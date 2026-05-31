@@ -5568,6 +5568,166 @@ async fn admin_convert_pair_routes_require_admin_scope_and_mysql() -> Result<(),
 }
 
 #[tokio::test]
+async fn admin_convert_detail_routes_require_admin_scope_mysql_and_reason()
+-> Result<(), Box<dyn Error>> {
+    let settings = test_settings();
+    let user_token = issue_token(&settings, "user:1", TokenScope::User, 900).unwrap();
+    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let app = build_router(AppState::new(settings));
+
+    let pair_missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/convert/pairs/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(pair_missing.status(), StatusCode::UNAUTHORIZED);
+
+    let pair_user = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/convert/pairs/1")
+                .header(AUTHORIZATION, format!("Bearer {user_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(pair_user.status(), StatusCode::FORBIDDEN);
+
+    let pair_admin = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/convert/pairs/1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(pair_admin.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let order_admin = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/convert/orders/1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(order_admin.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let blank_create_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/convert/pairs")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "from_asset_id": 1,
+                        "to_asset_id": 2,
+                        "pricing_mode": "fixed",
+                        "spread_rate": "0.01000000",
+                        "min_amount": "1.000000000000000000",
+                        "enabled": true,
+                        "reason": "   "
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(blank_create_reason.status(), StatusCode::BAD_REQUEST);
+    let blank_create_payload = body_json(blank_create_reason).await?;
+    assert_eq!(
+        blank_create_payload["message"],
+        "validation error: reason is required"
+    );
+
+    let blank_update_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/convert/pairs/1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "enabled": false, "reason": "   " }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(blank_update_reason.status(), StatusCode::BAD_REQUEST);
+    let blank_update_payload = body_json(blank_update_reason).await?;
+    assert_eq!(
+        blank_update_payload["message"],
+        "validation error: reason is required"
+    );
+
+    let long_reason = "R".repeat(513);
+    let long_create_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/convert/pairs")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "from_asset_id": 1,
+                        "to_asset_id": 2,
+                        "pricing_mode": "fixed",
+                        "spread_rate": "0.01000000",
+                        "min_amount": "1.000000000000000000",
+                        "enabled": true,
+                        "reason": long_reason
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(long_create_reason.status(), StatusCode::BAD_REQUEST);
+    let long_create_payload = body_json(long_create_reason).await?;
+    assert_eq!(
+        long_create_payload["message"],
+        "validation error: reason is too long"
+    );
+
+    let long_update_reason = app
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/convert/pairs/1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "enabled": false, "reason": "R".repeat(513) }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(long_update_reason.status(), StatusCode::BAD_REQUEST);
+    let long_update_payload = body_json(long_update_reason).await?;
+    assert_eq!(
+        long_update_payload["message"],
+        "validation error: reason is too long"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn admin_convert_new_coin_rule_routes_require_admin_scope_and_mysql()
 -> Result<(), Box<dyn Error>> {
     let settings = test_settings();

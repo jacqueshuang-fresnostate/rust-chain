@@ -2,6 +2,21 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-05-31 20:02 - Admin Earn 与闪兑行级操作补齐
+
+- 完成内容：新增 Admin Earn 产品详情与申购详情接口，Earn 产品创建/启停强制非空 reason 并保留审计；新增 Admin 闪兑交易对详情与闪兑订单详情接口，闪兑交易对创建/启停强制非空且不超过 512 字符的 reason 并保留审计；前端为 Earn 产品、Earn 申购、闪兑交易对、闪兑订单接入行级“查看详情”，并仅为 Earn 产品和闪兑交易对提供带原因确认的安全启停操作，未开放 Earn 申购或闪兑订单任意状态修改。
+- 修改文件：
+  - `src/modules/earn/routes.rs`
+  - `src/modules/admin/routes.rs`
+  - `tests/earn_routes.rs`
+  - `tests/admin_routes.rs`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test earn_routes admin_earn -- --nocapture`，6 个测试通过、0 失败，MySQL-gated 分支因本地未设置 `DATABASE_URL` 按设计跳过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_convert -- --nocapture`，9 个测试通过、0 失败，MySQL-gated 分支因本地未设置 `DATABASE_URL` 按设计跳过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx AdminResourcePage.test.tsx`，2 个测试文件、21 个测试通过、0 失败；已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --check`，通过；已执行 `cargo check --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets`，通过；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：Earn 产品强类型详情页、Earn 申购收益/赎回链路联动展示、闪兑订单成交明细页、其他后台资源筛选与行级上下文操作继续补齐。
+
 ## 2026-05-31 18:28 - Admin 杠杆与秒合约 CRUD 安全闭环
 
 - 完成内容：新增 Admin 杠杆产品详情、杠杆仓位详情、强平记录详情、秒合约产品详情、秒合约订单详情；杠杆与秒合约产品创建/启停强制非空 reason 并保留审计；秒合约手动结算强制非空 reason，复用原结算事务并仅在新结算成功时写 `seconds_contract_order.settle` 审计；前端为杠杆产品、杠杆仓位、强平记录、秒合约产品、秒合约订单接入行级“查看详情”、安全启停和固定赢/输结算操作。

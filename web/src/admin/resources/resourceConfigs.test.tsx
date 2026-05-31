@@ -545,6 +545,196 @@ describe('resourceConfigs create actions', () => {
     expect(screen.getByRole('button', { name: '结算输' })).toBeDisabled();
   });
 
+  it('opens earn product details and updates product status from row actions', async () => {
+    const user = userEvent.setup();
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/earn/products') {
+        const rows = [
+          {
+            id: 61,
+            asset_id: 12,
+            asset_symbol: 'USDT',
+            name: 'USDT 30D',
+            term_days: 30,
+            apr_rate: '0.12000000',
+            min_subscribe: '10.0000',
+            status: 'active'
+          }
+        ];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
+      return { rows: [], raw: {} };
+    });
+    apiRequestMock.mockImplementation(async (path) => {
+      if (path === '/admin/api/v1/earn/products/61') {
+        return { id: 61, detail: 'earn-product-detail' };
+      }
+
+      return {};
+    });
+
+    render(<ResourcePage config={resourceConfigs.earnProducts} />);
+
+    expect(await screen.findByText('USDT 30D')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看详情' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/products/61');
+    });
+    expect(await screen.findByText(/"detail": "earn-product-detail"/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '禁用' }));
+    await user.type(screen.getByLabelText('操作原因'), 'disable earn product');
+    await user.click(screen.getByRole('button', { name: '确认' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/products/61/status', {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'disabled', reason: 'disable earn product' })
+      });
+      expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/earn/products')).toHaveLength(2);
+    });
+  });
+
+  it('opens earn subscription details without unsafe write actions', async () => {
+    const user = userEvent.setup();
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/earn/subscriptions') {
+        const rows = [
+          {
+            id: 62,
+            user_id: 99,
+            product_id: 61,
+            asset_id: 12,
+            amount: '100.0000',
+            apr_rate: '0.12000000',
+            term_days: 30,
+            status: 'subscribed'
+          }
+        ];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
+      return { rows: [], raw: {} };
+    });
+    apiRequestMock.mockImplementation(async (path) => {
+      if (path === '/admin/api/v1/earn/subscriptions/62') {
+        return { id: 62, detail: 'earn-subscription-detail' };
+      }
+
+      return {};
+    });
+
+    render(<ResourcePage config={resourceConfigs.earnSubscriptions} />);
+
+    expect(await screen.findByText('100.0000')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '管理员赎回' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '赎回' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '修改状态' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看详情' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/subscriptions/62');
+    });
+    expect(await screen.findByText(/"detail": "earn-subscription-detail"/)).toBeInTheDocument();
+  });
+
+  it('opens convert pair details and updates pair enabled state from row actions', async () => {
+    const user = userEvent.setup();
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/convert/pairs') {
+        const rows = [
+          {
+            id: 71,
+            from_asset_id: 11,
+            to_asset_id: 12,
+            pricing_mode: 'fixed',
+            spread_rate: '0.01000000',
+            min_amount: '1.0000',
+            max_amount: '100.0000',
+            enabled: true
+          }
+        ];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
+      return { rows: [], raw: {} };
+    });
+    apiRequestMock.mockImplementation(async (path) => {
+      if (path === '/admin/api/v1/convert/pairs/71') {
+        return { id: 71, detail: 'convert-pair-detail' };
+      }
+
+      return {};
+    });
+
+    render(<ResourcePage config={resourceConfigs.convertPairs} />);
+
+    expect(await screen.findByText('0.01000000')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看详情' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/convert/pairs/71');
+    });
+    expect(await screen.findByText(/"detail": "convert-pair-detail"/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '禁用' }));
+    await user.type(screen.getByLabelText('操作原因'), 'disable convert pair');
+    await user.click(screen.getByRole('button', { name: '确认' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/convert/pairs/71', {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled: false, reason: 'disable convert pair' })
+      });
+      expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/convert/pairs')).toHaveLength(2);
+    });
+  });
+
+  it('opens convert order details without unsafe write actions', async () => {
+    const user = userEvent.setup();
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/convert/orders') {
+        const rows = [
+          {
+            id: 72,
+            quote_id: 'quote-72',
+            user_id: 99,
+            convert_pair_id: 71,
+            from_amount: '10.0000',
+            to_amount: '20.0000',
+            rate: '2.0000',
+            status: 'pending'
+          }
+        ];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
+      return { rows: [], raw: {} };
+    });
+    apiRequestMock.mockImplementation(async (path) => {
+      if (path === '/admin/api/v1/convert/orders/72') {
+        return { id: 72, detail: 'convert-order-detail' };
+      }
+
+      return {};
+    });
+
+    render(<ResourcePage config={resourceConfigs.convertOrders} />);
+
+    expect(await screen.findByText('quote-72')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '修改状态' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '取消订单' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '确认成交' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看详情' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/convert/orders/72');
+    });
+    expect(await screen.findByText(/"detail": "convert-order-detail"/)).toBeInTheDocument();
+  });
+
   it('exposes the spot trade fee column', () => {
     expect(resourceConfigs.spotTrades.columns).toEqual(
       expect.arrayContaining([expect.objectContaining({ key: 'fee', title: '手续费', type: 'amount' })])

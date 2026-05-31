@@ -441,6 +441,83 @@ export function SecondsOrderRowActions({ helpers, record }: { helpers: RowAction
   );
 }
 
+export function EarnProductRowActions({ helpers, record }: { helpers: RowActionHelpers; record: ApiRecord }) {
+  const productId = recordString(record, 'id');
+  const nextStatus = nextToggleStatus(recordString(record, 'status'));
+  const actionText = toggleActionText(nextStatus);
+
+  return (
+    <>
+      <Button disabled={!productId} onClick={() => openRecordDetail('/admin/api/v1/earn/products', productId, helpers)} size="small" theme="borderless">
+        查看详情
+      </Button>
+      <ConfirmAction
+        actionText={actionText}
+        disabled={!productId}
+        title={`${actionText}理财产品`}
+        onConfirm={async (reason) => {
+          await submitAction(`${actionText}理财产品`, () =>
+            apiRequest(`/admin/api/v1/earn/products/${productId}/status`, {
+              method: 'PATCH',
+              body: JSON.stringify({ status: nextStatus, reason })
+            })
+          );
+          helpers.reload();
+        }}
+      />
+    </>
+  );
+}
+
+export function EarnSubscriptionRowActions({ helpers, record }: { helpers: RowActionHelpers; record: ApiRecord }) {
+  const subscriptionId = recordString(record, 'id');
+
+  return (
+    <Button disabled={!subscriptionId} onClick={() => openRecordDetail('/admin/api/v1/earn/subscriptions', subscriptionId, helpers)} size="small" theme="borderless">
+      查看详情
+    </Button>
+  );
+}
+
+export function ConvertPairRowActions({ helpers, record }: { helpers: RowActionHelpers; record: ApiRecord }) {
+  const pairId = recordString(record, 'id');
+  const enabled = record.enabled === true;
+  const nextEnabled = !enabled;
+  const actionText = enabled ? '禁用' : '启用';
+
+  return (
+    <>
+      <Button disabled={!pairId} onClick={() => openRecordDetail('/admin/api/v1/convert/pairs', pairId, helpers)} size="small" theme="borderless">
+        查看详情
+      </Button>
+      <ConfirmAction
+        actionText={actionText}
+        disabled={!pairId}
+        title={`${actionText}闪兑交易对`}
+        onConfirm={async (reason) => {
+          await submitAction(`${actionText}闪兑交易对`, () =>
+            apiRequest(`/admin/api/v1/convert/pairs/${pairId}`, {
+              method: 'PATCH',
+              body: JSON.stringify({ enabled: nextEnabled, reason })
+            })
+          );
+          helpers.reload();
+        }}
+      />
+    </>
+  );
+}
+
+export function ConvertOrderRowActions({ helpers, record }: { helpers: RowActionHelpers; record: ApiRecord }) {
+  const orderId = recordString(record, 'id');
+
+  return (
+    <Button disabled={!orderId} onClick={() => openRecordDetail('/admin/api/v1/convert/orders', orderId, helpers)} size="small" theme="borderless">
+      查看详情
+    </Button>
+  );
+}
+
 export function CreateAssetAction() {
   const [asset, setAsset] = useState(initialAsset);
 

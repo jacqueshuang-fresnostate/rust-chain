@@ -1,9 +1,13 @@
 import { AdminResourcePage, type AdminResourceColumn } from './AdminResourcePage';
 import {
+  ConvertOrderRowActions,
+  ConvertPairRowActions,
   CreateAssetAction,
   CreateMarginPairAction,
   CreateSecondsPairAction,
   CreateSpotPairAction,
+  EarnProductRowActions,
+  EarnSubscriptionRowActions,
   MarginLiquidationRowActions,
   MarginPositionRowActions,
   MarginProductRowActions,
@@ -314,6 +318,7 @@ export const resourceConfigs = {
     endpoint: '/admin/api/v1/convert/pairs',
     responseKey: 'pairs',
     filters: [limitFilter],
+    rowActions: (record, helpers) => <ConvertPairRowActions helpers={helpers} record={record} />,
     columns: [
       { key: 'id', title: '交易对ID' },
       { key: 'from_asset_id', title: '源资产' },
@@ -330,6 +335,7 @@ export const resourceConfigs = {
     endpoint: '/admin/api/v1/convert/orders',
     responseKey: 'orders',
     filters: [userFilter, statusFilter, limitFilter],
+    rowActions: (record, helpers) => <ConvertOrderRowActions helpers={helpers} record={record} />,
     columns: [
       { key: 'id', title: '订单ID' },
       { key: 'quote_id', title: '报价ID' },
@@ -468,6 +474,7 @@ export const resourceConfigs = {
     endpoint: '/admin/api/v1/earn/products',
     responseKey: 'products',
     filters: [limitFilter],
+    rowActions: (record, helpers) => <EarnProductRowActions helpers={helpers} record={record} />,
     columns: [
       { key: 'id', title: '产品ID' },
       { key: 'asset_id', title: '资产ID' },
@@ -484,6 +491,7 @@ export const resourceConfigs = {
     endpoint: '/admin/api/v1/earn/subscriptions',
     responseKey: 'subscriptions',
     filters: [userFilter, statusFilter, limitFilter],
+    rowActions: (record, helpers) => <EarnSubscriptionRowActions helpers={helpers} record={record} />,
     columns: [
       { key: 'id', title: '申购ID' },
       { key: 'user_id', title: '用户ID' },

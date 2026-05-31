@@ -45,6 +45,8 @@ struct AdminAgentAuditEntry<'a> {
     reason: Option<String>,
 }
 
+const ADMIN_AUDIT_REASON_MAX_LEN: usize = 512;
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/dashboard", get(get_admin_dashboard))
@@ -123,12 +125,16 @@ pub fn routes() -> Router<AppState> {
             "/convert/pairs",
             get(list_convert_pairs).post(create_convert_pair),
         )
-        .route("/convert/pairs/:id", patch(update_convert_pair_status))
+        .route(
+            "/convert/pairs/:id",
+            get(get_convert_pair).patch(update_convert_pair_status),
+        )
         .route(
             "/convert/new-coin-rules",
             post(upsert_new_coin_convert_rule),
         )
         .route("/convert/orders", get(list_convert_orders))
+        .route("/convert/orders/:id", get(get_convert_order))
         .route(
             "/market-strategies",
             get(list_market_strategies).post(create_market_strategy),
@@ -2141,6 +2147,18 @@ async fn list_convert_pairs(
     Ok(Json(ConvertPairsResponse { pairs }))
 }
 
+async fn get_convert_pair(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+    Path(pair_id): Path<u64>,
+) -> AppResult<Json<ConvertPairResponse>> {
+    let pool = mysql_pool(&state)?;
+    let mut tx = pool.begin().await?;
+    let pair = load_convert_pair_in_tx(&mut tx, pair_id).await?;
+    tx.commit().await?;
+    Ok(Json(pair))
+}
+
 async fn list_convert_orders(
     _auth: AdminAuth,
     State(state): State<AppState>,
@@ -2172,6 +2190,26 @@ async fn list_convert_orders(
         .await?;
 
     Ok(Json(ConvertOrdersResponse { orders }))
+}
+
+async fn get_convert_order(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+    Path(order_id): Path<u64>,
+) -> AppResult<Json<ConvertOrderResponse>> {
+    let order = sqlx::query_as::<_, ConvertOrderResponse>(
+        r#"SELECT id, quote_id, convert_pair_id, user_id, from_asset AS from_asset_id,
+                  to_asset AS to_asset_id, from_amount, to_amount, rate, status, created_at
+           FROM convert_orders
+           WHERE id = ?
+           LIMIT 1"#,
+    )
+    .bind(order_id)
+    .fetch_optional(&mysql_pool(&state)?)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    Ok(Json(order))
 }
 
 async fn list_market_strategies(
@@ -3087,6 +3125,7 @@ async fn create_convert_pair(
     Json(request): Json<CreateConvertPairRequest>,
 ) -> AppResult<Json<ConvertPairResponse>> {
     validate_create_convert_pair(&request)?;
+    let reason = required_reason(request.reason)?;
     let admin_id = admin_id_from_subject(&claims.sub)?;
     let pool = mysql_pool(&state)?;
     let enabled = request.enabled.unwrap_or(true);
@@ -3114,7 +3153,7 @@ async fn create_convert_pair(
         pair.id,
         None,
         Some(convert_pair_audit_json(&pair)),
-        request.reason,
+        Some(reason),
     )
     .await?;
     tx.commit().await?;
@@ -3128,6 +3167,7 @@ async fn update_convert_pair_status(
     Path(pair_id): Path<u64>,
     Json(request): Json<UpdateConvertPairStatusRequest>,
 ) -> AppResult<Json<ConvertPairResponse>> {
+    let reason = required_reason(request.reason)?;
     let admin_id = admin_id_from_subject(&claims.sub)?;
     let pool = mysql_pool(&state)?;
     let mut tx = pool.begin().await?;
@@ -3146,7 +3186,7 @@ async fn update_convert_pair_status(
         pair_id,
         Some(convert_pair_audit_json(&before)),
         Some(convert_pair_audit_json(&after)),
-        request.reason,
+        Some(reason),
     )
     .await?;
     tx.commit().await?;
@@ -4936,7 +4976,13 @@ fn optional_string(value: Option<String>) -> Option<String> {
 }
 
 fn required_reason(value: Option<String>) -> AppResult<String> {
-    optional_string(value).ok_or_else(|| AppError::Validation("reason is required".to_owned()))
+    let Some(reason) = optional_string(value) else {
+        return Err(AppError::Validation("reason is required".to_owned()));
+    };
+    if reason.chars().count() > ADMIN_AUDIT_REASON_MAX_LEN {
+        return Err(AppError::Validation("reason is too long".to_owned()));
+    }
+    Ok(reason)
 }
 
 fn map_duplicate_pair(error: sqlx::Error) -> AppError {

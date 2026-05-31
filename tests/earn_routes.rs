@@ -311,7 +311,7 @@ async fn admin_earn_product_routes_require_admin_scope_mysql_and_validation()
                 .header("authorization", format!("Bearer {admin_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    r#"{"asset_id":1,"name":"Earn 30D","term_days":30,"apr_rate":"0.12000000","min_subscribe":"10.000000000000000000"}"#,
+                    r#"{"asset_id":1,"name":"Earn 30D","term_days":30,"apr_rate":"0.12000000","min_subscribe":"10.000000000000000000","reason":"create earn product"}"#,
                 ))
                 .unwrap(),
         )
@@ -336,6 +336,106 @@ async fn admin_earn_product_routes_require_admin_scope_mysql_and_validation()
         )
         .await?;
     assert_eq!(invalid_status.status(), StatusCode::BAD_REQUEST);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_earn_detail_routes_require_admin_scope_mysql_and_reason()
+-> Result<(), Box<dyn Error>> {
+    let settings = test_settings();
+    let user_token = issue_token(&settings, "user:1", TokenScope::User, 900).unwrap();
+    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let app = admin_routes().with_state(AppState::new(settings));
+
+    let product_missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/earn/products/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(product_missing.status(), StatusCode::UNAUTHORIZED);
+
+    let product_user = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/earn/products/1")
+                .header("authorization", format!("Bearer {user_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(product_user.status(), StatusCode::FORBIDDEN);
+
+    let product_admin = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/earn/products/1")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(product_admin.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let subscription_admin = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/earn/subscriptions/1")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(
+        subscription_admin.status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+
+    let blank_create_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/earn/products")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"asset_id":1,"name":"Earn 30D","term_days":30,"apr_rate":"0.12000000","min_subscribe":"10.000000000000000000","reason":"   "}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(blank_create_reason.status(), StatusCode::BAD_REQUEST);
+    let blank_create_payload = body_json(blank_create_reason).await?;
+    assert_eq!(
+        blank_create_payload["message"],
+        "validation error: earn product reason is required"
+    );
+
+    let blank_status_reason = app
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/earn/products/1/status")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"status":"disabled","reason":"   "}"#))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(blank_status_reason.status(), StatusCode::BAD_REQUEST);
+    let blank_status_payload = body_json(blank_status_reason).await?;
+    assert_eq!(
+        blank_status_payload["message"],
+        "validation error: earn product reason is required"
+    );
 
     Ok(())
 }

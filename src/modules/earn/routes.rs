@@ -34,8 +34,10 @@ pub fn admin_routes() -> Router<AppState> {
             "/earn/products",
             get(list_admin_products).post(create_product),
         )
+        .route("/earn/products/:id", get(get_admin_product))
         .route("/earn/products/:id/status", patch(update_product_status))
         .route("/earn/subscriptions", get(list_admin_subscriptions))
+        .route("/earn/subscriptions/:id", get(get_admin_subscription))
 }
 
 #[derive(Debug, Deserialize)]
@@ -165,6 +167,18 @@ async fn list_admin_products(
     list_products(mysql_pool(&state)?, None, route_limit(query.limit)).await
 }
 
+async fn get_admin_product(
+    AdminAuth(_claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(product_id): Path<u64>,
+) -> AppResult<Json<EarnProductResponse>> {
+    let pool = mysql_pool(&state)?;
+    let mut tx = pool.begin().await?;
+    let product = load_product_by_id(&mut tx, product_id).await?;
+    tx.commit().await?;
+    Ok(Json(product))
+}
+
 async fn list_subscriptions(
     UserAuth(claims): UserAuth,
     State(state): State<AppState>,
@@ -220,12 +234,25 @@ async fn list_admin_subscriptions(
     Ok(Json(EarnSubscriptionsResponse { subscriptions }))
 }
 
+async fn get_admin_subscription(
+    AdminAuth(_claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(subscription_id): Path<u64>,
+) -> AppResult<Json<EarnSubscriptionResponse>> {
+    let pool = mysql_pool(&state)?;
+    let mut tx = pool.begin().await?;
+    let subscription = load_subscription_by_id(&mut tx, subscription_id).await?;
+    tx.commit().await?;
+    Ok(Json(subscription))
+}
+
 async fn create_product(
     AdminAuth(claims): AdminAuth,
     State(state): State<AppState>,
     Json(request): Json<CreateEarnProductRequest>,
 ) -> AppResult<Json<EarnProductResponse>> {
     validate_create_product_request(&request)?;
+    let reason = required_reason(request.reason)?;
     let admin_id = admin_id_from_subject(&claims.sub)?;
     let status = normalized_product_status(request.status.as_deref().unwrap_or("active"))?;
     let pool = mysql_pool(&state)?;
@@ -254,7 +281,7 @@ async fn create_product(
         product.id,
         None,
         Some(product_audit_json(&product)),
-        request.reason,
+        Some(reason),
     )
     .await?;
     tx.commit().await?;
@@ -268,7 +295,7 @@ async fn update_product_status(
     Json(request): Json<UpdateEarnProductStatusRequest>,
 ) -> AppResult<Json<EarnProductResponse>> {
     let status = normalized_product_status(&request.status)?;
-    validate_optional_reason(request.reason.as_deref())?;
+    let reason = required_reason(request.reason)?;
     let admin_id = admin_id_from_subject(&claims.sub)?;
     let pool = mysql_pool(&state)?;
     let mut tx = pool.begin().await?;
@@ -286,7 +313,7 @@ async fn update_product_status(
         product_id,
         Some(product_audit_json(&before)),
         Some(product_audit_json(&after)),
-        request.reason,
+        Some(reason),
     )
     .await?;
     tx.commit().await?;
@@ -881,6 +908,16 @@ fn validate_optional_reason(reason: Option<&str>) -> AppResult<()> {
         ));
     }
     Ok(())
+}
+
+fn required_reason(reason: Option<String>) -> AppResult<String> {
+    let Some(reason) = optional_string(reason) else {
+        return Err(AppError::Validation(
+            "earn product reason is required".to_owned(),
+        ));
+    };
+    validate_optional_reason(Some(reason.as_str()))?;
+    Ok(reason)
 }
 
 fn normalized_product_status(value: &str) -> AppResult<String> {
