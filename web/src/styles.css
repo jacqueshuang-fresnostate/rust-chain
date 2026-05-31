@@ -285,8 +285,54 @@ body {
   min-height: auto;
 }
 
+.admin-dashboard-toolbar {
+  margin-bottom: 20px;
+}
+
+.admin-dashboard-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.admin-dashboard-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 20px;
+}
+
 .admin-dashboard-card {
   min-height: 150px;
+}
+
+.admin-dashboard-card h3 {
+  margin: 8px 0;
+}
+
+.admin-dashboard-audit-card {
+  grid-column: 1 / -1;
+}
+
+.admin-dashboard-audit-list {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+}
+
+.admin-dashboard-audit-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px;
+  border: 1px solid #eaedf3;
+  border-radius: 10px;
+  background: #f9fafb;
+}
+
+.admin-dashboard-audit-item > div {
+  display: grid;
+  gap: 4px;
 }
 
 .page-header {

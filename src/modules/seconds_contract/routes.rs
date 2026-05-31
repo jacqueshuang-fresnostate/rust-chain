@@ -35,11 +35,13 @@ pub fn admin_routes() -> Router<AppState> {
             "/seconds-contracts/products",
             get(list_admin_products).post(create_product),
         )
+        .route("/seconds-contracts/products/:id", get(get_admin_product))
         .route(
             "/seconds-contracts/products/:id/status",
             patch(update_product_status),
         )
         .route("/seconds-contracts/orders", get(list_admin_orders))
+        .route("/seconds-contracts/orders/:id", get(get_admin_order))
         .route("/seconds-contracts/orders/:id/settle", post(settle_order))
 }
 
@@ -138,6 +140,7 @@ struct OpenSecondsContractOrderResponse {
 #[derive(Debug, Deserialize)]
 struct SettleSecondsContractOrderRequest {
     result: String,
+    reason: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -166,6 +169,21 @@ struct SecondsContractWalletRow {
     locked: BigDecimal,
 }
 
+#[derive(Debug)]
+struct AdminSettlementAudit {
+    admin_id: u64,
+    reason: String,
+}
+
+struct AdminAuditEntry<'a> {
+    action: &'a str,
+    target_type: &'a str,
+    target_id: u64,
+    before_json: Option<Value>,
+    after_json: Option<Value>,
+    reason: Option<String>,
+}
+
 async fn list_active_products(
     UserAuth(_claims): UserAuth,
     State(state): State<AppState>,
@@ -185,6 +203,18 @@ async fn list_admin_products(
     Query(query): Query<ListQuery>,
 ) -> AppResult<Json<SecondsContractProductsResponse>> {
     list_products(mysql_pool(&state)?, None, route_limit(query.limit)).await
+}
+
+async fn get_admin_product(
+    AdminAuth(_claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(product_id): Path<u64>,
+) -> AppResult<Json<SecondsContractProductResponse>> {
+    let pool = mysql_pool(&state)?;
+    let mut tx = pool.begin().await?;
+    let product = load_product_by_id(&mut tx, product_id).await?;
+    tx.commit().await?;
+    Ok(Json(product))
 }
 
 async fn list_orders(
@@ -242,12 +272,23 @@ async fn list_admin_orders(
     Ok(Json(SecondsContractOrdersResponse { orders }))
 }
 
+async fn get_admin_order(
+    AdminAuth(_claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(order_id): Path<u64>,
+) -> AppResult<Json<SecondsContractOrderResponse>> {
+    Ok(Json(
+        load_order_by_id_from_pool(&mysql_pool(&state)?, order_id).await?,
+    ))
+}
+
 async fn create_product(
     AdminAuth(claims): AdminAuth,
     State(state): State<AppState>,
     Json(request): Json<CreateSecondsContractProductRequest>,
 ) -> AppResult<Json<SecondsContractProductResponse>> {
     validate_create_product_request(&request)?;
+    let reason = required_reason(request.reason)?;
     let admin_id = admin_id_from_subject(&claims.sub)?;
     let status = normalized_product_status(request.status.as_deref().unwrap_or("active"))?;
     let pool = mysql_pool(&state)?;
@@ -277,7 +318,7 @@ async fn create_product(
         product.id,
         None,
         Some(product_audit_json(&product)),
-        request.reason,
+        Some(reason),
     )
     .await?;
     tx.commit().await?;
@@ -291,7 +332,7 @@ async fn update_product_status(
     Json(request): Json<UpdateSecondsContractProductStatusRequest>,
 ) -> AppResult<Json<SecondsContractProductResponse>> {
     let status = normalized_product_status(&request.status)?;
-    validate_optional_reason(request.reason.as_deref())?;
+    let reason = required_reason(request.reason)?;
     let admin_id = admin_id_from_subject(&claims.sub)?;
     let pool = mysql_pool(&state)?;
     let mut tx = pool.begin().await?;
@@ -309,7 +350,7 @@ async fn update_product_status(
         product_id,
         Some(product_audit_json(&before)),
         Some(product_audit_json(&after)),
-        request.reason,
+        Some(reason),
     )
     .await?;
     tx.commit().await?;
@@ -388,14 +429,21 @@ async fn open_order(
 }
 
 async fn settle_order(
-    AdminAuth(_claims): AdminAuth,
+    AdminAuth(claims): AdminAuth,
     State(state): State<AppState>,
     Path(order_id): Path<u64>,
     Json(request): Json<SettleSecondsContractOrderRequest>,
 ) -> AppResult<Json<SettleSecondsContractOrderResponse>> {
     let result = normalize_settlement_result(&request.result)?;
-    let (response, is_new_settlement) =
-        settle_order_in_tx(&mysql_pool(&state)?, order_id, result).await?;
+    let reason = required_reason(request.reason)?;
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    let (response, is_new_settlement) = settle_order_in_tx(
+        &mysql_pool(&state)?,
+        order_id,
+        result,
+        Some(AdminSettlementAudit { admin_id, reason }),
+    )
+    .await?;
     if is_new_settlement && let Some(hub) = &state.event_broadcast_hub {
         hub.publish(EventBroadcastMessage::private_user(
             response.order.user_id,
@@ -540,6 +588,7 @@ async fn settle_order_in_tx(
     pool: &Pool<MySql>,
     order_id: u64,
     result: String,
+    admin_audit: Option<AdminSettlementAudit>,
 ) -> AppResult<(SettleSecondsContractOrderResponse, bool)> {
     let mut tx = pool.begin().await?;
     let order = lock_order_by_id(&mut tx, order_id).await?;
@@ -561,6 +610,9 @@ async fn settle_order_in_tx(
         ));
     }
 
+    let before_json = admin_audit
+        .as_ref()
+        .map(|_| order_audit_json(&order, BigDecimal::from(0)));
     let payout_amount = settlement_payout_amount(&order, &result);
 
     if payout_amount > 0 {
@@ -598,6 +650,17 @@ async fn settle_order_in_tx(
     .execute(&mut *tx)
     .await?;
     let settled_order = load_order_by_id(&mut tx, order.id).await?;
+    if let Some(admin_audit) = admin_audit {
+        insert_admin_order_audit_log_in_tx(
+            &mut tx,
+            admin_audit.admin_id,
+            order.id,
+            before_json,
+            Some(order_audit_json(&settled_order, payout_amount.clone())),
+            Some(admin_audit.reason),
+        )
+        .await?;
+    }
     tx.commit().await?;
     Ok((
         SettleSecondsContractOrderResponse {
@@ -837,17 +900,30 @@ async fn load_order_by_id(
     tx: &mut Transaction<'_, MySql>,
     order_id: u64,
 ) -> AppResult<SecondsContractOrderResponse> {
-    sqlx::query_as::<_, SecondsContractOrderResponse>(
-        r#"SELECT id, user_id, product_id, pair_id, stake_asset, direction, stake_amount,
-                  payout_rate, entry_price, status, result, idempotency_key, expires_at
-           FROM seconds_contract_orders
-           WHERE id = ?
-           LIMIT 1"#,
-    )
-    .bind(order_id)
-    .fetch_optional(&mut **tx)
-    .await?
-    .ok_or(AppError::NotFound)
+    sqlx::query_as::<_, SecondsContractOrderResponse>(seconds_contract_order_by_id_sql())
+        .bind(order_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
+async fn load_order_by_id_from_pool(
+    pool: &Pool<MySql>,
+    order_id: u64,
+) -> AppResult<SecondsContractOrderResponse> {
+    sqlx::query_as::<_, SecondsContractOrderResponse>(seconds_contract_order_by_id_sql())
+        .bind(order_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
+fn seconds_contract_order_by_id_sql() -> &'static str {
+    r#"SELECT id, user_id, product_id, pair_id, stake_asset, direction, stake_amount,
+              payout_rate, entry_price, status, result, idempotency_key, expires_at
+       FROM seconds_contract_orders
+       WHERE id = ?
+       LIMIT 1"#
 }
 
 async fn lock_order_by_id(
@@ -877,17 +953,61 @@ async fn insert_admin_audit_log_in_tx(
     after_json: Option<Value>,
     reason: Option<String>,
 ) -> AppResult<()> {
+    insert_admin_audit_log_with_target_in_tx(
+        tx,
+        admin_id,
+        AdminAuditEntry {
+            action,
+            target_type: "seconds_contract_product",
+            target_id,
+            before_json,
+            after_json,
+            reason,
+        },
+    )
+    .await
+}
+
+async fn insert_admin_order_audit_log_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    admin_id: u64,
+    order_id: u64,
+    before_json: Option<Value>,
+    after_json: Option<Value>,
+    reason: Option<String>,
+) -> AppResult<()> {
+    insert_admin_audit_log_with_target_in_tx(
+        tx,
+        admin_id,
+        AdminAuditEntry {
+            action: "seconds_contract_order.settle",
+            target_type: "seconds_contract_order",
+            target_id: order_id,
+            before_json,
+            after_json,
+            reason,
+        },
+    )
+    .await
+}
+
+async fn insert_admin_audit_log_with_target_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    admin_id: u64,
+    entry: AdminAuditEntry<'_>,
+) -> AppResult<()> {
     sqlx::query(
         r#"INSERT INTO admin_audit_logs
            (admin_id, action, target_type, target_id, before_json, after_json, reason)
-           VALUES (?, ?, 'seconds_contract_product', ?, ?, ?, ?)"#,
+           VALUES (?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(admin_id)
-    .bind(action)
-    .bind(target_id.to_string())
-    .bind(before_json.map(SqlxJson))
-    .bind(after_json.map(SqlxJson))
-    .bind(optional_string(reason))
+    .bind(entry.action)
+    .bind(entry.target_type)
+    .bind(entry.target_id.to_string())
+    .bind(entry.before_json.map(SqlxJson))
+    .bind(entry.after_json.map(SqlxJson))
+    .bind(optional_string(entry.reason))
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -905,6 +1025,24 @@ fn product_audit_json(product: &SecondsContractProductResponse) -> Value {
         "min_stake": product.min_stake,
         "max_stake": product.max_stake,
         "status": product.status,
+    })
+}
+
+fn order_audit_json(order: &SecondsContractOrderResponse, payout_amount: BigDecimal) -> Value {
+    json!({
+        "id": order.id,
+        "user_id": order.user_id,
+        "product_id": order.product_id,
+        "pair_id": order.pair_id,
+        "stake_asset": order.stake_asset,
+        "direction": order.direction,
+        "stake_amount": order.stake_amount,
+        "payout_rate": order.payout_rate,
+        "entry_price": order.entry_price,
+        "status": order.status,
+        "result": order.result,
+        "payout_amount": payout_amount,
+        "expires_at": order.expires_at.timestamp_millis(),
     })
 }
 
@@ -970,7 +1108,7 @@ fn validate_create_product_request(request: &CreateSecondsContractProductRequest
     if let Some(status) = request.status.as_deref() {
         normalized_product_status(status)?;
     }
-    validate_optional_reason(request.reason.as_deref())?;
+    validate_reason_len(request.reason.as_deref())?;
     Ok(())
 }
 
@@ -1030,7 +1168,17 @@ fn normalized_product_status(value: &str) -> AppResult<String> {
     }
 }
 
-fn validate_optional_reason(reason: Option<&str>) -> AppResult<()> {
+fn required_reason(reason: Option<String>) -> AppResult<String> {
+    let Some(reason) = optional_string(reason) else {
+        return Err(AppError::Validation(
+            "seconds contract reason is required".to_owned(),
+        ));
+    };
+    validate_reason_len(Some(reason.as_str()))?;
+    Ok(reason)
+}
+
+fn validate_reason_len(reason: Option<&str>) -> AppResult<()> {
     if let Some(reason) = reason
         && reason.trim().chars().count() > SECONDS_AUDIT_REASON_MAX_LEN
     {

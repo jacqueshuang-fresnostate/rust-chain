@@ -1,6 +1,6 @@
 import { Button, Card, Space, Typography } from '@douyinfe/semi-ui';
 import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { listAdminResource } from '../../api/adminResources';
 import type { ApiRecord } from '../../api/types';
@@ -26,6 +26,13 @@ type AdminResourcePageProps<T extends ApiRecord> = {
   endpoint: string;
   filters?: FilterField[];
   responseKey: string;
+  rowActions?: (
+    record: T,
+    helpers: {
+      reload: () => void;
+      openJson: (data: ApiRecord) => void;
+    }
+  ) => ReactNode;
   title: string;
 };
 
@@ -49,12 +56,14 @@ function renderCell<T extends ApiRecord>(column: AdminResourceColumn<T>, value: 
   return <span>{value === null || value === undefined || value === '' ? '-' : String(value)}</span>;
 }
 
-export function AdminResourcePage<T extends ApiRecord>({ actions, columns, endpoint, filters, responseKey, title }: AdminResourcePageProps<T>) {
-  const [drawerRow, setDrawerRow] = useState<T | null>(null);
+export function AdminResourcePage<T extends ApiRecord>({ actions, columns, endpoint, filters, responseKey, rowActions, title }: AdminResourcePageProps<T>) {
+  const [drawerRow, setDrawerRow] = useState<ApiRecord | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [filterValues, setFilterValues] = useState<FilterValues>({});
   const [loading, setLoading] = useState(true);
+  const [reloadVersion, setReloadVersion] = useState(0);
   const [rows, setRows] = useState<T[]>([]);
+  const reload = useCallback(() => setReloadVersion((value) => value + 1), []);
 
   useEffect(() => {
     let active = true;
@@ -84,7 +93,7 @@ export function AdminResourcePage<T extends ApiRecord>({ actions, columns, endpo
     return () => {
       active = false;
     };
-  }, [endpoint, filterValues, responseKey]);
+  }, [endpoint, filterValues, reloadVersion, responseKey]);
 
   const tableColumns = useMemo<Array<ColumnProps<T>>>(() => {
     const resourceColumns = columns.map<ColumnProps<T>>((column) => ({
@@ -97,14 +106,17 @@ export function AdminResourcePage<T extends ApiRecord>({ actions, columns, endpo
       ...resourceColumns,
       {
         render: (_value: unknown, record: T) => (
-          <Button onClick={() => setDrawerRow(record)} size="small" theme="borderless">
-            查看JSON
-          </Button>
+          <Space spacing={6} wrap>
+            {rowActions?.(record, { reload, openJson: setDrawerRow })}
+            <Button onClick={() => setDrawerRow(record)} size="small" theme="borderless">
+              查看JSON
+            </Button>
+          </Space>
         ),
         title: '操作'
       }
     ];
-  }, [columns]);
+  }, [columns, reload, rowActions]);
 
   return (
     <main className="exchange-page">

@@ -47,6 +47,7 @@ struct AdminAgentAuditEntry<'a> {
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route("/dashboard", get(get_admin_dashboard))
         .route("/users", get(list_admin_users))
         .route("/users/:id", get(get_admin_user))
         .route("/assets", get(list_assets).post(create_asset))
@@ -58,6 +59,11 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/market-pairs",
             get(list_trading_pairs).post(create_trading_pair),
+        )
+        .route("/market-pairs/:id", get(get_trading_pair))
+        .route(
+            "/market-pairs/:id/status",
+            patch(update_trading_pair_status),
         )
         .route(
             "/market-feed/config",
@@ -133,6 +139,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/audit-logs", get(list_admin_audit_logs))
         .route("/margin/liquidations", get(list_margin_liquidations))
+        .route("/margin/liquidations/:id", get(get_margin_liquidation))
         .route("/agents", post(create_agent))
         .route("/agents/:id/status", patch(update_agent_status))
         .route("/agents/:id/users", get(list_agent_users))
@@ -297,6 +304,12 @@ struct CreateTradingPairRequest {
     min_order_value: BigDecimal,
     status: Option<String>,
     market_type: Option<String>,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateTradingPairStatusRequest {
+    status: String,
     reason: Option<String>,
 }
 
@@ -861,6 +874,100 @@ struct NewCoinConvertRuleResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct AdminDashboardResponse {
+    #[serde(with = "unix_millis")]
+    generated_at: chrono::DateTime<chrono::Utc>,
+    users: AdminDashboardUsersSummary,
+    wallet: AdminDashboardWalletSummary,
+    market: AdminDashboardMarketSummary,
+    trading: AdminDashboardTradingSummary,
+    products: AdminDashboardProductsSummary,
+    risk: AdminDashboardRiskSummary,
+    audit: AdminDashboardAuditSummary,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+struct AdminDashboardUsersSummary {
+    total: i64,
+    active: i64,
+    new_24h: i64,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+struct AdminDashboardWalletSummary {
+    active_assets: i64,
+    wallet_accounts: i64,
+    non_zero_accounts: i64,
+    pending_unlocks: i64,
+    pending_deposits: i64,
+    pending_withdrawals: i64,
+    custody_status: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AdminDashboardMarketSummary {
+    active_pairs: i64,
+    disabled_pairs: i64,
+    external_pairs: i64,
+    strategy_pairs: i64,
+    feed_runtime_status: String,
+    feed_needs_reload: bool,
+    feed_symbols: Vec<String>,
+    feed_providers: Vec<String>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct AdminDashboardMarketCounts {
+    active_pairs: i64,
+    disabled_pairs: i64,
+    external_pairs: i64,
+    strategy_pairs: i64,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+struct AdminDashboardTradingSummary {
+    spot_open_orders: i64,
+    spot_trades_24h: i64,
+    convert_pending_orders: i64,
+    convert_completed_24h: i64,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+struct AdminDashboardProductsSummary {
+    seconds_open_orders: i64,
+    margin_open_positions: i64,
+    margin_liquidated_24h: i64,
+    earn_active_subscriptions: i64,
+    earn_maturing_24h: i64,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+struct AdminDashboardRiskSummary {
+    risk_events_24h: i64,
+    blocked_events_24h: i64,
+    pending_outbox_events: i64,
+    retry_inbox_events: i64,
+    dead_letter_inbox_events: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct AdminDashboardAuditSummary {
+    admin_actions_24h: i64,
+    latest_actions: Vec<AdminDashboardAuditAction>,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+struct AdminDashboardAuditAction {
+    id: u64,
+    admin_id: u64,
+    action: String,
+    target_type: String,
+    target_id: String,
+    #[serde(with = "unix_millis")]
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Serialize)]
 struct AdminUsersResponse {
     users: Vec<AdminUserResponse>,
 }
@@ -1384,6 +1491,130 @@ fn validate_loaded_market_feed_credentials(
     Ok(())
 }
 
+async fn get_admin_dashboard(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+) -> AppResult<Json<AdminDashboardResponse>> {
+    let pool = mysql_pool(&state)?;
+    let generated_at = chrono::Utc::now();
+    let users = sqlx::query_as::<_, AdminDashboardUsersSummary>(
+        r#"SELECT COUNT(*) AS total,
+                  COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0) AS active,
+                  COALESCE(SUM(CASE WHEN created_at >= DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 24 HOUR)
+                                    THEN 1 ELSE 0 END), 0) AS new_24h
+           FROM users"#,
+    )
+    .fetch_one(&pool)
+    .await?;
+    let wallet = sqlx::query_as::<_, AdminDashboardWalletSummary>(
+        r#"SELECT (SELECT COUNT(*) FROM assets WHERE status = 'active') AS active_assets,
+                  (SELECT COUNT(*) FROM wallet_accounts) AS wallet_accounts,
+                  (SELECT COUNT(*) FROM wallet_accounts
+                   WHERE available <> 0 OR frozen <> 0 OR locked <> 0) AS non_zero_accounts,
+                  (SELECT COUNT(*) FROM asset_lock_positions
+                   WHERE status = 'active' AND unlock_at <= UTC_TIMESTAMP(6)) AS pending_unlocks,
+                  (SELECT COUNT(*) FROM deposit_records WHERE status = 'pending') AS pending_deposits,
+                  (SELECT COUNT(*) FROM withdraw_records WHERE status = 'pending') AS pending_withdrawals,
+                  'not_configured' AS custody_status"#,
+    )
+    .fetch_one(&pool)
+    .await?;
+    let market_counts = sqlx::query_as::<_, AdminDashboardMarketCounts>(
+        r#"SELECT COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0) AS active_pairs,
+                  COALESCE(SUM(CASE WHEN status = 'disabled' THEN 1 ELSE 0 END), 0) AS disabled_pairs,
+                  COALESCE(SUM(CASE WHEN market_type = 'external' THEN 1 ELSE 0 END), 0) AS external_pairs,
+                  COALESCE(SUM(CASE WHEN market_type = 'strategy' THEN 1 ELSE 0 END), 0) AS strategy_pairs
+           FROM trading_pairs"#,
+    )
+    .fetch_one(&pool)
+    .await?;
+    let saved_feed_config = load_config(&pool).await?;
+    let runtime = match &state.market_feed_supervisor {
+        Some(supervisor) => supervisor.status().await,
+        None => Default::default(),
+    };
+    let feed_runtime_status = runtime
+        .last_reload_status
+        .clone()
+        .unwrap_or_else(|| "not_started".to_owned());
+    let market = AdminDashboardMarketSummary {
+        active_pairs: market_counts.active_pairs,
+        disabled_pairs: market_counts.disabled_pairs,
+        external_pairs: market_counts.external_pairs,
+        strategy_pairs: market_counts.strategy_pairs,
+        feed_runtime_status,
+        feed_needs_reload: saved_feed_config
+            .as_ref()
+            .is_some_and(|config| config.needs_reload),
+        feed_symbols: runtime.symbols,
+        feed_providers: runtime.providers,
+    };
+    let trading = sqlx::query_as::<_, AdminDashboardTradingSummary>(
+        r#"SELECT (SELECT COUNT(*) FROM spot_orders WHERE status IN ('pending', 'partial')) AS spot_open_orders,
+                  (SELECT COUNT(*) FROM spot_trades
+                   WHERE created_at >= DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 24 HOUR)) AS spot_trades_24h,
+                  (SELECT COUNT(*) FROM convert_orders WHERE status = 'pending') AS convert_pending_orders,
+                  (SELECT COUNT(*) FROM convert_orders
+                   WHERE status = 'completed'
+                     AND updated_at >= DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 24 HOUR)) AS convert_completed_24h"#,
+    )
+    .fetch_one(&pool)
+    .await?;
+    let products = sqlx::query_as::<_, AdminDashboardProductsSummary>(
+        r#"SELECT (SELECT COUNT(*) FROM seconds_contract_orders WHERE status = 'opened') AS seconds_open_orders,
+                  (SELECT COUNT(*) FROM margin_positions WHERE status = 'opened') AS margin_open_positions,
+                  (SELECT COUNT(*) FROM margin_liquidation_records
+                   WHERE liquidated_at >= DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 24 HOUR)) AS margin_liquidated_24h,
+                  (SELECT COUNT(*) FROM earn_subscriptions WHERE status = 'subscribed') AS earn_active_subscriptions,
+                  (SELECT COUNT(*) FROM earn_subscriptions
+                   WHERE status = 'subscribed'
+                     AND matures_at <= DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 24 HOUR)) AS earn_maturing_24h"#,
+    )
+    .fetch_one(&pool)
+    .await?;
+    let risk = sqlx::query_as::<_, AdminDashboardRiskSummary>(
+        r#"SELECT (SELECT COUNT(*) FROM risk_events
+                   WHERE created_at >= DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 24 HOUR)) AS risk_events_24h,
+                  (SELECT COUNT(*) FROM risk_events
+                   WHERE decision IN ('block', 'blocked', 'reject', 'rejected')
+                     AND created_at >= DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 24 HOUR)) AS blocked_events_24h,
+                  (SELECT COUNT(*) FROM event_outbox WHERE status = 'pending') AS pending_outbox_events,
+                  (SELECT COUNT(*) FROM event_inbox WHERE status = 'retry') AS retry_inbox_events,
+                  (SELECT COUNT(*) FROM event_inbox WHERE status = 'dead_letter') AS dead_letter_inbox_events"#,
+    )
+    .fetch_one(&pool)
+    .await?;
+    let admin_actions_24h = sqlx::query_as::<_, (i64,)>(
+        r#"SELECT COUNT(*) FROM admin_audit_logs
+           WHERE created_at >= DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 24 HOUR)"#,
+    )
+    .fetch_one(&pool)
+    .await?
+    .0;
+    let latest_actions = sqlx::query_as::<_, AdminDashboardAuditAction>(
+        r#"SELECT id, admin_id, action, target_type, target_id, created_at
+           FROM admin_audit_logs
+           ORDER BY created_at DESC, id DESC
+           LIMIT 5"#,
+    )
+    .fetch_all(&pool)
+    .await?;
+
+    Ok(Json(AdminDashboardResponse {
+        generated_at,
+        users,
+        wallet,
+        market,
+        trading,
+        products,
+        risk,
+        audit: AdminDashboardAuditSummary {
+            admin_actions_24h,
+            latest_actions,
+        },
+    }))
+}
+
 async fn list_admin_users(
     _auth: AdminAuth,
     State(state): State<AppState>,
@@ -1764,6 +1995,50 @@ async fn list_trading_pairs(
     Ok(Json(AdminTradingPairsResponse { pairs }))
 }
 
+async fn get_trading_pair(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+    Path(pair_id): Path<u64>,
+) -> AppResult<Json<AdminTradingPairResponse>> {
+    let pair = load_trading_pair_by_id(&mysql_pool(&state)?, pair_id).await?;
+    Ok(Json(pair))
+}
+
+async fn update_trading_pair_status(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(pair_id): Path<u64>,
+    Json(request): Json<UpdateTradingPairStatusRequest>,
+) -> AppResult<Json<AdminTradingPairResponse>> {
+    let status = validate_trading_pair_status(&request.status)?;
+    let reason = required_reason(request.reason)?;
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    let pool = mysql_pool(&state)?;
+    let mut tx = pool.begin().await?;
+    let before = lock_trading_pair_in_tx(&mut tx, pair_id).await?;
+    sqlx::query("UPDATE trading_pairs SET status = ? WHERE id = ?")
+        .bind(&status)
+        .bind(pair_id)
+        .execute(&mut *tx)
+        .await?;
+    let after = load_trading_pair_in_tx(&mut tx, pair_id).await?;
+    insert_typed_admin_audit_log_in_tx(
+        &mut tx,
+        admin_id,
+        AdminAuditEntry {
+            action: "trading_pair.status.update",
+            target_type: "trading_pair",
+            target_id: after.id,
+            before_json: Some(trading_pair_audit_json(&before)),
+            after_json: Some(trading_pair_audit_json(&after)),
+            reason: Some(reason),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(after))
+}
+
 async fn create_trading_pair(
     AdminAuth(claims): AdminAuth,
     State(state): State<AppState>,
@@ -2091,14 +2366,8 @@ async fn list_margin_liquidations(
 ) -> AppResult<Json<AdminMarginLiquidationsResponse>> {
     // 后台强平记录列表只读查询，支持按用户、交易对和仓位精确过滤，便于风控复盘。
     let pool = mysql_pool(&state)?;
-    let mut builder = QueryBuilder::<MySql>::new(
-        r#"SELECT id, position_id, user_id, product_id, pair_id, margin_asset, direction,
-                  margin_amount, notional_amount, interest_amount, entry_price, mark_price,
-                  maintenance_margin_rate, equity, maintenance_margin, realized_pnl,
-                  payout_amount, reason, liquidated_at, created_at
-           FROM margin_liquidation_records
-           WHERE 1 = 1"#,
-    );
+    let mut builder = margin_liquidation_query();
+    builder.push(" WHERE 1 = 1");
     if let Some(user_id) = query.user_id {
         builder.push(" AND user_id = ");
         builder.push_bind(user_id);
@@ -2120,6 +2389,33 @@ async fn list_margin_liquidations(
         .await?;
 
     Ok(Json(AdminMarginLiquidationsResponse { liquidations }))
+}
+
+async fn get_margin_liquidation(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+    Path(liquidation_id): Path<u64>,
+) -> AppResult<Json<AdminMarginLiquidationResponse>> {
+    let mut builder = margin_liquidation_query();
+    builder.push(" WHERE id = ");
+    builder.push_bind(liquidation_id);
+    builder.push(" LIMIT 1");
+    let liquidation = builder
+        .build_query_as::<AdminMarginLiquidationResponse>()
+        .fetch_optional(&mysql_pool(&state)?)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(Json(liquidation))
+}
+
+fn margin_liquidation_query() -> QueryBuilder<'static, MySql> {
+    QueryBuilder::<MySql>::new(
+        r#"SELECT id, position_id, user_id, product_id, pair_id, margin_asset, direction,
+                  margin_amount, notional_amount, interest_amount, entry_price, mark_price,
+                  maintenance_margin_rate, equity, maintenance_margin, realized_pnl,
+                  payout_amount, reason, liquidated_at, created_at
+           FROM margin_liquidation_records"#,
+    )
 }
 
 async fn list_new_coin_subscriptions(
@@ -3063,6 +3359,20 @@ fn admin_trading_pair_query() -> QueryBuilder<'static, MySql> {
     )
 }
 
+async fn load_trading_pair_by_id(
+    pool: &Pool<MySql>,
+    pair_id: u64,
+) -> AppResult<AdminTradingPairResponse> {
+    let mut builder = admin_trading_pair_query();
+    builder.push(" WHERE pairs.id = ");
+    builder.push_bind(pair_id);
+    builder
+        .build_query_as::<AdminTradingPairResponse>()
+        .fetch_optional(pool)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
 async fn load_trading_pair_in_tx(
     tx: &mut Transaction<'_, MySql>,
     pair_id: u64,
@@ -3075,6 +3385,18 @@ async fn load_trading_pair_in_tx(
         .fetch_optional(&mut **tx)
         .await?
         .ok_or(AppError::NotFound)
+}
+
+async fn lock_trading_pair_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    pair_id: u64,
+) -> AppResult<AdminTradingPairResponse> {
+    sqlx::query_as::<_, (u64,)>("SELECT id FROM trading_pairs WHERE id = ? FOR UPDATE")
+        .bind(pair_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    load_trading_pair_in_tx(tx, pair_id).await
 }
 
 async fn ensure_trading_pair_asset_in_tx(
@@ -4611,6 +4933,10 @@ fn optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
+}
+
+fn required_reason(value: Option<String>) -> AppResult<String> {
+    optional_string(value).ok_or_else(|| AppError::Validation("reason is required".to_owned()))
 }
 
 fn map_duplicate_pair(error: sqlx::Error) -> AppError {

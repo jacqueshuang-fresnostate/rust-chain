@@ -417,8 +417,74 @@ async fn margin_lists_active_products_for_user_and_all_products_for_admin()
 async fn admin_margin_product_routes_require_admin_scope_mysql_and_validation()
 -> Result<(), Box<dyn Error>> {
     let settings = test_settings();
+    let user_token = issue_token(&settings, "user:42", TokenScope::User, 900).unwrap();
     let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
     let app = admin_routes().with_state(AppState::new(settings));
+
+    let unauthenticated_detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/margin/products/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(unauthenticated_detail.status(), StatusCode::UNAUTHORIZED);
+
+    let user_detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/margin/products/1")
+                .header("authorization", format!("Bearer {user_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(user_detail.status(), StatusCode::FORBIDDEN);
+
+    let admin_detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/margin/products/1")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let admin_detail_status = admin_detail.status();
+    let admin_detail_payload = body_json(admin_detail).await?;
+    assert_eq!(admin_detail_status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(admin_detail_payload["code"], "INTERNAL_ERROR");
+    assert_eq!(
+        admin_detail_payload["message"],
+        "internal error: mysql pool is not configured for margin routes"
+    );
+
+    let blank_create_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/margin/products")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"pair_id":1,"margin_asset":1,"max_leverage":"5.00000000","min_margin":"10.000000000000000000","maintenance_margin_rate":"0.05000000","reason":"   "}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let blank_create_reason_status = blank_create_reason.status();
+    let blank_create_reason_payload = body_json(blank_create_reason).await?;
+    assert_eq!(blank_create_reason_status, StatusCode::BAD_REQUEST);
+    assert_eq!(blank_create_reason_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        blank_create_reason_payload["message"],
+        "validation error: margin product reason is required"
+    );
 
     let no_mysql = app
         .clone()
@@ -429,7 +495,7 @@ async fn admin_margin_product_routes_require_admin_scope_mysql_and_validation()
                 .header("authorization", format!("Bearer {admin_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    r#"{"pair_id":1,"margin_asset":1,"max_leverage":"5.00000000","min_margin":"10.000000000000000000","maintenance_margin_rate":"0.05000000"}"#,
+                    r#"{"pair_id":1,"margin_asset":1,"max_leverage":"5.00000000","min_margin":"10.000000000000000000","maintenance_margin_rate":"0.05000000","reason":"create test product"}"#,
                 ))
                 .unwrap(),
         )
@@ -443,6 +509,27 @@ async fn admin_margin_product_routes_require_admin_scope_mysql_and_validation()
         "internal error: mysql pool is not configured for margin routes"
     );
 
+    let blank_status_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/margin/products/1/status")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"status":"active","reason":"   "}"#))
+                .unwrap(),
+        )
+        .await?;
+    let blank_status_reason_status = blank_status_reason.status();
+    let blank_status_reason_payload = body_json(blank_status_reason).await?;
+    assert_eq!(blank_status_reason_status, StatusCode::BAD_REQUEST);
+    assert_eq!(blank_status_reason_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        blank_status_reason_payload["message"],
+        "validation error: margin product reason is required"
+    );
+
     let invalid_status = app
         .oneshot(
             Request::builder()
@@ -450,7 +537,9 @@ async fn admin_margin_product_routes_require_admin_scope_mysql_and_validation()
                 .uri("/margin/products/1/status")
                 .header("authorization", format!("Bearer {admin_token}"))
                 .header("content-type", "application/json")
-                .body(Body::from(r#"{"status":"archived"}"#))
+                .body(Body::from(
+                    r#"{"status":"archived","reason":"invalid status test"}"#,
+                ))
                 .unwrap(),
         )
         .await?;
@@ -585,7 +674,7 @@ async fn admin_margin_product_create_update_status_and_audit() -> Result<(), Box
     let app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
 
     let missing_pair_body = format!(
-        r#"{{"pair_id":999999999999,"margin_asset":{quote_asset},"max_leverage":"5.00000000","min_margin":"10.000000000000000000","maintenance_margin_rate":"0.05000000"}}"#
+        r#"{{"pair_id":999999999999,"margin_asset":{quote_asset},"max_leverage":"5.00000000","min_margin":"10.000000000000000000","maintenance_margin_rate":"0.05000000","reason":"missing pair test"}}"#
     );
     let missing_pair_response = app
         .clone()
@@ -630,6 +719,38 @@ async fn admin_margin_product_create_update_status_and_audit() -> Result<(), Box
     assert_eq!(create_payload["max_leverage"], "8.00000000");
     assert_eq!(create_payload["maintenance_margin_rate"], "0.04000000");
     assert_eq!(create_payload["status"], "active");
+
+    let detail_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/margin/products/{product_id}"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let detail_status = detail_response.status();
+    let detail_payload = body_json(detail_response).await?;
+    assert_eq!(detail_status, StatusCode::OK, "payload: {detail_payload}");
+    assert_eq!(detail_payload["id"], product_id);
+    assert_eq!(detail_payload["pair_id"], pair_id);
+    assert_eq!(detail_payload["symbol"], symbol);
+    assert_eq!(detail_payload["margin_asset"], quote_asset);
+    assert_eq!(detail_payload["margin_asset_symbol"], quote_symbol);
+    assert_eq!(detail_payload["status"], "active");
+
+    let unknown_detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/margin/products/999999999999")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(unknown_detail.status(), StatusCode::NOT_FOUND);
 
     let long_update_reason = "R".repeat(513);
     let long_update_reason_body =
@@ -1010,6 +1131,7 @@ async fn admin_margin_positions_require_admin_scope_and_mysql() -> Result<(), Bo
     assert_eq!(user_response.status(), StatusCode::FORBIDDEN);
 
     let admin_response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/margin/positions")
@@ -1024,6 +1146,47 @@ async fn admin_margin_positions_require_admin_scope_and_mysql() -> Result<(), Bo
     assert_eq!(admin_payload["code"], "INTERNAL_ERROR");
     assert_eq!(
         admin_payload["message"],
+        "internal error: mysql pool is not configured for margin routes"
+    );
+
+    let unauthenticated_detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/margin/positions/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(unauthenticated_detail.status(), StatusCode::UNAUTHORIZED);
+
+    let user_detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/margin/positions/1")
+                .header("authorization", format!("Bearer {user_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(user_detail.status(), StatusCode::FORBIDDEN);
+
+    let admin_detail = app
+        .oneshot(
+            Request::builder()
+                .uri("/margin/positions/1")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let admin_detail_status = admin_detail.status();
+    let admin_detail_payload = body_json(admin_detail).await?;
+    assert_eq!(admin_detail_status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(admin_detail_payload["code"], "INTERNAL_ERROR");
+    assert_eq!(
+        admin_detail_payload["message"],
         "internal error: mysql pool is not configured for margin routes"
     );
 
@@ -1193,6 +1356,7 @@ async fn admin_margin_positions_filter_history_and_return_interest_fields()
     );
 
     let closed_response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri(format!(
@@ -1210,6 +1374,41 @@ async fn admin_margin_positions_filter_history_and_return_interest_fields()
     assert!(closed_positions.iter().any(|position| {
         position["id"] == closed_id && position["closed_at"].as_i64().is_some()
     }));
+
+    let detail_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/margin/positions/{liquidated_id}"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let detail_status = detail_response.status();
+    let detail_payload = body_json(detail_response).await?;
+    assert_eq!(detail_status, StatusCode::OK, "payload: {detail_payload}");
+    assert_eq!(detail_payload["id"], liquidated_id);
+    assert_eq!(detail_payload["user_id"], user_id);
+    assert_eq!(detail_payload["product_id"], product_id);
+    assert_eq!(detail_payload["pair_id"], pair_id);
+    assert_eq!(detail_payload["margin_asset"], quote_asset);
+    assert_eq!(detail_payload["status"], "liquidated");
+    assert_eq!(detail_payload["borrowed_amount"], "75.000000000000000000");
+    assert_eq!(detail_payload["interest_amount"], "2.500000000000000000");
+    assert!(detail_payload["liquidated_at"].as_i64().is_some());
+    assert_eq!(detail_payload["liquidation_reason"], "maintenance_margin");
+
+    let unknown_detail = app
+        .oneshot(
+            Request::builder()
+                .uri("/margin/positions/999999999999")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(unknown_detail.status(), StatusCode::NOT_FOUND);
 
     Ok(())
 }

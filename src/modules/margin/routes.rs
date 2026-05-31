@@ -36,8 +36,10 @@ pub fn admin_routes() -> Router<AppState> {
             "/margin/products",
             get(list_admin_products).post(create_product),
         )
+        .route("/margin/products/:id", get(get_admin_product))
         .route("/margin/products/:id/status", patch(update_product_status))
         .route("/margin/positions", get(list_admin_positions))
+        .route("/margin/positions/:id", get(get_admin_position))
         .route("/margin/interest/summary", get(list_admin_interest_summary))
 }
 
@@ -323,12 +325,25 @@ async fn list_admin_products(
     list_products(mysql_pool(&state)?, None, route_limit(query.limit)).await
 }
 
+async fn get_admin_product(
+    AdminAuth(_claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(product_id): Path<u64>,
+) -> AppResult<Json<MarginProductResponse>> {
+    let pool = mysql_pool(&state)?;
+    let mut tx = pool.begin().await?;
+    let product = load_product_by_id(&mut tx, product_id).await?;
+    tx.commit().await?;
+    Ok(Json(product))
+}
+
 async fn create_product(
     AdminAuth(claims): AdminAuth,
     State(state): State<AppState>,
     Json(request): Json<CreateMarginProductRequest>,
 ) -> AppResult<Json<MarginProductResponse>> {
     validate_create_product_request(&request)?;
+    let reason = required_reason(request.reason)?;
     let admin_id = admin_id_from_subject(&claims.sub)?;
     let status = normalized_product_status(request.status.as_deref().unwrap_or("active"))?;
     let pool = mysql_pool(&state)?;
@@ -360,7 +375,7 @@ async fn create_product(
         product.id,
         None,
         Some(product_audit_json(&product)),
-        request.reason,
+        Some(reason),
     )
     .await?;
     tx.commit().await?;
@@ -374,7 +389,7 @@ async fn update_product_status(
     Json(request): Json<UpdateMarginProductStatusRequest>,
 ) -> AppResult<Json<MarginProductResponse>> {
     let status = normalized_product_status(&request.status)?;
-    validate_optional_reason(request.reason.as_deref())?;
+    let reason = required_reason(request.reason)?;
     let admin_id = admin_id_from_subject(&claims.sub)?;
     let pool = mysql_pool(&state)?;
     let mut tx = pool.begin().await?;
@@ -392,7 +407,7 @@ async fn update_product_status(
         product_id,
         Some(product_audit_json(&before)),
         Some(product_audit_json(&after)),
-        request.reason,
+        Some(reason),
     )
     .await?;
     tx.commit().await?;
@@ -466,6 +481,17 @@ async fn list_admin_positions(
         .fetch_all(&pool)
         .await?;
     Ok(Json(AdminMarginPositionsResponse { positions }))
+}
+
+async fn get_admin_position(
+    AdminAuth(_claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(position_id): Path<u64>,
+) -> AppResult<Json<AdminMarginPositionResponse>> {
+    let position = load_admin_position_by_id(&mysql_pool(&state)?, position_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(Json(position))
 }
 
 async fn list_admin_interest_summary(
@@ -1029,6 +1055,25 @@ async fn load_user_position_by_id(
     .map_err(AppError::from)
 }
 
+async fn load_admin_position_by_id(
+    pool: &Pool<MySql>,
+    position_id: u64,
+) -> AppResult<Option<AdminMarginPositionResponse>> {
+    sqlx::query_as::<_, AdminMarginPositionResponse>(
+        r#"SELECT id, user_id, product_id, pair_id, margin_asset, direction, margin_amount,
+                  leverage, notional_amount, borrowed_amount, interest_amount, entry_price,
+                  exit_price, realized_pnl, closed_at, liquidated_at, liquidation_reason, status,
+                  idempotency_key
+           FROM margin_positions
+           WHERE id = ?
+           LIMIT 1"#,
+    )
+    .bind(position_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(AppError::from)
+}
+
 async fn load_user_risk_position_by_id(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -1418,7 +1463,7 @@ fn validate_create_product_request(request: &CreateMarginProductRequest) -> AppR
     if let Some(status) = request.status.as_deref() {
         normalized_product_status(status)?;
     }
-    validate_optional_reason(request.reason.as_deref())?;
+    validate_reason_len(request.reason.as_deref())?;
     Ok(())
 }
 
@@ -1498,7 +1543,17 @@ fn normalized_position_status(value: &str) -> AppResult<String> {
     }
 }
 
-fn validate_optional_reason(reason: Option<&str>) -> AppResult<()> {
+fn required_reason(reason: Option<String>) -> AppResult<String> {
+    let Some(reason) = optional_string(reason) else {
+        return Err(AppError::Validation(
+            "margin product reason is required".to_owned(),
+        ));
+    };
+    validate_reason_len(Some(reason.as_str()))?;
+    Ok(reason)
+}
+
+fn validate_reason_len(reason: Option<&str>) -> AppResult<()> {
     if let Some(reason) = reason
         && reason.trim().chars().count() > MARGIN_AUDIT_REASON_MAX_LEN
     {

@@ -102,6 +102,38 @@ async fn create_user(pool: &MySqlPool) -> u64 {
         .last_insert_id()
 }
 
+async fn create_admin_user(pool: &MySqlPool) -> (u64, u64) {
+    let suffix = Uuid::now_v7().simple().to_string();
+    let role_id =
+        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_OBJECT())")
+            .bind(format!("spot-route-role-{suffix}"))
+            .execute(pool)
+            .await
+            .unwrap()
+            .last_insert_id();
+    let admin_id =
+        sqlx::query("INSERT INTO admin_users (username, password_hash, role_id) VALUES (?, ?, ?)")
+            .bind(format!("spot-route-admin-{suffix}"))
+            .bind("not-a-real-hash")
+            .bind(role_id)
+            .execute(pool)
+            .await
+            .unwrap()
+            .last_insert_id();
+
+    (role_id, admin_id)
+}
+
+#[derive(sqlx::FromRow)]
+struct AdminAuditRow {
+    action: String,
+    target_type: String,
+    target_id: String,
+    before_json: Option<Value>,
+    after_json: Option<Value>,
+    reason: Option<String>,
+}
+
 async fn create_asset(pool: &MySqlPool, prefix: &str) -> (u64, String) {
     let suffix = Uuid::now_v7().simple().to_string();
     let symbol = format!("{prefix}{}", &suffix[16..32]);
@@ -190,6 +222,271 @@ async fn seed_open_order(
     .await?
     .last_insert_id()
     .to_string())
+}
+
+#[tokio::test]
+async fn admin_spot_order_detail_and_cancel_routes_require_admin_scope_mysql()
+-> Result<(), Box<dyn Error>> {
+    let settings = test_settings();
+    let user_token = issue_token(&settings, "user:1", TokenScope::User, 900).unwrap();
+    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let app = admin_routes().with_state(AppState::new(settings));
+    let cancel_body = r#"{"reason":"manual cancel"}"#;
+
+    let missing_detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/spot/orders/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing_detail.status(), StatusCode::UNAUTHORIZED);
+
+    let user_detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/spot/orders/1")
+                .header("authorization", format!("Bearer {user_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(user_detail.status(), StatusCode::FORBIDDEN);
+
+    let admin_detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/spot/orders/1")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(admin_detail.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let missing_cancel = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/spot/orders/1/cancel")
+                .header("content-type", "application/json")
+                .body(Body::from(cancel_body))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing_cancel.status(), StatusCode::UNAUTHORIZED);
+
+    let user_cancel = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/spot/orders/1/cancel")
+                .header("authorization", format!("Bearer {user_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(cancel_body))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(user_cancel.status(), StatusCode::FORBIDDEN);
+
+    let missing_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/spot/orders/1/cancel")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"reason":" "}"#))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing_reason.status(), StatusCode::BAD_REQUEST);
+
+    let admin_cancel = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/spot/orders/1/cancel")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(cancel_body))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(admin_cancel.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_spot_order_detail_cancel_unfreezes_wallet_and_audits() -> Result<(), Box<dyn Error>>
+{
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let user_id = create_user(&pool).await;
+    let (base_asset, base_symbol) = create_asset(&pool, "AD").await;
+    let (quote_asset, quote_symbol) = create_asset(&pool, "AQ").await;
+    let pair_symbol =
+        create_pair(&pool, base_asset, quote_asset, &base_symbol, &quote_symbol).await;
+    let order_id = seed_open_buy_order(&pool, user_id, &pair_symbol).await?;
+    sqlx::query(
+        "INSERT INTO wallet_accounts (user_id, asset_id, available, frozen) VALUES (?, ?, ?, ?)",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .bind(decimal("80.000000000000000000"))
+    .bind(decimal("20.000000000000000000"))
+    .execute(&pool)
+    .await?;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let hub = EventBroadcastHub::new(16);
+    let _keepalive_hub = hub.clone();
+    let mut private_events = hub.subscribe(&WebSocketChannel::private_user(user_id));
+    let app = admin_routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_event_broadcast_hub(hub),
+    );
+
+    let detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/spot/orders/{order_id}"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let detail_status = detail.status();
+    let detail_body = axum::body::to_bytes(detail.into_body(), 8192).await?;
+    assert_eq!(
+        detail_status,
+        StatusCode::OK,
+        "payload: {}",
+        String::from_utf8_lossy(&detail_body)
+    );
+    let detail_payload: Value = serde_json::from_slice(&detail_body)?;
+    assert_eq!(detail_payload["id"], order_id);
+    assert_eq!(detail_payload["user_id"], user_id.to_string());
+    assert_eq!(detail_payload["pair_id"], pair_symbol);
+    assert_eq!(detail_payload["status"], "open");
+
+    let cancel = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/spot/orders/{order_id}/cancel"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"reason":"risk manual cancel"}"#))
+                .unwrap(),
+        )
+        .await?;
+    let cancel_status = cancel.status();
+    let cancel_body = axum::body::to_bytes(cancel.into_body(), 8192).await?;
+    assert_eq!(
+        cancel_status,
+        StatusCode::OK,
+        "payload: {}",
+        String::from_utf8_lossy(&cancel_body)
+    );
+    let cancel_payload: Value = serde_json::from_slice(&cancel_body)?;
+    assert_eq!(cancel_payload["cancelled"], true);
+    assert_eq!(cancel_payload["order"]["id"], order_id);
+    assert_eq!(cancel_payload["order"]["status"], "cancelled");
+    let event_message =
+        tokio::time::timeout(Duration::from_millis(100), private_events.recv()).await??;
+    let event: Value = serde_json::from_str(event_message.payload())?;
+    assert_eq!(event["type"], "spot.order.cancelled");
+    assert_eq!(event["order_id"], order_id);
+    assert_eq!(event["status"], "cancelled");
+
+    let stored_status: String = sqlx::query_scalar("SELECT status FROM spot_orders WHERE id = ?")
+        .bind(&order_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(stored_status, "cancelled");
+    let (available, frozen): (BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available, frozen FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        available.normalized(),
+        decimal("100.000000000000000000").normalized()
+    );
+    assert_eq!(
+        frozen.normalized(),
+        decimal("0.000000000000000000").normalized()
+    );
+
+    let audits = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type = 'spot_order' AND target_id = ?
+           ORDER BY id"#,
+    )
+    .bind(admin_id)
+    .bind(&order_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].action, "spot_order.cancel");
+    assert_eq!(audits[0].target_type, "spot_order");
+    assert_eq!(audits[0].target_id, order_id);
+    assert_eq!(audits[0].before_json.as_ref().unwrap()["status"], "open");
+    assert_eq!(
+        audits[0].after_json.as_ref().unwrap()["status"],
+        "cancelled"
+    );
+    assert_eq!(audits[0].reason.as_deref(), Some("risk manual cancel"));
+
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    cleanup_fixture(
+        &pool,
+        user_id,
+        base_asset,
+        quote_asset,
+        &pair_symbol,
+        &order_id,
+    )
+    .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
 }
 
 #[tokio::test]

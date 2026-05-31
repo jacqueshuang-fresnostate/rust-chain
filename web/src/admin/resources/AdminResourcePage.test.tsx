@@ -107,4 +107,43 @@ describe('AdminResourcePage', () => {
 
     expect(await screen.findByText(/"name": "风控员"/)).toBeInTheDocument();
   });
+
+  it('renders custom row actions and keeps JSON drawer action', async () => {
+    const user = userEvent.setup();
+    listAdminResourceMock.mockResolvedValue({
+      rows: [{ id: 3, name: '交易对', enabled: true, amount: '1.0000', created_at: 1_735_732_800_000 }],
+      raw: { items: [] }
+    });
+
+    render(
+      <AdminResourcePage<TestRecord>
+        title="管理员资源"
+        endpoint="/admin/accounts"
+        responseKey="items"
+        columns={columns}
+        rowActions={(record, helpers) => (
+          <>
+            <button type="button" onClick={() => helpers.openJson({ detail: record.name })}>
+              查看详情
+            </button>
+            <button type="button" onClick={helpers.reload}>
+              重新加载
+            </button>
+          </>
+        )}
+      />
+    );
+
+    await screen.findByText('交易对');
+    expect(screen.getByRole('button', { name: '查看详情' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看JSON' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '查看详情' }));
+    expect(await screen.findByText(/"detail": "交易对"/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '重新加载' }));
+    await waitFor(() => {
+      expect(listAdminResourceMock).toHaveBeenCalledTimes(2);
+    });
+  });
 });

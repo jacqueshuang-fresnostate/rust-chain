@@ -684,6 +684,134 @@ async fn body_json(response: axum::response::Response) -> Result<Value, Box<dyn 
 }
 
 #[tokio::test]
+async fn admin_dashboard_requires_admin_scope_and_mysql() -> Result<(), Box<dyn Error>> {
+    let settings = test_settings();
+    let user_token = issue_token(&settings, "user:1", TokenScope::User, 900).unwrap();
+    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let app = build_router(AppState::new(settings));
+
+    let missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/dashboard")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let user = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/dashboard")
+                .header(AUTHORIZATION, format!("Bearer {user_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(user.status(), StatusCode::FORBIDDEN);
+
+    let admin = app
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/dashboard")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(admin.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let payload = body_json(admin).await?;
+    assert_eq!(payload["code"], "INTERNAL_ERROR");
+    assert!(
+        payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("mysql pool is not configured for admin convert routes")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_dashboard_returns_operational_summary_shape() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let action = format!(
+        "dashboard.summary.{}",
+        &Uuid::now_v7().simple().to_string()[..12]
+    );
+    let audit_id = sqlx::query(
+        r#"INSERT INTO admin_audit_logs
+           (admin_id, action, target_type, target_id, after_json, reason)
+           VALUES (?, ?, 'dashboard_summary', 'summary', JSON_OBJECT('visible', true), 'dashboard test')"#,
+    )
+    .bind(admin_id)
+    .bind(&action)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/dashboard")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let status = response.status();
+    let payload = body_json(response).await?;
+    assert_eq!(status, StatusCode::OK, "payload: {payload}");
+    assert!(payload["generated_at"].is_number());
+    assert!(payload["users"]["total"].is_number());
+    assert!(payload["wallet"]["active_assets"].is_number());
+    assert_eq!(payload["wallet"]["custody_status"], "not_configured");
+    assert!(payload["market"]["active_pairs"].is_number());
+    assert_eq!(payload["market"]["feed_runtime_status"], "not_started");
+    assert!(payload["market"]["feed_symbols"].as_array().is_some());
+    assert!(payload["trading"]["spot_open_orders"].is_number());
+    assert!(payload["products"]["margin_open_positions"].is_number());
+    assert!(payload["risk"]["pending_outbox_events"].is_number());
+    assert!(payload["audit"]["admin_actions_24h"].as_i64().unwrap() >= 1);
+    assert!(
+        payload["audit"]["latest_actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["action"] == action)
+    );
+
+    sqlx::query("DELETE FROM admin_audit_logs WHERE id = ?")
+        .bind(audit_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn admin_core_resource_routes_require_admin_scope_and_mysql() -> Result<(), Box<dyn Error>> {
     let settings = test_settings();
     let user_token = issue_token(&settings, "user:1", TokenScope::User, 900).unwrap();
@@ -1909,6 +2037,263 @@ async fn admin_trading_pair_routes_require_admin_scope_mysql_and_validation()
         )
         .await?;
     assert_eq!(list.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_trading_pair_detail_and_status_routes_require_admin_scope_mysql()
+-> Result<(), Box<dyn Error>> {
+    let settings = test_settings();
+    let user_token = issue_token(&settings, "user:1", TokenScope::User, 900).unwrap();
+    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let app = build_router(AppState::new(settings));
+    let status_body = json!({
+        "status": "active",
+        "reason": "enable pair"
+    })
+    .to_string();
+
+    let missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/market-pairs/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let user = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/market-pairs/1")
+                .header(AUTHORIZATION, format!("Bearer {user_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(user.status(), StatusCode::FORBIDDEN);
+
+    let admin = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/market-pairs/1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(admin.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let payload = body_json(admin).await?;
+    assert_eq!(payload["code"], "INTERNAL_ERROR");
+    assert!(
+        payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("mysql pool is not configured for admin convert routes")
+    );
+
+    let patch_missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/market-pairs/1/status")
+                .header("content-type", "application/json")
+                .body(Body::from(status_body.clone()))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(patch_missing.status(), StatusCode::UNAUTHORIZED);
+
+    let patch_user = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/market-pairs/1/status")
+                .header(AUTHORIZATION, format!("Bearer {user_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(status_body.clone()))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(patch_user.status(), StatusCode::FORBIDDEN);
+
+    let invalid = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/market-pairs/1/status")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "status": "archived",
+                        "reason": "invalid status"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+
+    let missing_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/market-pairs/1/status")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "status": "active", "reason": " " }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing_reason.status(), StatusCode::BAD_REQUEST);
+
+    let patch_admin = app
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/market-pairs/1/status")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(status_body))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(patch_admin.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_trading_pair_create_detail_status_update_and_audit() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let (base_asset, base_symbol) = create_asset_with_symbol(&pool, "TPDB").await;
+    let (quote_asset, quote_symbol) = create_asset_with_symbol(&pool, "TPDQ").await;
+    let symbol = format!("{base_symbol}-{quote_symbol}");
+    let pair_id = sqlx::query(
+        r#"INSERT INTO trading_pairs
+           (base_asset, quote_asset, symbol, price_precision, qty_precision, min_order_value, status, market_type)
+           VALUES (?, ?, ?, 8, 6, '10.000000000000000000', 'disabled', 'external')"#,
+    )
+    .bind(base_asset)
+    .bind(quote_asset)
+    .bind(&symbol)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/admin/api/v1/market-pairs/{pair_id}"))
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let detail_status = detail.status();
+    let detail_payload = body_json(detail).await?;
+    assert_eq!(detail_status, StatusCode::OK, "payload: {detail_payload}");
+    assert_eq!(detail_payload["id"], pair_id);
+    assert_eq!(detail_payload["status"], "disabled");
+    assert_eq!(detail_payload["symbol"], symbol);
+
+    let update = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/admin/api/v1/market-pairs/{pair_id}/status"))
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "status": "active",
+                        "reason": "enable listed pair"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let update_status = update.status();
+    let updated = body_json(update).await?;
+    assert_eq!(update_status, StatusCode::OK, "payload: {updated}");
+    assert_eq!(updated["id"], pair_id);
+    assert_eq!(updated["status"], "active");
+
+    let stored_status: String = sqlx::query_scalar("SELECT status FROM trading_pairs WHERE id = ?")
+        .bind(pair_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(stored_status, "active");
+
+    let audits = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type = 'trading_pair' AND target_id = ?
+           ORDER BY id"#,
+    )
+    .bind(admin_id)
+    .bind(pair_id.to_string())
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].action, "trading_pair.status.update");
+    assert_eq!(
+        audits[0].before_json.as_ref().unwrap()["status"],
+        "disabled"
+    );
+    assert_eq!(audits[0].after_json.as_ref().unwrap()["status"], "active");
+    assert_eq!(audits[0].reason.as_deref(), Some("enable listed pair"));
+
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ? AND target_type = 'trading_pair'")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM trading_pairs WHERE id = ?")
+        .bind(pair_id)
+        .execute(&pool)
+        .await?;
+    for asset_id in [base_asset, quote_asset] {
+        sqlx::query("DELETE FROM assets WHERE id = ?")
+            .bind(asset_id)
+            .execute(&pool)
+            .await?;
+    }
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
 
     Ok(())
 }
@@ -4922,30 +5307,51 @@ async fn admin_margin_liquidation_routes_require_admin_scope_and_mysql()
     let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
     let app = build_router(AppState::new(settings));
 
-    let missing = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/admin/api/v1/margin/liquidations")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await?;
-    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+    for uri in [
+        "/admin/api/v1/margin/liquidations",
+        "/admin/api/v1/margin/liquidations/1",
+    ] {
+        let missing = app
+            .clone()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await?;
+        assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
 
-    let user = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/admin/api/v1/margin/liquidations")
-                .header(AUTHORIZATION, format!("Bearer {user_token}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await?;
-    assert_eq!(user.status(), StatusCode::FORBIDDEN);
+        let user = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header(AUTHORIZATION, format!("Bearer {user_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await?;
+        assert_eq!(user.status(), StatusCode::FORBIDDEN);
+
+        let admin = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await?;
+        assert_eq!(admin.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let payload = body_json(admin).await?;
+        assert_eq!(payload["code"], "INTERNAL_ERROR");
+        assert!(
+            payload["message"]
+                .as_str()
+                .unwrap()
+                .contains("mysql pool is not configured for admin convert routes")
+        );
+    }
 
     let admin = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/admin/api/v1/margin/liquidations")
@@ -5034,6 +5440,55 @@ async fn admin_margin_liquidations_list_filters_seeded_records() -> Result<(), B
     assert_eq!(liquidations[0]["reason"], "maintenance_margin");
     assert_eq!(liquidations[0]["liquidated_at"], now.timestamp_millis());
     assert!(liquidations[0]["created_at"].as_i64().is_some());
+
+    let detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/margin/liquidations/{}",
+                    target.record_id
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let detail_status = detail.status();
+    let detail_payload = body_json(detail).await?;
+    assert_eq!(detail_status, StatusCode::OK, "payload: {detail_payload}");
+    assert_eq!(detail_payload["id"], target.record_id);
+    assert_eq!(detail_payload["position_id"], target.position_id);
+    assert_eq!(detail_payload["user_id"], user_id);
+    assert_eq!(detail_payload["product_id"], target.product_id);
+    assert_eq!(detail_payload["pair_id"], target.pair_id);
+    assert_eq!(detail_payload["margin_asset"], target.margin_asset);
+    assert_eq!(detail_payload["direction"], "long");
+    assert_eq!(detail_payload["margin_amount"], "20.000000000000000000");
+    assert_eq!(detail_payload["notional_amount"], "100.000000000000000000");
+    assert_eq!(detail_payload["interest_amount"], "1.250000000000000000");
+    assert_eq!(detail_payload["entry_price"], "100.000000000000000000");
+    assert_eq!(detail_payload["mark_price"], "84.000000000000000000");
+    assert_eq!(detail_payload["maintenance_margin_rate"], "0.05000000");
+    assert_eq!(detail_payload["equity"], "2.750000000000000000");
+    assert_eq!(detail_payload["maintenance_margin"], "5.000000000000000000");
+    assert_eq!(detail_payload["realized_pnl"], "-16.000000000000000000");
+    assert_eq!(detail_payload["payout_amount"], "2.750000000000000000");
+    assert_eq!(detail_payload["reason"], "maintenance_margin");
+    assert_eq!(detail_payload["liquidated_at"], now.timestamp_millis());
+    assert!(detail_payload["created_at"].as_i64().is_some());
+
+    let unknown_detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/margin/liquidations/999999999999")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(unknown_detail.status(), StatusCode::NOT_FOUND);
 
     let all = app
         .oneshot(

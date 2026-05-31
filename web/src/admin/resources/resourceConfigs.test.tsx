@@ -171,4 +171,383 @@ describe('resourceConfigs create actions', () => {
       );
     });
   });
+
+  it('updates market pair status from row actions with a required reason', async () => {
+    const user = userEvent.setup();
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/assets') {
+        return { rows: assetRows, raw: { [responseKey]: assetRows } };
+      }
+
+      if (endpoint === '/admin/api/v1/market-pairs') {
+        const rows = [
+          {
+            id: 1,
+            symbol: 'BTC-USDT',
+            base_asset: 'BTC',
+            quote_asset: 'USDT',
+            price_precision: 8,
+            qty_precision: 6,
+            min_order_value: '10.0000',
+            market_type: 'external',
+            status: 'active'
+          }
+        ];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
+      return { rows: [], raw: {} };
+    });
+
+    render(<ResourcePage config={resourceConfigs.marketPairs} />);
+
+    expect(await screen.findByText('BTC-USDT')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '禁用' }));
+    await user.type(screen.getByLabelText('操作原因'), 'disable risky pair');
+    await user.click(screen.getByRole('button', { name: '确认' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/market-pairs/1/status', {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'disabled', reason: 'disable risky pair' })
+      });
+      expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/market-pairs')).toHaveLength(2);
+    });
+  });
+
+  it('opens spot order details and cancels cancellable orders from row actions', async () => {
+    const user = userEvent.setup();
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/spot/orders') {
+        const rows = [
+          {
+            id: 7,
+            user_id: 99,
+            pair_id: 1,
+            side: 'buy',
+            order_type: 'limit',
+            price: '100.0000',
+            quantity: '2.0000',
+            filled_quantity: '0.5000',
+            status: 'open'
+          }
+        ];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
+      return { rows: [], raw: {} };
+    });
+    apiRequestMock.mockImplementation(async (path) => {
+      if (path === '/admin/api/v1/spot/orders/7') {
+        return { id: '7', status: 'open', detail: 'spot-order-detail' };
+      }
+
+      return {};
+    });
+
+    render(<ResourcePage config={resourceConfigs.spotOrders} />);
+
+    expect(await screen.findByText('0.5000')).toBeInTheDocument();
+    expect(screen.getByText('已成交数量')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看详情' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/spot/orders/7');
+    });
+    expect(await screen.findByText(/"detail": "spot-order-detail"/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '管理员撤单' }));
+    await user.type(screen.getByLabelText('操作原因'), 'risk cancel');
+    await user.click(screen.getByRole('button', { name: '确认' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/spot/orders/7/cancel', {
+        method: 'POST',
+        body: JSON.stringify({ reason: 'risk cancel' })
+      });
+      expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/spot/orders')).toHaveLength(2);
+    });
+  });
+
+  it('opens margin product details and updates product status from row actions', async () => {
+    const user = userEvent.setup();
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/assets') {
+        return { rows: assetRows, raw: { [responseKey]: assetRows } };
+      }
+
+      if (endpoint === '/admin/api/v1/margin/products') {
+        const rows = [
+          {
+            id: 14,
+            pair_id: 1,
+            symbol: 'BTC-USDT',
+            margin_asset_symbol: 'USDT',
+            max_leverage: '5.00000000',
+            min_margin: '10.0000',
+            maintenance_margin_rate: '0.05000000',
+            status: 'active'
+          }
+        ];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
+      return { rows: [], raw: {} };
+    });
+    apiRequestMock.mockImplementation(async (path) => {
+      if (path === '/admin/api/v1/margin/products/14') {
+        return { id: 14, detail: 'margin-product-detail' };
+      }
+
+      return {};
+    });
+
+    render(<ResourcePage config={resourceConfigs.marginProducts} />);
+
+    expect(await screen.findByText('BTC-USDT')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看详情' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/margin/products/14');
+    });
+    expect(await screen.findByText(/"detail": "margin-product-detail"/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '禁用' }));
+    await user.type(screen.getByLabelText('操作原因'), 'disable margin product');
+    await user.click(screen.getByRole('button', { name: '确认' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/margin/products/14/status', {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'disabled', reason: 'disable margin product' })
+      });
+      expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/margin/products')).toHaveLength(2);
+    });
+  });
+
+  it('opens margin position details without unsafe write actions', async () => {
+    const user = userEvent.setup();
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/margin/positions') {
+        const rows = [
+          {
+            id: 21,
+            user_id: 99,
+            product_id: 14,
+            direction: 'long',
+            margin_amount: '100.0000',
+            notional_amount: '500.0000',
+            borrowed_amount: '400.0000',
+            interest_amount: '1.2500',
+            status: 'open'
+          }
+        ];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
+      return { rows: [], raw: {} };
+    });
+    apiRequestMock.mockImplementation(async (path) => {
+      if (path === '/admin/api/v1/margin/positions/21') {
+        return { id: 21, detail: 'margin-position-detail' };
+      }
+
+      return {};
+    });
+
+    render(<ResourcePage config={resourceConfigs.marginPositions} />);
+
+    expect(await screen.findByText('400.0000')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '强平' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '关闭仓位' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '修改状态' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看详情' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/margin/positions/21');
+    });
+    expect(await screen.findByText(/"detail": "margin-position-detail"/)).toBeInTheDocument();
+  });
+
+  it('opens margin liquidation record details from row actions', async () => {
+    const user = userEvent.setup();
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/margin/liquidations') {
+        const rows = [
+          {
+            id: 31,
+            position_id: 21,
+            user_id: 99,
+            mark_price: '84.0000',
+            equity: '2.7500',
+            interest_amount: '1.2500',
+            payout_amount: '2.7500',
+            reason: 'maintenance_margin'
+          }
+        ];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
+      return { rows: [], raw: {} };
+    });
+    apiRequestMock.mockImplementation(async (path) => {
+      if (path === '/admin/api/v1/margin/liquidations/31') {
+        return { id: 31, detail: 'margin-liquidation-detail' };
+      }
+
+      return {};
+    });
+
+    render(<ResourcePage config={resourceConfigs.marginLiquidations} />);
+
+    expect(await screen.findByText('maintenance_margin')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看详情' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/margin/liquidations/31');
+    });
+    expect(await screen.findByText(/"detail": "margin-liquidation-detail"/)).toBeInTheDocument();
+  });
+
+  it('opens seconds contract product details and updates product status from row actions', async () => {
+    const user = userEvent.setup();
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/assets') {
+        return { rows: assetRows, raw: { [responseKey]: assetRows } };
+      }
+
+      if (endpoint === '/admin/api/v1/seconds-contracts/products') {
+        const rows = [
+          {
+            id: 41,
+            pair_id: 1,
+            symbol: 'ETH-USDT',
+            stake_asset_symbol: 'USDT',
+            duration_seconds: 60,
+            payout_rate: '0.85000000',
+            min_stake: '10.0000',
+            status: 'disabled'
+          }
+        ];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
+      return { rows: [], raw: {} };
+    });
+    apiRequestMock.mockImplementation(async (path) => {
+      if (path === '/admin/api/v1/seconds-contracts/products/41') {
+        return { id: 41, detail: 'seconds-product-detail' };
+      }
+
+      return {};
+    });
+
+    render(<ResourcePage config={resourceConfigs.secondsProducts} />);
+
+    expect(await screen.findByText('ETH-USDT')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看详情' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/seconds-contracts/products/41');
+    });
+    expect(await screen.findByText(/"detail": "seconds-product-detail"/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '启用' }));
+    await user.type(screen.getByLabelText('操作原因'), 'enable seconds product');
+    await user.click(screen.getByRole('button', { name: '确认' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/seconds-contracts/products/41/status', {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'active', reason: 'enable seconds product' })
+      });
+      expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/seconds-contracts/products')).toHaveLength(2);
+    });
+  });
+
+  it('opens seconds contract order details and settles open orders with a reason', async () => {
+    const user = userEvent.setup();
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/seconds-contracts/orders') {
+        const rows = [
+          {
+            id: 51,
+            user_id: 99,
+            product_id: 41,
+            direction: 'up',
+            stake_amount: '10.0000',
+            entry_price: '100.0000',
+            result: null,
+            status: 'opened'
+          }
+        ];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
+      return { rows: [], raw: {} };
+    });
+    apiRequestMock.mockImplementation(async (path) => {
+      if (path === '/admin/api/v1/seconds-contracts/orders/51') {
+        return { id: 51, detail: 'seconds-order-detail' };
+      }
+
+      return {};
+    });
+
+    render(<ResourcePage config={resourceConfigs.secondsOrders} />);
+
+    expect(await screen.findByText('10.0000')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看详情' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/seconds-contracts/orders/51');
+    });
+    expect(await screen.findByText(/"detail": "seconds-order-detail"/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '结算赢' }));
+    await user.type(screen.getByLabelText('操作原因'), 'manual settle win');
+    await user.click(screen.getByRole('button', { name: '确认' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/seconds-contracts/orders/51/settle', {
+        method: 'POST',
+        body: JSON.stringify({ result: 'win', reason: 'manual settle win' })
+      });
+      expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/seconds-contracts/orders')).toHaveLength(2);
+    });
+  });
+
+  it('does not allow settlement actions for non-open seconds contract orders', async () => {
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/seconds-contracts/orders') {
+        const rows = [
+          {
+            id: 52,
+            user_id: 99,
+            product_id: 41,
+            direction: 'down',
+            stake_amount: '12.0000',
+            entry_price: '100.0000',
+            result: 'loss',
+            status: 'settled'
+          }
+        ];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
+      return { rows: [], raw: {} };
+    });
+
+    render(<ResourcePage config={resourceConfigs.secondsOrders} />);
+
+    expect(await screen.findByText('12.0000')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '结算赢' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '结算输' })).toBeDisabled();
+  });
+
+  it('exposes the spot trade fee column', () => {
+    expect(resourceConfigs.spotTrades.columns).toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: 'fee', title: '手续费', type: 'amount' })])
+    );
+  });
 });

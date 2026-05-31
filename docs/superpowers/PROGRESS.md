@@ -2,6 +2,36 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-05-31 18:28 - Admin 杠杆与秒合约 CRUD 安全闭环
+
+- 完成内容：新增 Admin 杠杆产品详情、杠杆仓位详情、强平记录详情、秒合约产品详情、秒合约订单详情；杠杆与秒合约产品创建/启停强制非空 reason 并保留审计；秒合约手动结算强制非空 reason，复用原结算事务并仅在新结算成功时写 `seconds_contract_order.settle` 审计；前端为杠杆产品、杠杆仓位、强平记录、秒合约产品、秒合约订单接入行级“查看详情”、安全启停和固定赢/输结算操作。
+- 修改文件：
+  - `src/modules/margin/routes.rs`
+  - `src/modules/seconds_contract/routes.rs`
+  - `src/modules/admin/routes.rs`
+  - `tests/margin_routes.rs`
+  - `tests/seconds_contract_routes.rs`
+  - `tests/admin_routes.rs`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test margin_routes admin_margin -- --nocapture`，8 个测试通过、0 失败，MySQL-gated 分支因本地未设置 `DATABASE_URL` 按设计跳过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test seconds_contract_routes admin_seconds_contract -- --nocapture`，6 个测试通过、0 失败，MySQL-gated 分支因本地未设置 `DATABASE_URL` 按设计跳过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes margin_liquidation -- --nocapture`，2 个测试通过、0 失败，MySQL-gated 分支因本地未设置 `DATABASE_URL` 按设计跳过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx AdminResourcePage.test.tsx`，2 个测试文件、17 个测试通过、0 失败；已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --check`，通过；已执行 `cargo check --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets`，通过；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：杠杆仓位强类型详情页、保证金/利息/强平链路联动展示、秒合约订单结算明细页、Earn/闪兑等其他模块行级操作补齐。
+
+## 2026-05-31 14:26 - Admin 运营总览仪表盘
+
+- 完成内容：新增 Admin 运营总览 API `/admin/api/v1/dashboard`，聚合用户、钱包资产、交易对、现货、闪兑、秒合约、杠杆、Earn、风控事件、outbox/inbox 和审计动作状态；重做 Admin 首页为交易所运营看板，展示 KPI、行情订阅、链上托管未接入提示、产品运行、风险积压和最新审计动作，并支持失败提示与手动刷新。
+- 修改文件：
+  - `src/modules/admin/routes.rs`
+  - `tests/admin_routes.rs`
+  - `web/src/admin/dashboard/DashboardPage.tsx`
+  - `web/src/admin/dashboard/DashboardPage.test.tsx`
+  - `web/src/styles.css`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --check`，通过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_dashboard -- --nocapture`，2 个测试通过、0 失败，其中 MySQL-gated shape 测试因本地未设置 `DATABASE_URL` 按设计跳过；已执行 `cargo check --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets`，通过；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- DashboardPage.test.tsx`，2 个测试通过、0 失败；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：继续完善区块链后台的强类型详情页、行级上下文操作、筛选器增强，以及链上充值/提现/冷热钱包/归集/对账等 custody 独立切片。
+
 ## 2026-05-31 10:44 - Admin 市场类型中文显示
 
 - 完成内容：将 Admin 添加现货交易对弹窗中的市场类型下拉显示改为中文，`external/internal/strategy` 分别显示为外部行情、内部撮合、策略行情，提交值保持原枚举值不变；补充前端测试覆盖中文选项和值映射。
@@ -1334,3 +1364,20 @@
   - `docs/superpowers/PROGRESS.md`
 - 验证结果：已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --check`，通过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_asset -- --nocapture`，2 个测试通过，其中无 `DATABASE_URL` 场景按测试设计跳过 seeded MySQL 分支；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_asset_create_list_and_audit -- --nocapture`，1 个 MySQL-backed 资产创建/列表/审计测试通过；已执行 `cargo check --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets`，通过；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx routes.test.tsx AdminLayout.test.tsx`，3 个文件 17 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过；已执行 `superpowers:code-reviewer` 复核，无 blocker/important 问题。
 - 后续事项：无。
+
+## 2026-05-31 16:22 - Admin 现货交易对与订单 CRUD 安全闭环
+
+- 完成内容：新增 Admin 交易对详情与启停接口 `GET /admin/api/v1/market-pairs/:id`、`PATCH /admin/api/v1/market-pairs/:id/status`，启停写入 `trading_pair.status.update` 审计，服务端强制操作原因非空，并在交易对行锁定后读取审计 before 快照；新增 Admin 现货订单详情与管理员撤单接口 `GET /admin/api/v1/spot/orders/:id`、`POST /admin/api/v1/spot/orders/:id/cancel`，管理员撤单复用现货撤单状态机和钱包解冻事务，服务端强制操作原因非空，并写入 `spot_order.cancel` 审计；前端通用资源页支持行级动作，交易对列表支持启用/禁用，现货订单列表支持查看详情/管理员撤单，并补充订单已成交数量与成交手续费列。
+- 修改文件：
+  - `src/modules/admin/routes.rs`
+  - `src/modules/spot/routes.rs`
+  - `tests/admin_routes.rs`
+  - `tests/spot_routes.rs`
+  - `web/src/admin/resources/AdminResourcePage.tsx`
+  - `web/src/admin/resources/AdminResourcePage.test.tsx`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_trading_pair_detail_and_status_routes_require_admin_scope_mysql -- --nocapture`，实现前失败于 404，符合路由缺失预期；已执行 RED：`cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test spot_routes admin_spot_order_detail_and_cancel_routes_require_admin_scope_mysql -- --nocapture`，实现前失败于 404，符合路由缺失预期；已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- AdminResourcePage.test.tsx`，实现前失败于找不到“查看详情”行级按钮，符合通用行级动作缺失预期；已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx`，新增交易对/订单行级动作测试实现前 3 个失败，符合按钮和 fee 列缺失预期。实现后已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --check`，通过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_trading_pair -- --nocapture`，4 个测试通过，其中 MySQL-gated seeded 分支因本地未设置 `DATABASE_URL` 按设计跳过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test spot_routes admin_spot_order -- --nocapture`，2 个测试通过，其中 MySQL-gated seeded 分支因本地未设置 `DATABASE_URL` 按设计跳过；已执行 `cargo check --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets`，通过；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- AdminResourcePage.test.tsx resourceConfigs.test.tsx`，2 个文件 11 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：交易对完整编辑、现货订单强类型详情页、成交只读详情、冻结资产/成交明细/钱包流水/审计记录联动，以及杠杆、秒合约、Earn、闪兑等模块的详情页和安全行级操作。

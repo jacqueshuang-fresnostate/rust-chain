@@ -1,4 +1,4 @@
-import { Card, Modal, Space, Typography, Toast } from '@douyinfe/semi-ui';
+import { Button, Card, Modal, Space, Typography, Toast } from '@douyinfe/semi-ui';
 import { type ReactNode, useEffect, useState } from 'react';
 
 import { listAdminResource } from '../../api/adminResources';
@@ -51,6 +51,11 @@ type SecondsProductValues = {
 type AssetOption = {
   id: string;
   label: string;
+};
+
+type RowActionHelpers = {
+  reload: () => void;
+  openJson: (data: ApiRecord) => void;
 };
 
 const initialAsset: AssetValues = {
@@ -256,6 +261,183 @@ function AssetSelect({
         ))}
       </select>
     </label>
+  );
+}
+
+function recordString(record: ApiRecord, key: string): string {
+  const value = record[key];
+  return typeof value === 'number' || typeof value === 'string' ? String(value) : '';
+}
+
+function canCancelSpotOrder(status: string): boolean {
+  return status === 'pending' || status === 'open' || status === 'partially_filled';
+}
+
+async function openRecordDetail(endpoint: string, recordId: string, helpers: RowActionHelpers) {
+  try {
+    helpers.openJson(await apiRequest<ApiRecord>(`${endpoint}/${recordId}`));
+  } catch (error) {
+    Toast.error(errorMessage(error));
+    throw error;
+  }
+}
+
+function nextToggleStatus(status: string): 'active' | 'disabled' {
+  return status === 'active' ? 'disabled' : 'active';
+}
+
+function toggleActionText(nextStatus: string): string {
+  return nextStatus === 'disabled' ? '禁用' : '启用';
+}
+
+export function MarketPairRowActions({ helpers, record }: { helpers: RowActionHelpers; record: ApiRecord }) {
+  const pairId = recordString(record, 'id');
+  const nextStatus = recordString(record, 'status') === 'active' ? 'disabled' : 'active';
+  const actionText = nextStatus === 'disabled' ? '禁用' : '启用';
+
+  return (
+    <ConfirmAction
+      actionText={actionText}
+      disabled={!pairId}
+      title={`${actionText}交易对`}
+      onConfirm={async (reason) => {
+        await submitAction(`${actionText}交易对`, () =>
+          apiRequest(`/admin/api/v1/market-pairs/${pairId}/status`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status: nextStatus, reason })
+          })
+        );
+        helpers.reload();
+      }}
+    />
+  );
+}
+
+export function SpotOrderRowActions({ helpers, record }: { helpers: RowActionHelpers; record: ApiRecord }) {
+  const orderId = recordString(record, 'id');
+  const status = recordString(record, 'status');
+
+  return (
+    <>
+      <Button disabled={!orderId} onClick={() => openRecordDetail('/admin/api/v1/spot/orders', orderId, helpers)} size="small" theme="borderless">
+        查看详情
+      </Button>
+      <ConfirmAction
+        actionText="管理员撤单"
+        disabled={!orderId || !canCancelSpotOrder(status)}
+        title="管理员撤单"
+        onConfirm={async (reason) => {
+          await submitAction('管理员撤单', () =>
+            apiRequest(`/admin/api/v1/spot/orders/${orderId}/cancel`, {
+              method: 'POST',
+              body: JSON.stringify({ reason })
+            })
+          );
+          helpers.reload();
+        }}
+      />
+    </>
+  );
+}
+
+export function MarginProductRowActions({ helpers, record }: { helpers: RowActionHelpers; record: ApiRecord }) {
+  const productId = recordString(record, 'id');
+  const nextStatus = nextToggleStatus(recordString(record, 'status'));
+  const actionText = toggleActionText(nextStatus);
+
+  return (
+    <>
+      <Button disabled={!productId} onClick={() => openRecordDetail('/admin/api/v1/margin/products', productId, helpers)} size="small" theme="borderless">
+        查看详情
+      </Button>
+      <ConfirmAction
+        actionText={actionText}
+        disabled={!productId}
+        title={`${actionText}杠杆产品`}
+        onConfirm={async (reason) => {
+          await submitAction(`${actionText}杠杆产品`, () =>
+            apiRequest(`/admin/api/v1/margin/products/${productId}/status`, {
+              method: 'PATCH',
+              body: JSON.stringify({ status: nextStatus, reason })
+            })
+          );
+          helpers.reload();
+        }}
+      />
+    </>
+  );
+}
+
+export function MarginPositionRowActions({ helpers, record }: { helpers: RowActionHelpers; record: ApiRecord }) {
+  const positionId = recordString(record, 'id');
+
+  return (
+    <Button disabled={!positionId} onClick={() => openRecordDetail('/admin/api/v1/margin/positions', positionId, helpers)} size="small" theme="borderless">
+      查看详情
+    </Button>
+  );
+}
+
+export function MarginLiquidationRowActions({ helpers, record }: { helpers: RowActionHelpers; record: ApiRecord }) {
+  const liquidationId = recordString(record, 'id');
+
+  return (
+    <Button disabled={!liquidationId} onClick={() => openRecordDetail('/admin/api/v1/margin/liquidations', liquidationId, helpers)} size="small" theme="borderless">
+      查看详情
+    </Button>
+  );
+}
+
+export function SecondsProductRowActions({ helpers, record }: { helpers: RowActionHelpers; record: ApiRecord }) {
+  const productId = recordString(record, 'id');
+  const nextStatus = nextToggleStatus(recordString(record, 'status'));
+  const actionText = toggleActionText(nextStatus);
+
+  return (
+    <>
+      <Button disabled={!productId} onClick={() => openRecordDetail('/admin/api/v1/seconds-contracts/products', productId, helpers)} size="small" theme="borderless">
+        查看详情
+      </Button>
+      <ConfirmAction
+        actionText={actionText}
+        disabled={!productId}
+        title={`${actionText}秒合约产品`}
+        onConfirm={async (reason) => {
+          await submitAction(`${actionText}秒合约产品`, () =>
+            apiRequest(`/admin/api/v1/seconds-contracts/products/${productId}/status`, {
+              method: 'PATCH',
+              body: JSON.stringify({ status: nextStatus, reason })
+            })
+          );
+          helpers.reload();
+        }}
+      />
+    </>
+  );
+}
+
+export function SecondsOrderRowActions({ helpers, record }: { helpers: RowActionHelpers; record: ApiRecord }) {
+  const orderId = recordString(record, 'id');
+  const canSettle = recordString(record, 'status') === 'opened';
+
+  async function settle(result: 'win' | 'loss', reason: string) {
+    await submitAction(result === 'win' ? '结算赢' : '结算输', () =>
+      apiRequest(`/admin/api/v1/seconds-contracts/orders/${orderId}/settle`, {
+        method: 'POST',
+        body: JSON.stringify({ result, reason })
+      })
+    );
+    helpers.reload();
+  }
+
+  return (
+    <>
+      <Button disabled={!orderId} onClick={() => openRecordDetail('/admin/api/v1/seconds-contracts/orders', orderId, helpers)} size="small" theme="borderless">
+        查看详情
+      </Button>
+      <ConfirmAction actionText="结算赢" disabled={!orderId || !canSettle} title="结算赢" onConfirm={(reason) => settle('win', reason)} />
+      <ConfirmAction actionText="结算输" disabled={!orderId || !canSettle} title="结算输" onConfirm={(reason) => settle('loss', reason)} />
+    </>
   );
 }
 

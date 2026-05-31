@@ -19,8 +19,8 @@ use axum::{
 };
 use bigdecimal::BigDecimal;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-use sqlx::{MySql, Pool, QueryBuilder, Transaction};
+use serde_json::{Value, json};
+use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -32,6 +32,8 @@ pub fn routes() -> Router<AppState> {
 pub fn admin_routes() -> Router<AppState> {
     Router::new()
         .route("/spot/orders", get(list_admin_orders))
+        .route("/spot/orders/:id", get(get_admin_order))
+        .route("/spot/orders/:id/cancel", post(cancel_admin_order))
         .route("/spot/trades", get(list_admin_trades))
         .route("/spot/fills", post(fill_orders))
 }
@@ -61,6 +63,11 @@ struct FillSpotOrdersRequest {
     price: BigDecimal,
     quantity: BigDecimal,
     idempotency_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AdminCancelSpotOrderRequest {
+    reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -220,6 +227,15 @@ struct SpotLedgerMetadata<'a> {
     ref_id: &'a str,
 }
 
+struct SpotAdminAuditEntry<'a> {
+    action: &'a str,
+    target_type: &'a str,
+    target_id: &'a str,
+    before_json: Option<Value>,
+    after_json: Option<Value>,
+    reason: Option<String>,
+}
+
 async fn create_order(
     UserAuth(claims): UserAuth,
     State(state): State<AppState>,
@@ -320,6 +336,44 @@ async fn list_admin_orders(
     fetch_spot_orders(pool, builder).await
 }
 
+async fn get_admin_order(
+    AdminAuth(_claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(order_id): Path<u64>,
+) -> AppResult<Json<SpotOrderResponse>> {
+    Ok(Json(
+        load_spot_order_by_id(&mysql_pool(&state)?, order_id).await?,
+    ))
+}
+
+async fn cancel_admin_order(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(order_id): Path<u64>,
+    Json(request): Json<AdminCancelSpotOrderRequest>,
+) -> AppResult<Json<SpotCancelResponse>> {
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    let reason = required_reason(request.reason)?;
+    let repository = spot_repository(&state)?;
+    let (order, cancelled) =
+        cancel_spot_order_by_admin(repository.pool(), order_id, admin_id, reason).await?;
+    let response = SpotCancelResponse {
+        order: order.into(),
+        cancelled,
+    };
+
+    if cancelled && let Some(hub) = &state.event_broadcast_hub {
+        let user_id = response
+            .order
+            .user_id
+            .parse::<u64>()
+            .map_err(|_| AppError::Unauthorized)?;
+        publish_spot_cancel_private_event(hub, user_id, &response.order);
+    }
+
+    Ok(Json(response))
+}
+
 fn base_spot_orders_query() -> QueryBuilder<'static, MySql> {
     QueryBuilder::<MySql>::new(
         r#"SELECT orders.id, orders.user_id, pairs.symbol AS pair_id, orders.side,
@@ -370,6 +424,18 @@ async fn fetch_spot_orders(
     Ok(Json(SpotOrdersResponse { orders }))
 }
 
+async fn load_spot_order_by_id(pool: &Pool<MySql>, order_id: u64) -> AppResult<SpotOrderResponse> {
+    let mut builder = base_spot_orders_query();
+    builder.push(" WHERE orders.id = ");
+    builder.push_bind(order_id);
+    builder
+        .build_query_as::<SpotOrderRow>()
+        .fetch_optional(pool)
+        .await?
+        .map(SpotOrderResponse::from)
+        .ok_or(AppError::NotFound)
+}
+
 async fn cancel_order(
     UserAuth(claims): UserAuth,
     State(state): State<AppState>,
@@ -385,19 +451,27 @@ async fn cancel_order(
     };
 
     if cancelled && let Some(hub) = &state.event_broadcast_hub {
-        hub.publish(EventBroadcastMessage::private_user(
-            user_id,
-            json!({
-                "type": "spot.order.cancelled",
-                "order_id": response.order.id,
-                "pair_id": response.order.pair_id,
-                "status": response.order.status,
-            })
-            .to_string(),
-        ));
+        publish_spot_cancel_private_event(hub, user_id, &response.order);
     }
 
     Ok(Json(response))
+}
+
+fn publish_spot_cancel_private_event(
+    hub: &crate::modules::events::EventBroadcastHub,
+    user_id: u64,
+    order: &SpotOrderResponse,
+) {
+    hub.publish(EventBroadcastMessage::private_user(
+        user_id,
+        json!({
+            "type": "spot.order.cancelled",
+            "order_id": order.id,
+            "pair_id": order.pair_id,
+            "status": order.status,
+        })
+        .to_string(),
+    ));
 }
 
 async fn list_trades(
@@ -1346,24 +1420,65 @@ async fn cancel_spot_order_and_unfreeze_wallet(
     user_id: u64,
 ) -> AppResult<(SpotOrder, bool)> {
     let mut tx = pool.begin().await?;
-    // 撤单先在同一事务内锁定订单，确保状态判断、资金解冻和订单更新看到同一份数据。
-    let mut order = lock_spot_order(&mut tx, &order_id.to_string()).await?;
+    let order = lock_spot_order(&mut tx, &order_id.to_string()).await?;
     if order.user_id != user_id.to_string() {
         return Err(AppError::NotFound);
     }
+    let result = cancel_locked_spot_order_and_unfreeze_wallet(&mut tx, order, user_id).await?;
+    tx.commit().await?;
+    Ok(result)
+}
 
+async fn cancel_spot_order_by_admin(
+    pool: &Pool<MySql>,
+    order_id: u64,
+    admin_id: u64,
+    reason: String,
+) -> AppResult<(SpotOrder, bool)> {
+    let mut tx = pool.begin().await?;
+    let order = lock_spot_order(&mut tx, &order_id.to_string()).await?;
+    let owner_user_id = order
+        .user_id
+        .parse::<u64>()
+        .map_err(|_| AppError::Unauthorized)?;
+    let before = spot_order_audit_json(&order);
+    let (order, cancelled) =
+        cancel_locked_spot_order_and_unfreeze_wallet(&mut tx, order, owner_user_id).await?;
+    if cancelled {
+        insert_spot_admin_audit_log_in_tx(
+            &mut tx,
+            admin_id,
+            SpotAdminAuditEntry {
+                action: "spot_order.cancel",
+                target_type: "spot_order",
+                target_id: &order.id,
+                before_json: Some(before),
+                after_json: Some(spot_order_audit_json(&order)),
+                reason: Some(reason),
+            },
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok((order, cancelled))
+}
+
+async fn cancel_locked_spot_order_and_unfreeze_wallet(
+    tx: &mut Transaction<'_, MySql>,
+    mut order: SpotOrder,
+    user_id: u64,
+) -> AppResult<(SpotOrder, bool)> {
     let cancelled = crate::modules::spot::cancel_order(&mut order)
         .map_err(|error| AppError::Validation(format!("invalid spot cancel: {error:?}")))?;
     if !cancelled {
-        tx.commit().await?;
         return Ok((order, false));
     }
 
     // 撤单状态和钱包解冻必须同事务提交，避免订单仍可成交但资金已经提前解冻。
-    let reservation = remaining_spot_order_reservation_in_tx(&mut tx, &order).await?;
+    let reservation = remaining_spot_order_reservation_in_tx(tx, &order).await?;
     if reservation.amount > 0 {
         apply_spot_wallet_unfreeze(
-            &mut tx,
+            tx,
             user_id,
             reservation.asset_id,
             &reservation.amount,
@@ -1373,8 +1488,7 @@ async fn cancel_spot_order_and_unfreeze_wallet(
         )
         .await?;
     }
-    update_spot_order_in_tx(&mut tx, &order).await?;
-    tx.commit().await?;
+    update_spot_order_in_tx(tx, &order).await?;
     Ok((order, true))
 }
 
@@ -1844,6 +1958,28 @@ async fn apply_spot_wallet_settlement_leg(
     .await
 }
 
+async fn insert_spot_admin_audit_log_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    admin_id: u64,
+    entry: SpotAdminAuditEntry<'_>,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"INSERT INTO admin_audit_logs
+           (admin_id, action, target_type, target_id, before_json, after_json, reason)
+           VALUES (?, ?, ?, ?, ?, ?, ?)"#,
+    )
+    .bind(admin_id)
+    .bind(entry.action)
+    .bind(entry.target_type)
+    .bind(entry.target_id)
+    .bind(entry.before_json.map(SqlxJson))
+    .bind(entry.after_json.map(SqlxJson))
+    .bind(optional_query_string(entry.reason))
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 async fn apply_spot_wallet_unfreeze(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1947,6 +2083,13 @@ fn user_id_from_subject(subject: &str) -> AppResult<u64> {
         .ok_or(AppError::Unauthorized)
 }
 
+fn admin_id_from_subject(subject: &str) -> AppResult<u64> {
+    subject
+        .strip_prefix("admin:")
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or(AppError::Unauthorized)
+}
+
 fn route_limit(limit: Option<u32>) -> u32 {
     limit.unwrap_or(50).clamp(1, 100)
 }
@@ -1955,6 +2098,25 @@ fn optional_query_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
+}
+
+fn required_reason(value: Option<String>) -> AppResult<String> {
+    optional_query_string(value)
+        .ok_or_else(|| AppError::Validation("reason is required".to_owned()))
+}
+
+fn spot_order_audit_json(order: &SpotOrder) -> Value {
+    json!({
+        "id": order.id,
+        "user_id": order.user_id,
+        "pair_id": order.pair_id,
+        "side": order.side,
+        "order_type": order.order_type,
+        "price": order.price,
+        "quantity": order.quantity,
+        "filled_quantity": order.filled_quantity,
+        "status": order.status,
+    })
 }
 
 fn ensure_positive_amount(amount: &BigDecimal, field: &str) -> AppResult<()> {

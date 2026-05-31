@@ -1,5 +1,17 @@
 import { AdminResourcePage, type AdminResourceColumn } from './AdminResourcePage';
-import { CreateAssetAction, CreateMarginPairAction, CreateSecondsPairAction, CreateSpotPairAction } from './ResourceCreateActions';
+import {
+  CreateAssetAction,
+  CreateMarginPairAction,
+  CreateSecondsPairAction,
+  CreateSpotPairAction,
+  MarginLiquidationRowActions,
+  MarginPositionRowActions,
+  MarginProductRowActions,
+  MarketPairRowActions,
+  SecondsOrderRowActions,
+  SecondsProductRowActions,
+  SpotOrderRowActions
+} from './ResourceCreateActions';
 import type { FilterField } from '../../shared/FilterBar';
 import type { ApiRecord } from '../../api/types';
 
@@ -9,6 +21,7 @@ export type ResourceConfig = {
   endpoint: string;
   filters?: FilterField[];
   responseKey: string;
+  rowActions?: React.ComponentProps<typeof AdminResourcePage<ApiRecord>>['rowActions'];
   title: string;
 };
 
@@ -147,6 +160,7 @@ export const resourceConfigs = {
     endpoint: '/admin/api/v1/market-pairs',
     responseKey: 'pairs',
     filters: [{ key: 'symbol', label: '交易对' }, statusFilter, { key: 'market_type', label: '市场类型' }, limitFilter],
+    rowActions: (record, helpers) => <MarketPairRowActions helpers={helpers} record={record} />,
     columns: [
       { key: 'id', title: '交易对ID' },
       { key: 'symbol', title: '交易对' },
@@ -164,6 +178,7 @@ export const resourceConfigs = {
     endpoint: '/admin/api/v1/spot/orders',
     responseKey: 'orders',
     filters: [userFilter, pairFilter, statusFilter, limitFilter],
+    rowActions: (record, helpers) => <SpotOrderRowActions helpers={helpers} record={record} />,
     columns: [
       { key: 'id', title: '订单ID' },
       { key: 'user_id', title: '用户ID' },
@@ -172,6 +187,7 @@ export const resourceConfigs = {
       { key: 'order_type', title: '订单类型' },
       { key: 'price', title: '价格', type: 'amount' },
       { key: 'quantity', title: '数量', type: 'amount' },
+      { key: 'filled_quantity', title: '已成交数量', type: 'amount' },
       { key: 'status', title: '状态', type: 'status' }
     ]
   },
@@ -187,6 +203,7 @@ export const resourceConfigs = {
       { key: 'sell_order_id', title: '卖单ID' },
       { key: 'price', title: '价格', type: 'amount' },
       { key: 'quantity', title: '数量', type: 'amount' },
+      { key: 'fee', title: '手续费', type: 'amount' },
       { key: 'created_at', title: '成交时间', type: 'timestamp' }
     ]
   },
@@ -348,6 +365,7 @@ export const resourceConfigs = {
     endpoint: '/admin/api/v1/seconds-contracts/products',
     responseKey: 'products',
     filters: [limitFilter],
+    rowActions: (record, helpers) => <SecondsProductRowActions helpers={helpers} record={record} />,
     columns: [
       { key: 'id', title: '产品ID' },
       { key: 'pair_id', title: '交易对ID' },
@@ -364,6 +382,7 @@ export const resourceConfigs = {
     endpoint: '/admin/api/v1/seconds-contracts/orders',
     responseKey: 'orders',
     filters: [userFilter, statusFilter, limitFilter],
+    rowActions: (record, helpers) => <SecondsOrderRowActions helpers={helpers} record={record} />,
     columns: [
       { key: 'id', title: '订单ID' },
       { key: 'user_id', title: '用户ID' },
@@ -382,6 +401,7 @@ export const resourceConfigs = {
     endpoint: '/admin/api/v1/margin/products',
     responseKey: 'products',
     filters: [limitFilter],
+    rowActions: (record, helpers) => <MarginProductRowActions helpers={helpers} record={record} />,
     columns: [
       { key: 'id', title: '产品ID' },
       { key: 'pair_id', title: '交易对ID' },
@@ -399,6 +419,7 @@ export const resourceConfigs = {
     endpoint: '/admin/api/v1/margin/positions',
     responseKey: 'positions',
     filters: [userFilter, pairFilter, statusFilter, limitFilter],
+    rowActions: (record, helpers) => <MarginPositionRowActions helpers={helpers} record={record} />,
     columns: [
       { key: 'id', title: '仓位ID' },
       { key: 'user_id', title: '用户ID' },
@@ -416,6 +437,7 @@ export const resourceConfigs = {
     endpoint: '/admin/api/v1/margin/liquidations',
     responseKey: 'liquidations',
     filters: [userFilter, pairFilter, { key: 'position_id', label: '仓位ID' }, limitFilter],
+    rowActions: (record, helpers) => <MarginLiquidationRowActions helpers={helpers} record={record} />,
     columns: [
       { key: 'id', title: '记录ID' },
       { key: 'position_id', title: '仓位ID' },

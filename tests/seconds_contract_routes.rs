@@ -293,7 +293,9 @@ async fn seconds_contract_routes_require_expected_scope() {
                 .uri("/seconds-contracts/orders/1/settle")
                 .header("authorization", format!("Bearer {user_token}"))
                 .header("content-type", "application/json")
-                .body(Body::from(r#"{"result":"win"}"#))
+                .body(Body::from(
+                    r#"{"result":"win","reason":"manual settle win"}"#,
+                ))
                 .unwrap(),
         )
         .await
@@ -454,8 +456,74 @@ async fn seconds_contract_lists_active_products_for_user_and_all_products_for_ad
 async fn admin_seconds_contract_product_routes_require_admin_scope_mysql_and_validation()
 -> Result<(), Box<dyn Error>> {
     let settings = test_settings();
+    let user_token = issue_token(&settings, "user:42", TokenScope::User, 900).unwrap();
     let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
     let app = admin_routes().with_state(AppState::new(settings));
+
+    let unauthenticated_detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/seconds-contracts/products/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(unauthenticated_detail.status(), StatusCode::UNAUTHORIZED);
+
+    let user_detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/seconds-contracts/products/1")
+                .header("authorization", format!("Bearer {user_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(user_detail.status(), StatusCode::FORBIDDEN);
+
+    let admin_detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/seconds-contracts/products/1")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let admin_detail_status = admin_detail.status();
+    let admin_detail_payload = body_json(admin_detail).await?;
+    assert_eq!(admin_detail_status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(admin_detail_payload["code"], "INTERNAL_ERROR");
+    assert_eq!(
+        admin_detail_payload["message"],
+        "internal error: mysql pool is not configured for seconds contract routes"
+    );
+
+    let blank_create_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/seconds-contracts/products")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"pair_id":1,"stake_asset":1,"duration_seconds":60,"payout_rate":"0.80000000","min_stake":"10.000000000000000000","reason":"   "}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let blank_create_reason_status = blank_create_reason.status();
+    let blank_create_reason_payload = body_json(blank_create_reason).await?;
+    assert_eq!(blank_create_reason_status, StatusCode::BAD_REQUEST);
+    assert_eq!(blank_create_reason_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        blank_create_reason_payload["message"],
+        "validation error: seconds contract reason is required"
+    );
 
     let no_mysql = app
         .clone()
@@ -466,7 +534,7 @@ async fn admin_seconds_contract_product_routes_require_admin_scope_mysql_and_val
                 .header("authorization", format!("Bearer {admin_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    r#"{"pair_id":1,"stake_asset":1,"duration_seconds":60,"payout_rate":"0.80000000","min_stake":"10.000000000000000000"}"#,
+                    r#"{"pair_id":1,"stake_asset":1,"duration_seconds":60,"payout_rate":"0.80000000","min_stake":"10.000000000000000000","reason":"create seconds product"}"#,
                 ))
                 .unwrap(),
         )
@@ -480,6 +548,27 @@ async fn admin_seconds_contract_product_routes_require_admin_scope_mysql_and_val
         "internal error: mysql pool is not configured for seconds contract routes"
     );
 
+    let blank_status_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/seconds-contracts/products/1/status")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"status":"active","reason":"   "}"#))
+                .unwrap(),
+        )
+        .await?;
+    let blank_status_reason_status = blank_status_reason.status();
+    let blank_status_reason_payload = body_json(blank_status_reason).await?;
+    assert_eq!(blank_status_reason_status, StatusCode::BAD_REQUEST);
+    assert_eq!(blank_status_reason_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        blank_status_reason_payload["message"],
+        "validation error: seconds contract reason is required"
+    );
+
     let invalid_status = app
         .oneshot(
             Request::builder()
@@ -487,11 +576,87 @@ async fn admin_seconds_contract_product_routes_require_admin_scope_mysql_and_val
                 .uri("/seconds-contracts/products/1/status")
                 .header("authorization", format!("Bearer {admin_token}"))
                 .header("content-type", "application/json")
-                .body(Body::from(r#"{"status":"archived"}"#))
+                .body(Body::from(
+                    r#"{"status":"archived","reason":"invalid status test"}"#,
+                ))
                 .unwrap(),
         )
         .await?;
     assert_eq!(invalid_status.status(), StatusCode::BAD_REQUEST);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_seconds_contract_order_routes_require_admin_scope_mysql_and_validation()
+-> Result<(), Box<dyn Error>> {
+    let settings = test_settings();
+    let user_token = issue_token(&settings, "user:42", TokenScope::User, 900).unwrap();
+    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let app = admin_routes().with_state(AppState::new(settings));
+
+    let unauthenticated_detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/seconds-contracts/orders/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(unauthenticated_detail.status(), StatusCode::UNAUTHORIZED);
+
+    let user_detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/seconds-contracts/orders/1")
+                .header("authorization", format!("Bearer {user_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(user_detail.status(), StatusCode::FORBIDDEN);
+
+    let admin_detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/seconds-contracts/orders/1")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let admin_detail_status = admin_detail.status();
+    let admin_detail_payload = body_json(admin_detail).await?;
+    assert_eq!(admin_detail_status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(admin_detail_payload["code"], "INTERNAL_ERROR");
+    assert_eq!(
+        admin_detail_payload["message"],
+        "internal error: mysql pool is not configured for seconds contract routes"
+    );
+
+    let blank_settle_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/seconds-contracts/orders/1/settle")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"result":"win","reason":"   "}"#))
+                .unwrap(),
+        )
+        .await?;
+    let blank_settle_reason_status = blank_settle_reason.status();
+    let blank_settle_reason_payload = body_json(blank_settle_reason).await?;
+    assert_eq!(blank_settle_reason_status, StatusCode::BAD_REQUEST);
+    assert_eq!(blank_settle_reason_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        blank_settle_reason_payload["message"],
+        "validation error: seconds contract reason is required"
+    );
 
     Ok(())
 }
@@ -624,7 +789,7 @@ async fn admin_seconds_contract_product_create_update_status_and_audit()
     let app = admin_routes().with_state(state_with_mysql_and_redis(settings, pool.clone(), None));
 
     let missing_pair_body = format!(
-        r#"{{"pair_id":999999999999,"stake_asset":{quote_asset},"duration_seconds":60,"payout_rate":"0.80000000","min_stake":"10.000000000000000000"}}"#
+        r#"{{"pair_id":999999999999,"stake_asset":{quote_asset},"duration_seconds":60,"payout_rate":"0.80000000","min_stake":"10.000000000000000000","reason":"missing pair test"}}"#
     );
     let missing_pair_response = app
         .clone()
@@ -669,6 +834,38 @@ async fn admin_seconds_contract_product_create_update_status_and_audit()
     assert_eq!(create_payload["duration_seconds"], 90);
     assert_eq!(create_payload["payout_rate"], "0.75000000");
     assert_eq!(create_payload["status"], "active");
+
+    let detail_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/seconds-contracts/products/{product_id}"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let detail_status = detail_response.status();
+    let detail_payload = body_json(detail_response).await?;
+    assert_eq!(detail_status, StatusCode::OK, "payload: {detail_payload}");
+    assert_eq!(detail_payload["id"], product_id);
+    assert_eq!(detail_payload["pair_id"], pair_id);
+    assert_eq!(detail_payload["symbol"], symbol);
+    assert_eq!(detail_payload["stake_asset"], quote_asset);
+    assert_eq!(detail_payload["stake_asset_symbol"], quote_symbol);
+    assert_eq!(detail_payload["status"], "active");
+
+    let unknown_detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/seconds-contracts/products/999999999999")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(unknown_detail.status(), StatusCode::NOT_FOUND);
 
     let long_update_reason = "R".repeat(513);
     let long_update_reason_body =
@@ -1105,6 +1302,40 @@ async fn admin_seconds_contract_lists_orders_with_filters_and_timestamp()
     assert_eq!(filtered_orders[0]["result"], "win");
     assert!(filtered_orders[0]["expires_at"].is_number());
 
+    let detail_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/seconds-contracts/orders/{settled_order_id}"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let detail_status = detail_response.status();
+    let detail_payload = body_json(detail_response).await?;
+    assert_eq!(detail_status, StatusCode::OK, "payload: {detail_payload}");
+    assert_eq!(detail_payload["id"], settled_order_id);
+    assert_eq!(detail_payload["user_id"], user_id);
+    assert_eq!(detail_payload["product_id"], product_id);
+    assert_eq!(detail_payload["pair_id"], pair_id);
+    assert_eq!(detail_payload["stake_asset"], quote_asset);
+    assert_eq!(detail_payload["status"], "settled");
+    assert_eq!(detail_payload["result"], "win");
+    assert!(detail_payload["expires_at"].is_number());
+
+    let unknown_detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/seconds-contracts/orders/999999999999")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(unknown_detail.status(), StatusCode::NOT_FOUND);
+
     let forbidden_response = app
         .oneshot(
             Request::builder()
@@ -1295,7 +1526,9 @@ async fn seconds_contract_settle_win_credits_payout_and_writes_ledger() -> Resul
                     .uri(format!("/seconds-contracts/orders/{order_id}/settle"))
                     .header("authorization", format!("Bearer {admin_token}"))
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"result":"win"}"#))
+                    .body(Body::from(
+                        r#"{"result":"win","reason":"manual settle win"}"#,
+                    ))
                     .unwrap(),
             )
             .await?;
@@ -1357,6 +1590,18 @@ async fn seconds_contract_settle_win_credits_payout_and_writes_ledger() -> Resul
     .fetch_one(&pool)
     .await?;
     assert_eq!(ledger_count, 1);
+
+    let audit_rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT action, target_type, reason FROM admin_audit_logs WHERE admin_id = ? AND target_id = ? ORDER BY id",
+    )
+    .bind(admin_id)
+    .bind(order_id.to_string())
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audit_rows.len(), 1);
+    assert_eq!(audit_rows[0].0, "seconds_contract_order.settle");
+    assert_eq!(audit_rows[0].1, "seconds_contract_order");
+    assert_eq!(audit_rows[0].2, "manual settle win");
 
     Ok(())
 }
@@ -1433,7 +1678,9 @@ async fn seconds_contract_settle_rejects_different_result_replay() -> Result<(),
                 .uri(format!("/seconds-contracts/orders/{order_id}/settle"))
                 .header("authorization", format!("Bearer {admin_token}"))
                 .header("content-type", "application/json")
-                .body(Body::from(r#"{"result":"win"}"#))
+                .body(Body::from(
+                    r#"{"result":"win","reason":"manual settle win"}"#,
+                ))
                 .unwrap(),
         )
         .await?;
@@ -1446,7 +1693,9 @@ async fn seconds_contract_settle_rejects_different_result_replay() -> Result<(),
                 .uri(format!("/seconds-contracts/orders/{order_id}/settle"))
                 .header("authorization", format!("Bearer {admin_token}"))
                 .header("content-type", "application/json")
-                .body(Body::from(r#"{"result":"loss"}"#))
+                .body(Body::from(
+                    r#"{"result":"loss","reason":"manual settle loss"}"#,
+                ))
                 .unwrap(),
         )
         .await?;
@@ -1758,7 +2007,9 @@ async fn assert_seconds_contract_settlement_idempotent_loss() -> Result<(), Box<
                     .uri(format!("/seconds-contracts/orders/{order_id}/settle"))
                     .header("authorization", format!("Bearer {admin_token}"))
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"result":"loss"}"#))
+                    .body(Body::from(
+                        r#"{"result":"loss","reason":"manual settle loss"}"#,
+                    ))
                     .unwrap(),
             )
             .await?;

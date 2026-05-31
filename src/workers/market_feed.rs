@@ -852,16 +852,16 @@ fn market_feed_providers(providers: Vec<String>) -> AppResult<Vec<MarketFeedProv
 
 fn channel_from_payload(payload: &str) -> MarketFeedChannel {
     if payload.contains("kline") || payload.contains("candle") {
-        info!("进入Kline:\npayload--->{}", payload);
+        // info!("进入Kline:\npayload--->{}", payload);
         MarketFeedChannel::Kline
     } else if payload.contains("depth") || payload.contains("books") {
-        info!("进入Depth:\npayload--->{}", payload);
+        // info!("进入Depth:\npayload--->{}", payload);
         MarketFeedChannel::Depth
     } else if payload.contains("trade") {
-        info!("进入Trade:\npayload--->{}", payload);
+        // info!("进入Trade:\npayload--->{}", payload);
         MarketFeedChannel::Trade
     } else if payload.contains("ticker") || payload.contains("detail") {
-        info!("进入Ticker:\npayload--->{}", payload);
+        // info!("进入Ticker:\npayload--->{}", payload);
         MarketFeedChannel::Ticker
     } else {
         MarketFeedChannel::None
