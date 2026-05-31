@@ -2,6 +2,16 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-05-31 10:44 - Admin 市场类型中文显示
+
+- 完成内容：将 Admin 添加现货交易对弹窗中的市场类型下拉显示改为中文，`external/internal/strategy` 分别显示为外部行情、内部撮合、策略行情，提交值保持原枚举值不变；补充前端测试覆盖中文选项和值映射。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx`，4 个测试通过、0 失败；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过。
+- 后续事项：无。
+
 ## 2026-05-31 10:22 - Admin 交易对创建资产下拉选择
 
 - 完成内容：将 Admin 添加现货交易对、杠杆交易对、秒合约交易对表单中的资产 ID 输入改为资产列表下拉选择；资产选项从 `/admin/api/v1/assets` 读取 active 资产，展示符号、名称和 ID，提交给后端仍保持原 ID 字段；补充前端测试覆盖基础资产、计价资产、保证金资产和押注资产选择。

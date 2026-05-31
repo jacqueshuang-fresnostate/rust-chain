@@ -89,6 +89,9 @@ describe('resourceConfigs create actions', () => {
     await user.selectOptions(within(dialog).getByLabelText('计价资产'), '12');
     expect(within(dialog).getAllByRole('option', { name: 'BTC - Bitcoin（ID: 11）' })[0]).toHaveValue('11');
     expect(within(dialog).getAllByRole('option', { name: 'USDT - Tether（ID: 12）' })[0]).toHaveValue('12');
+    expect(within(dialog).getByRole('option', { name: '外部行情' })).toHaveValue('external');
+    expect(within(dialog).getByRole('option', { name: '内部撮合' })).toHaveValue('internal');
+    expect(within(dialog).getByRole('option', { name: '策略行情' })).toHaveValue('strategy');
     await user.type(within(dialog).getByLabelText('交易对符号'), 'btc-usdt');
     await user.type(within(dialog).getByLabelText('价格精度'), '8');
     await user.type(within(dialog).getByLabelText('数量精度'), '6');

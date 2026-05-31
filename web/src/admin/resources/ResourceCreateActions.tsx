@@ -358,9 +358,9 @@ export function CreateSpotPairAction() {
             <label>
               市场类型
               <select value={spotPair.marketType} onChange={(event) => setSpotPair({ ...spotPair, marketType: event.currentTarget.value })}>
-                <option value="external">external</option>
-                <option value="internal">internal</option>
-                <option value="strategy">strategy</option>
+                <option value="external">外部行情</option>
+                <option value="internal">内部撮合</option>
+                <option value="strategy">策略行情</option>
               </select>
             </label>
           </div>
