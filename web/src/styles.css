@@ -358,6 +358,33 @@ body {
   padding-top: 16px;
 }
 
+.admin-resource-header {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.admin-resource-actions {
+  flex-shrink: 0;
+}
+
+.admin-inline-action-button {
+  min-height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  background: #0064fa;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.admin-inline-action-button:hover {
+  background: #0052cc;
+}
+
 .admin-action-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));

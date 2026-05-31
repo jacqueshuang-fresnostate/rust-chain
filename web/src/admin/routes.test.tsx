@@ -14,6 +14,7 @@ describe('adminRoutes', () => {
     'new-coins/subscriptions',
     'new-coins/distributions',
     'users',
+    'assets',
     'wallet/accounts',
     'wallet/ledger',
     'risk',

@@ -41,7 +41,7 @@ describe('AdminLayout', () => {
 
     [
       { group: '用户与代理', children: ['用户管理', '代理管理', '代理佣金'] },
-      { group: '钱包资产', children: ['钱包账户', '钱包流水'] },
+      { group: '钱包资产', children: ['资产管理', '钱包账户', '钱包流水'] },
       { group: '现货交易', children: ['交易对配置', '现货动作', '现货订单', '现货成交'] },
       {
         group: '新币生命周期',

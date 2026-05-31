@@ -1282,3 +1282,35 @@
   - `docs/superpowers/PROGRESS.md`
 - 验证结果：已执行后端 RED：新增 Admin 交易对测试后 `/admin/api/v1/market-pairs` 先返回 404，注册路由后编译失败于缺少 handler，符合缺失接口预期；实现后 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes -- --nocapture` 通过 42 个测试，但当前环境未设置 `DATABASE_URL`，MySQL seeded 分支按测试设计跳过。已执行前端 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- ProductStatusActions.test.tsx` 初始 3 个测试失败于找不到新增表单标签；实现后同命令通过 3 个测试。代码复核发现现货动作入口不可发现、空精度可能被当作 0 提交；补充 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- routes.test.tsx AdminLayout.test.tsx ProductStatusActions.test.tsx` 先失败于缺少 `spot/actions` 路由、缺少“现货动作”导航、创建按钮未禁用；修复后 3 个文件 16 个测试通过。最终已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --check`，通过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_trading_pair_routes_require_admin_scope_mysql_and_validation -- --nocapture`，1 个通过；已执行 `cargo check --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets`，通过；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- ProductStatusActions.test.tsx routes.test.tsx AdminLayout.test.tsx`，3 个文件 16 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行两轮 `superpowers:code-reviewer`，第二轮确认无剩余 blocker/important 问题。
 - 后续事项：当前环境未设置 `DATABASE_URL`，如需真实数据库路径验证，可补充带 `DATABASE_URL` 的 Admin 交易对创建/审计测试。
+
+## 2026-05-31 09:12 - Admin 交易对添加入口拆分到配置页
+
+- 完成内容：根据登录 Admin 后入口不可见反馈，确认根因是添加入口集中在产品动作页而非各配置页；已将现货交易对添加按钮放到交易对配置页，点击后弹窗填写基础/计价资产、交易对符号、精度、最小下单额、状态、市场类型和操作原因；已将杠杆交易对添加按钮放到杠杆产品页，点击后弹窗创建杠杆产品；已将秒合约交易对添加按钮放到秒合约产品页，点击后弹窗创建秒合约产品。
+- 修改文件：
+  - `web/src/admin/resources/AdminResourcePage.tsx`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/styles.css`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx`，实现前 3 个测试失败于找不到“添加交易对 / 添加杠杆交易对 / 添加秒合约交易对”按钮，符合入口缺失预期；实现后同命令 1 个文件 3 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx AdminResourcePage.test.tsx ProductStatusActions.test.tsx routes.test.tsx AdminLayout.test.tsx`，5 个文件 22 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过。
+- 后续事项：无。
+
+## 2026-05-31 09:52 - Admin 资产管理页面和接口
+
+- 完成内容：新增 Admin 资产管理闭环，后台提供 `GET/POST /admin/api/v1/assets`，支持 AdminAuth 鉴权、资产符号大写规范化、资产名称/精度/类型/状态校验、重复资产 conflict、筛选列表和 `asset.create` 审计日志；前端在“钱包资产”二级导航下增加“资产管理”页面，显示资产列表并提供“添加资产”弹窗，通过二次确认原因提交创建资产。
+- 修改文件：
+  - `src/modules/admin/routes.rs`
+  - `tests/admin_routes.rs`
+  - `web/src/admin/resources/AdminResourcePage.tsx`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/admin/routes.tsx`
+  - `web/src/admin/routes.test.tsx`
+  - `web/src/layouts/AdminLayout.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `web/src/styles.css`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --check`，通过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_asset -- --nocapture`，2 个测试通过，其中无 `DATABASE_URL` 场景按测试设计跳过 seeded MySQL 分支；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_asset_create_list_and_audit -- --nocapture`，1 个 MySQL-backed 资产创建/列表/审计测试通过；已执行 `cargo check --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets`，通过；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx routes.test.tsx AdminLayout.test.tsx`，3 个文件 17 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过；已执行 `superpowers:code-reviewer` 复核，无 blocker/important 问题。
+- 后续事项：无。

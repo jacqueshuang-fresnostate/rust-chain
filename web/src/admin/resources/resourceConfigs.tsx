@@ -1,8 +1,10 @@
 import { AdminResourcePage, type AdminResourceColumn } from './AdminResourcePage';
+import { CreateAssetAction, CreateMarginPairAction, CreateSecondsPairAction, CreateSpotPairAction } from './ResourceCreateActions';
 import type { FilterField } from '../../shared/FilterBar';
 import type { ApiRecord } from '../../api/types';
 
 export type ResourceConfig = {
+  actions?: React.ReactNode;
   columns: Array<AdminResourceColumn<ApiRecord>>;
   endpoint: string;
   filters?: FilterField[];
@@ -31,6 +33,22 @@ export const resourceConfigs = {
       { key: 'kyc_level', title: 'KYC等级' },
       { key: 'created_at', title: '创建时间', type: 'timestamp' },
       { key: 'updated_at', title: '更新时间', type: 'timestamp' }
+    ]
+  },
+  assets: {
+    title: '资产管理',
+    actions: <CreateAssetAction />,
+    endpoint: '/admin/api/v1/assets',
+    responseKey: 'assets',
+    filters: [{ key: 'symbol', label: '资产符号' }, { key: 'asset_type', label: '资产类型' }, statusFilter, limitFilter],
+    columns: [
+      { key: 'id', title: '资产ID' },
+      { key: 'symbol', title: '资产符号' },
+      { key: 'name', title: '资产名称' },
+      { key: 'precision_scale', title: '精度' },
+      { key: 'asset_type', title: '资产类型' },
+      { key: 'status', title: '状态', type: 'status' },
+      { key: 'created_at', title: '创建时间', type: 'timestamp' }
     ]
   },
   walletAccounts: {
@@ -125,6 +143,7 @@ export const resourceConfigs = {
   },
   marketPairs: {
     title: '交易对',
+    actions: <CreateSpotPairAction />,
     endpoint: '/admin/api/v1/market-pairs',
     responseKey: 'pairs',
     filters: [{ key: 'symbol', label: '交易对' }, statusFilter, { key: 'market_type', label: '市场类型' }, limitFilter],
@@ -325,6 +344,7 @@ export const resourceConfigs = {
   },
   secondsProducts: {
     title: '秒合约产品',
+    actions: <CreateSecondsPairAction />,
     endpoint: '/admin/api/v1/seconds-contracts/products',
     responseKey: 'products',
     filters: [limitFilter],
@@ -358,6 +378,7 @@ export const resourceConfigs = {
   },
   marginProducts: {
     title: '杠杆产品',
+    actions: <CreateMarginPairAction />,
     endpoint: '/admin/api/v1/margin/products',
     responseKey: 'products',
     filters: [limitFilter],

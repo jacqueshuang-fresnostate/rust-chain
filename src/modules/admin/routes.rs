@@ -49,6 +49,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/users", get(list_admin_users))
         .route("/users/:id", get(get_admin_user))
+        .route("/assets", get(list_assets).post(create_asset))
         .route("/wallet/accounts", get(list_wallet_accounts))
         .route("/wallet/ledger", get(list_wallet_ledger))
         .route("/risk/rules", get(list_risk_rules).post(create_risk_rule))
@@ -179,6 +180,14 @@ struct AdminWalletLedgerQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct AdminAssetQuery {
+    symbol: Option<String>,
+    asset_type: Option<String>,
+    status: Option<String>,
+    limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
 struct AdminRiskRuleQuery {
     rule_type: Option<String>,
     target_type: Option<String>,
@@ -288,6 +297,16 @@ struct CreateTradingPairRequest {
     min_order_value: BigDecimal,
     status: Option<String>,
     market_type: Option<String>,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateAssetRequest {
+    symbol: String,
+    name: String,
+    precision_scale: i32,
+    asset_type: Option<String>,
+    status: Option<String>,
     reason: Option<String>,
 }
 
@@ -487,6 +506,18 @@ struct AdminWalletLedgerResponse {
     locked_after: BigDecimal,
     ref_type: String,
     ref_id: String,
+    #[serde(with = "unix_millis")]
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+struct AdminAssetResponse {
+    id: u64,
+    symbol: String,
+    name: String,
+    precision_scale: i32,
+    asset_type: String,
+    status: String,
     #[serde(with = "unix_millis")]
     created_at: chrono::DateTime<chrono::Utc>,
 }
@@ -842,6 +873,11 @@ struct AdminWalletAccountsResponse {
 #[derive(Debug, Serialize)]
 struct AdminWalletLedgerResponseList {
     ledger: Vec<AdminWalletLedgerResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct AdminAssetsResponse {
+    assets: Vec<AdminAssetResponse>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1392,6 +1428,92 @@ async fn get_admin_user(
     .await?
     .ok_or(AppError::NotFound)?;
     Ok(Json(user))
+}
+
+async fn list_assets(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+    Query(query): Query<AdminAssetQuery>,
+) -> AppResult<Json<AdminAssetsResponse>> {
+    let pool = mysql_pool(&state)?;
+    let mut builder = admin_asset_query();
+    builder.push(" WHERE 1 = 1");
+    if let Some(symbol) = optional_string(query.symbol) {
+        builder.push(" AND symbol = ");
+        builder.push_bind(normalize_asset_symbol(&symbol)?);
+    }
+    if let Some(asset_type) = optional_string(query.asset_type) {
+        validate_asset_type(&asset_type)?;
+        builder.push(" AND asset_type = ");
+        builder.push_bind(asset_type);
+    }
+    if let Some(status) = optional_string(query.status) {
+        validate_asset_status(&status)?;
+        builder.push(" AND status = ");
+        builder.push_bind(status);
+    }
+    builder.push(" ORDER BY id DESC LIMIT ");
+    builder.push_bind(route_limit(query.limit) as i64);
+
+    let assets = builder
+        .build_query_as::<AdminAssetResponse>()
+        .fetch_all(&pool)
+        .await?;
+    Ok(Json(AdminAssetsResponse { assets }))
+}
+
+async fn create_asset(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Json(request): Json<CreateAssetRequest>,
+) -> AppResult<Json<AdminAssetResponse>> {
+    validate_create_asset(&request)?;
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    let pool = mysql_pool(&state)?;
+    let symbol = normalize_asset_symbol(&request.symbol)?;
+    let name = optional_string(Some(request.name.clone())).unwrap();
+    let asset_type = request
+        .asset_type
+        .as_deref()
+        .map(validate_asset_type)
+        .transpose()?
+        .unwrap_or_else(|| "coin".to_owned());
+    let status = request
+        .status
+        .as_deref()
+        .map(validate_asset_status)
+        .transpose()?
+        .unwrap_or_else(|| "active".to_owned());
+    let mut tx = pool.begin().await?;
+    let result = sqlx::query(
+        r#"INSERT INTO assets (symbol, name, precision_scale, asset_type, status)
+           VALUES (?, ?, ?, ?, ?)"#,
+    )
+    .bind(&symbol)
+    .bind(&name)
+    .bind(request.precision_scale)
+    .bind(&asset_type)
+    .bind(&status)
+    .execute(&mut *tx)
+    .await
+    .map_err(map_duplicate_asset)?;
+    let asset = load_asset_in_tx(&mut tx, result.last_insert_id()).await?;
+    insert_typed_admin_audit_log_in_tx(
+        &mut tx,
+        admin_id,
+        AdminAuditEntry {
+            action: "asset.create",
+            target_type: "asset",
+            target_id: asset.id,
+            before_json: None,
+            after_json: Some(asset_audit_json(&asset)),
+            reason: request.reason,
+        },
+    )
+    .await?;
+    tx.commit().await?;
+
+    Ok(Json(asset))
 }
 
 async fn list_wallet_accounts(
@@ -2900,6 +3022,27 @@ async fn lock_convert_pair_in_tx(
     .ok_or(AppError::NotFound)
 }
 
+fn admin_asset_query() -> QueryBuilder<'static, MySql> {
+    QueryBuilder::<MySql>::new(
+        r#"SELECT id, symbol, name, precision_scale, asset_type, status, created_at
+           FROM assets"#,
+    )
+}
+
+async fn load_asset_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    asset_id: u64,
+) -> AppResult<AdminAssetResponse> {
+    let mut builder = admin_asset_query();
+    builder.push(" WHERE id = ");
+    builder.push_bind(asset_id);
+    builder
+        .build_query_as::<AdminAssetResponse>()
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
 fn admin_trading_pair_query() -> QueryBuilder<'static, MySql> {
     QueryBuilder::<MySql>::new(
         r#"SELECT pairs.id,
@@ -3795,6 +3938,62 @@ fn validate_create_convert_pair(request: &CreateConvertPairRequest) -> AppResult
     Ok(())
 }
 
+fn validate_create_asset(request: &CreateAssetRequest) -> AppResult<()> {
+    normalize_asset_symbol(&request.symbol)?;
+    let Some(name) = optional_string(Some(request.name.clone())) else {
+        return Err(AppError::Validation("asset name is required".to_owned()));
+    };
+    if name.len() > 128 {
+        return Err(AppError::Validation(
+            "asset name must be at most 128 characters".to_owned(),
+        ));
+    }
+    if !(0..=18).contains(&request.precision_scale) {
+        return Err(AppError::Validation(
+            "asset precision_scale must be between 0 and 18".to_owned(),
+        ));
+    }
+    if let Some(asset_type) = request.asset_type.as_deref() {
+        validate_asset_type(asset_type)?;
+    }
+    if let Some(status) = request.status.as_deref() {
+        validate_asset_status(status)?;
+    }
+    Ok(())
+}
+
+fn normalize_asset_symbol(value: &str) -> AppResult<String> {
+    let Some(symbol) = optional_string(Some(value.to_owned())) else {
+        return Err(AppError::Validation("asset symbol is required".to_owned()));
+    };
+    if symbol.len() > 32 || !symbol.chars().all(|ch| ch.is_ascii_alphanumeric()) {
+        return Err(AppError::Validation(
+            "asset symbol format is invalid".to_owned(),
+        ));
+    }
+    Ok(symbol.to_ascii_uppercase())
+}
+
+fn validate_asset_type(value: &str) -> AppResult<String> {
+    let Some(asset_type) = optional_string(Some(value.to_owned())) else {
+        return Err(AppError::Validation("asset_type is required".to_owned()));
+    };
+    match asset_type.as_str() {
+        "coin" | "fiat" | "stablecoin" | "platform" => Ok(asset_type),
+        _ => Err(AppError::Validation("unsupported asset_type".to_owned())),
+    }
+}
+
+fn validate_asset_status(value: &str) -> AppResult<String> {
+    let Some(status) = optional_string(Some(value.to_owned())) else {
+        return Err(AppError::Validation("status is required".to_owned()));
+    };
+    match status.as_str() {
+        "active" | "disabled" => Ok(status),
+        _ => Err(AppError::Validation("unsupported asset status".to_owned())),
+    }
+}
+
 fn validate_create_trading_pair(request: &CreateTradingPairRequest) -> AppResult<()> {
     if request.base_asset_id == request.quote_asset_id {
         return Err(AppError::Validation(
@@ -3883,6 +4082,18 @@ fn convert_pair_audit_json(pair: &ConvertPairResponse) -> Value {
         "min_amount": pair.min_amount,
         "max_amount": pair.max_amount,
         "enabled": pair.enabled,
+    })
+}
+
+fn asset_audit_json(asset: &AdminAssetResponse) -> Value {
+    json!({
+        "id": asset.id,
+        "symbol": asset.symbol,
+        "name": asset.name,
+        "precision_scale": asset.precision_scale,
+        "asset_type": asset.asset_type,
+        "status": asset.status,
+        "created_at": asset.created_at.timestamp_millis(),
     })
 }
 
@@ -4413,6 +4624,14 @@ fn map_duplicate_pair(error: sqlx::Error) -> AppError {
 fn map_duplicate_trading_pair(error: sqlx::Error) -> AppError {
     if is_mysql_duplicate_key(&error) {
         AppError::Conflict("trading pair already exists".to_owned())
+    } else {
+        AppError::Database(error)
+    }
+}
+
+fn map_duplicate_asset(error: sqlx::Error) -> AppError {
+    if is_mysql_duplicate_key(&error) {
+        AppError::Conflict("asset already exists".to_owned())
     } else {
         AppError::Database(error)
     }

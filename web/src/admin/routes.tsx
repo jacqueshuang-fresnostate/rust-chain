@@ -15,6 +15,7 @@ export const adminRoutes: RouteObject[] = [
   { path: 'users', element: <ResourcePage config={resourceConfigs.users} /> },
   { path: 'agents', element: <AgentManagementPage /> },
   { path: 'agent-commissions', element: <ResourcePage config={resourceConfigs.agentCommissions} /> },
+  { path: 'assets', element: <ResourcePage config={resourceConfigs.assets} /> },
   { path: 'wallet/accounts', element: <ResourcePage config={resourceConfigs.walletAccounts} /> },
   { path: 'wallet/ledger', element: <ResourcePage config={resourceConfigs.walletLedger} /> },
   { path: 'spot/actions', element: <ProductStatusActions /> },

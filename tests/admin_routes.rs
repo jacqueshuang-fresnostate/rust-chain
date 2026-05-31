@@ -1561,6 +1561,245 @@ async fn admin_manages_risk_rules_and_lists_events() -> Result<(), Box<dyn Error
 }
 
 #[tokio::test]
+async fn admin_asset_routes_require_admin_scope_mysql_and_validation() -> Result<(), Box<dyn Error>>
+{
+    let settings = test_settings();
+    let user_token = issue_token(&settings, "user:1", TokenScope::User, 900).unwrap();
+    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let app = build_router(AppState::new(settings));
+    let body = json!({
+        "symbol": "btc",
+        "name": "Bitcoin",
+        "precision_scale": 8,
+        "asset_type": "coin",
+        "status": "active"
+    })
+    .to_string();
+
+    let missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/assets")
+                .header("content-type", "application/json")
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let user = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/assets")
+                .header(AUTHORIZATION, format!("Bearer {user_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(user.status(), StatusCode::FORBIDDEN);
+
+    let invalid = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/assets")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "symbol": "BTC",
+                        "name": "Bitcoin",
+                        "precision_scale": -1,
+                        "asset_type": "coin",
+                        "status": "active"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    let invalid_payload = body_json(invalid).await?;
+    assert_eq!(invalid_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        invalid_payload["message"],
+        "validation error: asset precision_scale must be between 0 and 18"
+    );
+
+    let admin = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/assets")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(admin.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let payload = body_json(admin).await?;
+    assert_eq!(payload["code"], "INTERNAL_ERROR");
+    assert!(
+        payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("mysql pool is not configured for admin convert routes")
+    );
+
+    let list = app
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/assets?limit=1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(list.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_asset_create_list_and_audit() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let symbol = format!("AST{}", &Uuid::now_v7().simple().to_string()[..10]).to_ascii_uppercase();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let create = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/assets")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "symbol": symbol.to_ascii_lowercase(),
+                        "name": "Asset Test Coin",
+                        "precision_scale": 8,
+                        "asset_type": "coin",
+                        "status": "active",
+                        "reason": "create asset"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let create_status = create.status();
+    let created = body_json(create).await?;
+    assert_eq!(create_status, StatusCode::OK, "payload: {created}");
+    let asset_id = created["id"].as_u64().unwrap();
+    assert_eq!(created["symbol"], symbol);
+    assert_eq!(created["name"], "Asset Test Coin");
+    assert_eq!(created["precision_scale"], 8);
+    assert_eq!(created["asset_type"], "coin");
+    assert_eq!(created["status"], "active");
+    assert!(created["created_at"].is_number());
+
+    let duplicate = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/assets")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "symbol": symbol,
+                        "name": "Duplicate Asset",
+                        "precision_scale": 8,
+                        "asset_type": "coin",
+                        "status": "active"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(duplicate.status(), StatusCode::CONFLICT);
+
+    let listed = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/assets?symbol={}&status=active&asset_type=coin&limit=10",
+                    created["symbol"].as_str().unwrap()
+                ))
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let listed_status = listed.status();
+    let listed_payload = body_json(listed).await?;
+    assert_eq!(listed_status, StatusCode::OK, "payload: {listed_payload}");
+    let assets = listed_payload["assets"].as_array().unwrap();
+    assert_eq!(assets.len(), 1);
+    assert_eq!(assets[0]["id"], asset_id);
+
+    let audits = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type = 'asset' AND target_id = ?
+           ORDER BY id"#,
+    )
+    .bind(admin_id)
+    .bind(asset_id.to_string())
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].action, "asset.create");
+    assert!(audits[0].before_json.is_none());
+    assert_eq!(
+        audits[0].after_json.as_ref().unwrap()["symbol"],
+        created["symbol"]
+    );
+    assert_eq!(audits[0].reason.as_deref(), Some("create asset"));
+
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ? AND target_type = 'asset'")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn admin_trading_pair_routes_require_admin_scope_mysql_and_validation()
 -> Result<(), Box<dyn Error>> {
     let settings = test_settings();

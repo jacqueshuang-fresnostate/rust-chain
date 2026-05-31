@@ -31,6 +31,7 @@ const navItems: AdminNavItem[] = [
   {
     label: '钱包资产',
     children: [
+      { path: '/admin/assets', label: '资产管理' },
       { path: '/admin/wallet/accounts', label: '钱包账户' },
       { path: '/admin/wallet/ledger', label: '钱包流水' }
     ]

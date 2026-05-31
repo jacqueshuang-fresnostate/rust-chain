@@ -1,6 +1,6 @@
 import { Button, Card, Space, Typography } from '@douyinfe/semi-ui';
 import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
-import { useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 
 import { listAdminResource } from '../../api/adminResources';
 import type { ApiRecord } from '../../api/types';
@@ -21,6 +21,7 @@ export type AdminResourceColumn<T extends ApiRecord> = {
 };
 
 type AdminResourcePageProps<T extends ApiRecord> = {
+  actions?: ReactNode;
   columns: Array<AdminResourceColumn<T>>;
   endpoint: string;
   filters?: FilterField[];
@@ -48,7 +49,7 @@ function renderCell<T extends ApiRecord>(column: AdminResourceColumn<T>, value: 
   return <span>{value === null || value === undefined || value === '' ? '-' : String(value)}</span>;
 }
 
-export function AdminResourcePage<T extends ApiRecord>({ columns, endpoint, filters, responseKey, title }: AdminResourcePageProps<T>) {
+export function AdminResourcePage<T extends ApiRecord>({ actions, columns, endpoint, filters, responseKey, title }: AdminResourcePageProps<T>) {
   const [drawerRow, setDrawerRow] = useState<T | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [filterValues, setFilterValues] = useState<FilterValues>({});
@@ -109,11 +110,14 @@ export function AdminResourcePage<T extends ApiRecord>({ columns, endpoint, filt
     <main className="exchange-page">
       <Card bordered={false} shadows="always">
         <Space align="start" spacing={20} vertical style={{ width: '100%' }}>
-          <div>
-            <Title heading={3} style={{ marginBottom: 8 }}>
-              {title}
-            </Title>
-            <Text type="secondary">后台资源只读检索视图，敏感操作需走二次确认。</Text>
+          <div className="admin-resource-header">
+            <div>
+              <Title heading={3} style={{ marginBottom: 8 }}>
+                {title}
+              </Title>
+              <Text type="secondary">后台资源检索视图，敏感操作需走二次确认。</Text>
+            </div>
+            {actions ? <div className="admin-resource-actions">{actions}</div> : null}
           </div>
           <FilterBar fields={filters} loading={loading} onChange={setFilterValues} value={filterValues} />
           <DataTable columns={tableColumns} data={rows} error={error} loading={loading} />
