@@ -1,0 +1,48 @@
+[package]
+name = "exchange-api"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "exchange_api"
+path = "src/lib.rs"
+
+[[bin]]
+name = "exchange-api"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+argon2 = "0.5"
+axum = { version = "0.7", features = ["macros", "ws"] }
+base64 = "0.22"
+bigdecimal = { version = "0.4", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+config = "0.14"
+dotenvy = "0.15"
+flate2 = "1"
+futures-util = "0.3"
+jsonwebtoken = "9"
+lapin = "2"
+mongodb = "3"
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+ring = "0.17"
+secrecy = { version = "0.8", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "mysql", "chrono", "uuid", "bigdecimal", "migrate"] }
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+uuid = { version = "1", features = ["serde", "v7"] }
+validator = { version = "0.18", features = ["derive"] }
+
+[dev-dependencies]
+rstest = "0.23"
+tower = { version = "0.5", features = ["util"] }
+wiremock = "0.6"
