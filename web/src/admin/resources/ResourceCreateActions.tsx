@@ -1,7 +1,9 @@
 import { Card, Modal, Space, Typography, Toast } from '@douyinfe/semi-ui';
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 
+import { listAdminResource } from '../../api/adminResources';
 import { ApiError, apiRequest } from '../../api/client';
+import type { ApiRecord } from '../../api/types';
 import { ConfirmAction } from '../../shared/ConfirmAction';
 
 const { Text, Title } = Typography;
@@ -44,6 +46,11 @@ type SecondsProductValues = {
   minStake: string;
   maxStake: string;
   status: string;
+};
+
+type AssetOption = {
+  id: string;
+  label: string;
 };
 
 const initialAsset: AssetValues = {
@@ -132,6 +139,23 @@ function optionalString(value: string): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+function assetFieldToString(asset: ApiRecord, key: string): string {
+  const value = asset[key];
+  return typeof value === 'number' || typeof value === 'string' ? String(value) : '';
+}
+
+function assetOptionLabel(asset: ApiRecord): string {
+  const id = assetFieldToString(asset, 'id');
+  const symbol = assetFieldToString(asset, 'symbol') || `资产${id}`;
+  const name = assetFieldToString(asset, 'name');
+  return `${symbol}${name ? ` - ${name}` : ''}（ID: ${id}）`;
+}
+
+function toAssetOption(asset: ApiRecord): AssetOption | null {
+  const id = assetFieldToString(asset, 'id');
+  return id ? { id, label: assetOptionLabel(asset) } : null;
+}
+
 function isAssetCreatable(values: AssetValues): boolean {
   return Boolean(values.symbol.trim() && values.name.trim() && isNonNegativeIntegerInput(values.precisionScale));
 }
@@ -172,6 +196,69 @@ function FormModal({ actionText, children, title }: { actionText: string; childr
   );
 }
 
+function useAssetOptions() {
+  const [assetOptions, setAssetOptions] = useState<AssetOption[]>([]);
+  const [assetLoading, setAssetLoading] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setAssetLoading(true);
+
+    listAdminResource('/admin/api/v1/assets', 'assets', { status: 'active', limit: 100 })
+      .then((result) => {
+        if (!active) {
+          return;
+        }
+
+        setAssetOptions(result.rows.map(toAssetOption).filter((asset): asset is AssetOption => asset !== null));
+      })
+      .catch(() => {
+        if (active) {
+          setAssetOptions([]);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setAssetLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return { assetLoading, assetOptions };
+}
+
+function AssetSelect({
+  label,
+  loading,
+  onChange,
+  options,
+  value
+}: {
+  label: string;
+  loading: boolean;
+  onChange: (value: string) => void;
+  options: AssetOption[];
+  value: string;
+}) {
+  return (
+    <label>
+      {label}
+      <select disabled={loading} value={value} onChange={(event) => onChange(event.currentTarget.value)}>
+        <option value="">{loading ? '加载资产中...' : '请选择资产'}</option>
+        {options.map((asset) => (
+          <option key={asset.id} value={asset.id}>
+            {asset.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 export function CreateAssetAction() {
   const [asset, setAsset] = useState(initialAsset);
 
@@ -190,10 +277,10 @@ export function CreateAssetAction() {
             <label>
               资产类型
               <select value={asset.assetType} onChange={(event) => setAsset({ ...asset, assetType: event.currentTarget.value })}>
-                <option value="coin">coin</option>
-                <option value="stablecoin">stablecoin</option>
-                <option value="fiat">fiat</option>
-                <option value="platform">platform</option>
+                <option value="coin">数字货币</option>
+                <option value="stablecoin">稳定币</option>
+                <option value="fiat">法币</option>
+                <option value="platform">平台币</option>
               </select>
             </label>
             <label>
@@ -232,6 +319,7 @@ export function CreateAssetAction() {
 
 export function CreateSpotPairAction() {
   const [spotPair, setSpotPair] = useState(initialSpotPair);
+  const { assetLoading, assetOptions } = useAssetOptions();
 
   return (
     <FormModal actionText="添加交易对" title="添加现货交易对">
@@ -242,8 +330,20 @@ export function CreateSpotPairAction() {
             <Text type="secondary">现货交易对创建后可被杠杆、秒合约产品复用。</Text>
           </div>
           <div className="admin-action-form">
-            <label>基础资产ID<input value={spotPair.baseAssetId} onChange={(event) => setSpotPair({ ...spotPair, baseAssetId: event.currentTarget.value })} /></label>
-            <label>计价资产ID<input value={spotPair.quoteAssetId} onChange={(event) => setSpotPair({ ...spotPair, quoteAssetId: event.currentTarget.value })} /></label>
+            <AssetSelect
+              label="基础资产"
+              loading={assetLoading}
+              options={assetOptions}
+              value={spotPair.baseAssetId}
+              onChange={(baseAssetId) => setSpotPair({ ...spotPair, baseAssetId })}
+            />
+            <AssetSelect
+              label="计价资产"
+              loading={assetLoading}
+              options={assetOptions}
+              value={spotPair.quoteAssetId}
+              onChange={(quoteAssetId) => setSpotPair({ ...spotPair, quoteAssetId })}
+            />
             <label>交易对符号<input value={spotPair.symbol} onChange={(event) => setSpotPair({ ...spotPair, symbol: event.currentTarget.value })} placeholder="BTC-USDT" /></label>
             <label>价格精度<input value={spotPair.pricePrecision} onChange={(event) => setSpotPair({ ...spotPair, pricePrecision: event.currentTarget.value })} /></label>
             <label>数量精度<input value={spotPair.qtyPrecision} onChange={(event) => setSpotPair({ ...spotPair, qtyPrecision: event.currentTarget.value })} /></label>
@@ -295,6 +395,7 @@ export function CreateSpotPairAction() {
 
 export function CreateMarginPairAction() {
   const [marginProduct, setMarginProduct] = useState(initialMarginProduct);
+  const { assetLoading, assetOptions } = useAssetOptions();
 
   return (
     <FormModal actionText="添加杠杆交易对" title="添加杠杆交易对">
@@ -306,7 +407,13 @@ export function CreateMarginPairAction() {
           </div>
           <div className="admin-action-form">
             <label>杠杆交易对ID<input value={marginProduct.pairId} onChange={(event) => setMarginProduct({ ...marginProduct, pairId: event.currentTarget.value })} /></label>
-            <label>保证金资产ID<input value={marginProduct.marginAsset} onChange={(event) => setMarginProduct({ ...marginProduct, marginAsset: event.currentTarget.value })} /></label>
+            <AssetSelect
+              label="保证金资产"
+              loading={assetLoading}
+              options={assetOptions}
+              value={marginProduct.marginAsset}
+              onChange={(marginAsset) => setMarginProduct({ ...marginProduct, marginAsset })}
+            />
             <label>最大杠杆<input value={marginProduct.maxLeverage} onChange={(event) => setMarginProduct({ ...marginProduct, maxLeverage: event.currentTarget.value })} /></label>
             <label>最小保证金<input value={marginProduct.minMargin} onChange={(event) => setMarginProduct({ ...marginProduct, minMargin: event.currentTarget.value })} /></label>
             <label>最大保证金<input value={marginProduct.maxMargin} onChange={(event) => setMarginProduct({ ...marginProduct, maxMargin: event.currentTarget.value })} /></label>
@@ -350,6 +457,7 @@ export function CreateMarginPairAction() {
 
 export function CreateSecondsPairAction() {
   const [secondsProduct, setSecondsProduct] = useState(initialSecondsProduct);
+  const { assetLoading, assetOptions } = useAssetOptions();
 
   return (
     <FormModal actionText="添加秒合约交易对" title="添加秒合约交易对">
@@ -361,7 +469,13 @@ export function CreateSecondsPairAction() {
           </div>
           <div className="admin-action-form">
             <label>秒合约交易对ID<input value={secondsProduct.pairId} onChange={(event) => setSecondsProduct({ ...secondsProduct, pairId: event.currentTarget.value })} /></label>
-            <label>押注资产ID<input value={secondsProduct.stakeAsset} onChange={(event) => setSecondsProduct({ ...secondsProduct, stakeAsset: event.currentTarget.value })} /></label>
+            <AssetSelect
+              label="押注资产"
+              loading={assetLoading}
+              options={assetOptions}
+              value={secondsProduct.stakeAsset}
+              onChange={(stakeAsset) => setSecondsProduct({ ...secondsProduct, stakeAsset })}
+            />
             <label>周期秒数<input value={secondsProduct.durationSeconds} onChange={(event) => setSecondsProduct({ ...secondsProduct, durationSeconds: event.currentTarget.value })} /></label>
             <label>赔率<input value={secondsProduct.payoutRate} onChange={(event) => setSecondsProduct({ ...secondsProduct, payoutRate: event.currentTarget.value })} /></label>
             <label>最小押注<input value={secondsProduct.minStake} onChange={(event) => setSecondsProduct({ ...secondsProduct, minStake: event.currentTarget.value })} /></label>
