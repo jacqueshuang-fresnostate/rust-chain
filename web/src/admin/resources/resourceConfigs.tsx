@@ -26,6 +26,7 @@ export type ResourceConfig = {
   filters?: FilterField[];
   responseKey: string;
   rowActions?: React.ComponentProps<typeof AdminResourcePage<ApiRecord>>['rowActions'];
+  showJsonAction?: boolean;
   title: string;
 };
 
@@ -35,6 +36,25 @@ const userFilter: FilterField = { key: 'user_id', label: '用户ID' };
 const pairFilter: FilterField = { key: 'pair_id', label: '交易对ID' };
 const projectFilter: FilterField = { key: 'project_id', label: '项目ID' };
 const assetFilter: FilterField = { key: 'asset_id', label: '资产ID' };
+
+const marketTypeLabels = {
+  external: '外部行情',
+  internal: '内部撮合',
+  strategy: '策略行情'
+};
+
+const marketTypeOptions = Object.entries(marketTypeLabels).map(([value, label]) => ({ label, value }));
+const marketPairStatusFilter: FilterField = {
+  key: 'status',
+  label: '状态',
+  type: 'select',
+  options: [
+    { label: '启用', value: 'active' },
+    { label: '禁用', value: 'disabled' }
+  ]
+};
+const marketPairSymbolFilter: FilterField = { key: 'symbol', label: '交易对', type: 'select', optionsFromRows: true };
+const marketTypeFilter: FilterField = { key: 'market_type', label: '市场类型', type: 'select', options: marketTypeOptions };
 
 export const resourceConfigs = {
   users: {
@@ -163,8 +183,9 @@ export const resourceConfigs = {
     actions: <CreateSpotPairAction />,
     endpoint: '/admin/api/v1/market-pairs',
     responseKey: 'pairs',
-    filters: [{ key: 'symbol', label: '交易对' }, statusFilter, { key: 'market_type', label: '市场类型' }, limitFilter],
+    filters: [marketPairSymbolFilter, marketPairStatusFilter, marketTypeFilter, limitFilter],
     rowActions: (record, helpers) => <MarketPairRowActions helpers={helpers} record={record} />,
+    showJsonAction: false,
     columns: [
       { key: 'id', title: '交易对ID' },
       { key: 'symbol', title: '交易对' },
@@ -173,7 +194,7 @@ export const resourceConfigs = {
       { key: 'price_precision', title: '价格精度' },
       { key: 'qty_precision', title: '数量精度' },
       { key: 'min_order_value', title: '最小下单额', type: 'amount' },
-      { key: 'market_type', title: '市场类型' },
+      { key: 'market_type', title: '市场类型', valueMap: marketTypeLabels },
       { key: 'status', title: '状态', type: 'status' }
     ]
   },

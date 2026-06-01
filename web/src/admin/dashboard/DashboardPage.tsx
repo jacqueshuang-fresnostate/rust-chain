@@ -127,7 +127,7 @@ export function DashboardPage() {
 
   return (
     <main className="exchange-page admin-dashboard-page">
-      <PageHeader title="总览仪表盘" description="Rust Chain Exchange 管理后台操作入口。" />
+      <PageHeader title="总览仪表盘" />
       <div className="admin-dashboard-toolbar">
         <Space wrap>
           <Button loading={loading} onClick={loadDashboard} theme="solid" type="primary">

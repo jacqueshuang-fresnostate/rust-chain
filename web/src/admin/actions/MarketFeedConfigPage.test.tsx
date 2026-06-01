@@ -72,10 +72,14 @@ describe('MarketFeedConfigPage', () => {
     vi.unstubAllGlobals();
   });
 
-  it('loads saved config, runtime status, masked credentials, and selectable feed options', async () => {
+  it('loads saved config, runtime status, masked credentials, and selectable feed options without static helper copy', async () => {
     render(<MarketFeedConfigPage />);
 
     expect(await screen.findByDisplayValue('BTCUSDT,ETHUSDT')).toBeInTheDocument();
+    expect(screen.queryByText('配置第三方行情 symbols、intervals、providers 和 API Key；保存后需手动重载才会生效。')).not.toBeInTheDocument();
+    expect(screen.queryByText('交易对支持逗号分隔输入；K 线周期和行情源可多选，保存后需手动重载。')).not.toBeInTheDocument();
+    expect(screen.queryByText('保存配置不会立即影响 worker，只有手动重载会更新运行态。')).not.toBeInTheDocument();
+    expect(screen.queryByText('API Key、Secret、Passphrase 只会加密提交；页面和接口仅展示 Key 掩码。')).not.toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: '1m' })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: '5m' })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: '15m' })).not.toBeChecked();

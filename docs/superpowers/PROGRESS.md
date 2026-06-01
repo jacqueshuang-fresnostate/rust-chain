@@ -2,6 +2,46 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-05-31 21:57 - Admin 静态说明文案清理
+
+- 完成内容：移除 Admin UI 中通过 Semi Typography/PageHeader 渲染的静态辅助说明文案，包括资源页说明、产品配置/行情订阅/新币/闪兑/行情策略/代理管理页面说明、创建/修改弹窗辅助说明；保留真实数据展示、字段标签、按钮、错误提示、安全警示、操作原因提示和运行状态摘要。
+- 修改文件：
+  - `web/src/layouts/PageHeader.tsx`
+  - `web/src/admin/resources/AdminResourcePage.tsx`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/actions/ProductStatusActions.tsx`
+  - `web/src/admin/actions/MarketFeedConfigPage.tsx`
+  - `web/src/admin/actions/ConvertRuleActions.tsx`
+  - `web/src/admin/actions/NewCoinActions.tsx`
+  - `web/src/admin/actions/MarketStrategyActions.tsx`
+  - `web/src/admin/actions/AgentManagementPage.tsx`
+  - `web/src/admin/dashboard/DashboardPage.tsx`
+  - `web/src/admin/resources/AdminResourcePage.test.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/admin/actions/ProductStatusActions.test.tsx`
+  - `web/src/admin/actions/MarketFeedConfigPage.test.tsx`
+  - `web/src/admin/actions/helperCopy.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已按 TDD 先执行前端 targeted 测试确认新增静态文案断言失败；实现后已重新执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- AdminResourcePage.test.tsx resourceConfigs.test.tsx ProductStatusActions.test.tsx MarketFeedConfigPage.test.tsx helperCopy.test.tsx`，5 个测试文件、39 个测试通过、0 失败；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：如需继续去除 Banner 安全警示、空状态/错误描述或确认弹窗操作提示，需要单独确认范围，避免误删功能性信息。
+
+## 2026-05-31 21:18 - Admin 交易对配置页补齐
+
+- 完成内容：补齐 `/admin/market/pairs` 后台交易对配置页，交易对、状态、市场类型筛选改为下拉选择且提交后端枚举/交易对值；隐藏该页默认“查看JSON”；新增行级“查看详情”和“修改”，修改仅提交价格精度、数量精度、最小下单额、市场类型和 reason；后端新增 `PATCH /admin/api/v1/market-pairs/:id` 安全配置更新接口并写入 `trading_pair.config.update` 审计；表格市场类型显示中文标签；补充筛选器样式。
+- 修改文件：
+  - `src/modules/admin/routes.rs`
+  - `tests/admin_routes.rs`
+  - `web/src/shared/FilterBar.tsx`
+  - `web/src/admin/resources/AdminResourcePage.tsx`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/AdminResourcePage.test.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/styles.css`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- AdminResourcePage.test.tsx resourceConfigs.test.tsx`，2 个测试文件、27 个测试通过、0 失败；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_trading_pair -- --nocapture`，4 个测试通过、0 失败，MySQL-gated 分支因本地未设置 `DATABASE_URL` 按设计跳过；首次执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --check` 发现 Rust 格式需调整，已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml"` 后重新执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --check`，通过；已执行 `cargo check --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets`，通过；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：如交易对数量超过当前列表加载上限，后续补专用 symbol options endpoint；交易对身份字段变更需独立工作流，不纳入本切片。
+
 ## 2026-05-31 20:02 - Admin Earn 与闪兑行级操作补齐
 
 - 完成内容：新增 Admin Earn 产品详情与申购详情接口，Earn 产品创建/启停强制非空 reason 并保留审计；新增 Admin 闪兑交易对详情与闪兑订单详情接口，闪兑交易对创建/启停强制非空且不超过 512 字符的 reason 并保留审计；前端为 Earn 产品、Earn 申购、闪兑交易对、闪兑订单接入行级“查看详情”，并仅为 Earn 产品和闪兑交易对提供带原因确认的安全启停操作，未开放 Earn 申购或闪兑订单任意状态修改。

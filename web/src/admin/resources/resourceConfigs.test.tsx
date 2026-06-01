@@ -57,12 +57,13 @@ describe('resourceConfigs create actions', () => {
     vi.unstubAllGlobals();
   });
 
-  it('opens an asset creation modal from the asset management page', async () => {
+  it('opens an asset creation modal from the asset management page without static helper copy', async () => {
     const user = userEvent.setup();
     render(<ResourcePage config={resourceConfigs.assets} />);
 
     await user.click(await screen.findByRole('button', { name: '添加资产' }));
     const dialog = await screen.findByRole('dialog', { name: '添加资产' });
+    expect(within(dialog).queryByText('资产创建后可作为交易对、钱包账户、闪兑和产品配置的基础资产。')).not.toBeInTheDocument();
     await user.type(within(dialog).getByLabelText('资产符号'), 'btc');
     await user.type(within(dialog).getByLabelText('资产名称'), 'Bitcoin');
     await user.type(within(dialog).getByLabelText('资产精度'), '8');
@@ -79,12 +80,13 @@ describe('resourceConfigs create actions', () => {
     });
   });
 
-  it('opens a spot trading pair creation modal from the trading pair config page', async () => {
+  it('opens a spot trading pair creation modal from the trading pair config page without static helper copy', async () => {
     const user = userEvent.setup();
     render(<ResourcePage config={resourceConfigs.marketPairs} />);
 
     await user.click(await screen.findByRole('button', { name: '添加交易对' }));
     const dialog = await screen.findByRole('dialog', { name: '添加现货交易对' });
+    expect(within(dialog).queryByText('现货交易对创建后可被杠杆、秒合约产品复用。')).not.toBeInTheDocument();
     await user.selectOptions(within(dialog).getByLabelText('基础资产'), '11');
     await user.selectOptions(within(dialog).getByLabelText('计价资产'), '12');
     expect(within(dialog).getAllByRole('option', { name: 'BTC - Bitcoin（ID: 11）' })[0]).toHaveValue('11');
@@ -201,7 +203,7 @@ describe('resourceConfigs create actions', () => {
 
     render(<ResourcePage config={resourceConfigs.marketPairs} />);
 
-    expect(await screen.findByText('BTC-USDT')).toBeInTheDocument();
+    expect(await screen.findByText('BTC-USDT', { selector: 'span' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '禁用' }));
     await user.type(screen.getByLabelText('操作原因'), 'disable risky pair');
     await user.click(screen.getByRole('button', { name: '确认' }));
@@ -213,6 +215,186 @@ describe('resourceConfigs create actions', () => {
       });
       expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/market-pairs')).toHaveLength(2);
     });
+  });
+
+  it('uses dropdown filters and localized market type labels on market pairs', async () => {
+    const user = userEvent.setup();
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/assets') {
+        return { rows: assetRows, raw: { [responseKey]: assetRows } };
+      }
+
+      if (endpoint === '/admin/api/v1/market-pairs') {
+        const rows = [
+          {
+            id: 1,
+            symbol: 'BTC-USDT',
+            base_asset: 'BTC',
+            quote_asset: 'USDT',
+            price_precision: 8,
+            qty_precision: 6,
+            min_order_value: '10.0000',
+            market_type: 'external',
+            status: 'active'
+          },
+          {
+            id: 2,
+            symbol: 'ETH-USDT',
+            base_asset: 'ETH',
+            quote_asset: 'USDT',
+            price_precision: 8,
+            qty_precision: 6,
+            min_order_value: '5.0000',
+            market_type: 'strategy',
+            status: 'disabled'
+          }
+        ];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
+      return { rows: [], raw: {} };
+    });
+
+    render(<ResourcePage config={resourceConfigs.marketPairs} />);
+
+    expect(await screen.findByText('BTC-USDT', { selector: 'span' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'BTC-USDT' })).toHaveValue('BTC-USDT');
+    expect(screen.getByRole('option', { name: 'ETH-USDT' })).toHaveValue('ETH-USDT');
+    expect(screen.getByRole('option', { name: '启用' })).toHaveValue('active');
+    expect(screen.getByRole('option', { name: '禁用' })).toHaveValue('disabled');
+    expect(screen.getByRole('option', { name: '外部行情' })).toHaveValue('external');
+    expect(screen.getByRole('option', { name: '内部撮合' })).toHaveValue('internal');
+    expect(screen.getByRole('option', { name: '策略行情' })).toHaveValue('strategy');
+    expect(screen.getByText('外部行情', { selector: 'span' })).toBeInTheDocument();
+    expect(screen.getByText('策略行情', { selector: 'span' })).toBeInTheDocument();
+    expect(screen.queryByText('external')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '查看JSON' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: '查看详情' })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: '修改' })).toHaveLength(2);
+
+    await user.selectOptions(screen.getByLabelText('交易对'), 'BTC-USDT');
+    await user.selectOptions(screen.getByLabelText('状态'), 'disabled');
+    await user.selectOptions(screen.getByLabelText('市场类型'), 'strategy');
+    await user.click(screen.getByRole('button', { name: '查询' }));
+
+    await waitFor(() => {
+      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/api/v1/market-pairs', 'pairs', {
+        symbol: 'BTC-USDT',
+        status: 'disabled',
+        market_type: 'strategy'
+      });
+    });
+  });
+
+  it('opens market pair details from row actions', async () => {
+    const user = userEvent.setup();
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/assets') {
+        return { rows: assetRows, raw: { [responseKey]: assetRows } };
+      }
+
+      if (endpoint === '/admin/api/v1/market-pairs') {
+        const rows = [
+          {
+            id: 1,
+            symbol: 'BTC-USDT',
+            base_asset: 'BTC',
+            quote_asset: 'USDT',
+            price_precision: 8,
+            qty_precision: 6,
+            min_order_value: '10.0000',
+            market_type: 'external',
+            status: 'active'
+          }
+        ];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
+      return { rows: [], raw: {} };
+    });
+    apiRequestMock.mockImplementation(async (path) => {
+      if (path === '/admin/api/v1/market-pairs/1') {
+        return { id: 1, symbol: 'BTC-USDT', detail: 'market-pair-detail' };
+      }
+
+      return {};
+    });
+
+    render(<ResourcePage config={resourceConfigs.marketPairs} />);
+
+    expect(await screen.findByText('BTC-USDT', { selector: 'span' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看详情' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/market-pairs/1');
+    });
+    expect(await screen.findByText(/"detail": "market-pair-detail"/)).toBeInTheDocument();
+  });
+
+  it('updates market pair safe config fields from row actions', async () => {
+    const user = userEvent.setup();
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/assets') {
+        return { rows: assetRows, raw: { [responseKey]: assetRows } };
+      }
+
+      if (endpoint === '/admin/api/v1/market-pairs') {
+        const rows = [
+          {
+            id: 1,
+            symbol: 'BTC-USDT',
+            base_asset_id: 11,
+            quote_asset_id: 12,
+            base_asset: 'BTC',
+            quote_asset: 'USDT',
+            price_precision: 8,
+            qty_precision: 6,
+            min_order_value: '10.000000000000000000',
+            market_type: 'external',
+            status: 'active'
+          }
+        ];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
+      return { rows: [], raw: {} };
+    });
+
+    render(<ResourcePage config={resourceConfigs.marketPairs} />);
+
+    expect(await screen.findByText('BTC-USDT', { selector: 'span' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '修改' }));
+    const dialog = await screen.findByRole('dialog', { name: '修改交易对配置' });
+    expect(within(dialog).queryByText('仅允许修改运营配置字段；交易对、基础资产、计价资产和状态保持只读。')).not.toBeInTheDocument();
+    await user.clear(within(dialog).getByLabelText('价格精度'));
+    await user.type(within(dialog).getByLabelText('价格精度'), '10');
+    await user.clear(within(dialog).getByLabelText('数量精度'));
+    await user.type(within(dialog).getByLabelText('数量精度'), '4');
+    await user.clear(within(dialog).getByLabelText('最小下单额'));
+    await user.type(within(dialog).getByLabelText('最小下单额'), '25.000000000000000000');
+    await user.selectOptions(within(dialog).getByLabelText('市场类型'), 'strategy');
+    await user.click(within(dialog).getByRole('button', { name: '提交修改' }));
+    await user.type(screen.getByLabelText('操作原因'), 'adjust pair config');
+    await user.click(screen.getByRole('button', { name: '确认' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/market-pairs/1', expect.objectContaining({ method: 'PATCH' }));
+    });
+    const request = apiRequestMock.mock.calls.find(([path]) => path === '/admin/api/v1/market-pairs/1')?.[1];
+    expect(request).toBeDefined();
+    const body = JSON.parse(String(request?.body));
+    expect(body).toEqual({
+      price_precision: 10,
+      qty_precision: 4,
+      min_order_value: '25.000000000000000000',
+      market_type: 'strategy',
+      reason: 'adjust pair config'
+    });
+    expect(body).not.toHaveProperty('symbol');
+    expect(body).not.toHaveProperty('base_asset_id');
+    expect(body).not.toHaveProperty('quote_asset_id');
+    expect(body).not.toHaveProperty('status');
+    expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/market-pairs')).toHaveLength(2);
   });
 
   it('opens spot order details and cancels cancellable orders from row actions', async () => {
@@ -304,7 +486,7 @@ describe('resourceConfigs create actions', () => {
 
     render(<ResourcePage config={resourceConfigs.marginProducts} />);
 
-    expect(await screen.findByText('BTC-USDT')).toBeInTheDocument();
+    expect(await screen.findByText('BTC-USDT', { selector: 'span' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '查看详情' }));
 
     await waitFor(() => {

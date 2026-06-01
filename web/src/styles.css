@@ -416,6 +416,32 @@ body {
   flex-shrink: 0;
 }
 
+.admin-filter-bar {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+
+.admin-filter-control {
+  display: grid;
+  min-width: 180px;
+  gap: 6px;
+  color: #344054;
+  font-size: 13px;
+}
+
+.admin-filter-control input,
+.admin-filter-control select {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: #fff;
+  box-sizing: border-box;
+}
+
 .admin-inline-action-button {
   min-height: 36px;
   padding: 0 16px;

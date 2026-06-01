@@ -6,7 +6,7 @@ import { ApiError, apiRequest } from '../../api/client';
 import type { ApiRecord } from '../../api/types';
 import { ConfirmAction } from '../../shared/ConfirmAction';
 
-const { Text, Title } = Typography;
+const { Title } = Typography;
 
 type AssetValues = {
   symbol: string;
@@ -24,6 +24,13 @@ type SpotPairValues = {
   qtyPrecision: string;
   minOrderValue: string;
   status: string;
+  marketType: string;
+};
+
+type MarketPairConfigValues = {
+  pricePrecision: string;
+  qtyPrecision: string;
+  minOrderValue: string;
   marketType: string;
 };
 
@@ -176,6 +183,10 @@ function isSpotPairCreatable(values: SpotPairValues): boolean {
   );
 }
 
+function isMarketPairConfigUpdatable(values: MarketPairConfigValues): boolean {
+  return Boolean(isNonNegativeIntegerInput(values.pricePrecision) && isNonNegativeIntegerInput(values.qtyPrecision) && values.minOrderValue.trim() && values.marketType.trim());
+}
+
 async function submitAction(label: string, request: () => Promise<unknown>) {
   try {
     await request();
@@ -290,26 +301,95 @@ function toggleActionText(nextStatus: string): string {
   return nextStatus === 'disabled' ? '禁用' : '启用';
 }
 
+function MarketPairEditAction({ helpers, pairId, record }: { helpers: RowActionHelpers; pairId: string; record: ApiRecord }) {
+  const [config, setConfig] = useState<MarketPairConfigValues>({
+    pricePrecision: recordString(record, 'price_precision'),
+    qtyPrecision: recordString(record, 'qty_precision'),
+    minOrderValue: recordString(record, 'min_order_value'),
+    marketType: recordString(record, 'market_type') || 'external'
+  });
+  const [visible, setVisible] = useState(false);
+
+  return (
+    <>
+      <Button disabled={!pairId} onClick={() => setVisible(true)} size="small" theme="borderless">
+        修改
+      </Button>
+      <Modal footer={null} onCancel={() => setVisible(false)} title="修改交易对配置" visible={visible}>
+        <Card bordered={false}>
+          <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
+            <Title heading={4}>修改交易对配置</Title>
+            <div className="admin-action-form">
+              <label>交易对<input readOnly value={recordString(record, 'symbol')} /></label>
+              <label>基础资产<input readOnly value={recordString(record, 'base_asset')} /></label>
+              <label>计价资产<input readOnly value={recordString(record, 'quote_asset')} /></label>
+              <label>当前状态<input readOnly value={recordString(record, 'status')} /></label>
+              <label>价格精度<input aria-label="价格精度" value={config.pricePrecision} onChange={(event) => setConfig({ ...config, pricePrecision: event.currentTarget.value })} /></label>
+              <label>数量精度<input aria-label="数量精度" value={config.qtyPrecision} onChange={(event) => setConfig({ ...config, qtyPrecision: event.currentTarget.value })} /></label>
+              <label>最小下单额<input aria-label="最小下单额" value={config.minOrderValue} onChange={(event) => setConfig({ ...config, minOrderValue: event.currentTarget.value })} /></label>
+              <label>
+                市场类型
+                <select aria-label="市场类型" value={config.marketType} onChange={(event) => setConfig({ ...config, marketType: event.currentTarget.value })}>
+                  <option value="external">外部行情</option>
+                  <option value="internal">内部撮合</option>
+                  <option value="strategy">策略行情</option>
+                </select>
+              </label>
+            </div>
+            <ConfirmAction
+              actionText="提交修改"
+              disabled={!isMarketPairConfigUpdatable(config)}
+              title="确认修改交易对配置"
+              onConfirm={async (reason) => {
+                await submitAction('修改交易对配置', () =>
+                  apiRequest(`/admin/api/v1/market-pairs/${pairId}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({
+                      price_precision: requiredNonNegativeInteger(config.pricePrecision, '价格精度'),
+                      qty_precision: requiredNonNegativeInteger(config.qtyPrecision, '数量精度'),
+                      min_order_value: requiredString(config.minOrderValue, '最小下单额'),
+                      market_type: requiredString(config.marketType, '市场类型'),
+                      reason
+                    })
+                  })
+                );
+                setVisible(false);
+                helpers.reload();
+              }}
+            />
+          </Space>
+        </Card>
+      </Modal>
+    </>
+  );
+}
+
 export function MarketPairRowActions({ helpers, record }: { helpers: RowActionHelpers; record: ApiRecord }) {
   const pairId = recordString(record, 'id');
   const nextStatus = recordString(record, 'status') === 'active' ? 'disabled' : 'active';
   const actionText = nextStatus === 'disabled' ? '禁用' : '启用';
 
   return (
-    <ConfirmAction
-      actionText={actionText}
-      disabled={!pairId}
-      title={`${actionText}交易对`}
-      onConfirm={async (reason) => {
-        await submitAction(`${actionText}交易对`, () =>
-          apiRequest(`/admin/api/v1/market-pairs/${pairId}/status`, {
-            method: 'PATCH',
-            body: JSON.stringify({ status: nextStatus, reason })
-          })
-        );
-        helpers.reload();
-      }}
-    />
+    <>
+      <Button disabled={!pairId} onClick={() => openRecordDetail('/admin/api/v1/market-pairs', pairId, helpers)} size="small" theme="borderless">
+        查看详情
+      </Button>
+      <MarketPairEditAction helpers={helpers} pairId={pairId} record={record} />
+      <ConfirmAction
+        actionText={actionText}
+        disabled={!pairId}
+        title={`${actionText}交易对`}
+        onConfirm={async (reason) => {
+          await submitAction(`${actionText}交易对`, () =>
+            apiRequest(`/admin/api/v1/market-pairs/${pairId}/status`, {
+              method: 'PATCH',
+              body: JSON.stringify({ status: nextStatus, reason })
+            })
+          );
+          helpers.reload();
+        }}
+      />
+    </>
   );
 }
 
@@ -525,10 +605,7 @@ export function CreateAssetAction() {
     <FormModal actionText="添加资产" title="添加资产">
       <Card bordered={false}>
         <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-          <div>
-            <Title heading={4}>添加资产</Title>
-            <Text type="secondary">资产创建后可作为交易对、钱包账户、闪兑和产品配置的基础资产。</Text>
-          </div>
+          <Title heading={4}>添加资产</Title>
           <div className="admin-action-form">
             <label>资产符号<input value={asset.symbol} onChange={(event) => setAsset({ ...asset, symbol: event.currentTarget.value })} placeholder="BTC" /></label>
             <label>资产名称<input value={asset.name} onChange={(event) => setAsset({ ...asset, name: event.currentTarget.value })} placeholder="Bitcoin" /></label>
@@ -584,10 +661,7 @@ export function CreateSpotPairAction() {
     <FormModal actionText="添加交易对" title="添加现货交易对">
       <Card bordered={false}>
         <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-          <div>
-            <Title heading={4}>添加现货交易对</Title>
-            <Text type="secondary">现货交易对创建后可被杠杆、秒合约产品复用。</Text>
-          </div>
+          <Title heading={4}>添加现货交易对</Title>
           <div className="admin-action-form">
             <AssetSelect
               label="基础资产"
@@ -660,10 +734,7 @@ export function CreateMarginPairAction() {
     <FormModal actionText="添加杠杆交易对" title="添加杠杆交易对">
       <Card bordered={false}>
         <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-          <div>
-            <Title heading={4}>添加杠杆交易对</Title>
-            <Text type="secondary">需先在交易对配置中创建现货交易对，再用 pair_id 开通杠杆交易。</Text>
-          </div>
+          <Title heading={4}>添加杠杆交易对</Title>
           <div className="admin-action-form">
             <label>杠杆交易对ID<input value={marginProduct.pairId} onChange={(event) => setMarginProduct({ ...marginProduct, pairId: event.currentTarget.value })} /></label>
             <AssetSelect
@@ -722,10 +793,7 @@ export function CreateSecondsPairAction() {
     <FormModal actionText="添加秒合约交易对" title="添加秒合约交易对">
       <Card bordered={false}>
         <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-          <div>
-            <Title heading={4}>添加秒合约交易对</Title>
-            <Text type="secondary">需先在交易对配置中创建现货交易对，再配置周期、赔率和押注资产。</Text>
-          </div>
+          <Title heading={4}>添加秒合约交易对</Title>
           <div className="admin-action-form">
             <label>秒合约交易对ID<input value={secondsProduct.pairId} onChange={(event) => setSecondsProduct({ ...secondsProduct, pairId: event.currentTarget.value })} /></label>
             <AssetSelect

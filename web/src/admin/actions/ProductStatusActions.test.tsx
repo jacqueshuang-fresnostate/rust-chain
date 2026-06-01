@@ -32,10 +32,15 @@ describe('ProductStatusActions', () => {
     vi.unstubAllGlobals();
   });
 
-  it('creates a spot trading pair through the Admin market pair endpoint', async () => {
+  it('creates a spot trading pair through the Admin market pair endpoint without static helper copy', async () => {
     const user = userEvent.setup();
     render(<ProductStatusActions />);
 
+    expect(screen.queryByText('创建现货交易对、杠杆产品、秒合约产品，并保留产品状态审计操作。')).not.toBeInTheDocument();
+    expect(screen.queryByText('交易对创建后可被现货、杠杆、秒合约产品复用。')).not.toBeInTheDocument();
+    expect(screen.queryByText('需先创建交易对，再用 pair_id 开通杠杆交易。')).not.toBeInTheDocument();
+    expect(screen.queryByText('需先创建交易对，再配置周期、赔率和押注资产。')).not.toBeInTheDocument();
+    expect(screen.queryByText('状态变更会要求操作原因并写入后端审计日志。')).not.toBeInTheDocument();
     await user.type(screen.getByLabelText('基础资产ID'), '11');
     await user.type(screen.getByLabelText('计价资产ID'), '12');
     await user.type(screen.getByLabelText('交易对符号'), 'btc_usdt');

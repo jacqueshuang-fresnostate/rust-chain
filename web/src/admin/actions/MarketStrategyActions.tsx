@@ -5,7 +5,7 @@ import { ApiError, apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
 
-const { Text, Title } = Typography;
+const { Title } = Typography;
 
 type CreateValues = {
   endTime: string;
@@ -75,12 +75,11 @@ export function MarketStrategyActions() {
 
   return (
     <main className="exchange-page admin-action-page">
-      <PageHeader title="行情策略动作" description="创建 internal/strategy 交易对策略并控制策略运行状态。" />
+      <PageHeader title="行情策略动作" />
       <div className="admin-action-grid">
         <Card bordered={false} shadows="always">
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
             <Title heading={4}>创建策略</Title>
-            <Text type="secondary">开始和结束时间均使用 Unix milliseconds。</Text>
             <div className="admin-action-form">
               <label>交易对ID<input value={createValues.pairId} onChange={(event) => setCreateValues({ ...createValues, pairId: event.currentTarget.value })} /></label>
               <label>策略类型<input value={createValues.strategyType} onChange={(event) => setCreateValues({ ...createValues, strategyType: event.currentTarget.value })} /></label>
@@ -131,7 +130,6 @@ export function MarketStrategyActions() {
         <Card bordered={false} shadows="always">
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
             <Title heading={4}>更新策略状态</Title>
-            <Text type="secondary">支持 draft、active、paused、disabled。</Text>
             <div className="admin-action-form">
               <label>策略ID<input value={statusValues.strategyId} onChange={(event) => setStatusValues({ ...statusValues, strategyId: event.currentTarget.value })} /></label>
               <label>

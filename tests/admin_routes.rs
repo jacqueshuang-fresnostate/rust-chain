@@ -2161,6 +2161,7 @@ async fn admin_trading_pair_detail_and_status_routes_require_admin_scope_mysql()
     assert_eq!(missing_reason.status(), StatusCode::BAD_REQUEST);
 
     let patch_admin = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("PATCH")
@@ -2172,6 +2173,131 @@ async fn admin_trading_pair_detail_and_status_routes_require_admin_scope_mysql()
         )
         .await?;
     assert_eq!(patch_admin.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let update_body = json!({
+        "price_precision": 8,
+        "qty_precision": 6,
+        "min_order_value": "10.000000000000000000",
+        "market_type": "external",
+        "reason": "update pair config"
+    })
+    .to_string();
+
+    let update_missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/market-pairs/1")
+                .header("content-type", "application/json")
+                .body(Body::from(update_body.clone()))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(update_missing.status(), StatusCode::UNAUTHORIZED);
+
+    let update_user = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/market-pairs/1")
+                .header(AUTHORIZATION, format!("Bearer {user_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(update_body.clone()))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(update_user.status(), StatusCode::FORBIDDEN);
+
+    let invalid_market_type = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/market-pairs/1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "price_precision": 8,
+                        "qty_precision": 6,
+                        "min_order_value": "10.000000000000000000",
+                        "market_type": "archive",
+                        "reason": "invalid market type"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(invalid_market_type.status(), StatusCode::BAD_REQUEST);
+
+    let blank_update_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/market-pairs/1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "price_precision": 8,
+                        "qty_precision": 6,
+                        "min_order_value": "10.000000000000000000",
+                        "market_type": "external",
+                        "reason": " "
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(blank_update_reason.status(), StatusCode::BAD_REQUEST);
+
+    let unknown_update_field = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/market-pairs/1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "price_precision": 8,
+                        "qty_precision": 6,
+                        "min_order_value": "10.000000000000000000",
+                        "market_type": "external",
+                        "status": "active",
+                        "reason": "unknown field"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(
+        unknown_update_field.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+
+    let config_update_admin = app
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/market-pairs/1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(update_body))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(
+        config_update_admin.status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
 
     Ok(())
 }
@@ -2253,6 +2379,59 @@ async fn admin_trading_pair_create_detail_status_update_and_audit() -> Result<()
         .await?;
     assert_eq!(stored_status, "active");
 
+    let config_update = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/admin/api/v1/market-pairs/{pair_id}"))
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "price_precision": 10,
+                        "qty_precision": 4,
+                        "min_order_value": "25.000000000000000000",
+                        "market_type": "strategy",
+                        "reason": "adjust pair config"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let config_update_status = config_update.status();
+    let config_updated = body_json(config_update).await?;
+    assert_eq!(
+        config_update_status,
+        StatusCode::OK,
+        "payload: {config_updated}"
+    );
+    assert_eq!(config_updated["id"], pair_id);
+    assert_eq!(config_updated["symbol"], symbol);
+    assert_eq!(config_updated["base_asset_id"], base_asset);
+    assert_eq!(config_updated["quote_asset_id"], quote_asset);
+    assert_eq!(config_updated["status"], "active");
+    assert_eq!(config_updated["price_precision"], 10);
+    assert_eq!(config_updated["qty_precision"], 4);
+    assert_eq!(config_updated["min_order_value"], "25.000000000000000000");
+    assert_eq!(config_updated["market_type"], "strategy");
+
+    let stored_config: (i32, i32, BigDecimal, String, String, u64, u64) = sqlx::query_as(
+        r#"SELECT price_precision, qty_precision, min_order_value, market_type, status, base_asset, quote_asset
+           FROM trading_pairs WHERE id = ?"#,
+    )
+    .bind(pair_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(stored_config.0, 10);
+    assert_eq!(stored_config.1, 4);
+    assert_eq!(stored_config.2, decimal("25.000000000000000000"));
+    assert_eq!(stored_config.3, "strategy");
+    assert_eq!(stored_config.4, "active");
+    assert_eq!(stored_config.5, base_asset);
+    assert_eq!(stored_config.6, quote_asset);
+
     let audits = sqlx::query_as::<_, AdminAuditRow>(
         r#"SELECT action, target_type, target_id, before_json, after_json, reason
            FROM admin_audit_logs
@@ -2263,7 +2442,7 @@ async fn admin_trading_pair_create_detail_status_update_and_audit() -> Result<()
     .bind(pair_id.to_string())
     .fetch_all(&pool)
     .await?;
-    assert_eq!(audits.len(), 1);
+    assert_eq!(audits.len(), 2);
     assert_eq!(audits[0].action, "trading_pair.status.update");
     assert_eq!(
         audits[0].before_json.as_ref().unwrap()["status"],
@@ -2271,6 +2450,24 @@ async fn admin_trading_pair_create_detail_status_update_and_audit() -> Result<()
     );
     assert_eq!(audits[0].after_json.as_ref().unwrap()["status"], "active");
     assert_eq!(audits[0].reason.as_deref(), Some("enable listed pair"));
+    assert_eq!(audits[1].action, "trading_pair.config.update");
+    assert_eq!(
+        audits[1].before_json.as_ref().unwrap()["price_precision"],
+        8
+    );
+    assert_eq!(
+        audits[1].after_json.as_ref().unwrap()["price_precision"],
+        10
+    );
+    assert_eq!(
+        audits[1].before_json.as_ref().unwrap()["market_type"],
+        "external"
+    );
+    assert_eq!(
+        audits[1].after_json.as_ref().unwrap()["market_type"],
+        "strategy"
+    );
+    assert_eq!(audits[1].reason.as_deref(), Some("adjust pair config"));
 
     sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ? AND target_type = 'trading_pair'")
         .bind(admin_id)

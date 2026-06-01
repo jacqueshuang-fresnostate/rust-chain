@@ -17,6 +17,7 @@ type TestRecord = {
   enabled: boolean;
   amount: string;
   created_at: number;
+  market_type?: string;
 };
 
 const columns: Array<AdminResourceColumn<TestRecord>> = [
@@ -32,7 +33,7 @@ describe('AdminResourcePage', () => {
     listAdminResourceMock.mockReset();
   });
 
-  it('loads and renders resource rows with shared formatters', async () => {
+  it('loads and renders resource rows with shared formatters without static helper copy', async () => {
     listAdminResourceMock.mockResolvedValueOnce({
       rows: [
         {
@@ -60,6 +61,7 @@ describe('AdminResourcePage', () => {
     expect(screen.getByText('启用')).toBeInTheDocument();
     expect(screen.getByText('123.4500 USDT')).toBeInTheDocument();
     expect(screen.getByText(/^2025年1月1日/)).toBeInTheDocument();
+    expect(screen.queryByText('后台资源检索视图，敏感操作需走二次确认。')).not.toBeInTheDocument();
     expect(listAdminResourceMock).toHaveBeenCalledWith('/admin/accounts', 'items', {});
   });
 
@@ -84,6 +86,58 @@ describe('AdminResourcePage', () => {
     await waitFor(() => {
       expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', { keyword: 'alice' });
     });
+  });
+
+  it('reloads with selected filter values', async () => {
+    const user = userEvent.setup();
+    listAdminResourceMock.mockResolvedValue({ rows: [], raw: { items: [] } });
+
+    render(
+      <AdminResourcePage<TestRecord>
+        title="管理员资源"
+        endpoint="/admin/accounts"
+        responseKey="items"
+        columns={columns}
+        filters={[
+          {
+            key: 'status',
+            label: '状态',
+            type: 'select',
+            options: [
+              { label: '启用', value: 'active' },
+              { label: '禁用', value: 'disabled' }
+            ]
+          }
+        ]}
+      />
+    );
+
+    await screen.findByText('暂无数据');
+    await user.selectOptions(screen.getByLabelText('状态'), 'disabled');
+    await user.click(screen.getByRole('button', { name: '查询' }));
+
+    await waitFor(() => {
+      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', { status: 'disabled' });
+    });
+  });
+
+  it('renders mapped column values', async () => {
+    listAdminResourceMock.mockResolvedValueOnce({
+      rows: [{ id: 4, name: 'BTC-USDT', enabled: true, amount: '1.0000', created_at: 1_735_732_800_000, market_type: 'external' }],
+      raw: { items: [] }
+    });
+
+    render(
+      <AdminResourcePage<TestRecord>
+        title="管理员资源"
+        endpoint="/admin/accounts"
+        responseKey="items"
+        columns={[...columns, { key: 'market_type', title: '市场类型', valueMap: { external: '外部行情' } }]}
+      />
+    );
+
+    expect(await screen.findByText('外部行情')).toBeInTheDocument();
+    expect(screen.queryByText('external')).not.toBeInTheDocument();
   });
 
   it('opens a JSON drawer for the selected row', async () => {
@@ -145,5 +199,33 @@ describe('AdminResourcePage', () => {
     await waitFor(() => {
       expect(listAdminResourceMock).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it('can hide the default JSON action while custom actions still open details', async () => {
+    const user = userEvent.setup();
+    listAdminResourceMock.mockResolvedValue({
+      rows: [{ id: 5, name: '交易对详情', enabled: true, amount: '1.0000', created_at: 1_735_732_800_000 }],
+      raw: { items: [] }
+    });
+
+    render(
+      <AdminResourcePage<TestRecord>
+        title="管理员资源"
+        endpoint="/admin/accounts"
+        responseKey="items"
+        columns={columns}
+        showJsonAction={false}
+        rowActions={(record, helpers) => (
+          <button type="button" onClick={() => helpers.openJson({ detail: record.name })}>
+            查看详情
+          </button>
+        )}
+      />
+    );
+
+    await screen.findByText('交易对详情');
+    expect(screen.queryByRole('button', { name: '查看JSON' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看详情' }));
+    expect(await screen.findByText(/"detail": "交易对详情"/)).toBeInTheDocument();
   });
 });

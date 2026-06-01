@@ -5,7 +5,7 @@ import { ApiError, apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
 
-const { Text, Title } = Typography;
+const { Title } = Typography;
 
 type ProductKind = 'earn' | 'margin' | 'seconds-contract';
 
@@ -159,14 +159,11 @@ export function ProductStatusActions() {
 
   return (
     <main className="exchange-page admin-action-page">
-      <PageHeader title="产品配置动作" description="创建现货交易对、杠杆产品、秒合约产品，并保留产品状态审计操作。" />
+      <PageHeader title="产品配置动作" />
       <div className="admin-action-grid">
         <Card bordered={false} shadows="always">
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-            <div>
-              <Title heading={4}>创建现货交易对</Title>
-              <Text type="secondary">交易对创建后可被现货、杠杆、秒合约产品复用。</Text>
-            </div>
+            <Title heading={4}>创建现货交易对</Title>
             <div className="admin-action-form">
               <label>基础资产ID<input value={spotPair.baseAssetId} onChange={(event) => setSpotPair({ ...spotPair, baseAssetId: event.currentTarget.value })} /></label>
               <label>计价资产ID<input value={spotPair.quoteAssetId} onChange={(event) => setSpotPair({ ...spotPair, quoteAssetId: event.currentTarget.value })} /></label>
@@ -218,10 +215,7 @@ export function ProductStatusActions() {
 
         <Card bordered={false} shadows="always">
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-            <div>
-              <Title heading={4}>创建杠杆产品</Title>
-              <Text type="secondary">需先创建交易对，再用 pair_id 开通杠杆交易。</Text>
-            </div>
+            <Title heading={4}>创建杠杆产品</Title>
             <div className="admin-action-form">
               <label>杠杆交易对ID<input value={marginProduct.pairId} onChange={(event) => setMarginProduct({ ...marginProduct, pairId: event.currentTarget.value })} /></label>
               <label>保证金资产ID<input value={marginProduct.marginAsset} onChange={(event) => setMarginProduct({ ...marginProduct, marginAsset: event.currentTarget.value })} /></label>
@@ -265,10 +259,7 @@ export function ProductStatusActions() {
 
         <Card bordered={false} shadows="always">
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-            <div>
-              <Title heading={4}>创建秒合约产品</Title>
-              <Text type="secondary">需先创建交易对，再配置周期、赔率和押注资产。</Text>
-            </div>
+            <Title heading={4}>创建秒合约产品</Title>
             <div className="admin-action-form">
               <label>秒合约交易对ID<input value={secondsProduct.pairId} onChange={(event) => setSecondsProduct({ ...secondsProduct, pairId: event.currentTarget.value })} /></label>
               <label>押注资产ID<input value={secondsProduct.stakeAsset} onChange={(event) => setSecondsProduct({ ...secondsProduct, stakeAsset: event.currentTarget.value })} /></label>
@@ -310,10 +301,7 @@ export function ProductStatusActions() {
 
         <Card bordered={false} shadows="always">
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-            <div>
-              <Title heading={4}>更新产品状态</Title>
-              <Text type="secondary">状态变更会要求操作原因并写入后端审计日志。</Text>
-            </div>
+            <Title heading={4}>更新产品状态</Title>
             <div className="admin-action-form admin-action-form-narrow">
               <label>
                 产品模块

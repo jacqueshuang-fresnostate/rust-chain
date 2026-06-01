@@ -5,7 +5,7 @@ import { ApiError, apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
 
-const { Text, Title } = Typography;
+const { Title } = Typography;
 
 type AgentCreateValues = {
   adminPasswordHash: string;
@@ -68,14 +68,11 @@ export function AgentManagementPage() {
 
   return (
     <main className="exchange-page admin-action-page">
-      <PageHeader title="代理管理" description="创建代理账号并调整代理状态；所有变更都必须填写操作原因。" />
+      <PageHeader title="代理管理" />
       <div className="admin-action-grid">
         <Card bordered={false} shadows="always">
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-            <div>
-              <Title heading={4}>创建代理</Title>
-              <Text type="secondary">绑定已存在用户，创建代理编号和代理后台账号。</Text>
-            </div>
+            <Title heading={4}>创建代理</Title>
             <div className="admin-action-form">
               <label>
                 用户ID
@@ -123,10 +120,7 @@ export function AgentManagementPage() {
 
         <Card bordered={false} shadows="always">
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-            <div>
-              <Title heading={4}>更新代理状态</Title>
-              <Text type="secondary">支持 active、suspended、disabled。</Text>
-            </div>
+            <Title heading={4}>更新代理状态</Title>
             <div className="admin-action-form">
               <label>
                 代理ID

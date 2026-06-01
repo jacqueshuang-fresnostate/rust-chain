@@ -152,14 +152,11 @@ export function MarketFeedConfigPage() {
 
   return (
     <main className="exchange-page admin-action-page">
-      <PageHeader title="行情订阅配置" description="配置第三方行情 symbols、intervals、providers 和 API Key；保存后需手动重载才会生效。" />
+      <PageHeader title="行情订阅配置" />
       <div className="admin-action-grid">
         <Card bordered={false} shadows="always">
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-            <div>
-              <Title heading={4}>订阅配置</Title>
-              <Text type="secondary">交易对支持逗号分隔输入；K 线周期和行情源可多选，保存后需手动重载。</Text>
-            </div>
+            <Title heading={4}>订阅配置</Title>
             <div className="admin-action-form">
               <label>
                 交易对 symbols
@@ -249,10 +246,7 @@ export function MarketFeedConfigPage() {
 
         <Card bordered={false} shadows="always">
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-            <div>
-              <Title heading={4}>运行状态</Title>
-              <Text type="secondary">保存配置不会立即影响 worker，只有手动重载会更新运行态。</Text>
-            </div>
+            <Title heading={4}>运行状态</Title>
             <div className="admin-action-summary">
               <span>配置状态 <StatusTag value={configStatus(config)} /></span>
               <span>配置版本：{config?.version ?? '-'}</span>
@@ -268,10 +262,7 @@ export function MarketFeedConfigPage() {
 
         <Card bordered={false} shadows="always">
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-            <div>
-              <Title heading={4}>Provider 凭证</Title>
-              <Text type="secondary">API Key、Secret、Passphrase 只会加密提交；页面和接口仅展示 Key 掩码。</Text>
-            </div>
+            <Title heading={4}>Provider 凭证</Title>
             <div className="admin-action-form">
               <label>
                 Provider

@@ -5,7 +5,7 @@ import { ApiError, apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
 
-const { Text, Title } = Typography;
+const { Title } = Typography;
 
 type RuleValues = {
   convertPairId: string;
@@ -42,13 +42,10 @@ export function ConvertRuleActions() {
 
   return (
     <main className="exchange-page admin-action-page">
-      <PageHeader title="新币闪兑规则" description="通过 POST upsert 固定汇率规则；本页面不创建 GET 列表请求。" />
+      <PageHeader title="新币闪兑规则" />
       <Card bordered={false} shadows="always">
         <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-          <div>
-            <Title heading={4}>新增或更新固定汇率</Title>
-            <Text type="secondary">后端仅允许 rate_source=fixed，重复交易对会更新现有规则。</Text>
-          </div>
+          <Title heading={4}>新增或更新固定汇率</Title>
           <div className="admin-action-form admin-action-form-narrow">
             <label>闪兑交易对ID<input value={values.convertPairId} onChange={(event) => setValues({ ...values, convertPairId: event.currentTarget.value })} /></label>
             <label>固定汇率<input value={values.fixedRate} onChange={(event) => setValues({ ...values, fixedRate: event.currentTarget.value })} /></label>

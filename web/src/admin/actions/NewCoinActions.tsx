@@ -5,7 +5,7 @@ import { ApiError, apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
 
-const { Text, Title } = Typography;
+const { Title } = Typography;
 
 type LifecycleValues = {
   projectId: string;
@@ -96,12 +96,11 @@ export function NewCoinActions() {
 
   return (
     <main className="exchange-page admin-action-page">
-      <PageHeader title="新币生命周期动作" description="覆盖生命周期流转、后台派发、解禁规则和矿工费规则更新。" />
+      <PageHeader title="新币生命周期动作" />
       <div className="admin-action-grid">
         <Card bordered={false} shadows="always">
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
             <Title heading={4}>生命周期流转</Title>
-            <Text type="secondary">按后端顺序推进 preheat → subscription → distribution → listed。</Text>
             <div className="admin-action-form">
               <label>项目ID<input value={lifecycle.projectId} onChange={(event) => setLifecycle({ ...lifecycle, projectId: event.currentTarget.value })} /></label>
               <label>
@@ -133,7 +132,6 @@ export function NewCoinActions() {
         <Card bordered={false} shadows="always">
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
             <Title heading={4}>后台派发</Title>
-            <Text type="secondary">项目必须处于 distribution 阶段，幂等键用于避免重复派发。</Text>
             <div className="admin-action-form">
               <label>项目ID<input value={distribute.projectId} onChange={(event) => setDistribute({ ...distribute, projectId: event.currentTarget.value })} /></label>
               <label>用户ID<input value={distribute.userId} onChange={(event) => setDistribute({ ...distribute, userId: event.currentTarget.value })} /></label>
@@ -165,7 +163,6 @@ export function NewCoinActions() {
         <Card bordered={false} shadows="always">
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
             <Title heading={4}>解禁规则</Title>
-            <Text type="secondary">时间字段按 Unix milliseconds 输入，relative_period 使用秒数。</Text>
             <div className="admin-action-form">
               <label>项目ID<input value={unlockRule.projectId} onChange={(event) => setUnlockRule({ ...unlockRule, projectId: event.currentTarget.value })} /></label>
               <label>
@@ -204,7 +201,6 @@ export function NewCoinActions() {
         <Card bordered={false} shadows="always">
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
             <Title heading={4}>矿工费规则</Title>
-            <Text type="secondary">启用矿工费时需提供费率、计费依据和费用资产。</Text>
             <div className="admin-action-form">
               <label>项目ID<input value={unlockFee.projectId} onChange={(event) => setUnlockFee({ ...unlockFee, projectId: event.currentTarget.value })} /></label>
               <label className="admin-action-checkbox"><input checked={unlockFee.feeEnabled} type="checkbox" onChange={(event) => setUnlockFee({ ...unlockFee, feeEnabled: event.currentTarget.checked })} /> 启用矿工费</label>

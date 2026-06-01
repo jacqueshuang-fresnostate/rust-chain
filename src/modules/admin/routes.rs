@@ -62,7 +62,10 @@ pub fn routes() -> Router<AppState> {
             "/market-pairs",
             get(list_trading_pairs).post(create_trading_pair),
         )
-        .route("/market-pairs/:id", get(get_trading_pair))
+        .route(
+            "/market-pairs/:id",
+            get(get_trading_pair).patch(update_trading_pair),
+        )
         .route(
             "/market-pairs/:id/status",
             patch(update_trading_pair_status),
@@ -316,6 +319,16 @@ struct CreateTradingPairRequest {
 #[derive(Debug, Deserialize)]
 struct UpdateTradingPairStatusRequest {
     status: String,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateTradingPairRequest {
+    price_precision: i32,
+    qty_precision: i32,
+    min_order_value: BigDecimal,
+    market_type: String,
     reason: Option<String>,
 }
 
@@ -2008,6 +2021,49 @@ async fn get_trading_pair(
 ) -> AppResult<Json<AdminTradingPairResponse>> {
     let pair = load_trading_pair_by_id(&mysql_pool(&state)?, pair_id).await?;
     Ok(Json(pair))
+}
+
+async fn update_trading_pair(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(pair_id): Path<u64>,
+    Json(request): Json<UpdateTradingPairRequest>,
+) -> AppResult<Json<AdminTradingPairResponse>> {
+    validate_update_trading_pair_request(&request)?;
+    let market_type = validate_trading_pair_market_type(&request.market_type)?;
+    let reason = required_reason(request.reason)?;
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    let pool = mysql_pool(&state)?;
+    let mut tx = pool.begin().await?;
+    let before = lock_trading_pair_in_tx(&mut tx, pair_id).await?;
+    sqlx::query(
+        r#"UPDATE trading_pairs
+           SET price_precision = ?, qty_precision = ?, min_order_value = ?, market_type = ?
+           WHERE id = ?"#,
+    )
+    .bind(request.price_precision)
+    .bind(request.qty_precision)
+    .bind(&request.min_order_value)
+    .bind(&market_type)
+    .bind(pair_id)
+    .execute(&mut *tx)
+    .await?;
+    let after = load_trading_pair_in_tx(&mut tx, pair_id).await?;
+    insert_typed_admin_audit_log_in_tx(
+        &mut tx,
+        admin_id,
+        AdminAuditEntry {
+            action: "trading_pair.config.update",
+            target_type: "trading_pair",
+            target_id: after.id,
+            before_json: Some(trading_pair_audit_json(&before)),
+            after_json: Some(trading_pair_audit_json(&after)),
+            reason: Some(reason),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(after))
 }
 
 async fn update_trading_pair_status(
@@ -4363,21 +4419,44 @@ fn validate_create_trading_pair(request: &CreateTradingPairRequest) -> AppResult
         ));
     }
     normalize_trading_pair_symbol(&request.symbol)?;
-    if request.price_precision < 0 || request.qty_precision < 0 {
-        return Err(AppError::Validation(
-            "trading pair precision must be non-negative".to_owned(),
-        ));
-    }
-    if request.min_order_value <= 0 {
-        return Err(AppError::Validation(
-            "min_order_value must be positive".to_owned(),
-        ));
-    }
+    validate_trading_pair_config(
+        request.price_precision,
+        request.qty_precision,
+        &request.min_order_value,
+    )?;
     if let Some(status) = request.status.as_deref() {
         validate_trading_pair_status(status)?;
     }
     if let Some(market_type) = request.market_type.as_deref() {
         validate_trading_pair_market_type(market_type)?;
+    }
+    Ok(())
+}
+
+fn validate_update_trading_pair_request(request: &UpdateTradingPairRequest) -> AppResult<()> {
+    validate_trading_pair_config(
+        request.price_precision,
+        request.qty_precision,
+        &request.min_order_value,
+    )?;
+    validate_trading_pair_market_type(&request.market_type)?;
+    Ok(())
+}
+
+fn validate_trading_pair_config(
+    price_precision: i32,
+    qty_precision: i32,
+    min_order_value: &BigDecimal,
+) -> AppResult<()> {
+    if price_precision < 0 || qty_precision < 0 {
+        return Err(AppError::Validation(
+            "trading pair precision must be non-negative".to_owned(),
+        ));
+    }
+    if min_order_value <= &BigDecimal::from(0) {
+        return Err(AppError::Validation(
+            "min_order_value must be positive".to_owned(),
+        ));
     }
     Ok(())
 }

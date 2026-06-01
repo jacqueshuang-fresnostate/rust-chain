@@ -18,6 +18,7 @@ export type AdminResourceColumn<T extends ApiRecord> = {
   key: Extract<keyof T, string>;
   title: string;
   type?: 'amount' | 'json' | 'status' | 'text' | 'timestamp';
+  valueMap?: Record<string, string>;
 };
 
 type AdminResourcePageProps<T extends ApiRecord> = {
@@ -33,10 +34,16 @@ type AdminResourcePageProps<T extends ApiRecord> = {
       openJson: (data: ApiRecord) => void;
     }
   ) => ReactNode;
+  showJsonAction?: boolean;
   title: string;
 };
 
 function renderCell<T extends ApiRecord>(column: AdminResourceColumn<T>, value: T[Extract<keyof T, string>]) {
+  const mappedValue = value === null || value === undefined ? undefined : column.valueMap?.[String(value)];
+  if (mappedValue) {
+    return <span>{mappedValue}</span>;
+  }
+
   if (column.type === 'timestamp') {
     return <TimestampText value={typeof value === 'number' ? value : null} />;
   }
@@ -56,7 +63,16 @@ function renderCell<T extends ApiRecord>(column: AdminResourceColumn<T>, value: 
   return <span>{value === null || value === undefined || value === '' ? '-' : String(value)}</span>;
 }
 
-export function AdminResourcePage<T extends ApiRecord>({ actions, columns, endpoint, filters, responseKey, rowActions, title }: AdminResourcePageProps<T>) {
+export function AdminResourcePage<T extends ApiRecord>({
+  actions,
+  columns,
+  endpoint,
+  filters,
+  responseKey,
+  rowActions,
+  showJsonAction = true,
+  title
+}: AdminResourcePageProps<T>) {
   const [drawerRow, setDrawerRow] = useState<ApiRecord | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [filterValues, setFilterValues] = useState<FilterValues>({});
@@ -95,6 +111,25 @@ export function AdminResourcePage<T extends ApiRecord>({ actions, columns, endpo
     };
   }, [endpoint, filterValues, reloadVersion, responseKey]);
 
+  const filterFields = useMemo(
+    () =>
+      filters?.map((field) => {
+        if (!field.optionsFromRows) {
+          return field;
+        }
+
+        const options = rows
+          .map((row) => row[field.key])
+          .filter((value): value is string | number => typeof value === 'string' || typeof value === 'number')
+          .map((value) => String(value))
+          .filter((item, index, values) => item.length > 0 && values.indexOf(item) === index)
+          .map((item) => ({ label: item, value: item }));
+
+        return { ...field, options };
+      }),
+    [filters, rows]
+  );
+
   const tableColumns = useMemo<Array<ColumnProps<T>>>(() => {
     const resourceColumns = columns.map<ColumnProps<T>>((column) => ({
       dataIndex: column.key,
@@ -108,30 +143,29 @@ export function AdminResourcePage<T extends ApiRecord>({ actions, columns, endpo
         render: (_value: unknown, record: T) => (
           <Space spacing={6} wrap>
             {rowActions?.(record, { reload, openJson: setDrawerRow })}
-            <Button onClick={() => setDrawerRow(record)} size="small" theme="borderless">
-              查看JSON
-            </Button>
+            {showJsonAction ? (
+              <Button onClick={() => setDrawerRow(record)} size="small" theme="borderless">
+                查看JSON
+              </Button>
+            ) : null}
           </Space>
         ),
         title: '操作'
       }
     ];
-  }, [columns, reload, rowActions]);
+  }, [columns, reload, rowActions, showJsonAction]);
 
   return (
     <main className="exchange-page">
       <Card bordered={false} shadows="always">
         <Space align="start" spacing={20} vertical style={{ width: '100%' }}>
           <div className="admin-resource-header">
-            <div>
-              <Title heading={3} style={{ marginBottom: 8 }}>
-                {title}
-              </Title>
-              <Text type="secondary">后台资源检索视图，敏感操作需走二次确认。</Text>
-            </div>
+            <Title heading={3} style={{ marginBottom: 8 }}>
+              {title}
+            </Title>
             {actions ? <div className="admin-resource-actions">{actions}</div> : null}
           </div>
-          <FilterBar fields={filters} loading={loading} onChange={setFilterValues} value={filterValues} />
+          <FilterBar fields={filterFields} loading={loading} onChange={setFilterValues} value={filterValues} />
           <DataTable columns={tableColumns} data={rows} error={error} loading={loading} />
         </Space>
       </Card>
