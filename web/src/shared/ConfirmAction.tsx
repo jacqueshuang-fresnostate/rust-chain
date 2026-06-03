@@ -39,6 +39,7 @@ export function ConfirmAction({ actionText = '执行', confirmText = '确认', d
       </Button>
       <Modal
         confirmLoading={submitting}
+        motion={false}
         okButtonProps={{ 'aria-label': confirmText, disabled: reason.trim().length === 0 }}
         okText={confirmText}
         onCancel={() => setVisible(false)}

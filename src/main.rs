@@ -1,7 +1,7 @@
 use exchange_api::{
     build_router,
     config::Settings,
-    infra,
+    infra::{self, email::SmtpEmailSender},
     modules::admin::market_feed_config::{
         load_enabled_config_for_bootstrap, runtime_config_from_response,
     },
@@ -12,6 +12,7 @@ use exchange_api::{
         margin_liquidation, market_feed, seconds_contract_settlement, unlock_scanner,
     },
 };
+use std::sync::Arc;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -36,7 +37,8 @@ async fn main() -> anyhow::Result<()> {
         .with_redis(redis)
         .with_rabbitmq(rabbitmq)
         .with_event_broadcast_hub(EventBroadcastHub::new(1024))
-        .with_market_feed_supervisor(market_feed_supervisor.clone());
+        .with_market_feed_supervisor(market_feed_supervisor.clone())
+        .with_email_sender(Arc::new(SmtpEmailSender));
 
     if let Some(pool) = state.mysql.clone() {
         let market_feed_state = state.clone();

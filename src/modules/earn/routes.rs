@@ -63,6 +63,8 @@ struct SubscribeEarnRequest {
 struct CreateEarnProductRequest {
     asset_id: u64,
     name: String,
+    category: Option<String>,
+    introduction_json: Option<Value>,
     term_days: u32,
     apr_rate: BigDecimal,
     min_subscribe: BigDecimal,
@@ -83,6 +85,8 @@ struct EarnProductResponse {
     asset_id: u64,
     asset_symbol: String,
     name: String,
+    category: String,
+    introduction_json: SqlxJson<Value>,
     term_days: u32,
     apr_rate: BigDecimal,
     min_subscribe: BigDecimal,
@@ -255,16 +259,21 @@ async fn create_product(
     let reason = required_reason(request.reason)?;
     let admin_id = admin_id_from_subject(&claims.sub)?;
     let status = normalized_product_status(request.status.as_deref().unwrap_or("active"))?;
+    let category = normalized_product_category(request.category.as_deref())?;
+    let introduction_json =
+        normalized_introduction_json(request.introduction_json.clone(), request.name.trim())?;
     let pool = mysql_pool(&state)?;
     let mut tx = pool.begin().await?;
     ensure_asset_exists(&mut tx, request.asset_id).await?;
     let product_id = sqlx::query(
         r#"INSERT INTO earn_products
-           (asset_id, name, term_days, apr_rate, min_subscribe, max_subscribe, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?)"#,
+           (asset_id, name, category, introduction_json, term_days, apr_rate, min_subscribe, max_subscribe, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(request.asset_id)
     .bind(request.name.trim())
+    .bind(&category)
+    .bind(SqlxJson(introduction_json))
     .bind(request.term_days)
     .bind(&request.apr_rate)
     .bind(&request.min_subscribe)
@@ -327,7 +336,8 @@ async fn list_products(
 ) -> AppResult<Json<EarnProductsResponse>> {
     let mut builder = QueryBuilder::<MySql>::new(
         r#"SELECT products.id, products.asset_id, assets.symbol AS asset_symbol,
-                  products.name, products.term_days, products.apr_rate,
+                  products.name, products.category, products.introduction_json,
+                  products.term_days, products.apr_rate,
                   products.min_subscribe, products.max_subscribe, products.status
            FROM earn_products products
            INNER JOIN assets ON assets.id = products.asset_id"#,
@@ -672,7 +682,8 @@ async fn load_product_by_id(
 ) -> AppResult<EarnProductResponse> {
     sqlx::query_as::<_, EarnProductResponse>(
         r#"SELECT products.id, products.asset_id, assets.symbol AS asset_symbol,
-                  products.name, products.term_days, products.apr_rate,
+                  products.name, products.category, products.introduction_json,
+                  products.term_days, products.apr_rate,
                   products.min_subscribe, products.max_subscribe, products.status
            FROM earn_products products
            INNER JOIN assets ON assets.id = products.asset_id
@@ -691,7 +702,8 @@ async fn lock_product_by_id(
 ) -> AppResult<EarnProductResponse> {
     sqlx::query_as::<_, EarnProductResponse>(
         r#"SELECT products.id, products.asset_id, assets.symbol AS asset_symbol,
-                  products.name, products.term_days, products.apr_rate,
+                  products.name, products.category, products.introduction_json,
+                  products.term_days, products.apr_rate,
                   products.min_subscribe, products.max_subscribe, products.status
            FROM earn_products products
            INNER JOIN assets ON assets.id = products.asset_id
@@ -858,6 +870,8 @@ fn product_audit_json(product: &EarnProductResponse) -> Value {
         "asset_id": product.asset_id,
         "asset_symbol": product.asset_symbol,
         "name": product.name,
+        "category": product.category,
+        "introduction_json": product.introduction_json.0.clone(),
         "term_days": product.term_days,
         "apr_rate": product.apr_rate,
         "min_subscribe": product.min_subscribe,
@@ -895,6 +909,8 @@ fn validate_create_product_request(request: &CreateEarnProductRequest) -> AppRes
     if let Some(status) = request.status.as_deref() {
         normalized_product_status(status)?;
     }
+    normalized_product_category(request.category.as_deref())?;
+    normalized_introduction_json(request.introduction_json.clone(), &name)?;
     validate_optional_reason(request.reason.as_deref())?;
     Ok(())
 }
@@ -934,6 +950,179 @@ fn normalized_product_status(value: &str) -> AppResult<String> {
     }
 }
 
+fn normalized_product_category(value: Option<&str>) -> AppResult<String> {
+    let Some(category) = value
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .or_else(|| Some("fixed_term".to_owned()))
+    else {
+        unreachable!("default earn product category is always present");
+    };
+    if category.chars().count() > EARN_PRODUCT_CATEGORY_MAX_LEN {
+        return Err(AppError::Validation(
+            "earn product category is too long".to_owned(),
+        ));
+    }
+    if !category
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || character == '_' || character == '-')
+    {
+        return Err(AppError::Validation(
+            "earn product category supports only letters, numbers, underscore, and hyphen"
+                .to_owned(),
+        ));
+    }
+    Ok(category)
+}
+
+fn default_introduction_json(product_name: &str) -> Value {
+    json!({
+        "version": 1,
+        "default_locale": "zh-CN",
+        "items": [
+            {
+                "locale": "zh-CN",
+                "country": "CN",
+                "title": product_name,
+                "content": [
+                    { "type": "p", "children": [{ "text": product_name }] }
+                ]
+            }
+        ]
+    })
+}
+
+fn normalized_introduction_json(value: Option<Value>, product_name: &str) -> AppResult<Value> {
+    let introduction = value.unwrap_or_else(|| default_introduction_json(product_name));
+    validate_introduction_json(&introduction)?;
+    Ok(introduction)
+}
+
+fn validate_introduction_json(value: &Value) -> AppResult<()> {
+    let object = value.as_object().ok_or_else(|| {
+        AppError::Validation("earn product introduction must be an object".to_owned())
+    })?;
+    if object.get("version").and_then(Value::as_u64) != Some(1) {
+        return Err(AppError::Validation(
+            "earn product introduction version must be 1".to_owned(),
+        ));
+    }
+    let default_locale = object
+        .get("default_locale")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            AppError::Validation("earn product introduction default_locale is required".to_owned())
+        })?;
+    let items = object
+        .get("items")
+        .and_then(Value::as_array)
+        .filter(|items| !items.is_empty())
+        .ok_or_else(|| {
+            AppError::Validation("earn product introduction items are required".to_owned())
+        })?;
+    let mut has_default_locale = false;
+    for item in items {
+        let item_object = item.as_object().ok_or_else(|| {
+            AppError::Validation("earn product introduction item must be an object".to_owned())
+        })?;
+        let locale = required_intro_string(item_object.get("locale"), "locale")?;
+        if locale == default_locale {
+            has_default_locale = true;
+        }
+        required_intro_string(item_object.get("country"), "country")?;
+        let title = required_intro_string(item_object.get("title"), "title")?;
+        if title.chars().count() > EARN_INTRO_TITLE_MAX_LEN {
+            return Err(AppError::Validation(
+                "earn product introduction title is too long".to_owned(),
+            ));
+        }
+        let content = item_object
+            .get("content")
+            .and_then(Value::as_array)
+            .filter(|content| !content.is_empty())
+            .ok_or_else(|| {
+                AppError::Validation("earn product introduction content is required".to_owned())
+            })?;
+        validate_plate_content(content)?;
+    }
+    if !has_default_locale {
+        return Err(AppError::Validation(
+            "earn product introduction default_locale must exist in items".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_plate_content(content: &[Value]) -> AppResult<()> {
+    for node in content {
+        validate_plate_block_node(node)?;
+    }
+    Ok(())
+}
+
+fn validate_plate_block_node(node: &Value) -> AppResult<()> {
+    let object = node.as_object().ok_or_else(invalid_plate_content)?;
+    if object
+        .keys()
+        .any(|key| !matches!(key.as_str(), "type" | "children"))
+    {
+        return Err(invalid_plate_content());
+    }
+    let node_type = object
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or_else(invalid_plate_content)?;
+    if !matches!(node_type, "p" | "h1" | "h2" | "h3" | "blockquote") {
+        return Err(invalid_plate_content());
+    }
+    let children = object
+        .get("children")
+        .and_then(Value::as_array)
+        .filter(|children| !children.is_empty())
+        .ok_or_else(invalid_plate_content)?;
+    for child in children {
+        validate_plate_child_node(child)?;
+    }
+    Ok(())
+}
+
+fn validate_plate_child_node(node: &Value) -> AppResult<()> {
+    let object = node.as_object().ok_or_else(invalid_plate_content)?;
+    if !object.get("text").is_some_and(Value::is_string) {
+        return Err(invalid_plate_content());
+    }
+    if object
+        .keys()
+        .any(|key| !matches!(key.as_str(), "text" | "bold" | "italic" | "underline"))
+    {
+        return Err(invalid_plate_content());
+    }
+    for mark in ["bold", "italic", "underline"] {
+        if let Some(value) = object.get(mark)
+            && !value.is_boolean()
+        {
+            return Err(invalid_plate_content());
+        }
+    }
+    Ok(())
+}
+
+fn invalid_plate_content() -> AppError {
+    AppError::Validation("earn product introduction content node is invalid".to_owned())
+}
+
+fn required_intro_string<'a>(value: Option<&'a Value>, field: &str) -> AppResult<&'a str> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            AppError::Validation(format!("earn product introduction {field} is required"))
+        })
+}
+
 fn ensure_existing_subscription_matches_request(
     existing: &EarnSubscriptionResponse,
     product_id: u64,
@@ -970,6 +1159,8 @@ fn validate_product_amount(amount: &BigDecimal, product: &EarnProductRuleRow) ->
 
 const EARN_PRODUCT_MAX_TERM_DAYS: u32 = 3_650;
 const EARN_PRODUCT_NAME_MAX_LEN: usize = 128;
+const EARN_PRODUCT_CATEGORY_MAX_LEN: usize = 64;
+const EARN_INTRO_TITLE_MAX_LEN: usize = 128;
 const EARN_AUDIT_REASON_MAX_LEN: usize = 512;
 const EARN_APR_MAX_SCALE: i64 = 8;
 const EARN_APR_MAX_INTEGER_DIGITS: usize = 10;

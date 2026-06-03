@@ -1,5 +1,7 @@
 import { Button } from '@douyinfe/semi-ui';
-import { type ChangeEvent, type FormEvent, type ReactNode, useEffect, useState } from 'react';
+import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
+
+import { AdminSelect, AdminTextInput } from './SemiFormControls';
 
 export type FilterOption = {
   label: string;
@@ -39,8 +41,7 @@ export function FilterBar({ fields = [], loading, onChange, value }: FilterBarPr
     return null;
   }
 
-  function updateField(field: FilterField, event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) {
-    const nextValue = event.currentTarget.value;
+  function updateField(field: FilterField, nextValue: string) {
     setDraftValues((current) => ({ ...current, [field.key]: nextValue }));
   }
 
@@ -57,20 +58,17 @@ export function FilterBar({ fields = [], loading, onChange, value }: FilterBarPr
       <label className="admin-filter-control" key={field.key}>
         <span>{field.label}</span>
         {field.type === 'select' ? (
-          <select aria-label={field.label} value={currentValue} onChange={(event) => updateField(field, event)}>
-            <option value="">全部{field.label}</option>
-            {selectOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          <AdminSelect
+            ariaLabel={field.label}
+            onChange={(nextValue) => updateField(field, nextValue)}
+            optionList={[{ value: '', label: `全部${field.label}` }, ...selectOptions]}
+            value={currentValue}
+          />
         ) : (
-          <input
-            aria-label={field.label}
-            onChange={(event) => updateField(field, event)}
+          <AdminTextInput
+            ariaLabel={field.label}
+            onChange={(nextValue) => updateField(field, nextValue)}
             placeholder={field.placeholder ?? `请输入${field.label}`}
-            type="text"
             value={currentValue}
           />
         )}

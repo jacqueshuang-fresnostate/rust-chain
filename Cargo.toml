@@ -24,6 +24,7 @@ flate2 = "1"
 futures-util = "0.3"
 jsonwebtoken = "9"
 lapin = "2"
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls"] }
 mongodb = "3"
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
@@ -34,6 +35,8 @@ serde_json = { version = "1", features = ["arbitrary_precision"] }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "mysql", "chrono", "uuid", "bigdecimal", "migrate"] }
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
+utoipa = { version = "5", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "8", features = ["axum"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace"] }

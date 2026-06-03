@@ -51,7 +51,8 @@ describe('AdminLayout', () => {
       { group: '闪兑管理', children: ['闪兑交易对', '新币闪兑规则', '闪兑订单'] },
       { group: '秒合约', children: ['秒合约产品', '秒合约订单', '秒合约动作'] },
       { group: '杠杆交易', children: ['杠杆产品', '杠杆仓位', '强平记录', '利息汇总', '杠杆动作'] },
-      { group: '理财 Earn', children: ['理财产品', '理财申购', '理财动作'] }
+      { group: '理财 Earn', children: ['理财产品', '理财申购', '理财动作'] },
+      { group: '系统配置', children: ['SMTP 邮件配置'] }
     ].forEach(({ group, children }) => {
       const groupButton = screen.getByRole('button', { name: new RegExp(group) });
       expect(groupButton).toHaveAttribute('aria-expanded', 'false');
@@ -88,6 +89,20 @@ describe('AdminLayout', () => {
     fireEvent.mouseDown(resizeHandle, { clientX: 288 });
     fireEvent.mouseMove(window, { clientX: 360 });
     fireEvent.mouseUp(window);
+
+    expect(sider).toHaveStyle({ width: '360px' });
+  });
+
+  it('resizes the sidebar with pointer drag events', () => {
+    renderAdminLayout();
+
+    const sider = screen.getByLabelText('后台侧边栏');
+    const resizeHandle = screen.getByRole('separator', { name: '调整导航宽度' });
+
+    expect(sider).toHaveStyle({ width: '288px' });
+    fireEvent.pointerDown(resizeHandle, { clientX: 288, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 360, pointerId: 1 });
+    fireEvent.pointerUp(window, { pointerId: 1 });
 
     expect(sider).toHaveStyle({ width: '360px' });
   });

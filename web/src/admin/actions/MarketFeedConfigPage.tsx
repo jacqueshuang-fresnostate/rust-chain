@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ApiError, apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
+import { AdminCheckbox, AdminPasswordInput, AdminSelect, AdminTextInput } from '../../shared/SemiFormControls';
 import { StatusTag } from '../../shared/StatusTag';
 import { TimestampText } from '../../shared/TimestampText';
 
@@ -160,21 +161,17 @@ export function MarketFeedConfigPage() {
             <div className="admin-action-form">
               <label>
                 交易对 symbols
-                <input aria-label="交易对 symbols" value={configForm.symbols} onChange={(event) => setConfigForm({ ...configForm, symbols: event.currentTarget.value })} />
+                <AdminTextInput ariaLabel="交易对 symbols" value={configForm.symbols} onChange={(symbols) => setConfigForm({ ...configForm, symbols })} />
               </label>
               <fieldset className="admin-action-choice-group">
                 <legend>K线 intervals</legend>
                 <div className="admin-action-choice-list">
                   {intervalOptions.map((interval) => (
-                    <label key={interval} className="admin-action-checkbox">
-                      <input
-                        aria-label={interval}
-                        checked={configForm.intervals.includes(interval)}
-                        type="checkbox"
-                        onChange={() => setConfigForm({ ...configForm, intervals: toggleListItem(configForm.intervals, interval) })}
-                      />
-                      {interval}
-                    </label>
+                    <div key={interval} className="admin-action-checkbox">
+                      <AdminCheckbox checked={configForm.intervals.includes(interval)} onChange={() => setConfigForm({ ...configForm, intervals: toggleListItem(configForm.intervals, interval) })}>
+                        {interval}
+                      </AdminCheckbox>
+                    </div>
                   ))}
                 </div>
               </fieldset>
@@ -182,24 +179,25 @@ export function MarketFeedConfigPage() {
                 <legend>行情 providers</legend>
                 <div className="admin-action-choice-list">
                   {providerOptions.map((provider) => (
-                    <label key={provider} className="admin-action-checkbox">
-                      <input
-                        aria-label={provider}
-                        checked={configForm.providers.includes(provider)}
-                        type="checkbox"
-                        onChange={() => setConfigForm({ ...configForm, providers: toggleListItem(configForm.providers, provider) })}
-                      />
-                      {provider}
-                    </label>
+                    <div key={provider} className="admin-action-checkbox">
+                      <AdminCheckbox checked={configForm.providers.includes(provider)} onChange={() => setConfigForm({ ...configForm, providers: toggleListItem(configForm.providers, provider) })}>
+                        {provider}
+                      </AdminCheckbox>
+                    </div>
                   ))}
                 </div>
               </fieldset>
               <label>
                 启用状态
-                <select aria-label="订阅启用状态" value={configForm.enabled ? 'enabled' : 'disabled'} onChange={(event) => setConfigForm({ ...configForm, enabled: event.currentTarget.value === 'enabled' })}>
-                  <option value="enabled">启用</option>
-                  <option value="disabled">禁用</option>
-                </select>
+                <AdminSelect
+                  ariaLabel="订阅启用状态"
+                  onChange={(enabled) => setConfigForm({ ...configForm, enabled: enabled === 'enabled' })}
+                  optionList={[
+                    { value: 'enabled', label: '启用' },
+                    { value: 'disabled', label: '禁用' }
+                  ]}
+                  value={configForm.enabled ? 'enabled' : 'disabled'}
+                />
               </label>
             </div>
             <Space>
@@ -266,36 +264,51 @@ export function MarketFeedConfigPage() {
             <div className="admin-action-form">
               <label>
                 Provider
-                <select aria-label="凭证 provider" value={credentialForm.provider} onChange={(event) => setCredentialForm({ ...credentialForm, provider: event.currentTarget.value })}>
-                  <option value="bitget">bitget</option>
-                  <option value="htx">htx</option>
-                </select>
+                <AdminSelect
+                  ariaLabel="凭证 provider"
+                  onChange={(provider) => setCredentialForm({ ...credentialForm, provider })}
+                  optionList={[
+                    { value: 'bitget', label: 'bitget' },
+                    { value: 'htx', label: 'htx' }
+                  ]}
+                  value={credentialForm.provider}
+                />
               </label>
               <label>
                 Auth Type
-                <select aria-label="凭证 auth type" value={credentialForm.authType} onChange={(event) => setCredentialForm({ ...credentialForm, authType: event.currentTarget.value })}>
-                  <option value="api_key">api_key</option>
-                  <option value="none">none</option>
-                </select>
+                <AdminSelect
+                  ariaLabel="凭证 auth type"
+                  onChange={(authType) => setCredentialForm({ ...credentialForm, authType })}
+                  optionList={[
+                    { value: 'api_key', label: 'api_key' },
+                    { value: 'none', label: 'none' }
+                  ]}
+                  value={credentialForm.authType}
+                />
               </label>
               <label>
                 API Key
-                <input aria-label="API Key" value={credentialForm.apiKey} onChange={(event) => setCredentialForm({ ...credentialForm, apiKey: event.currentTarget.value })} />
+                <AdminTextInput ariaLabel="API Key" value={credentialForm.apiKey} onChange={(apiKey) => setCredentialForm({ ...credentialForm, apiKey })} />
               </label>
               <label>
                 API Secret
-                <input aria-label="API Secret" type="password" value={credentialForm.apiSecret} onChange={(event) => setCredentialForm({ ...credentialForm, apiSecret: event.currentTarget.value })} />
+                <AdminPasswordInput ariaLabel="API Secret" value={credentialForm.apiSecret} onChange={(apiSecret) => setCredentialForm({ ...credentialForm, apiSecret })} />
               </label>
               <label>
                 Passphrase
-                <input aria-label="Passphrase" type="password" value={credentialForm.passphrase} onChange={(event) => setCredentialForm({ ...credentialForm, passphrase: event.currentTarget.value })} />
+                <AdminPasswordInput ariaLabel="Passphrase" value={credentialForm.passphrase} onChange={(passphrase) => setCredentialForm({ ...credentialForm, passphrase })} />
               </label>
               <label>
                 凭证状态
-                <select aria-label="凭证启用状态" value={credentialForm.enabled ? 'enabled' : 'disabled'} onChange={(event) => setCredentialForm({ ...credentialForm, enabled: event.currentTarget.value === 'enabled' })}>
-                  <option value="enabled">启用</option>
-                  <option value="disabled">禁用</option>
-                </select>
+                <AdminSelect
+                  ariaLabel="凭证启用状态"
+                  onChange={(enabled) => setCredentialForm({ ...credentialForm, enabled: enabled === 'enabled' })}
+                  optionList={[
+                    { value: 'enabled', label: '启用' },
+                    { value: 'disabled', label: '禁用' }
+                  ]}
+                  value={credentialForm.enabled ? 'enabled' : 'disabled'}
+                />
               </label>
             </div>
             <ConfirmAction

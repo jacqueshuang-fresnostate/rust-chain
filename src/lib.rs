@@ -2,6 +2,7 @@ pub mod config;
 pub mod error;
 pub mod infra;
 pub mod modules;
+pub mod openapi;
 pub mod state;
 pub mod time;
 pub mod workers;
@@ -10,6 +11,7 @@ use axum::{Json, Router, extract::State, routing::get};
 use serde::Serialize;
 use state::AppState;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
+use utoipa::ToSchema;
 
 pub fn build_router(state: AppState) -> Router {
     let user_api = Router::new()
@@ -39,6 +41,7 @@ pub fn build_router(state: AppState) -> Router {
 
     Router::new()
         .route("/health", get(health))
+        .merge(openapi::routes())
         .merge(modules::events::routes::routes())
         .nest("/api/v1", user_api)
         .nest("/admin/api/v1", admin_api)
@@ -48,7 +51,7 @@ pub fn build_router(state: AppState) -> Router {
         .layer(TraceLayer::new_for_http())
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct HealthResponse {
     status: &'static str,
 }

@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import { AmountText } from './AmountText';
+import { formatAdminNumber } from './numberFormat';
 import { StatusTag } from './StatusTag';
 import { TimestampText } from './TimestampText';
 
@@ -24,10 +25,14 @@ describe('TimestampText', () => {
 });
 
 describe('AmountText', () => {
-  it('renders decimal strings exactly with an optional asset suffix', () => {
-    render(<AmountText value="1000000000000000000.123450000000000001" asset="USDT" />);
+  it('renders decimal strings with the Admin numeral format and optional asset suffix', () => {
+    const { rerender } = render(<AmountText value="1234.5" />);
 
-    expect(screen.getByText('1000000000000000000.123450000000000001 USDT')).toBeInTheDocument();
+    expect(screen.getByText('1,234.50')).toBeInTheDocument();
+
+    rerender(<AmountText value="1234.567891" asset="USDT" />);
+
+    expect(screen.getByText('1,234.567891 USDT')).toBeInTheDocument();
   });
 
   it('renders a dash for missing or empty values', () => {
@@ -38,6 +43,13 @@ describe('AmountText', () => {
     rerender(<AmountText value="" asset="BTC" />);
 
     expect(screen.getByText('-')).toBeInTheDocument();
+  });
+});
+
+describe('formatAdminNumber', () => {
+  it('uses the Admin numeral format for integer and decimal display values', () => {
+    expect(formatAdminNumber('70000')).toBe('70,000.00');
+    expect(formatAdminNumber('70000.123456')).toBe('70,000.123456');
   });
 });
 

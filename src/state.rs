@@ -1,5 +1,5 @@
 use crate::{
-    config::Settings, modules::events::EventBroadcastHub,
+    config::Settings, infra::email::EmailSender, modules::events::EventBroadcastHub,
     workers::market_feed::MarketFeedSupervisorHandle,
 };
 use mongodb::Database;
@@ -16,6 +16,7 @@ pub struct AppState {
     pub rabbitmq: Option<Arc<lapin::Connection>>,
     pub event_broadcast_hub: Option<EventBroadcastHub>,
     pub market_feed_supervisor: Option<MarketFeedSupervisorHandle>,
+    pub email_sender: Option<Arc<dyn EmailSender>>,
 }
 
 impl AppState {
@@ -28,6 +29,7 @@ impl AppState {
             rabbitmq: None,
             event_broadcast_hub: None,
             market_feed_supervisor: None,
+            email_sender: None,
         }
     }
 
@@ -58,6 +60,11 @@ impl AppState {
 
     pub fn with_market_feed_supervisor(mut self, supervisor: MarketFeedSupervisorHandle) -> Self {
         self.market_feed_supervisor = Some(supervisor);
+        self
+    }
+
+    pub fn with_email_sender(mut self, sender: Arc<dyn EmailSender>) -> Self {
+        self.email_sender = Some(sender);
         self
     }
 }

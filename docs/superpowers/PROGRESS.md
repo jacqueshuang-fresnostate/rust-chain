@@ -2,6 +2,227 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-06-03 15:48 - Admin 侧边栏指针拖拽修复
+
+- 完成内容：修复 Admin 侧边栏在指针拖拽事件下无法调整宽度的问题；保留原鼠标拖拽和键盘左右键调整能力，并补充 pointer drag 回归测试。
+- 修改文件：
+  - `web/src/layouts/AdminLayout.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/layouts/AdminLayout.test.tsx`，实现前 `resizes the sidebar with pointer drag events` 失败，宽度仍为 `288px` 而非 `360px`；实现后已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/layouts/AdminLayout.test.tsx`，1 个测试文件、4 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `git diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-03 15:42 - Admin 用户邮箱查询
+
+- 完成内容：用户管理页新增“邮箱”筛选输入框，查询时向 `/admin/api/v1/users` 传递 `email` 参数；Admin 用户列表后端新增 `email` 精确过滤，保留原 `user_id`、`status`、`limit` 行为不变。
+- 修改文件：
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `src/modules/admin/routes.rs`
+  - `tests/admin_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/resources/resourceConfigs.test.tsx`，实现前失败于 `Unable to find a label with the text of: 邮箱`；已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_lists_users_and_reads_user_detail -- --nocapture`，实现前邮箱查询返回 10 条而非 1 条；实现后已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/resources/resourceConfigs.test.tsx`，1 个测试文件、25 个测试通过；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_lists_users_and_reads_user_detail -- --nocapture`，1 个测试通过、0 失败；已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过；已执行 `git diff --check`，通过。
+- 后续事项：继续排查侧边栏无法拖动问题。
+
+## 2026-06-03 15:23 - Admin 数字显示 numeral 格式化
+
+- 完成内容：后台 Admin 前端数字显示统一接入 `numeral`，固定使用 `0,0.00[0000]`；新增共享数字格式化模块，覆盖金额组件、资源表格、详情抽屉、资源自定义渲染器和运营总览 Dashboard；保留 ID、时间戳、精度、期限等非业务数值语义显示，并保持表单输入、查询参数和 API payload 原始值不变。
+- 修改文件：
+  - `web/package.json`
+  - `web/package-lock.json`
+  - `web/src/shared/numberFormat.ts`
+  - `web/src/shared/AmountText.tsx`
+  - `web/src/shared/DetailDrawer.tsx`
+  - `web/src/shared/format.test.tsx`
+  - `web/src/admin/resources/AdminResourcePage.tsx`
+  - `web/src/admin/resources/AdminResourcePage.test.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/admin/dashboard/DashboardPage.tsx`
+  - `web/src/admin/dashboard/DashboardPage.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/shared/format.test.tsx`，实现前 `AmountText` 与 `formatAdminNumber` 未输出 `1,234.50` / `70,000.00`；已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/resources/AdminResourcePage.test.tsx`，实现前资源表格和详情抽屉未格式化业务数值；已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/resources/resourceConfigs.test.tsx`，实现前自定义渲染器和既有显示期望未使用 numeral；已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/dashboard/DashboardPage.test.tsx`，实现前 Dashboard 未显示 `123,456.00`；实现后已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/shared/format.test.tsx src/admin/resources/AdminResourcePage.test.tsx src/admin/resources/resourceConfigs.test.tsx src/admin/dashboard/DashboardPage.test.tsx`，4 个测试文件、44 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test`，17 个测试文件、111 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run build`，通过，Vite 输出既有 `lottie-web` direct eval 与 chunk size 警告；已执行 `git diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-03 13:11 - Public WebSocket 单连接多订阅
+
+- 完成内容：新增公共行情 WebSocket 单入口 `GET /ws/public`，通过既有路由嵌套同步支持 `GET /api/v1/ws/public`；客户端可在同一连接内发送 JSON 消息订阅或取消订阅 `ticker`、`depth`、`kline`、`trade`，非法请求返回 `invalid_request` error frame 且不断开连接；保留原 `/ws/public/:namespace/:topic` 和 `/api/v1/ws/public/:namespace/:topic` 行为不变。
+- 修改文件：
+  - `src/modules/events/mod.rs`
+  - `src/modules/events/routes.rs`
+  - `tests/events_ws.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test events_ws public_ws_single_endpoint_subscribes_ticker -- --nocapture`，实现前 `/ws/public` 返回 404；实现后已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test events_ws -- --nocapture`，13 个测试通过、0 失败；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；已执行 `git diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-03 11:10 - OpenAPI /api/docs 兼容入口
+
+- 完成内容：为 OpenAPI 文档增加兼容入口 `GET /api/docs` 和 `GET /api/openapi.json`，保留原 `GET /docs` 与 `GET /openapi.json` 不变；补充回归测试覆盖 `/api/docs` 不再返回 404，并更新中文文档入口说明。
+- 修改文件：
+  - `src/openapi.rs`
+  - `tests/openapi_routes.rs`
+  - `docs/superpowers/specs/blockchain-exchange/README.md`
+  - `docs/superpowers/specs/blockchain-exchange/08-user-auth-security-api.md`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test openapi_routes swagger_ui_route_is_registered -- --nocapture`，修复前 `/api/docs` 返回 404；实现后已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test openapi_routes -- --nocapture`，3 个测试通过、0 失败；已执行 `git diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-03 10:21 - OpenAPI 与必要注释基础设施
+
+- 完成内容：新增集中式 OpenAPI 契约模块，提供 `GET /openapi.json` 和 `GET /docs`；首批覆盖健康检查、用户/Admin/Agent 认证、用户安全 API、Admin SMTP API；统一声明 `bearerAuth`，将错误响应纳入 schema，时间字段保持 Unix milliseconds `integer/int64`，SMTP 响应只公开 `username_mask` 和 `password_set`；按“非必要不形成注释”原则，仅补充 OpenAPI 模块边界说明和文档入口说明。
+- 修改文件：
+  - `Cargo.toml`
+  - `Cargo.lock`
+  - `src/openapi.rs`
+  - `src/lib.rs`
+  - `src/error.rs`
+  - `tests/openapi_routes.rs`
+  - `docs/superpowers/specs/blockchain-exchange/README.md`
+  - `docs/superpowers/specs/blockchain-exchange/08-user-auth-security-api.md`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test openapi_routes -- --nocapture`，实现前 `/openapi.json` 与 `/docs` 均为 404；实现后已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test openapi_routes -- --nocapture`，2 个测试通过、0 失败；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" modules::auth -- --nocapture`，9 个 auth 测试通过、0 失败；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；已执行 `git diff --check`，通过；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml"`，失败于既有/独立的 `tests/admin_routes.rs:2263`：`admin_lists_wallet_accounts_and_ledger` 未找到 `include_empty=true` 的空资产账户，单独重跑该测试仍同样失败。
+- 后续事项：全量 MySQL 测试中的 Admin 钱包 `include_empty` 失败需作为独立切片处理；本轮 OpenAPI 目标验证已通过。
+
+## 2026-06-02 22:54 - 用户认证安全 API 文档与最终验证
+
+- 完成内容：新增中文用户认证与安全 API 文档，覆盖注册、登录、refresh、profile 安全字段、邮箱验证码发送与绑定、登录密码修改、资金密码新建/修改、Admin SMTP 查询/保存/测试发送、鉴权 scope、错误码和安全说明；更新区块链交易所文档索引与用户端 API 表；修复最终全量验证中暴露的 Admin SMTP 测试路由无 MySQL 错误顺序、闪兑交易对审计回滚测试缺少 reason、行情订阅默认配置并发测试共享状态、Admin 用户测试手机号重复风险。
+- 修改文件：
+  - `docs/superpowers/specs/blockchain-exchange/08-user-auth-security-api.md`
+  - `docs/superpowers/specs/blockchain-exchange/README.md`
+  - `docs/superpowers/specs/blockchain-exchange/04-wallet-spot-trading.md`
+  - `src/modules/admin/routes.rs`
+  - `tests/admin_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_core_resource_routes_require_admin_scope_and_mysql -- --nocapture`，1 个测试通过、0 失败；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_convert_pair_create_rolls_back_when_audit_cannot_be_written -- --nocapture`，1 个测试通过、0 失败；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_convert_pair_update_rolls_back_when_audit_cannot_be_written -- --nocapture`，1 个测试通过、0 失败；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_market_feed_config_credentials_reload_and_status -- --nocapture`，1 个测试通过、0 失败；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_market_feed_reload_skips_disabled_config -- --nocapture`，1 个测试通过、0 失败；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_lists_users_and_reads_user_detail -- --nocapture`，1 个测试通过、0 失败；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_create_user_creates_hashed_user_and_audit_log -- --nocapture`，1 个测试通过、0 失败；已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml"`，全部测试通过，输出记录显示各 test target 均为 `ok`、0 失败；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过。
+- 后续事项：无。
+
+## 2026-06-02 22:54 - 后台 SMTP 配置页面
+
+- 完成内容：新增 `/admin/system/smtp` 后台 SMTP 邮件配置页面，使用现有 Semi 表单控件和 `ConfirmAction` 支持查询配置、保存配置、空密码保留旧密文、展示脱敏账号与密码设置状态、发送测试邮件；注册 Admin 路由并在“系统配置 / SMTP 邮件配置”导航中开放入口；补充前端测试覆盖配置加载、密码不明文展示、保存 payload、测试发送 payload、路由和导航可达，并恢复现有产品动作路由与导航不受影响。
+- 修改文件：
+  - `web/src/admin/actions/SmtpConfigPage.tsx`
+  - `web/src/admin/actions/SmtpConfigPage.test.tsx`
+  - `web/src/admin/routes.tsx`
+  - `web/src/admin/routes.test.tsx`
+  - `web/src/layouts/AdminLayout.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- SmtpConfigPage routes AdminLayout --reporter verbose`，实现前路由和导航断言失败；实现后已执行同命令，3 个测试文件、19 个测试通过，仍有既有 Semi React 19 `createRoot` 提示；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-02 22:01 - 用户邮箱、登录密码与资金密码 API
+
+- 完成内容：扩展用户 profile 返回邮箱验证时间与资金密码设置状态；新增邮箱绑定验证码发送、邮箱绑定、登录密码修改、资金密码新建和修改接口；验证码与资金密码仅保存 hash，登录密码修改会吊销旧 refresh token 并签发新 user token；补充测试覆盖 UserAuth scope、SMTP 未配置失败、验证码错误次数持久化、禁用用户禁止绑定、邮箱冲突、密码校验和资金密码规则。
+- 修改文件：
+  - `src/modules/user/routes.rs`
+  - `tests/user_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test user_routes user_security -- --nocapture`，实现前 5 个 user security 测试失败于缺字段或路由 404；已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test user_routes user_security_email_bind -- --nocapture`，审查修复前失败于 SMTP 未配置仍返回 200、验证码错误次数未持久化。实现后已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" modules::auth -- --nocapture`，9 个目标测试通过、0 失败；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test user_routes -- --nocapture`，9 个目标测试通过、0 失败；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；已执行 `git diff --check`，通过。
+- 后续事项：继续实现后台 SMTP 配置页面和中文 API 文档。
+
+## 2026-06-02 20:33 - 共享密文与邮件发送基础设施
+
+- 完成内容：新增共享密文工具，抽离行情源凭证加密、解密、保留旧密文和脱敏逻辑；新增 SMTP 邮件发送抽象和生产 sender；`AppState` 支持注入测试/生产邮件发送器；行情源凭证配置改为复用共享密文工具，移除本地重复加解密实现。
+- 修改文件：
+  - `Cargo.toml`
+  - `Cargo.lock`
+  - `src/infra/mod.rs`
+  - `src/infra/secrets.rs`
+  - `src/infra/email.rs`
+  - `src/state.rs`
+  - `src/modules/admin/market_feed_config.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" modules::admin::market_feed_config`，1 个目标测试通过、0 失败；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" infra`，5 个目标测试通过、0 失败；已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过；已执行 `git diff --check`，通过。
+- 后续事项：继续实现 Admin SMTP 配置后端、用户邮箱/密码/资金密码 API、后台 SMTP 配置页面和中文 API 文档。
+
+## 2026-06-02 18:16 - Admin 表单控件 Semi 全局迁移
+
+- 完成内容：新增共享 Semi 表单控件适配层，将 Admin 筛选栏、资源创建/修改弹窗和独立动作页中的可迁移原生输入框、选择框、文本域、复选框、创建按钮迁移到 Semi UI；保持现有 API payload、ConfirmAction、MarketFeed 凭证保存后清空敏感输入、Quill 富文本功能不变；全局生产 TSX 扫描后仅保留 Quill Snow toolbar 必需的原生 `ql-*` 控件。
+- 修改文件：
+  - `web/src/shared/SemiFormControls.tsx`
+  - `web/src/shared/FilterBar.tsx`
+  - `web/src/admin/resources/AdminResourcePage.test.tsx`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/admin/actions/ProductStatusActions.tsx`
+  - `web/src/admin/actions/ProductStatusActions.test.tsx`
+  - `web/src/admin/actions/ConvertRuleActions.tsx`
+  - `web/src/admin/actions/NewCoinActions.tsx`
+  - `web/src/admin/actions/AgentManagementPage.tsx`
+  - `web/src/admin/actions/MarketFeedConfigPage.tsx`
+  - `web/src/admin/actions/MarketFeedConfigPage.test.tsx`
+  - `web/src/admin/actions/helperCopy.test.tsx`
+  - `web/src/styles.css`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已按 TDD 执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx -t "creates earn products with category and multilingual rich text" --reporter verbose`，实现前添加理财产品输入框 Semi 断言失败；已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- ProductStatusActions.test.tsx MarketFeedConfigPage.test.tsx --reporter verbose`，实现前 3 个用例失败，证明独立动作页仍使用原生控件；已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- helperCopy.test.tsx --reporter verbose`，实现前 3 个用例失败，证明新币、闪兑、代理动作页仍有原生控件；实现后已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx --reporter verbose`，1 个测试文件、24 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- ProductStatusActions.test.tsx MarketFeedConfigPage.test.tsx helperCopy.test.tsx --reporter verbose`，3 个测试文件、10 个测试通过；已执行生产源码扫描 `grep -RIn --include='*.tsx' --exclude='*.test.tsx' -E '<(input|select|textarea|button)([[:space:]>])' "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web/src"`，仅剩 `QuillRichTextEditor.tsx` 的 `ql-header`、`ql-blockquote`、`ql-bold`、`ql-italic`、`ql-underline`；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- AdminResourcePage.test.tsx resourceConfigs.test.tsx ProductStatusActions.test.tsx MarketFeedConfigPage.test.tsx helperCopy.test.tsx --reporter verbose`，5 个测试文件、43 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。测试过程中仍出现既有 Semi React 19 createRoot 提示和 helperCopy 中 AdminResourcePage act 提示，不影响本次断言通过。
+- 后续事项：Quill Snow toolbar 的原生控件为官方 `ql-*` 工具栏结构要求，本轮保留；如需处理 Semi React 19 createRoot 提示或 AdminResourcePage 测试 act 提示，应另起独立切片。
+
+## 2026-06-02 11:49 - Admin 添加弹窗按复杂度扩宽
+
+- 完成内容：为 Admin 添加/创建弹窗增加中型、宽型、超宽型尺寸策略；简单添加资产和添加用户使用中型弹窗，现货交易对、闪兑交易对、风控规则、秒合约交易对和创建策略使用宽型弹窗，杠杆交易对、新币项目和理财产品使用超宽弹窗；弹窗内容区限制最大高度并启用内部滚动，避免复杂表单挤压视口；未改动确认弹窗、详情抽屉、充值和修改弹窗。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx --reporter verbose`，实现前 7 个弹窗尺寸断言失败，证明添加/创建弹窗缺少 `admin-create-modal` 尺寸类；实现后同命令通过，1 个测试文件、24 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，初次发现 `bodyStyle.overflowY` 类型需收窄，修复后通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：如后续需要对“修改/充值”等非添加弹窗也统一扩宽，应另起独立 UI 调整范围。
+
+## 2026-06-02 00:16 - Admin 详情抽屉默认宽度
+
+- 完成内容：将 Admin 格式化详情 SideSheet 默认宽度从固定 `720px` 调整为 `80%`，让 `.semi-sidesheet-inner` 详情抽屉按运营要求以 80% 宽度展示；补充 AdminResourcePage 测试断言详情抽屉宽度。
+- 修改文件：
+  - `web/src/shared/DetailDrawer.tsx`
+  - `web/src/admin/resources/AdminResourcePage.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- AdminResourcePage.test.tsx -t "opens a formatted detail drawer for the selected row" --reporter verbose`，修复前失败，实际宽度为 `720px`；实现后同命令通过，1 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- AdminResourcePage.test.tsx resourceConfigs.test.tsx`，2 个测试文件、30 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-01 23:38 - Admin 用户充值
+
+- 完成内容：后台用户管理新增“充值”行级操作；前端弹窗支持选择 active 资产、输入充值金额并强制填写操作原因；后端新增 `POST /admin/api/v1/users/:id/recharge`，校验管理员权限、用户存在、资产启用、金额为正数和 reason 非空，事务内创建/锁定真实钱包账户、增加 available 余额、写入 `wallet_ledger` 与 `wallet.recharge` 审计记录；用户资产查看继续使用 `include_empty=true` 虚拟 0 余额视图，不在新建用户时批量写入钱包账户。
+- 修改文件：
+  - `src/modules/admin/routes.rs`
+  - `tests/admin_routes.rs`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已按 TDD 执行 RED：`cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_core_resource_routes_require_admin_scope_and_mysql -- --nocapture`，修复前 `/admin/api/v1/users/1/recharge` 返回 404 而不是 401，证明 Admin route 缺失；已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_recharges_user_wallet_with_ledger_and_audit -- --nocapture`，修复前响应体无法解析，证明充值接口未实现；已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx -t "creates convert pairs, risk rules, new coin projects, and user row actions" --reporter verbose`，修复前找不到“充值”按钮。实现后已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_core_resource_routes_require_admin_scope_and_mysql -- --nocapture`，1 个测试通过；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_recharges_user_wallet_with_ledger_and_audit -- --nocapture`，1 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx --reporter verbose`，1 个测试文件、23 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx AdminResourcePage.test.tsx`，2 个测试文件、30 个测试通过；已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --check`，通过；已执行 `cargo check --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets`，通过；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：链上充值入账、提现、冷热钱包、归集和对账仍需独立 custody 工作流；当前后台充值是管理员手工入账到现有现货钱包模型，不创建杠杆钱包。
+
+## 2026-06-01 18:16 - Admin 资产管理查看修改与筛选中文化
+
+- 完成内容：补齐 `/admin/assets` 后台资产管理页，资产类型和状态筛选改为下拉选择且提交后端枚举值；表格资产类型显示中文；新增行级“查看详情”和“修改”；后端新增 `GET /admin/api/v1/assets/:id` 和 `PATCH /admin/api/v1/assets/:id`，修改仅允许资产名称、精度、资产类型、状态和 reason，不允许修改资产符号，并写入 `asset.config.update` 审计。
+- 修改文件：
+  - `src/modules/admin/routes.rs`
+  - `tests/admin_routes.rs`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已按 TDD 执行 RED：`cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_asset -- --nocapture`，修复前 `/admin/api/v1/assets/1` 返回 404 而不是 401，证明详情/修改路由缺失；已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx -t "uses dropdown filters, localized type labels" --reporter verbose`，修复前资产类型筛选仍是输入框，找不到“数字货币”下拉选项。实现后已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_asset -- --nocapture`，2 个测试通过、0 失败，MySQL-gated 分支因本地未设置 `DATABASE_URL` 按设计跳过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- AdminResourcePage.test.tsx resourceConfigs.test.tsx`，2 个测试文件、28 个测试通过、0 失败；已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --check`，通过；已执行 `cargo check --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets`，通过；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：资产符号变更、资产删除或钱包余额/交易历史迁移需要独立安全工作流，不纳入本切片。
+
+## 2026-06-01 14:46 - Admin 交易对最新价推送展示
+
+- 完成内容：`/admin/market/pairs` 新增“最新价格”列，按交易对 symbol 订阅 public ticker WebSocket `/ws/public/ticker/<symbol>`，接收推送 payload 中的 `last_price` 并实时展示；仅对交易对资源页启用该列，不影响其他 Admin 资源页。
+- 修改文件：
+  - `web/src/api/marketTickerSocket.ts`
+  - `web/src/admin/resources/AdminResourcePage.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已按 TDD 执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx`，修复前按预期失败，错误为找不到“最新价格”；实现后已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx -t "uses dropdown filters" --reporter verbose`，目标用例通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- AdminResourcePage.test.tsx resourceConfigs.test.tsx`，2 个测试文件、27 个测试通过、0 失败；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：如后续需要减少每行一个 WebSocket 连接，可单独实现交易对最新价批量订阅/聚合通道；如需要打开页面立即显示初始最新价，可单独补 REST ticker fallback。
+
+## 2026-06-01 09:08 - Admin 仪表盘聚合计数解码修复
+
+- 完成内容：修复 `/admin/api/v1/dashboard` 在 MySQL 环境下读取聚合计数时报 `DECIMAL` 到 `i64` 解码失败的问题；将用户活跃数、新增数和交易对状态/市场类型计数从 `SUM(CASE ... ELSE 0 END)` 改为 `COUNT(CASE ... THEN 1 END)`，让 MySQL 返回整数计数类型并保持空表计数为 0。
+- 修改文件：
+  - `src/modules/admin/routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_dashboard_returns_operational_summary_shape -- --nocapture`，修复前复现 500，错误为 `column "active"` 从 `DECIMAL` 解码到 `i64` 失败；修复用户计数后再次执行同命令，复现 `column "active_pairs"` 同类失败；修复交易对计数后同命令通过。最终已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --check`，通过；已执行 `cargo check --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets`，通过；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_dashboard -- --nocapture`，2 个测试通过、0 失败；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过。
+- 后续事项：无。
+
 ## 2026-05-31 21:57 - Admin 静态说明文案清理
 
 - 完成内容：移除 Admin UI 中通过 Semi Typography/PageHeader 渲染的静态辅助说明文案，包括资源页说明、产品配置/行情订阅/新币/闪兑/行情策略/代理管理页面说明、创建/修改弹窗辅助说明；保留真实数据展示、字段标签、按钮、错误提示、安全警示、操作原因提示和运行状态摘要。
@@ -1436,3 +1657,223 @@
   - `docs/superpowers/PROGRESS.md`
 - 验证结果：已执行 RED：`cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_trading_pair_detail_and_status_routes_require_admin_scope_mysql -- --nocapture`，实现前失败于 404，符合路由缺失预期；已执行 RED：`cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test spot_routes admin_spot_order_detail_and_cancel_routes_require_admin_scope_mysql -- --nocapture`，实现前失败于 404，符合路由缺失预期；已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- AdminResourcePage.test.tsx`，实现前失败于找不到“查看详情”行级按钮，符合通用行级动作缺失预期；已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx`，新增交易对/订单行级动作测试实现前 3 个失败，符合按钮和 fee 列缺失预期。实现后已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --check`，通过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_trading_pair -- --nocapture`，4 个测试通过，其中 MySQL-gated seeded 分支因本地未设置 `DATABASE_URL` 按设计跳过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test spot_routes admin_spot_order -- --nocapture`，2 个测试通过，其中 MySQL-gated seeded 分支因本地未设置 `DATABASE_URL` 按设计跳过；已执行 `cargo check --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets`，通过；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- AdminResourcePage.test.tsx resourceConfigs.test.tsx`，2 个文件 11 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
 - 后续事项：交易对完整编辑、现货订单强类型详情页、成交只读详情、冻结资产/成交明细/钱包流水/审计记录联动，以及杠杆、秒合约、Earn、闪兑等模块的详情页和安全行级操作。
+
+## 2026-06-01 20:30 - Admin 产品与用户管理入口补齐
+
+- 完成内容：补齐 Admin 闪兑交易对添加、风控规则添加与启停、新币项目添加、用户查看详情与查看资产入口；杠杆产品添加入口改为 active 交易对下拉；移除“现货动作 / 秒合约动作 / 杠杆动作”导航与路由，仅保留理财动作页并收口为理财产品状态更新。
+- 修改文件：
+  - `src/modules/admin/routes.rs`
+  - `tests/admin_routes.rs`
+  - `web/src/admin/actions/ProductStatusActions.test.tsx`
+  - `web/src/admin/actions/ProductStatusActions.tsx`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/routes.test.tsx`
+  - `web/src/admin/routes.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `web/src/layouts/AdminLayout.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行前端 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx AdminLayout.test.tsx routes.test.tsx`，实现前失败于缺少闪兑/风控/新币/用户资产动作和冗余动作路由仍存在；实现后 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- ProductStatusActions.test.tsx resourceConfigs.test.tsx AdminLayout.test.tsx routes.test.tsx` 4 个文件 39 个测试通过。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin -- --nocapture`，49 个测试通过，其中 MySQL-gated seeded 分支因当前未设置 `DATABASE_URL` 按设计跳过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过。
+- 后续事项：`market-pairs` 下拉当前使用 `limit=100`，交易对超过 100 后建议补专用 options endpoint；本轮不在注册流程批量创建所有资产钱包，也不创建未建模的杠杆钱包。
+
+## 2026-06-01 20:30 - 杠杆全仓逐仓与杠杆档位
+
+- 完成内容：新增 `margin_products.margin_mode`、`margin_products.leverage_levels`、`margin_positions.margin_mode` 迁移；Admin 创建杠杆产品支持逐仓/全仓与多档杠杆，后端校验档位非空、>1、去重、最大档位等于 `max_leverage`；开仓杠杆必须命中产品档位，仓位保存产品当前保证金模式；没有保证金钱包/全仓风险模型前，`cross` 产品开仓返回明确 validation；前端杠杆产品弹窗支持保证金模式下拉、默认档位多选、自定义档位，表格显示“逐仓/全仓”和 `2x / 5x / 10x` 档位。
+- 修改文件：
+  - `migrations/0035_margin_modes_and_leverage_levels.sql`
+  - `src/modules/margin/routes.rs`
+  - `tests/margin_routes.rs`
+  - `tests/margin_liquidation_worker.rs`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行后端 RED：`cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test margin_routes margin -- --nocapture`，实现前 `admin_margin_product_rejects_invalid_mode_and_leverage_levels_before_mysql` 因返回 500 而非 400 失败，符合 DB 前校验缺失预期；实现后同命令 25 个测试通过，其中 MySQL-gated seeded 分支因当前未设置 `DATABASE_URL` 按设计跳过。已执行前端 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx`，实现前失败于找不到“逐仓”，符合表格与表单缺失预期；实现后同命令 22 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx AdminLayout.test.tsx routes.test.tsx`，3 个文件 37 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- ProductStatusActions.test.tsx resourceConfigs.test.tsx AdminLayout.test.tsx routes.test.tsx`，4 个文件 39 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --check`，通过；代码复核发现 Admin 与 liquidation worker 的 MySQL seeded fixture 仍按旧 `margin_products` 结构插入，已补充写入 `margin_mode` 和 `leverage_levels`，并执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin -- --nocapture`，49 个测试通过；执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test margin_liquidation_worker -- --nocapture`，6 个测试通过；执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test margin_routes margin -- --nocapture`，25 个测试通过；以上 Rust 测试当前仍因未设置 `DATABASE_URL` 跳过 MySQL-gated seeded 分支。已执行 `cargo check --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets`，通过；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；已执行 `git diff --check`，通过。
+- 后续事项：当前未设置 `DATABASE_URL`，尚未真实 MySQL 验证新增 migration 与 MySQL-backed margin seeded 分支；真正全仓风控仍需后续独立设计 margin wallet、统一保证金权益、负债聚合、强平顺序和风险快照。
+
+## 2026-06-01 22:16 - Admin 用户创建与格式化详情
+
+- 完成内容：后台用户管理新增“添加用户”入口，提交邮箱/手机号、登录密码、状态、KYC 等级和操作原因；后端新增 `POST /admin/api/v1/users`，使用 Admin 鉴权、校验邮箱或手机号至少一个、校验状态/KYC、保存 Argon2 密码哈希、重复用户返回冲突，并写入 `user.create` 审计。Admin 通用详情从 JSON drawer 改为格式化详情 drawer：普通记录按“字段 / 内容”列出，数组数据按表格展示；用户管理“查看详情”和“查看资产”均用格式化展示，不再展示原始 JSON。
+- 修改文件：
+  - `src/modules/admin/routes.rs`
+  - `tests/admin_routes.rs`
+  - `web/src/admin/resources/AdminResourcePage.test.tsx`
+  - `web/src/admin/resources/AdminResourcePage.tsx`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/shared/DetailDrawer.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行前端 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx`，实现前 13 个用例失败，符合格式化详情、用户资产排版和添加用户入口缺失预期；已执行后端 RED：`cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_core_resource_routes_require_admin_scope_and_mysql -- --nocapture`，实现前 `/admin/api/v1/users` POST 返回 405 而非 401，符合路由缺失预期。实现后已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_core_resource_routes_require_admin_scope_and_mysql -- --nocapture`，1 个测试通过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_create_user_creates_hashed_user_and_audit_log -- --nocapture`，1 个测试通过，但因当前未设置 `DATABASE_URL`，MySQL-backed 创建用户主体按测试设计跳过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx AdminResourcePage.test.tsx`，2 个测试文件 29 个测试通过；已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --check`，通过；已执行 `cargo check --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets`，通过；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：当前未设置 `DATABASE_URL`，尚未真实 MySQL 验证 Admin 创建用户写库、密码哈希和审计日志分支；`web/src/shared/JsonDrawer.tsx` 已无 Admin 资源页引用，若后续确认全站不再需要原始 JSON drawer，可单独删除。
+
+## 2026-06-01 22:51 - 用户资产虚拟零余额视图与杠杆迁移修复
+
+- 完成内容：定位并处理运行时 `Unknown column 'products.margin_mode' in 'field list'`，根因是本地 MySQL 仅应用到 migration 34，`migrations/0035_margin_modes_and_leverage_levels.sql` 仍 pending；已对本地库应用 migration 35，并验证 `margin_products.margin_mode`、`margin_products.leverage_levels`、`margin_positions.margin_mode` 存在。用户管理“查看资产”改为请求 `include_empty=true`，后端返回真实钱包账户 + active assets 的虚拟 0 余额账户，虚拟账户 `id: null`、`account_exists: false`，并确认不写入 `wallet_accounts`。
+- 修改文件：
+  - `src/modules/admin/routes.rs`
+  - `tests/admin_routes.rs`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `sqlx migrate info --source "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/migrations" --database-url "mysql://exchange:exchange@127.0.0.1:3306/exchange"`，确认 35 初始为 pending；已执行 `sqlx migrate run --source "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/migrations" --database-url "mysql://exchange:exchange@127.0.0.1:3306/exchange"`，成功应用 migration 35；再次执行 `sqlx migrate info ...` 确认 1-35 均 installed；已执行 `mysql -h 127.0.0.1 -P 3306 -uexchange -pexchange exchange -e "SHOW COLUMNS FROM margin_products LIKE 'margin_mode'; SHOW COLUMNS FROM margin_products LIKE 'leverage_levels'; SHOW COLUMNS FROM margin_positions LIKE 'margin_mode';"`，三列均存在；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" REDIS_URL="redis://127.0.0.1:6379" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test margin_routes margin -- --nocapture`，25 个测试通过；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_lists_wallet_accounts_and_ledger -- --nocapture`，1 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx AdminResourcePage.test.tsx`，2 个文件 29 个测试通过；已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --check`，通过；已执行 `cargo check --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets`，通过；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：其他环境如仍报 `products.margin_mode` 缺失，需要在对应 MySQL 上执行同一套 `sqlx migrate run --source migrations`；后台给用户充值尚未实现，将作为下一项交付。
+
+## 2026-06-02 02:10 - Admin 行情策略动作表格化
+
+- 完成内容：`/admin/market/strategies/actions` 从独立双表单页改为资源表格页，顶部新增“创建策略”弹窗入口，行级新增“查看详情 / 修改 / 禁用 / 启用”；`AdminResourcePage` 支持 header actions 接收 `reload`；后端新增 `PATCH /admin/api/v1/market-strategies/:id`，仅允许修改非 active 策略配置，保持状态变更走原 status 接口，并同步 `strategy_runs` checkpoint、写入 `strategy_versions`、`strategy_events` 和 `admin_audit_logs`。
+- 修改文件：
+  - `src/modules/admin/routes.rs`
+  - `tests/admin_routes.rs`
+  - `web/src/admin/actions/MarketStrategyActions.tsx`
+  - `web/src/admin/actions/MarketStrategyActions.test.tsx`
+  - `web/src/admin/resources/AdminResourcePage.tsx`
+  - `web/src/admin/resources/AdminResourcePage.test.tsx`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/layouts/AdminLayout.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `web/src/styles.css`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行前端 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- AdminResourcePage.test.tsx resourceConfigs.test.tsx -t "header actions|market strategy actions" --reporter verbose`，实现前分别失败于函数型 `actions` 被当作 React child 渲染、`marketStrategyActions` 配置缺失，符合预期；实现后同命令 2 个目标测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- AdminResourcePage.test.tsx resourceConfigs.test.tsx`，2 个文件 32 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- MarketStrategyActions.test.tsx AdminResourcePage.test.tsx resourceConfigs.test.tsx`，3 个文件 33 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- AdminLayout.test.tsx MarketStrategyActions.test.tsx AdminResourcePage.test.tsx resourceConfigs.test.tsx`，4 个文件 37 个测试通过。已执行后端 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_market_strategy_update_config_versions_and_audit -- --nocapture`，实现前 PATCH 路由返回 404 而非预期 409，符合更新接口缺失预期；实现后同命令 1 个测试通过。已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_market_strategy -- --nocapture`，4 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --check`，通过；已执行 `cargo check --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets`，通过；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；已执行 `git diff --check`，通过。
+- 后续事项：继续实现理财产品分类、多语言 Plate 富文本介绍与 Admin 添加理财产品入口。
+
+## 2026-06-02 03:05 - 理财产品分类与多语言富文本配置
+
+- 完成内容：理财产品新增 `category` 与 `introduction_json` 存储，migration 对存量产品回填默认 `zh-CN / CN` Plate JSON；创建接口兼容旧调用并校验分类、默认语言、国家、标题与 Plate Value 内容；列表、详情和审计返回分类与介绍 JSON，并补强后端 Plate Value 校验以拒绝非对象节点、未知块类型、空 children、非字符串 text 叶子节点、非法 mark 类型与意外字段。Admin 理财产品页新增“添加理财产品”弹窗，支持资产、分类、状态、申购配置和多国语言介绍，介绍内容通过 Plate React 封装为 JSON 提交；表格新增分类中文展示，保留“查看详情 / 禁用 / 启用”。同时修复 ConfirmAction 在 Semi motion 下关闭后隐藏 DOM 残留导致测试/交互命中旧确认框的问题。
+- 修改文件：
+  - `migrations/0036_earn_product_content_i18n.sql`
+  - `src/modules/earn/routes.rs`
+  - `tests/earn_routes.rs`
+  - `tests/earn_auto_redemption_worker.rs`
+  - `web/package.json`
+  - `web/package-lock.json`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/shared/ConfirmAction.tsx`
+  - `web/src/shared/PlateRichTextEditor.tsx`
+  - `web/src/styles.css`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行后端 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test earn_routes admin_earn_product_create_update_status_and_audit -- --nocapture`，实现前失败于响应 `category` 为 `Null` 而非 `structured`，符合字段缺失预期；实现后同命令 1 个测试通过。已执行 Plate 校验 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test earn_routes admin_earn_product_rejects_unsafe_term_name_and_apr_before_mysql -- --nocapture`，补充非法 `content` 用例后先返回 500 而非 400，证明后端未在入库前拒绝非法 Plate 节点；实现递归校验后同命令 1 个测试通过；再次补充 text leaf 携带 `html`/`children` 等意外字段的用例，修复前返回 500 而非 400，收紧字段白名单后同命令 1 个测试通过。已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test earn_routes admin_earn_product -- --nocapture`，4 个测试通过；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test earn_auto_redemption_worker -- --nocapture`，3 个测试通过。已执行前端 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx -t "earn products" --reporter verbose`，实现前失败于找不到分类中文“定期”，后续修复中定位到新增语言项 key 使用 locale 导致输入后组件重挂载、ConfirmAction motion 关闭动画保留旧 DOM；修复后同命令 1 个目标测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- AdminLayout.test.tsx MarketStrategyActions.test.tsx AdminResourcePage.test.tsx resourceConfigs.test.tsx`，4 个文件 37 个测试通过；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_market_strategy -- --nocapture`，4 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --check`，通过；已执行 `cargo check --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets`，通过；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；已执行 `git diff --check`，通过。
+- 后续事项：Plate 工具栏当前按最小集成展示基础能力入口，后续如需真实按钮切换 H1/H2/H3、引用、加粗、斜体、下划线，可单独增强编辑器工具栏；本轮未实现前台用户端按国家/语言展示理财介绍。
+
+## 2026-06-02 09:00 - 理财产品富文本改为真实 Plate 编辑器
+
+- 完成内容：将 Earn 理财产品介绍编辑器改为以 `PlateContent` 作为唯一用户可编辑面，移除 textarea fallback；富文本工具栏改为真实按钮；Plate 插件收窄到后端允许的 `p`、`h1`、`h2`、`h3`、`blockquote` 与 `bold`、`italic`、`underline`；测试覆盖编辑面为 contenteditable 且非 textarea，并验证多语言介绍提交为 Plate JSON。
+- 修改文件：
+  - `web/src/shared/PlateRichTextEditor.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/styles.css`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx -t "earn products" --reporter verbose`，修复前失败于 `富文本内容` 对应元素没有 `contenteditable="true"`，符合旧 textarea fallback 仍被命中的预期；实现后同命令通过，1 个目标测试通过、23 个跳过（仍有既有 Semi React 19 warning）。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-02 09:26 - 修复理财产品添加表单空 value 崩溃
+
+- 完成内容：定位并修复 Admin 添加理财产品弹窗在 React StrictMode 下编辑多国语言介绍字段时抛出 `Cannot read properties of null (reading 'value')` 的问题；根因是函数式 `setProduct` updater 内延迟读取 `event.currentTarget.value`，StrictMode 重放更新时事件目标已为空。现已在 `onChange` 同步提取 `locale`、`country`、`title` 后再更新状态，并用 StrictMode 包裹 Earn 产品测试防止回归。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx -t "earn products" --reporter verbose`，修复前复现 `Cannot read properties of null (reading 'value')`；实现后同命令通过，1 个目标测试通过、23 个跳过（仍有既有 Semi React 19 warning）。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-02 10:44 - 接入 Plate editor-ai 风格编辑器外框
+
+- 完成内容：按 `@plate/editor-ai` registry 的 `EditorContainer` / `Editor variant="demo"` 思路，将理财产品富文本编辑器从简单自定义边框改为 Plate editor-ai 风格外框：使用 `PlateContainer` 包裹编辑区域，编辑器外层增加 `data-plate-editor-ai-shell` 标识，工具栏改为固定顶栏视觉，正文区使用 `disableDefaultStyles` 并补齐标题、段落、引用的富文本样式。未引入完整 AI/editor kit，避免其链接、表格、媒体、AI、评论等节点生成后端不接受的 Plate JSON；仍保持后端允许的 `p`、`h1`、`h2`、`h3`、`blockquote` 与 `bold`、`italic`、`underline` 范围。
+- 修改文件：
+  - `web/src/shared/PlateRichTextEditor.tsx`
+  - `web/src/styles.css`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx -t "earn products" --reporter verbose`，实现前失败于找不到 `data-plate-editor-ai-shell="true"` 外框；实现后同命令通过，1 个目标测试通过、23 个跳过（仍有既有 Semi React 19 warning）。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-02 14:15 - 理财产品富文本改为 QuillJS
+
+- 完成内容：将 Admin 添加理财产品弹窗中的多语言富文本编辑器从 Plate 实现切换为 QuillJS；新增 `QuillRichTextEditor`，使用 Quill 工具栏和 `.ql-editor` 编辑面，保留 `富文本内容` 无障碍标签；继续把编辑内容转换为后端现有 Plate-like JSON 提交，避免影响 `introduction_json` 接口合同；移除 Plate 依赖并保留 `PlateRichTextEditor` 兼容导出，防止旧引用失效。
+- 修改文件：
+  - `web/package.json`
+  - `web/package-lock.json`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/shared/QuillRichTextEditor.tsx`
+  - `web/src/shared/PlateRichTextEditor.tsx`
+  - `web/src/styles.css`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx -t "creates earn products with category and multilingual rich text" --reporter verbose`，实现前失败于找不到 `data-quill-editor="true"` 外框，符合仍是 Plate 外框的预期；实现后同命令通过，1 个目标测试通过、23 个跳过（仍有既有 Semi React 19 warning）。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx --reporter verbose`，1 个测试文件、24 个测试通过（仍有既有 Semi React 19 warning）；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-02 14:21 - 固定 Admin 表格操作列
+
+- 完成内容：将 Admin 资源表格统一追加的“操作”列设置为 Semi Table 右侧固定列，并给操作列设置固定宽度，保证横向滚动时查看详情、修改、启用、禁用等行级按钮保持可见；该改动覆盖所有通过 `AdminResourcePage` 渲染的表单/资源表格。
+- 修改文件：
+  - `web/src/admin/resources/AdminResourcePage.tsx`
+  - `web/src/admin/resources/AdminResourcePage.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- AdminResourcePage.test.tsx -t "fixes the operation column" --reporter verbose`，实现前失败于操作表头缺少 `semi-table-cell-fixed-right` 类；实现后同命令通过，1 个目标测试通过、8 个跳过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- AdminResourcePage.test.tsx resourceConfigs.test.tsx --reporter verbose`，2 个测试文件、33 个测试通过（仍有既有 Semi React 19 warning）；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-02 14:53 - 修复添加理财产品 Quill 富文本样式
+
+- 完成内容：定位到添加理财产品弹窗的 Quill 编辑器启用了 `snow` theme 但未加载 Quill snow 样式，导致工具栏、picker、编辑区等样式契约不完整；现已导入 `quill/dist/quill.snow.css`，为 Quill 工具栏、picker、编辑容器和内容区补齐项目内 scoped 样式，并让 Vitest 加载 CSS 以覆盖样式回归。提交 payload 仍保持后端现有 Plate-like JSON 结构。
+- 修改文件：
+  - `web/src/shared/QuillRichTextEditor.tsx`
+  - `web/src/styles.css`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/admin/actions/helperCopy.test.tsx`
+  - `web/vite.config.ts`
+  - `web/vitest.setup.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx -t "creates earn products with category and multilingual rich text" --reporter verbose`，实现前失败于 Quill toolbar computed `boxSizing` 为 `content-box` 而非 `border-box`，证明样式未加载/未覆盖；实现后同命令通过，1 个目标测试通过、23 个跳过（仍有既有 Semi React 19 warning）。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx --reporter verbose`，1 个测试文件、24 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- --reporter verbose`，16 个测试文件、106 个测试通过（仍有既有 Semi React 19 warning 和 helperCopy 异步 act warning）；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-02 15:14 - 使用 Quill 官方 Snow 富文本样式
+
+- 完成内容：按用户要求将添加理财产品弹窗中的 Quill 富文本区域改为直接使用官方 Snow 样式，移除项目自定义的 Quill 工具栏、容器、picker、标题、引用等覆盖样式，仅保留外层 `width: 100%` 布局约束；回归测试同时覆盖官方 Snow toolbar/container 样式契约和富文本区域 100% 宽度。
+- 修改文件：
+  - `web/src/styles.css`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx -t "creates earn products with category and multilingual rich text" --reporter verbose`，实现前先失败于 toolbar `display` 为 `flex` 而非官方 Snow 的 `block`，后续补充宽度断言后失败于外层宽度为 `auto` 而非 `100%`；实现后同命令通过，1 个目标测试通过、23 个跳过（仍有既有 Semi React 19 warning）。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx --reporter verbose`，1 个测试文件、24 个测试通过（仍有既有 Semi React 19 warning）；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：继续优化“添加理财产品”弹窗布局。
+
+## 2026-06-02 15:29 - 优化添加理财产品布局和 Quill 工具栏
+
+- 完成内容：优化“添加理财产品”弹窗布局，将基础信息、多国语言介绍和提交操作拆分为清晰分区；保持 Quill 富文本区域外层 `width: 100%` 并继续使用官方 Snow 样式；按 Quill Snow 推荐结构将 toolbar 控件分为 `.ql-formats` 组，确保块类型、引用、加粗、斜体、下划线控件完整显示。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/shared/QuillRichTextEditor.tsx`
+  - `web/src/styles.css`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/vite.config.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx -t "creates earn products with category and multilingual rich text" --reporter verbose`，实现前失败于弹窗缺少新的布局分区类以及 toolbar 缺少 `.ql-formats` 分组；实现后同命令通过，1 个目标测试通过、23 个跳过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx --reporter verbose`，1 个测试文件、24 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-02 16:28 - 添加理财产品使用 Semi Select
+
+- 完成内容：将“添加理财产品”弹窗中的理财资产、产品分类、初始状态选择控件改为 Semi UI `Select`，保持现有提交数据结构不变，并补充回归测试确保这些选择控件使用 `.semi-select`。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx -t "creates earn products with category and multilingual rich text" --reporter verbose`，实现前失败于理财资产控件不是 Semi Select；实现后同命令通过，1 个目标测试通过、23 个跳过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- resourceConfigs.test.tsx --reporter verbose`，1 个测试文件、24 个测试通过（仍有既有 Semi React 19 warning）；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `git diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-02 20:50 - Admin SMTP 配置后端
+
+- 完成内容：新增 Admin SMTP 配置后端模块，挂载 SMTP 配置查询、保存和测试发送接口；SMTP 用户名与密码使用共享密文工具加密保存，响应和审计仅返回脱敏信息；生产启动注入 SMTP 邮件发送器；补充后台路由测试覆盖 Admin 鉴权、必填审计原因、密文脱敏、测试发送审计和测试隔离；同时修复共享密文脱敏对非 ASCII 字符的安全截取。
+- 修改文件：
+  - `src/modules/admin/smtp_config.rs`
+  - `src/modules/admin/mod.rs`
+  - `src/modules/admin/routes.rs`
+  - `src/main.rs`
+  - `src/infra/secrets.rs`
+  - `tests/admin_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" infra::secrets::tests::masks_secret_without_exposing_middle -- --nocapture`，实现前失败于非 ASCII 字符 byte index 不是 char boundary；实现后通过。已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_smtp_test_uses_configured_sender_and_audits_without_secrets -- --nocapture`，实现前失败于发送前未写入 `smtp_config.test` 审计；实现后通过。已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" modules::admin::smtp_config -- --nocapture`，2 个目标测试通过、0 失败；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" infra -- --nocapture`，5 个目标测试通过、0 失败；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes smtp -- --nocapture`，3 个目标测试通过、0 失败；已执行 `git diff --check`，通过。
+- 后续事项：继续实现用户邮箱、登录密码、资金密码 API，以及后台 SMTP 配置页面和中文 API 文档。

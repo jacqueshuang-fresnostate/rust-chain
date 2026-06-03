@@ -166,8 +166,34 @@ impl EventBroadcastHub {
         }
     }
 
+    pub fn subscribe_multi(&self) -> EventBroadcastMultiSubscription {
+        EventBroadcastMultiSubscription {
+            receiver: self.sender.subscribe(),
+        }
+    }
+
     pub fn publish(&self, message: EventBroadcastMessage) {
         let _ = self.sender.send(message);
+    }
+}
+
+pub struct EventBroadcastMultiSubscription {
+    receiver: broadcast::Receiver<EventBroadcastMessage>,
+}
+
+impl EventBroadcastMultiSubscription {
+    pub async fn recv(&mut self) -> AppResult<EventBroadcastMessage> {
+        loop {
+            match self.receiver.recv().await {
+                Ok(message) => return Ok(message),
+                Err(RecvError::Lagged(_)) => {}
+                Err(RecvError::Closed) => {
+                    return Err(AppError::Internal(
+                        "event broadcast channel is closed".to_owned(),
+                    ));
+                }
+            }
+        }
     }
 }
 

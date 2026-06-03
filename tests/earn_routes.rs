@@ -14,7 +14,7 @@ use exchange_api::{
     state::AppState,
 };
 use secrecy::SecretString;
-use serde_json::Value;
+use serde_json::{Value, json};
 use sqlx::{MySql, MySqlPool, Transaction, mysql::MySqlPoolOptions};
 use std::{error::Error, str::FromStr, time::Duration};
 use tokio::time::timeout;
@@ -138,15 +138,34 @@ async fn create_asset(tx: &mut Transaction<'_, MySql>, prefix: &str) -> (u64, St
     (id, symbol)
 }
 
+fn default_introduction_json(name: &str) -> Value {
+    json!({
+        "version": 1,
+        "default_locale": "zh-CN",
+        "items": [
+            {
+                "locale": "zh-CN",
+                "country": "CN",
+                "title": name,
+                "content": [
+                    { "type": "p", "children": [{ "text": name }] }
+                ]
+            }
+        ]
+    })
+}
+
 async fn seed_earn_product(tx: &mut Transaction<'_, MySql>, asset_id: u64) -> u64 {
     let suffix = Uuid::now_v7().simple().to_string();
+    let name = format!("Earn {}", &suffix[16..32]);
     sqlx::query(
         r#"INSERT INTO earn_products
-           (asset_id, name, term_days, apr_rate, min_subscribe, max_subscribe, status)
-           VALUES (?, ?, 30, ?, ?, ?, 'active')"#,
+           (asset_id, name, category, introduction_json, term_days, apr_rate, min_subscribe, max_subscribe, status)
+           VALUES (?, ?, 'fixed_term', ?, 30, ?, ?, ?, 'active')"#,
     )
     .bind(asset_id)
-    .bind(format!("Earn {}", &suffix[16..32]))
+    .bind(&name)
+    .bind(sqlx::types::Json(default_introduction_json(&name)))
     .bind(decimal("0.12000000"))
     .bind(decimal("10.000000000000000000"))
     .bind(decimal("1000.000000000000000000"))
@@ -545,6 +564,98 @@ async fn admin_earn_product_rejects_unsafe_term_name_and_apr_before_mysql()
     let long_reason_body = format!(
         r#"{{"asset_id":1,"name":"Long Reason","term_days":30,"apr_rate":"0.12000000","min_subscribe":"10.000000000000000000","reason":"{long_reason}"}}"#
     );
+    let invalid_category_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/earn/products")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"asset_id":1,"name":"Invalid Category","category":"fixed term","term_days":30,"apr_rate":"0.12000000","min_subscribe":"10.000000000000000000"}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let invalid_category_status = invalid_category_response.status();
+    let invalid_category_payload = body_json(invalid_category_response).await?;
+    assert_eq!(invalid_category_status, StatusCode::BAD_REQUEST);
+    assert_eq!(invalid_category_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        invalid_category_payload["message"],
+        "validation error: earn product category supports only letters, numbers, underscore, and hyphen"
+    );
+
+    let invalid_intro_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/earn/products")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"asset_id":1,"name":"Invalid Intro","category":"fixed_term","introduction_json":{"version":1,"default_locale":"en-US","items":[{"locale":"zh-CN","country":"CN","title":"介绍","content":[{"type":"p","children":[{"text":"内容"}]}]}]},"term_days":30,"apr_rate":"0.12000000","min_subscribe":"10.000000000000000000"}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let invalid_intro_status = invalid_intro_response.status();
+    let invalid_intro_payload = body_json(invalid_intro_response).await?;
+    assert_eq!(invalid_intro_status, StatusCode::BAD_REQUEST);
+    assert_eq!(invalid_intro_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        invalid_intro_payload["message"],
+        "validation error: earn product introduction default_locale must exist in items"
+    );
+
+    let invalid_plate_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/earn/products")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"asset_id":1,"name":"Invalid Plate","category":"fixed_term","introduction_json":{"version":1,"default_locale":"zh-CN","items":[{"locale":"zh-CN","country":"CN","title":"介绍","content":[123,{"unexpected":true}]}]},"term_days":30,"apr_rate":"0.12000000","min_subscribe":"10.000000000000000000","reason":"invalid plate"}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let invalid_plate_status = invalid_plate_response.status();
+    let invalid_plate_payload = body_json(invalid_plate_response).await?;
+    assert_eq!(invalid_plate_status, StatusCode::BAD_REQUEST);
+    assert_eq!(invalid_plate_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        invalid_plate_payload["message"],
+        "validation error: earn product introduction content node is invalid"
+    );
+
+    let unexpected_plate_field_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/earn/products")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"asset_id":1,"name":"Plate Extra Field","category":"fixed_term","introduction_json":{"version":1,"default_locale":"zh-CN","items":[{"locale":"zh-CN","country":"CN","title":"介绍","content":[{"type":"p","children":[{"text":"内容","html":"raw html","children":[123]}]}]}]},"term_days":30,"apr_rate":"0.12000000","min_subscribe":"10.000000000000000000","reason":"unexpected plate field"}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let unexpected_plate_field_status = unexpected_plate_field_response.status();
+    let unexpected_plate_field_payload = body_json(unexpected_plate_field_response).await?;
+    assert_eq!(unexpected_plate_field_status, StatusCode::BAD_REQUEST);
+    assert_eq!(unexpected_plate_field_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        unexpected_plate_field_payload["message"],
+        "validation error: earn product introduction content node is invalid"
+    );
+
     let long_reason_response = app
         .oneshot(
             Request::builder()
@@ -805,10 +916,10 @@ async fn admin_earn_product_create_update_status_and_audit() -> Result<(), Box<d
     .unwrap();
     let app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
     let create_body = format!(
-        r#"{{"asset_id":{asset_id},"name":"Admin Earn {asset_symbol}","term_days":60,"apr_rate":"0.15000000","min_subscribe":"25.000000000000000000","max_subscribe":"2500.000000000000000000","status":"active","reason":"launch earn product"}}"#
+        r#"{{"asset_id":{asset_id},"name":"Admin Earn {asset_symbol}","category":"structured","introduction_json":{{"version":1,"default_locale":"zh-CN","items":[{{"locale":"zh-CN","country":"CN","title":"USDT 稳健理财","content":[{{"type":"h3","children":[{{"text":"USDT 稳健理财"}}]}},{{"type":"p","children":[{{"text":"适合稳健型用户。"}}]}}]}},{{"locale":"en-US","country":"US","title":"USDT Earn","content":[{{"type":"p","children":[{{"text":"For stable users."}}]}}]}}]}} ,"term_days":60,"apr_rate":"0.15000000","min_subscribe":"25.000000000000000000","max_subscribe":"2500.000000000000000000","status":"active","reason":"launch earn product"}}"#
     );
 
-    let missing_asset_body = r#"{"asset_id":999999999999,"name":"Missing Asset Earn","term_days":30,"apr_rate":"0.12000000","min_subscribe":"10.000000000000000000"}"#;
+    let missing_asset_body = r#"{"asset_id":999999999999,"name":"Missing Asset Earn","term_days":30,"apr_rate":"0.12000000","min_subscribe":"10.000000000000000000","reason":"missing asset"}"#;
     let missing_asset_response = app
         .clone()
         .oneshot(
@@ -846,7 +957,21 @@ async fn admin_earn_product_create_update_status_and_audit() -> Result<(), Box<d
     assert_eq!(create_payload["asset_symbol"], asset_symbol);
     assert_eq!(create_payload["term_days"], 60);
     assert_eq!(create_payload["apr_rate"], "0.15000000");
+    assert_eq!(create_payload["category"], "structured");
     assert_eq!(create_payload["status"], "active");
+    assert_eq!(create_payload["introduction_json"]["version"], 1);
+    assert_eq!(
+        create_payload["introduction_json"]["items"][0]["content"][0]["type"],
+        "h3"
+    );
+
+    let (stored_category, stored_introduction): (String, sqlx::types::Json<Value>) =
+        sqlx::query_as("SELECT category, introduction_json FROM earn_products WHERE id = ?")
+            .bind(product_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(stored_category, "structured");
+    assert_eq!(stored_introduction["default_locale"], "zh-CN");
 
     let long_update_reason = "R".repeat(513);
     let long_update_reason_body =
@@ -913,7 +1038,10 @@ async fn admin_earn_product_create_update_status_and_audit() -> Result<(), Box<d
             .as_array()
             .unwrap()
             .iter()
-            .any(|product| product["id"] == product_id && product["status"] == "disabled")
+            .any(|product| product["id"] == product_id
+                && product["status"] == "disabled"
+                && product["category"] == "structured"
+                && product["introduction_json"]["default_locale"] == "zh-CN")
     );
 
     let audit_rows: Vec<(String, String, String)> = sqlx::query_as(
@@ -1058,7 +1186,10 @@ async fn earn_lists_active_products_for_user_and_all_products_for_admin()
             .unwrap()
             .iter()
             .any(|product| {
-                product["id"] == active_product_id && product["asset_symbol"] == asset_symbol
+                product["id"] == active_product_id
+                    && product["asset_symbol"] == asset_symbol
+                    && product["category"] == "fixed_term"
+                    && product["introduction_json"]["default_locale"] == "zh-CN"
             })
     );
     assert!(

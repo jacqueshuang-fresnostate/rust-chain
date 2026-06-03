@@ -1,14 +1,17 @@
 use axum::{
+    Router, async_trait,
     body::Body,
     http::{Request, StatusCode},
 };
 use exchange_api::{
     config::Settings,
-    modules::auth::{TokenScope, issue_token},
+    error::AppResult,
+    infra::email::{EmailMessage, EmailSender, SmtpEmailConfig},
+    modules::auth::{TokenScope, hash_password, issue_token, verify_password},
     state::AppState,
 };
 use secrecy::SecretString;
-use serde_json::Value;
+use serde_json::{Value, json};
 use sqlx::{MySqlPool, mysql::MySqlPoolOptions};
 use std::error::Error;
 use tower::ServiceExt;
@@ -82,13 +85,13 @@ async fn mysql_pool() -> Option<MySqlPool> {
 }
 
 async fn create_profile_user(pool: &MySqlPool) -> u64 {
-    let suffix = Uuid::now_v7().simple();
+    let suffix = Uuid::now_v7().simple().to_string();
     sqlx::query(
         r#"INSERT INTO users (email, phone, password_hash, status, kyc_level, created_at)
            VALUES (?, ?, ?, 'active', 2, ?)"#,
     )
     .bind(format!("profile-{suffix}@example.test"))
-    .bind(format!("188{}", &suffix.to_string()[..8]))
+    .bind(format!("188{}", &suffix[16..27]))
     .bind("not-a-real-hash")
     .bind("2026-05-30 03:16:05.123000")
     .execute(pool)
@@ -97,12 +100,88 @@ async fn create_profile_user(pool: &MySqlPool) -> u64 {
     .last_insert_id()
 }
 
-async fn cleanup_profile_user(pool: &MySqlPool, user_id: u64) -> Result<(), sqlx::Error> {
-    sqlx::query("DELETE FROM users WHERE id = ?")
-        .bind(user_id)
+async fn create_security_user(pool: &MySqlPool, label: &str, password: &str) -> u64 {
+    let suffix = Uuid::now_v7().simple().to_string();
+    sqlx::query("INSERT INTO users (email, phone, password_hash) VALUES (?, ?, ?)")
+        .bind(format!("security-{label}-{suffix}@example.test"))
+        .bind(format!("177{}", &suffix[16..27]))
+        .bind(hash_password(password).unwrap())
         .execute(pool)
-        .await?;
+        .await
+        .unwrap()
+        .last_insert_id()
+}
+
+async fn cleanup_security_users(pool: &MySqlPool, user_ids: &[u64]) -> Result<(), sqlx::Error> {
+    for user_id in user_ids {
+        sqlx::query("DELETE FROM audit_events WHERE actor_type = 'user' AND actor_id = ?")
+            .bind(user_id)
+            .execute(pool)
+            .await?;
+        sqlx::query("DELETE FROM user_email_verifications WHERE user_id = ?")
+            .bind(user_id)
+            .execute(pool)
+            .await?;
+        sqlx::query("DELETE FROM refresh_tokens WHERE actor_type = 'user' AND actor_id = ?")
+            .bind(user_id)
+            .execute(pool)
+            .await?;
+        sqlx::query("DELETE FROM user_security WHERE user_id = ?")
+            .bind(user_id)
+            .execute(pool)
+            .await?;
+        sqlx::query("DELETE FROM smtp_configs WHERE name = 'default'")
+            .execute(pool)
+            .await?;
+        sqlx::query("DELETE FROM users WHERE id = ?")
+            .bind(user_id)
+            .execute(pool)
+            .await?;
+    }
     Ok(())
+}
+
+async fn cleanup_profile_user(pool: &MySqlPool, user_id: u64) -> Result<(), sqlx::Error> {
+    cleanup_security_users(pool, &[user_id]).await
+}
+
+async fn body_json(response: axum::response::Response) -> Result<Value, Box<dyn Error>> {
+    let body = axum::body::to_bytes(response.into_body(), 65_536).await?;
+    Ok(serde_json::from_slice(&body)?)
+}
+
+#[derive(Debug)]
+struct NoopEmailSender;
+
+#[async_trait]
+impl EmailSender for NoopEmailSender {
+    async fn send(&self, _config: SmtpEmailConfig, _message: EmailMessage) -> AppResult<()> {
+        Ok(())
+    }
+}
+
+fn bearer(token: &str) -> String {
+    format!("Bearer {token}")
+}
+
+async fn json_request(
+    app: Router,
+    method: &str,
+    uri: &str,
+    token: Option<&str>,
+    body: Value,
+) -> axum::response::Response {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("content-type", "application/json");
+    if let Some(token) = token {
+        builder = builder.header("authorization", bearer(token));
+    }
+
+    app.oneshot(builder.body(Body::from(body.to_string())).unwrap())
+        .await
+        .unwrap()
 }
 
 async fn create_referral_user(pool: &MySqlPool, label: &str) -> u64 {
@@ -183,8 +262,8 @@ async fn cleanup_referral_fixture(
 }
 
 #[tokio::test]
-async fn user_profile_route_returns_authenticated_user_with_timestamp() -> Result<(), Box<dyn Error>>
-{
+async fn user_security_profile_route_returns_authenticated_user_with_timestamp()
+-> Result<(), Box<dyn Error>> {
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
@@ -194,6 +273,7 @@ async fn user_profile_route_returns_authenticated_user_with_timestamp() -> Resul
     let app = exchange_api::build_router(AppState::new(settings).with_mysql(pool.clone()));
 
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/api/v1/user/profile")
@@ -220,6 +300,33 @@ async fn user_profile_route_returns_authenticated_user_with_timestamp() -> Resul
     assert_eq!(payload["kyc_level"], 2);
     assert_eq!(payload["created_at"], 1_780_110_965_123_i64);
     assert!(payload["created_at"].is_number());
+    assert_eq!(payload["email_verified_at"], Value::Null);
+    assert_eq!(payload["fund_password_set"], false);
+
+    sqlx::query("UPDATE users SET email_verified_at = ? WHERE id = ?")
+        .bind("2026-05-30 04:00:00.000000")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("INSERT INTO user_security (user_id, fund_password_hash) VALUES (?, ?)")
+        .bind(user_id)
+        .bind(hash_password("123456").unwrap())
+        .execute(&pool)
+        .await?;
+
+    let verified_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/user/profile")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let verified_payload = body_json(verified_response).await?;
+    assert!(verified_payload["email_verified_at"].is_number());
+    assert_eq!(verified_payload["fund_password_set"], true);
 
     cleanup_profile_user(&pool, user_id).await?;
     Ok(())
@@ -243,6 +350,385 @@ async fn user_profile_route_rejects_non_user_tokens() -> Result<(), Box<dyn Erro
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    Ok(())
+}
+
+#[tokio::test]
+async fn user_security_email_bind_code_requires_user_scope_and_records_hashed_code()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_security_user(&pool, "bind-code", "OldPassword123!").await;
+    let user_token =
+        issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let app = exchange_api::build_router(AppState::new(settings.clone()).with_mysql(pool.clone()));
+
+    let body = json!({ "email": format!("bind-{}@example.test", Uuid::now_v7().simple()) });
+    let missing = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/user/email/bind-code",
+        None,
+        body.clone(),
+    )
+    .await;
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let admin = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/user/email/bind-code",
+        Some(&admin_token),
+        body.clone(),
+    )
+    .await;
+    assert_eq!(admin.status(), StatusCode::FORBIDDEN);
+
+    let unconfigured = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/user/email/bind-code",
+        Some(&user_token),
+        body.clone(),
+    )
+    .await;
+    assert_eq!(unconfigured.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    sqlx::query(
+        r#"INSERT INTO smtp_configs (name, host, port, security, from_email, enabled)
+           VALUES ('default', 'smtp.example.test', 587, 'starttls', 'noreply@example.test', TRUE)
+           ON DUPLICATE KEY UPDATE host = VALUES(host), port = VALUES(port), security = VALUES(security), from_email = VALUES(from_email), enabled = VALUES(enabled)"#,
+    )
+    .execute(&pool)
+    .await?;
+    let app = exchange_api::build_router(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_email_sender(std::sync::Arc::new(NoopEmailSender)),
+    );
+
+    let sent = json_request(
+        app,
+        "POST",
+        "/api/v1/user/email/bind-code",
+        Some(&user_token),
+        body,
+    )
+    .await;
+    let sent_status = sent.status();
+    let sent_payload = body_json(sent).await?;
+    assert_eq!(sent_status, StatusCode::OK, "payload: {sent_payload}");
+    assert_eq!(sent_payload["sent"], true);
+    assert!(sent_payload["expires_at"].is_number());
+    assert!(sent_payload.get("code").is_none());
+
+    let code_hash: String = sqlx::query_scalar(
+        "SELECT code_hash FROM user_email_verifications WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_ne!(code_hash, "123456");
+    assert!(code_hash.starts_with("$argon2"));
+
+    cleanup_security_users(&pool, &[user_id]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn user_security_email_bind_verifies_code_and_marks_email_verified()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_security_user(&pool, "bind", "OldPassword123!").await;
+    let other_user_id = create_security_user(&pool, "bind-other", "OldPassword123!").await;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let app = exchange_api::build_router(AppState::new(settings).with_mysql(pool.clone()));
+    let email = format!("verified-{}@example.test", Uuid::now_v7().simple());
+    let duplicate_email = format!("duplicate-{}@example.test", Uuid::now_v7().simple());
+    sqlx::query("UPDATE users SET email = ? WHERE id = ?")
+        .bind(&duplicate_email)
+        .bind(other_user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        r#"INSERT INTO user_email_verifications
+           (user_id, email, purpose, code_hash, status, expires_at, sent_at)
+           VALUES (?, ?, 'bind', ?, 'pending', DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 10 MINUTE), CURRENT_TIMESTAMP(6))"#,
+    )
+    .bind(user_id)
+    .bind(&email)
+    .bind(hash_password("654321").unwrap())
+    .execute(&pool)
+    .await?;
+
+    let wrong = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/user/email/bind",
+        Some(&token),
+        json!({ "email": email, "code": "000000" }),
+    )
+    .await;
+    assert_eq!(wrong.status(), StatusCode::BAD_REQUEST);
+    let attempts_after_wrong: i32 = sqlx::query_scalar(
+        "SELECT attempt_count FROM user_email_verifications WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(attempts_after_wrong, 1);
+
+    sqlx::query("UPDATE users SET status = 'disabled' WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    let disabled = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/user/email/bind",
+        Some(&token),
+        json!({ "email": email, "code": "654321" }),
+    )
+    .await;
+    assert_eq!(disabled.status(), StatusCode::UNAUTHORIZED);
+    sqlx::query("UPDATE users SET status = 'active' WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+
+    let duplicate = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/user/email/bind",
+        Some(&token),
+        json!({ "email": duplicate_email, "code": "654321" }),
+    )
+    .await;
+    assert_eq!(duplicate.status(), StatusCode::CONFLICT);
+
+    let bound = json_request(
+        app,
+        "POST",
+        "/api/v1/user/email/bind",
+        Some(&token),
+        json!({ "email": email, "code": "654321" }),
+    )
+    .await;
+    let bound_status = bound.status();
+    let bound_payload = body_json(bound).await?;
+    assert_eq!(bound_status, StatusCode::OK, "payload: {bound_payload}");
+    assert_eq!(bound_payload["email"], email);
+    assert!(bound_payload["email_verified_at"].is_number());
+
+    let stored: (String, Option<chrono::DateTime<chrono::Utc>>) =
+        sqlx::query_as("SELECT email, email_verified_at FROM users WHERE id = ?")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(stored.0, email);
+    assert!(stored.1.is_some());
+    let verification_status: String = sqlx::query_scalar(
+        "SELECT status FROM user_email_verifications WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(verification_status, "verified");
+
+    cleanup_security_users(&pool, &[user_id, other_user_id]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn user_security_password_change_requires_old_password_and_revokes_refresh_tokens()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let email = format!("password-change-{}@example.test", Uuid::now_v7().simple());
+    let app = exchange_api::build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let register = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/auth/register",
+        None,
+        json!({ "email": email, "password": "OldPassword123!" }),
+    )
+    .await;
+    let register_payload = body_json(register).await?;
+    let token = register_payload["access_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let old_refresh = register_payload["refresh_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let user_id: u64 = sqlx::query_scalar("SELECT id FROM users WHERE email = ?")
+        .bind(&email)
+        .fetch_one(&pool)
+        .await?;
+
+    let wrong = json_request(
+        app.clone(),
+        "PATCH",
+        "/api/v1/user/password",
+        Some(&token),
+        json!({ "old_password": "WrongPassword123!", "new_password": "NewPassword123!" }),
+    )
+    .await;
+    assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
+
+    let changed = json_request(
+        app.clone(),
+        "PATCH",
+        "/api/v1/user/password",
+        Some(&token),
+        json!({ "old_password": "OldPassword123!", "new_password": "NewPassword123!" }),
+    )
+    .await;
+    let changed_status = changed.status();
+    let changed_payload = body_json(changed).await?;
+    assert_eq!(changed_status, StatusCode::OK, "payload: {changed_payload}");
+    assert_eq!(changed_payload["scope"], "user");
+    assert!(changed_payload["access_token"].is_string());
+    assert!(changed_payload["refresh_token"].is_string());
+
+    let old_login = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/auth/login",
+        None,
+        json!({ "email": email, "password": "OldPassword123!" }),
+    )
+    .await;
+    assert_eq!(old_login.status(), StatusCode::UNAUTHORIZED);
+
+    let new_login = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/auth/login",
+        None,
+        json!({ "email": email, "password": "NewPassword123!" }),
+    )
+    .await;
+    assert_eq!(new_login.status(), StatusCode::OK);
+
+    let old_refresh_response = json_request(
+        app,
+        "POST",
+        "/api/v1/auth/refresh",
+        None,
+        json!({ "refresh_token": old_refresh }),
+    )
+    .await;
+    assert_eq!(old_refresh_response.status(), StatusCode::UNAUTHORIZED);
+
+    cleanup_security_users(&pool, &[user_id]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn user_security_fund_password_create_and_change_enforce_password_rules()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_security_user(&pool, "fund", "LoginPassword123!").await;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let app = exchange_api::build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let invalid = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/user/fund-password",
+        Some(&token),
+        json!({ "login_password": "LoginPassword123!", "fund_password": "abcdef" }),
+    )
+    .await;
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+
+    let wrong_login = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/user/fund-password",
+        Some(&token),
+        json!({ "login_password": "WrongPassword123!", "fund_password": "123456" }),
+    )
+    .await;
+    assert_eq!(wrong_login.status(), StatusCode::UNAUTHORIZED);
+
+    let created = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/user/fund-password",
+        Some(&token),
+        json!({ "login_password": "LoginPassword123!", "fund_password": "123456" }),
+    )
+    .await;
+    let created_status = created.status();
+    let created_payload = body_json(created).await?;
+    assert_eq!(created_status, StatusCode::OK, "payload: {created_payload}");
+    assert_eq!(created_payload["fund_password_set"], true);
+
+    let stored_hash: String =
+        sqlx::query_scalar("SELECT fund_password_hash FROM user_security WHERE user_id = ?")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_ne!(stored_hash, "123456");
+    assert!(verify_password(&stored_hash, "123456")?);
+
+    let duplicate = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/user/fund-password",
+        Some(&token),
+        json!({ "login_password": "LoginPassword123!", "fund_password": "234567" }),
+    )
+    .await;
+    assert_eq!(duplicate.status(), StatusCode::CONFLICT);
+
+    let wrong_old = json_request(
+        app.clone(),
+        "PATCH",
+        "/api/v1/user/fund-password",
+        Some(&token),
+        json!({ "old_fund_password": "000000", "new_fund_password": "234567" }),
+    )
+    .await;
+    assert_eq!(wrong_old.status(), StatusCode::UNAUTHORIZED);
+
+    let changed = json_request(
+        app,
+        "PATCH",
+        "/api/v1/user/fund-password",
+        Some(&token),
+        json!({ "old_fund_password": "123456", "new_fund_password": "234567" }),
+    )
+    .await;
+    let changed_status = changed.status();
+    let changed_payload = body_json(changed).await?;
+    assert_eq!(changed_status, StatusCode::OK, "payload: {changed_payload}");
+    assert_eq!(changed_payload["fund_password_set"], true);
+
+    let changed_hash: String =
+        sqlx::query_scalar("SELECT fund_password_hash FROM user_security WHERE user_id = ?")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await?;
+    assert!(verify_password(&changed_hash, "234567")?);
+
+    cleanup_security_users(&pool, &[user_id]).await?;
     Ok(())
 }
 

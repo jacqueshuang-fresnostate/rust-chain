@@ -20,6 +20,7 @@ use redis::{AsyncCommands, aio::ConnectionManager};
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Value, json};
 use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
+use std::{collections::BTreeSet, str::FromStr};
 
 pub fn user_routes() -> Router<AppState> {
     Router::new()
@@ -90,6 +91,8 @@ struct CachedTickerPayload {
 struct CreateMarginProductRequest {
     pair_id: u64,
     margin_asset: u64,
+    margin_mode: Option<String>,
+    leverage_levels: Option<Vec<BigDecimal>>,
     max_leverage: BigDecimal,
     min_margin: BigDecimal,
     max_margin: Option<BigDecimal>,
@@ -112,6 +115,8 @@ struct MarginProductResponse {
     symbol: String,
     margin_asset: u64,
     margin_asset_symbol: String,
+    margin_mode: String,
+    leverage_levels: SqlxJson<Vec<String>>,
     max_leverage: BigDecimal,
     min_margin: BigDecimal,
     max_margin: Option<BigDecimal>,
@@ -163,6 +168,7 @@ struct AdminMarginPositionResponse {
     product_id: u64,
     pair_id: u64,
     margin_asset: u64,
+    margin_mode: String,
     direction: String,
     margin_amount: BigDecimal,
     leverage: BigDecimal,
@@ -194,6 +200,7 @@ struct MarginPositionResponse {
     product_id: u64,
     pair_id: u64,
     margin_asset: u64,
+    margin_mode: String,
     direction: String,
     margin_amount: BigDecimal,
     leverage: BigDecimal,
@@ -234,7 +241,8 @@ struct MarginProductRuleRow {
     pair_id: u64,
     symbol: String,
     margin_asset: u64,
-    max_leverage: BigDecimal,
+    margin_mode: String,
+    leverage_levels: SqlxJson<Vec<String>>,
     min_margin: BigDecimal,
     max_margin: Option<BigDecimal>,
     hourly_interest_rate: BigDecimal,
@@ -346,18 +354,23 @@ async fn create_product(
     let reason = required_reason(request.reason)?;
     let admin_id = admin_id_from_subject(&claims.sub)?;
     let status = normalized_product_status(request.status.as_deref().unwrap_or("active"))?;
+    let margin_mode = normalized_margin_mode(request.margin_mode.as_deref().unwrap_or("isolated"))?;
+    let leverage_levels =
+        validated_leverage_levels(&request.max_leverage, request.leverage_levels.as_deref())?;
     let pool = mysql_pool(&state)?;
     let mut tx = pool.begin().await?;
     ensure_pair_exists(&mut tx, request.pair_id).await?;
     ensure_asset_exists(&mut tx, request.margin_asset).await?;
     let product_id = sqlx::query(
         r#"INSERT INTO margin_products
-           (pair_id, margin_asset, max_leverage, min_margin, max_margin,
+           (pair_id, margin_asset, margin_mode, leverage_levels, max_leverage, min_margin, max_margin,
             maintenance_margin_rate, hourly_interest_rate, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(request.pair_id)
     .bind(request.margin_asset)
+    .bind(&margin_mode)
+    .bind(SqlxJson(leverage_levels))
     .bind(&request.max_leverage)
     .bind(&request.min_margin)
     .bind(&request.max_margin)
@@ -425,7 +438,7 @@ async fn list_positions(
         .transpose()?;
     let pool = mysql_pool(&state)?;
     let mut builder = QueryBuilder::<MySql>::new(
-        r#"SELECT id, user_id, product_id, pair_id, margin_asset, direction, margin_amount,
+        r#"SELECT id, user_id, product_id, pair_id, margin_asset, margin_mode, direction, margin_amount,
                   leverage, notional_amount, borrowed_amount, interest_amount, entry_price,
                   exit_price, realized_pnl, closed_at, status, idempotency_key
            FROM margin_positions
@@ -455,7 +468,7 @@ async fn list_admin_positions(
         .transpose()?;
     let pool = mysql_pool(&state)?;
     let mut builder = QueryBuilder::<MySql>::new(
-        r#"SELECT id, user_id, product_id, pair_id, margin_asset, direction, margin_amount,
+        r#"SELECT id, user_id, product_id, pair_id, margin_asset, margin_mode, direction, margin_amount,
                   leverage, notional_amount, borrowed_amount, interest_amount, entry_price,
                   exit_price, realized_pnl, closed_at, liquidated_at, liquidation_reason, status,
                   idempotency_key
@@ -604,8 +617,9 @@ async fn list_products(
     let mut builder = QueryBuilder::<MySql>::new(
         r#"SELECT products.id, products.pair_id, pairs.symbol,
                   products.margin_asset, assets.symbol AS margin_asset_symbol,
-                  products.max_leverage, products.min_margin, products.max_margin,
-                  products.maintenance_margin_rate, products.hourly_interest_rate, products.status
+                  products.margin_mode, products.leverage_levels, products.max_leverage,
+                  products.min_margin, products.max_margin, products.maintenance_margin_rate,
+                  products.hourly_interest_rate, products.status
            FROM margin_products products
            INNER JOIN trading_pairs pairs ON pairs.id = products.pair_id
            INNER JOIN assets ON assets.id = products.margin_asset"#,
@@ -656,6 +670,7 @@ async fn open_position(
                 "product_id": response.position.product_id,
                 "pair_id": response.position.pair_id,
                 "margin_asset": response.position.margin_asset,
+                "margin_mode": response.position.margin_mode,
                 "direction": response.position.direction,
                 "margin_amount": response.position.margin_amount,
                 "leverage": response.position.leverage,
@@ -764,15 +779,16 @@ async fn open_position_in_tx(
     // 先写入仓位占用用户幂等键，再锁定钱包扣保证金，避免同 key 并发重复扣款。
     let position_id = match sqlx::query(
         r#"INSERT INTO margin_positions
-           (user_id, product_id, pair_id, margin_asset, direction, margin_amount,
+           (user_id, product_id, pair_id, margin_asset, margin_mode, direction, margin_amount,
             leverage, notional_amount, borrowed_amount, interest_amount, interest_accrued_at,
             entry_price, status, idempotency_key)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP(6), ?, 'opened', ?)"#,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP(6), ?, 'opened', ?)"#,
     )
     .bind(user_id)
     .bind(product.id)
     .bind(product.pair_id)
     .bind(product.margin_asset)
+    .bind(&product.margin_mode)
     .bind(&direction)
     .bind(&margin_amount)
     .bind(&leverage)
@@ -977,7 +993,7 @@ async fn existing_position_for_idempotency_key(
     idempotency_key: &str,
 ) -> AppResult<Option<MarginPositionResponse>> {
     sqlx::query_as::<_, MarginPositionResponse>(
-        r#"SELECT id, user_id, product_id, pair_id, margin_asset, direction, margin_amount,
+        r#"SELECT id, user_id, product_id, pair_id, margin_asset, margin_mode, direction, margin_amount,
                   leverage, notional_amount, borrowed_amount, interest_amount, entry_price,
                   exit_price, realized_pnl, closed_at, status, idempotency_key
            FROM margin_positions
@@ -998,7 +1014,7 @@ async fn existing_position_for_idempotency_key_readonly(
     idempotency_key: &str,
 ) -> AppResult<Option<MarginPositionResponse>> {
     sqlx::query_as::<_, MarginPositionResponse>(
-        r#"SELECT id, user_id, product_id, pair_id, margin_asset, direction, margin_amount,
+        r#"SELECT id, user_id, product_id, pair_id, margin_asset, margin_mode, direction, margin_amount,
                   leverage, notional_amount, borrowed_amount, interest_amount, entry_price,
                   exit_price, realized_pnl, closed_at, status, idempotency_key
            FROM margin_positions
@@ -1041,7 +1057,7 @@ async fn load_user_position_by_id(
     position_id: u64,
 ) -> AppResult<Option<MarginPositionResponse>> {
     sqlx::query_as::<_, MarginPositionResponse>(
-        r#"SELECT id, user_id, product_id, pair_id, margin_asset, direction, margin_amount,
+        r#"SELECT id, user_id, product_id, pair_id, margin_asset, margin_mode, direction, margin_amount,
                   leverage, notional_amount, borrowed_amount, interest_amount, entry_price,
                   exit_price, realized_pnl, closed_at, status, idempotency_key
            FROM margin_positions
@@ -1060,7 +1076,7 @@ async fn load_admin_position_by_id(
     position_id: u64,
 ) -> AppResult<Option<AdminMarginPositionResponse>> {
     sqlx::query_as::<_, AdminMarginPositionResponse>(
-        r#"SELECT id, user_id, product_id, pair_id, margin_asset, direction, margin_amount,
+        r#"SELECT id, user_id, product_id, pair_id, margin_asset, margin_mode, direction, margin_amount,
                   leverage, notional_amount, borrowed_amount, interest_amount, entry_price,
                   exit_price, realized_pnl, closed_at, liquidated_at, liquidation_reason, status,
                   idempotency_key
@@ -1219,8 +1235,9 @@ async fn load_product_by_id(
     sqlx::query_as::<_, MarginProductResponse>(
         r#"SELECT products.id, products.pair_id, pairs.symbol,
                   products.margin_asset, assets.symbol AS margin_asset_symbol,
-                  products.max_leverage, products.min_margin, products.max_margin,
-                  products.maintenance_margin_rate, products.hourly_interest_rate, products.status
+                  products.margin_mode, products.leverage_levels, products.max_leverage,
+                  products.min_margin, products.max_margin, products.maintenance_margin_rate,
+                  products.hourly_interest_rate, products.status
            FROM margin_products products
            INNER JOIN trading_pairs pairs ON pairs.id = products.pair_id
            INNER JOIN assets ON assets.id = products.margin_asset
@@ -1240,8 +1257,9 @@ async fn lock_product_by_id(
     sqlx::query_as::<_, MarginProductResponse>(
         r#"SELECT products.id, products.pair_id, pairs.symbol,
                   products.margin_asset, assets.symbol AS margin_asset_symbol,
-                  products.max_leverage, products.min_margin, products.max_margin,
-                  products.maintenance_margin_rate, products.hourly_interest_rate, products.status
+                  products.margin_mode, products.leverage_levels, products.max_leverage,
+                  products.min_margin, products.max_margin, products.maintenance_margin_rate,
+                  products.hourly_interest_rate, products.status
            FROM margin_products products
            INNER JOIN trading_pairs pairs ON pairs.id = products.pair_id
            INNER JOIN assets ON assets.id = products.margin_asset
@@ -1261,8 +1279,8 @@ async fn lock_active_product(
 ) -> AppResult<MarginProductRuleRow> {
     let product = sqlx::query_as::<_, MarginProductRuleRow>(
         r#"SELECT products.id, products.pair_id, pairs.symbol, products.margin_asset,
-                  products.max_leverage, products.min_margin, products.max_margin,
-                  products.hourly_interest_rate, products.status
+                  products.margin_mode, products.leverage_levels, products.min_margin,
+                  products.max_margin, products.hourly_interest_rate, products.status
            FROM margin_products products
            INNER JOIN trading_pairs pairs ON pairs.id = products.pair_id
            WHERE products.id = ?
@@ -1330,6 +1348,8 @@ fn product_audit_json(product: &MarginProductResponse) -> Value {
         "symbol": product.symbol,
         "margin_asset": product.margin_asset,
         "margin_asset_symbol": product.margin_asset_symbol,
+        "margin_mode": product.margin_mode,
+        "leverage_levels": product.leverage_levels.0,
         "max_leverage": product.max_leverage,
         "min_margin": product.min_margin,
         "max_margin": product.max_margin,
@@ -1344,7 +1364,7 @@ async fn load_position_by_id(
     position_id: u64,
 ) -> AppResult<MarginPositionResponse> {
     sqlx::query_as::<_, MarginPositionResponse>(
-        r#"SELECT id, user_id, product_id, pair_id, margin_asset, direction, margin_amount,
+        r#"SELECT id, user_id, product_id, pair_id, margin_asset, margin_mode, direction, margin_amount,
                   leverage, notional_amount, borrowed_amount, interest_amount, entry_price,
                   exit_price, realized_pnl, closed_at, status, idempotency_key
            FROM margin_positions
@@ -1440,6 +1460,9 @@ fn ensure_existing_position_matches_request(
 }
 
 fn validate_create_product_request(request: &CreateMarginProductRequest) -> AppResult<()> {
+    let margin_mode = request.margin_mode.as_deref().unwrap_or("isolated");
+    normalized_margin_mode(margin_mode)?;
+    validated_leverage_levels(&request.max_leverage, request.leverage_levels.as_deref())?;
     if request.pair_id == 0 {
         return Err(AppError::Validation("pair_id is required".to_owned()));
     }
@@ -1487,9 +1510,19 @@ fn validate_product_margin(
             "margin amount exceeds product maximum".to_owned(),
         ));
     }
-    if leverage > &product.max_leverage {
+    if product.margin_mode == "cross" {
         return Err(AppError::Validation(
-            "margin leverage exceeds product maximum".to_owned(),
+            "cross margin opening requires a dedicated margin wallet risk model".to_owned(),
+        ));
+    }
+    if !product
+        .leverage_levels
+        .0
+        .iter()
+        .any(|level| decimal_matches_string(leverage, level))
+    {
+        return Err(AppError::Validation(
+            "margin leverage must match a configured product level".to_owned(),
         ));
     }
     validate_hourly_interest_rate(&product.hourly_interest_rate)?;
@@ -1527,6 +1560,76 @@ fn normalized_product_status(value: &str) -> AppResult<String> {
             "margin product status must be active or disabled".to_owned(),
         )),
     }
+}
+
+fn normalized_margin_mode(value: &str) -> AppResult<String> {
+    let Some(mode) = optional_string(Some(value.to_owned())) else {
+        return Err(AppError::Validation(
+            "margin product margin_mode is required".to_owned(),
+        ));
+    };
+    match mode.as_str() {
+        "isolated" | "cross" => Ok(mode),
+        _ => Err(AppError::Validation(
+            "margin product margin_mode must be isolated or cross".to_owned(),
+        )),
+    }
+}
+
+fn validated_leverage_levels(
+    max_leverage: &BigDecimal,
+    leverage_levels: Option<&[BigDecimal]>,
+) -> AppResult<Vec<String>> {
+    validate_max_leverage(max_leverage)?;
+    let Some(levels) = leverage_levels else {
+        return Ok(vec![decimal_config_string(max_leverage)]);
+    };
+    if levels.is_empty() {
+        return Err(AppError::Validation(
+            "margin product leverage_levels must not be empty".to_owned(),
+        ));
+    }
+
+    let mut seen = BTreeSet::new();
+    let mut normalized = Vec::with_capacity(levels.len());
+    for level in levels {
+        validate_max_leverage(level)?;
+        let level_text = decimal_config_string(level);
+        if !seen.insert(level_text.clone()) {
+            return Err(AppError::Validation(
+                "margin product leverage_levels must not contain duplicates".to_owned(),
+            ));
+        }
+        normalized.push(level_text);
+    }
+
+    let max_level = levels
+        .iter()
+        .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
+        .ok_or_else(|| {
+            AppError::Validation("margin product leverage_levels must not be empty".to_owned())
+        })?;
+    if max_level != max_leverage {
+        return Err(AppError::Validation(
+            "margin product max_leverage must match maximum leverage level".to_owned(),
+        ));
+    }
+
+    Ok(normalized)
+}
+
+fn decimal_config_string(value: &BigDecimal) -> String {
+    let normalized = value.normalized().to_string();
+    normalized
+        .strip_suffix(".0")
+        .unwrap_or(&normalized)
+        .to_owned()
+}
+
+fn decimal_matches_string(value: &BigDecimal, expected: &str) -> bool {
+    BigDecimal::from_str(expected)
+        .map(|level| &level == value)
+        .unwrap_or(false)
 }
 
 fn normalized_position_status(value: &str) -> AppResult<String> {

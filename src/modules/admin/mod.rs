@@ -3,6 +3,7 @@ use thiserror::Error;
 
 pub mod market_feed_config;
 pub mod routes;
+pub mod smtp_config;
 
 #[derive(Debug, Clone)]
 pub struct AdminScope {

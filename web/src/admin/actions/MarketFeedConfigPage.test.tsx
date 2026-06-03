@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -53,6 +53,27 @@ const credentialsResponse = {
   credentials: [{ api_key_mask: 'abcd****wxyz', auth_type: 'api_key', enabled: true, provider: 'bitget' }]
 };
 
+function semiSelectByLabel(label: string): HTMLElement {
+  const labelNode = screen.getByText(label).closest('label') as HTMLElement | null;
+  expect(labelNode).toBeInTheDocument();
+  const select = labelNode?.querySelector('.semi-select') as HTMLElement | null;
+  expect(select).toBeInTheDocument();
+  return select as HTMLElement;
+}
+
+async function selectSemiOption(user: ReturnType<typeof userEvent.setup>, label: string, optionLabel: string) {
+  await user.click(semiSelectByLabel(label));
+  await waitFor(() => {
+    expect([...document.querySelectorAll('.semi-select-option')].some((option) => option.textContent === optionLabel)).toBe(true);
+  });
+  const option = [...document.querySelectorAll('.semi-select-option')].find((item) => item.textContent === optionLabel) as HTMLElement | undefined;
+  expect(option).toBeDefined();
+  fireEvent.mouseEnter(option as HTMLElement);
+  fireEvent.mouseDown(option as HTMLElement);
+  fireEvent.mouseUp(option as HTMLElement);
+  fireEvent.click(option as HTMLElement);
+}
+
 describe('MarketFeedConfigPage', () => {
   beforeEach(() => {
     vi.stubGlobal('ResizeObserver', ResizeObserverMock);
@@ -75,7 +96,16 @@ describe('MarketFeedConfigPage', () => {
   it('loads saved config, runtime status, masked credentials, and selectable feed options without static helper copy', async () => {
     render(<MarketFeedConfigPage />);
 
-    expect(await screen.findByDisplayValue('BTCUSDT,ETHUSDT')).toBeInTheDocument();
+    const symbolsInput = await screen.findByDisplayValue('BTCUSDT,ETHUSDT');
+    expect(symbolsInput).toBeInTheDocument();
+    expect(symbolsInput.closest('.semi-input-wrapper')).toBeInTheDocument();
+    semiSelectByLabel('启用状态');
+    semiSelectByLabel('Provider');
+    semiSelectByLabel('Auth Type');
+    expect(screen.getByLabelText('API Key').closest('.semi-input-wrapper')).toBeInTheDocument();
+    expect(screen.getByLabelText('API Secret').closest('.semi-input-wrapper')).toBeInTheDocument();
+    expect(screen.getByLabelText('Passphrase').closest('.semi-input-wrapper')).toBeInTheDocument();
+    semiSelectByLabel('凭证状态');
     expect(screen.queryByText('配置第三方行情 symbols、intervals、providers 和 API Key；保存后需手动重载才会生效。')).not.toBeInTheDocument();
     expect(screen.queryByText('交易对支持逗号分隔输入；K 线周期和行情源可多选，保存后需手动重载。')).not.toBeInTheDocument();
     expect(screen.queryByText('保存配置不会立即影响 worker，只有手动重载会更新运行态。')).not.toBeInTheDocument();
@@ -111,6 +141,10 @@ describe('MarketFeedConfigPage', () => {
     render(<MarketFeedConfigPage />);
     await user.clear(await screen.findByLabelText('交易对 symbols'));
     await user.type(screen.getByLabelText('交易对 symbols'), 'BTC-USDT, ETH-USDT');
+    expect(screen.getByLabelText('交易对 symbols').closest('.semi-input-wrapper')).toBeInTheDocument();
+    semiSelectByLabel('启用状态');
+    await selectSemiOption(user, '启用状态', '禁用');
+    await selectSemiOption(user, '启用状态', '启用');
     await user.click(screen.getByRole('checkbox', { name: '5m' }));
     await user.click(screen.getByRole('checkbox', { name: '15m' }));
     await user.click(screen.getByRole('checkbox', { name: 'htx' }));

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ApiError, apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
+import { AdminSelect, AdminTextInput } from '../../shared/SemiFormControls';
 
 const { Title } = Typography;
 
@@ -47,14 +48,19 @@ export function ConvertRuleActions() {
         <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
           <Title heading={4}>新增或更新固定汇率</Title>
           <div className="admin-action-form admin-action-form-narrow">
-            <label>闪兑交易对ID<input value={values.convertPairId} onChange={(event) => setValues({ ...values, convertPairId: event.currentTarget.value })} /></label>
-            <label>固定汇率<input value={values.fixedRate} onChange={(event) => setValues({ ...values, fixedRate: event.currentTarget.value })} /></label>
+            <label>闪兑交易对ID<AdminTextInput ariaLabel="闪兑交易对ID" value={values.convertPairId} onChange={(convertPairId) => setValues({ ...values, convertPairId })} /></label>
+            <label>固定汇率<AdminTextInput ariaLabel="固定汇率" value={values.fixedRate} onChange={(fixedRate) => setValues({ ...values, fixedRate })} /></label>
             <label>
               状态
-              <select value={values.status} onChange={(event) => setValues({ ...values, status: event.currentTarget.value })}>
-                <option value="active">active</option>
-                <option value="disabled">disabled</option>
-              </select>
+              <AdminSelect
+                ariaLabel="状态"
+                onChange={(status) => setValues({ ...values, status })}
+                optionList={[
+                  { value: 'active', label: '启用' },
+                  { value: 'disabled', label: '禁用' }
+                ]}
+                value={values.status}
+              />
             </label>
           </div>
           <ConfirmAction

@@ -12,6 +12,7 @@ use exchange_api::{
 };
 use futures_util::{SinkExt, StreamExt};
 use secrecy::SecretString;
+use std::net::SocketAddr;
 use tokio::{net::TcpListener, sync::oneshot};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tower::ServiceExt;
@@ -146,12 +147,10 @@ async fn events_routes_expose_public_and_private_ws_paths() {
         AppState::new(test_settings()).with_event_broadcast_hub(EventBroadcastHub::new(16)),
     );
 
-    let public_response = app
-        .clone()
-        .oneshot(ws_request("/ws/public/ticker/BTC-USDT"))
-        .await
-        .unwrap();
-    assert_ne!(public_response.status(), StatusCode::NOT_FOUND);
+    for path in ["/ws/public", "/ws/public/ticker/BTC-USDT"] {
+        let public_response = app.clone().oneshot(ws_request(path)).await.unwrap();
+        assert_ne!(public_response.status(), StatusCode::NOT_FOUND);
+    }
 
     let private_response = app
         .oneshot(ws_request("/ws/private?token=invalid"))
@@ -161,17 +160,20 @@ async fn events_routes_expose_public_and_private_ws_paths() {
 }
 
 #[tokio::test]
-async fn build_router_exposes_root_websocket_paths() {
+async fn build_router_exposes_root_and_api_websocket_paths() {
     let app = build_router(
         AppState::new(test_settings()).with_event_broadcast_hub(EventBroadcastHub::new(16)),
     );
 
-    let public_response = app
-        .clone()
-        .oneshot(ws_request("/ws/public/ticker/BTC-USDT"))
-        .await
-        .unwrap();
-    assert_ne!(public_response.status(), StatusCode::NOT_FOUND);
+    for path in [
+        "/ws/public",
+        "/ws/public/ticker/BTC-USDT",
+        "/api/v1/ws/public",
+        "/api/v1/ws/public/ticker/BTC-USDT",
+    ] {
+        let public_response = app.clone().oneshot(ws_request(path)).await.unwrap();
+        assert_ne!(public_response.status(), StatusCode::NOT_FOUND);
+    }
 
     let private_response = app
         .oneshot(ws_request("/ws/private?token=invalid"))
@@ -230,20 +232,7 @@ async fn private_ws_receives_only_authenticated_user_broadcasts() {
 
 #[tokio::test]
 async fn public_ws_receives_broadcast_messages_after_subscription_confirmation() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let hub = EventBroadcastHub::new(16);
-    let app = routes::routes()
-        .with_state(AppState::new(test_settings()).with_event_broadcast_hub(hub.clone()));
-    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-    tokio::spawn(async move {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async {
-                let _ = shutdown_rx.await;
-            })
-            .await
-            .unwrap();
-    });
+    let (address, hub, shutdown_tx) = spawn_events_app().await;
 
     let (mut socket, _response) =
         connect_async(format!("ws://{address}/ws/public/ticker/BTC-USDT"))
@@ -270,6 +259,176 @@ async fn public_ws_receives_broadcast_messages_after_subscription_confirmation()
         Message::Text("pong".to_owned())
     );
     shutdown_tx.send(()).unwrap();
+}
+
+#[tokio::test]
+async fn public_ws_single_endpoint_subscribes_ticker() {
+    let (address, _hub, shutdown_tx) = spawn_events_app().await;
+    let (mut socket, _response) = connect_async(format!("ws://{address}/ws/public"))
+        .await
+        .unwrap();
+
+    socket
+        .send(Message::Text(
+            r#"{"op":"subscribe","channel":"ticker","symbol":"BTC-USDT"}"#.to_owned(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        socket.next().await.unwrap().unwrap(),
+        Message::Text(r#"{"type":"subscribed","channel":"public:ticker:BTCUSDT"}"#.to_owned())
+    );
+    socket.send(Message::Text("ping".to_owned())).await.unwrap();
+    assert_eq!(
+        socket.next().await.unwrap().unwrap(),
+        Message::Text("pong".to_owned())
+    );
+    shutdown_tx.send(()).unwrap();
+}
+
+#[tokio::test]
+async fn public_ws_single_endpoint_receives_multiple_market_channels() {
+    let (address, hub, shutdown_tx) = spawn_events_app().await;
+    let (mut socket, _response) = connect_async(format!("ws://{address}/ws/public"))
+        .await
+        .unwrap();
+
+    for command in [
+        r#"{"op":"subscribe","channel":"ticker","symbol":"BTCUSDT"}"#,
+        r#"{"op":"subscribe","channel":"depth","symbol":"BTCUSDT"}"#,
+        r#"{"op":"subscribe","channel":"kline","symbol":"BTCUSDT","interval":"1m"}"#,
+        r#"{"op":"subscribe","channel":"trade","symbol":"BTCUSDT"}"#,
+    ] {
+        socket
+            .send(Message::Text(command.to_owned()))
+            .await
+            .unwrap();
+        let message = socket.next().await.unwrap().unwrap().into_text().unwrap();
+        assert!(message.starts_with(r#"{"type":"subscribed","channel":"public:"#));
+    }
+
+    for (namespace, topic, payload) in [
+        (
+            "ticker",
+            "BTCUSDT",
+            r#"{"type":"ticker","symbol":"BTCUSDT","last_price":"70000.12"}"#,
+        ),
+        (
+            "depth",
+            "BTCUSDT",
+            r#"{"type":"depth","symbol":"BTCUSDT","bid":"70000.00"}"#,
+        ),
+        (
+            "kline",
+            "BTCUSDT_1m",
+            r#"{"type":"kline","symbol":"BTCUSDT","interval":"1m"}"#,
+        ),
+        (
+            "trade",
+            "BTCUSDT",
+            r#"{"type":"trade","symbol":"BTCUSDT","price":"70000.10"}"#,
+        ),
+    ] {
+        hub.publish(EventBroadcastMessage::public(
+            WebSocketChannel::public(namespace, topic).unwrap(),
+            payload,
+        ));
+        assert_eq!(
+            socket.next().await.unwrap().unwrap(),
+            Message::Text(payload.to_owned())
+        );
+    }
+    shutdown_tx.send(()).unwrap();
+}
+
+#[tokio::test]
+async fn public_ws_single_endpoint_unsubscribe_stops_channel_delivery() {
+    let (address, hub, shutdown_tx) = spawn_events_app().await;
+    let (mut socket, _response) = connect_async(format!("ws://{address}/ws/public"))
+        .await
+        .unwrap();
+
+    socket
+        .send(Message::Text(
+            r#"{"op":"subscribe","channel":"ticker","symbol":"BTCUSDT"}"#.to_owned(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        socket.next().await.unwrap().unwrap(),
+        Message::Text(r#"{"type":"subscribed","channel":"public:ticker:BTCUSDT"}"#.to_owned())
+    );
+    socket
+        .send(Message::Text(
+            r#"{"op":"unsubscribe","channel":"ticker","symbol":"BTCUSDT"}"#.to_owned(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        socket.next().await.unwrap().unwrap(),
+        Message::Text(r#"{"type":"unsubscribed","channel":"public:ticker:BTCUSDT"}"#.to_owned())
+    );
+
+    hub.publish(EventBroadcastMessage::public(
+        WebSocketChannel::public("ticker", "BTCUSDT").unwrap(),
+        r#"{"symbol":"BTCUSDT","last_price":"70000.12"}"#,
+    ));
+    socket.send(Message::Text("ping".to_owned())).await.unwrap();
+    assert_eq!(
+        socket.next().await.unwrap().unwrap(),
+        Message::Text("pong".to_owned())
+    );
+    shutdown_tx.send(()).unwrap();
+}
+
+#[tokio::test]
+async fn public_ws_single_endpoint_reports_invalid_request_without_closing() {
+    let (address, _hub, shutdown_tx) = spawn_events_app().await;
+    let (mut socket, _response) = connect_async(format!("ws://{address}/ws/public"))
+        .await
+        .unwrap();
+
+    socket
+        .send(Message::Text(
+            r#"{"op":"subscribe","channel":"kline"}"#.to_owned(),
+        ))
+        .await
+        .unwrap();
+    let error: serde_json::Value =
+        serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap()).unwrap();
+    assert_eq!(error["type"].as_str(), Some("error"));
+    assert_eq!(error["code"].as_str(), Some("invalid_request"));
+
+    socket
+        .send(Message::Text(
+            r#"{"op":"subscribe","channel":"trade","symbol":"BTCUSDT"}"#.to_owned(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        socket.next().await.unwrap().unwrap(),
+        Message::Text(r#"{"type":"subscribed","channel":"public:trade:BTCUSDT"}"#.to_owned())
+    );
+    shutdown_tx.send(()).unwrap();
+}
+
+async fn spawn_events_app() -> (SocketAddr, EventBroadcastHub, oneshot::Sender<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let hub = EventBroadcastHub::new(16);
+    let app = routes::routes()
+        .with_state(AppState::new(test_settings()).with_event_broadcast_hub(hub.clone()));
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                let _ = shutdown_rx.await;
+            })
+            .await
+            .unwrap();
+    });
+
+    (address, hub, shutdown_tx)
 }
 
 fn ws_request(uri: &str) -> axum::http::Request<Body> {

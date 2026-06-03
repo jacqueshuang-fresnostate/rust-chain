@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { ApiError, apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
+import { formatAdminNumber } from '../../shared/numberFormat';
 import { StatusTag } from '../../shared/StatusTag';
 import { TimestampText } from '../../shared/TimestampText';
 
@@ -70,7 +71,7 @@ type DashboardResponse = {
 type KpiCard = {
   description: string;
   label: string;
-  value: number;
+  value: string;
 };
 
 function errorMessage(error: unknown) {
@@ -88,6 +89,10 @@ function custodyText(status: string) {
   return status;
 }
 
+function displayNumber(value: number) {
+  return formatAdminNumber(value) ?? String(value);
+}
+
 export function DashboardPage() {
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -99,12 +104,16 @@ export function DashboardPage() {
     }
 
     return [
-      { label: '用户总数', value: dashboard.users.total, description: `活跃 ${dashboard.users.active}，24h 新增 ${dashboard.users.new_24h}` },
-      { label: '活跃资产', value: dashboard.wallet.active_assets, description: `钱包账户 ${dashboard.wallet.wallet_accounts}，非零账户 ${dashboard.wallet.non_zero_accounts}` },
-      { label: '活跃交易对', value: dashboard.market.active_pairs, description: `外部行情 ${dashboard.market.external_pairs}，策略行情 ${dashboard.market.strategy_pairs}` },
-      { label: '现货挂单', value: dashboard.trading.spot_open_orders, description: `24h 成交 ${dashboard.trading.spot_trades_24h}` },
-      { label: '24h 成交', value: dashboard.trading.spot_trades_24h, description: `闪兑待处理 ${dashboard.trading.convert_pending_orders}` },
-      { label: '事件积压', value: dashboard.risk.pending_outbox_events + dashboard.risk.retry_inbox_events + dashboard.risk.dead_letter_inbox_events, description: `风控事件 ${dashboard.risk.risk_events_24h}，阻断 ${dashboard.risk.blocked_events_24h}` }
+      { label: '用户总数', value: displayNumber(dashboard.users.total), description: `活跃 ${displayNumber(dashboard.users.active)}，24h 新增 ${displayNumber(dashboard.users.new_24h)}` },
+      { label: '活跃资产', value: displayNumber(dashboard.wallet.active_assets), description: `钱包账户 ${displayNumber(dashboard.wallet.wallet_accounts)}，非零账户 ${displayNumber(dashboard.wallet.non_zero_accounts)}` },
+      { label: '活跃交易对', value: displayNumber(dashboard.market.active_pairs), description: `外部行情 ${displayNumber(dashboard.market.external_pairs)}，策略行情 ${displayNumber(dashboard.market.strategy_pairs)}` },
+      { label: '现货挂单', value: displayNumber(dashboard.trading.spot_open_orders), description: `24h 成交 ${displayNumber(dashboard.trading.spot_trades_24h)}` },
+      { label: '24h 成交', value: displayNumber(dashboard.trading.spot_trades_24h), description: `闪兑待处理 ${displayNumber(dashboard.trading.convert_pending_orders)}` },
+      {
+        label: '事件积压',
+        value: displayNumber(dashboard.risk.pending_outbox_events + dashboard.risk.retry_inbox_events + dashboard.risk.dead_letter_inbox_events),
+        description: `风控事件 ${displayNumber(dashboard.risk.risk_events_24h)}，阻断 ${displayNumber(dashboard.risk.blocked_events_24h)}`
+      }
     ];
   }, [dashboard]);
 
@@ -162,35 +171,35 @@ export function DashboardPage() {
               <Space align="start" spacing={12} vertical>
                 <Title heading={4}>资金与链上状态</Title>
                 <Banner type="warning" description={custodyText(dashboard.wallet.custody_status)} />
-                <Text>待解禁：{dashboard.wallet.pending_unlocks}</Text>
-                <Text>待充值确认：{dashboard.wallet.pending_deposits}</Text>
-                <Text>待提现处理：{dashboard.wallet.pending_withdrawals}</Text>
+                <Text>待解禁：{displayNumber(dashboard.wallet.pending_unlocks)}</Text>
+                <Text>待充值确认：{displayNumber(dashboard.wallet.pending_deposits)}</Text>
+                <Text>待提现处理：{displayNumber(dashboard.wallet.pending_withdrawals)}</Text>
               </Space>
             </Card>
             <Card bordered={false} shadows="always">
               <Space align="start" spacing={12} vertical>
                 <Title heading={4}>产品运行</Title>
-                <Text>秒合约未结算订单：{dashboard.products.seconds_open_orders}</Text>
-                <Text>杠杆持仓：{dashboard.products.margin_open_positions}</Text>
-                <Text>24h 强平：{dashboard.products.margin_liquidated_24h}</Text>
-                <Text>Earn 生效申购：{dashboard.products.earn_active_subscriptions}</Text>
-                <Text>24h 到期 Earn：{dashboard.products.earn_maturing_24h}</Text>
+                <Text>秒合约未结算订单：{displayNumber(dashboard.products.seconds_open_orders)}</Text>
+                <Text>杠杆持仓：{displayNumber(dashboard.products.margin_open_positions)}</Text>
+                <Text>24h 强平：{displayNumber(dashboard.products.margin_liquidated_24h)}</Text>
+                <Text>Earn 生效申购：{displayNumber(dashboard.products.earn_active_subscriptions)}</Text>
+                <Text>24h 到期 Earn：{displayNumber(dashboard.products.earn_maturing_24h)}</Text>
               </Space>
             </Card>
             <Card bordered={false} shadows="always">
               <Space align="start" spacing={12} vertical>
                 <Title heading={4}>风控 / 事件积压</Title>
-                <Text>24h 风控事件：{dashboard.risk.risk_events_24h}</Text>
-                <Text>24h 阻断事件：{dashboard.risk.blocked_events_24h}</Text>
-                <Text>Outbox 待发布：{dashboard.risk.pending_outbox_events}</Text>
-                <Text>Inbox 重试：{dashboard.risk.retry_inbox_events}</Text>
-                <Text>Inbox 死信：{dashboard.risk.dead_letter_inbox_events}</Text>
+                <Text>24h 风控事件：{displayNumber(dashboard.risk.risk_events_24h)}</Text>
+                <Text>24h 阻断事件：{displayNumber(dashboard.risk.blocked_events_24h)}</Text>
+                <Text>Outbox 待发布：{displayNumber(dashboard.risk.pending_outbox_events)}</Text>
+                <Text>Inbox 重试：{displayNumber(dashboard.risk.retry_inbox_events)}</Text>
+                <Text>Inbox 死信：{displayNumber(dashboard.risk.dead_letter_inbox_events)}</Text>
               </Space>
             </Card>
             <Card bordered={false} className="admin-dashboard-audit-card" shadows="always">
               <Space align="start" spacing={12} vertical style={{ width: '100%' }}>
                 <Title heading={4}>最新审计动作</Title>
-                <Text type="secondary">24h 管理动作：{dashboard.audit.admin_actions_24h}</Text>
+                <Text type="secondary">24h 管理动作：{displayNumber(dashboard.audit.admin_actions_24h)}</Text>
                 <div className="admin-dashboard-audit-list">
                   {dashboard.audit.latest_actions.length ? (
                     dashboard.audit.latest_actions.map((action) => (

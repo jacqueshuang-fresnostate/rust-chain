@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ApiError, apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
+import { AdminPasswordInput, AdminSelect, AdminTextInput } from '../../shared/SemiFormControls';
 
 const { Title } = Typography;
 
@@ -76,23 +77,23 @@ export function AgentManagementPage() {
             <div className="admin-action-form">
               <label>
                 用户ID
-                <input value={createValues.userId} onChange={(event) => setCreateValues({ ...createValues, userId: event.currentTarget.value })} />
+                <AdminTextInput ariaLabel="用户ID" value={createValues.userId} onChange={(userId) => setCreateValues({ ...createValues, userId })} />
               </label>
               <label>
                 代理编号
-                <input value={createValues.agentCode} onChange={(event) => setCreateValues({ ...createValues, agentCode: event.currentTarget.value })} />
+                <AdminTextInput ariaLabel="代理编号" value={createValues.agentCode} onChange={(agentCode) => setCreateValues({ ...createValues, agentCode })} />
               </label>
               <label>
                 代理后台账号
-                <input value={createValues.adminUsername} onChange={(event) => setCreateValues({ ...createValues, adminUsername: event.currentTarget.value })} />
+                <AdminTextInput ariaLabel="代理后台账号" value={createValues.adminUsername} onChange={(adminUsername) => setCreateValues({ ...createValues, adminUsername })} />
               </label>
               <label>
                 密码哈希
-                <input value={createValues.adminPasswordHash} onChange={(event) => setCreateValues({ ...createValues, adminPasswordHash: event.currentTarget.value })} />
+                <AdminPasswordInput ariaLabel="密码哈希" value={createValues.adminPasswordHash} onChange={(adminPasswordHash) => setCreateValues({ ...createValues, adminPasswordHash })} />
               </label>
               <label>
                 层级
-                <input value={createValues.level} onChange={(event) => setCreateValues({ ...createValues, level: event.currentTarget.value })} />
+                <AdminTextInput ariaLabel="层级" value={createValues.level} onChange={(level) => setCreateValues({ ...createValues, level })} />
               </label>
             </div>
             <Banner fullMode={false} type="warning" description="密码哈希由后端现有接口接收；请勿在前端填入明文密码。" />
@@ -124,15 +125,20 @@ export function AgentManagementPage() {
             <div className="admin-action-form">
               <label>
                 代理ID
-                <input value={statusValues.agentId} onChange={(event) => setStatusValues({ ...statusValues, agentId: event.currentTarget.value })} />
+                <AdminTextInput ariaLabel="代理ID" value={statusValues.agentId} onChange={(agentId) => setStatusValues({ ...statusValues, agentId })} />
               </label>
               <label>
                 目标状态
-                <select value={statusValues.status} onChange={(event) => setStatusValues({ ...statusValues, status: event.currentTarget.value })}>
-                  <option value="active">active</option>
-                  <option value="suspended">suspended</option>
-                  <option value="disabled">disabled</option>
-                </select>
+                <AdminSelect
+                  ariaLabel="目标状态"
+                  onChange={(status) => setStatusValues({ ...statusValues, status })}
+                  optionList={[
+                    { value: 'active', label: 'active' },
+                    { value: 'suspended', label: 'suspended' },
+                    { value: 'disabled', label: 'disabled' }
+                  ]}
+                  value={statusValues.status}
+                />
               </label>
             </div>
             <ConfirmAction

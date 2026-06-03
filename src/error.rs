@@ -2,6 +2,7 @@ use axum::{Json, http::StatusCode, response::IntoResponse};
 use serde::Serialize;
 use thiserror::Error;
 use tracing::error;
+use utoipa::ToSchema;
 
 #[derive(Debug, Error)]
 pub enum AppError {
@@ -31,7 +32,7 @@ pub enum AppError {
 
 pub type AppResult<T> = Result<T, AppError>;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ErrorResponse {
     pub code: &'static str,
     pub message: String,

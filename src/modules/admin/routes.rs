@@ -1,15 +1,21 @@
 use crate::{
     error::{AppError, AppResult},
     modules::{
-        admin::market_feed_config::{
-            MarketFeedStatusResponse, MarketSourceCredentialSecret,
-            MarketSourceCredentialsResponse, ReloadMarketFeedRequest, ReloadMarketFeedResponse,
-            SaveMarketFeedConfigRequest, UpsertMarketSourceCredentialRequest,
-            insert_reload_audit_log, list_credentials, load_config, load_enabled_credentials,
-            mark_reload_failed, mark_reload_skipped, mark_reload_success,
-            runtime_config_from_response, save_config, upsert_credential,
+        admin::{
+            market_feed_config::{
+                MarketFeedStatusResponse, MarketSourceCredentialSecret,
+                MarketSourceCredentialsResponse, ReloadMarketFeedRequest, ReloadMarketFeedResponse,
+                SaveMarketFeedConfigRequest, UpsertMarketSourceCredentialRequest,
+                insert_reload_audit_log, list_credentials, load_config, load_enabled_credentials,
+                mark_reload_failed, mark_reload_skipped, mark_reload_success,
+                runtime_config_from_response, save_config, upsert_credential,
+            },
+            smtp_config::{
+                SaveSmtpConfigRequest, SendSmtpTestRequest, SendSmtpTestResponse,
+                SmtpConfigResponse, load_smtp_config, save_smtp_config, send_smtp_test_email,
+            },
         },
-        auth::AdminAuth,
+        auth::{AdminAuth, hash_password},
         new_coin::{LifecycleStatus, UnlockRule, UnlockSource, apply_unlock_rule},
     },
     state::AppState,
@@ -21,9 +27,10 @@ use axum::{
     routing::{get, patch, post},
 };
 use bigdecimal::BigDecimal;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Value, json};
 use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
+use std::collections::BTreeSet;
 use uuid::Uuid;
 
 struct AdminAuditEntry<'a> {
@@ -50,9 +57,11 @@ const ADMIN_AUDIT_REASON_MAX_LEN: usize = 512;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/dashboard", get(get_admin_dashboard))
-        .route("/users", get(list_admin_users))
+        .route("/users", get(list_admin_users).post(create_admin_user))
         .route("/users/:id", get(get_admin_user))
+        .route("/users/:id/recharge", post(recharge_admin_user_wallet))
         .route("/assets", get(list_assets).post(create_asset))
+        .route("/assets/:id", get(get_asset).patch(update_asset))
         .route("/wallet/accounts", get(list_wallet_accounts))
         .route("/wallet/ledger", get(list_wallet_ledger))
         .route("/risk/rules", get(list_risk_rules).post(create_risk_rule))
@@ -84,6 +93,11 @@ pub fn routes() -> Router<AppState> {
             "/market-feed/credentials/:provider",
             patch(upsert_market_feed_credential),
         )
+        .route(
+            "/smtp/config",
+            get(get_smtp_config).patch(save_smtp_config_route),
+        )
+        .route("/smtp/test", post(send_smtp_test))
         .route(
             "/new-coins",
             get(list_new_coin_projects).post(create_new_coin_project),
@@ -142,6 +156,7 @@ pub fn routes() -> Router<AppState> {
             "/market-strategies",
             get(list_market_strategies).post(create_market_strategy),
         )
+        .route("/market-strategies/:id", patch(update_market_strategy))
         .route(
             "/market-strategies/:id/status",
             patch(update_market_strategy_status),
@@ -175,6 +190,7 @@ struct ConvertOrdersQuery {
 #[derive(Debug, Deserialize)]
 struct AdminUserQuery {
     user_id: Option<u64>,
+    email: Option<String>,
     status: Option<String>,
     limit: Option<u32>,
 }
@@ -183,6 +199,7 @@ struct AdminUserQuery {
 struct AdminWalletAccountQuery {
     user_id: Option<u64>,
     asset_id: Option<u64>,
+    include_empty: Option<bool>,
     limit: Option<u32>,
 }
 
@@ -292,6 +309,23 @@ struct AdminNewCoinUnlockQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct CreateAdminUserRequest {
+    email: Option<String>,
+    phone: Option<String>,
+    password: String,
+    status: Option<String>,
+    kyc_level: Option<i32>,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AdminUserRechargeRequest {
+    asset_id: u64,
+    amount: BigDecimal,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct CreateConvertPairRequest {
     from_asset_id: u64,
     to_asset_id: u64,
@@ -339,6 +373,16 @@ struct CreateAssetRequest {
     precision_scale: i32,
     asset_type: Option<String>,
     status: Option<String>,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateAssetRequest {
+    name: String,
+    precision_scale: i32,
+    asset_type: String,
+    status: String,
     reason: Option<String>,
 }
 
@@ -478,6 +522,21 @@ struct CreateMarketStrategyRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct UpdateMarketStrategyRequest {
+    strategy_type: String,
+    start_price: BigDecimal,
+    target_price: BigDecimal,
+    #[serde(with = "unix_millis")]
+    start_time: chrono::DateTime<chrono::Utc>,
+    #[serde(with = "unix_millis")]
+    end_time: chrono::DateTime<chrono::Utc>,
+    volatility: BigDecimal,
+    volume_min: BigDecimal,
+    volume_max: BigDecimal,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct UpdateMarketStrategyStatusRequest {
     status: String,
     reason: Option<String>,
@@ -512,15 +571,47 @@ struct AdminUserResponse {
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 struct AdminWalletAccountResponse {
-    id: u64,
+    id: Option<u64>,
     user_id: u64,
     asset_id: u64,
     asset_symbol: String,
+    #[serde(serialize_with = "serialize_decimal_amount")]
     available: BigDecimal,
+    #[serde(serialize_with = "serialize_decimal_amount")]
     frozen: BigDecimal,
+    #[serde(serialize_with = "serialize_decimal_amount")]
     locked: BigDecimal,
+    account_exists: bool,
     #[serde(with = "unix_millis")]
     updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct AdminWalletEmptyAssetRow {
+    asset_id: u64,
+    asset_symbol: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AdminUserRechargeResponse {
+    recharge_id: String,
+    user_id: u64,
+    asset_id: u64,
+    asset_symbol: String,
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    amount: BigDecimal,
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    available: BigDecimal,
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    frozen: BigDecimal,
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    locked: BigDecimal,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct AdminAssetSymbolRow {
+    symbol: String,
+    status: String,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -1431,6 +1522,51 @@ async fn upsert_market_feed_credential(
     Ok(Json(credential))
 }
 
+async fn get_smtp_config(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+) -> AppResult<Json<Option<SmtpConfigResponse>>> {
+    Ok(Json(load_smtp_config(&mysql_pool(&state)?).await?))
+}
+
+async fn save_smtp_config_route(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Json(request): Json<SaveSmtpConfigRequest>,
+) -> AppResult<Json<SmtpConfigResponse>> {
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    let config = save_smtp_config(
+        &mysql_pool(&state)?,
+        admin_id,
+        state.settings.exposed_credential_encryption_key(),
+        request,
+    )
+    .await?;
+    Ok(Json(config))
+}
+
+async fn send_smtp_test(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Json(request): Json<SendSmtpTestRequest>,
+) -> AppResult<Json<SendSmtpTestResponse>> {
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    let pool = mysql_pool(&state)?;
+    let sender = state
+        .email_sender
+        .clone()
+        .ok_or_else(|| AppError::Internal("email sender is not configured".to_owned()))?;
+    let response = send_smtp_test_email(
+        &pool,
+        admin_id,
+        state.settings.exposed_credential_encryption_key(),
+        sender.as_ref(),
+        request,
+    )
+    .await?;
+    Ok(Json(response))
+}
+
 async fn reload_market_feed_config(
     AdminAuth(claims): AdminAuth,
     State(state): State<AppState>,
@@ -1518,9 +1654,9 @@ async fn get_admin_dashboard(
     let generated_at = chrono::Utc::now();
     let users = sqlx::query_as::<_, AdminDashboardUsersSummary>(
         r#"SELECT COUNT(*) AS total,
-                  COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0) AS active,
-                  COALESCE(SUM(CASE WHEN created_at >= DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 24 HOUR)
-                                    THEN 1 ELSE 0 END), 0) AS new_24h
+                  COUNT(CASE WHEN status = 'active' THEN 1 END) AS active,
+                  COUNT(CASE WHEN created_at >= DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 24 HOUR)
+                             THEN 1 END) AS new_24h
            FROM users"#,
     )
     .fetch_one(&pool)
@@ -1539,10 +1675,10 @@ async fn get_admin_dashboard(
     .fetch_one(&pool)
     .await?;
     let market_counts = sqlx::query_as::<_, AdminDashboardMarketCounts>(
-        r#"SELECT COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0) AS active_pairs,
-                  COALESCE(SUM(CASE WHEN status = 'disabled' THEN 1 ELSE 0 END), 0) AS disabled_pairs,
-                  COALESCE(SUM(CASE WHEN market_type = 'external' THEN 1 ELSE 0 END), 0) AS external_pairs,
-                  COALESCE(SUM(CASE WHEN market_type = 'strategy' THEN 1 ELSE 0 END), 0) AS strategy_pairs
+        r#"SELECT COUNT(CASE WHEN status = 'active' THEN 1 END) AS active_pairs,
+                  COUNT(CASE WHEN status = 'disabled' THEN 1 END) AS disabled_pairs,
+                  COUNT(CASE WHEN market_type = 'external' THEN 1 END) AS external_pairs,
+                  COUNT(CASE WHEN market_type = 'strategy' THEN 1 END) AS strategy_pairs
            FROM trading_pairs"#,
     )
     .fetch_one(&pool)
@@ -1634,6 +1770,56 @@ async fn get_admin_dashboard(
     }))
 }
 
+async fn create_admin_user(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Json(request): Json<CreateAdminUserRequest>,
+) -> AppResult<Json<AdminUserResponse>> {
+    validate_create_admin_user(&request)?;
+    let reason = required_reason(request.reason)?;
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    let pool = mysql_pool(&state)?;
+    let email = optional_string(request.email);
+    let phone = optional_string(request.phone);
+    let status = request
+        .status
+        .as_deref()
+        .map(validate_user_status)
+        .transpose()?
+        .unwrap_or_else(|| "active".to_owned());
+    let kyc_level = request.kyc_level.unwrap_or(0);
+    let password_hash = hash_password(&request.password)?;
+    let mut tx = pool.begin().await?;
+    let result = sqlx::query(
+        r#"INSERT INTO users (email, phone, password_hash, status, kyc_level)
+           VALUES (?, ?, ?, ?, ?)"#,
+    )
+    .bind(email.as_deref())
+    .bind(phone.as_deref())
+    .bind(password_hash)
+    .bind(&status)
+    .bind(kyc_level)
+    .execute(&mut *tx)
+    .await
+    .map_err(map_duplicate_user)?;
+    let user = load_admin_user_in_tx(&mut tx, result.last_insert_id()).await?;
+    insert_typed_admin_audit_log_in_tx(
+        &mut tx,
+        admin_id,
+        AdminAuditEntry {
+            action: "user.create",
+            target_type: "user",
+            target_id: user.id,
+            before_json: None,
+            after_json: Some(user_audit_json(&user)),
+            reason: Some(reason),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(user))
+}
+
 async fn list_admin_users(
     _auth: AdminAuth,
     State(state): State<AppState>,
@@ -1648,6 +1834,10 @@ async fn list_admin_users(
     if let Some(user_id) = query.user_id {
         builder.push(" AND id = ");
         builder.push_bind(user_id);
+    }
+    if let Some(email) = optional_string(query.email) {
+        builder.push(" AND email = ");
+        builder.push_bind(email);
     }
     if let Some(status) = optional_string(query.status) {
         builder.push(" AND status = ");
@@ -1668,16 +1858,87 @@ async fn get_admin_user(
     State(state): State<AppState>,
     Path(user_id): Path<u64>,
 ) -> AppResult<Json<AdminUserResponse>> {
-    let user = sqlx::query_as::<_, AdminUserResponse>(
+    let user = load_admin_user(&mysql_pool(&state)?, user_id).await?;
+    Ok(Json(user))
+}
+
+async fn recharge_admin_user_wallet(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(user_id): Path<u64>,
+    Json(request): Json<AdminUserRechargeRequest>,
+) -> AppResult<Json<AdminUserRechargeResponse>> {
+    validate_admin_user_recharge(&request)?;
+    let reason = required_reason(request.reason)?;
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    let pool = mysql_pool(&state)?;
+    let recharge_id = Uuid::now_v7().to_string();
+    let mut tx = pool.begin().await?;
+    ensure_user_exists_in_tx(&mut tx, user_id).await?;
+    let asset = load_active_asset_symbol_in_tx(&mut tx, request.asset_id).await?;
+    credit_admin_wallet_available(
+        &mut tx,
+        user_id,
+        request.asset_id,
+        &request.amount,
+        "admin_recharge",
+        "admin_recharge",
+        &recharge_id,
+    )
+    .await?;
+    let wallet = load_admin_wallet_row_in_tx(&mut tx, user_id, request.asset_id).await?;
+    let response = AdminUserRechargeResponse {
+        recharge_id,
+        user_id,
+        asset_id: request.asset_id,
+        asset_symbol: asset.symbol,
+        amount: request.amount,
+        available: wallet.available,
+        frozen: wallet.frozen,
+        locked: wallet.locked,
+    };
+    insert_typed_admin_audit_log_in_tx(
+        &mut tx,
+        admin_id,
+        AdminAuditEntry {
+            action: "wallet.recharge",
+            target_type: "wallet_account",
+            target_id: user_id,
+            before_json: None,
+            after_json: Some(recharge_audit_json(&response)),
+            reason: Some(reason),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(response))
+}
+
+async fn load_admin_user(pool: &Pool<MySql>, user_id: u64) -> AppResult<AdminUserResponse> {
+    sqlx::query_as::<_, AdminUserResponse>(
         r#"SELECT id, email, phone, status, kyc_level, created_at, updated_at
            FROM users
            WHERE id = ?"#,
     )
     .bind(user_id)
-    .fetch_optional(&mysql_pool(&state)?)
+    .fetch_optional(pool)
     .await?
-    .ok_or(AppError::NotFound)?;
-    Ok(Json(user))
+    .ok_or(AppError::NotFound)
+}
+
+async fn load_admin_user_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+) -> AppResult<AdminUserResponse> {
+    sqlx::query_as::<_, AdminUserResponse>(
+        r#"SELECT id, email, phone, status, kyc_level, created_at, updated_at
+           FROM users
+           WHERE id = ?"#,
+    )
+    .bind(user_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)
 }
 
 async fn list_assets(
@@ -1710,6 +1971,60 @@ async fn list_assets(
         .fetch_all(&pool)
         .await?;
     Ok(Json(AdminAssetsResponse { assets }))
+}
+
+async fn get_asset(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+    Path(asset_id): Path<u64>,
+) -> AppResult<Json<AdminAssetResponse>> {
+    let asset = load_asset(&mysql_pool(&state)?, asset_id).await?;
+    Ok(Json(asset))
+}
+
+async fn update_asset(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(asset_id): Path<u64>,
+    Json(request): Json<UpdateAssetRequest>,
+) -> AppResult<Json<AdminAssetResponse>> {
+    validate_update_asset(&request)?;
+    let asset_type = validate_asset_type(&request.asset_type)?;
+    let status = validate_asset_status(&request.status)?;
+    let reason = required_reason(request.reason)?;
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    let pool = mysql_pool(&state)?;
+    let name = optional_string(Some(request.name)).unwrap();
+    let mut tx = pool.begin().await?;
+    let before = lock_asset_in_tx(&mut tx, asset_id).await?;
+    sqlx::query(
+        r#"UPDATE assets
+           SET name = ?, precision_scale = ?, asset_type = ?, status = ?
+           WHERE id = ?"#,
+    )
+    .bind(&name)
+    .bind(request.precision_scale)
+    .bind(&asset_type)
+    .bind(&status)
+    .bind(asset_id)
+    .execute(&mut *tx)
+    .await?;
+    let after = load_asset_in_tx(&mut tx, asset_id).await?;
+    insert_typed_admin_audit_log_in_tx(
+        &mut tx,
+        admin_id,
+        AdminAuditEntry {
+            action: "asset.config.update",
+            target_type: "asset",
+            target_id: after.id,
+            before_json: Some(asset_audit_json(&before)),
+            after_json: Some(asset_audit_json(&after)),
+            reason: Some(reason),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(after))
 }
 
 async fn create_asset(
@@ -1772,9 +2087,10 @@ async fn list_wallet_accounts(
     Query(query): Query<AdminWalletAccountQuery>,
 ) -> AppResult<Json<AdminWalletAccountsResponse>> {
     let pool = mysql_pool(&state)?;
+    let include_empty = query.include_empty.unwrap_or(false);
     let mut builder = QueryBuilder::<MySql>::new(
         r#"SELECT accounts.id, accounts.user_id, accounts.asset_id, assets.symbol AS asset_symbol,
-                  accounts.available, accounts.frozen, accounts.locked, accounts.updated_at
+                  accounts.available, accounts.frozen, accounts.locked, TRUE AS account_exists, accounts.updated_at
            FROM wallet_accounts accounts
            INNER JOIN assets ON assets.id = accounts.asset_id
            WHERE 1 = 1"#,
@@ -1790,11 +2106,70 @@ async fn list_wallet_accounts(
     builder.push(" ORDER BY accounts.updated_at DESC, accounts.id DESC LIMIT ");
     builder.push_bind(route_limit(query.limit) as i64);
 
-    let accounts = builder
+    let mut accounts = builder
         .build_query_as::<AdminWalletAccountResponse>()
         .fetch_all(&pool)
         .await?;
+    if include_empty {
+        append_empty_wallet_accounts(&pool, &query, &mut accounts).await?;
+    }
     Ok(Json(AdminWalletAccountsResponse { accounts }))
+}
+
+fn serialize_decimal_amount<S>(amount: &BigDecimal, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&format!("{amount:.18}"))
+}
+
+async fn append_empty_wallet_accounts(
+    pool: &Pool<MySql>,
+    query: &AdminWalletAccountQuery,
+    accounts: &mut Vec<AdminWalletAccountResponse>,
+) -> AppResult<()> {
+    let Some(user_id) = query.user_id else {
+        return Ok(());
+    };
+    let existing_asset_ids = accounts
+        .iter()
+        .map(|account| account.asset_id)
+        .collect::<BTreeSet<_>>();
+    let mut builder = QueryBuilder::<MySql>::new(
+        r#"SELECT id AS asset_id, symbol AS asset_symbol
+           FROM assets
+           WHERE status = 'active'"#,
+    );
+    if let Some(asset_id) = query.asset_id {
+        builder.push(" AND id = ");
+        builder.push_bind(asset_id);
+    }
+    builder.push(" ORDER BY symbol ASC LIMIT ");
+    builder.push_bind(route_limit(query.limit) as i64);
+
+    let assets = builder
+        .build_query_as::<AdminWalletEmptyAssetRow>()
+        .fetch_all(pool)
+        .await?;
+    let zero = BigDecimal::from(0).with_scale(18);
+    let now = chrono::Utc::now();
+    accounts.extend(
+        assets
+            .into_iter()
+            .filter(|asset| !existing_asset_ids.contains(&asset.asset_id))
+            .map(|asset| AdminWalletAccountResponse {
+                id: None,
+                user_id,
+                asset_id: asset.asset_id,
+                asset_symbol: asset.asset_symbol,
+                available: zero.clone(),
+                frozen: zero.clone(),
+                locked: zero.clone(),
+                account_exists: false,
+                updated_at: now,
+            }),
+    );
+    Ok(())
 }
 
 async fn list_wallet_ledger(
@@ -2407,6 +2782,94 @@ async fn create_market_strategy(
     tx.commit().await?;
 
     Ok(Json(strategy))
+}
+
+async fn update_market_strategy(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(strategy_id): Path<u64>,
+    Json(request): Json<UpdateMarketStrategyRequest>,
+) -> AppResult<Json<AdminMarketStrategyResponse>> {
+    validate_update_market_strategy(&request)?;
+    let reason = required_reason(request.reason.clone())?;
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    let pool = mysql_pool(&state)?;
+    let mut tx = pool.begin().await?;
+    let before = lock_market_strategy_in_tx(&mut tx, strategy_id).await?;
+    if before.status == "active" {
+        return Err(AppError::Conflict(
+            "active market strategy must be paused or disabled before update".to_owned(),
+        ));
+    }
+    let strategy_type = optional_string(Some(request.strategy_type.clone())).unwrap();
+    sqlx::query(
+        r#"UPDATE market_strategies
+           SET strategy_type = ?, start_price = ?, target_price = ?, start_time = ?, end_time = ?,
+               volatility = ?, volume_min = ?, volume_max = ?
+           WHERE id = ?"#,
+    )
+    .bind(&strategy_type)
+    .bind(&request.start_price)
+    .bind(&request.target_price)
+    .bind(request.start_time)
+    .bind(request.end_time)
+    .bind(&request.volatility)
+    .bind(&request.volume_min)
+    .bind(&request.volume_max)
+    .bind(strategy_id)
+    .execute(&mut *tx)
+    .await?;
+    let run_update = sqlx::query(
+        r#"UPDATE strategy_runs
+           SET run_status = ?, current_price = ?, last_generated_at = NULL,
+               last_kline_open_time = ?, recovery_status = 'idle', error_message = NULL
+           WHERE strategy_id = ?"#,
+    )
+    .bind(market_strategy_run_status(&before.status))
+    .bind(&request.start_price)
+    .bind(request.start_time)
+    .bind(strategy_id)
+    .execute(&mut *tx)
+    .await?;
+    if run_update.rows_affected() != 1 {
+        return Err(AppError::Conflict(
+            "market strategy run checkpoint is missing".to_owned(),
+        ));
+    }
+    let next_version: i32 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(version), 0) + 1 FROM strategy_versions WHERE strategy_id = ?",
+    )
+    .bind(strategy_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let after = load_market_strategy_in_tx(&mut tx, strategy_id).await?;
+    let config_json =
+        market_strategy_update_config_json(&request, &after.status, &after.market_type);
+    sqlx::query(
+        r#"INSERT INTO strategy_versions (strategy_id, version, effective_time, config_json, seed, created_by)
+           VALUES (?, ?, ?, ?, ?, ?)"#,
+    )
+    .bind(strategy_id)
+    .bind(next_version)
+    .bind(request.start_time)
+    .bind(SqlxJson(config_json))
+    .bind(Uuid::now_v7().to_string())
+    .bind(admin_id)
+    .execute(&mut *tx)
+    .await?;
+    persist_market_strategy_change(
+        &mut tx,
+        admin_id,
+        strategy_id,
+        "market_strategy.update",
+        Some(&before),
+        Some(&after),
+        Some(reason),
+    )
+    .await?;
+    tx.commit().await?;
+
+    Ok(Json(after))
 }
 
 async fn update_market_strategy_status(
@@ -3421,6 +3884,17 @@ fn admin_asset_query() -> QueryBuilder<'static, MySql> {
     )
 }
 
+async fn load_asset(pool: &Pool<MySql>, asset_id: u64) -> AppResult<AdminAssetResponse> {
+    let mut builder = admin_asset_query();
+    builder.push(" WHERE id = ");
+    builder.push_bind(asset_id);
+    builder
+        .build_query_as::<AdminAssetResponse>()
+        .fetch_optional(pool)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
 async fn load_asset_in_tx(
     tx: &mut Transaction<'_, MySql>,
     asset_id: u64,
@@ -3428,6 +3902,21 @@ async fn load_asset_in_tx(
     let mut builder = admin_asset_query();
     builder.push(" WHERE id = ");
     builder.push_bind(asset_id);
+    builder
+        .build_query_as::<AdminAssetResponse>()
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
+async fn lock_asset_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    asset_id: u64,
+) -> AppResult<AdminAssetResponse> {
+    let mut builder = admin_asset_query();
+    builder.push(" WHERE id = ");
+    builder.push_bind(asset_id);
+    builder.push(" FOR UPDATE");
     builder
         .build_query_as::<AdminAssetResponse>()
         .fetch_optional(&mut **tx)
@@ -4015,31 +4504,74 @@ fn validate_create_market_strategy(request: &CreateMarketStrategyRequest) -> App
     if request.pair_id == 0 {
         return Err(AppError::Validation("pair_id is required".to_owned()));
     }
-    if optional_string(Some(request.strategy_type.clone())).is_none() {
+    validate_market_strategy_config(MarketStrategyConfigValidation {
+        strategy_type: &request.strategy_type,
+        start_price: &request.start_price,
+        target_price: &request.target_price,
+        start_time: request.start_time,
+        end_time: request.end_time,
+        volatility: &request.volatility,
+        volume_min: &request.volume_min,
+        volume_max: &request.volume_max,
+    })?;
+    if let Some(status) = request.status.as_deref() {
+        validate_market_strategy_status(status)?;
+    }
+    Ok(())
+}
+
+fn validate_update_market_strategy(request: &UpdateMarketStrategyRequest) -> AppResult<()> {
+    validate_market_strategy_config(MarketStrategyConfigValidation {
+        strategy_type: &request.strategy_type,
+        start_price: &request.start_price,
+        target_price: &request.target_price,
+        start_time: request.start_time,
+        end_time: request.end_time,
+        volatility: &request.volatility,
+        volume_min: &request.volume_min,
+        volume_max: &request.volume_max,
+    })?;
+    required_reason(request.reason.clone())?;
+    Ok(())
+}
+
+struct MarketStrategyConfigValidation<'a> {
+    strategy_type: &'a str,
+    start_price: &'a BigDecimal,
+    target_price: &'a BigDecimal,
+    start_time: chrono::DateTime<chrono::Utc>,
+    end_time: chrono::DateTime<chrono::Utc>,
+    volatility: &'a BigDecimal,
+    volume_min: &'a BigDecimal,
+    volume_max: &'a BigDecimal,
+}
+
+fn validate_market_strategy_config(config: MarketStrategyConfigValidation<'_>) -> AppResult<()> {
+    if optional_string(Some(config.strategy_type.to_owned())).is_none() {
         return Err(AppError::Validation("strategy_type is required".to_owned()));
     }
-    if request.start_price <= 0 || request.target_price <= 0 {
+    if config.start_price <= &BigDecimal::from(0) || config.target_price <= &BigDecimal::from(0) {
         return Err(AppError::Validation(
             "strategy prices must be positive".to_owned(),
         ));
     }
-    if request.end_time <= request.start_time {
+    if config.end_time <= config.start_time {
         return Err(AppError::Validation(
             "end_time must be after start_time".to_owned(),
         ));
     }
-    if request.volatility < 0 || request.volume_min < 0 || request.volume_max < 0 {
+    if config.volatility < &BigDecimal::from(0)
+        || config.volume_min < &BigDecimal::from(0)
+        || config.volume_max < &BigDecimal::from(0)
+    {
         return Err(AppError::Validation(
             "volatility and volume must be non-negative".to_owned(),
         ));
     }
-    if request.volume_max < request.volume_min {
+    if config.volume_max < config.volume_min {
         return Err(AppError::Validation(
             "volume_max must be greater than or equal to volume_min".to_owned(),
         ));
-    }
-    if let Some(status) = request.status.as_deref() {
-        validate_market_strategy_status(status)?;
     }
     Ok(())
 }
@@ -4326,6 +4858,60 @@ fn validate_new_coin_convert_rule(request: &UpsertNewCoinConvertRuleRequest) -> 
     Ok(())
 }
 
+fn validate_admin_user_recharge(request: &AdminUserRechargeRequest) -> AppResult<()> {
+    if request.asset_id == 0 {
+        return Err(AppError::Validation("asset_id is required".to_owned()));
+    }
+    if request.amount <= 0 {
+        return Err(AppError::Validation("amount must be positive".to_owned()));
+    }
+    required_reason(request.reason.clone())?;
+    Ok(())
+}
+
+fn validate_create_admin_user(request: &CreateAdminUserRequest) -> AppResult<()> {
+    if optional_string(request.email.clone()).is_none()
+        && optional_string(request.phone.clone()).is_none()
+    {
+        return Err(AppError::Validation(
+            "email or phone is required".to_owned(),
+        ));
+    }
+    if let Some(email) = optional_string(request.email.clone())
+        && (email.len() > 255 || !email.contains('@'))
+    {
+        return Err(AppError::Validation("email format is invalid".to_owned()));
+    }
+    if let Some(phone) = optional_string(request.phone.clone())
+        && phone.len() > 32
+    {
+        return Err(AppError::Validation("phone is too long".to_owned()));
+    }
+    if optional_string(Some(request.password.clone())).is_none() {
+        return Err(AppError::Validation("password is required".to_owned()));
+    }
+    if let Some(status) = request.status.as_deref() {
+        validate_user_status(status)?;
+    }
+    if request.kyc_level.unwrap_or(0) < 0 {
+        return Err(AppError::Validation(
+            "kyc_level must be non-negative".to_owned(),
+        ));
+    }
+    required_reason(request.reason.clone())?;
+    Ok(())
+}
+
+fn validate_user_status(value: &str) -> AppResult<String> {
+    let Some(status) = optional_string(Some(value.to_owned())) else {
+        return Err(AppError::Validation("status is required".to_owned()));
+    };
+    match status.as_str() {
+        "active" | "suspended" | "disabled" => Ok(status),
+        _ => Err(AppError::Validation("unsupported user status".to_owned())),
+    }
+}
+
 fn validate_create_convert_pair(request: &CreateConvertPairRequest) -> AppResult<()> {
     if request.from_asset_id == request.to_asset_id {
         return Err(AppError::Validation(
@@ -4358,7 +4944,28 @@ fn validate_create_convert_pair(request: &CreateConvertPairRequest) -> AppResult
 
 fn validate_create_asset(request: &CreateAssetRequest) -> AppResult<()> {
     normalize_asset_symbol(&request.symbol)?;
-    let Some(name) = optional_string(Some(request.name.clone())) else {
+    validate_asset_name(&request.name)?;
+    validate_asset_precision(request.precision_scale)?;
+    if let Some(asset_type) = request.asset_type.as_deref() {
+        validate_asset_type(asset_type)?;
+    }
+    if let Some(status) = request.status.as_deref() {
+        validate_asset_status(status)?;
+    }
+    Ok(())
+}
+
+fn validate_update_asset(request: &UpdateAssetRequest) -> AppResult<()> {
+    validate_asset_name(&request.name)?;
+    validate_asset_precision(request.precision_scale)?;
+    validate_asset_type(&request.asset_type)?;
+    validate_asset_status(&request.status)?;
+    required_reason(request.reason.clone())?;
+    Ok(())
+}
+
+fn validate_asset_name(value: &str) -> AppResult<String> {
+    let Some(name) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation("asset name is required".to_owned()));
     };
     if name.len() > 128 {
@@ -4366,16 +4973,14 @@ fn validate_create_asset(request: &CreateAssetRequest) -> AppResult<()> {
             "asset name must be at most 128 characters".to_owned(),
         ));
     }
-    if !(0..=18).contains(&request.precision_scale) {
+    Ok(name)
+}
+
+fn validate_asset_precision(value: i32) -> AppResult<()> {
+    if !(0..=18).contains(&value) {
         return Err(AppError::Validation(
             "asset precision_scale must be between 0 and 18".to_owned(),
         ));
-    }
-    if let Some(asset_type) = request.asset_type.as_deref() {
-        validate_asset_type(asset_type)?;
-    }
-    if let Some(status) = request.status.as_deref() {
-        validate_asset_status(status)?;
     }
     Ok(())
 }
@@ -4526,6 +5131,18 @@ fn convert_pair_audit_json(pair: &ConvertPairResponse) -> Value {
     })
 }
 
+fn user_audit_json(user: &AdminUserResponse) -> Value {
+    json!({
+        "id": user.id,
+        "email": user.email,
+        "phone": user.phone,
+        "status": user.status,
+        "kyc_level": user.kyc_level,
+        "created_at": user.created_at.timestamp_millis(),
+        "updated_at": user.updated_at.timestamp_millis(),
+    })
+}
+
 fn asset_audit_json(asset: &AdminAssetResponse) -> Value {
     json!({
         "id": asset.id,
@@ -4535,6 +5152,19 @@ fn asset_audit_json(asset: &AdminAssetResponse) -> Value {
         "asset_type": asset.asset_type,
         "status": asset.status,
         "created_at": asset.created_at.timestamp_millis(),
+    })
+}
+
+fn recharge_audit_json(recharge: &AdminUserRechargeResponse) -> Value {
+    json!({
+        "recharge_id": recharge.recharge_id,
+        "user_id": recharge.user_id,
+        "asset_id": recharge.asset_id,
+        "asset_symbol": recharge.asset_symbol,
+        "amount": format!("{:.18}", recharge.amount),
+        "available": format!("{:.18}", recharge.available),
+        "frozen": format!("{:.18}", recharge.frozen),
+        "locked": format!("{:.18}", recharge.locked),
     })
 }
 
@@ -4807,6 +5437,14 @@ async fn lock_or_create_admin_wallet_row(
     .bind(asset_id)
     .execute(&mut **tx)
     .await?;
+    load_admin_wallet_row_in_tx(tx, user_id, asset_id).await
+}
+
+async fn load_admin_wallet_row_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    asset_id: u64,
+) -> AppResult<AdminWalletRow> {
     sqlx::query_as::<_, AdminWalletRow>(
         r#"SELECT available, frozen, locked
            FROM wallet_accounts
@@ -4818,7 +5456,24 @@ async fn lock_or_create_admin_wallet_row(
     .bind(asset_id)
     .fetch_optional(&mut **tx)
     .await?
-    .ok_or_else(|| AppError::Validation("wallet account is required for distribution".to_owned()))
+    .ok_or_else(|| AppError::Validation("wallet account is required".to_owned()))
+}
+
+async fn load_active_asset_symbol_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    asset_id: u64,
+) -> AppResult<AdminAssetSymbolRow> {
+    let asset = sqlx::query_as::<_, AdminAssetSymbolRow>(
+        "SELECT symbol, status FROM assets WHERE id = ? LIMIT 1",
+    )
+    .bind(asset_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    if asset.status != "active" {
+        return Err(AppError::Validation("asset must be active".to_owned()));
+    }
+    Ok(asset)
 }
 
 async fn upsert_admin_new_coin_lock_position(
@@ -4940,19 +5595,72 @@ fn market_strategy_config_json(
     status: &str,
     market_type: &str,
 ) -> Value {
-    json!({
-        "pair_id": request.pair_id,
-        "market_type": market_type,
-        "strategy_type": request.strategy_type.trim(),
-        "start_price": request.start_price,
-        "target_price": request.target_price,
-        "start_time": request.start_time.timestamp_millis(),
-        "end_time": request.end_time.timestamp_millis(),
-        "volatility": request.volatility,
-        "volume_min": request.volume_min,
-        "volume_max": request.volume_max,
-        "status": status,
+    market_strategy_config_value(MarketStrategyConfigValue {
+        pair_id: Some(request.pair_id),
+        market_type,
+        strategy_type: request.strategy_type.trim(),
+        start_price: &request.start_price,
+        target_price: &request.target_price,
+        start_time: request.start_time,
+        end_time: request.end_time,
+        volatility: &request.volatility,
+        volume_min: &request.volume_min,
+        volume_max: &request.volume_max,
+        status,
     })
+}
+
+fn market_strategy_update_config_json(
+    request: &UpdateMarketStrategyRequest,
+    status: &str,
+    market_type: &str,
+) -> Value {
+    market_strategy_config_value(MarketStrategyConfigValue {
+        pair_id: None,
+        market_type,
+        strategy_type: request.strategy_type.trim(),
+        start_price: &request.start_price,
+        target_price: &request.target_price,
+        start_time: request.start_time,
+        end_time: request.end_time,
+        volatility: &request.volatility,
+        volume_min: &request.volume_min,
+        volume_max: &request.volume_max,
+        status,
+    })
+}
+
+struct MarketStrategyConfigValue<'a> {
+    pair_id: Option<u64>,
+    market_type: &'a str,
+    strategy_type: &'a str,
+    start_price: &'a BigDecimal,
+    target_price: &'a BigDecimal,
+    start_time: chrono::DateTime<chrono::Utc>,
+    end_time: chrono::DateTime<chrono::Utc>,
+    volatility: &'a BigDecimal,
+    volume_min: &'a BigDecimal,
+    volume_max: &'a BigDecimal,
+    status: &'a str,
+}
+
+fn market_strategy_config_value(config: MarketStrategyConfigValue<'_>) -> Value {
+    let mut value = json!({
+        "market_type": config.market_type,
+        "strategy_type": config.strategy_type,
+        "start_price": config.start_price,
+        "target_price": config.target_price,
+        "start_time": config.start_time.timestamp_millis(),
+        "end_time": config.end_time.timestamp_millis(),
+        "volatility": config.volatility,
+        "volume_min": config.volume_min,
+        "volume_max": config.volume_max,
+        "status": config.status,
+    });
+    if let Some(pair_id) = config.pair_id {
+        value["pair_id"] = json!(pair_id);
+    }
+    value
 }
 
 fn market_strategy_audit_json(strategy: &AdminMarketStrategyResponse) -> Value {
@@ -5083,6 +5791,14 @@ fn map_duplicate_trading_pair(error: sqlx::Error) -> AppError {
 fn map_duplicate_asset(error: sqlx::Error) -> AppError {
     if is_mysql_duplicate_key(&error) {
         AppError::Conflict("asset already exists".to_owned())
+    } else {
+        AppError::Database(error)
+    }
+}
+
+fn map_duplicate_user(error: sqlx::Error) -> AppError {
+    if is_mysql_duplicate_key(&error) {
+        AppError::Conflict("user already exists".to_owned())
     } else {
         AppError::Database(error)
     }

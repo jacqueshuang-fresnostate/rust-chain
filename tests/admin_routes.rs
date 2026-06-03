@@ -1,4 +1,5 @@
 use axum::{
+    async_trait,
     body::{Body, to_bytes},
     http::{Request, StatusCode, header::AUTHORIZATION},
 };
@@ -7,14 +8,19 @@ use chrono::TimeZone;
 use exchange_api::{
     build_router,
     config::Settings,
+    error::AppResult,
+    infra::{
+        email::{EmailMessage, EmailSender, SmtpEmailConfig},
+        secrets::encrypt_secret,
+    },
     modules::auth::{TokenScope, issue_token},
     state::AppState,
     workers::market_feed::MarketFeedSupervisorHandle,
 };
 use secrecy::SecretString;
 use serde_json::{Value, json};
-use sqlx::{MySqlPool, mysql::MySqlPoolOptions};
-use std::{error::Error, str::FromStr};
+use sqlx::{MySqlPool, mysql::MySqlPoolOptions, types::Json as SqlxJson};
+use std::{error::Error, str::FromStr, sync::Arc};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -68,6 +74,30 @@ fn test_settings() -> Settings {
         margin_interest_enabled: true,
         margin_interest_interval_seconds: 60,
         margin_interest_batch_limit: 100,
+    }
+}
+
+static SMTP_CONFIG_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static MARKET_FEED_CONFIG_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[derive(Debug)]
+struct RecordingEmailSender {
+    pool: MySqlPool,
+    admin_id: u64,
+}
+
+#[async_trait]
+impl EmailSender for RecordingEmailSender {
+    async fn send(&self, _config: SmtpEmailConfig, _message: EmailMessage) -> AppResult<()> {
+        let audits = sqlx::query_scalar::<_, i64>(
+            r#"SELECT COUNT(*) FROM admin_audit_logs
+               WHERE admin_id = ? AND action = 'smtp_config.test'"#,
+        )
+        .bind(self.admin_id)
+        .fetch_one(&self.pool)
+        .await?;
+        assert!(audits > 0);
+        Ok(())
     }
 }
 
@@ -200,11 +230,12 @@ async fn seed_margin_liquidation_record(
     .last_insert_id();
     let product_id = sqlx::query(
         r#"INSERT INTO margin_products
-           (pair_id, margin_asset, max_leverage, min_margin, max_margin, maintenance_margin_rate, status)
-           VALUES (?, ?, ?, ?, ?, ?, 'active')"#,
+           (pair_id, margin_asset, margin_mode, leverage_levels, max_leverage, min_margin, max_margin, maintenance_margin_rate, status)
+           VALUES (?, ?, 'isolated', ?, ?, ?, ?, ?, 'active')"#,
     )
     .bind(pair_id)
     .bind(margin_asset)
+    .bind(SqlxJson(vec!["2".to_owned(), "5".to_owned()]))
     .bind(decimal("5.00000000"))
     .bind(decimal("10.000000000000000000"))
     .bind(decimal("1000.000000000000000000"))
@@ -215,9 +246,9 @@ async fn seed_margin_liquidation_record(
     .last_insert_id();
     let position_id = sqlx::query(
         r#"INSERT INTO margin_positions
-           (user_id, product_id, pair_id, margin_asset, direction, margin_amount,
+           (user_id, product_id, pair_id, margin_asset, margin_mode, direction, margin_amount,
             leverage, notional_amount, entry_price, status, idempotency_key)
-           VALUES (?, ?, ?, ?, 'long', ?, ?, ?, ?, 'liquidated', ?)"#,
+           VALUES (?, ?, ?, ?, 'isolated', 'long', ?, ?, ?, ?, 'liquidated', ?)"#,
     )
     .bind(user_id)
     .bind(product_id)
@@ -841,9 +872,50 @@ async fn admin_core_resource_routes_require_admin_scope_and_mysql() -> Result<()
     })
     .to_string();
     let market_feed_reload_body = json!({ "reason": "reload feed config" }).to_string();
+    let smtp_config_body = json!({
+        "host": "smtp.example.test",
+        "port": 587,
+        "security": "starttls",
+        "username": "scope-smtp-user",
+        "password": "scope-smtp-password",
+        "from_email": "noreply@example.test",
+        "from_name": "Exchange Test",
+        "enabled": true,
+        "reason": "update smtp config"
+    })
+    .to_string();
+    let smtp_test_body = json!({
+        "recipient": "ops@example.test",
+        "reason": "test smtp config"
+    })
+    .to_string();
+    let user_create_body = json!({
+        "email": "scope-admin-create-user@example.test",
+        "password": "Password123!",
+        "status": "active",
+        "kyc_level": 0,
+        "reason": "scope create user"
+    })
+    .to_string();
+    let user_recharge_body = json!({
+        "asset_id": 1,
+        "amount": "1.000000000000000000",
+        "reason": "scope recharge user"
+    })
+    .to_string();
     let cases = [
         ("GET", "/admin/api/v1/users?limit=1", None),
         ("GET", "/admin/api/v1/users/1", None),
+        (
+            "POST",
+            "/admin/api/v1/users",
+            Some(user_create_body.as_str()),
+        ),
+        (
+            "POST",
+            "/admin/api/v1/users/1/recharge",
+            Some(user_recharge_body.as_str()),
+        ),
         ("GET", "/admin/api/v1/wallet/accounts?limit=1", None),
         ("GET", "/admin/api/v1/wallet/ledger?limit=1", None),
         ("GET", "/admin/api/v1/risk/rules?limit=1", None),
@@ -875,6 +947,17 @@ async fn admin_core_resource_routes_require_admin_scope_and_mysql() -> Result<()
             "POST",
             "/admin/api/v1/market-feed/reload",
             Some(market_feed_reload_body.as_str()),
+        ),
+        ("GET", "/admin/api/v1/smtp/config", None),
+        (
+            "PATCH",
+            "/admin/api/v1/smtp/config",
+            Some(smtp_config_body.as_str()),
+        ),
+        (
+            "POST",
+            "/admin/api/v1/smtp/test",
+            Some(smtp_test_body.as_str()),
         ),
         ("GET", "/admin/api/v1/new-coins/subscriptions?limit=1", None),
         ("GET", "/admin/api/v1/new-coins/distributions?limit=1", None),
@@ -943,6 +1026,323 @@ async fn admin_core_resource_routes_require_admin_scope_and_mysql() -> Result<()
         );
     }
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_smtp_routes_require_admin_scope_and_mysql() -> Result<(), Box<dyn Error>> {
+    let settings = test_settings();
+    let user_token = issue_token(&settings, "user:1", TokenScope::User, 900).unwrap();
+    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let app = build_router(AppState::new(settings));
+
+    let missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/smtp/config")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let user = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/smtp/config")
+                .header(AUTHORIZATION, format!("Bearer {user_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(user.status(), StatusCode::FORBIDDEN);
+
+    let admin = app
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/smtp/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(admin.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let payload = body_json(admin).await?;
+    assert!(
+        payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("mysql pool is not configured for admin convert routes")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_smtp_config_save_masks_secrets_and_requires_reason() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let _smtp_lock = SMTP_CONFIG_TEST_LOCK.lock().await;
+    let settings = test_settings();
+    sqlx::query("DELETE FROM smtp_configs WHERE name = 'default'")
+        .execute(&pool)
+        .await?;
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let missing_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/smtp/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "host": "smtp.example.test",
+                        "port": 587,
+                        "security": "starttls",
+                        "username": "smtp-user@example.test",
+                        "password": "smtp-secret-value",
+                        "from_email": "noreply@example.test",
+                        "from_name": "Exchange Test",
+                        "enabled": true,
+                        "reason": " "
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing_reason.status(), StatusCode::BAD_REQUEST);
+
+    let incomplete_credentials = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/smtp/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "host": "smtp.example.test",
+                        "port": 587,
+                        "security": "starttls",
+                        "username": "smtp-user@example.test",
+                        "from_email": "noreply@example.test",
+                        "from_name": "Exchange Test",
+                        "enabled": true,
+                        "reason": "configure smtp"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(incomplete_credentials.status(), StatusCode::BAD_REQUEST);
+
+    let saved = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/smtp/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "host": "smtp.example.test",
+                        "port": 587,
+                        "security": "starttls",
+                        "username": "smtp-user@example.test",
+                        "password": "smtp-secret-value",
+                        "from_email": "noreply@example.test",
+                        "from_name": "Exchange Test",
+                        "enabled": true,
+                        "reason": "configure smtp"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let saved_status = saved.status();
+    let saved_payload = body_json(saved).await?;
+    assert_eq!(saved_status, StatusCode::OK, "payload: {saved_payload}");
+    assert_eq!(saved_payload["host"], "smtp.example.test");
+    assert_eq!(saved_payload["port"], 587);
+    assert_eq!(saved_payload["security"], "starttls");
+    assert_eq!(saved_payload["username_mask"], "smtp****test");
+    assert_eq!(saved_payload["password_set"], true);
+    assert_eq!(saved_payload["username"], Value::Null);
+    assert_eq!(saved_payload["password"], Value::Null);
+    assert!(!saved_payload.to_string().contains("smtp-secret-value"));
+
+    let stored: (String, String) = sqlx::query_as(
+        "SELECT username_ciphertext, password_ciphertext FROM smtp_configs WHERE name = 'default'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert!(!stored.0.contains("smtp-user@example.test"));
+    assert!(!stored.1.contains("smtp-secret-value"));
+
+    let current = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/smtp/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let current_payload = body_json(current).await?;
+    assert_eq!(current_payload["password_set"], true);
+    assert!(!current_payload.to_string().contains("smtp-secret-value"));
+
+    let audits = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type = 'smtp_config'
+           ORDER BY id ASC"#,
+    )
+    .bind(admin_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].action, "smtp_config.save");
+    assert_eq!(audits[0].reason.as_deref(), Some("configure smtp"));
+    let audit_text = audits[0].after_json.as_ref().unwrap().to_string();
+    assert!(audit_text.contains("password_set"));
+    assert!(!audit_text.contains("smtp-secret-value"));
+    assert!(!audit_text.contains(&stored.1));
+
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM smtp_configs WHERE name = 'default'")
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_smtp_test_uses_configured_sender_and_audits_without_secrets()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let _smtp_lock = SMTP_CONFIG_TEST_LOCK.lock().await;
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    sqlx::query("DELETE FROM smtp_configs WHERE name = 'default'")
+        .execute(&pool)
+        .await?;
+    let key = settings.exposed_credential_encryption_key().unwrap();
+    let username_ciphertext = encrypt_secret("smtp-user@example.test", key)?;
+    let password_ciphertext = encrypt_secret("smtp-secret-value", key)?;
+    sqlx::query(
+        r#"INSERT INTO smtp_configs
+           (name, host, port, security, username_ciphertext, password_ciphertext, username_mask, from_email, from_name, enabled, updated_by)
+           VALUES ('default', 'smtp.example.test', 587, 'starttls', ?, ?, 'smtp****test', 'noreply@example.test', 'Exchange Test', TRUE, ?)"#,
+    )
+    .bind(&username_ciphertext)
+    .bind(&password_ciphertext)
+    .bind(admin_id)
+    .execute(&pool)
+    .await?;
+    let app = build_router(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_email_sender(Arc::new(RecordingEmailSender {
+                pool: pool.clone(),
+                admin_id,
+            })),
+    );
+
+    let sent = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/smtp/test")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "recipient": "operator@example.test",
+                        "reason": "verify smtp delivery"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let sent_status = sent.status();
+    let sent_payload = body_json(sent).await?;
+    assert_eq!(sent_status, StatusCode::OK, "payload: {sent_payload}");
+    assert_eq!(sent_payload["sent"], true);
+    assert_eq!(sent_payload["recipient"], "operator@example.test");
+
+    let audits = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type = 'smtp_config'
+           ORDER BY id ASC"#,
+    )
+    .bind(admin_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].action, "smtp_config.test");
+    assert_eq!(audits[0].reason.as_deref(), Some("verify smtp delivery"));
+    let audit_text = audits[0].after_json.as_ref().unwrap().to_string();
+    assert!(audit_text.contains("operator@example.test"));
+    assert!(!audit_text.contains("smtp-secret-value"));
+
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM smtp_configs WHERE name = 'default'")
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
     Ok(())
 }
 
@@ -1056,6 +1456,7 @@ async fn admin_market_feed_config_credentials_reload_and_status() -> Result<(), 
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
+    let _market_feed_lock = MARKET_FEED_CONFIG_TEST_LOCK.lock().await;
     let settings = test_settings();
     let (role_id, admin_id) = create_admin_user(&pool).await;
     let admin_token = issue_token(
@@ -1258,6 +1659,7 @@ async fn admin_market_feed_reload_skips_disabled_config() -> Result<(), Box<dyn 
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
+    let _market_feed_lock = MARKET_FEED_CONFIG_TEST_LOCK.lock().await;
     let settings = test_settings();
     let (role_id, admin_id) = create_admin_user(&pool).await;
     let admin_token = issue_token(
@@ -1346,11 +1748,9 @@ async fn admin_lists_users_and_reads_user_detail() -> Result<(), Box<dyn Error>>
     let email = format!("admin-list-user-{}@example.test", Uuid::now_v7().simple());
     let user_id = create_user_with_email(&pool, email.clone()).await;
     let other_user_id = create_user(&pool).await;
+    let phone_suffix = Uuid::now_v7().simple().to_string();
     sqlx::query("UPDATE users SET phone = ?, kyc_level = 2 WHERE id = ?")
-        .bind(format!(
-            "+8613{}",
-            &Uuid::now_v7().simple().to_string()[..9]
-        ))
+        .bind(format!("+8613{}", &phone_suffix[16..25]))
         .bind(user_id)
         .execute(&pool)
         .await?;
@@ -1391,6 +1791,28 @@ async fn admin_lists_users_and_reads_user_detail() -> Result<(), Box<dyn Error>>
     assert!(users[0]["created_at"].is_number());
     assert!(users[0]["updated_at"].is_number());
 
+    let email_list = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/admin/api/v1/users?email={email}&limit=10"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let email_list_status = email_list.status();
+    let email_list_payload = body_json(email_list).await?;
+    assert_eq!(
+        email_list_status,
+        StatusCode::OK,
+        "payload: {email_list_payload}"
+    );
+    let email_users = email_list_payload["users"].as_array().unwrap();
+    assert_eq!(email_users.len(), 1);
+    assert_eq!(email_users[0]["id"], user_id);
+    assert_eq!(email_users[0]["email"], email);
+
     let detail = app
         .clone()
         .oneshot(
@@ -1420,6 +1842,349 @@ async fn admin_lists_users_and_reads_user_detail() -> Result<(), Box<dyn Error>>
 }
 
 #[tokio::test]
+async fn admin_create_user_creates_hashed_user_and_audit_log() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (_role_id, admin_id) = create_admin_user(&pool).await;
+    let email = format!("admin-create-user-{}@example.test", Uuid::now_v7().simple());
+    let phone_suffix = Uuid::now_v7().simple().to_string();
+    let phone = format!("+8613{}", &phone_suffix[16..25]);
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let create = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/users")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "email": email,
+                        "phone": phone,
+                        "password": "Password123!",
+                        "status": "active",
+                        "kyc_level": 2,
+                        "reason": "create support user"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let create_status = create.status();
+    let create_payload = body_json(create).await?;
+    assert_eq!(create_status, StatusCode::OK, "payload: {create_payload}");
+    let user_id = create_payload["id"].as_u64().unwrap();
+    assert_eq!(create_payload["email"], email);
+    assert_eq!(create_payload["phone"], phone);
+    assert_eq!(create_payload["status"], "active");
+    assert_eq!(create_payload["kyc_level"], 2);
+
+    let stored = sqlx::query_as::<_, (String,)>("SELECT password_hash FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_ne!(stored.0, "Password123!");
+    assert!(stored.0.starts_with("$argon2"));
+
+    let audit = sqlx::query_as::<_, (String, String, String)>(
+        r#"SELECT action, target_type, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_id = ?
+           ORDER BY id DESC LIMIT 1"#,
+    )
+    .bind(admin_id)
+    .bind(user_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(audit.0, "user.create");
+    assert_eq!(audit.1, "user");
+    assert_eq!(audit.2, "create support user");
+
+    let missing_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/users")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "email": format!("missing-reason-{}@example.test", Uuid::now_v7().simple()),
+                        "password": "Password123!"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing_reason.status(), StatusCode::BAD_REQUEST);
+
+    let duplicate = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/users")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "email": create_payload["email"].as_str().unwrap(),
+                        "password": "Password123!",
+                        "reason": "duplicate user"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(duplicate.status(), StatusCode::CONFLICT);
+
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ? AND target_type = 'user'")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_recharges_user_wallet_with_ledger_and_audit() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let user_id = create_user(&pool).await;
+    let (asset_id, symbol) = create_asset_with_symbol(&pool, "ARU").await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let created = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/admin/api/v1/users/{user_id}/recharge"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "asset_id": asset_id,
+                        "amount": "25.500000000000000000",
+                        "reason": "manual support recharge"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let created_status = created.status();
+    let created_payload = body_json(created).await?;
+    assert_eq!(created_status, StatusCode::OK, "payload: {created_payload}");
+    assert_eq!(created_payload["user_id"], user_id);
+    assert_eq!(created_payload["asset_id"], asset_id);
+    assert_eq!(created_payload["asset_symbol"], symbol);
+    assert_eq!(created_payload["amount"], "25.500000000000000000");
+    assert_eq!(created_payload["available"], "25.500000000000000000");
+    assert_eq!(created_payload["frozen"], "0.000000000000000000");
+    assert_eq!(created_payload["locked"], "0.000000000000000000");
+    let recharge_id = created_payload["recharge_id"].as_str().unwrap().to_owned();
+
+    let available: BigDecimal = sqlx::query_scalar(
+        "SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(available, decimal("25.500000000000000000"));
+
+    let ledger = sqlx::query_as::<_, (String, BigDecimal, String, BigDecimal, String, String)>(
+        r#"SELECT change_type, amount, balance_type, available_after, ref_type, ref_id
+           FROM wallet_ledger
+           WHERE user_id = ? AND asset_id = ?
+           ORDER BY id DESC LIMIT 1"#,
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(ledger.0, "admin_recharge");
+    assert_eq!(ledger.1, decimal("25.500000000000000000"));
+    assert_eq!(ledger.2, "available");
+    assert_eq!(ledger.3, decimal("25.500000000000000000"));
+    assert_eq!(ledger.4, "admin_recharge");
+    assert_eq!(ledger.5, recharge_id);
+
+    let audit = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type = 'wallet_account'
+           ORDER BY id DESC LIMIT 1"#,
+    )
+    .bind(admin_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(audit.action, "wallet.recharge");
+    assert_eq!(audit.target_id, user_id.to_string());
+    assert_eq!(audit.reason.as_deref(), Some("manual support recharge"));
+    let after_json = audit.after_json.as_ref().unwrap();
+    assert_eq!(after_json["user_id"], user_id);
+    assert_eq!(after_json["asset_id"], asset_id);
+    assert_eq!(after_json["asset_symbol"], symbol);
+    assert_eq!(after_json["amount"], "25.500000000000000000");
+    assert_eq!(after_json["available"], "25.500000000000000000");
+
+    let second = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/admin/api/v1/users/{user_id}/recharge"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "asset_id": asset_id,
+                        "amount": "4.500000000000000000",
+                        "reason": "second support recharge"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let second_status = second.status();
+    let second_payload = body_json(second).await?;
+    assert_eq!(second_status, StatusCode::OK, "payload: {second_payload}");
+    assert_eq!(second_payload["available"], "30.000000000000000000");
+
+    let missing_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/admin/api/v1/users/{user_id}/recharge"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "asset_id": asset_id,
+                        "amount": "1.000000000000000000"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing_reason.status(), StatusCode::BAD_REQUEST);
+
+    let invalid_amount = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/admin/api/v1/users/{user_id}/recharge"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "asset_id": asset_id,
+                        "amount": "0.000000000000000000",
+                        "reason": "zero recharge"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(invalid_amount.status(), StatusCode::BAD_REQUEST);
+
+    let invalid_user = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/admin/api/v1/users/{}/recharge",
+                    user_id + 999_999
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "asset_id": asset_id,
+                        "amount": "1.000000000000000000",
+                        "reason": "missing user recharge"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(invalid_user.status(), StatusCode::NOT_FOUND);
+
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_ledger WHERE user_id = ? AND asset_id = ?")
+        .bind(user_id)
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+        .bind(user_id)
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn admin_lists_wallet_accounts_and_ledger() -> Result<(), Box<dyn Error>> {
     let Some(pool) = mysql_pool().await else {
         return Ok(());
@@ -1428,6 +2193,7 @@ async fn admin_lists_wallet_accounts_and_ledger() -> Result<(), Box<dyn Error>> 
     let (_role_id, admin_id) = create_admin_user(&pool).await;
     let user_id = create_user(&pool).await;
     let (asset_id, symbol) = create_asset_with_symbol(&pool, "AWL").await;
+    let (empty_asset_id, empty_symbol) = create_asset_with_symbol(&pool, "AWE").await;
     let token = issue_token(
         &settings,
         format!("admin:{admin_id}"),
@@ -1491,6 +2257,47 @@ async fn admin_lists_wallet_accounts_and_ledger() -> Result<(), Box<dyn Error>> 
     assert_eq!(accounts[0]["id"], account_id);
     assert_eq!(accounts[0]["asset_symbol"], symbol);
     assert_eq!(accounts[0]["available"], "100.000000000000000000");
+    assert_eq!(accounts[0]["account_exists"], true);
+
+    let include_empty_accounts = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/wallet/accounts?user_id={user_id}&include_empty=true&limit=20"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let include_empty_status = include_empty_accounts.status();
+    let include_empty_payload = body_json(include_empty_accounts).await?;
+    assert_eq!(
+        include_empty_status,
+        StatusCode::OK,
+        "payload: {include_empty_payload}"
+    );
+    let include_empty_accounts = include_empty_payload["accounts"].as_array().unwrap();
+    let empty_account = include_empty_accounts
+        .iter()
+        .find(|account| account["asset_id"] == empty_asset_id)
+        .unwrap();
+    assert_eq!(empty_account["id"], Value::Null);
+    assert_eq!(empty_account["user_id"], user_id);
+    assert_eq!(empty_account["asset_symbol"], empty_symbol);
+    assert_eq!(empty_account["available"], "0.000000000000000000");
+    assert_eq!(empty_account["frozen"], "0.000000000000000000");
+    assert_eq!(empty_account["locked"], "0.000000000000000000");
+    assert_eq!(empty_account["account_exists"], false);
+    let account_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(empty_asset_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(account_count, 0);
 
     let ledger = app
         .clone()
@@ -1522,8 +2329,9 @@ async fn admin_lists_wallet_accounts_and_ledger() -> Result<(), Box<dyn Error>> 
         .bind(account_id)
         .execute(&pool)
         .await?;
-    sqlx::query("DELETE FROM assets WHERE id = ?")
+    sqlx::query("DELETE FROM assets WHERE id IN (?, ?)")
         .bind(asset_id)
+        .bind(empty_asset_id)
         .execute(&pool)
         .await?;
     sqlx::query("DELETE FROM users WHERE id = ?")
@@ -1783,6 +2591,7 @@ async fn admin_asset_routes_require_admin_scope_mysql_and_validation() -> Result
     );
 
     let list = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/admin/api/v1/assets?limit=1")
@@ -1792,6 +2601,160 @@ async fn admin_asset_routes_require_admin_scope_mysql_and_validation() -> Result
         )
         .await?;
     assert_eq!(list.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let detail_missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/assets/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(detail_missing.status(), StatusCode::UNAUTHORIZED);
+
+    let detail_user = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/assets/1")
+                .header(AUTHORIZATION, format!("Bearer {user_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(detail_user.status(), StatusCode::FORBIDDEN);
+
+    let detail_admin = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/assets/1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(detail_admin.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let update_body = json!({
+        "name": "Bitcoin Updated",
+        "precision_scale": 6,
+        "asset_type": "stablecoin",
+        "status": "disabled",
+        "reason": "update asset"
+    })
+    .to_string();
+
+    let update_missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/assets/1")
+                .header("content-type", "application/json")
+                .body(Body::from(update_body.clone()))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(update_missing.status(), StatusCode::UNAUTHORIZED);
+
+    let update_user = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/assets/1")
+                .header(AUTHORIZATION, format!("Bearer {user_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(update_body.clone()))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(update_user.status(), StatusCode::FORBIDDEN);
+
+    let invalid_update = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/assets/1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "name": "Bitcoin Updated",
+                        "precision_scale": -1,
+                        "asset_type": "coin",
+                        "status": "active",
+                        "reason": "invalid asset"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(invalid_update.status(), StatusCode::BAD_REQUEST);
+
+    let blank_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/assets/1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "name": "Bitcoin Updated",
+                        "precision_scale": 6,
+                        "asset_type": "coin",
+                        "status": "active",
+                        "reason": " "
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(blank_reason.status(), StatusCode::BAD_REQUEST);
+
+    let unknown_field = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/assets/1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "symbol": "ETH",
+                        "name": "Bitcoin Updated",
+                        "precision_scale": 6,
+                        "asset_type": "coin",
+                        "status": "active",
+                        "reason": "unknown field"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(unknown_field.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let update_admin = app
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/assets/1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(update_body))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(update_admin.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
     Ok(())
 }
@@ -1907,6 +2870,92 @@ async fn admin_asset_create_list_and_audit() -> Result<(), Box<dyn Error>> {
         created["symbol"]
     );
     assert_eq!(audits[0].reason.as_deref(), Some("create asset"));
+
+    let detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/admin/api/v1/assets/{asset_id}"))
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let detail_status = detail.status();
+    let detail_payload = body_json(detail).await?;
+    assert_eq!(detail_status, StatusCode::OK, "payload: {detail_payload}");
+    assert_eq!(detail_payload["id"], asset_id);
+    assert_eq!(detail_payload["symbol"], created["symbol"]);
+
+    let update = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/admin/api/v1/assets/{asset_id}"))
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "name": "Asset Test Coin Updated",
+                        "precision_scale": 6,
+                        "asset_type": "stablecoin",
+                        "status": "disabled",
+                        "reason": "update asset config"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let update_status = update.status();
+    let updated = body_json(update).await?;
+    assert_eq!(update_status, StatusCode::OK, "payload: {updated}");
+    assert_eq!(updated["id"], asset_id);
+    assert_eq!(updated["symbol"], created["symbol"]);
+    assert_eq!(updated["name"], "Asset Test Coin Updated");
+    assert_eq!(updated["precision_scale"], 6);
+    assert_eq!(updated["asset_type"], "stablecoin");
+    assert_eq!(updated["status"], "disabled");
+
+    let persisted = sqlx::query_as::<_, (String, String, i32, String, String)>(
+        "SELECT symbol, name, precision_scale, asset_type, status FROM assets WHERE id = ?",
+    )
+    .bind(asset_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(persisted.0, created["symbol"].as_str().unwrap());
+    assert_eq!(persisted.1, "Asset Test Coin Updated");
+    assert_eq!(persisted.2, 6);
+    assert_eq!(persisted.3, "stablecoin");
+    assert_eq!(persisted.4, "disabled");
+
+    let audits = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type = 'asset' AND target_id = ?
+           ORDER BY id"#,
+    )
+    .bind(admin_id)
+    .bind(asset_id.to_string())
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audits.len(), 2);
+    assert_eq!(audits[1].action, "asset.config.update");
+    assert_eq!(
+        audits[1].before_json.as_ref().unwrap()["name"],
+        "Asset Test Coin"
+    );
+    assert_eq!(
+        audits[1].after_json.as_ref().unwrap()["name"],
+        "Asset Test Coin Updated"
+    );
+    assert_eq!(
+        audits[1].after_json.as_ref().unwrap()["asset_type"],
+        "stablecoin"
+    );
+    assert_eq!(audits[1].after_json.as_ref().unwrap()["status"], "disabled");
+    assert_eq!(audits[1].reason.as_deref(), Some("update asset config"));
 
     sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ? AND target_type = 'asset'")
         .bind(admin_id)
@@ -3058,6 +4107,334 @@ async fn admin_market_strategy_create_list_update_and_audit() -> Result<(), Box<
         external_base_asset,
         external_quote_asset,
     ] {
+        sqlx::query("DELETE FROM assets WHERE id = ?")
+            .bind(asset_id)
+            .execute(&pool)
+            .await?;
+    }
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_market_strategy_update_config_versions_and_audit() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let base_asset = create_asset(&pool, "MUB").await;
+    let quote_asset = create_asset(&pool, "MUQ").await;
+    let symbol = format!("MU{}", Uuid::now_v7().simple()).to_ascii_uppercase();
+    let pair_id = sqlx::query(
+        r#"INSERT INTO trading_pairs
+           (base_asset, quote_asset, symbol, price_precision, qty_precision, min_order_value, status, market_type)
+           VALUES (?, ?, ?, 8, 8, ?, 'active', 'strategy')"#,
+    )
+    .bind(base_asset)
+    .bind(quote_asset)
+    .bind(&symbol)
+    .bind(decimal("1.000000000000000000"))
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+    let start_time = chrono::Utc.with_ymd_and_hms(2026, 4, 1, 8, 0, 0).unwrap();
+    let end_time = chrono::Utc.with_ymd_and_hms(2026, 4, 1, 9, 0, 0).unwrap();
+    let update_start = chrono::Utc.with_ymd_and_hms(2026, 4, 1, 10, 0, 0).unwrap();
+    let update_end = chrono::Utc.with_ymd_and_hms(2026, 4, 1, 11, 0, 0).unwrap();
+
+    let create = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/market-strategies")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "pair_id": pair_id,
+                        "strategy_type": "price_path",
+                        "start_price": "1.000000000000000000",
+                        "target_price": "2.000000000000000000",
+                        "start_time": start_time.timestamp_millis(),
+                        "end_time": end_time.timestamp_millis(),
+                        "volatility": "0.01000000",
+                        "volume_min": "10.000000000000000000",
+                        "volume_max": "20.000000000000000000",
+                        "status": "active",
+                        "reason": "create before update"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let create_status = create.status();
+    let created = body_json(create).await?;
+    assert_eq!(create_status, StatusCode::OK, "payload: {created}");
+    let strategy_id = created["id"].as_u64().unwrap();
+
+    let active_update = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/admin/api/v1/market-strategies/{strategy_id}"))
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "strategy_type": "price_path",
+                        "start_price": "1.100000000000000000",
+                        "target_price": "2.200000000000000000",
+                        "start_time": update_start.timestamp_millis(),
+                        "end_time": update_end.timestamp_millis(),
+                        "volatility": "0.02000000",
+                        "volume_min": "12.000000000000000000",
+                        "volume_max": "24.000000000000000000",
+                        "reason": "try update active"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let active_update_status = active_update.status();
+    assert_eq!(active_update_status, StatusCode::CONFLICT);
+    let active_update_payload = body_json(active_update).await?;
+    assert_eq!(active_update_payload["code"], "CONFLICT");
+    assert_eq!(
+        active_update_payload["message"],
+        "conflict: active market strategy must be paused or disabled before update"
+    );
+
+    let pause = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!(
+                    "/admin/api/v1/market-strategies/{strategy_id}/status"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "status": "paused", "reason": "pause before config update" })
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(pause.status(), StatusCode::OK);
+
+    let missing_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/admin/api/v1/market-strategies/{strategy_id}"))
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "strategy_type": "price_path",
+                        "start_price": "1.100000000000000000",
+                        "target_price": "2.200000000000000000",
+                        "start_time": update_start.timestamp_millis(),
+                        "end_time": update_end.timestamp_millis(),
+                        "volatility": "0.02000000",
+                        "volume_min": "12.000000000000000000",
+                        "volume_max": "24.000000000000000000"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let missing_reason_status = missing_reason.status();
+    let missing_reason_payload = body_json(missing_reason).await?;
+    assert_eq!(
+        missing_reason_status,
+        StatusCode::BAD_REQUEST,
+        "payload: {missing_reason_payload}"
+    );
+    assert_eq!(missing_reason_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        missing_reason_payload["message"],
+        "validation error: reason is required"
+    );
+
+    let update = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/admin/api/v1/market-strategies/{strategy_id}"))
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "strategy_type": "price_path_v2",
+                        "start_price": "1.100000000000000000",
+                        "target_price": "2.200000000000000000",
+                        "start_time": update_start.timestamp_millis(),
+                        "end_time": update_end.timestamp_millis(),
+                        "volatility": "0.02000000",
+                        "volume_min": "12.000000000000000000",
+                        "volume_max": "24.000000000000000000",
+                        "reason": "update config"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let update_status = update.status();
+    let updated = body_json(update).await?;
+    assert_eq!(update_status, StatusCode::OK, "payload: {updated}");
+    assert_eq!(updated["id"], strategy_id);
+    assert_eq!(updated["pair_id"], pair_id);
+    assert_eq!(updated["status"], "paused");
+    assert_eq!(updated["run_status"], "paused");
+    assert_eq!(updated["strategy_type"], "price_path_v2");
+    assert_eq!(updated["start_price"], "1.100000000000000000");
+    assert_eq!(updated["target_price"], "2.200000000000000000");
+    assert_eq!(updated["start_time"], update_start.timestamp_millis());
+    assert_eq!(updated["end_time"], update_end.timestamp_millis());
+
+    let (stored_type, stored_start, stored_target, stored_status): (
+        String,
+        BigDecimal,
+        BigDecimal,
+        String,
+    ) = sqlx::query_as(
+        r#"SELECT strategy_type, start_price, target_price, status
+           FROM market_strategies
+           WHERE id = ?"#,
+    )
+    .bind(strategy_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(stored_type, "price_path_v2");
+    assert_eq!(stored_start, decimal("1.100000000000000000"));
+    assert_eq!(stored_target, decimal("2.200000000000000000"));
+    assert_eq!(stored_status, "paused");
+
+    let (run_status, current_price, last_kline_open_time, recovery_status): (
+        String,
+        BigDecimal,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<String>,
+    ) = sqlx::query_as(
+        r#"SELECT run_status, current_price, last_kline_open_time, recovery_status
+           FROM strategy_runs
+           WHERE strategy_id = ?"#,
+    )
+    .bind(strategy_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(run_status, "paused");
+    assert_eq!(current_price, decimal("1.100000000000000000"));
+    assert_eq!(last_kline_open_time, Some(update_start));
+    assert_eq!(recovery_status.as_deref(), Some("idle"));
+
+    let versions: Vec<(i32, Option<u64>, Value)> = sqlx::query_as(
+        r#"SELECT version, created_by, config_json
+           FROM strategy_versions
+           WHERE strategy_id = ?
+           ORDER BY version"#,
+    )
+    .bind(strategy_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(versions.len(), 2);
+    assert_eq!(versions[0].0, 1);
+    assert_eq!(versions[1].0, 2);
+    assert_eq!(versions[1].1, Some(admin_id));
+    assert_eq!(versions[1].2["strategy_type"], "price_path_v2");
+    assert_eq!(versions[1].2["start_time"], update_start.timestamp_millis());
+    assert_eq!(versions[1].2["status"], "paused");
+
+    let events: Vec<(String, Value)> = sqlx::query_as(
+        r#"SELECT event_type, payload_json
+           FROM strategy_events
+           WHERE strategy_id = ?
+           ORDER BY id"#,
+    )
+    .bind(strategy_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[2].0, "market_strategy.update");
+    assert_eq!(events[2].1["before"]["strategy_type"], "price_path");
+    assert_eq!(events[2].1["after"]["strategy_type"], "price_path_v2");
+
+    let audits = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type = 'market_strategy' AND target_id = ?
+           ORDER BY id"#,
+    )
+    .bind(admin_id)
+    .bind(strategy_id.to_string())
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audits.len(), 3);
+    assert_eq!(audits[2].action, "market_strategy.update");
+    assert_eq!(
+        audits[2].before_json.as_ref().unwrap()["strategy_type"],
+        "price_path"
+    );
+    assert_eq!(
+        audits[2].after_json.as_ref().unwrap()["strategy_type"],
+        "price_path_v2"
+    );
+    assert_eq!(audits[2].reason.as_deref(), Some("update config"));
+
+    sqlx::query(
+        "DELETE FROM admin_audit_logs WHERE admin_id = ? AND target_type = 'market_strategy'",
+    )
+    .bind(admin_id)
+    .execute(&pool)
+    .await?;
+    sqlx::query("DELETE FROM strategy_events WHERE strategy_id = ?")
+        .bind(strategy_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM strategy_versions WHERE strategy_id = ?")
+        .bind(strategy_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM strategy_runs WHERE strategy_id = ?")
+        .bind(strategy_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM market_strategies WHERE id = ?")
+        .bind(strategy_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM trading_pairs WHERE id = ?")
+        .bind(pair_id)
+        .execute(&pool)
+        .await?;
+    for asset_id in [base_asset, quote_asset] {
         sqlx::query("DELETE FROM assets WHERE id = ?")
             .bind(asset_id)
             .execute(&pool)
@@ -6499,7 +7876,8 @@ async fn admin_convert_pair_create_rolls_back_when_audit_cannot_be_written()
                         "pricing_mode": "fixed",
                         "spread_rate": "0.01000000",
                         "min_amount": "1.000000000000000000",
-                        "enabled": true
+                        "enabled": true,
+                        "reason": "create convert pair rollback"
                     })
                     .to_string(),
                 ))
@@ -6551,7 +7929,10 @@ async fn admin_convert_pair_update_rolls_back_when_audit_cannot_be_written()
                 .uri(format!("/admin/api/v1/convert/pairs/{pair_id}"))
                 .header(AUTHORIZATION, format!("Bearer {token}"))
                 .header("content-type", "application/json")
-                .body(Body::from(json!({ "enabled": false }).to_string()))
+                .body(Body::from(
+                    json!({ "enabled": false, "reason": "update convert pair rollback" })
+                        .to_string(),
+                ))
                 .unwrap(),
         )
         .await?;

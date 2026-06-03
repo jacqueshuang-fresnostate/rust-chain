@@ -17,7 +17,7 @@ use exchange_api::{
 use redis::AsyncCommands;
 use secrecy::SecretString;
 use serde_json::Value;
-use sqlx::{MySql, MySqlPool, Transaction, mysql::MySqlPoolOptions};
+use sqlx::{MySql, MySqlPool, Transaction, mysql::MySqlPoolOptions, types::Json as SqlxJson};
 use std::{error::Error, str::FromStr, time::Duration};
 use tokio::time::timeout;
 use tower::ServiceExt;
@@ -211,14 +211,42 @@ async fn seed_margin_product(
     pair_id: u64,
     margin_asset: u64,
 ) -> u64 {
+    seed_margin_product_with_mode(
+        tx,
+        pair_id,
+        margin_asset,
+        "isolated",
+        vec!["2", "3", "4", "5"],
+    )
+    .await
+}
+
+async fn seed_margin_product_with_mode(
+    tx: &mut Transaction<'_, MySql>,
+    pair_id: u64,
+    margin_asset: u64,
+    margin_mode: &str,
+    leverage_levels: Vec<&str>,
+) -> u64 {
+    let max_leverage = leverage_levels
+        .last()
+        .map(|level| decimal(level))
+        .unwrap_or_else(|| decimal("5.00000000"));
+    let leverage_levels: Vec<String> = leverage_levels
+        .into_iter()
+        .map(std::string::ToString::to_string)
+        .collect();
+
     sqlx::query(
         r#"INSERT INTO margin_products
-           (pair_id, margin_asset, max_leverage, min_margin, max_margin, maintenance_margin_rate, status)
-           VALUES (?, ?, ?, ?, ?, ?, 'active')"#,
+           (pair_id, margin_asset, margin_mode, leverage_levels, max_leverage, min_margin, max_margin, maintenance_margin_rate, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')"#,
     )
     .bind(pair_id)
     .bind(margin_asset)
-    .bind(decimal("5.00000000"))
+    .bind(margin_mode)
+    .bind(SqlxJson(leverage_levels))
+    .bind(max_leverage)
     .bind(decimal("10.000000000000000000"))
     .bind(decimal("1000.000000000000000000"))
     .bind(decimal("0.05000000"))
@@ -853,6 +881,235 @@ async fn admin_margin_product_create_rolls_back_when_audit_fails() -> Result<(),
     .fetch_one(&pool)
     .await?;
     assert_eq!(product_count, 0);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_margin_product_persists_mode_and_leverage_levels() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let mut fixture_tx = pool.begin().await?;
+    let admin_id = create_admin(&pool).await;
+    let (base_asset, base_symbol) = create_asset(&mut fixture_tx, "LM").await;
+    let (quote_asset, quote_symbol) = create_asset(&mut fixture_tx, "LQ").await;
+    let symbol = format!("{base_symbol}-{quote_symbol}");
+    let pair_id = create_pair(&mut fixture_tx, base_asset, quote_asset, &symbol).await;
+    fixture_tx.commit().await?;
+
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let create_body = format!(
+        r#"{{"pair_id":{pair_id},"margin_asset":{quote_asset},"margin_mode":"isolated","leverage_levels":["2","5","10"],"max_leverage":"10.00000000","min_margin":"15.000000000000000000","max_margin":"150.000000000000000000","maintenance_margin_rate":"0.04000000","status":"active","reason":"launch leverage levels"}}"#
+    );
+
+    let create_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/margin/products")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(create_body))
+                .unwrap(),
+        )
+        .await?;
+    let create_status = create_response.status();
+    let create_payload = body_json(create_response).await?;
+    assert_eq!(create_status, StatusCode::OK, "payload: {create_payload}");
+    let product_id = create_payload["id"].as_u64().unwrap();
+    assert_eq!(create_payload["margin_mode"], "isolated");
+    assert_eq!(
+        create_payload["leverage_levels"],
+        serde_json::json!(["2", "5", "10"])
+    );
+    assert_eq!(create_payload["max_leverage"], "10.00000000");
+
+    let (stored_mode, stored_levels): (String, SqlxJson<Vec<String>>) =
+        sqlx::query_as("SELECT margin_mode, leverage_levels FROM margin_products WHERE id = ?")
+            .bind(product_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(stored_mode, "isolated");
+    assert_eq!(stored_levels.0, vec!["2", "5", "10"]);
+
+    let detail_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/margin/products/{product_id}"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let detail_status = detail_response.status();
+    let detail_payload = body_json(detail_response).await?;
+    assert_eq!(detail_status, StatusCode::OK, "payload: {detail_payload}");
+    assert_eq!(detail_payload["margin_mode"], "isolated");
+    assert_eq!(
+        detail_payload["leverage_levels"],
+        serde_json::json!(["2", "5", "10"])
+    );
+
+    let list_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/margin/products")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let list_status = list_response.status();
+    let list_payload = body_json(list_response).await?;
+    assert_eq!(list_status, StatusCode::OK, "payload: {list_payload}");
+    assert!(
+        list_payload["products"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|product| {
+                product["id"] == product_id
+                    && product["margin_mode"] == "isolated"
+                    && product["leverage_levels"] == serde_json::json!(["2", "5", "10"])
+            })
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_margin_product_rejects_invalid_mode_and_leverage_levels_before_mysql()
+-> Result<(), Box<dyn Error>> {
+    let settings = test_settings();
+    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let app = admin_routes().with_state(AppState::new(settings));
+
+    for body in [
+        r#"{"pair_id":1,"margin_asset":1,"margin_mode":"portfolio","leverage_levels":["2","5"],"max_leverage":"5.00000000","min_margin":"10.000000000000000000","maintenance_margin_rate":"0.05000000","reason":"invalid mode"}"#,
+        r#"{"pair_id":1,"margin_asset":1,"margin_mode":"isolated","leverage_levels":[],"max_leverage":"5.00000000","min_margin":"10.000000000000000000","maintenance_margin_rate":"0.05000000","reason":"empty levels"}"#,
+        r#"{"pair_id":1,"margin_asset":1,"margin_mode":"isolated","leverage_levels":["1","5"],"max_leverage":"5.00000000","min_margin":"10.000000000000000000","maintenance_margin_rate":"0.05000000","reason":"low level"}"#,
+        r#"{"pair_id":1,"margin_asset":1,"margin_mode":"isolated","leverage_levels":["2","2","5"],"max_leverage":"5.00000000","min_margin":"10.000000000000000000","maintenance_margin_rate":"0.05000000","reason":"duplicate level"}"#,
+        r#"{"pair_id":1,"margin_asset":1,"margin_mode":"isolated","leverage_levels":["2","5","10"],"max_leverage":"5.00000000","min_margin":"10.000000000000000000","maintenance_margin_rate":"0.05000000","reason":"mismatch max"}"#,
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/margin/products")
+                    .header("authorization", format!("Bearer {admin_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await?;
+        let status = response.status();
+        let payload = body_json(response).await?;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "payload: {payload}");
+        assert_eq!(payload["code"], "VALIDATION_ERROR");
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn margin_open_position_requires_configured_leverage_level_and_persists_mode()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let mut fixture_tx = pool.begin().await?;
+    let user_id = create_user(&mut fixture_tx).await;
+    let (base_asset, base_symbol) = create_asset(&mut fixture_tx, "LB").await;
+    let (quote_asset, quote_symbol) = create_asset(&mut fixture_tx, "LQ").await;
+    let symbol = format!("{base_symbol}-{quote_symbol}");
+    let pair_id = create_pair(&mut fixture_tx, base_asset, quote_asset, &symbol).await;
+    let product_id = seed_margin_product_with_mode(
+        &mut fixture_tx,
+        pair_id,
+        quote_asset,
+        "isolated",
+        vec!["2", "5", "10"],
+    )
+    .await;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(quote_asset)
+        .bind(decimal("100.000000000000000000"))
+        .execute(&mut *fixture_tx)
+        .await?;
+    fixture_tx.commit().await?;
+
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let app = user_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let rejected_body = format!(
+        r#"{{"product_id":{product_id},"direction":"long","margin_amount":"20.000000000000000000","leverage":"7.00000000","idempotency_key":"margin-level-reject-{}"}}"#,
+        Uuid::now_v7().simple()
+    );
+    let rejected_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/margin/positions")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(rejected_body))
+                .unwrap(),
+        )
+        .await?;
+    let rejected_status = rejected_response.status();
+    let rejected_payload = body_json(rejected_response).await?;
+    assert_eq!(
+        rejected_status,
+        StatusCode::BAD_REQUEST,
+        "payload: {rejected_payload}"
+    );
+    assert_eq!(rejected_payload["code"], "VALIDATION_ERROR");
+
+    let accepted_body = format!(
+        r#"{{"product_id":{product_id},"direction":"long","margin_amount":"20.000000000000000000","leverage":"5.00000000","idempotency_key":"margin-level-open-{}"}}"#,
+        Uuid::now_v7().simple()
+    );
+    let accepted_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/margin/positions")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(accepted_body))
+                .unwrap(),
+        )
+        .await?;
+    let accepted_status = accepted_response.status();
+    let accepted_payload = body_json(accepted_response).await?;
+    assert_eq!(
+        accepted_status,
+        StatusCode::OK,
+        "payload: {accepted_payload}"
+    );
+    let position_id = accepted_payload["position"]["id"].as_u64().unwrap();
+    assert_eq!(accepted_payload["position"]["margin_mode"], "isolated");
+
+    let (stored_mode,): (String,) =
+        sqlx::query_as("SELECT margin_mode FROM margin_positions WHERE id = ?")
+            .bind(position_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(stored_mode, "isolated");
 
     Ok(())
 }

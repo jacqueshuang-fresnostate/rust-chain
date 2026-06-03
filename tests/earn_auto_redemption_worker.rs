@@ -9,6 +9,7 @@ use exchange_api::{
     },
 };
 use secrecy::SecretString;
+use serde_json::{Value, json};
 use sqlx::{MySql, MySqlPool, Transaction, mysql::MySqlPoolOptions};
 use std::{error::Error, str::FromStr, time::Duration};
 use tokio::{sync::Mutex, time::timeout};
@@ -133,6 +134,23 @@ async fn create_asset(tx: &mut Transaction<'_, MySql>) -> Result<u64, sqlx::Erro
     .last_insert_id())
 }
 
+fn default_introduction_json(name: &str) -> Value {
+    json!({
+        "version": 1,
+        "default_locale": "zh-CN",
+        "items": [
+            {
+                "locale": "zh-CN",
+                "country": "CN",
+                "title": name,
+                "content": [
+                    { "type": "p", "children": [{ "text": name }] }
+                ]
+            }
+        ]
+    })
+}
+
 async fn seed_matured_subscription(
     pool: &MySqlPool,
     now: chrono::DateTime<Utc>,
@@ -141,13 +159,15 @@ async fn seed_matured_subscription(
     let mut tx = pool.begin().await?;
     let user_id = create_user(&mut tx).await?;
     let asset_id = create_asset(&mut tx).await?;
+    let product_name = format!("Earn Worker {}", Uuid::now_v7().simple());
     let product_id = sqlx::query(
         r#"INSERT INTO earn_products
-           (asset_id, name, term_days, apr_rate, min_subscribe, max_subscribe, status)
-           VALUES (?, ?, 365, ?, ?, NULL, 'active')"#,
+           (asset_id, name, category, introduction_json, term_days, apr_rate, min_subscribe, max_subscribe, status)
+           VALUES (?, ?, 'fixed_term', ?, 365, ?, ?, NULL, 'active')"#,
     )
     .bind(asset_id)
-    .bind(format!("Earn Worker {}", Uuid::now_v7().simple()))
+    .bind(&product_name)
+    .bind(sqlx::types::Json(default_introduction_json(&product_name)))
     .bind(decimal("0.10000000"))
     .bind(decimal("10.000000000000000000"))
     .execute(&mut *tx)

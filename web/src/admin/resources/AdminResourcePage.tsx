@@ -7,7 +7,8 @@ import type { ApiRecord } from '../../api/types';
 import { AmountText } from '../../shared/AmountText';
 import { DataTable } from '../../shared/DataTable';
 import { FilterBar, type FilterField, type FilterValues } from '../../shared/FilterBar';
-import { JsonDrawer } from '../../shared/JsonDrawer';
+import { DetailDrawer, type DetailDrawerData } from '../../shared/DetailDrawer';
+import { formatAdminDisplayValue } from '../../shared/numberFormat';
 import { StatusTag } from '../../shared/StatusTag';
 import { TimestampText } from '../../shared/TimestampText';
 
@@ -16,13 +17,18 @@ const { Title, Text } = Typography;
 export type AdminResourceColumn<T extends ApiRecord> = {
   asset?: string;
   key: Extract<keyof T, string>;
+  render?: (record: T) => ReactNode;
   title: string;
   type?: 'amount' | 'json' | 'status' | 'text' | 'timestamp';
   valueMap?: Record<string, string>;
 };
 
+type AdminResourceActionHelpers = {
+  reload: () => void;
+};
+
 type AdminResourcePageProps<T extends ApiRecord> = {
-  actions?: ReactNode;
+  actions?: ReactNode | ((helpers: AdminResourceActionHelpers) => ReactNode);
   columns: Array<AdminResourceColumn<T>>;
   endpoint: string;
   filters?: FilterField[];
@@ -31,7 +37,7 @@ type AdminResourcePageProps<T extends ApiRecord> = {
     record: T,
     helpers: {
       reload: () => void;
-      openJson: (data: ApiRecord) => void;
+      openDetail: (detail: DetailDrawerData) => void;
     }
   ) => ReactNode;
   showJsonAction?: boolean;
@@ -60,7 +66,11 @@ function renderCell<T extends ApiRecord>(column: AdminResourceColumn<T>, value: 
     return <Text code>{JSON.stringify(value)}</Text>;
   }
 
-  return <span>{value === null || value === undefined || value === '' ? '-' : String(value)}</span>;
+  if (value === null || value === undefined || value === '') {
+    return <span>-</span>;
+  }
+
+  return <span>{formatAdminDisplayValue(column.key, value) ?? String(value)}</span>;
 }
 
 export function AdminResourcePage<T extends ApiRecord>({
@@ -73,7 +83,7 @@ export function AdminResourcePage<T extends ApiRecord>({
   showJsonAction = true,
   title
 }: AdminResourcePageProps<T>) {
-  const [drawerRow, setDrawerRow] = useState<ApiRecord | null>(null);
+  const [detail, setDetail] = useState<DetailDrawerData | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [filterValues, setFilterValues] = useState<FilterValues>({});
   const [loading, setLoading] = useState(true);
@@ -130,27 +140,32 @@ export function AdminResourcePage<T extends ApiRecord>({
     [filters, rows]
   );
 
+  const renderedActions = typeof actions === 'function' ? actions({ reload }) : actions;
+
   const tableColumns = useMemo<Array<ColumnProps<T>>>(() => {
     const resourceColumns = columns.map<ColumnProps<T>>((column) => ({
       dataIndex: column.key,
-      render: (value: T[Extract<keyof T, string>]) => renderCell(column, value),
+      key: `${column.key}-${column.title}`,
+      render: (value: T[Extract<keyof T, string>], record: T) => (column.render ? column.render(record) : renderCell(column, value)),
       title: column.title
     }));
 
     return [
       ...resourceColumns,
       {
+        fixed: 'right',
         render: (_value: unknown, record: T) => (
           <Space spacing={6} wrap>
-            {rowActions?.(record, { reload, openJson: setDrawerRow })}
-            {showJsonAction ? (
-              <Button onClick={() => setDrawerRow(record)} size="small" theme="borderless">
-                查看JSON
+            {rowActions?.(record, { reload, openDetail: setDetail })}
+            {showJsonAction && !rowActions ? (
+              <Button onClick={() => setDetail({ title: '详情', data: record })} size="small" theme="borderless">
+                查看详情
               </Button>
             ) : null}
           </Space>
         ),
-        title: '操作'
+        title: '操作',
+        width: 180
       }
     ];
   }, [columns, reload, rowActions, showJsonAction]);
@@ -163,13 +178,13 @@ export function AdminResourcePage<T extends ApiRecord>({
             <Title heading={3} style={{ marginBottom: 8 }}>
               {title}
             </Title>
-            {actions ? <div className="admin-resource-actions">{actions}</div> : null}
+            {renderedActions ? <div className="admin-resource-actions">{renderedActions}</div> : null}
           </div>
           <FilterBar fields={filterFields} loading={loading} onChange={setFilterValues} value={filterValues} />
           <DataTable columns={tableColumns} data={rows} error={error} loading={loading} />
         </Space>
       </Card>
-      <JsonDrawer data={drawerRow} onClose={() => setDrawerRow(null)} visible={drawerRow !== null} />
+      <DetailDrawer detail={detail} onClose={() => setDetail(null)} />
     </main>
   );
 }

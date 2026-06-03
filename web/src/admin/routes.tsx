@@ -6,6 +6,7 @@ import { MarketFeedConfigPage } from './actions/MarketFeedConfigPage';
 import { MarketStrategyActions } from './actions/MarketStrategyActions';
 import { NewCoinActions } from './actions/NewCoinActions';
 import { ProductStatusActions } from './actions/ProductStatusActions';
+import { SmtpConfigPage } from './actions/SmtpConfigPage';
 import { DashboardPage } from './dashboard/DashboardPage';
 import { ResourcePage, resourceConfigs } from './resources/resourceConfigs';
 
@@ -48,5 +49,6 @@ export const adminRoutes: RouteObject[] = [
   { path: 'earn/actions', element: <ProductStatusActions /> },
   { path: 'risk', element: <ResourcePage config={resourceConfigs.riskRules} /> },
   { path: 'risk/events', element: <ResourcePage config={resourceConfigs.riskEvents} /> },
+  { path: 'system/smtp', element: <SmtpConfigPage /> },
   { path: 'audit-logs', element: <ResourcePage config={resourceConfigs.auditLogs} /> }
 ];

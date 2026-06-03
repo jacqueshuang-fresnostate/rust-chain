@@ -15,7 +15,7 @@ use exchange_api::{
 use redis::AsyncCommands;
 use secrecy::SecretString;
 use serde_json::Value;
-use sqlx::{MySql, MySqlPool, Transaction, mysql::MySqlPoolOptions};
+use sqlx::{MySql, MySqlPool, Transaction, mysql::MySqlPoolOptions, types::Json as SqlxJson};
 use std::{collections::HashSet, error::Error, str::FromStr, time::Duration};
 use tokio::{sync::Mutex, time::timeout};
 use uuid::Uuid;
@@ -199,11 +199,12 @@ async fn seed_margin_position(
     .last_insert_id();
     let product_id = sqlx::query(
         r#"INSERT INTO margin_products
-           (pair_id, margin_asset, max_leverage, min_margin, max_margin, maintenance_margin_rate, status)
-           VALUES (?, ?, ?, ?, ?, ?, 'active')"#,
+           (pair_id, margin_asset, margin_mode, leverage_levels, max_leverage, min_margin, max_margin, maintenance_margin_rate, status)
+           VALUES (?, ?, 'isolated', ?, ?, ?, ?, ?, 'active')"#,
     )
     .bind(pair_id)
     .bind(margin_asset)
+    .bind(SqlxJson(vec!["2".to_owned(), "5".to_owned()]))
     .bind(decimal("5.00000000"))
     .bind(decimal("10.000000000000000000"))
     .bind(decimal("1000.000000000000000000"))
@@ -219,9 +220,9 @@ async fn seed_margin_position(
         .await?;
     let position_id = sqlx::query(
         r#"INSERT INTO margin_positions
-           (user_id, product_id, pair_id, margin_asset, direction, margin_amount,
+           (user_id, product_id, pair_id, margin_asset, margin_mode, direction, margin_amount,
             leverage, notional_amount, entry_price, status, idempotency_key)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'opened', ?)"#,
+           VALUES (?, ?, ?, ?, 'isolated', ?, ?, ?, ?, ?, 'opened', ?)"#,
     )
     .bind(user_id)
     .bind(product_id)

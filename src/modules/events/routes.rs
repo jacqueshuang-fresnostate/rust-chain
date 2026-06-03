@@ -3,8 +3,8 @@ use crate::{
     modules::{
         auth::AdminAuth,
         events::{
-            EventBroadcastHub, EventBroadcastSubscription, EventOutboxService, PrivateWsAuth,
-            PublishedOutboxBatch, WebSocketChannel,
+            EventBroadcastHub, EventBroadcastMultiSubscription, EventBroadcastSubscription,
+            EventOutboxService, PrivateWsAuth, PublishedOutboxBatch, WebSocketChannel,
         },
         market::{KlineUpsertKey, ValidatedMarketSymbol},
     },
@@ -22,10 +22,12 @@ use axum::{
 use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
+use std::collections::HashSet;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/events/outbox/publish-once", post(publish_once))
+        .route("/ws/public", get(public_multi_ws))
         .route("/ws/public/:namespace/:topic", get(public_ws))
         .route("/ws/private", get(private_ws))
 }
@@ -33,6 +35,14 @@ pub fn routes() -> Router<AppState> {
 #[derive(Debug, Deserialize)]
 struct PrivateWsQuery {
     token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PublicWsCommand {
+    op: String,
+    channel: String,
+    symbol: Option<String>,
+    interval: Option<String>,
 }
 
 async fn publish_once(
@@ -43,6 +53,14 @@ async fn publish_once(
     let summary = service.publish_once(Utc::now()).await?;
 
     Ok(Json(summary))
+}
+
+async fn public_multi_ws(
+    State(state): State<AppState>,
+    ws: WebSocketUpgrade,
+) -> AppResult<Response> {
+    let hub = state.event_broadcast_hub.clone();
+    Ok(ws.on_upgrade(move |socket| public_multi_socket(socket, hub)))
 }
 
 async fn public_ws(
@@ -88,6 +106,118 @@ fn public_channel(namespace: String, topic: String) -> AppResult<WebSocketChanne
         }
         _ => WebSocketChannel::public(namespace, topic),
     }
+}
+
+fn public_command_channel(command: &PublicWsCommand) -> AppResult<WebSocketChannel> {
+    let symbol = command
+        .symbol
+        .as_deref()
+        .ok_or_else(|| crate::error::AppError::Validation("symbol is required".to_owned()))?;
+    match command.channel.as_str() {
+        "ticker" | "depth" | "trade" => public_channel(command.channel.clone(), symbol.to_owned()),
+        "kline" => {
+            let interval = command.interval.as_deref().ok_or_else(|| {
+                crate::error::AppError::Validation("interval is required".to_owned())
+            })?;
+            public_channel("kline".to_owned(), format!("{symbol}_{interval}"))
+        }
+        _ => Err(crate::error::AppError::Validation(
+            "unsupported websocket channel".to_owned(),
+        )),
+    }
+}
+
+async fn public_multi_socket(socket: WebSocket, hub: Option<EventBroadcastHub>) {
+    let (mut sender, mut receiver) = socket.split();
+    let mut subscription = hub.map(|hub| hub.subscribe_multi());
+    let mut channels = HashSet::<WebSocketChannel>::new();
+
+    loop {
+        tokio::select! {
+            message = receiver.next() => {
+                if !handle_public_multi_client_message(message, &mut sender, &mut channels).await {
+                    break;
+                }
+            }
+            broadcast = recv_multi_broadcast(&mut subscription), if subscription.is_some() => {
+                let Ok(message) = broadcast else {
+                    break;
+                };
+                if channels.contains(message.channel())
+                    && sender.send(Message::Text(message.payload().to_owned())).await.is_err()
+                {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+async fn recv_multi_broadcast(
+    subscription: &mut Option<EventBroadcastMultiSubscription>,
+) -> AppResult<crate::modules::events::EventBroadcastMessage> {
+    let Some(subscription) = subscription else {
+        return Err(crate::error::AppError::Internal(
+            "event broadcast hub is not configured".to_owned(),
+        ));
+    };
+    subscription.recv().await
+}
+
+async fn handle_public_multi_client_message(
+    message: Option<Result<Message, axum::Error>>,
+    sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    channels: &mut HashSet<WebSocketChannel>,
+) -> bool {
+    match message {
+        Some(Ok(Message::Text(text))) if text == "ping" => {
+            sender.send(Message::Text("pong".to_owned())).await.is_ok()
+        }
+        Some(Ok(Message::Text(text))) => handle_public_ws_command(text, sender, channels).await,
+        Some(Ok(Message::Ping(payload))) => sender.send(Message::Pong(payload)).await.is_ok(),
+        Some(Ok(Message::Close(_))) | Some(Err(_)) | None => false,
+        Some(Ok(_)) => true,
+    }
+}
+
+async fn handle_public_ws_command(
+    text: String,
+    sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    channels: &mut HashSet<WebSocketChannel>,
+) -> bool {
+    let response = match serde_json::from_str::<PublicWsCommand>(&text)
+        .map_err(|error| crate::error::AppError::Validation(format!("invalid json: {error}")))
+        .and_then(|command| {
+            let channel = public_command_channel(&command)?;
+            match command.op.as_str() {
+                "subscribe" => {
+                    channels.insert(channel.clone());
+                    Ok(format!(
+                        r#"{{"type":"subscribed","channel":"{}"}}"#,
+                        channel.as_text()
+                    ))
+                }
+                "unsubscribe" => {
+                    channels.remove(&channel);
+                    Ok(format!(
+                        r#"{{"type":"unsubscribed","channel":"{}"}}"#,
+                        channel.as_text()
+                    ))
+                }
+                _ => Err(crate::error::AppError::Validation(
+                    "unsupported websocket operation".to_owned(),
+                )),
+            }
+        }) {
+        Ok(response) => response,
+        Err(error) => serde_json::json!({
+            "type": "error",
+            "code": "invalid_request",
+            "message": error.to_string(),
+        })
+        .to_string(),
+    };
+    sender.send(Message::Text(response)).await.is_ok()
 }
 
 async fn public_socket(

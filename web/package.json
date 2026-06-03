@@ -15,6 +15,9 @@
     "@douyinfe/semi-icons": "latest",
     "@douyinfe/semi-ui": "latest",
     "@tanstack/react-query": "latest",
+    "@types/numeral": "^2.0.5",
+    "numeral": "^2.0.6",
+    "quill": "^2.0.3",
     "react": "latest",
     "react-dom": "latest",
     "react-router-dom": "latest"

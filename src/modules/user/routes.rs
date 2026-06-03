@@ -1,22 +1,37 @@
 use crate::{
     error::{AppError, AppResult},
-    modules::auth::UserAuth,
+    infra::email::EmailMessage,
+    modules::{
+        admin::smtp_config::load_enabled_smtp_config,
+        auth::{
+            TokenScope, UserAuth, hash_password, hash_refresh_token, issue_token, verify_password,
+        },
+    },
     state::AppState,
-    time::unix_millis,
+    time::{option_unix_millis, unix_millis},
 };
 use axum::{
     Json, Router,
     extract::State,
-    routing::{get, post},
+    routing::{get, patch, post},
 };
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
+use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
-use sqlx::{MySql, Pool, Transaction};
+use serde_json::{Value, json};
+use sqlx::{MySql, Pool, Transaction, types::Json as SqlxJson};
 use uuid::Uuid;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/user/profile", get(profile))
+        .route("/user/email/bind-code", post(send_email_bind_code))
+        .route("/user/email/bind", post(bind_email))
+        .route("/user/password", patch(change_password))
+        .route(
+            "/user/fund-password",
+            post(create_fund_password).patch(change_fund_password),
+        )
         .route("/referral/my-code", get(my_referral_code))
         .route("/referral/bind", post(bind_referral_code))
         .route("/referral/my-invites", get(my_invites))
@@ -29,8 +44,82 @@ struct UserProfileResponse {
     phone: Option<String>,
     status: String,
     kyc_level: i32,
+    #[serde(default, with = "option_unix_millis")]
+    email_verified_at: Option<DateTime<Utc>>,
+    fund_password_set: bool,
     #[serde(with = "unix_millis")]
     created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BindEmailCodeRequest {
+    email: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BindEmailCodeResponse {
+    sent: bool,
+    #[serde(with = "unix_millis")]
+    expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BindEmailRequest {
+    email: String,
+    code: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BindEmailResponse {
+    email: String,
+    #[serde(with = "unix_millis")]
+    email_verified_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChangePasswordRequest {
+    old_password: String,
+    new_password: String,
+}
+
+#[derive(Debug, Serialize)]
+struct TokenResponse {
+    access_token: String,
+    refresh_token: String,
+    token_type: &'static str,
+    scope: TokenScope,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateFundPasswordRequest {
+    login_password: String,
+    fund_password: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChangeFundPasswordRequest {
+    old_fund_password: String,
+    new_fund_password: String,
+}
+
+#[derive(Debug, Serialize)]
+struct FundPasswordResponse {
+    fund_password_set: bool,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct UserPasswordRow {
+    id: u64,
+    password_hash: String,
+    status: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct EmailVerificationRow {
+    id: u64,
+    code_hash: String,
+    attempt_count: i32,
+    expires_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -108,9 +197,13 @@ async fn profile(
     let user_id = user_id_from_subject(&claims.sub)?;
     let pool = mysql_pool(&state)?;
     let profile = sqlx::query_as::<_, UserProfileResponse>(
-        r#"SELECT id, email, phone, status, kyc_level, created_at
+        r#"SELECT users.id, users.email, users.phone, users.status, users.kyc_level,
+                  users.email_verified_at,
+                  CASE WHEN security.fund_password_hash IS NULL THEN FALSE ELSE TRUE END AS fund_password_set,
+                  users.created_at
            FROM users
-           WHERE id = ?
+           LEFT JOIN user_security security ON security.user_id = users.id
+           WHERE users.id = ?
            LIMIT 1"#,
     )
     .bind(user_id)
@@ -119,6 +212,314 @@ async fn profile(
     .ok_or(AppError::Unauthorized)?;
 
     Ok(Json(profile))
+}
+
+async fn send_email_bind_code(
+    UserAuth(claims): UserAuth,
+    State(state): State<AppState>,
+    Json(request): Json<BindEmailCodeRequest>,
+) -> AppResult<Json<BindEmailCodeResponse>> {
+    let user_id = user_id_from_subject(&claims.sub)?;
+    let email = validate_email(&request.email, "email")?;
+    let pool = mysql_pool(&state)?;
+    let now = Utc::now();
+    let expires_at = now + Duration::minutes(10);
+    let code = generate_email_code()?;
+    let code_hash = hash_password(&code)?;
+
+    let sender = state
+        .email_sender
+        .clone()
+        .ok_or_else(|| AppError::Internal("email sender is not configured".to_owned()))?;
+    let smtp_config =
+        load_enabled_smtp_config(&pool, state.settings.exposed_credential_encryption_key())
+            .await?
+            .ok_or_else(|| {
+                AppError::Internal("enabled smtp config is not configured".to_owned())
+            })?;
+
+    let mut tx = pool.begin().await?;
+    ensure_active_user_in_tx(&mut tx, user_id).await?;
+    ensure_email_available_in_tx(&mut tx, user_id, &email).await?;
+    ensure_email_bind_not_cooling_down_in_tx(&mut tx, user_id, &email, now).await?;
+    sqlx::query(
+        r#"UPDATE user_email_verifications
+           SET status = 'superseded'
+           WHERE user_id = ? AND purpose = 'bind' AND status = 'pending'"#,
+    )
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        r#"INSERT INTO user_email_verifications
+           (user_id, email, purpose, code_hash, status, expires_at, sent_at)
+           VALUES (?, ?, 'bind', ?, 'pending', ?, ?)"#,
+    )
+    .bind(user_id)
+    .bind(&email)
+    .bind(&code_hash)
+    .bind(expires_at.naive_utc())
+    .bind(now.naive_utc())
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    sender
+        .send(
+            smtp_config,
+            EmailMessage {
+                to: email.clone(),
+                subject: "绑定邮箱验证码".to_owned(),
+                text_body: format!("您的绑定邮箱验证码是 {code}，10 分钟内有效。"),
+            },
+        )
+        .await?;
+
+    Ok(Json(BindEmailCodeResponse {
+        sent: true,
+        expires_at,
+    }))
+}
+
+async fn bind_email(
+    UserAuth(claims): UserAuth,
+    State(state): State<AppState>,
+    Json(request): Json<BindEmailRequest>,
+) -> AppResult<Json<BindEmailResponse>> {
+    let user_id = user_id_from_subject(&claims.sub)?;
+    let email = validate_email(&request.email, "email")?;
+    let code = validate_email_code(&request.code)?;
+    let pool = mysql_pool(&state)?;
+    let verified_at = Utc::now();
+    let mut tx = pool.begin().await?;
+
+    ensure_active_user_in_tx(&mut tx, user_id).await?;
+    ensure_email_available_in_tx(&mut tx, user_id, &email).await?;
+    let verification = lock_latest_pending_email_verification_in_tx(&mut tx, user_id, &email)
+        .await?
+        .ok_or_else(|| AppError::Validation("email verification code is invalid".to_owned()))?;
+    if verification.expires_at <= verified_at || verification.attempt_count >= 5 {
+        return Err(AppError::Validation(
+            "email verification code is expired".to_owned(),
+        ));
+    }
+    if !verify_password(&verification.code_hash, &code)? {
+        sqlx::query(
+            r#"UPDATE user_email_verifications
+               SET attempt_count = attempt_count + 1
+               WHERE id = ?"#,
+        )
+        .bind(verification.id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        return Err(AppError::Validation(
+            "email verification code is invalid".to_owned(),
+        ));
+    }
+
+    sqlx::query(
+        r#"UPDATE users
+           SET email = ?, email_verified_at = ?
+           WHERE id = ?"#,
+    )
+    .bind(&email)
+    .bind(verified_at.naive_utc())
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(map_duplicate_email)?;
+    sqlx::query(
+        r#"UPDATE user_email_verifications
+           SET status = 'verified', verified_at = ?
+           WHERE id = ?"#,
+    )
+    .bind(verified_at.naive_utc())
+    .bind(verification.id)
+    .execute(&mut *tx)
+    .await?;
+    insert_user_audit_event_in_tx(
+        &mut tx,
+        user_id,
+        "user.email.bind",
+        "user",
+        user_id.to_string(),
+        None,
+        Some(json!({ "email": email })),
+    )
+    .await?;
+    tx.commit().await?;
+
+    Ok(Json(BindEmailResponse {
+        email,
+        email_verified_at: verified_at,
+    }))
+}
+
+async fn change_password(
+    UserAuth(claims): UserAuth,
+    State(state): State<AppState>,
+    Json(request): Json<ChangePasswordRequest>,
+) -> AppResult<Json<TokenResponse>> {
+    let user_id = user_id_from_subject(&claims.sub)?;
+    let old_password = required_string(Some(request.old_password), "old_password")?;
+    let new_password = validate_login_password(&request.new_password, "new_password")?;
+    if old_password == new_password {
+        return Err(AppError::Validation(
+            "new_password must be different from old_password".to_owned(),
+        ));
+    }
+    let pool = mysql_pool(&state)?;
+    let mut tx = pool.begin().await?;
+    let user = lock_user_password_in_tx(&mut tx, user_id).await?;
+    if user.status != "active" || !verify_password(&user.password_hash, &old_password)? {
+        return Err(AppError::Unauthorized);
+    }
+    let password_hash = hash_password(&new_password)?;
+    sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+        .bind(password_hash)
+        .bind(user.id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        r#"UPDATE refresh_tokens
+           SET revoked_at = CURRENT_TIMESTAMP(6)
+           WHERE actor_type = 'user' AND actor_id = ? AND revoked_at IS NULL"#,
+    )
+    .bind(user.id)
+    .execute(&mut *tx)
+    .await?;
+    insert_user_audit_event_in_tx(
+        &mut tx,
+        user.id,
+        "user.password.change",
+        "user",
+        user.id.to_string(),
+        None,
+        Some(json!({ "changed": true })),
+    )
+    .await?;
+    let tokens = issue_user_tokens_in_tx(&mut tx, &state, user.id).await?;
+    tx.commit().await?;
+
+    Ok(Json(tokens))
+}
+
+async fn create_fund_password(
+    UserAuth(claims): UserAuth,
+    State(state): State<AppState>,
+    Json(request): Json<CreateFundPasswordRequest>,
+) -> AppResult<Json<FundPasswordResponse>> {
+    let user_id = user_id_from_subject(&claims.sub)?;
+    let login_password = required_string(Some(request.login_password), "login_password")?;
+    let fund_password = validate_fund_password(&request.fund_password, "fund_password")?;
+    if login_password == fund_password {
+        return Err(AppError::Validation(
+            "fund_password must be different from login_password".to_owned(),
+        ));
+    }
+    let pool = mysql_pool(&state)?;
+    let mut tx = pool.begin().await?;
+    let user = lock_user_password_in_tx(&mut tx, user_id).await?;
+    if user.status != "active" || !verify_password(&user.password_hash, &login_password)? {
+        return Err(AppError::Unauthorized);
+    }
+    let existing: Option<(Option<String>,)> = sqlx::query_as(
+        r#"SELECT fund_password_hash
+           FROM user_security
+           WHERE user_id = ?
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(user.id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if existing.and_then(|row| row.0).is_some() {
+        return Err(AppError::Conflict(
+            "fund password already exists".to_owned(),
+        ));
+    }
+    let fund_password_hash = hash_password(&fund_password)?;
+    sqlx::query(
+        r#"INSERT INTO user_security (user_id, fund_password_hash)
+           VALUES (?, ?)
+           ON DUPLICATE KEY UPDATE fund_password_hash = VALUES(fund_password_hash)"#,
+    )
+    .bind(user.id)
+    .bind(fund_password_hash)
+    .execute(&mut *tx)
+    .await?;
+    insert_user_audit_event_in_tx(
+        &mut tx,
+        user.id,
+        "user.fund_password.create",
+        "user_security",
+        user.id.to_string(),
+        None,
+        Some(json!({ "fund_password_set": true })),
+    )
+    .await?;
+    tx.commit().await?;
+
+    Ok(Json(FundPasswordResponse {
+        fund_password_set: true,
+    }))
+}
+
+async fn change_fund_password(
+    UserAuth(claims): UserAuth,
+    State(state): State<AppState>,
+    Json(request): Json<ChangeFundPasswordRequest>,
+) -> AppResult<Json<FundPasswordResponse>> {
+    let user_id = user_id_from_subject(&claims.sub)?;
+    let old_fund_password =
+        validate_fund_password(&request.old_fund_password, "old_fund_password")?;
+    let new_fund_password =
+        validate_fund_password(&request.new_fund_password, "new_fund_password")?;
+    if old_fund_password == new_fund_password {
+        return Err(AppError::Validation(
+            "new_fund_password must be different from old_fund_password".to_owned(),
+        ));
+    }
+    let pool = mysql_pool(&state)?;
+    let mut tx = pool.begin().await?;
+    ensure_active_user_in_tx(&mut tx, user_id).await?;
+    let existing_hash: Option<String> = sqlx::query_scalar(
+        r#"SELECT fund_password_hash
+           FROM user_security
+           WHERE user_id = ?
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .flatten();
+    let existing_hash = existing_hash.ok_or(AppError::NotFound)?;
+    if !verify_password(&existing_hash, &old_fund_password)? {
+        return Err(AppError::Unauthorized);
+    }
+    let new_hash = hash_password(&new_fund_password)?;
+    sqlx::query("UPDATE user_security SET fund_password_hash = ? WHERE user_id = ?")
+        .bind(new_hash)
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    insert_user_audit_event_in_tx(
+        &mut tx,
+        user_id,
+        "user.fund_password.change",
+        "user_security",
+        user_id.to_string(),
+        None,
+        Some(json!({ "fund_password_set": true })),
+    )
+    .await?;
+    tx.commit().await?;
+
+    Ok(Json(FundPasswordResponse {
+        fund_password_set: true,
+    }))
 }
 
 async fn my_referral_code(
@@ -255,6 +656,241 @@ async fn my_invites(
     .await?;
 
     Ok(Json(MyInvitesResponse { users }))
+}
+
+async fn ensure_active_user_in_tx(tx: &mut Transaction<'_, MySql>, user_id: u64) -> AppResult<()> {
+    sqlx::query_as::<_, (u64,)>(
+        r#"SELECT id
+           FROM users
+           WHERE id = ? AND status = 'active'
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(user_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::Unauthorized)?;
+    Ok(())
+}
+
+async fn ensure_email_available_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    email: &str,
+) -> AppResult<()> {
+    let existing_user_id: Option<u64> = sqlx::query_scalar(
+        r#"SELECT id
+           FROM users
+           WHERE email = ? AND id <> ?
+           LIMIT 1"#,
+    )
+    .bind(email)
+    .bind(user_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if existing_user_id.is_some() {
+        return Err(AppError::Conflict("email already exists".to_owned()));
+    }
+    Ok(())
+}
+
+async fn ensure_email_bind_not_cooling_down_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    email: &str,
+    now: DateTime<Utc>,
+) -> AppResult<()> {
+    let sent_at: Option<DateTime<Utc>> = sqlx::query_scalar(
+        r#"SELECT sent_at
+           FROM user_email_verifications
+           WHERE user_id = ? AND email = ? AND purpose = 'bind' AND status = 'pending'
+           ORDER BY id DESC
+           LIMIT 1"#,
+    )
+    .bind(user_id)
+    .bind(email)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if sent_at.is_some_and(|sent_at| sent_at + Duration::seconds(60) > now) {
+        return Err(AppError::Validation(
+            "email verification code was sent recently".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+async fn lock_latest_pending_email_verification_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    email: &str,
+) -> AppResult<Option<EmailVerificationRow>> {
+    sqlx::query_as::<_, EmailVerificationRow>(
+        r#"SELECT id, code_hash, attempt_count, expires_at
+           FROM user_email_verifications
+           WHERE user_id = ? AND email = ? AND purpose = 'bind' AND status = 'pending'
+           ORDER BY id DESC
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(user_id)
+    .bind(email)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(AppError::from)
+}
+
+async fn lock_user_password_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+) -> AppResult<UserPasswordRow> {
+    sqlx::query_as::<_, UserPasswordRow>(
+        r#"SELECT id, password_hash, status
+           FROM users
+           WHERE id = ?
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(user_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::Unauthorized)
+}
+
+async fn issue_user_tokens_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    state: &AppState,
+    user_id: u64,
+) -> AppResult<TokenResponse> {
+    let subject = format!("user:{user_id}");
+    let access_token = issue_token(
+        &state.settings,
+        subject.clone(),
+        TokenScope::User,
+        state.settings.jwt_access_ttl_seconds,
+    )?;
+    let refresh_token = issue_token(
+        &state.settings,
+        subject,
+        TokenScope::User,
+        state.settings.jwt_refresh_ttl_seconds,
+    )?;
+    let token_hash = hash_refresh_token(&refresh_token)?;
+    let expires_at =
+        Utc::now().naive_utc() + Duration::seconds(state.settings.jwt_refresh_ttl_seconds as i64);
+
+    sqlx::query(
+        r#"INSERT INTO refresh_tokens (user_id, actor_type, actor_id, token_hash, expires_at)
+           VALUES (?, 'user', ?, ?, ?)"#,
+    )
+    .bind(user_id)
+    .bind(user_id)
+    .bind(token_hash)
+    .bind(expires_at)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(TokenResponse {
+        access_token,
+        refresh_token,
+        token_type: "Bearer",
+        scope: TokenScope::User,
+    })
+}
+
+async fn insert_user_audit_event_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    action: &'static str,
+    target_type: &'static str,
+    target_id: String,
+    before_json: Option<Value>,
+    after_json: Option<Value>,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"INSERT INTO audit_events
+           (actor_type, actor_id, action, target_type, target_id, before_json, after_json)
+           VALUES ('user', ?, ?, ?, ?, ?, ?)"#,
+    )
+    .bind(user_id)
+    .bind(action)
+    .bind(target_type)
+    .bind(target_id)
+    .bind(before_json.map(SqlxJson))
+    .bind(after_json.map(SqlxJson))
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+fn validate_email(value: &str, field: &str) -> AppResult<String> {
+    let email = required_string(Some(value.to_owned()), field)?;
+    let mut parts = email.split('@');
+    let local = parts.next().unwrap_or_default();
+    let domain = parts.next().unwrap_or_default();
+    if email.len() > 255
+        || local.is_empty()
+        || domain.is_empty()
+        || parts.next().is_some()
+        || email.chars().any(char::is_whitespace)
+    {
+        return Err(AppError::Validation(format!("{field} is invalid")));
+    }
+    Ok(email)
+}
+
+fn validate_email_code(value: &str) -> AppResult<String> {
+    let code = required_string(Some(value.to_owned()), "code")?;
+    if code.len() != 6 || !code.chars().all(|char| char.is_ascii_digit()) {
+        return Err(AppError::Validation("code is invalid".to_owned()));
+    }
+    Ok(code)
+}
+
+fn validate_login_password(value: &str, field: &str) -> AppResult<String> {
+    let password = required_string(Some(value.to_owned()), field)?;
+    if password.chars().count() < 8 {
+        return Err(AppError::Validation(format!("{field} is too short")));
+    }
+    Ok(password)
+}
+
+fn validate_fund_password(value: &str, field: &str) -> AppResult<String> {
+    let password = required_string(Some(value.to_owned()), field)?;
+    if password.len() != 6 || !password.chars().all(|char| char.is_ascii_digit()) {
+        return Err(AppError::Validation(format!("{field} must be 6 digits")));
+    }
+    Ok(password)
+}
+
+fn generate_email_code() -> AppResult<String> {
+    let rng = SystemRandom::new();
+    let mut bytes = [0_u8; 4];
+    rng.fill(&mut bytes)
+        .map_err(|_| AppError::Internal("email verification code generation failed".to_owned()))?;
+    let value = u32::from_be_bytes(bytes) % 1_000_000;
+    Ok(format!("{value:06}"))
+}
+
+fn required_string(value: Option<String>, field: &str) -> AppResult<String> {
+    optional_string(value).ok_or_else(|| AppError::Validation(format!("{field} is required")))
+}
+
+fn optional_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+fn map_duplicate_email(error: sqlx::Error) -> AppError {
+    if is_duplicate_key(&error) {
+        AppError::Conflict("email already exists".to_owned())
+    } else {
+        AppError::Database(error)
+    }
+}
+
+fn is_duplicate_key(error: &sqlx::Error) -> bool {
+    matches!(error, sqlx::Error::Database(database_error) if database_error.code().as_deref() == Some("1062"))
 }
 
 async fn ensure_user_exists(pool: &Pool<MySql>, user_id: u64) -> AppResult<()> {

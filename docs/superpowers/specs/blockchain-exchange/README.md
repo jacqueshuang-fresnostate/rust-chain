@@ -15,6 +15,13 @@
 | `05-admin-agent-permissions.md` | 平台管理员后台、代理后台、邀请关系、权限边界、后台 API |
 | `06-security-risk-testing.md` | 风控、安全、合规边界、测试与验收 |
 | `07-flash-convert.md` | 闪兑、混合报价、资产划转、后台配置、风控验收 |
+| `08-user-auth-security-api.md` | 用户注册、登录、邮箱绑定、登录密码、资金密码、后台 SMTP 配置 API |
+
+## OpenAPI 入口
+
+- OpenAPI JSON：`GET /openapi.json`，兼容入口 `GET /api/openapi.json`
+- Swagger UI：`GET /docs`，兼容入口 `GET /api/docs`
+- 首批覆盖健康检查、用户/Admin/Agent 认证、用户安全 API 和 Admin SMTP API；其他业务模块后续按模块补齐。
 
 ## 全局时间字段要求
 

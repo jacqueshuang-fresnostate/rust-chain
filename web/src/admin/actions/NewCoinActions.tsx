@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ApiError, apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
+import { AdminCheckbox, AdminSelect, AdminTextInput } from '../../shared/SemiFormControls';
 
 const { Title } = Typography;
 
@@ -102,17 +103,22 @@ export function NewCoinActions() {
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
             <Title heading={4}>生命周期流转</Title>
             <div className="admin-action-form">
-              <label>项目ID<input value={lifecycle.projectId} onChange={(event) => setLifecycle({ ...lifecycle, projectId: event.currentTarget.value })} /></label>
+              <label>项目ID<AdminTextInput ariaLabel="项目ID" value={lifecycle.projectId} onChange={(projectId) => setLifecycle({ ...lifecycle, projectId })} /></label>
               <label>
                 目标阶段
-                <select value={lifecycle.lifecycleStatus} onChange={(event) => setLifecycle({ ...lifecycle, lifecycleStatus: event.currentTarget.value })}>
-                  <option value="preheat">preheat</option>
-                  <option value="subscription">subscription</option>
-                  <option value="distribution">distribution</option>
-                  <option value="listed">listed</option>
-                </select>
+                <AdminSelect
+                  ariaLabel="目标阶段"
+                  onChange={(lifecycleStatus) => setLifecycle({ ...lifecycle, lifecycleStatus })}
+                  optionList={[
+                    { value: 'preheat', label: 'preheat' },
+                    { value: 'subscription', label: 'subscription' },
+                    { value: 'distribution', label: 'distribution' },
+                    { value: 'listed', label: 'listed' }
+                  ]}
+                  value={lifecycle.lifecycleStatus}
+                />
               </label>
-              <label>上市时间戳<input placeholder="listed 可选，Unix ms" value={lifecycle.listedAt} onChange={(event) => setLifecycle({ ...lifecycle, listedAt: event.currentTarget.value })} /></label>
+              <label>上市时间戳<AdminTextInput ariaLabel="上市时间戳" placeholder="listed 可选，Unix ms" value={lifecycle.listedAt} onChange={(listedAt) => setLifecycle({ ...lifecycle, listedAt })} /></label>
             </div>
             <ConfirmAction
               actionText="更新生命周期"
@@ -133,11 +139,11 @@ export function NewCoinActions() {
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
             <Title heading={4}>后台派发</Title>
             <div className="admin-action-form">
-              <label>项目ID<input value={distribute.projectId} onChange={(event) => setDistribute({ ...distribute, projectId: event.currentTarget.value })} /></label>
-              <label>用户ID<input value={distribute.userId} onChange={(event) => setDistribute({ ...distribute, userId: event.currentTarget.value })} /></label>
-              <label>申购ID<input value={distribute.subscriptionId} onChange={(event) => setDistribute({ ...distribute, subscriptionId: event.currentTarget.value })} /></label>
-              <label>派发数量<input value={distribute.quantity} onChange={(event) => setDistribute({ ...distribute, quantity: event.currentTarget.value })} /></label>
-              <label>幂等键<input value={distribute.idempotencyKey} onChange={(event) => setDistribute({ ...distribute, idempotencyKey: event.currentTarget.value })} /></label>
+              <label>项目ID<AdminTextInput ariaLabel="项目ID" value={distribute.projectId} onChange={(projectId) => setDistribute({ ...distribute, projectId })} /></label>
+              <label>用户ID<AdminTextInput ariaLabel="用户ID" value={distribute.userId} onChange={(userId) => setDistribute({ ...distribute, userId })} /></label>
+              <label>申购ID<AdminTextInput ariaLabel="申购ID" value={distribute.subscriptionId} onChange={(subscriptionId) => setDistribute({ ...distribute, subscriptionId })} /></label>
+              <label>派发数量<AdminTextInput ariaLabel="派发数量" value={distribute.quantity} onChange={(quantity) => setDistribute({ ...distribute, quantity })} /></label>
+              <label>幂等键<AdminTextInput ariaLabel="幂等键" value={distribute.idempotencyKey} onChange={(idempotencyKey) => setDistribute({ ...distribute, idempotencyKey })} /></label>
             </div>
             <ConfirmAction
               actionText="执行派发"
@@ -164,18 +170,23 @@ export function NewCoinActions() {
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
             <Title heading={4}>解禁规则</Title>
             <div className="admin-action-form">
-              <label>项目ID<input value={unlockRule.projectId} onChange={(event) => setUnlockRule({ ...unlockRule, projectId: event.currentTarget.value })} /></label>
+              <label>项目ID<AdminTextInput ariaLabel="项目ID" value={unlockRule.projectId} onChange={(projectId) => setUnlockRule({ ...unlockRule, projectId })} /></label>
               <label>
                 解禁类型
-                <select value={unlockRule.unlockType} onChange={(event) => setUnlockRule({ ...unlockRule, unlockType: event.currentTarget.value })}>
-                  <option value="immediate_on_listing">immediate_on_listing</option>
-                  <option value="fixed_time">fixed_time</option>
-                  <option value="relative_period">relative_period</option>
-                </select>
+                <AdminSelect
+                  ariaLabel="解禁类型"
+                  onChange={(unlockType) => setUnlockRule({ ...unlockRule, unlockType })}
+                  optionList={[
+                    { value: 'immediate_on_listing', label: 'immediate_on_listing' },
+                    { value: 'fixed_time', label: 'fixed_time' },
+                    { value: 'relative_period', label: 'relative_period' }
+                  ]}
+                  value={unlockRule.unlockType}
+                />
               </label>
-              <label>上市时间戳<input value={unlockRule.listedAt} onChange={(event) => setUnlockRule({ ...unlockRule, listedAt: event.currentTarget.value })} /></label>
-              <label>固定解禁时间戳<input value={unlockRule.fixedUnlockAt} onChange={(event) => setUnlockRule({ ...unlockRule, fixedUnlockAt: event.currentTarget.value })} /></label>
-              <label>相对解禁秒数<input value={unlockRule.relativeUnlockSeconds} onChange={(event) => setUnlockRule({ ...unlockRule, relativeUnlockSeconds: event.currentTarget.value })} /></label>
+              <label>上市时间戳<AdminTextInput ariaLabel="上市时间戳" value={unlockRule.listedAt} onChange={(listedAt) => setUnlockRule({ ...unlockRule, listedAt })} /></label>
+              <label>固定解禁时间戳<AdminTextInput ariaLabel="固定解禁时间戳" value={unlockRule.fixedUnlockAt} onChange={(fixedUnlockAt) => setUnlockRule({ ...unlockRule, fixedUnlockAt })} /></label>
+              <label>相对解禁秒数<AdminTextInput ariaLabel="相对解禁秒数" value={unlockRule.relativeUnlockSeconds} onChange={(relativeUnlockSeconds) => setUnlockRule({ ...unlockRule, relativeUnlockSeconds })} /></label>
             </div>
             <ConfirmAction
               actionText="更新解禁规则"
@@ -202,17 +213,22 @@ export function NewCoinActions() {
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
             <Title heading={4}>矿工费规则</Title>
             <div className="admin-action-form">
-              <label>项目ID<input value={unlockFee.projectId} onChange={(event) => setUnlockFee({ ...unlockFee, projectId: event.currentTarget.value })} /></label>
-              <label className="admin-action-checkbox"><input checked={unlockFee.feeEnabled} type="checkbox" onChange={(event) => setUnlockFee({ ...unlockFee, feeEnabled: event.currentTarget.checked })} /> 启用矿工费</label>
-              <label>费率<input value={unlockFee.feeRate} onChange={(event) => setUnlockFee({ ...unlockFee, feeRate: event.currentTarget.value })} /></label>
+              <label>项目ID<AdminTextInput ariaLabel="项目ID" value={unlockFee.projectId} onChange={(projectId) => setUnlockFee({ ...unlockFee, projectId })} /></label>
+              <label className="admin-action-checkbox"><AdminCheckbox checked={unlockFee.feeEnabled} onChange={(feeEnabled) => setUnlockFee({ ...unlockFee, feeEnabled })}>启用矿工费</AdminCheckbox></label>
+              <label>费率<AdminTextInput ariaLabel="费率" value={unlockFee.feeRate} onChange={(feeRate) => setUnlockFee({ ...unlockFee, feeRate })} /></label>
               <label>
                 计费依据
-                <select value={unlockFee.feeBasis} onChange={(event) => setUnlockFee({ ...unlockFee, feeBasis: event.currentTarget.value })}>
-                  <option value="market_value">market_value</option>
-                  <option value="profit">profit</option>
-                </select>
+                <AdminSelect
+                  ariaLabel="计费依据"
+                  onChange={(feeBasis) => setUnlockFee({ ...unlockFee, feeBasis })}
+                  optionList={[
+                    { value: 'market_value', label: 'market_value' },
+                    { value: 'profit', label: 'profit' }
+                  ]}
+                  value={unlockFee.feeBasis}
+                />
               </label>
-              <label>费用资产ID<input value={unlockFee.feeAsset} onChange={(event) => setUnlockFee({ ...unlockFee, feeAsset: event.currentTarget.value })} /></label>
+              <label>费用资产ID<AdminTextInput ariaLabel="费用资产ID" value={unlockFee.feeAsset} onChange={(feeAsset) => setUnlockFee({ ...unlockFee, feeAsset })} /></label>
             </div>
             <ConfirmAction
               actionText="更新矿工费"

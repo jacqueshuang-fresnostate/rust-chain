@@ -200,8 +200,28 @@ body {
   display: grid;
   align-content: start;
   gap: 12px;
-  overflow-y: auto;
   padding-right: 4px;
+}
+
+.admin-shell-nav-scrollbar-visible {
+  overflow-y: scroll;
+  scrollbar-color: rgba(229, 162, 71, 0.7) rgba(255, 255, 255, 0.08);
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.admin-shell-nav-scrollbar-visible::-webkit-scrollbar {
+  width: 8px;
+}
+
+.admin-shell-nav-scrollbar-visible::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+}
+
+.admin-shell-nav-scrollbar-visible::-webkit-scrollbar-thumb {
+  background: rgba(229, 162, 71, 0.7);
+  border-radius: 999px;
 }
 
 .admin-shell-nav-group {
@@ -433,28 +453,19 @@ body {
 }
 
 .admin-filter-control input,
-.admin-filter-control select {
+.admin-filter-control select,
+.admin-filter-control .semi-input-wrapper,
+.admin-filter-control .semi-select {
   min-height: 36px;
-  padding: 0 10px;
-  border: 1px solid #d0d5dd;
-  border-radius: 8px;
-  background: #fff;
   box-sizing: border-box;
 }
 
-.admin-inline-action-button {
-  min-height: 36px;
-  padding: 0 16px;
-  border: 0;
+.admin-filter-control input,
+.admin-filter-control select {
+  /* padding: 0 10px; */
+  /* border: 1px solid #d0d5dd; */
   border-radius: 8px;
-  color: #fff;
-  background: #0064fa;
-  cursor: pointer;
-  font-weight: 600;
-}
-
-.admin-inline-action-button:hover {
-  background: #0052cc;
+  /* background: #fff; */
 }
 
 .admin-action-grid {
@@ -482,13 +493,22 @@ body {
 }
 
 .admin-action-form input,
-.admin-action-form select {
+.admin-action-form select,
+.admin-action-form textarea,
+.admin-action-form .semi-input-wrapper,
+.admin-action-form .semi-select,
+.admin-action-form .semi-input-textarea-wrapper {
   min-height: 36px;
-  padding: 0 10px;
-  border: 1px solid #d0d5dd;
-  border-radius: 8px;
-  background: #fff;
   box-sizing: border-box;
+}
+
+.admin-action-form input,
+.admin-action-form select,
+.admin-action-form textarea {
+  /* padding: 0 10px; */
+  /* border: 1px solid #d0d5dd; */
+  border-radius: 8px;
+  /* background: #fff; */
 }
 
 .admin-action-choice-group {
@@ -519,10 +539,10 @@ body {
   justify-content: start;
   gap: 6px;
   min-height: 32px;
-  padding: 0 10px;
-  border: 1px solid #d0d5dd;
+  /* padding: 0 10px; */
+  /* border: 1px solid #d0d5dd; */
   border-radius: 999px;
-  background: #fff;
+  /* background: #fff; */
   color: #344054;
   font-size: 13px;
 }
@@ -530,6 +550,47 @@ body {
 .admin-action-checkbox input {
   min-height: auto;
   margin: 0;
+}
+
+.admin-action-checkbox .semi-checkbox {
+  margin: 0;
+}
+
+.admin-earn-product-layout {
+  display: grid;
+  gap: 20px;
+  width: 100%;
+}
+
+.admin-earn-product-section {
+  display: grid;
+  gap: 14px;
+}
+
+.admin-earn-product-basic-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.admin-earn-section-header,
+.admin-earn-product-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-earn-introduction-list {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+}
+
+.admin-earn-introduction-meta {
+  grid-template-columns: minmax(120px, 0.5fr) minmax(120px, 0.5fr) minmax(240px, 2fr);
+}
+
+.quill-rich-text-editor {
+  width: 100%;
 }
 
 @media (max-width: 840px) {

@@ -1,9 +1,18 @@
+import { useEffect, useMemo, useState } from 'react';
+
 import { AdminResourcePage, type AdminResourceColumn } from './AdminResourcePage';
 import {
+  AssetRowActions,
   ConvertOrderRowActions,
   ConvertPairRowActions,
   CreateAssetAction,
+  CreateConvertPairAction,
+  CreateEarnProductAction,
   CreateMarginPairAction,
+  CreateMarketStrategyAction,
+  CreateNewCoinProjectAction,
+  CreateRiskRuleAction,
+  CreateUserAction,
   CreateSecondsPairAction,
   CreateSpotPairAction,
   EarnProductRowActions,
@@ -12,15 +21,20 @@ import {
   MarginPositionRowActions,
   MarginProductRowActions,
   MarketPairRowActions,
+  MarketStrategyRowActions,
+  RiskRuleRowActions,
   SecondsOrderRowActions,
   SecondsProductRowActions,
-  SpotOrderRowActions
+  SpotOrderRowActions,
+  UserRowActions
 } from './ResourceCreateActions';
+import { subscribeMarketTicker } from '../../api/marketTickerSocket';
 import type { FilterField } from '../../shared/FilterBar';
+import { formatAdminNumber } from '../../shared/numberFormat';
 import type { ApiRecord } from '../../api/types';
 
 export type ResourceConfig = {
-  actions?: React.ReactNode;
+  actions?: React.ComponentProps<typeof AdminResourcePage<ApiRecord>>['actions'];
   columns: Array<AdminResourceColumn<ApiRecord>>;
   endpoint: string;
   filters?: FilterField[];
@@ -33,9 +47,23 @@ export type ResourceConfig = {
 const limitFilter: FilterField = { key: 'limit', label: '数量限制' };
 const statusFilter: FilterField = { key: 'status', label: '状态' };
 const userFilter: FilterField = { key: 'user_id', label: '用户ID' };
+const emailFilter: FilterField = { key: 'email', label: '邮箱' };
 const pairFilter: FilterField = { key: 'pair_id', label: '交易对ID' };
 const projectFilter: FilterField = { key: 'project_id', label: '项目ID' };
 const assetFilter: FilterField = { key: 'asset_id', label: '资产ID' };
+
+const assetTypeLabels = {
+  coin: '数字货币',
+  stablecoin: '稳定币',
+  fiat: '法币',
+  platform: '平台币'
+};
+const statusOptions = [
+  { label: '启用', value: 'active' },
+  { label: '禁用', value: 'disabled' }
+];
+const assetTypeFilter: FilterField = { key: 'asset_type', label: '资产类型', type: 'select', options: Object.entries(assetTypeLabels).map(([value, label]) => ({ label, value })) };
+const statusSelectFilter: FilterField = { key: 'status', label: '状态', type: 'select', options: statusOptions };
 
 const marketTypeLabels = {
   external: '外部行情',
@@ -43,25 +71,67 @@ const marketTypeLabels = {
   strategy: '策略行情'
 };
 
-const marketTypeOptions = Object.entries(marketTypeLabels).map(([value, label]) => ({ label, value }));
-const marketPairStatusFilter: FilterField = {
-  key: 'status',
-  label: '状态',
-  type: 'select',
-  options: [
-    { label: '启用', value: 'active' },
-    { label: '禁用', value: 'disabled' }
-  ]
+const marginModeLabels = {
+  isolated: '逐仓',
+  cross: '全仓'
 };
+
+const earnProductCategoryLabels = {
+  fixed_term: '定期',
+  flexible: '活期',
+  structured: '结构化',
+  staking: '质押'
+};
+
+function MarginLeverageLevels({ levels }: { levels: unknown }) {
+  const normalizedLevels = Array.isArray(levels)
+    ? levels
+        .map((level) => (typeof level === 'number' || typeof level === 'string' ? formatAdminNumber(level) : null))
+        .filter((level): level is string => Boolean(level))
+    : [];
+
+  return <span>{normalizedLevels.length > 0 ? normalizedLevels.map((level) => `${level}x`).join(' / ') : '-'}</span>;
+}
+
+const marketTypeOptions = Object.entries(marketTypeLabels).map(([value, label]) => ({ label, value }));
+const marketPairStatusFilter: FilterField = statusSelectFilter;
 const marketPairSymbolFilter: FilterField = { key: 'symbol', label: '交易对', type: 'select', optionsFromRows: true };
 const marketTypeFilter: FilterField = { key: 'market_type', label: '市场类型', type: 'select', options: marketTypeOptions };
+
+function normalizeTickerSymbol(symbol: string) {
+  return symbol
+    .trim()
+    .split('')
+    .filter((character) => /[A-Za-z0-9]/.test(character))
+    .join('')
+    .toUpperCase();
+}
+
+function MarketPairLatestPrice({ symbol }: { symbol: unknown }) {
+  const normalizedSymbol = useMemo(() => (typeof symbol === 'string' ? normalizeTickerSymbol(symbol) : ''), [symbol]);
+  const [latestPrice, setLatestPrice] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLatestPrice(null);
+    if (!normalizedSymbol) {
+      return undefined;
+    }
+
+    return subscribeMarketTicker(normalizedSymbol, ({ lastPrice }) => setLatestPrice(lastPrice));
+  }, [normalizedSymbol]);
+
+  return <span>{formatAdminNumber(latestPrice) ?? '-'}</span>;
+}
 
 export const resourceConfigs = {
   users: {
     title: '用户管理',
+    actions: <CreateUserAction />,
     endpoint: '/admin/api/v1/users',
     responseKey: 'users',
-    filters: [userFilter, statusFilter, limitFilter],
+    filters: [userFilter, emailFilter, statusFilter, limitFilter],
+    rowActions: (record, helpers) => <UserRowActions helpers={helpers} record={record} />,
+    showJsonAction: false,
     columns: [
       { key: 'id', title: '用户ID' },
       { key: 'email', title: '邮箱' },
@@ -77,13 +147,15 @@ export const resourceConfigs = {
     actions: <CreateAssetAction />,
     endpoint: '/admin/api/v1/assets',
     responseKey: 'assets',
-    filters: [{ key: 'symbol', label: '资产符号' }, { key: 'asset_type', label: '资产类型' }, statusFilter, limitFilter],
+    filters: [{ key: 'symbol', label: '资产符号' }, assetTypeFilter, statusSelectFilter, limitFilter],
+    rowActions: (record, helpers) => <AssetRowActions helpers={helpers} record={record} />,
+    showJsonAction: false,
     columns: [
       { key: 'id', title: '资产ID' },
       { key: 'symbol', title: '资产符号' },
       { key: 'name', title: '资产名称' },
       { key: 'precision_scale', title: '精度' },
-      { key: 'asset_type', title: '资产类型' },
+      { key: 'asset_type', title: '资产类型', valueMap: assetTypeLabels },
       { key: 'status', title: '状态', type: 'status' },
       { key: 'created_at', title: '创建时间', type: 'timestamp' }
     ]
@@ -125,6 +197,7 @@ export const resourceConfigs = {
   },
   riskRules: {
     title: '风控规则',
+    actions: <CreateRiskRuleAction />,
     endpoint: '/admin/api/v1/risk/rules',
     responseKey: 'rules',
     filters: [
@@ -133,6 +206,7 @@ export const resourceConfigs = {
       { key: 'enabled', label: '启用' },
       limitFilter
     ],
+    rowActions: (record, helpers) => <RiskRuleRowActions helpers={helpers} record={record} />,
     columns: [
       { key: 'id', title: '规则ID' },
       { key: 'rule_type', title: '规则类型' },
@@ -194,6 +268,7 @@ export const resourceConfigs = {
       { key: 'price_precision', title: '价格精度' },
       { key: 'qty_precision', title: '数量精度' },
       { key: 'min_order_value', title: '最小下单额', type: 'amount' },
+      { key: 'symbol', title: '最新价格', render: (record) => <MarketPairLatestPrice symbol={record.symbol} /> },
       { key: 'market_type', title: '市场类型', valueMap: marketTypeLabels },
       { key: 'status', title: '状态', type: 'status' }
     ]
@@ -234,6 +309,7 @@ export const resourceConfigs = {
   },
   newCoinProjects: {
     title: '新币项目',
+    actions: <CreateNewCoinProjectAction />,
     endpoint: '/admin/api/v1/new-coins',
     responseKey: 'projects',
     filters: [limitFilter],
@@ -336,6 +412,7 @@ export const resourceConfigs = {
   },
   convertPairs: {
     title: '闪兑交易对',
+    actions: <CreateConvertPairAction />,
     endpoint: '/admin/api/v1/convert/pairs',
     responseKey: 'pairs',
     filters: [limitFilter],
@@ -374,6 +451,26 @@ export const resourceConfigs = {
     endpoint: '/admin/api/v1/market-strategies',
     responseKey: 'strategies',
     filters: [pairFilter, statusFilter, limitFilter],
+    columns: [
+      { key: 'id', title: '策略ID' },
+      { key: 'pair_id', title: '交易对ID' },
+      { key: 'symbol', title: '交易对' },
+      { key: 'strategy_type', title: '策略类型' },
+      { key: 'start_price', title: '起始价', type: 'amount' },
+      { key: 'target_price', title: '目标价', type: 'amount' },
+      { key: 'status', title: '状态', type: 'status' },
+      { key: 'run_status', title: '运行状态', type: 'status' },
+      { key: 'created_at', title: '创建时间', type: 'timestamp' }
+    ]
+  },
+  marketStrategyActions: {
+    title: '行情策略动作',
+    actions: ({ reload }) => <CreateMarketStrategyAction onCreated={reload} />,
+    endpoint: '/admin/api/v1/market-strategies',
+    responseKey: 'strategies',
+    filters: [pairFilter, statusFilter, limitFilter],
+    rowActions: (record, helpers) => <MarketStrategyRowActions helpers={helpers} record={record} />,
+    showJsonAction: false,
     columns: [
       { key: 'id', title: '策略ID' },
       { key: 'pair_id', title: '交易对ID' },
@@ -434,6 +531,8 @@ export const resourceConfigs = {
       { key: 'pair_id', title: '交易对ID' },
       { key: 'symbol', title: '交易对' },
       { key: 'margin_asset_symbol', title: '保证金资产' },
+      { key: 'margin_mode', title: '保证金模式', valueMap: marginModeLabels },
+      { key: 'leverage_levels', title: '杠杆档位', render: (record) => <MarginLeverageLevels levels={record.leverage_levels} /> },
       { key: 'max_leverage', title: '最大杠杆', type: 'amount' },
       { key: 'min_margin', title: '最小保证金', type: 'amount' },
       { key: 'maintenance_margin_rate', title: '维持保证金率', type: 'amount' },
@@ -492,6 +591,7 @@ export const resourceConfigs = {
   },
   earnProducts: {
     title: '理财产品',
+    actions: ({ reload }) => <CreateEarnProductAction onCreated={reload} />,
     endpoint: '/admin/api/v1/earn/products',
     responseKey: 'products',
     filters: [limitFilter],
@@ -501,6 +601,7 @@ export const resourceConfigs = {
       { key: 'asset_id', title: '资产ID' },
       { key: 'asset_symbol', title: '资产' },
       { key: 'name', title: '产品名称' },
+      { key: 'category', title: '产品分类', valueMap: earnProductCategoryLabels },
       { key: 'term_days', title: '期限天数' },
       { key: 'apr_rate', title: '年化利率', type: 'amount' },
       { key: 'min_subscribe', title: '最小申购', type: 'amount' },

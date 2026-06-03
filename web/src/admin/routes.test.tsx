@@ -27,7 +27,11 @@ describe('adminRoutes', () => {
     expect(routeElementName('market/feed-config')).toBe('MarketFeedConfigPage');
   });
 
-  it('registers the spot product action page', () => {
-    expect(routeElementName('spot/actions')).toBe('ProductStatusActions');
+  it('registers the SMTP configuration action page', () => {
+    expect(routeElementName('system/smtp')).toBe('SmtpConfigPage');
+  });
+
+  it.each(['spot/actions', 'seconds-contract/actions', 'margin/actions'])('keeps existing product action route %s', (path) => {
+    expect(routeElementName(path)).toBe('ProductStatusActions');
   });
 });

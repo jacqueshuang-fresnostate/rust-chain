@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom/vitest';
+import './src/styles.css';
 
 Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
   value: () => ({

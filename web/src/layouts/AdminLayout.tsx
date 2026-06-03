@@ -1,6 +1,6 @@
 import { IconExit } from '@douyinfe/semi-icons';
 import { Avatar, Button, Layout, Space, Typography } from '@douyinfe/semi-ui';
-import { type KeyboardEvent, type MouseEvent as ReactMouseEvent, useEffect, useState } from 'react';
+import { type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, useEffect, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 
 import { authStore } from '../auth/authStore';
@@ -101,6 +101,10 @@ const navItems: AdminNavItem[] = [
     ]
   },
   { path: '/admin/risk', label: '风控中心' },
+  {
+    label: '系统配置',
+    children: [{ path: '/admin/system/smtp', label: 'SMTP 邮件配置' }]
+  },
   { path: '/admin/audit-logs', label: '审计日志' }
 ];
 
@@ -147,17 +151,23 @@ export function AdminLayout() {
       return undefined;
     }
 
-    const handleMouseMove = (event: MouseEvent) => {
+    const handleDragMove = (event: MouseEvent | PointerEvent) => {
       setSiderWidth(clampSiderWidth(event.clientX));
     };
-    const handleMouseUp = () => setIsResizing(false);
+    const handleDragEnd = () => setIsResizing(false);
 
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('mousemove', handleDragMove);
+    window.addEventListener('mouseup', handleDragEnd);
+    window.addEventListener('pointermove', handleDragMove);
+    window.addEventListener('pointerup', handleDragEnd);
+    window.addEventListener('pointercancel', handleDragEnd);
 
     return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('mousemove', handleDragMove);
+      window.removeEventListener('mouseup', handleDragEnd);
+      window.removeEventListener('pointermove', handleDragMove);
+      window.removeEventListener('pointerup', handleDragEnd);
+      window.removeEventListener('pointercancel', handleDragEnd);
     };
   }, [isResizing]);
 
@@ -165,9 +175,16 @@ export function AdminLayout() {
     setExpandedGroups((groups) => ({ ...groups, [label]: !groups[label] }));
   };
 
+  const startResizing = () => setIsResizing(true);
+
   const handleResizeStart = (event: ReactMouseEvent<HTMLDivElement>) => {
     event.preventDefault();
-    setIsResizing(true);
+    startResizing();
+  };
+
+  const handleResizePointerStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    startResizing();
   };
 
   const handleResizeKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -251,6 +268,7 @@ export function AdminLayout() {
           className="admin-shell-sider-resizer"
           onKeyDown={handleResizeKeyDown}
           onMouseDown={handleResizeStart}
+          onPointerDown={handleResizePointerStart}
           role="separator"
           tabIndex={0}
         />

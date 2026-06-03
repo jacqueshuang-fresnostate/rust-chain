@@ -1,21 +1,16 @@
 use crate::{
     error::{AppError, AppResult},
+    infra::secrets::{decrypt_optional_secret, encrypt_secret_field, mask_secret},
     modules::market::{KlineUpsertKey, ValidatedMarketSymbol, adapters::MarketFeedProvider},
     time::option_unix_millis,
     workers::market_feed::{MarketFeedRuntimeConfig, MarketFeedRuntimeStatus},
 };
-use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::Utc;
-use ring::{
-    aead,
-    rand::{SecureRandom, SystemRandom},
-};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{MySql, Pool, Transaction, types::Json as SqlxJson};
 
 const DEFAULT_CONFIG_NAME: &str = "default";
-const NONCE_LEN: usize = 12;
 const API_KEY_AUTH_TYPE: &str = "api_key";
 const NONE_AUTH_TYPE: &str = "none";
 
@@ -255,7 +250,7 @@ pub async fn upsert_credential(
             let api_key_mask = request
                 .api_key
                 .as_deref()
-                .map(mask_api_key)
+                .map(mask_secret)
                 .or_else(|| before.as_ref().and_then(|row| row.api_key_mask.clone()));
             (
                 api_key_ciphertext,
@@ -447,59 +442,6 @@ pub fn runtime_config_from_response(
     )
 }
 
-pub fn mask_api_key(value: &str) -> String {
-    let value = value.trim();
-    if value.len() < 8 {
-        return "*".repeat(value.len());
-    }
-    format!("{}****{}", &value[..4], &value[value.len() - 4..])
-}
-
-pub fn encrypt_credential(plaintext: &str, key: &str) -> AppResult<String> {
-    let key_bytes = encryption_key_bytes(key)?;
-    let unbound_key = aead::UnboundKey::new(&aead::AES_256_GCM, key_bytes)
-        .map_err(|_| AppError::Internal("credential encryption key is invalid".to_owned()))?;
-    let key = aead::LessSafeKey::new(unbound_key);
-    let rng = SystemRandom::new();
-    let mut nonce_bytes = [0_u8; NONCE_LEN];
-    rng.fill(&mut nonce_bytes)
-        .map_err(|_| AppError::Internal("credential nonce generation failed".to_owned()))?;
-    let nonce = aead::Nonce::assume_unique_for_key(nonce_bytes);
-    let mut in_out = plaintext.as_bytes().to_vec();
-    key.seal_in_place_append_tag(nonce, aead::Aad::empty(), &mut in_out)
-        .map_err(|_| AppError::Internal("credential encryption failed".to_owned()))?;
-    let mut output = nonce_bytes.to_vec();
-    output.extend(in_out);
-    Ok(STANDARD.encode(output))
-}
-
-pub fn decrypt_credential(ciphertext: &str, key: &str) -> AppResult<String> {
-    let key_bytes = encryption_key_bytes(key)?;
-    let mut payload = STANDARD
-        .decode(ciphertext)
-        .map_err(|_| AppError::Validation("credential ciphertext is invalid".to_owned()))?;
-    if payload.len() <= NONCE_LEN {
-        return Err(AppError::Validation(
-            "credential ciphertext is invalid".to_owned(),
-        ));
-    }
-    let mut nonce_bytes = [0_u8; NONCE_LEN];
-    nonce_bytes.copy_from_slice(&payload[..NONCE_LEN]);
-    let mut encrypted = payload.split_off(NONCE_LEN);
-    let unbound_key = aead::UnboundKey::new(&aead::AES_256_GCM, key_bytes)
-        .map_err(|_| AppError::Internal("credential encryption key is invalid".to_owned()))?;
-    let key = aead::LessSafeKey::new(unbound_key);
-    let plaintext = key
-        .open_in_place(
-            aead::Nonce::assume_unique_for_key(nonce_bytes),
-            aead::Aad::empty(),
-            &mut encrypted,
-        )
-        .map_err(|_| AppError::Validation("credential ciphertext is invalid".to_owned()))?;
-    String::from_utf8(plaintext.to_vec())
-        .map_err(|_| AppError::Validation("credential plaintext is invalid utf8".to_owned()))
-}
-
 pub fn validate_symbols(symbols: &[String], enabled: bool) -> AppResult<Vec<String>> {
     if enabled && symbols.is_empty() {
         return Err(AppError::Validation(
@@ -569,36 +511,6 @@ fn validate_auth_type(auth_type: &str) -> AppResult<String> {
             "market source credential auth_type is invalid".to_owned(),
         )),
     }
-}
-
-fn encrypt_secret_field(
-    key: &str,
-    new_value: Option<&str>,
-    existing_ciphertext: Option<String>,
-) -> AppResult<Option<String>> {
-    match new_value.and_then(|value| {
-        let trimmed = value.trim();
-        (!trimmed.is_empty()).then_some(trimmed)
-    }) {
-        Some(value) => encrypt_credential(value, key).map(Some),
-        None => Ok(existing_ciphertext),
-    }
-}
-
-fn decrypt_optional_secret(ciphertext: Option<&str>, key: &str) -> AppResult<Option<String>> {
-    ciphertext
-        .map(|value| decrypt_credential(value, key))
-        .transpose()
-}
-
-fn encryption_key_bytes(key: &str) -> AppResult<&[u8]> {
-    let key = key.as_bytes();
-    if key.len() != 32 {
-        return Err(AppError::Validation(
-            "credential encryption key must be exactly 32 bytes".to_owned(),
-        ));
-    }
-    Ok(key)
 }
 
 fn config_response(row: MarketFeedConfigRow) -> MarketFeedConfigResponse {
@@ -758,24 +670,6 @@ fn sanitize_reload_error(error: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn masks_api_key_without_exposing_plaintext() {
-        assert_eq!(mask_api_key("abcd1234wxyz"), "abcd****wxyz");
-        assert_eq!(mask_api_key("short"), "*****");
-    }
-
-    #[test]
-    fn encrypts_and_decrypts_credential() {
-        let key = "0123456789abcdef0123456789abcdef";
-        let ciphertext = encrypt_credential("secret-value", key).unwrap();
-
-        assert_ne!(ciphertext, "secret-value");
-        assert_eq!(
-            decrypt_credential(&ciphertext, key).unwrap(),
-            "secret-value"
-        );
-    }
 
     #[test]
     fn validates_market_feed_config_values() {

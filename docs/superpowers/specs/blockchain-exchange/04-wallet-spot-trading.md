@@ -110,10 +110,15 @@
 
 | 模块 | API | 说明 |
 |---|---|---|
-| 认证 | POST /api/v1/auth/register | 注册 |
-| 认证 | POST /api/v1/auth/login | 登录 |
-| 认证 | POST /api/v1/auth/refresh | 刷新 token |
-| 用户 | GET /api/v1/user/profile | 用户信息 |
+| 认证 | POST /api/v1/auth/register | 注册，详见 `08-user-auth-security-api.md` |
+| 认证 | POST /api/v1/auth/login | 登录，详见 `08-user-auth-security-api.md` |
+| 认证 | POST /api/v1/auth/refresh | 刷新 token，详见 `08-user-auth-security-api.md` |
+| 用户 | GET /api/v1/user/profile | 用户信息，含邮箱验证和资金密码状态，详见 `08-user-auth-security-api.md` |
+| 用户 | POST /api/v1/user/email/bind-code | 发送绑定邮箱验证码，详见 `08-user-auth-security-api.md` |
+| 用户 | POST /api/v1/user/email/bind | 绑定并验证邮箱，详见 `08-user-auth-security-api.md` |
+| 用户 | PATCH /api/v1/user/password | 修改登录密码，详见 `08-user-auth-security-api.md` |
+| 用户 | POST /api/v1/user/fund-password | 新建 6 位数字资金密码，详见 `08-user-auth-security-api.md` |
+| 用户 | PATCH /api/v1/user/fund-password | 修改 6 位数字资金密码，详见 `08-user-auth-security-api.md` |
 | 资产 | GET /api/v1/wallet/accounts | 用户资产列表 |
 | 资产 | GET /api/v1/wallet/ledger | 资产流水 |
 | 闪兑 | GET /api/v1/convert/pairs | 可闪兑币对 |
