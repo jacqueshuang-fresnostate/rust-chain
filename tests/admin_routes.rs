@@ -1772,7 +1772,7 @@ async fn admin_lists_users_and_reads_user_detail() -> Result<(), Box<dyn Error>>
         .oneshot(
             Request::builder()
                 .uri(format!(
-                    "/admin/api/v1/users?user_id={user_id}&status=active&limit=10"
+                    "/admin/api/v1/users?email={email}&status=active&limit=10"
                 ))
                 .header(AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::empty())
@@ -2191,7 +2191,12 @@ async fn admin_lists_wallet_accounts_and_ledger() -> Result<(), Box<dyn Error>> 
     };
     let settings = test_settings();
     let (_role_id, admin_id) = create_admin_user(&pool).await;
-    let user_id = create_user(&pool).await;
+    let user_email = format!(
+        "admin-wallet-filter-{}@example.test",
+        Uuid::now_v7().simple()
+    );
+    let user_id = create_user_with_email(&pool, user_email.clone()).await;
+    let other_user_id = create_user(&pool).await;
     let (asset_id, symbol) = create_asset_with_symbol(&pool, "AWL").await;
     let (empty_asset_id, empty_symbol) = create_asset_with_symbol(&pool, "AWE").await;
     let token = issue_token(
@@ -2215,6 +2220,18 @@ async fn admin_lists_wallet_accounts_and_ledger() -> Result<(), Box<dyn Error>> 
     .execute(&pool)
     .await?
     .last_insert_id();
+    let other_account_id = sqlx::query(
+        r#"INSERT INTO wallet_accounts (user_id, asset_id, available, frozen, locked)
+           VALUES (?, ?, ?, ?, ?)"#,
+    )
+    .bind(other_user_id)
+    .bind(asset_id)
+    .bind(decimal("200.000000000000000000"))
+    .bind(decimal("0.000000000000000000"))
+    .bind(decimal("0.000000000000000000"))
+    .execute(&pool)
+    .await?
+    .last_insert_id();
     let ledger_id = sqlx::query(
         r#"INSERT INTO wallet_ledger
            (user_id, asset_id, change_type, amount, balance_type, balance_after,
@@ -2232,13 +2249,30 @@ async fn admin_lists_wallet_accounts_and_ledger() -> Result<(), Box<dyn Error>> 
     .execute(&pool)
     .await?
     .last_insert_id();
+    let other_ledger_id = sqlx::query(
+        r#"INSERT INTO wallet_ledger
+           (user_id, asset_id, change_type, amount, balance_type, balance_after,
+            available_after, frozen_after, locked_after, ref_type, ref_id)
+           VALUES (?, ?, 'deposit', ?, 'available', ?, ?, ?, ?, 'manual', ?)"#,
+    )
+    .bind(other_user_id)
+    .bind(asset_id)
+    .bind(decimal("200.000000000000000000"))
+    .bind(decimal("200.000000000000000000"))
+    .bind(decimal("200.000000000000000000"))
+    .bind(decimal("0.000000000000000000"))
+    .bind(decimal("0.000000000000000000"))
+    .bind(format!("admin-wallet-ledger-{other_user_id}-{asset_id}"))
+    .execute(&pool)
+    .await?
+    .last_insert_id();
 
     let accounts = app
         .clone()
         .oneshot(
             Request::builder()
                 .uri(format!(
-                    "/admin/api/v1/wallet/accounts?user_id={user_id}&asset_id={asset_id}&limit=10"
+                    "/admin/api/v1/wallet/accounts?email={user_email}&asset_id={asset_id}&limit=10"
                 ))
                 .header(AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::empty())
@@ -2264,7 +2298,7 @@ async fn admin_lists_wallet_accounts_and_ledger() -> Result<(), Box<dyn Error>> 
         .oneshot(
             Request::builder()
                 .uri(format!(
-                    "/admin/api/v1/wallet/accounts?user_id={user_id}&include_empty=true&limit=20"
+                    "/admin/api/v1/wallet/accounts?email={user_email}&asset_id={empty_asset_id}&include_empty=true&limit=20"
                 ))
                 .header(AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::empty())
@@ -2290,6 +2324,34 @@ async fn admin_lists_wallet_accounts_and_ledger() -> Result<(), Box<dyn Error>> 
     assert_eq!(empty_account["frozen"], "0.000000000000000000");
     assert_eq!(empty_account["locked"], "0.000000000000000000");
     assert_eq!(empty_account["account_exists"], false);
+
+    let mismatched_include_empty_accounts = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/wallet/accounts?user_id={user_id}&email=missing-{user_email}&asset_id={empty_asset_id}&include_empty=true&limit=20"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let mismatched_include_empty_status = mismatched_include_empty_accounts.status();
+    let mismatched_include_empty_payload = body_json(mismatched_include_empty_accounts).await?;
+    assert_eq!(
+        mismatched_include_empty_status,
+        StatusCode::OK,
+        "payload: {mismatched_include_empty_payload}"
+    );
+    assert_eq!(
+        mismatched_include_empty_payload["accounts"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+
     let account_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
     )
@@ -2304,7 +2366,7 @@ async fn admin_lists_wallet_accounts_and_ledger() -> Result<(), Box<dyn Error>> 
         .oneshot(
             Request::builder()
                 .uri(format!(
-                    "/admin/api/v1/wallet/ledger?user_id={user_id}&asset_id={asset_id}&change_type=deposit&ref_type=manual&limit=10"
+                    "/admin/api/v1/wallet/ledger?email={user_email}&asset_id={asset_id}&change_type=deposit&ref_type=manual&limit=10"
                 ))
                 .header(AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::empty())
@@ -2321,12 +2383,14 @@ async fn admin_lists_wallet_accounts_and_ledger() -> Result<(), Box<dyn Error>> 
     assert_eq!(ledger[0]["balance_type"], "available");
     assert!(ledger[0]["created_at"].is_number());
 
-    sqlx::query("DELETE FROM wallet_ledger WHERE id = ?")
+    sqlx::query("DELETE FROM wallet_ledger WHERE id IN (?, ?)")
         .bind(ledger_id)
+        .bind(other_ledger_id)
         .execute(&pool)
         .await?;
-    sqlx::query("DELETE FROM wallet_accounts WHERE id = ?")
+    sqlx::query("DELETE FROM wallet_accounts WHERE id IN (?, ?)")
         .bind(account_id)
+        .bind(other_account_id)
         .execute(&pool)
         .await?;
     sqlx::query("DELETE FROM assets WHERE id IN (?, ?)")
@@ -2334,8 +2398,9 @@ async fn admin_lists_wallet_accounts_and_ledger() -> Result<(), Box<dyn Error>> 
         .bind(empty_asset_id)
         .execute(&pool)
         .await?;
-    sqlx::query("DELETE FROM users WHERE id = ?")
+    sqlx::query("DELETE FROM users WHERE id IN (?, ?)")
         .bind(user_id)
+        .bind(other_user_id)
         .execute(&pool)
         .await?;
     sqlx::query("DELETE FROM admin_users WHERE id = ?")
@@ -2352,7 +2417,9 @@ async fn admin_manages_risk_rules_and_lists_events() -> Result<(), Box<dyn Error
     };
     let settings = test_settings();
     let (_role_id, admin_id) = create_admin_user(&pool).await;
-    let user_id = create_user(&pool).await;
+    let user_email = format!("admin-risk-filter-{}@example.test", Uuid::now_v7().simple());
+    let user_id = create_user_with_email(&pool, user_email.clone()).await;
+    let other_user_id = create_user(&pool).await;
     let token = issue_token(
         &settings,
         format!("admin:{admin_id}"),
@@ -2441,13 +2508,24 @@ async fn admin_manages_risk_rules_and_lists_events() -> Result<(), Box<dyn Error
     .execute(&pool)
     .await?
     .last_insert_id();
+    let other_event_id = sqlx::query(
+        r#"INSERT INTO risk_events
+           (user_id, actor_type, actor_id, event_type, risk_level, decision, reason, payload_json)
+           VALUES (?, 'user', ?, 'withdraw', 'high', 'review', 'manual review', ?)"#,
+    )
+    .bind(other_user_id)
+    .bind(other_user_id)
+    .bind(sqlx::types::Json(json!({ "rule_id": rule_id })))
+    .execute(&pool)
+    .await?
+    .last_insert_id();
 
     let events = app
         .clone()
         .oneshot(
             Request::builder()
                 .uri(format!(
-                    "/admin/api/v1/risk/events?user_id={user_id}&decision=review&risk_level=high&limit=10"
+                    "/admin/api/v1/risk/events?email={user_email}&decision=review&risk_level=high&limit=10"
                 ))
                 .header(AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::empty())
@@ -2463,6 +2541,7 @@ async fn admin_manages_risk_rules_and_lists_events() -> Result<(), Box<dyn Error
     assert_eq!(events[0]["risk_level"], "high");
     assert_eq!(events[0]["decision"], "review");
     assert!(events[0]["created_at"].is_number());
+    assert!(!events.iter().any(|event| event["id"] == other_event_id));
 
     let audit_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM admin_audit_logs WHERE admin_id = ? AND target_type = 'risk_rule' AND target_id = ?",
@@ -2473,8 +2552,9 @@ async fn admin_manages_risk_rules_and_lists_events() -> Result<(), Box<dyn Error
     .await?;
     assert_eq!(audit_count, 2);
 
-    sqlx::query("DELETE FROM risk_events WHERE id = ?")
+    sqlx::query("DELETE FROM risk_events WHERE id IN (?, ?)")
         .bind(event_id)
+        .bind(other_event_id)
         .execute(&pool)
         .await?;
     sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ? AND target_type = 'risk_rule'")
@@ -2485,8 +2565,9 @@ async fn admin_manages_risk_rules_and_lists_events() -> Result<(), Box<dyn Error
         .bind(rule_id)
         .execute(&pool)
         .await?;
-    sqlx::query("DELETE FROM users WHERE id = ?")
+    sqlx::query("DELETE FROM users WHERE id IN (?, ?)")
         .bind(user_id)
+        .bind(other_user_id)
         .execute(&pool)
         .await?;
     sqlx::query("DELETE FROM admin_users WHERE id = ?")
@@ -5039,7 +5120,8 @@ async fn admin_agent_management_create_update_assign_list_and_audit() -> Result<
     let settings = test_settings();
     let (role_id, admin_id) = create_admin_user(&pool).await;
     let agent_owner_id = create_user(&pool).await;
-    let team_user_id = create_user(&pool).await;
+    let team_user_email = format!("admin-agent-team-{}@example.test", Uuid::now_v7().simple());
+    let team_user_id = create_user_with_email(&pool, team_user_email.clone()).await;
     let other_user_id = create_user(&pool).await;
     let child_user_id = create_user(&pool).await;
     let unrelated_team_user_id = create_user(&pool).await;
@@ -5284,7 +5366,7 @@ async fn admin_agent_management_create_update_assign_list_and_audit() -> Result<
         "spot_trade",
         "200.000000000000000000",
         "10.000000000000000000",
-        "settled",
+        "pending",
     )
     .await;
 
@@ -5292,7 +5374,7 @@ async fn admin_agent_management_create_update_assign_list_and_audit() -> Result<
         .oneshot(
             Request::builder()
                 .uri(format!(
-                    "/admin/api/v1/agent-commissions?agent_id={agent_id}&user_id={team_user_id}&status=pending&limit=10"
+                    "/admin/api/v1/agent-commissions?agent_id={agent_id}&email={team_user_email}&status=pending&limit=10"
                 ))
                 .header(AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::empty())
@@ -6953,7 +7035,11 @@ async fn admin_margin_liquidations_list_filters_seeded_records() -> Result<(), B
         return Ok(());
     };
     let settings = test_settings();
-    let user_id = create_user(&pool).await;
+    let user_email = format!(
+        "admin-margin-liquidation-{}@example.test",
+        Uuid::now_v7().simple()
+    );
+    let user_id = create_user_with_email(&pool, user_email.clone()).await;
     let other_user_id = create_user(&pool).await;
     let now = chrono::Utc
         .with_ymd_and_hms(2026, 5, 29, 16, 30, 45)
@@ -6974,8 +7060,7 @@ async fn admin_margin_liquidations_list_filters_seeded_records() -> Result<(), B
         .oneshot(
             Request::builder()
                 .uri(format!(
-                    "/admin/api/v1/margin/liquidations?user_id={user_id}&pair_id={}&position_id={}&limit=10",
-                    target.pair_id, target.position_id
+                    "/admin/api/v1/margin/liquidations?email={user_email}&limit=10"
                 ))
                 .header(AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::empty())
@@ -7759,7 +7844,11 @@ async fn admin_convert_orders_list_filters_by_user_and_status() -> Result<(), Bo
         return Ok(());
     };
     let settings = test_settings();
-    let user_id = create_user(&pool).await;
+    let user_email = format!(
+        "admin-convert-filter-{}@example.test",
+        Uuid::now_v7().simple()
+    );
+    let user_id = create_user_with_email(&pool, user_email.clone()).await;
     let other_user_id = create_user(&pool).await;
     let from_asset = create_asset(&pool, "AOF").await;
     let to_asset = create_asset(&pool, "AOT").await;
@@ -7785,7 +7874,7 @@ async fn admin_convert_orders_list_filters_by_user_and_status() -> Result<(), Bo
         .oneshot(
             Request::builder()
                 .uri(format!(
-                    "/admin/api/v1/convert/orders?user_id={user_id}&status=pending&limit=10"
+                    "/admin/api/v1/convert/orders?email={user_email}&status=pending&limit=10"
                 ))
                 .header(AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::empty())
@@ -8145,7 +8234,11 @@ async fn admin_new_coin_listing_routes_filter_seeded_records() -> Result<(), Box
     };
     let settings = test_settings();
     let (role_id, admin_id) = create_admin_user(&pool).await;
-    let user_id = create_user(&pool).await;
+    let user_email = format!(
+        "admin-new-coin-filter-{}@example.test",
+        Uuid::now_v7().simple()
+    );
+    let user_id = create_user_with_email(&pool, user_email.clone()).await;
     let other_user_id = create_user(&pool).await;
     let asset_id = create_asset(&pool, "ANL").await;
     let quote_asset = create_asset(&pool, "AQL").await;
@@ -8221,21 +8314,39 @@ async fn admin_new_coin_listing_routes_filter_seeded_records() -> Result<(), Box
     .execute(&pool)
     .await?
     .last_insert_id();
-    sqlx::query(
+    let other_lock_position_id = sqlx::query(
+        r#"INSERT INTO asset_lock_positions
+           (user_id, asset_id, unlock_type, unlock_at, locked_amount, released_amount,
+            remaining_amount, merge_key, status)
+           VALUES (?, ?, 'fixed_time', ?, ?, 0, ?, ?, 'active')"#,
+    )
+    .bind(other_user_id)
+    .bind(asset_id)
+    .bind(unlock_at)
+    .bind(decimal("8.000000000000000000"))
+    .bind(decimal("8.000000000000000000"))
+    .bind(format!(
+        "admin-list-lock-other-{project_id}-{other_user_id}"
+    ))
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let other_subscription_id = sqlx::query(
         r#"INSERT INTO new_coin_subscriptions
            (project_id, user_id, quote_asset, quote_amount, requested_quantity,
             allocated_quantity, status, idempotency_key)
-           VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)"#,
+           VALUES (?, ?, ?, ?, ?, ?, 'allocated', ?)"#,
     )
     .bind(project_id)
     .bind(other_user_id)
     .bind(quote_asset)
     .bind(decimal("8.000000000000000000"))
     .bind(decimal("4.000000000000000000"))
-    .bind(decimal("0.000000000000000000"))
+    .bind(decimal("4.000000000000000000"))
     .bind(format!("admin-list-sub-other-{project_id}"))
     .execute(&pool)
-    .await?;
+    .await?
+    .last_insert_id();
     let distribution_id = sqlx::query(
         r#"INSERT INTO new_coin_distributions
            (project_id, user_id, subscription_id, asset_id, quantity, lock_position_id,
@@ -8252,6 +8363,21 @@ async fn admin_new_coin_listing_routes_filter_seeded_records() -> Result<(), Box
     .execute(&pool)
     .await?
     .last_insert_id();
+    sqlx::query(
+        r#"INSERT INTO new_coin_distributions
+           (project_id, user_id, subscription_id, asset_id, quantity, lock_position_id,
+            status, idempotency_key)
+           VALUES (?, ?, ?, ?, ?, ?, 'locked', ?)"#,
+    )
+    .bind(project_id)
+    .bind(other_user_id)
+    .bind(other_subscription_id)
+    .bind(asset_id)
+    .bind(decimal("4.000000000000000000"))
+    .bind(other_lock_position_id)
+    .bind(format!("admin-list-dist-other-{project_id}"))
+    .execute(&pool)
+    .await?;
     let purchase_id = sqlx::query(
         r#"INSERT INTO new_coin_purchase_orders
            (project_id, user_id, pair_id, base_asset, quote_asset, price, quantity,
@@ -8271,6 +8397,24 @@ async fn admin_new_coin_listing_routes_filter_seeded_records() -> Result<(), Box
     .execute(&pool)
     .await?
     .last_insert_id();
+    sqlx::query(
+        r#"INSERT INTO new_coin_purchase_orders
+           (project_id, user_id, pair_id, base_asset, quote_asset, price, quantity,
+            quote_amount, lock_position_id, status, idempotency_key)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'locked', ?)"#,
+    )
+    .bind(project_id)
+    .bind(other_user_id)
+    .bind(pair_id)
+    .bind(asset_id)
+    .bind(quote_asset)
+    .bind(decimal("2.000000000000000000"))
+    .bind(decimal("4.000000000000000000"))
+    .bind(decimal("8.000000000000000000"))
+    .bind(other_lock_position_id)
+    .bind(format!("admin-list-purchase-other-{project_id}"))
+    .execute(&pool)
+    .await?;
     let unlock_id = sqlx::query(
         r#"INSERT INTO asset_unlock_records
            (user_id, asset_id, lock_position_id, unlock_quantity, unlock_price,
@@ -8290,13 +8434,31 @@ async fn admin_new_coin_listing_routes_filter_seeded_records() -> Result<(), Box
     .execute(&pool)
     .await?
     .last_insert_id();
+    sqlx::query(
+        r#"INSERT INTO asset_unlock_records
+           (user_id, asset_id, lock_position_id, unlock_quantity, unlock_price,
+            unlock_fee_enabled, unlock_fee_rate, unlock_fee_basis, unlock_fee_asset,
+            unlock_fee_amount, fee_paid_status, status, idempotency_key)
+           VALUES (?, ?, ?, ?, ?, TRUE, ?, 'profit', ?, ?, 'pending', 'pending', ?)"#,
+    )
+    .bind(other_user_id)
+    .bind(asset_id)
+    .bind(other_lock_position_id)
+    .bind(decimal("4.000000000000000000"))
+    .bind(decimal("2.000000000000000000"))
+    .bind(decimal("0.04000000"))
+    .bind(quote_asset)
+    .bind(decimal("0.320000000000000000"))
+    .bind(format!("admin-list-unlock-other-{project_id}"))
+    .execute(&pool)
+    .await?;
 
     for subscriptions_path in [
         format!(
-            "/admin/api/v1/new-coins/{project_id}/subscriptions?user_id={user_id}&status=allocated&limit=10"
+            "/admin/api/v1/new-coins/{project_id}/subscriptions?email={user_email}&status=allocated&limit=10"
         ),
         format!(
-            "/admin/api/v1/new-coins/subscriptions?project_id={project_id}&user_id={user_id}&status=allocated&limit=10"
+            "/admin/api/v1/new-coins/subscriptions?project_id={project_id}&email={user_email}&status=allocated&limit=10"
         ),
     ] {
         let subscriptions = app
@@ -8326,10 +8488,10 @@ async fn admin_new_coin_listing_routes_filter_seeded_records() -> Result<(), Box
 
     for distributions_path in [
         format!(
-            "/admin/api/v1/new-coins/{project_id}/distributions?user_id={user_id}&status=locked&limit=10"
+            "/admin/api/v1/new-coins/{project_id}/distributions?email={user_email}&status=locked&limit=10"
         ),
         format!(
-            "/admin/api/v1/new-coins/distributions?project_id={project_id}&user_id={user_id}&status=locked&limit=10"
+            "/admin/api/v1/new-coins/distributions?project_id={project_id}&email={user_email}&status=locked&limit=10"
         ),
     ] {
         let distributions = app
@@ -8362,7 +8524,7 @@ async fn admin_new_coin_listing_routes_filter_seeded_records() -> Result<(), Box
         .oneshot(
             Request::builder()
                 .uri(format!(
-                    "/admin/api/v1/new-coins/purchases?project_id={project_id}&user_id={user_id}&status=locked&limit=10"
+                    "/admin/api/v1/new-coins/purchases?project_id={project_id}&email={user_email}&status=locked&limit=10"
                 ))
                 .header(AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::empty())
@@ -8388,7 +8550,7 @@ async fn admin_new_coin_listing_routes_filter_seeded_records() -> Result<(), Box
         .oneshot(
             Request::builder()
                 .uri(format!(
-                    "/admin/api/v1/new-coins/lock-positions?user_id={user_id}&asset_id={asset_id}&status=active&limit=10"
+                    "/admin/api/v1/new-coins/lock-positions?email={user_email}&asset_id={asset_id}&status=active&limit=10"
                 ))
                 .header(AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::empty())
@@ -8416,7 +8578,7 @@ async fn admin_new_coin_listing_routes_filter_seeded_records() -> Result<(), Box
         .oneshot(
             Request::builder()
                 .uri(format!(
-                    "/admin/api/v1/new-coins/unlocks?user_id={user_id}&asset_id={asset_id}&status=pending&fee_paid_status=pending&limit=10"
+                    "/admin/api/v1/new-coins/unlocks?email={user_email}&asset_id={asset_id}&status=pending&fee_paid_status=pending&limit=10"
                 ))
                 .header(AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::empty())
@@ -8433,8 +8595,9 @@ async fn admin_new_coin_listing_routes_filter_seeded_records() -> Result<(), Box
     assert_eq!(unlocks[0]["unlock_fee_basis"], "profit");
     assert_eq!(unlocks[0]["fee_paid_status"], "pending");
 
-    sqlx::query("DELETE FROM asset_unlock_records WHERE id = ?")
-        .bind(unlock_id)
+    sqlx::query("DELETE FROM asset_unlock_records WHERE idempotency_key IN (?, ?)")
+        .bind(format!("admin-list-unlock-{project_id}"))
+        .bind(format!("admin-list-unlock-other-{project_id}"))
         .execute(&pool)
         .await?;
     sqlx::query("DELETE FROM new_coin_purchase_orders WHERE project_id = ?")
@@ -8449,8 +8612,9 @@ async fn admin_new_coin_listing_routes_filter_seeded_records() -> Result<(), Box
         .bind(project_id)
         .execute(&pool)
         .await?;
-    sqlx::query("DELETE FROM asset_lock_positions WHERE id = ?")
+    sqlx::query("DELETE FROM asset_lock_positions WHERE id IN (?, ?)")
         .bind(lock_position_id)
+        .bind(other_lock_position_id)
         .execute(&pool)
         .await?;
     sqlx::query("DELETE FROM trading_pairs WHERE id = ?")

@@ -9,11 +9,10 @@ type PageHeaderProps = {
   title: string;
 };
 
-export function PageHeader({ actions, eyebrow = 'Admin Console', title }: PageHeaderProps) {
+export function PageHeader({ actions,  title }: PageHeaderProps) {
   return (
     <header className="page-header">
       <div>
-        <Text className="page-header-eyebrow">{eyebrow}</Text>
         <Title heading={2}>{title}</Title>
       </div>
       {actions ? <div className="page-header-actions">{actions}</div> : null}

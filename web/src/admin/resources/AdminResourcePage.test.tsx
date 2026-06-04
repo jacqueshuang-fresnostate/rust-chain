@@ -112,6 +112,31 @@ describe('AdminResourcePage', () => {
     expect(screen.getByRole('button', { name: '查看详情' }).closest('td')).toHaveClass('semi-table-cell-fixed-right');
   });
 
+  it('keeps table cells on one line for horizontal scrolling', async () => {
+    listAdminResourceMock.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 10,
+          name: '不会被挤压换行的超长资源名称-BTC-USDT-永续合约-测试环境',
+          enabled: true,
+          amount: '10.0000',
+          created_at: 1_735_732_800_000
+        }
+      ],
+      raw: { items: [] }
+    });
+
+    render(
+      <div className="admin-shell-content">
+        <AdminResourcePage<TestRecord> title="管理员资源" endpoint="/admin/accounts" responseKey="items" columns={columns} />
+      </div>
+    );
+
+    const value = await screen.findByText('不会被挤压换行的超长资源名称-BTC-USDT-永续合约-测试环境');
+    expect(value.closest('td')).toHaveStyle({ whiteSpace: 'nowrap' });
+    expect(screen.getByRole('columnheader', { name: '名称' })).toHaveStyle({ whiteSpace: 'nowrap' });
+  });
+
   it('reloads with non-empty filter values', async () => {
     const user = userEvent.setup();
     listAdminResourceMock.mockResolvedValue({ rows: [], raw: { items: [] } });

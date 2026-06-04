@@ -93,6 +93,10 @@ async fn mysql_pool() -> Option<MySqlPool> {
 
 async fn create_user(pool: &MySqlPool) -> u64 {
     let email = format!("spot-route-{}@example.test", Uuid::now_v7().simple());
+    create_user_with_email(pool, email).await
+}
+
+async fn create_user_with_email(pool: &MySqlPool, email: String) -> u64 {
     sqlx::query("INSERT INTO users (email, password_hash) VALUES (?, ?)")
         .bind(email)
         .bind("not-a-real-hash")
@@ -495,7 +499,8 @@ async fn admin_spot_lists_orders_and_trades_with_filters() -> Result<(), Box<dyn
         return Ok(());
     };
     let settings = test_settings();
-    let buyer_id = create_user(&pool).await;
+    let buyer_email = format!("spot-admin-filter-{}@example.test", Uuid::now_v7().simple());
+    let buyer_id = create_user_with_email(&pool, buyer_email.clone()).await;
     let seller_id = create_user(&pool).await;
     let other_user_id = create_user(&pool).await;
     let (base_asset, base_symbol) = create_asset(&pool, "AB").await;
@@ -622,7 +627,7 @@ async fn admin_spot_lists_orders_and_trades_with_filters() -> Result<(), Box<dyn
             Request::builder()
                 .method("GET")
                 .uri(format!(
-                    "/spot/orders?user_id={buyer_id}&status=open&limit=10"
+                    "/spot/orders?email={buyer_email}&status=open&limit=10"
                 ))
                 .header("authorization", format!("Bearer {admin_token}"))
                 .body(Body::empty())
@@ -679,7 +684,7 @@ async fn admin_spot_lists_orders_and_trades_with_filters() -> Result<(), Box<dyn
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!("/spot/trades?user_id={buyer_id}&limit=10"))
+                .uri(format!("/spot/trades?email={buyer_email}&limit=10"))
                 .header("authorization", format!("Bearer {admin_token}"))
                 .body(Body::empty())
                 .unwrap(),

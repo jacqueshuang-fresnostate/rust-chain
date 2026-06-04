@@ -183,6 +183,7 @@ struct ListQuery {
 #[derive(Debug, Deserialize)]
 struct ConvertOrdersQuery {
     user_id: Option<u64>,
+    email: Option<String>,
     status: Option<String>,
     limit: Option<u32>,
 }
@@ -198,6 +199,7 @@ struct AdminUserQuery {
 #[derive(Debug, Deserialize)]
 struct AdminWalletAccountQuery {
     user_id: Option<u64>,
+    email: Option<String>,
     asset_id: Option<u64>,
     include_empty: Option<bool>,
     limit: Option<u32>,
@@ -206,6 +208,7 @@ struct AdminWalletAccountQuery {
 #[derive(Debug, Deserialize)]
 struct AdminWalletLedgerQuery {
     user_id: Option<u64>,
+    email: Option<String>,
     asset_id: Option<u64>,
     change_type: Option<String>,
     ref_type: Option<String>,
@@ -231,6 +234,7 @@ struct AdminRiskRuleQuery {
 #[derive(Debug, Deserialize)]
 struct AdminRiskEventQuery {
     user_id: Option<u64>,
+    email: Option<String>,
     decision: Option<String>,
     risk_level: Option<String>,
     limit: Option<u32>,
@@ -254,6 +258,7 @@ struct AdminMarketStrategyQuery {
 #[derive(Debug, Deserialize)]
 struct AdminMarginLiquidationQuery {
     user_id: Option<u64>,
+    email: Option<String>,
     pair_id: Option<u64>,
     position_id: Option<u64>,
     limit: Option<u32>,
@@ -271,6 +276,7 @@ struct AdminAuditLogsQuery {
 #[derive(Debug, Deserialize)]
 struct AdminScopedListQuery {
     user_id: Option<u64>,
+    email: Option<String>,
     status: Option<String>,
     limit: Option<u32>,
 }
@@ -279,6 +285,7 @@ struct AdminScopedListQuery {
 struct AdminNewCoinPurchaseQuery {
     project_id: Option<u64>,
     user_id: Option<u64>,
+    email: Option<String>,
     status: Option<String>,
     limit: Option<u32>,
 }
@@ -287,6 +294,7 @@ struct AdminNewCoinPurchaseQuery {
 struct AdminNewCoinFlatListQuery {
     project_id: Option<u64>,
     user_id: Option<u64>,
+    email: Option<String>,
     status: Option<String>,
     limit: Option<u32>,
 }
@@ -294,6 +302,7 @@ struct AdminNewCoinFlatListQuery {
 #[derive(Debug, Deserialize)]
 struct AdminNewCoinLockPositionQuery {
     user_id: Option<u64>,
+    email: Option<String>,
     asset_id: Option<u64>,
     status: Option<String>,
     limit: Option<u32>,
@@ -302,6 +311,7 @@ struct AdminNewCoinLockPositionQuery {
 #[derive(Debug, Deserialize)]
 struct AdminNewCoinUnlockQuery {
     user_id: Option<u64>,
+    email: Option<String>,
     asset_id: Option<u64>,
     status: Option<String>,
     fee_paid_status: Option<String>,
@@ -552,6 +562,7 @@ struct AssignUserAgentRequest {
 struct AdminAgentCommissionQuery {
     agent_id: Option<u64>,
     user_id: Option<u64>,
+    email: Option<String>,
     status: Option<String>,
     limit: Option<u32>,
 }
@@ -1408,9 +1419,9 @@ async fn list_agent_commissions(
         builder.push_bind(agent_id);
     }
     if let Some(user_id) = query.user_id {
-        builder.push(" AND user_id = ");
-        builder.push_bind(user_id);
+        push_user_id_filter(&mut builder, "user_id", user_id);
     }
+    push_user_email_filter(&mut builder, "user_id", query.email);
     if let Some(status) = optional_string(query.status) {
         builder.push(" AND status = ");
         builder.push_bind(status);
@@ -2096,9 +2107,9 @@ async fn list_wallet_accounts(
            WHERE 1 = 1"#,
     );
     if let Some(user_id) = query.user_id {
-        builder.push(" AND accounts.user_id = ");
-        builder.push_bind(user_id);
+        push_user_id_filter(&mut builder, "accounts.user_id", user_id);
     }
+    push_user_email_filter(&mut builder, "accounts.user_id", query.email.clone());
     if let Some(asset_id) = query.asset_id {
         builder.push(" AND accounts.asset_id = ");
         builder.push_bind(asset_id);
@@ -2128,7 +2139,8 @@ async fn append_empty_wallet_accounts(
     query: &AdminWalletAccountQuery,
     accounts: &mut Vec<AdminWalletAccountResponse>,
 ) -> AppResult<()> {
-    let Some(user_id) = query.user_id else {
+    let Some(user_id) = resolve_user_id_filter(pool, query.user_id, query.email.clone()).await?
+    else {
         return Ok(());
     };
     let existing_asset_ids = accounts
@@ -2188,9 +2200,9 @@ async fn list_wallet_ledger(
            WHERE 1 = 1"#,
     );
     if let Some(user_id) = query.user_id {
-        builder.push(" AND ledger.user_id = ");
-        builder.push_bind(user_id);
+        push_user_id_filter(&mut builder, "ledger.user_id", user_id);
     }
+    push_user_email_filter(&mut builder, "ledger.user_id", query.email);
     if let Some(asset_id) = query.asset_id {
         builder.push(" AND ledger.asset_id = ");
         builder.push_bind(asset_id);
@@ -2336,9 +2348,9 @@ async fn list_risk_events(
            WHERE 1 = 1"#,
     );
     if let Some(user_id) = query.user_id {
-        builder.push(" AND user_id = ");
-        builder.push_bind(user_id);
+        push_user_id_filter(&mut builder, "user_id", user_id);
     }
+    push_user_email_filter(&mut builder, "user_id", query.email);
     if let Some(decision) = optional_string(query.decision) {
         builder.push(" AND decision = ");
         builder.push_bind(decision);
@@ -2604,9 +2616,9 @@ async fn list_convert_orders(
     );
 
     if let Some(user_id) = query.user_id {
-        builder.push(" AND user_id = ");
-        builder.push_bind(user_id);
+        push_user_id_filter(&mut builder, "user_id", user_id);
     }
+    push_user_email_filter(&mut builder, "user_id", query.email);
     if let Some(status) = optional_string(query.status) {
         builder.push(" AND status = ");
         builder.push_bind(status);
@@ -2926,9 +2938,9 @@ async fn list_margin_liquidations(
     let mut builder = margin_liquidation_query();
     builder.push(" WHERE 1 = 1");
     if let Some(user_id) = query.user_id {
-        builder.push(" AND user_id = ");
-        builder.push_bind(user_id);
+        push_user_id_filter(&mut builder, "user_id", user_id);
     }
+    push_user_email_filter(&mut builder, "user_id", query.email);
     if let Some(pair_id) = query.pair_id {
         builder.push(" AND pair_id = ");
         builder.push_bind(pair_id);
@@ -2985,6 +2997,7 @@ async fn list_new_coin_subscriptions(
         project_id: Some(project_id),
         user_id: query.user_id,
         status: query.status,
+        email: query.email,
         limit: query.limit,
     };
     list_new_coin_subscriptions_by_query(&state, query).await
@@ -3008,6 +3021,7 @@ async fn list_new_coin_distributions(
         project_id: Some(project_id),
         user_id: query.user_id,
         status: query.status,
+        email: query.email,
         limit: query.limit,
     };
     list_new_coin_distributions_by_query(&state, query).await
@@ -3036,7 +3050,7 @@ async fn list_new_coin_subscriptions_by_query(
         builder.push(" AND project_id = ");
         builder.push_bind(project_id);
     }
-    push_optional_user_and_status_filters(&mut builder, query.user_id, query.status);
+    push_optional_user_and_status_filters(&mut builder, query.user_id, query.email, query.status);
     builder.push(" ORDER BY id DESC LIMIT ");
     builder.push_bind(route_limit(query.limit) as i64);
 
@@ -3062,7 +3076,7 @@ async fn list_new_coin_distributions_by_query(
         builder.push(" AND project_id = ");
         builder.push_bind(project_id);
     }
-    push_optional_user_and_status_filters(&mut builder, query.user_id, query.status);
+    push_optional_user_and_status_filters(&mut builder, query.user_id, query.email, query.status);
     builder.push(" ORDER BY id DESC LIMIT ");
     builder.push_bind(route_limit(query.limit) as i64);
 
@@ -3090,7 +3104,7 @@ async fn list_new_coin_purchases(
         builder.push(" AND project_id = ");
         builder.push_bind(project_id);
     }
-    push_optional_user_and_status_filters(&mut builder, query.user_id, query.status);
+    push_optional_user_and_status_filters(&mut builder, query.user_id, query.email, query.status);
     builder.push(" ORDER BY id DESC LIMIT ");
     builder.push_bind(route_limit(query.limit) as i64);
 
@@ -3115,9 +3129,9 @@ async fn list_new_coin_lock_positions(
            WHERE 1 = 1"#,
     );
     if let Some(user_id) = query.user_id {
-        builder.push(" AND user_id = ");
-        builder.push_bind(user_id);
+        push_user_id_filter(&mut builder, "user_id", user_id);
     }
+    push_user_email_filter(&mut builder, "user_id", query.email);
     if let Some(asset_id) = query.asset_id {
         builder.push(" AND asset_id = ");
         builder.push_bind(asset_id);
@@ -3151,9 +3165,9 @@ async fn list_new_coin_unlocks(
            WHERE 1 = 1"#,
     );
     if let Some(user_id) = query.user_id {
-        builder.push(" AND user_id = ");
-        builder.push_bind(user_id);
+        push_user_id_filter(&mut builder, "user_id", user_id);
     }
+    push_user_email_filter(&mut builder, "user_id", query.email);
     if let Some(asset_id) = query.asset_id {
         builder.push(" AND asset_id = ");
         builder.push_bind(asset_id);
@@ -4815,15 +4829,63 @@ fn lifecycle_status_value(status: LifecycleStatus) -> &'static str {
     }
 }
 
+fn push_user_id_filter(
+    builder: &mut QueryBuilder<'_, MySql>,
+    user_id_column: &'static str,
+    user_id: u64,
+) {
+    builder.push(" AND ");
+    builder.push(user_id_column);
+    builder.push(" = ");
+    builder.push_bind(user_id);
+}
+
+fn push_user_email_filter(
+    builder: &mut QueryBuilder<'_, MySql>,
+    user_id_column: &'static str,
+    email: Option<String>,
+) {
+    if let Some(email) = optional_string(email) {
+        builder.push(" AND EXISTS (SELECT 1 FROM users WHERE users.id = ");
+        builder.push(user_id_column);
+        builder.push(" AND users.email = ");
+        builder.push_bind(email);
+        builder.push(")");
+    }
+}
+
+async fn resolve_user_id_filter(
+    pool: &Pool<MySql>,
+    user_id: Option<u64>,
+    email: Option<String>,
+) -> AppResult<Option<u64>> {
+    let Some(email) = optional_string(email) else {
+        return Ok(user_id);
+    };
+    let resolved_user_id =
+        sqlx::query_scalar::<_, u64>("SELECT id FROM users WHERE email = ? LIMIT 1")
+            .bind(email)
+            .fetch_optional(pool)
+            .await?;
+    Ok(match (user_id, resolved_user_id) {
+        (Some(requested_user_id), Some(email_user_id)) if requested_user_id == email_user_id => {
+            Some(requested_user_id)
+        }
+        (Some(_), _) => None,
+        (None, resolved_user_id) => resolved_user_id,
+    })
+}
+
 fn push_optional_user_and_status_filters(
     builder: &mut QueryBuilder<'_, MySql>,
     user_id: Option<u64>,
+    email: Option<String>,
     status: Option<String>,
 ) {
     if let Some(user_id) = user_id {
-        builder.push(" AND user_id = ");
-        builder.push_bind(user_id);
+        push_user_id_filter(builder, "user_id", user_id);
     }
+    push_user_email_filter(builder, "user_id", email);
     if let Some(status) = optional_string(status) {
         builder.push(" AND status = ");
         builder.push_bind(status);

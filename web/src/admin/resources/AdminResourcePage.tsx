@@ -165,7 +165,7 @@ export function AdminResourcePage<T extends ApiRecord>({
           </Space>
         ),
         title: '操作',
-        width: 180
+        width: 300
       }
     ];
   }, [columns, reload, rowActions, showJsonAction]);

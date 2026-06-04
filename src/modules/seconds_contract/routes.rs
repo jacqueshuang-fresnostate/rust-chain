@@ -54,6 +54,7 @@ struct ListQuery {
 struct AdminOrdersQuery {
     limit: Option<u32>,
     user_id: Option<u64>,
+    email: Option<String>,
     status: Option<String>,
 }
 
@@ -252,6 +253,13 @@ async fn list_admin_orders(
     if let Some(user_id) = query.user_id {
         builder.push(" WHERE user_id = ");
         builder.push_bind(user_id);
+        has_filter = true;
+    }
+    if let Some(email) = optional_string(query.email) {
+        builder.push(if has_filter { " AND " } else { " WHERE " });
+        builder.push("EXISTS (SELECT 1 FROM users WHERE users.id = user_id AND users.email = ");
+        builder.push_bind(email);
+        builder.push(")");
         has_filter = true;
     }
     if let Some(status) = optional_string(query.status) {

@@ -58,6 +58,7 @@ export function DataTable<T extends Record<string, unknown>>({ columns, data, er
 
   return (
     <Table
+      className="admin-data-table"
       columns={columns}
       dataSource={pageData}
       pagination={{

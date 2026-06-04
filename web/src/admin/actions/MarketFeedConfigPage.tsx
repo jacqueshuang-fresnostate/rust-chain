@@ -71,6 +71,13 @@ type MarketSourceCredentialsResponse = {
 
 type ConfigForm = typeof defaultConfigForm;
 type CredentialForm = typeof defaultCredentialForm;
+type SubscriptionRow = {
+  enabled: boolean;
+  item: string;
+  key: string;
+  kind: 'global' | 'interval' | 'provider' | 'symbol';
+  typeLabel: string;
+};
 
 function splitCsv(value: string) {
   return value
@@ -85,6 +92,40 @@ function toggleListItem(items: string[], item: string) {
 
 function joinList(value?: string[]) {
   return value?.length ? value.join(',') : '-';
+}
+
+function uniqueItems(items: string[]) {
+  return items.filter((item, index) => item.length > 0 && items.indexOf(item) === index);
+}
+
+function subscriptionRows(configForm: ConfigForm, config: MarketFeedConfig | null): SubscriptionRow[] {
+  const activeSymbols = splitCsv(configForm.symbols);
+  const symbols = uniqueItems([...activeSymbols, ...(config?.symbols ?? [])]);
+
+  return [
+    { enabled: configForm.enabled, item: '全部订阅', key: 'global', kind: 'global', typeLabel: '总开关' },
+    ...providerOptions.map((provider) => ({
+      enabled: configForm.providers.includes(provider),
+      item: provider,
+      key: `provider-${provider}`,
+      kind: 'provider' as const,
+      typeLabel: '行情源'
+    })),
+    ...symbols.map((symbol) => ({
+      enabled: activeSymbols.includes(symbol),
+      item: symbol,
+      key: `symbol-${symbol}`,
+      kind: 'symbol' as const,
+      typeLabel: '交易对'
+    })),
+    ...intervalOptions.map((interval) => ({
+      enabled: configForm.intervals.includes(interval),
+      item: interval,
+      key: `interval-${interval}`,
+      kind: 'interval' as const,
+      typeLabel: 'K线周期'
+    }))
+  ];
 }
 
 function errorMessage(error: unknown) {
@@ -123,6 +164,28 @@ export function MarketFeedConfigPage() {
     () => credentials.map((credential) => `${credential.provider}:${credential.api_key_mask ?? credential.auth_type}`).join('，') || '暂无凭证',
     [credentials]
   );
+  const rows = useMemo(() => subscriptionRows(configForm, config), [config, configForm]);
+
+  function toggleSubscription(row: SubscriptionRow) {
+    if (row.kind === 'global') {
+      setConfigForm({ ...configForm, enabled: !configForm.enabled });
+      return;
+    }
+    if (row.kind === 'provider') {
+      setConfigForm({ ...configForm, providers: toggleListItem(configForm.providers, row.item) });
+      return;
+    }
+    if (row.kind === 'interval') {
+      setConfigForm({ ...configForm, intervals: toggleListItem(configForm.intervals, row.item) });
+      return;
+    }
+
+    const symbols = splitCsv(configForm.symbols);
+    setConfigForm({
+      ...configForm,
+      symbols: row.enabled ? symbols.filter((symbol) => symbol !== row.item).join(',') : uniqueItems([...symbols, row.item]).join(',')
+    });
+  }
 
   async function loadPage() {
     setLoading(true);
@@ -200,6 +263,35 @@ export function MarketFeedConfigPage() {
                 />
               </label>
             </div>
+            <table aria-label="行情订阅列表" className="admin-action-subscription-list">
+              <thead>
+                <tr>
+                  <th>类型</th>
+                  <th>订阅项</th>
+                  <th>状态</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.key}>
+                    <td>{row.typeLabel}</td>
+                    <td>{row.item}</td>
+                    <td><StatusTag value={row.enabled} /></td>
+                    <td>
+                      <Button
+                        aria-label={`${row.enabled ? '禁用' : '启用'} ${row.typeLabel} ${row.item}`}
+                        onClick={() => toggleSubscription(row)}
+                        size="small"
+                        theme="borderless"
+                      >
+                        {row.enabled ? '禁用' : '启用'}
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
             <Space>
               <ConfirmAction
                 actionText="保存配置"

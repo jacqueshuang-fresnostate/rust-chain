@@ -123,6 +123,19 @@ function mockEmptyResource() {
 }
 
 describe('resourceConfigs create actions', () => {
+  it('adds an email filter beside every user ID filter', () => {
+    const configsWithoutEmail = Object.entries(resourceConfigs)
+      .filter(([, config]) => config.filters?.some((filter) => filter.key === 'user_id'))
+      .filter(([, config]) => !config.filters?.some((filter) => filter.key === 'email'))
+      .map(([key]) => key);
+
+    expect(configsWithoutEmail).toEqual([]);
+  });
+
+  it('keeps the user ID column visible on user management', () => {
+    expect(resourceConfigs.users.columns).toContainEqual({ key: 'id', title: '用户ID' });
+  });
+
   beforeEach(() => {
     vi.stubGlobal('ResizeObserver', ResizeObserverMock);
     vi.stubGlobal('WebSocket', undefined);

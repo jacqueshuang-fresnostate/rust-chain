@@ -2,6 +2,58 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-06-03 21:07 - Admin 用户ID筛选补充邮箱筛选
+
+- 完成内容：Admin 前端所有带 `user_id` 筛选的资源配置均补充“邮箱”筛选；后端 Admin 列表接口同步支持 `email` query 参数，覆盖钱包账户/流水、风控事件、代理佣金、闪兑订单、新币认购/分发/购买/锁仓/解禁、强平记录、现货订单/成交、杠杆仓位/利息汇总、Earn 订阅、秒合约订单等列表筛选。筛选仅作用于列表查询展示，不改变创建/操作表单、请求 payload 或既有 `user_id` 筛选行为。
+- 修改文件：
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `src/modules/admin/routes.rs`
+  - `src/modules/spot/routes.rs`
+  - `src/modules/margin/routes.rs`
+  - `src/modules/earn/routes.rs`
+  - `src/modules/seconds_contract/routes.rs`
+  - `tests/admin_routes.rs`
+  - `tests/spot_routes.rs`
+  - `tests/margin_routes.rs`
+  - `tests/earn_routes.rs`
+  - `tests/seconds_contract_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/resources/resourceConfigs.test.tsx`，实现前 `adds an email filter beside every user ID filter` 列出 17 个缺少邮箱筛选的资源；审查补强后已执行 RED：同一命令中 `keeps the user ID column visible on user management` 实现前失败，用户管理列表缺少 `用户ID` 列；已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_lists_wallet_accounts_and_ledger -- --nocapture`，`include_empty=true` 同时传入不匹配的 `user_id` 与 `email` 时实现前仍补出空账户。已执行多组后端 RED，邮箱参数实现前对应列表返回同状态/同资产/同交易对的其他用户记录。实现后已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/resources/resourceConfigs.test.tsx`，1 个测试文件、27 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；已执行后端 targeted tests：`admin_lists_users_and_reads_user_detail`、`admin_lists_wallet_accounts_and_ledger`、`admin_manages_risk_rules_and_lists_events`、`admin_convert_orders_list_filters_by_user_and_status`、`admin_margin_liquidations_list_filters_seeded_records`、`admin_agent_management_create_update_assign_list_and_audit`、`admin_new_coin_listing_routes_filter_seeded_records`、`admin_spot_lists_orders_and_trades_with_filters`、`admin_margin_positions_filter_history_and_return_interest_fields`、`admin_margin_interest_summary_groups_by_status_and_filters`、`admin_earn_lists_subscriptions_with_filters_and_timestamp`、`admin_seconds_contract_lists_orders_with_filters_and_timestamp`，均 1 个测试通过、0 失败；已执行 `git diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-03 19:20 - Admin 行情订阅列表化启停
+
+- 完成内容：将 Admin 行情订阅配置页在原有 symbols、intervals、providers 和总启用状态表单基础上增加“行情订阅列表”，按总开关、行情源、交易对、K 线周期分行展示当前订阅项及启用状态；每行提供启用/禁用操作，并同步更新既有表单状态与保存 payload，不新增后端表结构或接口。
+- 修改文件：
+  - `web/src/admin/actions/MarketFeedConfigPage.tsx`
+  - `web/src/admin/actions/MarketFeedConfigPage.test.tsx`
+  - `web/src/styles.css`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/actions/MarketFeedConfigPage.test.tsx`，实现前 `renders market feed subscriptions as a toggleable list` 失败，找不到 `aria-label="行情订阅列表"` 的 table；实现后已执行同一命令，1 个测试文件、5 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `git diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-03 19:03 - Admin 侧边栏拖拽命中区修复
+
+- 完成内容：定位侧边栏拖拽并非事件链路失效，而是拖拽命中区仅 `8px` 且一半覆盖在内容区边界外，实际浏览器中容易点到主内容导致“像是无法拖动”；将拖拽命中区扩大到 `16px`，右侧偏移调整为 `-8px`，并增加 `touch-action: none`，保留原鼠标、Pointer 和键盘调整能力。
+- 修改文件：
+  - `web/src/styles.css`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/layouts/AdminLayout.test.tsx`，实现前 `keeps the sidebar drag target easy to hit at the layout edge` 失败，命中区仍为 `8px`、`right: -4px` 且缺少 `touch-action: none`；实现后已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/layouts/AdminLayout.test.tsx`，1 个测试文件、5 个测试通过；已执行浏览器验证，拖拽命中区从 `left: 279` 到 `right: 295`，`width: 16px`，边界点命中 `admin-shell-sider-resizer`；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `git diff --check`，通过。
+- 后续事项：继续处理行情订阅列表化与开启关闭需求。
+
+## 2026-06-03 17:01 - Admin 表格单元格禁止挤压换行
+
+- 完成内容：Admin 资源表格增加统一样式类，表头与单元格内容固定单行展示，避免邮箱、交易对、时间、长名称等内容被挤压换行；保持横向滚动承载宽内容，不回退用户已调整的用户表格列配置。
+- 修改文件：
+  - `web/src/shared/DataTable.tsx`
+  - `web/src/styles.css`
+  - `web/src/admin/resources/AdminResourcePage.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/resources/AdminResourcePage.test.tsx`，实现前 `keeps table cells on one line for horizontal scrolling` 失败，单元格未应用 `white-space: nowrap`；实现后已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/resources/AdminResourcePage.test.tsx`，1 个测试文件、11 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/resources/AdminResourcePage.test.tsx src/admin/resources/resourceConfigs.test.tsx src/layouts/AdminLayout.test.tsx`，3 个测试文件、40 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test`，17 个测试文件、114 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run build`，通过，Vite 输出既有 `lottie-web` direct eval 与 chunk size 警告；已执行 `git diff --check`，通过。
+- 后续事项：无。
+
 ## 2026-06-03 15:48 - Admin 侧边栏指针拖拽修复
 
 - 完成内容：修复 Admin 侧边栏在指针拖拽事件下无法调整宽度的问题；保留原鼠标拖拽和键盘左右键调整能力，并补充 pointer drag 回归测试。

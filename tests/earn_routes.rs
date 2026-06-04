@@ -94,6 +94,10 @@ async fn mysql_pool() -> Option<MySqlPool> {
 
 async fn create_user(tx: &mut Transaction<'_, MySql>) -> u64 {
     let email = format!("earn-route-{}@example.test", Uuid::now_v7().simple());
+    create_user_with_email(tx, email).await
+}
+
+async fn create_user_with_email(tx: &mut Transaction<'_, MySql>, email: String) -> u64 {
     sqlx::query("INSERT INTO users (email, password_hash) VALUES (?, ?)")
         .bind(email)
         .bind("not-a-real-hash")
@@ -1352,7 +1356,8 @@ async fn admin_earn_lists_subscriptions_with_filters_and_timestamp() -> Result<(
     sqlx::query("DELETE FROM earn_subscriptions WHERE idempotency_key LIKE 'earn-admin-list-%'")
         .execute(&mut *fixture_tx)
         .await?;
-    let user_id = create_user(&mut fixture_tx).await;
+    let user_email = format!("earn-admin-filter-{}@example.test", Uuid::now_v7().simple());
+    let user_id = create_user_with_email(&mut fixture_tx, user_email.clone()).await;
     let other_user_id = create_user(&mut fixture_tx).await;
     let (asset_id, _asset_symbol) = create_asset(&mut fixture_tx, "AL").await;
     let product_id = seed_earn_product(&mut fixture_tx, asset_id).await;
@@ -1411,6 +1416,27 @@ async fn admin_earn_lists_subscriptions_with_filters_and_timestamp() -> Result<(
     .bind("2037-05-30 06:00:00.000000")
     .bind("2037-06-29 06:00:00.000000")
     .bind("2037-05-30 06:00:00.000000")
+    .execute(&mut *fixture_tx)
+    .await?
+    .last_insert_id();
+    let other_redeemed_id = sqlx::query(
+        r#"INSERT INTO earn_subscriptions
+           (user_id, product_id, asset_id, amount, apr_rate, term_days, status,
+            idempotency_key, subscribed_at, matures_at, created_at)
+           VALUES (?, ?, ?, ?, ?, 30, 'redeemed', ?, ?, ?, ?)"#,
+    )
+    .bind(other_user_id)
+    .bind(product_id)
+    .bind(asset_id)
+    .bind(decimal("55.000000000000000000"))
+    .bind(decimal("0.12000000"))
+    .bind(format!(
+        "earn-admin-list-other-redeemed-{}",
+        Uuid::now_v7().simple()
+    ))
+    .bind("2037-05-30 06:30:00.000000")
+    .bind("2037-06-29 06:30:00.000000")
+    .bind("2037-05-30 06:30:00.000000")
     .execute(&mut *fixture_tx)
     .await?
     .last_insert_id();
@@ -1481,7 +1507,7 @@ async fn admin_earn_lists_subscriptions_with_filters_and_timestamp() -> Result<(
         .oneshot(
             Request::builder()
                 .uri(format!(
-                    "/earn/subscriptions?user_id={user_id}&status=redeemed&limit=10"
+                    "/earn/subscriptions?email={user_email}&status=redeemed&limit=10"
                 ))
                 .header("authorization", format!("Bearer {admin_token}"))
                 .body(Body::empty())
@@ -1501,6 +1527,7 @@ async fn admin_earn_lists_subscriptions_with_filters_and_timestamp() -> Result<(
         .map(|subscription| subscription["id"].as_u64().unwrap())
         .collect();
     assert_eq!(filtered_ids, vec![user_redeemed_id]);
+    assert!(!filtered_ids.contains(&other_redeemed_id));
 
     let user_scope_response = app
         .oneshot(

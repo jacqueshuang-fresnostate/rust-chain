@@ -81,6 +81,7 @@ struct AdminSpotOrdersQuery {
     pair_id: Option<String>,
     status: Option<String>,
     user_id: Option<u64>,
+    email: Option<String>,
     limit: Option<u32>,
 }
 
@@ -88,6 +89,7 @@ struct AdminSpotOrdersQuery {
 struct AdminSpotTradesQuery {
     pair_id: Option<String>,
     user_id: Option<u64>,
+    email: Option<String>,
     limit: Option<u32>,
 }
 
@@ -311,7 +313,7 @@ async fn list_orders(
     let mut builder = base_spot_orders_query();
     builder.push(" WHERE orders.user_id = ");
     builder.push_bind(user_id);
-    push_spot_order_filters(&mut builder, query.pair_id, query.status, None, true);
+    push_spot_order_filters(&mut builder, query.pair_id, query.status, None, None, true);
     builder.push(" ORDER BY orders.id DESC LIMIT ");
     builder.push_bind(route_limit(query.limit) as i64);
     fetch_spot_orders(pool, builder).await
@@ -329,6 +331,7 @@ async fn list_admin_orders(
         query.pair_id,
         query.status,
         query.user_id,
+        query.email,
         false,
     );
     builder.push(" ORDER BY orders.created_at DESC, orders.id DESC LIMIT ");
@@ -389,6 +392,7 @@ fn push_spot_order_filters(
     pair_id: Option<String>,
     status: Option<String>,
     user_id: Option<u64>,
+    email: Option<String>,
     mut has_filter: bool,
 ) -> bool {
     if let Some(pair_id) = optional_query_string(pair_id) {
@@ -407,6 +411,14 @@ fn push_spot_order_filters(
         builder.push(if has_filter { " AND " } else { " WHERE " });
         builder.push("orders.user_id = ");
         builder.push_bind(user_id);
+        has_filter = true;
+    }
+    if let Some(email) = optional_query_string(email) {
+        builder.push(if has_filter { " AND " } else { " WHERE " });
+        builder
+            .push("EXISTS (SELECT 1 FROM users WHERE users.id = orders.user_id AND users.email = ");
+        builder.push_bind(email);
+        builder.push(")");
         has_filter = true;
     }
     has_filter
@@ -518,6 +530,17 @@ async fn list_admin_trades(
         builder.push(" OR sell_orders.user_id = ");
         builder.push_bind(user_id);
         builder.push(")");
+        has_filter = true;
+    }
+    if let Some(email) = optional_query_string(query.email) {
+        builder.push(if has_filter { " AND " } else { " WHERE " });
+        builder.push(
+            r#"EXISTS (
+                   SELECT 1 FROM users
+                   WHERE users.email = "#,
+        );
+        builder.push_bind(email);
+        builder.push(" AND (users.id = buy_orders.user_id OR users.id = sell_orders.user_id))");
     }
     builder.push(" ORDER BY trades.created_at DESC, trades.id DESC LIMIT ");
     builder.push_bind(route_limit(query.limit) as i64);

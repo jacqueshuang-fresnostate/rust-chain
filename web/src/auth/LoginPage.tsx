@@ -50,7 +50,6 @@ export function LoginPage() {
         <Card bordered={false} shadows="always" className="admin-login-card">
           <div className="admin-login-badge">
             <IconShield />
-            <span>Admin Console</span>
           </div>
           <Title heading={3}>登录管理后台</Title>
           <Text type="tertiary">请选择管理员身份并输入账号密码</Text>

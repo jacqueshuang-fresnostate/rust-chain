@@ -141,6 +141,10 @@ async fn cache_margin_ticker_at(
 
 async fn create_user(tx: &mut Transaction<'_, MySql>) -> u64 {
     let email = format!("margin-route-{}@example.test", Uuid::now_v7().simple());
+    create_user_with_email(tx, email).await
+}
+
+async fn create_user_with_email(tx: &mut Transaction<'_, MySql>, email: String) -> u64 {
     sqlx::query("INSERT INTO users (email, password_hash) VALUES (?, ?)")
         .bind(email)
         .bind("not-a-real-hash")
@@ -1459,7 +1463,11 @@ async fn admin_margin_positions_filter_history_and_return_interest_fields()
     let settings = test_settings();
     let mut fixture_tx = pool.begin().await?;
     let admin_id = create_admin(&pool).await;
-    let user_id = create_user(&mut fixture_tx).await;
+    let user_email = format!(
+        "margin-admin-filter-{}@example.test",
+        Uuid::now_v7().simple()
+    );
+    let user_id = create_user_with_email(&mut fixture_tx, user_email.clone()).await;
     let other_user_id = create_user(&mut fixture_tx).await;
     let (base_asset, base_symbol) = create_asset(&mut fixture_tx, "HB").await;
     let (quote_asset, quote_symbol) = create_asset(&mut fixture_tx, "HQ").await;
@@ -1576,7 +1584,7 @@ async fn admin_margin_positions_filter_history_and_return_interest_fields()
         .oneshot(
             Request::builder()
                 .uri(format!(
-                    "/margin/positions?user_id={user_id}&pair_id={pair_id}&status=liquidated&limit=10"
+                    "/margin/positions?email={user_email}&pair_id={pair_id}&status=liquidated&limit=10"
                 ))
                 .header("authorization", format!("Bearer {admin_token}"))
                 .body(Body::empty())
@@ -1617,7 +1625,7 @@ async fn admin_margin_positions_filter_history_and_return_interest_fields()
         .oneshot(
             Request::builder()
                 .uri(format!(
-                    "/margin/positions?user_id={user_id}&status=closed&limit=10"
+                    "/margin/positions?email={user_email}&status=closed&limit=10"
                 ))
                 .header("authorization", format!("Bearer {admin_token}"))
                 .body(Body::empty())
@@ -1720,7 +1728,11 @@ async fn admin_margin_interest_summary_groups_by_status_and_filters() -> Result<
     let settings = test_settings();
     let mut fixture_tx = pool.begin().await?;
     let admin_id = create_admin(&pool).await;
-    let user_id = create_user(&mut fixture_tx).await;
+    let user_email = format!(
+        "margin-interest-filter-{}@example.test",
+        Uuid::now_v7().simple()
+    );
+    let user_id = create_user_with_email(&mut fixture_tx, user_email.clone()).await;
     let other_user_id = create_user(&mut fixture_tx).await;
     let (base_asset, base_symbol) = create_asset(&mut fixture_tx, "IB").await;
     let (quote_asset, quote_symbol) = create_asset(&mut fixture_tx, "IQ").await;
@@ -1832,7 +1844,7 @@ async fn admin_margin_interest_summary_groups_by_status_and_filters() -> Result<
         .oneshot(
             Request::builder()
                 .uri(format!(
-                    "/margin/interest/summary?user_id={user_id}&pair_id={pair_id}&limit=10"
+                    "/margin/interest/summary?email={user_email}&pair_id={pair_id}&limit=10"
                 ))
                 .header("authorization", format!("Bearer {admin_token}"))
                 .body(Body::empty())
@@ -1869,7 +1881,7 @@ async fn admin_margin_interest_summary_groups_by_status_and_filters() -> Result<
         .oneshot(
             Request::builder()
                 .uri(format!(
-                    "/margin/interest/summary?user_id={user_id}&pair_id={pair_id}&status=opened&limit=10"
+                    "/margin/interest/summary?email={user_email}&pair_id={pair_id}&status=opened&limit=10"
                 ))
                 .header("authorization", format!("Bearer {admin_token}"))
                 .body(Body::empty())

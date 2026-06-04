@@ -58,6 +58,7 @@ struct ListPositionsQuery {
 #[derive(Debug, Deserialize)]
 struct AdminListPositionsQuery {
     user_id: Option<u64>,
+    email: Option<String>,
     pair_id: Option<u64>,
     status: Option<String>,
     limit: Option<u32>,
@@ -66,6 +67,7 @@ struct AdminListPositionsQuery {
 #[derive(Debug, Deserialize)]
 struct AdminInterestSummaryQuery {
     user_id: Option<u64>,
+    email: Option<String>,
     pair_id: Option<u64>,
     status: Option<String>,
     limit: Option<u32>,
@@ -479,6 +481,7 @@ async fn list_admin_positions(
         builder.push(" AND user_id = ");
         builder.push_bind(user_id);
     }
+    push_user_email_filter(&mut builder, "user_id", query.email);
     if let Some(pair_id) = query.pair_id {
         builder.push(" AND pair_id = ");
         builder.push_bind(pair_id);
@@ -527,6 +530,7 @@ async fn list_admin_interest_summary(
         builder.push(" AND user_id = ");
         builder.push_bind(user_id);
     }
+    push_user_email_filter(&mut builder, "user_id", query.email);
     if let Some(pair_id) = query.pair_id {
         builder.push(" AND pair_id = ");
         builder.push_bind(pair_id);
@@ -1787,6 +1791,20 @@ fn optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
+}
+
+fn push_user_email_filter(
+    builder: &mut QueryBuilder<'_, MySql>,
+    user_id_column: &'static str,
+    email: Option<String>,
+) {
+    if let Some(email) = optional_string(email) {
+        builder.push(" AND EXISTS (SELECT 1 FROM users WHERE users.id = ");
+        builder.push(user_id_column);
+        builder.push(" AND users.email = ");
+        builder.push_bind(email);
+        builder.push(")");
+    }
 }
 
 fn mysql_pool(state: &AppState) -> AppResult<Pool<MySql>> {

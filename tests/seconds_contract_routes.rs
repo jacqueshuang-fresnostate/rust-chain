@@ -144,6 +144,10 @@ fn state_with_mysql_redis_and_events(
 
 async fn create_user(tx: &mut Transaction<'_, MySql>) -> u64 {
     let email = format!("seconds-route-{}@example.test", Uuid::now_v7().simple());
+    create_user_with_email(tx, email).await
+}
+
+async fn create_user_with_email(tx: &mut Transaction<'_, MySql>, email: String) -> u64 {
     sqlx::query("INSERT INTO users (email, password_hash) VALUES (?, ?)")
         .bind(email)
         .bind("not-a-real-hash")
@@ -1150,7 +1154,11 @@ async fn admin_seconds_contract_lists_orders_with_filters_and_timestamp()
     )
     .execute(&mut *fixture_tx)
     .await?;
-    let user_id = create_user(&mut fixture_tx).await;
+    let user_email = format!(
+        "seconds-admin-filter-{}@example.test",
+        Uuid::now_v7().simple()
+    );
+    let user_id = create_user_with_email(&mut fixture_tx, user_email.clone()).await;
     let other_user_id = create_user(&mut fixture_tx).await;
     let (base_asset, base_symbol) = create_asset(&mut fixture_tx, "AB").await;
     let (quote_asset, quote_symbol) = create_asset(&mut fixture_tx, "AQ").await;
@@ -1201,6 +1209,31 @@ async fn admin_seconds_contract_lists_orders_with_filters_and_timestamp()
     .bind("2037-01-01 05:00:00.000000")
     .bind("2037-01-01 05:01:00.000000")
     .bind("2037-01-01 05:00:00.000000")
+    .execute(&mut *fixture_tx)
+    .await?
+    .last_insert_id();
+    let other_settled_order_id = sqlx::query(
+        r#"INSERT INTO seconds_contract_orders
+           (user_id, product_id, pair_id, stake_asset, direction, stake_amount,
+            payout_rate, entry_price, status, result, idempotency_key,
+            opened_at, expires_at, settled_at, created_at)
+           VALUES (?, ?, ?, ?, 'down', ?, ?, ?, 'settled', 'lose', ?, ?, ?, ?, ?)"#,
+    )
+    .bind(other_user_id)
+    .bind(product_id)
+    .bind(pair_id)
+    .bind(quote_asset)
+    .bind(decimal("25.000000000000000000"))
+    .bind(decimal("0.80000000"))
+    .bind(decimal("101.500000000000000000"))
+    .bind(format!(
+        "seconds-admin-list-other-settled-{}",
+        Uuid::now_v7().simple()
+    ))
+    .bind("2037-01-01 05:30:00.000000")
+    .bind("2037-01-01 05:31:00.000000")
+    .bind("2037-01-01 05:31:00.000000")
+    .bind("2037-01-01 05:30:00.000000")
     .execute(&mut *fixture_tx)
     .await?
     .last_insert_id();
@@ -1278,7 +1311,7 @@ async fn admin_seconds_contract_lists_orders_with_filters_and_timestamp()
         .oneshot(
             Request::builder()
                 .uri(format!(
-                    "/seconds-contracts/orders?user_id={user_id}&status=settled&limit=10"
+                    "/seconds-contracts/orders?email={user_email}&status=settled&limit=10"
                 ))
                 .header("authorization", format!("Bearer {admin_token}"))
                 .body(Body::empty())
@@ -1297,6 +1330,11 @@ async fn admin_seconds_contract_lists_orders_with_filters_and_timestamp()
     let filtered_orders = filtered_payload["orders"].as_array().unwrap();
     assert_eq!(filtered_orders.len(), 1);
     assert_eq!(filtered_orders[0]["id"], settled_order_id);
+    assert!(
+        !filtered_orders
+            .iter()
+            .any(|order| order["id"] == other_settled_order_id)
+    );
     assert_eq!(filtered_orders[0]["user_id"], user_id);
     assert_eq!(filtered_orders[0]["status"], "settled");
     assert_eq!(filtered_orders[0]["result"], "win");

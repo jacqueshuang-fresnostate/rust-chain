@@ -93,6 +93,14 @@ describe('AdminLayout', () => {
     expect(sider).toHaveStyle({ width: '360px' });
   });
 
+  it('keeps the sidebar drag target easy to hit at the layout edge', () => {
+    renderAdminLayout();
+
+    const resizeHandle = screen.getByRole('separator', { name: '调整导航宽度' });
+
+    expect(resizeHandle).toHaveStyle({ width: '16px', right: '-8px', touchAction: 'none' });
+  });
+
   it('resizes the sidebar with pointer drag events', () => {
     renderAdminLayout();
 

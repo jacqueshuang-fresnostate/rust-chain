@@ -157,11 +157,12 @@ body {
 .admin-shell-sider-resizer {
   position: absolute;
   top: 0;
-  right: -4px;
+  right: -8px;
   z-index: 2;
-  width: 8px;
+  width: 16px;
   height: 100%;
   cursor: col-resize;
+  touch-action: none;
 }
 
 .admin-shell-sider-resizer:focus-visible,
@@ -416,6 +417,11 @@ body {
   font-weight: 600;
 }
 
+.admin-data-table .semi-table-row-head,
+.admin-data-table .semi-table-row-cell {
+  white-space: nowrap;
+}
+
 .admin-shell-content .semi-table-tbody > .semi-table-row:hover > .semi-table-row-cell {
   background: #f8fbff;
 }
@@ -554,6 +560,33 @@ body {
 
 .admin-action-checkbox .semi-checkbox {
   margin: 0;
+}
+
+.admin-action-subscription-list {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid #eaedf3;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.admin-action-subscription-list th,
+.admin-action-subscription-list td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #eaedf3;
+  color: #344054;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.admin-action-subscription-list th {
+  background: #f9fafb;
+  color: #475467;
+  font-weight: 600;
+}
+
+.admin-action-subscription-list tr:last-child td {
+  border-bottom: 0;
 }
 
 .admin-earn-product-layout {

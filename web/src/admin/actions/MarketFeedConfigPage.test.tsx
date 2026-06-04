@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -121,6 +121,28 @@ describe('MarketFeedConfigPage', () => {
     expect(screen.getByText('成功')).toBeInTheDocument();
     expect(screen.getByText(/运行 symbols：BTCUSDT,ETHUSDT/)).toBeInTheDocument();
     expect(screen.getByText(/bitget:abcd\*\*\*\*wxyz/)).toBeInTheDocument();
+  });
+
+  it('renders market feed subscriptions as a toggleable list', async () => {
+    const user = userEvent.setup();
+
+    render(<MarketFeedConfigPage />);
+
+    const list = await screen.findByRole('table', { name: '行情订阅列表' });
+    expect(within(list).getByRole('columnheader', { name: '类型' })).toBeInTheDocument();
+    expect(within(list).getByRole('columnheader', { name: '订阅项' })).toBeInTheDocument();
+    expect(within(list).getByRole('columnheader', { name: '状态' })).toBeInTheDocument();
+    expect(within(list).getAllByRole('cell', { name: '行情源' })).toHaveLength(2);
+    expect(within(list).getAllByRole('cell', { name: '交易对' })).toHaveLength(2);
+    expect(within(list).getAllByRole('cell', { name: 'K线周期' })).toHaveLength(5);
+    expect(within(list).getByRole('cell', { name: 'htx' })).toBeInTheDocument();
+    expect(within(list).getByRole('cell', { name: 'BTCUSDT' })).toBeInTheDocument();
+    expect(within(list).getByRole('cell', { name: '1m' })).toBeInTheDocument();
+
+    await user.click(within(list).getByRole('button', { name: '禁用 行情源 htx' }));
+
+    expect(screen.getByRole('checkbox', { name: 'htx' })).not.toBeChecked();
+    expect(within(list).getByRole('button', { name: '启用 行情源 htx' })).toBeInTheDocument();
   });
 
   it('saves config with selected intervals, providers, and operation reason', async () => {

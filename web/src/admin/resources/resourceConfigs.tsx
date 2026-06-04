@@ -164,7 +164,7 @@ export const resourceConfigs = {
     title: '钱包账户',
     endpoint: '/admin/api/v1/wallet/accounts',
     responseKey: 'accounts',
-    filters: [userFilter, assetFilter, limitFilter],
+    filters: [userFilter, emailFilter, assetFilter, limitFilter],
     columns: [
       { key: 'id', title: '账户ID' },
       { key: 'user_id', title: '用户ID' },
@@ -180,7 +180,7 @@ export const resourceConfigs = {
     title: '钱包流水',
     endpoint: '/admin/api/v1/wallet/ledger',
     responseKey: 'ledger',
-    filters: [userFilter, assetFilter, { key: 'change_type', label: '变动类型' }, { key: 'ref_type', label: '来源类型' }, limitFilter],
+    filters: [userFilter, emailFilter, assetFilter, { key: 'change_type', label: '变动类型' }, { key: 'ref_type', label: '来源类型' }, limitFilter],
     columns: [
       { key: 'id', title: '流水ID' },
       { key: 'user_id', title: '用户ID' },
@@ -222,7 +222,7 @@ export const resourceConfigs = {
     title: '风控事件',
     endpoint: '/admin/api/v1/risk/events',
     responseKey: 'events',
-    filters: [userFilter, { key: 'decision', label: '决策' }, { key: 'risk_level', label: '风险等级' }, limitFilter],
+    filters: [userFilter, emailFilter, { key: 'decision', label: '决策' }, { key: 'risk_level', label: '风险等级' }, limitFilter],
     columns: [
       { key: 'id', title: '事件ID' },
       { key: 'user_id', title: '用户ID' },
@@ -239,7 +239,7 @@ export const resourceConfigs = {
     title: '代理佣金',
     endpoint: '/admin/api/v1/agent-commissions',
     responseKey: 'commissions',
-    filters: [userFilter, { key: 'agent_id', label: '代理ID' }, statusFilter, limitFilter],
+    filters: [userFilter, emailFilter, { key: 'agent_id', label: '代理ID' }, statusFilter, limitFilter],
     columns: [
       { key: 'id', title: 'ID' },
       { key: 'agent_id', title: '代理ID' },
@@ -277,7 +277,7 @@ export const resourceConfigs = {
     title: '现货订单',
     endpoint: '/admin/api/v1/spot/orders',
     responseKey: 'orders',
-    filters: [userFilter, pairFilter, statusFilter, limitFilter],
+    filters: [userFilter, emailFilter, pairFilter, statusFilter, limitFilter],
     rowActions: (record, helpers) => <SpotOrderRowActions helpers={helpers} record={record} />,
     columns: [
       { key: 'id', title: '订单ID' },
@@ -295,7 +295,7 @@ export const resourceConfigs = {
     title: '现货成交',
     endpoint: '/admin/api/v1/spot/trades',
     responseKey: 'trades',
-    filters: [userFilter, pairFilter, limitFilter],
+    filters: [userFilter, emailFilter, pairFilter, limitFilter],
     columns: [
       { key: 'id', title: '成交ID' },
       { key: 'pair_id', title: '交易对ID' },
@@ -329,7 +329,7 @@ export const resourceConfigs = {
     title: '发行申购',
     endpoint: '/admin/api/v1/new-coins/subscriptions',
     responseKey: 'subscriptions',
-    filters: [projectFilter, userFilter, statusFilter, limitFilter],
+    filters: [projectFilter, userFilter, emailFilter, statusFilter, limitFilter],
     columns: [
       { key: 'id', title: '申购ID' },
       { key: 'project_id', title: '项目ID' },
@@ -346,7 +346,7 @@ export const resourceConfigs = {
     title: '派发记录',
     endpoint: '/admin/api/v1/new-coins/distributions',
     responseKey: 'distributions',
-    filters: [projectFilter, userFilter, statusFilter, limitFilter],
+    filters: [projectFilter, userFilter, emailFilter, statusFilter, limitFilter],
     columns: [
       { key: 'id', title: '派发ID' },
       { key: 'project_id', title: '项目ID' },
@@ -363,7 +363,7 @@ export const resourceConfigs = {
     title: '上市认购',
     endpoint: '/admin/api/v1/new-coins/purchases',
     responseKey: 'purchases',
-    filters: [projectFilter, userFilter, statusFilter, limitFilter],
+    filters: [projectFilter, userFilter, emailFilter, statusFilter, limitFilter],
     columns: [
       { key: 'id', title: '订单ID' },
       { key: 'project_id', title: '项目ID' },
@@ -380,7 +380,7 @@ export const resourceConfigs = {
     title: '锁仓仓位',
     endpoint: '/admin/api/v1/new-coins/lock-positions',
     responseKey: 'lock_positions',
-    filters: [userFilter, assetFilter, statusFilter, limitFilter],
+    filters: [userFilter, emailFilter, assetFilter, statusFilter, limitFilter],
     columns: [
       { key: 'id', title: '仓位ID' },
       { key: 'user_id', title: '用户ID' },
@@ -397,7 +397,7 @@ export const resourceConfigs = {
     title: '解禁记录',
     endpoint: '/admin/api/v1/new-coins/unlocks',
     responseKey: 'unlocks',
-    filters: [userFilter, assetFilter, statusFilter, { key: 'fee_paid_status', label: '矿工费状态' }, limitFilter],
+    filters: [userFilter, emailFilter, assetFilter, statusFilter, { key: 'fee_paid_status', label: '矿工费状态' }, limitFilter],
     columns: [
       { key: 'id', title: '解禁ID' },
       { key: 'user_id', title: '用户ID' },
@@ -432,7 +432,7 @@ export const resourceConfigs = {
     title: '闪兑订单',
     endpoint: '/admin/api/v1/convert/orders',
     responseKey: 'orders',
-    filters: [userFilter, statusFilter, limitFilter],
+    filters: [userFilter, emailFilter, statusFilter, limitFilter],
     rowActions: (record, helpers) => <ConvertOrderRowActions helpers={helpers} record={record} />,
     columns: [
       { key: 'id', title: '订单ID' },
@@ -505,7 +505,7 @@ export const resourceConfigs = {
     title: '秒合约订单',
     endpoint: '/admin/api/v1/seconds-contracts/orders',
     responseKey: 'orders',
-    filters: [userFilter, statusFilter, limitFilter],
+    filters: [userFilter, emailFilter, statusFilter, limitFilter],
     rowActions: (record, helpers) => <SecondsOrderRowActions helpers={helpers} record={record} />,
     columns: [
       { key: 'id', title: '订单ID' },
@@ -544,7 +544,7 @@ export const resourceConfigs = {
     title: '杠杆仓位',
     endpoint: '/admin/api/v1/margin/positions',
     responseKey: 'positions',
-    filters: [userFilter, pairFilter, statusFilter, limitFilter],
+    filters: [userFilter, emailFilter, pairFilter, statusFilter, limitFilter],
     rowActions: (record, helpers) => <MarginPositionRowActions helpers={helpers} record={record} />,
     columns: [
       { key: 'id', title: '仓位ID' },
@@ -562,7 +562,7 @@ export const resourceConfigs = {
     title: '强平记录',
     endpoint: '/admin/api/v1/margin/liquidations',
     responseKey: 'liquidations',
-    filters: [userFilter, pairFilter, { key: 'position_id', label: '仓位ID' }, limitFilter],
+    filters: [userFilter, emailFilter, pairFilter, { key: 'position_id', label: '仓位ID' }, limitFilter],
     rowActions: (record, helpers) => <MarginLiquidationRowActions helpers={helpers} record={record} />,
     columns: [
       { key: 'id', title: '记录ID' },
@@ -580,7 +580,7 @@ export const resourceConfigs = {
     title: '利息汇总',
     endpoint: '/admin/api/v1/margin/interest/summary',
     responseKey: 'summaries',
-    filters: [userFilter, pairFilter, statusFilter, limitFilter],
+    filters: [userFilter, emailFilter, pairFilter, statusFilter, limitFilter],
     columns: [
       { key: 'margin_asset', title: '保证金资产' },
       { key: 'status', title: '仓位状态', type: 'status' },
@@ -612,7 +612,7 @@ export const resourceConfigs = {
     title: '理财申购',
     endpoint: '/admin/api/v1/earn/subscriptions',
     responseKey: 'subscriptions',
-    filters: [userFilter, statusFilter, limitFilter],
+    filters: [userFilter, emailFilter, statusFilter, limitFilter],
     rowActions: (record, helpers) => <EarnSubscriptionRowActions helpers={helpers} record={record} />,
     columns: [
       { key: 'id', title: '申购ID' },
