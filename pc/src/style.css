@@ -1,0 +1,248 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 10% 98%;
+    --foreground: 240 10% 3.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+
+    --primary: 240 5.9% 10%;
+    --primary-foreground: 0 0% 98%;
+
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 240 5.9% 10%;
+
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    /* Cyberpunk Deep Dark Background */
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+
+    /* Neon Blue as Primary */
+    --primary: 180 100% 50%; /* #00f3ff */
+    --primary-foreground: 240 10% 3.9%;
+
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+
+    /* Neon Red/Pink for Destructive */
+    --destructive: 0 100% 50%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 180 100% 50%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Cyberpunk Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-cyber-black;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-700 rounded-full hover:bg-neon-blue transition-colors;
+}
+
+/* Neon Glow Utilities */
+.text-glow {
+  text-shadow: 0 0 10px currentColor;
+}
+.box-glow {
+  box-shadow: 0 0 15px currentColor;
+}
+
+/* ===== Toast Customization ===== */
+
+/* Base container — position slightly lower for trading headers */
+.Vue-Toastification__container {
+  z-index: 99999 !important;
+}
+
+/* Base toast — glassmorphism card matching --card bg */
+.Vue-Toastification__toast {
+  background: rgba(10, 10, 18, 0.92) !important;
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 10px !important;
+  padding: 12px 16px !important;
+  min-height: 48px !important;
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.5),
+    0 0 1px rgba(255, 255, 255, 0.1);
+  font-family: 'Inter', 'SF Pro Display', -apple-system, sans-serif;
+  font-weight: 500;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.9);
+  letter-spacing: 0.01em;
+}
+
+/* Success — neon green accent */
+.Vue-Toastification__toast--success {
+  border-color: rgba(0, 255, 159, 0.25) !important;
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.5),
+    0 0 12px rgba(0, 255, 159, 0.08),
+    inset 0 0 20px rgba(0, 255, 159, 0.03);
+}
+.Vue-Toastification__toast--success .Vue-Toastification__toast-body {
+  color: rgba(0, 255, 159, 0.95);
+}
+.Vue-Toastification__toast--success .Vue-Toastification__icon {
+  color: #00ff9f;
+  filter: drop-shadow(0 0 4px rgba(0, 255, 159, 0.4));
+}
+
+/* Error — neon red accent */
+.Vue-Toastification__toast--error {
+  border-color: rgba(255, 0, 85, 0.25) !important;
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.5),
+    0 0 12px rgba(255, 0, 85, 0.08),
+    inset 0 0 20px rgba(255, 0, 85, 0.03);
+}
+.Vue-Toastification__toast--error .Vue-Toastification__toast-body {
+  color: rgba(255, 0, 85, 0.95);
+}
+.Vue-Toastification__toast--error .Vue-Toastification__icon {
+  color: #ff0055;
+  filter: drop-shadow(0 0 4px rgba(255, 0, 85, 0.4));
+}
+
+/* Warning — neon yellow accent */
+.Vue-Toastification__toast--warning {
+  border-color: rgba(252, 238, 10, 0.2) !important;
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.5),
+    0 0 12px rgba(252, 238, 10, 0.06),
+    inset 0 0 20px rgba(252, 238, 10, 0.02);
+}
+.Vue-Toastification__toast--warning .Vue-Toastification__toast-body {
+  color: rgba(252, 238, 10, 0.9);
+}
+.Vue-Toastification__toast--warning .Vue-Toastification__icon {
+  color: #fcee0a;
+  filter: drop-shadow(0 0 4px rgba(252, 238, 10, 0.4));
+}
+
+/* Info — neon blue accent (primary) */
+.Vue-Toastification__toast--info {
+  border-color: rgba(0, 243, 255, 0.2) !important;
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.5),
+    0 0 12px rgba(0, 243, 255, 0.06),
+    inset 0 0 20px rgba(0, 243, 255, 0.02);
+}
+.Vue-Toastification__toast--info .Vue-Toastification__toast-body {
+  color: rgba(0, 243, 255, 0.9);
+}
+.Vue-Toastification__toast--info .Vue-Toastification__icon {
+  color: #00f3ff;
+  filter: drop-shadow(0 0 4px rgba(0, 243, 255, 0.4));
+}
+
+/* Default (no type) */
+.Vue-Toastification__toast--default .Vue-Toastification__toast-body {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* Progress bar */
+.Vue-Toastification__progress-bar {
+  height: 2px !important;
+  bottom: 0;
+  opacity: 0.6;
+  border-radius: 0 0 10px 10px;
+}
+.Vue-Toastification__toast--success .Vue-Toastification__progress-bar {
+  background: linear-gradient(90deg, transparent, #00ff9f) !important;
+}
+.Vue-Toastification__toast--error .Vue-Toastification__progress-bar {
+  background: linear-gradient(90deg, transparent, #ff0055) !important;
+}
+.Vue-Toastification__toast--warning .Vue-Toastification__progress-bar {
+  background: linear-gradient(90deg, transparent, #fcee0a) !important;
+}
+.Vue-Toastification__toast--info .Vue-Toastification__progress-bar {
+  background: linear-gradient(90deg, transparent, #00f3ff) !important;
+}
+.Vue-Toastification__toast--default .Vue-Toastification__progress-bar {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3)) !important;
+}
+
+/* Close button */
+.Vue-Toastification__close-button {
+  color: rgba(255, 255, 255, 0.3) !important;
+  font-weight: 300;
+  opacity: 1;
+  transition: color 0.2s;
+}
+.Vue-Toastification__close-button:hover {
+  color: rgba(255, 255, 255, 0.7) !important;
+}
+
+/* Icon wrapper */
+.Vue-Toastification__icon {
+  margin-right: 10px;
+  min-width: 20px;
+}
+
+/* Toast body text */
+.Vue-Toastification__toast-body {
+  line-height: 1.4;
+}
+
+/* Slide animation refinement */
+.Vue-Toastification__bounce-enter-active {
+  animation-duration: 0.3s !important;
+  animation-timing-function: cubic-bezier(0.21, 1.02, 0.73, 1) !important;
+}
+.Vue-Toastification__bounce-leave-active {
+  animation-duration: 0.2s !important;
+}

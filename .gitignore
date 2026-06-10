@@ -9,9 +9,16 @@
 # Frontend
 /web/node_modules/
 /web/dist/
+/pc/node_modules/
+/pc/dist/
+/pc/*.tsbuildinfo
+/pc/src-tauri/target/
+/pc/web-retrieval-mcp/node_modules/
+/pc/web-retrieval-mcp/build/
 
 # Local IDE and tool state
 /.idea/
+/pc/.idea/
 /.codegraph/
 /.claude/settings*.json
 

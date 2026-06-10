@@ -1,0 +1,26 @@
+- [x] Fix Spot API based on documentation
+- [x] Fix Router Blank Page Issue
+- [x] Fix TVChart props.symbol race condition
+- [x] Change API request content type to x-www-form-urlencoded
+- [x] Update API header to use x-auth-token
+- [x] Add key to router-view to fix blank page
+- [x] Fix shared WebSocket disconnection issue
+- [x] Fix OrderBook data binding
+- [x] Improve user profile display in Header
+- [x] Add Contract and OTC requirements to AGENT.md
+- [x] Implement Hot Update System (Phase 5)
+- [x] Add Remember Password feature to Login page
+- [x] Integrate Spot Trading API (Buy/Sell) based on 接口.md
+- [x] Fix Order History refresh after trade execution
+- [x] Implement Phase 6: IEO/Launchpad Module (Refactored with Real API & Layout)
+- [x] Implement Phase 7: AI Finance Module (List & Stats)
+- [x] Refactor AI Finance UI: Add Investment Modal & Input Flow
+- [x] Connect AI Finance Investment API (/uc/ai-finance/add)
+- [x] Implement Guest View for Finance Page (Login Prompt)
+- [x] Optimize Finance Guest View UI (Cyberpunk Style)
+- [x] Implement Loan Module (Cycle Selection, Limit, Apply)
+- [x] Connect Loan Module to Real APIs (/uc/installment/list, /uc/installment/apply)
+- [x] Implement Transaction History in User Center
+- [x] Optimize Binary Options Buttons (Cyberpunk Style)
+- [x] Add Market List sidebar to Binary Options page
+- [ ] Implement Recharge and Withdraw pages in User Center
