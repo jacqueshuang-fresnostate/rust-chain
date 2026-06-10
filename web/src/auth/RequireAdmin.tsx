@@ -8,6 +8,10 @@ export function RequireAdmin({ children }: { children: ReactNode }) {
   const session = authStore.getSession();
 
   if (!session) {
+    if (authStore.getSession('agent')) {
+      return <Navigate to="/403" replace />;
+    }
+
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 

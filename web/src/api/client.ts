@@ -1,4 +1,4 @@
-import { authStore } from '../auth/authStore';
+import { authStore, type AuthScope } from '../auth/authStore';
 import type { ApiErrorPayload } from './types';
 
 export class ApiError extends Error {
@@ -15,21 +15,29 @@ export class ApiError extends Error {
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? '';
 
-export async function apiRequest<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers);
-  headers.set('Content-Type', 'application/json');
+type ApiRequestInit = RequestInit & {
+  authScope?: AuthScope;
+};
 
-  const session = authStore.getSession();
+export async function apiRequest<T = unknown>(path: string, init: ApiRequestInit = {}): Promise<T> {
+  const { authScope = 'admin', ...requestInit } = init;
+  const headers = new Headers(requestInit.headers);
+  const isFormData = typeof FormData !== 'undefined' && requestInit.body instanceof FormData;
+  if (!isFormData && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  const session = authStore.getSession(authScope);
   if (session?.accessToken) {
     headers.set('Authorization', `Bearer ${session.accessToken}`);
   }
 
-  const response = await fetch(`${apiBaseUrl}${path}`, { ...init, headers });
+  const response = await fetch(`${apiBaseUrl}${path}`, { ...requestInit, headers });
 
   if (!response.ok) {
     const payload = await safeErrorPayload(response);
     if (response.status === 401) {
-      authStore.clearSession();
+      authStore.clearSession(authScope);
     }
     throw new ApiError(response.status, payload.code ?? `HTTP_${response.status}`, payload.message ?? response.statusText);
   }

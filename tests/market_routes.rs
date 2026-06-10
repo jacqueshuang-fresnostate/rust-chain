@@ -6,7 +6,9 @@ use bigdecimal::BigDecimal;
 use chrono::{TimeZone, Utc};
 use exchange_api::{
     config::Settings,
-    modules::market::{KlineQuery, MarketTickerCacheEntry, routes},
+    modules::market::{
+        KlineQuery, MarketDepthCacheEntry, MarketDepthLevel, MarketTickerCacheEntry, routes,
+    },
     state::AppState,
 };
 use redis::AsyncCommands;
@@ -244,6 +246,64 @@ async fn market_ticker_route_returns_clear_error_without_redis() {
 }
 
 #[tokio::test]
+async fn market_depth_route_returns_clear_error_without_redis() {
+    let app = routes::routes().with_state(AppState::new(test_settings()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/markets/BTC-USDT/depth")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(payload["code"], "INTERNAL_ERROR");
+    assert!(
+        payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("redis connection is not configured for market depth routes")
+    );
+}
+
+#[tokio::test]
+async fn market_trades_route_returns_clear_error_without_mysql() {
+    let app = routes::routes().with_state(AppState::new(test_settings()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/markets/BTC-USDT/trades?limit=5")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(payload["code"], "INTERNAL_ERROR");
+    assert!(
+        payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("mysql pool is not configured for market trade routes")
+    );
+}
+
+#[tokio::test]
 async fn market_ticker_route_reads_latest_cached_ticker() -> Result<(), Box<dyn Error>> {
     let Some(redis_url) = env_or_skip("REDIS_URL") else {
         return Ok(());
@@ -285,6 +345,167 @@ async fn market_ticker_route_reads_latest_cached_ticker() -> Result<(), Box<dyn 
     assert_eq!(payload["observed_at"], observed_at.timestamp_millis());
 
     let _: usize = raw_connection.del(ticker.redis_key()).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn market_depth_route_reads_latest_cached_depth() -> Result<(), Box<dyn Error>> {
+    let Some(redis_url) = env_or_skip("REDIS_URL") else {
+        return Ok(());
+    };
+    let client = redis::Client::open(redis_url)?;
+    let manager = redis::aio::ConnectionManager::new(client).await?;
+    let observed_at = Utc.with_ymd_and_hms(2026, 5, 28, 12, 55, 0).unwrap();
+    let depth = MarketDepthCacheEntry::new(
+        "BTC-USDT",
+        vec![MarketDepthLevel::new(
+            decimal("70000.000000000000000000"),
+            decimal("1.250000000000000000"),
+        )],
+        vec![MarketDepthLevel::new(
+            decimal("70002.000000000000000000"),
+            decimal("0.750000000000000000"),
+        )],
+        observed_at,
+    )?;
+    let mut raw_connection = manager.clone();
+    let _: usize = raw_connection.del(depth.redis_key()).await?;
+    let payload = serde_json::to_string(&depth)?;
+    let _: () = raw_connection.set(depth.redis_key(), payload).await?;
+    let app = routes::routes().with_state(AppState::new(test_settings()).with_redis(manager));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/markets/BTC-USDT/depth")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(status, StatusCode::OK, "payload: {payload}");
+    assert_eq!(payload["symbol"], "BTCUSDT");
+    assert_eq!(payload["bids"][0]["price"], "70000.000000000000000000");
+    assert_eq!(payload["bids"][0]["amount"], "1.250000000000000000");
+    assert_eq!(payload["asks"][0]["price"], "70002.000000000000000000");
+    assert_eq!(payload["asks"][0]["amount"], "0.750000000000000000");
+    assert_eq!(payload["observed_at"], observed_at.timestamp_millis());
+
+    let _: usize = raw_connection.del(depth.redis_key()).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn market_trades_route_reads_recent_spot_trades_from_mysql() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool_or_skip().await? else {
+        return Ok(());
+    };
+    let base_symbol = unique_symbol("MTB");
+    let quote_symbol = unique_symbol("MTQ");
+    let base_asset_id = create_market_asset(&pool, &base_symbol).await?;
+    let quote_asset_id = create_market_asset(&pool, &quote_symbol).await?;
+    let pair_symbol = format!("{base_symbol}-{quote_symbol}");
+    let pair_id = sqlx::query(
+        r#"INSERT INTO trading_pairs
+           (base_asset, quote_asset, symbol, price_precision, qty_precision, min_order_value, status, market_type)
+           VALUES (?, ?, ?, 8, 8, 1, 'active', 'external')"#,
+    )
+    .bind(base_asset_id)
+    .bind(quote_asset_id)
+    .bind(&pair_symbol)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let user_id = sqlx::query(
+        "INSERT INTO users (email, password_hash, status) VALUES (?, 'hash', 'active')",
+    )
+    .bind(format!("{}@example.test", pair_symbol.to_ascii_lowercase()))
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let buy_order_id = sqlx::query(
+        r#"INSERT INTO spot_orders
+           (user_id, pair_id, side, order_type, price, quantity, filled_quantity, status)
+           VALUES (?, ?, 'buy', 'limit', 1, 1, 1, 'filled')"#,
+    )
+    .bind(user_id)
+    .bind(pair_id)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let sell_order_id = sqlx::query(
+        r#"INSERT INTO spot_orders
+           (user_id, pair_id, side, order_type, price, quantity, filled_quantity, status)
+           VALUES (?, ?, 'sell', 'limit', 1, 1, 1, 'filled')"#,
+    )
+    .bind(user_id)
+    .bind(pair_id)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let trade_id = sqlx::query(
+        r#"INSERT INTO spot_trades (pair_id, buy_order_id, sell_order_id, price, quantity, fee)
+           VALUES (?, ?, ?, 3.25, 4.5, 0)"#,
+    )
+    .bind(pair_id)
+    .bind(buy_order_id)
+    .bind(sell_order_id)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let app = routes::routes().with_state(AppState::new(test_settings()).with_mysql(pool.clone()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/markets/{pair_symbol}/trades?limit=5"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(status, StatusCode::OK, "payload: {payload}");
+    assert_eq!(payload["trades"][0]["id"], trade_id.to_string());
+    assert_eq!(payload["trades"][0]["symbol"], pair_symbol.replace('-', ""));
+    assert_eq!(payload["trades"][0]["price"], "3.250000000000000000");
+    assert_eq!(payload["trades"][0]["amount"], "4.500000000000000000");
+    assert_eq!(payload["trades"][0]["direction"], "BUY");
+    assert!(payload["trades"][0]["time"].as_i64().unwrap() > 0);
+
+    sqlx::query("DELETE FROM spot_trades WHERE id = ?")
+        .bind(trade_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM spot_orders WHERE id IN (?, ?)")
+        .bind(buy_order_id)
+        .bind(sell_order_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM trading_pairs WHERE id = ?")
+        .bind(pair_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id IN (?, ?)")
+        .bind(base_asset_id)
+        .bind(quote_asset_id)
+        .execute(&pool)
+        .await?;
     Ok(())
 }
 

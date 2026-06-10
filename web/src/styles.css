@@ -395,41 +395,6 @@ body {
   padding: 24px;
 }
 
-.admin-shell-content .semi-table-wrapper {
-  width: 100%;
-  border: 1px solid #eaedf3;
-  border-radius: 12px;
-  overflow: hidden;
-}
-
-.admin-shell-content .semi-table,
-.admin-shell-content .semi-table-container,
-.admin-shell-content .semi-table-body,
-.admin-shell-content .semi-table-scroll-position-left,
-.admin-shell-content .semi-table-scroll-position-right,
-.admin-shell-content .semi-table-scroll-position-middle {
-  width: 100%;
-}
-
-.admin-shell-content .semi-table-thead > .semi-table-row > .semi-table-row-head {
-  background: #f9fafb;
-  color: #475467;
-  font-weight: 600;
-}
-
-.admin-data-table .semi-table-row-head,
-.admin-data-table .semi-table-row-cell {
-  white-space: nowrap;
-}
-
-.admin-shell-content .semi-table-tbody > .semi-table-row:hover > .semi-table-row-cell {
-  background: #f8fbff;
-}
-
-.admin-shell-content .semi-pagination {
-  padding-top: 16px;
-}
-
 .admin-resource-header {
   width: 100%;
   display: flex;
@@ -560,33 +525,6 @@ body {
 
 .admin-action-checkbox .semi-checkbox {
   margin: 0;
-}
-
-.admin-action-subscription-list {
-  width: 100%;
-  border-collapse: collapse;
-  border: 1px solid #eaedf3;
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.admin-action-subscription-list th,
-.admin-action-subscription-list td {
-  padding: 10px 12px;
-  border-bottom: 1px solid #eaedf3;
-  color: #344054;
-  text-align: left;
-  white-space: nowrap;
-}
-
-.admin-action-subscription-list th {
-  background: #f9fafb;
-  color: #475467;
-  font-weight: 600;
-}
-
-.admin-action-subscription-list tr:last-child td {
-  border-bottom: 0;
 }
 
 .admin-earn-product-layout {

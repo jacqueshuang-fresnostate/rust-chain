@@ -14,7 +14,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 argon2 = "0.5"
-axum = { version = "0.7", features = ["macros", "ws"] }
+axum = { version = "0.7", features = ["macros", "multipart", "ws"] }
 base64 = "0.22"
 bigdecimal = { version = "0.4", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
@@ -22,16 +22,20 @@ config = "0.14"
 dotenvy = "0.15"
 flate2 = "1"
 futures-util = "0.3"
+hex = "0.4"
+hmac = "0.12"
 jsonwebtoken = "9"
 lapin = "2"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls"] }
 mongodb = "3"
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", features = ["json", "multipart", "rustls-tls"] }
 ring = "0.17"
 secrecy = { version = "0.8", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
+sha1 = "0.10"
+sha2 = "0.10"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "mysql", "chrono", "uuid", "bigdecimal", "migrate"] }
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }

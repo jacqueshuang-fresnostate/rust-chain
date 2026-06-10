@@ -175,6 +175,348 @@ async fn openapi_json_exposes_first_batch_contract() {
 }
 
 #[tokio::test]
+async fn openapi_json_documents_agent_management_contract() {
+    let openapi = openapi_json().await;
+
+    for (path, methods) in [
+        ("/admin/api/v1/agents", ["get", "post"].as_slice()),
+        ("/admin/api/v1/agents/{id}", ["get"].as_slice()),
+        ("/admin/api/v1/agents/{id}/status", ["patch"].as_slice()),
+        ("/admin/api/v1/users/{id}/agent", ["patch"].as_slice()),
+        ("/admin/api/v1/agent-commissions", ["get"].as_slice()),
+        (
+            "/admin/api/v1/agent-commissions/{id}/status",
+            ["patch"].as_slice(),
+        ),
+        (
+            "/admin/api/v1/agent-commission-rules",
+            ["get", "post"].as_slice(),
+        ),
+        (
+            "/admin/api/v1/agent-commission-rules/{id}",
+            ["patch"].as_slice(),
+        ),
+    ] {
+        for method in methods {
+            assert!(
+                openapi["paths"][path].get(*method).is_some(),
+                "missing {method} {path}"
+            );
+            assert!(
+                operation_has_bearer_security(&openapi, path, method),
+                "missing bearer security on {method} {path}"
+            );
+        }
+    }
+
+    assert!(
+        openapi["paths"]["/agent/api/v1/auth/register"]["post"]["responses"]
+            .get("403")
+            .is_some()
+    );
+    assert!(
+        openapi["paths"]["/agent/api/v1/auth/register"]["post"]["responses"]
+            .get("200")
+            .is_none()
+    );
+
+    let agent_auth_properties = &openapi["components"]["schemas"]["AgentAuthRequest"]["properties"];
+    assert!(agent_auth_properties.get("agent_id").is_none());
+
+    let create_agent_properties =
+        &openapi["components"]["schemas"]["CreateAdminAgentRequest"]["properties"];
+    assert!(create_agent_properties.get("admin_password").is_some());
+    assert!(create_agent_properties.get("admin_password_hash").is_none());
+    assert!(create_agent_properties.get("password_hash").is_none());
+
+    let agent_response_properties =
+        &openapi["components"]["schemas"]["AdminAgentResponse"]["properties"];
+    assert!(agent_response_properties.get("email").is_some());
+    assert!(agent_response_properties.get("admin_status").is_some());
+    assert!(agent_response_properties.get("password_hash").is_none());
+
+    let commission_status_properties =
+        &openapi["components"]["schemas"]["UpdateAdminAgentCommissionStatusRequest"]["properties"];
+    assert_eq!(
+        commission_status_properties["status"]["pattern"].as_str(),
+        Some("^(settled|rejected)$")
+    );
+
+    let commission_rule_properties =
+        &openapi["components"]["schemas"]["AdminAgentCommissionRuleResponse"]["properties"];
+    assert!(commission_rule_properties.get("updated_at").is_some());
+    assert!(commission_rule_properties.get("commission_rate").is_some());
+}
+
+#[tokio::test]
+async fn openapi_json_documents_agent_portal_contract() {
+    let openapi = openapi_json().await;
+
+    for (path, methods) in [
+        ("/agent/api/v1/me", ["get"].as_slice()),
+        ("/agent/api/v1/dashboard", ["get"].as_slice()),
+        ("/agent/api/v1/users", ["get"].as_slice()),
+        ("/agent/api/v1/invite-codes", ["get", "post"].as_slice()),
+        (
+            "/agent/api/v1/invite-codes/{id}/status",
+            ["patch"].as_slice(),
+        ),
+        ("/agent/api/v1/commissions", ["get"].as_slice()),
+        ("/agent/api/v1/convert/stats", ["get"].as_slice()),
+        ("/agent/api/v1/team-tree", ["get"].as_slice()),
+    ] {
+        for method in methods {
+            assert!(
+                openapi["paths"][path].get(*method).is_some(),
+                "missing {method} {path}"
+            );
+            assert!(
+                operation_has_bearer_security(&openapi, path, method),
+                "missing bearer security on {method} {path}"
+            );
+        }
+    }
+
+    for schema_name in [
+        "AgentMeResponse",
+        "AgentDashboardResponse",
+        "AgentTeamUserResponse",
+        "AgentUsersResponse",
+        "CreateAgentInviteCodeRequest",
+        "UpdateAgentInviteCodeStatusRequest",
+        "AgentInviteCodeResponse",
+        "AgentInviteCodesResponse",
+        "AgentCommissionResponse",
+        "AgentCommissionsResponse",
+        "AgentConvertStatsResponse",
+        "AgentTeamTreeNodeResponse",
+        "AgentTeamTreeResponse",
+    ] {
+        let schema = &openapi["components"]["schemas"][schema_name];
+        assert!(
+            schema.get("properties").is_some(),
+            "missing schema {schema_name}"
+        );
+        let schema_json = serde_json::to_string(schema).unwrap();
+        assert!(
+            !schema_json.contains("password_hash"),
+            "schema {schema_name} leaks password_hash"
+        );
+        assert!(
+            !schema_json.contains("access_token"),
+            "schema {schema_name} leaks access_token"
+        );
+        assert!(
+            !schema_json.contains("refresh_token"),
+            "schema {schema_name} leaks refresh_token"
+        );
+    }
+
+    let me_properties = &openapi["components"]["schemas"]["AgentMeResponse"]["properties"];
+    for field in [
+        "agent_admin_id",
+        "agent_id",
+        "username",
+        "agent_code",
+        "level",
+        "agent_status",
+        "admin_status",
+        "last_login_at",
+    ] {
+        assert!(
+            me_properties.get(field).is_some(),
+            "missing AgentMeResponse.{field}"
+        );
+    }
+    assert!(schema_is_unix_millis(&me_properties["last_login_at"]));
+
+    let invite_code_properties =
+        &openapi["components"]["schemas"]["AgentInviteCodeResponse"]["properties"];
+    assert!(schema_is_unix_millis(&invite_code_properties["created_at"]));
+    assert_eq!(
+        invite_code_properties["status"]["pattern"].as_str(),
+        Some("^(active|disabled)$")
+    );
+
+    let commission_properties =
+        &openapi["components"]["schemas"]["AgentCommissionResponse"]["properties"];
+    assert!(schema_is_unix_millis(&commission_properties["created_at"]));
+    assert!(schema_is_unix_millis(
+        &commission_properties["payout_created_at"]
+    ));
+
+    let team_user_properties =
+        &openapi["components"]["schemas"]["AgentTeamUserResponse"]["properties"];
+    assert!(schema_is_unix_millis(&team_user_properties["referred_at"]));
+
+    let team_tree_properties =
+        &openapi["components"]["schemas"]["AgentTeamTreeNodeResponse"]["properties"];
+    assert!(schema_is_unix_millis(&team_tree_properties["referred_at"]));
+}
+
+#[tokio::test]
+async fn openapi_json_documents_admin_news_contract() {
+    let openapi = openapi_json().await;
+
+    for (path, methods) in [
+        ("/admin/api/v1/news", ["get", "post"].as_slice()),
+        ("/admin/api/v1/news/{id}", ["get", "patch"].as_slice()),
+        ("/admin/api/v1/news/{id}/status", ["patch"].as_slice()),
+    ] {
+        for method in methods {
+            assert!(
+                openapi["paths"][path].get(*method).is_some(),
+                "missing {method} {path}"
+            );
+            assert!(
+                operation_has_bearer_security(&openapi, path, method),
+                "missing bearer security on {method} {path}"
+            );
+        }
+    }
+
+    let tags = openapi["tags"].as_array().unwrap();
+    assert!(tags.iter().any(|tag| tag["name"] == "admin-news"));
+
+    for schema_name in [
+        "NewsContentDocument",
+        "NewsContentTranslation",
+        "NewsRichTextBlock",
+        "NewsRichTextLeaf",
+        "AdminNewsItemResponse",
+        "AdminNewsItemsResponse",
+        "CreateAdminNewsItemRequest",
+        "UpdateAdminNewsItemRequest",
+        "UpdateAdminNewsStatusRequest",
+    ] {
+        let schema = &openapi["components"]["schemas"][schema_name];
+        assert!(
+            schema.get("properties").is_some(),
+            "missing schema {schema_name}"
+        );
+        let schema_json = serde_json::to_string(schema).unwrap().to_lowercase();
+        for sensitive in ["password", "token", "secret", "ciphertext"] {
+            assert!(
+                !schema_json.contains(sensitive),
+                "schema {schema_name} leaks {sensitive}"
+            );
+        }
+    }
+
+    let news_properties = &openapi["components"]["schemas"]["AdminNewsItemResponse"]["properties"];
+    for field in [
+        "id",
+        "title",
+        "category",
+        "status",
+        "country_code",
+        "default_locale",
+        "content_json",
+        "published_at",
+        "created_by_admin_id",
+        "updated_by_admin_id",
+        "created_at",
+        "updated_at",
+    ] {
+        assert!(
+            news_properties.get(field).is_some(),
+            "missing AdminNewsItemResponse.{field}"
+        );
+    }
+    assert!(schema_is_unix_millis(&news_properties["published_at"]));
+    assert!(schema_is_unix_millis(&news_properties["created_at"]));
+    assert!(schema_is_unix_millis(&news_properties["updated_at"]));
+    assert_eq!(
+        news_properties["category"]["pattern"].as_str(),
+        Some("^(general|market|product|system|promotion)$")
+    );
+    assert_eq!(
+        news_properties["status"]["pattern"].as_str(),
+        Some("^(draft|published|archived)$")
+    );
+
+    let create_properties =
+        &openapi["components"]["schemas"]["CreateAdminNewsItemRequest"]["properties"];
+    assert!(create_properties.get("content_json").is_some());
+    assert!(create_properties.get("reason").is_some());
+
+    let status_properties =
+        &openapi["components"]["schemas"]["UpdateAdminNewsStatusRequest"]["properties"];
+    assert_eq!(
+        status_properties["status"]["pattern"].as_str(),
+        Some("^(draft|published|archived)$")
+    );
+}
+
+#[tokio::test]
+async fn openapi_json_documents_public_news_contract() {
+    let openapi = openapi_json().await;
+
+    for (path, methods) in [
+        ("/api/v1/news", ["get"].as_slice()),
+        ("/api/v1/news/{id}", ["get"].as_slice()),
+    ] {
+        for method in methods {
+            assert!(
+                openapi["paths"][path].get(*method).is_some(),
+                "missing {method} {path}"
+            );
+            assert!(
+                !operation_has_bearer_security(&openapi, path, method),
+                "public news must not require bearer security on {method} {path}"
+            );
+        }
+    }
+
+    let tags = openapi["tags"].as_array().unwrap();
+    assert!(tags.iter().any(|tag| tag["name"] == "news"));
+
+    for schema_name in ["PublicNewsItemResponse", "PublicNewsItemsResponse"] {
+        let schema = &openapi["components"]["schemas"][schema_name];
+        assert!(
+            schema.get("properties").is_some(),
+            "missing schema {schema_name}"
+        );
+        let schema_json = serde_json::to_string(schema).unwrap().to_lowercase();
+        for forbidden in [
+            "password",
+            "token",
+            "secret",
+            "ciphertext",
+            "created_by_admin_id",
+            "updated_by_admin_id",
+        ] {
+            assert!(
+                !schema_json.contains(forbidden),
+                "schema {schema_name} leaks {forbidden}"
+            );
+        }
+    }
+
+    let news_properties = &openapi["components"]["schemas"]["PublicNewsItemResponse"]["properties"];
+    for field in [
+        "id",
+        "title",
+        "category",
+        "status",
+        "country_code",
+        "default_locale",
+        "content_json",
+        "published_at",
+        "created_at",
+        "updated_at",
+    ] {
+        assert!(
+            news_properties.get(field).is_some(),
+            "missing PublicNewsItemResponse.{field}"
+        );
+    }
+    assert!(schema_is_unix_millis(&news_properties["published_at"]));
+    assert!(schema_is_unix_millis(&news_properties["created_at"]));
+    assert!(schema_is_unix_millis(&news_properties["updated_at"]));
+}
+
+#[tokio::test]
 async fn openapi_json_alias_is_registered() {
     let openapi = request_json("/api/openapi.json").await;
 

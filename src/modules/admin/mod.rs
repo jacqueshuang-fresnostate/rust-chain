@@ -4,6 +4,7 @@ use thiserror::Error;
 pub mod market_feed_config;
 pub mod routes;
 pub mod smtp_config;
+pub mod upload_config;
 
 #[derive(Debug, Clone)]
 pub struct AdminScope {

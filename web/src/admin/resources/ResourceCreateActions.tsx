@@ -98,6 +98,23 @@ type EarnProductValues = {
   termDays: string;
 };
 
+type AdminNewsTranslationValues = {
+  content: RichTextValue;
+  countryCode: string;
+  locale: string;
+  summary: string;
+  title: string;
+};
+
+type AdminNewsValues = {
+  category: string;
+  countryCode: string;
+  defaultLocale: string;
+  status: string;
+  title: string;
+  translations: AdminNewsTranslationValues[];
+};
+
 type UserValues = {
   email: string;
   phone: string;
@@ -109,6 +126,17 @@ type UserValues = {
 type UserRechargeValues = {
   assetId: string;
   amount: string;
+};
+
+type AssignAgentValues = {
+  agentId: string;
+};
+
+type AgentCommissionRuleValues = {
+  agentId: string;
+  commissionRate: string;
+  productType: string;
+  status: string;
 };
 
 type RiskRuleValues = {
@@ -189,6 +217,17 @@ const initialUserRecharge: UserRechargeValues = {
   amount: ''
 };
 
+const initialAssignAgent: AssignAgentValues = {
+  agentId: ''
+};
+
+const initialAgentCommissionRule: AgentCommissionRuleValues = {
+  agentId: '',
+  commissionRate: '',
+  productType: 'convert',
+  status: 'active'
+};
+
 const initialAsset: AssetValues = {
   symbol: '',
   name: '',
@@ -260,6 +299,15 @@ const initialEarnProduct: EarnProductValues = {
   introductions: [{ locale: 'zh-CN', country: 'CN', title: '', content: emptyRichTextValue }]
 };
 
+const initialAdminNews: AdminNewsValues = {
+  title: '',
+  category: 'general',
+  countryCode: '',
+  defaultLocale: 'zh-CN',
+  status: 'draft',
+  translations: [{ locale: 'zh-CN', countryCode: 'CN', title: '', summary: '', content: emptyRichTextValue }]
+};
+
 const initialRiskRule: RiskRuleValues = {
   ruleType: '',
   targetType: '',
@@ -268,11 +316,27 @@ const initialRiskRule: RiskRuleValues = {
   enabled: 'true'
 };
 
-const earnProductCategoryOptions: SemiSelectOption[] = [
-  { value: 'fixed_term', label: '定期' },
-  { value: 'flexible', label: '活期' },
-  { value: 'structured', label: '结构化' },
-  { value: 'staking', label: '质押' }
+const earnProductCategoryDescriptions = [
+  { value: 'fixed_term', label: '定期', description: '固定期限，到期赎回或结算，适合锁定周期收益。' },
+  { value: 'flexible', label: '活期', description: '无固定期限，可按规则灵活赎回，收益通常按持有时间或日计。' },
+  { value: 'structured', label: '结构化', description: '收益与挂钩标的或条件相关，可能存在不同收益档位和触发条件。' },
+  { value: 'staking', label: '质押', description: '将资产用于链上或平台质押获得收益，通常受质押周期、解押期和链上风险影响。' }
+];
+
+const earnProductCategoryOptions: SemiSelectOption[] = earnProductCategoryDescriptions.map(({ label, value }) => ({ label, value }));
+
+const newsCategoryOptions: SemiSelectOption[] = [
+  { value: 'general', label: '通用资讯' },
+  { value: 'market', label: '市场资讯' },
+  { value: 'product', label: '产品资讯' },
+  { value: 'system', label: '系统公告' },
+  { value: 'promotion', label: '活动推广' }
+];
+
+const newsStatusOptions: SemiSelectOption[] = [
+  { value: 'draft', label: '草稿' },
+  { value: 'published', label: '已发布' },
+  { value: 'archived', label: '已归档' }
 ];
 
 const activeStatusOptions: SemiSelectOption[] = [
@@ -396,6 +460,14 @@ function isUserRechargeSubmittable(values: UserRechargeValues): boolean {
   return Boolean(values.assetId.trim() && values.amount.trim() && Number(values.amount) > 0);
 }
 
+function isAssignAgentSubmittable(values: AssignAgentValues): boolean {
+  return Boolean(values.agentId.trim() && Number(values.agentId) > 0);
+}
+
+function isAgentCommissionRuleSubmittable(values: AgentCommissionRuleValues, includeAgentId: boolean): boolean {
+  return Boolean((!includeAgentId || values.agentId.trim()) && values.productType === 'convert' && values.commissionRate.trim() && values.status.trim());
+}
+
 function isAssetCreatable(values: AssetValues): boolean {
   return Boolean(values.symbol.trim() && values.name.trim() && isNonNegativeIntegerInput(values.precisionScale));
 }
@@ -468,6 +540,20 @@ function isEarnProductCreatable(values: EarnProductValues): boolean {
       values.status.trim() &&
       values.introductions.length > 0 &&
       values.introductions.every((item) => item.locale.trim() && item.country.trim() && item.title.trim())
+  );
+}
+
+function richTextHasText(value: RichTextValue): boolean {
+  return value.some((block) => block.children.some((leaf) => leaf.text.trim().length > 0));
+}
+
+function isAdminNewsSubmittable(values: AdminNewsValues): boolean {
+  return Boolean(
+    values.title.trim() &&
+      values.category.trim() &&
+      values.defaultLocale.trim() &&
+      values.translations.length > 0 &&
+      values.translations.every((item) => item.locale.trim() && item.countryCode.trim() && item.title.trim() && richTextHasText(item.content))
   );
 }
 
@@ -679,6 +765,8 @@ const statusOptions: SemiSelectOption[] = [
   { value: 'disabled', label: '禁用' }
 ];
 
+const agentCommissionRuleProductOptions: SemiSelectOption[] = [{ value: 'convert', label: 'convert' }];
+
 const booleanOptions: SemiSelectOption[] = [
   { value: 'true', label: '启用' },
   { value: 'false', label: '禁用' }
@@ -731,6 +819,81 @@ function updateEarnIntroduction(values: EarnProductValues, index: number, patch:
   return {
     ...values,
     introductions: values.introductions.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item))
+  };
+}
+
+function newAdminNewsTranslation(): AdminNewsTranslationValues {
+  return { locale: 'en-US', countryCode: 'US', title: '', summary: '', content: emptyRichTextValue };
+}
+
+function updateAdminNewsTranslation(values: AdminNewsValues, index: number, patch: Partial<AdminNewsTranslationValues>): AdminNewsValues {
+  return {
+    ...values,
+    translations: values.translations.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item))
+  };
+}
+
+function adminNewsContentJson(values: AdminNewsValues) {
+  return {
+    version: 1,
+    default_locale: requiredString(values.defaultLocale, '默认语言'),
+    items: values.translations.map((item) => ({
+      locale: requiredString(item.locale, '语言'),
+      country_code: requiredString(item.countryCode, '翻译国家'),
+      title: requiredString(item.title, '翻译标题'),
+      summary: optionalString(item.summary),
+      content: item.content
+    }))
+  };
+}
+
+function adminNewsCreateRequestBody(values: AdminNewsValues, reason: string) {
+  return {
+    title: requiredString(values.title, '新闻标题'),
+    category: requiredString(values.category, '分类'),
+    status: requiredString(values.status, '状态'),
+    country_code: optionalString(values.countryCode),
+    default_locale: requiredString(values.defaultLocale, '默认语言'),
+    content_json: adminNewsContentJson(values),
+    reason
+  };
+}
+
+function adminNewsUpdateRequestBody(values: AdminNewsValues, reason: string) {
+  return {
+    title: requiredString(values.title, '新闻标题'),
+    category: requiredString(values.category, '分类'),
+    country_code: optionalString(values.countryCode),
+    default_locale: requiredString(values.defaultLocale, '默认语言'),
+    content_json: adminNewsContentJson(values),
+    reason
+  };
+}
+
+function adminNewsFromRecord(record: ApiRecord): AdminNewsValues {
+  const contentJson = record.content_json as { default_locale?: unknown; items?: unknown } | undefined;
+  const items = Array.isArray(contentJson?.items) ? contentJson.items : [];
+  const translations = items
+    .map((item) => {
+      const value = item as Record<string, unknown>;
+      const content = Array.isArray(value.content) ? (value.content as RichTextValue) : emptyRichTextValue;
+      return {
+        locale: typeof value.locale === 'string' ? value.locale : '',
+        countryCode: typeof value.country_code === 'string' ? value.country_code : '',
+        title: typeof value.title === 'string' ? value.title : '',
+        summary: typeof value.summary === 'string' ? value.summary : '',
+        content
+      };
+    })
+    .filter((item) => item.locale || item.countryCode || item.title);
+
+  return {
+    title: recordString(record, 'title'),
+    category: recordString(record, 'category') || 'general',
+    countryCode: recordString(record, 'country_code'),
+    defaultLocale: recordString(record, 'default_locale') || (typeof contentJson?.default_locale === 'string' ? contentJson.default_locale : 'zh-CN'),
+    status: recordString(record, 'status') || 'draft',
+    translations: translations.length > 0 ? translations : initialAdminNews.translations
   };
 }
 
@@ -870,6 +1033,46 @@ function UserRechargeAction({ helpers, userId }: { helpers: RowActionHelpers; us
   );
 }
 
+function AssignAgentAction({ helpers, userId }: { helpers: RowActionHelpers; userId: string }) {
+  const [assignment, setAssignment] = useState(initialAssignAgent);
+  const [visible, setVisible] = useState(false);
+
+  return (
+    <>
+      <Button disabled={!userId} onClick={() => setVisible(true)} size="small" theme="borderless">
+        分配代理
+      </Button>
+      <Modal footer={null} onCancel={() => setVisible(false)} title="分配代理" visible={visible}>
+        <Card bordered={false}>
+          <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
+            <Title heading={4}>分配代理</Title>
+            <div className="admin-action-form">
+              <label>用户ID<AdminTextInput ariaLabel="用户ID" readOnly value={userId} onChange={() => undefined} /></label>
+              <label>代理ID<AdminTextInput ariaLabel="代理ID" value={assignment.agentId} onChange={(agentId) => setAssignment({ ...assignment, agentId })} /></label>
+            </div>
+            <ConfirmAction
+              actionText="提交分配代理"
+              disabled={!isAssignAgentSubmittable(assignment)}
+              title="确认分配代理"
+              onConfirm={async (reason) => {
+                await submitAction('分配代理', () =>
+                  apiRequest(`/admin/api/v1/users/${userId}/agent`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ agent_id: requiredPositiveInteger(assignment.agentId, '代理ID'), reason })
+                  })
+                );
+                setVisible(false);
+                setAssignment(initialAssignAgent);
+                helpers.reload();
+              }}
+            />
+          </Space>
+        </Card>
+      </Modal>
+    </>
+  );
+}
+
 export function UserRowActions({ helpers, record }: { helpers: RowActionHelpers; record: ApiRecord }) {
   const userId = recordString(record, 'id');
 
@@ -882,6 +1085,7 @@ export function UserRowActions({ helpers, record }: { helpers: RowActionHelpers;
         查看资产
       </Button>
       <UserRechargeAction helpers={helpers} userId={userId} />
+      <AssignAgentAction helpers={helpers} userId={userId} />
     </>
   );
 }
@@ -1124,6 +1328,11 @@ export function CreateEarnProductAction({ onCreated }: { onCreated?: () => void 
                   产品分类
                   <AdminSelect ariaLabel="产品分类" onChange={(category) => setProduct({ ...product, category })} optionList={earnProductCategoryOptions} value={product.category} />
                 </label>
+                <ul aria-label="产品分类说明" className="admin-earn-category-descriptions">
+                  {earnProductCategoryDescriptions.map((item) => (
+                    <li key={item.value}>{item.label}：{item.description}</li>
+                  ))}
+                </ul>
                 <label>期限天数<AdminTextInput ariaLabel="期限天数" value={product.termDays} onChange={(termDays) => setProduct({ ...product, termDays })} /></label>
                 <label>年化利率<AdminTextInput ariaLabel="年化利率" value={product.aprRate} onChange={(aprRate) => setProduct({ ...product, aprRate })} /></label>
                 <label>最小申购<AdminTextInput ariaLabel="最小申购" value={product.minSubscribe} onChange={(minSubscribe) => setProduct({ ...product, minSubscribe })} /></label>
@@ -1180,6 +1389,169 @@ export function CreateEarnProductAction({ onCreated }: { onCreated?: () => void 
           </div>
         </Card>
       </Modal>
+    </>
+  );
+}
+
+function AdminNewsForm({ includeStatus, onChange, values }: { includeStatus: boolean; onChange: (values: AdminNewsValues) => void; values: AdminNewsValues }) {
+  return (
+    <div className="admin-earn-product-layout">
+      <section className="admin-earn-product-section" aria-labelledby="admin-news-basic-title">
+        <Title heading={4} id="admin-news-basic-title">
+          基础信息
+        </Title>
+        <div className="admin-action-form admin-earn-product-basic-grid">
+          <label>新闻标题<AdminTextInput ariaLabel="新闻标题" value={values.title} onChange={(title) => onChange({ ...values, title })} /></label>
+          <label>
+            分类
+            <AdminSelect ariaLabel="分类" onChange={(category) => onChange({ ...values, category })} optionList={newsCategoryOptions} value={values.category} />
+          </label>
+          <label>国家<AdminTextInput ariaLabel="国家" value={values.countryCode} onChange={(countryCode) => onChange({ ...values, countryCode })} placeholder="CN" /></label>
+          <label>默认语言<AdminTextInput ariaLabel="默认语言" value={values.defaultLocale} onChange={(defaultLocale) => onChange({ ...values, defaultLocale })} placeholder="zh-CN" /></label>
+          {includeStatus ? (
+            <label>
+              初始状态
+              <AdminSelect ariaLabel="初始状态" onChange={(status) => onChange({ ...values, status })} optionList={newsStatusOptions} value={values.status} />
+            </label>
+          ) : null}
+        </div>
+      </section>
+      <section className="admin-earn-product-section" aria-labelledby="admin-news-translations-title">
+        <div className="admin-earn-section-header">
+          <Title heading={4} id="admin-news-translations-title">
+            多语言内容
+          </Title>
+          <Button onClick={() => onChange({ ...values, translations: [...values.translations, newAdminNewsTranslation()] })} theme="borderless">
+            新增语言内容
+          </Button>
+        </div>
+        <div className="admin-earn-introduction-list">
+          {values.translations.map((item, index) => (
+            <Card bordered className="admin-earn-introduction-card" key={index}>
+              <Space align="start" spacing={12} vertical style={{ width: '100%' }}>
+                <Title heading={5}>语言内容 {index + 1}</Title>
+                <div className="admin-action-form admin-earn-introduction-meta">
+                  <label>语言<AdminTextInput ariaLabel="语言" value={item.locale} onChange={(locale) => onChange(updateAdminNewsTranslation(values, index, { locale }))} /></label>
+                  <label>翻译国家<AdminTextInput ariaLabel="翻译国家" value={item.countryCode} onChange={(countryCode) => onChange(updateAdminNewsTranslation(values, index, { countryCode }))} /></label>
+                  <label>翻译标题<AdminTextInput ariaLabel="翻译标题" value={item.title} onChange={(title) => onChange(updateAdminNewsTranslation(values, index, { title }))} /></label>
+                </div>
+                <label>摘要<AdminTextArea ariaLabel="摘要" autosize value={item.summary} onChange={(summary) => onChange(updateAdminNewsTranslation(values, index, { summary }))} /></label>
+                <QuillRichTextEditor placeholder="请输入新闻内容" value={item.content} onChange={(content) => onChange(updateAdminNewsTranslation(values, index, { content }))} />
+              </Space>
+            </Card>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export function CreateAdminNewsAction({ onCreated }: { onCreated?: () => void }) {
+  const [news, setNews] = useState(initialAdminNews);
+  const [visible, setVisible] = useState(false);
+
+  return (
+    <>
+      <AdminModalTriggerButton onClick={() => setVisible(true)}>添加新闻</AdminModalTriggerButton>
+      <Modal footer={null} motion={false} onCancel={() => setVisible(false)} title="添加新闻" visible={visible} {...createModalProps('extra-wide')}>
+        <Card bordered={false}>
+          <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
+            <AdminNewsForm includeStatus values={news} onChange={setNews} />
+            <ConfirmAction
+              actionText="提交添加新闻"
+              disabled={!isAdminNewsSubmittable(news)}
+              title="确认添加新闻"
+              onConfirm={async (reason) => {
+                await submitAction('添加新闻', () =>
+                  apiRequest('/admin/api/v1/news', {
+                    method: 'POST',
+                    body: JSON.stringify(adminNewsCreateRequestBody(news, reason))
+                  })
+                );
+                setVisible(false);
+                setNews(initialAdminNews);
+                onCreated?.();
+              }}
+            />
+          </Space>
+        </Card>
+      </Modal>
+    </>
+  );
+}
+
+function AdminNewsEditAction({ helpers, newsId, record }: { helpers: RowActionHelpers; newsId: string; record: ApiRecord }) {
+  const [news, setNews] = useState(() => adminNewsFromRecord(record));
+  const [visible, setVisible] = useState(false);
+
+  return (
+    <>
+      <Button disabled={!newsId} onClick={() => setVisible(true)} size="small" theme="borderless">
+        编辑
+      </Button>
+      <Modal footer={null} motion={false} onCancel={() => setVisible(false)} title="编辑新闻" visible={visible} {...createModalProps('extra-wide')}>
+        <Card bordered={false}>
+          <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
+            <AdminNewsForm includeStatus={false} values={news} onChange={setNews} />
+            <ConfirmAction
+              actionText="提交编辑新闻"
+              disabled={!isAdminNewsSubmittable(news)}
+              title="确认编辑新闻"
+              onConfirm={async (reason) => {
+                await submitAction('编辑新闻', () =>
+                  apiRequest(`/admin/api/v1/news/${newsId}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify(adminNewsUpdateRequestBody(news, reason))
+                  })
+                );
+                setVisible(false);
+                helpers.reload();
+              }}
+            />
+          </Space>
+        </Card>
+      </Modal>
+    </>
+  );
+}
+
+export function AdminNewsRowActions({ helpers, record }: { helpers: RowActionHelpers; record: ApiRecord }) {
+  const newsId = recordString(record, 'id');
+
+  return (
+    <>
+      <Button disabled={!newsId} onClick={() => openRecordDetail('/admin/api/v1/news', newsId, helpers)} size="small" theme="borderless">
+        查看详情
+      </Button>
+      <AdminNewsEditAction helpers={helpers} newsId={newsId} record={record} />
+      <ConfirmAction
+        actionText="发布"
+        disabled={!newsId || recordString(record, 'status') === 'published'}
+        title="发布新闻"
+        onConfirm={async (reason) => {
+          await submitAction('发布新闻', () =>
+            apiRequest(`/admin/api/v1/news/${newsId}/status`, {
+              method: 'PATCH',
+              body: JSON.stringify({ status: 'published', reason })
+            })
+          );
+          helpers.reload();
+        }}
+      />
+      <ConfirmAction
+        actionText="归档"
+        disabled={!newsId || recordString(record, 'status') === 'archived'}
+        title="归档新闻"
+        onConfirm={async (reason) => {
+          await submitAction('归档新闻', () =>
+            apiRequest(`/admin/api/v1/news/${newsId}/status`, {
+              method: 'PATCH',
+              body: JSON.stringify({ status: 'archived', reason })
+            })
+          );
+          helpers.reload();
+        }}
+      />
     </>
   );
 }
@@ -1282,6 +1654,133 @@ export function ConvertOrderRowActions({ helpers, record }: { helpers: RowAction
     <Button disabled={!orderId} onClick={() => openRecordDetail('/admin/api/v1/convert/orders', orderId, helpers)} size="small" theme="borderless">
       查看详情
     </Button>
+  );
+}
+
+function AgentCommissionRuleForm({ includeAgentId, onChange, values }: { includeAgentId: boolean; onChange: (values: AgentCommissionRuleValues) => void; values: AgentCommissionRuleValues }) {
+  return (
+    <div className="admin-action-form">
+      {includeAgentId ? <label>代理ID<AdminTextInput ariaLabel="代理ID" value={values.agentId} onChange={(agentId) => onChange({ ...values, agentId })} /></label> : null}
+      {!includeAgentId ? <label>代理ID<AdminTextInput ariaLabel="代理ID" readOnly value={values.agentId} onChange={() => undefined} /></label> : null}
+      <label>
+        产品类型
+        <AdminSelect ariaLabel="产品类型" onChange={(productType) => onChange({ ...values, productType })} optionList={agentCommissionRuleProductOptions} value={values.productType} />
+      </label>
+      <label>佣金比例<AdminTextInput ariaLabel="佣金比例" value={values.commissionRate} onChange={(commissionRate) => onChange({ ...values, commissionRate })} /></label>
+      <label>
+        {includeAgentId ? '初始状态' : '状态'}
+        <AdminSelect ariaLabel={includeAgentId ? '初始状态' : '状态'} onChange={(status) => onChange({ ...values, status })} optionList={statusOptions} value={values.status} />
+      </label>
+    </div>
+  );
+}
+
+export function CreateAgentCommissionRuleAction({ onCreated }: { onCreated?: () => void }) {
+  const [rule, setRule] = useState(initialAgentCommissionRule);
+  const [visible, setVisible] = useState(false);
+
+  return (
+    <>
+      <AdminModalTriggerButton onClick={() => setVisible(true)}>添加佣金规则</AdminModalTriggerButton>
+      <Modal footer={null} onCancel={() => setVisible(false)} title="添加佣金规则" visible={visible} {...createModalProps('medium')}>
+        <Card bordered={false}>
+          <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
+            <Title heading={4}>添加佣金规则</Title>
+            <AgentCommissionRuleForm includeAgentId values={rule} onChange={setRule} />
+            <ConfirmAction
+              actionText="提交添加佣金规则"
+              disabled={!isAgentCommissionRuleSubmittable(rule, true)}
+              title="确认添加佣金规则"
+              onConfirm={async (reason) => {
+                await submitAction('添加佣金规则', () =>
+                  apiRequest('/admin/api/v1/agent-commission-rules', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                      agent_id: requiredPositiveInteger(rule.agentId, '代理ID'),
+                      product_type: rule.productType,
+                      commission_rate: requiredString(rule.commissionRate, '佣金比例'),
+                      status: rule.status,
+                      reason
+                    })
+                  })
+                );
+                setVisible(false);
+                setRule(initialAgentCommissionRule);
+                onCreated?.();
+              }}
+            />
+          </Space>
+        </Card>
+      </Modal>
+    </>
+  );
+}
+
+export function AgentCommissionRuleRowActions({ helpers, record }: { helpers: RowActionHelpers; record: ApiRecord }) {
+  const ruleId = recordString(record, 'id');
+  const [rule, setRule] = useState<AgentCommissionRuleValues>({
+    agentId: recordString(record, 'agent_id'),
+    productType: recordString(record, 'product_type') || 'convert',
+    commissionRate: recordString(record, 'commission_rate'),
+    status: recordString(record, 'status') || 'active'
+  });
+  const [visible, setVisible] = useState(false);
+
+  return (
+    <>
+      <Button disabled={!ruleId} onClick={() => setVisible(true)} size="small" theme="borderless">
+        修改
+      </Button>
+      <Modal footer={null} onCancel={() => setVisible(false)} title="修改佣金规则" visible={visible}>
+        <Card bordered={false}>
+          <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
+            <Title heading={4}>修改佣金规则</Title>
+            <AgentCommissionRuleForm includeAgentId={false} values={rule} onChange={setRule} />
+            <ConfirmAction
+              actionText="提交修改"
+              disabled={!isAgentCommissionRuleSubmittable(rule, false)}
+              title="确认修改佣金规则"
+              onConfirm={async (reason) => {
+                await submitAction('修改佣金规则', () =>
+                  apiRequest(`/admin/api/v1/agent-commission-rules/${ruleId}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({
+                      commission_rate: requiredString(rule.commissionRate, '佣金比例'),
+                      status: rule.status,
+                      reason
+                    })
+                  })
+                );
+                setVisible(false);
+                helpers.reload();
+              }}
+            />
+          </Space>
+        </Card>
+      </Modal>
+    </>
+  );
+}
+
+export function AgentCommissionRowActions({ helpers, record }: { helpers: RowActionHelpers; record: ApiRecord }) {
+  const commissionId = recordString(record, 'id');
+  const canUpdate = recordString(record, 'status') === 'pending';
+
+  async function updateStatus(status: 'settled' | 'rejected', reason: string) {
+    await submitAction(status === 'settled' ? '结算代理佣金' : '拒绝代理佣金', () =>
+      apiRequest(`/admin/api/v1/agent-commissions/${commissionId}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status, reason })
+      })
+    );
+    helpers.reload();
+  }
+
+  return (
+    <>
+      <ConfirmAction actionText="结算" disabled={!commissionId || !canUpdate} title="结算代理佣金" onConfirm={(reason) => updateStatus('settled', reason)} />
+      <ConfirmAction actionText="拒绝" disabled={!commissionId || !canUpdate} title="拒绝代理佣金" onConfirm={(reason) => updateStatus('rejected', reason)} />
+    </>
   );
 }
 

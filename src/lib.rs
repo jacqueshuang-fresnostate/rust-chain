@@ -25,6 +25,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(modules::seconds_contract::routes::user_routes())
         .merge(modules::margin::routes::user_routes())
         .merge(modules::earn::routes::user_routes())
+        .merge(modules::news::routes::routes())
         .merge(modules::events::routes::routes());
 
     let admin_api = Router::new()
@@ -152,6 +153,7 @@ mod tests {
             "/admin/api/v1/margin/products",
             "/api/v1/earn/products",
             "/admin/api/v1/earn/products",
+            "/api/v1/news",
             "/api/v1/events/outbox/publish-once",
         ] {
             let response = app

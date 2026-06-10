@@ -1,5 +1,6 @@
-import { Banner, Button, Card, Space, Toast, Typography } from '@douyinfe/semi-ui';
-import { useEffect, useMemo, useState } from 'react';
+import { Banner, Button, Card, Space, Table, Toast, Typography } from '@douyinfe/semi-ui';
+import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
+import { type ComponentPropsWithoutRef, useEffect, useMemo, useState } from 'react';
 
 import { ApiError, apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
@@ -78,6 +79,12 @@ type SubscriptionRow = {
   kind: 'global' | 'interval' | 'provider' | 'symbol';
   typeLabel: string;
 };
+
+type SubscriptionTableProps = ComponentPropsWithoutRef<'table'>;
+
+function SubscriptionTable(props: SubscriptionTableProps) {
+  return <table {...props} aria-label="行情订阅列表" />;
+}
 
 function splitCsv(value: string) {
   return value
@@ -187,6 +194,30 @@ export function MarketFeedConfigPage() {
     });
   }
 
+  const subscriptionColumns = useMemo<Array<ColumnProps<SubscriptionRow>>>(
+    () => [
+      { dataIndex: 'typeLabel', title: '类型', width: 140 },
+      { dataIndex: 'item', title: '订阅项', width: 220 },
+      { dataIndex: 'enabled', title: '状态', width: 120, render: (enabled: boolean) => <StatusTag value={enabled} /> },
+      {
+        dataIndex: 'key',
+        title: '操作',
+        width: 140,
+        render: (_value: string, row: SubscriptionRow) => (
+          <Button
+            aria-label={`${row.enabled ? '禁用' : '启用'} ${row.typeLabel} ${row.item}`}
+            onClick={() => toggleSubscription(row)}
+            size="small"
+            theme="borderless"
+          >
+            {row.enabled ? '禁用' : '启用'}
+          </Button>
+        )
+      }
+    ],
+    [configForm]
+  );
+
   async function loadPage() {
     setLoading(true);
     try {
@@ -263,35 +294,16 @@ export function MarketFeedConfigPage() {
                 />
               </label>
             </div>
-            <table aria-label="行情订阅列表" className="admin-action-subscription-list">
-              <thead>
-                <tr>
-                  <th>类型</th>
-                  <th>订阅项</th>
-                  <th>状态</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr key={row.key}>
-                    <td>{row.typeLabel}</td>
-                    <td>{row.item}</td>
-                    <td><StatusTag value={row.enabled} /></td>
-                    <td>
-                      <Button
-                        aria-label={`${row.enabled ? '禁用' : '启用'} ${row.typeLabel} ${row.item}`}
-                        onClick={() => toggleSubscription(row)}
-                        size="small"
-                        theme="borderless"
-                      >
-                        {row.enabled ? '禁用' : '启用'}
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <Table
+              aria-label="行情订阅列表"
+              bordered
+              columns={subscriptionColumns}
+              components={{ body: { outer: SubscriptionTable } }}
+              dataSource={rows}
+              pagination={false}
+              resizable
+              rowKey="key"
+            />
             <Space>
               <ConfirmAction
                 actionText="保存配置"

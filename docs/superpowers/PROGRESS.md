@@ -2,6 +2,166 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-06-09 22:57 - PC 现货交易接口迁移
+
+- 完成内容：PC 现货交易 API 从旧 `/exchange/*` 迁移到 Rust `/api/v1/spot/orders`，撤单改用 `DELETE /spot/orders/:id`，当前订单合并 `pending`、`open`、`partially_filled` 状态，历史订单读取 `filled`、`cancelled`、`rejected`；交易页钱包余额从旧 `/uc/asset/wallet*` 改为 `/wallet/accounts` 后按 base/quote 适配；现货下单 adapter 生成 Rust spot request 与幂等 key，market BUY 按参考价将 quote 成交额换算为 base quantity；交易表单 market order 使用当前行情价作为后端 `reference_price`；清理本切片命中的旧钱包接口注释。
+- 修改文件：
+  - `pc/src/api/backendAdapters.ts`
+  - `pc/tests/backendAdapters.test.ts`
+  - `pc/src/api/exchange.ts`
+  - `pc/src/components/trade/OrderForm.vue`
+  - `pc/src/api/wallet.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`node --experimental-strip-types --test "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc/tests/backendAdapters.test.ts"`，实现前失败于缺少 `mapPcSpotOrderRequest` export；补充 market BUY 换算用例后实现前失败于 quantity 仍为 `5000` 而非 `2`。实现后同命令 10 个测试通过、0 失败。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run type-check`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run build`，通过，`255 modules transformed`，`built in 2.05s`。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test spot_routes -- --nocapture`，42 个测试通过、0 失败；其中 MySQL 集成分支因本地未设置 `DATABASE_URL` 被测试内 skip，未声明真实 MySQL 连通性。已执行 `git -C "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" grep -n "/exchange/\\|/uc/asset/wallet" -- src || true`，未发现本切片旧现货与旧资产钱包端点残留。已执行本轮触碰文件 `diff --check`，通过。
+- 后续事项：继续迁移闪兑、Earn、新币、秒合约、杠杆等产品接口；充值/提现、Loan、活动等用户中心剩余旧 `/uc/*` 入口仍需在后续切片接入真实新后端能力或禁用/隐藏。
+
+## 2026-06-09 22:12 - PC 旧 API_DOMAIN 移除与请求基座收口
+
+- 完成内容：按用户最新要求删除 PC 用户端旧 `API_DOMAIN` / `VITE_API_DOMAIN` 依赖；请求基座统一使用 `BACKEND_API_DOMAIN + BACKEND_API_PREFIX`；`backendApiUrl` 仅拼接 Rust 新后端 `/api/v1` 地址；相对路径默认按新后端请求处理并在存在 token 时注入 Bearer；401 继续清理登录态并跳转登录页。
+- 修改文件：
+  - `pc/src/config/app.ts`
+  - `pc/src/api/request.ts`
+  - `pc/src/api/backendAdapters.ts`
+  - `pc/tests/backendAdapters.test.ts`
+- 验证结果：已执行 RED：`node --experimental-strip-types --test "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc/tests/backendAdapters.test.ts"`，实现前失败于 `APP_CONFIG` 仍导出 `API_DOMAIN`；实现后同命令 8 个测试通过、0 失败。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run type-check`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run build`，通过，`255 modules transformed`，`built in 2.23s`。
+- 后续事项：继续按切片清理 PC 剩余旧业务接口。
+
+## 2026-06-09 22:12 - PC 市场行情接口迁移
+
+- 完成内容：PC 行情 REST 从旧 `/market/*` 迁移到 Rust `/api/v1/markets`、`/markets/:symbol/ticker`、`/markets/:symbol/klines`、`/markets/:symbol/depth`、`/markets/:symbol/trades`；补齐 Rust 市场 depth/trades 路由与测试；新增市场 DTO adapter；PC 行情 WebSocket 从 SockJS/STOMP legacy topic 改为 Rust 原生 `/ws/public` 多订阅命令；交易页盘口、成交列表与 K 线订阅改用新 topic 与 Rust payload shape。
+- 修改文件：
+  - `pc/src/api/backendAdapters.ts`
+  - `pc/tests/backendAdapters.test.ts`
+  - `pc/src/api/market.ts`
+  - `pc/src/api/stomp.ts`
+  - `pc/src/components/chart/TVChart.vue`
+  - `pc/src/components/trade/MarketTrades.vue`
+  - `pc/src/views/Market.vue`
+  - `pc/src/views/Trade.vue`
+  - `src/modules/market/routes.rs`
+  - `tests/market_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`node --experimental-strip-types --test "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc/tests/backendAdapters.test.ts"`，实现前失败于缺少 `mapMarketDepthToTradePlate` 等市场 adapter export；实现后同命令 8 个测试通过、0 失败。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run type-check`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run build`，通过，`255 modules transformed`，`built in 2.23s`。已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test market_routes -- --nocapture`，12 个测试通过、0 失败；其中 Redis/MySQL 集成分支因本地未设置 `REDIS_URL` / `DATABASE_URL` 被测试内 skip，未声明真实外部服务连通性。已执行旧行情/旧域名源码扫描，未发现 `APP_CONFIG.API_DOMAIN`、`VITE_API_DOMAIN`、`hippoweb3`、旧 `/market/symbol-thumb-trend`、旧 `/market/history`、旧 `/market/exchange-plate-mini`、旧 `/market/latest-trade`、旧 `/market/market-ws`、`/topic/market`、`SockJS`、`@stomp` 残留。已执行本轮触碰文件 `diff --check`，通过。
+- 后续事项：继续迁移 PC 现货交易、钱包资产与资金流水接口；`second` / `swap` WebSocket 当前不再连接旧端点，后续产品切片需接入真实新后端能力或禁用对应实时功能；市场成交方向当前按后端最小实现返回 `BUY`，如需真实方向需后续扩展成交模型。
+
+## 2026-06-09 15:17 - PC 用户端首批新后端 API 接入
+
+- 完成内容：PC 用户端首批接入 Rust 新后端接口，新增后端专用域名与 `/api/v1` 前缀配置，保留旧 `API_DOMAIN` 给未迁移模块使用；请求层仅对新后端请求注入 JSON Content-Type 与 `Authorization: Bearer`，并在 401 时清理登录态跳转登录页；登录、注册接入 `/auth/login`、`/auth/register` 并保存 access/refresh token；安全设置接入 `/user/profile` 与 `/user/fund-password`，设置资金密码时补充登录密码输入；资产概览接入 `/wallet/accounts`；资金流水接入 `/wallet/ledger` 并在前端兼容现有筛选分页；新增后端 DTO 到 PC 旧页面数据结构的 adapter 测试。
+- 修改文件：
+  - `pc/src/config/app.ts`
+  - `pc/src/api/backendAdapters.ts`
+  - `pc/tests/backendAdapters.test.ts`
+  - `pc/src/api/request.ts`
+  - `pc/src/api/auth.ts`
+  - `pc/src/api/user.ts`
+  - `pc/src/api/asset.ts`
+  - `pc/src/api/transaction.ts`
+  - `pc/src/stores/user.ts`
+  - `pc/src/views/auth/Login.vue`
+  - `pc/src/views/auth/Register.vue`
+  - `pc/src/views/User/Security.vue`
+  - `pc/src/api/option.ts`
+  - `pc/src/api/wallet.ts`
+  - `pc/src/components/trade/ContractOrderForm.vue`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`node --experimental-strip-types --test "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc/tests/backendAdapters.test.ts"`，实现前失败于 `ERR_MODULE_NOT_FOUND`，因为 `pc/src/api/backendAdapters.ts` 尚不存在；实现后同命令 5 个测试通过、0 失败。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run type-check`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run build`，通过，`391 modules transformed`，`built in 2.11s`。已执行限定本轮触碰文件的 `git -C "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" diff --check -- <touched files>`，通过；全 PC 仓库未执行通过性声明，因为仓库内存在多处既有 trailing whitespace，会干扰本轮范围判断。
+- 后续事项：本批未迁移行情、交易撮合、理财、充值地址、提现提交、新闻公开端、邀请码、登录密码找回和资金密码重置等接口；这些需后续按切片继续接入。
+
+## 2026-06-08 19:19 - Admin 新闻中心操作闭环与最终验证
+
+- 完成内容：补齐 Admin 新闻中心创建、编辑、发布、归档操作；创建/编辑表单支持标题、分类、国家、默认语言、多语言标题/摘要/富文本内容与操作原因；新闻详情通过行级操作加载；新闻富文本编辑器支持新闻专用 placeholder，同时保留既有理财介绍默认文案；新闻添加/编辑弹窗关闭动画，避免 Semi Modal 多弹窗测试场景下的可访问标题冲突；后端收紧 `content_json` 字段白名单并拒绝空正文，前端同步在未填写正文时禁用提交。
+- 修改文件：
+  - `migrations/0041_admin_news_center.sql`
+  - `src/modules/admin/routes.rs`
+  - `src/openapi.rs`
+  - `tests/admin_routes.rs`
+  - `tests/openapi_routes.rs`
+  - `web/src/admin/routes.tsx`
+  - `web/src/admin/routes.test.tsx`
+  - `web/src/layouts/AdminLayout.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/shared/QuillRichTextEditor.tsx`
+  - `web/src/shared/StatusTag.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/resources/resourceConfigs.test.tsx`，实现前失败于找不到“添加新闻”按钮；已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_news_routes_require_admin_scope_mysql_and_validation -- --nocapture`，收紧校验前失败于额外 `seo` 字段返回 500 而非 400；已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/resources/resourceConfigs.test.tsx -t "creates edits publishes and archives Admin news"`，收紧前端校验前失败于未填写正文时“提交添加新闻”仍可点击。实现后已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过。已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_news -- --nocapture`，2 个测试通过。已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test openapi_routes -- --nocapture`，6 个测试通过。已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets -- -D warnings`，通过。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml"`，全量 Rust 测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/resources --testTimeout=30000`，2 个测试文件、43 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- --testTimeout=30000`，26 个测试文件、163 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run build`，通过，存在既有 `lottie-web` direct eval 与 chunk size 构建警告，未阻断构建。已执行 `git -C "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain" diff --check`，通过。
+- 后续事项：无
+
+## 2026-06-08 01:50 - Admin 新闻中心入口与列表
+
+- 完成内容：新增 Admin 侧边栏“内容运营 / 新闻中心”入口；注册 `/admin/news` 资源路由；新增新闻中心资源配置，列表读取 `/admin/api/v1/news` 的 `news` 响应数组，支持关键词、状态、分类、国家、语言和数量筛选，并展示新闻 ID、标题、分类、国家、默认语言、状态、发布时间和更新时间。
+- 修改文件：
+  - `web/src/admin/routes.tsx`
+  - `web/src/admin/routes.test.tsx`
+  - `web/src/layouts/AdminLayout.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/shared/StatusTag.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/layouts/AdminLayout.test.tsx src/admin/routes.test.tsx`，实现前失败于缺少 `news` 路由和“内容运营”导航；已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/resources/resourceConfigs.test.tsx`，实现前失败于 `resourceConfigs.news` 不存在。实现后已执行同两条命令，分别 2 个测试文件 22 个测试通过、1 个测试文件 32 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过。
+- 后续事项：继续实现新闻创建、编辑、发布和归档操作。
+
+## 2026-06-08 01:36 - Admin 新闻中心 OpenAPI 合约
+
+- 完成内容：新增后台新闻中心 OpenAPI 路径、Admin bearerAuth 安全声明、新闻内容多语言 schema、新闻列表/详情/create/update/status request 与 response schema；合约测试覆盖路径、schema、时间戳格式和敏感字段泄露检查。
+- 修改文件：
+  - `src/openapi.rs`
+  - `tests/openapi_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test openapi_routes openapi_json_documents_admin_news_contract -- --nocapture`，实现前失败于缺少 `GET /admin/api/v1/news`；实现后同命令 1 个测试通过。已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test openapi_routes -- --nocapture`，6 个测试通过、0 失败；已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过。
+- 后续事项：继续实现 Admin 新闻中心前端入口、列表与操作表单。
+
+## 2026-06-08 01:18 - Admin 新闻中心后端接口
+
+- 完成内容：新增 `admin_news_items` 迁移表；实现 Admin 新闻列表、创建、详情、更新和状态变更接口；支持状态、分类、国家、语言、关键词、分页筛选；新增多语言 `content_json` 与国家/语言校验；写操作记录 Admin 审计并在发布时设置 `published_at`。
+- 修改文件：
+  - `migrations/0041_admin_news_center.sql`
+  - `src/modules/admin/routes.rs`
+  - `tests/admin_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_news -- --nocapture`，实现前失败于 `/admin/api/v1/news` 返回 404 和 JSON EOF；实现后同命令 2 个测试通过、0 失败。已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过。
+- 后续事项：继续补齐新闻中心 OpenAPI 合约与前端 Admin 页面。
+
+## 2026-06-08 00:58 - Agent 当前身份接口
+
+- 完成内容：新增 `GET /agent/api/v1/me`，基于 Agent token subject 查询当前代理后台账号与代理主表信息；接口仅在 `agent_admin_users.status = 'active'` 且 `agents.status = 'active'` 时返回，响应包含代理账号、代理编号、层级、状态与最近登录时间，不暴露密码 hash 或 token 字段。
+- 修改文件：
+  - `src/modules/agent/routes.rs`
+  - `tests/agent_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test agent_routes agent_me -- --nocapture`，实现前 3 个测试失败，`/agent/api/v1/me` 返回 404；实现后同命令 3 个测试通过；已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" && cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过。
+- 后续事项：继续实现前端 Admin/Agent 会话隔离与 Agent 登录。
+
+## 2026-06-08 00:55 - Agent 登录与 refresh 安全加固
+
+- 完成内容：Agent 登录成功后更新 `agent_admin_users.last_login_at`；各 refresh 入口按 User/Admin/Agent scope 限定 refresh token；refresh 续签前重新校验当前 actor 仍为 active，Agent 同时校验 `agent_admin_users.status = 'active'` 与 `agents.status = 'active'`。
+- 修改文件：
+  - `src/modules/auth/mod.rs`
+  - `src/modules/auth/routes.rs`
+  - `tests/agent_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test agent_routes agent_login -- --nocapture`，实现前失败于 `last_login_at.is_some()`；已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test agent_routes agent_refresh -- --nocapture`，实现前 Admin/User refresh token 调 Agent refresh 返回 200 而非 401。实现后已执行同两条命令，分别 2 个测试通过、1 个测试通过；已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过。
+- 后续事项：继续实现 Agent 当前身份接口 `/agent/api/v1/me`。
+
+## 2026-06-04 13:32 - Admin 表格边框与列伸缩
+
+- 完成内容：Admin 资源表格统一通过共享 DataTable 开启 Semi Table 边框与列宽伸缩，缺省列宽补 numeric width；资源页操作列继续固定右侧；详情抽屉与行情订阅列表等直用表格同步开启边框和列伸缩，行情订阅列表保留列表化启停行为与无障碍名称；清理旧原生订阅表样式并保留单行横向滚动展示。
+- 修改文件：
+  - `web/src/shared/DataTable.tsx`
+  - `web/src/shared/DataTable.test.tsx`
+  - `web/src/shared/DetailDrawer.tsx`
+  - `web/src/admin/resources/AdminResourcePage.test.tsx`
+  - `web/src/admin/actions/MarketFeedConfigPage.tsx`
+  - `web/src/admin/actions/MarketFeedConfigPage.test.tsx`
+  - `web/src/layouts/PageHeader.tsx`
+  - `web/src/styles.css`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/shared/DataTable.test.tsx`，实现前失败于缺少 `.semi-table-bordered` 与 `normalizeTableColumns`；已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/resources/AdminResourcePage.test.tsx src/admin/actions/MarketFeedConfigPage.test.tsx`，实现前行情订阅列表仍为原生表格，缺少 Semi bordered/resizable。实现后已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/resources/AdminResourcePage.test.tsx src/admin/actions/MarketFeedConfigPage.test.tsx src/shared/DataTable.test.tsx`，3 个测试文件、19 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，初次失败于 `PageHeader.tsx` 未使用的 `Text`，清理后重跑通过。
+- 后续事项：继续实现上传方式配置后端与前端。
+
 ## 2026-06-03 21:07 - Admin 用户ID筛选补充邮箱筛选
 
 - 完成内容：Admin 前端所有带 `user_id` 筛选的资源配置均补充“邮箱”筛选；后端 Admin 列表接口同步支持 `email` query 参数，覆盖钱包账户/流水、风控事件、代理佣金、闪兑订单、新币认购/分发/购买/锁仓/解禁、强平记录、现货订单/成交、杠杆仓位/利息汇总、Earn 订阅、秒合约订单等列表筛选。筛选仅作用于列表查询展示，不改变创建/操作表单、请求 payload 或既有 `user_id` 筛选行为。
@@ -1929,3 +2089,283 @@
   - `docs/superpowers/PROGRESS.md`
 - 验证结果：已执行 RED：`cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" infra::secrets::tests::masks_secret_without_exposing_middle -- --nocapture`，实现前失败于非 ASCII 字符 byte index 不是 char boundary；实现后通过。已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_smtp_test_uses_configured_sender_and_audits_without_secrets -- --nocapture`，实现前失败于发送前未写入 `smtp_config.test` 审计；实现后通过。已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" modules::admin::smtp_config -- --nocapture`，2 个目标测试通过、0 失败；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" infra -- --nocapture`，5 个目标测试通过、0 失败；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes smtp -- --nocapture`，3 个目标测试通过、0 失败；已执行 `git diff --check`，通过。
 - 后续事项：继续实现用户邮箱、登录密码、资金密码 API，以及后台 SMTP 配置页面和中文 API 文档。
+
+## 2026-06-04 16:43 - Admin 上传方式后端配置与上传服务
+
+- 完成内容：新增上传存储配置表与上传对象记录表；挂载 Admin 上传配置查询/保存和图片上传接口；上传配置支持图床、本地、S3、OSS，密钥加密保存并仅脱敏返回，保存配置必须提供审计原因；图片上传支持本地安全对象键、图床 multipart 转发、S3 SigV4 PUT、OSS PUT；后端校验文件大小、允许 MIME、图片 magic bytes，并修复大于 Axum 默认 2MiB 的合法配置上传被提前拦截的问题。
+- 修改文件：
+  - `Cargo.toml`
+  - `Cargo.lock`
+  - `migrations/0038_upload_storage_config.sql`
+  - `src/modules/admin/mod.rs`
+  - `src/modules/admin/routes.rs`
+  - `src/modules/admin/upload_config.rs`
+  - `tests/admin_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_upload -- --nocapture`，实现前失败于 `Table 'exchange.upload_storage_configs' doesn't exist`；实现后通过。已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_uploads_images_accepts_configured_size_above_axum_default_limit -- --nocapture`，修复前失败于 `upload multipart body is invalid`，修复后通过。已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过。已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_upload -- --nocapture`，4 个目标测试通过、0 失败。已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" upload -- --nocapture`，upload 相关测试通过。已执行 `cargo check --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml"`，通过。已执行代码审查，未发现剩余 Critical/Important 后端问题。
+- 后续事项：继续实现 Admin 上传配置前端页面与 FormData API 客户端支持。
+
+## 2026-06-04 17:19 - Admin 上传方式后端安全加固
+
+- 完成内容：加固上传配置与上传记录边界：拒绝 endpoint/public_base_url 中的 userinfo、query、fragment；限制允许 MIME 仅为后端 magic bytes 已支持的图片类型；保存上传对象前对原始文件名做安全化与长度限制；图床远端响应中的超长或不支持字段不再导致上传成功后记录入库失败；补充 S3/OSS bucket 与 region 字符校验；新增迁移将上传对象 URL 字段调整为 TEXT。
+- 修改文件：
+  - `migrations/0039_upload_object_url_text.sql`
+  - `src/modules/admin/upload_config.rs`
+  - `tests/admin_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_upload -- --nocapture`，实现前失败于 unsafe URL/bucket 被接受以及图床超长响应导致 `object_key` 入库超长；实现后 4 个目标测试通过、0 失败。已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" upload -- --nocapture`，upload 相关测试通过；已执行 `cargo check --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml"`，通过。
+- 后续事项：继续实现 Admin 上传配置前端页面与 FormData API 客户端支持。
+
+## 2026-06-04 17:56 - Admin 上传配置前端页面
+
+- 完成内容：新增 Admin 上传配置页面，支持图床、OSS、S3、本地 provider 切换；按 provider 展示配置字段；密钥输入框不回填明文且留空不覆盖已有密文；保存配置通过确认弹窗收集原因；新增测试上传 FormData 流程并在系统配置导航中注册“上传配置”。
+- 修改文件：
+  - `web/src/api/client.ts`
+  - `web/src/api/client.test.ts`
+  - `web/src/admin/actions/UploadConfigPage.tsx`
+  - `web/src/admin/actions/UploadConfigPage.test.tsx`
+  - `web/src/admin/routes.tsx`
+  - `web/src/admin/routes.test.tsx`
+  - `web/src/layouts/AdminLayout.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/api/client.test.ts`，实现前失败于 FormData 请求仍设置 `Content-Type`；实现后通过。已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/actions/UploadConfigPage.test.tsx`，实现前失败于找不到 `./UploadConfigPage`；实现后 5 个目标测试通过。已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/routes.test.tsx src/layouts/AdminLayout.test.tsx`，实现前失败于未注册 `system/uploads` 路由和“上传配置”导航；实现后通过。最终已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/shared/DataTable.test.tsx src/admin/resources/AdminResourcePage.test.tsx src/admin/actions/MarketFeedConfigPage.test.tsx src/api/client.test.ts src/admin/actions/UploadConfigPage.test.tsx src/admin/routes.test.tsx src/layouts/AdminLayout.test.tsx`，7 个测试文件、47 个测试通过。
+- 后续事项：无。
+
+## 2026-06-04 17:56 - Admin 上传方式后端复审安全修复与最终验证
+
+- 完成内容：修复上传后端复审发现的安全边界：长度小于等于 8 的密钥全部脱敏为星号；凭证型上传 endpoint 要求 HTTPS，保留 loopback HTTP 仅用于本地测试；图床返回的 download/share/delete URL 在返回和入库前校验；新增 file_field、local_root、key_prefix 长度校验，避免数据库截断或 500；完成表格边框列伸缩、上传配置后端、上传配置前端的最终验证。
+- 修改文件：
+  - `src/infra/secrets.rs`
+  - `src/modules/admin/upload_config.rs`
+  - `tests/admin_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" masks_secret_without_exposing_middle`，实现前失败于 8 字符密钥脱敏仍暴露完整值；实现后 1 个目标测试通过。已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_upload -- --nocapture`，实现前失败于非安全 HTTP endpoint 和图床不安全响应 URL 被接受；实现后 4 个目标测试通过、0 失败。最终已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test`，18 个测试文件、127 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run build`，通过，仍有既有第三方 `lottie-web` direct eval 与 chunk size warning；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets -- -D warnings`，通过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml"`，全量 Rust 测试通过；已执行 `git diff --check`，通过；已执行最终代码审查，未发现阻断或重要问题。
+- 后续事项：后续可补充 S3/OSS provider 的 wiremock 成功路径测试，以及将上传配置页 provider 摘要从 code 显示优化为中文标签；当前需求无阻断事项。
+
+## 2026-06-05 00:30 - 修复 Admin 表格列伸缩与默认样式
+
+- 完成内容：移除 Admin 表格自定义 class、横向滚动配置和表格样式覆盖；保留 Semi Table `bordered`、`resizable` 与 numeric column width，避免 `scroll.x` 干扰列伸缩；行情订阅列表改用 Semi Table，详情抽屉表格补充可伸缩列宽并改用 Semi 默认表格尺寸。
+- 修改文件：
+  - `web/src/shared/DataTable.tsx`
+  - `web/src/shared/DataTable.test.tsx`
+  - `web/src/shared/DetailDrawer.tsx`
+  - `web/src/admin/resources/AdminResourcePage.test.tsx`
+  - `web/src/admin/actions/MarketFeedConfigPage.tsx`
+  - `web/src/admin/actions/MarketFeedConfigPage.test.tsx`
+  - `web/src/styles.css`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/shared/DataTable.test.tsx src/admin/resources/AdminResourcePage.test.tsx src/admin/actions/MarketFeedConfigPage.test.tsx`，实现前失败于表格仍带 `admin-data-table` / `admin-action-subscription-list` 自定义 class；实现后 3 个测试文件、18 个测试通过。已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/shared/DataTable.test.tsx`，实现前失败于 `semi-table-small` 仍存在；移除 DataTable `size="small"` 后纳入最终目标测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过。已执行 `git -C "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain" diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-05 00:47 - 修复 Semi React 19 与列拖拽运行时错误
+
+- 完成内容：在前端入口最顶部注入 Semi React 19 adapter，消除 Semi 动态挂载组件缺少 `createRoot` 的警告；在 Vite runtime define 与依赖预构建 rolldown transform 中替换 `process.env.DRAGGABLE_DEBUG`，避免 Semi 表格列伸缩拖拽触发 `react-draggable` 的浏览器端 `process is not defined`。
+- 修改文件：
+  - `web/src/main.tsx`
+  - `web/vite.config.ts`
+  - `web/src/runtimeCompatibility.test.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/runtimeCompatibility.test.ts`，实现前失败于入口首个 import 不是 `@douyinfe/semi-ui/react19-adapter` 且 Vite 未替换 `process.env.DRAGGABLE_DEBUG`；实现后通过。已执行 RED：同一测试要求使用 `optimizeDeps.rolldownOptions.transform.define` 且不使用已弃用 `esbuildOptions`，实现前失败；实现后通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/runtimeCompatibility.test.ts src/shared/DataTable.test.tsx`，2 个测试文件、5 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run build`，通过，仍有既有第三方 `lottie-web` direct eval 与 chunk size warning。已执行 `rg -n "process\.env\.DRAGGABLE_DEBUG" "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web/dist"`，无输出。已执行 `git -C "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain" diff --check`，通过。
+- 后续事项：本地开发服务需重启；若浏览器仍加载旧 Vite 预构建缓存，可删除 `web/node_modules/.vite` 后重启。
+
+## 2026-06-05 13:36 - 增加 Admin 理财产品分类说明
+
+- 完成内容：在 Admin 添加理财产品弹窗中为“定期、活期、结构化、质押”四类产品分类增加区别说明；说明仅用于后台展示，不改变产品分类枚举值和提交给后端的 `category` payload。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/resources/resourceConfigs.test.tsx`，实现前失败于找不到 `产品分类说明`；实现后 1 个测试文件、27 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过。已执行 `git -C "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain" diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-05 14:08 - 代理后端安全收口
+
+- 完成内容：关闭公开代理自助注册；代理登录要求代理后台账号和代理主表均为 active；Admin 分配用户到代理时拒绝 suspended/disabled 代理，并避免错误响应暴露密码 hash。
+- 修改文件：
+  - `src/modules/auth/routes.rs`
+  - `src/modules/auth/mod.rs`
+  - `src/modules/admin/routes.rs`
+  - `tests/agent_routes.rs`
+  - `tests/admin_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" agent_register_route_rejects_public_self_service_accounts -- --nocapture`，实现前失败于公开代理注册返回 200 并签发 token；实现后通过。已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" agent_login_route_rejects_inactive_parent_agent -- --nocapture`，实现前失败于 suspended 父代理仍可登录；实现后通过。已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" admin_agent_management_create_update_assign_list_and_audit -- --nocapture`，实现前失败于 suspended 代理仍可接收用户分配；实现后通过。最终已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" agent_register -- --nocapture && DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" agent_login -- --nocapture && DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" admin_agent_management_create_update_assign_list_and_audit -- --nocapture`，3 个目标测试通过；已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过；已执行 `git -C "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain" diff --check`，通过。
+- 后续事项：继续补齐 Admin 代理列表/详情与创建代理初始密码后端处理。
+
+## 2026-06-05 16:30 - Admin 代理列表详情与初始密码处理
+
+- 完成内容：新增 Admin 代理列表与详情接口，支持按代理 ID、用户 ID、代理编号、邮箱、状态、limit、offset 查询；创建代理支持 `admin_password` 明文初始密码由后端 Argon2 hash 后保存，并兼容旧 `admin_password_hash`；代理响应与审计记录不暴露明文密码或 password hash；列表/详情在同一代理存在多条后台账号历史数据时固定返回一条代理记录，避免分页重复。
+- 修改文件：
+  - `src/modules/admin/routes.rs`
+  - `tests/admin_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" admin_agents_list_detail_filters_and_password_hashing -- --nocapture`，实现前失败于代理详情/列表接口未返回预期 JSON；实现后通过。代码审查发现同一代理存在多条 `agent_admin_users` 时列表会重复；已补充同名目标测试，修复前失败于列表返回 2 条同一代理记录，修复后通过。最终已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" && DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" admin_agents_list_detail_filters_and_password_hashing -- --nocapture && DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" admin_agent_management_routes_require_admin_scope_mysql_and_validation -- --nocapture && DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" admin_agent_management_create_update_assign_list_and_audit -- --nocapture`，3 个目标测试通过；已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过；已执行 `git -C "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain" diff --check`，通过。
+- 后续事项：继续补齐 Admin 佣金规则 CRUD 与结算保护。
+
+## 2026-06-05 17:17 - Admin 佣金规则 CRUD 与结算保护
+
+- 完成内容：新增 Admin 代理佣金规则列表、创建、更新接口，支持按代理 ID、产品类型、状态、limit、offset 查询；创建/更新规则强制 reason 并写 Admin 审计；本轮规则限制为 `convert`，佣金比例限制在 `[0,1]`，规则状态限制为 active/disabled；新增 `agent_commission_rules.updated_at` 迁移；佣金结算拒绝非 `convert_order` 来源，避免无真实打款时标记 settled；补充闪兑佣金规则行为测试，确认 disabled 规则不生成佣金且使用最新 active 规则。
+- 修改文件：
+  - `src/modules/admin/routes.rs`
+  - `tests/admin_routes.rs`
+  - `tests/convert_routes.rs`
+  - `migrations/0040_agent_commission_rule_updated_at.sql`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" admin_agent_commission_status_updates_pending_records_and_audits -- --nocapture`，实现前失败于 `spot_trade` 佣金可被标记 settled；实现后通过。已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" admin_agent_commission_rule_routes_require_admin_scope_mysql_and_validation -- --nocapture`，实现前失败于规则路由未注册返回 404；实现后通过。已执行 RED：`DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" admin_agent_commission_rules_crud_filters_and_audits -- --nocapture`，实现前失败于规则 CRUD 未返回预期 JSON；实现后通过。已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" REDIS_URL="redis://127.0.0.1:6379" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" convert_confirm_skips_disabled_agent_commission_rule -- --nocapture`，通过。已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" REDIS_URL="redis://127.0.0.1:6379" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" convert_confirm_uses_latest_active_agent_commission_rule -- --nocapture`，通过。最终已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_agent_commission -- --nocapture`，4 个目标测试通过；已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" REDIS_URL="redis://127.0.0.1:6379" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test convert_routes convert_confirm -- --nocapture`，5 个目标测试通过；已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过；已执行 `git -C "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain" diff --check`，通过；已执行代码审查，未发现阻断或重要问题。
+- 后续事项：继续补齐 Admin 前端代理管理闭环。
+
+## 2026-06-05 17:42 - Admin 前端代理管理闭环
+
+- 完成内容：Admin 代理管理页改为展示代理列表，创建代理使用“初始密码”并提交 `admin_password`，不再让管理员输入密码哈希；代理状态改为列表行级查看详情、启用、暂停、禁用操作，并通过 `ConfirmAction` 收集 reason；用户列表新增“分配代理”行级操作，提交用户代理分配原因；代理佣金列表新增“结算”和“拒绝”行级操作，佣金状态筛选改为 select。
+- 修改文件：
+  - `web/src/admin/actions/AgentManagementPage.tsx`
+  - `web/src/admin/actions/helperCopy.test.tsx`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/actions/helperCopy.test.tsx src/admin/resources/resourceConfigs.test.tsx`，实现前失败于找不到“初始密码”“分配代理”、佣金状态 select 和佣金结算/拒绝操作；实现后 2 个测试文件、33 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过。已执行 `git -C "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain" diff --check`，通过。已执行代码审查，未发现阻断或重要问题。
+- 后续事项：继续补齐 Admin 佣金规则前端入口。
+
+## 2026-06-05 18:07 - Admin 佣金规则前端入口
+
+- 完成内容：Admin 侧边栏“用户与代理”分组新增“佣金规则”入口，`/admin/agent-commission-rules` 注册为资源列表页；新增代理佣金规则资源配置，支持代理 ID、产品类型、状态筛选，展示规则创建/更新时间；新增“添加佣金规则”和行级“修改”操作，创建/更新均通过 `ConfirmAction` 收集 reason，创建只开放 `convert` 产品类型，更新仅提交佣金比例、状态和 reason。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/admin/routes.tsx`
+  - `web/src/admin/routes.test.tsx`
+  - `web/src/layouts/AdminLayout.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/resources/resourceConfigs.test.tsx src/admin/routes.test.tsx src/layouts/AdminLayout.test.tsx`，实现前失败于缺少 `agent-commission-rules` 路由、缺少“佣金规则”侧边栏入口和缺少 `agentCommissionRules` 资源配置；实现后 3 个测试文件、50 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过。已执行 `git -C "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain" diff --check`，通过。已执行代码审查，未发现阻断或重要问题。
+- 后续事项：继续补齐 OpenAPI、进度记录与代理功能集成验证。
+
+## 2026-06-05 18:23 - 代理功能 OpenAPI 与集成验证
+
+- 完成内容：补齐代理功能 OpenAPI 合约，覆盖 Admin 代理列表/详情/创建/状态、用户分配代理、代理佣金列表/状态、佣金规则列表/创建/更新；公开代理注册文档改为返回 403，`AgentAuthRequest` 不再包含 `agent_id`；创建代理文档仅暴露 `admin_password`，不暴露 `admin_password_hash` 或 `password_hash`；代理佣金状态更新文档与后端保持一致，仅允许 `settled` 或 `rejected`；同步修正代理 auth 路由单元测试，使公开代理注册关闭时返回 403。
+- 修改文件：
+  - `src/openapi.rs`
+  - `tests/openapi_routes.rs`
+  - `src/modules/auth/routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" openapi_json_documents_agent_management_contract -- --nocapture`，实现前失败于缺少 `GET /admin/api/v1/agents` OpenAPI 路径；实现后通过。已执行 RED：同一测试在补充佣金状态 schema 断言后失败于 OpenAPI 允许 `pending|settled|rejected`，修正后通过。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" modules::auth::routes::tests::agent_auth_routes_return_clear_error_without_mysql -- --nocapture`，通过。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" openapi -- --nocapture`，3 个 OpenAPI 测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/actions/helperCopy.test.tsx src/admin/resources/resourceConfigs.test.tsx src/admin/routes.test.tsx src/layouts/AdminLayout.test.tsx`，4 个测试文件、54 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test`，19 个测试文件、132 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run build`，通过，存在 `lottie-web` direct eval 与 chunk size 构建警告，未阻断构建。已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过。已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets -- -D warnings`，通过。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml"`，全量通过。已执行 `git -C "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain" diff --check`，通过。
+- 后续事项：无
+
+## 2026-06-08 01:13 - Agent 前端登录会话隔离
+
+- 完成内容：前端认证存储改为 Admin/Agent 分 key 管理；`apiRequest` 支持按 `authScope` 读取 token 并在 401 时只清理对应会话；新增 Agent 登录 API 封装；登录页开放代理身份登录，Admin 成功跳转 `/admin/dashboard`，Agent 成功跳转 `/agent/dashboard`，两类会话互不覆盖。
+- 修改文件：
+  - `web/src/auth/authStore.ts`
+  - `web/src/api/client.ts`
+  - `web/src/api/agentAuth.ts`
+  - `web/src/auth/LoginPage.tsx`
+  - `web/src/auth/authStore.test.ts`
+  - `web/src/api/client.test.ts`
+  - `web/src/auth/LoginPage.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/auth/authStore.test.ts src/api/client.test.ts src/auth/LoginPage.test.tsx`，实现前失败于 `agentAuth` 文件缺失、Admin/Agent 会话仍共用单 key、`apiRequest` 未支持 `authScope` 且 401 清理了默认会话；实现后同命令 3 个测试文件、11 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过。
+- 后续事项：继续实现 Agent 路由保护与门户布局。
+
+## 2026-06-08 01:18 - Agent 路由保护与门户布局
+
+- 完成内容：新增 `RequireAgent` 路由守卫，无 Agent 会话跳转登录页，存在非 Agent 会话跳转 403；新增 Agent 门户布局，包含总览、团队用户、邀请码、佣金记录、闪兑统计、团队树菜单；Agent 退出仅清理 Agent 会话，不影响 Admin 会话；新增 `/agent` 路由并挂载 Agent 布局与占位页面。
+- 修改文件：
+  - `web/src/auth/RequireAgent.tsx`
+  - `web/src/auth/RequireAgent.test.tsx`
+  - `web/src/layouts/AgentLayout.tsx`
+  - `web/src/layouts/AgentLayout.test.tsx`
+  - `web/src/agent/routes.tsx`
+  - `web/src/agent/routes.test.tsx`
+  - `web/src/app/router.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/auth/RequireAgent.test.tsx src/layouts/AgentLayout.test.tsx src/agent/routes.test.tsx`，实现前失败于 `RequireAgent`、`AgentLayout`、`agent/routes` 文件缺失；实现后同命令 3 个测试文件、13 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过。
+- 后续事项：继续实现 Agent 门户页面与 Agent API 封装。
+
+## 2026-06-08 01:25 - Agent 门户页面
+
+- 完成内容：新增 Agent 门户 API 封装，所有请求统一使用 Agent 会话；将 Agent 路由占位页替换为真实页面，覆盖代理总览、团队用户、邀请码创建与启停、佣金记录、闪兑统计、团队树；页面仅消费现有 Agent 后端接口字段，表格复用共享 `DataTable` 与 Semi 默认表格能力。
+- 修改文件：
+  - `web/src/api/agent.ts`
+  - `web/src/api/agent.test.ts`
+  - `web/src/agent/pages.tsx`
+  - `web/src/agent/pages.test.tsx`
+  - `web/src/agent/routes.tsx`
+  - `web/src/agent/routes.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/agent src/api/agent.test.ts`，实现前失败于 `web/src/api/agent.ts` 与 `web/src/agent/pages.tsx` 缺失；实现后同命令 3 个测试文件、15 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过。
+- 后续事项：继续补齐 Agent 门户 OpenAPI 与最终集成验证。
+
+## 2026-06-08 01:44 - Agent 门户 OpenAPI 与最终验证
+
+- 完成内容：补齐 Agent 门户 OpenAPI 合约，覆盖 `/agent/api/v1/me`、总览、团队用户、邀请码列表/创建/状态更新、佣金记录、闪兑统计、团队树；新增 Agent 门户 schema 并校验不暴露 `password_hash`、access token 或 refresh token；时间字段按 int64/unix millis 记录；修复 `RequireAdmin` 在仅存在 Agent 会话时误跳登录页的问题，使其返回 403；修复 Agent 登录请求未显式使用 Agent scope 的隔离问题，避免代理登录失败误清 Admin 会话。
+- 修改文件：
+  - `src/openapi.rs`
+  - `tests/openapi_routes.rs`
+  - `web/src/api/agentAuth.ts`
+  - `web/src/api/agentAuth.test.ts`
+  - `web/src/auth/RequireAdmin.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" openapi_json_documents_agent_portal_contract -- --nocapture`，实现前失败于缺少 `GET /agent/api/v1/me` OpenAPI 路径；实现后同命令通过，1 个测试通过。已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/api/agentAuth.test.ts`，修复前失败于 Agent 登录请求携带 `Bearer admin-token`；修复后同命令 1 个测试通过。已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过。已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test openapi_routes -- --nocapture`，5 个测试通过。已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test agent_routes -- --nocapture`，15 个测试通过。已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets -- -D warnings`，通过。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml"`，全量 Rust 测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/auth/RequireAdmin.test.tsx`，3 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/auth/authStore.test.ts src/api/client.test.ts src/api/agentAuth.test.ts src/auth/LoginPage.test.tsx src/auth/RequireAdmin.test.tsx src/auth/RequireAgent.test.tsx src/layouts/AgentLayout.test.tsx src/agent src/api/agent.test.ts`，10 个测试文件、36 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test`，26 个测试文件、158 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run build`，通过，存在 `lottie-web` direct eval 与 chunk size 构建警告，未阻断构建。已执行 `git -C "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain" diff --check`，通过。
+- 后续事项：无
+
+## 2026-06-10 02:08 - PC 产品接口迁移
+
+- 完成内容：将 PC 用户端闪兑、理财、Launchpad、新币认购、秒合约、期权样式秒合约、合约/杠杆相关 API 迁移到 Rust 后端 `/api/v1` 的 convert、earn、new-coins、seconds-contracts、margin 接口；删除产品 API 模块中的旧 `/uc/*`、`/swap/*`、`/second/*`、`/option/*` 调用和本地 mock 成功；对 Rust 后端暂未开放的合约/秒合约划转、撤单、全平、模式切换、单独调杠杆操作改为明确拒绝；合约与秒合约行情 WebSocket 统一改走 `market:*` 主题。
+- 修改文件：
+  - `pc/src/api/backendAdapters.ts`
+  - `pc/tests/backendAdapters.test.ts`
+  - `pc/src/api/swap.ts`
+  - `pc/src/api/finance.ts`
+  - `pc/src/api/activity.ts`
+  - `pc/src/api/second.ts`
+  - `pc/src/api/option.ts`
+  - `pc/src/api/contract.ts`
+  - `pc/src/views/Launchpad.vue`
+  - `pc/src/views/Contract.vue`
+  - `pc/src/views/SecondOptions.vue`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`node --experimental-strip-types --test "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc/tests/backendAdapters.test.ts"`，实现前失败于产品 API 模块仍包含旧 product endpoints 或 mock；实现后同命令 16 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run type-check`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run build`，通过，Vite 构建 255 个模块。已执行旧 product endpoint 和 legacy WebSocket module 扫描，无匹配输出。已执行 `git -C "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" diff --check -- "src/api/backendAdapters.ts" "src/api/swap.ts" "src/api/finance.ts" "src/api/activity.ts" "src/api/second.ts" "src/api/option.ts" "src/api/contract.ts" "src/views/Launchpad.vue" "src/views/Contract.vue" "src/views/SecondOptions.vue" "tests/backendAdapters.test.ts"`，通过。已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test convert_routes --test earn_routes --test new_coin_routes --test seconds_contract_routes --test margin_routes -- --nocapture`，失败于本地 MySQL 连接池超时 `PoolTimedOut`，其中 convert_routes 2 个无 MySQL/auth 错误路径测试通过，6 个需要 MySQL 的 convert 测试失败；未进入后续 product route 测试文件。
+- 后续事项：继续执行 PC 用户中心剩余接口迁移；如需完整 Rust product route 绿灯，需先恢复本地 MySQL 可连接性。
+
+## 2026-06-10 04:21 - PC 用户中心剩余接口迁移
+
+- 完成内容：将 PC 用户端邀请、新闻、登录密码修改接入 Rust 后端真实接口，新增公开新闻只读路由 `GET /api/v1/news`、`GET /api/v1/news/:id` 并写入 OpenAPI；KYC 提交、链上充值提现、资金密码重置、钱包绑定、借贷、OTC 等后端暂未开放能力改为明确不可用，不再保留假成功或随机数据；News 页面移除静态新闻并消费公开新闻接口；Header 和用户中心侧栏移除未开放 Loan/OTC/充值/提现/借贷订单入口。
+- 修改文件：
+  - `src/modules/mod.rs`
+  - `src/modules/news/mod.rs`
+  - `src/modules/news/routes.rs`
+  - `src/lib.rs`
+  - `src/openapi.rs`
+  - `tests/openapi_routes.rs`
+  - `pc/src/api/backendAdapters.ts`
+  - `pc/src/api/news.ts`
+  - `pc/src/api/user.ts`
+  - `pc/src/api/wallet.ts`
+  - `pc/src/api/loan.ts`
+  - `pc/tests/backendAdapters.test.ts`
+  - `pc/src/views/User/Invite.vue`
+  - `pc/src/views/News.vue`
+  - `pc/src/views/User/KYC.vue`
+  - `pc/src/views/User/Recharge.vue`
+  - `pc/src/views/User/Withdraw.vue`
+  - `pc/src/views/User/Security.vue`
+  - `pc/src/views/OTC.vue`
+  - `pc/src/views/Loan.vue`
+  - `pc/src/views/User/LoanOrders.vue`
+  - `pc/src/components/layout/Header.vue`
+  - `pc/src/views/User/UserLayout.vue`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `node --experimental-strip-types --test "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc/tests/backendAdapters.test.ts"`，18 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run type-check`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run build`，Vite 构建 255 个模块并通过。已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test openapi_routes -- --nocapture`，7 个测试通过。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" route_prefixes_are_registered -- --nocapture`，1 个测试通过。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test user_routes --test wallet_routes -- --nocapture`，user_routes 9 个测试、wallet_routes 1 个测试通过；其中 MySQL 集成测试因未设置 `DATABASE_URL` 按测试逻辑跳过。已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过。已执行 PC legacy endpoint 扫描和用户中心 residual mock 定向扫描，均无匹配输出。已执行 Rust news diff、PC residual diff 与 `docs/superpowers/PROGRESS.md` 的 `diff --check`，通过。
+- 后续事项：继续执行 PC 全量接口迁移最终验证；如需完整带数据库集成的用户/钱包路由绿灯，需提供可连接的 `DATABASE_URL`。
+
+## 2026-06-10 04:28 - PC 全量接口迁移最终验证
+
+- 完成内容：完成 PC 用户端新后端 API 迁移的最终验证；确认请求基座不再依赖旧 `API_DOMAIN` 或 `VITE_API_DOMAIN`，PC 源码不再保留旧域名与旧 `/uc/*`、`/exchange/*`、`/market/*`、`/swap/*`、`/second/*`、`/option/*` 接口路径；用户中心 residual 假成功流已清理，剩余无真实后端能力的 KYC 提交、链上充值提现、钱包绑定、资金密码重置、借贷、OTC 均保持明确不可用状态。
+- 修改文件：
+  - `pc/src/App.vue`
+  - `pc/src/components/layout/Footer.vue`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `node --experimental-strip-types --test "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc/tests/backendAdapters.test.ts"`，18 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run type-check`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run build`，Vite 构建 255 个模块并通过。已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test market_routes --test spot_routes --test convert_routes --test earn_routes --test new_coin_routes --test seconds_contract_routes --test margin_routes --test user_routes --test wallet_routes --test openapi_routes -- --nocapture`，market_routes 12 个、spot_routes 42 个、convert_routes 8 个、earn_routes 18 个、new_coin_routes 8 个、seconds_contract_routes 19 个、margin_routes 25 个、user_routes 9 个、wallet_routes 1 个、openapi_routes 7 个测试通过；本地未设置 `DATABASE_URL`、`REDIS_URL`、Mongo 连接时，相关集成测试按测试逻辑跳过但错误路径测试通过。已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过。已执行 PC legacy endpoint 扫描、用户中心 fake flow 扫描、PC `setTimeout` 扫描与 mock marker 扫描；旧接口与假成功标记无匹配输出，剩余 `setTimeout` 仅为 WebSocket 重连、合约刷新延迟和秒合约结算轮询冷却，剩余 `Math.random` 仅用于后端 idempotency key 生成。已执行 `git -C "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain" diff --check -- pc docs/superpowers/PROGRESS.md src/modules/news/routes.rs src/modules/news/mod.rs src/modules/mod.rs src/lib.rs src/openapi.rs tests/openapi_routes.rs`，通过。
+- 后续事项：如需运行未跳过的 MySQL/Redis/Mongo 集成测试，需先提供可连接的本地服务与对应环境变量。

@@ -1,7 +1,9 @@
 use crate::{
     error::{AppError, AppResult},
     infra::mongo::kline_collection_name,
-    modules::market::{KlineQuery, ValidatedMarketSymbol, market_ticker_redis_key},
+    modules::market::{
+        KlineQuery, ValidatedMarketSymbol, market_depth_redis_key, market_ticker_redis_key,
+    },
     state::AppState,
     time::{option_unix_millis, unix_millis},
 };
@@ -10,6 +12,7 @@ use axum::{
     extract::{Path, Query, State},
     routing::get,
 };
+use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use mongodb::bson::{DateTime as BsonDateTime, Document, doc, oid::ObjectId};
 use redis::AsyncCommands;
@@ -20,6 +23,8 @@ pub fn routes() -> Router<AppState> {
         .route("/markets", get(list_markets))
         .route("/markets/:symbol/ticker", get(get_ticker))
         .route("/markets/:symbol/klines", get(list_klines))
+        .route("/markets/:symbol/depth", get(get_depth))
+        .route("/markets/:symbol/trades", get(list_trades))
 }
 
 #[derive(Debug, Serialize)]
@@ -70,6 +75,66 @@ struct KlineResponse {
     low: String,
     close: String,
     volume: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TradesQueryParams {
+    limit: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+struct DepthResponse {
+    symbol: String,
+    bids: Vec<DepthLevelResponse>,
+    asks: Vec<DepthLevelResponse>,
+    #[serde(with = "unix_millis")]
+    observed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+struct DepthLevelResponse {
+    price: String,
+    amount: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DepthCachePayload {
+    symbol: String,
+    bids: Vec<DepthCacheLevel>,
+    asks: Vec<DepthCacheLevel>,
+    #[serde(with = "unix_millis")]
+    observed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DepthCacheLevel {
+    price: BigDecimal,
+    quantity: BigDecimal,
+}
+
+#[derive(Debug, Serialize)]
+struct TradesResponse {
+    trades: Vec<TradeResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct TradeResponse {
+    id: String,
+    symbol: String,
+    price: String,
+    amount: String,
+    direction: String,
+    #[serde(with = "unix_millis")]
+    time: DateTime<Utc>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct SpotTradeRow {
+    id: u64,
+    symbol: String,
+    price: BigDecimal,
+    quantity: BigDecimal,
+    created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -136,6 +201,59 @@ async fn get_ticker(
     Ok(Json(ticker))
 }
 
+async fn get_depth(
+    State(state): State<AppState>,
+    Path(symbol): Path<String>,
+) -> AppResult<Json<DepthResponse>> {
+    let symbol = ValidatedMarketSymbol::from_raw(&symbol)
+        .map_err(|error| AppError::Validation(error.to_string()))?;
+    ensure_listed_market_symbol(&state, symbol.as_str()).await?;
+    let mut connection = state.redis.clone().ok_or_else(|| {
+        AppError::Internal("redis connection is not configured for market depth routes".to_owned())
+    })?;
+    let payload: Option<String> = connection
+        .get(market_depth_redis_key(symbol.as_str()))
+        .await?;
+    let payload = payload.ok_or(AppError::NotFound)?;
+    let depth = serde_json::from_str::<DepthCachePayload>(&payload)
+        .map_err(|error| AppError::Internal(format!("invalid cached depth payload: {error}")))?;
+
+    Ok(Json(DepthResponse::from_cache(depth)))
+}
+
+async fn list_trades(
+    State(state): State<AppState>,
+    Path(symbol): Path<String>,
+    Query(query): Query<TradesQueryParams>,
+) -> AppResult<Json<TradesResponse>> {
+    let symbol = ValidatedMarketSymbol::from_raw(&symbol)
+        .map_err(|error| AppError::Validation(error.to_string()))?;
+    ensure_listed_market_symbol(&state, symbol.as_str()).await?;
+    let pool = state.mysql.as_ref().ok_or_else(|| {
+        AppError::Internal("mysql pool is not configured for market trade routes".to_owned())
+    })?;
+    let rows = sqlx::query_as::<_, SpotTradeRow>(
+        r#"SELECT trades.id,
+                  pairs.symbol,
+                  trades.price,
+                  trades.quantity,
+                  trades.created_at
+           FROM spot_trades trades
+           INNER JOIN trading_pairs pairs ON pairs.id = trades.pair_id
+           WHERE REPLACE(REPLACE(REPLACE(UPPER(pairs.symbol), '-', ''), '/', ''), '_', '') = ?
+           ORDER BY trades.created_at DESC, trades.id DESC
+           LIMIT ?"#,
+    )
+    .bind(symbol.as_str())
+    .bind(i64::from(route_limit(query.limit)))
+    .fetch_all(pool)
+    .await?;
+
+    Ok(Json(TradesResponse {
+        trades: rows.into_iter().map(TradeResponse::from).collect(),
+    }))
+}
+
 async fn list_klines(
     State(state): State<AppState>,
     Path(symbol): Path<String>,
@@ -194,6 +312,10 @@ async fn ensure_listed_market_symbol(state: &AppState, symbol: &str) -> AppResul
     Ok(())
 }
 
+fn route_limit(limit: Option<u32>) -> u32 {
+    limit.unwrap_or(50).clamp(1, 100)
+}
+
 fn kline_time_filter(start: Option<DateTime<Utc>>, end: Option<DateTime<Utc>>) -> Document {
     let mut filter = Document::new();
     if let Some(start) = start {
@@ -203,6 +325,49 @@ fn kline_time_filter(start: Option<DateTime<Utc>>, end: Option<DateTime<Utc>>) -
         filter.insert("$lte", BsonDateTime::from_millis(end.timestamp_millis()));
     }
     filter
+}
+
+impl DepthResponse {
+    fn from_cache(depth: DepthCachePayload) -> Self {
+        Self {
+            symbol: depth.symbol,
+            bids: depth
+                .bids
+                .into_iter()
+                .map(DepthLevelResponse::from)
+                .collect(),
+            asks: depth
+                .asks
+                .into_iter()
+                .map(DepthLevelResponse::from)
+                .collect(),
+            observed_at: depth.observed_at,
+        }
+    }
+}
+
+impl From<DepthCacheLevel> for DepthLevelResponse {
+    fn from(level: DepthCacheLevel) -> Self {
+        Self {
+            price: level.price.to_string(),
+            amount: level.quantity.to_string(),
+        }
+    }
+}
+
+impl From<SpotTradeRow> for TradeResponse {
+    fn from(row: SpotTradeRow) -> Self {
+        Self {
+            id: row.id.to_string(),
+            symbol: ValidatedMarketSymbol::from_raw(&row.symbol)
+                .map(|symbol| symbol.as_str().to_owned())
+                .unwrap_or(row.symbol),
+            price: row.price.to_string(),
+            amount: row.quantity.to_string(),
+            direction: "BUY".to_owned(),
+            time: row.created_at,
+        }
+    }
 }
 
 impl MarketResponse {

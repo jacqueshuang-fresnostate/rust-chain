@@ -1,3 +1,4 @@
+import '@douyinfe/semi-ui/react19-adapter';
 import '@douyinfe/semi-ui/lib/es/_base/base.css';
 import './styles.css';
 

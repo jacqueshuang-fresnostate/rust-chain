@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 const { Text } = Typography;
 
+const DEFAULT_COLUMN_WIDTH = 160;
 const DEFAULT_PAGE_SIZE = 20;
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
@@ -23,9 +24,17 @@ function resolveRowKey<T extends Record<string, unknown>>(rowKey: DataTableProps
   return rowKey ?? 'id';
 }
 
+export function normalizeTableColumns<T extends Record<string, unknown>>(columns: Array<ColumnProps<T>>) {
+  return columns.map((column) => ({
+    ...column,
+    width: typeof column.width === 'number' ? column.width : DEFAULT_COLUMN_WIDTH
+  }));
+}
+
 export function DataTable<T extends Record<string, unknown>>({ columns, data, error, loading, rowKey }: DataTableProps<T>) {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const tableColumns = useMemo(() => normalizeTableColumns(columns), [columns]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -58,8 +67,8 @@ export function DataTable<T extends Record<string, unknown>>({ columns, data, er
 
   return (
     <Table
-      className="admin-data-table"
-      columns={columns}
+      bordered
+      columns={tableColumns}
       dataSource={pageData}
       pagination={{
         currentPage,
@@ -73,9 +82,8 @@ export function DataTable<T extends Record<string, unknown>>({ columns, data, er
           setCurrentPage(1);
         }
       }}
+      resizable
       rowKey={resolveRowKey(rowKey)}
-      scroll={{ x: '100%' }}
-      size="small"
     />
   );
 }

@@ -10,7 +10,7 @@ const NONCE_LEN: usize = 12;
 pub fn mask_secret(value: &str) -> String {
     let value = value.trim();
     let chars: Vec<char> = value.chars().collect();
-    if chars.len() < 8 {
+    if chars.len() <= 8 {
         return "*".repeat(chars.len());
     }
     let prefix = chars.iter().take(4).collect::<String>();
@@ -101,6 +101,7 @@ mod tests {
     fn masks_secret_without_exposing_middle() {
         assert_eq!(mask_secret("abcd1234wxyz"), "abcd****wxyz");
         assert_eq!(mask_secret("用户abcdwxyz"), "用户ab****wxyz");
+        assert_eq!(mask_secret("abcdefgh"), "********");
         assert_eq!(mask_secret("short"), "*****");
     }
 

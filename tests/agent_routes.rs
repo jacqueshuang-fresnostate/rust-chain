@@ -6,7 +6,7 @@ use bigdecimal::BigDecimal;
 use exchange_api::{
     build_router,
     config::Settings,
-    modules::auth::{TokenScope, issue_token},
+    modules::auth::{TokenScope, hash_password, issue_token},
     state::AppState,
 };
 use secrecy::SecretString;
@@ -104,7 +104,54 @@ async fn create_user(pool: &MySqlPool, label: &str) -> u64 {
         .last_insert_id()
 }
 
+async fn create_user_with_password(pool: &MySqlPool, label: &str, password: &str) -> (u64, String) {
+    let email = format!(
+        "agent-route-{label}-{}@example.test",
+        Uuid::now_v7().simple()
+    );
+    let user_id = sqlx::query("INSERT INTO users (email, password_hash) VALUES (?, ?)")
+        .bind(&email)
+        .bind(hash_password(password).unwrap())
+        .execute(pool)
+        .await
+        .unwrap()
+        .last_insert_id();
+
+    (user_id, email)
+}
+
+async fn create_admin_with_password(
+    pool: &MySqlPool,
+    label: &str,
+    password: &str,
+) -> (u64, u64, String) {
+    let role_name = format!("agent-route-role-{label}-{}", Uuid::now_v7().simple());
+    let role_id =
+        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_OBJECT())")
+            .bind(role_name)
+            .execute(pool)
+            .await
+            .unwrap()
+            .last_insert_id();
+    let username = format!("agent-route-admin-{label}-{}", Uuid::now_v7().simple());
+    let admin_id =
+        sqlx::query("INSERT INTO admin_users (username, password_hash, role_id) VALUES (?, ?, ?)")
+            .bind(&username)
+            .bind(hash_password(password).unwrap())
+            .bind(role_id)
+            .execute(pool)
+            .await
+            .unwrap()
+            .last_insert_id();
+
+    (role_id, admin_id, username)
+}
+
 async fn create_agent(pool: &MySqlPool, label: &str) -> AgentFixture {
+    create_agent_with_password(pool, label, "not-a-real-password").await
+}
+
+async fn create_agent_with_password(pool: &MySqlPool, label: &str, password: &str) -> AgentFixture {
     let agent_user_id = create_user(pool, &format!("agent-owner-{label}")).await;
     let agent_code = format!("agent-{}-{}", label, Uuid::now_v7().simple());
     let agent_id = sqlx::query("INSERT INTO agents (user_id, agent_code) VALUES (?, ?)")
@@ -120,7 +167,7 @@ async fn create_agent(pool: &MySqlPool, label: &str) -> AgentFixture {
     )
     .bind(agent_id)
     .bind(username)
-    .bind("not-a-real-hash")
+    .bind(hash_password(password).unwrap())
     .execute(pool)
     .await
     .unwrap()
@@ -172,6 +219,19 @@ async fn create_unassigned_referral(pool: &MySqlPool, user_id: u64) {
     .execute(pool)
     .await
     .unwrap();
+}
+
+async fn response_json(response: axum::response::Response) -> Result<Value, Box<dyn Error>> {
+    let body = axum::body::to_bytes(response.into_body(), 8192).await?;
+    Ok(serde_json::from_slice(&body)?)
+}
+
+async fn cleanup_agent_admin_username(pool: &MySqlPool, username: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM agent_admin_users WHERE username = ?")
+        .bind(username)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 async fn cleanup_agent_fixture(
@@ -370,6 +430,493 @@ async fn create_convert_order(
     .await
     .unwrap();
     quote_id
+}
+
+#[tokio::test]
+async fn agent_register_route_rejects_public_self_service_accounts() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let agent = create_agent(&pool, "register-disabled").await;
+    let username = format!("agent-self-register-{}", Uuid::now_v7().simple());
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/agent/api/v1/auth/register")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "username": username,
+                        "password": "agent-password-1",
+                        "agent_id": agent.agent_id
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let status = response.status();
+    let payload = response_json(response).await?;
+    assert_eq!(status, StatusCode::FORBIDDEN, "payload: {payload}");
+    assert_eq!(payload["code"], "FORBIDDEN");
+    let created_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM agent_admin_users WHERE username = ?")
+            .bind(&username)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(created_count, 0);
+
+    cleanup_agent_admin_username(&pool, &username).await?;
+    cleanup_agent_fixture(&pool, &[agent], &[]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn agent_login_route_rejects_inactive_parent_agent() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let password = "agent-login-password-1";
+    let agent = create_agent_with_password(&pool, "inactive-login", password).await;
+    sqlx::query("UPDATE agents SET status = 'suspended' WHERE id = ?")
+        .bind(agent.agent_id)
+        .execute(&pool)
+        .await?;
+    let username: String =
+        sqlx::query_scalar("SELECT username FROM agent_admin_users WHERE id = ? LIMIT 1")
+            .bind(agent.admin_user_id)
+            .fetch_one(&pool)
+            .await?;
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/agent/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "username": username, "password": password }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    cleanup_agent_fixture(&pool, &[agent], &[]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn agent_login_route_issues_agent_tokens_and_records_last_login() -> Result<(), Box<dyn Error>>
+{
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let password = "agent-login-password-2";
+    let agent = create_agent_with_password(&pool, "active-login", password).await;
+    let username: String =
+        sqlx::query_scalar("SELECT username FROM agent_admin_users WHERE id = ? LIMIT 1")
+            .bind(agent.admin_user_id)
+            .fetch_one(&pool)
+            .await?;
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/agent/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "username": username, "password": password }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let status = response.status();
+    let payload = response_json(response).await?;
+    assert_eq!(status, StatusCode::OK, "payload: {payload}");
+    assert_eq!(payload["scope"], "agent");
+    assert_eq!(payload["token_type"], "Bearer");
+    assert!(
+        payload["access_token"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+    assert!(
+        payload["refresh_token"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+
+    let last_login_at: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT last_login_at FROM agent_admin_users WHERE id = ? LIMIT 1")
+            .bind(agent.admin_user_id)
+            .fetch_one(&pool)
+            .await?;
+    assert!(last_login_at.is_some());
+
+    sqlx::query("DELETE FROM refresh_tokens WHERE actor_type = 'agent' AND actor_id = ?")
+        .bind(agent.admin_user_id)
+        .execute(&pool)
+        .await?;
+    cleanup_agent_fixture(&pool, &[agent], &[]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn agent_refresh_routes_enforce_scope_and_active_status() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let agent_password = "agent-refresh-password-1";
+    let admin_password = "admin-refresh-password-1";
+    let user_password = "user-refresh-password-1";
+    let agent = create_agent_with_password(&pool, "refresh", agent_password).await;
+    let username: String =
+        sqlx::query_scalar("SELECT username FROM agent_admin_users WHERE id = ? LIMIT 1")
+            .bind(agent.admin_user_id)
+            .fetch_one(&pool)
+            .await?;
+    let (role_id, admin_id, admin_username) =
+        create_admin_with_password(&pool, "refresh", admin_password).await;
+    let (user_id, user_email) = create_user_with_password(&pool, "refresh", user_password).await;
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let agent_login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/agent/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "username": username, "password": agent_password }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let agent_tokens = response_json(agent_login).await?;
+    let agent_refresh_token = agent_tokens["refresh_token"].as_str().unwrap().to_owned();
+
+    let admin_login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "username": admin_username, "password": admin_password }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let admin_tokens = response_json(admin_login).await?;
+    let admin_refresh_token = admin_tokens["refresh_token"].as_str().unwrap().to_owned();
+
+    let user_login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "email": user_email, "password": user_password }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let user_tokens = response_json(user_login).await?;
+    let user_refresh_token = user_tokens["refresh_token"].as_str().unwrap().to_owned();
+
+    for refresh_token in [&admin_refresh_token, &user_refresh_token] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/agent/api/v1/auth/refresh")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({ "refresh_token": refresh_token }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/auth/refresh")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "refresh_token": agent_refresh_token }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let agent_login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/agent/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "username": username, "password": agent_password }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let active_agent_tokens = response_json(agent_login).await?;
+    let active_agent_refresh_token = active_agent_tokens["refresh_token"].as_str().unwrap();
+    sqlx::query("UPDATE agent_admin_users SET status = 'disabled' WHERE id = ?")
+        .bind(agent.admin_user_id)
+        .execute(&pool)
+        .await?;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/agent/api/v1/auth/refresh")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "refresh_token": active_agent_refresh_token }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    sqlx::query("UPDATE agent_admin_users SET status = 'active' WHERE id = ?")
+        .bind(agent.admin_user_id)
+        .execute(&pool)
+        .await?;
+    let agent_login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/agent/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "username": username, "password": agent_password }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let active_agent_tokens = response_json(agent_login).await?;
+    let active_agent_refresh_token = active_agent_tokens["refresh_token"].as_str().unwrap();
+    sqlx::query("UPDATE agents SET status = 'suspended' WHERE id = ?")
+        .bind(agent.agent_id)
+        .execute(&pool)
+        .await?;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/agent/api/v1/auth/refresh")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "refresh_token": active_agent_refresh_token }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    sqlx::query("DELETE FROM refresh_tokens WHERE actor_type = 'agent' AND actor_id = ?")
+        .bind(agent.admin_user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM refresh_tokens WHERE actor_type = 'admin' AND actor_id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM refresh_tokens WHERE actor_type = 'user' AND actor_id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    cleanup_agent_fixture(&pool, &[agent], &[user_id]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn agent_me_route_requires_agent_scope() -> Result<(), Box<dyn Error>> {
+    let settings = test_settings();
+    let user_token = issue_token(&settings, "user:1", TokenScope::User, 900).unwrap();
+    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let app = build_router(AppState::new(settings));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/agent/api/v1/me")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    for token in [user_token, admin_token] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/agent/api/v1/me")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn agent_me_route_returns_current_agent_identity_without_sensitive_fields()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let agent = create_agent_with_password(&pool, "me-active", "agent-me-password-1").await;
+    sqlx::query("UPDATE agent_admin_users SET last_login_at = CURRENT_TIMESTAMP(6) WHERE id = ?")
+        .bind(agent.admin_user_id)
+        .execute(&pool)
+        .await?;
+    let (username, agent_code, level): (String, String, i32) = sqlx::query_as(
+        r#"SELECT agent_admin_users.username, agents.agent_code, agents.level
+           FROM agent_admin_users
+           INNER JOIN agents ON agents.id = agent_admin_users.agent_id
+           WHERE agent_admin_users.id = ?
+           LIMIT 1"#,
+    )
+    .bind(agent.admin_user_id)
+    .fetch_one(&pool)
+    .await?;
+    let token = issue_token(
+        &settings,
+        format!("agent:{}", agent.admin_user_id),
+        TokenScope::Agent,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/agent/api/v1/me")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let status = response.status();
+    let payload = response_json(response).await?;
+    assert_eq!(status, StatusCode::OK, "payload: {payload}");
+    assert_eq!(payload["agent_admin_id"], agent.admin_user_id);
+    assert_eq!(payload["agent_id"], agent.agent_id);
+    assert_eq!(payload["username"], username);
+    assert_eq!(payload["agent_code"], agent_code);
+    assert_eq!(payload["level"], level);
+    assert_eq!(payload["agent_status"], "active");
+    assert_eq!(payload["admin_status"], "active");
+    assert!(
+        payload["last_login_at"]
+            .as_i64()
+            .is_some_and(|value| value > 0)
+    );
+    assert!(payload.get("password_hash").is_none());
+    assert!(payload.get("access_token").is_none());
+    assert!(payload.get("refresh_token").is_none());
+
+    cleanup_agent_fixture(&pool, &[agent], &[]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn agent_me_route_rejects_disabled_agent_context() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let agent = create_agent_with_password(&pool, "me-disabled", "agent-me-password-2").await;
+    let token = issue_token(
+        &settings,
+        format!("agent:{}", agent.admin_user_id),
+        TokenScope::Agent,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    sqlx::query("UPDATE agent_admin_users SET status = 'disabled' WHERE id = ?")
+        .bind(agent.admin_user_id)
+        .execute(&pool)
+        .await?;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/agent/api/v1/me")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    sqlx::query("UPDATE agent_admin_users SET status = 'active' WHERE id = ?")
+        .bind(agent.admin_user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE agents SET status = 'suspended' WHERE id = ?")
+        .bind(agent.agent_id)
+        .execute(&pool)
+        .await?;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/agent/api/v1/me")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    cleanup_agent_fixture(&pool, &[agent], &[]).await?;
+    Ok(())
 }
 
 #[tokio::test]

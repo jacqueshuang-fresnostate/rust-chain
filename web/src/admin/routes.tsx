@@ -7,6 +7,7 @@ import { MarketStrategyActions } from './actions/MarketStrategyActions';
 import { NewCoinActions } from './actions/NewCoinActions';
 import { ProductStatusActions } from './actions/ProductStatusActions';
 import { SmtpConfigPage } from './actions/SmtpConfigPage';
+import { UploadConfigPage } from './actions/UploadConfigPage';
 import { DashboardPage } from './dashboard/DashboardPage';
 import { ResourcePage, resourceConfigs } from './resources/resourceConfigs';
 
@@ -16,6 +17,8 @@ export const adminRoutes: RouteObject[] = [
   { path: 'users', element: <ResourcePage config={resourceConfigs.users} /> },
   { path: 'agents', element: <AgentManagementPage /> },
   { path: 'agent-commissions', element: <ResourcePage config={resourceConfigs.agentCommissions} /> },
+  { path: 'agent-commission-rules', element: <ResourcePage config={resourceConfigs.agentCommissionRules} /> },
+  { path: 'news', element: <ResourcePage config={resourceConfigs.news} /> },
   { path: 'assets', element: <ResourcePage config={resourceConfigs.assets} /> },
   { path: 'wallet/accounts', element: <ResourcePage config={resourceConfigs.walletAccounts} /> },
   { path: 'wallet/ledger', element: <ResourcePage config={resourceConfigs.walletLedger} /> },
@@ -50,5 +53,6 @@ export const adminRoutes: RouteObject[] = [
   { path: 'risk', element: <ResourcePage config={resourceConfigs.riskRules} /> },
   { path: 'risk/events', element: <ResourcePage config={resourceConfigs.riskEvents} /> },
   { path: 'system/smtp', element: <SmtpConfigPage /> },
+  { path: 'system/uploads', element: <UploadConfigPage /> },
   { path: 'audit-logs', element: <ResourcePage config={resourceConfigs.auditLogs} /> }
 ];

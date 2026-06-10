@@ -375,6 +375,7 @@ dependencies = [
  "matchit",
  "memchr",
  "mime",
+ "multer",
  "percent-encoding",
  "pin-project-lite",
  "rustversion",
@@ -1217,6 +1218,8 @@ dependencies = [
  "dotenvy",
  "flate2",
  "futures-util",
+ "hex",
+ "hmac",
  "jsonwebtoken",
  "lapin",
  "lettre",
@@ -1228,6 +1231,8 @@ dependencies = [
  "secrecy",
  "serde",
  "serde_json",
+ "sha1",
+ "sha2",
  "sqlx",
  "thiserror 2.0.18",
  "tokio",
@@ -2509,6 +2514,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "multer"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83e87776546dc87511aa5ee218730c92b666d7264ab6ed41f9d215af9cd5224b"
+dependencies = [
+ "bytes",
+ "encoding_rs",
+ "futures-util",
+ "http",
+ "httparse",
+ "memchr",
+ "mime",
+ "spin",
+ "version_check",
+]
+
+[[package]]
 name = "native-tls"
 version = "0.2.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3343,6 +3365,7 @@ dependencies = [
  "bytes",
  "encoding_rs",
  "futures-core",
+ "futures-util",
  "h2",
  "http",
  "http-body",
@@ -3354,6 +3377,7 @@ dependencies = [
  "js-sys",
  "log",
  "mime",
+ "mime_guess",
  "native-tls",
  "percent-encoding",
  "pin-project-lite",

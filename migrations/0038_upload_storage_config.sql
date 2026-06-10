@@ -1,0 +1,42 @@
+CREATE TABLE upload_storage_configs (
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(64) NOT NULL UNIQUE,
+    provider VARCHAR(32) NOT NULL,
+    endpoint VARCHAR(512) NULL,
+    file_field VARCHAR(64) NULL,
+    bearer_token_ciphertext TEXT NULL,
+    bearer_token_mask VARCHAR(64) NULL,
+    access_key_ciphertext TEXT NULL,
+    access_key_mask VARCHAR(64) NULL,
+    secret_key_ciphertext TEXT NULL,
+    bucket VARCHAR(255) NULL,
+    region VARCHAR(128) NULL,
+    public_base_url VARCHAR(512) NULL,
+    local_root VARCHAR(512) NULL,
+    key_prefix VARCHAR(128) NULL,
+    max_file_size_bytes BIGINT UNSIGNED NOT NULL DEFAULT 10485760,
+    allowed_mime_types_json JSON NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_by BIGINT UNSIGNED NULL,
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    INDEX idx_upload_storage_configs_enabled (enabled),
+    CONSTRAINT fk_upload_storage_configs_updated_by FOREIGN KEY (updated_by) REFERENCES admin_users(id)
+);
+
+CREATE TABLE upload_objects (
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    provider VARCHAR(32) NOT NULL,
+    object_key VARCHAR(512) NOT NULL,
+    public_url VARCHAR(1024) NOT NULL,
+    share_url VARCHAR(1024) NULL,
+    delete_url VARCHAR(1024) NULL,
+    mime_type VARCHAR(128) NOT NULL,
+    size_bytes BIGINT UNSIGNED NOT NULL,
+    original_filename VARCHAR(255) NULL,
+    uploaded_by BIGINT UNSIGNED NULL,
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    INDEX idx_upload_objects_provider (provider),
+    INDEX idx_upload_objects_uploaded_by (uploaded_by),
+    CONSTRAINT fk_upload_objects_uploaded_by FOREIGN KEY (uploaded_by) REFERENCES admin_users(id)
+);

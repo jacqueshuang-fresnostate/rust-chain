@@ -205,6 +205,8 @@ pub trait AuthRepository: Clone + Send + Sync + 'static {
         &self,
         username: &str,
     ) -> AppResult<Option<StoredActorCredential>>;
+    async fn find_active_actor(&self, actor: &AuthActor) -> AppResult<Option<AuthActor>>;
+    async fn record_login(&self, actor: &AuthActor) -> AppResult<()>;
     async fn store_refresh_token(&self, token: StoredRefreshToken) -> AppResult<()>;
     async fn find_refresh_token(
         &self,
@@ -221,6 +223,45 @@ pub struct MySqlAuthRepository {
 impl MySqlAuthRepository {
     pub fn new(pool: Pool<MySql>) -> Self {
         Self { pool }
+    }
+
+    async fn find_active_user(&self, actor: &AuthActor) -> AppResult<Option<AuthActor>> {
+        let actor_id = sqlx::query_scalar::<_, u64>(
+            "SELECT id FROM users WHERE id = ? AND status = 'active' LIMIT 1",
+        )
+        .bind(actor.actor_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(actor_id.map(|actor_id| AuthActor::new(ActorType::User, actor_id, Some(actor_id))))
+    }
+
+    async fn find_active_admin(&self, actor: &AuthActor) -> AppResult<Option<AuthActor>> {
+        let actor_id = sqlx::query_scalar::<_, u64>(
+            "SELECT id FROM admin_users WHERE id = ? AND status = 'active' LIMIT 1",
+        )
+        .bind(actor.actor_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(actor_id.map(|actor_id| AuthActor::new(ActorType::Admin, actor_id, None)))
+    }
+
+    async fn find_active_agent(&self, actor: &AuthActor) -> AppResult<Option<AuthActor>> {
+        let actor_id = sqlx::query_scalar::<_, u64>(
+            r#"SELECT agent_admin_users.id
+               FROM agent_admin_users
+               INNER JOIN agents ON agents.id = agent_admin_users.agent_id
+               WHERE agent_admin_users.id = ?
+                 AND agent_admin_users.status = 'active'
+                 AND agents.status = 'active'
+               LIMIT 1"#,
+        )
+        .bind(actor.actor_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(actor_id.map(|actor_id| AuthActor::new(ActorType::Agent, actor_id, None)))
     }
 }
 
@@ -335,7 +376,11 @@ impl AuthRepository for MySqlAuthRepository {
         username: &str,
     ) -> AppResult<Option<StoredActorCredential>> {
         let row = sqlx::query_as::<_, (u64, String, String)>(
-            "SELECT id, password_hash, status FROM agent_admin_users WHERE username = ? LIMIT 1",
+            r#"SELECT agent_admin_users.id, agent_admin_users.password_hash, agent_admin_users.status
+               FROM agent_admin_users
+               INNER JOIN agents ON agents.id = agent_admin_users.agent_id
+               WHERE agent_admin_users.username = ? AND agents.status = 'active'
+               LIMIT 1"#,
         )
         .bind(username)
         .fetch_optional(&self.pool)
@@ -348,6 +393,27 @@ impl AuthRepository for MySqlAuthRepository {
                 status,
             }),
         )
+    }
+
+    async fn find_active_actor(&self, actor: &AuthActor) -> AppResult<Option<AuthActor>> {
+        match actor.actor_type {
+            ActorType::User => self.find_active_user(actor).await,
+            ActorType::Admin => self.find_active_admin(actor).await,
+            ActorType::Agent => self.find_active_agent(actor).await,
+        }
+    }
+
+    async fn record_login(&self, actor: &AuthActor) -> AppResult<()> {
+        if actor.actor_type == ActorType::Agent {
+            sqlx::query(
+                "UPDATE agent_admin_users SET last_login_at = CURRENT_TIMESTAMP(6) WHERE id = ?",
+            )
+            .bind(actor.actor_id)
+            .execute(&self.pool)
+            .await?;
+        }
+
+        Ok(())
     }
 
     async fn store_refresh_token(&self, token: StoredRefreshToken) -> AppResult<()> {
@@ -500,9 +566,17 @@ impl<R: AuthRepository> AuthService<R> {
         self.verify_and_issue(stored, &password).await
     }
 
-    pub async fn refresh(&self, refresh_token: Option<String>) -> AppResult<IssuedTokens> {
+    pub async fn refresh(
+        &self,
+        refresh_token: Option<String>,
+        expected_scope: TokenScope,
+    ) -> AppResult<IssuedTokens> {
         let refresh_token = required_string(refresh_token, "refresh_token")?;
         let claims = decode_claims(&self.settings, &refresh_token)?;
+        if claims.scope != expected_scope {
+            return Err(AppError::Unauthorized);
+        }
+
         let token_hash = hash_refresh_token(&refresh_token)?;
         let stored = self
             .repository
@@ -514,6 +588,12 @@ impl<R: AuthRepository> AuthService<R> {
         if stored.actor_type.scope() != claims.scope || actor.subject() != claims.sub {
             return Err(AppError::Unauthorized);
         }
+
+        let actor = self
+            .repository
+            .find_active_actor(&actor)
+            .await?
+            .ok_or(AppError::Unauthorized)?;
 
         self.issue_tokens(actor).await
     }
@@ -527,6 +607,7 @@ impl<R: AuthRepository> AuthService<R> {
             return Err(AppError::Unauthorized);
         }
 
+        self.repository.record_login(&stored.actor).await?;
         self.issue_tokens(stored.actor).await
     }
 

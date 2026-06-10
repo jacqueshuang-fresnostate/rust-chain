@@ -13,16 +13,20 @@ use exchange_api::{
         email::{EmailMessage, EmailSender, SmtpEmailConfig},
         secrets::encrypt_secret,
     },
-    modules::auth::{TokenScope, issue_token},
+    modules::auth::{TokenScope, issue_token, verify_password},
     state::AppState,
     workers::market_feed::MarketFeedSupervisorHandle,
 };
 use secrecy::SecretString;
 use serde_json::{Value, json};
 use sqlx::{MySqlPool, mysql::MySqlPoolOptions, types::Json as SqlxJson};
-use std::{error::Error, str::FromStr, sync::Arc};
+use std::{error::Error, fs, str::FromStr, sync::Arc};
 use tower::ServiceExt;
 use uuid::Uuid;
+use wiremock::{
+    Mock, MockServer, ResponseTemplate,
+    matchers::{header, method, path},
+};
 
 fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).unwrap()
@@ -79,6 +83,7 @@ fn test_settings() -> Settings {
 
 static SMTP_CONFIG_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static MARKET_FEED_CONFIG_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static UPLOAD_CONFIG_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[derive(Debug)]
 struct RecordingEmailSender {
@@ -590,7 +595,7 @@ async fn delete_margin_liquidation_fixture(
     Ok(())
 }
 
-#[derive(sqlx::FromRow)]
+#[derive(sqlx::FromRow, Debug)]
 struct AdminAuditRow {
     action: String,
     target_type: String,
@@ -712,6 +717,528 @@ async fn delete_admin_agent_management_fixture(
 async fn body_json(response: axum::response::Response) -> Result<Value, Box<dyn Error>> {
     let body = to_bytes(response.into_body(), 65_536).await?;
     Ok(serde_json::from_slice(&body)?)
+}
+
+fn admin_news_content(default_locale: &str, items: Vec<Value>) -> Value {
+    json!({
+        "version": 1,
+        "default_locale": default_locale,
+        "items": items
+    })
+}
+
+fn admin_news_content_item(
+    locale: &str,
+    country_code: &str,
+    title: &str,
+    summary: &str,
+    text: &str,
+) -> Value {
+    json!({
+        "locale": locale,
+        "country_code": country_code,
+        "title": title,
+        "summary": summary,
+        "content": [
+            { "type": "p", "children": [{ "text": text }] }
+        ]
+    })
+}
+
+#[tokio::test]
+async fn admin_news_routes_require_admin_scope_mysql_and_validation() -> Result<(), Box<dyn Error>>
+{
+    let settings = test_settings();
+    let user_token = issue_token(&settings, "user:1", TokenScope::User, 900).unwrap();
+    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let app = build_router(AppState::new(settings));
+    let content = admin_news_content(
+        "zh-CN",
+        vec![admin_news_content_item(
+            "zh-CN",
+            "CN",
+            "新闻标题",
+            "新闻摘要",
+            "新闻内容",
+        )],
+    );
+    let body = json!({
+        "title": "News Center Auth Test",
+        "category": "general",
+        "status": "draft",
+        "country_code": "CN",
+        "default_locale": "zh-CN",
+        "content_json": content,
+        "reason": "create news auth test"
+    })
+    .to_string();
+
+    let missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/news")
+                .header("content-type", "application/json")
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let user = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/news")
+                .header(AUTHORIZATION, format!("Bearer {user_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(user.status(), StatusCode::FORBIDDEN);
+
+    let invalid_category = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/news")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "title": "News Center Auth Test",
+                        "category": "unknown",
+                        "status": "draft",
+                        "country_code": "CN",
+                        "default_locale": "zh-CN",
+                        "content_json": content,
+                        "reason": "create news auth test"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(invalid_category.status(), StatusCode::BAD_REQUEST);
+    let invalid_category_payload = body_json(invalid_category).await?;
+    assert_eq!(invalid_category_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        invalid_category_payload["message"],
+        "validation error: unsupported news category"
+    );
+
+    let invalid_content = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/news")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "title": "News Center Auth Test",
+                        "category": "general",
+                        "status": "draft",
+                        "country_code": "CN",
+                        "default_locale": "zh-CN",
+                        "content_json": admin_news_content("zh-CN", vec![]),
+                        "reason": "create news auth test"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(invalid_content.status(), StatusCode::BAD_REQUEST);
+    let invalid_content_payload = body_json(invalid_content).await?;
+    assert_eq!(invalid_content_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        invalid_content_payload["message"],
+        "validation error: news content items are required"
+    );
+
+    let extra_content_field = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/news")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "title": "News Center Auth Test",
+                        "category": "general",
+                        "status": "draft",
+                        "country_code": "CN",
+                        "default_locale": "zh-CN",
+                        "content_json": {
+                            "version": 1,
+                            "default_locale": "zh-CN",
+                            "seo": { "title": "out of scope" },
+                            "items": [admin_news_content_item("zh-CN", "CN", "新闻标题", "新闻摘要", "新闻内容")]
+                        },
+                        "reason": "create news auth test"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(extra_content_field.status(), StatusCode::BAD_REQUEST);
+    let extra_content_payload = body_json(extra_content_field).await?;
+    assert_eq!(extra_content_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        extra_content_payload["message"],
+        "validation error: news content field is unsupported"
+    );
+
+    let extra_item_field = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/news")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "title": "News Center Auth Test",
+                        "category": "general",
+                        "status": "draft",
+                        "country_code": "CN",
+                        "default_locale": "zh-CN",
+                        "content_json": {
+                            "version": 1,
+                            "default_locale": "zh-CN",
+                            "items": [{
+                                "locale": "zh-CN",
+                                "country_code": "CN",
+                                "title": "新闻标题",
+                                "summary": "新闻摘要",
+                                "cover_url": "https://example.test/cover.png",
+                                "content": [{ "type": "p", "children": [{ "text": "新闻内容" }] }]
+                            }]
+                        },
+                        "reason": "create news auth test"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(extra_item_field.status(), StatusCode::BAD_REQUEST);
+    let extra_item_payload = body_json(extra_item_field).await?;
+    assert_eq!(extra_item_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        extra_item_payload["message"],
+        "validation error: news content item field is unsupported"
+    );
+
+    let empty_rich_text = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/news")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "title": "News Center Auth Test",
+                        "category": "general",
+                        "status": "draft",
+                        "country_code": "CN",
+                        "default_locale": "zh-CN",
+                        "content_json": admin_news_content("zh-CN", vec![json!({
+                            "locale": "zh-CN",
+                            "country_code": "CN",
+                            "title": "新闻标题",
+                            "summary": "新闻摘要",
+                            "content": [{ "type": "p", "children": [{ "text": "   " }] }]
+                        })]),
+                        "reason": "create news auth test"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(empty_rich_text.status(), StatusCode::BAD_REQUEST);
+    let empty_rich_text_payload = body_json(empty_rich_text).await?;
+    assert_eq!(empty_rich_text_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        empty_rich_text_payload["message"],
+        "validation error: news content text is required"
+    );
+
+    let admin = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/news")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(admin.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let payload = body_json(admin).await?;
+    assert_eq!(payload["code"], "INTERNAL_ERROR");
+    assert!(
+        payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("mysql pool is not configured for admin convert routes")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_news_crud_filters_status_and_audit() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let unique = Uuid::now_v7().simple().to_string();
+    let title = format!("新闻中心测试 {unique}");
+    let content = admin_news_content(
+        "zh-CN",
+        vec![
+            admin_news_content_item("zh-CN", "CN", &title, "中文摘要", "中文内容"),
+            admin_news_content_item(
+                "en-US",
+                "US",
+                "News Center Test",
+                "English summary",
+                "English body",
+            ),
+        ],
+    );
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let create = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/news")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "title": title,
+                        "category": "market",
+                        "status": "draft",
+                        "country_code": "CN",
+                        "default_locale": "zh-CN",
+                        "content_json": content,
+                        "reason": "create multilingual news"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let create_status = create.status();
+    let created = body_json(create).await?;
+    assert_eq!(create_status, StatusCode::OK, "payload: {created}");
+    let news_id = created["id"].as_u64().unwrap();
+    assert_eq!(created["title"], title);
+    assert_eq!(created["category"], "market");
+    assert_eq!(created["status"], "draft");
+    assert_eq!(created["country_code"], "CN");
+    assert_eq!(created["default_locale"], "zh-CN");
+    assert!(created["published_at"].is_null());
+    assert_eq!(
+        created["content_json"]["items"].as_array().unwrap().len(),
+        2
+    );
+
+    let listed = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/news?status=draft&category=market&country_code=CN&locale=zh-CN&q={unique}&limit=10&offset=0"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let listed_status = listed.status();
+    let listed_payload = body_json(listed).await?;
+    assert_eq!(listed_status, StatusCode::OK, "payload: {listed_payload}");
+    let news = listed_payload["news"].as_array().unwrap();
+    assert_eq!(news.len(), 1);
+    assert_eq!(news[0]["id"], news_id);
+
+    let detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/admin/api/v1/news/{news_id}"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let detail_status = detail.status();
+    let detail_payload = body_json(detail).await?;
+    assert_eq!(detail_status, StatusCode::OK, "payload: {detail_payload}");
+    assert_eq!(detail_payload["id"], news_id);
+    assert_eq!(detail_payload["content_json"]["default_locale"], "zh-CN");
+    assert!(!detail_payload.to_string().contains("password"));
+    assert!(!detail_payload.to_string().contains("token"));
+
+    let updated_title = format!("新闻中心更新 {unique}");
+    let updated_content = admin_news_content(
+        "en-US",
+        vec![
+            admin_news_content_item(
+                "en-US",
+                "GLOBAL",
+                &updated_title,
+                "Updated summary",
+                "Updated body",
+            ),
+            admin_news_content_item("zh-CN", "CN", "新闻中心更新", "更新摘要", "更新内容"),
+        ],
+    );
+    let update = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/admin/api/v1/news/{news_id}"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "title": updated_title,
+                        "category": "system",
+                        "country_code": "GLOBAL",
+                        "default_locale": "en-US",
+                        "content_json": updated_content,
+                        "reason": "update multilingual news"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let update_status = update.status();
+    let updated = body_json(update).await?;
+    assert_eq!(update_status, StatusCode::OK, "payload: {updated}");
+    assert_eq!(updated["title"], updated_title);
+    assert_eq!(updated["category"], "system");
+    assert_eq!(updated["country_code"], "GLOBAL");
+    assert_eq!(updated["default_locale"], "en-US");
+
+    let publish = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/admin/api/v1/news/{news_id}/status"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "status": "published", "reason": "publish news" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let publish_status = publish.status();
+    let published = body_json(publish).await?;
+    assert_eq!(publish_status, StatusCode::OK, "payload: {published}");
+    assert_eq!(published["status"], "published");
+    assert!(published["published_at"].is_number());
+
+    let stored = sqlx::query_as::<_, (String, String, String, Option<String>, String, SqlxJson<Value>)>(
+        "SELECT title, category, status, country_code, default_locale, content_json FROM admin_news_items WHERE id = ?",
+    )
+    .bind(news_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(stored.0, updated_title);
+    assert_eq!(stored.1, "system");
+    assert_eq!(stored.2, "published");
+    assert_eq!(stored.3.as_deref(), Some("GLOBAL"));
+    assert_eq!(stored.4, "en-US");
+    assert_eq!(stored.5.0["default_locale"], "en-US");
+
+    let audits = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type = 'admin_news_item' AND target_id = ?
+           ORDER BY id"#,
+    )
+    .bind(admin_id)
+    .bind(news_id.to_string())
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audits.len(), 3, "audits: {audits:?}");
+    assert_eq!(audits[0].action, "admin_news_item.create");
+    assert!(audits[0].before_json.is_none());
+    assert_eq!(audits[0].after_json.as_ref().unwrap()["status"], "draft");
+    assert_eq!(
+        audits[0].reason.as_deref(),
+        Some("create multilingual news")
+    );
+    assert_eq!(audits[1].action, "admin_news_item.update");
+    assert_eq!(
+        audits[1].before_json.as_ref().unwrap()["category"],
+        "market"
+    );
+    assert_eq!(audits[1].after_json.as_ref().unwrap()["category"], "system");
+    assert_eq!(
+        audits[1].reason.as_deref(),
+        Some("update multilingual news")
+    );
+    assert_eq!(audits[2].action, "admin_news_item.status.update");
+    assert_eq!(audits[2].before_json.as_ref().unwrap()["status"], "draft");
+    assert_eq!(
+        audits[2].after_json.as_ref().unwrap()["status"],
+        "published"
+    );
+    assert_eq!(audits[2].reason.as_deref(), Some("publish news"));
+
+    sqlx::query(
+        "DELETE FROM admin_audit_logs WHERE admin_id = ? AND target_type = 'admin_news_item'",
+    )
+    .bind(admin_id)
+    .execute(&pool)
+    .await?;
+    sqlx::query("DELETE FROM admin_news_items WHERE id = ?")
+        .bind(news_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
 }
 
 #[tokio::test]
@@ -1343,6 +1870,1175 @@ async fn admin_smtp_test_uses_configured_sender_and_audits_without_secrets()
         .bind(role_id)
         .execute(&pool)
         .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_upload_config_save_masks_secrets_and_requires_reason() -> Result<(), Box<dyn Error>>
+{
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let _upload_lock = UPLOAD_CONFIG_TEST_LOCK.lock().await;
+    let settings = test_settings();
+    sqlx::query("DELETE FROM upload_storage_configs WHERE name = 'default'")
+        .execute(&pool)
+        .await?;
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let empty = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let empty_status = empty.status();
+    let empty_payload = body_json(empty).await?;
+    assert_eq!(empty_status, StatusCode::OK, "payload: {empty_payload}");
+    assert_eq!(empty_payload, Value::Null);
+
+    let missing_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "image_bed",
+                        "endpoint": "https://oss.example.test/api/v1/upload",
+                        "bearer_token": "image-bed-token-value",
+                        "enabled": true,
+                        "reason": " "
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing_reason.status(), StatusCode::BAD_REQUEST);
+
+    let rejected_url_with_userinfo = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "image_bed",
+                        "endpoint": "https://user:secret@oss.example.test/api/v1/upload",
+                        "bearer_token": "image-bed-token-value",
+                        "enabled": true,
+                        "reason": "reject secret in upload endpoint"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(rejected_url_with_userinfo.status(), StatusCode::BAD_REQUEST);
+
+    let rejected_url_with_query = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "local",
+                        "local_root": std::env::temp_dir().to_string_lossy(),
+                        "public_base_url": "https://cdn.example.test/uploads?token=secret",
+                        "enabled": true,
+                        "reason": "reject secret in public url"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(rejected_url_with_query.status(), StatusCode::BAD_REQUEST);
+
+    let rejected_url_with_fragment = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "local",
+                        "local_root": std::env::temp_dir().to_string_lossy(),
+                        "public_base_url": "https://cdn.example.test/uploads#secret",
+                        "enabled": true,
+                        "reason": "reject fragment in public url"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(rejected_url_with_fragment.status(), StatusCode::BAD_REQUEST);
+
+    let rejected_http_image_bed_endpoint = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "image_bed",
+                        "endpoint": "http://oss.example.test/api/v1/upload",
+                        "bearer_token": "image-bed-token-value",
+                        "enabled": true,
+                        "reason": "reject insecure image bed endpoint"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(
+        rejected_http_image_bed_endpoint.status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    let rejected_http_oss_endpoint = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "oss",
+                        "endpoint": "http://oss.example.test",
+                        "bucket": "images",
+                        "access_key": "access-key-value",
+                        "secret_key": "secret-key-value",
+                        "enabled": true,
+                        "reason": "reject insecure oss endpoint"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(rejected_http_oss_endpoint.status(), StatusCode::BAD_REQUEST);
+
+    let rejected_unsupported_mime = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "image_bed",
+                        "endpoint": "https://oss.example.test/api/v1/upload",
+                        "bearer_token": "image-bed-token-value",
+                        "allowed_mime_types": ["image/svg+xml"],
+                        "enabled": true,
+                        "reason": "reject unsupported image mime"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(rejected_unsupported_mime.status(), StatusCode::BAD_REQUEST);
+
+    let rejected_long_file_field = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "image_bed",
+                        "endpoint": "https://oss.example.test/api/v1/upload",
+                        "file_field": "f".repeat(65),
+                        "bearer_token": "image-bed-token-value",
+                        "enabled": true,
+                        "reason": "reject long upload file field"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(rejected_long_file_field.status(), StatusCode::BAD_REQUEST);
+
+    let rejected_long_local_root = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "local",
+                        "local_root": format!("/tmp/{}", "r".repeat(512)),
+                        "public_base_url": "https://cdn.example.test/uploads",
+                        "enabled": true,
+                        "reason": "reject long local root"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(rejected_long_local_root.status(), StatusCode::BAD_REQUEST);
+
+    let rejected_long_key_prefix = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "local",
+                        "local_root": std::env::temp_dir().to_string_lossy(),
+                        "public_base_url": "https://cdn.example.test/uploads",
+                        "key_prefix": "p".repeat(129),
+                        "enabled": true,
+                        "reason": "reject long key prefix"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(rejected_long_key_prefix.status(), StatusCode::BAD_REQUEST);
+
+    let rejected_s3_bucket_with_query = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "s3",
+                        "bucket": "images?token=secret",
+                        "region": "us-east-1",
+                        "access_key": "access-key-value",
+                        "secret_key": "secret-key-value",
+                        "enabled": true,
+                        "reason": "reject unsafe s3 bucket"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(
+        rejected_s3_bucket_with_query.status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    let rejected_s3_bucket_with_path = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "s3",
+                        "bucket": "../images",
+                        "region": "us-east-1",
+                        "access_key": "access-key-value",
+                        "secret_key": "secret-key-value",
+                        "enabled": true,
+                        "reason": "reject path-like s3 bucket"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(
+        rejected_s3_bucket_with_path.status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    let rejected_s3_region_with_query = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "s3",
+                        "bucket": "images",
+                        "region": "us-east-1?token=secret",
+                        "access_key": "access-key-value",
+                        "secret_key": "secret-key-value",
+                        "enabled": true,
+                        "reason": "reject unsafe s3 region"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(
+        rejected_s3_region_with_query.status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    let rejected_oss_bucket_with_fragment = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "oss",
+                        "endpoint": "https://oss.example.test",
+                        "bucket": "images#secret",
+                        "access_key": "access-key-value",
+                        "secret_key": "secret-key-value",
+                        "enabled": true,
+                        "reason": "reject unsafe oss bucket"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(
+        rejected_oss_bucket_with_fragment.status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    let saved = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "image_bed",
+                        "endpoint": "https://oss.example.test/api/v1/upload",
+                        "file_field": "file",
+                        "bearer_token": "abcd1234",
+                        "max_file_size_bytes": 1_048_576,
+                        "allowed_mime_types": ["image/png"],
+                        "enabled": true,
+                        "reason": "configure upload storage"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let saved_status = saved.status();
+    let saved_payload = body_json(saved).await?;
+    assert_eq!(saved_status, StatusCode::OK, "payload: {saved_payload}");
+    assert_eq!(saved_payload["provider"], "image_bed");
+    assert_eq!(saved_payload["file_field"], "file");
+    assert_eq!(saved_payload["bearer_token_mask"], "********");
+    assert_eq!(saved_payload["bearer_token_set"], true);
+    assert_eq!(saved_payload["bearer_token"], Value::Null);
+    assert!(!saved_payload.to_string().contains("abcd1234"));
+
+    let first_ciphertext: String = sqlx::query_scalar(
+        "SELECT bearer_token_ciphertext FROM upload_storage_configs WHERE name = 'default'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert!(!first_ciphertext.contains("abcd1234"));
+
+    let retained = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "image_bed",
+                        "endpoint": "https://oss.example.test/api/v1/upload",
+                        "file_field": "upload",
+                        "bearer_token": " ",
+                        "max_file_size_bytes": 2_097_152,
+                        "allowed_mime_types": ["image/png", "image/jpeg"],
+                        "enabled": true,
+                        "reason": "keep existing upload token"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let retained_status = retained.status();
+    let retained_payload = body_json(retained).await?;
+    assert_eq!(
+        retained_status,
+        StatusCode::OK,
+        "payload: {retained_payload}"
+    );
+    assert_eq!(retained_payload["file_field"], "upload");
+    assert_eq!(retained_payload["bearer_token_mask"], "********");
+    let retained_ciphertext: String = sqlx::query_scalar(
+        "SELECT bearer_token_ciphertext FROM upload_storage_configs WHERE name = 'default'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(retained_ciphertext, first_ciphertext);
+
+    let rejected_endpoint_change = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "image_bed",
+                        "endpoint": "https://other.example.test/api/v1/upload",
+                        "file_field": "upload",
+                        "bearer_token": " ",
+                        "max_file_size_bytes": 2_097_152,
+                        "allowed_mime_types": ["image/png", "image/jpeg"],
+                        "enabled": true,
+                        "reason": "reject upload endpoint change without token"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(rejected_endpoint_change.status(), StatusCode::BAD_REQUEST);
+    let endpoint_after_reject: String =
+        sqlx::query_scalar("SELECT endpoint FROM upload_storage_configs WHERE name = 'default'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(
+        endpoint_after_reject,
+        "https://oss.example.test/api/v1/upload"
+    );
+
+    let audits = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type = 'upload_storage_config'
+           ORDER BY id ASC"#,
+    )
+    .bind(admin_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audits.len(), 2);
+    assert_eq!(audits[0].action, "upload_storage_config.save");
+    assert_eq!(
+        audits[0].reason.as_deref(),
+        Some("configure upload storage")
+    );
+    let audit_text = audits[0].after_json.as_ref().unwrap().to_string();
+    assert!(audit_text.contains("bearer_token_set"));
+    assert!(!audit_text.contains("image-bed-token-value"));
+    assert!(!audit_text.contains(&retained_ciphertext));
+
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM upload_storage_configs WHERE name = 'default'")
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_uploads_images_with_image_bed_config_and_records_object()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let _upload_lock = UPLOAD_CONFIG_TEST_LOCK.lock().await;
+    let settings = test_settings();
+    sqlx::query("DELETE FROM upload_storage_configs WHERE name = 'default'")
+        .execute(&pool)
+        .await?;
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/upload"))
+        .and(header("authorization", "Bearer image-bed-token-value"))
+        .and(wiremock::matchers::body_string_contains("name=\"file\""))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": true,
+            "file": {
+                "id": "remote-file-id",
+                "name": "2.png",
+                "size": 8,
+                "type": "image/gif"
+            },
+            "links": {
+                "download": "https://oss.example.test/file/remote-file-id.png",
+                "share": "https://oss.example.test/s/remote-file-id",
+                "delete": "https://oss.example.test/api/v1/file/remote-file-id"
+            }
+        })))
+        .mount(&server)
+        .await;
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let saved = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "image_bed",
+                        "endpoint": format!("{}/api/v1/upload", server.uri()),
+                        "file_field": "file",
+                        "bearer_token": "image-bed-token-value",
+                        "max_file_size_bytes": 1024,
+                        "allowed_mime_types": ["image/gif"],
+                        "enabled": true,
+                        "reason": "configure image bed upload"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(saved.status(), StatusCode::OK);
+
+    let boundary = "upload-boundary";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"2.gif\"\r\nContent-Type: image/gif\r\n\r\nGIF89aDATA!\r\n--{boundary}--\r\n"
+    );
+    let uploaded = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/uploads/images")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await?;
+    let upload_status = uploaded.status();
+    let upload_payload = body_json(uploaded).await?;
+    assert_eq!(upload_status, StatusCode::OK, "payload: {upload_payload}");
+    assert_eq!(upload_payload["provider"], "image_bed");
+    assert_eq!(
+        upload_payload["download_url"],
+        "https://oss.example.test/file/remote-file-id.png"
+    );
+    assert_eq!(
+        upload_payload["share_url"],
+        "https://oss.example.test/s/remote-file-id"
+    );
+    assert_eq!(upload_payload["size_bytes"], 8);
+    assert_eq!(upload_payload["mime_type"], "image/gif");
+    assert!(!upload_payload.to_string().contains("image-bed-token-value"));
+
+    let stored: (String, String, String, Option<String>, u64) = sqlx::query_as(
+        r#"SELECT provider, object_key, public_url, original_filename, uploaded_by
+           FROM upload_objects
+           WHERE uploaded_by = ?
+           ORDER BY id DESC
+           LIMIT 1"#,
+    )
+    .bind(admin_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(stored.0, "image_bed");
+    assert_eq!(stored.1, upload_payload["object_key"].as_str().unwrap());
+    assert_eq!(stored.2, "https://oss.example.test/file/remote-file-id.png");
+    assert_eq!(stored.3.as_deref(), Some("2.gif"));
+    assert_eq!(stored.4, admin_id);
+
+    sqlx::query("DELETE FROM upload_storage_configs WHERE name = 'default'")
+        .execute(&pool)
+        .await?;
+    let long_remote_id = "r".repeat(600);
+    let long_remote_mime = format!("image/{}", "x".repeat(200));
+    let long_download_url = format!("https://oss.example.test/file/{}", "d".repeat(1100));
+    let long_share_url = format!("https://oss.example.test/s/{}", "s".repeat(1100));
+    let long_delete_url = format!("https://oss.example.test/api/v1/file/{}", "x".repeat(1100));
+    Mock::given(method("POST"))
+        .and(path("/api/v1/long-response-upload"))
+        .and(header("authorization", "Bearer image-bed-token-value"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": true,
+            "file": {
+                "id": long_remote_id,
+                "name": "remote.gif",
+                "size": 8,
+                "type": long_remote_mime
+            },
+            "links": {
+                "download": long_download_url,
+                "share": long_share_url,
+                "delete": long_delete_url
+            }
+        })))
+        .mount(&server)
+        .await;
+    let saved = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "image_bed",
+                        "endpoint": format!("{}/api/v1/long-response-upload", server.uri()),
+                        "file_field": "file",
+                        "bearer_token": "image-bed-token-value",
+                        "max_file_size_bytes": 1024,
+                        "allowed_mime_types": ["image/gif"],
+                        "enabled": true,
+                        "reason": "configure image bed upload with long response"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(saved.status(), StatusCode::OK);
+
+    let boundary = "long-response-boundary";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"long.gif\"\r\nContent-Type: image/gif\r\n\r\nGIF89aDATA!\r\n--{boundary}--\r\n"
+    );
+    let uploaded = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/uploads/images")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await?;
+    let upload_status = uploaded.status();
+    let upload_payload = body_json(uploaded).await?;
+    assert_eq!(upload_status, StatusCode::OK, "payload: {upload_payload}");
+    assert_ne!(upload_payload["object_key"], Value::String("r".repeat(600)));
+    assert_eq!(upload_payload["mime_type"], "image/gif");
+    let stored: (String, String, Option<String>, Option<String>, String) = sqlx::query_as(
+        r#"SELECT object_key, public_url, share_url, delete_url, mime_type
+           FROM upload_objects
+           WHERE uploaded_by = ?
+           ORDER BY id DESC
+           LIMIT 1"#,
+    )
+    .bind(admin_id)
+    .fetch_one(&pool)
+    .await?;
+    assert!(stored.0.len() <= 512);
+    assert_eq!(stored.1, upload_payload["download_url"].as_str().unwrap());
+    assert_eq!(stored.2.as_deref(), upload_payload["share_url"].as_str());
+    assert_eq!(stored.3.as_deref(), upload_payload["delete_url"].as_str());
+    assert_eq!(stored.4, "image/gif");
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/unsafe-response-upload"))
+        .and(header("authorization", "Bearer image-bed-token-value"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": true,
+            "file": {
+                "id": "unsafe-response",
+                "name": "unsafe.gif",
+                "size": 8,
+                "type": "image/gif"
+            },
+            "links": {
+                "download": "javascript:alert(1)",
+                "share": "https://user:secret@oss.example.test/s/unsafe-response",
+                "delete": "https://oss.example.test/api/v1/file/unsafe-response?token=secret"
+            }
+        })))
+        .mount(&server)
+        .await;
+    let saved = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "image_bed",
+                        "endpoint": format!("{}/api/v1/unsafe-response-upload", server.uri()),
+                        "file_field": "file",
+                        "bearer_token": "image-bed-token-value",
+                        "max_file_size_bytes": 1024,
+                        "allowed_mime_types": ["image/gif"],
+                        "enabled": true,
+                        "reason": "configure image bed upload with unsafe response"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(saved.status(), StatusCode::OK);
+
+    let boundary = "unsafe-response-boundary";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"unsafe.gif\"\r\nContent-Type: image/gif\r\n\r\nGIF89aDATA!\r\n--{boundary}--\r\n"
+    );
+    let rejected_unsafe_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/uploads/images")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await?;
+    let rejected_status = rejected_unsafe_response.status();
+    let rejected_payload = body_json(rejected_unsafe_response).await?;
+    assert_eq!(
+        rejected_status,
+        StatusCode::BAD_REQUEST,
+        "payload: {rejected_payload}"
+    );
+
+    sqlx::query("DELETE FROM upload_objects WHERE uploaded_by = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM upload_storage_configs WHERE name = 'default'")
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_uploads_images_accepts_configured_size_above_axum_default_limit()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let _upload_lock = UPLOAD_CONFIG_TEST_LOCK.lock().await;
+    let settings = test_settings();
+    sqlx::query("DELETE FROM upload_storage_configs WHERE name = 'default'")
+        .execute(&pool)
+        .await?;
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let local_root = std::env::temp_dir().join(format!(
+        "exchange-large-upload-test-{}",
+        Uuid::now_v7().simple()
+    ));
+    fs::create_dir_all(&local_root)?;
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let saved = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "local",
+                        "local_root": local_root.to_string_lossy(),
+                        "public_base_url": "https://cdn.example.test/uploads",
+                        "key_prefix": "large-images",
+                        "max_file_size_bytes": 4_000_000,
+                        "allowed_mime_types": ["image/gif"],
+                        "enabled": true,
+                        "reason": "configure large local upload"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(saved.status(), StatusCode::OK);
+
+    let boundary = "large-upload-boundary";
+    let large_bytes = "A".repeat(3_000_000);
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"large.gif\"\r\nContent-Type: image/gif\r\n\r\nGIF89a{large_bytes}\r\n--{boundary}--\r\n"
+    );
+    let uploaded = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/uploads/images")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await?;
+    let upload_status = uploaded.status();
+    let upload_body = to_bytes(uploaded.into_body(), usize::MAX).await?;
+    assert_eq!(
+        upload_status,
+        StatusCode::OK,
+        "body: {}",
+        String::from_utf8_lossy(&upload_body)
+    );
+    let upload_payload: Value = serde_json::from_slice(&upload_body)?;
+    let object_key = upload_payload["object_key"].as_str().unwrap();
+    assert!(object_key.starts_with("large-images/"));
+    assert!(local_root.join(object_key).is_file());
+
+    sqlx::query("DELETE FROM upload_objects WHERE uploaded_by = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM upload_storage_configs WHERE name = 'default'")
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    fs::remove_dir_all(local_root)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_uploads_images_to_local_storage_with_safe_object_key() -> Result<(), Box<dyn Error>>
+{
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let _upload_lock = UPLOAD_CONFIG_TEST_LOCK.lock().await;
+    let settings = test_settings();
+    sqlx::query("DELETE FROM upload_storage_configs WHERE name = 'default'")
+        .execute(&pool)
+        .await?;
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let local_root =
+        std::env::temp_dir().join(format!("exchange-upload-test-{}", Uuid::now_v7().simple()));
+    fs::create_dir_all(&local_root)?;
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let rejected_prefix = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "local",
+                        "local_root": local_root.to_string_lossy(),
+                        "public_base_url": "https://cdn.example.test/uploads",
+                        "key_prefix": "../escape",
+                        "max_file_size_bytes": 1024,
+                        "allowed_mime_types": ["image/gif"],
+                        "enabled": true,
+                        "reason": "reject unsafe local prefix"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(rejected_prefix.status(), StatusCode::BAD_REQUEST);
+
+    let saved = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/upload/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "provider": "local",
+                        "local_root": local_root.to_string_lossy(),
+                        "public_base_url": "https://cdn.example.test/uploads",
+                        "key_prefix": "images",
+                        "max_file_size_bytes": 1024,
+                        "allowed_mime_types": ["image/gif"],
+                        "enabled": true,
+                        "reason": "configure local upload"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(saved.status(), StatusCode::OK);
+
+    let boundary = "local-upload-boundary";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"../../evil.gif\"\r\nContent-Type: image/gif\r\n\r\nGIF89aDATA!\r\n--{boundary}--\r\n"
+    );
+    let uploaded = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/uploads/images")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await?;
+    let upload_status = uploaded.status();
+    let upload_payload = body_json(uploaded).await?;
+    assert_eq!(upload_status, StatusCode::OK, "payload: {upload_payload}");
+    let object_key = upload_payload["object_key"].as_str().unwrap();
+    assert!(object_key.starts_with("images/"));
+    assert!(!object_key.contains(".."));
+    assert!(!object_key.contains("evil"));
+    assert!(local_root.join(object_key).is_file());
+    assert_eq!(
+        upload_payload["download_url"],
+        format!("https://cdn.example.test/uploads/{object_key}")
+    );
+
+    let boundary = "long-name-upload-boundary";
+    let long_filename = format!("{}{}.gif", "a".repeat(320), "-avatar");
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{long_filename}\"\r\nContent-Type: image/gif\r\n\r\nGIF89aDATA!\r\n--{boundary}--\r\n"
+    );
+    let long_name_upload = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/uploads/images")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await?;
+    let long_name_status = long_name_upload.status();
+    let long_name_payload = body_json(long_name_upload).await?;
+    assert_eq!(
+        long_name_status,
+        StatusCode::OK,
+        "payload: {long_name_payload}"
+    );
+    let stored_filename: String = sqlx::query_scalar(
+        r#"SELECT original_filename
+           FROM upload_objects
+           WHERE uploaded_by = ?
+           ORDER BY id DESC
+           LIMIT 1"#,
+    )
+    .bind(admin_id)
+    .fetch_one(&pool)
+    .await?;
+    assert!(stored_filename.len() <= 255);
+    assert!(stored_filename.ends_with(".gif"));
+    assert!(!stored_filename.contains('/'));
+    assert!(!stored_filename.contains('\\'));
+
+    let boundary = "oversized-upload-boundary";
+    let oversized_bytes = "A".repeat(2_000_000);
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"huge.gif\"\r\nContent-Type: image/gif\r\n\r\nGIF89a{oversized_bytes}\r\n--{boundary}--\r\n"
+    );
+    let oversized = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/uploads/images")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(oversized.status(), StatusCode::BAD_REQUEST);
+
+    let boundary = "bad-upload-boundary";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"bad.txt\"\r\nContent-Type: text/plain\r\n\r\nTEXT\r\n--{boundary}--\r\n"
+    );
+    let rejected = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/uploads/images")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+
+    sqlx::query("DELETE FROM upload_objects WHERE uploaded_by = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM upload_storage_configs WHERE name = 'default'")
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    fs::remove_dir_all(local_root)?;
     Ok(())
 }
 
@@ -4880,6 +6576,359 @@ async fn admin_agent_commission_status_route_requires_admin_scope_mysql_and_vali
 }
 
 #[tokio::test]
+async fn admin_agent_commission_rule_routes_require_admin_scope_mysql_and_validation()
+-> Result<(), Box<dyn Error>> {
+    let settings = test_settings();
+    let user_token = issue_token(&settings, "user:1", TokenScope::User, 900).unwrap();
+    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let app = build_router(AppState::new(settings));
+
+    let missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/agent-commission-rules")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let user = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/agent-commission-rules")
+                .header(AUTHORIZATION, format!("Bearer {user_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(user.status(), StatusCode::FORBIDDEN);
+
+    let missing_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/agent-commission-rules")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "agent_id": 1,
+                        "product_type": "convert",
+                        "commission_rate": "0.05000000"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing_reason.status(), StatusCode::BAD_REQUEST);
+    let missing_reason_payload = body_json(missing_reason).await?;
+    assert_eq!(missing_reason_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        missing_reason_payload["message"],
+        "validation error: reason is required"
+    );
+
+    let unsupported_product = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/agent-commission-rules")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "agent_id": 1,
+                        "product_type": "spot",
+                        "commission_rate": "0.05000000",
+                        "reason": "create spot rule"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(unsupported_product.status(), StatusCode::BAD_REQUEST);
+    let unsupported_product_payload = body_json(unsupported_product).await?;
+    assert_eq!(
+        unsupported_product_payload["message"],
+        "validation error: unsupported agent commission product type"
+    );
+
+    let invalid_rate = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/agent-commission-rules")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "agent_id": 1,
+                        "product_type": "convert",
+                        "commission_rate": "1.10000000",
+                        "reason": "create invalid rule"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(invalid_rate.status(), StatusCode::BAD_REQUEST);
+    let invalid_rate_payload = body_json(invalid_rate).await?;
+    assert_eq!(
+        invalid_rate_payload["message"],
+        "validation error: commission_rate must be between 0 and 1"
+    );
+
+    let missing_update_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/agent-commission-rules/1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "status": "active" }).to_string()))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing_update_reason.status(), StatusCode::BAD_REQUEST);
+
+    let invalid_update_status = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/agent-commission-rules/1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "status": "archived", "reason": "archive rule" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(invalid_update_status.status(), StatusCode::BAD_REQUEST);
+    let invalid_update_status_payload = body_json(invalid_update_status).await?;
+    assert_eq!(
+        invalid_update_status_payload["message"],
+        "validation error: unsupported agent commission rule status"
+    );
+
+    let admin = app
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/agent-commission-rules")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(admin.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_agent_commission_rules_crud_filters_and_audits() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let agent_owner_id = create_user(&pool).await;
+    let commission_user_id = create_user(&pool).await;
+    let agent_code = format!("R{}", Uuid::now_v7().simple()).to_ascii_uppercase();
+    let agent_id = sqlx::query(
+        r#"INSERT INTO agents (user_id, agent_code, level, status)
+           VALUES (?, ?, 1, 'active')"#,
+    )
+    .bind(agent_owner_id)
+    .bind(agent_code)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let existing_record_id = seed_agent_commission(
+        &pool,
+        agent_id,
+        commission_user_id,
+        "convert_order",
+        "100.000000000000000000",
+        "5.000000000000000000",
+        "pending",
+    )
+    .await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let create = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/agent-commission-rules")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "agent_id": agent_id,
+                        "product_type": "convert",
+                        "commission_rate": "0.08000000",
+                        "reason": "create convert commission rule"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let create_status = create.status();
+    let created = body_json(create).await?;
+    assert_eq!(create_status, StatusCode::OK, "payload: {created}");
+    let rule_id = created["id"].as_u64().unwrap();
+    assert_eq!(created["agent_id"], agent_id);
+    assert_eq!(created["product_type"], "convert");
+    assert_eq!(created["commission_rate"], "0.08000000");
+    assert_eq!(created["status"], "active");
+    assert!(created["created_at"].is_number());
+    assert!(created["updated_at"].is_number());
+
+    let filtered = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/agent-commission-rules?agent_id={agent_id}&product_type=convert&status=active&limit=10&offset=0"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let filtered_status = filtered.status();
+    let filtered_payload = body_json(filtered).await?;
+    assert_eq!(
+        filtered_status,
+        StatusCode::OK,
+        "payload: {filtered_payload}"
+    );
+    let rules = filtered_payload["rules"].as_array().unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0]["id"], rule_id);
+
+    let offset_filtered = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/agent-commission-rules?agent_id={agent_id}&limit=1&offset=1"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let offset_filtered_status = offset_filtered.status();
+    let offset_filtered_payload = body_json(offset_filtered).await?;
+    assert_eq!(
+        offset_filtered_status,
+        StatusCode::OK,
+        "payload: {offset_filtered_payload}"
+    );
+    assert_eq!(
+        offset_filtered_payload["rules"].as_array().unwrap().len(),
+        0
+    );
+
+    let update = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/admin/api/v1/agent-commission-rules/{rule_id}"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "commission_rate": "0.12000000",
+                        "status": "disabled",
+                        "reason": "disable convert commission rule"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let update_status = update.status();
+    let updated = body_json(update).await?;
+    assert_eq!(update_status, StatusCode::OK, "payload: {updated}");
+    assert_eq!(updated["id"], rule_id);
+    assert_eq!(updated["commission_rate"], "0.12000000");
+    assert_eq!(updated["status"], "disabled");
+
+    let (record_commission_amount, record_status): (BigDecimal, String) = sqlx::query_as(
+        "SELECT commission_amount, status FROM agent_commission_records WHERE id = ?",
+    )
+    .bind(existing_record_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(record_commission_amount, decimal("5.000000000000000000"));
+    assert_eq!(record_status, "pending");
+
+    let audits = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type = 'agent_commission_rule' AND target_id = ?
+           ORDER BY id"#,
+    )
+    .bind(admin_id)
+    .bind(rule_id.to_string())
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audits.len(), 2, "audits: {audits:?}");
+    assert_eq!(audits[0].action, "agent_commission_rule.create");
+    assert!(audits[0].before_json.is_none());
+    assert_eq!(audits[0].after_json.as_ref().unwrap()["status"], "active");
+    assert_eq!(
+        audits[0].reason.as_deref(),
+        Some("create convert commission rule")
+    );
+    assert_eq!(audits[1].action, "agent_commission_rule.update");
+    assert_eq!(audits[1].before_json.as_ref().unwrap()["status"], "active");
+    assert_eq!(audits[1].after_json.as_ref().unwrap()["status"], "disabled");
+    assert_eq!(
+        audits[1].reason.as_deref(),
+        Some("disable convert commission rule")
+    );
+
+    sqlx::query("DELETE FROM agent_commission_rules WHERE agent_id = ?")
+        .bind(agent_id)
+        .execute(&pool)
+        .await?;
+    delete_admin_agent_management_fixture(
+        &pool,
+        admin_id,
+        role_id,
+        &[agent_id],
+        &[agent_owner_id, commission_user_id],
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn admin_agent_commission_status_updates_pending_records_and_audits()
 -> Result<(), Box<dyn Error>> {
     let Some(pool) = mysql_pool().await else {
@@ -5005,6 +7054,42 @@ async fn admin_agent_commission_status_updates_pending_records_and_audits()
     assert_eq!(ledger_amount, decimal("5.000000000000000000"));
     assert_eq!(ledger_balance_after, decimal("6.000000000000000000"));
 
+    let unsupported_settle = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!(
+                    "/admin/api/v1/agent-commissions/{pending_reject_id}/status"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "status": "settled", "reason": "settle unsupported source" })
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let unsupported_settle_status = unsupported_settle.status();
+    let unsupported_settle_payload = body_json(unsupported_settle).await?;
+    assert_eq!(
+        unsupported_settle_status,
+        StatusCode::CONFLICT,
+        "payload: {unsupported_settle_payload}"
+    );
+    assert_eq!(unsupported_settle_payload["code"], "CONFLICT");
+    assert_eq!(
+        unsupported_settle_payload["message"],
+        "conflict: agent commission source cannot be settled without payout support"
+    );
+    let (unsupported_settle_stored_status,): (String,) =
+        sqlx::query_as("SELECT status FROM agent_commission_records WHERE id = ?")
+            .bind(pending_reject_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(unsupported_settle_stored_status, "pending");
+
     let reject = app
         .clone()
         .oneshot(
@@ -5108,6 +7193,184 @@ async fn admin_agent_commission_status_updates_pending_records_and_audits()
     delete_admin_agent_management_fixture(&pool, admin_id, role_id, &[agent_id], &[agent_owner_id])
         .await?;
     delete_order_fixture(&pool, pair_id, from_asset, to_asset, &[commission_user_id]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_agents_list_detail_filters_and_password_hashing() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let agent_owner_email = format!("admin-agent-owner-{}@example.test", Uuid::now_v7().simple());
+    let agent_owner_id = create_user_with_email(&pool, agent_owner_email.clone()).await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+    let agent_code = format!("L{}", Uuid::now_v7().simple()).to_ascii_uppercase();
+    let admin_username = format!("agent-admin-list-{}", Uuid::now_v7().simple());
+    let initial_password = "initial-agent-password-1";
+
+    let create = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/agents")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "user_id": agent_owner_id,
+                        "agent_code": agent_code,
+                        "admin_username": admin_username,
+                        "admin_password": initial_password,
+                        "level": 3,
+                        "reason": "create agent with initial password"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let create_status = create.status();
+    let created = body_json(create).await?;
+    assert_eq!(create_status, StatusCode::OK, "payload: {created}");
+    let agent_id = created["id"].as_u64().unwrap();
+    let agent_admin_user_id = created["admin_user_id"].as_u64().unwrap();
+    assert_eq!(created["user_id"], agent_owner_id);
+    assert_eq!(created["email"], agent_owner_email);
+    assert_eq!(created["agent_code"], agent_code);
+    assert_eq!(created["level"], 3);
+    assert_eq!(created["status"], "active");
+    assert_eq!(created["admin_username"], admin_username);
+    assert_eq!(created["admin_status"], "active");
+    let created_text = created.to_string();
+    assert!(!created_text.contains(initial_password));
+    assert!(!created_text.contains("password_hash"));
+    assert!(!created_text.contains("admin_password"));
+
+    let stored_hash: String =
+        sqlx::query_scalar("SELECT password_hash FROM agent_admin_users WHERE id = ?")
+            .bind(agent_admin_user_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_ne!(stored_hash, initial_password);
+    assert!(stored_hash.starts_with("$argon2"));
+    assert!(verify_password(&stored_hash, initial_password)?);
+
+    let second_agent_admin_user_id = sqlx::query(
+        r#"INSERT INTO agent_admin_users (agent_id, username, password_hash, status)
+           VALUES (?, ?, ?, 'suspended')"#,
+    )
+    .bind(agent_id)
+    .bind(format!("{admin_username}-duplicate"))
+    .bind(&stored_hash)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    assert_ne!(second_agent_admin_user_id, agent_admin_user_id);
+
+    let detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/admin/api/v1/agents/{agent_id}"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let detail_status = detail.status();
+    let detail_payload = body_json(detail).await?;
+    assert_eq!(detail_status, StatusCode::OK, "payload: {detail_payload}");
+    assert_eq!(detail_payload["id"], agent_id);
+    assert_eq!(detail_payload["email"], agent_owner_email);
+    assert!(!detail_payload.to_string().contains("password_hash"));
+
+    let filtered = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/agents?agent_id={agent_id}&user_id={agent_owner_id}&agent_code={agent_code}&email={agent_owner_email}&status=active&limit=10&offset=0"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let filtered_status = filtered.status();
+    let filtered_payload = body_json(filtered).await?;
+    assert_eq!(
+        filtered_status,
+        StatusCode::OK,
+        "payload: {filtered_payload}"
+    );
+    let agents = filtered_payload["agents"].as_array().unwrap();
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0]["id"], agent_id);
+    assert_eq!(agents[0]["email"], agent_owner_email);
+    assert!(!filtered_payload.to_string().contains("password_hash"));
+
+    let offset_filtered = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/agents?agent_id={agent_id}&limit=1&offset=1"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let offset_filtered_status = offset_filtered.status();
+    let offset_filtered_payload = body_json(offset_filtered).await?;
+    assert_eq!(
+        offset_filtered_status,
+        StatusCode::OK,
+        "payload: {offset_filtered_payload}"
+    );
+    assert_eq!(
+        offset_filtered_payload["agents"].as_array().unwrap().len(),
+        0
+    );
+
+    let audits = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type = 'agent' AND target_id = ?
+           ORDER BY id"#,
+    )
+    .bind(admin_id)
+    .bind(agent_id.to_string())
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audits.len(), 1, "audits: {audits:?}");
+    assert_eq!(audits[0].action, "agent.create");
+    assert!(audits[0].before_json.is_none());
+    assert_eq!(
+        audits[0].after_json.as_ref().unwrap()["agent_code"],
+        agent_code
+    );
+    let audit_text = audits[0].after_json.as_ref().unwrap().to_string();
+    assert!(!audit_text.contains(initial_password));
+    assert!(!audit_text.contains(&stored_hash));
+    assert!(!audit_text.contains("password_hash"));
+    assert_eq!(
+        audits[0].reason.as_deref(),
+        Some("create agent with initial password")
+    );
+
+    delete_admin_agent_management_fixture(&pool, admin_id, role_id, &[agent_id], &[agent_owner_id])
+        .await?;
     Ok(())
 }
 
@@ -5246,6 +7509,57 @@ async fn admin_agent_management_create_update_assign_list_and_audit() -> Result<
     assert_eq!(status_update_status, StatusCode::OK, "payload: {updated}");
     assert_eq!(updated["id"], agent_id);
     assert_eq!(updated["status"], "suspended");
+
+    let assign_to_suspended = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/admin/api/v1/users/{team_user_id}/agent"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "agent_id": agent_id, "reason": "manual assignment" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let assign_to_suspended_status = assign_to_suspended.status();
+    let assign_to_suspended_payload = body_json(assign_to_suspended).await?;
+    assert_eq!(
+        assign_to_suspended_status,
+        StatusCode::CONFLICT,
+        "payload: {assign_to_suspended_payload}"
+    );
+    assert_eq!(assign_to_suspended_payload["code"], "CONFLICT");
+    assert!(
+        !assign_to_suspended_payload
+            .to_string()
+            .contains("not-a-real-hash")
+    );
+
+    let reactivate = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/admin/api/v1/agents/{agent_id}/status"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "status": "active", "reason": "enable assignment" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let reactivate_status = reactivate.status();
+    let reactivate_payload = body_json(reactivate).await?;
+    assert_eq!(
+        reactivate_status,
+        StatusCode::OK,
+        "payload: {reactivate_payload}"
+    );
+    assert_eq!(reactivate_payload["status"], "active");
 
     sqlx::query(
         r#"INSERT INTO user_referrals
@@ -5404,7 +7718,7 @@ async fn admin_agent_management_create_update_assign_list_and_audit() -> Result<
     .bind(admin_id)
     .fetch_all(&pool)
     .await?;
-    assert_eq!(audits.len(), 3);
+    assert_eq!(audits.len(), 4);
     assert_eq!(audits[0].action, "agent.create");
     assert_eq!(audits[0].target_type, "agent");
     assert_eq!(audits[0].target_id, agent_id.to_string());
@@ -5421,14 +7735,21 @@ async fn admin_agent_management_create_update_assign_list_and_audit() -> Result<
         "suspended"
     );
     assert_eq!(audits[1].reason.as_deref(), Some("risk control"));
-    assert_eq!(audits[2].action, "user_referral.assign_agent");
-    assert_eq!(audits[2].target_type, "user_referral");
-    assert_eq!(audits[2].target_id, team_user_id.to_string());
+    assert_eq!(audits[2].action, "agent.status.update");
     assert_eq!(
-        audits[2].after_json.as_ref().unwrap()["root_agent_id"],
+        audits[2].before_json.as_ref().unwrap()["status"],
+        "suspended"
+    );
+    assert_eq!(audits[2].after_json.as_ref().unwrap()["status"], "active");
+    assert_eq!(audits[2].reason.as_deref(), Some("enable assignment"));
+    assert_eq!(audits[3].action, "user_referral.assign_agent");
+    assert_eq!(audits[3].target_type, "user_referral");
+    assert_eq!(audits[3].target_id, team_user_id.to_string());
+    assert_eq!(
+        audits[3].after_json.as_ref().unwrap()["root_agent_id"],
         agent_id
     );
-    assert_eq!(audits[2].reason.as_deref(), Some("manual assignment"));
+    assert_eq!(audits[3].reason.as_deref(), Some("manual assignment"));
 
     delete_admin_agent_management_fixture(
         &pool,

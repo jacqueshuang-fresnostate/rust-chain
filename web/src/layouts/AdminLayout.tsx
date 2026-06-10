@@ -25,7 +25,8 @@ const navItems: AdminNavItem[] = [
     children: [
       { path: '/admin/users', label: '用户管理' },
       { path: '/admin/agents', label: '代理管理' },
-      { path: '/admin/agent-commissions', label: '代理佣金' }
+      { path: '/admin/agent-commissions', label: '代理佣金' },
+      { path: '/admin/agent-commission-rules', label: '佣金规则' }
     ]
   },
   {
@@ -100,10 +101,17 @@ const navItems: AdminNavItem[] = [
       { path: '/admin/earn/actions', label: '理财动作' }
     ]
   },
+  {
+    label: '内容运营',
+    children: [{ path: '/admin/news', label: '新闻中心' }]
+  },
   { path: '/admin/risk', label: '风控中心' },
   {
     label: '系统配置',
-    children: [{ path: '/admin/system/smtp', label: 'SMTP 邮件配置' }]
+    children: [
+      { path: '/admin/system/smtp', label: 'SMTP 邮件配置' },
+      { path: '/admin/system/uploads', label: '上传配置' }
+    ]
   },
   { path: '/admin/audit-logs', label: '审计日志' }
 ];

@@ -20,6 +20,7 @@ export type RichTextValue = RichTextBlock[];
 type QuillRichTextEditorProps = {
   ariaLabel?: string;
   onChange: (value: RichTextValue) => void;
+  placeholder?: string;
   value: RichTextValue;
 };
 
@@ -144,7 +145,7 @@ function plainTextToValue(text: string): RichTextValue {
   return (lines.length > 0 ? lines : ['']).map((line) => ({ type: 'p', children: [{ text: line }] }));
 }
 
-export function QuillRichTextEditor({ ariaLabel = '富文本内容', onChange, value }: QuillRichTextEditorProps) {
+export function QuillRichTextEditor({ ariaLabel = '富文本内容', onChange, placeholder = '请输入理财介绍', value }: QuillRichTextEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const quillRef = useRef<Quill | null>(null);
@@ -166,7 +167,7 @@ export function QuillRichTextEditor({ ariaLabel = '富文本内容', onChange, v
     const quill = new Quill(editorRef.current, {
       formats: supportedFormats,
       modules: { toolbar: toolbarRef.current },
-      placeholder: '请输入理财介绍',
+      placeholder,
       theme: 'snow'
     });
     quillRef.current = quill;
@@ -204,7 +205,7 @@ export function QuillRichTextEditor({ ariaLabel = '富文本内容', onChange, v
         editorRef.current.innerHTML = '';
       }
     };
-  }, [ariaLabel]);
+  }, [ariaLabel, placeholder]);
 
   useEffect(() => {
     const quill = quillRef.current;

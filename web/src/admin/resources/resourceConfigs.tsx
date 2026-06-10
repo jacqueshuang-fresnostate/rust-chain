@@ -2,9 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { AdminResourcePage, type AdminResourceColumn } from './AdminResourcePage';
 import {
+  AgentCommissionRowActions,
+  AgentCommissionRuleRowActions,
+  AdminNewsRowActions,
   AssetRowActions,
   ConvertOrderRowActions,
   ConvertPairRowActions,
+  CreateAgentCommissionRuleAction,
+  CreateAdminNewsAction,
   CreateAssetAction,
   CreateConvertPairAction,
   CreateEarnProductAction,
@@ -62,6 +67,26 @@ const statusOptions = [
   { label: '启用', value: 'active' },
   { label: '禁用', value: 'disabled' }
 ];
+const agentCommissionStatusFilter: FilterField = {
+  key: 'status',
+  label: '状态',
+  type: 'select',
+  options: [
+    { label: 'pending', value: 'pending' },
+    { label: 'settled', value: 'settled' },
+    { label: 'rejected', value: 'rejected' }
+  ]
+};
+const agentCommissionRuleProductFilter: FilterField = { key: 'product_type', label: '产品类型', type: 'select', options: [{ label: 'convert', value: 'convert' }] };
+const agentCommissionRuleStatusFilter: FilterField = {
+  key: 'status',
+  label: '状态',
+  type: 'select',
+  options: [
+    { label: 'active', value: 'active' },
+    { label: 'disabled', value: 'disabled' }
+  ]
+};
 const assetTypeFilter: FilterField = { key: 'asset_type', label: '资产类型', type: 'select', options: Object.entries(assetTypeLabels).map(([value, label]) => ({ label, value })) };
 const statusSelectFilter: FilterField = { key: 'status', label: '状态', type: 'select', options: statusOptions };
 
@@ -82,6 +107,28 @@ const earnProductCategoryLabels = {
   structured: '结构化',
   staking: '质押'
 };
+
+const newsCategoryLabels = {
+  general: '通用资讯',
+  market: '市场资讯',
+  product: '产品资讯',
+  system: '系统公告',
+  promotion: '活动推广'
+};
+
+const newsStatusOptions = [
+  { label: '草稿', value: 'draft' },
+  { label: '已发布', value: 'published' },
+  { label: '已归档', value: 'archived' }
+];
+
+const newsCategoryFilter: FilterField = {
+  key: 'category',
+  label: '分类',
+  type: 'select',
+  options: Object.entries(newsCategoryLabels).map(([value, label]) => ({ label, value }))
+};
+const newsStatusFilter: FilterField = { key: 'status', label: '状态', type: 'select', options: newsStatusOptions };
 
 function MarginLeverageLevels({ levels }: { levels: unknown }) {
   const normalizedLevels = Array.isArray(levels)
@@ -239,7 +286,8 @@ export const resourceConfigs = {
     title: '代理佣金',
     endpoint: '/admin/api/v1/agent-commissions',
     responseKey: 'commissions',
-    filters: [userFilter, emailFilter, { key: 'agent_id', label: '代理ID' }, statusFilter, limitFilter],
+    filters: [userFilter, emailFilter, { key: 'agent_id', label: '代理ID' }, agentCommissionStatusFilter, limitFilter],
+    rowActions: (record, helpers) => <AgentCommissionRowActions helpers={helpers} record={record} />,
     columns: [
       { key: 'id', title: 'ID' },
       { key: 'agent_id', title: '代理ID' },
@@ -250,6 +298,50 @@ export const resourceConfigs = {
       { key: 'commission_amount', title: '佣金金额', type: 'amount' },
       { key: 'status', title: '状态', type: 'status' },
       { key: 'created_at', title: '创建时间', type: 'timestamp' }
+    ]
+  },
+  agentCommissionRules: {
+    title: '佣金规则',
+    actions: ({ reload }) => <CreateAgentCommissionRuleAction onCreated={reload} />,
+    endpoint: '/admin/api/v1/agent-commission-rules',
+    responseKey: 'rules',
+    filters: [{ key: 'agent_id', label: '代理ID' }, agentCommissionRuleProductFilter, agentCommissionRuleStatusFilter, limitFilter],
+    rowActions: (record, helpers) => <AgentCommissionRuleRowActions helpers={helpers} record={record} />,
+    showJsonAction: false,
+    columns: [
+      { key: 'id', title: 'ID' },
+      { key: 'agent_id', title: '代理ID' },
+      { key: 'product_type', title: '产品类型' },
+      { key: 'commission_rate', title: '佣金比例', type: 'amount' },
+      { key: 'status', title: '状态', type: 'status' },
+      { key: 'created_at', title: '创建时间', type: 'timestamp' },
+      { key: 'updated_at', title: '更新时间', type: 'timestamp' }
+    ]
+  },
+  news: {
+    title: '新闻中心',
+    actions: ({ reload }) => <CreateAdminNewsAction onCreated={reload} />,
+    endpoint: '/admin/api/v1/news',
+    responseKey: 'news',
+    filters: [
+      { key: 'q', label: '关键词' },
+      newsStatusFilter,
+      newsCategoryFilter,
+      { key: 'country_code', label: '国家' },
+      { key: 'locale', label: '语言' },
+      limitFilter
+    ],
+    rowActions: (record, helpers) => <AdminNewsRowActions helpers={helpers} record={record} />,
+    showJsonAction: false,
+    columns: [
+      { key: 'id', title: '新闻ID' },
+      { key: 'title', title: '标题' },
+      { key: 'category', title: '分类', valueMap: newsCategoryLabels },
+      { key: 'country_code', title: '国家' },
+      { key: 'default_locale', title: '默认语言' },
+      { key: 'status', title: '状态', type: 'status' },
+      { key: 'published_at', title: '发布时间', type: 'timestamp' },
+      { key: 'updated_at', title: '更新时间', type: 'timestamp' }
     ]
   },
   marketPairs: {

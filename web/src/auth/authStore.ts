@@ -8,6 +8,7 @@ export interface AuthSession {
 }
 
 export const SESSION_STORAGE_KEY = 'exchange_admin_session';
+export const AGENT_SESSION_STORAGE_KEY = 'exchange_agent_session';
 
 const authScopes = new Set<AuthScope>(['admin', 'agent', 'user']);
 
@@ -46,16 +47,20 @@ function parseSession(raw: string | null): AuthSession | null {
   }
 }
 
+function storageKeyForScope(scope: AuthScope = 'admin'): string {
+  return scope === 'agent' ? AGENT_SESSION_STORAGE_KEY : SESSION_STORAGE_KEY;
+}
+
 export const authStore = {
-  getSession(): AuthSession | null {
-    return parseSession(localStorage.getItem(SESSION_STORAGE_KEY));
+  getSession(scope: AuthScope = 'admin'): AuthSession | null {
+    return parseSession(localStorage.getItem(storageKeyForScope(scope)));
   },
 
   setSession(session: AuthSession): void {
-    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+    localStorage.setItem(storageKeyForScope(session.scope), JSON.stringify(session));
   },
 
-  clearSession(): void {
-    localStorage.removeItem(SESSION_STORAGE_KEY);
+  clearSession(scope: AuthScope = 'admin'): void {
+    localStorage.removeItem(storageKeyForScope(scope));
   }
 };

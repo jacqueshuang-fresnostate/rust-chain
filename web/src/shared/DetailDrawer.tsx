@@ -67,11 +67,13 @@ const fieldColumns: Array<ColumnProps<FieldRow>> = [
   {
     dataIndex: 'field',
     title: '字段',
+    width: 220,
     render: (value: string) => <Text strong>{fieldLabel(value)}</Text>
   },
   {
     dataIndex: 'value',
     title: '内容',
+    width: 640,
     render: (value: unknown, row: FieldRow) => <span>{displayValue(value, row.field)}</span>
   }
 ];
@@ -81,6 +83,7 @@ function recordColumns(records: ApiRecord[]): Array<ColumnProps<ApiRecord>> {
   return keys.map((key) => ({
     dataIndex: key,
     title: fieldLabel(key),
+    width: 180,
     render: (value: unknown) => <span>{displayValue(value, key)}</span>
   }));
 }
@@ -92,9 +95,9 @@ export function DetailDrawer({ detail, onClose }: DetailDrawerProps) {
   return (
     <SideSheet onCancel={onClose} title={detail?.title ?? '详情'} visible={detail !== null} width="80%">
       {Array.isArray(data) ? (
-        <Table columns={recordColumns(records)} dataSource={records} pagination={false} rowKey={(record) => String(record?.id ?? displayValue(record))} />
+        <Table bordered columns={recordColumns(records)} dataSource={records} pagination={false} resizable rowKey={(record) => String(record?.id ?? displayValue(record))} />
       ) : (
-        <Table columns={fieldColumns} dataSource={data ? toRows(data) : []} pagination={false} rowKey="field" />
+        <Table bordered columns={fieldColumns} dataSource={data ? toRows(data) : []} pagination={false} resizable rowKey="field" />
       )}
     </SideSheet>
   );

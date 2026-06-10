@@ -14,6 +14,11 @@ use crate::{
                 SaveSmtpConfigRequest, SendSmtpTestRequest, SendSmtpTestResponse,
                 SmtpConfigResponse, load_smtp_config, save_smtp_config, send_smtp_test_email,
             },
+            upload_config::{
+                MAX_UPLOAD_BODY_SIZE_BYTES, SaveUploadConfigRequest, UploadConfigResponse,
+                UploadFileInput, UploadImageResponse, load_upload_config, save_upload_config,
+                upload_image,
+            },
         },
         auth::{AdminAuth, hash_password},
         new_coin::{LifecycleStatus, UnlockRule, UnlockSource, apply_unlock_rule},
@@ -23,14 +28,14 @@ use crate::{
 };
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
+    extract::{DefaultBodyLimit, Multipart, Path, Query, State},
     routing::{get, patch, post},
 };
 use bigdecimal::BigDecimal;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Value, json};
 use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use uuid::Uuid;
 
 struct AdminAuditEntry<'a> {
@@ -57,6 +62,15 @@ const ADMIN_AUDIT_REASON_MAX_LEN: usize = 512;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/dashboard", get(get_admin_dashboard))
+        .route(
+            "/news",
+            get(list_admin_news_items).post(create_admin_news_item),
+        )
+        .route(
+            "/news/:id",
+            get(get_admin_news_item).patch(update_admin_news_item),
+        )
+        .route("/news/:id/status", patch(update_admin_news_status))
         .route("/users", get(list_admin_users).post(create_admin_user))
         .route("/users/:id", get(get_admin_user))
         .route("/users/:id/recharge", post(recharge_admin_user_wallet))
@@ -98,6 +112,14 @@ pub fn routes() -> Router<AppState> {
             get(get_smtp_config).patch(save_smtp_config_route),
         )
         .route("/smtp/test", post(send_smtp_test))
+        .route(
+            "/upload/config",
+            get(get_upload_config).patch(save_upload_config_route),
+        )
+        .route(
+            "/uploads/images",
+            post(upload_image_route).layer(DefaultBodyLimit::max(MAX_UPLOAD_BODY_SIZE_BYTES)),
+        )
         .route(
             "/new-coins",
             get(list_new_coin_projects).post(create_new_coin_project),
@@ -164,10 +186,19 @@ pub fn routes() -> Router<AppState> {
         .route("/audit-logs", get(list_admin_audit_logs))
         .route("/margin/liquidations", get(list_margin_liquidations))
         .route("/margin/liquidations/:id", get(get_margin_liquidation))
-        .route("/agents", post(create_agent))
+        .route("/agents", get(list_agents).post(create_agent))
+        .route("/agents/:id", get(get_agent))
         .route("/agents/:id/status", patch(update_agent_status))
         .route("/agents/:id/users", get(list_agent_users))
         .route("/users/:id/agent", patch(assign_user_agent))
+        .route(
+            "/agent-commission-rules",
+            get(list_agent_commission_rules).post(create_agent_commission_rule),
+        )
+        .route(
+            "/agent-commission-rules/:id",
+            patch(update_agent_commission_rule),
+        )
         .route("/agent-commissions", get(list_agent_commissions))
         .route(
             "/agent-commissions/:id/status",
@@ -481,7 +512,8 @@ struct CreateAgentRequest {
     user_id: u64,
     agent_code: String,
     admin_username: String,
-    admin_password_hash: String,
+    admin_password: Option<String>,
+    admin_password_hash: Option<String>,
     level: Option<i32>,
     reason: Option<String>,
 }
@@ -495,6 +527,22 @@ struct UpdateAgentStatusRequest {
 #[derive(Debug, Deserialize)]
 struct UpdateAgentCommissionStatusRequest {
     status: String,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateAgentCommissionRuleRequest {
+    agent_id: u64,
+    product_type: String,
+    commission_rate: BigDecimal,
+    status: Option<String>,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateAgentCommissionRuleRequest {
+    commission_rate: Option<BigDecimal>,
+    status: Option<String>,
     reason: Option<String>,
 }
 
@@ -559,12 +607,70 @@ struct AssignUserAgentRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct AdminAgentQuery {
+    agent_id: Option<u64>,
+    user_id: Option<u64>,
+    agent_code: Option<String>,
+    email: Option<String>,
+    status: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
 struct AdminAgentCommissionQuery {
     agent_id: Option<u64>,
     user_id: Option<u64>,
     email: Option<String>,
     status: Option<String>,
     limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AdminAgentCommissionRuleQuery {
+    agent_id: Option<u64>,
+    product_type: Option<String>,
+    status: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AdminNewsQuery {
+    status: Option<String>,
+    category: Option<String>,
+    country_code: Option<String>,
+    locale: Option<String>,
+    q: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateAdminNewsItemRequest {
+    title: String,
+    category: String,
+    status: Option<String>,
+    country_code: Option<String>,
+    default_locale: String,
+    content_json: Value,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateAdminNewsItemRequest {
+    title: String,
+    category: String,
+    country_code: Option<String>,
+    default_locale: String,
+    content_json: Value,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateAdminNewsStatusRequest {
+    status: String,
+    reason: Option<String>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -654,6 +760,25 @@ struct AdminAssetResponse {
     status: String,
     #[serde(with = "unix_millis")]
     created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+struct AdminNewsItemResponse {
+    id: u64,
+    title: String,
+    category: String,
+    status: String,
+    country_code: Option<String>,
+    default_locale: String,
+    content_json: SqlxJson<Value>,
+    #[serde(default, with = "option_unix_millis")]
+    published_at: Option<chrono::DateTime<chrono::Utc>>,
+    created_by_admin_id: Option<u64>,
+    updated_by_admin_id: Option<u64>,
+    #[serde(with = "unix_millis")]
+    created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(with = "unix_millis")]
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -898,6 +1023,7 @@ struct NewCoinUnlockResponse {
 struct AdminAgentResponse {
     id: u64,
     user_id: u64,
+    email: Option<String>,
     agent_code: String,
     level: i32,
     status: String,
@@ -948,6 +1074,19 @@ struct AdminAgentCommissionResponse {
     status: String,
     #[serde(with = "unix_millis")]
     created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+struct AdminAgentCommissionRuleResponse {
+    id: u64,
+    agent_id: u64,
+    product_type: String,
+    commission_rate: BigDecimal,
+    status: String,
+    #[serde(with = "unix_millis")]
+    created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(with = "unix_millis")]
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -1109,6 +1248,11 @@ struct AdminAssetsResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct AdminNewsItemsResponse {
+    news: Vec<AdminNewsItemResponse>,
+}
+
+#[derive(Debug, Serialize)]
 struct RiskRulesResponse {
     rules: Vec<RiskRuleResponse>,
 }
@@ -1194,6 +1338,11 @@ struct NewCoinUnlocksResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct AdminAgentsResponse {
+    agents: Vec<AdminAgentResponse>,
+}
+
+#[derive(Debug, Serialize)]
 struct AdminAgentUsersResponse {
     users: Vec<AdminAgentUserResponse>,
 }
@@ -1201,6 +1350,66 @@ struct AdminAgentUsersResponse {
 #[derive(Debug, Serialize)]
 struct AdminAgentCommissionsResponse {
     commissions: Vec<AdminAgentCommissionResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct AdminAgentCommissionRulesResponse {
+    rules: Vec<AdminAgentCommissionRuleResponse>,
+}
+
+async fn list_agents(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+    Query(query): Query<AdminAgentQuery>,
+) -> AppResult<Json<AdminAgentsResponse>> {
+    let pool = mysql_pool(&state)?;
+    let mut builder = base_agent_query();
+    builder.push(" WHERE 1 = 1");
+    if let Some(agent_id) = query.agent_id {
+        builder.push(" AND agents.id = ");
+        builder.push_bind(agent_id);
+    }
+    if let Some(user_id) = query.user_id {
+        push_user_id_filter(&mut builder, "agents.user_id", user_id);
+    }
+    if let Some(agent_code) = optional_string(query.agent_code) {
+        builder.push(" AND agents.agent_code = ");
+        builder.push_bind(agent_code);
+    }
+    push_user_email_filter(&mut builder, "agents.user_id", query.email);
+    if let Some(status) = optional_string(query.status) {
+        builder.push(" AND agents.status = ");
+        builder.push_bind(status);
+    }
+    builder.push(" ORDER BY agents.id DESC LIMIT ");
+    builder.push_bind(route_limit(query.limit) as i64);
+    builder.push(" OFFSET ");
+    builder.push_bind(route_offset(query.offset) as i64);
+
+    let agents = builder
+        .build_query_as::<AdminAgentResponse>()
+        .fetch_all(&pool)
+        .await?;
+
+    Ok(Json(AdminAgentsResponse { agents }))
+}
+
+async fn get_agent(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+    Path(agent_id): Path<u64>,
+) -> AppResult<Json<AdminAgentResponse>> {
+    let mut builder = base_agent_query();
+    builder.push(" WHERE agents.id = ");
+    builder.push_bind(agent_id);
+    builder.push(" ORDER BY agent_admin_users.id ASC LIMIT 1");
+    let agent = builder
+        .build_query_as::<AdminAgentResponse>()
+        .fetch_optional(&mysql_pool(&state)?)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    Ok(Json(agent))
 }
 
 async fn create_agent(
@@ -1215,7 +1424,7 @@ async fn create_agent(
     let mut tx = pool.begin().await?;
     let agent_code = optional_string(Some(request.agent_code.clone())).unwrap();
     let admin_username = optional_string(Some(request.admin_username.clone())).unwrap();
-    let admin_password_hash = optional_string(Some(request.admin_password_hash.clone())).unwrap();
+    let admin_password_hash = agent_password_hash(&request)?;
     let level = request.level.unwrap_or(1);
 
     // 创建代理前先锁定并确认归属用户存在，避免外键错误泄露为内部错误。
@@ -1344,7 +1553,12 @@ async fn assign_user_agent(
     let mut tx = pool.begin().await?;
     // 锁定目标用户、代理和既有归属，防止后台并发改派导致团队归属覆盖。
     ensure_user_exists_in_tx(&mut tx, user_id).await?;
-    lock_agent_in_tx(&mut tx, request.agent_id).await?;
+    let agent = lock_agent_in_tx(&mut tx, request.agent_id).await?;
+    if agent.status != "active" {
+        return Err(AppError::Conflict(
+            "only active agents can receive assigned users".to_owned(),
+        ));
+    }
     let before = lock_user_referral_in_tx(&mut tx, user_id).await?;
     let previous_tree = before.as_ref().map(|referral| {
         (
@@ -1394,6 +1608,140 @@ async fn assign_user_agent(
             before_json: before.as_ref().map(user_referral_audit_json),
             after_json: Some(user_referral_audit_json(&after)),
             reason: request.reason,
+        },
+    )
+    .await?;
+    tx.commit().await?;
+
+    Ok(Json(after))
+}
+
+async fn list_agent_commission_rules(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+    Query(query): Query<AdminAgentCommissionRuleQuery>,
+) -> AppResult<Json<AdminAgentCommissionRulesResponse>> {
+    let pool = mysql_pool(&state)?;
+    let mut builder = QueryBuilder::<MySql>::new(
+        r#"SELECT id, agent_id, product_type, commission_rate, status, created_at, updated_at
+           FROM agent_commission_rules
+           WHERE 1 = 1"#,
+    );
+    if let Some(agent_id) = query.agent_id {
+        builder.push(" AND agent_id = ");
+        builder.push_bind(agent_id);
+    }
+    if let Some(product_type) = optional_string(query.product_type) {
+        builder.push(" AND product_type = ");
+        builder.push_bind(product_type);
+    }
+    if let Some(status) = optional_string(query.status) {
+        builder.push(" AND status = ");
+        builder.push_bind(status);
+    }
+    builder.push(" ORDER BY id DESC LIMIT ");
+    builder.push_bind(route_limit(query.limit) as i64);
+    builder.push(" OFFSET ");
+    builder.push_bind(route_offset(query.offset) as i64);
+
+    let rules = builder
+        .build_query_as::<AdminAgentCommissionRuleResponse>()
+        .fetch_all(&pool)
+        .await?;
+    Ok(Json(AdminAgentCommissionRulesResponse { rules }))
+}
+
+async fn create_agent_commission_rule(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Json(request): Json<CreateAgentCommissionRuleRequest>,
+) -> AppResult<Json<AdminAgentCommissionRuleResponse>> {
+    let reason = required_reason(request.reason.clone())?;
+    let product_type = validate_agent_commission_rule_product_type(&request.product_type)?;
+    let status =
+        validate_agent_commission_rule_status(request.status.as_deref().unwrap_or("active"))?;
+    validate_agent_commission_rate(&request.commission_rate)?;
+    if request.agent_id == 0 {
+        return Err(AppError::Validation("agent_id is required".to_owned()));
+    }
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    let pool = mysql_pool(&state)?;
+    let mut tx = pool.begin().await?;
+    lock_agent_in_tx(&mut tx, request.agent_id).await?;
+    let rule_id = sqlx::query(
+        r#"INSERT INTO agent_commission_rules (agent_id, product_type, commission_rate, status)
+           VALUES (?, ?, ?, ?)"#,
+    )
+    .bind(request.agent_id)
+    .bind(&product_type)
+    .bind(&request.commission_rate)
+    .bind(&status)
+    .execute(&mut *tx)
+    .await?
+    .last_insert_id();
+    let after = load_agent_commission_rule_in_tx(&mut tx, rule_id).await?;
+    insert_typed_admin_audit_log_in_tx(
+        &mut tx,
+        admin_id,
+        AdminAuditEntry {
+            action: "agent_commission_rule.create",
+            target_type: "agent_commission_rule",
+            target_id: rule_id,
+            before_json: None,
+            after_json: Some(agent_commission_rule_audit_json(&after)),
+            reason: Some(reason),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+
+    Ok(Json(after))
+}
+
+async fn update_agent_commission_rule(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(rule_id): Path<u64>,
+    Json(request): Json<UpdateAgentCommissionRuleRequest>,
+) -> AppResult<Json<AdminAgentCommissionRuleResponse>> {
+    let reason = required_reason(request.reason.clone())?;
+    let commission_rate = if let Some(commission_rate) = request.commission_rate {
+        validate_agent_commission_rate(&commission_rate)?;
+        Some(commission_rate)
+    } else {
+        None
+    };
+    let status = request
+        .status
+        .as_deref()
+        .map(validate_agent_commission_rule_status)
+        .transpose()?;
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    let pool = mysql_pool(&state)?;
+    let mut tx = pool.begin().await?;
+    let before = lock_agent_commission_rule_in_tx(&mut tx, rule_id).await?;
+    sqlx::query(
+        r#"UPDATE agent_commission_rules
+           SET commission_rate = COALESCE(?, commission_rate),
+               status = COALESCE(?, status)
+           WHERE id = ?"#,
+    )
+    .bind(commission_rate.as_ref())
+    .bind(status.as_ref())
+    .bind(rule_id)
+    .execute(&mut *tx)
+    .await?;
+    let after = load_agent_commission_rule_in_tx(&mut tx, rule_id).await?;
+    insert_typed_admin_audit_log_in_tx(
+        &mut tx,
+        admin_id,
+        AdminAuditEntry {
+            action: "agent_commission_rule.update",
+            target_type: "agent_commission_rule",
+            target_id: rule_id,
+            before_json: Some(agent_commission_rule_audit_json(&before)),
+            after_json: Some(agent_commission_rule_audit_json(&after)),
+            reason: Some(reason),
         },
     )
     .await?;
@@ -1576,6 +1924,74 @@ async fn send_smtp_test(
     )
     .await?;
     Ok(Json(response))
+}
+
+async fn get_upload_config(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+) -> AppResult<Json<Option<UploadConfigResponse>>> {
+    Ok(Json(load_upload_config(&mysql_pool(&state)?).await?))
+}
+
+async fn save_upload_config_route(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Json(request): Json<SaveUploadConfigRequest>,
+) -> AppResult<Json<UploadConfigResponse>> {
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    let config = save_upload_config(
+        &mysql_pool(&state)?,
+        admin_id,
+        state.settings.exposed_credential_encryption_key(),
+        request,
+    )
+    .await?;
+    Ok(Json(config))
+}
+
+async fn upload_image_route(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    multipart: Multipart,
+) -> AppResult<Json<UploadImageResponse>> {
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    let input = multipart_file_input(multipart).await?;
+    let response = upload_image(
+        &mysql_pool(&state)?,
+        admin_id,
+        state.settings.exposed_credential_encryption_key(),
+        input,
+    )
+    .await?;
+    Ok(Json(response))
+}
+
+async fn multipart_file_input(mut multipart: Multipart) -> AppResult<UploadFileInput> {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|_| AppError::Validation("upload multipart body is invalid".to_owned()))?
+    {
+        if field.name() != Some("file") {
+            continue;
+        }
+        let original_filename = field.file_name().map(str::to_owned);
+        let mime_type = field.content_type().map(str::to_owned).ok_or_else(|| {
+            AppError::Validation("upload file content type is required".to_owned())
+        })?;
+        let bytes = field
+            .bytes()
+            .await
+            .map_err(|_| AppError::Validation("upload file body is invalid".to_owned()))?
+            .to_vec();
+        return Ok(UploadFileInput {
+            original_filename,
+            mime_type,
+            bytes,
+        });
+    }
+
+    Err(AppError::Validation("upload file is required".to_owned()))
 }
 
 async fn reload_market_feed_config(
@@ -1950,6 +2366,212 @@ async fn load_admin_user_in_tx(
     .fetch_optional(&mut **tx)
     .await?
     .ok_or(AppError::NotFound)
+}
+
+async fn list_admin_news_items(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+    Query(query): Query<AdminNewsQuery>,
+) -> AppResult<Json<AdminNewsItemsResponse>> {
+    let pool = mysql_pool(&state)?;
+    let mut builder = admin_news_query();
+    builder.push(" WHERE 1 = 1");
+    if let Some(status) = optional_string(query.status) {
+        let status = validate_news_status(&status)?;
+        builder.push(" AND status = ");
+        builder.push_bind(status);
+    }
+    if let Some(category) = optional_string(query.category) {
+        let category = validate_news_category(&category)?;
+        builder.push(" AND category = ");
+        builder.push_bind(category);
+    }
+    if let Some(country_code) = optional_string(query.country_code) {
+        let country_code = normalize_news_country_code(&country_code)?;
+        builder.push(" AND country_code = ");
+        builder.push_bind(country_code);
+    }
+    if let Some(locale) = optional_string(query.locale) {
+        let locale = validate_news_locale(&locale)?;
+        builder.push(" AND JSON_SEARCH(content_json, 'one', ");
+        builder.push_bind(locale);
+        builder.push(", NULL, '$.items[*].locale') IS NOT NULL");
+    }
+    if let Some(keyword) = optional_string(query.q) {
+        builder.push(" AND (title LIKE ");
+        builder.push_bind(format!("%{keyword}%"));
+        builder.push(" OR CAST(content_json AS CHAR) LIKE ");
+        builder.push_bind(format!("%{keyword}%"));
+        builder.push(")");
+    }
+    builder.push(" ORDER BY updated_at DESC, id DESC LIMIT ");
+    builder.push_bind(route_limit(query.limit) as i64);
+    builder.push(" OFFSET ");
+    builder.push_bind(route_offset(query.offset) as i64);
+
+    let news = builder
+        .build_query_as::<AdminNewsItemResponse>()
+        .fetch_all(&pool)
+        .await?;
+    Ok(Json(AdminNewsItemsResponse { news }))
+}
+
+async fn get_admin_news_item(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+    Path(news_id): Path<u64>,
+) -> AppResult<Json<AdminNewsItemResponse>> {
+    let news = load_admin_news_item(&mysql_pool(&state)?, news_id).await?;
+    Ok(Json(news))
+}
+
+async fn create_admin_news_item(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Json(request): Json<CreateAdminNewsItemRequest>,
+) -> AppResult<Json<AdminNewsItemResponse>> {
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    let title = validate_news_title(&request.title)?;
+    let category = validate_news_category(&request.category)?;
+    let status = request
+        .status
+        .as_deref()
+        .map(validate_news_status)
+        .transpose()?
+        .unwrap_or_else(|| "draft".to_owned());
+    let country_code = normalize_optional_news_country_code(request.country_code)?;
+    let default_locale = validate_news_locale(&request.default_locale)?;
+    let content_json = validate_news_content_document(request.content_json, &default_locale)?;
+    let published_at = (status == "published").then(chrono::Utc::now);
+    let pool = mysql_pool(&state)?;
+    let mut tx = pool.begin().await?;
+    let result = sqlx::query(
+        r#"INSERT INTO admin_news_items
+           (title, category, status, country_code, default_locale, content_json, published_at,
+            created_by_admin_id, updated_by_admin_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+    )
+    .bind(&title)
+    .bind(&category)
+    .bind(&status)
+    .bind(country_code.as_deref())
+    .bind(&default_locale)
+    .bind(SqlxJson(content_json))
+    .bind(published_at)
+    .bind(admin_id)
+    .bind(admin_id)
+    .execute(&mut *tx)
+    .await?;
+    let news = load_admin_news_item_in_tx(&mut tx, result.last_insert_id()).await?;
+    insert_typed_admin_audit_log_in_tx(
+        &mut tx,
+        admin_id,
+        AdminAuditEntry {
+            action: "admin_news_item.create",
+            target_type: "admin_news_item",
+            target_id: news.id,
+            before_json: None,
+            after_json: Some(admin_news_item_audit_json(&news)),
+            reason: request.reason,
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(news))
+}
+
+async fn update_admin_news_item(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(news_id): Path<u64>,
+    Json(request): Json<UpdateAdminNewsItemRequest>,
+) -> AppResult<Json<AdminNewsItemResponse>> {
+    let reason = required_reason(request.reason)?;
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    let title = validate_news_title(&request.title)?;
+    let category = validate_news_category(&request.category)?;
+    let country_code = normalize_optional_news_country_code(request.country_code)?;
+    let default_locale = validate_news_locale(&request.default_locale)?;
+    let content_json = validate_news_content_document(request.content_json, &default_locale)?;
+    let pool = mysql_pool(&state)?;
+    let mut tx = pool.begin().await?;
+    let before = lock_admin_news_item_in_tx(&mut tx, news_id).await?;
+    sqlx::query(
+        r#"UPDATE admin_news_items
+           SET title = ?, category = ?, country_code = ?, default_locale = ?, content_json = ?, updated_by_admin_id = ?
+           WHERE id = ?"#,
+    )
+    .bind(&title)
+    .bind(&category)
+    .bind(country_code.as_deref())
+    .bind(&default_locale)
+    .bind(SqlxJson(content_json))
+    .bind(admin_id)
+    .bind(news_id)
+    .execute(&mut *tx)
+    .await?;
+    let after = load_admin_news_item_in_tx(&mut tx, news_id).await?;
+    insert_typed_admin_audit_log_in_tx(
+        &mut tx,
+        admin_id,
+        AdminAuditEntry {
+            action: "admin_news_item.update",
+            target_type: "admin_news_item",
+            target_id: after.id,
+            before_json: Some(admin_news_item_audit_json(&before)),
+            after_json: Some(admin_news_item_audit_json(&after)),
+            reason: Some(reason),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(after))
+}
+
+async fn update_admin_news_status(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(news_id): Path<u64>,
+    Json(request): Json<UpdateAdminNewsStatusRequest>,
+) -> AppResult<Json<AdminNewsItemResponse>> {
+    let reason = required_reason(request.reason)?;
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    let status = validate_news_status(&request.status)?;
+    let pool = mysql_pool(&state)?;
+    let mut tx = pool.begin().await?;
+    let before = lock_admin_news_item_in_tx(&mut tx, news_id).await?;
+    let published_at = if status == "published" && before.published_at.is_none() {
+        Some(chrono::Utc::now())
+    } else {
+        before.published_at
+    };
+    sqlx::query(
+        r#"UPDATE admin_news_items
+           SET status = ?, published_at = ?, updated_by_admin_id = ?
+           WHERE id = ?"#,
+    )
+    .bind(&status)
+    .bind(published_at)
+    .bind(admin_id)
+    .bind(news_id)
+    .execute(&mut *tx)
+    .await?;
+    let after = load_admin_news_item_in_tx(&mut tx, news_id).await?;
+    insert_typed_admin_audit_log_in_tx(
+        &mut tx,
+        admin_id,
+        AdminAuditEntry {
+            action: "admin_news_item.status.update",
+            target_type: "admin_news_item",
+            target_id: after.id,
+            before_json: Some(admin_news_item_audit_json(&before)),
+            after_json: Some(admin_news_item_audit_json(&after)),
+            reason: Some(reason),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(after))
 }
 
 async fn list_assets(
@@ -3891,6 +4513,57 @@ async fn lock_convert_pair_in_tx(
     .ok_or(AppError::NotFound)
 }
 
+fn admin_news_query() -> QueryBuilder<'static, MySql> {
+    QueryBuilder::<MySql>::new(
+        r#"SELECT id, title, category, status, country_code, default_locale, content_json,
+                  published_at, created_by_admin_id, updated_by_admin_id, created_at, updated_at
+           FROM admin_news_items"#,
+    )
+}
+
+async fn load_admin_news_item(
+    pool: &Pool<MySql>,
+    news_id: u64,
+) -> AppResult<AdminNewsItemResponse> {
+    let mut builder = admin_news_query();
+    builder.push(" WHERE id = ");
+    builder.push_bind(news_id);
+    builder
+        .build_query_as::<AdminNewsItemResponse>()
+        .fetch_optional(pool)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
+async fn load_admin_news_item_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    news_id: u64,
+) -> AppResult<AdminNewsItemResponse> {
+    let mut builder = admin_news_query();
+    builder.push(" WHERE id = ");
+    builder.push_bind(news_id);
+    builder
+        .build_query_as::<AdminNewsItemResponse>()
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
+async fn lock_admin_news_item_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    news_id: u64,
+) -> AppResult<AdminNewsItemResponse> {
+    let mut builder = admin_news_query();
+    builder.push(" WHERE id = ");
+    builder.push_bind(news_id);
+    builder.push(" FOR UPDATE");
+    builder
+        .build_query_as::<AdminNewsItemResponse>()
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
 fn admin_asset_query() -> QueryBuilder<'static, MySql> {
     QueryBuilder::<MySql>::new(
         r#"SELECT id, symbol, name, precision_scale, asset_type, status, created_at
@@ -4087,26 +4760,37 @@ async fn ensure_strategy_pair_in_tx(
     Ok(row.0)
 }
 
-async fn load_agent_in_tx(
-    tx: &mut Transaction<'_, MySql>,
-    agent_id: u64,
-) -> AppResult<AdminAgentResponse> {
-    sqlx::query_as::<_, AdminAgentResponse>(
-        r#"SELECT agents.id, agents.user_id, agents.agent_code, agents.level, agents.status,
+fn base_agent_query() -> QueryBuilder<'static, MySql> {
+    QueryBuilder::<MySql>::new(
+        r#"SELECT agents.id, agents.user_id, users.email, agents.agent_code, agents.level, agents.status,
                   agent_admin_users.id AS admin_user_id,
                   agent_admin_users.username AS admin_username,
                   agent_admin_users.status AS admin_status,
                   agents.created_at
            FROM agents
-           LEFT JOIN agent_admin_users ON agent_admin_users.agent_id = agents.id
-           WHERE agents.id = ?
-           ORDER BY agent_admin_users.id ASC
-           LIMIT 1"#,
+           INNER JOIN users ON users.id = agents.user_id
+           LEFT JOIN (
+               SELECT agent_id, MIN(id) AS id
+               FROM agent_admin_users
+               GROUP BY agent_id
+           ) first_agent_admin_users ON first_agent_admin_users.agent_id = agents.id
+           LEFT JOIN agent_admin_users ON agent_admin_users.id = first_agent_admin_users.id"#,
     )
-    .bind(agent_id)
-    .fetch_optional(&mut **tx)
-    .await?
-    .ok_or(AppError::NotFound)
+}
+
+async fn load_agent_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    agent_id: u64,
+) -> AppResult<AdminAgentResponse> {
+    let mut builder = base_agent_query();
+    builder.push(" WHERE agents.id = ");
+    builder.push_bind(agent_id);
+    builder.push(" ORDER BY agent_admin_users.id ASC LIMIT 1");
+    builder
+        .build_query_as::<AdminAgentResponse>()
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(AppError::NotFound)
 }
 
 async fn ensure_post_listing_pair_in_tx(
@@ -4133,23 +4817,15 @@ async fn lock_agent_in_tx(
     tx: &mut Transaction<'_, MySql>,
     agent_id: u64,
 ) -> AppResult<AdminAgentResponse> {
-    sqlx::query_as::<_, AdminAgentResponse>(
-        r#"SELECT agents.id, agents.user_id, agents.agent_code, agents.level, agents.status,
-                  agent_admin_users.id AS admin_user_id,
-                  agent_admin_users.username AS admin_username,
-                  agent_admin_users.status AS admin_status,
-                  agents.created_at
-           FROM agents
-           LEFT JOIN agent_admin_users ON agent_admin_users.agent_id = agents.id
-           WHERE agents.id = ?
-           ORDER BY agent_admin_users.id ASC
-           LIMIT 1
-           FOR UPDATE"#,
-    )
-    .bind(agent_id)
-    .fetch_optional(&mut **tx)
-    .await?
-    .ok_or(AppError::NotFound)
+    let mut builder = base_agent_query();
+    builder.push(" WHERE agents.id = ");
+    builder.push_bind(agent_id);
+    builder.push(" ORDER BY agent_admin_users.id ASC LIMIT 1 FOR UPDATE");
+    builder
+        .build_query_as::<AdminAgentResponse>()
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(AppError::NotFound)
 }
 
 async fn ensure_user_exists_in_tx(tx: &mut Transaction<'_, MySql>, user_id: u64) -> AppResult<()> {
@@ -4200,7 +4876,9 @@ async fn settle_agent_commission_payout_in_tx(
     commission: &AdminAgentCommissionResponse,
 ) -> AppResult<()> {
     if commission.source_type != "convert_order" {
-        return Ok(());
+        return Err(AppError::Conflict(
+            "agent commission source cannot be settled without payout support".to_owned(),
+        ));
     }
     let target = sqlx::query_as::<_, AgentCommissionPayoutTargetRow>(
         r#"SELECT agents.user_id AS agent_user_id, orders.from_asset AS asset_id
@@ -4238,6 +4916,39 @@ async fn load_agent_commission_in_tx(
            LIMIT 1"#,
     )
     .bind(commission_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)
+}
+
+async fn load_agent_commission_rule_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    rule_id: u64,
+) -> AppResult<AdminAgentCommissionRuleResponse> {
+    sqlx::query_as::<_, AdminAgentCommissionRuleResponse>(
+        r#"SELECT id, agent_id, product_type, commission_rate, status, created_at, updated_at
+           FROM agent_commission_rules
+           WHERE id = ?
+           LIMIT 1"#,
+    )
+    .bind(rule_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)
+}
+
+async fn lock_agent_commission_rule_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    rule_id: u64,
+) -> AppResult<AdminAgentCommissionRuleResponse> {
+    sqlx::query_as::<_, AdminAgentCommissionRuleResponse>(
+        r#"SELECT id, agent_id, product_type, commission_rate, status, created_at, updated_at
+           FROM agent_commission_rules
+           WHERE id = ?
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(rule_id)
     .fetch_optional(&mut **tx)
     .await?
     .ok_or(AppError::NotFound)
@@ -4481,15 +5192,25 @@ fn validate_create_agent(request: &CreateAgentRequest) -> AppResult<()> {
             "admin_username is required".to_owned(),
         ));
     }
-    if optional_string(Some(request.admin_password_hash.clone())).is_none() {
+    if optional_string(request.admin_password.clone()).is_none()
+        && optional_string(request.admin_password_hash.clone()).is_none()
+    {
         return Err(AppError::Validation(
-            "admin_password_hash is required".to_owned(),
+            "admin_password is required".to_owned(),
         ));
     }
     if request.level.unwrap_or(1) <= 0 {
         return Err(AppError::Validation("level must be positive".to_owned()));
     }
     Ok(())
+}
+
+fn agent_password_hash(request: &CreateAgentRequest) -> AppResult<String> {
+    if let Some(password) = optional_string(request.admin_password.clone()) {
+        return hash_password(&password);
+    }
+    optional_string(request.admin_password_hash.clone())
+        .ok_or_else(|| AppError::Validation("admin_password is required".to_owned()))
 }
 
 fn validate_agent_status(value: &str) -> AppResult<String> {
@@ -4512,6 +5233,40 @@ fn validate_agent_commission_status(value: &str) -> AppResult<String> {
             "unsupported agent commission status".to_owned(),
         )),
     }
+}
+
+fn validate_agent_commission_rule_product_type(value: &str) -> AppResult<String> {
+    let Some(product_type) = optional_string(Some(value.to_owned())) else {
+        return Err(AppError::Validation("product_type is required".to_owned()));
+    };
+    if product_type == "convert" {
+        Ok(product_type)
+    } else {
+        Err(AppError::Validation(
+            "unsupported agent commission product type".to_owned(),
+        ))
+    }
+}
+
+fn validate_agent_commission_rule_status(value: &str) -> AppResult<String> {
+    let Some(status) = optional_string(Some(value.to_owned())) else {
+        return Err(AppError::Validation("status is required".to_owned()));
+    };
+    match status.as_str() {
+        "active" | "disabled" => Ok(status),
+        _ => Err(AppError::Validation(
+            "unsupported agent commission rule status".to_owned(),
+        )),
+    }
+}
+
+fn validate_agent_commission_rate(value: &BigDecimal) -> AppResult<()> {
+    if value < &BigDecimal::from(0) || value > &BigDecimal::from(1) {
+        return Err(AppError::Validation(
+            "commission_rate must be between 0 and 1".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_create_market_strategy(request: &CreateMarketStrategyRequest) -> AppResult<()> {
@@ -5079,6 +5834,254 @@ fn validate_asset_status(value: &str) -> AppResult<String> {
     }
 }
 
+fn validate_news_title(value: &str) -> AppResult<String> {
+    let Some(title) = optional_string(Some(value.to_owned())) else {
+        return Err(AppError::Validation("news title is required".to_owned()));
+    };
+    if title.chars().count() > 255 {
+        return Err(AppError::Validation("news title is too long".to_owned()));
+    }
+    Ok(title)
+}
+
+fn validate_news_category(value: &str) -> AppResult<String> {
+    let Some(category) = optional_string(Some(value.to_owned())) else {
+        return Err(AppError::Validation("news category is required".to_owned()));
+    };
+    match category.as_str() {
+        "general" | "market" | "product" | "system" | "promotion" => Ok(category),
+        _ => Err(AppError::Validation("unsupported news category".to_owned())),
+    }
+}
+
+fn validate_news_status(value: &str) -> AppResult<String> {
+    let Some(status) = optional_string(Some(value.to_owned())) else {
+        return Err(AppError::Validation("news status is required".to_owned()));
+    };
+    match status.as_str() {
+        "draft" | "published" | "archived" => Ok(status),
+        _ => Err(AppError::Validation("unsupported news status".to_owned())),
+    }
+}
+
+fn normalize_optional_news_country_code(value: Option<String>) -> AppResult<Option<String>> {
+    value
+        .map(|value| normalize_news_country_code(&value))
+        .transpose()
+}
+
+fn normalize_news_country_code(value: &str) -> AppResult<String> {
+    let Some(country_code) = optional_string(Some(value.to_owned())) else {
+        return Err(AppError::Validation(
+            "news country_code is required".to_owned(),
+        ));
+    };
+    let country_code = country_code.to_ascii_uppercase();
+    if country_code == "GLOBAL" {
+        return Ok(country_code);
+    }
+    if country_code.len() < 2
+        || country_code.len() > 16
+        || !country_code.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '-' || character == '_'
+        })
+    {
+        return Err(AppError::Validation(
+            "news country_code format is invalid".to_owned(),
+        ));
+    }
+    Ok(country_code)
+}
+
+fn validate_news_locale(value: &str) -> AppResult<String> {
+    let Some(locale) = optional_string(Some(value.to_owned())) else {
+        return Err(AppError::Validation("news locale is required".to_owned()));
+    };
+    if locale.len() < 2
+        || locale.len() > 16
+        || !locale
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-')
+    {
+        return Err(AppError::Validation(
+            "news locale format is invalid".to_owned(),
+        ));
+    }
+    Ok(locale)
+}
+
+fn validate_news_content_document(value: Value, default_locale: &str) -> AppResult<Value> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| AppError::Validation("news content must be an object".to_owned()))?;
+    if object
+        .keys()
+        .any(|key| !matches!(key.as_str(), "version" | "default_locale" | "items"))
+    {
+        return Err(AppError::Validation(
+            "news content field is unsupported".to_owned(),
+        ));
+    }
+    if object.get("version").and_then(Value::as_u64) != Some(1) {
+        return Err(AppError::Validation(
+            "news content version must be 1".to_owned(),
+        ));
+    }
+    let content_default_locale = object
+        .get("default_locale")
+        .and_then(Value::as_str)
+        .map(validate_news_locale)
+        .transpose()?
+        .ok_or_else(|| {
+            AppError::Validation("news content default_locale is required".to_owned())
+        })?;
+    if content_default_locale != default_locale {
+        return Err(AppError::Validation(
+            "news content default_locale must match request default_locale".to_owned(),
+        ));
+    }
+    let items = object
+        .get("items")
+        .and_then(Value::as_array)
+        .filter(|items| !items.is_empty())
+        .ok_or_else(|| AppError::Validation("news content items are required".to_owned()))?;
+    let mut has_default_locale = false;
+    let mut seen = HashSet::new();
+    for item in items {
+        let item_object = item.as_object().ok_or_else(|| {
+            AppError::Validation("news content item must be an object".to_owned())
+        })?;
+        if item_object.keys().any(|key| {
+            !matches!(
+                key.as_str(),
+                "locale" | "country_code" | "title" | "summary" | "content"
+            )
+        }) {
+            return Err(AppError::Validation(
+                "news content item field is unsupported".to_owned(),
+            ));
+        }
+        let locale = required_news_content_string(item_object.get("locale"), "locale")?;
+        let locale = validate_news_locale(locale)?;
+        if locale == default_locale {
+            has_default_locale = true;
+        }
+        let country_code =
+            required_news_content_string(item_object.get("country_code"), "country_code")?;
+        let country_code = normalize_news_country_code(country_code)?;
+        if !seen.insert((locale, country_code)) {
+            return Err(AppError::Validation(
+                "news content locale and country_code must be unique".to_owned(),
+            ));
+        }
+        validate_news_title(required_news_content_string(
+            item_object.get("title"),
+            "title",
+        )?)?;
+        if let Some(summary) = item_object.get("summary") {
+            let summary = summary.as_str().ok_or_else(|| {
+                AppError::Validation("news content summary must be a string".to_owned())
+            })?;
+            if summary.chars().count() > 512 {
+                return Err(AppError::Validation(
+                    "news content summary is too long".to_owned(),
+                ));
+            }
+        }
+        let content = item_object
+            .get("content")
+            .and_then(Value::as_array)
+            .filter(|content| !content.is_empty())
+            .ok_or_else(|| {
+                AppError::Validation("news content item content is required".to_owned())
+            })?;
+        if !validate_news_rich_text_content(content)? {
+            return Err(AppError::Validation(
+                "news content text is required".to_owned(),
+            ));
+        }
+    }
+    if !has_default_locale {
+        return Err(AppError::Validation(
+            "news content default_locale must exist in items".to_owned(),
+        ));
+    }
+    Ok(value)
+}
+
+fn validate_news_rich_text_content(content: &[Value]) -> AppResult<bool> {
+    let mut has_text = false;
+    for node in content {
+        has_text = validate_news_rich_text_block(node)? || has_text;
+    }
+    Ok(has_text)
+}
+
+fn validate_news_rich_text_block(node: &Value) -> AppResult<bool> {
+    let object = node
+        .as_object()
+        .ok_or_else(invalid_news_rich_text_content)?;
+    if object
+        .keys()
+        .any(|key| !matches!(key.as_str(), "type" | "children"))
+    {
+        return Err(invalid_news_rich_text_content());
+    }
+    let node_type = object
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or_else(invalid_news_rich_text_content)?;
+    if !matches!(node_type, "p" | "h1" | "h2" | "h3" | "blockquote") {
+        return Err(invalid_news_rich_text_content());
+    }
+    let children = object
+        .get("children")
+        .and_then(Value::as_array)
+        .filter(|children| !children.is_empty())
+        .ok_or_else(invalid_news_rich_text_content)?;
+    let mut has_text = false;
+    for child in children {
+        has_text = validate_news_rich_text_child(child)? || has_text;
+    }
+    Ok(has_text)
+}
+
+fn validate_news_rich_text_child(node: &Value) -> AppResult<bool> {
+    let object = node
+        .as_object()
+        .ok_or_else(invalid_news_rich_text_content)?;
+    let text = object
+        .get("text")
+        .and_then(Value::as_str)
+        .ok_or_else(invalid_news_rich_text_content)?;
+    if object
+        .keys()
+        .any(|key| !matches!(key.as_str(), "text" | "bold" | "italic" | "underline"))
+    {
+        return Err(invalid_news_rich_text_content());
+    }
+    for mark in ["bold", "italic", "underline"] {
+        if let Some(value) = object.get(mark)
+            && !value.is_boolean()
+        {
+            return Err(invalid_news_rich_text_content());
+        }
+    }
+    Ok(!text.trim().is_empty())
+}
+
+fn invalid_news_rich_text_content() -> AppError {
+    AppError::Validation("news content node is invalid".to_owned())
+}
+
+fn required_news_content_string<'a>(value: Option<&'a Value>, field: &str) -> AppResult<&'a str> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| AppError::Validation(format!("news content {field} is required")))
+}
+
 fn validate_create_trading_pair(request: &CreateTradingPairRequest) -> AppResult<()> {
     if request.base_asset_id == request.quote_asset_id {
         return Err(AppError::Validation(
@@ -5214,6 +6217,22 @@ fn asset_audit_json(asset: &AdminAssetResponse) -> Value {
         "asset_type": asset.asset_type,
         "status": asset.status,
         "created_at": asset.created_at.timestamp_millis(),
+    })
+}
+
+fn admin_news_item_audit_json(news: &AdminNewsItemResponse) -> Value {
+    json!({
+        "id": news.id,
+        "title": news.title,
+        "category": news.category,
+        "status": news.status,
+        "country_code": news.country_code,
+        "default_locale": news.default_locale,
+        "published_at": news.published_at.map(|value| value.timestamp_millis()),
+        "created_by_admin_id": news.created_by_admin_id,
+        "updated_by_admin_id": news.updated_by_admin_id,
+        "created_at": news.created_at.timestamp_millis(),
+        "updated_at": news.updated_at.timestamp_millis(),
     })
 }
 
@@ -5753,6 +6772,7 @@ fn agent_audit_json(agent: &AdminAgentResponse) -> Value {
     json!({
         "id": agent.id,
         "user_id": agent.user_id,
+        "email": agent.email,
         "agent_code": agent.agent_code,
         "level": agent.level,
         "status": agent.status,
@@ -5789,6 +6809,18 @@ fn agent_commission_audit_json(commission: &AdminAgentCommissionResponse) -> Val
     })
 }
 
+fn agent_commission_rule_audit_json(rule: &AdminAgentCommissionRuleResponse) -> Value {
+    json!({
+        "id": rule.id,
+        "agent_id": rule.agent_id,
+        "product_type": rule.product_type,
+        "commission_rate": rule.commission_rate,
+        "status": rule.status,
+        "created_at": rule.created_at.timestamp_millis(),
+        "updated_at": rule.updated_at.timestamp_millis(),
+    })
+}
+
 fn new_coin_convert_rule_audit_json(rule: &NewCoinConvertRuleResponse) -> Value {
     json!({
         "id": rule.id,
@@ -5816,6 +6848,10 @@ fn mysql_pool(state: &AppState) -> AppResult<Pool<MySql>> {
 
 fn route_limit(limit: Option<u32>) -> u32 {
     limit.unwrap_or(50).clamp(1, 100)
+}
+
+fn route_offset(offset: Option<u32>) -> u32 {
+    offset.unwrap_or(0).min(10_000)
 }
 
 fn optional_string(value: Option<String>) -> Option<String> {

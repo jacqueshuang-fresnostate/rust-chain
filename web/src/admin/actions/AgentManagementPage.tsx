@@ -1,37 +1,43 @@
-import { Banner, Card, Space, Typography, Toast } from '@douyinfe/semi-ui';
-import { useState } from 'react';
+import { Button, Card, Modal, Space, Typography, Toast } from '@douyinfe/semi-ui';
+import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ApiError, apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
-import { AdminPasswordInput, AdminSelect, AdminTextInput } from '../../shared/SemiFormControls';
+import { DataTable } from '../../shared/DataTable';
+import { StatusTag } from '../../shared/StatusTag';
+import { TimestampText } from '../../shared/TimestampText';
+import { AdminPasswordInput, AdminTextInput } from '../../shared/SemiFormControls';
 
-const { Title } = Typography;
+const { Text, Title } = Typography;
+
+type AgentRecord = Record<string, unknown> & {
+  admin_status?: string | null;
+  admin_username?: string | null;
+  agent_code?: string | null;
+  created_at?: number | null;
+  email?: string | null;
+  id: number | string;
+  level?: number | string | null;
+  status?: string | null;
+  user_id?: number | string | null;
+};
 
 type AgentCreateValues = {
-  adminPasswordHash: string;
+  adminPassword: string;
   adminUsername: string;
   agentCode: string;
   level: string;
   userId: string;
 };
 
-type AgentStatusValues = {
-  agentId: string;
-  status: string;
-};
-
 const initialCreateValues: AgentCreateValues = {
-  adminPasswordHash: '',
+  adminPassword: '',
   adminUsername: '',
   agentCode: '',
   level: '1',
   userId: ''
-};
-
-const initialStatusValues: AgentStatusValues = {
-  agentId: '',
-  status: 'active'
 };
 
 function requiredPositiveInteger(value: string, label: string): number {
@@ -42,11 +48,17 @@ function requiredPositiveInteger(value: string, label: string): number {
   return parsed;
 }
 
-function optionalPositiveInteger(value: string): number | undefined {
-  if (!value.trim()) {
-    return undefined;
+function requiredString(value: string, label: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error(`${label}不能为空`);
   }
-  return requiredPositiveInteger(value, '层级');
+  return trimmed;
+}
+
+function optionalPositiveInteger(value: string): number | undefined {
+  const trimmed = value.trim();
+  return trimmed ? requiredPositiveInteger(trimmed, '层级') : undefined;
 }
 
 function errorMessage(error: unknown) {
@@ -63,9 +75,120 @@ async function submitAction(label: string, request: () => Promise<unknown>) {
   }
 }
 
+function recordString(record: AgentRecord, key: keyof AgentRecord): string {
+  const value = record[key];
+  return typeof value === 'number' || typeof value === 'string' ? String(value) : '';
+}
+
+function agentStatusActions(status: string): Array<{ label: string; status: string }> {
+  return [
+    { label: '启用', status: 'active' },
+    { label: '暂停', status: 'suspended' },
+    { label: '禁用', status: 'disabled' }
+  ].filter((item) => item.status !== status);
+}
+
+function isAgentCreatable(values: AgentCreateValues) {
+  return Boolean(values.userId.trim() && values.agentCode.trim() && values.adminUsername.trim() && values.adminPassword.trim());
+}
+
 export function AgentManagementPage() {
+  const [agents, setAgents] = useState<AgentRecord[]>([]);
   const [createValues, setCreateValues] = useState(initialCreateValues);
-  const [statusValues, setStatusValues] = useState(initialStatusValues);
+  const [detail, setDetail] = useState<AgentRecord | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [reloadVersion, setReloadVersion] = useState(0);
+  const reload = useCallback(() => setReloadVersion((value) => value + 1), []);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError(null);
+
+    apiRequest<{ agents?: AgentRecord[] }>('/admin/api/v1/agents')
+      .then((response) => {
+        if (active) {
+          setAgents(Array.isArray(response.agents) ? response.agents : []);
+        }
+      })
+      .catch((caught: unknown) => {
+        if (!active) {
+          return;
+        }
+        setAgents([]);
+        setError(caught instanceof Error ? caught : new Error('加载代理列表失败'));
+      })
+      .finally(() => {
+        if (active) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [reloadVersion]);
+
+  async function openAgentDetail(agentId: string) {
+    try {
+      setDetail(await apiRequest<AgentRecord>(`/admin/api/v1/agents/${agentId}`));
+    } catch (caught) {
+      Toast.error(errorMessage(caught));
+      throw caught;
+    }
+  }
+
+  async function updateAgentStatus(agentId: string, nextStatus: string, reason: string) {
+    await submitAction('更新代理状态', () =>
+      apiRequest(`/admin/api/v1/agents/${agentId}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: nextStatus, reason })
+      })
+    );
+    reload();
+  }
+
+  const columns = useMemo<Array<ColumnProps<AgentRecord>>>(
+    () => [
+      { dataIndex: 'id', key: 'id', title: '代理ID' },
+      { dataIndex: 'user_id', key: 'user_id', title: '用户ID' },
+      { dataIndex: 'email', key: 'email', title: '邮箱' },
+      { dataIndex: 'agent_code', key: 'agent_code', title: '代理编号' },
+      { dataIndex: 'level', key: 'level', title: '层级' },
+      { dataIndex: 'status', key: 'status', render: (value) => <StatusTag value={typeof value === 'string' ? value : null} />, title: '状态' },
+      { dataIndex: 'admin_username', key: 'admin_username', title: '代理后台账号' },
+      { dataIndex: 'admin_status', key: 'admin_status', render: (value) => <StatusTag value={typeof value === 'string' ? value : null} />, title: '后台账号状态' },
+      { dataIndex: 'created_at', key: 'created_at', render: (value) => <TimestampText value={typeof value === 'number' ? value : null} />, title: '创建时间' },
+      {
+        dataIndex: 'id',
+        key: 'actions',
+        render: (_value, record) => {
+          const agentId = recordString(record, 'id');
+          const status = recordString(record, 'status');
+          return (
+            <Space spacing={6} wrap>
+              <Button disabled={!agentId} onClick={() => openAgentDetail(agentId)} size="small" theme="borderless">
+                查看详情
+              </Button>
+              {agentStatusActions(status).map((action) => (
+                <ConfirmAction
+                  actionText={action.label}
+                  disabled={!agentId}
+                  key={action.status}
+                  title={`${action.label}代理`}
+                  onConfirm={(reason) => updateAgentStatus(agentId, action.status, reason)}
+                />
+              ))}
+            </Space>
+          );
+        },
+        title: '操作',
+        width: 260
+      }
+    ],
+    []
+  );
 
   return (
     <main className="exchange-page admin-action-page">
@@ -75,87 +198,47 @@ export function AgentManagementPage() {
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
             <Title heading={4}>创建代理</Title>
             <div className="admin-action-form">
-              <label>
-                用户ID
-                <AdminTextInput ariaLabel="用户ID" value={createValues.userId} onChange={(userId) => setCreateValues({ ...createValues, userId })} />
-              </label>
-              <label>
-                代理编号
-                <AdminTextInput ariaLabel="代理编号" value={createValues.agentCode} onChange={(agentCode) => setCreateValues({ ...createValues, agentCode })} />
-              </label>
-              <label>
-                代理后台账号
-                <AdminTextInput ariaLabel="代理后台账号" value={createValues.adminUsername} onChange={(adminUsername) => setCreateValues({ ...createValues, adminUsername })} />
-              </label>
-              <label>
-                密码哈希
-                <AdminPasswordInput ariaLabel="密码哈希" value={createValues.adminPasswordHash} onChange={(adminPasswordHash) => setCreateValues({ ...createValues, adminPasswordHash })} />
-              </label>
-              <label>
-                层级
-                <AdminTextInput ariaLabel="层级" value={createValues.level} onChange={(level) => setCreateValues({ ...createValues, level })} />
-              </label>
+              <label>用户ID<AdminTextInput ariaLabel="用户ID" value={createValues.userId} onChange={(userId) => setCreateValues({ ...createValues, userId })} /></label>
+              <label>代理编号<AdminTextInput ariaLabel="代理编号" value={createValues.agentCode} onChange={(agentCode) => setCreateValues({ ...createValues, agentCode })} /></label>
+              <label>代理后台账号<AdminTextInput ariaLabel="代理后台账号" value={createValues.adminUsername} onChange={(adminUsername) => setCreateValues({ ...createValues, adminUsername })} /></label>
+              <label>初始密码<AdminPasswordInput ariaLabel="初始密码" value={createValues.adminPassword} onChange={(adminPassword) => setCreateValues({ ...createValues, adminPassword })} /></label>
+              <label>层级<AdminTextInput ariaLabel="层级" value={createValues.level} onChange={(level) => setCreateValues({ ...createValues, level })} /></label>
             </div>
-            <Banner fullMode={false} type="warning" description="密码哈希由后端现有接口接收；请勿在前端填入明文密码。" />
             <ConfirmAction
               actionText="创建代理"
+              disabled={!isAgentCreatable(createValues)}
               title="确认创建代理"
-              onConfirm={(reason) =>
-                submitAction('创建代理', () =>
+              onConfirm={async (reason) => {
+                await submitAction('创建代理', () =>
                   apiRequest('/admin/api/v1/agents', {
                     method: 'POST',
                     body: JSON.stringify({
                       user_id: requiredPositiveInteger(createValues.userId, '用户ID'),
-                      agent_code: createValues.agentCode.trim(),
-                      admin_username: createValues.adminUsername.trim(),
-                      admin_password_hash: createValues.adminPasswordHash.trim(),
+                      agent_code: requiredString(createValues.agentCode, '代理编号'),
+                      admin_username: requiredString(createValues.adminUsername, '代理后台账号'),
+                      admin_password: requiredString(createValues.adminPassword, '初始密码'),
                       level: optionalPositiveInteger(createValues.level),
                       reason
                     })
                   })
-                )
-              }
+                );
+                setCreateValues(initialCreateValues);
+                reload();
+              }}
             />
           </Space>
         </Card>
 
         <Card bordered={false} shadows="always">
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-            <Title heading={4}>更新代理状态</Title>
-            <div className="admin-action-form">
-              <label>
-                代理ID
-                <AdminTextInput ariaLabel="代理ID" value={statusValues.agentId} onChange={(agentId) => setStatusValues({ ...statusValues, agentId })} />
-              </label>
-              <label>
-                目标状态
-                <AdminSelect
-                  ariaLabel="目标状态"
-                  onChange={(status) => setStatusValues({ ...statusValues, status })}
-                  optionList={[
-                    { value: 'active', label: 'active' },
-                    { value: 'suspended', label: 'suspended' },
-                    { value: 'disabled', label: 'disabled' }
-                  ]}
-                  value={statusValues.status}
-                />
-              </label>
-            </div>
-            <ConfirmAction
-              actionText="更新状态"
-              title="确认更新代理状态"
-              onConfirm={(reason) =>
-                submitAction('更新代理状态', () =>
-                  apiRequest(`/admin/api/v1/agents/${requiredPositiveInteger(statusValues.agentId, '代理ID')}/status`, {
-                    method: 'PATCH',
-                    body: JSON.stringify({ status: statusValues.status, reason })
-                  })
-                )
-              }
-            />
+            <Title heading={4}>代理列表</Title>
+            <DataTable columns={columns} data={agents} error={error} loading={loading} />
           </Space>
         </Card>
       </div>
+      <Modal footer={null} onCancel={() => setDetail(null)} title="代理详情" visible={Boolean(detail)}>
+        <Text code>{detail ? JSON.stringify(detail, null, 2) : ''}</Text>
+      </Modal>
     </main>
   );
 }

@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route("/me", get(me))
         .route("/dashboard", get(dashboard))
         .route("/users", get(list_users))
         .route(
@@ -27,6 +28,19 @@ pub fn routes() -> Router<AppState> {
         .route("/commissions", get(list_commissions))
         .route("/convert/stats", get(convert_stats))
         .route("/team-tree", get(team_tree))
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+struct AgentMeResponse {
+    agent_admin_id: u64,
+    agent_id: u64,
+    username: String,
+    agent_code: String,
+    level: i32,
+    agent_status: String,
+    admin_status: String,
+    #[serde(default, with = "option_unix_millis")]
+    last_login_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -152,6 +166,36 @@ struct AgentConvertStatsResponse {
     completed_orders: i64,
     total_from_amount: BigDecimal,
     total_to_amount: BigDecimal,
+}
+
+async fn me(
+    AgentAuth(claims): AgentAuth,
+    State(state): State<AppState>,
+) -> AppResult<Json<AgentMeResponse>> {
+    let agent_admin_id = agent_admin_id_from_subject(&claims.sub)?;
+    let pool = mysql_pool(&state)?;
+
+    sqlx::query_as::<_, AgentMeResponse>(
+        r#"SELECT agent_admins.id AS agent_admin_id,
+                  agents.id AS agent_id,
+                  agent_admins.username,
+                  agents.agent_code,
+                  agents.level,
+                  agents.status AS agent_status,
+                  agent_admins.status AS admin_status,
+                  agent_admins.last_login_at
+           FROM agent_admin_users agent_admins
+           INNER JOIN agents ON agents.id = agent_admins.agent_id
+           WHERE agent_admins.id = ?
+             AND agent_admins.status = 'active'
+             AND agents.status = 'active'
+           LIMIT 1"#,
+    )
+    .bind(agent_admin_id)
+    .fetch_optional(&pool)
+    .await?
+    .map(Json)
+    .ok_or(AppError::Unauthorized)
 }
 
 async fn dashboard(

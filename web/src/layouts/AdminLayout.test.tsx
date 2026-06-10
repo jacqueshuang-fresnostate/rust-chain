@@ -13,7 +13,8 @@ function renderAdminLayout(initialEntry = '/admin/dashboard') {
         element: <AdminLayout />,
         children: [
           { path: 'dashboard', element: <div>仪表盘内容</div> },
-          { path: 'users', element: <div>用户内容</div> }
+          { path: 'users', element: <div>用户内容</div> },
+          { path: 'news', element: <div>新闻内容</div> }
         ]
       }
     ],
@@ -40,7 +41,7 @@ describe('AdminLayout', () => {
     });
 
     [
-      { group: '用户与代理', children: ['用户管理', '代理管理', '代理佣金'] },
+      { group: '用户与代理', children: ['用户管理', '代理管理', '代理佣金', '佣金规则'] },
       { group: '钱包资产', children: ['资产管理', '钱包账户', '钱包流水'] },
       { group: '现货交易', children: ['交易对配置', '现货动作', '现货订单', '现货成交'] },
       {
@@ -52,7 +53,8 @@ describe('AdminLayout', () => {
       { group: '秒合约', children: ['秒合约产品', '秒合约订单', '秒合约动作'] },
       { group: '杠杆交易', children: ['杠杆产品', '杠杆仓位', '强平记录', '利息汇总', '杠杆动作'] },
       { group: '理财 Earn', children: ['理财产品', '理财申购', '理财动作'] },
-      { group: '系统配置', children: ['SMTP 邮件配置'] }
+      { group: '内容运营', children: ['新闻中心'] },
+      { group: '系统配置', children: ['SMTP 邮件配置', '上传配置'] }
     ].forEach(({ group, children }) => {
       const groupButton = screen.getByRole('button', { name: new RegExp(group) });
       expect(groupButton).toHaveAttribute('aria-expanded', 'false');
@@ -64,6 +66,15 @@ describe('AdminLayout', () => {
       });
     });
     expect(screen.getByText('root-admin')).toBeInTheDocument();
+  });
+
+  it('activates the news center navigation entry', () => {
+    renderAdminLayout('/admin/news');
+
+    const groupButton = screen.getByRole('button', { name: /内容运营/ });
+    expect(groupButton).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: '新闻中心' })).toHaveClass('active');
+    expect(screen.getByText('新闻内容')).toBeInTheDocument();
   });
 
   it('uses expandable second-level navigation and opens the active group', () => {

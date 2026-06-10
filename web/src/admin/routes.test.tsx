@@ -11,9 +11,11 @@ function routeElementName(path: string) {
 
 describe('adminRoutes', () => {
   it.each([
+    'news',
     'new-coins/subscriptions',
     'new-coins/distributions',
     'users',
+    'agent-commission-rules',
     'assets',
     'wallet/accounts',
     'wallet/ledger',
@@ -29,6 +31,10 @@ describe('adminRoutes', () => {
 
   it('registers the SMTP configuration action page', () => {
     expect(routeElementName('system/smtp')).toBe('SmtpConfigPage');
+  });
+
+  it('registers the upload configuration action page', () => {
+    expect(routeElementName('system/uploads')).toBe('UploadConfigPage');
   });
 
   it.each(['spot/actions', 'seconds-contract/actions', 'margin/actions'])('keeps existing product action route %s', (path) => {

@@ -7,6 +7,7 @@ pub mod events;
 pub mod margin;
 pub mod market;
 pub mod new_coin;
+pub mod news;
 pub mod risk;
 pub mod seconds_contract;
 pub mod spot;

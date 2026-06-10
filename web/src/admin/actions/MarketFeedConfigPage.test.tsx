@@ -128,16 +128,20 @@ describe('MarketFeedConfigPage', () => {
 
     render(<MarketFeedConfigPage />);
 
-    const list = await screen.findByRole('table', { name: '行情订阅列表' });
+    const list = await screen.findByRole('grid', { name: '行情订阅列表' });
+    expect(list.closest('.semi-table-bordered')).toBeInTheDocument();
+    expect(list.closest('.semi-table-wrapper')).not.toHaveClass('admin-action-subscription-list');
+    expect(list.querySelector('.react-resizable-handle')).toBeInTheDocument();
+    expect(document.querySelector('.admin-action-subscription-list')).not.toBeInTheDocument();
     expect(within(list).getByRole('columnheader', { name: '类型' })).toBeInTheDocument();
     expect(within(list).getByRole('columnheader', { name: '订阅项' })).toBeInTheDocument();
     expect(within(list).getByRole('columnheader', { name: '状态' })).toBeInTheDocument();
-    expect(within(list).getAllByRole('cell', { name: '行情源' })).toHaveLength(2);
-    expect(within(list).getAllByRole('cell', { name: '交易对' })).toHaveLength(2);
-    expect(within(list).getAllByRole('cell', { name: 'K线周期' })).toHaveLength(5);
-    expect(within(list).getByRole('cell', { name: 'htx' })).toBeInTheDocument();
-    expect(within(list).getByRole('cell', { name: 'BTCUSDT' })).toBeInTheDocument();
-    expect(within(list).getByRole('cell', { name: '1m' })).toBeInTheDocument();
+    expect(within(list).getAllByRole('gridcell', { name: '行情源' })).toHaveLength(2);
+    expect(within(list).getAllByRole('gridcell', { name: '交易对' })).toHaveLength(2);
+    expect(within(list).getAllByRole('gridcell', { name: 'K线周期' })).toHaveLength(5);
+    expect(within(list).getByRole('gridcell', { name: 'htx' })).toBeInTheDocument();
+    expect(within(list).getByRole('gridcell', { name: 'BTCUSDT' })).toBeInTheDocument();
+    expect(within(list).getByRole('gridcell', { name: '1m' })).toBeInTheDocument();
 
     await user.click(within(list).getByRole('button', { name: '禁用 行情源 htx' }));
 

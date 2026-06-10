@@ -145,12 +145,22 @@ async fn refer_user_to_agent(pool: &MySqlPool, user_id: u64, agent_id: u64) {
 }
 
 async fn seed_agent_commission_rule(pool: &MySqlPool, agent_id: u64) -> u64 {
+    seed_agent_commission_rule_with(pool, agent_id, "0.05000000", "active").await
+}
+
+async fn seed_agent_commission_rule_with(
+    pool: &MySqlPool,
+    agent_id: u64,
+    commission_rate: &str,
+    status: &str,
+) -> u64 {
     sqlx::query(
         r#"INSERT INTO agent_commission_rules (agent_id, product_type, commission_rate, status)
-           VALUES (?, 'convert', ?, 'active')"#,
+           VALUES (?, 'convert', ?, ?)"#,
     )
     .bind(agent_id)
-    .bind(decimal("0.05000000"))
+    .bind(decimal(commission_rate))
+    .bind(status)
     .execute(pool)
     .await
     .unwrap()
@@ -605,6 +615,219 @@ async fn convert_confirm_creates_pending_agent_commission_for_referred_user()
         .del(format!("convert:quote:{}", parsed_quote_id.0))
         .await?;
     cleanup_agent_commission_fixture(&pool, rule_id, user_id, agent_id, agent_user_id).await?;
+    cleanup_fixture(&pool, &quote_id, pair_id, from_asset, to_asset, user_id).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn convert_confirm_skips_disabled_agent_commission_rule() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (agent_id, agent_user_id) = create_agent(&pool).await;
+    let user_id = create_user(&pool).await;
+    refer_user_to_agent(&pool, user_id, agent_id).await;
+    let rule_id = seed_agent_commission_rule_with(&pool, agent_id, "0.05000000", "disabled").await;
+    let from_asset = create_asset(&pool, "CDR").await;
+    let to_asset = create_asset(&pool, "CDT").await;
+    let pair_id = seed_convert_pair(&pool, from_asset, to_asset).await;
+    let quote_id = seed_convert_quote(&pool, user_id, pair_id, from_asset, to_asset).await;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(from_asset)
+        .bind(decimal("10.000000000000000000"))
+        .execute(&pool)
+        .await?;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(to_asset)
+        .bind(decimal("0.000000000000000000"))
+        .execute(&pool)
+        .await?;
+
+    let parsed_quote_id = QuoteId(Uuid::parse_str(&quote_id)?);
+    RedisConvertQuoteCache::new(redis.clone())
+        .save_quote_ttl(ConvertQuoteCacheEntry {
+            quote_id: parsed_quote_id.clone(),
+            user_id: user_id.to_string(),
+            from_asset: from_asset.to_string(),
+            to_asset: to_asset.to_string(),
+            from_amount: decimal("10.000000000000000000"),
+            to_amount: decimal("20.000000000000000000"),
+            expires_at: Utc::now() + TimeDelta::seconds(30),
+            redis_key: format!("convert:quote:{}", parsed_quote_id.0),
+            ttl_seconds: 30,
+        })
+        .await
+        .unwrap();
+
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let app = user_routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_redis(redis.clone()),
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/convert/confirm")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(r#"{{"quote_id":"{quote_id}"}}"#)))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 8192).await?;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "payload: {}",
+        String::from_utf8_lossy(&body)
+    );
+
+    let (record_count,): (i64,) = sqlx::query_as(
+        r#"SELECT COUNT(*)
+           FROM agent_commission_records
+           WHERE agent_id = ? AND user_id = ? AND source_type = 'convert_order'"#,
+    )
+    .bind(agent_id)
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(record_count, 0);
+
+    let mut raw_redis = redis.clone();
+    let _: usize = raw_redis
+        .del(format!("convert:quote:{}", parsed_quote_id.0))
+        .await?;
+    cleanup_agent_commission_fixture(&pool, rule_id, user_id, agent_id, agent_user_id).await?;
+    cleanup_fixture(&pool, &quote_id, pair_id, from_asset, to_asset, user_id).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn convert_confirm_uses_latest_active_agent_commission_rule() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (agent_id, agent_user_id) = create_agent(&pool).await;
+    let user_id = create_user(&pool).await;
+    refer_user_to_agent(&pool, user_id, agent_id).await;
+    let old_rule_id =
+        seed_agent_commission_rule_with(&pool, agent_id, "0.05000000", "active").await;
+    let latest_rule_id =
+        seed_agent_commission_rule_with(&pool, agent_id, "0.08000000", "active").await;
+    let from_asset = create_asset(&pool, "CLR").await;
+    let to_asset = create_asset(&pool, "CLT").await;
+    let pair_id = seed_convert_pair(&pool, from_asset, to_asset).await;
+    let quote_id = seed_convert_quote(&pool, user_id, pair_id, from_asset, to_asset).await;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(from_asset)
+        .bind(decimal("10.000000000000000000"))
+        .execute(&pool)
+        .await?;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(to_asset)
+        .bind(decimal("0.000000000000000000"))
+        .execute(&pool)
+        .await?;
+
+    let parsed_quote_id = QuoteId(Uuid::parse_str(&quote_id)?);
+    RedisConvertQuoteCache::new(redis.clone())
+        .save_quote_ttl(ConvertQuoteCacheEntry {
+            quote_id: parsed_quote_id.clone(),
+            user_id: user_id.to_string(),
+            from_asset: from_asset.to_string(),
+            to_asset: to_asset.to_string(),
+            from_amount: decimal("10.000000000000000000"),
+            to_amount: decimal("20.000000000000000000"),
+            expires_at: Utc::now() + TimeDelta::seconds(30),
+            redis_key: format!("convert:quote:{}", parsed_quote_id.0),
+            ttl_seconds: 30,
+        })
+        .await
+        .unwrap();
+
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let app = user_routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_redis(redis.clone()),
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/convert/confirm")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(r#"{{"quote_id":"{quote_id}"}}"#)))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 8192).await?;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "payload: {}",
+        String::from_utf8_lossy(&body)
+    );
+
+    let (commission_amount,): (BigDecimal,) = sqlx::query_as(
+        r#"SELECT commission_amount
+           FROM agent_commission_records
+           WHERE agent_id = ? AND user_id = ? AND source_type = 'convert_order'
+           LIMIT 1"#,
+    )
+    .bind(agent_id)
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(commission_amount, decimal("0.800000000000000000"));
+
+    let mut raw_redis = redis.clone();
+    let _: usize = raw_redis
+        .del(format!("convert:quote:{}", parsed_quote_id.0))
+        .await?;
+    sqlx::query("DELETE FROM agent_commission_records WHERE agent_id = ? AND user_id = ?")
+        .bind(agent_id)
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM agent_commission_rules WHERE id IN (?, ?)")
+        .bind(old_rule_id)
+        .bind(latest_rule_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM user_referrals WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM agents WHERE id = ?")
+        .bind(agent_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(agent_user_id)
+        .execute(&pool)
+        .await?;
     cleanup_fixture(&pool, &quote_id, pair_id, from_asset, to_asset, user_id).await?;
     Ok(())
 }

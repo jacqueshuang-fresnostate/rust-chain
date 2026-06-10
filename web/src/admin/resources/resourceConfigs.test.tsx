@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { listAdminResource } from '../../api/adminResources';
 import { apiRequest } from '../../api/client';
-import { ResourcePage, resourceConfigs } from './resourceConfigs';
+import { ResourcePage, resourceConfigs, type ResourceConfig } from './resourceConfigs';
 
 vi.mock('../../api/adminResources', () => ({
   listAdminResource: vi.fn()
@@ -46,6 +46,10 @@ function semiInputByLabel(dialog: HTMLElement, label: string, index = 0): HTMLEl
   const wrapper = input.closest('.semi-input-wrapper') as HTMLElement | null;
   expect(wrapper).toBeInTheDocument();
   return wrapper as HTMLElement;
+}
+
+function expectFilter(config: ResourceConfig, key: string, expected: Partial<NonNullable<ResourceConfig['filters']>[number]>) {
+  expect(config.filters?.find((filter) => filter.key === key)).toMatchObject(expected);
 }
 
 async function selectSemiOption(user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement, label: string, optionLabel: string) {
@@ -131,6 +135,235 @@ describe('resourceConfigs create actions', () => {
 
     expect(configsWithoutEmail).toEqual([]);
   });
+
+  it('configures the Admin news center list with filters and columns', () => {
+    expect(resourceConfigs.news.title).toBe('新闻中心');
+    expect(resourceConfigs.news.endpoint).toBe('/admin/api/v1/news');
+    expect(resourceConfigs.news.responseKey).toBe('news');
+    expect(resourceConfigs.news.showJsonAction).toBe(false);
+    expectFilter(resourceConfigs.news, 'q', { label: '关键词' });
+    expectFilter(resourceConfigs.news, 'status', { label: '状态', type: 'select' });
+    expectFilter(resourceConfigs.news, 'category', { label: '分类', type: 'select' });
+    expectFilter(resourceConfigs.news, 'country_code', { label: '国家' });
+    expectFilter(resourceConfigs.news, 'locale', { label: '语言' });
+    expectFilter(resourceConfigs.news, 'limit', { label: '数量限制' });
+    expect(resourceConfigs.news.columns).toEqual([
+      { key: 'id', title: '新闻ID' },
+      { key: 'title', title: '标题' },
+      expect.objectContaining({ key: 'category', title: '分类' }),
+      { key: 'country_code', title: '国家' },
+      { key: 'default_locale', title: '默认语言' },
+      expect.objectContaining({ key: 'status', title: '状态', type: 'status' }),
+      expect.objectContaining({ key: 'published_at', title: '发布时间', type: 'timestamp' }),
+      expect.objectContaining({ key: 'updated_at', title: '更新时间', type: 'timestamp' })
+    ]);
+  });
+
+  it('lists Admin news from the news endpoint', async () => {
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey, filters) => ({
+      rows:
+        endpoint === '/admin/api/v1/news'
+          ? [
+              {
+                id: 7,
+                title: '平台公告',
+                category: 'system',
+                country_code: 'CN',
+                default_locale: 'zh-CN',
+                status: 'published',
+                published_at: 1_700_000_000_000,
+                updated_at: 1_700_000_100_000
+              }
+            ]
+          : [],
+      raw: { [responseKey]: [], filters }
+    }));
+
+    render(<ResourcePage config={resourceConfigs.news} />);
+
+    expect(await screen.findByText('平台公告')).toBeInTheDocument();
+    expect(screen.getByText('系统公告')).toBeInTheDocument();
+    expect(listAdminResourceMock).toHaveBeenCalledWith('/admin/api/v1/news', 'news', {});
+  });
+
+  it('creates edits publishes and archives Admin news', async () => {
+    const user = userEvent.setup();
+    const confirmWithReason = async (reason: string) => {
+      const reasonInputs = await screen.findAllByLabelText('操作原因');
+      await user.type(reasonInputs.at(-1)!, reason);
+      const confirmButtons = screen.getAllByRole('button', { name: '确认' });
+      await user.click(confirmButtons.at(-1)!);
+    };
+    const newsContent = {
+      version: 1,
+      default_locale: 'zh-CN',
+      items: [
+        {
+          locale: 'zh-CN',
+          country_code: 'CN',
+          title: '平台公告',
+          summary: '旧摘要',
+          content: [{ type: 'p', children: [{ text: '旧内容' }] }]
+        }
+      ]
+    };
+
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/news') {
+        const rows = [
+          {
+            id: 7,
+            title: '平台公告',
+            category: 'system',
+            country_code: 'CN',
+            default_locale: 'zh-CN',
+            status: 'draft',
+            content_json: newsContent,
+            updated_at: 1_700_000_100_000
+          }
+        ];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
+      return { rows: [], raw: {} };
+    });
+    apiRequestMock.mockImplementation(async (path) => {
+      if (path === '/admin/api/v1/news/7') {
+        return { id: 7, detail: 'news-detail' };
+      }
+
+      return {};
+    });
+
+    render(<ResourcePage config={resourceConfigs.news} />);
+
+    expect(await screen.findByText('平台公告')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '添加新闻' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看详情' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '编辑' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '发布' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '归档' })).toBeInTheDocument();
+    const initialNewsLoadCount = listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/news').length;
+
+    await user.click(screen.getByRole('button', { name: '添加新闻' }));
+    let dialog = await screen.findByRole('dialog', { name: '添加新闻' });
+    expectCreateModalSize(dialog, 'extra-wide');
+    semiInputByLabel(dialog, '新闻标题');
+    semiSelectByLabel(dialog, '分类');
+    semiInputByLabel(dialog, '国家');
+    semiInputByLabel(dialog, '默认语言');
+    semiSelectByLabel(dialog, '初始状态');
+    semiInputByLabel(dialog, '语言');
+    semiInputByLabel(dialog, '翻译国家');
+    semiInputByLabel(dialog, '翻译标题');
+    expect(within(dialog).getByLabelText('摘要').closest('.semi-input-textarea-wrapper')).toBeInTheDocument();
+    const createEditor = within(dialog).getByLabelText('富文本内容');
+    expect(createEditor).toHaveAttribute('contenteditable', 'true');
+    expect(createEditor.closest('.ql-editor')).toHaveAttribute('data-placeholder', '请输入新闻内容');
+    await user.type(within(dialog).getByLabelText('新闻标题'), '平台新公告');
+    await selectSemiOption(user, dialog, '分类', '市场资讯');
+    await user.clear(within(dialog).getByLabelText('国家'));
+    await user.type(within(dialog).getByLabelText('国家'), 'US');
+    await selectSemiOption(user, dialog, '初始状态', '已发布');
+    await user.type(within(dialog).getByLabelText('翻译标题'), '平台新公告');
+    await user.type(within(dialog).getByLabelText('摘要'), '公告摘要');
+    expect(within(dialog).getByRole('button', { name: '提交添加新闻' })).toBeDisabled();
+    fireEvent.input(createEditor, { target: { innerText: '公告正文' } });
+    await user.click(within(dialog).getByRole('button', { name: '新增语言内容' }));
+    const localeInputs = within(dialog).getAllByLabelText('语言');
+    await user.clear(localeInputs[1]);
+    await user.type(localeInputs[1], 'en-US');
+    const countryInputs = within(dialog).getAllByLabelText('翻译国家');
+    await user.clear(countryInputs[1]);
+    await user.type(countryInputs[1], 'US');
+    const translationTitles = within(dialog).getAllByLabelText('翻译标题');
+    await user.clear(translationTitles[1]);
+    await user.type(translationTitles[1], 'Platform News');
+    const summaries = within(dialog).getAllByLabelText('摘要');
+    await user.type(summaries[1], 'English summary');
+    const editors = within(dialog).getAllByLabelText('富文本内容');
+    fireEvent.input(editors[1], { target: { innerText: 'English body' } });
+    await user.click(within(dialog).getByRole('button', { name: '提交添加新闻' }));
+    await confirmWithReason('create news');
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/news', expect.objectContaining({ method: 'POST' }));
+    });
+    let request = apiRequestMock.mock.calls.find(([path, init]) => path === '/admin/api/v1/news' && init && 'method' in init)?.[1];
+    let body = JSON.parse(String(request?.body));
+    expect(body).toMatchObject({
+      title: '平台新公告',
+      category: 'market',
+      status: 'published',
+      country_code: 'US',
+      default_locale: 'zh-CN',
+      reason: 'create news'
+    });
+    expect(body.content_json).toMatchObject({
+      version: 1,
+      default_locale: 'zh-CN',
+      items: [
+        { locale: 'zh-CN', country_code: 'CN', title: '平台新公告', summary: '公告摘要' },
+        { locale: 'en-US', country_code: 'US', title: 'Platform News', summary: 'English summary' }
+      ]
+    });
+    expect(body.content_json.items[0].content).toEqual([{ type: 'p', children: [{ text: '公告正文' }] }]);
+    expect(body.content_json.items[1].content).toEqual([{ type: 'p', children: [{ text: 'English body' }] }]);
+
+    await user.click(screen.getByRole('button', { name: '查看详情' }));
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/news/7');
+    });
+    await expectFormattedDetail('news-detail', /"detail": "news-detail"/);
+
+    await user.click(screen.getByRole('button', { name: '编辑' }));
+    dialog = await screen.findByRole('dialog', { name: '编辑新闻' });
+    semiInputByLabel(dialog, '新闻标题');
+    semiSelectByLabel(dialog, '分类');
+    semiInputByLabel(dialog, '国家');
+    semiInputByLabel(dialog, '默认语言');
+    await user.clear(within(dialog).getByLabelText('新闻标题'));
+    await user.type(within(dialog).getByLabelText('新闻标题'), '平台公告更新');
+    await selectSemiOption(user, dialog, '分类', '产品资讯');
+    await user.clear(within(dialog).getByLabelText('国家'));
+    await user.type(within(dialog).getByLabelText('国家'), 'JP');
+    await user.click(within(dialog).getByRole('button', { name: '提交编辑新闻' }));
+    await confirmWithReason('edit news');
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/news/7', expect.objectContaining({ method: 'PATCH' }));
+    });
+    request = apiRequestMock.mock.calls.find(([path, init]) => path === '/admin/api/v1/news/7' && init && 'method' in init)?.[1];
+    body = JSON.parse(String(request?.body));
+    expect(body).toMatchObject({
+      title: '平台公告更新',
+      category: 'product',
+      country_code: 'JP',
+      default_locale: 'zh-CN',
+      reason: 'edit news'
+    });
+    expect(body.content_json.items[0]).toMatchObject({ locale: 'zh-CN', country_code: 'CN', title: '平台公告', summary: '旧摘要' });
+    expect(body).not.toHaveProperty('status');
+
+    await user.click(screen.getByRole('button', { name: '发布' }));
+    await confirmWithReason('publish news');
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/news/7/status', {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'published', reason: 'publish news' })
+      });
+    });
+
+    await user.click(screen.getByRole('button', { name: '归档' }));
+    await confirmWithReason('archive news');
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/news/7/status', {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'archived', reason: 'archive news' })
+      });
+      expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/news').length).toBeGreaterThanOrEqual(initialNewsLoadCount + 4);
+    });
+  }, 20_000);
 
   it('keeps the user ID column visible on user management', () => {
     expect(resourceConfigs.users.columns).toContainEqual({ key: 'id', title: '用户ID' });
@@ -759,6 +992,216 @@ describe('resourceConfigs create actions', () => {
       reason: 'manual recharge'
     });
     expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/users')).toHaveLength(2);
+  });
+
+  it('assigns an agent from user row actions with a required reason', async () => {
+    const user = userEvent.setup();
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/users') {
+        const rows = [{ id: 123, email: 'user@example.com', phone: '18800000000', status: 'active', kyc_level: 1 }];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
+      return { rows: [], raw: {} };
+    });
+
+    render(<ResourcePage config={resourceConfigs.users} />);
+
+    expect(await screen.findByText('user@example.com')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '分配代理' }));
+    const dialog = await screen.findByRole('dialog', { name: '分配代理' });
+    semiInputByLabel(dialog, '用户ID');
+    semiInputByLabel(dialog, '代理ID');
+    await user.type(within(dialog).getByLabelText('代理ID'), '42');
+    await user.click(within(dialog).getByRole('button', { name: '提交分配代理' }));
+    await user.type(screen.getByLabelText('操作原因'), 'assign user agent');
+    await user.click(screen.getByRole('button', { name: '确认' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/users/123/agent', {
+        method: 'PATCH',
+        body: JSON.stringify({ agent_id: 42, reason: 'assign user agent' })
+      });
+      expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/users')).toHaveLength(2);
+    });
+  });
+
+  it('creates and updates convert-only agent commission rules with required reasons', async () => {
+    const user = userEvent.setup();
+    const config = resourceConfigs.agentCommissionRules;
+    expect(config).toMatchObject({
+      title: '佣金规则',
+      endpoint: '/admin/api/v1/agent-commission-rules',
+      responseKey: 'rules'
+    });
+    expectFilter(config, 'agent_id', { key: 'agent_id', label: '代理ID' });
+    expectFilter(config, 'product_type', {
+      key: 'product_type',
+      label: '产品类型',
+      type: 'select',
+      options: [{ label: 'convert', value: 'convert' }]
+    });
+    expectFilter(config, 'status', {
+      key: 'status',
+      label: '状态',
+      type: 'select',
+      options: [
+        { label: 'active', value: 'active' },
+        { label: 'disabled', value: 'disabled' }
+      ]
+    });
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/agent-commission-rules') {
+        const rows = [
+          {
+            id: 77,
+            agent_id: 42,
+            product_type: 'convert',
+            commission_rate: '0.05000000',
+            status: 'active',
+            created_at: 1_775_027_600_000,
+            updated_at: 1_775_027_700_000
+          }
+        ];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
+      return { rows: [], raw: {} };
+    });
+
+    const { unmount } = render(<ResourcePage config={config} />);
+
+    expect(await screen.findByText('0.05')).toBeInTheDocument();
+    expect(screen.getByText('更新时间')).toBeInTheDocument();
+    semiInputByLabel(document.body, '代理ID');
+    semiSelectByLabel(document.body, '产品类型');
+    semiSelectByLabel(document.body, '状态');
+    await selectSemiOption(user, document.body, '产品类型', 'convert');
+    await selectSemiOption(user, document.body, '状态', 'disabled');
+    await user.click(screen.getByRole('button', { name: '查询' }));
+    await waitFor(() => {
+      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/api/v1/agent-commission-rules', 'rules', {
+        product_type: 'convert',
+        status: 'disabled'
+      });
+    });
+
+    await user.click(screen.getByRole('button', { name: '添加佣金规则' }));
+    const createDialog = await screen.findByRole('dialog', { name: '添加佣金规则' });
+    semiInputByLabel(createDialog, '代理ID');
+    semiSelectByLabel(createDialog, '产品类型');
+    semiInputByLabel(createDialog, '佣金比例');
+    semiSelectByLabel(createDialog, '初始状态');
+    expect(semiSelectByLabel(createDialog, '产品类型')).toHaveTextContent('convert');
+    await user.type(within(createDialog).getByLabelText('代理ID'), '42');
+    await user.type(within(createDialog).getByLabelText('佣金比例'), '0.05');
+    await user.click(within(createDialog).getByRole('button', { name: '提交添加佣金规则' }));
+    await user.type(screen.getByLabelText('操作原因'), 'create commission rule');
+    await user.click(screen.getByRole('button', { name: '确认' }));
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/agent-commission-rules', expect.objectContaining({ method: 'POST' }));
+    });
+    const createRequest = apiRequestMock.mock.calls.find(([path, init]) => path === '/admin/api/v1/agent-commission-rules' && init && 'method' in init)?.[1];
+    expect(JSON.parse(String(createRequest?.body))).toEqual({
+      agent_id: 42,
+      product_type: 'convert',
+      commission_rate: '0.05',
+      status: 'active',
+      reason: 'create commission rule'
+    });
+
+    unmount();
+    render(<ResourcePage config={config} />);
+    expect(await screen.findByText('0.05')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '修改' }));
+    const editDialog = await screen.findByRole('dialog', { name: '修改佣金规则' });
+    semiInputByLabel(editDialog, '代理ID');
+    semiSelectByLabel(editDialog, '产品类型');
+    semiInputByLabel(editDialog, '佣金比例');
+    semiSelectByLabel(editDialog, '状态');
+    await user.clear(within(editDialog).getByLabelText('佣金比例'));
+    await user.type(within(editDialog).getByLabelText('佣金比例'), '0.08');
+    await selectSemiOption(user, editDialog, '状态', '禁用');
+    await user.click(within(editDialog).getByRole('button', { name: '提交修改' }));
+    await user.type(screen.getByLabelText('操作原因'), 'update commission rule');
+    await user.click(screen.getByRole('button', { name: '确认' }));
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/agent-commission-rules/77', expect.objectContaining({ method: 'PATCH' }));
+    });
+    const updateRequest = apiRequestMock.mock.calls.find(([path, init]) => path === '/admin/api/v1/agent-commission-rules/77' && init && 'method' in init)?.[1];
+    expect(JSON.parse(String(updateRequest?.body))).toEqual({
+      commission_rate: '0.08',
+      status: 'disabled',
+      reason: 'update commission rule'
+    });
+    expect(JSON.parse(String(updateRequest?.body))).not.toHaveProperty('agent_id');
+    expect(JSON.parse(String(updateRequest?.body))).not.toHaveProperty('product_type');
+  });
+
+  it('settles and rejects agent commissions from row actions with a dropdown status filter', async () => {
+    const user = userEvent.setup();
+    const statusFilterConfig = resourceConfigs.agentCommissions.filters?.find((filter) => filter.key === 'status');
+    expect(statusFilterConfig).toMatchObject({
+      key: 'status',
+      label: '状态',
+      type: 'select',
+      options: [
+        { label: 'pending', value: 'pending' },
+        { label: 'settled', value: 'settled' },
+        { label: 'rejected', value: 'rejected' }
+      ]
+    });
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/agent-commissions') {
+        const rows = [
+          {
+            id: 88,
+            agent_id: 42,
+            user_id: 123,
+            source_type: 'convert_order',
+            source_id: 'quote-88',
+            source_amount: '10.000000000000000000',
+            commission_amount: '0.500000000000000000',
+            status: 'pending',
+            created_at: 1_775_027_600_000
+          }
+        ];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
+      return { rows: [], raw: {} };
+    });
+
+    render(<ResourcePage config={resourceConfigs.agentCommissions} />);
+
+    expect(await screen.findByText('quote-88')).toBeInTheDocument();
+    semiSelectByLabel(document.body, '状态');
+    await selectSemiOption(user, document.body, '状态', 'pending');
+    await user.click(screen.getByRole('button', { name: '查询' }));
+    await waitFor(() => {
+      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/api/v1/agent-commissions', 'commissions', { status: 'pending' });
+    });
+
+    await user.click(screen.getByRole('button', { name: '结算' }));
+    await user.type(screen.getByLabelText('操作原因'), 'settle commission');
+    await user.click(screen.getByRole('button', { name: '确认' }));
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/agent-commissions/88/status', {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'settled', reason: 'settle commission' })
+      });
+    });
+
+    await user.click(screen.getByRole('button', { name: '拒绝' }));
+    await user.type(screen.getByLabelText('操作原因'), 'reject commission');
+    await user.click(screen.getByRole('button', { name: '确认' }));
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/agent-commissions/88/status', {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'rejected', reason: 'reject commission' })
+      });
+    });
   });
 
   it('updates market pair status from row actions with a required reason', async () => {
@@ -1397,6 +1840,11 @@ describe('resourceConfigs create actions', () => {
     expect(dialog.querySelector('.admin-earn-introduction-card')).toBeInTheDocument();
     expect(dialog.querySelector('.admin-earn-introduction-meta')).toBeInTheDocument();
     expect(dialog.querySelector('.admin-earn-product-footer')).toBeInTheDocument();
+    const categoryDescriptionList = within(dialog).getByLabelText('产品分类说明');
+    expect(within(categoryDescriptionList).getByText('定期：固定期限，到期赎回或结算，适合锁定周期收益。')).toBeInTheDocument();
+    expect(within(categoryDescriptionList).getByText('活期：无固定期限，可按规则灵活赎回，收益通常按持有时间或日计。')).toBeInTheDocument();
+    expect(within(categoryDescriptionList).getByText('结构化：收益与挂钩标的或条件相关，可能存在不同收益档位和触发条件。')).toBeInTheDocument();
+    expect(within(categoryDescriptionList).getByText('质押：将资产用于链上或平台质押获得收益，通常受质押周期、解押期和链上风险影响。')).toBeInTheDocument();
     semiSelectByLabel(dialog, '理财资产');
     semiSelectByLabel(dialog, '产品分类');
     semiSelectByLabel(dialog, '初始状态');
