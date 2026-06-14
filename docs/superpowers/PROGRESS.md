@@ -2,6 +2,471 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-06-13 09:59 - 优化充值地址导入规则选择
+
+- 完成内容：后台“添加充值地址”SideSheet 将“导入地址”入口移入地址规则区域，和网络、支持币种、初始状态放在同一组配置中；创建页资产多选文案从“限定资产”调整为“支持币种”；地址明细区域只保留新增行操作；测试覆盖导入前选择 Tron 网络和 USDT 支持币种，提交 body 会带上对应 `network` 与 `asset_symbols`。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `.trellis/tasks/06-13-deposit-address-import-rules/prd.md`
+  - `.trellis/tasks/06-13-deposit-address-import-rules/implement.jsonl`
+  - `.trellis/tasks/06-13-deposit-address-import-rules/check.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- resourceConfigs.test.tsx`，1 个测试文件、42 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行本轮触碰文件 `git diff --check`，通过。已用内置浏览器打开 `http://127.0.0.1:3032/admin/wallet/deposit-address-pool`，当前本地登录态重定向到 `/login`，未绕过管理员登录做真实弹窗截图验收。
+- 后续事项：无。
+
+## 2026-06-13 09:55 - 添加充值地址导入
+
+- 完成内容：后台“添加充值地址”SideSheet 新增 Semi Upload 导入入口；支持导入 `.csv` / `.txt` 文件，按每行 `充值地址, Memo/Tag, 备注` 解析，也兼容 Tab 和 `|` 分隔、自动跳过表头和空行；导入后将内容填充为批量地址明细，若已有手动填写内容则追加到现有明细后，提交仍沿用 `/admin/api/v1/deposit-address-pool/batch`。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `.trellis/tasks/06-13-deposit-address-import/prd.md`
+  - `.trellis/tasks/06-13-deposit-address-import/implement.jsonl`
+  - `.trellis/tasks/06-13-deposit-address-import/check.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- resourceConfigs.test.tsx`，1 个测试文件、42 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行本轮触碰文件 `git diff --check`，通过。已用内置浏览器打开 `http://127.0.0.1:3032/admin/wallet/deposit-address-pool`，当前本地登录态重定向到 `/login`，未绕过管理员登录做真实弹窗截图验收。
+- 后续事项：无。
+
+## 2026-06-13 09:49 - 优化添加充值地址页面
+
+- 完成内容：后台“添加充值地址”SideSheet 重新排版为“地址规则”和“地址明细”两块；网络、限定资产多选、初始状态放在顶部响应式栅格中；每条充值地址独立使用 Semi Card 承载，支持继续新增多行、删除多余行，并保留原批量提交接口和请求结构；资源页测试补充新布局断言，并为 Semi 响应式栅格补充 `matchMedia` 测试环境 mock。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `.trellis/tasks/06-13-deposit-address-create-layout/prd.md`
+  - `.trellis/tasks/06-13-deposit-address-create-layout/implement.jsonl`
+  - `.trellis/tasks/06-13-deposit-address-create-layout/check.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- resourceConfigs.test.tsx`，1 个测试文件、41 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行本轮触碰文件 `git diff --check`，通过。已启动 web dev server 并用内置浏览器打开 `http://127.0.0.1:3032/admin/wallet/deposit-address-pool`，当前本地登录态重定向到 `/login`，未绕过管理员登录做真实弹窗截图验收。
+- 后续事项：无。
+
+## 2026-06-13 05:17 - 充值地址池配置与分配
+
+- 完成内容：新增充值地址池表，支持 ETH/Base/Tron/BTC/Solana 网络地址维护；用户端 `/wallet/deposit-address` 可按资产和网络从地址池申请地址，已分配地址会绑定用户并重复返回给同一用户；后台新增充值地址池列表、添加、详情、修改和回收接口，并写入审计日志；后台资源页新增“充值地址池”导航、表格、筛选、新增 SideSheet、行级详情/修改/回收操作；PC 充值页改为调用真实地址申请接口，提现页改为只读取网络信息，避免误占用充值地址；OpenAPI 同步新增用户端和后台地址池契约。
+- 修改文件：
+  - `migrations/0056_deposit_address_pool.sql`
+  - `src/modules/wallet/routes.rs`
+  - `src/modules/admin/routes.rs`
+  - `src/openapi.rs`
+  - `tests/wallet_routes.rs`
+  - `tests/admin_routes.rs`
+  - `tests/openapi_routes.rs`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/admin/routes.tsx`
+  - `web/src/admin/routes.test.tsx`
+  - `web/src/layouts/AdminLayout.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `pc/src/api/wallet.ts`
+  - `pc/src/views/User/Withdraw.vue`
+  - `pc/tests/backendAdapters.test.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web run typecheck`，通过。已执行 `npm --prefix pc run type-check`，通过。已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx src/admin/routes.test.tsx src/layouts/AdminLayout.test.tsx`，3 个测试文件、75 个测试通过。已执行 `node --experimental-strip-types --test --test-name-pattern "PC 2FA login security|PC residual user-center" pc/tests/backendAdapters.test.ts`，2 个目标测试通过。已执行 `cargo check --manifest-path Cargo.toml --all-targets`，通过。已执行 `cargo test --manifest-path Cargo.toml --test wallet_routes wallet_deposit_address_is_assigned_from_pool_and_reused -- --nocapture`，目标测试通过；当前环境未设置 `DATABASE_URL`，真实 MySQL 分支按现有测试约定跳过。已执行 `cargo test --manifest-path Cargo.toml --test admin_routes admin_deposit_address_pool_create_list_update_reclaim_and_audit -- --nocapture`，目标测试通过；真实 MySQL 分支跳过。已执行 `cargo test --manifest-path Cargo.toml --test openapi_routes openapi_json_exposes_first_batch_contract -- --nocapture`，目标测试通过。已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行本次触碰文件 `git diff --check`，通过。
+- 后续事项：如需验证真实地址池并发分配、后台回收和 PC 充值展示，需要提供可用 `DATABASE_URL` 并运行迁移后执行真实 MySQL 分支与端到端验收。
+
+## 2026-06-13 03:58 - PC Trade 盘口显示 20 行
+
+- 完成内容：PC 端 Trade 页面向 `OrderBook` 传入 `visibleRows=20`，盘口按 10 行卖盘 + 10 行买盘展示；`OrderBook` 支持按页面传入行数裁剪展示，并用展示行计算深度背景宽度；Bitget 行情深度订阅由 `books5` 调整为 `books15`，避免 5 档行情源限制 PC 盘口行数。
+- 修改文件：
+  - `pc/src/components/trade/OrderBook.vue`
+  - `pc/src/views/Trade.vue`
+  - `src/modules/market/mod.rs`
+  - `tests/market_feed_worker.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix pc run type-check`，通过。已执行 `cargo fmt`，通过。已执行 `cargo test --test market_feed_worker provider_feed_configs_use_settings_urls_and_channel_payloads -- --nocapture`，目标测试通过。已执行本次触碰文件 `git diff --check`，通过。
+- 后续事项：无
+
+## 2026-06-13 03:43 - PC 端显示交易对 Logo
+
+- 完成内容：`/markets` 公开行情列表返回交易对 `logo_url`；PC market adapter 将交易对 logo 映射为 ticker `icon`，并保留 WebSocket 行情更新前已有 logo；新增 `PairLogo` 组件，统一在首页行情、顶部交易菜单、行情页、现货交易页、Launchpad 交易页、秒合约页和杠杆合约页显示交易对 logo，缺失 logo 时回退基础资产首字母；杠杆产品列表适配 `logo_url` 并在合约交易对下拉中展示。
+- 修改文件：
+  - `src/modules/market/routes.rs`
+  - `tests/market_routes.rs`
+  - `pc/src/api/backendAdapters.ts`
+  - `pc/src/stores/market.ts`
+  - `pc/src/stores/second.ts`
+  - `pc/src/stores/contract.ts`
+  - `pc/src/components/common/PairLogo.vue`
+  - `pc/src/views/Home.vue`
+  - `pc/src/views/Trade.vue`
+  - `pc/src/components/trade/MarketList.vue`
+  - `pc/src/views/Market.vue`
+  - `pc/src/components/layout/Header.vue`
+  - `pc/src/views/LaunchpadTrade.vue`
+  - `pc/src/views/SecondOptions.vue`
+  - `pc/src/views/Contract.vue`
+  - `pc/tests/backendAdapters.test.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt`，通过。已执行 `node --experimental-strip-types --test --test-name-pattern "maps backend market list|maps backend margin products" pc/tests/backendAdapters.test.ts`，2 个目标测试通过。已执行 `npm --prefix pc run type-check`，通过。已执行 `cargo test --test market_routes market_list_route_returns_active_pairs_from_mysql -- --nocapture`，目标测试通过；当前环境未设置 `DATABASE_URL`，真实 MySQL 分支按现有测试约定跳过。已执行本次触碰文件 `git diff --check`，通过。已执行 `npm --prefix pc run build`，Vite 输出 `✓ built in 2.33s` 并生成产物；随后 npm 会话未自动退出，已中断悬挂会话，未发现本次 build 残留进程。
+- 后续事项：如需验证真实交易对 logo 数据，需要提供可连接的 `DATABASE_URL` 并在后台为交易对配置 `logo_url` 后运行真实数据库分支。
+
+## 2026-06-13 03:37 - 移除后台杠杆动作页面
+
+- 完成内容：移除后台 `/admin/margin/actions` 路由和侧边栏“杠杆动作”入口；更新路由测试，确认该页面不再注册；更新后台导航测试，杠杆交易分组只保留杠杆产品、杠杆仓位、强平记录和利息汇总。
+- 修改文件：
+  - `web/src/admin/routes.tsx`
+  - `web/src/admin/routes.test.tsx`
+  - `web/src/layouts/AdminLayout.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- src/admin/routes.test.tsx src/layouts/AdminLayout.test.tsx`，2 个测试文件、32 个测试通过。已在 `web` 目录执行 `npm run typecheck`，通过。已执行本次触碰文件 `git diff --check`，通过。
+- 后续事项：无
+
+## 2026-06-13 03:36 - 后台杠杆列表隐藏 ID 列
+
+- 完成内容：后台“杠杆产品”列表去除“产品ID”和“交易对ID”两列，保留交易对、Logo、保证金资产、保证金模式、杠杆档位和风控参数等业务字段；补充前端渲染断言，确保杠杆产品列表不再展示这两个 ID 表头。
+- 修改文件：
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx -t "margin product"`，1 个测试文件、2 个目标测试通过。已在 `web` 目录执行 `npm run typecheck`，通过。已执行本次触碰文件 `git diff --check`，通过。
+- 后续事项：无
+
+## 2026-06-13 03:34 - 后台钱包流水显示用户邮箱
+
+- 完成内容：后台钱包流水列表接口新增 `user_email` 字段；后台钱包流水表格去除“用户ID”和“资产ID”列，改为显示“用户邮箱”和资产符号；补充后台接口与前端资源配置测试。
+- 修改文件：
+  - `src/modules/admin/routes.rs`
+  - `tests/admin_routes.rs`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt` 和 `cargo fmt -- --check`，通过。已执行 `cargo test --test admin_routes admin_lists_wallet_accounts_and_ledger -- --nocapture`，目标测试通过；当前环境未设置 `DATABASE_URL`，真实 MySQL 分支按现有测试约定跳过。已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx -t "wallet ledger"`，1 个测试文件、1 个目标测试通过。已在 `web` 目录执行 `npm run typecheck`，通过。已执行本次触碰文件 `git diff --check`，通过。
+- 后续事项：如需验证真实后台流水数据展示，需要提供可连接的 `DATABASE_URL` 后运行该集成测试的真实数据库分支。
+
+## 2026-06-13 03:31 - 闪兑单记录支持正反向兑换
+
+- 完成内容：闪兑 pair 列表接口新增源/目标资产符号字段；用户报价逻辑支持同一条闪兑记录正向和反向兑换，反向报价会复用同一个 `convert_pair_id` 并按固定汇率倒数计算；后台闪兑交易对列表改为展示资产符号，创建弹窗不再额外创建反向记录；PC 闪兑提交和可兑换列表映射支持单记录双向使用。
+- 修改文件：
+  - `src/modules/convert/routes.rs`
+  - `src/modules/admin/routes.rs`
+  - `tests/convert_routes.rs`
+  - `tests/admin_routes.rs`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `pc/src/api/swap.ts`
+  - `pc/src/api/backendAdapters.ts`
+  - `pc/tests/backendAdapters.test.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt`，通过。已执行 `cargo test --test convert_routes convert_quote_supports_reverse_direction_from_single_pair -- --nocapture`，目标测试通过；当前环境未设置 `DATABASE_URL`，真实 MySQL 分支按现有测试约定跳过。已执行 `cargo test --test convert_routes convert_routes_list_pairs_and_user_orders -- --nocapture`，目标测试通过；真实 MySQL 分支跳过。已执行 `cargo test --test admin_routes admin_convert_pair_routes_create_list_update_and_audit -- --nocapture`，目标测试通过；真实 MySQL 分支跳过。已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx -t "添加闪兑交易对|convert pair"`，1 个测试文件、2 个目标测试通过。已在 `web` 目录执行 `npm run typecheck`，通过。已执行 `npm --prefix pc run type-check`，通过。已执行 `node --experimental-strip-types --test --test-name-pattern "maps backend convert pairs into PC swap coin rows" pc/tests/backendAdapters.test.ts`，目标测试通过。已执行本次触碰文件 `git diff --check`，通过。执行 `node --experimental-strip-types --test pc/tests/backendAdapters.test.ts` 时仍存在与本任务无关的既有失败：`PC country locale wiring uses the new backend country and news contracts` 仍断言旧英文文案 `No registration countries available`。
+- 后续事项：如需验证真实数据库报价和后台列表，需要提供可连接的 `DATABASE_URL`/`REDIS_URL` 后运行闪兑集成测试的真实分支。
+
+## 2026-06-13 03:22 - 用户邀请码改为 6 位随机字符
+
+- 完成内容：用户 `/referral/my-code` 懒生成的邀请码由 `USR + UUID` 改为 6 位随机大写字母/数字；生成时保留唯一索引冲突重试，避免随机码碰撞导致创建失败；补充生成函数单元测试和 referral 路由返回格式断言。
+- 修改文件：`src/modules/user/routes.rs`、`tests/user_routes.rs`
+- 验证结果：`cargo fmt` 已执行；`cargo fmt --check` 通过；`cargo test user_invite_code_is_six_uppercase_alphanumeric_chars` 通过；`cargo test --test user_routes user_referral_routes_bind_agent_code_and_return_invites -- --nocapture` 通过，因未设置 `DATABASE_URL`，真实 MySQL 分支按测试逻辑跳过；`git diff --check -- src/modules/user/routes.rs tests/user_routes.rs` 通过。
+- 后续事项：如需验证真实数据库中邀请码入库与绑定流程，需要提供可用 `DATABASE_URL` 后执行该集成测试的 MySQL 分支。
+
+## 2026-06-13 03:15 - PC 端绑定 2FA 使用二维码
+
+- 完成内容：PC 安全中心绑定 2FA 弹窗改为使用本地 `qrcode` 依赖根据后端 `otpauth_uri` 生成二维码，不再直接展示完整 `otpauth_uri`；保留手动设置密钥作为兜底，二维码生成失败时提示使用手动密钥；绑定/重置弹窗关闭后清理 2FA secret 与二维码状态，并补充中英文文案。
+- 修改文件：`pc/package.json`、`pc/package-lock.json`、`pc/src/views/User/Security.vue`、`pc/src/i18n/index.ts`、`pc/tests/backendAdapters.test.ts`
+- 验证结果：`npm --prefix pc run type-check` 通过；`node --experimental-strip-types --test --test-name-pattern "PC 2FA login security" pc/tests/backendAdapters.test.ts` 通过；`node --input-type=module -e "import { toDataURL } from 'qrcode'; const url = await toDataURL('otpauth://totp/Test:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Test'); if (!url.startsWith('data:image/png;base64,')) throw new Error('invalid qr data url'); console.log(url.slice(0, 22));"` 通过；`git diff --check -- pc/src/views/User/Security.vue pc/src/i18n/index.ts pc/tests/backendAdapters.test.ts pc/package.json pc/package-lock.json docs/superpowers/PROGRESS.md` 通过；启动 `npm --prefix pc run dev -- --host 127.0.0.1 --port 5175` 并用 Browser 打开 `http://127.0.0.1:5175/user/security`，未登录状态重定向到 `/login`，无 Vite/运行时错误；`node --experimental-strip-types --test pc/tests/backendAdapters.test.ts` 仍存在与本任务无关的既有失败：`PC country locale wiring uses the new backend country and news contracts` 仍在断言旧文案 `No registration countries available`。
+- 后续事项：如需完整点击绑定二维码弹窗，需要提供可用登录态和后端服务；适配层全集中的注册国家文案断言可单独修正。
+
+## 2026-06-13 03:11 - PC 用户资产页显示资产 Logo
+
+- 完成内容：`/wallet/accounts` 返回资产 `logo_url`；PC 钱包适配层映射到 `coin.logoUrl`；`pc` 端 `user/assets` 资产列表优先展示资产 Logo，并在图片缺失或加载失败时回退到币种图标。
+- 修改文件：`src/modules/wallet/routes.rs`、`tests/wallet_routes.rs`、`pc/src/api/backendAdapters.ts`、`pc/src/api/asset.ts`、`pc/src/views/User/Assets.vue`、`pc/tests/backendAdapters.test.ts`
+- 验证结果：`cargo fmt --check` 通过；`cargo test --test wallet_routes` 通过；`npm --prefix pc run type-check` 通过；`node --experimental-strip-types --test --test-name-pattern "maps backend wallet accounts" pc/tests/backendAdapters.test.ts` 通过；`git diff --check -- src/modules/wallet/routes.rs tests/wallet_routes.rs pc/src/api/backendAdapters.ts pc/src/api/asset.ts pc/src/views/User/Assets.vue pc/tests/backendAdapters.test.ts` 通过；`node --experimental-strip-types --test pc/tests/backendAdapters.test.ts` 存在与本任务无关的既有失败：`PC country locale wiring uses the new backend country and news contracts` 仍在断言旧文案 `No registration countries available`。
+- 后续事项：适配层全集中的注册国家文案断言可单独修正；本次资产 Logo 展示无剩余事项。
+
+## 2026-06-12 23:29 - 后台 PC 品牌配置
+
+- 完成内容：新增 `platform_brand_configs` 迁移和平台品牌模块，提供公开 `/api/v1/platform/brand` 供 PC 读取平台名称与 logo，并提供后台 `/admin/api/v1/platform/brand` 查询/保存接口，保存时校验 logo URL、要求操作原因并写入 Admin 审计。后台系统配置新增“PC 品牌配置”页面和导航入口，使用 Semi Card/Image/Button/ConfirmAction 展示编辑与预览。PC 端新增品牌 API、Pinia 状态和 `BrandLogo` 组件，Header、登录、注册、忘记密码页改为读取后台配置；应用启动时加载平台品牌并同步 `document.title`，logo 加载失败时回退默认 logo，同时补充 loader 移除兜底。OpenAPI 补充公开和后台品牌配置契约。
+- 修改文件：
+  - `migrations/0047_platform_brand_config.sql`
+  - `src/modules/platform.rs`
+  - `src/modules/mod.rs`
+  - `src/lib.rs`
+  - `src/modules/admin/routes.rs`
+  - `src/openapi.rs`
+  - `tests/admin_routes.rs`
+  - `tests/user_routes.rs`
+  - `tests/openapi_routes.rs`
+  - `web/src/admin/actions/PlatformBrandPage.tsx`
+  - `web/src/admin/actions/PlatformBrandPage.test.tsx`
+  - `web/src/admin/routes.tsx`
+  - `web/src/admin/routes.test.tsx`
+  - `web/src/layouts/AdminLayout.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `web/vitest.setup.ts`
+  - `pc/src/api/platform.ts`
+  - `pc/src/stores/setting.ts`
+  - `pc/src/components/common/BrandLogo.vue`
+  - `pc/src/components/layout/Header.vue`
+  - `pc/src/views/auth/Login.vue`
+  - `pc/src/views/auth/Register.vue`
+  - `pc/src/views/auth/ForgotPassword.vue`
+  - `pc/src/App.vue`
+- 验证结果：已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行 `cargo test --manifest-path Cargo.toml route_prefixes_are_registered -- --nocapture`，目标路由注册测试通过。已执行 `cargo test --manifest-path Cargo.toml --test admin_routes admin_platform_brand_config_save_and_audit -- --nocapture`，目标测试通过；因未设置 `DATABASE_URL`，真实 MySQL 分支按测试逻辑跳过。已执行 `cargo test --manifest-path Cargo.toml --test user_routes public_platform_brand_returns_pc_display_config -- --nocapture`，目标测试通过；因未设置 `DATABASE_URL`，真实 MySQL 分支按测试逻辑跳过。已执行 `cargo test --manifest-path Cargo.toml --test openapi_routes openapi_json_exposes_first_batch_contract -- --nocapture`，目标 OpenAPI 测试通过。已执行 `cargo check --manifest-path Cargo.toml --all-targets`，通过。已执行 `npm --prefix web test -- src/admin/actions/PlatformBrandPage.test.tsx src/admin/routes.test.tsx src/layouts/AdminLayout.test.tsx`，3 个目标测试文件、33 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `npm --prefix pc run type-check`，通过。已启动 `npm --prefix pc run dev -- --host 127.0.0.1 --port 5175` 并用 Browser 打开 `http://127.0.0.1:5175/register`，确认注册页标题、邮箱输入、注册按钮、默认品牌 logo 和 `document.title` 正常渲染，loader 已移除；未启动后端时品牌接口走默认回退。已执行本轮相关文件 `git diff --check`，通过。
+- 后续事项：如需验证后台保存后 PC 读取真实自定义 logo/平台名称，需要提供可用 `DATABASE_URL` 并启动后端服务后再做端到端验收。
+
+## 2026-06-12 22:37 - SMTP 验证码富文本多模板
+
+- 完成内容：SMTP 配置新增 `verification_code_templates_json` 迁移和 `verification_code_templates` 接口字段，保留旧 `verification_code_template_html` 兼容；邮件发送按验证码用途优先选择专用模板，找不到则回退通用模板和旧单模板。Admin SMTP 邮件配置页将“验证码 HTML 模板”从 textarea 改为 Quill 富文本编辑器，支持新增、删除、启用/停用多套模板，并保存为 HTML 模板数组；模板支持 `{{subject}}`、`{{code}}`、`{{expires_minutes}}` 变量。
+- 修改文件：
+  - `migrations/0045_smtp_verification_code_templates.sql`
+  - `src/infra/email.rs`
+  - `src/modules/admin/smtp_config.rs`
+  - `src/modules/auth/routes.rs`
+  - `src/modules/user/routes.rs`
+  - `src/openapi.rs`
+  - `tests/admin_routes.rs`
+  - `tests/openapi_routes.rs`
+  - `web/src/admin/actions/SmtpConfigPage.tsx`
+  - `web/src/admin/actions/SmtpConfigPage.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- src/admin/actions/SmtpConfigPage.test.tsx`，3 个 SMTP 页面测试通过。已执行 `npm --prefix web test -- src/admin/actions/SmtpConfigPage.test.tsx src/admin/routes.test.tsx`，2 个测试文件、22 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `cargo test --manifest-path Cargo.toml --lib smtp -- --nocapture`，4 个 SMTP 相关库测试通过。已执行 `cargo test --manifest-path Cargo.toml --lib selects_purpose_specific_template -- --nocapture`，新增模板选择单测通过。已执行 `cargo test --manifest-path Cargo.toml --test admin_routes admin_smtp_config_save_masks_secrets_and_requires_reason -- --nocapture`，目标测试编译通过；因未设置 `DATABASE_URL`，真实 MySQL 分支按测试逻辑跳过并返回通过。已执行 `cargo test --manifest-path Cargo.toml --test openapi_routes openapi_json_exposes_first_batch_contract -- --nocapture`，目标 OpenAPI 测试通过。已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，首次发现 rustfmt 排版差异，执行 `cargo fmt --manifest-path Cargo.toml` 后重跑通过。已执行 `cargo clippy --manifest-path Cargo.toml --all-targets --all-features -- -D warnings`，通过。已执行 `git diff --check -- src/infra/email.rs src/modules/admin/smtp_config.rs src/modules/user/routes.rs src/modules/auth/routes.rs src/openapi.rs tests/admin_routes.rs tests/openapi_routes.rs migrations/0045_smtp_verification_code_templates.sql web/src/admin/actions/SmtpConfigPage.tsx web/src/admin/actions/SmtpConfigPage.test.tsx`，通过。
+- 后续事项：如需真实数据库验证多模板 JSON 读写，需要提供可用 `DATABASE_URL` 并运行迁移后执行 Admin SMTP MySQL 集成分支。
+
+## 2026-06-12 22:26 - Admin 移除新币闪兑规则页面
+
+- 完成内容：后台移除“新币闪兑规则”前端页面，不再注册 `/admin/convert/rules` 路由，闪兑管理侧边栏只保留“闪兑交易对”和“闪兑订单”；删除未使用的 `ConvertRuleActions` 页面组件，并同步调整路由、侧边栏和动作页测试。后端 `/admin/api/v1/convert/new-coin-rules` 接口未改动。
+- 修改文件：
+  - `web/src/admin/actions/ConvertRuleActions.tsx`
+  - `web/src/admin/actions/helperCopy.test.tsx`
+  - `web/src/admin/routes.test.tsx`
+  - `web/src/admin/routes.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `web/src/layouts/AdminLayout.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- src/admin/routes.test.tsx src/layouts/AdminLayout.test.tsx src/admin/actions/helperCopy.test.tsx`，3 个目标测试文件、30 个测试通过。已执行 `npm --prefix web test -- src/admin/routes.test.tsx src/layouts/AdminLayout.test.tsx src/admin/actions/helperCopy.test.tsx src/admin/resources/resourceConfigs.test.tsx`，4 个测试文件、67 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `git diff --check -- web/src/admin/routes.tsx web/src/layouts/AdminLayout.tsx web/src/layouts/AdminLayout.test.tsx web/src/admin/routes.test.tsx web/src/admin/actions/helperCopy.test.tsx web/src/admin/actions/ConvertRuleActions.tsx`，通过。
+- 后续事项：无。
+
+## 2026-06-12 22:23 - Admin 闪兑交易对双向创建
+
+- 完成内容：后台添加闪兑交易对新增默认勾选的“同时创建反向交易对”，创建 `BTC -> USDT` 时会自动再创建 `USDT -> BTC`，也可取消勾选保留单向创建；创建校验增加源资产和目标资产不能相同；提交仍沿用现有 `/admin/api/v1/convert/pairs` 接口，按方向分别创建记录。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx -t "creates convert pairs, risk rules, new coin projects, and user row actions"`，目标闪兑创建用例通过。已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx`，37 个资源配置测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `git diff --check -- web/src/admin/resources/ResourceCreateActions.tsx web/src/admin/resources/resourceConfigs.test.tsx`，通过。
+- 后续事项：无。
+
+## 2026-06-12 22:20 - Admin 新币中文下拉与秒合约多周期配置
+
+- 完成内容：后台添加新币项目的“生命周期”和“解禁类型”下拉改为中文显示，提交仍保留后端英文枚举值；后台添加秒合约交易对改为同一交易对可维护多组周期配置，每组周期可单独填写周期秒数、赔率、最小押注和最大押注，最大押注留空表示无上限；秒合约产品列表补充“最大押注”列，便于核对配置。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx -t "seconds contract pair creation|convert pairs, risk rules, new coin projects|seconds contract product details"`，3 个目标用例通过。已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx`，37 个资源配置测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `git diff --check -- web/src/admin/resources/ResourceCreateActions.tsx web/src/admin/resources/resourceConfigs.tsx web/src/admin/resources/resourceConfigs.test.tsx`，通过。
+- 后续事项：无。
+
+## 2026-06-12 22:14 - Admin 添加新闻只选择国家
+
+- 完成内容：后台“添加新闻”弹窗改为只选择国家，不再要求创建时手动填写默认语言、翻译语言、翻译国家和翻译标题；选择国家后自动使用国家配置的默认语言与国家代码生成首条新闻内容，并在提交时写入 `country_code`、`default_locale` 和单条 `content_json.items`。编辑新闻仍保留完整多语言内容维护能力。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx -t "creates edits publishes and archives Admin news"`，目标新闻创建/编辑/发布/归档用例通过。已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx`，37 个资源配置测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `git diff --check -- web/src/admin/resources/ResourceCreateActions.tsx web/src/admin/resources/resourceConfigs.test.tsx`，通过。
+- 后续事项：无。
+
+## 2026-06-12 21:41 - Ticker 24h 高低价与涨跌字段
+
+- 完成内容：后端 `MarketTickerSnapshot`、Redis ticker cache、REST `/markets/:symbol/ticker` 和公开 WS ticker payload 补齐 `high_24h`、`low_24h`、`price_change_24h`、`price_change_percent_24h`；Bitget 解析 `high24h/low24h/open24h/change24h`，HTX 解析 `open/high/low/close` 后计算 24h 涨跌；PC adapter/store 使用后端 24h 字段映射 `high/low/chg`，WS 更新不再二次丢弃高低价和涨跌字段。
+- 修改文件：
+  - `src/modules/market/mod.rs`
+  - `src/modules/market/routes.rs`
+  - `tests/market_adapters.rs`
+  - `tests/market_feed_worker.rs`
+  - `tests/market_redis_cache.rs`
+  - `tests/market_routes.rs`
+  - `pc/src/api/backendAdapters.ts`
+  - `pc/src/api/stomp.ts`
+  - `pc/src/stores/market.ts`
+  - `pc/tests/backendAdapters.test.ts`
+  - `pc/tests/stomp.test.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo test --manifest-path Cargo.toml --test market_adapters -- --nocapture`，4 个测试通过。已执行 `cargo test --manifest-path Cargo.toml --test market_feed_worker market_feed_event_payloads_are_ready_for_outbox_fanout -- --nocapture`，目标测试通过。已执行 `cargo test --manifest-path Cargo.toml --lib ticker -- --nocapture`，2 个目标库测试通过。已执行 `cargo test --manifest-path Cargo.toml --test market_routes market_ticker_route_reads_latest_cached_ticker -- --nocapture`，编译通过，因未设置 `REDIS_URL` 按测试逻辑跳过真实 Redis 分支并返回通过。已执行 `cargo test --manifest-path Cargo.toml --test market_redis_cache redis_market_cache_stores_ticker_depth_and_kline_json -- --nocapture`，编译通过，因未设置 `REDIS_URL` 按测试逻辑跳过真实 Redis 分支并返回通过。已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行 `cargo clippy --manifest-path Cargo.toml --all-targets --all-features -- -D warnings`，首次发现 `BigDecimal::from(0)` 比较告警，修复后重跑通过。已执行 `node --experimental-strip-types --test pc/tests/stomp.test.ts`，3 个 WS 订阅与 ticker 更新测试通过。已执行 `node --experimental-strip-types --test --test-name-pattern "maps backend market list" pc/tests/backendAdapters.test.ts`，目标 PC ticker adapter 用例通过；全文件曾执行但仍因既有 `PC country locale wiring uses the new backend country and news contracts` 注册页 i18n 文案扫描断言失败，和本切片无关。已执行 `npm --prefix pc run type-check`，通过。已执行 `npm --prefix pc run build`，Vite 输出 `✓ built in 2.20s` 且生成产物；命令成功输出后进程未自然退出，已手动终止悬挂的 `pc/node_modules/.bin/vite build` 进程。已执行本轮触碰文件 `git diff --check`，通过。
+- 后续事项：如需验证真实 Redis 中 ticker REST 响应字段，需要启动 Redis 并设置 `REDIS_URL`；既有注册页 i18n 扫描断言仍需另起切片修复。
+
+## 2026-06-12 20:02 - PC 行情 WebSocket 自动订阅
+
+- 完成内容：修复 PC 端只连接 `/ws/public` 但未发送行情订阅的问题；`StompService.connect()` 现在会监听 `marketStore.tickers` 并为已有或后续加载的 ticker 自动发送 `subscribe` 命令；订阅管理改为同一 channel/symbol/interval 支持多个回调，避免自动 ticker 订阅覆盖交易页手动 ticker 回调；断线后保留订阅记录并在重连时重新订阅。
+- 修改文件：
+  - `pc/src/api/stomp.ts`
+  - `pc/tests/stomp.test.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `node --experimental-strip-types --test pc/tests/stomp.test.ts`，3 个 WS 订阅测试通过。已执行 `npm --prefix pc run type-check`，通过。已执行 `npm --prefix pc run build`，Vite 输出 `✓ built in 2.37s` 且生成产物；命令成功输出后进程未自然退出，已手动终止悬挂的 `pc/node_modules/.bin/vite build` 进程。已执行 `git diff --check -- pc/src/api/stomp.ts pc/tests/stomp.test.ts`，通过。曾执行 `node --experimental-strip-types --test pc/tests/stomp.test.ts pc/tests/backendAdapters.test.ts`，初次失败包含新增测试使用 Node strip-types 不支持的 TS 参数属性（已修复）以及既有 `PC country locale wiring uses the new backend country and news contracts` 对注册页英文直写文案的断言失败；后者与本次 WS 订阅改动无关，未在本切片修改。
+- 后续事项：如需恢复完整 `pc/tests/backendAdapters.test.ts` 通过，需要另起切片更新该既有注册页文案扫描断言以匹配当前 vue-i18n 实现。
+
+## 2026-06-12 05:25 - PC 注册多语言与 Admin 页面结构 Semi 化
+
+- 完成内容：PC 注册页接入 vue-i18n 文案，补齐中英文注册标题、字段、按钮、协议、国家加载和 toast 文案；修复邮箱占位符 `@` 在 vue-i18n 中被误解析为 linked message 的问题。Admin 通用资源页改为 Semi Tabs 工作台结构，增加记录/筛选摘要、图标化刷新、筛选/数据面板和 SideSheet 详情入口；代理管理页改为 Tabs + 同屏创建/列表工作区，详情由 Modal JSON 改为共用 SideSheet；安全策略页增加 Semi Tabs 与图标化刷新入口。
+- 修改文件：
+  - `pc/src/i18n/index.ts`
+  - `pc/src/views/auth/Register.vue`
+  - `web/src/admin/resources/AdminResourcePage.tsx`
+  - `web/src/admin/resources/AdminResourcePage.test.tsx`
+  - `web/src/admin/actions/AgentManagementPage.tsx`
+  - `web/src/admin/actions/SecurityPolicyPage.tsx`
+  - `web/src/styles.css`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run type-check`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run build`，Vite 输出 `✓ built in 3.00s` 且生成产物；但命令输出成功后 Vite 进程未自然退出，已手动终止悬挂的 `pc/node_modules/.bin/vite build` 进程。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/actions/helperCopy.test.tsx src/admin/resources/AdminResourcePage.test.tsx src/admin/actions/SecurityPolicyPage.test.tsx`，3 个目标测试文件、15 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- --testTimeout 30000`，27 个测试文件、172 个测试通过；默认 10s 超时时完整套件曾在 `AdminLayout.test.tsx` 超时，单独重跑 `npm --prefix ".../web" test -- src/layouts/AdminLayout.test.tsx` 8 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run build`，通过，保留既有 `lottie-web` direct eval 与 chunk size warning。已用 Browser 打开 `http://127.0.0.1:5174/register`，确认注册页标题、字段、按钮和邮箱占位符正常渲染；修复后不再出现 vue-i18n `name@example.com` message compilation error；仅剩未启动后端导致 `/countries` 网络失败，符合本次只启动 PC 前端验证的预期。已执行本轮触碰文件 `git diff --check`，通过。
+- 后续事项：如需完整人工验收 Admin 资源页真实数据与安全策略，需要启动 Admin 后端和可用管理员会话；PC build 输出成功后进程不退出的问题可另起切片排查。
+
+## 2026-06-12 04:34 - Provider 行情停止写入 event_outbox
+
+- 完成内容：确认 provider 行情帧此前会通过 `MarketFeedWorker` 写入 `event_outbox`；新增回归测试证明 provider 行情不再写 outbox；移除生产行情 worker 对 outbox writer 的持有、自动挂载和写入调用，保留行情 ingestion sink 写入与 WebSocket broadcast 行为。
+- 修改文件：
+  - `src/modules/market/mod.rs`
+  - `src/workers/market_feed.rs`
+  - `tests/market_feed_worker.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test market_feed_worker market_feed_worker_does_not_write_provider_events_to_outbox -- --nocapture`，实现前失败于 `assertion failed: events.is_empty()`，确认 provider 行情会写 outbox；实现后已执行同命令，1 个目标测试通过。已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，首次发现测试函数格式需调整；已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml"` 后重跑 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test market_feed_worker -- --nocapture`，31 个测试通过、0 失败。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test events_outbox -- --nocapture`，10 个测试通过、0 失败。已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过。已执行 `git -C "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain" diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-12 03:30 - 用户 2FA 与 Admin 安全策略最终验证
+
+- 完成内容：完成用户 TOTP 2FA、登录 challenge、提现安全校验、Admin 安全策略与 PC/Admin 前端接入的最终验证；修复最终 clippy 暴露的提现金额/手续费 BigDecimal 比较告警，避免为整数比较创建临时 owned 值。
+- 修改文件：
+  - `src/modules/wallet/routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test wallet_routes -- --nocapture`，2 个测试通过、0 失败，MySQL 分支因未设置 `DATABASE_URL` 按测试逻辑跳过；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，首次失败于 `src/modules/wallet/routes.rs` 的 `BigDecimal::from(0)` 比较告警，修复后重跑通过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test user_routes --test admin_routes --test openapi_routes -- --nocapture`，Admin 67 个、OpenAPI 8 个、User 12 个测试通过、0 失败，MySQL 集成分支因未设置 `DATABASE_URL` 按测试逻辑跳过；已执行 `node --experimental-strip-types --test "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc/tests/backendAdapters.test.ts"`，25 个测试通过、0 失败；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run type-check`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run build`，通过，`256 modules transformed`；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test`，27 个测试文件、172 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run build`，通过，保留依赖 `lottie-web` direct eval 与 chunk size warning；已执行 `git -C "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain" diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-12 03:22 - Admin 安全策略配置页与用户 2FA 重置操作
+
+- 完成内容：新增 Admin 安全策略页面，支持加载和保存登录 2FA 策略、资金动作校验开关与校验方式；后台路由和侧边栏加入“安全策略”；用户列表行级操作新增“重置2FA”，提交操作原因后调用 Admin 重置接口并刷新列表。
+- 修改文件：
+  - `web/src/admin/actions/SecurityPolicyPage.test.tsx`
+  - `web/src/admin/actions/SecurityPolicyPage.tsx`
+  - `web/src/admin/routes.test.tsx`
+  - `web/src/admin/routes.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `web/src/layouts/AdminLayout.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/actions/SecurityPolicyPage.test.tsx`，实现前因 `./SecurityPolicyPage` 不存在按预期失败；已执行覆盖页面、路由、侧边栏和用户行级操作的目标 RED，分别失败于缺少页面、路由、侧边栏入口和“重置2FA”按钮。实现后已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/actions/SecurityPolicyPage.test.tsx src/admin/routes.test.tsx src/layouts/AdminLayout.test.tsx src/admin/resources/resourceConfigs.test.tsx --testNamePattern "SecurityPolicyPage|security policy|安全策略|resets user 2FA"`，4 个目标测试通过、0 失败；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test`，27 个测试文件、172 个测试通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过；已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run build`，通过，保留依赖 `lottie-web` direct eval 与 chunk size warning；已执行 `git -C "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain" diff --check`，通过。
+- 后续事项：继续执行 2FA 安全策略整体最终验证。
+
+## 2026-06-12 03:00 - PC 端 2FA 登录与提现安全校验接入
+
+- 完成内容：PC 登录页接入后端登录 2FA challenge，只有拿到 token 响应后才写入会话；安全设置页新增 TOTP 绑定、确认、登录 2FA 开关与邮箱验证码重置；提现页按 Admin 提现策略动态要求资金密码和 2FA，并调用 Rust `/wallet/withdrawals` 提交安全校验字段；PC adapter 补齐登录 2FA challenge 归一化和提现请求映射。
+- 修改文件：
+  - `pc/src/api/backendAdapters.ts`
+  - `pc/src/api/auth.ts`
+  - `pc/src/api/user.ts`
+  - `pc/src/api/wallet.ts`
+  - `pc/src/views/auth/Login.vue`
+  - `pc/src/views/User/Security.vue`
+  - `pc/src/views/User/Withdraw.vue`
+  - `pc/tests/backendAdapters.test.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`node --experimental-strip-types --test "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc/tests/backendAdapters.test.ts"`，实现前失败于 `mapPcWithdrawalRequest` 未导出；补齐登录 2FA 与提现映射测试后，实现前继续失败于 PC 端未接入 `/auth/login/2fa` 与 `/wallet/withdrawals`。实现后已执行同命令，25 个测试通过、0 失败。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run type-check`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run build`，通过，`257 modules transformed`，保留既有 Monaco chunk size warning。已执行 `git -C "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain" diff --check`，通过。
+- 后续事项：继续实现 Admin 端安全策略配置页和用户 2FA 重置操作。
+
+## 2026-06-12 02:30 - Admin 安全策略与 2FA OpenAPI 契约
+
+- 完成内容：新增后台用户安全策略查询与更新接口 `GET/PATCH /admin/api/v1/security-policy`，新增后台重置用户 2FA 接口 `POST /admin/api/v1/users/:id/2fa/reset`，策略更新与 2FA 重置均写入 Admin 审计；安全策略请求和策略模型拒绝未知字段，避免额外资金动作键被静默接受；补齐用户 2FA、登录 2FA challenge、提现安全校验、后台安全策略和后台 2FA 重置的 OpenAPI path 与 schema 契约。
+- 修改文件：
+  - `src/modules/admin/routes.rs`
+  - `src/modules/security.rs`
+  - `src/openapi.rs`
+  - `tests/admin_routes.rs`
+  - `tests/openapi_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test openapi_routes openapi_json_documents_user_2fa_security_policy_contract -- --nocapture`，实现前缺少 `POST /api/v1/auth/login/2fa` OpenAPI path，测试按预期失败。实现后已执行同命令，目标测试通过。已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_security_policy_routes_are_registered_after_auth -- --nocapture`，目标测试通过。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes admin_security_policy_crud_and_reset_two_factor_audit -- --nocapture`，目标测试通过；因未设置 `DATABASE_URL`，真实 MySQL CRUD/audit 分支按测试逻辑跳过。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test openapi_routes -- --nocapture`，8 个 OpenAPI 测试通过、0 失败。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test admin_routes -- --nocapture`，67 个 Admin 路由测试通过、0 失败；MySQL 集成分支因未设置 `DATABASE_URL` 按测试逻辑跳过。
+- 后续事项：继续实现 PC 端 2FA 登录、安全设置和提现 UI 接入。
+
+## 2026-06-12 01:58 - 提现安全校验后端接口
+
+- 完成内容：新增用户提现申请接口 `POST /api/v1/wallet/withdrawals`，提交前按 Admin 安全策略调用 `verify_user_security_action` 校验资金密码或 2FA；提现参数做最小校验和规范化，校验通过后持久化 `wallet_withdrawal_requests` pending 记录并返回实际安全校验方式；补充无 MySQL 环境下的路由认证/错误测试和 MySQL 集成分支测试。
+- 修改文件：
+  - `src/lib.rs`
+  - `src/modules/wallet/routes.rs`
+  - `tests/wallet_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" wallet_withdrawal_route_requires_user_auth -- --nocapture`，实现前 `/wallet/withdrawals` 返回 404，测试按预期失败。实现后已执行同命令，目标测试通过。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test wallet_routes wallet_withdrawal_requires_fund_password_and_records_pending_request -- --nocapture`，目标测试通过；因未设置 `DATABASE_URL`，真实 MySQL 分支按测试逻辑跳过。已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" route_prefixes_are_registered -- --nocapture`，1 个目标测试通过。已执行 `env -u DATABASE_URL cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test wallet_routes -- --nocapture`，2 个测试通过、0 失败，MySQL 分支因未设置 `DATABASE_URL` 按测试逻辑跳过。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" wallet_withdrawal_route_ -- --nocapture`，2 个提现路由单元测试通过。已执行 `git diff --check -- "src/modules/wallet/routes.rs" "tests/wallet_routes.rs" "src/lib.rs"`，通过。
+- 后续事项：继续实现 Admin 安全策略配置与 Admin 重置用户 2FA 后端接口，并补充 OpenAPI 契约。
+
+## 2026-06-12 01:41 - 用户 2FA 与登录 Challenge 后端接口
+
+- 完成内容：实现用户 2FA 状态、生成密钥、确认绑定、登录 2FA 开关、邮箱验证码重置接口；用户登录按 Admin 登录 2FA 策略返回 token、登录 2FA challenge 或强制绑定 setup challenge；实现登录 2FA 验证、登录 challenge 邮箱验证码重置与重登要求；补充无 MySQL 环境下的路由错误测试覆盖。
+- 修改文件：
+  - `src/lib.rs`
+  - `src/modules/auth/mod.rs`
+  - `src/modules/auth/routes.rs`
+  - `src/modules/user/routes.rs`
+  - `src/modules/security.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" route_prefixes_are_registered -- --nocapture`，1 个目标测试通过；已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过；已执行 `env -u DATABASE_URL cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test user_routes -- --nocapture`，12 个测试通过、0 失败，MySQL 分支因未设置 `DATABASE_URL` 按测试逻辑跳过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" user_auth_routes_return_clear_error_without_mysql -- --nocapture`，目标测试通过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" two_factor_routes_require_mysql_after_user_auth -- --nocapture`，目标测试通过；已执行 `git diff --check -- "src/modules/auth/mod.rs" "src/modules/auth/routes.rs" "src/modules/user/routes.rs" "src/lib.rs" "src/modules/security.rs"`，通过。
+- 后续事项：继续实现提现安全校验后端，将 Admin 策略中的资金校验方式接入提现提交。
+
+## 2026-06-12 01:05 - 用户 2FA 与后台安全策略实施计划
+
+- 完成内容：基于已批准的用户 TOTP 2FA 与 Admin 后台安全策略设计，写入可执行实施计划，覆盖后端迁移、TOTP/策略核心模块、用户 2FA API、登录 challenge、提现安全校验、Admin API、OpenAPI、PC 登录/安全设置/提现、Admin 安全策略页面以及最终验证步骤。
+- 修改文件：
+  - `docs/superpowers/plans/2026-06-12-user-2fa-security-policy.md`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `grep -nE "TBD|TODO|implement later|fill in details|Similar to Task|appropriate error handling" "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/docs/superpowers/plans/2026-06-12-user-2fa-security-policy.md" || true`，无占位符命中；已执行 `grep -nE "^### Task |^- \[ \] \*\*Step" "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/docs/superpowers/plans/2026-06-12-user-2fa-security-policy.md"`，确认计划包含 11 个任务和逐步执行项；本切片为计划文档，未运行代码测试。
+- 后续事项：按计划从后端 schema 与错误码任务开始执行，并继续遵守每 20 分钟进度汇报要求。
+
+## 2026-06-12 00:43 - 用户 2FA 与后台安全策略设计
+
+- 完成内容：确认用户 2FA 与后台安全策略范围；2FA 采用 TOTP Authenticator，登录与资金操作校验策略改由 Admin 后台配置，支持登录策略、资金动作校验方式、用户自助邮箱验证码重置和 Admin 重置兜底；已写入设计文档并完成自检。
+- 修改文件：
+  - `docs/superpowers/specs/2026-06-12-user-2fa-design.md`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已读取并自检 `docs/superpowers/specs/2026-06-12-user-2fa-design.md`，修正 mandatory 登录未绑定 2FA、登录 challenge 重置等歧义；本切片为设计文档，未运行代码测试。
+- 后续事项：等待用户 review 设计文档；确认后再进入 implementation plan。
+
+## 2026-06-11 03:19 - 国家与语言偏好 rollout 最终验证
+
+- 完成内容：完成国家与语言偏好 rollout 的后端、Admin 前端、PC 前端整体验证；确认无 `DATABASE_URL` 时 Rust MySQL 集成分支按测试逻辑跳过，本地 `127.0.0.1:3306` MySQL 当前不可连接；Admin 与 PC 前端测试、类型检查和生产构建均通过，构建仅保留既有 warning。
+- 修改文件：
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check && env -u DATABASE_URL cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test user_routes --test admin_routes --test openapi_routes -- --nocapture && cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；其中 `admin_routes` 65 个测试、`openapi_routes` 7 个测试、`user_routes` 12 个测试通过，MySQL 分支因未设置 `DATABASE_URL` 跳过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test && npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck && npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run build`，通过；Admin 测试 26 个文件、168 个测试通过，构建保留 `lottie-web` direct eval 与 chunk size warning。已执行 `node --experimental-strip-types --test "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc/tests/backendAdapters.test.ts"`，22 个测试通过、0 失败。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run type-check`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run build`，通过，`256 modules transformed`，`built in 1.98s`。已执行 `mysqladmin --host=127.0.0.1 --port=3306 --user=exchange --password=exchange ping`，失败：本地 MySQL `127.0.0.1:3306` 不可连接。已执行 `git diff --check -- "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain"`，通过。
+- 后续事项：如需真实 MySQL 集成分支验证，需要先启动本地 MySQL 或提供可用 `DATABASE_URL`。
+
+## 2026-06-11 03:04 - PC 注册国家与语言偏好接入
+
+- 完成内容：PC 注册页新增国家/地区选择，加载公开 `/api/v1/countries` 并在注册时提交 `country_code`；用户 profile adapter 保留国家代码、用户偏好语言、国家默认语言和支持语言；设置状态新增 `localeOverridden`、手动语言切换与 profile 默认语言应用逻辑；应用启动和登录/注册加载 profile 后按“手动切换 > 用户偏好 > 国家默认 > en”同步语言；Header 语言列表按用户 `supportedLocales` 过滤，手动切换会记录 override；新闻列表请求带上用户国家与当前语言，新闻内容按当前语言、默认语言、首条内容回退。
+- 修改文件：
+  - `pc/src/App.vue`
+  - `pc/src/api/auth.ts`
+  - `pc/src/api/backendAdapters.ts`
+  - `pc/src/api/countries.ts`
+  - `pc/src/api/news.ts`
+  - `pc/src/stores/setting.ts`
+  - `pc/src/stores/user.ts`
+  - `pc/src/components/layout/Header.vue`
+  - `pc/src/views/News.vue`
+  - `pc/src/views/auth/Register.vue`
+  - `pc/tests/backendAdapters.test.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`node --experimental-strip-types --test "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc/tests/backendAdapters.test.ts"`，实现前失败于 `mapPublicCountriesToPcOptions` 未导出。实现后同命令 22 个测试通过、0 失败。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run type-check`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run build`，通过，`256 modules transformed`，`built in 1.98s`。已执行 `git diff --check -- "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain"`，通过。
+- 后续事项：继续执行国家与语言偏好 rollout 的最终整体验证。
+
+## 2026-06-11 02:08 - 国家与语言偏好后端接口
+
+- 完成内容：新增国家配置表与用户国家/语言字段；用户注册要求 `country_code`，仅允许后台启用注册且 active 的国家，并写入用户 `country_code` 与默认 `preferred_locale`；新增公开 `/api/v1/countries`；用户 profile 返回国家代码、用户偏好语言、国家默认语言和可选语言；新增后台国家配置列表、创建、更新和状态更新接口，并记录 Admin 审计；OpenAPI 暴露公开和后台国家配置契约。
+- 修改文件：
+  - `migrations/0042_country_locale_config.sql`
+  - `src/modules/countries.rs`
+  - `src/modules/mod.rs`
+  - `src/lib.rs`
+  - `src/modules/auth/mod.rs`
+  - `src/modules/auth/routes.rs`
+  - `src/modules/user/routes.rs`
+  - `src/modules/admin/routes.rs`
+  - `src/openapi.rs`
+  - `tests/user_routes.rs`
+  - `tests/admin_routes.rs`
+  - `tests/openapi_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" route_prefixes_are_registered -- --nocapture`，实现前 `/api/v1/countries` 返回 404；已执行 RED：`cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test openapi_routes openapi_json_exposes_first_batch_contract -- --nocapture`，实现前缺少 `/api/v1/countries` OpenAPI path。实现后已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" route_prefixes_are_registered -- --nocapture`，1 个目标测试通过；已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test openapi_routes openapi_json_exposes_first_batch_contract -- --nocapture`，1 个测试通过；已执行 `env -u DATABASE_URL cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test user_routes --test admin_routes --test openapi_routes -- --nocapture`，84 个测试通过、0 失败，其中 MySQL 集成分支因未设置 `DATABASE_URL` 按测试内逻辑跳过；已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过；已执行 `mysqladmin --host=127.0.0.1 --port=3306 --user=exchange --password=exchange ping`，失败：本地 `127.0.0.1:3306` MySQL 不可连接，因此未运行真实 MySQL 集成分支；已执行 `git diff --check -- "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain"`，通过。
+- 后续事项：继续实现 Admin 国家配置 UI 和 PC 注册国家选择、语言 override、新闻语言/国家筛选接入。
+
 ## 2026-06-09 22:57 - PC 现货交易接口迁移
 
 - 完成内容：PC 现货交易 API 从旧 `/exchange/*` 迁移到 Rust `/api/v1/spot/orders`，撤单改用 `DELETE /spot/orders/:id`，当前订单合并 `pending`、`open`、`partially_filled` 状态，历史订单读取 `filled`、`cancelled`、`rejected`；交易页钱包余额从旧 `/uc/asset/wallet*` 改为 `/wallet/accounts` 后按 base/quote 适配；现货下单 adapter 生成 Rust spot request 与幂等 key，market BUY 按参考价将 quote 成交额换算为 base quantity；交易表单 market order 使用当前行情价作为后端 `reference_price`；清理本切片命中的旧钱包接口注释。
@@ -283,6 +748,7 @@
 
 - 完成内容：新增集中式 OpenAPI 契约模块，提供 `GET /openapi.json` 和 `GET /docs`；首批覆盖健康检查、用户/Admin/Agent 认证、用户安全 API、Admin SMTP API；统一声明 `bearerAuth`，将错误响应纳入 schema，时间字段保持 Unix milliseconds `integer/int64`，SMTP 响应只公开 `username_mask` 和 `password_set`；按“非必要不形成注释”原则，仅补充 OpenAPI 模块边界说明和文档入口说明。
 - 修改文件：
+  - `Cargo.lock`
   - `Cargo.toml`
   - `Cargo.lock`
   - `src/openapi.rs`
@@ -2379,3 +2845,1072 @@
   - `docs/superpowers/PROGRESS.md`
 - 验证结果：已执行 `find . -path './.git' -prune -o -path './pc/*/.git' -type d -prune -print -o -path './pc/.git' -type d -prune -print`，无嵌套 Git 目录输出。已执行 `git status --short --untracked-files=all`，确认 PC 项目文件等待根仓库追踪。已执行 `find pc -path 'pc/node_modules' -prune -o -path 'pc/dist' -prune -o -path 'pc/src-tauri/target' -prune -o -path 'pc/web-retrieval-mcp/node_modules' -prune -o -path 'pc/web-retrieval-mcp/build' -prune -o \( -name '.env' -o -name '.env.*' -o -name 'settings*.json' -o -name '.DS_Store' -o -name '.git' \) -print`，仅发现已忽略的 `pc/.DS_Store` 与 `pc/.claude/settings.local.json`。已执行 `node --experimental-strip-types --test "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc/tests/backendAdapters.test.ts"`，18 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run type-check`，通过。已执行 `git diff --check -- .gitignore pc docs/superpowers/PROGRESS.md`，通过。
 - 后续事项：无
+
+## 2026-06-10 20:25 - 用户资金密码重置接口接入
+
+- 完成内容：补齐用户资金密码重置真实链路：后端新增 `POST /api/v1/user/fund-password/reset-code` 和 `POST /api/v1/user/fund-password/reset`，复用已验证邮箱、SMTP 配置与 `user_email_verifications` 验证码表，重置成功后更新 `user_security.fund_password_hash` 并写入用户审计事件；OpenAPI 增加对应路径和请求 schema；PC 用户端安全页新增发送资金密码重置验证码调用，并将重置资金密码改为请求 Rust 后端真实接口，移除“暂未开放资金密码重置接口”占位返回。
+- 修改文件：
+  - `src/lib.rs`
+  - `src/modules/user/routes.rs`
+  - `src/openapi.rs`
+  - `tests/user_routes.rs`
+  - `tests/openapi_routes.rs`
+  - `pc/src/api/user.ts`
+  - `pc/src/views/User/Security.vue`
+  - `pc/tests/backendAdapters.test.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`node --experimental-strip-types --test "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc/tests/backendAdapters.test.ts"`，实现前失败于 `pc/src/api/user.ts` 仍包含“当前后端暂未开放资金密码重置接口”；实现后同命令 18 个测试通过。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" route_prefixes_are_registered -- --nocapture`，1 个路由前缀测试通过。已执行 `cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test openapi_routes openapi_json_exposes_first_batch_contract -- --nocapture`，1 个 OpenAPI 合约测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/pc" run type-check`，通过。已执行 `cargo fmt --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" -- --check`，通过。已执行 `cargo clippy --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --all-targets --all-features -- -D warnings`，通过。已执行 `env -u DATABASE_URL cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test user_routes user_security_fund_password_reset_uses_email_code -- --nocapture`，测试按无 `DATABASE_URL` 逻辑跳过 MySQL 集成并通过。已执行 `DATABASE_URL="mysql://exchange:exchange@127.0.0.1:3306/exchange" cargo test --manifest-path "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/Cargo.toml" --test user_routes user_security_fund_password_reset_uses_email_code -- --nocapture`，失败于本地 MySQL 连接池超时 `PoolTimedOut`；已执行 `mysqladmin --host=127.0.0.1 --port=3306 --user=exchange --password=exchange ping`，确认本地 `127.0.0.1:3306` 无法连接。已执行本次改动文件 `git diff --check`，通过。
+- 后续事项：如需运行未跳过的资金密码重置 MySQL 集成测试，需先启动本地 MySQL 并提供可连接的 `DATABASE_URL`。
+
+## 2026-06-11 02:40 - Admin 国家配置 UI
+
+- 完成内容：新增 Admin 国家配置资源页接入，支持国家代码、状态、开放注册筛选；列表展示国家代码、名称、默认语言、支持语言、开放注册、状态、排序和更新时间；新增添加国家、查看详情、修改国家配置、启停国家配置行级操作；注册 `/admin/system/countries` 路由，并在后台系统配置导航中加入“国家配置”。
+- 修改文件：
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/routes.tsx`
+  - `web/src/admin/routes.test.tsx`
+  - `web/src/layouts/AdminLayout.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 RED：`npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/resources/resourceConfigs.test.tsx src/admin/routes.test.tsx src/layouts/AdminLayout.test.tsx`，实现前 3 个测试文件失败、6 个测试失败。实现后同命令 3 个测试文件、60 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test`，26 个测试文件、168 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run type-check`，失败于 package 缺少 `type-check` script；随后执行实际脚本 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run build`，通过；构建输出保留 `lottie-web` direct eval 与 chunk size 既有警告。已执行 `git diff --check -- "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain"`，通过。
+- 后续事项：继续实现 PC 注册国家选择、语言 override 与新闻国家/语言筛选接入。
+
+## 2026-06-12 05:31 - Admin 侧边栏切换 Semi Navigation
+
+- 完成内容：将管理后台侧边栏从自定义按钮列表切换为 Semi UI `Nav`/Navigation，保留原有导航分组、路由选中态、活跃分组自动展开、侧边栏拖拽宽度和退出登录能力；同步更新 AdminLayout 测试和深色侧栏样式覆盖。
+- 修改文件：
+  - `web/src/layouts/AdminLayout.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `web/src/styles.css`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/layouts/AdminLayout.test.tsx`，1 个测试文件、8 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- --testTimeout 30000`，27 个测试文件、172 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run build`，通过；构建输出保留 `lottie-web` direct eval 与 chunk size 既有警告。已启动本地 Vite `http://127.0.0.1:5175/` 并用 Browser 验证登录页可渲染；直接访问 `/admin/dashboard` 会按登录保护重定向到 `/login`，因此本地浏览器未在无 Admin session 情况下直接渲染侧边栏，已停止 dev server。
+- 后续事项：如需真实浏览器侧边栏人工验收，需要提供可用 Admin session 或后端登录环境。
+
+## 2026-06-12 05:44 - Admin 使用 Semi 默认主题样式
+
+- 完成内容：管理后台布局接入 Semi `theme-mode="light"` 主题模式；AdminLayout 去除 `admin-shell*` 自定义外观类，使用 Semi `Layout`、`Nav.header`、`Nav.footer` 和默认 Navigation 样式承载侧边栏品牌、分组、选中态与滚动；移除后台页面层对 Semi Navigation、Card、面板、PageHeader、表单输入圆角/颜色等自定义视觉覆盖，保留必要的栅格、间距和拖拽宽度结构能力。
+- 修改文件：
+  - `web/src/app/providers.tsx`
+  - `web/src/app/providers.test.tsx`
+  - `web/src/layouts/AdminLayout.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `web/src/styles.css`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/layouts/AdminLayout.test.tsx src/app/providers.test.tsx`，2 个测试文件、11 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- --testTimeout 30000`，27 个测试文件、174 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run build`，通过；构建输出保留既有 `lottie-web` direct eval 与 chunk size 警告。已启动本地 Vite `http://127.0.0.1:5176/` 并用 Browser 验证登录页正常渲染、`body theme-mode="light"` 生效；直接访问 `/admin/dashboard` 会按登录保护重定向到 `/login`，未绕过 Admin session 验证侧边栏真实页面，已停止本次 dev server。已执行本次改动文件 `git diff --check`，通过。
+- 后续事项：如需真实浏览器侧边栏人工验收，需要提供可用 Admin session 或后端登录环境；登录页和代理门户旧自定义视觉未纳入本次管理后台默认化范围。
+
+## 2026-06-12 06:32 - Admin Navigation 滚动修复
+
+- 完成内容：修复管理后台 Semi `Navigation` 列表无法滚动的问题：为 `Nav` 的列表 body 区域补充功能性高度约束和 `overflowY: auto`，让导航项在 100vh 侧栏内滚动；移除 `Nav.footer` 对可滚动区域高度的额外占用，并把“管理后台”并入 Semi `Nav.header` 文案，保持 Semi 默认视觉样式。
+- 修改文件：
+  - `web/src/layouts/AdminLayout.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/layouts/AdminLayout.test.tsx`，1 个测试文件、10 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run build`，通过；构建输出保留既有 `lottie-web` direct eval 与 chunk size 警告。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过。
+- 后续事项：如需浏览器真实侧栏滚动人工验收，需要可用 Admin session 或后端登录环境。
+
+## 2026-06-12 06:35 - 行情订阅配置 Tabs 分栏
+
+- 完成内容：将管理后台“行情订阅配置”页从三个并排卡片调整为 Semi `Tabs` 工作台，拆分为“订阅配置”“运行状态”“Provider 凭证”三个栏目；刷新状态移到 Tabs 右侧，保存配置、重载订阅和保存凭证继续保留原业务逻辑；测试按真实 Tab 切换验证配置、状态和凭证栏目。
+- 修改文件：
+  - `web/src/admin/actions/MarketFeedConfigPage.tsx`
+  - `web/src/admin/actions/MarketFeedConfigPage.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" test -- src/admin/actions/MarketFeedConfigPage.test.tsx`，1 个测试文件、5 个测试通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run typecheck`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run lint`，通过。已执行 `npm --prefix "/Users/huangkunhuang/Public/程序工程目录/复合工程/rust-chain/web" run build`，通过；构建输出保留既有 `lottie-web` direct eval 与 chunk size 警告。
+- 后续事项：无
+
+## 2026-06-12 06:44 - 秒合约交易对下拉添加
+
+- 完成内容：将管理后台“添加秒合约交易对”表单中的交易对字段从手动输入 ID 改为 Semi 下拉选择，复用活跃现货交易对数据源；提交时继续按原接口发送 `pair_id` 数字。同步更新资源配置测试，验证秒合约交易对 ID 输入框已移除、可从下拉选择交易对，并确认提交请求体包含所选 `pair_id`。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已在 `web` 目录执行 `npm run test -- src/admin/resources/resourceConfigs.test.tsx`，1 个测试文件、37 个测试通过。已在 `web` 目录执行 `npm run typecheck`，通过。已在 `web` 目录执行 `npm run lint`，通过。已在 `web` 目录执行 `npm run build`，通过；构建输出保留既有 `lottie-web` direct eval 与 chunk size 警告。
+- 后续事项：无
+
+## 2026-06-12 06:51 - 秒合约弹窗与表格宽度优化
+
+- 完成内容：优化“添加秒合约交易对”弹窗结构，使用 Semi `Tabs` 拆分“基础配置”和“交易参数”，提交按钮在必填字段完整前禁用；新增共享表格布局配置，让资源列表、详情 SideSheet 表格和行情订阅表格默认使用 100% 容器宽度并在表格内部横向滚动，避免撑破页面容器。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/shared/tableLayout.ts`
+  - `web/src/shared/DataTable.tsx`
+  - `web/src/shared/DataTable.test.tsx`
+  - `web/src/shared/DetailDrawer.tsx`
+  - `web/src/admin/resources/AdminResourcePage.test.tsx`
+  - `web/src/admin/actions/MarketFeedConfigPage.tsx`
+  - `web/src/admin/actions/MarketFeedConfigPage.test.tsx`
+  - `web/src/styles.css`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已在 `web` 目录执行 `npm run test -- src/admin/resources/resourceConfigs.test.tsx`，1 个测试文件、37 个测试通过。已在 `web` 目录执行 `npm run test -- src/shared/DataTable.test.tsx src/admin/resources/AdminResourcePage.test.tsx src/admin/actions/MarketFeedConfigPage.test.tsx`，3 个测试文件、18 个测试通过。已在 `web` 目录执行 `npm run typecheck`，通过。已在 `web` 目录执行 `npm run lint`，通过。已在 `web` 目录执行 `npm run build`，通过；构建输出保留既有 `lottie-web` direct eval 与 chunk size 警告。已启动本地 Vite `http://127.0.0.1:3032/` 并用 Browser 访问 `/admin/seconds-contract/products`，按登录保护重定向到 `/login`；登录页正常渲染且 `body theme-mode="light"` 生效，无 Admin session 未直接浏览器验证秒合约表格和弹窗，随后已停止 dev server。
+- 后续事项：无
+
+## 2026-06-12 06:55 - 移除无效秒合约动作入口
+
+- 完成内容：确认“秒合约动作”入口复用了通用 `ProductStatusActions`，实际页面文案和接口均指向理财产品动作；为避免误导，移除管理后台侧边栏“秒合约动作”栏目和 `seconds-contract/actions` 路由，秒合约产品启停继续保留在“秒合约产品”列表行操作中。
+- 修改文件：
+  - `web/src/layouts/AdminLayout.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `web/src/admin/routes.tsx`
+  - `web/src/admin/routes.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已在 `web` 目录执行 `npm run test -- src/layouts/AdminLayout.test.tsx src/admin/routes.test.tsx`，2 个测试文件、28 个测试通过。已在 `web` 目录执行 `npm run typecheck`，通过。已在 `web` 目录执行 `npm run lint`，通过。已在 `web` 目录执行 `npm run build`，通过；构建输出保留既有 `lottie-web` direct eval 与 chunk size 警告。
+- 后续事项：无
+
+## 2026-06-12 07:23 - 管理后台 Semi SaaS 布局与弹窗重构
+
+- 完成内容：按 Semi 规范重构管理后台壳层，侧边栏改为 Semi `Navigation` 侧边导航和内置折叠按钮，去除旧拖拽/自定义外观结构；同步调整代理后台布局避免依赖旧 `admin-shell*` 样式；资源列表页改为 Semi `Tabs` 分隔“数据列表/筛选条件”；批量将资源创建/编辑类弹窗迁移为 Semi `SideSheet`，提交成功后自动关闭并触发列表刷新；保留确认类操作使用 Semi `Modal`；清理资源页旧自定义面板样式。
+- 修改文件：
+  - `web/src/layouts/AdminLayout.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `web/src/layouts/AgentLayout.tsx`
+  - `web/src/layouts/AgentLayout.test.tsx`
+  - `web/src/admin/resources/AdminResourcePage.tsx`
+  - `web/src/admin/resources/AdminResourcePage.test.tsx`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/styles.css`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已在 `web` 目录执行 `npm run test -- src/layouts/AdminLayout.test.tsx src/layouts/AgentLayout.test.tsx src/admin/resources/AdminResourcePage.test.tsx src/admin/resources/resourceConfigs.test.tsx`，4 个测试文件、58 个测试通过。已在 `web` 目录执行 `npm run typecheck`，通过。已在 `web` 目录执行 `npm run lint`，通过。已在 `web` 目录执行 `npm run build`，通过；构建输出保留既有 `lottie-web` direct eval 与 chunk size 警告。已启动 mock API 与本地 Vite `http://127.0.0.1:5181/`，通过 Browser 走管理员登录流并访问 `/admin/assets`，确认 Semi Navigation、Tabs、表格渲染正常，页面无 body 横向溢出，侧边导航列表区域可滚动，“添加资产”打开 Semi SideSheet，当前 5181 页面无 console error；验证后已停止临时服务。
+- 后续事项：无
+
+## 2026-06-12 19:38 - 移除资源页说明提示
+
+- 完成内容：移除后台资源页数据列表中的“行级操作会在右侧 SideSheet 中展示详情”说明文案，并同步去掉筛选 Tab 内“可用筛选项/暂无筛选项”的右侧说明，仅保留栏目标题和真实操作控件。
+- 修改文件：
+  - `web/src/admin/resources/AdminResourcePage.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已在 `web` 目录执行 `npm run test -- src/admin/resources/AdminResourcePage.test.tsx`，1 个测试文件、10 个测试通过。已在 `web` 目录执行 `npm run typecheck`，通过。已执行 `rg -n "行级操作会在右侧|可用筛选项|当前页面暂无筛选项" web/src`，未发现残留文案。
+- 后续事项：无
+
+## 2026-06-12 19:55 - SMTP 邮件 HTML 模板配置
+
+- 完成内容：为后台“SMTP 邮件配置”增加验证码 HTML 模板配置项；新增 `smtp_configs.verification_code_template_html` 迁移字段，后端保存/返回模板并写入审计快照；邮件发送结构扩展为纯文本 + 可选 HTML，验证码邮件会使用 `{{subject}}`、`{{code}}`、`{{expires_minutes}}` 渲染 HTML 模板，同时保留纯文本正文；前端 SMTP 配置页新增 Semi `TextArea` 编辑模板，保存配置时可提交或清空模板；OpenAPI schema 与测试同步更新。
+- 修改文件：
+  - `migrations/0044_smtp_html_template.sql`
+  - `src/infra/email.rs`
+  - `src/modules/admin/smtp_config.rs`
+  - `src/modules/auth/routes.rs`
+  - `src/modules/user/routes.rs`
+  - `src/openapi.rs`
+  - `tests/admin_routes.rs`
+  - `tests/openapi_routes.rs`
+  - `web/src/admin/actions/SmtpConfigPage.tsx`
+  - `web/src/admin/actions/SmtpConfigPage.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已在 `web` 目录执行 `npm run test -- src/admin/actions/SmtpConfigPage.test.tsx`，1 个测试文件、3 个测试通过。已在 `web` 目录执行 `npm run typecheck`，通过。已在 `web` 目录执行 `npm run lint`，通过。已在 `web` 目录执行 `npm run build`，通过；构建输出保留既有 `lottie-web` direct eval 与 chunk size 警告。已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行 `cargo clippy --manifest-path Cargo.toml --all-targets --all-features -- -D warnings`，通过。已执行 `cargo test --manifest-path Cargo.toml --test openapi_routes openapi_json_exposes_first_batch_contract -- --nocapture`，1 个测试通过。已执行 `cargo test --manifest-path Cargo.toml smtp_config -- --nocapture`，SMTP 配置相关测试通过；其中 `admin_smtp_config_save_masks_secrets_and_requires_reason` 在未设置 `DATABASE_URL` 时按现有逻辑跳过 MySQL 集成并通过。已执行 `cargo test --manifest-path Cargo.toml renders_verification_code_html_template_with_escaped_variables -- --nocapture`，模板渲染测试通过。已启动 mock API 与本地 Vite `http://127.0.0.1:5182/`，通过 Browser 登录并访问 `/admin/system/smtp`，确认模板 textarea 渲染并加载后端模板值、页面无横向溢出、当前 5182 页面无 console error；验证后已停止临时服务。
+- 后续事项：如需运行未跳过的 SMTP MySQL 集成断言，需要提供可连接的 `DATABASE_URL`。
+
+## 2026-06-12 22:42 - 优化添加杠杆交易对弹窗
+
+- 完成内容：将后台“添加杠杆交易对”SideSheet 从单一长表单优化为 Semi `Tabs` 分区，拆分为“基础配置 / 杠杆档位 / 风控参数”；基础区保留交易对、保证金资产、保证金模式和初始状态；杠杆区保留常用档位多选与自定义档位，并增加已选档位状态展示；风控区集中最小/最大保证金、维持保证金率和小时利率；提交接口 payload 保持不变，提交成功后继续关闭弹窗、重置表单并刷新列表。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx -t "creates margin products"`，1 个目标测试通过。已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx`，1 个测试文件、37 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已启动本地 Vite `http://127.0.0.1:5183/` 并用 Browser 访问 `/admin/margin/products`，按登录保护重定向到 `/login`，登录页正常渲染且无 console error；当前无 Admin session，未进入杠杆弹窗做浏览器视觉点击，随后已停止临时服务。已执行 `git diff --check -- web/src/admin/resources/ResourceCreateActions.tsx web/src/admin/resources/resourceConfigs.test.tsx docs/superpowers/PROGRESS.md`，通过。
+- 后续事项：无
+
+## 2026-06-12 22:48 - 后台 Select 下拉项中文化
+
+- 完成内容：扫描后台管理端 `AdminSelect`/筛选下拉配置，将裸英文枚举展示值改为中文 label，同时保持提交和筛选使用的 value 不变；覆盖代理佣金筛选与佣金规则产品类型、创建动作的状态/定价模式、SMTP 加密方式与模板用途、新币动作页生命周期/解禁/计费依据、行情订阅凭证行情源与鉴权方式、上传存储方式、安全策略校验方式等下拉框。
+- 修改文件：
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/actions/SmtpConfigPage.tsx`
+  - `web/src/admin/actions/NewCoinActions.tsx`
+  - `web/src/admin/actions/MarketFeedConfigPage.tsx`
+  - `web/src/admin/actions/UploadConfigPage.tsx`
+  - `web/src/admin/actions/SecurityPolicyPage.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/admin/actions/SmtpConfigPage.test.tsx`
+  - `web/src/admin/actions/SecurityPolicyPage.test.tsx`
+  - `web/src/admin/actions/UploadConfigPage.test.tsx`
+  - `web/src/admin/actions/MarketFeedConfigPage.test.tsx`
+  - `web/src/admin/actions/helperCopy.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `rg -n "label:\\s*['\\\"](active|disabled|pending|settled|rejected|convert|draft|paused|fixed|market|preheat|subscription|distribution|listed|immediate_on_listing|fixed_time|relative_period|market_value|profit|api_key|none|bitget|htx|None)['\\\"]" web/src/admin -g '*.tsx' -g '*.ts'`，未发现裸英文枚举 label。已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx src/admin/actions/SmtpConfigPage.test.tsx src/admin/actions/MarketFeedConfigPage.test.tsx src/admin/actions/UploadConfigPage.test.tsx src/admin/actions/SecurityPolicyPage.test.tsx src/admin/actions/helperCopy.test.tsx`，6 个测试文件、54 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `npm --prefix web run lint`，通过。已执行本次相关文件 `git diff --check`，通过。
+- 后续事项：无
+
+## 2026-06-12 22:50 - 用户充值弹窗隐藏用户ID
+
+- 完成内容：移除后台用户行操作“充值”SideSheet 中的只读“用户ID”输入框；充值仍默认使用当前行选中的用户 ID 拼接 `/admin/api/v1/users/{userId}/recharge` 接口，管理员只需选择充值资产并输入金额。同步更新测试，确认弹窗不再显示用户ID字段且提交仍命中所选用户。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx -t "recharges a user wallet"`，1 个目标测试通过。已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx`，1 个测试文件、37 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `git diff --check -- web/src/admin/resources/ResourceCreateActions.tsx web/src/admin/resources/resourceConfigs.test.tsx`，通过。
+- 后续事项：无
+
+## 2026-06-12 23:09 - KYC 配置与人工审核闭环
+
+- 完成内容：新增 KYC 默认配置与用户 KYC 申请表迁移；后端新增用户 KYC 状态/提交接口和后台 KYC 配置、申请列表、详情、人工审核接口，审核通过会同步提升用户 `kyc_level` 并写入后台审计；PC 端实名认证页面改为真实提交证件图片并展示待审状态；后台新增 Semi `Tabs` + `SideSheet` 的“KYC 管理”页面并接入侧边导航。
+- 修改文件：
+  - `migrations/0046_kyc_config_and_submissions.sql`
+  - `src/modules/kyc.rs`
+  - `src/modules/mod.rs`
+  - `src/modules/admin/routes.rs`
+  - `src/modules/user/routes.rs`
+  - `tests/admin_routes.rs`
+  - `tests/user_routes.rs`
+  - `pc/src/api/backendAdapters.ts`
+  - `pc/src/api/user.ts`
+  - `pc/src/views/User/KYC.vue`
+  - `web/src/admin/actions/KycManagementPage.tsx`
+  - `web/src/admin/actions/KycManagementPage.test.tsx`
+  - `web/src/admin/routes.tsx`
+  - `web/src/admin/routes.test.tsx`
+  - `web/src/layouts/AdminLayout.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+- 验证结果：已执行 `cargo fmt --manifest-path Cargo.toml`，通过；已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行 `cargo check --manifest-path Cargo.toml --all-targets`，通过。已执行 `cargo test --manifest-path Cargo.toml --test user_routes user_kyc_status_and_submission_create_pending_review -- --nocapture`，测试通过；当前环境未设置 `DATABASE_URL`，MySQL 集成逻辑按现有测试约定跳过。已执行 `cargo test --manifest-path Cargo.toml --test admin_routes admin_kyc_config_list_detail_and_manual_review -- --nocapture`，测试通过；当前环境未设置 `DATABASE_URL`，MySQL 集成逻辑按现有测试约定跳过。已执行 `npm --prefix web test -- src/admin/actions/KycManagementPage.test.tsx src/admin/routes.test.tsx src/layouts/AdminLayout.test.tsx`，3 个测试文件、32 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `npm --prefix pc run type-check`，通过。曾执行 `npm --prefix pc run typecheck`，该项目无此脚本，已改用实际脚本 `type-check`。已启动本地 Vite `http://127.0.0.1:5184/`，通过 Browser 访问 `/admin/users/kyc`，确认受保护路由重定向到 `/login`、登录页正常渲染且无 console error；当前浏览器只读脚本环境无法直接写入 `localStorage` 绕过登录，KYC 页面主体渲染由自动化测试覆盖；验证后已停止临时服务。
+- 后续事项：如需验证未跳过的 MySQL KYC 集成断言，需要提供可连接的 `DATABASE_URL`。
+
+## 2026-06-12 23:43 - 秒合约产品列表支持编辑
+
+- 完成内容：为后台秒合约产品新增 `PATCH /seconds-contracts/products/:id` 编辑接口，可修改交易对、押注资产、周期秒数、赔率、最小/最大押注和状态，并写入 `seconds_contract_product.update` 后台审计；后台列表行操作新增“修改”入口，使用 Semi `SideSheet` + `Tabs` + 下拉选择交易对/押注资产编辑单个产品，提交成功后自动关闭并刷新表格；同步扩展前后端测试覆盖编辑 payload、校验和审计动作。
+- 修改文件：
+  - `src/modules/seconds_contract/routes.rs`
+  - `tests/seconds_contract_routes.rs`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --manifest-path Cargo.toml`，通过；已执行 `cargo fmt --manifest-path Cargo.toml --check`，通过。已执行 `cargo test --manifest-path Cargo.toml --test seconds_contract_routes admin_seconds_contract_product_routes_require_admin_scope_mysql_and_validation -- --nocapture`，1 个测试通过。已执行 `cargo test --manifest-path Cargo.toml --test seconds_contract_routes admin_seconds_contract_product_rejects_unsafe_fields_before_mysql -- --nocapture`，1 个测试通过。已执行 `cargo test --manifest-path Cargo.toml --test seconds_contract_routes admin_seconds_contract_product_create_update_status_and_audit -- --nocapture`，测试通过；当前环境未设置 `DATABASE_URL`，MySQL 集成断言按现有测试约定跳过。已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx -t "seconds contract product"`，1 个目标测试通过。已执行 `npm --prefix web run typecheck`，通过。已启动本地 Vite `http://127.0.0.1:5185/` 并通过 Browser 访问 `/admin/seconds/products`，确认受保护路由停留在登录页、页面可渲染且无 console error；当前无 Admin session，秒合约产品页面主体由自动化测试覆盖；验证后已停止临时服务。已执行 `git diff --check -- src/modules/seconds_contract/routes.rs tests/seconds_contract_routes.rs web/src/admin/resources/ResourceCreateActions.tsx web/src/admin/resources/resourceConfigs.test.tsx`，通过。
+- 后续事项：如需验证未跳过的秒合约产品 MySQL 编辑与审计断言，需要提供可连接的 `DATABASE_URL`。
+
+## 2026-06-12 23:47 - 修复杠杆档位多选点击
+
+- 完成内容：修复“添加杠杆交易对”SideSheet 中杠杆档位无法点击选中的问题；将 Semi `Checkbox` 外层从原生 `label` 改为普通容器，避免嵌套 label 导致点击后状态异常；测试新增点击后 `2x/5x/10x` 已选中的断言。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx -t "creates margin products"`，1 个目标测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `git diff --check -- web/src/admin/resources/ResourceCreateActions.tsx web/src/admin/resources/resourceConfigs.test.tsx`，通过。
+- 后续事项：无
+
+## 2026-06-12 23:49 - 移除理财产品动作入口
+
+- 完成内容：移除后台 Earn 分组中的“理财动作”菜单入口，并取消注册 `/admin/earn/actions` 路由；保留理财产品列表自身的行级启用/禁用操作，未影响理财产品与理财申购列表。
+- 修改文件：
+  - `web/src/admin/routes.tsx`
+  - `web/src/admin/routes.test.tsx`
+  - `web/src/layouts/AdminLayout.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- src/layouts/AdminLayout.test.tsx src/admin/routes.test.tsx`，2 个测试文件、32 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `rg -n "理财动作|earn/actions" web/src -g '*.tsx' -g '*.ts'`，仅剩确认不显示/不注册的测试断言。已执行 `git diff --check -- web/src/admin/routes.tsx web/src/admin/routes.test.tsx web/src/layouts/AdminLayout.tsx web/src/layouts/AdminLayout.test.tsx`，通过。
+- 后续事项：无
+
+## 2026-06-12 23:53 - 优化添加理财产品排版
+
+- 完成内容：将“添加理财产品” SideSheet 的产品分类说明移动到表单顶部，改为独立说明区；基础信息仅保留理财资产、产品名称、产品分类、初始状态；新增“收益与申购参数”分区承载期限、年化利率、最小/最大申购；多语言介绍与提交逻辑保持不变。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/styles.css`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx -t "creates earn products"`，1 个目标测试通过。已执行 `npm --prefix web run typecheck`，通过。已启动本地 Vite `http://127.0.0.1:5186/` 并通过 Browser 访问 `/admin/earn/products`，当前无 Admin session，被登录保护重定向到 `/login`，页面可渲染且无 console error；目标 SideSheet 主体由自动化测试覆盖；验证后已停止临时服务。已执行 `git diff --check -- web/src/admin/resources/ResourceCreateActions.tsx web/src/admin/resources/resourceConfigs.test.tsx web/src/styles.css`，通过。
+- 后续事项：无
+
+## 2026-06-13 00:15 - SMTP 多发信配置与发送策略
+
+- 完成内容：后台 SMTP 从单个 default 配置扩展为多配置列表，支持新增、编辑、逐条启用/停用和优先级；新增发信策略配置，系统发送验证码时可按优先级或轮询选择启用配置，测试发送可选择按当前策略或指定某条配置；SMTP 测试响应返回实际使用的配置 id/name；保留旧 `/smtp/config` default 接口兼容，并新增复数配置、按 id 更新和策略保存接口；OpenAPI 同步暴露新路径与 schema。
+- 修改文件：
+  - `migrations/0048_smtp_multi_config_strategy.sql`
+  - `src/modules/admin/smtp_config.rs`
+  - `src/modules/admin/routes.rs`
+  - `src/openapi.rs`
+  - `tests/admin_routes.rs`
+  - `tests/openapi_routes.rs`
+  - `web/src/admin/actions/SmtpConfigPage.tsx`
+  - `web/src/admin/actions/SmtpConfigPage.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行 `cargo check --manifest-path Cargo.toml --all-targets`，通过。已执行 `cargo test --manifest-path Cargo.toml smtp_config -- --nocapture`，SMTP 配置相关测试通过；其中 MySQL 集成断言在未设置 `DATABASE_URL` 时按现有逻辑跳过。已执行 `cargo test --manifest-path Cargo.toml selects_delivery_row_by_strategy -- --nocapture`，策略选择单元测试通过。已执行 `cargo test --manifest-path Cargo.toml --test openapi_routes openapi_json_exposes_first_batch_contract -- --nocapture`，通过。已执行 `cargo test --manifest-path Cargo.toml --test admin_routes admin_smtp_routes_require_admin_scope_and_mysql -- --nocapture`，通过。已执行 `cargo test --manifest-path Cargo.toml --test admin_routes admin_smtp_test_uses_configured_sender_and_audits_without_secrets -- --nocapture`，测试通过；当前环境未设置 `DATABASE_URL`，MySQL 集成逻辑按现有测试约定跳过。已执行 `npm --prefix web test -- src/admin/actions/SmtpConfigPage.test.tsx`，1 个测试文件、4 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已启动本地 Vite `http://127.0.0.1:5187/` 并通过 Browser 访问 `/admin/system/smtp`，当前无 Admin session，被登录保护重定向到 `/login`，页面可渲染且无 console error；目标 SMTP 页面主体由自动化测试覆盖；验证后已停止临时服务。已执行 `git diff --check -- src/modules/admin/smtp_config.rs src/modules/admin/routes.rs src/openapi.rs tests/admin_routes.rs tests/openapi_routes.rs web/src/admin/actions/SmtpConfigPage.tsx web/src/admin/actions/SmtpConfigPage.test.tsx migrations/0048_smtp_multi_config_strategy.sql docs/superpowers/PROGRESS.md`，通过。
+- 后续事项：如需验证未跳过的 SMTP 多配置 MySQL 创建、更新、轮询 cursor 与真实发送审计断言，需要提供可连接的 `DATABASE_URL`。
+
+## 2026-06-13 00:27 - KYC 国家证件类型配置
+
+- 完成内容：为 KYC 默认配置新增 `country_document_types` 国家证件类型规则，支持配置不同国家可上传的证件类型；后端提交 KYC 时按国家规则校验证件类型，规则未配置时保持默认兼容；后台 KYC 配置页新增“证件类型规则”表格，使用 Semi `Table` 与多选 `Select` 维护国家和证件类型；PC 端 KYC 表单改为读取配置与公开国家列表，选择国家后动态展示可选证件类型，并按配置的证件大小提示和校验上传文件。
+- 修改文件：
+  - `migrations/0049_kyc_country_document_types.sql`
+  - `src/modules/kyc.rs`
+  - `tests/admin_routes.rs`
+  - `tests/user_routes.rs`
+  - `web/src/admin/actions/KycManagementPage.tsx`
+  - `web/src/admin/actions/KycManagementPage.test.tsx`
+  - `pc/src/api/user.ts`
+  - `pc/src/views/User/KYC.vue`
+  - `pc/src/i18n/index.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --all -- --check`，通过。已执行 `cargo check --all-targets`，通过。已执行 `cargo test --test admin_routes admin_kyc_config_list_detail_and_manual_review`，测试通过；当前环境未设置 `DATABASE_URL` 时 MySQL 集成断言按现有测试约定跳过。已执行 `cargo test --test user_routes user_kyc_status_and_submission_create_pending_review`，测试通过；当前环境未设置 `DATABASE_URL` 时 MySQL 集成断言按现有测试约定跳过。已执行 `npm --prefix web test -- src/admin/actions/KycManagementPage.test.tsx`，1 个测试文件、3 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `npm --prefix pc run type-check`，通过。已执行 `git diff --check`，通过。已启动本地 Vite `http://127.0.0.1:5181/` 与 `http://127.0.0.1:5182/`；通过 Browser 访问 `/admin/users/kyc` 并切到 KYC 配置，确认新增“证件类型规则”区域可渲染且无 console error；通过 Browser 访问 PC `/user/kyc`，当前无用户登录态被重定向到 `/login`，应用壳可渲染且无 console error。
+- 后续事项：如需验证未跳过的 KYC 国家证件类型 MySQL 持久化与真实登录后的 PC 提交流程，需要提供可连接的 `DATABASE_URL` 和登录态。
+
+## 2026-06-13 00:34 - 后台详情字段中文化
+
+- 完成内容：修复后台通用“查看详情”抽屉字段名和值大量显示英文/下划线的问题；资源页打开详情时自动把表格列的中文标题、字段类型、资产单位和 `valueMap` 传给 `DetailDrawer`；`DetailDrawer` 新增通用字段词典和常见枚举值中文映射，支持单条详情、数组详情、嵌套对象、金额、时间和状态值统一中文显示；自定义行操作通过 `openDetail` 打开的详情也会继承当前资源页列配置。
+- 修改文件：
+  - `web/src/shared/DetailDrawer.tsx`
+  - `web/src/shared/TimestampText.tsx`
+  - `web/src/admin/resources/AdminResourcePage.tsx`
+  - `web/src/admin/resources/AdminResourcePage.test.tsx`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- src/admin/resources/AdminResourcePage.test.tsx`，1 个测试文件、10 个测试通过。已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx`，1 个测试文件、37 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `git diff --check -- web/src/shared/DetailDrawer.tsx web/src/shared/TimestampText.tsx web/src/admin/resources/AdminResourcePage.tsx web/src/admin/resources/AdminResourcePage.test.tsx web/src/admin/resources/ResourceCreateActions.tsx`，通过。
+- 后续事项：如后续发现某个业务专属枚举仍显示英文，可继续补充到 `DetailDrawer` 的字段值映射或对应资源列的 `valueMap`。
+
+## 2026-06-13 00:37 - 移除 SideSheet 内 H4 标题
+
+- 完成内容：移除后台资源创建/编辑 SideSheet 内容区重复的 `Typography.Title heading={4}`，避免抽屉内生成 `semi-typography-h4`；理财产品与新闻表单的分区标题改为 `Typography.Text strong`，保留分区语义和 `aria-labelledby` 关联；普通页面区域的 H4 标题未改动。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `rg -n "<Title heading=\\{4\\}|semi-typography-h4" web/src/admin/resources/ResourceCreateActions.tsx -S`，确认资源 SideSheet 文件无匹配。已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx`，1 个测试文件、37 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `git diff --check -- web/src/admin/resources/ResourceCreateActions.tsx`，通过。
+- 后续事项：无
+
+## 2026-06-13 01:02 - KYC 国家下拉与手持证件照规则
+
+- 完成内容：后台 KYC“证件类型规则”的国家 / 地区改为读取国家管理数据的 Semi 下拉框，并兼容历史手填国家；每条国家规则新增 `handheld_document_types`，可配置哪些证件类型需要本人手持证件照；用户 KYC 提交新增可选 `document_handheld_image` 字段，后端在规则要求时强制校验；后台审核详情支持查看本人手持证件照；PC KYC 上传页会按所选国家和证件类型动态展示第三张上传卡片并提交对应图片。
+- 修改文件：
+  - `migrations/0050_kyc_handheld_document_image.sql`
+  - `src/modules/kyc.rs`
+  - `tests/admin_routes.rs`
+  - `tests/user_routes.rs`
+  - `web/src/admin/actions/KycManagementPage.tsx`
+  - `web/src/admin/actions/KycManagementPage.test.tsx`
+  - `pc/src/api/user.ts`
+  - `pc/src/views/User/KYC.vue`
+  - `pc/src/i18n/index.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --manifest-path Cargo.toml`，通过。已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行 `cargo check --manifest-path Cargo.toml --all-targets`，通过。已执行 `cargo test --manifest-path Cargo.toml --test user_routes user_kyc_status_and_submission_create_pending_review -- --nocapture`，测试通过；当前环境未设置 `DATABASE_URL`，MySQL 集成断言按现有测试约定跳过。已执行 `cargo test --manifest-path Cargo.toml --test admin_routes admin_kyc_config_list_detail_and_manual_review -- --nocapture`，测试通过；当前环境未设置 `DATABASE_URL`，MySQL 集成断言按现有测试约定跳过。已执行 `npm --prefix web test -- src/admin/actions/KycManagementPage.test.tsx`，1 个测试文件、3 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `npm --prefix pc run type-check`，通过。已执行 `git diff --check -- src/modules/kyc.rs tests/user_routes.rs tests/admin_routes.rs web/src/admin/actions/KycManagementPage.tsx web/src/admin/actions/KycManagementPage.test.tsx pc/src/api/user.ts pc/src/views/User/KYC.vue pc/src/i18n/index.ts migrations/0050_kyc_handheld_document_image.sql`，通过。
+- 后续事项：如需验证未跳过的 MySQL 持久化与真实图片上传提交链路，需要提供可连接的 `DATABASE_URL` 和登录态。
+
+## 2026-06-13 01:16 - 后台资源图片上传接入
+
+- 完成内容：新增业务图片字段迁移，资产、现货交易对、秒合约产品、杠杆产品支持 Logo URL；理财产品与新闻支持 Banner 和小 Logo URL；新增共享 Semi `Upload` 图片上传组件并接入 PC 品牌配置、上传配置测试入口、资产/交易对/理财/新闻表单；资源列表增加图片缩略图列，详情继续保留 URL 字段。
+- 修改文件：
+  - `migrations/0051_admin_image_upload_fields.sql`
+  - `src/modules/admin/routes.rs`
+  - `src/modules/earn/routes.rs`
+  - `src/modules/margin/routes.rs`
+  - `src/modules/seconds_contract/routes.rs`
+  - `web/src/shared/AdminImageUpload.tsx`
+  - `web/src/admin/actions/PlatformBrandPage.tsx`
+  - `web/src/admin/actions/PlatformBrandPage.test.tsx`
+  - `web/src/admin/actions/UploadConfigPage.tsx`
+  - `web/src/admin/actions/UploadConfigPage.test.tsx`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --manifest-path Cargo.toml`，通过。已执行 `cargo fmt --manifest-path Cargo.toml --check`，通过。已执行 `cargo check --all-targets`，通过。已执行 `cargo test --test admin_routes -- --nocapture`，69 个测试通过；当前环境未设置 `DATABASE_URL`，MySQL 集成分支按现有测试约定跳过。已执行 `cargo test --test earn_routes -- --nocapture`，18 个测试通过；当前环境未设置 `DATABASE_URL`，MySQL 集成分支按现有测试约定跳过。已执行 `cargo test --test seconds_contract_routes -- --nocapture`，19 个测试通过；当前环境未设置 `DATABASE_URL`，MySQL 集成分支按现有测试约定跳过。已执行 `cargo test --test margin_routes -- --nocapture`，25 个测试通过；当前环境未设置 `DATABASE_URL`，MySQL 集成分支按现有测试约定跳过。已执行 `npm --prefix web test -- src/admin/actions/PlatformBrandPage.test.tsx src/admin/actions/UploadConfigPage.test.tsx src/admin/resources/resourceConfigs.test.tsx`，3 个测试文件、44 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `git diff --check`，通过。
+- 后续事项：如需验证真实对象存储写入和迁移后的字段落库，需要提供可连接的 `DATABASE_URL` 以及可用上传存储配置。
+
+## 2026-06-13 01:33 - Logo 上传改为头像触发
+
+- 完成内容：根据 Semi Upload“点击头像触发上传”模式，给后台共享图片上传组件新增 `avatar` 变体，Logo 类上传使用 Semi `Avatar` 作为上传触发器并隐藏上传列表；资产 Logo、现货交易对 Logo、秒合约交易对 Logo、杠杆交易对 Logo、理财小 Logo、新闻小 Logo、PC Logo 全部切换为头像触发上传，Banner 上传继续保留图片预览模式。
+- 修改文件：
+  - `web/src/shared/AdminImageUpload.tsx`
+  - `web/src/admin/actions/PlatformBrandPage.tsx`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web run typecheck`，通过。已执行 `npm --prefix web test -- src/admin/actions/PlatformBrandPage.test.tsx src/admin/actions/UploadConfigPage.test.tsx src/admin/resources/resourceConfigs.test.tsx`，3 个测试文件、44 个测试通过。已执行 `git diff --check -- web/src/shared/AdminImageUpload.tsx web/src/admin/actions/PlatformBrandPage.tsx web/src/admin/resources/ResourceCreateActions.tsx`，通过。
+- 后续事项：无
+
+## 2026-06-13 01:35 - 上传触发器形状细化
+
+- 完成内容：将 Logo 类头像触发上传从圆形改为方形 Semi `Avatar`；新增 Banner 上传变体，理财 Banner 与新闻 Banner 使用长方形图片墙尺寸，Logo 与 Banner 的上传形态区分更清晰。
+- 修改文件：
+  - `web/src/shared/AdminImageUpload.tsx`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web run typecheck`，通过。已执行 `npm --prefix web test -- src/admin/actions/PlatformBrandPage.test.tsx src/admin/actions/UploadConfigPage.test.tsx src/admin/resources/resourceConfigs.test.tsx`，3 个测试文件、44 个测试通过。已执行 `git diff --check -- web/src/shared/AdminImageUpload.tsx web/src/admin/resources/ResourceCreateActions.tsx`，通过。
+- 后续事项：无
+
+## 2026-06-13 01:41 - 现货交易对状态编辑下拉化
+
+- 完成内容：现货“修改交易对配置”弹窗中，交易对、基础资产、计价资产改为禁用输入框，确保不可编辑；“当前状态”改为 Semi 下拉框并显示中文选项，提交配置时同步保存交易对状态；后端交易对配置 PATCH 支持 `status` 字段并继续拒绝 `base_asset_id` 等不可编辑字段。
+- 修改文件：
+  - `src/modules/admin/routes.rs`
+  - `tests/admin_routes.rs`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --manifest-path Cargo.toml --check`，通过。已执行 `cargo test --test admin_routes -- --nocapture`，69 个测试通过；当前环境未设置 `DATABASE_URL`，MySQL 集成分支按现有测试约定跳过。已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx`，1 个测试文件、37 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `git diff --check -- src/modules/admin/routes.rs tests/admin_routes.rs web/src/admin/resources/ResourceCreateActions.tsx web/src/admin/resources/resourceConfigs.test.tsx`，通过。
+- 后续事项：无
+
+## 2026-06-13 01:54 - 移除现货动作模块
+
+- 完成内容：移除后台现货交易分组中的“现货动作”侧边栏入口，并注销 `/admin/spot/actions` 对应路由；保留现货订单、现货成交以及杠杆动作模块不受影响。
+- 修改文件：
+  - `web/src/admin/routes.tsx`
+  - `web/src/admin/routes.test.tsx`
+  - `web/src/layouts/AdminLayout.tsx`
+  - `web/src/layouts/AdminLayout.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- src/admin/routes.test.tsx src/layouts/AdminLayout.test.tsx`，2 个测试文件、32 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `git diff --check -- web/src/admin/routes.tsx web/src/admin/routes.test.tsx web/src/layouts/AdminLayout.tsx web/src/layouts/AdminLayout.test.tsx`，通过。已执行 `rg -n "现货动作|spot/actions" web/src/admin web/src/layouts`，确认仅保留移除断言中的引用。
+- 后续事项：无
+
+## 2026-06-13 02:05 - 数据库字段中文注释迁移
+
+- 完成内容：新增统一迁移 `0052_schema_column_comments_zh.sql`，为当前 69 张业务表、733 个字段生成中文字段注释；迁移通过 `information_schema` 读取现有字段定义并动态执行 `MODIFY COLUMN ... COMMENT`，保留字段类型、字符集、可空性、默认值、`AUTO_INCREMENT` 和 `ON UPDATE` 等属性，同时在执行期间临时关闭并恢复会话外键检查。
+- 修改文件：
+  - `migrations/0052_schema_column_comments_zh.sql`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `git diff --check -- migrations/0052_schema_column_comments_zh.sql`，通过。已执行静态覆盖脚本，确认迁移目标覆盖 69 张表、733 个字段。已执行 `cargo check --manifest-path Cargo.toml --all-targets`，通过。已执行 `cargo test --manifest-path Cargo.toml --test admin_routes -- --nocapture`，69 个测试通过；当前环境未设置 `DATABASE_URL`，真实 MySQL 迁移执行分支按现有测试约定跳过。已执行 `mysql -e "SELECT VERSION();"`，本地 `/tmp/mysql.sock` 无可连接 MySQL 服务，无法进行真实落库验证。
+- 后续事项：如需确认真实 MySQL 执行效果，需要提供可连接的 `DATABASE_URL` 后运行完整迁移，并检查 `information_schema.COLUMNS.COLUMN_COMMENT`。
+
+## 2026-06-13 02:11 - 禁用秒合约产品支持删除
+
+- 完成内容：后台秒合约产品新增删除能力；后端增加 `DELETE /admin/api/v1/seconds-contracts/products/:id`，仅允许已禁用且没有关联订单的产品删除，并写入管理员审计日志；前端在禁用秒合约产品行展示“删除”确认操作，提交原因后自动刷新列表。
+- 修改文件：
+  - `src/modules/seconds_contract/routes.rs`
+  - `tests/seconds_contract_routes.rs`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行 `cargo test --manifest-path Cargo.toml --test seconds_contract_routes -- --nocapture`，20 个测试通过；当前环境未设置 `DATABASE_URL`，MySQL 集成分支按现有测试约定跳过。已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx`，1 个测试文件、37 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `git diff --check -- src/modules/seconds_contract/routes.rs tests/seconds_contract_routes.rs web/src/admin/resources/ResourceCreateActions.tsx web/src/admin/resources/resourceConfigs.test.tsx`，通过。
+- 后续事项：如需验证真实 MySQL 删除和审计落库，需要提供可连接的 `DATABASE_URL`。
+
+## 2026-06-13 02:13 - 秒合约产品列表隐藏 ID 列
+
+- 完成内容：后台秒合约产品列表移除“产品ID”和“交易对ID”两列表头，仅保留交易对、Logo、押注资产、周期、赔率、押注限制和状态等业务信息；编辑弹窗中的只读产品 ID 保持不变。
+- 修改文件：
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx`，1 个测试文件、37 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `git diff --check -- web/src/admin/resources/resourceConfigs.tsx web/src/admin/resources/resourceConfigs.test.tsx`，通过。
+- 后续事项：无
+
+## 2026-06-13 02:24 - 杠杆交易对支持多保证金模式
+
+- 完成内容：杠杆产品新增 `margin_modes` 支持模式列表，保留 `margin_mode` 作为默认/兼容模式；后台“添加杠杆交易对”将保证金模式改为 Semi 多选并在列表展示“逐仓 / 全仓”；PC 合约交易根据交易对支持的模式禁用或展示保证金模式选择，并在开仓请求中提交用户选择的 `margin_mode`；后端开仓会校验所选保证金模式是否被该产品支持，允许配置了全仓的交易对开全仓仓位。
+- 修改文件：
+  - `migrations/0053_margin_product_supported_modes.sql`
+  - `src/modules/margin/routes.rs`
+  - `tests/margin_routes.rs`
+  - `tests/admin_routes.rs`
+  - `tests/margin_liquidation_worker.rs`
+  - `web/src/shared/SemiFormControls.tsx`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `pc/src/api/backendAdapters.ts`
+  - `pc/src/api/contract.ts`
+  - `pc/src/stores/contract.ts`
+  - `pc/src/components/trade/ContractOrderForm.vue`
+  - `pc/tests/backendAdapters.test.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行 `cargo test --manifest-path Cargo.toml --test margin_routes -- --nocapture`，25 个测试通过；当前环境未设置 `DATABASE_URL`，真实 MySQL 分支按现有测试约定跳过。已执行 `cargo test --manifest-path Cargo.toml --test admin_routes -- --nocapture`，69 个测试通过；真实 MySQL 分支因未设置 `DATABASE_URL` 跳过。已执行 `cargo test --manifest-path Cargo.toml --test margin_liquidation_worker -- --nocapture`，6 个测试通过；真实 MySQL 分支因未设置 `DATABASE_URL` 跳过。已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx`，1 个测试文件、37 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `npm --prefix pc run type-check`，通过。已执行 `node --experimental-strip-types --test --test-name-pattern "maps backend margin products" pc/tests/backendAdapters.test.ts`，目标 PC 杠杆映射测试通过。已执行本轮触碰文件 `git diff --check`，通过。
+- 后续事项：如需验证真实 MySQL 迁移和全仓开仓落库，需要提供可连接的 `DATABASE_URL` 后运行完整迁移及集成测试。
+
+## 2026-06-13 02:29 - 添加新闻弹窗排版优化
+
+- 完成内容：重新排版后台“添加新闻” SideSheet，去除外层包裹卡片，改为“发布设置 / 视觉素材 / 内容编辑”的两列工作区；发布设置集中新闻标题、国家、分类和状态，视觉素材集中 Banner 与小 Logo 上传，内容编辑区保留更宽的摘要和富文本编辑区域；接口 payload 和编辑新闻多语言流程保持不变。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/styles.css`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx`，1 个测试文件、37 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `git diff --check -- web/src/admin/resources/ResourceCreateActions.tsx web/src/admin/resources/resourceConfigs.test.tsx web/src/styles.css`，通过。已启动 `npm --prefix web run dev -- --host 127.0.0.1 --port 5174` 并用 Browser 打开 `http://127.0.0.1:5174/admin/news`，页面按预期重定向到后台登录页，前端无控制台错误；因当前浏览器无后台登录态，未进行真实弹窗视觉截图验证。
+- 后续事项：如需做登录后视觉验收，需要提供可用后台登录态或测试账号后打开新闻中心弹窗检查实际布局。
+
+## 2026-06-13 02:33 - SMTP 邮件配置模块 Tabs 拆分
+
+- 完成内容：将后台 SMTP 邮件配置页从多卡片平铺改为 Semi Tabs 工作台，拆分为“发信配置 / 验证码模板 / 发信策略 / 测试发送”四个模块；发信配置 tab 集中配置列表和基础 SMTP 字段，验证码模板 tab 独立管理富文本模板，发信策略和测试发送分别独立操作；保留当前配置状态、保存逻辑、策略保存和测试邮件接口不变。
+- 修改文件：
+  - `web/src/admin/actions/SmtpConfigPage.tsx`
+  - `web/src/admin/actions/SmtpConfigPage.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- src/admin/actions/SmtpConfigPage.test.tsx`，1 个测试文件、4 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `git diff --check -- web/src/admin/actions/SmtpConfigPage.tsx web/src/admin/actions/SmtpConfigPage.test.tsx`，通过。已启动 `npm --prefix web run dev -- --host 127.0.0.1 --port 5174` 并用 Browser 打开 `http://127.0.0.1:5174/admin/system/smtp`，页面按预期重定向到后台登录页，前端无控制台错误；因当前浏览器无后台登录态，未进行登录后 SMTP tabs 视觉截图验证。
+- 后续事项：如需做登录后视觉验收，需要提供可用后台登录态或测试账号后打开 SMTP 邮件配置页检查实际 tabs 布局。
+
+## 2026-06-13 02:37 - 国家配置补齐国家代码
+
+- 完成内容：新增国家配置种子迁移，使用 `INSERT IGNORE` 为 `country_configs` 补齐大部分 ISO 3166-1 alpha-2 国家/地区代码，覆盖注册、KYC、新闻等国家选择场景，并保留已有国家配置的语言、注册开关、状态和排序等自定义设置。
+- 修改文件：
+  - `migrations/0054_seed_country_codes.sql`
+  - `tests/country_config_migration.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `rg -c "^    \\('[A-Z]{2}'" migrations/0054_seed_country_codes.sql`，确认种子迁移包含 249 个国家/地区代码。已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行 `cargo test --manifest-path Cargo.toml --test country_config_migration -- --nocapture`，3 个测试通过。已执行 `git diff --check -- migrations/0054_seed_country_codes.sql tests/country_config_migration.rs`，通过。当前环境未提供可连接的 `DATABASE_URL`，未执行真实 MySQL 迁移落库验证。
+- 后续事项：如需确认真实数据库导入效果，需要提供可连接的 `DATABASE_URL` 后运行完整迁移并检查 `country_configs` 数据。
+
+## 2026-06-13 02:53 - 国家配置本地名称与中文备注
+
+- 完成内容：将国家配置的 `country_name` 调整为国家/地区本地语言显示名称，并新增 `remark` 字段保存中文国家/地区名称；更新基础建表迁移、国家种子迁移和兼容回填迁移，后台国家配置创建、编辑、列表、详情、审计和 OpenAPI 均支持中文备注字段；后台国家配置表格和 SideSheet 新增“备注（中文名称）”展示/录入。
+- 修改文件：
+  - `migrations/0042_country_locale_config.sql`
+  - `migrations/0052_schema_column_comments_zh.sql`
+  - `migrations/0054_seed_country_codes.sql`
+  - `migrations/0055_country_config_local_names_and_remark.sql`
+  - `src/modules/admin/routes.rs`
+  - `src/openapi.rs`
+  - `tests/admin_routes.rs`
+  - `tests/country_config_migration.rs`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/shared/DetailDrawer.tsx`
+  - `web/src/admin/actions/KycManagementPage.test.tsx`
+  - `pc/tests/backendAdapters.test.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --manifest-path Cargo.toml` 和 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行 `cargo test --manifest-path Cargo.toml --test country_config_migration -- --nocapture`，5 个测试通过。已执行 `cargo test --manifest-path Cargo.toml --test admin_routes -- --nocapture`，69 个测试通过；当前环境未设置 `DATABASE_URL`，真实 MySQL 集成分支按现有测试约定跳过。已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx src/admin/actions/KycManagementPage.test.tsx`，2 个测试文件、40 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `node --experimental-strip-types --test --test-name-pattern "maps public country configs" pc/tests/backendAdapters.test.ts`，目标 PC 国家映射测试通过。已执行本轮触碰文件 `git diff --check`，通过。
+- 后续事项：如需确认真实数据库回填效果，需要提供可连接的 `DATABASE_URL` 后运行完整迁移，并检查 `country_configs.country_name` 与 `country_configs.remark`。
+
+## 2026-06-13 02:59 - 新币项目符号改为下拉选择
+
+- 完成内容：后台“添加新币项目”弹窗将“项目符号”从文本输入改为 Semi 下拉选择，选项复用当前活跃资产列表；选择项目资产会自动同步对应资产符号，单独选择项目符号时也会同步对应项目资产，提交 payload 仍保持 `asset_id` 与 `symbol`。
+- 修改文件：
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx`，1 个测试文件、37 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `git diff --check -- web/src/admin/resources/ResourceCreateActions.tsx web/src/admin/resources/resourceConfigs.test.tsx`，通过。
+- 后续事项：无
+
+## 2026-06-13 03:06 - KYC 必传证件适配最新规则
+
+- 完成内容：后台 KYC 配置页将“必传证件”从旧的可勾选正反面配置，调整为适配最新国家证件类型规则的展示：证件正面和证件反面作为基础必传项，手持证件照由“证件类型规则”的 `handheld_document_types` 控制；保存时继续向后端发送兼容字段 `required_documents: ["identity_front", "identity_back"]`。
+- 修改文件：
+  - `web/src/admin/actions/KycManagementPage.tsx`
+  - `web/src/admin/actions/KycManagementPage.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- src/admin/actions/KycManagementPage.test.tsx`，1 个测试文件、3 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `git diff --check -- web/src/admin/actions/KycManagementPage.tsx web/src/admin/actions/KycManagementPage.test.tsx`，通过。
+- 后续事项：无
+
+## 2026-06-13 04:06 - PC 现货交易 API 接入修正
+
+- 完成内容：PC 现货下单适配后端契约，市价买入输入统一为基础资产数量，百分比按钮按当前价从计价资产余额换算数量；后端现货订单列表、取消和幂等返回补充 `created_at` 毫秒时间，PC 订单历史可显示真实下单时间；Bitget 行情 websocket 深度订阅从 `books5/books15` 修正为 `books50` 并用精确 channel 断言覆盖。
+- 修改文件：
+  - `pc/src/api/backendAdapters.ts`
+  - `pc/src/components/trade/OrderForm.vue`
+  - `pc/tests/backendAdapters.test.ts`
+  - `src/modules/spot/routes.rs`
+  - `src/modules/market/mod.rs`
+  - `tests/market_feed_worker.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix pc run type-check`，通过。已执行 `node --experimental-strip-types --test --test-name-pattern "maps backend spot order payloads|maps PC spot order requests" pc/tests/backendAdapters.test.ts`，2 个测试通过。已执行 `cargo test --test market_feed_worker provider_feed_configs_use_settings_urls_and_channel_payloads -- --nocapture`，通过。已执行 `cargo test --lib locked_spot_order_response_keeps_pair_id_without_locking_pair_row -- --nocapture`，通过。已执行 `cargo test --test spot_routes spot_create_market_order_idempotency_accepts_same_unused_price_replay -- --nocapture`，通过；当前环境未设置 `DATABASE_URL`，MySQL 集成分支按现有测试约定跳过。已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行 `git diff --check -- pc/src/api/backendAdapters.ts pc/src/components/trade/OrderForm.vue pc/tests/backendAdapters.test.ts src/modules/spot/routes.rs src/modules/market/mod.rs tests/market_feed_worker.rs`，通过。已执行 `rg -n 'books15|"channel":"books5"' src/modules/market/mod.rs tests/market_feed_worker.rs`，未发现残留。
+- 后续事项：如需验证真实现货下单、撤单、钱包冻结和订单刷新链路，需要提供可连接的 `DATABASE_URL` 与可登录 PC 测试账号后进行端到端验证。
+
+## 2026-06-13 04:24 - 现货市价买入即时成交
+
+- 完成内容：修复 PC 现货市价买入创建后只冻结不成交的问题；用户市价买单现在会读取后端缓存行情价作为执行价（无 Redis 缓存时回退请求参考价），若执行价超过提交参考价则拒绝重试；成交时自动创建系统流动性对手卖单，在同一事务内写入成交记录、结算用户钱包、释放买单价差冻结并推送成交事件。
+- 修改文件：
+  - `src/modules/spot/routes.rs`
+  - `tests/spot_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo test --test spot_routes spot_create_market_buy_order_fills_immediately_at_market_price -- --nocapture`，通过；当前环境未设置 `DATABASE_URL`，真实 MySQL 分支按现有测试约定跳过。已执行 `cargo test --test spot_routes spot_create_market_order_idempotency_accepts_same_unused_price_replay -- --nocapture`，通过；真实 MySQL 分支跳过。已执行 `cargo test --lib route_new_order_requires_market_reference_price -- --nocapture`，通过。已执行 `cargo test --test spot_routes spot_create_limit_buy_order_freezes_quote_wallet -- --nocapture`，通过；真实 MySQL 分支跳过。已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行 `git diff --check -- src/modules/spot/routes.rs tests/spot_routes.rs`，通过。
+- 后续事项：如需确认真实成交落库、系统流动性账户余额和 PC 端成交后刷新效果，需要提供可连接的 `DATABASE_URL` 与测试账号后做端到端验证。
+
+## 2026-06-13 05:37 - 快速充值接入 GMPay/Epusdt
+
+- 完成内容：新增快速充值配置与订单表，后端接入 GMPay/Epusdt 创建订单、MD5 签名、回调验签和幂等入账；后台新增“快速充值配置”和“快速充值订单”入口，配置页使用 Semi Tabs 分段编辑商户接口、充值资产和回调跳转；PC 端充值页新增 Quick Deposit，用户输入金额后创建订单并打开 GMPay 收银台链接；OpenAPI 补充用户端、后台和回调接口文档。
+- 修改文件：
+  - `Cargo.toml`
+  - `migrations/0057_quick_recharge_gmpay.sql`
+  - `src/lib.rs`
+  - `src/modules/mod.rs`
+  - `src/modules/quick_recharge.rs`
+  - `src/openapi.rs`
+  - `web/src/admin/actions/QuickRechargeConfigPage.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/routes.tsx`
+  - `web/src/admin/routes.test.tsx`
+  - `web/src/layouts/AdminLayout.tsx`
+  - `pc/src/api/wallet.ts`
+  - `pc/src/views/User/Recharge.vue`
+  - `pc/tests/backendAdapters.test.ts`
+  - `.trellis/tasks/06-13-quick-recharge-gmpay/prd.md`
+  - `.trellis/tasks/06-13-quick-recharge-gmpay/implement.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo test --manifest-path Cargo.toml quick_recharge -- --nocapture`，3 个快速充值签名单测通过。已执行 `cargo test --manifest-path Cargo.toml --test openapi_routes -- --nocapture`，8 个 OpenAPI 测试通过。已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行 `npm --prefix web test -- src/admin/routes.test.tsx`，1 个测试文件、25 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `npm --prefix pc run type-check`，通过。已执行 `node --experimental-strip-types --test --test-name-pattern "PC 2FA login security|PC residual user-center" pc/tests/backendAdapters.test.ts`，2 个测试通过。已执行本轮触碰文件 `git diff --check`，通过。当前环境未设置可连接的 `DATABASE_URL`，未执行真实 MySQL 迁移落库、真实 GMPay 支付和回调端到端验证。
+- 后续事项：如需验证真实支付链路，需要配置可用 `DATABASE_URL`、`credential_encryption_key`、GMPay/Epusdt 商户 PID/Secret、公开可访问的回调地址后，创建一笔快速充值订单并触发 GMPay 回调确认钱包入账。
+
+## 2026-06-13 07:54 - 现货限价买单到价触发成交
+
+- 完成内容：修复现货限价买单价格已到达但不会成交的问题；行情 ticker 写入缓存后会触发同交易对待成交限价买单扫描，买入限价大于等于最新价时自动使用系统流动性对手卖单完成撮合、写入成交、结算钱包并释放价差冻结；用户新建限价买单时如果 Redis 已有到价行情，也会在同一事务内直接成交。
+- 修改文件：
+  - `src/modules/spot/routes.rs`
+  - `src/modules/market/mod.rs`
+  - `tests/spot_routes.rs`
+  - `.trellis/tasks/06-13-06-13-spot-limit-fill-trigger/prd.md`
+  - `.trellis/tasks/06-13-06-13-spot-limit-fill-trigger/implement.jsonl`
+  - `.trellis/tasks/06-13-06-13-spot-limit-fill-trigger/check.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo test --manifest-path Cargo.toml --test spot_routes spot_limit_buy_order_fills_when_market_price_reaches_limit -- --nocapture`，通过；当前环境未设置 `DATABASE_URL`，真实 MySQL 分支按现有测试约定跳过。已执行 `cargo test --manifest-path Cargo.toml --test spot_routes spot_create_market_buy_order_fills_immediately_at_market_price -- --nocapture`，通过；真实 MySQL 分支跳过。已执行 `cargo test --manifest-path Cargo.toml --test spot_routes spot_create_limit_buy_order_freezes_quote_wallet -- --nocapture`，通过；真实 MySQL 分支跳过。已执行 `cargo test --manifest-path Cargo.toml --test market_feed_worker provider_feed_configs_use_settings_urls_and_channel_payloads -- --nocapture`，通过。已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行本轮触碰文件 `git diff --check`，通过。
+- 后续事项：如需确认真实成交落库、钱包冻结释放和 PC 订单刷新链路，需要提供可连接的 `DATABASE_URL`、Redis 行情缓存和可登录 PC 测试账号后做端到端验证。
+
+## 2026-06-13 08:06 - 现货限价买单真实行情触发修正
+
+- 完成内容：修正上一版限价触发只按 `pairs.symbol = snapshot.symbol` 精确匹配的问题，真实行情 `BTCUSDT` 现在可以命中数据库和 PC 下单使用的 `BTC-USDT` 交易对；同时在 depth 行情写入后使用卖一价触发买入限价单，避免盘口价格到达但 ticker 最新成交价未触发时订单继续卡在当前委托。
+- 修改文件：
+  - `src/modules/spot/routes.rs`
+  - `src/modules/market/mod.rs`
+  - `tests/spot_routes.rs`
+  - `.trellis/tasks/06-13-spot-limit-real-trigger-debug/prd.md`
+  - `.trellis/tasks/06-13-spot-limit-real-trigger-debug/implement.jsonl`
+  - `.trellis/tasks/06-13-spot-limit-real-trigger-debug/check.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo test --manifest-path Cargo.toml --test spot_routes spot_limit_buy_order_fills_when_market_price_reaches_limit -- --nocapture`，通过；该测试已改为用紧凑行情 symbol 触发带横杠交易对，但当前环境未设置 `DATABASE_URL`，真实 MySQL 分支按现有测试约定跳过。已执行 `cargo test --manifest-path Cargo.toml --test spot_routes spot_create_market_buy_order_fills_immediately_at_market_price -- --nocapture`，通过；真实 MySQL 分支跳过。已执行 `cargo test --manifest-path Cargo.toml --test spot_routes spot_create_limit_buy_order_freezes_quote_wallet -- --nocapture`，通过；真实 MySQL 分支跳过。已执行 `cargo test --manifest-path Cargo.toml --test market_feed_worker -- --nocapture`，31 个测试通过。已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行本轮触碰文件 `git diff --check`，通过。
+- 后续事项：如部署后仍不触发，需要检查后台“行情订阅配置”是否启用并包含对应交易对，因为后端必须收到 ticker/depth 行情后才能推动限价委托成交。
+
+## 2026-06-13 08:12 - 修复 0042 迁移 checksum 冲突
+
+- 完成内容：修复 `sqlx migrate run` 报 `migration 42 was previously applied but has been modified` 的迁移顺序问题；将已执行过的 `0042_country_locale_config.sql` 恢复为基础国家配置结构，不再包含后续 `remark` 字段；调整 `0054_seed_country_codes.sql`，让国家代码种子不依赖 `remark` 列；保留 `0055_country_config_local_names_and_remark.sql` 负责新增 `remark` 并回填本地国家名称和中文备注。
+- 修改文件：
+  - `migrations/0042_country_locale_config.sql`
+  - `migrations/0054_seed_country_codes.sql`
+  - `migrations/0055_country_config_local_names_and_remark.sql`
+  - `tests/country_config_migration.rs`
+  - `.trellis/tasks/06-13-migration-0042-checksum-fix/prd.md`
+  - `.trellis/tasks/06-13-migration-0042-checksum-fix/implement.jsonl`
+  - `.trellis/tasks/06-13-migration-0042-checksum-fix/check.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo test --manifest-path Cargo.toml --test country_config_migration -- --nocapture`，6 个测试通过。已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行本轮触碰文件尾随空白检查，未发现问题。未直接执行 `sqlx migrate run`，因为当前会话未确认目标 `DATABASE_URL`，避免误迁移真实数据库。
+- 后续事项：在目标数据库环境重新执行 `sqlx migrate run`；如果仍提示某个已执行迁移 checksum 不一致，需要按同样原则恢复该已执行迁移的原始内容，并把变化放入更后的新迁移。
+
+## 2026-06-13 08:17 - 修复 0052 迁移 checksum 冲突
+
+- 完成内容：修复 `sqlx migrate run` 报 `migration 52 was previously applied but has been modified` 的迁移顺序问题；将已执行过的 `0052_schema_column_comments_zh.sql` 恢复为当时的国家字段注释规则，不再包含后续 `country_configs.remark` 字段注释，也不再把 `country_name` 描述改为本地语言名称；保留 `0055_country_config_local_names_and_remark.sql` 负责新增 `remark` 字段及中文备注注释。
+- 修改文件：
+  - `migrations/0052_schema_column_comments_zh.sql`
+  - `tests/country_config_migration.rs`
+  - `.trellis/tasks/06-13-migration-0052-checksum-fix/prd.md`
+  - `.trellis/tasks/06-13-migration-0052-checksum-fix/implement.jsonl`
+  - `.trellis/tasks/06-13-migration-0052-checksum-fix/check.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo test --manifest-path Cargo.toml --test country_config_migration -- --nocapture`，7 个测试通过。已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行本轮触碰文件 `git diff --check`，通过。已确认 `0052` 仍覆盖 69 张目标表，且不再包含 `remark` 字段 CASE 规则。未直接执行 `sqlx migrate run`，因为当前会话未确认目标 `DATABASE_URL`，避免误迁移真实数据库。
+- 后续事项：在目标数据库环境重新执行 `sqlx migrate run`；如果继续提示其他已执行迁移 checksum 不一致，需要继续恢复对应已执行迁移的原始内容，并把新增结构放入更后的新迁移。
+
+## 2026-06-13 08:21 - 修复 0054 迁移 checksum 冲突
+
+- 完成内容：修复 `sqlx migrate run` 报 `migration 54 was previously applied but has been modified` 的迁移顺序问题；将已执行过的 `0054_seed_country_codes.sql` 恢复为原始英文国家名称种子，并移除后来补充的 `0055` 说明行；保留 `0055_country_config_local_names_and_remark.sql` 负责把英文种子回填成本地语言名称并新增中文备注。
+- 修改文件：
+  - `migrations/0054_seed_country_codes.sql`
+  - `tests/country_config_migration.rs`
+  - `.trellis/tasks/06-13-migration-0054-checksum-fix/prd.md`
+  - `.trellis/tasks/06-13-migration-0054-checksum-fix/implement.jsonl`
+  - `.trellis/tasks/06-13-migration-0054-checksum-fix/check.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo test --manifest-path Cargo.toml --test country_config_migration -- --nocapture`，7 个测试通过。已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行本轮触碰文件 `git diff --check`，通过。已确认 `0054` 仍包含 249 条国家/地区种子，不包含后续说明行，也不依赖 `remark` 列。未直接执行 `sqlx migrate run`，因为当前会话未确认目标 `DATABASE_URL`，避免误迁移真实数据库。
+- 后续事项：在目标数据库环境重新执行 `sqlx migrate run`；如果继续提示其他已执行迁移 checksum 不一致，需要继续恢复对应已执行迁移的原始内容，并把新增结构放入更后的新迁移。
+
+## 2026-06-13 08:37 - 充值地址池批量新增和限定资产多选
+
+- 完成内容：新增 `asset_symbols_json` 地址池多资产限定字段，保留旧 `asset_symbol` 单资产兼容；新增后台批量创建充值地址接口；钱包申请充值地址时支持按多资产限定匹配并优先分配；后台添加充值地址弹窗改为多行地址录入和资产下拉多选；地址池列表限定资产改为展示符号列表，空值显示任意资产。
+- 修改文件：
+  - `migrations/0058_deposit_address_pool_asset_symbols.sql`
+  - `src/modules/admin/routes.rs`
+  - `src/modules/wallet/routes.rs`
+  - `src/openapi.rs`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `tests/admin_routes.rs`
+  - `tests/wallet_routes.rs`
+  - `.trellis/tasks/06-13-deposit-address-pool-bulk-create-assets/prd.md`
+  - `.trellis/tasks/06-13-deposit-address-pool-bulk-create-assets/implement.jsonl`
+  - `.trellis/tasks/06-13-deposit-address-pool-bulk-create-assets/check.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt`，通过。已执行 `cargo check`，通过。已执行 `npm test -- resourceConfigs.test.tsx`（工作目录 `web/`），1 个测试文件、41 个测试通过。已执行 `cargo test admin_deposit_address_pool --test admin_routes`，2 个过滤测试通过；当前环境未设置 `DATABASE_URL`，真实 MySQL 分支按测试约定提前跳过。已执行 `cargo test wallet_deposit_address_is_assigned_from_pool_and_reused --test wallet_routes`，1 个过滤测试通过；当前环境未设置 `DATABASE_URL`，真实 MySQL 分支按测试约定提前跳过。已执行 `cargo test --test openapi_routes`，8 个测试通过。
+- 后续事项：在目标数据库环境执行 `sqlx migrate run` 应用新增 `0058` 迁移，并用真实后台账号创建多资产、多行地址池记录后，从 PC 端发起充值地址申请做一次端到端确认。
+
+## 2026-06-13 08:47 - 快速充值配置页宽松布局
+
+- 完成内容：后台快速充值配置页移除 Tab 分段挤压布局，改为商户接口、充值资产、回调跳转三组配置同时展开；使用 Semi Row/Col 响应式栅格拉开字段间距，顶部保留启用状态与配置元信息，底部保留保存确认动作；新增页面测试覆盖宽松栅格布局和保存 payload 不变。
+- 修改文件：
+  - `web/src/admin/actions/QuickRechargeConfigPage.tsx`
+  - `web/src/admin/actions/QuickRechargeConfigPage.test.tsx`
+  - `.trellis/tasks/06-13-quick-recharge-config-layout/prd.md`
+  - `.trellis/tasks/06-13-quick-recharge-config-layout/implement.jsonl`
+  - `.trellis/tasks/06-13-quick-recharge-config-layout/check.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm test -- QuickRechargeConfigPage.test.tsx`（工作目录 `web/`），1 个测试文件、2 个测试通过。已执行 `npm run typecheck`（工作目录 `web/`），通过。已执行本次触碰文件 `git diff --check`，通过。已启动 web dev server 并尝试打开 `http://127.0.0.1:3032/admin/wallet/quick-recharge`，页面按当前本地登录态重定向到 `/login`，未绕过管理员登录做真实页面截图验收。
+- 后续事项：使用有效管理员会话进入后台后，可再人工确认真实配置页在桌面宽度下三组字段是否符合预期。
+
+## 2026-06-13 09:36 - 快速充值后台测试配置
+
+- 完成内容：后台快速充值配置新增联通测试能力；后端新增 `POST /admin/api/v1/quick-recharge/config/test`，复用 GMPay/Epusdt 签名和创建订单逻辑发起测试订单，不写入用户快速充值订单、不触发钱包入账，并记录不含密钥的管理员审计日志；后台配置页新增测试金额、测试确认和服务商返回结果展示；OpenAPI 和测试同步覆盖新接口。
+- 修改文件：
+  - `src/modules/quick_recharge.rs`
+  - `src/openapi.rs`
+  - `tests/admin_routes.rs`
+  - `tests/openapi_routes.rs`
+  - `web/src/admin/actions/QuickRechargeConfigPage.tsx`
+  - `web/src/admin/actions/QuickRechargeConfigPage.test.tsx`
+  - `.trellis/tasks/06-13-quick-recharge-admin-test/prd.md`
+  - `.trellis/tasks/06-13-quick-recharge-admin-test/implement.jsonl`
+  - `.trellis/tasks/06-13-quick-recharge-admin-test/check.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- QuickRechargeConfigPage.test.tsx`，1 个测试文件、3 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `cargo test --manifest-path Cargo.toml quick_recharge -- --nocapture`，快速充值模块相关过滤测试通过，其中后台路由 MySQL 成功路径因当前环境未设置 `DATABASE_URL` 按测试约定跳过。已执行 `cargo test --manifest-path Cargo.toml --test openapi_routes -- --nocapture`，8 个测试通过。已执行 `cargo test --manifest-path Cargo.toml --test admin_routes admin_quick_recharge_test -- --nocapture`，2 个过滤测试通过，其中真实 MySQL 分支按测试约定跳过。已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行本轮触碰文件 `git diff --check`，通过。
+- 后续事项：如需验证真实 GMPay/Epusdt 测试订单，需要在目标环境配置可用 `DATABASE_URL`、商户 PID/Secret、API 地址和公开回调地址后，在后台点击“测试快速充值”确认服务商返回的收银台链接可打开。
+
+## 2026-06-13 09:40 - 修复快速充值无法启用
+
+- 完成内容：后台快速充值配置页开启 GMPay 开关后不再直接禁用保存按钮；启用时如缺少 API 基础地址、商户 PID、商户 Secret Key 或异步回调地址，会在页面用中文列出缺失项，并在确认保存时阻止无效提交；补充测试覆盖缺字段仍可点击保存、完整配置可提交 `enabled: true`。
+- 修改文件：
+  - `web/src/admin/actions/QuickRechargeConfigPage.tsx`
+  - `web/src/admin/actions/QuickRechargeConfigPage.test.tsx`
+  - `.trellis/tasks/06-13-quick-recharge-enable-fix/prd.md`
+  - `.trellis/tasks/06-13-quick-recharge-enable-fix/implement.jsonl`
+  - `.trellis/tasks/06-13-quick-recharge-enable-fix/check.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- QuickRechargeConfigPage.test.tsx`，1 个测试文件、5 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行本轮触碰文件 `git diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-13 22:24 - 修复 GMPay 快速充值开关状态提示
+
+- 完成内容：后台快速充值配置页的 GMPay Switch 切换后会明确显示“将启用/将停用，保存后生效”；保存确认按钮会根据开关草稿状态显示“保存并启用GMPay”或“保存并停用GMPay”；补充停用场景测试，确认保存时会提交 `enabled: false`。
+- 修改文件：
+  - `web/src/admin/actions/QuickRechargeConfigPage.tsx`
+  - `web/src/admin/actions/QuickRechargeConfigPage.test.tsx`
+  - `.trellis/tasks/06-13-quick-recharge-switch-fix/prd.md`
+  - `.trellis/tasks/06-13-quick-recharge-switch-fix/implement.jsonl`
+  - `.trellis/tasks/06-13-quick-recharge-switch-fix/check.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- QuickRechargeConfigPage.test.tsx`，1 个测试文件、6 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已用 Browser 打开 `http://127.0.0.1:3032/admin/wallet/quick-recharge`，当前本地登录态重定向到 `/login`，未绕过管理员登录做真实页面截图验收。
+- 后续事项：使用有效管理员会话进入后台后，可再人工确认 Switch 切换后的待保存状态和保存按钮文案。
+
+## 2026-06-13 22:35 - 修复 GMPay Cloudflare 403 错误提示
+
+- 完成内容：GMPay 快速充值下单请求新增 `Accept: application/json` 和服务端 `User-Agent`；服务商返回 Cloudflare 挑战页或 HTML 页面时，后端不再把整段 HTML 透传给后台，而是返回 `GMPAY_REQUEST_FAILED`、502 和可操作中文提示；补充 Cloudflare 403 回归测试；同步后端错误处理规范。
+- 修改文件：
+  - `src/modules/quick_recharge.rs`
+  - `.trellis/spec/backend/error-handling.md`
+  - `.trellis/tasks/06-13-quick-recharge-cloudflare-403/prd.md`
+  - `.trellis/tasks/06-13-quick-recharge-cloudflare-403/implement.jsonl`
+  - `.trellis/tasks/06-13-quick-recharge-cloudflare-403/check.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo test --manifest-path Cargo.toml quick_recharge -- --nocapture`，快速充值相关测试通过，新增 Cloudflare 403 场景通过；后台路由 MySQL 成功路径因当前环境未设置 `DATABASE_URL` 按测试约定跳过。已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行 `cargo check --manifest-path Cargo.toml`，通过。
+- 后续事项：目标环境仍需联系 GMPay/服务商确认可供服务端调用的 API 域名，或把本服务器 IP/API 路径加入 Cloudflare 放行名单；Cloudflare Managed Challenge 无法通过后端代码真正绕过。
+
+## 2026-06-14 02:49 - 现货订单类型和方向多语言
+
+- 完成内容：PC 端现货交易页的当前委托、历史委托表格不再直接显示 `LIMIT_PRICE`、`MARKET_PRICE`、`BUY`、`SELL`，改为按当前语言展示订单类型和方向；撤单确认弹窗中的方向也使用同一套 i18n 显示；兼容 `limit`、`market`、`buy`、`sell` 等小写值，未知值保留原文。
+- 修改文件：
+  - `pc/src/components/trade/OrderHistory.vue`
+  - `pc/src/i18n/index.ts`
+  - `.trellis/tasks/06-14-spot-order-enum-i18n/prd.md`
+  - `.trellis/tasks/06-14-spot-order-enum-i18n/implement.jsonl`
+  - `.trellis/tasks/06-14-spot-order-enum-i18n/check.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix pc run type-check`，通过。已执行 `rg` 检查 `OrderHistory.vue`，表格和撤单弹窗均通过格式化函数展示类型/方向。已执行本轮触碰文件 `git diff --check` 和新任务文件空白检查，均通过。
+- 后续事项：无。
+
+## 2026-06-14 02:52 - 现货订单状态多语言
+
+- 完成内容：PC 端现货交易页的当前委托、历史委托状态列改为按当前语言展示；覆盖 `TRADING`、`SUBMITTED`、`CANCELED`、`COMPLETED`、`REJECTED` 等 PC 状态码，并兼容 `open`、`pending`、`partially_filled`、`filled`、`cancelled` 等后端原始状态；撤单按钮仍保留原状态码判断，不改变业务逻辑。
+- 修改文件：
+  - `pc/src/components/trade/OrderHistory.vue`
+  - `pc/src/i18n/index.ts`
+  - `.trellis/tasks/06-14-spot-order-status-i18n/prd.md`
+  - `.trellis/tasks/06-14-spot-order-status-i18n/implement.jsonl`
+  - `.trellis/tasks/06-14-spot-order-status-i18n/check.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix pc run type-check`，通过。已执行 `rg` 检查 `OrderHistory.vue`，状态展示列通过 `formatOrderStatus` 输出，`order.status` 仅保留在撤单按钮可见性判断中。已执行本轮触碰文件 `git diff --check` 和新任务文件空白检查，均通过。
+- 后续事项：无。
+
+## 2026-06-14 02:59 - 历史委托显示成交价
+
+- 完成内容：后端 `/spot/orders` 订单响应新增 `average_price`，按 `spot_trades` 中订单作为买单或卖单的成交记录计算加权平均成交价；PC 订单 adapter 映射为 `filledPrice`；PC 端现货历史委托表格新增“成交价”列，无成交价时显示 `--`；补充中英文文案和映射测试。
+- 修改文件：
+  - `src/modules/spot/routes.rs`
+  - `tests/spot_routes.rs`
+  - `pc/src/api/backendAdapters.ts`
+  - `pc/tests/backendAdapters.test.ts`
+  - `pc/src/components/trade/OrderHistory.vue`
+  - `pc/src/i18n/index.ts`
+  - `.trellis/tasks/06-14-spot-history-deal-price/prd.md`
+  - `.trellis/tasks/06-14-spot-history-deal-price/implement.jsonl`
+  - `.trellis/tasks/06-14-spot-history-deal-price/check.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix pc run type-check`，通过。已执行 `node --test --test-name-pattern "maps backend spot order payloads into PC order history rows" pc/tests/backendAdapters.test.ts`，通过。已执行 `cargo check --manifest-path Cargo.toml`，通过。已执行 `cargo test --manifest-path Cargo.toml --test spot_routes admin_spot_lists_orders_and_trades_with_filters -- --nocapture`，通过；当前环境未设置 `DATABASE_URL`，真实 MySQL 分支按测试约定跳过。已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行本轮触碰文件 `git diff --check`，通过。曾执行 `node --test pc/tests/backendAdapters.test.ts`，本次订单映射用例通过，但整文件中既有 `PC country locale wiring uses the new backend country and news contracts` 断言因注册页仍使用 i18n key 而非英文静态文案失败，和本次成交价改动无关。
+- 后续事项：如需确认真实成交均价精度，需要在配置 `DATABASE_URL` 的环境执行订单列表接口端到端验证。
+
+## 2026-06-14 03:05 - 市价单委托价显示占位符
+
+- 完成内容：PC 端现货当前委托和历史委托的委托价列改为通过统一格式化函数展示；市价单不再显示后端空价格映射出的 `0`，改为显示 `--`；撤单确认弹窗中的价格也使用同一展示规则。
+- 修改文件：
+  - `pc/src/components/trade/OrderHistory.vue`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix pc run type-check`，通过。已执行 `rg` 检查 `OrderHistory.vue`，价格列和撤单弹窗均通过 `formatOrderPrice` 展示，未再直接展示 `order.price` 或 `cancelingOrder.price`。已执行本轮触碰文件 `git diff --check`，通过。
+- 后续事项：无。
+
+## 2026-06-14 03:20 - 现货卖出成交修复
+
+- 完成内容：补齐现货卖出侧成交链路；市价卖出现在会按参考价或最新行情价立即成交，限价卖出在行情价格达到或高于卖价时会被 `execute_triggered_spot_limit_orders` 触发成交；新增系统流动性买单对手方、卖出侧钱包结算、卖出成交私有事件 `side: sell`，并保留买入侧原有逻辑。
+- 修改文件：
+  - `src/modules/spot/routes.rs`
+  - `tests/spot_routes.rs`
+  - `.trellis/tasks/06-14-spot-sell-fill-fix/prd.md`
+  - `.trellis/tasks/06-14-spot-sell-fill-fix/implement.jsonl`
+  - `.trellis/tasks/06-14-spot-sell-fill-fix/check.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo check --manifest-path Cargo.toml`，通过。已执行 `cargo test --manifest-path Cargo.toml --test spot_routes spot_create_market_sell_order_fills_immediately_at_market_price -- --nocapture`，通过；当前环境未设置 `DATABASE_URL`，真实 MySQL 分支按测试约定跳过。已执行 `cargo test --manifest-path Cargo.toml --test spot_routes spot_limit_sell_order_fills_when_market_price_reaches_limit -- --nocapture`，通过；真实 MySQL 分支跳过。已执行 `cargo test --manifest-path Cargo.toml --test spot_routes spot_create_market_buy_order_fills_immediately_at_market_price -- --nocapture`，通过；真实 MySQL 分支跳过。已执行 `cargo test --manifest-path Cargo.toml --test spot_routes spot_limit_buy_order_fills_when_market_price_reaches_limit -- --nocapture`，通过；真实 MySQL 分支跳过。已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行本轮触碰文件 `git diff --check` 和新任务文件尾随空白检查，均通过。
+- 后续事项：如需确认真实钱包入账和订单状态落库，需要在配置 `DATABASE_URL` 的环境执行上述现货路由测试或做一次 PC 端卖出端到端验证。
+
+## 2026-06-14 04:10 - 闪兑交易对支持删除
+
+- 完成内容：后台闪兑交易对新增管理员 DELETE 接口，要求先禁用并填写原因；删除前检查报价、订单、新币闪兑规则等引用，避免外键失败变成 500；删除成功写入 `convert_pair.delete` 审计；后台资源行操作在已禁用的闪兑交易对上展示“删除”，确认后自动刷新列表；补充 Trellis 任务上下文和前后端回归测试。
+- 修改文件：
+  - `src/modules/admin/routes.rs`
+  - `tests/admin_routes.rs`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `.trellis/tasks/06-14-convert-pair-delete/prd.md`
+  - `.trellis/tasks/06-14-convert-pair-delete/implement.jsonl`
+  - `.trellis/tasks/06-14-convert-pair-delete/check.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --manifest-path Cargo.toml`，通过。已执行 `cargo test --manifest-path Cargo.toml --test admin_routes admin_convert_pair -- --nocapture`，5 个筛选测试通过；当前环境未设置 `DATABASE_URL`，真实 MySQL 成功路径按测试约定跳过。已执行 `cargo check --manifest-path Cargo.toml`，通过。已执行 `npm --prefix web test -- resourceConfigs.test.tsx`，1 个测试文件、42 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行本轮触碰文件和任务文件 `git diff --check`，通过。已执行 `python3 .trellis/scripts/task.py validate 06-14-convert-pair-delete`，通过。
+- 后续事项：如需确认真实库中的删除、审计和外键保护，需要在配置 `DATABASE_URL` 的环境执行 `cargo test --manifest-path Cargo.toml --test admin_routes admin_convert_pair -- --nocapture`。
+
+## 2026-06-14 04:46 - PC端闪兑功能对接
+
+- 完成内容：PC 端闪兑页改为使用后台 `/convert/pairs`、`/convert/quote`、`/convert/confirm`、`/convert/orders` 和钱包账户接口；闪兑交易对支持后台正反向配置映射，提交时先取最新报价再确认；页面按 Bitget Convert 参考改成双栏布局、From/To 大面板、中间切换按钮、搜索式资产下拉和最近订单区域；钱包资产 logo 会进入资产选择器展示，普通 `<select>` 已移除。
+- 修改文件：
+  - `pc/src/api/backendAdapters.ts`
+  - `pc/src/api/swap.ts`
+  - `pc/src/views/Swap.vue`
+  - `pc/src/i18n/index.ts`
+  - `pc/tests/backendAdapters.test.ts`
+  - `.trellis/tasks/06-14-pc-convert-integration/prd.md`
+  - `.trellis/tasks/06-14-pc-convert-integration/implement.jsonl`
+  - `.trellis/tasks/06-14-pc-convert-integration/check.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix pc run type-check`，通过。已执行 `node --test --test-name-pattern "convert|swap" pc/tests/backendAdapters.test.ts`，3 个测试通过。已执行浏览器验证：使用一次性测试账号登录本地 `http://127.0.0.1:3034/swap`，页面进入登录态后显示“立即将 USDT 兑换为 BTC”、From/To 面板、兑换按钮，原生 `select` 数量为 0，资产下拉可展开并显示搜索框及 BTC/USDT 列表。已执行 `git diff --check`，通过。已执行 `python3 .trellis/scripts/task.py validate 06-14-pc-convert-integration`，通过。曾执行完整 `node --test pc/tests/backendAdapters.test.ts`，本次闪兑相关测试均通过，整文件中既有 `PC country locale wiring uses the new backend country and news contracts` 因注册页使用 `t('auth.register_no_countries')` 而非英文静态文案失败，与本次闪兑改动无关。
+- 后续事项：当前测试账号余额为 0，浏览器验证未实际提交成交；如需验证真实闪兑入账，需要给测试账号充值后在 PC 页面发起一笔兑换。
+
+## 2026-06-14 04:48 - 现货委托按时间倒序
+
+- 完成内容：PC 端现货订单统一映射时按订单 `time/created_at` 从新到旧排序；当前委托由 `pending/open/partially_filled` 多状态合并后会重新全局倒序，历史委托由 `filled/cancelled/rejected` 多状态合并后也会重新全局倒序；补充乱序输入的回归断言。
+- 修改文件：
+  - `pc/src/api/backendAdapters.ts`
+  - `pc/tests/backendAdapters.test.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix pc run type-check`，通过。已执行 `node --test --test-name-pattern "maps backend spot order payloads into PC order history rows" pc/tests/backendAdapters.test.ts`，通过。已执行 `git diff --check -- pc/src/api/backendAdapters.ts pc/tests/backendAdapters.test.ts docs/superpowers/PROGRESS.md`，通过。
+- 后续事项：无。
+
+## 2026-06-14 04:57 - 闪兑支持市场价报价
+
+- 完成内容：修复 PC 闪兑请求 market 定价交易对时报 `only fixed convert pricing is supported by this route` 的问题；后端 `/convert/quote` 现在支持 `pricing_mode = market`，会通过对应现货交易对的 Redis ticker `last_price` 计算汇率，方向为 base->quote 时使用最新价，方向为 quote->base 时使用倒数；fixed 定价原有逻辑保持不变；补充 market 定价报价回归测试。
+- 修改文件：
+  - `src/modules/convert/routes.rs`
+  - `tests/convert_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行 `cargo check --manifest-path Cargo.toml`，通过。已执行 `cargo test --manifest-path Cargo.toml --test convert_routes convert_quote_supports_market_pricing_from_cached_ticker -- --nocapture`，通过；当前环境未设置 `DATABASE_URL`，真实 MySQL 成功路径按测试约定跳过但目标测试编译通过。已执行 `cargo test --manifest-path Cargo.toml --test convert_routes -- --nocapture`，10 个测试通过；真实 MySQL/Redis 成功路径按测试约定跳过。已执行 `git diff --check -- src/modules/convert/routes.rs tests/convert_routes.rs docs/superpowers/PROGRESS.md`，通过。
+- 后续事项：部署或本地验证时需要重启后端进程，并确保市场行情 worker 已把对应现货交易对 ticker 写入 Redis；否则 market 闪兑会返回“需要缓存市场价格”的校验错误。
+
+## 2026-06-14 05:12 - 闪兑订单移入个人中心
+
+- 完成内容：PC 闪兑页移除“最近闪兑订单”区域和订单请求，只保留兑换表单；个人中心 `/user/transaction` 新增“最近闪兑订单”卡片，使用现有 `fetchSwapOrders` 展示闪兑订单，支持刷新、空态、状态中文映射。
+- 修改文件：
+  - `pc/src/views/Swap.vue`
+  - `pc/src/views/User/Transaction.vue`
+  - `pc/tests/backendAdapters.test.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix pc run type-check`，通过。已执行 `node --test --test-name-pattern "swap|convert orders" pc/tests/backendAdapters.test.ts`，3 个测试通过。已执行静态检查 `rg -n "fetchSwapOrders|recent_orders|swap\.recent_orders" pc/src/views/Swap.vue pc/src/views/User/Transaction.vue pc/tests/backendAdapters.test.ts`，确认闪兑页不再包含订单列表入口，个人中心交易记录页接入 `fetchSwapOrders`。已执行 `git diff --check -- pc/src/views/Swap.vue pc/src/views/User/Transaction.vue pc/tests/backendAdapters.test.ts docs/superpowers/PROGRESS.md`，通过。浏览器验证尝试登录本地 `http://127.0.0.1:3034`，但 Browser 插件虚拟剪贴板不可用导致无法完成登录态页面验收。
+- 后续事项：可在可登录的浏览器会话中人工确认 `/user/transaction` 的闪兑订单卡片实际数据展示。
+
+## 2026-06-14 05:16 - 个人中心交易记录 Tabs 分栏
+
+- 完成内容：PC 个人中心 `/user/transaction` 将原交易流水和最近闪兑订单合并到同一卡片的 Tabs 中，默认显示 Transaction History，切换后显示最近闪兑订单；保留交易流水筛选/分页和闪兑订单刷新/空态/状态映射逻辑。
+- 修改文件：
+  - `pc/src/views/User/Transaction.vue`
+  - `pc/tests/backendAdapters.test.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix pc run type-check`，通过。已执行 `node --test --test-name-pattern "swap|convert orders" pc/tests/backendAdapters.test.ts`，3 个测试通过。已执行 `rg -n "transaction-tabs|activeTab === 'transactions'|activeTab === 'swapOrders'|fetchSwapOrders|swap\.recent_orders" pc/src/views/User/Transaction.vue pc/tests/backendAdapters.test.ts`，确认交易记录和最近闪兑订单已由 Tabs 分栏。已执行 `git diff --check -- pc/src/views/User/Transaction.vue pc/tests/backendAdapters.test.ts docs/superpowers/PROGRESS.md`，通过。已尝试打开本地 `http://127.0.0.1:3034/user/transaction`，当前浏览器未登录被重定向到 `/login`，因此未完成登录态视觉验收。
+- 后续事项：可在已登录浏览器会话中确认两个 Tab 的切换和表格展示效果。
+
+## 2026-06-14 05:21 - 闪兑记录列表文案与列调整
+
+- 完成内容：PC 个人中心交易记录页将“最近闪兑订单”文案改为“闪兑记录”（英文为 `Swap Records`）；闪兑记录表格移除“交易对”列，仅保留支付数量、获得数量、状态、时间；补充静态回归断言避免交易对列回退。
+- 修改文件：
+  - `pc/src/i18n/index.ts`
+  - `pc/src/views/User/Transaction.vue`
+  - `pc/tests/backendAdapters.test.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix pc run type-check`，通过。已执行 `node --test --test-name-pattern "swap|convert orders" pc/tests/backendAdapters.test.ts`，3 个测试通过。已执行 `rg -n "recent_orders: '闪兑记录'|recent_orders: 'Swap Records'|swap\\.pair|order\\.fromUnit\\s*}}/\\{\\{\\s*order\\.toUnit" pc/src/i18n/index.ts pc/src/views/User/Transaction.vue pc/tests/backendAdapters.test.ts`，确认文案已更新且页面不再包含闪兑交易对列。已执行 `git diff --check -- pc/src/views/User/Transaction.vue pc/src/i18n/index.ts pc/tests/backendAdapters.test.ts docs/superpowers/PROGRESS.md`，通过。
+- 后续事项：无。
+
+## 2026-06-14 05:29 - 闪兑交易对双向限额配置
+
+- 完成内容：闪兑交易对新增目标资产方向的最小/最大兑换金额配置；数据库新增 `target_min_amount`、`target_max_amount` 并回填旧数据；用户 `/convert/pairs` 返回两组限额，`/convert/quote` 会按正向/反向选择源资产或目标资产限额；后台添加闪兑交易对弹窗和列表展示两组限额；PC 闪兑正反向选项分别使用对应方向限额。
+- 修改文件：
+  - `migrations/0059_convert_pair_directional_amount_limits.sql`
+  - `src/modules/convert/routes.rs`
+  - `src/modules/admin/routes.rs`
+  - `pc/src/api/backendAdapters.ts`
+  - `pc/src/api/swap.ts`
+  - `pc/tests/backendAdapters.test.ts`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/shared/DetailDrawer.tsx`
+  - `tests/convert_routes.rs`
+  - `tests/admin_routes.rs`
+  - `.trellis/tasks/06-14-pc-convert-integration/prd.md`
+  - `.trellis/tasks/06-14-pc-convert-integration/implement.jsonl`
+  - `.trellis/tasks/06-14-pc-convert-integration/check.jsonl`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行 `cargo check --manifest-path Cargo.toml`，通过。已执行 `cargo test --manifest-path Cargo.toml --test convert_routes convert_quote_uses_target_asset_limits_for_reverse_direction -- --nocapture`，通过；当前环境未设置 `DATABASE_URL`，真实 MySQL 分支按测试约定跳过。已执行 `cargo test --manifest-path Cargo.toml --test admin_routes admin_convert_pair_routes_create_list_update_and_audit -- --nocapture`，通过；真实 MySQL 分支按测试约定跳过。已执行 `npm --prefix pc run type-check`，通过。已执行 `node --test --test-name-pattern "convert pairs|convert orders|swap" pc/tests/backendAdapters.test.ts`，3 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `npm --prefix web test -- resourceConfigs.test.tsx`，42 个测试通过。
+- 后续事项：部署前需执行 `sqlx migrate run` 应用 `0059` 新迁移；如需验证真实库约束和回填，请在配置 `DATABASE_URL` 的环境重跑上述后端路由测试。
+
+## 2026-06-14 05:39 - 后台表格筛选工具栏与显示模式
+
+- 完成内容：后台资源页移除筛选 Tab，改为参考图中的表格顶部结构：左侧操作区、右侧筛选区、查询与重置按钮；新增表格“自适应列表 / 紧凑列表”切换，默认自适应，紧凑模式使用横向滚动和小尺寸表格；共享筛选栏改为 Semi 输入框前缀搜索图标并保留无障碍标签。
+- 修改文件：
+  - `web/src/admin/resources/AdminResourcePage.tsx`
+  - `web/src/shared/FilterBar.tsx`
+  - `web/src/shared/DataTable.tsx`
+  - `web/src/styles.css`
+  - `web/src/admin/resources/AdminResourcePage.test.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `web/src/shared/DataTable.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm test -- AdminResourcePage.test.tsx DataTable.test.tsx resourceConfigs.test.tsx`，58 个测试通过。已执行 `npm run typecheck`，通过。已执行 `npx eslint src/shared/DataTable.tsx src/shared/FilterBar.tsx src/admin/resources/AdminResourcePage.tsx src/shared/DataTable.test.tsx src/admin/resources/AdminResourcePage.test.tsx src/admin/resources/resourceConfigs.test.tsx`，通过。已启动本地 `web` dev server 并打开 `/admin/assets`，当前无后台登录态被重定向到登录页，未做登录后视觉验收。曾执行 `npm run lint -- ...`，但该脚本会固定跑完整 `web` 目录，目前被既有 `QuickRechargeConfigPage.test.tsx` 未使用 `user` 和 `ResourceCreateActions.tsx` 未使用 `initialDepositAddressPool` 阻塞，与本次改动无关。
+- 后续事项：全量 `web` lint 需要单独清理上述既有未使用变量后再恢复通过。
+
+## 2026-06-14 06:01 - 闪兑交易对支持编辑
+
+- 完成内容：后台闪兑交易对行级操作新增“修改” SideSheet，可编辑源资产、目标资产、定价模式、价差率、源/目标资产最小最大金额和启用状态；后端 `/admin/api/v1/convert/pairs/:id` PATCH 扩展为兼容状态切换和完整配置更新，支持将最大金额提交为 `null` 清空为无上限，并保留审计日志 before/after。
+- 修改文件：
+  - `src/modules/admin/routes.rs`
+  - `tests/admin_routes.rs`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行 `cargo check --manifest-path Cargo.toml`，通过。已执行 `cargo test --manifest-path Cargo.toml --test admin_routes admin_convert_pair_routes_create_list_update_and_audit -- --nocapture`，通过；当前环境未设置 `DATABASE_URL`，真实 MySQL 分支按测试约定跳过。已执行 `npm --prefix web test -- resourceConfigs.test.tsx`，43 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `npx eslint src/admin/resources/ResourceCreateActions.tsx src/admin/resources/resourceConfigs.test.tsx`，通过。已执行 `git diff --check -- src/modules/admin/routes.rs tests/admin_routes.rs web/src/admin/resources/ResourceCreateActions.tsx web/src/admin/resources/resourceConfigs.test.tsx`，通过。已执行 `npm --prefix web run lint`，当前仅被既有 `web/src/admin/actions/QuickRechargeConfigPage.test.tsx` 未使用 `user` 阻塞，与本次闪兑改动无关。
+- 后续事项：如需验证真实数据库的编辑和审计落库，请在设置 `DATABASE_URL` 后重跑 `admin_convert_pair_routes_create_list_update_and_audit`；全量 `web` lint 需要单独清理快速充值测试里的既有未使用变量。
+
+## 2026-06-14 06:35 - 闪兑手续费配置
+
+- 完成内容：闪兑交易对新增手续费率配置；用户报价按支付资产数量计算手续费并用扣除手续费后的净额计算到账数量；报价和订单保存手续费率/手续费金额快照；后台添加/编辑/列表/订单列展示手续费字段；PC 闪兑页展示报价手续费，PC adapter 同步解析手续费字段。
+- 修改文件：
+  - `migrations/0060_convert_fee_config.sql`
+  - `src/modules/convert/routes.rs`
+  - `src/modules/convert/mod.rs`
+  - `src/modules/admin/routes.rs`
+  - `tests/convert_routes.rs`
+  - `tests/convert_repositories.rs`
+  - `tests/admin_routes.rs`
+  - `pc/src/api/backendAdapters.ts`
+  - `pc/src/api/swap.ts`
+  - `pc/src/views/Swap.vue`
+  - `pc/src/i18n/index.ts`
+  - `pc/tests/backendAdapters.test.ts`
+  - `web/src/admin/resources/ResourceCreateActions.tsx`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行 `cargo check --manifest-path Cargo.toml`，通过。已执行 `cargo test --manifest-path Cargo.toml --test convert_routes convert_quote_applies_pair_fee_rate_and_settles_net_amount -- --nocapture`，通过；当前环境未设置 `DATABASE_URL`，真实 MySQL 分支按测试约定跳过。已执行 `cargo test --manifest-path Cargo.toml --test admin_routes admin_convert_pair_routes_create_list_update_and_audit -- --nocapture`，通过；真实 MySQL 分支按测试约定跳过。已执行 `cargo test --manifest-path Cargo.toml --test convert_repositories redis_quote_ttl_cache_stores_expected_json_shape -- --nocapture`，通过；当前环境未设置 `REDIS_URL`，真实 Redis 分支按测试约定跳过。已执行 `cargo test --manifest-path Cargo.toml --test convert_repositories mysql_convert_order_insert_is_idempotent_by_quote_id -- --nocapture`，通过；真实 MySQL 分支按测试约定跳过。已执行 `npm --prefix pc run type-check`，通过。已执行 `node --test --test-name-pattern "convert pairs|convert quote|convert orders|swap" pc/tests/backendAdapters.test.ts`，4 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `npm --prefix web test -- resourceConfigs.test.tsx`，43 个测试通过。已执行 `cd web && npx eslint src/admin/resources/ResourceCreateActions.tsx src/admin/resources/resourceConfigs.tsx src/admin/resources/resourceConfigs.test.tsx`，通过。已执行 `git diff --check -- migrations/0060_convert_fee_config.sql src/modules/convert/routes.rs src/modules/convert/mod.rs src/modules/admin/routes.rs tests/convert_routes.rs tests/convert_repositories.rs tests/admin_routes.rs pc/src/api/backendAdapters.ts pc/src/api/swap.ts pc/src/views/Swap.vue pc/src/i18n/index.ts pc/tests/backendAdapters.test.ts web/src/admin/resources/ResourceCreateActions.tsx web/src/admin/resources/resourceConfigs.tsx web/src/admin/resources/resourceConfigs.test.tsx`，通过。
+- 后续事项：部署前需执行 `sqlx migrate run` 应用 `0060` 新迁移；如需验证真实库手续费计算和订单快照，请在配置 `DATABASE_URL`、`REDIS_URL` 的环境重跑上述后端测试。
+
+## 2026-06-14 06:41 - 后台表格业务明细样式
+
+- 完成内容：后台共享 `DataTable` 增加业务表格样式入口，参考截图调整 Semi Table 的表头分割线、行高、单元格留白、固定操作列、状态标签、行级按钮和分页区域视觉；继续保留“自适应列表 / 紧凑列表”两种显示模式。
+- 修改文件：
+  - `web/src/shared/DataTable.tsx`
+  - `web/src/shared/DataTable.test.tsx`
+  - `web/src/styles.css`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- DataTable.test.tsx AdminResourcePage.test.tsx`，2 个测试文件、16 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `cd web && npx eslint src/shared/DataTable.tsx src/shared/DataTable.test.tsx src/admin/resources/AdminResourcePage.tsx src/admin/resources/AdminResourcePage.test.tsx`，通过。已确认 Semi CSS 变量为 RGB 三元组格式，`rgba(var(--semi-...))` 写法有效。已尝试打开本地 `/admin/assets` 做浏览器视觉验收，但当前无后台登录态，被重定向到登录页，未能进入真实数据表格页截图验收。
+- 后续事项：如需像截图一样逐页验收真实数据表格效果，需要在有后台登录态的浏览器中打开资源页确认。
+
+## 2026-06-14 06:52 - PC 交易记录页面多语言
+
+- 完成内容：PC 端交易记录页面标题、交易记录 Tab、筛选项、表头、状态、空数据和分页文案接入 i18n；交易类型名称改为通过翻译 key 渲染；补充中英文 `transaction.*` 文案，并增加测试防止 `Transaction History` 回退为页面硬编码。
+- 修改文件：
+  - `pc/src/views/User/Transaction.vue`
+  - `pc/src/i18n/index.ts`
+  - `pc/tests/backendAdapters.test.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix pc run type-check`，通过。已执行 `node --test --test-name-pattern "PC swap page uses backend quote and user center shows convert orders" pc/tests/backendAdapters.test.ts`，1 个测试通过。已确认 `pc/package.json` 没有 lint 脚本。
+- 后续事项：无。
+
+## 2026-06-14 06:56 - 后台用户管理显示邀请码
+
+- 完成内容：后台用户列表和用户详情接口返回 `invite_code` 字段，从 `invite_codes` 表读取用户自己的邀请码；后台用户管理表格新增“邀请码”列；补充前后端测试覆盖列表、详情和表格配置。
+- 修改文件：
+  - `src/modules/admin/routes.rs`
+  - `tests/admin_routes.rs`
+  - `web/src/admin/resources/resourceConfigs.tsx`
+  - `web/src/admin/resources/resourceConfigs.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行 `cargo check --manifest-path Cargo.toml`，通过。已执行 `cargo test --manifest-path Cargo.toml --test admin_routes admin_lists_users_and_reads_user_detail -- --nocapture`，通过；当前环境未设置 `DATABASE_URL`，真实 MySQL 分支按测试约定跳过。已执行 `npm --prefix web run typecheck`，通过。已执行 `npm --prefix web test -- resourceConfigs.test.tsx`，1 个测试文件、44 个测试通过。已执行 `cd web && npx eslint src/admin/resources/resourceConfigs.tsx src/admin/resources/resourceConfigs.test.tsx`，通过。已执行 `git diff --check -- src/modules/admin/routes.rs tests/admin_routes.rs web/src/admin/resources/resourceConfigs.tsx web/src/admin/resources/resourceConfigs.test.tsx docs/superpowers/PROGRESS.md`，通过。
+- 后续事项：如需验证真实数据库的邀请码返回，请在配置 `DATABASE_URL` 的环境重跑 `admin_lists_users_and_reads_user_detail`。
+
+## 2026-06-14 07:13 - 后台创建用户生成 6 位邀请码
+
+- 完成内容：将用户端 6 位随机邀请码生成函数开放为模块内复用；后台创建用户时在同一事务内写入 `owner_type='user'` 的 6 位大写字母/数字邀请码，唯一键冲突时重试；后台创建用户响应立即返回该邀请码；补充测试断言接口返回与数据库落库的邀请码格式一致。
+- 修改文件：
+  - `src/modules/user/routes.rs`
+  - `src/modules/admin/routes.rs`
+  - `tests/admin_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --manifest-path Cargo.toml -- --check`，通过。已执行 `cargo check --manifest-path Cargo.toml`，通过。已执行 `cargo test --manifest-path Cargo.toml user_invite_code_is_six_uppercase_alphanumeric_chars -- --nocapture`，通过。已执行 `cargo test --manifest-path Cargo.toml --test admin_routes admin_create_user_creates_hashed_user_and_audit_log -- --nocapture`，通过；当前环境未设置 `DATABASE_URL`，真实 MySQL 分支按测试约定跳过。已执行 `git diff --check -- src/modules/user/routes.rs src/modules/admin/routes.rs tests/admin_routes.rs docs/superpowers/PROGRESS.md`，通过。
+- 后续事项：如需验证真实数据库中后台创建用户时邀请码入库，请在配置 `DATABASE_URL` 的环境重跑 `admin_create_user_creates_hashed_user_and_audit_log`。
+
+## 2026-06-14 07:25 - PC 交易记录显示手续费
+
+- 完成内容：用户钱包流水接口新增 `fee` 返回字段，并按流水来源追溯闪兑订单、现货成交、提现申请和旧提现记录的手续费；PC 交易记录 adapter 不再将手续费写死为 0，改为展示后端返回值；补充前后端回归测试。
+- 修改文件：
+  - `src/modules/wallet/routes.rs`
+  - `tests/wallet_routes.rs`
+  - `pc/src/api/backendAdapters.ts`
+  - `pc/tests/backendAdapters.test.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt -- src/modules/wallet/routes.rs tests/wallet_routes.rs`，通过。已执行 `node --test --test-name-pattern "maps backend wallet ledger into the current transaction history page shape" pc/tests/backendAdapters.test.ts`，1 个测试通过。已执行 `cargo test --test wallet_routes wallet_routes_return_authenticated_user_accounts_and_ledger`，通过。已执行 `npm --prefix pc run type-check`，通过。已执行 `git diff --check -- src/modules/wallet/routes.rs tests/wallet_routes.rs pc/src/api/backendAdapters.ts pc/tests/backendAdapters.test.ts docs/superpowers/PROGRESS.md`，通过。
+- 后续事项：无。
+
+## 2026-06-14 07:28 - 后台表格默认显示自适应列表
+
+- 完成内容：后台资源页表格模式按钮改为显示当前模式，默认状态下显示“自适应列表”；点击后切换到紧凑模式并显示“紧凑列表”，避免默认页面看起来像是紧凑列表。
+- 修改文件：
+  - `web/src/admin/resources/AdminResourcePage.tsx`
+  - `web/src/admin/resources/AdminResourcePage.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- AdminResourcePage.test.tsx DataTable.test.tsx`，2 个测试文件、16 个测试通过。已执行 `npm --prefix web run typecheck`，通过。已执行 `cd web && npx eslint src/admin/resources/AdminResourcePage.tsx src/admin/resources/AdminResourcePage.test.tsx`，通过。已执行 `git diff --check -- web/src/admin/resources/AdminResourcePage.tsx web/src/admin/resources/AdminResourcePage.test.tsx`，通过。
+- 后续事项：无。
+
+## 2026-06-14 07:50 - PC 端高频页面 i18n 扫描修复
+
+- 完成内容：扫描 PC 端用户可见硬编码文案，补充中英文 i18n 词条；登录、资产、充值、提现、安全设置、新闻、首页、行情、现货下单、现货订单、合约下单/订单、秒合约、借款、OTC、KYC 等高频页面改为通过 i18n 渲染；修复现货/合约订单类型、方向、状态、撤单/平仓弹窗和旧 BinaryOptions 页的未国际化提示。
+- 修改文件：
+  - `pc/src/i18n/index.ts`
+  - `pc/src/components/layout/Header.vue`
+  - `pc/src/components/trade/ContractOrderForm.vue`
+  - `pc/src/components/trade/ContractOrders.vue`
+  - `pc/src/components/trade/MarketList.vue`
+  - `pc/src/components/trade/OrderForm.vue`
+  - `pc/src/components/trade/OrderHistory.vue`
+  - `pc/src/views/auth/Login.vue`
+  - `pc/src/views/auth/ForgotPassword.vue`
+  - `pc/src/views/BinaryOptions.vue`
+  - `pc/src/views/Contract.vue`
+  - `pc/src/views/Home.vue`
+  - `pc/src/views/LaunchpadTrade.vue`
+  - `pc/src/views/Loan.vue`
+  - `pc/src/views/Market.vue`
+  - `pc/src/views/News.vue`
+  - `pc/src/views/OTC.vue`
+  - `pc/src/views/SecondOptions.vue`
+  - `pc/src/views/User/Assets.vue`
+  - `pc/src/views/User/KYC.vue`
+  - `pc/src/views/User/LoanOrders.vue`
+  - `pc/src/views/User/Recharge.vue`
+  - `pc/src/views/User/Security.vue`
+  - `pc/src/views/User/Withdraw.vue`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix pc run type-check`，通过。已执行 PC 端明显未国际化文案扫描，未再命中本次关注的页面标题、按钮、弹窗和 toast 文案。已执行 `git diff --check` 覆盖本次 PC i18n 修改文件，通过。
+- 后续事项：本次未做逐页浏览器视觉验收；如需继续清理低频页面，可再针对 PC 全量页面做一轮人工 UI 巡检。
+
+## 2026-06-14 07:59 - PC 行情页参考 Binance 总览重构
+
+- 完成内容：PC `/market` 页面从左侧列表 + 图表改为行情总览结构，参考 Binance Markets Overview 增加顶部总览区、搜索框、热门币种/新币/涨幅榜/成交量榜四个卡片、行情 Tab、报价资产筛选、排序按钮、收藏和完整行情表格；点击卡片、交易对或“交易”按钮仍进入现货交易页；补充中英文 `market.*` 文案。
+- 修改文件：
+  - `pc/src/views/Market.vue`
+  - `pc/src/i18n/index.ts`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix pc run type-check`，通过。已启动 `npm --prefix pc run dev -- --host 127.0.0.1` 并在 in-app browser 打开 `http://127.0.0.1:1610/market` 验证桌面布局；窄屏 `390x844` 检查仅表格容器按预期横向滚动，无页面级异常溢出；浏览器控制台无 error/warning。已执行 `git diff --check -- pc/src/views/Market.vue pc/src/i18n/index.ts docs/superpowers/PROGRESS.md`，通过。
+- 后续事项：当前本地行情接口只返回 1 个交易对，因此多币种榜单效果需要连接真实/更多行情数据后再做视觉确认。
