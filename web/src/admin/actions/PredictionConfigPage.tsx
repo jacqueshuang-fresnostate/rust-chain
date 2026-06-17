@@ -1,11 +1,14 @@
-import { IconRefresh, IconSave, IconSync } from '@douyinfe/semi-icons';
-import { Button, Card, Col, Input, Row, Space, Switch, Table, Tabs, Toast, Typography } from '@douyinfe/semi-ui';
+import { IconList, IconPulse, IconRefresh, IconSave, IconSetting, IconSync } from '@douyinfe/semi-icons';
+import { Banner, Button, Card, Col, Descriptions, Input, Row, Space, Switch, Table, Tabs, Tag, Toast, Typography } from '@douyinfe/semi-ui';
 import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { type ComponentPropsWithoutRef, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { apiRequest } from '../../api/client';
+import { PageHeader } from '../../layouts/PageHeader';
 import { TimestampText } from '../../shared/TimestampText';
 import { AdminMultiSelect, AdminSelect, AdminTextArea, AdminTextInput, type SemiSelectOption } from '../../shared/SemiFormControls';
+import { StatusTag } from '../../shared/StatusTag';
+import { containedTableScroll, containedTableStyle } from '../../shared/tableLayout';
 
 const { Title, Text } = Typography;
 
@@ -72,6 +75,9 @@ type SyncLogsResponse = {
   logs: PredictionSyncLog[];
 };
 
+type PredictionTab = 'assets' | 'settings' | 'sync';
+type PredictionTableProps = ComponentPropsWithoutRef<'table'>;
+
 const settlementModeOptions: SemiSelectOption[] = [
   { value: 'manual_confirm', label: '外部结果 + 人工确认' },
   { value: 'auto', label: '外部结果 + 自动结算' }
@@ -82,6 +88,63 @@ const invalidRefundPolicyOptions: SemiSelectOption[] = [
   { value: 'refund_stake_only', label: '只退本金' },
   { value: 'manual', label: '无效结算时人工选择' }
 ];
+
+const predictionTabs = [
+  { itemKey: 'settings', tab: '全局策略', icon: <IconSetting aria-hidden="true" /> },
+  { itemKey: 'assets', tab: '下注资产', icon: <IconList aria-hidden="true" /> },
+  { itemKey: 'sync', tab: '同步任务', icon: <IconPulse aria-hidden="true" /> }
+];
+
+const triggerTypeLabels: Record<string, string> = {
+  manual: '手动触发',
+  scheduled: '定时同步',
+  system: '系统触发'
+};
+
+const syncStatusMeta: Record<string, { color: 'green' | 'grey' | 'light-blue' | 'orange' | 'red'; label: string }> = {
+  failed: { color: 'red', label: '失败' },
+  running: { color: 'light-blue', label: '同步中' },
+  skipped: { color: 'grey', label: '已跳过' },
+  success: { color: 'green', label: '成功' },
+  pending: { color: 'orange', label: '待执行' }
+};
+
+type FieldColumnSize = 'full' | 'half' | 'third';
+
+const fieldColumnProps: Record<FieldColumnSize, { md?: number; xl?: number; xs: number }> = {
+  full: { xs: 24 },
+  half: { xs: 24, md: 12 },
+  third: { xs: 24, md: 12, xl: 8 }
+};
+
+function AssetConfigTable(props: PredictionTableProps) {
+  return <table {...props} aria-label="竞猜下注资产配置表" />;
+}
+
+function SyncLogTable(props: PredictionTableProps) {
+  return <table {...props} aria-label="竞猜同步日志表" />;
+}
+
+function FieldLabel({ children, label }: { children: ReactNode; label: string }) {
+  return (
+    <label style={{ display: 'grid', gap: 6, width: '100%' }}>
+      {label}
+      {children}
+    </label>
+  );
+}
+
+function FieldColumn({ children, size = 'half' }: { children: ReactNode; size?: FieldColumnSize }) {
+  return <Col {...fieldColumnProps[size]}>{children}</Col>;
+}
+
+function ConfigGrid({ children }: { children: ReactNode }) {
+  return (
+    <Row gutter={[24, 18]} style={{ width: '100%' }}>
+      {children}
+    </Row>
+  );
+}
 
 function settingsToValues(settings: PredictionSettings): PredictionSettingsValues {
   return {
@@ -119,7 +182,28 @@ function nonNegativeAmount(value: string, label: string) {
   return trimmed;
 }
 
+function optionLabel(options: SemiSelectOption[], value?: string | null) {
+  if (!value) return '-';
+  return options.find((option) => option.value === value)?.label ?? value;
+}
+
+function triggerTypeLabel(value?: string | null) {
+  if (!value) return '-';
+  return triggerTypeLabels[value] ?? value;
+}
+
+function syncStatusTag(value?: string | null) {
+  if (!value) return <span>-</span>;
+  const meta = syncStatusMeta[value] ?? { color: 'light-blue' as const, label: value };
+  return <Tag color={meta.color}>{meta.label}</Tag>;
+}
+
+function joinText(items: string[]) {
+  return items.length ? items.join('、') : '-';
+}
+
 export function PredictionConfigPage() {
+  const [activeTab, setActiveTab] = useState<PredictionTab>('settings');
   const [assetConfigs, setAssetConfigs] = useState<PredictionAssetConfig[]>([]);
   const [assetDrafts, setAssetDrafts] = useState<Record<string, PredictionAssetDraft>>({});
   const [loading, setLoading] = useState(true);
@@ -207,6 +291,10 @@ export function PredictionConfigPage() {
         })
       });
       setAssetConfigs((current) => current.map((item) => (item.asset_id === updated.asset_id ? updated : item)));
+      setAssetDrafts((current) => ({
+        ...current,
+        [String(updated.asset_id)]: { enabled: updated.enabled, maxPayoutAmount: String(updated.max_payout_amount ?? '0') }
+      }));
       Toast.success(`${asset.asset_symbol} 下注配置已保存`);
     } catch (error) {
       Toast.error(error instanceof Error ? error.message : '保存资产配置失败');
@@ -233,20 +321,22 @@ export function PredictionConfigPage() {
       { dataIndex: 'asset_symbol', title: '资产' },
       {
         dataIndex: 'enabled',
-        title: '允许下注',
+        title: '状态',
+        width: 150,
         render: (_value, record) => {
           const draft = assetDrafts[String(record.asset_id)];
           return (
             <Switch
+              aria-label={`${record.asset_symbol} 允许下注`}
               checked={Boolean(draft?.enabled)}
-              checkedText="开"
+              checkedText="启用"
               onChange={(checked) =>
                 setAssetDrafts((current) => ({
                   ...current,
                   [String(record.asset_id)]: { enabled: checked, maxPayoutAmount: current[String(record.asset_id)]?.maxPayoutAmount ?? '0' }
                 }))
               }
-              uncheckedText="关"
+              uncheckedText="停用"
             />
           );
         }
@@ -254,6 +344,7 @@ export function PredictionConfigPage() {
       {
         dataIndex: 'max_payout_amount',
         title: '默认最大赔付',
+        width: 240,
         render: (_value, record) => {
           const draft = assetDrafts[String(record.asset_id)];
           return (
@@ -266,17 +357,19 @@ export function PredictionConfigPage() {
                 }))
               }
               style={{ width: 180 }}
+              type="number"
               value={draft?.maxPayoutAmount ?? '0'}
             />
           );
         }
       },
-      { dataIndex: 'updated_at', title: '更新时间', render: (value) => <TimestampText value={typeof value === 'number' ? value : null} /> },
+      { dataIndex: 'updated_at', title: '更新时间', width: 180, render: (value) => <TimestampText value={typeof value === 'number' ? value : null} /> },
       {
         dataIndex: 'asset_id',
         title: '操作',
+        width: 120,
         render: (_value, record) => (
-          <Button icon={<IconSave />} loading={savingAssetId === record.asset_id} onClick={() => saveAssetConfig(record)} theme="light" type="primary">
+          <Button icon={<IconSave aria-hidden="true" />} loading={savingAssetId === record.asset_id} onClick={() => saveAssetConfig(record)} theme="light" type="primary">
             保存
           </Button>
         )
@@ -287,123 +380,239 @@ export function PredictionConfigPage() {
 
   const syncLogColumns = useMemo<Array<ColumnProps<PredictionSyncLog>>>(
     () => [
-      { dataIndex: 'trigger_type', title: '触发方式' },
-      { dataIndex: 'status', title: '状态' },
-      { dataIndex: 'imported_count', title: '新增' },
-      { dataIndex: 'updated_count', title: '更新' },
-      { dataIndex: 'error_message', title: '错误信息', render: (value) => <span>{typeof value === 'string' && value ? value : '-'}</span> },
-      { dataIndex: 'started_at', title: '开始时间', render: (value) => <TimestampText value={typeof value === 'number' ? value : null} /> },
-      { dataIndex: 'finished_at', title: '结束时间', render: (value) => <TimestampText value={typeof value === 'number' ? value : null} /> }
+      { dataIndex: 'trigger_type', title: '触发方式', width: 140, render: (value) => <span>{triggerTypeLabel(typeof value === 'string' ? value : null)}</span> },
+      { dataIndex: 'status', title: '状态', width: 120, render: (value) => syncStatusTag(typeof value === 'string' ? value : null) },
+      { dataIndex: 'imported_count', title: '新增', width: 100 },
+      { dataIndex: 'updated_count', title: '更新', width: 100 },
+      { dataIndex: 'error_message', title: '错误信息', ellipsis: true, render: (value) => <span>{typeof value === 'string' && value ? value : '-'}</span> },
+      { dataIndex: 'started_at', title: '开始时间', width: 180, render: (value) => <TimestampText value={typeof value === 'number' ? value : null} /> },
+      { dataIndex: 'finished_at', title: '结束时间', width: 180, render: (value) => <TimestampText value={typeof value === 'number' ? value : null} /> }
     ],
     []
   );
 
+  const allowedAssetLabels = useMemo(() => {
+    const selectedIds = new Set(settingsValues?.allowedAssetIds ?? []);
+    return assetConfigs.filter((asset) => selectedIds.has(String(asset.asset_id))).map((asset) => asset.asset_symbol);
+  }, [assetConfigs, settingsValues]);
+
+  const enabledAssetCount = useMemo(() => assetConfigs.filter((asset) => asset.enabled).length, [assetConfigs]);
+
+  const overviewData = useMemo(
+    () => [
+      { key: '同步开关', value: <StatusTag value={settingsValues?.syncEnabled ?? settings?.sync_enabled ?? false} /> },
+      { key: '允许资产', value: `${allowedAssetLabels.length} 个` },
+      { key: '已启用资产', value: `${enabledAssetCount} / ${assetConfigs.length}` },
+      { key: '默认手续费率', value: settingsValues?.defaultFeeRate ?? settings?.default_fee_rate ?? '-' },
+      { key: '结算模式', value: optionLabel(settlementModeOptions, settingsValues?.defaultSettlementMode ?? settings?.default_settlement_mode) },
+      { key: '最近同步', value: <TimestampText value={settings?.last_successful_sync_at ?? null} /> }
+    ],
+    [allowedAssetLabels.length, assetConfigs.length, enabledAssetCount, settings, settingsValues]
+  );
+
+  const syncData = useMemo(
+    () => [
+      { key: '最近状态', value: syncStatusTag(settings?.last_sync_status ?? null) },
+      { key: '最近成功', value: <TimestampText value={settings?.last_successful_sync_at ?? null} /> },
+      { key: '开始时间', value: <TimestampText value={settings?.last_sync_started_at ?? null} /> },
+      { key: '结束时间', value: <TimestampText value={settings?.last_sync_finished_at ?? null} /> },
+      { key: '新增市场', value: settings?.last_sync_imported_count ?? '-' },
+      { key: '更新市场', value: settings?.last_sync_updated_count ?? '-' }
+    ],
+    [settings]
+  );
+
   return (
-    <main className="exchange-page">
-      <Card bordered={false} className="admin-resource-shell">
-        <div className="admin-resource-head">
-          <div>
-            <Title heading={4} style={{ marginBottom: 6 }}>
-              竞猜配置
-            </Title>
-            <Text type="tertiary">管理 Polymarket 同步、本地下注资产、手续费、封顶和结算策略</Text>
-          </div>
-          <Space>
-            <Button icon={<IconRefresh />} loading={loading} onClick={loadPage} theme="borderless">
-              刷新
-            </Button>
-          </Space>
-        </div>
-        <Tabs lazyRender type="line">
-          <Tabs.TabPane itemKey="settings" tab="全局策略">
-            {settingsValues ? (
-              <Space align="start" style={{ width: '100%' }} vertical>
-                <Switch
-                  checked={settingsValues.syncEnabled}
-                  checkedText="启用同步"
-                  onChange={(checked) => setSettingsValues({ ...settingsValues, syncEnabled: checked })}
-                  uncheckedText="关闭同步"
-                />
-                <Row gutter={[16, 16]}>
-                  <Col span={8}>
-                    <AdminTextInput ariaLabel="同步间隔秒数" onChange={(value) => setSettingsValues({ ...settingsValues, syncIntervalSeconds: value })} value={settingsValues.syncIntervalSeconds} />
-                  </Col>
-                  <Col span={8}>
-                    <AdminTextInput ariaLabel="默认手续费率" onChange={(value) => setSettingsValues({ ...settingsValues, defaultFeeRate: value })} value={settingsValues.defaultFeeRate} />
-                  </Col>
-                  <Col span={8}>
-                    <AdminTextInput ariaLabel="报价有效秒数" onChange={(value) => setSettingsValues({ ...settingsValues, quoteTtlSeconds: value })} value={settingsValues.quoteTtlSeconds} />
-                  </Col>
-                  <Col span={12}>
-                    <AdminSelect
-                      ariaLabel="默认结算模式"
-                      onChange={(value) => setSettingsValues({ ...settingsValues, defaultSettlementMode: value })}
-                      optionList={settlementModeOptions}
-                      value={settingsValues.defaultSettlementMode}
-                    />
-                  </Col>
-                  <Col span={12}>
-                    <AdminSelect
-                      ariaLabel="无效市场退款策略"
-                      onChange={(value) => setSettingsValues({ ...settingsValues, defaultInvalidRefundPolicy: value })}
-                      optionList={invalidRefundPolicyOptions}
-                      value={settingsValues.defaultInvalidRefundPolicy}
-                    />
-                  </Col>
-                  <Col span={12}>
-                    <AdminMultiSelect
-                      ariaLabel="全局允许下注资产"
-                      optionList={assetOptions}
-                      placeholder="选择允许下注的虚拟资产"
-                      value={settingsValues.allowedAssetIds}
-                      onChange={(value) => setSettingsValues({ ...settingsValues, allowedAssetIds: value })}
-                    />
-                  </Col>
-                  <Col span={12}>
-                    <AdminTextArea
-                      ariaLabel="Polymarket 标签或分类"
-                      autosize
-                      onChange={(value) => setSettingsValues({ ...settingsValues, syncTags: value })}
-                      placeholder="每行一个 tag_id 或 tag_slug；留空同步全部活跃市场"
-                      value={settingsValues.syncTags}
-                    />
-                  </Col>
-                </Row>
-                <Button icon={<IconSave />} loading={savingSettings} onClick={saveSettings} theme="solid" type="primary">
+    <main className="exchange-page admin-action-page">
+      <PageHeader
+        actions={
+          <Button icon={<IconRefresh aria-hidden="true" />} loading={loading} onClick={loadPage} theme="borderless">
+            刷新
+          </Button>
+        }
+        title="竞猜配置"
+      />
+      <Card bordered={false} className="admin-action-workbench" shadows="always">
+        <Space align="start" spacing={20} vertical style={{ width: '100%' }}>
+          <Descriptions align="plain" column={6} data={overviewData} layout="horizontal" />
+          <Tabs
+            activeKey={activeTab}
+            className="admin-action-tabs"
+            collapsible="auto"
+            onChange={(nextTab) => setActiveTab(nextTab as PredictionTab)}
+            tabList={predictionTabs}
+            type="button"
+          />
+
+          {activeTab === 'settings' && settingsValues ? (
+            <Space align="start" spacing={18} vertical style={{ width: '100%' }}>
+              <div className="admin-action-workbench-grid">
+                <section className="admin-action-panel">
+                  <Title heading={4}>同步来源</Title>
+                  <ConfigGrid>
+                    <FieldColumn size="full">
+                      <Space align="center" spacing={12}>
+                        <Switch
+                          aria-label="Polymarket 同步开关"
+                          checked={settingsValues.syncEnabled}
+                          checkedText="启用"
+                          onChange={(checked) => setSettingsValues({ ...settingsValues, syncEnabled: checked })}
+                          uncheckedText="停用"
+                        />
+                        <Text>Polymarket 市场同步</Text>
+                      </Space>
+                    </FieldColumn>
+                    <FieldColumn>
+                      <FieldLabel label="同步间隔秒数">
+                        <AdminTextInput
+                          ariaLabel="同步间隔秒数"
+                          onChange={(value) => setSettingsValues({ ...settingsValues, syncIntervalSeconds: value })}
+                          type="number"
+                          value={settingsValues.syncIntervalSeconds}
+                        />
+                      </FieldLabel>
+                    </FieldColumn>
+                    <FieldColumn>
+                      <FieldLabel label="报价有效秒数">
+                        <AdminTextInput
+                          ariaLabel="报价有效秒数"
+                          onChange={(value) => setSettingsValues({ ...settingsValues, quoteTtlSeconds: value })}
+                          type="number"
+                          value={settingsValues.quoteTtlSeconds}
+                        />
+                      </FieldLabel>
+                    </FieldColumn>
+                    <FieldColumn size="full">
+                      <FieldLabel label="Polymarket 标签或分类">
+                        <AdminTextArea
+                          ariaLabel="Polymarket 标签或分类"
+                          autosize
+                          onChange={(value) => setSettingsValues({ ...settingsValues, syncTags: value })}
+                          placeholder="每行一个 tag_id 或 tag_slug；留空同步全部活跃市场"
+                          value={settingsValues.syncTags}
+                        />
+                      </FieldLabel>
+                    </FieldColumn>
+                  </ConfigGrid>
+                </section>
+
+                <section className="admin-action-panel">
+                  <Title heading={4}>交易与结算</Title>
+                  <ConfigGrid>
+                    <FieldColumn size="full">
+                      <FieldLabel label="全局允许下注资产">
+                        <AdminMultiSelect
+                          ariaLabel="全局允许下注资产"
+                          optionList={assetOptions}
+                          placeholder="选择允许下注的虚拟资产"
+                          value={settingsValues.allowedAssetIds}
+                          onChange={(value) => setSettingsValues({ ...settingsValues, allowedAssetIds: value })}
+                        />
+                      </FieldLabel>
+                      <Text type="secondary">{joinText(allowedAssetLabels)}</Text>
+                    </FieldColumn>
+                    <FieldColumn>
+                      <FieldLabel label="默认手续费率">
+                        <AdminTextInput
+                          ariaLabel="默认手续费率"
+                          onChange={(value) => setSettingsValues({ ...settingsValues, defaultFeeRate: value })}
+                          type="number"
+                          value={settingsValues.defaultFeeRate}
+                        />
+                      </FieldLabel>
+                    </FieldColumn>
+                    <FieldColumn>
+                      <FieldLabel label="默认结算模式">
+                        <AdminSelect
+                          ariaLabel="默认结算模式"
+                          onChange={(value) => setSettingsValues({ ...settingsValues, defaultSettlementMode: value })}
+                          optionList={settlementModeOptions}
+                          value={settingsValues.defaultSettlementMode}
+                        />
+                      </FieldLabel>
+                    </FieldColumn>
+                    <FieldColumn size="full">
+                      <FieldLabel label="无效市场退款策略">
+                        <AdminSelect
+                          ariaLabel="无效市场退款策略"
+                          onChange={(value) => setSettingsValues({ ...settingsValues, defaultInvalidRefundPolicy: value })}
+                          optionList={invalidRefundPolicyOptions}
+                          value={settingsValues.defaultInvalidRefundPolicy}
+                        />
+                      </FieldLabel>
+                    </FieldColumn>
+                  </ConfigGrid>
+                </section>
+              </div>
+              <Row justify="end" style={{ width: '100%' }} type="flex">
+                <Button icon={<IconSave aria-hidden="true" />} loading={savingSettings} onClick={saveSettings} theme="solid" type="primary">
                   保存全局策略
                 </Button>
-              </Space>
-            ) : null}
-          </Tabs.TabPane>
-          <Tabs.TabPane itemKey="assets" tab="下注资产">
-            <Table columns={assetColumns} dataSource={assetConfigs} loading={loading} pagination={false} rowKey="asset_id" />
-          </Tabs.TabPane>
-          <Tabs.TabPane itemKey="sync" tab="同步状态">
-            <Space style={{ width: '100%' }} vertical>
-              <Row gutter={[16, 16]}>
-                <Col span={6}>
-                  <Text type="tertiary">最近状态</Text>
-                  <Title heading={6}>{settings?.last_sync_status ?? '-'}</Title>
-                </Col>
-                <Col span={6}>
-                  <Text type="tertiary">最近成功</Text>
-                  <div><TimestampText value={settings?.last_successful_sync_at ?? null} /></div>
-                </Col>
-                <Col span={6}>
-                  <Text type="tertiary">新增 / 更新</Text>
-                  <Title heading={6}>{settings ? `${settings.last_sync_imported_count} / ${settings.last_sync_updated_count}` : '-'}</Title>
-                </Col>
-                <Col span={6}>
-                  <Button icon={<IconSync />} loading={syncing} onClick={triggerSync} theme="solid" type="primary">
-                    立即同步
-                  </Button>
-                </Col>
               </Row>
-              {settings?.last_sync_error ? <Text type="danger">{settings.last_sync_error}</Text> : null}
-              <Table columns={syncLogColumns} dataSource={syncLogs} loading={loading} pagination={false} rowKey="id" />
             </Space>
-          </Tabs.TabPane>
-        </Tabs>
+          ) : null}
+
+          {activeTab === 'assets' ? (
+            <section className="admin-action-panel">
+              <Space align="center" spacing={12} style={{ width: '100%', justifyContent: 'space-between' }}>
+                <Title heading={4} style={{ margin: 0 }}>下注资产</Title>
+                <Space spacing={8}>
+                  <Tag color="green">已启用 {enabledAssetCount}</Tag>
+                  <Tag color="grey">共 {assetConfigs.length}</Tag>
+                </Space>
+              </Space>
+              <Table
+                aria-label="竞猜下注资产配置表"
+                bordered
+                columns={assetColumns}
+                components={{ body: { outer: AssetConfigTable } }}
+                dataSource={assetConfigs}
+                loading={loading}
+                pagination={false}
+                rowKey="asset_id"
+                scroll={containedTableScroll}
+                style={containedTableStyle}
+              />
+            </section>
+          ) : null}
+
+          {activeTab === 'sync' ? (
+            <Space align="start" spacing={18} vertical style={{ width: '100%' }}>
+              <section className="admin-action-panel">
+                <Row gutter={[24, 16]} style={{ width: '100%' }} type="flex" align="middle" justify="space-between">
+                  <Col xs={24} lg={18}>
+                    <Title heading={4}>同步任务</Title>
+                    <Descriptions align="plain" column={3} data={syncData} layout="horizontal" />
+                  </Col>
+                  <Col xs={24} lg={6}>
+                    <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+                      <Button icon={<IconSync aria-hidden="true" />} loading={syncing} onClick={triggerSync} theme="solid" type="primary">
+                        立即同步
+                      </Button>
+                    </Space>
+                  </Col>
+                </Row>
+                {settings?.last_sync_error ? <Banner fullMode={false} type="danger" description={settings.last_sync_error} /> : null}
+              </section>
+
+              <section className="admin-action-panel">
+                <Title heading={4}>同步日志</Title>
+                <Table
+                  aria-label="竞猜同步日志表"
+                  bordered
+                  columns={syncLogColumns}
+                  components={{ body: { outer: SyncLogTable } }}
+                  dataSource={syncLogs}
+                  loading={loading}
+                  pagination={false}
+                  rowKey="id"
+                  scroll={containedTableScroll}
+                  style={containedTableStyle}
+                />
+              </section>
+            </Space>
+          ) : null}
+        </Space>
       </Card>
     </main>
   );

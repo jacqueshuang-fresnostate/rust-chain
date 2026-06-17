@@ -2,6 +2,13 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-06-17 11:45 - 优化后台竞猜配置页面
+
+- 完成内容：后台“竞猜配置”页改为 Semi 工作台结构，顶部新增策略概览，使用按钮式 Tabs 分离全局策略、下注资产、同步任务；全局策略拆分为同步来源与交易结算两栏，下注资产表格改为 100% 容器宽度并支持中文状态开关，同步任务页新增状态描述、错误 Banner 和中文同步日志；补充页面级测试覆盖布局结构和保存 payload。
+- 修改文件：`web/src/admin/actions/PredictionConfigPage.tsx`, `web/src/admin/actions/PredictionConfigPage.test.tsx`, `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix web test -- src/admin/actions/PredictionConfigPage.test.tsx`，2 项通过；已执行 `npx --prefix web eslint web/src/admin/actions/PredictionConfigPage.tsx web/src/admin/actions/PredictionConfigPage.test.tsx`，通过；已执行 `npm --prefix web run typecheck`，通过；已执行 `git diff --check -- web/src/admin/actions/PredictionConfigPage.tsx web/src/admin/actions/PredictionConfigPage.test.tsx`，通过；已执行尾随空白/冲突标记检查，无输出；已启动 `npm --prefix web run dev -- --host 127.0.0.1 --port 5184` 并用内置浏览器打开 `/admin/prediction/settings`，当前本地无管理员登录态被重定向到 `/login`，浏览器错误日志为空，临时 dev server 已停止。
+- 后续事项：如需真实页面可视验收，需要提供可用后台管理员登录态。
+
 ## 2026-06-17 11:20 - 修复竞猜资产配置查询旧库列错误
 
 - 完成内容：修复后台竞猜资产配置列表 SQL 错误引用不存在的 `assets.updated_at` 列导致 MySQL 1054 的问题；未配置过竞猜规则的资产现在使用 `assets.created_at` 作为更新时间兜底；新增单测防止该查询再次依赖 `assets.updated_at`，并补充 prediction spec 里的 schema 兼容约定。
