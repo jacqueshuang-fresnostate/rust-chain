@@ -68,6 +68,7 @@
 - Effective allowed assets are global `prediction_settings.allowed_asset_ids_json` unless `prediction_markets.allowed_asset_ids_override_json` is present.
 - Effective payout cap is per-asset `prediction_asset_configs.max_payout_amount` unless overridden by `prediction_markets.payout_cap_overrides_json`.
 - Effective fee rate is global `prediction_settings.default_fee_rate` unless `prediction_markets.fee_rate_override` is present.
+- Admin prediction asset config lists may left-join all active `assets` before an asset has a prediction config row. The base `assets` table only guarantees `created_at`; do not select `assets.updated_at` as a fallback timestamp.
 - Admin tables should show user email, market title, asset symbol, order number, and Chinese labels. They should not expose raw quote id, user id, market id, or asset id as primary display columns unless needed for a technical detail view.
 - PC pages must display `orderNo` for prediction orders, not raw `id`.
 - PC market lists must localize dynamic market text. If the API includes locale documents such as `title_i18n_json`, `description_i18n_json`, `category_i18n_json`, or outcome label i18n fields, the current locale wins. If Polymarket only supplies English text, the PC page must apply a local fallback for common prediction-market phrases so Chinese users do not see an all-English market list.
@@ -83,6 +84,7 @@
 - Asset not globally allowed or not allowed by market override -> validation error.
 - Asset config disabled or missing -> validation error.
 - Theoretical payout exceeds effective cap where cap is greater than zero -> validation error.
+- Admin prediction asset config list references `assets.updated_at` -> MySQL 1054 unknown-column error on the current schema; use `configs.updated_at` or fall back to `assets.created_at`.
 - Quote missing, expired, consumed, or owned by another user -> validation error before wallet mutation.
 - Insufficient wallet available balance for stake or fee -> wallet error and no order insert should be committed.
 - Manual invalid refund policy selected but no concrete policy supplied at settlement time -> validation error.

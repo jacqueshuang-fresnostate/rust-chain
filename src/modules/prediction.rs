@@ -40,6 +40,15 @@ const REFUND_STAKE_ONLY: &str = "refund_stake_only";
 const REFUND_MANUAL: &str = "manual";
 const REF_TYPE_PREDICTION_ORDER: &str = "prediction_order";
 const POLYMARKET_GAMMA_EVENTS_URL: &str = "https://gamma-api.polymarket.com/events";
+const ADMIN_ASSET_CONFIGS_SQL: &str = r#"SELECT assets.id AS asset_id, assets.symbol AS asset_symbol,
+                  COALESCE(configs.enabled, FALSE) AS enabled,
+                  COALESCE(configs.max_payout_amount, 0) AS max_payout_amount,
+                  COALESCE(configs.created_at, assets.created_at) AS created_at,
+                  COALESCE(configs.updated_at, assets.created_at) AS updated_at
+           FROM assets
+           LEFT JOIN prediction_asset_configs configs ON configs.asset_id = assets.id
+           WHERE assets.status = 'active'
+           ORDER BY assets.symbol ASC"#;
 const DEFAULT_SYNC_POLL_SECONDS: u64 = 30;
 const DEFAULT_SYNC_LIMIT: &str = "100";
 
@@ -531,19 +540,9 @@ async fn list_admin_asset_configs(
     AdminAuth(_claims): AdminAuth,
     State(state): State<AppState>,
 ) -> AppResult<Json<PredictionAssetConfigsResponse>> {
-    let configs = sqlx::query_as::<_, PredictionAssetConfigResponse>(
-        r#"SELECT assets.id AS asset_id, assets.symbol AS asset_symbol,
-                  COALESCE(configs.enabled, FALSE) AS enabled,
-                  COALESCE(configs.max_payout_amount, 0) AS max_payout_amount,
-                  COALESCE(configs.created_at, assets.created_at) AS created_at,
-                  COALESCE(configs.updated_at, assets.updated_at) AS updated_at
-           FROM assets
-           LEFT JOIN prediction_asset_configs configs ON configs.asset_id = assets.id
-           WHERE assets.status = 'active'
-           ORDER BY assets.symbol ASC"#,
-    )
-    .fetch_all(&mysql_pool(&state)?)
-    .await?;
+    let configs = sqlx::query_as::<_, PredictionAssetConfigResponse>(ADMIN_ASSET_CONFIGS_SQL)
+        .fetch_all(&mysql_pool(&state)?)
+        .await?;
     Ok(Json(PredictionAssetConfigsResponse { configs }))
 }
 
@@ -2485,5 +2484,13 @@ mod tests {
         assert_eq!(parsed.outcome_yes_label, "Yes");
         assert_eq!(parsed.outcome_no_label, "No");
         assert_eq!(parsed.yes_price, decimal_str("0.42"));
+    }
+
+    #[test]
+    fn admin_asset_config_query_does_not_require_assets_updated_at() {
+        assert!(!ADMIN_ASSET_CONFIGS_SQL.contains("assets.updated_at"));
+        assert!(
+            ADMIN_ASSET_CONFIGS_SQL.contains("COALESCE(configs.updated_at, assets.created_at)")
+        );
     }
 }

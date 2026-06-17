@@ -2,6 +2,13 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-06-17 11:20 - 修复竞猜资产配置查询旧库列错误
+
+- 完成内容：修复后台竞猜资产配置列表 SQL 错误引用不存在的 `assets.updated_at` 列导致 MySQL 1054 的问题；未配置过竞猜规则的资产现在使用 `assets.created_at` 作为更新时间兜底；新增单测防止该查询再次依赖 `assets.updated_at`，并补充 prediction spec 里的 schema 兼容约定。
+- 修改文件：`src/modules/prediction.rs`, `.trellis/spec/backend/prediction-markets.md`, `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --manifest-path Cargo.toml`，通过；已执行 `cargo test --manifest-path Cargo.toml admin_asset_config_query_does_not_require_assets_updated_at`，通过；已执行 `cargo test --manifest-path Cargo.toml extracts_markets_from_polymarket_events_with_context`，通过；已执行 `cargo check --manifest-path Cargo.toml --all-targets`，通过；已执行 `rg -n "assets\\.updated_at" src tests migrations web pc -g '!node_modules'`，业务代码无引用，仅剩单测断言字符串。
+- 后续事项：无。
+
 ## 2026-06-17 11:10 - 优化PC竞猜市场页面和动态文本多语言
 
 - 完成内容：PC `/prediction` 页面从基础列表改为预测市场工作台结构，新增市场搜索、分类筛选、热门/成交量/结束时间排序、顶部统计卡片、市场卡片概率条和右侧固定下单面板；新增预测市场动态文本本地化工具，支持优先读取后端 i18n 文档，并在中文环境下对 Polymarket 常见英文标题、分类、YES/NO 选项做中文兜底；补充本地化测试与预测市场 spec 约定。
