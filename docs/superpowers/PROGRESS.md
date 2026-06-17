@@ -2,6 +2,13 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-06-17 11:10 - 优化PC竞猜市场页面和动态文本多语言
+
+- 完成内容：PC `/prediction` 页面从基础列表改为预测市场工作台结构，新增市场搜索、分类筛选、热门/成交量/结束时间排序、顶部统计卡片、市场卡片概率条和右侧固定下单面板；新增预测市场动态文本本地化工具，支持优先读取后端 i18n 文档，并在中文环境下对 Polymarket 常见英文标题、分类、YES/NO 选项做中文兜底；补充本地化测试与预测市场 spec 约定。
+- 修改文件：`pc/src/views/Prediction.vue`, `pc/src/api/prediction.ts`, `pc/src/utils/predictionLocale.ts`, `pc/src/i18n/index.ts`, `pc/tests/prediction-localization.test.ts`, `.trellis/spec/backend/prediction-markets.md`, `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `npm --prefix pc run type-check`，通过；已执行 `node --test --experimental-strip-types tests/prediction-localization.test.ts tests/user-center-loan-orders.test.ts`（目录 `pc`），4 项通过；已执行 `git diff --check -- pc/src/views/Prediction.vue pc/src/i18n/index.ts pc/src/api/prediction.ts pc/src/utils/predictionLocale.ts pc/tests/prediction-localization.test.ts`，通过；已执行尾随空白/冲突标记检查，无输出；已启动 `npm --prefix pc run dev -- --host 127.0.0.1 --port 5177` 并用内置浏览器打开 `http://127.0.0.1:5177/prediction`，桌面 1280 宽度和移动 390 宽度均无横向溢出且无 Vite 错误层。
+- 后续事项：当前中文兜底是常见 Polymarket 语句规则，不等同完整机器翻译；如果后续要覆盖所有长描述，建议后台同步时生成并保存正式的 `*_i18n_json` 文档。
+
 ## 2026-06-17 09:52 - 竞猜模块契约规范更新
 
 - 完成内容：新增后端 code-spec，记录 Polymarket 竞猜模块的同步来源、数据库表、用户/后台 API、后端 Quote、本地虚拟资产下注、钱包流水、结算/退款、PC 与后台订单号展示等跨层契约；同步把 `PM` 竞猜订单号前缀加入统一订单号展示规范，并更新后端规范索引。

@@ -1,6 +1,7 @@
 import request from './request'
 import { backendApiUrl } from './backendAdapters'
 import { formatBusinessOrderNo } from '@/utils/orderNo'
+import type { PredictionLocalizedTextDocument } from '@/utils/predictionLocale'
 
 export type PredictionOutcome = 'yes' | 'no'
 export type PredictionOrderStatus = 'open' | 'settled' | 'refunded'
@@ -20,11 +21,16 @@ export interface PredictionConfig {
 export interface PredictionMarket {
   id: number
   title: string
+  title_i18n_json?: PredictionLocalizedTextDocument | null
   description?: string | null
+  description_i18n_json?: PredictionLocalizedTextDocument | null
   image_url?: string | null
   category?: string | null
+  category_i18n_json?: PredictionLocalizedTextDocument | null
   outcome_yes_label: string
+  outcome_yes_label_i18n_json?: PredictionLocalizedTextDocument | null
   outcome_no_label: string
+  outcome_no_label_i18n_json?: PredictionLocalizedTextDocument | null
   yes_price: string
   no_price: string
   volume?: string | null

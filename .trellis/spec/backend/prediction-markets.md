@@ -70,6 +70,7 @@
 - Effective fee rate is global `prediction_settings.default_fee_rate` unless `prediction_markets.fee_rate_override` is present.
 - Admin tables should show user email, market title, asset symbol, order number, and Chinese labels. They should not expose raw quote id, user id, market id, or asset id as primary display columns unless needed for a technical detail view.
 - PC pages must display `orderNo` for prediction orders, not raw `id`.
+- PC market lists must localize dynamic market text. If the API includes locale documents such as `title_i18n_json`, `description_i18n_json`, `category_i18n_json`, or outcome label i18n fields, the current locale wins. If Polymarket only supplies English text, the PC page must apply a local fallback for common prediction-market phrases so Chinese users do not see an all-English market list.
 
 ### 4. Validation & Error Matrix
 
@@ -102,6 +103,7 @@
 - Wallet/settlement tests should assert stake freeze, fee debit, payout/refund ledger types, idempotency replay, expired quote rejection, and payout cap rejection when those paths are changed.
 - Web admin typecheck and resource config tests must cover prediction resources and `PM` order-number display.
 - PC typecheck and static tests must cover header/sidebar entries, route registration, adapter `orderNo` mapping, and user order tab rendering.
+- PC localization tests must cover configured locale documents and common Polymarket fallback phrases such as Fed rate cuts, FDV after token launch, categories, and YES/NO outcomes.
 - Migration validation should be run in an environment without prior checksum conflicts. If historical migration checksums are already dirty, document why `sqlx migrate run` was skipped and never edit old applied migrations.
 
 ### 7. Wrong vs Correct
