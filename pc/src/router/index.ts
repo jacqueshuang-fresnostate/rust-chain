@@ -34,6 +34,11 @@ const router = createRouter({
           component: () => import('@/views/News.vue')
         },
         {
+          path: 'news/detail/:id',
+          name: 'NewsDetail',
+          component: () => import('@/views/News.vue')
+        },
+        {
           path: 'market',
           name: 'Market',
           component: () => import('@/views/Market.vue')
@@ -54,7 +59,7 @@ const router = createRouter({
           component: () => import('@/views/Swap.vue')
         },
           {
-              path: 'trade/:symbol?',
+              path: 'spot/:symbol?',
               name: 'Trade',
               component: () => import('@/views/Trade.vue')
           },
@@ -83,6 +88,11 @@ const router = createRouter({
             path: 'loan',
             name: 'Loan',
             component: () => import('@/views/Loan.vue')
+        },
+        {
+          path: 'prediction',
+          name: 'Prediction',
+          component: () => import('@/views/Prediction.vue')
         },
         {
           path: 'user',
@@ -128,6 +138,11 @@ const router = createRouter({
               path: 'loan-orders',
               name: 'LoanOrders',
               component: () => import('@/views/User/LoanOrders.vue')
+            },
+            {
+              path: 'prediction-orders',
+              name: 'PredictionOrders',
+              component: () => import('@/views/User/PredictionOrders.vue')
             },
             {
               path: 'finance-orders',

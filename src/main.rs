@@ -5,7 +5,7 @@ use exchange_api::{
     modules::admin::market_feed_config::{
         load_enabled_config_for_bootstrap, runtime_config_from_response,
     },
-    modules::events::EventBroadcastHub,
+    modules::{events::EventBroadcastHub, prediction},
     state::AppState,
     workers::{
         earn_auto_redemption, event_inbox, event_outbox, kline_recovery, margin_interest,
@@ -178,6 +178,15 @@ async fn main() -> anyhow::Result<()> {
             if let Err(error) = margin_interest::run_loop(pool, interval_seconds, batch_limit).await
             {
                 tracing::error!(%error, "杠杆利息循环已停止");
+            }
+        });
+    }
+
+    if state.mysql.is_some() {
+        let prediction_sync_state = state.clone();
+        tokio::spawn(async move {
+            if let Err(error) = prediction::run_sync_loop(prediction_sync_state).await {
+                tracing::error!(%error, "竞猜市场同步循环已停止");
             }
         });
     }

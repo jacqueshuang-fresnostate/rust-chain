@@ -16,8 +16,12 @@ use utoipa::ToSchema;
 pub fn build_router(state: AppState) -> Router {
     let user_api = Router::new()
         .merge(modules::auth::routes::user_routes())
+        .merge(modules::countries::routes())
+        .merge(modules::platform::routes())
         .merge(modules::user::routes::routes())
         .merge(modules::wallet::routes::routes())
+        .merge(modules::quick_recharge::user_routes())
+        .merge(modules::quick_recharge::public_routes())
         .merge(modules::market::routes::routes())
         .merge(modules::spot::routes::routes())
         .merge(modules::new_coin::routes::user_routes())
@@ -25,6 +29,8 @@ pub fn build_router(state: AppState) -> Router {
         .merge(modules::seconds_contract::routes::user_routes())
         .merge(modules::margin::routes::user_routes())
         .merge(modules::earn::routes::user_routes())
+        .merge(modules::loan::user_routes())
+        .merge(modules::prediction::user_routes())
         .merge(modules::news::routes::routes())
         .merge(modules::events::routes::routes());
 
@@ -32,9 +38,12 @@ pub fn build_router(state: AppState) -> Router {
         .merge(modules::auth::routes::admin_routes())
         .merge(modules::spot::routes::admin_routes())
         .merge(modules::admin::routes::routes())
+        .merge(modules::quick_recharge::admin_routes())
         .merge(modules::seconds_contract::routes::admin_routes())
         .merge(modules::margin::routes::admin_routes())
-        .merge(modules::earn::routes::admin_routes());
+        .merge(modules::earn::routes::admin_routes())
+        .merge(modules::loan::admin_routes())
+        .merge(modules::prediction::admin_routes());
 
     let agent_api = Router::new()
         .merge(modules::auth::routes::agent_routes())
@@ -91,6 +100,8 @@ mod tests {
             bitget_ws_url: "wss://bitget.test/ws".to_owned(),
             htx_rest_base_url: "https://htx.test".to_owned(),
             htx_ws_url: "wss://htx.test/ws".to_owned(),
+            coinbase_rest_base_url: "https://coinbase.test".to_owned(),
+            coinbase_ws_url: "wss://coinbase.test/ws".to_owned(),
             market_feed_symbols: Vec::new(),
             market_feed_intervals: Vec::new(),
             market_feed_providers: Vec::new(),
@@ -142,10 +153,21 @@ mod tests {
 
         for path in [
             "/api/v1/auth/login",
+            "/api/v1/countries",
+            "/api/v1/platform/brand",
             "/api/v1/user/profile",
+            "/api/v1/user/avatar",
+            "/api/v1/user/2fa",
+            "/api/v1/user/2fa/setup",
+            "/api/v1/auth/login/2fa",
+            "/api/v1/auth/login/2fa/reset-code",
+            "/api/v1/user/fund-password/reset-code",
+            "/api/v1/user/fund-password/reset",
             "/admin/api/v1/auth/login",
+            "/admin/api/v1/countries",
             "/agent/api/v1/auth/login",
             "/api/v1/wallet/accounts",
+            "/api/v1/wallet/withdrawals",
             "/api/v1/convert/pairs",
             "/api/v1/seconds-contracts/products",
             "/admin/api/v1/seconds-contracts/products",
@@ -153,6 +175,11 @@ mod tests {
             "/admin/api/v1/margin/products",
             "/api/v1/earn/products",
             "/admin/api/v1/earn/products",
+            "/api/v1/loan/products",
+            "/admin/api/v1/loan/products",
+            "/api/v1/prediction/config",
+            "/api/v1/prediction/markets",
+            "/admin/api/v1/prediction/settings",
             "/api/v1/news",
             "/api/v1/events/outbox/publish-once",
         ] {
