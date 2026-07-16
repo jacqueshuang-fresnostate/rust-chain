@@ -5541,3 +5541,10 @@
   - Web `npm run typecheck`、返佣规则组件测试（1/1）、目标文件 ESLint、`npm run build` 通过；构建仅报告第三方 `lottie-web` 的直接 `eval` 和既有大 chunk 提示。
   - `cargo clippy --all-targets` 通过并保留全仓 56 条历史告警；本次新增的多级返佣测试告警已消除，返佣领域与仓储代码未新增 Clippy 告警。
 - 后续事项：无
+
+## 2026-07-16 13:24 - 配置 GitHub 远程并推送主分支
+
+- 完成内容：添加 `origin` 远程 `git@github.com-fresnostate:jacqueshuang-fresnostate/rust-chain.git`，验证 SSH 仓库访问，并将 `main` 分支推送到远程。
+- 修改文件：Git 远程配置；`docs/superpowers/PROGRESS.md`
+- 验证结果：`git ls-remote origin`、`git push -u origin main` 均成功；本地 `main` 已跟踪 `origin/main`。
+- 后续事项：无
