@@ -63,9 +63,20 @@ async function selectSemiOption(user: ReturnType<typeof userEvent.setup>, label:
   fireEvent.click(option as HTMLElement);
 }
 
+function stubResizeObserver() {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver');
+  if (descriptor?.configurable === false) {
+    if ('writable' in descriptor && descriptor.writable) {
+      (globalThis as typeof globalThis & { ResizeObserver: typeof ResizeObserverMock }).ResizeObserver = ResizeObserverMock;
+    }
+    return;
+  }
+  vi.stubGlobal('ResizeObserver', ResizeObserverMock);
+}
+
 describe('UploadConfigPage', () => {
   beforeEach(() => {
-    vi.stubGlobal('ResizeObserver', ResizeObserverMock);
+    stubResizeObserver();
     apiRequestMock.mockReset();
     apiRequestMock.mockImplementation((path, init) => {
       if (path === '/admin/api/v1/upload/config' && !init?.method) {
@@ -104,7 +115,7 @@ describe('UploadConfigPage', () => {
     expect(screen.getByLabelText('公开访问 base URL')).toBeInTheDocument();
     expect(screen.queryByLabelText('图床 Bearer Token')).not.toBeInTheDocument();
 
-    await selectSemiOption(user, '上传方式', 'S3');
+    await selectSemiOption(user, '上传方式', 'S3 兼容存储');
 
     expect(screen.getByLabelText('Bucket')).toBeInTheDocument();
     expect(screen.getByLabelText('Region')).toBeInTheDocument();
@@ -186,8 +197,9 @@ describe('UploadConfigPage', () => {
     render(<UploadConfigPage />);
     await screen.findByDisplayValue('https://oss.example.test/api/v1/upload');
     const file = new File(['png-data'], 'result.png', { type: 'image/png' });
-    await user.upload(screen.getByLabelText('测试上传文件'), file);
-    await user.click(screen.getByRole('button', { name: '测试上传' }));
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement | null;
+    expect(fileInput).toBeInTheDocument();
+    await user.upload(fileInput as HTMLInputElement, file);
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith(

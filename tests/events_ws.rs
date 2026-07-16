@@ -37,6 +37,8 @@ fn test_settings() -> Settings {
         bitget_ws_url: "wss://bitget.test/ws".to_owned(),
         htx_rest_base_url: "wss://htx.test".to_owned(),
         htx_ws_url: "wss://htx.test/ws".to_owned(),
+        coinbase_rest_base_url: "https://coinbase.test".to_owned(),
+        coinbase_ws_url: "wss://coinbase.test/ws".to_owned(),
         market_feed_symbols: Vec::new(),
         market_feed_intervals: Vec::new(),
         market_feed_providers: Vec::new(),
@@ -147,7 +149,16 @@ async fn events_routes_expose_public_and_private_ws_paths() {
         AppState::new(test_settings()).with_event_broadcast_hub(EventBroadcastHub::new(16)),
     );
 
-    for path in ["/ws/public", "/ws/public/ticker/BTC-USDT"] {
+    for path in [
+        "/ws/public",
+        "/ws/public/ticker/BTC-USDT",
+        "/ws/spot",
+        "/ws/spot/ticker/BTC-USDT",
+        "/ws/margin",
+        "/ws/margin/ticker/BTC-USDT",
+        "/ws/seconds",
+        "/ws/seconds/ticker/BTC-USDT",
+    ] {
         let public_response = app.clone().oneshot(ws_request(path)).await.unwrap();
         assert_ne!(public_response.status(), StatusCode::NOT_FOUND);
     }
@@ -168,8 +179,14 @@ async fn build_router_exposes_root_and_api_websocket_paths() {
     for path in [
         "/ws/public",
         "/ws/public/ticker/BTC-USDT",
+        "/ws/spot",
+        "/ws/margin",
+        "/ws/seconds",
         "/api/v1/ws/public",
         "/api/v1/ws/public/ticker/BTC-USDT",
+        "/api/v1/ws/spot",
+        "/api/v1/ws/margin",
+        "/api/v1/ws/seconds",
     ] {
         let public_response = app.clone().oneshot(ws_request(path)).await.unwrap();
         assert_ne!(public_response.status(), StatusCode::NOT_FOUND);
@@ -283,6 +300,39 @@ async fn public_ws_single_endpoint_subscribes_ticker() {
         socket.next().await.unwrap().unwrap(),
         Message::Text("pong".to_owned())
     );
+    shutdown_tx.send(()).unwrap();
+}
+
+#[tokio::test]
+async fn business_ws_aliases_share_public_subscription_contract() {
+    let (address, hub, shutdown_tx) = spawn_events_app().await;
+
+    for path in ["/ws/spot", "/ws/margin", "/ws/seconds"] {
+        let (mut socket, _response) = connect_async(format!("ws://{address}{path}"))
+            .await
+            .unwrap();
+
+        socket
+            .send(Message::Text(
+                r#"{"op":"subscribe","channel":"ticker","symbol":"BTC-USDT"}"#.to_owned(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            socket.next().await.unwrap().unwrap(),
+            Message::Text(r#"{"type":"subscribed","channel":"public:ticker:BTCUSDT"}"#.to_owned())
+        );
+
+        hub.publish(EventBroadcastMessage::public(
+            WebSocketChannel::public("ticker", "BTCUSDT").unwrap(),
+            r#"{"symbol":"BTCUSDT","last_price":"70000.12"}"#,
+        ));
+        assert_eq!(
+            socket.next().await.unwrap().unwrap(),
+            Message::Text(r#"{"symbol":"BTCUSDT","last_price":"70000.12"}"#.to_owned())
+        );
+    }
+
     shutdown_tx.send(()).unwrap();
 }
 

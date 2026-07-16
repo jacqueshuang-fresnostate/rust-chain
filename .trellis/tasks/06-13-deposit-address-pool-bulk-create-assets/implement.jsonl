@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后台路由和数据库改动需遵循后端分层与验证规范"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "地址池涉及后台 API、钱包申请和前端表单的跨层契约"}

@@ -2,6 +2,9 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { getWallets } from '@/api/asset'
 import { getSecuritySetting } from '@/api/user'
+import { stompService } from '@/api/stomp'
+import { useSettingStore } from '@/stores/setting'
+import { clearAuthStorage, writeAuthTokens } from '@/utils/authStorage'
 
 export interface UserAssets {
   [symbol: string]: number
@@ -26,7 +29,7 @@ export const useUserStore = defineStore('user', () => {
 
   function setToken(newToken: string) {
     token.value = newToken
-    localStorage.setItem('token', newToken)
+    writeAuthTokens(newToken)
   }
 
   function setUser(userData: any) {
@@ -34,10 +37,8 @@ export const useUserStore = defineStore('user', () => {
   }
 
   function setAuthSession(session: AuthSession) {
-    setToken(session.token)
-    if (session.refreshToken) {
-      localStorage.setItem('refresh_token', session.refreshToken)
-    }
+    token.value = session.token
+    writeAuthTokens(session.token, session.refreshToken)
     if (session.user) {
       setUser(session.user)
     }
@@ -47,6 +48,7 @@ export const useUserStore = defineStore('user', () => {
     const res = await getSecuritySetting()
     if (res.code === 0 || res.code === 200) {
       user.value = res.data
+      useSettingStore().applyProfileLocale(res.data)
     }
     return res
   }
@@ -69,12 +71,11 @@ export const useUserStore = defineStore('user', () => {
   }
 
   function logout() {
+    stompService.disconnect('private')
     token.value = null
     user.value = null
     assets.value = {}
-    localStorage.removeItem('token')
-    localStorage.removeItem('refresh_token')
-    localStorage.removeItem('user')
+    clearAuthStorage()
   }
 
   return {

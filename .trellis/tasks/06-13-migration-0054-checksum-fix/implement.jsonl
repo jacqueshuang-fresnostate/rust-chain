@@ -1,0 +1,7 @@
+{"type":"spec","path":".trellis/spec/backend/index.md","reason":"Backend migration task entry."}
+{"type":"spec","path":".trellis/spec/backend/database-guidelines.md","reason":"Migration checksum fix and schema seed order."}
+{"type":"spec","path":".trellis/spec/backend/quality-guidelines.md","reason":"Focused validation for backend migration changes."}
+{"type":"guide","path":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Search before modifying migration seed values."}
+{"type":"implementation","path":"migrations/0054_seed_country_codes.sql","reason":"Restore applied migration 0054 to the original English country seed names."}
+{"type":"implementation","path":"migrations/0055_country_config_local_names_and_remark.sql","reason":"Keep local names and Chinese remarks in the later backfill migration."}
+{"type":"test","path":"tests/country_config_migration.rs","reason":"Update migration-order tests for 0054 English seed and 0055 localization."}

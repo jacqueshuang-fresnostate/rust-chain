@@ -1,0 +1,3 @@
+{"file":"web/src/admin/resources/ResourceCreateActions.tsx","reason":"导入文件入口已移入地址规则区域，并将创建页资产多选文案改为支持币种。"}
+{"file":"web/src/admin/resources/resourceConfigs.test.tsx","reason":"测试已覆盖导入前选择网络和支持币种，提交 body 使用对应 network 与 asset_symbols。"}
+{"file":"docs/superpowers/PROGRESS.md","reason":"按项目规则记录本次完成内容、修改文件、验证结果和后续事项。"}

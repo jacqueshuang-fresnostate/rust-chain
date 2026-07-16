@@ -1,0 +1,9 @@
+{"command":"cargo fmt","result":"passed"}
+{"command":"cargo test -q stop_limit","result":"passed: 2 route trigger predicate tests and 1 domain test matched"}
+{"command":"cargo test -q --test spot_domain","result":"passed: 8 tests"}
+{"command":"cargo check --manifest-path Cargo.toml --all-targets","result":"passed"}
+{"command":"node --test --experimental-strip-types pc/tests/backendAdapters.test.ts","result":"passed: 32 tests"}
+{"command":"npm --prefix pc run type-check","result":"passed"}
+{"command":"cargo fmt --manifest-path Cargo.toml -- --check","result":"passed"}
+{"command":"git diff --check -- touched spot stop-limit files","result":"passed"}
+{"command":"! rg -n \"[ \\\\t]+$\" migrations/0074_spot_stop_limit_orders.sql .trellis/tasks/06-17-spot-take-profit-stop-loss .trellis/spec/backend/spot-orders.md","result":"passed"}

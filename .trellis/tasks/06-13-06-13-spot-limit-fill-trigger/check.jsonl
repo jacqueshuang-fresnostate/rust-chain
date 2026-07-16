@@ -1,0 +1,8 @@
+{"type":"spec","path":".trellis/spec/backend/quality-guidelines.md","reason":"Use backend quality checks after implementation."}
+{"type":"guide","path":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify data flow from price trigger through order and wallet state."}
+{"type":"verification","command":"cargo test --manifest-path Cargo.toml --test spot_routes spot_limit_buy_order_fills_when_market_price_reaches_limit -- --nocapture","result":"passed; DATABASE_URL not set, so MySQL integration branch skipped by existing test guard."}
+{"type":"verification","command":"cargo test --manifest-path Cargo.toml --test spot_routes spot_create_market_buy_order_fills_immediately_at_market_price -- --nocapture","result":"passed; DATABASE_URL not set, so MySQL integration branch skipped by existing test guard."}
+{"type":"verification","command":"cargo test --manifest-path Cargo.toml --test spot_routes spot_create_limit_buy_order_freezes_quote_wallet -- --nocapture","result":"passed; DATABASE_URL not set, so MySQL integration branch skipped by existing test guard."}
+{"type":"verification","command":"cargo test --manifest-path Cargo.toml --test market_feed_worker provider_feed_configs_use_settings_urls_and_channel_payloads -- --nocapture","result":"passed."}
+{"type":"verification","command":"cargo fmt --manifest-path Cargo.toml -- --check","result":"passed."}
+{"type":"verification","command":"git diff --check -- src/modules/spot/routes.rs src/modules/market/mod.rs tests/spot_routes.rs .trellis/tasks/06-13-06-13-spot-limit-fill-trigger/prd.md .trellis/tasks/06-13-06-13-spot-limit-fill-trigger/implement.jsonl .trellis/tasks/06-13-06-13-spot-limit-fill-trigger/check.jsonl","result":"passed."}

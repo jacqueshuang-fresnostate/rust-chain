@@ -110,10 +110,10 @@ export function NewCoinActions() {
                   ariaLabel="目标阶段"
                   onChange={(lifecycleStatus) => setLifecycle({ ...lifecycle, lifecycleStatus })}
                   optionList={[
-                    { value: 'preheat', label: 'preheat' },
-                    { value: 'subscription', label: 'subscription' },
-                    { value: 'distribution', label: 'distribution' },
-                    { value: 'listed', label: 'listed' }
+                    { value: 'preheat', label: '预热' },
+                    { value: 'subscription', label: '申购中' },
+                    { value: 'distribution', label: '分发中' },
+                    { value: 'listed', label: '已上市' }
                   ]}
                   value={lifecycle.lifecycleStatus}
                 />
@@ -177,9 +177,9 @@ export function NewCoinActions() {
                   ariaLabel="解禁类型"
                   onChange={(unlockType) => setUnlockRule({ ...unlockRule, unlockType })}
                   optionList={[
-                    { value: 'immediate_on_listing', label: 'immediate_on_listing' },
-                    { value: 'fixed_time', label: 'fixed_time' },
-                    { value: 'relative_period', label: 'relative_period' }
+                    { value: 'immediate_on_listing', label: '上市即解禁' },
+                    { value: 'fixed_time', label: '固定时间解禁' },
+                    { value: 'relative_period', label: '相对周期解禁' }
                   ]}
                   value={unlockRule.unlockType}
                 />
@@ -222,8 +222,8 @@ export function NewCoinActions() {
                   ariaLabel="计费依据"
                   onChange={(feeBasis) => setUnlockFee({ ...unlockFee, feeBasis })}
                   optionList={[
-                    { value: 'market_value', label: 'market_value' },
-                    { value: 'profit', label: 'profit' }
+                    { value: 'market_value', label: '市值' },
+                    { value: 'profit', label: '收益' }
                   ]}
                   value={unlockFee.feeBasis}
                 />

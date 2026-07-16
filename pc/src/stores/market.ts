@@ -3,7 +3,7 @@ import { ref } from 'vue'
 
 export interface Ticker {
   symbol: string
-    icon: string
+  icon: string
   open: number
   high: number
   low: number
@@ -39,31 +39,39 @@ export const useMarketStore = defineStore('market', () => {
       close: t.close,
       volume: t.volume,
       turnover: t.turnover,
-        icon: t.icon,
+      icon: typeof t.icon === 'string' ? t.icon : '',
       time: t.time,
-      chg: t.open ? ((t.close - t.open) / t.open * 100)  : 0, // Recalculate chg
+      chg: typeof t.chg === 'number' ? t.chg : (t.open ? ((t.close - t.open) / t.open * 100)  : 0),
       zone: t.zone
     }))
   }
 
   function updateTicker(ticker: Ticker) {
-    const index = tickers.value.findIndex(t => t.symbol === ticker.symbol)
+    const compactSymbol = compactMarketSymbol(ticker.symbol)
+    const index = tickers.value.findIndex(t => compactMarketSymbol(t.symbol) === compactSymbol)
     if (index !== -1) {
-      // Merge updates
-        tickers.value[index].close = ticker.close
-        tickers.value[index].high = ticker.high
-        tickers.value[index].low = ticker.low
-        tickers.value[index].open = ticker.open
-        tickers.value[index].volume = ticker.volume
-        tickers.value[index].turnover = ticker.turnover
-        // Recalculate chg
-        const open = tickers.value[index].open
-        const close = tickers.value[index].close
-        tickers.value[index].chg = open ? ((close - open) / open * 100 )  : 0
+      const current = tickers.value[index]
+      const open = finiteNumber(ticker.open, current.open)
+      const close = finiteNumber(ticker.close, current.close)
+      tickers.value[index] = {
+        ...current,
+        ...ticker,
+        symbol: current.symbol || ticker.symbol,
+        icon: ticker.icon || current.icon,
+        open,
+        close,
+        high: finiteNumber(ticker.high, current.high),
+        low: finiteNumber(ticker.low, current.low),
+        volume: finiteNumber(ticker.volume, current.volume),
+        turnover: finiteNumber(ticker.turnover, current.turnover),
+        time: finiteNumber(ticker.time, current.time),
+        zone: finiteNumber(ticker.zone, current.zone),
+        chg: typeof ticker.chg === 'number' ? ticker.chg : (open ? ((close - open) / open * 100) : 0),
+      }
     } else {
         // Calculate chg for new ticker
         const newTicker = { ...ticker }
-        newTicker.chg = newTicker.open ? ((newTicker.close - newTicker.open) / newTicker.open * 100)  : 0
+        newTicker.chg = typeof newTicker.chg === 'number' ? newTicker.chg : (newTicker.open ? ((newTicker.close - newTicker.open) / newTicker.open * 100)  : 0)
         tickers.value.push(newTicker)
     }
   }
@@ -82,3 +90,11 @@ export const useMarketStore = defineStore('market', () => {
     paths: ['activeSymbol']
   }
 })
+
+function compactMarketSymbol(symbol: string): string {
+  return symbol.replace(/[-_/]/g, '').toUpperCase()
+}
+
+function finiteNumber(value: number, fallback: number): number {
+  return Number.isFinite(value) ? value : fallback
+}

@@ -51,7 +51,7 @@ const router = createRouter({
         {
           path: 'otc',
           name: 'OTC',
-          component: () => import('@/views/OTC.vue')
+          redirect: '/market'
         },
         {
           path: 'swap',
@@ -92,6 +92,11 @@ const router = createRouter({
         {
           path: 'prediction',
           name: 'Prediction',
+          component: () => import('@/views/Prediction.vue')
+        },
+        {
+          path: 'prediction/:id',
+          name: 'PredictionDetail',
           component: () => import('@/views/Prediction.vue')
         },
         {

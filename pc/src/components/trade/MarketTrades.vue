@@ -26,9 +26,9 @@ import { stompService } from '@/api/stomp'
 
 const props = withDefaults(defineProps<{
   symbol?: string
-  module?: 'market' | 'second' | 'swap'
+  module?: 'spot' | 'margin' | 'seconds' | 'market' | 'second' | 'swap'
 }>(), {
-  module: 'market'
+  module: 'spot'
 })
 
 const trades = ref<any[]>([])
@@ -41,14 +41,29 @@ const quoteSymbol = computed(() => props.symbol?.split('/')[1] || 'USDT')
  * Select the correct API function based on module
  */
 function getTradeFetcher() {
-  switch (props.module) {
-    case 'swap':
+  switch (normalizeWsModule(props.module)) {
+    case 'margin':
       return fetchSwapTrade
-    case 'second':
+    case 'seconds':
       return fetchSecondTrade
-    case 'market':
+    case 'spot':
     default:
       return fetchMarketTrade
+  }
+}
+
+function normalizeWsModule(module: typeof props.module): 'spot' | 'margin' | 'seconds' {
+  switch (module) {
+    case 'swap':
+    case 'margin':
+      return 'margin'
+    case 'second':
+    case 'seconds':
+      return 'seconds'
+    case 'market':
+    case 'spot':
+    default:
+      return 'spot'
   }
 }
 
@@ -56,7 +71,7 @@ function getTradeFetcher() {
  * Get the WebSocket topic based on module
  */
 function getTradeTopic(symbol: string) {
-  return `${props.module}:trade:${symbol}`
+  return `${normalizeWsModule(props.module)}:trade:${symbol}`
 }
 
 const formatTime = (ts: number | string) => {
@@ -99,7 +114,8 @@ const subscribeTrades = async () => {
 
     const topic = getTradeTopic(props.symbol)
     console.log(`[MarketTrades][${props.module}] Subscribing to:`, topic)
-    tradeSub = await stompService.subscribe(props.module,topic, (msg) => {
+    const wsModule = normalizeWsModule(props.module)
+    tradeSub = await stompService.subscribe(wsModule, topic, (msg) => {
         try {
             const data = JSON.parse(msg.body)
             const items = Array.isArray(data) ? data : [data]

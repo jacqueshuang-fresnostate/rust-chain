@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/index.md","reason":"质量检查时复核后端规范入口。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"复核 include_internal 查询参数、后端默认过滤和前端开关筛选的一致性。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复核是否复用现有资源页、筛选条和现货订单字段。"}

@@ -44,6 +44,8 @@ fn test_state() -> AppState {
         bitget_ws_url: "wss://bitget.test/ws".to_owned(),
         htx_rest_base_url: "https://htx.test".to_owned(),
         htx_ws_url: "wss://htx.test/ws".to_owned(),
+        coinbase_rest_base_url: "https://coinbase.test".to_owned(),
+        coinbase_ws_url: "wss://coinbase.test/ws".to_owned(),
         market_feed_symbols: Vec::new(),
         market_feed_intervals: Vec::new(),
         market_feed_providers: Vec::new(),

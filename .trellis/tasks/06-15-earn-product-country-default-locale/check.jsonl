@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Verify backend changes follow project route, validation, and quality expectations."}
+{"file": ".trellis/spec/guides/index.md", "reason": "Check cross-layer contract consistency between country config, Earn API, and admin UI."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Check the solution reused existing helpers and avoided inconsistent duplicated form logic."}
+{"file": ".codex/skills/semi-design-guide/SKILL.md", "reason": "Verify Semi UI form controls and SideSheet behavior remain aligned with project UI standards."}

@@ -9,19 +9,32 @@ use exchange_api::{
     modules::{
         auth::{TokenScope, issue_token},
         events::{EventBroadcastHub, WebSocketChannel},
-        spot::routes::{admin_routes, routes},
+        market::market_ticker_redis_key,
+        spot::{
+            application::execute_triggered_spot_limit_orders_with_hub,
+            routes::{admin_routes, routes},
+        },
     },
     state::AppState,
 };
+use redis::AsyncCommands;
 use secrecy::SecretString;
 use serde_json::Value;
 use sqlx::{MySqlPool, mysql::MySqlPoolOptions};
 use std::{error::Error, str::FromStr, sync::Arc, time::Duration};
+use tokio::time::timeout;
 use tower::ServiceExt;
 use uuid::Uuid;
 
+mod support;
+
 fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).unwrap()
+}
+
+async fn body_json(response: axum::response::Response) -> Result<Value, Box<dyn Error>> {
+    let body = axum::body::to_bytes(response.into_body(), 65_536).await?;
+    Ok(serde_json::from_slice(&body)?)
 }
 
 fn test_settings() -> Settings {
@@ -44,6 +57,8 @@ fn test_settings() -> Settings {
         bitget_ws_url: "wss://bitget.test/ws".to_owned(),
         htx_rest_base_url: "https://htx.test".to_owned(),
         htx_ws_url: "wss://htx.test/ws".to_owned(),
+        coinbase_rest_base_url: "https://coinbase.test".to_owned(),
+        coinbase_ws_url: "wss://coinbase.test/ws".to_owned(),
         market_feed_symbols: Vec::new(),
         market_feed_intervals: Vec::new(),
         market_feed_providers: Vec::new(),
@@ -89,6 +104,50 @@ async fn mysql_pool() -> Option<MySqlPool> {
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     Some(pool)
+}
+
+async fn redis_manager() -> Option<redis::aio::ConnectionManager> {
+    let redis_url = match std::env::var("REDIS_URL") {
+        Ok(value) if !value.trim().is_empty() => value,
+        _ => {
+            eprintln!("skipping Redis-backed spot route test because REDIS_URL is not set");
+            return None;
+        }
+    };
+    let client = redis::Client::open(redis_url).unwrap();
+    redis::aio::ConnectionManager::new(client).await.ok()
+}
+
+async fn cache_market_ticker(
+    redis: &redis::aio::ConnectionManager,
+    symbol: &str,
+    last_price: &str,
+) -> Result<(), redis::RedisError> {
+    cache_market_ticker_at(
+        redis,
+        symbol,
+        last_price,
+        chrono::Utc::now().timestamp_millis(),
+    )
+    .await
+}
+
+async fn cache_market_ticker_at(
+    redis: &redis::aio::ConnectionManager,
+    symbol: &str,
+    last_price: &str,
+    observed_at: i64,
+) -> Result<(), redis::RedisError> {
+    let mut connection = redis.clone();
+    let payload = serde_json::json!({
+        "symbol": symbol,
+        "last_price": last_price,
+        "observed_at": observed_at,
+    })
+    .to_string();
+    connection
+        .set(market_ticker_redis_key(symbol), payload)
+        .await
 }
 
 async fn create_user(pool: &MySqlPool) -> u64 {
@@ -226,6 +285,290 @@ async fn seed_open_order(
     .await?
     .last_insert_id()
     .to_string())
+}
+
+async fn seed_reserved_open_buy_order(
+    pool: &MySqlPool,
+    user_id: u64,
+    pair_symbol: &str,
+    reserve_asset: u64,
+    price: &str,
+) -> Result<String, sqlx::Error> {
+    Ok(sqlx::query(
+        r#"INSERT INTO spot_orders
+           (user_id, pair_id, side, order_type, price, quantity, filled_quantity, status,
+            reserved_asset, reserved_amount)
+           VALUES (?, ?, 'buy', 'limit', ?, 1, 0, 'open', ?, ?)"#,
+    )
+    .bind(user_id)
+    .bind(pair_id(pool, pair_symbol).await?)
+    .bind(decimal(price))
+    .bind(reserve_asset)
+    .bind(decimal(price))
+    .execute(pool)
+    .await?
+    .last_insert_id()
+    .to_string())
+}
+
+async fn seed_historical_market_buy_order(
+    pool: &MySqlPool,
+    user_id: u64,
+    pair_symbol: &str,
+    quote_asset: u64,
+    reference_price: &str,
+    quantity: &str,
+) -> Result<String, sqlx::Error> {
+    let reference_price = decimal(reference_price);
+    let quantity = decimal(quantity);
+    let reserved_amount = reference_price.clone() * quantity.clone();
+    let mut tx = pool.begin().await?;
+    let (available, frozen, locked): (BigDecimal, BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available, frozen, locked FROM wallet_accounts WHERE user_id = ? AND asset_id = ? FOR UPDATE",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .fetch_one(&mut *tx)
+    .await?;
+    let available_after = available - reserved_amount.clone();
+    let frozen_after = frozen + reserved_amount.clone();
+    let order_id = sqlx::query(
+        r#"INSERT INTO spot_orders
+           (user_id, pair_id, side, order_type, price, quantity, filled_quantity, status,
+            reserved_asset, reserved_amount, request_reference_price)
+           VALUES (?, ?, 'buy', 'market', NULL, ?, 0, 'open', ?, ?, ?)"#,
+    )
+    .bind(user_id)
+    .bind(pair_id(pool, pair_symbol).await?)
+    .bind(&quantity)
+    .bind(quote_asset)
+    .bind(&reserved_amount)
+    .bind(&reference_price)
+    .execute(&mut *tx)
+    .await?
+    .last_insert_id()
+    .to_string();
+    sqlx::query(
+        "UPDATE wallet_accounts SET available = ?, frozen = ? WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(&available_after)
+    .bind(&frozen_after)
+    .bind(user_id)
+    .bind(quote_asset)
+    .execute(&mut *tx)
+    .await?;
+    for (amount, balance_type, balance_after) in [
+        (
+            -reserved_amount.clone(),
+            "available",
+            available_after.clone(),
+        ),
+        (reserved_amount, "frozen", frozen_after.clone()),
+    ] {
+        sqlx::query(
+            r#"INSERT INTO wallet_ledger
+               (user_id, asset_id, change_type, amount, balance_type, balance_after,
+                available_after, frozen_after, locked_after, ref_type, ref_id)
+               VALUES (?, ?, 'spot_freeze', ?, ?, ?, ?, ?, ?, 'spot_order', ?)"#,
+        )
+        .bind(user_id)
+        .bind(quote_asset)
+        .bind(amount)
+        .bind(balance_type)
+        .bind(balance_after)
+        .bind(&available_after)
+        .bind(&frozen_after)
+        .bind(&locked)
+        .bind(&order_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(order_id)
+}
+
+#[tokio::test]
+async fn spot_market_order_requires_fresh_server_ticker_before_mutation()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_user(&pool).await;
+    let (base_asset, base_symbol) = create_asset(&pool, "NTB").await;
+    let (quote_asset, quote_symbol) = create_asset(&pool, "NTQ").await;
+    let pair_symbol =
+        create_pair(&pool, base_asset, quote_asset, &base_symbol, &quote_symbol).await;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(quote_asset)
+        .bind(decimal("100.000000000000000000"))
+        .execute(&pool)
+        .await?;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+
+    let no_redis = routes()
+        .with_state(AppState::new(settings.clone()).with_mysql(pool.clone()))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/spot/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"pair_id":"{pair_symbol}","side":"buy","order_type":"market","quantity":"2.0000","reference_price":"10.000000000000000000","idempotency_key":"spot-no-redis-{}"}}"#,
+                    Uuid::now_v7().simple()
+                )))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(no_redis.status(), StatusCode::BAD_REQUEST);
+
+    if let Some(redis) = redis_manager().await {
+        cache_market_ticker_at(
+            &redis,
+            &pair_symbol,
+            "10.000000000000000000",
+            (chrono::Utc::now() - chrono::TimeDelta::seconds(61)).timestamp_millis(),
+        )
+        .await?;
+        let stale = routes()
+            .with_state(
+                AppState::new(settings)
+                    .with_mysql(pool.clone())
+                    .with_redis(redis),
+            )
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/spot/orders")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"pair_id":"{pair_symbol}","side":"buy","order_type":"market","quantity":"2.0000","reference_price":"10.000000000000000000","idempotency_key":"spot-stale-ticker-{}"}}"#,
+                        Uuid::now_v7().simple()
+                    )))
+                    .unwrap(),
+            )
+            .await?;
+        assert_eq!(stale.status(), StatusCode::BAD_REQUEST);
+    }
+
+    let (order_count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM spot_orders WHERE user_id = ?")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await?;
+    let (available, frozen): (BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available, frozen FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    let (ledger_count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM wallet_ledger WHERE user_id = ? AND ref_type = 'spot_order'",
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(order_count, 0);
+    assert_eq!(available, decimal("100.000000000000000000"));
+    assert_eq!(frozen, decimal("0.000000000000000000"));
+    assert_eq!(ledger_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn spot_user_trade_query_returns_only_authenticated_users_fills() -> Result<(), Box<dyn Error>>
+{
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let first_user = create_user(&pool).await;
+    let second_user = create_user(&pool).await;
+    let third_user = create_user(&pool).await;
+    let (base_asset, base_symbol) = create_asset(&pool, "TQB").await;
+    let (quote_asset, quote_symbol) = create_asset(&pool, "TQQ").await;
+    let pair_symbol =
+        create_pair(&pool, base_asset, quote_asset, &base_symbol, &quote_symbol).await;
+    let pair_db_id = pair_id(&pool, &pair_symbol).await?;
+    let first_buy = seed_open_order(&pool, first_user, &pair_symbol, "buy", "10", "1").await?;
+    let first_sell = seed_open_order(&pool, second_user, &pair_symbol, "sell", "10", "1").await?;
+    let second_buy = seed_open_order(&pool, second_user, &pair_symbol, "buy", "11", "1").await?;
+    let second_sell = seed_open_order(&pool, third_user, &pair_symbol, "sell", "11", "1").await?;
+    let first_trade_id = sqlx::query(
+        r#"INSERT INTO spot_trades
+           (pair_id, buy_order_id, sell_order_id, price, quantity, fee, idempotency_key)
+           VALUES (?, ?, ?, 10, 1, 0, ?)"#,
+    )
+    .bind(pair_db_id)
+    .bind(&first_buy)
+    .bind(&first_sell)
+    .bind(format!("spot-user-trade-{}", Uuid::now_v7().simple()))
+    .execute(&pool)
+    .await?
+    .last_insert_id()
+    .to_string();
+    let second_trade_id = sqlx::query(
+        r#"INSERT INTO spot_trades
+           (pair_id, buy_order_id, sell_order_id, price, quantity, fee, idempotency_key)
+           VALUES (?, ?, ?, 11, 1, 0, ?)"#,
+    )
+    .bind(pair_db_id)
+    .bind(&second_buy)
+    .bind(&second_sell)
+    .bind(format!("spot-user-trade-{}", Uuid::now_v7().simple()))
+    .execute(&pool)
+    .await?
+    .last_insert_id()
+    .to_string();
+
+    let first_token = issue_token(
+        &settings,
+        format!("user:{first_user}"),
+        TokenScope::User,
+        900,
+    )
+    .unwrap();
+    let third_token = issue_token(
+        &settings,
+        format!("user:{third_user}"),
+        TokenScope::User,
+        900,
+    )
+    .unwrap();
+    let app = routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let first_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/spot/trades?pair_id={pair_symbol}&limit=10"))
+                .header("authorization", format!("Bearer {first_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let first_payload = body_json(first_response).await?;
+    let first_trades = first_payload["trades"].as_array().unwrap();
+    assert_eq!(first_trades.len(), 1);
+    assert_eq!(first_trades[0]["id"], first_trade_id);
+
+    let third_response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/spot/trades?pair_id={pair_symbol}&limit=10"))
+                .header("authorization", format!("Bearer {third_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let third_payload = body_json(third_response).await?;
+    let third_trades = third_payload["trades"].as_array().unwrap();
+    assert_eq!(third_trades.len(), 1);
+    assert_eq!(third_trades[0]["id"], second_trade_id);
+    Ok(())
 }
 
 #[tokio::test]
@@ -511,6 +854,7 @@ async fn admin_spot_lists_orders_and_trades_with_filters() -> Result<(), Box<dyn
     let first_created_at = Utc.with_ymd_and_hms(2026, 5, 30, 9, 0, 0).unwrap();
     let second_created_at = Utc.with_ymd_and_hms(2026, 5, 30, 9, 1, 0).unwrap();
     let third_created_at = Utc.with_ymd_and_hms(2026, 5, 30, 9, 2, 0).unwrap();
+    let system_created_at = Utc.with_ymd_and_hms(2026, 5, 30, 9, 3, 0).unwrap();
     let buy_order_id = sqlx::query(
         r#"INSERT INTO spot_orders
            (user_id, pair_id, side, order_type, price, quantity, filled_quantity, status, created_at)
@@ -553,6 +897,28 @@ async fn admin_spot_lists_orders_and_trades_with_filters() -> Result<(), Box<dyn
     .await?
     .last_insert_id()
     .to_string();
+    let system_user_id = sqlx::query(
+        r#"INSERT INTO users (email, password_hash, status)
+           VALUES ('__system_spot_liquidity@internal.local', 'system-liquidity', 'active')
+           ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"#,
+    )
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let system_order_id = sqlx::query(
+        r#"INSERT INTO spot_orders
+           (user_id, pair_id, side, order_type, price, quantity, filled_quantity, status, created_at)
+           VALUES (?, ?, 'sell', 'limit', ?, ?, 0, 'open', ?)"#,
+    )
+    .bind(system_user_id)
+    .bind(pair_db_id)
+    .bind(decimal("12.000000000000000000"))
+    .bind(decimal("1.0000"))
+    .bind(system_created_at.naive_utc())
+    .execute(&pool)
+    .await?
+    .last_insert_id()
+    .to_string();
     let first_trade_id = sqlx::query(
         r#"INSERT INTO spot_trades
            (pair_id, buy_order_id, sell_order_id, price, quantity, fee, idempotency_key, created_at)
@@ -581,6 +947,25 @@ async fn admin_spot_lists_orders_and_trades_with_filters() -> Result<(), Box<dyn
     .bind(decimal("1.000000000000000000"))
     .bind(format!("spot-admin-list-{}-2", Uuid::now_v7().simple()))
     .bind(third_created_at.naive_utc())
+    .execute(&pool)
+    .await?
+    .last_insert_id()
+    .to_string();
+    let system_trade_id = sqlx::query(
+        r#"INSERT INTO spot_trades
+           (pair_id, buy_order_id, sell_order_id, price, quantity, fee, idempotency_key, created_at)
+           VALUES (?, ?, ?, ?, ?, 0, ?, ?)"#,
+    )
+    .bind(pair_db_id)
+    .bind(&other_order_id)
+    .bind(&system_order_id)
+    .bind(decimal("12.000000000000000000"))
+    .bind(decimal("1.000000000000000000"))
+    .bind(format!(
+        "spot-admin-list-{}-system",
+        Uuid::now_v7().simple()
+    ))
+    .bind(system_created_at.naive_utc())
     .execute(&pool)
     .await?
     .last_insert_id()
@@ -618,8 +1003,42 @@ async fn admin_spot_lists_orders_and_trades_with_filters() -> Result<(), Box<dyn
     assert_eq!(orders[0]["id"], other_order_id);
     assert_eq!(orders[0]["user_id"], other_user_id.to_string());
     assert_eq!(orders[0]["status"], "open");
+    assert_eq!(orders[0]["average_price"], "11.000000000000000000");
     assert_eq!(orders[1]["id"], buy_order_id);
     assert_eq!(orders[1]["user_id"], buyer_id.to_string());
+    assert_eq!(orders[1]["user_email"], buyer_email);
+    assert_eq!(orders[1]["average_price"], "10.000000000000000000");
+
+    let internal_orders_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!(
+                    "/spot/orders?pair_id={pair_symbol}&status=open&include_internal=true&limit=10"
+                ))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let internal_orders_status = internal_orders_response.status();
+    let internal_orders_body =
+        axum::body::to_bytes(internal_orders_response.into_body(), 8192).await?;
+    assert_eq!(
+        internal_orders_status,
+        StatusCode::OK,
+        "payload: {}",
+        String::from_utf8_lossy(&internal_orders_body)
+    );
+    let internal_orders_payload: Value = serde_json::from_slice(&internal_orders_body)?;
+    let internal_orders = internal_orders_payload["orders"].as_array().unwrap();
+    assert!(
+        internal_orders
+            .iter()
+            .any(|order| order["id"].as_str() == Some(system_order_id.as_str()))
+    );
 
     let filtered_orders_response = app
         .clone()
@@ -649,6 +1068,8 @@ async fn admin_spot_lists_orders_and_trades_with_filters() -> Result<(), Box<dyn
     assert_eq!(filtered_orders.len(), 1);
     assert_eq!(filtered_orders[0]["id"], buy_order_id);
     assert_eq!(filtered_orders[0]["user_id"], buyer_id.to_string());
+    assert_eq!(filtered_orders[0]["user_email"], buyer_email);
+    assert_eq!(filtered_orders[0]["average_price"], "10.000000000000000000");
 
     let trades_response = app
         .clone()
@@ -678,6 +1099,42 @@ async fn admin_spot_lists_orders_and_trades_with_filters() -> Result<(), Box<dyn
     assert_eq!(trades[0]["sell_order_id"], sell_order_id);
     assert!(trades[0]["created_at"].is_number());
     assert_eq!(trades[1]["id"], first_trade_id);
+    assert!(
+        trades
+            .iter()
+            .all(|trade| trade["id"].as_str() != Some(system_trade_id.as_str()))
+    );
+
+    let internal_trades_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!(
+                    "/spot/trades?pair_id={pair_symbol}&include_internal=true&limit=10"
+                ))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let internal_trades_status = internal_trades_response.status();
+    let internal_trades_body =
+        axum::body::to_bytes(internal_trades_response.into_body(), 8192).await?;
+    assert_eq!(
+        internal_trades_status,
+        StatusCode::OK,
+        "payload: {}",
+        String::from_utf8_lossy(&internal_trades_body)
+    );
+    let internal_trades_payload: Value = serde_json::from_slice(&internal_trades_body)?;
+    let internal_trades = internal_trades_payload["trades"].as_array().unwrap();
+    assert!(
+        internal_trades
+            .iter()
+            .any(|trade| trade["id"].as_str() == Some(system_trade_id.as_str()))
+    );
 
     let filtered_trades_response = app
         .clone()
@@ -718,15 +1175,17 @@ async fn admin_spot_lists_orders_and_trades_with_filters() -> Result<(), Box<dyn
         .await
         .unwrap();
 
-    sqlx::query("DELETE FROM spot_trades WHERE id IN (?, ?)")
+    sqlx::query("DELETE FROM spot_trades WHERE id IN (?, ?, ?)")
         .bind(&first_trade_id)
         .bind(&second_trade_id)
+        .bind(&system_trade_id)
         .execute(&pool)
         .await?;
-    sqlx::query("DELETE FROM spot_orders WHERE id IN (?, ?, ?)")
+    sqlx::query("DELETE FROM spot_orders WHERE id IN (?, ?, ?, ?)")
         .bind(&buy_order_id)
         .bind(&sell_order_id)
         .bind(&other_order_id)
+        .bind(&system_order_id)
         .execute(&pool)
         .await?;
     sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
@@ -842,6 +1301,844 @@ async fn spot_create_limit_buy_order_freezes_quote_wallet() -> Result<(), Box<dy
         &order_id,
     )
     .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn spot_limit_buy_order_fills_when_market_price_reaches_limit() -> Result<(), Box<dyn Error>>
+{
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_user(&pool).await;
+    let commission_fixture =
+        support::seed_direct_agent_commission(&pool, user_id, "spot", "0.05000000").await?;
+    let (base_asset, base_symbol) = create_asset(&pool, "LB").await;
+    let (quote_asset, quote_symbol) = create_asset(&pool, "LQ").await;
+    let pair_symbol =
+        create_pair(&pool, base_asset, quote_asset, &base_symbol, &quote_symbol).await;
+    let compact_market_symbol = format!("{base_symbol}{quote_symbol}");
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(quote_asset)
+        .bind(decimal("100.000000000000000000"))
+        .execute(&pool)
+        .await?;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let idempotency_key = format!("spot-limit-trigger-{}", Uuid::now_v7().simple());
+    let hub = EventBroadcastHub::new(16);
+    let mut private_events = hub.subscribe(&WebSocketChannel::private_user(user_id));
+    let app = routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_event_broadcast_hub(hub.clone()),
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/spot/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"pair_id":"{pair_symbol}","side":"buy","order_type":"limit","price":"10.000000000000000000","quantity":"2.0000","idempotency_key":"{idempotency_key}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 8192).await?;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "payload: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let order: Value = serde_json::from_slice(&body)?;
+    assert_eq!(order["status"], "pending");
+    let order_id = order["id"].as_str().unwrap().to_owned();
+    let created_event: Value = serde_json::from_str(private_events.recv().await?.payload())?;
+    assert_eq!(created_event["type"], "spot.order.created");
+    assert_eq!(created_event["order_id"], order_id);
+    assert_eq!(created_event["status"], "pending");
+
+    let filled = execute_triggered_spot_limit_orders_with_hub(
+        &pool,
+        &compact_market_symbol,
+        &decimal("9.000000000000000000"),
+        Some(&hub),
+    )
+    .await?;
+    assert_eq!(filled, 1);
+
+    let fill_event: Value = serde_json::from_str(private_events.recv().await?.payload())?;
+    assert_eq!(fill_event["type"], "spot.trade.filled");
+    assert_eq!(fill_event["order_id"], order_id);
+    assert_eq!(fill_event["order_status"], "filled");
+
+    let (order_status, filled_quantity): (String, BigDecimal) =
+        sqlx::query_as("SELECT status, filled_quantity FROM spot_orders WHERE id = ?")
+            .bind(&order_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(order_status, "filled");
+    assert_eq!(
+        filled_quantity.normalized(),
+        decimal("2.000000000000000000").normalized()
+    );
+
+    let (buyer_quote_available, buyer_quote_frozen): (BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available, frozen FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        buyer_quote_available.normalized(),
+        decimal("82.000000000000000000").normalized()
+    );
+    assert_eq!(
+        buyer_quote_frozen.normalized(),
+        decimal("0.000000000000000000").normalized()
+    );
+    let (buyer_base_available,): (BigDecimal,) =
+        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(base_asset)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(
+        buyer_base_available.normalized(),
+        decimal("2.000000000000000000").normalized()
+    );
+
+    let (trade_id, sell_order_id, trade_price, trade_quantity): (u64, u64, BigDecimal, BigDecimal) =
+        sqlx::query_as(
+            "SELECT id, sell_order_id, price, quantity FROM spot_trades WHERE buy_order_id = ?",
+        )
+        .bind(&order_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(
+        trade_price.normalized(),
+        decimal("9.000000000000000000").normalized()
+    );
+    assert_eq!(
+        trade_quantity.normalized(),
+        decimal("2.000000000000000000").normalized()
+    );
+    let (sell_order_status,): (String,) =
+        sqlx::query_as("SELECT status FROM spot_orders WHERE id = ?")
+            .bind(sell_order_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(sell_order_status, "filled");
+
+    let commission: (u64, BigDecimal, BigDecimal, BigDecimal, u64) = sqlx::query_as(
+        r#"SELECT agent_id, source_amount, commission_rate, commission_amount, payout_asset_id
+           FROM agent_commission_records
+           WHERE user_id = ? AND source_type = 'spot_trade_buy' AND source_id = ?"#,
+    )
+    .bind(user_id)
+    .bind(trade_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(commission.0, commission_fixture.agent_id);
+    assert_eq!(commission.1, decimal("18.000000000000000000"));
+    assert_eq!(commission.2, decimal("0.05000000"));
+    assert_eq!(commission.3, decimal("0.900000000000000000"));
+    assert_eq!(commission.4, quote_asset);
+
+    let (system_user_id,): (u64,) = sqlx::query_as("SELECT id FROM users WHERE email = ?")
+        .bind("__system_spot_liquidity@internal.local")
+        .fetch_one(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_ledger WHERE asset_id IN (?, ?) AND user_id IN (?, ?)")
+        .bind(base_asset)
+        .bind(quote_asset)
+        .bind(user_id)
+        .bind(system_user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM spot_trades WHERE buy_order_id = ? OR sell_order_id = ?")
+        .bind(&order_id)
+        .bind(sell_order_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM spot_orders WHERE id IN (?, ?)")
+        .bind(&order_id)
+        .bind(sell_order_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_accounts WHERE user_id IN (?, ?) AND asset_id IN (?, ?)")
+        .bind(user_id)
+        .bind(system_user_id)
+        .bind(base_asset)
+        .bind(quote_asset)
+        .execute(&pool)
+        .await?;
+    support::cleanup_direct_agent_commission(&pool, user_id, commission_fixture).await?;
+    sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
+        .bind(&pair_symbol)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id IN (?, ?)")
+        .bind(base_asset)
+        .bind(quote_asset)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn spot_create_market_buy_order_fills_immediately_at_market_price()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_user(&pool).await;
+    let (base_asset, base_symbol) = create_asset(&pool, "MB").await;
+    let (quote_asset, quote_symbol) = create_asset(&pool, "MQ").await;
+    let pair_symbol =
+        create_pair(&pool, base_asset, quote_asset, &base_symbol, &quote_symbol).await;
+    cache_market_ticker(&redis, &pair_symbol, "10.000000000000000000").await?;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(quote_asset)
+        .bind(decimal("100.000000000000000000"))
+        .execute(&pool)
+        .await?;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let idempotency_key = format!("spot-market-buy-{}", Uuid::now_v7().simple());
+    let hub = EventBroadcastHub::new(16);
+    let mut private_events = hub.subscribe(&WebSocketChannel::private_user(user_id));
+    let app = routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_redis(redis)
+            .with_event_broadcast_hub(hub),
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/spot/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"pair_id":"{pair_symbol}","side":"buy","order_type":"market","quantity":"2.0000","reference_price":"10.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 8192).await?;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "payload: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let order: Value = serde_json::from_slice(&body)?;
+    assert_eq!(order["status"], "filled");
+    assert_eq!(
+        decimal(order["filled_quantity"].as_str().unwrap()).normalized(),
+        decimal("2.0000").normalized()
+    );
+    let order_id = order["id"].as_str().unwrap().to_owned();
+
+    let created_event: Value = serde_json::from_str(private_events.recv().await?.payload())?;
+    assert_eq!(created_event["type"], "spot.order.created");
+    assert_eq!(created_event["order_id"], order_id);
+    assert_eq!(created_event["status"], "filled");
+    let fill_event: Value = serde_json::from_str(private_events.recv().await?.payload())?;
+    assert_eq!(fill_event["type"], "spot.trade.filled");
+    assert_eq!(fill_event["order_id"], order_id);
+    assert_eq!(fill_event["order_status"], "filled");
+
+    let (buyer_quote_available, buyer_quote_frozen): (BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available, frozen FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        buyer_quote_available.normalized(),
+        decimal("80.000000000000000000").normalized()
+    );
+    assert_eq!(
+        buyer_quote_frozen.normalized(),
+        decimal("0.000000000000000000").normalized()
+    );
+    let (buyer_base_available,): (BigDecimal,) =
+        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(base_asset)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(
+        buyer_base_available.normalized(),
+        decimal("2.000000000000000000").normalized()
+    );
+
+    let (sell_order_id, trade_price, trade_quantity): (u64, BigDecimal, BigDecimal) =
+        sqlx::query_as(
+            "SELECT sell_order_id, price, quantity FROM spot_trades WHERE buy_order_id = ?",
+        )
+        .bind(&order_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(
+        trade_price.normalized(),
+        decimal("10.000000000000000000").normalized()
+    );
+    assert_eq!(
+        trade_quantity.normalized(),
+        decimal("2.000000000000000000").normalized()
+    );
+    let (sell_order_status,): (String,) =
+        sqlx::query_as("SELECT status FROM spot_orders WHERE id = ?")
+            .bind(sell_order_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(sell_order_status, "filled");
+
+    let (system_user_id,): (u64,) = sqlx::query_as("SELECT id FROM users WHERE email = ?")
+        .bind("__system_spot_liquidity@internal.local")
+        .fetch_one(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_ledger WHERE asset_id IN (?, ?) AND user_id IN (?, ?)")
+        .bind(base_asset)
+        .bind(quote_asset)
+        .bind(user_id)
+        .bind(system_user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM spot_trades WHERE buy_order_id = ? OR sell_order_id = ?")
+        .bind(&order_id)
+        .bind(sell_order_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM spot_orders WHERE id IN (?, ?)")
+        .bind(&order_id)
+        .bind(sell_order_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_accounts WHERE user_id IN (?, ?) AND asset_id IN (?, ?)")
+        .bind(user_id)
+        .bind(system_user_id)
+        .bind(base_asset)
+        .bind(quote_asset)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
+        .bind(&pair_symbol)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id IN (?, ?)")
+        .bind(base_asset)
+        .bind(quote_asset)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn spot_market_buy_accepts_small_cached_price_uptick_and_reserves_execution_price()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_user(&pool).await;
+    let (base_asset, base_symbol) = create_asset(&pool, "RB").await;
+    let (quote_asset, quote_symbol) = create_asset(&pool, "RQ").await;
+    let pair_symbol =
+        create_pair(&pool, base_asset, quote_asset, &base_symbol, &quote_symbol).await;
+    cache_market_ticker(&redis, &pair_symbol, "1718.000000000000000000").await?;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(quote_asset)
+        .bind(decimal("2000.000000000000000000"))
+        .execute(&pool)
+        .await?;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let idempotency_key = format!("spot-market-buy-uptick-{}", Uuid::now_v7().simple());
+    let app = routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_redis(redis.clone()),
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/spot/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"pair_id":"{pair_symbol}","side":"buy","order_type":"market","quantity":"1.0000","reference_price":"1717.800000000000000000","idempotency_key":"{idempotency_key}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 8192).await?;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "payload: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let order: Value = serde_json::from_slice(&body)?;
+    assert_eq!(order["status"], "filled");
+    let order_id = order["id"].as_str().unwrap().to_owned();
+
+    let (reserved_amount,): (BigDecimal,) =
+        sqlx::query_as("SELECT reserved_amount FROM spot_orders WHERE id = ?")
+            .bind(&order_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(
+        reserved_amount.normalized(),
+        decimal("1718.000000000000000000").normalized()
+    );
+    let (buyer_quote_available, buyer_quote_frozen): (BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available, frozen FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        buyer_quote_available.normalized(),
+        decimal("282.000000000000000000").normalized()
+    );
+    assert_eq!(
+        buyer_quote_frozen.normalized(),
+        decimal("0.000000000000000000").normalized()
+    );
+    let (trade_price, sell_order_id): (BigDecimal, u64) =
+        sqlx::query_as("SELECT price, sell_order_id FROM spot_trades WHERE buy_order_id = ?")
+            .bind(&order_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(
+        trade_price.normalized(),
+        decimal("1718.000000000000000000").normalized()
+    );
+
+    let (system_user_id,): (u64,) = sqlx::query_as("SELECT id FROM users WHERE email = ?")
+        .bind("__system_spot_liquidity@internal.local")
+        .fetch_one(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_ledger WHERE asset_id IN (?, ?) AND user_id IN (?, ?)")
+        .bind(base_asset)
+        .bind(quote_asset)
+        .bind(user_id)
+        .bind(system_user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM spot_trades WHERE buy_order_id = ? OR sell_order_id = ?")
+        .bind(&order_id)
+        .bind(sell_order_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM spot_orders WHERE id IN (?, ?)")
+        .bind(&order_id)
+        .bind(sell_order_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_accounts WHERE user_id IN (?, ?) AND asset_id IN (?, ?)")
+        .bind(user_id)
+        .bind(system_user_id)
+        .bind(base_asset)
+        .bind(quote_asset)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
+        .bind(&pair_symbol)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id IN (?, ?)")
+        .bind(base_asset)
+        .bind(quote_asset)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    let mut redis_connection = redis.clone();
+    let _: () = redis_connection
+        .del(market_ticker_redis_key(&pair_symbol))
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn spot_create_market_sell_order_fills_immediately_at_market_price()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_user(&pool).await;
+    let (base_asset, base_symbol) = create_asset(&pool, "MS").await;
+    let (quote_asset, quote_symbol) = create_asset(&pool, "MQ").await;
+    let pair_symbol =
+        create_pair(&pool, base_asset, quote_asset, &base_symbol, &quote_symbol).await;
+    cache_market_ticker(&redis, &pair_symbol, "10.000000000000000000").await?;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(base_asset)
+        .bind(decimal("2.000000000000000000"))
+        .execute(&pool)
+        .await?;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let idempotency_key = format!("spot-market-sell-{}", Uuid::now_v7().simple());
+    let hub = EventBroadcastHub::new(16);
+    let mut private_events = hub.subscribe(&WebSocketChannel::private_user(user_id));
+    let app = routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_redis(redis)
+            .with_event_broadcast_hub(hub),
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/spot/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"pair_id":"{pair_symbol}","side":"sell","order_type":"market","quantity":"2.0000","reference_price":"10.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 8192).await?;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "payload: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let order: Value = serde_json::from_slice(&body)?;
+    assert_eq!(order["status"], "filled");
+    assert_eq!(
+        decimal(order["filled_quantity"].as_str().unwrap()).normalized(),
+        decimal("2.0000").normalized()
+    );
+    let order_id = order["id"].as_str().unwrap().to_owned();
+
+    let created_event: Value = serde_json::from_str(private_events.recv().await?.payload())?;
+    assert_eq!(created_event["type"], "spot.order.created");
+    assert_eq!(created_event["order_id"], order_id);
+    assert_eq!(created_event["status"], "filled");
+    let fill_event: Value = serde_json::from_str(private_events.recv().await?.payload())?;
+    assert_eq!(fill_event["type"], "spot.trade.filled");
+    assert_eq!(fill_event["order_id"], order_id);
+    assert_eq!(fill_event["side"], "sell");
+    assert_eq!(fill_event["order_status"], "filled");
+
+    let (seller_base_available, seller_base_frozen): (BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available, frozen FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(base_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        seller_base_available.normalized(),
+        decimal("0.000000000000000000").normalized()
+    );
+    assert_eq!(
+        seller_base_frozen.normalized(),
+        decimal("0.000000000000000000").normalized()
+    );
+    let (seller_quote_available,): (BigDecimal,) =
+        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(quote_asset)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(
+        seller_quote_available.normalized(),
+        decimal("20.000000000000000000").normalized()
+    );
+
+    let (buy_order_id, trade_price, trade_quantity): (u64, BigDecimal, BigDecimal) =
+        sqlx::query_as(
+            "SELECT buy_order_id, price, quantity FROM spot_trades WHERE sell_order_id = ?",
+        )
+        .bind(&order_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(
+        trade_price.normalized(),
+        decimal("10.000000000000000000").normalized()
+    );
+    assert_eq!(
+        trade_quantity.normalized(),
+        decimal("2.000000000000000000").normalized()
+    );
+    let (buy_order_status,): (String,) =
+        sqlx::query_as("SELECT status FROM spot_orders WHERE id = ?")
+            .bind(buy_order_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(buy_order_status, "filled");
+
+    let (system_user_id,): (u64,) = sqlx::query_as("SELECT id FROM users WHERE email = ?")
+        .bind("__system_spot_liquidity@internal.local")
+        .fetch_one(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_ledger WHERE asset_id IN (?, ?) AND user_id IN (?, ?)")
+        .bind(base_asset)
+        .bind(quote_asset)
+        .bind(user_id)
+        .bind(system_user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM spot_trades WHERE buy_order_id = ? OR sell_order_id = ?")
+        .bind(buy_order_id)
+        .bind(&order_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM spot_orders WHERE id IN (?, ?)")
+        .bind(&order_id)
+        .bind(buy_order_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_accounts WHERE user_id IN (?, ?) AND asset_id IN (?, ?)")
+        .bind(user_id)
+        .bind(system_user_id)
+        .bind(base_asset)
+        .bind(quote_asset)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
+        .bind(&pair_symbol)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id IN (?, ?)")
+        .bind(base_asset)
+        .bind(quote_asset)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn spot_limit_sell_order_fills_when_market_price_reaches_limit() -> Result<(), Box<dyn Error>>
+{
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_user(&pool).await;
+    let (base_asset, base_symbol) = create_asset(&pool, "LS").await;
+    let (quote_asset, quote_symbol) = create_asset(&pool, "LQ").await;
+    let pair_symbol =
+        create_pair(&pool, base_asset, quote_asset, &base_symbol, &quote_symbol).await;
+    let compact_market_symbol = format!("{base_symbol}{quote_symbol}");
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(base_asset)
+        .bind(decimal("2.000000000000000000"))
+        .execute(&pool)
+        .await?;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let idempotency_key = format!("spot-limit-sell-trigger-{}", Uuid::now_v7().simple());
+    let hub = EventBroadcastHub::new(16);
+    let mut private_events = hub.subscribe(&WebSocketChannel::private_user(user_id));
+    let app = routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_event_broadcast_hub(hub.clone()),
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/spot/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"pair_id":"{pair_symbol}","side":"sell","order_type":"limit","price":"10.000000000000000000","quantity":"2.0000","idempotency_key":"{idempotency_key}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 8192).await?;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "payload: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let order: Value = serde_json::from_slice(&body)?;
+    assert_eq!(order["status"], "pending");
+    let order_id = order["id"].as_str().unwrap().to_owned();
+    let created_event: Value = serde_json::from_str(private_events.recv().await?.payload())?;
+    assert_eq!(created_event["type"], "spot.order.created");
+    assert_eq!(created_event["order_id"], order_id);
+    assert_eq!(created_event["status"], "pending");
+
+    let filled = execute_triggered_spot_limit_orders_with_hub(
+        &pool,
+        &compact_market_symbol,
+        &decimal("11.000000000000000000"),
+        Some(&hub),
+    )
+    .await?;
+    assert_eq!(filled, 1);
+
+    let fill_event: Value = serde_json::from_str(private_events.recv().await?.payload())?;
+    assert_eq!(fill_event["type"], "spot.trade.filled");
+    assert_eq!(fill_event["order_id"], order_id);
+    assert_eq!(fill_event["side"], "sell");
+    assert_eq!(fill_event["order_status"], "filled");
+
+    let (order_status, filled_quantity): (String, BigDecimal) =
+        sqlx::query_as("SELECT status, filled_quantity FROM spot_orders WHERE id = ?")
+            .bind(&order_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(order_status, "filled");
+    assert_eq!(
+        filled_quantity.normalized(),
+        decimal("2.000000000000000000").normalized()
+    );
+
+    let (seller_base_available, seller_base_frozen): (BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available, frozen FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(base_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        seller_base_available.normalized(),
+        decimal("0.000000000000000000").normalized()
+    );
+    assert_eq!(
+        seller_base_frozen.normalized(),
+        decimal("0.000000000000000000").normalized()
+    );
+    let (seller_quote_available,): (BigDecimal,) =
+        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(quote_asset)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(
+        seller_quote_available.normalized(),
+        decimal("22.000000000000000000").normalized()
+    );
+
+    let (buy_order_id, trade_price, trade_quantity): (u64, BigDecimal, BigDecimal) =
+        sqlx::query_as(
+            "SELECT buy_order_id, price, quantity FROM spot_trades WHERE sell_order_id = ?",
+        )
+        .bind(&order_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(
+        trade_price.normalized(),
+        decimal("11.000000000000000000").normalized()
+    );
+    assert_eq!(
+        trade_quantity.normalized(),
+        decimal("2.000000000000000000").normalized()
+    );
+    let (buy_order_status,): (String,) =
+        sqlx::query_as("SELECT status FROM spot_orders WHERE id = ?")
+            .bind(buy_order_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(buy_order_status, "filled");
+
+    let (system_user_id,): (u64,) = sqlx::query_as("SELECT id FROM users WHERE email = ?")
+        .bind("__system_spot_liquidity@internal.local")
+        .fetch_one(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_ledger WHERE asset_id IN (?, ?) AND user_id IN (?, ?)")
+        .bind(base_asset)
+        .bind(quote_asset)
+        .bind(user_id)
+        .bind(system_user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM spot_trades WHERE buy_order_id = ? OR sell_order_id = ?")
+        .bind(buy_order_id)
+        .bind(&order_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM spot_orders WHERE id IN (?, ?)")
+        .bind(&order_id)
+        .bind(buy_order_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_accounts WHERE user_id IN (?, ?) AND asset_id IN (?, ?)")
+        .bind(user_id)
+        .bind(system_user_id)
+        .bind(base_asset)
+        .bind(quote_asset)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
+        .bind(&pair_symbol)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id IN (?, ?)")
+        .bind(base_asset)
+        .bind(quote_asset)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
     Ok(())
 }
 
@@ -1234,12 +2531,16 @@ async fn spot_create_market_order_idempotency_accepts_legacy_null_reference_pric
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
     let settings = test_settings();
     let user_id = create_user(&pool).await;
     let (base_asset, base_symbol) = create_asset(&pool, "HB").await;
     let (quote_asset, quote_symbol) = create_asset(&pool, "HQ").await;
     let pair_symbol =
         create_pair(&pool, base_asset, quote_asset, &base_symbol, &quote_symbol).await;
+    cache_market_ticker(&redis, &pair_symbol, "10.000000000000000000").await?;
     sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
         .bind(user_id)
         .bind(quote_asset)
@@ -1248,7 +2549,11 @@ async fn spot_create_market_order_idempotency_accepts_legacy_null_reference_pric
         .await?;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let idempotency_key = format!("spot-route-{}", Uuid::now_v7().simple());
-    let app = routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let app = routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_redis(redis),
+    );
     let request_body = format!(
         r#"{{"pair_id":"{pair_symbol}","side":"buy","order_type":"market","quantity":"2.0000","reference_price":"10.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
     );
@@ -1324,12 +2629,16 @@ async fn spot_create_legacy_market_sell_idempotency_rejects_changed_reference_pr
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
     let settings = test_settings();
     let user_id = create_user(&pool).await;
     let (base_asset, base_symbol) = create_asset(&pool, "SB").await;
     let (quote_asset, quote_symbol) = create_asset(&pool, "SQ").await;
     let pair_symbol =
         create_pair(&pool, base_asset, quote_asset, &base_symbol, &quote_symbol).await;
+    cache_market_ticker(&redis, &pair_symbol, "10.000000000000000000").await?;
     sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
         .bind(user_id)
         .bind(base_asset)
@@ -1338,7 +2647,11 @@ async fn spot_create_legacy_market_sell_idempotency_rejects_changed_reference_pr
         .await?;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let idempotency_key = format!("spot-route-{}", Uuid::now_v7().simple());
-    let app = routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let app = routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_redis(redis),
+    );
     let first_body = format!(
         r#"{{"pair_id":"{pair_symbol}","side":"sell","order_type":"market","quantity":"2.0000","reference_price":"10.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
     );
@@ -1415,12 +2728,16 @@ async fn spot_create_legacy_market_order_idempotency_rejects_added_unused_price(
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
     let settings = test_settings();
     let user_id = create_user(&pool).await;
     let (base_asset, base_symbol) = create_asset(&pool, "PB").await;
     let (quote_asset, quote_symbol) = create_asset(&pool, "PQ").await;
     let pair_symbol =
         create_pair(&pool, base_asset, quote_asset, &base_symbol, &quote_symbol).await;
+    cache_market_ticker(&redis, &pair_symbol, "10.000000000000000000").await?;
     sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
         .bind(user_id)
         .bind(quote_asset)
@@ -1429,7 +2746,11 @@ async fn spot_create_legacy_market_order_idempotency_rejects_added_unused_price(
         .await?;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let idempotency_key = format!("spot-route-{}", Uuid::now_v7().simple());
-    let app = routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let app = routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_redis(redis),
+    );
     let first_body = format!(
         r#"{{"pair_id":"{pair_symbol}","side":"buy","order_type":"market","quantity":"2.0000","reference_price":"10.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
     );
@@ -1594,12 +2915,16 @@ async fn spot_create_market_sell_idempotency_rejects_changed_reference_price()
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
     let settings = test_settings();
     let user_id = create_user(&pool).await;
     let (base_asset, base_symbol) = create_asset(&pool, "MS").await;
     let (quote_asset, quote_symbol) = create_asset(&pool, "MR").await;
     let pair_symbol =
         create_pair(&pool, base_asset, quote_asset, &base_symbol, &quote_symbol).await;
+    cache_market_ticker(&redis, &pair_symbol, "10.000000000000000000").await?;
     sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
         .bind(user_id)
         .bind(base_asset)
@@ -1608,7 +2933,11 @@ async fn spot_create_market_sell_idempotency_rejects_changed_reference_price()
         .await?;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let idempotency_key = format!("spot-route-{}", Uuid::now_v7().simple());
-    let app = routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let app = routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_redis(redis),
+    );
     let first_body = format!(
         r#"{{"pair_id":"{pair_symbol}","side":"sell","order_type":"market","quantity":"2.0000","reference_price":"10.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
     );
@@ -1680,12 +3009,16 @@ async fn spot_create_market_order_idempotency_accepts_same_unused_price_replay()
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
     let settings = test_settings();
     let user_id = create_user(&pool).await;
     let (base_asset, base_symbol) = create_asset(&pool, "UP").await;
     let (quote_asset, quote_symbol) = create_asset(&pool, "UQ").await;
     let pair_symbol =
         create_pair(&pool, base_asset, quote_asset, &base_symbol, &quote_symbol).await;
+    cache_market_ticker(&redis, &pair_symbol, "10.000000000000000000").await?;
     sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
         .bind(user_id)
         .bind(quote_asset)
@@ -1694,7 +3027,11 @@ async fn spot_create_market_order_idempotency_accepts_same_unused_price_replay()
         .await?;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let idempotency_key = format!("spot-route-{}", Uuid::now_v7().simple());
-    let app = routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let app = routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_redis(redis),
+    );
     let request_body = format!(
         r#"{{"pair_id":"{pair_symbol}","side":"buy","order_type":"market","price":"10.000000000000000000","quantity":"2.0000","reference_price":"10.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
     );
@@ -1765,12 +3102,16 @@ async fn spot_create_market_order_idempotency_rejects_changed_unused_price()
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
     let settings = test_settings();
     let user_id = create_user(&pool).await;
     let (base_asset, base_symbol) = create_asset(&pool, "CP").await;
     let (quote_asset, quote_symbol) = create_asset(&pool, "CQ").await;
     let pair_symbol =
         create_pair(&pool, base_asset, quote_asset, &base_symbol, &quote_symbol).await;
+    cache_market_ticker(&redis, &pair_symbol, "10.000000000000000000").await?;
     sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
         .bind(user_id)
         .bind(quote_asset)
@@ -1779,7 +3120,11 @@ async fn spot_create_market_order_idempotency_rejects_changed_unused_price()
         .await?;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let idempotency_key = format!("spot-route-{}", Uuid::now_v7().simple());
-    let app = routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let app = routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_redis(redis),
+    );
     let first_body = format!(
         r#"{{"pair_id":"{pair_symbol}","side":"buy","order_type":"market","price":"10.000000000000000000","quantity":"2.0000","reference_price":"10.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
     );
@@ -2521,13 +3866,268 @@ async fn spot_cancel_is_idempotent_without_repeating_unfreeze() -> Result<(), Bo
 }
 
 #[tokio::test]
-async fn spot_fill_settles_buyer_and_seller_wallets() -> Result<(), Box<dyn Error>> {
+async fn spot_cancel_all_requires_user_scope_and_mysql() -> Result<(), Box<dyn Error>> {
+    let settings = test_settings();
+    let user_token = issue_token(&settings, "user:42", TokenScope::User, 900).unwrap();
+    let admin_token = issue_token(&settings, "admin:7", TokenScope::Admin, 900).unwrap();
+    let app = routes().with_state(AppState::new(settings));
+
+    let missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/spot/orders")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let admin = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/spot/orders")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(admin.status(), StatusCode::FORBIDDEN);
+
+    let no_mysql = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/spot/orders")
+                .header("authorization", format!("Bearer {user_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(no_mysql.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    Ok(())
+}
+
+#[tokio::test]
+async fn spot_cancel_all_filters_pair_and_reuses_idempotent_single_cancel()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_user(&pool).await;
+    let other_user_id = create_user(&pool).await;
+    let (first_base_asset, first_base_symbol) = create_asset(&pool, "BA").await;
+    let (second_base_asset, second_base_symbol) = create_asset(&pool, "BB").await;
+    let (quote_asset, quote_symbol) = create_asset(&pool, "BQ").await;
+    let first_pair = create_pair(
+        &pool,
+        first_base_asset,
+        quote_asset,
+        &first_base_symbol,
+        &quote_symbol,
+    )
+    .await;
+    let second_pair = create_pair(
+        &pool,
+        second_base_asset,
+        quote_asset,
+        &second_base_symbol,
+        &quote_symbol,
+    )
+    .await;
+    let first_order_id =
+        seed_reserved_open_buy_order(&pool, user_id, &first_pair, quote_asset, "10").await?;
+    let failing_order_id =
+        seed_reserved_open_buy_order(&pool, user_id, &first_pair, quote_asset, "100").await?;
+    let success_after_failure_id =
+        seed_reserved_open_buy_order(&pool, user_id, &first_pair, quote_asset, "10").await?;
+    let unfiltered_order_id =
+        seed_reserved_open_buy_order(&pool, user_id, &second_pair, quote_asset, "20").await?;
+    let other_order_id =
+        seed_reserved_open_buy_order(&pool, other_user_id, &first_pair, quote_asset, "10").await?;
+    sqlx::query(
+        "INSERT INTO wallet_accounts (user_id, asset_id, available, frozen) VALUES (?, ?, ?, ?)",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .bind(decimal("60"))
+    .bind(decimal("40"))
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO wallet_accounts (user_id, asset_id, available, frozen) VALUES (?, ?, ?, ?)",
+    )
+    .bind(other_user_id)
+    .bind(quote_asset)
+    .bind(decimal("90"))
+    .bind(decimal("10"))
+    .execute(&pool)
+    .await?;
+
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let hub = EventBroadcastHub::new(16);
+    let _keepalive_hub = hub.clone();
+    let mut private_events = hub.subscribe(&WebSocketChannel::private_user(user_id));
+    let app = routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_event_broadcast_hub(hub),
+    );
+
+    let filtered = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/spot/orders?pair_id={first_pair}"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let filtered_status = filtered.status();
+    let filtered_payload: Value =
+        serde_json::from_slice(&axum::body::to_bytes(filtered.into_body(), 65_536).await?)?;
+    assert_eq!(
+        filtered_status,
+        StatusCode::OK,
+        "payload: {filtered_payload}"
+    );
+    let filtered_orders = filtered_payload["orders"].as_array().unwrap();
+    assert_eq!(filtered_orders.len(), 2);
+    assert_eq!(filtered_payload["failures"].as_array().unwrap().len(), 1);
+    assert_eq!(filtered_payload["failures"][0]["id"], failing_order_id);
+    assert_eq!(filtered_payload["failures"][0]["code"], "VALIDATION_ERROR");
+    assert!(filtered_payload["failures"][0]["message"].is_string());
+    assert!(
+        filtered_orders
+            .iter()
+            .all(|order| order["pair_id"] == first_pair && order["status"] == "cancelled")
+    );
+
+    let mut event_order_ids = Vec::new();
+    for _ in 0..2 {
+        let event_message = timeout(Duration::from_millis(100), private_events.recv()).await??;
+        let event: Value = serde_json::from_str(event_message.payload())?;
+        assert_eq!(event["type"], "spot.order.cancelled");
+        event_order_ids.push(event["order_id"].as_str().unwrap().to_owned());
+    }
+    assert!(event_order_ids.contains(&first_order_id));
+    assert!(event_order_ids.contains(&success_after_failure_id));
+
+    let replay = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/spot/orders?pair_id={first_pair}"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let replay_payload = body_json(replay).await?;
+    assert_eq!(replay_payload["orders"], serde_json::json!([]));
+    assert_eq!(replay_payload["failures"][0]["id"], failing_order_id);
+    assert!(
+        timeout(Duration::from_millis(25), private_events.recv())
+            .await
+            .is_err(),
+        "repeated cancel-all must not publish duplicate events"
+    );
+
+    let remaining = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/spot/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let remaining_status = remaining.status();
+    let remaining_payload = body_json(remaining).await?;
+    assert_eq!(
+        remaining_status,
+        StatusCode::OK,
+        "payload: {remaining_payload}"
+    );
+    assert_eq!(remaining_payload["orders"].as_array().unwrap().len(), 1);
+    assert_eq!(remaining_payload["orders"][0]["id"], unfiltered_order_id);
+    assert_eq!(remaining_payload["failures"][0]["id"], failing_order_id);
+
+    let (available, frozen): (BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available, frozen FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(available, decimal("100"));
+    assert_eq!(frozen, decimal("0"));
+    let (other_status,): (String,) = sqlx::query_as("SELECT status FROM spot_orders WHERE id = ?")
+        .bind(&other_order_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(other_status, "open");
+    let (failing_status,): (String,) =
+        sqlx::query_as("SELECT status FROM spot_orders WHERE id = ?")
+            .bind(&failing_order_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(failing_status, "open");
+
+    sqlx::query("DELETE FROM wallet_ledger WHERE user_id IN (?, ?) AND ref_type = 'spot_order'")
+        .bind(user_id)
+        .bind(other_user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM spot_orders WHERE user_id IN (?, ?)")
+        .bind(user_id)
+        .bind(other_user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_accounts WHERE user_id IN (?, ?)")
+        .bind(user_id)
+        .bind(other_user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM trading_pairs WHERE symbol IN (?, ?)")
+        .bind(&first_pair)
+        .bind(&second_pair)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id IN (?, ?, ?)")
+        .bind(first_base_asset)
+        .bind(second_base_asset)
+        .bind(quote_asset)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id IN (?, ?)")
+        .bind(user_id)
+        .bind(other_user_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn spot_fill_settles_pending_buyer_and_seller_wallets() -> Result<(), Box<dyn Error>> {
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
     let settings = test_settings();
     let buyer_id = create_user(&pool).await;
     let seller_id = create_user(&pool).await;
+    let buyer_commission =
+        support::seed_direct_agent_commission(&pool, buyer_id, "spot", "0.05000000").await?;
+    let seller_commission =
+        support::seed_direct_agent_commission(&pool, seller_id, "spot", "0.03000000").await?;
     let (base_asset, base_symbol) = create_asset(&pool, "FB").await;
     let (quote_asset, quote_symbol) = create_asset(&pool, "FQ").await;
     let pair_symbol =
@@ -2550,6 +4150,11 @@ async fn spot_fill_settles_buyer_and_seller_wallets() -> Result<(), Box<dyn Erro
         "2.0000",
     )
     .await?;
+    sqlx::query("UPDATE spot_orders SET status = 'pending' WHERE id IN (?, ?)")
+        .bind(&buy_order_id)
+        .bind(&sell_order_id)
+        .execute(&pool)
+        .await?;
     sqlx::query(
         "INSERT INTO wallet_accounts (user_id, asset_id, available, frozen) VALUES (?, ?, ?, ?)",
     )
@@ -2674,6 +4279,41 @@ async fn spot_fill_settles_buyer_and_seller_wallets() -> Result<(), Box<dyn Erro
     .await?;
     assert_eq!(trade_count, 1);
 
+    let trade_id = payload["trade"]["id"].as_str().unwrap();
+    let buyer_record: (u64, BigDecimal, BigDecimal, BigDecimal, u64, String) = sqlx::query_as(
+        r#"SELECT agent_id, source_amount, commission_rate, commission_amount,
+                      payout_asset_id, status
+               FROM agent_commission_records
+               WHERE user_id = ? AND source_type = 'spot_trade_buy' AND source_id = ?"#,
+    )
+    .bind(buyer_id)
+    .bind(trade_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(buyer_record.0, buyer_commission.agent_id);
+    assert_eq!(buyer_record.1, decimal("20.000000000000000000"));
+    assert_eq!(buyer_record.2, decimal("0.05000000"));
+    assert_eq!(buyer_record.3, decimal("1.000000000000000000"));
+    assert_eq!(buyer_record.4, quote_asset);
+    assert_eq!(buyer_record.5, "pending");
+
+    let seller_record: (u64, BigDecimal, BigDecimal, BigDecimal, u64, String) = sqlx::query_as(
+        r#"SELECT agent_id, source_amount, commission_rate, commission_amount,
+                      payout_asset_id, status
+               FROM agent_commission_records
+               WHERE user_id = ? AND source_type = 'spot_trade_sell' AND source_id = ?"#,
+    )
+    .bind(seller_id)
+    .bind(trade_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(seller_record.0, seller_commission.agent_id);
+    assert_eq!(seller_record.1, decimal("2.000000000000000000"));
+    assert_eq!(seller_record.2, decimal("0.03000000"));
+    assert_eq!(seller_record.3, decimal("0.060000000000000000"));
+    assert_eq!(seller_record.4, base_asset);
+    assert_eq!(seller_record.5, "pending");
+
     let (ledger_count,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'spot_trade' AND ref_id = ?",
     )
@@ -2681,6 +4321,9 @@ async fn spot_fill_settles_buyer_and_seller_wallets() -> Result<(), Box<dyn Erro
     .fetch_one(&pool)
     .await?;
     assert_eq!(ledger_count, 4);
+
+    support::cleanup_direct_agent_commission(&pool, buyer_id, buyer_commission).await?;
+    support::cleanup_direct_agent_commission(&pool, seller_id, seller_commission).await?;
 
     cleanup_fill_fixture(
         &pool,
@@ -3769,34 +5412,16 @@ async fn spot_cancel_market_buy_order_unfreezes_reference_price_reserve()
         .execute(&pool)
         .await?;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
-    let idempotency_key = format!("spot-route-{}", Uuid::now_v7().simple());
     let app = routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
-
-    let create_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/spot/orders")
-                .header("authorization", format!("Bearer {token}"))
-                .header("content-type", "application/json")
-                .body(Body::from(format!(
-                    r#"{{"pair_id":"{pair_symbol}","side":"buy","order_type":"market","quantity":"2.0000","reference_price":"10.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
-                )))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let create_status = create_response.status();
-    let create_body = axum::body::to_bytes(create_response.into_body(), 8192).await?;
-    assert_eq!(
-        create_status,
-        StatusCode::OK,
-        "payload: {}",
-        String::from_utf8_lossy(&create_body)
-    );
-    let created: Value = serde_json::from_slice(&create_body)?;
-    let order_id = created["id"].as_str().unwrap().to_owned();
+    let order_id = seed_historical_market_buy_order(
+        &pool,
+        user_id,
+        &pair_symbol,
+        quote_asset,
+        "10.000000000000000000",
+        "2.0000",
+    )
+    .await?;
 
     let cancel_response = app
         .oneshot(
@@ -3901,37 +5526,15 @@ async fn spot_cancel_market_buy_after_below_reference_partial_fill_unfreezes_all
     let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
     let user_app = routes().with_state(AppState::new(settings.clone()).with_mysql(pool.clone()));
     let admin_app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
-    let idempotency_key = format!("spot-route-{}", Uuid::now_v7().simple());
-
-    let create_response = user_app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/spot/orders")
-                .header("authorization", format!("Bearer {user_token}"))
-                .header("content-type", "application/json")
-                .body(Body::from(format!(
-                    r#"{{"pair_id":"{pair_symbol}","side":"buy","order_type":"market","quantity":"2.0000","reference_price":"10.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
-                )))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let create_status = create_response.status();
-    let create_body = axum::body::to_bytes(create_response.into_body(), 8192).await?;
-    assert_eq!(
-        create_status,
-        StatusCode::OK,
-        "payload: {}",
-        String::from_utf8_lossy(&create_body)
-    );
-    let created: Value = serde_json::from_slice(&create_body)?;
-    let buy_order_id = created["id"].as_str().unwrap().to_owned();
-    sqlx::query("UPDATE spot_orders SET status = 'open' WHERE id = ?")
-        .bind(&buy_order_id)
-        .execute(&pool)
-        .await?;
+    let buy_order_id = seed_historical_market_buy_order(
+        &pool,
+        buyer_id,
+        &pair_symbol,
+        quote_asset,
+        "10.000000000000000000",
+        "2.0000",
+    )
+    .await?;
     let sell_order_id = seed_open_order(
         &pool,
         seller_id,
@@ -4063,37 +5666,15 @@ async fn spot_cancel_market_buy_after_above_reference_partial_fill_unfreezes_rem
     let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
     let user_app = routes().with_state(AppState::new(settings.clone()).with_mysql(pool.clone()));
     let admin_app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
-    let idempotency_key = format!("spot-route-{}", Uuid::now_v7().simple());
-
-    let create_response = user_app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/spot/orders")
-                .header("authorization", format!("Bearer {user_token}"))
-                .header("content-type", "application/json")
-                .body(Body::from(format!(
-                    r#"{{"pair_id":"{pair_symbol}","side":"buy","order_type":"market","quantity":"2.0000","reference_price":"10.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
-                )))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let create_status = create_response.status();
-    let create_body = axum::body::to_bytes(create_response.into_body(), 8192).await?;
-    assert_eq!(
-        create_status,
-        StatusCode::OK,
-        "payload: {}",
-        String::from_utf8_lossy(&create_body)
-    );
-    let created: Value = serde_json::from_slice(&create_body)?;
-    let buy_order_id = created["id"].as_str().unwrap().to_owned();
-    sqlx::query("UPDATE spot_orders SET status = 'open' WHERE id = ?")
-        .bind(&buy_order_id)
-        .execute(&pool)
-        .await?;
+    let buy_order_id = seed_historical_market_buy_order(
+        &pool,
+        buyer_id,
+        &pair_symbol,
+        quote_asset,
+        "10.000000000000000000",
+        "2.0000",
+    )
+    .await?;
     let sell_order_id = seed_open_order(
         &pool,
         seller_id,
@@ -4225,38 +5806,16 @@ async fn spot_fill_rejects_market_buy_that_exceeds_order_reservation() -> Result
     let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
     let user_app = routes().with_state(AppState::new(settings.clone()).with_mysql(pool.clone()));
     let admin_app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
-    let market_key = format!("spot-route-{}", Uuid::now_v7().simple());
     let other_key = format!("spot-route-{}", Uuid::now_v7().simple());
-
-    let market_response = user_app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/spot/orders")
-                .header("authorization", format!("Bearer {user_token}"))
-                .header("content-type", "application/json")
-                .body(Body::from(format!(
-                    r#"{{"pair_id":"{pair_symbol}","side":"buy","order_type":"market","quantity":"2.0000","reference_price":"10.000000000000000000","idempotency_key":"{market_key}"}}"#
-                )))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let market_status = market_response.status();
-    let market_body = axum::body::to_bytes(market_response.into_body(), 8192).await?;
-    assert_eq!(
-        market_status,
-        StatusCode::OK,
-        "payload: {}",
-        String::from_utf8_lossy(&market_body)
-    );
-    let market_order: Value = serde_json::from_slice(&market_body)?;
-    let market_order_id = market_order["id"].as_str().unwrap().to_owned();
-    sqlx::query("UPDATE spot_orders SET status = 'open' WHERE id = ?")
-        .bind(&market_order_id)
-        .execute(&pool)
-        .await?;
+    let market_order_id = seed_historical_market_buy_order(
+        &pool,
+        buyer_id,
+        &pair_symbol,
+        quote_asset,
+        "10.000000000000000000",
+        "2.0000",
+    )
+    .await?;
 
     let other_response = user_app
         .clone()
@@ -4384,42 +5943,17 @@ async fn spot_fill_full_market_buy_below_reference_releases_surplus_quote()
         .bind(decimal("0.000000000000000000"))
         .execute(&pool)
         .await?;
-    let user_token =
-        issue_token(&settings, format!("user:{buyer_id}"), TokenScope::User, 900).unwrap();
     let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
-    let user_app = routes().with_state(AppState::new(settings.clone()).with_mysql(pool.clone()));
     let admin_app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
-    let idempotency_key = format!("spot-route-{}", Uuid::now_v7().simple());
-
-    let buy_response = user_app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/spot/orders")
-                .header("authorization", format!("Bearer {user_token}"))
-                .header("content-type", "application/json")
-                .body(Body::from(format!(
-                    r#"{{"pair_id":"{pair_symbol}","side":"buy","order_type":"market","quantity":"2.0000","reference_price":"10.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
-                )))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let buy_status = buy_response.status();
-    let buy_body = axum::body::to_bytes(buy_response.into_body(), 8192).await?;
-    assert_eq!(
-        buy_status,
-        StatusCode::OK,
-        "payload: {}",
-        String::from_utf8_lossy(&buy_body)
-    );
-    let buy_order: Value = serde_json::from_slice(&buy_body)?;
-    let buy_order_id = buy_order["id"].as_str().unwrap().to_owned();
-    sqlx::query("UPDATE spot_orders SET status = 'open' WHERE id = ?")
-        .bind(&buy_order_id)
-        .execute(&pool)
-        .await?;
+    let buy_order_id = seed_historical_market_buy_order(
+        &pool,
+        buyer_id,
+        &pair_symbol,
+        quote_asset,
+        "10.000000000000000000",
+        "2.0000",
+    )
+    .await?;
     let sell_order_id = seed_open_order(
         &pool,
         seller_id,
@@ -5705,20 +7239,61 @@ async fn cleanup_fixture(
     pair_symbol: &str,
     order_id: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("DELETE FROM wallet_ledger WHERE ref_type = 'spot_order' AND ref_id = ?")
-        .bind(order_id)
+    let order_db_id = order_id.parse::<u64>().unwrap();
+    let trades: Vec<(u64, u64)> = sqlx::query_as(
+        "SELECT buy_order_id, sell_order_id FROM spot_trades WHERE buy_order_id = ? OR sell_order_id = ?",
+    )
+    .bind(order_db_id)
+    .bind(order_db_id)
+    .fetch_all(pool)
+    .await?;
+    let mut related_order_ids = vec![order_db_id];
+    for (buy_order_id, sell_order_id) in &trades {
+        if !related_order_ids.contains(buy_order_id) {
+            related_order_ids.push(*buy_order_id);
+        }
+        if !related_order_ids.contains(sell_order_id) {
+            related_order_ids.push(*sell_order_id);
+        }
+        sqlx::query("DELETE FROM wallet_ledger WHERE ref_type = 'spot_trade' AND ref_id = ?")
+            .bind(format!("{buy_order_id}:{sell_order_id}"))
+            .execute(pool)
+            .await?;
+    }
+    sqlx::query("DELETE FROM spot_trades WHERE buy_order_id = ? OR sell_order_id = ?")
+        .bind(order_db_id)
+        .bind(order_db_id)
         .execute(pool)
         .await?;
-    sqlx::query("DELETE FROM spot_orders WHERE id = ?")
-        .bind(order_id)
-        .execute(pool)
-        .await?;
+    for related_order_id in related_order_ids {
+        sqlx::query("DELETE FROM wallet_ledger WHERE ref_type = 'spot_order' AND ref_id = ?")
+            .bind(related_order_id.to_string())
+            .execute(pool)
+            .await?;
+        sqlx::query("DELETE FROM spot_orders WHERE id = ?")
+            .bind(related_order_id)
+            .execute(pool)
+            .await?;
+    }
     sqlx::query("DELETE FROM wallet_accounts WHERE user_id = ? AND asset_id IN (?, ?)")
         .bind(user_id)
         .bind(base_asset)
         .bind(quote_asset)
         .execute(pool)
         .await?;
+    if let Some((system_user_id,)) = sqlx::query_as::<_, (u64,)>(
+        "SELECT id FROM users WHERE email = '__system_spot_liquidity@internal.local' LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await?
+    {
+        sqlx::query("DELETE FROM wallet_accounts WHERE user_id = ? AND asset_id IN (?, ?)")
+            .bind(system_user_id)
+            .bind(base_asset)
+            .bind(quote_asset)
+            .execute(pool)
+            .await?;
+    }
     sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
         .bind(pair_symbol)
         .execute(pool)

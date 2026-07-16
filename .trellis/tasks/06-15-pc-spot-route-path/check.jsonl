@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Verify all relevant /trade references were considered and no inconsistent duplicate path remains."}
+{"command": "rg -n \"path:\\\\s*['\\\"]trade/:symbol\\\\?|\\\\$router\\\\.push\\\\(['\\\"]\\\\/trade['\\\"]\\\\)|/trade/BTC_USDT|router\\\\.push\\\\('/trade|router\\\\.push\\\\(\\\\\\\"/trade\" pc/src pc/tests pc/AGENT.md", "result": "passed; no old spot route or direct /trade entry references found"}
+{"command": "node --test --experimental-strip-types tests/router-paths.test.ts", "cwd": "pc", "result": "passed"}
+{"command": "npm run type-check", "cwd": "pc", "result": "passed"}
+{"command": "git diff --check -- pc/src/router/index.ts pc/src/views/Home.vue pc/AGENT.md pc/tests/router-paths.test.ts .trellis/tasks/06-15-pc-spot-route-path", "result": "passed"}

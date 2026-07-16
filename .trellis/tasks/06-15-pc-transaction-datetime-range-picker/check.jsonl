@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "收尾前确认共享检查要求。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查新增弹窗和过滤逻辑没有无必要重复。"}

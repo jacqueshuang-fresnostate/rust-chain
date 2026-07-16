@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/directory-structure.md","reason":"确认本次只改后台管理前端资源表单，不触碰无关模块。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"确认完成前需要运行最贴近改动的前端测试、类型检查和 diff 检查。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"确认导入只在前端解析为已有 batch entries，不改变后端接口契约。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"确认复用现有充值地址批量提交状态和 Semi Upload 模式，不新增重复后端逻辑。"}
+{"file":".codex/skills/semi-design-guide/SKILL.md","reason":"确认使用 Semi MCP 查询 Upload 组件 API，并用 Semi Upload 作为导入触发器。"}

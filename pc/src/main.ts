@@ -10,6 +10,32 @@ import i18n from './i18n'
 import Toast, { PluginOptions, POSITION, globalEventBus } from 'vue-toastification'
 import 'vue-toastification/dist/index.css'
 
+const canRegisterServiceWorker = () => {
+    if (!('serviceWorker' in navigator)) return false
+    if (window.location.protocol === 'https:') return true
+    if (window.location.protocol !== 'http:') return false
+
+    return ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname)
+}
+
+const registerImageCacheWorker = () => {
+    if (!canRegisterServiceWorker()) return
+
+    const register = () => {
+        navigator.serviceWorker.register('/image-cache-sw.js', { scope: '/' }).catch((error) => {
+            if (import.meta.env.DEV) {
+                console.warn('[image-cache] Service worker registration failed', error)
+            }
+        })
+    }
+
+    if (document.readyState === 'complete') {
+        register()
+    } else {
+        window.addEventListener('load', register, { once: true })
+    }
+}
+
 const pinia = createPinia()
 pinia.use(piniaPluginPersistedstate)
 
@@ -38,3 +64,4 @@ app.use(i18n)
 app.use(Toast, toastOptions)
 
 app.mount('#app')
+registerImageCacheWorker()

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend route changes and validation should follow current backend project guidance."}
+{"file":".trellis/spec/guides/index.md","reason":"Shared Trellis guide index for implementation context."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"The change should reuse existing margin product create form and route validation helpers."}
+{"file":".codex/skills/semi-design-guide/SKILL.md","reason":"The admin edit SideSheet uses Semi UI components and existing Semi form controls."}

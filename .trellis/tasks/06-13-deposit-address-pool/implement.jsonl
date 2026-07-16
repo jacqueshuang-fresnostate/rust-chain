@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend package entry point and required checklist."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Migration and SQL conventions for address pool storage."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Testing and quality expectations for backend changes."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Feature spans database, backend API, admin frontend, and PC frontend."}

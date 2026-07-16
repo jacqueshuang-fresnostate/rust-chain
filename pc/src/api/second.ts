@@ -1,16 +1,17 @@
 import request from './request'
-import { fetchHistoryKLine, fetchLatestTrade, fetchMarketSnapshot, fetchTradePlate } from './market'
+import { fetchHistoryKLine, fetchLatestTrade, fetchTradePlate } from './market'
 import {
   backendApiUrl,
   mapPcSecondsOrderRequest,
   mapSecondsOrdersToPcOrders,
   mapSecondsProductsToPcCycles,
+  mapSecondsProductsToPcTickers,
+  type BackendMarketTicker,
   type BackendSecondsOrdersResponse,
   type BackendSecondsProductsResponse,
   type BackendWalletAccountsResponse,
 } from './backendAdapters'
 
-export const fetchSecondSnapshot = fetchMarketSnapshot
 export const fetchSecondLatestTrade = fetchLatestTrade
 export const fetchSecondExchangePlate = fetchTradePlate
 export const fetchSecondKlineHistory = fetchHistoryKLine
@@ -22,6 +23,8 @@ export interface SecondOrderParams {
   coinSymbol: string
   direction: 0 | 1
   cycleId: number
+  productId?: number
+  durationSeconds?: number
   amount: number
 }
 
@@ -38,9 +41,15 @@ export interface SecondTransferParams {
   amount: number
 }
 
+export async function fetchSecondSnapshot(): Promise<{ data: any }> {
+  const productsResponse = await request.instance.get<BackendSecondsProductsResponse>(backendApiUrl('/seconds-contracts/products'))
+  const tickersBySymbol = await fetchSecondTickersBySymbol(productsResponse.data.products)
+  return { data: mapSecondsProductsToPcTickers(productsResponse.data, tickersBySymbol) }
+}
+
 export async function fetchSecondSymbols(): Promise<{ data: any }> {
   const response = await request.instance.get<BackendSecondsProductsResponse>(backendApiUrl('/seconds-contracts/products'))
-  return { data: [...new Set(response.data.products.map((product) => product.symbol))] }
+  return { data: [...new Set(response.data.products.filter(isActiveSecondsProduct).map((product) => displaySecondSymbol(product.symbol)))] }
 }
 
 export async function fetchSecondSymbolInfo(symbol: string): Promise<{ data: any }> {
@@ -107,6 +116,32 @@ async function fetchSecondOrders(params: { symbol?: string; status?: 'open' | 'c
   return { data: mapSecondsOrdersToPcOrders({ orders }) }
 }
 
+async function fetchSecondTickersBySymbol(products: BackendSecondsProductsResponse['products']): Promise<Record<string, BackendMarketTicker>> {
+  const symbols = [
+    ...new Set(
+      products
+        .filter(isActiveSecondsProduct)
+        .map((product) => normalizeSymbol(product.symbol)),
+    ),
+  ]
+  const results = await Promise.allSettled(
+    symbols.map((symbol) => request.instance.get<BackendMarketTicker>(backendApiUrl(`/markets/${encodeURIComponent(symbol)}/ticker`))),
+  )
+  const tickers: Record<string, BackendMarketTicker> = {}
+
+  results.forEach((result) => {
+    if (result.status !== 'fulfilled') return
+    const ticker = result.value.data
+    tickers[normalizeSymbol(ticker.symbol)] = ticker
+  })
+
+  return tickers
+}
+
+function isActiveSecondsProduct(product: { status?: string }): boolean {
+  return String(product.status || 'active').toLowerCase() === 'active'
+}
+
 function isOpenStatus(status: string): boolean {
   const normalized = status.toLowerCase()
   return normalized === 'open' || normalized === 'opened' || normalized === 'pending'
@@ -118,6 +153,14 @@ function symbolMatches(source?: string, expected?: string): boolean {
 
 function normalizeSymbol(symbol: string): string {
   return symbol.replace(/[-_/]/g, '').toUpperCase()
+}
+
+function displaySecondSymbol(symbol: string): string {
+  const normalized = symbol.toUpperCase()
+  if (normalized.includes('/')) return normalized
+  if (normalized.includes('-')) return normalized.replace('-', '/')
+  if (normalized.endsWith('USDT') && normalized.length > 4) return `${normalized.slice(0, -4)}/USDT`
+  return normalized.replace('_', '/')
 }
 
 function normalizeAssetSymbol(symbol: string): string {

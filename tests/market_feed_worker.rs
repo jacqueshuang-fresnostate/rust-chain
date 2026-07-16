@@ -56,6 +56,8 @@ fn test_settings() -> Settings {
         bitget_ws_url: "wss://bitget.test/ws".to_owned(),
         htx_rest_base_url: "https://htx.test".to_owned(),
         htx_ws_url: "wss://htx.test/ws".to_owned(),
+        coinbase_rest_base_url: "https://coinbase.test".to_owned(),
+        coinbase_ws_url: "wss://coinbase.test/ws".to_owned(),
         market_feed_symbols: Vec::new(),
         market_feed_intervals: Vec::new(),
         market_feed_providers: Vec::new(),
@@ -220,13 +222,16 @@ async fn market_feed_worker_routes_provider_frames_to_ingestion_sink() -> Result
         Ok::<MarketFeedFrame, String>(MarketFeedFrame::htx_depth(
             r#"{"ch":"market.ethusdt.depth.step0","ts":1710000000001,"tick":{"bids":[["3000.00","1.20"]],"asks":[["3001.00","1.10"]],"ts":1710000000001}}"#,
         )),
+        Ok::<MarketFeedFrame, String>(MarketFeedFrame::coinbase_ticker(
+            r#"{"channel":"ticker","timestamp":"2026-06-15T01:00:00Z","events":[{"type":"snapshot","tickers":[{"product_id":"SOL-USDT","price":"150.12","volume_24_h":"25.50"}]}]}"#,
+        )),
     ]);
 
     let summary = worker.run_stream(frames).await?;
     let events = sink.events.lock().await.clone();
 
-    assert_eq!(summary.received, 3);
-    assert_eq!(summary.ingested, 3);
+    assert_eq!(summary.received, 4);
+    assert_eq!(summary.ingested, 4);
     assert_eq!(summary.failed, 0);
     assert_eq!(
         events,
@@ -234,6 +239,7 @@ async fn market_feed_worker_routes_provider_frames_to_ingestion_sink() -> Result
             "ticker:0:BTCUSDT".to_owned(),
             "kline:0:BTCUSDT:1m".to_owned(),
             "depth:1:ETHUSDT".to_owned(),
+            "ticker:3:SOLUSDT".to_owned(),
         ]
     );
     Ok(())
@@ -277,7 +283,7 @@ fn market_feed_cycle_rejects_only_invalid_frames() {
 #[test]
 fn market_feed_event_payloads_are_ready_for_outbox_fanout() -> Result<(), Box<dyn Error>> {
     let frame = MarketFeedFrame::bitget_ticker(
-        r#"{"arg":{"instId":"BTCUSDT"},"data":[{"lastPr":"70000.12","baseVolume":"125.50","ts":"1710000000000"}]}"#,
+        r#"{"arg":{"instId":"BTCUSDT"},"data":[{"lastPr":"70000.12","open24h":"69000.00","high24h":"70100.00","low24h":"68000.00","baseVolume":"125.50","ts":"1710000000000"}]}"#,
     );
 
     let event = MarketFeedEvent::from_frame(&frame)?;
@@ -293,6 +299,9 @@ fn market_feed_event_payloads_are_ready_for_outbox_fanout() -> Result<(), Box<dy
     );
     assert_eq!(event.payload()["symbol"], "BTCUSDT");
     assert_eq!(event.payload()["last_price"], "70000.12");
+    assert_eq!(event.payload()["high_24h"], "70100.00");
+    assert_eq!(event.payload()["low_24h"], "68000.00");
+    assert_eq!(event.payload()["price_change_24h"], "1000.12");
     assert_eq!(
         broadcast.channel(),
         &WebSocketChannel::public("ticker", "BTCUSDT")?
@@ -315,10 +324,16 @@ fn market_feed_provider_codes_are_validated_for_runtime_selection() {
         MarketFeedProvider::from_code("huobi").unwrap(),
         MarketFeedProvider::Htx
     );
+    assert_eq!(
+        MarketFeedProvider::from_code("Coinbase_Advanced_Trade").unwrap(),
+        MarketFeedProvider::Coinbase
+    );
     assert_eq!(MarketFeedProvider::Bitget.code(), "bitget");
     assert_eq!(MarketFeedProvider::Htx.code(), "htx");
+    assert_eq!(MarketFeedProvider::Coinbase.code(), "coinbase");
     assert_eq!(MarketFeedProvider::Bitget.aliases(), &["bitget"]);
     assert_eq!(MarketFeedProvider::Htx.aliases(), &["htx", "huobi"]);
+    assert!(MarketFeedProvider::Coinbase.aliases().contains(&"coinbase"));
     assert!(MarketFeedProvider::from_code("unknown").is_err());
 }
 
@@ -328,19 +343,25 @@ fn provider_feed_configs_can_select_runtime_providers() -> Result<(), Box<dyn Er
 
     let configs = MarketFeedWorker::<RecordedIngestionSink>::provider_configs_for(
         &settings,
-        &[MarketFeedProvider::Htx],
+        &[MarketFeedProvider::Coinbase],
         &["BTCUSDT"],
-        &["1m"],
+        &["5m"],
     )?;
 
     assert_eq!(configs.len(), 1);
-    assert_eq!(configs[0].provider(), MarketFeedProvider::Htx);
-    assert_eq!(configs[0].url(), "wss://htx.test/ws");
+    assert_eq!(configs[0].provider(), MarketFeedProvider::Coinbase);
+    assert_eq!(configs[0].url(), "wss://coinbase.test/ws");
     assert!(
         configs[0]
             .subscription_messages()
             .iter()
-            .any(|message| message.contains("market.btcusdt.kline.1min"))
+            .any(|message| message.contains("\"channel\":\"candles\""))
+    );
+    assert!(
+        configs[0]
+            .subscription_messages()
+            .iter()
+            .any(|message| message.contains("BTC-USDT"))
     );
     Ok(())
 }
@@ -351,12 +372,16 @@ fn provider_feed_configs_use_provider_registry_metadata() -> Result<(), Box<dyn 
 
     let configs = MarketFeedWorker::<RecordedIngestionSink>::provider_configs_for(
         &settings,
-        &[MarketFeedProvider::Htx, MarketFeedProvider::Bitget],
+        &[
+            MarketFeedProvider::Htx,
+            MarketFeedProvider::Bitget,
+            MarketFeedProvider::Coinbase,
+        ],
         &["BTCUSDT"],
-        &["1m"],
+        &["1m", "5m"],
     )?;
 
-    assert_eq!(configs.len(), 2);
+    assert_eq!(configs.len(), 3);
     assert_eq!(configs[0].provider(), MarketFeedProvider::Htx);
     assert_eq!(configs[0].url(), "wss://htx.test/ws");
     assert!(
@@ -372,6 +397,20 @@ fn provider_feed_configs_use_provider_registry_metadata() -> Result<(), Box<dyn 
             .subscription_messages()
             .iter()
             .any(|message| message.contains("candle1m"))
+    );
+    assert_eq!(configs[2].provider(), MarketFeedProvider::Coinbase);
+    assert_eq!(configs[2].url(), "wss://coinbase.test/ws");
+    assert!(
+        configs[2]
+            .subscription_messages()
+            .iter()
+            .any(|message| message.contains("\"channel\":\"level2\""))
+    );
+    assert!(
+        configs[2]
+            .subscription_messages()
+            .iter()
+            .any(|message| message.contains("\"channel\":\"candles\""))
     );
     Ok(())
 }
@@ -390,7 +429,12 @@ fn runtime_provider_codes_default_and_deduplicate_in_order() -> Result<(), Box<d
         &settings,
         vec!["BTCUSDT".to_owned()],
         vec!["1m".to_owned()],
-        vec!["htx".to_owned(), "huobi".to_owned(), "bitget".to_owned()],
+        vec![
+            "htx".to_owned(),
+            "huobi".to_owned(),
+            "coinbase".to_owned(),
+            "bitget".to_owned(),
+        ],
         5,
     )?;
 
@@ -400,7 +444,11 @@ fn runtime_provider_codes_default_and_deduplicate_in_order() -> Result<(), Box<d
     );
     assert_eq!(
         deduplicated_config.providers(),
-        &[MarketFeedProvider::Htx, MarketFeedProvider::Bitget]
+        &[
+            MarketFeedProvider::Htx,
+            MarketFeedProvider::Coinbase,
+            MarketFeedProvider::Bitget
+        ]
     );
     Ok(())
 }
@@ -430,12 +478,16 @@ fn provider_rest_fallback_configs_use_settings_urls_and_validated_pairs()
 
     let configs = MarketFeedWorker::<RecordedIngestionSink>::provider_rest_fallback_configs_for(
         &settings,
-        &[MarketFeedProvider::Bitget, MarketFeedProvider::Htx],
+        &[
+            MarketFeedProvider::Bitget,
+            MarketFeedProvider::Htx,
+            MarketFeedProvider::Coinbase,
+        ],
         &["BTCUSDT"],
         &["1m", "1h"],
     )?;
 
-    assert_eq!(configs.len(), 2);
+    assert_eq!(configs.len(), 3);
     assert_eq!(configs[0].provider(), MarketFeedProvider::Bitget);
     assert_eq!(
         configs[0].ticker_url(),
@@ -474,6 +526,19 @@ fn provider_rest_fallback_configs_use_settings_urls_and_validated_pairs()
             url == "https://htx.test/market/history/kline?symbol=btcusdt&period=60min"
         })
     );
+    assert_eq!(configs[2].provider(), MarketFeedProvider::Coinbase);
+    assert_eq!(
+        configs[2].ticker_url(),
+        "https://coinbase.test/api/v3/brokerage/market/products/BTC-USDT"
+    );
+    assert!(configs[2].kline_urls().iter().any(|url| {
+        url.starts_with("https://coinbase.test/api/v3/brokerage/market/products/BTC-USDT/candles?")
+            && url.contains("granularity=ONE_MINUTE")
+    }));
+    assert!(configs[2].kline_urls().iter().any(|url| {
+        url.starts_with("https://coinbase.test/api/v3/brokerage/market/products/BTC-USDT/candles?")
+            && url.contains("granularity=ONE_HOUR")
+    }));
     Ok(())
 }
 
@@ -547,6 +612,50 @@ fn bitget_rest_fallback_http_client(
             r#"{"data":[["1710000000000","3000.00","3100.00","2900.00","3050.00","220.00"]]}"#.to_owned(),
         ),
     ])
+}
+
+#[tokio::test]
+async fn coinbase_rest_fallback_fetches_and_ingests_ticker_and_kline() -> Result<(), Box<dyn Error>>
+{
+    let settings = test_settings();
+    let config = MarketFeedWorker::<RecordedIngestionSink>::provider_rest_fallback_configs_for(
+        &settings,
+        &[MarketFeedProvider::Coinbase],
+        &["BTCUSDT"],
+        &["5m"],
+    )?
+    .remove(0);
+    let ticker_urls = config.ticker_urls();
+    let kline_urls = config.kline_urls();
+    let http_client = RecordedRestFallbackHttpClient::new([
+        (
+            ticker_urls[0].clone(),
+            r#"{"product_id":"BTC-USDT","price":"70000.12","volume_24h":"125.50","price_percentage_change_24h":"1.45%"}"#.to_owned(),
+        ),
+        (
+            kline_urls[0].clone(),
+            r#"{"candles":[{"start":"1710000000","low":"69990.00","high":"70010.00","open":"70000.00","close":"70005.00","volume":"12.30"}]}"#.to_owned(),
+        ),
+    ]);
+    let sink = RecordedIngestionSink::default();
+    let worker = MarketFeedWorker::new(sink.clone());
+
+    let summary = worker
+        .run_rest_fallback_config(&config, &http_client)
+        .await?;
+    let events = sink.events.lock().await.clone();
+
+    assert_eq!(summary.received, 2);
+    assert_eq!(summary.ingested, 2);
+    assert_eq!(summary.failed, 0);
+    assert_eq!(
+        events,
+        vec![
+            "ticker:3:BTCUSDT".to_owned(),
+            "kline:3:BTCUSDT:5m".to_owned(),
+        ]
+    );
+    Ok(())
 }
 
 #[test]
@@ -763,6 +872,14 @@ fn provider_feed_configs_use_settings_urls_and_channel_payloads() -> Result<(), 
             .iter()
             .any(|message| message.contains("ticker"))
     );
+    assert!(subscription_has_channel(
+        configs[0].subscription_messages(),
+        "books50"
+    )?);
+    assert!(!subscription_has_channel(
+        configs[0].subscription_messages(),
+        "books5"
+    )?);
     assert!(
         configs[0]
             .subscription_messages()
@@ -783,6 +900,23 @@ fn provider_feed_configs_use_settings_urls_and_channel_payloads() -> Result<(), 
             .any(|message| message.contains("market.btcusdt.kline.1min"))
     );
     Ok(())
+}
+
+fn subscription_has_channel(messages: &[String], channel: &str) -> Result<bool, serde_json::Error> {
+    messages.iter().try_fold(false, |found, message| {
+        if found {
+            return Ok(true);
+        }
+
+        let value: serde_json::Value = serde_json::from_str(message)?;
+        Ok(value
+            .get("args")
+            .and_then(|args| args.as_array())
+            .is_some_and(|args| {
+                args.iter()
+                    .any(|arg| arg.get("channel").and_then(|value| value.as_str()) == Some(channel))
+            }))
+    })
 }
 
 #[tokio::test]
@@ -808,7 +942,8 @@ async fn market_feed_worker_publishes_events_to_broadcast_hub() -> Result<(), Bo
 }
 
 #[tokio::test]
-async fn market_feed_worker_writes_events_to_outbox() -> Result<(), Box<dyn Error>> {
+async fn market_feed_worker_does_not_write_provider_events_to_outbox() -> Result<(), Box<dyn Error>>
+{
     let sink = RecordedIngestionSink::default();
     let repository = RecordingOutboxRepository::default();
     let worker = MarketFeedWorker::new(sink).with_outbox_writer(
@@ -821,12 +956,7 @@ async fn market_feed_worker_writes_events_to_outbox() -> Result<(), Box<dyn Erro
     worker.ingest_frame(&frame).await?;
 
     let events = repository.events.lock().await;
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].routing_key, "market.BTCUSDT.ticker");
-    assert_eq!(
-        events[0].idempotency_key,
-        "market_feed:bitget:BTCUSDT:ticker:1710000000000"
-    );
+    assert!(events.is_empty());
     Ok(())
 }
 
@@ -858,6 +988,14 @@ fn market_feed_text_action_handles_provider_heartbeats_and_data_frames() {
         market_feed_text_action(
             MarketFeedProvider::Bitget,
             r#"{"event":"subscribe","code":"0"}"#
+        )
+        .unwrap(),
+        MarketFeedTextAction::Ignore
+    );
+    assert_eq!(
+        market_feed_text_action(
+            MarketFeedProvider::Coinbase,
+            r#"{"channel":"heartbeats","timestamp":"2026-06-15T01:00:00Z","events":[{"current_time":"2026-06-15 01:00:00.000000000"}]}"#
         )
         .unwrap(),
         MarketFeedTextAction::Ignore
@@ -906,6 +1044,16 @@ fn market_feed_text_action_handles_subscription_acknowledgements() {
     assert!(htx_error.contains("htx market feed acknowledgement error"));
     assert!(htx_error.contains("bad-request"));
     assert!(htx_error.contains("invalid topic"));
+
+    let coinbase_error = market_feed_text_action(
+        MarketFeedProvider::Coinbase,
+        r#"{"type":"error","code":"bad_request","message":"invalid channel"}"#,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(coinbase_error.contains("coinbase market feed acknowledgement error"));
+    assert!(coinbase_error.contains("bad_request"));
+    assert!(coinbase_error.contains("invalid channel"));
 }
 
 #[test]
@@ -941,6 +1089,19 @@ fn market_feed_text_action_preserves_data_frames_with_control_fields() {
             MarketFeedProvider::Htx,
             MarketFeedChannel::Kline,
             r#"{"status":"ok","rep":"market.btcusdt.kline.1min","data":[{"id":1710000000,"open":"70000.00","close":"70005.00","low":"69990.00","high":"70010.00","amount":"12.30"}]}"#,
+        ))
+    );
+
+    assert_eq!(
+        market_feed_text_action(
+            MarketFeedProvider::Coinbase,
+            r#"{"channel":"l2_data","timestamp":"2026-06-15T01:00:01Z","events":[{"type":"snapshot","product_id":"BTC-USDT","updates":[{"side":"bid","event_time":"2026-06-15T01:00:01Z","price_level":"70000.00","new_quantity":"0.50"}]}]}"#,
+        )
+        .unwrap(),
+        MarketFeedTextAction::Frame(MarketFeedFrame::new(
+            MarketFeedProvider::Coinbase,
+            MarketFeedChannel::Depth,
+            r#"{"channel":"l2_data","timestamp":"2026-06-15T01:00:01Z","events":[{"type":"snapshot","product_id":"BTC-USDT","updates":[{"side":"bid","event_time":"2026-06-15T01:00:01Z","price_level":"70000.00","new_quantity":"0.50"}]}]}"#,
         ))
     );
 }

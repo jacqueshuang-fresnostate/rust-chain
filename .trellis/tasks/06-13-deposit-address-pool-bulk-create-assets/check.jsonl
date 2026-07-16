@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端检查需要覆盖格式化、编译和相关集成测试"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "校验前后端字段一致性和多资产列表显示"}

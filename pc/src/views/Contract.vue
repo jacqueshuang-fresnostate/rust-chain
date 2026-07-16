@@ -1,12 +1,15 @@
 <template>
-  <div class="flex flex-col h-full overflow-hidden bg-background text-foreground">
+  <div v-if="!isLoggedIn" class="h-full bg-background p-4 text-foreground md:p-8">
+    <AuthRequiredState />
+  </div>
+  <div v-else class="flex flex-col h-full overflow-hidden bg-background text-foreground">
     <!-- Header: Ticker Info -->
     <div class="h-16 min-h-[4rem] border-b border-border flex items-center px-4 bg-card justify-between z-10">
       <div class="flex items-center space-x-6 overflow-x-auto no-scrollbar">
           <div class="flex items-center shrink-0">
              <div id="pair-trigger-btn" class="cursor-pointer flex items-center hover:opacity-80 transition-opacity" @click.stop="toggleDropdown">
                <h1 class="text-xl font-bold font-mono tracking-tight mr-2 flex items-center gap-2">
-                 <span class="text-primary text-2xl">🔥</span>
+                 <PairLogo class="h-8 w-8" :symbol="activeSymbol" :src="activeCoinInfo?.logoUrl" />
                  {{ activeSymbol }}
                  <span class="i-lucide-chevron-down w-5 h-5 ml-1 text-muted-foreground transition-transform" :class="showPairDropdown ? 'rotate-180' : ''"></span>
                </h1>
@@ -43,11 +46,11 @@
                  <span class="text-sm font-bold font-mono">{{ activeCoinInfo.maxLeverage }}x</span>
              </div>
              <div class="flex flex-col shrink-0" v-if="activeCoinInfo">
-                 <span class="text-xs text-muted-foreground">保证金率</span>
+                 <span class="text-xs text-muted-foreground">{{ $t('trade.margin_rate') }}</span>
                  <span class="text-sm font-bold font-mono">{{ numeral(activeCoinInfo.marginRate).format('0.[00]') }}%</span>
              </div>
              <div class="flex flex-col shrink-0" v-if="activeCoinInfo">
-                 <span class="text-xs text-muted-foreground">最小成交额</span>
+                 <span class="text-xs text-muted-foreground">{{ $t('trade.min_turnover') }}</span>
                  <span class="text-sm font-bold font-mono">{{ activeCoinInfo.minTurnover }} {{ activeCoinInfo.baseSymbol }}</span>
              </div>
          </div>
@@ -76,9 +79,12 @@
                     class="flex items-center justify-between p-3 cursor-pointer transition-colors border-b last:border-0"
                     :class="activeSymbol === coin.symbol ? 'bg-[rgba(0,200,150,0.12)]' : 'hover:bg-[rgba(255,255,255,0.05)]'"
                     style="border-color: rgba(255,255,255,0.05);">
-                   <div class="flex flex-col">
-                       <span class="text-sm font-bold font-mono" :class="activeSymbol === coin.symbol ? 'text-primary' : 'text-white'">{{ coin.symbol }}</span>
-                       <span class="text-[10px]" style="color: rgba(255,255,255,0.4);">{{ coin.maxLeverage ? coin.maxLeverage + 'x' : '' }}</span>
+                   <div class="flex min-w-0 items-center gap-2">
+                       <PairLogo class="h-7 w-7" :symbol="coin.symbol" :src="coin.logoUrl" />
+                       <div class="flex min-w-0 flex-col">
+                           <span class="truncate text-sm font-bold font-mono" :class="activeSymbol === coin.symbol ? 'text-primary' : 'text-white'">{{ coin.symbol }}</span>
+                           <span class="text-[10px]" style="color: rgba(255,255,255,0.4);">{{ coin.maxLeverage ? coin.maxLeverage + 'x' : '' }}</span>
+                       </div>
                    </div>
                    <div class="flex flex-col items-end">
                        <span class="text-sm font-mono font-medium" :class="(contractStore.getThumbBySymbol(coin.symbol)?.change || 0) >= 0 ? 'text-up' : 'text-down'">
@@ -105,8 +111,8 @@
          <div class="flex-1 border-b border-border relative flex flex-col">
              <!-- Chart Toolbar Placeholder -->
              <div class="h-10 border-b border-border bg-card flex items-center px-4 gap-4">
-                <span class="text-sm font-bold text-primary border-b-2 border-primary h-full flex items-center px-2">{{ $t('trade.original') }}</span>
-                <span class="text-sm font-medium text-muted-foreground hover:text-foreground cursor-pointer">{{ $t('trade.tradingview') }}</span>
+                <span :class="settingStore.chartProvider === 'klinecharts' ? 'text-sm font-bold text-primary border-b-2 border-primary h-full flex items-center px-2' : 'text-sm font-medium text-muted-foreground h-full flex items-center px-2'">{{ $t('trade.original') }}</span>
+                <span :class="settingStore.chartProvider === 'tradingview' ? 'text-sm font-bold text-primary border-b-2 border-primary h-full flex items-center px-2' : 'text-sm font-medium text-muted-foreground h-full flex items-center px-2'">{{ $t('trade.tradingview') }}</span>
                 <span class="text-sm font-medium text-muted-foreground hover:text-foreground cursor-pointer">{{ $t('trade.depth') }}</span>
                 <div class="w-px h-4 bg-border mx-2"></div>
                 <span class="text-sm font-medium text-foreground">1m</span>
@@ -115,7 +121,7 @@
                 <span class="text-sm font-medium text-muted-foreground">4h</span>
                 <span class="text-sm font-medium text-muted-foreground">1D</span>
              </div>
-            <TVChart v-if="activeSymbol" :dataList="chartData" :symbol="activeSymbol" module="market" period="1m" class="flex-1" />
+            <MarketChart v-if="activeSymbol" :dataList="chartData" :symbol="activeSymbol" module="margin" period="1m" class="flex-1" />
          </div>
          <!-- Order History -->
          <div class="h-[320px] bg-card border-t-4 border-background shrink-0 flex flex-col">
@@ -131,7 +137,7 @@
          <!-- Market Trades -->
          <div class="flex-1 flex flex-col min-h-0">
 <!--             <div class="p-2 text-xs font-bold text-muted-foreground border-b border-border">Market Trades</div>-->
-             <MarketTrades :symbol="activeSymbol" module="market" />
+             <MarketTrades :symbol="activeSymbol" module="margin" />
          </div>
       </div>
     </div>
@@ -142,22 +148,29 @@
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import numeral from 'numeral'
-import TVChart from '@/components/chart/TVChart.vue'
+import MarketChart from '@/components/chart/MarketChart.vue'
+import AuthRequiredState from '@/components/common/AuthRequiredState.vue'
+import PairLogo from '@/components/common/PairLogo.vue'
 import OrderBook from '@/components/trade/OrderBook.vue'
 import ContractOrderForm from '@/components/trade/ContractOrderForm.vue'
 import MarketTrades from '@/components/trade/MarketTrades.vue'
 import ContractOrders from '@/components/trade/ContractOrders.vue'
 import { useMarketStore } from '@/stores/market'
 import { useContractStore } from '@/stores/contract'
+import { useSettingStore } from '@/stores/setting'
+import type { ContractCoin } from '@/stores/contract'
 import { fetchExchangePlate } from '@/api/contract'
 import { stompService } from '@/api/stomp'
+import { useAuthRequired } from '@/composables/useAuthRequired'
 
 const route = useRoute()
 const router = useRouter()
 const marketStore = useMarketStore()
 const contractStore = useContractStore()
+const settingStore = useSettingStore()
+const { isLoggedIn } = useAuthRequired()
 
-const activeSymbol = computed(() => marketStore.activeSymbol)
+const activeSymbol = computed(() => contractStore.activeCoin?.symbol || '')
 const currentThumb = computed(() => contractStore.getThumbBySymbol(activeSymbol.value))
 const activeCoinInfo = computed(() => contractStore.activeCoin)
 const currentPrice = computed(() => currentThumb.value?.last || 0)
@@ -168,6 +181,7 @@ const orderBookAsks = ref<any[]>([])
 const chartData = ref<any[]>([])
 const showPairDropdown = ref(false)
 const dropdownPos = ref({ top: 0, left: 0 })
+const contractProductsReady = ref(false)
 
 const toggleDropdown = (e: MouseEvent) => {
     const btn = (e.currentTarget as HTMLElement).getBoundingClientRect()
@@ -178,17 +192,86 @@ const toggleDropdown = (e: MouseEvent) => {
 // Subscriptions
 let plateSub: any = null
 let thumbSub: any = null
+let privateSub: any = null
+
+const privateEventType = (msg: { body: string }) => {
+    try {
+        return String(JSON.parse(msg.body)?.type || '')
+    } catch {
+        return ''
+    }
+}
+
+const handlePrivateEvent = (msg: { body: string }) => {
+    const type = privateEventType(msg)
+    if (type && !type.startsWith('margin.') && !type.startsWith('wallet.')) return
+    contractStore.triggerOrderRefresh()
+    void contractStore.loadWallets()
+}
+
+const routeParamToSymbol = (symbol: unknown) => {
+    if (!symbol) return null
+    const symbolStr = Array.isArray(symbol) ? symbol[0] : String(symbol)
+    const trimmed = symbolStr.trim()
+    if (!trimmed) return null
+    return trimmed.replace(/[-_]/g, '/').toUpperCase()
+}
+
+const symbolToRouteParam = (symbol: string) => symbol.replace(/\//g, '_')
+
+const currentRouteSymbolParam = () => {
+    const symbol = route.params.symbol
+    return Array.isArray(symbol) ? symbol[0] : symbol
+}
+
+const clearMarketDataSubscriptions = () => {
+    if (plateSub) {
+        plateSub.unsubscribe()
+        plateSub = null
+    }
+    if (thumbSub) {
+        thumbSub.unsubscribe()
+        thumbSub = null
+    }
+}
+
+const clearContractMarketData = () => {
+    clearMarketDataSubscriptions()
+    orderBookBids.value = []
+    orderBookAsks.value = []
+    chartData.value = []
+}
+
+const syncRouteToContractCoin = async (coin: ContractCoin) => {
+    const urlSymbol = symbolToRouteParam(coin.symbol)
+    if (currentRouteSymbolParam() !== urlSymbol) {
+        await router.replace({ name: 'Contract', params: { symbol: urlSymbol } })
+    }
+}
+
+const resolveContractRouteSymbol = async (routeSymbol: string | null) => {
+    const requestedCoin = routeSymbol ? contractStore.getCoinBySymbol(routeSymbol) : null
+    const resolvedCoin = requestedCoin || contractStore.coins[0] || null
+
+    if (!resolvedCoin) {
+        contractStore.setActiveCoin(null)
+        clearContractMarketData()
+        return null
+    }
+
+    contractStore.setActiveCoin(resolvedCoin)
+    if (marketStore.activeSymbol !== resolvedCoin.symbol) {
+        marketStore.setActiveSymbol(resolvedCoin.symbol)
+    }
+    await syncRouteToContractCoin(resolvedCoin)
+    return resolvedCoin
+}
 
 // URL Persistence Logic
 watch(() => route.params.symbol, (newSymbol) => {
-    if (newSymbol) {
-        const symbolStr = Array.isArray(newSymbol) ? newSymbol[0] : newSymbol
-        const formattedSymbol = symbolStr.replace('_', '/')
-        if (marketStore.activeSymbol !== formattedSymbol) {
-            marketStore.setActiveSymbol(formattedSymbol)
-        }
-    }
-}, { immediate: true })
+    if (!contractProductsReady.value) return
+    void resolveContractRouteSymbol(routeParamToSymbol(newSymbol))
+})
 
 // Formatting helpers
 const formatPrice = (val: number | undefined) => {
@@ -211,7 +294,7 @@ const mapItems = (items: any[]) => {
 }
 
 const switchPair = (symbol: string) => {
-    const urlSymbol = symbol.replace('/', '_')
+    const urlSymbol = symbolToRouteParam(symbol)
     router.push({ name: 'Contract', params: { symbol: urlSymbol } })
     showPairDropdown.value = false
 }
@@ -235,17 +318,10 @@ const refreshOrderBook = async () => {
 const subscribeToData = async () => {
     if (!activeSymbol.value) return
 
-    if (plateSub) {
-        plateSub.unsubscribe()
-        plateSub = null
-    }
-    if (thumbSub) {
-        thumbSub.unsubscribe()
-        thumbSub = null
-    }
+    clearMarketDataSubscriptions()
 
-    const depthTopic = `market:depth:${activeSymbol.value}`
-    plateSub = await stompService.subscribe('market', depthTopic, (msg) => {
+    const depthTopic = `margin:depth:${activeSymbol.value}`
+    plateSub = await stompService.subscribe('margin', depthTopic, (msg) => {
         try {
             const data = JSON.parse(msg.body)
             if (data.bids) orderBookBids.value = mapItems(data.bids)
@@ -255,8 +331,8 @@ const subscribeToData = async () => {
         }
     })
 
-    const tickerTopic = `market:ticker:${activeSymbol.value}`
-    thumbSub = await stompService.subscribe('market', tickerTopic, (msg) => {
+    const tickerTopic = `margin:ticker:${activeSymbol.value}`
+    thumbSub = await stompService.subscribe('margin', tickerTopic, (msg) => {
         try {
             contractStore.updateThumb(JSON.parse(msg.body))
         } catch (e) {
@@ -266,40 +342,37 @@ const subscribeToData = async () => {
 }
 
 watch(activeSymbol, (newSymbol) => {
+    if (!contractProductsReady.value || !newSymbol) return
     refreshOrderBook()
     subscribeToData()
-    // Update active coin in contract store
-    const coin = contractStore.getCoinBySymbol(newSymbol)
-    if (coin) {
-        contractStore.setActiveCoin(coin)
-    }
 })
 
 onMounted(async () => {
-    if (!route.params.symbol) {
-        const urlSymbol = marketStore.activeSymbol.replace('/', '_')
-        router.replace({ name: 'Contract', params: { symbol: urlSymbol } })
-    }
-    stompService.connect('market')
+    if (!isLoggedIn.value) return
+
+    stompService.connect('margin')
 
     // Load contract data
     await contractStore.loadCoins()
+    await resolveContractRouteSymbol(routeParamToSymbol(route.params.symbol))
+    contractProductsReady.value = true
     await contractStore.loadThumbs()
-    await contractStore.loadWallets()
-
-    // Set active coin based on symbol
-    const coin = contractStore.getCoinBySymbol(activeSymbol.value)
-    if (coin) {
-        contractStore.setActiveCoin(coin)
+    if (isLoggedIn.value) {
+        await contractStore.loadWallets()
     }
 
-    refreshOrderBook()
-    subscribeToData()
+    if (activeSymbol.value) {
+        refreshOrderBook()
+        subscribeToData()
+    }
+    if (isLoggedIn.value) {
+        privateSub = await stompService.subscribePrivate(handlePrivateEvent)
+    }
 })
 
 onUnmounted(() => {
-    if (plateSub) plateSub.unsubscribe()
-    if (thumbSub) thumbSub.unsubscribe()
+    clearMarketDataSubscriptions()
+    if (privateSub) privateSub.unsubscribe()
 })
 </script>
 

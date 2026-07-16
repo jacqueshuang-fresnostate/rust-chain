@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查布局 helper 与现有组件复用方式"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "验证保存 payload 不因布局调整改变"}

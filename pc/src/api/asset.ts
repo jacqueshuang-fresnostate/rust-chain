@@ -9,6 +9,7 @@ export interface Coin {
     coinGroup: string
     canWithdraw: number | boolean
     canRecharge: number | boolean
+    logoUrl?: string
 }
 
 export interface MemberWallet {

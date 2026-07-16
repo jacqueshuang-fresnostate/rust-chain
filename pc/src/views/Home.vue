@@ -12,19 +12,20 @@
       <div class="lg:col-span-8 flex flex-col justify-center text-left">
         <h1 class="text-5xl md:text-7xl font-black mb-6 leading-tight tracking-tighter">
            {{ $t('home.hero_title') }} <br />
-           <span class="text-transparent bg-clip-text bg-gradient-to-r from-neon-blue to-neon-green text-glow">DECENTRALIZED</span>
-           TRADING
+           <span class="text-transparent bg-clip-text bg-gradient-to-r from-neon-blue to-neon-green text-glow">{{ $t('home.hero_highlight') }}</span>
+           {{ $t('home.hero_suffix') }}
         </h1>
         <p class="text-lg text-muted-foreground mb-8 max-w-2xl">
            {{ $t('home.hero_subtitle') }}
         </p>
         <div class="flex flex-wrap gap-4">
-           <button @click="$router.push('/trade')" class="px-8 py-3 bg-primary text-primary-foreground font-bold rounded-lg hover:bg-primary/90 transition-all box-glow flex items-center gap-2">
+           <button @click="$router.push('/spot')" class="px-8 py-3 bg-primary text-primary-foreground font-bold rounded-lg hover:bg-primary/90 transition-all box-glow flex items-center gap-2">
              {{ $t('home.cta') }}
              <Icon icon="mdi:arrow-right" />
            </button>
-           <button class="px-8 py-3 border border-border bg-card/30 backdrop-blur font-bold rounded-lg hover:border-primary hover:text-primary transition-all">
-             {{ $t('home.view_docs') || 'View Documentation' }}
+           <button @click="$router.push('/news')" class="px-8 py-3 border border-border bg-card/30 backdrop-blur font-bold rounded-lg hover:border-primary hover:text-primary transition-all flex items-center gap-2">
+             {{ $t('home.news_cta') }}
+             <Icon icon="mdi:newspaper-variant-outline" />
            </button>
         </div>
       </div>
@@ -40,7 +41,7 @@
            <div class="text-3xl font-mono font-bold text-glow">$1,245,678,901</div>
            <div class="text-xs text-up mt-2 flex items-center gap-1">
              <Icon icon="mdi:trending-up" />
-             +12.5% vs yesterday
+             +12.5% {{ $t('home.vs_yesterday') }}
            </div>
         </div>
 
@@ -54,7 +55,7 @@
       <div class="flex items-center justify-between mb-6">
         <h2 class="text-2xl font-bold flex items-center gap-2">
            <Icon icon="mdi:fire" class="text-neon-pink" />
-           Trending Markets
+           {{ $t('home.trending_markets') }}
         </h2>
       </div>
 
@@ -66,7 +67,7 @@
               <th class="p-4 font-medium text-right">{{ $t('trade.price') }}</th>
               <th class="p-4 font-medium text-right">{{ $t('market.change') }}</th>
               <th class="p-4 font-medium text-right hidden md:table-cell">24h {{ $t('market.vol') }}</th>
-              <th class="p-4 font-medium text-right hidden lg:table-cell">{{ $t('home.chart') || 'Chart' }}</th>
+              <th class="p-4 font-medium text-right hidden lg:table-cell">{{ $t('home.chart') }}</th>
               <th class="p-4 font-medium text-center">{{ $t('trade.action') }}</th>
             </tr>
           </thead>
@@ -76,22 +77,14 @@
             >
               <td class="p-4">
                 <div class="flex items-center gap-3">
-                  <div class="w-8 h-8 rounded-lg bg-background/50 border border-border flex items-center justify-center text-lg">
-                     <!-- Dynamic Icon Handling based on symbol name -->
-<!--                     <Icon v-if="ticker.symbol.includes('BTC')" icon="mdi:bitcoin" class="text-[#F7931A]" />-->
-<!--                     <Icon v-else-if="ticker.symbol.includes('ETH')" icon="mdi:ethereum" class="text-[#627EEA]" />-->
-<!--                     <Icon v-else-if="ticker.symbol.includes('SOL')" icon="simple-icons:solana" class="text-[#14F195]" />-->
-<!--                     <Icon v-else-if="ticker.symbol.includes('BNB')" icon="simple-icons:binance" class="text-[#F3BA2F]" />-->
-<!--                     <Icon v-else icon="mdi:currency-usd-circle-outline" class="text-muted-foreground" />-->
-                    <img :src="ticker.icon" alt="" />
-                  </div>
+                  <PairLogo class="h-8 w-8" :symbol="ticker.symbol" :src="ticker.icon" />
                   <div>
                     <div class="font-bold flex items-center gap-2">
                       {{ ticker.symbol }}
                       <span class="px-1.5 py-0.5 rounded text-[10px] bg-muted text-muted-foreground font-normal">SPOT</span>
                     </div>
                     <!-- Zone or other meta info -->
-                    <div class="text-xs text-muted-foreground">Zone {{ ticker.zone }}</div>
+                    <div class="text-xs text-muted-foreground">{{ $t('market.zone') }} {{ ticker.zone }}</div>
                   </div>
                 </div>
               </td>
@@ -128,10 +121,11 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, computed } from 'vue'
+import { onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { Icon } from '@iconify/vue'
 import NewsTicker from '@/components/home/NewsTicker.vue'
+import PairLogo from '@/components/common/PairLogo.vue'
 import { useMarketStore } from '@/stores/market'
 import { fetchMarketSnapshot } from '@/api/market'
 import { stompService } from '@/api/stomp'
@@ -182,12 +176,9 @@ onMounted(async () => {
     console.error('Failed to fetch market snapshot', e)
   }
   // 2. Connect WebSocket
-  stompService.connect()
+  stompService.connect('spot')
 
 
 })
 
-onUnmounted(() => {
-  stompService.disconnect()
-})
 </script>

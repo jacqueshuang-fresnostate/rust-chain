@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared workflow guide index for small frontend-only change."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Confirm existing BrandLogo component should be reused instead of modified globally."}

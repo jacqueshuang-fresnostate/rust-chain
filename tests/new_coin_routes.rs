@@ -44,6 +44,8 @@ fn test_settings() -> Settings {
         bitget_ws_url: "wss://bitget.test/ws".to_owned(),
         htx_rest_base_url: "https://htx.test".to_owned(),
         htx_ws_url: "wss://htx.test/ws".to_owned(),
+        coinbase_rest_base_url: "https://coinbase.test".to_owned(),
+        coinbase_ws_url: "wss://coinbase.test/ws".to_owned(),
         market_feed_symbols: Vec::new(),
         market_feed_intervals: Vec::new(),
         market_feed_providers: Vec::new(),
@@ -297,6 +299,8 @@ async fn new_coin_routes_list_projects_and_allow_fee_payment() -> Result<(), Box
                 project["id"] == project_id
                     && project["symbol"] == symbol
                     && project["lifecycle_status"] == "listed"
+                    && project["post_listing_purchase_enabled"] == false
+                    && project["post_listing_pair_id"].is_null()
             }),
         "payload: {projects}"
     );

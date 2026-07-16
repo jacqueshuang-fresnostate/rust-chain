@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality and verification expectations for backend-facing changes."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check null/no-fill and serialization boundaries after implementation."}

@@ -11,14 +11,8 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
-import { stompService } from '@/api/stomp'
 import Header from './Header.vue'
 import Footer from './Footer.vue'
-
-onMounted(() => {
-    stompService.connect()
-})
 </script>
 
 <style>

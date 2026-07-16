@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "确认共享开发前检查项。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "本次涉及页面弹层和日期过滤 helper，改动前确认复用优先。"}

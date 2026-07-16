@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend route verification context."}
+{"file":".trellis/spec/guides/index.md","reason":"Shared Trellis guide index for check context."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Verify the new edit form and backend validation reuse existing patterns."}
+{"file":".codex/skills/semi-design-guide/SKILL.md","reason":"Verify the SideSheet/edit controls align with Semi UI conventions."}

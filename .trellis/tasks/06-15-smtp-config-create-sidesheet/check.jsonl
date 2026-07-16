@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/index.md","reason":"Quality gate for project checks before reporting completion."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify SideSheet submission preserves the backend payload contract."}

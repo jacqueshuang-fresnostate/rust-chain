@@ -12,16 +12,25 @@ const formatter = new Intl.DateTimeFormat('zh-CN', {
   hour12: false
 });
 
-export function TimestampText({ value }: TimestampTextProps) {
-  if (value === null || value === undefined || !Number.isFinite(value)) {
-    return <span>-</span>;
+export function formatAdminTimestamp(value?: number | null): string | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
   }
 
   const date = new Date(value);
 
   if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return formatter.format(date);
+}
+
+export function TimestampText({ value }: TimestampTextProps) {
+  const formatted = formatAdminTimestamp(value);
+  if (!formatted) {
     return <span>-</span>;
   }
 
-  return <time dateTime={date.toISOString()}>{formatter.format(date)}</time>;
+  return <time dateTime={new Date(value as number).toISOString()}>{formatted}</time>;
 }

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "New schema must use immutable SQLx migration practices."}
+{"file": ".trellis/spec/backend/wallet-amount-precision.md", "reason": "Withdrawal fee calculation is decimal wallet arithmetic and must follow asset precision contracts."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Feature spans DB, backend API, admin UI, and PC UI."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Fee calculation and tier parsing should reuse existing patterns and avoid duplicated adapters."}

@@ -1,7 +1,8 @@
-import { Button } from '@douyinfe/semi-ui';
+import { IconSearch } from '@douyinfe/semi-icons';
+import { Button, Input, Switch } from '@douyinfe/semi-ui';
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
 
-import { AdminSelect, AdminTextInput } from './SemiFormControls';
+import { AdminSelect } from './SemiFormControls';
 
 export type FilterOption = {
   label: string;
@@ -11,10 +12,11 @@ export type FilterOption = {
 export type FilterField = {
   key: string;
   label: string;
+  optionLabelKey?: string;
   options?: FilterOption[];
   optionsFromRows?: boolean;
   placeholder?: string;
-  type?: 'input' | 'select';
+  type?: 'input' | 'select' | 'switch';
 };
 
 export type FilterValues = Record<string, string>;
@@ -50,25 +52,44 @@ export function FilterBar({ fields = [], loading, onChange, value }: FilterBarPr
     onChange(pruneEmpty(draftValues));
   }
 
+  function handleReset() {
+    setDraftValues({});
+    onChange({});
+  }
+
   const controls: ReactNode[] = fields.map((field) => {
     const currentValue = draftValues[field.key] ?? '';
     const selectOptions = field.options ?? [];
 
     return (
       <label className="admin-filter-control" key={field.key}>
-        <span>{field.label}</span>
-        {field.type === 'select' ? (
+        <span className="admin-filter-label">{field.label}</span>
+        {field.type === 'switch' ? (
+          <Switch
+            aria-label={field.label}
+            checked={currentValue === 'true'}
+            checkedText="开"
+            disabled={loading}
+            onChange={(checked) => updateField(field, checked ? 'true' : '')}
+            uncheckedText="关"
+          />
+        ) : field.type === 'select' ? (
           <AdminSelect
             ariaLabel={field.label}
+            disabled={loading}
             onChange={(nextValue) => updateField(field, nextValue)}
             optionList={[{ value: '', label: `全部${field.label}` }, ...selectOptions]}
+            placeholder={field.placeholder ?? field.label}
             value={currentValue}
           />
         ) : (
-          <AdminTextInput
-            ariaLabel={field.label}
+          <Input
+            aria-label={field.label}
             onChange={(nextValue) => updateField(field, nextValue)}
-            placeholder={field.placeholder ?? `请输入${field.label}`}
+            placeholder={field.placeholder ?? field.label}
+            prefix={<IconSearch aria-hidden="true" />}
+            showClear
+            style={{ width: '100%' }}
             value={currentValue}
           />
         )}
@@ -81,6 +102,9 @@ export function FilterBar({ fields = [], loading, onChange, value }: FilterBarPr
       {controls}
       <Button htmlType="submit" loading={loading} theme="solid" type="primary">
         查询
+      </Button>
+      <Button disabled={loading} htmlType="button" onClick={handleReset}>
+        重置
       </Button>
     </form>
   );

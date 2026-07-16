@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "General thinking guide index for route/config value changes."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Search all old route references before changing a shared URL contract."}

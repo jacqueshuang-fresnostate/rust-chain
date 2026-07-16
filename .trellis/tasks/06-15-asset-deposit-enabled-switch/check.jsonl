@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/index.md","reason":"Quality gate for Rust backend migrations and route tests."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify the database, API, admin UI, and PC recharge flow remain aligned."}

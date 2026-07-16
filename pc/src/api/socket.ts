@@ -84,8 +84,3 @@ export class WebSocketClient {
     }
   }
 }
-
-// Export a singleton or factory if needed, but here usually we need per-instance
-// For global market data, a singleton is fine.
-// Using a public dummy Echo for now or placeholder
-export const marketSocket = new WebSocketClient('wss://stream.binance.com:9443/ws') // Example URL

@@ -7,7 +7,7 @@
       </h1>
       <button @click="hideBalance = !hideBalance" class="flex items-center gap-2 text-sm text-primary hover:text-neon-blue transition-colors px-4 py-2 rounded-lg bg-primary/10 hover:bg-primary/20 border border-primary/20 backdrop-blur-sm">
          <span :class="hideBalance ? 'i-mdi-eye-off-outline' : 'i-mdi-eye-outline'" class="text-lg"></span>
-         {{ hideBalance ? 'Show Balance' : 'Hide Balance' }}
+         {{ hideBalance ? t('assets.show_balance') : t('assets.hide_balance') }}
       </button>
     </div>
 
@@ -54,14 +54,14 @@
              <div>
                <span class="text-muted-foreground text-xs uppercase tracking-wider block mb-1">{{ t('assets.risk_rate') }}</span>
                <div class="font-bold text-lg text-up flex items-center gap-1">
-                  1.25 <span class="text-xs">SAFE</span>
+                  {{ marginRiskRateText }}
                </div>
              </div>
              <div class="w-px bg-border/50"></div>
              <div>
                <span class="text-muted-foreground text-xs uppercase tracking-wider block mb-1">{{ t('assets.margin_level') }}</span>
                <div class="font-bold text-lg text-primary flex items-center gap-1">
-                  <span class="i-mdi-lightning-bolt"></span> 20x
+                  <span class="i-mdi-lightning-bolt"></span> {{ marginLeverageText }}
                </div>
              </div>
            </div>
@@ -69,14 +69,11 @@
            <!-- Actions -->
            <div class="flex flex-wrap gap-4 mt-8">
              <router-link to="/user/recharge" class="px-8 py-3 bg-primary hover:bg-primary/90 text-primary-foreground font-black tracking-wide rounded-xl transition-all shadow-[0_0_20px_rgba(var(--primary),0.4)] hover:shadow-[0_0_30px_rgba(var(--primary),0.6)] hover:-translate-y-0.5 flex items-center gap-2">
-                <span class="i-mdi-arrow-down-circle-outline text-xl"></span> DEPOSIT
+                <span class="i-mdi-arrow-down-circle-outline text-xl"></span> {{ t('assets.deposit') }}
              </router-link>
              <router-link to="/user/withdraw" class="px-8 py-3 bg-muted/50 hover:bg-muted text-foreground font-bold tracking-wide rounded-xl border border-border hover:border-border/80 transition-all backdrop-blur hover:-translate-y-0.5 flex items-center gap-2">
-                <span class="i-mdi-arrow-up-circle-outline text-xl"></span> WITHDRAW
+                <span class="i-mdi-arrow-up-circle-outline text-xl"></span> {{ t('assets.withdraw') }}
              </router-link>
-             <button class="px-8 py-3 bg-transparent hover:bg-muted/30 text-muted-foreground hover:text-foreground font-bold tracking-wide rounded-xl border border-transparent hover:border-border transition-all flex items-center gap-2">
-                <span class="i-mdi-swap-horizontal text-xl"></span> TRANSFER
-             </button>
            </div>
          </div>
        </div>
@@ -91,11 +88,11 @@
             <div class="text-sm text-muted-foreground font-mono tracking-widest uppercase mb-2">
               {{ activeTab === 'spot' ? t('assets.today_pnl') : t('assets.unrealized_pnl') }}
             </div>
-            <div class="text-3xl font-black text-up font-mono mb-2">
-              {{ hideBalance ? '****' : '+$1,250.42' }}
+            <div class="text-3xl font-black font-mono mb-2" :class="pnlClass">
+              {{ hideBalance ? '****' : pnlDisplay }}
             </div>
-            <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-up/10 text-up text-sm font-bold border border-up/20">
-              <span class="i-mdi-arrow-top-right"></span> +2.5%
+            <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-bold border" :class="pnlBadgeClass">
+              <span :class="pnlValue >= 0 ? 'i-mdi-arrow-top-right' : 'i-mdi-arrow-bottom-right'"></span> {{ pnlRatioDisplay }}
             </div>
          </div>
        </div>
@@ -110,7 +107,7 @@
         </h3>
         <div class="relative">
            <span class="i-mdi-magnify absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground w-5 h-5"></span>
-           <input type="text" placeholder="Search Asset..." class="pl-10 pr-4 py-2 bg-background/50 border border-border rounded-lg text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50 transition-all font-mono" />
+           <input type="text" :placeholder="t('assets.search_placeholder')" class="pl-10 pr-4 py-2 bg-background/50 border border-border rounded-lg text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50 transition-all font-mono" />
         </div>
       </div>
 
@@ -123,17 +120,25 @@
            <div class="flex items-center gap-5 mb-4 sm:mb-0">
              <div class="w-12 h-12 rounded-xl bg-background border border-border/50 flex items-center justify-center text-2xl group-hover:scale-110 group-hover:border-primary/50 group-hover:shadow-[0_0_15px_rgba(var(--primary),0.3)] transition-all duration-300 relative overflow-hidden">
                <div class="absolute inset-0 bg-gradient-to-tr from-primary/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
-               <div :class="asset.icon" class="relative z-10 text-foreground group-hover:text-primary transition-colors">
-                <img :src="asset.icon||''" alt="" />
-
-               </div>
+               <img
+                 v-if="asset.logoUrl"
+                 :src="asset.logoUrl"
+                 :alt="t('assets.logo_alt', { symbol: asset.coin })"
+                 class="relative z-10 w-8 h-8 rounded-full object-cover"
+                 @error="markLogoFailed(asset.coin)"
+               />
+               <span
+                 v-else
+                 :class="asset.fallbackIcon"
+                 class="relative z-10 text-foreground group-hover:text-primary transition-colors"
+               ></span>
              </div>
              <div>
                <div class="font-black text-lg flex items-center gap-2">
                   {{ asset.coin }}
                   <span class="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-normal border border-border">{{ asset.name }}</span>
                </div>
-               <div class="text-sm text-muted-foreground font-mono mt-0.5">Price: ${{ formatNumber(asset.price, 'price') }}</div>
+               <div class="text-sm text-muted-foreground font-mono mt-0.5">{{ t('assets.price') }}: ${{ formatNumber(asset.price, 'price') }}</div>
              </div>
            </div>
 
@@ -150,7 +155,7 @@
 
         <div v-if="displayAssets.length === 0" class="p-12 text-center text-muted-foreground flex flex-col items-center justify-center">
              <span class="i-mdi-cube-off-outline text-6xl mb-4 opacity-20"></span>
-             <p>No assets found</p>
+             <p>{{ t('assets.no_assets') }}</p>
         </div>
       </div>
     </div>
@@ -158,9 +163,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useUserStore } from '@/stores/user'
 import { useMarketStore } from '@/stores/market'
+import { useContractStore } from '@/stores/contract'
 import { useI18n } from 'vue-i18n'
 import { formatNumber } from '@/utils/format'
 import { getWallets, type MemberWallet } from '@/api/asset'
@@ -168,54 +174,161 @@ import { getWallets, type MemberWallet } from '@/api/asset'
 const { t } = useI18n()
 const userStore = useUserStore()
 const marketStore = useMarketStore()
+const contractStore = useContractStore()
 
 const activeTab = ref<'spot' | 'margin'>('spot')
 const hideBalance = ref(false)
 const wallets = ref<MemberWallet[]>([])
+const failedLogoSymbols = ref<Set<string>>(new Set())
 
 const getAssetPrice = (unit: string) => {
-    if (unit === 'USDT') return 1;
-    const ticker = marketStore.tickers.find(t => t.symbol === `${unit}/USDT`);
-    return ticker ? ticker.close : 0;
+    const symbol = unit.toUpperCase()
+    if (symbol === 'USDT') return 1
+    const ticker = marketStore.tickers.find(t => t.symbol === `${symbol}/USDT`)
+    return ticker ? ticker.close : 0
 }
 const getAssetIcon = (unit: string): string => {
-  if (unit === 'USDT') return ''; // Or provide a valid USDT icon URL string
-  const ticker = marketStore.tickers.find(t => t.symbol === `${unit}/USDT`);
-  return ticker?.icon || '';
+  const symbol = unit.toUpperCase()
+  if (symbol === 'USDT') return ''
+  const ticker = marketStore.tickers.find(t => t.symbol === `${symbol}/USDT`)
+  return ticker?.icon || ''
 }
 
 const btcPrice = computed(() => getAssetPrice('BTC') || 40000)
+
+const normalizeLogoUrl = (value?: string | null) => value?.trim() || ''
+
+const isImageUrl = (value: string) => /^(https?:|data:image|\/)/i.test(value.trim())
+
+const defaultAssetIcon = (unit: string) => {
+  const symbol = unit.toUpperCase()
+  if (symbol === 'BTC') return 'i-mdi-bitcoin'
+  if (symbol === 'USDT' || symbol === 'USD') return 'i-mdi-currency-usd'
+  return 'i-mdi-cube-outline'
+}
+
+const resolveAssetVisual = (unit: string, walletLogoUrl?: string | null) => {
+  const symbol = unit.toUpperCase()
+  const walletLogo = normalizeLogoUrl(walletLogoUrl)
+  const marketIcon = normalizeLogoUrl(getAssetIcon(symbol))
+  const logoCandidate = walletLogo || (isImageUrl(marketIcon) ? marketIcon : '')
+  return {
+    logoUrl: logoCandidate && !failedLogoSymbols.value.has(symbol) ? logoCandidate : '',
+    fallbackIcon: marketIcon && !isImageUrl(marketIcon) ? marketIcon : defaultAssetIcon(symbol),
+  }
+}
+
+const markLogoFailed = (unit: string) => {
+  const nextFailedLogos = new Set(failedLogoSymbols.value)
+  nextFailedLogos.add(unit.toUpperCase())
+  failedLogoSymbols.value = nextFailedLogos
+}
 
 
 
 // Spot Assets
 const spotAssets = computed(() => {
-    return wallets.value.map(w => ({
-        coin: w.coin.coinGroup,
-        name: w.coin.coinGroup || w.coin.name,
-        icon: getAssetIcon(w.coin.coinGroup),
+    return wallets.value.map(w => {
+      const coin = (w.coin.coinGroup || w.coin.unit || w.coin.name).toUpperCase()
+      return {
+        coin,
+        name: w.coin.name || coin,
+        ...resolveAssetVisual(coin, w.coin.logoUrl),
         balance: w.balance,
-        price: getAssetPrice(w.coin.coinGroup)
-    }))
+        price: getAssetPrice(coin)
+      }
+    })
 })
 
-// Margin Assets (Mock - should be from API)
-const marginAssets = computed(() => [
-  { coin: 'USDT', name: 'Tether', icon: 'i-mdi-currency-usd', balance: 5420.50, price: 1.00 },
-  { coin: 'BTC', name: 'Bitcoin', icon: 'i-mdi-bitcoin', balance: 0.125, price: btcPrice.value },
-])
+const marginAssets = computed(() => {
+  const grouped = new Map<string, { coin: string; name: string; logoUrl: string; fallbackIcon: string; balance: number; price: number }>()
+  for (const wallet of contractStore.wallets) {
+    const coin = (wallet.baseSymbol || 'USDT').toUpperCase()
+    const existing = grouped.get(coin)
+    const marginBalance = wallet.usdtBuyPrincipalAmount + wallet.usdtSellPrincipalAmount || wallet.usdtBalance
+    if (existing) {
+      existing.balance += marginBalance
+      continue
+    }
+    grouped.set(coin, {
+      coin,
+      name: coin,
+      ...resolveAssetVisual(coin),
+      balance: marginBalance,
+      price: getAssetPrice(coin),
+    })
+  }
+  return Array.from(grouped.values())
+})
 
 const displayAssets = computed(() => activeTab.value === 'spot' ? spotAssets.value : marginAssets.value)
 
-const totalBalanceUSD = computed(() => {
+const totalUsdValue = computed(() => {
   const total = displayAssets.value.reduce((sum, asset) => sum + (asset.balance * asset.price), 0)
-  return formatNumber(total, 'price')
+  return total
+})
+
+const totalBalanceUSD = computed(() => {
+  return formatNumber(totalUsdValue.value, 'price')
 })
 
 const totalBalanceBTC = computed(() => {
-  const totalUSD = displayAssets.value.reduce((sum, asset) => sum + (asset.balance * asset.price), 0)
-  return formatNumber(totalUSD / btcPrice.value, 'amount')
+  return formatNumber(totalUsdValue.value / btcPrice.value, 'amount')
 })
+
+const marginPositionCount = computed(() => {
+  return contractStore.wallets.reduce((total, wallet) => {
+    const longCount = wallet.usdtBuyPosition + wallet.usdtFrozenBuyPosition > 0 ? 1 : 0
+    const shortCount = wallet.usdtSellPosition + wallet.usdtFrozenSellPosition > 0 ? 1 : 0
+    return total + longCount + shortCount
+  }, 0)
+})
+
+const marginUnrealizedPnl = computed(() => {
+  return contractStore.wallets.reduce((sum, wallet) => {
+    const currentPrice = contractStore.getThumbBySymbol(wallet.symbol)?.last || wallet.currentPrice || 0
+    let pnl = 0
+    if (currentPrice > 0 && wallet.usdtBuyPosition > 0 && wallet.usdtBuyPrice > 0) {
+      pnl += (currentPrice / wallet.usdtBuyPrice - 1) * wallet.usdtBuyPosition * wallet.usdtShareNumber
+    }
+    if (currentPrice > 0 && wallet.usdtSellPosition > 0 && wallet.usdtSellPrice > 0) {
+      pnl += (1 - currentPrice / wallet.usdtSellPrice) * wallet.usdtSellPosition * wallet.usdtShareNumber
+    }
+    return sum + pnl
+  }, 0)
+})
+
+const marginRiskRate = computed(() => {
+  const margin = marginAssets.value.reduce((sum, asset) => sum + asset.balance, 0)
+  if (margin <= 0) return null
+  return (margin + marginUnrealizedPnl.value) / margin
+})
+
+const marginRiskRateText = computed(() => {
+  if (marginRiskRate.value === null) return '--'
+  return `${formatNumber(marginRiskRate.value * 100, 'amount')}%`
+})
+
+const marginLeverageText = computed(() => {
+  const maxLeverage = Math.max(
+    0,
+    ...contractStore.wallets.map((wallet) => Math.max(wallet.usdtBuyLeverage, wallet.usdtSellLeverage))
+  )
+  return maxLeverage > 0 && marginPositionCount.value > 0 ? `${maxLeverage}x` : '--'
+})
+
+const pnlValue = computed(() => activeTab.value === 'margin' ? marginUnrealizedPnl.value : 0)
+const pnlDisplay = computed(() => `${pnlValue.value >= 0 ? '+' : '-'}$${formatNumber(Math.abs(pnlValue.value), 'price')}`)
+const pnlRatioDisplay = computed(() => {
+  const principal = activeTab.value === 'margin'
+    ? marginAssets.value.reduce((sum, asset) => sum + asset.balance, 0)
+    : totalUsdValue.value
+  if (principal <= 0) return '0.00%'
+  const ratio = pnlValue.value / principal * 100
+  return `${ratio >= 0 ? '+' : '-'}${formatNumber(Math.abs(ratio), 'amount')}%`
+})
+const pnlClass = computed(() => pnlValue.value >= 0 ? 'text-up' : 'text-down')
+const pnlBadgeClass = computed(() => pnlValue.value >= 0 ? 'bg-up/10 text-up border-up/20' : 'bg-down/10 text-down border-down/20')
 
 const loadWallets = async () => {
     try {
@@ -228,9 +341,18 @@ const loadWallets = async () => {
     }
 }
 
+const loadMarginWallets = async () => {
+    try {
+        await Promise.all([contractStore.loadWallets(), contractStore.loadThumbs()])
+    } catch (error) {
+        console.error('Failed to load margin wallets:', error)
+    }
+}
+
 onMounted(() => {
     if (userStore.isLoggedIn) {
         loadWallets()
+        loadMarginWallets()
     }
 
     // Trigger market store fetch if tickers are empty
@@ -241,6 +363,12 @@ onMounted(() => {
                 marketStore.setTickers(data)
             })
         }).catch(err => console.error(err))
+    }
+})
+
+watch(activeTab, (tab) => {
+    if (tab === 'margin' && userStore.isLoggedIn) {
+        loadMarginWallets()
     }
 })
 </script>

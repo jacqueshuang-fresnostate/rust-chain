@@ -1,21 +1,38 @@
 import request from './request'
 import { backendApiUrl, normalizeWalletLedgerPage } from './backendAdapters'
 
-// Transaction Type Enum
-export enum TransactionType {
-    RECHARGE = 0,
-    WITHDRAW = 1,
-    TRANSFER = 2,
-    EXCHANGE = 3,
-    OTC_BUY = 4,
-    OTC_SELL = 5,
-    ACTIVITY_AWARD = 6,
-    PROMOTION_AWARD = 7,
-    DIVIDEND = 8,
-    VOTE = 9,
-    ADMIN_RECHARGE = 10,
-    MATCH = 11
-}
+export const WALLET_LEDGER_TRANSACTION_TYPES = [
+    'deposit',
+    'admin_recharge',
+    'quick_recharge',
+    'convert_settlement',
+    'spot_freeze',
+    'spot_unfreeze',
+    'spot_fill',
+    'spot_trade_settlement',
+    'spot_price_improvement_release',
+    'seconds_contract_open',
+    'seconds_contract_settle_win',
+    'margin_position_open',
+    'margin_position_close',
+    'margin_position_liquidate',
+    'earn_subscribe',
+    'earn_redeem',
+    'loan_collateral_freeze',
+    'loan_collateral_release',
+    'loan_disbursement',
+    'loan_repayment',
+    'new_coin_subscription_payment',
+    'new_coin_subscription_lock',
+    'new_coin_purchase_payment',
+    'new_coin_purchase_lock',
+    'new_coin_distribution_lock',
+    'new_coin_unlock_release',
+    'asset_lock',
+    'agent_commission_payout',
+] as const
+
+export type TransactionType = (typeof WALLET_LEDGER_TRANSACTION_TYPES)[number] | (string & {})
 
 export interface TransactionRecord {
     id: number
@@ -45,36 +62,38 @@ interface PageData<T> {
     }
 }
 
-export async function fetchTransactionHistory(params: { pageNo: number, pageSize: number, type?: TransactionType, symbol?: string, startTime?: string, endTime?: string }): Promise<{ data: ApiResponse<PageData<TransactionRecord>> }> {
-    const res = await request.instance.get(backendApiUrl('/wallet/ledger'), {
-        params: { limit: 100 },
-    })
-    const normalized = normalizeWalletLedgerPage(res.data, { pageNo: 1, pageSize: 100 })
+export function normalizeTransactionDateTimeFilter(value: string | undefined, boundary: 'start' | 'end'): string | undefined {
+    const trimmed = value?.trim()
+    if (!trimmed) return undefined
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+        return `${trimmed} ${boundary === 'start' ? '00:00:00' : '23:59:59'}`
+    }
+
+    const normalized = trimmed.replace('T', ' ')
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(normalized)) {
+        return `${normalized}:${boundary === 'start' ? '00' : '59'}`
+    }
+    return normalized
+}
+
+export async function fetchTransactionHistory(params: { pageNo: number, pageSize: number, type?: string, symbol?: string, startTime?: string, endTime?: string }): Promise<{ data: ApiResponse<PageData<TransactionRecord>> }> {
+    const pageNo = Math.max(params.pageNo, 1)
+    const pageSize = Math.max(params.pageSize, 1)
     const symbol = params.symbol?.trim().toUpperCase()
-    const records = normalized.data.content.filter((record) => {
-        if (params.type !== undefined && record.type !== params.type) return false
-        if (symbol && record.symbol.toUpperCase() !== symbol) return false
-        const date = record.createTime.slice(0, 10)
-        if (params.startTime && date < params.startTime) return false
-        if (params.endTime && date > params.endTime) return false
-        return true
+    const startTime = normalizeTransactionDateTimeFilter(params.startTime, 'start')
+    const endTime = normalizeTransactionDateTimeFilter(params.endTime, 'end')
+    const res = await request.instance.get(backendApiUrl('/wallet/ledger'), {
+        params: {
+            limit: pageSize,
+            offset: (pageNo - 1) * pageSize,
+            change_type: params.type || undefined,
+            asset_symbol: symbol || undefined,
+            start_time: startTime,
+            end_time: endTime,
+        },
     })
-    const start = Math.max(params.pageNo - 1, 0) * params.pageSize
-    const content = records.slice(start, start + params.pageSize)
 
     return {
-        data: {
-            code: normalized.code,
-            message: normalized.message,
-            data: {
-                content,
-                page: {
-                    number: Math.max(params.pageNo - 1, 0),
-                    size: params.pageSize,
-                    totalElements: records.length,
-                    totalPages: Math.max(Math.ceil(records.length / params.pageSize), 1),
-                },
-            },
-        },
+        data: normalizeWalletLedgerPage(res.data, { pageNo, pageSize }),
     }
 }

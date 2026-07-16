@@ -2,15 +2,17 @@ use crate::error::{AppError, AppResult};
 use axum::async_trait;
 use lettre::{
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
-    message::{Mailbox, header::ContentType},
+    message::{Mailbox, MultiPart, header::ContentType},
     transport::smtp::{authentication::Credentials, client::Tls},
 };
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmailMessage {
     pub to: String,
     pub subject: String,
     pub text_body: String,
+    pub html_body: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +24,27 @@ pub struct SmtpEmailConfig {
     pub password: Option<String>,
     pub from_email: String,
     pub from_name: Option<String>,
+    pub verification_code_template_html: Option<String>,
+    pub verification_code_templates: Vec<VerificationCodeTemplate>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VerificationCodeTemplate {
+    pub key: String,
+    pub name: String,
+    pub purpose: Option<String>,
+    pub html: String,
+    pub enabled: bool,
+}
+
+impl SmtpEmailConfig {
+    pub fn verification_code_template_html_for_purpose(&self, purpose: &str) -> Option<&str> {
+        verification_code_template_html_for_purpose(
+            &self.verification_code_templates,
+            self.verification_code_template_html.as_deref(),
+            purpose,
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,13 +71,20 @@ impl EmailSender for SmtpEmailSender {
             "smtp from_email is invalid",
         )?;
         let to = mailbox(message.to.as_str(), None, "email recipient is invalid")?;
-        let email = Message::builder()
+        let builder = Message::builder()
             .from(from)
             .to(to)
-            .subject(message.subject)
-            .header(ContentType::TEXT_PLAIN)
-            .body(message.text_body)
-            .map_err(|error| AppError::Internal(format!("smtp email build failed: {error}")))?;
+            .subject(message.subject);
+        let email = match message.html_body {
+            Some(html_body) => builder.multipart(MultiPart::alternative_plain_html(
+                message.text_body,
+                html_body,
+            )),
+            None => builder
+                .header(ContentType::TEXT_PLAIN)
+                .body(message.text_body),
+        }
+        .map_err(|error| AppError::Internal(format!("smtp email build failed: {error}")))?;
         let mailer = smtp_transport(&config)?;
         mailer
             .send(email)
@@ -115,25 +145,77 @@ fn mailbox(email: &str, name: Option<&str>, error: &'static str) -> AppResult<Ma
     Ok(Mailbox::new(name, address))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_smtp_security_codes() {
-        assert_eq!(parse_smtp_security("none").unwrap(), SmtpSecurity::None);
-        assert_eq!(
-            parse_smtp_security("STARTTLS").unwrap(),
-            SmtpSecurity::StartTls
-        );
-        assert_eq!(parse_smtp_security("tls").unwrap(), SmtpSecurity::Tls);
-        assert!(parse_smtp_security("ssl").is_err());
-    }
-
-    #[test]
-    fn maps_smtp_security_to_storage_code() {
-        assert_eq!(smtp_security_code(SmtpSecurity::None), "none");
-        assert_eq!(smtp_security_code(SmtpSecurity::StartTls), "starttls");
-        assert_eq!(smtp_security_code(SmtpSecurity::Tls), "tls");
+pub fn verification_code_email_message(
+    to: String,
+    subject: &str,
+    code: &str,
+    expires_minutes: u32,
+    template_html: Option<&str>,
+) -> EmailMessage {
+    EmailMessage {
+        to,
+        subject: subject.to_owned(),
+        text_body: format!("您的{subject}是 {code}，{expires_minutes} 分钟内有效。"),
+        html_body: template_html.and_then(|template| {
+            let template = template.trim();
+            (!template.is_empty()).then(|| {
+                render_verification_code_html_template(template, subject, code, expires_minutes)
+            })
+        }),
     }
 }
+
+pub fn verification_code_template_html_for_purpose<'a>(
+    templates: &'a [VerificationCodeTemplate],
+    legacy_template_html: Option<&'a str>,
+    purpose: &str,
+) -> Option<&'a str> {
+    let purpose = purpose.trim();
+    templates
+        .iter()
+        .find(|template| {
+            template.enabled
+                && template
+                    .purpose
+                    .as_deref()
+                    .is_some_and(|template_purpose| template_purpose == purpose)
+                && !template.html.trim().is_empty()
+        })
+        .or_else(|| {
+            templates.iter().find(|template| {
+                template.enabled && template.purpose.is_none() && !template.html.trim().is_empty()
+            })
+        })
+        .map(|template| template.html.as_str())
+        .or(legacy_template_html)
+}
+
+fn render_verification_code_html_template(
+    template: &str,
+    subject: &str,
+    code: &str,
+    expires_minutes: u32,
+) -> String {
+    template
+        .replace("{{subject}}", &escape_html(subject))
+        .replace("{{code}}", &escape_html(code))
+        .replace("{{expires_minutes}}", &expires_minutes.to_string())
+}
+
+fn escape_html(value: &str) -> String {
+    value.chars().fold(String::new(), |mut escaped, character| {
+        match character {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            _ => escaped.push(character),
+        }
+        escaped
+    })
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit_src/src_infra_email_tests.rs"]
+mod tests;

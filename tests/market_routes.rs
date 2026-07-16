@@ -7,7 +7,8 @@ use chrono::{TimeZone, Utc};
 use exchange_api::{
     config::Settings,
     modules::market::{
-        KlineQuery, MarketDepthCacheEntry, MarketDepthLevel, MarketTickerCacheEntry, routes,
+        KlineQuery, MarketDepthCacheEntry, MarketDepthLevel, MarketTickerCacheEntry,
+        MarketTickerValues, routes,
     },
     state::AppState,
 };
@@ -79,6 +80,8 @@ fn test_settings() -> Settings {
         bitget_ws_url: "wss://bitget.test/ws".to_owned(),
         htx_rest_base_url: "https://htx.test".to_owned(),
         htx_ws_url: "wss://htx.test/ws".to_owned(),
+        coinbase_rest_base_url: "https://coinbase.test".to_owned(),
+        coinbase_ws_url: "wss://coinbase.test/ws".to_owned(),
         market_feed_symbols: Vec::new(),
         market_feed_intervals: Vec::new(),
         market_feed_providers: Vec::new(),
@@ -130,14 +133,16 @@ async fn market_list_route_returns_active_pairs_from_mysql() -> Result<(), Box<d
     let disabled_base_asset_id = create_market_asset(&pool, &disabled_base_symbol).await?;
     let active_pair_symbol = format!("{base_symbol}-{quote_symbol}");
     let disabled_pair_symbol = format!("{disabled_base_symbol}-{quote_symbol}");
+    let active_pair_logo_url = format!("https://cdn.example.test/{active_pair_symbol}.png");
     let active_pair_id = sqlx::query(
         r#"INSERT INTO trading_pairs
-           (base_asset, quote_asset, symbol, price_precision, qty_precision, min_order_value, status, market_type)
-           VALUES (?, ?, ?, 8, 8, 1, 'active', 'external')"#,
+           (base_asset, quote_asset, symbol, logo_url, price_precision, qty_precision, min_order_value, status, market_type)
+           VALUES (?, ?, ?, ?, 8, 8, 1, 'active', 'external')"#,
     )
     .bind(base_asset_id)
     .bind(quote_asset_id)
     .bind(&active_pair_symbol)
+    .bind(&active_pair_logo_url)
     .execute(&pool)
     .await?
     .last_insert_id();
@@ -174,6 +179,7 @@ async fn market_list_route_returns_active_pairs_from_mysql() -> Result<(), Box<d
         market["symbol"] == active_pair_symbol
             && market["base_asset"] == base_symbol
             && market["quote_asset"] == quote_symbol
+            && market["logo_url"] == active_pair_logo_url
             && market["status"] == "active"
             && market["market_type"] == "external"
     }));
@@ -311,10 +317,16 @@ async fn market_ticker_route_reads_latest_cached_ticker() -> Result<(), Box<dyn 
     let client = redis::Client::open(redis_url)?;
     let manager = redis::aio::ConnectionManager::new(client).await?;
     let observed_at = Utc.with_ymd_and_hms(2026, 5, 28, 12, 50, 0).unwrap();
-    let ticker = MarketTickerCacheEntry::new(
+    let ticker = MarketTickerCacheEntry::with_24h(
         "BTC-USDT",
-        decimal("70001.120000000000000000"),
-        decimal("245.500000000000000000"),
+        MarketTickerValues::new(
+            decimal("70001.120000000000000000"),
+            decimal("70100.000000000000000000"),
+            decimal("69000.000000000000000000"),
+            decimal("245.500000000000000000"),
+            decimal("1001.120000000000000000"),
+            decimal("1.450898550724637681"),
+        ),
         observed_at,
     )?;
     let mut raw_connection = manager.clone();
@@ -341,7 +353,11 @@ async fn market_ticker_route_reads_latest_cached_ticker() -> Result<(), Box<dyn 
     assert_eq!(status, StatusCode::OK, "payload: {payload}");
     assert_eq!(payload["symbol"], "BTCUSDT");
     assert_eq!(payload["last_price"], "70001.120000000000000000");
+    assert_eq!(payload["high_24h"], "70100.000000000000000000");
+    assert_eq!(payload["low_24h"], "69000.000000000000000000");
     assert_eq!(payload["volume_24h"], "245.500000000000000000");
+    assert_eq!(payload["price_change_24h"], "1001.120000000000000000");
+    assert_eq!(payload["price_change_percent_24h"], "1.450898550724637681");
     assert_eq!(payload["observed_at"], observed_at.timestamp_millis());
 
     let _: usize = raw_connection.del(ticker.redis_key()).await?;

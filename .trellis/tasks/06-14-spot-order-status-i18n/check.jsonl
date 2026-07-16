@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"质量检查需要确认 PC 类型检查和触碰文件空白检查通过。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查展示翻译没有改变订单接口、适配器枚举和撤单判断。"}

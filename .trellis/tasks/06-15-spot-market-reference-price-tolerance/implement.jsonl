@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend scope index for route and validation conventions."}
+{"file": ".trellis/spec/backend/spot-orders.md", "reason": "Spot market order reference price tolerance and reservation contract."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend quality and test expectations."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Spot order wallet freeze and transaction changes touch database behavior."}
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared thinking guide index required before implementation."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Confirm no existing spot slippage helper should be reused."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Trace PC request reference price through backend validation, wallet freeze, and fill settlement."}

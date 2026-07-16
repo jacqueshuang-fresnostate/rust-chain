@@ -2,6 +2,7 @@ use crate::{
     error::{AppError, AppResult},
     modules::{
         events::{EventBroadcastHub, EventBroadcastMessage},
+        margin::infrastructure::credit_margin_position_amount,
         market::market_ticker_redis_key,
     },
     state::AppState,
@@ -76,6 +77,7 @@ struct LockedMarginPosition {
     product_id: u64,
     pair_id: u64,
     margin_asset: u64,
+    wallet_scope: String,
     direction: String,
     margin_amount: BigDecimal,
     notional_amount: BigDecimal,
@@ -83,13 +85,6 @@ struct LockedMarginPosition {
     status: String,
     entry_price: Option<BigDecimal>,
     maintenance_margin_rate: BigDecimal,
-}
-
-#[derive(Debug, sqlx::FromRow)]
-struct WalletBalanceRow {
-    available: BigDecimal,
-    frozen: BigDecimal,
-    locked: BigDecimal,
 }
 
 #[derive(Debug, Deserialize)]
@@ -335,38 +330,16 @@ async fn liquidate_position_by_id(
     }
 
     let payout_amount = non_negative_amount(&risk_state.equity);
-    if payout_amount > 0 {
-        let wallet = lock_wallet_row(&mut tx, position.user_id, position.margin_asset).await?;
-        let available_after = wallet.available.clone() + payout_amount.clone();
-        let update_wallet = sqlx::query(
-            "UPDATE wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?",
-        )
-        .bind(&available_after)
-        .bind(position.user_id)
-        .bind(position.margin_asset)
-        .execute(&mut *tx)
-        .await?;
-        if update_wallet.rows_affected() != 1 {
-            tx.rollback().await?;
-            return Ok(LiquidationOutcome::Skipped);
-        }
-        sqlx::query(
-            r#"INSERT INTO wallet_ledger
-               (user_id, asset_id, change_type, amount, balance_type, balance_after,
-                available_after, frozen_after, locked_after, ref_type, ref_id)
-               VALUES (?, ?, 'margin_position_liquidate', ?, 'available', ?, ?, ?, ?, 'margin_position', ?)"#,
-        )
-        .bind(position.user_id)
-        .bind(position.margin_asset)
-        .bind(&payout_amount)
-        .bind(&available_after)
-        .bind(&available_after)
-        .bind(&wallet.frozen)
-        .bind(&wallet.locked)
-        .bind(position.id.to_string())
-        .execute(&mut *tx)
-        .await?;
-    }
+    credit_margin_position_amount(
+        &mut tx,
+        position.user_id,
+        position.margin_asset,
+        &position.wallet_scope,
+        &payout_amount,
+        "margin_position_liquidate",
+        position.id,
+    )
+    .await?;
 
     insert_liquidation_record(
         &mut tx,
@@ -448,7 +421,7 @@ async fn lock_position_by_id(
 ) -> AppResult<Option<LockedMarginPosition>> {
     sqlx::query_as::<_, LockedMarginPosition>(
         r#"SELECT positions.id, positions.user_id, positions.product_id, positions.pair_id,
-                  positions.margin_asset, positions.direction, positions.margin_amount,
+                  positions.margin_asset, positions.wallet_scope, positions.direction, positions.margin_amount,
                   positions.notional_amount, positions.interest_amount, positions.status,
                   positions.entry_price, products.maintenance_margin_rate
            FROM margin_positions positions
@@ -499,27 +472,6 @@ async fn insert_liquidation_record(
     .execute(&mut **tx)
     .await?;
     Ok(())
-}
-
-async fn lock_wallet_row(
-    tx: &mut Transaction<'_, MySql>,
-    user_id: u64,
-    asset_id: u64,
-) -> AppResult<WalletBalanceRow> {
-    sqlx::query_as::<_, WalletBalanceRow>(
-        r#"SELECT available, frozen, locked
-           FROM wallet_accounts
-           WHERE user_id = ? AND asset_id = ?
-           LIMIT 1
-           FOR UPDATE"#,
-    )
-    .bind(user_id)
-    .bind(asset_id)
-    .fetch_optional(&mut **tx)
-    .await?
-    .ok_or_else(|| {
-        AppError::Validation("wallet account is required for margin liquidation".to_owned())
-    })
 }
 
 async fn reschedule_liquidation_attempt(
@@ -604,41 +556,5 @@ fn env_u32(key: &str, default: u32) -> u32 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::str::FromStr;
-
-    fn decimal(value: &str) -> BigDecimal {
-        BigDecimal::from_str(value).unwrap()
-    }
-
-    #[test]
-    fn margin_liquidation_limit_is_clamped() {
-        assert_eq!(margin_liquidation_limit(0), 1);
-        assert_eq!(margin_liquidation_limit(50), 50);
-        assert_eq!(margin_liquidation_limit(500), 100);
-    }
-
-    #[test]
-    fn margin_liquidation_scan_limit_scans_past_broken_rows() {
-        assert_eq!(margin_liquidation_scan_limit(0), 10);
-        assert_eq!(margin_liquidation_scan_limit(1), 10);
-        assert_eq!(margin_liquidation_scan_limit(50), 500);
-        assert_eq!(margin_liquidation_scan_limit(500), 500);
-    }
-
-    #[test]
-    fn margin_liquidation_risk_state_rejects_invalid_direction() {
-        let error = margin_liquidation_risk_state(
-            "sideways",
-            &decimal("20"),
-            &decimal("100"),
-            &decimal("0"),
-            &decimal("100"),
-            &decimal("90"),
-            &decimal("0.05"),
-        )
-        .unwrap_err();
-        assert!(error.to_string().contains("long or short"));
-    }
-}
+#[path = "../../tests/unit_src/src_workers_margin_liquidation_tests.rs"]
+mod tests;

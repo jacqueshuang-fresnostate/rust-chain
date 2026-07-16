@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"当前仓库只有 backend spec 索引，作为本任务项目规范入口。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"确认本次 PC 前端展示修复需要执行贴近的类型检查和空白检查。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"确认状态 i18n 只发生在展示层，不改变后端/适配器订单状态契约。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复用上一任务新增的订单枚举格式化模式和现有 trade 字典结构。"}

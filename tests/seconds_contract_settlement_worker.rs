@@ -60,6 +60,8 @@ fn test_settings() -> Settings {
         bitget_ws_url: "wss://bitget.test/ws".to_owned(),
         htx_rest_base_url: "https://htx.test".to_owned(),
         htx_ws_url: "wss://htx.test/ws".to_owned(),
+        coinbase_rest_base_url: "https://coinbase.test".to_owned(),
+        coinbase_ws_url: "wss://coinbase.test/ws".to_owned(),
         market_feed_symbols: Vec::new(),
         market_feed_intervals: Vec::new(),
         market_feed_providers: Vec::new(),
@@ -324,16 +326,20 @@ async fn seconds_contract_settlement_worker_settles_due_orders_from_cached_ticke
     assert_eq!(event["stake_asset"], stake_asset);
     assert_eq!(event["direction"], "up");
     assert_eq!(event["stake_amount"], "10.000000000000000000");
-    assert_eq!(event["payout_amount"], "18.00000000000000000000000000");
+    assert_eq!(event["settlement_price"], "105.000000000000000000");
+    assert_eq!(event["payout_amount"], "18.000000000000000000");
     assert_eq!(event["result"], "win");
     assert_eq!(event["status"], "settled");
-    let (status, result): (String, Option<String>) =
-        sqlx::query_as("SELECT status, result FROM seconds_contract_orders WHERE id = ?")
-            .bind(order_id)
-            .fetch_one(&pool)
-            .await?;
+    let (status, result, settlement_price): (String, Option<String>, Option<BigDecimal>) =
+        sqlx::query_as(
+            "SELECT status, result, settlement_price FROM seconds_contract_orders WHERE id = ?",
+        )
+        .bind(order_id)
+        .fetch_one(&pool)
+        .await?;
     assert_eq!(status, "settled");
     assert_eq!(result.as_deref(), Some("win"));
+    assert_eq!(settlement_price, Some(decimal("105.000000000000000000")));
     let (available,): (BigDecimal,) =
         sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ?")
             .bind(user_id)
@@ -365,6 +371,85 @@ async fn seconds_contract_settlement_worker_settles_due_orders_from_cached_ticke
     .fetch_one(&pool)
     .await?;
     assert_eq!(ledger_count_after, 1);
+    let _: usize = redis_connection.del(&redis_key).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn seconds_contract_settlement_worker_truncates_payout_to_asset_precision()
+-> Result<(), Box<dyn Error>> {
+    let _guard = TEST_LOCK.lock().await;
+    let Some(pool) = mysql_pool_or_skip().await? else {
+        return Ok(());
+    };
+    let Some(redis) = redis_manager_or_skip().await? else {
+        return Ok(());
+    };
+    close_previous_seconds_worker_orders(&pool).await?;
+    let now = Utc.with_ymd_and_hms(1980, 1, 7, 12, 0, 0).unwrap();
+    let (order_id, user_id, _, stake_asset, pair_symbol) =
+        seed_due_seconds_order(&pool, "up", &decimal("100.000000000000000000"), now).await?;
+    sqlx::query("UPDATE assets SET precision_scale = 2 WHERE id = ?")
+        .bind(stake_asset)
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "UPDATE seconds_contract_orders SET stake_amount = ?, payout_rate = ? WHERE id = ?",
+    )
+    .bind(decimal("10.12"))
+    .bind(decimal("0.33333333"))
+    .bind(order_id)
+    .execute(&pool)
+    .await?;
+    sqlx::query("UPDATE wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?")
+        .bind(decimal("39.88"))
+        .bind(user_id)
+        .bind(stake_asset)
+        .execute(&pool)
+        .await?;
+    let redis_key = market_ticker_redis_key(&pair_symbol);
+    let mut redis_connection = redis.clone();
+    let ticker_payload = serde_json::json!({
+        "symbol": pair_symbol.replace('-', ""),
+        "last_price": "105.000000000000000000",
+        "volume_24h": "1.000000000000000000",
+        "observed_at": now.timestamp_millis(),
+    })
+    .to_string();
+    let _: () = redis_connection.set(&redis_key, ticker_payload).await?;
+    let hub = EventBroadcastHub::new(16);
+    let _keepalive_hub = hub.clone();
+    let mut private_events = hub.subscribe(&WebSocketChannel::private_user(user_id));
+    let state = AppState::new(test_settings())
+        .with_mysql(pool.clone())
+        .with_redis(redis.clone())
+        .with_event_broadcast_hub(hub);
+
+    let summary = SecondsContractSettlementWorker
+        .run_once(&state, now, 10)
+        .await?;
+    assert_eq!(summary.settled, 1);
+    assert_eq!(summary.failed, 0);
+    let event_message = timeout(Duration::from_millis(100), private_events.recv()).await??;
+    let event: serde_json::Value = serde_json::from_str(event_message.payload())?;
+    assert_eq!(
+        decimal(event["payout_amount"].as_str().unwrap()).normalized(),
+        decimal("13.49").normalized()
+    );
+    let (available,): (BigDecimal,) =
+        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(stake_asset)
+            .fetch_one(&pool)
+            .await?;
+    let (payout_amount,): (BigDecimal,) = sqlx::query_as(
+        "SELECT amount FROM wallet_ledger WHERE ref_type = 'seconds_contract_order' AND ref_id = ? AND change_type = 'seconds_contract_settle_win'",
+    )
+    .bind(order_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(available.normalized(), decimal("53.37").normalized());
+    assert_eq!(payout_amount.normalized(), decimal("13.49").normalized());
     let _: usize = redis_connection.del(&redis_key).await?;
     Ok(())
 }

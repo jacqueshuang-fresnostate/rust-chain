@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Confirm any new seconds contract contract doc is indexed."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Migration must be additive and runnable with sqlx."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Run focused backend and frontend checks before completion."}
+{"file": ".trellis/spec/backend/seconds-contracts.md", "reason": "Verify implementation follows the product cycle and order duration contract."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Validate cycle data round-trip across database, API, and admin UI."}

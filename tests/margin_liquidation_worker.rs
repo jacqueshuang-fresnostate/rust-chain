@@ -56,6 +56,8 @@ fn test_settings() -> Settings {
         bitget_ws_url: "wss://bitget.test/ws".to_owned(),
         htx_rest_base_url: "https://htx.test".to_owned(),
         htx_ws_url: "wss://htx.test/ws".to_owned(),
+        coinbase_rest_base_url: "https://coinbase.test".to_owned(),
+        coinbase_ws_url: "wss://coinbase.test/ws".to_owned(),
         market_feed_symbols: Vec::new(),
         market_feed_intervals: Vec::new(),
         market_feed_providers: Vec::new(),
@@ -199,8 +201,8 @@ async fn seed_margin_position(
     .last_insert_id();
     let product_id = sqlx::query(
         r#"INSERT INTO margin_products
-           (pair_id, margin_asset, margin_mode, leverage_levels, max_leverage, min_margin, max_margin, maintenance_margin_rate, status)
-           VALUES (?, ?, 'isolated', ?, ?, ?, ?, ?, 'active')"#,
+           (pair_id, margin_asset, margin_mode, margin_modes, leverage_levels, max_leverage, min_margin, max_margin, maintenance_margin_rate, status)
+           VALUES (?, ?, 'isolated', JSON_ARRAY('isolated'), ?, ?, ?, ?, ?, 'active')"#,
     )
     .bind(pair_id)
     .bind(margin_asset)
@@ -526,6 +528,74 @@ async fn margin_liquidation_worker_liquidates_unsafe_position_idempotently()
             .fetch_one(&pool)
             .await?;
     assert_eq!(record_count_after, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn margin_liquidation_worker_credits_recorded_margin_wallet_scope()
+-> Result<(), Box<dyn Error>> {
+    let _guard = TEST_LOCK.lock().await;
+    let Some(pool) = mysql_pool_or_skip().await? else {
+        return Ok(());
+    };
+    let Some(redis) = redis_manager_or_skip().await? else {
+        return Ok(());
+    };
+    close_previous_margin_worker_positions(&pool).await?;
+    let now = Utc.with_ymd_and_hms(1991, 1, 7, 12, 0, 0).unwrap();
+    let fixture =
+        seed_margin_position(&pool, "long", Some(&decimal("100.000000000000000000"))).await?;
+    sqlx::query(
+        "INSERT INTO margin_wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)",
+    )
+    .bind(fixture.user_id)
+    .bind(fixture.margin_asset)
+    .bind(decimal("80.000000000000000000"))
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "UPDATE margin_positions SET wallet_scope = 'margin', interest_amount = ? WHERE id = ?",
+    )
+    .bind(decimal("1.250000000000000000"))
+    .bind(fixture.position_id)
+    .execute(&pool)
+    .await?;
+    cache_ticker(&redis, &fixture.pair_symbol, "84.000000000000000000", now).await?;
+    close_other_open_positions(&pool, &[fixture.position_id]).await?;
+
+    let summary = run_once_with_dependencies(&pool, &redis, now, 10).await?;
+    assert_eq!(summary.liquidated, 1);
+    assert_eq!(summary.failed, 0);
+
+    let (spot_available,): (BigDecimal,) =
+        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(fixture.user_id)
+            .bind(fixture.margin_asset)
+            .fetch_one(&pool)
+            .await?;
+    let (margin_available,): (BigDecimal,) = sqlx::query_as(
+        "SELECT available FROM margin_wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(fixture.user_id)
+    .bind(fixture.margin_asset)
+    .fetch_one(&pool)
+    .await?;
+    let (spot_ledger_count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'margin_position' AND ref_id = ? AND change_type = 'margin_position_liquidate'",
+    )
+    .bind(fixture.position_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    let (margin_ledger_count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM margin_wallet_ledger WHERE ref_type = 'margin_position' AND ref_id = ? AND change_type = 'margin_position_liquidate'",
+    )
+    .bind(fixture.position_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(spot_available, decimal("80.000000000000000000"));
+    assert_eq!(margin_available, decimal("82.750000000000000000"));
+    assert_eq!(spot_ledger_count, 0);
+    assert_eq!(margin_ledger_count, 1);
     Ok(())
 }
 

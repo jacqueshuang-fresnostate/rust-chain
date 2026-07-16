@@ -49,6 +49,8 @@ fn test_settings() -> Settings {
         bitget_ws_url: "wss://bitget.test/ws".to_owned(),
         htx_rest_base_url: "https://htx.test".to_owned(),
         htx_ws_url: "wss://htx.test/ws".to_owned(),
+        coinbase_rest_base_url: "https://coinbase.test".to_owned(),
+        coinbase_ws_url: "wss://coinbase.test/ws".to_owned(),
         market_feed_symbols: Vec::new(),
         market_feed_intervals: Vec::new(),
         market_feed_providers: Vec::new(),
@@ -261,6 +263,11 @@ async fn earn_auto_redemption_worker_redeems_matured_subscription_idempotently()
     let now = Utc.with_ymd_and_hms(1990, 1, 1, 12, 0, 0).unwrap();
     let fixture =
         seed_matured_subscription(&pool, now, now - chrono::TimeDelta::seconds(1)).await?;
+    sqlx::query("UPDATE earn_subscriptions SET maturity_profit_fee_rate = ? WHERE id = ?")
+        .bind(decimal("0.10000000"))
+        .bind(fixture.subscription_id)
+        .execute(&pool)
+        .await?;
 
     let hub = EventBroadcastHub::new(16);
     let _keepalive_hub = hub.clone();
@@ -278,8 +285,11 @@ async fn earn_auto_redemption_worker_redeems_matured_subscription_idempotently()
     assert_eq!(event["subscription_id"], fixture.subscription_id);
     assert_eq!(event["asset_id"], fixture.asset_id);
     assert_eq!(event["principal_amount"], "20.000000000000000000");
-    assert_eq!(event["yield_amount"], "2.000000000000000000");
-    assert_eq!(event["redeem_amount"], "22.000000000000000000");
+    assert_eq!(event["gross_yield_amount"], "2.000000000000000000");
+    assert_eq!(event["yield_amount"], "1.800000000000000000");
+    assert_eq!(event["maturity_profit_fee_amount"], "0.200000000000000000");
+    assert_eq!(event["fee_amount"], "0.200000000000000000");
+    assert_eq!(event["redeem_amount"], "21.800000000000000000");
     assert_eq!(event["status"], "redeemed");
     let (status, redeemed_at): (String, Option<chrono::DateTime<Utc>>) =
         sqlx::query_as("SELECT status, redeemed_at FROM earn_subscriptions WHERE id = ?")
@@ -294,7 +304,7 @@ async fn earn_auto_redemption_worker_redeems_matured_subscription_idempotently()
             .bind(fixture.asset_id)
             .fetch_one(&pool)
             .await?;
-    assert_eq!(available, decimal("102.000000000000000000"));
+    assert_eq!(available, decimal("101.800000000000000000"));
     let (redeem_amount, ledger_count): (BigDecimal, i64) = sqlx::query_as(
         r#"SELECT COALESCE(SUM(amount), 0), COUNT(*)
            FROM wallet_ledger
@@ -305,7 +315,7 @@ async fn earn_auto_redemption_worker_redeems_matured_subscription_idempotently()
     .bind(fixture.subscription_id.to_string())
     .fetch_one(&pool)
     .await?;
-    assert_eq!(redeem_amount, decimal("22.000000000000000000"));
+    assert_eq!(redeem_amount, decimal("21.800000000000000000"));
     assert_eq!(ledger_count, 1);
 
     let idempotent = run_once_with_broadcast(&pool, Some(&hub), now, 10).await?;

@@ -25,6 +25,7 @@ export const adminRoutes: RouteObject[] = [
   { path: 'news', element: <ResourcePage config={resourceConfigs.news} /> },
   { path: 'assets', element: <ResourcePage config={resourceConfigs.assets} /> },
   { path: 'wallet/accounts', element: <ResourcePage config={resourceConfigs.walletAccounts} /> },
+  { path: 'wallet/deposit-network-configs', element: <ResourcePage config={resourceConfigs.depositNetworkConfigs} /> },
   { path: 'wallet/deposit-address-pool', element: <ResourcePage config={resourceConfigs.depositAddressPool} /> },
   { path: 'wallet/quick-recharge', element: <QuickRechargeConfigPage /> },
   { path: 'wallet/quick-recharge-orders', element: <ResourcePage config={resourceConfigs.quickRechargeOrders} /> },

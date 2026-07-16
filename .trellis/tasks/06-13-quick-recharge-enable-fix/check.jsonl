@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"确认质量要求并执行就近前端测试"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查启用状态、缺失字段提示和 PATCH payload 的一致性"}

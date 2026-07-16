@@ -1,0 +1,7 @@
+{"type":"spec","path":".trellis/spec/backend/index.md","reason":"Backend task entry and required checklist."}
+{"type":"spec","path":".trellis/spec/backend/database-guidelines.md","reason":"Fix touches MySQL query semantics for trading pair symbol matching."}
+{"type":"spec","path":".trellis/spec/backend/quality-guidelines.md","reason":"Backend bug fix verification expectations."}
+{"type":"guide","path":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Bug sits at market ticker symbol format and spot order trading pair boundary."}
+{"type":"implementation","path":"src/modules/spot/routes.rs","reason":"Changed triggered limit order scan to match compact market symbols like BTCUSDT against stored symbols like BTC-USDT."}
+{"type":"implementation","path":"src/modules/market/mod.rs","reason":"Added depth best-ask based trigger so buy limit orders can fill when orderbook ask reaches the limit, not only ticker last price."}
+{"type":"test","path":"tests/spot_routes.rs","reason":"Updated limit trigger regression to pass compact market symbol while the stored trading pair uses the dashed symbol format."}

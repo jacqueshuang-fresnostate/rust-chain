@@ -2,8 +2,9 @@ use exchange_api::{
     build_router,
     config::Settings,
     infra::{self, email::SmtpEmailSender},
-    modules::admin::market_feed_config::{
-        load_enabled_config_for_bootstrap, runtime_config_from_response,
+    modules::admin::{
+        application::load_enabled_admin_market_feed_config,
+        service::market_feed_runtime_config_from_response,
     },
     modules::{events::EventBroadcastHub, prediction},
     state::AppState,
@@ -28,6 +29,7 @@ async fn main() -> anyhow::Result<()> {
     let mysql = infra::mysql::connect(&settings).await?;
     let mongo = infra::mongo::connect(&settings).await?;
     let redis = infra::redis::connect(&settings).await?;
+    let auth_manager = infra::auth::connect(&settings).await?;
     let rabbitmq = infra::rabbitmq::connect(&settings).await?;
 
     let market_feed_supervisor = market_feed::MarketFeedSupervisorHandle::new();
@@ -35,6 +37,7 @@ async fn main() -> anyhow::Result<()> {
         .with_mysql(mysql)
         .with_mongo(mongo)
         .with_redis(redis)
+        .with_auth_manager(auth_manager)
         .with_rabbitmq(rabbitmq)
         .with_event_broadcast_hub(EventBroadcastHub::new(1024))
         .with_market_feed_supervisor(market_feed_supervisor.clone())
@@ -43,7 +46,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some(pool) = state.mysql.clone() {
         let market_feed_state = state.clone();
         tokio::spawn(async move {
-            let db_config = match load_enabled_config_for_bootstrap(&pool).await {
+            let db_config = match load_enabled_admin_market_feed_config(&pool).await {
                 Ok(config) => config,
                 Err(error) => {
                     tracing::error!(%error, "加载行情订阅数据库配置失败");
@@ -51,7 +54,9 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
             let runtime_config = match db_config.as_ref() {
-                Some(config) => runtime_config_from_response(&market_feed_state.settings, config),
+                Some(config) => {
+                    market_feed_runtime_config_from_response(&market_feed_state.settings, config)
+                }
                 None => market_feed::MarketFeedRuntimeConfig::new(
                     &market_feed_state.settings,
                     market_feed_state.settings.market_feed_symbols.clone(),

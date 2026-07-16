@@ -1,0 +1,17 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Verify backend migration, validation, and API behavior."}
+{"file": ".trellis/spec/guides/index.md", "reason": "Verify cross-layer consistency and reuse expectations."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Check duplicated fee calculation/form handling."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Check round-trip of fee fields through DB, API, UI, and settlement."}
+{"command": "cargo fmt", "result": "passed"}
+{"command": "cargo check", "result": "passed"}
+{"command": "set -a; source .env; set +a; sqlx migrate run", "result": "passed: applied 65/migrate earn product fee config"}
+{"command": "cargo test --test earn_routes admin_earn_product_create_update_status_and_audit", "result": "passed: 1 test"}
+{"command": "cargo test --test earn_routes earn_redeem_matured_subscription_credits_principal_yield_and_writes_ledger", "result": "passed: 1 test"}
+{"command": "cargo test --test earn_routes earn_redeem_early_subscription_applies_principal_fee", "result": "passed: 1 test"}
+{"command": "cargo test --test earn_auto_redemption_worker earn_auto_redemption_worker_redeems_matured_subscription_idempotently", "result": "passed: 1 test"}
+{"command": "cargo test earn::redemption --lib", "result": "passed: 2 tests"}
+{"command": "npm test -- src/admin/resources/resourceConfigs.test.tsx -t \"earn products\"", "cwd": "web", "result": "passed: 1 target test"}
+{"command": "npm run typecheck", "cwd": "web", "result": "passed"}
+{"command": "npm run type-check", "cwd": "pc", "result": "passed"}
+{"command": "node --test --experimental-strip-types tests/backendAdapters.test.ts", "cwd": "pc", "result": "passed: 31 tests"}
+{"command": "git diff --check -- migrations/0065_earn_product_fee_config.sql src/modules/earn/mod.rs src/modules/earn/redemption.rs src/modules/earn/routes.rs src/workers/earn_auto_redemption.rs tests/earn_routes.rs tests/earn_auto_redemption_worker.rs web/src/admin/resources/ResourceCreateActions.tsx web/src/admin/resources/resourceConfigs.tsx web/src/admin/resources/resourceConfigs.test.tsx web/src/shared/DetailDrawer.tsx pc/src/api/backendAdapters.ts .trellis/spec/backend/index.md .trellis/spec/backend/earn-products.md .trellis/tasks/06-15-earn-product-fee-config docs/superpowers/PROGRESS.md", "result": "passed"}

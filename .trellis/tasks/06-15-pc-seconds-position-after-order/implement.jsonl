@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend contract index for seconds contract API behavior."}
+{"file": ".trellis/spec/backend/seconds-contracts.md", "reason": "Seconds contract product/order API contracts and PC boundary expectations."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Bug is a backend-to-PC response shape mismatch."}

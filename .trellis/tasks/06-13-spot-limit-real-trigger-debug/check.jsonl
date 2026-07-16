@@ -1,0 +1,8 @@
+{"type":"spec","path":".trellis/spec/backend/quality-guidelines.md","reason":"Use backend quality checks after implementation."}
+{"type":"guide","path":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify compact market symbol reaches dashed DB trading pair orders."}
+{"type":"verification","command":"cargo test --manifest-path Cargo.toml --test spot_routes spot_limit_buy_order_fills_when_market_price_reaches_limit -- --nocapture","result":"passed; DATABASE_URL not set, so MySQL integration branch skipped by existing test guard."}
+{"type":"verification","command":"cargo test --manifest-path Cargo.toml --test spot_routes spot_create_market_buy_order_fills_immediately_at_market_price -- --nocapture","result":"passed; DATABASE_URL not set, so MySQL integration branch skipped by existing test guard."}
+{"type":"verification","command":"cargo test --manifest-path Cargo.toml --test spot_routes spot_create_limit_buy_order_freezes_quote_wallet -- --nocapture","result":"passed; DATABASE_URL not set, so MySQL integration branch skipped by existing test guard."}
+{"type":"verification","command":"cargo test --manifest-path Cargo.toml --test market_feed_worker -- --nocapture","result":"passed; 31 tests passed."}
+{"type":"verification","command":"cargo fmt --manifest-path Cargo.toml -- --check","result":"passed."}
+{"type":"verification","command":"git diff --check -- src/modules/spot/routes.rs src/modules/market/mod.rs tests/spot_routes.rs .trellis/tasks/06-13-spot-limit-real-trigger-debug/prd.md .trellis/tasks/06-13-spot-limit-real-trigger-debug/implement.jsonl .trellis/tasks/06-13-spot-limit-real-trigger-debug/check.jsonl","result":"passed."}

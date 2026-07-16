@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/index.md","reason":"Existing project quality conventions for admin route/UI tasks."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Keep the existing SMTP API payload contract aligned with the admin UI SideSheet change."}

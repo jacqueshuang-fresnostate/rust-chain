@@ -13,19 +13,22 @@ use exchange_api::{
         email::{EmailMessage, EmailSender, SmtpEmailConfig},
         secrets::encrypt_secret,
     },
-    modules::auth::{TokenScope, issue_token, verify_password},
+    modules::{
+        auth::{TokenScope, issue_token, verify_password},
+        quick_recharge::gmpay_signature,
+    },
     state::AppState,
     workers::market_feed::MarketFeedSupervisorHandle,
 };
 use secrecy::SecretString;
 use serde_json::{Value, json};
 use sqlx::{MySqlPool, mysql::MySqlPoolOptions, types::Json as SqlxJson};
-use std::{error::Error, fs, str::FromStr, sync::Arc};
+use std::{collections::BTreeMap, error::Error, fs, str::FromStr, sync::Arc};
 use tower::ServiceExt;
 use uuid::Uuid;
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
-    matchers::{header, method, path},
+    matchers::{body_string_contains, header, method, path},
 };
 
 fn decimal(value: &str) -> BigDecimal {
@@ -52,6 +55,8 @@ fn test_settings() -> Settings {
         bitget_ws_url: "wss://bitget.test/ws".to_owned(),
         htx_rest_base_url: "https://htx.test".to_owned(),
         htx_ws_url: "wss://htx.test/ws".to_owned(),
+        coinbase_rest_base_url: "https://coinbase.test".to_owned(),
+        coinbase_ws_url: "wss://coinbase.test/ws".to_owned(),
         market_feed_symbols: Vec::new(),
         market_feed_intervals: Vec::new(),
         market_feed_providers: Vec::new(),
@@ -84,6 +89,11 @@ fn test_settings() -> Settings {
 static SMTP_CONFIG_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static MARKET_FEED_CONFIG_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static UPLOAD_CONFIG_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static COUNTRY_CONFIG_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static SECURITY_POLICY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static KYC_CONFIG_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static PLATFORM_BRAND_CONFIG_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static QUICK_RECHARGE_CONFIG_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[derive(Debug)]
 struct RecordingEmailSender {
@@ -156,6 +166,27 @@ async fn create_asset_with_symbol(pool: &MySqlPool, prefix: &str) -> (u64, Strin
     .unwrap()
     .last_insert_id();
     (asset_id, symbol)
+}
+
+async fn upsert_deposit_network_config(pool: &MySqlPool, network: &str, group_code: &str) {
+    sqlx::query(
+        r#"INSERT INTO deposit_network_configs
+           (network, display_name, address_group_code, address_group_name, asset_symbols_json, status, sort_order)
+           VALUES (?, ?, ?, ?, NULL, 'active', 0)
+           ON DUPLICATE KEY UPDATE
+             display_name = VALUES(display_name),
+             address_group_code = VALUES(address_group_code),
+             address_group_name = VALUES(address_group_name),
+             asset_symbols_json = NULL,
+             status = 'active'"#,
+    )
+    .bind(network)
+    .bind(network)
+    .bind(group_code)
+    .bind(group_code)
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 async fn seed_convert_pair(pool: &MySqlPool, from_asset: u64, to_asset: u64, enabled: bool) -> u64 {
@@ -235,8 +266,8 @@ async fn seed_margin_liquidation_record(
     .last_insert_id();
     let product_id = sqlx::query(
         r#"INSERT INTO margin_products
-           (pair_id, margin_asset, margin_mode, leverage_levels, max_leverage, min_margin, max_margin, maintenance_margin_rate, status)
-           VALUES (?, ?, 'isolated', ?, ?, ?, ?, ?, 'active')"#,
+           (pair_id, margin_asset, margin_mode, margin_modes, leverage_levels, max_leverage, min_margin, max_margin, maintenance_margin_rate, status)
+           VALUES (?, ?, 'isolated', JSON_ARRAY('isolated'), ?, ?, ?, ?, ?, 'active')"#,
     )
     .bind(pair_id)
     .bind(margin_asset)
@@ -329,6 +360,39 @@ async fn create_admin_user(pool: &MySqlPool) -> (u64, u64) {
             .last_insert_id();
 
     (role_id, admin_id)
+}
+
+async fn reset_kyc_config(pool: &MySqlPool) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO kyc_configs
+           (name, enabled, target_kyc_level, required_documents_json, allowed_countries_json, country_document_types_json, max_document_size_bytes, updated_by)
+           VALUES ('default', TRUE, 1, JSON_ARRAY('identity_front', 'identity_back'), JSON_ARRAY(), JSON_ARRAY(), 5242880, NULL)
+           ON DUPLICATE KEY UPDATE enabled = VALUES(enabled),
+                                   target_kyc_level = VALUES(target_kyc_level),
+                                   required_documents_json = VALUES(required_documents_json),
+                                   allowed_countries_json = VALUES(allowed_countries_json),
+                                   country_document_types_json = VALUES(country_document_types_json),
+                                   max_document_size_bytes = VALUES(max_document_size_bytes),
+                                   updated_by = VALUES(updated_by)"#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn reset_platform_brand_config(pool: &MySqlPool) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO platform_brand_configs
+           (name, platform_name, logo_url, chart_provider, updated_by)
+           VALUES ('default', 'Hippo Exchange', NULL, 'klinecharts', NULL)
+           ON DUPLICATE KEY UPDATE platform_name = VALUES(platform_name),
+                                   logo_url = VALUES(logo_url),
+                                   chart_provider = VALUES(chart_provider),
+                                   updated_by = VALUES(updated_by)"#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 async fn delete_pair_fixture(
@@ -719,6 +783,847 @@ async fn body_json(response: axum::response::Response) -> Result<Value, Box<dyn 
     Ok(serde_json::from_slice(&body)?)
 }
 
+fn form_body_value(body: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key}=");
+    body.split('&')
+        .find_map(|part| part.strip_prefix(&prefix))
+        .map(|value| value.replace('+', " "))
+}
+
+#[tokio::test]
+async fn admin_security_policy_routes_are_registered_after_auth() {
+    let settings = test_settings();
+    let token = issue_token(&settings, "admin:42", TokenScope::Admin, 900).unwrap();
+    let app = build_router(AppState::new(settings));
+
+    let get_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/security-policy")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let patch_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/security-policy")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "login_2fa_mode": "mandatory",
+                        "registration_invite_required": true,
+                        "payment_policies": {
+                            "withdraw": {"enabled": true, "method": "fund_password_and_two_factor"},
+                            "spot_order": {"enabled": true, "method": "two_factor"},
+                            "convert": {"enabled": false, "method": "fund_password"},
+                            "earn_subscribe": {"enabled": false, "method": "fund_password"}
+                        },
+                        "reason": "enable stronger security policy"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(patch_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let reset_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/users/42/2fa/reset")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"reason": "user lost authenticator"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reset_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn admin_security_policy_crud_and_reset_two_factor_audit() -> Result<(), Box<dyn Error>> {
+    let _guard = SECURITY_POLICY_TEST_LOCK.lock().await;
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let key = settings.exposed_credential_encryption_key().unwrap();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let user_id = create_user(&pool).await;
+    let encrypted_secret = encrypt_secret("JBSWY3DPEHPK3PXP", key)?;
+    sqlx::query(
+        r#"INSERT INTO user_two_factor_settings
+           (user_id, totp_secret_encrypted, totp_enabled, login_2fa_enabled, confirmed_at, last_verified_at)
+           VALUES (?, ?, TRUE, TRUE, CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6))
+           ON DUPLICATE KEY UPDATE
+              totp_secret_encrypted = VALUES(totp_secret_encrypted),
+              totp_enabled = TRUE,
+              login_2fa_enabled = TRUE,
+              confirmed_at = CURRENT_TIMESTAMP(6),
+              last_verified_at = CURRENT_TIMESTAMP(6)"#,
+    )
+    .bind(user_id)
+    .bind(encrypted_secret)
+    .execute(&pool)
+    .await?;
+
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+    sqlx::query(
+        r#"INSERT INTO security_policy_configs (policy_key, policy_value, updated_by)
+           VALUES ('user_security_policy', JSON_OBJECT(
+               'login_2fa_mode', 'user_enabled',
+               'registration_invite_required', FALSE,
+               'username_login_enabled', FALSE,
+               'payment_policies', JSON_OBJECT(
+                   'withdraw', JSON_OBJECT('enabled', TRUE, 'method', 'fund_password'),
+                   'spot_order', JSON_OBJECT('enabled', FALSE, 'method', 'fund_password'),
+                   'convert', JSON_OBJECT('enabled', FALSE, 'method', 'fund_password'),
+                   'earn_subscribe', JSON_OBJECT('enabled', FALSE, 'method', 'fund_password')
+               ),
+               'third_party_bindings', JSON_OBJECT(
+                   'coinbase_wallet_enabled', FALSE,
+                   'telegram_account_enabled', FALSE
+               )
+           ), ?)
+           ON DUPLICATE KEY UPDATE
+               policy_value = VALUES(policy_value),
+               updated_by = VALUES(updated_by)"#,
+    )
+    .bind(admin_id)
+    .execute(&pool)
+    .await?;
+
+    let current = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/security-policy")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(current.status(), StatusCode::OK);
+    let current_payload = body_json(current).await?;
+    assert_eq!(current_payload["login_2fa_mode"], "user_enabled");
+    assert_eq!(current_payload["registration_invite_required"], false);
+    assert_eq!(current_payload["username_login_enabled"], false);
+    assert_eq!(
+        current_payload["payment_policies"]["withdraw"]["method"],
+        "fund_password"
+    );
+    assert_eq!(
+        current_payload["third_party_bindings"]["coinbase_wallet_enabled"],
+        false
+    );
+    assert_eq!(
+        current_payload["third_party_bindings"]["telegram_account_enabled"],
+        false
+    );
+
+    let missing_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/security-policy")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "login_2fa_mode": "mandatory",
+                        "registration_invite_required": true,
+                        "username_login_enabled": true,
+                        "payment_policies": {
+                            "withdraw": {"enabled": true, "method": "fund_password_and_two_factor"},
+                            "spot_order": {"enabled": true, "method": "two_factor"},
+                            "convert": {"enabled": false, "method": "fund_password"},
+                            "earn_subscribe": {"enabled": false, "method": "fund_password"}
+                        },
+                        "third_party_bindings": {
+                            "coinbase_wallet_enabled": true,
+                            "telegram_account_enabled": false
+                        }
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing_reason.status(), StatusCode::BAD_REQUEST);
+    let missing_reason_payload = body_json(missing_reason).await?;
+    assert_eq!(
+        missing_reason_payload["message"],
+        "validation error: reason is required"
+    );
+
+    let updated = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/security-policy")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "login_2fa_mode": "mandatory",
+                        "registration_invite_required": true,
+                        "username_login_enabled": true,
+                        "payment_policies": {
+                            "withdraw": {"enabled": true, "method": "fund_password_and_two_factor"},
+                            "spot_order": {"enabled": true, "method": "two_factor"},
+                            "convert": {"enabled": false, "method": "fund_password"},
+                            "earn_subscribe": {"enabled": false, "method": "fund_password"}
+                        },
+                        "third_party_bindings": {
+                            "coinbase_wallet_enabled": true,
+                            "telegram_account_enabled": true
+                        },
+                        "reason": "enable stronger security policy"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.status(), StatusCode::OK);
+    let updated_payload = body_json(updated).await?;
+    assert_eq!(updated_payload["login_2fa_mode"], "mandatory");
+    assert_eq!(updated_payload["registration_invite_required"], true);
+    assert_eq!(updated_payload["username_login_enabled"], true);
+    assert_eq!(
+        updated_payload["payment_policies"]["withdraw"]["method"],
+        "fund_password_and_two_factor"
+    );
+    assert_eq!(
+        updated_payload["payment_policies"]["spot_order"]["method"],
+        "two_factor"
+    );
+    assert_eq!(
+        updated_payload["third_party_bindings"]["coinbase_wallet_enabled"],
+        true
+    );
+    assert_eq!(
+        updated_payload["third_party_bindings"]["telegram_account_enabled"],
+        true
+    );
+
+    let reset = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/admin/api/v1/users/{user_id}/2fa/reset"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"reason": "user lost authenticator"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reset.status(), StatusCode::OK);
+    let reset_payload = body_json(reset).await?;
+    assert_eq!(reset_payload["user_id"], user_id);
+    assert_eq!(reset_payload["totp_enabled"], false);
+    assert_eq!(reset_payload["login_2fa_enabled"], false);
+
+    let stored: (Option<String>, bool, bool) = sqlx::query_as(
+        r#"SELECT totp_secret_encrypted, totp_enabled, login_2fa_enabled
+           FROM user_two_factor_settings
+           WHERE user_id = ?"#,
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await?;
+    assert!(stored.0.is_none());
+    assert!(!stored.1);
+    assert!(!stored.2);
+
+    let audits = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type IN ('security_policy', 'user_two_factor')
+           ORDER BY id ASC"#,
+    )
+    .bind(admin_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audits.len(), 2);
+    assert_eq!(audits[0].action, "security_policy.update");
+    assert_eq!(audits[0].target_type, "security_policy");
+    assert_eq!(audits[0].target_id, "0");
+    assert_eq!(
+        audits[0].reason.as_deref(),
+        Some("enable stronger security policy")
+    );
+    assert_eq!(
+        audits[0].before_json.as_ref().unwrap()["login_2fa_mode"],
+        "user_enabled"
+    );
+    assert_eq!(
+        audits[0].after_json.as_ref().unwrap()["login_2fa_mode"],
+        "mandatory"
+    );
+    assert_eq!(
+        audits[0].after_json.as_ref().unwrap()["registration_invite_required"],
+        true
+    );
+    assert_eq!(
+        audits[0].after_json.as_ref().unwrap()["username_login_enabled"],
+        true
+    );
+    assert_eq!(
+        audits[0].after_json.as_ref().unwrap()["third_party_bindings"]["coinbase_wallet_enabled"],
+        true
+    );
+    assert_eq!(
+        audits[0].after_json.as_ref().unwrap()["third_party_bindings"]["telegram_account_enabled"],
+        true
+    );
+    assert_eq!(audits[1].action, "user_2fa.reset");
+    assert_eq!(audits[1].target_type, "user_two_factor");
+    assert_eq!(audits[1].target_id, user_id.to_string());
+    assert_eq!(audits[1].reason.as_deref(), Some("user lost authenticator"));
+    assert_eq!(
+        audits[1].before_json.as_ref().unwrap()["totp_enabled"],
+        true
+    );
+    assert_eq!(
+        audits[1].after_json.as_ref().unwrap()["totp_enabled"],
+        false
+    );
+
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM user_two_factor_settings WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM security_policy_configs WHERE policy_key = 'user_security_policy'")
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_kyc_config_list_detail_and_manual_review() -> Result<(), Box<dyn Error>> {
+    let _guard = KYC_CONFIG_TEST_LOCK.lock().await;
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    reset_kyc_config(&pool).await?;
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let user_id = create_user(&pool).await;
+    let submission_id = sqlx::query(
+        r#"INSERT INTO user_kyc_submissions
+           (user_id, real_name, country, id_number, document_type, document_front_image, document_back_image, document_handheld_image, status, target_kyc_level)
+           VALUES (?, 'Zhang San', 'China', 'CN1234567890', 'identity_card', 'data:image/png;base64,front', 'data:image/png;base64,back', 'data:image/png;base64,handheld', 'pending', 1)"#,
+    )
+    .bind(user_id)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let config_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/kyc/config")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let config_payload = body_json(config_response).await?;
+    assert_eq!(config_payload["enabled"], true);
+    assert_eq!(config_payload["target_kyc_level"], 1);
+
+    let updated_config = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/kyc/config")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "enabled": true,
+                        "target_kyc_level": 2,
+                        "required_documents": ["identity_front", "identity_back"],
+                        "allowed_countries": ["China"],
+                        "country_document_types": [
+                            { "country": "China", "document_types": ["identity_card", "passport"], "handheld_document_types": ["passport"] }
+                        ],
+                        "max_document_size_bytes": 6291456,
+                        "reason": "tighten kyc config"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let updated_config_status = updated_config.status();
+    let updated_config_payload = body_json(updated_config).await?;
+    assert_eq!(
+        updated_config_status,
+        StatusCode::OK,
+        "payload: {updated_config_payload}"
+    );
+    assert_eq!(updated_config_payload["target_kyc_level"], 2);
+    assert_eq!(
+        updated_config_payload["allowed_countries"],
+        json!(["China"])
+    );
+    assert_eq!(
+        updated_config_payload["country_document_types"],
+        json!([{ "country": "China", "document_types": ["identity_card", "passport"], "handheld_document_types": ["passport"] }])
+    );
+
+    let list_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/kyc/submissions?status=pending&limit=10")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let list_payload = body_json(list_response).await?;
+    let submissions = list_payload["submissions"].as_array().unwrap();
+    assert!(
+        submissions
+            .iter()
+            .any(|submission| submission["id"] == submission_id)
+    );
+
+    let detail_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/admin/api/v1/kyc/submissions/{submission_id}"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let detail_payload = body_json(detail_response).await?;
+    assert_eq!(
+        detail_payload["document_front_image"],
+        "data:image/png;base64,front"
+    );
+    assert_eq!(
+        detail_payload["document_handheld_image"],
+        "data:image/png;base64,handheld"
+    );
+    assert_eq!(detail_payload["status"], "pending");
+
+    let review_response = app
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!(
+                    "/admin/api/v1/kyc/submissions/{submission_id}/review"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "status": "approved",
+                        "kyc_level": 2,
+                        "reason": "identity checked"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let review_status = review_response.status();
+    let review_payload = body_json(review_response).await?;
+    assert_eq!(review_status, StatusCode::OK, "payload: {review_payload}");
+    assert_eq!(review_payload["status"], "approved");
+    assert_eq!(review_payload["reviewed_by"], admin_id);
+
+    let kyc_level: i32 = sqlx::query_scalar("SELECT kyc_level FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(kyc_level, 2);
+    let audit_count: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*)
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND action IN ('kyc.config.update', 'kyc.submission.approve')"#,
+    )
+    .bind(admin_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(audit_count, 2);
+
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM user_kyc_submissions WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    reset_kyc_config(&pool).await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_kyc_list_and_detail_includes_enterprise_fields() -> Result<(), Box<dyn Error>> {
+    let _guard = KYC_CONFIG_TEST_LOCK.lock().await;
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    reset_kyc_config(&pool).await?;
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let user_id = create_user(&pool).await;
+    let submission_id = sqlx::query(
+        r#"INSERT INTO user_kyc_submissions
+           (user_id, real_name, submission_type, enterprise_name, business_registration_number, country, id_number, document_type, document_front_image, document_back_image, document_handheld_image, status, target_kyc_level)
+           VALUES (?, 'Acme Holdings', 'enterprise', 'Acme Holdings Ltd', '91310000712345678A', 'China', 'CN9999999999', 'identity_card', 'data:image/png;base64,front', 'data:image/png;base64,back', 'data:image/png;base64,handheld', 'pending', 1)"#,
+    )
+    .bind(user_id)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let list_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/kyc/submissions?status=pending&limit=10")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let list_payload = body_json(list_response).await?;
+    let submissions = list_payload["submissions"].as_array().unwrap();
+    let submission = submissions
+        .iter()
+        .find(|item| item["id"].as_u64() == Some(submission_id))
+        .expect("submitted enterprise kyc should appear");
+    assert_eq!(submission["submission_type"], "enterprise");
+    assert_eq!(submission["enterprise_name"], "Acme Holdings Ltd");
+    assert_eq!(
+        submission["business_registration_number"],
+        "91310000712345678A"
+    );
+
+    let detail_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/admin/api/v1/kyc/submissions/{submission_id}"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let detail_payload = body_json(detail_response).await?;
+    assert_eq!(detail_payload["submission_type"], "enterprise");
+    assert_eq!(detail_payload["enterprise_name"], "Acme Holdings Ltd");
+    assert_eq!(
+        detail_payload["business_registration_number"],
+        "91310000712345678A"
+    );
+
+    sqlx::query("DELETE FROM user_kyc_submissions WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_country_config_crud_filters_and_audit() -> Result<(), Box<dyn Error>> {
+    let _guard = COUNTRY_CONFIG_TEST_LOCK.lock().await;
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let invalid_default = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/countries")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "country_code": "qa",
+                        "country_name": "Invalid Country",
+                        "remark": "无效国家",
+                        "default_locale": "zh",
+                        "supported_locales": ["en"],
+                        "registration_enabled": true,
+                        "status": "active",
+                        "sort_order": 1,
+                        "reason": "invalid default locale"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(invalid_default.status(), StatusCode::BAD_REQUEST);
+
+    let create = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/countries")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "country_code": " qa ",
+                        "country_name": "Admin Country",
+                        "remark": "后台国家",
+                        "default_locale": "zh",
+                        "supported_locales": ["zh", "en"],
+                        "registration_enabled": true,
+                        "status": "active",
+                        "sort_order": 7,
+                        "reason": "create country"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let create_status = create.status();
+    let created = body_json(create).await?;
+    assert_eq!(create_status, StatusCode::OK, "payload: {created}");
+    let country_id = created["id"].as_u64().unwrap();
+    assert_eq!(created["country_code"], "QA");
+    assert_eq!(created["country_name"], "Admin Country");
+    assert_eq!(created["remark"], "后台国家");
+    assert_eq!(created["default_locale"], "zh");
+    assert_eq!(created["supported_locales"], json!(["zh", "en"]));
+    assert_eq!(created["registration_enabled"], true);
+    assert_eq!(created["status"], "active");
+    assert_eq!(created["sort_order"], 7);
+    assert!(created["created_at"].is_number());
+    assert!(created["updated_at"].is_number());
+
+    let listed = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/countries?country_code=QA&status=active&registration_enabled=true&limit=10")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let listed_status = listed.status();
+    let listed_payload = body_json(listed).await?;
+    assert_eq!(listed_status, StatusCode::OK, "payload: {listed_payload}");
+    let countries = listed_payload["countries"].as_array().unwrap();
+    assert!(countries.iter().any(|country| country["id"] == country_id));
+
+    let update = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/admin/api/v1/countries/{country_id}"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "country_name": "Updated Country",
+                        "remark": "更新国家",
+                        "default_locale": "en",
+                        "supported_locales": ["en"],
+                        "registration_enabled": false,
+                        "sort_order": 9,
+                        "reason": "update country"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let update_status = update.status();
+    let updated = body_json(update).await?;
+    assert_eq!(update_status, StatusCode::OK, "payload: {updated}");
+    assert_eq!(updated["country_name"], "Updated Country");
+    assert_eq!(updated["remark"], "更新国家");
+    assert_eq!(updated["default_locale"], "en");
+    assert_eq!(updated["supported_locales"], json!(["en"]));
+    assert_eq!(updated["registration_enabled"], false);
+    assert_eq!(updated["status"], "active");
+
+    let status_update = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/admin/api/v1/countries/{country_id}/status"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "status": "disabled", "reason": "disable country" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let status_update_status = status_update.status();
+    let disabled = body_json(status_update).await?;
+    assert_eq!(status_update_status, StatusCode::OK, "payload: {disabled}");
+    assert_eq!(disabled["status"], "disabled");
+
+    let audits = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type = 'country_config' AND target_id = ?
+           ORDER BY id"#,
+    )
+    .bind(admin_id)
+    .bind(country_id.to_string())
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audits.len(), 3, "audits: {audits:?}");
+    assert_eq!(audits[0].action, "country_config.create");
+    assert!(audits[0].before_json.is_none());
+    assert_eq!(audits[0].after_json.as_ref().unwrap()["country_code"], "QA");
+    assert_eq!(audits[0].reason.as_deref(), Some("create country"));
+    assert_eq!(audits[1].action, "country_config.update");
+    assert_eq!(
+        audits[1].before_json.as_ref().unwrap()["default_locale"],
+        "zh"
+    );
+    assert_eq!(
+        audits[1].after_json.as_ref().unwrap()["default_locale"],
+        "en"
+    );
+    assert_eq!(audits[1].reason.as_deref(), Some("update country"));
+    assert_eq!(audits[2].action, "country_config.status.update");
+    assert_eq!(audits[2].before_json.as_ref().unwrap()["status"], "active");
+    assert_eq!(audits[2].after_json.as_ref().unwrap()["status"], "disabled");
+    assert_eq!(audits[2].reason.as_deref(), Some("disable country"));
+
+    sqlx::query(
+        "DELETE FROM admin_audit_logs WHERE admin_id = ? AND target_type = 'country_config'",
+    )
+    .bind(admin_id)
+    .execute(&pool)
+    .await?;
+    sqlx::query("DELETE FROM country_configs WHERE id = ?")
+        .bind(country_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
 fn admin_news_content(default_locale: &str, items: Vec<Value>) -> Value {
     json!({
         "version": 1,
@@ -959,7 +1864,7 @@ async fn admin_news_routes_require_admin_scope_mysql_and_validation() -> Result<
                             "locale": "zh-CN",
                             "country_code": "CN",
                             "title": "新闻标题",
-                            "summary": "新闻摘要",
+                            "summary": [{ "type": "p", "children": [{ "text": "新闻摘要", "bold": true }] }],
                             "content": [{ "type": "p", "children": [{ "text": "   " }] }]
                         })]),
                         "reason": "create news auth test"
@@ -974,7 +1879,46 @@ async fn admin_news_routes_require_admin_scope_mysql_and_validation() -> Result<
     assert_eq!(empty_rich_text_payload["code"], "VALIDATION_ERROR");
     assert_eq!(
         empty_rich_text_payload["message"],
-        "validation error: news content text is required"
+        "validation error: news content body is required"
+    );
+
+    let image_rich_text = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/news")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "title": "News Center Image Test",
+                        "category": "general",
+                        "status": "draft",
+                        "country_code": "CN",
+                        "default_locale": "zh-CN",
+                        "content_json": admin_news_content("zh-CN", vec![json!({
+                            "locale": "zh-CN",
+                            "country_code": "CN",
+                            "title": "新闻标题",
+                            "summary": "新闻摘要",
+                            "content": [{ "type": "image", "url": "https://cdn.example.test/news/body.png", "alt": "新闻配图" }]
+                        })]),
+                        "reason": "create news image test"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(image_rich_text.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let image_rich_text_payload = body_json(image_rich_text).await?;
+    assert_eq!(image_rich_text_payload["code"], "INTERNAL_ERROR");
+    assert!(
+        image_rich_text_payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("mysql pool is not configured for admin convert routes")
     );
 
     let admin = app
@@ -1400,6 +2344,7 @@ async fn admin_core_resource_routes_require_admin_scope_and_mysql() -> Result<()
     .to_string();
     let market_feed_reload_body = json!({ "reason": "reload feed config" }).to_string();
     let smtp_config_body = json!({
+        "name": "Scope SMTP",
         "host": "smtp.example.test",
         "port": 587,
         "security": "starttls",
@@ -1408,12 +2353,24 @@ async fn admin_core_resource_routes_require_admin_scope_and_mysql() -> Result<()
         "from_email": "noreply@example.test",
         "from_name": "Exchange Test",
         "enabled": true,
+        "priority": 100,
         "reason": "update smtp config"
+    })
+    .to_string();
+    let smtp_delivery_settings_body = json!({
+        "strategy": "round_robin",
+        "reason": "switch smtp strategy"
     })
     .to_string();
     let smtp_test_body = json!({
         "recipient": "ops@example.test",
         "reason": "test smtp config"
+    })
+    .to_string();
+    let platform_brand_body = json!({
+        "platform_name": "Scope Exchange",
+        "logo_url": "https://cdn.example.test/scope-logo.png",
+        "reason": "update pc brand"
     })
     .to_string();
     let user_create_body = json!({
@@ -1481,10 +2438,32 @@ async fn admin_core_resource_routes_require_admin_scope_and_mysql() -> Result<()
             "/admin/api/v1/smtp/config",
             Some(smtp_config_body.as_str()),
         ),
+        ("GET", "/admin/api/v1/smtp/configs", None),
+        (
+            "POST",
+            "/admin/api/v1/smtp/configs",
+            Some(smtp_config_body.as_str()),
+        ),
+        (
+            "PATCH",
+            "/admin/api/v1/smtp/configs/1",
+            Some(smtp_config_body.as_str()),
+        ),
+        (
+            "PATCH",
+            "/admin/api/v1/smtp/delivery-settings",
+            Some(smtp_delivery_settings_body.as_str()),
+        ),
         (
             "POST",
             "/admin/api/v1/smtp/test",
             Some(smtp_test_body.as_str()),
+        ),
+        ("GET", "/admin/api/v1/platform/brand", None),
+        (
+            "PATCH",
+            "/admin/api/v1/platform/brand",
+            Some(platform_brand_body.as_str()),
         ),
         ("GET", "/admin/api/v1/new-coins/subscriptions?limit=1", None),
         ("GET", "/admin/api/v1/new-coins/distributions?limit=1", None),
@@ -1553,6 +2532,188 @@ async fn admin_core_resource_routes_require_admin_scope_and_mysql() -> Result<()
         );
     }
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_platform_brand_config_save_and_audit() -> Result<(), Box<dyn Error>> {
+    let _guard = PLATFORM_BRAND_CONFIG_TEST_LOCK.lock().await;
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    reset_platform_brand_config(&pool).await?;
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let current = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/platform/brand")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let current_status = current.status();
+    let current_payload = body_json(current).await?;
+    assert_eq!(current_status, StatusCode::OK, "payload: {current_payload}");
+    assert_eq!(current_payload["name"], "default");
+    assert_eq!(current_payload["platform_name"], "Hippo Exchange");
+    assert_eq!(current_payload["logo_url"], Value::Null);
+    assert_eq!(current_payload["chart_provider"], "klinecharts");
+
+    let missing_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/platform/brand")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "platform_name": "Rust Chain",
+                        "logo_url": "https://cdn.example.test/logo.png",
+                        "reason": " "
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing_reason.status(), StatusCode::BAD_REQUEST);
+
+    let invalid_logo = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/platform/brand")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "platform_name": "Rust Chain",
+                        "logo_url": "javascript:alert(1)",
+                        "reason": "reject unsafe logo"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(invalid_logo.status(), StatusCode::BAD_REQUEST);
+
+    let invalid_chart_provider = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/platform/brand")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "platform_name": "Rust Chain",
+                        "logo_url": "https://cdn.example.test/logo.png",
+                        "chart_provider": "unknown",
+                        "reason": "reject unsupported chart provider"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(invalid_chart_provider.status(), StatusCode::BAD_REQUEST);
+
+    let saved = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/platform/brand")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "platform_name": "Rust Chain",
+                        "logo_url": "https://cdn.example.test/logo.png",
+                        "chart_provider": "tradingview",
+                        "reason": "update pc brand"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let saved_status = saved.status();
+    let saved_payload = body_json(saved).await?;
+    assert_eq!(saved_status, StatusCode::OK, "payload: {saved_payload}");
+    assert_eq!(saved_payload["platform_name"], "Rust Chain");
+    assert_eq!(
+        saved_payload["logo_url"],
+        "https://cdn.example.test/logo.png"
+    );
+    assert_eq!(saved_payload["chart_provider"], "tradingview");
+    assert_eq!(saved_payload["updated_by"], admin_id);
+
+    let audits = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type = 'platform_brand_config'
+           ORDER BY id ASC"#,
+    )
+    .bind(admin_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].action, "platform_brand.update");
+    assert_eq!(
+        audits[0].target_id,
+        saved_payload["id"].as_u64().unwrap().to_string()
+    );
+    assert_eq!(
+        audits[0].before_json.as_ref().unwrap()["platform_name"],
+        "Hippo Exchange"
+    );
+    assert_eq!(
+        audits[0].after_json.as_ref().unwrap()["platform_name"],
+        "Rust Chain"
+    );
+    assert_eq!(
+        audits[0].before_json.as_ref().unwrap()["chart_provider"],
+        "klinecharts"
+    );
+    assert_eq!(
+        audits[0].after_json.as_ref().unwrap()["chart_provider"],
+        "tradingview"
+    );
+    assert_eq!(audits[0].reason.as_deref(), Some("update pc brand"));
+
+    sqlx::query(
+        "DELETE FROM admin_audit_logs WHERE admin_id = ? AND target_type = 'platform_brand_config'",
+    )
+    .bind(admin_id)
+    .execute(&pool)
+    .await?;
+    reset_platform_brand_config(&pool).await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
     Ok(())
 }
 
@@ -1697,6 +2858,23 @@ async fn admin_smtp_config_save_masks_secrets_and_requires_reason() -> Result<()
                         "password": "smtp-secret-value",
                         "from_email": "noreply@example.test",
                         "from_name": "Exchange Test",
+                        "verification_code_template_html": "<p>{{subject}}：<strong>{{code}}</strong></p>",
+                        "verification_code_templates": [
+                            {
+                                "key": "default",
+                                "name": "通用验证码",
+                                "purpose": null,
+                                "html": "<p>{{subject}}：<strong>{{code}}</strong></p>",
+                                "enabled": true
+                            },
+                            {
+                                "key": "fund_password_reset",
+                                "name": "资金密码验证码",
+                                "purpose": "fund_password_reset",
+                                "html": "<p>资金验证码：<strong>{{code}}</strong></p>",
+                                "enabled": true
+                            }
+                        ],
                         "enabled": true,
                         "reason": "configure smtp"
                     })
@@ -1713,17 +2891,41 @@ async fn admin_smtp_config_save_masks_secrets_and_requires_reason() -> Result<()
     assert_eq!(saved_payload["security"], "starttls");
     assert_eq!(saved_payload["username_mask"], "smtp****test");
     assert_eq!(saved_payload["password_set"], true);
+    assert_eq!(
+        saved_payload["verification_code_template_html"],
+        "<p>{{subject}}：<strong>{{code}}</strong></p>"
+    );
+    assert_eq!(
+        saved_payload["verification_code_templates"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        saved_payload["verification_code_templates"][1]["purpose"],
+        "fund_password_reset"
+    );
     assert_eq!(saved_payload["username"], Value::Null);
     assert_eq!(saved_payload["password"], Value::Null);
     assert!(!saved_payload.to_string().contains("smtp-secret-value"));
 
-    let stored: (String, String) = sqlx::query_as(
-        "SELECT username_ciphertext, password_ciphertext FROM smtp_configs WHERE name = 'default'",
+    let stored: (String, String, Option<String>, Option<SqlxJson<Vec<Value>>>) = sqlx::query_as(
+        "SELECT username_ciphertext, password_ciphertext, verification_code_template_html, verification_code_templates_json FROM smtp_configs WHERE name = 'default'",
     )
     .fetch_one(&pool)
     .await?;
     assert!(!stored.0.contains("smtp-user@example.test"));
     assert!(!stored.1.contains("smtp-secret-value"));
+    assert_eq!(
+        stored.2.as_deref(),
+        Some("<p>{{subject}}：<strong>{{code}}</strong></p>")
+    );
+    assert_eq!(stored.3.as_ref().unwrap().0.len(), 2);
+    assert_eq!(
+        stored.3.as_ref().unwrap().0[1]["key"],
+        "fund_password_reset"
+    );
 
     let current = app
         .clone()
@@ -1870,6 +3072,612 @@ async fn admin_smtp_test_uses_configured_sender_and_audits_without_secrets()
         .bind(role_id)
         .execute(&pool)
         .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_quick_recharge_test_route_requires_admin_scope_and_mysql()
+-> Result<(), Box<dyn Error>> {
+    let settings = test_settings();
+    let user_token = issue_token(&settings, "user:1", TokenScope::User, 900).unwrap();
+    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let app = build_router(AppState::new(settings));
+    let body = json!({
+        "amount": "12.50",
+        "reason": "test quick recharge config"
+    })
+    .to_string();
+
+    let missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/quick-recharge/config/test")
+                .header("content-type", "application/json")
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let user = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/quick-recharge/config/test")
+                .header(AUTHORIZATION, format!("Bearer {user_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(user.status(), StatusCode::FORBIDDEN);
+
+    let admin = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/quick-recharge/config/test")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(admin.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let payload = body_json(admin).await?;
+    assert_eq!(payload["code"], "INTERNAL_ERROR");
+    assert!(
+        payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("mysql pool is not configured for quick recharge routes")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_quick_recharge_test_creates_provider_order_without_wallet_order()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let _quick_recharge_lock = QUICK_RECHARGE_CONFIG_TEST_LOCK.lock().await;
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let key = settings.exposed_credential_encryption_key().unwrap();
+    let secret_ciphertext = encrypt_secret("epusdt-secret", key)?;
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/payments/gmpay/v1/order/create-transaction"))
+        .and(body_string_contains("pid=1000"))
+        .and(body_string_contains("amount=12.5"))
+        .and(body_string_contains("name=Admin+Quick+Recharge+Test"))
+        .respond_with(|request: &wiremock::Request| {
+            let body = String::from_utf8(request.body.clone()).unwrap();
+            let order_id = form_body_value(&body, "order_id").unwrap();
+            let amount = form_body_value(&body, "amount").unwrap();
+            ResponseTemplate::new(200).set_body_json(json!({
+                "status_code": 200,
+                "message": "ok",
+                "data": {
+                    "trade_id": "GMTEST202606130001",
+                    "order_id": order_id,
+                    "amount": amount,
+                    "currency": "cny",
+                    "actual_amount": "3.210000000000000000",
+                    "receive_address": "TQuickRechargeTestAddress",
+                    "token": "usdt",
+                    "expiration_time": 1_775_100_000,
+                    "payment_url": "https://cashier.example/GMTEST202606130001"
+                }
+            }))
+        })
+        .mount(&server)
+        .await;
+
+    sqlx::query(
+        r#"INSERT INTO quick_recharge_configs
+           (name, provider, enabled, api_base_url, merchant_pid, merchant_secret_ciphertext,
+            merchant_secret_mask, currency, token, network, notify_url, redirect_url,
+            min_amount, max_amount, updated_by)
+           VALUES ('default', 'gmpay', FALSE, ?, '1000', ?, 'epu****cret',
+                   'cny', 'usdt', 'tron', 'https://merchant.example/notify',
+                   'https://merchant.example/return', 10, 1000, ?)
+           ON DUPLICATE KEY UPDATE
+               enabled = VALUES(enabled),
+               api_base_url = VALUES(api_base_url),
+               merchant_pid = VALUES(merchant_pid),
+               merchant_secret_ciphertext = VALUES(merchant_secret_ciphertext),
+               merchant_secret_mask = VALUES(merchant_secret_mask),
+               currency = VALUES(currency),
+               token = VALUES(token),
+               network = VALUES(network),
+               notify_url = VALUES(notify_url),
+               redirect_url = VALUES(redirect_url),
+               min_amount = VALUES(min_amount),
+               max_amount = VALUES(max_amount),
+               updated_by = VALUES(updated_by)"#,
+    )
+    .bind(server.uri())
+    .bind(&secret_ciphertext)
+    .bind(admin_id)
+    .execute(&pool)
+    .await?;
+
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+    let tested = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/quick-recharge/config/test")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "amount": "12.50",
+                        "reason": "verify quick recharge provider"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let tested_status = tested.status();
+    let tested_payload = body_json(tested).await?;
+    assert_eq!(tested_status, StatusCode::OK, "payload: {tested_payload}");
+    assert_eq!(tested_payload["provider_trade_id"], "GMTEST202606130001");
+    assert_eq!(tested_payload["fiat_amount"], "12.500000000000000000");
+    assert_eq!(tested_payload["actual_amount"], "3.210000000000000000");
+    assert_eq!(
+        tested_payload["payment_url"],
+        "https://cashier.example/GMTEST202606130001"
+    );
+
+    let order_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM quick_recharge_orders WHERE order_id = ?")
+            .bind(tested_payload["order_id"].as_str().unwrap())
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(order_count, 0);
+
+    let audits = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type = 'quick_recharge_config'
+           ORDER BY id ASC"#,
+    )
+    .bind(admin_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].action, "quick_recharge_config.test");
+    assert_eq!(
+        audits[0].reason.as_deref(),
+        Some("verify quick recharge provider")
+    );
+    let audit_text = audits[0].after_json.as_ref().unwrap().to_string();
+    assert!(audit_text.contains("GMTEST202606130001"));
+    assert!(!audit_text.contains("epusdt-secret"));
+    assert!(!audit_text.contains(&secret_ciphertext));
+
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        r#"UPDATE quick_recharge_configs
+           SET enabled = FALSE,
+               api_base_url = NULL,
+               merchant_pid = NULL,
+               merchant_secret_ciphertext = NULL,
+               merchant_secret_mask = NULL,
+               notify_url = NULL,
+               redirect_url = NULL,
+               pc_app_redirect_url = NULL,
+               mac_app_redirect_url = NULL,
+               ios_app_redirect_url = NULL,
+               android_app_redirect_url = NULL,
+               mobile_web_redirect_url = NULL,
+               desktop_web_redirect_url = NULL,
+               currency = 'cny',
+               token = 'usdt',
+               network = 'tron',
+               min_amount = 0.010000000000000000,
+               max_amount = NULL,
+               updated_by = NULL
+           WHERE name = 'default'"#,
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_quick_recharge_order_delete_removes_unpaid_orders_only() -> Result<(), Box<dyn Error>>
+{
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let user_id = create_user(&pool).await;
+    let user_email: String = sqlx::query_scalar("SELECT email FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await?;
+    let (asset_id, symbol) = create_asset_with_symbol(&pool, "QDR").await;
+    let pending_order_id = format!("QRDEL{}", &Uuid::now_v7().simple().to_string()[..18]);
+    let paid_order_id = format!("QRPAID{}", &Uuid::now_v7().simple().to_string()[..18]);
+    let pending_row_id = sqlx::query(
+        r#"INSERT INTO quick_recharge_orders
+           (order_id, user_id, user_email, asset_id, asset_symbol, currency, token, network,
+            fiat_amount, actual_amount, provider_trade_id, status)
+           VALUES (?, ?, ?, ?, ?, 'cny', ?, 'tron', ?, ?, ?, 'pending')"#,
+    )
+    .bind(&pending_order_id)
+    .bind(user_id)
+    .bind(&user_email)
+    .bind(asset_id)
+    .bind(&symbol)
+    .bind(&symbol)
+    .bind(decimal("66.000000000000000000"))
+    .bind(decimal("9.000000000000000000"))
+    .bind(format!("GM{pending_order_id}"))
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    sqlx::query(
+        r#"INSERT INTO quick_recharge_orders
+           (order_id, user_id, user_email, asset_id, asset_symbol, currency, token, network,
+            fiat_amount, actual_amount, provider_trade_id, status, paid_at)
+           VALUES (?, ?, ?, ?, ?, 'cny', ?, 'tron', ?, ?, ?, 'paid', CURRENT_TIMESTAMP(6))"#,
+    )
+    .bind(&paid_order_id)
+    .bind(user_id)
+    .bind(&user_email)
+    .bind(asset_id)
+    .bind(&symbol)
+    .bind(&symbol)
+    .bind(decimal("88.000000000000000000"))
+    .bind(decimal("12.000000000000000000"))
+    .bind(format!("GM{paid_order_id}"))
+    .execute(&pool)
+    .await?;
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let deleted = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!(
+                    "/admin/api/v1/quick-recharge/orders/{pending_order_id}"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "reason": "delete unpaid quick recharge order" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    let pending_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM quick_recharge_orders WHERE order_id = ?")
+            .bind(&pending_order_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(pending_count, 0);
+    let audits = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type = 'quick_recharge_order'
+           ORDER BY id DESC"#,
+    )
+    .bind(admin_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].action, "quick_recharge_order.delete");
+    assert_eq!(audits[0].target_id, pending_row_id.to_string());
+    assert_eq!(
+        audits[0].reason.as_deref(),
+        Some("delete unpaid quick recharge order")
+    );
+    assert_eq!(
+        audits[0].before_json.as_ref().unwrap()["order_id"],
+        pending_order_id
+    );
+    assert!(audits[0].after_json.is_none());
+
+    let paid_delete = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!(
+                    "/admin/api/v1/quick-recharge/orders/{paid_order_id}"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "reason": "delete paid quick recharge order" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let paid_delete_status = paid_delete.status();
+    let paid_delete_payload = body_json(paid_delete).await?;
+    assert_eq!(paid_delete_status, StatusCode::CONFLICT);
+    assert_eq!(
+        paid_delete_payload["message"],
+        "conflict: paid quick recharge order cannot be deleted"
+    );
+    let paid_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM quick_recharge_orders WHERE order_id = ?")
+            .bind(&paid_order_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(paid_count, 1);
+
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM quick_recharge_orders WHERE order_id = ?")
+        .bind(&paid_order_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn gmpay_quick_recharge_notify_marks_order_paid_and_is_idempotent()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let _quick_recharge_lock = QUICK_RECHARGE_CONFIG_TEST_LOCK.lock().await;
+    let settings = test_settings();
+    let key = settings.exposed_credential_encryption_key().unwrap();
+    let secret_ciphertext = encrypt_secret("epusdt-secret", key)?;
+    let user_id = create_user(&pool).await;
+    let user_email: String = sqlx::query_scalar("SELECT email FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await?;
+    let (asset_id, symbol) = create_asset_with_symbol(&pool, "GMP").await;
+    let order_id = Uuid::now_v7().simple().to_string();
+    let trade_id = format!("GMNOTIFY{}", &Uuid::now_v7().simple().to_string()[..16]);
+    let notify_amount = "88.000000000000000000";
+    let actual_amount = "12.345000000000000000";
+    let receive_address = format!("TGmpayNotify{}", &Uuid::now_v7().simple().to_string()[..18]);
+    let block_transaction_id = format!("0x{}", Uuid::now_v7().simple());
+
+    sqlx::query(
+        r#"INSERT INTO quick_recharge_configs
+           (name, provider, enabled, api_base_url, merchant_pid, merchant_secret_ciphertext,
+            merchant_secret_mask, currency, token, network, notify_url, redirect_url,
+            min_amount, max_amount, updated_by)
+           VALUES ('default', 'gmpay', TRUE, 'https://pay.example.test', '1000', ?, 'epu****cret',
+                   'cny', ?, 'tron', 'https://api.example.test/api/v1/payments/gmpay/notify',
+                   'https://merchant.example/return', 1, NULL, NULL)
+           ON DUPLICATE KEY UPDATE
+               enabled = VALUES(enabled),
+               api_base_url = VALUES(api_base_url),
+               merchant_pid = VALUES(merchant_pid),
+               merchant_secret_ciphertext = VALUES(merchant_secret_ciphertext),
+               merchant_secret_mask = VALUES(merchant_secret_mask),
+               currency = VALUES(currency),
+               token = VALUES(token),
+               network = VALUES(network),
+               notify_url = VALUES(notify_url),
+               redirect_url = VALUES(redirect_url),
+               min_amount = VALUES(min_amount),
+               max_amount = VALUES(max_amount),
+               updated_by = VALUES(updated_by)"#,
+    )
+    .bind(&secret_ciphertext)
+    .bind(&symbol)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        r#"INSERT INTO quick_recharge_orders
+           (order_id, user_id, user_email, asset_id, asset_symbol, currency, token, network,
+            fiat_amount, provider_trade_id, actual_amount, receive_address, payment_url, status)
+           VALUES (?, ?, ?, ?, ?, 'cny', ?, 'tron', ?, ?, ?, ?, 'https://cashier.example.test/pay', 'pending')"#,
+    )
+    .bind(&order_id)
+    .bind(user_id)
+    .bind(&user_email)
+    .bind(asset_id)
+    .bind(&symbol)
+    .bind(&symbol)
+    .bind(decimal(notify_amount))
+    .bind(&trade_id)
+    .bind(decimal(actual_amount))
+    .bind(&receive_address)
+    .execute(&pool)
+    .await?;
+
+    let mut signed_params = BTreeMap::new();
+    signed_params.insert("pid".to_owned(), "1000".to_owned());
+    signed_params.insert("trade_id".to_owned(), trade_id.clone());
+    signed_params.insert("order_id".to_owned(), order_id.clone());
+    signed_params.insert("amount".to_owned(), notify_amount.to_owned());
+    signed_params.insert("actual_amount".to_owned(), actual_amount.to_owned());
+    signed_params.insert("token".to_owned(), symbol.clone());
+    signed_params.insert("status".to_owned(), "2".to_owned());
+    signed_params.insert("receive_address".to_owned(), receive_address.clone());
+    signed_params.insert(
+        "block_transaction_id".to_owned(),
+        block_transaction_id.clone(),
+    );
+    let signature = gmpay_signature(&signed_params, "epusdt-secret");
+    let payload = json!({
+        "pid": "1000",
+        "trade_id": trade_id,
+        "order_id": order_id,
+        "amount": notify_amount,
+        "actual_amount": actual_amount,
+        "token": symbol,
+        "status": "2",
+        "receive_address": receive_address,
+        "block_transaction_id": block_transaction_id,
+        "signature": signature
+    });
+
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+    for attempt in 0..2 {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/payments/gmpay/notify")
+                    .header("content-type", "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await?;
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 8192).await?;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "attempt {attempt} payload: {}",
+            String::from_utf8_lossy(&body)
+        );
+        assert_eq!(String::from_utf8_lossy(&body), "ok");
+    }
+
+    let order = sqlx::query_as::<_, (String, BigDecimal, String, Option<SqlxJson<Value>>)>(
+        r#"SELECT status, actual_amount, block_transaction_id, callback_payload_json
+           FROM quick_recharge_orders
+           WHERE order_id = ?"#,
+    )
+    .bind(payload["order_id"].as_str().unwrap())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(order.0, "paid");
+    assert_eq!(order.1, decimal(actual_amount));
+    assert_eq!(order.2, payload["block_transaction_id"].as_str().unwrap());
+    assert_eq!(
+        order.3.as_ref().unwrap().0["signature"],
+        payload["signature"]
+    );
+
+    let available: BigDecimal = sqlx::query_scalar(
+        "SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(available, decimal(actual_amount));
+    let ledger_count: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM wallet_ledger
+           WHERE user_id = ? AND asset_id = ? AND change_type = 'quick_recharge'
+             AND ref_type = 'quick_recharge' AND ref_id = ?"#,
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .bind(payload["order_id"].as_str().unwrap())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(ledger_count, 1);
+
+    sqlx::query("DELETE FROM wallet_ledger WHERE ref_type = 'quick_recharge' AND ref_id = ?")
+        .bind(payload["order_id"].as_str().unwrap())
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+        .bind(user_id)
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM quick_recharge_orders WHERE order_id = ?")
+        .bind(payload["order_id"].as_str().unwrap())
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        r#"UPDATE quick_recharge_configs
+           SET enabled = FALSE,
+               api_base_url = NULL,
+               merchant_pid = NULL,
+               merchant_secret_ciphertext = NULL,
+               merchant_secret_mask = NULL,
+               notify_url = NULL,
+               redirect_url = NULL,
+               pc_app_redirect_url = NULL,
+               mac_app_redirect_url = NULL,
+               ios_app_redirect_url = NULL,
+               android_app_redirect_url = NULL,
+               mobile_web_redirect_url = NULL,
+               desktop_web_redirect_url = NULL,
+               currency = 'cny',
+               token = 'usdt',
+               network = 'tron',
+               min_amount = 0.010000000000000000,
+               max_amount = NULL,
+               updated_by = NULL
+           WHERE name = 'default'"#,
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query("DELETE FROM assets WHERE id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+
     Ok(())
 }
 
@@ -3136,6 +4944,35 @@ async fn admin_market_feed_rejects_invalid_interval() -> Result<(), Box<dyn Erro
     let invalid_payload = body_json(invalid).await?;
     assert_eq!(invalid_payload["code"], "VALIDATION_ERROR");
 
+    let multi_provider = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/market-feed/config")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "symbols": ["BTC-USDT"],
+                        "intervals": ["1m"],
+                        "providers": ["bitget", "htx"],
+                        "enabled": true,
+                        "reason": "multiple providers"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(multi_provider.status(), StatusCode::BAD_REQUEST);
+    let multi_provider_payload = body_json(multi_provider).await?;
+    assert_eq!(multi_provider_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        multi_provider_payload["message"],
+        "validation error: market feed only supports one enabled provider"
+    );
+
     sqlx::query("DELETE FROM admin_users WHERE id = ?")
         .bind(admin_id)
         .execute(&pool)
@@ -3181,7 +5018,7 @@ async fn admin_market_feed_config_credentials_reload_and_status() -> Result<(), 
                     json!({
                         "symbols": ["BTC-USDT", "ETH_USDT"],
                         "intervals": ["1m", "5m", "1h"],
-                        "providers": ["bitget", "htx", "huobi"],
+                        "providers": ["bitget"],
                         "enabled": true,
                         "reason": "enable external market feed"
                     })
@@ -3194,8 +5031,9 @@ async fn admin_market_feed_config_credentials_reload_and_status() -> Result<(), 
     let saved_payload = body_json(saved).await?;
     assert_eq!(saved_status, StatusCode::OK, "payload: {saved_payload}");
     let config_id = saved_payload["id"].as_u64().unwrap();
+    let saved_version = saved_payload["version"].as_u64().unwrap();
     assert_eq!(saved_payload["symbols"], json!(["BTCUSDT", "ETHUSDT"]));
-    assert_eq!(saved_payload["providers"], json!(["bitget", "htx"]));
+    assert_eq!(saved_payload["providers"], json!(["bitget"]));
     assert_eq!(saved_payload["needs_reload"], true);
 
     let credential = app
@@ -3282,6 +5120,7 @@ async fn admin_market_feed_config_credentials_reload_and_status() -> Result<(), 
         reload_payload["runtime"]["symbols"],
         json!(["BTCUSDT", "ETHUSDT"])
     );
+    assert_eq!(reload_payload["runtime"]["providers"], json!(["bitget"]));
     supervisor.stop().await;
 
     let status = app
@@ -3296,7 +5135,7 @@ async fn admin_market_feed_config_credentials_reload_and_status() -> Result<(), 
         .await?;
     let status_payload = body_json(status).await?;
     assert_eq!(status_payload["saved_config"]["id"], config_id);
-    assert_eq!(status_payload["runtime"]["applied_version"], 1);
+    assert_eq!(status_payload["runtime"]["applied_version"], saved_version);
 
     let audits = sqlx::query_as::<_, AdminAuditRow>(
         r#"SELECT action, target_type, target_id, before_json, after_json, reason
@@ -3444,10 +5283,16 @@ async fn admin_lists_users_and_reads_user_detail() -> Result<(), Box<dyn Error>>
     let email = format!("admin-list-user-{}@example.test", Uuid::now_v7().simple());
     let user_id = create_user_with_email(&pool, email.clone()).await;
     let other_user_id = create_user(&pool).await;
+    let invite_code = Uuid::now_v7().simple().to_string()[..6].to_ascii_uppercase();
     let phone_suffix = Uuid::now_v7().simple().to_string();
     sqlx::query("UPDATE users SET phone = ?, kyc_level = 2 WHERE id = ?")
         .bind(format!("+8613{}", &phone_suffix[16..25]))
         .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("INSERT INTO invite_codes (owner_type, owner_id, code, status) VALUES ('user', ?, ?, 'active')")
+        .bind(user_id)
+        .bind(&invite_code)
         .execute(&pool)
         .await?;
     sqlx::query("UPDATE users SET status = 'suspended' WHERE id = ?")
@@ -3482,6 +5327,7 @@ async fn admin_lists_users_and_reads_user_detail() -> Result<(), Box<dyn Error>>
     assert_eq!(users.len(), 1);
     assert_eq!(users[0]["id"], user_id);
     assert_eq!(users[0]["email"], email);
+    assert_eq!(users[0]["invite_code"], invite_code);
     assert_eq!(users[0]["status"], "active");
     assert_eq!(users[0]["kyc_level"], 2);
     assert!(users[0]["created_at"].is_number());
@@ -3508,6 +5354,7 @@ async fn admin_lists_users_and_reads_user_detail() -> Result<(), Box<dyn Error>>
     assert_eq!(email_users.len(), 1);
     assert_eq!(email_users[0]["id"], user_id);
     assert_eq!(email_users[0]["email"], email);
+    assert_eq!(email_users[0]["invite_code"], invite_code);
 
     let detail = app
         .clone()
@@ -3524,7 +5371,12 @@ async fn admin_lists_users_and_reads_user_detail() -> Result<(), Box<dyn Error>>
     assert_eq!(detail_status, StatusCode::OK, "payload: {detail_payload}");
     assert_eq!(detail_payload["id"], user_id);
     assert_eq!(detail_payload["email"], email);
+    assert_eq!(detail_payload["invite_code"], invite_code);
 
+    sqlx::query("DELETE FROM invite_codes WHERE owner_type = 'user' AND owner_id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
     sqlx::query("DELETE FROM users WHERE id IN (?, ?)")
         .bind(user_id)
         .bind(other_user_id)
@@ -3586,6 +5438,13 @@ async fn admin_create_user_creates_hashed_user_and_audit_log() -> Result<(), Box
     assert_eq!(create_payload["phone"], phone);
     assert_eq!(create_payload["status"], "active");
     assert_eq!(create_payload["kyc_level"], 2);
+    let invite_code = create_payload["invite_code"].as_str().unwrap();
+    assert_eq!(invite_code.len(), 6);
+    assert!(
+        invite_code
+            .chars()
+            .all(|char| char.is_ascii_uppercase() || char.is_ascii_digit())
+    );
 
     let stored = sqlx::query_as::<_, (String,)>("SELECT password_hash FROM users WHERE id = ?")
         .bind(user_id)
@@ -3593,6 +5452,13 @@ async fn admin_create_user_creates_hashed_user_and_audit_log() -> Result<(), Box
         .await?;
     assert_ne!(stored.0, "Password123!");
     assert!(stored.0.starts_with("$argon2"));
+    let stored_invite_code: String = sqlx::query_scalar(
+        "SELECT code FROM invite_codes WHERE owner_type = 'user' AND owner_id = ? LIMIT 1",
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(stored_invite_code, invite_code);
 
     let audit = sqlx::query_as::<_, (String, String, String)>(
         r#"SELECT action, target_type, reason
@@ -3651,6 +5517,10 @@ async fn admin_create_user_creates_hashed_user_and_audit_log() -> Result<(), Box
 
     sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ? AND target_type = 'user'")
         .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM invite_codes WHERE owner_type = 'user' AND owner_id = ?")
+        .bind(user_id)
         .execute(&pool)
         .await?;
     sqlx::query("DELETE FROM users WHERE id = ?")
@@ -3881,6 +5751,377 @@ async fn admin_recharges_user_wallet_with_ledger_and_audit() -> Result<(), Box<d
 }
 
 #[tokio::test]
+async fn admin_deposit_address_pool_create_list_update_reclaim_and_audit()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let user_email = format!(
+        "admin-deposit-address-{}@example.test",
+        Uuid::now_v7().simple()
+    );
+    let user_id = create_user_with_email(&pool, user_email.clone()).await;
+    let (asset_id, symbol) = create_asset_with_symbol(&pool, "ADA").await;
+    upsert_deposit_network_config(&pool, "base", "A").await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+    let address = format!("0x{}", Uuid::now_v7().simple());
+
+    let create = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/deposit-address-pool")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "network": "Base",
+                        "address": address,
+                        "asset_symbol": symbol.to_ascii_lowercase(),
+                        "status": "available",
+                        "memo": "memo-1",
+                        "remark": "initial pool address",
+                        "reason": "create deposit address"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let create_status = create.status();
+    let created = body_json(create).await?;
+    assert_eq!(create_status, StatusCode::OK, "payload: {created}");
+    let address_id = created["id"].as_u64().unwrap();
+    assert_eq!(created["network"], "base");
+    assert_eq!(created["address_group_code"], "A");
+    assert_eq!(created["asset_symbol"], symbol);
+    assert_eq!(created["asset_symbols"], json!([symbol.clone()]));
+    assert_eq!(created["status"], "available");
+
+    let single_asset_symbols = json!([symbol.clone()]);
+    let listed = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/deposit-address-pool?network=base&status=available&asset_symbol={symbol}&address={address}&limit=10"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let listed_status = listed.status();
+    let listed_payload = body_json(listed).await?;
+    assert_eq!(listed_status, StatusCode::OK, "payload: {listed_payload}");
+    assert!(
+        listed_payload["addresses"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| {
+                item["id"] == address_id
+                    && item["network"] == "base"
+                    && item["address_group_code"] == "A"
+                    && item["asset_symbol"] == symbol
+                    && item["asset_symbols"] == single_asset_symbols
+                    && item["status"] == "available"
+            })
+    );
+
+    let update = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/admin/api/v1/deposit-address-pool/{address_id}"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "network": "base",
+                        "address": address,
+                        "asset_symbol": symbol,
+                        "status": "disabled",
+                        "memo": "memo-2",
+                        "remark": "paused pool address",
+                        "reason": "pause deposit address"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let update_status = update.status();
+    let updated = body_json(update).await?;
+    assert_eq!(update_status, StatusCode::OK, "payload: {updated}");
+    assert_eq!(updated["status"], "disabled");
+    assert_eq!(updated["memo"], "memo-2");
+    assert_eq!(updated["asset_symbols"], single_asset_symbols);
+
+    sqlx::query(
+        r#"UPDATE deposit_address_pool
+           SET status = 'assigned',
+               assigned_user_id = ?,
+               assigned_user_email = ?,
+               assigned_asset_symbol = ?,
+               assigned_at = CURRENT_TIMESTAMP(6)
+           WHERE id = ?"#,
+    )
+    .bind(user_id)
+    .bind(&user_email)
+    .bind(&symbol)
+    .bind(address_id)
+    .execute(&pool)
+    .await?;
+
+    let assigned_list = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/deposit-address-pool?email={user_email}&status=assigned&limit=10"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let assigned_payload = body_json(assigned_list).await?;
+    let assigned_rows = assigned_payload["addresses"].as_array().unwrap();
+    assert!(assigned_rows.iter().any(|item| {
+        item["id"] == address_id
+            && item["assigned_user_email"] == user_email
+            && item["assigned_asset_symbol"] == symbol
+    }));
+
+    let reclaim = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/admin/api/v1/deposit-address-pool/{address_id}/reclaim"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "reason": "reclaim address" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let reclaim_status = reclaim.status();
+    let reclaimed = body_json(reclaim).await?;
+    assert_eq!(reclaim_status, StatusCode::OK, "payload: {reclaimed}");
+    assert_eq!(reclaimed["status"], "available");
+    assert!(reclaimed["assigned_user_id"].is_null());
+    assert!(reclaimed["assigned_asset_symbol"].is_null());
+
+    let audits = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type = 'deposit_address_pool' AND target_id = ?
+           ORDER BY id"#,
+    )
+    .bind(admin_id)
+    .bind(address_id.to_string())
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audits.len(), 3, "audits: {audits:?}");
+    assert_eq!(audits[0].action, "deposit_address_pool.create");
+    assert!(audits[0].before_json.is_none());
+    assert_eq!(audits[0].after_json.as_ref().unwrap()["network"], "base");
+    assert_eq!(
+        audits[0].after_json.as_ref().unwrap()["asset_symbols"],
+        single_asset_symbols
+    );
+    assert_eq!(
+        audits[0].after_json.as_ref().unwrap()["address_group_code"],
+        "A"
+    );
+    assert_eq!(audits[0].reason.as_deref(), Some("create deposit address"));
+    assert_eq!(audits[1].action, "deposit_address_pool.update");
+    assert_eq!(
+        audits[1].before_json.as_ref().unwrap()["status"],
+        "available"
+    );
+    assert_eq!(audits[1].after_json.as_ref().unwrap()["status"], "disabled");
+    assert_eq!(audits[1].reason.as_deref(), Some("pause deposit address"));
+    assert_eq!(audits[2].action, "deposit_address_pool.reclaim");
+    assert_eq!(
+        audits[2].before_json.as_ref().unwrap()["status"],
+        "assigned"
+    );
+    assert_eq!(
+        audits[2].after_json.as_ref().unwrap()["status"],
+        "available"
+    );
+    assert_eq!(audits[2].reason.as_deref(), Some("reclaim address"));
+
+    sqlx::query(
+        "DELETE FROM admin_audit_logs WHERE admin_id = ? AND target_type = 'deposit_address_pool'",
+    )
+    .bind(admin_id)
+    .execute(&pool)
+    .await?;
+    sqlx::query("DELETE FROM deposit_address_pool WHERE id = ?")
+        .bind(address_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_deposit_address_pool_batch_create_supports_multiple_assets()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let (asset_id, symbol) = create_asset_with_symbol(&pool, "DAB").await;
+    let (asset_id_two, symbol_two) = create_asset_with_symbol(&pool, "DAC").await;
+    upsert_deposit_network_config(&pool, "tron", "C").await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+    let address_one = format!("TBatch{}", &Uuid::now_v7().simple().to_string()[..24]);
+    let address_two = format!("TBatch{}", &Uuid::now_v7().simple().to_string()[..24]);
+
+    let create = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/deposit-address-pool/batch")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "network": "tron",
+                        "asset_symbols": [symbol.to_ascii_lowercase(), symbol_two.clone()],
+                        "status": "available",
+                        "entries": [
+                            { "address": address_one, "memo": "memo-a", "remark": "primary tron address" },
+                            { "address": address_two, "memo": "memo-b", "remark": "backup tron address" }
+                        ],
+                        "reason": "batch create deposit addresses"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let create_status = create.status();
+    let created = body_json(create).await?;
+    assert_eq!(create_status, StatusCode::OK, "payload: {created}");
+    let rows = created["addresses"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "payload: {created}");
+    let asset_symbols = json!([symbol.clone(), symbol_two.clone()]);
+    let created_ids: Vec<u64> = rows
+        .iter()
+        .map(|row| {
+            assert_eq!(row["network"], "tron");
+            assert_eq!(row["address_group_code"], "C");
+            assert!(row["asset_symbol"].is_null());
+            assert_eq!(row["asset_symbols"], asset_symbols);
+            row["id"].as_u64().unwrap()
+        })
+        .collect();
+
+    let listed = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/deposit-address-pool?network=tron&asset_symbol={symbol_two}&limit=10"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let listed_payload = body_json(listed).await?;
+    let listed_rows = listed_payload["addresses"].as_array().unwrap();
+    assert!(
+        created_ids
+            .iter()
+            .all(|id| listed_rows.iter().any(|row| row["id"] == *id))
+    );
+
+    let audit_count: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*)
+           FROM admin_audit_logs
+           WHERE admin_id = ?
+             AND target_type = 'deposit_address_pool'
+             AND action = 'deposit_address_pool.create'
+             AND reason = 'batch create deposit addresses'"#,
+    )
+    .bind(admin_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(audit_count, 2);
+
+    sqlx::query(
+        "DELETE FROM admin_audit_logs WHERE admin_id = ? AND target_type = 'deposit_address_pool'",
+    )
+    .bind(admin_id)
+    .execute(&pool)
+    .await?;
+    sqlx::query("DELETE FROM deposit_address_pool WHERE id IN (?, ?)")
+        .bind(created_ids[0])
+        .bind(created_ids[1])
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id IN (?, ?)")
+        .bind(asset_id)
+        .bind(asset_id_two)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn admin_lists_wallet_accounts_and_ledger() -> Result<(), Box<dyn Error>> {
     let Some(pool) = mysql_pool().await else {
         return Ok(());
@@ -3893,6 +6134,11 @@ async fn admin_lists_wallet_accounts_and_ledger() -> Result<(), Box<dyn Error>> 
     );
     let user_id = create_user_with_email(&pool, user_email.clone()).await;
     let other_user_id = create_user(&pool).await;
+    let internal_user_email = format!(
+        "admin-wallet-robot-{}@internal.local",
+        Uuid::now_v7().simple()
+    );
+    let internal_user_id = create_user_with_email(&pool, internal_user_email.clone()).await;
     let (asset_id, symbol) = create_asset_with_symbol(&pool, "AWL").await;
     let (empty_asset_id, empty_symbol) = create_asset_with_symbol(&pool, "AWE").await;
     let token = issue_token(
@@ -3928,6 +6174,18 @@ async fn admin_lists_wallet_accounts_and_ledger() -> Result<(), Box<dyn Error>> 
     .execute(&pool)
     .await?
     .last_insert_id();
+    let internal_account_id = sqlx::query(
+        r#"INSERT INTO wallet_accounts (user_id, asset_id, available, frozen, locked)
+           VALUES (?, ?, ?, ?, ?)"#,
+    )
+    .bind(internal_user_id)
+    .bind(asset_id)
+    .bind(decimal("300.000000000000000000"))
+    .bind(decimal("0.000000000000000000"))
+    .bind(decimal("0.000000000000000000"))
+    .execute(&pool)
+    .await?
+    .last_insert_id();
     let ledger_id = sqlx::query(
         r#"INSERT INTO wallet_ledger
            (user_id, asset_id, change_type, amount, balance_type, balance_after,
@@ -3942,6 +6200,23 @@ async fn admin_lists_wallet_accounts_and_ledger() -> Result<(), Box<dyn Error>> 
     .bind(decimal("5.000000000000000000"))
     .bind(decimal("10.000000000000000000"))
     .bind(format!("admin-wallet-ledger-{user_id}-{asset_id}"))
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let internal_ledger_id = sqlx::query(
+        r#"INSERT INTO wallet_ledger
+           (user_id, asset_id, change_type, amount, balance_type, balance_after,
+            available_after, frozen_after, locked_after, ref_type, ref_id)
+           VALUES (?, ?, 'deposit', ?, 'available', ?, ?, ?, ?, 'manual', ?)"#,
+    )
+    .bind(internal_user_id)
+    .bind(asset_id)
+    .bind(decimal("300.000000000000000000"))
+    .bind(decimal("300.000000000000000000"))
+    .bind(decimal("300.000000000000000000"))
+    .bind(decimal("0.000000000000000000"))
+    .bind(decimal("0.000000000000000000"))
+    .bind(format!("admin-wallet-ledger-{internal_user_id}-{asset_id}"))
     .execute(&pool)
     .await?
     .last_insert_id();
@@ -3985,9 +6260,113 @@ async fn admin_lists_wallet_accounts_and_ledger() -> Result<(), Box<dyn Error>> 
     let accounts = accounts_payload["accounts"].as_array().unwrap();
     assert_eq!(accounts.len(), 1);
     assert_eq!(accounts[0]["id"], account_id);
+    assert_eq!(accounts[0]["user_email"], user_email);
     assert_eq!(accounts[0]["asset_symbol"], symbol);
     assert_eq!(accounts[0]["available"], "100.000000000000000000");
     assert_eq!(accounts[0]["account_exists"], true);
+
+    let default_accounts = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/wallet/accounts?asset_id={asset_id}&limit=20"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let default_accounts_status = default_accounts.status();
+    let default_accounts_payload = body_json(default_accounts).await?;
+    assert_eq!(
+        default_accounts_status,
+        StatusCode::OK,
+        "payload: {default_accounts_payload}"
+    );
+    let default_accounts = default_accounts_payload["accounts"].as_array().unwrap();
+    assert!(
+        default_accounts
+            .iter()
+            .all(|account| account["user_email"] != internal_user_email)
+    );
+
+    let internal_accounts = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/wallet/accounts?asset_id={asset_id}&include_internal=true&limit=20"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let internal_accounts_status = internal_accounts.status();
+    let internal_accounts_payload = body_json(internal_accounts).await?;
+    assert_eq!(
+        internal_accounts_status,
+        StatusCode::OK,
+        "payload: {internal_accounts_payload}"
+    );
+    let internal_accounts = internal_accounts_payload["accounts"].as_array().unwrap();
+    assert!(internal_accounts.iter().any(|account| {
+        account["id"] == internal_account_id
+            && account["user_email"] == internal_user_email
+            && account["asset_symbol"] == symbol
+    }));
+
+    let default_internal_users = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/users?email={internal_user_email}&limit=10"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let default_internal_users_status = default_internal_users.status();
+    let default_internal_users_payload = body_json(default_internal_users).await?;
+    assert_eq!(
+        default_internal_users_status,
+        StatusCode::OK,
+        "payload: {default_internal_users_payload}"
+    );
+    assert_eq!(
+        default_internal_users_payload["users"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+
+    let included_internal_users = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/users?email={internal_user_email}&include_internal=true&limit=10"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let included_internal_users_status = included_internal_users.status();
+    let included_internal_users_payload = body_json(included_internal_users).await?;
+    assert_eq!(
+        included_internal_users_status,
+        StatusCode::OK,
+        "payload: {included_internal_users_payload}"
+    );
+    let included_internal_users = included_internal_users_payload["users"].as_array().unwrap();
+    assert_eq!(included_internal_users.len(), 1);
+    assert_eq!(included_internal_users[0]["id"], internal_user_id);
+    assert_eq!(included_internal_users[0]["email"], internal_user_email);
 
     let include_empty_accounts = app
         .clone()
@@ -4015,6 +6394,7 @@ async fn admin_lists_wallet_accounts_and_ledger() -> Result<(), Box<dyn Error>> 
         .unwrap();
     assert_eq!(empty_account["id"], Value::Null);
     assert_eq!(empty_account["user_id"], user_id);
+    assert_eq!(empty_account["user_email"], user_email);
     assert_eq!(empty_account["asset_symbol"], empty_symbol);
     assert_eq!(empty_account["available"], "0.000000000000000000");
     assert_eq!(empty_account["frozen"], "0.000000000000000000");
@@ -4048,6 +6428,63 @@ async fn admin_lists_wallet_accounts_and_ledger() -> Result<(), Box<dyn Error>> 
         0
     );
 
+    let hidden_internal_empty_accounts = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/wallet/accounts?user_id={internal_user_id}&asset_id={empty_asset_id}&include_empty=true&limit=20"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let hidden_internal_empty_status = hidden_internal_empty_accounts.status();
+    let hidden_internal_empty_payload = body_json(hidden_internal_empty_accounts).await?;
+    assert_eq!(
+        hidden_internal_empty_status,
+        StatusCode::OK,
+        "payload: {hidden_internal_empty_payload}"
+    );
+    assert_eq!(
+        hidden_internal_empty_payload["accounts"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+
+    let included_internal_empty_accounts = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/wallet/accounts?user_id={internal_user_id}&asset_id={empty_asset_id}&include_empty=true&include_internal=true&limit=20"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let included_internal_empty_status = included_internal_empty_accounts.status();
+    let included_internal_empty_payload = body_json(included_internal_empty_accounts).await?;
+    assert_eq!(
+        included_internal_empty_status,
+        StatusCode::OK,
+        "payload: {included_internal_empty_payload}"
+    );
+    let included_internal_empty_accounts = included_internal_empty_payload["accounts"]
+        .as_array()
+        .unwrap();
+    let internal_empty_account = included_internal_empty_accounts
+        .iter()
+        .find(|account| account["asset_id"] == empty_asset_id)
+        .unwrap();
+    assert_eq!(internal_empty_account["id"], Value::Null);
+    assert_eq!(internal_empty_account["user_id"], internal_user_id);
+    assert_eq!(internal_empty_account["user_email"], internal_user_email);
+
     let account_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
     )
@@ -4075,18 +6512,73 @@ async fn admin_lists_wallet_accounts_and_ledger() -> Result<(), Box<dyn Error>> 
     let ledger = ledger_payload["ledger"].as_array().unwrap();
     assert_eq!(ledger.len(), 1);
     assert_eq!(ledger[0]["id"], ledger_id);
+    assert_eq!(ledger[0]["user_email"], user_email);
     assert_eq!(ledger[0]["asset_symbol"], symbol);
     assert_eq!(ledger[0]["balance_type"], "available");
     assert!(ledger[0]["created_at"].is_number());
 
-    sqlx::query("DELETE FROM wallet_ledger WHERE id IN (?, ?)")
+    let default_ledger = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/wallet/ledger?asset_id={asset_id}&limit=20"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let default_ledger_status = default_ledger.status();
+    let default_ledger_payload = body_json(default_ledger).await?;
+    assert_eq!(
+        default_ledger_status,
+        StatusCode::OK,
+        "payload: {default_ledger_payload}"
+    );
+    let default_ledger = default_ledger_payload["ledger"].as_array().unwrap();
+    assert!(
+        default_ledger
+            .iter()
+            .all(|entry| entry["user_email"] != internal_user_email)
+    );
+
+    let internal_ledger = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/wallet/ledger?asset_id={asset_id}&include_internal=true&limit=20"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let internal_ledger_status = internal_ledger.status();
+    let internal_ledger_payload = body_json(internal_ledger).await?;
+    assert_eq!(
+        internal_ledger_status,
+        StatusCode::OK,
+        "payload: {internal_ledger_payload}"
+    );
+    let internal_ledger = internal_ledger_payload["ledger"].as_array().unwrap();
+    assert!(internal_ledger.iter().any(|entry| {
+        entry["id"] == internal_ledger_id
+            && entry["user_email"] == internal_user_email
+            && entry["asset_symbol"] == symbol
+    }));
+
+    sqlx::query("DELETE FROM wallet_ledger WHERE id IN (?, ?, ?)")
         .bind(ledger_id)
         .bind(other_ledger_id)
+        .bind(internal_ledger_id)
         .execute(&pool)
         .await?;
-    sqlx::query("DELETE FROM wallet_accounts WHERE id IN (?, ?)")
+    sqlx::query("DELETE FROM wallet_accounts WHERE id IN (?, ?, ?)")
         .bind(account_id)
         .bind(other_account_id)
+        .bind(internal_account_id)
         .execute(&pool)
         .await?;
     sqlx::query("DELETE FROM assets WHERE id IN (?, ?)")
@@ -4094,9 +6586,10 @@ async fn admin_lists_wallet_accounts_and_ledger() -> Result<(), Box<dyn Error>> 
         .bind(empty_asset_id)
         .execute(&pool)
         .await?;
-    sqlx::query("DELETE FROM users WHERE id IN (?, ?)")
+    sqlx::query("DELETE FROM users WHERE id IN (?, ?, ?)")
         .bind(user_id)
         .bind(other_user_id)
+        .bind(internal_user_id)
         .execute(&pool)
         .await?;
     sqlx::query("DELETE FROM admin_users WHERE id = ?")
@@ -4521,6 +7014,7 @@ async fn admin_asset_routes_require_admin_scope_mysql_and_validation() -> Result
     assert_eq!(unknown_field.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
     let update_admin = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("PATCH")
@@ -4532,6 +7026,63 @@ async fn admin_asset_routes_require_admin_scope_mysql_and_validation() -> Result
         )
         .await?;
     assert_eq!(update_admin.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let delete_missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/admin/api/v1/assets/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(delete_missing.status(), StatusCode::UNAUTHORIZED);
+
+    let delete_user = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/admin/api/v1/assets/1")
+                .header(AUTHORIZATION, format!("Bearer {user_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(delete_user.status(), StatusCode::FORBIDDEN);
+
+    let blank_delete_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/admin/api/v1/assets/1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "reason": "   " }).to_string()))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(blank_delete_reason.status(), StatusCode::BAD_REQUEST);
+    let blank_delete_payload = body_json(blank_delete_reason).await?;
+    assert_eq!(
+        blank_delete_payload["message"],
+        "validation error: reason is required"
+    );
+
+    let delete_admin = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/admin/api/v1/assets/1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "reason": "delete asset" }).to_string()))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(delete_admin.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
     Ok(())
 }
@@ -4550,6 +7101,14 @@ async fn admin_asset_create_list_and_audit() -> Result<(), Box<dyn Error>> {
         900,
     )
     .unwrap();
+    let user_email = format!(
+        "admin-asset-wallet-{}@example.test",
+        Uuid::now_v7().simple()
+    );
+    let user_id = create_user_with_email(&pool, user_email).await;
+    let other_user_id = create_user(&pool).await;
+    let user_token =
+        issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let symbol = format!("AST{}", &Uuid::now_v7().simple().to_string()[..10]).to_ascii_uppercase();
     let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
 
@@ -4568,6 +7127,14 @@ async fn admin_asset_create_list_and_audit() -> Result<(), Box<dyn Error>> {
                         "precision_scale": 8,
                         "asset_type": "coin",
                         "status": "active",
+                        "deposit_enabled": false,
+                        "withdraw_enabled": false,
+                        "min_deposit_amount": "1.500000000000000000",
+                        "deposit_fee": "0.010000000000000000",
+                        "withdraw_fee": "0.250000000000000000",
+                        "withdraw_fee_tiers": [
+                            { "min_amount": "1", "max_amount": "100", "fee_rate_percent": "1" }
+                        ],
                         "reason": "create asset"
                     })
                     .to_string(),
@@ -4584,7 +7151,85 @@ async fn admin_asset_create_list_and_audit() -> Result<(), Box<dyn Error>> {
     assert_eq!(created["precision_scale"], 8);
     assert_eq!(created["asset_type"], "coin");
     assert_eq!(created["status"], "active");
+    assert_eq!(created["deposit_enabled"], false);
+    assert_eq!(created["withdraw_enabled"], false);
+    assert_eq!(created["min_deposit_amount"], "1.500000000000000000");
+    assert_eq!(created["deposit_fee"], "0.010000000000000000");
+    assert_eq!(created["withdraw_fee"], "0.250000000000000000");
+    assert_eq!(created["withdraw_fee_tiers"][0]["min_amount"], "1");
+    assert_eq!(created["withdraw_fee_tiers"][0]["max_amount"], "100");
+    assert_eq!(created["withdraw_fee_tiers"][0]["fee_rate_percent"], "1");
     assert!(created["created_at"].is_number());
+
+    let wallet_accounts = sqlx::query_as::<_, (u64, u64, BigDecimal, BigDecimal, BigDecimal)>(
+        r#"SELECT user_id, asset_id, available, frozen, locked
+           FROM wallet_accounts
+           WHERE asset_id = ? AND user_id IN (?, ?)
+           ORDER BY user_id"#,
+    )
+    .bind(asset_id)
+    .bind(user_id)
+    .bind(other_user_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(wallet_accounts.len(), 2);
+    for account in wallet_accounts {
+        assert_eq!(account.1, asset_id);
+        assert_eq!(account.2, decimal("0.000000000000000000"));
+        assert_eq!(account.3, decimal("0.000000000000000000"));
+        assert_eq!(account.4, decimal("0.000000000000000000"));
+    }
+
+    let user_accounts = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/wallet/accounts")
+                .header(AUTHORIZATION, format!("Bearer {user_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let user_accounts_status = user_accounts.status();
+    let user_accounts_payload = body_json(user_accounts).await?;
+    assert_eq!(
+        user_accounts_status,
+        StatusCode::OK,
+        "payload: {user_accounts_payload}"
+    );
+    let user_created_account = user_accounts_payload["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|account| account["asset_id"].as_u64() == Some(asset_id))
+        .expect("created asset account should be visible to the user");
+    assert_eq!(user_created_account["symbol"], created["symbol"]);
+    assert_eq!(
+        decimal(user_created_account["available"].as_str().unwrap()),
+        decimal("0.000000000000000000")
+    );
+
+    let active_delete = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/admin/api/v1/assets/{asset_id}"))
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "reason": "delete active asset" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let active_delete_status = active_delete.status();
+    let active_delete_payload = body_json(active_delete).await?;
+    assert_eq!(active_delete_status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        active_delete_payload["message"],
+        "validation error: asset must be disabled before deletion"
+    );
 
     let duplicate = app
         .clone()
@@ -4628,6 +7273,12 @@ async fn admin_asset_create_list_and_audit() -> Result<(), Box<dyn Error>> {
     let assets = listed_payload["assets"].as_array().unwrap();
     assert_eq!(assets.len(), 1);
     assert_eq!(assets[0]["id"], asset_id);
+    assert_eq!(assets[0]["deposit_enabled"], false);
+    assert_eq!(assets[0]["withdraw_enabled"], false);
+    assert_eq!(assets[0]["min_deposit_amount"], "1.500000000000000000");
+    assert_eq!(assets[0]["deposit_fee"], "0.010000000000000000");
+    assert_eq!(assets[0]["withdraw_fee"], "0.250000000000000000");
+    assert_eq!(assets[0]["withdraw_fee_tiers"][0]["fee_rate_percent"], "1");
 
     let audits = sqlx::query_as::<_, AdminAuditRow>(
         r#"SELECT action, target_type, target_id, before_json, after_json, reason
@@ -4663,6 +7314,8 @@ async fn admin_asset_create_list_and_audit() -> Result<(), Box<dyn Error>> {
     assert_eq!(detail_status, StatusCode::OK, "payload: {detail_payload}");
     assert_eq!(detail_payload["id"], asset_id);
     assert_eq!(detail_payload["symbol"], created["symbol"]);
+    assert_eq!(detail_payload["min_deposit_amount"], "1.500000000000000000");
+    assert_eq!(detail_payload["withdraw_fee_tiers"][0]["max_amount"], "100");
 
     let update = app
         .clone()
@@ -4678,6 +7331,14 @@ async fn admin_asset_create_list_and_audit() -> Result<(), Box<dyn Error>> {
                         "precision_scale": 6,
                         "asset_type": "stablecoin",
                         "status": "disabled",
+                        "deposit_enabled": true,
+                        "withdraw_enabled": true,
+                        "min_deposit_amount": "2.000000000000000000",
+                        "deposit_fee": "0.020000000000000000",
+                        "withdraw_fee": "0.300000000000000000",
+                        "withdraw_fee_tiers": [
+                            { "min_amount": "2", "max_amount": null, "fee_rate_percent": "2" }
+                        ],
                         "reason": "update asset config"
                     })
                     .to_string(),
@@ -4694,9 +7355,42 @@ async fn admin_asset_create_list_and_audit() -> Result<(), Box<dyn Error>> {
     assert_eq!(updated["precision_scale"], 6);
     assert_eq!(updated["asset_type"], "stablecoin");
     assert_eq!(updated["status"], "disabled");
+    assert_eq!(updated["deposit_enabled"], true);
+    assert_eq!(updated["withdraw_enabled"], true);
+    assert_eq!(updated["min_deposit_amount"], "2.000000000000000000");
+    assert_eq!(updated["deposit_fee"], "0.020000000000000000");
+    assert_eq!(updated["withdraw_fee"], "0.300000000000000000");
+    assert_eq!(updated["withdraw_fee_tiers"][0]["min_amount"], "2");
+    assert!(updated["withdraw_fee_tiers"][0]["max_amount"].is_null());
+    assert_eq!(updated["withdraw_fee_tiers"][0]["fee_rate_percent"], "2");
 
-    let persisted = sqlx::query_as::<_, (String, String, i32, String, String)>(
-        "SELECT symbol, name, precision_scale, asset_type, status FROM assets WHERE id = ?",
+    let persisted = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            i32,
+            String,
+            String,
+            bool,
+            bool,
+            BigDecimal,
+            BigDecimal,
+            BigDecimal,
+        ),
+    >(
+        r#"SELECT symbol,
+                      name,
+                      precision_scale,
+                      asset_type,
+                      status,
+                      deposit_enabled,
+                      withdraw_enabled,
+                      min_deposit_amount,
+                      deposit_fee,
+                      withdraw_fee
+               FROM assets
+               WHERE id = ?"#,
     )
     .bind(asset_id)
     .fetch_one(&pool)
@@ -4706,6 +7400,11 @@ async fn admin_asset_create_list_and_audit() -> Result<(), Box<dyn Error>> {
     assert_eq!(persisted.2, 6);
     assert_eq!(persisted.3, "stablecoin");
     assert_eq!(persisted.4, "disabled");
+    assert!(persisted.5);
+    assert!(persisted.6);
+    assert_eq!(persisted.7, decimal("2.000000000000000000"));
+    assert_eq!(persisted.8, decimal("0.020000000000000000"));
+    assert_eq!(persisted.9, decimal("0.300000000000000000"));
 
     let audits = sqlx::query_as::<_, AdminAuditRow>(
         r#"SELECT action, target_type, target_id, before_json, after_json, reason
@@ -4732,7 +7431,124 @@ async fn admin_asset_create_list_and_audit() -> Result<(), Box<dyn Error>> {
         "stablecoin"
     );
     assert_eq!(audits[1].after_json.as_ref().unwrap()["status"], "disabled");
+    assert_eq!(
+        audits[1].before_json.as_ref().unwrap()["deposit_enabled"],
+        false
+    );
+    assert_eq!(
+        audits[1].after_json.as_ref().unwrap()["deposit_enabled"],
+        true
+    );
+    assert_eq!(
+        audits[1].before_json.as_ref().unwrap()["withdraw_enabled"],
+        false
+    );
+    assert_eq!(
+        audits[1].after_json.as_ref().unwrap()["withdraw_enabled"],
+        true
+    );
+    assert_eq!(
+        audits[1].before_json.as_ref().unwrap()["min_deposit_amount"],
+        "1.500000000000000000"
+    );
+    assert_eq!(
+        audits[1].after_json.as_ref().unwrap()["min_deposit_amount"],
+        "2.000000000000000000"
+    );
+    assert_eq!(
+        audits[1].after_json.as_ref().unwrap()["deposit_fee"],
+        "0.020000000000000000"
+    );
+    assert_eq!(
+        audits[1].after_json.as_ref().unwrap()["withdraw_fee"],
+        "0.300000000000000000"
+    );
+    assert_eq!(
+        audits[1].after_json.as_ref().unwrap()["withdraw_fee_tiers"][0]["fee_rate_percent"],
+        "2"
+    );
     assert_eq!(audits[1].reason.as_deref(), Some("update asset config"));
+
+    sqlx::query("UPDATE wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?")
+        .bind(decimal("1.000000000000000000"))
+        .bind(user_id)
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    let referenced_delete = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/admin/api/v1/assets/{asset_id}"))
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "reason": "delete referenced asset" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let referenced_delete_status = referenced_delete.status();
+    let referenced_delete_payload = body_json(referenced_delete).await?;
+    assert_eq!(referenced_delete_status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        referenced_delete_payload["message"],
+        "validation error: asset with related records cannot be deleted"
+    );
+    sqlx::query("UPDATE wallet_accounts SET available = 0 WHERE user_id = ? AND asset_id = ?")
+        .bind(user_id)
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+
+    let delete = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/admin/api/v1/assets/{asset_id}"))
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "reason": "delete disabled asset" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(delete.status(), StatusCode::NO_CONTENT);
+
+    let (asset_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM assets WHERE id = ?")
+        .bind(asset_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(asset_count, 0);
+    let (wallet_count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM wallet_accounts WHERE asset_id = ?")
+            .bind(asset_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(wallet_count, 0);
+
+    let audits = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type = 'asset' AND target_id = ?
+           ORDER BY id"#,
+    )
+    .bind(admin_id)
+    .bind(asset_id.to_string())
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audits.len(), 3);
+    assert_eq!(audits[2].action, "asset.delete");
+    assert_eq!(audits[2].target_type, "asset");
+    assert_eq!(audits[2].target_id, asset_id.to_string());
+    assert_eq!(
+        audits[2].before_json.as_ref().unwrap()["status"],
+        "disabled"
+    );
+    assert!(audits[2].after_json.is_none());
+    assert_eq!(audits[2].reason.as_deref(), Some("delete disabled asset"));
 
     sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ? AND target_type = 'asset'")
         .bind(admin_id)
@@ -4740,6 +7556,11 @@ async fn admin_asset_create_list_and_audit() -> Result<(), Box<dyn Error>> {
         .await?;
     sqlx::query("DELETE FROM assets WHERE id = ?")
         .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id IN (?, ?)")
+        .bind(user_id)
+        .bind(other_user_id)
         .execute(&pool)
         .await?;
     sqlx::query("DELETE FROM admin_users WHERE id = ?")
@@ -5004,6 +7825,7 @@ async fn admin_trading_pair_detail_and_status_routes_require_admin_scope_mysql()
         "price_precision": 8,
         "qty_precision": 6,
         "min_order_value": "10.000000000000000000",
+        "status": "active",
         "market_type": "external",
         "reason": "update pair config"
     })
@@ -5049,6 +7871,7 @@ async fn admin_trading_pair_detail_and_status_routes_require_admin_scope_mysql()
                         "price_precision": 8,
                         "qty_precision": 6,
                         "min_order_value": "10.000000000000000000",
+                        "status": "active",
                         "market_type": "archive",
                         "reason": "invalid market type"
                     })
@@ -5072,6 +7895,7 @@ async fn admin_trading_pair_detail_and_status_routes_require_admin_scope_mysql()
                         "price_precision": 8,
                         "qty_precision": 6,
                         "min_order_value": "10.000000000000000000",
+                        "status": "active",
                         "market_type": "external",
                         "reason": " "
                     })
@@ -5097,6 +7921,7 @@ async fn admin_trading_pair_detail_and_status_routes_require_admin_scope_mysql()
                         "min_order_value": "10.000000000000000000",
                         "market_type": "external",
                         "status": "active",
+                        "base_asset_id": 999,
                         "reason": "unknown field"
                     })
                     .to_string(),
@@ -5218,6 +8043,7 @@ async fn admin_trading_pair_create_detail_status_update_and_audit() -> Result<()
                         "price_precision": 10,
                         "qty_precision": 4,
                         "min_order_value": "25.000000000000000000",
+                        "status": "disabled",
                         "market_type": "strategy",
                         "reason": "adjust pair config"
                     })
@@ -5237,7 +8063,7 @@ async fn admin_trading_pair_create_detail_status_update_and_audit() -> Result<()
     assert_eq!(config_updated["symbol"], symbol);
     assert_eq!(config_updated["base_asset_id"], base_asset);
     assert_eq!(config_updated["quote_asset_id"], quote_asset);
-    assert_eq!(config_updated["status"], "active");
+    assert_eq!(config_updated["status"], "disabled");
     assert_eq!(config_updated["price_precision"], 10);
     assert_eq!(config_updated["qty_precision"], 4);
     assert_eq!(config_updated["min_order_value"], "25.000000000000000000");
@@ -5254,7 +8080,7 @@ async fn admin_trading_pair_create_detail_status_update_and_audit() -> Result<()
     assert_eq!(stored_config.1, 4);
     assert_eq!(stored_config.2, decimal("25.000000000000000000"));
     assert_eq!(stored_config.3, "strategy");
-    assert_eq!(stored_config.4, "active");
+    assert_eq!(stored_config.4, "disabled");
     assert_eq!(stored_config.5, base_asset);
     assert_eq!(stored_config.6, quote_asset);
 
@@ -5293,6 +8119,7 @@ async fn admin_trading_pair_create_detail_status_update_and_audit() -> Result<()
         audits[1].after_json.as_ref().unwrap()["market_type"],
         "strategy"
     );
+    assert_eq!(audits[1].after_json.as_ref().unwrap()["status"], "disabled");
     assert_eq!(audits[1].reason.as_deref(), Some("adjust pair config"));
 
     sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ? AND target_type = 'trading_pair'")
@@ -6644,7 +9471,7 @@ async fn admin_agent_commission_rule_routes_require_admin_scope_mysql_and_valida
                 .body(Body::from(
                     json!({
                         "agent_id": 1,
-                        "product_type": "spot",
+                        "product_type": "earn",
                         "commission_rate": "0.05000000",
                         "reason": "create spot rule"
                     })
@@ -6747,14 +9574,20 @@ async fn admin_agent_commission_rules_crud_filters_and_audits() -> Result<(), Bo
     let commission_user_id = create_user(&pool).await;
     let agent_code = format!("R{}", Uuid::now_v7().simple()).to_ascii_uppercase();
     let agent_id = sqlx::query(
-        r#"INSERT INTO agents (user_id, agent_code, level, status)
-           VALUES (?, ?, 1, 'active')"#,
+        r#"INSERT INTO agents (user_id, agent_code, level, path, status)
+           VALUES (?, ?, 1, '', 'active')"#,
     )
     .bind(agent_owner_id)
     .bind(agent_code)
     .execute(&pool)
     .await?
     .last_insert_id();
+    sqlx::query("UPDATE agents SET root_agent_id = ?, path = ? WHERE id = ?")
+        .bind(agent_id)
+        .bind(format!("/agent:{agent_id}"))
+        .bind(agent_id)
+        .execute(&pool)
+        .await?;
     let existing_record_id = seed_agent_commission(
         &pool,
         agent_id,
@@ -6940,14 +9773,20 @@ async fn admin_agent_commission_status_updates_pending_records_and_audits()
     let commission_user_id = create_user(&pool).await;
     let agent_code = format!("C{}", Uuid::now_v7().simple()).to_ascii_uppercase();
     let agent_id = sqlx::query(
-        r#"INSERT INTO agents (user_id, agent_code, level, status)
-           VALUES (?, ?, 1, 'active')"#,
+        r#"INSERT INTO agents (user_id, agent_code, level, path, status)
+           VALUES (?, ?, 1, '', 'active')"#,
     )
     .bind(agent_owner_id)
     .bind(agent_code)
     .execute(&pool)
     .await?
     .last_insert_id();
+    sqlx::query("UPDATE agents SET root_agent_id = ?, path = ? WHERE id = ?")
+        .bind(agent_id)
+        .bind(format!("/agent:{agent_id}"))
+        .bind(agent_id)
+        .execute(&pool)
+        .await?;
     let from_asset = create_asset(&pool, "APF").await;
     let to_asset = create_asset(&pool, "APT").await;
     let pair_id = seed_convert_pair(&pool, from_asset, to_asset, true).await;
@@ -6979,6 +9818,14 @@ async fn admin_agent_commission_status_updates_pending_records_and_audits()
         },
     )
     .await;
+    sqlx::query(
+        "UPDATE agent_commission_records SET payout_asset_id = ?, commission_rate = ? WHERE id = ?",
+    )
+    .bind(from_asset)
+    .bind(decimal("0.05000000"))
+    .bind(pending_settle_id)
+    .execute(&pool)
+    .await?;
     let pending_reject_id = seed_agent_commission(
         &pool,
         agent_id,
@@ -7231,7 +10078,7 @@ async fn admin_agents_list_detail_filters_and_password_hashing() -> Result<(), B
                         "agent_code": agent_code,
                         "admin_username": admin_username,
                         "admin_password": initial_password,
-                        "level": 3,
+                        "level": 1,
                         "reason": "create agent with initial password"
                     })
                     .to_string(),
@@ -7247,7 +10094,10 @@ async fn admin_agents_list_detail_filters_and_password_hashing() -> Result<(), B
     assert_eq!(created["user_id"], agent_owner_id);
     assert_eq!(created["email"], agent_owner_email);
     assert_eq!(created["agent_code"], agent_code);
-    assert_eq!(created["level"], 3);
+    assert_eq!(created["level"], 1);
+    assert_eq!(created["parent_agent_id"], Value::Null);
+    assert_eq!(created["root_agent_id"], agent_id);
+    assert_eq!(created["path"], format!("/agent:{agent_id}"));
     assert_eq!(created["status"], "active");
     assert_eq!(created["admin_username"], admin_username);
     assert_eq!(created["admin_status"], "active");
@@ -7375,6 +10225,217 @@ async fn admin_agents_list_detail_filters_and_password_hashing() -> Result<(), B
 }
 
 #[tokio::test]
+async fn admin_agents_create_three_level_hierarchy_and_reject_a_fourth_level()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let owner_ids = [
+        create_user(&pool).await,
+        create_user(&pool).await,
+        create_user(&pool).await,
+        create_user(&pool).await,
+    ];
+    let team_user_ids = [
+        create_user(&pool).await,
+        create_user(&pool).await,
+        create_user(&pool).await,
+    ];
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )?;
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let root_code = format!("R{}", Uuid::now_v7().simple()).to_ascii_uppercase();
+    let root_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/agents")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "user_id": owner_ids[0],
+                        "agent_code": root_code,
+                        "admin_username": format!("root-{}", Uuid::now_v7().simple()),
+                        "admin_password_hash": "not-a-real-hash",
+                        "level": 1
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(root_response.status(), StatusCode::OK);
+    let root = body_json(root_response).await?;
+    let root_id = root["id"].as_u64().unwrap();
+    assert_eq!(root["level"], 1);
+    assert_eq!(root["root_agent_id"], root_id);
+    assert_eq!(root["path"], format!("/agent:{root_id}"));
+
+    let child_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/agents")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "user_id": owner_ids[1],
+                        "parent_agent_id": root_id,
+                        "agent_code": format!("C{}", Uuid::now_v7().simple()).to_ascii_uppercase(),
+                        "admin_username": format!("child-{}", Uuid::now_v7().simple()),
+                        "admin_password_hash": "not-a-real-hash",
+                        "level": 2
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(child_response.status(), StatusCode::OK);
+    let child = body_json(child_response).await?;
+    let child_id = child["id"].as_u64().unwrap();
+    assert_eq!(child["parent_agent_id"], root_id);
+    assert_eq!(child["root_agent_id"], root_id);
+    assert_eq!(child["level"], 2);
+    assert_eq!(child["path"], format!("/agent:{root_id}/agent:{child_id}"));
+
+    let grandchild_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/agents")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "user_id": owner_ids[2],
+                        "parent_agent_id": child_id,
+                        "agent_code": format!("G{}", Uuid::now_v7().simple()).to_ascii_uppercase(),
+                        "admin_username": format!("grandchild-{}", Uuid::now_v7().simple()),
+                        "admin_password_hash": "not-a-real-hash"
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(grandchild_response.status(), StatusCode::OK);
+    let grandchild = body_json(grandchild_response).await?;
+    let grandchild_id = grandchild["id"].as_u64().unwrap();
+    assert_eq!(grandchild["parent_agent_id"], child_id);
+    assert_eq!(grandchild["root_agent_id"], root_id);
+    assert_eq!(grandchild["level"], 3);
+
+    let fourth_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/agents")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "user_id": owner_ids[3],
+                        "parent_agent_id": grandchild_id,
+                        "agent_code": format!("X{}", Uuid::now_v7().simple()).to_ascii_uppercase(),
+                        "admin_username": format!("fourth-{}", Uuid::now_v7().simple()),
+                        "admin_password_hash": "not-a-real-hash"
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(fourth_response.status(), StatusCode::BAD_REQUEST);
+
+    let filtered = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/agents?parent_agent_id={root_id}&root_agent_id={root_id}&level=2"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(filtered.status(), StatusCode::OK);
+    let filtered = body_json(filtered).await?;
+    assert_eq!(filtered["agents"].as_array().unwrap().len(), 1);
+    assert_eq!(filtered["agents"][0]["id"], child_id);
+
+    for (user_id, agent_id) in [
+        (team_user_ids[0], root_id),
+        (team_user_ids[1], child_id),
+        (team_user_ids[2], grandchild_id),
+    ] {
+        sqlx::query(
+            r#"INSERT INTO user_referrals
+               (user_id, direct_inviter_id, direct_inviter_type, root_agent_id, depth, path)
+               VALUES (?, ?, 'agent', ?, 1, ?)"#,
+        )
+        .bind(user_id)
+        .bind(agent_id)
+        .bind(agent_id)
+        .bind(format!("/agent:{agent_id}/user:{user_id}"))
+        .execute(&pool)
+        .await?;
+    }
+
+    for (agent_id, expected_user_ids) in [
+        (root_id, team_user_ids.to_vec()),
+        (child_id, team_user_ids[1..].to_vec()),
+        (grandchild_id, vec![team_user_ids[2]]),
+    ] {
+        let users_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/admin/api/v1/agents/{agent_id}/users?limit=10"))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(users_response.status(), StatusCode::OK);
+        let users_payload = body_json(users_response).await?;
+        let actual_user_ids = users_payload["users"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|user| user["user_id"].as_u64().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(actual_user_ids, expected_user_ids);
+    }
+
+    delete_admin_agent_management_fixture(
+        &pool,
+        admin_id,
+        role_id,
+        &[grandchild_id, child_id, root_id],
+        &[
+            owner_ids[0],
+            owner_ids[1],
+            owner_ids[2],
+            owner_ids[3],
+            team_user_ids[0],
+            team_user_ids[1],
+            team_user_ids[2],
+        ],
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn admin_agent_management_create_update_assign_list_and_audit() -> Result<(), Box<dyn Error>>
 {
     let Some(pool) = mysql_pool().await else {
@@ -7414,7 +10475,7 @@ async fn admin_agent_management_create_update_assign_list_and_audit() -> Result<
                         "agent_code": agent_code,
                         "admin_username": admin_username,
                         "admin_password_hash": "not-a-real-hash",
-                        "level": 2,
+                        "level": 1,
                         "reason": "create managed agent"
                     })
                     .to_string(),
@@ -7429,7 +10490,9 @@ async fn admin_agent_management_create_update_assign_list_and_audit() -> Result<
     let agent_admin_user_id = created["admin_user_id"].as_u64().unwrap();
     assert_eq!(created["user_id"], agent_owner_id);
     assert_eq!(created["agent_code"], agent_code);
-    assert_eq!(created["level"], 2);
+    assert_eq!(created["level"], 1);
+    assert_eq!(created["parent_agent_id"], Value::Null);
+    assert_eq!(created["root_agent_id"], agent_id);
     assert_eq!(created["status"], "active");
     assert_eq!(created["admin_username"], admin_username);
     assert_eq!(created["admin_status"], "active");
@@ -7583,14 +10646,20 @@ async fn admin_agent_management_create_update_assign_list_and_audit() -> Result<
 
     let unrelated_agent_code = format!("B{}", Uuid::now_v7().simple()).to_ascii_uppercase();
     let unrelated_agent_id = sqlx::query(
-        r#"INSERT INTO agents (user_id, agent_code, level, status)
-           VALUES (?, ?, 1, 'active')"#,
+        r#"INSERT INTO agents (user_id, agent_code, level, path, status)
+           VALUES (?, ?, 1, '', 'active')"#,
     )
     .bind(reserved_collision_user_id)
     .bind(&unrelated_agent_code)
     .execute(&pool)
     .await?
     .last_insert_id();
+    sqlx::query("UPDATE agents SET root_agent_id = ?, path = ? WHERE id = ?")
+        .bind(unrelated_agent_id)
+        .bind(format!("/agent:{unrelated_agent_id}"))
+        .bind(unrelated_agent_id)
+        .execute(&pool)
+        .await?;
     sqlx::query(
         r#"INSERT INTO user_referrals
            (user_id, direct_inviter_id, direct_inviter_type, root_agent_id, depth, path)
@@ -7641,10 +10710,14 @@ async fn admin_agent_management_create_update_assign_list_and_audit() -> Result<
     let users = users_payload["users"].as_array().unwrap();
     assert_eq!(users.len(), 2);
     assert!(users.iter().any(|user| user["user_id"] == team_user_id
+        && user["owner_agent_id"] == agent_id
         && user["root_agent_id"] == agent_id
+        && user["direct_inviter_type"] == "agent"
         && user["depth"] == 1));
     assert!(users.iter().any(|user| user["user_id"] == child_user_id
+        && user["owner_agent_id"] == agent_id
         && user["root_agent_id"] == agent_id
+        && user["direct_inviter_type"] == "user"
         && user["direct_inviter_id"] == team_user_id
         && user["depth"] == 2));
     let unrelated_referral: (Option<u64>, String) =
@@ -9590,6 +12663,48 @@ async fn admin_convert_detail_routes_require_admin_scope_mysql_and_reason()
         .await?;
     assert_eq!(pair_admin.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
+    let delete_pair_missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/admin/api/v1/convert/pairs/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(delete_pair_missing.status(), StatusCode::UNAUTHORIZED);
+
+    let delete_pair_user = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/admin/api/v1/convert/pairs/1")
+                .header(AUTHORIZATION, format!("Bearer {user_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(delete_pair_user.status(), StatusCode::FORBIDDEN);
+
+    let delete_pair_admin = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/admin/api/v1/convert/pairs/1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "reason": "delete pair" }).to_string()))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(
+        delete_pair_admin.status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+
     let order_admin = app
         .clone()
         .oneshot(
@@ -9653,6 +12768,25 @@ async fn admin_convert_detail_routes_require_admin_scope_mysql_and_reason()
         "validation error: reason is required"
     );
 
+    let blank_delete_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/admin/api/v1/convert/pairs/1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "reason": "   " }).to_string()))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(blank_delete_reason.status(), StatusCode::BAD_REQUEST);
+    let blank_delete_payload = body_json(blank_delete_reason).await?;
+    assert_eq!(
+        blank_delete_payload["message"],
+        "validation error: reason is required"
+    );
+
     let long_reason = "R".repeat(513);
     let long_create_reason = app
         .clone()
@@ -9685,6 +12819,7 @@ async fn admin_convert_detail_routes_require_admin_scope_mysql_and_reason()
     );
 
     let long_update_reason = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("PATCH")
@@ -9701,6 +12836,24 @@ async fn admin_convert_detail_routes_require_admin_scope_mysql_and_reason()
     let long_update_payload = body_json(long_update_reason).await?;
     assert_eq!(
         long_update_payload["message"],
+        "validation error: reason is too long"
+    );
+
+    let long_delete_reason = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/admin/api/v1/convert/pairs/1")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "reason": "R".repeat(513) }).to_string()))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(long_delete_reason.status(), StatusCode::BAD_REQUEST);
+    let long_delete_payload = body_json(long_delete_reason).await?;
+    assert_eq!(
+        long_delete_payload["message"],
         "validation error: reason is too long"
     );
 
@@ -10169,16 +13322,20 @@ async fn admin_convert_orders_list_filters_by_user_and_status() -> Result<(), Bo
         "admin-convert-filter-{}@example.test",
         Uuid::now_v7().simple()
     );
+    let other_user_email = format!(
+        "admin-convert-other-{}@example.test",
+        Uuid::now_v7().simple()
+    );
     let user_id = create_user_with_email(&pool, user_email.clone()).await;
-    let other_user_id = create_user(&pool).await;
-    let from_asset = create_asset(&pool, "AOF").await;
-    let to_asset = create_asset(&pool, "AOT").await;
+    let other_user_id = create_user_with_email(&pool, other_user_email.clone()).await;
+    let (from_asset, from_symbol) = create_asset_with_symbol(&pool, "AOF").await;
+    let (to_asset, to_symbol) = create_asset_with_symbol(&pool, "AOT").await;
     let pair_id = seed_convert_pair(&pool, from_asset, to_asset, true).await;
     let pending_quote =
         seed_convert_order(&pool, user_id, pair_id, from_asset, to_asset, "pending").await;
     let _completed_quote =
         seed_convert_order(&pool, user_id, pair_id, from_asset, to_asset, "completed").await;
-    let other_quote = seed_convert_order(
+    let _other_quote = seed_convert_order(
         &pool,
         other_user_id,
         pair_id,
@@ -10187,6 +13344,11 @@ async fn admin_convert_orders_list_filters_by_user_and_status() -> Result<(), Bo
         "pending",
     )
     .await;
+    let (pending_order_id,): (u64,) =
+        sqlx::query_as("SELECT id FROM convert_orders WHERE quote_id = ?")
+            .bind(&pending_quote)
+            .fetch_one(&pool)
+            .await?;
     let token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
     let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
 
@@ -10211,15 +13373,39 @@ async fn admin_convert_orders_list_filters_by_user_and_status() -> Result<(), Bo
     );
     let orders = filtered_payload["orders"].as_array().unwrap();
     assert_eq!(orders.len(), 1);
-    assert_eq!(orders[0]["quote_id"], pending_quote);
-    assert_eq!(orders[0]["user_id"], user_id);
-    assert_eq!(orders[0]["convert_pair_id"], pair_id);
-    assert_eq!(orders[0]["from_asset_id"], from_asset);
-    assert_eq!(orders[0]["to_asset_id"], to_asset);
+    assert!(orders[0].get("quote_id").is_none());
+    assert!(orders[0].get("user_id").is_none());
+    assert!(orders[0].get("convert_pair_id").is_none());
+    assert!(orders[0].get("from_asset_id").is_none());
+    assert!(orders[0].get("to_asset_id").is_none());
+    assert_eq!(orders[0]["id"], pending_order_id);
+    assert_eq!(orders[0]["user_email"], user_email);
+    assert_eq!(orders[0]["from_asset_symbol"], from_symbol);
+    assert_eq!(orders[0]["to_asset_symbol"], to_symbol);
     assert_eq!(orders[0]["from_amount"], "10.000000000000000000");
     assert_eq!(orders[0]["to_amount"], "20.000000000000000000");
     assert_eq!(orders[0]["rate"], "2.000000000000000000");
     assert_eq!(orders[0]["status"], "pending");
+
+    let detail = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/admin/api/v1/convert/orders/{pending_order_id}"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let detail_status = detail.status();
+    let detail_payload = body_json(detail).await?;
+    assert_eq!(detail_status, StatusCode::OK, "payload: {detail_payload}");
+    assert!(detail_payload.get("quote_id").is_none());
+    assert!(detail_payload.get("user_id").is_none());
+    assert!(detail_payload.get("convert_pair_id").is_none());
+    assert_eq!(detail_payload["user_email"], user_email);
+    assert_eq!(detail_payload["from_asset_symbol"], from_symbol);
+    assert_eq!(detail_payload["to_asset_symbol"], to_symbol);
 
     let all = app
         .oneshot(
@@ -10239,7 +13425,7 @@ async fn admin_convert_orders_list_filters_by_user_and_status() -> Result<(), Bo
             .as_array()
             .unwrap()
             .iter()
-            .any(|order| order["quote_id"] == other_quote)
+            .any(|order| order["user_email"] == other_user_email)
     );
 
     delete_order_fixture(
@@ -10285,6 +13471,7 @@ async fn admin_convert_pair_create_rolls_back_when_audit_cannot_be_written()
                         "to_asset_id": to_asset,
                         "pricing_mode": "fixed",
                         "spread_rate": "0.01000000",
+                        "fee_rate": "0.00100000",
                         "min_amount": "1.000000000000000000",
                         "enabled": true,
                         "reason": "create convert pair rollback"
@@ -10364,8 +13551,8 @@ async fn admin_convert_pair_routes_create_list_update_and_audit() -> Result<(), 
     };
     let settings = test_settings();
     let (role_id, admin_id) = create_admin_user(&pool).await;
-    let from_asset = create_asset(&pool, "ACF").await;
-    let to_asset = create_asset(&pool, "ACT").await;
+    let (from_asset, from_symbol) = create_asset_with_symbol(&pool, "ACF").await;
+    let (to_asset, to_symbol) = create_asset_with_symbol(&pool, "ACT").await;
     let token = issue_token(
         &settings,
         format!("admin:{admin_id}"),
@@ -10391,6 +13578,8 @@ async fn admin_convert_pair_routes_create_list_update_and_audit() -> Result<(), 
                         "spread_rate": "0.01000000",
                         "min_amount": "1.000000000000000000",
                         "max_amount": "100.000000000000000000",
+                        "target_min_amount": "10.000000000000000000",
+                        "target_max_amount": "1000.000000000000000000",
                         "enabled": true,
                         "reason": "initial convert pair"
                     })
@@ -10404,11 +13593,16 @@ async fn admin_convert_pair_routes_create_list_update_and_audit() -> Result<(), 
     assert_eq!(create_status, StatusCode::OK, "payload: {created}");
     let pair_id = created["id"].as_u64().unwrap();
     assert_eq!(created["from_asset_id"], from_asset);
+    assert_eq!(created["from_asset_symbol"], from_symbol);
     assert_eq!(created["to_asset_id"], to_asset);
+    assert_eq!(created["to_asset_symbol"], to_symbol);
     assert_eq!(created["pricing_mode"], "fixed");
     assert_eq!(created["spread_rate"], "0.01000000");
+    assert_eq!(created["fee_rate"], "0.00100000");
     assert_eq!(created["min_amount"], "1.000000000000000000");
     assert_eq!(created["max_amount"], "100.000000000000000000");
+    assert_eq!(created["target_min_amount"], "10.000000000000000000");
+    assert_eq!(created["target_max_amount"], "1000.000000000000000000");
     assert_eq!(created["enabled"], true);
 
     let list = app
@@ -10424,15 +13618,58 @@ async fn admin_convert_pair_routes_create_list_update_and_audit() -> Result<(), 
     let list_status = list.status();
     let listed = body_json(list).await?;
     assert_eq!(list_status, StatusCode::OK, "payload: {listed}");
-    assert!(
-        listed["pairs"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|pair| { pair["id"] == pair_id && pair["enabled"] == true })
-    );
+    assert!(listed["pairs"].as_array().unwrap().iter().any(|pair| {
+        pair["id"] == pair_id
+            && pair["from_asset_symbol"] == from_symbol
+            && pair["to_asset_symbol"] == to_symbol
+            && pair["fee_rate"] == "0.00100000"
+            && pair["target_min_amount"] == "10.000000000000000000"
+            && pair["target_max_amount"] == "1000.000000000000000000"
+            && pair["enabled"] == true
+    }));
+
+    let edit = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/admin/api/v1/convert/pairs/{pair_id}"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "from_asset_id": from_asset,
+                        "to_asset_id": to_asset,
+                        "pricing_mode": "market",
+                        "spread_rate": "0.02000000",
+                        "fee_rate": "0.00300000",
+                        "min_amount": "2.000000000000000000",
+                        "max_amount": null,
+                        "target_min_amount": "20.000000000000000000",
+                        "target_max_amount": null,
+                        "enabled": true,
+                        "reason": "edit convert pair"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let edit_status = edit.status();
+    let edited = body_json(edit).await?;
+    assert_eq!(edit_status, StatusCode::OK, "payload: {edited}");
+    assert_eq!(edited["id"], pair_id);
+    assert_eq!(edited["pricing_mode"], "market");
+    assert_eq!(edited["spread_rate"], "0.02000000");
+    assert_eq!(edited["fee_rate"], "0.00300000");
+    assert_eq!(edited["min_amount"], "2.000000000000000000");
+    assert!(edited["max_amount"].is_null());
+    assert_eq!(edited["target_min_amount"], "20.000000000000000000");
+    assert!(edited["target_max_amount"].is_null());
+    assert_eq!(edited["enabled"], true);
 
     let update = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("PATCH")
@@ -10449,6 +13686,8 @@ async fn admin_convert_pair_routes_create_list_update_and_audit() -> Result<(), 
     let updated = body_json(update).await?;
     assert_eq!(update_status, StatusCode::OK, "payload: {updated}");
     assert_eq!(updated["id"], pair_id);
+    assert_eq!(updated["from_asset_symbol"], from_symbol);
+    assert_eq!(updated["to_asset_symbol"], to_symbol);
     assert_eq!(updated["enabled"], false);
 
     let (enabled,): (bool,) = sqlx::query_as("SELECT enabled FROM convert_pairs WHERE id = ?")
@@ -10456,6 +13695,27 @@ async fn admin_convert_pair_routes_create_list_update_and_audit() -> Result<(), 
         .fetch_one(&pool)
         .await?;
     assert!(!enabled);
+
+    let delete = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/admin/api/v1/convert/pairs/{pair_id}"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "reason": "remove disabled pair" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(delete.status(), StatusCode::NO_CONTENT);
+
+    let (pair_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM convert_pairs WHERE id = ?")
+        .bind(pair_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(pair_count, 0);
 
     let audits = sqlx::query_as::<_, AdminAuditRow>(
         r#"SELECT action, target_type, target_id, before_json, after_json, reason
@@ -10467,19 +13727,159 @@ async fn admin_convert_pair_routes_create_list_update_and_audit() -> Result<(), 
     .bind(pair_id.to_string())
     .fetch_all(&pool)
     .await?;
-    assert_eq!(audits.len(), 2);
+    assert_eq!(audits.len(), 4);
     assert_eq!(audits[0].action, "convert_pair.create");
     assert_eq!(audits[0].target_type, "convert_pair");
     assert_eq!(audits[0].target_id, pair_id.to_string());
     assert!(audits[0].before_json.is_none());
     assert_eq!(audits[0].after_json.as_ref().unwrap()["enabled"], true);
+    assert_eq!(
+        audits[0].after_json.as_ref().unwrap()["from_asset_symbol"],
+        from_symbol
+    );
+    assert_eq!(
+        audits[0].after_json.as_ref().unwrap()["to_asset_symbol"],
+        to_symbol
+    );
+    assert_eq!(
+        audits[0].after_json.as_ref().unwrap()["target_min_amount"],
+        "10.000000000000000000"
+    );
+    assert_eq!(
+        audits[0].after_json.as_ref().unwrap()["target_max_amount"],
+        "1000.000000000000000000"
+    );
+    assert_eq!(
+        audits[0].after_json.as_ref().unwrap()["fee_rate"],
+        "0.00100000"
+    );
     assert_eq!(audits[0].reason.as_deref(), Some("initial convert pair"));
-    assert_eq!(audits[1].action, "convert_pair.update_status");
-    assert_eq!(audits[1].before_json.as_ref().unwrap()["enabled"], true);
-    assert_eq!(audits[1].after_json.as_ref().unwrap()["enabled"], false);
-    assert_eq!(audits[1].reason.as_deref(), Some("pause pair"));
+    assert_eq!(audits[1].action, "convert_pair.update");
+    assert_eq!(
+        audits[1].before_json.as_ref().unwrap()["pricing_mode"],
+        "fixed"
+    );
+    assert_eq!(
+        audits[1].after_json.as_ref().unwrap()["pricing_mode"],
+        "market"
+    );
+    assert_eq!(
+        audits[1].after_json.as_ref().unwrap()["min_amount"],
+        "2.000000000000000000"
+    );
+    assert_eq!(
+        audits[1].after_json.as_ref().unwrap()["fee_rate"],
+        "0.00300000"
+    );
+    assert!(audits[1].after_json.as_ref().unwrap()["max_amount"].is_null());
+    assert_eq!(
+        audits[1].after_json.as_ref().unwrap()["target_min_amount"],
+        "20.000000000000000000"
+    );
+    assert!(audits[1].after_json.as_ref().unwrap()["target_max_amount"].is_null());
+    assert_eq!(audits[1].reason.as_deref(), Some("edit convert pair"));
+    assert_eq!(audits[2].action, "convert_pair.update_status");
+    assert_eq!(audits[2].before_json.as_ref().unwrap()["enabled"], true);
+    assert_eq!(audits[2].after_json.as_ref().unwrap()["enabled"], false);
+    assert_eq!(audits[2].reason.as_deref(), Some("pause pair"));
+    assert_eq!(audits[3].action, "convert_pair.delete");
+    assert_eq!(audits[3].before_json.as_ref().unwrap()["enabled"], false);
+    assert!(audits[3].after_json.is_none());
+    assert_eq!(audits[3].reason.as_deref(), Some("remove disabled pair"));
 
     delete_pair_fixture(&pool, pair_id, from_asset, to_asset, admin_id, role_id).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_convert_pair_delete_requires_disabled_and_no_references()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let user_id = create_user(&pool).await;
+    let from_asset = create_asset(&pool, "CDF").await;
+    let to_asset = create_asset(&pool, "CDT").await;
+    let pair_id = seed_convert_pair(&pool, from_asset, to_asset, true).await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let active_delete = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/admin/api/v1/convert/pairs/{pair_id}"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "reason": "delete active convert pair" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let active_delete_status = active_delete.status();
+    let active_delete_payload = body_json(active_delete).await?;
+    assert_eq!(active_delete_status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        active_delete_payload["message"],
+        "validation error: convert pair must be disabled before deletion"
+    );
+
+    sqlx::query("UPDATE convert_pairs SET enabled = false WHERE id = ?")
+        .bind(pair_id)
+        .execute(&pool)
+        .await?;
+    seed_convert_order(&pool, user_id, pair_id, from_asset, to_asset, "completed").await;
+
+    let referenced_delete = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/admin/api/v1/convert/pairs/{pair_id}"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "reason": "delete referenced convert pair" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let referenced_delete_status = referenced_delete.status();
+    let referenced_delete_payload = body_json(referenced_delete).await?;
+    assert_eq!(referenced_delete_status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        referenced_delete_payload["message"],
+        "validation error: convert pair with related records cannot be deleted"
+    );
+
+    let (pair_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM convert_pairs WHERE id = ?")
+        .bind(pair_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(pair_count, 1);
+
+    delete_order_fixture(&pool, pair_id, from_asset, to_asset, &[user_id]).await?;
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
     Ok(())
 }
 

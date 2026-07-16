@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Verify backend scope before finishing."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Review migration and transactional registration behavior."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify validation errors stay in the established API format."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Confirm targeted tests and checks are sufficient."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Check that new helpers do not duplicate reusable patterns unnecessarily."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify backend config, admin UI, and PC form contracts remain aligned."}

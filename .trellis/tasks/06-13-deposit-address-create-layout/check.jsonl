@@ -1,0 +1,3 @@
+{"file":"web/src/admin/resources/ResourceCreateActions.tsx","reason":"添加充值地址 SideSheet 已拆成地址规则与地址明细区域，使用 Semi Row/Col/Card/Space 组织批量录入。"}
+{"file":"web/src/admin/resources/resourceConfigs.test.tsx","reason":"资源页测试已覆盖新弹窗宽度、分区标题、多行地址录入和原批量提交 body。"}
+{"file":"docs/superpowers/PROGRESS.md","reason":"按项目规则记录本次完成内容、修改文件、验证结果和后续事项。"}

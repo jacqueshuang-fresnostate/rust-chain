@@ -27,10 +27,15 @@ hmac = "0.12"
 jsonwebtoken = "9"
 lapin = "2"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls"] }
+md-5 = "0.10"
 mongodb = "3"
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 reqwest = { version = "0.12", features = ["json", "multipart", "rustls-tls"] }
 ring = "0.17"
+sa-token-adapter = "0.1.18"
+sa-token-core = "0.1.18"
+sa-token-storage-memory = "0.1.18"
+sa-token-storage-redis = "0.1.18"
 secrecy = { version = "0.8", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
@@ -47,6 +52,7 @@ tower-http = { version = "0.6", features = ["cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["serde", "v7"] }
+url = "2.5"
 validator = { version = "0.18", features = ["derive"] }
 
 [dev-dependencies]

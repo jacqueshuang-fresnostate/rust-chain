@@ -1,6 +1,9 @@
 use crate::{
     error::{AppError, AppResult},
-    modules::events::{EventBroadcastHub, EventBroadcastMessage},
+    modules::{
+        earn::redemption::{EarnRedemptionTerms, calculate_earn_redemption_amounts},
+        events::{EventBroadcastHub, EventBroadcastMessage},
+    },
     state::AppState,
 };
 use bigdecimal::BigDecimal;
@@ -62,8 +65,13 @@ struct LockedEarnSubscription {
     product_id: u64,
     amount: BigDecimal,
     apr_rate: BigDecimal,
+    redemption_fee_rate: BigDecimal,
+    maturity_profit_fee_rate: BigDecimal,
+    early_redeem_fee_basis: String,
+    early_redeem_fee_rate: BigDecimal,
     term_days: u32,
     status: String,
+    subscribed_at: DateTime<Utc>,
     matures_at: DateTime<Utc>,
 }
 
@@ -81,7 +89,12 @@ pub struct EarnRedemptionEvent {
     product_id: u64,
     asset_id: u64,
     principal_amount: BigDecimal,
+    gross_yield_amount: BigDecimal,
     yield_amount: BigDecimal,
+    redemption_fee_amount: BigDecimal,
+    maturity_profit_fee_amount: BigDecimal,
+    early_redeem_fee_amount: BigDecimal,
+    fee_amount: BigDecimal,
     redeem_amount: BigDecimal,
 }
 
@@ -197,11 +210,22 @@ async fn redeem_subscription_by_id(
         return Ok(EarnRedemptionOutcome::Skipped);
     }
 
-    let principal_amount = subscription.amount.clone();
-    let yield_amount = earn_redeem_yield_amount(&subscription);
-    let redeem_amount = principal_amount.clone() + yield_amount.clone();
+    let amounts = calculate_earn_redemption_amounts(
+        EarnRedemptionTerms {
+            amount: &subscription.amount,
+            apr_rate: &subscription.apr_rate,
+            term_days: subscription.term_days,
+            subscribed_at: subscription.subscribed_at,
+            matures_at: subscription.matures_at,
+            redemption_fee_rate: &subscription.redemption_fee_rate,
+            maturity_profit_fee_rate: &subscription.maturity_profit_fee_rate,
+            early_redeem_fee_basis: &subscription.early_redeem_fee_basis,
+            early_redeem_fee_rate: &subscription.early_redeem_fee_rate,
+        },
+        now,
+    );
     let wallet = lock_wallet_row(&mut tx, subscription.user_id, subscription.asset_id).await?;
-    let available_after = wallet.available.clone() + redeem_amount.clone();
+    let available_after = wallet.available.clone() + amounts.redeem_amount.clone();
 
     // 先更新钱包，再写流水，最后标记订单已赎回，保证资金和状态在同一事务内完成。
     let wallet_update =
@@ -224,7 +248,7 @@ async fn redeem_subscription_by_id(
     )
     .bind(subscription.user_id)
     .bind(subscription.asset_id)
-    .bind(&redeem_amount)
+    .bind(&amounts.redeem_amount)
     .bind(&available_after)
     .bind(&available_after)
     .bind(&wallet.frozen)
@@ -250,9 +274,14 @@ async fn redeem_subscription_by_id(
         subscription_id: subscription.id,
         product_id: subscription.product_id,
         asset_id: subscription.asset_id,
-        principal_amount,
-        yield_amount,
-        redeem_amount,
+        principal_amount: amounts.principal_amount,
+        gross_yield_amount: amounts.gross_yield_amount,
+        yield_amount: amounts.yield_amount,
+        redemption_fee_amount: amounts.redemption_fee_amount,
+        maturity_profit_fee_amount: amounts.maturity_profit_fee_amount,
+        early_redeem_fee_amount: amounts.early_redeem_fee_amount,
+        fee_amount: amounts.fee_amount,
+        redeem_amount: amounts.redeem_amount,
     };
     tx.commit().await?;
     Ok(EarnRedemptionOutcome::Redeemed(event))
@@ -268,7 +297,12 @@ fn publish_redemption_event(hub: Option<&EventBroadcastHub>, event: &EarnRedempt
                 "product_id": event.product_id,
                 "asset_id": event.asset_id,
                 "principal_amount": event.principal_amount,
+                "gross_yield_amount": event.gross_yield_amount,
                 "yield_amount": event.yield_amount,
+                "redemption_fee_amount": event.redemption_fee_amount,
+                "maturity_profit_fee_amount": event.maturity_profit_fee_amount,
+                "early_redeem_fee_amount": event.early_redeem_fee_amount,
+                "fee_amount": event.fee_amount,
                 "redeem_amount": event.redeem_amount,
                 "status": "redeemed",
             })
@@ -282,7 +316,9 @@ async fn lock_subscription_by_id(
     subscription_id: u64,
 ) -> AppResult<Option<LockedEarnSubscription>> {
     sqlx::query_as::<_, LockedEarnSubscription>(
-        r#"SELECT id, user_id, asset_id, product_id, amount, apr_rate, term_days, status, matures_at
+        r#"SELECT id, user_id, asset_id, product_id, amount, apr_rate, redemption_fee_rate,
+                  maturity_profit_fee_rate, early_redeem_fee_basis, early_redeem_fee_rate,
+                  term_days, status, subscribed_at, matures_at
            FROM earn_subscriptions
            WHERE id = ?
            LIMIT 1
@@ -313,11 +349,6 @@ async fn lock_wallet_row(
     .ok_or_else(|| {
         AppError::Validation("wallet account is required for earn auto redemption".to_owned())
     })
-}
-
-fn earn_redeem_yield_amount(subscription: &LockedEarnSubscription) -> BigDecimal {
-    let yearly_yield = subscription.amount.clone() * subscription.apr_rate.clone();
-    (yearly_yield * BigDecimal::from(subscription.term_days) / BigDecimal::from(365)).with_scale(18)
 }
 
 fn earn_auto_redemption_limit(limit: u32) -> u32 {
@@ -352,21 +383,5 @@ fn env_u32(key: &str, default: u32) -> u32 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn earn_auto_redemption_limit_is_clamped() {
-        assert_eq!(earn_auto_redemption_limit(0), 1);
-        assert_eq!(earn_auto_redemption_limit(50), 50);
-        assert_eq!(earn_auto_redemption_limit(500), 100);
-    }
-
-    #[test]
-    fn earn_auto_redemption_scan_limit_scans_past_bad_rows() {
-        assert_eq!(earn_auto_redemption_scan_limit(0), 10);
-        assert_eq!(earn_auto_redemption_scan_limit(1), 10);
-        assert_eq!(earn_auto_redemption_scan_limit(50), 500);
-        assert_eq!(earn_auto_redemption_scan_limit(500), 500);
-    }
-}
+#[path = "../../tests/unit_src/src_workers_earn_auto_redemption_tests.rs"]
+mod tests;

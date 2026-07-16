@@ -19,7 +19,7 @@
 
     <!-- Asks (Sells) -->
     <div class="flex-1 overflow-hidden relative flex flex-col-reverse">
-       <div v-for="(ask, i) in asks" :key="'ask-'+i" class="flex justify-between px-2 py-0.5 hover:bg-muted cursor-pointer relative group">
+       <div v-for="(ask, i) in visibleAsks" :key="'ask-'+i" class="flex justify-between px-2 py-0.5 hover:bg-muted cursor-pointer relative group">
           <div class="absolute right-0 top-0 bottom-0 bg-down/10 transition-all" :style="{ width: (ask.total || 0) / maxVol * 100 + '%' }"></div>
           <span class="text-down z-10 font-mono w-1/3">{{ formatNumber(ask.price, 'price') }}</span>
           <span class="text-muted-foreground z-10 font-mono w-1/3 text-right group-hover:text-foreground">{{ formatNumber(ask.amount, 'amount') }}</span>
@@ -35,7 +35,7 @@
 
     <!-- Bids (Buys) -->
     <div class="flex-1 overflow-hidden relative">
-       <div v-for="(bid, i) in bids" :key="'bid-'+i" class="flex justify-between px-2 py-0.5 hover:bg-muted cursor-pointer relative group">
+       <div v-for="(bid, i) in visibleBids" :key="'bid-'+i" class="flex justify-between px-2 py-0.5 hover:bg-muted cursor-pointer relative group">
           <div class="absolute right-0 top-0 bottom-0 bg-up/10 transition-all" :style="{ width: (bid.total || 0) / maxVol * 100 + '%' }"></div>
           <span class="text-up z-10 font-mono w-1/3">{{ formatNumber(bid.price, 'price') }}</span>
           <span class="text-muted-foreground z-10 font-mono w-1/3 text-right group-hover:text-foreground">{{ formatNumber(bid.amount, 'amount') }}</span>
@@ -54,14 +54,21 @@ const props = defineProps<{
   bids: Array<{ price: number, amount: number, total: number }>
   asks: Array<{ price: number, amount: number, total: number }>
   currentPrice: number
+  visibleRows?: number
 }>()
 
 const baseSymbol = computed(() => props.symbol?.split('/')[0] || 'BTC')
 const quoteSymbol = computed(() => props.symbol?.split('/')[1] || 'USDT')
+const rowsPerSide = computed(() => {
+  if (!props.visibleRows) return undefined
+  return Math.max(1, Math.floor(props.visibleRows / 2))
+})
+const visibleBids = computed(() => rowsPerSide.value ? props.bids.slice(0, rowsPerSide.value) : props.bids)
+const visibleAsks = computed(() => rowsPerSide.value ? props.asks.slice(0, rowsPerSide.value) : props.asks)
 
 const maxVol = computed(() => {
-  const maxBid = Math.max(...props.bids.map(b => b.total || 0), 0)
-  const maxAsk = Math.max(...props.asks.map(a => a.total || 0), 0)
+  const maxBid = Math.max(...visibleBids.value.map(b => b.total || 0), 0)
+  const maxAsk = Math.max(...visibleAsks.value.map(a => a.total || 0), 0)
   return Math.max(maxBid, maxAsk) * 1.5 || 1 // Scale factor, avoid div by 0
 })
 </script>

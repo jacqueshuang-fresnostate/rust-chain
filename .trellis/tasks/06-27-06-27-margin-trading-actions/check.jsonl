@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"检查新增迁移和数据库变更是否遵守 SQLx migration 规则。"}
+{"file":".trellis/spec/backend/wallet-amount-precision.md","reason":"检查划转和开仓扣款路径的钱包余额/流水一致性。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查 PC 与后端字段、错误和状态语义是否一致。"}
+{"file":"docs/superpowers/PROGRESS.md","reason":"确认本次任务有进度记录。"}

@@ -41,6 +41,7 @@ export interface PredictionMarket {
   external_resolution?: string | null
   local_resolution?: string | null
   allowed_asset_ids_override_json?: Array<string | number> | null
+  payout_cap_overrides_json?: Record<string, string | number> | null
   fee_rate_override?: string | null
   last_synced_at?: number | null
 }

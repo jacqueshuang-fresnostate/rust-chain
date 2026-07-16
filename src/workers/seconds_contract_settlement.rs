@@ -3,6 +3,7 @@ use crate::{
     modules::{
         events::{EventBroadcastHub, EventBroadcastMessage},
         market::market_ticker_redis_key,
+        seconds_contract::service::seconds_contract_payout_amount,
     },
     state::AppState,
     time::unix_millis,
@@ -70,6 +71,7 @@ struct LockedSecondsContractOrder {
     product_id: u64,
     pair_id: u64,
     stake_asset: u64,
+    stake_asset_precision: i32,
     direction: String,
     stake_amount: BigDecimal,
     payout_rate: BigDecimal,
@@ -102,6 +104,7 @@ pub struct SecondsContractSettlementEvent {
     direction: String,
     stake_amount: BigDecimal,
     payout_amount: BigDecimal,
+    settlement_price: BigDecimal,
     result: String,
 }
 
@@ -199,7 +202,7 @@ pub async fn run_once_with_broadcast(
                     continue;
                 }
             };
-        match settle_order_by_id(pool, row.order_id, result).await {
+        match settle_order_by_id(pool, row.order_id, result, &exit_price).await {
             Ok(SettlementOutcome::Settled(event)) => {
                 summary.settled += 1;
                 publish_settlement_event(hub, &event);
@@ -307,6 +310,7 @@ async fn settle_order_by_id(
     pool: &Pool<MySql>,
     order_id: u64,
     result: &str,
+    settlement_price: &BigDecimal,
 ) -> AppResult<SettlementOutcome> {
     let mut tx = pool.begin().await?;
     let Some(order) = lock_order_by_id(&mut tx, order_id).await? else {
@@ -332,7 +336,12 @@ async fn settle_order_by_id(
         ));
     }
 
-    let payout_amount = settlement_payout_amount(&order, result);
+    let payout_amount = seconds_contract_payout_amount(
+        &order.stake_amount,
+        &order.payout_rate,
+        result,
+        order.stake_asset_precision,
+    );
     if payout_amount > 0 {
         let wallet = lock_wallet_row(&mut tx, order.user_id, order.stake_asset).await?;
         let available_after = wallet.available.clone() + payout_amount.clone();
@@ -367,9 +376,10 @@ async fn settle_order_by_id(
     }
 
     let update = sqlx::query(
-        "UPDATE seconds_contract_orders SET status = 'settled', result = ?, settled_at = CURRENT_TIMESTAMP(6) WHERE id = ? AND status = 'opened'",
+        "UPDATE seconds_contract_orders SET status = 'settled', result = ?, settlement_price = ?, settled_at = CURRENT_TIMESTAMP(6) WHERE id = ? AND status = 'opened'",
     )
     .bind(result)
+    .bind(settlement_price)
     .bind(order.id)
     .execute(&mut *tx)
     .await?;
@@ -387,6 +397,7 @@ async fn settle_order_by_id(
         direction: order.direction,
         stake_amount: order.stake_amount,
         payout_amount,
+        settlement_price: settlement_price.clone(),
         result: result.to_owned(),
     };
     tx.commit().await?;
@@ -408,6 +419,7 @@ fn publish_settlement_event(
                 "stake_asset": event.stake_asset,
                 "direction": event.direction,
                 "stake_amount": event.stake_amount,
+                "settlement_price": event.settlement_price,
                 "payout_amount": event.payout_amount,
                 "result": event.result,
                 "status": "settled",
@@ -422,10 +434,13 @@ async fn lock_order_by_id(
     order_id: u64,
 ) -> AppResult<Option<LockedSecondsContractOrder>> {
     sqlx::query_as::<_, LockedSecondsContractOrder>(
-        r#"SELECT id, user_id, product_id, pair_id, stake_asset, direction,
-                  stake_amount, payout_rate, status, result, entry_price
-           FROM seconds_contract_orders
-           WHERE id = ?
+        r#"SELECT orders.id, orders.user_id, orders.product_id, orders.pair_id,
+                  orders.stake_asset, assets.precision_scale AS stake_asset_precision,
+                  orders.direction, orders.stake_amount, orders.payout_rate,
+                  orders.status, orders.result, orders.entry_price
+           FROM seconds_contract_orders orders
+           INNER JOIN assets ON assets.id = orders.stake_asset
+           WHERE orders.id = ?
            LIMIT 1
            FOR UPDATE"#,
     )
@@ -458,14 +473,6 @@ async fn lock_wallet_row(
     })
 }
 
-fn settlement_payout_amount(order: &LockedSecondsContractOrder, result: &str) -> BigDecimal {
-    if result == "win" {
-        order.stake_amount.clone() + order.stake_amount.clone() * order.payout_rate.clone()
-    } else {
-        BigDecimal::from(0)
-    }
-}
-
 fn seconds_contract_settlement_limit(limit: u32) -> u32 {
     limit.clamp(1, 100)
 }
@@ -496,39 +503,5 @@ fn env_u32(key: &str, default: u32) -> u32 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::str::FromStr;
-
-    fn decimal(value: &str) -> BigDecimal {
-        BigDecimal::from_str(value).unwrap()
-    }
-
-    #[test]
-    fn settlement_result_treats_equal_price_as_loss() {
-        assert_eq!(
-            seconds_contract_settlement_result("up", &decimal("1"), &decimal("1")).unwrap(),
-            "loss"
-        );
-        assert_eq!(
-            seconds_contract_settlement_result("down", &decimal("1"), &decimal("1")).unwrap(),
-            "loss"
-        );
-    }
-
-    #[test]
-    fn seconds_contract_settlement_limit_is_clamped() {
-        assert_eq!(seconds_contract_settlement_limit(0), 1);
-        assert_eq!(seconds_contract_settlement_limit(50), 50);
-        assert_eq!(seconds_contract_settlement_limit(500), 100);
-    }
-
-    #[test]
-    fn seconds_contract_settlement_scan_limit_matches_settlement_limit() {
-        assert_eq!(seconds_contract_settlement_scan_limit(0), 1);
-        assert_eq!(seconds_contract_settlement_scan_limit(1), 1);
-        assert_eq!(seconds_contract_settlement_scan_limit(50), 50);
-        assert_eq!(seconds_contract_settlement_scan_limit(100), 100);
-        assert_eq!(seconds_contract_settlement_scan_limit(500), 100);
-    }
-}
+#[path = "../../tests/unit_src/src_workers_seconds_contract_settlement_tests.rs"]
+mod tests;

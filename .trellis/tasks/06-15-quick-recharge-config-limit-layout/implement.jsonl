@@ -1,0 +1,3 @@
+{"file":".trellis/spec/guides/index.md","reason":"Shared Trellis thinking guide index required before implementation."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"This task updates an existing admin page and should reuse local layout helpers instead of adding duplicate abstractions."}
+{"file":".codex/skills/semi-design-guide/SKILL.md","reason":"The admin page uses Semi UI components and should follow the project Semi usage guide."}

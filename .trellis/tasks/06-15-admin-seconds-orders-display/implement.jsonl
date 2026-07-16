@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend API and data contract index."}
+{"file": ".trellis/spec/backend/seconds-contracts.md", "reason": "Seconds contract order response and settlement snapshot contract."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Feature crosses database, backend API, worker, and admin UI table."}
+{"file": "migrations/0067_seconds_contract_order_settlement_price.sql", "reason": "Add nullable order settlement price snapshot column."}
+{"file": "src/modules/seconds_contract/routes.rs", "reason": "Return admin order email, symbol, stake asset symbol, duration and settlement price in order responses."}
+{"file": "src/workers/seconds_contract_settlement.rs", "reason": "Persist cached ticker exit price as order settlement_price and broadcast it with settlement events."}
+{"file": "web/src/admin/resources/resourceConfigs.tsx", "reason": "Show user email, trading pair and settlement price while hiding internal order/user/product IDs in seconds order table."}

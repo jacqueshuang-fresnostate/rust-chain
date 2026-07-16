@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Verify the scoped auth page change does not alter shared BrandLogo behavior."}
+{"command": "rg -n \"<BrandLogo[^\\\\n>]*(show-name|name-class)\" pc/src/views/auth pc/src/components/layout/Header.vue pc/src/components/common/BrandLogo.vue", "result": "passed; only Header keeps show-name/name-class"}
+{"command": "node --test --experimental-strip-types tests/auth-brand-logo.test.ts", "cwd": "pc", "result": "passed"}
+{"command": "npm run type-check", "cwd": "pc", "result": "passed"}

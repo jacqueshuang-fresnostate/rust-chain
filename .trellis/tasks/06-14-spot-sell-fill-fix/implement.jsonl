@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend route/query conventions for spot order changes."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Sell order data flow crosses route, wallet, trade record, and event boundaries."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Buy-side market/trigger logic already exists and should be reused symmetrically where safe."}

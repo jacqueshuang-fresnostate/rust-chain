@@ -46,7 +46,7 @@
         - 优化交易对列表的视觉样式。
         - 点击交易对时，直接跳转到对应的现货交易页面。
         - 交易下拉菜单中的 "Swap" (闪兑) 选项**不需要**显示二级分栏（Hot Markets），即悬停时不显示任何右侧内容。
-      - **URL Persistence**: 点击 Header 交易对跳转或在现货页面切换交易对后，URL 必须明确包含 symbol 参数（例如 `/trade/BTC_USDT`），确保刷新页面后能保持当前选中的交易对。
+      - **URL Persistence**: 点击 Header 交易对跳转或在现货页面切换交易对后，URL 必须明确包含 symbol 参数（例如 `/spot/BTC_USDT`），确保刷新页面后能保持当前选中的交易对。
 2.  **Market Data Integration (New)**:
     - **Global Market Snapshot**: Initial data fetch via HTTP (`https://www.hippoweb3.net/market/symbol-thumb-trend`).
     - **Real-time Updates**: Subscribe to WebSocket topic (`/topic/market/thumb`) using `sockjs-client` and `@stomp/stompjs` at `wss://www.hippoweb3.net/market/thumb`.

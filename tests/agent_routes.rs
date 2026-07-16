@@ -43,6 +43,8 @@ fn test_settings() -> Settings {
         bitget_ws_url: "wss://bitget.test/ws".to_owned(),
         htx_rest_base_url: "https://htx.test".to_owned(),
         htx_ws_url: "wss://htx.test/ws".to_owned(),
+        coinbase_rest_base_url: "https://coinbase.test".to_owned(),
+        coinbase_ws_url: "wss://coinbase.test/ws".to_owned(),
         market_feed_symbols: Vec::new(),
         market_feed_intervals: Vec::new(),
         market_feed_providers: Vec::new(),
@@ -154,13 +156,20 @@ async fn create_agent(pool: &MySqlPool, label: &str) -> AgentFixture {
 async fn create_agent_with_password(pool: &MySqlPool, label: &str, password: &str) -> AgentFixture {
     let agent_user_id = create_user(pool, &format!("agent-owner-{label}")).await;
     let agent_code = format!("agent-{}-{}", label, Uuid::now_v7().simple());
-    let agent_id = sqlx::query("INSERT INTO agents (user_id, agent_code) VALUES (?, ?)")
+    let agent_id = sqlx::query("INSERT INTO agents (user_id, agent_code, path) VALUES (?, ?, '')")
         .bind(agent_user_id)
         .bind(agent_code)
         .execute(pool)
         .await
         .unwrap()
         .last_insert_id();
+    sqlx::query("UPDATE agents SET root_agent_id = ?, path = ? WHERE id = ?")
+        .bind(agent_id)
+        .bind(format!("/agent:{agent_id}"))
+        .bind(agent_id)
+        .execute(pool)
+        .await
+        .unwrap();
     let username = format!("agent-admin-{}-{}", label, Uuid::now_v7().simple());
     let admin_user_id = sqlx::query(
         "INSERT INTO agent_admin_users (agent_id, username, password_hash) VALUES (?, ?, ?)",
@@ -168,6 +177,53 @@ async fn create_agent_with_password(pool: &MySqlPool, label: &str, password: &st
     .bind(agent_id)
     .bind(username)
     .bind(hash_password(password).unwrap())
+    .execute(pool)
+    .await
+    .unwrap()
+    .last_insert_id();
+
+    AgentFixture {
+        agent_user_id,
+        agent_id,
+        admin_user_id,
+    }
+}
+
+async fn create_child_agent(pool: &MySqlPool, parent: AgentFixture, label: &str) -> AgentFixture {
+    let (root_agent_id, parent_level, parent_path): (u64, i32, String) =
+        sqlx::query_as("SELECT root_agent_id, level, path FROM agents WHERE id = ? LIMIT 1")
+            .bind(parent.agent_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    let agent_user_id = create_user(pool, &format!("agent-owner-{label}")).await;
+    let agent_code = format!("agent-{}-{}", label, Uuid::now_v7().simple());
+    let agent_id = sqlx::query(
+        r#"INSERT INTO agents
+              (user_id, parent_agent_id, root_agent_id, agent_code, level, path)
+           VALUES (?, ?, ?, ?, ?, '')"#,
+    )
+    .bind(agent_user_id)
+    .bind(parent.agent_id)
+    .bind(root_agent_id)
+    .bind(agent_code)
+    .bind(parent_level + 1)
+    .execute(pool)
+    .await
+    .unwrap()
+    .last_insert_id();
+    sqlx::query("UPDATE agents SET path = ? WHERE id = ?")
+        .bind(format!("{parent_path}/agent:{agent_id}"))
+        .bind(agent_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    let admin_user_id = sqlx::query(
+        "INSERT INTO agent_admin_users (agent_id, username, password_hash) VALUES (?, ?, ?)",
+    )
+    .bind(agent_id)
+    .bind(format!("agent-admin-{}-{}", label, Uuid::now_v7().simple()))
+    .bind(hash_password("not-a-real-password").unwrap())
     .execute(pool)
     .await
     .unwrap()
@@ -1619,7 +1675,15 @@ async fn agent_users_route_only_returns_authenticated_agent_team() -> Result<(),
     let other_agent_user = create_user(&pool, "other-agent").await;
     let unassigned_user = create_user(&pool, "unassigned").await;
     refer_user_to_agent(&pool, direct_team_user, agent_a.agent_id, 1).await;
-    refer_user_to_agent(&pool, nested_team_user, agent_a.agent_id, 2).await;
+    refer_user_with_inviter(
+        &pool,
+        nested_team_user,
+        agent_a.agent_id,
+        direct_team_user,
+        "user",
+        2,
+    )
+    .await;
     refer_user_to_agent(&pool, other_agent_user, agent_b.agent_id, 1).await;
     create_unassigned_referral(&pool, unassigned_user).await;
 
@@ -1660,8 +1724,14 @@ async fn agent_users_route_only_returns_authenticated_agent_team() -> Result<(),
     assert_eq!(listed_ids, vec![direct_team_user, nested_team_user]);
     assert!(!listed_ids.contains(&other_agent_user));
     assert!(!listed_ids.contains(&unassigned_user));
+    assert_eq!(users["users"][0]["owner_agent_id"], agent_a.agent_id);
     assert_eq!(users["users"][0]["root_agent_id"], agent_a.agent_id);
+    assert_eq!(users["users"][0]["direct_inviter_type"], "agent");
+    assert_eq!(users["users"][0]["direct_inviter_id"], agent_a.agent_id);
+    assert_eq!(users["users"][1]["owner_agent_id"], agent_a.agent_id);
     assert_eq!(users["users"][1]["root_agent_id"], agent_a.agent_id);
+    assert_eq!(users["users"][1]["direct_inviter_type"], "user");
+    assert_eq!(users["users"][1]["direct_inviter_id"], direct_team_user);
 
     cleanup_agent_fixture(
         &pool,
@@ -1671,6 +1741,214 @@ async fn agent_users_route_only_returns_authenticated_agent_team() -> Result<(),
             nested_team_user,
             other_agent_user,
             unassigned_user,
+        ],
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn agent_hierarchy_scopes_users_and_blocks_children_when_parent_is_suspended()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let root = create_agent(&pool, "hier-root").await;
+    let child = create_child_agent(&pool, root, "hier-child").await;
+    let grandchild = create_child_agent(&pool, child, "hier-grand").await;
+    let sibling = create_child_agent(&pool, root, "hier-sibling").await;
+    let root_user = create_user(&pool, "hierarchy-root-user").await;
+    let child_user = create_user(&pool, "hierarchy-child-user").await;
+    let grandchild_user = create_user(&pool, "hierarchy-grandchild-user").await;
+    let sibling_user = create_user(&pool, "hierarchy-sibling-user").await;
+    let grandchild_referred_user = create_user(&pool, "hierarchy-user-invite").await;
+    refer_user_to_agent(&pool, root_user, root.agent_id, 1).await;
+    refer_user_to_agent(&pool, child_user, child.agent_id, 1).await;
+    refer_user_to_agent(&pool, grandchild_user, grandchild.agent_id, 1).await;
+    refer_user_to_agent(&pool, sibling_user, sibling.agent_id, 1).await;
+    refer_user_with_inviter(
+        &pool,
+        grandchild_referred_user,
+        grandchild.agent_id,
+        grandchild_user,
+        "user",
+        2,
+    )
+    .await;
+
+    let root_token = issue_token(
+        &settings,
+        format!("agent:{}", root.admin_user_id),
+        TokenScope::Agent,
+        900,
+    )?;
+    let child_token = issue_token(
+        &settings,
+        format!("agent:{}", child.admin_user_id),
+        TokenScope::Agent,
+        900,
+    )?;
+    let grandchild_token = issue_token(
+        &settings,
+        format!("agent:{}", grandchild.admin_user_id),
+        TokenScope::Agent,
+        900,
+    )?;
+    let sibling_token = issue_token(
+        &settings,
+        format!("agent:{}", sibling.admin_user_id),
+        TokenScope::Agent,
+        900,
+    )?;
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let root_users = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/agent/api/v1/users")
+                .header("authorization", format!("Bearer {root_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(root_users.status(), StatusCode::OK);
+    let root_payload = response_json(root_users).await?;
+    let root_user_ids = root_payload["users"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|user| user["user_id"].as_u64().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        root_user_ids,
+        vec![
+            root_user,
+            child_user,
+            sibling_user,
+            grandchild_user,
+            grandchild_referred_user,
+        ]
+    );
+    let referred_user = root_payload["users"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|user| user["user_id"] == grandchild_referred_user)
+        .unwrap();
+    assert_eq!(referred_user["owner_agent_id"], grandchild.agent_id);
+    assert_eq!(referred_user["root_agent_id"], grandchild.agent_id);
+    assert_eq!(referred_user["direct_inviter_type"], "user");
+    assert_eq!(referred_user["direct_inviter_id"], grandchild_user);
+
+    let child_users = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/agent/api/v1/users")
+                .header("authorization", format!("Bearer {child_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(child_users.status(), StatusCode::OK);
+    let child_payload = response_json(child_users).await?;
+    let child_user_ids = child_payload["users"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|user| user["user_id"].as_u64().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        child_user_ids,
+        vec![child_user, grandchild_user, grandchild_referred_user]
+    );
+
+    let grandchild_users = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/agent/api/v1/users")
+                .header("authorization", format!("Bearer {grandchild_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(grandchild_users.status(), StatusCode::OK);
+    let grandchild_payload = response_json(grandchild_users).await?;
+    let grandchild_user_ids = grandchild_payload["users"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|user| user["user_id"].as_u64().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        grandchild_user_ids,
+        vec![grandchild_user, grandchild_referred_user]
+    );
+
+    let sibling_users = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/agent/api/v1/users")
+                .header("authorization", format!("Bearer {sibling_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(sibling_users.status(), StatusCode::OK);
+    let sibling_payload = response_json(sibling_users).await?;
+    let sibling_user_ids = sibling_payload["users"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|user| user["user_id"].as_u64().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(sibling_user_ids, vec![sibling_user]);
+
+    let sub_agents = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/agent/api/v1/sub-agents")
+                .header("authorization", format!("Bearer {root_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(sub_agents.status(), StatusCode::OK);
+    let sub_agent_payload = response_json(sub_agents).await?;
+    let sub_agent_ids = sub_agent_payload["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|agent| agent["id"].as_u64().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        sub_agent_ids,
+        vec![child.agent_id, sibling.agent_id, grandchild.agent_id]
+    );
+
+    sqlx::query("UPDATE agents SET status = 'suspended' WHERE id = ?")
+        .bind(child.agent_id)
+        .execute(&pool)
+        .await?;
+    let blocked_grandchild = app
+        .oneshot(
+            Request::builder()
+                .uri("/agent/api/v1/users")
+                .header("authorization", format!("Bearer {grandchild_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(blocked_grandchild.status(), StatusCode::UNAUTHORIZED);
+
+    cleanup_agent_fixture(
+        &pool,
+        &[grandchild, child, sibling, root],
+        &[
+            root_user,
+            child_user,
+            grandchild_user,
+            sibling_user,
+            grandchild_referred_user,
         ],
     )
     .await?;

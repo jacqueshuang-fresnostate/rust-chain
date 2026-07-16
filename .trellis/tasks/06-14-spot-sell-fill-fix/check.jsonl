@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verification expectations for backend bug fixes."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check order state, wallet balance, trade record, and event consistency."}

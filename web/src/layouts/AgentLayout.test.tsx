@@ -38,7 +38,7 @@ describe('AgentLayout', () => {
     renderAgentLayout();
 
     ['总览', '团队用户', '邀请码', '佣金记录', '闪兑统计', '团队树'].forEach((label) => {
-      expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
+      expect(screen.getByRole('menuitem', { name: label })).toBeInTheDocument();
     });
     expect(screen.getByText('agent:9')).toBeInTheDocument();
     expect(screen.getByText('代理总览内容')).toBeInTheDocument();
@@ -47,7 +47,7 @@ describe('AgentLayout', () => {
   it('navigates between agent menu items', async () => {
     renderAgentLayout();
 
-    fireEvent.click(screen.getByRole('button', { name: '团队用户' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '团队用户' }));
 
     expect(await screen.findByText('团队用户内容')).toBeInTheDocument();
   });

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "验收时确认项目规则和验证要求。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "验收是否复用现有 adapter helper。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "验收秒合约产品与 PC ticker 映射契约一致。"}
+{"file": ".trellis/tasks/06-15-pc-seconds-products-only-pairs/research/seconds-pair-source.md", "reason": "验收数据源修复符合用户要求。"}

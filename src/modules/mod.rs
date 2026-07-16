@@ -1,3 +1,6 @@
+//! modules bounded contexts 聚合入口。
+//!
+//! 按 DDD 上下文注册各业务域模块，避免横向引用绕过边界层次。
 pub mod admin;
 pub mod agent;
 pub mod auth;

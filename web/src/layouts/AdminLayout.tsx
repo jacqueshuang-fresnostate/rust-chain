@@ -86,6 +86,7 @@ const navItems: AdminNavItem[] = [
     children: [
       { path: '/admin/assets', label: '资产管理' },
       { path: '/admin/wallet/accounts', label: '钱包账户' },
+      { path: '/admin/wallet/deposit-network-configs', label: '充值网络配置' },
       { path: '/admin/wallet/deposit-address-pool', label: '充值地址池' },
       { path: '/admin/wallet/quick-recharge', label: '快速充值配置' },
       { path: '/admin/wallet/quick-recharge-orders', label: '快速充值订单' },

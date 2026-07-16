@@ -28,6 +28,12 @@ pub enum AppError {
     Conflict(String),
     #[error("internal error: {0}")]
     Internal(String),
+    #[error("{message}")]
+    Api {
+        status: StatusCode,
+        code: &'static str,
+        message: String,
+    },
 }
 
 pub type AppResult<T> = Result<T, AppError>;
@@ -46,6 +52,7 @@ impl AppError {
             Self::Validation(_) => StatusCode::BAD_REQUEST,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Conflict(_) => StatusCode::CONFLICT,
+            Self::Api { status, .. } => *status,
             Self::Config(_)
             | Self::Database(_)
             | Self::Mongo(_)
@@ -68,6 +75,23 @@ impl AppError {
             Self::NotFound => "NOT_FOUND",
             Self::Conflict(_) => "CONFLICT",
             Self::Internal(_) => "INTERNAL_ERROR",
+            Self::Api { code, .. } => code,
+        }
+    }
+
+    pub fn security_validation(code: &'static str, message: impl Into<String>) -> Self {
+        Self::Api {
+            status: StatusCode::BAD_REQUEST,
+            code,
+            message: message.into(),
+        }
+    }
+
+    pub fn security_forbidden(code: &'static str, message: impl Into<String>) -> Self {
+        Self::Api {
+            status: StatusCode::FORBIDDEN,
+            code,
+            message: message.into(),
         }
     }
 }

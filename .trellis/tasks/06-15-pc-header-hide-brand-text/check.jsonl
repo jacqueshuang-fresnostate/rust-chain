@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared quality checklist context."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Verify change remains scoped to Header caller."}

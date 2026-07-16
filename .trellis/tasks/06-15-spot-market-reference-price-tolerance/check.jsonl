@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Confirm backend validation scope before finishing."}
+{"file": ".trellis/spec/backend/spot-orders.md", "reason": "Verify implementation satisfies spot market reference price tolerance and reservation contract."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Confirm tests and checks satisfy project expectations."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Review wallet freeze database behavior."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Verify the local helper did not duplicate reusable code unnecessarily."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify the request-to-fill flow remains consistent."}

@@ -294,6 +294,9 @@ describe('resourceConfigs create actions', () => {
       title: '提现手续费',
       type: 'amount'
     });
+    expect(resourceConfigs.assets.columns.find((column) => column.key === 'withdraw_fee_tiers')).toMatchObject({
+      title: '提现梯度手续费'
+    });
   });
 
   it('shows spot order user email and localized order fields without internal ID columns', () => {
@@ -369,6 +372,7 @@ describe('resourceConfigs create actions', () => {
     expect(config.endpoint).toBe('/admin/api/v1/deposit-address-pool');
     expect(config.responseKey).toBe('addresses');
     expect(config.showJsonAction).toBe(false);
+    expectFilter(config, 'address_group_code', { label: '地址集合编号' });
     expectFilter(config, 'network', {
       label: '网络',
       type: 'select',
@@ -391,6 +395,7 @@ describe('resourceConfigs create actions', () => {
     });
     expect(columnKeys).toEqual([
       'network',
+      'address_group_code',
       'address',
       'asset_symbols',
       'status',
@@ -403,6 +408,24 @@ describe('resourceConfigs create actions', () => {
     ]);
     expect(columnKeys).not.toContain('id');
     expect(columnKeys).not.toContain('assigned_user_id');
+  });
+
+  it('configures deposit network configs for dynamic address groups', () => {
+    const config = resourceConfigs.depositNetworkConfigs;
+    const columnKeys = config.columns.map((column) => column.key);
+
+    expect(config.title).toBe('充值网络配置');
+    expect(config.endpoint).toBe('/admin/api/v1/deposit-network-configs');
+    expect(config.responseKey).toBe('configs');
+    expect(config.showJsonAction).toBe(false);
+    expectFilter(config, 'network', { label: '网络', type: 'select' });
+    expectFilter(config, 'address_group_code', { label: '地址集合编号' });
+    expectFilter(config, 'asset_symbol', { label: '资产符号' });
+    expect(columnKeys).toContain('network');
+    expect(columnKeys).toContain('display_name');
+    expect(columnKeys).toContain('address_group_code');
+    expect(columnKeys).toContain('asset_symbols');
+    expect(columnKeys).toContain('status');
   });
 
   it('configures the Admin country list with filters, columns, and hidden JSON action', () => {
@@ -1012,7 +1035,7 @@ describe('resourceConfigs create actions', () => {
     expect(within(dialog).getByText('地址 1')).toBeInTheDocument();
     await selectSemiOption(user, dialog, '网络', 'Base');
     await selectSemiOption(user, dialog, '支持币种', 'USDT - Tether（ID: 12）');
-    await selectSemiOption(user, dialog, '支持币种', 'BTC - Bitcoin（ID: 11）');
+    expect(within(dialog).getByLabelText('地址集合编号')).toHaveValue('A');
     await user.type(within(dialog).getAllByLabelText('充值地址')[0], '0x1234567890abcdef1234567890abcdef12345678');
     await user.type(within(dialog).getAllByLabelText('Memo / Tag')[0], 'memo-1');
     await user.type(within(dialog).getAllByLabelText('备注')[0], 'pool address');
@@ -1032,7 +1055,8 @@ describe('resourceConfigs create actions', () => {
     expect(request).toBeDefined();
     expect(JSON.parse(String(request?.body))).toEqual({
       network: 'base',
-      asset_symbols: ['USDT', 'BTC'],
+      address_group_code: 'A',
+      asset_symbols: ['USDT'],
       status: 'available',
       entries: [
         {
@@ -1090,6 +1114,7 @@ describe('resourceConfigs create actions', () => {
     expect(request).toBeDefined();
     expect(JSON.parse(String(request?.body))).toEqual({
       network: 'tron',
+      address_group_code: 'C',
       asset_symbols: ['USDT'],
       status: 'available',
       entries: [
@@ -1176,7 +1201,8 @@ describe('resourceConfigs create actions', () => {
             withdraw_enabled: true,
             min_deposit_amount: '1.000000000000000000',
             deposit_fee: '0.010000000000000000',
-            withdraw_fee: '0.100000000000000000'
+            withdraw_fee: '0.100000000000000000',
+            withdraw_fee_tiers: [{ min_amount: '1', max_amount: '100', fee_rate_percent: '1' }]
           },
           {
             id: 12,
@@ -1189,7 +1215,8 @@ describe('resourceConfigs create actions', () => {
             withdraw_enabled: false,
             min_deposit_amount: '2.000000000000000000',
             deposit_fee: '0.020000000000000000',
-            withdraw_fee: '0.200000000000000000'
+            withdraw_fee: '0.200000000000000000',
+            withdraw_fee_tiers: []
           }
         ];
         return { rows, raw: { [responseKey]: rows } };
@@ -1209,6 +1236,7 @@ describe('resourceConfigs create actions', () => {
     expect(await screen.findByText('BTC', { selector: 'span' })).toBeInTheDocument();
     expect(screen.getByText('数字货币', { selector: 'span' })).toBeInTheDocument();
     expect(screen.getByText('稳定币', { selector: 'span' })).toBeInTheDocument();
+    expect(screen.getByText('1 - 100: 1%', { selector: 'span' })).toBeInTheDocument();
     expect(screen.queryByText('coin')).not.toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: '查看详情' })).toHaveLength(2);
     expect(screen.getAllByRole('button', { name: '修改' })).toHaveLength(2);
@@ -1246,6 +1274,12 @@ describe('resourceConfigs create actions', () => {
     await user.type(within(editDialog).getByLabelText('充值手续费'), '0.03');
     await user.clear(within(editDialog).getByLabelText('提现手续费'));
     await user.type(within(editDialog).getByLabelText('提现手续费'), '0.3');
+    await user.clear(within(editDialog).getByLabelText('梯度最小金额 1'));
+    await user.type(within(editDialog).getByLabelText('梯度最小金额 1'), '2');
+    await user.clear(within(editDialog).getByLabelText('梯度最大金额 1'));
+    await user.type(within(editDialog).getByLabelText('梯度最大金额 1'), '200');
+    await user.clear(within(editDialog).getByLabelText('梯度手续费比例 1'));
+    await user.type(within(editDialog).getByLabelText('梯度手续费比例 1'), '1.5');
     await selectSemiOption(user, editDialog, '资产类型', '稳定币');
     await selectSemiOption(user, editDialog, '状态', '禁用');
     await user.click(within(editDialog).getByLabelText('支持充值'));
@@ -1270,6 +1304,7 @@ describe('resourceConfigs create actions', () => {
       min_deposit_amount: '3',
       deposit_fee: '0.03',
       withdraw_fee: '0.3',
+      withdraw_fee_tiers: [{ min_amount: '2', max_amount: '200', fee_rate_percent: '1.5' }],
       reason: 'update asset config'
     });
     expect(body).not.toHaveProperty('symbol');
@@ -1302,6 +1337,10 @@ describe('resourceConfigs create actions', () => {
     semiInputByLabel(dialog, '最小充值数量');
     semiInputByLabel(dialog, '充值手续费');
     semiInputByLabel(dialog, '提现手续费');
+    await user.click(within(dialog).getByRole('button', { name: '添加梯度' }));
+    await user.type(within(dialog).getByLabelText('梯度最小金额 1'), '1');
+    await user.type(within(dialog).getByLabelText('梯度最大金额 1'), '100');
+    await user.type(within(dialog).getByLabelText('梯度手续费比例 1'), '1');
     semiSelectByLabel(dialog, '资产类型');
     semiSelectByLabel(dialog, '初始状态');
     expect(within(dialog).getByLabelText('支持充值')).toBeInTheDocument();
@@ -1325,6 +1364,7 @@ describe('resourceConfigs create actions', () => {
       min_deposit_amount: '0',
       deposit_fee: '0',
       withdraw_fee: '0',
+      withdraw_fee_tiers: [{ min_amount: '1', max_amount: '100', fee_rate_percent: '1' }],
       reason: 'add asset'
     });
   });
@@ -1408,7 +1448,7 @@ describe('resourceConfigs create actions', () => {
             symbol: 'ETH-USDT',
             margin_asset_symbol: 'USDT',
             margin_mode: 'isolated',
-            margin_modes: ['isolated', 'cross'],
+            margin_modes: ['isolated'],
             leverage_levels: ['3', '7'],
             max_leverage: '7.00000000',
             min_margin: '50.000000000000000000',
@@ -1425,7 +1465,7 @@ describe('resourceConfigs create actions', () => {
     render(<ResourcePage config={resourceConfigs.marginProducts} />);
 
     expect(await screen.findByText('逐仓', { selector: 'span' })).toBeInTheDocument();
-    expect(screen.getByText('逐仓 / 全仓', { selector: 'span' })).toBeInTheDocument();
+    expect(screen.queryByText('逐仓 / 全仓', { selector: 'span' })).not.toBeInTheDocument();
     expect(screen.getByText('2.00x / 5.00x / 10.00x', { selector: 'span' })).toBeInTheDocument();
     expect(screen.getByText('3.00x / 7.00x', { selector: 'span' })).toBeInTheDocument();
 
@@ -1440,13 +1480,12 @@ describe('resourceConfigs create actions', () => {
     expect(within(dialog).queryByLabelText('最大杠杆')).not.toBeInTheDocument();
     semiSelectByLabel(dialog, '杠杆交易对');
     semiSelectByLabel(dialog, '保证金资产');
-    semiSelectByLabel(dialog, '支持保证金模式');
+    expect(within(dialog).getByLabelText('支持保证金模式')).toHaveValue('逐仓');
     semiSelectByLabel(dialog, '初始状态');
     expect(within(dialog).queryByLabelText('自定义杠杆档位')).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText('最小保证金')).not.toBeInTheDocument();
     await selectSemiOption(user, dialog, '杠杆交易对', 'BTC-USDT（ID: 21）');
     await selectSemiOption(user, dialog, '保证金资产', 'ETH - Ethereum（ID: 22）');
-    await selectSemiOption(user, dialog, '支持保证金模式', '全仓');
     await user.click(within(dialog).getByRole('tab', { name: '杠杆档位' }));
     expect(within(dialog).getByText('杠杆档位', { selector: 'legend' })).toBeInTheDocument();
     expect(within(dialog).getByLabelText('2x')).not.toBeChecked();
@@ -1479,7 +1518,7 @@ describe('resourceConfigs create actions', () => {
     expect(JSON.parse(String(request?.body))).toEqual({
       pair_id: 21,
       margin_asset: 22,
-      margin_modes: ['isolated', 'cross'],
+      margin_modes: ['isolated'],
       leverage_levels: ['2', '5', '10', '25'],
       max_leverage: '25',
       min_margin: '100',
@@ -1970,7 +2009,7 @@ describe('resourceConfigs create actions', () => {
     });
   });
 
-  it('creates and updates convert-only agent commission rules with required reasons', async () => {
+  it('creates and updates configurable agent commission rules with required reasons', async () => {
     const user = userEvent.setup();
     const config = resourceConfigs.agentCommissionRules;
     expect(config).toMatchObject({
@@ -1983,7 +2022,13 @@ describe('resourceConfigs create actions', () => {
       key: 'product_type',
       label: '产品类型',
       type: 'select',
-      options: [{ label: '闪兑', value: 'convert' }]
+      options: [
+        { label: '闪兑', value: 'convert' },
+        { label: '竞猜', value: 'prediction' },
+        { label: '现货', value: 'spot' },
+        { label: '杠杆', value: 'margin' },
+        { label: '秒合约', value: 'seconds_contract' }
+      ]
     });
     expectFilter(config, 'status', {
       key: 'status',
@@ -2553,9 +2598,8 @@ describe('resourceConfigs create actions', () => {
     expect(within(editSheet).getByRole('tab', { name: '基础配置' })).toBeInTheDocument();
     semiSelectByLabel(editSheet, '杠杆交易对');
     semiSelectByLabel(editSheet, '保证金资产');
-    semiSelectByLabel(editSheet, '支持保证金模式');
+    expect(within(editSheet).getByLabelText('支持保证金模式')).toHaveValue('逐仓');
     semiSelectByLabel(editSheet, '状态');
-    await selectSemiOption(user, editSheet, '支持保证金模式', '全仓');
     await selectSemiOption(user, editSheet, '状态', '禁用');
     await user.click(within(editSheet).getByRole('tab', { name: '杠杆档位' }));
     expect(within(editSheet).getByLabelText('2x')).toBeChecked();
@@ -2584,7 +2628,7 @@ describe('resourceConfigs create actions', () => {
       pair_id: 1,
       margin_asset: 12,
       logo_url: 'https://cdn.example.test/margin/btc-usdt.png',
-      margin_modes: ['isolated', 'cross'],
+      margin_modes: ['isolated'],
       leverage_levels: ['2', '5', '10', '25'],
       max_leverage: '25',
       min_margin: '20',

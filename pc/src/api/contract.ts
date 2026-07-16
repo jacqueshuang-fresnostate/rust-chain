@@ -2,10 +2,11 @@ import request from './request'
 import { fetchHistoryKLine as fetchMarketKLine, fetchLatestTrade, fetchMarketSnapshot, fetchTradePlate } from './market'
 import {
   backendApiUrl,
+  mapMarginWalletsToContractWallets,
   mapMarginPositionsToContractOrders,
-  mapMarginPositionsToContractWallets,
   mapMarginProductsToContractCoins,
   mapPcMarginOpenRequest,
+  type BackendMarginWalletsResponse,
   type BackendMarginPositionsResponse,
   type BackendMarginProductsResponse,
 } from './backendAdapters'
@@ -21,6 +22,7 @@ export interface OpenPositionParams {
   triggerPrice?: number
   entrustPrice?: number
   leverage: number
+  marginMode?: 'cross' | 'isolated'
   volume: number
 }
 
@@ -48,6 +50,12 @@ export interface TransferParams {
   fromWalletId?: number
   toWalletId?: number
   amount: number
+}
+
+export interface MarginActionResult {
+  code: number
+  message: string
+  data: unknown
 }
 
 export async function fetchBaseSymbol(): Promise<{ data: any }> {
@@ -85,15 +93,20 @@ export async function closePosition(params: ClosePositionParams): Promise<{ data
 }
 
 export function closeAllPositions(_contractCoinId: number, _type: 0 | 1 | 2): Promise<{ data: any }> {
-  return Promise.reject(new Error('Closing all margin positions is not supported by the Rust backend yet.'))
+  return request.instance
+    .post(backendApiUrl('/margin/positions/close-all'), { product_id: _contractCoinId || undefined })
+    .then((response) => ({ data: { code: 0, message: 'success', data: response.data } }))
 }
 
-export function cancelOrder(_entrustId: string): Promise<{ data: any }> {
-  return Promise.reject(new Error('Margin order cancellation is not supported by the Rust backend yet.'))
+export async function cancelOrder(entrustId: string): Promise<{ data: any }> {
+  const response = await request.instance.post(backendApiUrl(`/margin/positions/${encodeURIComponent(entrustId)}/cancel`), {})
+  return { data: { code: 0, message: 'success', data: response.data } }
 }
 
-export function cancelAllOrders(_symbol?: string): Promise<{ data: any }> {
-  return Promise.reject(new Error('Margin order cancellation is not supported by the Rust backend yet.'))
+export function cancelAllOrders(symbol?: string): Promise<{ data: any }> {
+  return request.instance
+    .post(backendApiUrl('/margin/positions/cancel-all'), productIdPayload(symbol))
+    .then((response) => ({ data: { code: 0, message: 'success', data: response.data } }))
 }
 
 export async function fetchOrderDetail(orderId: string): Promise<{ data: any }> {
@@ -110,30 +123,42 @@ export async function fetchHistoryOrders(params: OrderListParams): Promise<{ dat
 }
 
 export async function fetchContractWallets(): Promise<{ data: any }> {
-  const response = await request.instance.get<BackendMarginPositionsResponse>(backendApiUrl('/margin/positions'))
-  return { data: mapMarginPositionsToContractWallets(response.data) }
+  const response = await request.instance.get<BackendMarginWalletsResponse>(backendApiUrl('/margin/wallets'))
+  return { data: mapMarginWalletsToContractWallets(response.data) }
 }
 
 export async function fetchWalletDetail(contractCoinId: number): Promise<{ data: any }> {
-  const response = await request.instance.get<BackendMarginPositionsResponse>(backendApiUrl('/margin/positions'))
-  const wallet = (mapMarginPositionsToContractWallets(response.data).data as any[]).find((item) => item.id === contractCoinId)
+  const response = await request.instance.get<BackendMarginWalletsResponse>(backendApiUrl('/margin/wallets'))
+  const wallet = (mapMarginWalletsToContractWallets(response.data).data as any[]).find((item) => item.id === contractCoinId)
   return { data: { code: 0, message: 'success', data: wallet ?? null } }
 }
 
-export function transferFunds(_params: TransferParams): Promise<{ data: any }> {
-  return Promise.reject(new Error('Margin wallet transfer is not supported by the Rust backend yet.'))
+export async function transferFunds(params: TransferParams): Promise<{ data: any }> {
+  const response = await request.instance.post(backendApiUrl('/margin/transfers'), {
+    asset_symbol: params.unit,
+    from: params.from === 'SWAP' ? 'margin' : 'spot',
+    to: params.to === 'SWAP' ? 'margin' : 'spot',
+    amount: String(params.amount),
+  })
+  return { data: { code: 0, message: 'success', data: response.data } }
 }
 
-export function modifyLeverage(_contractCoinId: number, _leverage: number, _direction: 0 | 1): Promise<{ data: any }> {
-  return Promise.reject(new Error('Margin leverage modification is not supported by the Rust backend yet.'))
+export async function modifyLeverage(contractCoinId: number, leverage: number, _direction: 0 | 1): Promise<{ data: any }> {
+  const response = await request.instance.patch(backendApiUrl(`/margin/settings/${contractCoinId}/leverage`), {
+    leverage: String(leverage),
+  })
+  return { data: { code: 0, message: 'success', data: response.data } }
 }
 
 export function canSwitchPattern(_contractCoinId: number, _targetPattern: string): Promise<{ data: any }> {
-  return Promise.reject(new Error('Margin mode switching is not supported by the Rust backend yet.'))
+  return Promise.resolve({ data: { code: 0, message: 'success', data: true } })
 }
 
-export function switchPattern(_contractCoinId: number, _targetPattern: string): Promise<{ data: any }> {
-  return Promise.reject(new Error('Margin mode switching is not supported by the Rust backend yet.'))
+export async function switchPattern(contractCoinId: number, targetPattern: string): Promise<{ data: any }> {
+  const response = await request.instance.patch(backendApiUrl(`/margin/settings/${contractCoinId}/mode`), {
+    margin_mode: targetPattern === 'CROSSED' ? 'cross' : targetPattern.toLowerCase(),
+  })
+  return { data: { code: 0, message: 'success', data: response.data } }
 }
 
 export async function fetchContractSymbols(): Promise<{ data: any }> {
@@ -204,4 +229,9 @@ function normalizeSymbol(symbol: string): string {
 
 function createMarginIdempotencyKey(): string {
   return `pc-margin-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function productIdPayload(symbol?: string): { product_id?: number } {
+  const id = Number(symbol)
+  return Number.isFinite(id) && id > 0 ? { product_id: id } : {}
 }

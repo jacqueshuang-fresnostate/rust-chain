@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend admin list query conventions and validation expectations."}
+{"file": ".trellis/spec/guides/index.md", "reason": "Cross-layer checklist for backend filters and admin UI request parameters."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse existing filter and resource page patterns for robot visibility switches."}
+{"file": ".codex/skills/semi-design-guide/SKILL.md", "reason": "Semi Switch placement and component usage guidance for admin tables."}
+{"file": "web/src/admin/resources/AdminResourcePage.tsx", "reason": "Added toolbar switch filters and split toolbar filter state from normal filter drafts."}
+{"file": "web/src/admin/resources/resourceConfigs.tsx", "reason": "Moved spot robot order switch to toolbar and added robot data switches for users, wallet accounts, wallet ledger, and spot trades."}
+{"file": "src/modules/admin/routes.rs", "reason": "Added include_internal support and default internal email exclusion for admin users, wallet accounts, and wallet ledger."}
+{"file": "src/modules/spot/routes.rs", "reason": "Added include_internal support and default system liquidity exclusion for admin spot trades."}

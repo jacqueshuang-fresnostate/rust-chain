@@ -14,18 +14,18 @@ import {
     cancelAllOrders,
     transferFunds,
     modifyLeverage,
-    canSwitchPattern,
     switchPattern,
     type OpenPositionParams,
     type ClosePositionParams,
+    type TransferParams,
     type OrderListParams,
-    type OrderType,
-    type TransferParams
+    type OrderType
 } from '@/api/contract'
 
 export interface ContractCoin {
     id: number
     symbol: string
+    logoUrl: string
     baseSymbol: string
     coinSymbol: string
     enable: boolean
@@ -33,6 +33,7 @@ export interface ContractCoin {
     minTurnover: number
     maxLeverage: number
     marginRate: number
+    marginModes: Array<'cross' | 'isolated'>
     leverage: number[]
 }
 
@@ -112,6 +113,7 @@ export const useContractStore = defineStore('contract', () => {
                 coins.value = res.data.map((c: any) => ({
                     id: c.id,
                     symbol: c.symbol,
+                    logoUrl: typeof c.logoUrl === 'string' ? c.logoUrl : '',
                     baseSymbol: c.baseSymbol,
                     coinSymbol: c.coinSymbol,
                     enable: c.enable,
@@ -119,6 +121,7 @@ export const useContractStore = defineStore('contract', () => {
                     minTurnover: c.minTurnover,
                     maxLeverage: c.maxLeverage,
                     marginRate: c.marginRate,
+                    marginModes: Array.isArray(c.marginModes) && c.marginModes.length > 0 ? c.marginModes : ['isolated'],
                     leverage: Array.isArray(c.leverage) ? c.leverage : (typeof c.leverage === 'string' ? c.leverage.split(',').map(Number) : [1, 2, 3, 5, 10, 20, 50, 100])
                 }))
                 console.log('--- coins ---', coins.value)
@@ -299,6 +302,10 @@ export const useContractStore = defineStore('contract', () => {
 
     const orderRefreshKey = ref(0)
 
+    function triggerOrderRefresh() {
+        orderRefreshKey.value++
+    }
+
     const delay = (ms: number) => new Promise(r => setTimeout(r, ms))
 
     async function submitOpenPosition(params: OpenPositionParams) {
@@ -307,7 +314,7 @@ export const useContractStore = defineStore('contract', () => {
             const res = await openPosition(params)
             await delay(500)
             await Promise.all([loadCurrentOrders(params.contractCoinId), loadWallets()])
-            orderRefreshKey.value++
+            triggerOrderRefresh()
             return res.data
         } finally {
             loading.value = false
@@ -320,42 +327,57 @@ export const useContractStore = defineStore('contract', () => {
             const res = await closePosition(params)
             await delay(500)
             await Promise.all([loadCurrentOrders(params.contractCoinId), loadWallets()])
-            orderRefreshKey.value++
+            triggerOrderRefresh()
             return res.data
         } finally {
             loading.value = false
         }
     }
 
-    async function submitCloseAll(contractCoinId: number, type: 0 | 1 | 2) {
+    async function submitCloseAllPositions(contractCoinId?: number) {
         loading.value = true
         try {
-            const res = await closeAllPositions(contractCoinId, type)
+            const res = await closeAllPositions(contractCoinId || 0, 0)
             await delay(500)
-            await Promise.all([loadCurrentOrders(contractCoinId), loadWallets()])
-            orderRefreshKey.value++
+            await Promise.all([loadCurrentOrders(contractCoinId), loadHistoryOrders(contractCoinId), loadWallets()])
+            triggerOrderRefresh()
             return res.data
         } finally {
             loading.value = false
         }
     }
 
-    async function cancel(entrustId: string, contractCoinId?: number) {
-        const res = await cancelOrder(entrustId)
-        await loadCurrentOrders(contractCoinId)
-        return res.data
+    async function submitCancelOrder(orderId: string, contractCoinId?: number) {
+        loading.value = true
+        try {
+            const res = await cancelOrder(orderId)
+            await delay(500)
+            await Promise.all([loadCurrentOrders(contractCoinId), loadWallets()])
+            triggerOrderRefresh()
+            return res.data
+        } finally {
+            loading.value = false
+        }
     }
 
-    async function cancelAll(contractCoinId?: number) {
-        const res = await cancelAllOrders()
-        await loadCurrentOrders(contractCoinId)
-        return res.data
+    async function submitCancelAllOrders(contractCoinId?: number) {
+        loading.value = true
+        try {
+            const res = await cancelAllOrders(contractCoinId ? String(contractCoinId) : undefined)
+            await delay(500)
+            await Promise.all([loadCurrentOrders(contractCoinId), loadWallets()])
+            triggerOrderRefresh()
+            return res.data
+        } finally {
+            loading.value = false
+        }
     }
 
-    async function transfer(params: TransferParams) {
+    async function submitTransfer(params: TransferParams) {
         loading.value = true
         try {
             const res = await transferFunds(params)
+            await delay(300)
             await loadWallets()
             return res.data
         } finally {
@@ -363,16 +385,13 @@ export const useContractStore = defineStore('contract', () => {
         }
     }
 
-    async function setLeverage(contractCoinId: number, leverage: number, direction: 0 | 1) {
+    async function submitModifyLeverage(contractCoinId: number, leverage: number, direction: 0 | 1 = 0) {
         const res = await modifyLeverage(contractCoinId, leverage, direction)
-        await loadWallets()
         return res.data
     }
 
-    async function setMarginMode(contractCoinId: number, targetPattern: string) {
-        await canSwitchPattern(contractCoinId, targetPattern)
+    async function submitSwitchPattern(contractCoinId: number, targetPattern: 'cross' | 'isolated') {
         const res = await switchPattern(contractCoinId, targetPattern)
-        await loadWallets()
         return res.data
     }
 
@@ -380,29 +399,63 @@ export const useContractStore = defineStore('contract', () => {
         activeCoin.value = coin
     }
 
+    function normalizeContractSymbol(symbol: string) {
+        return symbol.replace(/[-_/]/g, '').toUpperCase()
+    }
+
+    function displayContractSymbol(symbol: string) {
+        const normalized = normalizeContractSymbol(symbol)
+        const quote = ['USDT', 'USDC', 'USD', 'BTC', 'ETH'].find(q => normalized.endsWith(q) && normalized.length > q.length)
+        if (quote) return `${normalized.slice(0, -quote.length)}/${quote}`
+        return symbol.replace(/[-_]/g, '/')
+    }
+
+    function firstFiniteNumber(values: unknown[], fallback: number) {
+        for (const value of values) {
+            if (value === null || value === undefined || value === '') continue
+            const number = Number(value)
+            if (Number.isFinite(number)) return number
+        }
+        return fallback
+    }
+
     function getCoinBySymbol(symbol: string) {
-        return coins.value.find(c => c.symbol === symbol)
+        const normalized = normalizeContractSymbol(symbol)
+        return coins.value.find(c => normalizeContractSymbol(c.symbol) === normalized)
     }
 
     function getThumbBySymbol(symbol: string) {
-        return thumbs.value.find(t => t.symbol === symbol)
+        const normalized = normalizeContractSymbol(symbol)
+        return thumbs.value.find(t => normalizeContractSymbol(t.symbol) === normalized)
     }
 
     function updateThumb(data: any) {
-        const symbol = data.symbol
-        if (!symbol) return
-        const idx = thumbs.value.findIndex(t => t.symbol === symbol)
-        const open = Number(data.open) || 0
-        const close = Number(data.close ?? data.last ?? data.price) || 0
+        const rawSymbol = String(data.symbol ?? data.pair_id ?? data.pair ?? data.market ?? data.instId ?? '')
+        if (!rawSymbol) return
+
+        const normalized = normalizeContractSymbol(rawSymbol)
+        const idx = thumbs.value.findIndex(t => normalizeContractSymbol(t.symbol) === normalized)
+        const current = idx >= 0 ? thumbs.value[idx] : undefined
+        const symbol = current?.symbol || getCoinBySymbol(rawSymbol)?.symbol || displayContractSymbol(rawSymbol)
+        const close = firstFiniteNumber([data.close, data.last, data.price, data.last_price], current?.close ?? current?.last ?? 0)
+        const open = firstFiniteNumber([data.open, data.open_24h], current?.open ?? close)
+        const highFallback = current ? Math.max(current.high || close, close) : close
+        const lowFallback = current?.low ? Math.min(current.low, close) : close
+        const high = firstFiniteNumber([data.high, data.high_24h], highFallback)
+        const low = firstFiniteNumber([data.low, data.low_24h], lowFallback)
+        const vol = firstFiniteNumber([data.vol, data.volume, data.volume_24h], current?.vol ?? 0)
         const updated: CoinThumb = {
             symbol,
             open,
             close,
-            last: Number(data.last ?? data.close ?? data.price) || 0,
-            high: Number(data.high) || 0,
-            low: Number(data.low) || 0,
-            vol: Number(data.vol ?? data.volume) || 0,
-            change: open ? ((close - open) / open * 100) : 0
+            last: firstFiniteNumber([data.last, data.close, data.price, data.last_price], close),
+            high,
+            low,
+            vol,
+            change: firstFiniteNumber(
+                [data.change, data.chg, data.price_change_percent_24h],
+                open ? ((close - open) / open * 100) : (current?.change ?? 0)
+            )
         }
         if (idx >= 0) {
             thumbs.value[idx] = updated
@@ -433,13 +486,14 @@ export const useContractStore = defineStore('contract', () => {
         getWalletDetail,
         submitOpenPosition,
         submitClosePosition,
-        submitCloseAll,
+        submitCloseAllPositions,
+        submitCancelOrder,
+        submitCancelAllOrders,
+        submitTransfer,
+        submitModifyLeverage,
+        submitSwitchPattern,
         orderRefreshKey,
-        cancel,
-        cancelAll,
-        transfer,
-        setLeverage,
-        setMarginMode,
+        triggerOrderRefresh,
         setActiveCoin,
         getCoinBySymbol,
         getThumbBySymbol,

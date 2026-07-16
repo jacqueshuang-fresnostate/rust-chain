@@ -28,28 +28,27 @@
         <table class="w-full table-fixed text-sm">
           <thead>
             <tr class="border-b border-border text-left text-muted-foreground">
-              <th class="w-[16%] px-4 py-3">{{ t('prediction.order_no') }}</th>
-              <th class="w-[24%] px-4 py-3">{{ t('prediction.market') }}</th>
-              <th class="w-[9%] px-4 py-3">{{ t('prediction.outcome') }}</th>
-              <th class="w-[14%] px-4 py-3">{{ t('prediction.stake') }}</th>
-              <th class="w-[10%] px-4 py-3">{{ t('prediction.price') }}</th>
-              <th class="w-[10%] px-4 py-3">{{ t('prediction.status') }}</th>
-              <th class="w-[17%] px-4 py-3">{{ t('prediction.time') }}</th>
+              <th class="w-[22%] px-4 py-3">{{ t('prediction.order_no') }}</th>
+              <th class="w-[12%] px-4 py-3">{{ t('prediction.outcome') }}</th>
+              <th class="w-[18%] px-4 py-3">{{ t('prediction.stake') }}</th>
+              <th class="w-[14%] px-4 py-3">{{ t('prediction.price') }}</th>
+              <th class="w-[14%] px-4 py-3">{{ t('prediction.status') }}</th>
+              <th class="w-[20%] px-4 py-3">{{ t('prediction.time') }}</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="7" class="px-4 py-10 text-center text-muted-foreground">{{ t('common.loading') }}</td>
+              <td colspan="6" class="px-4 py-10 text-center text-muted-foreground">{{ t('common.loading') }}</td>
             </tr>
             <tr v-else-if="orders.length === 0">
-              <td colspan="7" class="px-4 py-10 text-center text-muted-foreground">{{ t('prediction.no_orders') }}</td>
+              <td colspan="6" class="px-4 py-10 text-center text-muted-foreground">{{ t('prediction.no_orders') }}</td>
             </tr>
             <template v-for="order in orders" :key="order.id">
               <tr class="border-b border-border">
-                <td class="px-4 py-4 font-mono text-foreground">{{ order.orderNo }}</td>
                 <td class="px-4 py-4">
-                  <button class="max-w-full truncate text-left font-semibold text-foreground hover:text-primary" @click="toggleExpanded(order.id)">
-                    {{ order.market_title }}
+                  <button class="inline-flex max-w-full items-center gap-2 text-left font-mono text-foreground hover:text-primary" @click="toggleExpanded(order.id)">
+                    <span class="text-muted-foreground">{{ expandedIds.has(order.id) ? 'v' : '>' }}</span>
+                    <span class="truncate">{{ order.orderNo }}</span>
                   </button>
                 </td>
                 <td class="px-4 py-4">
@@ -63,12 +62,13 @@
                 <td class="px-4 py-4 text-muted-foreground">{{ formatTime(order.created_at) }}</td>
               </tr>
               <tr v-if="expandedIds.has(order.id)" class="border-b border-border bg-muted/20">
-                <td colspan="7" class="px-4 py-4">
+                <td colspan="6" class="px-4 py-4">
                   <div class="grid gap-3 text-sm md:grid-cols-4">
+                    <InfoItem :label="t('prediction.market')" :value="order.market_title" />
                     <InfoItem :label="t('prediction.fee')" :value="`${formatAmount(order.fee_amount)} ${order.asset_symbol}`" />
                     <InfoItem :label="t('prediction.shares')" :value="formatAmount(order.shares)" />
                     <InfoItem :label="t('prediction.max_payout')" :value="`${formatAmount(order.theoretical_payout)} ${order.asset_symbol}`" />
-                    <InfoItem :label="t('prediction.payout_cap')" :value="`${formatAmount(order.effective_payout_cap)} ${order.asset_symbol}`" />
+                    <InfoItem :label="t('prediction.payout_cap')" :value="formatPayoutCap(order.effective_payout_cap, order.asset_symbol)" />
                     <InfoItem :label="t('prediction.result')" :value="outcomeText(order.result || '')" />
                     <InfoItem :label="t('prediction.payout')" :value="`${formatAmount(order.payout_amount)} ${order.asset_symbol}`" />
                     <InfoItem :label="t('prediction.refund')" :value="`${formatAmount(Number(order.refund_amount) + Number(order.fee_refund_amount))} ${order.asset_symbol}`" />
@@ -173,6 +173,12 @@ function percentText(value: string | number) {
 
 function formatAmount(value: string | number | null | undefined) {
   return formatNumber(Number(value ?? 0), 'amount')
+}
+
+function formatPayoutCap(value: string | number | null | undefined, symbol: string) {
+  const cap = Number(value ?? 0)
+  if (!Number.isFinite(cap) || cap <= 0) return t('prediction.unlimited')
+  return `${formatAmount(cap)} ${symbol}`
 }
 
 function formatTime(value?: number | null) {

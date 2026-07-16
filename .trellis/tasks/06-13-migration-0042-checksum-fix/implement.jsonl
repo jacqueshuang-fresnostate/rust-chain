@@ -1,0 +1,8 @@
+{"type":"spec","path":".trellis/spec/backend/index.md","reason":"Backend migration task entry and checklist."}
+{"type":"spec","path":".trellis/spec/backend/database-guidelines.md","reason":"Migration checksum fix and schema order correction."}
+{"type":"spec","path":".trellis/spec/backend/quality-guidelines.md","reason":"Verification requirements for backend migration changes."}
+{"type":"guide","path":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Country config schema flows from migrations to backend/admin/PC consumers."}
+{"type":"implementation","path":"migrations/0042_country_locale_config.sql","reason":"Restored applied migration 0042 to the stable base schema without the later remark column."}
+{"type":"implementation","path":"migrations/0054_seed_country_codes.sql","reason":"Removed dependency on remark before migration 0055 adds that column."}
+{"type":"implementation","path":"migrations/0055_country_config_local_names_and_remark.sql","reason":"Kept additive remark column and local-name backfill as the schema-evolution point."}
+{"type":"test","path":"tests/country_config_migration.rs","reason":"Updated migration-order tests for 0042 stability and 0055 remark backfill."}

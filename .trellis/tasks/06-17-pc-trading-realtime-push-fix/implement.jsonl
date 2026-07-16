@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/spot-orders.md", "reason": "Spot market order and market ticker contracts intersect with realtime spot updates."}
+{"file": ".trellis/spec/backend/seconds-contracts.md", "reason": "Seconds contract product/order payloads and PC page behavior must stay aligned."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Realtime push spans backend topics, frontend adapters, stores, and pages."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "WebSocket topic and subscription logic should reuse existing helpers instead of duplicating."}

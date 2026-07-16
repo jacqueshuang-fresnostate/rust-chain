@@ -4,6 +4,7 @@ use crate::{
 };
 use mongodb::Database;
 use redis::aio::ConnectionManager;
+use sa_token_core::SaTokenManager;
 use sqlx::{MySql, Pool};
 use std::sync::Arc;
 
@@ -13,6 +14,7 @@ pub struct AppState {
     pub mysql: Option<Pool<MySql>>,
     pub mongo: Option<Database>,
     pub redis: Option<ConnectionManager>,
+    pub auth_manager: Option<Arc<SaTokenManager>>,
     pub rabbitmq: Option<Arc<lapin::Connection>>,
     pub event_broadcast_hub: Option<EventBroadcastHub>,
     pub market_feed_supervisor: Option<MarketFeedSupervisorHandle>,
@@ -26,6 +28,7 @@ impl AppState {
             mysql: None,
             mongo: None,
             redis: None,
+            auth_manager: None,
             rabbitmq: None,
             event_broadcast_hub: None,
             market_feed_supervisor: None,
@@ -45,6 +48,11 @@ impl AppState {
 
     pub fn with_redis(mut self, redis: ConnectionManager) -> Self {
         self.redis = Some(redis);
+        self
+    }
+
+    pub fn with_auth_manager(mut self, auth_manager: Arc<SaTokenManager>) -> Self {
+        self.auth_manager = Some(auth_manager);
         self
     }
 

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/index.md","reason":"后端快速充值 GMPay 请求错误处理需要遵循后端规范入口。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"本次修改新增外部支付服务 HTML/Cloudflare 错误的 502 API 错误契约。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"确认本次后端修复的测试和质量检查要求。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"GMPay 错误从外部服务经后端传到后台页面，需要检查边界错误契约。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"新增错误格式化前先复用现有 AppError 和 GMPay 下单流程。"}

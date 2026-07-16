@@ -1,18 +1,49 @@
 use crate::{
-    error::{AppError, AppResult},
+    error::AppResult,
     modules::auth::{
-        AdminCredentials, AdminRegistration, AgentCredentials, AuthService, IssuedTokens,
-        MySqlAuthRepository, TokenScope, UserCredentials,
+        AdminCredentials, AdminRegistration, AgentCredentials, TokenScope,
+        application::{
+            load_login_config, load_register_config, login_admin_actor, login_agent_actor,
+            login_user_with_optional_two_factor_response, mysql_pool, refresh_actor_tokens,
+            register_admin_actor, register_user_with_email_code_response,
+            reject_agent_registration, reset_login_two_factor_with_email_code,
+            reset_password_with_email_code, send_login_two_factor_reset_email_code,
+            send_password_reset_email_code, send_registration_email_code,
+            verify_login_two_factor_and_issue_tokens,
+        },
+        presentation::{
+            AdminAuthRequest, AgentAuthRequest, LoginConfigResponse, LoginTwoFactorCodeResponse,
+            LoginTwoFactorRequest, LoginTwoFactorResetCodeRequest, LoginTwoFactorResetRequest,
+            LoginTwoFactorResetResponse, PasswordResetCodeRequest, PasswordResetCodeResponse,
+            PasswordResetRequest, PasswordResetResponse, RefreshRequest, RegisterConfigResponse,
+            RegisterEmailCodeRequest, RegisterEmailCodeResponse, TokenResponse, UserAuthRequest,
+            UserLoginResponse,
+        },
     },
     state::AppState,
 };
-use axum::{Json, Router, extract::State, routing::post};
-use serde::{Deserialize, Serialize};
+use axum::{
+    Json, Router,
+    extract::State,
+    routing::{get, post},
+};
+use chrono::Utc;
 
 pub fn user_routes() -> Router<AppState> {
     Router::new()
+        .route("/auth/register/config", get(get_register_config))
+        .route("/auth/login/config", get(get_login_config))
+        .route("/auth/register/email-code", post(send_register_email_code))
         .route("/auth/register", post(user_register))
+        .route("/auth/password/reset-code", post(send_password_reset_code))
+        .route("/auth/password/reset", post(reset_password))
         .route("/auth/login", post(user_login))
+        .route("/auth/login/2fa", post(user_login_two_factor))
+        .route(
+            "/auth/login/2fa/reset-code",
+            post(send_login_two_factor_reset_code),
+        )
+        .route("/auth/login/2fa/reset", post(reset_login_two_factor))
         .route("/auth/refresh", post(user_refresh))
 }
 
@@ -30,87 +61,150 @@ pub fn agent_routes() -> Router<AppState> {
         .route("/auth/refresh", post(agent_refresh))
 }
 
-#[derive(Debug, Deserialize)]
-struct UserAuthRequest {
-    email: Option<String>,
-    phone: Option<String>,
-    password: Option<String>,
+async fn get_register_config(
+    State(state): State<AppState>,
+) -> AppResult<Json<RegisterConfigResponse>> {
+    let config = load_register_config(&mysql_pool(&state)?).await?;
+
+    Ok(Json(RegisterConfigResponse {
+        email_code_required: config.email_code_required,
+        invite_code_required: config.invite_code_required,
+    }))
 }
 
-#[derive(Debug, Deserialize)]
-struct AdminAuthRequest {
-    username: Option<String>,
-    password: Option<String>,
-    role_id: Option<u64>,
+async fn get_login_config(State(state): State<AppState>) -> AppResult<Json<LoginConfigResponse>> {
+    let config = load_login_config(&mysql_pool(&state)?).await?;
+
+    Ok(Json(LoginConfigResponse {
+        username_login_enabled: config.username_login_enabled,
+    }))
 }
 
-#[derive(Debug, Deserialize)]
-struct AgentAuthRequest {
-    username: Option<String>,
-    password: Option<String>,
+async fn send_register_email_code(
+    State(state): State<AppState>,
+    Json(request): Json<RegisterEmailCodeRequest>,
+) -> AppResult<Json<RegisterEmailCodeResponse>> {
+    let pool = mysql_pool(&state)?;
+    let expires_at = send_registration_email_code(&state, &pool, request.email).await?;
+
+    Ok(Json(RegisterEmailCodeResponse {
+        sent: true,
+        expires_in_seconds: (expires_at - Utc::now()).num_seconds().max(0),
+    }))
 }
 
-#[derive(Debug, Deserialize)]
-struct RefreshRequest {
-    refresh_token: Option<String>,
+async fn send_password_reset_code(
+    State(state): State<AppState>,
+    Json(request): Json<PasswordResetCodeRequest>,
+) -> AppResult<Json<PasswordResetCodeResponse>> {
+    let pool = mysql_pool(&state)?;
+    let expires_at = send_password_reset_email_code(&state, &pool, request.email).await?;
+
+    Ok(Json(PasswordResetCodeResponse {
+        sent: true,
+        expires_in_seconds: (expires_at - Utc::now()).num_seconds().max(0),
+    }))
 }
 
-#[derive(Debug, Serialize)]
-struct TokenResponse {
-    access_token: String,
-    refresh_token: String,
-    token_type: &'static str,
-    scope: TokenScope,
+async fn reset_password(
+    State(state): State<AppState>,
+    Json(request): Json<PasswordResetRequest>,
+) -> AppResult<Json<PasswordResetResponse>> {
+    let pool = mysql_pool(&state)?;
+    reset_password_with_email_code(&state, &pool, request.email, request.code, request.password)
+        .await?;
+
+    Ok(Json(PasswordResetResponse {
+        reset: true,
+        requires_relogin: true,
+    }))
 }
 
 async fn user_register(
     State(state): State<AppState>,
     Json(request): Json<UserAuthRequest>,
 ) -> AppResult<Json<TokenResponse>> {
-    let tokens = auth_service(&state)?
-        .register_user(UserCredentials {
-            email: request.email,
-            phone: request.phone,
-            password: request.password,
-        })
-        .await?;
+    let pool = mysql_pool(&state)?;
+    let tokens = register_user_with_email_code_response(&state, &pool, request).await?;
 
-    Ok(Json(tokens.into()))
+    Ok(Json(tokens))
 }
 
 async fn user_login(
     State(state): State<AppState>,
     Json(request): Json<UserAuthRequest>,
-) -> AppResult<Json<TokenResponse>> {
-    let tokens = auth_service(&state)?
-        .login_user(UserCredentials {
-            email: request.email,
-            phone: request.phone,
-            password: request.password,
-        })
-        .await?;
-
-    Ok(Json(tokens.into()))
+) -> AppResult<Json<UserLoginResponse>> {
+    let pool = mysql_pool(&state)?;
+    Ok(Json(
+        login_user_with_optional_two_factor_response(&state, &pool, request).await?,
+    ))
 }
 
 async fn user_refresh(
     State(state): State<AppState>,
     Json(request): Json<RefreshRequest>,
 ) -> AppResult<Json<TokenResponse>> {
-    refresh(&state, request.refresh_token, TokenScope::User).await
+    let tokens = refresh_actor_tokens(&state, request.refresh_token, TokenScope::User).await?;
+
+    Ok(Json(tokens.into()))
+}
+
+async fn user_login_two_factor(
+    State(state): State<AppState>,
+    Json(request): Json<LoginTwoFactorRequest>,
+) -> AppResult<Json<TokenResponse>> {
+    let pool = mysql_pool(&state)?;
+    let tokens = verify_login_two_factor_and_issue_tokens(
+        &state,
+        &pool,
+        request.challenge_id,
+        request.totp_code,
+    )
+    .await?;
+
+    Ok(Json(tokens.into()))
+}
+
+async fn send_login_two_factor_reset_code(
+    State(state): State<AppState>,
+    Json(request): Json<LoginTwoFactorResetCodeRequest>,
+) -> AppResult<Json<LoginTwoFactorCodeResponse>> {
+    let pool = mysql_pool(&state)?;
+    let expires_at =
+        send_login_two_factor_reset_email_code(&state, &pool, request.challenge_id).await?;
+
+    Ok(Json(LoginTwoFactorCodeResponse {
+        sent: true,
+        expires_in_seconds: (expires_at - Utc::now()).num_seconds().max(0),
+    }))
+}
+
+async fn reset_login_two_factor(
+    State(state): State<AppState>,
+    Json(request): Json<LoginTwoFactorResetRequest>,
+) -> AppResult<Json<LoginTwoFactorResetResponse>> {
+    let pool = mysql_pool(&state)?;
+    reset_login_two_factor_with_email_code(&pool, request.challenge_id, request.code).await?;
+
+    Ok(Json(LoginTwoFactorResetResponse {
+        reset: true,
+        requires_relogin: true,
+    }))
 }
 
 async fn admin_register(
     State(state): State<AppState>,
     Json(request): Json<AdminAuthRequest>,
 ) -> AppResult<Json<TokenResponse>> {
-    let tokens = auth_service(&state)?
-        .register_admin(AdminRegistration {
+    let tokens = register_admin_actor(
+        &state,
+        AdminRegistration {
             username: request.username,
             password: request.password,
             role_id: request.role_id,
-        })
-        .await?;
+        },
+    )
+    .await?;
 
     Ok(Json(tokens.into()))
 }
@@ -119,12 +213,14 @@ async fn admin_login(
     State(state): State<AppState>,
     Json(request): Json<AdminAuthRequest>,
 ) -> AppResult<Json<TokenResponse>> {
-    let tokens = auth_service(&state)?
-        .login_admin(AdminCredentials {
+    let tokens = login_admin_actor(
+        &state,
+        AdminCredentials {
             username: request.username,
             password: request.password,
-        })
-        .await?;
+        },
+    )
+    .await?;
 
     Ok(Json(tokens.into()))
 }
@@ -133,26 +229,32 @@ async fn admin_refresh(
     State(state): State<AppState>,
     Json(request): Json<RefreshRequest>,
 ) -> AppResult<Json<TokenResponse>> {
-    refresh(&state, request.refresh_token, TokenScope::Admin).await
+    let tokens = refresh_actor_tokens(&state, request.refresh_token, TokenScope::Admin).await?;
+
+    Ok(Json(tokens.into()))
 }
 
 async fn agent_register(
     State(_state): State<AppState>,
     Json(_request): Json<AgentAuthRequest>,
 ) -> AppResult<Json<TokenResponse>> {
-    Err(AppError::Forbidden)
+    let tokens = reject_agent_registration()?;
+
+    Ok(Json(tokens.into()))
 }
 
 async fn agent_login(
     State(state): State<AppState>,
     Json(request): Json<AgentAuthRequest>,
 ) -> AppResult<Json<TokenResponse>> {
-    let tokens = auth_service(&state)?
-        .login_agent(AgentCredentials {
+    let tokens = login_agent_actor(
+        &state,
+        AgentCredentials {
             username: request.username,
             password: request.password,
-        })
-        .await?;
+        },
+    )
+    .await?;
 
     Ok(Json(tokens.into()))
 }
@@ -161,216 +263,11 @@ async fn agent_refresh(
     State(state): State<AppState>,
     Json(request): Json<RefreshRequest>,
 ) -> AppResult<Json<TokenResponse>> {
-    refresh(&state, request.refresh_token, TokenScope::Agent).await
-}
-
-async fn refresh(
-    state: &AppState,
-    refresh_token: Option<String>,
-    expected_scope: TokenScope,
-) -> AppResult<Json<TokenResponse>> {
-    let tokens = auth_service(state)?
-        .refresh(refresh_token, expected_scope)
-        .await?;
+    let tokens = refresh_actor_tokens(&state, request.refresh_token, TokenScope::Agent).await?;
 
     Ok(Json(tokens.into()))
 }
 
-fn auth_service(state: &AppState) -> AppResult<AuthService<MySqlAuthRepository>> {
-    let pool = state.mysql.clone().ok_or_else(|| {
-        AppError::Internal("mysql pool is not configured for auth persistence".to_owned())
-    })?;
-
-    Ok(AuthService::new(
-        MySqlAuthRepository::new(pool),
-        state.settings.clone(),
-    ))
-}
-
-impl From<IssuedTokens> for TokenResponse {
-    fn from(tokens: IssuedTokens) -> Self {
-        Self {
-            access_token: tokens.access_token,
-            refresh_token: tokens.refresh_token,
-            token_type: tokens.token_type,
-            scope: tokens.scope,
-        }
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::Settings;
-    use axum::{
-        body::{Body, to_bytes},
-        http::{Request, StatusCode},
-    };
-    use secrecy::SecretString;
-    use serde_json::Value;
-    use tower::ServiceExt;
-
-    fn test_state() -> AppState {
-        AppState::new(Settings {
-            app_env: "test".to_owned(),
-            app_host: "127.0.0.1".parse().unwrap(),
-            app_port: 0,
-            database_url: SecretString::new("mysql://test:test@localhost/test".to_owned()),
-            mongodb_uri: SecretString::new("mongodb://localhost:27017".to_owned()),
-            mongodb_database: "exchange_test".to_owned(),
-            redis_url: SecretString::new("redis://localhost:6379".to_owned()),
-            rabbitmq_url: SecretString::new("amqp://guest:guest@localhost:5672/%2f".to_owned()),
-            jwt_secret: SecretString::new("test-secret".to_owned()),
-            credential_encryption_key: Some(SecretString::new(
-                "0123456789abcdef0123456789abcdef".to_owned(),
-            )),
-            jwt_access_ttl_seconds: 900,
-            jwt_refresh_ttl_seconds: 2_592_000,
-            bitget_rest_base_url: "https://bitget.test".to_owned(),
-            bitget_ws_url: "wss://bitget.test/ws".to_owned(),
-            htx_rest_base_url: "https://htx.test".to_owned(),
-            htx_ws_url: "wss://htx.test/ws".to_owned(),
-            market_feed_symbols: Vec::new(),
-            market_feed_intervals: Vec::new(),
-            market_feed_providers: Vec::new(),
-            market_feed_reconnect_seconds: 5,
-            market_feed_rest_fallback_timeout_seconds: 3,
-            event_inbox_retry_scan_seconds: 10,
-            event_outbox_publisher_enabled: true,
-            event_outbox_publisher_interval_seconds: 5,
-            unlock_scanner_enabled: true,
-            unlock_scanner_interval_seconds: 10,
-            unlock_scanner_batch_limit: 100,
-            kline_recovery_enabled: true,
-            kline_recovery_interval_seconds: 30,
-            kline_recovery_batch_limit: 100,
-            seconds_contract_settlement_enabled: true,
-            seconds_contract_settlement_interval_seconds: 5,
-            seconds_contract_settlement_batch_limit: 100,
-            earn_auto_redemption_enabled: true,
-            earn_auto_redemption_interval_seconds: 60,
-            earn_auto_redemption_batch_limit: 100,
-            margin_liquidation_enabled: true,
-            margin_liquidation_interval_seconds: 5,
-            margin_liquidation_batch_limit: 100,
-            margin_interest_enabled: true,
-            margin_interest_interval_seconds: 60,
-            margin_interest_batch_limit: 100,
-        })
-    }
-
-    async fn request_auth_route(
-        app: Router,
-        path: &str,
-        body: &'static str,
-    ) -> (StatusCode, Value) {
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(path)
-                    .header("content-type", "application/json")
-                    .body(Body::from(body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = response.status();
-        let body = to_bytes(response.into_body(), 4096).await.unwrap();
-        let payload: Value = serde_json::from_slice(&body).unwrap();
-
-        (status, payload)
-    }
-
-    async fn assert_auth_route_requires_mysql(app: Router, path: &str, body: &'static str) {
-        let (status, payload) = request_auth_route(app, path, body).await;
-
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{path}");
-        assert_eq!(payload["code"], "INTERNAL_ERROR");
-        assert!(
-            payload["message"]
-                .as_str()
-                .unwrap()
-                .contains("mysql pool is not configured for auth persistence")
-        );
-    }
-
-    async fn assert_auth_route_forbidden(app: Router, path: &str, body: &'static str) {
-        let (status, payload) = request_auth_route(app, path, body).await;
-
-        assert_eq!(status, StatusCode::FORBIDDEN, "{path}");
-        assert_eq!(payload["code"], "FORBIDDEN");
-    }
-
-    #[tokio::test]
-    async fn user_auth_routes_return_clear_error_without_mysql() {
-        let app = user_routes().with_state(test_state());
-
-        assert_auth_route_requires_mysql(
-            app.clone(),
-            "/auth/register",
-            r#"{"email":"user@example.com","password":"password-1"}"#,
-        )
-        .await;
-        assert_auth_route_requires_mysql(
-            app.clone(),
-            "/auth/login",
-            r#"{"email":"user@example.com","password":"password-1"}"#,
-        )
-        .await;
-        assert_auth_route_requires_mysql(
-            app,
-            "/auth/refresh",
-            r#"{"refresh_token":"refresh-token-1"}"#,
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn admin_auth_routes_return_clear_error_without_mysql() {
-        let app = admin_routes().with_state(test_state());
-
-        assert_auth_route_requires_mysql(
-            app.clone(),
-            "/auth/register",
-            r#"{"username":"admin","password":"password-1"}"#,
-        )
-        .await;
-        assert_auth_route_requires_mysql(
-            app.clone(),
-            "/auth/login",
-            r#"{"username":"admin","password":"password-1"}"#,
-        )
-        .await;
-        assert_auth_route_requires_mysql(
-            app,
-            "/auth/refresh",
-            r#"{"refresh_token":"refresh-token-1"}"#,
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn agent_auth_routes_return_clear_error_without_mysql() {
-        let app = agent_routes().with_state(test_state());
-
-        assert_auth_route_forbidden(
-            app.clone(),
-            "/auth/register",
-            r#"{"username":"agent","password":"password-1"}"#,
-        )
-        .await;
-        assert_auth_route_requires_mysql(
-            app.clone(),
-            "/auth/login",
-            r#"{"username":"agent","password":"password-1"}"#,
-        )
-        .await;
-        assert_auth_route_requires_mysql(
-            app,
-            "/auth/refresh",
-            r#"{"refresh_token":"refresh-token-1"}"#,
-        )
-        .await;
-    }
-}
+#[path = "../../../tests/unit_src/src_modules_auth_routes_tests.rs"]
+mod tests;

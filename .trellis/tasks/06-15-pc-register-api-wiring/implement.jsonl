@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend scope index for route, validation, and database changes."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Registration email verification and referral binding require database changes."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "New public endpoints must return existing validation/internal error formats."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Confirm test expectations before changing auth routes."}
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared guide index required before implementation."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse existing SMTP, security policy, and invite-code patterns where possible."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Trace registration config and payload through backend, admin UI, and PC UI."}

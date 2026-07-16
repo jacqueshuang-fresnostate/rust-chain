@@ -1,0 +1,4 @@
+{"type":"spec","path":".trellis/spec/backend/quality-guidelines.md","reason":"Run focused migration and formatting checks."}
+{"type":"verification","command":"cargo test --manifest-path Cargo.toml --test country_config_migration -- --nocapture","result":"passed; 6 tests passed."}
+{"type":"verification","command":"cargo fmt --manifest-path Cargo.toml -- --check","result":"passed."}
+{"type":"verification","command":"rg -n \"[ \\\\t]+$\" migrations/0042_country_locale_config.sql migrations/0054_seed_country_codes.sql migrations/0055_country_config_local_names_and_remark.sql tests/country_config_migration.rs .trellis/tasks/06-13-migration-0042-checksum-fix/prd.md .trellis/tasks/06-13-migration-0042-checksum-fix/implement.jsonl .trellis/tasks/06-13-migration-0042-checksum-fix/check.jsonl || true","result":"passed; no trailing whitespace reported."}

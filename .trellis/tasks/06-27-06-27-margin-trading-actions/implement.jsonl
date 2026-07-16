@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"新增杠杆设置/划转持久化时遵守不可修改已执行迁移和事务规则。"}
+{"file":".trellis/spec/backend/wallet-amount-precision.md","reason":"资金划转和杠杆开仓会写钱包余额与流水，必须遵守资产精度与余额快照约定。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"功能跨后端 API、钱包、PC API、Pinia store 和组件，需要明确跨层数据契约。"}
+{"file":"docs/superpowers/PROGRESS.md","reason":"项目规则要求完成任务切片后记录完成内容、修改文件、验证结果和后续事项。"}

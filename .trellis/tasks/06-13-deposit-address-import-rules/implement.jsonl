@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"确认完成前需要运行最近相关前端测试、类型检查和 diff 检查。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"确认本次只调整前端规则选择和导入布局，不改变 batch 接口契约。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"确认复用现有导入解析和 Semi Upload，不新增重复导入逻辑。"}
+{"file":".codex/skills/semi-design-guide/SKILL.md","reason":"确认继续使用 Semi 组件默认布局与现有 Upload/Select 模式。"}

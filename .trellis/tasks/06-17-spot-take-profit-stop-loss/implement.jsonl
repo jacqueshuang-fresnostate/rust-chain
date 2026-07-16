@@ -1,0 +1,11 @@
+{"file":"src/modules/spot/mod.rs","reason":"Added StopLimit order type, trigger price model fields, validation, repository persistence, and service reservation support."}
+{"file":"src/modules/spot/routes.rs","reason":"Accepted stop_limit spot orders, returned trigger_price, included trigger price in idempotency checks, and executed triggered stop-limit orders from market feed price updates."}
+{"file":"migrations/0074_spot_stop_limit_orders.sql","reason":"Added spot_orders.trigger_price and an index for stop-limit trigger scans."}
+{"file":"pc/src/api/backendAdapters.ts","reason":"Mapped PC STOP_LIMIT requests and backend stop_limit responses, including triggerPrice."}
+{"file":"pc/src/api/exchange.ts","reason":"Exposed triggerPrice in PC spot order request params."}
+{"file":"pc/src/components/trade/OrderForm.vue","reason":"Added stop-limit tab, trigger price input, validation, and request payload wiring."}
+{"file":"pc/src/components/trade/OrderHistory.vue","reason":"Displayed stop-limit trigger price in open/history order tables and cancel confirmation."}
+{"file":"pc/src/i18n/index.ts","reason":"Added stop-limit order type and trigger price validation translations."}
+{"file":"tests/spot_domain.rs","reason":"Covered stop-limit domain construction."}
+{"file":"pc/tests/backendAdapters.test.ts","reason":"Covered stop-limit request/response adapter mapping."}
+{"file":".trellis/spec/backend/spot-orders.md","reason":"Documented stop-limit API, reservation, trigger, and test contracts."}

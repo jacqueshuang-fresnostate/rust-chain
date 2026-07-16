@@ -40,6 +40,8 @@ async fn redis_quote_ttl_cache_stores_expected_json_shape() -> Result<(), Box<dy
         to_asset: "12".to_owned(),
         from_amount: decimal("25.500000000000000000"),
         to_amount: decimal("51.000000000000000000"),
+        fee_rate: decimal("0.00000000"),
+        fee_amount: decimal("0.000000000000000000"),
         expires_at: chrono::DateTime::from_timestamp_millis(expires_at.timestamp_millis()).unwrap(),
         redis_key: redis_key.clone(),
         ttl_seconds: 30,
@@ -131,6 +133,8 @@ async fn mysql_convert_order_insert_is_idempotent_by_quote_id() -> Result<(), Bo
             to_amount: decimal("51.000000000000000000"),
             rate: decimal("2.000000000000000000"),
             spread_rate: decimal("0.00000000"),
+            fee_rate: decimal("0.00000000"),
+            fee_amount: decimal("0.000000000000000000"),
             expires_at: Utc::now() + TimeDelta::seconds(60),
         })
         .await

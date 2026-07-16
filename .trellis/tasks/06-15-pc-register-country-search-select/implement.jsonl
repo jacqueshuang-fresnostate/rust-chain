@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "General guide index for scoped frontend UI control changes."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse existing country API and registration form state instead of changing contracts."}

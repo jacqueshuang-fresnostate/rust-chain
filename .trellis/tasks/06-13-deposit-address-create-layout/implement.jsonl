@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/directory-structure.md","reason":"确认本次后台管理前端改动的目录边界，避免影响无关模块。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"确认实现后需要运行最贴近改动的测试、类型检查和 diff 检查。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"确认本次只调整创建 SideSheet 展示结构，不改变充值地址池接口契约。"}
+{"file":".codex/skills/semi-design-guide/SKILL.md","reason":"确认 Semi UI 组件查询流程，并通过 Semi MCP 查阅 Grid/Card 组件用法。"}

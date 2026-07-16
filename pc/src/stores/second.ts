@@ -29,6 +29,8 @@ export interface Ticker {
 
 export interface SecondCycle {
     id: number
+    productId: number
+    symbol: string
     cycleLength: number   // duration in seconds
     cycleRate: number     // payout rate, e.g. 0.85
     minAmount: number
@@ -81,29 +83,62 @@ export const useSecondStore = defineStore('second', () => {
             close: Number(t.close) || 0,
             volume: Number(t.volume) || 0,
             turnover: Number(t.turnover) || 0,
-            icon: t.icon || '',
+            icon: typeof t.icon === 'string' ? t.icon : '',
             time: t.time || 0,
             chg: t.open ? ((Number(t.close) - Number(t.open)) / Number(t.open) * 100) : 0,
             zone: t.zone || 0
         }))
     }
 
+    function compactTickerSymbol(symbol: string) {
+        return symbol.replace(/[-_/]/g, '').toUpperCase()
+    }
+
+    function displayTickerSymbol(symbol: string) {
+        const normalized = compactTickerSymbol(symbol)
+        const quote = ['USDT', 'USDC', 'USD', 'BTC', 'ETH'].find(q => normalized.endsWith(q) && normalized.length > q.length)
+        if (quote) return `${normalized.slice(0, -quote.length)}/${quote}`
+        return symbol.replace(/[-_]/g, '/')
+    }
+
+    function firstFiniteNumber(values: unknown[], fallback: number) {
+        for (const value of values) {
+            if (value === null || value === undefined || value === '') continue
+            const number = Number(value)
+            if (Number.isFinite(number)) return number
+        }
+        return fallback
+    }
+
     function updateTicker(ticker: any) {
-        const index = tickers.value.findIndex(t => t.symbol === ticker.symbol)
-        const open = Number(ticker.open) || 0
-        const close = Number(ticker.close ?? ticker.last ?? ticker.price) || 0
+        const rawSymbol = String(ticker.symbol ?? ticker.pair_id ?? ticker.pair ?? ticker.market ?? ticker.instId ?? '')
+        if (!rawSymbol) return
+
+        const normalized = compactTickerSymbol(rawSymbol)
+        const index = tickers.value.findIndex(t => compactTickerSymbol(t.symbol) === normalized)
+        const current = index >= 0 ? tickers.value[index] : undefined
+        const close = firstFiniteNumber([ticker.close, ticker.last, ticker.price, ticker.last_price], current?.close ?? 0)
+        const open = firstFiniteNumber([ticker.open, ticker.open_24h], current?.open ?? close)
+        const highFallback = current ? Math.max(current.high || close, close) : close
+        const lowFallback = current?.low ? Math.min(current.low, close) : close
+        const high = firstFiniteNumber([ticker.high, ticker.high_24h], highFallback)
+        const low = firstFiniteNumber([ticker.low, ticker.low_24h], lowFallback)
+        const volume = firstFiniteNumber([ticker.volume, ticker.vol, ticker.volume_24h], current?.volume ?? 0)
         const updated: Ticker = {
-            symbol: ticker.symbol,
-            open:ticker.open,
-            close:ticker.close,
-            high: Number(ticker.high) || 0,
-            low: Number(ticker.low) || 0,
-            volume: Number(ticker.volume ?? ticker.vol) || 0,
-            turnover: Number(ticker.turnover) || 0,
-            icon: ticker.icon || '',
-            time: ticker.time || 0,
-            chg: open ? ((close - open) / open * 100) : 0,
-            zone: ticker.zone || 0
+            symbol: current?.symbol || displayTickerSymbol(rawSymbol),
+            open,
+            close,
+            high,
+            low,
+            volume,
+            turnover: firstFiniteNumber([ticker.turnover], current?.turnover ?? close * volume),
+            icon: ticker.icon || current?.icon || '',
+            time: firstFiniteNumber([ticker.time, ticker.observed_at], current?.time ?? 0),
+            chg: firstFiniteNumber(
+                [ticker.chg, ticker.change, ticker.price_change_percent_24h],
+                open ? ((close - open) / open * 100) : (current?.chg ?? 0)
+            ),
+            zone: firstFiniteNumber([ticker.zone], current?.zone ?? 0)
         }
         if (index >= 0) {
             tickers.value[index] = updated
@@ -113,7 +148,8 @@ export const useSecondStore = defineStore('second', () => {
     }
 
     function getTickerBySymbol(symbol: string) {
-        return tickers.value.find(t => t.symbol === symbol)
+        const normalized = compactTickerSymbol(symbol)
+        return tickers.value.find(t => compactTickerSymbol(t.symbol) === normalized)
     }
 
     // ========== Cycles ==========
@@ -125,6 +161,8 @@ export const useSecondStore = defineStore('second', () => {
             const list = body?.data || (Array.isArray(body) ? body : [])
             cycles.value = list.map((c: any) => ({
                 id: c.id,
+                productId: Number(c.productId ?? c.product_id ?? c.id) || 0,
+                symbol: c.symbol || '',
                 cycleLength: Number(c.cycleLength) || 0,
                 cycleRate: Number(c.cycleRate) || 0,
                 minAmount: Number(c.minAmount) || 0,

@@ -1,0 +1,5 @@
+{"type":"spec","path":".trellis/spec/backend/quality-guidelines.md","reason":"Run focused migration tests and formatting checks."}
+{"type":"verification","command":"cargo test --manifest-path Cargo.toml --test country_config_migration -- --nocapture","result":"passed; 7 tests passed."}
+{"type":"verification","command":"cargo fmt --manifest-path Cargo.toml -- --check","result":"passed."}
+{"type":"verification","command":"git diff --check -- migrations/0054_seed_country_codes.sql tests/country_config_migration.rs .trellis/tasks/06-13-migration-0054-checksum-fix/prd.md .trellis/tasks/06-13-migration-0054-checksum-fix/implement.jsonl .trellis/tasks/06-13-migration-0054-checksum-fix/check.jsonl","result":"passed."}
+{"type":"verification","command":"printf 'rows=' && rg -c \"^    \\\\('[A-Z]{2}'\" migrations/0054_seed_country_codes.sql && printf 'later_comment=' && (rg -c \"Chinese remarks are added\" migrations/0054_seed_country_codes.sql || true) && printf 'remark_column=' && (rg -c \"country_name, remark\" migrations/0054_seed_country_codes.sql || true)","result":"0054 has 249 seed rows, no later explanatory comment, and no remark column dependency."}

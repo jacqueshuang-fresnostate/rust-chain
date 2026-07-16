@@ -8,7 +8,7 @@
 
     <div class="w-full max-w-md p-8 bg-card/60 backdrop-blur-xl border border-border rounded-xl shadow-2xl relative z-10">
       <div class="flex justify-center mb-6">
-          <img src="@/assets/logo/logo.png" alt="Hippo Exchange" class="w-28 h-12 object-contain drop-shadow-neon" />
+          <BrandLogo container-class="flex flex-col items-center" image-class="w-28 h-12 object-contain drop-shadow-neon" />
       </div>
       <div class="text-center mb-8">
         <h1 class="text-3xl font-black tracking-tighter text-glow mb-2">{{ t('auth.password_reset') }}</h1>
@@ -114,6 +114,7 @@ import { useRouter } from 'vue-router'
 import { resetPassword, sendResetVerifyCode } from '@/api/auth'
 import { useToast } from 'vue-toastification'
 import { useI18n } from 'vue-i18n'
+import BrandLogo from '@/components/common/BrandLogo.vue'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -147,6 +148,7 @@ const sendCode = async () => {
         startCountdown()
     } catch (e: any) {
         console.error(e)
+        toast.error(e?.response?.data?.message || e.message || t('auth.reset_code_failed'))
     } finally {
         codeLoading.value = false
     }
@@ -179,9 +181,7 @@ const handleReset = async () => {
     }
   } catch (error: any) {
     console.error(error)
-    if (!error.response) {
-         toast.error(error.message || 'Reset Error')
-    }
+    toast.error(error?.response?.data?.message || error.message || t('auth.reset_error'))
   } finally {
     loading.value = false
   }

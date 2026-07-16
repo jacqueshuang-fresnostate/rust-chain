@@ -5,25 +5,27 @@ import { formatNumber } from '@/utils/format'
 import { stompService } from '@/api/stomp'
 import { useToast } from 'vue-toastification'
 import { Icon } from '@iconify/vue'
-import TVChart from '@/components/chart/TVChart.vue'
+import MarketChart from '@/components/chart/MarketChart.vue'
+import AuthRequiredState from '@/components/common/AuthRequiredState.vue'
+import PairLogo from '@/components/common/PairLogo.vue'
 import numeral from 'numeral'
 import { useSecondStore, type SecondOrder } from '@/stores/second'
+import { useSettingStore } from '@/stores/setting'
+import { useI18n } from 'vue-i18n'
+import { useAuthRequired } from '@/composables/useAuthRequired'
 
 const toast = useToast()
 const route = useRoute()
 const router = useRouter()
 const store = useSecondStore()
+const settingStore = useSettingStore()
+const { t } = useI18n()
+const { isLoggedIn, goToLogin } = useAuthRequired()
 
 const symbol = ref(route.params.symbol ? (route.params.symbol as string).replace('_', '/') : 'BTC/USDT')
 const amount = ref<number>(100)
 const selectedCycleId = ref<number | null>(null)
 const loading = ref(false)
-
-// Transfer modal state
-const showTransferModal = ref(false)
-const transferDirection = ref<'SPOT_TO_SECOND' | 'SECOND_TO_SPOT'>('SPOT_TO_SECOND')
-const transferAmount = ref<number | null>(null)
-const transferring = ref(false)
 
 // Active/History tab
 const orderTab = ref<'active' | 'history'>('active')
@@ -41,9 +43,11 @@ const precision = computed(() => {
     if (val < 1) return 4
     return 2
 })
-const usdtBalance = computed(() => store.balance)
+const usdtBalance = computed(() => isLoggedIn.value ? store.balance : 0)
+const usdtBalanceText = computed(() => isLoggedIn.value ? `${formatNumber(usdtBalance.value)} USDT` : '--')
 
 const selectedCycle = computed(() => store.cycles.find(c => c.id === selectedCycleId.value))
+const visibleCycles = computed(() => store.cycles.filter(c => !c.symbol || c.symbol === symbol.value))
 
 const payoutRate = computed(() => {
     const cycle = selectedCycle.value
@@ -66,14 +70,74 @@ const marketList = computed(() => {
 // Countdown Logic
 const orderCountdowns = ref<Record<number, number>>({})
 let intervalId: any
+let tickerSubs: Array<{ unsubscribe: () => void }> = []
+let privateSub: { unsubscribe: () => void } | null = null
+
+const privateEventType = (msg: { body: string }) => {
+    try {
+        return String(JSON.parse(msg.body)?.type || '')
+    } catch {
+        return ''
+    }
+}
+
+const handlePrivateEvent = async (msg: { body: string }) => {
+    if (!isLoggedIn.value) return
+    const type = privateEventType(msg)
+    if (type && !type.startsWith('seconds_contract.') && !type.startsWith('wallet.')) return
+    await Promise.all([
+        store.loadBalance(),
+        store.loadCurrentOrders(symbol.value),
+        store.loadHistoryOrders(symbol.value, 0)
+    ])
+}
 
 const changeSymbol = (newSymbol: string) => {
     symbol.value = newSymbol
     router.replace({ params: { symbol: newSymbol.replace('/', '_') } })
+    selectDefaultCycleForSymbol()
     loadOrders()
 }
 
+const selectDefaultCycleForSymbol = () => {
+    const nextCycle = visibleCycles.value[0]
+    selectedCycleId.value = nextCycle?.id ?? null
+}
+
+const clearTickerSubscriptions = () => {
+    tickerSubs.forEach(sub => sub.unsubscribe())
+    tickerSubs = []
+}
+
+const subscribeSecondTickers = async () => {
+    clearTickerSubscriptions()
+    const symbols = [...new Set(store.tickers.map(ticker => ticker.symbol).filter(Boolean))]
+    tickerSubs = await Promise.all(symbols.map(symbol =>
+        stompService.subscribe('seconds', `seconds:ticker:${symbol}`, (msg) => {
+            try {
+                store.updateTicker(JSON.parse(msg.body))
+            } catch (e) {
+                console.error('Failed to parse seconds ticker', e)
+            }
+        }),
+    ))
+}
+
+const syncSymbolWithSecondsProducts = () => {
+    if (store.tickers.length === 0) return
+    const exists = store.tickers.some(ticker => ticker.symbol === symbol.value)
+    if (exists) return
+
+    symbol.value = store.tickers[0].symbol
+    router.replace({ params: { symbol: symbol.value.replace('/', '_') } })
+}
+
 const loadOrders = async () => {
+    if (!isLoggedIn.value) {
+        store.currentOrders = []
+        store.historyOrders = []
+        return
+    }
     if (orderTab.value === 'active') {
         await store.loadCurrentOrders(symbol.value)
     } else {
@@ -92,22 +156,26 @@ const handleHistoryScroll = async (e: Event) => {
 }
 
 const handleOrder = async (direction: 0 | 1) => {
+    if (!isLoggedIn.value) {
+        goToLogin()
+        return
+    }
     if (!selectedCycleId.value) {
-        toast.error('请选择周期')
+        toast.error(t('seconds.select_cycle_error'))
         return
     }
     if (!amount.value || amount.value <= 0) {
-        toast.error('请输入有效金额')
+        toast.error(t('seconds.invalid_amount'))
         return
     }
     const cycle = selectedCycle.value
     if (cycle) {
         if (amount.value < cycle.minAmount) {
-            toast.error(`最小金额 ${cycle.minAmount} USDT`)
+            toast.error(t('seconds.min_amount_error', { amount: cycle.minAmount }))
             return
         }
-        if (amount.value > cycle.maxAmount) {
-            toast.error(`最大金额 ${cycle.maxAmount} USDT`)
+        if (cycle.maxAmount > 0 && amount.value > cycle.maxAmount) {
+            toast.error(t('seconds.max_amount_error', { amount: cycle.maxAmount }))
             return
         }
     }
@@ -119,13 +187,15 @@ const handleOrder = async (direction: 0 | 1) => {
             coinSymbol: coinSymbol,
             direction,
             cycleId: selectedCycleId.value,
+            productId: cycle?.productId,
+            durationSeconds: cycle?.cycleLength,
             amount: amount.value
         })
-        toast.success(direction === 0 ? '看涨下单成功' : '看跌下单成功')
+        toast.success(direction === 0 ? t('seconds.call_success') : t('seconds.put_success'))
         orderTab.value = 'active'
         await loadOrders()
     } catch (e: any) {
-        toast.error(e?.response?.data?.message || e.message || '下单失败')
+        toast.error(e?.response?.data?.message || e.message || t('seconds.order_failed'))
     } finally {
         loading.value = false
     }
@@ -192,7 +262,7 @@ const tick = () => {
                     }
                 }
             } catch (e) {
-                console.error('Failed to query order result:', e)
+                console.error(t('seconds.result_query_failed'), e)
             } finally {
                 // Cooldown before retrying if it hasn't actually settled yet
                 setTimeout(() => {
@@ -209,22 +279,22 @@ const formatTime = (ts: number) => {
 }
 
 const formatCountdown = (seconds: number) => {
-    if (seconds <= 0) return '结算中...'
+    if (seconds <= 0) return t('seconds.settling')
     const m = Math.floor(seconds / 60)
     const s = seconds % 60
     return m > 0 ? `${m}:${String(s).padStart(2, '0')}` : `${s}s`
 }
 
 const getResultText = (order: SecondOrder) => {
-    if (order.status === 'ENTRUST') return '委托中'
-    if (order.status === 'OPEN') return '进行中'
-    if (order.status === 'CANCELED') return '已撤销'
+    if (order.status === 'ENTRUST') return t('seconds.status_entrust')
+    if (order.status === 'OPEN') return t('seconds.status_open')
+    if (order.status === 'CANCELED') return t('seconds.status_canceled')
 
-    if (order.result === 1 || order.result === 'WIN') return '盈利'
-    if (order.result === 2 || order.result === 'LOSE') return '亏损'
+    if (order.result === 1 || order.result === 'WIN') return t('seconds.status_win')
+    if (order.result === 2 || order.result === 'LOSE') return t('seconds.status_lose')
 
-    if (order.status === 'CLOSE') return '已完成'
-    return '待结算'
+    if (order.status === 'CLOSE') return t('seconds.status_completed')
+    return t('seconds.status_pending')
 }
 
 const getResultClass = (order: SecondOrder) => {
@@ -235,51 +305,34 @@ const getResultClass = (order: SecondOrder) => {
     return 'text-muted-foreground'
 }
 
-// Transfer
-const toggleTransferDirection = () => {
-    transferDirection.value = transferDirection.value === 'SPOT_TO_SECOND' ? 'SECOND_TO_SPOT' : 'SPOT_TO_SECOND'
-    transferAmount.value = null
-}
-
-const confirmTransfer = async () => {
-    if (!transferAmount.value || transferAmount.value <= 0) return
-    transferring.value = true
-    try {
-        await store.transfer({
-            unit: 'USDT-ERC20',
-            from: transferDirection.value === 'SPOT_TO_SECOND' ? 'SPOT' : 'SECOND',
-            to: transferDirection.value === 'SPOT_TO_SECOND' ? 'SECOND' : 'SPOT',
-            amount: transferAmount.value
-        })
-        toast.success('划转成功')
-        showTransferModal.value = false
-        transferAmount.value = null
-    } catch (e: any) {
-        toast.error(e?.response?.data?.message || e.message || '划转失败')
-    } finally {
-        transferring.value = false
-    }
-}
 const chartData = ref<any[]>([])
 
 onMounted(async () => {
-    stompService.connect('market')
+    if (!isLoggedIn.value) return
 
-    // Load tickers
-    if (store.tickers.length === 0) {
-        await store.loadTickers()
-    }
+    stompService.connect('seconds')
 
-    // Load cycles, balance, orders
+    // Load seconds products first so the pair selector cannot show normal spot markets.
     await Promise.all([
+        store.loadTickers(),
         store.loadCycles(),
-        store.loadBalance(),
-        store.loadCurrentOrders(symbol.value)
     ])
+    await subscribeSecondTickers()
+    syncSymbolWithSecondsProducts()
+    selectDefaultCycleForSymbol()
 
-    // Select first cycle by default
-    if (store.cycles.length > 0 && !selectedCycleId.value) {
-        selectedCycleId.value = store.cycles[0].id
+    if (isLoggedIn.value) {
+        await Promise.all([
+            store.loadBalance(),
+            store.loadCurrentOrders(symbol.value)
+        ])
+        privateSub = await stompService.subscribePrivate((msg) => {
+            void handlePrivateEvent(msg)
+        })
+    } else {
+        store.currentOrders = []
+        store.historyOrders = []
+        store.balance = 0
     }
 
     intervalId = setInterval(tick, 1000)
@@ -287,20 +340,25 @@ onMounted(async () => {
 
 onUnmounted(() => {
     if (intervalId) clearInterval(intervalId)
+    clearTickerSubscriptions()
+    privateSub?.unsubscribe()
 })
 </script>
 
 <template>
-  <div class="flex flex-col h-full overflow-hidden bg-background text-foreground">
+  <div v-if="!isLoggedIn" class="h-full bg-background p-4 text-foreground md:p-8">
+    <AuthRequiredState />
+  </div>
+  <div v-else class="flex flex-col h-full overflow-hidden bg-background text-foreground">
     <!-- Header: Ticker Info -->
     <div class="h-16 min-h-[4rem] border-b border-border flex items-center px-4 bg-card justify-between z-10 shrink-0">
       <div class="flex items-center space-x-6 overflow-x-auto no-scrollbar w-full">
           <div class="flex items-center shrink-0">
              <h1 class="text-xl font-bold font-mono tracking-tight mr-2 flex items-center gap-2">
-               <Icon icon="mdi:lightning-bolt" class="text-primary text-2xl" />
+               <PairLogo class="h-8 w-8" :symbol="symbol" :src="currentTicker?.icon" />
                {{ symbol }}
              </h1>
-             <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">秒合约</span>
+             <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">{{ t('seconds.badge') }}</span>
           </div>
           <div class="h-8 w-px bg-border mx-2 shrink-0"></div>
           <div class="flex items-center space-x-3 shrink-0">
@@ -310,18 +368,18 @@ onUnmounted(() => {
               <span class="text-sm text-muted-foreground font-medium">≈ ${{ formatNumber(currentPrice, 'price') }}</span>
           </div>
              <div class="flex flex-col shrink-0">
-                 <span class="text-xs text-muted-foreground">24h Change</span>
+                 <span class="text-xs text-muted-foreground">24h {{ t('market.change') }}</span>
 
                  <span :class="['text-sm font-bold font-mono', (currentTicker?.chg||0) >= 0 ? 'text-up' : 'text-down']">
                     {{ (currentTicker?.chg||0 ) >= 0 ? '+' : '' }}{{ numeral(currentTicker?.chg||0).format("0.00")  }}%
                  </span>
              </div>
              <div class="flex flex-col shrink-0">
-                 <span class="text-xs text-muted-foreground">24h High</span>
+                 <span class="text-xs text-muted-foreground">24h {{ t('market.high') }}</span>
                  <span class="text-sm font-bold font-mono">{{ formatNumber(currentTicker?.high || 0, 'price') }}</span>
              </div>
              <div class="flex flex-col shrink-0">
-                 <span class="text-xs text-muted-foreground">24h Low</span>
+                 <span class="text-xs text-muted-foreground">24h {{ t('market.low') }}</span>
                  <span class="text-sm font-bold font-mono">{{ formatNumber(currentTicker?.low || 0, 'price') }}</span>
              </div>
          </div>
@@ -337,16 +395,16 @@ onUnmounted(() => {
                     <input
                         v-model="filterText"
                         type="text"
-                        placeholder="Search Symbol"
+                        :placeholder="t('seconds.search_symbol')"
                         class="w-full bg-muted/20 border border-border rounded h-9 pl-9 pr-3 text-xs focus:outline-none focus:border-primary transition-colors"
                     />
                 </div>
             </div>
             <!-- Header -->
             <div class="flex items-center px-3 py-2 text-xs text-muted-foreground border-b border-border/50">
-                <div class="flex-1">Symbol</div>
-                <div class="w-20 text-right">Price</div>
-                <div class="w-16 text-right">Change</div>
+                <div class="flex-1">{{ t('seconds.symbol') }}</div>
+                <div class="w-20 text-right">{{ t('seconds.price') }}</div>
+                <div class="w-16 text-right">{{ t('seconds.change') }}</div>
             </div>
             <!-- List -->
             <div class="flex-1 overflow-y-auto no-scrollbar">
@@ -357,8 +415,11 @@ onUnmounted(() => {
                     class="flex items-center px-3 py-2.5 cursor-pointer hover:bg-muted/30 transition-colors border-b border-border/20 last:border-0 group"
                     :class="{'bg-primary/5': ticker.symbol === symbol}"
                 >
-                    <div class="flex-1 font-mono text-sm font-bold group-hover:text-primary transition-colors" :class="ticker.symbol === symbol ? 'text-primary' : ''">
-                        {{ ticker.symbol.split('/')[0] }}<span class="text-xs font-normal text-muted-foreground">/{{ ticker.symbol.split('/')[1] }}</span>
+                    <div class="flex min-w-0 flex-1 items-center gap-2" :class="ticker.symbol === symbol ? 'text-primary' : ''">
+                        <PairLogo class="h-7 w-7" :symbol="ticker.symbol" :src="ticker.icon" />
+                        <div class="truncate font-mono text-sm font-bold group-hover:text-primary transition-colors">
+                            {{ ticker.symbol.split('/')[0] }}<span class="text-xs font-normal text-muted-foreground">/{{ ticker.symbol.split('/')[1] }}</span>
+                        </div>
                     </div>
                     <div class="w-20 text-right font-mono text-sm" :class="ticker.chg >= 0 ? 'text-up' : 'text-down'">
                         {{ formatNumber(ticker.close, 'price') }}
@@ -371,7 +432,7 @@ onUnmounted(() => {
                     </div>
                 </div>
                 <div v-if="marketList.length === 0" class="p-8 text-center text-muted-foreground text-xs">
-                    No symbols found
+                    {{ t('seconds.no_symbols') }}
                 </div>
             </div>
         </div>
@@ -382,10 +443,10 @@ onUnmounted(() => {
              <div class="flex-1 border-b border-border relative flex flex-col min-h-[320px]">
                  <!-- Chart Toolbar -->
                  <div class="h-10 border-b border-border bg-card flex items-center px-4 gap-4 overflow-x-auto no-scrollbar shrink-0">
-                    <span class="text-sm font-bold text-primary border-b-2 border-primary h-full flex items-center px-2 whitespace-nowrap">Original</span>
-                    <span class="text-sm font-medium text-muted-foreground hover:text-foreground cursor-pointer whitespace-nowrap">TradingView</span>
+                    <span :class="settingStore.chartProvider === 'klinecharts' ? 'text-sm font-bold text-primary border-b-2 border-primary h-full flex items-center px-2 whitespace-nowrap' : 'text-sm font-medium text-muted-foreground h-full flex items-center px-2 whitespace-nowrap'">{{ t('trade.original') }}</span>
+                    <span :class="settingStore.chartProvider === 'tradingview' ? 'text-sm font-bold text-primary border-b-2 border-primary h-full flex items-center px-2 whitespace-nowrap' : 'text-sm font-medium text-muted-foreground h-full flex items-center px-2 whitespace-nowrap'">{{ t('trade.tradingview') }}</span>
                  </div>
-                <TVChart v-if="symbol" :dataList="chartData" :symbol="symbol" :precision="precision" module="market" period="1m" class="flex-1" :key="`${symbol}-${precision}`" />
+                <MarketChart v-if="symbol" :dataList="chartData" :symbol="symbol" :precision="precision" module="seconds" period="1m" class="flex-1" :key="`${symbol}-${precision}`" />
              </div>
 
              <!-- Active Orders & History -->
@@ -393,32 +454,34 @@ onUnmounted(() => {
                 <div class="flex border-b border-border">
                     <button @click="orderTab = 'active'; loadOrders()"
                       :class="['px-4 py-2 text-sm font-bold border-b-2 transition-colors', orderTab === 'active' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground']">
-                      当前持仓
+                      {{ t('seconds.active_positions') }}
                     </button>
                     <button @click="orderTab = 'history'; loadOrders()"
                       :class="['px-4 py-2 text-sm font-bold border-b-2 transition-colors', orderTab === 'history' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground']">
-                      历史记录
+                      {{ t('seconds.history_records') }}
                     </button>
                 </div>
 
+                <AuthRequiredState v-if="!isLoggedIn" compact class="m-4" />
+
                 <!-- Active Orders -->
-                <div v-if="orderTab === 'active'" class="flex-1 overflow-auto p-0">
+                <div v-else-if="orderTab === 'active'" class="flex-1 overflow-auto p-0">
                      <table class="w-full text-xs text-left">
                         <thead class="bg-muted/20 text-muted-foreground sticky top-0">
                             <tr>
-                                <th class="px-4 py-2">方向</th>
-                                <th class="px-4 py-2 text-right">金额</th>
-                                <th class="px-4 py-2 text-right">开仓价</th>
-                                <th class="px-4 py-2 text-right">当前价</th>
-                                <th class="px-4 py-2 text-right">收益率</th>
-                                <th class="px-4 py-2 text-center">倒计时</th>
+                                <th class="px-4 py-2">{{ t('seconds.direction') }}</th>
+                                <th class="px-4 py-2 text-right">{{ t('seconds.amount') }}</th>
+                                <th class="px-4 py-2 text-right">{{ t('seconds.open_price') }}</th>
+                                <th class="px-4 py-2 text-right">{{ t('seconds.current_price') }}</th>
+                                <th class="px-4 py-2 text-right">{{ t('seconds.yield_rate') }}</th>
+                                <th class="px-4 py-2 text-center">{{ t('seconds.countdown') }}</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-border/50">
                             <tr v-for="order in store.currentOrders" :key="order.id" class="hover:bg-muted/10">
                                 <td class="px-4 py-2">
                                     <span :class="order.direction === 'BUY' ? 'text-up' : 'text-down'" class="font-bold">
-                                        {{ order.direction === 'BUY' ? '看涨' : '看跌' }}
+                                        {{ order.direction === 'BUY' ? t('seconds.call') : t('seconds.put') }}
                                     </span>
                                 </td>
 <!--                                {{JSON.stringify(order)}}-->
@@ -440,7 +503,7 @@ onUnmounted(() => {
                                 </td>
                             </tr>
                              <tr v-if="store.currentOrders.length === 0">
-                                <td colspan="6" class="text-center py-12 text-muted-foreground">暂无持仓</td>
+                                <td colspan="6" class="text-center py-12 text-muted-foreground">{{ t('seconds.no_positions') }}</td>
                             </tr>
                         </tbody>
                     </table>
@@ -451,13 +514,13 @@ onUnmounted(() => {
                      <table class="w-full text-xs text-left">
                         <thead class="bg-muted/20 text-muted-foreground sticky top-0 z-10">
                             <tr>
-                                <th class="px-4 py-2">时间</th>
-                                <th class="px-4 py-2">方向</th>
-                                <th class="px-4 py-2 text-right">金额</th>
-                                <th class="px-4 py-2 text-right">开仓价</th>
-                                <th class="px-4 py-2 text-right">收盘价</th>
-                                <th class="px-4 py-2 text-right">盈亏</th>
-                                <th class="px-4 py-2 text-center">结果</th>
+                                <th class="px-4 py-2">{{ t('trade.time') }}</th>
+                                <th class="px-4 py-2">{{ t('seconds.direction') }}</th>
+                                <th class="px-4 py-2 text-right">{{ t('seconds.amount') }}</th>
+                                <th class="px-4 py-2 text-right">{{ t('seconds.open_price') }}</th>
+                                <th class="px-4 py-2 text-right">{{ t('seconds.close_price') }}</th>
+                                <th class="px-4 py-2 text-right">{{ t('seconds.pnl') }}</th>
+                                <th class="px-4 py-2 text-center">{{ t('seconds.result') }}</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-border/50">
@@ -465,7 +528,7 @@ onUnmounted(() => {
                                 <td class="px-4 py-2 text-muted-foreground">{{ formatTime(order.createTime) }}</td>
                                 <td class="px-4 py-2">
                                     <span :class="order.direction === 'BUY' ? 'text-up' : 'text-down'" class="font-bold">
-                                        {{ order.direction === 'BUY' ? '看涨' : '看跌' }}
+                                        {{ order.direction === 'BUY' ? t('seconds.call') : t('seconds.put') }}
                                     </span>
                                 </td>
                                 <td class="px-4 py-2 text-right font-mono">{{ order.betAmount }}</td>
@@ -481,7 +544,7 @@ onUnmounted(() => {
                                 </td>
                             </tr>
                              <tr v-if="store.historyOrders.length === 0 && !store.loadingHistory">
-                                <td colspan="7" class="text-center py-12 text-muted-foreground">暂无记录</td>
+                                <td colspan="7" class="text-center py-12 text-muted-foreground">{{ t('seconds.no_records') }}</td>
                             </tr>
                         </tbody>
                     </table>
@@ -489,10 +552,10 @@ onUnmounted(() => {
                     <!-- Pagination Loading State -->
                     <div v-if="store.historyOrders.length > 0" class="py-4 text-center pb-8">
                         <div v-if="store.loadingHistory" class="text-xs flex items-center justify-center gap-2 text-muted-foreground">
-                            <Icon icon="mdi:loading" class="animate-spin text-primary" /> 加载中...
+                            <Icon icon="mdi:loading" class="animate-spin text-primary" /> {{ t('seconds.loading') }}
                         </div>
                         <div v-else-if="!store.historyHasMore" class="text-[10px] text-muted-foreground">
-                            没有更多记录了
+                            {{ t('seconds.no_more') }}
                         </div>
                     </div>
                 </div>
@@ -503,21 +566,16 @@ onUnmounted(() => {
         <div class="w-full lg:w-[320px] border-t lg:border-t-0 lg:border-l border-border flex flex-col bg-card shrink-0 order-2 lg:order-3">
              <div class="p-4 flex flex-col gap-4 flex-1">
                  <div class="flex justify-between items-center text-sm font-bold mb-2">
-                     <span>秒合约交易</span>
-                     <div class="flex items-center gap-2">
-                       <span class="text-xs font-normal text-muted-foreground">{{ formatNumber(usdtBalance) }} USDT</span>
-                       <button @click="showTransferModal = true" class="text-[10px] bg-primary/10 text-primary hover:bg-primary/20 px-1.5 py-0.5 rounded transition-colors" title="资金划转">
-                         <Icon icon="lucide:arrow-right-left" class="w-3 h-3" />
-                       </button>
-                     </div>
+                     <span>{{ t('seconds.trading') }}</span>
+                     <span class="text-xs font-normal text-muted-foreground">{{ usdtBalanceText }}</span>
                  </div>
 
                  <!-- Cycle Selection -->
                  <div>
-                   <label class="text-xs text-muted-foreground block mb-2">选择周期</label>
+                   <label class="text-xs text-muted-foreground block mb-2">{{ t('seconds.select_cycle') }}</label>
                    <div class="grid grid-cols-3 gap-2">
                      <button
-                       v-for="cycle in store.cycles"
+                       v-for="cycle in visibleCycles"
                        :key="cycle.id"
                        @click="selectedCycleId = cycle.id"
                        :class="selectedCycleId === cycle.id
@@ -533,7 +591,7 @@ onUnmounted(() => {
 
                  <!-- Amount -->
                  <div>
-                   <label class="text-xs text-muted-foreground block mb-2">参与金额 (USDT)</label>
+                   <label class="text-xs text-muted-foreground block mb-2">{{ t('seconds.stake_amount') }}</label>
                    <div class="flex items-center bg-background border border-input rounded px-3 h-10 focus-within:border-primary transition-colors">
                      <input v-model="amount" type="number" class="bg-transparent w-full outline-none font-bold font-mono" placeholder="0.00" />
                      <span class="text-xs text-muted-foreground ml-2">USDT</span>
@@ -542,19 +600,21 @@ onUnmounted(() => {
                      <button @click="amount = 10" class="py-1 text-[10px] bg-muted hover:bg-muted/80 rounded transition-colors border border-transparent hover:border-border">10</button>
                      <button @click="amount = 50" class="py-1 text-[10px] bg-muted hover:bg-muted/80 rounded transition-colors border border-transparent hover:border-border">50</button>
                      <button @click="amount = 100" class="py-1 text-[10px] bg-muted hover:bg-muted/80 rounded transition-colors border border-transparent hover:border-border">100</button>
-                     <button @click="amount = usdtBalance" class="py-1 text-[10px] bg-muted hover:bg-muted/80 rounded transition-colors border border-transparent hover:border-border">全部</button>
+                     <button @click="amount = usdtBalance" class="py-1 text-[10px] bg-muted hover:bg-muted/80 rounded transition-colors border border-transparent hover:border-border">{{ t('seconds.all') }}</button>
                    </div>
                    <!-- Min/Max hint -->
                    <div v-if="selectedCycle" class="text-[10px] text-muted-foreground mt-1">
-                     范围: {{ selectedCycle.minAmount }} - {{ selectedCycle.maxAmount }} USDT
+                     {{ t('seconds.range') }}: {{ selectedCycle.minAmount }} - {{ selectedCycle.maxAmount }} USDT
                    </div>
                  </div>
+
+                 <AuthRequiredState v-if="!isLoggedIn" compact />
 
                  <div class="mt-auto pt-6 flex flex-col gap-4">
                     <!-- Call Button -->
                     <button
                         @click="handleOrder(0)"
-                        :disabled="loading || !selectedCycleId"
+                        :disabled="loading || !selectedCycleId || !isLoggedIn"
                         class="w-full relative overflow-hidden rounded-xl border border-[#0ecb81]/30 bg-gradient-to-r from-[#0ecb81]/10 to-transparent p-[1px] transition-all hover:shadow-[0_4px_20px_rgba(14,203,129,0.2)] hover:-translate-y-0.5 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed group"
                     >
                         <div class="bg-card w-full h-full rounded-xl py-4 px-6 flex items-center justify-between group-hover:bg-[#0ecb81]/5 transition-colors">
@@ -563,12 +623,12 @@ onUnmounted(() => {
                                      <Icon icon="mdi:trending-up" class="w-6 h-6" />
                                  </div>
                                  <div class="flex flex-col items-start leading-none">
-                                     <span class="text-foreground font-bold text-lg">买入看涨</span>
-                                     <span class="text-xs text-muted-foreground mt-1 tracking-wide uppercase">Call</span>
+                                     <span class="text-foreground font-bold text-lg">{{ t('seconds.buy_call') }}</span>
+                                     <span class="text-xs text-muted-foreground mt-1 tracking-wide uppercase">{{ t('seconds.call') }}</span>
                                  </div>
                              </div>
                              <div class="flex flex-col items-end leading-none">
-                                 <span class="text-[10px] text-muted-foreground mb-1">预期收益</span>
+                                 <span class="text-[10px] text-muted-foreground mb-1">{{ t('seconds.expected_return') }}</span>
                                  <span class="text-lg font-black font-mono text-[#0ecb81]">{{ payoutPercent }}%</span>
                              </div>
                         </div>
@@ -577,7 +637,7 @@ onUnmounted(() => {
                     <!-- Put Button -->
                     <button
                         @click="handleOrder(1)"
-                        :disabled="loading || !selectedCycleId"
+                        :disabled="loading || !selectedCycleId || !isLoggedIn"
                         class="w-full relative overflow-hidden rounded-xl border border-[#f6465d]/30 bg-gradient-to-r from-[#f6465d]/10 to-transparent p-[1px] transition-all hover:shadow-[0_4px_20px_rgba(246,70,93,0.2)] hover:-translate-y-0.5 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed group"
                     >
                         <div class="bg-card w-full h-full rounded-xl py-4 px-6 flex items-center justify-between group-hover:bg-[#f6465d]/5 transition-colors">
@@ -586,12 +646,12 @@ onUnmounted(() => {
                                      <Icon icon="mdi:trending-down" class="w-6 h-6" />
                                  </div>
                                  <div class="flex flex-col items-start leading-none">
-                                     <span class="text-foreground font-bold text-lg">卖出看跌</span>
-                                     <span class="text-xs text-muted-foreground mt-1 tracking-wide uppercase">Put</span>
+                                     <span class="text-foreground font-bold text-lg">{{ t('seconds.sell_put') }}</span>
+                                     <span class="text-xs text-muted-foreground mt-1 tracking-wide uppercase">{{ t('seconds.put') }}</span>
                                  </div>
                              </div>
                              <div class="flex flex-col items-end leading-none">
-                                 <span class="text-[10px] text-muted-foreground mb-1">预期收益</span>
+                                 <span class="text-[10px] text-muted-foreground mb-1">{{ t('seconds.expected_return') }}</span>
                                  <span class="text-lg font-black font-mono text-[#f6465d]">{{ payoutPercent }}%</span>
                              </div>
                         </div>
@@ -601,38 +661,6 @@ onUnmounted(() => {
         </div>
     </div>
 
-    <!-- Transfer Modal -->
-    <div v-if="showTransferModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="showTransferModal = false">
-      <div class="bg-card border border-border rounded-lg p-6 w-80 shadow-xl">
-        <div class="flex items-center justify-between mb-4">
-          <div class="text-base font-bold">资金划转</div>
-          <button @click="showTransferModal = false" class="text-muted-foreground hover:text-foreground transition-colors text-lg leading-none">&times;</button>
-        </div>
-        <div class="flex items-center justify-between mb-4 border rounded p-2 bg-muted/20">
-            <div class="flex-1 text-center text-sm font-medium">{{ transferDirection === 'SPOT_TO_SECOND' ? '币币 (SPOT)' : '秒合约' }}</div>
-            <button @click="toggleTransferDirection" class="px-2 text-primary hover:text-primary/80 transition-colors">
-                <Icon icon="lucide:arrow-right-left" class="w-4 h-4" />
-            </button>
-            <div class="flex-1 text-center text-sm font-medium">{{ transferDirection === 'SPOT_TO_SECOND' ? '秒合约' : '币币 (SPOT)' }}</div>
-        </div>
-        <div class="mb-4">
-            <div class="flex justify-between text-xs mb-1 text-muted-foreground">
-                <span>划转数量 (USDT)</span>
-            </div>
-            <div class="flex items-center bg-background border border-input rounded px-3 h-10 focus-within:border-primary transition-colors">
-                <input v-model="transferAmount" type="number" class="bg-transparent flex-1 outline-none font-mono text-sm" placeholder="0.00" />
-                <button @click="transferAmount = transferDirection === 'SECOND_TO_SPOT' ? usdtBalance : 0" class="text-xs text-primary font-bold ml-2">全部</button>
-            </div>
-            <div class="text-xs text-muted-foreground mt-1" v-if="transferDirection === 'SECOND_TO_SPOT'">可用: {{ formatNumber(usdtBalance) }} USDT</div>
-        </div>
-        <div class="flex gap-2">
-          <button @click="showTransferModal = false" class="flex-1 py-2 text-sm border border-border rounded hover:bg-muted">取消</button>
-          <button @click="confirmTransfer" :disabled="transferring || !transferAmount || (transferAmount <= 0)" class="flex-1 py-2 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center">
-              <span v-if="transferring" class="animate-spin mr-1">⏳</span> 确认
-          </button>
-        </div>
-      </div>
-    </div>
     <!-- Settlement Result Modal -->
     <div v-if="showResultModal && resultData" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 transition-opacity" @click.self="showResultModal = false">
       <div
@@ -645,7 +673,7 @@ onUnmounted(() => {
         </div>
 
         <div class="flex items-center justify-between mb-6 relative z-10">
-          <div class="text-lg font-bold">交割记录</div>
+          <div class="text-lg font-bold">{{ t('seconds.settlement_record') }}</div>
           <button @click="showResultModal = false" class="text-muted-foreground hover:text-foreground p-1 rounded-full hover:bg-muted transition-colors">
               <Icon icon="lucide:x" class="w-5 h-5" />
           </button>
@@ -666,29 +694,29 @@ onUnmounted(() => {
 
         <div class="space-y-3 relative z-10 bg-muted/30 p-4 rounded-xl border border-border/50">
             <div class="flex justify-between text-sm">
-                <span class="text-muted-foreground">交易对</span>
+                <span class="text-muted-foreground">{{ t('seconds.pair') }}</span>
                 <span class="font-bold">{{ resultData.symbol }}</span>
             </div>
             <div class="flex justify-between text-sm">
-                <span class="text-muted-foreground">方向</span>
+                <span class="text-muted-foreground">{{ t('seconds.direction') }}</span>
                 <span class="font-bold" :class="resultData.direction === 'BUY' || resultData.direction === 0 ? 'text-[#0ecb81]' : 'text-[#f6465d]'">
-                    {{ resultData.direction === 'BUY' || resultData.direction === 0 ? '看涨 (Call)' : '看跌 (Put)' }}
+                    {{ resultData.direction === 'BUY' || resultData.direction === 0 ? t('seconds.call') : t('seconds.put') }}
                 </span>
             </div>
             <div class="flex justify-between text-sm">
-                <span class="text-muted-foreground">投入金额</span>
+                <span class="text-muted-foreground">{{ t('seconds.invested_amount') }}</span>
                 <span class="font-mono">{{ resultData.amount }} USDT</span>
             </div>
             <div class="flex justify-between text-sm">
-                <span class="text-muted-foreground">最终结果</span>
+                <span class="text-muted-foreground">{{ t('seconds.final_result') }}</span>
                 <span class="font-bold" :class="resultData.isWin ? 'text-[#0ecb81]' : resultData.isLose ? 'text-[#f6465d]' : ''">
-                    {{ resultData.isWin ? '盈利' : resultData.isLose ? '亏损' : '平' }}
+                    {{ resultData.isWin ? t('seconds.status_win') : resultData.isLose ? t('seconds.status_lose') : t('seconds.status_draw') }}
                 </span>
             </div>
         </div>
 
         <button @click="showResultModal = false" class="w-full mt-6 py-3 bg-primary text-primary-foreground font-bold rounded-xl hover:bg-primary/90 transition-colors shadow-lg shadow-primary/20 relative z-10">
-            确切完毕
+            {{ t('seconds.done') }}
         </button>
       </div>
     </div>

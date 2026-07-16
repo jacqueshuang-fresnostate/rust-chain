@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"质量门禁记录：本次已执行快速充值页面单测、前端类型检查和 diff 空白检查。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"确认未改变后端接口和 PC 充值逻辑，仅调整管理后台保存前状态表达。"}

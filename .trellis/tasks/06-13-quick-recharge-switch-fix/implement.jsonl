@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"读取项目质量规则，确认本次修复需要保持小范围改动并补充贴近验证。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"读取跨层思考规则，确认该问题优先从管理后台交互和已有接口契约定位。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"读取复用规则，保持使用现有 ConfirmAction、Semi Switch 与页面状态模式。"}

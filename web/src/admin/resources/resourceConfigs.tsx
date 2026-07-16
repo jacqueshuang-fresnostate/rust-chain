@@ -15,6 +15,7 @@ import {
   CreateConvertPairAction,
   CreateCountryAction,
   CreateDepositAddressPoolAction,
+  CreateDepositNetworkConfigAction,
   CreateEarnCategoryAction,
   CreateEarnProductAction,
   CreateLoanProductAction,
@@ -26,6 +27,7 @@ import {
   CreateSecondsPairAction,
   CreateSpotPairAction,
   DepositAddressPoolRowActions,
+  DepositNetworkConfigRowActions,
   EarnCategoryRowActions,
   EarnProductRowActions,
   EarnSubscriptionRowActions,
@@ -99,6 +101,10 @@ const depositNetworkLabels = {
   tron: 'Tron',
   btc: 'BTC',
   solana: 'Solana'
+};
+const depositNetworkConfigStatusLabels = {
+  active: '启用',
+  disabled: '停用'
 };
 const depositAddressStatusLabels = {
   available: '可用',
@@ -228,6 +234,12 @@ const depositNetworkFilter: FilterField = {
   type: 'select',
   options: Object.entries(depositNetworkLabels).map(([value, label]) => ({ label, value }))
 };
+const depositNetworkConfigStatusFilter: FilterField = {
+  key: 'status',
+  label: '状态',
+  type: 'select',
+  options: Object.entries(depositNetworkConfigStatusLabels).map(([value, label]) => ({ label, value }))
+};
 const depositAddressStatusFilter: FilterField = {
   key: 'status',
   label: '状态',
@@ -326,7 +338,18 @@ const agentCommissionStatusFilter: FilterField = {
     { label: '已拒绝', value: 'rejected' }
   ]
 };
-const agentCommissionRuleProductFilter: FilterField = { key: 'product_type', label: '产品类型', type: 'select', options: [{ label: '闪兑', value: 'convert' }] };
+const agentCommissionRuleProductFilter: FilterField = {
+  key: 'product_type',
+  label: '产品类型',
+  type: 'select',
+  options: [
+    { label: '闪兑', value: 'convert' },
+    { label: '竞猜', value: 'prediction' },
+    { label: '现货', value: 'spot' },
+    { label: '杠杆', value: 'margin' },
+    { label: '秒合约', value: 'seconds_contract' }
+  ]
+};
 const agentCommissionRuleStatusFilter: FilterField = {
   key: 'status',
   label: '状态',
@@ -398,6 +421,23 @@ function DepositAssetSymbolList({ fallback, value }: { fallback: unknown; value:
   const fallbackSymbol = typeof fallback === 'string' ? fallback.trim() : '';
 
   return <span>{symbols.length > 0 ? symbols.join(' / ') : fallbackSymbol || '任意资产'}</span>;
+}
+
+function WithdrawFeeTiersCell({ value }: { value: unknown }) {
+  const tiers = Array.isArray(value) ? value : [];
+  const labels = tiers
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const tier = item as Record<string, unknown>;
+      const minAmount = typeof tier.min_amount === 'number' || typeof tier.min_amount === 'string' ? String(tier.min_amount) : '';
+      const maxAmount = typeof tier.max_amount === 'number' || typeof tier.max_amount === 'string' ? String(tier.max_amount) : '';
+      const feeRate = typeof tier.fee_rate_percent === 'number' || typeof tier.fee_rate_percent === 'string' ? String(tier.fee_rate_percent) : '';
+      if (!minAmount || !feeRate) return null;
+      return maxAmount ? `${minAmount} - ${maxAmount}: ${feeRate}%` : `${minAmount}以上: ${feeRate}%`;
+    })
+    .filter((label): label is string => Boolean(label));
+
+  return <span>{labels.length > 0 ? labels.join(' / ') : '-'}</span>;
 }
 
 function adminNumberText(value: unknown): string {
@@ -536,6 +576,7 @@ export const resourceConfigs = {
       { key: 'min_deposit_amount', title: '最小充值数量', type: 'amount' },
       { key: 'deposit_fee', title: '充值手续费', type: 'amount' },
       { key: 'withdraw_fee', title: '提现手续费', type: 'amount' },
+      { key: 'withdraw_fee_tiers', title: '提现梯度手续费', render: (record) => <WithdrawFeeTiersCell value={record.withdraw_fee_tiers} /> },
       { key: 'created_at', title: '创建时间', type: 'timestamp' }
     ]
   },
@@ -554,16 +595,36 @@ export const resourceConfigs = {
       { key: 'updated_at', title: '更新时间', type: 'timestamp' }
     ]
   },
+  depositNetworkConfigs: {
+    title: '充值网络配置',
+    actions: ({ reload }) => <CreateDepositNetworkConfigAction onCreated={reload} />,
+    endpoint: '/admin/api/v1/deposit-network-configs',
+    responseKey: 'configs',
+    filters: [depositNetworkFilter, { key: 'address_group_code', label: '地址集合编号' }, depositNetworkConfigStatusFilter, { key: 'asset_symbol', label: '资产符号' }, limitFilter],
+    rowActions: (record, helpers) => <DepositNetworkConfigRowActions helpers={helpers} record={record} />,
+    showJsonAction: false,
+    columns: [
+      { key: 'network', title: '网络', valueMap: depositNetworkLabels },
+      { key: 'display_name', title: '显示名称' },
+      { key: 'address_group_code', title: '地址集合编号' },
+      { key: 'address_group_name', title: '地址集合名称' },
+      { key: 'asset_symbols', title: '支持充值币种', render: (record) => <DepositAssetSymbolList fallback={null} value={record.asset_symbols} /> },
+      { key: 'status', title: '状态', valueMap: depositNetworkConfigStatusLabels },
+      { key: 'sort_order', title: '排序' },
+      { key: 'updated_at', title: '更新时间', type: 'timestamp' }
+    ]
+  },
   depositAddressPool: {
     title: '充值地址池',
     actions: ({ reload }) => <CreateDepositAddressPoolAction onCreated={reload} />,
     endpoint: '/admin/api/v1/deposit-address-pool',
     responseKey: 'addresses',
-    filters: [depositNetworkFilter, depositAddressStatusFilter, { key: 'asset_symbol', label: '资产符号' }, emailFilter, { key: 'address', label: '充值地址' }, limitFilter],
+    filters: [depositNetworkFilter, { key: 'address_group_code', label: '地址集合编号' }, depositAddressStatusFilter, { key: 'asset_symbol', label: '资产符号' }, emailFilter, { key: 'address', label: '充值地址' }, limitFilter],
     rowActions: (record, helpers) => <DepositAddressPoolRowActions helpers={helpers} record={record} />,
     showJsonAction: false,
     columns: [
       { key: 'network', title: '网络', valueMap: depositNetworkLabels },
+      { key: 'address_group_code', title: '地址集合编号' },
       { key: 'address', title: '充值地址' },
       { key: 'asset_symbols', title: '限定资产', render: (record) => <DepositAssetSymbolList fallback={record.asset_symbol} value={record.asset_symbols} /> },
       { key: 'status', title: '状态', valueMap: depositAddressStatusLabels },
@@ -794,6 +855,8 @@ export const resourceConfigs = {
       { key: 'source_type', title: '来源类型' },
       { key: 'source_id', title: '来源ID' },
       { key: 'source_amount', title: '来源金额', type: 'amount' },
+      { key: 'payout_asset_id', title: '结算资产ID' },
+      { key: 'commission_rate', title: '实际差额比例', type: 'amount' },
       { key: 'commission_amount', title: '佣金金额', type: 'amount' },
       { key: 'status', title: '状态', type: 'status' },
       { key: 'created_at', title: '创建时间', type: 'timestamp' }
@@ -811,7 +874,7 @@ export const resourceConfigs = {
       { key: 'id', title: 'ID' },
       { key: 'agent_id', title: '代理ID' },
       { key: 'product_type', title: '产品类型' },
-      { key: 'commission_rate', title: '佣金比例', type: 'amount' },
+      { key: 'commission_rate', title: '累计返佣比例', type: 'amount' },
       { key: 'status', title: '状态', type: 'status' },
       { key: 'created_at', title: '创建时间', type: 'timestamp' },
       { key: 'updated_at', title: '更新时间', type: 'timestamp' }

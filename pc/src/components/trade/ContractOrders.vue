@@ -8,13 +8,14 @@
         :class="['px-4 py-2 text-sm font-medium hover:text-primary transition-colors', activeTab === t.key ? 'text-primary border-b-2 border-primary' : 'text-muted-foreground']"
         @click="activeTab = t.key"
       >
-        {{ t.label }}
+        {{ $t(t.labelKey) }}
       </button>
     </div>
 
     <!-- Content -->
     <div class="flex-1 overflow-auto p-2">
-      <div v-if="loading" class="h-full flex items-center justify-center text-muted-foreground">
+      <AuthRequiredState v-if="!isLoggedIn" compact />
+      <div v-else-if="loading" class="h-full flex items-center justify-center text-muted-foreground">
         <span class="animate-spin mr-2">⏳</span> {{ $t('common.loading') }}
       </div>
       <div v-else-if="isEmpty" class="h-full flex flex-col items-center justify-center text-muted-foreground opacity-50">
@@ -24,106 +25,88 @@
 
       <!-- Positions (当前持仓) -->
       <div v-else-if="activeTab === 'positions'">
-        <!-- Close All Button -->
-        <div v-if="positionList.length > 0" class="flex justify-end mb-2">
-          <button @click="handleCloseAll"
-            :disabled="closingAll"
-            class="text-xs px-3 py-1.5 rounded border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1">
-            <span v-if="closingAll" class="animate-spin">⏳</span>
-            一键平仓
+        <div class="mb-2 flex justify-end gap-2">
+          <button
+            type="button"
+            class="rounded border border-border px-3 py-1.5 text-xs font-bold text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-50"
+            :disabled="closing"
+            @click="cancelAllOpenOrders"
+          >
+            {{ $t('trade.cancel_all') }}
+          </button>
+          <button
+            type="button"
+            class="rounded bg-primary px-3 py-1.5 text-xs font-bold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            :disabled="closing"
+            @click="closeAllOpenPositions"
+          >
+            {{ $t('trade.close_all') }}
           </button>
         </div>
-      <table class="w-full text-xs text-left">
-        <thead>
-          <tr class="text-muted-foreground border-b border-border">
-            <th class="pb-2">合约</th>
-            <th class="pb-2 text-right">开仓均价</th>
-            <th class="pb-2 text-right">当前价格</th>
-            <th class="pb-2 text-right">持仓量</th>
-            <th class="pb-2 text-right">保证金</th>
-            <th class="pb-2 text-right">保证金率</th>
-            <th class="pb-2 text-right">未实现盈亏</th>
-            <th class="pb-2 text-right">收益率</th>
-            <th class="pb-2 text-right">{{ $t('trade.action') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="pos in positionList" :key="pos.key" class="border-b border-border/50 hover:bg-muted/50">
-            <td class="py-2.5">
-              <div class="flex items-center gap-1.5">
-                <span class="font-bold font-mono">{{ pos.symbol.split('/')[0] }}</span>
-                <span class="text-[10px] font-bold px-1 py-0.5 rounded leading-none"
-                  :class="pos.direction === 'LONG' ? 'bg-up/10 text-up' : 'bg-down/10 text-down'">
-                  {{ pos.direction === 'LONG' ? '多' : '空' }}
-                </span>
-                <span class="text-[10px] text-muted-foreground font-mono">{{ pos.leverage }}x</span>
-              </div>
-            </td>
-            <td class="py-2.5 text-right font-mono">{{ formatPrice(pos.entryPrice) }}</td>
-            <td class="py-2.5 text-right font-mono" :class="pos.currentPrice > pos.entryPrice ? 'text-up' : 'text-down'">
-              {{ formatPrice(pos.currentPrice) }}
-            </td>
-            <td class="py-2.5 text-right font-mono">{{ pos.positionAmount }}</td>
-            <td class="py-2.5 text-right font-mono">{{ numeral(pos.margin).format('0,0.00') }}</td>
-            <td class="py-2.5 text-right font-mono"
-              :class="pos.marginRate < 0.1 ? 'text-down' : pos.marginRate < 0.5 ? 'text-orange-400' : 'text-up'">
-              {{ numeral(pos.marginRate).format('0.00%') }}
-            </td>
-            <td class="py-2.5 text-right font-mono font-bold"
-              :class="pos.unrealizedPnl >= 0 ? 'text-up' : 'text-down'">
-              {{ pos.unrealizedPnl >= 0 ? '+' : '' }}{{ numeral(pos.unrealizedPnl).format('0,0.00') }}
-            </td>
-            <td class="py-2.5 text-right font-mono font-bold"
-              :class="pos.plRatio >= 0 ? 'text-up' : 'text-down'">
-              {{ pos.plRatio >= 0 ? '+' : '' }}{{ numeral(pos.plRatio).format('0.00%') }}
-            </td>
-            <td class="py-2.5 text-right">
-              <button @click="openCloseModal(pos)" class="text-xs text-primary hover:underline mr-2">{{ $t('trade.close_position') }}</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+        <table class="w-full text-xs text-left">
+          <thead>
+            <tr class="text-muted-foreground border-b border-border">
+              <th class="pb-2">{{ $t('trade.contract') }}</th>
+              <th class="pb-2 text-right">{{ $t('trade.entry_price') }}</th>
+              <th class="pb-2 text-right">{{ $t('trade.current_price') }}</th>
+              <th class="pb-2 text-right">{{ $t('trade.position_amount') }}</th>
+              <th class="pb-2 text-right">{{ $t('trade.margin') }}</th>
+              <th class="pb-2 text-right">{{ $t('trade.margin_rate') }}</th>
+              <th class="pb-2 text-right">{{ $t('assets.unrealized_pnl') }}</th>
+              <th class="pb-2 text-right">{{ $t('trade.pnl_ratio') }}</th>
+              <th class="pb-2 text-right">{{ $t('trade.action') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="pos in positionList" :key="pos.key" class="border-b border-border/50 hover:bg-muted/50">
+              <td class="py-2.5">
+                <div class="flex items-center gap-1.5">
+                  <span class="font-bold font-mono">{{ pos.symbol.split('/')[0] }}</span>
+                  <span class="text-[10px] font-bold px-1 py-0.5 rounded leading-none"
+                    :class="pos.direction === 'LONG' ? 'bg-up/10 text-up' : 'bg-down/10 text-down'">
+                    {{ pos.direction === 'LONG' ? $t('trade.long') : $t('trade.short') }}
+                  </span>
+                  <span class="text-[10px] text-muted-foreground font-mono">{{ pos.leverage }}x</span>
+                </div>
+              </td>
+              <td class="py-2.5 text-right font-mono">{{ formatPrice(pos.entryPrice) }}</td>
+              <td class="py-2.5 text-right font-mono" :class="pos.currentPrice > pos.entryPrice ? 'text-up' : 'text-down'">
+                {{ formatPrice(pos.currentPrice) }}
+              </td>
+              <td class="py-2.5 text-right font-mono">{{ pos.positionAmount }}</td>
+              <td class="py-2.5 text-right font-mono">{{ numeral(pos.margin).format('0,0.00') }}</td>
+              <td class="py-2.5 text-right font-mono"
+                :class="pos.marginRate < 0.1 ? 'text-down' : pos.marginRate < 0.5 ? 'text-orange-400' : 'text-up'">
+                {{ numeral(pos.marginRate).format('0.00%') }}
+              </td>
+              <td class="py-2.5 text-right font-mono font-bold"
+                :class="pos.unrealizedPnl >= 0 ? 'text-up' : 'text-down'">
+                {{ pos.unrealizedPnl >= 0 ? '+' : '' }}{{ numeral(pos.unrealizedPnl).format('0,0.00') }}
+              </td>
+              <td class="py-2.5 text-right font-mono font-bold"
+                :class="pos.plRatio >= 0 ? 'text-up' : 'text-down'">
+                {{ pos.plRatio >= 0 ? '+' : '' }}{{ numeral(pos.plRatio).format('0.00%') }}
+              </td>
+              <td class="py-2.5 text-right">
+                <button v-if="pos.entryPrice <= 0" @click="cancelPosition(pos)" class="text-xs text-muted-foreground hover:text-primary hover:underline mr-2">{{ $t('common.cancel') }}</button>
+                <button @click="openCloseModal(pos)" class="text-xs text-primary hover:underline mr-2">{{ $t('trade.close_position') }}</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
-
-      <!-- Open Orders (当前委托) -->
-      <table v-else-if="activeTab === 'open_orders'" class="w-full text-xs text-left">
-        <thead>
-          <tr class="text-muted-foreground border-b border-border">
-            <th class="pb-2">Symbol</th>
-            <th class="pb-2">Side</th>
-            <th class="pb-2">Leverage</th>
-            <th class="pb-2">Price</th>
-            <th class="pb-2">Amount</th>
-            <th class="pb-2">Status</th>
-            <th class="pb-2 text-right">{{ $t('trade.action') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="item in currentOrders" :key="item.orderId" class="border-b border-border/50 hover:bg-muted/50">
-            <td class="py-2 font-medium">{{ item.symbol }}</td>
-            <td class="py-2" :class="getDirectionClass(item.direction)">{{ getDirectionText(item.direction) }}</td>
-            <td class="py-2 font-mono">{{ item.leverage }}x</td>
-            <td class="py-2 font-mono">{{ formatPrice(item.price) }}</td>
-            <td class="py-2 font-mono">{{ item.amount }}</td>
-            <td class="py-2">{{ formatStatus(item.status) }}</td>
-            <td class="py-2 text-right">
-                <button @click="openCancelModal(item)" class="text-destructive hover:underline text-xs">{{ $t('trade.cancel') }}</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
 
       <!-- History (历史委托) -->
       <table v-else-if="activeTab === 'history'" class="w-full text-xs text-left">
         <thead>
           <tr class="text-muted-foreground border-b border-border">
-            <th class="pb-2">Time</th>
-            <th class="pb-2">Symbol</th>
-            <th class="pb-2">Side</th>
-            <th class="pb-2">Type</th>
-            <th class="pb-2">Price</th>
-            <th class="pb-2">Amount</th>
-            <th class="pb-2">Status</th>
+            <th class="pb-2">{{ $t('trade.time') }}</th>
+            <th class="pb-2">{{ $t('trade.symbol') }}</th>
+            <th class="pb-2">{{ $t('trade.side') }}</th>
+            <th class="pb-2">{{ $t('trade.type') }}</th>
+            <th class="pb-2">{{ $t('trade.price') }}</th>
+            <th class="pb-2">{{ $t('trade.amount') }}</th>
+            <th class="pb-2">{{ $t('trade.status') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -145,7 +128,7 @@
       <div class="bg-card border border-border rounded-lg p-6 w-96 shadow-xl">
         <!-- Header -->
         <div class="flex items-center justify-between mb-4">
-          <div class="text-base font-bold">平仓</div>
+          <div class="text-base font-bold">{{ $t('trade.close_position') }}</div>
           <button @click="showCloseModal = false" class="text-muted-foreground hover:text-foreground transition-colors text-lg leading-none">&times;</button>
         </div>
 
@@ -154,11 +137,11 @@
           <span class="font-bold font-mono text-sm">{{ closingPosition.symbol.split('/')[0] }}</span>
           <span class="text-[10px] font-bold px-1.5 py-0.5 rounded leading-none"
             :class="closingPosition.direction === 'LONG' ? 'bg-up/10 text-up' : 'bg-down/10 text-down'">
-            {{ closingPosition.direction === 'LONG' ? '多' : '空' }}
+            {{ closingPosition.direction === 'LONG' ? $t('trade.long') : $t('trade.short') }}
           </span>
           <span class="text-[10px] text-muted-foreground font-mono">{{ closingPosition.leverage }}x</span>
           <span class="ml-auto text-xs text-muted-foreground">
-            可平: <span class="font-mono font-bold text-foreground">{{ closingPosition.avaPosition }}</span> 张
+            {{ $t('trade.available_close') }}: <span class="font-mono font-bold text-foreground">{{ closingPosition.avaPosition }}</span> {{ $t('trade.contracts_unit') }}
           </span>
         </div>
 
@@ -196,7 +179,7 @@
         <!-- Amount Input -->
         <div class="mb-2">
           <div class="flex items-center bg-background border border-input rounded px-3 h-10 focus-within:border-primary transition-colors hover:border-border/80">
-            <span class="text-xs text-muted-foreground w-12 shrink-0">数量</span>
+            <span class="text-xs text-muted-foreground w-12 shrink-0">{{ $t('trade.amount') }}</span>
             <input
               v-model="closeVolume"
               type="number"
@@ -205,7 +188,7 @@
               :max="closingPosition?.avaPosition"
               min="0"
             />
-            <span class="text-xs text-muted-foreground ml-2 w-10 text-right">张</span>
+            <span class="text-xs text-muted-foreground ml-2 w-10 text-right">{{ $t('trade.contracts_unit') }}</span>
           </div>
         </div>
 
@@ -229,64 +212,7 @@
             class="flex-1 py-2.5 text-sm rounded-lg font-bold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
             :class="closingPosition?.direction === 'LONG' ? 'bg-down hover:bg-down/90' : 'bg-up hover:bg-up/90'">
             <span v-if="closing" class="animate-spin mr-1">⏳</span>
-            确认平仓
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Close All Confirm Modal -->
-    <div v-if="showCloseAllModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="showCloseAllModal = false">
-      <div class="bg-card border border-border rounded-lg p-6 w-80 shadow-xl">
-        <div class="flex items-center justify-between mb-4">
-          <div class="text-base font-bold">一键平仓</div>
-          <button @click="showCloseAllModal = false" class="text-muted-foreground hover:text-foreground transition-colors text-lg leading-none">&times;</button>
-        </div>
-        <div class="text-sm text-muted-foreground mb-2">
-          确认一键平仓所有持仓？
-        </div>
-        <div class="text-xs text-destructive/80 mb-5 p-2 bg-destructive/5 rounded border border-destructive/10">
-          ⚠️ 此操作将以市价平掉所有多仓和空仓，不可撤销。
-        </div>
-        <div class="flex gap-3">
-          <button @click="showCloseAllModal = false"
-            class="flex-1 py-2.5 text-sm border border-border rounded-lg hover:bg-muted transition-colors font-medium">
-            {{ $t('common.cancel') }}
-          </button>
-          <button @click="confirmCloseAll"
-            :disabled="closingAll"
-            class="flex-1 py-2.5 text-sm rounded-lg font-bold text-white bg-destructive hover:bg-destructive/90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center">
-            <span v-if="closingAll" class="animate-spin mr-1">⏳</span>
-            确认平仓
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Cancel Order Confirm Modal -->
-    <div v-if="showCancelModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="showCancelModal = false">
-      <div class="bg-card border border-border rounded-lg p-6 w-80 shadow-xl">
-        <div class="flex items-center justify-between mb-4">
-          <div class="text-base font-bold">撤销委托</div>
-          <button @click="showCancelModal = false" class="text-muted-foreground hover:text-foreground transition-colors text-lg leading-none">&times;</button>
-        </div>
-        <div v-if="cancelingOrder" class="text-sm text-muted-foreground mb-4 space-y-1">
-          <div class="flex justify-between"><span>交易对</span><span class="font-mono font-medium text-foreground">{{ cancelingOrder.symbol }}</span></div>
-          <div class="flex justify-between"><span>方向</span><span :class="getDirectionClass(cancelingOrder.direction)" class="font-medium">{{ getDirectionText(cancelingOrder.direction) }}</span></div>
-          <div class="flex justify-between"><span>价格</span><span class="font-mono text-foreground">{{ formatPrice(cancelingOrder.price) }}</span></div>
-          <div class="flex justify-between"><span>数量</span><span class="font-mono text-foreground">{{ cancelingOrder.amount }}</span></div>
-        </div>
-        <div class="text-xs text-muted-foreground mb-5">确认撤销该委托订单？</div>
-        <div class="flex gap-3">
-          <button @click="showCancelModal = false"
-            class="flex-1 py-2.5 text-sm border border-border rounded-lg hover:bg-muted transition-colors font-medium">
-            {{ $t('common.cancel') }}
-          </button>
-          <button @click="confirmCancel"
-            :disabled="canceling"
-            class="flex-1 py-2.5 text-sm rounded-lg font-bold text-white bg-destructive hover:bg-destructive/90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center">
-            <span v-if="canceling" class="animate-spin mr-1">⏳</span>
-            确认撤单
+            {{ $t('trade.confirm_close') }}
           </button>
         </div>
       </div>
@@ -297,10 +223,12 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useContractStore, type ContractOrder } from '@/stores/contract'
+import { useContractStore } from '@/stores/contract'
 import { useToast } from 'vue-toastification'
 import numeral from 'numeral'
 import type { OrderType } from '@/api/contract'
+import AuthRequiredState from '@/components/common/AuthRequiredState.vue'
+import { useAuthRequired } from '@/composables/useAuthRequired'
 
 const props = defineProps<{
   symbol?: string
@@ -309,11 +237,11 @@ const props = defineProps<{
 const { t: $t } = useI18n()
 const toast = useToast()
 const contractStore = useContractStore()
+const { isLoggedIn, goToLogin } = useAuthRequired()
 
 const tabs = [
-    { key: 'positions', label: '当前持仓' },
-    { key: 'open_orders', label: '当前委托' },
-    { key: 'history', label: '历史委托' }
+    { key: 'positions', labelKey: 'trade.positions' },
+    { key: 'history', labelKey: 'trade.order_history' }
 ]
 const activeTab = ref('positions')
 const loading = ref(false)
@@ -325,13 +253,7 @@ const closeOrderType = ref<OrderType>(0) // 0=市价 1=限价
 const closePrice = ref<number | null>(null)
 const closeVolume = ref<number | null>(null)
 const closing = ref(false)
-const closingAll = ref(false)
-const showCloseAllModal = ref(false)
-const showCancelModal = ref(false)
-const cancelingOrder = ref<ContractOrder | null>(null)
-const canceling = ref(false)
 
-const currentOrders = computed(() => contractStore.currentOrders)
 const historyOrders = computed(() => contractStore.historyOrders)
 const activeCoinId = computed(() => contractStore.activeCoin?.id)
 
@@ -345,6 +267,7 @@ const canClose = computed(() => {
 
 // Build position list from wallets — only items with actual positions (buy or sell > 0)
 interface PositionItem {
+    orderId: string
     key: string
     symbol: string
     direction: 'LONG' | 'SHORT'
@@ -384,6 +307,7 @@ const positionList = computed<PositionItem[]>(() => {
 
             list.push({
                 key: `${w.id}_long`,
+                orderId: String(w.id),
                 symbol: w.symbol,
                 direction: 'LONG',
                 positionAmount: totalPos,
@@ -412,6 +336,7 @@ const positionList = computed<PositionItem[]>(() => {
 
             list.push({
                 key: `${w.id}_short`,
+                orderId: String(w.id),
                 symbol: w.symbol,
                 direction: 'SHORT',
                 positionAmount: totalPos,
@@ -447,7 +372,6 @@ const positionList = computed<PositionItem[]>(() => {
 
 const isEmpty = computed(() => {
     if (activeTab.value === 'positions') return positionList.value.length === 0
-    if (activeTab.value === 'open_orders') return currentOrders.value.length === 0
     return historyOrders.value.length === 0
 })
 
@@ -463,14 +387,14 @@ const formatTime = (ts: number | undefined) => {
 
 const formatStatus = (status: number | string) => {
     const map: Record<number | string, string> = {
-        0: 'Pending',
-        1: 'Completed',
-        2: 'Canceled',
-        3: 'Failed',
-        'TRADING': 'Pending',
-        'COMPLETED': 'Completed',
-        'CANCELED': 'Canceled',
-        'FAILED': 'Failed'
+        0: $t('trade.order_status_pending'),
+        1: $t('trade.order_status_completed'),
+        2: $t('trade.order_status_canceled'),
+        3: $t('trade.order_status_failed'),
+        'TRADING': $t('trade.order_status_pending'),
+        'COMPLETED': $t('trade.order_status_completed'),
+        'CANCELED': $t('trade.order_status_canceled'),
+        'FAILED': $t('trade.order_status_failed')
     }
     return map[status] ?? String(status)
 }
@@ -490,12 +414,11 @@ const getDirectionClass = (direction: number) => {
 }
 
 const loadData = async () => {
+    if (!isLoggedIn.value) return
     loading.value = true
     try {
         if (activeTab.value === 'positions') {
             await contractStore.loadWallets()
-        } else if (activeTab.value === 'open_orders') {
-            await contractStore.loadCurrentOrders(activeCoinId.value)
         } else {
             await contractStore.loadHistoryOrders(activeCoinId.value)
         }
@@ -504,52 +427,12 @@ const loadData = async () => {
     }
 }
 
-/** Open cancel order confirmation modal */
-const openCancelModal = (order: ContractOrder) => {
-    cancelingOrder.value = order
-    canceling.value = false
-    showCancelModal.value = true
-}
-
-/** Confirm and cancel the order */
-const confirmCancel = async () => {
-    if (!cancelingOrder.value) return
-    canceling.value = true
-    try {
-        await contractStore.cancel(cancelingOrder.value.orderId, activeCoinId.value)
-        toast.success($t('trade.cancel_success'))
-        showCancelModal.value = false
-    } catch (e) {
-        toast.error($t('trade.cancel_failed'))
-    } finally {
-        canceling.value = false
-    }
-}
-
-/** Open close-all confirmation modal */
-const handleCloseAll = () => {
-    showCloseAllModal.value = true
-}
-
-/** Confirm and close all positions at market price */
-const confirmCloseAll = async () => {
-    const coinId = activeCoinId.value
-    if (!coinId) return
-    closingAll.value = true
-    try {
-        // type 2 = 市价平多+平空
-        await contractStore.submitCloseAll(coinId, 2)
-        toast.success($t('trade.close_success'))
-        showCloseAllModal.value = false
-    } catch (e: any) {
-        toast.error(e?.response?.data?.message || $t('trade.close_failed'))
-    } finally {
-        closingAll.value = false
-    }
-}
-
 /** Open the close-position modal and pre-fill values */
 const openCloseModal = (pos: PositionItem) => {
+    if (!isLoggedIn.value) {
+        goToLogin()
+        return
+    }
     closingPosition.value = pos
     closeOrderType.value = 0 // default to market
     closePrice.value = pos.currentPrice || null
@@ -566,6 +449,10 @@ const setClosePercent = (p: number) => {
 
 /** Confirm and submit the close position order */
 const confirmClosePosition = async () => {
+    if (!isLoggedIn.value) {
+        goToLogin()
+        return
+    }
     const pos = closingPosition.value
     const coinId = activeCoinId.value
     if (!pos || !coinId) return
@@ -592,7 +479,57 @@ const confirmClosePosition = async () => {
     }
 }
 
-watch([() => props.symbol, activeTab, activeCoinId], () => {
+const closeAllOpenPositions = async () => {
+    if (!isLoggedIn.value) {
+        goToLogin()
+        return
+    }
+    if (!activeCoinId.value) return
+    closing.value = true
+    try {
+        await contractStore.submitCloseAllPositions(activeCoinId.value)
+        toast.success($t('trade.close_success'))
+    } catch (e: any) {
+        toast.error(e?.response?.data?.message || e.message || $t('trade.close_failed'))
+    } finally {
+        closing.value = false
+    }
+}
+
+const cancelPosition = async (pos: PositionItem) => {
+    if (!isLoggedIn.value) {
+        goToLogin()
+        return
+    }
+    closing.value = true
+    try {
+        await contractStore.submitCancelOrder(pos.orderId, activeCoinId.value)
+        toast.success($t('trade.cancel_success'))
+    } catch (e: any) {
+        toast.error(e?.response?.data?.message || e.message || $t('trade.cancel_failed'))
+    } finally {
+        closing.value = false
+    }
+}
+
+const cancelAllOpenOrders = async () => {
+    if (!isLoggedIn.value) {
+        goToLogin()
+        return
+    }
+    if (!activeCoinId.value) return
+    closing.value = true
+    try {
+        await contractStore.submitCancelAllOrders(activeCoinId.value)
+        toast.success($t('trade.cancel_success'))
+    } catch (e: any) {
+        toast.error(e?.response?.data?.message || e.message || $t('trade.cancel_failed'))
+    } finally {
+        closing.value = false
+    }
+}
+
+watch([() => props.symbol, activeTab, activeCoinId, isLoggedIn], () => {
     loadData()
 })
 

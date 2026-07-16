@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/spot-orders.md", "reason": "Check spot realtime changes preserve order/ticker contract assumptions."}
+{"file": ".trellis/spec/backend/seconds-contracts.md", "reason": "Check seconds realtime changes preserve PC order and product payload assumptions."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify backend/frontend realtime boundaries and event formats are consistent."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Verify subscription helpers are shared where appropriate and no duplicated topic logic drifts."}

@@ -2,6 +2,137 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-07-08 10:34 - 继续后端 DDD 结构复核
+
+- 完成内容：再次全量扫描 `src/modules` 架构边界，确认已拆分的路由文件都在 `routes.rs`，`#[cfg(test)]` 仅通过 `#[path = "...unit_src..."]` 引入独立测试文件，未发现路由层新增业务逻辑回窜。对 `countries/platform/loan/prediction/quick_recharge` 等入口继续复核并确认其仅承担层级入口与导出职责。
+- 修改文件：
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：
+  - `cargo fmt --manifest-path Cargo.toml -- --check`
+  - `cargo test --manifest-path Cargo.toml --test backend_architecture -- --nocapture`
+  - `cargo check --manifest-path Cargo.toml --all-targets`
+  - `rg -n "^\s*#\[cfg\(test\)\]" src/modules`
+- 后续事项：无，继续等待下一阶段功能或下一轮结构重构指令。
+
+## 2026-07-08 17:02 - 清理 market 基础设施测试 Helper 的层边界
+
+- 完成内容：将 `market` 基础设施层中的测试专用函数移出生产代码，改为在 `tests/unit_src/src_modules_market_mod_tests.rs` 内部定义测试 helper，避免测试逻辑污染 DDD 基础设施层，保持生产代码更干净。
+- 修改文件：
+  - `src/modules/market/infrastructure.rs`
+  - `tests/unit_src/src_modules_market_mod_tests.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：
+  - `cargo fmt --manifest-path Cargo.toml -- --check`
+  - `cargo test --manifest-path Cargo.toml --test backend_architecture -- --nocapture`
+  - `cargo test --manifest-path Cargo.toml kline_upsert_key_uses_interval_and_open_time_only -- --nocapture`
+- 后续事项：继续检查其余模块是否存在测试 helper 直接暴露在生产代码中的情况。
+
+## 2026-07-08 17:25 - 深化测试与生产代码分离（admin 上传/SMTP）
+
+- 完成内容：继续清理 admin 模块内仍在生产源码中的测试依赖：移除 `#[cfg(test)]` 里对测试时才需要 `use` 的直接引用，改由各单测文件自行引入，确保 `src/modules/admin/*` 生产代码不带测试专用依赖；`upload_config` 与 `smtp_config` 的相关测试依旧保留在独立测试文件。
+- 修改文件：
+  - `src/modules/admin/upload_config.rs`
+  - `src/modules/admin/smtp_config.rs`
+  - `tests/unit_src/src_modules_admin_upload_config_tests.rs`
+  - `tests/unit_src/src_modules_admin_smtp_config_tests.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：
+  - `cargo fmt --manifest-path Cargo.toml`
+  - `cargo test --manifest-path Cargo.toml --test backend_architecture -- --nocapture`
+  - `cargo test --manifest-path Cargo.toml validates_upload_provider_config -- --nocapture`
+  - `cargo test --manifest-path Cargo.toml validates_smtp_save_request -- --nocapture`
+- 后续事项：继续跑一遍静态扫描，确认 `src/modules` 下不再出现 `#[cfg(test)] use` 这类测试专用依赖落在生产文件。
+
+## 2026-07-08 17:40 - 架构测试自动化模块发现
+
+- 完成内容：将 `tests/backend_architecture.rs` 的 `DDD` 上下文清单改为从 `src/modules` 自动扫描目录，避免新增/重命名业务模块时遗漏 `domain/repository/service/application/infrastructure/presentation` 层校验，提升架构约束的可持续性。
+- 修改文件：
+  - `tests/backend_architecture.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：
+  - `cargo test --manifest-path Cargo.toml --test backend_architecture -- --nocapture`
+  - `cargo fmt --manifest-path Cargo.toml -- --check`
+- 后续事项：无
+
+## 2026-07-08 17:55 - 强化测试文件引用边界检查
+
+- 完成内容：继续收紧后端架构测试，新增对 `src` 中 `#[cfg(test)]` 声明的校验：所有测试模块必须通过 `#[path = "..."]` 明确引用 `tests/unit_src/*.rs` 文件，不再允许通过其它路径或内联形式声明。这样可以持续防止测试实现再次回灌到业务源文件。
+- 修改文件：
+  - `tests/backend_architecture.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：
+  - `cargo fmt --manifest-path Cargo.toml`
+  - `cargo fmt --manifest-path Cargo.toml -- --check`
+  - `cargo test --manifest-path Cargo.toml --test backend_architecture -- --nocapture`
+- 后续事项：持续补齐新规则下仍需迁移的测试模块时，可直接触发该测试失败提醒。
+
+## 2026-07-08 18:10 - 增加路由层服务依赖白名单检查
+
+- 完成内容：新增架构测试，要求 `routes.rs` 中对 `service` 的直接引用仅限白名单内边界符号，避免路由层再次吸收业务实现细节。该机制会在新增路由时提醒将新逻辑优先下沉到 `application` 层，并把少量通用上下文解析符号放入白名单。
+- 修改文件：
+  - `tests/backend_architecture.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：
+  - `cargo fmt --manifest-path Cargo.toml`
+  - `cargo test --manifest-path Cargo.toml --test backend_architecture -- --nocapture`
+- 后续事项：如确需新增 `routes.rs` 对 `service` 的新符号依赖，请先评估是否应迁移到 `application`；若确有必要扩展白名单，需在同一测试文件中补充并留痕。
+
+## 2026-07-08 09:40 - 修复 Spot 管理端撤单参数校验顺序与 DDD 路由边界
+
+- 完成内容：继续沿用 DDD 路由薄化方向，修复 `spot` 管理端撤单接口在无 MySQL 时仍返回 500 的回归。将请求参数校验提到应用层返回值入口后再取 `mysql_pool`，保持“先参数校验、后持久化依赖”行为；同时清理一个不再使用的旧用例导出函数，保持代码整洁。
+- 修改文件：
+  - `src/modules/spot/routes.rs`
+  - `src/modules/spot/application.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：
+  - `cargo fmt --manifest-path Cargo.toml`
+  - `cargo check --manifest-path Cargo.toml --all-targets`
+  - `cargo test --manifest-path Cargo.toml --test backend_architecture -- --nocapture`
+  - `cargo test --manifest-path Cargo.toml --test spot_routes admin_spot_order_detail_and_cancel_routes_require_admin_scope_mysql -- --nocapture`
+  - `cargo test --manifest-path Cargo.toml -- --nocapture`
+- 后续事项：继续沿着 DDD 边界做更细的调用图扫描，优先检查其他管理端路由是否存在“参数校验在数据库取值之后”导致的错误码偏移。
+
+## 2026-07-08 04:56 - wallet 充值网络查询参数验证与路由层下沉一致性修复
+
+- 完成内容：完善 wallet `list_deposit_networks` 的 DDD 分层一致性：新增 `normalize_deposit_networks_query_asset` 作为仅参数校验函数，路由先做 `asset_symbol` 规范化校验再获取数据库连接；`routes` 使用应用用例 `list_deposit_networks_by_query` 处理查询与仓储读取。通过单独 application 测试覆盖 `normalize_asset_symbol`，并修正 route 测试 `wallet_deposit_networks_route_rejects_invalid_asset_symbol` 期望为 400（避免在无 mysql 下被内部错误掩盖）。
+- 修改文件：
+  - `src/modules/wallet/application.rs`
+  - `src/modules/wallet/routes.rs`
+  - `tests/unit_src/src_modules_wallet_application_tests.rs`
+  - `tests/unit_src/src_modules_wallet_routes_tests.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：
+  - `cargo test --manifest-path Cargo.toml authorize_private_ws -- --nocapture`
+  - `cargo test --manifest-path Cargo.toml normalize_asset_symbol_to_uppercase -- --nocapture`
+  - `cargo test --manifest-path Cargo.toml normalize_asset_symbol_rejects_invalid_format -- --nocapture`
+  - `cargo test --manifest-path Cargo.toml wallet_deposit_networks_route_rejects_invalid_asset_symbol -- --nocapture`
+  - `cargo test --manifest-path Cargo.toml events_ws -- --nocapture`
+  - `cargo test --manifest-path Cargo.toml wallet_routes -- --nocapture`
+  - `cargo test --manifest-path Cargo.toml --test backend_architecture -- --nocapture`
+  - `cargo check --manifest-path Cargo.toml --all-targets`
+- 后续事项：继续扫描 `events/routes.rs` 与 `admin/routes.rs` 里是否仍有可下沉到 application 的参数组装逻辑。
+
+## 2026-07-08 03:20 - admin 项目级查询参数下沉到 application 层
+
+- 完成内容：将 `admin` 后台中“项目级新币认购/分配列表”的查询组装从 `routes` 下沉到 `application`；新增 `list_admin_new_coin_subscriptions_for_project` 与 `list_admin_new_coin_distributions_for_project` 两个应用层用例，`routes` 不再手工拼接 `AdminNewCoinFlatListQuery`。补充 application 层单测文件覆盖 `project_id` 注入与空过滤条件透传。
+- 修改文件：
+  - `src/modules/admin/application.rs`
+  - `src/modules/admin/routes.rs`
+  - `tests/unit_src/src_modules_admin_application_tests.rs`
+- 验证结果：
+  - `cargo fmt --manifest-path Cargo.toml`
+  - `cargo check --manifest-path Cargo.toml --all-targets`
+  - `cargo test --lib build_scoped_new_coin -- --nocapture`
+  - `cargo test --test backend_architecture -- --nocapture`
+- 后续事项：继续扫描 `admin/routes.rs` 与 `events/routes.rs` 中是否仍有可下沉到 application 的参数/查询转换逻辑。
+
+## 2026-07-08 23:20 - agent 领域清理与预测基础设施职责注释
+
+- 完成内容：移除 `agent/domain.rs` 的未被使用 `filter_team_users` 以消除 `dead_code` 提示；对应单测 `src_modules_agent_mod_tests.rs` 已改为直接使用 `AgentScope::can_access_user` 进行可见性判断，保持测试意图不变；同时为 `prediction/infrastructure.rs` 补充中文层注释，明确其基础设施职责（持久化 SQL、第三方调用与订单/市场结算数据组织）。
+- 修改文件：`src/modules/agent/domain.rs`, `tests/unit_src/src_modules_agent_mod_tests.rs`, `src/modules/prediction/infrastructure.rs`, `docs/superpowers/PROGRESS.md`
+- 验证结果：已执行 `cargo fmt --manifest-path Cargo.toml`；已执行 `cargo check --manifest-path Cargo.toml --all-targets`（通过）；已执行 `cargo test --test backend_architecture -- --nocapture`（2 项通过）。
+- 后续事项：继续聚焦 `admin/routes.rs` 的剩余厚重分支点，优先将可复用参数校验继续下沉到 `admin/service.rs`。
+
 ## 2026-06-17 11:45 - 优化后台竞猜配置页面
 
 - 完成内容：后台“竞猜配置”页改为 Semi 工作台结构，顶部新增策略概览，使用按钮式 Tabs 分离全局策略、下注资产、同步任务；全局策略拆分为同步来源与交易结算两栏，下注资产表格改为 100% 容器宽度并支持中文状态开关，同步任务页新增状态描述、错误 Banner 和中文同步日志；补充页面级测试覆盖布局结构和保存 payload。
@@ -5129,3 +5260,284 @@
   - `docs/superpowers/PROGRESS.md`
 - 验证结果：已执行 `npm run type-check`（目录 `pc`），通过；已执行 `git diff --check -- pc/src/views/User/LoanOrders.vue`，通过；已执行尾随空白/冲突标记检查，无输出。
 - 后续事项：无。
+
+## 2026-07-08 10:40 - 统一 backend 模块入口注释
+
+- 完成内容：补齐 DDD 模块入口文件的中文文档注释，统一 `src/modules` 下各聚合入口（含 `mod.rs`）的结构说明，便于快速识别分层边界与上下文职责。
+- 修改文件：
+  - `src/modules/mod.rs`
+  - `src/modules/countries.rs`
+  - `src/modules/kyc.rs`
+  - `src/modules/loan.rs`
+  - `src/modules/platform.rs`
+  - `src/modules/prediction.rs`
+  - `src/modules/quick_recharge.rs`
+  - `src/modules/security.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：
+  - `cargo fmt --manifest-path Cargo.toml --all -- --check`（通过）
+  - `cargo test --manifest-path Cargo.toml --test backend_architecture -- --nocapture`（通过，4/4）
+  - `cargo check --manifest-path Cargo.toml --all-targets`（通过）
+- 后续事项：无。
+
+## 2026-07-08 14:20 - KYC 支持企业认证字段（后端持久化与测试）
+
+- 完成内容：补充 KYC 企业认证能力的后端持久化与前端展示链路：
+  - 用户侧新增提交类型与企业资料字段（认证类型、企业名称、统一社会信用代码）传输与校验；
+  - 管理后台审核列表/详情增加企业字段展示；
+  - 增加数据库迁移，给 `user_kyc_submissions` 增加 `submission_type`、`enterprise_name`、`business_registration_number`；
+  - 补充后端路由测试，覆盖企业认证提交校验与管理员端查询字段回显。
+- 修改文件：
+  - `src/modules/kyc/domain.rs`
+  - `src/modules/kyc/presentation.rs`
+  - `src/modules/kyc/application.rs`
+  - `src/modules/kyc/infrastructure.rs`
+  - `src/modules/kyc/service.rs`
+  - `src/modules/kyc/presentation.rs`
+  - `pc/src/api/user.ts`
+  - `pc/src/views/User/KYC.vue`
+  - `pc/src/i18n/index.ts`
+  - `web/src/admin/actions/KycManagementPage.tsx`
+  - `migrations/0080_kyc_submission_type_and_enterprise_fields.sql`
+  - `tests/user_routes.rs`
+  - `tests/admin_routes.rs`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：
+  - `cargo fmt`（通过）
+  - `cargo test --test user_routes user_kyc_enterprise_submission_requires_enterprise_fields -- --exact --nocapture`（通过；未设置 `DATABASE_URL` 时测试场景按集成测试约定跳过）
+  - `cargo test --test admin_routes admin_kyc_list_and_detail_includes_enterprise_fields -- --exact --nocapture`（通过；同上）
+  - `npm run type-check`（目录 `pc`，通过）
+  - `cd web && npm test -- KycManagementPage.test.tsx`（通过）
+- 后续事项：部署前执行数据库迁移 `0080_kyc_submission_type_and_enterprise_fields.sql`，并在生产配置下补充企业认证场景的验收回归。
+
+## 2026-07-08 11:55 - KYC 管理页企业认证展示回归覆盖
+
+- 完成内容：
+  - 在管理员 KYC 管理页测试中补充企业认证场景字段（认证类型、企业名称、统一社会信用代码）展示断言，覆盖表格和详情两处展示链路。
+- 修改文件：
+  - `web/src/admin/actions/KycManagementPage.test.tsx`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：
+  - `npm run typecheck`（目录 `web`，通过）
+  - `npm test -- KycManagementPage.test.tsx`（通过）
+- 后续事项：无
+
+## 2026-07-11 01:05 - PC K线支持 TradingView 与后台动态配置
+
+- 完成内容：
+  - 平台品牌配置新增全局 `chart_provider`（`klinecharts` / `tradingview`），提供数据库迁移、领域校验、公开 PC 配置返回、后台保存审计以及 OpenAPI 字段说明；旧后台请求未传该字段时保留已发布配置。
+  - 后台“PC 品牌配置”页新增 K线图引擎选择，可在系统 K线与 TradingView Lightweight Charts 之间切换并保存。
+  - PC 新增 `MarketChart` 统一入口和 TradingView Lightweight Charts 渲染器，现货、杠杆、秒合约、新币交易页统一受后台配置控制；历史 K线与实时推送继续使用平台 REST/WebSocket 数据源，且两套图表库按需懒加载。
+  - 新增 K线数据归一化单元测试，覆盖模块/周期/主题、时间戳转换、排序、去重与实时数据解析；补充平台图表跨层契约规范与第三方接入调研记录。
+- 修改文件：
+  - `migrations/0081_platform_chart_provider.sql`
+  - `src/modules/platform/{domain,application,infrastructure,presentation}.rs`
+  - `src/openapi.rs`、`tests/{admin_routes,user_routes,openapi_routes}.rs`
+  - `web/src/admin/actions/PlatformBrandPage.{tsx,test.tsx}`
+  - `pc/package.{json,lock.json}`、`pc/src/{api/platform.ts,stores/setting.ts,utils/chartProvider.ts}`
+  - `pc/src/components/chart/{MarketChart,TradingViewChart,TVChart,klineData,klineDataSource}.ts/vue`
+  - `pc/src/views/{Trade,Contract,SecondOptions,LaunchpadTrade}.vue`
+  - `pc/tests/{chart-provider,kline-data}.test.ts`
+  - `.trellis/spec/backend/{index.md,platform-display-and-chart.md}`
+  - `.trellis/tasks/06-27-backend-ddd-architecture-refactor/{prd.md,research/tradingview-lightweight-charts.md}`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：
+  - `cargo fmt --manifest-path Cargo.toml --all -- --check`、`cargo check --manifest-path Cargo.toml --all-targets`、`cargo test --manifest-path Cargo.toml --test backend_architecture -- --nocapture`（通过）。
+  - `cargo test --manifest-path Cargo.toml --test admin_routes admin_platform_brand_config_save_and_audit -- --exact --nocapture`、`cargo test --manifest-path Cargo.toml --test user_routes public_platform_brand_returns_pc_display_config -- --exact --nocapture`、`cargo test --manifest-path Cargo.toml --test openapi_routes -- --nocapture`（通过；前两项在未配置 `DATABASE_URL` 时按约定跳过真实 MySQL 场景）。
+  - `npm run typecheck` 与 `npm test -- PlatformBrandPage.test.tsx`（目录 `web`，通过）。
+  - `npm run type-check` 及 `node --test --experimental-strip-types tests/chart-provider.test.ts tests/kline-data.test.ts`（目录 `pc`，4 个测试通过）。
+  - `node node_modules/vite/bin/vite.js build`（目录 `pc`）已生成完整生产资源并输出 `built in 2.90s`，但当前终端环境未在构建输出后自动退出而触发超时；开发服务器模块访问与 HTTP 200 验证通过，且确认两套图表库为独立懒加载资源。
+  - `git diff --check` 与新增文件尾随空白/冲突标记检查（通过）。
+- 后续事项：部署前执行迁移 `0081_platform_chart_provider.sql`；若需要 TradingView Advanced Charts 的完整画线/指标能力，需另行提供其授权库与数据源接入范围。
+
+## 2026-07-11 10:03 - 移动端资产、订单与账户安全闭环
+
+- 完成内容：新增独立 `mobile` Vue 3 + Vite + Tauri v2 客户端基础，并完成移动端核心闭环：
+  - 完成 H5、Android、iOS 共用的安全区布局、移动导航、行情、K 线、深度、现货/合约下单、充币、提币、划转、资产流水及快捷买币页面；所有账户操作直接调用现有用户端 API。
+  - 订单页接通现货单笔/逐笔全部撤单，合约单笔平仓、待成交撤单、全部平仓；交易页接通杠杆倍数及全仓/逐仓的后端设置接口。
+  - 新增账户中心、个人/企业实名认证、资金密码、验证器绑定、登录双重验证、邀请码和邀请记录；KYC 材料按后台配置上传为数据 URL 并通过现有认证提交接口发送。
+  - 统一移动端视觉令牌、细节层级、按钮反馈、列表密度和弹层样式；Vite 开发环境增加同源 API 代理，避免 H5 调试受跨域阻断。
+- 修改文件：
+  - `mobile/` 下的 Tauri 配置、Vue 页面、组件、API 适配、路由、样式和独立测试文件。
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：
+  - `npm run type-check`、`npm test`、`npm run build`（目录 `mobile`，均通过；5 个单元测试通过）。
+  - Chrome 移动设备模拟 `390x844` 截图检查首页与受保护页面，文档宽度为 `390`，无横向溢出。
+  - `curl http://127.0.0.1:1611/api/v1/news?limit=3` 已通过 Vite 同源代理到后端并得到后端 `401` 业务响应，确认代理链路生效。
+- 后续事项：继续补齐闪兑、理财/借贷等用户侧产品页面；在已配置测试用户和真实后端数据的环境中完成资金、认证和订单操作的端到端验收；解决本机 SwiftPM 缓存导致的 iOS 模拟器构建阻塞。
+
+## 2026-07-11 10:49 - 移动端产品全量补齐、质感提升与原生构建验证
+
+- 完成内容：
+  - 完成独立 `mobile` 客户端的用户侧产品页面闭环：闪兑、理财、借贷、新币、竞猜、秒合约、资讯详情、订单管理、资产、认证和账户安全均具有对应移动端路由及真实用户接口适配。
+  - 新增新币项目详情与记录页，覆盖认购、上市后购买、派发、购买、手续费支付和释放；后台公开项目响应增加后台配置的 `post_listing_purchase_enabled` 与 `post_listing_pair_id`，移动端仅使用该授权交易对发起购买。
+  - 账户中心补齐头像上传、邮箱绑定、第三方账户绑定、邀请码绑定、验证器重置和资金密码邮件重置页面与接口。
+  - 提升新币、账户绑定、个人中心及安全页的视觉层级、信息密度、空状态、表单和记录列表；Chrome 390px 有数据模拟检查未发现横向溢出。
+  - 固化 iOS Tauri 构建脚本：仅对 SwiftPM 子进程 Git 注入临时 bare-repository 配置，并清理旧的被忽略 iOS 构建目录，避免影响系统 Git、钥匙串或重复构建。
+- 修改文件：
+  - `mobile/src/{api,components,config,core,data,router,stores,styles,views}`、`mobile/src-tauri/`、`mobile/scripts/run-ios-tauri.mjs`、`mobile/tests/`、`mobile/{package.json,vite.config.ts,README.md}`。
+  - `src/modules/new_coin/{repository,infrastructure,presentation}.rs`、`tests/new_coin_routes.rs`。
+  - `.trellis/spec/backend/{index.md,new-coin-mobile-contract.md}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：
+  - `cargo check --manifest-path Cargo.toml --all-targets`（通过）。
+  - `cargo test --test new_coin_routes`（通过，8/8）；`rustfmt --edition 2024 --check`（新币改动文件通过）。
+  - `npm test`、`npm run build`（目录 `mobile`，通过，5 个单元测试通过）。
+  - `npm run tauri:android:build -- --debug --target aarch64 --apk`（通过，产出 universal Debug APK）。
+  - `npm run tauri:ios:build -- --debug --target aarch64-sim --no-sign`（通过，产出 iOS Simulator Bundle）。
+  - Chrome CDP 在 `390x844` 检查新币详情与账户绑定的有数据状态，`scrollWidth=390`，无横向溢出；冲突标记与尾随空白扫描通过。
+- 后续事项：在提供可登录测试账户且当前后端公开行情/资讯接口可用的环境中，执行真实资金、认证、下单、解锁的端到端验收；iOS 真机发布前配置所属 Apple Development Team 和签名证书。
+
+## 2026-07-12 03:32 - 移除移动端首页产品切换条
+
+- 完成内容：移除首页静态的“交易所 / Web3 钱包”产品切换条及对应样式，首页品牌头部后直接进入行情搜索。
+- 修改文件：`mobile/src/views/HomeView.vue`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run type-check && npm run build`（目录 `mobile`，通过）；Chrome CDP 在 `390x844` 首页检查 `scrollWidth=390`，无横向溢出。
+- 后续事项：无
+
+## 2026-07-11 10:58 - 移动端合约钱包资产与划转余额校验补齐
+
+- 完成内容：
+  - 资产页接入 `GET /margin/wallets`，总资产估值、资产列表同时展示资金账户和合约账户余额。
+  - 划转弹层根据“从资金账户 / 从合约账户”动态切换资产和可用余额，前端在提交前校验划转额，避免无效请求。
+  - 将杠杆仓位响应映射抽成复用函数，合约钱包与仓位读取共享同一格式转换逻辑。
+- 修改文件：
+  - `mobile/src/api/trading.ts`
+  - `mobile/src/views/AssetsView.vue`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：
+  - `npm run type-check`、`npm test`、`npm run build`（目录 `mobile`，通过，5 个单元测试通过）。
+  - `npm run tauri:android:build -- --debug --target aarch64 --apk`（通过，最后改动已进入 universal Debug APK）。
+  - `npm run tauri:ios:build -- --debug --target aarch64-sim --no-sign`（通过，最后改动已进入 iOS Simulator Bundle）。
+  - Chrome CDP 模拟资金/合约钱包响应，在 `390x844` 资产页和划转弹层验证 `scrollWidth=390`，无横向溢出。
+- 后续事项：在提供可登录测试账户且当前后端公开行情/资讯接口可用的环境中，执行真实资金、认证、下单、解锁的端到端验收；iOS 真机发布前配置所属 Apple Development Team 和签名证书。
+
+## 2026-07-12 04:48 - 移动端导航、多语言及登录注册体验完善
+
+- 完成内容：
+  - 修复底部主导航历史栈污染、详情页直开返回、交易选币错误跳详情、滚动恢复及路由过渡；最近交易对与现货/合约模式共同持久化，跨资产/行情页返回交易时保持原上下文。
+  - 接入 `vue-i18n`，支持简体中文和英文即时切换、刷新持久化、`Intl` 数字/日期格式同步及资讯接口语言参数；固定界面文案、校验反馈、无障碍标签、预测市场常见外部文本均已双语化。
+  - 按参考交互重构登录和注册：登录采用“邮箱/用户名 -> 密码”两步流程，注册采用“国家与协议 -> 邮箱验证码与密码”两步流程，增加密码显隐、规则状态、短屏滚动、底部安全区和未登录国家列表降级。
+  - 接入公开认证配置接口：用户名登录入口、注册邮箱验证码及邀请码必填状态均随后台配置动态变化；配置请求失败时采用保守默认值，不阻断邮箱注册流程。
+  - 修复行情概览长数字、浏览器默认焦点框、页面头部安全区、资产/理财/借贷/新币/预测/秒合约弹层键盘边界及 H5 宽屏约束等视觉问题；移除交易页无实际行为的设置和链上入口。
+- 修改文件：
+  - `mobile/package.json`、`mobile/package-lock.json`
+  - `mobile/src/{App.vue,main.ts,env.d.ts}`、`mobile/src/router/index.ts`、`mobile/src/styles/base.css`
+  - `mobile/src/{core,i18n,stores,api,components,views}/`
+  - `mobile/tests/{navigation,i18n,prediction-locale}.test.ts` 及既有移动端测试
+  - `.trellis/spec/mobile/{index.md,navigation-and-localization.md}`
+  - `.trellis/tasks/06-27-backend-ddd-architecture-refactor/prd.md`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：
+  - `npm run type-check`、`npm test`（12/12）、`npm run build`（目录 `mobile`，全部通过）。
+  - `npm run tauri:android:build -- --debug --target aarch64 --apk`（通过，产出 universal Debug APK）。
+  - `npm run tauri:ios:build -- --debug --target aarch64-sim --no-sign`（通过，产出 iOS Simulator Bundle）。
+  - Codex In-app Browser 在 `390x844` 验证中英文登录/注册、语言刷新持久化、合约选币返回、交易模式跨主导航保持、主导航不堆叠历史和详情直开返回兜底；宽屏 H5 检查未发现裁切或重叠。
+  - 中英文资源键一致性检查通过（944 个键）；固定中文、调试日志、尾随空白扫描通过。
+- 后续事项：当前本机 `127.0.0.1:8080` 由旧 Java 服务占用，其公开国家接口返回 401，移动端已提供基础国家列表降级；切换到本仓库 Rust 后端并提供测试账户后，仍需完成登录、注册邮件、真实资金与下单写操作的端到端验收。iOS 真机发布前需配置 Apple Development Team 和签名证书。
+
+## 2026-07-13 04:56 - 撤销移动端全量视觉系统重构
+
+- 完成内容：按视觉重构前的完整工作区快照精确恢复移动端样式、组件和页面，撤销 2026-07-13 的全量视觉改版；保留此前已完成的接口对接、业务页面、导航逻辑、多语言和登录注册流程。
+- 修改文件：恢复 `mobile/src/{styles,components,views}` 中本次涉及的 40 个文件；删除 `mobile/tests/visual-system.test.ts`、`.trellis/spec/mobile/visual-system.md` 和 `.trellis/tasks/07-13-mobile-visual-system-redesign/`；恢复 `.trellis/spec/mobile/index.md` 并更新 `docs/superpowers/PROGRESS.md`。
+- 验证结果：逐文件内容哈希与重构前快照比对，差异为 0；`npm run type-check`、`npm test`（12/12）、`npm run build`（目录 `mobile`，全部通过）；`npm run tauri:android:build` 与 `npm run tauri:ios:build -- --no-sign` 通过，Android APK/AAB 和 iOS IPA 已按回滚后的界面重新生成；390x844 H5 检查确认旧版视觉变量和 52x52 中央交易按钮恢复，页面无横向溢出。
+- 后续事项：无
+
+## 2026-07-13 19:25 - 打通现货、杠杆、秒合约与三级代理后端
+
+- 完成内容：
+  - 将代理组织升级为“后台超级管理员（虚拟 0 级）> 总代理 > 二级代理 > 三级代理”的物化路径树；后台创建时由服务端推导父级、根级、等级和路径并拒绝第四级，代理与后台用户查询均按当前节点子树隔离，停用任一祖先会阻断下级登录、刷新和邀请码发展用户。
+  - 现货新增服务端按交易对批量撤单和逐项失败汇总；市价单必须使用 60 秒内服务端行情，修复普通 pending 订单成交，并将用户成交历史限制为当前用户参与的成交。
+  - 杠杆补齐设置读取、双向划转幂等和资产精度、超过 100 条的批量平仓/撤单、失败继续执行及事件发布；平仓、撤单和爆仓按仓位 `wallet_scope` 原路入账，并统一双向钱包锁序。当前没有账户级共享风险池，`cross` 设置及开仓会明确拒绝，避免伪全仓。
+  - 秒合约在扣款前校验新鲜正价行情、产品/交易对/相关资产状态和质押资产精度；手工结算与自动结算统一按资产精度截断派奖。
+  - 新增 `0082_agent_hierarchy.sql`、`0083_margin_transfer_idempotency.sql`，并补齐代理、后台、交易路由和清算 worker 回归测试及后端契约规范。
+- 修改文件：
+  - `migrations/{0082_agent_hierarchy.sql,0083_margin_transfer_idempotency.sql}`
+  - `src/modules/{agent,admin,auth,spot,margin,seconds_contract}/`、`src/workers/{margin_liquidation,seconds_contract_settlement}.rs`、`src/openapi.rs`
+  - `tests/{agent_routes,admin_routes,openapi_routes,spot_routes,margin_routes,seconds_contract_routes,margin_liquidation_worker,seconds_contract_settlement_worker}.rs`
+  - `tests/unit_src/src_modules_agent_mod_tests.rs`
+  - `.trellis/spec/backend/{agent-hierarchy,margin-trading-actions,spot-orders,seconds-contracts,index}.md`
+  - `.trellis/tasks/07-13-trading-agent-hierarchy/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：
+  - 空 Docker MySQL 从 `0001` 至 `0083` 全量迁移通过；`cargo check --all-targets`、任务相关文件 `rustfmt --edition 2024 --check`、`git diff --check` 通过。
+  - 真实 MySQL/Redis：`agent_routes` 16/16、三级代理后台用例 1/1、后台代理改派审计用例 1/1、`openapi_routes` 8/8 通过。
+  - 真实 MySQL/Redis：`spot_routes` 51/51、`margin_routes` 29/29、`seconds_contract_routes` 24/24、`margin_liquidation_worker` 7/7、`seconds_contract_settlement_worker` 8/8 通过；代理领域单测 2/2 通过。
+  - `cargo clippy --all-targets --no-deps -- -D warnings` 未通过：全仓仍有 55 条既有告警，分布于 admin、convert、earn、kyc、loan、prediction、quick_recharge、wallet 及本次拆分前已存在的复杂参数/样式代码；本次未扩大范围清理这些无关告警。
+- 后续事项：若业务必须支持真实全仓保证金，需要另行实现账户级共享权益、组合风险和统一强平模型；生产现货还需按实际交易模式接入外部撮合/流动性资金对账，而不是把内部系统对手方等同于外部结算。
+
+## 2026-07-14 03:46 - 补齐代理归属与用户邀请双链路
+
+- 完成内容：
+  - 明确代理组织树负责“归属哪家代理公司”，用户邀请链负责“具体由谁邀请”；代理邀请用户 A、A 再邀请用户 B 时，B 继承 A 的直属归属代理，同时保留 A 作为直属邀请人。
+  - 注册和已注册用户绑定两个入口统一校验直属邀请用户、归属代理及其全部上级状态；任一上级代理停用后，所属用户的个人邀请码不能继续发展用户，失败事务不会写入用户、推荐关系或邀请码用量。
+  - 代理 `/users` 与后台代理用户响应新增明确的 `owner_agent_id`，并返回 `direct_inviter_type/direct_inviter_id`；保留历史 `root_agent_id` 字段兼容现有客户端。
+  - 增加三级代理下“代理 -> 用户 A -> 用户 B”的归属继承、总代理/二级/三级可见、兄弟代理隔离及后台双维度展示回归测试。
+- 修改文件：
+  - `src/modules/auth/infrastructure.rs`
+  - `src/modules/user/{application,infrastructure}.rs`
+  - `src/modules/agent/{infrastructure,presentation}.rs`
+  - `src/modules/admin/{infrastructure,presentation}.rs`
+  - `src/openapi.rs`
+  - `tests/{user_routes,agent_routes,admin_routes,openapi_routes}.rs`
+  - `.trellis/tasks/07-13-trading-agent-hierarchy/prd.md`
+  - `.trellis/spec/backend/agent-hierarchy.md`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：
+  - `cargo check --all-targets`（通过）。
+  - 真实 MySQL：`user_routes` 单线程 19/19、`agent_routes` 单线程 16/16（通过）。
+  - 真实 MySQL：后台三级代理用例、后台代理改派与邀请链用例各 1/1（通过）。
+  - `openapi_routes` 8/8、任务相关文件 `rustfmt --edition 2024 --check`（通过）。
+  - `cargo clippy --all-targets --no-deps`（通过，仍报告全仓 55 条既有告警，本次修改位置未新增告警）。
+  - 全仓 `cargo fmt --check` 仍被未涉及的 `tests/convert_routes.rs:122` 既有格式差异阻断，本次修改文件无格式差异。
+- 后续事项：后续若在主后台用户总表直接展示邀请归属，可复用本次 `owner_agent_id + direct_inviter_type/direct_inviter_id` 契约；当前后台代理团队接口已完整提供这些字段。
+
+## 2026-07-16 04:25 - 对齐杠杆、代理返佣与竞猜结算链路
+
+- 完成内容：
+  - 杠杆产品接口新增已实现能力声明，服务端只接受逐仓市价开仓；产品后台、PC 与移动端同步移除限价/全仓的伪能力，并将下单金额、余额和百分比计算统一为保证金资产计量，历史 cross 产品配置由迁移统一修正为逐仓。
+  - 代理后台创建页改为选择直属上级、由服务端推导等级；列表补齐直属上级、总代理、直属用户、下级代理和团队用户字段，支持三级组织的日常管理。
+  - 返佣规则由仅闪兑扩展为闪兑与竞猜两种业务；抽出代理返佣共享仓储写入，在闪兑成交和竞猜订单创建事务内落佣，并记录 payout asset，使后台结算不再依赖闪兑订单表。
+  - 竞猜同步同时抓取进行中与已关闭的 Polymarket 市场；关闭市场可从最终二元价格推导结果，无法确定结果时转为待确认，避免单笔竞猜订单永久未结算。
+- 修改文件：
+  - `migrations/0084_margin_capabilities_and_agent_commission_businesses.sql`
+  - `src/modules/{margin,agent,convert,prediction,admin}/`、`src/openapi.rs`
+  - `pc/src/{api/backendAdapters.ts,components/trade/ContractOrderForm.vue}`
+  - `mobile/src/{api/trading.ts,views/TradeView.vue}`
+  - `web/src/admin/{actions/AgentManagementPage.tsx,resources/}`
+  - `tests/unit_src/{src_modules_margin_application_tests.rs,src_modules_agent_mod_tests.rs,src_modules_prediction_tests.rs}`
+  - `.trellis/spec/backend/{margin-trading-actions.md,agent-hierarchy.md,prediction-markets.md}`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：根据当前任务约束，本轮未执行 `cargo`、前端 typecheck、测试、迁移或构建命令，需在用户明确要求验证后执行。
+- 后续事项：执行 MySQL 迁移与后端/PC/mobile/web 的针对性验证；在真实 Polymarket 关闭市场和真实代理归属数据上做端到端资金结算验收。
+
+## 2026-07-16 09:19 - 交易与代理功能完成度审计
+
+- 完成内容：对现货、杠杆、秒合约、三级代理、业务返佣和竞猜关闭链路进行了代码、类型检查、单元测试及临时 MySQL/Redis 集成审计；确认核心现货、秒合约和三级代理后端链路可用，并整理仍需完成的 P0/P1 项目。
+- 修改文件：`docs/superpowers/PROGRESS.md`
+- 验证结果：`cargo check --all-targets`、`cargo test --lib`（156/156）、`backend_architecture`（4/4）、PC/mobile 类型检查、mobile 测试（12/12）通过；临时 MySQL 完整应用 1-84 号迁移，现货（51/51）、秒合约（24/24）、代理（16/16）及后台三级代理（2/2）通过。Web typecheck 被 `resourceConfigs.test.tsx:2026` 语法错误阻断；PC 静态测试 80/83，杠杆集成测试 27/29，闪兑集成测试 12/13，后台返佣测试 3/4；全仓 `cargo fmt --check` 未通过。
+- 后续事项：修复构建与测试阻断；彻底收敛 PC 杠杆伪能力；为代理团队补分页和树形下钻；为竞猜关闭同步补分页及端到端结算测试；按业务范围扩展返佣；生产化场景仍需实现真正全仓风控、挂单模型及外部撮合/流动性对账。
+
+## 2026-07-16 11:06 - 完成五业务多级差额返佣
+
+- 完成内容：
+  - 将可配置返佣业务扩展为闪兑、竞猜、现货、杠杆和秒合约；五类业务统一通过代理仓储入口，在原成交或开仓资金事务内写入返佣记录。
+  - 实现三级代理累计比例差额分配：按直属代理到总代理依次计算正差额，`5%/8%/10%` 实际分配为 `5%/3%/2%`；缺失、禁用或倒挂层级不会负分配或超额返佣。
+  - 按返佣结算资产精度截断累计金额后计算逐级差额，记录快照实际 `commission_rate` 与 `payout_asset_id`，并用 `(agent_id, source_type, source_id)` 保证每一级幂等。
+  - 后台规则创建与筛选支持五类业务，佣金列表展示实际差额比例；管理员、代理端响应及 OpenAPI 契约同步新增 `commission_rate`。
+  - 增加迁移 `0085_agent_tiered_business_commissions.sql`，三阶段回填历史实际比例，并补齐领域、五业务、后台结算、代理可见性和接口契约测试。
+- 修改文件：
+  - `migrations/0085_agent_tiered_business_commissions.sql`
+  - `src/modules/agent/{domain,infrastructure,presentation,repository,service}.rs`
+  - `src/modules/{convert,prediction,spot,margin,seconds_contract}/` 对应事务应用/仓储文件
+  - `src/modules/admin/{application,infrastructure,presentation,service}.rs`、`src/openapi.rs`
+  - `tests/{admin_routes,agent_routes,convert_routes,margin_routes,openapi_routes,seconds_contract_routes,spot_routes,prediction_commission_routes}.rs`
+  - `tests/support/mod.rs`、`tests/unit_src/{src_modules_agent_domain_tests,src_modules_agent_mod_tests}.rs`
+  - `web/src/admin/resources/{ResourceCreateActions,resourceConfigs,resourceConfigs.test}.tsx`
+  - `.trellis/tasks/07-13-trading-agent-hierarchy/prd.md`
+  - `.trellis/spec/backend/{agent-hierarchy,wallet-amount-precision,index}.md`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：
+  - 临时空 MySQL 已完整应用 `0001-0085`，`sqlx migrate info` 确认 85 号迁移 installed；返佣专项真实 MySQL/Redis 测试全部通过：闪兑 5/5、现货 2/2、杠杆 1/1、秒合约 1/1、竞猜 1/1、后台规则与结算 4/4、代理佣金可见性 1/1。
+  - `cargo check --all-targets`、`cargo test --lib`（159/159）、`backend_architecture`（4/4）、代理管理与代理端 OpenAPI 契约（2/2）、任务文件 `rustfmt --check`、差异/冲突标记/尾随空格检查通过。
+  - Web `npm run typecheck`、返佣规则组件测试（1/1）、目标文件 ESLint、`npm run build` 通过；构建仅报告第三方 `lottie-web` 的直接 `eval` 和既有大 chunk 提示。
+  - `cargo clippy --all-targets` 通过并保留全仓 56 条历史告警；本次新增的多级返佣测试告警已消除，返佣领域与仓储代码未新增 Clippy 告警。
+- 后续事项：无

@@ -22,6 +22,8 @@ use tokio::time::timeout;
 use tower::ServiceExt;
 use uuid::Uuid;
 
+mod support;
+
 fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).unwrap()
 }
@@ -46,6 +48,8 @@ fn test_settings() -> Settings {
         bitget_ws_url: "wss://bitget.test/ws".to_owned(),
         htx_rest_base_url: "https://htx.test".to_owned(),
         htx_ws_url: "wss://htx.test/ws".to_owned(),
+        coinbase_rest_base_url: "https://coinbase.test".to_owned(),
+        coinbase_ws_url: "wss://coinbase.test/ws".to_owned(),
         market_feed_symbols: Vec::new(),
         market_feed_intervals: Vec::new(),
         market_feed_providers: Vec::new(),
@@ -106,12 +110,21 @@ async fn seed_ticker(redis: &Option<redis::aio::ConnectionManager>, symbol: &str
     let Some(redis) = redis else {
         return;
     };
+    seed_ticker_at(redis, symbol, price, chrono::Utc::now().timestamp_millis()).await;
+}
+
+async fn seed_ticker_at(
+    redis: &redis::aio::ConnectionManager,
+    symbol: &str,
+    price: &str,
+    observed_at: i64,
+) {
     let mut connection = redis.clone();
     let payload = serde_json::json!({
         "symbol": symbol.replace('-', ""),
         "last_price": price,
         "volume_24h": "1.000000000000000000",
-        "observed_at": chrono::Utc::now().timestamp_millis(),
+        "observed_at": observed_at,
     })
     .to_string();
     let _: () = connection
@@ -232,9 +245,426 @@ async fn seed_seconds_product(
     .last_insert_id()
 }
 
+async fn seed_seconds_product_cycle(
+    tx: &mut Transaction<'_, MySql>,
+    product_id: u64,
+    duration_seconds: u32,
+    payout_rate: &str,
+    min_stake: &str,
+    max_stake: Option<&str>,
+    sort_order: u32,
+) {
+    sqlx::query(
+        r#"INSERT INTO seconds_contract_product_cycles
+           (product_id, duration_seconds, payout_rate, min_stake, max_stake, sort_order)
+           VALUES (?, ?, ?, ?, ?, ?)"#,
+    )
+    .bind(product_id)
+    .bind(duration_seconds)
+    .bind(decimal(payout_rate))
+    .bind(decimal(min_stake))
+    .bind(max_stake.map(decimal))
+    .bind(sort_order)
+    .execute(&mut **tx)
+    .await
+    .unwrap();
+}
+
 async fn body_json(response: axum::response::Response) -> Result<Value, Box<dyn Error>> {
     let body = axum::body::to_bytes(response.into_body(), 65_536).await?;
     Ok(serde_json::from_slice(&body)?)
+}
+
+#[tokio::test]
+async fn seconds_contract_open_requires_fresh_positive_ticker_before_mutation()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let mut tx = pool.begin().await?;
+    let user_id = create_user(&mut tx).await;
+    let (base_asset, base_symbol) = create_asset(&mut tx, "NTB").await;
+    let (quote_asset, quote_symbol) = create_asset(&mut tx, "NTQ").await;
+    let symbol = format!("{base_symbol}-{quote_symbol}");
+    let pair_id = create_pair(&mut tx, base_asset, quote_asset, &symbol).await;
+    let product_id = seed_seconds_product(&mut tx, pair_id, quote_asset).await;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(quote_asset)
+        .bind(decimal("50.000000000000000000"))
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+
+    let no_redis = user_routes()
+        .with_state(AppState::new(settings.clone()).with_mysql(pool.clone()))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/seconds-contracts/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"product_id":{product_id},"direction":"up","stake_amount":"10.000000000000000000","idempotency_key":"seconds-no-redis-{}"}}"#,
+                    Uuid::now_v7().simple()
+                )))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(no_redis.status(), StatusCode::BAD_REQUEST);
+
+    if let Some(redis) = redis_manager().await {
+        let mut connection = redis.clone();
+        let _: usize = connection.del(market_ticker_redis_key(&symbol)).await?;
+        let app = user_routes().with_state(
+            AppState::new(settings)
+                .with_mysql(pool.clone())
+                .with_redis(redis.clone()),
+        );
+
+        let missing = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/seconds-contracts/orders")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"product_id":{product_id},"direction":"up","stake_amount":"10.000000000000000000","idempotency_key":"seconds-missing-ticker-{}"}}"#,
+                        Uuid::now_v7().simple()
+                    )))
+                    .unwrap(),
+            )
+            .await?;
+        assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+
+        seed_ticker_at(
+            &redis,
+            &symbol,
+            "100.000000000000000000",
+            (chrono::Utc::now() - chrono::TimeDelta::seconds(61)).timestamp_millis(),
+        )
+        .await;
+        let stale = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/seconds-contracts/orders")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"product_id":{product_id},"direction":"up","stake_amount":"10.000000000000000000","idempotency_key":"seconds-stale-ticker-{}"}}"#,
+                        Uuid::now_v7().simple()
+                    )))
+                    .unwrap(),
+            )
+            .await?;
+        assert_eq!(stale.status(), StatusCode::BAD_REQUEST);
+
+        seed_ticker_at(
+            &redis,
+            &symbol,
+            "0.000000000000000000",
+            chrono::Utc::now().timestamp_millis(),
+        )
+        .await;
+        let non_positive = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/seconds-contracts/orders")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"product_id":{product_id},"direction":"up","stake_amount":"10.000000000000000000","idempotency_key":"seconds-zero-ticker-{}"}}"#,
+                        Uuid::now_v7().simple()
+                    )))
+                    .unwrap(),
+            )
+            .await?;
+        assert_eq!(non_positive.status(), StatusCode::BAD_REQUEST);
+    }
+
+    let (order_count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM seconds_contract_orders WHERE user_id = ?")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await?;
+    let (available,): (BigDecimal,) =
+        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(quote_asset)
+            .fetch_one(&pool)
+            .await?;
+    let (ledger_count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM wallet_ledger WHERE user_id = ? AND ref_type = 'seconds_contract_order'",
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(order_count, 0);
+    assert_eq!(available, decimal("50.000000000000000000"));
+    assert_eq!(ledger_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn seconds_contract_open_rejects_inactive_pair_or_assets_before_mutation()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let mut tx = pool.begin().await?;
+    let user_id = create_user(&mut tx).await;
+    let (base_asset, base_symbol) = create_asset(&mut tx, "ISB").await;
+    let (quote_asset, quote_symbol) = create_asset(&mut tx, "ISQ").await;
+    let symbol = format!("{base_symbol}-{quote_symbol}");
+    let pair_id = create_pair(&mut tx, base_asset, quote_asset, &symbol).await;
+    let product_id = seed_seconds_product(&mut tx, pair_id, quote_asset).await;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(quote_asset)
+        .bind(decimal("50.000000000000000000"))
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let app = user_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+
+    sqlx::query("UPDATE trading_pairs SET status = 'disabled' WHERE id = ?")
+        .bind(pair_id)
+        .execute(&pool)
+        .await?;
+    let inactive_pair = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/seconds-contracts/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"product_id":{product_id},"direction":"up","stake_amount":"10.000000000000000000","idempotency_key":"seconds-inactive-pair-{}"}}"#,
+                    Uuid::now_v7().simple()
+                )))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(inactive_pair.status(), StatusCode::NOT_FOUND);
+
+    sqlx::query("UPDATE trading_pairs SET status = 'active' WHERE id = ?")
+        .bind(pair_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE assets SET status = 'disabled' WHERE id = ?")
+        .bind(quote_asset)
+        .execute(&pool)
+        .await?;
+    let inactive_stake_asset = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/seconds-contracts/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"product_id":{product_id},"direction":"up","stake_amount":"10.000000000000000000","idempotency_key":"seconds-inactive-stake-{}"}}"#,
+                    Uuid::now_v7().simple()
+                )))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(inactive_stake_asset.status(), StatusCode::NOT_FOUND);
+
+    sqlx::query("UPDATE assets SET status = 'active' WHERE id = ?")
+        .bind(quote_asset)
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE assets SET status = 'disabled' WHERE id = ?")
+        .bind(base_asset)
+        .execute(&pool)
+        .await?;
+    let inactive_pair_asset = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/seconds-contracts/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"product_id":{product_id},"direction":"up","stake_amount":"10.000000000000000000","idempotency_key":"seconds-inactive-base-{}"}}"#,
+                    Uuid::now_v7().simple()
+                )))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(inactive_pair_asset.status(), StatusCode::NOT_FOUND);
+
+    let (order_count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM seconds_contract_orders WHERE user_id = ?")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await?;
+    let (available,): (BigDecimal,) =
+        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(quote_asset)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(order_count, 0);
+    assert_eq!(available, decimal("50.000000000000000000"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn seconds_contract_stake_and_manual_payout_respect_asset_precision()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let mut tx = pool.begin().await?;
+    let user_id = create_user(&mut tx).await;
+    let (base_asset, base_symbol) = create_asset(&mut tx, "PRB").await;
+    let (quote_asset, quote_symbol) = create_asset(&mut tx, "PRQ").await;
+    let symbol = format!("{base_symbol}-{quote_symbol}");
+    let pair_id = create_pair(&mut tx, base_asset, quote_asset, &symbol).await;
+    let product_id = seed_seconds_product(&mut tx, pair_id, quote_asset).await;
+    sqlx::query("UPDATE assets SET precision_scale = 2 WHERE id = ?")
+        .bind(quote_asset)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE seconds_contract_products SET payout_rate = ? WHERE id = ?")
+        .bind(decimal("0.33333333"))
+        .bind(product_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(quote_asset)
+        .bind(decimal("50.000000000000000000"))
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    let admin_id = create_admin(&pool).await;
+    seed_ticker_at(
+        &redis,
+        &symbol,
+        "100.000000000000000000",
+        chrono::Utc::now().timestamp_millis(),
+    )
+    .await;
+
+    let user_token =
+        issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let user_app = user_routes().with_state(
+        AppState::new(settings.clone())
+            .with_mysql(pool.clone())
+            .with_redis(redis),
+    );
+
+    let invalid = user_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/seconds-contracts/orders")
+                .header("authorization", format!("Bearer {user_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"product_id":{product_id},"direction":"up","stake_amount":"10.123","idempotency_key":"seconds-precision-invalid-{}"}}"#,
+                    Uuid::now_v7().simple()
+                )))
+                .unwrap(),
+        )
+        .await?;
+    let invalid_status = invalid.status();
+    let invalid_payload = body_json(invalid).await?;
+    assert_eq!(
+        invalid_status,
+        StatusCode::BAD_REQUEST,
+        "payload: {invalid_payload}"
+    );
+    let (available_before_open,): (BigDecimal,) =
+        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(quote_asset)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(available_before_open, decimal("50.000000000000000000"));
+
+    let opened = user_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/seconds-contracts/orders")
+                .header("authorization", format!("Bearer {user_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"product_id":{product_id},"direction":"up","stake_amount":"10.12","idempotency_key":"seconds-precision-open-{}"}}"#,
+                    Uuid::now_v7().simple()
+                )))
+                .unwrap(),
+        )
+        .await?;
+    let opened_status = opened.status();
+    let opened_payload = body_json(opened).await?;
+    assert_eq!(opened_status, StatusCode::OK, "payload: {opened_payload}");
+    let order_id = opened_payload["order"]["id"].as_u64().unwrap();
+
+    let settled = admin_routes()
+        .with_state(AppState::new(settings).with_mysql(pool.clone()))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/seconds-contracts/orders/{order_id}/settle"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"result":"win","reason":"precision regression settlement"}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let settled_status = settled.status();
+    let settled_payload = body_json(settled).await?;
+    assert_eq!(settled_status, StatusCode::OK, "payload: {settled_payload}");
+    assert_eq!(
+        decimal(settled_payload["payout_amount"].as_str().unwrap()).normalized(),
+        decimal("13.49").normalized()
+    );
+
+    let (available_after,): (BigDecimal,) =
+        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(quote_asset)
+            .fetch_one(&pool)
+            .await?;
+    let (payout_amount,): (BigDecimal,) = sqlx::query_as(
+        "SELECT amount FROM wallet_ledger WHERE ref_type = 'seconds_contract_order' AND ref_id = ? AND change_type = 'seconds_contract_settle_win'",
+    )
+    .bind(order_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(available_after.normalized(), decimal("53.37").normalized());
+    assert_eq!(payout_amount.normalized(), decimal("13.49").normalized());
+    Ok(())
 }
 
 #[tokio::test]
@@ -552,6 +982,94 @@ async fn admin_seconds_contract_product_routes_require_admin_scope_mysql_and_val
         "internal error: mysql pool is not configured for seconds contract routes"
     );
 
+    let update_body = r#"{"pair_id":1,"stake_asset":1,"duration_seconds":60,"payout_rate":"0.80000000","min_stake":"10.000000000000000000","status":"active","reason":"update seconds product"}"#;
+    let unauthenticated_update = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/seconds-contracts/products/1")
+                .header("content-type", "application/json")
+                .body(Body::from(update_body))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(unauthenticated_update.status(), StatusCode::UNAUTHORIZED);
+
+    let user_update = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/seconds-contracts/products/1")
+                .header("authorization", format!("Bearer {user_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(update_body))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(user_update.status(), StatusCode::FORBIDDEN);
+
+    let blank_update_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/seconds-contracts/products/1")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"pair_id":1,"stake_asset":1,"duration_seconds":60,"payout_rate":"0.80000000","min_stake":"10.000000000000000000","status":"active","reason":"   "}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let blank_update_reason_status = blank_update_reason.status();
+    let blank_update_reason_payload = body_json(blank_update_reason).await?;
+    assert_eq!(blank_update_reason_status, StatusCode::BAD_REQUEST);
+    assert_eq!(blank_update_reason_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        blank_update_reason_payload["message"],
+        "validation error: seconds contract reason is required"
+    );
+
+    let invalid_update_status = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/seconds-contracts/products/1")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"pair_id":1,"stake_asset":1,"duration_seconds":60,"payout_rate":"0.80000000","min_stake":"10.000000000000000000","status":"archived","reason":"invalid status test"}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(invalid_update_status.status(), StatusCode::BAD_REQUEST);
+
+    let no_mysql_update = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/seconds-contracts/products/1")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(update_body))
+                .unwrap(),
+        )
+        .await?;
+    let no_mysql_update_status = no_mysql_update.status();
+    let no_mysql_update_payload = body_json(no_mysql_update).await?;
+    assert_eq!(no_mysql_update_status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(no_mysql_update_payload["code"], "INTERNAL_ERROR");
+    assert_eq!(
+        no_mysql_update_payload["message"],
+        "internal error: mysql pool is not configured for seconds contract routes"
+    );
+
     let blank_status_reason = app
         .clone()
         .oneshot(
@@ -741,6 +1259,29 @@ async fn admin_seconds_contract_product_rejects_unsafe_fields_before_mysql()
         "validation error: seconds contract payout_rate supports at most 8 decimal places"
     );
 
+    let invalid_update_bounds = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/seconds-contracts/products/1")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"pair_id":1,"stake_asset":1,"duration_seconds":60,"payout_rate":"0.80000000","min_stake":"20.000000000000000000","max_stake":"10.000000000000000000","status":"active","reason":"invalid edit bounds"}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let invalid_update_bounds_status = invalid_update_bounds.status();
+    let invalid_update_bounds_payload = body_json(invalid_update_bounds).await?;
+    assert_eq!(invalid_update_bounds_status, StatusCode::BAD_REQUEST);
+    assert_eq!(invalid_update_bounds_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        invalid_update_bounds_payload["message"],
+        "validation error: seconds contract max_stake must be greater than or equal to min_stake"
+    );
+
     let long_reason = "R".repeat(513);
     let long_reason_body = format!(
         r#"{{"pair_id":1,"stake_asset":1,"duration_seconds":60,"payout_rate":"0.80000000","min_stake":"10.000000000000000000","reason":"{long_reason}"}}"#
@@ -813,7 +1354,7 @@ async fn admin_seconds_contract_product_create_update_status_and_audit()
     assert_eq!(missing_pair_payload["code"], "NOT_FOUND");
 
     let create_body = format!(
-        r#"{{"pair_id":{pair_id},"stake_asset":{quote_asset},"duration_seconds":90,"payout_rate":"0.75000000","min_stake":"15.000000000000000000","max_stake":"150.000000000000000000","status":"active","reason":"launch seconds product"}}"#
+        r#"{{"pair_id":{pair_id},"stake_asset":{quote_asset},"cycles":[{{"duration_seconds":90,"payout_rate":"0.75000000","min_stake":"15.000000000000000000","max_stake":"150.000000000000000000"}},{{"duration_seconds":120,"payout_rate":"0.82000000","min_stake":"20.000000000000000000","max_stake":null}}],"status":"active","reason":"launch seconds product"}}"#
     );
     let create_response = app
         .clone()
@@ -837,6 +1378,9 @@ async fn admin_seconds_contract_product_create_update_status_and_audit()
     assert_eq!(create_payload["stake_asset_symbol"], quote_symbol);
     assert_eq!(create_payload["duration_seconds"], 90);
     assert_eq!(create_payload["payout_rate"], "0.75000000");
+    assert_eq!(create_payload["cycles"].as_array().unwrap().len(), 2);
+    assert_eq!(create_payload["cycles"][0]["duration_seconds"], 90);
+    assert_eq!(create_payload["cycles"][1]["duration_seconds"], 120);
     assert_eq!(create_payload["status"], "active");
 
     let detail_response = app
@@ -857,6 +1401,7 @@ async fn admin_seconds_contract_product_create_update_status_and_audit()
     assert_eq!(detail_payload["symbol"], symbol);
     assert_eq!(detail_payload["stake_asset"], quote_asset);
     assert_eq!(detail_payload["stake_asset_symbol"], quote_symbol);
+    assert_eq!(detail_payload["cycles"].as_array().unwrap().len(), 2);
     assert_eq!(detail_payload["status"], "active");
 
     let unknown_detail = app
@@ -870,6 +1415,36 @@ async fn admin_seconds_contract_product_create_update_status_and_audit()
         )
         .await?;
     assert_eq!(unknown_detail.status(), StatusCode::NOT_FOUND);
+
+    let edit_body = format!(
+        r#"{{"pair_id":{pair_id},"stake_asset":{quote_asset},"cycles":[{{"duration_seconds":120,"payout_rate":"0.82000000","min_stake":"20.000000000000000000","max_stake":null}},{{"duration_seconds":300,"payout_rate":"0.95000000","min_stake":"30.000000000000000000","max_stake":"300.000000000000000000"}}],"status":"active","reason":"adjust seconds product"}}"#
+    );
+    let edit_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/seconds-contracts/products/{product_id}"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(edit_body))
+                .unwrap(),
+        )
+        .await?;
+    let edit_status = edit_response.status();
+    let edit_payload = body_json(edit_response).await?;
+    assert_eq!(edit_status, StatusCode::OK, "payload: {edit_payload}");
+    assert_eq!(edit_payload["id"], product_id);
+    assert_eq!(edit_payload["pair_id"], pair_id);
+    assert_eq!(edit_payload["stake_asset"], quote_asset);
+    assert_eq!(edit_payload["duration_seconds"], 120);
+    assert_eq!(edit_payload["payout_rate"], "0.82000000");
+    assert_eq!(edit_payload["min_stake"], "20.000000000000000000");
+    assert!(edit_payload["max_stake"].is_null());
+    assert_eq!(edit_payload["cycles"].as_array().unwrap().len(), 2);
+    assert_eq!(edit_payload["cycles"][0]["duration_seconds"], 120);
+    assert_eq!(edit_payload["cycles"][1]["duration_seconds"], 300);
+    assert_eq!(edit_payload["status"], "active");
 
     let long_update_reason = "R".repeat(513);
     let long_update_reason_body =
@@ -915,6 +1490,29 @@ async fn admin_seconds_contract_product_create_update_status_and_audit()
     assert_eq!(update_payload["id"], product_id);
     assert_eq!(update_payload["status"], "disabled");
 
+    let delete_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/seconds-contracts/products/{product_id}"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"reason":"remove disabled seconds product"}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
+
+    let product_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM seconds_contract_products WHERE id = ?")
+            .bind(product_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(product_count, 0);
+
     let audit_rows: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT action, target_type, reason FROM admin_audit_logs WHERE admin_id = ? AND target_id = ? ORDER BY id",
     )
@@ -922,13 +1520,117 @@ async fn admin_seconds_contract_product_create_update_status_and_audit()
     .bind(product_id.to_string())
     .fetch_all(&pool)
     .await?;
-    assert_eq!(audit_rows.len(), 2);
+    assert_eq!(audit_rows.len(), 4);
     assert_eq!(audit_rows[0].0, "seconds_contract_product.create");
     assert_eq!(audit_rows[0].1, "seconds_contract_product");
     assert_eq!(audit_rows[0].2, "launch seconds product");
-    assert_eq!(audit_rows[1].0, "seconds_contract_product.update_status");
+    assert_eq!(audit_rows[1].0, "seconds_contract_product.update");
     assert_eq!(audit_rows[1].1, "seconds_contract_product");
-    assert_eq!(audit_rows[1].2, "pause seconds product");
+    assert_eq!(audit_rows[1].2, "adjust seconds product");
+    assert_eq!(audit_rows[2].0, "seconds_contract_product.update_status");
+    assert_eq!(audit_rows[2].1, "seconds_contract_product");
+    assert_eq!(audit_rows[2].2, "pause seconds product");
+    assert_eq!(audit_rows[3].0, "seconds_contract_product.delete");
+    assert_eq!(audit_rows[3].1, "seconds_contract_product");
+    assert_eq!(audit_rows[3].2, "remove disabled seconds product");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_seconds_contract_product_delete_requires_disabled_and_no_orders()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let mut fixture_tx = pool.begin().await?;
+    let admin_id = create_admin(&pool).await;
+    let user_id = create_user(&mut fixture_tx).await;
+    let (base_asset, base_symbol) = create_asset(&mut fixture_tx, "RD").await;
+    let (quote_asset, quote_symbol) = create_asset(&mut fixture_tx, "RQ").await;
+    let symbol = format!("{base_symbol}-{quote_symbol}");
+    let pair_id = create_pair(&mut fixture_tx, base_asset, quote_asset, &symbol).await;
+    let product_id = seed_seconds_product(&mut fixture_tx, pair_id, quote_asset).await;
+    fixture_tx.commit().await?;
+
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = admin_routes().with_state(state_with_mysql_and_redis(settings, pool.clone(), None));
+
+    let active_delete_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/seconds-contracts/products/{product_id}"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"reason":"delete active product"}"#))
+                .unwrap(),
+        )
+        .await?;
+    let active_delete_status = active_delete_response.status();
+    let active_delete_payload = body_json(active_delete_response).await?;
+    assert_eq!(active_delete_status, StatusCode::BAD_REQUEST);
+    assert_eq!(active_delete_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        active_delete_payload["message"],
+        "validation error: seconds contract product must be disabled before deletion"
+    );
+
+    sqlx::query("UPDATE seconds_contract_products SET status = 'disabled' WHERE id = ?")
+        .bind(product_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        r#"INSERT INTO seconds_contract_orders
+           (user_id, product_id, pair_id, stake_asset, direction, stake_amount,
+            payout_rate, status, idempotency_key, expires_at)
+           VALUES (?, ?, ?, ?, 'up', ?, ?, 'settled', ?, CURRENT_TIMESTAMP(6))"#,
+    )
+    .bind(user_id)
+    .bind(product_id)
+    .bind(pair_id)
+    .bind(quote_asset)
+    .bind(decimal("10.000000000000000000"))
+    .bind(decimal("0.80000000"))
+    .bind(format!("seconds-delete-guard-{}", Uuid::now_v7().simple()))
+    .execute(&pool)
+    .await?;
+
+    let referenced_delete_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/seconds-contracts/products/{product_id}"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"reason":"delete referenced product"}"#))
+                .unwrap(),
+        )
+        .await?;
+    let referenced_delete_status = referenced_delete_response.status();
+    let referenced_delete_payload = body_json(referenced_delete_response).await?;
+    assert_eq!(referenced_delete_status, StatusCode::BAD_REQUEST);
+    assert_eq!(referenced_delete_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        referenced_delete_payload["message"],
+        "validation error: seconds contract product with orders cannot be deleted"
+    );
+
+    let product_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM seconds_contract_products WHERE id = ?")
+            .bind(product_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(product_count, 1);
 
     Ok(())
 }
@@ -983,6 +1685,10 @@ async fn seconds_contract_open_order_does_not_replay_foreign_key_failures()
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
+    let redis = Some(redis);
     let settings = test_settings();
     let mut fixture_tx = pool.begin().await?;
     let (base_asset, base_symbol) = create_asset(&mut fixture_tx, "FB").await;
@@ -991,6 +1697,7 @@ async fn seconds_contract_open_order_does_not_replay_foreign_key_failures()
     let pair_id = create_pair(&mut fixture_tx, base_asset, quote_asset, &symbol).await;
     let product_id = seed_seconds_product(&mut fixture_tx, pair_id, quote_asset).await;
     fixture_tx.commit().await?;
+    seed_ticker(&redis, &symbol, "100.000000000000000000").await;
 
     let token = issue_token(&settings, "user:999999999", TokenScope::User, 900).unwrap();
     let idempotency_key = format!("seconds-fk-{}", Uuid::now_v7().simple());
@@ -999,7 +1706,7 @@ async fn seconds_contract_open_order_does_not_replay_foreign_key_failures()
     );
 
     let response = user_routes()
-        .with_state(state_with_mysql_and_redis(settings, pool.clone(), None))
+        .with_state(state_with_mysql_and_redis(settings, pool.clone(), redis))
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -1134,8 +1841,11 @@ async fn seconds_contract_lists_current_user_orders_with_timestamp() -> Result<(
     assert_eq!(order_ids, vec![second_order_id, first_order_id]);
     assert!(!order_ids.contains(&other_order_id));
     assert_eq!(orders[0]["direction"], "down");
+    assert_eq!(orders[0]["symbol"], symbol);
+    assert_eq!(orders[0]["stake_asset_symbol"], quote_symbol);
     assert_eq!(orders[0]["stake_amount"], "20.000000000000000000");
     assert!(orders[0]["expires_at"].is_number());
+    assert!(orders[0]["created_at"].is_number());
 
     Ok(())
 }
@@ -1240,9 +1950,9 @@ async fn admin_seconds_contract_lists_orders_with_filters_and_timestamp()
     let settled_order_id = sqlx::query(
         r#"INSERT INTO seconds_contract_orders
            (user_id, product_id, pair_id, stake_asset, direction, stake_amount,
-            payout_rate, entry_price, status, result, idempotency_key,
+            payout_rate, entry_price, settlement_price, status, result, idempotency_key,
             opened_at, expires_at, settled_at, created_at)
-           VALUES (?, ?, ?, ?, 'up', ?, ?, ?, 'settled', 'win', ?, ?, ?, ?, ?)"#,
+           VALUES (?, ?, ?, ?, 'up', ?, ?, ?, ?, 'settled', 'win', ?, ?, ?, ?, ?)"#,
     )
     .bind(user_id)
     .bind(product_id)
@@ -1251,6 +1961,7 @@ async fn admin_seconds_contract_lists_orders_with_filters_and_timestamp()
     .bind(decimal("30.000000000000000000"))
     .bind(decimal("0.80000000"))
     .bind(decimal("102.000000000000000000"))
+    .bind(decimal("108.000000000000000000"))
     .bind(format!(
         "seconds-admin-list-settled-{}",
         Uuid::now_v7().simple()
@@ -1301,9 +2012,13 @@ async fn admin_seconds_contract_lists_orders_with_filters_and_timestamp()
         .collect();
     assert_eq!(order_ids, vec![second_open_order_id, first_open_order_id]);
     assert_eq!(orders[0]["user_id"], other_user_id);
+    assert!(orders[0]["email"].as_str().is_some());
+    assert_eq!(orders[0]["symbol"], symbol);
+    assert_eq!(orders[0]["settlement_price"], Value::Null);
     assert_eq!(orders[0]["direction"], "down");
     assert_eq!(orders[0]["stake_amount"], "20.000000000000000000");
     assert!(orders[0]["expires_at"].is_number());
+    assert!(orders[0]["created_at"].is_number());
     assert!(!order_ids.contains(&settled_order_id));
 
     let filtered_response = app
@@ -1336,9 +2051,16 @@ async fn admin_seconds_contract_lists_orders_with_filters_and_timestamp()
             .any(|order| order["id"] == other_settled_order_id)
     );
     assert_eq!(filtered_orders[0]["user_id"], user_id);
+    assert_eq!(filtered_orders[0]["email"], user_email);
+    assert_eq!(filtered_orders[0]["symbol"], symbol);
+    assert_eq!(
+        filtered_orders[0]["settlement_price"],
+        "108.000000000000000000"
+    );
     assert_eq!(filtered_orders[0]["status"], "settled");
     assert_eq!(filtered_orders[0]["result"], "win");
     assert!(filtered_orders[0]["expires_at"].is_number());
+    assert!(filtered_orders[0]["created_at"].is_number());
 
     let detail_response = app
         .clone()
@@ -1357,10 +2079,15 @@ async fn admin_seconds_contract_lists_orders_with_filters_and_timestamp()
     assert_eq!(detail_payload["user_id"], user_id);
     assert_eq!(detail_payload["product_id"], product_id);
     assert_eq!(detail_payload["pair_id"], pair_id);
+    assert_eq!(detail_payload["email"], user_email);
+    assert_eq!(detail_payload["symbol"], symbol);
     assert_eq!(detail_payload["stake_asset"], quote_asset);
+    assert_eq!(detail_payload["stake_asset_symbol"], quote_symbol);
+    assert_eq!(detail_payload["settlement_price"], "108.000000000000000000");
     assert_eq!(detail_payload["status"], "settled");
     assert_eq!(detail_payload["result"], "win");
     assert!(detail_payload["expires_at"].is_number());
+    assert!(detail_payload["created_at"].is_number());
 
     let unknown_detail = app
         .clone()
@@ -1395,7 +2122,10 @@ async fn seconds_contract_open_order_debits_wallet_and_writes_ledger() -> Result
         return Ok(());
     };
     let settings = test_settings();
-    let redis = redis_manager().await;
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
+    let redis = Some(redis);
     let mut fixture_tx = pool.begin().await?;
     let user_id = create_user(&mut fixture_tx).await;
     let (base_asset, base_symbol) = create_asset(&mut fixture_tx, "OB").await;
@@ -1410,6 +2140,9 @@ async fn seconds_contract_open_order_debits_wallet_and_writes_ledger() -> Result
         .execute(&mut *fixture_tx)
         .await?;
     fixture_tx.commit().await?;
+    let commission_fixture =
+        support::seed_direct_agent_commission(&pool, user_id, "seconds_contract", "0.05000000")
+            .await?;
     seed_ticker(&redis, &symbol, "100.000000000000000000").await;
 
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
@@ -1450,7 +2183,9 @@ async fn seconds_contract_open_order_debits_wallet_and_writes_ledger() -> Result
     let order_id = payload["order"]["id"].as_u64().unwrap();
     assert_eq!(payload["order"]["user_id"], user_id);
     assert_eq!(payload["order"]["product_id"], product_id);
+    assert_eq!(payload["order"]["symbol"], symbol);
     assert_eq!(payload["order"]["stake_asset"], quote_asset);
+    assert_eq!(payload["order"]["stake_asset_symbol"], quote_symbol);
     assert_eq!(payload["order"]["stake_amount"], "10.000000000000000000");
     assert_eq!(payload["order"]["status"], "opened");
 
@@ -1460,7 +2195,9 @@ async fn seconds_contract_open_order_debits_wallet_and_writes_ledger() -> Result
     assert_eq!(event["order_id"], order_id);
     assert_eq!(event["product_id"], product_id);
     assert_eq!(event["pair_id"], pair_id);
+    assert_eq!(event["symbol"], symbol);
     assert_eq!(event["stake_asset"], quote_asset);
+    assert_eq!(event["stake_asset_symbol"], quote_symbol);
     assert_eq!(event["direction"], "up");
     assert_eq!(event["stake_amount"], "10.000000000000000000");
     assert_eq!(event["payout_rate"], "0.80000000");
@@ -1483,6 +2220,142 @@ async fn seconds_contract_open_order_debits_wallet_and_writes_ledger() -> Result
     .await?;
     assert_eq!(ledger_count, 1);
 
+    let commission: (u64, BigDecimal, BigDecimal, BigDecimal, u64, String) = sqlx::query_as(
+        r#"SELECT agent_id, source_amount, commission_rate, commission_amount,
+                  payout_asset_id, status
+           FROM agent_commission_records
+           WHERE user_id = ? AND source_type = 'seconds_contract_order' AND source_id = ?"#,
+    )
+    .bind(user_id)
+    .bind(order_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(commission.0, commission_fixture.agent_id);
+    assert_eq!(commission.1, decimal("10.000000000000000000"));
+    assert_eq!(commission.2, decimal("0.05000000"));
+    assert_eq!(commission.3, decimal("0.500000000000000000"));
+    assert_eq!(commission.4, quote_asset);
+    assert_eq!(commission.5, "pending");
+    support::cleanup_direct_agent_commission(&pool, user_id, commission_fixture).await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn seconds_contract_open_order_uses_requested_product_cycle() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
+    let redis = Some(redis);
+    let mut fixture_tx = pool.begin().await?;
+    let user_id = create_user(&mut fixture_tx).await;
+    let (base_asset, base_symbol) = create_asset(&mut fixture_tx, "CB").await;
+    let (quote_asset, quote_symbol) = create_asset(&mut fixture_tx, "CQ").await;
+    let symbol = format!("{base_symbol}-{quote_symbol}");
+    let pair_id = create_pair(&mut fixture_tx, base_asset, quote_asset, &symbol).await;
+    let product_id = seed_seconds_product(&mut fixture_tx, pair_id, quote_asset).await;
+    seed_seconds_product_cycle(
+        &mut fixture_tx,
+        product_id,
+        60,
+        "0.70000000",
+        "5.000000000000000000",
+        Some("50.000000000000000000"),
+        0,
+    )
+    .await;
+    seed_seconds_product_cycle(
+        &mut fixture_tx,
+        product_id,
+        120,
+        "0.90000000",
+        "20.000000000000000000",
+        Some("200.000000000000000000"),
+        1,
+    )
+    .await;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(quote_asset)
+        .bind(decimal("100.000000000000000000"))
+        .execute(&mut *fixture_tx)
+        .await?;
+    fixture_tx.commit().await?;
+    seed_ticker(&redis, &symbol, "100.000000000000000000").await;
+
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let app = user_routes().with_state(state_with_mysql_and_redis(
+        settings,
+        pool.clone(),
+        redis.clone(),
+    ));
+    let too_small_body = format!(
+        r#"{{"product_id":{product_id},"duration_seconds":120,"direction":"up","stake_amount":"10.000000000000000000","idempotency_key":"seconds-cycle-small-{}"}}"#,
+        Uuid::now_v7().simple()
+    );
+    let too_small_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/seconds-contracts/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(too_small_body))
+                .unwrap(),
+        )
+        .await?;
+    let too_small_payload = body_json(too_small_response).await?;
+    assert_eq!(
+        too_small_payload["message"],
+        "validation error: seconds contract stake is below product minimum"
+    );
+
+    let unsupported_body = format!(
+        r#"{{"product_id":{product_id},"duration_seconds":180,"direction":"up","stake_amount":"20.000000000000000000","idempotency_key":"seconds-cycle-unsupported-{}"}}"#,
+        Uuid::now_v7().simple()
+    );
+    let unsupported_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/seconds-contracts/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(unsupported_body))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(unsupported_response.status(), StatusCode::NOT_FOUND);
+
+    let idempotency_key = format!("seconds-cycle-open-{}", Uuid::now_v7().simple());
+    let request_body = format!(
+        r#"{{"product_id":{product_id},"duration_seconds":120,"direction":"down","stake_amount":"25.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/seconds-contracts/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(request_body))
+                .unwrap(),
+        )
+        .await?;
+    let status = response.status();
+    let payload = body_json(response).await?;
+    assert_eq!(status, StatusCode::OK, "payload: {payload}");
+    assert_eq!(payload["order"]["product_id"], product_id);
+    assert_eq!(payload["order"]["duration_seconds"], 120);
+    assert_eq!(payload["order"]["payout_rate"], "0.90000000");
+    assert_eq!(payload["order"]["stake_amount"], "25.000000000000000000");
+
     Ok(())
 }
 
@@ -1493,7 +2366,10 @@ async fn seconds_contract_settle_win_credits_payout_and_writes_ledger() -> Resul
         return Ok(());
     };
     let settings = test_settings();
-    let redis = redis_manager().await;
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
+    let redis = Some(redis);
     let mut fixture_tx = pool.begin().await?;
     let user_id = create_user(&mut fixture_tx).await;
     let admin_id = create_admin(&pool).await;
@@ -1582,10 +2458,7 @@ async fn seconds_contract_settle_win_credits_payout_and_writes_ledger() -> Resul
         assert_eq!(settle_payload["order"]["id"], order_id);
         assert_eq!(settle_payload["order"]["status"], "settled");
         assert_eq!(settle_payload["order"]["result"], "win");
-        assert_eq!(
-            settle_payload["payout_amount"],
-            "18.00000000000000000000000000"
-        );
+        assert_eq!(settle_payload["payout_amount"], "18.000000000000000000");
         if attempt == 0 {
             let settled_event_message =
                 timeout(Duration::from_millis(100), private_events.recv()).await??;
@@ -1597,10 +2470,7 @@ async fn seconds_contract_settle_win_credits_payout_and_writes_ledger() -> Resul
             assert_eq!(settled_event["stake_asset"], quote_asset);
             assert_eq!(settled_event["direction"], "up");
             assert_eq!(settled_event["stake_amount"], "10.000000000000000000");
-            assert_eq!(
-                settled_event["payout_amount"],
-                "18.00000000000000000000000000"
-            );
+            assert_eq!(settled_event["payout_amount"], "18.000000000000000000");
             assert_eq!(settled_event["result"], "win");
             assert_eq!(settled_event["status"], "settled");
         } else {
@@ -1655,7 +2525,10 @@ async fn seconds_contract_settle_rejects_different_result_replay() -> Result<(),
         return Ok(());
     };
     let settings = test_settings();
-    let redis = redis_manager().await;
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
+    let redis = Some(redis);
     let mut fixture_tx = pool.begin().await?;
     let user_id = create_user(&mut fixture_tx).await;
     let admin_id = create_admin(&pool).await;
@@ -1983,7 +2856,10 @@ async fn assert_seconds_contract_settlement_idempotent_loss() -> Result<(), Box<
         return Ok(());
     };
     let settings = test_settings();
-    let redis = redis_manager().await;
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
+    let redis = Some(redis);
     let mut fixture_tx = pool.begin().await?;
     let user_id = create_user(&mut fixture_tx).await;
     let admin_id = create_admin(&pool).await;
@@ -2090,7 +2966,10 @@ async fn assert_seconds_contract_idempotent_open(concurrent: bool) -> Result<(),
         return Ok(());
     };
     let settings = test_settings();
-    let redis = redis_manager().await;
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
+    let redis = Some(redis);
     let mut fixture_tx = pool.begin().await?;
     let user_id = create_user(&mut fixture_tx).await;
     let (base_asset, base_symbol) = create_asset(&mut fixture_tx, "IB").await;

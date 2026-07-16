@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Verify the searchable dropdown is scoped to register and preserves existing country API/form contract."}
+{"command": "node --test --experimental-strip-types tests/register-country-select.test.ts", "cwd": "pc", "result": "passed"}
+{"command": "node --test --experimental-strip-types tests/backendAdapters.test.ts", "cwd": "pc", "result": "passed; 31 tests"}
+{"command": "npm run type-check", "cwd": "pc", "result": "passed"}
+{"command": "rg -n \"<select|countrySearch|filteredCountryOptions|register_search_country|register_no_country_matches\" pc/src/views/auth/Register.vue pc/src/i18n/index.ts pc/tests/register-country-select.test.ts", "result": "passed; searchable dropdown code and i18n keys present"}
+{"command": "git diff --check -- pc/src/views/auth/Register.vue pc/src/i18n/index.ts pc/tests/register-country-select.test.ts .trellis/tasks/06-15-pc-register-country-search-select docs/superpowers/PROGRESS.md", "result": "passed"}

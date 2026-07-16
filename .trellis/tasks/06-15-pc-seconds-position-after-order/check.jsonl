@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/seconds-contracts.md", "reason": "Verify order responses carry enough data for PC filtering and display."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Confirm the order data survives backend response to PC filtering."}

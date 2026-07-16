@@ -36,6 +36,7 @@ export enum AiFinanceOrderStatus {
 
 export interface AiFinanceOrder {
   id: number
+  orderNo: string
   memberId: number
   financeId: number
   coinSymbol: string

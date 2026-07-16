@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend route and response shape guidance index"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Follow existing resource table and response patterns instead of duplicating new abstractions"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Change spans MySQL query, admin API response, and frontend table display"}

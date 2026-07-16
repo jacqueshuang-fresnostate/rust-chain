@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend scope index for route, database, and quality conventions."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Database transaction and query guidance for wallet account backfill."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend quality and testing expectations."}
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared thinking guide index required before implementation."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Check existing wallet account creation patterns before adding helper logic."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Trace admin asset creation through database rows to user wallet output."}

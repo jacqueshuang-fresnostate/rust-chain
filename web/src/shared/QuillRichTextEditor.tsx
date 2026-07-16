@@ -1,7 +1,13 @@
 import 'quill/dist/quill.snow.css';
 
+import { IconUpload } from '@douyinfe/semi-icons';
+import { Button, Toast, Upload } from '@douyinfe/semi-ui';
+import type { customRequestArgs } from '@douyinfe/semi-ui/lib/es/upload';
 import Quill from 'quill';
 import { useEffect, useMemo, useRef } from 'react';
+
+import { ApiError } from '../api/client';
+import { uploadAdminImageFile } from './AdminImageUpload';
 
 export type RichTextLeaf = {
   bold?: boolean;
@@ -10,15 +16,23 @@ export type RichTextLeaf = {
   underline?: boolean;
 };
 
-export type RichTextBlock = {
+export type RichTextTextBlock = {
   children: RichTextLeaf[];
   type: 'blockquote' | 'h1' | 'h2' | 'h3' | 'p';
 };
 
+export type RichTextImageBlock = {
+  alt?: string;
+  type: 'image';
+  url: string;
+};
+
+export type RichTextBlock = RichTextTextBlock | RichTextImageBlock;
 export type RichTextValue = RichTextBlock[];
 
 type QuillRichTextEditorProps = {
   ariaLabel?: string;
+  enableImageUpload?: boolean;
   onChange: (value: RichTextValue) => void;
   placeholder?: string;
   value: RichTextValue;
@@ -31,10 +45,14 @@ type QuillOp = {
 };
 
 const fallbackValue: RichTextValue = [{ type: 'p', children: [{ text: '' }] }];
-const supportedFormats = ['bold', 'italic', 'underline', 'header', 'blockquote'];
+const supportedFormats = ['bold', 'italic', 'underline', 'header', 'blockquote', 'image'];
 
 function normalizedValue(value: RichTextValue): RichTextValue {
   return value.length > 0 ? value : fallbackValue;
+}
+
+function isImageBlock(block: RichTextBlock): block is RichTextImageBlock {
+  return block.type === 'image';
 }
 
 function inlineAttributes(leaf: RichTextLeaf): Record<string, true> | undefined {
@@ -55,7 +73,7 @@ function inlineAttributes(leaf: RichTextLeaf): Record<string, true> | undefined 
   return Object.keys(attributes).length > 0 ? attributes : undefined;
 }
 
-function blockAttributes(type: RichTextBlock['type']): Record<string, true | 1 | 2 | 3> | undefined {
+function blockAttributes(type: RichTextTextBlock['type']): Record<string, true | 1 | 2 | 3> | undefined {
   if (type === 'h1') {
     return { header: 1 };
   }
@@ -77,12 +95,17 @@ function blockAttributes(type: RichTextBlock['type']): Record<string, true | 1 |
 
 function valueToQuillOps(value: RichTextValue): QuillOp[] {
   return normalizedValue(value).flatMap((block) => {
+    if (isImageBlock(block)) {
+      const url = block.url.trim();
+      return url ? [{ insert: { image: url } }, { insert: '\n' }] : [];
+    }
+
     const textOps = (block.children.length > 0 ? block.children : [{ text: '' }]).filter((leaf) => leaf.text.length > 0).map((leaf) => ({ insert: leaf.text, attributes: inlineAttributes(leaf) }));
     return [...textOps, { insert: '\n', attributes: blockAttributes(block.type) }];
   });
 }
 
-function blockTypeFromAttributes(attributes: QuillAttributeMap): RichTextBlock['type'] {
+function blockTypeFromAttributes(attributes: QuillAttributeMap): RichTextTextBlock['type'] {
   if (attributes?.header === 1) {
     return 'h1';
   }
@@ -111,12 +134,33 @@ function leafFromText(text: string, attributes: QuillAttributeMap): RichTextLeaf
   };
 }
 
+function imageUrlFromInsert(insert: Record<string, unknown>): string {
+  return typeof insert.image === 'string' ? insert.image.trim() : '';
+}
+
 function quillOpsToValue(ops: QuillOp[]): RichTextValue {
   const blocks: RichTextValue = [];
   let children: RichTextLeaf[] = [];
+  let skipNextEmptyNewline = false;
+
+  const pushTextBlock = (type: RichTextTextBlock['type']) => {
+    blocks.push({ type, children: children.length > 0 ? children : [{ text: '' }] });
+    children = [];
+  };
 
   ops.forEach((op) => {
     if (typeof op.insert !== 'string') {
+      if (op.insert && typeof op.insert === 'object') {
+        const imageUrl = imageUrlFromInsert(op.insert);
+        if (!imageUrl) {
+          return;
+        }
+        if (children.length > 0) {
+          pushTextBlock('p');
+        }
+        blocks.push({ type: 'image', url: imageUrl });
+        skipNextEmptyNewline = true;
+      }
       return;
     }
 
@@ -124,11 +168,17 @@ function quillOpsToValue(ops: QuillOp[]): RichTextValue {
     segments.forEach((segment, index) => {
       if (segment.length > 0) {
         children.push(leafFromText(segment, op.attributes));
+        skipNextEmptyNewline = false;
       }
 
       if (index < segments.length - 1) {
-        blocks.push({ type: blockTypeFromAttributes(op.attributes), children: children.length > 0 ? children : [{ text: '' }] });
-        children = [];
+        if (children.length > 0) {
+          pushTextBlock(blockTypeFromAttributes(op.attributes));
+        } else if (skipNextEmptyNewline) {
+          skipNextEmptyNewline = false;
+        } else {
+          pushTextBlock(blockTypeFromAttributes(op.attributes));
+        }
       }
     });
   });
@@ -145,7 +195,15 @@ function plainTextToValue(text: string): RichTextValue {
   return (lines.length > 0 ? lines : ['']).map((line) => ({ type: 'p', children: [{ text: line }] }));
 }
 
-export function QuillRichTextEditor({ ariaLabel = '富文本内容', onChange, placeholder = '请输入理财介绍', value }: QuillRichTextEditorProps) {
+function isEmptyTextValue(value: RichTextValue): boolean {
+  return value.length === 1 && value[0].type !== 'image' && value[0].children.every((leaf) => !leaf.text.trim());
+}
+
+function uploadErrorMessage(error: unknown) {
+  return error instanceof ApiError || error instanceof Error ? error.message : '图片上传失败';
+}
+
+export function QuillRichTextEditor({ ariaLabel = '富文本内容', enableImageUpload = false, onChange, placeholder = '请输入理财介绍', value }: QuillRichTextEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const quillRef = useRef<Quill | null>(null);
@@ -158,6 +216,34 @@ export function QuillRichTextEditor({ ariaLabel = '富文本内容', onChange, p
   useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
+
+  const insertImage = (url: string) => {
+    const quill = quillRef.current;
+    const imageUrl = url.trim();
+    if (!quill || !imageUrl) {
+      return;
+    }
+
+    const currentValue = quillOpsToValue(quill.getContents().ops as QuillOp[]);
+    const nextValue: RichTextValue = [...(isEmptyTextValue(currentValue) ? [] : currentValue), { type: 'image', url: imageUrl }];
+    const serializedNextValue = JSON.stringify(nextValue);
+    quill.setContents(valueToQuillOps(nextValue), 'silent');
+    quill.setSelection(quill.getLength(), 0, 'silent');
+    internalValueRef.current = serializedNextValue;
+    onChangeRef.current(nextValue);
+  };
+
+  const customImageRequest = async (request: customRequestArgs) => {
+    try {
+      request.onProgress({ loaded: 1, total: 2 });
+      const response = await uploadAdminImageFile(request.fileInstance);
+      insertImage(response.download_url);
+      request.onSuccess(response);
+    } catch (error) {
+      Toast.error(uploadErrorMessage(error));
+      request.onError({ status: error instanceof ApiError ? error.status : 500 });
+    }
+  };
 
   useEffect(() => {
     if (!editorRef.current || !toolbarRef.current || quillRef.current) {
@@ -242,6 +328,22 @@ export function QuillRichTextEditor({ ariaLabel = '富文本内容', onChange, p
             下划线
           </button>
         </span>
+        {enableImageUpload ? (
+          <span className="ql-formats quill-rich-text-upload">
+            <Upload
+              accept=".png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif"
+              action="/admin/api/v1/uploads/images"
+              customRequest={customImageRequest}
+              limit={1}
+              onSizeError={() => Toast.error('图片大小超过上传配置限制')}
+              showUploadList={false}
+            >
+              <Button icon={<IconUpload aria-hidden="true" />} size="small" theme="borderless" type="tertiary">
+                插入图片
+              </Button>
+            </Upload>
+          </span>
+        ) : null}
       </div>
       <div className="quill-rich-text-container" ref={editorRef} />
     </div>

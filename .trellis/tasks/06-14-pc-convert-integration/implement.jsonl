@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend contract and repo conventions relevant to the existing convert routes."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"PC swap integration spans backend API contracts, adapter mapping, page state, and tests."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse existing PC API adapter and wallet mapping patterns instead of adding parallel shapes."}
+{"ts":"2026-06-14T05:29:47+0800","summary":"Added directional amount limits for convert pairs: DB migration adds target_min_amount/target_max_amount; user quote validation picks source or target limits by direction; admin create/list/detail/audit and PC pair adapters now carry both limit sets."}

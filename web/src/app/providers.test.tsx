@@ -1,5 +1,5 @@
 import { ConfigConsumer } from '@douyinfe/semi-ui';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import { AppProviders } from './providers';
@@ -23,5 +23,15 @@ describe('AppProviders', () => {
     expect(screen.getByTestId('timezone')).toHaveTextContent('Asia/Shanghai');
     expect(screen.getByTestId('pagination-page-size')).toHaveTextContent('每页条数');
     expect(screen.getByTestId('table-empty')).toHaveTextContent('暂无数据');
+  });
+
+  it('enables Semi theme mode on the document body', async () => {
+    render(
+      <AppProviders>
+        <div>theme target</div>
+      </AppProviders>
+    );
+
+    await waitFor(() => expect(document.body).toHaveAttribute('theme-mode', 'light'));
   });
 });

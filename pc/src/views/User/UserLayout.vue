@@ -7,14 +7,14 @@
           <button
             type="button"
             class="group relative flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border bg-muted text-xl font-bold text-foreground transition-colors hover:border-primary/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-70"
-            :aria-label="t('common.upload_avatar')"
+            :aria-label="isLoggedIn ? t('common.upload_avatar') : t('common.login_now')"
             :disabled="avatarUploading"
             @click="triggerAvatarUpload"
           >
             <img v-if="avatarUrl" :src="avatarUrl" :alt="userDisplayName" class="h-full w-full object-cover" />
             <span v-else>{{ userInitial }}</span>
             <span class="absolute inset-0 flex items-center justify-center bg-background/70 opacity-0 transition-opacity group-hover:opacity-100" :class="{ 'opacity-100': avatarUploading }">
-              <Icon :icon="avatarUploading ? 'mdi:loading' : 'mdi:camera-plus-outline'" class="h-5 w-5 text-primary" :class="{ 'animate-spin': avatarUploading }" />
+              <Icon :icon="avatarUploading ? 'mdi:loading' : isLoggedIn ? 'mdi:camera-plus-outline' : 'mdi:login'" class="h-5 w-5 text-primary" :class="{ 'animate-spin': avatarUploading }" />
             </span>
           </button>
           <div class="min-w-0">
@@ -25,7 +25,7 @@
               :disabled="avatarUploading"
               @click="triggerAvatarUpload"
             >
-              {{ avatarUploading ? t('common.avatar_uploading') : t('common.upload_avatar') }}
+              {{ avatarUploading ? t('common.avatar_uploading') : isLoggedIn ? t('common.upload_avatar') : t('common.login_now') }}
             </button>
           </div>
         </div>
@@ -73,16 +73,12 @@
         <Icon icon="mdi:account-multiple-plus-outline" class="w-5 h-5" />
         {{ $t('invite.title') }}
       </router-link>
-
-      <router-link to="/user/api" class="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-muted transition-colors" active-class="bg-primary/10 text-primary font-bold">
-        <Icon icon="mdi:api" class="w-5 h-5" />
-        {{ $t('nav.api') }}
-      </router-link>
     </div>
 
     <!-- Content Area -->
     <div class="flex-1 bg-card border border-border rounded-xl p-6 min-h-[500px]">
-      <router-view></router-view>
+      <AuthRequiredState v-if="!isLoggedIn" />
+      <router-view v-else></router-view>
     </div>
   </div>
 </template>
@@ -93,28 +89,33 @@ import { useI18n } from 'vue-i18n'
 import { useToast } from 'vue-toastification'
 import { Icon } from '@iconify/vue'
 import { uploadUserAvatar } from '@/api/user'
-import { useUserStore } from '@/stores/user'
+import AuthRequiredState from '@/components/common/AuthRequiredState.vue'
+import { useAuthRequired } from '@/composables/useAuthRequired'
 
 const { t } = useI18n()
 const toast = useToast()
-const userStore = useUserStore()
+const { isLoggedIn, goToLogin, userStore } = useAuthRequired()
 
 const avatarInput = ref<HTMLInputElement | null>(null)
 const avatarUploading = ref(false)
 
-const userDisplayName = computed(() => userStore.user?.username || userStore.user?.email || userStore.user?.phone || t('common.user'))
+const userDisplayName = computed(() => isLoggedIn.value ? (userStore.user?.username || userStore.user?.email || userStore.user?.phone || t('common.user')) : t('common.guest_user'))
 const avatarUrl = computed(() => userStore.user?.avatar || userStore.user?.avatarString || '')
 const userInitial = computed(() => userDisplayName.value.trim().charAt(0).toUpperCase() || 'U')
 
 function triggerAvatarUpload() {
   if (avatarUploading.value) return
+  if (!isLoggedIn.value) {
+    goToLogin()
+    return
+  }
   avatarInput.value?.click()
 }
 
 async function handleAvatarChange(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
-  if (!file) return
+  if (!file || !isLoggedIn.value) return
 
   avatarUploading.value = true
   try {

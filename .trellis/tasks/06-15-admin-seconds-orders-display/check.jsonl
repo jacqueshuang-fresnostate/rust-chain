@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/backend/seconds-contracts.md", "reason": "Verify admin order response display fields and settlement price snapshot."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Ensure data survives storage to admin table display."}
+{"command": "cargo fmt", "result": "passed"}
+{"command": "set -a; source .env; set +a; sqlx migrate run", "result": "passed; applied 67/migrate seconds contract order settlement price"}
+{"command": "cargo test --test seconds_contract_routes admin_seconds_contract_lists_orders_with_filters_and_timestamp", "result": "passed"}
+{"command": "cargo test --test seconds_contract_settlement_worker seconds_contract_settlement_worker_settles_due_orders_from_cached_ticker_idempotently", "result": "passed"}
+{"command": "npm test -- src/admin/resources/resourceConfigs.test.tsx -t \"seconds contract order\"", "cwd": "web", "result": "passed"}
+{"command": "cargo check", "result": "passed"}
+{"command": "npm run typecheck", "cwd": "web", "result": "passed"}
+{"command": "git diff --check -- migrations/0067_seconds_contract_order_settlement_price.sql src/modules/seconds_contract/routes.rs src/workers/seconds_contract_settlement.rs tests/seconds_contract_routes.rs tests/seconds_contract_settlement_worker.rs web/src/admin/resources/resourceConfigs.tsx web/src/admin/resources/resourceConfigs.test.tsx .trellis/spec/backend/seconds-contracts.md", "result": "passed"}

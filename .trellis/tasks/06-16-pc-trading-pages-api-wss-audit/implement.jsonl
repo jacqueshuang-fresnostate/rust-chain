@@ -1,0 +1,2 @@
+{"file":".trellis/tasks/06-16-pc-trading-pages-api-wss-audit/prd.md","reason":"记录本次 PC 端现货、合约、秒合约交易页面接口与 WSS 对接审计范围。"}
+{"file":".trellis/tasks/06-16-pc-trading-pages-api-wss-audit/research/pc-trading-pages-api-wss-audit.md","reason":"沉淀页面、API adapter、store、后端路由和 WSS 对接情况，以及未对接/半对接缺口。"}

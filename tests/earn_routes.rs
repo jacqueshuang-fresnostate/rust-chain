@@ -45,6 +45,8 @@ fn test_settings() -> Settings {
         bitget_ws_url: "wss://bitget.test/ws".to_owned(),
         htx_rest_base_url: "https://htx.test".to_owned(),
         htx_ws_url: "wss://htx.test/ws".to_owned(),
+        coinbase_rest_base_url: "https://coinbase.test".to_owned(),
+        coinbase_ws_url: "wss://coinbase.test/ws".to_owned(),
         market_feed_symbols: Vec::new(),
         market_feed_intervals: Vec::new(),
         market_feed_providers: Vec::new(),
@@ -901,6 +903,225 @@ async fn earn_subscribe_replays_existing_key_after_concurrent_disable() -> Resul
 }
 
 #[tokio::test]
+async fn admin_earn_categories_configure_multilingual_product_columns() -> Result<(), Box<dyn Error>>
+{
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let mut fixture_tx = pool.begin().await?;
+    let admin_id = create_admin(&pool).await;
+    let (asset_id, asset_symbol) = create_asset(&mut fixture_tx, "EC").await;
+    fixture_tx.commit().await?;
+
+    let suffix = Uuid::now_v7().simple().to_string();
+    let category_code = format!("wealth_{}", &suffix[20..32]);
+    let product_name = format!("Category Earn {asset_symbol}");
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+
+    let create_category_body = format!(
+        r#"{{"code":"{category_code}","name_json":{{"version":1,"default_locale":"zh-CN","items":[{{"locale":"zh-CN","country":"CN","title":"稳健栏目"}},{{"locale":"en-US","country":"US","title":"Stable Earn"}}]}},"sort_order":7,"status":"active","reason":"create earn category"}}"#
+    );
+    let create_category_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/earn/categories")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(create_category_body))
+                .unwrap(),
+        )
+        .await?;
+    let create_category_status = create_category_response.status();
+    let create_category_payload = body_json(create_category_response).await?;
+    assert_eq!(
+        create_category_status,
+        StatusCode::OK,
+        "payload: {create_category_payload}"
+    );
+    let category_id = create_category_payload["id"].as_u64().unwrap();
+    assert_eq!(create_category_payload["code"], category_code);
+    assert_eq!(create_category_payload["default_name"], "稳健栏目");
+    assert_eq!(
+        create_category_payload["name_json"]["items"][1]["title"],
+        "Stable Earn"
+    );
+
+    let category_list_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/earn/categories?status=active&limit=100")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let category_list_payload = body_json(category_list_response).await?;
+    assert!(
+        category_list_payload["categories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|category| category["id"] == category_id
+                && category["code"] == category_code
+                && category["default_name"] == "稳健栏目")
+    );
+
+    let create_product_body = format!(
+        r#"{{"asset_id":{asset_id},"name":"{product_name}","category":"{category_code}","term_days":30,"apr_rate":"0.12000000","min_subscribe":"10.000000000000000000","status":"active","reason":"create product for category"}}"#
+    );
+    let create_product_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/earn/products")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(create_product_body))
+                .unwrap(),
+        )
+        .await?;
+    let create_product_status = create_product_response.status();
+    let create_product_payload = body_json(create_product_response).await?;
+    assert_eq!(
+        create_product_status,
+        StatusCode::OK,
+        "payload: {create_product_payload}"
+    );
+    let product_id = create_product_payload["id"].as_u64().unwrap();
+    assert_eq!(create_product_payload["category"], category_code);
+    assert_eq!(create_product_payload["category_name"], "稳健栏目");
+    assert_eq!(
+        create_product_payload["category_name_json"]["items"][0]["title"],
+        "稳健栏目"
+    );
+
+    let update_category_body = r#"{"name_json":{"version":1,"default_locale":"zh-CN","items":[{"locale":"zh-CN","country":"CN","title":"精品理财"},{"locale":"en-US","country":"US","title":"Premium Earn"}]},"sort_order":3,"status":"active","reason":"rename earn category"}"#;
+    let update_category_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/earn/categories/{category_id}"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(update_category_body))
+                .unwrap(),
+        )
+        .await?;
+    let update_category_payload = body_json(update_category_response).await?;
+    assert_eq!(update_category_payload["default_name"], "精品理财");
+    assert_eq!(update_category_payload["sort_order"], 3);
+
+    let product_detail_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/earn/products/{product_id}"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let product_detail_payload = body_json(product_detail_response).await?;
+    assert_eq!(product_detail_payload["category"], category_code);
+    assert_eq!(product_detail_payload["category_name"], "精品理财");
+    assert_eq!(
+        product_detail_payload["category_name_json"]["items"][1]["title"],
+        "Premium Earn"
+    );
+
+    let disable_category_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/earn/categories/{category_id}/status"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"status":"disabled","reason":"pause earn category"}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let disable_category_payload = body_json(disable_category_response).await?;
+    assert_eq!(disable_category_payload["status"], "disabled");
+
+    let disabled_product_body = format!(
+        r#"{{"asset_id":{asset_id},"name":"Disabled Category Product","category":"{category_code}","term_days":30,"apr_rate":"0.12000000","min_subscribe":"10.000000000000000000","status":"active","reason":"should fail"}}"#
+    );
+    let disabled_product_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/earn/products")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(disabled_product_body))
+                .unwrap(),
+        )
+        .await?;
+    let disabled_product_status = disabled_product_response.status();
+    let disabled_product_payload = body_json(disabled_product_response).await?;
+    assert_eq!(disabled_product_status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        disabled_product_payload["message"],
+        "validation error: earn product category must reference an active category"
+    );
+
+    let category_audit_rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT action, reason FROM admin_audit_logs WHERE admin_id = ? AND target_type = 'earn_category' AND target_id = ? ORDER BY id",
+    )
+    .bind(admin_id)
+    .bind(category_id.to_string())
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(category_audit_rows.len(), 3);
+    assert_eq!(category_audit_rows[0].0, "earn_category.create");
+    assert_eq!(category_audit_rows[0].1, "create earn category");
+    assert_eq!(category_audit_rows[1].0, "earn_category.update");
+    assert_eq!(category_audit_rows[1].1, "rename earn category");
+    assert_eq!(category_audit_rows[2].0, "earn_category.update_status");
+    assert_eq!(category_audit_rows[2].1, "pause earn category");
+
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ? AND target_type IN ('earn_category', 'earn_product')")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM earn_products WHERE id = ?")
+        .bind(product_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM earn_product_categories WHERE id = ?")
+        .bind(category_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn admin_earn_product_create_update_status_and_audit() -> Result<(), Box<dyn Error>> {
     let Some(pool) = mysql_pool().await else {
         return Ok(());
@@ -920,7 +1141,7 @@ async fn admin_earn_product_create_update_status_and_audit() -> Result<(), Box<d
     .unwrap();
     let app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
     let create_body = format!(
-        r#"{{"asset_id":{asset_id},"name":"Admin Earn {asset_symbol}","category":"structured","introduction_json":{{"version":1,"default_locale":"zh-CN","items":[{{"locale":"zh-CN","country":"CN","title":"USDT 稳健理财","content":[{{"type":"h3","children":[{{"text":"USDT 稳健理财"}}]}},{{"type":"p","children":[{{"text":"适合稳健型用户。"}}]}}]}},{{"locale":"en-US","country":"US","title":"USDT Earn","content":[{{"type":"p","children":[{{"text":"For stable users."}}]}}]}}]}} ,"term_days":60,"apr_rate":"0.15000000","min_subscribe":"25.000000000000000000","max_subscribe":"2500.000000000000000000","status":"active","reason":"launch earn product"}}"#
+        r#"{{"asset_id":{asset_id},"name":"Admin Earn {asset_symbol}","category":"structured","introduction_json":{{"version":1,"default_locale":"zh-CN","items":[{{"locale":"zh-CN","country":"CN","title":"USDT 稳健理财","content":[{{"type":"h3","children":[{{"text":"USDT 稳健理财"}}]}},{{"type":"p","children":[{{"text":"适合稳健型用户。"}}]}}]}},{{"locale":"en-US","country":"US","title":"USDT Earn","content":[{{"type":"p","children":[{{"text":"For stable users."}}]}}]}}]}} ,"term_days":60,"apr_rate":"0.15000000","redemption_fee_rate":"0.01000000","maturity_profit_fee_rate":"0.10000000","early_redeem_fee_basis":"principal","early_redeem_fee_rate":"0.02000000","min_subscribe":"25.000000000000000000","max_subscribe":"2500.000000000000000000","status":"active","reason":"launch earn product"}}"#
     );
 
     let missing_asset_body = r#"{"asset_id":999999999999,"name":"Missing Asset Earn","term_days":30,"apr_rate":"0.12000000","min_subscribe":"10.000000000000000000","reason":"missing asset"}"#;
@@ -961,7 +1182,16 @@ async fn admin_earn_product_create_update_status_and_audit() -> Result<(), Box<d
     assert_eq!(create_payload["asset_symbol"], asset_symbol);
     assert_eq!(create_payload["term_days"], 60);
     assert_eq!(create_payload["apr_rate"], "0.15000000");
+    assert_eq!(create_payload["redemption_fee_rate"], "0.01000000");
+    assert_eq!(create_payload["maturity_profit_fee_rate"], "0.10000000");
+    assert_eq!(create_payload["early_redeem_fee_basis"], "principal");
+    assert_eq!(create_payload["early_redeem_fee_rate"], "0.02000000");
     assert_eq!(create_payload["category"], "structured");
+    assert_eq!(create_payload["category_name"], "结构化");
+    assert_eq!(
+        create_payload["category_name_json"]["items"][0]["title"],
+        "结构化"
+    );
     assert_eq!(create_payload["status"], "active");
     assert_eq!(create_payload["introduction_json"]["version"], 1);
     assert_eq!(
@@ -969,13 +1199,82 @@ async fn admin_earn_product_create_update_status_and_audit() -> Result<(), Box<d
         "h3"
     );
 
-    let (stored_category, stored_introduction): (String, sqlx::types::Json<Value>) =
-        sqlx::query_as("SELECT category, introduction_json FROM earn_products WHERE id = ?")
+    let (
+        stored_category,
+        stored_introduction,
+        stored_redemption_fee_rate,
+        stored_maturity_profit_fee_rate,
+        stored_early_redeem_fee_basis,
+        stored_early_redeem_fee_rate,
+    ): (
+        String,
+        sqlx::types::Json<Value>,
+        BigDecimal,
+        BigDecimal,
+        String,
+        BigDecimal,
+    ) =
+        sqlx::query_as(
+            "SELECT category, introduction_json, redemption_fee_rate, maturity_profit_fee_rate, early_redeem_fee_basis, early_redeem_fee_rate FROM earn_products WHERE id = ?",
+        )
             .bind(product_id)
             .fetch_one(&pool)
             .await?;
     assert_eq!(stored_category, "structured");
     assert_eq!(stored_introduction["default_locale"], "zh-CN");
+    assert_eq!(stored_redemption_fee_rate, decimal("0.01000000"));
+    assert_eq!(stored_maturity_profit_fee_rate, decimal("0.10000000"));
+    assert_eq!(stored_early_redeem_fee_basis, "principal");
+    assert_eq!(stored_early_redeem_fee_rate, decimal("0.02000000"));
+
+    let update_body = format!(
+        r#"{{"asset_id":{asset_id},"name":"Admin Earn Updated {asset_symbol}","category":"staking","introduction_json":{{"version":1,"default_locale":"en-US","items":[{{"locale":"en-US","country":"US","title":"Updated Earn","content":[{{"type":"p","children":[{{"text":"Updated earn copy."}}]}}]}}]}},"term_days":90,"apr_rate":"0.18000000","redemption_fee_rate":"0.02000000","maturity_profit_fee_rate":"0.05000000","early_redeem_fee_basis":"profit","early_redeem_fee_rate":"0.30000000","min_subscribe":"30.000000000000000000","max_subscribe":"3000.000000000000000000","status":"active","reason":"update earn product"}}"#
+    );
+    let full_update_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/earn/products/{product_id}"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(update_body))
+                .unwrap(),
+        )
+        .await?;
+    let full_update_status = full_update_response.status();
+    let full_update_payload = body_json(full_update_response).await?;
+    assert_eq!(
+        full_update_status,
+        StatusCode::OK,
+        "payload: {full_update_payload}"
+    );
+    assert_eq!(full_update_payload["id"], product_id);
+    assert_eq!(full_update_payload["asset_id"], asset_id);
+    assert_eq!(
+        full_update_payload["name"],
+        format!("Admin Earn Updated {asset_symbol}")
+    );
+    assert_eq!(full_update_payload["category"], "staking");
+    assert_eq!(full_update_payload["category_name"], "质押");
+    assert_eq!(full_update_payload["term_days"], 90);
+    assert_eq!(full_update_payload["apr_rate"], "0.18000000");
+    assert_eq!(full_update_payload["redemption_fee_rate"], "0.02000000");
+    assert_eq!(
+        full_update_payload["maturity_profit_fee_rate"],
+        "0.05000000"
+    );
+    assert_eq!(full_update_payload["early_redeem_fee_basis"], "profit");
+    assert_eq!(full_update_payload["early_redeem_fee_rate"], "0.30000000");
+    assert_eq!(full_update_payload["status"], "active");
+    assert_eq!(
+        full_update_payload["introduction_json"]["default_locale"],
+        "en-US"
+    );
+    assert_eq!(
+        full_update_payload["introduction_json"]["items"][0]["country"],
+        "US"
+    );
 
     let long_update_reason = "R".repeat(513);
     let long_update_reason_body =
@@ -1044,8 +1343,13 @@ async fn admin_earn_product_create_update_status_and_audit() -> Result<(), Box<d
             .iter()
             .any(|product| product["id"] == product_id
                 && product["status"] == "disabled"
-                && product["category"] == "structured"
-                && product["introduction_json"]["default_locale"] == "zh-CN")
+                && product["category"] == "staking"
+                && product["category_name"] == "质押"
+                && product["redemption_fee_rate"] == "0.02000000"
+                && product["maturity_profit_fee_rate"] == "0.05000000"
+                && product["early_redeem_fee_basis"] == "profit"
+                && product["early_redeem_fee_rate"] == "0.30000000"
+                && product["introduction_json"]["default_locale"] == "en-US")
     );
 
     let audit_rows: Vec<(String, String, String)> = sqlx::query_as(
@@ -1055,13 +1359,16 @@ async fn admin_earn_product_create_update_status_and_audit() -> Result<(), Box<d
     .bind(product_id.to_string())
     .fetch_all(&pool)
     .await?;
-    assert_eq!(audit_rows.len(), 2);
+    assert_eq!(audit_rows.len(), 3);
     assert_eq!(audit_rows[0].0, "earn_product.create");
     assert_eq!(audit_rows[0].1, "earn_product");
     assert_eq!(audit_rows[0].2, "launch earn product");
-    assert_eq!(audit_rows[1].0, "earn_product.update_status");
+    assert_eq!(audit_rows[1].0, "earn_product.update");
     assert_eq!(audit_rows[1].1, "earn_product");
-    assert_eq!(audit_rows[1].2, "pause product");
+    assert_eq!(audit_rows[1].2, "update earn product");
+    assert_eq!(audit_rows[2].0, "earn_product.update_status");
+    assert_eq!(audit_rows[2].1, "earn_product");
+    assert_eq!(audit_rows[2].2, "pause product");
 
     sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ? AND target_type = 'earn_product'")
         .bind(admin_id)
@@ -1752,7 +2059,15 @@ async fn earn_redeem_matured_subscription_credits_principal_yield_and_writes_led
         assert_eq!(payload["subscription"]["id"], subscription_id);
         assert_eq!(payload["subscription"]["status"], "redeemed");
         assert_eq!(payload["principal_amount"], "365.000000000000000000");
+        assert_eq!(payload["gross_yield_amount"], "3.600000000000000000");
         assert_eq!(payload["yield_amount"], "3.600000000000000000");
+        assert_eq!(payload["redemption_fee_amount"], "0.000000000000000000");
+        assert_eq!(
+            payload["maturity_profit_fee_amount"],
+            "0.000000000000000000"
+        );
+        assert_eq!(payload["early_redeem_fee_amount"], "0.000000000000000000");
+        assert_eq!(payload["fee_amount"], "0.000000000000000000");
         assert_eq!(payload["redeem_amount"], "368.600000000000000000");
         if attempt == 0 {
             let event_message =
@@ -1763,7 +2078,9 @@ async fn earn_redeem_matured_subscription_credits_principal_yield_and_writes_led
             assert_eq!(event["product_id"], product_id);
             assert_eq!(event["asset_id"], asset_id);
             assert_eq!(event["principal_amount"], "365.000000000000000000");
+            assert_eq!(event["gross_yield_amount"], "3.600000000000000000");
             assert_eq!(event["yield_amount"], "3.600000000000000000");
+            assert_eq!(event["fee_amount"], "0.000000000000000000");
             assert_eq!(event["redeem_amount"], "368.600000000000000000");
             assert_eq!(event["status"], "redeemed");
         } else {
@@ -1844,7 +2161,7 @@ async fn earn_redeem_matured_subscription_credits_principal_yield_and_writes_led
 }
 
 #[tokio::test]
-async fn earn_redeem_rejects_early_subscription() -> Result<(), Box<dyn Error>> {
+async fn earn_redeem_early_subscription_applies_principal_fee() -> Result<(), Box<dyn Error>> {
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
@@ -1853,6 +2170,16 @@ async fn earn_redeem_rejects_early_subscription() -> Result<(), Box<dyn Error>> 
     let user_id = create_user(&mut fixture_tx).await;
     let (asset_id, _asset_symbol) = create_asset(&mut fixture_tx, "EA").await;
     let product_id = seed_earn_product(&mut fixture_tx, asset_id).await;
+    sqlx::query(
+        r#"UPDATE earn_products
+           SET apr_rate = 0, redemption_fee_rate = 0,
+               early_redeem_fee_basis = 'principal', early_redeem_fee_rate = ?
+           WHERE id = ?"#,
+    )
+    .bind(decimal("0.05000000"))
+    .bind(product_id)
+    .execute(&mut *fixture_tx)
+    .await?;
     sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
         .bind(user_id)
         .bind(asset_id)
@@ -1889,6 +2216,14 @@ async fn earn_redeem_rejects_early_subscription() -> Result<(), Box<dyn Error>> 
     );
     let subscribe_payload: Value = serde_json::from_slice(&subscribe_body)?;
     let subscription_id = subscribe_payload["subscription"]["id"].as_u64().unwrap();
+    assert_eq!(
+        subscribe_payload["subscription"]["early_redeem_fee_basis"],
+        "principal"
+    );
+    assert_eq!(
+        subscribe_payload["subscription"]["early_redeem_fee_rate"],
+        "0.05000000"
+    );
 
     let response = app
         .oneshot(
@@ -1904,12 +2239,26 @@ async fn earn_redeem_rejects_early_subscription() -> Result<(), Box<dyn Error>> 
     let body = axum::body::to_bytes(response.into_body(), 65_536).await?;
     assert_eq!(
         status,
-        StatusCode::BAD_REQUEST,
+        StatusCode::OK,
         "payload: {}",
         String::from_utf8_lossy(&body)
     );
     let payload: Value = serde_json::from_slice(&body)?;
-    assert_eq!(payload["code"], "VALIDATION_ERROR");
+    assert_eq!(payload["subscription"]["status"], "redeemed");
+    assert_eq!(payload["principal_amount"], "20.000000000000000000");
+    assert_eq!(payload["gross_yield_amount"], "0.000000000000000000");
+    assert_eq!(payload["yield_amount"], "0.000000000000000000");
+    assert_eq!(payload["early_redeem_fee_amount"], "1.000000000000000000");
+    assert_eq!(payload["fee_amount"], "1.000000000000000000");
+    assert_eq!(payload["redeem_amount"], "19.000000000000000000");
+
+    let (available,): (BigDecimal,) =
+        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(asset_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(available, decimal("99.000000000000000000"));
 
     Ok(())
 }

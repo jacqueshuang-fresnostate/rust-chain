@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "DDD layer ownership, Chinese comments, and standalone test placement"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Agent hierarchy migration and transactional wallet persistence rules"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Consistent validation, conflict, and authorization semantics"}
+{"file": ".trellis/spec/backend/spot-orders.md", "reason": "Spot reservation, idempotency, trigger, and cancel contracts"}
+{"file": ".trellis/spec/backend/seconds-contracts.md", "reason": "Seconds-contract product, order, and settlement contracts"}
+{"file": ".trellis/spec/backend/wallet-amount-precision.md", "reason": "Financial balance and ledger precision contract"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer migration, API, permission, and test impact"}
+{"file": ".trellis/tasks/07-13-trading-agent-hierarchy/research/backend-gap-audit.md", "reason": "Current backend gaps and selected hierarchy design"}

@@ -1,0 +1,7 @@
+{"type":"spec","path":".trellis/spec/backend/index.md","reason":"Backend task entry and required checklist."}
+{"type":"spec","path":".trellis/spec/backend/database-guidelines.md","reason":"Spot matching touches MySQL transactions and wallet ledger writes."}
+{"type":"spec","path":".trellis/spec/backend/quality-guidelines.md","reason":"Verification expectations for backend bug fixes."}
+{"type":"guide","path":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Order lifecycle crosses API, matching service, database, wallet, and frontend-visible status."}
+{"type":"implementation","path":"src/modules/spot/routes.rs","reason":"Added ticker-triggered limit buy execution and reused system liquidity settlement for reached buy limits."}
+{"type":"implementation","path":"src/modules/market/mod.rs","reason":"Triggered pending spot limit buy orders after ticker ingestion saves the latest market price."}
+{"type":"test","path":"tests/spot_routes.rs","reason":"Added regression coverage for a pending limit buy becoming filled when market price reaches the limit."}

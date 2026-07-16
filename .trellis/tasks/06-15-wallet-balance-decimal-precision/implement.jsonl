@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend task index and applicable contract guidance"}
+{"file": ".trellis/spec/backend/spot-orders.md", "reason": "Existing spot wallet reservation contract; check for related precision rules"}
+{"file": ".trellis/spec/backend/wallet-amount-precision.md", "reason": "New wallet precision contract for calculated amounts"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Shared helper decision for repeated precision logic"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Amount flow crosses API, Redis cache, MySQL, and wallet ledger"}

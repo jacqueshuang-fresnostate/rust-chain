@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Confirm backend validation expectations before finishing."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Verify transactional database change matches local patterns."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Confirm test and formatting expectations."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Re-check helper reuse and avoid unnecessary abstraction."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify admin write creates data consumed by user wallet API."}

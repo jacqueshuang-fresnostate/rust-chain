@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend route and validation conventions for the Earn product update endpoint."}
+{"file": ".trellis/spec/guides/index.md", "reason": "Cross-layer and reuse thinking checklist for API plus admin UI changes."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Guidance to reuse existing country option and resource form patterns instead of duplicating logic."}
+{"file": ".codex/skills/semi-design-guide/SKILL.md", "reason": "Semi UI form and SideSheet guidance for the admin product editor."}

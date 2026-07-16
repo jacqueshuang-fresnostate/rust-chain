@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "前端布局调整需复用已有 Admin/Semi 控件模式"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "确认仅调整页面布局，不改变快速充值接口契约"}

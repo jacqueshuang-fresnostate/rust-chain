@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "任务开始前读取通用开发指南索引。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "确认优先复用现有 Header、PairLogo、i18n 与路由逻辑。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "确认本次仅前端展示改造，不触碰后端接口。"}
+{"file": ".trellis/tasks/06-15-pc-header-bitget-style/research/bitget-header-notes.md", "reason": "记录 Bitget Header 参考点与本地适配原则。"}

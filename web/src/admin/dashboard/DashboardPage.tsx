@@ -10,17 +10,6 @@ import { TimestampText } from '../../shared/TimestampText';
 const { Text, Title } = Typography;
 
 type DashboardResponse = {
-  audit: {
-    admin_actions_24h: number;
-    latest_actions: Array<{
-      action: string;
-      admin_id: number;
-      created_at: number;
-      id: number;
-      target_id: string;
-      target_type: string;
-    }>;
-  };
   generated_at: number;
   market: {
     active_pairs: number;
@@ -194,27 +183,6 @@ export function DashboardPage() {
                 <Text>Outbox 待发布：{displayNumber(dashboard.risk.pending_outbox_events)}</Text>
                 <Text>Inbox 重试：{displayNumber(dashboard.risk.retry_inbox_events)}</Text>
                 <Text>Inbox 死信：{displayNumber(dashboard.risk.dead_letter_inbox_events)}</Text>
-              </Space>
-            </Card>
-            <Card bordered={false} className="admin-dashboard-audit-card" shadows="always">
-              <Space align="start" spacing={12} vertical style={{ width: '100%' }}>
-                <Title heading={4}>最新审计动作</Title>
-                <Text type="secondary">24h 管理动作：{displayNumber(dashboard.audit.admin_actions_24h)}</Text>
-                <div className="admin-dashboard-audit-list">
-                  {dashboard.audit.latest_actions.length ? (
-                    dashboard.audit.latest_actions.map((action) => (
-                      <div className="admin-dashboard-audit-item" key={action.id}>
-                        <div>
-                          <Text strong>{action.action}</Text>
-                          <Text type="tertiary">{action.target_type} #{action.target_id}</Text>
-                        </div>
-                        <TimestampText value={action.created_at} />
-                      </div>
-                    ))
-                  ) : (
-                    <Text type="secondary">暂无审计动作</Text>
-                  )}
-                </div>
               </Space>
             </Card>
           </section>

@@ -4,7 +4,6 @@ import {
   mapSecondsOrdersToPcOrders,
   mapSecondsProductsToPcCycles,
   type BackendSecondsOrdersResponse,
-  type BackendSecondsProduct,
   type BackendSecondsProductsResponse,
 } from './backendAdapters'
 
@@ -22,7 +21,8 @@ export async function submitOptionOrder(
 ): Promise<{ data: any }> {
   const product = await resolveSecondsProduct(symbol, periodSeconds)
   const response = await request.instance.post(backendApiUrl('/seconds-contracts/orders'), {
-    product_id: product.id,
+    product_id: product.productId,
+    duration_seconds: product.durationSeconds,
     direction: direction === 'SELL' ? 'down' : 'up',
     stake_amount: String(amount),
     idempotency_key: createOptionIdempotencyKey(),
@@ -61,13 +61,28 @@ export async function fetchOptionOrders(symbol: string, status: 'OPEN' | 'HISTOR
   }
 }
 
-async function resolveSecondsProduct(symbol: string, periodSeconds: number): Promise<BackendSecondsProduct> {
+async function resolveSecondsProduct(symbol: string, periodSeconds: number): Promise<{ productId: number; durationSeconds: number }> {
   const response = await request.instance.get<BackendSecondsProductsResponse>(backendApiUrl('/seconds-contracts/products'))
-  const product = response.data.products.find((item) => {
-    return item.status === 'active' && normalizeSymbol(item.symbol) === normalizeSymbol(symbol) && item.duration_seconds === periodSeconds
-  })
-  if (!product) throw new Error(`Seconds contract product unavailable: ${symbol} ${periodSeconds}s`)
-  return product
+  for (const product of response.data.products) {
+    if (product.status !== 'active' || normalizeSymbol(product.symbol) !== normalizeSymbol(symbol)) continue
+    const cycles = product.cycles?.length
+      ? product.cycles
+      : [
+          {
+            id: product.id,
+            product_id: product.id,
+            duration_seconds: product.duration_seconds,
+            payout_rate: product.payout_rate,
+            min_stake: product.min_stake,
+            max_stake: product.max_stake,
+          },
+        ]
+    const cycle = cycles.find((item) => item.duration_seconds === periodSeconds)
+    if (cycle) {
+      return { productId: product.id, durationSeconds: cycle.duration_seconds }
+    }
+  }
+  throw new Error(`Seconds contract product unavailable: ${symbol} ${periodSeconds}s`)
 }
 
 function isOpenStatus(status: string): boolean {

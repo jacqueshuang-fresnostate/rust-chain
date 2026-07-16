@@ -123,9 +123,10 @@ describe('DashboardPage', () => {
     expect(screen.getByText('Outbox 待发布：1,234.00')).toBeInTheDocument();
     expect(screen.getByText('Inbox 重试：78.00')).toBeInTheDocument();
     expect(screen.getByText('Inbox 死信：56.00')).toBeInTheDocument();
-    expect(screen.getByText('24h 管理动作：1,234.00')).toBeInTheDocument();
-    expect(screen.getByText('asset.create')).toBeInTheDocument();
-    expect(screen.getByText('asset #9')).toBeInTheDocument();
+    expect(screen.queryByText('最新审计动作')).not.toBeInTheDocument();
+    expect(screen.queryByText('24h 管理动作：1,234.00')).not.toBeInTheDocument();
+    expect(screen.queryByText('asset.create')).not.toBeInTheDocument();
+    expect(screen.queryByText('asset #9')).not.toBeInTheDocument();
   });
 
   it('shows load failure and retries with refresh button', async () => {

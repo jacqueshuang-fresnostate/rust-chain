@@ -5,7 +5,7 @@
       <div class="flex items-center space-x-6 overflow-x-auto no-scrollbar w-full">
           <div class="flex items-center shrink-0">
              <h1 class="text-xl font-bold font-mono tracking-tight mr-2 flex items-center gap-2">
-               <img class="text-primary w-8 h-8" :src="currentTicker?.icon" />
+               <PairLogo class="h-8 w-8" :symbol="activeSymbol" :src="currentTicker?.icon" />
                {{ activeSymbol }}
              </h1>
              <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-neon-purple/10 text-neon-purple border border-neon-purple/20">{{ $t('nav.launchpad').toUpperCase() }}</span>
@@ -57,8 +57,8 @@
          <div class="flex-1 border-b lg:border-r lg:border-b-0 border-border relative flex flex-col min-h-[400px]">
              <!-- Chart Toolbar -->
              <div class="h-10 border-b border-border bg-card flex items-center px-4 gap-4 overflow-x-auto no-scrollbar shrink-0">
-                <span class="text-sm font-bold text-primary border-b-2 border-primary h-full flex items-center px-2 whitespace-nowrap">{{ $t('trade.original') }}</span>
-                <span class="text-sm font-medium text-muted-foreground hover:text-foreground cursor-pointer whitespace-nowrap">{{ $t('trade.tradingview') }}</span>
+                <span :class="settingStore.chartProvider === 'klinecharts' ? 'text-sm font-bold text-primary border-b-2 border-primary h-full flex items-center px-2 whitespace-nowrap' : 'text-sm font-medium text-muted-foreground h-full flex items-center px-2 whitespace-nowrap'">{{ $t('trade.original') }}</span>
+                <span :class="settingStore.chartProvider === 'tradingview' ? 'text-sm font-bold text-primary border-b-2 border-primary h-full flex items-center px-2 whitespace-nowrap' : 'text-sm font-medium text-muted-foreground h-full flex items-center px-2 whitespace-nowrap'">{{ $t('trade.tradingview') }}</span>
                 <div class="w-px h-4 bg-border mx-2 shrink-0"></div>
                 <span class="text-sm font-medium text-foreground cursor-pointer">1m</span>
                 <span class="text-sm font-medium text-muted-foreground cursor-pointer">15m</span>
@@ -66,7 +66,7 @@
                 <span class="text-sm font-medium text-muted-foreground cursor-pointer">4h</span>
                 <span class="text-sm font-medium text-muted-foreground cursor-pointer">1D</span>
              </div>
-            <TVChart v-if="activeSymbol" :dataList="chartData" :symbol="activeSymbol" :precision="precision" period="1m" class="flex-1" :key="`${activeSymbol}-${precision}`" />
+            <MarketChart v-if="activeSymbol" :dataList="chartData" :symbol="activeSymbol" :precision="precision" period="1m" class="flex-1" :key="`${activeSymbol}-${precision}`" />
          </div>
 
          <!-- Order History (Bottom Left) -->
@@ -87,7 +87,7 @@
              <div class="bg-card border border-border rounded-xl p-5 shadow-sm space-y-2">
                  <div class="flex items-center gap-2 text-muted-foreground">
                     <span class="i-lucide-award w-4 h-4"></span>
-                    <span class="text-sm font-medium">{{ $t('trade.purchased_amount') || '已购数量' }}</span>
+                    <span class="text-sm font-medium">{{ $t('trade.purchased_amount') }}</span>
                  </div>
                  <div class="flex justify-between items-baseline mt-2">
                      <span class="text-3xl font-mono font-bold">{{ purchasedAmount }}</span>
@@ -105,15 +105,18 @@
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import numeral from 'numeral'
-import TVChart from '@/components/chart/TVChart.vue'
+import MarketChart from '@/components/chart/MarketChart.vue'
+import PairLogo from '@/components/common/PairLogo.vue'
 import OrderForm from '@/components/trade/OrderForm.vue'
 import OrderHistory from '@/components/trade/OrderHistory.vue'
 import { useMarketStore } from '@/stores/market'
+import { useSettingStore } from '@/stores/setting'
 import { fetchMarketSnapshot } from '@/api/market'
 
 const route = useRoute()
 const router = useRouter()
 const marketStore = useMarketStore()
+const settingStore = useSettingStore()
 const activeSymbol = computed(() => marketStore.activeSymbol)
 const currentTicker = computed(() =>
   marketStore.tickers.find(t => t.symbol === activeSymbol.value)

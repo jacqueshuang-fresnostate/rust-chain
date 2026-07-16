@@ -1,9 +1,10 @@
 import { Button, Card, Space, Toast, Typography } from '@douyinfe/semi-ui';
-import { type ChangeEvent, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { ApiError, apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
+import { AdminImageUpload } from '../../shared/AdminImageUpload';
 import { AdminCheckbox, AdminPasswordInput, AdminSelect, AdminTextInput } from '../../shared/SemiFormControls';
 import { StatusTag } from '../../shared/StatusTag';
 
@@ -11,8 +12,8 @@ const { Text, Title } = Typography;
 
 const providerOptions = [
   { value: 'image_bed', label: '图床' },
-  { value: 'oss', label: 'OSS' },
-  { value: 's3', label: 'S3' },
+  { value: 'oss', label: '阿里云 OSS' },
+  { value: 's3', label: 'S3 兼容存储' },
   { value: 'local', label: '本地' }
 ];
 
@@ -175,7 +176,6 @@ export function UploadConfigPage() {
   const [config, setConfig] = useState<UploadConfig | null>(null);
   const [configForm, setConfigForm] = useState<ConfigForm>(defaultConfigForm);
   const [loading, setLoading] = useState(true);
-  const [testFile, setTestFile] = useState<File | null>(null);
   const [lastUpload, setLastUpload] = useState<UploadImageResponse | null>(null);
 
   async function loadConfig() {
@@ -192,23 +192,6 @@ export function UploadConfigPage() {
   useEffect(() => {
     loadConfig().catch((error) => Toast.error(errorMessage(error)));
   }, []);
-
-  function handleTestFileChange(event: ChangeEvent<HTMLInputElement>) {
-    setTestFile(event.target.files?.[0] ?? null);
-  }
-
-  async function uploadTestFile() {
-    if (!testFile) {
-      Toast.error('请选择测试上传文件');
-      return;
-    }
-    const body = new FormData();
-    body.append('file', testFile);
-    await submitAction('测试上传', async () => {
-      const response = await apiRequest<UploadImageResponse>('/admin/api/v1/uploads/images', { method: 'POST', body });
-      setLastUpload(response);
-    });
-  }
 
   return (
     <main className="exchange-page admin-action-page">
@@ -348,15 +331,17 @@ export function UploadConfigPage() {
         <Card bordered={false} shadows="always">
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
             <Title heading={4}>测试上传</Title>
-            <div className="admin-action-form">
-              <label>
-                测试上传文件
-                <input aria-label="测试上传文件" onChange={handleTestFileChange} type="file" />
-              </label>
-            </div>
-            <Button onClick={uploadTestFile} type="primary">
-              测试上传
-            </Button>
+            <AdminImageUpload
+              buttonText="测试上传"
+              label="测试上传文件"
+              value={lastUpload?.download_url ?? ''}
+              onChange={(downloadUrl) => {
+                if (!downloadUrl) {
+                  setLastUpload(null);
+                }
+              }}
+              onUploaded={(image) => setLastUpload(image)}
+            />
             {lastUpload ? <Text type="secondary">最近上传 URL：{lastUpload.download_url}</Text> : null}
           </Space>
         </Card>

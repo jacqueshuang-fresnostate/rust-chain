@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"确认后端质量规范并执行就近测试"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查后台测试接口、OpenAPI schema 和前端 payload 的字段一致性"}

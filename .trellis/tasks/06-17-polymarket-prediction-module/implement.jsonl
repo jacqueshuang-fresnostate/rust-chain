@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec index for module, migration, wallet ledger, and API conventions."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Prediction module spans database, backend APIs, wallet accounting, admin UI, PC UI, and realtime refresh."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"New module should reuse existing wallet ledger, admin resource, PC adapter, order-number, and websocket patterns."}
+{"file":".trellis/tasks/06-17-polymarket-prediction-module/research/polymarket-model.md","reason":"Research mapping Polymarket official concepts/API shapes to this platform's virtual-asset model."}

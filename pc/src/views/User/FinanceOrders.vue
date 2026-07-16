@@ -35,7 +35,7 @@
         <div v-for="order in orders" :key="order.id" class="bg-card border border-border rounded-xl p-6 shadow-sm hover:border-primary/50 transition-colors">
             <div class="flex flex-col md:flex-row justify-between md:items-center gap-4 mb-4">
                 <div>
-                    <div class="text-sm text-muted-foreground font-mono">{{ $t('ai_finance.order_sn') }}: {{ order.id }}</div>
+                    <div class="text-sm text-muted-foreground font-mono">{{ $t('ai_finance.order_sn') }}: {{ order.orderNo }}</div>
                     <div class="text-xl font-bold flex items-center gap-2 mt-1">
                         {{ formatNumber(order.num) }} USDT
                         <span class="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">

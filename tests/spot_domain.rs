@@ -1,7 +1,8 @@
 use bigdecimal::BigDecimal;
 use exchange_api::modules::spot::{
     OrderSide, OrderStatus, OrderType, SpotDomainError, SpotOrder, TradingPairRule, apply_fill,
-    cancel_order, create_limit_order, create_market_order, validate_order_request,
+    cancel_order, create_limit_order, create_market_order, create_stop_limit_order,
+    validate_order_request,
 };
 use std::str::FromStr;
 
@@ -27,6 +28,7 @@ fn open_limit_order(quantity: &str) -> SpotOrder {
         side: OrderSide::Buy,
         order_type: OrderType::Limit,
         price: Some(dec("100")),
+        trigger_price: None,
         quantity: dec(quantity),
         filled_quantity: dec("0"),
         status: OrderStatus::Open,
@@ -51,6 +53,26 @@ fn creates_valid_limit_order() {
     assert_eq!(order.price, Some(dec("100.12")));
     assert_eq!(order.quantity, dec("0.1000"));
     assert_eq!(order.filled_quantity, dec("0"));
+    assert_eq!(order.status, OrderStatus::Pending);
+}
+
+#[test]
+fn creates_valid_stop_limit_order() {
+    let order = create_stop_limit_order(
+        "user-1",
+        OrderSide::Sell,
+        dec("105.00"),
+        dec("104.50"),
+        dec("0.1000"),
+        &pair(),
+    )
+    .unwrap();
+
+    assert_eq!(order.side, OrderSide::Sell);
+    assert_eq!(order.order_type, OrderType::StopLimit);
+    assert_eq!(order.trigger_price, Some(dec("105.00")));
+    assert_eq!(order.price, Some(dec("104.50")));
+    assert_eq!(order.quantity, dec("0.1000"));
     assert_eq!(order.status, OrderStatus::Pending);
 }
 

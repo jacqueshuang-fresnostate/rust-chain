@@ -80,7 +80,11 @@ async fn redis_market_cache_stores_ticker_depth_and_kline_json() -> Result<(), B
         format!("market:ticker:{normalized_symbol}")
     );
     assert!(ticker_json["last_price"].is_string());
+    assert!(ticker_json["high_24h"].is_string());
+    assert!(ticker_json["low_24h"].is_string());
     assert!(ticker_json["volume_24h"].is_string());
+    assert!(ticker_json["price_change_24h"].is_string());
+    assert!(ticker_json["price_change_percent_24h"].is_string());
     assert_eq!(depth_json["symbol"], normalized_symbol);
     assert_eq!(
         depth_json["redis_key"],

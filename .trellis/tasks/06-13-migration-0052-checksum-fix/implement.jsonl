@@ -1,0 +1,7 @@
+{"type":"spec","path":".trellis/spec/backend/index.md","reason":"Backend migration task entry."}
+{"type":"spec","path":".trellis/spec/backend/database-guidelines.md","reason":"Migration checksum fix and schema evolution order."}
+{"type":"spec","path":".trellis/spec/backend/quality-guidelines.md","reason":"Focused validation for backend migration changes."}
+{"type":"guide","path":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Search before modifying migration values."}
+{"type":"implementation","path":"migrations/0052_schema_column_comments_zh.sql","reason":"Restore applied migration 0052 to its pre-remark country field comment rules."}
+{"type":"implementation","path":"migrations/0055_country_config_local_names_and_remark.sql","reason":"Keep the additive remark column and comment as the later schema-evolution point."}
+{"type":"test","path":"tests/country_config_migration.rs","reason":"Add migration-order guard for 0052 and 0055 country remark responsibilities."}

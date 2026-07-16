@@ -1,0 +1,12 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend API, migration, and test conventions for earn product fee fields."}
+{"file": ".trellis/spec/guides/index.md", "reason": "Cross-layer and reuse checklist for product fee configuration."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse existing earn product form and settlement patterns."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Track fee fields across database, API, admin UI, and settlement."}
+{"file": "migrations/0065_earn_product_fee_config.sql", "reason": "Added product and subscription fee snapshot fields with comments and constraints."}
+{"file": "src/modules/earn/redemption.rs", "reason": "Added shared earn redemption fee calculation used by user routes and auto-redemption worker."}
+{"file": "src/modules/earn/routes.rs", "reason": "Added earn fee API fields, subscription snapshots, early redemption, and fee-aware redemption responses."}
+{"file": "src/workers/earn_auto_redemption.rs", "reason": "Reused the shared redemption calculation for maturity auto-redemption."}
+{"file": "web/src/admin/resources/ResourceCreateActions.tsx", "reason": "Added admin earn product fee configuration fields to create/edit SideSheets."}
+{"file": "web/src/admin/resources/resourceConfigs.tsx", "reason": "Displayed earn product fee settings in the admin table."}
+{"file": "pc/src/api/backendAdapters.ts", "reason": "Added optional backend fee fields to PC earn adapter types."}
+{"file": ".trellis/spec/backend/earn-products.md", "reason": "Captured earn fee snapshot and redemption settlement contracts for future changes."}

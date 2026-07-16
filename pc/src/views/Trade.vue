@@ -5,7 +5,7 @@
       <div class="flex items-center space-x-6 overflow-x-auto no-scrollbar w-full">
           <div class="flex items-center shrink-0">
              <h1 class="text-xl font-bold font-mono tracking-tight mr-2 flex items-center gap-2">
-               <img class="text-primary w-8 h-8" :src="currentTicker?.icon" />
+               <PairLogo class="h-8 w-8" :symbol="activeSymbol" :src="currentTicker?.icon" />
                {{ activeSymbol }}
              </h1>
              <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">SPOT</span>
@@ -52,7 +52,7 @@
     <div class="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
       <!-- Left: Order Book -->
       <div class="w-full lg:w-[320px] h-[500px] lg:h-full border-b lg:border-b-0 lg:border-r border-border flex flex-col bg-card shrink-0 order-3 lg:order-1">
-        <OrderBook :bids="orderBookBids" :asks="orderBookAsks" :currentPrice="currentPrice" class="flex-1" :symbol="activeSymbol" />
+        <OrderBook :bids="orderBookBids" :asks="orderBookAsks" :currentPrice="currentPrice" class="flex-1" :symbol="activeSymbol" :visible-rows="20" />
       </div>
 
       <!-- Center: Chart & Order History -->
@@ -61,8 +61,8 @@
          <div class="flex-1 border-b border-border relative flex flex-col min-h-[350px]">
              <!-- Chart Toolbar -->
              <div class="h-10 border-b border-border bg-card flex items-center px-4 gap-4 overflow-x-auto no-scrollbar shrink-0">
-                <span class="text-sm font-bold text-primary border-b-2 border-primary h-full flex items-center px-2 whitespace-nowrap">{{ $t('trade.original') }}</span>
-                <span class="text-sm font-medium text-muted-foreground hover:text-foreground cursor-pointer whitespace-nowrap">{{ $t('trade.tradingview') }}</span>
+                <span :class="settingStore.chartProvider === 'klinecharts' ? 'text-sm font-bold text-primary border-b-2 border-primary h-full flex items-center px-2 whitespace-nowrap' : 'text-sm font-medium text-muted-foreground h-full flex items-center px-2 whitespace-nowrap'">{{ $t('trade.original') }}</span>
+                <span :class="settingStore.chartProvider === 'tradingview' ? 'text-sm font-bold text-primary border-b-2 border-primary h-full flex items-center px-2 whitespace-nowrap' : 'text-sm font-medium text-muted-foreground h-full flex items-center px-2 whitespace-nowrap'">{{ $t('trade.tradingview') }}</span>
                 <span class="text-sm font-medium text-muted-foreground hover:text-foreground cursor-pointer whitespace-nowrap">{{ $t('trade.depth') }}</span>
                 <div class="w-px h-4 bg-border mx-2 shrink-0"></div>
                 <span class="text-sm font-medium text-foreground cursor-pointer">1m</span>
@@ -71,7 +71,7 @@
                 <span class="text-sm font-medium text-muted-foreground cursor-pointer">4h</span>
                 <span class="text-sm font-medium text-muted-foreground cursor-pointer">1D</span>
              </div>
-            <TVChart v-if="activeSymbol" :dataList="chartData" :symbol="activeSymbol" :precision="precision" period="1m" class="flex-1" :key="`${activeSymbol}-${precision}`" />
+            <MarketChart v-if="activeSymbol" :dataList="chartData" :symbol="activeSymbol" :precision="precision" period="1m" class="flex-1" :key="`${activeSymbol}-${precision}`" />
          </div>
          <!-- Order History -->
          <div class="h-[260px] bg-card border-t-4 border-background shrink-0 flex flex-col z-20 relative">
@@ -97,18 +97,23 @@
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import numeral from 'numeral'
-import TVChart from '@/components/chart/TVChart.vue'
+import MarketChart from '@/components/chart/MarketChart.vue'
+import PairLogo from '@/components/common/PairLogo.vue'
 import OrderBook from '@/components/trade/OrderBook.vue'
 import OrderForm from '@/components/trade/OrderForm.vue'
 import MarketTrades from '@/components/trade/MarketTrades.vue'
 import OrderHistory from '@/components/trade/OrderHistory.vue'
 import { useMarketStore } from '@/stores/market'
+import { useSettingStore } from '@/stores/setting'
 import { fetchMarketSnapshot, fetchTradePlate } from '@/api/market'
 import { stompService } from '@/api/stomp'
+import { useAuthRequired } from '@/composables/useAuthRequired'
 
 const route = useRoute()
 const router = useRouter()
 const marketStore = useMarketStore()
+const settingStore = useSettingStore()
+const { isLoggedIn } = useAuthRequired()
 const activeSymbol = computed(() => marketStore.activeSymbol)
 const currentTicker = computed(() =>
   marketStore.tickers.find(t => t.symbol === activeSymbol.value)
@@ -122,6 +127,22 @@ const chartData = ref<any[]>([])
 
 // Subscriptions
 let plateSub: any = null
+let tickerSub: any = null
+let privateSub: any = null
+
+const privateEventType = (msg: { body: string }) => {
+    try {
+        return String(JSON.parse(msg.body)?.type || '')
+    } catch {
+        return ''
+    }
+}
+
+const handlePrivateEvent = (msg: { body: string }) => {
+    const type = privateEventType(msg)
+    if (type && !type.startsWith('spot.') && !type.startsWith('wallet.')) return
+    marketStore.triggerOrderRefresh()
+}
 
 // URL Persistence Logic
 watch(() => route.params.symbol, (newSymbol) => {
@@ -171,23 +192,39 @@ const refreshOrderBook = async () => {
 }
 
 // Subscribe to Data
-const subscribeToData = async () => {
-    if (!activeSymbol.value) return
-
-    // Unsubscribe previous
+const clearMarketDataSubscriptions = () => {
     if (plateSub) {
         plateSub.unsubscribe()
         plateSub = null
     }
+    if (tickerSub) {
+        tickerSub.unsubscribe()
+        tickerSub = null
+    }
+}
 
-    const topic = `market:depth:${activeSymbol.value}`
-    plateSub = await stompService.subscribe(topic, (msg) => {
+const subscribeToData = async () => {
+    if (!activeSymbol.value) return
+
+    clearMarketDataSubscriptions()
+
+    const topic = `spot:depth:${activeSymbol.value}`
+    plateSub = await stompService.subscribe('spot', topic, (msg) => {
         try {
             const data = JSON.parse(msg.body)
             if (data.bids) orderBookBids.value = mapItems(data.bids)
             if (data.asks) orderBookAsks.value = mapItems(data.asks)
         } catch (e) {
             console.error(e)
+        }
+    })
+
+    const tickerTopic = `spot:ticker:${activeSymbol.value}`
+    tickerSub = await stompService.subscribe('spot', tickerTopic, (msg) => {
+        try {
+            marketStore.updateTicker(JSON.parse(msg.body))
+        } catch (e) {
+            console.error('Failed to parse spot ticker', e)
         }
     })
 }
@@ -226,7 +263,7 @@ onMounted(async () => {
         router.replace({ name: 'Trade', params: { symbol: urlSymbol } })
     }
 
-    stompService.connect()
+    stompService.connect('spot')
 
     if (marketStore.tickers.length === 0) {
         try {
@@ -242,11 +279,14 @@ onMounted(async () => {
 
     refreshOrderBook()
     subscribeToData()
+    if (isLoggedIn.value) {
+        privateSub = await stompService.subscribePrivate(handlePrivateEvent)
+    }
 })
 
 onUnmounted(() => {
-    if (plateSub) plateSub.unsubscribe()
-    // stompService.disconnect() // Don't disconnect shared connection
+    clearMarketDataSubscriptions()
+    if (privateSub) privateSub.unsubscribe()
 })
 </script>
 

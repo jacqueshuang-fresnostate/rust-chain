@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Verify backend filter defaults and list query behavior."}
+{"file": ".trellis/spec/guides/index.md", "reason": "Check consistency across backend APIs and admin resource filters."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Check repeated robot switch logic is handled consistently."}
+{"file": ".codex/skills/semi-design-guide/SKILL.md", "reason": "Verify Semi Switch-based UI remains aligned with the admin design system."}
+{"command": "cargo fmt", "result": "passed"}
+{"command": "npm test -- AdminResourcePage.test.tsx resourceConfigs.test.tsx", "cwd": "web", "result": "passed: 2 files, 62 tests"}
+{"command": "cargo test admin_spot_lists_orders_and_trades_with_filters --test spot_routes", "result": "passed: 1 test"}
+{"command": "cargo test admin_lists_wallet_accounts_and_ledger --test admin_routes", "result": "passed: 1 test"}
+{"command": "npm run typecheck", "cwd": "web", "result": "passed"}
+{"command": "git diff --check -- src/modules/admin/routes.rs src/modules/spot/routes.rs tests/admin_routes.rs tests/spot_routes.rs web/src/admin/resources/AdminResourcePage.tsx web/src/admin/resources/AdminResourcePage.test.tsx web/src/admin/resources/resourceConfigs.tsx web/src/admin/resources/resourceConfigs.test.tsx web/src/styles.css .trellis/tasks/06-15-admin-robot-data-visibility docs/superpowers/PROGRESS.md", "result": "passed"}

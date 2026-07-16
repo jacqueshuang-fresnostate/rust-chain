@@ -1,0 +1,2 @@
+{"file":".trellis/tasks/06-16-pc-trading-pages-api-wss-audit/research/pc-trading-pages-api-wss-audit.md","reason":"使用代码阅读与 rg/nl 交叉核对现货、合约、秒合约页面的 HTTP API、WSS 订阅和后端路由。"}
+{"file":".trellis/tasks/06-16-pc-trading-pages-api-wss-audit/research/pc-trading-pages-api-wss-audit.md","reason":"已执行 npm run type-check（目录 pc），通过。已执行 git diff --check -- .trellis/tasks/06-16-pc-trading-pages-api-wss-audit docs/superpowers/PROGRESS.md，通过。已执行 rg 核对关键接口、Promise.reject、WSS topic、私有 WS 路由与 settlement_price 映射。"}

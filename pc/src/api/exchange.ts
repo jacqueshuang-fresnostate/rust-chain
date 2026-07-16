@@ -10,13 +10,14 @@ import {
   type BackendWalletAccountsResponse,
 } from './backendAdapters'
 
-// Order Types: LIMIT_PRICE, MARKET_PRICE
+// Order Types: LIMIT_PRICE, MARKET_PRICE, STOP_LIMIT
 export type OrderType = 'LIMIT_PRICE' | 'MARKET_PRICE' | 'STOP_LIMIT'
 export type OrderDirection = 'BUY' | 'SELL'
 
 export interface OrderParams {
   symbol: string
   price?: number
+  triggerPrice?: number
   amount: number // For LIMIT/MARKET SELL, and MARKET BUY (USDT amount)
   direction: OrderDirection
   type: OrderType

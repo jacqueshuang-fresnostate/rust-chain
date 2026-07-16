@@ -1,3 +1,9 @@
+pub mod application;
+pub mod domain;
+pub mod infrastructure;
+pub mod presentation;
+pub mod repository;
+pub mod service;
 use crate::{
     config::Settings,
     error::{AppError, AppResult},
@@ -12,17 +18,21 @@ use axum::{
     extract::FromRequestParts,
     http::{header::AUTHORIZATION, request::Parts},
 };
-use chrono::{Duration, NaiveDateTime, Utc};
+use chrono::{NaiveDateTime, Utc};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
+use sa_token_core::{SaTokenError, SaTokenManager, TokenInfo, TokenValue};
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
-use sqlx::{MySql, Pool};
-use std::sync::Arc;
 use uuid::Uuid;
 
 pub mod routes;
 
-const ACTIVE_STATUS: &str = "active";
+pub use infrastructure::MySqlAuthRepository;
+pub use repository::AuthRepository;
+pub use service::AuthService;
+use service::revoke_project_refresh_tokens;
+
+pub(crate) const ACTIVE_STATUS: &str = "active";
 const REFRESH_TOKEN_HASH_SALT: &[u8] = b"exchange-refresh-token-v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,6 +41,25 @@ pub enum TokenScope {
     User,
     Admin,
     Agent,
+}
+
+impl TokenScope {
+    pub fn as_login_type(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Admin => "admin",
+            Self::Agent => "agent",
+        }
+    }
+
+    fn from_login_type(value: &str) -> AppResult<Self> {
+        match value {
+            "user" => Ok(Self::User),
+            "admin" => Ok(Self::Admin),
+            "agent" => Ok(Self::Agent),
+            _ => Err(AppError::Unauthorized),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,7 +86,7 @@ impl ActorType {
         }
     }
 
-    fn from_storage(value: &str) -> AppResult<Self> {
+    pub(crate) fn from_storage(value: &str) -> AppResult<Self> {
         match value {
             "user" => Ok(Self::User),
             "admin" => Ok(Self::Admin),
@@ -109,7 +138,10 @@ impl AuthActor {
 pub struct UserCredentials {
     pub email: Option<String>,
     pub phone: Option<String>,
+    pub username: Option<String>,
     pub password: Option<String>,
+    pub country_code: Option<String>,
+    pub username_login_enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -151,6 +183,8 @@ pub struct NewUserActor {
     pub email: Option<String>,
     pub phone: Option<String>,
     pub password_hash: String,
+    pub country_code: String,
+    pub preferred_locale: String,
 }
 
 #[derive(Debug, Clone)]
@@ -175,6 +209,12 @@ pub struct StoredActorCredential {
 }
 
 #[derive(Debug, Clone)]
+pub struct ActiveCountryConfig {
+    pub country_code: String,
+    pub default_locale: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct StoredRefreshToken {
     pub actor_type: ActorType,
     pub actor_id: u64,
@@ -188,465 +228,7 @@ pub struct RefreshTokenRecord {
     pub actor_type: ActorType,
     pub actor_id: u64,
     pub user_id: Option<u64>,
-}
-
-#[async_trait]
-pub trait AuthRepository: Clone + Send + Sync + 'static {
-    async fn create_user(&self, actor: NewUserActor) -> AppResult<AuthActor>;
-    async fn create_admin(&self, actor: NewAdminActor) -> AppResult<AuthActor>;
-    async fn create_agent(&self, actor: NewAgentActor) -> AppResult<AuthActor>;
-    async fn find_user_by_email(&self, email: &str) -> AppResult<Option<StoredActorCredential>>;
-    async fn find_user_by_phone(&self, phone: &str) -> AppResult<Option<StoredActorCredential>>;
-    async fn find_admin_by_username(
-        &self,
-        username: &str,
-    ) -> AppResult<Option<StoredActorCredential>>;
-    async fn find_agent_by_username(
-        &self,
-        username: &str,
-    ) -> AppResult<Option<StoredActorCredential>>;
-    async fn find_active_actor(&self, actor: &AuthActor) -> AppResult<Option<AuthActor>>;
-    async fn record_login(&self, actor: &AuthActor) -> AppResult<()>;
-    async fn store_refresh_token(&self, token: StoredRefreshToken) -> AppResult<()>;
-    async fn find_refresh_token(
-        &self,
-        token_hash: &str,
-        now: NaiveDateTime,
-    ) -> AppResult<Option<RefreshTokenRecord>>;
-}
-
-#[derive(Clone)]
-pub struct MySqlAuthRepository {
-    pool: Pool<MySql>,
-}
-
-impl MySqlAuthRepository {
-    pub fn new(pool: Pool<MySql>) -> Self {
-        Self { pool }
-    }
-
-    async fn find_active_user(&self, actor: &AuthActor) -> AppResult<Option<AuthActor>> {
-        let actor_id = sqlx::query_scalar::<_, u64>(
-            "SELECT id FROM users WHERE id = ? AND status = 'active' LIMIT 1",
-        )
-        .bind(actor.actor_id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(actor_id.map(|actor_id| AuthActor::new(ActorType::User, actor_id, Some(actor_id))))
-    }
-
-    async fn find_active_admin(&self, actor: &AuthActor) -> AppResult<Option<AuthActor>> {
-        let actor_id = sqlx::query_scalar::<_, u64>(
-            "SELECT id FROM admin_users WHERE id = ? AND status = 'active' LIMIT 1",
-        )
-        .bind(actor.actor_id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(actor_id.map(|actor_id| AuthActor::new(ActorType::Admin, actor_id, None)))
-    }
-
-    async fn find_active_agent(&self, actor: &AuthActor) -> AppResult<Option<AuthActor>> {
-        let actor_id = sqlx::query_scalar::<_, u64>(
-            r#"SELECT agent_admin_users.id
-               FROM agent_admin_users
-               INNER JOIN agents ON agents.id = agent_admin_users.agent_id
-               WHERE agent_admin_users.id = ?
-                 AND agent_admin_users.status = 'active'
-                 AND agents.status = 'active'
-               LIMIT 1"#,
-        )
-        .bind(actor.actor_id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(actor_id.map(|actor_id| AuthActor::new(ActorType::Agent, actor_id, None)))
-    }
-}
-
-#[async_trait]
-impl AuthRepository for MySqlAuthRepository {
-    async fn create_user(&self, actor: NewUserActor) -> AppResult<AuthActor> {
-        let result =
-            sqlx::query("INSERT INTO users (email, phone, password_hash) VALUES (?, ?, ?)")
-                .bind(actor.email)
-                .bind(actor.phone)
-                .bind(actor.password_hash)
-                .execute(&self.pool)
-                .await
-                .map_err(|error| map_duplicate_key(error, "user"))?;
-        let actor_id = result.last_insert_id();
-
-        Ok(AuthActor::new(ActorType::User, actor_id, Some(actor_id)))
-    }
-
-    async fn create_admin(&self, actor: NewAdminActor) -> AppResult<AuthActor> {
-        let result = sqlx::query(
-            "INSERT INTO admin_users (username, password_hash, role_id) VALUES (?, ?, ?)",
-        )
-        .bind(actor.username)
-        .bind(actor.password_hash)
-        .bind(actor.role_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|error| map_duplicate_key(error, "admin"))?;
-
-        Ok(AuthActor::new(
-            ActorType::Admin,
-            result.last_insert_id(),
-            None,
-        ))
-    }
-
-    async fn create_agent(&self, actor: NewAgentActor) -> AppResult<AuthActor> {
-        let result = sqlx::query(
-            "INSERT INTO agent_admin_users (agent_id, username, password_hash) VALUES (?, ?, ?)",
-        )
-        .bind(actor.agent_id)
-        .bind(actor.username)
-        .bind(actor.password_hash)
-        .execute(&self.pool)
-        .await
-        .map_err(|error| map_duplicate_key(error, "agent"))?;
-
-        Ok(AuthActor::new(
-            ActorType::Agent,
-            result.last_insert_id(),
-            None,
-        ))
-    }
-
-    async fn find_user_by_email(&self, email: &str) -> AppResult<Option<StoredActorCredential>> {
-        let row = sqlx::query_as::<_, (u64, String, String)>(
-            "SELECT id, password_hash, status FROM users WHERE email = ? LIMIT 1",
-        )
-        .bind(email)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(
-            row.map(|(actor_id, password_hash, status)| StoredActorCredential {
-                actor: AuthActor::new(ActorType::User, actor_id, Some(actor_id)),
-                password_hash,
-                status,
-            }),
-        )
-    }
-
-    async fn find_user_by_phone(&self, phone: &str) -> AppResult<Option<StoredActorCredential>> {
-        let row = sqlx::query_as::<_, (u64, String, String)>(
-            "SELECT id, password_hash, status FROM users WHERE phone = ? LIMIT 1",
-        )
-        .bind(phone)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(
-            row.map(|(actor_id, password_hash, status)| StoredActorCredential {
-                actor: AuthActor::new(ActorType::User, actor_id, Some(actor_id)),
-                password_hash,
-                status,
-            }),
-        )
-    }
-
-    async fn find_admin_by_username(
-        &self,
-        username: &str,
-    ) -> AppResult<Option<StoredActorCredential>> {
-        let row = sqlx::query_as::<_, (u64, String, String)>(
-            "SELECT id, password_hash, status FROM admin_users WHERE username = ? LIMIT 1",
-        )
-        .bind(username)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(
-            row.map(|(actor_id, password_hash, status)| StoredActorCredential {
-                actor: AuthActor::new(ActorType::Admin, actor_id, None),
-                password_hash,
-                status,
-            }),
-        )
-    }
-
-    async fn find_agent_by_username(
-        &self,
-        username: &str,
-    ) -> AppResult<Option<StoredActorCredential>> {
-        let row = sqlx::query_as::<_, (u64, String, String)>(
-            r#"SELECT agent_admin_users.id, agent_admin_users.password_hash, agent_admin_users.status
-               FROM agent_admin_users
-               INNER JOIN agents ON agents.id = agent_admin_users.agent_id
-               WHERE agent_admin_users.username = ? AND agents.status = 'active'
-               LIMIT 1"#,
-        )
-        .bind(username)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(
-            row.map(|(actor_id, password_hash, status)| StoredActorCredential {
-                actor: AuthActor::new(ActorType::Agent, actor_id, None),
-                password_hash,
-                status,
-            }),
-        )
-    }
-
-    async fn find_active_actor(&self, actor: &AuthActor) -> AppResult<Option<AuthActor>> {
-        match actor.actor_type {
-            ActorType::User => self.find_active_user(actor).await,
-            ActorType::Admin => self.find_active_admin(actor).await,
-            ActorType::Agent => self.find_active_agent(actor).await,
-        }
-    }
-
-    async fn record_login(&self, actor: &AuthActor) -> AppResult<()> {
-        if actor.actor_type == ActorType::Agent {
-            sqlx::query(
-                "UPDATE agent_admin_users SET last_login_at = CURRENT_TIMESTAMP(6) WHERE id = ?",
-            )
-            .bind(actor.actor_id)
-            .execute(&self.pool)
-            .await?;
-        }
-
-        Ok(())
-    }
-
-    async fn store_refresh_token(&self, token: StoredRefreshToken) -> AppResult<()> {
-        sqlx::query(
-            r#"INSERT INTO refresh_tokens (user_id, actor_type, actor_id, token_hash, expires_at)
-               VALUES (?, ?, ?, ?, ?)
-               ON DUPLICATE KEY UPDATE token_hash = token_hash"#,
-        )
-        .bind(token.user_id)
-        .bind(token.actor_type.as_str())
-        .bind(token.actor_id)
-        .bind(token.token_hash)
-        .bind(token.expires_at)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    async fn find_refresh_token(
-        &self,
-        token_hash: &str,
-        now: NaiveDateTime,
-    ) -> AppResult<Option<RefreshTokenRecord>> {
-        let row = sqlx::query_as::<_, (String, u64, Option<u64>)>(
-            r#"SELECT actor_type, actor_id, user_id
-               FROM refresh_tokens
-               WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?
-               LIMIT 1"#,
-        )
-        .bind(token_hash)
-        .bind(now)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        row.map(|(actor_type, actor_id, user_id)| {
-            Ok(RefreshTokenRecord {
-                actor_type: ActorType::from_storage(&actor_type)?,
-                actor_id,
-                user_id,
-            })
-        })
-        .transpose()
-    }
-}
-
-#[derive(Clone)]
-pub struct AuthService<R> {
-    repository: R,
-    settings: Arc<Settings>,
-}
-
-impl<R: AuthRepository> AuthService<R> {
-    pub fn new(repository: R, settings: Arc<Settings>) -> Self {
-        Self {
-            repository,
-            settings,
-        }
-    }
-
-    pub async fn register_user(&self, credentials: UserCredentials) -> AppResult<IssuedTokens> {
-        let password = required_string(credentials.password, "password")?;
-        let (email, phone) = user_identifier(credentials.email, credentials.phone)?;
-        let actor = self
-            .repository
-            .create_user(NewUserActor {
-                email,
-                phone,
-                password_hash: hash_password(&password)?,
-            })
-            .await?;
-
-        self.issue_tokens(actor).await
-    }
-
-    pub async fn login_user(&self, credentials: UserCredentials) -> AppResult<IssuedTokens> {
-        let password = required_string(credentials.password, "password")?;
-        let (email, phone) = user_identifier(credentials.email, credentials.phone)?;
-        let stored = match (email, phone) {
-            (Some(email), _) => self.repository.find_user_by_email(&email).await?,
-            (None, Some(phone)) => self.repository.find_user_by_phone(&phone).await?,
-            (None, None) => {
-                return Err(AppError::Validation(
-                    "email or phone is required".to_owned(),
-                ));
-            }
-        }
-        .ok_or(AppError::Unauthorized)?;
-
-        self.verify_and_issue(stored, &password).await
-    }
-
-    pub async fn register_admin(&self, registration: AdminRegistration) -> AppResult<IssuedTokens> {
-        let username = required_string(registration.username, "username")?;
-        let password = required_string(registration.password, "password")?;
-        let role_id = registration
-            .role_id
-            .ok_or_else(|| AppError::Validation("role_id is required".to_owned()))?;
-        let actor = self
-            .repository
-            .create_admin(NewAdminActor {
-                username,
-                password_hash: hash_password(&password)?,
-                role_id,
-            })
-            .await?;
-
-        self.issue_tokens(actor).await
-    }
-
-    pub async fn login_admin(&self, credentials: AdminCredentials) -> AppResult<IssuedTokens> {
-        let username = required_string(credentials.username, "username")?;
-        let password = required_string(credentials.password, "password")?;
-        let stored = self
-            .repository
-            .find_admin_by_username(&username)
-            .await?
-            .ok_or(AppError::Unauthorized)?;
-
-        self.verify_and_issue(stored, &password).await
-    }
-
-    pub async fn register_agent(&self, registration: AgentRegistration) -> AppResult<IssuedTokens> {
-        let username = required_string(registration.username, "username")?;
-        let password = required_string(registration.password, "password")?;
-        let agent_id = registration
-            .agent_id
-            .ok_or_else(|| AppError::Validation("agent_id is required".to_owned()))?;
-        let actor = self
-            .repository
-            .create_agent(NewAgentActor {
-                username,
-                password_hash: hash_password(&password)?,
-                agent_id,
-            })
-            .await?;
-
-        self.issue_tokens(actor).await
-    }
-
-    pub async fn login_agent(&self, credentials: AgentCredentials) -> AppResult<IssuedTokens> {
-        let username = required_string(credentials.username, "username")?;
-        let password = required_string(credentials.password, "password")?;
-        let stored = self
-            .repository
-            .find_agent_by_username(&username)
-            .await?
-            .ok_or(AppError::Unauthorized)?;
-
-        self.verify_and_issue(stored, &password).await
-    }
-
-    pub async fn refresh(
-        &self,
-        refresh_token: Option<String>,
-        expected_scope: TokenScope,
-    ) -> AppResult<IssuedTokens> {
-        let refresh_token = required_string(refresh_token, "refresh_token")?;
-        let claims = decode_claims(&self.settings, &refresh_token)?;
-        if claims.scope != expected_scope {
-            return Err(AppError::Unauthorized);
-        }
-
-        let token_hash = hash_refresh_token(&refresh_token)?;
-        let stored = self
-            .repository
-            .find_refresh_token(&token_hash, Utc::now().naive_utc())
-            .await?
-            .ok_or(AppError::Unauthorized)?;
-        let actor = AuthActor::new(stored.actor_type, stored.actor_id, stored.user_id);
-
-        if stored.actor_type.scope() != claims.scope || actor.subject() != claims.sub {
-            return Err(AppError::Unauthorized);
-        }
-
-        let actor = self
-            .repository
-            .find_active_actor(&actor)
-            .await?
-            .ok_or(AppError::Unauthorized)?;
-
-        self.issue_tokens(actor).await
-    }
-
-    async fn verify_and_issue(
-        &self,
-        stored: StoredActorCredential,
-        password: &str,
-    ) -> AppResult<IssuedTokens> {
-        if stored.status != ACTIVE_STATUS || !verify_password(&stored.password_hash, password)? {
-            return Err(AppError::Unauthorized);
-        }
-
-        self.repository.record_login(&stored.actor).await?;
-        self.issue_tokens(stored.actor).await
-    }
-
-    async fn issue_tokens(&self, actor: AuthActor) -> AppResult<IssuedTokens> {
-        let scope = actor.actor_type.scope();
-        let subject = actor.subject();
-        let access_token = issue_token(
-            &self.settings,
-            subject.clone(),
-            scope,
-            self.settings.jwt_access_ttl_seconds,
-        )?;
-        let refresh_token = issue_token(
-            &self.settings,
-            subject,
-            scope,
-            self.settings.jwt_refresh_ttl_seconds,
-        )?;
-        let token_hash = hash_refresh_token(&refresh_token)?;
-        let expires_at = Utc::now().naive_utc()
-            + Duration::seconds(self.settings.jwt_refresh_ttl_seconds as i64);
-
-        self.repository
-            .store_refresh_token(StoredRefreshToken {
-                actor_type: actor.actor_type,
-                actor_id: actor.actor_id,
-                user_id: actor.user_id,
-                token_hash,
-                expires_at,
-            })
-            .await?;
-
-        Ok(IssuedTokens {
-            access_token,
-            refresh_token,
-            token_type: "Bearer",
-            scope,
-        })
-    }
+    pub scope: TokenScope,
 }
 
 pub fn hash_password(password: &str) -> AppResult<String> {
@@ -676,6 +258,46 @@ pub fn hash_refresh_token(refresh_token: &str) -> AppResult<String> {
     hash_with_salt(refresh_token, &salt)
 }
 
+pub async fn revoke_actor_auth_sessions(state: &AppState, actor: &AuthActor) -> AppResult<()> {
+    if let Some(manager) = &state.auth_manager {
+        let tokens = manager
+            .get_token_value_list_by_login_id(
+                actor.actor_type.as_str(),
+                &actor.actor_id.to_string(),
+                None,
+            )
+            .await
+            .unwrap_or_default();
+        for token in tokens {
+            manager
+                .logout(&TokenValue::new(token))
+                .await
+                .map_err(map_sa_token_error)?;
+        }
+    }
+
+    if let Some(redis) = &state.redis {
+        revoke_project_refresh_tokens(redis.clone(), actor).await?;
+    }
+
+    Ok(())
+}
+
+pub(crate) fn map_sa_token_error(error: SaTokenError) -> AppError {
+    match error {
+        SaTokenError::TokenNotFound
+        | SaTokenError::TokenExpired
+        | SaTokenError::InvalidToken(_)
+        | SaTokenError::NotLogin
+        | SaTokenError::TokenInactive
+        | SaTokenError::TokenEmpty
+        | SaTokenError::TokenTooShort
+        | SaTokenError::AccountKickedOut
+        | SaTokenError::AccountReplaced => AppError::Unauthorized,
+        other => AppError::Internal(format!("sa-token operation failed: {other}")),
+    }
+}
+
 fn hash_with_salt(secret: &str, salt: &SaltString) -> AppResult<String> {
     Argon2::default()
         .hash_password(secret.as_bytes(), salt)
@@ -683,42 +305,20 @@ fn hash_with_salt(secret: &str, salt: &SaltString) -> AppResult<String> {
         .map_err(|error| AppError::Internal(format!("failed to hash secret: {error}")))
 }
 
-fn user_identifier(
-    email: Option<String>,
-    phone: Option<String>,
-) -> AppResult<(Option<String>, Option<String>)> {
-    let email = optional_string(email);
-    let phone = optional_string(phone);
-
-    if email.is_none() && phone.is_none() {
-        Err(AppError::Validation(
-            "email or phone is required".to_owned(),
-        ))
-    } else {
-        Ok((email, phone))
+pub fn normalize_username(value: &str) -> AppResult<String> {
+    let username = value.trim().to_ascii_lowercase();
+    let length = username.chars().count();
+    if !(3..=32).contains(&length)
+        || !username
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+    {
+        return Err(AppError::Validation(
+            "username must be 3-32 characters and contain only letters, numbers, or underscore"
+                .to_owned(),
+        ));
     }
-}
-
-fn optional_string(value: Option<String>) -> Option<String> {
-    value
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-}
-
-fn required_string(value: Option<String>, field: &str) -> AppResult<String> {
-    optional_string(value).ok_or_else(|| AppError::Validation(format!("{field} is required")))
-}
-
-fn map_duplicate_key(error: sqlx::Error, actor: &str) -> AppError {
-    if is_duplicate_key(&error) {
-        AppError::Conflict(format!("{actor} already exists"))
-    } else {
-        AppError::Database(error)
-    }
-}
-
-fn is_duplicate_key(error: &sqlx::Error) -> bool {
-    matches!(error, sqlx::Error::Database(database_error) if database_error.code().as_deref() == Some("1062"))
+    Ok(username)
 }
 
 pub fn issue_token(
@@ -769,14 +369,53 @@ fn bearer_token(parts: &Parts) -> AppResult<&str> {
     }
 }
 
-fn require_scope(parts: &Parts, state: &AppState, required_scope: TokenScope) -> AppResult<Claims> {
-    let claims = decode_claims(&state.settings, bearer_token(parts)?)?;
+pub async fn claims_from_bearer_token(
+    state: &AppState,
+    token: &str,
+    required_scope: TokenScope,
+) -> AppResult<Claims> {
+    let claims = match &state.auth_manager {
+        Some(manager) => claims_from_sa_token(manager, token).await?,
+        None => decode_claims(&state.settings, token)?,
+    };
 
     if claims.scope == required_scope {
         Ok(claims)
     } else {
         Err(AppError::Forbidden)
     }
+}
+
+fn claims_from_token_info(token_info: TokenInfo) -> AppResult<Claims> {
+    let scope = TokenScope::from_login_type(&token_info.login_type)?;
+    let exp = token_info
+        .expire_time
+        .map(|time| time.timestamp().max(0) as usize)
+        .unwrap_or(0);
+
+    Ok(Claims {
+        sub: format!("{}:{}", scope.as_login_type(), token_info.login_id),
+        scope,
+        exp,
+        token_id: token_info.token.to_string(),
+    })
+}
+
+async fn claims_from_sa_token(manager: &SaTokenManager, token: &str) -> AppResult<Claims> {
+    let token_info = manager
+        .get_token_info(&TokenValue::new(token.to_owned()))
+        .await
+        .map_err(map_sa_token_error)?;
+
+    claims_from_token_info(token_info)
+}
+
+async fn require_scope(
+    parts: &Parts,
+    state: &AppState,
+    required_scope: TokenScope,
+) -> AppResult<Claims> {
+    claims_from_bearer_token(state, bearer_token(parts)?, required_scope).await
 }
 
 #[async_trait]
@@ -787,7 +426,9 @@ impl FromRequestParts<AppState> for UserAuth {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        require_scope(parts, state, TokenScope::User).map(Self)
+        require_scope(parts, state, TokenScope::User)
+            .await
+            .map(Self)
     }
 }
 
@@ -799,7 +440,9 @@ impl FromRequestParts<AppState> for AdminAuth {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        require_scope(parts, state, TokenScope::Admin).map(Self)
+        require_scope(parts, state, TokenScope::Admin)
+            .await
+            .map(Self)
     }
 }
 
@@ -811,195 +454,12 @@ impl FromRequestParts<AppState> for AgentAuth {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        require_scope(parts, state, TokenScope::Agent).map(Self)
+        require_scope(parts, state, TokenScope::Agent)
+            .await
+            .map(Self)
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{config::Settings, state::AppState};
-    use axum::{
-        Router,
-        body::Body,
-        http::{Request, StatusCode, header::AUTHORIZATION},
-        routing::get,
-    };
-    use secrecy::SecretString;
-    use tower::ServiceExt;
-
-    fn test_state() -> AppState {
-        AppState::new(Settings {
-            app_env: "test".to_owned(),
-            app_host: "127.0.0.1".parse().unwrap(),
-            app_port: 0,
-            database_url: SecretString::new("mysql://test:test@localhost/test".to_owned()),
-            mongodb_uri: SecretString::new("mongodb://localhost:27017".to_owned()),
-            mongodb_database: "exchange_test".to_owned(),
-            redis_url: SecretString::new("redis://localhost:6379".to_owned()),
-            rabbitmq_url: SecretString::new("amqp://guest:guest@localhost:5672/%2f".to_owned()),
-            jwt_secret: SecretString::new("test-secret".to_owned()),
-            credential_encryption_key: Some(SecretString::new(
-                "0123456789abcdef0123456789abcdef".to_owned(),
-            )),
-            jwt_access_ttl_seconds: 900,
-            jwt_refresh_ttl_seconds: 2_592_000,
-            bitget_rest_base_url: "https://bitget.test".to_owned(),
-            bitget_ws_url: "wss://bitget.test/ws".to_owned(),
-            htx_rest_base_url: "https://htx.test".to_owned(),
-            htx_ws_url: "wss://htx.test/ws".to_owned(),
-            market_feed_symbols: Vec::new(),
-            market_feed_intervals: Vec::new(),
-            market_feed_providers: Vec::new(),
-            market_feed_reconnect_seconds: 5,
-            market_feed_rest_fallback_timeout_seconds: 3,
-            event_inbox_retry_scan_seconds: 10,
-            event_outbox_publisher_enabled: true,
-            event_outbox_publisher_interval_seconds: 5,
-            unlock_scanner_enabled: true,
-            unlock_scanner_interval_seconds: 10,
-            unlock_scanner_batch_limit: 100,
-            kline_recovery_enabled: true,
-            kline_recovery_interval_seconds: 30,
-            kline_recovery_batch_limit: 100,
-            seconds_contract_settlement_enabled: true,
-            seconds_contract_settlement_interval_seconds: 5,
-            seconds_contract_settlement_batch_limit: 100,
-            earn_auto_redemption_enabled: true,
-            earn_auto_redemption_interval_seconds: 60,
-            earn_auto_redemption_batch_limit: 100,
-            margin_liquidation_enabled: true,
-            margin_liquidation_interval_seconds: 5,
-            margin_liquidation_batch_limit: 100,
-            margin_interest_enabled: true,
-            margin_interest_interval_seconds: 60,
-            margin_interest_batch_limit: 100,
-        })
-    }
-
-    fn scoped_app(state: AppState) -> Router {
-        Router::new()
-            .route("/user", get(|_auth: UserAuth| async { "user" }))
-            .route("/admin", get(|_auth: AdminAuth| async { "admin" }))
-            .route("/agent", get(|_auth: AgentAuth| async { "agent" }))
-            .with_state(state)
-    }
-
-    #[test]
-    fn password_hashes_verify_without_storing_plaintext() {
-        let password_hash = hash_password("correct horse battery staple").unwrap();
-
-        assert_ne!(password_hash, "correct horse battery staple");
-        assert!(verify_password(&password_hash, "correct horse battery staple").unwrap());
-        assert!(!verify_password(&password_hash, "wrong password").unwrap());
-    }
-
-    #[test]
-    fn actor_type_maps_to_token_scope_and_storage_value() {
-        assert_eq!(ActorType::User.scope(), TokenScope::User);
-        assert_eq!(ActorType::Admin.scope(), TokenScope::Admin);
-        assert_eq!(ActorType::Agent.scope(), TokenScope::Agent);
-        assert_eq!(ActorType::User.as_str(), "user");
-        assert_eq!(ActorType::Admin.as_str(), "admin");
-        assert_eq!(ActorType::Agent.as_str(), "agent");
-    }
-
-    #[test]
-    fn refresh_token_hash_is_deterministic_and_not_plaintext() {
-        let first = hash_refresh_token("refresh-token-1").unwrap();
-        let second = hash_refresh_token("refresh-token-1").unwrap();
-        let different = hash_refresh_token("refresh-token-2").unwrap();
-
-        assert_eq!(first, second);
-        assert_ne!(first, different);
-        assert_ne!(first, "refresh-token-1");
-        assert!(first.starts_with("$argon2id$"));
-    }
-
-    async fn status_for(app: Router, path: &str, token: &str) -> StatusCode {
-        app.oneshot(
-            Request::builder()
-                .uri(path)
-                .header(AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap()
-        .status()
-    }
-
-    #[tokio::test]
-    async fn user_token_cannot_access_admin_or_agent_extractors() {
-        let state = test_state();
-        let token = issue_token(
-            &state.settings,
-            "user-1",
-            TokenScope::User,
-            state.settings.jwt_access_ttl_seconds,
-        )
-        .unwrap();
-        let app = scoped_app(state);
-
-        assert_eq!(
-            status_for(app.clone(), "/user", &token).await,
-            StatusCode::OK
-        );
-        assert_eq!(
-            status_for(app.clone(), "/admin", &token).await,
-            StatusCode::FORBIDDEN
-        );
-        assert_eq!(
-            status_for(app, "/agent", &token).await,
-            StatusCode::FORBIDDEN
-        );
-    }
-
-    #[tokio::test]
-    async fn admin_token_cannot_satisfy_user_scope() {
-        let state = test_state();
-        let token = issue_token(
-            &state.settings,
-            "admin-1",
-            TokenScope::Admin,
-            state.settings.jwt_access_ttl_seconds,
-        )
-        .unwrap();
-        let app = scoped_app(state);
-
-        assert_eq!(
-            status_for(app.clone(), "/admin", &token).await,
-            StatusCode::OK
-        );
-        assert_eq!(
-            status_for(app, "/user", &token).await,
-            StatusCode::FORBIDDEN
-        );
-    }
-
-    #[tokio::test]
-    async fn agent_token_only_satisfies_agent_scope() {
-        let state = test_state();
-        let token = issue_token(
-            &state.settings,
-            "agent-1",
-            TokenScope::Agent,
-            state.settings.jwt_access_ttl_seconds,
-        )
-        .unwrap();
-        let app = scoped_app(state);
-
-        assert_eq!(
-            status_for(app.clone(), "/agent", &token).await,
-            StatusCode::OK
-        );
-        assert_eq!(
-            status_for(app.clone(), "/user", &token).await,
-            StatusCode::FORBIDDEN
-        );
-        assert_eq!(
-            status_for(app, "/admin", &token).await,
-            StatusCode::FORBIDDEN
-        );
-    }
-}
+#[path = "../../../tests/unit_src/src_modules_auth_mod_tests.rs"]
+mod tests;

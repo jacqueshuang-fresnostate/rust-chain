@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend spec index for relevant project contracts."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Migration and SQLx conventions for schema changes."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Verification expectations for backend changes."}
+{"file": ".trellis/spec/backend/seconds-contracts.md", "reason": "Seconds product cycle and order duration API contracts."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse existing seconds contract route and admin resource patterns."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Feature spans migration, backend API, PC data shape, and admin UI."}

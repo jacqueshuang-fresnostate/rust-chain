@@ -13,9 +13,9 @@
           <div v-if="activeTab === tab.id" class="absolute bottom-0 left-0 w-full h-0.5 bg-primary shadow-neon"></div>
         </button>
       </div>
-      <button class="text-xs text-primary hover:underline flex items-center gap-1">
-        More <Icon icon="mdi:arrow-right" class="w-3 h-3" />
-      </button>
+      <router-link to="/news" class="text-xs text-primary hover:underline flex items-center gap-1">
+        {{ $t('home.news_more') }} <Icon icon="mdi:arrow-right" class="w-3 h-3" />
+      </router-link>
     </div>
 
     <div class="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
