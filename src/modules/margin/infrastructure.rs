@@ -7,9 +7,9 @@ use crate::{
     error::{AppError, AppResult},
     modules::{
         margin::presentation::{
-            AdminInterestSummaryItem, AdminMarginPositionResponse, MarginPositionResponse,
-            MarginProductResponse, MarginUserSettingResponse, MarginWalletAccountResponse,
-            MarginWalletAccountSnapshot,
+            AdminInterestSummaryItem, AdminMarginPositionResponse, MarginCrossAccountResponse,
+            MarginPositionResponse, MarginProductResponse, MarginUserSettingResponse,
+            MarginWalletAccountResponse, MarginWalletAccountSnapshot,
         },
         market::market_ticker_redis_key,
     },
@@ -745,6 +745,27 @@ pub(crate) async fn list_margin_wallet_accounts(
     .map_err(AppError::from)
 }
 
+/// 读取用户全仓账户最近一次组合风险快照；风险 worker 会持续刷新这些字段。
+pub(crate) async fn list_user_cross_margin_accounts(
+    pool: &Pool<MySql>,
+    user_id: u64,
+) -> AppResult<Vec<MarginCrossAccountResponse>> {
+    sqlx::query_as::<_, MarginCrossAccountResponse>(
+        r#"SELECT margin_asset, status, last_equity AS equity,
+                  last_unrealized_pnl AS unrealized_pnl,
+                  last_interest_amount AS interest_amount,
+                  last_maintenance_margin AS maintenance_margin,
+                  last_margin_ratio AS margin_ratio
+           FROM margin_cross_accounts
+           WHERE user_id = ?
+           ORDER BY margin_asset ASC"#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::from)
+}
+
 pub(crate) async fn load_user_position_by_id(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -1131,6 +1152,22 @@ pub(crate) async fn set_margin_position_wallet_scope(
         .bind(position_id)
         .execute(&mut **tx)
         .await?;
+    Ok(())
+}
+
+/// 确保全仓账户存在；账户按用户和保证金资产唯一，避免不同交易对各自分账。
+pub(crate) async fn ensure_cross_margin_account(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    margin_asset: u64,
+) -> AppResult<()> {
+    sqlx::query(
+        "INSERT INTO margin_cross_accounts (user_id, margin_asset) VALUES (?, ?) ON DUPLICATE KEY UPDATE status = 'active'",
+    )
+    .bind(user_id)
+    .bind(margin_asset)
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }
 

@@ -52,6 +52,9 @@ struct MarginInterestCandidate {
 #[derive(Debug, sqlx::FromRow)]
 struct LockedMarginPosition {
     id: u64,
+    user_id: u64,
+    margin_asset: u64,
+    margin_mode: String,
     borrowed_amount: BigDecimal,
     interest_amount: BigDecimal,
     interest_accrued_at: Option<DateTime<Utc>>,
@@ -174,6 +177,23 @@ async fn accrue_position_interest(
         tx.rollback().await?;
         return Ok(MarginInterestOutcome::Skipped);
     }
+    if position.margin_mode == "cross" {
+        // 全仓利息按账户聚合，风险快照和统一强平都读取这个聚合值。
+        sqlx::query(
+            r#"UPDATE margin_cross_accounts
+               SET last_interest_amount = COALESCE(
+                     (SELECT SUM(interest_amount) FROM margin_positions
+                      WHERE user_id = ? AND margin_asset = ? AND margin_mode = 'cross' AND status = 'opened'), 0),
+                   version = version + 1
+               WHERE user_id = ? AND margin_asset = ?"#,
+        )
+        .bind(position.user_id)
+        .bind(position.margin_asset)
+        .bind(position.user_id)
+        .bind(position.margin_asset)
+        .execute(&mut *tx)
+        .await?;
+    }
     tx.commit().await?;
     Ok(MarginInterestOutcome::Accrued)
 }
@@ -183,7 +203,8 @@ async fn lock_position(
     position_id: u64,
 ) -> AppResult<Option<LockedMarginPosition>> {
     sqlx::query_as::<_, LockedMarginPosition>(
-        r#"SELECT positions.id, positions.borrowed_amount, positions.interest_amount,
+        r#"SELECT positions.id, positions.user_id, positions.margin_asset, positions.margin_mode,
+                  positions.borrowed_amount, positions.interest_amount,
                   positions.interest_accrued_at, positions.opened_at, positions.status,
                   products.hourly_interest_rate
            FROM margin_positions positions

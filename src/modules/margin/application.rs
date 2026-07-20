@@ -16,11 +16,12 @@ use crate::{
             LockedMarginPositionRow, MarginOpenProductRule, MarginProductSettingRule,
             MarginProductUpsertValues, cached_margin_entry_price, cached_margin_mark_price,
             cached_margin_risk_ticker, credit_margin_position_amount,
-            debit_margin_position_open_collateral, ensure_asset_exists, ensure_pair_exists,
-            existing_position_for_idempotency_key, existing_position_for_idempotency_key_readonly,
-            insert_admin_audit_log, insert_margin_position, insert_margin_product,
-            insert_margin_transfer, list_admin_interest_summary, list_admin_margin_positions,
-            list_margin_products, list_margin_wallet_accounts,
+            debit_margin_position_open_collateral, ensure_asset_exists,
+            ensure_cross_margin_account, ensure_pair_exists, existing_position_for_idempotency_key,
+            existing_position_for_idempotency_key_readonly, insert_admin_audit_log,
+            insert_margin_position, insert_margin_product, insert_margin_transfer,
+            list_admin_interest_summary, list_admin_margin_positions, list_margin_products,
+            list_margin_wallet_accounts, list_user_cross_margin_accounts,
             list_user_margin_positions as list_user_margin_positions_rows,
             load_admin_margin_position_by_id, load_cancelable_position_ids,
             load_margin_transfer_by_idempotency_key, load_margin_transfer_wallet_snapshots,
@@ -189,6 +190,9 @@ pub(crate) async fn open_margin_position(
     )
     .await?;
     set_margin_position_wallet_scope(&mut tx, position_id, &wallet_scope).await?;
+    if position_margin_mode == "cross" {
+        ensure_cross_margin_account(&mut tx, user_id, product.margin_asset).await?;
+    }
     let commission_source_id = position_id.to_string();
     insert_agent_business_commission_in_tx(
         &mut tx,
@@ -392,7 +396,12 @@ pub(crate) async fn list_user_margin_wallets(
 ) -> AppResult<MarginWalletsResponse> {
     let wallets = list_margin_wallet_accounts(pool, user_id).await?;
     let positions = list_user_margin_positions_rows(pool, user_id, Some("opened"), limit).await?;
-    Ok(MarginWalletsResponse { wallets, positions })
+    let cross_accounts = list_user_cross_margin_accounts(pool, user_id).await?;
+    Ok(MarginWalletsResponse {
+        wallets,
+        positions,
+        cross_accounts,
+    })
 }
 
 pub(crate) async fn get_user_margin_position(
@@ -1478,21 +1487,18 @@ fn selected_margin_mode(
 }
 
 fn ensure_supported_user_margin_mode(mode: &str) -> AppResult<()> {
-    // 当前保证金、盈亏和强平仍按单仓结算；没有账户级风险池时不能把 cross 伪装成已支持。
-    if mode == "cross" {
-        return Err(AppError::Validation(
-            "cross margin mode is unavailable until account-level risk management is implemented"
-                .to_owned(),
-        ));
+    // cross 已由账户级共享权益和组合清算实现；未知模式仍由标准化校验拦截。
+    if !matches!(mode, "isolated" | "cross") {
+        return Err(AppError::Validation("unsupported margin mode".to_owned()));
     }
     Ok(())
 }
 
 pub(crate) fn margin_trading_capabilities() -> MarginTradingCapabilitiesResponse {
-    // 订单、钱包和清算均按逐仓市价仓位实现，客户端必须以此能力集渲染交互。
+    // 两种模式都只支持市价开仓，前端应依据能力集显示模式切换。
     MarginTradingCapabilitiesResponse {
         order_types: vec!["market".to_owned()],
-        margin_modes: vec!["isolated".to_owned()],
+        margin_modes: vec!["isolated".to_owned(), "cross".to_owned()],
     }
 }
 

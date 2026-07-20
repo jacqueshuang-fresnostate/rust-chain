@@ -174,6 +174,24 @@ pub(crate) struct MarginPositionsResponse {
 pub(crate) struct MarginWalletsResponse {
     pub(crate) wallets: Vec<MarginWalletAccountResponse>,
     pub(crate) positions: Vec<MarginPositionResponse>,
+    pub(crate) cross_accounts: Vec<MarginCrossAccountResponse>,
+}
+
+/// 用户当前保证金资产对应的全仓风险快照。
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub(crate) struct MarginCrossAccountResponse {
+    pub(crate) margin_asset: u64,
+    pub(crate) status: String,
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    pub(crate) equity: BigDecimal,
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    pub(crate) unrealized_pnl: BigDecimal,
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    pub(crate) interest_amount: BigDecimal,
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    pub(crate) maintenance_margin: BigDecimal,
+    #[serde(default, serialize_with = "serialize_optional_decimal_amount")]
+    pub(crate) margin_ratio: Option<BigDecimal>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -359,4 +377,17 @@ where
     S: Serializer,
 {
     serializer.serialize_str(&format!("{amount:.18}"))
+}
+
+fn serialize_optional_decimal_amount<S>(
+    amount: &Option<BigDecimal>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match amount {
+        Some(value) => serializer.serialize_some(&format!("{value:.18}")),
+        None => serializer.serialize_none(),
+    }
 }

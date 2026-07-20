@@ -2,6 +2,7 @@ use crate::{
     error::{AppError, AppResult},
     modules::{
         events::{EventBroadcastHub, EventBroadcastMessage},
+        margin::domain::{CrossMarginPositionRisk, CrossMarginRiskState, evaluate_cross_margin},
         margin::infrastructure::credit_margin_position_amount,
         market::market_ticker_redis_key,
     },
@@ -14,6 +15,7 @@ use redis::{AsyncCommands, aio::ConnectionManager};
 use serde::Deserialize;
 use serde_json::json;
 use sqlx::{MySql, Pool, Transaction};
+use std::collections::HashMap;
 use std::env;
 use tokio::time::{Duration, interval};
 use tracing::{error, info, warn};
@@ -68,6 +70,34 @@ pub struct MarginLiquidationRiskState {
 struct MarginLiquidationCandidate {
     position_id: u64,
     symbol: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct CrossMarginAccountCandidate {
+    user_id: u64,
+    margin_asset: u64,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct CrossMarginPositionCandidate {
+    id: u64,
+    symbol: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct LockedCrossMarginPosition {
+    id: u64,
+    user_id: u64,
+    product_id: u64,
+    pair_id: u64,
+    margin_asset: u64,
+    wallet_scope: String,
+    direction: String,
+    margin_amount: BigDecimal,
+    notional_amount: BigDecimal,
+    interest_amount: BigDecimal,
+    entry_price: Option<BigDecimal>,
+    maintenance_margin_rate: BigDecimal,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -152,6 +182,26 @@ pub fn margin_liquidation_risk_state(
     })
 }
 
+fn margin_realized_pnl(
+    direction: &str,
+    notional_amount: &BigDecimal,
+    entry_price: &BigDecimal,
+    mark_price: &BigDecimal,
+) -> AppResult<BigDecimal> {
+    validate_positive_decimal(entry_price, "margin entry price")?;
+    validate_positive_decimal(mark_price, "margin mark price")?;
+    let price_delta = match direction {
+        "long" => mark_price.clone() - entry_price.clone(),
+        "short" => entry_price.clone() - mark_price.clone(),
+        _ => {
+            return Err(AppError::Validation(
+                "margin direction must be long or short".to_owned(),
+            ));
+        }
+    };
+    Ok((notional_amount.clone() * price_delta / entry_price.clone()).with_scale(18))
+}
+
 pub async fn run_once(
     state: &AppState,
     now: DateTime<Utc>,
@@ -191,7 +241,56 @@ async fn run_once_with_dependencies_and_events(
 ) -> AppResult<MarginLiquidationSummary> {
     let liquidation_limit = margin_liquidation_limit(limit);
     let candidates = fetch_open_positions(pool, now, margin_liquidation_scan_limit(limit)).await?;
+    let cross_accounts =
+        fetch_open_cross_accounts(pool, now, margin_liquidation_limit(limit)).await?;
     let mut summary = MarginLiquidationSummary::default();
+
+    // 全仓按账户一次性评估；一旦触发，账户内所有全仓仓位在同一事务中统一处理。
+    for account in cross_accounts {
+        if summary.liquidated >= liquidation_limit {
+            break;
+        }
+        summary.scanned += 1;
+        let positions =
+            fetch_cross_account_positions(pool, account.user_id, account.margin_asset).await?;
+        let mut marks = HashMap::new();
+        let mut missing_mark = false;
+        for position in &positions {
+            match cached_ticker_price(redis, &position.symbol, now).await {
+                Ok(Some(price)) => {
+                    marks.insert(position.id, price);
+                }
+                Ok(None) | Err(_) => {
+                    missing_mark = true;
+                    schedule_next_liquidation_attempt(
+                        pool,
+                        position.id,
+                        now + chrono::TimeDelta::seconds(60),
+                    )
+                    .await?;
+                }
+            }
+        }
+        if missing_mark {
+            summary.skipped += 1;
+            continue;
+        }
+        match liquidate_cross_account(pool, account.user_id, account.margin_asset, &marks, now)
+            .await
+        {
+            Ok(LiquidationOutcome::Liquidated(event)) => {
+                summary.liquidated += 1;
+                if let Some(hub) = event_hub {
+                    publish_liquidation_event(hub, &event);
+                }
+            }
+            Ok(LiquidationOutcome::Skipped) => summary.skipped += 1,
+            Err(error) => {
+                summary.failed += 1;
+                warn!(user_id = account.user_id, margin_asset = account.margin_asset, %error, "全仓账户强平失败");
+            }
+        }
+    }
 
     for candidate in candidates {
         if summary.liquidated >= liquidation_limit {
@@ -264,13 +363,54 @@ async fn fetch_open_positions(
                   pairs.symbol
            FROM margin_positions positions
            INNER JOIN trading_pairs pairs ON pairs.id = positions.pair_id
-           WHERE positions.status = 'opened'
+           WHERE positions.status = 'opened' AND positions.margin_mode = 'isolated'
              AND (positions.next_liquidation_attempt_at IS NULL OR positions.next_liquidation_attempt_at <= ?)
            ORDER BY positions.next_liquidation_attempt_at ASC, positions.opened_at ASC, positions.id ASC
            LIMIT ?"#,
     )
     .bind(now.naive_utc())
     .bind(limit.clamp(1, 500) as i64)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::from)
+}
+
+async fn fetch_open_cross_accounts(
+    pool: &Pool<MySql>,
+    now: DateTime<Utc>,
+    limit: u32,
+) -> AppResult<Vec<CrossMarginAccountCandidate>> {
+    sqlx::query_as::<_, CrossMarginAccountCandidate>(
+        r#"SELECT DISTINCT positions.user_id, positions.margin_asset
+           FROM margin_positions positions
+           WHERE positions.status = 'opened'
+             AND positions.margin_mode = 'cross'
+             AND (positions.next_liquidation_attempt_at IS NULL OR positions.next_liquidation_attempt_at <= ?)
+           ORDER BY positions.user_id ASC, positions.margin_asset ASC
+           LIMIT ?"#,
+    )
+    .bind(now.naive_utc())
+    .bind(limit.clamp(1, 100) as i64)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::from)
+}
+
+async fn fetch_cross_account_positions(
+    pool: &Pool<MySql>,
+    user_id: u64,
+    margin_asset: u64,
+) -> AppResult<Vec<CrossMarginPositionCandidate>> {
+    sqlx::query_as::<_, CrossMarginPositionCandidate>(
+        r#"SELECT positions.id, pairs.symbol
+           FROM margin_positions positions
+           INNER JOIN trading_pairs pairs ON pairs.id = positions.pair_id
+           WHERE positions.user_id = ? AND positions.margin_asset = ?
+             AND positions.margin_mode = 'cross' AND positions.status = 'opened'
+           ORDER BY positions.id ASC"#,
+    )
+    .bind(user_id)
+    .bind(margin_asset)
     .fetch_all(pool)
     .await
     .map_err(AppError::from)
@@ -391,6 +531,206 @@ async fn liquidate_position_by_id(
     Ok(LiquidationOutcome::Liquidated(Box::new(event)))
 }
 
+/// 统一处理一个全仓账户：先锁定账户内全部仓位，再用组合权益决定是否清算。
+async fn liquidate_cross_account(
+    pool: &Pool<MySql>,
+    user_id: u64,
+    margin_asset: u64,
+    marks: &HashMap<u64, BigDecimal>,
+    now: DateTime<Utc>,
+) -> AppResult<LiquidationOutcome> {
+    let mut tx = pool.begin().await?;
+    let positions = sqlx::query_as::<_, LockedCrossMarginPosition>(
+        r#"SELECT positions.id, positions.user_id, positions.product_id, positions.pair_id,
+                  positions.margin_asset, positions.wallet_scope, positions.direction,
+                  positions.margin_amount, positions.notional_amount, positions.interest_amount,
+                  positions.entry_price, products.maintenance_margin_rate
+           FROM margin_positions positions
+           INNER JOIN margin_products products ON products.id = positions.product_id
+           WHERE positions.user_id = ? AND positions.margin_asset = ?
+             AND positions.margin_mode = 'cross' AND positions.status = 'opened'
+           ORDER BY positions.id ASC
+           FOR UPDATE"#,
+    )
+    .bind(user_id)
+    .bind(margin_asset)
+    .fetch_all(&mut *tx)
+    .await?;
+    if positions.is_empty() {
+        tx.rollback().await?;
+        return Ok(LiquidationOutcome::Skipped);
+    }
+
+    let wallet_equity = sqlx::query_scalar::<_, BigDecimal>(
+        r#"SELECT
+              COALESCE((SELECT SUM(available + frozen + locked)
+                        FROM margin_wallet_accounts
+                        WHERE user_id = ? AND asset_id = ?), 0)
+            + COALESCE((SELECT SUM(available + frozen + locked)
+                        FROM wallet_accounts
+                        WHERE user_id = ? AND asset_id = ?), 0)"#,
+    )
+    .bind(user_id)
+    .bind(margin_asset)
+    .bind(user_id)
+    .bind(margin_asset)
+    .fetch_one(&mut *tx)
+    .await?;
+    let mut position_margin = BigDecimal::from(0);
+    let mut risks = Vec::with_capacity(positions.len());
+    let mut per_position_states = Vec::with_capacity(positions.len());
+    for position in &positions {
+        let Some(entry_price) = position.entry_price.as_ref() else {
+            return Err(AppError::Validation(
+                "cross margin entry price is required for liquidation".to_owned(),
+            ));
+        };
+        let mark_price = marks.get(&position.id).ok_or_else(|| {
+            AppError::Validation("cross margin mark price is required for liquidation".to_owned())
+        })?;
+        let realized_pnl = margin_realized_pnl(
+            &position.direction,
+            &position.notional_amount,
+            entry_price,
+            mark_price,
+        )?;
+        let maintenance_margin = (position.notional_amount.clone()
+            * position.maintenance_margin_rate.clone())
+        .with_scale(18);
+        position_margin += position.margin_amount.clone();
+        risks.push(CrossMarginPositionRisk {
+            unrealized_pnl: realized_pnl.clone(),
+            interest_amount: position.interest_amount.clone(),
+            maintenance_margin: maintenance_margin.clone(),
+        });
+        per_position_states.push((
+            realized_pnl,
+            maintenance_margin,
+            entry_price.clone(),
+            mark_price.clone(),
+        ));
+    }
+    let account_risk = evaluate_cross_margin(&wallet_equity, &position_margin, &risks);
+    update_cross_account_snapshot(&mut tx, user_id, margin_asset, &account_risk, now).await?;
+    if !account_risk.should_liquidate {
+        tx.commit().await?;
+        return Ok(LiquidationOutcome::Skipped);
+    }
+
+    let mut first_event = None;
+    for (position, (realized_pnl, maintenance_margin, entry_price, mark_price)) in
+        positions.iter().zip(per_position_states)
+    {
+        let position_equity = (position.margin_amount.clone() + realized_pnl.clone()
+            - position.interest_amount.clone())
+        .with_scale(18);
+        let payout_amount = non_negative_amount(&position_equity);
+        credit_margin_position_amount(
+            &mut tx,
+            position.user_id,
+            position.margin_asset,
+            &position.wallet_scope,
+            &payout_amount,
+            "margin_cross_liquidate",
+            position.id,
+        )
+        .await?;
+        let position_risk = MarginLiquidationRiskState {
+            should_liquidate: true,
+            equity: position_equity,
+            maintenance_margin,
+            realized_pnl: realized_pnl.clone(),
+        };
+        insert_cross_liquidation_record(
+            &mut tx,
+            position,
+            &entry_price,
+            &mark_price,
+            &position_risk,
+            &payout_amount,
+            now,
+        )
+        .await?;
+        sqlx::query(
+            r#"UPDATE margin_positions
+               SET status = 'liquidated', closed_at = ?, liquidated_at = ?, exit_price = ?,
+                   realized_pnl = ?, liquidation_reason = 'cross_maintenance_margin',
+                   next_liquidation_attempt_at = NULL
+               WHERE id = ? AND status = 'opened'"#,
+        )
+        .bind(now.naive_utc())
+        .bind(now.naive_utc())
+        .bind(&mark_price)
+        .bind(&realized_pnl)
+        .bind(position.id)
+        .execute(&mut *tx)
+        .await?;
+        if first_event.is_none() {
+            first_event = Some(Box::new(MarginLiquidationEvent {
+                user_id: position.user_id,
+                position_id: position.id,
+                product_id: position.product_id,
+                pair_id: position.pair_id,
+                margin_asset: position.margin_asset,
+                direction: position.direction.clone(),
+                margin_amount: position.margin_amount.clone(),
+                notional_amount: position.notional_amount.clone(),
+                interest_amount: position.interest_amount.clone(),
+                entry_price,
+                mark_price,
+                realized_pnl,
+                payout_amount,
+                reason: "cross_maintenance_margin",
+                liquidated_at: now,
+            }));
+        }
+    }
+    sqlx::query(
+        "UPDATE margin_cross_accounts SET status = 'liquidated', version = version + 1 WHERE user_id = ? AND margin_asset = ?",
+    )
+    .bind(user_id)
+    .bind(margin_asset)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(first_event
+        .map(LiquidationOutcome::Liquidated)
+        .unwrap_or(LiquidationOutcome::Skipped))
+}
+
+async fn update_cross_account_snapshot(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    margin_asset: u64,
+    risk: &CrossMarginRiskState,
+    now: DateTime<Utc>,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"INSERT INTO margin_cross_accounts
+             (user_id, margin_asset, status, last_equity, last_unrealized_pnl,
+              last_interest_amount, last_maintenance_margin, last_margin_ratio, last_risk_at, version)
+           VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, 1)
+           ON DUPLICATE KEY UPDATE
+             status = 'active', last_equity = VALUES(last_equity),
+             last_unrealized_pnl = VALUES(last_unrealized_pnl),
+             last_interest_amount = VALUES(last_interest_amount),
+             last_maintenance_margin = VALUES(last_maintenance_margin),
+             last_margin_ratio = VALUES(last_margin_ratio), last_risk_at = VALUES(last_risk_at),
+             version = version + 1"#,
+    )
+    .bind(user_id)
+    .bind(margin_asset)
+    .bind(&risk.equity)
+    .bind(&risk.unrealized_pnl)
+    .bind(&risk.interest_amount)
+    .bind(&risk.maintenance_margin)
+    .bind(&risk.margin_ratio)
+    .bind(now.naive_utc())
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 fn publish_liquidation_event(hub: &EventBroadcastHub, event: &MarginLiquidationEvent) {
     hub.publish(EventBroadcastMessage::private_user(
         event.user_id,
@@ -451,6 +791,44 @@ async fn insert_liquidation_record(
             notional_amount, interest_amount, entry_price, mark_price, maintenance_margin_rate, equity,
             maintenance_margin, realized_pnl, payout_amount, reason, liquidated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'maintenance_margin', ?)"#,
+    )
+    .bind(position.id)
+    .bind(position.user_id)
+    .bind(position.product_id)
+    .bind(position.pair_id)
+    .bind(position.margin_asset)
+    .bind(&position.direction)
+    .bind(&position.margin_amount)
+    .bind(&position.notional_amount)
+    .bind(&position.interest_amount)
+    .bind(entry_price)
+    .bind(mark_price)
+    .bind(&position.maintenance_margin_rate)
+    .bind(&risk_state.equity)
+    .bind(&risk_state.maintenance_margin)
+    .bind(&risk_state.realized_pnl)
+    .bind(payout_amount)
+    .bind(now.naive_utc())
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+async fn insert_cross_liquidation_record(
+    tx: &mut Transaction<'_, MySql>,
+    position: &LockedCrossMarginPosition,
+    entry_price: &BigDecimal,
+    mark_price: &BigDecimal,
+    risk_state: &MarginLiquidationRiskState,
+    payout_amount: &BigDecimal,
+    now: DateTime<Utc>,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"INSERT INTO margin_liquidation_records
+           (position_id, user_id, product_id, pair_id, margin_asset, direction, margin_amount,
+            notional_amount, interest_amount, entry_price, mark_price, maintenance_margin_rate, equity,
+            maintenance_margin, realized_pnl, payout_amount, reason, liquidated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cross_maintenance_margin', ?)"#,
     )
     .bind(position.id)
     .bind(position.user_id)

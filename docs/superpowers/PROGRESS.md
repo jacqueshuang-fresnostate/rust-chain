@@ -5548,3 +5548,30 @@
 - 修改文件：Git 远程配置；`docs/superpowers/PROGRESS.md`
 - 验证结果：`git ls-remote origin`、`git push -u origin main` 均成功；本地 `main` 已跟踪 `origin/main`。
 - 后续事项：无
+
+## 2026-07-16 14:11 - 创建手机端本地设计原型
+
+- 完成内容：在项目目录新增独立手机端设计稿，覆盖首页、行情详情、交易、资产、登录/注册五个核心页面；统一深色交易工作台视觉 token、资产卡片、行情行、订单簿、输入控件、底部导航和状态色；加入中英文切换、亮暗主题、买卖切换、行情周期切换和页面跳转交互；补齐 390px 小屏专用的语言与主题入口，避免外层预览工具栏隐藏后失去全局控制。
+- 修改文件：
+  - `mobile/design/index.html`
+  - `mobile/design/styles.css`
+  - `mobile/design/app.js`
+  - `mobile/design/README.md`
+  - `.trellis/spec/mobile/navigation-and-localization.md`
+  - `docs/superpowers/PROGRESS.md`
+- 验证结果：`node --check mobile/design/app.js`、`git diff --check` 通过；本地 HTTP 预览已启动并使用 390x844 浏览器视口检查，确认无横向溢出、行情列表样式正常、交易页可进入、手机端语言切换可用。
+- 后续事项：等待视觉方向确认后，将 token 和页面结构逐步迁移到 `mobile/src/` 的真实 Vue 页面并接入现有 API。
+
+## 2026-07-20 继续 - 后端未完成项审计
+
+- 完成内容：重新审计后端模块、DDD 分层、交易路由、迁移、worker、KYC 企业认证、代理多级返佣和资金链路；确认核心业务闭环已完成，未发现新的空实现或缺少 repository/service 层级的模块。
+- 修改文件：`docs/superpowers/PROGRESS.md`
+- 验证结果：`cargo test --lib`（159/159）、`cargo check --all-targets`、`cargo test --test backend_architecture`（4/4）、`cargo clippy --all-targets --no-deps`（通过，保留 56 条既有告警）。
+- 后续事项：生产级后端仍有三项重点：账户级全仓保证金风控与强平、现货外部撮合/流动性和资金对账、充值提现链上监听与提现广播；另需使用真实 MySQL/Redis/RabbitMQ/行情/邮件/链上环境做写操作端到端验收。
+
+## 2026-07-21 - 实现账户级全仓保证金
+
+- 完成内容：新增按用户和保证金资产隔离的 `margin_cross_accounts` 全仓账户；支持共享钱包权益、跨仓位未实现 PnL、累计利息和组合维持保证金计算；开放已实现全仓模式能力；全仓利息同步到账户快照；强平 worker 按全仓账户聚合行情，在同一事务中锁定并统一结算该账户的全部全仓仓位；钱包接口新增 `cross_accounts` 风险快照。
+- 修改文件：`migrations/0086_cross_margin_accounts.sql`、`src/modules/margin/{domain,application,infrastructure,presentation}.rs`、`src/workers/{margin_interest,margin_liquidation}.rs`、`.trellis/spec/backend/margin-trading-actions.md`、`tests/unit_src/src_modules_margin_domain_tests.rs`、`tests/unit_src/src_modules_margin_application_tests.rs`、`tests/margin_routes.rs`。
+- 验证结果：`cargo check --all-targets`、`cargo test --lib`（161/161）、`cargo test --test backend_architecture`（4/4）、`cargo test --test margin_routes`（29/29）和 `cargo clippy --all-targets --no-deps` 通过；Clippy 保留 56 条仓库既有告警；本次全仓 `cargo fmt --check` 仍被既有 prediction 测试格式差异阻断，新增文件及本次修改文件已单独 rustfmt。
+- 后续事项：全仓核心后端已完成；仍需在带真实行情、钱包和迁移 0086 的环境执行全仓开仓、多仓组合亏损、利息、统一强平和恢复重启端到端验收；现货外部撮合/流动性对账与链上充值提现仍未完成。

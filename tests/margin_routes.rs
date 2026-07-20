@@ -621,11 +621,8 @@ async fn margin_transfer_and_user_settings_round_trip_with_user_isolation()
         .await?;
     let cross_status = cross.status();
     let cross_payload = body_json(cross).await?;
-    assert_eq!(
-        cross_status,
-        StatusCode::BAD_REQUEST,
-        "payload: {cross_payload}"
-    );
+    assert_eq!(cross_status, StatusCode::OK, "payload: {cross_payload}");
+    assert_eq!(cross_payload["margin_mode"], "cross");
 
     let (spot_available,): (BigDecimal,) =
         sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
