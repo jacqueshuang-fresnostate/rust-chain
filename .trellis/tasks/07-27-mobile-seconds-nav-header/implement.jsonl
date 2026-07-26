@@ -1,0 +1,3 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/mobile/index.md", "reason": "Mobile touch-target, control-state, and Sites prototype contracts"}
+{"file": ".trellis/tasks/07-27-mobile-seconds-nav-header/research/mobile-navigation-audit.md", "reason": "Observed color, route visibility, navigation, and stacking gaps"}

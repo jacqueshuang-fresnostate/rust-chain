@@ -1,0 +1,31 @@
+{
+  "id": "mobile-seconds-nav-header",
+  "name": "mobile-seconds-nav-header",
+  "title": "redesign mobile seconds trading and navigation",
+  "description": "Replace the banned light border color, build a dedicated seconds-contract workspace, add an irregular bottom navigation with a raised seconds entry, and fix sticky header stacking.",
+  "status": "in_progress",
+  "dev_type": "frontend",
+  "scope": "mobile/sites-prototype",
+  "package": "mobile/sites-prototype",
+  "priority": "P2",
+  "creator": "rust-chain",
+  "assignee": "rust-chain",
+  "createdAt": "2026-07-27",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "mobile/sites-prototype/app/page.tsx",
+    "mobile/sites-prototype/app/secondary-pages.tsx",
+    "mobile/sites-prototype/app/globals.css",
+    "mobile/sites-prototype/tests/rendered-html.test.mjs"
+  ],
+  "notes": "Preserve typed route fallbacks and all existing root navigation destinations.",
+  "meta": {}
+}

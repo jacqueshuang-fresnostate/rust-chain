@@ -5800,3 +5800,10 @@
 - 修改文件：`src/modules/{auth,agent,admin,wallet,spot,market}/**`、`src/workers/wallet_chain.rs`、`src/openapi*`、`migrations/{0088,0089}_*.sql`、`web/src/**`、`pc/src/**`、`mobile/src/**` 及对应测试
 - 验证结果：后端 34/34 集成测试二进制全绿（真实 MySQL/Redis 串行，451 用例）、`cargo test --lib` 171/171、`cargo fmt --check` 干净、`cargo check --all-targets` 零警告；web `npm run typecheck`/`lint` 通过、251/251 测试；pc 与 mobile type-check + build 通过。四通道对抗性验证 3 绿 1 提出 2 项显示缺陷（已修复并复验）。
 - 后续事项：Tier2 服务端分页（30+ 列表硬截断 100 条）、代理账号密码生命周期、用户封禁端点、风控引擎接线、贷款逾期处置。
+
+## 2026-07-27 03:45 - Tier2 系统性打磨：服务端分页、风控接线、贷款逾期
+
+- 完成内容：三条通道各经一轮对抗性验证并按验证结论修复后交付。①服务端分页（25e1e39）：24 个后台列表接口新增 offset 与「与筛选条件同源」的 total（共享 fetch_admin_page 助手，行查询与计数共用谓词），前端 DataTable 改为服务端受控分页；修复验证发现的真回归——翻页状态跨资源页残留（切页面时按 endpoint 重建组件，此前从钱包流水第 4 页切到审计日志会直接跳到第 4 页并隐藏最新 30 条）；钱包账户列表改按主键排序（updated_at 每笔余额变动都改，分页时行会在页间跳动），连带移除该热表索引消除写放大；offset 比照 limit 加上限；服务端分页首屏页容量取 50，避免下拉筛选项与 CSV 导出骤减。新增迁移 0090（三张日志表排序索引）。②风控接线（17d0c2b）：evaluate_risk 此前零生产调用、risk_events 从无写入，现接入现货下单与提现创建（均在冻结/记账之前），拒绝写入 risk_events。按验证结论重做语义：规则只约束自己声明的操作（两条各自合法的规则不可能叠加成全拒而使交易所停摆）、金额限额按操作口径匹配单位（限现货名义额的规则不会误拦提现数量）、限流计数键带规则作用域且用 Lua 脚本原子取 TTL（避免 EXPIRE 失败导致用户被永久拒绝）、无规则时行为不变（fail-open）。③贷款逾期（5895955）：新增 overdue 状态与默认关闭的扫描 worker，还款路径接受逾期单以免新状态永久困住抵押物，后台列表补「已逾期」筛选与标签。
+- 修改文件：`src/modules/{admin,risk,spot,wallet,loan}/**`、`src/workers/loan_overdue.rs(新)`、`src/main.rs`、`src/openapi*`、`migrations/{0090,0092}_*.sql`、`web/src/{shared/DataTable,api/adminResources,admin/resources/**}`、`tests/{admin_routes,spot_routes,wallet_routes,loan_routes(新),loan_overdue_worker(新)}.rs` 及单测
+- 验证结果：后端 36 个测试二进制全绿（真实 MySQL/Redis 串行，462 用例）、`cargo test --lib` 179/179、`cargo fmt --check` 干净、`cargo check --all-targets` 零警告；web `npm run typecheck`/`lint` 通过、254/254 测试。三通道对抗验证共提出 24 项缺陷，其中危及生产的 4 项（配置组合停摆、限额单位混用、限流永久锁死、翻页状态跨页残留）已全部修复并复验。
+- 后续事项：①分页仅覆盖 43 个后台列表中的 24 个，另 19 个（现货订单/成交、竞猜、理财、贷款、杠杆、秒合约、充提记录）的列表处理函数在各自模块内，仍为硬截断 100 条，需单列一轮补齐；②贷款清算与罚息计提为有意保留的待办（缺可配置的定价与罚息口径）；③loan_overdue 与 wallet_chain 两个 worker 仍走 from_env 而非 Settings，与新 worker 约定不一致（迁移需同步改约 30 个测试的 Settings 全字段字面量，另立切片）；④风控规则配置键的操作者契约已在后台表单内说明，但 tests/admin_routes.rs 中仍有使用未识别键 daily_limit 的历史样例。
