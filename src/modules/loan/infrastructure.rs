@@ -838,7 +838,8 @@ fn loan_order_query_builder() -> QueryBuilder<'static, MySql> {
                   orders.collateral_amount, orders.status, orders.interest_amount,
                   orders.repayment_amount, orders.approved_by, orders.rejected_by,
                   orders.rejected_reason, orders.approved_at, orders.rejected_at,
-                  orders.disbursed_at, orders.due_at, orders.cancelled_at, orders.repaid_at,
+                  orders.disbursed_at, orders.due_at, orders.overdue_at,
+                  orders.cancelled_at, orders.repaid_at,
                   orders.collateral_released_at, orders.created_at, orders.updated_at
            FROM loan_orders orders
            INNER JOIN users ON users.id = orders.user_id

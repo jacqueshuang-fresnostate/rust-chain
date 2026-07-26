@@ -3,6 +3,7 @@ pub mod earn_auto_redemption;
 pub mod event_inbox;
 pub mod event_outbox;
 pub mod kline_recovery;
+pub mod loan_overdue;
 pub mod margin_interest;
 pub mod margin_liquidation;
 pub mod market_feed;

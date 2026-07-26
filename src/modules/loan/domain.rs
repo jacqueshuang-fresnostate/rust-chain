@@ -22,6 +22,7 @@ pub const STATUS_DISBURSED: &str = "disbursed";
 pub const STATUS_REJECTED: &str = "rejected";
 pub const STATUS_CANCELLED: &str = "cancelled";
 pub const STATUS_REPAID: &str = "repaid";
+pub const STATUS_OVERDUE: &str = "overdue";
 
 /// 产品标题 JSON 的最大长度。
 pub const LOAN_PRODUCT_NAME_TITLE_MAX_LEN: usize = 128;

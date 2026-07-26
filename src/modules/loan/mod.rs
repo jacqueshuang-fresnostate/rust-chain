@@ -10,8 +10,8 @@ pub mod routes;
 pub mod service;
 
 pub(crate) use self::domain::{
-    LOAN_TYPE_COLLATERALIZED, STATUS_ACTIVE, STATUS_CANCELLED, STATUS_DISBURSED, STATUS_PENDING,
-    STATUS_REJECTED, STATUS_REPAID,
+    LOAN_TYPE_COLLATERALIZED, STATUS_ACTIVE, STATUS_CANCELLED, STATUS_DISBURSED, STATUS_OVERDUE,
+    STATUS_PENDING, STATUS_REJECTED, STATUS_REPAID,
 };
 pub(crate) use self::service::{
     ensure_amount_precision, ensure_amount_within_product_limits, ensure_non_negative_amount,

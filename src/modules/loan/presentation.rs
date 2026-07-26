@@ -150,6 +150,8 @@ pub(crate) struct LoanOrderResponse {
     #[serde(default, with = "option_unix_millis")]
     due_at: Option<DateTime<Utc>>,
     #[serde(default, with = "option_unix_millis")]
+    overdue_at: Option<DateTime<Utc>>,
+    #[serde(default, with = "option_unix_millis")]
     cancelled_at: Option<DateTime<Utc>>,
     #[serde(default, with = "option_unix_millis")]
     repaid_at: Option<DateTime<Utc>>,

@@ -3,11 +3,11 @@
 //! 应用层：编排用例、事务边界和跨仓储协作。
 
 use super::{
-    LOAN_TYPE_COLLATERALIZED, STATUS_ACTIVE, STATUS_CANCELLED, STATUS_DISBURSED, STATUS_PENDING,
-    STATUS_REJECTED, STATUS_REPAID, ensure_amount_precision, ensure_amount_within_product_limits,
-    ensure_non_negative_amount, ensure_positive_amount, normalized_product_name_json,
-    optional_string, product_default_name, route_limit, validate_idempotency_key,
-    validate_interest_mode, validate_loan_type, validate_product_status,
+    LOAN_TYPE_COLLATERALIZED, STATUS_ACTIVE, STATUS_CANCELLED, STATUS_DISBURSED, STATUS_OVERDUE,
+    STATUS_PENDING, STATUS_REJECTED, STATUS_REPAID, ensure_amount_precision,
+    ensure_amount_within_product_limits, ensure_non_negative_amount, ensure_positive_amount,
+    normalized_product_name_json, optional_string, product_default_name, route_limit,
+    validate_idempotency_key, validate_interest_mode, validate_loan_type, validate_product_status,
 };
 use crate::{
     error::{AppError, AppResult},
@@ -469,7 +469,8 @@ pub(crate) async fn repay_loan_order_use_case(
         tx.commit().await?;
         return Ok((load_loan_order_response(pool, order_id).await?, false));
     }
-    if order.status != STATUS_DISBURSED {
+    // 逾期订单仍必须可还款，否则抵押资产会被永久锁死。
+    if order.status != STATUS_DISBURSED && order.status != STATUS_OVERDUE {
         return Err(AppError::Conflict(
             "loan order is not disbursed for repayment".to_owned(),
         ));

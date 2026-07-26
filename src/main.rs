@@ -10,7 +10,7 @@ use exchange_api::{
     state::AppState,
     workers::{
         agent_commission_settlement, earn_auto_redemption, event_inbox, event_outbox,
-        kline_recovery, margin_interest, margin_liquidation, market_feed,
+        kline_recovery, loan_overdue, margin_interest, margin_liquidation, market_feed,
         seconds_contract_settlement, unlock_scanner, wallet_chain,
     },
 };
@@ -204,6 +204,23 @@ async fn main() -> anyhow::Result<()> {
             .await
             {
                 tracing::error!(%error, "代理佣金自动结算循环已停止");
+            }
+        });
+    }
+
+    let loan_overdue_config = loan_overdue::LoanOverdueWorkerConfig::from_env();
+    if loan_overdue_config.enabled
+        && let Some(pool) = state.mysql.clone()
+    {
+        tokio::spawn(async move {
+            if let Err(error) = loan_overdue::run_loop(
+                pool,
+                loan_overdue_config.interval_seconds,
+                loan_overdue_config.batch_limit,
+            )
+            .await
+            {
+                tracing::error!(%error, "贷款逾期扫描循环已停止");
             }
         });
     }
