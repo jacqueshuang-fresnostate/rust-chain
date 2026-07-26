@@ -1,0 +1,3 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/mobile/index.md", "reason": "Verify mobile UI quality, touch targets, and build contract"}
+{"file": ".trellis/tasks/07-27-mobile-trade-input-focus-border/research/light-control-audit.md", "reason": "Verify focus and light-theme visual-state requirements"}

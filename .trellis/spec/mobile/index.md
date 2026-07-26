@@ -53,6 +53,14 @@ Apply this contract to `mobile/sites-prototype/` secondary routes:
 - Shared fields expose visible `focus-within`, invalid, disabled, unit, hint,
   and completion states without changing their dimensions. Validation styling
   must belong to the field that failed, not to unrelated workflow errors.
+- Nested inputs inside a framed field must not draw a second focus outline.
+  Move the visible keyboard and pointer focus treatment to the full field
+  container, while preserving the field's validation color when focus and
+  invalid states overlap.
+- Light-theme controls must not communicate selection through text color
+  alone. Segmented controls, quick amounts, and primary actions need distinct
+  filled, bordered, or inset states; scope these selectors to the relevant
+  control group so card buttons and utility toggles retain their own semantics.
 - Consequential local mutations use the shared bottom confirmation dialog.
   It must provide `role="dialog"`, `aria-modal`, labelled title/summary,
   overlay and Escape dismissal, a contained Tab loop, background scroll lock,

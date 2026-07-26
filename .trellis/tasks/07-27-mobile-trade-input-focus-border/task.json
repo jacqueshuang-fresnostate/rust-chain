@@ -1,0 +1,29 @@
+{
+  "id": "mobile-trade-input-focus-border",
+  "name": "mobile-trade-input-focus-border",
+  "title": "polish mobile light inputs and buttons",
+  "description": "Fix the trade ticket focus ring and strengthen light-theme field and button states across the mobile prototype.",
+  "status": "in_progress",
+  "dev_type": "frontend",
+  "scope": "mobile/sites-prototype",
+  "package": "mobile/sites-prototype",
+  "priority": "P2",
+  "creator": "rust-chain",
+  "assignee": "rust-chain",
+  "createdAt": "2026-07-27",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "mobile/sites-prototype/app/globals.css",
+    "mobile/sites-prototype/tests"
+  ],
+  "notes": "Preserve dark-theme behavior except for moving trade field focus treatment to the complete container.",
+  "meta": {}
+}
