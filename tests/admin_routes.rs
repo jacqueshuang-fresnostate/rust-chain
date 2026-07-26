@@ -2286,7 +2286,16 @@ async fn admin_dashboard_returns_operational_summary_shape() -> Result<(), Box<d
     assert!(payload["generated_at"].is_number());
     assert!(payload["users"]["total"].is_number());
     assert!(payload["wallet"]["active_assets"].is_number());
-    assert_eq!(payload["wallet"]["custody_status"], "not_configured");
+    let active_gateways: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM wallet_chain_gateways WHERE status = 'active'")
+            .fetch_one(&pool)
+            .await?;
+    let expected_custody = if active_gateways > 0 {
+        "active"
+    } else {
+        "not_configured"
+    };
+    assert_eq!(payload["wallet"]["custody_status"], expected_custody);
     assert!(payload["market"]["active_pairs"].is_number());
     assert_eq!(payload["market"]["feed_runtime_status"], "not_started");
     assert!(payload["market"]["feed_symbols"].as_array().is_some());
@@ -2304,6 +2313,241 @@ async fn admin_dashboard_returns_operational_summary_shape() -> Result<(), Box<d
 
     sqlx::query("DELETE FROM admin_audit_logs WHERE id = ?")
         .bind(audit_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_dashboard_wallet_summary_counts_live_pipeline_and_custody()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let suffix = Uuid::now_v7().simple().to_string();
+    let user_id = sqlx::query("INSERT INTO users (email, password_hash) VALUES (?, ?)")
+        .bind(format!("dashboard-wallet-{suffix}@example.test"))
+        .bind("not-a-real-hash")
+        .execute(&pool)
+        .await?
+        .last_insert_id();
+    let symbol = format!("DW{}", &suffix[..8]).to_ascii_uppercase();
+    let asset_id =
+        sqlx::query("INSERT INTO assets (symbol, name, precision_scale) VALUES (?, ?, 18)")
+            .bind(&symbol)
+            .bind(&symbol)
+            .execute(&pool)
+            .await?
+            .last_insert_id();
+    let baseline_deposits: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM wallet_deposit_events WHERE status = 'observed'")
+            .fetch_one(&pool)
+            .await?;
+    let baseline_withdrawals: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM wallet_withdrawal_requests
+           WHERE status IN ('pending_review', 'approved', 'broadcasting',
+                            'broadcasted', 'manual_review')"#,
+    )
+    .fetch_one(&pool)
+    .await?;
+
+    let deposit_id = sqlx::query(
+        r#"INSERT INTO wallet_deposit_events
+           (user_id, asset_id, asset_symbol, network, address, tx_hash, amount,
+            required_confirmations, status)
+           VALUES (?, ?, ?, ?, ?, ?, 1, 12, 'observed')"#,
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .bind(&symbol)
+    .bind(format!("net-{suffix}"))
+    .bind(format!("addr-{suffix}"))
+    .bind(format!("tx-{suffix}"))
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let withdrawal_id = sqlx::query(
+        r#"INSERT INTO wallet_withdrawal_requests
+           (user_id, asset_id, asset_symbol, network, address, amount, fee, total_reserved,
+            status, security_method, idempotency_key, gateway_request_id)
+           VALUES (?, ?, ?, ?, ?, 1, 0, 1, 'pending_review', 'none', ?, ?)"#,
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .bind(&symbol)
+    .bind(format!("net-{suffix}"))
+    .bind(format!("addr-{suffix}"))
+    .bind(format!("idem-{suffix}"))
+    .bind(Uuid::now_v7().to_string())
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let gateway_id = sqlx::query(
+        r#"INSERT INTO wallet_chain_gateways (network, broadcast_url, status)
+           VALUES (?, 'https://gateway.test/broadcast', 'active')"#,
+    )
+    .bind(format!("net-{suffix}"))
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/dashboard")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let status = response.status();
+    let payload = body_json(response).await?;
+    assert_eq!(status, StatusCode::OK, "payload: {payload}");
+    assert_eq!(payload["wallet"]["pending_deposits"], baseline_deposits + 1);
+    assert_eq!(
+        payload["wallet"]["pending_withdrawals"],
+        baseline_withdrawals + 1
+    );
+    assert_eq!(payload["wallet"]["custody_status"], "active");
+
+    sqlx::query("DELETE FROM wallet_chain_gateways WHERE id = ?")
+        .bind(gateway_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_withdrawal_requests WHERE id = ?")
+        .bind(withdrawal_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_deposit_events WHERE id = ?")
+        .bind(deposit_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_register_route_requires_existing_active_admin_once_bootstrapped()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let user_token =
+        issue_token(&settings, format!("user:{admin_id}"), TokenScope::User, 900).unwrap();
+    let (ghost_role_id, ghost_admin_id) = create_admin_user(&pool).await;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(ghost_admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(ghost_role_id)
+        .execute(&pool)
+        .await?;
+    let ghost_token = issue_token(
+        &settings,
+        format!("admin:{ghost_admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let username = format!("admin-register-{}", Uuid::now_v7().simple());
+    let body = json!({
+        "username": username,
+        "password": "admin-register-password-1",
+        "role_id": role_id
+    })
+    .to_string();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+    let request = |token: Option<&str>| {
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri("/admin/api/v1/auth/register")
+            .header("content-type", "application/json");
+        if let Some(token) = token {
+            builder = builder.header(AUTHORIZATION, format!("Bearer {token}"));
+        }
+        builder.body(Body::from(body.clone())).unwrap()
+    };
+
+    let missing = app.clone().oneshot(request(None)).await?;
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let wrong_scope = app.clone().oneshot(request(Some(&user_token))).await?;
+    assert_eq!(wrong_scope.status(), StatusCode::FORBIDDEN);
+
+    let ghost = app.clone().oneshot(request(Some(&ghost_token))).await?;
+    assert_eq!(ghost.status(), StatusCode::FORBIDDEN);
+
+    let blocked_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM admin_users WHERE username = ?")
+            .bind(&username)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(blocked_count, 0);
+
+    let created = app.oneshot(request(Some(&admin_token))).await?;
+    let status = created.status();
+    let payload = body_json(created).await?;
+    assert_eq!(status, StatusCode::OK, "payload: {payload}");
+    assert_eq!(payload["scope"], "admin");
+    assert!(
+        payload["access_token"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+
+    let new_admin_id: u64 = sqlx::query_scalar("SELECT id FROM admin_users WHERE username = ?")
+        .bind(&username)
+        .fetch_one(&pool)
+        .await?;
+    sqlx::query("DELETE FROM refresh_tokens WHERE actor_type = 'admin' AND actor_id = ?")
+        .bind(new_admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(new_admin_id)
         .execute(&pool)
         .await?;
     sqlx::query("DELETE FROM admin_users WHERE id = ?")

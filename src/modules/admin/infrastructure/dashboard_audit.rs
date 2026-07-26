@@ -74,9 +74,13 @@ pub(crate) async fn load_admin_dashboard_wallet_summary(
                    WHERE available <> 0 OR frozen <> 0 OR locked <> 0) AS non_zero_accounts,
                   (SELECT COUNT(*) FROM asset_lock_positions
                    WHERE status = 'active' AND unlock_at <= UTC_TIMESTAMP(6)) AS pending_unlocks,
-                  (SELECT COUNT(*) FROM deposit_records WHERE status = 'pending') AS pending_deposits,
-                  (SELECT COUNT(*) FROM withdraw_records WHERE status = 'pending') AS pending_withdrawals,
-                  'not_configured' AS custody_status"#,
+                  (SELECT COUNT(*) FROM wallet_deposit_events
+                   WHERE status = 'observed') AS pending_deposits,
+                  (SELECT COUNT(*) FROM wallet_withdrawal_requests
+                   WHERE status IN ('pending_review', 'approved', 'broadcasting',
+                                    'broadcasted', 'manual_review')) AS pending_withdrawals,
+                  CASE WHEN EXISTS (SELECT 1 FROM wallet_chain_gateways WHERE status = 'active')
+                       THEN 'active' ELSE 'not_configured' END AS custody_status"#,
     )
     .fetch_one(pool)
     .await?)
@@ -100,7 +104,8 @@ pub(crate) async fn load_admin_dashboard_trading_summary(
     pool: &Pool<MySql>,
 ) -> AppResult<AdminDashboardTradingSummary> {
     Ok(sqlx::query_as::<_, AdminDashboardTradingSummary>(
-        r#"SELECT (SELECT COUNT(*) FROM spot_orders WHERE status IN ('pending', 'partial')) AS spot_open_orders,
+        r#"SELECT (SELECT COUNT(*) FROM spot_orders
+                   WHERE status IN ('pending', 'open', 'partially_filled')) AS spot_open_orders,
                   (SELECT COUNT(*) FROM spot_trades
                    WHERE created_at >= DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 24 HOUR)) AS spot_trades_24h,
                   (SELECT COUNT(*) FROM convert_orders WHERE status = 'pending') AS convert_pending_orders,

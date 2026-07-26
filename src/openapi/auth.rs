@@ -247,11 +247,13 @@ fn user_refresh() {}
     post,
     path = "/admin/api/v1/auth/register",
     tag = "auth",
-    summary = "管理员注册",
+    summary = "管理员注册（仅空表引导或现有管理员创建）",
     request_body = AdminAuthRequest,
     responses(
         (status = 200, description = "注册成功", body = TokenResponse),
         (status = 400, description = "参数错误", body = ErrorResponse),
+        (status = 401, description = "已初始化后缺少或携带无效管理员凭证", body = ErrorResponse),
+        (status = 403, description = "凭证对应管理员不存在或已停用", body = ErrorResponse),
         (status = 409, description = "账号已存在", body = ErrorResponse),
         (status = 500, description = "服务内部错误", body = ErrorResponse)
     )

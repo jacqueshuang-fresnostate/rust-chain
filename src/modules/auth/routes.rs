@@ -25,6 +25,7 @@ use crate::{
 use axum::{
     Json, Router,
     extract::State,
+    http::HeaderMap,
     routing::{get, post},
 };
 use chrono::Utc;
@@ -194,10 +195,12 @@ async fn reset_login_two_factor(
 
 async fn admin_register(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<AdminAuthRequest>,
 ) -> AppResult<Json<TokenResponse>> {
     let tokens = register_admin_actor(
         &state,
+        &headers,
         AdminRegistration {
             username: request.username,
             password: request.password,

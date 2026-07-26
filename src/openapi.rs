@@ -279,6 +279,7 @@ pub fn routes() -> Router<AppState> {
         PublicNewsItemResponse,
         PublicNewsItemsResponse,
         AgentMeResponse,
+        AgentDashboardAssetSummaryResponse,
         AgentDashboardResponse,
         AgentTeamUserResponse,
         AgentUsersResponse,

@@ -9,8 +9,9 @@ use crate::{
     modules::agent::{
         presentation::{
             AgentCommissionResponse, AgentCommissionsResponse, AgentConvertStatsResponse,
+            AgentDashboardAssetSummaryResponse, AgentDashboardResponse,
         },
-        repository::AgentConvertStatsRecord,
+        repository::{AgentConvertStatsRecord, AgentDashboardCountsRecord, AgentListPage},
     },
 };
 use bigdecimal::BigDecimal;
@@ -39,6 +40,17 @@ pub(crate) fn normalize_agent_commission_product_type(value: &str) -> AppResult<
         _ => Err(AppError::Validation(
             "unsupported agent commission product type".to_owned(),
         )),
+    }
+}
+
+pub(crate) fn agent_list_page(
+    limit: Option<u32>,
+    offset: Option<u32>,
+    default_limit: u32,
+) -> AgentListPage {
+    AgentListPage {
+        limit: limit.unwrap_or(default_limit).clamp(1, default_limit),
+        offset: offset.unwrap_or(0),
     }
 }
 
@@ -89,6 +101,41 @@ pub(crate) fn agent_convert_stats_response(
         total_from_amount: row.total_from_amount,
         total_to_amount: row.total_to_amount,
     })
+}
+
+pub(crate) fn agent_dashboard_response(
+    agent_id: u64,
+    counts: AgentDashboardCountsRecord,
+    commission_assets: Vec<AgentDashboardAssetSummaryResponse>,
+) -> AgentDashboardResponse {
+    let commission_record_count = commission_assets
+        .iter()
+        .map(|asset| asset.commission_record_count)
+        .sum();
+    // 跨资产金额不可相加：顶层金额仅在单一发放资产时有意义，否则归零并以明细为准。
+    let (pending, settled, total) = match commission_assets.as_slice() {
+        [single] => (
+            single.pending_commission_amount.clone(),
+            single.settled_commission_amount.clone(),
+            single.total_commission_amount.clone(),
+        ),
+        _ => (
+            BigDecimal::from(0),
+            BigDecimal::from(0),
+            BigDecimal::from(0),
+        ),
+    };
+
+    AgentDashboardResponse {
+        agent_id,
+        team_user_count: counts.team_user_count,
+        active_invite_code_count: counts.active_invite_code_count,
+        commission_record_count,
+        pending_commission_amount: pending,
+        settled_commission_amount: settled,
+        total_commission_amount: total,
+        commission_assets,
+    }
 }
 
 pub(crate) fn agent_commissions_response(

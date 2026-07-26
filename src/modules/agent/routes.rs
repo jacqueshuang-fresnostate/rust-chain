@@ -6,15 +6,15 @@ use super::{
     },
     presentation::{
         AgentCommissionsResponse, AgentConvertStatsResponse, AgentDashboardResponse,
-        AgentInviteCodeResponse, AgentInviteCodesResponse, AgentMeResponse, AgentSubAgentsResponse,
-        AgentTeamTreeResponse, AgentUsersResponse, CreateInviteCodeRequest,
+        AgentInviteCodeResponse, AgentInviteCodesResponse, AgentListQuery, AgentMeResponse,
+        AgentSubAgentsResponse, AgentTeamTreeResponse, AgentUsersResponse, CreateInviteCodeRequest,
         UpdateInviteCodeStatusRequest,
     },
 };
 use crate::{error::AppResult, modules::auth::AgentAuth, state::AppState};
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     routing::{get, patch},
 };
 
@@ -62,45 +62,50 @@ async fn convert_stats(
 async fn list_users(
     AgentAuth(claims): AgentAuth,
     State(state): State<AppState>,
+    Query(query): Query<AgentListQuery>,
 ) -> AppResult<Json<AgentUsersResponse>> {
     Ok(Json(
-        list_agent_users(state.mysql.clone(), &claims.sub).await?,
+        list_agent_users(state.mysql.clone(), &claims.sub, query).await?,
     ))
 }
 
 async fn team_tree(
     AgentAuth(claims): AgentAuth,
     State(state): State<AppState>,
+    Query(query): Query<AgentListQuery>,
 ) -> AppResult<Json<AgentTeamTreeResponse>> {
     Ok(Json(
-        list_agent_team_tree(state.mysql.clone(), &claims.sub).await?,
+        list_agent_team_tree(state.mysql.clone(), &claims.sub, query).await?,
     ))
 }
 
 async fn sub_agents(
     AgentAuth(claims): AgentAuth,
     State(state): State<AppState>,
+    Query(query): Query<AgentListQuery>,
 ) -> AppResult<Json<AgentSubAgentsResponse>> {
     Ok(Json(
-        list_agent_sub_agents(state.mysql.clone(), &claims.sub).await?,
+        list_agent_sub_agents(state.mysql.clone(), &claims.sub, query).await?,
     ))
 }
 
 async fn list_commissions(
     AgentAuth(claims): AgentAuth,
     State(state): State<AppState>,
+    Query(query): Query<AgentListQuery>,
 ) -> AppResult<Json<AgentCommissionsResponse>> {
     Ok(Json(
-        list_agent_commissions(state.mysql.clone(), &claims.sub).await?,
+        list_agent_commissions(state.mysql.clone(), &claims.sub, query).await?,
     ))
 }
 
 async fn list_invite_codes(
     AgentAuth(claims): AgentAuth,
     State(state): State<AppState>,
+    Query(query): Query<AgentListQuery>,
 ) -> AppResult<Json<AgentInviteCodesResponse>> {
     Ok(Json(
-        list_agent_invite_codes(state.mysql.clone(), &claims.sub).await?,
+        list_agent_invite_codes(state.mysql.clone(), &claims.sub, query).await?,
     ))
 }
 

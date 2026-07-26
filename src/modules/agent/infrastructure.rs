@@ -8,13 +8,14 @@ use crate::{
     modules::agent::{
         domain::{AgentCommissionRateTier, allocate_differential_agent_commissions},
         presentation::{
-            AgentCommissionResponse, AgentDashboardResponse, AgentInviteCodeResponse,
+            AgentCommissionResponse, AgentDashboardAssetSummaryResponse, AgentInviteCodeResponse,
             AgentMeResponse, AgentSubAgentResponse, AgentTeamTreeNodeResponse,
             AgentTeamUserResponse,
         },
         repository::{
             AgentAccessScope, AgentBusinessCommissionWrite, AgentCommissionRuleRecord,
-            AgentConvertStatsRecord, AgentInviteCodeWrite,
+            AgentConvertStatsRecord, AgentDashboardCountsRecord, AgentInviteCodeWrite,
+            AgentListPage,
         },
     },
 };
@@ -171,13 +172,12 @@ pub(crate) async fn load_agent_access_scope_for_admin(
     Ok(scope)
 }
 
-pub(crate) async fn load_agent_dashboard(
+pub(crate) async fn load_agent_dashboard_counts(
     pool: &Pool<MySql>,
     scope: &AgentAccessScope,
-) -> AppResult<AgentDashboardResponse> {
-    let dashboard = sqlx::query_as::<_, AgentDashboardResponse>(
-        r#"SELECT ? AS agent_id,
-                  (SELECT COUNT(*)
+) -> AppResult<AgentDashboardCountsRecord> {
+    let counts = sqlx::query_as::<_, AgentDashboardCountsRecord>(
+        r#"SELECT (SELECT COUNT(*)
                    FROM user_referrals team_referrals
                    INNER JOIN agents owner_agents
                      ON owner_agents.id = team_referrals.root_agent_id
@@ -186,7 +186,24 @@ pub(crate) async fn load_agent_dashboard(
                   (SELECT COUNT(*)
                    FROM invite_codes
                    WHERE owner_type = 'agent' AND owner_id = ? AND status = 'active')
-                   AS active_invite_code_count,
+                   AS active_invite_code_count"#,
+    )
+    .bind(&scope.path)
+    .bind(&scope.path)
+    .bind(scope.agent_id)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(counts)
+}
+
+pub(crate) async fn load_agent_dashboard_asset_summaries(
+    pool: &Pool<MySql>,
+    scope: &AgentAccessScope,
+) -> AppResult<Vec<AgentDashboardAssetSummaryResponse>> {
+    // 佣金按发放资产逐一聚合，不同资产的金额不能直接相加。
+    let summaries = sqlx::query_as::<_, AgentDashboardAssetSummaryResponse>(
+        r#"SELECT records.payout_asset_id,
                   COUNT(records.id) AS commission_record_count,
                   COALESCE(SUM(CASE WHEN records.status = 'pending'
                                     THEN records.commission_amount ELSE 0 END), 0)
@@ -200,19 +217,17 @@ pub(crate) async fn load_agent_dashboard(
            INNER JOIN agents owner_agents ON owner_agents.id = referrals.root_agent_id
            WHERE records.agent_id = ?
              AND (owner_agents.path = ?
-               OR owner_agents.path LIKE CONCAT(?, '/%'))"#,
+               OR owner_agents.path LIKE CONCAT(?, '/%'))
+           GROUP BY records.payout_asset_id
+           ORDER BY records.payout_asset_id"#,
     )
     .bind(scope.agent_id)
     .bind(&scope.path)
     .bind(&scope.path)
-    .bind(scope.agent_id)
-    .bind(scope.agent_id)
-    .bind(&scope.path)
-    .bind(&scope.path)
-    .fetch_one(pool)
+    .fetch_all(pool)
     .await?;
 
-    Ok(dashboard)
+    Ok(summaries)
 }
 
 pub(crate) async fn load_agent_convert_stats(
@@ -246,6 +261,7 @@ pub(crate) async fn load_agent_convert_stats(
 pub(crate) async fn list_agent_team_users(
     pool: &Pool<MySql>,
     scope: &AgentAccessScope,
+    page: AgentListPage,
 ) -> AppResult<Vec<AgentTeamUserResponse>> {
     let users = sqlx::query_as::<_, AgentTeamUserResponse>(
         r#"SELECT u.id AS user_id, u.email, u.phone, u.status, u.kyc_level,
@@ -260,10 +276,12 @@ pub(crate) async fn list_agent_team_users(
            WHERE owner_agents.path = ?
               OR owner_agents.path LIKE CONCAT(?, '/%')
            ORDER BY owner_agents.level ASC, u.id ASC
-           LIMIT 100"#,
+           LIMIT ? OFFSET ?"#,
     )
     .bind(&scope.path)
     .bind(&scope.path)
+    .bind(page.limit as i64)
+    .bind(page.offset as i64)
     .fetch_all(pool)
     .await?;
 
@@ -273,6 +291,7 @@ pub(crate) async fn list_agent_team_users(
 pub(crate) async fn list_agent_team_tree_nodes(
     pool: &Pool<MySql>,
     scope: &AgentAccessScope,
+    page: AgentListPage,
 ) -> AppResult<Vec<AgentTeamTreeNodeResponse>> {
     let nodes = sqlx::query_as::<_, AgentTeamTreeNodeResponse>(
         r#"SELECT u.id AS user_id, u.email, u.phone, u.status,
@@ -288,10 +307,12 @@ pub(crate) async fn list_agent_team_tree_nodes(
            WHERE owner_agents.path = ?
               OR owner_agents.path LIKE CONCAT(?, '/%')
            ORDER BY owner_agents.level ASC, ur.depth ASC, u.id ASC
-           LIMIT 500"#,
+           LIMIT ? OFFSET ?"#,
     )
     .bind(&scope.path)
     .bind(&scope.path)
+    .bind(page.limit as i64)
+    .bind(page.offset as i64)
     .fetch_all(pool)
     .await?;
 
@@ -301,6 +322,7 @@ pub(crate) async fn list_agent_team_tree_nodes(
 pub(crate) async fn list_agent_sub_agents(
     pool: &Pool<MySql>,
     scope: &AgentAccessScope,
+    page: AgentListPage,
 ) -> AppResult<Vec<AgentSubAgentResponse>> {
     let agents = sqlx::query_as::<_, AgentSubAgentResponse>(
         r#"SELECT descendants.id, descendants.parent_agent_id,
@@ -318,10 +340,12 @@ pub(crate) async fn list_agent_sub_agents(
            WHERE descendants.id <> ?
              AND descendants.path LIKE CONCAT(?, '/%')
            ORDER BY descendants.level ASC, descendants.id ASC
-           LIMIT 500"#,
+           LIMIT ? OFFSET ?"#,
     )
     .bind(scope.agent_id)
     .bind(&scope.path)
+    .bind(page.limit as i64)
+    .bind(page.offset as i64)
     .fetch_all(pool)
     .await?;
     Ok(agents)
@@ -330,6 +354,7 @@ pub(crate) async fn list_agent_sub_agents(
 pub(crate) async fn list_agent_commissions(
     pool: &Pool<MySql>,
     scope: &AgentAccessScope,
+    page: AgentListPage,
 ) -> AppResult<Vec<AgentCommissionResponse>> {
     let commissions = sqlx::query_as::<_, AgentCommissionResponse>(
         r#"SELECT records.id, records.user_id, users.email, records.source_type,
@@ -356,12 +381,14 @@ pub(crate) async fn list_agent_commissions(
            WHERE records.agent_id = ?
              AND (owner_agents.path = ?
                OR owner_agents.path LIKE CONCAT(?, '/%'))
-           ORDER BY records.id ASC
-           LIMIT 100"#,
+           ORDER BY records.id DESC
+           LIMIT ? OFFSET ?"#,
     )
     .bind(scope.agent_id)
     .bind(&scope.path)
     .bind(&scope.path)
+    .bind(page.limit as i64)
+    .bind(page.offset as i64)
     .fetch_all(pool)
     .await?;
 
@@ -371,15 +398,18 @@ pub(crate) async fn list_agent_commissions(
 pub(crate) async fn list_agent_invite_codes(
     pool: &Pool<MySql>,
     agent_id: u64,
+    page: AgentListPage,
 ) -> AppResult<Vec<AgentInviteCodeResponse>> {
     let invite_codes = sqlx::query_as::<_, AgentInviteCodeResponse>(
         r#"SELECT id, owner_id, code, usage_limit, used_count, status, created_at
            FROM invite_codes
            WHERE owner_type = 'agent' AND owner_id = ?
            ORDER BY id ASC
-           LIMIT 100"#,
+           LIMIT ? OFFSET ?"#,
     )
     .bind(agent_id)
+    .bind(page.limit as i64)
+    .bind(page.offset as i64)
     .fetch_all(pool)
     .await?;
 

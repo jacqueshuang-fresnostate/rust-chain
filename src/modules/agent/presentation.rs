@@ -49,6 +49,12 @@ pub(crate) struct AgentTeamUserResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct AgentListQuery {
+    pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct CreateInviteCodeRequest {
     pub(crate) usage_limit: Option<i32>,
 }
@@ -147,11 +153,22 @@ pub(crate) struct AgentCommissionResponse {
     pub(crate) created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize)]
 pub(crate) struct AgentDashboardResponse {
     pub(crate) agent_id: u64,
     pub(crate) team_user_count: i64,
     pub(crate) active_invite_code_count: i64,
+    pub(crate) commission_record_count: i64,
+    // 顶层金额只在全部佣金使用同一发放资产时保留，跨资产金额以 commission_assets 为准。
+    pub(crate) pending_commission_amount: BigDecimal,
+    pub(crate) settled_commission_amount: BigDecimal,
+    pub(crate) total_commission_amount: BigDecimal,
+    pub(crate) commission_assets: Vec<AgentDashboardAssetSummaryResponse>,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub(crate) struct AgentDashboardAssetSummaryResponse {
+    pub(crate) payout_asset_id: Option<u64>,
     pub(crate) commission_record_count: i64,
     pub(crate) pending_commission_amount: BigDecimal,
     pub(crate) settled_commission_amount: BigDecimal,

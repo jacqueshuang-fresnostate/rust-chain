@@ -8,7 +8,7 @@ use axum::{
 };
 use secrecy::SecretString;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
 };
 use tower::ServiceExt;
@@ -80,6 +80,7 @@ fn scoped_app(state: AppState) -> Router {
 struct TestAuthRepository {
     refresh_tokens: Arc<Mutex<HashMap<String, StoredRefreshToken>>>,
     users_by_username: Arc<Mutex<HashMap<String, StoredActorCredential>>>,
+    active_admin_ids: Arc<Mutex<HashSet<u64>>>,
 }
 
 #[async_trait]
@@ -89,7 +90,11 @@ impl AuthRepository for TestAuthRepository {
     }
 
     async fn create_admin(&self, _actor: NewAdminActor) -> AppResult<AuthActor> {
-        Err(AppError::Internal("not used".to_owned()))
+        let mut admins = self.active_admin_ids.lock().unwrap();
+        let admin_id = admins.iter().max().copied().unwrap_or(0) + 1;
+        admins.insert(admin_id);
+
+        Ok(AuthActor::new(ActorType::Admin, admin_id, None))
     }
 
     async fn create_agent(&self, _actor: NewAgentActor) -> AppResult<AuthActor> {
@@ -130,6 +135,10 @@ impl AuthRepository for TestAuthRepository {
         Ok(None)
     }
 
+    async fn has_any_admin(&self) -> AppResult<bool> {
+        Ok(!self.active_admin_ids.lock().unwrap().is_empty())
+    }
+
     async fn find_agent_by_username(
         &self,
         _username: &str,
@@ -138,6 +147,16 @@ impl AuthRepository for TestAuthRepository {
     }
 
     async fn find_active_actor(&self, actor: &AuthActor) -> AppResult<Option<AuthActor>> {
+        if actor.actor_type == ActorType::Admin
+            && !self
+                .active_admin_ids
+                .lock()
+                .unwrap()
+                .contains(&actor.actor_id)
+        {
+            return Ok(None);
+        }
+
         Ok(Some(actor.clone()))
     }
 
@@ -250,6 +269,44 @@ async fn username_login_requires_policy_toggle() {
         .await
         .unwrap();
     assert_eq!(actor, AuthActor::new(ActorType::User, 42, Some(42)));
+}
+
+#[tokio::test]
+async fn admin_registration_allows_bootstrap_then_requires_active_admin() {
+    let repository = TestAuthRepository::default();
+    let state = test_state();
+    let service = AuthService::new(repository, state.settings.clone(), None, None);
+    let registration = |username: &str| AdminRegistration {
+        username: Some(username.to_owned()),
+        password: Some("CorrectPassword123!".to_owned()),
+        role_id: Some(1),
+    };
+
+    // 空表引导：允许无凭证创建首个管理员。
+    service
+        .register_admin(None, registration("bootstrap_admin"))
+        .await
+        .unwrap();
+
+    let unauthenticated = service
+        .register_admin(None, registration("second_admin"))
+        .await;
+    assert!(matches!(unauthenticated, Err(AppError::Unauthorized)));
+
+    let invalid_subject = service
+        .register_admin(Some("user:1"), registration("second_admin"))
+        .await;
+    assert!(matches!(invalid_subject, Err(AppError::Unauthorized)));
+
+    let missing_admin = service
+        .register_admin(Some("admin:999"), registration("second_admin"))
+        .await;
+    assert!(matches!(missing_admin, Err(AppError::Forbidden)));
+
+    service
+        .register_admin(Some("admin:1"), registration("second_admin"))
+        .await
+        .unwrap();
 }
 
 async fn status_for(app: Router, path: &str, token: &str) -> StatusCode {

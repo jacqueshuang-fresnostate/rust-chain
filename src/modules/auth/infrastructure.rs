@@ -231,6 +231,14 @@ impl AuthRepository for MySqlAuthRepository {
         )
     }
 
+    async fn has_any_admin(&self) -> AppResult<bool> {
+        let (exists,): (bool,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM admin_users)")
+            .fetch_one(&self.pool)
+            .await?;
+
+        Ok(exists)
+    }
+
     async fn find_agent_by_username(
         &self,
         username: &str,

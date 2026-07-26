@@ -14,6 +14,7 @@ use crate::{
         auth::{
             ActorType, AdminCredentials, AdminRegistration, AgentCredentials, AuthActor,
             AuthService, IssuedTokens, MySqlAuthRepository, TokenScope, UserCredentials,
+            claims_from_bearer_token,
             domain::{
                 optional_string, required_string, validate_email_code, validate_registration_email,
                 validate_reset_password,
@@ -47,6 +48,7 @@ use crate::{
     },
     state::AppState,
 };
+use axum::http::{HeaderMap, header::AUTHORIZATION};
 use chrono::{DateTime, Duration, Utc};
 use ring::rand::{SecureRandom, SystemRandom};
 use sqlx::{MySql, Pool};
@@ -107,9 +109,29 @@ pub(crate) enum UserLoginOutcome {
 
 pub(crate) async fn register_admin_actor(
     state: &AppState,
+    headers: &HeaderMap,
     registration: AdminRegistration,
 ) -> AppResult<IssuedTokens> {
-    auth_service(state)?.register_admin(registration).await
+    let requester_subject = match admin_bearer_token(headers) {
+        Some(token) => Some(
+            claims_from_bearer_token(state, token, TokenScope::Admin)
+                .await?
+                .sub,
+        ),
+        None => None,
+    };
+
+    auth_service(state)?
+        .register_admin(requester_subject.as_deref(), registration)
+        .await
+}
+
+fn admin_bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .filter(|token| !token.is_empty())
 }
 
 pub(crate) async fn login_admin_actor(

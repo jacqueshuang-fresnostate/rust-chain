@@ -19,6 +19,18 @@ pub(crate) struct AgentAccessScope {
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
+pub(crate) struct AgentDashboardCountsRecord {
+    pub(crate) team_user_count: i64,
+    pub(crate) active_invite_code_count: i64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AgentListPage {
+    pub(crate) limit: u32,
+    pub(crate) offset: u32,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub(crate) struct AgentConvertStatsRecord {
     pub(crate) agent_id: u64,
     pub(crate) total_orders: i64,

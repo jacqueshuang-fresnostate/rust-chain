@@ -31,6 +31,7 @@ pub trait AuthRepository: Clone + Send + Sync + 'static {
         &self,
         username: &str,
     ) -> AppResult<Option<StoredActorCredential>>;
+    async fn has_any_admin(&self) -> AppResult<bool>;
     async fn find_agent_by_username(
         &self,
         username: &str,

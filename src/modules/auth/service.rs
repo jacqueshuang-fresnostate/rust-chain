@@ -117,7 +117,23 @@ impl<R: AuthRepository> AuthService<R> {
         self.verify_actor_credentials(stored, &password).await
     }
 
-    pub async fn register_admin(&self, registration: AdminRegistration) -> AppResult<IssuedTokens> {
+    pub async fn register_admin(
+        &self,
+        requester_subject: Option<&str>,
+        registration: AdminRegistration,
+    ) -> AppResult<IssuedTokens> {
+        // 首个管理员通过空表引导注册，此后必须由现有活跃管理员创建新管理员。
+        if self.repository.has_any_admin().await? {
+            let admin_id = requester_subject
+                .ok_or(AppError::Unauthorized)?
+                .strip_prefix("admin:")
+                .and_then(|value| value.parse::<u64>().ok())
+                .ok_or(AppError::Unauthorized)?;
+            self.repository
+                .find_active_actor(&AuthActor::new(ActorType::Admin, admin_id, None))
+                .await?
+                .ok_or(AppError::Forbidden)?;
+        }
         let username = required_string(registration.username, "username")?;
         let password = required_string(registration.password, "password")?;
         let role_id = registration

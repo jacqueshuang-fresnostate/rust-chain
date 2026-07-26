@@ -1248,6 +1248,22 @@ async fn agent_dashboard_only_summarizes_authenticated_agent_team() -> Result<()
         dashboard["total_commission_amount"],
         "13.000000000000000000"
     );
+    let commission_assets = dashboard["commission_assets"].as_array().unwrap();
+    assert_eq!(commission_assets.len(), 1);
+    assert_eq!(commission_assets[0]["payout_asset_id"], Value::Null);
+    assert_eq!(commission_assets[0]["commission_record_count"], 2);
+    assert_eq!(
+        commission_assets[0]["pending_commission_amount"],
+        "5.000000000000000000"
+    );
+    assert_eq!(
+        commission_assets[0]["settled_commission_amount"],
+        "8.000000000000000000"
+    );
+    assert_eq!(
+        commission_assets[0]["total_commission_amount"],
+        "13.000000000000000000"
+    );
 
     for record_id in [
         direct_commission,
@@ -1390,28 +1406,29 @@ async fn agent_commissions_only_return_authenticated_agent_team_records()
         .iter()
         .map(|record| record["id"].as_u64().unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(listed_ids, vec![direct_commission, nested_commission]);
-    assert_eq!(records[0]["user_id"], direct_user);
-    assert_eq!(records[0]["source_type"], "spot_trade");
-    assert_eq!(records[0]["source_id"], direct_source_id);
-    assert_eq!(records[0]["source_amount"], "100.500000000000000000");
-    assert_eq!(records[0]["commission_amount"], "5.025000000000000000");
-    assert_eq!(records[0]["status"], "pending");
-    assert_eq!(records[0]["depth"], 1);
-    assert_eq!(records[0]["payout_ledger_id"], Value::Null);
-    assert_eq!(records[0]["payout_asset_id"], Value::Null);
-    assert_eq!(records[0]["payout_amount"], Value::Null);
-    assert_eq!(records[0]["payout_balance_after"], Value::Null);
-    assert_eq!(records[0]["payout_created_at"], Value::Null);
-    assert_eq!(records[1]["user_id"], nested_user);
-    assert_eq!(records[1]["source_id"], nested_source_id);
-    assert_eq!(records[1]["status"], "settled");
-    assert_eq!(records[1]["depth"], 2);
-    assert_eq!(records[1]["payout_ledger_id"], payout_ledger);
-    assert_eq!(records[1]["payout_asset_id"], payout_asset);
-    assert_eq!(records[1]["payout_amount"], "8.000000000000000000");
-    assert_eq!(records[1]["payout_balance_after"], "18.000000000000000000");
-    assert!(records[1]["payout_created_at"].as_i64().unwrap() > 0);
+    // 列表按最新记录优先返回，避免超过分页上限后新佣金永远不可见。
+    assert_eq!(listed_ids, vec![nested_commission, direct_commission]);
+    assert_eq!(records[1]["user_id"], direct_user);
+    assert_eq!(records[1]["source_type"], "spot_trade");
+    assert_eq!(records[1]["source_id"], direct_source_id);
+    assert_eq!(records[1]["source_amount"], "100.500000000000000000");
+    assert_eq!(records[1]["commission_amount"], "5.025000000000000000");
+    assert_eq!(records[1]["status"], "pending");
+    assert_eq!(records[1]["depth"], 1);
+    assert_eq!(records[1]["payout_ledger_id"], Value::Null);
+    assert_eq!(records[1]["payout_asset_id"], Value::Null);
+    assert_eq!(records[1]["payout_amount"], Value::Null);
+    assert_eq!(records[1]["payout_balance_after"], Value::Null);
+    assert_eq!(records[1]["payout_created_at"], Value::Null);
+    assert_eq!(records[0]["user_id"], nested_user);
+    assert_eq!(records[0]["source_id"], nested_source_id);
+    assert_eq!(records[0]["status"], "settled");
+    assert_eq!(records[0]["depth"], 2);
+    assert_eq!(records[0]["payout_ledger_id"], payout_ledger);
+    assert_eq!(records[0]["payout_asset_id"], payout_asset);
+    assert_eq!(records[0]["payout_amount"], "8.000000000000000000");
+    assert_eq!(records[0]["payout_balance_after"], "18.000000000000000000");
+    assert!(records[0]["payout_created_at"].as_i64().unwrap() > 0);
     assert!(!listed_ids.contains(&other_agent_commission));
     assert!(!listed_ids.contains(&unassigned_commission));
 
@@ -1956,5 +1973,204 @@ async fn agent_hierarchy_scopes_users_and_blocks_children_when_parent_is_suspend
         ],
     )
     .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn agent_dashboard_breaks_down_commissions_per_payout_asset() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let agent = create_agent(&pool, "dashboard-assets").await;
+    let team_user = create_user(&pool, "dashboard-assets-user").await;
+    refer_user_to_agent(&pool, team_user, agent.agent_id, 1).await;
+    let asset_a = create_asset(&pool, "adba").await;
+    let asset_b = create_asset(&pool, "adbb").await;
+    let pending_commission = create_commission_record(
+        &pool,
+        agent.agent_id,
+        team_user,
+        "convert_order",
+        "100.000000000000000000",
+        "5.000000000000000000",
+        "pending",
+    )
+    .await;
+    let settled_commission = create_commission_record(
+        &pool,
+        agent.agent_id,
+        team_user,
+        "spot_trade",
+        "200.000000000000000000",
+        "8.000000000000000000",
+        "settled",
+    )
+    .await;
+    for (commission_id, asset_id) in [(pending_commission, asset_a), (settled_commission, asset_b)]
+    {
+        sqlx::query("UPDATE agent_commission_records SET payout_asset_id = ? WHERE id = ?")
+            .bind(asset_id)
+            .bind(commission_id)
+            .execute(&pool)
+            .await?;
+    }
+    let token = issue_token(
+        &settings,
+        format!("agent:{}", agent.admin_user_id),
+        TokenScope::Agent,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/agent/api/v1/dashboard")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let status = response.status();
+    let dashboard = response_json(response).await?;
+    assert_eq!(status, StatusCode::OK, "payload: {dashboard}");
+    assert_eq!(dashboard["commission_record_count"], 2);
+    // 多资产佣金不做跨币种求和，顶层金额归零，以 commission_assets 明细为准。
+    assert_eq!(dashboard["pending_commission_amount"], "0");
+    assert_eq!(dashboard["settled_commission_amount"], "0");
+    assert_eq!(dashboard["total_commission_amount"], "0");
+    let commission_assets = dashboard["commission_assets"].as_array().unwrap();
+    assert_eq!(commission_assets.len(), 2);
+    let (first, second) = if asset_a < asset_b { (0, 1) } else { (1, 0) };
+    assert_eq!(commission_assets[first]["payout_asset_id"], asset_a);
+    assert_eq!(commission_assets[first]["commission_record_count"], 1);
+    assert_eq!(
+        commission_assets[first]["pending_commission_amount"],
+        "5.000000000000000000"
+    );
+    assert_eq!(
+        commission_assets[first]["total_commission_amount"],
+        "5.000000000000000000"
+    );
+    assert_eq!(commission_assets[second]["payout_asset_id"], asset_b);
+    assert_eq!(commission_assets[second]["commission_record_count"], 1);
+    assert_eq!(
+        commission_assets[second]["settled_commission_amount"],
+        "8.000000000000000000"
+    );
+    assert_eq!(
+        commission_assets[second]["total_commission_amount"],
+        "8.000000000000000000"
+    );
+
+    for record_id in [pending_commission, settled_commission] {
+        sqlx::query("DELETE FROM agent_commission_records WHERE id = ?")
+            .bind(record_id)
+            .execute(&pool)
+            .await?;
+    }
+    for asset_id in [asset_a, asset_b] {
+        sqlx::query("DELETE FROM assets WHERE id = ?")
+            .bind(asset_id)
+            .execute(&pool)
+            .await?;
+    }
+    cleanup_agent_fixture(&pool, &[agent], &[team_user]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn agent_lists_support_newest_first_commission_pagination() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let agent = create_agent(&pool, "commission-page").await;
+    let team_user = create_user(&pool, "commission-page-user").await;
+    refer_user_to_agent(&pool, team_user, agent.agent_id, 1).await;
+    let mut commission_ids = Vec::new();
+    for index in 0..3 {
+        commission_ids.push(
+            create_commission_record(
+                &pool,
+                agent.agent_id,
+                team_user,
+                "spot_trade",
+                "100.000000000000000000",
+                &format!("{}.000000000000000000", index + 1),
+                "pending",
+            )
+            .await,
+        );
+    }
+    let invite_code_a = create_invite_code(&pool, agent.agent_id, "active").await;
+    let invite_code_b = create_invite_code(&pool, agent.agent_id, "active").await;
+    let token = issue_token(
+        &settings,
+        format!("agent:{}", agent.admin_user_id),
+        TokenScope::Agent,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+    let get_json = |uri: String| {
+        let app = app.clone();
+        let token = token.clone();
+        async move {
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .uri(uri)
+                        .header("authorization", format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await?;
+            assert_eq!(response.status(), StatusCode::OK);
+            response_json(response).await
+        }
+    };
+
+    let first_page = get_json("/agent/api/v1/commissions?limit=2".to_owned()).await?;
+    let first_page_ids = first_page["commissions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|record| record["id"].as_u64().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(first_page_ids, vec![commission_ids[2], commission_ids[1]]);
+    assert_eq!(first_page["total_records"], 2);
+
+    let second_page = get_json("/agent/api/v1/commissions?limit=2&offset=2".to_owned()).await?;
+    let second_page_ids = second_page["commissions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|record| record["id"].as_u64().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(second_page_ids, vec![commission_ids[0]]);
+
+    let invite_page = get_json("/agent/api/v1/invite-codes?limit=1&offset=1".to_owned()).await?;
+    let invite_page_ids = invite_page["invite_codes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|code| code["id"].as_u64().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(invite_page_ids, vec![invite_code_b]);
+
+    let users_page = get_json("/agent/api/v1/users?limit=1".to_owned()).await?;
+    assert_eq!(users_page["users"].as_array().unwrap().len(), 1);
+
+    for record_id in &commission_ids {
+        sqlx::query("DELETE FROM agent_commission_records WHERE id = ?")
+            .bind(record_id)
+            .execute(&pool)
+            .await?;
+    }
+    let _ = (invite_code_a, invite_code_b);
+    cleanup_agent_fixture(&pool, &[agent], &[team_user]).await?;
     Ok(())
 }

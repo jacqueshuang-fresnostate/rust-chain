@@ -17,6 +17,15 @@ pub(super) struct AgentMeResponse {
 }
 
 #[derive(ToSchema)]
+pub(super) struct AgentDashboardAssetSummaryResponse {
+    payout_asset_id: Option<u64>,
+    commission_record_count: i64,
+    pending_commission_amount: String,
+    settled_commission_amount: String,
+    total_commission_amount: String,
+}
+
+#[derive(ToSchema)]
 pub(super) struct AgentDashboardResponse {
     agent_id: u64,
     team_user_count: i64,
@@ -25,6 +34,7 @@ pub(super) struct AgentDashboardResponse {
     pending_commission_amount: String,
     settled_commission_amount: String,
     total_commission_amount: String,
+    commission_assets: Vec<AgentDashboardAssetSummaryResponse>,
 }
 
 #[derive(ToSchema)]
@@ -196,6 +206,10 @@ fn get_agent_dashboard() {}
     path = "/agent/api/v1/users",
     tag = "agent-portal",
     summary = "查询代理团队用户",
+    params(
+        ("limit" = Option<u32>, Query, description = "返回条数，默认 100，最大 100"),
+        ("offset" = Option<u32>, Query, description = "偏移量，默认 0")
+    ),
     security(("bearerAuth" = [])),
     responses(
         (status = 200, description = "查询成功", body = AgentUsersResponse),
@@ -211,6 +225,10 @@ fn list_agent_users() {}
     path = "/agent/api/v1/invite-codes",
     tag = "agent-portal",
     summary = "查询代理邀请码",
+    params(
+        ("limit" = Option<u32>, Query, description = "返回条数，默认 100，最大 100"),
+        ("offset" = Option<u32>, Query, description = "偏移量，默认 0")
+    ),
     security(("bearerAuth" = [])),
     responses(
         (status = 200, description = "查询成功", body = AgentInviteCodesResponse),
@@ -261,7 +279,11 @@ fn update_agent_invite_code_status() {}
     get,
     path = "/agent/api/v1/commissions",
     tag = "agent-portal",
-    summary = "查询代理佣金记录",
+    summary = "查询代理佣金记录（按创建时间倒序）",
+    params(
+        ("limit" = Option<u32>, Query, description = "返回条数，默认 100，最大 100"),
+        ("offset" = Option<u32>, Query, description = "偏移量，默认 0")
+    ),
     security(("bearerAuth" = [])),
     responses(
         (status = 200, description = "查询成功", body = AgentCommissionsResponse),
@@ -292,6 +314,10 @@ fn get_agent_convert_stats() {}
     path = "/agent/api/v1/sub-agents",
     tag = "agent-portal",
     summary = "查询当前代理的全部下级代理",
+    params(
+        ("limit" = Option<u32>, Query, description = "返回条数，默认 500，最大 500"),
+        ("offset" = Option<u32>, Query, description = "偏移量，默认 0")
+    ),
     security(("bearerAuth" = [])),
     responses(
         (status = 200, description = "查询成功", body = AgentSubAgentsResponse),
@@ -307,6 +333,10 @@ fn list_agent_sub_agents() {}
     path = "/agent/api/v1/team-tree",
     tag = "agent-portal",
     summary = "查询代理团队树",
+    params(
+        ("limit" = Option<u32>, Query, description = "返回条数，默认 500，最大 500"),
+        ("offset" = Option<u32>, Query, description = "偏移量，默认 0")
+    ),
     security(("bearerAuth" = [])),
     responses(
         (status = 200, description = "查询成功", body = AgentTeamTreeResponse),

@@ -9,15 +9,15 @@ use crate::{
         infrastructure,
         presentation::{
             AgentCommissionsResponse, AgentConvertStatsResponse, AgentDashboardResponse,
-            AgentInviteCodeResponse, AgentInviteCodesResponse, AgentMeResponse,
+            AgentInviteCodeResponse, AgentInviteCodesResponse, AgentListQuery, AgentMeResponse,
             AgentSubAgentsResponse, AgentTeamTreeResponse, AgentUsersResponse,
             CreateInviteCodeRequest, UpdateInviteCodeStatusRequest,
         },
         repository::{AgentAccessScope, AgentInviteCodeWrite},
         service::{
             agent_admin_id_from_subject, agent_commissions_response, agent_convert_stats_response,
-            generated_agent_invite_code, validate_agent_invite_code_status,
-            validate_agent_invite_code_usage_limit,
+            agent_dashboard_response, agent_list_page, generated_agent_invite_code,
+            validate_agent_invite_code_status, validate_agent_invite_code_usage_limit,
         },
     },
 };
@@ -45,7 +45,9 @@ pub(crate) async fn get_agent_dashboard(
     subject: &str,
 ) -> AppResult<AgentDashboardResponse> {
     let (pool, scope) = agent_context(mysql, subject).await?;
-    infrastructure::load_agent_dashboard(&pool, &scope).await
+    let counts = infrastructure::load_agent_dashboard_counts(&pool, &scope).await?;
+    let assets = infrastructure::load_agent_dashboard_asset_summaries(&pool, &scope).await?;
+    Ok(agent_dashboard_response(scope.agent_id, counts, assets))
 }
 
 pub(crate) async fn get_agent_convert_stats(
@@ -60,28 +62,34 @@ pub(crate) async fn get_agent_convert_stats(
 pub(crate) async fn list_agent_users(
     mysql: Option<Pool<MySql>>,
     subject: &str,
+    query: AgentListQuery,
 ) -> AppResult<AgentUsersResponse> {
     let (pool, scope) = agent_context(mysql, subject).await?;
-    let users = infrastructure::list_agent_team_users(&pool, &scope).await?;
+    let page = agent_list_page(query.limit, query.offset, 100);
+    let users = infrastructure::list_agent_team_users(&pool, &scope, page).await?;
     Ok(AgentUsersResponse { users })
 }
 
 pub(crate) async fn list_agent_sub_agents(
     mysql: Option<Pool<MySql>>,
     subject: &str,
+    query: AgentListQuery,
 ) -> AppResult<AgentSubAgentsResponse> {
     let (pool, scope) = agent_context(mysql, subject).await?;
-    let agents = infrastructure::list_agent_sub_agents(&pool, &scope).await?;
+    let page = agent_list_page(query.limit, query.offset, 500);
+    let agents = infrastructure::list_agent_sub_agents(&pool, &scope, page).await?;
     Ok(AgentSubAgentsResponse { agents })
 }
 
 pub(crate) async fn list_agent_team_tree(
     mysql: Option<Pool<MySql>>,
     subject: &str,
+    query: AgentListQuery,
 ) -> AppResult<AgentTeamTreeResponse> {
     let (pool, scope) = agent_context(mysql, subject).await?;
-    let agents = infrastructure::list_agent_sub_agents(&pool, &scope).await?;
-    let nodes = infrastructure::list_agent_team_tree_nodes(&pool, &scope).await?;
+    let page = agent_list_page(query.limit, query.offset, 500);
+    let agents = infrastructure::list_agent_sub_agents(&pool, &scope, page).await?;
+    let nodes = infrastructure::list_agent_team_tree_nodes(&pool, &scope, page).await?;
 
     Ok(AgentTeamTreeResponse {
         root_agent_id: scope.root_agent_id,
@@ -93,18 +101,22 @@ pub(crate) async fn list_agent_team_tree(
 pub(crate) async fn list_agent_commissions(
     mysql: Option<Pool<MySql>>,
     subject: &str,
+    query: AgentListQuery,
 ) -> AppResult<AgentCommissionsResponse> {
     let (pool, scope) = agent_context(mysql, subject).await?;
-    let commissions = infrastructure::list_agent_commissions(&pool, &scope).await?;
+    let page = agent_list_page(query.limit, query.offset, 100);
+    let commissions = infrastructure::list_agent_commissions(&pool, &scope, page).await?;
     Ok(agent_commissions_response(scope.agent_id, commissions))
 }
 
 pub(crate) async fn list_agent_invite_codes(
     mysql: Option<Pool<MySql>>,
     subject: &str,
+    query: AgentListQuery,
 ) -> AppResult<AgentInviteCodesResponse> {
     let (pool, scope) = agent_context(mysql, subject).await?;
-    let invite_codes = infrastructure::list_agent_invite_codes(&pool, scope.agent_id).await?;
+    let page = agent_list_page(query.limit, query.offset, 100);
+    let invite_codes = infrastructure::list_agent_invite_codes(&pool, scope.agent_id, page).await?;
     Ok(AgentInviteCodesResponse { invite_codes })
 }
 
