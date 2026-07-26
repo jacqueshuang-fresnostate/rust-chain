@@ -2,6 +2,27 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-07-27 02:22 - 发布手机原型二级页面公开版本 13
+
+- 完成内容：将消息中心、借贷、安全中心、共享输入状态及底部确认弹层重构固定为 Sites 版本 13，保持现有公开访问模式和生产地址；同步将二级页 Header、字段状态、危险确认、中文状态和 44px 触控约束写入移动端项目规范。
+- 修改文件：`mobile/sites-prototype/app/secondary-pages.tsx`、`mobile/sites-prototype/app/globals.css`、`mobile/sites-prototype/tests/rendered-html.test.mjs`、`.trellis/spec/mobile/index.md`、`.trellis/tasks/07-27-mobile-message-center-redesign/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run lint`、`npm test`（生产构建及 27/27 测试）、`git diff --check` 通过；390x844 浅色/深色实机检查消息中心、消息详情、安全中心、借贷金额错误态与设备撤销弹层正常，Escape 可关闭弹层且焦点恢复正确；1440x900 展示舞台与二级页无错位；公开生产地址复核三张重点页面及弹层交互均为新版，Sites Worker 最近 10 分钟无错误事件；精确提交 `ef10b1ac72b6251bff017d32c0cb36072e3e82bc` 已推送并部署为公开 Sites 版本 13。
+- 后续事项：当前仍为确定性本地交互原型；真实消息未读状态、贷款授信/还款、设备会话与安全设置需在后端提供对应接口后单独接入。
+
+## 2026-07-27 02:16 - 复核并修正手机原型二级页面重构
+
+- 完成内容：独立复核 39 条二级路由及消息、贷款、安全工作流；修复确认弹层在 `busy`/回调变化时错误恢复背景焦点的问题，补齐危险操作默认聚焦取消、完整焦点圈、背景滚动锁定和无可用按钮时的焦点兜底；补齐搜索、金额、抵押、TOTP、密码与复选框的聚焦/完成/错误/禁用/提示状态，避免无关工作流错误把金额字段标红；统一快捷充值和资金流水的中文状态文案；使贷款“当前可借”与预设及提交上限一致；修复无 Header action 路由仍显示空 44px 边框方块的问题，保留三列网格占位与头部对齐；删除同一最终 CSS 层内被覆盖的重复规则并补充聚焦回归断言。
+- 修改文件：`mobile/sites-prototype/app/secondary-pages.tsx`、`mobile/sites-prototype/app/globals.css`、`mobile/sites-prototype/tests/rendered-html.test.mjs`、`docs/superpowers/PROGRESS.md`
+- 验证结果：在 `mobile/sites-prototype` 执行 `npm run lint`、任务文件聚焦 `npx tsc --noEmit ... app/secondary-pages.tsx app/prototype-routes.ts`、`npm run build`、`npm test`（生产构建及 27/27 测试）均通过；根目录 `git diff --check` 与原始英文状态泄漏扫描通过。独立全量 `npx tsc --noEmit` 仍被既有 Cloudflare ambient 类型缺失（`cloudflare:workers`、`Fetcher`、`D1Database`）阻断，与本任务改动无关。
+- 后续事项：无。
+
+## 2026-07-27 02:07 - 重构手机原型二级页面工作台
+
+- 完成内容：升级全部 39 条二级路由的共享头部与操作表面，使用业务分组和路由上下文替代序号及原型占位文案；将消息中心重构为带总数/未读统计、五类筛选、仅看未读、全部已读、时间分组、完整站内详情和上下文去向的本地收件箱；将贷款页重构为借款能力、产品比较、金额预设、本息与到期日实时估算、信用/抵押要求及中文状态的进行中/历史订单；将安全中心重构为保护评分、优先检查项、独立 TOTP/密码/资金保护任务和可撤销本地设备会话；新增可复用无障碍移动底部确认对话框，接入资金票据提交、贷款取消/还款和设备撤销；统一二级页面输入聚焦/错误/禁用/单位/提示状态及按钮按下/忙碌/禁用状态，保持 Lucide-only、本地副作用和 44px 触控契约。
+- 修改文件：`mobile/sites-prototype/app/secondary-pages.tsx`、`mobile/sites-prototype/app/globals.css`、`mobile/sites-prototype/tests/rendered-html.test.mjs`、`docs/superpowers/PROGRESS.md`
+- 验证结果：在 `mobile/sites-prototype` 执行 `npm run lint` 通过；执行 `npm test` 通过，包含生产构建成功及 27/27 测试；`git diff --check` 与禁用调试标记、emoji、内联 SVG、旧 `SCENE`/`HIPPO PROTOTYPE`/`清空演示` 文案扫描通过。已启动本地开发服务器，但隔离的内置浏览器无法访问宿主机 `localhost`，因此未取得可信的 390px/宽桌面视觉截图和浏览器控制台结果。
+- 后续事项：在可访问宿主机本地端口的浏览器中补做 390x844、宽桌面、明暗主题、Escape/遮罩关闭对话框及控制台视觉验收。
+
 ## 2026-07-26 14:24 - 移除手机原型 Web3 钱包入口
 
 - 完成内容：移除首页“交易所 / Web3 钱包”产品模式切换栏及对应点击行为、文案和冗余样式；重新收紧首页顶部间距，使搜索栏直接成为全局头部后的第一个控件；保留六栏导航、现货/合约独立栏目以及资产、充值、提现、划转和快捷充值等交易所资金能力；新增 Web3 缺席契约与资金动作保留回归测试，并发布公开 Sites 版本 4。

@@ -1,0 +1,30 @@
+{
+  "id": "mobile-message-center-redesign",
+  "name": "mobile-message-center-redesign",
+  "title": "redesign mobile secondary pages",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "mobile/sites-prototype secondary surfaces",
+  "package": "mobile",
+  "priority": "P2",
+  "creator": "rust-chain",
+  "assignee": "rust-chain",
+  "createdAt": "2026-07-27",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "mobile/sites-prototype/app/secondary-pages.tsx",
+    "mobile/sites-prototype/app/globals.css",
+    "mobile/sites-prototype/tests/rendered-html.test.mjs"
+  ],
+  "notes": "",
+  "meta": {}
+}

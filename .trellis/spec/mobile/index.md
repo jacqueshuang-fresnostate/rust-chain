@@ -43,4 +43,34 @@ not rely on inherited `text-align` or the browser's default button layout.
 For shared control changes, verify the SVG and button bounding-box centers
 match on both axes and preserve a minimum 44x44 touch target.
 
+## Local Sites Prototype Surface Contract
+
+Apply this contract to `mobile/sites-prototype/` secondary routes:
+
+- Secondary headers use a business-domain label and route-specific context.
+  Keep the third grid track for alignment, but an absent action must set an
+  explicit empty state and remain visually hidden.
+- Shared fields expose visible `focus-within`, invalid, disabled, unit, hint,
+  and completion states without changing their dimensions. Validation styling
+  must belong to the field that failed, not to unrelated workflow errors.
+- Consequential local mutations use the shared bottom confirmation dialog.
+  It must provide `role="dialog"`, `aria-modal`, labelled title/summary,
+  overlay and Escape dismissal, a contained Tab loop, background scroll lock,
+  and focus restoration.
+- Dangerous confirmations initially focus the cancel action. Submitting or busy
+  state must not restore focus behind an open dialog.
+- Backend-style status values must be mapped to user-facing Chinese labels.
+  Preserve unknown values only where the mobile API localization contract
+  explicitly requires source visibility.
+- Use Lucide icons only, no emoji, and keep all interactive targets at least
+  44x44 CSS pixels.
+
+Run from `mobile/sites-prototype/` after shared surface changes:
+
+```bash
+npm run lint
+npm test
+git diff --check
+```
+
 **Language**: All code-spec documentation is written in English. User-facing mobile copy is defined in locale resources.
