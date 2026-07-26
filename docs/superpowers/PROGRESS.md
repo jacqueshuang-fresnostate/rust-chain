@@ -5758,3 +5758,17 @@
 - 修改文件：`web/src/admin/navigation.tsx(新)`、`web/src/admin/navigation.test.tsx(新)`、`web/src/layouts/{AdminLayout,PageHeader}.tsx`、`web/src/admin/resources/AdminResourcePage.tsx`、`web/src/admin/actions/AgentManagementPage.tsx`、`web/src/shared/DetailDrawer.tsx`、`web/src/styles.css`、`web/package.json`、`web/package-lock.json` 及 3 个测试文件
 - 验证结果：`npm run typecheck`、`npm run lint` 通过；`npm test -- --run` 34 文件 239/239 通过；焦点复核确认导航去重、风控组、防漂移测试引用真实表、登录页浅色化、详情按钮合并均落地。
 - 后续事项：无。
+
+## 2026-07-27 01:45 - 全仓功能完整度审计（113 项发现）
+
+- 完成内容：以 5 路只读审计（后端业务域 / 后台控制台 / 代理返佣 / 用户端 / 机械扫描）对全仓做功能完整度普查，产出 113 项带 file:line 证据的发现，按[缺失]/[风险]/[打磨]与用户影响分级。关键结论：核心资金链路实现质量高，短板集中在运营处置面（封禁、退款、网关管理）与故障隔离；确认 1 项高危安全漏洞（admin 注册接口无鉴权）、多项统计口径错误（仪表盘读死表恒为 0、现货挂单枚举错、代理仪表盘跨资产求和）。
+- 修改文件：无（只读审计）
+- 验证结果：所有发现均经 file:line 交叉核对；admin 注册无鉴权一项由编排方独立复核确认（routes.rs:52 无 extractor，对照 agent_register 主动拒绝）。
+- 后续事项：按 Tier1-4 分批修复，Tier1 见下条。
+
+## 2026-07-27 01:45 - Tier1 打磨：安全、正确性、运营能力、故障隔离
+
+- 完成内容：四条隔离通道并行修复最高优先级发现，各配对抗性验证。①安全与正确性（d82bab5）：admin 注册改为需现有管理员令牌（保留空表首启引导），仪表盘充提统计改读真实表 wallet_deposit_events/wallet_withdrawal_requests、现货挂单枚举修正为 pending/open/partially_filled、custody_status 由 wallet_chain_gateways 推导，代理端五个列表新增 limit/offset 且佣金改倒序（原 ASC LIMIT 100 导致新佣金永不可见），代理仪表盘改为按 payout_asset_id 分组（原跨资产求和无意义），新增迁移 0088 补结算扫描与 KPI 索引。②故障隔离（15e4886）：链上事件确定性失败落死信表并推进游标（原单条坏事件永久冻结该网络充提），瞬时错误仍停机重试；现货触发订单失败隔离到单笔（原一笔坏单每 tick 阻塞整批）；新增迁移 0089。③后台运营（6091a16）：新增提现审核页与充值记录页（后端早已就绪但零 UI）、401 改为共享单次刷新后重放并跳转登录、资源页新增 CSV 导出。④客户端（1e25f7e）：PC 二维码改本地生成（原将用户充值地址外发第三方）、移除移动端行情失败回退硬编码假价格改为显式错误态、PC/移动端新增提现记录列表。另修复对抗验证发现的两处显示缺陷（PC 金额 18 位尾零、移动端空盘口误报加载失败）。
+- 修改文件：`src/modules/{auth,agent,admin,wallet,spot,market}/**`、`src/workers/wallet_chain.rs`、`src/openapi*`、`migrations/{0088,0089}_*.sql`、`web/src/**`、`pc/src/**`、`mobile/src/**` 及对应测试
+- 验证结果：后端 34/34 集成测试二进制全绿（真实 MySQL/Redis 串行，451 用例）、`cargo test --lib` 171/171、`cargo fmt --check` 干净、`cargo check --all-targets` 零警告；web `npm run typecheck`/`lint` 通过、251/251 测试；pc 与 mobile type-check + build 通过。四通道对抗性验证 3 绿 1 提出 2 项显示缺陷（已修复并复验）。
+- 后续事项：Tier2 服务端分页（30+ 列表硬截断 100 条）、代理账号密码生命周期、用户封禁端点、风控引擎接线、贷款逾期处置。
