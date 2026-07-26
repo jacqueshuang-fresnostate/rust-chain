@@ -26,9 +26,20 @@ class ResizeObserverMock {
   disconnect() {}
 }
 
+function stubResizeObserver() {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver');
+  if (descriptor?.configurable === false) {
+    if ('writable' in descriptor && descriptor.writable) {
+      (globalThis as typeof globalThis & { ResizeObserver: typeof ResizeObserverMock }).ResizeObserver = ResizeObserverMock;
+    }
+    return;
+  }
+  vi.stubGlobal('ResizeObserver', ResizeObserverMock);
+}
+
 describe('MarketStrategyActions', () => {
   beforeEach(() => {
-    vi.stubGlobal('ResizeObserver', ResizeObserverMock);
+    stubResizeObserver();
     listAdminResourceMock.mockReset();
     apiRequestMock.mockReset();
     apiRequestMock.mockResolvedValue({});

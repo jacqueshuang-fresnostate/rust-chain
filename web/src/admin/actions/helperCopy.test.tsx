@@ -23,6 +23,17 @@ class ResizeObserverMock {
   disconnect() {}
 }
 
+function stubResizeObserver() {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver');
+  if (descriptor?.configurable === false) {
+    if ('writable' in descriptor && descriptor.writable) {
+      (globalThis as typeof globalThis & { ResizeObserver: typeof ResizeObserverMock }).ResizeObserver = ResizeObserverMock;
+    }
+    return;
+  }
+  vi.stubGlobal('ResizeObserver', ResizeObserverMock);
+}
+
 function semiSelectByLabel(label: string): HTMLElement {
   const labelNode = screen.getByText(label).closest('label') as HTMLElement | null;
   expect(labelNode).toBeInTheDocument();
@@ -33,7 +44,7 @@ function semiSelectByLabel(label: string): HTMLElement {
 
 describe('Admin action helper copy', () => {
   beforeEach(() => {
-    vi.stubGlobal('ResizeObserver', ResizeObserverMock);
+    stubResizeObserver();
     apiRequestMock.mockReset();
     apiRequestMock.mockImplementation(async (path) => {
       if (path === '/admin/api/v1/agents') {
@@ -128,7 +139,6 @@ describe('Admin action helper copy', () => {
       agent_code: 'AGT-NEW',
       admin_username: 'agent-new',
       admin_password: 'Password123!',
-      level: 1,
       reason: 'create agent'
     });
     expect(JSON.parse(String(createRequest?.body))).not.toHaveProperty('admin_password_hash');

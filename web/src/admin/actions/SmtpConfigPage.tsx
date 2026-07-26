@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { ApiError, apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
-import { QuillRichTextEditor, type RichTextBlock, type RichTextLeaf, type RichTextTextBlock, type RichTextValue } from '../../shared/QuillRichTextEditor';
+import { QuillRichTextEditor, type RichTextLeaf, type RichTextTextBlock, type RichTextValue } from '../../shared/QuillRichTextEditor';
 import { AdminCheckbox, AdminPasswordInput, AdminSelect, AdminTextInput } from '../../shared/SemiFormControls';
 import { StatusTag } from '../../shared/StatusTag';
 

@@ -5716,3 +5716,17 @@
 - 修改文件：`src/modules/{countries,kyc,loan,platform,prediction,quick_recharge,security}/mod.rs`（自同名 .rs 重命名）
 - 验证结果：`cargo check --all-targets` 无警告；`cargo test --lib` 165 通过；`cargo test --test backend_architecture` 4 通过。
 - 后续事项：无。
+
+## 2026-07-26 20:46 - 拆分 ResourceCreateActions 巨石并放开五类返佣业务
+
+- 完成内容：将 web/src/admin/resources/ResourceCreateActions.tsx（5794 行、42 个导出）按业务域拆分为 actions/ 下 14 个文件（shared 公共表单原语 + users/agents/wallet/loan/market/margin/secondsContract/convert/newCoins/earn/news/risk/system），resourceConfigs.tsx 改为按域直接导入并删除巨石文件；代理佣金规则去除仅 convert 可提交的限制，五种业务类型（convert/prediction/spot/margin/seconds_contract）均可创建，编辑弹窗产品类型改为只读（后端 PATCH 不支持修改），列表列与详情抽屉补齐五类中文标签。
+- 修改文件：`web/src/admin/resources/actions/`（新建 14 文件）、`web/src/admin/resources/resourceConfigs.tsx`、`web/src/admin/resources/resourceConfigs.test.tsx`、`web/src/shared/DetailDrawer.tsx`、删除 `web/src/admin/resources/ResourceCreateActions.tsx`；另修复存量红灯：`web/src/admin/actions/{KycManagementPage,SmtpConfigPage}.tsx` 未使用声明、`web/src/admin/actions/{ProductStatusActions,MarketStrategyActions,helperCopy}.test.tsx` ResizeObserver 存根与代理创建断言过期、resourceConfigs 杠杆列表断言多元素。
+- 验证结果：web/ 下 `npm run typecheck`、`npm run lint` 通过；`npm test -- --run` 32 文件 229/229 通过（HEAD 基线原有 10 个失败已一并修复；AdminLayout 导航用例在高负载下偶发超时，隔离运行稳定通过）。
+- 后续事项：代理佣金列表 source_type（“来源类型”列）仍显示原始英文值，如需中文化另行处理。
+
+## 2026-07-26 21:05 - 代理返佣批量结算（端点+自动结算 worker）与存量测试修复
+
+- 完成内容：新增 `POST /admin/api/v1/agent-commissions/batch-status` 批量结算/驳回端点（≤200 条、去重校验、逐条独立事务、单条失败不中断、按序返回逐条结果），从单条路径抽取共享用例 `apply_admin_agent_commission_status` 供单条/批量/worker 三方复用；新增自动结算 worker `agent_commission_settlement`（默认关闭，配置 `agent_commission_auto_settle_*` 四键：开关/间隔/最小账龄/批量上限，无打款支持记录跳过不改状态并有防热循环 guard）。另修复三处存量问题：convert pair 创建测试缺 `fee_rate` 字段、`UpdateConvertPairRequest` 的 `max_amount/target_max_amount` 无法用显式 null 清空（新增 `double_option` 反序列化器）、convert 列表测试对零值 BigDecimal 序列化（"0"）的错误断言。
+- 修改文件：`src/modules/admin/{application,presentation,routes,service}.rs`、`src/workers/{agent_commission_settlement.rs(新),mod.rs}`、`src/{config,main,openapi}.rs`、`tests/admin_routes.rs`、`tests/convert_routes.rs`、`tests/openapi_routes.rs`、`tests/unit_src/src_workers_agent_commission_settlement_tests.rs(新)`、`tests/unit_src/src_config_tests.rs`、28 个测试夹具补齐新配置字段
+- 验证结果：真实 MySQL 集成测试 `admin_routes` 串行 80/80、`convert_routes` 13/13、`agent_routes` 16/16、`cargo test --lib` 169/169、`backend_architecture` 4/4、`cargo fmt --check` 干净；批量结算 MySQL 用例断言钱包入账、ledger 幂等、跳过记录保持 pending、重复结算冲突。已知遗留：测试套件在并行+脏库下存在互扰（本次串行验证规避），另立后续事项。
+- 后续事项：管理端批量结算 UI（并入 #5 web 切片）；测试套件并行隔离性改进可另立任务。

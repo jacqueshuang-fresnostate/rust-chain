@@ -1464,7 +1464,7 @@ describe('resourceConfigs create actions', () => {
     });
     render(<ResourcePage config={resourceConfigs.marginProducts} />);
 
-    expect(await screen.findByText('逐仓', { selector: 'span' })).toBeInTheDocument();
+    expect(await screen.findAllByText('逐仓', { selector: 'span' })).toHaveLength(2);
     expect(screen.queryByText('逐仓 / 全仓', { selector: 'span' })).not.toBeInTheDocument();
     expect(screen.getByText('2.00x / 5.00x / 10.00x', { selector: 'span' })).toBeInTheDocument();
     expect(screen.getByText('3.00x / 7.00x', { selector: 'span' })).toBeInTheDocument();
@@ -2127,6 +2127,82 @@ describe('resourceConfigs create actions', () => {
     });
     expect(JSON.parse(String(updateRequest?.body))).not.toHaveProperty('agent_id');
     expect(JSON.parse(String(updateRequest?.body))).not.toHaveProperty('product_type');
+  });
+
+  it('accepts every configurable product type for agent commission rules', async () => {
+    const user = userEvent.setup();
+    const config = resourceConfigs.agentCommissionRules;
+    expect(config.columns.find((column) => column.key === 'product_type')).toMatchObject({
+      valueMap: { convert: '闪兑', prediction: '竞猜', spot: '现货', margin: '杠杆', seconds_contract: '秒合约' }
+    });
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/agent-commission-rules') {
+        const rows = [
+          {
+            id: 78,
+            agent_id: 42,
+            product_type: 'prediction',
+            commission_rate: '0.03000000',
+            status: 'active',
+            created_at: 1_775_027_600_000,
+            updated_at: 1_775_027_700_000
+          }
+        ];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
+      return { rows: [], raw: {} };
+    });
+
+    const { unmount } = render(<ResourcePage config={config} />);
+    expect(await screen.findByText('0.03')).toBeInTheDocument();
+    expect(screen.getByText('竞猜')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '添加佣金规则' }));
+    const createDialog = await findActionSheet('添加佣金规则');
+    await user.type(within(createDialog).getByLabelText('代理ID'), '42');
+    await user.type(within(createDialog).getByLabelText('佣金比例'), '0.05');
+    for (const productLabel of ['竞猜', '现货', '杠杆', '闪兑', '秒合约']) {
+      await selectSemiOption(user, createDialog, '产品类型', productLabel);
+      expect(within(createDialog).getByRole('button', { name: '提交添加佣金规则' })).toBeEnabled();
+    }
+    await user.click(within(createDialog).getByRole('button', { name: '提交添加佣金规则' }));
+    await user.type(screen.getByLabelText('操作原因'), 'create seconds contract rule');
+    await user.click(screen.getByRole('button', { name: '确认' }));
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/agent-commission-rules', expect.objectContaining({ method: 'POST' }));
+    });
+    const createRequest = apiRequestMock.mock.calls.find(([path, init]) => path === '/admin/api/v1/agent-commission-rules' && init && 'method' in init)?.[1];
+    expect(JSON.parse(String(createRequest?.body))).toEqual({
+      agent_id: 42,
+      product_type: 'seconds_contract',
+      commission_rate: '0.05',
+      status: 'active',
+      reason: 'create seconds contract rule'
+    });
+
+    unmount();
+    render(<ResourcePage config={config} />);
+    expect(await screen.findByText('0.03')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '修改' }));
+    const editDialog = await findActionSheet('修改佣金规则');
+    expect(semiSelectByLabel(editDialog, '产品类型')).toHaveTextContent('竞猜');
+    await user.clear(within(editDialog).getByLabelText('佣金比例'));
+    await user.type(within(editDialog).getByLabelText('佣金比例'), '0.09');
+    expect(within(editDialog).getByRole('button', { name: '提交修改' })).toBeEnabled();
+    await user.click(within(editDialog).getByRole('button', { name: '提交修改' }));
+    await user.type(screen.getByLabelText('操作原因'), 'update prediction rule');
+    await user.click(screen.getByRole('button', { name: '确认' }));
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/agent-commission-rules/78', expect.objectContaining({ method: 'PATCH' }));
+    });
+    const updateRequest = apiRequestMock.mock.calls.find(([path, init]) => path === '/admin/api/v1/agent-commission-rules/78' && init && 'method' in init)?.[1];
+    expect(JSON.parse(String(updateRequest?.body))).toEqual({
+      commission_rate: '0.09',
+      status: 'active',
+      reason: 'update prediction rule'
+    });
   });
 
   it('settles and rejects agent commissions from row actions with a dropdown status filter', async () => {

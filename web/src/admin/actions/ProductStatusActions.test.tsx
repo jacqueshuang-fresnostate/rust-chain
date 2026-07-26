@@ -21,6 +21,17 @@ class ResizeObserverMock {
   disconnect() {}
 }
 
+function stubResizeObserver() {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver');
+  if (descriptor?.configurable === false) {
+    if ('writable' in descriptor && descriptor.writable) {
+      (globalThis as typeof globalThis & { ResizeObserver: typeof ResizeObserverMock }).ResizeObserver = ResizeObserverMock;
+    }
+    return;
+  }
+  vi.stubGlobal('ResizeObserver', ResizeObserverMock);
+}
+
 function semiSelectByLabel(label: string): HTMLElement {
   const labelNode = screen.getByText(label).closest('label') as HTMLElement | null;
   expect(labelNode).toBeInTheDocument();
@@ -44,7 +55,7 @@ async function selectSemiOption(user: ReturnType<typeof userEvent.setup>, label:
 
 describe('ProductStatusActions', () => {
   beforeEach(() => {
-    vi.stubGlobal('ResizeObserver', ResizeObserverMock);
+    stubResizeObserver();
     apiRequestMock.mockReset();
     apiRequestMock.mockResolvedValue({});
   });

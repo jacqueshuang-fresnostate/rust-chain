@@ -268,7 +268,11 @@ const FIELD_VALUE_LABELS: Record<string, Record<string, string>> = {
     market: '市场汇率'
   },
   product_type: {
-    convert: '闪兑'
+    convert: '闪兑',
+    prediction: '竞猜',
+    spot: '现货',
+    margin: '杠杆',
+    seconds_contract: '秒合约'
   },
   result: {
     pending: '待处理',

@@ -125,11 +125,6 @@ const kycTabs = [
   { itemKey: 'reviews', tab: '人工审核', icon: <IconShield aria-hidden="true" /> }
 ];
 
-const submissionTypeOptions = [
-  { value: 'personal', label: '个人认证' },
-  { value: 'enterprise', label: '企业认证' }
-];
-
 const submissionTypeLabelMap = {
   personal: '个人认证',
   enterprise: '企业认证'

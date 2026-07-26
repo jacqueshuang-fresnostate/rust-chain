@@ -1,50 +1,27 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { AdminResourcePage, type AdminResourceColumn } from './AdminResourcePage';
+import { AgentCommissionRowActions, AgentCommissionRuleRowActions, CreateAgentCommissionRuleAction } from './actions/agents';
+import { ConvertOrderRowActions, ConvertPairRowActions, CreateConvertPairAction } from './actions/convert';
+import { CreateEarnCategoryAction, CreateEarnProductAction, EarnCategoryRowActions, EarnProductRowActions, EarnSubscriptionRowActions } from './actions/earn';
+import { CreateLoanProductAction, LoanOrderRowActions, LoanProductRowActions } from './actions/loan';
+import { CreateMarginPairAction, MarginLiquidationRowActions, MarginPositionRowActions, MarginProductRowActions } from './actions/margin';
+import { CreateMarketStrategyAction, CreateSpotPairAction, MarketPairRowActions, MarketStrategyRowActions, SpotOrderRowActions } from './actions/market';
+import { CreateNewCoinProjectAction } from './actions/newCoins';
+import { AdminNewsRowActions, CreateAdminNewsAction } from './actions/news';
+import { CreateRiskRuleAction, RiskRuleRowActions } from './actions/risk';
+import { CreateSecondsPairAction, SecondsOrderRowActions, SecondsProductRowActions } from './actions/secondsContract';
+import { CountryRowActions, CreateCountryAction } from './actions/system';
+import { CreateUserAction, UserRowActions } from './actions/users';
 import {
-  AgentCommissionRowActions,
-  AgentCommissionRuleRowActions,
-  AdminNewsRowActions,
   AssetRowActions,
-  ConvertOrderRowActions,
-  ConvertPairRowActions,
-  CountryRowActions,
-  CreateAgentCommissionRuleAction,
-  CreateAdminNewsAction,
   CreateAssetAction,
-  CreateConvertPairAction,
-  CreateCountryAction,
   CreateDepositAddressPoolAction,
   CreateDepositNetworkConfigAction,
-  CreateEarnCategoryAction,
-  CreateEarnProductAction,
-  CreateLoanProductAction,
-  CreateMarginPairAction,
-  CreateMarketStrategyAction,
-  CreateNewCoinProjectAction,
-  CreateRiskRuleAction,
-  CreateUserAction,
-  CreateSecondsPairAction,
-  CreateSpotPairAction,
   DepositAddressPoolRowActions,
   DepositNetworkConfigRowActions,
-  EarnCategoryRowActions,
-  EarnProductRowActions,
-  EarnSubscriptionRowActions,
-  LoanOrderRowActions,
-  LoanProductRowActions,
-  MarginLiquidationRowActions,
-  MarginPositionRowActions,
-  MarginProductRowActions,
-  MarketPairRowActions,
-  MarketStrategyRowActions,
-  QuickRechargeOrderRowActions,
-  RiskRuleRowActions,
-  SecondsOrderRowActions,
-  SecondsProductRowActions,
-  SpotOrderRowActions,
-  UserRowActions
-} from './ResourceCreateActions';
+  QuickRechargeOrderRowActions
+} from './actions/wallet';
 import { subscribeMarketTicker } from '../../api/marketTickerSocket';
 import type { FilterField } from '../../shared/FilterBar';
 import { AdminImageCell } from '../../shared/AdminImageUpload';
@@ -873,7 +850,7 @@ export const resourceConfigs = {
     columns: [
       { key: 'id', title: 'ID' },
       { key: 'agent_id', title: '代理ID' },
-      { key: 'product_type', title: '产品类型' },
+      { key: 'product_type', title: '产品类型', valueMap: { convert: '闪兑', prediction: '竞猜', spot: '现货', margin: '杠杆', seconds_contract: '秒合约' } },
       { key: 'commission_rate', title: '累计返佣比例', type: 'amount' },
       { key: 'status', title: '状态', type: 'status' },
       { key: 'created_at', title: '创建时间', type: 'timestamp' },
