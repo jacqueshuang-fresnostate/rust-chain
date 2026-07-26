@@ -6,6 +6,7 @@ use crate::{
     config::Settings,
     error::{AppError, AppResult},
     modules::{
+        risk::{RiskGuardInput, RiskScope, enforce_risk_control},
         security::{SecurityAction, SecurityVerificationInput, verify_user_security_action},
         wallet::{
             amount_fits_asset_precision, infrastructure,
@@ -220,6 +221,24 @@ pub(crate) async fn create_withdrawal_request(
         ensure_withdrawal_replay_matches(&existing, &request, &asset.fee)?;
         return withdrawal_request_response(existing);
     }
+    // 风控闸门先于安全校验和冻结执行，命中拒绝时不消耗验证凭据、也不产生任何资金状态。
+    // 提现用例不持有 Redis 句柄，限频规则在该路径不生效。
+    enforce_risk_control(
+        pool,
+        None,
+        RiskGuardInput {
+            user_id,
+            operation: "wallet.withdrawal.create",
+            scopes: vec![
+                RiskScope::new("user", user_id.to_string()),
+                RiskScope::new("asset", request.asset_symbol.clone()),
+            ],
+            amount: Some(request.amount.clone()),
+            price: None,
+            reference_price: None,
+        },
+    )
+    .await?;
     let security_method = verify_user_security_action(
         pool,
         settings,

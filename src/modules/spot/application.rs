@@ -10,6 +10,7 @@ use crate::{
             infrastructure::insert_agent_business_commission_in_tx,
             repository::AgentBusinessCommissionWrite, service::AGENT_COMMISSION_PRODUCT_SPOT,
         },
+        risk::{RiskGuardInput, RiskScope, enforce_risk_control},
         spot::MySqlSpotRepository,
         spot::{
             NewOrder, OrderSide, OrderStatus, OrderType, SpotOrder, SpotTrade, TradingPairRule,
@@ -181,6 +182,14 @@ pub(crate) async fn create_spot_order_with_events(
     let triggered_execution_price =
         resolve_spot_order_execution_price(redis, &request, &pair.pair_id).await?;
     let new_order = build_create_spot_order(user_id, &request, &pair)?;
+    enforce_spot_order_risk_control(
+        pool,
+        redis,
+        user_id,
+        &new_order,
+        triggered_execution_price.as_ref(),
+    )
+    .await?;
     let (inserted, is_new_order, fill_event) =
         if let Some(execution_price) = triggered_execution_price.as_ref() {
             match new_order.side {
@@ -237,6 +246,44 @@ pub(crate) async fn create_spot_order_with_events(
     )?;
 
     Ok(response)
+}
+
+/// 下单风控闸门必须在冻结与建单之前执行；市价单没有委托价时以服务端撮合价为准。
+async fn enforce_spot_order_risk_control(
+    pool: &Pool<MySql>,
+    redis: Option<&ConnectionManager>,
+    user_id: u64,
+    new_order: &NewOrder,
+    triggered_execution_price: Option<&BigDecimal>,
+) -> AppResult<()> {
+    let order_price = new_order
+        .price
+        .clone()
+        .or_else(|| triggered_execution_price.cloned());
+    let reference_price = match triggered_execution_price {
+        Some(price) => Some(price.clone()),
+        None => latest_spot_market_price(redis, &new_order.pair_id).await?,
+    };
+
+    enforce_risk_control(
+        pool,
+        redis,
+        RiskGuardInput {
+            user_id,
+            operation: "spot.order.create",
+            scopes: vec![
+                RiskScope::new("user", user_id.to_string()),
+                RiskScope::new("pair", new_order.pair_id.clone()),
+            ],
+            // 限额统一按计价币种口径折算，避免不同交易对的基础币数量不可比。
+            amount: order_price
+                .as_ref()
+                .map(|price| price * &new_order.quantity),
+            price: order_price,
+            reference_price,
+        },
+    )
+    .await
 }
 
 pub(crate) async fn cancel_user_spot_order(

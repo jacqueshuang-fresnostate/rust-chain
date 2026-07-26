@@ -1421,3 +1421,143 @@ async fn wallet_withdrawal_rejects_assets_with_withdraw_disabled() -> Result<(),
     cleanup_wallet_route_fixture(&pool, user_id, asset_id).await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn wallet_withdrawal_risk_rule_rejects_over_limit_amount_without_reserving_balance()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_user(&pool).await;
+    let (asset_id, _) = create_asset(&pool).await;
+    let asset_symbol: String = sqlx::query_scalar("SELECT symbol FROM assets WHERE id = ?")
+        .bind(asset_id)
+        .fetch_one(&pool)
+        .await?;
+    sqlx::query("UPDATE assets SET withdraw_fee = ? WHERE id = ?")
+        .bind(decimal("0.250000000000000000"))
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    let ref_id = format!("wallet-withdraw-risk-{}", Uuid::now_v7().simple());
+    seed_wallet(&pool, user_id, asset_id, &ref_id).await;
+    seed_fund_password(&pool, user_id, "123456").await;
+
+    let rule_id = sqlx::query(
+        r#"INSERT INTO risk_rules (rule_type, target_type, target_id, config_json, enabled)
+           VALUES ('amount_limit', 'asset', ?, ?, TRUE)"#,
+    )
+    .bind(&asset_symbol)
+    .bind(r#"{"operations":["wallet.withdrawal.create"],"max_amount":"1"}"#)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let app = routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+
+    let rejected = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/wallet/withdrawals")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "asset_symbol": asset_symbol.clone(),
+                        "network": "trc20",
+                        "address": "TWithdrawAddress",
+                        "amount": "2.000000000000000000",
+                        "fee": "0.100000000000000000",
+                        "idempotency_key": format!("withdraw-risk-{}", Uuid::now_v7().simple()),
+                        "fund_password": "123456"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let rejected_status = rejected.status();
+    let rejected_payload = body_json(rejected).await?;
+    assert_eq!(
+        rejected_status,
+        StatusCode::FORBIDDEN,
+        "payload: {rejected_payload}"
+    );
+    assert_eq!(rejected_payload["code"], "risk_amount_limit");
+    assert_eq!(rejected_payload["message"], "金额超出风控限额");
+
+    let (available, frozen): (BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available, frozen FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(available, decimal("12.500000000000000000"));
+    assert_eq!(frozen, decimal("1.500000000000000000"));
+    let withdrawal_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM wallet_withdrawal_requests WHERE user_id = ?")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(withdrawal_count, 0);
+
+    let (event_type, decision, risk_level, reason): (String, String, String, Option<String>) =
+        sqlx::query_as(
+            "SELECT event_type, decision, risk_level, reason FROM risk_events WHERE user_id = ?",
+        )
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(event_type, "wallet.withdrawal.create");
+    assert_eq!(decision, "reject");
+    assert_eq!(risk_level, "high");
+    assert_eq!(reason.as_deref(), Some("金额超出风控限额"));
+
+    // 规则停用后必须恢复接入风控之前的行为。
+    sqlx::query("UPDATE risk_rules SET enabled = FALSE WHERE id = ?")
+        .bind(rule_id)
+        .execute(&pool)
+        .await?;
+    let allowed = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/wallet/withdrawals")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "asset_symbol": asset_symbol,
+                        "network": "trc20",
+                        "address": "TWithdrawAddress",
+                        "amount": "2.000000000000000000",
+                        "fee": "0.100000000000000000",
+                        "idempotency_key": format!("withdraw-risk-allowed-{}", Uuid::now_v7().simple()),
+                        "fund_password": "123456"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let allowed_status = allowed.status();
+    let allowed_payload = body_json(allowed).await?;
+    assert_eq!(allowed_status, StatusCode::OK, "payload: {allowed_payload}");
+    assert_eq!(allowed_payload["total_reserved"], "2.250000000000000000");
+
+    sqlx::query("DELETE FROM risk_events WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM risk_rules WHERE id = ?")
+        .bind(rule_id)
+        .execute(&pool)
+        .await?;
+    cleanup_wallet_route_fixture(&pool, user_id, asset_id).await?;
+    Ok(())
+}

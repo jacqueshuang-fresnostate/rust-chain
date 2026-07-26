@@ -18,6 +18,26 @@ pub enum RiskReject {
     OperationNotAllowed,
 }
 
+impl RiskReject {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::RateLimit => "risk_rate_limit",
+            Self::AmountLimit => "risk_amount_limit",
+            Self::PriceDeviation => "risk_price_deviation",
+            Self::OperationNotAllowed => "risk_operation_not_allowed",
+        }
+    }
+
+    pub fn message(&self) -> &'static str {
+        match self {
+            Self::RateLimit => "操作过于频繁，请稍后再试",
+            Self::AmountLimit => "金额超出风控限额",
+            Self::PriceDeviation => "价格偏离市场价过大",
+            Self::OperationNotAllowed => "该操作已被风控规则限制",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RiskDecision {
     Approved,
@@ -30,48 +50,70 @@ impl RiskDecision {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// 后台配置出的风控阈值；`None` 表示该维度没有规则，必须放行。
+/// 操作维度用黑名单而非白名单：每条规则只拒绝自己列出的操作，叠加只会拒绝更多具名操作，
+/// 不会像白名单取交集那样把两条各自合理的规则合成"全面拒绝"。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RiskRules {
-    pub max_requests: u32,
-    pub max_amount: BigDecimal,
-    pub max_price_deviation_bps: u32,
-    pub allowed_operations: Vec<String>,
+    pub max_requests: Option<u32>,
+    pub max_amount: Option<BigDecimal>,
+    pub max_price_deviation_bps: Option<u32>,
+    pub blocked_operations: Option<Vec<String>>,
 }
 
 impl DomainLayer for RiskRules {}
 
+impl RiskRules {
+    pub fn is_unrestricted(&self) -> bool {
+        self.max_requests.is_none()
+            && self.max_amount.is_none()
+            && self.max_price_deviation_bps.is_none()
+            && self.blocked_operations.is_none()
+    }
+}
+
+/// 待评估的业务请求；`None` 表示该路径无法诚实取到对应事实，相应校验必须跳过。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RiskRequest {
     pub operation: String,
-    pub request_count: u32,
-    pub amount: BigDecimal,
-    pub price: BigDecimal,
-    pub reference_price: BigDecimal,
+    pub request_count: Option<u32>,
+    pub amount: Option<BigDecimal>,
+    pub price: Option<BigDecimal>,
+    pub reference_price: Option<BigDecimal>,
 }
 
 impl DomainLayer for RiskRequest {}
 
 pub fn evaluate_risk(request: &RiskRequest, rules: &RiskRules) -> RiskDecision {
-    if request.request_count > rules.max_requests {
+    // 被禁用的操作优先拒绝，拒绝原因才不会被限频等次要维度盖掉。
+    if let Some(blocked_operations) = rules.blocked_operations.as_ref()
+        && blocked_operations
+            .iter()
+            .any(|operation| operation.eq_ignore_ascii_case(&request.operation))
+    {
+        return RiskDecision::Rejected(RiskReject::OperationNotAllowed);
+    }
+
+    if let (Some(max_requests), Some(request_count)) = (rules.max_requests, request.request_count)
+        && request_count > max_requests
+    {
         return RiskDecision::Rejected(RiskReject::RateLimit);
     }
 
-    if request.amount > rules.max_amount {
+    if let (Some(max_amount), Some(amount)) = (rules.max_amount.as_ref(), request.amount.as_ref())
+        && amount > max_amount
+    {
         return RiskDecision::Rejected(RiskReject::AmountLimit);
     }
 
     // 价格偏离按基准价折算为 bps，避免不同币种价格精度影响风控阈值。
-    if price_deviation_bps(&request.price, &request.reference_price) > rules.max_price_deviation_bps
+    if let (Some(max_deviation_bps), Some(price), Some(reference_price)) = (
+        rules.max_price_deviation_bps,
+        request.price.as_ref(),
+        request.reference_price.as_ref(),
+    ) && price_deviation_bps(price, reference_price) > BigDecimal::from(max_deviation_bps)
     {
         return RiskDecision::Rejected(RiskReject::PriceDeviation);
-    }
-
-    if !rules
-        .allowed_operations
-        .iter()
-        .any(|operation| operation == &request.operation)
-    {
-        return RiskDecision::Rejected(RiskReject::OperationNotAllowed);
     }
 
     RiskDecision::Approved

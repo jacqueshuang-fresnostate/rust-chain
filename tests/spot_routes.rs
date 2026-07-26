@@ -7463,6 +7463,146 @@ async fn cleanup_fill_fixture(
     Ok(())
 }
 
+#[tokio::test]
+async fn spot_order_risk_rule_rejects_price_deviation_without_freezing_wallet()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_user(&pool).await;
+    let (base_asset, base_symbol) = create_asset(&pool, "SB").await;
+    let (quote_asset, quote_symbol) = create_asset(&pool, "SQ").await;
+    let pair_symbol =
+        create_pair(&pool, base_asset, quote_asset, &base_symbol, &quote_symbol).await;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(quote_asset)
+        .bind(decimal("100.000000000000000000"))
+        .execute(&pool)
+        .await?;
+    cache_market_ticker(&redis, &pair_symbol, "20.00").await?;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let app = routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_redis(redis.clone()),
+    );
+
+    // 未配置风控规则时，下单行为与接入风控之前完全一致。
+    let allowed = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/spot/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"pair_id":"{pair_symbol}","side":"buy","order_type":"limit","price":"10.00","quantity":"2.0000","idempotency_key":"spot-risk-allowed-{}"}}"#,
+                    Uuid::now_v7().simple()
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let allowed_status = allowed.status();
+    let allowed_payload = body_json(allowed).await?;
+    assert_eq!(allowed_status, StatusCode::OK, "payload: {allowed_payload}");
+    let order_id = allowed_payload["id"].as_str().unwrap().to_owned();
+
+    let rule_id = sqlx::query(
+        r#"INSERT INTO risk_rules (rule_type, target_type, target_id, config_json, enabled)
+           VALUES ('price_deviation', 'pair', ?, ?, TRUE)"#,
+    )
+    .bind(&pair_symbol)
+    .bind(r#"{"max_price_deviation_bps":100}"#)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+
+    let rejected = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/spot/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"pair_id":"{pair_symbol}","side":"buy","order_type":"limit","price":"10.00","quantity":"2.0000","idempotency_key":"spot-risk-rejected-{}"}}"#,
+                    Uuid::now_v7().simple()
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let rejected_status = rejected.status();
+    let rejected_payload = body_json(rejected).await?;
+    assert_eq!(
+        rejected_status,
+        StatusCode::FORBIDDEN,
+        "payload: {rejected_payload}"
+    );
+    assert_eq!(rejected_payload["code"], "risk_price_deviation");
+    assert_eq!(rejected_payload["message"], "价格偏离市场价过大");
+
+    let (available, frozen): (BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available, frozen FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        available.normalized(),
+        decimal("80.000000000000000000").normalized()
+    );
+    assert_eq!(
+        frozen.normalized(),
+        decimal("20.000000000000000000").normalized()
+    );
+    let (order_count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM spot_orders WHERE user_id = ?")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(order_count, 1);
+
+    let (event_type, decision, payload_json): (String, String, Value) = sqlx::query_as(
+        "SELECT event_type, decision, payload_json FROM risk_events WHERE user_id = ?",
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(event_type, "spot.order.create");
+    assert_eq!(decision, "reject");
+    assert_eq!(payload_json["request"]["price"], "10.00");
+    assert_eq!(payload_json["request"]["reference_price"], "20.00");
+    assert_eq!(payload_json["rules"]["max_price_deviation_bps"], 100);
+
+    sqlx::query("DELETE FROM risk_events WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM risk_rules WHERE id = ?")
+        .bind(rule_id)
+        .execute(&pool)
+        .await?;
+    cleanup_fixture(
+        &pool,
+        user_id,
+        base_asset,
+        quote_asset,
+        &pair_symbol,
+        &order_id,
+    )
+    .await?;
+    Ok(())
+}
+
 async fn cleanup_fixture(
     pool: &MySqlPool,
     user_id: u64,
