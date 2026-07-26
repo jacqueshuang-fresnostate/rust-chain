@@ -5814,3 +5814,10 @@
 - 修改文件：`mobile/sites-prototype/app/page.tsx`、`mobile/sites-prototype/app/secondary-pages.tsx`、`mobile/sites-prototype/app/globals.css`、`mobile/sites-prototype/tests/rendered-html.test.mjs`、`.trellis/spec/mobile/index.md`、`.trellis/tasks/07-27-mobile-seconds-nav-header/`、`docs/superpowers/PROGRESS.md`
 - 验证结果：`npm run lint`、`npm run build`、`npm test`（32/32）、`git diff --check` 通过；源码及构建 CSS 均无禁用颜色；320x844、390x844、448x900 浏览器检查无页面横向溢出，七个导航入口可见，秒合约金额/派彩/确认/记录闭环通过；根与二级 Header 滚动命中均保持最上层；全量 `npx tsc --noEmit` 仍被既有 Cloudflare ambient 类型缺失阻断，任务范围严格类型检查通过；原型提交 `41a46742e0075cb1f98345de92a88b8f2b8e65c6` 已推送并部署为公开 Sites 版本 15，生产地址 `https://hippo-mobile-signal-2026.ikuboy.chatgpt.site/` 复验通过。
 - 后续事项：秒合约仍为确定性本地交互原型，不连接真实账户、不提交真实订单或资金；接入后端真实秒合约接口需另立任务。
+
+## 2026-07-27 05:00 - 自主批次：PC 新币记录、事件死信运维、PC 杠杆回读
+
+- 完成内容：在 Tier3 三条通道并行执行期间，于无归属冲突的路径继续补齐审计缺口。①PC 新币记录页（8ffb2a7）：PC 此前只接入 10 个新币用户接口中的 3 个，用户资金锁在申购里却无处查看派发、上市认购与解锁；新增个人中心「新币记录」页覆盖四类记录并支持解锁手续费支付与释放，与 mobile 拉平；同时修复两个长期红灯的 pc 测试（断言扫描源码文本，在 authStorage 重构与余额计算属性化后失配，行为本身未回归）。②事件死信运维（165f5c3）：死信事件此前仅在仪表盘显示计数且永远无法恢复（发布循环只取 pending），新增按状态查询 outbox/inbox 记录与死信重排端点，重排会重置重试状态、写带必填原因的审计日志，且仅允许死信重排以免误重发正常事件。③PC 杠杆回读与快捷充值订单（89cd49f）：合约下单表单只 PATCH 杠杆/仓位模式从不回读，而适配层把 usdtBuyLeverage 硬编码为 1，刷新后界面显示本地默认值而服务端可能是另一倍数——用户可能以未曾见过的倍数下单；改为挂载与切换交易对时读取 GET /margin/settings/:id，失败则保留本地默认不阻塞下单；快捷充值补上早已存在却无人调用的订单列表接口，支付跳转返回后可见状态。
+- 修改文件：`pc/src/views/User/LaunchpadOrders.vue(新)`、`pc/src/views/User/{Recharge,UserLayout}.vue`、`pc/src/components/trade/ContractOrderForm.vue`、`pc/src/api/{activity,contract}.ts`、`pc/src/router/index.ts`、`pc/src/i18n/index.ts`、`pc/tests/{guest-auth-states,second-options-transfer}.test.ts`、`src/modules/events/{infrastructure,presentation,routes}.rs`、`tests/events_outbox.rs`
+- 验证结果：pc `npm run type-check`、`npm run build` 通过，`node --test` 83/83（修复前 81/83）；`cargo check --all-targets` 零错误、`cargo fmt` 干净；真实 MySQL `cargo test --test events_outbox` 12/12，含死信重排后状态与重试计数复位、重复重排返回 409、审计日志落库的断言。
+- 后续事项：死信运维尚无后台界面（web/src/admin/resources 本轮由分页通道占用），待通道合并后补;预测市场结算单事务无上限、秒合约缺行情无限重试两项因模块被并行通道占用而未动。
