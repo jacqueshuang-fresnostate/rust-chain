@@ -179,7 +179,9 @@ function mockEmptyResource() {
 
 describe('resourceConfigs create actions', () => {
   it('adds an email filter beside every user ID filter', () => {
+    const emailUnsupportedByBackend = new Set(['walletWithdrawals', 'walletDeposits']);
     const configsWithoutEmail = Object.entries(resourceConfigs)
+      .filter(([key]) => !emailUnsupportedByBackend.has(key))
       .filter(([, config]) => config.filters?.some((filter) => filter.key === 'user_id'))
       .filter(([, config]) => !config.filters?.some((filter) => filter.key === 'email'))
       .map(([key]) => key);
@@ -3945,5 +3947,201 @@ describe('resourceConfigs create actions', () => {
     expect(resourceConfigs.spotTrades.columns).toEqual(
       expect.arrayContaining([expect.objectContaining({ key: 'fee', title: '手续费', type: 'amount' })])
     );
+  });
+});
+
+describe('wallet review resources', () => {
+  beforeEach(() => {
+    stubResizeObserver();
+    stubMatchMedia();
+    vi.stubGlobal('WebSocket', undefined);
+    Object.defineProperty(window, 'WebSocket', { configurable: true, value: undefined });
+    listAdminResourceMock.mockReset();
+    apiRequestMock.mockReset();
+    mockEmptyResource();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const withdrawalRow = (id: number, status: string) => ({
+    id,
+    user_id: 6,
+    asset_symbol: 'USDT',
+    network: 'eth',
+    address: `0xabc${id}`,
+    amount: '100.000000000000000000',
+    fee: '1.000000000000000000',
+    total_reserved: '101.000000000000000000',
+    status,
+    tx_hash: null,
+    review_reason: null,
+    failure_reason: null,
+    created_at: 1_700_000_000_000
+  });
+
+  function mockWithdrawals(rows: ReturnType<typeof withdrawalRow>[]) {
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) =>
+      endpoint === '/admin/api/v1/wallet/withdrawals' ? { rows, raw: { [responseKey]: rows } } : { rows: [], raw: {} }
+    );
+  }
+
+  it('registers withdrawal review and deposit records with backend-supported filters', () => {
+    expect(resourceConfigs.walletWithdrawals.endpoint).toBe('/admin/api/v1/wallet/withdrawals');
+    expect(resourceConfigs.walletWithdrawals.responseKey).toBe('withdrawals');
+    expect(resourceConfigs.walletWithdrawals.filters?.map((filter) => filter.key)).toEqual(['user_id', 'status', 'limit']);
+    expectFilter(resourceConfigs.walletWithdrawals, 'status', {
+      label: '状态',
+      type: 'select',
+      options: expect.arrayContaining([
+        { label: '待审核', value: 'pending_review' },
+        { label: '已广播', value: 'broadcasted' },
+        { label: '人工处理', value: 'manual_review' }
+      ])
+    });
+    expect(resourceConfigs.walletWithdrawals.columns.find((column) => column.key === 'status')).toMatchObject({
+      valueMap: expect.objectContaining({ pending_review: '待审核', confirmed: '已到账', failed: '已失败' })
+    });
+    expect(resourceConfigs.walletDeposits.endpoint).toBe('/admin/api/v1/wallet/deposits');
+    expect(resourceConfigs.walletDeposits.responseKey).toBe('deposits');
+    expect(resourceConfigs.walletDeposits.filters?.map((filter) => filter.key)).toEqual(['user_id', 'limit']);
+    expect(resourceConfigs.walletDeposits.columns.find((column) => column.key === 'status')).toMatchObject({
+      valueMap: expect.objectContaining({ credited: '已入账', reversed: '已冲正' })
+    });
+  });
+
+  it('opts finance-heavy resources into CSV export of loaded rows', () => {
+    expect(resourceConfigs.walletLedger.csvFileName).toBe('钱包流水.csv');
+    expect(resourceConfigs.agentCommissions.csvFileName).toBe('代理佣金.csv');
+    expect(resourceConfigs.spotOrders.csvFileName).toBe('现货订单.csv');
+  });
+
+  it('renders only legal withdrawal transitions per status', async () => {
+    const rows = [
+      withdrawalRow(1, 'pending_review'),
+      withdrawalRow(2, 'approved'),
+      withdrawalRow(3, 'broadcasting'),
+      withdrawalRow(4, 'broadcasted'),
+      withdrawalRow(5, 'manual_review'),
+      withdrawalRow(6, 'confirmed'),
+      withdrawalRow(7, 'rejected'),
+      withdrawalRow(8, 'failed')
+    ];
+    mockWithdrawals(rows);
+
+    render(<ResourcePage config={resourceConfigs.walletWithdrawals} />);
+    await screen.findByText('0xabc1');
+
+    const actionsByStatus: Record<string, string[]> = {
+      pending_review: ['通过', '驳回'],
+      approved: ['驳回', '标记广播', '标记失败'],
+      broadcasting: ['标记广播', '标记失败'],
+      broadcasted: ['确认到账'],
+      manual_review: ['确认到账'],
+      confirmed: [],
+      rejected: [],
+      failed: []
+    };
+    const transitionButtons = ['通过', '驳回', '标记广播', '确认到账', '标记失败'];
+    rows.forEach((row) => {
+      const rowNode = screen.getByText(`0xabc${row.id}`).closest('tr') as HTMLElement;
+      const expected = actionsByStatus[row.status];
+      transitionButtons.forEach((name) => {
+        const button = within(rowNode).queryByRole('button', { name });
+        if (expected.includes(name)) {
+          expect(button, `${row.status} 应提供 ${name}`).toBeInTheDocument();
+        } else {
+          expect(button, `${row.status} 不应提供 ${name}`).not.toBeInTheDocument();
+        }
+      });
+      expect(within(rowNode).getByRole('button', { name: '查看详情' })).toBeInTheDocument();
+    });
+  });
+
+  it('submits approve and broadcast transitions with their required inputs', async () => {
+    const user = userEvent.setup();
+    mockWithdrawals([withdrawalRow(11, 'pending_review'), withdrawalRow(12, 'approved')]);
+    apiRequestMock.mockResolvedValue({});
+
+    render(<ResourcePage config={resourceConfigs.walletWithdrawals} />);
+    await screen.findByText('0xabc11');
+
+    const pendingRow = screen.getByText('0xabc11').closest('tr') as HTMLElement;
+    await user.click(within(pendingRow).getByRole('button', { name: '通过' }));
+    await user.type(screen.getByLabelText('操作原因'), 'approve withdrawal');
+    await user.click(screen.getByRole('button', { name: '确认' }));
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/wallet/withdrawals/11/approve', {
+        method: 'POST',
+        body: JSON.stringify({ reason: 'approve withdrawal' })
+      });
+    });
+
+    const approvedRow = screen.getByText('0xabc12').closest('tr') as HTMLElement;
+    await user.click(within(approvedRow).getByRole('button', { name: '标记广播' }));
+    const confirmBroadcast = await screen.findByRole('button', { name: '确认广播' });
+    expect(confirmBroadcast).toBeDisabled();
+    await user.type(screen.getByLabelText('交易哈希'), '0xhash12');
+    await user.type(screen.getByLabelText('区块高度'), '100');
+    await user.type(screen.getByLabelText('确认数'), '3');
+    await user.click(screen.getByRole('button', { name: '确认广播' }));
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/wallet/withdrawals/12/broadcast', {
+        method: 'POST',
+        body: JSON.stringify({ tx_hash: '0xhash12', block_height: 100, confirmations: 3 })
+      });
+    });
+  });
+
+  it('confirms broadcasted withdrawals behind a popconfirm', async () => {
+    const user = userEvent.setup();
+    mockWithdrawals([withdrawalRow(31, 'broadcasted')]);
+    apiRequestMock.mockResolvedValue({});
+
+    render(<ResourcePage config={resourceConfigs.walletWithdrawals} />);
+    await screen.findByText('0xabc31');
+
+    await user.click(screen.getByRole('button', { name: '确认到账' }));
+    const confirmButtons = await screen.findAllByRole('button', { name: '确认到账' });
+    await user.click(confirmButtons.at(-1)!);
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/wallet/withdrawals/31/confirm', {
+        method: 'POST',
+        body: JSON.stringify({})
+      });
+    });
+  });
+
+  it('reverses credited deposits behind a confirmed reason modal', async () => {
+    const user = userEvent.setup();
+    const rows = [
+      { id: 21, user_id: 6, asset_symbol: 'USDT', network: 'eth', address: '0xdep21', amount: '50', tx_hash: '0xtx21', confirmations: 12, required_confirmations: 12, status: 'credited', created_at: 1_700_000_000_000 },
+      { id: 22, user_id: 6, asset_symbol: 'USDT', network: 'eth', address: '0xdep22', amount: '50', tx_hash: '0xtx22', confirmations: 12, required_confirmations: 12, status: 'reversed', created_at: 1_700_000_000_000 }
+    ];
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) =>
+      endpoint === '/admin/api/v1/wallet/deposits' ? { rows, raw: { [responseKey]: rows } } : { rows: [], raw: {} }
+    );
+    apiRequestMock.mockResolvedValue({});
+
+    render(<ResourcePage config={resourceConfigs.walletDeposits} />);
+    await screen.findByText('0xdep21');
+
+    const reversedRow = screen.getByText('0xdep22').closest('tr') as HTMLElement;
+    expect(within(reversedRow).queryByRole('button', { name: '冲正' })).not.toBeInTheDocument();
+
+    const creditedRow = screen.getByText('0xdep21').closest('tr') as HTMLElement;
+    await user.click(within(creditedRow).getByRole('button', { name: '冲正' }));
+    await user.type(screen.getByLabelText('操作原因'), 'chain reorg');
+    await user.click(screen.getByRole('button', { name: '确认' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/wallet/deposits/21/reverse', {
+        method: 'POST',
+        body: JSON.stringify({ reason: 'chain reorg' })
+      });
+      expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/wallet/deposits')).toHaveLength(2);
+    });
   });
 });

@@ -29,6 +29,8 @@ export const adminRoutes: RouteObject[] = [
   { path: 'wallet/deposit-address-pool', element: <ResourcePage config={resourceConfigs.depositAddressPool} /> },
   { path: 'wallet/quick-recharge', element: <QuickRechargeConfigPage /> },
   { path: 'wallet/quick-recharge-orders', element: <ResourcePage config={resourceConfigs.quickRechargeOrders} /> },
+  { path: 'wallet/deposits', element: <ResourcePage config={resourceConfigs.walletDeposits} /> },
+  { path: 'wallet/withdrawals', element: <ResourcePage config={resourceConfigs.walletWithdrawals} /> },
   { path: 'wallet/ledger', element: <ResourcePage config={resourceConfigs.walletLedger} /> },
   { path: 'loan/products', element: <ResourcePage config={resourceConfigs.loanProducts} /> },
   { path: 'loan/orders', element: <ResourcePage config={resourceConfigs.loanOrders} /> },

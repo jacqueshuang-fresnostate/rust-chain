@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -26,6 +26,23 @@ describe('RequireAdmin', () => {
     ]);
 
     render(<RouterProvider router={router} />);
+
+    expect(await screen.findByText('登录')).toBeInTheDocument();
+  });
+
+  it('redirects to login when the session is cleared after render', async () => {
+    authStore.setSession({ accessToken: 'a', refreshToken: 'r', scope: 'admin', subject: 'admin:1' });
+    const router = createMemoryRouter([
+      { path: '/', element: <RequireAdmin>Admin content</RequireAdmin> },
+      { path: '/login', element: <div>登录</div> }
+    ]);
+
+    render(<RouterProvider router={router} />);
+    expect(screen.getByText('Admin content')).toBeInTheDocument();
+
+    act(() => {
+      authStore.clearSession();
+    });
 
     expect(await screen.findByText('登录')).toBeInTheDocument();
   });

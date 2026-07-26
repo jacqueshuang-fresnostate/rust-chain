@@ -1,11 +1,11 @@
-import type { ReactNode } from 'react';
+import { type ReactNode, useSyncExternalStore } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 
 import { authStore } from './authStore';
 
 export function RequireAdmin({ children }: { children: ReactNode }) {
   const location = useLocation();
-  const session = authStore.getSession();
+  const session = useSyncExternalStore(authStore.subscribe, () => authStore.getSession());
 
   if (!session) {
     if (authStore.getSession('agent')) {

@@ -20,7 +20,9 @@ import {
   CreateDepositNetworkConfigAction,
   DepositAddressPoolRowActions,
   DepositNetworkConfigRowActions,
-  QuickRechargeOrderRowActions
+  DepositRowActions,
+  QuickRechargeOrderRowActions,
+  WithdrawalRowActions
 } from './actions/wallet';
 import { subscribeMarketTicker } from '../../api/marketTickerSocket';
 import type { FilterField } from '../../shared/FilterBar';
@@ -34,6 +36,7 @@ export type ResourceConfig = {
   actions?: React.ComponentProps<typeof AdminResourcePage<ApiRecord>>['actions'];
   batchActions?: React.ComponentProps<typeof AdminResourcePage<ApiRecord>>['batchActions'];
   columns: Array<AdminResourceColumn<ApiRecord>>;
+  csvFileName?: string;
   endpoint: string;
   filters?: FilterField[];
   responseKey: string;
@@ -88,6 +91,22 @@ const depositAddressStatusLabels = {
   available: '可用',
   assigned: '已分配',
   disabled: '禁用'
+};
+const walletWithdrawalStatusLabels = {
+  pending_review: '待审核',
+  approved: '已通过',
+  broadcasting: '广播中',
+  broadcasted: '已广播',
+  confirmed: '已到账',
+  manual_review: '人工处理',
+  rejected: '已驳回',
+  failed: '已失败'
+};
+const walletDepositStatusLabels = {
+  observed: '已观察',
+  credited: '已入账',
+  manual_review: '人工处理',
+  reversed: '已冲正'
 };
 const quickRechargeStatusLabels = {
   created: '已创建',
@@ -229,6 +248,12 @@ const quickRechargeStatusFilter: FilterField = {
   label: '状态',
   type: 'select',
   options: Object.entries(quickRechargeStatusLabels).map(([value, label]) => ({ label, value }))
+};
+const walletWithdrawalStatusFilter: FilterField = {
+  key: 'status',
+  label: '状态',
+  type: 'select',
+  options: Object.entries(walletWithdrawalStatusLabels).map(([value, label]) => ({ label, value }))
 };
 const walletLedgerAssetFilter: FilterField = { key: 'asset_id', label: '资产', optionLabelKey: 'asset_symbol', type: 'select', optionsFromRows: true };
 const walletLedgerChangeTypeFilter: FilterField = {
@@ -645,8 +670,55 @@ export const resourceConfigs = {
       { key: 'created_at', title: '创建时间', type: 'timestamp' }
     ]
   },
+  walletWithdrawals: {
+    title: '提现审核',
+    endpoint: '/admin/api/v1/wallet/withdrawals',
+    responseKey: 'withdrawals',
+    filters: [userFilter, walletWithdrawalStatusFilter, limitFilter],
+    rowActions: (record, helpers) => <WithdrawalRowActions helpers={helpers} record={record} />,
+    showJsonAction: false,
+    columns: [
+      { key: 'id', title: '提现ID' },
+      { key: 'user_id', title: '用户ID' },
+      { key: 'asset_symbol', title: '资产' },
+      { key: 'network', title: '网络' },
+      { key: 'address', title: '提现地址' },
+      { key: 'amount', title: '提现金额', type: 'amount' },
+      { key: 'fee', title: '手续费', type: 'amount' },
+      { key: 'total_reserved', title: '冻结总额', type: 'amount' },
+      { key: 'status', title: '状态', valueMap: walletWithdrawalStatusLabels },
+      { key: 'tx_hash', title: '交易哈希' },
+      { key: 'review_reason', title: '审核原因' },
+      { key: 'failure_reason', title: '失败原因' },
+      { key: 'created_at', title: '申请时间', type: 'timestamp' }
+    ]
+  },
+  walletDeposits: {
+    title: '充值记录',
+    endpoint: '/admin/api/v1/wallet/deposits',
+    responseKey: 'deposits',
+    filters: [userFilter, limitFilter],
+    rowActions: (record, helpers) => <DepositRowActions helpers={helpers} record={record} />,
+    showJsonAction: false,
+    columns: [
+      { key: 'id', title: '充值ID' },
+      { key: 'user_id', title: '用户ID' },
+      { key: 'asset_symbol', title: '资产' },
+      { key: 'network', title: '网络', valueMap: depositNetworkLabels },
+      { key: 'address', title: '充值地址' },
+      { key: 'amount', title: '充值金额', type: 'amount' },
+      { key: 'tx_hash', title: '交易哈希' },
+      { key: 'confirmations', title: '确认数' },
+      { key: 'required_confirmations', title: '所需确认数' },
+      { key: 'status', title: '状态', valueMap: walletDepositStatusLabels },
+      { key: 'failure_reason', title: '异常原因' },
+      { key: 'credited_at', title: '入账时间', type: 'timestamp' },
+      { key: 'created_at', title: '创建时间', type: 'timestamp' }
+    ]
+  },
   walletLedger: {
     title: '钱包流水',
+    csvFileName: '钱包流水.csv',
     endpoint: '/admin/api/v1/wallet/ledger',
     responseKey: 'ledger',
     filters: [userFilter, emailFilter, walletLedgerAssetFilter, walletLedgerChangeTypeFilter, walletLedgerRefTypeFilter, limitFilter],
@@ -830,6 +902,7 @@ export const resourceConfigs = {
   },
   agentCommissions: {
     title: '代理佣金',
+    csvFileName: '代理佣金.csv',
     endpoint: '/admin/api/v1/agent-commissions',
     responseKey: 'commissions',
     filters: [userFilter, emailFilter, { key: 'agent_id', label: '代理ID' }, agentCommissionStatusFilter, limitFilter],
@@ -948,6 +1021,7 @@ export const resourceConfigs = {
   },
   spotOrders: {
     title: '现货订单',
+    csvFileName: '现货订单.csv',
     endpoint: '/admin/api/v1/spot/orders',
     responseKey: 'orders',
     filters: [userFilter, emailFilter, spotOrderPairFilter, spotOrderStatusFilter, limitFilter],

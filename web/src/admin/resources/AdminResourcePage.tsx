@@ -1,4 +1,4 @@
-import { IconEyeOpened, IconList, IconRefresh } from '@douyinfe/semi-icons';
+import { IconDownload, IconEyeOpened, IconList, IconRefresh } from '@douyinfe/semi-icons';
 import { Button, Card, Space, Switch, Tooltip, Typography } from '@douyinfe/semi-ui';
 import type { ColumnProps, RowSelectionProps } from '@douyinfe/semi-ui/lib/es/table';
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
@@ -45,6 +45,7 @@ type AdminResourcePageProps<T extends ApiRecord> = {
   actions?: ReactNode | ((helpers: AdminResourceActionHelpers) => ReactNode);
   batchActions?: AdminResourceBatchActions<T>;
   columns: Array<AdminResourceColumn<T>>;
+  csvFileName?: string;
   endpoint: string;
   filters?: FilterField[];
   responseKey: string;
@@ -96,6 +97,37 @@ function renderCell<T extends ApiRecord>(column: AdminResourceColumn<T>, value: 
   return <span>{formatAdminDisplayValue(column.key, value) ?? String(value)}</span>;
 }
 
+function csvCell(value: unknown): string {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  const text = typeof value === 'object' ? JSON.stringify(value) : String(value);
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+export function toCsv<T extends ApiRecord>(columns: Array<AdminResourceColumn<T>>, rows: T[]): string {
+  const header = columns.map((column) => csvCell(column.title)).join(',');
+  const lines = rows.map((row) =>
+    columns
+      .map((column) => {
+        const value = row[column.key];
+        const mapped = value === null || value === undefined ? undefined : column.valueMap?.[String(value)];
+        return csvCell(mapped ?? value);
+      })
+      .join(',')
+  );
+  return [header, ...lines].join('\n');
+}
+
+function downloadCsv(fileName: string, csv: string) {
+  const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 function mergeDetailFieldMeta(base: DetailDrawerFieldMeta, next?: DetailDrawerFieldMeta): DetailDrawerFieldMeta {
   return {
     assets: { ...base.assets, ...next?.assets },
@@ -109,6 +141,7 @@ export function AdminResourcePage<T extends ApiRecord>({
   actions,
   batchActions,
   columns,
+  csvFileName,
   endpoint,
   filters,
   responseKey,
@@ -329,6 +362,18 @@ export function AdminResourcePage<T extends ApiRecord>({
           <Space className="admin-resource-toolbar-actions" spacing={10} wrap>
             {renderedActions}
             {renderedBatchActions}
+            {csvFileName ? (
+              <Tooltip content="以 CSV 导出当前已加载数据（非全量）">
+                <Button
+                  disabled={rows.length === 0}
+                  icon={<IconDownload aria-hidden="true" />}
+                  onClick={() => downloadCsv(csvFileName, toCsv(columns, rows))}
+                  theme="borderless"
+                >
+                  导出已加载数据
+                </Button>
+              </Tooltip>
+            ) : null}
             <Tooltip content="重新加载当前资源">
               <Button icon={<IconRefresh aria-hidden="true" />} loading={loading} onClick={reload} theme="borderless">
                 刷新

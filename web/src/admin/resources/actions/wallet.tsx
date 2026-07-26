@@ -1,5 +1,5 @@
 import { IconUpload } from '@douyinfe/semi-icons';
-import { Button, Card, Col, Row, SideSheet, Space, Toast, Typography, Upload } from '@douyinfe/semi-ui';
+import { Button, Card, Col, Modal, Popconfirm, Row, SideSheet, Space, Toast, Typography, Upload } from '@douyinfe/semi-ui';
 import type { customRequestArgs } from '@douyinfe/semi-ui/lib/es/upload';
 import { useEffect, useState } from 'react';
 
@@ -1193,6 +1193,124 @@ export function DepositAddressPoolRowActions({ helpers, record }: { helpers: Row
                 method: 'POST',
                 body: JSON.stringify({ reason })
               })
+            );
+            helpers.reload();
+          }}
+        />
+      ) : null}
+    </>
+  );
+}
+
+const withdrawalAdminEndpoint = '/admin/api/v1/wallet/withdrawals';
+
+function BroadcastWithdrawalAction({ helpers, withdrawalId }: { helpers: RowActionHelpers; withdrawalId: string }) {
+  const [values, setValues] = useState({ txHash: '', blockHeight: '', confirmations: '' });
+  const [submitting, setSubmitting] = useState(false);
+  const [visible, setVisible] = useState(false);
+  const submittable =
+    Boolean(values.txHash.trim()) &&
+    (!values.blockHeight.trim() || isNonNegativeIntegerInput(values.blockHeight)) &&
+    (!values.confirmations.trim() || isNonNegativeIntegerInput(values.confirmations));
+
+  async function handleConfirm() {
+    setSubmitting(true);
+    try {
+      await submitAction('标记提现广播', () =>
+        apiRequest(`${withdrawalAdminEndpoint}/${withdrawalId}/broadcast`, {
+          method: 'POST',
+          body: JSON.stringify({
+            tx_hash: requiredString(values.txHash, '交易哈希'),
+            block_height: values.blockHeight.trim() ? requiredNonNegativeInteger(values.blockHeight, '区块高度') : undefined,
+            confirmations: values.confirmations.trim() ? requiredNonNegativeInteger(values.confirmations, '确认数') : undefined
+          })
+        })
+      );
+      setVisible(false);
+      helpers.reload();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <>
+      <Button disabled={!withdrawalId} onClick={() => setVisible(true)} size="small" theme="borderless">
+        标记广播
+      </Button>
+      <Modal
+        confirmLoading={submitting}
+        motion={false}
+        okButtonProps={{ 'aria-label': '确认广播', disabled: !submittable }}
+        okText="确认广播"
+        onCancel={() => setVisible(false)}
+        onOk={handleConfirm}
+        title="标记链上广播"
+        visible={visible}
+      >
+        <div className="admin-action-form">
+          <label>交易哈希<AdminTextInput ariaLabel="交易哈希" value={values.txHash} onChange={(txHash) => setValues({ ...values, txHash })} placeholder="0x..." /></label>
+          <label>区块高度<AdminTextInput ariaLabel="区块高度" value={values.blockHeight} onChange={(blockHeight) => setValues({ ...values, blockHeight })} placeholder="选填" /></label>
+          <label>确认数<AdminTextInput ariaLabel="确认数" value={values.confirmations} onChange={(confirmations) => setValues({ ...values, confirmations })} placeholder="选填，默认 0" /></label>
+        </div>
+      </Modal>
+    </>
+  );
+}
+
+export function WithdrawalRowActions({ helpers, record }: { helpers: RowActionHelpers; record: ApiRecord }) {
+  const withdrawalId = recordString(record, 'id');
+  const status = recordString(record, 'status');
+  const transition = async (label: string, action: string, body: Record<string, unknown>) => {
+    await submitAction(label, () =>
+      apiRequest(`${withdrawalAdminEndpoint}/${withdrawalId}/${action}`, { method: 'POST', body: JSON.stringify(body) })
+    );
+    helpers.reload();
+  };
+
+  return (
+    <>
+      <Button disabled={!withdrawalId} onClick={() => helpers.openDetail({ title: '提现详情', data: record })} size="small" theme="borderless">
+        查看详情
+      </Button>
+      {status === 'pending_review' ? (
+        <ConfirmAction actionText="通过" disabled={!withdrawalId} title="确认通过提现审核" onConfirm={(reason) => transition('通过提现审核', 'approve', { reason })} />
+      ) : null}
+      {status === 'pending_review' || status === 'approved' ? (
+        <ConfirmAction actionText="驳回" disabled={!withdrawalId} title="确认驳回提现" onConfirm={(reason) => transition('驳回提现', 'reject', { reason })} />
+      ) : null}
+      {status === 'approved' || status === 'broadcasting' ? <BroadcastWithdrawalAction helpers={helpers} withdrawalId={withdrawalId} /> : null}
+      {status === 'broadcasted' || status === 'manual_review' ? (
+        <Popconfirm content="确认该提现已在链上到账？" okText="确认到账" onConfirm={() => transition('确认提现到账', 'confirm', {})} title="确认提现到账">
+          <Button disabled={!withdrawalId} size="small" theme="borderless">
+            确认到账
+          </Button>
+        </Popconfirm>
+      ) : null}
+      {status === 'approved' || status === 'broadcasting' ? (
+        <ConfirmAction actionText="标记失败" disabled={!withdrawalId} title="确认标记提现失败" onConfirm={(reason) => transition('标记提现失败', 'fail', { reason })} />
+      ) : null}
+    </>
+  );
+}
+
+export function DepositRowActions({ helpers, record }: { helpers: RowActionHelpers; record: ApiRecord }) {
+  const depositId = recordString(record, 'id');
+  const status = recordString(record, 'status');
+
+  return (
+    <>
+      <Button disabled={!depositId} onClick={() => helpers.openDetail({ title: '充值详情', data: record })} size="small" theme="borderless">
+        查看详情
+      </Button>
+      {status === 'credited' ? (
+        <ConfirmAction
+          actionText="冲正"
+          disabled={!depositId}
+          title="确认冲正充值"
+          onConfirm={async (reason) => {
+            await submitAction('冲正充值', () =>
+              apiRequest(`/admin/api/v1/wallet/deposits/${depositId}/reverse`, { method: 'POST', body: JSON.stringify({ reason }) })
             );
             helpers.reload();
           }}

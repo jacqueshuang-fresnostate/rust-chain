@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AdminResourcePage, type AdminResourceColumn } from './AdminResourcePage';
+import { AdminResourcePage, toCsv, type AdminResourceColumn } from './AdminResourcePage';
 import { listAdminResource } from '../../api/adminResources';
 
 vi.mock('../../api/adminResources', () => ({
@@ -509,6 +509,84 @@ describe('AdminResourcePage', () => {
     await waitFor(() => {
       expect(listAdminResourceMock).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it('serializes CSV rows with headers, value maps, JSON cells, and escaping', () => {
+    type CsvRecord = { id: number; name: string; market_type?: string | null; metadata?: object };
+    const csv = toCsv<CsvRecord>(
+      [
+        { key: 'id', title: 'ID' },
+        { key: 'name', title: '名称' },
+        { key: 'market_type', title: '市场类型', valueMap: { external: '外部行情' } },
+        { key: 'metadata', title: '元数据' }
+      ],
+      [
+        { id: 1, name: '含,逗号', market_type: 'external', metadata: { a: 1 } },
+        { id: 2, name: '引"号', market_type: null }
+      ]
+    );
+
+    expect(csv).toBe(['ID,名称,市场类型,元数据', '1,"含,逗号",外部行情,"{""a"":1}"', '2,"引""号",,'].join('\n'));
+  });
+
+  it('exports loaded rows as CSV from the toolbar when opted in', async () => {
+    const user = userEvent.setup();
+    const createObjectURL = vi.fn<(blob: Blob) => string>(() => 'blob:csv');
+    const revokeObjectURL = vi.fn();
+    Object.assign(URL, { createObjectURL, revokeObjectURL });
+    let downloadedFileName = '';
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      downloadedFileName = this.download;
+    });
+    listAdminResourceMock.mockResolvedValue({
+      rows: [{ id: 7, name: '导出行', enabled: true, amount: '12.5000', created_at: 1_735_732_800_000 }],
+      raw: { items: [] }
+    });
+
+    render(
+      <AdminResourcePage<TestRecord>
+        title="管理员资源"
+        endpoint="/admin/accounts"
+        responseKey="items"
+        columns={columns}
+        csvFileName="管理员资源.csv"
+      />
+    );
+
+    await screen.findByText('导出行');
+    await user.click(screen.getByRole('button', { name: '导出已加载数据' }));
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    const bytes = new Uint8Array(await createObjectURL.mock.calls[0][0].arrayBuffer());
+    expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    expect(new TextDecoder().decode(bytes.slice(3))).toBe('ID,名称,状态,数量,创建时间\n7,导出行,true,12.5000,1735732800000');
+    expect(downloadedFileName).toBe('管理员资源.csv');
+    expect(anchorClick).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:csv');
+    anchorClick.mockRestore();
+  });
+
+  it('hides the CSV export button without opt-in and disables it without rows', async () => {
+    listAdminResourceMock.mockResolvedValue({ rows: [], raw: { items: [] } });
+
+    const { unmount } = render(
+      <AdminResourcePage<TestRecord> title="管理员资源" endpoint="/admin/accounts" responseKey="items" columns={columns} />
+    );
+    await screen.findByText('暂无数据');
+    expect(screen.queryByRole('button', { name: '导出已加载数据' })).not.toBeInTheDocument();
+    unmount();
+
+    render(
+      <AdminResourcePage<TestRecord>
+        title="管理员资源"
+        endpoint="/admin/accounts"
+        responseKey="items"
+        columns={columns}
+        csvFileName="管理员资源.csv"
+      />
+    );
+    await screen.findByText('暂无数据');
+    expect(screen.getByRole('button', { name: '导出已加载数据' })).toBeDisabled();
   });
 
   it('can hide the default detail action while custom actions still open details', async () => {
