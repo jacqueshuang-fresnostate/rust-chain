@@ -1281,6 +1281,83 @@ pub(crate) async fn mark_withdrawal_manual_review_in_tx(
     load_withdrawal_by_id_in_tx(tx, withdrawal_id).await
 }
 
+#[derive(Debug)]
+pub struct NewWalletChainEventDeadLetter<'a> {
+    pub gateway_id: u64,
+    pub network: &'a str,
+    pub event_kind: &'a str,
+    pub dedup_key: String,
+    pub request_id: Option<String>,
+    pub tx_hash: Option<String>,
+    pub event_index: Option<u32>,
+    pub payload_json: String,
+    pub failure_reason: String,
+}
+
+pub async fn insert_wallet_chain_event_dead_letter(
+    pool: &Pool<MySql>,
+    record: &NewWalletChainEventDeadLetter<'_>,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"INSERT INTO wallet_chain_event_dead_letters
+              (gateway_id, network, event_kind, dedup_key, request_id, tx_hash, event_index,
+               payload_json, failure_reason)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             payload_json = VALUES(payload_json),
+             failure_reason = VALUES(failure_reason)"#,
+    )
+    .bind(record.gateway_id)
+    .bind(record.network)
+    .bind(record.event_kind)
+    .bind(&record.dedup_key)
+    .bind(&record.request_id)
+    .bind(&record.tx_hash)
+    .bind(record.event_index)
+    .bind(&record.payload_json)
+    .bind(&record.failure_reason)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct WalletChainEventDeadLetterRecord {
+    pub id: u64,
+    pub gateway_id: u64,
+    pub network: String,
+    pub event_kind: String,
+    pub request_id: Option<String>,
+    pub tx_hash: Option<String>,
+    pub event_index: Option<u32>,
+    pub payload_json: SqlxJson<serde_json::Value>,
+    pub failure_reason: String,
+    pub created_at: DateTime<Utc>,
+}
+
+pub async fn list_wallet_chain_event_dead_letters(
+    pool: &Pool<MySql>,
+    network: Option<&str>,
+    limit: u32,
+) -> AppResult<Vec<WalletChainEventDeadLetterRecord>> {
+    let mut builder = QueryBuilder::<MySql>::new(
+        r#"SELECT id, gateway_id, network, event_kind, request_id, tx_hash, event_index,
+                  payload_json, failure_reason, created_at
+           FROM wallet_chain_event_dead_letters"#,
+    );
+    if let Some(network) = network {
+        builder.push(" WHERE network = ");
+        builder.push_bind(network);
+    }
+    builder.push(" ORDER BY id DESC LIMIT ");
+    builder.push_bind(i64::from(limit.clamp(1, 500)));
+    builder
+        .build_query_as::<WalletChainEventDeadLetterRecord>()
+        .fetch_all(pool)
+        .await
+        .map_err(AppError::from)
+}
+
 pub(crate) async fn observe_deposit_event(
     pool: &Pool<MySql>,
     request: &ObserveDepositRequest,

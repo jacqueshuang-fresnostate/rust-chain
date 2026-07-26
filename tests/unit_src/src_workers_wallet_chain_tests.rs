@@ -1,7 +1,8 @@
 use super::{
-    WithdrawalReceiptStatus, normalize_gateway_identifier, normalize_withdrawal_receipt_status,
-    retry_backoff_seconds,
+    WithdrawalReceiptStatus, is_transient_chain_event_error, normalize_gateway_identifier,
+    normalize_withdrawal_receipt_status, retry_backoff_seconds,
 };
+use crate::error::AppError;
 
 #[test]
 fn wallet_chain_retry_backoff_is_bounded() {
@@ -22,6 +23,23 @@ fn wallet_chain_receipt_status_is_strict_and_case_insensitive() {
         WithdrawalReceiptStatus::Failed
     );
     assert!(normalize_withdrawal_receipt_status("pending").is_err());
+}
+
+#[test]
+fn wallet_chain_transient_errors_halt_while_deterministic_rejections_dead_letter() {
+    assert!(is_transient_chain_event_error(&AppError::Database(
+        sqlx::Error::PoolClosed
+    )));
+    assert!(is_transient_chain_event_error(&AppError::Internal(
+        "boom".to_owned()
+    )));
+    assert!(!is_transient_chain_event_error(&AppError::NotFound));
+    assert!(!is_transient_chain_event_error(&AppError::Validation(
+        "deposit amount is below minimum".to_owned()
+    )));
+    assert!(!is_transient_chain_event_error(&AppError::Conflict(
+        "asset mismatch".to_owned()
+    )));
 }
 
 #[test]

@@ -1568,19 +1568,14 @@ async fn spot_triggered_order_keeps_user_order_and_reservation_when_system_inven
     let created = body_json(response).await?;
     let order_id = created["id"].as_str().unwrap().to_owned();
 
-    let error = execute_triggered_spot_limit_orders_with_hub(
+    let filled = execute_triggered_spot_limit_orders_with_hub(
         &pool,
         &compact_market_symbol,
         &decimal("9.000000000000000000"),
         None,
     )
-    .await
-    .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("insufficient system spot liquidity inventory")
-    );
+    .await?;
+    assert_eq!(filled, 0);
     let (status, filled_quantity): (String, BigDecimal) =
         sqlx::query_as("SELECT status, filled_quantity FROM spot_orders WHERE id = ?")
             .bind(&order_id)
@@ -1613,6 +1608,113 @@ async fn spot_triggered_order_keeps_user_order_and_reservation_when_system_inven
         quote_asset,
         &pair_symbol,
         &order_id,
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn spot_triggered_batch_skips_failing_order_and_fills_healthy_order()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_user(&pool).await;
+    let (base_asset, base_symbol) = create_asset(&pool, "HB").await;
+    let (quote_asset, quote_symbol) = create_asset(&pool, "HQ").await;
+    let pair_symbol =
+        create_pair(&pool, base_asset, quote_asset, &base_symbol, &quote_symbol).await;
+    let compact_market_symbol = format!("{base_symbol}{quote_symbol}");
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(quote_asset)
+        .bind(decimal("100.000000000000000000"))
+        .execute(&pool)
+        .await?;
+    // 系统库存只够低价单成交，高价单确定性失败。
+    fund_system_spot_liquidity(&pool, base_asset, &decimal("2.000000000000000000")).await?;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let app = routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let mut order_ids = Vec::new();
+    for (price, quantity) in [
+        ("10.000000000000000000", "5.0000"),
+        ("9.500000000000000000", "2.0000"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/spot/orders")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"pair_id":"{pair_symbol}","side":"buy","order_type":"limit","price":"{price}","quantity":"{quantity}","idempotency_key":"spot-batch-isolation-{}"}}"#,
+                        Uuid::now_v7().simple()
+                    )))
+                    .unwrap(),
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        let created = body_json(response).await?;
+        order_ids.push(created["id"].as_str().unwrap().to_owned());
+    }
+    let failing_order_id = order_ids[0].clone();
+    let healthy_order_id = order_ids[1].clone();
+
+    let filled = execute_triggered_spot_limit_orders_with_hub(
+        &pool,
+        &compact_market_symbol,
+        &decimal("9.000000000000000000"),
+        None,
+    )
+    .await?;
+    assert_eq!(filled, 1);
+
+    let (failing_status, failing_filled): (String, BigDecimal) =
+        sqlx::query_as("SELECT status, filled_quantity FROM spot_orders WHERE id = ?")
+            .bind(&failing_order_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(failing_status, "pending");
+    assert_eq!(failing_filled, decimal("0.000000000000000000"));
+    let (healthy_status, healthy_filled): (String, BigDecimal) =
+        sqlx::query_as("SELECT status, filled_quantity FROM spot_orders WHERE id = ?")
+            .bind(&healthy_order_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(healthy_status, "filled");
+    assert_eq!(
+        healthy_filled.normalized(),
+        decimal("2.000000000000000000").normalized()
+    );
+    let (frozen,): (BigDecimal,) =
+        sqlx::query_as("SELECT frozen FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(quote_asset)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(
+        frozen.normalized(),
+        decimal("50.000000000000000000").normalized()
+    );
+
+    sqlx::query("DELETE FROM wallet_ledger WHERE ref_type = 'spot_order' AND ref_id = ?")
+        .bind(&failing_order_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM spot_orders WHERE id = ?")
+        .bind(failing_order_id.parse::<u64>().unwrap())
+        .execute(&pool)
+        .await?;
+    cleanup_fixture(
+        &pool,
+        user_id,
+        base_asset,
+        quote_asset,
+        &pair_symbol,
+        &healthy_order_id,
     )
     .await?;
     Ok(())

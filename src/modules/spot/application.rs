@@ -485,42 +485,49 @@ pub(crate) async fn execute_triggered_spot_limit_orders(
 
     let order_ids = triggered_limit_buy_order_ids(pool, pair_symbol, market_price, 20).await?;
     for order_id in order_ids {
-        if let Some((order, counterparty_order, trade)) =
-            execute_triggered_limit_buy_order(pool, order_id, market_price).await?
-        {
-            fills.push((order, counterparty_order, trade, "buy"));
-        }
+        let result = execute_triggered_limit_buy_order(pool, order_id, market_price).await;
+        collect_triggered_spot_fill(&mut fills, result, "buy", order_id, pair_symbol);
     }
 
     let order_ids = triggered_limit_sell_order_ids(pool, pair_symbol, market_price, 20).await?;
     for order_id in order_ids {
-        if let Some((order, counterparty_order, trade)) =
-            execute_triggered_limit_sell_order(pool, order_id, market_price).await?
-        {
-            fills.push((order, counterparty_order, trade, "sell"));
-        }
+        let result = execute_triggered_limit_sell_order(pool, order_id, market_price).await;
+        collect_triggered_spot_fill(&mut fills, result, "sell", order_id, pair_symbol);
     }
 
     let order_ids = triggered_stop_limit_buy_order_ids(pool, pair_symbol, market_price, 20).await?;
     for order_id in order_ids {
-        if let Some((order, counterparty_order, trade)) =
-            execute_triggered_stop_limit_buy_order(pool, order_id, market_price).await?
-        {
-            fills.push((order, counterparty_order, trade, "buy"));
-        }
+        let result = execute_triggered_stop_limit_buy_order(pool, order_id, market_price).await;
+        collect_triggered_spot_fill(&mut fills, result, "buy", order_id, pair_symbol);
     }
 
     let order_ids =
         triggered_stop_limit_sell_order_ids(pool, pair_symbol, market_price, 20).await?;
     for order_id in order_ids {
-        if let Some((order, counterparty_order, trade)) =
-            execute_triggered_stop_limit_sell_order(pool, order_id, market_price).await?
-        {
-            fills.push((order, counterparty_order, trade, "sell"));
-        }
+        let result = execute_triggered_stop_limit_sell_order(pool, order_id, market_price).await;
+        collect_triggered_spot_fill(&mut fills, result, "sell", order_id, pair_symbol);
     }
 
     Ok(fills)
+}
+
+/// 单个触发订单失败只回滚并跳过自身，防止头部坏单阻塞同批其他订单撮合。
+fn collect_triggered_spot_fill(
+    fills: &mut Vec<(SpotOrder, SpotOrder, SpotTrade, &'static str)>,
+    result: AppResult<Option<(SpotOrder, SpotOrder, SpotTrade)>>,
+    side: &'static str,
+    order_id: u64,
+    pair_symbol: &str,
+) {
+    match result {
+        Ok(Some((order, counterparty_order, trade))) => {
+            fills.push((order, counterparty_order, trade, side));
+        }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(order_id, pair_symbol, side, %error, "触发订单撮合失败，跳过该订单");
+        }
+    }
 }
 
 /// 在外部触发价格驱动撮合时复用的应用服务入口。

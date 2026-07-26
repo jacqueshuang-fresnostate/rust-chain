@@ -4,14 +4,15 @@ use crate::{
     modules::wallet::{
         application::{normalize_deposit_network, observe_deposit},
         infrastructure::{
-            HttpWalletChainGateway, confirm_withdrawal_in_tx,
-            load_withdrawal_by_gateway_request_for_update, mark_withdrawal_broadcasted_in_tx,
-            mark_withdrawal_manual_review_in_tx, release_withdrawal_in_tx,
-            update_withdrawal_chain_progress_in_tx,
+            HttpWalletChainGateway, NewWalletChainEventDeadLetter, confirm_withdrawal_in_tx,
+            insert_wallet_chain_event_dead_letter, load_withdrawal_by_gateway_request_for_update,
+            mark_withdrawal_broadcasted_in_tx, mark_withdrawal_manual_review_in_tx,
+            release_withdrawal_in_tx, update_withdrawal_chain_progress_in_tx,
         },
         presentation::ObserveDepositRequest,
         repository::{
-            WalletChainBroadcastCommand, WalletChainGateway, WalletChainWithdrawalObservation,
+            WalletChainBroadcastCommand, WalletChainDepositObservation, WalletChainGateway,
+            WalletChainWithdrawalObservation,
         },
     },
     state::AppState,
@@ -51,6 +52,7 @@ pub struct WalletChainWorkerSummary {
     pub withdrawal_manual_review: u32,
     pub deposit_observed: u32,
     pub gateway_failed: u32,
+    pub event_dead_lettered: u32,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -192,58 +194,52 @@ pub async fn run_once_with_gateway(
         };
         let expected_network = normalize_deposit_network(&chain_gateway.network)?;
         let mut page_failed = false;
-        for observation in page.withdrawals {
+        for observation in &page.withdrawals {
             if let Err(error) =
                 process_withdrawal_observation(pool, &expected_network, observation, &mut summary)
                     .await
             {
-                page_failed = true;
-                summary.gateway_failed += 1;
-                warn!(network = %expected_network, %error, "链上提现回执处理失败");
-                break;
+                // 基础设施类错误停页重试以免丢事件；确定性拒绝进死信并越过，避免毒性事件卡死游标。
+                if is_transient_chain_event_error(&error) {
+                    page_failed = true;
+                    summary.gateway_failed += 1;
+                    warn!(
+                        network = %expected_network,
+                        request_id = %observation.request_id,
+                        %error,
+                        "链上提现回执处理失败，停页等待重试"
+                    );
+                    break;
+                }
+                dead_letter_withdrawal_observation(pool, &chain_gateway, observation, &error)
+                    .await?;
+                summary.event_dead_lettered += 1;
             }
         }
         if page_failed {
             continue;
         }
-        for observation in page.deposits {
-            let observed_network = normalize_deposit_network(&observation.network)?;
-            if observed_network != expected_network {
-                page_failed = true;
-                summary.gateway_failed += 1;
-                warn!(
-                    configured_network = %expected_network,
-                    observed_network = %observed_network,
-                    tx_hash = %observation.tx_hash,
-                    "链事件网络与网关配置不一致"
-                );
-                break;
+        for observation in &page.deposits {
+            match process_deposit_observation(pool, &expected_network, observation).await {
+                Ok(()) => summary.deposit_observed += 1,
+                Err(error) if is_transient_chain_event_error(&error) => {
+                    page_failed = true;
+                    summary.gateway_failed += 1;
+                    warn!(
+                        network = %expected_network,
+                        tx_hash = %observation.tx_hash,
+                        event_index = observation.event_index,
+                        %error,
+                        "链上充值事件处理失败，停页等待重试"
+                    );
+                    break;
+                }
+                Err(error) => {
+                    dead_letter_deposit_observation(pool, &chain_gateway, observation, &error)
+                        .await?;
+                    summary.event_dead_lettered += 1;
+                }
             }
-            let amount = BigDecimal::from_str(&observation.amount).map_err(|_| {
-                AppError::Validation("wallet gateway deposit amount is invalid".to_owned())
-            })?;
-            if let Err(error) = observe_deposit(
-                pool,
-                ObserveDepositRequest {
-                    asset_symbol: observation.asset_symbol,
-                    network: observed_network,
-                    address: observation.address,
-                    memo: observation.memo,
-                    tx_hash: observation.tx_hash,
-                    event_index: observation.event_index,
-                    amount,
-                    block_height: observation.block_height,
-                    confirmations: observation.confirmations,
-                },
-            )
-            .await
-            {
-                page_failed = true;
-                summary.gateway_failed += 1;
-                warn!(network = %expected_network, %error, "链上充值事件处理失败");
-                break;
-            }
-            summary.deposit_observed += 1;
         }
         if !page_failed && let Some(cursor) = page.next_cursor {
             update_gateway_cursor(pool, chain_gateway.id, &cursor).await?;
@@ -266,6 +262,7 @@ pub async fn run_loop(state: AppState, config: WalletChainWorkerConfig) -> AppRe
                 withdrawal_manual_review = summary.withdrawal_manual_review,
                 deposit_observed = summary.deposit_observed,
                 gateway_failed = summary.gateway_failed,
+                event_dead_lettered = summary.event_dead_lettered,
                 "钱包链任务周期完成"
             ),
             Err(error) => error!(%error, "钱包链任务周期失败"),
@@ -276,7 +273,7 @@ pub async fn run_loop(state: AppState, config: WalletChainWorkerConfig) -> AppRe
 async fn process_withdrawal_observation(
     pool: &Pool<MySql>,
     expected_network: &str,
-    observation: WalletChainWithdrawalObservation,
+    observation: &WalletChainWithdrawalObservation,
     summary: &mut WalletChainWorkerSummary,
 ) -> AppResult<()> {
     let observed_network = normalize_deposit_network(&observation.network)?;
@@ -372,6 +369,151 @@ async fn process_withdrawal_observation(
     }
     tx.commit().await?;
     Ok(())
+}
+
+async fn process_deposit_observation(
+    pool: &Pool<MySql>,
+    expected_network: &str,
+    observation: &WalletChainDepositObservation,
+) -> AppResult<()> {
+    let observed_network = normalize_deposit_network(&observation.network)?;
+    if observed_network != expected_network {
+        return Err(AppError::Conflict(format!(
+            "deposit event network {observed_network} does not match gateway {expected_network}"
+        )));
+    }
+    let amount = BigDecimal::from_str(&observation.amount)
+        .map_err(|_| AppError::Validation("wallet gateway deposit amount is invalid".to_owned()))?;
+    observe_deposit(
+        pool,
+        ObserveDepositRequest {
+            asset_symbol: observation.asset_symbol.clone(),
+            network: observed_network,
+            address: observation.address.clone(),
+            memo: observation.memo.clone(),
+            tx_hash: observation.tx_hash.clone(),
+            event_index: observation.event_index,
+            amount,
+            block_height: observation.block_height,
+            confirmations: observation.confirmations,
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+/// 基础设施类错误可重试，其余视为确定性拒绝进入死信。
+fn is_transient_chain_event_error(error: &AppError) -> bool {
+    matches!(
+        error,
+        AppError::Config(_)
+            | AppError::Database(_)
+            | AppError::Mongo(_)
+            | AppError::Redis(_)
+            | AppError::RabbitMq(_)
+            | AppError::Internal(_)
+    )
+}
+
+async fn dead_letter_withdrawal_observation(
+    pool: &Pool<MySql>,
+    gateway: &ChainGatewayConfig,
+    observation: &WalletChainWithdrawalObservation,
+    error: &AppError,
+) -> AppResult<()> {
+    let payload = serde_json::json!({
+        "request_id": observation.request_id,
+        "network": observation.network,
+        "tx_hash": observation.tx_hash,
+        "block_height": observation.block_height,
+        "confirmations": observation.confirmations,
+        "status": observation.status,
+        "failure_reason": observation.failure_reason,
+    });
+    insert_wallet_chain_event_dead_letter(
+        pool,
+        &NewWalletChainEventDeadLetter {
+            gateway_id: gateway.id,
+            network: &gateway.network,
+            event_kind: "withdrawal",
+            dedup_key: bounded_chain_value(
+                &format!(
+                    "withdrawal:{}:{}:{}",
+                    gateway.network, observation.request_id, observation.status
+                ),
+                512,
+            ),
+            request_id: Some(bounded_chain_value(&observation.request_id, 128)),
+            tx_hash: observation
+                .tx_hash
+                .as_deref()
+                .map(|value| bounded_chain_value(value, 255)),
+            event_index: None,
+            payload_json: payload.to_string(),
+            failure_reason: bounded_failure_reason(&error.to_string()),
+        },
+    )
+    .await?;
+    warn!(
+        network = %gateway.network,
+        request_id = %observation.request_id,
+        tx_hash = observation.tx_hash.as_deref().unwrap_or(""),
+        %error,
+        "链上提现回执确定性失败，已记录死信并跳过"
+    );
+    Ok(())
+}
+
+async fn dead_letter_deposit_observation(
+    pool: &Pool<MySql>,
+    gateway: &ChainGatewayConfig,
+    observation: &WalletChainDepositObservation,
+    error: &AppError,
+) -> AppResult<()> {
+    let payload = serde_json::json!({
+        "asset_symbol": observation.asset_symbol,
+        "network": observation.network,
+        "address": observation.address,
+        "memo": observation.memo,
+        "tx_hash": observation.tx_hash,
+        "event_index": observation.event_index,
+        "amount": observation.amount,
+        "block_height": observation.block_height,
+        "confirmations": observation.confirmations,
+    });
+    insert_wallet_chain_event_dead_letter(
+        pool,
+        &NewWalletChainEventDeadLetter {
+            gateway_id: gateway.id,
+            network: &gateway.network,
+            event_kind: "deposit",
+            dedup_key: bounded_chain_value(
+                &format!(
+                    "deposit:{}:{}:{}",
+                    gateway.network, observation.tx_hash, observation.event_index
+                ),
+                512,
+            ),
+            request_id: None,
+            tx_hash: Some(bounded_chain_value(&observation.tx_hash, 255)),
+            event_index: Some(observation.event_index),
+            payload_json: payload.to_string(),
+            failure_reason: bounded_failure_reason(&error.to_string()),
+        },
+    )
+    .await?;
+    warn!(
+        network = %gateway.network,
+        tx_hash = %observation.tx_hash,
+        event_index = observation.event_index,
+        %error,
+        "链上充值事件确定性失败，已记录死信并跳过"
+    );
+    Ok(())
+}
+
+fn bounded_chain_value(value: &str, max_length: usize) -> String {
+    value.chars().take(max_length).collect()
 }
 
 async fn load_withdrawal_candidates(
