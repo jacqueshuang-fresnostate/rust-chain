@@ -120,6 +120,7 @@ pub fn routes() -> Router<AppState> {
         assign_user_agent,
         list_admin_agent_commissions,
         update_admin_agent_commission_status,
+        update_admin_agent_commission_statuses,
         list_admin_agent_commission_rules,
         create_admin_agent_commission_rule,
         update_admin_agent_commission_rule,
@@ -241,6 +242,9 @@ pub fn routes() -> Router<AppState> {
         AdminAgentCommissionResponse,
         AdminAgentCommissionsResponse,
         UpdateAdminAgentCommissionStatusRequest,
+        BatchUpdateAdminAgentCommissionStatusRequest,
+        AdminAgentCommissionBatchStatusItemResponse,
+        AdminAgentCommissionBatchStatusResponse,
         AdminAgentCommissionRuleResponse,
         AdminAgentCommissionRulesResponse,
         CreateAdminAgentCommissionRuleRequest,
@@ -1311,6 +1315,28 @@ struct UpdateAdminAgentCommissionStatusRequest {
     #[schema(pattern = "^(settled|rejected)$")]
     status: String,
     reason: Option<String>,
+}
+
+#[derive(ToSchema)]
+struct BatchUpdateAdminAgentCommissionStatusRequest {
+    #[schema(max_items = 200)]
+    ids: Vec<u64>,
+    #[schema(pattern = "^(settled|rejected)$")]
+    status: String,
+    reason: Option<String>,
+}
+
+#[derive(ToSchema)]
+struct AdminAgentCommissionBatchStatusItemResponse {
+    id: u64,
+    #[schema(pattern = "^(ok|failed)$")]
+    status: String,
+    error: Option<String>,
+}
+
+#[derive(ToSchema)]
+struct AdminAgentCommissionBatchStatusResponse {
+    results: Vec<AdminAgentCommissionBatchStatusItemResponse>,
 }
 
 #[derive(ToSchema)]
@@ -3060,6 +3086,23 @@ fn list_admin_agent_commissions() {}
     )
 )]
 fn update_admin_agent_commission_status() {}
+
+#[utoipa::path(
+    post,
+    path = "/admin/api/v1/agent-commissions/batch-status",
+    tag = "admin-agent",
+    summary = "批量更新代理佣金状态",
+    request_body = BatchUpdateAdminAgentCommissionStatusRequest,
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "批量处理完成，逐条返回结果", body = AdminAgentCommissionBatchStatusResponse),
+        (status = 400, description = "参数错误", body = ErrorResponse),
+        (status = 401, description = "未登录", body = ErrorResponse),
+        (status = 403, description = "鉴权 scope 不匹配", body = ErrorResponse),
+        (status = 500, description = "服务内部错误", body = ErrorResponse)
+    )
+)]
+fn update_admin_agent_commission_statuses() {}
 
 #[utoipa::path(
     get,

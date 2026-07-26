@@ -55,6 +55,10 @@ fn test_state() -> AppState {
         margin_interest_enabled: true,
         margin_interest_interval_seconds: 60,
         margin_interest_batch_limit: 100,
+        agent_commission_auto_settle_enabled: false,
+        agent_commission_auto_settle_interval_seconds: 60,
+        agent_commission_auto_settle_min_age_seconds: 3600,
+        agent_commission_auto_settle_batch_limit: 100,
     })
 }
 
@@ -380,6 +384,10 @@ async fn openapi_json_documents_agent_management_contract() {
         (
             "/admin/api/v1/agent-commissions/{id}/status",
             ["patch"].as_slice(),
+        ),
+        (
+            "/admin/api/v1/agent-commissions/batch-status",
+            ["post"].as_slice(),
         ),
         (
             "/admin/api/v1/agent-commission-rules",

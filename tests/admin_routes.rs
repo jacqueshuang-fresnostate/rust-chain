@@ -83,6 +83,10 @@ fn test_settings() -> Settings {
         margin_interest_enabled: true,
         margin_interest_interval_seconds: 60,
         margin_interest_batch_limit: 100,
+        agent_commission_auto_settle_enabled: false,
+        agent_commission_auto_settle_interval_seconds: 60,
+        agent_commission_auto_settle_min_age_seconds: 3600,
+        agent_commission_auto_settle_batch_limit: 100,
     }
 }
 
@@ -10044,6 +10048,364 @@ async fn admin_agent_commission_status_updates_pending_records_and_audits()
 }
 
 #[tokio::test]
+async fn admin_agent_commission_batch_status_route_requires_admin_scope_mysql_and_validation()
+-> Result<(), Box<dyn Error>> {
+    let settings = test_settings();
+    let user_token = issue_token(&settings, "user:1", TokenScope::User, 900).unwrap();
+    let admin_token = issue_token(&settings, "admin:1", TokenScope::Admin, 900).unwrap();
+    let app = build_router(AppState::new(settings));
+    let body = json!({ "ids": [1, 2], "status": "settled", "reason": "settle payout" }).to_string();
+    let batch_request = |token: Option<&str>, body: String| {
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri("/admin/api/v1/agent-commissions/batch-status")
+            .header("content-type", "application/json");
+        if let Some(token) = token {
+            builder = builder.header(AUTHORIZATION, format!("Bearer {token}"));
+        }
+        builder.body(Body::from(body)).unwrap()
+    };
+
+    let missing = app
+        .clone()
+        .oneshot(batch_request(None, body.clone()))
+        .await?;
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let user = app
+        .clone()
+        .oneshot(batch_request(Some(&user_token), body.clone()))
+        .await?;
+    assert_eq!(user.status(), StatusCode::FORBIDDEN);
+
+    let invalid_status = app
+        .clone()
+        .oneshot(batch_request(
+            Some(&admin_token),
+            json!({ "ids": [1], "status": "paid" }).to_string(),
+        ))
+        .await?;
+    assert_eq!(invalid_status.status(), StatusCode::BAD_REQUEST);
+    let invalid_status_payload = body_json(invalid_status).await?;
+    assert_eq!(invalid_status_payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        invalid_status_payload["message"],
+        "validation error: unsupported agent commission status"
+    );
+
+    let empty_ids = app
+        .clone()
+        .oneshot(batch_request(
+            Some(&admin_token),
+            json!({ "ids": [], "status": "settled" }).to_string(),
+        ))
+        .await?;
+    assert_eq!(empty_ids.status(), StatusCode::BAD_REQUEST);
+    let empty_ids_payload = body_json(empty_ids).await?;
+    assert_eq!(
+        empty_ids_payload["message"],
+        "validation error: at least one agent commission id is required"
+    );
+
+    let oversized_ids = (1..=201).collect::<Vec<u64>>();
+    let oversized = app
+        .clone()
+        .oneshot(batch_request(
+            Some(&admin_token),
+            json!({ "ids": oversized_ids, "status": "settled" }).to_string(),
+        ))
+        .await?;
+    assert_eq!(oversized.status(), StatusCode::BAD_REQUEST);
+    let oversized_payload = body_json(oversized).await?;
+    assert_eq!(
+        oversized_payload["message"],
+        "validation error: a single batch cannot contain more than 200 agent commissions"
+    );
+
+    let duplicated = app
+        .clone()
+        .oneshot(batch_request(
+            Some(&admin_token),
+            json!({ "ids": [1, 1], "status": "settled" }).to_string(),
+        ))
+        .await?;
+    assert_eq!(duplicated.status(), StatusCode::BAD_REQUEST);
+    let duplicated_payload = body_json(duplicated).await?;
+    assert_eq!(
+        duplicated_payload["message"],
+        "validation error: duplicate agent commission id in batch"
+    );
+
+    let admin = app.oneshot(batch_request(Some(&admin_token), body)).await?;
+    assert_eq!(admin.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let payload = body_json(admin).await?;
+    assert_eq!(payload["code"], "INTERNAL_ERROR");
+    assert!(
+        payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("mysql pool is not configured for admin convert routes")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_agent_commission_batch_status_settles_per_record_and_reports_outcomes()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let agent_owner_id = create_user(&pool).await;
+    let commission_user_id = create_user(&pool).await;
+    let agent_code = format!("B{}", Uuid::now_v7().simple()).to_ascii_uppercase();
+    let agent_id = sqlx::query(
+        r#"INSERT INTO agents (user_id, agent_code, level, path, status)
+           VALUES (?, ?, 1, '', 'active')"#,
+    )
+    .bind(agent_owner_id)
+    .bind(agent_code)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    sqlx::query("UPDATE agents SET root_agent_id = ?, path = ? WHERE id = ?")
+        .bind(agent_id)
+        .bind(format!("/agent:{agent_id}"))
+        .bind(agent_id)
+        .execute(&pool)
+        .await?;
+    let from_asset = create_asset(&pool, "ABF").await;
+    let to_asset = create_asset(&pool, "ABT").await;
+    let pair_id = seed_convert_pair(&pool, from_asset, to_asset, true).await;
+    let quote_id = seed_convert_order(
+        &pool,
+        commission_user_id,
+        pair_id,
+        from_asset,
+        to_asset,
+        "completed",
+    )
+    .await;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(agent_owner_id)
+        .bind(from_asset)
+        .bind(decimal("1.000000000000000000"))
+        .execute(&pool)
+        .await?;
+    let pending_settle_id = seed_agent_commission_with_source_id(
+        &pool,
+        AgentCommissionSeed {
+            agent_id,
+            user_id: commission_user_id,
+            source_type: "convert_order",
+            source_id: &quote_id,
+            source_amount: "100.000000000000000000",
+            commission_amount: "5.000000000000000000",
+            status: "pending",
+        },
+    )
+    .await;
+    sqlx::query(
+        "UPDATE agent_commission_records SET payout_asset_id = ?, commission_rate = ? WHERE id = ?",
+    )
+    .bind(from_asset)
+    .bind(decimal("0.05000000"))
+    .bind(pending_settle_id)
+    .execute(&pool)
+    .await?;
+    let unsupported_id = seed_agent_commission(
+        &pool,
+        agent_id,
+        commission_user_id,
+        "spot_trade",
+        "200.000000000000000000",
+        "10.000000000000000000",
+        "pending",
+    )
+    .await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let settle = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/agent-commissions/batch-status")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "ids": [pending_settle_id, unsupported_id, u64::MAX],
+                        "status": "settled",
+                        "reason": "batch settle payout"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let settle_status = settle.status();
+    let settled = body_json(settle).await?;
+    assert_eq!(settle_status, StatusCode::OK, "payload: {settled}");
+    let results = settled["results"].as_array().unwrap();
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0]["id"], pending_settle_id);
+    assert_eq!(results[0]["status"], "ok");
+    assert!(results[0]["error"].is_null());
+    assert_eq!(results[1]["id"], unsupported_id);
+    assert_eq!(results[1]["status"], "failed");
+    assert_eq!(
+        results[1]["error"],
+        "conflict: agent commission source cannot be settled without payout support"
+    );
+    assert_eq!(results[2]["id"], u64::MAX);
+    assert_eq!(results[2]["status"], "failed");
+    assert_eq!(results[2]["error"], "not found");
+
+    let (settle_stored_status,): (String,) =
+        sqlx::query_as("SELECT status FROM agent_commission_records WHERE id = ?")
+            .bind(pending_settle_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(settle_stored_status, "settled");
+    let (unsupported_stored_status,): (String,) =
+        sqlx::query_as("SELECT status FROM agent_commission_records WHERE id = ?")
+            .bind(unsupported_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(unsupported_stored_status, "pending");
+    let (agent_available,): (BigDecimal,) = sqlx::query_as(
+        "SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ? LIMIT 1",
+    )
+    .bind(agent_owner_id)
+    .bind(from_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(agent_available, decimal("6.000000000000000000"));
+    let (ledger_count,): (i64,) = sqlx::query_as(
+        r#"SELECT COUNT(*) FROM wallet_ledger
+           WHERE user_id = ? AND asset_id = ? AND change_type = 'agent_commission_payout'
+             AND ref_type = 'agent_commission' AND ref_id = ?"#,
+    )
+    .bind(agent_owner_id)
+    .bind(from_asset)
+    .bind(pending_settle_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(ledger_count, 1);
+
+    let repeat = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/agent-commissions/batch-status")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "ids": [pending_settle_id], "status": "settled" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let repeat_payload = body_json(repeat).await?;
+    assert_eq!(repeat_payload["results"][0]["status"], "failed");
+    assert_eq!(
+        repeat_payload["results"][0]["error"],
+        "conflict: agent commission status can only be updated from pending"
+    );
+    let (ledger_count_after_repeat,): (i64,) = sqlx::query_as(
+        r#"SELECT COUNT(*) FROM wallet_ledger
+           WHERE user_id = ? AND asset_id = ? AND change_type = 'agent_commission_payout'
+             AND ref_type = 'agent_commission' AND ref_id = ?"#,
+    )
+    .bind(agent_owner_id)
+    .bind(from_asset)
+    .bind(pending_settle_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(ledger_count_after_repeat, 1);
+
+    let reject = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/agent-commissions/batch-status")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "ids": [unsupported_id],
+                        "status": "rejected",
+                        "reason": "batch reject"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let rejected = body_json(reject).await?;
+    assert_eq!(rejected["results"][0]["status"], "ok");
+    let (rejected_stored_status,): (String,) =
+        sqlx::query_as("SELECT status FROM agent_commission_records WHERE id = ?")
+            .bind(unsupported_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(rejected_stored_status, "rejected");
+
+    let audits = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type = 'agent_commission'
+             AND target_id IN (?, ?)
+           ORDER BY id"#,
+    )
+    .bind(admin_id)
+    .bind(pending_settle_id.to_string())
+    .bind(unsupported_id.to_string())
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audits.len(), 2, "audits: {audits:?}");
+    assert!(
+        audits
+            .iter()
+            .all(|audit| audit.action == "agent_commission.status.update")
+    );
+    assert_eq!(audits[0].target_id, pending_settle_id.to_string());
+    assert_eq!(audits[0].after_json.as_ref().unwrap()["status"], "settled");
+    assert_eq!(audits[0].reason.as_deref(), Some("batch settle payout"));
+    assert_eq!(audits[1].target_id, unsupported_id.to_string());
+    assert_eq!(audits[1].after_json.as_ref().unwrap()["status"], "rejected");
+    assert_eq!(audits[1].reason.as_deref(), Some("batch reject"));
+
+    sqlx::query(
+        "DELETE FROM wallet_ledger WHERE ref_type = 'agent_commission' AND ref_id IN (?, ?)",
+    )
+    .bind(pending_settle_id.to_string())
+    .bind(unsupported_id.to_string())
+    .execute(&pool)
+    .await?;
+    sqlx::query("DELETE FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+        .bind(agent_owner_id)
+        .bind(from_asset)
+        .execute(&pool)
+        .await?;
+    delete_admin_agent_management_fixture(&pool, admin_id, role_id, &[agent_id], &[agent_owner_id])
+        .await?;
+    delete_order_fixture(&pool, pair_id, from_asset, to_asset, &[commission_user_id]).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn admin_agents_list_detail_filters_and_password_hashing() -> Result<(), Box<dyn Error>> {
     let Some(pool) = mysql_pool().await else {
         return Ok(());
@@ -13576,6 +13938,7 @@ async fn admin_convert_pair_routes_create_list_update_and_audit() -> Result<(), 
                         "to_asset_id": to_asset,
                         "pricing_mode": "fixed",
                         "spread_rate": "0.01000000",
+                        "fee_rate": "0.00100000",
                         "min_amount": "1.000000000000000000",
                         "max_amount": "100.000000000000000000",
                         "target_min_amount": "10.000000000000000000",

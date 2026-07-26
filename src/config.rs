@@ -83,6 +83,14 @@ pub struct Settings {
     pub margin_interest_interval_seconds: u64,
     #[serde(default = "default_margin_interest_batch_limit")]
     pub margin_interest_batch_limit: u32,
+    #[serde(default = "default_agent_commission_auto_settle_enabled")]
+    pub agent_commission_auto_settle_enabled: bool,
+    #[serde(default = "default_agent_commission_auto_settle_interval_seconds")]
+    pub agent_commission_auto_settle_interval_seconds: u64,
+    #[serde(default = "default_agent_commission_auto_settle_min_age_seconds")]
+    pub agent_commission_auto_settle_min_age_seconds: u64,
+    #[serde(default = "default_agent_commission_auto_settle_batch_limit")]
+    pub agent_commission_auto_settle_batch_limit: u32,
 }
 
 impl Settings {
@@ -265,6 +273,22 @@ fn default_margin_interest_interval_seconds() -> u64 {
 }
 
 fn default_margin_interest_batch_limit() -> u32 {
+    100
+}
+
+fn default_agent_commission_auto_settle_enabled() -> bool {
+    false
+}
+
+fn default_agent_commission_auto_settle_interval_seconds() -> u64 {
+    60
+}
+
+fn default_agent_commission_auto_settle_min_age_seconds() -> u64 {
+    3600
+}
+
+fn default_agent_commission_auto_settle_batch_limit() -> u32 {
     100
 }
 

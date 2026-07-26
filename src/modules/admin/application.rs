@@ -148,6 +148,7 @@ use crate::{
             upsert_user_agent_referral_in_tx,
         },
         presentation::{
+            AdminAgentCommissionBatchStatusItemResponse, AdminAgentCommissionBatchStatusResponse,
             AdminAgentCommissionQuery, AdminAgentCommissionResponse, AdminAgentCommissionRuleQuery,
             AdminAgentCommissionRuleResponse, AdminAgentCommissionRulesResponse,
             AdminAgentCommissionsResponse, AdminAgentQuery, AdminAgentResponse,
@@ -171,17 +172,17 @@ use crate::{
             AdminUserReferralResponse, AdminUserResponse, AdminUserTwoFactorResetResponse,
             AdminUsersResponse, AdminWalletAccountQuery, AdminWalletAccountsResponse,
             AdminWalletLedgerQuery, AdminWalletLedgerResponseList, AssignUserAgentRequest,
-            ConvertOrderResponse, ConvertOrdersResponse, ConvertPairResponse, ConvertPairsResponse,
-            CreateAdminCountryRequest, CreateAdminNewsItemRequest, CreateAdminUserRequest,
-            CreateAgentCommissionRuleRequest, CreateAgentRequest, CreateAssetRequest,
-            CreateConvertPairRequest, CreateDepositAddressPoolBatchRequest,
-            CreateDepositAddressPoolRequest, CreateDepositNetworkConfigRequest,
-            CreateMarketStrategyRequest, CreateNewCoinProjectRequest, CreateRiskRuleRequest,
-            CreateTradingPairRequest, DeleteAssetRequest, DeleteConvertPairRequest,
-            DistributeNewCoinRequest, MarketFeedConfigResponse, MarketFeedStatusResponse,
-            MarketSourceCredentialResponse, MarketSourceCredentialSecret,
-            MarketSourceCredentialsResponse, NewCoinConvertRuleResponse,
-            NewCoinDistributionResponse, NewCoinDistributionsResponse,
+            BatchUpdateAgentCommissionStatusRequest, ConvertOrderResponse, ConvertOrdersResponse,
+            ConvertPairResponse, ConvertPairsResponse, CreateAdminCountryRequest,
+            CreateAdminNewsItemRequest, CreateAdminUserRequest, CreateAgentCommissionRuleRequest,
+            CreateAgentRequest, CreateAssetRequest, CreateConvertPairRequest,
+            CreateDepositAddressPoolBatchRequest, CreateDepositAddressPoolRequest,
+            CreateDepositNetworkConfigRequest, CreateMarketStrategyRequest,
+            CreateNewCoinProjectRequest, CreateRiskRuleRequest, CreateTradingPairRequest,
+            DeleteAssetRequest, DeleteConvertPairRequest, DistributeNewCoinRequest,
+            MarketFeedConfigResponse, MarketFeedStatusResponse, MarketSourceCredentialResponse,
+            MarketSourceCredentialSecret, MarketSourceCredentialsResponse,
+            NewCoinConvertRuleResponse, NewCoinDistributionResponse, NewCoinDistributionsResponse,
             NewCoinLockPositionsResponse, NewCoinProjectResponse, NewCoinProjectsResponse,
             NewCoinPurchasesResponse, NewCoinSubscriptionsResponse, NewCoinUnlocksResponse,
             ReclaimDepositAddressPoolRequest, ReloadMarketFeedRequest, ReloadMarketFeedResponse,
@@ -236,28 +237,29 @@ use crate::{
             smtp_request_has_new_secret, trading_pair_audit_json, two_factor_audit_json,
             upload_config_audit_json, upload_config_secret_destination_unchanged, user_audit_json,
             user_referral_audit_json, validate_address_group_code, validate_admin_user_recharge,
-            validate_agent_commission_rate, validate_agent_commission_rule_product_type,
-            validate_agent_commission_rule_status, validate_agent_commission_status,
-            validate_agent_status, validate_asset_fee_settings, validate_asset_name,
-            validate_asset_status, validate_asset_type, validate_convert_pair_values,
-            validate_country_code, validate_country_locale_config, validate_country_name,
-            validate_country_remark, validate_country_status, validate_create_admin_user_request,
-            validate_create_agent_request, validate_create_asset_request,
-            validate_create_convert_pair, validate_create_market_strategy,
-            validate_create_new_coin_project, validate_create_risk_rule,
-            validate_create_trading_pair_request, validate_deposit_address,
-            validate_deposit_address_assignable_status, validate_deposit_address_status,
-            validate_deposit_network_config_status, validate_deposit_network_display_name,
-            validate_distribute_new_coin, validate_market_feed_intervals,
-            validate_market_feed_providers, validate_market_feed_reason,
-            validate_market_feed_symbols, validate_market_source_auth_type,
-            validate_market_strategy_status, validate_new_coin_convert_rule,
-            validate_news_category, validate_news_content_document, validate_news_locale,
-            validate_news_status, validate_news_title, validate_optional_image_url,
-            validate_optional_length, validate_security_policy, validate_smtp_delivery_strategy,
-            validate_smtp_email, validate_smtp_save_request, validate_trading_pair_market_type,
-            validate_trading_pair_status, validate_update_asset_request,
-            validate_update_market_strategy, validate_update_new_coin_post_listing_purchase,
+            validate_agent_commission_batch_ids, validate_agent_commission_rate,
+            validate_agent_commission_rule_product_type, validate_agent_commission_rule_status,
+            validate_agent_commission_status, validate_agent_status, validate_asset_fee_settings,
+            validate_asset_name, validate_asset_status, validate_asset_type,
+            validate_convert_pair_values, validate_country_code, validate_country_locale_config,
+            validate_country_name, validate_country_remark, validate_country_status,
+            validate_create_admin_user_request, validate_create_agent_request,
+            validate_create_asset_request, validate_create_convert_pair,
+            validate_create_market_strategy, validate_create_new_coin_project,
+            validate_create_risk_rule, validate_create_trading_pair_request,
+            validate_deposit_address, validate_deposit_address_assignable_status,
+            validate_deposit_address_status, validate_deposit_network_config_status,
+            validate_deposit_network_display_name, validate_distribute_new_coin,
+            validate_market_feed_intervals, validate_market_feed_providers,
+            validate_market_feed_reason, validate_market_feed_symbols,
+            validate_market_source_auth_type, validate_market_strategy_status,
+            validate_new_coin_convert_rule, validate_news_category, validate_news_content_document,
+            validate_news_locale, validate_news_status, validate_news_title,
+            validate_optional_image_url, validate_optional_length, validate_security_policy,
+            validate_smtp_delivery_strategy, validate_smtp_email, validate_smtp_save_request,
+            validate_trading_pair_market_type, validate_trading_pair_status,
+            validate_update_asset_request, validate_update_market_strategy,
+            validate_update_new_coin_post_listing_purchase,
             validate_update_new_coin_unlock_fee_rule, validate_update_new_coin_unlock_rule,
             validate_update_trading_pair_request, validate_upload_config, validate_user_status,
         },
@@ -2506,7 +2508,59 @@ pub(crate) async fn update_admin_agent_commission_status(
 ) -> AppResult<AdminAgentCommissionResponse> {
     let status = validate_agent_commission_status(&request.status)?;
     let pool = admin_mysql_pool(pool)?;
+    apply_admin_agent_commission_status(
+        &pool,
+        Some(admin_id),
+        commission_id,
+        &status,
+        request.reason,
+    )
+    .await
+}
 
+pub(crate) async fn update_admin_agent_commission_statuses(
+    pool: Option<Pool<MySql>>,
+    admin_id: u64,
+    request: BatchUpdateAgentCommissionStatusRequest,
+) -> AppResult<AdminAgentCommissionBatchStatusResponse> {
+    let status = validate_agent_commission_status(&request.status)?;
+    let ids = validate_agent_commission_batch_ids(&request.ids)?;
+    let pool = admin_mysql_pool(pool)?;
+
+    // 每条佣金独立事务处理，单条失败不影响其余记录的结算/拒绝。
+    let mut results = Vec::with_capacity(ids.len());
+    for commission_id in ids {
+        let outcome = apply_admin_agent_commission_status(
+            &pool,
+            Some(admin_id),
+            commission_id,
+            &status,
+            request.reason.clone(),
+        )
+        .await;
+        results.push(match outcome {
+            Ok(_) => AdminAgentCommissionBatchStatusItemResponse {
+                id: commission_id,
+                status: "ok".to_owned(),
+                error: None,
+            },
+            Err(error) => AdminAgentCommissionBatchStatusItemResponse {
+                id: commission_id,
+                status: "failed".to_owned(),
+                error: Some(error.to_string()),
+            },
+        });
+    }
+    Ok(AdminAgentCommissionBatchStatusResponse { results })
+}
+
+pub(crate) async fn apply_admin_agent_commission_status(
+    pool: &Pool<MySql>,
+    admin_id: Option<u64>,
+    commission_id: u64,
+    status: &str,
+    reason: Option<String>,
+) -> AppResult<AdminAgentCommissionResponse> {
     // 锁定佣金记录后只允许 pending 进入结算/拒绝，防止重复给代理钱包入账。
     let mut tx = pool.begin().await?;
     let before = lock_agent_commission_in_tx(&mut tx, commission_id).await?;
@@ -2518,21 +2572,23 @@ pub(crate) async fn update_admin_agent_commission_status(
     if status == "settled" {
         settle_agent_commission_payout_in_tx(&mut tx, &before).await?;
     }
-    update_agent_commission_status_in_tx(&mut tx, commission_id, &status).await?;
+    update_agent_commission_status_in_tx(&mut tx, commission_id, status).await?;
     let after = load_agent_commission_in_tx(&mut tx, commission_id).await?;
-    insert_admin_audit_log_entry_in_tx(
-        &mut tx,
-        admin_id,
-        AdminAuditLogEntry {
-            action: "agent_commission.status.update",
-            target_type: "agent_commission",
-            target_id: commission_id,
-            before_json: Some(agent_commission_audit_json(&before)),
-            after_json: Some(agent_commission_audit_json(&after)),
-            reason: request.reason,
-        },
-    )
-    .await?;
+    if let Some(admin_id) = admin_id {
+        insert_admin_audit_log_entry_in_tx(
+            &mut tx,
+            admin_id,
+            AdminAuditLogEntry {
+                action: "agent_commission.status.update",
+                target_type: "agent_commission",
+                target_id: commission_id,
+                before_json: Some(agent_commission_audit_json(&before)),
+                after_json: Some(agent_commission_audit_json(&after)),
+                reason,
+            },
+        )
+        .await?;
+    }
     tx.commit().await?;
     Ok(after)
 }

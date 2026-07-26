@@ -76,6 +76,10 @@ fn test_settings() -> Settings {
         margin_interest_enabled: true,
         margin_interest_interval_seconds: 60,
         margin_interest_batch_limit: 100,
+        agent_commission_auto_settle_enabled: false,
+        agent_commission_auto_settle_interval_seconds: 60,
+        agent_commission_auto_settle_min_age_seconds: 3600,
+        agent_commission_auto_settle_batch_limit: 100,
     }
 }
 

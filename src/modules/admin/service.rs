@@ -1015,6 +1015,28 @@ pub(crate) fn validate_agent_commission_status(value: &str) -> AppResult<String>
     }
 }
 
+pub(crate) fn validate_agent_commission_batch_ids(ids: &[u64]) -> AppResult<Vec<u64>> {
+    if ids.is_empty() {
+        return Err(AppError::Validation(
+            "at least one agent commission id is required".to_owned(),
+        ));
+    }
+    if ids.len() > 200 {
+        return Err(AppError::Validation(
+            "a single batch cannot contain more than 200 agent commissions".to_owned(),
+        ));
+    }
+    let mut seen = HashSet::new();
+    for id in ids {
+        if !seen.insert(*id) {
+            return Err(AppError::Validation(
+                "duplicate agent commission id in batch".to_owned(),
+            ));
+        }
+    }
+    Ok(ids.to_vec())
+}
+
 pub(crate) fn validate_agent_commission_rule_product_type(value: &str) -> AppResult<String> {
     crate::modules::agent::service::normalize_agent_commission_product_type(value)
 }

@@ -50,6 +50,10 @@ fn settings_from_env_parses_market_feed_lists() {
     set_test_env("MARGIN_INTEREST_ENABLED", "false");
     set_test_env("MARGIN_INTEREST_INTERVAL_SECONDS", "31");
     set_test_env("MARGIN_INTEREST_BATCH_LIMIT", "37");
+    set_test_env("AGENT_COMMISSION_AUTO_SETTLE_ENABLED", "true");
+    set_test_env("AGENT_COMMISSION_AUTO_SETTLE_INTERVAL_SECONDS", "41");
+    set_test_env("AGENT_COMMISSION_AUTO_SETTLE_MIN_AGE_SECONDS", "43");
+    set_test_env("AGENT_COMMISSION_AUTO_SETTLE_BATCH_LIMIT", "47");
 
     let settings = Settings::from_env().unwrap();
 
@@ -88,6 +92,10 @@ fn settings_from_env_parses_market_feed_lists() {
     assert!(!settings.margin_interest_enabled);
     assert_eq!(settings.margin_interest_interval_seconds, 31);
     assert_eq!(settings.margin_interest_batch_limit, 37);
+    assert!(settings.agent_commission_auto_settle_enabled);
+    assert_eq!(settings.agent_commission_auto_settle_interval_seconds, 41);
+    assert_eq!(settings.agent_commission_auto_settle_min_age_seconds, 43);
+    assert_eq!(settings.agent_commission_auto_settle_batch_limit, 47);
     clear_market_feed_env();
 }
 
@@ -150,6 +158,10 @@ fn settings_from_env_accepts_empty_market_feed_lists() {
     assert!(settings.margin_interest_enabled);
     assert_eq!(settings.margin_interest_interval_seconds, 60);
     assert_eq!(settings.margin_interest_batch_limit, 100);
+    assert!(!settings.agent_commission_auto_settle_enabled);
+    assert_eq!(settings.agent_commission_auto_settle_interval_seconds, 60);
+    assert_eq!(settings.agent_commission_auto_settle_min_age_seconds, 3600);
+    assert_eq!(settings.agent_commission_auto_settle_batch_limit, 100);
     clear_market_feed_env();
 }
 
@@ -190,5 +202,9 @@ fn clear_market_feed_env() {
         env::remove_var("MARGIN_INTEREST_ENABLED");
         env::remove_var("MARGIN_INTEREST_INTERVAL_SECONDS");
         env::remove_var("MARGIN_INTEREST_BATCH_LIMIT");
+        env::remove_var("AGENT_COMMISSION_AUTO_SETTLE_ENABLED");
+        env::remove_var("AGENT_COMMISSION_AUTO_SETTLE_INTERVAL_SECONDS");
+        env::remove_var("AGENT_COMMISSION_AUTO_SETTLE_MIN_AGE_SECONDS");
+        env::remove_var("AGENT_COMMISSION_AUTO_SETTLE_BATCH_LIMIT");
     }
 }

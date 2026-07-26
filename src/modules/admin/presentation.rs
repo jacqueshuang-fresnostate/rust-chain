@@ -13,9 +13,18 @@ use crate::{
 };
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use sqlx::types::Json as SqlxJson;
+
+/// 区分「字段缺省」与「显式 null」：缺省 → None（保持原值），null → Some(None)（清空）。
+fn double_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct AdminCountriesQuery {
@@ -673,6 +682,32 @@ pub(crate) struct AdminAgentCommissionsResponse {
 }
 
 impl PresentationLayer for AdminAgentCommissionsResponse {}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BatchUpdateAgentCommissionStatusRequest {
+    pub(crate) ids: Vec<u64>,
+    pub(crate) status: String,
+    pub(crate) reason: Option<String>,
+}
+
+impl PresentationLayer for BatchUpdateAgentCommissionStatusRequest {}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AdminAgentCommissionBatchStatusItemResponse {
+    pub(crate) id: u64,
+    pub(crate) status: String,
+    pub(crate) error: Option<String>,
+}
+
+impl PresentationLayer for AdminAgentCommissionBatchStatusItemResponse {}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AdminAgentCommissionBatchStatusResponse {
+    pub(crate) results: Vec<AdminAgentCommissionBatchStatusItemResponse>,
+}
+
+impl PresentationLayer for AdminAgentCommissionBatchStatusResponse {}
 
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminAgentCommissionRulesResponse {
@@ -1909,10 +1944,10 @@ pub(crate) struct UpdateConvertPairRequest {
     pub(crate) spread_rate: Option<BigDecimal>,
     pub(crate) fee_rate: Option<BigDecimal>,
     pub(crate) min_amount: Option<BigDecimal>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "double_option")]
     pub(crate) max_amount: Option<Option<BigDecimal>>,
     pub(crate) target_min_amount: Option<BigDecimal>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "double_option")]
     pub(crate) target_max_amount: Option<Option<BigDecimal>>,
     pub(crate) enabled: Option<bool>,
     pub(crate) reason: Option<String>,

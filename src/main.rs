@@ -9,8 +9,9 @@ use exchange_api::{
     modules::{events::EventBroadcastHub, prediction},
     state::AppState,
     workers::{
-        earn_auto_redemption, event_inbox, event_outbox, kline_recovery, margin_interest,
-        margin_liquidation, market_feed, seconds_contract_settlement, unlock_scanner, wallet_chain,
+        agent_commission_settlement, earn_auto_redemption, event_inbox, event_outbox,
+        kline_recovery, margin_interest, margin_liquidation, market_feed,
+        seconds_contract_settlement, unlock_scanner, wallet_chain,
     },
 };
 use std::sync::Arc;
@@ -183,6 +184,26 @@ async fn main() -> anyhow::Result<()> {
             if let Err(error) = margin_interest::run_loop(pool, interval_seconds, batch_limit).await
             {
                 tracing::error!(%error, "杠杆利息循环已停止");
+            }
+        });
+    }
+
+    if state.settings.agent_commission_auto_settle_enabled
+        && let Some(pool) = state.mysql.clone()
+    {
+        let interval_seconds = state.settings.agent_commission_auto_settle_interval_seconds;
+        let min_age_seconds = state.settings.agent_commission_auto_settle_min_age_seconds;
+        let batch_limit = state.settings.agent_commission_auto_settle_batch_limit;
+        tokio::spawn(async move {
+            if let Err(error) = agent_commission_settlement::run_loop(
+                pool,
+                interval_seconds,
+                min_age_seconds,
+                batch_limit,
+            )
+            .await
+            {
+                tracing::error!(%error, "代理佣金自动结算循环已停止");
             }
         });
     }

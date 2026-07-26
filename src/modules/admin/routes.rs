@@ -85,6 +85,7 @@ use crate::{
                 send_admin_smtp_test as send_smtp_test_use_case,
                 update_admin_agent_commission_rule as update_agent_commission_rule_use_case,
                 update_admin_agent_commission_status as update_agent_commission_status_use_case,
+                update_admin_agent_commission_statuses as update_agent_commission_statuses_use_case,
                 update_admin_agent_status as update_agent_status_use_case,
                 update_admin_asset as update_asset_use_case,
                 update_admin_convert_pair as update_convert_pair_use_case,
@@ -111,14 +112,15 @@ use crate::{
             },
             infrastructure::multipart_file_input,
             presentation::{
-                AdminAgentCommissionQuery, AdminAgentCommissionResponse,
-                AdminAgentCommissionRuleQuery, AdminAgentCommissionRuleResponse,
-                AdminAgentCommissionRulesResponse, AdminAgentCommissionsResponse, AdminAgentQuery,
-                AdminAgentResponse, AdminAgentUsersQuery, AdminAgentUsersResponse,
-                AdminAgentsResponse, AdminAssetQuery, AdminAssetResponse, AdminAssetsResponse,
-                AdminAuditLogsQuery, AdminAuditLogsResponse, AdminConvertOrdersQuery,
-                AdminConvertPairQuery, AdminCountriesQuery, AdminCountriesResponse,
-                AdminCountryResponse, AdminDashboardResponse, AdminDepositAddressPoolBatchResponse,
+                AdminAgentCommissionBatchStatusResponse, AdminAgentCommissionQuery,
+                AdminAgentCommissionResponse, AdminAgentCommissionRuleQuery,
+                AdminAgentCommissionRuleResponse, AdminAgentCommissionRulesResponse,
+                AdminAgentCommissionsResponse, AdminAgentQuery, AdminAgentResponse,
+                AdminAgentUsersQuery, AdminAgentUsersResponse, AdminAgentsResponse,
+                AdminAssetQuery, AdminAssetResponse, AdminAssetsResponse, AdminAuditLogsQuery,
+                AdminAuditLogsResponse, AdminConvertOrdersQuery, AdminConvertPairQuery,
+                AdminCountriesQuery, AdminCountriesResponse, AdminCountryResponse,
+                AdminDashboardResponse, AdminDepositAddressPoolBatchResponse,
                 AdminDepositAddressPoolQuery, AdminDepositAddressPoolResponse,
                 AdminDepositAddressPoolResponseList, AdminDepositNetworkConfigQuery,
                 AdminDepositNetworkConfigResponse, AdminDepositNetworkConfigResponseList,
@@ -134,10 +136,11 @@ use crate::{
                 AdminUserReferralResponse, AdminUserResponse, AdminUserTwoFactorResetResponse,
                 AdminUsersResponse, AdminWalletAccountQuery, AdminWalletAccountsResponse,
                 AdminWalletLedgerQuery, AdminWalletLedgerResponseList, AssignUserAgentRequest,
-                ConvertOrderResponse, ConvertOrdersResponse, ConvertPairResponse,
-                ConvertPairsResponse, CreateAdminCountryRequest, CreateAdminNewsItemRequest,
-                CreateAdminUserRequest, CreateAgentCommissionRuleRequest, CreateAgentRequest,
-                CreateAssetRequest, CreateConvertPairRequest, CreateDepositAddressPoolBatchRequest,
+                BatchUpdateAgentCommissionStatusRequest, ConvertOrderResponse,
+                ConvertOrdersResponse, ConvertPairResponse, ConvertPairsResponse,
+                CreateAdminCountryRequest, CreateAdminNewsItemRequest, CreateAdminUserRequest,
+                CreateAgentCommissionRuleRequest, CreateAgentRequest, CreateAssetRequest,
+                CreateConvertPairRequest, CreateDepositAddressPoolBatchRequest,
                 CreateDepositAddressPoolRequest, CreateDepositNetworkConfigRequest,
                 CreateMarketStrategyRequest, CreateNewCoinProjectRequest, CreateRiskRuleRequest,
                 CreateTradingPairRequest, DeleteAssetRequest, DeleteConvertPairRequest,
@@ -385,6 +388,10 @@ pub fn routes() -> Router<AppState> {
             "/agent-commissions/:id/status",
             patch(update_agent_commission_status),
         )
+        .route(
+            "/agent-commissions/batch-status",
+            post(update_agent_commission_statuses),
+        )
 }
 
 async fn list_agents(
@@ -512,6 +519,17 @@ async fn update_agent_commission_status(
             request,
         )
         .await?,
+    ))
+}
+
+async fn update_agent_commission_statuses(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Json(request): Json<BatchUpdateAgentCommissionStatusRequest>,
+) -> AppResult<Json<AdminAgentCommissionBatchStatusResponse>> {
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    Ok(Json(
+        update_agent_commission_statuses_use_case(state.mysql.clone(), admin_id, request).await?,
     ))
 }
 
