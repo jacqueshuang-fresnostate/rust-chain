@@ -163,6 +163,26 @@
       </div>
     </div>
 
+    <div v-if="quickConfig?.enabled" class="bg-card border border-border rounded-xl p-6 shadow-sm">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="font-bold">{{ t('wallet.quick_orders_title') }}</h3>
+        <button class="text-xs text-primary font-bold hover:underline" :disabled="quickOrdersLoading" @click="loadQuickOrders">
+          {{ t('wallet.records_refresh') }}
+        </button>
+      </div>
+      <div v-if="quickOrdersLoading" class="py-6 text-center text-sm text-muted-foreground">{{ t('common.loading') }}</div>
+      <div v-else-if="quickOrders.length === 0" class="py-6 text-center text-sm text-muted-foreground">{{ t('wallet.quick_orders_empty') }}</div>
+      <div v-else class="space-y-2">
+        <div v-for="order in quickOrders" :key="order.id" class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted/20 px-4 py-3 text-sm">
+          <span class="font-mono text-xs text-muted-foreground">{{ order.order_id }}</span>
+          <span class="font-mono">{{ formatQuickAmount(order.fiat_amount) }} {{ order.currency.toUpperCase() }}</span>
+          <span class="font-mono text-muted-foreground">{{ order.actual_amount ? formatQuickAmount(order.actual_amount) : '-' }} {{ order.token.toUpperCase() }}</span>
+          <span class="rounded-full px-3 py-1 text-xs font-bold" :class="quickOrderStatusClass(order.status)">{{ quickOrderStatusText(order.status) }}</span>
+          <span class="text-xs text-muted-foreground">{{ formatQuickOrderTime(order.created_at) }}</span>
+        </div>
+      </div>
+    </div>
+
     <div class="bg-card border border-border rounded-xl p-6 shadow-sm">
       <h3 class="font-bold mb-4">{{ t('wallet.tips') }}</h3>
       <ul class="list-disc pl-5 space-y-2 text-sm text-muted-foreground">
@@ -181,6 +201,7 @@ import { toDataURL } from 'qrcode'
 import {
     createQuickRechargeOrder,
     fetchQuickRechargeConfig,
+    fetchQuickRechargeOrders,
     fetchSupportedCoins,
     fetchCoinNetworks,
     getDepositAddress,
@@ -354,6 +375,7 @@ const submitQuickRecharge = async () => {
         if (res.data.code === 0) {
             quickOrder.value = res.data.data
             toast.success(t('wallet.payment_created'))
+            void loadQuickOrders()
             openQuickPayment()
         }
     } catch (e) {
@@ -395,9 +417,42 @@ const formatQuickAmount = (value: string | number | null | undefined) => {
     return new Intl.NumberFormat(undefined, { maximumFractionDigits: 8 }).format(amount)
 }
 
+const quickOrders = ref<QuickRechargeOrder[]>([])
+const quickOrdersLoading = ref(false)
+
+async function loadQuickOrders() {
+    quickOrdersLoading.value = true
+    try {
+        const response = await fetchQuickRechargeOrders()
+        quickOrders.value = response.data.data
+    } catch {
+        quickOrders.value = []
+    } finally {
+        quickOrdersLoading.value = false
+    }
+}
+
+function quickOrderStatusText(status: string) {
+    const key = `wallet.quick_status_${status}`
+    const label = t(key)
+    return label === key ? status : label
+}
+
+function quickOrderStatusClass(status: string) {
+    if (status === 'paid' || status === 'credited') return 'bg-green-500/10 text-green-400'
+    if (status === 'expired' || status === 'cancelled' || status === 'failed') return 'bg-rose-500/10 text-rose-400'
+    return 'bg-blue-500/10 text-blue-400'
+}
+
+function formatQuickOrderTime(value: number) {
+    if (!value) return '--'
+    return new Date(value).toLocaleString()
+}
+
 onMounted(() => {
     loadCoins()
     loadQuickRechargeConfig()
+    void loadQuickOrders()
 })
 </script>
 

@@ -143,6 +143,23 @@ export async function transferFunds(params: TransferParams): Promise<{ data: any
   return { data: { code: 0, message: 'success', data: response.data } }
 }
 
+export interface MarginUserSetting {
+  leverage: number | null
+  marginMode: string | null
+}
+
+/// 读取服务端已保存的杠杆与仓位模式，避免刷新后表单回退到本地默认值。
+export async function fetchMarginSetting(contractCoinId: number): Promise<MarginUserSetting> {
+  const response = await request.instance.get<{ leverage?: string | null; margin_mode?: string | null }>(
+    backendApiUrl(`/margin/settings/${contractCoinId}`),
+  )
+  const leverage = Number(response.data.leverage)
+  return {
+    leverage: Number.isFinite(leverage) && leverage > 0 ? leverage : null,
+    marginMode: response.data.margin_mode ?? null,
+  }
+}
+
 export async function modifyLeverage(contractCoinId: number, leverage: number, _direction: 0 | 1): Promise<{ data: any }> {
   const response = await request.instance.patch(backendApiUrl(`/margin/settings/${contractCoinId}/leverage`), {
     leverage: String(leverage),

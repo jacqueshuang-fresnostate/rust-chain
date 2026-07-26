@@ -173,6 +173,7 @@ import { useToast } from 'vue-toastification'
 import { useContractStore } from '@/stores/contract'
 import AuthRequiredState from '@/components/common/AuthRequiredState.vue'
 import { useAuthRequired } from '@/composables/useAuthRequired'
+import { fetchMarginSetting } from '@/api/contract'
 
 const props = defineProps<{
   symbol?: string
@@ -228,9 +229,25 @@ const syncFromWallet = () => {
     }
 }
 
+// 钱包快照不含杠杆配置，需回读服务端设置，否则刷新后表单显示的倍数与实际下单倍数不一致。
+const syncLeverageFromServer = async () => {
+    const coinId = contractStore.activeCoin?.id
+    if (!isLoggedIn.value || !coinId) return
+    try {
+        const setting = await fetchMarginSetting(coinId)
+        if (setting.leverage) {
+            leverage.value = setting.leverage
+            tempLeverage.value = setting.leverage
+        }
+    } catch {
+        // 读取失败保持本地默认值，不阻塞下单。
+    }
+}
+
 watch(() => props.symbol, () => {
     amount.value = null
     syncFromWallet()
+    void syncLeverageFromServer()
 })
 
 // Also sync when wallets are loaded
@@ -357,11 +374,13 @@ onMounted(async () => {
     if (!isLoggedIn.value) return
     await contractStore.loadWallets()
     syncFromWallet()
+    await syncLeverageFromServer()
 })
 
 watch(isLoggedIn, async (loggedIn) => {
     if (!loggedIn) return
     await contractStore.loadWallets()
     syncFromWallet()
+    await syncLeverageFromServer()
 })
 </script>
