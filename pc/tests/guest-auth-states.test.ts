@@ -21,7 +21,9 @@ test('PC user center renders a guest state instead of mounting private pages', (
   assert.match(authState, /common\.login_required_title/)
   assert.match(authState, /common\.login_now/)
   assert.match(authComposable, /redirect:\s*route\.fullPath/)
-  assert.match(authComposable, /localStorage\.getItem\('token'\)/)
+  // 登录态改由 authStorage.readAuthToken 统一从本地持久化中读取。
+  assert.match(authComposable, /readAuthToken\(\)/)
+  assert.match(readProjectFile('src/utils/authStorage.ts'), /globalThis\.localStorage/)
   assert.match(i18n, /login_required_title:\s*'Please log in'/)
   assert.match(i18n, /login_required_title:\s*'请先登录'/)
 })

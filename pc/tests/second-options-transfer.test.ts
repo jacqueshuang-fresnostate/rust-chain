@@ -30,7 +30,9 @@ test('seconds options page does not expose transfer actions', () => {
     assert.doesNotMatch(source, pattern)
   }
 
-  assert.match(source, /formatNumber\(usdtBalance\)\s*\}\}\s*USDT/)
+  // 余额展示已抽成 usdtBalanceText 计算属性，未登录显示 '--'。
+  assert.match(source, /usdtBalanceText = computed\(.*formatNumber\(usdtBalance\.value\)\} USDT/)
+  assert.match(source, /\{\{ usdtBalanceText \}\}/)
   assert.match(source, /handleOrder\(0\)/)
   assert.match(source, /handleOrder\(1\)/)
 })

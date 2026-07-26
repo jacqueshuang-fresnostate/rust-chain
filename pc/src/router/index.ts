@@ -153,6 +153,11 @@ const router = createRouter({
               path: 'finance-orders',
               name: 'FinanceOrders',
               component: () => import('@/views/User/FinanceOrders.vue')
+            },
+            {
+              path: 'launchpad-orders',
+              name: 'LaunchpadOrders',
+              component: () => import('@/views/User/LaunchpadOrders.vue')
             }
           ]
         }

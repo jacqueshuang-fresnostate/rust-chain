@@ -69,6 +69,11 @@
         {{ $t('nav.prediction_orders') }}
       </router-link>
 
+      <router-link to="/user/launchpad-orders" class="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-muted transition-colors" active-class="bg-primary/10 text-primary font-bold">
+        <Icon icon="mdi:rocket-launch-outline" class="w-5 h-5" />
+        {{ $t('nav.launchpad_orders') }}
+      </router-link>
+
       <router-link to="/user/invite" class="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-muted transition-colors" active-class="bg-primary/10 text-primary font-bold">
         <Icon icon="mdi:account-multiple-plus-outline" class="w-5 h-5" />
         {{ $t('invite.title') }}
