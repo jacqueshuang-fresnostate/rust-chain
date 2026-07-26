@@ -37,6 +37,7 @@ pub fn build_router(state: AppState) -> Router {
 
     let admin_api = Router::new()
         .merge(modules::auth::routes::admin_routes())
+        .merge(modules::wallet::routes::admin_routes())
         .merge(modules::spot::routes::admin_routes())
         .merge(modules::admin::routes::routes())
         .merge(modules::quick_recharge::admin_routes())

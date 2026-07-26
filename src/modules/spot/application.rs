@@ -17,7 +17,7 @@ use crate::{
             infrastructure::{
                 SpotLedgerMetadata, SpotOrderListFilter, SpotTradeListFilter,
                 SqlxSpotOrderCancelRepository, apply_spot_wallet_settlement_leg,
-                credit_spot_liquidity_wallet_in_tx, ensure_spot_liquidity_user_in_tx,
+                ensure_spot_liquidity_inventory_in_tx, ensure_spot_liquidity_user_in_tx,
                 ensure_wallet_account_in_tx, freeze_wallet_for_inserted_order_in_tx,
                 insert_spot_liquidity_buy_order_in_tx, insert_spot_liquidity_sell_order_in_tx,
                 insert_spot_order_in_tx, insert_spot_trade, is_duplicate_key_error,
@@ -1020,14 +1020,11 @@ async fn execute_triggered_buy_order_in_tx(
         .map_err(|_| AppError::Unauthorized)?;
     ensure_wallet_account_in_tx(tx, buyer_id, assets.base_asset_id).await?;
     let liquidity_user_id = ensure_spot_liquidity_user_in_tx(tx).await?;
-    credit_spot_liquidity_wallet_in_tx(
+    ensure_spot_liquidity_inventory_in_tx(
         tx,
         liquidity_user_id,
         assets.base_asset_id,
         &fill_quantity,
-        "spot_system_liquidity_credit",
-        "spot_order",
-        &buy_order.id,
     )
     .await?;
     ensure_wallet_account_in_tx(tx, liquidity_user_id, assets.quote_asset_id).await?;
@@ -1184,14 +1181,11 @@ async fn execute_triggered_sell_order_in_tx(
     ensure_wallet_account_in_tx(tx, seller_id, assets.quote_asset_id).await?;
     let liquidity_user_id = ensure_spot_liquidity_user_in_tx(tx).await?;
     let fill_quote_amount = execution_price.clone() * fill_quantity.clone();
-    credit_spot_liquidity_wallet_in_tx(
+    ensure_spot_liquidity_inventory_in_tx(
         tx,
         liquidity_user_id,
         assets.quote_asset_id,
         &fill_quote_amount,
-        "spot_system_liquidity_credit",
-        "spot_order",
-        &sell_order.id,
     )
     .await?;
     ensure_wallet_account_in_tx(tx, liquidity_user_id, assets.base_asset_id).await?;

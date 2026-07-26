@@ -14,14 +14,14 @@ use crate::{
     modules::margin::{
         infrastructure::{
             LockedMarginPositionRow, MarginOpenProductRule, MarginProductSettingRule,
-            MarginProductUpsertValues, cached_margin_entry_price, cached_margin_mark_price,
-            cached_margin_risk_ticker, credit_margin_position_amount,
-            debit_margin_position_open_collateral, ensure_asset_exists,
-            ensure_cross_margin_account, ensure_pair_exists, existing_position_for_idempotency_key,
-            existing_position_for_idempotency_key_readonly, insert_admin_audit_log,
-            insert_margin_position, insert_margin_product, insert_margin_transfer,
-            list_admin_interest_summary, list_admin_margin_positions, list_margin_products,
-            list_margin_wallet_accounts, list_user_cross_margin_accounts,
+            MarginProductUpsertValues, apply_cross_margin_position_settlement,
+            cached_margin_entry_price, cached_margin_mark_price, cached_margin_risk_ticker,
+            credit_margin_position_amount, debit_margin_position_open_collateral,
+            ensure_asset_exists, ensure_cross_margin_account, ensure_pair_exists,
+            existing_position_for_idempotency_key, existing_position_for_idempotency_key_readonly,
+            insert_admin_audit_log, insert_margin_position, insert_margin_product,
+            insert_margin_transfer, list_admin_interest_summary, list_admin_margin_positions,
+            list_margin_products, list_margin_wallet_accounts, list_user_cross_margin_accounts,
             list_user_margin_positions as list_user_margin_positions_rows,
             load_admin_margin_position_by_id, load_cancelable_position_ids,
             load_margin_transfer_by_idempotency_key, load_margin_transfer_wallet_snapshots,
@@ -187,6 +187,7 @@ pub(crate) async fn open_margin_position(
         product.margin_asset,
         &request.margin_amount,
         position_id,
+        &position_margin_mode,
     )
     .await?;
     set_margin_position_wallet_scope(&mut tx, position_id, &wallet_scope).await?;
@@ -721,22 +722,42 @@ pub(crate) async fn close_margin_position(
         entry_price,
         &mark_price,
     )?;
+    let position_equity = (position.margin_amount.clone() + realized_pnl.clone()
+        - position.interest_amount.clone())
+    .with_scale(18);
     let payout_amount = margin_payout_amount(
         &position.margin_amount,
         &realized_pnl,
         &position.interest_amount,
     );
-    // 平仓返还金额、流水和仓位状态必须同事务提交，避免用户收到余额但仓位仍显示 opened。
-    credit_margin_position_amount(
-        &mut tx,
-        user_id,
-        position.margin_asset,
-        &position.wallet_scope,
-        &payout_amount,
-        "margin_position_close",
-        position.id,
-    )
-    .await?;
+    if position.margin_mode == "cross" {
+        if position.wallet_scope != "margin" {
+            return Err(AppError::Validation(
+                "cross margin position must use margin wallet scope".to_owned(),
+            ));
+        }
+        // 全仓亏损必须真实扣减共享钱包，不能按单仓把负权益截断为零。
+        apply_cross_margin_position_settlement(
+            &mut tx,
+            user_id,
+            position.margin_asset,
+            &position_equity,
+            position.id,
+        )
+        .await?;
+    } else {
+        // 逐仓平仓仍按单仓非负权益返还原资金账户。
+        credit_margin_position_amount(
+            &mut tx,
+            user_id,
+            position.margin_asset,
+            &position.wallet_scope,
+            &payout_amount,
+            "margin_position_close",
+            position.id,
+        )
+        .await?;
+    }
     mark_position_closed(
         &mut tx,
         user_id,

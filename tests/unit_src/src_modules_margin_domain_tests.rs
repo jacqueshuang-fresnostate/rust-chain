@@ -1,4 +1,4 @@
-use super::{CrossMarginPositionRisk, evaluate_cross_margin};
+use super::{CrossMarginPositionRisk, allocate_cross_margin_payouts, evaluate_cross_margin};
 use bigdecimal::BigDecimal;
 use std::str::FromStr;
 
@@ -26,10 +26,32 @@ fn cross_margin_aggregates_equity_pnl_interest_and_maintenance() {
     );
 
     assert_eq!(state.equity, decimal("152.000000000000000000"));
+    assert_eq!(state.portfolio_equity, decimal("52.000000000000000000"));
     assert_eq!(state.unrealized_pnl, decimal("5.000000000000000000"));
     assert_eq!(state.interest_amount, decimal("3.000000000000000000"));
     assert_eq!(state.maintenance_margin, decimal("40.000000000000000000"));
     assert!(!state.should_liquidate);
+}
+
+#[test]
+fn cross_margin_payout_allocation_never_exceeds_portfolio_equity() {
+    let payouts = allocate_cross_margin_payouts(
+        &[decimal("70"), decimal("-100"), decimal("30")],
+        &decimal("0"),
+    );
+    assert_eq!(payouts, vec![decimal("0"), decimal("0"), decimal("0")]);
+
+    let payouts = allocate_cross_margin_payouts(
+        &[decimal("70"), decimal("-50"), decimal("30")],
+        &decimal("50"),
+    );
+    assert_eq!(
+        payouts.iter().cloned().sum::<BigDecimal>(),
+        decimal("50.000000000000000000")
+    );
+    assert_eq!(payouts[0], decimal("35.000000000000000000"));
+    assert_eq!(payouts[1], decimal("0.000000000000000000"));
+    assert_eq!(payouts[2], decimal("15.000000000000000000"));
 }
 
 #[test]

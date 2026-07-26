@@ -410,7 +410,12 @@ pub(crate) fn parse_polymarket_market(value: &Value) -> AppResult<ParsedPolymark
     };
     let external_resolution = first_string(
         value,
-        &["resolutionOutcome", "resolvedOutcome", "winningOutcome", "outcome"],
+        &[
+            "resolutionOutcome",
+            "resolvedOutcome",
+            "winningOutcome",
+            "outcome",
+        ],
     )
     .and_then(|outcome| normalize_external_resolution(&outcome))
     .or_else(|| closed_binary_price_resolution(is_closed, &prices));

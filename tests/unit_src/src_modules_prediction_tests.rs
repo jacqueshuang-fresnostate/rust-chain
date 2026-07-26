@@ -56,7 +56,10 @@ fn closed_polymarket_market_uses_final_binary_prices_for_resolution() {
     let parsed = super::service::parse_polymarket_market(&market).expect("market should parse");
 
     assert_eq!(parsed.source_status, super::service::STATUS_HIDDEN);
-    assert_eq!(parsed.external_resolution.as_deref(), Some(super::service::OUTCOME_YES));
+    assert_eq!(
+        parsed.external_resolution.as_deref(),
+        Some(super::service::OUTCOME_YES)
+    );
 }
 
 #[test]

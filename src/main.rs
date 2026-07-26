@@ -10,7 +10,7 @@ use exchange_api::{
     state::AppState,
     workers::{
         earn_auto_redemption, event_inbox, event_outbox, kline_recovery, margin_interest,
-        margin_liquidation, market_feed, seconds_contract_settlement, unlock_scanner,
+        margin_liquidation, market_feed, seconds_contract_settlement, unlock_scanner, wallet_chain,
     },
 };
 use std::sync::Arc;
@@ -183,6 +183,18 @@ async fn main() -> anyhow::Result<()> {
             if let Err(error) = margin_interest::run_loop(pool, interval_seconds, batch_limit).await
             {
                 tracing::error!(%error, "杠杆利息循环已停止");
+            }
+        });
+    }
+
+    let wallet_chain_config = wallet_chain::WalletChainWorkerConfig::from_env();
+    if wallet_chain_config.enabled && state.mysql.is_some() {
+        let wallet_chain_state = state.clone();
+        tokio::spawn(async move {
+            if let Err(error) =
+                wallet_chain::run_loop(wallet_chain_state, wallet_chain_config).await
+            {
+                tracing::error!(%error, "钱包链任务循环已停止");
             }
         });
     }

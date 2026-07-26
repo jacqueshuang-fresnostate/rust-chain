@@ -789,6 +789,44 @@ async fn openapi_json_documents_user_2fa_security_policy_contract() {
         ("/api/v1/user/2fa/reset-code", ["post"].as_slice(), true),
         ("/api/v1/user/2fa/reset", ["post"].as_slice(), true),
         ("/api/v1/wallet/withdrawals", ["post"].as_slice(), true),
+        ("/api/v1/wallet/withdrawals", ["get"].as_slice(), true),
+        ("/admin/api/v1/wallet/withdrawals", ["get"].as_slice(), true),
+        (
+            "/admin/api/v1/wallet/withdrawals/{id}/approve",
+            ["post"].as_slice(),
+            true,
+        ),
+        (
+            "/admin/api/v1/wallet/withdrawals/{id}/reject",
+            ["post"].as_slice(),
+            true,
+        ),
+        (
+            "/admin/api/v1/wallet/withdrawals/{id}/broadcast",
+            ["post"].as_slice(),
+            true,
+        ),
+        (
+            "/admin/api/v1/wallet/withdrawals/{id}/confirm",
+            ["post"].as_slice(),
+            true,
+        ),
+        (
+            "/admin/api/v1/wallet/withdrawals/{id}/fail",
+            ["post"].as_slice(),
+            true,
+        ),
+        ("/admin/api/v1/wallet/deposits", ["get"].as_slice(), true),
+        (
+            "/admin/api/v1/wallet/deposits/observe",
+            ["post"].as_slice(),
+            true,
+        ),
+        (
+            "/admin/api/v1/wallet/deposits/{id}/reverse",
+            ["post"].as_slice(),
+            true,
+        ),
         (
             "/admin/api/v1/security-policy",
             ["get", "patch"].as_slice(),
@@ -837,6 +875,16 @@ async fn openapi_json_documents_user_2fa_security_policy_contract() {
         "AdminUserTwoFactorResetResponse",
         "CreateWithdrawalRequest",
         "WithdrawalRequestResponse",
+        "WalletWithdrawalResponse",
+        "WalletWithdrawalsResponse",
+        "ReviewWithdrawalRequest",
+        "BroadcastWithdrawalRequest",
+        "ConfirmWithdrawalRequest",
+        "FailWithdrawalRequest",
+        "ObserveDepositRequest",
+        "ReverseDepositRequest",
+        "WalletDepositEventResponse",
+        "WalletDepositsResponse",
     ] {
         let schema = &openapi["components"]["schemas"][schema_name];
         assert!(

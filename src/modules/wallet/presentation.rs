@@ -4,7 +4,7 @@
 
 use super::WithdrawFeeTier;
 use crate::modules::security::SecurityVerificationMethod;
-use crate::time::unix_millis;
+use crate::time::{option_unix_millis, unix_millis};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -33,6 +33,7 @@ pub struct CreateWithdrawalRequest {
     pub address: String,
     pub amount: BigDecimal,
     pub fee: BigDecimal,
+    pub idempotency_key: String,
     pub fund_password: Option<String>,
     pub totp_code: Option<String>,
 }
@@ -41,7 +42,131 @@ pub struct CreateWithdrawalRequest {
 pub struct WithdrawalRequestResponse {
     pub id: u64,
     pub status: String,
+    pub total_reserved: BigDecimal,
     pub security_method: SecurityVerificationMethod,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WalletWithdrawalQuery {
+    pub status: Option<String>,
+    pub user_id: Option<u64>,
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WalletWithdrawalsResponse {
+    pub withdrawals: Vec<WalletWithdrawalResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct WalletWithdrawalResponse {
+    pub id: u64,
+    pub user_id: u64,
+    pub asset_id: u64,
+    pub asset_symbol: String,
+    pub network: Option<String>,
+    pub address: String,
+    pub amount: BigDecimal,
+    pub fee: BigDecimal,
+    pub total_reserved: BigDecimal,
+    pub status: String,
+    pub security_method: String,
+    pub idempotency_key: String,
+    pub gateway_request_id: String,
+    pub tx_hash: Option<String>,
+    pub block_height: Option<u64>,
+    pub confirmations: u32,
+    pub failure_reason: Option<String>,
+    pub review_reason: Option<String>,
+    pub reviewed_by: Option<u64>,
+    pub broadcasted_by: Option<u64>,
+    pub confirmed_by: Option<u64>,
+    pub failed_by: Option<u64>,
+    #[serde(default, with = "option_unix_millis")]
+    pub reviewed_at: Option<DateTime<Utc>>,
+    #[serde(default, with = "option_unix_millis")]
+    pub broadcast_at: Option<DateTime<Utc>>,
+    #[serde(default, with = "option_unix_millis")]
+    pub confirmed_at: Option<DateTime<Utc>>,
+    #[serde(default, with = "option_unix_millis")]
+    pub failed_at: Option<DateTime<Utc>>,
+    #[serde(default, with = "option_unix_millis")]
+    pub released_at: Option<DateTime<Utc>>,
+    #[serde(with = "unix_millis")]
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReviewWithdrawalRequest {
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BroadcastWithdrawalRequest {
+    pub tx_hash: String,
+    pub block_height: Option<u64>,
+    pub confirmations: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConfirmWithdrawalRequest {
+    pub block_height: Option<u64>,
+    pub confirmations: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FailWithdrawalRequest {
+    pub reason: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ObserveDepositRequest {
+    pub asset_symbol: String,
+    pub network: String,
+    pub address: String,
+    pub memo: Option<String>,
+    pub tx_hash: String,
+    #[serde(default)]
+    pub event_index: u32,
+    pub amount: BigDecimal,
+    pub block_height: Option<u64>,
+    #[serde(default)]
+    pub confirmations: u32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReverseDepositRequest {
+    pub reason: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WalletDepositsResponse {
+    pub deposits: Vec<WalletDepositEventResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct WalletDepositEventResponse {
+    pub id: u64,
+    pub user_id: u64,
+    pub asset_id: u64,
+    pub asset_symbol: String,
+    pub network: String,
+    pub address: String,
+    pub memo: Option<String>,
+    pub tx_hash: String,
+    pub event_index: u32,
+    pub amount: BigDecimal,
+    pub block_height: Option<u64>,
+    pub confirmations: u32,
+    pub required_confirmations: u32,
+    pub status: String,
+    pub failure_reason: Option<String>,
+    #[serde(default, with = "option_unix_millis")]
+    pub credited_at: Option<DateTime<Utc>>,
+    #[serde(default, with = "option_unix_millis")]
+    pub reversed_at: Option<DateTime<Utc>>,
+    #[serde(with = "unix_millis")]
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize)]

@@ -7,7 +7,7 @@ use exchange_api::{
     config::Settings,
     modules::{
         auth::{TokenScope, hash_password, issue_token},
-        wallet::routes::routes,
+        wallet::routes::{admin_routes, routes},
     },
     state::AppState,
 };
@@ -20,6 +20,11 @@ use uuid::Uuid;
 
 fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).unwrap()
+}
+
+async fn body_json(response: axum::response::Response) -> Result<Value, Box<dyn Error>> {
+    let body = axum::body::to_bytes(response.into_body(), 65_536).await?;
+    Ok(serde_json::from_slice(&body)?)
 }
 
 fn test_settings() -> Settings {
@@ -100,6 +105,28 @@ async fn create_user(pool: &MySqlPool) -> u64 {
         .await
         .unwrap()
         .last_insert_id()
+}
+
+async fn create_admin(pool: &MySqlPool) -> (u64, u64) {
+    let suffix = Uuid::now_v7().simple().to_string();
+    let role_id = sqlx::query(
+        "INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_ARRAY('wallet:manage'))",
+    )
+    .bind(format!("wallet-role-{}", &suffix[16..32]))
+    .execute(pool)
+    .await
+    .unwrap()
+    .last_insert_id();
+    let admin_id =
+        sqlx::query("INSERT INTO admin_users (username, password_hash, role_id) VALUES (?, ?, ?)")
+            .bind(format!("wallet-admin-{}", &suffix[16..32]))
+            .bind("not-a-real-hash")
+            .bind(role_id)
+            .execute(pool)
+            .await
+            .unwrap()
+            .last_insert_id();
+    (role_id, admin_id)
 }
 
 async fn seed_fund_password(pool: &MySqlPool, user_id: u64, password: &str) {
@@ -319,7 +346,7 @@ async fn wallet_routes_return_authenticated_user_accounts_and_ledger() -> Result
     seed_convert_fee_ledger(&pool, user_id, asset_id, &convert_quote_id).await;
 
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
-    let app = routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let app = routes().with_state(AppState::new(settings.clone()).with_mysql(pool.clone()));
 
     let accounts_response = app
         .clone()
@@ -370,7 +397,10 @@ async fn wallet_routes_return_authenticated_user_accounts_and_ledger() -> Result
     assert_eq!(ledger["entries"][0]["user_id"], user_id);
     assert_eq!(ledger["entries"][0]["ref_id"], ref_id);
     assert_eq!(ledger["entries"][0]["amount"], "12.500000000000000000");
-    assert_eq!(ledger["entries"][0]["fee"], "0.000000000000000000");
+    assert_eq!(
+        decimal(ledger["entries"][0]["fee"].as_str().unwrap()),
+        decimal("0")
+    );
 
     let convert_ledger_response = app
         .oneshot(
@@ -439,7 +469,7 @@ async fn wallet_deposit_address_is_assigned_from_pool_and_reused() -> Result<(),
         900,
     )
     .unwrap();
-    let app = routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let app = routes().with_state(AppState::new(settings.clone()).with_mysql(pool.clone()));
     let request_body =
         json!({ "asset_symbol": symbol.to_ascii_lowercase(), "network": "trc20" }).to_string();
 
@@ -771,6 +801,173 @@ async fn wallet_deposit_assets_only_include_enabled_assets_and_reject_disabled_d
 }
 
 #[tokio::test]
+async fn wallet_deposit_observation_credits_once_and_reorg_reverses_once()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_user(&pool).await;
+    let (asset_id, asset_symbol) = create_deposit_asset(&pool).await;
+    upsert_deposit_network_config(&pool, "tron", "C").await;
+    let address = format!("T{}", Uuid::now_v7().simple());
+    sqlx::query(
+        r#"INSERT INTO deposit_address_pool
+           (network, address_group_code, address, status, assigned_user_id,
+            assigned_asset_symbol, assigned_at)
+           VALUES ('tron', 'C', ?, 'assigned', ?, ?, CURRENT_TIMESTAMP(6))"#,
+    )
+    .bind(&address)
+    .bind(user_id)
+    .bind(&asset_symbol)
+    .execute(&pool)
+    .await?;
+    let (admin_role_id, admin_id) = create_admin(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let tx_hash = format!("0x{}", Uuid::now_v7().simple());
+    let observe_body = |confirmations: u32| {
+        json!({
+            "asset_symbol": asset_symbol,
+            "network": "tron",
+            "address": address,
+            "tx_hash": tx_hash,
+            "event_index": 0,
+            "amount": "3.000000000000000000",
+            "block_height": 100,
+            "confirmations": confirmations
+        })
+        .to_string()
+    };
+
+    let observed = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/wallet/deposits/observe")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(observe_body(11)))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(observed.status(), StatusCode::OK);
+    let observed_payload = body_json(observed).await?;
+    let deposit_id = observed_payload["id"].as_u64().unwrap();
+    assert_eq!(observed_payload["status"], "observed");
+
+    for confirmations in [12, 20] {
+        let credited = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/wallet/deposits/observe")
+                    .header("authorization", format!("Bearer {admin_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(observe_body(confirmations)))
+                    .unwrap(),
+            )
+            .await?;
+        assert_eq!(credited.status(), StatusCode::OK);
+        let credited_payload = body_json(credited).await?;
+        assert_eq!(credited_payload["status"], "credited");
+        assert_eq!(credited_payload["id"], deposit_id);
+    }
+    let credited_available: BigDecimal = sqlx::query_scalar(
+        "SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(credited_available, decimal("3.000000000000000000"));
+    let credit_ledger_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'wallet_deposit_event' AND ref_id = ? AND change_type = 'deposit_confirm'",
+    )
+    .bind(deposit_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(credit_ledger_count, 1);
+
+    for _ in 0..2 {
+        let reversed = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/wallet/deposits/{deposit_id}/reverse"))
+                    .header("authorization", format!("Bearer {admin_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"reason":"chain reorganization"}"#))
+                    .unwrap(),
+            )
+            .await?;
+        assert_eq!(reversed.status(), StatusCode::OK);
+        let reversed_payload = body_json(reversed).await?;
+        assert_eq!(reversed_payload["status"], "reversed");
+    }
+    let reversed_available: BigDecimal = sqlx::query_scalar(
+        "SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(reversed_available, decimal("0.000000000000000000"));
+    let reverse_ledger_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'wallet_deposit_event' AND ref_id = ? AND change_type = 'deposit_reorg_reverse'",
+    )
+    .bind(deposit_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(reverse_ledger_count, 1);
+
+    sqlx::query("DELETE FROM wallet_ledger WHERE user_id = ? AND asset_id = ?")
+        .bind(user_id)
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_deposit_events WHERE id = ?")
+        .bind(deposit_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+        .bind(user_id)
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM deposit_address_pool WHERE address = ?")
+        .bind(&address)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(admin_role_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn wallet_withdrawal_requires_fund_password_and_records_pending_request()
 -> Result<(), Box<dyn Error>> {
     let Some(pool) = mysql_pool().await else {
@@ -793,7 +990,8 @@ async fn wallet_withdrawal_requires_fund_password_and_records_pending_request()
     seed_fund_password(&pool, user_id, "123456").await;
 
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
-    let app = routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let app = routes().with_state(AppState::new(settings.clone()).with_mysql(pool.clone()));
+    let withdrawal_key = format!("withdraw-create-{}", Uuid::now_v7().simple());
 
     let missing_security_response = app
         .clone()
@@ -809,7 +1007,8 @@ async fn wallet_withdrawal_requires_fund_password_and_records_pending_request()
                         "network": "trc20",
                         "address": "TWithdrawAddress",
                         "amount": "2.000000000000000000",
-                        "fee": "0.100000000000000000"
+                        "fee": "0.100000000000000000",
+                        "idempotency_key": format!("withdraw-missing-security-{}", Uuid::now_v7().simple())
                     })
                     .to_string(),
                 ))
@@ -823,6 +1022,7 @@ async fn wallet_withdrawal_requires_fund_password_and_records_pending_request()
     assert_eq!(missing_payload["code"], "security_verification_required");
 
     let create_response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -836,6 +1036,7 @@ async fn wallet_withdrawal_requires_fund_password_and_records_pending_request()
                         "address": "TWithdrawAddress",
                         "amount": "2.000000000000000000",
                         "fee": "0.100000000000000000",
+                        "idempotency_key": withdrawal_key.clone(),
                         "fund_password": "123456"
                     })
                     .to_string(),
@@ -854,7 +1055,8 @@ async fn wallet_withdrawal_requires_fund_password_and_records_pending_request()
     );
     let created: Value = serde_json::from_slice(&create_body)?;
     let withdrawal_id = created["id"].as_u64().unwrap();
-    assert_eq!(created["status"], "pending");
+    assert_eq!(created["status"], "pending_review");
+    assert_eq!(created["total_reserved"], "2.250000000000000000");
     assert_eq!(created["security_method"], "fund_password");
 
     let stored: (
@@ -864,10 +1066,12 @@ async fn wallet_withdrawal_requires_fund_password_and_records_pending_request()
         String,
         BigDecimal,
         BigDecimal,
+        BigDecimal,
         String,
         String,
     ) = sqlx::query_as(
-        r#"SELECT user_id, asset_symbol, network, address, amount, fee, status, security_method
+        r#"SELECT user_id, asset_symbol, network, address, amount, fee, total_reserved,
+                  status, security_method
                FROM wallet_withdrawal_requests
                WHERE id = ?"#,
     )
@@ -876,14 +1080,106 @@ async fn wallet_withdrawal_requires_fund_password_and_records_pending_request()
     .await?;
     assert_eq!(stored.0, user_id);
     assert_eq!(stored.1, asset_symbol);
-    assert_eq!(stored.2.as_deref(), Some("trc20"));
+    assert_eq!(stored.2.as_deref(), Some("tron"));
     assert_eq!(stored.3, "TWithdrawAddress");
     assert_eq!(stored.4, decimal("2.000000000000000000"));
     assert_eq!(stored.5, decimal("0.250000000000000000"));
-    assert_eq!(stored.6, "pending");
-    assert_eq!(stored.7, "fund_password");
+    assert_eq!(stored.6, decimal("2.250000000000000000"));
+    assert_eq!(stored.7, "pending_review");
+    assert_eq!(stored.8, "fund_password");
+
+    let replay_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/wallet/withdrawals")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "asset_symbol": asset_symbol.to_ascii_lowercase(),
+                        "network": "tron",
+                        "address": "TWithdrawAddress",
+                        "amount": "2.000000000000000000",
+                        "fee": "0.000000000000000000",
+                        "idempotency_key": withdrawal_key
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(replay_response.status(), StatusCode::OK);
+    let replay_payload: Value =
+        serde_json::from_slice(&axum::body::to_bytes(replay_response.into_body(), 8192).await?)?;
+    assert_eq!(replay_payload["id"], withdrawal_id);
+    let (available_after_reserve, frozen_after_reserve): (BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available, frozen FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(available_after_reserve, decimal("10.250000000000000000"));
+    assert_eq!(frozen_after_reserve, decimal("3.750000000000000000"));
+    let reserve_ledger_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'wallet_withdrawal_request' AND ref_id = ? AND change_type = 'withdrawal_reserve'",
+    )
+    .bind(withdrawal_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(reserve_ledger_count, 1);
+
+    let (admin_role_id, admin_id) = create_admin(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let admin_app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    for _ in 0..2 {
+        let rejected = admin_app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/wallet/withdrawals/{withdrawal_id}/reject"))
+                    .header("authorization", format!("Bearer {admin_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"reason":"risk review rejected"}"#))
+                    .unwrap(),
+            )
+            .await?;
+        assert_eq!(rejected.status(), StatusCode::OK);
+    }
+    let (available_after_reject, frozen_after_reject): (BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available, frozen FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(available_after_reject, decimal("12.500000000000000000"));
+    assert_eq!(frozen_after_reject, decimal("1.500000000000000000"));
+    let release_ledger_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'wallet_withdrawal_request' AND ref_id = ? AND change_type = 'withdrawal_release'",
+    )
+    .bind(withdrawal_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(release_ledger_count, 1);
 
     cleanup_wallet_route_fixture(&pool, user_id, asset_id).await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(admin_role_id)
+        .execute(&pool)
+        .await?;
     Ok(())
 }
 
@@ -921,7 +1217,7 @@ async fn wallet_withdrawal_uses_tiered_withdraw_fee_when_amount_matches()
     seed_fund_password(&pool, user_id, "123456").await;
 
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
-    let app = routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let app = routes().with_state(AppState::new(settings.clone()).with_mysql(pool.clone()));
 
     let create_response = app
         .oneshot(
@@ -937,6 +1233,7 @@ async fn wallet_withdrawal_uses_tiered_withdraw_fee_when_amount_matches()
                         "address": "TWithdrawAddress",
                         "amount": "2.000000000000000000",
                         "fee": "0.000000000000000000",
+                        "idempotency_key": format!("withdraw-tier-{}", Uuid::now_v7().simple()),
                         "fund_password": "123456"
                     })
                     .to_string(),
@@ -963,7 +1260,98 @@ async fn wallet_withdrawal_uses_tiered_withdraw_fee_when_amount_matches()
             .await?;
     assert_eq!(stored_fee, decimal("0.040000000000000000"));
 
+    let (admin_role_id, admin_id) = create_admin(&pool).await;
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let admin_app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let approved = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/wallet/withdrawals/{withdrawal_id}/approve"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"reason":"approved"}"#))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(approved.status(), StatusCode::OK);
+    let broadcasted = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/wallet/withdrawals/{withdrawal_id}/broadcast"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"tx_hash":"0xwithdrawalconfirmed","block_height":101,"confirmations":1}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(broadcasted.status(), StatusCode::OK);
+    let broadcasted_payload = body_json(broadcasted).await?;
+    assert_eq!(broadcasted_payload["broadcasted_by"], admin_id);
+    for _ in 0..2 {
+        let confirmed = admin_app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/wallet/withdrawals/{withdrawal_id}/confirm"))
+                    .header("authorization", format!("Bearer {admin_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"block_height":102,"confirmations":12}"#))
+                    .unwrap(),
+            )
+            .await?;
+        assert_eq!(confirmed.status(), StatusCode::OK);
+        let confirmed_payload = body_json(confirmed).await?;
+        assert_eq!(confirmed_payload["confirmed_by"], admin_id);
+    }
+    let (withdrawal_status, broadcasted_by, confirmed_by): (String, Option<u64>, Option<u64>) =
+        sqlx::query_as(
+            "SELECT status, broadcasted_by, confirmed_by FROM wallet_withdrawal_requests WHERE id = ?",
+        )
+        .bind(withdrawal_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(withdrawal_status, "confirmed");
+    assert_eq!(broadcasted_by, Some(admin_id));
+    assert_eq!(confirmed_by, Some(admin_id));
+    let (available, frozen): (BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available, frozen FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(available, decimal("10.460000000000000000"));
+    assert_eq!(frozen, decimal("1.500000000000000000"));
+    let confirm_ledger_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'wallet_withdrawal_request' AND ref_id = ? AND change_type = 'withdrawal_confirm'",
+    )
+    .bind(withdrawal_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(confirm_ledger_count, 1);
+
     cleanup_wallet_route_fixture(&pool, user_id, asset_id).await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(admin_role_id)
+        .execute(&pool)
+        .await?;
     Ok(())
 }
 
@@ -1003,6 +1391,7 @@ async fn wallet_withdrawal_rejects_assets_with_withdraw_disabled() -> Result<(),
                         "address": "TWithdrawAddress",
                         "amount": "2.000000000000000000",
                         "fee": "0.100000000000000000",
+                        "idempotency_key": format!("withdraw-disabled-{}", Uuid::now_v7().simple()),
                         "fund_password": "123456"
                     })
                     .to_string(),

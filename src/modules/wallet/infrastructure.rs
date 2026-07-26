@@ -8,16 +8,98 @@ use super::{
 };
 use crate::{
     error::{AppError, AppResult},
-    modules::wallet::presentation::{
-        DepositAddressResponse, DepositAssetResponse, DepositNetworkResponse,
-        WalletAccountResponse, WalletLedgerEntryResponse, WalletLedgerPageResponse,
-        WalletLedgerResponse,
+    modules::wallet::{
+        presentation::{
+            DepositAddressResponse, DepositAssetResponse, DepositNetworkResponse,
+            ObserveDepositRequest, WalletAccountResponse, WalletDepositEventResponse,
+            WalletLedgerEntryResponse, WalletLedgerPageResponse, WalletLedgerResponse,
+            WalletWithdrawalResponse,
+        },
+        repository::{
+            WalletChainBroadcastCommand, WalletChainBroadcastResult, WalletChainGateway,
+            WalletChainPollPage,
+        },
     },
 };
 use axum::async_trait;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
+use std::time::Duration;
+
+#[derive(Debug, Clone)]
+pub struct HttpWalletChainGateway {
+    client: reqwest::Client,
+}
+
+impl Default for HttpWalletChainGateway {
+    fn default() -> Self {
+        Self {
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
+#[async_trait]
+impl WalletChainGateway for HttpWalletChainGateway {
+    async fn broadcast_withdrawal(
+        &self,
+        endpoint: &str,
+        bearer_token: Option<&str>,
+        command: &WalletChainBroadcastCommand,
+    ) -> AppResult<WalletChainBroadcastResult> {
+        let mut request = self
+            .client
+            .post(endpoint)
+            .timeout(Duration::from_secs(15))
+            .json(command);
+        if let Some(token) = bearer_token {
+            request = request.bearer_auth(token);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|error| AppError::Internal(format!("wallet gateway request failed: {error}")))?
+            .error_for_status()
+            .map_err(|error| {
+                AppError::Internal(format!("wallet gateway rejected broadcast: {error}"))
+            })?;
+        response.json().await.map_err(|error| {
+            AppError::Internal(format!(
+                "wallet gateway broadcast response is invalid: {error}"
+            ))
+        })
+    }
+
+    async fn poll_chain_events(
+        &self,
+        endpoint: &str,
+        bearer_token: Option<&str>,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> AppResult<WalletChainPollPage> {
+        let limit = limit.to_string();
+        let mut request = self
+            .client
+            .get(endpoint)
+            .timeout(Duration::from_secs(15))
+            .query(&[("cursor", cursor.unwrap_or("")), ("limit", limit.as_str())]);
+        if let Some(token) = bearer_token {
+            request = request.bearer_auth(token);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|error| AppError::Internal(format!("wallet gateway poll failed: {error}")))?
+            .error_for_status()
+            .map_err(|error| {
+                AppError::Internal(format!("wallet gateway poll rejected: {error}"))
+            })?;
+        response.json().await.map_err(|error| {
+            AppError::Internal(format!("wallet gateway poll response is invalid: {error}"))
+        })
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct NewAssetLockPosition {
@@ -198,6 +280,29 @@ struct DepositAssetRow {
     deposit_fee: BigDecimal,
     withdraw_fee: BigDecimal,
     withdraw_fee_tiers: SqlxJson<Vec<WithdrawFeeTier>>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub(crate) struct WithdrawalAssetRule {
+    pub(crate) id: u64,
+    pub(crate) precision_scale: i32,
+    pub(crate) fee: BigDecimal,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct DepositTargetRow {
+    user_id: u64,
+    asset_id: u64,
+    precision_scale: i32,
+    min_deposit_amount: BigDecimal,
+    required_confirmations: u32,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct WalletBalanceRow {
+    available: BigDecimal,
+    frozen: BigDecimal,
+    locked: BigDecimal,
 }
 
 #[derive(Debug)]
@@ -725,16 +830,14 @@ pub(crate) async fn load_deposit_address_in_tx(
     Ok(deposit_address_response(row))
 }
 
-pub(crate) async fn load_asset_withdraw_fee(
+pub(crate) async fn load_withdrawal_asset_rule(
     pool: &Pool<MySql>,
     asset_symbol: &str,
     amount: &BigDecimal,
-) -> AppResult<BigDecimal> {
-    let row = sqlx::query_as::<_, (bool, BigDecimal, i32, SqlxJson<Vec<WithdrawFeeTier>>)>(
-        r#"SELECT withdraw_enabled,
-                  withdraw_fee,
-                  precision_scale,
-                  COALESCE(withdraw_fee_tiers_json, JSON_ARRAY()) AS withdraw_fee_tiers
+) -> AppResult<WithdrawalAssetRule> {
+    let row = sqlx::query_as::<_, (u64, bool, BigDecimal, i32, SqlxJson<Vec<WithdrawFeeTier>>)>(
+        r#"SELECT id, withdraw_enabled, withdraw_fee, precision_scale,
+                  COALESCE(withdraw_fee_tiers_json, JSON_ARRAY())
            FROM assets
            WHERE symbol = ? AND status = 'active'
            LIMIT 1"#,
@@ -743,50 +846,623 @@ pub(crate) async fn load_asset_withdraw_fee(
     .fetch_optional(pool)
     .await?;
     match row {
-        Some((true, withdraw_fee, precision_scale, SqlxJson(tiers))) => {
-            let normalized_tiers =
-                normalize_withdraw_fee_tiers(tiers).map_err(AppError::Validation)?;
-            Ok(calculate_withdraw_fee(
-                amount,
-                &withdraw_fee,
-                &normalized_tiers,
+        Some((id, true, fixed_fee, precision_scale, SqlxJson(tiers))) => {
+            let tiers = normalize_withdraw_fee_tiers(tiers).map_err(AppError::Validation)?;
+            Ok(WithdrawalAssetRule {
+                id,
                 precision_scale,
-            ))
+                fee: calculate_withdraw_fee(amount, &fixed_fee, &tiers, precision_scale),
+            })
         }
-        Some((false, _, _, _)) => Err(AppError::Validation(
+        Some((_, false, _, _, _)) => Err(AppError::Validation(
             "asset does not support withdraw".to_owned(),
         )),
         None => Err(AppError::NotFound),
     }
 }
 
-pub(crate) async fn insert_withdrawal_request(
+pub(crate) async fn load_withdrawal_by_user_key(
     pool: &Pool<MySql>,
     user_id: u64,
+    idempotency_key: &str,
+) -> AppResult<Option<WalletWithdrawalResponse>> {
+    sqlx::query_as::<_, WalletWithdrawalResponse>(&format!(
+        "{} WHERE requests.user_id = ? AND requests.idempotency_key = ? LIMIT 1",
+        wallet_withdrawal_select_sql()
+    ))
+    .bind(user_id)
+    .bind(idempotency_key)
+    .fetch_optional(pool)
+    .await
+    .map_err(AppError::from)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn reserve_withdrawal_request(
+    pool: &Pool<MySql>,
+    user_id: u64,
+    asset: &WithdrawalAssetRule,
     asset_symbol: &str,
     network: Option<&str>,
     address: &str,
     amount: &BigDecimal,
-    fee: &BigDecimal,
+    idempotency_key: &str,
     security_method: &str,
-) -> AppResult<u64> {
-    let status = "pending";
+) -> AppResult<WalletWithdrawalResponse> {
+    let total_reserved = (amount.clone() + asset.fee.clone()).with_scale(18);
+    let gateway_request_id = uuid::Uuid::now_v7().to_string();
+    let mut tx = pool.begin().await?;
     let result = sqlx::query(
         r#"INSERT INTO wallet_withdrawal_requests
-              (user_id, asset_symbol, network, address, amount, fee, status, security_method)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#,
+              (user_id, asset_id, asset_symbol, network, address, amount, fee, total_reserved,
+               status, security_method, idempotency_key, gateway_request_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_review', ?, ?, ?)"#,
     )
     .bind(user_id)
+    .bind(asset.id)
     .bind(asset_symbol)
     .bind(network)
     .bind(address)
     .bind(amount)
-    .bind(fee)
-    .bind(status)
+    .bind(&asset.fee)
+    .bind(&total_reserved)
     .bind(security_method)
-    .execute(pool)
+    .bind(idempotency_key)
+    .bind(&gateway_request_id)
+    .execute(&mut *tx)
+    .await;
+    let withdrawal_id = match result {
+        Ok(result) => result.last_insert_id(),
+        Err(error) => {
+            tx.rollback().await?;
+            return Err(AppError::Database(error));
+        }
+    };
+
+    let wallet = lock_wallet_balance(&mut tx, user_id, asset.id).await?;
+    if wallet.available < total_reserved {
+        return Err(AppError::Validation(format!(
+            "insufficient available balance for withdrawal: requested {}, available {}",
+            total_reserved, wallet.available
+        )));
+    }
+    let available_after = (wallet.available.clone() - total_reserved.clone()).with_scale(18);
+    let frozen_after = (wallet.frozen.clone() + total_reserved.clone()).with_scale(18);
+    update_wallet_balance(
+        &mut tx,
+        user_id,
+        asset.id,
+        &available_after,
+        &frozen_after,
+        &wallet.locked,
+    )
     .await?;
-    Ok(result.last_insert_id())
+    insert_wallet_ledger_in_tx(
+        &mut tx,
+        user_id,
+        asset.id,
+        "withdrawal_reserve",
+        &(-total_reserved),
+        "available",
+        &available_after,
+        &available_after,
+        &frozen_after,
+        &wallet.locked,
+        "wallet_withdrawal_request",
+        &withdrawal_id.to_string(),
+    )
+    .await?;
+    let withdrawal = load_withdrawal_by_id_in_tx(&mut tx, withdrawal_id).await?;
+    tx.commit().await?;
+    Ok(withdrawal)
+}
+
+pub(crate) async fn list_wallet_withdrawals(
+    pool: &Pool<MySql>,
+    user_id: Option<u64>,
+    status: Option<&str>,
+    limit: u32,
+) -> AppResult<Vec<WalletWithdrawalResponse>> {
+    let mut builder = QueryBuilder::<MySql>::new(wallet_withdrawal_select_sql());
+    builder.push(" WHERE 1 = 1");
+    if let Some(user_id) = user_id {
+        builder.push(" AND requests.user_id = ");
+        builder.push_bind(user_id);
+    }
+    if let Some(status) = status {
+        builder.push(" AND requests.status = ");
+        builder.push_bind(status);
+    }
+    builder.push(" ORDER BY requests.id DESC LIMIT ");
+    builder.push_bind(limit.clamp(1, 200) as i64);
+    builder
+        .build_query_as::<WalletWithdrawalResponse>()
+        .fetch_all(pool)
+        .await
+        .map_err(AppError::from)
+}
+
+pub(crate) async fn approve_withdrawal_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    withdrawal_id: u64,
+    admin_id: u64,
+    reason: Option<&str>,
+) -> AppResult<WalletWithdrawalResponse> {
+    let withdrawal = load_withdrawal_by_id_for_update(tx, withdrawal_id).await?;
+    if withdrawal.status == "approved" {
+        return Ok(withdrawal);
+    }
+    if withdrawal.status != "pending_review" {
+        return Err(AppError::Conflict(format!(
+            "withdrawal cannot be approved from status {}",
+            withdrawal.status
+        )));
+    }
+    sqlx::query(
+        r#"UPDATE wallet_withdrawal_requests
+           SET status = 'approved', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP(6),
+               review_reason = ?, failure_reason = NULL, next_attempt_at = CURRENT_TIMESTAMP(6)
+           WHERE id = ? AND status = 'pending_review'"#,
+    )
+    .bind(admin_id)
+    .bind(reason)
+    .bind(withdrawal_id)
+    .execute(&mut **tx)
+    .await?;
+    load_withdrawal_by_id_in_tx(tx, withdrawal_id).await
+}
+
+pub(crate) async fn release_withdrawal_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    withdrawal_id: u64,
+    admin_id: Option<u64>,
+    target_status: &str,
+    reason: &str,
+) -> AppResult<WalletWithdrawalResponse> {
+    let withdrawal = load_withdrawal_by_id_for_update(tx, withdrawal_id).await?;
+    if withdrawal.status == target_status {
+        return Ok(withdrawal);
+    }
+    let release_allowed = match target_status {
+        "rejected" => matches!(withdrawal.status.as_str(), "pending_review" | "approved"),
+        // 已经取得交易哈希的请求不得自动解冻，必须等待链上确认或进入人工处置。
+        "failed" => matches!(withdrawal.status.as_str(), "approved" | "broadcasting"),
+        _ => false,
+    };
+    if !release_allowed {
+        return Err(AppError::Conflict(format!(
+            "withdrawal reservation cannot be released from status {}",
+            withdrawal.status
+        )));
+    }
+    let wallet = lock_wallet_balance(tx, withdrawal.user_id, withdrawal.asset_id).await?;
+    if wallet.frozen < withdrawal.total_reserved {
+        return Err(AppError::Conflict(
+            "withdrawal frozen balance is lower than reserved amount".to_owned(),
+        ));
+    }
+    let available_after =
+        (wallet.available.clone() + withdrawal.total_reserved.clone()).with_scale(18);
+    let frozen_after = (wallet.frozen.clone() - withdrawal.total_reserved.clone()).with_scale(18);
+    update_wallet_balance(
+        tx,
+        withdrawal.user_id,
+        withdrawal.asset_id,
+        &available_after,
+        &frozen_after,
+        &wallet.locked,
+    )
+    .await?;
+    insert_wallet_ledger_in_tx(
+        tx,
+        withdrawal.user_id,
+        withdrawal.asset_id,
+        "withdrawal_release",
+        &withdrawal.total_reserved,
+        "available",
+        &available_after,
+        &available_after,
+        &frozen_after,
+        &wallet.locked,
+        "wallet_withdrawal_request",
+        &withdrawal.id.to_string(),
+    )
+    .await?;
+    sqlx::query(
+        r#"UPDATE wallet_withdrawal_requests
+           SET status = ?, failure_reason = ?,
+               review_reason = CASE WHEN ? = 'rejected' THEN ? ELSE review_reason END,
+               reviewed_by = COALESCE(?, reviewed_by),
+               reviewed_at = COALESCE(reviewed_at, CURRENT_TIMESTAMP(6)),
+               failed_at = CASE WHEN ? = 'failed' THEN CURRENT_TIMESTAMP(6) ELSE failed_at END,
+               failed_by = CASE WHEN ? = 'failed' THEN COALESCE(?, failed_by) ELSE failed_by END,
+               released_at = CURRENT_TIMESTAMP(6), next_attempt_at = NULL
+           WHERE id = ?"#,
+    )
+    .bind(target_status)
+    .bind(reason)
+    .bind(target_status)
+    .bind(reason)
+    .bind(admin_id)
+    .bind(target_status)
+    .bind(target_status)
+    .bind(admin_id)
+    .bind(withdrawal_id)
+    .execute(&mut **tx)
+    .await?;
+    load_withdrawal_by_id_in_tx(tx, withdrawal_id).await
+}
+
+pub(crate) async fn mark_withdrawal_broadcasted_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    withdrawal_id: u64,
+    admin_id: Option<u64>,
+    tx_hash: &str,
+    block_height: Option<u64>,
+    confirmations: u32,
+) -> AppResult<WalletWithdrawalResponse> {
+    let tx_hash = normalize_chain_value(tx_hash, "tx_hash", 255)?;
+    let withdrawal = load_withdrawal_by_id_for_update(tx, withdrawal_id).await?;
+    if withdrawal.status == "broadcasted" && withdrawal.tx_hash.as_deref() == Some(&tx_hash) {
+        return update_withdrawal_chain_progress_in_tx(
+            tx,
+            withdrawal_id,
+            &tx_hash,
+            block_height,
+            confirmations,
+        )
+        .await;
+    }
+    if !matches!(withdrawal.status.as_str(), "approved" | "broadcasting") {
+        return Err(AppError::Conflict(format!(
+            "withdrawal cannot be broadcast from status {}",
+            withdrawal.status
+        )));
+    }
+    sqlx::query(
+        r#"UPDATE wallet_withdrawal_requests
+           SET status = 'broadcasted', tx_hash = ?, block_height = ?,
+               confirmations = ?, broadcast_at = CURRENT_TIMESTAMP(6),
+               broadcasted_by = COALESCE(?, broadcasted_by), next_attempt_at = NULL
+           WHERE id = ? AND status IN ('approved', 'broadcasting')"#,
+    )
+    .bind(&tx_hash)
+    .bind(block_height)
+    .bind(confirmations)
+    .bind(admin_id)
+    .bind(withdrawal_id)
+    .execute(&mut **tx)
+    .await?;
+    load_withdrawal_by_id_in_tx(tx, withdrawal_id).await
+}
+
+pub(crate) async fn confirm_withdrawal_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    withdrawal_id: u64,
+    admin_id: Option<u64>,
+    block_height: Option<u64>,
+    confirmations: u32,
+) -> AppResult<WalletWithdrawalResponse> {
+    let withdrawal = load_withdrawal_by_id_for_update(tx, withdrawal_id).await?;
+    if withdrawal.status == "confirmed" {
+        return Ok(withdrawal);
+    }
+    if !matches!(withdrawal.status.as_str(), "broadcasted" | "manual_review") {
+        return Err(AppError::Conflict(format!(
+            "withdrawal cannot be confirmed from status {}",
+            withdrawal.status
+        )));
+    }
+    let wallet = lock_wallet_balance(tx, withdrawal.user_id, withdrawal.asset_id).await?;
+    if wallet.frozen < withdrawal.total_reserved {
+        return Err(AppError::Conflict(
+            "withdrawal frozen balance is lower than reserved amount".to_owned(),
+        ));
+    }
+    let frozen_after = (wallet.frozen.clone() - withdrawal.total_reserved.clone()).with_scale(18);
+    update_wallet_balance(
+        tx,
+        withdrawal.user_id,
+        withdrawal.asset_id,
+        &wallet.available,
+        &frozen_after,
+        &wallet.locked,
+    )
+    .await?;
+    insert_wallet_ledger_in_tx(
+        tx,
+        withdrawal.user_id,
+        withdrawal.asset_id,
+        "withdrawal_confirm",
+        &(-withdrawal.total_reserved.clone()),
+        "frozen",
+        &frozen_after,
+        &wallet.available,
+        &frozen_after,
+        &wallet.locked,
+        "wallet_withdrawal_request",
+        &withdrawal.id.to_string(),
+    )
+    .await?;
+    sqlx::query(
+        r#"UPDATE wallet_withdrawal_requests
+           SET status = 'confirmed', block_height = COALESCE(?, block_height),
+               confirmations = GREATEST(confirmations, ?),
+               confirmed_at = CURRENT_TIMESTAMP(6),
+               confirmed_by = COALESCE(?, confirmed_by), next_attempt_at = NULL
+           WHERE id = ? AND status IN ('broadcasted', 'manual_review')"#,
+    )
+    .bind(block_height)
+    .bind(confirmations)
+    .bind(admin_id)
+    .bind(withdrawal_id)
+    .execute(&mut **tx)
+    .await?;
+    load_withdrawal_by_id_in_tx(tx, withdrawal_id).await
+}
+
+pub(crate) async fn load_withdrawal_by_gateway_request_for_update(
+    tx: &mut Transaction<'_, MySql>,
+    gateway_request_id: &str,
+) -> AppResult<WalletWithdrawalResponse> {
+    let gateway_request_id = normalize_chain_value(gateway_request_id, "gateway_request_id", 128)?;
+    sqlx::query_as::<_, WalletWithdrawalResponse>(&format!(
+        "{} WHERE requests.gateway_request_id = ? FOR UPDATE",
+        wallet_withdrawal_select_sql()
+    ))
+    .bind(gateway_request_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)
+}
+
+pub(crate) async fn update_withdrawal_chain_progress_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    withdrawal_id: u64,
+    tx_hash: &str,
+    block_height: Option<u64>,
+    confirmations: u32,
+) -> AppResult<WalletWithdrawalResponse> {
+    let tx_hash = normalize_chain_value(tx_hash, "tx_hash", 255)?;
+    let withdrawal = load_withdrawal_by_id_for_update(tx, withdrawal_id).await?;
+    if !matches!(
+        withdrawal.status.as_str(),
+        "broadcasted" | "manual_review" | "confirmed"
+    ) {
+        return Err(AppError::Conflict(format!(
+            "withdrawal chain progress cannot update status {}",
+            withdrawal.status
+        )));
+    }
+    if withdrawal.tx_hash.as_deref() != Some(&tx_hash) {
+        return Err(AppError::Conflict(
+            "withdrawal chain transaction hash does not match".to_owned(),
+        ));
+    }
+    sqlx::query(
+        r#"UPDATE wallet_withdrawal_requests
+           SET block_height = COALESCE(?, block_height),
+               confirmations = GREATEST(confirmations, ?)
+           WHERE id = ?"#,
+    )
+    .bind(block_height)
+    .bind(confirmations)
+    .bind(withdrawal_id)
+    .execute(&mut **tx)
+    .await?;
+    load_withdrawal_by_id_in_tx(tx, withdrawal_id).await
+}
+
+pub(crate) async fn mark_withdrawal_manual_review_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    withdrawal_id: u64,
+    reason: &str,
+) -> AppResult<WalletWithdrawalResponse> {
+    let reason = reason.chars().take(500).collect::<String>();
+    let withdrawal = load_withdrawal_by_id_for_update(tx, withdrawal_id).await?;
+    if withdrawal.status == "manual_review" {
+        return Ok(withdrawal);
+    }
+    if withdrawal.status != "broadcasted" {
+        return Err(AppError::Conflict(format!(
+            "withdrawal cannot enter manual review from status {}",
+            withdrawal.status
+        )));
+    }
+    sqlx::query(
+        r#"UPDATE wallet_withdrawal_requests
+           SET status = 'manual_review', failure_reason = ?, next_attempt_at = NULL
+           WHERE id = ? AND status = 'broadcasted'"#,
+    )
+    .bind(reason)
+    .bind(withdrawal_id)
+    .execute(&mut **tx)
+    .await?;
+    load_withdrawal_by_id_in_tx(tx, withdrawal_id).await
+}
+
+pub(crate) async fn observe_deposit_event(
+    pool: &Pool<MySql>,
+    request: &ObserveDepositRequest,
+) -> AppResult<WalletDepositEventResponse> {
+    let mut tx = pool.begin().await?;
+    let target = sqlx::query_as::<_, DepositTargetRow>(
+        r#"SELECT pool.assigned_user_id AS user_id, assets.id AS asset_id,
+                  assets.precision_scale, assets.min_deposit_amount,
+                  configs.required_confirmations
+           FROM deposit_address_pool pool
+           INNER JOIN assets ON assets.symbol = pool.assigned_asset_symbol
+           INNER JOIN deposit_network_configs configs
+                   ON configs.network = ? AND configs.status = 'active'
+                  AND configs.address_group_code = pool.address_group_code
+                  AND (
+                      configs.asset_symbols_json IS NULL
+                      OR JSON_CONTAINS(
+                          configs.asset_symbols_json,
+                          JSON_QUOTE(pool.assigned_asset_symbol)
+                      )
+                  )
+           WHERE pool.address = ? AND pool.status = 'assigned'
+             AND pool.assigned_asset_symbol = ? AND assets.status = 'active'
+             AND assets.deposit_enabled = TRUE
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(&request.network)
+    .bind(&request.address)
+    .bind(&request.asset_symbol)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    if !super::amount_fits_asset_precision(&request.amount, target.precision_scale) {
+        return Err(AppError::Validation(format!(
+            "deposit amount supports at most {} decimal places",
+            target.precision_scale
+        )));
+    }
+    if request.amount < target.min_deposit_amount {
+        return Err(AppError::Validation(format!(
+            "deposit amount is below minimum {}",
+            target.min_deposit_amount
+        )));
+    }
+    sqlx::query(
+        r#"INSERT INTO wallet_deposit_events
+              (user_id, asset_id, asset_symbol, network, address, memo, tx_hash, event_index,
+               amount, block_height, confirmations, required_confirmations, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'observed')
+           ON DUPLICATE KEY UPDATE
+             confirmations = GREATEST(confirmations, VALUES(confirmations)),
+             block_height = COALESCE(VALUES(block_height), block_height)"#,
+    )
+    .bind(target.user_id)
+    .bind(target.asset_id)
+    .bind(&request.asset_symbol)
+    .bind(&request.network)
+    .bind(&request.address)
+    .bind(&request.memo)
+    .bind(&request.tx_hash)
+    .bind(request.event_index)
+    .bind(&request.amount)
+    .bind(request.block_height)
+    .bind(request.confirmations)
+    .bind(target.required_confirmations)
+    .execute(&mut *tx)
+    .await?;
+    let event = load_deposit_event_by_external_key_for_update(
+        &mut tx,
+        &request.network,
+        &request.tx_hash,
+        request.event_index,
+    )
+    .await?;
+    if event.user_id != target.user_id
+        || event.asset_id != target.asset_id
+        || event.address != request.address
+        || event.memo != request.memo
+        || event.amount != request.amount
+    {
+        return Err(AppError::Conflict(
+            "deposit event identity was already used with different parameters".to_owned(),
+        ));
+    }
+    if event.status == "observed" && event.confirmations >= event.required_confirmations {
+        credit_deposit_event_in_tx(&mut tx, &event).await?;
+    }
+    let event = load_deposit_event_by_id_in_tx(&mut tx, event.id).await?;
+    tx.commit().await?;
+    Ok(event)
+}
+
+pub(crate) async fn reverse_deposit_event(
+    pool: &Pool<MySql>,
+    deposit_id: u64,
+    reason: &str,
+) -> AppResult<WalletDepositEventResponse> {
+    let mut tx = pool.begin().await?;
+    let event = load_deposit_event_by_id_for_update(&mut tx, deposit_id).await?;
+    if event.status == "reversed" {
+        tx.commit().await?;
+        return Ok(event);
+    }
+    if event.status != "credited" {
+        return Err(AppError::Conflict(format!(
+            "deposit cannot be reversed from status {}",
+            event.status
+        )));
+    }
+    let wallet = lock_wallet_balance(&mut tx, event.user_id, event.asset_id).await?;
+    if wallet.available < event.amount {
+        sqlx::query(
+            r#"UPDATE wallet_deposit_events
+               SET status = 'manual_review', failure_reason = ?
+               WHERE id = ? AND status = 'credited'"#,
+        )
+        .bind(reason)
+        .bind(event.id)
+        .execute(&mut *tx)
+        .await?;
+        let event = load_deposit_event_by_id_in_tx(&mut tx, event.id).await?;
+        tx.commit().await?;
+        return Ok(event);
+    }
+    let available_after = (wallet.available.clone() - event.amount.clone()).with_scale(18);
+    update_wallet_balance(
+        &mut tx,
+        event.user_id,
+        event.asset_id,
+        &available_after,
+        &wallet.frozen,
+        &wallet.locked,
+    )
+    .await?;
+    insert_wallet_ledger_in_tx(
+        &mut tx,
+        event.user_id,
+        event.asset_id,
+        "deposit_reorg_reverse",
+        &(-event.amount.clone()),
+        "available",
+        &available_after,
+        &available_after,
+        &wallet.frozen,
+        &wallet.locked,
+        "wallet_deposit_event",
+        &event.id.to_string(),
+    )
+    .await?;
+    sqlx::query(
+        r#"UPDATE wallet_deposit_events
+           SET status = 'reversed', failure_reason = ?, reversed_at = CURRENT_TIMESTAMP(6)
+           WHERE id = ? AND status = 'credited'"#,
+    )
+    .bind(reason)
+    .bind(event.id)
+    .execute(&mut *tx)
+    .await?;
+    let event = load_deposit_event_by_id_in_tx(&mut tx, event.id).await?;
+    tx.commit().await?;
+    Ok(event)
+}
+
+pub(crate) async fn list_deposit_events(
+    pool: &Pool<MySql>,
+    user_id: Option<u64>,
+    limit: u32,
+) -> AppResult<Vec<WalletDepositEventResponse>> {
+    let mut builder = QueryBuilder::<MySql>::new(wallet_deposit_select_sql());
+    builder.push(" WHERE 1 = 1");
+    if let Some(user_id) = user_id {
+        builder.push(" AND events.user_id = ");
+        builder.push_bind(user_id);
+    }
+    builder.push(" ORDER BY events.id DESC LIMIT ");
+    builder.push_bind(limit.clamp(1, 200) as i64);
+    builder
+        .build_query_as::<WalletDepositEventResponse>()
+        .fetch_all(pool)
+        .await
+        .map_err(AppError::from)
 }
 
 pub(crate) async fn list_wallet_accounts(
@@ -979,6 +1655,252 @@ fn wallet_ledger_select_sql() -> &'static str {
              AND withdraw_records.user_id = wl.user_id
              AND withdraw_records.asset_id = wl.asset_id
        WHERE wl.user_id = "#
+}
+
+fn wallet_withdrawal_select_sql() -> &'static str {
+    r#"SELECT requests.id, requests.user_id, requests.asset_id, requests.asset_symbol,
+              requests.network, requests.address, requests.amount, requests.fee,
+              requests.total_reserved, requests.status, requests.security_method,
+              requests.idempotency_key, requests.gateway_request_id, requests.tx_hash,
+              requests.block_height, requests.confirmations, requests.failure_reason,
+              requests.review_reason,
+              requests.reviewed_by, requests.broadcasted_by, requests.confirmed_by,
+              requests.failed_by, requests.reviewed_at, requests.broadcast_at,
+              requests.confirmed_at, requests.failed_at, requests.released_at, requests.created_at
+       FROM wallet_withdrawal_requests requests"#
+}
+
+fn wallet_deposit_select_sql() -> &'static str {
+    r#"SELECT events.id, events.user_id, events.asset_id, events.asset_symbol,
+              events.network, events.address, events.memo, events.tx_hash, events.event_index,
+              events.amount, events.block_height, events.confirmations,
+              events.required_confirmations, events.status, events.failure_reason,
+              events.credited_at, events.reversed_at, events.created_at
+       FROM wallet_deposit_events events"#
+}
+
+fn normalize_chain_value(value: &str, label: &str, max_length: usize) -> AppResult<String> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > max_length || value.chars().any(char::is_whitespace) {
+        return Err(AppError::Validation(format!("{label} format is invalid")));
+    }
+    Ok(value.to_owned())
+}
+
+async fn load_withdrawal_by_id_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    withdrawal_id: u64,
+) -> AppResult<WalletWithdrawalResponse> {
+    sqlx::query_as::<_, WalletWithdrawalResponse>(&format!(
+        "{} WHERE requests.id = ? LIMIT 1",
+        wallet_withdrawal_select_sql()
+    ))
+    .bind(withdrawal_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)
+}
+
+async fn load_withdrawal_by_id_for_update(
+    tx: &mut Transaction<'_, MySql>,
+    withdrawal_id: u64,
+) -> AppResult<WalletWithdrawalResponse> {
+    sqlx::query_as::<_, WalletWithdrawalResponse>(&format!(
+        "{} WHERE requests.id = ? LIMIT 1 FOR UPDATE",
+        wallet_withdrawal_select_sql()
+    ))
+    .bind(withdrawal_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)
+}
+
+async fn lock_wallet_balance(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    asset_id: u64,
+) -> AppResult<WalletBalanceRow> {
+    sqlx::query(
+        r#"INSERT INTO wallet_accounts (user_id, asset_id, available, frozen, locked)
+           VALUES (?, ?, 0, 0, 0)
+           ON DUPLICATE KEY UPDATE updated_at = updated_at"#,
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query_as::<_, WalletBalanceRow>(
+        r#"SELECT available, frozen, locked
+           FROM wallet_accounts
+           WHERE user_id = ? AND asset_id = ?
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(AppError::from)
+}
+
+async fn update_wallet_balance(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    asset_id: u64,
+    available: &BigDecimal,
+    frozen: &BigDecimal,
+    locked: &BigDecimal,
+) -> AppResult<()> {
+    if available < &BigDecimal::from(0)
+        || frozen < &BigDecimal::from(0)
+        || locked < &BigDecimal::from(0)
+    {
+        return Err(AppError::Conflict(
+            "wallet balance mutation would produce a negative bucket".to_owned(),
+        ));
+    }
+    sqlx::query(
+        r#"UPDATE wallet_accounts
+           SET available = ?, frozen = ?, locked = ?
+           WHERE user_id = ? AND asset_id = ?"#,
+    )
+    .bind(available)
+    .bind(frozen)
+    .bind(locked)
+    .bind(user_id)
+    .bind(asset_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn insert_wallet_ledger_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    asset_id: u64,
+    change_type: &str,
+    amount: &BigDecimal,
+    balance_type: &str,
+    balance_after: &BigDecimal,
+    available_after: &BigDecimal,
+    frozen_after: &BigDecimal,
+    locked_after: &BigDecimal,
+    ref_type: &str,
+    ref_id: &str,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"INSERT INTO wallet_ledger
+           (user_id, asset_id, change_type, amount, balance_type, balance_after,
+            available_after, frozen_after, locked_after, ref_type, ref_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .bind(change_type)
+    .bind(amount)
+    .bind(balance_type)
+    .bind(balance_after)
+    .bind(available_after)
+    .bind(frozen_after)
+    .bind(locked_after)
+    .bind(ref_type)
+    .bind(ref_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+async fn load_deposit_event_by_external_key_for_update(
+    tx: &mut Transaction<'_, MySql>,
+    network: &str,
+    tx_hash: &str,
+    event_index: u32,
+) -> AppResult<WalletDepositEventResponse> {
+    sqlx::query_as::<_, WalletDepositEventResponse>(&format!(
+        "{} WHERE events.network = ? AND events.tx_hash = ? AND events.event_index = ? LIMIT 1 FOR UPDATE",
+        wallet_deposit_select_sql()
+    ))
+    .bind(network)
+    .bind(tx_hash)
+    .bind(event_index)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)
+}
+
+async fn load_deposit_event_by_id_for_update(
+    tx: &mut Transaction<'_, MySql>,
+    event_id: u64,
+) -> AppResult<WalletDepositEventResponse> {
+    sqlx::query_as::<_, WalletDepositEventResponse>(&format!(
+        "{} WHERE events.id = ? LIMIT 1 FOR UPDATE",
+        wallet_deposit_select_sql()
+    ))
+    .bind(event_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)
+}
+
+async fn load_deposit_event_by_id_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    event_id: u64,
+) -> AppResult<WalletDepositEventResponse> {
+    sqlx::query_as::<_, WalletDepositEventResponse>(&format!(
+        "{} WHERE events.id = ? LIMIT 1",
+        wallet_deposit_select_sql()
+    ))
+    .bind(event_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)
+}
+
+async fn credit_deposit_event_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    event: &WalletDepositEventResponse,
+) -> AppResult<()> {
+    let wallet = lock_wallet_balance(tx, event.user_id, event.asset_id).await?;
+    let available_after = (wallet.available.clone() + event.amount.clone()).with_scale(18);
+    update_wallet_balance(
+        tx,
+        event.user_id,
+        event.asset_id,
+        &available_after,
+        &wallet.frozen,
+        &wallet.locked,
+    )
+    .await?;
+    insert_wallet_ledger_in_tx(
+        tx,
+        event.user_id,
+        event.asset_id,
+        "deposit_confirm",
+        &event.amount,
+        "available",
+        &available_after,
+        &available_after,
+        &wallet.frozen,
+        &wallet.locked,
+        "wallet_deposit_event",
+        &event.id.to_string(),
+    )
+    .await?;
+    let update = sqlx::query(
+        r#"UPDATE wallet_deposit_events
+           SET status = 'credited', credited_at = CURRENT_TIMESTAMP(6)
+           WHERE id = ? AND status = 'observed'"#,
+    )
+    .bind(event.id)
+    .execute(&mut **tx)
+    .await?;
+    if update.rows_affected() != 1 {
+        return Err(AppError::Conflict(
+            "deposit event status changed concurrently".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn deposit_asset_response(row: DepositAssetRow) -> DepositAssetResponse {

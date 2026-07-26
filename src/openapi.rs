@@ -78,6 +78,16 @@ pub fn routes() -> Router<AppState> {
         list_user_quick_recharge_orders,
         gmpay_notify,
         create_withdrawal_request,
+        list_user_withdrawals,
+        list_admin_wallet_withdrawals,
+        approve_admin_wallet_withdrawal,
+        reject_admin_wallet_withdrawal,
+        broadcast_admin_wallet_withdrawal,
+        confirm_admin_wallet_withdrawal,
+        fail_admin_wallet_withdrawal,
+        list_admin_wallet_deposits,
+        observe_admin_wallet_deposit,
+        reverse_admin_wallet_deposit,
         get_smtp_config,
         list_smtp_configs,
         create_smtp_config,
@@ -178,6 +188,16 @@ pub fn routes() -> Router<AppState> {
         FundPasswordResponse,
         CreateWithdrawalRequest,
         WithdrawalRequestResponse,
+        WalletWithdrawalResponse,
+        WalletWithdrawalsResponse,
+        ReviewWithdrawalRequest,
+        BroadcastWithdrawalRequest,
+        ConfirmWithdrawalRequest,
+        FailWithdrawalRequest,
+        ObserveDepositRequest,
+        ReverseDepositRequest,
+        WalletDepositEventResponse,
+        WalletDepositsResponse,
         DepositAssetResponse,
         DepositAssetsResponse,
         DepositAddressRequest,
@@ -677,6 +697,7 @@ struct CreateWithdrawalRequest {
     address: String,
     amount: String,
     fee: String,
+    idempotency_key: String,
     fund_password: Option<String>,
     totp_code: Option<String>,
 }
@@ -685,7 +706,122 @@ struct CreateWithdrawalRequest {
 struct WithdrawalRequestResponse {
     id: u64,
     status: String,
+    total_reserved: String,
     security_method: SecurityVerificationMethod,
+}
+
+#[derive(ToSchema)]
+struct WalletWithdrawalResponse {
+    id: u64,
+    user_id: u64,
+    asset_id: u64,
+    asset_symbol: String,
+    network: Option<String>,
+    address: String,
+    amount: String,
+    fee: String,
+    total_reserved: String,
+    status: String,
+    security_method: String,
+    idempotency_key: String,
+    gateway_request_id: String,
+    tx_hash: Option<String>,
+    block_height: Option<u64>,
+    confirmations: u32,
+    failure_reason: Option<String>,
+    review_reason: Option<String>,
+    reviewed_by: Option<u64>,
+    broadcasted_by: Option<u64>,
+    confirmed_by: Option<u64>,
+    failed_by: Option<u64>,
+    #[schema(format = Int64)]
+    reviewed_at: Option<i64>,
+    #[schema(format = Int64)]
+    broadcast_at: Option<i64>,
+    #[schema(format = Int64)]
+    confirmed_at: Option<i64>,
+    #[schema(format = Int64)]
+    failed_at: Option<i64>,
+    #[schema(format = Int64)]
+    released_at: Option<i64>,
+    #[schema(format = Int64)]
+    created_at: i64,
+}
+
+#[derive(ToSchema)]
+struct WalletWithdrawalsResponse {
+    withdrawals: Vec<WalletWithdrawalResponse>,
+}
+
+#[derive(ToSchema)]
+struct ReviewWithdrawalRequest {
+    reason: Option<String>,
+}
+
+#[derive(ToSchema)]
+struct BroadcastWithdrawalRequest {
+    tx_hash: String,
+    block_height: Option<u64>,
+    confirmations: Option<u32>,
+}
+
+#[derive(ToSchema)]
+struct ConfirmWithdrawalRequest {
+    block_height: Option<u64>,
+    confirmations: Option<u32>,
+}
+
+#[derive(ToSchema)]
+struct FailWithdrawalRequest {
+    reason: String,
+}
+
+#[derive(ToSchema)]
+struct ObserveDepositRequest {
+    asset_symbol: String,
+    network: String,
+    address: String,
+    memo: Option<String>,
+    tx_hash: String,
+    event_index: u32,
+    amount: String,
+    block_height: Option<u64>,
+    confirmations: u32,
+}
+
+#[derive(ToSchema)]
+struct ReverseDepositRequest {
+    reason: String,
+}
+
+#[derive(ToSchema)]
+struct WalletDepositEventResponse {
+    id: u64,
+    user_id: u64,
+    asset_id: u64,
+    asset_symbol: String,
+    network: String,
+    address: String,
+    memo: Option<String>,
+    tx_hash: String,
+    event_index: u32,
+    amount: String,
+    block_height: Option<u64>,
+    confirmations: u32,
+    required_confirmations: u32,
+    status: String,
+    failure_reason: Option<String>,
+    #[schema(format = Int64)]
+    credited_at: Option<i64>,
+    #[schema(format = Int64)]
+    reversed_at: Option<i64>,
+    #[schema(format = Int64)]
+    created_at: i64,
+}
+
+#[derive(ToSchema)]
+struct WalletDepositsResponse {
+    deposits: Vec<WalletDepositEventResponse>,
 }
 
 #[derive(ToSchema)]
@@ -2310,6 +2446,164 @@ fn gmpay_notify() {}
     )
 )]
 fn create_withdrawal_request() {}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/wallet/withdrawals",
+    tag = "wallet",
+    summary = "查询当前用户提现申请",
+    params(
+        ("status" = Option<String>, Query, description = "提现状态"),
+        ("limit" = Option<u32>, Query, description = "返回数量")
+    ),
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "查询成功", body = WalletWithdrawalsResponse),
+        (status = 400, description = "状态参数错误", body = ErrorResponse),
+        (status = 401, description = "未登录", body = ErrorResponse),
+        (status = 500, description = "服务内部错误", body = ErrorResponse)
+    )
+)]
+fn list_user_withdrawals() {}
+
+#[utoipa::path(
+    get,
+    path = "/admin/api/v1/wallet/withdrawals",
+    tag = "admin-wallet",
+    summary = "后台查询提现申请",
+    params(
+        ("status" = Option<String>, Query, description = "提现状态"),
+        ("user_id" = Option<u64>, Query, description = "用户 ID"),
+        ("limit" = Option<u32>, Query, description = "返回数量")
+    ),
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "查询成功", body = WalletWithdrawalsResponse),
+        (status = 400, description = "参数错误", body = ErrorResponse),
+        (status = 401, description = "未登录", body = ErrorResponse),
+        (status = 403, description = "无后台权限", body = ErrorResponse)
+    )
+)]
+fn list_admin_wallet_withdrawals() {}
+
+#[utoipa::path(
+    post,
+    path = "/admin/api/v1/wallet/withdrawals/{id}/approve",
+    tag = "admin-wallet",
+    summary = "审核通过提现申请",
+    params(("id" = u64, Path, description = "提现申请 ID")),
+    request_body = ReviewWithdrawalRequest,
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "审核成功", body = WalletWithdrawalResponse),
+        (status = 409, description = "状态冲突", body = ErrorResponse)
+    )
+)]
+fn approve_admin_wallet_withdrawal() {}
+
+#[utoipa::path(
+    post,
+    path = "/admin/api/v1/wallet/withdrawals/{id}/reject",
+    tag = "admin-wallet",
+    summary = "拒绝提现并解冻资金",
+    params(("id" = u64, Path, description = "提现申请 ID")),
+    request_body = ReviewWithdrawalRequest,
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "拒绝成功", body = WalletWithdrawalResponse),
+        (status = 409, description = "状态冲突", body = ErrorResponse)
+    )
+)]
+fn reject_admin_wallet_withdrawal() {}
+
+#[utoipa::path(
+    post,
+    path = "/admin/api/v1/wallet/withdrawals/{id}/broadcast",
+    tag = "admin-wallet",
+    summary = "登记提现链上广播结果",
+    params(("id" = u64, Path, description = "提现申请 ID")),
+    request_body = BroadcastWithdrawalRequest,
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "登记成功", body = WalletWithdrawalResponse),
+        (status = 409, description = "状态冲突", body = ErrorResponse)
+    )
+)]
+fn broadcast_admin_wallet_withdrawal() {}
+
+#[utoipa::path(
+    post,
+    path = "/admin/api/v1/wallet/withdrawals/{id}/confirm",
+    tag = "admin-wallet",
+    summary = "确认提现并最终扣除冻结资金",
+    params(("id" = u64, Path, description = "提现申请 ID")),
+    request_body = ConfirmWithdrawalRequest,
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "确认成功", body = WalletWithdrawalResponse),
+        (status = 409, description = "状态冲突", body = ErrorResponse)
+    )
+)]
+fn confirm_admin_wallet_withdrawal() {}
+
+#[utoipa::path(
+    post,
+    path = "/admin/api/v1/wallet/withdrawals/{id}/fail",
+    tag = "admin-wallet",
+    summary = "标记广播前提现失败并解冻资金",
+    params(("id" = u64, Path, description = "提现申请 ID")),
+    request_body = FailWithdrawalRequest,
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "失败处理成功", body = WalletWithdrawalResponse),
+        (status = 409, description = "已广播请求不可自动解冻", body = ErrorResponse)
+    )
+)]
+fn fail_admin_wallet_withdrawal() {}
+
+#[utoipa::path(
+    get,
+    path = "/admin/api/v1/wallet/deposits",
+    tag = "admin-wallet",
+    summary = "后台查询链上充值事件",
+    params(
+        ("user_id" = Option<u64>, Query, description = "用户 ID"),
+        ("limit" = Option<u32>, Query, description = "返回数量")
+    ),
+    security(("bearerAuth" = [])),
+    responses((status = 200, description = "查询成功", body = WalletDepositsResponse))
+)]
+fn list_admin_wallet_deposits() {}
+
+#[utoipa::path(
+    post,
+    path = "/admin/api/v1/wallet/deposits/observe",
+    tag = "admin-wallet",
+    summary = "观察链上充值并按确认数幂等入账",
+    request_body = ObserveDepositRequest,
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "观察成功", body = WalletDepositEventResponse),
+        (status = 400, description = "链事件参数错误", body = ErrorResponse),
+        (status = 409, description = "外部事件身份冲突", body = ErrorResponse)
+    )
+)]
+fn observe_admin_wallet_deposit() {}
+
+#[utoipa::path(
+    post,
+    path = "/admin/api/v1/wallet/deposits/{id}/reverse",
+    tag = "admin-wallet",
+    summary = "链重组充值冲正",
+    params(("id" = u64, Path, description = "充值事件 ID")),
+    request_body = ReverseDepositRequest,
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "冲正成功或进入人工处理", body = WalletDepositEventResponse),
+        (status = 409, description = "充值状态不允许冲正", body = ErrorResponse)
+    )
+)]
+fn reverse_admin_wallet_deposit() {}
 
 #[utoipa::path(
     get,

@@ -79,6 +79,7 @@ pub(crate) struct LockedMarginPositionRow {
     pub(crate) symbol: String,
     pub(crate) margin_asset: u64,
     pub(crate) wallet_scope: String,
+    pub(crate) margin_mode: String,
     pub(crate) direction: String,
     pub(crate) margin_amount: BigDecimal,
     pub(crate) notional_amount: BigDecimal,
@@ -1178,7 +1179,8 @@ pub(crate) async fn lock_user_position_by_id(
 ) -> AppResult<Option<LockedMarginPositionRow>> {
     sqlx::query_as::<_, LockedMarginPositionRow>(
         r#"SELECT positions.id, positions.pair_id, pairs.symbol,
-                  positions.margin_asset, positions.wallet_scope, positions.direction, positions.margin_amount,
+                  positions.margin_asset, positions.wallet_scope, positions.margin_mode,
+                  positions.direction, positions.margin_amount,
                   positions.notional_amount, positions.interest_amount, positions.entry_price,
                   positions.status
            FROM margin_positions positions
@@ -1200,7 +1202,42 @@ pub(crate) async fn debit_margin_position_open_collateral(
     asset_id: u64,
     amount: &BigDecimal,
     position_id: u64,
+    margin_mode: &str,
 ) -> AppResult<String> {
+    if margin_mode == "cross" {
+        let margin_wallet = lock_margin_wallet_row(tx, user_id, asset_id).await?;
+        if margin_wallet.available < *amount {
+            return Err(AppError::Validation(format!(
+                "insufficient margin wallet balance for cross position: requested {}, available {}",
+                amount, margin_wallet.available
+            )));
+        }
+        let available_after = margin_wallet.available.clone() - amount.clone();
+        sqlx::query(
+            "UPDATE margin_wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?",
+        )
+        .bind(&available_after)
+        .bind(user_id)
+        .bind(asset_id)
+        .execute(&mut **tx)
+        .await?;
+        insert_margin_wallet_ledger(
+            tx,
+            user_id,
+            asset_id,
+            "margin_position_open",
+            &(-amount.clone()),
+            &available_after,
+            &available_after,
+            &margin_wallet.frozen,
+            &margin_wallet.locked,
+            "margin_position",
+            &position_id.to_string(),
+        )
+        .await?;
+        return Ok("margin".to_owned());
+    }
+
     if let Some(margin_wallet) = lock_existing_margin_wallet_row(tx, user_id, asset_id).await?
         && margin_wallet.available >= *amount
     {
@@ -1348,6 +1385,104 @@ pub(crate) async fn credit_margin_position_amount(
             "margin position wallet_scope must be spot or margin".to_owned(),
         )),
     }
+}
+
+/// 全仓单仓主动平仓使用有符号权益更新共享钱包，余额不足时必须交给账户级强平处理。
+pub(crate) async fn apply_cross_margin_position_settlement(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    asset_id: u64,
+    amount: &BigDecimal,
+    position_id: u64,
+) -> AppResult<()> {
+    let wallet = lock_margin_wallet_row(tx, user_id, asset_id).await?;
+    let available_after = (wallet.available.clone() + amount.clone()).with_scale(18);
+    if available_after < 0 {
+        return Err(AppError::Validation(
+            "cross margin position loss exceeds shared available equity; account liquidation is required"
+                .to_owned(),
+        ));
+    }
+    if amount == &BigDecimal::from(0) {
+        return Ok(());
+    }
+    sqlx::query(
+        "UPDATE margin_wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(&available_after)
+    .bind(user_id)
+    .bind(asset_id)
+    .execute(&mut **tx)
+    .await?;
+    insert_margin_wallet_ledger(
+        tx,
+        user_id,
+        asset_id,
+        "margin_cross_position_close",
+        amount,
+        &available_after,
+        &available_after,
+        &wallet.frozen,
+        &wallet.locked,
+        "margin_position",
+        &position_id.to_string(),
+    )
+    .await
+}
+
+#[derive(Debug)]
+pub(crate) struct CrossMarginAccountSettlement {
+    pub(crate) available_after: BigDecimal,
+    pub(crate) bad_debt: BigDecimal,
+}
+
+/// 全仓强平只在共享钱包上结算一次；极端跳空超过可用余额的部分单独记为坏账。
+pub(crate) async fn apply_cross_margin_account_settlement(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    asset_id: u64,
+    portfolio_equity: &BigDecimal,
+    reference_id: &str,
+) -> AppResult<CrossMarginAccountSettlement> {
+    let wallet = lock_margin_wallet_row(tx, user_id, asset_id).await?;
+    let raw_available_after = (wallet.available.clone() + portfolio_equity.clone()).with_scale(18);
+    let (available_after, bad_debt) = if raw_available_after < 0 {
+        (
+            BigDecimal::from(0).with_scale(18),
+            (-raw_available_after).with_scale(18),
+        )
+    } else {
+        (raw_available_after, BigDecimal::from(0).with_scale(18))
+    };
+    let applied_delta = (available_after.clone() - wallet.available.clone()).with_scale(18);
+    if applied_delta != 0 {
+        sqlx::query(
+            "UPDATE margin_wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?",
+        )
+        .bind(&available_after)
+        .bind(user_id)
+        .bind(asset_id)
+        .execute(&mut **tx)
+        .await?;
+        insert_margin_wallet_ledger(
+            tx,
+            user_id,
+            asset_id,
+            "margin_cross_account_liquidate",
+            &applied_delta,
+            &available_after,
+            &available_after,
+            &wallet.frozen,
+            &wallet.locked,
+            "margin_cross_account",
+            reference_id,
+        )
+        .await?;
+    }
+    Ok(CrossMarginAccountSettlement {
+        available_after,
+        bad_debt,
+    })
 }
 
 pub(crate) async fn mark_position_closed(

@@ -1,25 +1,45 @@
 use crate::{
-    error::AppResult, modules::auth::UserAuth, modules::user::service::user_id_from_subject,
+    error::AppResult,
+    modules::{
+        auth::{AdminAuth, UserAuth},
+        user::service::user_id_from_subject,
+    },
     state::AppState,
 };
-use axum::{Json, Router, extract::Query, extract::State, routing::get, routing::post};
+use axum::{
+    Json, Router,
+    extract::{Path, Query, State},
+    routing::{get, post},
+};
 
 use super::{
     application::{
-        build_wallet_ledger_filter,
+        admin_id_from_subject, approve_withdrawal as approve_withdrawal_use_case,
+        broadcast_withdrawal as broadcast_withdrawal_use_case, build_wallet_ledger_filter,
+        confirm_withdrawal as confirm_withdrawal_use_case,
         create_withdrawal_request as create_withdrawal_request_use_case,
+        fail_withdrawal as fail_withdrawal_use_case,
         get_or_assign_deposit_address as get_or_assign_deposit_address_use_case,
+        list_admin_deposits as list_admin_deposits_use_case,
+        list_admin_withdrawals as list_admin_withdrawals_use_case,
         list_deposit_assets as list_deposit_assets_use_case,
         list_deposit_networks_by_query as list_deposit_networks_use_case,
+        list_user_withdrawals as list_user_withdrawals_use_case,
         list_wallet_accounts as list_wallet_accounts_use_case,
         list_wallet_ledger as list_wallet_ledger_use_case,
         list_withdraw_assets as list_withdraw_assets_use_case, mysql_pool,
-        normalize_deposit_networks_query_asset,
+        normalize_deposit_networks_query_asset, observe_deposit as observe_deposit_use_case,
+        reject_withdrawal as reject_withdrawal_use_case,
+        reverse_deposit as reverse_deposit_use_case,
     },
     presentation::{
-        CreateWithdrawalRequest, DepositAddressRequest, DepositAddressResponse,
-        DepositAssetsResponse, DepositNetworksQuery, DepositNetworksResponse,
-        WalletAccountsResponse, WalletLedgerQuery, WalletLedgerResponse, WithdrawalRequestResponse,
+        BroadcastWithdrawalRequest, ConfirmWithdrawalRequest, CreateWithdrawalRequest,
+        DepositAddressRequest, DepositAddressResponse, DepositAssetsResponse, DepositNetworksQuery,
+        DepositNetworksResponse, FailWithdrawalRequest, ObserveDepositRequest,
+        ReverseDepositRequest, ReviewWithdrawalRequest, WalletAccountsResponse,
+        WalletDepositEventResponse, WalletDepositsResponse, WalletLedgerQuery,
+        WalletLedgerResponse, WalletWithdrawalQuery, WalletWithdrawalResponse,
+        WalletWithdrawalsResponse, WithdrawalRequestResponse,
     },
 };
 
@@ -34,7 +54,26 @@ pub fn routes() -> Router<AppState> {
             "/wallet/deposit-address",
             post(get_or_assign_deposit_address),
         )
-        .route("/wallet/withdrawals", post(create_withdrawal_request))
+        .route(
+            "/wallet/withdrawals",
+            get(list_user_withdrawals).post(create_withdrawal_request),
+        )
+}
+
+pub fn admin_routes() -> Router<AppState> {
+    Router::new()
+        .route("/wallet/withdrawals", get(list_admin_withdrawals))
+        .route("/wallet/withdrawals/:id/approve", post(approve_withdrawal))
+        .route("/wallet/withdrawals/:id/reject", post(reject_withdrawal))
+        .route(
+            "/wallet/withdrawals/:id/broadcast",
+            post(broadcast_withdrawal),
+        )
+        .route("/wallet/withdrawals/:id/confirm", post(confirm_withdrawal))
+        .route("/wallet/withdrawals/:id/fail", post(fail_withdrawal))
+        .route("/wallet/deposits", get(list_admin_deposits))
+        .route("/wallet/deposits/observe", post(observe_deposit))
+        .route("/wallet/deposits/:id/reverse", post(reverse_deposit))
 }
 
 async fn get_or_assign_deposit_address(
@@ -119,6 +158,116 @@ async fn create_withdrawal_request(
         create_withdrawal_request_use_case(&pool, state.settings.as_ref(), user_id, request)
             .await?;
     Ok(Json(withdrawal))
+}
+
+async fn list_user_withdrawals(
+    UserAuth(claims): UserAuth,
+    State(state): State<AppState>,
+    Query(query): Query<WalletWithdrawalQuery>,
+) -> AppResult<Json<WalletWithdrawalsResponse>> {
+    let user_id = user_id_from_subject(&claims.sub)?;
+    let withdrawals = list_user_withdrawals_use_case(&mysql_pool(&state)?, user_id, query).await?;
+    Ok(Json(WalletWithdrawalsResponse { withdrawals }))
+}
+
+async fn list_admin_withdrawals(
+    AdminAuth(_claims): AdminAuth,
+    State(state): State<AppState>,
+    Query(query): Query<WalletWithdrawalQuery>,
+) -> AppResult<Json<WalletWithdrawalsResponse>> {
+    let withdrawals = list_admin_withdrawals_use_case(&mysql_pool(&state)?, query).await?;
+    Ok(Json(WalletWithdrawalsResponse { withdrawals }))
+}
+
+async fn approve_withdrawal(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(withdrawal_id): Path<u64>,
+    Json(request): Json<ReviewWithdrawalRequest>,
+) -> AppResult<Json<WalletWithdrawalResponse>> {
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    Ok(Json(
+        approve_withdrawal_use_case(&mysql_pool(&state)?, admin_id, withdrawal_id, request).await?,
+    ))
+}
+
+async fn reject_withdrawal(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(withdrawal_id): Path<u64>,
+    Json(request): Json<ReviewWithdrawalRequest>,
+) -> AppResult<Json<WalletWithdrawalResponse>> {
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    Ok(Json(
+        reject_withdrawal_use_case(&mysql_pool(&state)?, admin_id, withdrawal_id, request).await?,
+    ))
+}
+
+async fn broadcast_withdrawal(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(withdrawal_id): Path<u64>,
+    Json(request): Json<BroadcastWithdrawalRequest>,
+) -> AppResult<Json<WalletWithdrawalResponse>> {
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    Ok(Json(
+        broadcast_withdrawal_use_case(&mysql_pool(&state)?, admin_id, withdrawal_id, request)
+            .await?,
+    ))
+}
+
+async fn confirm_withdrawal(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(withdrawal_id): Path<u64>,
+    Json(request): Json<ConfirmWithdrawalRequest>,
+) -> AppResult<Json<WalletWithdrawalResponse>> {
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    Ok(Json(
+        confirm_withdrawal_use_case(&mysql_pool(&state)?, admin_id, withdrawal_id, request).await?,
+    ))
+}
+
+async fn fail_withdrawal(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(withdrawal_id): Path<u64>,
+    Json(request): Json<FailWithdrawalRequest>,
+) -> AppResult<Json<WalletWithdrawalResponse>> {
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    Ok(Json(
+        fail_withdrawal_use_case(&mysql_pool(&state)?, admin_id, withdrawal_id, request).await?,
+    ))
+}
+
+async fn list_admin_deposits(
+    AdminAuth(_claims): AdminAuth,
+    State(state): State<AppState>,
+    Query(query): Query<WalletWithdrawalQuery>,
+) -> AppResult<Json<WalletDepositsResponse>> {
+    let deposits = list_admin_deposits_use_case(&mysql_pool(&state)?, query).await?;
+    Ok(Json(WalletDepositsResponse { deposits }))
+}
+
+async fn observe_deposit(
+    AdminAuth(_claims): AdminAuth,
+    State(state): State<AppState>,
+    Json(request): Json<ObserveDepositRequest>,
+) -> AppResult<Json<WalletDepositEventResponse>> {
+    Ok(Json(
+        observe_deposit_use_case(&mysql_pool(&state)?, request).await?,
+    ))
+}
+
+async fn reverse_deposit(
+    AdminAuth(_claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(deposit_id): Path<u64>,
+    Json(request): Json<ReverseDepositRequest>,
+) -> AppResult<Json<WalletDepositEventResponse>> {
+    Ok(Json(
+        reverse_deposit_use_case(&mysql_pool(&state)?, deposit_id, request).await?,
+    ))
 }
 #[cfg(test)]
 #[path = "../../../tests/unit_src/src_modules_wallet_routes_tests.rs"]

@@ -6,6 +6,7 @@
 use crate::{
     error::{AppError, AppResult},
     modules::{
+        auth::hash_password,
         market::market_ticker_redis_key,
         spot::{
             NewOrder, NewSpotTrade, OrderSide, OrderStatus, OrderType, SpotOrder, SpotServiceError,
@@ -33,7 +34,6 @@ use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
 use std::str::FromStr;
 
 const SYSTEM_SPOT_LIQUIDITY_EMAIL: &str = "__system_spot_liquidity@internal.local";
-const SYSTEM_SPOT_LIQUIDITY_PASSWORD_HASH: &str = "system-liquidity";
 
 pub(crate) struct SpotOrderListFilter {
     pub(crate) user_id: Option<u64>,
@@ -1597,13 +1597,15 @@ pub(crate) async fn apply_spot_wallet_settlement_leg(
 pub(crate) async fn ensure_spot_liquidity_user_in_tx(
     tx: &mut Transaction<'_, MySql>,
 ) -> AppResult<u64> {
+    // 内部做市账户不允许使用固定可猜密码；随机哈希只在首次插入时持久化。
+    let disabled_password_hash = hash_password(&uuid::Uuid::now_v7().to_string())?;
     let result = sqlx::query(
         r#"INSERT INTO users (email, password_hash, status)
            VALUES (?, ?, 'active')
            ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"#,
     )
     .bind(SYSTEM_SPOT_LIQUIDITY_EMAIL)
-    .bind(SYSTEM_SPOT_LIQUIDITY_PASSWORD_HASH)
+    .bind(disabled_password_hash)
     .execute(&mut **tx)
     .await?;
     let user_id = result.last_insert_id();
@@ -1633,39 +1635,22 @@ pub(crate) async fn ensure_wallet_account_in_tx(
     Ok(())
 }
 
-pub(crate) async fn credit_spot_liquidity_wallet_in_tx(
+/// 系统做市成交只能消费后台预充值库存，禁止在成交路径自动增加资产。
+pub(crate) async fn ensure_spot_liquidity_inventory_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
     asset_id: u64,
-    amount: &BigDecimal,
-    change_type: &str,
-    ref_type: &str,
-    ref_id: &str,
+    required_amount: &BigDecimal,
 ) -> AppResult<()> {
     ensure_wallet_account_in_tx(tx, user_id, asset_id).await?;
     let wallet = lock_wallet_row(tx, user_id, asset_id).await?;
-    let available_after = wallet.available.clone() + amount.clone();
-    sqlx::query("UPDATE wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?")
-        .bind(&available_after)
-        .bind(user_id)
-        .bind(asset_id)
-        .execute(&mut **tx)
-        .await?;
-    insert_spot_wallet_ledger(
-        tx,
-        user_id,
-        asset_id,
-        amount.clone(),
-        "available",
-        &available_after,
-        &available_after,
-        &wallet.frozen,
-        &wallet.locked,
-        change_type,
-        ref_type,
-        ref_id,
-    )
-    .await
+    if wallet.available < *required_amount {
+        return Err(AppError::Conflict(format!(
+            "insufficient system spot liquidity inventory: required {}, available {}",
+            required_amount, wallet.available
+        )));
+    }
+    Ok(())
 }
 
 pub(crate) async fn release_buy_order_surplus_reservation_after_fill(

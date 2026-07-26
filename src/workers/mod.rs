@@ -7,3 +7,4 @@ pub mod margin_liquidation;
 pub mod market_feed;
 pub mod seconds_contract_settlement;
 pub mod unlock_scanner;
+pub mod wallet_chain;

@@ -1867,6 +1867,9 @@ async fn margin_open_position_requires_configured_leverage_level_and_persists_mo
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
     let settings = test_settings();
     let mut fixture_tx = pool.begin().await?;
     let user_id = create_user(&mut fixture_tx).await;
@@ -1891,7 +1894,11 @@ async fn margin_open_position_requires_configured_leverage_level_and_persists_mo
     fixture_tx.commit().await?;
 
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
-    let app = user_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let app = user_routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_redis(redis.clone()),
+    );
     let rejected_body = format!(
         r#"{{"product_id":{product_id},"direction":"long","margin_amount":"20.000000000000000000","leverage":"7.00000000","idempotency_key":"margin-level-reject-{}"}}"#,
         Uuid::now_v7().simple()
@@ -1948,6 +1955,15 @@ async fn margin_open_position_requires_configured_leverage_level_and_persists_mo
     .bind(product_id)
     .execute(&pool)
     .await?;
+    sqlx::query(
+        "INSERT INTO margin_wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .bind(decimal("100.000000000000000000"))
+    .execute(&pool)
+    .await?;
+    cache_margin_ticker(&redis, &symbol, "10.000000000000000000").await?;
 
     let configured_cross_body = format!(
         r#"{{"product_id":{product_id},"direction":"long","margin_mode":"cross","margin_amount":"20.000000000000000000","leverage":"5.00000000","idempotency_key":"margin-level-open-{}"}}"#,
@@ -1968,20 +1984,212 @@ async fn margin_open_position_requires_configured_leverage_level_and_persists_mo
     let configured_cross_payload = body_json(configured_cross_response).await?;
     assert_eq!(
         configured_cross_status,
-        StatusCode::BAD_REQUEST,
+        StatusCode::OK,
         "payload: {configured_cross_payload}"
     );
+    assert_eq!(configured_cross_payload["position"]["margin_mode"], "cross");
     assert_eq!(
-        configured_cross_payload["message"],
-        "validation error: cross margin mode is unavailable until account-level risk management is implemented"
+        configured_cross_payload["position"]["wallet_scope"],
+        "margin"
     );
-    let (position_count,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM margin_positions WHERE user_id = ?")
-            .bind(user_id)
-            .fetch_one(&pool)
-            .await?;
-    assert_eq!(position_count, 0);
+    let margin_available: BigDecimal = sqlx::query_scalar(
+        "SELECT available FROM margin_wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(margin_available, decimal("80.000000000000000000"));
+    let spot_available: BigDecimal = sqlx::query_scalar(
+        "SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(spot_available, decimal("100.000000000000000000"));
+    let cross_account_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM margin_cross_accounts WHERE user_id = ? AND margin_asset = ?",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(cross_account_count, 1);
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn cross_margin_active_close_applies_signed_equity_and_rejects_unfunded_loss()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let mut fixture_tx = pool.begin().await?;
+    let user_id = create_user(&mut fixture_tx).await;
+    let (base_asset, base_symbol) = create_asset(&mut fixture_tx, "XB").await;
+    let (quote_asset, quote_symbol) = create_asset(&mut fixture_tx, "XQ").await;
+    let symbol = format!("{base_symbol}-{quote_symbol}");
+    let pair_id = create_pair(&mut fixture_tx, base_asset, quote_asset, &symbol).await;
+    let product_id =
+        seed_margin_product_with_mode(&mut fixture_tx, pair_id, quote_asset, "cross", vec!["5"])
+            .await;
+    sqlx::query(
+        "INSERT INTO margin_wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .bind(decimal("100.000000000000000000"))
+    .execute(&mut *fixture_tx)
+    .await?;
+    fixture_tx.commit().await?;
+
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let app = user_routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_redis(redis.clone()),
+    );
+    cache_margin_ticker(&redis, &symbol, "100.000000000000000000").await?;
+    let first_open = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/margin/positions")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"product_id":{product_id},"direction":"long","margin_mode":"cross","margin_amount":"20.000000000000000000","leverage":"5","idempotency_key":"cross-close-{}"}}"#,
+                    Uuid::now_v7().simple()
+                )))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(first_open.status(), StatusCode::OK);
+    let first_position_id = body_json(first_open).await?["position"]["id"]
+        .as_u64()
+        .unwrap();
+
+    cache_margin_ticker(&redis, &symbol, "70.000000000000000000").await?;
+    let close = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/margin/positions/{first_position_id}/close"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let close_status = close.status();
+    let close_payload = body_json(close).await?;
+    assert_eq!(close_status, StatusCode::OK, "payload: {close_payload}");
+    assert_eq!(
+        close_payload["position"]["realized_pnl"],
+        "-30.000000000000000000"
+    );
+    let first_available: BigDecimal = sqlx::query_scalar(
+        "SELECT available FROM margin_wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(first_available, decimal("70.000000000000000000"));
+    let (signed_close_amount, signed_close_count): (BigDecimal, i64) = sqlx::query_as(
+        r#"SELECT COALESCE(SUM(amount), 0), COUNT(*)
+           FROM margin_wallet_ledger
+           WHERE ref_type = 'margin_position' AND ref_id = ?
+             AND change_type = 'margin_cross_position_close'"#,
+    )
+    .bind(first_position_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(signed_close_amount, decimal("-10.000000000000000000"));
+    assert_eq!(signed_close_count, 1);
+
+    let replay = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/margin/positions/{first_position_id}/close"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(replay.status(), StatusCode::OK);
+
+    cache_margin_ticker(&redis, &symbol, "100.000000000000000000").await?;
+    let second_open = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/margin/positions")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"product_id":{product_id},"direction":"long","margin_mode":"cross","margin_amount":"70.000000000000000000","leverage":"5","idempotency_key":"cross-unfunded-{}"}}"#,
+                    Uuid::now_v7().simple()
+                )))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(second_open.status(), StatusCode::OK);
+    let second_position_id = body_json(second_open).await?["position"]["id"]
+        .as_u64()
+        .unwrap();
+
+    cache_margin_ticker(&redis, &symbol, "70.000000000000000000").await?;
+    let rejected_close = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/margin/positions/{second_position_id}/close"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let rejected_status = rejected_close.status();
+    let rejected_payload = body_json(rejected_close).await?;
+    assert_eq!(
+        rejected_status,
+        StatusCode::BAD_REQUEST,
+        "payload: {rejected_payload}"
+    );
+    assert_eq!(rejected_payload["code"], "VALIDATION_ERROR");
+    let (remaining_available, position_status): (BigDecimal, String) = sqlx::query_as(
+        r#"SELECT wallets.available, positions.status
+           FROM margin_wallet_accounts wallets
+           JOIN margin_positions positions ON positions.id = ?
+           WHERE wallets.user_id = ? AND wallets.asset_id = ?"#,
+    )
+    .bind(second_position_id)
+    .bind(user_id)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(remaining_available, decimal("0"));
+    assert_eq!(position_status, "opened");
+    let rejected_close_ledger_count: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM margin_wallet_ledger
+           WHERE ref_type = 'margin_position' AND ref_id = ?
+             AND change_type = 'margin_cross_position_close'"#,
+    )
+    .bind(second_position_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(rejected_close_ledger_count, 0);
     Ok(())
 }
 

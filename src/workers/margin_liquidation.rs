@@ -2,8 +2,13 @@ use crate::{
     error::{AppError, AppResult},
     modules::{
         events::{EventBroadcastHub, EventBroadcastMessage},
-        margin::domain::{CrossMarginPositionRisk, CrossMarginRiskState, evaluate_cross_margin},
-        margin::infrastructure::credit_margin_position_amount,
+        margin::domain::{
+            CrossMarginPositionRisk, CrossMarginRiskState, allocate_cross_margin_payouts,
+            evaluate_cross_margin,
+        },
+        margin::infrastructure::{
+            apply_cross_margin_account_settlement, credit_margin_position_amount,
+        },
         market::market_ticker_redis_key,
     },
     state::AppState,
@@ -145,7 +150,7 @@ struct MarginLiquidationEvent {
 
 #[derive(Debug, Clone)]
 enum LiquidationOutcome {
-    Liquidated(Box<MarginLiquidationEvent>),
+    Liquidated(Vec<MarginLiquidationEvent>),
     Skipped,
 }
 
@@ -278,10 +283,12 @@ async fn run_once_with_dependencies_and_events(
         match liquidate_cross_account(pool, account.user_id, account.margin_asset, &marks, now)
             .await
         {
-            Ok(LiquidationOutcome::Liquidated(event)) => {
+            Ok(LiquidationOutcome::Liquidated(events)) => {
                 summary.liquidated += 1;
                 if let Some(hub) = event_hub {
-                    publish_liquidation_event(hub, &event);
+                    for event in &events {
+                        publish_liquidation_event(hub, event);
+                    }
                 }
             }
             Ok(LiquidationOutcome::Skipped) => summary.skipped += 1,
@@ -314,10 +321,12 @@ async fn run_once_with_dependencies_and_events(
         };
 
         match liquidate_position_by_id(pool, candidate.position_id, &mark_price, now).await {
-            Ok(LiquidationOutcome::Liquidated(event)) => {
+            Ok(LiquidationOutcome::Liquidated(events)) => {
                 summary.liquidated += 1;
                 if let Some(hub) = event_hub {
-                    publish_liquidation_event(hub, &event);
+                    for event in &events {
+                        publish_liquidation_event(hub, event);
+                    }
                 }
             }
             Ok(LiquidationOutcome::Skipped) => {
@@ -528,7 +537,7 @@ async fn liquidate_position_by_id(
         liquidated_at: now,
     };
     tx.commit().await?;
-    Ok(LiquidationOutcome::Liquidated(Box::new(event)))
+    Ok(LiquidationOutcome::Liquidated(vec![event]))
 }
 
 /// 统一处理一个全仓账户：先锁定账户内全部仓位，再用组合权益决定是否清算。
@@ -562,24 +571,26 @@ async fn liquidate_cross_account(
     }
 
     let wallet_equity = sqlx::query_scalar::<_, BigDecimal>(
-        r#"SELECT
-              COALESCE((SELECT SUM(available + frozen + locked)
-                        FROM margin_wallet_accounts
-                        WHERE user_id = ? AND asset_id = ?), 0)
-            + COALESCE((SELECT SUM(available + frozen + locked)
-                        FROM wallet_accounts
-                        WHERE user_id = ? AND asset_id = ?), 0)"#,
+        r#"SELECT COALESCE(available, 0)
+           FROM margin_wallet_accounts
+           WHERE user_id = ? AND asset_id = ?
+           LIMIT 1
+           FOR UPDATE"#,
     )
     .bind(user_id)
     .bind(margin_asset)
-    .bind(user_id)
-    .bind(margin_asset)
-    .fetch_one(&mut *tx)
-    .await?;
+    .fetch_optional(&mut *tx)
+    .await?
+    .unwrap_or_else(|| BigDecimal::from(0).with_scale(18));
     let mut position_margin = BigDecimal::from(0);
     let mut risks = Vec::with_capacity(positions.len());
     let mut per_position_states = Vec::with_capacity(positions.len());
     for position in &positions {
+        if position.wallet_scope != "margin" {
+            return Err(AppError::Validation(
+                "cross margin position must use margin wallet scope".to_owned(),
+            ));
+        }
         let Some(entry_price) = position.entry_price.as_ref() else {
             return Err(AppError::Validation(
                 "cross margin entry price is required for liquidation".to_owned(),
@@ -617,24 +628,38 @@ async fn liquidate_cross_account(
         return Ok(LiquidationOutcome::Skipped);
     }
 
-    let mut first_event = None;
-    for (position, (realized_pnl, maintenance_margin, entry_price, mark_price)) in
-        positions.iter().zip(per_position_states)
+    let position_equities = positions
+        .iter()
+        .zip(&per_position_states)
+        .map(|(position, (realized_pnl, _, _, _))| {
+            (position.margin_amount.clone() + realized_pnl.clone()
+                - position.interest_amount.clone())
+            .with_scale(18)
+        })
+        .collect::<Vec<_>>();
+    let payouts = allocate_cross_margin_payouts(&position_equities, &account_risk.portfolio_equity);
+    let reference_id = format!(
+        "{}:{}:{}",
+        user_id,
+        margin_asset,
+        positions.first().map(|position| position.id).unwrap_or(0)
+    );
+    let settlement = apply_cross_margin_account_settlement(
+        &mut tx,
+        user_id,
+        margin_asset,
+        &account_risk.portfolio_equity,
+        &reference_id,
+    )
+    .await?;
+
+    let mut events = Vec::with_capacity(positions.len());
+    for ((position, (realized_pnl, maintenance_margin, entry_price, mark_price)), payout_amount) in
+        positions.iter().zip(per_position_states).zip(payouts)
     {
         let position_equity = (position.margin_amount.clone() + realized_pnl.clone()
             - position.interest_amount.clone())
         .with_scale(18);
-        let payout_amount = non_negative_amount(&position_equity);
-        credit_margin_position_amount(
-            &mut tx,
-            position.user_id,
-            position.margin_asset,
-            &position.wallet_scope,
-            &payout_amount,
-            "margin_cross_liquidate",
-            position.id,
-        )
-        .await?;
         let position_risk = MarginLiquidationRiskState {
             should_liquidate: true,
             equity: position_equity,
@@ -665,37 +690,38 @@ async fn liquidate_cross_account(
         .bind(position.id)
         .execute(&mut *tx)
         .await?;
-        if first_event.is_none() {
-            first_event = Some(Box::new(MarginLiquidationEvent {
-                user_id: position.user_id,
-                position_id: position.id,
-                product_id: position.product_id,
-                pair_id: position.pair_id,
-                margin_asset: position.margin_asset,
-                direction: position.direction.clone(),
-                margin_amount: position.margin_amount.clone(),
-                notional_amount: position.notional_amount.clone(),
-                interest_amount: position.interest_amount.clone(),
-                entry_price,
-                mark_price,
-                realized_pnl,
-                payout_amount,
-                reason: "cross_maintenance_margin",
-                liquidated_at: now,
-            }));
-        }
+        events.push(MarginLiquidationEvent {
+            user_id: position.user_id,
+            position_id: position.id,
+            product_id: position.product_id,
+            pair_id: position.pair_id,
+            margin_asset: position.margin_asset,
+            direction: position.direction.clone(),
+            margin_amount: position.margin_amount.clone(),
+            notional_amount: position.notional_amount.clone(),
+            interest_amount: position.interest_amount.clone(),
+            entry_price,
+            mark_price,
+            realized_pnl,
+            payout_amount,
+            reason: "cross_maintenance_margin",
+            liquidated_at: now,
+        });
     }
     sqlx::query(
-        "UPDATE margin_cross_accounts SET status = 'liquidated', version = version + 1 WHERE user_id = ? AND margin_asset = ?",
+        r#"UPDATE margin_cross_accounts
+           SET status = 'liquidated', last_equity = ?, last_bad_debt = ?,
+               version = version + 1
+           WHERE user_id = ? AND margin_asset = ?"#,
     )
+    .bind(&settlement.available_after)
+    .bind(&settlement.bad_debt)
     .bind(user_id)
     .bind(margin_asset)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
-    Ok(first_event
-        .map(LiquidationOutcome::Liquidated)
-        .unwrap_or(LiquidationOutcome::Skipped))
+    Ok(LiquidationOutcome::Liquidated(events))
 }
 
 async fn update_cross_account_snapshot(

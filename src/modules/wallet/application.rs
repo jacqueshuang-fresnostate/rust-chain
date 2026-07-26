@@ -8,12 +8,15 @@ use crate::{
     modules::{
         security::{SecurityAction, SecurityVerificationInput, verify_user_security_action},
         wallet::{
-            infrastructure,
+            amount_fits_asset_precision, infrastructure,
             infrastructure::WalletLedgerFilter,
             presentation::{
-                CreateWithdrawalRequest, DepositAddressRequest, DepositAddressResponse,
-                DepositAssetResponse, DepositNetworkResponse, DepositNetworksQuery,
-                WalletAccountResponse, WalletLedgerQuery, WalletLedgerResponse,
+                BroadcastWithdrawalRequest, ConfirmWithdrawalRequest, CreateWithdrawalRequest,
+                DepositAddressRequest, DepositAddressResponse, DepositAssetResponse,
+                DepositNetworkResponse, DepositNetworksQuery, FailWithdrawalRequest,
+                ObserveDepositRequest, ReverseDepositRequest, ReviewWithdrawalRequest,
+                WalletAccountResponse, WalletDepositEventResponse, WalletLedgerQuery,
+                WalletLedgerResponse, WalletWithdrawalQuery, WalletWithdrawalResponse,
                 WithdrawalRequestResponse,
             },
         },
@@ -202,9 +205,21 @@ pub(crate) async fn create_withdrawal_request(
     request: CreateWithdrawalRequest,
 ) -> AppResult<WithdrawalRequestResponse> {
     let request = validate_withdrawal_request(request)?;
-    let configured_fee =
-        infrastructure::load_asset_withdraw_fee(pool, &request.asset_symbol, &request.amount)
+    let asset =
+        infrastructure::load_withdrawal_asset_rule(pool, &request.asset_symbol, &request.amount)
             .await?;
+    if !amount_fits_asset_precision(&request.amount, asset.precision_scale) {
+        return Err(AppError::Validation(format!(
+            "withdrawal amount supports at most {} decimal places",
+            asset.precision_scale
+        )));
+    }
+    if let Some(existing) =
+        infrastructure::load_withdrawal_by_user_key(pool, user_id, &request.idempotency_key).await?
+    {
+        ensure_withdrawal_replay_matches(&existing, &request, &asset.fee)?;
+        return withdrawal_request_response(existing);
+    }
     let security_method = verify_user_security_action(
         pool,
         settings,
@@ -217,24 +232,190 @@ pub(crate) async fn create_withdrawal_request(
     )
     .await?;
 
-    // 提现手续费必须以服务端资产配置重新计算，不能信任客户端提交的 fee 字段。
-    let id = infrastructure::insert_withdrawal_request(
+    // 请求、余额冻结和账本必须同事务提交；唯一键冲突时只允许返回完全一致的历史请求。
+    let withdrawal = match infrastructure::reserve_withdrawal_request(
         pool,
         user_id,
+        &asset,
         &request.asset_symbol,
         request.network.as_deref(),
         &request.address,
         &request.amount,
-        &configured_fee,
+        &request.idempotency_key,
         security_method.as_str(),
     )
-    .await?;
+    .await
+    {
+        Ok(withdrawal) => withdrawal,
+        Err(AppError::Database(error)) if is_duplicate_key_error(&error) => {
+            let existing = infrastructure::load_withdrawal_by_user_key(
+                pool,
+                user_id,
+                &request.idempotency_key,
+            )
+            .await?
+            .ok_or_else(|| {
+                AppError::Conflict("withdrawal idempotency key was used concurrently".to_owned())
+            })?;
+            ensure_withdrawal_replay_matches(&existing, &request, &asset.fee)?;
+            existing
+        }
+        Err(error) => return Err(error),
+    };
+    withdrawal_request_response(withdrawal)
+}
 
-    Ok(WithdrawalRequestResponse {
-        id,
-        status: "pending".to_owned(),
-        security_method,
-    })
+pub(crate) async fn list_user_withdrawals(
+    pool: &Pool<MySql>,
+    user_id: u64,
+    query: WalletWithdrawalQuery,
+) -> AppResult<Vec<WalletWithdrawalResponse>> {
+    let status = normalize_withdrawal_status(query.status)?;
+    infrastructure::list_wallet_withdrawals(
+        pool,
+        Some(user_id),
+        status.as_deref(),
+        route_limit(query.limit),
+    )
+    .await
+}
+
+pub(crate) async fn list_admin_withdrawals(
+    pool: &Pool<MySql>,
+    query: WalletWithdrawalQuery,
+) -> AppResult<Vec<WalletWithdrawalResponse>> {
+    let status = normalize_withdrawal_status(query.status)?;
+    infrastructure::list_wallet_withdrawals(
+        pool,
+        query.user_id,
+        status.as_deref(),
+        route_limit(query.limit).min(200),
+    )
+    .await
+}
+
+pub(crate) async fn approve_withdrawal(
+    pool: &Pool<MySql>,
+    admin_id: u64,
+    withdrawal_id: u64,
+    request: ReviewWithdrawalRequest,
+) -> AppResult<WalletWithdrawalResponse> {
+    let reason = normalize_optional_query_string(request.reason);
+    let mut tx = pool.begin().await?;
+    let withdrawal = infrastructure::approve_withdrawal_in_tx(
+        &mut tx,
+        withdrawal_id,
+        admin_id,
+        reason.as_deref(),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(withdrawal)
+}
+
+pub(crate) async fn reject_withdrawal(
+    pool: &Pool<MySql>,
+    admin_id: u64,
+    withdrawal_id: u64,
+    request: ReviewWithdrawalRequest,
+) -> AppResult<WalletWithdrawalResponse> {
+    let reason = required_reason(request.reason, "rejection reason")?;
+    let mut tx = pool.begin().await?;
+    let withdrawal = infrastructure::release_withdrawal_in_tx(
+        &mut tx,
+        withdrawal_id,
+        Some(admin_id),
+        "rejected",
+        &reason,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(withdrawal)
+}
+
+pub(crate) async fn broadcast_withdrawal(
+    pool: &Pool<MySql>,
+    admin_id: u64,
+    withdrawal_id: u64,
+    request: BroadcastWithdrawalRequest,
+) -> AppResult<WalletWithdrawalResponse> {
+    let tx_hash = normalize_chain_identifier(request.tx_hash, "tx_hash")?;
+    let mut tx = pool.begin().await?;
+    let withdrawal = infrastructure::mark_withdrawal_broadcasted_in_tx(
+        &mut tx,
+        withdrawal_id,
+        Some(admin_id),
+        &tx_hash,
+        request.block_height,
+        request.confirmations.unwrap_or(0),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(withdrawal)
+}
+
+pub(crate) async fn confirm_withdrawal(
+    pool: &Pool<MySql>,
+    admin_id: u64,
+    withdrawal_id: u64,
+    request: ConfirmWithdrawalRequest,
+) -> AppResult<WalletWithdrawalResponse> {
+    let mut tx = pool.begin().await?;
+    let withdrawal = infrastructure::confirm_withdrawal_in_tx(
+        &mut tx,
+        withdrawal_id,
+        Some(admin_id),
+        request.block_height,
+        request.confirmations.unwrap_or(1),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(withdrawal)
+}
+
+pub(crate) async fn fail_withdrawal(
+    pool: &Pool<MySql>,
+    admin_id: u64,
+    withdrawal_id: u64,
+    request: FailWithdrawalRequest,
+) -> AppResult<WalletWithdrawalResponse> {
+    let reason = required_reason(Some(request.reason), "failure reason")?;
+    let mut tx = pool.begin().await?;
+    let withdrawal = infrastructure::release_withdrawal_in_tx(
+        &mut tx,
+        withdrawal_id,
+        Some(admin_id),
+        "failed",
+        &reason,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(withdrawal)
+}
+
+pub(crate) async fn observe_deposit(
+    pool: &Pool<MySql>,
+    request: ObserveDepositRequest,
+) -> AppResult<WalletDepositEventResponse> {
+    let request = normalize_observe_deposit_request(request)?;
+    infrastructure::observe_deposit_event(pool, &request).await
+}
+
+pub(crate) async fn reverse_deposit(
+    pool: &Pool<MySql>,
+    deposit_id: u64,
+    request: ReverseDepositRequest,
+) -> AppResult<WalletDepositEventResponse> {
+    let reason = required_reason(Some(request.reason), "reversal reason")?;
+    infrastructure::reverse_deposit_event(pool, deposit_id, &reason).await
+}
+
+pub(crate) async fn list_admin_deposits(
+    pool: &Pool<MySql>,
+    query: WalletWithdrawalQuery,
+) -> AppResult<Vec<WalletDepositEventResponse>> {
+    infrastructure::list_deposit_events(pool, query.user_id, route_limit(query.limit).min(200))
+        .await
 }
 
 /// 统一从应用状态中获取数据库连接池。
@@ -242,6 +423,14 @@ pub(crate) fn mysql_pool(state: &AppState) -> AppResult<Pool<MySql>> {
     state.mysql.clone().ok_or_else(|| {
         AppError::Internal("mysql pool is not configured for wallet routes".to_owned())
     })
+}
+
+/// 解析后台 JWT subject，避免管理路由信任请求体中的管理员标识。
+pub(crate) fn admin_id_from_subject(subject: &str) -> AppResult<u64> {
+    subject
+        .strip_prefix("admin:")
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or(AppError::Unauthorized)
 }
 
 fn validate_withdrawal_request(
@@ -259,15 +448,141 @@ fn validate_withdrawal_request(
     if request.fee < BigDecimal::from(0) {
         return Err(AppError::Validation("fee must be non-negative".to_owned()));
     }
+    let idempotency_key = request.idempotency_key.trim();
+    if idempotency_key.is_empty()
+        || idempotency_key.len() > 128
+        || !idempotency_key
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | ':' | '.'))
+    {
+        return Err(AppError::Validation(
+            "idempotency_key format is invalid".to_owned(),
+        ));
+    }
 
     Ok(CreateWithdrawalRequest {
         asset_symbol: request.asset_symbol.trim().to_ascii_uppercase(),
-        network: optional_string(request.network),
+        network: request
+            .network
+            .map(|network| normalize_deposit_network(&network))
+            .transpose()?,
         address: request.address.trim().to_owned(),
         amount: request.amount,
         fee: request.fee,
+        idempotency_key: idempotency_key.to_owned(),
         fund_password: request.fund_password,
         totp_code: request.totp_code,
+    })
+}
+
+fn ensure_withdrawal_replay_matches(
+    existing: &WalletWithdrawalResponse,
+    request: &CreateWithdrawalRequest,
+    configured_fee: &BigDecimal,
+) -> AppResult<()> {
+    if existing.asset_symbol != request.asset_symbol
+        || existing.network != request.network
+        || existing.address != request.address
+        || existing.amount != request.amount
+        || existing.fee != *configured_fee
+    {
+        return Err(AppError::Conflict(
+            "withdrawal idempotency key was reused with different parameters".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn withdrawal_request_response(
+    withdrawal: WalletWithdrawalResponse,
+) -> AppResult<WithdrawalRequestResponse> {
+    let security_method = match withdrawal.security_method.as_str() {
+        "fund_password" => crate::modules::security::SecurityVerificationMethod::FundPassword,
+        "two_factor" => crate::modules::security::SecurityVerificationMethod::TwoFactor,
+        "fund_password_and_two_factor" => {
+            crate::modules::security::SecurityVerificationMethod::FundPasswordAndTwoFactor
+        }
+        _ => {
+            return Err(AppError::Internal(
+                "withdrawal security method is invalid".to_owned(),
+            ));
+        }
+    };
+    Ok(WithdrawalRequestResponse {
+        id: withdrawal.id,
+        status: withdrawal.status,
+        total_reserved: withdrawal.total_reserved,
+        security_method,
+    })
+}
+
+fn normalize_withdrawal_status(status: Option<String>) -> AppResult<Option<String>> {
+    let status = normalize_optional_query_string(status);
+    if let Some(status) = status.as_deref()
+        && !matches!(
+            status,
+            "pending_review"
+                | "approved"
+                | "broadcasting"
+                | "broadcasted"
+                | "confirmed"
+                | "manual_review"
+                | "rejected"
+                | "failed"
+        )
+    {
+        return Err(AppError::Validation(
+            "withdrawal status is invalid".to_owned(),
+        ));
+    }
+    Ok(status)
+}
+
+fn required_reason(reason: Option<String>, label: &str) -> AppResult<String> {
+    let reason = normalize_optional_query_string(reason)
+        .ok_or_else(|| AppError::Validation(format!("{label} is required")))?;
+    if reason.len() > 512 {
+        return Err(AppError::Validation(format!(
+            "{label} must not exceed 512 characters"
+        )));
+    }
+    Ok(reason)
+}
+
+fn normalize_chain_identifier(value: String, label: &str) -> AppResult<String> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 255 || value.chars().any(char::is_whitespace) {
+        return Err(AppError::Validation(format!("{label} format is invalid")));
+    }
+    Ok(value.to_owned())
+}
+
+fn normalize_observe_deposit_request(
+    request: ObserveDepositRequest,
+) -> AppResult<ObserveDepositRequest> {
+    if request.amount <= BigDecimal::from(0) {
+        return Err(AppError::Validation(
+            "deposit amount must be positive".to_owned(),
+        ));
+    }
+    let address = normalize_chain_identifier(request.address, "address")?;
+    let tx_hash = normalize_chain_identifier(request.tx_hash, "tx_hash")?;
+    Ok(ObserveDepositRequest {
+        asset_symbol: normalize_asset_symbol(&request.asset_symbol)?,
+        network: normalize_deposit_network(&request.network)?,
+        address,
+        memo: optional_string(request.memo),
+        tx_hash,
+        event_index: request.event_index,
+        amount: request.amount,
+        block_height: request.block_height,
+        confirmations: request.confirmations,
+    })
+}
+
+fn is_duplicate_key_error(error: &sqlx::Error) -> bool {
+    error.as_database_error().is_some_and(|database_error| {
+        matches!(database_error.code().as_deref(), Some("1062" | "23000"))
     })
 }
 

@@ -235,6 +235,32 @@ async fn create_pair(
     symbol
 }
 
+async fn fund_system_spot_liquidity(
+    pool: &MySqlPool,
+    asset_id: u64,
+    amount: &BigDecimal,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        r#"INSERT INTO users (email, password_hash, status)
+           VALUES ('__system_spot_liquidity@internal.local', '!test-internal-account!', 'active')
+           ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"#,
+    )
+    .execute(pool)
+    .await?;
+    let system_user_id = result.last_insert_id();
+    sqlx::query(
+        r#"INSERT INTO wallet_accounts (user_id, asset_id, available, frozen, locked)
+           VALUES (?, ?, ?, 0, 0)
+           ON DUPLICATE KEY UPDATE available = VALUES(available), frozen = 0, locked = 0"#,
+    )
+    .bind(system_user_id)
+    .bind(asset_id)
+    .bind(amount)
+    .execute(pool)
+    .await?;
+    Ok(system_user_id)
+}
+
 async fn pair_id(pool: &MySqlPool, pair_symbol: &str) -> Result<u64, sqlx::Error> {
     sqlx::query_as("SELECT id FROM trading_pairs WHERE symbol = ?")
         .bind(pair_symbol)
@@ -1325,6 +1351,7 @@ async fn spot_limit_buy_order_fills_when_market_price_reaches_limit() -> Result<
         .bind(decimal("100.000000000000000000"))
         .execute(&pool)
         .await?;
+    fund_system_spot_liquidity(&pool, base_asset, &decimal("100.000000000000000000")).await?;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let idempotency_key = format!("spot-limit-trigger-{}", Uuid::now_v7().simple());
     let hub = EventBroadcastHub::new(16);
@@ -1499,6 +1526,95 @@ async fn spot_limit_buy_order_fills_when_market_price_reaches_limit() -> Result<
 }
 
 #[tokio::test]
+async fn spot_triggered_order_keeps_user_order_and_reservation_when_system_inventory_is_empty()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_user(&pool).await;
+    let (base_asset, base_symbol) = create_asset(&pool, "IB").await;
+    let (quote_asset, quote_symbol) = create_asset(&pool, "IQ").await;
+    let pair_symbol =
+        create_pair(&pool, base_asset, quote_asset, &base_symbol, &quote_symbol).await;
+    let compact_market_symbol = format!("{base_symbol}{quote_symbol}");
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(quote_asset)
+        .bind(decimal("100.000000000000000000"))
+        .execute(&pool)
+        .await?;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let app = routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/spot/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"pair_id":"{pair_symbol}","side":"buy","order_type":"limit","price":"10.000000000000000000","quantity":"2.0000","idempotency_key":"spot-inventory-empty-{}"}}"#,
+                    Uuid::now_v7().simple()
+                )))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let created = body_json(response).await?;
+    let order_id = created["id"].as_str().unwrap().to_owned();
+
+    let error = execute_triggered_spot_limit_orders_with_hub(
+        &pool,
+        &compact_market_symbol,
+        &decimal("9.000000000000000000"),
+        None,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("insufficient system spot liquidity inventory")
+    );
+    let (status, filled_quantity): (String, BigDecimal) =
+        sqlx::query_as("SELECT status, filled_quantity FROM spot_orders WHERE id = ?")
+            .bind(&order_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(status, "pending");
+    assert_eq!(filled_quantity, decimal("0.000000000000000000"));
+    let (available, frozen): (BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available, frozen FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(available, decimal("80.000000000000000000"));
+    assert_eq!(frozen, decimal("20.000000000000000000"));
+    let trade_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM spot_trades WHERE buy_order_id = ? OR sell_order_id = ?",
+    )
+    .bind(&order_id)
+    .bind(&order_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(trade_count, 0);
+
+    cleanup_fixture(
+        &pool,
+        user_id,
+        base_asset,
+        quote_asset,
+        &pair_symbol,
+        &order_id,
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn spot_create_market_buy_order_fills_immediately_at_market_price()
 -> Result<(), Box<dyn Error>> {
     let Some(pool) = mysql_pool().await else {
@@ -1520,6 +1636,7 @@ async fn spot_create_market_buy_order_fills_immediately_at_market_price()
         .bind(decimal("100.000000000000000000"))
         .execute(&pool)
         .await?;
+    fund_system_spot_liquidity(&pool, base_asset, &decimal("100.000000000000000000")).await?;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let idempotency_key = format!("spot-market-buy-{}", Uuid::now_v7().simple());
     let hub = EventBroadcastHub::new(16);
@@ -1684,6 +1801,7 @@ async fn spot_market_buy_accepts_small_cached_price_uptick_and_reserves_executio
         .bind(decimal("2000.000000000000000000"))
         .execute(&pool)
         .await?;
+    fund_system_spot_liquidity(&pool, base_asset, &decimal("100.000000000000000000")).await?;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let idempotency_key = format!("spot-market-buy-uptick-{}", Uuid::now_v7().simple());
     let app = routes().with_state(
@@ -1822,6 +1940,7 @@ async fn spot_create_market_sell_order_fills_immediately_at_market_price()
         .bind(decimal("2.000000000000000000"))
         .execute(&pool)
         .await?;
+    fund_system_spot_liquidity(&pool, quote_asset, &decimal("100000.000000000000000000")).await?;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let idempotency_key = format!("spot-market-sell-{}", Uuid::now_v7().simple());
     let hub = EventBroadcastHub::new(16);
@@ -1984,6 +2103,7 @@ async fn spot_limit_sell_order_fills_when_market_price_reaches_limit() -> Result
         .bind(decimal("2.000000000000000000"))
         .execute(&pool)
         .await?;
+    fund_system_spot_liquidity(&pool, quote_asset, &decimal("100000.000000000000000000")).await?;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let idempotency_key = format!("spot-limit-sell-trigger-{}", Uuid::now_v7().simple());
     let hub = EventBroadcastHub::new(16);
@@ -2547,6 +2667,7 @@ async fn spot_create_market_order_idempotency_accepts_legacy_null_reference_pric
         .bind(decimal("100.000000000000000000"))
         .execute(&pool)
         .await?;
+    fund_system_spot_liquidity(&pool, base_asset, &decimal("100.000000000000000000")).await?;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let idempotency_key = format!("spot-route-{}", Uuid::now_v7().simple());
     let app = routes().with_state(
@@ -2645,6 +2766,7 @@ async fn spot_create_legacy_market_sell_idempotency_rejects_changed_reference_pr
         .bind(decimal("5.000000000000000000"))
         .execute(&pool)
         .await?;
+    fund_system_spot_liquidity(&pool, quote_asset, &decimal("100000.000000000000000000")).await?;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let idempotency_key = format!("spot-route-{}", Uuid::now_v7().simple());
     let app = routes().with_state(
@@ -2744,6 +2866,7 @@ async fn spot_create_legacy_market_order_idempotency_rejects_added_unused_price(
         .bind(decimal("100.000000000000000000"))
         .execute(&pool)
         .await?;
+    fund_system_spot_liquidity(&pool, base_asset, &decimal("100.000000000000000000")).await?;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let idempotency_key = format!("spot-route-{}", Uuid::now_v7().simple());
     let app = routes().with_state(
@@ -2931,6 +3054,7 @@ async fn spot_create_market_sell_idempotency_rejects_changed_reference_price()
         .bind(decimal("5.000000000000000000"))
         .execute(&pool)
         .await?;
+    fund_system_spot_liquidity(&pool, quote_asset, &decimal("100000.000000000000000000")).await?;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let idempotency_key = format!("spot-route-{}", Uuid::now_v7().simple());
     let app = routes().with_state(
@@ -3025,6 +3149,7 @@ async fn spot_create_market_order_idempotency_accepts_same_unused_price_replay()
         .bind(decimal("100.000000000000000000"))
         .execute(&pool)
         .await?;
+    fund_system_spot_liquidity(&pool, base_asset, &decimal("100.000000000000000000")).await?;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let idempotency_key = format!("spot-route-{}", Uuid::now_v7().simple());
     let app = routes().with_state(
@@ -3118,6 +3243,7 @@ async fn spot_create_market_order_idempotency_rejects_changed_unused_price()
         .bind(decimal("100.000000000000000000"))
         .execute(&pool)
         .await?;
+    fund_system_spot_liquidity(&pool, base_asset, &decimal("100.000000000000000000")).await?;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let idempotency_key = format!("spot-route-{}", Uuid::now_v7().simple());
     let app = routes().with_state(
