@@ -141,6 +141,23 @@ impl EventOutboxRepository for RecordingOutboxRepository {
     }
 }
 
+async fn mysql_pool() -> Option<sqlx::MySqlPool> {
+    let database_url = match env::var("DATABASE_URL") {
+        Ok(value) if !value.trim().is_empty() => value,
+        _ => {
+            eprintln!("skipping MySQL event record test because DATABASE_URL is not set");
+            return None;
+        }
+    };
+    let pool = MySqlPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    Some(pool)
+}
+
 async fn post_publish_once(app: axum::Router, token: Option<&str>) -> (StatusCode, Value) {
     let mut request = Request::builder()
         .method("POST")
@@ -432,4 +449,175 @@ fn admin_token(state: &AppState) -> String {
         state.settings.jwt_access_ttl_seconds,
     )
     .unwrap()
+}
+
+#[tokio::test]
+async fn event_record_routes_require_admin_auth() {
+    let state = test_state();
+    let user_token = issue_token(
+        &state.settings,
+        "user:1",
+        TokenScope::User,
+        state.settings.jwt_access_ttl_seconds,
+    )
+    .unwrap();
+    let app = routes::routes().with_state(state);
+
+    for uri in ["/events/outbox", "/events/inbox"] {
+        let missing = app
+            .clone()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+        let forbidden = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header(AUTHORIZATION, format!("Bearer {user_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+    }
+}
+
+#[tokio::test]
+async fn event_outbox_requeue_restores_dead_letter_to_pending_and_audits() {
+    let Some(pool) = mysql_pool().await else {
+        return;
+    };
+    let state = test_state();
+    let suffix = Uuid::now_v7().simple().to_string();
+    let role_id =
+        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_ARRAY())")
+            .bind(format!("events-role-{}", &suffix[16..32]))
+            .execute(&pool)
+            .await
+            .unwrap()
+            .last_insert_id();
+    let admin_id =
+        sqlx::query("INSERT INTO admin_users (username, password_hash, role_id) VALUES (?, ?, ?)")
+            .bind(format!("events-admin-{}", &suffix[16..32]))
+            .bind("not-a-real-hash")
+            .bind(role_id)
+            .execute(&pool)
+            .await
+            .unwrap()
+            .last_insert_id();
+    let idempotency_key = format!("events-dead-letter-{suffix}");
+    let outbox_id = sqlx::query(
+        r#"INSERT INTO event_outbox
+           (aggregate_type, aggregate_id, event_type, routing_key, idempotency_key, payload_json,
+            status, retry_count)
+           VALUES ('test_aggregate', '1', 'created', 'test.created', ?, JSON_OBJECT(), 'dead_letter', 5)"#,
+    )
+    .bind(&idempotency_key)
+    .execute(&pool)
+    .await
+    .unwrap()
+    .last_insert_id();
+
+    let token = issue_token(
+        &state.settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        state.settings.jwt_access_ttl_seconds,
+    )
+    .unwrap();
+    let app = routes::routes().with_state(state.with_mysql(pool.clone()));
+
+    let listed = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/events/outbox?status=dead_letter&limit=100")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(listed.status(), StatusCode::OK);
+    let listed_payload: Value =
+        serde_json::from_slice(&to_bytes(listed.into_body(), 1_048_576).await.unwrap()).unwrap();
+    assert!(
+        listed_payload["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|record| record["id"] == outbox_id)
+    );
+    assert!(listed_payload["total"].as_i64().unwrap() >= 1);
+
+    let requeue = |body: &'static str| {
+        let app = app.clone();
+        let token = token.clone();
+        async move {
+            app.oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/events/outbox/{outbox_id}/requeue"))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+        }
+    };
+
+    let missing_reason = requeue("{}").await;
+    assert_eq!(missing_reason.status(), StatusCode::BAD_REQUEST);
+
+    let requeued = requeue(r#"{"reason":"重放死信"}"#).await;
+    assert_eq!(requeued.status(), StatusCode::OK);
+    let (status, retry_count): (String, i32) =
+        sqlx::query_as("SELECT status, retry_count FROM event_outbox WHERE id = ?")
+            .bind(outbox_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "pending");
+    assert_eq!(retry_count, 0);
+
+    // 已回到 pending 的事件不能重复重放。
+    let repeated = requeue(r#"{"reason":"重复重放"}"#).await;
+    assert_eq!(repeated.status(), StatusCode::CONFLICT);
+
+    let (audit_count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM admin_audit_logs WHERE admin_id = ? AND action = 'event_outbox.requeue' AND target_id = ?",
+    )
+    .bind(admin_id)
+    .bind(outbox_id.to_string())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(audit_count, 1);
+
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM event_outbox WHERE id = ?")
+        .bind(outbox_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await
+        .unwrap();
 }
