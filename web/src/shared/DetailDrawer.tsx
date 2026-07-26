@@ -448,6 +448,26 @@ function recordColumns(records: ApiRecord[], meta?: DetailDrawerFieldMeta): Arra
   }));
 }
 
+type DetailFieldTableProps = {
+  fieldMeta?: DetailDrawerFieldMeta;
+  record: ApiRecord | null;
+};
+
+export function DetailFieldTable({ fieldMeta, record }: DetailFieldTableProps) {
+  return (
+    <Table
+      bordered
+      columns={fieldColumns(fieldMeta)}
+      dataSource={record ? toRows(record) : []}
+      pagination={false}
+      resizable
+      rowKey="field"
+      scroll={containedTableScroll}
+      style={containedTableStyle}
+    />
+  );
+}
+
 export function DetailDrawer({ detail, onClose }: DetailDrawerProps) {
   const data = detail?.data;
   const meta = detail?.fieldMeta;
@@ -467,16 +487,7 @@ export function DetailDrawer({ detail, onClose }: DetailDrawerProps) {
           style={containedTableStyle}
         />
       ) : (
-        <Table
-          bordered
-          columns={fieldColumns(meta)}
-          dataSource={data ? toRows(data) : []}
-          pagination={false}
-          resizable
-          rowKey="field"
-          scroll={containedTableScroll}
-          style={containedTableStyle}
-        />
+        <DetailFieldTable fieldMeta={meta} record={data ?? null} />
       )}
     </SideSheet>
   );

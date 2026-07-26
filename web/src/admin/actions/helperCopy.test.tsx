@@ -111,7 +111,8 @@ describe('Admin action helper copy', () => {
     expect(screen.getByText('代理管理')).toBeInTheDocument();
     expect(await screen.findByText('AGT-42')).toBeInTheDocument();
     expect(screen.getByText('agent@example.com')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '查看详情' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '详情' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '查看详情' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '暂停' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '禁用' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '创建代理' })).not.toBeInTheDocument();

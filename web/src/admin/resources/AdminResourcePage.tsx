@@ -5,6 +5,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react
 
 import { listAdminResource } from '../../api/adminResources';
 import type { ApiRecord } from '../../api/types';
+import { PageHeader } from '../../layouts/PageHeader';
 import { AmountText } from '../../shared/AmountText';
 import { formatAdminBetContent, isAdminBetContentField } from '../../shared/betContentFormat';
 import { DataTable, type DataTableDisplayMode } from '../../shared/DataTable';
@@ -14,7 +15,7 @@ import { formatAdminDisplayValue } from '../../shared/numberFormat';
 import { StatusTag } from '../../shared/StatusTag';
 import { TimestampText } from '../../shared/TimestampText';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 export type AdminResourceColumn<T extends ApiRecord> = {
   asset?: string;
@@ -305,15 +306,9 @@ export function AdminResourcePage<T extends ApiRecord>({
   }, [columns, openDetail, reload, rowActions, showJsonAction]);
 
   return (
-    <main className="exchange-page">
-      <Card bordered={false} className="admin-resource-shell">
-        <div className="admin-resource-head">
-          <div>
-            <Title heading={4} style={{ marginBottom: 6 }}>
-              {title}
-            </Title>
-            <Text type="tertiary">共 {rows.length} 条记录，{activeFilterCount > 0 ? `已启用 ${activeFilterCount} 个筛选` : '未启用筛选'}</Text>
-          </div>
+    <main className="exchange-page admin-action-page">
+      <PageHeader
+        actions={
           <Space align="center" className="admin-resource-head-actions" spacing={12} wrap>
             {renderedToolbarFilters}
             <Button
@@ -325,7 +320,11 @@ export function AdminResourcePage<T extends ApiRecord>({
               {displayModeButtonText}
             </Button>
           </Space>
-        </div>
+        }
+        description={`共 ${rows.length} 条记录，${activeFilterCount > 0 ? `已启用 ${activeFilterCount} 个筛选` : '未启用筛选'}`}
+        title={title}
+      />
+      <Card bordered={false} className="admin-resource-shell">
         <div className="admin-resource-toolbar">
           <Space className="admin-resource-toolbar-actions" spacing={10} wrap>
             {renderedActions}

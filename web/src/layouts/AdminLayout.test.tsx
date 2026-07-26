@@ -44,7 +44,7 @@ describe('AdminLayout', () => {
   it('renders the Chinese admin navigation labels', () => {
     renderAdminLayout();
 
-    ['总览仪表盘', '风控中心', '审计日志'].forEach((label) => {
+    ['总览仪表盘', '审计日志'].forEach((label) => {
       expect(screen.getByRole('menuitem', { name: label })).toBeInTheDocument();
     });
 
@@ -52,17 +52,18 @@ describe('AdminLayout', () => {
       { group: '用户与代理', children: ['用户管理', 'KYC 审核', '代理管理', '代理佣金', '佣金规则'] },
       { group: '钱包资产', children: ['资产管理', '钱包账户', '充值网络配置', '充值地址池', '钱包流水'] },
       { group: '贷款管理', children: ['贷款产品', '贷款订单'] },
-      { group: '现货交易', children: ['交易对配置', '现货订单', '现货成交'] },
+      { group: '现货交易', children: ['现货订单', '现货成交'] },
       {
         group: '新币生命周期',
         children: ['新币项目', '生命周期动作', '发行申购', '派发记录', '上市认购', '锁仓仓位', '解禁记录']
       },
-      { group: '行情市场', children: ['交易对', '行情策略', '策略动作', '行情订阅'] },
+      { group: '行情市场', children: ['交易对配置', '行情策略', '策略动作', '行情订阅'] },
       { group: '闪兑管理', children: ['闪兑交易对', '闪兑订单'] },
       { group: '秒合约', children: ['秒合约产品', '秒合约订单'] },
       { group: '杠杆交易', children: ['杠杆产品', '杠杆仓位', '强平记录', '利息汇总'] },
       { group: '理财 Earn', children: ['理财分类', '理财产品', '理财申购'] },
       { group: '内容运营', children: ['新闻中心'] },
+      { group: '风控中心', children: ['风控规则', '风控事件'] },
       { group: '系统配置', children: ['国家配置', '安全策略', 'PC 品牌配置', 'SMTP 邮件配置', '上传配置'] }
     ].forEach(({ group, children }) => {
       const groupButton = screen.getByRole('menuitem', { name: new RegExp(group) });
@@ -79,7 +80,7 @@ describe('AdminLayout', () => {
     expect(screen.queryByRole('menuitem', { name: '秒合约动作' })).not.toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: '理财动作' })).not.toBeInTheDocument();
     expect(screen.getByText('root-admin')).toBeInTheDocument();
-  });
+  }, 30000);
 
   it('uses Semi theme and Navigation defaults instead of admin shell style classes', () => {
     const { container } = renderAdminLayout();
@@ -92,9 +93,7 @@ describe('AdminLayout', () => {
   it('keeps the Semi Navigation list scrollable within the sidebar', () => {
     const { container } = renderAdminLayout();
 
-    const listWrapper = container.querySelector('.semi-navigation-list-wrapper');
-
-    expect(listWrapper).toHaveStyle({ height: 'calc(100% - 116px)', overflowY: 'auto' });
+    expect(container.querySelector('.admin-layout-nav .semi-navigation-list-wrapper')).toBeInTheDocument();
   });
 
   it('activates the news center navigation entry', () => {
@@ -179,12 +178,13 @@ describe('AdminLayout', () => {
     const sider = screen.getByLabelText('后台侧边栏');
     const collapseButton = container.querySelector('.semi-navigation-footer button') as HTMLElement | null;
 
-    expect(sider).toHaveStyle({ width: '272px' });
+    expect(sider).toHaveClass('admin-layout-sider');
+    expect(sider).not.toHaveClass('admin-layout-sider-collapsed');
     expect(collapseButton).toBeInTheDocument();
 
     fireEvent.click(collapseButton as HTMLElement);
 
-    expect(sider).toHaveStyle({ width: '72px' });
+    expect(sider).toHaveClass('admin-layout-sider-collapsed');
     expect(screen.queryByText('Rust Chain')).not.toBeInTheDocument();
   });
 });

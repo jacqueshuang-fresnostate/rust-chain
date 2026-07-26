@@ -5744,3 +5744,17 @@
 - 修改文件：`web/src/api/agent.ts`、`web/src/agent/{pages,routes}.tsx`、`web/src/layouts/AgentLayout.tsx`、`web/src/admin/actions/AgentManagementPage.tsx(+新测试)`、`web/src/admin/resources/{AdminResourcePage,resourceConfigs}.tsx`、`web/src/admin/resources/actions/agents.tsx`、`web/src/shared/DataTable.tsx` 及 6 个测试文件
 - 验证结果：`npm run typecheck`、`npm run lint` 通过；`npm test -- --run` 33 文件 235/235 通过；对抗性验证复核请求体与后端 DTO 逐字段一致（batch-status、AssignUserAgentRequest）、无行选择泄漏到其他资源页，判定 GREEN。
 - 后续事项：代理列表「详情/查看详情」两按钮文案相近（并入后台视觉统一切片处理）。
+
+## 2026-07-27 00:10 - 全量集成测试普查与存量测试修复
+
+- 完成内容：对全部 34 个集成测试二进制做真实 MySQL/Redis 逐库串行普查，31 绿 3 红；修复三处存量缺陷（均为从未在有库环境跑过的断言）：earn 零值 BigDecimal 序列化断言 7 处（"0.000000000000000000"→"0"）、market 交易对符号清洗后超 32 字符上限（测试符号截短）、wallet 响应体读取上限被累积资产列表击穿（8K/64K→1M）。修复后 34/34 全绿。
+- 修改文件：`tests/earn_routes.rs`、`tests/market_routes.rs`、`tests/wallet_routes.rs`
+- 验证结果：earn_routes 19/19、market_routes 12/12、wallet_routes 8/8（串行）；`cargo fmt --check` 干净；连同此前 admin_routes 串行 80/80、convert_routes 13/13，全部 34 个二进制绿。
+- 后续事项：测试套件在并行线程+脏库下仍有互扰（本次以串行验证规避），如需根治可另立「测试隔离性」任务。
+
+## 2026-07-27 00:20 - 后台C1-C3：导航单源、页面壳统一、设计 token、依赖固定
+
+- 完成内容：新建 web/src/admin/navigation.tsx 单源导航注册表（AdminLayout 消费），去除 /admin/market/pairs 双入口、风控改为分组并补「风控事件」菜单项、各分组图标唯一；新增防漂移测试（导航路径 ⊆ 真实路由表、无重复路径、图标唯一）；AdminResourcePage 统一采用 PageHeader 页面壳；代理列表「详情/查看详情」合并为单一详情抽屉（含可折叠原始数据）；styles.css 引入设计 token 层并重构（204 行变更），登录页由暗色渐变改为与后台一致的浅色主题；package.json 全部 "latest" 依赖固定为实际安装版本（semi-ui ^2.99.2、react ^19.2.6 等），package-lock 同步。
+- 修改文件：`web/src/admin/navigation.tsx(新)`、`web/src/admin/navigation.test.tsx(新)`、`web/src/layouts/{AdminLayout,PageHeader}.tsx`、`web/src/admin/resources/AdminResourcePage.tsx`、`web/src/admin/actions/AgentManagementPage.tsx`、`web/src/shared/DetailDrawer.tsx`、`web/src/styles.css`、`web/package.json`、`web/package-lock.json` 及 3 个测试文件
+- 验证结果：`npm run typecheck`、`npm run lint` 通过；`npm test -- --run` 34 文件 239/239 通过；焦点复核确认导航去重、风控组、防漂移测试引用真实表、登录页浅色化、详情按钮合并均落地。
+- 后续事项：无。

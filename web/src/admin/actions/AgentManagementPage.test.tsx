@@ -151,6 +151,26 @@ describe('AgentManagementPage', () => {
     expect(screen.queryByRole('heading', { name: '创建代理' })).not.toBeInTheDocument();
   });
 
+  it('consolidates detail into a single button with a collapsible raw data section', async () => {
+    const user = userEvent.setup();
+    render(<AgentManagementPage />);
+
+    expect((await screen.findAllByText('AGT-001')).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: '查看详情' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: '详情' })).toHaveLength(2);
+
+    await user.click(screen.getAllByRole('button', { name: '详情' })[0]);
+
+    expect(await screen.findByText('team@example.test')).toBeInTheDocument();
+    expect(screen.getByText('原始数据')).toBeInTheDocument();
+    expect(screen.queryByText('字段')).not.toBeInTheDocument();
+
+    await user.click(screen.getByText('原始数据'));
+
+    expect(await screen.findByText('字段')).toBeInTheDocument();
+    expect(screen.getByText('内容')).toBeInTheDocument();
+  });
+
   it('opens agent detail drawer and reassigns a user to another agent', async () => {
     const user = userEvent.setup();
     render(<AgentManagementPage />);

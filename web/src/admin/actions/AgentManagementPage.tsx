@@ -1,5 +1,5 @@
 import { IconList, IconPlus, IconRefresh } from '@douyinfe/semi-icons';
-import { Button, Card, Descriptions, Popconfirm, SideSheet, Space, Tabs, Typography, Toast } from '@douyinfe/semi-ui';
+import { Button, Card, Collapse, Descriptions, Popconfirm, SideSheet, Space, Tabs, Typography, Toast } from '@douyinfe/semi-ui';
 import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -8,7 +8,7 @@ import type { ApiRecord } from '../../api/types';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
 import { DataTable } from '../../shared/DataTable';
-import { DetailDrawer, type DetailDrawerData } from '../../shared/DetailDrawer';
+import { DetailFieldTable } from '../../shared/DetailDrawer';
 import { StatusTag } from '../../shared/StatusTag';
 import { TimestampText } from '../../shared/TimestampText';
 import { AdminPasswordInput, AdminSelect, AdminTextInput } from '../../shared/SemiFormControls';
@@ -242,6 +242,13 @@ function AgentDetailDrawer({ agentId, agentOptions, onClose, onReassigned }: Age
         {agent ? <Descriptions align="plain" column={3} data={agentInfo} layout="horizontal" /> : null}
         <Title heading={5}>团队用户</Title>
         <DataTable columns={userColumns} data={users} error={error} loading={loading} rowKey="user_id" />
+        {agent ? (
+          <Collapse className="agent-detail-raw" keepDOM={false}>
+            <Collapse.Panel header="原始数据" itemKey="raw">
+              <DetailFieldTable record={agent as ApiRecord} />
+            </Collapse.Panel>
+          </Collapse>
+        ) : null}
       </Space>
     </SideSheet>
   );
@@ -251,7 +258,6 @@ export function AgentManagementPage() {
   const [activeTab, setActiveTab] = useState<'list' | 'create'>('list');
   const [agents, setAgents] = useState<AgentRecord[]>([]);
   const [createValues, setCreateValues] = useState(initialCreateValues);
-  const [detail, setDetail] = useState<DetailDrawerData | null>(null);
   const [detailAgentId, setDetailAgentId] = useState<string | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [loading, setLoading] = useState(true);
@@ -313,16 +319,6 @@ export function AgentManagementPage() {
     };
   }, [reloadVersion]);
 
-  async function openAgentDetail(agentId: string) {
-    try {
-      const agent = await apiRequest<AgentRecord>(`/admin/api/v1/agents/${agentId}`);
-      setDetail({ title: '代理详情', data: agent as ApiRecord });
-    } catch (caught) {
-      Toast.error(errorMessage(caught));
-      throw caught;
-    }
-  }
-
   async function updateAgentStatus(agentId: string, nextStatus: string, reason: string) {
     await submitAction('更新代理状态', () =>
       apiRequest(`/admin/api/v1/agents/${agentId}/status`, {
@@ -359,9 +355,6 @@ export function AgentManagementPage() {
             <Space spacing={6} wrap>
               <Button disabled={!agentId} onClick={() => setDetailAgentId(agentId)} size="small" theme="borderless">
                 详情
-              </Button>
-              <Button disabled={!agentId} onClick={() => openAgentDetail(agentId)} size="small" theme="borderless">
-                查看详情
               </Button>
               {agentStatusActions(status).map((action) => (
                 <ConfirmAction
@@ -448,7 +441,6 @@ export function AgentManagementPage() {
           ) : null}
         </div>
       </Card>
-      <DetailDrawer detail={detail} onClose={() => setDetail(null)} />
       <AgentDetailDrawer
         agentId={detailAgentId}
         agentOptions={reassignAgentOptions}
