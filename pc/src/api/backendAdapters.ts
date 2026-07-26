@@ -127,6 +127,7 @@ export interface BackendCreateWithdrawalRequest {
   address: string
   amount: string
   fee: string
+  idempotency_key: string
   fund_password?: string
   totp_code?: string
 }
@@ -137,6 +138,7 @@ export interface PcWithdrawalParams {
   address: string
   amount: number
   fee: number
+  idempotencyKey?: string
   code?: string
   fundPassword?: string
   totpCode?: string
@@ -1215,6 +1217,8 @@ export function mapPcWithdrawalRequest(params: PcWithdrawalParams): BackendCreat
     address: params.address.trim(),
     amount: String(params.amount),
     fee: String(params.fee),
+    idempotency_key: params.idempotencyKey?.trim()
+      || `pc-withdraw-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     fund_password: params.fundPassword?.trim() || undefined,
     totp_code: params.totpCode?.trim() || undefined,
   }

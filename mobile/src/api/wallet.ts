@@ -155,9 +155,16 @@ export async function submitWithdrawal(input: { assetSymbol: string; network?: s
     address: input.address.trim(),
     amount: String(input.amount),
     fee: String(input.fee),
+    idempotency_key: createWithdrawalIdempotencyKey(),
     fund_password: input.fundPassword?.trim() || undefined,
     totp_code: input.totpCode?.trim() || undefined,
   })
+}
+
+function createWithdrawalIdempotencyKey(): string {
+  const randomPart = globalThis.crypto?.randomUUID?.()
+    ?? Math.random().toString(36).slice(2)
+  return `mobile-withdraw-${Date.now()}-${randomPart}`
 }
 
 export async function fetchWalletLedger(limit = 30, offset = 0, changeType?: string): Promise<WalletLedgerEntry[]> {

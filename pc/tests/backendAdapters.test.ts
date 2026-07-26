@@ -435,6 +435,7 @@ test('maps PC withdrawal request into backend security verification payload', ()
     address: 'TDestinationAddress',
     amount: 25.5,
     fee: 1,
+    idempotencyKey: 'withdraw-test-1',
     code: 'legacy-email-code',
     fundPassword: 'fund-secret',
     totpCode: '123456',
@@ -444,6 +445,7 @@ test('maps PC withdrawal request into backend security verification payload', ()
     address: 'TDestinationAddress',
     amount: '25.5',
     fee: '1',
+    idempotency_key: 'withdraw-test-1',
     fund_password: 'fund-secret',
     totp_code: '123456',
   })
@@ -453,6 +455,7 @@ test('maps PC withdrawal request into backend security verification payload', ()
     address: 'bc1destination',
     amount: 0.1,
     fee: 0,
+    idempotencyKey: 'withdraw-test-2',
     code: '',
   }), {
     asset_symbol: 'BTC',
@@ -460,6 +463,7 @@ test('maps PC withdrawal request into backend security verification payload', ()
     address: 'bc1destination',
     amount: '0.1',
     fee: '0',
+    idempotency_key: 'withdraw-test-2',
     fund_password: undefined,
     totp_code: undefined,
   })
@@ -1357,6 +1361,7 @@ test('maps backend margin products, positions, and open request into PC contract
   assert.deepEqual(mapPcMarginOpenRequest({ contractCoinId: 6, direction: 1, type: 0, leverage: 3, marginMode: 'cross', volume: 100 }, 'margin-1'), {
     product_id: 6,
     direction: 'short',
+    order_type: 'market',
     margin_mode: 'cross',
     margin_amount: '100',
     leverage: '3',
