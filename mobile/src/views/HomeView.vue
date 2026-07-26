@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Bell, ChevronRight, Eye, Grid2X2, ScanLine, Search, Sparkles } from 'lucide-vue-next'
@@ -64,10 +64,12 @@ async function loadAnnouncements(): Promise<void> {
   }
 }
 
-onMounted(() => {
-  void marketStore.refresh()
+onMounted(async () => {
   void loadAnnouncements()
+  await marketStore.refresh()
+  marketStore.startLiveUpdates()
 })
+onUnmounted(() => marketStore.stopLiveUpdates())
 watch(locale, () => { void loadAnnouncements() })
 </script>
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { RefreshCw, Search } from 'lucide-vue-next'
@@ -53,7 +53,11 @@ function selectCategory(next: MarketCategory) {
   category.value = next
 }
 
-onMounted(() => { void marketStore.refresh() })
+onMounted(async () => {
+  await marketStore.refresh()
+  marketStore.startLiveUpdates()
+})
+onUnmounted(() => marketStore.stopLiveUpdates())
 </script>
 
 <template>
