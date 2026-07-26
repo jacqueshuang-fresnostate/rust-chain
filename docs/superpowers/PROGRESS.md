@@ -5807,3 +5807,10 @@
 - 修改文件：`src/modules/{admin,risk,spot,wallet,loan}/**`、`src/workers/loan_overdue.rs(新)`、`src/main.rs`、`src/openapi*`、`migrations/{0090,0092}_*.sql`、`web/src/{shared/DataTable,api/adminResources,admin/resources/**}`、`tests/{admin_routes,spot_routes,wallet_routes,loan_routes(新),loan_overdue_worker(新)}.rs` 及单测
 - 验证结果：后端 36 个测试二进制全绿（真实 MySQL/Redis 串行，462 用例）、`cargo test --lib` 179/179、`cargo fmt --check` 干净、`cargo check --all-targets` 零警告；web `npm run typecheck`/`lint` 通过、254/254 测试。三通道对抗验证共提出 24 项缺陷，其中危及生产的 4 项（配置组合停摆、限额单位混用、限流永久锁死、翻页状态跨页残留）已全部修复并复验。
 - 后续事项：①分页仅覆盖 43 个后台列表中的 24 个，另 19 个（现货订单/成交、竞猜、理财、贷款、杠杆、秒合约、充提记录）的列表处理函数在各自模块内，仍为硬截断 100 条，需单列一轮补齐；②贷款清算与罚息计提为有意保留的待办（缺可配置的定价与罚息口径）；③loan_overdue 与 wallet_chain 两个 worker 仍走 from_env 而非 Settings，与新 worker 约定不一致（迁移需同步改约 30 个测试的 Settings 全字段字面量，另立切片）；④风控规则配置键的操作者契约已在后台表单内说明，但 tests/admin_routes.rs 中仍有使用未识别键 daily_limit 的历史样例。
+
+## 2026-07-27 03:46 - 秒合约工作台、异形导航与 Header 层级优化
+
+- 完成内容：浅色主题移除 `#0b18111f` 及其 `rgba(11, 24, 17, ...)` 边框家族，统一改为冷灰中性色；新增独立秒合约工作台，覆盖交易对、参考价、轮次、方向、周期、金额、预计派彩、余额、确认弹层及本地会话记录；底部主导航升级为七入口异形导航并抬升居中秒合约入口；根页面和二级页面 Header 使用不透明 sticky 高层，避免滚动内容遮挡；补齐 320px 滚动条环境与浅色方向激活态对比度修复。
+- 修改文件：`mobile/sites-prototype/app/page.tsx`、`mobile/sites-prototype/app/secondary-pages.tsx`、`mobile/sites-prototype/app/globals.css`、`mobile/sites-prototype/tests/rendered-html.test.mjs`、`.trellis/spec/mobile/index.md`、`.trellis/tasks/07-27-mobile-seconds-nav-header/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run lint`、`npm run build`、`npm test`（32/32）、`git diff --check` 通过；源码及构建 CSS 均无禁用颜色；320x844、390x844、448x900 浏览器检查无页面横向溢出，七个导航入口可见，秒合约金额/派彩/确认/记录闭环通过；根与二级 Header 滚动命中均保持最上层；全量 `npx tsc --noEmit` 仍被既有 Cloudflare ambient 类型缺失阻断，任务范围严格类型检查通过；原型提交 `41a46742e0075cb1f98345de92a88b8f2b8e65c6` 已推送并部署为公开 Sites 版本 15，生产地址 `https://hippo-mobile-signal-2026.ikuboy.chatgpt.site/` 复验通过。
+- 后续事项：秒合约仍为确定性本地交互原型，不连接真实账户、不提交真实订单或资金；接入后端真实秒合约接口需另立任务。

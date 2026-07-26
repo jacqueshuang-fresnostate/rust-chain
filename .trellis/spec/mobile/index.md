@@ -73,6 +73,25 @@ Apply this contract to `mobile/sites-prototype/` secondary routes:
 - Use Lucide icons only, no emoji, and keep all interactive targets at least
   44x44 CSS pixels.
 
+For root navigation, seconds trading, and sticky headers in the Sites
+prototype:
+
+- Keep spot, contract, and seconds trading as separate operational surfaces.
+  Seconds trading must use its typed protected route and must not be folded into
+  either root trading column.
+- A shaped root navigation may raise one protected destination above the
+  navigation body, but all root destinations must remain visible and the full
+  control must fit from 320px through 448px without horizontal page overflow.
+- Seconds trading remains a deterministic local prototype. It must expose pair,
+  reference price, round, direction, duration, amount, payout, balance,
+  confirmation, and session feedback while explicitly avoiding real orders or
+  external side effects.
+- Root and secondary headers must use an opaque sticky layer above route
+  transitions and scrolling content. Content stacking contexts must remain
+  below the header layer.
+- Light-theme border tokens must use the shared cool-neutral family. Do not
+  reintroduce the retired `#0b1811` / `rgba(11, 24, 17, ...)` border family.
+
 Run from `mobile/sites-prototype/` after shared surface changes:
 
 ```bash
