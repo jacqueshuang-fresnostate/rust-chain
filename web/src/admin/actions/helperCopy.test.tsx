@@ -109,6 +109,14 @@ describe('Admin action helper copy', () => {
     render(<AgentManagementPage />);
 
     expect(screen.getByText('代理管理')).toBeInTheDocument();
+    expect(await screen.findByText('AGT-42')).toBeInTheDocument();
+    expect(screen.getByText('agent@example.com')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看详情' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '暂停' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '禁用' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '创建代理' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: '创建代理' }));
     expect(screen.getByRole('heading', { name: '创建代理' })).toBeInTheDocument();
     expect(screen.getByLabelText('用户ID').closest('.semi-input-wrapper')).toBeInTheDocument();
     expect(screen.getByLabelText('代理编号').closest('.semi-input-wrapper')).toBeInTheDocument();
@@ -116,11 +124,6 @@ describe('Admin action helper copy', () => {
     expect(screen.getByLabelText('初始密码').closest('.semi-input-wrapper')).toBeInTheDocument();
     expect(screen.queryByLabelText('密码哈希')).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '更新代理状态' })).not.toBeInTheDocument();
-    expect(await screen.findByText('AGT-42')).toBeInTheDocument();
-    expect(screen.getByText('agent@example.com')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '查看详情' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '暂停' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '禁用' })).toBeInTheDocument();
 
     await user.type(screen.getByLabelText('用户ID'), '1001');
     await user.type(screen.getByLabelText('代理编号'), 'AGT-NEW');
@@ -143,6 +146,8 @@ describe('Admin action helper copy', () => {
     });
     expect(JSON.parse(String(createRequest?.body))).not.toHaveProperty('admin_password_hash');
 
+    await user.click(screen.getByRole('tab', { name: '代理列表' }));
+    expect(await screen.findByText('AGT-42')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '暂停' }));
     await user.type(screen.getByLabelText('操作原因'), 'suspend agent');
     await user.click(screen.getByRole('button', { name: '确认' }));

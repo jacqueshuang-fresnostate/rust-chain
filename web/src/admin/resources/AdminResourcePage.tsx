@@ -1,6 +1,6 @@
 import { IconEyeOpened, IconList, IconRefresh } from '@douyinfe/semi-icons';
 import { Button, Card, Space, Switch, Tooltip, Typography } from '@douyinfe/semi-ui';
-import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
+import type { ColumnProps, RowSelectionProps } from '@douyinfe/semi-ui/lib/es/table';
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { listAdminResource } from '../../api/adminResources';
@@ -29,8 +29,20 @@ type AdminResourceActionHelpers = {
   reload: () => void;
 };
 
+export type AdminResourceBatchHelpers<T extends ApiRecord> = {
+  clearSelection: () => void;
+  reload: () => void;
+  selectedRows: T[];
+};
+
+type AdminResourceBatchActions<T extends ApiRecord> = {
+  isRowSelectable?: (record: T) => boolean;
+  render: (helpers: AdminResourceBatchHelpers<T>) => ReactNode;
+};
+
 type AdminResourcePageProps<T extends ApiRecord> = {
   actions?: ReactNode | ((helpers: AdminResourceActionHelpers) => ReactNode);
+  batchActions?: AdminResourceBatchActions<T>;
   columns: Array<AdminResourceColumn<T>>;
   endpoint: string;
   filters?: FilterField[];
@@ -94,6 +106,7 @@ function mergeDetailFieldMeta(base: DetailDrawerFieldMeta, next?: DetailDrawerFi
 
 export function AdminResourcePage<T extends ApiRecord>({
   actions,
+  batchActions,
   columns,
   endpoint,
   filters,
@@ -110,8 +123,10 @@ export function AdminResourcePage<T extends ApiRecord>({
   const [loading, setLoading] = useState(true);
   const [reloadVersion, setReloadVersion] = useState(0);
   const [rows, setRows] = useState<T[]>([]);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<Array<string | number>>([]);
   const [tableDisplayMode, setTableDisplayMode] = useState<DataTableDisplayMode>('compact');
   const reload = useCallback(() => setReloadVersion((value) => value + 1), []);
+  const clearSelection = useCallback(() => setSelectedRowKeys([]), []);
   const handleFilterChange = useCallback((values: FilterValues) => {
     setFilterValues(values);
   }, []);
@@ -145,6 +160,7 @@ export function AdminResourcePage<T extends ApiRecord>({
           return;
         }
         setRows(result.rows);
+        setSelectedRowKeys([]);
       })
       .catch((caught: unknown) => {
         if (!active) {
@@ -195,6 +211,22 @@ export function AdminResourcePage<T extends ApiRecord>({
   );
 
   const renderedActions = typeof actions === 'function' ? actions({ reload }) : actions;
+  const selectedRows = useMemo(
+    () => rows.filter((row) => selectedRowKeys.some((key) => String(key) === String(row.id))),
+    [rows, selectedRowKeys]
+  );
+  const rowSelection = useMemo<RowSelectionProps<T> | undefined>(() => {
+    if (!batchActions) {
+      return undefined;
+    }
+    const isRowSelectable = batchActions.isRowSelectable;
+    return {
+      getCheckboxProps: isRowSelectable ? (record: T) => ({ disabled: !isRowSelectable(record) }) : undefined,
+      onChange: (keys) => setSelectedRowKeys(keys ?? []),
+      selectedRowKeys
+    };
+  }, [batchActions, selectedRowKeys]);
+  const renderedBatchActions = batchActions ? batchActions.render({ clearSelection, reload, selectedRows }) : null;
   const renderedToolbarFilters = toolbarFilters?.map((field) => {
     if (field.type !== 'switch') {
       return null;
@@ -297,6 +329,7 @@ export function AdminResourcePage<T extends ApiRecord>({
         <div className="admin-resource-toolbar">
           <Space className="admin-resource-toolbar-actions" spacing={10} wrap>
             {renderedActions}
+            {renderedBatchActions}
             <Tooltip content="重新加载当前资源">
               <Button icon={<IconRefresh aria-hidden="true" />} loading={loading} onClick={reload} theme="borderless">
                 刷新
@@ -309,7 +342,7 @@ export function AdminResourcePage<T extends ApiRecord>({
             </div>
           ) : null}
         </div>
-        <DataTable columns={tableColumns} data={rows} displayMode={tableDisplayMode} error={error} loading={loading} />
+        <DataTable columns={tableColumns} data={rows} displayMode={tableDisplayMode} error={error} loading={loading} rowSelection={rowSelection} />
       </Card>
       <DetailDrawer detail={detail} onClose={() => setDetail(null)} />
     </main>

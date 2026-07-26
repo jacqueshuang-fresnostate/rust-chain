@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { AdminResourcePage, type AdminResourceColumn } from './AdminResourcePage';
-import { AgentCommissionRowActions, AgentCommissionRuleRowActions, CreateAgentCommissionRuleAction } from './actions/agents';
+import { AgentCommissionBatchActions, AgentCommissionRowActions, AgentCommissionRuleRowActions, CreateAgentCommissionRuleAction } from './actions/agents';
 import { ConvertOrderRowActions, ConvertPairRowActions, CreateConvertPairAction } from './actions/convert';
 import { CreateEarnCategoryAction, CreateEarnProductAction, EarnCategoryRowActions, EarnProductRowActions, EarnSubscriptionRowActions } from './actions/earn';
 import { CreateLoanProductAction, LoanOrderRowActions, LoanProductRowActions } from './actions/loan';
@@ -32,6 +32,7 @@ import { PredictionMarketRowActions } from '../actions/PredictionMarketRowAction
 
 export type ResourceConfig = {
   actions?: React.ComponentProps<typeof AdminResourcePage<ApiRecord>>['actions'];
+  batchActions?: React.ComponentProps<typeof AdminResourcePage<ApiRecord>>['batchActions'];
   columns: Array<AdminResourceColumn<ApiRecord>>;
   endpoint: string;
   filters?: FilterField[];
@@ -824,6 +825,10 @@ export const resourceConfigs = {
     endpoint: '/admin/api/v1/agent-commissions',
     responseKey: 'commissions',
     filters: [userFilter, emailFilter, { key: 'agent_id', label: '代理ID' }, agentCommissionStatusFilter, limitFilter],
+    batchActions: {
+      isRowSelectable: (record) => record.status === 'pending',
+      render: (helpers) => <AgentCommissionBatchActions helpers={helpers} />
+    },
     rowActions: (record, helpers) => <AgentCommissionRowActions helpers={helpers} record={record} />,
     columns: [
       { key: 'id', title: 'ID' },

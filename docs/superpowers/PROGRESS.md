@@ -5730,3 +5730,17 @@
 - 修改文件：`src/modules/admin/{application,presentation,routes,service}.rs`、`src/workers/{agent_commission_settlement.rs(新),mod.rs}`、`src/{config,main,openapi}.rs`、`tests/admin_routes.rs`、`tests/convert_routes.rs`、`tests/openapi_routes.rs`、`tests/unit_src/src_workers_agent_commission_settlement_tests.rs(新)`、`tests/unit_src/src_config_tests.rs`、28 个测试夹具补齐新配置字段
 - 验证结果：真实 MySQL 集成测试 `admin_routes` 串行 80/80、`convert_routes` 13/13、`agent_routes` 16/16、`cargo test --lib` 169/169、`backend_architecture` 4/4、`cargo fmt --check` 干净；批量结算 MySQL 用例断言钱包入账、ledger 幂等、跳过记录保持 pending、重复结算冲突。已知遗留：测试套件在并行+脏库下存在互扰（本次串行验证规避），另立后续事项。
 - 后续事项：管理端批量结算 UI（并入 #5 web 切片）；测试套件并行隔离性改进可另立任务。
+
+## 2026-07-26 21:45 - 结构A4：admin 三巨石与 openapi 按域拆分
+
+- 完成内容：将 src/modules/admin/application.rs（4452 行）、infrastructure.rs（5668 行）、service.rs（2968 行）与 src/openapi.rs（3454 行）按业务域拆为原生子模块（application/ 12 文件、infrastructure/ 12 文件、service/ 10 文件、openapi/ 8 文件），层根文件保留为薄声明+再导出，全部既有路径不变；单文件最大 1110 行。纯代码移动零行为变化：对抗性验证对 9 函数+3 结构体做逐字节比对（含 apply_admin_agent_commission_status、settle_agent_commission_payout_in_tx 等资金关键路径），并做全层行多重集比对确认零丢失、公共 API 面零缺失。
+- 修改文件：`src/modules/admin/{application,infrastructure,service}.rs` 及新建对应子目录、`src/openapi.rs` 及 `src/openapi/`
+- 验证结果：`cargo check --all-targets` 零警告、`cargo fmt --check` 干净、`cargo test --lib` 169/169、`backend_architecture` 4/4、`openapi_routes` 全过、真实 MySQL 串行 `admin_routes` 80/80。
+- 后续事项：无。
+
+## 2026-07-26 21:45 - 代理功能全链路补全（下级代理页/团队树/详情抽屉/批量结算 UI）
+
+- 完成内容：代理门户新增「下级代理」页（/agent/sub-agents，复用 useLoader+DataTable 模式）并在团队树页补渲染后端已返回的下级代理层；管理端 AgentManagementPage 新增代理详情抽屉（代理信息+名下用户，支持 Popconfirm 确认后 PATCH /users/:id/agent 转移用户归属）、修复死 Tabs（activeKey+条件渲染，与竞猜配置页同构）；佣金列表接入批量结算/驳回（DataTable 通用 rowSelection + 资源页 batchActions 能力，仅 pending 行可选，客户端去重与 200 条上限、部分失败摘要 Toast）。
+- 修改文件：`web/src/api/agent.ts`、`web/src/agent/{pages,routes}.tsx`、`web/src/layouts/AgentLayout.tsx`、`web/src/admin/actions/AgentManagementPage.tsx(+新测试)`、`web/src/admin/resources/{AdminResourcePage,resourceConfigs}.tsx`、`web/src/admin/resources/actions/agents.tsx`、`web/src/shared/DataTable.tsx` 及 6 个测试文件
+- 验证结果：`npm run typecheck`、`npm run lint` 通过；`npm test -- --run` 33 文件 235/235 通过；对抗性验证复核请求体与后端 DTO 逐字段一致（batch-status、AssignUserAgentRequest）、无行选择泄漏到其他资源页，判定 GREEN。
+- 后续事项：代理列表「详情/查看详情」两按钮文案相近（并入后台视觉统一切片处理）。

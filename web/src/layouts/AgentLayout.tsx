@@ -21,7 +21,8 @@ const navItems: AgentNavItem[] = [
   { path: '/agent/invite-codes', label: '邀请码', icon: <IconList aria-hidden="true" /> },
   { path: '/agent/commissions', label: '佣金记录', icon: <IconCoinMoneyStroked aria-hidden="true" /> },
   { path: '/agent/convert-stats', label: '闪兑统计', icon: <IconCoinMoneyStroked aria-hidden="true" /> },
-  { path: '/agent/team-tree', label: '团队树', icon: <IconList aria-hidden="true" /> }
+  { path: '/agent/team-tree', label: '团队树', icon: <IconList aria-hidden="true" /> },
+  { path: '/agent/sub-agents', label: '下级代理', icon: <IconUserGroup aria-hidden="true" /> }
 ];
 
 const shellStyle: CSSProperties = {

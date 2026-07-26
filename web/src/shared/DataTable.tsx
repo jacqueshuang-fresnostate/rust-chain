@@ -1,5 +1,5 @@
 import { Empty, Spin, Table, Typography } from '@douyinfe/semi-ui';
-import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
+import type { ColumnProps, RowSelectionProps } from '@douyinfe/semi-ui/lib/es/table';
 import { useEffect, useMemo, useState } from 'react';
 
 import { containedTableScroll, containedTableStyle } from './tableLayout';
@@ -20,6 +20,7 @@ type DataTableProps<T extends Record<string, unknown>> = {
   error?: Error | null;
   loading?: boolean;
   rowKey?: Extract<keyof T, string> | ((record: T) => string | number);
+  rowSelection?: RowSelectionProps<T>;
 };
 
 function resolveRowKey<T extends Record<string, unknown>>(rowKey: DataTableProps<T>['rowKey']) {
@@ -43,7 +44,7 @@ export function normalizeTableColumns<T extends Record<string, unknown>>(columns
   });
 }
 
-export function DataTable<T extends Record<string, unknown>>({ columns, data, displayMode = 'compact', error, loading, rowKey }: DataTableProps<T>) {
+export function DataTable<T extends Record<string, unknown>>({ columns, data, displayMode = 'compact', error, loading, rowKey, rowSelection }: DataTableProps<T>) {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const tableColumns = useMemo(() => normalizeTableColumns(columns, displayMode), [columns, displayMode]);
@@ -97,6 +98,7 @@ export function DataTable<T extends Record<string, unknown>>({ columns, data, di
       }}
       resizable
       rowKey={resolveRowKey(rowKey)}
+      rowSelection={rowSelection}
       scroll={displayMode === 'compact' ? containedTableScroll : adaptiveTableScroll}
       size={displayMode === 'compact' ? 'small' : 'default'}
       style={containedTableStyle}

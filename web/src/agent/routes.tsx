@@ -5,6 +5,7 @@ import {
   AgentConvertStatsPage,
   AgentDashboardPage,
   AgentInviteCodesPage,
+  AgentSubAgentsPage,
   AgentTeamTreePage,
   AgentUsersPage
 } from './pages';
@@ -16,5 +17,6 @@ export const agentRoutes: RouteObject[] = [
   { path: 'invite-codes', element: <AgentInviteCodesPage /> },
   { path: 'commissions', element: <AgentCommissionsPage /> },
   { path: 'convert-stats', element: <AgentConvertStatsPage /> },
-  { path: 'team-tree', element: <AgentTeamTreePage /> }
+  { path: 'team-tree', element: <AgentTeamTreePage /> },
+  { path: 'sub-agents', element: <AgentSubAgentsPage /> }
 ];

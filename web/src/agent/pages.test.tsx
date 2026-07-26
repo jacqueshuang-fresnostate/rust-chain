@@ -8,6 +8,7 @@ import {
   getAgentDashboard,
   getAgentInviteCodes,
   getAgentMe,
+  getAgentSubAgents,
   getAgentTeamTree,
   getAgentUsers,
   updateAgentInviteCodeStatus
@@ -17,6 +18,7 @@ import {
   AgentConvertStatsPage,
   AgentDashboardPage,
   AgentInviteCodesPage,
+  AgentSubAgentsPage,
   AgentTeamTreePage,
   AgentUsersPage
 } from './pages';
@@ -28,6 +30,7 @@ vi.mock('../api/agent', () => ({
   getAgentDashboard: vi.fn(),
   getAgentInviteCodes: vi.fn(),
   getAgentMe: vi.fn(),
+  getAgentSubAgents: vi.fn(),
   getAgentTeamTree: vi.fn(),
   getAgentUsers: vi.fn(),
   updateAgentInviteCodeStatus: vi.fn()
@@ -39,6 +42,7 @@ const getAgentConvertStatsMock = vi.mocked(getAgentConvertStats);
 const getAgentDashboardMock = vi.mocked(getAgentDashboard);
 const getAgentInviteCodesMock = vi.mocked(getAgentInviteCodes);
 const getAgentMeMock = vi.mocked(getAgentMe);
+const getAgentSubAgentsMock = vi.mocked(getAgentSubAgents);
 const getAgentTeamTreeMock = vi.mocked(getAgentTeamTree);
 const getAgentUsersMock = vi.mocked(getAgentUsers);
 const updateAgentInviteCodeStatusMock = vi.mocked(updateAgentInviteCodeStatus);
@@ -196,9 +200,22 @@ describe('Agent portal pages', () => {
     expect(screen.getByText('15.00')).toBeInTheDocument();
   });
 
-  it('renders team tree nodes', async () => {
+  it('renders team tree sub agents and nodes', async () => {
     getAgentTeamTreeMock.mockResolvedValueOnce({
       root_agent_id: 7,
+      agents: [
+        {
+          id: 8,
+          parent_agent_id: 7,
+          root_agent_id: 7,
+          agent_code: 'AGT-008',
+          level: 2,
+          path: '7/8',
+          status: 'active',
+          direct_user_count: 3,
+          team_user_count: 9
+        }
+      ],
       nodes: [
         {
           user_id: 1,
@@ -218,5 +235,36 @@ describe('Agent portal pages', () => {
 
     expect(await screen.findByText('node@example.test')).toBeInTheDocument();
     expect(screen.getByText('7/1')).toBeInTheDocument();
+    expect(screen.getByText('下级代理')).toBeInTheDocument();
+    expect(screen.getByText('团队用户')).toBeInTheDocument();
+    expect(screen.getByText('AGT-008')).toBeInTheDocument();
+    expect(screen.getByText('L2')).toBeInTheDocument();
+  });
+
+  it('renders sub agents', async () => {
+    getAgentSubAgentsMock.mockResolvedValueOnce({
+      agents: [
+        {
+          id: 12,
+          parent_agent_id: 7,
+          root_agent_id: 7,
+          agent_code: 'AGT-012',
+          level: 3,
+          path: '7/8/12',
+          status: 'active',
+          direct_user_count: 2,
+          team_user_count: 5
+        }
+      ]
+    });
+
+    render(<AgentSubAgentsPage />);
+
+    expect(await screen.findByText('AGT-012')).toBeInTheDocument();
+    expect(screen.getByText('下级代理')).toBeInTheDocument();
+    expect(screen.getByText('L3')).toBeInTheDocument();
+    expect(screen.getByText('直属用户数')).toBeInTheDocument();
+    expect(screen.getByText('团队用户数')).toBeInTheDocument();
+    expect(screen.getByText('上级代理ID')).toBeInTheDocument();
   });
 });

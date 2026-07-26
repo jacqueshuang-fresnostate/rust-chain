@@ -9,6 +9,7 @@ import {
   getAgentDashboard,
   getAgentInviteCodes,
   getAgentMe,
+  getAgentSubAgents,
   getAgentTeamTree,
   getAgentUsers,
   updateAgentInviteCodeStatus,
@@ -18,6 +19,7 @@ import {
   type AgentDashboard,
   type AgentInviteCode,
   type AgentMe,
+  type AgentSubAgent,
   type AgentTeamTreeNode,
   type AgentTeamTreeResponse,
   type AgentTeamUser
@@ -331,6 +333,27 @@ export function AgentConvertStatsPage() {
   );
 }
 
+const subAgentColumns: Array<ColumnProps<AgentSubAgent>> = [
+  { dataIndex: 'agent_code', key: 'agent_code', title: '代理编号' },
+  { dataIndex: 'level', key: 'level', render: (value) => `L${String(value || 1)}`, title: '层级' },
+  { dataIndex: 'status', key: 'status', render: (value) => <StatusTag value={typeof value === 'string' ? value : null} />, title: '状态' },
+  { dataIndex: 'direct_user_count', key: 'direct_user_count', title: '直属用户数' },
+  { dataIndex: 'team_user_count', key: 'team_user_count', title: '团队用户数' },
+  { dataIndex: 'parent_agent_id', key: 'parent_agent_id', title: '上级代理ID' }
+];
+
+export function AgentSubAgentsPage() {
+  const loadSubAgents = useCallback(async () => (await getAgentSubAgents()).agents, []);
+  const { data, error, loading } = useLoader<AgentSubAgent[]>(loadSubAgents);
+
+  return (
+    <main className="exchange-page">
+      <PageHeader title="下级代理" />
+      <DataTable columns={subAgentColumns} data={data ?? []} error={error} loading={loading} rowKey="id" />
+    </main>
+  );
+}
+
 export function AgentTeamTreePage() {
   const loadTeamTree = useCallback(async () => await getAgentTeamTree(), []);
   const { data, error, loading } = useLoader<AgentTeamTreeResponse>(loadTeamTree);
@@ -353,6 +376,9 @@ export function AgentTeamTreePage() {
     <main className="exchange-page">
       <PageHeader title="团队树" />
       {data ? <Text type="secondary">根代理ID：{data.root_agent_id}</Text> : null}
+      <Title heading={4}>下级代理</Title>
+      <DataTable columns={subAgentColumns} data={data?.agents ?? []} error={error} loading={loading} rowKey="id" />
+      <Title heading={4}>团队用户</Title>
       <DataTable columns={columns} data={data?.nodes ?? []} error={error} loading={loading} rowKey="user_id" />
     </main>
   );

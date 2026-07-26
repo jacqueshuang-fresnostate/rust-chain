@@ -37,7 +37,7 @@ describe('AgentLayout', () => {
   it('renders the agent navigation labels and subject', () => {
     renderAgentLayout();
 
-    ['总览', '团队用户', '邀请码', '佣金记录', '闪兑统计', '团队树'].forEach((label) => {
+    ['总览', '团队用户', '邀请码', '佣金记录', '闪兑统计', '团队树', '下级代理'].forEach((label) => {
       expect(screen.getByRole('menuitem', { name: label })).toBeInTheDocument();
     });
     expect(screen.getByText('agent:9')).toBeInTheDocument();

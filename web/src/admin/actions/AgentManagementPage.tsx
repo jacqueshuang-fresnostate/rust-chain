@@ -1,5 +1,5 @@
 import { IconList, IconPlus, IconRefresh } from '@douyinfe/semi-icons';
-import { Button, Card, Space, Tabs, Typography, Toast } from '@douyinfe/semi-ui';
+import { Button, Card, Descriptions, Popconfirm, SideSheet, Space, Tabs, Typography, Toast } from '@douyinfe/semi-ui';
 import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -85,7 +85,7 @@ async function submitAction(label: string, request: () => Promise<unknown>) {
   }
 }
 
-function recordString(record: AgentRecord, key: keyof AgentRecord): string {
+function recordString(record: Record<string, unknown>, key: string): string {
   const value = record[key];
   return typeof value === 'number' || typeof value === 'string' ? String(value) : '';
 }
@@ -102,10 +102,157 @@ function isAgentCreatable(values: AgentCreateValues) {
   return Boolean(values.userId.trim() && values.agentCode.trim() && values.adminUsername.trim() && values.adminPassword.trim());
 }
 
+type AgentUserRecord = Record<string, unknown> & {
+  user_id: number | string;
+};
+
+type AgentDetailDrawerProps = {
+  agentId: string | null;
+  agentOptions: Array<{ label: string; value: string }>;
+  onClose: () => void;
+  onReassigned: () => void;
+};
+
+function AgentDetailDrawer({ agentId, agentOptions, onClose, onReassigned }: AgentDetailDrawerProps) {
+  const [agent, setAgent] = useState<AgentRecord | null>(null);
+  const [users, setUsers] = useState<AgentUserRecord[]>([]);
+  const [error, setError] = useState<Error | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [targetAgents, setTargetAgents] = useState<Record<string, string>>({});
+  const [reloadVersion, setReloadVersion] = useState(0);
+  const reassignOptions = useMemo(() => agentOptions.filter((option) => option.value !== agentId), [agentId, agentOptions]);
+
+  useEffect(() => {
+    if (!agentId) {
+      setAgent(null);
+      setUsers([]);
+      setError(null);
+      setTargetAgents({});
+      return undefined;
+    }
+
+    let active = true;
+    setLoading(true);
+    setError(null);
+
+    Promise.all([
+      apiRequest<AgentRecord>(`/admin/api/v1/agents/${agentId}`),
+      apiRequest<{ users?: AgentUserRecord[] }>(`/admin/api/v1/agents/${agentId}/users`)
+    ])
+      .then(([agentResponse, usersResponse]) => {
+        if (active) {
+          setAgent(agentResponse);
+          setUsers(Array.isArray(usersResponse.users) ? usersResponse.users : []);
+        }
+      })
+      .catch((caught: unknown) => {
+        if (!active) {
+          return;
+        }
+        setAgent(null);
+        setUsers([]);
+        setError(caught instanceof Error ? caught : new Error('加载代理详情失败'));
+      })
+      .finally(() => {
+        if (active) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [agentId, reloadVersion]);
+
+  async function reassignUser(userId: string) {
+    await submitAction('转移用户归属', () =>
+      apiRequest(`/admin/api/v1/users/${userId}/agent`, {
+        method: 'PATCH',
+        body: JSON.stringify({ agent_id: requiredPositiveInteger(targetAgents[userId] ?? '', '目标代理') })
+      })
+    );
+    setTargetAgents((current) => {
+      const next = { ...current };
+      delete next[userId];
+      return next;
+    });
+    setReloadVersion((value) => value + 1);
+    onReassigned();
+  }
+
+  const agentInfo = agent
+    ? [
+        { key: '代理编号', value: recordString(agent, 'agent_code') },
+        { key: '层级', value: `L${recordString(agent, 'level') || '1'}` },
+        { key: '状态', value: <StatusTag value={typeof agent.status === 'string' ? agent.status : null} /> },
+        { key: '邮箱', value: recordString(agent, 'email') || '-' },
+        { key: '直属上级', value: recordString(agent, 'parent_agent_code') || '总代理' },
+        { key: '归属总代理', value: recordString(agent, 'root_agent_code') || '-' },
+        { key: '直属用户', value: recordString(agent, 'direct_user_count') || '0' },
+        { key: '团队用户', value: recordString(agent, 'team_user_count') || '0' },
+        { key: '下级代理', value: recordString(agent, 'child_agent_count') || '0' },
+        { key: '代理后台账号', value: recordString(agent, 'admin_username') || '-' },
+        { key: '后台账号状态', value: <StatusTag value={typeof agent.admin_status === 'string' ? agent.admin_status : null} /> },
+        { key: '创建时间', value: <TimestampText value={typeof agent.created_at === 'number' ? agent.created_at : null} /> }
+      ]
+    : [];
+
+  const userColumns: Array<ColumnProps<AgentUserRecord>> = [
+    { dataIndex: 'user_id', key: 'user_id', title: '用户ID' },
+    { dataIndex: 'email', key: 'email', title: '邮箱' },
+    { dataIndex: 'status', key: 'status', render: (value) => <StatusTag value={typeof value === 'string' ? value : null} />, title: '状态' },
+    { dataIndex: 'kyc_level', key: 'kyc_level', title: 'KYC等级' },
+    { dataIndex: 'owner_agent_code', key: 'owner_agent_code', title: '归属代理' },
+    { dataIndex: 'depth', key: 'depth', title: '层级深度' },
+    { dataIndex: 'referred_at', key: 'referred_at', render: (value) => <TimestampText value={typeof value === 'number' ? value : null} />, title: '加入时间' },
+    {
+      dataIndex: 'user_id',
+      key: 'reassign',
+      render: (_value, record) => {
+        const userId = recordString(record, 'user_id');
+        const target = targetAgents[userId] ?? '';
+        return (
+          <Space spacing={6}>
+            <AdminSelect
+              ariaLabel={`用户${userId}目标代理`}
+              onChange={(value) => setTargetAgents((current) => ({ ...current, [userId]: value }))}
+              optionList={reassignOptions}
+              placeholder="目标代理"
+              value={target}
+            />
+            <Popconfirm
+              content="该用户将被重新分配至所选代理"
+              okText="确认转移"
+              onConfirm={() => reassignUser(userId)}
+              title="确认转移用户归属"
+            >
+              <Button disabled={!userId || !target} size="small" type="danger">转移</Button>
+            </Popconfirm>
+          </Space>
+        );
+      },
+      title: '转移归属',
+      width: 280
+    }
+  ];
+
+  return (
+    <SideSheet onCancel={onClose} title="代理详情" visible={agentId !== null} width="min(920px, calc(100vw - 48px))">
+      <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
+        {agent ? <Descriptions align="plain" column={3} data={agentInfo} layout="horizontal" /> : null}
+        <Title heading={5}>团队用户</Title>
+        <DataTable columns={userColumns} data={users} error={error} loading={loading} rowKey="user_id" />
+      </Space>
+    </SideSheet>
+  );
+}
+
 export function AgentManagementPage() {
+  const [activeTab, setActiveTab] = useState<'list' | 'create'>('list');
   const [agents, setAgents] = useState<AgentRecord[]>([]);
   const [createValues, setCreateValues] = useState(initialCreateValues);
   const [detail, setDetail] = useState<DetailDrawerData | null>(null);
+  const [detailAgentId, setDetailAgentId] = useState<string | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [loading, setLoading] = useState(true);
   const [reloadVersion, setReloadVersion] = useState(0);
@@ -126,6 +273,16 @@ export function AgentManagementPage() {
     const parent = agents.find((agent) => recordString(agent, 'id') === createValues.parentAgentId);
     return parent ? Number(parent.level || 1) + 1 : 1;
   }, [agents, createValues.parentAgentId]);
+  const reassignAgentOptions = useMemo(
+    () =>
+      agents
+        .filter((agent) => agent.status === 'active')
+        .map((agent) => ({
+          label: `${recordString(agent, 'agent_code')}（L${recordString(agent, 'level') || '1'}）`,
+          value: recordString(agent, 'id')
+        })),
+    [agents]
+  );
 
   useEffect(() => {
     let active = true;
@@ -200,6 +357,9 @@ export function AgentManagementPage() {
           const status = recordString(record, 'status');
           return (
             <Space spacing={6} wrap>
+              <Button disabled={!agentId} onClick={() => setDetailAgentId(agentId)} size="small" theme="borderless">
+                详情
+              </Button>
               <Button disabled={!agentId} onClick={() => openAgentDetail(agentId)} size="small" theme="borderless">
                 查看详情
               </Button>
@@ -216,7 +376,7 @@ export function AgentManagementPage() {
           );
         },
         title: '操作',
-        width: 260
+        width: 320
       }
     ],
     []
@@ -234,8 +394,9 @@ export function AgentManagementPage() {
       />
       <Card bordered={false} className="admin-action-workbench" shadows="always">
         <Tabs
+          activeKey={activeTab}
           className="admin-action-tabs"
-          defaultActiveKey="list"
+          onChange={(nextTab) => setActiveTab(nextTab as 'list' | 'create')}
           tabBarExtraContent={<Text type="tertiary">共 {agents.length} 个代理</Text>}
           tabList={[
             { itemKey: 'list', tab: '代理列表', icon: <IconList aria-hidden="true" /> },
@@ -244,6 +405,7 @@ export function AgentManagementPage() {
           type="button"
         />
         <div className="admin-action-workbench-grid">
+          {activeTab === 'create' ? (
           <section className="admin-action-panel">
             <Title heading={4}>创建代理</Title>
             <div className="admin-action-form admin-action-form-narrow">
@@ -277,13 +439,22 @@ export function AgentManagementPage() {
               }}
             />
           </section>
+          ) : null}
+          {activeTab === 'list' ? (
           <section className="admin-action-panel">
             <Title heading={4}>代理列表</Title>
             <DataTable columns={columns} data={agents} error={error} loading={loading} />
           </section>
+          ) : null}
         </div>
       </Card>
       <DetailDrawer detail={detail} onClose={() => setDetail(null)} />
+      <AgentDetailDrawer
+        agentId={detailAgentId}
+        agentOptions={reassignAgentOptions}
+        onClose={() => setDetailAgentId(null)}
+        onReassigned={reload}
+      />
     </main>
   );
 }

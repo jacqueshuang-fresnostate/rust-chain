@@ -69,6 +69,18 @@ export type AgentConvertStats = Record<string, unknown> & {
   total_to_amount: string | number;
 };
 
+export type AgentSubAgent = Record<string, unknown> & {
+  id: number;
+  parent_agent_id?: number | null;
+  root_agent_id: number;
+  agent_code: string;
+  level: number;
+  path: string;
+  status: string;
+  direct_user_count: number;
+  team_user_count: number;
+};
+
 export type AgentTeamTreeNode = Record<string, unknown> & {
   user_id: number;
   email?: string | null;
@@ -98,7 +110,12 @@ export type AgentCommissionsResponse = {
 
 export type AgentTeamTreeResponse = {
   root_agent_id: number;
+  agents: AgentSubAgent[];
   nodes: AgentTeamTreeNode[];
+};
+
+export type AgentSubAgentsResponse = {
+  agents: AgentSubAgent[];
 };
 
 const agentRequest = <T>(path: string, init: RequestInit = {}) =>
@@ -147,4 +164,8 @@ export function getAgentConvertStats(): Promise<AgentConvertStats> {
 
 export function getAgentTeamTree(): Promise<AgentTeamTreeResponse> {
   return agentRequest<AgentTeamTreeResponse>('/agent/api/v1/team-tree');
+}
+
+export function getAgentSubAgents(): Promise<AgentSubAgentsResponse> {
+  return agentRequest<AgentSubAgentsResponse>('/agent/api/v1/sub-agents');
 }

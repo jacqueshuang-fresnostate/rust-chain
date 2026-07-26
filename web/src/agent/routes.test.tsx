@@ -38,7 +38,8 @@ describe('agentRoutes', () => {
     ['invite-codes', 'AgentInviteCodesPage'],
     ['commissions', 'AgentCommissionsPage'],
     ['convert-stats', 'AgentConvertStatsPage'],
-    ['team-tree', 'AgentTeamTreePage']
+    ['team-tree', 'AgentTeamTreePage'],
+    ['sub-agents', 'AgentSubAgentsPage']
   ])('registers %s page', (path, expectedName) => {
     expect(routeElementName(path)).toBe(expectedName);
   });

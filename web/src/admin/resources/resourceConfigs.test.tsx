@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { listAdminResource } from '../../api/adminResources';
 import { apiRequest } from '../../api/client';
+import { batchStatusSummary } from './actions/agents';
 import { ResourcePage, resourceConfigs, type ResourceConfig } from './resourceConfigs';
 
 vi.mock('../../api/adminResources', () => ({
@@ -2267,6 +2268,83 @@ describe('resourceConfigs create actions', () => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/agent-commissions/88/status', {
         method: 'PATCH',
         body: JSON.stringify({ status: 'rejected', reason: 'reject commission' })
+      });
+    });
+  });
+
+  it('summarizes batch commission results with the first failure detail', () => {
+    expect(batchStatusSummary([{ id: 1, status: 'ok', error: null }])).toBe('成功 1 / 失败 0');
+    expect(
+      batchStatusSummary([
+        { id: 1, status: 'ok', error: null },
+        { id: 2, status: 'failed', error: 'commission not pending' },
+        { id: 3, status: 'failed', error: null }
+      ])
+    ).toBe('成功 1 / 失败 2；首个失败：#2 commission not pending');
+  });
+
+  it('batch settles selected pending agent commissions and reports partial failures', async () => {
+    const user = userEvent.setup();
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/agent-commissions') {
+        const rows = [
+          { id: 88, agent_id: 42, user_id: 123, source_type: 'convert_order', source_id: 'quote-88', source_amount: '10', commission_amount: '0.5', status: 'pending', created_at: 1_775_027_600_000 },
+          { id: 89, agent_id: 42, user_id: 124, source_type: 'convert_order', source_id: 'quote-89', source_amount: '20', commission_amount: '1', status: 'pending', created_at: 1_775_027_700_000 },
+          { id: 90, agent_id: 42, user_id: 125, source_type: 'convert_order', source_id: 'quote-90', source_amount: '30', commission_amount: '1.5', status: 'settled', created_at: 1_775_027_800_000 }
+        ];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
+      return { rows: [], raw: {} };
+    });
+    apiRequestMock.mockResolvedValue({
+      results: [
+        { id: 88, status: 'ok', error: null },
+        { id: 89, status: 'failed', error: 'commission not pending' }
+      ]
+    });
+
+    render(<ResourcePage config={resourceConfigs.agentCommissions} />);
+
+    expect(await screen.findByText('quote-88')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '批量结算' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '批量驳回' })).toBeDisabled();
+
+    const checkboxes = screen.getAllByRole('checkbox');
+    expect(checkboxes).toHaveLength(4);
+    expect(checkboxes[3]).toBeDisabled();
+    fireEvent.click(checkboxes[1]);
+    fireEvent.click(checkboxes[2]);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '批量结算' })).toBeEnabled();
+    });
+    await user.click(screen.getByRole('button', { name: '批量结算' }));
+    await user.type(screen.getByLabelText('批量操作原因'), 'batch settle');
+    await user.click(screen.getByRole('button', { name: '确认批量结算' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/agent-commissions/batch-status', {
+        method: 'POST',
+        body: JSON.stringify({ ids: [88, 89], status: 'settled', reason: 'batch settle' })
+      });
+    });
+    await waitFor(() => {
+      expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/agent-commissions')).toHaveLength(2);
+    });
+
+    const reloadedCheckboxes = screen.getAllByRole('checkbox');
+    fireEvent.click(reloadedCheckboxes[1]);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '批量驳回' })).toBeEnabled();
+    });
+    await user.click(screen.getByRole('button', { name: '批量驳回' }));
+    await user.click(screen.getByRole('button', { name: '确认批量驳回' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/agent-commissions/batch-status', {
+        method: 'POST',
+        body: JSON.stringify({ ids: [88], status: 'rejected' })
       });
     });
   });
