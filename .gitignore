@@ -15,6 +15,17 @@
 /pc/src-tauri/target/
 /pc/web-retrieval-mcp/node_modules/
 /pc/web-retrieval-mcp/build/
+/pc/vite.config.js
+/pc/vite.config.d.ts
+/mobile/node_modules/
+/mobile/dist/
+/mobile/.vite/
+/mobile/src-tauri/target/
+/mobile/src-tauri/gen/
+
+# Local design prototypes (not part of the product build)
+/mobile/sites-prototype/
+/mobile/design/
 
 # Local IDE and tool state
 /.idea/

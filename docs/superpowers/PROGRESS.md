@@ -5702,3 +5702,10 @@
 - 修改文件：`src/`、`migrations/0087_p0_financial_safety.sql`、`tests/`、`mobile/src/api/wallet.ts`、`pc/src/api/backendAdapters.ts`、`docs/superpowers/PROGRESS.md`
 - 验证结果：`cargo check --all-targets` 通过；完整集成测试留待各切片交付时随改动执行。
 - 后续事项：结构 A1/A2（杂物清理、模块根风格归一）、代理 B1-B3（5 业务规则、下级代理页、批量结算）、后台 C1-C3（导航单源、页面壳统一、设计 token）、admin 巨型文件拆分。
+
+## 2026-07-26 20:12 - 结构A1：清理原型杂物并统一 gitignore
+
+- 完成内容：根 .gitignore 补齐 mobile 构建产物与本地原型目录忽略（sites-prototype、design，约 3.4 万文件不再污染 git 状态）；删除 pc 中由 tsc 生成且与 vite.config.ts 语义完全一致的 vite.config.js/.d.ts 并加入忽略；将 pc 开发过程文档归档至 docs/archive/pc/（dev_logs、designer 截图、task.md、PROJECT_STATUS.md、接口.md），保留 AGENT.md 与 README.md。
+- 修改文件：`.gitignore`、`docs/archive/pc/*`（git mv 自 pc/）、删除 `pc/vite.config.js`、`pc/vite.config.d.ts`
+- 验证结果：`git check-ignore` 确认三处忽略生效、`git status` 未跟踪文件归零；vite.config.js 与 .ts 逐行比对语义一致（Vite 原生支持 .ts 配置），pc 构建链未受影响。
+- 后续事项：无（pc/web-retrieval-mcp 属工具项目暂保留原位，如需迁移另立任务）。
