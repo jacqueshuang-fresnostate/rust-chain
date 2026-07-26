@@ -5821,3 +5821,11 @@
 - 修改文件：`pc/src/views/User/LaunchpadOrders.vue(新)`、`pc/src/views/User/{Recharge,UserLayout}.vue`、`pc/src/components/trade/ContractOrderForm.vue`、`pc/src/api/{activity,contract}.ts`、`pc/src/router/index.ts`、`pc/src/i18n/index.ts`、`pc/tests/{guest-auth-states,second-options-transfer}.test.ts`、`src/modules/events/{infrastructure,presentation,routes}.rs`、`tests/events_outbox.rs`
 - 验证结果：pc `npm run type-check`、`npm run build` 通过，`node --test` 83/83（修复前 81/83）；`cargo check --all-targets` 零错误、`cargo fmt` 干净；真实 MySQL `cargo test --test events_outbox` 12/12，含死信重排后状态与重试计数复位、重复重排返回 409、审计日志落库的断言。
 - 后续事项：死信运维尚无后台界面（web/src/admin/resources 本轮由分页通道占用），待通道合并后补;预测市场结算单事务无上限、秒合约缺行情无限重试两项因模块被并行通道占用而未动。
+
+## 2026-07-27 06:15 - Tier3：登录锁定、管理员 2FA、账号处置、分页全覆盖
+
+- 完成内容：三条通道交付后按对抗性验证结论修复再合并。①认证加固：密码登录新增失败计数与临时锁定、管理员 TOTP 两步验证；②账号生命周期：管理员可重置代理门户密码、代理可自助改密、管理员可停用用户（此前登录强制校验 status='active' 却无任何置为非 active 的入口）；③分页补齐：剩余 19 个后台列表新增 offset 与随筛选变化的 total，含跨 kyc/admin 两模块的 KYC 提交列表。
+- 验证发现并修复的缺陷：**（严重）失败计数在 upsert 前做 SELECT ... FOR UPDATE**，对不存在的行取间隙锁、与插入意向锁互相死锁——验证器以双连接 5/5 复现，后果是并发失败请求返回 500 且漏计，等于放过首轮爆破；改为单条原子 upsert 后 5 轮×6 并发 30/30 全部成功。**（中）计数表无回收**：仅登录成功才删行，撞库随机账号会永久堆积，改为在"新增计数行"这一增长事件上做有界清扫（迁移里预留的 window_expires_at 索引终于被用上）。**（中）管理员 2FA 在控制台无任何开通入口**，opt-in 特性等于永久空转，新增自助绑定页（含密钥备份提示与无自助找回的明示）。**（中）分页后最大的两张表无排序索引**：spot_orders/spot_trades 等六张表默认按 created_at 倒序却无该前导列索引，新增迁移 0096，EXPLAIN 由全表 filesort 变为索引反向扫描。**（低）管理员重置代理密码不清锁定计数**，泄露后仍需等 15 分钟，改为同事务清除。
+- 修改文件：`src/modules/{auth,admin,agent,user,kyc,spot,wallet,earn,loan,margin,seconds_contract,quick_recharge,prediction}/**`、`migrations/{0095,0096}_*.sql`、`web/src/admin/actions/AdminTwoFactorPage.tsx(新)`、`web/src/admin/{routes,navigation}.tsx`、`web/src/api/adminAuth.ts`、`web/src/admin/actions/KycManagementPage.tsx` 及测试
+- 验证结果：后端 36 个测试二进制全绿（真实 MySQL/Redis 串行，478 用例）、`cargo test --lib` 179/179、`cargo fmt --check` 干净、`cargo check --all-targets` 零警告；web `npm run typecheck`/`lint` 通过、255/255 测试；死锁修复以验证器原复现手法复测通过。
+- 后续事项：①管理员 2FA 无自助找回路径（丢失验证器需改库），也无管理员互相重置 2FA 的接口；②登录失败计数按提交的标识形态（邮箱/手机/用户名）分桶，同一账号可获得三倍尝试额度；③OpenAPI 未登记新增的 2FA 与账号处置端点；④`fetch_admin_page` 现有 8 份逐字节副本（跨模块可见性所限）；⑤loan/products 的两个筛选器后端始终丢弃（改动前既有）。
