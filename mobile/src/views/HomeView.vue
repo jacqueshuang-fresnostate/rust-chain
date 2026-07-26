@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { Bell, ChevronRight, Eye, Grid2X2, ScanLine, Search, Sparkles } from 'lucide-vue-next'
 import AssetMark from '@/components/AssetMark.vue'
 import { fetchNews } from '@/api/news'
-import { fallbackNews, fallbackTickers } from '@/data/fallback'
+import { fallbackNews } from '@/data/fallback'
 import { formatCompact, formatPercent, formatPrice } from '@/core/format'
 import { useMarketStore } from '@/stores/market'
 import { useSessionStore } from '@/stores/session'
@@ -32,7 +32,7 @@ const visibleAnnouncements = computed(() => {
 })
 
 const visibleTickers = computed(() => {
-  const rows = marketStore.topTickers.length ? [...marketStore.topTickers] : [...fallbackTickers]
+  const rows = [...marketStore.topTickers]
   if (activeTab.value === 'gainers') return rows.sort((left, right) => right.changePercent - left.changePercent)
   if (activeTab.value === 'popular') return rows.sort((left, right) => right.volume - left.volume)
   return rows
@@ -99,7 +99,7 @@ watch(locale, () => { void loadAnnouncements() })
       </div>
 
       <section class="market-pulse" :aria-label="t('home.marketSummary')">
-        <div><span>{{ t('home.marketUpdates') }}</span><strong>{{ marketStore.sampleData ? t('common.demoData') : t('common.liveData') }}</strong></div>
+        <div><span>{{ t('home.marketUpdates') }}</span><strong>{{ marketStore.error ? t('common.marketUnavailable') : t('common.liveData') }}</strong></div>
         <Sparkles :size="23" />
       </section>
 
@@ -110,7 +110,10 @@ watch(locale, () => { void loadAnnouncements() })
         <button class="section-heading__action" type="button" @click="router.replace({ name: 'markets' })">{{ t('common.more') }} <ChevronRight :size="16" /></button>
       </div>
 
-      <p v-if="marketStore.sampleData" class="sample-note">{{ t('common.offlineMarketNotice') }}</p>
+      <div v-if="marketStore.error" class="market-error">
+        <span>{{ t('common.marketLoadFailed') }}</span>
+        <button type="button" :disabled="marketStore.loading" @click="marketStore.refresh(true)">{{ t('common.retry') }}</button>
+      </div>
       <div class="ticker-list">
         <button v-for="ticker in visibleTickers.slice(0, 5)" :key="ticker.symbol" class="ticker-row" type="button" @click="openMarket(ticker.symbol)">
           <AssetMark :symbol="ticker.base" :src="ticker.iconUrl" />
@@ -148,7 +151,7 @@ watch(locale, () => { void loadAnnouncements() })
 .market-pulse { align-items: center; background: var(--soft); border: 1px solid #e8ecee; border-radius: var(--radius); box-shadow: 0 7px 18px rgb(15 23 42 / 3%); display: flex; justify-content: space-between; margin-top: 28px; min-height: 86px; padding: 17px; }
 .market-pulse div { display: grid; gap: 5px; }.market-pulse span { color: var(--muted); font-size: 13px; }.market-pulse strong { font-size: 18px; }.market-pulse svg { color: var(--positive); }
 .market-heading { margin-top: 34px; }.market-tabs { display: flex; gap: 20px; min-width: 0; }.market-tabs button { background: transparent; color: var(--muted); font-size: 16px; padding: 0; white-space: nowrap; }.market-tabs .is-active { color: var(--ink); font-weight: 750; }
-.section-heading__action { align-items: center; display: inline-flex; }.sample-note { background: #fff8e6; border-radius: 6px; color: #8a5a00; font-size: 12px; margin: 0 0 8px; padding: 7px 9px; }
+.section-heading__action { align-items: center; display: inline-flex; }.market-error { align-items: center; background: #fdecec; border-radius: 6px; color: #b3261e; display: flex; font-size: 12px; gap: 10px; justify-content: space-between; margin: 0 0 8px; padding: 7px 9px; }.market-error button { background: transparent; color: #b3261e; font-weight: 750; padding: 2px 4px; }
 .ticker-list { display: grid; }.ticker-row { align-items: center; background: transparent; border-radius: 6px; display: grid; gap: 10px; grid-template-columns: 38px minmax(0, 1.15fr) minmax(84px, .95fr) 82px; min-height: 72px; padding: 8px 0; text-align: left; width: 100%; }.ticker-row:hover { background: #f8fafb; }.ticker-row__name,.ticker-row__price { display: grid; min-width: 0; }.ticker-row b { color: var(--ink); font-size: 16px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.ticker-row small,.ticker-row em { color: var(--muted); font-size: 12px; font-style: normal; margin-top: 4px; }.ticker-row__price { text-align: right; }.ticker-row__change { border-radius: 6px; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 14%); color: white; font-size: 14px; font-weight: 720; padding: 9px 6px; text-align: center; }.ticker-row__change.is-up { background: var(--positive); }.ticker-row__change.is-down { background: var(--negative); }
 .announcements { padding-bottom: 10px; }.announcement-row { align-items: center; background: transparent; border-bottom: 1px solid var(--line); display: flex; font-size: 15px; gap: 12px; justify-content: space-between; min-height: 62px; padding: 10px 0; text-align: left; width: 100%; }.announcement-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .announcement-more { background: transparent; color: var(--accent); font-size: 13px; font-weight: 700; margin-top: 13px; padding: 6px 0; }

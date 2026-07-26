@@ -164,13 +164,65 @@
         </div>
       </div>
     </div>
+
+    <!-- Withdrawal Records -->
+    <div class="bg-card border border-border rounded-xl p-6 shadow-sm">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="font-bold">{{ t('wallet.records_title') }}</h3>
+        <button @click="loadRecords" :disabled="loadingRecords" class="text-primary text-sm font-bold hover:underline disabled:opacity-50 flex items-center gap-1">
+          <Icon v-if="loadingRecords" icon="mdi:loading" class="animate-spin" />
+          {{ t('wallet.records_refresh') }}
+        </button>
+      </div>
+
+      <div v-if="loadingRecords && records.length === 0" class="py-8 flex justify-center">
+        <Icon icon="mdi:loading" class="animate-spin text-3xl text-primary" />
+      </div>
+
+      <div v-else-if="records.length === 0" class="py-8 text-center text-sm text-muted-foreground">
+        {{ t('wallet.records_empty') }}
+      </div>
+
+      <div v-else class="space-y-3">
+        <div v-for="record in records" :key="record.id" class="p-4 bg-muted/30 rounded-lg border border-border space-y-2">
+          <div class="flex flex-col md:flex-row justify-between md:items-center gap-2">
+            <div class="font-bold font-mono">{{ formatRecordAmount(record.amount) }} {{ record.asset_symbol }}<span v-if="record.network" class="ml-2 text-xs font-sans font-medium text-muted-foreground">{{ record.network }}</span></div>
+            <span class="text-xs font-bold px-2 py-1 rounded border self-start md:self-auto" :class="recordStatusClass(record.status)">
+              {{ recordStatusLabel(record.status) }}
+            </span>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-xs text-muted-foreground">
+            <div class="flex justify-between gap-3">
+              <span>{{ t('wallet.withdraw_address') }}</span>
+              <span class="font-mono text-foreground break-all text-right">{{ record.address }}</span>
+            </div>
+            <div class="flex justify-between gap-3">
+              <span>{{ t('wallet.fee') }}</span>
+              <span class="font-mono text-foreground">{{ formatRecordAmount(record.fee) }} {{ record.asset_symbol }}</span>
+            </div>
+            <div class="flex justify-between gap-3">
+              <span>{{ t('wallet.records_time') }}</span>
+              <span class="font-mono text-foreground">{{ formatRecordTime(record.created_at) }}</span>
+            </div>
+            <div v-if="record.tx_hash" class="flex justify-between gap-3">
+              <span>{{ t('wallet.records_tx_hash') }}</span>
+              <span class="font-mono text-foreground break-all text-right">{{ record.tx_hash }}</span>
+            </div>
+            <div v-if="record.failure_reason || record.review_reason" class="flex justify-between gap-3 md:col-span-2">
+              <span>{{ t('wallet.records_reason') }}</span>
+              <span class="text-foreground text-right">{{ record.failure_reason || record.review_reason }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
-import { calculateWithdrawFee, fetchWithdrawCoins, fetchCoinNetworks, getNetworkInfo, submitWithdraw, type WalletAddress, type CoinNetwork } from '@/api/wallet'
+import { calculateWithdrawFee, fetchWithdrawCoins, fetchCoinNetworks, fetchWithdrawRecords, getNetworkInfo, submitWithdraw, type WalletAddress, type CoinNetwork, type WithdrawalRecord } from '@/api/wallet'
 import { getTwoFactorStatus, type PaymentPolicy, type TwoFactorStatus } from '@/api/user'
 import { useUserStore } from '@/stores/user'
 import { useToast } from 'vue-toastification'
@@ -189,6 +241,8 @@ const loadingInfo = ref(false)
 const loadingNetworks = ref(false)
 const submitting = ref(false)
 const twoFactorStatus = ref<TwoFactorStatus | null>(null)
+const records = ref<WithdrawalRecord[]>([])
+const loadingRecords = ref(false)
 
 const form = ref({
     address: '',
@@ -321,6 +375,56 @@ const selectNetwork = async (network: string) => {
     }
 }
 
+const loadRecords = async () => {
+    loadingRecords.value = true
+    try {
+        const res = await fetchWithdrawRecords()
+        if (res.data.code === 0) {
+            records.value = res.data.data
+        }
+    } catch (e) {
+        console.error(e)
+        toast.error(t('wallet.records_load_failed'))
+    } finally {
+        loadingRecords.value = false
+    }
+}
+
+const recordStatusLabel = (status: string) => {
+    switch (status) {
+        case 'pending_review': return t('wallet.status_pending_review')
+        case 'approved': return t('wallet.status_approved')
+        case 'broadcasting': return t('wallet.status_broadcasting')
+        case 'broadcasted': return t('wallet.status_broadcasted')
+        case 'confirmed': return t('wallet.status_confirmed')
+        case 'manual_review': return t('wallet.status_manual_review')
+        case 'rejected': return t('wallet.status_rejected')
+        case 'failed': return t('wallet.status_failed')
+        default: return status
+    }
+}
+
+const recordStatusClass = (status: string) => {
+    switch (status) {
+        case 'confirmed': return 'text-up border-up/30 bg-up/10'
+        case 'rejected':
+        case 'failed': return 'text-destructive border-destructive/30 bg-destructive/10'
+        case 'approved':
+        case 'broadcasting':
+        case 'broadcasted': return 'text-primary border-primary/30 bg-primary/10'
+        default: return 'text-yellow-500 border-yellow-500/30 bg-yellow-500/10'
+    }
+}
+
+const formatRecordTime = (ts: number) => new Date(ts).toLocaleString()
+
+// 后端 DECIMAL(36,18) 序列化为定长字符串，去掉无意义的尾随零但保留全部有效位。
+const formatRecordAmount = (value: string) => {
+    if (!value.includes('.')) return value
+    const trimmed = value.replace(/0+$/, '').replace(/\.$/, '')
+    return trimmed === '' || trimmed === '-' ? '0' : trimmed
+}
+
 const setMaxAmount = () => {
     if (!coinInfo.value) return
     const balance = getBalance(selectedCoin.value)
@@ -350,6 +454,7 @@ const handleSubmit = async () => {
             form.value.address = ''
             form.value.fundPassword = ''
             form.value.totpCode = ''
+            loadRecords()
         } else {
             toast.error(res.data.message || t('wallet.withdraw_failed'))
         }
@@ -379,6 +484,7 @@ function paymentPolicyLabel(policy?: PaymentPolicy) {
 onMounted(() => {
     loadCoins()
     loadSecurityPolicy()
+    loadRecords()
 })
 </script>
 

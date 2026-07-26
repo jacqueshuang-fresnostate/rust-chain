@@ -9,7 +9,6 @@ import OrderBookPanel from '@/components/OrderBookPanel.vue'
 import { apiErrorMessage } from '@/api/client'
 import { fetchOrderBook } from '@/api/market'
 import { fetchMarginProducts, placeMarginOrder, placeSpotOrder, updateMarginLeverage } from '@/api/trading'
-import { createFallbackDepth, fallbackTickers } from '@/data/fallback'
 import { formatPrice, normalizeSymbol } from '@/core/format'
 import { useMarketStore } from '@/stores/market'
 import { useSessionStore } from '@/stores/session'
@@ -38,13 +37,15 @@ const submitting = ref(false)
 const settingsSaving = ref(false)
 
 const pairSymbol = computed(() => String(route.params.symbol || 'BTC_USDT').replace(/[_-]/g, '/').toUpperCase())
-const ticker = computed(() => marketStore.tickerFor(pairSymbol.value) || fallbackTickers.find((item) => normalizeSymbol(item.symbol) === normalizeSymbol(pairSymbol.value)) || fallbackTickers[0])
+const ticker = computed(() => marketStore.tickerFor(pairSymbol.value))
+const baseAsset = computed(() => pairSymbol.value.split('/')[0] || '')
+const quoteAsset = computed(() => pairSymbol.value.split('/')[1] || 'USDT')
 const selectedProduct = computed(() => products.value.find((product) => normalizeSymbol(product.symbol) === normalizeSymbol(pairSymbol.value)) || products.value[0])
-const currentPrice = computed(() => ticker.value.lastPrice)
-const isLive = computed(() => !marketStore.sampleData && marketStore.tickers.length > 0)
+const currentPrice = computed(() => ticker.value?.lastPrice ?? 0)
+const isLive = computed(() => !marketStore.error && !!ticker.value)
 const orderButtonLabel = computed(() => {
   if (mode.value === 'contract') return side.value === 'buy' ? t('trade.longAction', { leverage: leverage.value }) : t('trade.shortAction', { leverage: leverage.value })
-  return side.value === 'buy' ? t('trade.buyAsset', { asset: ticker.value.base }) : t('trade.sellAsset', { asset: ticker.value.base })
+  return side.value === 'buy' ? t('trade.buyAsset', { asset: baseAsset.value }) : t('trade.sellAsset', { asset: baseAsset.value })
 })
 const feedbackIsPositive = computed(() => feedbackTone.value === 'success')
 
@@ -59,9 +60,8 @@ async function loadDepth(): Promise<void> {
     bids.value = depth.bids
     asks.value = depth.asks
   } catch {
-    const depth = createFallbackDepth(currentPrice.value)
-    bids.value = depth.bids
-    asks.value = depth.asks
+    bids.value = []
+    asks.value = []
   }
 }
 
@@ -130,7 +130,7 @@ async function submitOrder(): Promise<void> {
     return
   }
   if (!isLive.value) {
-    setFeedback(t('trade.demoDisabled'))
+    setFeedback(t('trade.marketUnavailable'))
     return
   }
   if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(limitPrice) || limitPrice <= 0) {
@@ -184,7 +184,7 @@ watch(() => route.query.mode, (nextMode) => {
   navigation.rememberTradeMode(mode.value)
 }, { immediate: true })
 watch(currentPrice, (value) => {
-  if (!price.value) price.value = String(value)
+  if (!price.value && value > 0) price.value = String(value)
 }, { immediate: true })
 </script>
 
@@ -192,7 +192,7 @@ watch(currentPrice, (value) => {
   <main class="page trade-page">
     <nav class="trade-category" :aria-label="t('trade.category')"><button type="button" @click="router.push({ name: 'swap' })">{{ t('trade.swap') }}</button><button :class="{ 'is-active': mode === 'spot' }" type="button" @click="selectTradeMode('spot')">{{ t('trade.spot') }}</button><button :class="{ 'is-active': mode === 'contract' }" type="button" @click="selectTradeMode('contract')">{{ t('trade.contract') }}</button></nav>
     <section class="trade-pair">
-      <button type="button" class="trade-pair__selector" @click="openPairPicker"><AssetMark :symbol="ticker.base" :src="ticker.iconUrl" :size="30" /><span><b>{{ ticker.base }}/{{ ticker.quote }}</b><small :class="ticker.changePercent >= 0 ? 'up' : 'down'">{{ formatPrice(currentPrice) }} {{ ticker.changePercent >= 0 ? '+' : '' }}{{ ticker.changePercent.toFixed(2) }}%</small></span><ChevronDown :size="18" /></button>
+      <button type="button" class="trade-pair__selector" @click="openPairPicker"><AssetMark :symbol="baseAsset" :src="ticker?.iconUrl" :size="30" /><span><b>{{ baseAsset }}/{{ quoteAsset }}</b><small v-if="ticker" :class="ticker.changePercent >= 0 ? 'up' : 'down'">{{ formatPrice(currentPrice) }} {{ ticker.changePercent >= 0 ? '+' : '' }}{{ ticker.changePercent.toFixed(2) }}%</small><small v-else>--</small></span><ChevronDown :size="18" /></button>
     </section>
 
     <div class="page-content trade-page__content">
@@ -204,9 +204,9 @@ watch(currentPrice, (value) => {
           <div class="buy-sell"><button type="button" :class="{ 'is-buy': side === 'buy' }" @click="side = 'buy'">{{ t('trade.buy') }}</button><button type="button" :class="{ 'is-sell': side === 'sell' }" @click="side = 'sell'">{{ t('trade.sell') }}</button></div>
           <button v-if="mode === 'spot'" class="order-type" type="button" @click="orderType = orderType === 'limit' ? 'market' : 'limit'">{{ orderType === 'limit' ? t('trade.limitOrder') : t('trade.marketOrder') }} <ChevronDown :size="16" /></button>
           <div v-else class="order-type">{{ t('trade.marketOrder') }}</div>
-          <label v-if="mode === 'spot'" class="trade-field"><span>{{ t('trade.priceField', { asset: ticker.quote }) }}</span><input v-model="price" class="input" :disabled="orderType === 'market'" inputmode="decimal" :placeholder="t('trade.pricePlaceholder')" /><b v-if="orderType === 'market'">{{ t('trade.marketPrice') }}</b></label>
-          <div v-else class="trade-field trade-field--market"><span>{{ t('trade.priceField', { asset: ticker.quote }) }}</span><b>{{ t('trade.marketPrice') }}</b></div>
-          <label class="trade-field"><span>{{ mode === 'contract' ? t('trade.marginField', { asset: ticker.quote }) : t('trade.quantityField', { asset: ticker.base }) }}</span><input v-model="quantity" class="input" inputmode="decimal" :placeholder="t('trade.quantityPlaceholder')" /></label>
+          <label v-if="mode === 'spot'" class="trade-field"><span>{{ t('trade.priceField', { asset: quoteAsset }) }}</span><input v-model="price" class="input" :disabled="orderType === 'market'" inputmode="decimal" :placeholder="t('trade.pricePlaceholder')" /><b v-if="orderType === 'market'">{{ t('trade.marketPrice') }}</b></label>
+          <div v-else class="trade-field trade-field--market"><span>{{ t('trade.priceField', { asset: quoteAsset }) }}</span><b>{{ t('trade.marketPrice') }}</b></div>
+          <label class="trade-field"><span>{{ mode === 'contract' ? t('trade.marginField', { asset: quoteAsset }) : t('trade.quantityField', { asset: baseAsset }) }}</span><input v-model="quantity" class="input" inputmode="decimal" :placeholder="t('trade.quantityPlaceholder')" /></label>
           <div class="percent-row"><button v-for="item in [0.25, 0.5, 0.75, 1]" :key="item" type="button" @click="setQuantity(item)">{{ item === 1 ? t('trade.maximum') : `${item * 100}%` }}</button></div>
           <p class="trade-balance">{{ t('common.available') }} <button type="button" @click="openLogin">{{ session.isAuthenticated ? t('trade.loadBalance') : t('trade.viewAfterLogin') }} <Plus :size="14" /></button></p>
           <button class="button button--full" :class="side === 'buy' ? 'button--primary' : 'button--danger'" type="button" :disabled="submitting" @click="submitOrder">{{ submitting ? t('trade.submittingOrder') : orderButtonLabel }}</button>
@@ -217,7 +217,10 @@ watch(currentPrice, (value) => {
       </div>
 
       <section class="trade-orders"><header><button class="is-active" type="button" @click="openOrders('spot')">{{ t('trade.orders') }}</button><button type="button" @click="openOrders('positions')">{{ t('trade.positionsAndAssets') }}</button><button type="button" @click="openOrders('history')">{{ t('trade.orderHistory') }}</button></header><LoginRequiredState v-if="!session.isAuthenticated" :description="t('trade.ordersLoginHint')" /><button v-else class="trade-orders__entry" type="button" @click="openOrders(mode === 'contract' ? 'positions' : 'spot')">{{ mode === 'contract' ? t('trade.viewPositions') : t('trade.viewOpenOrders') }}</button></section>
-      <p v-if="marketStore.sampleData" class="sample-note">{{ t('trade.demoDisabled') }}</p>
+      <div v-if="marketStore.error" class="market-error">
+        <span>{{ t('trade.marketUnavailable') }}</span>
+        <button type="button" :disabled="marketStore.loading" @click="marketStore.refresh(true)">{{ t('common.retry') }}</button>
+      </div>
     </div>
   </main>
 </template>
@@ -231,6 +234,6 @@ watch(currentPrice, (value) => {
 .order-type { align-items: center; background: var(--soft); border-radius: 6px; color: var(--ink); display: flex; font-size: 13px; font-weight: 700; justify-content: space-between; margin-top: 12px; min-height: 42px; padding: 0 12px; width: 100%; }.trade-field { display: grid; margin-top: 10px; position: relative; }.trade-field > span { color: var(--muted); font-size: 11px; left: 12px; position: absolute; top: 7px; z-index: 1; }.trade-field .input { font-size: 16px; min-height: 58px; padding: 19px 12px 3px; }.trade-field b { color: var(--muted); font-size: 13px; position: absolute; right: 12px; top: 24px; }.trade-field--market { background: var(--soft); border-radius: 6px; min-height: 58px; }
 .percent-row { display: grid; gap: 6px; grid-template-columns: repeat(4, 1fr); margin-top: 10px; }.percent-row button { background: white; border: 1px solid var(--line); border-radius: 6px; color: var(--muted-strong); font-size: 11px; min-height: 31px; }.trade-balance { align-items: center; color: var(--muted); display: flex; font-size: 12px; justify-content: space-between; margin: 12px 0; }.trade-balance button { align-items: center; background: transparent; color: var(--muted-strong); display: inline-flex; gap: 3px; padding: 0; }.order-form .button { font-size: 14px; min-height: 45px; padding: 0 6px; }.trade-feedback { font-size: 12px; line-height: 1.45; margin: 8px 0 0; }
 .trade-columns :deep(.order-book) { border-radius: 0; padding: 0 12px 12px; }.trade-columns :deep(.order-book__row) { font-size: 11px; }.trade-columns :deep(.order-book__last strong) { font-size: 15px; }
-.trade-orders { border-top: 1px solid var(--line); margin: 24px -20px 0; }.trade-orders header { display: flex; gap: 20px; overflow: auto; padding: 0 20px; }.trade-orders header button { background: transparent; border-bottom: 2px solid transparent; color: var(--muted); flex: 0 0 auto; font-size: 15px; min-height: 48px; padding: 0; }.trade-orders header .is-active { border-color: var(--ink); color: var(--ink); font-weight: 750; }.trade-orders__entry { background: transparent; color: var(--muted-strong); font-size: 14px; min-height: 74px; padding: 0 20px; text-align: left; width: 100%; }.sample-note { background: #fff8e6; border-radius: 6px; color: #8a5a00; font-size: 12px; margin: 13px 0 0; padding: 8px 10px; }
+.trade-orders { border-top: 1px solid var(--line); margin: 24px -20px 0; }.trade-orders header { display: flex; gap: 20px; overflow: auto; padding: 0 20px; }.trade-orders header button { background: transparent; border-bottom: 2px solid transparent; color: var(--muted); flex: 0 0 auto; font-size: 15px; min-height: 48px; padding: 0; }.trade-orders header .is-active { border-color: var(--ink); color: var(--ink); font-weight: 750; }.trade-orders__entry { background: transparent; color: var(--muted-strong); font-size: 14px; min-height: 74px; padding: 0 20px; text-align: left; width: 100%; }.market-error { align-items: center; background: #fdecec; border-radius: 6px; color: #b3261e; display: flex; font-size: 12px; gap: 10px; justify-content: space-between; margin: 13px 0 0; padding: 8px 10px; }.market-error button { background: transparent; color: #b3261e; font-weight: 750; padding: 2px 4px; }
 @media (max-width: 390px) { .trade-columns { gap: 10px; }.trade-page__content { padding-left: 14px; padding-right: 14px; }.trade-columns { margin-left: -14px; margin-right: -14px; }.order-form { padding-left: 14px; }.trade-orders { margin-left: -14px; margin-right: -14px; } }
 </style>

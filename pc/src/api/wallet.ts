@@ -119,6 +119,20 @@ export interface QuickRechargeOrder {
     updated_at: number
 }
 
+export interface WithdrawalRecord {
+    id: number
+    asset_symbol: string
+    network?: string | null
+    address: string
+    amount: string
+    fee: string
+    status: string
+    tx_hash?: string | null
+    failure_reason?: string | null
+    review_reason?: string | null
+    created_at: number
+}
+
 // --- API Functions ---
 
 export async function fetchSupportedCoins(): Promise<{ data: { code: number, message: string, data: string[] } }> {
@@ -252,6 +266,19 @@ export async function getNetworkInfo(unit: string, network?: string, purpose: As
                 network: coin.name,
                 coin,
             },
+        }
+    }
+}
+
+export async function fetchWithdrawRecords(limit = 50): Promise<{ data: { code: number, message: string, data: WithdrawalRecord[] } }> {
+    const res = await request.instance.get<{ withdrawals?: WithdrawalRecord[] }>(backendApiUrl('/wallet/withdrawals'), {
+        params: { limit },
+    })
+    return {
+        data: {
+            code: 0,
+            message: 'success',
+            data: Array.isArray(res.data?.withdrawals) ? res.data.withdrawals : [],
         }
     }
 }

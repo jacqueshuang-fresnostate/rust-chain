@@ -34,6 +34,7 @@ const TradeView = () => import('@/views/TradeView.vue')
 const WalletLedgerView = () => import('@/views/WalletLedgerView.vue')
 const WithdrawAssetView = () => import('@/views/WithdrawAssetView.vue')
 const WithdrawView = () => import('@/views/WithdrawView.vue')
+const WithdrawalRecordsView = () => import('@/views/WithdrawalRecordsView.vue')
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -67,6 +68,7 @@ const router = createRouter({
     { path: '/assets/withdraw', name: 'withdraw-asset', component: WithdrawAssetView, meta: { showBottomNav: false, depth: 1, backFallback: '/assets' } },
     { path: '/assets/withdraw/:asset', name: 'withdraw', component: WithdrawView, props: true, meta: { showBottomNav: false, depth: 2, backFallback: '/assets/withdraw' } },
     { path: '/assets/ledger', name: 'wallet-ledger', component: WalletLedgerView, meta: { showBottomNav: false, depth: 1, backFallback: '/assets' } },
+    { path: '/assets/withdrawals', name: 'withdrawal-records', component: WithdrawalRecordsView, meta: { showBottomNav: false, depth: 1, backFallback: '/assets' } },
     { path: '/assets/quick-recharge', name: 'quick-recharge', component: QuickRechargeView, meta: { showBottomNav: false, depth: 1, backFallback: '/assets' } },
     { path: '/login', name: 'login', component: LoginView, meta: { showBottomNav: false, depth: 1, backFallback: '/' } },
     { path: '/login/two-factor', name: 'login-two-factor', component: LoginTwoFactorView, meta: { showBottomNav: false, depth: 2, backFallback: '/login' } },

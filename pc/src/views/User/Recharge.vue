@@ -73,8 +73,12 @@
             </div>
 
             <div class="flex flex-col items-center justify-center p-6 border border-dashed border-border rounded-lg bg-background">
-                <div class="w-48 h-48 bg-white p-2 rounded mb-4">
-                     <img :src="`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${walletData.address}`" :alt="t('wallet.qr_alt')" class="w-full h-full object-contain" />
+                <div class="w-48 h-48 bg-white p-2 rounded mb-4 flex items-center justify-center">
+                     <img v-if="qrCodeUrl" :src="qrCodeUrl" :alt="t('wallet.qr_alt')" class="w-full h-full object-contain" />
+                     <div v-else class="text-slate-500 text-xs text-center space-y-2">
+                         <Icon icon="mdi:qrcode-scan" class="text-4xl mx-auto" />
+                         <div>{{ qrCodeError || t('wallet.qr_failed') }}</div>
+                     </div>
                 </div>
                 <p class="text-sm text-muted-foreground text-center">{{ t('wallet.scan_qr', { coin: selectedCoin, network: selectedNetwork }) }}</p>
             </div>
@@ -173,6 +177,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { Icon } from '@iconify/vue'
+import { toDataURL } from 'qrcode'
 import {
     createQuickRechargeOrder,
     fetchQuickRechargeConfig,
@@ -196,6 +201,8 @@ const availableNetworks = ref<CoinNetwork[]>([])
 const selectedNetwork = ref<string>('')
 const selectedNetworkKey = ref<string>('')
 const walletData = ref<WalletAddress | null>(null)
+const qrCodeUrl = ref('')
+const qrCodeError = ref('')
 const quickConfig = ref<QuickRechargeConfig | null>(null)
 const quickAmount = ref('')
 const quickOrder = ref<QuickRechargeOrder | null>(null)
@@ -247,6 +254,8 @@ const selectCoin = async (coin: string) => {
     selectedNetwork.value = ''
     selectedNetworkKey.value = ''
     walletData.value = null
+    qrCodeUrl.value = ''
+    qrCodeError.value = ''
     availableNetworks.value = []
 
     loadingNetworks.value = true
@@ -276,10 +285,15 @@ const selectNetwork = async (network: CoinNetwork | string) => {
     selectedNetworkKey.value = networkKey
     loading.value = true
     walletData.value = null
+    qrCodeUrl.value = ''
+    qrCodeError.value = ''
     try {
         const res = await getDepositAddress(selectedCoin.value, networkKey)
         if (res.data.code === 0) {
             walletData.value = res.data.data
+            if (walletData.value?.address) {
+                await renderAddressQrCode(walletData.value.address)
+            }
         } else {
             toast.error(t('wallet.address_failed'))
         }
@@ -288,6 +302,25 @@ const selectNetwork = async (network: CoinNetwork | string) => {
         toast.error(t('wallet.address_fetch_failed'))
     } finally {
         loading.value = false
+    }
+}
+
+const renderAddressQrCode = async (address: string) => {
+    qrCodeUrl.value = ''
+    qrCodeError.value = ''
+    try {
+        qrCodeUrl.value = await toDataURL(address, {
+            errorCorrectionLevel: 'M',
+            margin: 1,
+            width: 192,
+            color: {
+                dark: '#020617',
+                light: '#ffffff',
+            },
+        })
+    } catch (error) {
+        console.error('Failed to render deposit QR code', error)
+        qrCodeError.value = t('wallet.qr_failed')
     }
 }
 

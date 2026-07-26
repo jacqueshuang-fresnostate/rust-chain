@@ -18,6 +18,20 @@ export interface WalletLedgerEntry {
   createdAt: number
 }
 
+export interface WithdrawalRecord {
+  id: number
+  assetSymbol: string
+  network?: string
+  address: string
+  amount: number
+  fee: number
+  status: string
+  txHash?: string
+  failureReason?: string
+  reviewReason?: string
+  createdAt: number
+}
+
 export interface QuickRechargeConfig {
   enabled: boolean
   currency: string
@@ -159,6 +173,37 @@ export async function submitWithdrawal(input: { assetSymbol: string; network?: s
     fund_password: input.fundPassword?.trim() || undefined,
     totp_code: input.totpCode?.trim() || undefined,
   })
+}
+
+interface BackendWithdrawalRecord {
+  id: number
+  asset_symbol: string
+  network?: string | null
+  address: string
+  amount: string | number
+  fee: string | number
+  status: string
+  tx_hash?: string | null
+  failure_reason?: string | null
+  review_reason?: string | null
+  created_at: number
+}
+
+export async function fetchWithdrawalRecords(limit = 50): Promise<WithdrawalRecord[]> {
+  const response = await client.get<{ withdrawals?: BackendWithdrawalRecord[] }>(requestUrl('/wallet/withdrawals'), { params: { limit } })
+  return (response.data.withdrawals || []).map((record) => ({
+    id: record.id,
+    assetSymbol: record.asset_symbol.toUpperCase(),
+    network: record.network || undefined,
+    address: record.address,
+    amount: asNumber(record.amount),
+    fee: asNumber(record.fee),
+    status: record.status,
+    txHash: record.tx_hash || undefined,
+    failureReason: record.failure_reason || undefined,
+    reviewReason: record.review_reason || undefined,
+    createdAt: record.created_at > 0 && record.created_at < 1_000_000_000_000 ? record.created_at * 1000 : record.created_at,
+  }))
 }
 
 function createWithdrawalIdempotencyKey(): string {
