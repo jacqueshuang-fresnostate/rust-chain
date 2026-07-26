@@ -23,5 +23,5 @@ pub(crate) use self::service::{
 pub use routes::{admin_routes, user_routes};
 
 #[cfg(test)]
-#[path = "../../tests/unit_src/src_modules_loan_tests.rs"]
+#[path = "../../../tests/unit_src/src_modules_loan_tests.rs"]
 mod tests;

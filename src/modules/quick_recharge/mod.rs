@@ -20,5 +20,5 @@ pub use service::gmpay_signature;
 pub use routes::{admin_routes, public_routes, user_routes};
 
 #[cfg(test)]
-#[path = "../../tests/unit_src/src_modules_quick_recharge_tests.rs"]
+#[path = "../../../tests/unit_src/src_modules_quick_recharge_tests.rs"]
 mod tests;

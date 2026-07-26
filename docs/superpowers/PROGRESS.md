@@ -5709,3 +5709,10 @@
 - 修改文件：`.gitignore`、`docs/archive/pc/*`（git mv 自 pc/）、删除 `pc/vite.config.js`、`pc/vite.config.d.ts`
 - 验证结果：`git check-ignore` 确认三处忽略生效、`git status` 未跟踪文件归零；vite.config.js 与 .ts 逐行比对语义一致（Vite 原生支持 .ts 配置），pc 构建链未受影响。
 - 后续事项：无（pc/web-retrieval-mcp 属工具项目暂保留原位，如需迁移另立任务）。
+
+## 2026-07-26 20:25 - 结构A2：统一 Rust 模块根为 mod.rs 布局
+
+- 完成内容：将 7 个使用同级根文件的模块（countries、kyc、loan、platform、prediction、quick_recharge、security）经 git mv 归一为目录 mod.rs 布局，消除 15/7 两种风格分裂；同步修正 4 处指向 tests/unit_src 的 #[path] 相对深度；tests/backend_architecture.rs 动态适配两种布局无需改动。
+- 修改文件：`src/modules/{countries,kyc,loan,platform,prediction,quick_recharge,security}/mod.rs`（自同名 .rs 重命名）
+- 验证结果：`cargo check --all-targets` 无警告；`cargo test --lib` 165 通过；`cargo test --test backend_architecture` 4 通过。
+- 后续事项：无。

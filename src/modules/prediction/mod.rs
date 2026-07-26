@@ -13,5 +13,5 @@ pub use application::run_sync_loop;
 pub use routes::{admin_routes, user_routes};
 
 #[cfg(test)]
-#[path = "../../tests/unit_src/src_modules_prediction_tests.rs"]
+#[path = "../../../tests/unit_src/src_modules_prediction_tests.rs"]
 mod tests;

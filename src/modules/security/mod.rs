@@ -28,5 +28,5 @@ pub use infrastructure::{
 };
 
 #[cfg(test)]
-#[path = "../../tests/unit_src/src_modules_security_tests.rs"]
+#[path = "../../../tests/unit_src/src_modules_security_tests.rs"]
 mod tests;
