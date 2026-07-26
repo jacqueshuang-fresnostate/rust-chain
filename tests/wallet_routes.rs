@@ -23,7 +23,7 @@ fn decimal(value: &str) -> BigDecimal {
 }
 
 async fn body_json(response: axum::response::Response) -> Result<Value, Box<dyn Error>> {
-    let body = axum::body::to_bytes(response.into_body(), 65_536).await?;
+    let body = axum::body::to_bytes(response.into_body(), 1_048_576).await?;
     Ok(serde_json::from_slice(&body)?)
 }
 
@@ -695,7 +695,7 @@ async fn wallet_deposit_assets_only_include_enabled_assets_and_reject_disabled_d
         .await?;
     let listed_status = listed.status();
     let listed_payload: Value =
-        serde_json::from_slice(&axum::body::to_bytes(listed.into_body(), 8192).await?)?;
+        serde_json::from_slice(&axum::body::to_bytes(listed.into_body(), 1_048_576).await?)?;
     assert_eq!(listed_status, StatusCode::OK, "payload: {listed_payload}");
     let symbols: Vec<&str> = listed_payload["assets"]
         .as_array()
@@ -735,8 +735,9 @@ async fn wallet_deposit_assets_only_include_enabled_assets_and_reject_disabled_d
         )
         .await?;
     let withdraw_listed_status = withdraw_listed.status();
-    let withdraw_listed_payload: Value =
-        serde_json::from_slice(&axum::body::to_bytes(withdraw_listed.into_body(), 8192).await?)?;
+    let withdraw_listed_payload: Value = serde_json::from_slice(
+        &axum::body::to_bytes(withdraw_listed.into_body(), 1_048_576).await?,
+    )?;
     assert_eq!(
         withdraw_listed_status,
         StatusCode::OK,
@@ -779,7 +780,7 @@ async fn wallet_deposit_assets_only_include_enabled_assets_and_reject_disabled_d
         .await?;
     let rejected_status = rejected.status();
     let rejected_payload: Value =
-        serde_json::from_slice(&axum::body::to_bytes(rejected.into_body(), 8192).await?)?;
+        serde_json::from_slice(&axum::body::to_bytes(rejected.into_body(), 1_048_576).await?)?;
     assert_eq!(
         rejected_status,
         StatusCode::BAD_REQUEST,

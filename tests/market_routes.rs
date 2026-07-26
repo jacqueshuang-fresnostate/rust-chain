@@ -426,8 +426,11 @@ async fn market_trades_route_reads_recent_spot_trades_from_mysql() -> Result<(),
     let Some(pool) = mysql_pool_or_skip().await? else {
         return Ok(());
     };
-    let base_symbol = unique_symbol("MTB");
-    let quote_symbol = unique_symbol("MTQ");
+    // 交易对符号清洗后不得超过 32 字符，截短基础/计价符号。
+    let mut base_symbol = unique_symbol("MTB");
+    base_symbol.truncate(11);
+    let mut quote_symbol = unique_symbol("MTQ");
+    quote_symbol.truncate(11);
     let base_asset_id = create_market_asset(&pool, &base_symbol).await?;
     let quote_asset_id = create_market_asset(&pool, &quote_symbol).await?;
     let pair_symbol = format!("{base_symbol}-{quote_symbol}");

@@ -2065,13 +2065,10 @@ async fn earn_redeem_matured_subscription_credits_principal_yield_and_writes_led
         assert_eq!(payload["principal_amount"], "365.000000000000000000");
         assert_eq!(payload["gross_yield_amount"], "3.600000000000000000");
         assert_eq!(payload["yield_amount"], "3.600000000000000000");
-        assert_eq!(payload["redemption_fee_amount"], "0.000000000000000000");
-        assert_eq!(
-            payload["maturity_profit_fee_amount"],
-            "0.000000000000000000"
-        );
-        assert_eq!(payload["early_redeem_fee_amount"], "0.000000000000000000");
-        assert_eq!(payload["fee_amount"], "0.000000000000000000");
+        assert_eq!(payload["redemption_fee_amount"], "0");
+        assert_eq!(payload["maturity_profit_fee_amount"], "0");
+        assert_eq!(payload["early_redeem_fee_amount"], "0");
+        assert_eq!(payload["fee_amount"], "0");
         assert_eq!(payload["redeem_amount"], "368.600000000000000000");
         if attempt == 0 {
             let event_message =
@@ -2084,7 +2081,7 @@ async fn earn_redeem_matured_subscription_credits_principal_yield_and_writes_led
             assert_eq!(event["principal_amount"], "365.000000000000000000");
             assert_eq!(event["gross_yield_amount"], "3.600000000000000000");
             assert_eq!(event["yield_amount"], "3.600000000000000000");
-            assert_eq!(event["fee_amount"], "0.000000000000000000");
+            assert_eq!(event["fee_amount"], "0");
             assert_eq!(event["redeem_amount"], "368.600000000000000000");
             assert_eq!(event["status"], "redeemed");
         } else {
@@ -2250,8 +2247,8 @@ async fn earn_redeem_early_subscription_applies_principal_fee() -> Result<(), Bo
     let payload: Value = serde_json::from_slice(&body)?;
     assert_eq!(payload["subscription"]["status"], "redeemed");
     assert_eq!(payload["principal_amount"], "20.000000000000000000");
-    assert_eq!(payload["gross_yield_amount"], "0.000000000000000000");
-    assert_eq!(payload["yield_amount"], "0.000000000000000000");
+    assert_eq!(payload["gross_yield_amount"], "0");
+    assert_eq!(payload["yield_amount"], "0");
     assert_eq!(payload["early_redeem_fee_amount"], "1.000000000000000000");
     assert_eq!(payload["fee_amount"], "1.000000000000000000");
     assert_eq!(payload["redeem_amount"], "19.000000000000000000");
