@@ -6,12 +6,14 @@
 use super::{
     infrastructure,
     presentation::{
-        AdminOrdersQuery, CreateSecondsContractProductRequest, DeleteSecondsContractProductRequest,
-        OpenSecondsContractOrderRequest, OpenSecondsContractOrderResponse,
-        SecondsContractOrderResponse, SecondsContractOrdersResponse,
-        SecondsContractProductResponse, SecondsContractProductsResponse,
-        SettleSecondsContractOrderRequest, SettleSecondsContractOrderResponse,
-        UpdateSecondsContractProductRequest, UpdateSecondsContractProductStatusRequest,
+        AdminOrdersQuery, AdminProductsQuery, AdminSecondsContractOrdersResponse,
+        AdminSecondsContractProductsResponse, CreateSecondsContractProductRequest,
+        DeleteSecondsContractProductRequest, OpenSecondsContractOrderRequest,
+        OpenSecondsContractOrderResponse, SecondsContractOrderResponse,
+        SecondsContractOrdersResponse, SecondsContractProductResponse,
+        SecondsContractProductsResponse, SettleSecondsContractOrderRequest,
+        SettleSecondsContractOrderResponse, UpdateSecondsContractProductRequest,
+        UpdateSecondsContractProductStatusRequest,
     },
     repository::{
         SecondsContractAdminOrderFilter, SecondsContractOrderInsert, SecondsContractProductWrite,
@@ -24,8 +26,8 @@ use super::{
         optional_image_url, optional_string, order_audit_json, product_audit_json,
         publish_seconds_contract_order_opened_event_if_needed,
         publish_seconds_contract_order_settled_event_if_needed, required_reason, route_limit,
-        settlement_payout_amount, validate_create_product_request, validate_product_stake,
-        validate_stake_amount, validate_update_product_request,
+        route_offset, settlement_payout_amount, validate_create_product_request,
+        validate_product_stake, validate_stake_amount, validate_update_product_request,
     },
 };
 use crate::{
@@ -59,10 +61,16 @@ pub(crate) async fn list_active_products(
 
 pub(crate) async fn list_admin_products(
     pool: &Pool<MySql>,
-    limit: u32,
-) -> AppResult<SecondsContractProductsResponse> {
-    let products = infrastructure::list_products(pool, None, limit).await?;
-    Ok(SecondsContractProductsResponse { products })
+    query: AdminProductsQuery,
+) -> AppResult<AdminSecondsContractProductsResponse> {
+    let (products, total) = infrastructure::list_admin_products(
+        pool,
+        None,
+        route_limit(query.limit),
+        route_offset(query.offset),
+    )
+    .await?;
+    Ok(AdminSecondsContractProductsResponse { products, total })
 }
 
 pub(crate) async fn get_admin_product(
@@ -493,15 +501,16 @@ pub(crate) async fn list_user_orders(
 pub(crate) async fn list_admin_orders(
     pool: &Pool<MySql>,
     query: AdminOrdersQuery,
-) -> AppResult<SecondsContractOrdersResponse> {
+) -> AppResult<AdminSecondsContractOrdersResponse> {
     let filter = SecondsContractAdminOrderFilter {
         user_id: query.user_id,
         email: optional_string(query.email),
         status: optional_string(query.status),
         limit: route_limit(query.limit),
+        offset: route_offset(query.offset),
     };
-    let orders = infrastructure::list_admin_orders(pool, filter).await?;
-    Ok(SecondsContractOrdersResponse { orders })
+    let (orders, total) = infrastructure::list_admin_orders(pool, filter).await?;
+    Ok(AdminSecondsContractOrdersResponse { orders, total })
 }
 
 pub(crate) async fn get_admin_order(

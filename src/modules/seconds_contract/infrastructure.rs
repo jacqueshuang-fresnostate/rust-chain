@@ -31,12 +31,88 @@ pub struct InfrastructureLayerMarker;
 
 impl InfrastructureLayer for InfrastructureLayerMarker {}
 
+/// 分页排序必须带唯一列 id，否则同一排序值的行会在页间重复或丢失。
+const SECONDS_CONTRACT_PRODUCT_ORDER_BY: &str = " ORDER BY products.id DESC";
+
+/// 行查询与 COUNT 查询必须由同一组过滤谓词构建，返回总数才能与当前筛选一致。
+async fn fetch_admin_page<T>(
+    pool: &Pool<MySql>,
+    mut rows: QueryBuilder<'_, MySql>,
+    mut total: QueryBuilder<'_, MySql>,
+    order_by: &str,
+    limit: u32,
+    offset: u32,
+) -> AppResult<(Vec<T>, i64)>
+where
+    T: for<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> + Send + Unpin,
+{
+    rows.push(order_by);
+    rows.push(" LIMIT ");
+    rows.push_bind(limit as i64);
+    rows.push(" OFFSET ");
+    rows.push_bind(offset as i64);
+
+    let items = rows.build_query_as::<T>().fetch_all(pool).await?;
+    let total = total.build_query_scalar::<i64>().fetch_one(pool).await?;
+
+    Ok((items, total))
+}
+
 pub(crate) async fn list_products(
     pool: &Pool<MySql>,
     status: Option<&str>,
     limit: u32,
 ) -> AppResult<Vec<SecondsContractProductResponse>> {
-    let mut builder = QueryBuilder::<MySql>::new(
+    let mut builder = seconds_contract_product_query();
+    push_seconds_contract_product_filters(&mut builder, status);
+    builder.push(SECONDS_CONTRACT_PRODUCT_ORDER_BY);
+    builder.push(" LIMIT ");
+    builder.push_bind(limit as i64);
+
+    let product_rows = builder
+        .build_query_as::<SecondsContractProductRow>()
+        .fetch_all(pool)
+        .await?;
+    attach_product_cycles_from_pool(pool, product_rows).await
+}
+
+/// 后台产品列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
+pub(crate) async fn list_admin_products(
+    pool: &Pool<MySql>,
+    status: Option<&str>,
+    limit: u32,
+    offset: u32,
+) -> AppResult<(Vec<SecondsContractProductResponse>, i64)> {
+    let mut rows = seconds_contract_product_query();
+    let mut total = QueryBuilder::<MySql>::new(
+        r#"SELECT COUNT(*)
+           FROM seconds_contract_products products
+           INNER JOIN trading_pairs pairs ON pairs.id = products.pair_id
+           INNER JOIN assets ON assets.id = products.stake_asset
+           INNER JOIN assets pair_base_assets ON pair_base_assets.id = pairs.base_asset
+           INNER JOIN assets pair_quote_assets ON pair_quote_assets.id = pairs.quote_asset"#,
+    );
+    for builder in [&mut rows, &mut total] {
+        push_seconds_contract_product_filters(builder, status);
+    }
+
+    let (product_rows, total) = fetch_admin_page::<SecondsContractProductRow>(
+        pool,
+        rows,
+        total,
+        SECONDS_CONTRACT_PRODUCT_ORDER_BY,
+        limit,
+        offset,
+    )
+    .await?;
+    Ok((
+        attach_product_cycles_from_pool(pool, product_rows).await?,
+        total,
+    ))
+}
+
+fn seconds_contract_product_query() -> QueryBuilder<'static, MySql> {
+    QueryBuilder::<MySql>::new(
         r#"SELECT products.id, products.pair_id, pairs.symbol,
                   products.stake_asset, assets.symbol AS stake_asset_symbol,
                   products.logo_url,
@@ -47,26 +123,23 @@ pub(crate) async fn list_products(
            INNER JOIN assets ON assets.id = products.stake_asset
            INNER JOIN assets pair_base_assets ON pair_base_assets.id = pairs.base_asset
            INNER JOIN assets pair_quote_assets ON pair_quote_assets.id = pairs.quote_asset"#,
-    );
+    )
+}
 
+fn push_seconds_contract_product_filters(
+    builder: &mut QueryBuilder<'_, MySql>,
+    status: Option<&str>,
+) {
+    builder.push(" WHERE 1 = 1");
     if let Some(status) = status {
-        builder.push(" WHERE products.status = ");
-        builder.push_bind(status);
+        builder.push(" AND products.status = ");
+        builder.push_bind(status.to_owned());
         if status == "active" {
             builder.push(
                 " AND pairs.status = 'active' AND assets.status = 'active' AND pair_base_assets.status = 'active' AND pair_quote_assets.status = 'active'",
             );
         }
     }
-
-    builder.push(" ORDER BY products.id DESC LIMIT ");
-    builder.push_bind(limit as i64);
-
-    let product_rows = builder
-        .build_query_as::<SecondsContractProductRow>()
-        .fetch_all(pool)
-        .await?;
-    attach_product_cycles_from_pool(pool, product_rows).await
 }
 
 pub(crate) async fn load_product_by_id_from_pool(
@@ -320,11 +393,12 @@ pub(crate) async fn list_user_orders(
     .map_err(AppError::from)
 }
 
+/// 后台订单列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
 pub(crate) async fn list_admin_orders(
     pool: &Pool<MySql>,
     filter: SecondsContractAdminOrderFilter,
-) -> AppResult<Vec<SecondsContractOrderResponse>> {
-    let mut builder = QueryBuilder::<MySql>::new(
+) -> AppResult<(Vec<SecondsContractOrderResponse>, i64)> {
+    let mut rows = QueryBuilder::<MySql>::new(
         r#"SELECT orders.id, orders.user_id, orders.product_id, orders.pair_id,
                   users.email, pairs.symbol, orders.stake_asset, assets.symbol AS stake_asset_symbol,
                   orders.direction, orders.stake_amount, orders.duration_seconds,
@@ -335,34 +409,38 @@ pub(crate) async fn list_admin_orders(
            INNER JOIN trading_pairs pairs ON pairs.id = orders.pair_id
            INNER JOIN assets ON assets.id = orders.stake_asset"#,
     );
-    let mut has_filter = false;
-    if let Some(user_id) = filter.user_id {
-        builder.push(" WHERE orders.user_id = ");
-        builder.push_bind(user_id);
-        has_filter = true;
+    let mut total = QueryBuilder::<MySql>::new(
+        r#"SELECT COUNT(*)
+           FROM seconds_contract_orders orders
+           INNER JOIN users ON users.id = orders.user_id
+           INNER JOIN trading_pairs pairs ON pairs.id = orders.pair_id
+           INNER JOIN assets ON assets.id = orders.stake_asset"#,
+    );
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(user_id) = filter.user_id {
+            builder.push(" AND orders.user_id = ");
+            builder.push_bind(user_id);
+        }
+        if let Some(email) = filter.email.clone() {
+            builder.push(" AND users.email = ");
+            builder.push_bind(email);
+        }
+        if let Some(status) = filter.status.clone() {
+            builder.push(" AND orders.status = ");
+            builder.push_bind(status);
+        }
     }
-    if let Some(email) = filter.email {
-        builder.push(if has_filter { " AND " } else { " WHERE " });
-        builder.push("users.email = ");
-        builder.push_bind(email);
-        has_filter = true;
-    }
-    if let Some(status) = filter.status {
-        builder.push(if has_filter {
-            " AND orders.status = "
-        } else {
-            " WHERE orders.status = "
-        });
-        builder.push_bind(status);
-    }
-    builder.push(" ORDER BY orders.created_at DESC, orders.id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
 
-    builder
-        .build_query_as::<SecondsContractOrderResponse>()
-        .fetch_all(pool)
-        .await
-        .map_err(AppError::from)
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY orders.created_at DESC, orders.id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
 }
 
 pub(crate) async fn load_order_by_id_from_pool(

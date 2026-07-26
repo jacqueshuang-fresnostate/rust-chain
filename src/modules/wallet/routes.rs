@@ -33,8 +33,9 @@ use super::{
         reverse_deposit as reverse_deposit_use_case,
     },
     presentation::{
-        BroadcastWithdrawalRequest, ConfirmWithdrawalRequest, CreateWithdrawalRequest,
-        DepositAddressRequest, DepositAddressResponse, DepositAssetsResponse, DepositNetworksQuery,
+        AdminWalletListQuery, AdminWalletWithdrawalsResponse, BroadcastWithdrawalRequest,
+        ConfirmWithdrawalRequest, CreateWithdrawalRequest, DepositAddressRequest,
+        DepositAddressResponse, DepositAssetsResponse, DepositNetworksQuery,
         DepositNetworksResponse, FailWithdrawalRequest, ObserveDepositRequest,
         ReverseDepositRequest, ReviewWithdrawalRequest, WalletAccountsResponse,
         WalletDepositEventResponse, WalletDepositsResponse, WalletLedgerQuery,
@@ -173,10 +174,11 @@ async fn list_user_withdrawals(
 async fn list_admin_withdrawals(
     AdminAuth(_claims): AdminAuth,
     State(state): State<AppState>,
-    Query(query): Query<WalletWithdrawalQuery>,
-) -> AppResult<Json<WalletWithdrawalsResponse>> {
-    let withdrawals = list_admin_withdrawals_use_case(&mysql_pool(&state)?, query).await?;
-    Ok(Json(WalletWithdrawalsResponse { withdrawals }))
+    Query(query): Query<AdminWalletListQuery>,
+) -> AppResult<Json<AdminWalletWithdrawalsResponse>> {
+    Ok(Json(
+        list_admin_withdrawals_use_case(&mysql_pool(&state)?, query).await?,
+    ))
 }
 
 async fn approve_withdrawal(
@@ -243,10 +245,11 @@ async fn fail_withdrawal(
 async fn list_admin_deposits(
     AdminAuth(_claims): AdminAuth,
     State(state): State<AppState>,
-    Query(query): Query<WalletWithdrawalQuery>,
+    Query(query): Query<AdminWalletListQuery>,
 ) -> AppResult<Json<WalletDepositsResponse>> {
-    let deposits = list_admin_deposits_use_case(&mysql_pool(&state)?, query).await?;
-    Ok(Json(WalletDepositsResponse { deposits }))
+    Ok(Json(
+        list_admin_deposits_use_case(&mysql_pool(&state)?, query).await?,
+    ))
 }
 
 async fn observe_deposit(

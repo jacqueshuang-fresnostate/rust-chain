@@ -62,6 +62,31 @@ pub(crate) struct LoginTwoFactorRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct AdminTwoFactorCodeRequest {
+    pub(crate) totp_code: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub(crate) enum AdminLoginResponse {
+    Token(TokenResponse),
+    TwoFactorChallenge(LoginTwoFactorChallengeResponse),
+}
+
+impl PresentationLayer for AdminLoginResponse {}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AdminTwoFactorStatusResponse {
+    pub(crate) totp_enabled: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AdminTwoFactorSetupResponse {
+    pub(crate) otpauth_uri: String,
+    pub(crate) secret: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct LoginTwoFactorResetCodeRequest {
     pub(crate) challenge_id: String,
 }

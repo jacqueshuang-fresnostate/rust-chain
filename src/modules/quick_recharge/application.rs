@@ -6,9 +6,9 @@
 use super::{
     infrastructure,
     presentation::{
-        CreateQuickRechargeOrderRequest, DeleteQuickRechargeOrderRequest,
-        QuickRechargeConfigResponse, QuickRechargeOrderResponse, QuickRechargeOrdersQuery,
-        QuickRechargeOrdersResponse, SaveQuickRechargeConfigRequest,
+        AdminQuickRechargeOrdersResponse, CreateQuickRechargeOrderRequest,
+        DeleteQuickRechargeOrderRequest, QuickRechargeConfigResponse, QuickRechargeOrderResponse,
+        QuickRechargeOrdersQuery, QuickRechargeOrdersResponse, SaveQuickRechargeConfigRequest,
         TestQuickRechargeConfigRequest, TestQuickRechargeConfigResponse,
         UserQuickRechargeConfigResponse,
     },
@@ -20,7 +20,7 @@ use super::{
     service::{
         admin_id_from_subject, config_audit_json, decimal_to_gmpay_string, optional_json_string,
         optional_str, optional_string, prepare_secret_field, redirect_url_for_target,
-        required_json_decimal, required_json_string, required_reason, route_limit,
+        required_json_decimal, required_json_string, required_reason, route_limit, route_offset,
         runtime_config_from_row, test_config_audit_json, user_id_from_subject,
         validate_enabled_config_secrets, validate_order_status, validate_recharge_amount,
         validate_save_config_request, verify_gmpay_notify_signature,
@@ -90,7 +90,7 @@ pub(crate) async fn get_admin_quick_recharge_config(
 pub(crate) async fn list_admin_quick_recharge_orders(
     pool: Option<Pool<MySql>>,
     query: QuickRechargeOrdersQuery,
-) -> AppResult<QuickRechargeOrdersResponse> {
+) -> AppResult<AdminQuickRechargeOrdersResponse> {
     let filter = QuickRechargeAdminOrderFilter {
         user_id: query.user_id,
         email: optional_string(query.email),
@@ -100,11 +100,13 @@ pub(crate) async fn list_admin_quick_recharge_orders(
         order_id: optional_string(query.order_id),
         provider_trade_id: optional_string(query.provider_trade_id),
         limit: route_limit(query.limit),
+        offset: route_offset(query.offset),
     };
-    let orders =
+    let (orders, total) =
         infrastructure::list_admin_orders(&quick_recharge_mysql_pool(pool)?, filter).await?;
-    Ok(QuickRechargeOrdersResponse {
+    Ok(AdminQuickRechargeOrdersResponse {
         orders: quick_recharge_order_responses(orders),
+        total,
     })
 }
 

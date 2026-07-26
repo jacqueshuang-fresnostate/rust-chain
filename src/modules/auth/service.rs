@@ -11,13 +11,16 @@ use crate::{
             ACTIVE_STATUS, ActorType, AdminCredentials, AdminRegistration, AgentCredentials,
             AgentRegistration, AuthActor, IssuedTokens, NewAdminActor, NewAgentActor, NewUserActor,
             RefreshTokenRecord, StoredActorCredential, StoredRefreshToken, TokenScope,
-            UserCredentials, decode_claims, hash_password, hash_refresh_token, issue_token,
-            map_sa_token_error, normalize_username, repository::AuthRepository, verify_password,
+            UserCredentials, decode_claims,
+            domain::{login_failure_key, login_locked_error},
+            hash_password, hash_refresh_token, issue_token, map_sa_token_error, normalize_username,
+            repository::AuthRepository,
+            verify_password,
         },
         countries::normalize_country_code,
     },
 };
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use redis::AsyncCommands;
 use sa_token_core::SaTokenManager;
 use serde::{Deserialize, Serialize};
@@ -105,16 +108,23 @@ impl<R: AuthRepository> AuthService<R> {
             credentials.username,
             credentials.username_login_enabled,
         )?;
-        let stored = match identifier {
-            UserLoginIdentifier::Email(email) => self.repository.find_user_by_email(&email).await?,
-            UserLoginIdentifier::Phone(phone) => self.repository.find_user_by_phone(&phone).await?,
-            UserLoginIdentifier::Username(username) => {
-                self.repository.find_user_by_username(&username).await?
+        let (identifier, stored) = match identifier {
+            UserLoginIdentifier::Email(email) => {
+                let stored = self.repository.find_user_by_email(&email).await?;
+                (email, stored)
             }
-        }
-        .ok_or(AppError::Unauthorized)?;
+            UserLoginIdentifier::Phone(phone) => {
+                let stored = self.repository.find_user_by_phone(&phone).await?;
+                (phone, stored)
+            }
+            UserLoginIdentifier::Username(username) => {
+                let stored = self.repository.find_user_by_username(&username).await?;
+                (username, stored)
+            }
+        };
 
-        self.verify_actor_credentials(stored, &password).await
+        self.verify_with_lockout(ActorType::User, &identifier, stored, &password)
+            .await
     }
 
     pub async fn register_admin(
@@ -151,16 +161,16 @@ impl<R: AuthRepository> AuthService<R> {
         self.issue_tokens(actor).await
     }
 
-    pub async fn login_admin(&self, credentials: AdminCredentials) -> AppResult<IssuedTokens> {
+    pub async fn verify_admin_credentials(
+        &self,
+        credentials: AdminCredentials,
+    ) -> AppResult<AuthActor> {
         let username = required_string(credentials.username, "username")?;
         let password = required_string(credentials.password, "password")?;
-        let stored = self
-            .repository
-            .find_admin_by_username(&username)
-            .await?
-            .ok_or(AppError::Unauthorized)?;
+        let stored = self.repository.find_admin_by_username(&username).await?;
 
-        self.verify_and_issue(stored, &password).await
+        self.verify_with_lockout(ActorType::Admin, &username, stored, &password)
+            .await
     }
 
     pub async fn register_agent(&self, registration: AgentRegistration) -> AppResult<IssuedTokens> {
@@ -184,13 +194,12 @@ impl<R: AuthRepository> AuthService<R> {
     pub async fn login_agent(&self, credentials: AgentCredentials) -> AppResult<IssuedTokens> {
         let username = required_string(credentials.username, "username")?;
         let password = required_string(credentials.password, "password")?;
-        let stored = self
-            .repository
-            .find_agent_by_username(&username)
-            .await?
-            .ok_or(AppError::Unauthorized)?;
+        let stored = self.repository.find_agent_by_username(&username).await?;
+        let actor = self
+            .verify_with_lockout(ActorType::Agent, &username, stored, &password)
+            .await?;
 
-        self.verify_and_issue(stored, &password).await
+        self.issue_tokens(actor).await
     }
 
     pub async fn refresh(
@@ -253,26 +262,41 @@ impl<R: AuthRepository> AuthService<R> {
         self.issue_tokens(actor).await
     }
 
-    async fn verify_and_issue(
+    /// 用户、管理员、代理共用同一条密码校验入口，统一执行失败计数与临时锁定。
+    async fn verify_with_lockout(
         &self,
-        stored: StoredActorCredential,
-        password: &str,
-    ) -> AppResult<IssuedTokens> {
-        let actor = self.verify_actor_credentials(stored, password).await?;
-        self.issue_tokens(actor).await
-    }
-
-    async fn verify_actor_credentials(
-        &self,
-        stored: StoredActorCredential,
+        actor_type: ActorType,
+        identifier: &str,
+        stored: Option<StoredActorCredential>,
         password: &str,
     ) -> AppResult<AuthActor> {
-        if stored.status != ACTIVE_STATUS || !verify_password(&stored.password_hash, password)? {
-            return Err(AppError::Unauthorized);
+        let key = login_failure_key(identifier);
+        if let Some(locked_until) = self.repository.find_login_lockout(actor_type, &key).await? {
+            return Err(login_locked(locked_until));
         }
 
-        self.repository.record_login(&stored.actor).await?;
-        Ok(stored.actor)
+        let mut authenticated = None;
+        if let Some(stored) = stored
+            && stored.status == ACTIVE_STATUS
+            && verify_password(&stored.password_hash, password)?
+        {
+            authenticated = Some(stored.actor);
+        }
+
+        let Some(actor) = authenticated else {
+            // 账号不存在与密码错误共用同一条失败分支，既计入锁定又不泄露账号是否存在。
+            let locked_until = self
+                .repository
+                .record_login_failure(actor_type, &key)
+                .await?;
+            return Err(locked_until.map_or(AppError::Unauthorized, login_locked));
+        };
+
+        self.repository
+            .clear_login_failures(actor_type, &key)
+            .await?;
+        self.repository.record_login(&actor).await?;
+        Ok(actor)
     }
 
     pub async fn issue_tokens_for_actor(&self, actor: AuthActor) -> AppResult<IssuedTokens> {
@@ -406,6 +430,10 @@ pub(crate) async fn revoke_project_refresh_tokens(
     redis.del::<_, ()>(actor_key).await?;
 
     Ok(())
+}
+
+fn login_locked(locked_until: DateTime<Utc>) -> AppError {
+    login_locked_error((locked_until - Utc::now()).num_seconds())
 }
 
 fn generate_refresh_token() -> String {

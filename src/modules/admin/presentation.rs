@@ -437,6 +437,7 @@ pub(crate) struct AdminKycSubmissionQuery {
     pub(crate) email: Option<String>,
     pub(crate) status: Option<String>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminKycSubmissionQuery {}
@@ -475,6 +476,15 @@ pub(crate) struct AdminUserTwoFactorResetResponse {
 impl PresentationLayer for AdminUserTwoFactorResetResponse {}
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct UpdateUserStatusRequest {
+    pub(crate) status: String,
+    pub(crate) reason: Option<String>,
+}
+
+impl PresentationLayer for UpdateUserStatusRequest {}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct CreateAgentRequest {
     pub(crate) user_id: u64,
     pub(crate) parent_agent_id: Option<u64>,
@@ -495,6 +505,25 @@ pub(crate) struct UpdateAgentStatusRequest {
 }
 
 impl PresentationLayer for UpdateAgentStatusRequest {}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ResetAgentPasswordRequest {
+    pub(crate) password: Option<String>,
+    pub(crate) reason: Option<String>,
+}
+
+impl PresentationLayer for ResetAgentPasswordRequest {}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AdminAgentPasswordResetResponse {
+    pub(crate) agent_id: u64,
+    pub(crate) admin_user_id: u64,
+    pub(crate) admin_username: String,
+    pub(crate) requires_relogin: bool,
+}
+
+impl PresentationLayer for AdminAgentPasswordResetResponse {}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct AssignUserAgentRequest {

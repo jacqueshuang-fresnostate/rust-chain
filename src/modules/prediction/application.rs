@@ -101,14 +101,21 @@ pub(crate) async fn save_admin_settings(
 pub(crate) async fn list_admin_asset_configs(
     _auth: AdminAuth,
     State(state): State<AppState>,
+    Query(query): Query<presentation::AdminListQuery>,
 ) -> AppResult<Json<presentation::PredictionAssetConfigsResponse>> {
-    let configs = infrastructure::list_admin_asset_configs(&infrastructure::mysql_pool(&state)?)
-        .await?
+    let (rows, total) = infrastructure::list_admin_asset_configs(
+        &infrastructure::mysql_pool(&state)?,
+        service::route_limit(query.limit),
+        service::route_offset(query.offset),
+    )
+    .await?;
+    let configs = rows
         .into_iter()
         .map(presentation::PredictionAssetConfigResponse::from)
         .collect();
     Ok(Json(presentation::PredictionAssetConfigsResponse {
         configs,
+        total,
     }))
 }
 
@@ -208,32 +215,46 @@ pub(crate) async fn list_admin_markets(
     _auth: AdminAuth,
     State(state): State<AppState>,
     Query(query): Query<presentation::AdminMarketQuery>,
-) -> AppResult<Json<presentation::PredictionMarketsResponse>> {
-    let mut builder = infrastructure::prediction_market_query_builder();
-    builder.push(" WHERE 1 = 1");
-    if let Some(status) = service::optional_text(query.display_status) {
-        builder.push(" AND markets.display_status = ");
-        builder.push_bind(status);
+) -> AppResult<Json<presentation::AdminPredictionMarketsResponse>> {
+    let display_status = service::optional_text(query.display_status);
+    let settlement_status = service::optional_text(query.settlement_status);
+    let keyword = service::optional_text(query.keyword);
+    let mut rows = infrastructure::prediction_market_query_builder();
+    let mut total = infrastructure::prediction_market_count_query_builder();
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(status) = display_status.clone() {
+            builder.push(" AND markets.display_status = ");
+            builder.push_bind(status);
+        }
+        if let Some(status) = settlement_status.clone() {
+            builder.push(" AND markets.settlement_status = ");
+            builder.push_bind(status);
+        }
+        if let Some(keyword) = keyword.clone() {
+            builder.push(" AND markets.title LIKE ");
+            builder.push_bind(format!("%{keyword}%"));
+        }
     }
-    if let Some(status) = service::optional_text(query.settlement_status) {
-        builder.push(" AND markets.settlement_status = ");
-        builder.push_bind(status);
-    }
-    if let Some(keyword) = service::optional_text(query.keyword) {
-        builder.push(" AND markets.title LIKE ");
-        builder.push_bind(format!("%{keyword}%"));
-    }
-    builder.push(" ORDER BY markets.last_synced_at DESC, markets.id DESC LIMIT ");
-    builder.push_bind(service::route_limit(query.limit) as i64);
-    let rows = builder
-        .build_query_as::<repository::PredictionMarketRow>()
-        .fetch_all(&infrastructure::mysql_pool(&state)?)
-        .await?;
+
+    // 按主键排序：last_synced_at 每轮同步都会被批量刷新，翻页时行会在页间跳动。
+    let (rows, total) = infrastructure::fetch_admin_page::<repository::PredictionMarketRow>(
+        &infrastructure::mysql_pool(&state)?,
+        rows,
+        total,
+        " ORDER BY markets.id DESC",
+        service::route_limit(query.limit),
+        service::route_offset(query.offset),
+    )
+    .await?;
     let markets = rows
         .into_iter()
         .map(presentation::PredictionMarketResponse::from)
         .collect();
-    Ok(Json(presentation::PredictionMarketsResponse { markets }))
+    Ok(Json(presentation::AdminPredictionMarketsResponse {
+        markets,
+        total,
+    }))
 }
 
 pub(crate) async fn get_admin_market(
@@ -349,33 +370,45 @@ pub(crate) async fn list_user_orders(
 pub(crate) async fn list_admin_orders(
     _auth: AdminAuth,
     State(state): State<AppState>,
-    Query(query): Query<presentation::OrdersQuery>,
-) -> AppResult<Json<presentation::PredictionOrdersResponse>> {
-    let mut builder = infrastructure::prediction_order_query_builder();
-    builder.push(" WHERE 1 = 1");
-    if let Some(status) = service::optional_text(query.status) {
-        builder.push(" AND orders.status = ");
-        builder.push_bind(status);
+    Query(query): Query<presentation::AdminOrdersQuery>,
+) -> AppResult<Json<presentation::AdminPredictionOrdersResponse>> {
+    let status = service::optional_text(query.status);
+    let email = service::optional_text(query.email);
+    let mut rows = infrastructure::prediction_order_query_builder();
+    let mut total = infrastructure::prediction_order_count_query_builder();
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(status) = status.clone() {
+            builder.push(" AND orders.status = ");
+            builder.push_bind(status);
+        }
+        if let Some(market_id) = query.market_id {
+            builder.push(" AND orders.market_id = ");
+            builder.push_bind(market_id);
+        }
+        if let Some(email) = email.clone() {
+            builder.push(" AND users.email LIKE ");
+            builder.push_bind(format!("%{email}%"));
+        }
     }
-    if let Some(market_id) = query.market_id {
-        builder.push(" AND orders.market_id = ");
-        builder.push_bind(market_id);
-    }
-    if let Some(email) = service::optional_text(query.email) {
-        builder.push(" AND users.email LIKE ");
-        builder.push_bind(format!("%{email}%"));
-    }
-    builder.push(" ORDER BY orders.created_at DESC, orders.id DESC LIMIT ");
-    builder.push_bind(service::route_limit(query.limit) as i64);
-    let rows = builder
-        .build_query_as::<repository::PredictionOrderRow>()
-        .fetch_all(&infrastructure::mysql_pool(&state)?)
-        .await?;
+
+    let (rows, total) = infrastructure::fetch_admin_page::<repository::PredictionOrderRow>(
+        &infrastructure::mysql_pool(&state)?,
+        rows,
+        total,
+        " ORDER BY orders.created_at DESC, orders.id DESC",
+        service::route_limit(query.limit),
+        service::route_offset(query.offset),
+    )
+    .await?;
     let orders = rows
         .into_iter()
         .map(presentation::PredictionOrderResponse::from)
         .collect();
-    Ok(Json(presentation::PredictionOrdersResponse { orders }))
+    Ok(Json(presentation::AdminPredictionOrdersResponse {
+        orders,
+        total,
+    }))
 }
 
 pub(crate) async fn get_admin_order(
@@ -428,16 +461,20 @@ pub(crate) async fn trigger_admin_sync(
 pub(crate) async fn list_admin_sync_logs(
     _auth: AdminAuth,
     State(state): State<AppState>,
-    Query(query): Query<presentation::ListQuery>,
+    Query(query): Query<presentation::AdminListQuery>,
 ) -> AppResult<Json<presentation::PredictionSyncLogsResponse>> {
-    let rows = infrastructure::list_admin_sync_logs(
+    let (rows, total) = infrastructure::list_admin_sync_logs(
         &infrastructure::mysql_pool(&state)?,
-        service::route_limit(query.limit) as i64,
+        service::route_limit(query.limit),
+        service::route_offset(query.offset),
     )
     .await?;
     let logs = rows
         .into_iter()
         .map(presentation::PredictionSyncLogResponse::from)
         .collect();
-    Ok(Json(presentation::PredictionSyncLogsResponse { logs }))
+    Ok(Json(presentation::PredictionSyncLogsResponse {
+        logs,
+        total,
+    }))
 }

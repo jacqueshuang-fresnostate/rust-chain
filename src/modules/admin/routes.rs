@@ -74,6 +74,7 @@ use crate::{
                 recharge_admin_user_wallet as recharge_admin_user_wallet_use_case,
                 reclaim_admin_deposit_address_pool as reclaim_deposit_address_pool_use_case,
                 reload_admin_market_feed_config as reload_market_feed_config_use_case,
+                reset_admin_agent_password as reset_agent_password_use_case,
                 reset_admin_user_two_factor as reset_admin_user_two_factor_use_case,
                 review_admin_kyc_submission as review_kyc_submission_use_case,
                 save_admin_kyc_config as save_kyc_config_use_case,
@@ -106,6 +107,7 @@ use crate::{
                 update_admin_smtp_config as update_smtp_config_use_case,
                 update_admin_trading_pair as update_trading_pair_use_case,
                 update_admin_trading_pair_status as update_trading_pair_status_use_case,
+                update_admin_user_status as update_admin_user_status_use_case,
                 upload_admin_image as upload_image_use_case,
                 upsert_admin_market_feed_credential as upsert_market_feed_credential_use_case,
                 upsert_admin_new_coin_convert_rule as upsert_new_coin_convert_rule_use_case,
@@ -115,12 +117,12 @@ use crate::{
                 AdminAgentCommissionBatchStatusResponse, AdminAgentCommissionQuery,
                 AdminAgentCommissionResponse, AdminAgentCommissionRuleQuery,
                 AdminAgentCommissionRuleResponse, AdminAgentCommissionRulesResponse,
-                AdminAgentCommissionsResponse, AdminAgentQuery, AdminAgentResponse,
-                AdminAgentUsersQuery, AdminAgentUsersResponse, AdminAgentsResponse,
-                AdminAssetQuery, AdminAssetResponse, AdminAssetsResponse, AdminAuditLogsQuery,
-                AdminAuditLogsResponse, AdminConvertOrdersQuery, AdminConvertPairQuery,
-                AdminCountriesQuery, AdminCountriesResponse, AdminCountryResponse,
-                AdminDashboardResponse, AdminDepositAddressPoolBatchResponse,
+                AdminAgentCommissionsResponse, AdminAgentPasswordResetResponse, AdminAgentQuery,
+                AdminAgentResponse, AdminAgentUsersQuery, AdminAgentUsersResponse,
+                AdminAgentsResponse, AdminAssetQuery, AdminAssetResponse, AdminAssetsResponse,
+                AdminAuditLogsQuery, AdminAuditLogsResponse, AdminConvertOrdersQuery,
+                AdminConvertPairQuery, AdminCountriesQuery, AdminCountriesResponse,
+                AdminCountryResponse, AdminDashboardResponse, AdminDepositAddressPoolBatchResponse,
                 AdminDepositAddressPoolQuery, AdminDepositAddressPoolResponse,
                 AdminDepositAddressPoolResponseList, AdminDepositNetworkConfigQuery,
                 AdminDepositNetworkConfigResponse, AdminDepositNetworkConfigResponseList,
@@ -150,11 +152,12 @@ use crate::{
                 NewCoinDistributionsResponse, NewCoinLockPositionsResponse, NewCoinProjectResponse,
                 NewCoinProjectsResponse, NewCoinPurchasesResponse, NewCoinSubscriptionsResponse,
                 NewCoinUnlocksResponse, ReclaimDepositAddressPoolRequest, ReloadMarketFeedRequest,
-                ReloadMarketFeedResponse, ResetUserTwoFactorRequest, RiskEventsResponse,
-                RiskRuleResponse, RiskRulesResponse, SaveMarketFeedConfigRequest,
-                SaveSmtpConfigRequest, SaveSmtpDeliverySettingsRequest, SaveUploadConfigRequest,
-                SendSmtpTestRequest, SendSmtpTestResponse, SmtpConfigListResponse,
-                SmtpConfigResponse, SmtpDeliverySettingsResponse, UpdateAdminCountryRequest,
+                ReloadMarketFeedResponse, ResetAgentPasswordRequest, ResetUserTwoFactorRequest,
+                RiskEventsResponse, RiskRuleResponse, RiskRulesResponse,
+                SaveMarketFeedConfigRequest, SaveSmtpConfigRequest,
+                SaveSmtpDeliverySettingsRequest, SaveUploadConfigRequest, SendSmtpTestRequest,
+                SendSmtpTestResponse, SmtpConfigListResponse, SmtpConfigResponse,
+                SmtpDeliverySettingsResponse, UpdateAdminCountryRequest,
                 UpdateAdminCountryStatusRequest, UpdateAdminNewsItemRequest,
                 UpdateAdminNewsStatusRequest, UpdateAgentCommissionRuleRequest,
                 UpdateAgentCommissionStatusRequest, UpdateAgentStatusRequest, UpdateAssetRequest,
@@ -164,8 +167,9 @@ use crate::{
                 UpdateNewCoinPostListingPurchaseRequest, UpdateNewCoinUnlockFeeRuleRequest,
                 UpdateNewCoinUnlockRuleRequest, UpdateRiskRuleStatusRequest,
                 UpdateSecurityPolicyRequest, UpdateTradingPairRequest,
-                UpdateTradingPairStatusRequest, UploadConfigResponse, UploadImageResponse,
-                UpsertMarketSourceCredentialRequest, UpsertNewCoinConvertRuleRequest,
+                UpdateTradingPairStatusRequest, UpdateUserStatusRequest, UploadConfigResponse,
+                UploadImageResponse, UpsertMarketSourceCredentialRequest,
+                UpsertNewCoinConvertRuleRequest,
             },
             service::MAX_UPLOAD_BODY_SIZE_BYTES,
         },
@@ -207,6 +211,7 @@ pub fn routes() -> Router<AppState> {
         .route("/users", get(list_admin_users).post(create_admin_user))
         .route("/users/:id", get(get_admin_user))
         .route("/users/:id/recharge", post(recharge_admin_user_wallet))
+        .route("/users/:id/status", patch(update_admin_user_status))
         .route("/kyc/config", get(get_kyc_config).patch(save_kyc_config))
         .route("/kyc/submissions", get(list_kyc_submission_routes))
         .route("/kyc/submissions/:id", get(get_kyc_submission))
@@ -373,6 +378,7 @@ pub fn routes() -> Router<AppState> {
         .route("/agents", get(list_agents).post(create_agent))
         .route("/agents/:id", get(get_agent))
         .route("/agents/:id/status", patch(update_agent_status))
+        .route("/agents/:id/password/reset", post(reset_agent_password))
         .route("/agents/:id/users", get(list_agent_users))
         .route("/users/:id/agent", patch(assign_user_agent))
         .route(
@@ -434,6 +440,18 @@ async fn update_agent_status(
     let admin_id = admin_id_from_subject(&claims.sub)?;
     Ok(Json(
         update_agent_status_use_case(state.mysql.clone(), admin_id, agent_id, request).await?,
+    ))
+}
+
+async fn reset_agent_password(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(agent_id): Path<u64>,
+    Json(request): Json<ResetAgentPasswordRequest>,
+) -> AppResult<Json<AdminAgentPasswordResetResponse>> {
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    Ok(Json(
+        reset_agent_password_use_case(state, admin_id, agent_id, request).await?,
     ))
 }
 
@@ -837,6 +855,18 @@ async fn recharge_admin_user_wallet(
     Ok(Json(
         recharge_admin_user_wallet_use_case(state.mysql.clone(), admin_id, user_id, request)
             .await?,
+    ))
+}
+
+async fn update_admin_user_status(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(user_id): Path<u64>,
+    Json(request): Json<UpdateUserStatusRequest>,
+) -> AppResult<Json<AdminUserResponse>> {
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    Ok(Json(
+        update_admin_user_status_use_case(state, admin_id, user_id, request).await?,
     ))
 }
 

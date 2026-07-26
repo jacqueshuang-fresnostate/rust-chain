@@ -6,12 +6,15 @@
 use crate::{
     architecture::ServiceLayer,
     error::{AppError, AppResult},
-    modules::agent::{
-        presentation::{
-            AgentCommissionResponse, AgentCommissionsResponse, AgentConvertStatsResponse,
-            AgentDashboardAssetSummaryResponse, AgentDashboardResponse,
+    modules::{
+        agent::{
+            presentation::{
+                AgentCommissionResponse, AgentCommissionsResponse, AgentConvertStatsResponse,
+                AgentDashboardAssetSummaryResponse, AgentDashboardResponse,
+            },
+            repository::{AgentConvertStatsRecord, AgentDashboardCountsRecord, AgentListPage},
         },
-        repository::{AgentConvertStatsRecord, AgentDashboardCountsRecord, AgentListPage},
+        auth::domain::{required_string, validate_reset_password},
     },
 };
 use bigdecimal::BigDecimal;
@@ -59,6 +62,21 @@ pub(crate) fn agent_admin_id_from_subject(subject: &str) -> AppResult<u64> {
         .strip_prefix("agent:")
         .and_then(|value| value.parse::<u64>().ok())
         .ok_or(AppError::Unauthorized)
+}
+
+/// 代理自助改密沿用平台统一的 6-20 位口令策略，并强制新旧密码不同。
+pub(crate) fn validate_agent_password_change(
+    current_password: Option<String>,
+    new_password: Option<String>,
+) -> AppResult<(String, String)> {
+    let current_password = required_string(current_password, "current_password")?;
+    let new_password = validate_reset_password(&required_string(new_password, "new_password")?)?;
+    if current_password == new_password {
+        return Err(AppError::Validation(
+            "new_password must be different from current_password".to_owned(),
+        ));
+    }
+    Ok((current_password, new_password))
 }
 
 pub(crate) fn validate_agent_invite_code_usage_limit(limit: Option<i32>) -> AppResult<()> {

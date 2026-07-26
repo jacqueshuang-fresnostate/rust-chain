@@ -14,12 +14,14 @@ use super::{
         update_product_status as update_product_status_use_case,
     },
     presentation::{
-        AdminOrdersQuery, CreateSecondsContractProductRequest, DeleteSecondsContractProductRequest,
-        ListQuery, OpenSecondsContractOrderRequest, OpenSecondsContractOrderResponse,
-        SecondsContractOrderResponse, SecondsContractOrdersResponse,
-        SecondsContractProductResponse, SecondsContractProductsResponse,
-        SettleSecondsContractOrderRequest, SettleSecondsContractOrderResponse,
-        UpdateSecondsContractProductRequest, UpdateSecondsContractProductStatusRequest,
+        AdminOrdersQuery, AdminProductsQuery, AdminSecondsContractOrdersResponse,
+        AdminSecondsContractProductsResponse, CreateSecondsContractProductRequest,
+        DeleteSecondsContractProductRequest, ListQuery, OpenSecondsContractOrderRequest,
+        OpenSecondsContractOrderResponse, SecondsContractOrderResponse,
+        SecondsContractOrdersResponse, SecondsContractProductResponse,
+        SecondsContractProductsResponse, SettleSecondsContractOrderRequest,
+        SettleSecondsContractOrderResponse, UpdateSecondsContractProductRequest,
+        UpdateSecondsContractProductStatusRequest,
     },
     service::{admin_id_from_subject, route_limit, user_id_from_subject},
 };
@@ -79,12 +81,10 @@ async fn list_active_products(
 async fn list_admin_products(
     AdminAuth(_claims): AdminAuth,
     State(state): State<AppState>,
-    Query(query): Query<ListQuery>,
-) -> AppResult<Json<SecondsContractProductsResponse>> {
+    Query(query): Query<AdminProductsQuery>,
+) -> AppResult<Json<AdminSecondsContractProductsResponse>> {
     let pool = mysql_pool(&state)?;
-    Ok(Json(
-        list_admin_products_use_case(&pool, route_limit(query.limit)).await?,
-    ))
+    Ok(Json(list_admin_products_use_case(&pool, query).await?))
 }
 
 async fn get_admin_product(
@@ -112,7 +112,7 @@ async fn list_admin_orders(
     AdminAuth(_claims): AdminAuth,
     State(state): State<AppState>,
     Query(query): Query<AdminOrdersQuery>,
-) -> AppResult<Json<SecondsContractOrdersResponse>> {
+) -> AppResult<Json<AdminSecondsContractOrdersResponse>> {
     let pool = mysql_pool(&state)?;
     Ok(Json(list_admin_orders_use_case(&pool, query).await?))
 }

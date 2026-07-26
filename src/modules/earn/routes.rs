@@ -9,7 +9,8 @@ use super::{
         update_earn_product_status,
     },
     presentation::{
-        AdminCategoriesQuery, AdminSubscriptionsQuery, CreateEarnCategoryRequest,
+        AdminCategoriesQuery, AdminEarnProductsResponse, AdminEarnSubscriptionsResponse,
+        AdminProductsQuery, AdminSubscriptionsQuery, CreateEarnCategoryRequest,
         CreateEarnProductRequest, EarnCategoriesResponse, EarnCategoryResponse,
         EarnProductResponse, EarnProductsResponse, EarnSubscriptionResponse,
         EarnSubscriptionsResponse, ListQuery, RedeemEarnResponse, SubscribeEarnRequest,
@@ -75,8 +76,8 @@ async fn list_active_products(
 async fn list_admin_products(
     AdminAuth(_claims): AdminAuth,
     State(state): State<AppState>,
-    Query(query): Query<ListQuery>,
-) -> AppResult<Json<EarnProductsResponse>> {
+    Query(query): Query<AdminProductsQuery>,
+) -> AppResult<Json<AdminEarnProductsResponse>> {
     Ok(Json(
         list_admin_earn_products(state.mysql.clone(), query).await?,
     ))
@@ -106,7 +107,7 @@ async fn list_admin_subscriptions(
     AdminAuth(_claims): AdminAuth,
     State(state): State<AppState>,
     Query(query): Query<AdminSubscriptionsQuery>,
-) -> AppResult<Json<EarnSubscriptionsResponse>> {
+) -> AppResult<Json<AdminEarnSubscriptionsResponse>> {
     Ok(Json(
         list_admin_earn_subscriptions(state.mysql.clone(), query).await?,
     ))

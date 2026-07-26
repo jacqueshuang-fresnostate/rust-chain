@@ -7,8 +7,8 @@ use crate::{
     error::{AppError, AppResult},
     modules::earn::{
         presentation::{
-            EarnCategoriesResponse, EarnCategoryResponse, EarnProductResponse,
-            EarnProductsResponse, EarnSubscriptionResponse, EarnSubscriptionsResponse,
+            EarnCategoryResponse, EarnProductResponse, EarnProductsResponse,
+            EarnSubscriptionResponse, EarnSubscriptionsResponse,
         },
         repository::{EarnCategoryWrite, EarnProductRuleRow, EarnProductWrite, EarnWalletRow},
     },
@@ -22,12 +22,74 @@ pub struct InfrastructureLayerMarker;
 
 impl InfrastructureLayer for InfrastructureLayerMarker {}
 
+/// 分页排序必须带唯一列 id，否则同一排序值的行会在页间重复或丢失。
+const EARN_PRODUCT_ORDER_BY: &str = " ORDER BY products.id DESC";
+
+/// 行查询与 COUNT 查询必须由同一组过滤谓词构建，返回总数才能与当前筛选一致。
+async fn fetch_admin_page<T>(
+    pool: &Pool<MySql>,
+    mut rows: QueryBuilder<'_, MySql>,
+    mut total: QueryBuilder<'_, MySql>,
+    order_by: &str,
+    limit: u32,
+    offset: u32,
+) -> AppResult<(Vec<T>, i64)>
+where
+    T: for<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> + Send + Unpin,
+{
+    rows.push(order_by);
+    rows.push(" LIMIT ");
+    rows.push_bind(limit as i64);
+    rows.push(" OFFSET ");
+    rows.push_bind(offset as i64);
+
+    let items = rows.build_query_as::<T>().fetch_all(pool).await?;
+    let total = total.build_query_scalar::<i64>().fetch_one(pool).await?;
+
+    Ok((items, total))
+}
+
 pub(crate) async fn list_products(
     pool: &Pool<MySql>,
     status: Option<&str>,
     limit: u32,
 ) -> AppResult<EarnProductsResponse> {
-    let mut builder = QueryBuilder::<MySql>::new(
+    let mut builder = earn_product_query();
+    push_earn_product_filters(&mut builder, status);
+    builder.push(EARN_PRODUCT_ORDER_BY);
+    builder.push(" LIMIT ");
+    builder.push_bind(limit as i64);
+
+    let products = builder
+        .build_query_as::<EarnProductResponse>()
+        .fetch_all(pool)
+        .await?;
+    Ok(EarnProductsResponse { products })
+}
+
+/// 后台理财产品列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
+pub(crate) async fn list_admin_products(
+    pool: &Pool<MySql>,
+    status: Option<&str>,
+    limit: u32,
+    offset: u32,
+) -> AppResult<(Vec<EarnProductResponse>, i64)> {
+    let mut rows = earn_product_query();
+    let mut total = QueryBuilder::<MySql>::new(
+        r#"SELECT COUNT(*)
+           FROM earn_products products
+           INNER JOIN assets ON assets.id = products.asset_id
+           LEFT JOIN earn_product_categories categories ON categories.code = products.category"#,
+    );
+    for builder in [&mut rows, &mut total] {
+        push_earn_product_filters(builder, status);
+    }
+
+    fetch_admin_page(pool, rows, total, EARN_PRODUCT_ORDER_BY, limit, offset).await
+}
+
+fn earn_product_query() -> QueryBuilder<'static, MySql> {
+    QueryBuilder::<MySql>::new(
         r#"SELECT products.id, products.asset_id, assets.symbol AS asset_symbol,
                   products.name, products.banner_url, products.small_logo_url,
                   products.category,
@@ -41,21 +103,15 @@ pub(crate) async fn list_products(
            FROM earn_products products
            INNER JOIN assets ON assets.id = products.asset_id
            LEFT JOIN earn_product_categories categories ON categories.code = products.category"#,
-    );
+    )
+}
 
+fn push_earn_product_filters(builder: &mut QueryBuilder<'_, MySql>, status: Option<&str>) {
+    builder.push(" WHERE 1 = 1");
     if let Some(status) = status {
-        builder.push(" WHERE products.status = ");
-        builder.push_bind(status);
+        builder.push(" AND products.status = ");
+        builder.push_bind(status.to_owned());
     }
-
-    builder.push(" ORDER BY products.id DESC LIMIT ");
-    builder.push_bind(limit as i64);
-
-    let products = builder
-        .build_query_as::<EarnProductResponse>()
-        .fetch_all(pool)
-        .await?;
-    Ok(EarnProductsResponse { products })
 }
 
 pub(crate) async fn list_user_subscriptions(
@@ -80,74 +136,84 @@ pub(crate) async fn list_user_subscriptions(
     Ok(EarnSubscriptionsResponse { subscriptions })
 }
 
+/// 后台申购列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
 pub(crate) async fn list_admin_subscriptions(
     pool: &Pool<MySql>,
     limit: u32,
+    offset: u32,
     user_id: Option<u64>,
     email: Option<String>,
     status: Option<String>,
-) -> AppResult<EarnSubscriptionsResponse> {
-    let mut builder = QueryBuilder::<MySql>::new(
+) -> AppResult<(Vec<EarnSubscriptionResponse>, i64)> {
+    let mut rows = QueryBuilder::<MySql>::new(
         r#"SELECT id, user_id, product_id, asset_id, amount, apr_rate,
                   redemption_fee_rate, maturity_profit_fee_rate, early_redeem_fee_basis,
                   early_redeem_fee_rate, term_days, status, idempotency_key,
                   subscribed_at, matures_at, redeemed_at
            FROM earn_subscriptions"#,
     );
-    let mut has_filter = false;
-    if let Some(user_id) = user_id {
-        builder.push(" WHERE user_id = ");
-        builder.push_bind(user_id);
-        has_filter = true;
+    let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM earn_subscriptions");
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(user_id) = user_id {
+            builder.push(" AND user_id = ");
+            builder.push_bind(user_id);
+        }
+        if let Some(email) = email.clone() {
+            builder.push(
+                " AND EXISTS (SELECT 1 FROM users WHERE users.id = user_id AND users.email = ",
+            );
+            builder.push_bind(email);
+            builder.push(")");
+        }
+        if let Some(status) = status.clone() {
+            builder.push(" AND status = ");
+            builder.push_bind(status);
+        }
     }
-    if let Some(email) = email {
-        builder.push(if has_filter { " AND " } else { " WHERE " });
-        builder.push("EXISTS (SELECT 1 FROM users WHERE users.id = user_id AND users.email = ");
-        builder.push_bind(email);
-        builder.push(")");
-        has_filter = true;
-    }
-    if let Some(status) = status {
-        builder.push(if has_filter {
-            " AND status = "
-        } else {
-            " WHERE status = "
-        });
-        builder.push_bind(status);
-    }
-    builder.push(" ORDER BY created_at DESC, id DESC LIMIT ");
-    builder.push_bind(limit as i64);
 
-    let subscriptions = builder
-        .build_query_as::<EarnSubscriptionResponse>()
-        .fetch_all(pool)
-        .await?;
-    Ok(EarnSubscriptionsResponse { subscriptions })
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY created_at DESC, id DESC",
+        limit,
+        offset,
+    )
+    .await
 }
 
+/// 后台分类列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
 pub(crate) async fn list_admin_categories(
     pool: &Pool<MySql>,
     limit: u32,
+    offset: u32,
     status: Option<String>,
-) -> AppResult<EarnCategoriesResponse> {
-    let mut builder = QueryBuilder::<MySql>::new(
+) -> AppResult<(Vec<EarnCategoryResponse>, i64)> {
+    let mut rows = QueryBuilder::<MySql>::new(
         r#"SELECT id, code, name_json,
                   COALESCE(JSON_UNQUOTE(JSON_EXTRACT(name_json, '$.items[0].title')), code) AS default_name,
                   sort_order, status
            FROM earn_product_categories"#,
     );
-    if let Some(status) = status {
-        builder.push(" WHERE status = ");
-        builder.push_bind(status);
+    let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM earn_product_categories");
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(status) = status.clone() {
+            builder.push(" AND status = ");
+            builder.push_bind(status);
+        }
     }
-    builder.push(" ORDER BY sort_order ASC, id ASC LIMIT ");
-    builder.push_bind(limit as i64);
 
-    let categories = builder
-        .build_query_as::<EarnCategoryResponse>()
-        .fetch_all(pool)
-        .await?;
-    Ok(EarnCategoriesResponse { categories })
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY sort_order ASC, id ASC",
+        limit,
+        offset,
+    )
+    .await
 }
 
 pub(crate) async fn insert_category_in_tx(

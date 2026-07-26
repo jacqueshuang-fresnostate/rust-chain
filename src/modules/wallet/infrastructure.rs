@@ -27,6 +27,33 @@ use chrono::{DateTime, Utc};
 use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
 use std::time::Duration;
 
+/// 分页排序必须带唯一列 id，否则同一时间戳的行会在页间重复或丢失。
+const WALLET_WITHDRAWAL_ORDER_BY: &str = " ORDER BY requests.id DESC";
+
+/// 行查询与 COUNT 查询必须由同一组过滤谓词构建，返回总数才能与当前筛选一致。
+async fn fetch_admin_page<T>(
+    pool: &Pool<MySql>,
+    mut rows: QueryBuilder<'_, MySql>,
+    mut total: QueryBuilder<'_, MySql>,
+    order_by: &str,
+    limit: u32,
+    offset: u32,
+) -> AppResult<(Vec<T>, i64)>
+where
+    T: for<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> + Send + Unpin,
+{
+    rows.push(order_by);
+    rows.push(" LIMIT ");
+    rows.push_bind(limit as i64);
+    rows.push(" OFFSET ");
+    rows.push_bind(offset as i64);
+
+    let items = rows.build_query_as::<T>().fetch_all(pool).await?;
+    let total = total.build_query_scalar::<i64>().fetch_one(pool).await?;
+
+    Ok((items, total))
+}
+
 #[derive(Debug, Clone)]
 pub struct HttpWalletChainGateway {
     client: reqwest::Client,
@@ -964,6 +991,48 @@ pub(crate) async fn list_wallet_withdrawals(
     limit: u32,
 ) -> AppResult<Vec<WalletWithdrawalResponse>> {
     let mut builder = QueryBuilder::<MySql>::new(wallet_withdrawal_select_sql());
+    push_wallet_withdrawal_filters(&mut builder, user_id, status);
+    builder.push(WALLET_WITHDRAWAL_ORDER_BY);
+    builder.push(" LIMIT ");
+    builder.push_bind(limit.clamp(1, 200) as i64);
+    builder
+        .build_query_as::<WalletWithdrawalResponse>()
+        .fetch_all(pool)
+        .await
+        .map_err(AppError::from)
+}
+
+/// 后台提现列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
+pub(crate) async fn list_admin_wallet_withdrawals_page(
+    pool: &Pool<MySql>,
+    user_id: Option<u64>,
+    status: Option<&str>,
+    limit: u32,
+    offset: u32,
+) -> AppResult<(Vec<WalletWithdrawalResponse>, i64)> {
+    let mut rows = QueryBuilder::<MySql>::new(wallet_withdrawal_select_sql());
+    let mut total =
+        QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM wallet_withdrawal_requests requests");
+    for builder in [&mut rows, &mut total] {
+        push_wallet_withdrawal_filters(builder, user_id, status);
+    }
+
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        WALLET_WITHDRAWAL_ORDER_BY,
+        limit.clamp(1, 200),
+        offset,
+    )
+    .await
+}
+
+fn push_wallet_withdrawal_filters(
+    builder: &mut QueryBuilder<'_, MySql>,
+    user_id: Option<u64>,
+    status: Option<&str>,
+) {
     builder.push(" WHERE 1 = 1");
     if let Some(user_id) = user_id {
         builder.push(" AND requests.user_id = ");
@@ -971,15 +1040,8 @@ pub(crate) async fn list_wallet_withdrawals(
     }
     if let Some(status) = status {
         builder.push(" AND requests.status = ");
-        builder.push_bind(status);
+        builder.push_bind(status.to_owned());
     }
-    builder.push(" ORDER BY requests.id DESC LIMIT ");
-    builder.push_bind(limit.clamp(1, 200) as i64);
-    builder
-        .build_query_as::<WalletWithdrawalResponse>()
-        .fetch_all(pool)
-        .await
-        .map_err(AppError::from)
 }
 
 pub(crate) async fn approve_withdrawal_in_tx(
@@ -1522,24 +1584,32 @@ pub(crate) async fn reverse_deposit_event(
     Ok(event)
 }
 
+/// 后台充值事件列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
 pub(crate) async fn list_deposit_events(
     pool: &Pool<MySql>,
     user_id: Option<u64>,
     limit: u32,
-) -> AppResult<Vec<WalletDepositEventResponse>> {
-    let mut builder = QueryBuilder::<MySql>::new(wallet_deposit_select_sql());
-    builder.push(" WHERE 1 = 1");
-    if let Some(user_id) = user_id {
-        builder.push(" AND events.user_id = ");
-        builder.push_bind(user_id);
+    offset: u32,
+) -> AppResult<(Vec<WalletDepositEventResponse>, i64)> {
+    let mut rows = QueryBuilder::<MySql>::new(wallet_deposit_select_sql());
+    let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM wallet_deposit_events events");
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(user_id) = user_id {
+            builder.push(" AND events.user_id = ");
+            builder.push_bind(user_id);
+        }
     }
-    builder.push(" ORDER BY events.id DESC LIMIT ");
-    builder.push_bind(limit.clamp(1, 200) as i64);
-    builder
-        .build_query_as::<WalletDepositEventResponse>()
-        .fetch_all(pool)
-        .await
-        .map_err(AppError::from)
+
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY events.id DESC",
+        limit.clamp(1, 200),
+        offset,
+    )
+    .await
 }
 
 pub(crate) async fn list_wallet_accounts(

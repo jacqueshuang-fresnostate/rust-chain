@@ -5,12 +5,12 @@
 use crate::{
     error::AppResult,
     modules::auth::{
-        ActiveCountryConfig, AuthActor, NewAdminActor, NewAgentActor, NewUserActor,
+        ActiveCountryConfig, ActorType, AuthActor, NewAdminActor, NewAgentActor, NewUserActor,
         RefreshTokenRecord, StoredActorCredential, StoredRefreshToken,
     },
 };
 use axum::async_trait;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, NaiveDateTime, Utc};
 
 #[async_trait]
 pub trait AuthRepository: Clone + Send + Sync + 'static {
@@ -44,4 +44,17 @@ pub trait AuthRepository: Clone + Send + Sync + 'static {
         token_hash: &str,
         now: NaiveDateTime,
     ) -> AppResult<Option<RefreshTokenRecord>>;
+    /// 返回仍在生效的锁定截止时间，已过期的锁定视为不存在。
+    async fn find_login_lockout(
+        &self,
+        actor_type: ActorType,
+        identifier: &str,
+    ) -> AppResult<Option<DateTime<Utc>>>;
+    /// 累加失败次数并在触发阈值时返回锁定截止时间。
+    async fn record_login_failure(
+        &self,
+        actor_type: ActorType,
+        identifier: &str,
+    ) -> AppResult<Option<DateTime<Utc>>>;
+    async fn clear_login_failures(&self, actor_type: ActorType, identifier: &str) -> AppResult<()>;
 }

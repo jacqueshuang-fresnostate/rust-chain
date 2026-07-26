@@ -19,6 +19,12 @@ pub(crate) struct AgentAccessScope {
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
+pub(crate) struct AgentAdminCredentialRecord {
+    pub(crate) password_hash: String,
+    pub(crate) status: String,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub(crate) struct AgentDashboardCountsRecord {
     pub(crate) team_user_count: i64,
     pub(crate) active_invite_code_count: i64,

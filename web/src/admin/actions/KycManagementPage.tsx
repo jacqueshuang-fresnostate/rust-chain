@@ -76,6 +76,7 @@ type KycSubmission = KycSubmissionSummary & {
 
 type KycSubmissionsResponse = {
   submissions: KycSubmissionSummary[];
+  total?: number;
 };
 
 type ConfigForm = {
@@ -275,6 +276,7 @@ export function KycManagementPage() {
   const [reviewing, setReviewing] = useState<KycStatus | null>(null);
   const [reviewLevel, setReviewLevel] = useState('1');
   const [submissions, setSubmissions] = useState<KycSubmissionSummary[]>([]);
+  const [submissionTotal, setSubmissionTotal] = useState(0);
   const handheldDocumentTypeRuleCount = countHandheldDocumentTypeRules(configForm.countryDocumentTypes);
 
   const configSummary = useMemo(
@@ -305,6 +307,7 @@ export function KycManagementPage() {
       setConfig(nextConfig);
       setConfigForm(configToForm(nextConfig));
       setSubmissions(submissionResponse.submissions);
+      setSubmissionTotal(submissionResponse.total ?? submissionResponse.submissions.length);
       setCountryOptions(adminCountrySelectOptions(countriesResponse.countries ?? []));
     } finally {
       setLoading(false);
@@ -608,6 +611,11 @@ export function KycManagementPage() {
         {activeTab === 'reviews' ? (
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
             <Title heading={4}>人工审核</Title>
+            <Text type="tertiary">
+              {submissionTotal > submissions.length
+                ? `共 ${submissionTotal} 条，当前展示最新 ${submissions.length} 条`
+                : `共 ${submissionTotal} 条`}
+            </Text>
             <div className="admin-action-form admin-action-form-narrow">
               <label>
                 审核状态

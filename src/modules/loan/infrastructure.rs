@@ -64,6 +64,7 @@ struct WalletRow {
 
 pub(crate) struct AdminLoanOrdersFilter {
     pub(crate) limit: u32,
+    pub(crate) offset: u32,
     pub(crate) user_id: Option<u64>,
     pub(crate) email: Option<String>,
     pub(crate) product_id: Option<u64>,
@@ -179,7 +180,39 @@ pub(crate) async fn list_loan_products(
     status: Option<&str>,
     limit: u32,
 ) -> AppResult<Vec<LoanProductResponse>> {
-    let mut builder = QueryBuilder::<MySql>::new(
+    let mut builder = loan_product_query_builder();
+    push_loan_product_filters(&mut builder, status);
+    builder.push(LOAN_PRODUCT_ORDER_BY);
+    builder.push(" LIMIT ");
+    builder.push_bind(limit as i64);
+    Ok(builder
+        .build_query_as::<LoanProductResponse>()
+        .fetch_all(pool)
+        .await?)
+}
+
+/// 后台产品列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
+pub(crate) async fn list_admin_loan_products(
+    pool: &Pool<MySql>,
+    status: Option<&str>,
+    limit: u32,
+    offset: u32,
+) -> AppResult<(Vec<LoanProductResponse>, i64)> {
+    let mut rows = loan_product_query_builder();
+    let mut total = QueryBuilder::<MySql>::new(
+        r#"SELECT COUNT(*)
+           FROM loan_products products
+           INNER JOIN assets ON assets.id = products.asset_id"#,
+    );
+    for builder in [&mut rows, &mut total] {
+        push_loan_product_filters(builder, status);
+    }
+
+    fetch_admin_page(pool, rows, total, LOAN_PRODUCT_ORDER_BY, limit, offset).await
+}
+
+fn loan_product_query_builder() -> QueryBuilder<'static, MySql> {
+    QueryBuilder::<MySql>::new(
         r#"SELECT products.id, products.loan_type, products.asset_id, assets.symbol AS asset_symbol,
                   products.name, products.name_json, products.term_days, products.interest_rate,
                   products.interest_calculation_mode, products.min_kyc_level,
@@ -187,17 +220,15 @@ pub(crate) async fn list_loan_products(
                   products.created_at, products.updated_at
            FROM loan_products products
            INNER JOIN assets ON assets.id = products.asset_id"#,
-    );
+    )
+}
+
+fn push_loan_product_filters(builder: &mut QueryBuilder<'_, MySql>, status: Option<&str>) {
+    builder.push(" WHERE 1 = 1");
     if let Some(status) = status {
-        builder.push(" WHERE products.status = ");
-        builder.push_bind(status);
+        builder.push(" AND products.status = ");
+        builder.push_bind(status.to_owned());
     }
-    builder.push(" ORDER BY products.id DESC LIMIT ");
-    builder.push_bind(limit as i64);
-    Ok(builder
-        .build_query_as::<LoanProductResponse>()
-        .fetch_all(pool)
-        .await?)
 }
 
 pub(crate) async fn load_loan_product_response(
@@ -243,39 +274,49 @@ pub(crate) async fn list_user_loan_orders(
         .await?)
 }
 
+/// 后台订单列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
 pub(crate) async fn list_admin_loan_orders(
     pool: &Pool<MySql>,
     filter: AdminLoanOrdersFilter,
-) -> AppResult<Vec<LoanOrderResponse>> {
-    let mut builder = loan_order_query_builder();
-    builder.push(" WHERE 1 = 1");
-    if let Some(user_id) = filter.user_id {
-        builder.push(" AND orders.user_id = ");
-        builder.push_bind(user_id);
+) -> AppResult<(Vec<LoanOrderResponse>, i64)> {
+    let email = optional_string(filter.email);
+    let loan_type = optional_string(filter.loan_type);
+    let status = optional_string(filter.status);
+    let mut rows = loan_order_query_builder();
+    let mut total = loan_order_count_query_builder();
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(user_id) = filter.user_id {
+            builder.push(" AND orders.user_id = ");
+            builder.push_bind(user_id);
+        }
+        if let Some(email) = email.clone() {
+            builder.push(" AND users.email LIKE ");
+            builder.push_bind(format!("%{email}%"));
+        }
+        if let Some(product_id) = filter.product_id {
+            builder.push(" AND orders.product_id = ");
+            builder.push_bind(product_id);
+        }
+        if let Some(loan_type) = loan_type.clone() {
+            builder.push(" AND orders.loan_type = ");
+            builder.push_bind(loan_type);
+        }
+        if let Some(status) = status.clone() {
+            builder.push(" AND orders.status = ");
+            builder.push_bind(status);
+        }
     }
-    if let Some(email) = optional_string(filter.email) {
-        builder.push(" AND users.email LIKE ");
-        builder.push_bind(format!("%{email}%"));
-    }
-    if let Some(product_id) = filter.product_id {
-        builder.push(" AND orders.product_id = ");
-        builder.push_bind(product_id);
-    }
-    if let Some(loan_type) = optional_string(filter.loan_type) {
-        builder.push(" AND orders.loan_type = ");
-        builder.push_bind(loan_type);
-    }
-    if let Some(status) = optional_string(filter.status) {
-        builder.push(" AND orders.status = ");
-        builder.push_bind(status);
-    }
-    builder.push(" ORDER BY orders.id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
 
-    Ok(builder
-        .build_query_as::<LoanOrderResponse>()
-        .fetch_all(pool)
-        .await?)
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY orders.id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
 }
 
 pub(crate) async fn load_loan_order_response(
@@ -847,6 +888,44 @@ fn loan_order_query_builder() -> QueryBuilder<'static, MySql> {
            INNER JOIN assets ON assets.id = orders.asset_id
            LEFT JOIN assets collateral_assets ON collateral_assets.id = orders.collateral_asset_id"#,
     )
+}
+
+fn loan_order_count_query_builder() -> QueryBuilder<'static, MySql> {
+    QueryBuilder::<MySql>::new(
+        r#"SELECT COUNT(*)
+           FROM loan_orders orders
+           INNER JOIN users ON users.id = orders.user_id
+           INNER JOIN loan_products products ON products.id = orders.product_id
+           INNER JOIN assets ON assets.id = orders.asset_id
+           LEFT JOIN assets collateral_assets ON collateral_assets.id = orders.collateral_asset_id"#,
+    )
+}
+
+/// 分页排序必须带唯一列 id，否则同一排序值的行会在页间重复或丢失。
+const LOAN_PRODUCT_ORDER_BY: &str = " ORDER BY products.id DESC";
+
+/// 行查询与 COUNT 查询必须由同一组过滤谓词构建，返回总数才能与当前筛选一致。
+async fn fetch_admin_page<T>(
+    pool: &Pool<MySql>,
+    mut rows: QueryBuilder<'_, MySql>,
+    mut total: QueryBuilder<'_, MySql>,
+    order_by: &str,
+    limit: u32,
+    offset: u32,
+) -> AppResult<(Vec<T>, i64)>
+where
+    T: for<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> + Send + Unpin,
+{
+    rows.push(order_by);
+    rows.push(" LIMIT ");
+    rows.push_bind(limit as i64);
+    rows.push(" OFFSET ");
+    rows.push_bind(offset as i64);
+
+    let items = rows.build_query_as::<T>().fetch_all(pool).await?;
+    let total = total.build_query_scalar::<i64>().fetch_one(pool).await?;
+
+    Ok((items, total))
 }
 
 fn optional_string(value: Option<String>) -> Option<String> {

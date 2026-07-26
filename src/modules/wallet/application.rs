@@ -12,11 +12,12 @@ use crate::{
             amount_fits_asset_precision, infrastructure,
             infrastructure::WalletLedgerFilter,
             presentation::{
-                BroadcastWithdrawalRequest, ConfirmWithdrawalRequest, CreateWithdrawalRequest,
-                DepositAddressRequest, DepositAddressResponse, DepositAssetResponse,
-                DepositNetworkResponse, DepositNetworksQuery, FailWithdrawalRequest,
-                ObserveDepositRequest, ReverseDepositRequest, ReviewWithdrawalRequest,
-                WalletAccountResponse, WalletDepositEventResponse, WalletLedgerQuery,
+                AdminWalletListQuery, AdminWalletWithdrawalsResponse, BroadcastWithdrawalRequest,
+                ConfirmWithdrawalRequest, CreateWithdrawalRequest, DepositAddressRequest,
+                DepositAddressResponse, DepositAssetResponse, DepositNetworkResponse,
+                DepositNetworksQuery, FailWithdrawalRequest, ObserveDepositRequest,
+                ReverseDepositRequest, ReviewWithdrawalRequest, WalletAccountResponse,
+                WalletDepositEventResponse, WalletDepositsResponse, WalletLedgerQuery,
                 WalletLedgerResponse, WalletWithdrawalQuery, WalletWithdrawalResponse,
                 WithdrawalRequestResponse,
             },
@@ -301,16 +302,18 @@ pub(crate) async fn list_user_withdrawals(
 
 pub(crate) async fn list_admin_withdrawals(
     pool: &Pool<MySql>,
-    query: WalletWithdrawalQuery,
-) -> AppResult<Vec<WalletWithdrawalResponse>> {
+    query: AdminWalletListQuery,
+) -> AppResult<AdminWalletWithdrawalsResponse> {
     let status = normalize_withdrawal_status(query.status)?;
-    infrastructure::list_wallet_withdrawals(
+    let (withdrawals, total) = infrastructure::list_admin_wallet_withdrawals_page(
         pool,
         query.user_id,
         status.as_deref(),
         route_limit(query.limit).min(200),
+        route_offset(query.offset),
     )
-    .await
+    .await?;
+    Ok(AdminWalletWithdrawalsResponse { withdrawals, total })
 }
 
 pub(crate) async fn approve_withdrawal(
@@ -431,10 +434,16 @@ pub(crate) async fn reverse_deposit(
 
 pub(crate) async fn list_admin_deposits(
     pool: &Pool<MySql>,
-    query: WalletWithdrawalQuery,
-) -> AppResult<Vec<WalletDepositEventResponse>> {
-    infrastructure::list_deposit_events(pool, query.user_id, route_limit(query.limit).min(200))
-        .await
+    query: AdminWalletListQuery,
+) -> AppResult<WalletDepositsResponse> {
+    let (deposits, total) = infrastructure::list_deposit_events(
+        pool,
+        query.user_id,
+        route_limit(query.limit).min(200),
+        route_offset(query.offset),
+    )
+    .await?;
+    Ok(WalletDepositsResponse { deposits, total })
 }
 
 /// 统一从应用状态中获取数据库连接池。

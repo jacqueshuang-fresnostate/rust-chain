@@ -1561,3 +1561,131 @@ async fn wallet_withdrawal_risk_rule_rejects_over_limit_amount_without_reserving
     cleanup_wallet_route_fixture(&pool, user_id, asset_id).await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn admin_wallet_withdrawals_offset_paging_returns_disjoint_pages_and_filtered_total()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin(&pool).await;
+    let user_id = create_user(&pool).await;
+    let (asset_id, _logo_url) = create_asset(&pool).await;
+    let asset_symbol = sqlx::query_scalar::<_, String>("SELECT symbol FROM assets WHERE id = ?")
+        .bind(asset_id)
+        .fetch_one(&pool)
+        .await?;
+
+    let mut pending_ids = Vec::new();
+    for (index, status) in [
+        "pending_review",
+        "pending_review",
+        "pending_review",
+        "rejected",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let id = sqlx::query(
+            r#"INSERT INTO wallet_withdrawal_requests
+               (user_id, asset_id, asset_symbol, network, address, amount, fee, total_reserved,
+                status, security_method, idempotency_key, gateway_request_id)
+               VALUES (?, ?, ?, 'ETH', '0xpaging', ?, 0, ?, ?, 'fund_password', ?, UUID())"#,
+        )
+        .bind(user_id)
+        .bind(asset_id)
+        .bind(&asset_symbol)
+        .bind(decimal("1.000000000000000000"))
+        .bind(decimal("1.000000000000000000"))
+        .bind(status)
+        .bind(format!("wallet-page-{index}-{}", Uuid::now_v7().simple()))
+        .execute(&pool)
+        .await?
+        .last_insert_id();
+        if status == "pending_review" {
+            pending_ids.push(id);
+        }
+    }
+
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+
+    let mut page_ids = Vec::new();
+    for offset in [0, 2] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/wallet/withdrawals?user_id={user_id}&status=pending_review&limit=2&offset={offset}"
+                    ))
+                    .header("authorization", format!("Bearer {admin_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await?;
+        let status_code = response.status();
+        let payload = body_json(response).await?;
+        assert_eq!(status_code, StatusCode::OK, "payload: {payload}");
+        // 总数必须反映筛选条件本身，而不是当前页行数。
+        assert_eq!(payload["total"], 3, "payload: {payload}");
+        page_ids.extend(
+            payload["withdrawals"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| entry["id"].as_u64().unwrap()),
+        );
+    }
+    assert_eq!(page_ids.len(), 3);
+    let mut unique_ids = page_ids.clone();
+    unique_ids.sort_unstable();
+    unique_ids.dedup();
+    assert_eq!(unique_ids.len(), 3, "pages must not overlap: {page_ids:?}");
+    pending_ids.sort_unstable();
+    assert_eq!(unique_ids, pending_ids);
+
+    let all_statuses = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/wallet/withdrawals?user_id={user_id}&limit=1"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let all_statuses_code = all_statuses.status();
+    let all_statuses_payload = body_json(all_statuses).await?;
+    assert_eq!(
+        all_statuses_code,
+        StatusCode::OK,
+        "payload: {all_statuses_payload}"
+    );
+    assert_eq!(
+        all_statuses_payload["withdrawals"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(all_statuses_payload["total"], 4);
+
+    cleanup_wallet_route_fixture(&pool, user_id, asset_id).await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}

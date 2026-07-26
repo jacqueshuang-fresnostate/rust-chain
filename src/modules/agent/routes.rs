@@ -1,13 +1,15 @@
 use super::{
     application::{
-        create_agent_invite_code, get_agent_convert_stats, get_agent_dashboard, get_agent_me,
-        list_agent_commissions, list_agent_invite_codes, list_agent_sub_agents,
-        list_agent_team_tree, list_agent_users, update_agent_invite_code_status,
+        change_agent_password, create_agent_invite_code, get_agent_convert_stats,
+        get_agent_dashboard, get_agent_me, list_agent_commissions, list_agent_invite_codes,
+        list_agent_sub_agents, list_agent_team_tree, list_agent_users,
+        update_agent_invite_code_status,
     },
     presentation::{
         AgentCommissionsResponse, AgentConvertStatsResponse, AgentDashboardResponse,
         AgentInviteCodeResponse, AgentInviteCodesResponse, AgentListQuery, AgentMeResponse,
-        AgentSubAgentsResponse, AgentTeamTreeResponse, AgentUsersResponse, CreateInviteCodeRequest,
+        AgentPasswordChangeResponse, AgentSubAgentsResponse, AgentTeamTreeResponse,
+        AgentUsersResponse, ChangeAgentPasswordRequest, CreateInviteCodeRequest,
         UpdateInviteCodeStatusRequest,
     },
 };
@@ -15,7 +17,7 @@ use crate::{error::AppResult, modules::auth::AgentAuth, state::AppState};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    routing::{get, patch},
+    routing::{get, patch, post},
 };
 
 pub fn routes() -> Router<AppState> {
@@ -32,6 +34,17 @@ pub fn routes() -> Router<AppState> {
         .route("/convert/stats", get(convert_stats))
         .route("/sub-agents", get(sub_agents))
         .route("/team-tree", get(team_tree))
+        .route("/password/change", post(change_password))
+}
+
+async fn change_password(
+    AgentAuth(claims): AgentAuth,
+    State(state): State<AppState>,
+    Json(request): Json<ChangeAgentPasswordRequest>,
+) -> AppResult<Json<AgentPasswordChangeResponse>> {
+    Ok(Json(
+        change_agent_password(state, &claims.sub, request).await?,
+    ))
 }
 
 async fn me(

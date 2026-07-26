@@ -1,4 +1,5 @@
 use super::*;
+use crate::modules::auth::domain::login_failure_key;
 
 pub(crate) async fn list_admin_agents(
     pool: Option<Pool<MySql>>,
@@ -133,6 +134,61 @@ pub(crate) async fn update_admin_agent_status(
     .await?;
     tx.commit().await?;
     Ok(after)
+}
+
+pub(crate) async fn reset_admin_agent_password(
+    state: AppState,
+    admin_id: u64,
+    agent_id: u64,
+    request: ResetAgentPasswordRequest,
+) -> AppResult<AdminAgentPasswordResetResponse> {
+    let reason = required_admin_audit_reason(request.reason)?;
+    let password_hash = agent_admin_password_hash(request.password)?;
+    let pool = admin_mysql_pool(state.mysql.clone())?;
+
+    // 改密、吊销刷新令牌和审计同事务提交，避免泄露的旧口令或旧令牌在重置后仍可用。
+    let mut tx = pool.begin().await?;
+    let agent = lock_admin_agent_in_tx(&mut tx, agent_id).await?;
+    let (Some(admin_user_id), Some(admin_username)) =
+        (agent.admin_user_id, agent.admin_username.clone())
+    else {
+        return Err(AppError::Conflict(
+            "agent has no portal account to reset".to_owned(),
+        ));
+    };
+    update_agent_admin_password_in_tx_from_agent(&mut tx, admin_user_id, &password_hash).await?;
+    revoke_agent_admin_refresh_tokens_in_tx_from_agent(&mut tx, admin_user_id).await?;
+    // 一并清除登录失败计数：口令泄露后重置若仍受锁定窗口约束，代理最长要等 15 分钟才能恢复访问。
+    sqlx::query("DELETE FROM login_failure_counters WHERE actor_type = 'agent' AND identifier = ?")
+        .bind(login_failure_key(&admin_username))
+        .execute(&mut *tx)
+        .await?;
+    insert_admin_audit_log_entry_in_tx(
+        &mut tx,
+        admin_id,
+        AdminAuditLogEntry {
+            action: "agent_admin_user.password.reset",
+            target_type: "agent_admin_user",
+            target_id: admin_user_id,
+            before_json: None,
+            after_json: Some(agent_password_reset_audit_json(&agent)),
+            reason: Some(reason),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+
+    revoke_actor_auth_sessions(
+        &state,
+        &AuthActor::new(ActorType::Agent, admin_user_id, None),
+    )
+    .await?;
+    Ok(AdminAgentPasswordResetResponse {
+        agent_id,
+        admin_user_id,
+        admin_username,
+        requires_relogin: true,
+    })
 }
 
 pub(crate) async fn list_admin_agent_users(

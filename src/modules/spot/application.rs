@@ -22,9 +22,10 @@ use crate::{
                 ensure_wallet_account_in_tx, freeze_wallet_for_inserted_order_in_tx,
                 insert_spot_liquidity_buy_order_in_tx, insert_spot_liquidity_sell_order_in_tx,
                 insert_spot_order_in_tx, insert_spot_trade, is_duplicate_key_error,
-                latest_spot_market_price, list_spot_orders, list_spot_trades,
-                list_user_cancellable_spot_order_ids, load_existing_spot_trade_by_idempotency_key,
-                load_spot_order_by_id, load_spot_order_by_idempotency_key, load_spot_pair_db_id,
+                latest_spot_market_price, list_admin_spot_orders_page, list_admin_spot_trades_page,
+                list_spot_orders, list_spot_trades, list_user_cancellable_spot_order_ids,
+                load_existing_spot_trade_by_idempotency_key, load_spot_order_by_id,
+                load_spot_order_by_idempotency_key, load_spot_pair_db_id,
                 lock_spot_fill_orders_in_order, lock_spot_fill_wallet_rows_in_order,
                 lock_spot_order_by_db_id, pair_assets_in_tx,
                 release_buy_order_surplus_reservation_after_fill,
@@ -34,11 +35,12 @@ use crate::{
                 triggered_stop_limit_sell_order_ids,
             },
             presentation::{
-                AdminCancelSpotOrderRequest, AdminSpotOrdersQuery, AdminSpotTradesQuery,
-                CancelAllSpotOrdersQuery, CreateSpotOrderRequest, FillSpotOrdersRequest,
-                SpotBatchActionFailure, SpotCancelAllResponse, SpotCancelResponse,
-                SpotFillResponse, SpotOrderResponse, SpotOrdersQuery, SpotOrdersResponse,
-                SpotTradeResponse, SpotTradesQuery, SpotTradesResponse,
+                AdminCancelSpotOrderRequest, AdminSpotOrdersQuery, AdminSpotOrdersResponse,
+                AdminSpotTradesQuery, AdminSpotTradesResponse, CancelAllSpotOrdersQuery,
+                CreateSpotOrderRequest, FillSpotOrdersRequest, SpotBatchActionFailure,
+                SpotCancelAllResponse, SpotCancelResponse, SpotFillResponse, SpotOrderResponse,
+                SpotOrdersQuery, SpotOrdersResponse, SpotTradeResponse, SpotTradesQuery,
+                SpotTradesResponse,
             },
             repository::{
                 SpotAdminCancelCommand, SpotOrderCancelRepository, SpotUserCancelCommand,
@@ -87,6 +89,7 @@ pub(crate) async fn list_user_spot_orders(
             email: None,
             include_internal: true,
             limit: route_limit(query.limit),
+            offset: 0,
         },
     )
     .await?;
@@ -96,8 +99,8 @@ pub(crate) async fn list_user_spot_orders(
 pub(crate) async fn list_admin_spot_orders(
     pool: &Pool<MySql>,
     query: AdminSpotOrdersQuery,
-) -> AppResult<SpotOrdersResponse> {
-    let orders = list_spot_orders(
+) -> AppResult<AdminSpotOrdersResponse> {
+    let (orders, total) = list_admin_spot_orders_page(
         pool,
         SpotOrderListFilter {
             user_id: query.user_id,
@@ -106,10 +109,11 @@ pub(crate) async fn list_admin_spot_orders(
             email: optional_query_string(query.email),
             include_internal: query.include_internal == Some(true),
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(SpotOrdersResponse { orders })
+    Ok(AdminSpotOrdersResponse { orders, total })
 }
 
 pub(crate) async fn list_user_spot_trades(
@@ -125,6 +129,7 @@ pub(crate) async fn list_user_spot_trades(
             email: None,
             include_internal: true,
             limit: route_limit(query.limit),
+            offset: 0,
         },
     )
     .await?;
@@ -501,8 +506,8 @@ async fn resolve_market_execution_price(
 pub(crate) async fn list_admin_spot_trades(
     pool: &Pool<MySql>,
     query: AdminSpotTradesQuery,
-) -> AppResult<SpotTradesResponse> {
-    let trades = list_spot_trades(
+) -> AppResult<AdminSpotTradesResponse> {
+    let (trades, total) = list_admin_spot_trades_page(
         pool,
         SpotTradeListFilter {
             pair_id: optional_query_string(query.pair_id),
@@ -510,10 +515,11 @@ pub(crate) async fn list_admin_spot_trades(
             email: optional_query_string(query.email),
             include_internal: query.include_internal == Some(true),
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(SpotTradesResponse { trades })
+    Ok(AdminSpotTradesResponse { trades, total })
 }
 
 /// 执行触发订单撮合，返回所有成交明细用于上层事件发布。
@@ -1466,6 +1472,11 @@ fn ensure_limit_sell_price_reached(
 
 pub(crate) fn route_limit(limit: Option<u32>) -> u32 {
     limit.unwrap_or(50).clamp(1, 100)
+}
+
+/// 偏移同样设上限：超大 offset 会让日志类大表退化为全表扫描加文件排序。
+fn route_offset(offset: Option<u32>) -> u32 {
+    offset.unwrap_or(0).min(100_000)
 }
 
 fn optional_query_string(value: Option<String>) -> Option<String> {

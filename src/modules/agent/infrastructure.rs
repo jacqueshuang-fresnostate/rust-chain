@@ -13,9 +13,9 @@ use crate::{
             AgentTeamUserResponse,
         },
         repository::{
-            AgentAccessScope, AgentBusinessCommissionWrite, AgentCommissionRuleRecord,
-            AgentConvertStatsRecord, AgentDashboardCountsRecord, AgentInviteCodeWrite,
-            AgentListPage,
+            AgentAccessScope, AgentAdminCredentialRecord, AgentBusinessCommissionWrite,
+            AgentCommissionRuleRecord, AgentConvertStatsRecord, AgentDashboardCountsRecord,
+            AgentInviteCodeWrite, AgentListPage,
         },
     },
 };
@@ -141,6 +141,48 @@ pub(crate) async fn load_agent_me(
     .await?;
 
     Ok(agent)
+}
+
+pub(crate) async fn lock_agent_admin_credential_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    agent_admin_id: u64,
+) -> AppResult<Option<AgentAdminCredentialRecord>> {
+    let credential = sqlx::query_as::<_, AgentAdminCredentialRecord>(
+        "SELECT password_hash, status FROM agent_admin_users WHERE id = ? LIMIT 1 FOR UPDATE",
+    )
+    .bind(agent_admin_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+
+    Ok(credential)
+}
+
+pub(crate) async fn update_agent_admin_password_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    agent_admin_id: u64,
+    password_hash: &str,
+) -> AppResult<()> {
+    sqlx::query("UPDATE agent_admin_users SET password_hash = ? WHERE id = ?")
+        .bind(password_hash)
+        .bind(agent_admin_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+pub(crate) async fn revoke_agent_admin_refresh_tokens_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    agent_admin_id: u64,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"UPDATE refresh_tokens
+           SET revoked_at = CURRENT_TIMESTAMP(6)
+           WHERE actor_type = 'agent' AND actor_id = ? AND revoked_at IS NULL"#,
+    )
+    .bind(agent_admin_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 pub(crate) async fn load_agent_access_scope_for_admin(

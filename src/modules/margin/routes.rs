@@ -32,6 +32,7 @@ use crate::{
             presentation::{
                 AdminInterestSummaryQuery, AdminInterestSummaryResponse, AdminListPositionsQuery,
                 AdminMarginPositionResponse, AdminMarginPositionsResponse,
+                AdminMarginProductsQuery, AdminMarginProductsResponse,
                 CancelAllMarginPositionsResponse, CancelMarginPositionResponse,
                 CloseAllMarginPositionsResponse, CloseMarginPositionResponse,
                 CreateMarginProductRequest, ListPositionsQuery, ListQuery,
@@ -104,10 +105,10 @@ async fn list_active_products(
 async fn list_admin_products(
     AdminAuth(_claims): AdminAuth,
     State(state): State<AppState>,
-    Query(query): Query<ListQuery>,
-) -> AppResult<Json<MarginProductsResponse>> {
+    Query(query): Query<AdminMarginProductsQuery>,
+) -> AppResult<Json<AdminMarginProductsResponse>> {
     Ok(Json(
-        list_admin_margin_products_use_case(&mysql_pool(&state)?, route_limit(query.limit)).await?,
+        list_admin_margin_products_use_case(&mysql_pool(&state)?, query).await?,
     ))
 }
 
@@ -238,15 +239,7 @@ async fn list_admin_positions(
 ) -> AppResult<Json<AdminMarginPositionsResponse>> {
     let pool = mysql_pool(&state)?;
     Ok(Json(
-        list_admin_margin_position_history_use_case(
-            &pool,
-            query.user_id,
-            query.email,
-            query.pair_id,
-            query.status,
-            route_limit(query.limit),
-        )
-        .await?,
+        list_admin_margin_position_history_use_case(&pool, query).await?,
     ))
 }
 
@@ -267,15 +260,7 @@ async fn list_admin_interest_summary(
 ) -> AppResult<Json<AdminInterestSummaryResponse>> {
     let pool = mysql_pool(&state)?;
     Ok(Json(
-        list_admin_margin_interest_summary_use_case(
-            &pool,
-            query.user_id,
-            query.email,
-            query.pair_id,
-            query.status,
-            route_limit(query.limit),
-        )
-        .await?,
+        list_admin_margin_interest_summary_use_case(&pool, query).await?,
     ))
 }
 

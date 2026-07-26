@@ -34,6 +34,33 @@ use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
 use std::str::FromStr;
 
 const SYSTEM_SPOT_LIQUIDITY_EMAIL: &str = "__system_spot_liquidity@internal.local";
+/// 分页排序必须带唯一列 id，否则同一 created_at 的行会在页间重复或丢失。
+const SPOT_ORDER_ORDER_BY: &str = " ORDER BY orders.created_at DESC, orders.id DESC";
+const SPOT_TRADE_ORDER_BY: &str = " ORDER BY trades.created_at DESC, trades.id DESC";
+
+/// 行查询与 COUNT 查询必须由同一组过滤谓词构建，返回总数才能与当前筛选一致。
+async fn fetch_admin_page<T>(
+    pool: &Pool<MySql>,
+    mut rows: QueryBuilder<'_, MySql>,
+    mut total: QueryBuilder<'_, MySql>,
+    order_by: &str,
+    limit: u32,
+    offset: u32,
+) -> AppResult<(Vec<T>, i64)>
+where
+    T: for<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> + Send + Unpin,
+{
+    rows.push(order_by);
+    rows.push(" LIMIT ");
+    rows.push_bind(limit as i64);
+    rows.push(" OFFSET ");
+    rows.push_bind(offset as i64);
+
+    let items = rows.build_query_as::<T>().fetch_all(pool).await?;
+    let total = total.build_query_scalar::<i64>().fetch_one(pool).await?;
+
+    Ok((items, total))
+}
 
 pub(crate) struct SpotOrderListFilter {
     pub(crate) user_id: Option<u64>,
@@ -42,6 +69,7 @@ pub(crate) struct SpotOrderListFilter {
     pub(crate) email: Option<String>,
     pub(crate) include_internal: bool,
     pub(crate) limit: u32,
+    pub(crate) offset: u32,
 }
 
 pub(crate) struct SpotTradeListFilter {
@@ -50,6 +78,7 @@ pub(crate) struct SpotTradeListFilter {
     pub(crate) email: Option<String>,
     pub(crate) include_internal: bool,
     pub(crate) limit: u32,
+    pub(crate) offset: u32,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -448,20 +477,9 @@ pub(crate) async fn list_spot_orders(
     filter: SpotOrderListFilter,
 ) -> AppResult<Vec<SpotOrderResponse>> {
     let mut builder = base_spot_orders_query(filter.include_internal);
-    let has_filter = push_spot_order_filters(
-        &mut builder,
-        filter.user_id,
-        filter.pair_id,
-        filter.status,
-        filter.email,
-        false,
-    );
-    if !filter.include_internal {
-        builder.push(if has_filter { " AND " } else { " WHERE " });
-        builder.push("users.email <> ");
-        builder.push_bind(SYSTEM_SPOT_LIQUIDITY_EMAIL);
-    }
-    builder.push(" ORDER BY orders.created_at DESC, orders.id DESC LIMIT ");
+    push_spot_order_list_filters(&mut builder, &filter);
+    builder.push(SPOT_ORDER_ORDER_BY);
+    builder.push(" LIMIT ");
     builder.push_bind(i64::from(filter.limit));
 
     let rows = builder
@@ -469,6 +487,32 @@ pub(crate) async fn list_spot_orders(
         .fetch_all(pool)
         .await?;
     Ok(rows.into_iter().map(SpotOrderResponse::from).collect())
+}
+
+/// 后台订单列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
+pub(crate) async fn list_admin_spot_orders_page(
+    pool: &Pool<MySql>,
+    filter: SpotOrderListFilter,
+) -> AppResult<(Vec<SpotOrderResponse>, i64)> {
+    let mut rows = base_spot_orders_query(filter.include_internal);
+    let mut total = base_spot_orders_count_query();
+    for builder in [&mut rows, &mut total] {
+        push_spot_order_list_filters(builder, &filter);
+    }
+
+    let (rows, total) = fetch_admin_page::<SpotOrderQueryRow>(
+        pool,
+        rows,
+        total,
+        SPOT_ORDER_ORDER_BY,
+        filter.limit,
+        filter.offset,
+    )
+    .await?;
+    Ok((
+        rows.into_iter().map(SpotOrderResponse::from).collect(),
+        total,
+    ))
 }
 
 pub(crate) async fn load_spot_order_by_id(
@@ -519,51 +563,10 @@ pub(crate) async fn list_spot_trades(
     pool: &Pool<MySql>,
     filter: SpotTradeListFilter,
 ) -> AppResult<Vec<SpotTradeResponse>> {
-    let mut builder = QueryBuilder::<MySql>::new(
-        r#"SELECT trades.id, pairs.symbol AS pair_id, trades.buy_order_id, trades.sell_order_id,
-                  trades.price, trades.quantity, trades.fee, trades.created_at
-           FROM spot_trades trades
-           INNER JOIN trading_pairs pairs ON pairs.id = trades.pair_id
-           INNER JOIN spot_orders buy_orders ON buy_orders.id = trades.buy_order_id
-           INNER JOIN spot_orders sell_orders ON sell_orders.id = trades.sell_order_id"#,
-    );
-    let mut has_filter = false;
-    if let Some(pair_id) = filter.pair_id {
-        builder.push(" WHERE pairs.symbol = ");
-        builder.push_bind(pair_id);
-        has_filter = true;
-    }
-    if let Some(user_id) = filter.user_id {
-        builder.push(if has_filter { " AND " } else { " WHERE " });
-        builder.push("(buy_orders.user_id = ");
-        builder.push_bind(user_id);
-        builder.push(" OR sell_orders.user_id = ");
-        builder.push_bind(user_id);
-        builder.push(")");
-        has_filter = true;
-    }
-    if let Some(email) = filter.email {
-        builder.push(if has_filter { " AND " } else { " WHERE " });
-        builder.push(
-            r#"EXISTS (
-                   SELECT 1 FROM users
-                   WHERE users.email = "#,
-        );
-        builder.push_bind(email);
-        builder.push(" AND (users.id = buy_orders.user_id OR users.id = sell_orders.user_id))");
-        has_filter = true;
-    }
-    if !filter.include_internal {
-        builder.push(if has_filter { " AND " } else { " WHERE " });
-        builder.push(
-            r#"NOT EXISTS (
-                   SELECT 1 FROM users
-                   WHERE users.email = "#,
-        );
-        builder.push_bind(SYSTEM_SPOT_LIQUIDITY_EMAIL);
-        builder.push(" AND (users.id = buy_orders.user_id OR users.id = sell_orders.user_id))");
-    }
-    builder.push(" ORDER BY trades.created_at DESC, trades.id DESC LIMIT ");
+    let mut builder = base_spot_trades_query();
+    push_spot_trade_list_filters(&mut builder, &filter);
+    builder.push(SPOT_TRADE_ORDER_BY);
+    builder.push(" LIMIT ");
     builder.push_bind(i64::from(filter.limit));
 
     let rows = builder
@@ -571,6 +574,32 @@ pub(crate) async fn list_spot_trades(
         .fetch_all(pool)
         .await?;
     Ok(rows.into_iter().map(SpotTradeResponse::from).collect())
+}
+
+/// 后台成交列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
+pub(crate) async fn list_admin_spot_trades_page(
+    pool: &Pool<MySql>,
+    filter: SpotTradeListFilter,
+) -> AppResult<(Vec<SpotTradeResponse>, i64)> {
+    let mut rows = base_spot_trades_query();
+    let mut total = base_spot_trades_count_query();
+    for builder in [&mut rows, &mut total] {
+        push_spot_trade_list_filters(builder, &filter);
+    }
+
+    let (rows, total) = fetch_admin_page::<SpotTradeQueryRow>(
+        pool,
+        rows,
+        total,
+        SPOT_TRADE_ORDER_BY,
+        filter.limit,
+        filter.offset,
+    )
+    .await?;
+    Ok((
+        rows.into_iter().map(SpotTradeResponse::from).collect(),
+        total,
+    ))
 }
 
 pub(crate) async fn load_existing_spot_trade_by_idempotency_key(
@@ -1859,6 +1888,36 @@ fn base_spot_orders_query(include_internal_trades: bool) -> QueryBuilder<'static
     ))
 }
 
+fn base_spot_orders_count_query() -> QueryBuilder<'static, MySql> {
+    QueryBuilder::<MySql>::new(
+        r#"SELECT COUNT(*)
+           FROM spot_orders orders
+           INNER JOIN trading_pairs pairs ON pairs.id = orders.pair_id
+           LEFT JOIN users ON users.id = orders.user_id"#,
+    )
+}
+
+fn base_spot_trades_query() -> QueryBuilder<'static, MySql> {
+    QueryBuilder::<MySql>::new(
+        r#"SELECT trades.id, pairs.symbol AS pair_id, trades.buy_order_id, trades.sell_order_id,
+                  trades.price, trades.quantity, trades.fee, trades.created_at
+           FROM spot_trades trades
+           INNER JOIN trading_pairs pairs ON pairs.id = trades.pair_id
+           INNER JOIN spot_orders buy_orders ON buy_orders.id = trades.buy_order_id
+           INNER JOIN spot_orders sell_orders ON sell_orders.id = trades.sell_order_id"#,
+    )
+}
+
+fn base_spot_trades_count_query() -> QueryBuilder<'static, MySql> {
+    QueryBuilder::<MySql>::new(
+        r#"SELECT COUNT(*)
+           FROM spot_trades trades
+           INNER JOIN trading_pairs pairs ON pairs.id = trades.pair_id
+           INNER JOIN spot_orders buy_orders ON buy_orders.id = trades.buy_order_id
+           INNER JOIN spot_orders sell_orders ON sell_orders.id = trades.sell_order_id"#,
+    )
+}
+
 fn spot_order_average_price_sql(include_internal_trades: bool) -> &'static str {
     if include_internal_trades {
         return r#"CAST((
@@ -1880,39 +1939,67 @@ fn spot_order_average_price_sql(include_internal_trades: bool) -> &'static str {
            ) AS DECIMAL(38,18))"#
 }
 
-fn push_spot_order_filters(
+fn push_spot_order_list_filters(
     builder: &mut QueryBuilder<'_, MySql>,
-    user_id: Option<u64>,
-    pair_id: Option<String>,
-    status: Option<String>,
-    email: Option<String>,
-    mut has_filter: bool,
-) -> bool {
-    if let Some(user_id) = user_id {
-        builder.push(if has_filter { " AND " } else { " WHERE " });
-        builder.push("orders.user_id = ");
+    filter: &SpotOrderListFilter,
+) {
+    builder.push(" WHERE 1 = 1");
+    if let Some(user_id) = filter.user_id {
+        builder.push(" AND orders.user_id = ");
         builder.push_bind(user_id);
-        has_filter = true;
     }
-    if let Some(pair_id) = pair_id {
-        builder.push(if has_filter { " AND " } else { " WHERE " });
-        builder.push("pairs.symbol = ");
+    if let Some(pair_id) = filter.pair_id.clone() {
+        builder.push(" AND pairs.symbol = ");
         builder.push_bind(pair_id);
-        has_filter = true;
     }
-    if let Some(status) = status {
-        builder.push(if has_filter { " AND " } else { " WHERE " });
-        builder.push("orders.status = ");
+    if let Some(status) = filter.status.clone() {
+        builder.push(" AND orders.status = ");
         builder.push_bind(status);
-        has_filter = true;
     }
-    if let Some(email) = email {
-        builder.push(if has_filter { " AND " } else { " WHERE " });
-        builder.push("users.email = ");
+    if let Some(email) = filter.email.clone() {
+        builder.push(" AND users.email = ");
         builder.push_bind(email);
-        has_filter = true;
     }
-    has_filter
+    if !filter.include_internal {
+        builder.push(" AND users.email <> ");
+        builder.push_bind(SYSTEM_SPOT_LIQUIDITY_EMAIL);
+    }
+}
+
+fn push_spot_trade_list_filters(
+    builder: &mut QueryBuilder<'_, MySql>,
+    filter: &SpotTradeListFilter,
+) {
+    builder.push(" WHERE 1 = 1");
+    if let Some(pair_id) = filter.pair_id.clone() {
+        builder.push(" AND pairs.symbol = ");
+        builder.push_bind(pair_id);
+    }
+    if let Some(user_id) = filter.user_id {
+        builder.push(" AND (buy_orders.user_id = ");
+        builder.push_bind(user_id);
+        builder.push(" OR sell_orders.user_id = ");
+        builder.push_bind(user_id);
+        builder.push(")");
+    }
+    if let Some(email) = filter.email.clone() {
+        builder.push(
+            r#" AND EXISTS (
+                   SELECT 1 FROM users
+                   WHERE users.email = "#,
+        );
+        builder.push_bind(email);
+        builder.push(" AND (users.id = buy_orders.user_id OR users.id = sell_orders.user_id))");
+    }
+    if !filter.include_internal {
+        builder.push(
+            r#" AND NOT EXISTS (
+                   SELECT 1 FROM users
+                   WHERE users.email = "#,
+        );
+        builder.push_bind(SYSTEM_SPOT_LIQUIDITY_EMAIL);
+        builder.push(" AND (users.id = buy_orders.user_id OR users.id = sell_orders.user_id))");
+    }
 }
 
 impl From<SpotOrderQueryRow> for SpotOrderResponse {

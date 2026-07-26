@@ -22,6 +22,13 @@ pub(crate) struct ListPositionsQuery {
     pub(crate) limit: Option<u32>,
 }
 
+/// 管理后台产品列表查询参数。
+#[derive(Debug, Deserialize)]
+pub(crate) struct AdminMarginProductsQuery {
+    pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
+}
+
 /// 管理后台资金费汇总查询参数。
 #[derive(Debug, Deserialize)]
 pub(crate) struct AdminInterestSummaryQuery {
@@ -30,6 +37,7 @@ pub(crate) struct AdminInterestSummaryQuery {
     pub(crate) pair_id: Option<u64>,
     pub(crate) status: Option<String>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 /// 管理后台仓位列表查询参数。
@@ -40,6 +48,7 @@ pub(crate) struct AdminListPositionsQuery {
     pub(crate) pair_id: Option<u64>,
     pub(crate) status: Option<String>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 /// 关闭/取消仓位的可选产品过滤参数。
@@ -157,6 +166,13 @@ pub(crate) struct MarginProductResponse {
 pub(crate) struct MarginProductsResponse {
     pub(crate) products: Vec<MarginProductResponse>,
     pub(crate) capabilities: MarginTradingCapabilitiesResponse,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AdminMarginProductsResponse {
+    pub(crate) products: Vec<MarginProductResponse>,
+    pub(crate) capabilities: MarginTradingCapabilitiesResponse,
+    pub(crate) total: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -294,11 +310,13 @@ pub(crate) struct MarginPositionDetailResponse {
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminMarginPositionsResponse {
     pub(crate) positions: Vec<AdminMarginPositionResponse>,
+    pub(crate) total: i64,
 }
 
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminInterestSummaryResponse {
     pub(crate) summaries: Vec<AdminInterestSummaryItem>,
+    pub(crate) total: i64,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]

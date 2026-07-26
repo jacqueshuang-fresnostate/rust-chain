@@ -2360,3 +2360,139 @@ async fn assert_earn_subscribe_idempotent(concurrent: bool) -> Result<(), Box<dy
 
     Ok(())
 }
+
+#[tokio::test]
+async fn admin_earn_subscriptions_offset_paging_returns_disjoint_pages_and_filtered_total()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let admin_id = create_admin(&pool).await;
+    let mut fixture_tx = pool.begin().await?;
+    let user_id = create_user(&mut fixture_tx).await;
+    let (asset_id, _asset_symbol) = create_asset(&mut fixture_tx, "EP").await;
+    let product_id = seed_earn_product(&mut fixture_tx, asset_id).await;
+
+    let mut subscribed_ids = Vec::new();
+    for (index, status) in ["subscribed", "subscribed", "subscribed", "redeemed"]
+        .into_iter()
+        .enumerate()
+    {
+        let id = sqlx::query(
+            r#"INSERT INTO earn_subscriptions
+               (user_id, product_id, asset_id, amount, apr_rate, term_days, status,
+                idempotency_key, subscribed_at, matures_at, created_at)
+               VALUES (?, ?, ?, ?, ?, 30, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(user_id)
+        .bind(product_id)
+        .bind(asset_id)
+        .bind(decimal("11.000000000000000000"))
+        .bind(decimal("0.12000000"))
+        .bind(status)
+        .bind(format!("earn-admin-page-{}", Uuid::now_v7().simple()))
+        .bind(format!("2037-07-0{} 04:00:00.000000", index + 1))
+        .bind(format!("2037-08-0{} 04:00:00.000000", index + 1))
+        .bind(format!("2037-07-0{} 04:00:00.000000", index + 1))
+        .execute(&mut *fixture_tx)
+        .await?
+        .last_insert_id();
+        if status == "subscribed" {
+            subscribed_ids.push(id);
+        }
+    }
+    fixture_tx.commit().await?;
+
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+
+    let mut page_ids = Vec::new();
+    for offset in [0, 2] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/earn/subscriptions?user_id={user_id}&status=subscribed&limit=2&offset={offset}"
+                    ))
+                    .header("authorization", format!("Bearer {admin_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await?;
+        let status_code = response.status();
+        let payload = body_json(response).await?;
+        assert_eq!(status_code, StatusCode::OK, "payload: {payload}");
+        // 总数必须反映筛选条件本身，而不是当前页行数。
+        assert_eq!(payload["total"], 3, "payload: {payload}");
+        page_ids.extend(
+            payload["subscriptions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| entry["id"].as_u64().unwrap()),
+        );
+    }
+    assert_eq!(page_ids.len(), 3);
+    let mut unique_ids = page_ids.clone();
+    unique_ids.sort_unstable();
+    unique_ids.dedup();
+    assert_eq!(unique_ids.len(), 3, "pages must not overlap: {page_ids:?}");
+    subscribed_ids.sort_unstable();
+    assert_eq!(unique_ids, subscribed_ids);
+
+    let all_statuses = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/earn/subscriptions?user_id={user_id}&limit=1"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let all_statuses_code = all_statuses.status();
+    let all_statuses_payload = body_json(all_statuses).await?;
+    assert_eq!(
+        all_statuses_code,
+        StatusCode::OK,
+        "payload: {all_statuses_payload}"
+    );
+    assert_eq!(
+        all_statuses_payload["subscriptions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(all_statuses_payload["total"], 4);
+
+    sqlx::query("DELETE FROM earn_subscriptions WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM earn_products WHERE id = ?")
+        .bind(product_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}

@@ -279,6 +279,11 @@ pub(crate) fn route_limit(limit: Option<u32>) -> u32 {
     limit.unwrap_or(50).clamp(1, 200)
 }
 
+/// 偏移同样设上限：超大 offset 会让日志类大表退化为全表扫描加文件排序。
+pub(crate) fn route_offset(offset: Option<u32>) -> u32 {
+    offset.unwrap_or(0).min(100_000)
+}
+
 /// 从路由状态里提取 MySQL 连接池。
 pub(crate) fn mysql_pool(state: &AppState) -> AppResult<Pool<MySql>> {
     state.mysql.clone().ok_or_else(|| {

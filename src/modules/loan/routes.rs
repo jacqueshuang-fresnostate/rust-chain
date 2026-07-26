@@ -16,7 +16,8 @@ use axum::{
 use super::service::{admin_id_from_subject, mysql_pool, user_id_from_subject};
 
 use super::presentation::{
-    AdminLoanOrdersQuery, CreateLoanOrderRequest, CreateLoanProductRequest, ListQuery,
+    AdminLoanOrdersQuery, AdminLoanOrdersResponse, AdminLoanProductsQuery,
+    AdminLoanProductsResponse, CreateLoanOrderRequest, CreateLoanProductRequest, ListQuery,
     LoanOrderActionResponse, LoanOrderResponse, LoanOrdersResponse, LoanProductResponse,
     LoanProductsResponse, ReviewLoanOrderRequest, UpdateLoanProductRequest,
     UpdateLoanProductStatusRequest, UserLoanOrdersQuery,
@@ -68,8 +69,8 @@ async fn list_active_products(
 
 async fn list_admin_products(
     State(state): State<AppState>,
-    Query(query): Query<ListQuery>,
-) -> AppResult<Json<LoanProductsResponse>> {
+    Query(query): Query<AdminLoanProductsQuery>,
+) -> AppResult<Json<AdminLoanProductsResponse>> {
     let products = list_admin_products_use_case(&mysql_pool(&state)?, query).await?;
     Ok(Json(products))
 }
@@ -174,7 +175,7 @@ async fn repay_order(
 async fn list_admin_orders(
     State(state): State<AppState>,
     Query(query): Query<AdminLoanOrdersQuery>,
-) -> AppResult<Json<LoanOrdersResponse>> {
+) -> AppResult<Json<AdminLoanOrdersResponse>> {
     Ok(Json(
         list_admin_orders_use_case(&mysql_pool(&state)?, query).await?,
     ))

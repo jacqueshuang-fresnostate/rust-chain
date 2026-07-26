@@ -76,11 +76,15 @@ fn scoped_app(state: AppState) -> Router {
         .with_state(state)
 }
 
+type LoginFailureKey = (String, String);
+
 #[derive(Clone, Default)]
 struct TestAuthRepository {
     refresh_tokens: Arc<Mutex<HashMap<String, StoredRefreshToken>>>,
     users_by_username: Arc<Mutex<HashMap<String, StoredActorCredential>>>,
     active_admin_ids: Arc<Mutex<HashSet<u64>>>,
+    login_failures: Arc<Mutex<HashMap<LoginFailureKey, u32>>>,
+    login_lockouts: Arc<Mutex<HashMap<LoginFailureKey, chrono::DateTime<chrono::Utc>>>>,
 }
 
 #[async_trait]
@@ -189,6 +193,48 @@ impl AuthRepository for TestAuthRepository {
                 user_id: token.user_id,
                 scope: token.actor_type.scope(),
             }))
+    }
+
+    async fn find_login_lockout(
+        &self,
+        actor_type: ActorType,
+        identifier: &str,
+    ) -> AppResult<Option<chrono::DateTime<chrono::Utc>>> {
+        Ok(self
+            .login_lockouts
+            .lock()
+            .unwrap()
+            .get(&(actor_type.as_str().to_owned(), identifier.to_owned()))
+            .copied()
+            .filter(|locked_until| *locked_until > chrono::Utc::now()))
+    }
+
+    async fn record_login_failure(
+        &self,
+        actor_type: ActorType,
+        identifier: &str,
+    ) -> AppResult<Option<chrono::DateTime<chrono::Utc>>> {
+        let key = (actor_type.as_str().to_owned(), identifier.to_owned());
+        let mut failures = self.login_failures.lock().unwrap();
+        let failure_count = failures.entry(key.clone()).or_insert(0);
+        *failure_count += 1;
+        if *failure_count < 5 {
+            return Ok(None);
+        }
+
+        let locked_until = chrono::Utc::now() + chrono::Duration::seconds(900);
+        self.login_lockouts
+            .lock()
+            .unwrap()
+            .insert(key, locked_until);
+        Ok(Some(locked_until))
+    }
+
+    async fn clear_login_failures(&self, actor_type: ActorType, identifier: &str) -> AppResult<()> {
+        let key = (actor_type.as_str().to_owned(), identifier.to_owned());
+        self.login_failures.lock().unwrap().remove(&key);
+        self.login_lockouts.lock().unwrap().remove(&key);
+        Ok(())
     }
 }
 

@@ -16,8 +16,8 @@ pub(crate) use self::domain::{
 pub(crate) use self::service::{
     ensure_amount_precision, ensure_amount_within_product_limits, ensure_non_negative_amount,
     ensure_positive_amount, normalized_product_name_json, optional_string, product_default_name,
-    route_limit, validate_idempotency_key, validate_interest_mode, validate_loan_type,
-    validate_product_status,
+    route_limit, route_offset, validate_idempotency_key, validate_interest_mode,
+    validate_loan_type, validate_product_status,
 };
 
 pub use routes::{admin_routes, user_routes};

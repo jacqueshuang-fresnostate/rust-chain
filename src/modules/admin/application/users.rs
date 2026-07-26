@@ -81,6 +81,51 @@ pub(crate) async fn create_admin_user(
     Ok(user)
 }
 
+pub(crate) async fn update_admin_user_status(
+    state: AppState,
+    admin_id: u64,
+    user_id: u64,
+    request: UpdateUserStatusRequest,
+) -> AppResult<AdminUserResponse> {
+    let reason = required_admin_audit_reason(request.reason)?;
+    let status = validate_user_status(&request.status)?;
+    let pool = admin_mysql_pool(state.mysql.clone())?;
+
+    // 状态变更、刷新令牌吊销和审计同事务提交，避免被封禁账号继续用旧令牌续期。
+    let mut tx = pool.begin().await?;
+    ensure_admin_user_exists_in_tx(&mut tx, user_id).await?;
+    let before = load_admin_user_in_tx(&mut tx, user_id).await?;
+    update_admin_user_status_in_tx(&mut tx, user_id, &status).await?;
+    let disabled = status != "active";
+    if disabled {
+        revoke_user_refresh_tokens_in_tx(&mut tx, user_id).await?;
+    }
+    let after = load_admin_user_in_tx(&mut tx, user_id).await?;
+    insert_admin_audit_log_entry_in_tx(
+        &mut tx,
+        admin_id,
+        AdminAuditLogEntry {
+            action: "user.status.update",
+            target_type: "user",
+            target_id: user_id,
+            before_json: Some(user_audit_json(&before)),
+            after_json: Some(user_audit_json(&after)),
+            reason: Some(reason),
+        },
+    )
+    .await?;
+    tx.commit().await?;
+
+    if disabled {
+        revoke_actor_auth_sessions(
+            &state,
+            &AuthActor::new(ActorType::User, user_id, Some(user_id)),
+        )
+        .await?;
+    }
+    Ok(after)
+}
+
 pub(crate) async fn recharge_admin_user_wallet(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -174,17 +219,18 @@ pub(crate) async fn list_admin_kyc_submissions(
     query: AdminKycSubmissionQuery,
 ) -> AppResult<KycSubmissionsResponse> {
     let pool = admin_mysql_pool(pool)?;
-    let submissions = list_kyc_submissions_from_kyc(
+    let (submissions, total) = list_kyc_submissions_from_kyc(
         &pool,
         ListKycSubmissionsFilter {
             user_id: query.user_id,
             email: query.email,
             status: query.status,
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(KycSubmissionsResponse { submissions })
+    Ok(KycSubmissionsResponse { submissions, total })
 }
 
 pub(crate) async fn get_admin_kyc_submission(

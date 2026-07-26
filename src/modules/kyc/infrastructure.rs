@@ -168,29 +168,36 @@ pub(crate) async fn latest_kyc_submission(
 pub(crate) async fn list_kyc_submissions(
     pool: &Pool<MySql>,
     filter: ListKycSubmissionsFilter,
-) -> AppResult<Vec<KycSubmissionSummary>> {
-    let mut builder = QueryBuilder::<MySql>::new(select_kyc_submission_summary_sql());
-    builder.push(" WHERE 1 = 1");
-    if let Some(user_id) = filter.user_id {
-        builder.push(" AND submissions.user_id = ");
-        builder.push_bind(user_id);
+) -> AppResult<(Vec<KycSubmissionSummary>, i64)> {
+    let mut rows_query = QueryBuilder::<MySql>::new(select_kyc_submission_summary_sql());
+    let mut total_query = QueryBuilder::<MySql>::new(count_kyc_submission_sql());
+    // 计数与行查询压入同一组谓词，总数不会脱离当前筛选。
+    for builder in [&mut rows_query, &mut total_query] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(user_id) = filter.user_id {
+            builder.push(" AND submissions.user_id = ");
+            builder.push_bind(user_id);
+        }
+        if let Some(email) = filter.email.as_ref() {
+            builder.push(" AND users.email = ");
+            builder.push_bind(email);
+        }
+        if let Some(status) = filter.status.as_ref() {
+            builder.push(" AND submissions.status = ");
+            builder.push_bind(status);
+        }
     }
-    if let Some(email) = filter.email {
-        builder.push(" AND users.email = ");
-        builder.push_bind(email);
-    }
-    if let Some(status) = filter.status {
-        builder.push(" AND submissions.status = ");
-        builder.push_bind(status);
-    }
-    builder.push(" ORDER BY submissions.submitted_at DESC, submissions.id DESC LIMIT ");
-    builder.push_bind(i64::from(filter.limit.clamp(1, 100)));
+    rows_query.push(" ORDER BY submissions.submitted_at DESC, submissions.id DESC LIMIT ");
+    rows_query.push_bind(i64::from(filter.limit.clamp(1, 100)));
+    rows_query.push(" OFFSET ");
+    rows_query.push_bind(i64::from(filter.offset.min(100_000)));
 
-    let rows = builder
+    let rows = rows_query
         .build_query_as::<KycSubmissionSummaryRow>()
         .fetch_all(pool)
         .await?;
-    Ok(rows.into_iter().map(submission_summary).collect())
+    let (total,): (i64,) = total_query.build_query_as().fetch_one(pool).await?;
+    Ok((rows.into_iter().map(submission_summary).collect(), total))
 }
 
 pub(crate) async fn load_kyc_submission(
@@ -380,6 +387,13 @@ fn select_kyc_config_sql(for_update: bool) -> String {
         sql.push_str(" FOR UPDATE");
     }
     sql
+}
+
+fn count_kyc_submission_sql() -> &'static str {
+    // JOIN 与行查询保持一致：users 按主键连接，不改变基数。
+    r#"SELECT COUNT(*)
+       FROM user_kyc_submissions submissions
+       LEFT JOIN users ON users.id = submissions.user_id"#
 }
 
 fn select_kyc_submission_summary_sql() -> &'static str {

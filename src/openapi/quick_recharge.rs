@@ -62,6 +62,12 @@ pub(super) struct QuickRechargeOrdersResponse {
 }
 
 #[derive(ToSchema)]
+pub(super) struct AdminQuickRechargeOrdersResponse {
+    orders: Vec<QuickRechargeOrderResponse>,
+    total: i64,
+}
+
+#[derive(ToSchema)]
 pub(super) struct SaveQuickRechargeConfigRequest {
     enabled: bool,
     api_base_url: Option<String>,
@@ -283,11 +289,12 @@ fn test_admin_quick_recharge_config() {}
         ("status" = Option<String>, Query, description = "订单状态"),
         ("order_id" = Option<String>, Query, description = "平台订单号"),
         ("provider_trade_id" = Option<String>, Query, description = "GMPay 交易号"),
-        ("limit" = Option<u32>, Query, description = "分页数量")
+        ("limit" = Option<u32>, Query, description = "分页数量"),
+        ("offset" = Option<u32>, Query, description = "分页偏移")
     ),
     security(("bearerAuth" = [])),
     responses(
-        (status = 200, description = "查询成功", body = QuickRechargeOrdersResponse),
+        (status = 200, description = "查询成功", body = AdminQuickRechargeOrdersResponse),
         (status = 400, description = "参数错误", body = ErrorResponse),
         (status = 401, description = "未登录", body = ErrorResponse),
         (status = 403, description = "鉴权 scope 不匹配", body = ErrorResponse),

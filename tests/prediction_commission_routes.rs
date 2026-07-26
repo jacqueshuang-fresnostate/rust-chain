@@ -7,7 +7,7 @@ use exchange_api::{
     config::Settings,
     modules::{
         auth::{TokenScope, issue_token},
-        prediction::routes::user_routes,
+        prediction::routes::{admin_routes, user_routes},
     },
     state::AppState,
 };
@@ -254,6 +254,173 @@ async fn prediction_order_creates_precise_idempotent_agent_commission() -> Resul
         .await?;
     sqlx::query("DELETE FROM users WHERE id = ?")
         .bind(user_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+async fn create_prediction_admin(pool: &MySqlPool) -> (u64, u64) {
+    let suffix = Uuid::now_v7().simple().to_string();
+    let role_id =
+        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_OBJECT())")
+            .bind(format!("prediction-page-role-{}", &suffix[16..32]))
+            .execute(pool)
+            .await
+            .unwrap()
+            .last_insert_id();
+    let admin_id =
+        sqlx::query("INSERT INTO admin_users (username, password_hash, role_id) VALUES (?, ?, ?)")
+            .bind(format!("prediction-page-admin-{}", &suffix[16..32]))
+            .bind("not-a-real-hash")
+            .bind(role_id)
+            .execute(pool)
+            .await
+            .unwrap()
+            .last_insert_id();
+    (role_id, admin_id)
+}
+
+#[tokio::test]
+async fn admin_prediction_orders_offset_paging_returns_disjoint_pages_and_filtered_total()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let suffix = Uuid::now_v7().simple().to_string();
+    let (role_id, admin_id) = create_prediction_admin(&pool).await;
+    let user_id = sqlx::query("INSERT INTO users (email, password_hash) VALUES (?, ?)")
+        .bind(format!("prediction-page-{suffix}@example.test"))
+        .bind("not-a-real-hash")
+        .execute(&pool)
+        .await?
+        .last_insert_id();
+    let asset_id = sqlx::query(
+        "INSERT INTO assets (symbol, name, precision_scale, asset_type, status) VALUES (?, ?, 8, 'coin', 'active')",
+    )
+    .bind(format!("PP{}", &suffix[..12]))
+    .bind(format!("Prediction paging {suffix}"))
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let market_id = sqlx::query(
+        r#"INSERT INTO prediction_markets
+           (external_market_id, title, tags_json, yes_price, no_price)
+           VALUES (?, ?, JSON_ARRAY(), 0.50000000, 0.50000000)"#,
+    )
+    .bind(format!("prediction-paging-{suffix}"))
+    .bind("Prediction paging market")
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+
+    let mut open_order_ids = Vec::new();
+    for (index, status) in ["open", "open", "open", "settled"].into_iter().enumerate() {
+        let id = sqlx::query(
+            r#"INSERT INTO prediction_orders
+               (order_no, user_id, market_id, quote_id, idempotency_key, outcome, asset_id,
+                stake_amount, fee_amount, accepted_price, shares, theoretical_payout,
+                effective_payout_cap, status)
+               VALUES (?, ?, ?, ?, ?, 'yes', ?, 1, 0, 0.50000000, 2, 2, 100, ?)"#,
+        )
+        .bind(format!("PM{suffix}{index}"))
+        .bind(user_id)
+        .bind(market_id)
+        .bind(format!("prediction-paging-quote-{suffix}-{index}"))
+        .bind(format!("prediction-paging-key-{suffix}-{index}"))
+        .bind(asset_id)
+        .bind(status)
+        .execute(&pool)
+        .await?
+        .last_insert_id();
+        if status == "open" {
+            open_order_ids.push(id);
+        }
+    }
+
+    let token = issue_token(
+        &test_settings(),
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )?;
+    let app = admin_routes().with_state(AppState::new(test_settings()).with_mysql(pool.clone()));
+
+    let mut page_ids = Vec::new();
+    for offset in [0, 2] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/prediction/orders?market_id={market_id}&status=open&limit=2&offset={offset}"
+                    ))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())?,
+            )
+            .await?;
+        let status_code = response.status();
+        let body = axum::body::to_bytes(response.into_body(), 65_536).await?;
+        let payload: Value = serde_json::from_slice(&body)?;
+        assert_eq!(status_code, StatusCode::OK, "payload: {payload}");
+        // 总数必须反映筛选条件本身，而不是当前页行数。
+        assert_eq!(payload["total"], 3, "payload: {payload}");
+        page_ids.extend(
+            payload["orders"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| entry["id"].as_u64().unwrap()),
+        );
+    }
+    assert_eq!(page_ids.len(), 3);
+    let mut unique_ids = page_ids.clone();
+    unique_ids.sort_unstable();
+    unique_ids.dedup();
+    assert_eq!(unique_ids.len(), 3, "pages must not overlap: {page_ids:?}");
+    open_order_ids.sort_unstable();
+    assert_eq!(unique_ids, open_order_ids);
+
+    let all_statuses = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/prediction/orders?market_id={market_id}&limit=1"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    let all_statuses_code = all_statuses.status();
+    let all_statuses_body = axum::body::to_bytes(all_statuses.into_body(), 65_536).await?;
+    let all_statuses_payload: Value = serde_json::from_slice(&all_statuses_body)?;
+    assert_eq!(
+        all_statuses_code,
+        StatusCode::OK,
+        "payload: {all_statuses_payload}"
+    );
+    assert_eq!(all_statuses_payload["orders"].as_array().unwrap().len(), 1);
+    assert_eq!(all_statuses_payload["total"], 4);
+
+    sqlx::query("DELETE FROM prediction_orders WHERE market_id = ?")
+        .bind(market_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM prediction_markets WHERE id = ?")
+        .bind(market_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
         .execute(&pool)
         .await?;
     Ok(())

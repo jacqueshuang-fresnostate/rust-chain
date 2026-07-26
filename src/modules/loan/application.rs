@@ -6,7 +6,7 @@ use super::{
     LOAN_TYPE_COLLATERALIZED, STATUS_ACTIVE, STATUS_CANCELLED, STATUS_DISBURSED, STATUS_OVERDUE,
     STATUS_PENDING, STATUS_REJECTED, STATUS_REPAID, ensure_amount_precision,
     ensure_amount_within_product_limits, ensure_non_negative_amount, ensure_positive_amount,
-    normalized_product_name_json, optional_string, product_default_name, route_limit,
+    normalized_product_name_json, optional_string, product_default_name, route_limit, route_offset,
     validate_idempotency_key, validate_interest_mode, validate_loan_type, validate_product_status,
 };
 use crate::{
@@ -17,8 +17,8 @@ use crate::{
                 AdminLoanOrdersFilter, LoanOrderCreate, LoanProductWrite, apply_loan_wallet_credit,
                 apply_loan_wallet_debit, apply_loan_wallet_freeze, ensure_loan_user_kyc_level,
                 insert_loan_order_in_tx, insert_loan_product, is_duplicate_key_error,
-                list_admin_loan_orders, list_loan_products, list_user_loan_orders,
-                load_active_asset_meta, load_active_asset_meta_in_tx,
+                list_admin_loan_orders, list_admin_loan_products, list_loan_products,
+                list_user_loan_orders, load_active_asset_meta, load_active_asset_meta_in_tx,
                 load_loan_order_by_idempotency, load_loan_order_response,
                 load_loan_product_response, load_user_loan_order_response,
                 lock_active_loan_product_terms, lock_loan_order, lock_user_loan_order,
@@ -27,9 +27,10 @@ use crate::{
                 release_loan_collateral_if_needed, update_loan_product, update_loan_product_status,
             },
             presentation::{
-                AdminLoanOrdersQuery, CreateLoanOrderRequest, CreateLoanProductRequest, ListQuery,
-                LoanOrderResponse, LoanOrdersResponse, LoanProductResponse, LoanProductsResponse,
-                UpdateLoanProductRequest, UserLoanOrdersQuery,
+                AdminLoanOrdersQuery, AdminLoanOrdersResponse, AdminLoanProductsQuery,
+                AdminLoanProductsResponse, CreateLoanOrderRequest, CreateLoanProductRequest,
+                ListQuery, LoanOrderResponse, LoanOrdersResponse, LoanProductResponse,
+                LoanProductsResponse, UpdateLoanProductRequest, UserLoanOrdersQuery,
             },
             service::calculate_interest_amount,
         },
@@ -52,11 +53,17 @@ pub(crate) async fn list_active_products_use_case(
 
 pub(crate) async fn list_admin_products_use_case(
     pool: &Pool<MySql>,
-    query: ListQuery,
-) -> AppResult<LoanProductsResponse> {
+    query: AdminLoanProductsQuery,
+) -> AppResult<AdminLoanProductsResponse> {
     // 查询后台可见的全部产品清单，使用统一分页策略。
-    let products = list_loan_products(pool, None, route_limit(query.limit)).await?;
-    Ok(LoanProductsResponse { products })
+    let (products, total) = list_admin_loan_products(
+        pool,
+        None,
+        route_limit(query.limit),
+        route_offset(query.offset),
+    )
+    .await?;
+    Ok(AdminLoanProductsResponse { products, total })
 }
 
 pub(crate) async fn get_admin_product_use_case(
@@ -90,12 +97,13 @@ pub(crate) async fn get_user_order_use_case(
 pub(crate) async fn list_admin_orders_use_case(
     pool: &Pool<MySql>,
     query: AdminLoanOrdersQuery,
-) -> AppResult<LoanOrdersResponse> {
+) -> AppResult<AdminLoanOrdersResponse> {
     // 在后台列表里组装筛选条件，复用统一分页和基础设施查询。
-    let orders = list_admin_loan_orders(
+    let (orders, total) = list_admin_loan_orders(
         pool,
         AdminLoanOrdersFilter {
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
             user_id: query.user_id,
             email: query.email,
             product_id: query.product_id,
@@ -104,7 +112,7 @@ pub(crate) async fn list_admin_orders_use_case(
         },
     )
     .await?;
-    Ok(LoanOrdersResponse { orders })
+    Ok(AdminLoanOrdersResponse { orders, total })
 }
 
 pub(crate) async fn get_admin_order_use_case(

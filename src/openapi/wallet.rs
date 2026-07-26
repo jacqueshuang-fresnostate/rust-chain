@@ -64,6 +64,12 @@ pub(super) struct WalletWithdrawalsResponse {
 }
 
 #[derive(ToSchema)]
+pub(super) struct AdminWalletWithdrawalsResponse {
+    withdrawals: Vec<WalletWithdrawalResponse>,
+    total: i64,
+}
+
+#[derive(ToSchema)]
 pub(super) struct ReviewWithdrawalRequest {
     reason: Option<String>,
 }
@@ -132,6 +138,7 @@ pub(super) struct WalletDepositEventResponse {
 #[derive(ToSchema)]
 pub(super) struct WalletDepositsResponse {
     deposits: Vec<WalletDepositEventResponse>,
+    total: i64,
 }
 
 #[derive(ToSchema)]
@@ -357,11 +364,12 @@ fn list_user_withdrawals() {}
     params(
         ("status" = Option<String>, Query, description = "提现状态"),
         ("user_id" = Option<u64>, Query, description = "用户 ID"),
-        ("limit" = Option<u32>, Query, description = "返回数量")
+        ("limit" = Option<u32>, Query, description = "返回数量"),
+        ("offset" = Option<u32>, Query, description = "分页偏移")
     ),
     security(("bearerAuth" = [])),
     responses(
-        (status = 200, description = "查询成功", body = WalletWithdrawalsResponse),
+        (status = 200, description = "查询成功", body = AdminWalletWithdrawalsResponse),
         (status = 400, description = "参数错误", body = ErrorResponse),
         (status = 401, description = "未登录", body = ErrorResponse),
         (status = 403, description = "无后台权限", body = ErrorResponse)
@@ -451,7 +459,8 @@ fn fail_admin_wallet_withdrawal() {}
     summary = "后台查询链上充值事件",
     params(
         ("user_id" = Option<u64>, Query, description = "用户 ID"),
-        ("limit" = Option<u32>, Query, description = "返回数量")
+        ("limit" = Option<u32>, Query, description = "返回数量"),
+        ("offset" = Option<u32>, Query, description = "分页偏移")
     ),
     security(("bearerAuth" = [])),
     responses((status = 200, description = "查询成功", body = WalletDepositsResponse))

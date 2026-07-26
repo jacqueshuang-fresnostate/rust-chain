@@ -2670,7 +2670,9 @@ describe('resourceConfigs create actions', () => {
     await user.click(screen.getByLabelText('显示机器人订单'));
     await waitFor(() => {
       expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/api/v1/spot/orders', 'orders', {
-        include_internal: 'true'
+        include_internal: 'true',
+        limit: 50,
+        offset: 0
       });
     });
     await waitFor(() => {
@@ -2682,7 +2684,9 @@ describe('resourceConfigs create actions', () => {
       expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/api/v1/spot/orders', 'orders', {
         pair_id: 'BTC-USDT',
         status: 'open',
-        include_internal: 'true'
+        include_internal: 'true',
+        limit: 50,
+        offset: 0
       });
     });
 

@@ -64,6 +64,7 @@ pub(crate) struct AdminSpotOrdersQuery {
     pub(crate) email: Option<String>,
     pub(crate) include_internal: Option<bool>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,6 +74,7 @@ pub(crate) struct AdminSpotTradesQuery {
     pub(crate) email: Option<String>,
     pub(crate) include_internal: Option<bool>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -96,6 +98,12 @@ pub(crate) struct SpotOrderResponse {
 #[derive(Debug, Serialize)]
 pub(crate) struct SpotOrdersResponse {
     pub(crate) orders: Vec<SpotOrderResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AdminSpotOrdersResponse {
+    pub(crate) orders: Vec<SpotOrderResponse>,
+    pub(crate) total: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -140,6 +148,12 @@ pub(crate) struct SpotTradeResponse {
 #[derive(Debug, Serialize)]
 pub(crate) struct SpotTradesResponse {
     pub(crate) trades: Vec<SpotTradeResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AdminSpotTradesResponse {
+    pub(crate) trades: Vec<SpotTradeResponse>,
+    pub(crate) total: i64,
 }
 
 impl From<SpotOrder> for SpotOrderResponse {

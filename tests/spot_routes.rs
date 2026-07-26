@@ -7684,3 +7684,129 @@ async fn cleanup_fixture(
         .await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn admin_spot_orders_offset_paging_returns_disjoint_pages_and_filtered_total()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let user_id = create_user(&pool).await;
+    let (base_asset, base_symbol) = create_asset(&pool, "PB").await;
+    let (quote_asset, quote_symbol) = create_asset(&pool, "PQ").await;
+    let pair_symbol =
+        create_pair(&pool, base_asset, quote_asset, &base_symbol, &quote_symbol).await;
+
+    let mut open_order_ids = Vec::new();
+    for index in 0..3 {
+        open_order_ids.push(
+            seed_open_order(
+                &pool,
+                user_id,
+                &pair_symbol,
+                "buy",
+                &format!("1{index}"),
+                "1",
+            )
+            .await?,
+        );
+    }
+    let cancelled_id = seed_open_order(&pool, user_id, &pair_symbol, "sell", "20", "1").await?;
+    sqlx::query("UPDATE spot_orders SET status = 'cancelled' WHERE id = ?")
+        .bind(cancelled_id.parse::<u64>().unwrap())
+        .execute(&pool)
+        .await?;
+
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+
+    let mut page_ids = Vec::new();
+    for offset in [0, 2] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/spot/orders?user_id={user_id}&status=open&limit=2&offset={offset}"
+                    ))
+                    .header("authorization", format!("Bearer {admin_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await?;
+        let status_code = response.status();
+        let payload = body_json(response).await?;
+        assert_eq!(status_code, StatusCode::OK, "payload: {payload}");
+        // 总数必须反映筛选条件本身，而不是当前页行数。
+        assert_eq!(payload["total"], 3, "payload: {payload}");
+        page_ids.extend(
+            payload["orders"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| entry["id"].as_str().unwrap().to_owned()),
+        );
+    }
+    assert_eq!(page_ids.len(), 3);
+    let mut unique_ids = page_ids.clone();
+    unique_ids.sort();
+    unique_ids.dedup();
+    assert_eq!(unique_ids.len(), 3, "pages must not overlap: {page_ids:?}");
+    open_order_ids.sort();
+    assert_eq!(unique_ids, open_order_ids);
+
+    let all_statuses = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/spot/orders?user_id={user_id}&limit=1"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let all_statuses_code = all_statuses.status();
+    let all_statuses_payload = body_json(all_statuses).await?;
+    assert_eq!(
+        all_statuses_code,
+        StatusCode::OK,
+        "payload: {all_statuses_payload}"
+    );
+    assert_eq!(all_statuses_payload["orders"].as_array().unwrap().len(), 1);
+    assert_eq!(all_statuses_payload["total"], 4);
+
+    sqlx::query("DELETE FROM spot_orders WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
+        .bind(&pair_symbol)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id IN (?, ?)")
+        .bind(base_asset)
+        .bind(quote_asset)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}

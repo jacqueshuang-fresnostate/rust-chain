@@ -313,41 +313,71 @@ pub(crate) async fn list_user_orders(
     Ok(rows.into_iter().map(Into::into).collect())
 }
 
+/// 后台快充订单列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
 pub(crate) async fn list_admin_orders(
     pool: &Pool<MySql>,
     filter: QuickRechargeAdminOrderFilter,
-) -> AppResult<Vec<QuickRechargeOrderRow>> {
-    let mut builder = quick_recharge_order_query();
-    builder.push(" WHERE 1 = 1");
-    if let Some(user_id) = filter.user_id {
-        builder.push(" AND orders.user_id = ");
-        builder.push_bind(user_id);
+) -> AppResult<(Vec<QuickRechargeOrderRow>, i64)> {
+    let mut rows = quick_recharge_order_query();
+    let mut total = quick_recharge_order_count_query();
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(user_id) = filter.user_id {
+            builder.push(" AND orders.user_id = ");
+            builder.push_bind(user_id);
+        }
+        if let Some(email) = filter.email.clone() {
+            builder.push(" AND users.email = ");
+            builder.push_bind(email);
+        }
+        if let Some(status) = filter.status.clone() {
+            builder.push(" AND orders.status = ");
+            builder.push_bind(status);
+        }
+        if let Some(order_id) = filter.order_id.clone() {
+            builder.push(" AND orders.order_id = ");
+            builder.push_bind(order_id);
+        }
+        if let Some(provider_trade_id) = filter.provider_trade_id.clone() {
+            builder.push(" AND orders.provider_trade_id = ");
+            builder.push_bind(provider_trade_id);
+        }
     }
-    if let Some(email) = filter.email {
-        builder.push(" AND users.email = ");
-        builder.push_bind(email);
-    }
-    if let Some(status) = filter.status {
-        builder.push(" AND orders.status = ");
-        builder.push_bind(status);
-    }
-    if let Some(order_id) = filter.order_id {
-        builder.push(" AND orders.order_id = ");
-        builder.push_bind(order_id);
-    }
-    if let Some(provider_trade_id) = filter.provider_trade_id {
-        builder.push(" AND orders.provider_trade_id = ");
-        builder.push_bind(provider_trade_id);
-    }
-    builder.push(" ORDER BY orders.created_at DESC, orders.id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
 
-    let rows = builder
-        .build_query_as::<QuickRechargeOrderSqlRow>()
-        .fetch_all(pool)
-        .await
-        .map_err(AppError::from)?;
-    Ok(rows.into_iter().map(Into::into).collect())
+    let (rows, total) = fetch_admin_page::<QuickRechargeOrderSqlRow>(
+        pool,
+        rows,
+        total,
+        " ORDER BY orders.created_at DESC, orders.id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await?;
+    Ok((rows.into_iter().map(Into::into).collect(), total))
+}
+
+/// 行查询与 COUNT 查询必须由同一组过滤谓词构建，返回总数才能与当前筛选一致。
+async fn fetch_admin_page<T>(
+    pool: &Pool<MySql>,
+    mut rows: QueryBuilder<'_, MySql>,
+    mut total: QueryBuilder<'_, MySql>,
+    order_by: &str,
+    limit: u32,
+    offset: u32,
+) -> AppResult<(Vec<T>, i64)>
+where
+    T: for<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> + Send + Unpin,
+{
+    rows.push(order_by);
+    rows.push(" LIMIT ");
+    rows.push_bind(limit as i64);
+    rows.push(" OFFSET ");
+    rows.push_bind(offset as i64);
+
+    let items = rows.build_query_as::<T>().fetch_all(pool).await?;
+    let total = total.build_query_scalar::<i64>().fetch_one(pool).await?;
+
+    Ok((items, total))
 }
 
 pub(crate) async fn load_order_by_order_id(
@@ -722,6 +752,14 @@ fn quick_recharge_order_query() -> QueryBuilder<'static, MySql> {
                   orders.paid_at,
                   orders.created_at,
                   orders.updated_at
+           FROM quick_recharge_orders orders
+           LEFT JOIN users ON users.id = orders.user_id"#,
+    )
+}
+
+fn quick_recharge_order_count_query() -> QueryBuilder<'static, MySql> {
+    QueryBuilder::<MySql>::new(
+        r#"SELECT COUNT(*)
            FROM quick_recharge_orders orders
            LEFT JOIN users ON users.id = orders.user_id"#,
     )

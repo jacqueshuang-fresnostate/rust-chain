@@ -21,6 +21,7 @@ use crate::{
             existing_position_for_idempotency_key, existing_position_for_idempotency_key_readonly,
             insert_admin_audit_log, insert_margin_position, insert_margin_product,
             insert_margin_transfer, list_admin_interest_summary, list_admin_margin_positions,
+            list_admin_margin_products as list_admin_margin_products_from_store,
             list_margin_products, list_margin_wallet_accounts, list_user_cross_margin_accounts,
             list_user_margin_positions as list_user_margin_positions_rows,
             load_admin_margin_position_by_id, load_cancelable_position_ids,
@@ -37,8 +38,9 @@ use crate::{
             upsert_user_margin_setting,
         },
         presentation::{
-            AdminInterestSummaryResponse, AdminMarginPositionResponse,
-            AdminMarginPositionsResponse, CancelAllMarginPositionsResponse,
+            AdminInterestSummaryQuery, AdminInterestSummaryResponse, AdminListPositionsQuery,
+            AdminMarginPositionResponse, AdminMarginPositionsResponse, AdminMarginProductsQuery,
+            AdminMarginProductsResponse, CancelAllMarginPositionsResponse,
             CancelMarginPositionResponse, CloseAllMarginPositionsResponse,
             CloseMarginPositionResponse, CreateMarginProductRequest, MarginBatchActionFailure,
             MarginPositionDetailResponse, MarginPositionResponse, MarginPositionsResponse,
@@ -70,6 +72,11 @@ pub(crate) fn mysql_pool(state: &AppState) -> AppResult<Pool<MySql>> {
     state.mysql.clone().ok_or_else(|| {
         AppError::Internal("mysql pool is not configured for margin routes".to_owned())
     })
+}
+
+/// 偏移同样设上限：超大 offset 会让日志类大表退化为全表扫描加文件排序。
+pub(crate) fn route_offset(offset: Option<u32>) -> u32 {
+    offset.unwrap_or(0).min(100_000)
 }
 
 pub(crate) fn route_limit(limit: Option<u32>) -> u32 {
@@ -243,12 +250,19 @@ pub(crate) async fn list_active_margin_products(
 
 pub(crate) async fn list_admin_margin_products(
     pool: &Pool<MySql>,
-    limit: u32,
-) -> AppResult<MarginProductsResponse> {
-    let products = list_margin_products(pool, None, limit).await?;
-    Ok(MarginProductsResponse {
+    query: AdminMarginProductsQuery,
+) -> AppResult<AdminMarginProductsResponse> {
+    let (products, total) = list_admin_margin_products_from_store(
+        pool,
+        None,
+        route_limit(query.limit),
+        route_offset(query.offset),
+    )
+    .await?;
+    Ok(AdminMarginProductsResponse {
         products,
         capabilities: margin_trading_capabilities(),
+        total,
     })
 }
 
@@ -418,19 +432,22 @@ pub(crate) async fn get_user_margin_position(
 
 pub(crate) async fn list_admin_margin_position_history(
     pool: &Pool<MySql>,
-    user_id: Option<u64>,
-    email: Option<String>,
-    pair_id: Option<u64>,
-    status: Option<String>,
-    limit: u32,
+    query: AdminListPositionsQuery,
 ) -> AppResult<AdminMarginPositionsResponse> {
-    let status = optional_string(status)
+    let status = optional_string(query.status)
         .map(|status| normalized_position_status(&status))
         .transpose()?;
-    let positions =
-        list_admin_margin_positions(pool, user_id, email, pair_id, status.as_deref(), limit)
-            .await?;
-    Ok(AdminMarginPositionsResponse { positions })
+    let (positions, total) = list_admin_margin_positions(
+        pool,
+        query.user_id,
+        query.email,
+        query.pair_id,
+        status.as_deref(),
+        route_limit(query.limit),
+        route_offset(query.offset),
+    )
+    .await?;
+    Ok(AdminMarginPositionsResponse { positions, total })
 }
 
 pub(crate) async fn get_admin_margin_position(
@@ -444,19 +461,22 @@ pub(crate) async fn get_admin_margin_position(
 
 pub(crate) async fn list_admin_margin_interest_summary(
     pool: &Pool<MySql>,
-    user_id: Option<u64>,
-    email: Option<String>,
-    pair_id: Option<u64>,
-    status: Option<String>,
-    limit: u32,
+    query: AdminInterestSummaryQuery,
 ) -> AppResult<AdminInterestSummaryResponse> {
-    let status = optional_string(status)
+    let status = optional_string(query.status)
         .map(|status| normalized_position_status(&status))
         .transpose()?;
-    let summaries =
-        list_admin_interest_summary(pool, user_id, email, pair_id, status.as_deref(), limit)
-            .await?;
-    Ok(AdminInterestSummaryResponse { summaries })
+    let (summaries, total) = list_admin_interest_summary(
+        pool,
+        query.user_id,
+        query.email,
+        query.pair_id,
+        status.as_deref(),
+        route_limit(query.limit),
+        route_offset(query.offset),
+    )
+    .await?;
+    Ok(AdminInterestSummaryResponse { summaries, total })
 }
 
 pub(crate) async fn get_margin_position_risk_snapshot(

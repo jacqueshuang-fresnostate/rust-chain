@@ -3840,3 +3840,150 @@ async fn assert_margin_open_position_idempotent(concurrent: bool) -> Result<(), 
 
     Ok(())
 }
+
+#[tokio::test]
+async fn admin_margin_interest_summary_offset_paging_totals_count_groups_not_positions()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let admin_id = create_admin(&pool).await;
+    let mut tx = pool.begin().await?;
+    let user_id = create_user(&mut tx).await;
+    let (base_asset, base_symbol) = create_asset(&mut tx, "IB").await;
+    let (first_margin_asset, quote_symbol) = create_asset(&mut tx, "IQ").await;
+    let (second_margin_asset, _second_symbol) = create_asset(&mut tx, "IS").await;
+    let pair_id = create_pair(
+        &mut tx,
+        base_asset,
+        first_margin_asset,
+        &format!("{base_symbol}-{quote_symbol}"),
+    )
+    .await;
+    let product_id = seed_margin_product(&mut tx, pair_id, first_margin_asset).await;
+
+    // 分组键为 (margin_asset, status)：两条同组仓位只能算一个分组。
+    let mut position_ids = Vec::new();
+    for margin_asset in [first_margin_asset, first_margin_asset, second_margin_asset] {
+        position_ids.push(
+            seed_margin_position(
+                &mut tx,
+                user_id,
+                product_id,
+                pair_id,
+                margin_asset,
+                "10",
+                Some("100"),
+            )
+            .await,
+        );
+    }
+    let closed_position_id = seed_margin_position(
+        &mut tx,
+        user_id,
+        product_id,
+        pair_id,
+        second_margin_asset,
+        "10",
+        Some("100"),
+    )
+    .await;
+    sqlx::query("UPDATE margin_positions SET status = 'closed' WHERE id = ?")
+        .bind(closed_position_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = admin_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+
+    let mut page_keys = Vec::new();
+    for offset in [0, 1] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/margin/interest/summary?user_id={user_id}&status=opened&limit=1&offset={offset}"
+                    ))
+                    .header("authorization", format!("Bearer {admin_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await?;
+        let status_code = response.status();
+        let payload = body_json(response).await?;
+        assert_eq!(status_code, StatusCode::OK, "payload: {payload}");
+        // 总数按分组键统计，既不是仓位条数，也不是当前页行数。
+        assert_eq!(payload["total"], 2, "payload: {payload}");
+        let summaries = payload["summaries"].as_array().unwrap();
+        assert_eq!(summaries.len(), 1, "payload: {payload}");
+        page_keys.push((
+            summaries[0]["margin_asset"].as_u64().unwrap(),
+            summaries[0]["status"].as_str().unwrap().to_owned(),
+        ));
+    }
+    assert_eq!(page_keys.len(), 2);
+    assert_ne!(page_keys[0], page_keys[1], "pages must not overlap");
+    assert!(page_keys.iter().all(|(_, status)| status == "opened"));
+
+    let all_statuses = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/margin/interest/summary?user_id={user_id}&limit=1"
+                ))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let all_statuses_code = all_statuses.status();
+    let all_statuses_payload = body_json(all_statuses).await?;
+    assert_eq!(
+        all_statuses_code,
+        StatusCode::OK,
+        "payload: {all_statuses_payload}"
+    );
+    assert_eq!(
+        all_statuses_payload["summaries"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(all_statuses_payload["total"], 3);
+
+    sqlx::query("DELETE FROM margin_positions WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM margin_products WHERE id = ?")
+        .bind(product_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM trading_pairs WHERE id = ?")
+        .bind(pair_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id IN (?, ?, ?)")
+        .bind(base_asset)
+        .bind(first_margin_asset)
+        .bind(second_margin_asset)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}

@@ -15,6 +15,8 @@ use sha1::Sha1;
 
 pub const TOTP_STEP_SECONDS: u64 = 30;
 pub const TOTP_DIGITS: u32 = 6;
+/// 单个管理员登录挑战允许的验证码错误次数，用尽即作废，防止对挑战暴力试码。
+pub const ADMIN_LOGIN_TWO_FACTOR_ATTEMPT_LIMIT: u32 = 5;
 
 const BASE32_ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 const DEFAULT_TOTP_SECRET_BYTES: usize = 20;
@@ -172,6 +174,38 @@ impl UserTwoFactorSettings {
 }
 
 impl DomainLayer for UserTwoFactorSettings {}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct AdminTwoFactorSettings {
+    pub admin_id: u64,
+    pub totp_secret_encrypted: Option<String>,
+    pub totp_enabled: bool,
+    pub confirmed_at: Option<DateTime<Utc>>,
+    pub last_verified_at: Option<DateTime<Utc>>,
+}
+
+impl AdminTwoFactorSettings {
+    pub(crate) fn empty(admin_id: u64) -> Self {
+        Self {
+            admin_id,
+            totp_secret_encrypted: None,
+            totp_enabled: false,
+            confirmed_at: None,
+            last_verified_at: None,
+        }
+    }
+}
+
+impl DomainLayer for AdminTwoFactorSettings {}
+
+#[derive(Debug, Clone)]
+pub struct AdminLoginTwoFactorChallenge {
+    pub challenge_id: String,
+    pub admin_id: u64,
+    pub attempt_count: u32,
+    pub expires_at: DateTime<Utc>,
+    pub consumed_at: Option<DateTime<Utc>>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

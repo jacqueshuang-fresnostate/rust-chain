@@ -2174,3 +2174,115 @@ async fn agent_lists_support_newest_first_commission_pagination() -> Result<(), 
     cleanup_agent_fixture(&pool, &[agent], &[team_user]).await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn agent_password_change_requires_current_password_and_rotates_login()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let current_password = "agent-change-old-1";
+    let new_password = "agent-change-new-1";
+    let agent = create_agent_with_password(&pool, "password-change", current_password).await;
+    let username: String =
+        sqlx::query_scalar("SELECT username FROM agent_admin_users WHERE id = ? LIMIT 1")
+            .bind(agent.admin_user_id)
+            .fetch_one(&pool)
+            .await?;
+    let token = issue_token(
+        &settings,
+        format!("agent:{}", agent.admin_user_id),
+        TokenScope::Agent,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+    let change_request = |body: Value| {
+        Request::builder()
+            .method("POST")
+            .uri("/agent/api/v1/password/change")
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    };
+    let login_request = |password: &str| {
+        Request::builder()
+            .method("POST")
+            .uri("/agent/api/v1/auth/login")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({ "username": username, "password": password }).to_string(),
+            ))
+            .unwrap()
+    };
+
+    let seed_login = app.clone().oneshot(login_request(current_password)).await?;
+    assert_eq!(seed_login.status(), StatusCode::OK);
+
+    let wrong_current = app
+        .clone()
+        .oneshot(change_request(json!({
+            "current_password": "agent-change-wrong",
+            "new_password": new_password
+        })))
+        .await?;
+    assert_eq!(wrong_current.status(), StatusCode::BAD_REQUEST);
+
+    let weak_new = app
+        .clone()
+        .oneshot(change_request(json!({
+            "current_password": current_password,
+            "new_password": "123"
+        })))
+        .await?;
+    assert_eq!(weak_new.status(), StatusCode::BAD_REQUEST);
+
+    let unchanged = app
+        .clone()
+        .oneshot(change_request(json!({
+            "current_password": current_password,
+            "new_password": current_password
+        })))
+        .await?;
+    assert_eq!(unchanged.status(), StatusCode::BAD_REQUEST);
+
+    let still_old_password = app.clone().oneshot(login_request(current_password)).await?;
+    assert_eq!(still_old_password.status(), StatusCode::OK);
+
+    let changed = app
+        .clone()
+        .oneshot(change_request(json!({
+            "current_password": current_password,
+            "new_password": new_password
+        })))
+        .await?;
+    let changed_status = changed.status();
+    let changed_payload = response_json(changed).await?;
+    assert_eq!(changed_status, StatusCode::OK, "payload: {changed_payload}");
+    assert_eq!(changed_payload["changed"], true);
+    assert_eq!(changed_payload["requires_relogin"], true);
+
+    let stale_login = app.clone().oneshot(login_request(current_password)).await?;
+    assert_eq!(stale_login.status(), StatusCode::UNAUTHORIZED);
+
+    let rotated_login = app.clone().oneshot(login_request(new_password)).await?;
+    assert_eq!(rotated_login.status(), StatusCode::OK);
+
+    let revoked_count: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM refresh_tokens
+           WHERE actor_type = 'agent' AND actor_id = ? AND revoked_at IS NOT NULL"#,
+    )
+    .bind(agent.admin_user_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(revoked_count, 2);
+
+    sqlx::query("DELETE FROM refresh_tokens WHERE actor_type = 'agent' AND actor_id = ?")
+        .bind(agent.admin_user_id)
+        .execute(&pool)
+        .await?;
+    cleanup_agent_fixture(&pool, &[agent], &[]).await?;
+    Ok(())
+}

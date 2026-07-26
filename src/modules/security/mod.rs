@@ -9,9 +9,11 @@ pub mod repository;
 pub mod service;
 
 pub use application::{
-    ensure_login_challenge_usable, verify_user_security_action, verify_user_totp,
+    credential_encryption_key, ensure_admin_login_challenge_usable, ensure_login_challenge_usable,
+    verify_admin_totp, verify_user_security_action, verify_user_totp,
 };
 pub use domain::{
+    ADMIN_LOGIN_TWO_FACTOR_ATTEMPT_LIMIT, AdminLoginTwoFactorChallenge, AdminTwoFactorSettings,
     CreatedLoginTwoFactorChallenge, LoginTwoFactorChallenge, LoginTwoFactorChallengeType,
     LoginTwoFactorMode, PaymentPolicies, PaymentPolicy, SecurityAction, SecurityVerificationInput,
     SecurityVerificationMethod, TOTP_DIGITS, TOTP_STEP_SECONDS, ThirdPartyBindingPolicy,
@@ -20,10 +22,13 @@ pub use domain::{
     verify_totp_code,
 };
 pub use infrastructure::{
-    LOGIN_CHALLENGE_TTL_SECONDS, USER_SECURITY_POLICY_KEY, confirm_user_totp,
-    consume_login_two_factor_challenge, create_login_two_factor_challenge,
-    load_login_two_factor_challenge, load_security_policy, load_user_two_factor,
-    reset_user_two_factor, save_pending_totp_secret, save_security_policy,
+    LOGIN_CHALLENGE_TTL_SECONDS, USER_SECURITY_POLICY_KEY, confirm_admin_totp, confirm_user_totp,
+    consume_admin_login_two_factor_challenge, consume_login_two_factor_challenge,
+    create_admin_login_two_factor_challenge, create_login_two_factor_challenge,
+    increment_admin_login_two_factor_attempt, load_admin_login_two_factor_challenge,
+    load_admin_two_factor, load_login_two_factor_challenge, load_security_policy,
+    load_user_two_factor, reset_admin_two_factor, reset_user_two_factor,
+    save_pending_admin_totp_secret, save_pending_totp_secret, save_security_policy,
     set_user_login_two_factor,
 };
 

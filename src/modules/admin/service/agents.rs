@@ -126,6 +126,23 @@ pub(crate) fn agent_password_hash(request: &CreateAgentRequest) -> AppResult<Str
         .ok_or_else(|| AppError::Validation("admin_password is required".to_owned()))
 }
 
+/// 代理后台账号改密沿用平台统一的 6-20 位口令策略，明文口令绝不进入审计快照。
+pub(crate) fn agent_admin_password_hash(password: Option<String>) -> AppResult<String> {
+    hash_password(&validate_reset_password(&required_string(
+        password, "password",
+    )?)?)
+}
+
+pub(crate) fn agent_password_reset_audit_json(agent: &AdminAgentResponse) -> Value {
+    json!({
+        "agent_id": agent.id,
+        "agent_code": agent.agent_code,
+        "admin_user_id": agent.admin_user_id,
+        "admin_username": agent.admin_username,
+        "admin_status": agent.admin_status,
+    })
+}
+
 pub(crate) fn validate_agent_status(value: &str) -> AppResult<String> {
     let Some(status) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation("status is required".to_owned()));

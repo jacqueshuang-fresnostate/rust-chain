@@ -118,6 +118,11 @@ export type AgentSubAgentsResponse = {
   agents: AgentSubAgent[];
 };
 
+export type AgentPasswordChangeResponse = {
+  changed: boolean;
+  requires_relogin: boolean;
+};
+
 const agentRequest = <T>(path: string, init: RequestInit = {}) =>
   apiRequest<T>(path, {
     ...init,
@@ -168,4 +173,11 @@ export function getAgentTeamTree(): Promise<AgentTeamTreeResponse> {
 
 export function getAgentSubAgents(): Promise<AgentSubAgentsResponse> {
   return agentRequest<AgentSubAgentsResponse>('/agent/api/v1/sub-agents');
+}
+
+export function changeAgentPassword(currentPassword: string, newPassword: string): Promise<AgentPasswordChangeResponse> {
+  return agentRequest<AgentPasswordChangeResponse>('/agent/api/v1/password/change', {
+    method: 'POST',
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword })
+  });
 }

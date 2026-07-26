@@ -14,8 +14,9 @@ use exchange_api::{
         secrets::encrypt_secret,
     },
     modules::{
-        auth::{TokenScope, issue_token, verify_password},
+        auth::{TokenScope, hash_password, issue_token, verify_password},
         quick_recharge::gmpay_signature,
+        security::{TOTP_DIGITS, TOTP_STEP_SECONDS, base32_decode_no_padding, totp_code_for_time},
     },
     state::AppState,
     workers::market_feed::MarketFeedSupervisorHandle,
@@ -157,6 +158,19 @@ async fn create_user_with_email(pool: &MySqlPool, email: String) -> u64 {
         .await
         .unwrap()
         .last_insert_id()
+}
+
+async fn create_user_with_login_password(pool: &MySqlPool, password: &str) -> (u64, String) {
+    let email = format!("admin-route-login-{}@example.test", Uuid::now_v7().simple());
+    let user_id = sqlx::query("INSERT INTO users (email, password_hash) VALUES (?, ?)")
+        .bind(&email)
+        .bind(hash_password(password).unwrap())
+        .execute(pool)
+        .await
+        .unwrap()
+        .last_insert_id();
+
+    (user_id, email)
 }
 
 async fn create_asset(pool: &MySqlPool, prefix: &str) -> u64 {
@@ -15201,5 +15215,728 @@ async fn admin_agent_commissions_offset_paging_totals_respect_status_filter()
         &[agent_owner_id, commission_user_id],
     )
     .await?;
+    Ok(())
+}
+
+const LOGIN_LOCKOUT_TEST_PASSWORD: &str = "CorrectPassword123!";
+const ADMIN_TOTP_TEST_SECRET: &str = "JBSWY3DPEHPK3PXP";
+
+async fn create_login_admin(pool: &MySqlPool) -> (u64, u64, String) {
+    let suffix = Uuid::now_v7().simple().to_string();
+    let role_id =
+        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_OBJECT())")
+            .bind(format!("admin-login-role-{suffix}"))
+            .execute(pool)
+            .await
+            .unwrap()
+            .last_insert_id();
+    let username = format!("admin-login-{suffix}");
+    let admin_id =
+        sqlx::query("INSERT INTO admin_users (username, password_hash, role_id) VALUES (?, ?, ?)")
+            .bind(&username)
+            .bind(hash_password(LOGIN_LOCKOUT_TEST_PASSWORD).unwrap())
+            .bind(role_id)
+            .execute(pool)
+            .await
+            .unwrap()
+            .last_insert_id();
+
+    (role_id, admin_id, username)
+}
+
+async fn delete_login_admin(
+    pool: &MySqlPool,
+    role_id: u64,
+    admin_id: u64,
+    username: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM admin_login_two_factor_challenges WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_two_factor_settings WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM refresh_tokens WHERE actor_type = 'admin' AND actor_id = ?")
+        .bind(admin_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM login_failure_counters WHERE actor_type = 'admin' AND identifier = ?")
+        .bind(username)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+fn admin_login_request(username: &str, password: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/admin/api/v1/auth/login")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({ "username": username, "password": password }).to_string(),
+        ))
+        .unwrap()
+}
+
+fn totp_code_at(secret: &str, offset_seconds: i64) -> String {
+    let bytes = base32_decode_no_padding(secret).unwrap();
+    let timestamp = (chrono::Utc::now().timestamp() + offset_seconds).max(0) as u64;
+    totp_code_for_time(&bytes, timestamp, TOTP_STEP_SECONDS, TOTP_DIGITS)
+}
+
+fn invalid_totp_code(secret: &str) -> String {
+    let accepted = [
+        totp_code_at(secret, -(TOTP_STEP_SECONDS as i64)),
+        totp_code_at(secret, 0),
+        totp_code_at(secret, TOTP_STEP_SECONDS as i64),
+    ];
+
+    (0..10)
+        .map(|value| format!("{value:06}"))
+        .find(|candidate| !accepted.contains(candidate))
+        .unwrap()
+}
+
+async fn login_failure_count(pool: &MySqlPool, username: &str) -> Option<u32> {
+    sqlx::query_scalar::<_, u32>(
+        "SELECT failure_count FROM login_failure_counters WHERE actor_type = 'admin' AND identifier = ?",
+    )
+    .bind(username)
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn admin_login_locks_out_after_repeated_password_failures() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let (role_id, admin_id, username) = create_login_admin(&pool).await;
+    let app = build_router(AppState::new(test_settings()).with_mysql(pool.clone()));
+
+    for attempt in 1..=4 {
+        let response = app
+            .clone()
+            .oneshot(admin_login_request(&username, "WrongPassword!"))
+            .await?;
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "attempt {attempt} must stay unauthorized"
+        );
+    }
+
+    let locking = app
+        .clone()
+        .oneshot(admin_login_request(&username, "WrongPassword!"))
+        .await?;
+    assert_eq!(locking.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body_json(locking).await?["code"],
+        "login_temporarily_locked"
+    );
+    assert_eq!(login_failure_count(&pool, &username).await, Some(5));
+
+    // 锁定期内即使密码正确也必须拒绝。
+    let locked = app
+        .clone()
+        .oneshot(admin_login_request(&username, LOGIN_LOCKOUT_TEST_PASSWORD))
+        .await?;
+    assert_eq!(locked.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(locked).await?["code"], "login_temporarily_locked");
+
+    // 锁定到期后自愈，无需人工干预即可重新登录。
+    sqlx::query(
+        r#"UPDATE login_failure_counters
+           SET locked_until = UTC_TIMESTAMP(6) - INTERVAL 1 SECOND,
+               window_expires_at = UTC_TIMESTAMP(6) - INTERVAL 1 SECOND
+           WHERE actor_type = 'admin' AND identifier = ?"#,
+    )
+    .bind(&username)
+    .execute(&pool)
+    .await?;
+
+    let healed = app
+        .clone()
+        .oneshot(admin_login_request(&username, LOGIN_LOCKOUT_TEST_PASSWORD))
+        .await?;
+    assert_eq!(healed.status(), StatusCode::OK);
+    assert!(body_json(healed).await?["access_token"].is_string());
+    assert_eq!(login_failure_count(&pool, &username).await, None);
+
+    delete_login_admin(&pool, role_id, admin_id, &username).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn successful_admin_login_clears_login_failure_counter() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let (role_id, admin_id, username) = create_login_admin(&pool).await;
+    let app = build_router(AppState::new(test_settings()).with_mysql(pool.clone()));
+
+    for _ in 0..2 {
+        let response = app
+            .clone()
+            .oneshot(admin_login_request(&username, "WrongPassword!"))
+            .await?;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+    assert_eq!(login_failure_count(&pool, &username).await, Some(2));
+
+    let success = app
+        .clone()
+        .oneshot(admin_login_request(&username, LOGIN_LOCKOUT_TEST_PASSWORD))
+        .await?;
+    assert_eq!(success.status(), StatusCode::OK);
+    assert_eq!(login_failure_count(&pool, &username).await, None);
+
+    // 计数已归零，后续 4 次失败不应再触发锁定。
+    for _ in 0..4 {
+        let response = app
+            .clone()
+            .oneshot(admin_login_request(&username, "WrongPassword!"))
+            .await?;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    delete_login_admin(&pool, role_id, admin_id, &username).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_login_requires_totp_when_two_factor_enabled() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let key = settings
+        .exposed_credential_encryption_key()
+        .unwrap()
+        .to_owned();
+    let (role_id, admin_id, username) = create_login_admin(&pool).await;
+    sqlx::query(
+        r#"INSERT INTO admin_two_factor_settings
+           (admin_id, totp_secret_encrypted, totp_enabled, confirmed_at, last_verified_at)
+           VALUES (?, ?, TRUE, CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6))"#,
+    )
+    .bind(admin_id)
+    .bind(encrypt_secret(ADMIN_TOTP_TEST_SECRET, &key)?)
+    .execute(&pool)
+    .await?;
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let challenge_response = app
+        .clone()
+        .oneshot(admin_login_request(&username, LOGIN_LOCKOUT_TEST_PASSWORD))
+        .await?;
+    assert_eq!(challenge_response.status(), StatusCode::OK);
+    let challenge_payload = body_json(challenge_response).await?;
+    assert_eq!(challenge_payload["requires_2fa"], true);
+    assert!(challenge_payload["access_token"].is_null());
+    let challenge_id = challenge_payload["challenge_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let two_factor_request = |challenge_id: &str, code: &str| {
+        Request::builder()
+            .method("POST")
+            .uri("/admin/api/v1/auth/login/2fa")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({ "challenge_id": challenge_id, "totp_code": code }).to_string(),
+            ))
+            .unwrap()
+    };
+
+    let wrong_code = app
+        .clone()
+        .oneshot(two_factor_request(
+            &challenge_id,
+            &invalid_totp_code(ADMIN_TOTP_TEST_SECRET),
+        ))
+        .await?;
+    assert_eq!(wrong_code.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(wrong_code).await?["code"], "invalid_2fa_code");
+
+    let verified = app
+        .clone()
+        .oneshot(two_factor_request(
+            &challenge_id,
+            &totp_code_at(ADMIN_TOTP_TEST_SECRET, 0),
+        ))
+        .await?;
+    assert_eq!(verified.status(), StatusCode::OK);
+    let verified_payload = body_json(verified).await?;
+    assert!(verified_payload["access_token"].is_string());
+    assert_eq!(verified_payload["scope"], "admin");
+
+    // 挑战一次性消费，重放同一个 challenge 必须失败。
+    let replayed = app
+        .clone()
+        .oneshot(two_factor_request(
+            &challenge_id,
+            &totp_code_at(ADMIN_TOTP_TEST_SECRET, 0),
+        ))
+        .await?;
+    assert_eq!(replayed.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body_json(replayed).await?["code"],
+        "login_2fa_challenge_expired"
+    );
+
+    delete_login_admin(&pool, role_id, admin_id, &username).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_without_two_factor_logs_in_and_can_enroll() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let (role_id, admin_id, username) = create_login_admin(&pool).await;
+    let app = build_router(AppState::new(test_settings()).with_mysql(pool.clone()));
+
+    let login = app
+        .clone()
+        .oneshot(admin_login_request(&username, LOGIN_LOCKOUT_TEST_PASSWORD))
+        .await?;
+    assert_eq!(login.status(), StatusCode::OK);
+    let login_payload = body_json(login).await?;
+    assert!(login_payload["requires_2fa"].is_null());
+    let token = login_payload["access_token"].as_str().unwrap().to_owned();
+
+    let status = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/auth/2fa")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(status.status(), StatusCode::OK);
+    assert_eq!(body_json(status).await?["totp_enabled"], false);
+
+    let setup = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/auth/2fa/setup")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(setup.status(), StatusCode::OK);
+    let setup_payload = body_json(setup).await?;
+    let secret = setup_payload["secret"].as_str().unwrap().to_owned();
+    assert!(
+        setup_payload["otpauth_uri"]
+            .as_str()
+            .unwrap()
+            .contains(&secret)
+    );
+
+    let code_request = |uri: &str, code: &str| {
+        Request::builder()
+            .method("POST")
+            .uri(uri.to_owned())
+            .header(AUTHORIZATION, format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(json!({ "totp_code": code }).to_string()))
+            .unwrap()
+    };
+
+    let confirmed = app
+        .clone()
+        .oneshot(code_request(
+            "/admin/api/v1/auth/2fa/confirm",
+            &totp_code_at(&secret, 0),
+        ))
+        .await?;
+    assert_eq!(confirmed.status(), StatusCode::OK);
+    assert_eq!(body_json(confirmed).await?["totp_enabled"], true);
+
+    let challenged = app
+        .clone()
+        .oneshot(admin_login_request(&username, LOGIN_LOCKOUT_TEST_PASSWORD))
+        .await?;
+    assert_eq!(challenged.status(), StatusCode::OK);
+    assert_eq!(body_json(challenged).await?["requires_2fa"], true);
+
+    let disabled = app
+        .clone()
+        .oneshot(code_request(
+            "/admin/api/v1/auth/2fa/disable",
+            &totp_code_at(&secret, 0),
+        ))
+        .await?;
+    assert_eq!(disabled.status(), StatusCode::OK);
+    assert_eq!(body_json(disabled).await?["totp_enabled"], false);
+
+    let plain_login = app
+        .clone()
+        .oneshot(admin_login_request(&username, LOGIN_LOCKOUT_TEST_PASSWORD))
+        .await?;
+    assert_eq!(plain_login.status(), StatusCode::OK);
+    assert!(body_json(plain_login).await?["access_token"].is_string());
+
+    delete_login_admin(&pool, role_id, admin_id, &username).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_agent_password_reset_rotates_login_credentials_and_audits()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let agent_owner_id = create_user(&pool).await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+    let agent_code = format!("P{}", Uuid::now_v7().simple()).to_ascii_uppercase();
+    let agent_username = format!("agent-pwd-{}", Uuid::now_v7().simple());
+    let initial_password = "agent-initial-1";
+    let rotated_password = "agent-rotated-1";
+
+    let create = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/agents")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "user_id": agent_owner_id,
+                        "agent_code": agent_code,
+                        "admin_username": agent_username,
+                        "admin_password": initial_password,
+                        "reason": "create agent for password rotation"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let create_status = create.status();
+    let created = body_json(create).await?;
+    assert_eq!(create_status, StatusCode::OK, "payload: {created}");
+    let agent_id = created["id"].as_u64().unwrap();
+    let agent_admin_user_id = created["admin_user_id"].as_u64().unwrap();
+
+    let initial_login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/agent/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "username": agent_username, "password": initial_password }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(initial_login.status(), StatusCode::OK);
+
+    let missing_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/admin/api/v1/agents/{agent_id}/password/reset"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "password": rotated_password }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing_reason.status(), StatusCode::BAD_REQUEST);
+
+    let weak_password = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/admin/api/v1/agents/{agent_id}/password/reset"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "password": "123", "reason": "too short" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(weak_password.status(), StatusCode::BAD_REQUEST);
+
+    let reset = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/admin/api/v1/agents/{agent_id}/password/reset"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "password": rotated_password, "reason": "credential leak" })
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let reset_status = reset.status();
+    let reset_payload = body_json(reset).await?;
+    assert_eq!(reset_status, StatusCode::OK, "payload: {reset_payload}");
+    assert_eq!(reset_payload["agent_id"], agent_id);
+    assert_eq!(reset_payload["admin_user_id"], agent_admin_user_id);
+    assert_eq!(reset_payload["admin_username"], agent_username);
+    assert_eq!(reset_payload["requires_relogin"], true);
+
+    let stale_login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/agent/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "username": agent_username, "password": initial_password }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(stale_login.status(), StatusCode::UNAUTHORIZED);
+
+    let rotated_login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/agent/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "username": agent_username, "password": rotated_password }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(rotated_login.status(), StatusCode::OK);
+
+    let revoked_count: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM refresh_tokens
+           WHERE actor_type = 'agent' AND actor_id = ? AND revoked_at IS NOT NULL"#,
+    )
+    .bind(agent_admin_user_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(revoked_count, 1);
+
+    let audits = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type = 'agent_admin_user'
+           ORDER BY id"#,
+    )
+    .bind(admin_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].action, "agent_admin_user.password.reset");
+    assert_eq!(audits[0].target_id, agent_admin_user_id.to_string());
+    assert!(audits[0].before_json.is_none());
+    assert_eq!(
+        audits[0].after_json.as_ref().unwrap()["admin_username"],
+        agent_username
+    );
+    assert_eq!(audits[0].reason.as_deref(), Some("credential leak"));
+
+    sqlx::query("DELETE FROM refresh_tokens WHERE actor_type = 'agent' AND actor_id = ?")
+        .bind(agent_admin_user_id)
+        .execute(&pool)
+        .await?;
+    delete_admin_agent_management_fixture(&pool, admin_id, role_id, &[agent_id], &[agent_owner_id])
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_user_status_update_blocks_login_and_audits() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let password = "user-status-pass-1";
+    let (user_id, email) = create_user_with_login_password(&pool, password).await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+    let login_request = || {
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/auth/login")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({ "email": email, "password": password }).to_string(),
+            ))
+            .unwrap()
+    };
+
+    let active_login = app.clone().oneshot(login_request()).await?;
+    assert_eq!(active_login.status(), StatusCode::OK);
+
+    let unsupported_status = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/admin/api/v1/users/{user_id}/status"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "status": "banned", "reason": "abuse" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(unsupported_status.status(), StatusCode::BAD_REQUEST);
+
+    let missing_reason = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/admin/api/v1/users/{user_id}/status"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "status": "disabled" }).to_string()))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(missing_reason.status(), StatusCode::BAD_REQUEST);
+
+    let disable = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/admin/api/v1/users/{user_id}/status"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "status": "disabled", "reason": "account compromised" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let disable_status = disable.status();
+    let disabled_payload = body_json(disable).await?;
+    assert_eq!(
+        disable_status,
+        StatusCode::OK,
+        "payload: {disabled_payload}"
+    );
+    assert_eq!(disabled_payload["id"], user_id);
+    assert_eq!(disabled_payload["status"], "disabled");
+
+    let blocked_login = app.clone().oneshot(login_request()).await?;
+    assert_eq!(blocked_login.status(), StatusCode::UNAUTHORIZED);
+
+    let revoked_count: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM refresh_tokens
+           WHERE actor_type = 'user' AND actor_id = ? AND revoked_at IS NOT NULL"#,
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(revoked_count, 1);
+
+    let restore = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/admin/api/v1/users/{user_id}/status"))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "status": "active", "reason": "appeal approved" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let restore_status = restore.status();
+    let restored_payload = body_json(restore).await?;
+    assert_eq!(
+        restore_status,
+        StatusCode::OK,
+        "payload: {restored_payload}"
+    );
+    assert_eq!(restored_payload["status"], "active");
+
+    let restored_login = app.clone().oneshot(login_request()).await?;
+    assert_eq!(restored_login.status(), StatusCode::OK);
+
+    let audits = sqlx::query_as::<_, AdminAuditRow>(
+        r#"SELECT action, target_type, target_id, before_json, after_json, reason
+           FROM admin_audit_logs
+           WHERE admin_id = ? AND action = 'user.status.update'
+           ORDER BY id"#,
+    )
+    .bind(admin_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(audits.len(), 2);
+    assert_eq!(audits[0].target_type, "user");
+    assert_eq!(audits[0].target_id, user_id.to_string());
+    assert_eq!(audits[0].before_json.as_ref().unwrap()["status"], "active");
+    assert_eq!(audits[0].after_json.as_ref().unwrap()["status"], "disabled");
+    assert_eq!(audits[0].reason.as_deref(), Some("account compromised"));
+    assert_eq!(
+        audits[1].before_json.as_ref().unwrap()["status"],
+        "disabled"
+    );
+    assert_eq!(audits[1].after_json.as_ref().unwrap()["status"], "active");
+    assert_eq!(audits[1].reason.as_deref(), Some("appeal approved"));
+
+    sqlx::query("DELETE FROM refresh_tokens WHERE actor_type = 'user' AND actor_id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    delete_admin_agent_management_fixture(&pool, admin_id, role_id, &[], &[user_id]).await?;
     Ok(())
 }

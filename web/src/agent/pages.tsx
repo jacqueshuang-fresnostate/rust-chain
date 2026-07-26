@@ -3,6 +3,7 @@ import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
+  changeAgentPassword,
   createAgentInviteCode,
   getAgentCommissions,
   getAgentConvertStats,
@@ -27,7 +28,7 @@ import {
 import { PageHeader } from '../layouts/PageHeader';
 import { AmountText } from '../shared/AmountText';
 import { DataTable } from '../shared/DataTable';
-import { AdminTextInput } from '../shared/SemiFormControls';
+import { AdminPasswordInput, AdminTextInput } from '../shared/SemiFormControls';
 import { StatusTag } from '../shared/StatusTag';
 import { TimestampText } from '../shared/TimestampText';
 import { formatAdminNumber } from '../shared/numberFormat';
@@ -96,6 +97,40 @@ function KpiGrid({ cards }: { cards: KpiCard[] }) {
         </Card>
       ))}
     </section>
+  );
+}
+
+function AgentPasswordChangeCard() {
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  async function submit() {
+    setSubmitting(true);
+    try {
+      await changeAgentPassword(currentPassword.trim(), newPassword.trim());
+      setCurrentPassword('');
+      setNewPassword('');
+      Toast.success('密码已修改，请使用新密码重新登录');
+    } catch (error) {
+      Toast.error(errorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Card bordered={false} shadows="always">
+      <Space align="start" spacing={12} vertical style={{ width: '100%' }}>
+        <Title heading={4}>修改登录密码</Title>
+        <label>当前密码<AdminPasswordInput ariaLabel="当前密码" value={currentPassword} onChange={setCurrentPassword} /></label>
+        <label>新密码<AdminPasswordInput ariaLabel="新密码" value={newPassword} onChange={setNewPassword} /></label>
+        <Text type="tertiary">新密码需为 6-20 位，且与当前密码不同；修改后当前登录会话立即失效。</Text>
+        <Button disabled={!currentPassword.trim() || !newPassword.trim()} loading={submitting} onClick={submit} theme="solid" type="primary">
+          提交修改
+        </Button>
+      </Space>
+    </Card>
   );
 }
 
@@ -168,6 +203,7 @@ export function AgentDashboardPage() {
                 <Text>转入金额：<AmountText value={data.convertStats.total_to_amount} /></Text>
               </Space>
             </Card>
+            <AgentPasswordChangeCard />
           </section>
         </>
       ) : loading ? <Text type="secondary">加载中</Text> : null}

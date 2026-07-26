@@ -64,6 +64,18 @@ pub(crate) struct UpdateInviteCodeStatusRequest {
     pub(crate) status: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct ChangeAgentPasswordRequest {
+    pub(crate) current_password: Option<String>,
+    pub(crate) new_password: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AgentPasswordChangeResponse {
+    pub(crate) changed: bool,
+    pub(crate) requires_relogin: bool,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct AgentInviteCodesResponse {
     pub(crate) invite_codes: Vec<AgentInviteCodeResponse>,

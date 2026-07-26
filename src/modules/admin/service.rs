@@ -32,6 +32,7 @@ use crate::{
             AdminNewCoinLockPositionWrite, AdminSmtpConfigRecord, AdminSmtpDeliverySettingsRecord,
             AdminUploadConfigRecord,
         },
+        auth::domain::{required_string, validate_reset_password},
         auth::hash_password,
         countries::{
             ensure_default_locale_supported, normalize_country_code, normalize_locale,

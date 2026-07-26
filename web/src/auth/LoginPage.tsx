@@ -4,9 +4,10 @@ import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-import { adminLogin } from '../api/adminAuth';
+import { adminLogin, adminLoginTwoFactor, isAdminLoginTwoFactorChallenge } from '../api/adminAuth';
 import { agentLogin } from '../api/agentAuth';
 import { ApiError } from '../api/client';
+import type { AdminLoginResponse } from '../api/types';
 import { authStore, type AuthScope } from './authStore';
 
 const { Title, Text } = Typography;
@@ -16,30 +17,50 @@ type LoginFormValues = {
   password?: string;
 };
 
+type TwoFactorFormValues = {
+  totp_code?: string;
+};
+
 type LoginScope = Extract<AuthScope, 'admin' | 'agent'>;
 
 export function LoginPage() {
   const navigate = useNavigate();
   const [loginScope, setLoginScope] = useState<LoginScope>('admin');
+  const [challengeId, setChallengeId] = useState<string | null>(null);
+  const applySession = (response: AdminLoginResponse) => {
+    if (response.scope !== loginScope) {
+      Toast.error(loginScope === 'agent' ? '当前账号不是代理' : '当前账号不是管理员');
+      return;
+    }
+
+    authStore.setSession({
+      accessToken: response.access_token,
+      refreshToken: response.refresh_token,
+      scope: response.scope,
+      subject: response.subject ?? loginScope
+    });
+    navigate(loginScope === 'agent' ? '/agent/dashboard' : '/admin/dashboard', { replace: true });
+  };
+  const notifyError = (error: unknown) => {
+    Toast.error(error instanceof ApiError ? error.message : '登录失败，请稍后重试');
+  };
   const loginMutation = useMutation({
     mutationFn: (values: Required<LoginFormValues>) => (loginScope === 'agent' ? agentLogin(values) : adminLogin(values)),
     onSuccess: (response) => {
-      if (response.scope !== loginScope) {
-        Toast.error(loginScope === 'agent' ? '当前账号不是代理' : '当前账号不是管理员');
+      // 密码正确但需要二次验证时，后端只返回挑战，不下发任何令牌。
+      if (isAdminLoginTwoFactorChallenge(response)) {
+        setChallengeId(response.challenge_id);
         return;
       }
 
-      authStore.setSession({
-        accessToken: response.access_token,
-        refreshToken: response.refresh_token,
-        scope: response.scope,
-        subject: response.subject ?? loginScope
-      });
-      navigate(loginScope === 'agent' ? '/agent/dashboard' : '/admin/dashboard', { replace: true });
+      applySession(response);
     },
-    onError: (error) => {
-      Toast.error(error instanceof ApiError ? error.message : '登录失败，请稍后重试');
-    }
+    onError: notifyError
+  });
+  const twoFactorMutation = useMutation({
+    mutationFn: (totpCode: string) => adminLoginTwoFactor({ challenge_id: challengeId ?? '', totp_code: totpCode }),
+    onSuccess: applySession,
+    onError: notifyError
   });
   const isAgentLogin = loginScope === 'agent';
   const accountLabel = isAgentLogin ? '代理账号' : '管理员账号';
@@ -59,41 +80,69 @@ export function LoginPage() {
             <IconShield />
           </div>
           <Title heading={3}>登录管理后台</Title>
-          <Text type="tertiary">请选择登录身份并输入账号密码</Text>
-          <Form<LoginFormValues>
-            className="admin-login-form"
-            onSubmit={(values) => {
-              loginMutation.mutate({
-                username: values.username ?? '',
-                password: values.password ?? ''
-              });
-            }}
-          >
-            <Form.Slot label="登录身份">
-              <RadioGroup value={loginScope} type="button" onChange={(event) => setLoginScope(event.target.value as LoginScope)}>
-                <Radio value="admin">管理员</Radio>
-                <Radio value="agent">代理</Radio>
-              </RadioGroup>
-            </Form.Slot>
-            <Form.Input
-              field="username"
-              label={accountLabel}
-              prefix={<IconShield />}
-              placeholder={`请输入${accountLabel}`}
-              rules={[{ required: true, message: `请输入${accountLabel}` }]}
-            />
-            <Form.Input
-              field="password"
-              label="密码"
-              mode="password"
-              prefix={<IconLock />}
-              placeholder="请输入密码"
-              rules={[{ required: true, message: '请输入密码' }]}
-            />
-            <Button htmlType="submit" theme="solid" type="primary" block loading={loginMutation.isPending}>
-              登录
-            </Button>
-          </Form>
+          {challengeId ? (
+            <>
+              <Text type="tertiary">请输入验证器应用中的 6 位动态码</Text>
+              <Form<TwoFactorFormValues>
+                className="admin-login-form"
+                onSubmit={(values) => {
+                  twoFactorMutation.mutate(values.totp_code ?? '');
+                }}
+              >
+                <Form.Input
+                  field="totp_code"
+                  label="两步验证码"
+                  prefix={<IconLock />}
+                  placeholder="请输入 6 位验证码"
+                  rules={[{ required: true, message: '请输入两步验证码' }]}
+                />
+                <Button htmlType="submit" theme="solid" type="primary" block loading={twoFactorMutation.isPending}>
+                  验证并登录
+                </Button>
+                <Button theme="borderless" block onClick={() => setChallengeId(null)}>
+                  返回重新登录
+                </Button>
+              </Form>
+            </>
+          ) : (
+            <>
+              <Text type="tertiary">请选择登录身份并输入账号密码</Text>
+              <Form<LoginFormValues>
+                className="admin-login-form"
+                onSubmit={(values) => {
+                  loginMutation.mutate({
+                    username: values.username ?? '',
+                    password: values.password ?? ''
+                  });
+                }}
+              >
+                <Form.Slot label="登录身份">
+                  <RadioGroup value={loginScope} type="button" onChange={(event) => setLoginScope(event.target.value as LoginScope)}>
+                    <Radio value="admin">管理员</Radio>
+                    <Radio value="agent">代理</Radio>
+                  </RadioGroup>
+                </Form.Slot>
+                <Form.Input
+                  field="username"
+                  label={accountLabel}
+                  prefix={<IconShield />}
+                  placeholder={`请输入${accountLabel}`}
+                  rules={[{ required: true, message: `请输入${accountLabel}` }]}
+                />
+                <Form.Input
+                  field="password"
+                  label="密码"
+                  mode="password"
+                  prefix={<IconLock />}
+                  placeholder="请输入密码"
+                  rules={[{ required: true, message: '请输入密码' }]}
+                />
+                <Button htmlType="submit" theme="solid" type="primary" block loading={loginMutation.isPending}>
+                  登录
+                </Button>
+              </Form>
+            </>
+          )}
         </Card>
       </section>
     </main>

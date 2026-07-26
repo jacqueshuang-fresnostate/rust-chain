@@ -8,6 +8,7 @@ import { NewCoinActions } from './actions/NewCoinActions';
 import { PlatformBrandPage } from './actions/PlatformBrandPage';
 import { PredictionConfigPage } from './actions/PredictionConfigPage';
 import { QuickRechargeConfigPage } from './actions/QuickRechargeConfigPage';
+import { AdminTwoFactorPage } from './actions/AdminTwoFactorPage';
 import { SecurityPolicyPage } from './actions/SecurityPolicyPage';
 import { SmtpConfigPage } from './actions/SmtpConfigPage';
 import { UploadConfigPage } from './actions/UploadConfigPage';
@@ -67,6 +68,7 @@ export const adminRoutes: RouteObject[] = [
   { path: 'risk/events', element: <ResourcePage config={resourceConfigs.riskEvents} /> },
   { path: 'system/countries', element: <ResourcePage config={resourceConfigs.countries} /> },
   { path: 'system/security-policy', element: <SecurityPolicyPage /> },
+  { path: 'system/two-factor', element: <AdminTwoFactorPage /> },
   { path: 'system/brand', element: <PlatformBrandPage /> },
   { path: 'system/smtp', element: <SmtpConfigPage /> },
   { path: 'system/uploads', element: <UploadConfigPage /> },

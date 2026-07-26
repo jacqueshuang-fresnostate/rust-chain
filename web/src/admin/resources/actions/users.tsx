@@ -163,6 +163,38 @@ function AssignAgentAction({ helpers, userId }: { helpers: RowActionHelpers; use
   );
 }
 
+function userStatusActions(status: string): Array<{ label: string; status: string }> {
+  return [
+    { label: '启用', status: 'active' },
+    { label: '暂停', status: 'suspended' },
+    { label: '封禁', status: 'disabled' }
+  ].filter((item) => item.status !== status);
+}
+
+function UserStatusActions({ helpers, status, userId }: { helpers: RowActionHelpers; status: string; userId: string }) {
+  return (
+    <>
+      {userStatusActions(status).map((action) => (
+        <ConfirmAction
+          actionText={action.label}
+          disabled={!userId}
+          key={action.status}
+          title={`${action.label}用户`}
+          onConfirm={async (reason) => {
+            await submitAction(`${action.label}用户`, () =>
+              apiRequest(`/admin/api/v1/users/${userId}/status`, {
+                method: 'PATCH',
+                body: JSON.stringify({ status: action.status, reason })
+              })
+            );
+            helpers.reload();
+          }}
+        />
+      ))}
+    </>
+  );
+}
+
 function ResetUserTwoFactorAction({ helpers, userId }: { helpers: RowActionHelpers; userId: string }) {
   return (
     <ConfirmAction
@@ -196,6 +228,7 @@ export function UserRowActions({ helpers, record }: { helpers: RowActionHelpers;
       <UserRechargeAction helpers={helpers} userId={userId} />
       <AssignAgentAction helpers={helpers} userId={userId} />
       <ResetUserTwoFactorAction helpers={helpers} userId={userId} />
+      <UserStatusActions helpers={helpers} status={recordString(record, 'status')} userId={userId} />
     </>
   );
 }

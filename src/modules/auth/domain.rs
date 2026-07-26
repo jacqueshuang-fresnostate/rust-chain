@@ -7,10 +7,38 @@ use crate::{
     error::{AppError, AppResult},
 };
 
+/// 连续密码失败次数达到该阈值即触发临时锁定，与邮件验证码的尝试上限保持一致。
+pub(crate) const LOGIN_FAILURE_LIMIT: u32 = 5;
+/// 失败计数窗口：窗口过期后计数自动归零，无需人工干预。
+pub(crate) const LOGIN_FAILURE_WINDOW_SECONDS: i64 = 900;
+/// 锁定时长：到期后自动解锁，避免计数卡死造成永久拒绝登录。
+pub(crate) const LOGIN_LOCKOUT_SECONDS: i64 = 900;
+
+const LOGIN_FAILURE_KEY_MAX_CHARS: usize = 191;
+
 #[derive(Debug)]
 pub struct AuthValidationRules;
 
 impl DomainLayer for AuthValidationRules {}
+
+/// 失败计数键统一小写并截断，避免通过大小写或超长输入绕过锁定。
+pub fn login_failure_key(identifier: &str) -> String {
+    identifier
+        .trim()
+        .to_lowercase()
+        .chars()
+        .take(LOGIN_FAILURE_KEY_MAX_CHARS)
+        .collect()
+}
+
+/// 锁定提示不区分账号是否存在，只暴露可重试时间。
+pub(crate) fn login_locked_error(retry_after_seconds: i64) -> AppError {
+    let minutes = (retry_after_seconds.max(0) as u64).div_ceil(60).max(1);
+    AppError::security_validation(
+        "login_temporarily_locked",
+        format!("登录失败次数过多，请在 {minutes} 分钟后重试"),
+    )
+}
 
 pub(crate) fn validate_email_code(value: &str) -> AppResult<String> {
     let code = value.trim();

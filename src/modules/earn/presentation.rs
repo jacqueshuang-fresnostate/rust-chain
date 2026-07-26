@@ -15,14 +15,22 @@ pub(crate) struct ListQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct AdminProductsQuery {
+    pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct AdminCategoriesQuery {
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
     pub(crate) status: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct AdminSubscriptionsQuery {
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
     pub(crate) user_id: Option<u64>,
     pub(crate) email: Option<String>,
     pub(crate) status: Option<String>,
@@ -117,6 +125,7 @@ pub(crate) struct EarnCategoryResponse {
 #[derive(Debug, Serialize)]
 pub(crate) struct EarnCategoriesResponse {
     pub(crate) categories: Vec<EarnCategoryResponse>,
+    pub(crate) total: i64,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -148,8 +157,20 @@ pub(crate) struct EarnProductsResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub(crate) struct AdminEarnProductsResponse {
+    pub(crate) products: Vec<EarnProductResponse>,
+    pub(crate) total: i64,
+}
+
+#[derive(Debug, Serialize)]
 pub(crate) struct EarnSubscriptionsResponse {
     pub(crate) subscriptions: Vec<EarnSubscriptionResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AdminEarnSubscriptionsResponse {
+    pub(crate) subscriptions: Vec<EarnSubscriptionResponse>,
+    pub(crate) total: i64,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]

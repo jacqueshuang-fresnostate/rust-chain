@@ -5,21 +5,27 @@
 use crate::{
     architecture::ApplicationLayer,
     error::{AppError, AppResult},
-    modules::agent::{
-        infrastructure,
-        presentation::{
-            AgentCommissionsResponse, AgentConvertStatsResponse, AgentDashboardResponse,
-            AgentInviteCodeResponse, AgentInviteCodesResponse, AgentListQuery, AgentMeResponse,
-            AgentSubAgentsResponse, AgentTeamTreeResponse, AgentUsersResponse,
-            CreateInviteCodeRequest, UpdateInviteCodeStatusRequest,
+    modules::{
+        agent::{
+            infrastructure,
+            presentation::{
+                AgentCommissionsResponse, AgentConvertStatsResponse, AgentDashboardResponse,
+                AgentInviteCodeResponse, AgentInviteCodesResponse, AgentListQuery, AgentMeResponse,
+                AgentPasswordChangeResponse, AgentSubAgentsResponse, AgentTeamTreeResponse,
+                AgentUsersResponse, ChangeAgentPasswordRequest, CreateInviteCodeRequest,
+                UpdateInviteCodeStatusRequest,
+            },
+            repository::{AgentAccessScope, AgentInviteCodeWrite},
+            service::{
+                agent_admin_id_from_subject, agent_commissions_response,
+                agent_convert_stats_response, agent_dashboard_response, agent_list_page,
+                generated_agent_invite_code, validate_agent_invite_code_status,
+                validate_agent_invite_code_usage_limit, validate_agent_password_change,
+            },
         },
-        repository::{AgentAccessScope, AgentInviteCodeWrite},
-        service::{
-            agent_admin_id_from_subject, agent_commissions_response, agent_convert_stats_response,
-            agent_dashboard_response, agent_list_page, generated_agent_invite_code,
-            validate_agent_invite_code_status, validate_agent_invite_code_usage_limit,
-        },
+        auth::{ActorType, AuthActor, hash_password, revoke_actor_auth_sessions, verify_password},
     },
+    state::AppState,
 };
 use sqlx::{MySql, Pool};
 
@@ -163,6 +169,46 @@ pub(crate) async fn update_agent_invite_code_status(
     infrastructure::load_agent_invite_code_by_id(&pool, scope.agent_id, invite_code_id)
         .await?
         .ok_or(AppError::NotFound)
+}
+
+pub(crate) async fn change_agent_password(
+    state: AppState,
+    subject: &str,
+    request: ChangeAgentPasswordRequest,
+) -> AppResult<AgentPasswordChangeResponse> {
+    let agent_admin_id = agent_admin_id_from_subject(subject)?;
+    let (current_password, new_password) =
+        validate_agent_password_change(request.current_password, request.new_password)?;
+    let password_hash = hash_password(&new_password)?;
+    let pool = agent_mysql_pool(state.mysql.clone())?;
+
+    // 校验旧密码、写入新密码和吊销刷新令牌同事务提交，避免旧凭证在改密后仍可续期。
+    let mut tx = pool.begin().await?;
+    let credential = infrastructure::lock_agent_admin_credential_in_tx(&mut tx, agent_admin_id)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+    if credential.status != "active" {
+        return Err(AppError::Unauthorized);
+    }
+    if !verify_password(&credential.password_hash, &current_password)? {
+        return Err(AppError::Validation(
+            "current_password is incorrect".to_owned(),
+        ));
+    }
+    infrastructure::update_agent_admin_password_in_tx(&mut tx, agent_admin_id, &password_hash)
+        .await?;
+    infrastructure::revoke_agent_admin_refresh_tokens_in_tx(&mut tx, agent_admin_id).await?;
+    tx.commit().await?;
+
+    revoke_actor_auth_sessions(
+        &state,
+        &AuthActor::new(ActorType::Agent, agent_admin_id, None),
+    )
+    .await?;
+    Ok(AgentPasswordChangeResponse {
+        changed: true,
+        requires_relogin: true,
+    })
 }
 
 async fn agent_context(

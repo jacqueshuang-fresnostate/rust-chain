@@ -118,6 +118,7 @@ pub struct KycSubmissionSummary {
 #[derive(Debug, Serialize)]
 pub struct KycSubmissionsResponse {
     pub submissions: Vec<KycSubmissionSummary>,
+    pub total: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -133,6 +134,7 @@ pub struct ListKycSubmissionsFilter {
     pub email: Option<String>,
     pub status: Option<String>,
     pub limit: u32,
+    pub offset: u32,
 }
 
 #[derive(Debug)]

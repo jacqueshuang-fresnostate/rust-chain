@@ -53,9 +53,24 @@ pub struct WalletWithdrawalQuery {
     pub limit: Option<u32>,
 }
 
+/// 后台充提列表查询参数：用户端不暴露 offset，避免公开接口承诺未实现的翻页语义。
+#[derive(Debug, Deserialize)]
+pub struct AdminWalletListQuery {
+    pub status: Option<String>,
+    pub user_id: Option<u64>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct WalletWithdrawalsResponse {
     pub withdrawals: Vec<WalletWithdrawalResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdminWalletWithdrawalsResponse {
+    pub withdrawals: Vec<WalletWithdrawalResponse>,
+    pub total: i64,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -142,6 +157,7 @@ pub struct ReverseDepositRequest {
 #[derive(Debug, Serialize)]
 pub struct WalletDepositsResponse {
     pub deposits: Vec<WalletDepositEventResponse>,
+    pub total: i64,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]

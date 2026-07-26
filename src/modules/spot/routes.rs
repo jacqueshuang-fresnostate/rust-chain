@@ -19,10 +19,11 @@ use crate::{
                 validate_admin_cancel_spot_order_request,
             },
             presentation::{
-                AdminCancelSpotOrderRequest, AdminSpotOrdersQuery, AdminSpotTradesQuery,
-                CancelAllSpotOrdersQuery, CreateSpotOrderRequest, FillSpotOrdersRequest,
-                SpotCancelAllResponse, SpotCancelResponse, SpotFillResponse, SpotOrderResponse,
-                SpotOrdersQuery, SpotOrdersResponse, SpotTradesQuery, SpotTradesResponse,
+                AdminCancelSpotOrderRequest, AdminSpotOrdersQuery, AdminSpotOrdersResponse,
+                AdminSpotTradesQuery, AdminSpotTradesResponse, CancelAllSpotOrdersQuery,
+                CreateSpotOrderRequest, FillSpotOrdersRequest, SpotCancelAllResponse,
+                SpotCancelResponse, SpotFillResponse, SpotOrderResponse, SpotOrdersQuery,
+                SpotOrdersResponse, SpotTradesQuery, SpotTradesResponse,
             },
         },
     },
@@ -89,7 +90,7 @@ async fn list_admin_orders(
     AdminAuth(_claims): AdminAuth,
     State(state): State<AppState>,
     Query(query): Query<AdminSpotOrdersQuery>,
-) -> AppResult<Json<SpotOrdersResponse>> {
+) -> AppResult<Json<AdminSpotOrdersResponse>> {
     let pool = mysql_pool(&state)?;
     Ok(Json(list_admin_spot_orders_use_case(&pool, query).await?))
 }
@@ -173,7 +174,7 @@ async fn list_admin_trades(
     AdminAuth(_claims): AdminAuth,
     State(state): State<AppState>,
     Query(query): Query<AdminSpotTradesQuery>,
-) -> AppResult<Json<SpotTradesResponse>> {
+) -> AppResult<Json<AdminSpotTradesResponse>> {
     let pool = mysql_pool(&state)?;
     Ok(Json(list_admin_spot_trades_use_case(&pool, query).await?))
 }

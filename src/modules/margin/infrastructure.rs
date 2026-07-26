@@ -674,7 +674,41 @@ pub(crate) async fn list_margin_products(
     status: Option<&str>,
     limit: u32,
 ) -> AppResult<Vec<MarginProductResponse>> {
-    let mut builder = QueryBuilder::<MySql>::new(
+    let mut builder = margin_product_query();
+    push_margin_product_filters(&mut builder, status);
+    builder.push(MARGIN_PRODUCT_ORDER_BY);
+    builder.push(" LIMIT ");
+    builder.push_bind(limit as i64);
+    builder
+        .build_query_as::<MarginProductResponse>()
+        .fetch_all(pool)
+        .await
+        .map_err(AppError::from)
+}
+
+/// 后台杠杆产品列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
+pub(crate) async fn list_admin_margin_products(
+    pool: &Pool<MySql>,
+    status: Option<&str>,
+    limit: u32,
+    offset: u32,
+) -> AppResult<(Vec<MarginProductResponse>, i64)> {
+    let mut rows = margin_product_query();
+    let mut total = QueryBuilder::<MySql>::new(
+        r#"SELECT COUNT(*)
+           FROM margin_products products
+           INNER JOIN trading_pairs pairs ON pairs.id = products.pair_id
+           INNER JOIN assets ON assets.id = products.margin_asset"#,
+    );
+    for builder in [&mut rows, &mut total] {
+        push_margin_product_filters(builder, status);
+    }
+
+    fetch_admin_page(pool, rows, total, MARGIN_PRODUCT_ORDER_BY, limit, offset).await
+}
+
+fn margin_product_query() -> QueryBuilder<'static, MySql> {
+    QueryBuilder::<MySql>::new(
         r#"SELECT products.id, products.pair_id, pairs.symbol,
                   products.margin_asset, assets.symbol AS margin_asset_symbol,
                   products.logo_url,
@@ -684,18 +718,15 @@ pub(crate) async fn list_margin_products(
            FROM margin_products products
            INNER JOIN trading_pairs pairs ON pairs.id = products.pair_id
            INNER JOIN assets ON assets.id = products.margin_asset"#,
-    );
+    )
+}
+
+fn push_margin_product_filters(builder: &mut QueryBuilder<'_, MySql>, status: Option<&str>) {
+    builder.push(" WHERE 1 = 1");
     if let Some(status) = status {
-        builder.push(" WHERE products.status = ");
-        builder.push_bind(status);
+        builder.push(" AND products.status = ");
+        builder.push_bind(status.to_owned());
     }
-    builder.push(" ORDER BY products.id DESC LIMIT ");
-    builder.push_bind(limit as i64);
-    builder
-        .build_query_as::<MarginProductResponse>()
-        .fetch_all(pool)
-        .await
-        .map_err(AppError::from)
 }
 
 pub(crate) async fn list_user_margin_positions(
@@ -787,6 +818,7 @@ pub(crate) async fn load_user_position_by_id(
     .map_err(AppError::from)
 }
 
+/// 后台仓位列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
 pub(crate) async fn list_admin_margin_positions(
     pool: &Pool<MySql>,
     user_id: Option<u64>,
@@ -794,35 +826,44 @@ pub(crate) async fn list_admin_margin_positions(
     pair_id: Option<u64>,
     status: Option<&str>,
     limit: u32,
-) -> AppResult<Vec<AdminMarginPositionResponse>> {
-    let mut builder = QueryBuilder::<MySql>::new(
+    offset: u32,
+) -> AppResult<(Vec<AdminMarginPositionResponse>, i64)> {
+    let mut rows = QueryBuilder::<MySql>::new(
         r#"SELECT id, user_id, product_id, pair_id, margin_asset, wallet_scope, margin_mode, direction, margin_amount,
                   leverage, notional_amount, borrowed_amount, interest_amount, entry_price,
                   exit_price, realized_pnl, closed_at, liquidated_at, liquidation_reason, status,
                   idempotency_key
-           FROM margin_positions
-           WHERE 1 = 1"#,
+           FROM margin_positions"#,
     );
+    let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM margin_positions");
+    for builder in [&mut rows, &mut total] {
+        push_admin_margin_position_filters(builder, user_id, email.clone(), pair_id, status);
+    }
+
+    fetch_admin_page(pool, rows, total, " ORDER BY id DESC", limit, offset).await
+}
+
+fn push_admin_margin_position_filters(
+    builder: &mut QueryBuilder<'_, MySql>,
+    user_id: Option<u64>,
+    email: Option<String>,
+    pair_id: Option<u64>,
+    status: Option<&str>,
+) {
+    builder.push(" WHERE 1 = 1");
     if let Some(user_id) = user_id {
         builder.push(" AND user_id = ");
         builder.push_bind(user_id);
     }
-    push_user_email_filter(&mut builder, "user_id", email);
+    push_user_email_filter(builder, "user_id", email);
     if let Some(pair_id) = pair_id {
         builder.push(" AND pair_id = ");
         builder.push_bind(pair_id);
     }
     if let Some(status) = status {
         builder.push(" AND status = ");
-        builder.push_bind(status);
+        builder.push_bind(status.to_owned());
     }
-    builder.push(" ORDER BY id DESC LIMIT ");
-    builder.push_bind(limit as i64);
-    builder
-        .build_query_as::<AdminMarginPositionResponse>()
-        .fetch_all(pool)
-        .await
-        .map_err(AppError::from)
 }
 
 pub(crate) async fn load_admin_margin_position_by_id(
@@ -844,6 +885,7 @@ pub(crate) async fn load_admin_margin_position_by_id(
     .map_err(AppError::from)
 }
 
+/// 后台资金费汇总：分组行与分组总数共用同一组谓词，总数按分组键去重统计。
 pub(crate) async fn list_admin_interest_summary(
     pool: &Pool<MySql>,
     user_id: Option<u64>,
@@ -851,34 +893,32 @@ pub(crate) async fn list_admin_interest_summary(
     pair_id: Option<u64>,
     status: Option<&str>,
     limit: u32,
-) -> AppResult<Vec<AdminInterestSummaryItem>> {
-    let mut builder = QueryBuilder::<MySql>::new(
+    offset: u32,
+) -> AppResult<(Vec<AdminInterestSummaryItem>, i64)> {
+    let mut rows = QueryBuilder::<MySql>::new(
         r#"SELECT margin_asset, status, COUNT(*) AS position_count,
                   COALESCE(SUM(borrowed_amount), 0) AS borrowed_amount,
                   COALESCE(SUM(interest_amount), 0) AS interest_amount
-           FROM margin_positions
-           WHERE 1 = 1"#,
+           FROM margin_positions"#,
     );
-    if let Some(user_id) = user_id {
-        builder.push(" AND user_id = ");
-        builder.push_bind(user_id);
+    let mut total = QueryBuilder::<MySql>::new(
+        "SELECT COUNT(DISTINCT margin_asset, status) FROM margin_positions",
+    );
+    for builder in [&mut rows, &mut total] {
+        push_admin_margin_position_filters(builder, user_id, email.clone(), pair_id, status);
     }
-    push_user_email_filter(&mut builder, "user_id", email);
-    if let Some(pair_id) = pair_id {
-        builder.push(" AND pair_id = ");
-        builder.push_bind(pair_id);
-    }
-    if let Some(status) = status {
-        builder.push(" AND status = ");
-        builder.push_bind(status);
-    }
-    builder.push(" GROUP BY margin_asset, status ORDER BY margin_asset ASC, status ASC LIMIT ");
-    builder.push_bind(limit as i64);
-    builder
-        .build_query_as::<AdminInterestSummaryItem>()
-        .fetch_all(pool)
-        .await
-        .map_err(AppError::from)
+    // 分组键 (margin_asset, status) 本身唯一，排序无需再补主键。
+    rows.push(" GROUP BY margin_asset, status");
+
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY margin_asset ASC, status ASC",
+        limit,
+        offset,
+    )
+    .await
 }
 
 pub(crate) async fn load_user_risk_position_by_id(
@@ -1698,6 +1738,33 @@ fn optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
+}
+
+/// 分页排序必须带唯一列 id，否则同一排序值的行会在页间重复或丢失。
+const MARGIN_PRODUCT_ORDER_BY: &str = " ORDER BY products.id DESC";
+
+/// 行查询与 COUNT 查询必须由同一组过滤谓词构建，返回总数才能与当前筛选一致。
+async fn fetch_admin_page<T>(
+    pool: &Pool<MySql>,
+    mut rows: QueryBuilder<'_, MySql>,
+    mut total: QueryBuilder<'_, MySql>,
+    order_by: &str,
+    limit: u32,
+    offset: u32,
+) -> AppResult<(Vec<T>, i64)>
+where
+    T: for<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> + Send + Unpin,
+{
+    rows.push(order_by);
+    rows.push(" LIMIT ");
+    rows.push_bind(limit as i64);
+    rows.push(" OFFSET ");
+    rows.push_bind(offset as i64);
+
+    let items = rows.build_query_as::<T>().fetch_all(pool).await?;
+    let total = total.build_query_scalar::<i64>().fetch_one(pool).await?;
+
+    Ok((items, total))
 }
 
 fn push_user_email_filter(

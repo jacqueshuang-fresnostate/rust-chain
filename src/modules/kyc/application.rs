@@ -145,7 +145,7 @@ pub(crate) async fn create_user_kyc_submission_in_tx(
 pub(crate) async fn list_kyc_submissions(
     pool: &Pool<MySql>,
     filter: ListKycSubmissionsFilter,
-) -> AppResult<Vec<KycSubmissionSummary>> {
+) -> AppResult<(Vec<KycSubmissionSummary>, i64)> {
     let status = filter
         .status
         .as_deref()
@@ -159,6 +159,7 @@ pub(crate) async fn list_kyc_submissions(
             email,
             status,
             limit: filter.limit,
+            offset: filter.offset,
         },
     )
     .await

@@ -120,6 +120,19 @@ pub(crate) async fn ensure_admin_user_exists_in_tx(
     Ok(())
 }
 
+pub(crate) async fn update_admin_user_status_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    status: &str,
+) -> AppResult<()> {
+    sqlx::query("UPDATE users SET status = ? WHERE id = ?")
+        .bind(status)
+        .bind(user_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
 pub(crate) async fn load_admin_user_two_factor_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,

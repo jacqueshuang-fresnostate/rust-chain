@@ -2364,3 +2364,135 @@ async fn user_referral_bind_rejects_disabled_agent_codes() -> Result<(), Box<dyn
     cleanup_referral_fixture(&pool, &[user_id, agent_user_id], &[agent_id]).await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn user_login_route_rejects_disabled_account() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let password = "user-status-login-1";
+    let active_user_id = create_security_user(&pool, "status-active", password).await;
+    let disabled_user_id = create_security_user(&pool, "status-disabled", password).await;
+    let active_email: String = sqlx::query_scalar("SELECT email FROM users WHERE id = ?")
+        .bind(active_user_id)
+        .fetch_one(&pool)
+        .await?;
+    let disabled_email: String = sqlx::query_scalar("SELECT email FROM users WHERE id = ?")
+        .bind(disabled_user_id)
+        .fetch_one(&pool)
+        .await?;
+    sqlx::query("UPDATE users SET status = 'disabled' WHERE id = ?")
+        .bind(disabled_user_id)
+        .execute(&pool)
+        .await?;
+    let app = exchange_api::build_router(AppState::new(settings).with_mysql(pool.clone()));
+    let login_request = |email: &str| {
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/auth/login")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({ "email": email, "password": password }).to_string(),
+            ))
+            .unwrap()
+    };
+
+    let active_login = app.clone().oneshot(login_request(&active_email)).await?;
+    assert_eq!(active_login.status(), StatusCode::OK);
+
+    let disabled_login = app.clone().oneshot(login_request(&disabled_email)).await?;
+    assert_eq!(disabled_login.status(), StatusCode::UNAUTHORIZED);
+
+    cleanup_security_users(&pool, &[active_user_id, disabled_user_id]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn user_login_locks_out_after_repeated_password_failures() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let user_id = create_security_user(&pool, "login-lockout", "LoginPassword123!").await;
+    let email: String = sqlx::query_scalar("SELECT email FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await?;
+    let app = exchange_api::build_router(AppState::new(test_settings()).with_mysql(pool.clone()));
+    let login_body =
+        |password: &str| json!({ "email": email.clone(), "password": password.to_owned() });
+
+    for attempt in 1..=4 {
+        let response = json_request(
+            app.clone(),
+            "POST",
+            "/api/v1/auth/login",
+            None,
+            login_body("WrongPassword!"),
+        )
+        .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "attempt {attempt} must stay unauthorized"
+        );
+    }
+
+    let locking = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/auth/login",
+        None,
+        login_body("WrongPassword!"),
+    )
+    .await;
+    assert_eq!(locking.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body_json(locking).await?["code"],
+        "login_temporarily_locked"
+    );
+
+    let locked = json_request(
+        app.clone(),
+        "POST",
+        "/api/v1/auth/login",
+        None,
+        login_body("LoginPassword123!"),
+    )
+    .await;
+    assert_eq!(locked.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(locked).await?["code"], "login_temporarily_locked");
+
+    // 锁定到期后自愈，成功登录同时清空计数。
+    sqlx::query(
+        r#"UPDATE login_failure_counters
+           SET locked_until = UTC_TIMESTAMP(6) - INTERVAL 1 SECOND,
+               window_expires_at = UTC_TIMESTAMP(6) - INTERVAL 1 SECOND
+           WHERE actor_type = 'user' AND identifier = ?"#,
+    )
+    .bind(&email)
+    .execute(&pool)
+    .await?;
+
+    let healed = json_request(
+        app,
+        "POST",
+        "/api/v1/auth/login",
+        None,
+        login_body("LoginPassword123!"),
+    )
+    .await;
+    assert_eq!(healed.status(), StatusCode::OK);
+    assert_eq!(body_json(healed).await?["scope"], "user");
+
+    let remaining: Option<u32> = sqlx::query_scalar(
+        "SELECT failure_count FROM login_failure_counters WHERE actor_type = 'user' AND identifier = ?",
+    )
+    .bind(&email)
+    .fetch_optional(&pool)
+    .await?;
+    assert_eq!(remaining, None);
+
+    cleanup_security_users(&pool, &[user_id]).await?;
+    Ok(())
+}

@@ -15,8 +15,15 @@ pub(crate) struct ListQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct AdminLoanProductsQuery {
+    pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct AdminLoanOrdersQuery {
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
     pub(crate) user_id: Option<u64>,
     pub(crate) email: Option<String>,
     pub(crate) product_id: Option<u64>,
@@ -85,8 +92,20 @@ pub(crate) struct LoanProductsResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub(crate) struct AdminLoanProductsResponse {
+    pub(crate) products: Vec<LoanProductResponse>,
+    pub(crate) total: i64,
+}
+
+#[derive(Debug, Serialize)]
 pub(crate) struct LoanOrdersResponse {
     pub(crate) orders: Vec<LoanOrderResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AdminLoanOrdersResponse {
+    pub(crate) orders: Vec<LoanOrderResponse>,
+    pub(crate) total: i64,
 }
 
 #[derive(Debug, Serialize)]

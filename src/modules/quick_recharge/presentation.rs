@@ -80,6 +80,7 @@ pub struct QuickRechargeOrdersQuery {
     pub(crate) order_id: Option<String>,
     pub(crate) provider_trade_id: Option<String>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -177,6 +178,12 @@ pub struct TestQuickRechargeConfigResponse {
 #[derive(Debug, Serialize)]
 pub struct QuickRechargeOrdersResponse {
     pub(crate) orders: Vec<QuickRechargeOrderResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdminQuickRechargeOrdersResponse {
+    pub(crate) orders: Vec<QuickRechargeOrderResponse>,
+    pub(crate) total: i64,
 }
 
 impl From<QuickRechargeConfigRow> for QuickRechargeConfigResponse {

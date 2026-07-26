@@ -4,10 +4,14 @@
 
 use crate::{
     error::{AppError, AppResult},
-    infra::email::verification_code_email_message,
+    infra::{
+        email::verification_code_email_message,
+        secrets::{decrypt_secret, encrypt_secret},
+    },
     modules::{
-        admin::application::load_enabled_admin_smtp_config,
+        admin::{application::load_enabled_admin_smtp_config, service::admin_id_from_subject},
         auth::presentation::{
+            AdminLoginResponse, AdminTwoFactorSetupResponse, AdminTwoFactorStatusResponse,
             LoginTwoFactorChallengeResponse, LoginTwoFactorSetupChallengeResponse, TokenResponse,
             UserAuthRequest, UserLoginResponse,
         },
@@ -27,7 +31,7 @@ use crate::{
                 ensure_registration_email_not_cooling_down_in_tx,
                 increment_email_verification_attempt_in_tx,
                 insert_registration_email_verification_in_tx, insert_user_email_verification_in_tx,
-                insert_verified_user_in_tx, load_password_reset_user_id,
+                insert_verified_user_in_tx, load_admin_username, load_password_reset_user_id,
                 lock_latest_pending_email_verification_by_purpose_in_tx,
                 lock_password_reset_user_in_tx, lock_registration_country_in_tx,
                 lock_verified_user_email_in_tx, mark_email_verification_verified_in_tx,
@@ -40,10 +44,16 @@ use crate::{
         },
         countries::normalize_country_code,
         security::{
-            LoginTwoFactorChallengeType, LoginTwoFactorMode, consume_login_two_factor_challenge,
-            create_login_two_factor_challenge, ensure_login_challenge_usable,
-            load_login_two_factor_challenge, load_security_policy, load_user_two_factor,
-            reset_user_two_factor, verify_user_totp,
+            LoginTwoFactorChallengeType, LoginTwoFactorMode, confirm_admin_totp,
+            consume_admin_login_two_factor_challenge, consume_login_two_factor_challenge,
+            create_admin_login_two_factor_challenge, create_login_two_factor_challenge,
+            credential_encryption_key, ensure_admin_login_challenge_usable,
+            ensure_login_challenge_usable, generate_totp_secret,
+            increment_admin_login_two_factor_attempt, load_admin_login_two_factor_challenge,
+            load_admin_two_factor, load_login_two_factor_challenge, load_security_policy,
+            load_user_two_factor, reset_admin_two_factor, reset_user_two_factor,
+            save_pending_admin_totp_secret, totp_otpauth_uri, verify_admin_totp, verify_totp_code,
+            verify_user_totp,
         },
     },
     state::AppState,
@@ -136,9 +146,141 @@ fn admin_bearer_token(headers: &HeaderMap) -> Option<&str> {
 
 pub(crate) async fn login_admin_actor(
     state: &AppState,
+    pool: &Pool<MySql>,
     credentials: AdminCredentials,
-) -> AppResult<IssuedTokens> {
-    auth_service(state)?.login_admin(credentials).await
+) -> AppResult<AdminLoginResponse> {
+    let service = auth_service(state)?;
+    let actor = service.verify_admin_credentials(credentials).await?;
+    // 管理员 2FA 按账号自愿绑定，未绑定的账号维持原有登录行为，避免上线即锁死存量管理员。
+    if !load_admin_two_factor(pool, actor.actor_id)
+        .await?
+        .totp_enabled
+    {
+        return Ok(AdminLoginResponse::Token(
+            service.issue_tokens_for_actor(actor).await?.into(),
+        ));
+    }
+
+    let challenge = create_admin_login_two_factor_challenge(pool, actor.actor_id).await?;
+
+    Ok(AdminLoginResponse::TwoFactorChallenge(
+        LoginTwoFactorChallengeResponse {
+            requires_2fa: true,
+            challenge_id: challenge.challenge_id,
+            expires_in_seconds: challenge.expires_in_seconds,
+        },
+    ))
+}
+
+pub(crate) async fn verify_admin_login_two_factor(
+    state: &AppState,
+    pool: &Pool<MySql>,
+    challenge_id: String,
+    totp_code: String,
+) -> AppResult<TokenResponse> {
+    let challenge = load_admin_login_two_factor_challenge(pool, &challenge_id).await?;
+    ensure_admin_login_challenge_usable(&challenge)?;
+    if let Err(error) = verify_admin_totp(
+        pool,
+        state.settings.as_ref(),
+        challenge.admin_id,
+        &totp_code,
+    )
+    .await
+    {
+        // 试码失败计入挑战次数，用尽后挑战作废，攻击者必须重新通过密码登录。
+        increment_admin_login_two_factor_attempt(pool, &challenge.challenge_id).await?;
+        return Err(error);
+    }
+    consume_admin_login_two_factor_challenge(pool, &challenge.challenge_id).await?;
+
+    let tokens = auth_service(state)?
+        .issue_tokens_for_actor(AuthActor::new(ActorType::Admin, challenge.admin_id, None))
+        .await?;
+
+    Ok(tokens.into())
+}
+
+pub(crate) async fn get_admin_two_factor_status(
+    pool: &Pool<MySql>,
+    subject: &str,
+) -> AppResult<AdminTwoFactorStatusResponse> {
+    let two_factor = load_admin_two_factor(pool, admin_id_from_subject(subject)?).await?;
+
+    Ok(AdminTwoFactorStatusResponse {
+        totp_enabled: two_factor.totp_enabled,
+    })
+}
+
+pub(crate) async fn setup_admin_two_factor(
+    state: &AppState,
+    pool: &Pool<MySql>,
+    subject: &str,
+) -> AppResult<AdminTwoFactorSetupResponse> {
+    let admin_id = admin_id_from_subject(subject)?;
+    if load_admin_two_factor(pool, admin_id).await?.totp_enabled {
+        return Err(AppError::security_validation(
+            "2fa_already_enabled",
+            "2FA 已绑定",
+        ));
+    }
+    let key = credential_encryption_key(state.settings.as_ref())?;
+    let account = load_admin_username(pool, admin_id).await?;
+    let secret = generate_totp_secret()?;
+    save_pending_admin_totp_secret(pool, admin_id, &encrypt_secret(&secret, key)?).await?;
+
+    Ok(AdminTwoFactorSetupResponse {
+        otpauth_uri: totp_otpauth_uri("Exchange Admin", &account, &secret),
+        secret,
+    })
+}
+
+pub(crate) async fn confirm_admin_two_factor(
+    state: &AppState,
+    pool: &Pool<MySql>,
+    subject: &str,
+    totp_code: String,
+) -> AppResult<AdminTwoFactorStatusResponse> {
+    let admin_id = admin_id_from_subject(subject)?;
+    let two_factor = load_admin_two_factor(pool, admin_id).await?;
+    if two_factor.totp_enabled {
+        return Err(AppError::security_validation(
+            "2fa_already_enabled",
+            "2FA 已绑定",
+        ));
+    }
+    let encrypted_secret = two_factor.totp_secret_encrypted.ok_or_else(|| {
+        AppError::security_validation("security_verification_required", "请先生成 2FA 密钥")
+    })?;
+    let secret = decrypt_secret(
+        &encrypted_secret,
+        credential_encryption_key(state.settings.as_ref())?,
+    )?;
+    if !verify_totp_code(&secret, &totp_code, Utc::now())? {
+        return Err(AppError::security_validation(
+            "invalid_2fa_code",
+            "2FA 验证码错误",
+        ));
+    }
+    confirm_admin_totp(pool, admin_id, &encrypted_secret).await?;
+
+    Ok(AdminTwoFactorStatusResponse { totp_enabled: true })
+}
+
+pub(crate) async fn disable_admin_two_factor(
+    state: &AppState,
+    pool: &Pool<MySql>,
+    subject: &str,
+    totp_code: String,
+) -> AppResult<AdminTwoFactorStatusResponse> {
+    let admin_id = admin_id_from_subject(subject)?;
+    // 解绑必须先通过一次有效验证码，避免会话被劫持后直接摘掉第二因子。
+    verify_admin_totp(pool, state.settings.as_ref(), admin_id, &totp_code).await?;
+    reset_admin_two_factor(pool, admin_id).await?;
+
+    Ok(AdminTwoFactorStatusResponse {
+        totp_enabled: false,
+    })
 }
 
 pub(crate) async fn login_agent_actor(

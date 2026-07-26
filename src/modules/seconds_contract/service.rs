@@ -540,6 +540,11 @@ pub(crate) fn route_limit(limit: Option<u32>) -> u32 {
     limit.unwrap_or(50).clamp(1, 100)
 }
 
+/// 偏移同样设上限：超大 offset 会让日志类大表退化为全表扫描加文件排序。
+pub(crate) fn route_offset(offset: Option<u32>) -> u32 {
+    offset.unwrap_or(0).min(100_000)
+}
+
 pub(crate) fn is_duplicate_key_error(error: &sqlx::Error) -> bool {
     let Some(database_error) = error.as_database_error() else {
         return false;

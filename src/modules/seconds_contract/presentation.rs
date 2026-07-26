@@ -14,8 +14,15 @@ pub(crate) struct ListQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct AdminProductsQuery {
+    pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct AdminOrdersQuery {
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
     pub(crate) user_id: Option<u64>,
     pub(crate) email: Option<String>,
     pub(crate) status: Option<String>,
@@ -117,8 +124,20 @@ pub(crate) struct SecondsContractProductsResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub(crate) struct AdminSecondsContractProductsResponse {
+    pub(crate) products: Vec<SecondsContractProductResponse>,
+    pub(crate) total: i64,
+}
+
+#[derive(Debug, Serialize)]
 pub(crate) struct SecondsContractOrdersResponse {
     pub(crate) orders: Vec<SecondsContractOrderResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AdminSecondsContractOrdersResponse {
+    pub(crate) orders: Vec<SecondsContractOrderResponse>,
+    pub(crate) total: i64,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]

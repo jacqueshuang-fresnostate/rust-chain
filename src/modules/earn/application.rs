@@ -9,7 +9,8 @@ use crate::{
         earn::{
             infrastructure,
             presentation::{
-                AdminCategoriesQuery, AdminSubscriptionsQuery, CreateEarnCategoryRequest,
+                AdminCategoriesQuery, AdminEarnProductsResponse, AdminEarnSubscriptionsResponse,
+                AdminProductsQuery, AdminSubscriptionsQuery, CreateEarnCategoryRequest,
                 CreateEarnProductRequest, EarnCategoriesResponse, EarnCategoryResponse,
                 EarnProductResponse, EarnProductsResponse, EarnSubscriptionResponse,
                 EarnSubscriptionsResponse, ListQuery, RedeemEarnResponse, SubscribeEarnRequest,
@@ -25,7 +26,7 @@ use crate::{
                 normalized_product_status, normalized_required_category_code, optional_image_url,
                 optional_string, product_audit_json, product_fee_config_from_create_request,
                 product_fee_config_from_update_request, redemption_amounts_for_subscription,
-                required_reason, route_limit, user_id_from_subject, validate_amount,
+                required_reason, route_limit, route_offset, user_id_from_subject, validate_amount,
                 validate_create_product_request, validate_product_amount,
                 validate_update_product_request,
             },
@@ -53,10 +54,17 @@ pub(crate) async fn list_active_earn_products(
 
 pub(crate) async fn list_admin_earn_products(
     pool: Option<Pool<MySql>>,
-    query: ListQuery,
-) -> AppResult<EarnProductsResponse> {
+    query: AdminProductsQuery,
+) -> AppResult<AdminEarnProductsResponse> {
     let pool = earn_mysql_pool(pool)?;
-    infrastructure::list_products(&pool, None, route_limit(query.limit)).await
+    let (products, total) = infrastructure::list_admin_products(
+        &pool,
+        None,
+        route_limit(query.limit),
+        route_offset(query.offset),
+    )
+    .await?;
+    Ok(AdminEarnProductsResponse { products, total })
 }
 
 pub(crate) async fn get_admin_earn_product(
@@ -83,16 +91,21 @@ pub(crate) async fn list_earn_subscriptions(
 pub(crate) async fn list_admin_earn_subscriptions(
     pool: Option<Pool<MySql>>,
     query: AdminSubscriptionsQuery,
-) -> AppResult<EarnSubscriptionsResponse> {
+) -> AppResult<AdminEarnSubscriptionsResponse> {
     let pool = earn_mysql_pool(pool)?;
-    infrastructure::list_admin_subscriptions(
+    let (subscriptions, total) = infrastructure::list_admin_subscriptions(
         &pool,
         route_limit(query.limit),
+        route_offset(query.offset),
         query.user_id,
         optional_string(query.email),
         optional_string(query.status),
     )
-    .await
+    .await?;
+    Ok(AdminEarnSubscriptionsResponse {
+        subscriptions,
+        total,
+    })
 }
 
 pub(crate) async fn get_admin_earn_subscription(
@@ -111,12 +124,14 @@ pub(crate) async fn list_admin_earn_categories(
     query: AdminCategoriesQuery,
 ) -> AppResult<EarnCategoriesResponse> {
     let pool = earn_mysql_pool(pool)?;
-    infrastructure::list_admin_categories(
+    let (categories, total) = infrastructure::list_admin_categories(
         &pool,
         route_limit(query.limit),
+        route_offset(query.offset),
         optional_string(query.status),
     )
-    .await
+    .await?;
+    Ok(EarnCategoriesResponse { categories, total })
 }
 
 pub(crate) async fn get_admin_earn_category(

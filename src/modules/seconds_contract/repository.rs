@@ -54,6 +54,7 @@ pub(crate) struct SecondsContractAdminOrderFilter {
     pub(crate) email: Option<String>,
     pub(crate) status: Option<String>,
     pub(crate) limit: u32,
+    pub(crate) offset: u32,
 }
 
 #[derive(Debug, Clone)]

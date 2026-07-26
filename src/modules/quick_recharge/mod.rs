@@ -10,9 +10,10 @@ pub mod routes;
 pub mod service;
 
 pub use presentation::{
-    CreateQuickRechargeOrderRequest, DeleteQuickRechargeOrderRequest, QuickRechargeConfigResponse,
-    QuickRechargeOrderResponse, QuickRechargeOrdersQuery, QuickRechargeOrdersResponse,
-    QuickRechargeReturnTarget, SaveQuickRechargeConfigRequest, TestQuickRechargeConfigRequest,
+    AdminQuickRechargeOrdersResponse, CreateQuickRechargeOrderRequest,
+    DeleteQuickRechargeOrderRequest, QuickRechargeConfigResponse, QuickRechargeOrderResponse,
+    QuickRechargeOrdersQuery, QuickRechargeOrdersResponse, QuickRechargeReturnTarget,
+    SaveQuickRechargeConfigRequest, TestQuickRechargeConfigRequest,
     TestQuickRechargeConfigResponse, UserQuickRechargeConfigResponse,
 };
 pub use service::gmpay_signature;

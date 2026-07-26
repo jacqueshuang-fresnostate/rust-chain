@@ -1,19 +1,22 @@
 use crate::{
     error::AppResult,
     modules::auth::{
-        AdminCredentials, AdminRegistration, AgentCredentials, TokenScope,
+        AdminAuth, AdminCredentials, AdminRegistration, AgentCredentials, TokenScope,
         application::{
+            confirm_admin_two_factor, disable_admin_two_factor, get_admin_two_factor_status,
             load_login_config, load_register_config, login_admin_actor, login_agent_actor,
             login_user_with_optional_two_factor_response, mysql_pool, refresh_actor_tokens,
             register_admin_actor, register_user_with_email_code_response,
             reject_agent_registration, reset_login_two_factor_with_email_code,
             reset_password_with_email_code, send_login_two_factor_reset_email_code,
-            send_password_reset_email_code, send_registration_email_code,
-            verify_login_two_factor_and_issue_tokens,
+            send_password_reset_email_code, send_registration_email_code, setup_admin_two_factor,
+            verify_admin_login_two_factor, verify_login_two_factor_and_issue_tokens,
         },
         presentation::{
-            AdminAuthRequest, AgentAuthRequest, LoginConfigResponse, LoginTwoFactorCodeResponse,
-            LoginTwoFactorRequest, LoginTwoFactorResetCodeRequest, LoginTwoFactorResetRequest,
+            AdminAuthRequest, AdminLoginResponse, AdminTwoFactorCodeRequest,
+            AdminTwoFactorSetupResponse, AdminTwoFactorStatusResponse, AgentAuthRequest,
+            LoginConfigResponse, LoginTwoFactorCodeResponse, LoginTwoFactorRequest,
+            LoginTwoFactorResetCodeRequest, LoginTwoFactorResetRequest,
             LoginTwoFactorResetResponse, PasswordResetCodeRequest, PasswordResetCodeResponse,
             PasswordResetRequest, PasswordResetResponse, RefreshRequest, RegisterConfigResponse,
             RegisterEmailCodeRequest, RegisterEmailCodeResponse, TokenResponse, UserAuthRequest,
@@ -52,6 +55,11 @@ pub fn admin_routes() -> Router<AppState> {
     Router::new()
         .route("/auth/register", post(admin_register))
         .route("/auth/login", post(admin_login))
+        .route("/auth/login/2fa", post(admin_login_two_factor))
+        .route("/auth/2fa", get(admin_two_factor_status))
+        .route("/auth/2fa/setup", post(admin_two_factor_setup))
+        .route("/auth/2fa/confirm", post(admin_two_factor_confirm))
+        .route("/auth/2fa/disable", post(admin_two_factor_disable))
         .route("/auth/refresh", post(admin_refresh))
 }
 
@@ -215,9 +223,11 @@ async fn admin_register(
 async fn admin_login(
     State(state): State<AppState>,
     Json(request): Json<AdminAuthRequest>,
-) -> AppResult<Json<TokenResponse>> {
-    let tokens = login_admin_actor(
+) -> AppResult<Json<AdminLoginResponse>> {
+    let pool = mysql_pool(&state)?;
+    let response = login_admin_actor(
         &state,
+        &pool,
         AdminCredentials {
             username: request.username,
             password: request.password,
@@ -225,7 +235,61 @@ async fn admin_login(
     )
     .await?;
 
-    Ok(Json(tokens.into()))
+    Ok(Json(response))
+}
+
+async fn admin_login_two_factor(
+    State(state): State<AppState>,
+    Json(request): Json<LoginTwoFactorRequest>,
+) -> AppResult<Json<TokenResponse>> {
+    let pool = mysql_pool(&state)?;
+    let tokens =
+        verify_admin_login_two_factor(&state, &pool, request.challenge_id, request.totp_code)
+            .await?;
+
+    Ok(Json(tokens))
+}
+
+async fn admin_two_factor_status(
+    State(state): State<AppState>,
+    AdminAuth(claims): AdminAuth,
+) -> AppResult<Json<AdminTwoFactorStatusResponse>> {
+    let pool = mysql_pool(&state)?;
+    let status = get_admin_two_factor_status(&pool, &claims.sub).await?;
+
+    Ok(Json(status))
+}
+
+async fn admin_two_factor_setup(
+    State(state): State<AppState>,
+    AdminAuth(claims): AdminAuth,
+) -> AppResult<Json<AdminTwoFactorSetupResponse>> {
+    let pool = mysql_pool(&state)?;
+    let setup = setup_admin_two_factor(&state, &pool, &claims.sub).await?;
+
+    Ok(Json(setup))
+}
+
+async fn admin_two_factor_confirm(
+    State(state): State<AppState>,
+    AdminAuth(claims): AdminAuth,
+    Json(request): Json<AdminTwoFactorCodeRequest>,
+) -> AppResult<Json<AdminTwoFactorStatusResponse>> {
+    let pool = mysql_pool(&state)?;
+    let status = confirm_admin_two_factor(&state, &pool, &claims.sub, request.totp_code).await?;
+
+    Ok(Json(status))
+}
+
+async fn admin_two_factor_disable(
+    State(state): State<AppState>,
+    AdminAuth(claims): AdminAuth,
+    Json(request): Json<AdminTwoFactorCodeRequest>,
+) -> AppResult<Json<AdminTwoFactorStatusResponse>> {
+    let pool = mysql_pool(&state)?;
+    let status = disable_admin_two_factor(&state, &pool, &claims.sub, request.totp_code).await?;
+
+    Ok(Json(status))
 }
 
 async fn admin_refresh(

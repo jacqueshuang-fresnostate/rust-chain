@@ -5,13 +5,15 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 
-import { adminLogin } from '../api/adminAuth';
+import { adminLogin, adminLoginTwoFactor } from '../api/adminAuth';
 import { agentLogin } from '../api/agentAuth';
 import { authStore } from './authStore';
 import { LoginPage } from './LoginPage';
 
-vi.mock('../api/adminAuth', () => ({
-  adminLogin: vi.fn()
+vi.mock('../api/adminAuth', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../api/adminAuth')>()),
+  adminLogin: vi.fn(),
+  adminLoginTwoFactor: vi.fn()
 }));
 
 vi.mock('../api/agentAuth', () => ({
@@ -19,6 +21,7 @@ vi.mock('../api/agentAuth', () => ({
 }));
 
 const adminLoginMock = vi.mocked(adminLogin);
+const adminLoginTwoFactorMock = vi.mocked(adminLoginTwoFactor);
 const agentLoginMock = vi.mocked(agentLogin);
 
 function renderLoginPage() {
@@ -43,6 +46,7 @@ describe('LoginPage', () => {
   beforeEach(() => {
     localStorage.clear();
     adminLoginMock.mockReset();
+    adminLoginTwoFactorMock.mockReset();
     agentLoginMock.mockReset();
   });
 
@@ -65,6 +69,44 @@ describe('LoginPage', () => {
       expect(adminLoginMock).toHaveBeenCalledWith({ username: 'admin', password: 'password' });
     });
     expect(agentLoginMock).not.toHaveBeenCalled();
+    expect(authStore.getSession()).toEqual({
+      accessToken: 'admin-access',
+      refreshToken: 'admin-refresh',
+      scope: 'admin',
+      subject: 'admin:7'
+    });
+    expect(await screen.findByText('管理员控制台')).toBeInTheDocument();
+  });
+
+  it('prompts for the admin two-factor code before storing a session', async () => {
+    const user = userEvent.setup();
+    adminLoginMock.mockResolvedValueOnce({
+      requires_2fa: true,
+      challenge_id: 'challenge-1',
+      expires_in_seconds: 300
+    });
+    adminLoginTwoFactorMock.mockResolvedValueOnce({
+      access_token: 'admin-access',
+      refresh_token: 'admin-refresh',
+      token_type: 'Bearer',
+      scope: 'admin',
+      subject: 'admin:7'
+    });
+
+    renderLoginPage();
+    await user.type(screen.getByLabelText('管理员账号'), 'admin');
+    await user.type(screen.getByLabelText('密码'), 'password');
+    await user.click(screen.getByRole('button', { name: '登录' }));
+
+    const codeInput = await screen.findByLabelText('两步验证码');
+    expect(authStore.getSession()).toBeNull();
+
+    await user.type(codeInput, '123456');
+    await user.click(screen.getByRole('button', { name: '验证并登录' }));
+
+    await waitFor(() => {
+      expect(adminLoginTwoFactorMock).toHaveBeenCalledWith({ challenge_id: 'challenge-1', totp_code: '123456' });
+    });
     expect(authStore.getSession()).toEqual({
       accessToken: 'admin-access',
       refreshToken: 'admin-refresh',

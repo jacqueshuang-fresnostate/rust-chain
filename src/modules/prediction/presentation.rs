@@ -23,8 +23,15 @@ pub(crate) struct ListQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct AdminListQuery {
+    pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct AdminMarketQuery {
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
     pub(crate) display_status: Option<String>,
     pub(crate) settlement_status: Option<String>,
     pub(crate) keyword: Option<String>,
@@ -33,6 +40,14 @@ pub(crate) struct AdminMarketQuery {
 #[derive(Debug, Deserialize)]
 pub(crate) struct OrdersQuery {
     pub(crate) limit: Option<u32>,
+    pub(crate) status: Option<String>,
+    pub(crate) market_id: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AdminOrdersQuery {
+    pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
     pub(crate) status: Option<String>,
     pub(crate) market_id: Option<u64>,
     pub(crate) email: Option<String>,
@@ -171,8 +186,15 @@ pub(crate) struct PredictionMarketsResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub(crate) struct AdminPredictionMarketsResponse {
+    pub(crate) markets: Vec<PredictionMarketResponse>,
+    pub(crate) total: i64,
+}
+
+#[derive(Debug, Serialize)]
 pub(crate) struct PredictionAssetConfigsResponse {
     pub(crate) configs: Vec<PredictionAssetConfigResponse>,
+    pub(crate) total: i64,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -239,6 +261,12 @@ pub(crate) struct PredictionOrdersResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub(crate) struct AdminPredictionOrdersResponse {
+    pub(crate) orders: Vec<PredictionOrderResponse>,
+    pub(crate) total: i64,
+}
+
+#[derive(Debug, Serialize)]
 pub(crate) struct PredictionOrderActionResponse {
     pub(crate) order: PredictionOrderResponse,
     pub(crate) changed: bool,
@@ -276,6 +304,7 @@ pub(crate) struct PredictionSyncLogResponse {
 #[derive(Debug, Serialize)]
 pub(crate) struct PredictionSyncLogsResponse {
     pub(crate) logs: Vec<PredictionSyncLogResponse>,
+    pub(crate) total: i64,
 }
 
 impl From<PredictionSettingsRow> for PredictionSettingsResponse {

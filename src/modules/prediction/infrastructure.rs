@@ -49,8 +49,36 @@ pub(crate) const ADMIN_ASSET_CONFIGS_SQL: &str = r#"SELECT assets.id AS asset_id
                   COALESCE(configs.updated_at, assets.created_at) AS updated_at
            FROM assets
            LEFT JOIN prediction_asset_configs configs ON configs.asset_id = assets.id
-           WHERE assets.status = 'active'
-           ORDER BY assets.symbol ASC"#;
+           WHERE assets.status = 'active'"#;
+
+const ADMIN_ASSET_CONFIGS_COUNT_SQL: &str = r#"SELECT COUNT(*)
+           FROM assets
+           LEFT JOIN prediction_asset_configs configs ON configs.asset_id = assets.id
+           WHERE assets.status = 'active'"#;
+
+/// 行查询与 COUNT 查询必须由同一组过滤谓词构建，返回总数才能与当前筛选一致。
+pub(crate) async fn fetch_admin_page<T>(
+    pool: &Pool<MySql>,
+    mut rows: QueryBuilder<'_, MySql>,
+    mut total: QueryBuilder<'_, MySql>,
+    order_by: &str,
+    limit: u32,
+    offset: u32,
+) -> AppResult<(Vec<T>, i64)>
+where
+    T: for<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> + Send + Unpin,
+{
+    rows.push(order_by);
+    rows.push(" LIMIT ");
+    rows.push_bind(limit as i64);
+    rows.push(" OFFSET ");
+    rows.push_bind(offset as i64);
+
+    let items = rows.build_query_as::<T>().fetch_all(pool).await?;
+    let total = total.build_query_scalar::<i64>().fetch_one(pool).await?;
+
+    Ok((items, total))
+}
 
 type SyncCounts = service::SyncCounts;
 type EffectiveMarketConfig = service::EffectiveMarketConfig;
@@ -179,12 +207,20 @@ pub(crate) async fn save_admin_settings(
 
 pub(crate) async fn list_admin_asset_configs(
     pool: &Pool<MySql>,
-) -> AppResult<Vec<PredictionAssetConfigRow>> {
+    limit: u32,
+    offset: u32,
+) -> AppResult<(Vec<PredictionAssetConfigRow>, i64)> {
     // 列出所有激活资产的预测配置，缺失配置的资产会回退到资产创建时间作为时间字段。
-    let rows = sqlx::query_as::<_, PredictionAssetConfigRow>(ADMIN_ASSET_CONFIGS_SQL)
-        .fetch_all(pool)
-        .await?;
-    Ok(rows)
+    // symbol 可能重名，排序补主键保证分页稳定。
+    fetch_admin_page(
+        pool,
+        QueryBuilder::<MySql>::new(ADMIN_ASSET_CONFIGS_SQL),
+        QueryBuilder::<MySql>::new(ADMIN_ASSET_CONFIGS_COUNT_SQL),
+        " ORDER BY assets.symbol ASC, assets.id ASC",
+        limit,
+        offset,
+    )
+    .await
 }
 
 pub(crate) async fn list_stake_assets(
@@ -748,6 +784,23 @@ pub(crate) fn prediction_market_query_builder() -> QueryBuilder<'static, MySql> 
     )
 }
 
+pub(crate) fn prediction_market_count_query_builder() -> QueryBuilder<'static, MySql> {
+    QueryBuilder::<MySql>::new(
+        r#"SELECT COUNT(*)
+           FROM prediction_markets markets"#,
+    )
+}
+
+pub(crate) fn prediction_order_count_query_builder() -> QueryBuilder<'static, MySql> {
+    QueryBuilder::<MySql>::new(
+        r#"SELECT COUNT(*)
+           FROM prediction_orders orders
+           INNER JOIN users ON users.id = orders.user_id
+           INNER JOIN prediction_markets markets ON markets.id = orders.market_id
+           INNER JOIN assets ON assets.id = orders.asset_id"#,
+    )
+}
+
 pub(crate) fn prediction_order_query_builder() -> QueryBuilder<'static, MySql> {
     QueryBuilder::<MySql>::new(
         r#"SELECT orders.id, orders.order_no, orders.user_id, users.email AS user_email,
@@ -860,20 +913,23 @@ pub(crate) async fn update_admin_market(
 
 pub(crate) async fn list_admin_sync_logs(
     pool: &Pool<MySql>,
-    limit: i64,
-) -> AppResult<Vec<PredictionSyncLogRow>> {
+    limit: u32,
+    offset: u32,
+) -> AppResult<(Vec<PredictionSyncLogRow>, i64)> {
     // 后台查询同步日志，按 ID 倒序分页返回。
-    let rows = sqlx::query_as::<_, PredictionSyncLogRow>(
-        r#"SELECT id, trigger_type, status, imported_count, updated_count,
+    fetch_admin_page(
+        pool,
+        QueryBuilder::<MySql>::new(
+            r#"SELECT id, trigger_type, status, imported_count, updated_count,
                   error_message, started_at, finished_at
-           FROM prediction_sync_logs
-           ORDER BY id DESC
-           LIMIT ?"#,
+           FROM prediction_sync_logs"#,
+        ),
+        QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM prediction_sync_logs"),
+        " ORDER BY id DESC",
+        limit,
+        offset,
     )
-    .bind(limit)
-    .fetch_all(pool)
-    .await?;
-    Ok(rows)
+    .await
 }
 
 pub(crate) async fn load_market_response(

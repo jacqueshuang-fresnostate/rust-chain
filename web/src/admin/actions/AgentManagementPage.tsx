@@ -17,6 +17,7 @@ const { Text, Title } = Typography;
 
 type AgentRecord = Record<string, unknown> & {
   admin_status?: string | null;
+  admin_user_id?: number | string | null;
   admin_username?: string | null;
   agent_code?: string | null;
   created_at?: number | null;
@@ -100,6 +101,30 @@ function agentStatusActions(status: string): Array<{ label: string; status: stri
 
 function isAgentCreatable(values: AgentCreateValues) {
   return Boolean(values.userId.trim() && values.agentCode.trim() && values.adminUsername.trim() && values.adminPassword.trim());
+}
+
+function AgentPasswordResetAction({ agentId, disabled }: { agentId: string; disabled: boolean }) {
+  const [password, setPassword] = useState('');
+
+  return (
+    <Space spacing={6}>
+      <AdminPasswordInput ariaLabel={`代理${agentId}新密码`} value={password} onChange={setPassword} />
+      <ConfirmAction
+        actionText="重置密码"
+        disabled={disabled || !password.trim()}
+        title="重置代理后台密码"
+        onConfirm={async (reason) => {
+          await submitAction('重置代理后台密码', () =>
+            apiRequest(`/admin/api/v1/agents/${agentId}/password/reset`, {
+              method: 'POST',
+              body: JSON.stringify({ password: requiredString(password, '新密码'), reason })
+            })
+          );
+          setPassword('');
+        }}
+      />
+    </Space>
+  );
 }
 
 type AgentUserRecord = Record<string, unknown> & {
@@ -365,11 +390,12 @@ export function AgentManagementPage() {
                   onConfirm={(reason) => updateAgentStatus(agentId, action.status, reason)}
                 />
               ))}
+              <AgentPasswordResetAction agentId={agentId} disabled={!agentId || !record.admin_user_id} />
             </Space>
           );
         },
         title: '操作',
-        width: 320
+        width: 520
       }
     ],
     []

@@ -9,7 +9,10 @@ use crate::{
         auth::{
             ActiveCountryConfig, ActorType, AuthActor, NewAdminActor, NewAgentActor, NewUserActor,
             RefreshTokenRecord, StoredActorCredential, StoredRefreshToken,
-            domain::{normalize_invite_code, validate_email_code},
+            domain::{
+                LOGIN_FAILURE_LIMIT, LOGIN_FAILURE_WINDOW_SECONDS, LOGIN_LOCKOUT_SECONDS,
+                normalize_invite_code, validate_email_code,
+            },
             repository::AuthRepository,
             verify_password,
         },
@@ -336,6 +339,114 @@ impl AuthRepository for MySqlAuthRepository {
         })
         .transpose()
     }
+
+    async fn find_login_lockout(
+        &self,
+        actor_type: ActorType,
+        identifier: &str,
+    ) -> AppResult<Option<DateTime<Utc>>> {
+        let locked_until = sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
+            r#"SELECT locked_until
+               FROM login_failure_counters
+               WHERE actor_type = ? AND identifier = ? AND locked_until > ?
+               LIMIT 1"#,
+        )
+        .bind(actor_type.as_str())
+        .bind(identifier)
+        .bind(Utc::now().naive_utc())
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten();
+
+        Ok(locked_until)
+    }
+
+    async fn record_login_failure(
+        &self,
+        actor_type: ActorType,
+        identifier: &str,
+    ) -> AppResult<Option<DateTime<Utc>>> {
+        let now = Utc::now();
+        let first_failure_locked = LOGIN_FAILURE_LIMIT <= 1;
+        let first_failure_locked_until =
+            first_failure_locked.then(|| now + Duration::seconds(LOGIN_LOCKOUT_SECONDS));
+        let first_failure_window = first_failure_locked_until
+            .unwrap_or_else(|| now + Duration::seconds(LOGIN_FAILURE_WINDOW_SECONDS));
+
+        // 计数在单条 upsert 内推进：先读后写会在不存在的行上取间隙锁，与插入意向锁互相死锁，
+        // 并发失败请求会因此报错且漏计，等于放过一整轮爆破。
+        // ON DUPLICATE KEY UPDATE 的赋值自左向右求值，故 failure_count 之后的表达式读到的是新计数。
+        let result = sqlx::query(
+            r#"INSERT INTO login_failure_counters
+                  (actor_type, identifier, failure_count, window_expires_at, locked_until)
+               VALUES (?, ?, 1, ?, ?)
+               ON DUPLICATE KEY UPDATE
+                  failure_count = IF(window_expires_at > ?, failure_count + 1, 1),
+                  locked_until = IF(failure_count >= ?, DATE_ADD(?, INTERVAL ? SECOND), NULL),
+                  window_expires_at = IF(
+                      failure_count >= ?,
+                      DATE_ADD(?, INTERVAL ? SECOND),
+                      DATE_ADD(?, INTERVAL ? SECOND)
+                  )"#,
+        )
+        .bind(actor_type.as_str())
+        .bind(identifier)
+        .bind(first_failure_window.naive_utc())
+        .bind(first_failure_locked_until.map(|value| value.naive_utc()))
+        .bind(now.naive_utc())
+        .bind(LOGIN_FAILURE_LIMIT)
+        .bind(now.naive_utc())
+        .bind(LOGIN_LOCKOUT_SECONDS)
+        .bind(LOGIN_FAILURE_LIMIT)
+        .bind(now.naive_utc())
+        .bind(LOGIN_LOCKOUT_SECONDS)
+        .bind(now.naive_utc())
+        .bind(LOGIN_FAILURE_WINDOW_SECONDS)
+        .execute(&self.pool)
+        .await?;
+
+        // upsert 影响 1 行即新增了标识符——表只在这一刻增长，借此做有界清扫，
+        // 否则针对随机账号的撞库会留下永不回收的计数行（成功登录才删）。
+        if result.rows_affected() == 1 {
+            sqlx::query(
+                "DELETE FROM login_failure_counters WHERE window_expires_at <= ? LIMIT 200",
+            )
+            .bind(now.naive_utc())
+            .execute(&self.pool)
+            .await?;
+        }
+
+        let locked_until = sqlx::query_as::<_, (Option<DateTime<Utc>>,)>(
+            r#"SELECT locked_until FROM login_failure_counters
+               WHERE actor_type = ? AND identifier = ? LIMIT 1"#,
+        )
+        .bind(actor_type.as_str())
+        .bind(identifier)
+        .fetch_optional(&self.pool)
+        .await?
+        .and_then(|(locked_until,)| locked_until)
+        .filter(|locked_until| *locked_until > now);
+
+        Ok(locked_until)
+    }
+
+    async fn clear_login_failures(&self, actor_type: ActorType, identifier: &str) -> AppResult<()> {
+        sqlx::query("DELETE FROM login_failure_counters WHERE actor_type = ? AND identifier = ?")
+            .bind(actor_type.as_str())
+            .bind(identifier)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+}
+
+pub(crate) async fn load_admin_username(pool: &Pool<MySql>, admin_id: u64) -> AppResult<String> {
+    sqlx::query_scalar::<_, String>("SELECT username FROM admin_users WHERE id = ? LIMIT 1")
+        .bind(admin_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or(AppError::Unauthorized)
 }
 
 #[derive(Debug)]

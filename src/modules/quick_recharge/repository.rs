@@ -28,6 +28,7 @@ pub(crate) struct QuickRechargeAdminOrderFilter {
     pub(crate) order_id: Option<String>,
     pub(crate) provider_trade_id: Option<String>,
     pub(crate) limit: u32,
+    pub(crate) offset: u32,
 }
 
 #[derive(Debug, Clone)]

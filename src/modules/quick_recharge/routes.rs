@@ -16,10 +16,11 @@ use axum::{
 use serde_json::Value;
 
 use super::{
-    CreateQuickRechargeOrderRequest, DeleteQuickRechargeOrderRequest, QuickRechargeConfigResponse,
-    QuickRechargeOrderResponse, QuickRechargeOrdersQuery, QuickRechargeOrdersResponse,
-    SaveQuickRechargeConfigRequest, TestQuickRechargeConfigRequest,
-    TestQuickRechargeConfigResponse, UserQuickRechargeConfigResponse,
+    AdminQuickRechargeOrdersResponse, CreateQuickRechargeOrderRequest,
+    DeleteQuickRechargeOrderRequest, QuickRechargeConfigResponse, QuickRechargeOrderResponse,
+    QuickRechargeOrdersQuery, QuickRechargeOrdersResponse, SaveQuickRechargeConfigRequest,
+    TestQuickRechargeConfigRequest, TestQuickRechargeConfigResponse,
+    UserQuickRechargeConfigResponse,
 };
 
 /// 用户端快速充值相关路由。
@@ -146,7 +147,7 @@ async fn list_admin_quick_recharge_orders(
     _auth: AdminAuth,
     State(state): State<AppState>,
     Query(query): Query<QuickRechargeOrdersQuery>,
-) -> AppResult<Json<QuickRechargeOrdersResponse>> {
+) -> AppResult<Json<AdminQuickRechargeOrdersResponse>> {
     Ok(Json(
         super::application::list_admin_quick_recharge_orders(state.mysql.clone(), query).await?,
     ))
