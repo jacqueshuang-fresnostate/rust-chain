@@ -243,6 +243,14 @@ const walletLedgerRefTypeFilter: FilterField = {
   type: 'select',
   options: Object.entries(walletLedgerRefTypeLabels).map(([value, label]) => ({ label, value }))
 };
+const agentCommissionSourceTypeLabels: Record<string, string> = {
+  convert_order: '闪兑订单',
+  prediction_order: '竞猜订单',
+  spot_trade_buy: '现货成交(买)',
+  spot_trade_sell: '现货成交(卖)',
+  margin_position: '杠杆仓位',
+  seconds_contract_order: '秒合约订单'
+};
 const loanTypeFilter: FilterField = {
   key: 'loan_type',
   label: '贷款类型',
@@ -834,7 +842,7 @@ export const resourceConfigs = {
       { key: 'id', title: 'ID' },
       { key: 'agent_id', title: '代理ID' },
       { key: 'user_id', title: '用户ID' },
-      { key: 'source_type', title: '来源类型' },
+      { key: 'source_type', title: '来源类型', valueMap: agentCommissionSourceTypeLabels },
       { key: 'source_id', title: '来源ID' },
       { key: 'source_amount', title: '来源金额', type: 'amount' },
       { key: 'payout_asset_id', title: '结算资产ID' },

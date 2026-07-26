@@ -297,7 +297,12 @@ const FIELD_VALUE_LABELS: Record<string, Record<string, string>> = {
     sell: '卖出'
   },
   source_type: {
-    convert: '闪兑'
+    convert_order: '闪兑订单',
+    prediction_order: '竞猜订单',
+    spot_trade_buy: '现货成交(买)',
+    spot_trade_sell: '现货成交(卖)',
+    margin_position: '杠杆仓位',
+    seconds_contract_order: '秒合约订单'
   },
   status: {
     active: '启用',
