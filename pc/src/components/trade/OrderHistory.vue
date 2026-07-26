@@ -10,6 +10,14 @@
       >
         {{ $t('trade.'+tab) }}
       </button>
+      <button
+        v-if="activeTab === 'open_orders' && isLoggedIn && orders.length > 0"
+        class="ml-auto px-3 py-2 text-xs font-bold text-muted-foreground hover:text-primary disabled:opacity-50"
+        :disabled="cancelingAll"
+        @click="confirmCancelAll"
+      >
+        {{ $t('trade.cancel_all') }}
+      </button>
     </div>
 
     <!-- Content -->
@@ -87,7 +95,7 @@
 
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue'
-import { fetchCurrentOrders, fetchHistoryOrders, cancelOrder } from '@/api/exchange'
+import { fetchCurrentOrders, fetchHistoryOrders, cancelOrder, cancelAllOrders } from '@/api/exchange'
 import { useToast } from 'vue-toastification'
 import { useMarketStore } from '@/stores/market'
 import { useI18n } from 'vue-i18n'
@@ -214,6 +222,30 @@ const openCancelModal = (order: any) => {
     cancelingOrder.value = order
     canceling.value = false
     showCancelModal.value = true
+}
+
+const cancelingAll = ref(false)
+
+const confirmCancelAll = async () => {
+    if (!isLoggedIn.value) {
+        goToLogin()
+        return
+    }
+    if (!window.confirm(t('trade.cancel_all_confirm'))) return
+    cancelingAll.value = true
+    try {
+        const result = await cancelAllOrders()
+        if (result.failed > 0) {
+            toast.warning(t('trade.cancel_all_partial', { cancelled: result.cancelled, failed: result.failed }))
+        } else {
+            toast.success(t('trade.cancel_all_success', { cancelled: result.cancelled }))
+        }
+        loadOrders()
+    } catch (e: any) {
+        toast.error(e?.response?.data?.message || e.message || t('trade.cancel_failed'))
+    } finally {
+        cancelingAll.value = false
+    }
 }
 
 const confirmCancel = async () => {

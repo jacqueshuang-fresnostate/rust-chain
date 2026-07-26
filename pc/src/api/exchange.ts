@@ -56,6 +56,20 @@ export async function cancelOrder(orderId: string): Promise<{ data: any }> {
 }
 
 /**
+ * Cancel every open order, optionally scoped to one pair
+ */
+export async function cancelAllOrders(pairId?: string): Promise<{ cancelled: number; failed: number }> {
+  const response = await request.instance.delete<{ orders?: unknown[]; failures?: unknown[] }>(
+    backendApiUrl('/spot/orders'),
+    { params: pairId ? { pair_id: pairId } : undefined },
+  )
+  return {
+    cancelled: response.data.orders?.length ?? 0,
+    failed: response.data.failures?.length ?? 0,
+  }
+}
+
+/**
  * Fetch Current Open Orders
  */
 export async function fetchCurrentOrders(symbol: string, pageNo: number = 0, pageSize: number = 10): Promise<{ data: any }> {
