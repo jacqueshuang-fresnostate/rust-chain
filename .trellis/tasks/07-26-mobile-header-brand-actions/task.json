@@ -1,0 +1,30 @@
+{
+  "id": "mobile-header-brand-actions",
+  "name": "mobile-header-brand-actions",
+  "title": "refine mobile header brand and action controls",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "mobile/sites-prototype",
+  "package": null,
+  "priority": "P2",
+  "creator": "rust-chain",
+  "assignee": "rust-chain",
+  "createdAt": "2026-07-26",
+  "completedAt": "2026-07-26T17:54:12+08:00",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "7523db01be14d54a67222d0bd8c9a9765a86083a",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "mobile/sites-prototype/app/globals.css",
+    "mobile/sites-prototype/app/page.tsx",
+    "mobile/sites-prototype/tests/rendered-html.test.mjs"
+  ],
+  "notes": "Refined transparent header branding and shared two-cell action rails were deployed as public Sites version 9 at https://hippo-mobile-signal-2026.ikuboy.chatgpt.site.",
+  "meta": {}
+}

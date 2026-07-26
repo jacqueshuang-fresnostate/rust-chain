@@ -1,0 +1,30 @@
+{
+  "id": "mobile-utility-icon-centering",
+  "name": "mobile-utility-icon-centering",
+  "title": "center home utility icons",
+  "description": "",
+  "status": "completed",
+  "dev_type": "frontend",
+  "scope": "mobile/sites-prototype",
+  "package": "mobile",
+  "priority": "P2",
+  "creator": "rust-chain",
+  "assignee": "rust-chain",
+  "createdAt": "2026-07-26",
+  "completedAt": "2026-07-26",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "474452e383d1f2e39f41cd45b457d98884817dfd",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "mobile/sites-prototype/app/globals.css",
+    "mobile/sites-prototype/tests/rendered-html.test.mjs",
+    ".trellis/spec/mobile/index.md"
+  ],
+  "notes": "Published as public Sites version 11 at https://hippo-mobile-signal-2026.ikuboy.chatgpt.site/.",
+  "meta": {}
+}

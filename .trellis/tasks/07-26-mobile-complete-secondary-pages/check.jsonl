@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/07-26-mobile-complete-secondary-pages/prd.md", "reason": "Verify every route, interaction and quality acceptance criterion."}
+{"file": ".trellis/tasks/07-26-mobile-complete-secondary-pages/research/market-content-gaps.md", "reason": "Check market/content/trade parity and gaps."}
+{"file": ".trellis/tasks/07-26-mobile-complete-secondary-pages/research/asset-funding-gaps.md", "reason": "Check asset/funding route chains and validation."}
+{"file": ".trellis/tasks/07-26-mobile-complete-secondary-pages/research/product-account-gaps.md", "reason": "Check product/account/auth route chains and state depth."}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "Check Back, hidden root nav and preserved trade context."}

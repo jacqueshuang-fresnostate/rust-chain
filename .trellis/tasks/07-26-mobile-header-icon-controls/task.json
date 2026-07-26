@@ -1,0 +1,29 @@
+{
+  "id": "mobile-header-icon-controls",
+  "name": "mobile-header-icon-controls",
+  "title": "replace segmented header controls with standalone icons",
+  "description": "",
+  "status": "completed",
+  "dev_type": "frontend",
+  "scope": "mobile/sites-prototype",
+  "package": "mobile",
+  "priority": "P2",
+  "creator": "rust-chain",
+  "assignee": "rust-chain",
+  "createdAt": "2026-07-26",
+  "completedAt": "2026-07-26",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "245dad1bf5e331dce54e0d8416bc7403d48fe413",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "mobile/sites-prototype/app/globals.css",
+    "mobile/sites-prototype/tests/rendered-html.test.mjs"
+  ],
+  "notes": "Published as public Sites version 10 at https://hippo-mobile-signal-2026.ikuboy.chatgpt.site/.",
+  "meta": {}
+}

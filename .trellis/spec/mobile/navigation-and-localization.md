@@ -126,3 +126,9 @@ await goBackOr(router, route.meta.backFallback || '/')
 selectTradeMode('contract') // persists mode and replaces the route
 const label = t('prediction.confirmOrder')
 ```
+
+## 8. Local Design Preview
+
+- The standalone visual prototype lives in `mobile/design/` and must remain independent from `mobile/src/` business screens until a visual direction is approved.
+- At widths up to `480px`, the preview hides its outer desktop toolbar; language and theme controls must therefore be duplicated inside the mobile canvas rather than relying only on the outer preview chrome.
+- The preview must be checked at `390px` width for horizontal overflow, bottom navigation occlusion, and reachable language switching before the visual direction is handed off to Vue components.

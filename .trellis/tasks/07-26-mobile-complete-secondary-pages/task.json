@@ -1,0 +1,32 @@
+{
+  "id": "mobile-complete-secondary-pages",
+  "name": "mobile-complete-secondary-pages",
+  "title": "complete mobile prototype secondary pages",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "mobile/sites-prototype",
+  "package": null,
+  "priority": "P2",
+  "creator": "rust-chain",
+  "assignee": "rust-chain",
+  "createdAt": "2026-07-26",
+  "completedAt": "2026-07-26T16:08:00+08:00",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "6d444de32d238e048d2a1d243b6b28d3ceca0250",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "mobile/sites-prototype/app/page.tsx",
+    "mobile/sites-prototype/app/prototype-routes.ts",
+    "mobile/sites-prototype/app/secondary-pages.tsx",
+    "mobile/sites-prototype/app/globals.css",
+    "mobile/sites-prototype/tests/rendered-html.test.mjs"
+  ],
+  "notes": "Sites public version 5 deployed at https://hippo-mobile-signal-2026.ikuboy.chatgpt.site",
+  "meta": {}
+}

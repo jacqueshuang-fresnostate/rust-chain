@@ -1,0 +1,30 @@
+{
+  "id": "mobile-pencil-redesign",
+  "name": "mobile-pencil-redesign",
+  "title": "brainstorm: immersive mobile prototype with Sites",
+  "description": "Design and publish an interactive mobile trading prototype with Sites, based on existing backend capabilities and PC workflows.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "mobile/sites-prototype",
+  "package": "mobile",
+  "priority": "P2",
+  "creator": "rust-chain",
+  "assignee": "rust-chain",
+  "createdAt": "2026-07-26",
+  "completedAt": "2026-07-26",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "fff84389590de9f0298d14390592fa164c28bf4e",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "mobile/sites-prototype/app/page.tsx",
+    "mobile/sites-prototype/app/globals.css",
+    ".trellis/tasks/07-26-mobile-pencil-redesign/research/okx-mobile-reference.md"
+  ],
+  "notes": "Sites version 2 deployed publicly at https://hippo-mobile-signal-2026.ikuboy.chatgpt.site",
+  "meta": {}
+}

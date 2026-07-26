@@ -1,0 +1,30 @@
+{
+  "id": "mobile-remove-web3-wallet",
+  "name": "mobile-remove-web3-wallet",
+  "title": "remove Web3 wallet from mobile prototype",
+  "description": "Remove the Web3 wallet product-mode row from the public HIPPO mobile Sites prototype.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "mobile/sites-prototype",
+  "package": null,
+  "priority": "P2",
+  "creator": "rust-chain",
+  "assignee": "rust-chain",
+  "createdAt": "2026-07-26",
+  "completedAt": "2026-07-26",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "508cec9c6c6c8f7000163defb194db4eccb93339",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "mobile/sites-prototype/app/page.tsx",
+    "mobile/sites-prototype/app/globals.css",
+    "mobile/sites-prototype/tests/rendered-html.test.mjs"
+  ],
+  "notes": "Sites version 4 deployed publicly at https://hippo-mobile-signal-2026.ikuboy.chatgpt.site",
+  "meta": {}
+}

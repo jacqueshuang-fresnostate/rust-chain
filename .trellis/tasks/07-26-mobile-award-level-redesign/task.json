@@ -1,0 +1,33 @@
+{
+  "id": "mobile-award-level-redesign",
+  "name": "mobile-award-level-redesign",
+  "title": "brainstorm: elevate mobile prototype to award-level experience",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "mobile/sites-prototype",
+  "package": null,
+  "priority": "P2",
+  "creator": "rust-chain",
+  "assignee": "rust-chain",
+  "createdAt": "2026-07-26",
+  "completedAt": "2026-07-26T17:25:26+08:00",
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "14af67519b744971d41de9813ef7a8cd6a9f2e1e",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "mobile/sites-prototype/app/globals.css",
+    "mobile/sites-prototype/app/layout.tsx",
+    "mobile/sites-prototype/app/page.tsx",
+    "mobile/sites-prototype/app/secondary-pages.tsx",
+    "mobile/sites-prototype/public/signal-theatre.png",
+    "mobile/sites-prototype/tests/rendered-html.test.mjs"
+  ],
+  "notes": "Validated commit 14af67519b744971d41de9813ef7a8cd6a9f2e1e was published as public Sites version 6 at https://hippo-mobile-signal-2026.ikuboy.chatgpt.site.",
+  "meta": {}
+}

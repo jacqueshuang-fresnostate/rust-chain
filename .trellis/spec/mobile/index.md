@@ -27,4 +27,20 @@ npm run tauri:android:build -- --debug --target aarch64 --apk
 npm run tauri:ios:build -- --debug --target aarch64-sim --no-sign
 ```
 
+## Icon-Only Control Contract
+
+Circular icon-only buttons must center their SVG explicitly on both axes. Do
+not rely on inherited `text-align` or the browser's default button layout.
+
+```css
+.icon-only-button {
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+```
+
+For shared control changes, verify the SVG and button bounding-box centers
+match on both axes and preserve a minimum 44x44 touch target.
+
 **Language**: All code-spec documentation is written in English. User-facing mobile copy is defined in locale resources.

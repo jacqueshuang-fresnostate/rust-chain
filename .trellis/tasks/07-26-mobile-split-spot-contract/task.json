@@ -1,0 +1,30 @@
+{
+  "id": "mobile-split-spot-contract",
+  "name": "mobile-split-spot-contract",
+  "title": "split spot and contract mobile columns",
+  "description": "Split Spot and Contract into independent top-level columns in the public HIPPO mobile Sites prototype.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "mobile/sites-prototype",
+  "package": null,
+  "priority": "P2",
+  "creator": "rust-chain",
+  "assignee": "rust-chain",
+  "createdAt": "2026-07-26",
+  "completedAt": "2026-07-26",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "13f2afa9c70dd5da9bcf889775e61314798ee6b4",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "mobile/sites-prototype/app/page.tsx",
+    "mobile/sites-prototype/app/globals.css",
+    "mobile/sites-prototype/tests/rendered-html.test.mjs"
+  ],
+  "notes": "Sites version 3 deployed publicly at https://hippo-mobile-signal-2026.ikuboy.chatgpt.site",
+  "meta": {}
+}

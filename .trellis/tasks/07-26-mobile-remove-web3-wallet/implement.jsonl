@@ -1,0 +1,2 @@
+{"file": ".trellis/tasks/07-26-mobile-remove-web3-wallet/prd.md", "reason": "Remove only the Web3 product-mode entry while preserving exchange wallet and six-column behavior."}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "Preserve the established navigation and local prototype constraints."}

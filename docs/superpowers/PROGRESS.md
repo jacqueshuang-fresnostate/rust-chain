@@ -2,6 +2,77 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-07-26 14:24 - 移除手机原型 Web3 钱包入口
+
+- 完成内容：移除首页“交易所 / Web3 钱包”产品模式切换栏及对应点击行为、文案和冗余样式；重新收紧首页顶部间距，使搜索栏直接成为全局头部后的第一个控件；保留六栏导航、现货/合约独立栏目以及资产、充值、提现、划转和快捷充值等交易所资金能力；新增 Web3 缺席契约与资金动作保留回归测试，并发布公开 Sites 版本 4。
+- 修改文件：`mobile/sites-prototype/app/page.tsx`、`mobile/sites-prototype/app/globals.css`、`mobile/sites-prototype/tests/rendered-html.test.mjs`、`.trellis/tasks/07-26-mobile-remove-web3-wallet/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run lint`、`npm test` 通过，生产构建成功且测试 5/5；变更相关 UI 严格类型检查、无表情符号与差异格式扫描通过；390x844 浏览器检查无横向溢出，搜索栏距全局头部 10px，六栏导航完整，控制台无 warning/error；Sites 部署 `appgdep_6a65a7f861c88191bfcabe35cfb75776` 状态 `succeeded`，线上边缘刷新后确认 `Web3` 和“产品模式”均不存在。
+- 后续事项：无。
+
+## 2026-07-26 12:50 - 拆分手机端现货与合约独立栏目
+
+- 完成内容：将原型底部导航从“首页、行情、交易、资产、我的”调整为“首页、行情、现货、合约、资产、我的”六个独立栏目；移除交易页内部现货/合约模式切换；首页快捷入口和行情分类按交易类型进入对应栏目；现货页保留买入/卖出、现货余额和资产到账语义，合约页增加开多/开空、全仓/逐仓、10x/20x、张数、预计保证金、标记价格、资金费率和强平风险说明；补充模式隔离回归测试并发布公开 Sites 版本 3。
+- 修改文件：`mobile/sites-prototype/app/page.tsx`、`mobile/sites-prototype/app/globals.css`、`mobile/sites-prototype/tests/rendered-html.test.mjs`、`.trellis/tasks/07-26-mobile-split-spot-contract/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run lint`、`npm test` 通过，生产构建成功且测试 3/3；无表情符号与差异格式扫描通过；390x844 浏览器检查显示六栏在实际 375px 内容宽度下无横向溢出、标签截断或碰撞；现货模拟确认返回现货语义，合约杠杆切换、开空及模拟确认返回合约语义；本地和公开生产页面均无 warning/error；Sites 部署 `appgdep_6a6591cef34481918601c9771d78d8e3` 状态 `succeeded`，公开新标签确认版本 3 生效。
+- 后续事项：本次仅修改独立 Sites 原型；生产 `mobile/src/` 的五主导航契约保持不变，待视觉方案最终确认后再单独规划迁移。
+
+## 2026-07-26 05:01 - 发布 OKX 参考版 HIPPO 手机原型
+
+- 完成内容：将 Sites 手机原型重构为交易所工作台式首页，以资产估值和今日收益为首要信息，强化买币/充币入口，新增紧凑产品宫格、AI 行情简报、可切换榜单行情与用户任务入口；全局调整为黑白中性色、克制绿红语义色、细分隔线、近直角控件和高密度数字排版；修正通知装饰点定位并扩大文字标签与图标触控区域；保留首页、行情、交易、资产、我的五主导航以及模拟下单、主题切换和产品入口交互；将精确源码保存为 Sites 版本 2 并更新公开生产站点。
+- 修改文件：`mobile/sites-prototype/app/page.tsx`、`mobile/sites-prototype/app/globals.css`、`.trellis/tasks/07-26-mobile-pencil-redesign/task.json`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run lint`、`npm run build`、`npm test` 通过（2/2）；无表情符号扫描通过；390x844 检查无横向溢出，行情筛选、五主导航、明暗主题和模拟下单反馈通过；1440x900 舞台检查无重叠；本地及公开生产页面控制台均无 warning/error；Sites 部署 `appgdep_6a6523ee6bb08191ad87360b0074159d` 状态 `succeeded`，站点 `access_mode` 为 `public`。
+- 后续事项：原型继续使用模拟数据；视觉方向确认后可将组件和设计令牌迁移到 `mobile/src/` 并接入真实接口。
+
+## 2026-07-26 04:52 - 确认 OKX 参考版手机原型设计方向
+
+- 完成内容：研究欧易当前官方 App 下载页、C2C 手机端路径、移动衍生品交易说明及官方截图，提炼资产总览优先、买币/充币强入口、紧凑功能宫格、榜单式行情、交易控制与风险信息同屏、黑白中性色和克制圆角等布局与视觉规律；将第二版设计要求加入现有 Sites 原型 PRD，并明确只借鉴信息架构和视觉节奏，不复制欧易品牌或具体页面。
+- 修改文件：`.trellis/tasks/07-26-mobile-pencil-redesign/prd.md`、`.trellis/tasks/07-26-mobile-pencil-redesign/research/okx-mobile-reference.md`、`docs/superpowers/PROGRESS.md`
+- 验证结果：已完成官方资料交叉复核，研究结论与现有五主导航及后端产品范围无冲突。
+- 后续事项：重构 `mobile/sites-prototype/` 首页与全局视觉系统，完成浏览器验收后发布 Sites 版本 2。
+
+## 2026-07-26 04:50 - 完成后端 P0 资金安全收口
+
+- 完成内容：
+  - 修正全仓保证金资金守恒：全仓只能使用杠杆钱包，共享权益按有符号仓位权益结算；主动平仓余额不足时整笔回滚并交由账户级统一强平；组合强平只结算一次共享钱包，逐仓记录仅用于审计，跳空缺口单独记录坏账。
+  - 将提现升级为真实资金状态机：创建时按服务端手续费冻结 `amount + fee`，用户级幂等键防止重复冻结；支持后台查询、审核、拒绝、广播、确认和失败；确认最终扣除冻结资金，广播前失败解冻，已广播失败进入人工复核。
+  - 增加钱包链网关 repository、HTTP infrastructure 和后台 worker；广播重试复用稳定请求标识，HTTP 请求统一设置 15 秒超时，轮询同时处理充值与提现回执，整页成功后才推进游标。
+  - 人工广播、确认和失败操作记录管理员 ID，worker 自动处理保持系统来源，便于区分人工与自动链上状态变更。
+  - 增加链上充值观察、确认入账和链重组冲正；按 `(network, tx_hash, event_index)` 去重，余额不足时进入人工处理。
+  - 移除现货成交路径的系统钱包自动补余额；系统做市账户必须持有真实基础/计价资产库存，库存不足时订单、冻结和流水整体回滚；内部账户密码改为随机不可登录哈希。
+  - 同步 PC/mobile 提现幂等请求、完整钱包 OpenAPI、链网关部署契约和独立测试文件。
+- 修改文件：
+  - `migrations/0087_p0_financial_safety.sql`
+  - `src/modules/{margin,spot,wallet}/`、`src/workers/{margin_liquidation,wallet_chain}.rs`、`src/{lib,main,openapi}.rs`
+  - `tests/{margin_liquidation_worker,margin_routes,spot_routes,wallet_routes,wallet_chain_worker,openapi_routes}.rs`、`tests/unit_src/`
+  - `pc/src/api/backendAdapters.ts`、`pc/tests/backendAdapters.test.ts`、`mobile/src/api/wallet.ts`
+  - `.trellis/tasks/07-13-trading-agent-hierarchy/`、`docs/superpowers/specs/blockchain-exchange/`
+- 验证结果：
+  - 隔离临时 MySQL 8.4/Redis 7 环境完整应用 `0001-0087`，`sqlx migrate info` 确认 87 号迁移 installed；真实数据库专项测试通过：钱包路由 8/8、钱包链 worker 1/1、全仓/杠杆路由 30/30、强平与利息 worker 8/8、现货路由 52/52。
+  - `cargo check --all-targets`、`cargo test --lib`（165/165）、`backend_architecture`（4/4）、OpenAPI（8/8）、`cargo fmt --check` 和 `git diff --check` 通过。
+  - `cargo clippy --all-targets --no-deps` 通过，保留仓库既有 56 条告警；PC 类型检查和适配器测试（32/32）、mobile 类型检查和测试（12/12）通过。
+- 后续事项：代码和隔离依赖验收已完成；生产上线前仍需使用实际公链测试网网关执行重复广播、节点超时、区块确认、链重组和服务重启恢复演练，并配置链网关告警与系统做市库存监控。
+
+## 2026-07-26 04:48 - 将 HIPPO Sites 原型改为公开访问
+
+- 完成内容：将 `HIPPO Mobile — Signals in Motion` Sites 站点访问模式从仅本人访问调整为公开访问，任何获得链接的用户均可直接打开。
+- 修改文件：`docs/superpowers/PROGRESS.md`
+- 验证结果：通过 Sites 站点配置复核，`access_mode` 已确认为 `public`，当前生产地址为 `https://hippo-mobile-signal-2026.ikuboy.chatgpt.site`。
+- 后续事项：无。
+
+## 2026-07-26 04:44 - 完成并发布 HIPPO 手机端沉浸式 Sites 原型
+
+- 完成内容：新增独立 Sites 原型工程 `mobile/sites-prototype/`，实现首页、行情、交易、资产、我的五个完整主视图；覆盖闪兑、理财、贷款、新币、预测、秒合约、充值、提现、划转、快捷充值、KYC、安全、邀请和订单等现有能力入口；统一使用 Lucide 图标并禁止表情符号；实现 Canvas 信号场、行情图表、分类筛选、自选收藏、现货/合约与买卖切换、余额百分比、模拟下单、产品浮层、主题切换、减弱动效和手机安全区适配；生成并接入品牌社交预览图；通过 Sites 私有发布版本 1，生产地址为 `https://hippo-mobile-signal-2026.ikuboy.chatgpt.site`。
+- 修改文件：`mobile/sites-prototype/`、`.trellis/tasks/07-26-mobile-pencil-redesign/task.json`、`.trellis/tasks/07-26-mobile-pencil-redesign/prd.md`、`.trellis/tasks/07-26-mobile-pencil-redesign/research/design-direction.md`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run lint` 通过；`npm test` 通过（包含生产构建及 2 项服务端渲染/契约测试）；390x844 浏览器检查无横向溢出、底部导航贴合视口、所有可见按钮触控尺寸不小于 28px；五个主导航页面均可达；产品浮层、主题切换、买卖方向、100% 数量和模拟下单提示通过；1440x900 宽屏检查舞台与手机画布无重叠；干净浏览器会话无 warning/error；Sites 部署状态 `succeeded`。
+- 后续事项：原型当前使用模拟数据，视觉方向确认后再将设计迁移到 `mobile/src/` 并对接真实后端接口。
+
+## 2026-07-26 04:24 - 确认 Sites 手机端沉浸式原型范围
+
+- 完成内容：将原 Pencil 设计任务调整为 Sites 可交互原型任务，依据现有移动端路由、PC 功能和后端能力确定首页、行情、交易、资产、我的五个主视图及产品入口；记录 Lucide 图标、禁止表情符号、390px 适配、交互动效边界、发布要求和验收标准。
+- 修改文件：`.trellis/tasks/07-26-mobile-pencil-redesign/task.json`、`.trellis/tasks/07-26-mobile-pencil-redesign/prd.md`、`.trellis/tasks/07-26-mobile-pencil-redesign/research/design-direction.md`、`docs/superpowers/PROGRESS.md`
+- 验证结果：已完成需求文档人工复核；待原型实现后执行构建、移动端浏览器检查和 Sites 发布验证。
+- 后续事项：初始化 `mobile/sites-prototype/`，实现并发布 Sites 原型。
+
 ## 2026-07-08 10:34 - 继续后端 DDD 结构复核
 
 - 完成内容：再次全量扫描 `src/modules` 架构边界，确认已拆分的路由文件都在 `routes.rs`，`#[cfg(test)]` 仅通过 `#[path = "...unit_src..."]` 引入独立测试文件，未发现路由层新增业务逻辑回窜。对 `countries/platform/loan/prediction/quick_recharge` 等入口继续复核并确认其仅承担层级入口与导出职责。
@@ -5575,3 +5646,59 @@
 - 修改文件：`migrations/0086_cross_margin_accounts.sql`、`src/modules/margin/{domain,application,infrastructure,presentation}.rs`、`src/workers/{margin_interest,margin_liquidation}.rs`、`.trellis/spec/backend/margin-trading-actions.md`、`tests/unit_src/src_modules_margin_domain_tests.rs`、`tests/unit_src/src_modules_margin_application_tests.rs`、`tests/margin_routes.rs`。
 - 验证结果：`cargo check --all-targets`、`cargo test --lib`（161/161）、`cargo test --test backend_architecture`（4/4）、`cargo test --test margin_routes`（29/29）和 `cargo clippy --all-targets --no-deps` 通过；Clippy 保留 56 条仓库既有告警；本次全仓 `cargo fmt --check` 仍被既有 prediction 测试格式差异阻断，新增文件及本次修改文件已单独 rustfmt。
 - 后续事项：全仓核心后端已完成；仍需在带真实行情、钱包和迁移 0086 的环境执行全仓开仓、多仓组合亏损、利息、统一强平和恢复重启端到端验收；现货外部撮合/流动性对账与链上充值提现仍未完成。
+
+## 2026-07-26 16:08 - 完整补齐手机端原型二级页面
+
+- 完成内容：将 HIPPO 手机端 Sites 原型扩展为完整可导航产品，新增 39 个类型化二级页面，覆盖行情资讯、现货与合约独立交易、资产充值提现划转、产品中心、贷款、快捷充值、KYC、账户安全及登录注册；补齐参数保持、可靠返回、访客保护返回、金融表单校验、单次提交和本地结果记录，并继续移除 Web3 钱包入口。
+- 修改文件：`mobile/sites-prototype/app/{page.tsx,prototype-routes.ts,secondary-pages.tsx,globals.css}`、`mobile/sites-prototype/tests/rendered-html.test.mjs`、`.trellis/tasks/07-26-mobile-complete-secondary-pages/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run lint`、`npm test`（生产构建及 16/16 测试）、`git diff --check`、emoji 扫描通过；390x844 与 1440x900 浏览器验收无横向溢出或控制台错误，代表性行情、交易对、充值、认证返回、贷款、快捷充值与 KYC 深链通过；精确提交 `6d444de32d238e048d2a1d243b6b28d3ceca0250` 已保存并部署为公开 Sites 版本 5。
+- 后续事项：当前为本地确定性模拟原型，未接入真实后端、真实账户、支付、订单、资金或 KYC 文件上传；生产接入需另立任务。
+
+## 2026-07-26 17:25 - 升级手机端原型为 Signal Theatre 视觉系统
+
+- 完成内容：将完整手机端原型升级为统一的 Signal Theatre 视觉与动效系统，加入触控/指针响应的信号画布、粒子与光带渲染、方向感页面转场、桌面展览舞台和全新位图主视觉；同步重构六个一级栏目及 39 个二级页面的排版、数据层级与交互反馈，继续保持现货和合约独立、移除 Web3 钱包，并强化提现复核的到账金额、手续费、扣款与不可逆风险提示。
+- 修改文件：`mobile/sites-prototype/app/{globals.css,layout.tsx,page.tsx,secondary-pages.tsx}`、`mobile/sites-prototype/public/signal-theatre.png`、`mobile/sites-prototype/tests/rendered-html.test.mjs`、`.trellis/tasks/07-26-mobile-award-level-redesign/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run lint`、`npm test`（生产构建及 19/19 测试）、`git diff --check`、emoji 与负字距扫描通过；390x844、1440x900 及代表性二级金融页面浏览器验收无横向溢出、遮挡或控制台错误，画布像素检查确认非空且指针交互会改变帧；精确提交 `14af67519b744971d41de9813ef7a8cd6a9f2e1e` 已推送并部署为公开 Sites 版本 6，生产新会话加载验证通过。
+- 后续事项：当前仍为本地确定性模拟原型，未接入真实后端、账户、订单、资金、支付或 KYC 上传；生产功能接入需另立任务。
+
+## 2026-07-26 17:42 - 接入 HIPPO 官方 Logo 并提亮浅色主题
+
+- 完成内容：将用户提供的三种 HIPPO 官方 Logo 原图接入手机顶栏、桌面 Signal Theatre 舞台及 Open Graph/X 分享预览，移除临时字母标识；根据反馈将浅色主题从灰米色与大面积深色块调整为瓷白、冷银、石墨与高饱和橙绿配色，并同步提亮资产总览、市场提示、市场指数和资产首页。
+- 修改文件：`mobile/sites-prototype/app/{globals.css,layout.tsx,page.tsx}`、`mobile/sites-prototype/public/hippo-logo-{compact,landscape,light}.png`、`mobile/sites-prototype/tests/rendered-html.test.mjs`、`.trellis/tasks/07-26-mobile-official-logo-integration/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run lint`、`npm test`（生产构建及 21/21 测试）、`git diff --check` 通过；390x844 与 1440x900 浏览器确认 Logo 比例稳定、无横向溢出或控制台错误，生产环境确认浅色页背景为瓷白、资产总览为白色、市场提示为品牌橙且官方 Logo 资源正常加载；最终提交 `801762d50a6baf7849c77e1eff7ef6abb7af96bb` 已部署为公开 Sites 版本 8。
+- 后续事项：当前仍为本地确定性模拟原型，未接入真实后端、账户、订单、资金、支付或 KYC 上传；生产功能接入需另立任务。
+
+## 2026-07-26 17:54 - 优化手机端 Header 品牌与快捷控制区
+
+- 完成内容：移除 Header 官方 Logo 的强制黑底、边框和块状投影，改为透明金属品牌签名并增加轻量品牌强调线；将主题/通知与扫码/消息分别统一为相同的双按钮分段控制轨，规范 44px 触控尺寸、Lucide 图标尺寸、分隔线、间距与通知红点位置，同时保持搜索框弹性收缩。
+- 修改文件：`mobile/sites-prototype/app/{globals.css,page.tsx}`、`mobile/sites-prototype/tests/rendered-html.test.mjs`、`.trellis/tasks/07-26-mobile-header-brand-actions/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run lint`、`npm test`（生产构建及 22/22 测试）、`git diff --check` 通过；390x844 浅色与深色浏览器验收确认 Logo 无黑底、两组控制轨一致、红点固定在 5px 光学基准，1440x900 无重叠或横向溢出，控制台无告警或错误；提交 `7523db01be14d54a67222d0bd8c9a9765a86083a` 已部署为公开 Sites 版本 9，生产缓存切换后重新加载验证通过。
+- 后续事项：当前仍为本地确定性模拟原型，未接入真实后端、账户、订单、资金、支付或 KYC 上传；生产功能接入需另立任务。
+
+## 2026-07-26 18:02 - 将 Header 快捷控制改为独立圆形按钮
+
+- 完成内容：根据最新反馈移除主题/通知与扫码/消息控制组的灰色外层卡片、圆角包裹和中央分隔线，将四个功能改为独立 44px 圆形 Lucide 图标按钮；增大按钮间的视觉呼吸空间，将通知红点贴合对应按钮右上角，并分别优化浅色白色表面与深色半透明表面的边界对比。
+- 修改文件：`mobile/sites-prototype/app/globals.css`、`mobile/sites-prototype/tests/rendered-html.test.mjs`、`.trellis/tasks/07-26-mobile-header-icon-controls/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run lint`、`npm test`（生产构建及 22/22 测试）、`git diff --check` 通过；390x844 浅色与深色、1440x900 浏览器验收确认控制组外层透明无边框、按钮为 44x44 圆形、红点为右上角 7px 标记，页面无横向溢出且控制台无告警或错误；精确提交 `245dad1bf5e331dce54e0d8416bc7403d48fe413` 已推送并部署为公开 Sites 版本 10，生产缓存刷新后重新加载验证通过。
+- 后续事项：当前仍为本地确定性模拟原型，未接入真实后端、账户、订单、资金、支付或 KYC 上传；生产功能接入需另立任务。
+
+## 2026-07-26 18:36 - 修正快捷工具图标居中
+
+- 完成内容：修复扫码和消息 Lucide SVG 在圆形按钮内向左偏移的问题，为共享快捷按钮规则补充显式网格双轴居中与零内边距；保持四个按钮 44x44 尺寸、6px 间距、通知红点、可访问名称及点击行为不变，并增加源码契约测试与移动端图标按钮规范。
+- 修改文件：`mobile/sites-prototype/app/globals.css`、`mobile/sites-prototype/tests/rendered-html.test.mjs`、`.trellis/spec/mobile/index.md`、`.trellis/tasks/07-26-mobile-utility-icon-centering/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run lint`、`npm test`（生产构建及 23/23 测试）、`git diff --check` 通过；390x844 浏览器实测线上旧版扫码和消息 SVG 横向偏移均为 -12px，修复后四个快捷 SVG 相对按钮的 X/Y 中心偏差全部为 0px，页面无横向溢出且控制台无告警或错误；独立 `npx tsc --noEmit` 仍被既有 Cloudflare ambient 类型缺失阻断，与本次改动无关；精确提交 `474452e383d1f2e39f41cd45b457d98884817dfd` 已推送并部署为公开 Sites 版本 11，生产缓存刷新后重新测量通过。
+- 后续事项：当前仍为本地确定性模拟原型，未接入真实后端、账户、订单、资金、支付或 KYC 上传；生产功能接入需另立任务。
+
+## 2026-07-26 19:22 - 去除重复消息入口
+
+- 完成内容：保留 Header 铃铛作为唯一全局消息中心入口，删除首页与其功能重复的消息气泡按钮和红点；将首页快捷工具组收缩为单个 44x44 扫码按钮，使搜索框使用释放出的横向空间，并将相关回归测试升级为 TypeScript AST 与单规则 CSS 声明检查。
+- 修改文件：`mobile/sites-prototype/app/page.tsx`、`mobile/sites-prototype/app/globals.css`、`mobile/sites-prototype/tests/rendered-html.test.mjs`、`.trellis/tasks/07-26-mobile-deduplicate-message-entry/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run lint`、`npm test`（生产构建及 23/23 测试）、`git diff --check` 通过；390x844 浏览器确认首页快捷按钮由“扫码、消息”收敛为单一“扫码”，快捷区宽度由 94px 收缩为 44px，搜索框由 241px 扩展为 291px，扫码图标中心偏差为 0px，页面无横向溢出或控制台错误；顶部铃铛在本地及生产环境仍可打开消息中心；独立全量 `npx tsc --noEmit` 仍受既有 Cloudflare ambient 类型缺失影响，聚焦类型检查通过；精确提交 `2a8374ab29f6da2c02c9c5c9e2d6cf359e18616d` 已推送并部署为公开 Sites 版本 12，生产缓存刷新后验证通过。
+- 后续事项：当前仍为本地确定性模拟原型，未接入真实后端、账户、订单、资金、支付或 KYC 上传；生产功能接入需另立任务。
+
+## 2026-07-26 20:05 - 提交 P0 金融安全 WIP 并启动全仓优化
+
+- 完成内容：将工作区滞留的 P0 金融安全后端改动（钱包链网关 worker、充值观察/确认/重组、提现状态机、保证金守恒、迁移 0087）与 pc/mobile 钱包适配器改动按功能分组提交（2678b97、f37cd39）；建立全仓优化任务清单：结构轻量整理、代理返佣全链路完善（放开 5 业务规则配置、下级代理页、批量结算）、管理后台界面统一。
+- 修改文件：`src/`、`migrations/0087_p0_financial_safety.sql`、`tests/`、`mobile/src/api/wallet.ts`、`pc/src/api/backendAdapters.ts`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`cargo check --all-targets` 通过；完整集成测试留待各切片交付时随改动执行。
+- 后续事项：结构 A1/A2（杂物清理、模块根风格归一）、代理 B1-B3（5 业务规则、下级代理页、批量结算）、后台 C1-C3（导航单源、页面壳统一、设计 token）、admin 巨型文件拆分。

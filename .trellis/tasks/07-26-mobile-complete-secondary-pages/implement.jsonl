@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/07-26-mobile-complete-secondary-pages/prd.md", "reason": "Authoritative complete secondary-page scope and acceptance criteria."}
+{"file": ".trellis/tasks/07-26-mobile-complete-secondary-pages/research/market-content-gaps.md", "reason": "Market, news, orders, picker and message workflow inventory."}
+{"file": ".trellis/tasks/07-26-mobile-complete-secondary-pages/research/asset-funding-gaps.md", "reason": "Asset, deposit, withdrawal, transfer and ledger workflow inventory."}
+{"file": ".trellis/tasks/07-26-mobile-complete-secondary-pages/research/product-account-gaps.md", "reason": "Product, profile and authentication workflow inventory."}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "Back, secondary navigation, trade context and mobile layout contracts."}

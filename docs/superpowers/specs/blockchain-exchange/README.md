@@ -16,6 +16,7 @@
 | `06-security-risk-testing.md` | 风控、安全、合规边界、测试与验收 |
 | `07-flash-convert.md` | 闪兑、混合报价、资产划转、后台配置、风控验收 |
 | `08-user-auth-security-api.md` | 用户注册、登录、邮箱绑定、登录密码、资金密码、后台 SMTP 配置 API |
+| `09-wallet-chain-gateway.md` | 充值监听、提现广播、链上回执、幂等与部署配置 |
 
 ## OpenAPI 入口
 
