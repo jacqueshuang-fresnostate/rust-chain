@@ -12,6 +12,7 @@ pub(crate) struct AdminAssetListFilter {
     pub(crate) asset_type: Option<String>,
     pub(crate) status: Option<String>,
     pub(crate) limit: u32,
+    pub(crate) offset: u32,
 }
 
 #[derive(Debug)]
@@ -53,6 +54,7 @@ pub(crate) struct AdminWalletAccountListFilter {
     pub(crate) include_empty: bool,
     pub(crate) include_internal: bool,
     pub(crate) limit: u32,
+    pub(crate) offset: u32,
 }
 
 #[derive(Debug)]
@@ -64,6 +66,7 @@ pub(crate) struct AdminWalletLedgerListFilter {
     pub(crate) ref_type: Option<String>,
     pub(crate) include_internal: bool,
     pub(crate) limit: u32,
+    pub(crate) offset: u32,
 }
 
 #[derive(Debug)]
@@ -73,6 +76,7 @@ pub(crate) struct AdminDepositNetworkConfigListFilter {
     pub(crate) status: Option<String>,
     pub(crate) asset_symbol: Option<String>,
     pub(crate) limit: u32,
+    pub(crate) offset: u32,
 }
 
 #[derive(Debug)]
@@ -96,6 +100,7 @@ pub(crate) struct AdminDepositAddressPoolListFilter {
     pub(crate) email: Option<String>,
     pub(crate) address: Option<String>,
     pub(crate) limit: u32,
+    pub(crate) offset: u32,
 }
 
 #[derive(Debug)]
@@ -142,28 +147,34 @@ pub(crate) async fn load_active_asset_symbol_in_tx(
 pub(crate) async fn list_admin_assets(
     pool: &Pool<MySql>,
     filter: AdminAssetListFilter,
-) -> AppResult<Vec<AdminAssetResponse>> {
-    let mut builder = admin_asset_query();
-    builder.push(" WHERE 1 = 1");
-    if let Some(symbol) = filter.symbol {
-        builder.push(" AND symbol = ");
-        builder.push_bind(symbol);
+) -> AppResult<(Vec<AdminAssetResponse>, i64)> {
+    let mut rows = admin_asset_query();
+    let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM assets");
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(symbol) = filter.symbol.clone() {
+            builder.push(" AND symbol = ");
+            builder.push_bind(symbol);
+        }
+        if let Some(asset_type) = filter.asset_type.clone() {
+            builder.push(" AND asset_type = ");
+            builder.push_bind(asset_type);
+        }
+        if let Some(status) = filter.status.clone() {
+            builder.push(" AND status = ");
+            builder.push_bind(status);
+        }
     }
-    if let Some(asset_type) = filter.asset_type {
-        builder.push(" AND asset_type = ");
-        builder.push_bind(asset_type);
-    }
-    if let Some(status) = filter.status {
-        builder.push(" AND status = ");
-        builder.push_bind(status);
-    }
-    builder.push(" ORDER BY id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
 
-    Ok(builder
-        .build_query_as::<AdminAssetResponse>()
-        .fetch_all(pool)
-        .await?)
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
 }
 
 pub(crate) async fn load_admin_asset(
@@ -389,45 +400,60 @@ pub(crate) async fn ensure_asset_has_no_references_in_tx(
 pub(crate) async fn list_admin_wallet_accounts(
     pool: &Pool<MySql>,
     filter: AdminWalletAccountListFilter,
-) -> AppResult<Vec<AdminWalletAccountResponse>> {
-    let mut builder = QueryBuilder::<MySql>::new(
+) -> AppResult<(Vec<AdminWalletAccountResponse>, i64)> {
+    let mut rows = QueryBuilder::<MySql>::new(
         r#"SELECT accounts.id, accounts.user_id, account_users.email AS user_email,
                   accounts.asset_id, assets.symbol AS asset_symbol,
                   accounts.available, accounts.frozen, accounts.locked, TRUE AS account_exists, accounts.updated_at
            FROM wallet_accounts accounts
            INNER JOIN users account_users ON account_users.id = accounts.user_id
-           INNER JOIN assets ON assets.id = accounts.asset_id
-           WHERE 1 = 1"#,
+           INNER JOIN assets ON assets.id = accounts.asset_id"#,
     );
-    if !filter.include_internal {
-        push_exclude_internal_user_email(&mut builder, "account_users.email");
+    let mut total = QueryBuilder::<MySql>::new(
+        r#"SELECT COUNT(*)
+           FROM wallet_accounts accounts
+           INNER JOIN users account_users ON account_users.id = accounts.user_id
+           INNER JOIN assets ON assets.id = accounts.asset_id"#,
+    );
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if !filter.include_internal {
+            push_exclude_internal_user_email(builder, "account_users.email");
+        }
+        if let Some(user_id) = filter.user_id {
+            push_user_id_filter(builder, "accounts.user_id", user_id);
+        }
+        push_user_email_filter(builder, "accounts.user_id", filter.email.clone());
+        if let Some(asset_id) = filter.asset_id {
+            builder.push(" AND accounts.asset_id = ");
+            builder.push_bind(asset_id);
+        }
     }
-    if let Some(user_id) = filter.user_id {
-        push_user_id_filter(&mut builder, "accounts.user_id", user_id);
-    }
-    push_user_email_filter(&mut builder, "accounts.user_id", filter.email.clone());
-    if let Some(asset_id) = filter.asset_id {
-        builder.push(" AND accounts.asset_id = ");
-        builder.push_bind(asset_id);
-    }
-    builder.push(" ORDER BY accounts.updated_at DESC, accounts.id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
 
-    let mut accounts = builder
-        .build_query_as::<AdminWalletAccountResponse>()
-        .fetch_all(pool)
-        .await?;
+    let (mut accounts, mut total) = fetch_admin_page::<AdminWalletAccountResponse>(
+        pool,
+        rows,
+        total,
+        // 按主键排序：updated_at 每笔余额变动都会改，分页时行会在页间跳动。
+        " ORDER BY accounts.id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await?;
     if filter.include_empty {
+        // 补齐的空账户是内存拼接结果，总数按本页补齐条数累加，保持与返回行一致。
+        let persisted = accounts.len();
         append_empty_wallet_accounts(pool, &filter, &mut accounts).await?;
+        total += (accounts.len() - persisted) as i64;
     }
-    Ok(accounts)
+    Ok((accounts, total))
 }
 
 pub(crate) async fn list_admin_wallet_ledger(
     pool: &Pool<MySql>,
     filter: AdminWalletLedgerListFilter,
-) -> AppResult<Vec<AdminWalletLedgerResponse>> {
-    let mut builder = QueryBuilder::<MySql>::new(
+) -> AppResult<(Vec<AdminWalletLedgerResponse>, i64)> {
+    let mut rows = QueryBuilder::<MySql>::new(
         r#"SELECT ledger.id, ledger.user_id, ledger_users.email AS user_email,
                   ledger.asset_id, assets.symbol AS asset_symbol,
                   ledger.change_type, ledger.amount, ledger.balance_type, ledger.balance_after,
@@ -435,69 +461,86 @@ pub(crate) async fn list_admin_wallet_ledger(
                   ledger.ref_type, ledger.ref_id, ledger.created_at
            FROM wallet_ledger ledger
            INNER JOIN users ledger_users ON ledger_users.id = ledger.user_id
-           INNER JOIN assets ON assets.id = ledger.asset_id
-           WHERE 1 = 1"#,
+           INNER JOIN assets ON assets.id = ledger.asset_id"#,
     );
-    if !filter.include_internal {
-        push_exclude_internal_user_email(&mut builder, "ledger_users.email");
+    let mut total = QueryBuilder::<MySql>::new(
+        r#"SELECT COUNT(*)
+           FROM wallet_ledger ledger
+           INNER JOIN users ledger_users ON ledger_users.id = ledger.user_id
+           INNER JOIN assets ON assets.id = ledger.asset_id"#,
+    );
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if !filter.include_internal {
+            push_exclude_internal_user_email(builder, "ledger_users.email");
+        }
+        if let Some(user_id) = filter.user_id {
+            push_user_id_filter(builder, "ledger.user_id", user_id);
+        }
+        push_user_email_filter(builder, "ledger.user_id", filter.email.clone());
+        if let Some(asset_id) = filter.asset_id {
+            builder.push(" AND ledger.asset_id = ");
+            builder.push_bind(asset_id);
+        }
+        if let Some(change_type) = optional_string(filter.change_type.clone()) {
+            builder.push(" AND ledger.change_type = ");
+            builder.push_bind(change_type);
+        }
+        if let Some(ref_type) = optional_string(filter.ref_type.clone()) {
+            builder.push(" AND ledger.ref_type = ");
+            builder.push_bind(ref_type);
+        }
     }
-    if let Some(user_id) = filter.user_id {
-        push_user_id_filter(&mut builder, "ledger.user_id", user_id);
-    }
-    push_user_email_filter(&mut builder, "ledger.user_id", filter.email);
-    if let Some(asset_id) = filter.asset_id {
-        builder.push(" AND ledger.asset_id = ");
-        builder.push_bind(asset_id);
-    }
-    if let Some(change_type) = optional_string(filter.change_type) {
-        builder.push(" AND ledger.change_type = ");
-        builder.push_bind(change_type);
-    }
-    if let Some(ref_type) = optional_string(filter.ref_type) {
-        builder.push(" AND ledger.ref_type = ");
-        builder.push_bind(ref_type);
-    }
-    builder.push(" ORDER BY ledger.created_at DESC, ledger.id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
 
-    Ok(builder
-        .build_query_as::<AdminWalletLedgerResponse>()
-        .fetch_all(pool)
-        .await?)
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY ledger.created_at DESC, ledger.id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
 }
 
 pub(crate) async fn list_admin_deposit_network_configs(
     pool: &Pool<MySql>,
     filter: AdminDepositNetworkConfigListFilter,
-) -> AppResult<Vec<AdminDepositNetworkConfigResponse>> {
-    let mut builder = admin_deposit_network_config_query();
-    builder.push(" WHERE 1 = 1");
-    if let Some(network) = filter.network {
-        builder.push(" AND network = ");
-        builder.push_bind(network);
+) -> AppResult<(Vec<AdminDepositNetworkConfigResponse>, i64)> {
+    let mut rows = admin_deposit_network_config_query();
+    let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM deposit_network_configs");
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(network) = filter.network.clone() {
+            builder.push(" AND network = ");
+            builder.push_bind(network);
+        }
+        if let Some(address_group_code) = filter.address_group_code.clone() {
+            builder.push(" AND address_group_code = ");
+            builder.push_bind(address_group_code);
+        }
+        if let Some(status) = filter.status.clone() {
+            builder.push(" AND status = ");
+            builder.push_bind(status);
+        }
+        if let Some(asset_symbol) = filter.asset_symbol.clone() {
+            builder.push(
+                " AND (asset_symbols_json IS NULL OR JSON_CONTAINS(asset_symbols_json, JSON_QUOTE(",
+            );
+            builder.push_bind(asset_symbol);
+            builder.push(")))");
+        }
     }
-    if let Some(address_group_code) = filter.address_group_code {
-        builder.push(" AND address_group_code = ");
-        builder.push_bind(address_group_code);
-    }
-    if let Some(status) = filter.status {
-        builder.push(" AND status = ");
-        builder.push_bind(status);
-    }
-    if let Some(asset_symbol) = filter.asset_symbol {
-        builder.push(
-            " AND (asset_symbols_json IS NULL OR JSON_CONTAINS(asset_symbols_json, JSON_QUOTE(",
-        );
-        builder.push_bind(asset_symbol);
-        builder.push(")))");
-    }
-    builder.push(" ORDER BY sort_order ASC, id ASC LIMIT ");
-    builder.push_bind(filter.limit as i64);
 
-    Ok(builder
-        .build_query_as::<AdminDepositNetworkConfigResponse>()
-        .fetch_all(pool)
-        .await?)
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY sort_order ASC, id ASC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
 }
 
 pub(crate) async fn load_deposit_network_config_by_network(
@@ -608,46 +651,56 @@ pub(crate) async fn ensure_asset_symbols_exist(
 pub(crate) async fn list_admin_deposit_address_pool(
     pool: &Pool<MySql>,
     filter: AdminDepositAddressPoolListFilter,
-) -> AppResult<Vec<AdminDepositAddressPoolResponse>> {
-    let mut builder = admin_deposit_address_pool_query();
-    builder.push(" WHERE 1 = 1");
-    if let Some(network) = filter.network {
-        builder.push(" AND addresses.network = ");
-        builder.push_bind(network);
+) -> AppResult<(Vec<AdminDepositAddressPoolResponse>, i64)> {
+    let mut rows = admin_deposit_address_pool_query();
+    let mut total = QueryBuilder::<MySql>::new(
+        r#"SELECT COUNT(*)
+           FROM deposit_address_pool addresses
+           LEFT JOIN users assigned_users ON assigned_users.id = addresses.assigned_user_id"#,
+    );
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(network) = filter.network.clone() {
+            builder.push(" AND addresses.network = ");
+            builder.push_bind(network);
+        }
+        if let Some(address_group_code) = filter.address_group_code.clone() {
+            builder.push(" AND addresses.address_group_code = ");
+            builder.push_bind(address_group_code);
+        }
+        if let Some(status) = filter.status.clone() {
+            builder.push(" AND addresses.status = ");
+            builder.push_bind(status);
+        }
+        if let Some(asset_symbol) = filter.asset_symbol.clone() {
+            builder.push(" AND (addresses.asset_symbol = ");
+            builder.push_bind(asset_symbol.clone());
+            builder.push(" OR addresses.assigned_asset_symbol = ");
+            builder.push_bind(asset_symbol.clone());
+            builder.push(" OR JSON_CONTAINS(addresses.asset_symbols_json, JSON_QUOTE(");
+            builder.push_bind(asset_symbol);
+            builder.push("))");
+            builder.push(")");
+        }
+        if let Some(user_id) = filter.assigned_user_id {
+            push_user_id_filter(builder, "addresses.assigned_user_id", user_id);
+        }
+        push_user_email_filter(builder, "addresses.assigned_user_id", filter.email.clone());
+        if let Some(address) = filter.address.clone() {
+            builder.push(" AND addresses.address LIKE ");
+            builder.push_bind(format!("%{address}%"));
+        }
     }
-    if let Some(address_group_code) = filter.address_group_code {
-        builder.push(" AND addresses.address_group_code = ");
-        builder.push_bind(address_group_code);
-    }
-    if let Some(status) = filter.status {
-        builder.push(" AND addresses.status = ");
-        builder.push_bind(status);
-    }
-    if let Some(asset_symbol) = filter.asset_symbol {
-        builder.push(" AND (addresses.asset_symbol = ");
-        builder.push_bind(asset_symbol.clone());
-        builder.push(" OR addresses.assigned_asset_symbol = ");
-        builder.push_bind(asset_symbol.clone());
-        builder.push(" OR JSON_CONTAINS(addresses.asset_symbols_json, JSON_QUOTE(");
-        builder.push_bind(asset_symbol);
-        builder.push("))");
-        builder.push(")");
-    }
-    if let Some(user_id) = filter.assigned_user_id {
-        push_user_id_filter(&mut builder, "addresses.assigned_user_id", user_id);
-    }
-    push_user_email_filter(&mut builder, "addresses.assigned_user_id", filter.email);
-    if let Some(address) = filter.address {
-        builder.push(" AND addresses.address LIKE ");
-        builder.push_bind(format!("%{address}%"));
-    }
-    builder.push(" ORDER BY addresses.updated_at DESC, addresses.id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
 
-    Ok(builder
-        .build_query_as::<AdminDepositAddressPoolResponse>()
-        .fetch_all(pool)
-        .await?)
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY addresses.updated_at DESC, addresses.id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
 }
 
 pub(crate) async fn load_deposit_address_pool(

@@ -6,6 +6,7 @@ pub(crate) struct AdminConvertOrderListFilter {
     pub(crate) email: Option<String>,
     pub(crate) status: Option<String>,
     pub(crate) limit: u32,
+    pub(crate) offset: u32,
 }
 
 #[derive(Debug)]
@@ -39,14 +40,23 @@ pub(crate) struct AdminConvertPairUpdate {
 pub(crate) async fn list_admin_convert_pairs(
     pool: &Pool<MySql>,
     limit: u32,
-) -> AppResult<Vec<ConvertPairResponse>> {
-    let mut builder = admin_convert_pair_query();
-    builder.push(" ORDER BY pairs.id DESC LIMIT ");
-    builder.push_bind(limit as i64);
-    Ok(builder
-        .build_query_as::<ConvertPairResponse>()
-        .fetch_all(pool)
-        .await?)
+    offset: u32,
+) -> AppResult<(Vec<ConvertPairResponse>, i64)> {
+    let total = QueryBuilder::<MySql>::new(
+        r#"SELECT COUNT(*)
+           FROM convert_pairs pairs
+           INNER JOIN assets from_assets ON from_assets.id = pairs.from_asset
+           INNER JOIN assets to_assets ON to_assets.id = pairs.to_asset"#,
+    );
+    fetch_admin_page(
+        pool,
+        admin_convert_pair_query(),
+        total,
+        " ORDER BY pairs.id DESC",
+        limit,
+        offset,
+    )
+    .await
 }
 
 pub(crate) async fn load_admin_convert_pair(
@@ -67,23 +77,36 @@ pub(crate) async fn load_admin_convert_pair(
 pub(crate) async fn list_admin_convert_orders(
     pool: &Pool<MySql>,
     filter: AdminConvertOrderListFilter,
-) -> AppResult<Vec<ConvertOrderResponse>> {
-    let mut builder = admin_convert_order_query();
-    builder.push(" WHERE 1 = 1");
-    if let Some(user_id) = filter.user_id {
-        push_user_id_filter(&mut builder, "orders.user_id", user_id);
+) -> AppResult<(Vec<ConvertOrderResponse>, i64)> {
+    let mut rows = admin_convert_order_query();
+    let mut total = QueryBuilder::<MySql>::new(
+        r#"SELECT COUNT(*)
+           FROM convert_orders orders
+           INNER JOIN users ON users.id = orders.user_id
+           INNER JOIN assets from_assets ON from_assets.id = orders.from_asset
+           INNER JOIN assets to_assets ON to_assets.id = orders.to_asset"#,
+    );
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(user_id) = filter.user_id {
+            push_user_id_filter(builder, "orders.user_id", user_id);
+        }
+        push_user_email_filter(builder, "orders.user_id", filter.email.clone());
+        if let Some(status) = filter.status.clone() {
+            builder.push(" AND orders.status = ");
+            builder.push_bind(status);
+        }
     }
-    push_user_email_filter(&mut builder, "orders.user_id", filter.email);
-    if let Some(status) = filter.status {
-        builder.push(" AND orders.status = ");
-        builder.push_bind(status);
-    }
-    builder.push(" ORDER BY orders.id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
-    Ok(builder
-        .build_query_as::<ConvertOrderResponse>()
-        .fetch_all(pool)
-        .await?)
+
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY orders.id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
 }
 
 pub(crate) async fn load_admin_convert_order(

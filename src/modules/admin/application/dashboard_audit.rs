@@ -55,7 +55,7 @@ pub(crate) async fn list_admin_audit_logs(
     query: AdminAuditLogsQuery,
 ) -> AppResult<AdminAuditLogsResponse> {
     let pool = admin_mysql_pool(pool)?;
-    let logs = list_admin_audit_logs_from_store(
+    let (logs, total) = list_admin_audit_logs_from_store(
         &pool,
         AdminAuditLogListFilter {
             admin_id: query.admin_id,
@@ -63,8 +63,9 @@ pub(crate) async fn list_admin_audit_logs(
             target_type: query.target_type.and_then(optional_string),
             target_id: query.target_id.and_then(optional_string),
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(AdminAuditLogsResponse { logs })
+    Ok(AdminAuditLogsResponse { logs, total })
 }

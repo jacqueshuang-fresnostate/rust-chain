@@ -471,7 +471,7 @@ pub(crate) async fn list_admin_countries(
         .and_then(optional_string)
         .map(|value| validate_country_status(&value))
         .transpose()?;
-    let countries = list_admin_countries_from_store(
+    let (countries, total) = list_admin_countries_from_store(
         pool,
         AdminCountryListFilter {
             country_code,
@@ -482,7 +482,7 @@ pub(crate) async fn list_admin_countries(
         },
     )
     .await?;
-    Ok(AdminCountriesResponse { countries })
+    Ok(AdminCountriesResponse { countries, total })
 }
 
 pub(crate) async fn create_admin_country(

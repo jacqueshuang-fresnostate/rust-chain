@@ -5,7 +5,7 @@ pub(crate) async fn list_admin_margin_liquidations(
     query: AdminMarginLiquidationQuery,
 ) -> AppResult<AdminMarginLiquidationsResponse> {
     let pool = admin_mysql_pool(pool)?;
-    let liquidations = list_admin_margin_liquidations_from_store(
+    let (liquidations, total) = list_admin_margin_liquidations_from_store(
         &pool,
         AdminMarginLiquidationListFilter {
             user_id: query.user_id,
@@ -13,10 +13,14 @@ pub(crate) async fn list_admin_margin_liquidations(
             pair_id: query.pair_id,
             position_id: query.position_id,
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(AdminMarginLiquidationsResponse { liquidations })
+    Ok(AdminMarginLiquidationsResponse {
+        liquidations,
+        total,
+    })
 }
 
 pub(crate) async fn get_admin_margin_liquidation(

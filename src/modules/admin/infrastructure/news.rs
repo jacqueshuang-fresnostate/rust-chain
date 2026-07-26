@@ -47,42 +47,46 @@ pub(crate) struct AdminNewsStatusUpdate {
 pub(crate) async fn list_admin_news_items(
     pool: &Pool<MySql>,
     filter: AdminNewsListFilter,
-) -> AppResult<Vec<AdminNewsItemResponse>> {
-    let mut builder = admin_news_query();
-    builder.push(" WHERE 1 = 1");
-    if let Some(status) = filter.status {
-        builder.push(" AND status = ");
-        builder.push_bind(status);
+) -> AppResult<(Vec<AdminNewsItemResponse>, i64)> {
+    let mut rows = admin_news_query();
+    let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM admin_news_items");
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(status) = filter.status.clone() {
+            builder.push(" AND status = ");
+            builder.push_bind(status);
+        }
+        if let Some(category) = filter.category.clone() {
+            builder.push(" AND category = ");
+            builder.push_bind(category);
+        }
+        if let Some(country_code) = filter.country_code.clone() {
+            builder.push(" AND country_code = ");
+            builder.push_bind(country_code);
+        }
+        if let Some(locale) = filter.locale.clone() {
+            builder.push(" AND JSON_SEARCH(content_json, 'one', ");
+            builder.push_bind(locale);
+            builder.push(", NULL, '$.items[*].locale') IS NOT NULL");
+        }
+        if let Some(keyword) = filter.keyword.clone() {
+            builder.push(" AND (title LIKE ");
+            builder.push_bind(format!("%{keyword}%"));
+            builder.push(" OR CAST(content_json AS CHAR) LIKE ");
+            builder.push_bind(format!("%{keyword}%"));
+            builder.push(")");
+        }
     }
-    if let Some(category) = filter.category {
-        builder.push(" AND category = ");
-        builder.push_bind(category);
-    }
-    if let Some(country_code) = filter.country_code {
-        builder.push(" AND country_code = ");
-        builder.push_bind(country_code);
-    }
-    if let Some(locale) = filter.locale {
-        builder.push(" AND JSON_SEARCH(content_json, 'one', ");
-        builder.push_bind(locale);
-        builder.push(", NULL, '$.items[*].locale') IS NOT NULL");
-    }
-    if let Some(keyword) = filter.keyword {
-        builder.push(" AND (title LIKE ");
-        builder.push_bind(format!("%{keyword}%"));
-        builder.push(" OR CAST(content_json AS CHAR) LIKE ");
-        builder.push_bind(format!("%{keyword}%"));
-        builder.push(")");
-    }
-    builder.push(" ORDER BY updated_at DESC, id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
-    builder.push(" OFFSET ");
-    builder.push_bind(filter.offset as i64);
 
-    Ok(builder
-        .build_query_as::<AdminNewsItemResponse>()
-        .fetch_all(pool)
-        .await?)
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY updated_at DESC, id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
 }
 
 pub(crate) async fn load_admin_news_item(

@@ -32,6 +32,12 @@ async function selectSemiOption(user: ReturnType<typeof userEvent.setup>, label:
   fireEvent.click(option as HTMLElement);
 }
 
+function pagerItem(text: string): HTMLElement {
+  const item = [...document.querySelectorAll('.semi-page-item')].find((node) => node.textContent?.trim() === text) as HTMLElement | undefined;
+  expect(item).toBeDefined();
+  return item as HTMLElement;
+}
+
 type TestRecord = {
   id: number;
   name: string;
@@ -616,5 +622,97 @@ describe('AdminResourcePage', () => {
     await user.click(screen.getByRole('button', { name: '查看详情' }));
     expect((await screen.findAllByText('详情')).length).toBeGreaterThan(0);
     expect(screen.queryByText(/"detail": "交易对详情"/)).not.toBeInTheDocument();
+  });
+
+  it('sends limit and offset, drives the pager from the server total, and resets to page 1 on filter change', async () => {
+    const user = userEvent.setup();
+    const pageRow = (id: number) => ({ id, name: `分页行${id}`, enabled: true, amount: '1.0000', created_at: 1_735_732_800_000 });
+    listAdminResourceMock.mockImplementation(async (_endpoint, _responseKey, filters) => ({
+      rows: [pageRow(Number(filters?.offset ?? 0) + 1)],
+      raw: { items: [] },
+      total: 210
+    }));
+
+    render(
+      <AdminResourcePage<TestRecord>
+        title="管理员资源"
+        endpoint="/admin/accounts"
+        responseKey="items"
+        columns={columns}
+        filters={[{ key: 'keyword', label: '关键词' }]}
+        serverPaged
+      />
+    );
+
+    expect(await screen.findByText('分页行1')).toBeInTheDocument();
+    expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', { limit: 50, offset: 0 });
+    expect(screen.getByText('共 210 条记录，未启用筛选')).toBeInTheDocument();
+    // 服务端总数决定页码数量，50 条一页共 5 页。
+    expect(pagerItem('5')).toBeInTheDocument();
+
+    await user.click(pagerItem('3'));
+    await waitFor(() => {
+      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', { limit: 50, offset: 100 });
+    });
+    expect(await screen.findByText('分页行101')).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText('关键词'), 'alice');
+    await user.click(screen.getByRole('button', { name: '查询' }));
+    await waitFor(() => {
+      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', { keyword: 'alice', limit: 50, offset: 0 });
+    });
+  });
+
+  it('keeps client-side slicing and omits pagination params when the endpoint is not server paged', async () => {
+    listAdminResourceMock.mockResolvedValue({
+      rows: Array.from({ length: 12 }, (_value, index) => ({
+        id: index + 1,
+        name: `本地行${index + 1}`,
+        enabled: true,
+        amount: '1.0000',
+        created_at: 1_735_732_800_000
+      })),
+      raw: { items: [] }
+    });
+
+    render(<AdminResourcePage<TestRecord> title="管理员资源" endpoint="/admin/accounts" responseKey="items" columns={columns} />);
+
+    expect(await screen.findByText('本地行1')).toBeInTheDocument();
+    expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/accounts', 'items', {});
+    expect(screen.queryByText('本地行11')).not.toBeInTheDocument();
+    expect(screen.getByText('共 12 条记录，未启用筛选')).toBeInTheDocument();
+  });
+
+  it('clears row selection when the server page changes', async () => {
+    const user = userEvent.setup();
+    listAdminResourceMock.mockImplementation(async (_endpoint, _responseKey, filters) => ({
+      rows: [{ id: Number(filters?.offset ?? 0) + 1, name: `选择行${Number(filters?.offset ?? 0) + 1}`, enabled: true, amount: '1.0000', created_at: 1_735_732_800_000 }],
+      raw: { items: [] },
+      total: 120
+    }));
+
+    render(
+      <AdminResourcePage<TestRecord>
+        title="管理员资源"
+        endpoint="/admin/accounts"
+        responseKey="items"
+        columns={columns}
+        batchActions={{ render: ({ selectedRows }) => <span>{`已选 ${selectedRows.length}`}</span> }}
+        serverPaged
+      />
+    );
+
+    expect(await screen.findByText('选择行1')).toBeInTheDocument();
+    expect(screen.getByText('已选 0')).toBeInTheDocument();
+    await user.click(screen.getAllByRole('checkbox').at(-1) as HTMLElement);
+    await waitFor(() => {
+      expect(screen.getByText('已选 1')).toBeInTheDocument();
+    });
+
+    await user.click(pagerItem('2'));
+    expect(await screen.findByText('选择行51')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('已选 0')).toBeInTheDocument();
+    });
   });
 });

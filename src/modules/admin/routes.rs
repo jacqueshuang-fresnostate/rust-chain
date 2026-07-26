@@ -444,7 +444,7 @@ async fn list_agent_users(
     Query(query): Query<AdminAgentUsersQuery>,
 ) -> AppResult<Json<AdminAgentUsersResponse>> {
     Ok(Json(
-        list_agent_users_use_case(state.mysql.clone(), agent_id, query.limit).await?,
+        list_agent_users_use_case(state.mysql.clone(), agent_id, query).await?,
     ))
 }
 

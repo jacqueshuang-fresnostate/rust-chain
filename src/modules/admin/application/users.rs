@@ -7,7 +7,7 @@ pub(crate) async fn list_admin_users(
     let email = query.email.and_then(optional_string);
     let status = query.status.and_then(optional_string);
     let pool = admin_mysql_pool(pool)?;
-    let users = list_admin_users_from_store(
+    let (users, total) = list_admin_users_from_store(
         &pool,
         AdminUserListFilter {
             user_id: query.user_id,
@@ -15,10 +15,11 @@ pub(crate) async fn list_admin_users(
             status,
             include_internal: query.include_internal.unwrap_or(false),
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(AdminUsersResponse { users })
+    Ok(AdminUsersResponse { users, total })
 }
 
 pub(crate) async fn get_admin_user(

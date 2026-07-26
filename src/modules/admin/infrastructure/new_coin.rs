@@ -7,6 +7,7 @@ pub(crate) struct AdminNewCoinFlatListFilter {
     pub(crate) email: Option<String>,
     pub(crate) status: Option<String>,
     pub(crate) limit: u32,
+    pub(crate) offset: u32,
 }
 
 #[derive(Debug)]
@@ -16,6 +17,7 @@ pub(crate) struct AdminNewCoinLockPositionListFilter {
     pub(crate) asset_id: Option<u64>,
     pub(crate) status: Option<String>,
     pub(crate) limit: u32,
+    pub(crate) offset: u32,
 }
 
 #[derive(Debug)]
@@ -26,6 +28,7 @@ pub(crate) struct AdminNewCoinUnlockListFilter {
     pub(crate) status: Option<String>,
     pub(crate) fee_paid_status: Option<String>,
     pub(crate) limit: u32,
+    pub(crate) offset: u32,
 }
 
 #[derive(Debug)]
@@ -74,163 +77,202 @@ pub(crate) struct AdminNewCoinConvertRuleWrite {
 pub(crate) async fn list_admin_new_coin_projects(
     pool: &Pool<MySql>,
     limit: u32,
-) -> AppResult<Vec<NewCoinProjectResponse>> {
-    let mut builder = admin_new_coin_project_query();
-    builder.push(" ORDER BY projects.id DESC LIMIT ");
-    builder.push_bind(limit as i64);
-    Ok(builder
-        .build_query_as::<NewCoinProjectResponse>()
-        .fetch_all(pool)
-        .await?)
+    offset: u32,
+) -> AppResult<(Vec<NewCoinProjectResponse>, i64)> {
+    let total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM new_coin_projects projects");
+    fetch_admin_page(
+        pool,
+        admin_new_coin_project_query(),
+        total,
+        " ORDER BY projects.id DESC",
+        limit,
+        offset,
+    )
+    .await
 }
 
 pub(crate) async fn list_admin_new_coin_subscriptions(
     pool: &Pool<MySql>,
     filter: AdminNewCoinFlatListFilter,
-) -> AppResult<Vec<NewCoinSubscriptionResponse>> {
-    let mut builder = QueryBuilder::<MySql>::new(
+) -> AppResult<(Vec<NewCoinSubscriptionResponse>, i64)> {
+    let mut rows = QueryBuilder::<MySql>::new(
         r#"SELECT id, project_id, user_id, quote_asset, quote_amount, requested_quantity,
                   allocated_quantity, status, idempotency_key, created_at
-           FROM new_coin_subscriptions
-           WHERE 1 = 1"#,
+           FROM new_coin_subscriptions"#,
     );
-    if let Some(project_id) = filter.project_id {
-        builder.push(" AND project_id = ");
-        builder.push_bind(project_id);
+    let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM new_coin_subscriptions");
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(project_id) = filter.project_id {
+            builder.push(" AND project_id = ");
+            builder.push_bind(project_id);
+        }
+        push_optional_user_and_status_filters(
+            builder,
+            filter.user_id,
+            filter.email.clone(),
+            filter.status.clone(),
+        );
     }
-    push_optional_user_and_status_filters(
-        &mut builder,
-        filter.user_id,
-        filter.email,
-        filter.status,
-    );
-    builder.push(" ORDER BY id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
-    Ok(builder
-        .build_query_as::<NewCoinSubscriptionResponse>()
-        .fetch_all(pool)
-        .await?)
+
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
 }
 
 pub(crate) async fn list_admin_new_coin_distributions(
     pool: &Pool<MySql>,
     filter: AdminNewCoinFlatListFilter,
-) -> AppResult<Vec<NewCoinDistributionResponse>> {
-    let mut builder = QueryBuilder::<MySql>::new(
+) -> AppResult<(Vec<NewCoinDistributionResponse>, i64)> {
+    let mut rows = QueryBuilder::<MySql>::new(
         r#"SELECT id, project_id, user_id, subscription_id, asset_id, quantity,
                   lock_position_id, status, idempotency_key, created_at
-           FROM new_coin_distributions
-           WHERE 1 = 1"#,
+           FROM new_coin_distributions"#,
     );
-    if let Some(project_id) = filter.project_id {
-        builder.push(" AND project_id = ");
-        builder.push_bind(project_id);
+    let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM new_coin_distributions");
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(project_id) = filter.project_id {
+            builder.push(" AND project_id = ");
+            builder.push_bind(project_id);
+        }
+        push_optional_user_and_status_filters(
+            builder,
+            filter.user_id,
+            filter.email.clone(),
+            filter.status.clone(),
+        );
     }
-    push_optional_user_and_status_filters(
-        &mut builder,
-        filter.user_id,
-        filter.email,
-        filter.status,
-    );
-    builder.push(" ORDER BY id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
-    Ok(builder
-        .build_query_as::<NewCoinDistributionResponse>()
-        .fetch_all(pool)
-        .await?)
+
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
 }
 
 pub(crate) async fn list_admin_new_coin_purchases(
     pool: &Pool<MySql>,
     filter: AdminNewCoinFlatListFilter,
-) -> AppResult<Vec<NewCoinPurchaseResponse>> {
-    let mut builder = QueryBuilder::<MySql>::new(
+) -> AppResult<(Vec<NewCoinPurchaseResponse>, i64)> {
+    let mut rows = QueryBuilder::<MySql>::new(
         r#"SELECT id, project_id, user_id, pair_id, base_asset, quote_asset, price, quantity,
                   quote_amount, lock_position_id, status, idempotency_key, created_at
-           FROM new_coin_purchase_orders
-           WHERE 1 = 1"#,
+           FROM new_coin_purchase_orders"#,
     );
-    if let Some(project_id) = filter.project_id {
-        builder.push(" AND project_id = ");
-        builder.push_bind(project_id);
+    let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM new_coin_purchase_orders");
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(project_id) = filter.project_id {
+            builder.push(" AND project_id = ");
+            builder.push_bind(project_id);
+        }
+        push_optional_user_and_status_filters(
+            builder,
+            filter.user_id,
+            filter.email.clone(),
+            filter.status.clone(),
+        );
     }
-    push_optional_user_and_status_filters(
-        &mut builder,
-        filter.user_id,
-        filter.email,
-        filter.status,
-    );
-    builder.push(" ORDER BY id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
-    Ok(builder
-        .build_query_as::<NewCoinPurchaseResponse>()
-        .fetch_all(pool)
-        .await?)
+
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
 }
 
 pub(crate) async fn list_admin_new_coin_lock_positions(
     pool: &Pool<MySql>,
     filter: AdminNewCoinLockPositionListFilter,
-) -> AppResult<Vec<NewCoinLockPositionResponse>> {
-    let mut builder = QueryBuilder::<MySql>::new(
+) -> AppResult<(Vec<NewCoinLockPositionResponse>, i64)> {
+    let mut rows = QueryBuilder::<MySql>::new(
         r#"SELECT id, user_id, asset_id, unlock_type, unlock_at, locked_amount,
                   released_amount, remaining_amount, merge_key, status, created_at
-           FROM asset_lock_positions
-           WHERE 1 = 1"#,
+           FROM asset_lock_positions"#,
     );
-    if let Some(user_id) = filter.user_id {
-        push_user_id_filter(&mut builder, "user_id", user_id);
+    let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM asset_lock_positions");
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(user_id) = filter.user_id {
+            push_user_id_filter(builder, "user_id", user_id);
+        }
+        push_user_email_filter(builder, "user_id", filter.email.clone());
+        if let Some(asset_id) = filter.asset_id {
+            builder.push(" AND asset_id = ");
+            builder.push_bind(asset_id);
+        }
+        if let Some(status) = filter.status.clone() {
+            builder.push(" AND status = ");
+            builder.push_bind(status);
+        }
     }
-    push_user_email_filter(&mut builder, "user_id", filter.email);
-    if let Some(asset_id) = filter.asset_id {
-        builder.push(" AND asset_id = ");
-        builder.push_bind(asset_id);
-    }
-    if let Some(status) = filter.status {
-        builder.push(" AND status = ");
-        builder.push_bind(status);
-    }
-    builder.push(" ORDER BY id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
-    Ok(builder
-        .build_query_as::<NewCoinLockPositionResponse>()
-        .fetch_all(pool)
-        .await?)
+
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
 }
 
 pub(crate) async fn list_admin_new_coin_unlocks(
     pool: &Pool<MySql>,
     filter: AdminNewCoinUnlockListFilter,
-) -> AppResult<Vec<NewCoinUnlockResponse>> {
-    let mut builder = QueryBuilder::<MySql>::new(
+) -> AppResult<(Vec<NewCoinUnlockResponse>, i64)> {
+    let mut rows = QueryBuilder::<MySql>::new(
         r#"SELECT id, user_id, asset_id, lock_position_id, unlock_quantity, unlock_price,
                   unlock_fee_enabled, unlock_fee_rate, unlock_fee_basis, unlock_fee_asset,
                   unlock_fee_amount, fee_paid_status, status, idempotency_key, created_at
-           FROM asset_unlock_records
-           WHERE 1 = 1"#,
+           FROM asset_unlock_records"#,
     );
-    if let Some(user_id) = filter.user_id {
-        push_user_id_filter(&mut builder, "user_id", user_id);
+    let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM asset_unlock_records");
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(user_id) = filter.user_id {
+            push_user_id_filter(builder, "user_id", user_id);
+        }
+        push_user_email_filter(builder, "user_id", filter.email.clone());
+        if let Some(asset_id) = filter.asset_id {
+            builder.push(" AND asset_id = ");
+            builder.push_bind(asset_id);
+        }
+        if let Some(status) = filter.status.clone() {
+            builder.push(" AND status = ");
+            builder.push_bind(status);
+        }
+        if let Some(fee_paid_status) = filter.fee_paid_status.clone() {
+            builder.push(" AND fee_paid_status = ");
+            builder.push_bind(fee_paid_status);
+        }
     }
-    push_user_email_filter(&mut builder, "user_id", filter.email);
-    if let Some(asset_id) = filter.asset_id {
-        builder.push(" AND asset_id = ");
-        builder.push_bind(asset_id);
-    }
-    if let Some(status) = filter.status {
-        builder.push(" AND status = ");
-        builder.push_bind(status);
-    }
-    if let Some(fee_paid_status) = filter.fee_paid_status {
-        builder.push(" AND fee_paid_status = ");
-        builder.push_bind(fee_paid_status);
-    }
-    builder.push(" ORDER BY id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
-    Ok(builder
-        .build_query_as::<NewCoinUnlockResponse>()
-        .fetch_all(pool)
-        .await?)
+
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
 }
 
 pub(crate) async fn insert_admin_new_coin_project_in_tx(

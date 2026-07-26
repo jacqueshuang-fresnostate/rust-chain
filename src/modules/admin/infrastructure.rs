@@ -100,6 +100,30 @@ fn optional_string(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+/// 行查询与 COUNT 查询必须由同一组过滤谓词构建，返回总数才能与当前筛选一致。
+async fn fetch_admin_page<T>(
+    pool: &Pool<MySql>,
+    mut rows: QueryBuilder<'_, MySql>,
+    mut total: QueryBuilder<'_, MySql>,
+    order_by: &str,
+    limit: u32,
+    offset: u32,
+) -> AppResult<(Vec<T>, i64)>
+where
+    T: for<'r> sqlx::FromRow<'r, sqlx::mysql::MySqlRow> + Send + Unpin,
+{
+    rows.push(order_by);
+    rows.push(" LIMIT ");
+    rows.push_bind(limit as i64);
+    rows.push(" OFFSET ");
+    rows.push_bind(offset as i64);
+
+    let items = rows.build_query_as::<T>().fetch_all(pool).await?;
+    let total = total.build_query_scalar::<i64>().fetch_one(pool).await?;
+
+    Ok((items, total))
+}
+
 fn is_mysql_duplicate_key(error: &sqlx::Error) -> bool {
     let sqlx::Error::Database(database_error) = error else {
         return false;

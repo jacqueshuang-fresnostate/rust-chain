@@ -26,6 +26,7 @@ pub(super) struct AdminAgentResponse {
 #[derive(ToSchema)]
 pub(super) struct AdminAgentsResponse {
     agents: Vec<AdminAgentResponse>,
+    total: i64,
 }
 
 #[derive(ToSchema)]
@@ -50,6 +51,7 @@ pub(super) struct AdminAgentUserResponse {
 #[derive(ToSchema)]
 pub(super) struct AdminAgentUsersResponse {
     users: Vec<AdminAgentUserResponse>,
+    total: i64,
 }
 
 #[derive(ToSchema)]
@@ -95,6 +97,7 @@ pub(super) struct AdminAgentCommissionResponse {
 #[derive(ToSchema)]
 pub(super) struct AdminAgentCommissionsResponse {
     commissions: Vec<AdminAgentCommissionResponse>,
+    total: i64,
 }
 
 #[derive(ToSchema)]
@@ -144,6 +147,7 @@ pub(super) struct AdminAgentCommissionRuleResponse {
 #[derive(ToSchema)]
 pub(super) struct AdminAgentCommissionRulesResponse {
     rules: Vec<AdminAgentCommissionRuleResponse>,
+    total: i64,
 }
 
 #[derive(ToSchema)]
@@ -254,7 +258,8 @@ fn update_admin_agent_status() {}
     summary = "查询代理节点及其下级代理归属的用户",
     params(
         ("id" = u64, Path, description = "代理 ID"),
-        ("limit" = Option<u32>, Query, description = "返回数量")
+        ("limit" = Option<u32>, Query, description = "返回数量"),
+        ("offset" = Option<u32>, Query, description = "分页偏移")
     ),
     security(("bearerAuth" = [])),
     responses(
@@ -297,7 +302,8 @@ fn assign_user_agent() {}
         ("user_id" = Option<u64>, Query, description = "用户 ID"),
         ("email" = Option<String>, Query, description = "用户邮箱"),
         ("status" = Option<String>, Query, description = "佣金状态"),
-        ("limit" = Option<u32>, Query, description = "分页数量")
+        ("limit" = Option<u32>, Query, description = "分页数量"),
+        ("offset" = Option<u32>, Query, description = "分页偏移")
     ),
     security(("bearerAuth" = [])),
     responses(

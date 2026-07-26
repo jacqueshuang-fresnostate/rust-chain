@@ -152,8 +152,8 @@ use crate::{
             AdminAgentCommissionQuery, AdminAgentCommissionResponse, AdminAgentCommissionRuleQuery,
             AdminAgentCommissionRuleResponse, AdminAgentCommissionRulesResponse,
             AdminAgentCommissionsResponse, AdminAgentQuery, AdminAgentResponse,
-            AdminAgentUsersResponse, AdminAgentsResponse, AdminAssetQuery, AdminAssetResponse,
-            AdminAssetsResponse, AdminAuditLogsQuery, AdminAuditLogsResponse,
+            AdminAgentUsersQuery, AdminAgentUsersResponse, AdminAgentsResponse, AdminAssetQuery,
+            AdminAssetResponse, AdminAssetsResponse, AdminAuditLogsQuery, AdminAuditLogsResponse,
             AdminConvertOrdersQuery, AdminConvertPairQuery, AdminCountriesQuery,
             AdminCountriesResponse, AdminCountryResponse, AdminDashboardAuditSummary,
             AdminDashboardMarketSummary, AdminDashboardResponse,
@@ -322,12 +322,15 @@ pub struct AdminCountryUseCases;
 
 impl ApplicationLayer for AdminCountryUseCases {}
 
+const MAX_ROUTE_OFFSET: u32 = 100_000;
+
 fn route_limit(limit: Option<u32>) -> u32 {
     limit.unwrap_or(50).clamp(1, 100)
 }
 
+/// 偏移同样设上限：超大 offset 会让日志类大表退化为全表扫描加文件排序。
 fn route_offset(offset: Option<u32>) -> u32 {
-    offset.unwrap_or(0)
+    offset.unwrap_or(0).min(MAX_ROUTE_OFFSET)
 }
 
 fn optional_string(value: String) -> Option<String> {

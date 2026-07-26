@@ -499,7 +499,7 @@ describe('resourceConfigs create actions', () => {
     expect(screen.getByText('美国')).toBeInTheDocument();
     expect(screen.getAllByText('en').length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: '查看JSON' })).not.toBeInTheDocument();
-    expect(listAdminResourceMock).toHaveBeenCalledWith('/admin/api/v1/countries', 'countries', {});
+    expect(listAdminResourceMock).toHaveBeenCalledWith('/admin/api/v1/countries', 'countries', { limit: 50, offset: 0 });
   });
 
   it('creates edits and updates Admin country status from row actions', async () => {
@@ -694,7 +694,7 @@ describe('resourceConfigs create actions', () => {
 
     expect(await screen.findByText('平台公告')).toBeInTheDocument();
     expect(screen.getByText('系统公告')).toBeInTheDocument();
-    expect(listAdminResourceMock).toHaveBeenCalledWith('/admin/api/v1/news', 'news', {});
+    expect(listAdminResourceMock).toHaveBeenCalledWith('/admin/api/v1/news', 'news', { limit: 50, offset: 0 });
   });
 
   it('creates edits publishes and archives Admin news', async () => {
@@ -1255,7 +1255,9 @@ describe('resourceConfigs create actions', () => {
     await waitFor(() => {
       expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/api/v1/assets', 'assets', {
         asset_type: 'stablecoin',
-        status: 'disabled'
+        status: 'disabled',
+        limit: 50,
+        offset: 0
       });
     });
 
@@ -1896,7 +1898,11 @@ describe('resourceConfigs create actions', () => {
     await user.click(screen.getByRole('button', { name: '查询' }));
 
     await waitFor(() => {
-      expect(listAdminResourceMock.mock.calls).toContainEqual(['/admin/api/v1/users', 'users', { email: 'target@example.com' }]);
+      expect(listAdminResourceMock.mock.calls).toContainEqual([
+        '/admin/api/v1/users',
+        'users',
+        { email: 'target@example.com', limit: 50, offset: 0 }
+      ]);
     });
   });
 
@@ -2075,7 +2081,9 @@ describe('resourceConfigs create actions', () => {
     await waitFor(() => {
       expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/api/v1/agent-commission-rules', 'rules', {
         product_type: 'convert',
-        status: 'disabled'
+        status: 'disabled',
+        limit: 50,
+        offset: 0
       });
     });
 
@@ -2250,7 +2258,7 @@ describe('resourceConfigs create actions', () => {
     await selectSemiOption(user, document.body, '状态', '待结算');
     await user.click(screen.getByRole('button', { name: '查询' }));
     await waitFor(() => {
-      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/api/v1/agent-commissions', 'commissions', { status: 'pending' });
+      expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/api/v1/agent-commissions', 'commissions', { status: 'pending', limit: 50, offset: 0 });
     });
 
     await user.click(screen.getByRole('button', { name: '结算' }));
@@ -2477,7 +2485,9 @@ describe('resourceConfigs create actions', () => {
       expect(listAdminResourceMock).toHaveBeenLastCalledWith('/admin/api/v1/market-pairs', 'pairs', {
         symbol: 'BTC-USDT',
         status: 'disabled',
-        market_type: 'strategy'
+        market_type: 'strategy',
+        limit: 50,
+        offset: 0
       });
     });
     unmount();

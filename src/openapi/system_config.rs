@@ -56,6 +56,7 @@ pub(super) struct AdminCountryResponse {
 #[derive(ToSchema)]
 pub(super) struct AdminCountriesResponse {
     countries: Vec<AdminCountryResponse>,
+    total: i64,
 }
 
 #[derive(ToSchema)]

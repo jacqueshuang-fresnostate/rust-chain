@@ -49,17 +49,18 @@ pub(crate) async fn list_admin_risk_rules(
     query: AdminRiskRuleQuery,
 ) -> AppResult<RiskRulesResponse> {
     let pool = admin_mysql_pool(pool)?;
-    let rules = list_admin_risk_rules_from_store(
+    let (rules, total) = list_admin_risk_rules_from_store(
         &pool,
         AdminRiskRuleListFilter {
             rule_type: query.rule_type.and_then(optional_string),
             target_type: query.target_type.and_then(optional_string),
             enabled: query.enabled,
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(RiskRulesResponse { rules })
+    Ok(RiskRulesResponse { rules, total })
 }
 
 pub(crate) async fn create_admin_risk_rule(
@@ -148,7 +149,7 @@ pub(crate) async fn list_admin_risk_events(
     query: AdminRiskEventQuery,
 ) -> AppResult<RiskEventsResponse> {
     let pool = admin_mysql_pool(pool)?;
-    let events = list_admin_risk_events_from_store(
+    let (events, total) = list_admin_risk_events_from_store(
         &pool,
         AdminRiskEventListFilter {
             user_id: query.user_id,
@@ -156,8 +157,9 @@ pub(crate) async fn list_admin_risk_events(
             decision: query.decision.and_then(optional_string),
             risk_level: query.risk_level.and_then(optional_string),
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(RiskEventsResponse { events })
+    Ok(RiskEventsResponse { events, total })
 }

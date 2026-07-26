@@ -17,6 +17,7 @@ pub(crate) struct AdminAuditLogListFilter {
     pub(crate) target_type: Option<String>,
     pub(crate) target_id: Option<String>,
     pub(crate) limit: u32,
+    pub(crate) offset: u32,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -177,34 +178,40 @@ pub(crate) async fn list_admin_dashboard_latest_actions(
 pub(crate) async fn list_admin_audit_logs(
     pool: &Pool<MySql>,
     filter: AdminAuditLogListFilter,
-) -> AppResult<Vec<AdminAuditLogResponse>> {
-    let mut builder = QueryBuilder::<MySql>::new(
+) -> AppResult<(Vec<AdminAuditLogResponse>, i64)> {
+    let mut rows = QueryBuilder::<MySql>::new(
         r#"SELECT id, admin_id, action, target_type, target_id,
                   before_json, after_json, reason, ip, created_at
-           FROM admin_audit_logs
-           WHERE 1 = 1"#,
+           FROM admin_audit_logs"#,
     );
-    if let Some(admin_id) = filter.admin_id {
-        builder.push(" AND admin_id = ");
-        builder.push_bind(admin_id);
+    let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM admin_audit_logs");
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(admin_id) = filter.admin_id {
+            builder.push(" AND admin_id = ");
+            builder.push_bind(admin_id);
+        }
+        if let Some(action) = filter.action.clone() {
+            builder.push(" AND action = ");
+            builder.push_bind(action);
+        }
+        if let Some(target_type) = filter.target_type.clone() {
+            builder.push(" AND target_type = ");
+            builder.push_bind(target_type);
+        }
+        if let Some(target_id) = filter.target_id.clone() {
+            builder.push(" AND target_id = ");
+            builder.push_bind(target_id);
+        }
     }
-    if let Some(action) = filter.action {
-        builder.push(" AND action = ");
-        builder.push_bind(action);
-    }
-    if let Some(target_type) = filter.target_type {
-        builder.push(" AND target_type = ");
-        builder.push_bind(target_type);
-    }
-    if let Some(target_id) = filter.target_id {
-        builder.push(" AND target_id = ");
-        builder.push_bind(target_id);
-    }
-    builder.push(" ORDER BY created_at DESC, id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
 
-    Ok(builder
-        .build_query_as::<AdminAuditLogResponse>()
-        .fetch_all(pool)
-        .await?)
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY created_at DESC, id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
 }

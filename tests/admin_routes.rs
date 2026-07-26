@@ -23,7 +23,13 @@ use exchange_api::{
 use secrecy::SecretString;
 use serde_json::{Value, json};
 use sqlx::{MySqlPool, mysql::MySqlPoolOptions, types::Json as SqlxJson};
-use std::{collections::BTreeMap, error::Error, fs, str::FromStr, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fs,
+    str::FromStr,
+    sync::Arc,
+};
 use tower::ServiceExt;
 use uuid::Uuid;
 use wiremock::{
@@ -14960,5 +14966,240 @@ async fn admin_new_coin_listing_routes_filter_seeded_records() -> Result<(), Box
             .execute(&pool)
             .await?;
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_wallet_ledger_offset_paging_returns_disjoint_pages_and_filtered_total()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (_role_id, admin_id) = create_admin_user(&pool).await;
+    let user_email = format!("admin-ledger-page-{}@example.test", Uuid::now_v7().simple());
+    let user_id = create_user_with_email(&pool, user_email.clone()).await;
+    let other_user_id = create_user(&pool).await;
+    let (asset_id, _symbol) = create_asset_with_symbol(&pool, "APG").await;
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let mut ledger_ids = Vec::new();
+    for (owner_id, index) in [(user_id, 0), (user_id, 1), (user_id, 2), (other_user_id, 3)] {
+        let id = sqlx::query(
+            r#"INSERT INTO wallet_ledger
+               (user_id, asset_id, change_type, amount, balance_type, balance_after,
+                available_after, frozen_after, locked_after, ref_type, ref_id)
+               VALUES (?, ?, 'deposit', ?, 'available', ?, ?, ?, ?, 'manual', ?)"#,
+        )
+        .bind(owner_id)
+        .bind(asset_id)
+        .bind(decimal("1.000000000000000000"))
+        .bind(decimal("1.000000000000000000"))
+        .bind(decimal("1.000000000000000000"))
+        .bind(decimal("0.000000000000000000"))
+        .bind(decimal("0.000000000000000000"))
+        .bind(format!("admin-ledger-page-{user_id}-{index}"))
+        .execute(&pool)
+        .await?
+        .last_insert_id();
+        ledger_ids.push(id);
+    }
+
+    let mut page_ids = Vec::new();
+    for offset in [0, 2] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/admin/api/v1/wallet/ledger?user_id={user_id}&limit=2&offset={offset}"
+                    ))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await?;
+        let status = response.status();
+        let payload = body_json(response).await?;
+        assert_eq!(status, StatusCode::OK, "payload: {payload}");
+        // 总数必须反映筛选条件本身，而不是当前页行数。
+        assert_eq!(payload["total"], 3, "payload: {payload}");
+        page_ids.extend(
+            payload["ledger"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| entry["id"].as_u64().unwrap()),
+        );
+    }
+    assert_eq!(page_ids.len(), 3);
+    let unique_ids = page_ids.iter().copied().collect::<BTreeSet<_>>();
+    assert_eq!(unique_ids.len(), 3, "pages must not overlap: {page_ids:?}");
+    assert!(unique_ids.iter().all(|id| ledger_ids[..3].contains(id)));
+
+    let unfiltered = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/wallet/ledger?limit=1")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let unfiltered_status = unfiltered.status();
+    let unfiltered_payload = body_json(unfiltered).await?;
+    assert_eq!(
+        unfiltered_status,
+        StatusCode::OK,
+        "payload: {unfiltered_payload}"
+    );
+    assert_eq!(unfiltered_payload["ledger"].as_array().unwrap().len(), 1);
+    assert!(unfiltered_payload["total"].as_i64().unwrap() >= 4);
+
+    sqlx::query("DELETE FROM wallet_ledger WHERE user_id IN (?, ?)")
+        .bind(user_id)
+        .bind(other_user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id IN (?, ?)")
+        .bind(user_id)
+        .bind(other_user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_agent_commissions_offset_paging_totals_respect_status_filter()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (role_id, admin_id) = create_admin_user(&pool).await;
+    let agent_owner_id = create_user(&pool).await;
+    let commission_user_id = create_user(&pool).await;
+    let agent_code = format!("P{}", Uuid::now_v7().simple()).to_ascii_uppercase();
+    let agent_id = sqlx::query(
+        r#"INSERT INTO agents (user_id, agent_code, level, path, status)
+           VALUES (?, ?, 1, '', 'active')"#,
+    )
+    .bind(agent_owner_id)
+    .bind(agent_code)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    sqlx::query("UPDATE agents SET root_agent_id = ?, path = ? WHERE id = ?")
+        .bind(agent_id)
+        .bind(format!("/agent:{agent_id}"))
+        .bind(agent_id)
+        .execute(&pool)
+        .await?;
+    for status in ["pending", "pending", "pending", "settled"] {
+        seed_agent_commission(
+            &pool,
+            agent_id,
+            commission_user_id,
+            "convert_order",
+            "100.000000000000000000",
+            "5.000000000000000000",
+            status,
+        )
+        .await;
+    }
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )
+    .unwrap();
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let mut page_ids = Vec::new();
+    for offset in [0, 2] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/admin/api/v1/agent-commissions?agent_id={agent_id}&status=pending&limit=2&offset={offset}"
+                    ))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await?;
+        let status_code = response.status();
+        let payload = body_json(response).await?;
+        assert_eq!(status_code, StatusCode::OK, "payload: {payload}");
+        assert_eq!(payload["total"], 3, "payload: {payload}");
+        page_ids.extend(
+            payload["commissions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| entry["id"].as_u64().unwrap()),
+        );
+    }
+    assert_eq!(page_ids.len(), 3);
+    assert_eq!(
+        page_ids.iter().copied().collect::<BTreeSet<_>>().len(),
+        3,
+        "pages must not overlap: {page_ids:?}"
+    );
+
+    let all_statuses = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/agent-commissions?agent_id={agent_id}&limit=1"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let all_statuses_code = all_statuses.status();
+    let all_statuses_payload = body_json(all_statuses).await?;
+    assert_eq!(
+        all_statuses_code,
+        StatusCode::OK,
+        "payload: {all_statuses_payload}"
+    );
+    assert_eq!(
+        all_statuses_payload["commissions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(all_statuses_payload["total"], 4);
+
+    delete_admin_agent_management_fixture(
+        &pool,
+        admin_id,
+        role_id,
+        &[agent_id],
+        &[agent_owner_id, commission_user_id],
+    )
+    .await?;
     Ok(())
 }

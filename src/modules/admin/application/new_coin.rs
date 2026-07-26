@@ -5,8 +5,13 @@ pub(crate) async fn list_admin_new_coin_projects(
     query: AdminNewCoinProjectQuery,
 ) -> AppResult<NewCoinProjectsResponse> {
     let pool = admin_mysql_pool(pool)?;
-    let projects = list_admin_new_coin_projects_from_store(&pool, route_limit(query.limit)).await?;
-    Ok(NewCoinProjectsResponse { projects })
+    let (projects, total) = list_admin_new_coin_projects_from_store(
+        &pool,
+        route_limit(query.limit),
+        route_offset(query.offset),
+    )
+    .await?;
+    Ok(NewCoinProjectsResponse { projects, total })
 }
 
 pub(crate) async fn list_admin_new_coin_subscriptions(
@@ -14,7 +19,7 @@ pub(crate) async fn list_admin_new_coin_subscriptions(
     query: AdminNewCoinFlatListQuery,
 ) -> AppResult<NewCoinSubscriptionsResponse> {
     let pool = admin_mysql_pool(pool)?;
-    let subscriptions = list_admin_new_coin_subscriptions_from_store(
+    let (subscriptions, total) = list_admin_new_coin_subscriptions_from_store(
         &pool,
         AdminNewCoinFlatListFilter {
             project_id: query.project_id,
@@ -22,10 +27,14 @@ pub(crate) async fn list_admin_new_coin_subscriptions(
             email: query.email,
             status: query.status.and_then(optional_string),
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(NewCoinSubscriptionsResponse { subscriptions })
+    Ok(NewCoinSubscriptionsResponse {
+        subscriptions,
+        total,
+    })
 }
 
 /// 组装项目过滤列表参数：由路由层传入的子查询参数统一补齐项目ID。
@@ -39,6 +48,7 @@ pub(super) fn build_new_coin_scoped_list_query(
         email: query.email,
         status: query.status,
         limit: query.limit,
+        offset: query.offset,
     }
 }
 
@@ -57,7 +67,7 @@ pub(crate) async fn list_admin_new_coin_distributions(
     query: AdminNewCoinFlatListQuery,
 ) -> AppResult<NewCoinDistributionsResponse> {
     let pool = admin_mysql_pool(pool)?;
-    let distributions = list_admin_new_coin_distributions_from_store(
+    let (distributions, total) = list_admin_new_coin_distributions_from_store(
         &pool,
         AdminNewCoinFlatListFilter {
             project_id: query.project_id,
@@ -65,10 +75,14 @@ pub(crate) async fn list_admin_new_coin_distributions(
             email: query.email,
             status: query.status.and_then(optional_string),
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(NewCoinDistributionsResponse { distributions })
+    Ok(NewCoinDistributionsResponse {
+        distributions,
+        total,
+    })
 }
 
 /// 查询某个项目的分配列表。
@@ -86,7 +100,7 @@ pub(crate) async fn list_admin_new_coin_purchases(
     query: AdminNewCoinPurchaseQuery,
 ) -> AppResult<NewCoinPurchasesResponse> {
     let pool = admin_mysql_pool(pool)?;
-    let purchases = list_admin_new_coin_purchases_from_store(
+    let (purchases, total) = list_admin_new_coin_purchases_from_store(
         &pool,
         AdminNewCoinFlatListFilter {
             project_id: query.project_id,
@@ -94,10 +108,11 @@ pub(crate) async fn list_admin_new_coin_purchases(
             email: query.email,
             status: query.status.and_then(optional_string),
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(NewCoinPurchasesResponse { purchases })
+    Ok(NewCoinPurchasesResponse { purchases, total })
 }
 
 pub(crate) async fn list_admin_new_coin_lock_positions(
@@ -105,7 +120,7 @@ pub(crate) async fn list_admin_new_coin_lock_positions(
     query: AdminNewCoinLockPositionQuery,
 ) -> AppResult<NewCoinLockPositionsResponse> {
     let pool = admin_mysql_pool(pool)?;
-    let lock_positions = list_admin_new_coin_lock_positions_from_store(
+    let (lock_positions, total) = list_admin_new_coin_lock_positions_from_store(
         &pool,
         AdminNewCoinLockPositionListFilter {
             user_id: query.user_id,
@@ -113,10 +128,14 @@ pub(crate) async fn list_admin_new_coin_lock_positions(
             asset_id: query.asset_id,
             status: query.status.and_then(optional_string),
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(NewCoinLockPositionsResponse { lock_positions })
+    Ok(NewCoinLockPositionsResponse {
+        lock_positions,
+        total,
+    })
 }
 
 pub(crate) async fn list_admin_new_coin_unlocks(
@@ -124,7 +143,7 @@ pub(crate) async fn list_admin_new_coin_unlocks(
     query: AdminNewCoinUnlockQuery,
 ) -> AppResult<NewCoinUnlocksResponse> {
     let pool = admin_mysql_pool(pool)?;
-    let unlocks = list_admin_new_coin_unlocks_from_store(
+    let (unlocks, total) = list_admin_new_coin_unlocks_from_store(
         &pool,
         AdminNewCoinUnlockListFilter {
             user_id: query.user_id,
@@ -133,10 +152,11 @@ pub(crate) async fn list_admin_new_coin_unlocks(
             status: query.status.and_then(optional_string),
             fee_paid_status: query.fee_paid_status.and_then(optional_string),
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(NewCoinUnlocksResponse { unlocks })
+    Ok(NewCoinUnlocksResponse { unlocks, total })
 }
 
 pub(crate) async fn create_admin_new_coin_project(

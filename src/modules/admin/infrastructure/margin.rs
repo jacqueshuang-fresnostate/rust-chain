@@ -7,33 +7,40 @@ pub(crate) struct AdminMarginLiquidationListFilter {
     pub(crate) pair_id: Option<u64>,
     pub(crate) position_id: Option<u64>,
     pub(crate) limit: u32,
+    pub(crate) offset: u32,
 }
 
 pub(crate) async fn list_admin_margin_liquidations(
     pool: &Pool<MySql>,
     filter: AdminMarginLiquidationListFilter,
-) -> AppResult<Vec<AdminMarginLiquidationResponse>> {
-    let mut builder = admin_margin_liquidation_query();
-    builder.push(" WHERE 1 = 1");
-    if let Some(user_id) = filter.user_id {
-        push_user_id_filter(&mut builder, "user_id", user_id);
+) -> AppResult<(Vec<AdminMarginLiquidationResponse>, i64)> {
+    let mut rows = admin_margin_liquidation_query();
+    let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM margin_liquidation_records");
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(user_id) = filter.user_id {
+            push_user_id_filter(builder, "user_id", user_id);
+        }
+        push_user_email_filter(builder, "user_id", filter.email.clone());
+        if let Some(pair_id) = filter.pair_id {
+            builder.push(" AND pair_id = ");
+            builder.push_bind(pair_id);
+        }
+        if let Some(position_id) = filter.position_id {
+            builder.push(" AND position_id = ");
+            builder.push_bind(position_id);
+        }
     }
-    push_user_email_filter(&mut builder, "user_id", filter.email);
-    if let Some(pair_id) = filter.pair_id {
-        builder.push(" AND pair_id = ");
-        builder.push_bind(pair_id);
-    }
-    if let Some(position_id) = filter.position_id {
-        builder.push(" AND position_id = ");
-        builder.push_bind(position_id);
-    }
-    builder.push(" ORDER BY id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
 
-    Ok(builder
-        .build_query_as::<AdminMarginLiquidationResponse>()
-        .fetch_all(pool)
-        .await?)
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
 }
 
 pub(crate) async fn load_admin_margin_liquidation(

@@ -13,6 +13,7 @@ pub(crate) struct AdminUserListFilter {
     pub(crate) status: Option<String>,
     pub(crate) include_internal: bool,
     pub(crate) limit: u32,
+    pub(crate) offset: u32,
 }
 
 #[derive(Debug)]
@@ -27,31 +28,37 @@ pub(crate) struct AdminUserInsert {
 pub(crate) async fn list_admin_users(
     pool: &Pool<MySql>,
     filter: AdminUserListFilter,
-) -> AppResult<Vec<AdminUserResponse>> {
-    let mut builder = admin_user_query();
-    builder.push(" WHERE 1 = 1");
-    if !filter.include_internal {
-        push_exclude_internal_user_email(&mut builder, "users.email");
+) -> AppResult<(Vec<AdminUserResponse>, i64)> {
+    let mut rows = admin_user_query();
+    let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM users");
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if !filter.include_internal {
+            push_exclude_internal_user_email(builder, "users.email");
+        }
+        if let Some(user_id) = filter.user_id {
+            builder.push(" AND users.id = ");
+            builder.push_bind(user_id);
+        }
+        if let Some(email) = filter.email.clone() {
+            builder.push(" AND users.email = ");
+            builder.push_bind(email);
+        }
+        if let Some(status) = filter.status.clone() {
+            builder.push(" AND users.status = ");
+            builder.push_bind(status);
+        }
     }
-    if let Some(user_id) = filter.user_id {
-        builder.push(" AND users.id = ");
-        builder.push_bind(user_id);
-    }
-    if let Some(email) = filter.email {
-        builder.push(" AND users.email = ");
-        builder.push_bind(email);
-    }
-    if let Some(status) = filter.status {
-        builder.push(" AND users.status = ");
-        builder.push_bind(status);
-    }
-    builder.push(" ORDER BY users.id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
 
-    Ok(builder
-        .build_query_as::<AdminUserResponse>()
-        .fetch_all(pool)
-        .await?)
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY users.id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
 }
 
 pub(crate) async fn load_admin_user(

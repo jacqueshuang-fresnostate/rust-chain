@@ -6,6 +6,7 @@ export type AdminResourceFilters = Record<string, string | number | boolean | nu
 export type AdminResourceListResult<T extends ApiRecord = ApiRecord> = {
   rows: T[];
   raw: ApiRecord;
+  total?: number;
 };
 
 function appendQuery(endpoint: string, filters: AdminResourceFilters) {
@@ -38,9 +39,11 @@ export async function listAdminResource<T extends ApiRecord = ApiRecord>(
 ): Promise<AdminResourceListResult<T>> {
   const raw = await apiRequest<ApiRecord>(appendQuery(endpoint, filters));
   const rowsValue = raw[responseKey];
+  const total = raw.total;
 
   return {
     rows: isApiRecordArray(rowsValue) ? (rowsValue as T[]) : [],
-    raw
+    raw,
+    total: typeof total === 'number' ? total : undefined
   };
 }

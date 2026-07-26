@@ -20,17 +20,18 @@ pub(crate) async fn list_admin_trading_pairs(
         .map(|value| validate_trading_pair_market_type(&value))
         .transpose()?;
     let pool = admin_mysql_pool(pool)?;
-    let pairs = list_admin_trading_pairs_from_store(
+    let (pairs, total) = list_admin_trading_pairs_from_store(
         &pool,
         AdminTradingPairListFilter {
             symbol,
             status,
             market_type,
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(AdminTradingPairsResponse { pairs })
+    Ok(AdminTradingPairsResponse { pairs, total })
 }
 
 pub(crate) async fn get_admin_trading_pair(
@@ -184,16 +185,17 @@ pub(crate) async fn list_admin_market_strategies(
     query: AdminMarketStrategyQuery,
 ) -> AppResult<AdminMarketStrategiesResponse> {
     let pool = admin_mysql_pool(pool)?;
-    let strategies = list_admin_market_strategies_from_store(
+    let (strategies, total) = list_admin_market_strategies_from_store(
         &pool,
         AdminMarketStrategyListFilter {
             pair_id: query.pair_id,
             status: query.status.and_then(optional_string),
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(AdminMarketStrategiesResponse { strategies })
+    Ok(AdminMarketStrategiesResponse { strategies, total })
 }
 
 pub(crate) async fn create_admin_market_strategy(

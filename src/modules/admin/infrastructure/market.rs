@@ -6,6 +6,7 @@ pub(crate) struct AdminTradingPairListFilter {
     pub(crate) status: Option<String>,
     pub(crate) market_type: Option<String>,
     pub(crate) limit: u32,
+    pub(crate) offset: u32,
 }
 
 #[derive(Debug)]
@@ -36,6 +37,7 @@ pub(crate) struct AdminMarketStrategyListFilter {
     pub(crate) pair_id: Option<u64>,
     pub(crate) status: Option<String>,
     pub(crate) limit: u32,
+    pub(crate) offset: u32,
 }
 
 #[derive(Debug)]
@@ -67,28 +69,39 @@ pub(crate) struct AdminMarketStrategyUpdate {
 pub(crate) async fn list_admin_trading_pairs(
     pool: &Pool<MySql>,
     filter: AdminTradingPairListFilter,
-) -> AppResult<Vec<AdminTradingPairResponse>> {
-    let mut builder = admin_trading_pair_query();
-    builder.push(" WHERE 1 = 1");
-    if let Some(symbol) = filter.symbol {
-        builder.push(" AND pairs.symbol = ");
-        builder.push_bind(symbol);
+) -> AppResult<(Vec<AdminTradingPairResponse>, i64)> {
+    let mut rows = admin_trading_pair_query();
+    let mut total = QueryBuilder::<MySql>::new(
+        r#"SELECT COUNT(*)
+           FROM trading_pairs pairs
+           INNER JOIN assets base ON base.id = pairs.base_asset
+           INNER JOIN assets quote ON quote.id = pairs.quote_asset"#,
+    );
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(symbol) = filter.symbol.clone() {
+            builder.push(" AND pairs.symbol = ");
+            builder.push_bind(symbol);
+        }
+        if let Some(status) = filter.status.clone() {
+            builder.push(" AND pairs.status = ");
+            builder.push_bind(status);
+        }
+        if let Some(market_type) = filter.market_type.clone() {
+            builder.push(" AND pairs.market_type = ");
+            builder.push_bind(market_type);
+        }
     }
-    if let Some(status) = filter.status {
-        builder.push(" AND pairs.status = ");
-        builder.push_bind(status);
-    }
-    if let Some(market_type) = filter.market_type {
-        builder.push(" AND pairs.market_type = ");
-        builder.push_bind(market_type);
-    }
-    builder.push(" ORDER BY pairs.id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
 
-    Ok(builder
-        .build_query_as::<AdminTradingPairResponse>()
-        .fetch_all(pool)
-        .await?)
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY pairs.id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
 }
 
 pub(crate) async fn load_admin_trading_pair(
@@ -207,24 +220,34 @@ pub(crate) async fn ensure_trading_pair_asset_in_tx(
 pub(crate) async fn list_admin_market_strategies(
     pool: &Pool<MySql>,
     filter: AdminMarketStrategyListFilter,
-) -> AppResult<Vec<AdminMarketStrategyResponse>> {
-    let mut builder = admin_market_strategy_query();
-    builder.push(" WHERE 1 = 1");
-    if let Some(pair_id) = filter.pair_id {
-        builder.push(" AND strategies.pair_id = ");
-        builder.push_bind(pair_id);
+) -> AppResult<(Vec<AdminMarketStrategyResponse>, i64)> {
+    let mut rows = admin_market_strategy_query();
+    let mut total = QueryBuilder::<MySql>::new(
+        r#"SELECT COUNT(*)
+           FROM market_strategies strategies
+           INNER JOIN trading_pairs pairs ON pairs.id = strategies.pair_id"#,
+    );
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(pair_id) = filter.pair_id {
+            builder.push(" AND strategies.pair_id = ");
+            builder.push_bind(pair_id);
+        }
+        if let Some(status) = filter.status.clone() {
+            builder.push(" AND strategies.status = ");
+            builder.push_bind(status);
+        }
     }
-    if let Some(status) = filter.status {
-        builder.push(" AND strategies.status = ");
-        builder.push_bind(status);
-    }
-    builder.push(" ORDER BY strategies.created_at DESC, strategies.id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
 
-    Ok(builder
-        .build_query_as::<AdminMarketStrategyResponse>()
-        .fetch_all(pool)
-        .await?)
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY strategies.created_at DESC, strategies.id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
 }
 
 pub(crate) async fn ensure_market_strategy_pair_in_tx(

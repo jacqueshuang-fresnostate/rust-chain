@@ -82,30 +82,34 @@ struct AdminUploadConfigRow {
 pub(crate) async fn list_admin_countries(
     pool: &Pool<MySql>,
     filter: AdminCountryListFilter,
-) -> AppResult<Vec<AdminCountryResponse>> {
-    let mut builder = admin_country_query();
-    builder.push(" WHERE 1 = 1");
-    if let Some(country_code) = filter.country_code {
-        builder.push(" AND country_code = ");
-        builder.push_bind(country_code);
+) -> AppResult<(Vec<AdminCountryResponse>, i64)> {
+    let mut rows = admin_country_query();
+    let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM country_configs");
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(country_code) = filter.country_code.clone() {
+            builder.push(" AND country_code = ");
+            builder.push_bind(country_code);
+        }
+        if let Some(status) = filter.status.clone() {
+            builder.push(" AND status = ");
+            builder.push_bind(status);
+        }
+        if let Some(registration_enabled) = filter.registration_enabled {
+            builder.push(" AND registration_enabled = ");
+            builder.push_bind(registration_enabled);
+        }
     }
-    if let Some(status) = filter.status {
-        builder.push(" AND status = ");
-        builder.push_bind(status);
-    }
-    if let Some(registration_enabled) = filter.registration_enabled {
-        builder.push(" AND registration_enabled = ");
-        builder.push_bind(registration_enabled);
-    }
-    builder.push(" ORDER BY sort_order ASC, country_code ASC LIMIT ");
-    builder.push_bind(filter.limit as i64);
-    builder.push(" OFFSET ");
-    builder.push_bind(filter.offset as i64);
 
-    Ok(builder
-        .build_query_as::<AdminCountryResponse>()
-        .fetch_all(pool)
-        .await?)
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY sort_order ASC, country_code ASC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
 }
 
 pub(crate) async fn insert_admin_country_in_tx(

@@ -55,6 +55,7 @@ pub(super) struct AdminNewsItemResponse {
 #[derive(ToSchema)]
 pub(super) struct AdminNewsItemsResponse {
     news: Vec<AdminNewsItemResponse>,
+    total: i64,
 }
 
 #[derive(ToSchema)]

@@ -7,6 +7,7 @@ fn build_scoped_new_coin_subscription_query_includes_project_id() {
         status: Some("opened".to_owned()),
         email: Some("alpha@example.com".to_owned()),
         limit: Some(40),
+        offset: Some(80),
     };
 
     let flat = build_new_coin_scoped_list_query(9001, query);
@@ -16,6 +17,7 @@ fn build_scoped_new_coin_subscription_query_includes_project_id() {
     assert_eq!(flat.status, Some("opened".to_owned()));
     assert_eq!(flat.email, Some("alpha@example.com".to_owned()));
     assert_eq!(flat.limit, Some(40));
+    assert_eq!(flat.offset, Some(80));
 }
 
 #[test]
@@ -25,6 +27,7 @@ fn build_scoped_new_coin_list_query_allows_empty_filters() {
         status: None,
         email: None,
         limit: None,
+        offset: None,
     };
 
     let flat = build_new_coin_scoped_list_query(11, query);
@@ -34,4 +37,5 @@ fn build_scoped_new_coin_list_query_allows_empty_filters() {
     assert!(flat.status.is_none());
     assert!(flat.email.is_none());
     assert!(flat.limit.is_none());
+    assert!(flat.offset.is_none());
 }

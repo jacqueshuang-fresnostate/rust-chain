@@ -54,6 +54,7 @@ pub(crate) struct AdminAgentCommissionListFilter {
     pub(crate) email: Option<String>,
     pub(crate) status: Option<String>,
     pub(crate) limit: u32,
+    pub(crate) offset: u32,
 }
 
 #[derive(Debug)]
@@ -76,15 +77,32 @@ pub(crate) struct AdminAgentCommissionRuleWrite {
 pub(crate) async fn list_admin_agents(
     pool: &Pool<MySql>,
     filter: AdminAgentListFilter,
-) -> AppResult<Vec<AdminAgentResponse>> {
-    let mut builder = admin_agent_query();
+) -> AppResult<(Vec<AdminAgentResponse>, i64)> {
+    let mut rows = admin_agent_query();
+    let mut total = admin_agent_count_query();
+    for builder in [&mut rows, &mut total] {
+        push_admin_agent_filters(builder, &filter);
+    }
+
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY agents.id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
+}
+
+fn push_admin_agent_filters(builder: &mut QueryBuilder<'_, MySql>, filter: &AdminAgentListFilter) {
     builder.push(" WHERE 1 = 1");
     if let Some(agent_id) = filter.agent_id {
         builder.push(" AND agents.id = ");
         builder.push_bind(agent_id);
     }
     if let Some(user_id) = filter.user_id {
-        push_user_id_filter(&mut builder, "agents.user_id", user_id);
+        push_user_id_filter(builder, "agents.user_id", user_id);
     }
     if let Some(parent_agent_id) = filter.parent_agent_id {
         builder.push(" AND agents.parent_agent_id = ");
@@ -98,24 +116,15 @@ pub(crate) async fn list_admin_agents(
         builder.push(" AND agents.level = ");
         builder.push_bind(level);
     }
-    if let Some(agent_code) = filter.agent_code {
+    if let Some(agent_code) = filter.agent_code.clone() {
         builder.push(" AND agents.agent_code = ");
         builder.push_bind(agent_code);
     }
-    push_user_email_filter(&mut builder, "agents.user_id", filter.email);
-    if let Some(status) = filter.status {
+    push_user_email_filter(builder, "agents.user_id", filter.email.clone());
+    if let Some(status) = filter.status.clone() {
         builder.push(" AND agents.status = ");
         builder.push_bind(status);
     }
-    builder.push(" ORDER BY agents.id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
-    builder.push(" OFFSET ");
-    builder.push_bind(filter.offset as i64);
-
-    Ok(builder
-        .build_query_as::<AdminAgentResponse>()
-        .fetch_all(pool)
-        .await?)
 }
 
 pub(crate) async fn load_admin_agent(
@@ -287,8 +296,9 @@ pub(crate) async fn list_admin_agent_users(
     pool: &Pool<MySql>,
     agent_id: u64,
     limit: u32,
-) -> AppResult<Vec<AdminAgentUserResponse>> {
-    Ok(sqlx::query_as::<_, AdminAgentUserResponse>(
+    offset: u32,
+) -> AppResult<(Vec<AdminAgentUserResponse>, i64)> {
+    let users = sqlx::query_as::<_, AdminAgentUserResponse>(
         r#"SELECT users.id AS user_id, users.email, users.phone, users.status, users.kyc_level,
                   owner_agents.id AS owner_agent_id, referrals.root_agent_id,
                   owner_agents.agent_code AS owner_agent_code,
@@ -302,12 +312,27 @@ pub(crate) async fn list_admin_agent_users(
            WHERE owner_agents.path = scope_agent.path
               OR owner_agents.path LIKE CONCAT(scope_agent.path, '/%')
            ORDER BY owner_agents.level ASC, referrals.depth ASC, users.id ASC
-           LIMIT ?"#,
+           LIMIT ? OFFSET ?"#,
     )
     .bind(agent_id)
     .bind(limit as i64)
+    .bind(offset as i64)
     .fetch_all(pool)
-    .await?)
+    .await?;
+    let total = sqlx::query_scalar::<_, i64>(
+        r#"SELECT COUNT(*)
+           FROM user_referrals referrals
+           INNER JOIN users ON users.id = referrals.user_id
+           INNER JOIN agents owner_agents ON owner_agents.id = referrals.root_agent_id
+           INNER JOIN agents scope_agent ON scope_agent.id = ?
+           WHERE owner_agents.path = scope_agent.path
+              OR owner_agents.path LIKE CONCAT(scope_agent.path, '/%')"#,
+    )
+    .bind(agent_id)
+    .fetch_one(pool)
+    .await?;
+
+    Ok((users, total))
 }
 
 pub(crate) async fn lock_user_referral_in_tx(
@@ -401,33 +426,37 @@ pub(crate) async fn migrate_user_referral_descendants_in_tx(
 pub(crate) async fn list_admin_agent_commission_rules(
     pool: &Pool<MySql>,
     filter: AdminAgentCommissionRuleListFilter,
-) -> AppResult<Vec<AdminAgentCommissionRuleResponse>> {
-    let mut builder = QueryBuilder::<MySql>::new(
+) -> AppResult<(Vec<AdminAgentCommissionRuleResponse>, i64)> {
+    let mut rows = QueryBuilder::<MySql>::new(
         r#"SELECT id, agent_id, product_type, commission_rate, status, created_at, updated_at
-           FROM agent_commission_rules
-           WHERE 1 = 1"#,
+           FROM agent_commission_rules"#,
     );
-    if let Some(agent_id) = filter.agent_id {
-        builder.push(" AND agent_id = ");
-        builder.push_bind(agent_id);
+    let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM agent_commission_rules");
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(agent_id) = filter.agent_id {
+            builder.push(" AND agent_id = ");
+            builder.push_bind(agent_id);
+        }
+        if let Some(product_type) = filter.product_type.clone() {
+            builder.push(" AND product_type = ");
+            builder.push_bind(product_type);
+        }
+        if let Some(status) = filter.status.clone() {
+            builder.push(" AND status = ");
+            builder.push_bind(status);
+        }
     }
-    if let Some(product_type) = filter.product_type {
-        builder.push(" AND product_type = ");
-        builder.push_bind(product_type);
-    }
-    if let Some(status) = filter.status {
-        builder.push(" AND status = ");
-        builder.push_bind(status);
-    }
-    builder.push(" ORDER BY id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
-    builder.push(" OFFSET ");
-    builder.push_bind(filter.offset as i64);
 
-    Ok(builder
-        .build_query_as::<AdminAgentCommissionRuleResponse>()
-        .fetch_all(pool)
-        .await?)
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
 }
 
 pub(crate) async fn insert_agent_commission_rule_in_tx(
@@ -504,32 +533,38 @@ pub(crate) async fn lock_agent_commission_rule_in_tx(
 pub(crate) async fn list_admin_agent_commissions(
     pool: &Pool<MySql>,
     filter: AdminAgentCommissionListFilter,
-) -> AppResult<Vec<AdminAgentCommissionResponse>> {
-    let mut builder = QueryBuilder::<MySql>::new(
+) -> AppResult<(Vec<AdminAgentCommissionResponse>, i64)> {
+    let mut rows = QueryBuilder::<MySql>::new(
         r#"SELECT id, agent_id, user_id, source_type, source_id, source_amount, payout_asset_id,
                   commission_rate, commission_amount, status, created_at
-           FROM agent_commission_records
-           WHERE 1 = 1"#,
+           FROM agent_commission_records"#,
     );
-    if let Some(agent_id) = filter.agent_id {
-        builder.push(" AND agent_id = ");
-        builder.push_bind(agent_id);
+    let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM agent_commission_records");
+    for builder in [&mut rows, &mut total] {
+        builder.push(" WHERE 1 = 1");
+        if let Some(agent_id) = filter.agent_id {
+            builder.push(" AND agent_id = ");
+            builder.push_bind(agent_id);
+        }
+        if let Some(user_id) = filter.user_id {
+            push_user_id_filter(builder, "user_id", user_id);
+        }
+        push_user_email_filter(builder, "user_id", filter.email.clone());
+        if let Some(status) = filter.status.clone() {
+            builder.push(" AND status = ");
+            builder.push_bind(status);
+        }
     }
-    if let Some(user_id) = filter.user_id {
-        push_user_id_filter(&mut builder, "user_id", user_id);
-    }
-    push_user_email_filter(&mut builder, "user_id", filter.email);
-    if let Some(status) = filter.status {
-        builder.push(" AND status = ");
-        builder.push_bind(status);
-    }
-    builder.push(" ORDER BY id DESC LIMIT ");
-    builder.push_bind(filter.limit as i64);
 
-    Ok(builder
-        .build_query_as::<AdminAgentCommissionResponse>()
-        .fetch_all(pool)
-        .await?)
+    fetch_admin_page(
+        pool,
+        rows,
+        total,
+        " ORDER BY id DESC",
+        filter.limit,
+        filter.offset,
+    )
+    .await
 }
 
 pub(crate) async fn load_agent_commission_in_tx(
@@ -643,6 +678,15 @@ fn admin_agent_query() -> QueryBuilder<'static, MySql> {
                GROUP BY agent_id
            ) first_agent_admin_users ON first_agent_admin_users.agent_id = agents.id
            LEFT JOIN agent_admin_users ON agent_admin_users.id = first_agent_admin_users.id"#,
+    )
+}
+
+fn admin_agent_count_query() -> QueryBuilder<'static, MySql> {
+    QueryBuilder::<MySql>::new(
+        r#"SELECT COUNT(*)
+           FROM agents
+           INNER JOIN users ON users.id = agents.user_id
+           INNER JOIN agents root_agents ON root_agents.id = COALESCE(agents.root_agent_id, agents.id)"#,
     )
 }
 

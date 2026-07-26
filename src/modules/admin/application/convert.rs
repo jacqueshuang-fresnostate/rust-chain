@@ -5,8 +5,13 @@ pub(crate) async fn list_admin_convert_pairs(
     query: AdminConvertPairQuery,
 ) -> AppResult<ConvertPairsResponse> {
     let pool = admin_mysql_pool(pool)?;
-    let pairs = list_admin_convert_pairs_from_store(&pool, route_limit(query.limit)).await?;
-    Ok(ConvertPairsResponse { pairs })
+    let (pairs, total) = list_admin_convert_pairs_from_store(
+        &pool,
+        route_limit(query.limit),
+        route_offset(query.offset),
+    )
+    .await?;
+    Ok(ConvertPairsResponse { pairs, total })
 }
 
 pub(crate) async fn get_admin_convert_pair(
@@ -22,17 +27,18 @@ pub(crate) async fn list_admin_convert_orders(
     query: AdminConvertOrdersQuery,
 ) -> AppResult<ConvertOrdersResponse> {
     let pool = admin_mysql_pool(pool)?;
-    let orders = list_admin_convert_orders_from_store(
+    let (orders, total) = list_admin_convert_orders_from_store(
         &pool,
         AdminConvertOrderListFilter {
             user_id: query.user_id,
             email: query.email,
             status: query.status.and_then(optional_string),
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(ConvertOrdersResponse { orders })
+    Ok(ConvertOrdersResponse { orders, total })
 }
 
 pub(crate) async fn get_admin_convert_order(

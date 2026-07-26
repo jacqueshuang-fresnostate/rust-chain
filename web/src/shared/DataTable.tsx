@@ -7,11 +7,20 @@ import { containedTableScroll, containedTableStyle } from './tableLayout';
 const { Text } = Typography;
 
 const DEFAULT_COLUMN_WIDTH = 160;
-const DEFAULT_PAGE_SIZE = 10;
+export const DEFAULT_PAGE_SIZE = 10;
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 const adaptiveTableScroll = { x: '100%' };
 
 export type DataTableDisplayMode = 'adaptive' | 'compact';
+
+// 由外部驱动的服务端分页：data 即当前页，total 来自服务端。
+export type DataTableServerPagination = {
+  currentPage: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
+  pageSize: number;
+  total: number;
+};
 
 type DataTableProps<T extends Record<string, unknown>> = {
   columns: Array<ColumnProps<T>>;
@@ -19,6 +28,7 @@ type DataTableProps<T extends Record<string, unknown>> = {
   displayMode?: DataTableDisplayMode;
   error?: Error | null;
   loading?: boolean;
+  pagination?: DataTableServerPagination;
   rowKey?: Extract<keyof T, string> | ((record: T) => string | number);
   rowSelection?: RowSelectionProps<T>;
 };
@@ -44,7 +54,7 @@ export function normalizeTableColumns<T extends Record<string, unknown>>(columns
   });
 }
 
-export function DataTable<T extends Record<string, unknown>>({ columns, data, displayMode = 'compact', error, loading, rowKey, rowSelection }: DataTableProps<T>) {
+export function DataTable<T extends Record<string, unknown>>({ columns, data, displayMode = 'compact', error, loading, pagination, rowKey, rowSelection }: DataTableProps<T>) {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const tableColumns = useMemo(() => normalizeTableColumns(columns, displayMode), [columns, displayMode]);
@@ -54,9 +64,13 @@ export function DataTable<T extends Record<string, unknown>>({ columns, data, di
   }, [data]);
 
   const pageData = useMemo(() => {
+    if (pagination) {
+      return data;
+    }
+
     const start = (currentPage - 1) * pageSize;
     return data.slice(start, start + pageSize);
-  }, [currentPage, data, pageSize]);
+  }, [currentPage, data, pageSize, pagination]);
 
   if (loading) {
     return (
@@ -74,7 +88,7 @@ export function DataTable<T extends Record<string, unknown>>({ columns, data, di
     );
   }
 
-  if (data.length === 0) {
+  if (data.length === 0 && !(pagination && pagination.total > 0)) {
     return <Empty description="暂无数据" />;
   }
 
@@ -85,13 +99,17 @@ export function DataTable<T extends Record<string, unknown>>({ columns, data, di
       columns={tableColumns}
       dataSource={pageData}
       pagination={{
-        currentPage,
-        pageSize,
+        currentPage: pagination ? pagination.currentPage : currentPage,
+        pageSize: pagination ? pagination.pageSize : pageSize,
         pageSizeOpts: PAGE_SIZE_OPTIONS,
         showSizeChanger: true,
-        total: data.length,
-        onPageChange: setCurrentPage,
+        total: pagination ? pagination.total : data.length,
+        onPageChange: pagination ? pagination.onPageChange : setCurrentPage,
         onPageSizeChange: (nextPageSize) => {
+          if (pagination) {
+            pagination.onPageSizeChange(nextPageSize);
+            return;
+          }
           setPageSize(nextPageSize);
           setCurrentPage(1);
         }

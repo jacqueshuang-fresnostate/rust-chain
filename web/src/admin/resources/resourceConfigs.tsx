@@ -162,7 +162,8 @@ const loanOrderStatusLabels = {
   disbursed: '已放款',
   rejected: '已拒绝',
   cancelled: '已取消',
-  repaid: '已还款'
+  repaid: '已还款',
+  overdue: '已逾期'
 };
 const walletLedgerChangeTypeLabels = {
   deposit: '充值',
@@ -1425,6 +1426,45 @@ export const resourceConfigs = {
   }
 } satisfies Record<string, ResourceConfig>;
 
+// 后端已返回 total 且支持 offset 的资源才启用服务端分页，其余仍走客户端切片以免翻页拿到重复数据。
+const SERVER_PAGED_ENDPOINTS = new Set([
+  '/admin/api/v1/agent-commission-rules',
+  '/admin/api/v1/agent-commissions',
+  '/admin/api/v1/assets',
+  '/admin/api/v1/audit-logs',
+  '/admin/api/v1/convert/orders',
+  '/admin/api/v1/convert/pairs',
+  '/admin/api/v1/countries',
+  '/admin/api/v1/deposit-address-pool',
+  '/admin/api/v1/deposit-network-configs',
+  '/admin/api/v1/margin/liquidations',
+  '/admin/api/v1/market-pairs',
+  '/admin/api/v1/market-strategies',
+  '/admin/api/v1/new-coins',
+  '/admin/api/v1/new-coins/distributions',
+  '/admin/api/v1/new-coins/lock-positions',
+  '/admin/api/v1/new-coins/purchases',
+  '/admin/api/v1/new-coins/subscriptions',
+  '/admin/api/v1/new-coins/unlocks',
+  '/admin/api/v1/news',
+  '/admin/api/v1/risk/events',
+  '/admin/api/v1/risk/rules',
+  '/admin/api/v1/users',
+  '/admin/api/v1/wallet/accounts',
+  '/admin/api/v1/wallet/ledger'
+]);
+
+export function isServerPagedResource(endpoint: string) {
+  return SERVER_PAGED_ENDPOINTS.has(endpoint);
+}
+
 export function ResourcePage({ config }: { config: ResourceConfig }) {
-  return <AdminResourcePage<ApiRecord> {...config} />;
+  // 按 endpoint 重建组件：路由复用同一实例时，分页与筛选状态不会带到下一个资源页。
+  return (
+    <AdminResourcePage<ApiRecord>
+      key={config.endpoint}
+      {...config}
+      serverPaged={isServerPagedResource(config.endpoint)}
+    />
+  );
 }

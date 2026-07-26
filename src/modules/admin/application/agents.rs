@@ -5,7 +5,7 @@ pub(crate) async fn list_admin_agents(
     query: AdminAgentQuery,
 ) -> AppResult<AdminAgentsResponse> {
     let pool = admin_mysql_pool(pool)?;
-    let agents = list_admin_agents_from_store(
+    let (agents, total) = list_admin_agents_from_store(
         &pool,
         AdminAgentListFilter {
             agent_id: query.agent_id,
@@ -21,7 +21,7 @@ pub(crate) async fn list_admin_agents(
         },
     )
     .await?;
-    Ok(AdminAgentsResponse { agents })
+    Ok(AdminAgentsResponse { agents, total })
 }
 
 pub(crate) async fn get_admin_agent(
@@ -138,12 +138,18 @@ pub(crate) async fn update_admin_agent_status(
 pub(crate) async fn list_admin_agent_users(
     pool: Option<Pool<MySql>>,
     agent_id: u64,
-    limit: Option<u32>,
+    query: AdminAgentUsersQuery,
 ) -> AppResult<AdminAgentUsersResponse> {
     let pool = admin_mysql_pool(pool)?;
     load_admin_agent_from_store(&pool, agent_id).await?;
-    let users = list_admin_agent_users_from_store(&pool, agent_id, route_limit(limit)).await?;
-    Ok(AdminAgentUsersResponse { users })
+    let (users, total) = list_admin_agent_users_from_store(
+        &pool,
+        agent_id,
+        route_limit(query.limit),
+        route_offset(query.offset),
+    )
+    .await?;
+    Ok(AdminAgentUsersResponse { users, total })
 }
 
 pub(crate) async fn assign_admin_user_agent(
@@ -222,7 +228,7 @@ pub(crate) async fn list_admin_agent_commission_rules(
     let product_type = query.product_type.and_then(optional_string);
     let status = query.status.and_then(optional_string);
     let pool = admin_mysql_pool(pool)?;
-    let rules = list_admin_agent_commission_rules_from_store(
+    let (rules, total) = list_admin_agent_commission_rules_from_store(
         &pool,
         AdminAgentCommissionRuleListFilter {
             agent_id: query.agent_id,
@@ -233,7 +239,7 @@ pub(crate) async fn list_admin_agent_commission_rules(
         },
     )
     .await?;
-    Ok(AdminAgentCommissionRulesResponse { rules })
+    Ok(AdminAgentCommissionRulesResponse { rules, total })
 }
 
 pub(crate) async fn create_admin_agent_commission_rule(
@@ -340,7 +346,7 @@ pub(crate) async fn list_admin_agent_commissions(
 ) -> AppResult<AdminAgentCommissionsResponse> {
     let status = query.status.and_then(optional_string);
     let pool = admin_mysql_pool(pool)?;
-    let commissions = list_admin_agent_commissions_from_store(
+    let (commissions, total) = list_admin_agent_commissions_from_store(
         &pool,
         AdminAgentCommissionListFilter {
             agent_id: query.agent_id,
@@ -348,10 +354,11 @@ pub(crate) async fn list_admin_agent_commissions(
             email: query.email,
             status,
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(AdminAgentCommissionsResponse { commissions })
+    Ok(AdminAgentCommissionsResponse { commissions, total })
 }
 
 pub(crate) async fn update_admin_agent_commission_status(

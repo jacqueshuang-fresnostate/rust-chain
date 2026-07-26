@@ -95,6 +95,7 @@ impl PresentationLayer for AdminCountryResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminCountriesResponse {
     pub(crate) countries: Vec<AdminCountryResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for AdminCountriesResponse {}
@@ -175,6 +176,7 @@ impl PresentationLayer for AdminNewsItemResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminNewsItemsResponse {
     pub(crate) news: Vec<AdminNewsItemResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for AdminNewsItemsResponse {}
@@ -185,6 +187,7 @@ pub(crate) struct AdminAssetQuery {
     pub(crate) asset_type: Option<String>,
     pub(crate) status: Option<String>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminAssetQuery {}
@@ -258,6 +261,7 @@ impl PresentationLayer for AdminAssetResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminAssetsResponse {
     pub(crate) assets: Vec<AdminAssetResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for AdminAssetsResponse {}
@@ -269,6 +273,7 @@ pub(crate) struct AdminUserQuery {
     pub(crate) status: Option<String>,
     pub(crate) include_internal: Option<bool>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminUserQuery {}
@@ -331,6 +336,7 @@ impl PresentationLayer for AdminUserRechargeResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminUsersResponse {
     pub(crate) users: Vec<AdminUserResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for AdminUsersResponse {}
@@ -343,6 +349,7 @@ pub(crate) struct AdminWalletAccountQuery {
     pub(crate) include_empty: Option<bool>,
     pub(crate) include_internal: Option<bool>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminWalletAccountQuery {}
@@ -356,6 +363,7 @@ pub(crate) struct AdminWalletLedgerQuery {
     pub(crate) ref_type: Option<String>,
     pub(crate) include_internal: Option<bool>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminWalletLedgerQuery {}
@@ -410,6 +418,7 @@ impl PresentationLayer for AdminWalletLedgerResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminWalletAccountsResponse {
     pub(crate) accounts: Vec<AdminWalletAccountResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for AdminWalletAccountsResponse {}
@@ -417,6 +426,7 @@ impl PresentationLayer for AdminWalletAccountsResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminWalletLedgerResponseList {
     pub(crate) ledger: Vec<AdminWalletLedgerResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for AdminWalletLedgerResponseList {}
@@ -498,6 +508,7 @@ impl PresentationLayer for AssignUserAgentRequest {}
 pub(crate) struct AdminAgentUsersQuery {
     /// 用于限制返回团队成员数量，保持接口分页行为一致。
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminAgentUsersQuery {}
@@ -582,6 +593,7 @@ impl PresentationLayer for AdminUserReferralResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminAgentsResponse {
     pub(crate) agents: Vec<AdminAgentResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for AdminAgentsResponse {}
@@ -589,6 +601,7 @@ impl PresentationLayer for AdminAgentsResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminAgentUsersResponse {
     pub(crate) users: Vec<AdminAgentUserResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for AdminAgentUsersResponse {}
@@ -628,6 +641,7 @@ pub(crate) struct AdminAgentCommissionQuery {
     pub(crate) email: Option<String>,
     pub(crate) status: Option<String>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminAgentCommissionQuery {}
@@ -679,6 +693,7 @@ impl PresentationLayer for AdminAgentCommissionRuleResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminAgentCommissionsResponse {
     pub(crate) commissions: Vec<AdminAgentCommissionResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for AdminAgentCommissionsResponse {}
@@ -712,6 +727,7 @@ impl PresentationLayer for AdminAgentCommissionBatchStatusResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminAgentCommissionRulesResponse {
     pub(crate) rules: Vec<AdminAgentCommissionRuleResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for AdminAgentCommissionRulesResponse {}
@@ -722,6 +738,7 @@ pub(crate) struct AdminRiskRuleQuery {
     pub(crate) target_type: Option<String>,
     pub(crate) enabled: Option<bool>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminRiskRuleQuery {}
@@ -733,6 +750,7 @@ pub(crate) struct AdminRiskEventQuery {
     pub(crate) decision: Option<String>,
     pub(crate) risk_level: Option<String>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminRiskEventQuery {}
@@ -794,6 +812,7 @@ impl PresentationLayer for RiskEventResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct RiskRulesResponse {
     pub(crate) rules: Vec<RiskRuleResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for RiskRulesResponse {}
@@ -801,6 +820,7 @@ impl PresentationLayer for RiskRulesResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct RiskEventsResponse {
     pub(crate) events: Vec<RiskEventResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for RiskEventsResponse {}
@@ -812,6 +832,7 @@ pub(crate) struct AdminDepositNetworkConfigQuery {
     pub(crate) status: Option<String>,
     pub(crate) asset_symbol: Option<String>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminDepositNetworkConfigQuery {}
@@ -867,6 +888,7 @@ impl PresentationLayer for AdminDepositNetworkConfigResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminDepositNetworkConfigResponseList {
     pub(crate) configs: Vec<AdminDepositNetworkConfigResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for AdminDepositNetworkConfigResponseList {}
@@ -881,6 +903,7 @@ pub(crate) struct AdminDepositAddressPoolQuery {
     pub(crate) email: Option<String>,
     pub(crate) address: Option<String>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminDepositAddressPoolQuery {}
@@ -976,6 +999,7 @@ impl PresentationLayer for AdminDepositAddressPoolResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminDepositAddressPoolResponseList {
     pub(crate) addresses: Vec<AdminDepositAddressPoolResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for AdminDepositAddressPoolResponseList {}
@@ -993,6 +1017,7 @@ pub(crate) struct AdminTradingPairQuery {
     pub(crate) status: Option<String>,
     pub(crate) market_type: Option<String>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminTradingPairQuery {}
@@ -1058,6 +1083,7 @@ impl PresentationLayer for AdminTradingPairResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminTradingPairsResponse {
     pub(crate) pairs: Vec<AdminTradingPairResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for AdminTradingPairsResponse {}
@@ -1067,6 +1093,7 @@ pub(crate) struct AdminMarketStrategyQuery {
     pub(crate) pair_id: Option<u64>,
     pub(crate) status: Option<String>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminMarketStrategyQuery {}
@@ -1148,6 +1175,7 @@ impl PresentationLayer for AdminMarketStrategyResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminMarketStrategiesResponse {
     pub(crate) strategies: Vec<AdminMarketStrategyResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for AdminMarketStrategiesResponse {}
@@ -1397,6 +1425,7 @@ pub(crate) struct AdminMarginLiquidationQuery {
     pub(crate) pair_id: Option<u64>,
     pub(crate) position_id: Option<u64>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminMarginLiquidationQuery {}
@@ -1408,6 +1437,7 @@ pub(crate) struct AdminAuditLogsQuery {
     pub(crate) target_type: Option<String>,
     pub(crate) target_id: Option<String>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminAuditLogsQuery {}
@@ -1443,6 +1473,7 @@ impl PresentationLayer for AdminMarginLiquidationResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminMarginLiquidationsResponse {
     pub(crate) liquidations: Vec<AdminMarginLiquidationResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for AdminMarginLiquidationsResponse {}
@@ -1467,6 +1498,7 @@ impl PresentationLayer for AdminAuditLogResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct AdminAuditLogsResponse {
     pub(crate) logs: Vec<AdminAuditLogResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for AdminAuditLogsResponse {}
@@ -1578,6 +1610,7 @@ impl PresentationLayer for AdminDashboardAuditAction {}
 #[derive(Debug, Deserialize)]
 pub(crate) struct AdminNewCoinProjectQuery {
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminNewCoinProjectQuery {}
@@ -1588,6 +1621,7 @@ pub(crate) struct AdminNewCoinScopedListQuery {
     pub(crate) email: Option<String>,
     pub(crate) status: Option<String>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminNewCoinScopedListQuery {}
@@ -1599,6 +1633,7 @@ pub(crate) struct AdminNewCoinFlatListQuery {
     pub(crate) email: Option<String>,
     pub(crate) status: Option<String>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminNewCoinFlatListQuery {}
@@ -1610,6 +1645,7 @@ pub(crate) struct AdminNewCoinPurchaseQuery {
     pub(crate) email: Option<String>,
     pub(crate) status: Option<String>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminNewCoinPurchaseQuery {}
@@ -1621,6 +1657,7 @@ pub(crate) struct AdminNewCoinLockPositionQuery {
     pub(crate) asset_id: Option<u64>,
     pub(crate) status: Option<String>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminNewCoinLockPositionQuery {}
@@ -1633,6 +1670,7 @@ pub(crate) struct AdminNewCoinUnlockQuery {
     pub(crate) status: Option<String>,
     pub(crate) fee_paid_status: Option<String>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminNewCoinUnlockQuery {}
@@ -1754,6 +1792,7 @@ impl PresentationLayer for NewCoinProjectResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct NewCoinProjectsResponse {
     pub(crate) projects: Vec<NewCoinProjectResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for NewCoinProjectsResponse {}
@@ -1778,6 +1817,7 @@ impl PresentationLayer for NewCoinSubscriptionResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct NewCoinSubscriptionsResponse {
     pub(crate) subscriptions: Vec<NewCoinSubscriptionResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for NewCoinSubscriptionsResponse {}
@@ -1802,6 +1842,7 @@ impl PresentationLayer for NewCoinDistributionResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct NewCoinDistributionsResponse {
     pub(crate) distributions: Vec<NewCoinDistributionResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for NewCoinDistributionsResponse {}
@@ -1829,6 +1870,7 @@ impl PresentationLayer for NewCoinPurchaseResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct NewCoinPurchasesResponse {
     pub(crate) purchases: Vec<NewCoinPurchaseResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for NewCoinPurchasesResponse {}
@@ -1855,6 +1897,7 @@ impl PresentationLayer for NewCoinLockPositionResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct NewCoinLockPositionsResponse {
     pub(crate) lock_positions: Vec<NewCoinLockPositionResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for NewCoinLockPositionsResponse {}
@@ -1884,6 +1927,7 @@ impl PresentationLayer for NewCoinUnlockResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct NewCoinUnlocksResponse {
     pub(crate) unlocks: Vec<NewCoinUnlockResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for NewCoinUnlocksResponse {}
@@ -1904,6 +1948,7 @@ impl PresentationLayer for NewCoinConvertRuleResponse {}
 #[derive(Debug, Deserialize)]
 pub(crate) struct AdminConvertPairQuery {
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminConvertPairQuery {}
@@ -1914,6 +1959,7 @@ pub(crate) struct AdminConvertOrdersQuery {
     pub(crate) email: Option<String>,
     pub(crate) status: Option<String>,
     pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
 }
 
 impl PresentationLayer for AdminConvertOrdersQuery {}
@@ -1984,6 +2030,7 @@ impl PresentationLayer for ConvertPairResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct ConvertPairsResponse {
     pub(crate) pairs: Vec<ConvertPairResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for ConvertPairsResponse {}
@@ -2009,6 +2056,7 @@ impl PresentationLayer for ConvertOrderResponse {}
 #[derive(Debug, Serialize)]
 pub(crate) struct ConvertOrdersResponse {
     pub(crate) orders: Vec<ConvertOrderResponse>,
+    pub(crate) total: i64,
 }
 
 impl PresentationLayer for ConvertOrdersResponse {}

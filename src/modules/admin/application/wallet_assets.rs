@@ -20,17 +20,18 @@ pub(crate) async fn list_admin_assets(
         .map(|value| validate_asset_status(&value))
         .transpose()?;
     let pool = admin_mysql_pool(pool)?;
-    let assets = list_admin_assets_from_store(
+    let (assets, total) = list_admin_assets_from_store(
         &pool,
         AdminAssetListFilter {
             symbol,
             asset_type,
             status,
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(AdminAssetsResponse { assets })
+    Ok(AdminAssetsResponse { assets, total })
 }
 
 pub(crate) async fn get_admin_asset(
@@ -224,7 +225,7 @@ pub(crate) async fn list_admin_wallet_accounts(
     query: AdminWalletAccountQuery,
 ) -> AppResult<AdminWalletAccountsResponse> {
     let pool = admin_mysql_pool(pool)?;
-    let accounts = list_admin_wallet_accounts_from_store(
+    let (accounts, total) = list_admin_wallet_accounts_from_store(
         &pool,
         AdminWalletAccountListFilter {
             user_id: query.user_id,
@@ -233,10 +234,11 @@ pub(crate) async fn list_admin_wallet_accounts(
             include_empty: query.include_empty.unwrap_or(false),
             include_internal: query.include_internal.unwrap_or(false),
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(AdminWalletAccountsResponse { accounts })
+    Ok(AdminWalletAccountsResponse { accounts, total })
 }
 
 pub(crate) async fn list_admin_wallet_ledger(
@@ -244,7 +246,7 @@ pub(crate) async fn list_admin_wallet_ledger(
     query: AdminWalletLedgerQuery,
 ) -> AppResult<AdminWalletLedgerResponseList> {
     let pool = admin_mysql_pool(pool)?;
-    let ledger = list_admin_wallet_ledger_from_store(
+    let (ledger, total) = list_admin_wallet_ledger_from_store(
         &pool,
         AdminWalletLedgerListFilter {
             user_id: query.user_id,
@@ -254,10 +256,11 @@ pub(crate) async fn list_admin_wallet_ledger(
             ref_type: query.ref_type,
             include_internal: query.include_internal.unwrap_or(false),
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(AdminWalletLedgerResponseList { ledger })
+    Ok(AdminWalletLedgerResponseList { ledger, total })
 }
 
 pub(crate) async fn list_admin_deposit_network_configs(
@@ -285,7 +288,7 @@ pub(crate) async fn list_admin_deposit_network_configs(
         .map(|value| normalize_asset_symbol(&value))
         .transpose()?;
     let pool = admin_mysql_pool(pool)?;
-    let configs = list_admin_deposit_network_configs_from_store(
+    let (configs, total) = list_admin_deposit_network_configs_from_store(
         &pool,
         AdminDepositNetworkConfigListFilter {
             network,
@@ -293,10 +296,11 @@ pub(crate) async fn list_admin_deposit_network_configs(
             status,
             asset_symbol,
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(AdminDepositNetworkConfigResponseList { configs })
+    Ok(AdminDepositNetworkConfigResponseList { configs, total })
 }
 
 pub(crate) async fn create_admin_deposit_network_config(
@@ -432,7 +436,7 @@ pub(crate) async fn list_admin_deposit_address_pool(
         .transpose()?;
     let address = query.address.and_then(optional_string);
     let pool = admin_mysql_pool(pool)?;
-    let addresses = list_admin_deposit_address_pool_from_store(
+    let (addresses, total) = list_admin_deposit_address_pool_from_store(
         &pool,
         AdminDepositAddressPoolListFilter {
             network,
@@ -443,10 +447,11 @@ pub(crate) async fn list_admin_deposit_address_pool(
             email: query.email,
             address,
             limit: route_limit(query.limit),
+            offset: route_offset(query.offset),
         },
     )
     .await?;
-    Ok(AdminDepositAddressPoolResponseList { addresses })
+    Ok(AdminDepositAddressPoolResponseList { addresses, total })
 }
 
 pub(crate) async fn get_admin_deposit_address_pool(

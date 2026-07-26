@@ -8,7 +8,7 @@ import type { ApiRecord } from '../../api/types';
 import { PageHeader } from '../../layouts/PageHeader';
 import { AmountText } from '../../shared/AmountText';
 import { formatAdminBetContent, isAdminBetContentField } from '../../shared/betContentFormat';
-import { DataTable, type DataTableDisplayMode } from '../../shared/DataTable';
+import { DataTable, DEFAULT_PAGE_SIZE, type DataTableDisplayMode } from '../../shared/DataTable';
 import { FilterBar, type FilterField, type FilterValues } from '../../shared/FilterBar';
 import { DetailDrawer, type DetailDrawerData, type DetailDrawerFieldMeta } from '../../shared/DetailDrawer';
 import { formatAdminDisplayValue } from '../../shared/numberFormat';
@@ -56,10 +56,29 @@ type AdminResourcePageProps<T extends ApiRecord> = {
       openDetail: (detail: DetailDrawerData) => void;
     }
   ) => ReactNode;
+  serverPaged?: boolean;
   showJsonAction?: boolean;
   title: string;
   toolbarFilters?: FilterField[];
 };
+
+// 服务端分页下筛选下拉只能看到当前页，累积已加载行以保留可选项。
+const FILTER_OPTION_ROW_LIMIT = 500;
+// 服务端分页首屏页容量，与后端默认 limit 一致，避免下拉选项与导出范围骤减。
+const SERVER_PAGED_PAGE_SIZE = 50;
+
+function mergeFilterOptionRows<T extends ApiRecord>(current: T[], next: T[]): T[] {
+  const seen = new Set(current.map((row) => JSON.stringify(row)));
+  const merged = [...current];
+  next.forEach((row) => {
+    const key = JSON.stringify(row);
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(row);
+    }
+  });
+  return merged.slice(-FILTER_OPTION_ROW_LIMIT);
+}
 
 function renderCell<T extends ApiRecord>(column: AdminResourceColumn<T>, value: T[Extract<keyof T, string>]) {
   const mappedValue = value === null || value === undefined ? undefined : column.valueMap?.[String(value)];
@@ -146,6 +165,7 @@ export function AdminResourcePage<T extends ApiRecord>({
   filters,
   responseKey,
   rowActions,
+  serverPaged = false,
   showJsonAction = true,
   title,
   toolbarFilters
@@ -157,30 +177,49 @@ export function AdminResourcePage<T extends ApiRecord>({
   const [loading, setLoading] = useState(true);
   const [reloadVersion, setReloadVersion] = useState(0);
   const [rows, setRows] = useState<T[]>([]);
+  const [filterOptionRows, setFilterOptionRows] = useState<T[]>([]);
+  const [page, setPage] = useState(1);
+  // 服务端分页首屏仍取 50 条：下拉筛选项与 CSV 导出都基于已加载数据，页容量过小会让两者失真。
+  const [pageSize, setPageSize] = useState(serverPaged ? SERVER_PAGED_PAGE_SIZE : DEFAULT_PAGE_SIZE);
+  const [total, setTotal] = useState<number | null>(null);
   const [selectedRowKeys, setSelectedRowKeys] = useState<Array<string | number>>([]);
   const [tableDisplayMode, setTableDisplayMode] = useState<DataTableDisplayMode>('compact');
   const reload = useCallback(() => setReloadVersion((value) => value + 1), []);
   const clearSelection = useCallback(() => setSelectedRowKeys([]), []);
-  const handleFilterChange = useCallback((values: FilterValues) => {
-    setFilterValues(values);
+  // 筛选变化后必须回到第一页，否则会按旧偏移量请求到错误的分页数据。
+  const resetPaging = useCallback(() => {
+    setPage(1);
+    setFilterOptionRows([]);
   }, []);
-  const updateToolbarFilter = useCallback((field: FilterField, nextValue: string) => {
-    setToolbarFilterValues((current) => {
-      const next = { ...current };
-      if (nextValue.trim()) {
-        next[field.key] = nextValue;
-      } else {
-        delete next[field.key];
-      }
-      return next;
-    });
-  }, []);
+  const handleFilterChange = useCallback(
+    (values: FilterValues) => {
+      setFilterValues(values);
+      resetPaging();
+    },
+    [resetPaging]
+  );
+  const updateToolbarFilter = useCallback(
+    (field: FilterField, nextValue: string) => {
+      setToolbarFilterValues((current) => {
+        const next = { ...current };
+        if (nextValue.trim()) {
+          next[field.key] = nextValue;
+        } else {
+          delete next[field.key];
+        }
+        return next;
+      });
+      resetPaging();
+    },
+    [resetPaging]
+  );
   const requestFilterValues = useMemo(
     () => ({
       ...filterValues,
-      ...toolbarFilterValues
+      ...toolbarFilterValues,
+      ...(serverPaged ? { limit: pageSize, offset: (page - 1) * pageSize } : {})
     }),
-    [filterValues, toolbarFilterValues]
+    [filterValues, page, pageSize, serverPaged, toolbarFilterValues]
   );
 
   useEffect(() => {
@@ -194,6 +233,9 @@ export function AdminResourcePage<T extends ApiRecord>({
           return;
         }
         setRows(result.rows);
+        setFilterOptionRows((current) => mergeFilterOptionRows(current, result.rows));
+        setTotal(typeof result.total === 'number' ? result.total : null);
+        // 跨页勾选无法回溯其他页的行，换页与重载后一律清空，避免批量操作落到过期 ID 上。
         setSelectedRowKeys([]);
       })
       .catch((caught: unknown) => {
@@ -202,6 +244,7 @@ export function AdminResourcePage<T extends ApiRecord>({
         }
         setError(caught instanceof Error ? caught : new Error('加载失败'));
         setRows([]);
+        setTotal(null);
       })
       .finally(() => {
         if (active) {
@@ -216,12 +259,13 @@ export function AdminResourcePage<T extends ApiRecord>({
 
   const filterFields = useMemo(
     () =>
-      filters?.map((field) => {
+      // 服务端分页由分页器控制每页条数，手动的 limit 筛选会与之冲突。
+      filters?.filter((field) => !(serverPaged && field.key === 'limit')).map((field) => {
         if (!field.optionsFromRows) {
           return field;
         }
 
-        const optionLabels = rows.reduce((options, row) => {
+        const optionLabels = filterOptionRows.reduce((options, row) => {
           const rawValue = row[field.key];
           if (typeof rawValue !== 'string' && typeof rawValue !== 'number') {
             return options;
@@ -241,7 +285,7 @@ export function AdminResourcePage<T extends ApiRecord>({
 
         return { ...field, options };
       }),
-    [filters, rows]
+    [filterOptionRows, filters, serverPaged]
   );
 
   const renderedActions = typeof actions === 'function' ? actions({ reload }) : actions;
@@ -279,7 +323,8 @@ export function AdminResourcePage<T extends ApiRecord>({
       </label>
     );
   });
-  const activeFilterCount = Object.keys(requestFilterValues).length;
+  const activeFilterCount = Object.keys(filterValues).length + Object.keys(toolbarFilterValues).length;
+  const recordCount = serverPaged && total !== null ? total : rows.length;
   const filterCount = filterFields?.length ?? 0;
   const nextDisplayMode: DataTableDisplayMode = tableDisplayMode === 'adaptive' ? 'compact' : 'adaptive';
   const displayModeButtonText = tableDisplayMode === 'adaptive' ? '自适应列表' : '紧凑列表';
@@ -354,7 +399,7 @@ export function AdminResourcePage<T extends ApiRecord>({
             </Button>
           </Space>
         }
-        description={`共 ${rows.length} 条记录，${activeFilterCount > 0 ? `已启用 ${activeFilterCount} 个筛选` : '未启用筛选'}`}
+        description={`共 ${recordCount} 条记录，${activeFilterCount > 0 ? `已启用 ${activeFilterCount} 个筛选` : '未启用筛选'}`}
         title={title}
       />
       <Card bordered={false} className="admin-resource-shell">
@@ -386,7 +431,28 @@ export function AdminResourcePage<T extends ApiRecord>({
             </div>
           ) : null}
         </div>
-        <DataTable columns={tableColumns} data={rows} displayMode={tableDisplayMode} error={error} loading={loading} rowSelection={rowSelection} />
+        <DataTable
+          columns={tableColumns}
+          data={rows}
+          displayMode={tableDisplayMode}
+          error={error}
+          loading={loading}
+          pagination={
+            serverPaged
+              ? {
+                  currentPage: page,
+                  onPageChange: setPage,
+                  onPageSizeChange: (nextPageSize) => {
+                    setPageSize(nextPageSize);
+                    setPage(1);
+                  },
+                  pageSize,
+                  total: total ?? rows.length
+                }
+              : undefined
+          }
+          rowSelection={rowSelection}
+        />
       </Card>
       <DetailDrawer detail={detail} onClose={() => setDetail(null)} />
     </main>

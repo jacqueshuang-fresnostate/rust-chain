@@ -205,6 +205,7 @@ pub(super) struct AdminDepositAddressPoolResponse {
 #[derive(ToSchema)]
 pub(super) struct AdminDepositAddressPoolResponseList {
     addresses: Vec<AdminDepositAddressPoolResponse>,
+    total: i64,
 }
 
 #[derive(ToSchema)]
@@ -499,7 +500,8 @@ fn reverse_admin_wallet_deposit() {}
         ("assigned_user_id" = Option<u64>, Query, description = "绑定用户 ID"),
         ("email" = Option<String>, Query, description = "绑定用户邮箱"),
         ("address" = Option<String>, Query, description = "地址模糊查询"),
-        ("limit" = Option<u32>, Query, description = "分页数量")
+        ("limit" = Option<u32>, Query, description = "分页数量"),
+        ("offset" = Option<u32>, Query, description = "分页偏移")
     ),
     security(("bearerAuth" = [])),
     responses(

@@ -26,7 +26,7 @@ pub(crate) async fn list_admin_news_items(
         .transpose()?;
     let keyword = query.q.and_then(optional_string);
     let pool = admin_mysql_pool(pool)?;
-    let news = list_admin_news_items_from_store(
+    let (news, total) = list_admin_news_items_from_store(
         &pool,
         AdminNewsListFilter {
             status,
@@ -39,7 +39,7 @@ pub(crate) async fn list_admin_news_items(
         },
     )
     .await?;
-    Ok(AdminNewsItemsResponse { news })
+    Ok(AdminNewsItemsResponse { news, total })
 }
 
 pub(crate) async fn get_admin_news_item(
