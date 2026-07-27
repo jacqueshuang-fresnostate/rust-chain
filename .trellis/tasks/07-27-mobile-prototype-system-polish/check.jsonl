@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "Verify mobile Sites quality, accessibility, responsive, and local-only contracts"}
+{"file": ".trellis/tasks/07-27-mobile-prototype-system-polish/research/mobile-ui-audit.md", "reason": "Verify every audited issue is resolved without regressing preserved strengths"}

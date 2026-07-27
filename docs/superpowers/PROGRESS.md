@@ -5829,3 +5829,10 @@
 - 修改文件：`src/modules/{auth,admin,agent,user,kyc,spot,wallet,earn,loan,margin,seconds_contract,quick_recharge,prediction}/**`、`migrations/{0095,0096}_*.sql`、`web/src/admin/actions/AdminTwoFactorPage.tsx(新)`、`web/src/admin/{routes,navigation}.tsx`、`web/src/api/adminAuth.ts`、`web/src/admin/actions/KycManagementPage.tsx` 及测试
 - 验证结果：后端 36 个测试二进制全绿（真实 MySQL/Redis 串行，478 用例）、`cargo test --lib` 179/179、`cargo fmt --check` 干净、`cargo check --all-targets` 零警告；web `npm run typecheck`/`lint` 通过、255/255 测试；死锁修复以验证器原复现手法复测通过。
 - 后续事项：①管理员 2FA 无自助找回路径（丢失验证器需改库），也无管理员互相重置 2FA 的接口；②登录失败计数按提交的标识形态（邮箱/手机/用户名）分桶，同一账号可获得三倍尝试额度；③OpenAPI 未登记新增的 2FA 与账号处置端点；④`fetch_admin_page` 现有 8 份逐字节副本（跨模块可见性所限）；⑤loan/products 的两个筛选器后端始终丢弃（改动前既有）。
+
+## 2026-07-27 20:58 - 手机端原型系统性视觉与二级页面优化
+
+- 完成内容：基于 320/390/448px 线上审计，将产品中心由通用列表升级为分层产品矩阵；消息中心改为五等分单排分类、按钮组语义与结构化未读状态；浅色秒合约改为明亮高对比行情板并保留独立暗色方案；借贷产品在常规手机宽度双列对比、窄屏自动单列；共享消息/借贷概览加入一致的业务强调；异形底栏焦点收束到图标并明确内容、导航、转场、Header 四级层级。
+- 修改文件：`mobile/sites-prototype/app/secondary-pages.tsx`、`mobile/sites-prototype/app/globals.css`、`mobile/sites-prototype/tests/rendered-html.test.mjs`、`.trellis/spec/mobile/index.md`、`.trellis/tasks/07-27-mobile-prototype-system-polish/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run lint`、`npm test`（含构建，33/33）、`git diff --check` 通过；禁用浅色边框与表情符号扫描无命中；320x720、390x844、448x900 浏览器复验无横向溢出，消息分类触控高度 44px，贷款 320px 单列/390px 双列，浅深秒合约对比度、底栏图标焦点与 1/40/60/70 层级通过；全量 `npx tsc --noEmit` 仍被既有 Cloudflare ambient 类型缺失阻断，归属文件针对性检查通过。原型提交 `75ebd77fc0790f59f00218eb50b45bd82313c8c5` 已推送并部署为公开 Sites 版本 16，生产地址 `https://hippo-mobile-signal-2026.ikuboy.chatgpt.site/` 复验通过。
+- 后续事项：原型中的交易、借贷、预测与秒合约仍为确定性本地演示，不连接真实账户或资金；接入真实后端接口需另立任务。

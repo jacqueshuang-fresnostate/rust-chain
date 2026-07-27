@@ -91,6 +91,22 @@ prototype:
   below the header layer.
 - Light-theme border tokens must use the shared cool-neutral family. Do not
   reintroduce the retired `#0b1811` / `rgba(11, 24, 17, ...)` border family.
+- Product hubs must expose an operational hierarchy rather than a generic action
+  list. Keep primary and secondary products visually distinct while preserving
+  every typed route and deterministic local-only behavior.
+- Message category controls must remain one equal-width row from 320px through
+  448px. Use a button group with `aria-pressed` unless a complete keyboard tab
+  model is implemented, and distinguish unread rows structurally as well as by
+  color.
+- Root navigation keyboard focus belongs to the icon target, not the full grid
+  cell. Keep the layer order explicit: content below the shaped navigation,
+  navigation below route transitions, and transitions below sticky headers.
+- Loan product comparison remains two columns at normal phone widths and
+  collapses to one column at 340px and below. Both layouts must keep 44px touch
+  targets and avoid horizontal page overflow.
+- Light-theme seconds trading uses a bright market board with dark text; retain
+  the separate dark-theme instrument panel rather than sharing one dark board
+  across both themes.
 
 Run from `mobile/sites-prototype/` after shared surface changes:
 
