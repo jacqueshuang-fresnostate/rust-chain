@@ -111,6 +111,7 @@ export default defineConfig(({ mode }) => {
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),
+        tailwindcss: fileURLToPath(new URL('./src/styles/tailwind-source-reset.css', import.meta.url)),
       },
     },
     clearScreen: false,

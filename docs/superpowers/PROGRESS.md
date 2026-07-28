@@ -2,6 +2,41 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-07-28 21:42 - 完成手机端原型 1:1 重构与 Android 实机交付
+
+- 完成内容：以已发布 v16 Sites 原型及其精确 CSS 为视觉基线，完成首页、行情、现货、合约、资产、我的与独立秒合约七个一级入口的正式 Vue/Tauri 重构，并完整迁移消息中心、贷款、安全中心等重点二级页面；复刻 64px 根 Header、76px 二级 Header、84px 七栏异形底栏、48px 抬升秒合约入口、原型排版/颜色/字段/按钮/弹层和 Geist 字体；保留真实行情、钱包、保证金、现货/合约下单、秒合约、贷款、公告、账户与安全 API，接口失败时仅显示同尺寸 skeleton、`--`、禁用或错误状态，不伪造余额、评分、订单、趋势和消息；修正交易百分比将 25/50/75/100 错当 0–1 比例以及合约输入误映射名义数量的问题，现货按精确基础/报价钱包计算，合约按精确产品的保证金钱包计算并以 `marginAmount` 提交；将精确 CSS、字体、品牌图和舞台图收口为正式受跟踪资源，消除对忽略原型目录的构建依赖；完成 PWA/Tauri 隔离、Android debug APK 构建、TAS-AL00 更新安装与前台启动。
+- 修改文件：`mobile/src/{App.vue,main.ts,router/index.ts}`、`mobile/src/components/{AppBottomNav,PageHeader,RootHeader}.vue`、`mobile/src/styles/{prototype-base,prototype-parity,tailwind-source-reset}.css`、`mobile/src/assets/{brand,fonts}/`、`mobile/src/views/{Home,Markets,Trade,Assets,Profile,Seconds,MessageCenter,Loan,Security}View.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/vite.config.ts`、`mobile/tests/` 中本任务相关契约测试、`.trellis/spec/mobile/index.md`、`.trellis/tasks/07-28-mobile-ui-pixel-perfect-replica/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run type-check` 通过；`npm test` 138/138 通过；`npm run build:pwa` 通过并生成 132 条预缓存，manifest、service worker、4 张 PWA 图标、字体和品牌资源完整；`npm run build:tauri` 通过且产物不含 manifest、service worker、Workbox、PWA 图标目录或 PWA 运行时代码；生产源码与测试的 `sites-prototype` 扫描零命中，CSS 6/6 字体/图片引用均存在；`git diff --check` 通过；390x844 浏览器检查首页无横向溢出、底栏 84px、秒合约/消息/贷款/安全二级页 Header 76px 且无根底栏，控制台无 warning/error；Android `npm run tauri:android:build -- --debug --target aarch64 --apk` 通过，生成 225MB universal debug APK，SHA-256 为 `f710a3222eca34d70d92683c7500aa7f621f4a3ca3fcdd7425f47b231105768f`；通过 ADB 更新安装到 Android 12 华为 TAS-AL00（1080x2340、480dpi、360dp 可用宽度），`com.hippo.exchange.mobile/.MainActivity` 已处于 resumed 前台状态。
+- 后续事项：正式 Tauri 发布包仍需在部署环境注入设备可访问的 HTTPS `VITE_BACKEND_API_DOMAIN`；当前本地开发使用既有 Vite `/api/v1` 同源代理，生产 PWA 使用同源反向代理。受设备内容采集安全限制，本轮未保存实机屏幕图；像素视觉验收使用相同前端构建的 390x844 浏览器截图，实机仅验证安装、启动、WebView 前台状态和 360dp 配置。
+
+## 2026-07-28 21:02 - 完成生产手机端原型资源自包含
+
+- 完成内容：将生产客户端实际消费的 v16 `globals.css`、Geist/Geist Mono 字体、紧凑/横版品牌图和舞台图按源字节机械复制到 `mobile/src`；将共享 parity CSS、根壳和根 Header 切换为生产自有资源；将所有读取旧原型 CSS 的移动端测试改为读取受跟踪的 `prototype-base.css`，保持原视觉合同断言，并新增递归扫描保证 `mobile/src` 与 `mobile/tests` 不再依赖忽略的原型工作区；同步修正交易 checker 对最新金额摘要结构的过时双向绑定断言，未改动交易实现。
+- 修改文件：`mobile/src/App.vue`、`mobile/src/components/RootHeader.vue`、`mobile/src/styles/prototype-base.css`、`mobile/src/styles/prototype-parity.css`、`mobile/src/assets/brand/{hippo-logo-compact.png,hippo-logo-landscape.png,signal-theatre.png}`、`mobile/src/assets/fonts/{geist-98bbbccb.woff2,geist-mono-013b2f2f.woff2}`、`mobile/tests/{account-message-views,android-ui-foundation-slice-a,core-discovery-views,priority-secondary-page-parity,pwa,root-prototype-parity,shell-navigation,trading-lending-views,ui-prototype-alignment-foundation,ui-prototype-alignment-secondary,ui-prototype-alignment-trading}.test.ts`、`docs/superpowers/PROGRESS.md`
+- 验证结果：六项 `cmp` 全部通过，确认生产副本与当前忽略源逐字节一致；`rg -n --hidden --glob '!node_modules' --glob '!dist' "sites-prototype" mobile/src mobile/tests` 无输出；`npm run type-check` 通过；聚焦 PWA/根壳测试 14/14、交易 checker 8/8 通过；`npm test` 137/137 通过；`npm run build:pwa` 通过并生成 132 个预缓存条目，manifest 身份/方向、四张有效 PWA PNG、SW denylist、字体及品牌哈希资产和零旧目录引用检查通过；`npm run build:tauri` 通过，确认产物不含 `manifest.webmanifest`、`sw.js`、Workbox、`pwa/` 图标或 `data-pwa-only` 元数据，且包含生产字体与品牌资产。两种构建均提示逐字节基础 CSS 内三条绝对图片声明留待运行时解析；实际目标元素由 `App.vue`/`RootHeader.vue` 的生产自有哈希资源导入覆盖，相关资产均已输出。仓库根 `git diff --check` 通过。
+- 后续事项：无。
+
+## 2026-07-28 20:17 - 完成首页最终文案与公告禁用态对齐
+
+- 完成内容：将 zh-CN 首页搜索占位精确调整为“搜索币种、产品或功能”，为首页快捷入口新增专用“新币”与“预测”短标签并保持产品中心及二级页“新币认购”“预测市场”长标签不变，同时补齐英文等价文案；锁定行情日报“AI 行情日报”“三分钟读懂今日市场”固定原型文案，第三行继续只展示真实公告标题或诚实的加载、空、错误状态；无真实公告时保留原生禁用和点击短路，不伪造详情导航，并单独覆盖禁用透明度为 1，避免全局禁用样式淡化珊瑚色表面。
+- 修改文件：`mobile/src/views/HomeView.vue`、`mobile/src/i18n/messages/zh-CN.ts`、`mobile/src/i18n/messages/en.ts`、`mobile/tests/home-prototype-parity.test.ts`、`docs/superpowers/PROGRESS.md`
+- 验证结果：聚焦 `node --test --experimental-strip-types tests/home-prototype-parity.test.ts` 3/3 通过；`npm run type-check` 通过；`npm test` 136/136 通过；仓库根 `git diff --check` 通过。
+- 后续事项：无。
+
+## 2026-07-28 20:07 - 精确修正贷款与安全中心页面标题
+
+- 完成内容：将 zh-CN 的贷款页 PageHeader 标题由“借贷”精确修正为公开原型的“贷款”，将安全页 PageHeader 标题由“账户与安全”精确修正为“安全中心”；保持首页快捷入口/产品标签“借贷”和个人中心分区标题“账户与安全”不变，未修改布局、API、英文资源或其他文案；新增聚焦断言锁定两个页面标题的 i18n 消费路径及两处保留文案。
+- 修改文件：`mobile/src/i18n/messages/zh-CN.ts`、`mobile/tests/priority-secondary-page-parity.test.ts`、`docs/superpowers/PROGRESS.md`
+- 验证结果：聚焦 `node --test --experimental-strip-types tests/priority-secondary-page-parity.test.ts` 8/8 通过；`npm run type-check` 通过；`npm test` 133/133 通过；仓库根 `git diff --check` 通过。
+- 后续事项：无。
+
+## 2026-07-28 20:00 - 完成四个优先二级页精确文案与秒合约数据槽收口
+
+- 完成内容：将秒合约、消息中心、借贷和安全中心的 PageShell 场景/上下文精确对齐公开 v16 原型并补齐中英文等价文案；将秒合约市场板改为“短周期交易工作台、交易对、实时参考价、报价币种上下文、当前轮次、结算窗口、派彩系数”的原型顺序，轮次接口未提供编号时固定显示 `--`，派彩系数使用 `1 + payoutRate` 并以 `x` 展示；将下方摘要精确收口为“预计派彩、可用余额、本地结果”，继续使用真实所选产品、周期、ticker、钱包账户和下单成功状态，预计派彩仍按实际 payoutRate 计算；同步方向和时长辅助文案，保持原有页面几何、路由、共享 Header、根视图和 API 副作用不变。
+- 修改文件：`mobile/src/views/SecondsView.vue`、`mobile/src/views/MessageCenterView.vue`、`mobile/src/views/LoanView.vue`、`mobile/src/views/SecurityView.vue`、`mobile/src/i18n/messages/zh-CN.ts`、`mobile/src/i18n/messages/en.ts`、`mobile/tests/priority-secondary-page-parity.test.ts`、`docs/superpowers/PROGRESS.md`
+- 验证结果：聚焦 `node --test --experimental-strip-types tests/priority-secondary-page-parity.test.ts tests/trading-lending-views.test.ts tests/account-message-views.test.ts` 18/18 通过；`npm run type-check` 通过；`npm test` 132/132 通过；根目录 `git diff --check` 通过。
+- 后续事项：无。
+
 ## 2026-07-28 07:23 - 重构手机端访问、身份与设置二级视图
 
 - 完成内容：将登录、注册、找回密码、登录双重验证、KYC、账户绑定、邀请和语言设置迁移到 HIPPO 高对比主题变量；统一完整字段焦点、主次按钮、错误/成功/加载状态、KYC 文件上传选择态、账户绑定底部确认层及语言选中态；补齐 320px 窄屏布局、44px 触控、safe area、ARIA 状态和 Lucide-only 契约；保持全部鉴权 challenge/redirect、注册策略、密码重置、2FA、KYC 文件转换与提交、邮箱/第三方账户绑定、邀请和语言持久化调用及请求载荷不变。
@@ -5955,3 +5990,45 @@
 - 修改文件：`mobile/src/{styles/base.css,i18n/messages/{zh-CN,en}.ts}`、`mobile/src/components/{AppBottomNav,AssetMark,LoginRequiredState,OrderBookPanel,PageHeader}.vue`、`mobile/src/views/{Assets,Home,Loan,Login,MarketDetail,Markets,MessageCenter,NewCoinDetail,Orders,ProductHub,Profile,Register,Seconds,Security,Swap,Trade,Withdraw}View.vue`、`mobile/tests/{android-ui-foundation-slice-a,android-ui-secondary-prototype,android-ui-trading-prototype-v16,core-discovery-views,shell-navigation,theme,trading-lending-views,ui-prototype-alignment-foundation,ui-prototype-alignment-trading}.test.ts`、`.trellis/spec/mobile/{index,navigation-and-localization}.md`、`.trellis/tasks/07-28-android-ui-prototype-alignment/`、`docs/superpowers/PROGRESS.md`
 - 验证结果：`npm run type-check`、`npm test`（116/116）、`npm run build:pwa`（130 条静态壳预缓存，约 1.20 MiB）、Android `aarch64` Debug APK 构建和 `git diff --check` 通过；本地 `http://127.0.0.1:1611/#/` 浏览器复验首页、行情、现货、资产、我的、产品、消息、借贷、安全与秒合约真实空状态，10 个核心路由在 320x720、390x844、448x900 共 30 次检查均无横向溢出，最终新标签页控制台 warning/error 为 0；新 APK SHA-256 为 `9ffdd879377842941e18ddb93566d8acf6b19d8b722330ab828f58c4703a4d9d`，已通过非流式 ADB 安装到 `TAS-AL00`，`com.hippo.exchange.mobile/.MainActivity` 前台运行。
 - 后续事项：本地后端当前不可用，登录态真实账户密度和交易提交后的 Android 视觉状态仍需在后端恢复后补做设备验收；未读取或截取设备上可能包含隐私信息的画面。
+
+## 2026-07-28 18:58 - 手机端像素级复刻：共享壳与根页面切片
+
+- 完成内容：机械导入受检 Sites `globals.css` 作为共享视觉真源，迁移 Signal Theatre 根壳、64px 顶栏、84px 七项异形导航及 Home、Markets、独立 Spot/Contract、Assets、Profile 的原型 DOM 顺序和几何；保留真实行情、钱包、保证金、公告、下单、用户/KYC、上传、划转、主题、PWA/Tauri 与鉴权流程；Seconds 保留旧深链但改为无根底栏的二级面；补齐中英文根页面文案与原型曲线图。
+- 修改文件：`mobile/src/App.vue`、`mobile/src/components/{AppBottomNav,RootHeader}.vue`、`mobile/src/styles/{prototype-parity,tailwind-source-reset}.css`、`mobile/src/{main.ts,router/index.ts,vite.config.ts}`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/src/views/{Home,Markets,Trade,Assets,Profile}View.vue`、`mobile/tests/{root-prototype-parity,android-ui-foundation-slice-a,android-ui-trading-prototype-v16,core-discovery-views,shell-navigation,theme,trading-lending-views,ui-prototype-alignment-foundation,ui-prototype-alignment-trading}.test.ts`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run type-check` 通过；根壳/根页面/交易聚焦测试 39/39 通过；`npm run build:pwa` 通过并生成 128 条预缓存；`git diff --check` 通过；本地 Chromium 390x844 实渲染确认文档宽 390px、无横向溢出、顶栏 64px、底栏 84px。真实后端未启动，浏览器 API 请求按现有错误/空状态呈现。
+- 后续事项：全量旧测试中的 Seconds、Loan 等二级页面断言需由并发二级页面切片完成者同步收敛；根切片没有代码阻塞。
+
+## 2026-07-28 19:13 - 手机端像素级复刻：集成审查与自修复
+
+- 完成内容：对照当前 PRD 与 `mobile/sites-prototype` 复核集成结果；确认 Seconds 路由为无根导航二级面；移除首页可点击的合成公告回退；按后端整期利率语义修正借贷利息/应还预估并本地化已知订单状态、保留未知状态原文；移除安全页游客态额外登录卡片以稳定工作台几何；清理 Loan 已无 DOM 对应的旧版 overview/order CSS；将根页面可见英文眉题纳入中英文 i18n；以生产桥接固定七项根导航 66px 最小操作轨；同步旧 Seconds/Loan/Security/Message/Assets 测试断言到当前原型结构。
+- 修改文件：`mobile/src/styles/prototype-parity.css`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/src/views/{Assets,Home,Loan,Markets,Profile,Security}View.vue`、`mobile/tests/{account-message-views,android-ui-secondary-prototype,android-ui-trading-prototype-v16,priority-secondary-page-parity,root-prototype-parity,trading-lending-views,ui-prototype-alignment-secondary}.test.ts`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run type-check` 通过；`npm test` 127/127 通过；`git diff --check` 通过。按用户要求即时结束状态汇报，未启动且未执行本轮 `npm run build:pwa`、`npm run build:tauri` 与 390x844 浏览器复验；没有挂起进程。
+- 后续事项：主会话继续执行 `npm run build:pwa`、`npm run build:tauri`，并在 390x844 复验中文/英文的根页面、Seconds、Loan、Security、Message Center 横向溢出与加载/错误状态几何。
+
+## 2026-07-28 19:22 - 修复行情数据真实性与固定占位几何
+
+- 完成内容：移除行情页静态原型曲线和 BTC/SOL 默认伪自选；逐交易对调用真实 `fetchKlines`，仅按有效收盘价首尾决定曲线方向，K 线缺失或失败时显示中性水平线；Home 自选默认返回真实空状态；Home 与 Markets 首次加载及行情 API 失败时均保留五行等高 skeleton，错误文案和重试按钮覆盖在同一预留区域内；将桌面 Signal Theatre 可见文案全部接入中英文 i18n，同时保留舞台 `aria-hidden`；未改动 64px 顶栏、84px 底栏、66px 普通导航轨和 48px 抬升 Seconds 几何。
+- 修改文件：`mobile/src/App.vue`、`mobile/src/views/{Home,Markets}View.vue`、`mobile/src/styles/prototype-parity.css`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/root-prototype-parity.test.ts`、`docs/superpowers/PROGRESS.md`
+- 验证结果：在 `mobile/` 执行 `npm run type-check` 通过；根壳、导航与 i18n 聚焦测试 13/13 通过；`npm test` 128/128 通过；根目录 `git diff --check` 通过；静态契约确认 64px/84px/66px/48px 壳层尺寸仍由原型 CSS 与生产桥接提供。
+- 后续事项：本地后端未运行，未在浏览器中实测真实 K 线成功与逐交易对失败混合场景；自动化已覆盖 API 调用、失败中性线、五行预留区和壳层尺寸契约。
+
+## 2026-07-28 19:28 - 手机端像素级复刻最终修复后质量门
+
+- 完成内容：按 PRD、移动端导航/PWA/后端规格和 v16 几何合同复核最新 Markets、Home 与 App 改动；修复 Home/Markets 错误态仍错误暴露 `aria-busy` 的语义问题，并为交易对选择模式补齐五行等高加载骨架、同尺寸失败覆盖层、重试和真实空结果反馈；确认 App 桌面舞台继续使用本地化文案和 Vite 哈希图片，未改变根壳、导航、API 或路由合同。
+- 修改文件：`mobile/src/views/{Home,Markets}View.vue`、`mobile/src/styles/prototype-parity.css`、`mobile/tests/root-prototype-parity.test.ts`、`docs/superpowers/PROGRESS.md`
+- 验证结果：在 `mobile/` 依次执行 `npm run type-check` 通过；`npm test` 128/128 通过；`npm run build:pwa` 通过（2020 modules，129 条静态壳预缓存，3156.07 KiB），产物确认包含 `manifest.webmanifest`、`sw.js`、`workbox-5f44db27.js`、192/512/maskable/Apple PWA 图标，且无运行时金融请求缓存策略；`npm run build:tauri` 通过（2020 modules），最终 `dist/` 扫描确认不含 manifest、service worker、Workbox、`pwa/` 图标目录或 PWA HTML 元数据；仓库根 `git diff --check` 通过。两次 Vite 构建均报告机械导入原型 CSS 的三条绝对图片 URL 无法在编译期解析，但 App/RootHeader 的显式 Vite 导入已生成并引用对应哈希图片，产物图片存在，未形成运行时资源缺失。
+- 后续事项：按用户要求未执行 Android 构建或浏览器自动化，由主会话继续完成。
+
+## 2026-07-28 19:36 - 修复根页面 Geist 字体与装饰眉题
+
+- 完成内容：使用受检 Sites 产物中的 Latin 可变字体文件本地声明 `Geist` 与 `Geist Mono`，在 `.app-stage` 恢复 `--font-geist-sans`、`--font-geist-mono` 并统一根壳字体栈；保留 `PingFang SC`、`Hiragino Sans GB`、`Microsoft YaHei` 中文回退；将 zh-CN 根页面全部八个装饰眉题恢复为 `page.tsx` 的英文原文，未改动布局尺寸、路由或 API 行为。
+- 修改文件：`mobile/src/styles/prototype-parity.css`、`mobile/src/i18n/messages/zh-CN.ts`、`mobile/tests/root-prototype-parity.test.ts`、`docs/superpowers/PROGRESS.md`
+- 验证结果：在 `mobile/` 执行聚焦 `node --test --experimental-strip-types tests/root-prototype-parity.test.ts` 10/10 通过；`npm run type-check` 通过；`npm test` 130/130 通过；仓库根 `git diff --check` 通过。
+- 后续事项：无。
+
+## 2026-07-28 19:51 - 修复重点二级页面 76/20px 几何与消息五分类
+
+- 完成内容：将共享 `PageHeader` 重构为 Sites `PageShell` 的 `secondary-header` 三列结构，保留安全返回、props 与 action 插槽，并补齐 scene、strong 标题、context、始终存在且带 `data-empty` 的 action 轨及绿色 header rail；Seconds、Message Center、Loan、Security 接入 `secondary-view` / `secondary-content`，移除 scoped 的 14/16px 顶部内边距与窄屏横向覆盖，使 390x844 下 header 固定 76px、内容顶部固定 20px、Seconds 工作台从 y=96 开始；消息中心改为“全部/账户/资金/交易/公告”五个等宽分类，未读保留为独立工具开关，真实 `fetchNews(40)` 仅映射公告，其他分类使用明确空状态，不伪造消息且继续保留本机已读 ID。
+- 修改文件：`mobile/src/components/PageHeader.vue`、`mobile/src/views/{Seconds,MessageCenter,Loan,Security}View.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/src/styles/prototype-parity.css`、`mobile/tests/{priority-secondary-page-parity,account-message-views,ui-prototype-alignment-secondary,shell-navigation,pwa}.test.ts`、`docs/superpowers/PROGRESS.md`
+- 验证结果：在 `mobile/` 执行二级页面聚焦测试 33/33 通过；`npm run type-check` 通过；`npm test` 131/131 通过；仓库根 `git diff --check` 通过；自动化合同直接断言原型 76px header、20px content top、44/minmax/44 网格、四页共享类、五分类顺序与公告唯一真实来源。改动未触及根页面 64px 顶栏、84px 底栏、66px 普通导航轨或 48px Seconds 抬升按钮尺寸。
+- 后续事项：无。

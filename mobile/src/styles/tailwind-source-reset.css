@@ -1,0 +1,5 @@
+/*
+ * The checked-in Sites prototype imports Tailwind for its reset layer. The
+ * production Vue client already owns an equivalent reset in base.css, so Vite
+ * aliases that bare import to this intentionally empty compatibility file.
+ */

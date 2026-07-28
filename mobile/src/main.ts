@@ -6,6 +6,7 @@ import router from './router'
 import { isTauriRuntime } from './core/platform'
 import { initializePwa } from './pwa'
 import './styles/base.css'
+import './styles/prototype-parity.css'
 
 createApp(App).use(createPinia()).use(router).use(i18n).mount('#app')
 

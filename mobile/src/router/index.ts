@@ -54,7 +54,7 @@ const router = createRouter({
     { path: '/products/new-coins/records', name: 'new-coin-records', component: NewCoinRecordsView, meta: { showBottomNav: false, depth: 3, backFallback: '/products/new-coins' } },
     { path: '/products/new-coins/:symbol', name: 'new-coin-detail', component: NewCoinDetailView, props: true, meta: { showBottomNav: false, depth: 3, backFallback: '/products/new-coins' } },
     { path: '/products/prediction', name: 'prediction', component: PredictionView, meta: { showBottomNav: false, depth: 2, backFallback: '/products' } },
-    { path: '/seconds', alias: '/products/seconds', name: 'seconds', component: SecondsView, meta: { depth: 0 } },
+    { path: '/seconds', alias: '/products/seconds', name: 'seconds', component: SecondsView, meta: { showBottomNav: false, depth: 1, backFallback: '/products' } },
     { path: '/orders', name: 'orders', component: OrdersView, meta: { showBottomNav: false, depth: 1, backFallback: '/trade/BTC_USDT' } },
     { path: '/profile', name: 'profile', component: ProfileView, meta: { depth: 0 } },
     { path: '/profile/language', name: 'language', component: LanguageView, meta: { showBottomNav: false, depth: 1, backFallback: '/profile' } },

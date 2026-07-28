@@ -136,3 +136,37 @@ git diff --check
 ```
 
 **Language**: All code-spec documentation is written in English. User-facing mobile copy is defined in locale resources.
+
+## Production Prototype Snapshot Contract
+
+When the approved Sites prototype is promoted into `mobile/src/`, production
+must own a tracked, self-contained snapshot of every visual build input:
+
+- Keep the exact approved base CSS in `src/styles/prototype-base.css`. Layer
+  production-only API, accessibility, and runtime corrections after it in
+  `src/styles/prototype-parity.css`; do not import from the ignored
+  `mobile/sites-prototype/` workspace.
+- Copy required Geist fonts and HIPPO brand/stage images into tracked
+  `src/assets/` paths and resolve every CSS `url(...)` through those paths.
+  Tests must fail when a CSS asset reference does not exist or a production
+  source/test file references `sites-prototype`.
+- The snapshot controls geometry, typography, color, and static copy. Dynamic
+  market, account, security, loan, message, and order values still come from
+  the existing API/store contracts.
+- Loading and failed API states must preserve the prototype's dimensions while
+  showing skeletons, `--`, disabled controls, or explicit errors. Never fill
+  missing production data with prototype demo values.
+- Trading percentage controls accept display values `25`, `50`, `75`, and
+  `100`, but calculations must normalize them to `0.25`, `0.5`, `0.75`, and
+  `1`. Contract input/submission remains margin amount; displayed notional is
+  `marginAmount * leverage`.
+
+Required assertions:
+
+```text
+mobile/src and mobile/tests contain no sites-prototype dependency
+every CSS font/image URL resolves to a tracked production asset
+spot percentage derives from the exact base/quote wallet
+contract percentage derives from the exact matched margin wallet
+failed API loads expose no fabricated balances, scores, counts, or trends
+```

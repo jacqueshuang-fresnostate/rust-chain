@@ -1,0 +1,517 @@
+/*
+ * The production-owned prototype snapshot is the visual source of truth.
+ * Import it directly so geometry and tokens cannot drift through a rewrite.
+ */
+@import './prototype-base.css';
+
+@font-face {
+  font-family: 'Geist';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('../assets/fonts/geist-98bbbccb.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('../assets/fonts/geist-mono-013b2f2f.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+body,
+#app {
+  font-family: 'Geist', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+}
+
+.app-stage {
+  --font-geist-sans: 'Geist';
+  --font-geist-mono: 'Geist Mono';
+  --accent: var(--coral);
+  --accent-soft: color-mix(in srgb, var(--coral) 12%, var(--surface));
+  --background: var(--page);
+  --disabled: var(--muted);
+  --field-surface: var(--surface-2);
+  --focus: var(--cyan);
+  --focus-ring: color-mix(in srgb, var(--cyan) 22%, transparent);
+  --ink: var(--text);
+  --negative: var(--coral);
+  --negative-soft: color-mix(in srgb, var(--coral) 12%, var(--surface));
+  --on-accent: #07110c;
+  --on-dark-surface: #f4f5ef;
+  --on-negative: #ffffff;
+  --on-positive: #07110c;
+  --overlay: rgb(4 9 16 / 54%);
+  --positive: var(--green);
+  --positive-soft: color-mix(in srgb, var(--green) 12%, var(--surface));
+  --surface-elevated: var(--surface);
+  font-family: var(--font-geist-sans), 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+}
+
+.mobile-canvas.app-frame {
+  min-height: 100dvh;
+  overflow-x: clip;
+  position: relative;
+}
+
+/*
+ * The application contract uses a 66px minimum rail for every root action.
+ * Keep this production-only correction after the prototype import so base.css
+ * and older prototype snapshots cannot shrink the touch target.
+ */
+.bottom-nav button {
+  min-height: 66px;
+}
+
+.app-route-host {
+  min-height: calc(100dvh - 64px);
+  position: relative;
+}
+
+.app-route-layer {
+  min-width: 0;
+  width: 100%;
+}
+
+/*
+ * Existing secondary pages keep their legacy scoped token meaning until their
+ * own parity slice migrates them to the prototype secondary DOM.
+ */
+.page {
+  --muted-strong: var(--text);
+  --soft: var(--surface-2);
+  background: var(--page);
+  color: var(--text);
+}
+
+.secondary-view.page {
+  background-image: none;
+  padding-block: 0;
+}
+
+.prototype-root-view {
+  min-height: calc(100svh - 64px);
+}
+
+.prototype-root-view .numeric {
+  font-family: var(--font-geist-mono), var(--data-font);
+}
+
+.prototype-root-view .market-error {
+  margin: 0 16px;
+}
+
+.prototype-root-view .market-error,
+.prototype-root-view .root-inline-state {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  min-height: 52px;
+  padding: 8px 0;
+  color: var(--coral);
+  border-bottom: 1px solid var(--line);
+  font-size: 10px;
+}
+
+.prototype-root-view .market-error button,
+.prototype-root-view .root-inline-state button {
+  min-height: 44px;
+  padding: 0 10px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+
+.prototype-root-view .coin-orbit {
+  overflow: hidden;
+}
+
+.prototype-root-view .coin-orbit > .asset-mark {
+  border: 0;
+  box-shadow: none;
+  height: 100% !important;
+  width: 100% !important;
+}
+
+.prototype-root-view .coin-orbit img {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.prototype-root-view .chart-panel__canvas,
+.prototype-root-view .chart-panel__canvas > * {
+  min-height: 0;
+  width: 100%;
+}
+
+.prototype-root-view .chart-panel__canvas {
+  bottom: 0;
+  height: 203px;
+  left: 0;
+  position: absolute;
+  right: 0;
+}
+
+.prototype-root-view .chart-panel__canvas canvas {
+  display: block;
+}
+
+.prototype-root-view .trade-feedback {
+  min-height: 28px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.prototype-root-view .trade-feedback.positive {
+  color: var(--green);
+}
+
+.prototype-root-view .trade-feedback.negative {
+  color: var(--coral);
+}
+
+.prototype-root-view .available-row > button {
+  align-items: center;
+  background: transparent;
+  color: var(--text);
+  display: inline-flex;
+  font-size: 10px;
+  font-weight: 700;
+  gap: 5px;
+  justify-content: flex-end;
+  min-height: 44px;
+  padding: 0;
+}
+
+.prototype-root-view .root-skeleton,
+.market-picker-list .root-skeleton {
+  color: transparent !important;
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 20%,
+    var(--surface-3) 48%,
+    var(--surface-2) 76%
+  );
+  background-size: 220% 100%;
+  animation: prototype-root-skeleton 1.2s linear infinite;
+}
+
+.prototype-root-view .root-market-reserved {
+  position: relative;
+}
+
+.prototype-root-view .root-market-reserved-state {
+  align-content: center;
+  align-items: center;
+  background: color-mix(in srgb, var(--page) 86%, transparent);
+  color: var(--coral);
+  display: grid;
+  gap: 12px;
+  inset: 0;
+  justify-items: center;
+  padding: 24px;
+  position: absolute;
+  text-align: center;
+  z-index: 1;
+}
+
+.prototype-root-view .root-market-reserved-state span {
+  font-size: 11px;
+  line-height: 1.5;
+  max-width: 240px;
+}
+
+.prototype-root-view .root-market-reserved-state button {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  min-height: 44px;
+  padding: 0 14px;
+}
+
+.prototype-root-view .market-row--skeleton {
+  pointer-events: none;
+}
+
+.prototype-root-view .root-market-skeleton-dot {
+  border-radius: 50%;
+  display: block;
+  height: 14px;
+  width: 14px;
+}
+
+.prototype-root-view .root-market-skeleton-block {
+  border-radius: 2px;
+  display: block;
+  height: 8px;
+  width: 72%;
+}
+
+.prototype-root-view .root-market-skeleton-block.compact {
+  height: 6px;
+  width: 48%;
+}
+
+.prototype-root-view .market-row--skeleton .sparkline {
+  border-radius: 3px;
+}
+
+.prototype-root-view .market-row--skeleton .market-price .root-market-skeleton-block {
+  justify-self: end;
+}
+
+.prototype-root-view .home-market-skeleton-row {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 1fr 78px;
+  min-height: 70px;
+}
+
+.prototype-root-view .home-market-skeleton-row .home-market-name > span:last-child,
+.prototype-root-view .home-market-skeleton-row .home-market-price {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.prototype-root-view .home-market-skeleton-row .home-market-price {
+  justify-items: end;
+}
+
+.prototype-root-view .home-market-skeleton-row .market-change {
+  display: block;
+  min-height: 32px;
+}
+
+.prototype-root-view .root-market-empty-state {
+  align-content: center;
+  color: var(--muted);
+  display: grid;
+  gap: 9px;
+  justify-items: center;
+  min-height: 350px;
+  text-align: center;
+}
+
+.prototype-root-view .root-market-empty-state strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.prototype-root-view .root-market-empty-state span {
+  font-size: 10px;
+}
+
+.prototype-root-view .sparkline.neutral {
+  color: var(--muted) !important;
+  opacity: 0.56;
+}
+
+.market-picker-search {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 20px minmax(0, 1fr);
+  margin: 18px 0 10px;
+}
+
+.market-picker-search input {
+  background: transparent;
+  border: 0;
+  min-height: 44px;
+  outline: 0;
+}
+
+.market-picker-list {
+  border-top: 1px solid var(--line);
+  display: grid;
+}
+
+.market-picker-list--reserved {
+  position: relative;
+}
+
+.market-picker-list > button {
+  align-items: center;
+  background: transparent;
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  min-height: 68px;
+  padding: 8px 0;
+  text-align: left;
+}
+
+.market-picker-list > button > span {
+  display: grid;
+  gap: 3px;
+}
+
+.market-picker-list small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.market-picker-skeleton-row {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  min-height: 68px;
+  padding: 8px 0;
+}
+
+.market-picker-skeleton-mark {
+  border-radius: 50%;
+  display: block;
+  height: 34px;
+  width: 34px;
+}
+
+.market-picker-skeleton-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.market-picker-skeleton-line,
+.market-picker-skeleton-price {
+  border-radius: 2px;
+  display: block;
+  height: 8px;
+  width: 112px;
+}
+
+.market-picker-skeleton-line.compact {
+  height: 6px;
+  width: 76px;
+}
+
+.market-picker-skeleton-price {
+  width: 64px;
+}
+
+.market-picker-state {
+  align-content: center;
+  align-items: center;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: var(--negative);
+  display: grid;
+  gap: 12px;
+  inset: 0;
+  justify-items: center;
+  padding: 24px;
+  position: absolute;
+  text-align: center;
+  z-index: 1;
+}
+
+.market-picker-state span {
+  font-size: 12px;
+  line-height: 1.5;
+  max-width: 240px;
+}
+
+.market-picker-state button {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  min-height: 44px;
+  padding: 0 14px;
+}
+
+.prototype-root-view .avatar-input {
+  display: none;
+}
+
+.prototype-root-view .avatar {
+  overflow: hidden;
+}
+
+.prototype-root-view .avatar img {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.prototype-root-view .avatar > i {
+  align-items: center;
+  background: var(--page);
+  border-radius: 50%;
+  bottom: -1px;
+  color: var(--text);
+  display: flex;
+  height: 22px;
+  justify-content: center;
+  position: absolute;
+  right: -1px;
+  width: 22px;
+}
+
+.prototype-root-view .asset-hero-state {
+  align-content: center;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  display: grid;
+  gap: 10px;
+  inset: 0;
+  justify-items: center;
+  padding: 18px;
+  position: absolute;
+  text-align: center;
+  z-index: 2;
+}
+
+.prototype-root-view .asset-hero-state span {
+  color: var(--negative);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.prototype-root-view .asset-hero-state button {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  min-height: 44px;
+  padding: 0 14px;
+}
+
+.prototype-root-view .profile-identity-state {
+  align-content: center;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  display: grid;
+  gap: 9px;
+  inset: 0;
+  justify-items: center;
+  padding: 16px;
+  position: absolute;
+  text-align: center;
+  z-index: 2;
+}
+
+.prototype-root-view .profile-identity-state span {
+  color: var(--negative);
+  font-size: 10px;
+}
+
+.prototype-root-view .profile-identity-state button {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  min-height: 44px;
+  padding: 0 14px;
+}
+
+@keyframes prototype-root-skeleton {
+  to {
+    background-position: -220% 0;
+  }
+}

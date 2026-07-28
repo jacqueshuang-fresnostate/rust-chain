@@ -71,16 +71,17 @@ test('消息、借贷与安全工作台使用共享原型网格和真实业务�
   }
 
   assert.match(sources.messageCenter, /messages\.value = await fetchNews\(40\)/)
-  assert.match(sources.messageCenter, /message-summary__metrics/)
-  assert.match(sources.messageCenter, /var\(--signal-coral\)/)
+  assert.match(sources.messageCenter, /class="inbox-summary"/)
+  assert.match(sources.messageCenter, /var\(--signal-blue\)/)
 
   assert.match(sources.loan, /collateralProductCount/)
   assert.match(sources.loan, /creditProductCount/)
   assert.match(sources.loan, /session\.isAuthenticated \? orders\.length : '--'/)
-  assert.match(sources.loan, /loan-overview__metrics/)
+  assert.match(sources.loan, /class="borrowing-overview"/)
 
   assert.match(sources.security, /const protectionCount = computed/)
   assert.match(sources.security, /profile\.value\?\.emailVerified/)
   assert.match(sources.security, /twoFactor\.value\?\.totpEnabled/)
-  assert.match(sources.security, /security-overview__checks/)
+  assert.match(sources.security, /class="protection-overview"/)
+  assert.match(sources.security, /class="security-checklist"/)
 })

@@ -1,19 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import {
   ArrowDown,
   ArrowUp,
   CheckCircle2,
   CircleAlert,
   Clock3,
-  Gauge,
   LoaderCircle,
   RefreshCw,
   X,
 } from 'lucide-vue-next'
-import AssetMark from '@/components/AssetMark.vue'
-import LoginRequiredState from '@/components/LoginRequiredState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
 import {
@@ -32,6 +30,7 @@ import type { WalletAccount } from '@/core/types'
 
 const session = useSessionStore()
 const marketStore = useMarketStore()
+const router = useRouter()
 const { t } = useI18n()
 const products = ref<SecondsProduct[]>([])
 const orders = ref<SecondsOrder[]>([])
@@ -58,6 +57,7 @@ const account = computed(() => accounts.value.find((item) => item.assetId === se
 const selectedTicker = computed(() => marketStore.tickerFor(selected.value?.symbol || ''))
 const amountNumber = computed(() => Number(amount.value || 0))
 const payoutRate = computed(() => cycle.value?.payoutRate || 0)
+const payoutCoefficient = computed(() => 1 + payoutRate.value)
 const estimatedPayout = computed(() => (
   Number.isFinite(amountNumber.value) && amountNumber.value > 0
     ? amountNumber.value * (1 + payoutRate.value)
@@ -86,6 +86,9 @@ const quickAmounts = computed(() => {
     .filter((value) => Number.isFinite(value) && value >= activeCycle.minStake && value <= upperBound)
     .slice(0, 4)
 })
+const quickAmountSlots = computed(() => (
+  quickAmounts.value.length ? quickAmounts.value : [0, 0, 0, 0]
+))
 
 async function load(): Promise<void> {
   loading.value = true
@@ -121,6 +124,12 @@ function selectProduct(product: SecondsProduct): void {
   success.value = ''
 }
 
+function selectProductFromEvent(event: Event): void {
+  const productId = Number((event.target as HTMLSelectElement).value)
+  const product = products.value.find((item) => item.id === productId)
+  if (product) selectProduct(product)
+}
+
 function selectCycle(cycleId: number): void {
   selectedCycleId.value = cycleId
   amount.value = String(cycle.value?.minStake || '')
@@ -142,7 +151,7 @@ function setAmount(value: string | number): void {
 
 function reviewOrder(): void {
   if (!session.isAuthenticated) {
-    error.value = t('seconds.loginDescription')
+    void router.push({ name: 'login', query: { redirect: '/seconds' } })
     return
   }
   if (!selected.value || !cycle.value || !valid.value) {
@@ -260,11 +269,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="page page--plain seconds-page">
+  <main class="secondary-view page page--plain page--prototype-grid seconds-page">
     <PageHeader
-      :eyebrow="t('trade.category')"
+      :back="true"
+      :eyebrow="t('seconds.scene')"
       :title="t('seconds.title')"
-      :subtitle="t('seconds.introDescription')"
+      :subtitle="t('seconds.context')"
     >
       <template #actions>
         <button
@@ -279,304 +289,262 @@ onBeforeUnmount(() => {
       </template>
     </PageHeader>
 
-    <div class="page-content seconds-content">
-      <LoginRequiredState
-        v-if="!session.isAuthenticated"
-        :description="t('seconds.loginDescription')"
-      />
-
-      <div v-if="error" class="seconds-message seconds-message--error" role="alert">
-          <CircleAlert :size="18" />
-          <span>{{ error }}</span>
-          <button
-            v-if="!confirmOpen"
-            type="button"
-            :aria-label="t('common.retry')"
-            @click="load"
-          >
-            <RefreshCw :size="17" />
-          </button>
-        </div>
-        <div
-          v-if="success"
-          class="seconds-message seconds-message--success"
-          data-session-feedback="created"
-          role="status"
+    <div class="secondary-content page-content seconds-content">
+      <section
+        class="seconds-workspace"
+        data-seconds-workspace="live"
+        :class="{ 'seconds-guest': !session.isAuthenticated }"
+      >
+        <section
+          class="seconds-market-board"
+          :data-seconds-market="selected ? 'live' : loading ? 'loading' : 'empty'"
+          :aria-busy="loading || marketStore.loading"
         >
-          <CheckCircle2 :size="18" />
-          <span>{{ success }}</span>
-        </div>
-
-        <div v-if="loading" class="seconds-loading" aria-live="polite">
-          <LoaderCircle :size="24" class="spin" />
-          <span>{{ t('seconds.loading') }}</span>
-        </div>
-
-        <template v-else>
-          <section
-            v-if="selected"
-            class="seconds-market-board"
-            data-seconds-market="live"
-            :aria-busy="marketStore.loading"
-          >
-            <header>
-              <div>
-                <span>{{ t('seconds.title') }}</span>
-                <strong>{{ selected.symbol }}</strong>
-              </div>
-              <div class="seconds-rate">
-                <Gauge :size="17" />
-                <span>{{ t('seconds.highest', { rate: highestRate(selected) }) }}</span>
-              </div>
-            </header>
-            <div class="seconds-reference">
-              <span>{{ t('marketDetail.latestPrice') }}</span>
-              <strong>{{ selectedTicker ? formatPrice(selectedTicker.lastPrice) : '--' }}</strong>
-              <small>
-                {{ selectedTicker ? t('common.liveData') : t('common.marketUnavailable') }}
-              </small>
+          <header>
+            <div>
+              <span>{{ t('seconds.workbenchTitle') }}</span>
+              <strong>{{ selected?.symbol || '--/--' }}</strong>
             </div>
-            <dl class="seconds-market-facts">
-              <div>
-                <dt>{{ t('seconds.payoutRate') }}</dt>
-                <dd>{{ (payoutRate * 100).toFixed(2) }}%</dd>
-              </div>
-              <div>
-                <dt>{{ t('seconds.term') }}</dt>
-                <dd>{{ t('seconds.duration', { seconds: cycle?.durationSeconds || 0 }) }}</dd>
-              </div>
-              <div>
-                <dt>{{ t('common.available') }}</dt>
-                <dd>{{ formatAmount(account?.available) }} {{ selected.stakeAssetSymbol }}</dd>
-              </div>
-            </dl>
-          </section>
+            <span class="seconds-market-change">
+              <ArrowUp v-if="(selectedTicker?.changePercent || 0) >= 0" :size="15" />
+              <ArrowDown v-else :size="15" />
+              {{ selectedTicker ? `${selectedTicker.changePercent >= 0 ? '+' : ''}${selectedTicker.changePercent.toFixed(2)}%` : '--' }}
+            </span>
+          </header>
 
-          <div
-            v-if="products.length"
-            class="seconds-products"
-            role="group"
-            :aria-label="t('seconds.title')"
-          >
-            <button
-              v-for="product in products"
-              :key="product.id"
-              type="button"
-              :class="{ 'is-active': selected?.id === product.id }"
-              :aria-pressed="selected?.id === product.id"
-              @click="selectProduct(product)"
-            >
-              <AssetMark
-                :symbol="product.symbol.split(/[\/_-]/)[0] || product.symbol"
-                :size="30"
-              />
-              <span>
-                <strong>{{ product.symbol }}</strong>
-                <small>{{ t('seconds.highest', { rate: highestRate(product) }) }}</small>
-              </span>
-            </button>
+          <div class="seconds-reference-price">
+            <span>{{ t('seconds.referencePrice') }}</span>
+            <strong>{{ selectedTicker ? formatPrice(selectedTicker.lastPrice) : '--' }}</strong>
+            <small>
+              {{ selected
+                ? `${selected.stakeAssetSymbol} · ${selectedTicker ? t('common.liveData') : t('common.marketUnavailable')}`
+                : '--' }}
+            </small>
           </div>
 
-          <section
-            v-if="!products.length"
-            class="seconds-market-board seconds-market-board--empty"
-            data-seconds-market="empty"
+          <dl class="seconds-round-context">
+            <div>
+              <dt>{{ t('seconds.currentRound') }}</dt>
+              <dd>--</dd>
+            </div>
+            <div>
+              <dt>{{ t('seconds.settlementWindow') }}</dt>
+              <dd>{{ cycle ? t('seconds.duration', { seconds: cycle.durationSeconds }) : '--' }}</dd>
+            </div>
+            <div>
+              <dt>{{ t('seconds.payoutCoefficient') }}</dt>
+              <dd>{{ cycle ? `${payoutCoefficient.toFixed(2)}x` : '--' }}</dd>
+            </div>
+          </dl>
+        </section>
+
+        <label class="field seconds-pair-field" :data-field-state="selected ? 'complete' : 'idle'">
+          <span>{{ t('marketDetail.market') }}</span>
+          <select
+            :value="selected?.id || ''"
+            :disabled="loading || !products.length"
+            @change="selectProductFromEvent"
           >
-            <header>
-              <div>
-                <span>{{ t('seconds.title') }}</span>
-                <strong>--/--</strong>
-              </div>
-              <div class="seconds-rate">
-                <Gauge :size="17" />
-                <span>{{ t('common.marketUnavailable') }}</span>
-              </div>
-            </header>
-            <div class="seconds-reference">
-              <span>{{ t('marketDetail.latestPrice') }}</span>
-              <strong>--</strong>
-              <small>{{ t('common.marketUnavailable') }}</small>
-            </div>
-            <dl class="seconds-market-facts">
-              <div>
-                <dt>{{ t('seconds.payoutRate') }}</dt>
-                <dd>--</dd>
-              </div>
-              <div>
-                <dt>{{ t('seconds.term') }}</dt>
-                <dd>--</dd>
-              </div>
-              <div>
-                <dt>{{ t('common.available') }}</dt>
-                <dd>--</dd>
-              </div>
-            </dl>
-            <div class="seconds-empty">
-              <Gauge :size="24" />
-              <span>{{ t('seconds.noProducts') }}</span>
-            </div>
-          </section>
+            <option v-if="!products.length" value="">{{ loading ? t('seconds.loading') : t('seconds.noProducts') }}</option>
+            <option v-for="product in products" :key="product.id" :value="product.id">
+              {{ product.symbol }} · {{ t('seconds.highest', { rate: highestRate(product) }) }}
+            </option>
+          </select>
+        </label>
 
-          <template v-if="selected">
-            <section class="seconds-control-group">
-              <div class="seconds-control-label">
-                <strong>{{ t('seconds.direction') }}</strong>
-                <small>{{ t('seconds.introDescription') }}</small>
-              </div>
-              <div class="seconds-direction-grid" :aria-label="t('seconds.direction')">
-                <button
-                  type="button"
-                  class="is-up"
-                  :class="{ 'is-active': direction === 'up' }"
-                  :aria-pressed="direction === 'up'"
-                  @click="setDirection('up')"
-                >
-                  <ArrowUp :size="18" />
-                  <span>{{ t('seconds.bullish') }}</span>
-                </button>
-                <button
-                  type="button"
-                  class="is-down"
-                  :class="{ 'is-active': direction === 'down' }"
-                  :aria-pressed="direction === 'down'"
-                  @click="setDirection('down')"
-                >
-                  <ArrowDown :size="18" />
-                  <span>{{ t('seconds.bearish') }}</span>
-                </button>
-              </div>
-            </section>
-
-            <section class="seconds-control-group">
-              <div class="seconds-control-label">
-                <strong>{{ t('seconds.term') }}</strong>
-                <small>{{ t('seconds.settlementSummary', { asset: selected.stakeAssetSymbol, count: selected.cycles.length }) }}</small>
-              </div>
-              <div class="seconds-duration-grid" :aria-label="t('seconds.term')">
-                <button
-                  v-for="item in selected.cycles"
-                  :key="item.id"
-                  type="button"
-                  :class="{ 'is-active': cycle?.id === item.id }"
-                  :aria-pressed="cycle?.id === item.id"
-                  @click="selectCycle(item.id)"
-                >
-                  <Clock3 :size="16" />
-                  <span>{{ t('seconds.duration', { seconds: item.durationSeconds }) }}</span>
-                  <small>{{ (item.payoutRate * 100).toFixed(0) }}%</small>
-                </button>
-              </div>
-            </section>
-
-            <section class="seconds-control-group">
-              <label class="seconds-amount-field">
-                <span>{{ t('seconds.stakeAmount') }}</span>
-                <div>
-                  <input
-                    v-model="amount"
-                    class="numeric"
-                    inputmode="decimal"
-                    :aria-invalid="Boolean(amount) && !valid"
-                    @input="setAmount(amount)"
-                  />
-                  <b>{{ selected.stakeAssetSymbol }}</b>
-                </div>
-              </label>
-              <div v-if="quickAmounts.length" class="seconds-amount-presets">
-                <button
-                  v-for="value in quickAmounts"
-                  :key="value"
-                  type="button"
-                  :aria-pressed="amountNumber === value"
-                  @click="setAmount(value)"
-                >
-                  {{ formatAmount(value) }}
-                </button>
-              </div>
-            </section>
-
-            <dl class="seconds-order-summary">
-              <div>
-                <dt>{{ t('seconds.payoutRate') }}</dt>
-                <dd class="seconds-payout">
-                  <strong>{{ (payoutRate * 100).toFixed(2) }}%</strong>
-                  <small>{{ formatAmount(estimatedPayout) }} {{ selected.stakeAssetSymbol }}</small>
-                </dd>
-              </div>
-              <div>
-                <dt>{{ t('common.available') }}</dt>
-                <dd>{{ formatAmount(account?.available) }} {{ selected.stakeAssetSymbol }}</dd>
-              </div>
-              <div>
-                <dt>{{ t('seconds.term') }}</dt>
-                <dd>{{ t('seconds.duration', { seconds: cycle?.durationSeconds || 0 }) }}</dd>
-              </div>
-            </dl>
-
-            <p class="seconds-balance">
-              {{ t('seconds.balanceMinimum', {
-                available: formatAmount(account?.available),
-                asset: selected.stakeAssetSymbol,
-                minimum: formatAmount(cycle?.minStake),
-              }) }}
-            </p>
-
+        <section class="seconds-control-group" :aria-labelledby="'seconds-direction-label'">
+          <div class="seconds-control-label">
+            <span id="seconds-direction-label">{{ t('seconds.direction') }}</span>
+            <small>{{ t('seconds.directionHelper') }}</small>
+          </div>
+          <div class="seconds-direction-grid" role="group" :aria-label="t('seconds.direction')">
             <button
-              ref="reviewButton"
-              class="button button--primary button--full seconds-submit"
               type="button"
-              :disabled="submitting"
-              @click="reviewOrder"
+              class="up"
+              :class="{ active: direction === 'up' }"
+              :aria-pressed="direction === 'up'"
+              :disabled="loading || !selected"
+              @click="setDirection('up')"
             >
-              {{ t('seconds.confirmOrder') }}
+              <ArrowUp :size="18" />
+              <span>{{ t('seconds.bullish') }}</span>
             </button>
-          </template>
+            <button
+              type="button"
+              class="down"
+              :class="{ active: direction === 'down' }"
+              :aria-pressed="direction === 'down'"
+              :disabled="loading || !selected"
+              @click="setDirection('down')"
+            >
+              <ArrowDown :size="18" />
+              <span>{{ t('seconds.bearish') }}</span>
+            </button>
+          </div>
+        </section>
 
-          <section class="seconds-orders">
-            <div class="section-heading">
-              <span>{{ t('seconds.myOrders') }}</span>
-              <b>{{ orders.length }}</b>
-            </div>
-            <div v-if="orders.length" class="seconds-order-list">
-              <article v-for="order in orders" :key="order.id">
-                <div>
-                  <strong>
-                    {{ order.symbol }} ·
-                    {{ t(order.direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }}
-                  </strong>
-                  <small>
-                    {{ formatDateTime(order.createdAt) }} ·
-                    {{ t('seconds.duration', { seconds: order.durationSeconds }) }}
-                  </small>
-                </div>
-                <span>
-                  <b>{{ formatAmount(order.stakeAmount) }} {{ order.stakeAssetSymbol }}</b>
-                  <small :class="statusTone(order.status)">{{ statusLabel(order.status) }}</small>
-                </span>
-              </article>
-            </div>
-            <div v-else class="seconds-empty">
-              <Clock3 :size="22" />
-              <span>{{ t('seconds.noOrders') }}</span>
-            </div>
-          </section>
-      </template>
+        <section class="seconds-control-group" :aria-labelledby="'seconds-duration-label'">
+          <div class="seconds-control-label">
+            <span id="seconds-duration-label">{{ t('seconds.term') }}</span>
+            <small>{{ t('seconds.durationHelper') }}</small>
+          </div>
+          <div class="seconds-duration-grid" role="group" :aria-label="t('seconds.term')">
+            <template v-if="selected?.cycles.length">
+              <button
+                v-for="item in selected.cycles"
+                :key="item.id"
+                type="button"
+                :class="{ active: cycle?.id === item.id }"
+                :aria-pressed="cycle?.id === item.id"
+                @click="selectCycle(item.id)"
+              >
+                <Clock3 :size="16" />
+                <span>{{ t('seconds.duration', { seconds: item.durationSeconds }) }}</span>
+              </button>
+            </template>
+            <template v-else>
+              <button v-for="slot in 3" :key="slot" type="button" disabled>
+                <Clock3 :size="16" />
+                <span>--</span>
+              </button>
+            </template>
+          </div>
+        </section>
+
+        <label
+          class="field seconds-amount-field"
+          :data-field-state="amount && !valid ? 'invalid' : amount && valid ? 'complete' : 'idle'"
+        >
+          <span>{{ t('seconds.stakeAmount') }}</span>
+          <div>
+            <input
+              v-model="amount"
+              class="numeric"
+              inputmode="decimal"
+              :disabled="loading || !selected"
+              :aria-invalid="Boolean(amount) && !valid"
+              @input="setAmount(amount)"
+            />
+            <b>{{ selected?.stakeAssetSymbol || '--' }}</b>
+          </div>
+        </label>
+
+        <div class="seconds-amount-presets" role="group" :aria-label="t('seconds.stakeAmount')">
+          <button
+            v-for="(value, index) in quickAmountSlots"
+            :key="`${value}-${index}`"
+            type="button"
+            :aria-pressed="value > 0 && amountNumber === value"
+            :disabled="loading || !selected || value <= 0"
+            @click="setAmount(value)"
+          >
+            {{ value > 0 ? formatAmount(value) : '--' }}
+          </button>
+        </div>
+
+        <dl class="seconds-order-summary">
+          <div>
+            <dt>{{ t('seconds.estimatedPayout') }}</dt>
+            <dd>{{ selected ? `${formatAmount(estimatedPayout)} ${selected.stakeAssetSymbol}` : '--' }}</dd>
+          </div>
+          <div>
+            <dt>{{ t('seconds.availableBalance') }}</dt>
+            <dd>
+              {{ selected && session.isAuthenticated && account
+                ? `${formatAmount(account.available)} ${selected.stakeAssetSymbol}`
+                : '--' }}
+            </dd>
+          </div>
+          <div>
+            <dt>{{ t('seconds.localResult') }}</dt>
+            <dd>{{ success ? t('seconds.resultConfirmed') : t('seconds.resultPending') }}</dd>
+          </div>
+        </dl>
+
+        <p v-if="selected" class="seconds-balance">
+          {{ t('seconds.balanceMinimum', {
+            available: session.isAuthenticated && account ? formatAmount(account.available) : '--',
+            asset: selected.stakeAssetSymbol,
+            minimum: formatAmount(cycle?.minStake),
+          }) }}
+        </p>
+
+        <div class="seconds-feedback" aria-live="polite">
+          <div v-if="error" class="seconds-message seconds-message--error" role="alert">
+            <CircleAlert :size="18" />
+            <span>{{ error }}</span>
+            <button type="button" :aria-label="t('common.retry')" @click="load">
+              <RefreshCw :size="17" />
+            </button>
+          </div>
+          <div
+            v-else-if="success"
+            class="seconds-message seconds-message--success"
+            data-session-feedback="created"
+            role="status"
+          >
+            <CheckCircle2 :size="18" />
+            <span>{{ success }}</span>
+          </div>
+          <span v-else-if="loading">
+            <LoaderCircle :size="15" class="spin" />
+            {{ t('seconds.loading') }}
+          </span>
+          <span v-else-if="!session.isAuthenticated">{{ t('seconds.loginDescription') }}</span>
+          <span v-else>{{ t('seconds.introDescription') }}</span>
+        </div>
+
+        <button
+          ref="reviewButton"
+          class="button button--primary button--full seconds-submit"
+          type="button"
+          :disabled="submitting || loading || !selected"
+          @click="reviewOrder"
+        >
+          {{ t('seconds.confirmOrder') }}
+        </button>
+
+        <section class="seconds-session-records seconds-orders" :aria-label="t('seconds.myOrders')">
+          <h2 class="group-title">{{ t('seconds.myOrders') }} · {{ session.isAuthenticated ? orders.length : '--' }}</h2>
+          <template v-if="orders.length">
+            <article v-for="order in orders.slice(0, 3)" :key="order.id">
+              <div>
+                <strong>
+                  {{ order.symbol }} ·
+                  {{ t(order.direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }}
+                </strong>
+                <span :class="statusTone(order.status)">{{ statusLabel(order.status) }}</span>
+              </div>
+              <p>
+                {{ formatAmount(order.stakeAmount) }} {{ order.stakeAssetSymbol }} ·
+                {{ t('seconds.duration', { seconds: order.durationSeconds }) }} ·
+                {{ formatDateTime(order.createdAt) }}
+              </p>
+            </article>
+          </template>
+          <p v-else>{{ session.isAuthenticated ? t('seconds.noOrders') : t('seconds.loginDescription') }}</p>
+        </section>
+      </section>
     </div>
 
     <div
       v-if="confirmOpen && selected && cycle"
-      class="seconds-mask"
+      class="confirmation-layer seconds-mask"
       @click.self="closeConfirm"
     >
       <section
         ref="confirmDialog"
-        class="seconds-dialog"
+        class="confirmation-sheet seconds-dialog"
         role="dialog"
         aria-modal="true"
+        :aria-busy="submitting"
         aria-labelledby="seconds-confirm-title"
+        aria-describedby="seconds-confirm-summary"
+        tabindex="-1"
         @keydown="trapDialogFocus"
       >
         <header>
+          <span class="confirmation-icon"><CheckCircle2 :size="20" /></span>
           <div>
             <strong id="seconds-confirm-title">{{ t('seconds.confirmOrder') }}</strong>
             <small>{{ selected.symbol }} · {{ t('seconds.settledIn', { asset: selected.stakeAssetSymbol }) }}</small>
@@ -593,7 +561,12 @@ onBeforeUnmount(() => {
           </button>
         </header>
 
-        <dl>
+        <p id="seconds-confirm-summary">
+          {{ selected.symbol }} · {{ t(direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }} ·
+          {{ formatAmount(amountNumber) }} {{ selected.stakeAssetSymbol }}
+        </p>
+
+        <dl class="confirmation-detail">
           <div>
             <dt>{{ t('seconds.direction') }}</dt>
             <dd>{{ t(direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }}</dd>
@@ -620,7 +593,7 @@ onBeforeUnmount(() => {
         </dl>
 
         <p v-if="error" class="dialog-feedback" role="alert">{{ error }}</p>
-        <div class="dialog-actions">
+        <div class="confirmation-actions dialog-actions">
           <button
             type="button"
             class="button button--secondary"
@@ -631,7 +604,7 @@ onBeforeUnmount(() => {
           </button>
           <button
             type="button"
-            class="button button--primary"
+            class="button button--primary confirmation-primary"
             :disabled="submitting"
             :aria-busy="submitting"
             @click="submit"
@@ -645,17 +618,14 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.seconds-page {
-  background: var(--surface);
-  min-width: 0;
-}
-
-.seconds-content {
+.seconds-workspace {
   display: grid;
   gap: 16px;
   min-width: 0;
-  padding-bottom: calc(28px + env(safe-area-inset-bottom));
-  padding-top: 14px;
+}
+
+.seconds-guest {
+  align-content: start;
 }
 
 .seconds-message {
@@ -718,6 +688,16 @@ onBeforeUnmount(() => {
   position: relative;
 }
 
+.seconds-market-board::after {
+  bottom: 9px;
+  color: color-mix(in srgb, var(--ink) 25%, transparent);
+  content: 'LOCAL / SHORT CYCLE';
+  font-size: 8px;
+  pointer-events: none;
+  position: absolute;
+  right: 12px;
+}
+
 .seconds-market-board header {
   align-items: flex-start;
   display: flex;
@@ -727,16 +707,16 @@ onBeforeUnmount(() => {
 }
 
 .seconds-market-board header > div:first-child,
-.seconds-reference {
+.seconds-reference-price {
   display: grid;
   gap: 3px;
   min-width: 0;
 }
 
 .seconds-market-board header span,
-.seconds-reference > span,
-.seconds-reference small,
-.seconds-market-facts dt {
+.seconds-reference-price > span,
+.seconds-reference-price small,
+.seconds-round-context dt {
   color: var(--muted);
   font-size: 10px;
 }
@@ -745,20 +725,21 @@ onBeforeUnmount(() => {
   font-size: 15px;
 }
 
-.seconds-rate {
+.seconds-market-change {
   align-items: center;
   color: var(--positive);
   display: inline-flex;
+  font-variant-numeric: tabular-nums;
   gap: 5px;
   min-height: 32px;
 }
 
-.seconds-rate span {
-  color: inherit !important;
+.seconds-market-change {
+  color: var(--positive) !important;
   font-weight: 750;
 }
 
-.seconds-reference strong {
+.seconds-reference-price strong {
   color: var(--ink);
   font-size: 36px;
   font-variant-numeric: tabular-nums;
@@ -766,12 +747,12 @@ onBeforeUnmount(() => {
   overflow-wrap: anywhere;
 }
 
-.seconds-reference small {
+.seconds-reference-price small {
   line-height: 1.45;
   margin-top: 3px;
 }
 
-.seconds-market-facts,
+.seconds-round-context,
 .seconds-order-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -779,7 +760,7 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-.seconds-market-facts > div,
+.seconds-round-context > div,
 .seconds-order-summary > div {
   border-right: 1px solid var(--line);
   display: grid;
@@ -788,16 +769,16 @@ onBeforeUnmount(() => {
   padding: 10px 9px;
 }
 
-.seconds-market-facts > div {
+.seconds-round-context > div {
   border-block: 1px solid var(--line);
 }
 
-.seconds-market-facts > div:last-child,
+.seconds-round-context > div:last-child,
 .seconds-order-summary > div:last-child {
   border-right: 0;
 }
 
-.seconds-market-facts dd,
+.seconds-round-context dd,
 .seconds-order-summary dd {
   font-size: 10px;
   font-variant-numeric: tabular-nums;
@@ -883,8 +864,9 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-.seconds-control-label strong {
+.seconds-control-label span {
   font-size: 12px;
+  font-weight: 700;
 }
 
 .seconds-control-label small {
@@ -941,21 +923,21 @@ onBeforeUnmount(() => {
   grid-column: 1 / -1;
 }
 
-.seconds-direction-grid .is-up.is-active {
+.seconds-direction-grid .up.active {
   background: color-mix(in srgb, var(--positive) 11%, var(--surface));
   border-color: var(--positive);
   box-shadow: inset 0 -3px 0 var(--positive);
   color: var(--positive);
 }
 
-.seconds-direction-grid .is-down.is-active {
+.seconds-direction-grid .down.active {
   background: color-mix(in srgb, var(--negative) 11%, var(--surface));
   border-color: var(--negative);
   box-shadow: inset 0 -3px 0 var(--negative);
   color: var(--negative);
 }
 
-.seconds-duration-grid button.is-active,
+.seconds-duration-grid button.active,
 .seconds-amount-presets button[aria-pressed="true"] {
   background: color-mix(in srgb, var(--focus) 8%, var(--surface));
   border-color: var(--focus);
@@ -1024,9 +1006,75 @@ onBeforeUnmount(() => {
   margin: -5px 0 0;
 }
 
+.seconds-feedback {
+  align-content: start;
+  display: grid;
+  min-height: 76px;
+}
+
+.seconds-feedback > span {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 10px;
+  gap: 6px;
+}
+
 .seconds-submit {
   border-radius: 0;
   min-height: 52px;
+}
+
+.seconds-session-records {
+  display: grid;
+  min-width: 0;
+}
+
+.seconds-session-records h2 {
+  font-size: 11px;
+}
+
+.seconds-session-records article {
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 0;
+}
+
+.seconds-session-records article > div {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.seconds-session-records article strong,
+.seconds-session-records article span {
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.seconds-session-records article span {
+  color: var(--positive);
+  text-align: right;
+}
+
+.seconds-session-records article span.is-negative {
+  color: var(--negative);
+}
+
+.seconds-session-records article span.is-pending {
+  color: var(--accent);
+}
+
+.seconds-session-records article p,
+.seconds-session-records > p {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .seconds-orders {
@@ -1214,9 +1262,9 @@ onBeforeUnmount(() => {
   color: var(--ink);
 }
 
-:global(html[data-theme='dark']) .seconds-market-board .seconds-reference strong,
-:global([data-theme='dark']) .seconds-market-board .seconds-reference strong,
-:global(.theme-dark) .seconds-market-board .seconds-reference strong,
+:global(html[data-theme='dark']) .seconds-market-board .seconds-reference-price strong,
+:global([data-theme='dark']) .seconds-market-board .seconds-reference-price strong,
+:global(.theme-dark) .seconds-market-board .seconds-reference-price strong,
 :global(html[data-theme='dark']) .seconds-market-board header strong,
 :global([data-theme='dark']) .seconds-market-board header strong,
 :global(.theme-dark) .seconds-market-board header strong {
@@ -1226,12 +1274,12 @@ onBeforeUnmount(() => {
 :global(html[data-theme='dark']) .seconds-market-board header span,
 :global([data-theme='dark']) .seconds-market-board header span,
 :global(.theme-dark) .seconds-market-board header span,
-:global(html[data-theme='dark']) .seconds-market-board .seconds-reference > span,
-:global([data-theme='dark']) .seconds-market-board .seconds-reference > span,
-:global(.theme-dark) .seconds-market-board .seconds-reference > span,
-:global(html[data-theme='dark']) .seconds-market-board .seconds-reference small,
-:global([data-theme='dark']) .seconds-market-board .seconds-reference small,
-:global(.theme-dark) .seconds-market-board .seconds-reference small,
+:global(html[data-theme='dark']) .seconds-market-board .seconds-reference-price > span,
+:global([data-theme='dark']) .seconds-market-board .seconds-reference-price > span,
+:global(.theme-dark) .seconds-market-board .seconds-reference-price > span,
+:global(html[data-theme='dark']) .seconds-market-board .seconds-reference-price small,
+:global([data-theme='dark']) .seconds-market-board .seconds-reference-price small,
+:global(.theme-dark) .seconds-market-board .seconds-reference-price small,
 :global(html[data-theme='dark']) .seconds-market-board dt,
 :global([data-theme='dark']) .seconds-market-board dt,
 :global(.theme-dark) .seconds-market-board dt {
@@ -1247,11 +1295,6 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 390px) {
-  .seconds-content {
-    padding-left: 14px;
-    padding-right: 14px;
-  }
-
   .seconds-orders {
     margin-left: -14px;
     margin-right: -14px;
@@ -1274,12 +1317,12 @@ onBeforeUnmount(() => {
     text-align: left;
   }
 
-  .seconds-market-facts,
+  .seconds-round-context,
   .seconds-order-summary {
     grid-template-columns: 1fr;
   }
 
-  .seconds-market-facts > div,
+  .seconds-round-context > div,
   .seconds-order-summary > div {
     align-items: center;
     border-bottom: 1px solid var(--line);
@@ -1287,7 +1330,7 @@ onBeforeUnmount(() => {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .seconds-market-facts > div:last-child,
+  .seconds-round-context > div:last-child,
   .seconds-order-summary > div:last-child {
     border-bottom: 0;
   }

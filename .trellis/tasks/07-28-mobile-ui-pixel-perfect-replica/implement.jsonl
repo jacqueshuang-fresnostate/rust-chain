@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "Mobile package quality gates and prototype surface contracts."}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "Preserve typed routes, separate trading destinations, safe back behavior, and localization."}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "Preserve PWA, Tauri build isolation, theme, shell, and root navigation behavior."}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Keep backend DTO adapters, auth refresh, runtime URLs, WebSocket, and real data integration."}
+{"file": ".trellis/tasks/07-28-mobile-ui-pixel-perfect-replica/prd.md", "reason": "Defines strict parity scope and measurable acceptance criteria."}
+{"file": ".trellis/tasks/07-28-mobile-ui-pixel-perfect-replica/research/prototype-parity-contract.md", "reason": "Maps checked-in prototype source to Vue integration boundaries and per-page geometry."}

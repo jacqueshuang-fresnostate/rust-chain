@@ -1,17 +1,23 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import AppBottomNav from '@/components/AppBottomNav.vue'
 import PwaStatus from '@/components/PwaStatus.vue'
+import RootHeader from '@/components/RootHeader.vue'
 import { routeTransitionName } from '@/core/navigation'
 import { useSessionStore } from '@/stores/session'
 import { useThemeStore } from '@/stores/theme'
+import stageLogo from '@/assets/brand/hippo-logo-landscape.png'
+import stageImage from '@/assets/brand/signal-theatre.png'
 
 const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
 const theme = useThemeStore()
+const { t } = useI18n()
 const showBottomNav = computed(() => route.meta.showBottomNav !== false && !(route.name === 'markets' && route.query.purpose === 'trade'))
+const rootSurface = computed(() => ['trade'].includes(String(route.name || '')) ? 'protected' : 'expressive')
 
 theme.initializeTheme()
 
@@ -27,28 +33,49 @@ onUnmounted(() => window.removeEventListener('hippo-mobile-auth-expired', handle
 </script>
 
 <template>
-  <div class="app-frame" :class="{ 'app-frame--with-bottom-nav': showBottomNav }">
-    <PwaStatus />
-    <div class="app-route-host">
-      <RouterView v-slot="{ Component, route: currentRoute }">
-        <Transition :name="routeTransitionName">
-          <component :is="Component" :key="currentRoute.fullPath" class="app-route-layer" />
-        </Transition>
-      </RouterView>
+  <main class="app-stage" :class="theme.isDark ? 'theme-dark' : 'theme-light'">
+    <div class="stage-art" aria-hidden="true">
+      <div class="stage-image" :style="{ backgroundImage: `url(${stageImage})` }" />
+      <span
+        class="stage-brand-lockup"
+        :style="{ backgroundImage: `url(${stageLogo})` }"
+      />
+      <span class="stage-index">{{ t('rootPrototype.desktopStageIndex') }}</span>
+      <p>
+        {{ t('rootPrototype.desktopStageMottoLine1') }}<br />
+        {{ t('rootPrototype.desktopStageMottoLine2') }}<br />
+        {{ t('rootPrototype.desktopStageMottoLine3') }}
+      </p>
+      <div class="stage-tape">
+        <span>{{ t('rootPrototype.desktopStagePairBtc') }}</span>
+        <span>{{ t('rootPrototype.desktopStagePairEth') }}</span>
+        <span>{{ t('rootPrototype.desktopStagePairSol') }}</span>
+      </div>
+      <div class="stage-caption">
+        <span>{{ t('rootPrototype.desktopStageInstrument') }}</span>
+        <span>{{ t('rootPrototype.desktopStageLocation') }}</span>
+      </div>
     </div>
-    <AppBottomNav v-if="showBottomNav" />
-  </div>
+    <section
+      class="app-frame mobile-canvas"
+      :class="{ 'app-frame--with-bottom-nav': showBottomNav }"
+      :data-surface="showBottomNav ? rootSurface : 'protected'"
+    >
+      <PwaStatus />
+      <RootHeader v-if="showBottomNav" />
+      <div class="app-route-host view-stack" :class="{ 'secondary-stack': !showBottomNav }">
+        <RouterView v-slot="{ Component, route: currentRoute }">
+          <Transition :name="routeTransitionName">
+            <component :is="Component" :key="currentRoute.fullPath" class="app-route-layer" />
+          </Transition>
+        </RouterView>
+      </div>
+      <AppBottomNav v-if="showBottomNav" />
+    </section>
+  </main>
 </template>
 
 <style>
-.app-route-host {
-  min-height: 100dvh;
-  position: relative;
-}
-.app-route-layer {
-  min-width: 0;
-  width: 100%;
-}
 .route-forward-enter-active,.route-forward-leave-active,.route-back-enter-active,.route-back-leave-active,.route-fade-enter-active,.route-fade-leave-active {
   transition: opacity var(--motion-medium) var(--motion-ease), transform var(--motion-medium) var(--motion-ease);
 }

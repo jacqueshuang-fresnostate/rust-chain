@@ -1,9 +1,22 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { access, readdir, readFile } from 'node:fs/promises'
+import { extname } from 'node:path'
 import test from 'node:test'
 import en from '../src/i18n/messages/en.ts'
 import zhCN from '../src/i18n/messages/zh-CN.ts'
 import { isIosBrowser, isStandaloneDisplay, resolveServiceWorkerLocation } from '../src/pwa/runtime.ts'
+
+const dependencySourceExtensions = new Set(['.css', '.html', '.js', '.json', '.mjs', '.ts', '.vue'])
+
+async function collectDependencySources(directory: URL): Promise<URL[]> {
+  const entries = await readdir(directory, { withFileTypes: true })
+  const files = await Promise.all(entries.map(async (entry) => {
+    const location = new URL(entry.name + (entry.isDirectory() ? '/' : ''), directory)
+    if (entry.isDirectory()) return collectDependencySources(location)
+    return dependencySourceExtensions.has(extname(entry.name)) ? [location] : []
+  }))
+  return files.flat()
+}
 
 test('PWA runtime helpers cover iOS standalone and subpath service-worker scope', () => {
   assert.equal(isIosBrowser('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)'), true)
@@ -62,6 +75,43 @@ test('PWA config keeps native builds disabled and financial traffic out of runti
   assert.doesNotMatch(marketStoreSource, /finally\s*\{[^}]*updatedAt\.value/)
 })
 
+test('production source and tests do not depend on the ignored prototype workspace', async () => {
+  const ignoredPrototypeDirectory = ['sites', 'prototype'].join('-')
+  const files = (await Promise.all([
+    collectDependencySources(new URL('../src/', import.meta.url)),
+    collectDependencySources(new URL('./', import.meta.url)),
+  ])).flat()
+  const violations: string[] = []
+
+  for (const file of files) {
+    if ((await readFile(file, 'utf8')).includes(ignoredPrototypeDirectory)) {
+      violations.push(file.pathname)
+    }
+  }
+
+  assert.deepEqual(violations, [])
+})
+
+test('copied prototype CSS resolves production-owned font and image paths', async () => {
+  const stylesheets = [
+    new URL('../src/styles/prototype-base.css', import.meta.url),
+    new URL('../src/styles/prototype-parity.css', import.meta.url),
+  ]
+
+  for (const stylesheet of stylesheets) {
+    const source = await readFile(stylesheet, 'utf8')
+    const assetPaths = [...source.matchAll(/url\((?:'|")?([^'")]+)(?:'|")?\)/g)]
+      .map((match) => match[1])
+      .filter((path) => !path.startsWith('data:'))
+
+    assert.ok(assetPaths.length > 0, `${stylesheet.pathname} should reference copied assets`)
+    for (const assetPath of assetPaths) {
+      assert.ok(!assetPath.startsWith('/'), `${assetPath} must not depend on a deployment-root file`)
+      await access(new URL(assetPath, stylesheet))
+    }
+  }
+})
+
 test('PWA and message-center locale contracts stay complete in Chinese and English', () => {
   const pwaKeys = [
     'installTitle',
@@ -92,12 +142,24 @@ test('PWA and message-center locale contracts stay complete in Chinese and Engli
     'filterUnread',
     'summaryTotal',
     'summaryUnread',
+    'summaryTotalLabel',
+    'summaryUnreadLabel',
+    'summarySource',
     'markAllRead',
     'allRead',
     'empty',
     'retry',
+    'categoryLabel',
     'categoryPlatform',
+    'categoryAccount',
+    'categoryFunds',
+    'categoryTrade',
     'categoryAnnouncement',
+    'sourceContext',
+    'categoryEmpty',
+    'categoryEmptyDescription',
+    'unreadEmptyDescription',
+    'announcementEmptyDescription',
     'latest',
   ] as const
 

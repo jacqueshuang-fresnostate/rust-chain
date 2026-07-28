@@ -10,7 +10,7 @@ import en from '../src/i18n/messages/en.ts'
 import zhCN from '../src/i18n/messages/zh-CN.ts'
 
 const baseCss = readFileSync(new URL('../src/styles/base.css', import.meta.url), 'utf8')
-const homeSource = readFileSync(new URL('../src/views/HomeView.vue', import.meta.url), 'utf8')
+const rootHeaderSource = readFileSync(new URL('../src/components/RootHeader.vue', import.meta.url), 'utf8')
 const themeStoreSource = readFileSync(new URL('../src/stores/theme.ts', import.meta.url), 'utf8')
 
 function tokenHex(source: string, name: string): string {
@@ -92,12 +92,12 @@ test('壳层层级遵循内容、导航、转场、粘性头部、浮层顺序',
   assert.equal(new Set(layers).size, layers.length)
 })
 
-test('首页主题按钮复用持久化主题 store 并提供双语可访问标签', () => {
+test('共享根头部主题按钮复用持久化主题 store 并提供双语可访问标签', () => {
   assert.match(themeStoreSource, /localStorage\?\.setItem\(THEME_STORAGE_KEY, nextTheme\)/)
-  assert.match(homeSource, /const theme = useThemeStore\(\)/)
-  assert.match(homeSource, /@click="theme\.toggleTheme"/)
-  assert.match(homeSource, /<Sun v-if="theme\.isDark"[\s\S]*?<Moon v-else/)
-  assert.match(homeSource, /:aria-pressed="theme\.isDark"/)
+  assert.match(rootHeaderSource, /const theme = useThemeStore\(\)/)
+  assert.match(rootHeaderSource, /@click="theme\.toggleTheme"/)
+  assert.match(rootHeaderSource, /<Sun v-if="theme\.isDark"[\s\S]*?<Moon v-else/)
+  assert.match(rootHeaderSource, /:aria-pressed="theme\.isDark"/)
 
   for (const messages of [zhCN, en]) {
     assert.ok(messages.home.switchToLightTheme)

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, useSlots } from 'vue'
 import { useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { ArrowLeft } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
@@ -16,8 +16,10 @@ const props = defineProps<{
 
 const route = useRoute()
 const router = useRouter()
+const slots = useSlots()
 const { t } = useI18n()
 const showBack = computed(() => props.back ?? (Number(route.meta.depth || 0) > 0))
+const hasActions = computed(() => Boolean(slots.actions))
 
 function back(): void {
   void goBackOr(router, props.fallback || route.meta.backFallback || '/')
@@ -26,102 +28,42 @@ function back(): void {
 
 <template>
   <header
-    class="page-header"
+    class="secondary-header page-header"
     :class="{
       'page-header--root': !showBack,
       'page-header--compact': compact,
     }"
   >
-    <button v-if="showBack" class="icon-button" type="button" :aria-label="t('common.back')" @click="back">
-      <ArrowLeft :size="25" />
+    <button
+      class="icon-button page-header__back"
+      type="button"
+      :data-empty="showBack ? 'false' : 'true'"
+      :aria-hidden="showBack ? undefined : 'true'"
+      :aria-label="showBack ? t('common.back') : undefined"
+      :tabindex="showBack ? undefined : -1"
+      @click="back"
+    >
+      <ArrowLeft :size="20" />
     </button>
     <div class="page-header__copy">
-      <span v-if="eyebrow" class="page-header__eyebrow">{{ eyebrow }}</span>
-      <h1>{{ title }}</h1>
-      <small v-if="subtitle">{{ subtitle }}</small>
+      <span class="secondary-scene page-header__eyebrow">{{ eyebrow || '' }}</span>
+      <strong class="page-header__title">{{ title }}</strong>
+      <small>{{ subtitle || '' }}</small>
     </div>
-    <div class="page-header__actions"><slot name="actions" /></div>
+    <span
+      class="secondary-header-action page-header__actions"
+      :data-empty="hasActions ? 'false' : 'true'"
+      :aria-hidden="hasActions ? undefined : 'true'"
+    >
+      <slot name="actions" />
+    </span>
+    <i class="secondary-header-rail" aria-hidden="true" />
   </header>
 </template>
 
 <style scoped>
-.page-header {
-  align-items: center;
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
-  display: grid;
-  gap: 8px;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
-  isolation: isolate;
-  min-height: 66px;
-  padding: 8px 16px;
-  position: sticky;
-  top: 0;
-  z-index: var(--layer-sticky-header);
-}
-
-.page-header--root {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-.page-header--compact {
-  min-height: 58px;
-}
-
-.page-header__copy {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  text-align: left;
-}
-
-.page-header h1 {
-  font-size: 18px;
-  font-weight: 760;
-  line-height: 1.2;
-  margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.page-header__eyebrow {
-  color: var(--muted);
-  font-family: var(--data-font);
-  font-size: 9px;
-  font-weight: 750;
-  line-height: 1.2;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.page-header small {
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.page-header__actions {
-  align-items: center;
-  display: flex;
-  gap: 6px;
-  justify-content: flex-end;
-  min-height: 44px;
-  min-width: 44px;
-}
-
-.page-header__actions:empty {
-  min-width: 0;
-}
-
-@media (max-width: 360px) {
-  .page-header {
-    padding-inline: 12px;
-  }
+.page-header__back[data-empty='true'] {
+  pointer-events: none;
+  visibility: hidden;
 }
 </style>

@@ -1,18 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
-  Banknote,
   CheckCircle2,
   CircleAlert,
-  Clock3,
+  Fingerprint,
   LoaderCircle,
   RefreshCw,
   ShieldCheck,
   X,
 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import AssetMark from '@/components/AssetMark.vue'
-import LoginRequiredState from '@/components/LoginRequiredState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
 import {
@@ -30,6 +29,7 @@ import { useSessionStore } from '@/stores/session'
 import type { WalletAccount } from '@/core/types'
 
 const session = useSessionStore()
+const router = useRouter()
 const { t } = useI18n()
 const products = ref<LoanProduct[]>([])
 const orders = ref<LoanOrder[]>([])
@@ -44,7 +44,7 @@ const submitting = ref(false)
 const actionId = ref(0)
 const error = ref('')
 const success = ref('')
-const applyDialog = ref<HTMLElement | null>(null)
+const productsReady = ref(false)
 const actionDialog = ref<HTMLElement | null>(null)
 let returnFocus: HTMLElement | null = null
 let previousBodyOverflow = ''
@@ -52,7 +52,7 @@ let previousBodyOverflow = ''
 const amountNumber = computed(() => Number(amount.value || 0))
 const collateralAmountNumber = computed(() => Number(collateralAmount.value || 0))
 const selectedCollateral = computed(() => accounts.value.find((account) => account.assetId === collateralAssetId.value))
-const dialogOpen = computed(() => Boolean(selected.value || pendingAction.value))
+const dialogOpen = computed(() => Boolean(pendingAction.value))
 const amountInvalid = computed(() => {
   const product = selected.value
   if (!product) return false
@@ -84,11 +84,36 @@ const canApply = computed(() => {
 })
 const collateralProductCount = computed(() => products.value.filter((product) => product.loanType === 'collateralized').length)
 const creditProductCount = computed(() => products.value.length - collateralProductCount.value)
+const amountPresets = computed(() => {
+  const product = selected.value
+  if (!product) return []
+  const maximum = product.maxAmount || product.minAmount * 10
+  return [...new Set([
+    product.minAmount,
+    Math.min(maximum, product.minAmount * 2),
+    Math.min(maximum, product.minAmount * 5),
+    maximum,
+  ])].filter((value) => Number.isFinite(value) && value >= product.minAmount && value <= maximum)
+})
+const estimatedInterest = computed(() => {
+  const product = selected.value
+  if (!product || !Number.isFinite(amountNumber.value) || amountNumber.value <= 0) return 0
+  return amountNumber.value * product.interestRate
+})
+const estimatedRepayment = computed(() => amountNumber.value + estimatedInterest.value)
+const activeOrders = computed(() => orders.value.filter((order) => (
+  ['pending', 'disbursed', 'overdue'].includes(order.status.toLowerCase())
+)))
+const historicalOrders = computed(() => orders.value.filter((order) => (
+  !['pending', 'disbursed', 'overdue'].includes(order.status.toLowerCase())
+)))
 
 async function load(): Promise<void> {
   loading.value = true
+  productsReady.value = false
   error.value = ''
   try {
+    const selectedProductId = selected.value?.id
     const productsPromise = fetchLoanProducts()
     if (session.isAuthenticated) {
       const [nextProducts, nextOrders, nextAccounts] = await Promise.all([
@@ -104,30 +129,35 @@ async function load(): Promise<void> {
       orders.value = []
       accounts.value = []
     }
+    productsReady.value = true
+    const nextSelected = products.value.find((product) => product.id === selectedProductId) || products.value[0] || null
+    if (nextSelected) openApply(nextSelected, false)
+    else selected.value = null
   } catch (reason) {
+    products.value = []
+    orders.value = []
+    accounts.value = []
+    selected.value = null
     error.value = apiErrorMessage(reason, t('loan.loadFailed'))
   } finally {
     loading.value = false
   }
 }
 
-function openApply(product: LoanProduct): void {
-  if (!session.isAuthenticated) return
+function openApply(product: LoanProduct, reset = true): void {
   selected.value = product
-  amount.value = String(product.minAmount)
+  if (reset || !amount.value) amount.value = String(product.minAmount)
   collateralAssetId.value = accounts.value[0]?.assetId || 0
   collateralAmount.value = ''
   error.value = ''
   success.value = ''
 }
 
-function closeApply(): void {
-  if (submitting.value) return
-  selected.value = null
-  error.value = ''
-}
-
 async function submitApplication(): Promise<void> {
+  if (!session.isAuthenticated) {
+    void router.push({ name: 'login', query: { redirect: '/products/loan' } })
+    return
+  }
   if (!selected.value || !canApply.value) {
     error.value = t('loan.invalidApplication')
     return
@@ -205,6 +235,30 @@ function actionLabel(order: LoanOrder): string {
   return order.status.toLowerCase() === 'pending' ? t('loan.cancel') : t('loan.repay')
 }
 
+function interestModeLabel(mode: string): string {
+  const keys: Record<string, string> = {
+    full_term: 'loan.interestModeFullTerm',
+    actual_days: 'loan.interestModeActualDays',
+  }
+  const key = keys[mode.toLowerCase()]
+  return key ? t(key) : mode || t('loan.interestModeUnavailable')
+}
+
+function statusLabel(status: string): string {
+  const keys: Record<string, string> = {
+    pending: 'loan.statusPending',
+    disbursed: 'loan.statusDisbursed',
+    overdue: 'loan.statusOverdue',
+    repaid: 'loan.statusRepaid',
+    completed: 'loan.statusCompleted',
+    rejected: 'loan.statusRejected',
+    cancelled: 'loan.statusCancelled',
+    canceled: 'loan.statusCancelled',
+  }
+  const key = keys[status.toLowerCase()]
+  return key ? t(key) : status
+}
+
 function statusTone(status: string): string {
   const normalized = status.toLowerCase()
   if (normalized === 'repaid' || normalized === 'completed') return 'is-positive'
@@ -215,8 +269,7 @@ function statusTone(status: string): string {
 function trapDialogFocus(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
     event.preventDefault()
-    if (selected.value) closeApply()
-    else closeOrderAction()
+    closeOrderAction()
     return
   }
   if (event.key !== 'Tab') return
@@ -243,8 +296,7 @@ watch(dialogOpen, async (open) => {
     previousBodyOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     await nextTick()
-    const activeDialog = applyDialog.value || actionDialog.value
-    activeDialog?.querySelector<HTMLElement>('[data-dialog-cancel]')?.focus()
+    actionDialog.value?.querySelector<HTMLElement>('[data-dialog-cancel]')?.focus()
     return
   }
   document.body.style.overflow = previousBodyOverflow
@@ -261,11 +313,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="page page--plain page--prototype-grid loan-page" data-loan-workspace="live">
+  <main class="secondary-view page page--plain page--prototype-grid loan-view" data-loan-workspace="live">
     <PageHeader
       :back="true"
-      :eyebrow="t('products.loan')"
-      :subtitle="t('loan.bannerDescription')"
+      :eyebrow="t('loan.scene')"
+      :subtitle="t('loan.context')"
       :title="t('loan.title')"
     >
       <template #actions>
@@ -281,40 +333,25 @@ onBeforeUnmount(() => {
       </template>
     </PageHeader>
 
-    <div class="page-content loan-content">
-      <div v-if="error && !dialogOpen" class="loan-message loan-message--error" role="alert">
-        <CircleAlert :size="18" />
-        <span>{{ error }}</span>
-        <button type="button" :aria-label="t('common.retry')" @click="load">
-          <RefreshCw :size="17" />
-        </button>
-      </div>
-      <div v-if="success" class="loan-message loan-message--success" role="status">
-        <CheckCircle2 :size="18" />
-        <span>{{ success }}</span>
-      </div>
-
-      <div v-if="loading" class="loan-loading" aria-live="polite">
-        <LoaderCircle :size="24" class="spin" />
-        <span>{{ t('loan.loading') }}</span>
-      </div>
-
-      <template v-else>
-        <section class="loan-overview">
-          <div class="loan-overview__icon"><Banknote :size="24" /></div>
+    <div class="secondary-content page-content loan-content">
+      <section class="loan-page" data-loan-workflow="live">
+        <section class="borrowing-overview" :aria-label="t('loan.bannerTitle')">
           <div>
-            <strong>{{ t('loan.bannerTitle') }}</strong>
+            <span>{{ t('loan.bannerTitle') }}</span>
+            <strong class="numeric">
+              {{ productsReady && selected?.maxAmount ? formatAmount(selected.maxAmount) : '--' }}
+              <small>{{ selected?.assetSymbol || '' }}</small>
+            </strong>
             <p>{{ t('loan.bannerDescription') }}</p>
           </div>
-          <ShieldCheck :size="20" />
-          <dl class="loan-overview__metrics">
+          <dl>
             <div>
               <dt>{{ t('loan.collateralized') }}</dt>
-              <dd class="numeric">{{ collateralProductCount }}</dd>
+              <dd class="numeric">{{ productsReady ? collateralProductCount : '--' }}</dd>
             </div>
             <div>
               <dt>{{ t('loan.credit') }}</dt>
-              <dd class="numeric">{{ creditProductCount }}</dd>
+              <dd class="numeric">{{ productsReady ? creditProductCount : '--' }}</dd>
             </div>
             <div>
               <dt>{{ t('loan.myLoans') }}</dt>
@@ -323,212 +360,288 @@ onBeforeUnmount(() => {
           </dl>
         </section>
 
-        <div v-if="products.length" class="loan-list">
+        <h3 class="group-title">{{ t('loan.bannerTitle') }}</h3>
+        <div class="product-choice-grid loan-list" :aria-label="t('loan.bannerTitle')">
           <button
             v-for="product in products"
             :key="product.id"
             class="loan-card"
             type="button"
-            :disabled="!session.isAuthenticated"
+            :class="{ active: selected?.id === product.id }"
+            :aria-pressed="selected?.id === product.id"
+            :data-loan-product="product.loanType"
+            :disabled="loading"
             @click="openApply(product)"
           >
-            <header>
-              <AssetMark :symbol="product.assetSymbol" :size="38" />
-              <span class="loan-kind">
-                {{ product.loanType === 'collateralized' ? t('loan.collateralized') : t('loan.credit') }}
-              </span>
-            </header>
-            <div class="loan-card__body">
-              <strong>{{ product.name }}</strong>
-              <small>{{ product.assetSymbol }}</small>
-            </div>
-            <dl>
-              <div>
-                <dt>{{ t('loan.annualRate') }}</dt>
-                <dd>{{ (product.interestRate * 100).toFixed(2) }}%</dd>
-              </div>
-              <div>
-                <dt>{{ t('loan.term') }}</dt>
-                <dd>{{ t('loan.termDays', { days: product.termDays }) }}</dd>
-              </div>
-            </dl>
+            <span class="product-kind">
+              {{ product.loanType === 'collateralized' ? t('loan.collateralized') : t('loan.credit') }}
+            </span>
+            <strong>{{ product.name }}</strong>
+            <span>{{ t('loan.minimum', {
+              type: product.loanType === 'collateralized' ? t('loan.collateralized') : t('loan.credit'),
+              amount: formatAmount(product.minAmount),
+              asset: product.assetSymbol,
+            }) }}</span>
+            <span class="product-terms">
+              <b>{{ (product.interestRate * 100).toFixed(2) }}%</b>
+              <b>{{ t('loan.termDays', { days: product.termDays }) }}</b>
+              <b>{{ product.maxAmount ? formatAmount(product.maxAmount) : '--' }} {{ product.assetSymbol }}</b>
+            </span>
+          </button>
+          <button v-if="!products.length" class="loan-card loan-card--placeholder" type="button" disabled>
+            <span class="product-kind">{{ t('loan.title') }}</span>
+            <strong aria-live="polite">{{ loading ? t('loan.loading') : error || t('loan.noProducts') }}</strong>
+            <span>{{ t('loan.bannerDescription') }}</span>
+            <span class="product-terms"><b>--</b><b>--</b><b>--</b></span>
+          </button>
+          <button v-if="!products.length" class="loan-card loan-card--placeholder" type="button" disabled aria-hidden="true">
+            <span class="product-kind">{{ t('loan.title') }}</span>
+            <strong>--</strong>
+            <span>{{ t('loan.bannerDescription') }}</span>
+            <span class="product-terms"><b>--</b><b>--</b><b>--</b></span>
           </button>
         </div>
 
-        <div v-else class="loan-empty">
-          <Banknote :size="24" />
-          <span>{{ t('loan.noProducts') }}</span>
-        </div>
-
-        <LoginRequiredState
-          v-if="!session.isAuthenticated"
-          :description="t('loan.loginDescription')"
-        />
-
-        <section v-else class="loan-orders">
-          <div class="section-heading">
-            <span>{{ t('loan.myLoans') }}</span>
-            <b>{{ orders.length }}</b>
+        <template v-if="selected">
+          <div class="metric-grid loan-disclosures">
+            <span>
+              {{ t('loan.loanAmount') }}
+              <b>{{ formatAmount(selected.minAmount) }}–{{ selected.maxAmount ? formatAmount(selected.maxAmount) : '--' }} {{ selected.assetSymbol }}</b>
+            </span>
+            <span>
+              {{ t('loan.term') }}
+              <b>{{ t('loan.termDays', { days: selected.termDays }) }}</b>
+            </span>
+            <span>
+              {{ t('loan.minimumKyc') }}
+              <b>{{ selected.minKycLevel }} · {{ (selected.interestRate * 100).toFixed(2) }}%</b>
+            </span>
           </div>
 
-          <div v-if="orders.length" class="loan-order-list">
-            <article v-for="order in orders" :key="order.id" class="loan-order">
-              <header>
-                <div>
-                  <strong>{{ order.productName }}</strong>
-                  <small>
-                    {{ formatDateTime(order.createdAt) }} ·
-                    <span :class="statusTone(order.status)">{{ order.status }}</span>
-                  </small>
-                </div>
-                <AssetMark :symbol="order.assetSymbol" :size="32" />
-              </header>
-              <dl>
-                <div>
-                  <dt>{{ t('loan.loanAmount') }}</dt>
-                  <dd>{{ formatAmount(order.amount) }} {{ order.assetSymbol }}</dd>
-                </div>
-                <div>
-                  <dt>{{ t('loan.repaymentDue', { amount: formatAmount(order.repaymentAmount) }) }}</dt>
-                  <dd v-if="order.dueAt">{{ formatDateTime(order.dueAt) }}</dd>
-                  <dd v-else>{{ t('loan.termDays', { days: order.termDays }) }}</dd>
-                </div>
-              </dl>
-              <button
-                v-if="canActOnOrder(order)"
-                class="button"
-                :class="order.status.toLowerCase() === 'pending' ? 'button--secondary' : 'button--primary'"
-                type="button"
-                :disabled="actionId === order.id"
-                @click="requestOrderAction(order)"
-              >
-                {{ actionId === order.id ? t('loan.processing') : actionLabel(order) }}
-              </button>
-            </article>
-          </div>
-
-          <div v-else class="loan-empty">
-            <Clock3 :size="22" />
-            <span>{{ t('loan.noOrders') }}</span>
-          </div>
-        </section>
-      </template>
-    </div>
-
-    <div v-if="selected" class="loan-mask" @click.self="closeApply">
-      <form
-        ref="applyDialog"
-        class="loan-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="loan-apply-title"
-        @keydown="trapDialogFocus"
-        @submit.prevent="submitApplication"
-      >
-        <header>
-          <div>
-            <strong id="loan-apply-title">{{ t('loan.applyTitle', { name: selected.name }) }}</strong>
-            <small>
-              {{ t('loan.minimum', {
-                type: selected.loanType === 'collateralized' ? t('loan.collateralized') : t('loan.credit'),
-                amount: formatAmount(selected.minAmount),
-                asset: selected.assetSymbol,
-              }) }}
-            </small>
-          </div>
-          <button
-            class="icon-button"
-            type="button"
-            :aria-label="t('common.close')"
-            :disabled="submitting"
-            data-dialog-cancel
-            @click="closeApply"
-          >
-            <X :size="21" />
-          </button>
-        </header>
-
-        <label class="loan-field" :class="{ 'is-invalid': amountInvalid }">
-          <span>{{ t('loan.loanAmount') }}</span>
-          <div>
-            <input v-model="amount" class="numeric" inputmode="decimal" :aria-invalid="amountInvalid" />
-            <b>{{ selected.assetSymbol }}</b>
-          </div>
-        </label>
-
-        <template v-if="selected.loanType === 'collateralized'">
-          <label class="loan-field">
-            <span>{{ t('loan.collateralAsset') }}</span>
-            <select v-model="collateralAssetId">
-              <option
-                v-for="account in accounts"
-                :key="account.assetId"
-                :value="account.assetId"
-              >
-                {{ t('loan.assetAvailable', {
-                  asset: account.symbol,
-                  amount: formatAmount(account.available),
-                }) }}
-              </option>
-            </select>
-          </label>
-          <label class="loan-field" :class="{ 'is-invalid': collateralInvalid }">
-            <span>{{ t('loan.collateralAmount') }}</span>
+          <div class="loan-requirement" :data-loan-requirement="selected.loanType">
+            <ShieldCheck v-if="selected.loanType === 'collateralized'" :size="20" />
+            <Fingerprint v-else :size="20" />
             <div>
-              <input
-                v-model="collateralAmount"
-                class="numeric"
-                inputmode="decimal"
-                :aria-invalid="collateralInvalid"
-              />
-              <b>{{ selectedCollateral?.symbol || '' }}</b>
+              <strong>
+                {{ selected.loanType === 'collateralized' ? t('loan.collateralized') : t('loan.credit') }}
+              </strong>
+              <span>{{ session.isAuthenticated ? t('loan.bannerDescription') : t('loan.loginDescription') }}</span>
             </div>
-          </label>
+          </div>
+
+          <h3 class="group-title">{{ t('loan.applyTitle', { name: selected.name }) }}</h3>
+          <form class="loan-application" @submit.prevent="submitApplication">
+            <label
+              class="field loan-field"
+              :class="{ 'is-invalid': amountInvalid }"
+              :data-field-state="amountInvalid ? 'invalid' : amount ? 'complete' : 'idle'"
+            >
+              <span>{{ t('loan.loanAmount') }}</span>
+              <div>
+                <input
+                  v-model="amount"
+                  class="numeric"
+                  inputmode="decimal"
+                  :aria-invalid="amountInvalid"
+                  :disabled="loading"
+                  @input="error = ''; success = ''"
+                />
+                <b>{{ selected.assetSymbol }}</b>
+              </div>
+            </label>
+
+            <div class="amount-presets" :aria-label="t('loan.loanAmount')">
+              <button
+                v-for="preset in amountPresets"
+                :key="preset"
+                type="button"
+                :aria-pressed="amountNumber === preset"
+                :disabled="loading"
+                @click="amount = String(preset); error = ''; success = ''"
+              >
+                {{ formatAmount(preset) }}
+              </button>
+            </div>
+
+            <div v-if="selected.loanType === 'collateralized'" class="collateral-fields">
+              <label class="field loan-field" :data-field-state="selectedCollateral ? 'complete' : 'idle'">
+                <span>{{ t('loan.collateralAsset') }}</span>
+                <select v-model="collateralAssetId" :disabled="loading || !session.isAuthenticated">
+                  <option v-if="!accounts.length" :value="0">{{ t('loan.loginDescription') }}</option>
+                  <option
+                    v-for="account in accounts"
+                    :key="account.assetId"
+                    :value="account.assetId"
+                  >
+                    {{ t('loan.assetAvailable', {
+                      asset: account.symbol,
+                      amount: formatAmount(account.available),
+                    }) }}
+                  </option>
+                </select>
+              </label>
+              <label
+                class="field loan-field"
+                :class="{ 'is-invalid': collateralInvalid }"
+                :data-field-state="collateralInvalid ? 'invalid' : collateralAmount ? 'complete' : 'idle'"
+              >
+                <span>{{ t('loan.collateralAmount') }}</span>
+                <div>
+                  <input
+                    v-model="collateralAmount"
+                    class="numeric"
+                    inputmode="decimal"
+                    :aria-invalid="collateralInvalid"
+                    :disabled="loading || !session.isAuthenticated"
+                    @input="error = ''; success = ''"
+                  />
+                  <b>{{ selectedCollateral?.symbol || '--' }}</b>
+                </div>
+              </label>
+            </div>
+
+            <section class="loan-estimate" aria-live="polite">
+              <div class="section-heading-row">
+                <h3 class="group-title">{{ t('loan.repaymentDue', { amount: formatAmount(estimatedRepayment) }) }}</h3>
+                <span>
+                  {{ interestModeLabel(selected.interestCalculationMode) }}
+                  · {{ t('loan.termDays', { days: selected.termDays }) }}
+                </span>
+              </div>
+              <div class="loan-estimate-grid">
+                <span>{{ t('loan.loanAmount') }}<b>{{ formatAmount(amountNumber) }} {{ selected.assetSymbol }}</b></span>
+                <span>{{ t('loan.annualRate') }}<b>{{ (selected.interestRate * 100).toFixed(2) }}%</b></span>
+                <span>{{ t('loan.estimatedInterest') }}<b>{{ formatAmount(estimatedInterest) }} {{ selected.assetSymbol }}</b></span>
+                <span>{{ t('loan.estimatedRepayment') }}<b>{{ formatAmount(estimatedRepayment) }} {{ selected.assetSymbol }}</b></span>
+              </div>
+              <p>{{ t('loan.bannerDescription') }}</p>
+            </section>
+
+            <div class="loan-feedback" aria-live="polite">
+              <div v-if="error && !dialogOpen" class="loan-message loan-message--error" role="alert">
+                <CircleAlert :size="18" />
+                <span>{{ error }}</span>
+                <button type="button" :aria-label="t('common.retry')" @click="load">
+                  <RefreshCw :size="17" />
+                </button>
+              </div>
+              <div v-else-if="success" class="loan-message loan-message--success" role="status">
+                <CheckCircle2 :size="18" />
+                <span>{{ success }}</span>
+              </div>
+              <span v-else-if="loading">
+                <LoaderCircle :size="15" class="spin" />
+                {{ t('loan.loading') }}
+              </span>
+              <span v-else-if="!session.isAuthenticated">{{ t('loan.loginDescription') }}</span>
+              <span v-else>{{ t('loan.bannerDescription') }}</span>
+            </div>
+
+            <button
+              class="button button--primary button--full loan-submit"
+              type="submit"
+              :disabled="submitting || (session.isAuthenticated && !canApply)"
+              :aria-busy="submitting"
+            >
+              {{ submitting ? t('common.submitting') : t('loan.submit') }}
+            </button>
+          </form>
         </template>
 
-        <dl class="loan-terms">
-          <div>
-            <dt>{{ t('loan.term') }}</dt>
-            <dd>{{ t('loan.termDays', { days: selected.termDays }) }}</dd>
-          </div>
-          <div>
-            <dt>{{ t('loan.annualRate') }}</dt>
-            <dd>{{ (selected.interestRate * 100).toFixed(2) }}%</dd>
-          </div>
-          <div>
-            <dt>{{ t('loan.minimumKyc') }}</dt>
-            <dd>{{ selected.minKycLevel }}</dd>
-          </div>
-        </dl>
+        <section class="loan-order-columns">
+          <section>
+            <header>
+              <span>{{ t('loan.myLoans') }}</span>
+              <b>{{ activeOrders.length }}</b>
+            </header>
+            <div class="lifecycle-list loan-order-list">
+              <article v-for="order in activeOrders" :key="order.id" class="loan-order" :data-loan-status="order.status">
+                <header>
+                  <div>
+                    <strong>{{ order.productName }}</strong>
+                    <small>{{ formatDateTime(order.createdAt) }} · <span :class="statusTone(order.status)">{{ statusLabel(order.status) }}</span></small>
+                  </div>
+                  <AssetMark :symbol="order.assetSymbol" :size="32" />
+                </header>
+                <dl>
+                  <div>
+                    <dt>{{ t('loan.loanAmount') }}</dt>
+                    <dd>{{ formatAmount(order.amount) }} {{ order.assetSymbol }}</dd>
+                  </div>
+                  <div>
+                    <dt>{{ t('loan.repaymentDue', { amount: formatAmount(order.repaymentAmount) }) }}</dt>
+                    <dd>{{ order.dueAt ? formatDateTime(order.dueAt) : t('loan.termDays', { days: order.termDays }) }}</dd>
+                  </div>
+                </dl>
+                <button
+                  v-if="canActOnOrder(order)"
+                  class="button"
+                  :class="order.status.toLowerCase() === 'pending' ? 'button--secondary' : 'button--primary'"
+                  type="button"
+                  :disabled="actionId === order.id"
+                  @click="requestOrderAction(order)"
+                >
+                  {{ actionId === order.id ? t('loan.processing') : actionLabel(order) }}
+                </button>
+              </article>
+              <p v-if="!activeOrders.length" class="loan-record-empty">
+                {{ session.isAuthenticated ? t('loan.noOrders') : t('loan.loginDescription') }}
+              </p>
+            </div>
+          </section>
 
-        <p v-if="error" class="dialog-feedback" role="alert">{{ error }}</p>
-        <button
-          class="button button--primary button--full loan-submit"
-          type="submit"
-          :disabled="submitting || !canApply"
-          :aria-busy="submitting"
-        >
-          {{ submitting ? t('common.submitting') : t('loan.submit') }}
-        </button>
-      </form>
+          <section>
+            <header>
+              <span>{{ t('orders.history') }}</span>
+              <b>{{ historicalOrders.length }}</b>
+            </header>
+            <div class="lifecycle-list loan-order-list">
+              <article v-for="order in historicalOrders" :key="order.id" class="loan-order" :data-loan-status="order.status">
+                <header>
+                  <div>
+                    <strong>{{ order.productName }}</strong>
+                    <small>{{ formatDateTime(order.createdAt) }} · <span :class="statusTone(order.status)">{{ statusLabel(order.status) }}</span></small>
+                  </div>
+                  <AssetMark :symbol="order.assetSymbol" :size="32" />
+                </header>
+                <dl>
+                  <div>
+                    <dt>{{ t('loan.loanAmount') }}</dt>
+                    <dd>{{ formatAmount(order.amount) }} {{ order.assetSymbol }}</dd>
+                  </div>
+                  <div>
+                    <dt>{{ t('loan.repaymentDue', { amount: formatAmount(order.repaymentAmount) }) }}</dt>
+                    <dd>{{ formatAmount(order.repaymentAmount) }} {{ order.assetSymbol }}</dd>
+                  </div>
+                </dl>
+              </article>
+              <p v-if="!historicalOrders.length" class="loan-record-empty">{{ t('loan.noOrders') }}</p>
+            </div>
+          </section>
+        </section>
+      </section>
     </div>
 
-    <div v-if="pendingAction" class="loan-mask" @click.self="closeOrderAction">
+    <div v-if="pendingAction" class="confirmation-layer loan-mask" @click.self="closeOrderAction">
       <section
         ref="actionDialog"
-        class="loan-dialog loan-action-dialog"
+        class="confirmation-sheet loan-dialog loan-action-dialog"
+        :class="{ danger: pendingAction.status.toLowerCase() === 'pending' }"
         role="dialog"
         aria-modal="true"
+        :aria-busy="Boolean(actionId)"
         aria-labelledby="loan-action-title"
+        aria-describedby="loan-action-summary"
+        tabindex="-1"
         @keydown="trapDialogFocus"
       >
         <header>
+          <span class="confirmation-icon">
+            <CircleAlert v-if="pendingAction.status.toLowerCase() === 'pending'" :size="20" />
+            <CheckCircle2 v-else :size="20" />
+          </span>
           <div>
             <strong id="loan-action-title">{{ actionLabel(pendingAction) }}</strong>
-            <small>
-              {{ pendingAction.productName }} ·
-              {{ formatAmount(pendingAction.amount) }} {{ pendingAction.assetSymbol }}
-            </small>
           </div>
           <button
             class="icon-button"
@@ -542,19 +655,24 @@ onBeforeUnmount(() => {
           </button>
         </header>
 
-        <dl class="loan-terms">
+        <p id="loan-action-summary">
+          {{ pendingAction.productName }} ·
+          {{ formatAmount(pendingAction.amount) }} {{ pendingAction.assetSymbol }}
+        </p>
+
+        <dl class="confirmation-detail loan-terms">
           <div>
             <dt>{{ t('loan.loanAmount') }}</dt>
             <dd>{{ formatAmount(pendingAction.amount) }} {{ pendingAction.assetSymbol }}</dd>
           </div>
           <div>
             <dt>{{ t('loan.repaymentDue', { amount: formatAmount(pendingAction.repaymentAmount) }) }}</dt>
-            <dd>{{ pendingAction.status }}</dd>
+            <dd>{{ statusLabel(pendingAction.status) }}</dd>
           </div>
         </dl>
 
         <p v-if="error" class="dialog-feedback" role="alert">{{ error }}</p>
-        <div class="dialog-actions">
+        <div class="confirmation-actions dialog-actions">
           <button
             type="button"
             class="button button--secondary"
@@ -565,7 +683,7 @@ onBeforeUnmount(() => {
           </button>
           <button
             type="button"
-            class="button"
+            class="button confirmation-primary"
             :class="pendingAction.status.toLowerCase() === 'pending' ? 'button--danger' : 'button--primary'"
             :disabled="Boolean(actionId)"
             :aria-busy="Boolean(actionId)"
@@ -581,16 +699,9 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .loan-page {
-  background-color: var(--surface);
-  min-width: 0;
-}
-
-.loan-content {
   display: grid;
   gap: 16px;
   min-width: 0;
-  padding-bottom: calc(28px + env(safe-area-inset-bottom));
-  padding-top: 14px;
 }
 
 .loan-message {
@@ -624,102 +735,6 @@ onBeforeUnmount(() => {
   min-width: 44px;
   place-items: center;
 }
-
-.loan-loading,
-.loan-empty {
-  align-content: center;
-  color: var(--muted);
-  display: grid;
-  font-size: 12px;
-  gap: 9px;
-  justify-items: center;
-  min-height: 132px;
-  text-align: center;
-}
-
-.loan-overview {
-  align-items: center;
-  background:
-    linear-gradient(var(--grid-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
-    var(--surface);
-  background-size: 34px 34px;
-  border-block: 1px solid var(--line);
-  border-top: 3px solid var(--accent);
-  display: grid;
-  gap: 11px;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
-  min-height: 92px;
-  min-width: 0;
-  padding: 12px 4px;
-}
-
-.loan-overview__icon {
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
-  color: var(--accent);
-  display: grid;
-  height: 44px;
-  place-items: center;
-  width: 44px;
-}
-
-.loan-overview > div:nth-child(2) {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.loan-overview strong {
-  font-size: 17px;
-}
-
-.loan-overview p {
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.45;
-  margin: 0;
-}
-
-.loan-overview > svg {
-  color: var(--positive);
-}
-
-.loan-overview__metrics {
-  border-top: 1px solid var(--line);
-  display: grid;
-  grid-column: 1 / -1;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin: 2px -4px -12px;
-}
-
-.loan-overview__metrics > div {
-  display: grid;
-  gap: 4px;
-  min-height: 58px;
-  min-width: 0;
-  padding: 9px 10px;
-}
-
-.loan-overview__metrics > div + div {
-  border-left: 1px solid var(--line);
-}
-
-.loan-overview__metrics > div:nth-child(1) { border-top: 3px solid var(--signal-green); }
-.loan-overview__metrics > div:nth-child(2) { border-top: 3px solid var(--signal-blue); }
-.loan-overview__metrics > div:nth-child(3) { border-top: 3px solid var(--signal-coral); }
-
-.loan-overview__metrics dt,
-.loan-overview__metrics dd {
-  font-size: 9px;
-  margin: 0;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.loan-overview__metrics dt { color: var(--muted); }
-.loan-overview__metrics dd { font-size: 14px; font-weight: 800; }
 
 .loan-list {
   display: grid;
@@ -756,95 +771,296 @@ onBeforeUnmount(() => {
   opacity: .76;
 }
 
-.loan-card header {
-  align-items: flex-start;
-  display: flex;
+.borrowing-overview {
+  --overview-accent: var(--signal-green);
+  background:
+    linear-gradient(132deg, color-mix(in srgb, var(--overview-accent) 8%, transparent), transparent 62%),
+    var(--surface);
+  border-bottom: 1px solid var(--line-strong);
+  border-top: 3px solid var(--overview-accent);
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.borrowing-overview > div {
+  align-content: center;
+  border-right: 1px solid var(--line);
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 16px 12px 16px 0;
+}
+
+.borrowing-overview > div > span,
+.borrowing-overview p,
+.borrowing-overview dt {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.borrowing-overview strong {
+  font-size: 24px;
+}
+
+.borrowing-overview strong small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.borrowing-overview p {
+  line-height: 1.45;
+  margin: 0;
+}
+
+.borrowing-overview dl {
+  align-content: center;
+  display: grid;
   gap: 7px;
+  margin: 0;
+  min-width: 0;
+  padding: 12px 0 12px 12px;
+}
+
+.borrowing-overview dl > div {
+  display: flex;
+  gap: 8px;
   justify-content: space-between;
   min-width: 0;
 }
 
-.loan-kind {
-  background: color-mix(in srgb, var(--accent) 9%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--line));
-  color: var(--accent);
-  font-size: 8px;
-  font-weight: 800;
-  line-height: 1.3;
-  max-width: calc(100% - 45px);
-  overflow-wrap: anywhere;
-  padding: 4px 5px;
+.borrowing-overview dd {
+  font-size: 10px;
+  font-weight: 700;
+  margin: 0;
 }
 
-.loan-card__body {
+.product-choice-grid button {
+  align-content: start;
+  min-height: 150px;
+}
+
+.product-choice-grid button.active {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  border-color: var(--accent);
+  box-shadow: inset 0 -3px 0 var(--accent);
+}
+
+.product-choice-grid .product-kind {
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.product-choice-grid > button > span:not(.product-kind, .product-terms) {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.product-choice-grid .product-terms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: auto;
+}
+
+.product-choice-grid .product-terms b {
+  background: var(--soft);
+  border: 1px solid var(--line);
+  color: var(--muted-strong);
+  font-size: 8px;
+  padding: 4px 6px;
+}
+
+.loan-card--placeholder {
+  opacity: .62;
+}
+
+.loan-disclosures {
+  border-left: 1px solid var(--line);
+  border-top: 1px solid var(--line);
   display: grid;
-  gap: 3px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.loan-disclosures span {
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  color: var(--muted);
+  display: grid;
+  font-size: 9px;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px 8px;
+}
+
+.loan-disclosures b {
+  color: var(--ink);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.loan-requirement {
+  border-block: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
+  color: var(--accent);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 24px minmax(0, 1fr);
+  min-width: 0;
+  padding: 13px 12px;
+}
+
+.loan-requirement[data-loan-requirement='collateralized'] {
+  border-left-color: var(--signal-coral);
+  color: var(--signal-coral);
+}
+
+.loan-requirement > div {
+  display: grid;
+  gap: 4px;
   min-width: 0;
 }
 
-.loan-card__body strong {
-  font-size: 13px;
-  overflow-wrap: anywhere;
+.loan-requirement strong {
+  color: var(--ink);
+  font-size: 12px;
 }
 
-.loan-card__body small {
+.loan-requirement span {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.loan-application,
+.collateral-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.amount-presets {
+  display: grid;
+  gap: 4px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.amount-presets button {
+  background: var(--soft);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 9px;
+  min-height: 44px;
+  min-width: 0;
+}
+
+.amount-presets button[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--accent) 8%, var(--soft));
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.loan-estimate {
+  border-bottom: 1px solid var(--line-strong);
+  display: grid;
+  gap: 10px;
+  padding-block: 4px 14px;
+}
+
+.loan-estimate .section-heading-row > span {
   color: var(--muted);
   font-size: 9px;
 }
 
-.loan-card dl {
+.loan-estimate-grid {
+  border-left: 1px solid var(--line);
   border-top: 1px solid var(--line);
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin: auto 0 0;
-  min-width: 0;
-  padding-top: 9px;
 }
 
-.loan-card dl > div {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.loan-card dt,
-.loan-card dd {
-  font-size: 9px;
-  margin: 0;
-}
-
-.loan-card dt {
+.loan-estimate-grid span {
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
   color: var(--muted);
+  display: grid;
+  font-size: 9px;
+  gap: 5px;
+  min-width: 0;
+  padding: 11px;
 }
 
-.loan-card dd {
-  font-variant-numeric: tabular-nums;
-  font-weight: 800;
+.loan-estimate-grid b {
+  color: var(--ink);
+  font-size: 11px;
   overflow-wrap: anywhere;
 }
 
-.loan-card dl > div:first-child dd {
-  color: var(--accent);
-  font-size: 13px;
-}
-
-.loan-orders {
-  border-top: 8px solid var(--soft);
-  margin: 8px -20px 0;
-  min-width: 0;
-  padding: 0 20px;
-}
-
-.loan-orders .section-heading {
-  border-bottom: 1px solid var(--line);
-  font-size: 16px;
+.loan-estimate > p {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
   margin: 0;
-  min-height: 56px;
 }
 
-.loan-orders .section-heading b {
+.loan-feedback {
+  align-content: start;
+  display: grid;
+  min-height: 76px;
+}
+
+.loan-feedback > span {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 10px;
+  gap: 6px;
+}
+
+.loan-order-columns {
+  display: grid;
+  gap: 16px;
+}
+
+.loan-order-columns > section {
+  min-width: 0;
+}
+
+.loan-order-columns > section > header {
+  align-items: center;
+  border-bottom: 1px solid var(--line-strong);
+  display: flex;
+  justify-content: space-between;
+  min-height: 40px;
+  padding-inline: 2px;
+}
+
+.loan-order-columns > section > header span,
+.loan-order-columns > section > header b {
+  font-size: 10px;
+}
+
+.loan-order-columns > section > header b {
   color: var(--accent);
-  font-size: 12px;
+}
+
+.lifecycle-list article {
+  background: transparent;
+  border-width: 0 0 1px;
+}
+
+.loan-record-empty {
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  display: grid;
+  font-size: 10px;
+  margin: 0;
+  min-height: 88px;
+  padding: 14px;
+  place-items: center;
+  text-align: center;
 }
 
 .loan-order {
@@ -1119,11 +1335,6 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 390px) {
-  .loan-content {
-    padding-left: 14px;
-    padding-right: 14px;
-  }
-
   .loan-orders {
     margin-left: -14px;
     margin-right: -14px;

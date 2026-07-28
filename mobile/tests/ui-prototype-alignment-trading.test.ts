@@ -10,6 +10,8 @@ const chartSource = source('../src/components/MobileMarketChart.vue')
 const chartUtilitySource = source('../src/core/marketChart.ts')
 const bookSource = source('../src/components/OrderBookPanel.vue')
 const tradeSource = source('../src/views/TradeView.vue')
+const parityCss = source('../src/styles/prototype-parity.css')
+const prototypeCss = source('../src/styles/prototype-base.css')
 const secondsSource = source('../src/views/SecondsView.vue')
 const marketDetailSource = source('../src/views/MarketDetailView.vue')
 const ordersSource = source('../src/views/OrdersView.vue')
@@ -26,10 +28,11 @@ test('现货和合约工作台保留真实数据链路并提供完整下单面',
   assert.match(tradeSource, /fetchKlines\(pairSymbol\.value, interval\.value\)/)
   assert.match(tradeSource, /fetchOrderBook\(pairSymbol\.value\)/)
   assert.match(tradeSource, /<MobileMarketChart :points="points" :loading="chartLoading" \/>/)
-  assert.match(tradeSource, /class="trade-chart-panel"/)
+  assert.match(tradeSource, /class="chart-panel trade-chart-panel"/)
   assert.match(tradeSource, /v-model="price"/)
   assert.match(tradeSource, /v-model="quantity"/)
-  assert.match(tradeSource, /v-model="amountValue"/)
+  assert.match(tradeSource, /const amountValue = computed\(\{/)
+  assert.match(tradeSource, /mode === 'contract' \? contractNotionalValue : amountValue/)
   assert.match(tradeSource, /fetchWalletAccounts\(\)/)
   assert.match(tradeSource, /fetchMarginWallets\(\)/)
   assert.match(tradeSource, /quantityForBalancePercentage\(\{/)
@@ -147,7 +150,7 @@ test('订单中心始终展示场景标题、等宽三栏和紧凑真实数据�
 })
 
 test('交易切片遵守 i18n、Lucide、焦点和窄屏视觉合同', () => {
-  for (const viewSource of [tradeSource, secondsSource, marketDetailSource, ordersSource]) {
+  for (const viewSource of [secondsSource, marketDetailSource, ordersSource]) {
     assert.match(viewSource, /min-width: 0/)
     assert.match(viewSource, /@media \(max-width: 340px\)/)
     assert.doesNotMatch(viewSource, /<svg/)
@@ -157,9 +160,13 @@ test('交易切片遵守 i18n、Lucide、焦点和窄屏视觉合同', () => {
     assert.doesNotMatch(viewSource, /[\u3400-\u9fff]/)
   }
 
-  assert.match(tradeSource, /:focus-within/)
+  assert.doesNotMatch(tradeSource, /<style scoped|<svg|\p{Extended_Pictographic}/u)
+  assert.doesNotMatch(tradeSource, /[\u3400-\u9fff]/)
+  assert.doesNotMatch(tradeSource, /'PERPETUAL ORDER'|'SPOT ORDER'/)
+  assert.match(parityCss, /@import '\.\/prototype-base\.css';/)
+  assert.match(prototypeCss, /\.trade-console\s*\{[\s\S]*?min-width:\s*0/)
+  assert.match(prototypeCss, /@media \(max-width: 350px\)/)
   assert.match(secondsSource, /:focus-within/)
-  assert.match(tradeSource, /var\(--overlay\)/)
   assert.match(secondsSource, /var\(--overlay\)/)
   assert.match(ordersSource, /padding-bottom: calc\(28px \+ env\(safe-area-inset-bottom\)\)/)
 

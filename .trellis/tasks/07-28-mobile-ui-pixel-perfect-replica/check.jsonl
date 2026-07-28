@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "Required mobile verification commands and UI contracts."}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "Verify route, navigation, localization, and back-stack behavior."}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "Verify PWA/Tauri build outputs, theme, header, and shaped navigation."}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Verify API integration and failure-state truthfulness."}
+{"file": ".trellis/tasks/07-28-mobile-ui-pixel-perfect-replica/prd.md", "reason": "Acceptance criteria for root, secondary, responsive, PWA, and Android parity."}
+{"file": ".trellis/tasks/07-28-mobile-ui-pixel-perfect-replica/research/prototype-parity-contract.md", "reason": "Screenshot and geometry verification baseline."}

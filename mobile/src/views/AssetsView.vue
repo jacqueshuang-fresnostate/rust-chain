@@ -2,10 +2,23 @@
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowDownUp, ArrowUpToLine, ChevronRight, Download, ReceiptText, RefreshCw, WalletCards, X } from 'lucide-vue-next'
-import AssetMark from '@/components/AssetMark.vue'
-import LoginRequiredState from '@/components/LoginRequiredState.vue'
-import PageHeader from '@/components/PageHeader.vue'
+import {
+  ArrowDownLeft,
+  ArrowLeftRight,
+  ArrowUpRight,
+  CandlestickChart,
+  CheckCircle2,
+  ChevronRight,
+  CreditCard,
+  Eye,
+  EyeOff,
+  History,
+  Landmark,
+  Layers3,
+  SlidersHorizontal,
+  WalletCards,
+  X,
+} from 'lucide-vue-next'
 import { apiErrorMessage } from '@/api/client'
 import { fetchMarginWallets } from '@/api/trading'
 import { fetchWalletAccounts, transferWalletFunds } from '@/api/wallet'
@@ -21,8 +34,10 @@ const session = useSessionStore()
 const { t } = useI18n()
 const accounts = ref<WalletAccount[]>([])
 const marginAccounts = ref<WalletAccount[]>([])
+const balanceVisible = ref(true)
 const loading = ref(false)
 const error = ref('')
+const accountsReady = ref(false)
 const transferOpen = ref(false)
 const transferAsset = ref('')
 const transferAmount = ref('')
@@ -40,31 +55,75 @@ const assetRows = computed(() => {
   return [...rows.values()].sort((left, right) => left.symbol.localeCompare(right.symbol))
 })
 
+const visibleAssetRows = computed<Array<{
+  key: string
+  symbol: string
+  spot?: WalletAccount
+  margin?: WalletAccount
+  placeholder?: boolean
+}>>(() => assetRows.value.length
+  ? assetRows.value.slice(0, 3).map((row) => ({ ...row, key: row.symbol }))
+  : [1, 2, 3].map((slot) => ({ key: `placeholder-${slot}`, symbol: '--', placeholder: true })))
 const spotEstimate = computed(() => estimateWallets(accounts.value))
 const marginEstimate = computed(() => estimateWallets(marginAccounts.value))
 const totalEstimate = computed(() => spotEstimate.value + marginEstimate.value)
+const accountDataAvailable = computed(() => session.isAuthenticated && accountsReady.value && !error.value)
+const accountStateLabel = computed(() => {
+  if (!session.isAuthenticated) return t('common.loginRequiredTitle')
+  if (loading.value) return t('common.loading')
+  if (error.value) return t('common.serviceUnavailable')
+  return t('common.liveData')
+})
+const allocation = computed(() => {
+  const values = new Map<string, number>()
+  for (const row of assetRows.value) {
+    const amount = walletTotal(row.spot) + walletTotal(row.margin)
+    const value = ['USDT', 'USDC', 'USD'].includes(row.symbol)
+      ? amount
+      : amount * (marketStore.tickerFor(`${row.symbol}/USDT`)?.lastPrice || 0)
+    values.set(row.symbol, value)
+  }
+  const total = [...values.values()].reduce((sum, value) => sum + value, 0)
+  if (total <= 0) return { btc: 0, eth: 0, usdt: 0, other: 0 }
+  const ratio = (symbol: string) => total > 0 ? Math.round(((values.get(symbol) || 0) / total) * 100) : 0
+  const btc = ratio('BTC')
+  const eth = ratio('ETH')
+  const usdt = ratio('USDT') + ratio('USDC') + ratio('USD')
+  return { btc, eth, usdt, other: Math.max(0, 100 - btc - eth - usdt) }
+})
 
 const transferAccounts = computed(() => transferFrom.value === 'spot' ? accounts.value : marginAccounts.value)
 const transferAccount = computed(() => transferAccounts.value.find((account) => account.symbol === transferAsset.value))
 const transferAvailable = computed(() => transferAccount.value?.available || 0)
 
 async function loadAccounts(): Promise<void> {
-  if (!session.isAuthenticated) return
+  if (!session.isAuthenticated) {
+    accounts.value = []
+    marginAccounts.value = []
+    accountsReady.value = false
+    loading.value = false
+    error.value = ''
+    return
+  }
   loading.value = true
+  accountsReady.value = false
   error.value = ''
   try {
     const [, nextAccounts, marginState] = await Promise.all([marketStore.refresh(), fetchWalletAccounts(), fetchMarginWallets()])
     accounts.value = nextAccounts
     marginAccounts.value = marginState.wallets
+    accountsReady.value = true
     if (!transferAccounts.value.some((account) => account.symbol === transferAsset.value)) transferAsset.value = transferAccounts.value[0]?.symbol || ''
   } catch (reason) {
+    accounts.value = []
+    marginAccounts.value = []
     error.value = apiErrorMessage(reason, t('assets.loadFailed'))
   } finally {
     loading.value = false
   }
 }
 
-function openDeposit() {
+function openDeposit(): void {
   if (!session.isAuthenticated) {
     void router.push({ name: 'login', query: { redirect: '/assets/deposit' } })
     return
@@ -72,7 +131,7 @@ function openDeposit() {
   void router.push({ name: 'deposit-asset' })
 }
 
-function openTransfer() {
+function openTransfer(): void {
   if (!session.isAuthenticated) {
     void router.push({ name: 'login', query: { redirect: '/assets' } })
     return
@@ -101,13 +160,13 @@ function openProtectedRoute(name: 'withdraw-asset' | 'wallet-ledger' | 'quick-re
 }
 
 async function submitTransfer(): Promise<void> {
-  const amount = Number(transferAmount.value)
-  if (!transferAsset.value || !Number.isFinite(amount) || amount <= 0) {
+  const transferValue = Number(transferAmount.value)
+  if (!transferAsset.value || !Number.isFinite(transferValue) || transferValue <= 0) {
     transferFeedback.value = t('assets.invalidTransfer')
     transferFeedbackTone.value = 'error'
     return
   }
-  if (amount > transferAvailable.value) {
+  if (transferValue > transferAvailable.value) {
     transferFeedback.value = t('assets.exceedsBalance')
     transferFeedbackTone.value = 'error'
     return
@@ -116,7 +175,7 @@ async function submitTransfer(): Promise<void> {
   transferFeedback.value = ''
   try {
     const to = transferFrom.value === 'spot' ? 'margin' : 'spot'
-    await transferWalletFunds(transferAsset.value, transferFrom.value, to, amount)
+    await transferWalletFunds(transferAsset.value, transferFrom.value, to, transferValue)
     transferFeedback.value = t('assets.transferSuccess')
     transferFeedbackTone.value = 'success'
     transferAmount.value = ''
@@ -135,9 +194,9 @@ function walletTotal(account?: WalletAccount): number {
 
 function estimateWallets(wallets: WalletAccount[]): number {
   return wallets.reduce((total, account) => {
-    const amount = walletTotal(account)
-    if (account.symbol === 'USDT' || account.symbol === 'USDC' || account.symbol === 'USD') return total + amount
-    return total + amount * (marketStore.tickerFor(`${account.symbol}/USDT`)?.lastPrice || 0)
+    const accountAmount = walletTotal(account)
+    if (account.symbol === 'USDT' || account.symbol === 'USDC' || account.symbol === 'USD') return total + accountAmount
+    return total + accountAmount * (marketStore.tickerFor(`${account.symbol}/USDT`)?.lastPrice || 0)
   }, 0)
 }
 
@@ -150,224 +209,174 @@ watch(() => session.isAuthenticated, () => { void loadAccounts() }, { immediate:
 </script>
 
 <template>
-  <main class="page page--prototype-grid assets-page" data-assets-workspace="live">
-    <PageHeader :title="t('assets.title')" :eyebrow="t('assets.totalValue')" :back="false">
-      <template #actions>
-        <button class="icon-button" type="button" :aria-label="t('assets.refresh')" :disabled="loading" @click="loadAccounts">
-          <RefreshCw :size="21" :class="{ spin: loading }" />
-        </button>
-      </template>
-    </PageHeader>
-    <div class="page-content assets-content">
-      <LoginRequiredState v-if="!session.isAuthenticated" :description="t('assets.loginDescription')" />
-      <section class="assets-summary">
-          <div class="assets-summary__heading">
-            <span>{{ t('assets.totalValue') }}</span>
-            <WalletCards :size="20" aria-hidden="true" />
-          </div>
-          <strong class="numeric">{{ formatFiat(totalEstimate) }}</strong>
-          <p>{{ t('assets.estimateNote') }}</p>
-          <dl class="assets-summary__metrics">
-            <div>
-              <dt>{{ t('assets.fundingAccount') }}</dt>
-              <dd class="numeric">{{ formatFiat(spotEstimate) }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('assets.contractAccount') }}</dt>
-              <dd class="numeric">{{ formatFiat(marginEstimate) }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('assets.list') }}</dt>
-              <dd class="numeric">{{ assetRows.length }}</dd>
-            </div>
-          </dl>
-      </section>
-
-      <div class="asset-actions" :aria-label="t('assets.operations')">
-          <button type="button" @click="openDeposit">
-            <span class="asset-action__icon"><Download :size="19" /></span>
-            <span>{{ t('assets.deposit') }}</span>
-          </button>
-          <button type="button" @click="openProtectedRoute('withdraw-asset')">
-            <span class="asset-action__icon"><ArrowUpToLine :size="19" /></span>
-            <span>{{ t('assets.withdraw') }}</span>
-          </button>
-          <button type="button" @click="openTransfer">
-            <span class="asset-action__icon"><ArrowDownUp :size="19" /></span>
-            <span>{{ t('assets.transfer') }}</span>
-          </button>
-          <button type="button" @click="openProtectedRoute('wallet-ledger')">
-            <span class="asset-action__icon"><ReceiptText :size="19" /></span>
-            <span>{{ t('assets.ledger') }}</span>
-          </button>
-      </div>
-
-      <button class="quick-recharge-entry" type="button" @click="openProtectedRoute('quick-recharge')">
-          <span>
-            <b>{{ t('assets.quickBuy') }}</b>
-            <small>{{ t('assets.quickBuyDescription') }}</small>
-          </span>
-          <span class="quick-recharge-entry__action">{{ t('assets.go') }}<ChevronRight :size="18" /></span>
-      </button>
-
-      <div class="section-heading">
-        <span>{{ t('assets.list') }}</span>
-        <button v-if="session.isAuthenticated" class="section-heading__action" type="button" @click="session.logout">{{ t('assets.logout') }}</button>
-      </div>
-      <p v-if="error" class="error-message" role="alert">{{ error }}</p>
-      <div v-if="assetRows.length" class="asset-list" role="list">
-          <div v-for="account in assetRows" :key="account.symbol" class="asset-row" role="listitem">
-            <AssetMark :symbol="account.symbol" :src="account.spot?.logoUrl || account.margin?.logoUrl" />
-            <span class="asset-row__symbol">
-              <b>{{ account.symbol }}</b>
-              <small>{{ t('assets.accountSummary', { funding: formatAmount(account.spot?.available), contract: formatAmount(account.margin?.available) }) }}</small>
-            </span>
-            <span class="asset-row__value">
-              <b class="numeric">{{ formatAmount(walletTotal(account.spot) + walletTotal(account.margin)) }}</b>
-              <small>{{ t('assets.frozen', { amount: formatAmount((account.spot?.frozen || 0) + (account.spot?.locked || 0) + (account.margin?.frozen || 0) + (account.margin?.locked || 0)) }) }}</small>
-            </span>
-          </div>
-      </div>
-      <p v-else-if="!loading" class="empty-state">{{ t('assets.empty') }}</p>
+  <main class="view assets-view prototype-root-view" data-assets-workspace="live">
+    <div class="page-intro compact">
+      <span class="eyebrow">{{ t('rootPrototype.assetField') }}</span>
+      <h1>{{ t('rootPrototype.assetHeadlineLine1') }}<br />{{ t('rootPrototype.assetHeadlineLine2') }}</h1>
     </div>
 
-    <div v-if="transferOpen" class="transfer-mask" @click.self="closeTransfer">
-      <form
+    <section class="asset-hero" :aria-busy="loading">
+      <div class="asset-orbit" aria-hidden="true"><span /><i /><b /></div>
+      <div class="asset-hero-copy">
+        <div class="balance-label">
+          <span>{{ t('home.totalAssetValue') }}</span>
+          <button
+            class="inline-icon"
+            type="button"
+            :aria-label="t('home.assetOverview')"
+            :aria-pressed="!balanceVisible"
+            @click="balanceVisible = !balanceVisible"
+          >
+            <Eye v-if="balanceVisible" :size="16" aria-hidden="true" />
+            <EyeOff v-else :size="16" aria-hidden="true" />
+          </button>
+        </div>
+        <strong class="numeric">
+          {{ !balanceVisible
+            ? '$••••••'
+            : accountDataAvailable
+              ? formatFiat(totalEstimate)
+              : session.isAuthenticated
+                ? '$--'
+                : '$••••••' }}
+        </strong>
+        <span class="positive">{{ t('rootPrototype.todayReturn') }} --</span>
+      </div>
+      <div v-if="error" class="asset-hero-state" role="alert">
+        <span>{{ error }}</span>
+        <button type="button" :disabled="loading" @click="loadAccounts">{{ t('common.retry') }}</button>
+      </div>
+    </section>
+
+    <div class="asset-actions">
+      <button type="button" @click="openDeposit"><span><ArrowDownLeft :size="20" /></span>{{ t('assets.deposit') }}</button>
+      <button type="button" @click="openProtectedRoute('withdraw-asset')"><span><ArrowUpRight :size="20" /></span>{{ t('assets.withdraw') }}</button>
+      <button type="button" @click="openTransfer"><span><ArrowLeftRight :size="20" /></span>{{ t('assets.transfer') }}</button>
+      <button type="button" @click="openProtectedRoute('quick-recharge')"><span><CreditCard :size="20" /></span>{{ t('assets.quickBuy') }}</button>
+    </div>
+
+    <section class="content-section allocation-section">
+      <div class="section-heading">
+        <div><span class="eyebrow">{{ t('rootPrototype.allocationLabel') }}</span><h2>{{ t('rootPrototype.assetAllocation') }}</h2></div>
+        <button class="icon-button small" type="button" :aria-label="t('rootPrototype.assetAllocation')" @click="openProtectedRoute('wallet-ledger')">
+          <SlidersHorizontal :size="15" />
+        </button>
+      </div>
+      <div class="allocation-track" :aria-label="t('rootPrototype.assetAllocation')">
+        <i class="allocation-btc" :style="{ width: `${allocation.btc}%` }" />
+        <i class="allocation-eth" :style="{ width: `${allocation.eth}%` }" />
+        <i class="allocation-usdt" :style="{ width: `${allocation.usdt}%` }" />
+        <i class="allocation-other" :style="{ width: `${allocation.other}%` }" />
+      </div>
+      <div class="allocation-legend">
+        <span><i class="btc-dot" /> BTC <b>{{ allocation.btc }}%</b></span>
+        <span><i class="eth-dot" /> ETH <b>{{ allocation.eth }}%</b></span>
+        <span><i class="usdt-dot" /> USDT <b>{{ allocation.usdt }}%</b></span>
+        <span><i class="other-dot" /> {{ t('rootPrototype.otherAssets') }} <b>{{ allocation.other }}%</b></span>
+      </div>
+    </section>
+
+    <section class="content-section">
+      <div class="section-heading"><div><span class="eyebrow">{{ t('rootPrototype.holdingsLabel') }}</span><h2>{{ t('rootPrototype.holdings') }}</h2></div></div>
+      <div class="account-list">
+        <button
+          v-for="row in visibleAssetRows"
+          :key="row.key"
+          type="button"
+          class="account-row"
+          :disabled="row.placeholder"
+          @click="openProtectedRoute('wallet-ledger')"
+        >
+          <span class="account-icon"><WalletCards :size="19" /></span>
+          <span>
+            <strong>{{ row.symbol }}</strong>
+            <small>
+              {{ t('common.available') }}
+              {{ accountDataAvailable && !row.placeholder ? formatAmount(row.spot?.available || 0) : '--' }}
+            </small>
+          </span>
+          <b class="numeric">
+            {{ !balanceVisible
+              ? '••••'
+              : accountDataAvailable && !row.placeholder
+                ? formatAmount(walletTotal(row.spot) + walletTotal(row.margin))
+                : '--' }}
+          </b>
+          <ChevronRight :size="16" />
+        </button>
+      </div>
+    </section>
+
+    <section class="content-section">
+      <div class="section-heading">
+        <div><span class="eyebrow">{{ t('rootPrototype.accountsLabel') }}</span><h2>{{ t('rootPrototype.accounts') }}</h2></div>
+        <button class="text-action" type="button" @click="openProtectedRoute('wallet-ledger')">
+          {{ t('assets.ledger') }} <History :size="15" />
+        </button>
+      </div>
+      <div class="account-list">
+        <button class="account-row" type="button" @click="openProtectedRoute('wallet-ledger')">
+          <span class="account-icon"><CandlestickChart :size="19" /></span>
+          <span><strong>{{ t('assets.fundingAccount') }}</strong><small :class="{ positive: accountDataAvailable }">{{ accountStateLabel }}</small></span>
+          <b class="numeric">{{ balanceVisible && accountDataAvailable ? formatFiat(spotEstimate) : '$••••' }}</b>
+          <ChevronRight :size="16" />
+        </button>
+        <button class="account-row" type="button" @click="openProtectedRoute('wallet-ledger')">
+          <span class="account-icon"><Layers3 :size="19" /></span>
+          <span><strong>{{ t('assets.marginAccount') }}</strong><small :class="{ positive: accountDataAvailable }">{{ accountStateLabel }}</small></span>
+          <b class="numeric">{{ balanceVisible && accountDataAvailable ? formatFiat(marginEstimate) : '$••••' }}</b>
+          <ChevronRight :size="16" />
+        </button>
+        <button class="account-row" type="button" @click="router.push({ name: 'earn' })">
+          <span class="account-icon"><Landmark :size="19" /></span>
+          <span><strong>{{ t('rootPrototype.earnAccount') }}</strong><small>{{ t('products.earn') }}</small></span>
+          <b>--</b>
+          <ChevronRight :size="16" />
+        </button>
+      </div>
+    </section>
+
+    <div v-if="transferOpen" class="confirmation-layer">
+      <button class="confirmation-overlay-dismiss" type="button" :aria-label="t('common.close')" :disabled="transferring" tabindex="-1" @click="closeTransfer" />
+      <section
         ref="transferDialog"
-        class="transfer-dialog"
+        class="confirmation-sheet"
         role="dialog"
         aria-modal="true"
-        aria-labelledby="transfer-title"
+        :aria-busy="transferring"
+        :aria-label="t('assets.transfer')"
+        tabindex="-1"
         @keydown="handleTransferDialogKeydown"
-        @submit.prevent="submitTransfer"
       >
         <header>
-          <strong id="transfer-title">{{ t('assets.transferTitle') }}</strong>
-          <button data-dialog-initial class="icon-button" type="button" :aria-label="t('common.close')" :disabled="transferring" @click="closeTransfer">
-            <X :size="21" />
-          </button>
+          <span class="confirmation-icon"><CheckCircle2 :size="20" /></span>
+          <div><span>{{ t('common.confirm') }}</span><h2>{{ t('assets.transfer') }}</h2></div>
         </header>
-        <label class="transfer-field">
-          <span>{{ t('assets.asset') }}</span>
-          <select v-model="transferAsset">
-            <option v-for="account in transferAccounts" :key="account.symbol" :value="account.symbol">{{ t('assets.assetAvailable', { asset: account.symbol, amount: formatAmount(account.available) }) }}</option>
-          </select>
-        </label>
-        <label class="transfer-field">
-          <span>{{ t('assets.from') }}</span>
+        <label class="field">
+          <span>{{ t('assets.transferFrom') }}</span>
           <select v-model="transferFrom">
             <option value="spot">{{ t('assets.fundingAccount') }}</option>
-            <option value="margin">{{ t('assets.contractAccount') }}</option>
+            <option value="margin">{{ t('assets.marginAccount') }}</option>
           </select>
         </label>
-        <div class="transfer-direction">
-          <span>{{ transferFrom === 'spot' ? t('assets.fundingAccount') : t('assets.contractAccount') }}</span>
-          <ArrowDownUp :size="19" />
-          <span>{{ transferFrom === 'spot' ? t('assets.contractAccount') : t('assets.fundingAccount') }}</span>
-        </div>
-        <p class="transfer-available">{{ t('assets.availableBalance', { amount: formatAmount(transferAvailable), asset: transferAsset }) }}</p>
-        <label class="transfer-field">
-          <span>{{ t('assets.transferAmount') }}</span>
-          <input v-model="transferAmount" inputmode="decimal" :placeholder="t('assets.transferPlaceholder')" />
+        <label class="field">
+          <span>{{ t('common.amount') }}</span>
+          <div>
+            <input v-model="transferAmount" inputmode="decimal" />
+            <select v-model="transferAsset">
+              <option v-for="account in transferAccounts" :key="account.assetId" :value="account.symbol">{{ account.symbol }}</option>
+            </select>
+          </div>
         </label>
-        <button class="button button--primary button--full" type="submit" :disabled="transferring">{{ transferring ? t('assets.transferring') : t('assets.confirmTransfer') }}</button>
-        <p v-if="transferFeedback" :class="transferFeedbackTone === 'success' ? 'up' : 'down'" class="transfer-feedback" aria-live="polite">{{ transferFeedback }}</p>
-      </form>
+        <p class="field-hint">{{ t('common.available') }} {{ formatAmount(transferAvailable) }} {{ transferAsset }}</p>
+        <p v-if="transferFeedback" :class="transferFeedbackTone === 'success' ? 'positive' : 'field-error'" aria-live="polite">{{ transferFeedback }}</p>
+        <div class="confirmation-actions">
+          <button data-dialog-cancel type="button" :disabled="transferring" @click="closeTransfer"><X :size="16" />{{ t('common.cancel') }}</button>
+          <button class="confirmation-primary" type="button" :disabled="transferring" @click="submitTransfer">
+            {{ transferring ? t('common.submitting') : t('common.confirm') }}
+          </button>
+        </div>
+      </section>
     </div>
   </main>
 </template>
-
-<style scoped>
-.assets-content { padding-bottom: calc(36px + env(safe-area-inset-bottom)); }
-.assets-content > :deep(.login-required) { margin: 12px -16px 0; }
-.assets-summary {
-  background:
-    linear-gradient(var(--grid-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
-    var(--surface-elevated);
-  background-size: 36px 36px;
-  border-bottom: 1px solid var(--line-strong);
-  border-top: 3px solid var(--signal-green);
-  margin: 0 -16px;
-  min-height: 256px;
-  overflow: hidden;
-  padding: 30px 16px 0;
-  position: relative;
-}
-.assets-summary::before {
-  background: linear-gradient(90deg, var(--line-strong) 0 42%, transparent 42% 52%, var(--signal-green) 52% 100%);
-  content: '';
-  height: 2px;
-  position: absolute;
-  right: 16px;
-  top: 16px;
-  width: 58px;
-}
-.assets-summary__heading { align-items: center; color: var(--muted); display: flex; font-size: 13px; font-weight: 700; justify-content: space-between; }
-.assets-summary__heading svg { color: var(--signal-green); }
-.assets-summary strong { display: block; font-family: var(--data-font); font-size: 38px; letter-spacing: 0; line-height: 1.08; margin-top: 28px; }
-.assets-summary p { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 9px 0 0; }
-.assets-summary__metrics { border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 22px -16px 0; }
-.assets-summary__metrics > div { display: grid; gap: 5px; min-height: 66px; min-width: 0; padding: 10px 12px; }
-.assets-summary__metrics > div + div { border-left: 1px solid var(--line); }
-.assets-summary__metrics dt,
-.assets-summary__metrics dd { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.assets-summary__metrics dt { color: var(--muted); font-size: 9px; }
-.assets-summary__metrics dd { font-size: 11px; font-weight: 760; }
-.assets-summary__metrics > div:nth-child(1) { border-top: 3px solid var(--signal-green); }
-.assets-summary__metrics > div:nth-child(2) { border-top: 3px solid var(--signal-blue); }
-.assets-summary__metrics > div:nth-child(3) { border-top: 3px solid var(--signal-coral); }
-.asset-actions { border-bottom: 1px solid var(--line); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0 -16px; }
-.asset-actions button { align-items: center; background: transparent; color: var(--ink); display: flex; flex-direction: column; font-size: 11px; font-weight: 720; gap: 7px; justify-content: center; min-height: 86px; min-width: 0; padding: 8px 2px; }
-.asset-actions button + button { border-left: 1px solid var(--line); }
-.asset-action__icon { align-items: center; background: var(--soft); border: 1px solid var(--line); border-radius: 50%; color: var(--signal-green); display: inline-flex; height: 40px; justify-content: center; width: 40px; }
-.asset-actions button:nth-child(2) .asset-action__icon { color: var(--signal-coral); }
-.asset-actions button:nth-child(3) .asset-action__icon { color: var(--signal-blue); }
-.quick-recharge-entry { align-items: center; background: var(--surface-elevated); border-bottom: 1px solid var(--line); border-top: 1px solid var(--line); display: flex; justify-content: space-between; margin: 16px -16px 0; min-height: 72px; padding: 12px 16px; text-align: left; width: calc(100% + 32px); }
-.quick-recharge-entry > span:first-child { display: grid; gap: 4px; min-width: 0; padding-right: 10px; }
-.quick-recharge-entry b { font-size: 15px; }
-.quick-recharge-entry small { color: var(--muted); font-size: 12px; line-height: 1.4; }
-.quick-recharge-entry__action { align-items: center; color: var(--signal-green); display: inline-flex; flex: 0 0 auto; font-size: 13px; font-weight: 750; gap: 2px; }
-.asset-list { border-top: 1px solid var(--line); display: grid; }
-.asset-row { align-items: center; border-bottom: 1px solid var(--line); display: grid; gap: 12px; grid-template-columns: 40px minmax(0, 1fr) minmax(90px, auto); min-height: 78px; }
-.asset-row__symbol,
-.asset-row__value { display: grid; min-width: 0; }
-.asset-row b { font-size: 15px; }
-.asset-row small { color: var(--muted); font-size: 11px; line-height: 1.35; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.asset-row__value { text-align: right; }
-.asset-row__value b { font-variant-numeric: tabular-nums; }
-.transfer-mask { align-items: flex-end; background: var(--overlay); display: flex; inset: 0; justify-content: center; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); position: fixed; z-index: var(--layer-overlay); }
-.transfer-dialog { background: var(--surface-elevated); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow-soft); display: grid; gap: 13px; max-height: calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); max-width: 448px; overflow-y: auto; overscroll-behavior: contain; padding: 18px; width: 100%; }
-.transfer-dialog header { align-items: center; display: flex; justify-content: space-between; }
-.transfer-dialog header strong { font-size: 20px; }
-.transfer-field { background: var(--field-surface); border: 1px solid var(--line); border-radius: var(--radius); display: grid; gap: 2px; padding: 7px 12px; }
-.transfer-field:focus-within { border-color: var(--focus); box-shadow: 0 0 0 2px var(--focus-ring); }
-.transfer-field > span { color: var(--muted); font-size: 11px; font-weight: 650; }
-.transfer-field input,
-.transfer-field select { background: transparent; border: 0; color: var(--ink); min-height: 30px; outline: 0; padding: 0; width: 100%; }
-.transfer-direction { align-items: center; background: var(--soft); border: 1px solid var(--line); border-radius: var(--radius); display: grid; font-size: 12px; font-weight: 700; gap: 8px; grid-template-columns: 1fr 28px 1fr; min-height: 48px; padding: 7px 12px; text-align: center; }
-.transfer-direction svg { color: var(--positive); justify-self: center; }
-.transfer-available { color: var(--muted-strong); font-size: 12px; margin: -3px 0 0; text-align: right; }
-.transfer-feedback { font-size: 13px; margin: 0; text-align: center; }
-.spin { animation: spin .8s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-@media (max-width: 360px) {
-  .assets-content > :deep(.login-required),
-  .assets-summary,
-  .asset-actions { margin-left: -12px; margin-right: -12px; }
-  .quick-recharge-entry { margin-left: -12px; margin-right: -12px; padding-inline: 12px; width: calc(100% + 24px); }
-  .assets-summary { padding-left: 12px; padding-right: 12px; }
-}
-@media (max-width: 340px) {
-  .assets-content { padding-left: 12px; padding-right: 12px; }
-  .assets-content > :deep(.login-required),
-  .assets-summary,
-  .asset-actions { margin-left: -12px; margin-right: -12px; }
-  .quick-recharge-entry { margin-left: -12px; margin-right: -12px; padding-inline: 12px; width: calc(100% + 24px); }
-  .assets-summary { padding-left: 12px; padding-right: 12px; }
-  .asset-actions button { font-size: 11px; min-height: 76px; }
-  .asset-action__icon { height: 38px; width: 38px; }
-  .asset-row { gap: 9px; grid-template-columns: 36px minmax(0, 1fr) minmax(78px, auto); }
-  .asset-row small { font-size: 10px; }
-}
-</style>

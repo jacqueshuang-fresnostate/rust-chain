@@ -38,6 +38,8 @@ const sources = Object.fromEntries(viewNames.map((name) => [
   name,
   readFileSync(new URL(`../src/views/${name}.vue`, import.meta.url), 'utf8'),
 ])) as Record<(typeof viewNames)[number], string>
+const prototypeCss = readFileSync(new URL('../src/styles/prototype-base.css', import.meta.url), 'utf8')
+const prototypeManagedContent = new Set(['LoanView', 'MessageCenterView', 'SecurityView'])
 
 test('二级页面使用场景 Header 或完整认证身份区', () => {
   for (const name of viewNames) {
@@ -59,16 +61,18 @@ test('二级页面使用场景 Header 或完整认证身份区', () => {
 })
 
 test('重点业务页保留各自的信息层级和完整状态表面', () => {
-  assert.match(sources.MessageCenterView, /class="message-summary"/)
+  assert.match(sources.MessageCenterView, /class="inbox-summary"/)
   assert.match(sources.MessageCenterView, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/)
+  assert.match(sources.MessageCenterView, /\.message-filter-bar\s*\{[\s\S]*?grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/)
   assert.match(sources.MessageCenterView, /message-row--unread/)
 
   assert.match(sources.LoanView, /\.loan-list \{\s*display: grid;[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/)
   assert.match(sources.LoanView, /@media \(max-width: 340px\) \{[\s\S]*\.loan-list \{\s*grid-template-columns: 1fr;/)
   assert.match(sources.LoanView, /:class="\{ 'is-invalid': amountInvalid \}"/)
-  assert.match(sources.LoanView, /:disabled="submitting \|\| !canApply"/)
+  assert.match(sources.LoanView, /:disabled="submitting \|\| \(session\.isAuthenticated && !canApply\)"/)
 
-  assert.match(sources.SecurityView, /class="security-overview"/)
+  assert.match(sources.SecurityView, /class="protection-overview"/)
+  assert.match(sources.SecurityView, /class="security-checklist"/)
   assert.match(sources.SecurityView, /canUpdateLoginPassword/)
   assert.match(sources.SecurityView, /canUpdateFundPassword/)
 
@@ -113,7 +117,15 @@ test('全部二级页面遵守窄屏、硬边界、主题变量和 Lucide 合同
   for (const [name, source] of Object.entries(sources)) {
     const styles = source.match(/<style scoped>([\s\S]*?)<\/style>/)?.[1] || ''
     assert.match(styles, /@media \(max-width: 340px\)/, `${name} missing 340px layout`)
-    assert.match(styles, /env\(safe-area-inset-bottom\)/, `${name} missing safe area`)
+    if (prototypeManagedContent.has(name)) {
+      assert.match(
+        prototypeCss,
+        /\.secondary-content\s*\{[\s\S]*?env\(safe-area-inset-bottom\)/,
+        `${name} missing shared safe area`,
+      )
+    } else {
+      assert.match(styles, /env\(safe-area-inset-bottom\)/, `${name} missing safe area`)
+    }
     assert.doesNotMatch(styles, /border-radius:\s*(?:[1-9]\d+|999)px/, `${name} has a radius over 8px`)
     assert.doesNotMatch(styles, /rgba?\(11,\s*24,\s*17/i)
     assert.doesNotMatch(source, /<svg/)

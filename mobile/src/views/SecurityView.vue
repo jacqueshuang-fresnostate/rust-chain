@@ -1,9 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Check, Copy, KeyRound, LockKeyhole, MailCheck, ShieldCheck } from 'lucide-vue-next'
+import {
+  Check,
+  CheckCircle2,
+  Copy,
+  Fingerprint,
+  LockKeyhole,
+  MailCheck,
+  MonitorSmartphone,
+  ShieldCheck,
+} from 'lucide-vue-next'
 import { toDataURL } from 'qrcode'
 import { useI18n } from 'vue-i18n'
-import LoginRequiredState from '@/components/LoginRequiredState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
 import {
@@ -32,9 +40,11 @@ const twoFactor = ref<TwoFactorStatus | null>(null)
 const loading = ref(false)
 const error = ref('')
 const success = ref('')
+const securityReady = ref(false)
 const saving = ref('')
 const loginOldPassword = ref('')
 const loginNewPassword = ref('')
+const loginNewPasswordConfirm = ref('')
 const fundLoginPassword = ref('')
 const fundOldPassword = ref('')
 const fundNewPassword = ref('')
@@ -48,9 +58,24 @@ const showFundPasswordReset = ref(false)
 const fundPasswordResetCode = ref('')
 const fundPasswordResetValue = ref('')
 
-const fundPasswordLabel = computed(() => profile.value?.fundPasswordSet ? t('security.changeFundPassword') : t('security.setFundPassword'))
-const canUpdateLoginPassword = computed(() => Boolean(loginOldPassword.value && loginNewPassword.value))
+const fundPasswordLabel = computed(() => {
+  if (!securityReady.value) return t('security.fundProtection')
+  return profile.value?.fundPasswordSet ? t('security.changeFundPassword') : t('security.setFundPassword')
+})
+const securityStateLabel = computed(() => {
+  if (loading.value) return t('security.loading')
+  if (error.value) return t('common.serviceUnavailable')
+  if (!session.isAuthenticated) return t('security.loginDescription')
+  return '--'
+})
+const canUpdateLoginPassword = computed(() => Boolean(
+  loginOldPassword.value
+  && loginNewPassword.value.length >= 8
+  && loginNewPassword.value === loginNewPasswordConfirm.value,
+))
 const canUpdateFundPassword = computed(() => Boolean(
+  securityReady.value
+  &&
   fundNewPassword.value
   && (profile.value?.fundPasswordSet ? fundOldPassword.value : fundLoginPassword.value),
 ))
@@ -63,14 +88,25 @@ const protectionCount = computed(() => [
 const protectionPercent = computed(() => Math.round((protectionCount.value / 3) * 100))
 
 async function load(): Promise<void> {
-  if (!session.isAuthenticated) return
+  if (!session.isAuthenticated) {
+    profile.value = null
+    twoFactor.value = null
+    securityReady.value = false
+    loading.value = false
+    error.value = ''
+    return
+  }
   loading.value = true
+  securityReady.value = false
   error.value = ''
   try {
     const [nextProfile, nextTwoFactor] = await Promise.all([fetchUserProfile(), fetchTwoFactorStatus()])
     profile.value = nextProfile
     twoFactor.value = nextTwoFactor
+    securityReady.value = true
   } catch (reason) {
+    profile.value = null
+    twoFactor.value = null
     error.value = apiErrorMessage(reason, t('security.loadFailed'))
   } finally {
     loading.value = false
@@ -78,7 +114,7 @@ async function load(): Promise<void> {
 }
 
 async function updateLoginPassword(): Promise<void> {
-  if (!loginOldPassword.value || !loginNewPassword.value) {
+  if (!canUpdateLoginPassword.value) {
     error.value = t('security.currentAndNewRequired')
     return
   }
@@ -89,6 +125,7 @@ async function updateLoginPassword(): Promise<void> {
     session.sync()
     loginOldPassword.value = ''
     loginNewPassword.value = ''
+    loginNewPasswordConfirm.value = ''
     success.value = t('security.loginPasswordUpdated')
   } catch (reason) {
     error.value = apiErrorMessage(reason, t('security.loginPasswordFailed'))
@@ -154,10 +191,10 @@ async function confirmSetup(): Promise<void> {
 }
 
 async function toggleLoginTwoFactor(event: Event): Promise<void> {
-  const target = event.target as HTMLInputElement
-  const enabled = target.checked
+  const target = event.currentTarget instanceof HTMLInputElement ? event.currentTarget : null
+  const enabled = target ? target.checked : !twoFactor.value?.loginTwoFactorEnabled
   if (!twoFactor.value?.totpEnabled) {
-    target.checked = false
+    if (target) target.checked = false
     await beginTwoFactorSetup()
     return
   }
@@ -168,7 +205,7 @@ async function toggleLoginTwoFactor(event: Event): Promise<void> {
     if (twoFactor.value) twoFactor.value = { ...twoFactor.value, loginTwoFactorEnabled: enabled }
     success.value = enabled ? t('security.loginTwoFactorEnabled') : t('security.loginTwoFactorDisabled')
   } catch (reason) {
-    target.checked = !enabled
+    if (target) target.checked = !enabled
     error.value = apiErrorMessage(reason, t('security.loginTwoFactorFailed'))
   } finally {
     saving.value = ''
@@ -264,258 +301,761 @@ onMounted(() => { void load() })
 </script>
 
 <template>
-  <main class="page page--plain page--prototype-grid security-page" data-security-workspace="live">
+  <main class="secondary-view page page--plain page--prototype-grid security-view" data-security-workspace="live">
     <PageHeader
       :back="true"
-      :eyebrow="t('security.authenticatorStatus')"
-      :subtitle="t('security.twoFactorDescription')"
+      :eyebrow="t('security.scene')"
+      :subtitle="t('security.context')"
       :title="t('security.title')"
     />
-    <div class="page-content security-content">
-      <LoginRequiredState v-if="!session.isAuthenticated" :description="t('security.loginDescription')" />
-      <section class="security-overview" :aria-label="t('security.title')">
-        <header>
-          <span>
-            <ShieldCheck :size="22" />
-            <small>{{ t('security.protectionScore') }}</small>
-          </span>
-          <strong class="numeric">{{ protectionPercent }}%</strong>
-          <p>{{ t('security.protectionSummary', { completed: protectionCount, total: 3 }) }}</p>
-          <i aria-hidden="true"><b :style="{ width: `${protectionPercent}%` }" /></i>
-        </header>
-        <div class="security-overview__checks">
-          <div>
-            <MailCheck :size="18" />
-            <span>
-              <small>{{ t('security.emailStatus') }}</small>
-              <b :class="{ up: profile?.emailVerified }">{{ profile?.emailVerified ? t('security.enabled') : t('security.notSet') }}</b>
-            </span>
+    <div class="secondary-content page-content security-content">
+      <section class="security-page" data-security-workflow="live">
+        <section class="protection-overview" :aria-label="t('security.title')">
+          <div class="protection-score">
+            <span>{{ t('security.protectionScore') }}</span>
+            <strong class="numeric">{{ securityReady ? protectionPercent : '--' }}<small>/100</small></strong>
+            <div aria-hidden="true"><i :style="{ width: `${securityReady ? protectionPercent : 0}%` }" /></div>
+            <p>
+              {{ securityReady
+                ? t('security.protectionSummary', { completed: protectionCount, total: 3 })
+                : securityStateLabel }}
+            </p>
           </div>
-          <div>
-            <ShieldCheck :size="18" />
-            <span>
-              <small>{{ t('security.authenticatorStatus') }}</small>
-              <b :class="{ up: twoFactor?.totpEnabled }">{{ twoFactor?.totpEnabled ? t('security.enabled') : t('security.notSet') }}</b>
-            </span>
+          <div class="security-checklist">
+            <article :class="{ complete: profile?.emailVerified }">
+              <span class="security-check-icon">
+                <CheckCircle2 v-if="profile?.emailVerified" :size="18" />
+                <MailCheck v-else :size="18" />
+              </span>
+              <div>
+                <strong>{{ t('security.emailStatus') }}</strong>
+                <small>{{ securityReady ? (profile?.emailVerified ? t('security.enabled') : t('security.notSet')) : securityStateLabel }}</small>
+              </div>
+              <b>{{ securityReady ? (profile?.emailVerified ? t('security.enabled') : t('security.notSet')) : '--' }}</b>
+            </article>
+            <article :class="{ complete: twoFactor?.totpEnabled }">
+              <span class="security-check-icon">
+                <CheckCircle2 v-if="twoFactor?.totpEnabled" :size="18" />
+                <Fingerprint v-else :size="18" />
+              </span>
+              <div>
+                <strong>{{ t('security.authenticatorStatus') }}</strong>
+                <small>{{ securityReady ? (twoFactor?.totpEnabled ? t('security.enabled') : t('security.notSet')) : securityStateLabel }}</small>
+              </div>
+              <b>{{ securityReady ? (twoFactor?.totpEnabled ? t('security.enabled') : t('security.notSet')) : '--' }}</b>
+            </article>
+            <article :class="{ complete: profile?.fundPasswordSet }">
+              <span class="security-check-icon">
+                <CheckCircle2 v-if="profile?.fundPasswordSet" :size="18" />
+                <ShieldCheck v-else :size="18" />
+              </span>
+              <div>
+                <strong>{{ fundPasswordLabel }}</strong>
+                <small>{{ securityReady ? (profile?.fundPasswordSet ? t('security.enabled') : t('security.notSet')) : securityStateLabel }}</small>
+              </div>
+              <b>{{ securityReady ? (profile?.fundPasswordSet ? t('security.enabled') : t('security.notSet')) : '--' }}</b>
+            </article>
           </div>
-          <div>
-            <LockKeyhole :size="18" />
-            <span>
-              <small>{{ fundPasswordLabel }}</small>
-              <b :class="{ up: profile?.fundPasswordSet }">{{ profile?.fundPasswordSet ? t('security.enabled') : t('security.notSet') }}</b>
-            </span>
-          </div>
+        </section>
+
+        <div class="security-feedback-slot" aria-live="polite">
+          <p v-if="error" class="error-message security-feedback" role="alert">{{ error }}</p>
+          <p v-else-if="success" class="success-message security-feedback" role="status">{{ success }}</p>
+          <p v-else-if="!session.isAuthenticated" class="security-feedback">{{ t('security.loginDescription') }}</p>
+          <p v-else-if="loading" class="security-feedback">{{ t('security.loading') }}</p>
+          <p v-else class="security-feedback">{{ t('security.twoFactorDescription') }}</p>
         </div>
-      </section>
-      <template v-if="session.isAuthenticated">
-        <p v-if="error" class="error-message security-feedback" role="alert">{{ error }}</p>
-        <p v-if="success" class="success-message security-feedback" role="status">{{ success }}</p>
-        <p v-if="loading" class="empty-state">{{ t('security.loading') }}</p>
-        <template v-else>
-          <section class="security-block">
-            <header>
-              <ShieldCheck :size="21" />
-              <div>
-                <h2>{{ t('security.twoFactor') }}</h2>
-                <p>{{ t('security.twoFactorDescription') }}</p>
-              </div>
-            </header>
-            <div class="security-row">
-              <span>
-                <b>{{ t('security.authenticatorStatus') }}</b>
-                <small>{{ twoFactor?.totpEnabled ? t('security.enabled') : t('security.notSet') }}</small>
-              </span>
-              <button v-if="!twoFactor?.totpEnabled" class="button button--secondary" type="button" :disabled="saving === 'two-factor-setup'" @click="beginTwoFactorSetup">{{ saving === 'two-factor-setup' ? t('security.preparing') : t('security.setup') }}</button>
-              <span v-else class="status-text up">{{ t('security.enabled') }}</span>
+
+        <h3 class="group-title">{{ t('security.twoFactor') }}</h3>
+        <section class="security-task security-block" data-security-task="two-factor">
+          <header>
+            <span class="security-task-icon"><Fingerprint :size="20" /></span>
+            <div>
+              <strong>{{ t('security.twoFactor') }}</strong>
+              <small>{{ t('security.twoFactorDescription') }}</small>
             </div>
-            <div class="security-row">
-              <span>
-                <b>{{ t('security.loginTwoFactor') }}</b>
-                <small>{{ twoFactor?.canToggleLoginTwoFactor ? t('security.loginCodeRequired') : t('security.managedByPolicy') }}</small>
-              </span>
-              <label class="switch">
-                <input type="checkbox" :aria-label="t('security.loginTwoFactor')" :checked="twoFactor?.loginTwoFactorEnabled" :disabled="!twoFactor?.canToggleLoginTwoFactor || saving === 'two-factor-toggle'" @change="toggleLoginTwoFactor" />
-                <i />
-              </label>
+            <b class="status-badge" :class="twoFactor?.totpEnabled ? 'is-positive' : 'is-pending'">
+              {{ securityReady ? (twoFactor?.totpEnabled ? t('security.enabled') : t('security.notSet')) : '--' }}
+            </b>
+          </header>
+
+          <div class="security-row">
+            <span>
+              <b>{{ t('security.authenticatorStatus') }}</b>
+              <small>{{ securityReady ? (twoFactor?.totpEnabled ? t('security.enabled') : t('security.notSet')) : securityStateLabel }}</small>
+            </span>
+            <button
+              v-if="!twoFactor?.totpEnabled"
+              class="button button--secondary"
+              type="button"
+              :disabled="!session.isAuthenticated || !securityReady || loading || saving === 'two-factor-setup'"
+              @click="beginTwoFactorSetup"
+            >
+              {{ saving === 'two-factor-setup' ? t('security.preparing') : t('security.setup') }}
+            </button>
+            <span v-else class="status-text up">{{ t('security.enabled') }}</span>
+          </div>
+
+          <button
+            class="policy-toggle"
+            type="button"
+            :aria-pressed="Boolean(twoFactor?.loginTwoFactorEnabled)"
+            :disabled="!session.isAuthenticated || !securityReady || loading || !twoFactor?.canToggleLoginTwoFactor || saving === 'two-factor-toggle'"
+            @click="toggleLoginTwoFactor"
+          >
+            <span>
+              <strong>{{ t('security.loginTwoFactor') }}</strong>
+              <small>{{ twoFactor?.canToggleLoginTwoFactor ? t('security.loginCodeRequired') : t('security.managedByPolicy') }}</small>
+            </span>
+            <i :class="{ on: twoFactor?.loginTwoFactorEnabled }" />
+          </button>
+
+          <button
+            v-if="twoFactor?.totpEnabled"
+            class="reset-toggle"
+            type="button"
+            :disabled="saving === 'two-factor-reset-code'"
+            @click="sendTwoFactorReset"
+          >
+            {{ saving === 'two-factor-reset-code' ? t('auth.sendingEllipsis') : t('security.resettingByEmail') }}
+          </button>
+
+          <section v-if="showTwoFactorReset" class="reset-panel">
+            <MailCheck :size="19" />
+            <div>
+              <strong>{{ t('security.resetTwoFactor') }}</strong>
+              <p>{{ t('security.resetCodeDescription') }}</p>
             </div>
-            <button v-if="twoFactor?.totpEnabled" class="reset-toggle" type="button" :disabled="saving === 'two-factor-reset-code'" @click="sendTwoFactorReset">{{ saving === 'two-factor-reset-code' ? t('auth.sendingEllipsis') : t('security.resettingByEmail') }}</button>
-            <section v-if="showTwoFactorReset" class="reset-panel">
-              <MailCheck :size="19" />
+            <label class="field security-field" :data-field-state="twoFactorResetCode.trim() ? 'complete' : 'idle'">
+              <span>{{ t('security.emailCode') }}</span>
               <div>
-                <strong>{{ t('security.resetTwoFactor') }}</strong>
-                <p>{{ t('security.resetCodeDescription') }}</p>
-              </div>
-              <label class="security-field">
-                <span>{{ t('security.emailCode') }}</span>
                 <input v-model="twoFactorResetCode" inputmode="numeric" autocomplete="one-time-code" :placeholder="t('security.emailCode')" />
-              </label>
-              <button class="button button--secondary button--full" type="button" :disabled="saving === 'two-factor-reset' || !twoFactorResetCode.trim()" @click="confirmTwoFactorReset">{{ saving === 'two-factor-reset' ? t('auth.resetting') : t('security.confirmReset') }}</button>
-            </section>
+              </div>
+            </label>
+            <button class="button button--secondary button--full" type="button" :disabled="saving === 'two-factor-reset' || !twoFactorResetCode.trim()" @click="confirmTwoFactorReset">
+              {{ saving === 'two-factor-reset' ? t('auth.resetting') : t('security.confirmReset') }}
+            </button>
           </section>
+        </section>
 
-          <section v-if="setup" class="two-factor-setup">
-            <h2>{{ t('security.bindAuthenticator') }}</h2>
-            <img :src="setupQr" :alt="t('security.qrAlt')" />
-            <p>{{ t('security.scanDescription') }}</p>
-            <div class="secret-row">
-              <code>{{ setup.secret }}</code>
-              <button class="icon-button" type="button" :aria-label="t('security.copySecret')" @click="copySecret">
-                <Check v-if="copied" :size="19" />
-                <Copy v-else :size="19" />
-              </button>
+        <section v-if="setup" class="security-task two-factor-setup" data-security-task="two-factor-setup">
+          <header>
+            <span class="security-task-icon"><Fingerprint :size="20" /></span>
+            <div>
+              <strong>{{ t('security.bindAuthenticator') }}</strong>
+              <small>{{ t('security.scanDescription') }}</small>
             </div>
-            <label class="security-field">
-              <span>{{ t('security.authenticatorCodePlaceholder') }}</span>
+            <b class="status-badge is-pending">{{ t('security.notSet') }}</b>
+          </header>
+          <div class="secret-box">
+            <img :src="setupQr" :alt="t('security.qrAlt')" />
+            <code>{{ setup.secret }}</code>
+            <button class="icon-button" type="button" :aria-label="t('security.copySecret')" @click="copySecret">
+              <Check v-if="copied" :size="19" />
+              <Copy v-else :size="19" />
+            </button>
+          </div>
+          <label class="field security-field" :data-field-state="setupCode.trim() ? 'complete' : 'idle'">
+            <span>{{ t('security.authenticatorCodePlaceholder') }}</span>
+            <div>
               <input v-model="setupCode" inputmode="numeric" autocomplete="one-time-code" maxlength="8" :placeholder="t('security.authenticatorCodePlaceholder')" />
-            </label>
-            <button class="button button--primary button--full" type="button" :disabled="saving === 'two-factor-confirm' || !setupCode.trim()" @click="confirmSetup">{{ saving === 'two-factor-confirm' ? t('auth.verifying') : t('security.confirmEnable') }}</button>
-          </section>
+            </div>
+          </label>
+          <button class="button button--primary button--full" type="button" :disabled="saving === 'two-factor-confirm' || !setupCode.trim()" @click="confirmSetup">
+            {{ saving === 'two-factor-confirm' ? t('auth.verifying') : t('security.confirmEnable') }}
+          </button>
+        </section>
 
-          <section class="security-block">
-            <header>
-              <KeyRound :size="21" />
-              <div>
-                <h2>{{ t('security.loginPassword') }}</h2>
-                <p>{{ t('security.loginPasswordDescription') }}</p>
-              </div>
-            </header>
-            <label class="security-field">
-              <span>{{ t('security.currentLoginPassword') }}</span>
-              <input v-model="loginOldPassword" type="password" autocomplete="current-password" />
-            </label>
-            <label class="security-field">
-              <span>{{ t('security.newLoginPassword') }}</span>
-              <input v-model="loginNewPassword" type="password" autocomplete="new-password" />
-            </label>
-            <button class="button button--secondary button--full" type="button" :disabled="saving === 'login-password' || !canUpdateLoginPassword" @click="updateLoginPassword">{{ saving === 'login-password' ? t('security.updating') : t('security.updateLoginPassword') }}</button>
-          </section>
+        <section class="security-task security-block" data-security-task="password">
+          <header>
+            <span class="security-task-icon"><LockKeyhole :size="20" /></span>
+            <div>
+              <strong>{{ t('security.loginPassword') }}</strong>
+              <small>{{ t('security.loginPasswordDescription') }}</small>
+            </div>
+            <b class="status-badge is-pending">{{ securityReady ? t('security.enabled') : '--' }}</b>
+          </header>
 
-          <section class="security-block">
-            <header>
-              <LockKeyhole :size="21" />
-              <div>
-                <h2>{{ fundPasswordLabel }}</h2>
-                <p>{{ t('security.fundPasswordDescription') }}</p>
-              </div>
-            </header>
-            <label v-if="!profile?.fundPasswordSet" class="security-field">
-              <span>{{ t('security.loginPassword') }}</span>
-              <input v-model="fundLoginPassword" type="password" autocomplete="current-password" />
+          <label class="field security-field" :data-field-state="loginOldPassword ? 'complete' : 'idle'">
+            <span>{{ t('security.currentLoginPassword') }}</span>
+            <div><input v-model="loginOldPassword" type="password" autocomplete="current-password" :disabled="!session.isAuthenticated || loading" /></div>
+          </label>
+          <label class="field security-field" :data-field-state="loginNewPassword ? 'complete' : 'idle'">
+            <span>{{ t('security.newLoginPassword') }}</span>
+            <div>
+              <input
+                v-model="loginNewPassword"
+                type="password"
+                autocomplete="new-password"
+                :disabled="!session.isAuthenticated || loading"
+                :aria-invalid="Boolean(loginNewPassword) && loginNewPassword.length < 8"
+              />
+            </div>
+          </label>
+          <label
+            class="field security-field"
+            :data-field-state="loginNewPasswordConfirm && loginNewPassword.length >= 8 && loginNewPasswordConfirm === loginNewPassword ? 'complete' : loginNewPasswordConfirm ? 'invalid' : 'idle'"
+          >
+            <span>{{ t('auth.confirmNewPassword') }}</span>
+            <div>
+              <input
+                v-model="loginNewPasswordConfirm"
+                type="password"
+                autocomplete="new-password"
+                :disabled="!session.isAuthenticated || loading"
+                :aria-invalid="Boolean(loginNewPasswordConfirm) && loginNewPasswordConfirm !== loginNewPassword"
+              />
+            </div>
+          </label>
+          <p class="field-hint">
+            {{ t('auth.passwordLengthRule') }} · {{ t('auth.passwordMatchRule') }}
+          </p>
+          <button class="button button--secondary button--full" type="button" :disabled="!session.isAuthenticated || saving === 'login-password' || !canUpdateLoginPassword" @click="updateLoginPassword">
+            {{ saving === 'login-password' ? t('security.updating') : t('security.updateLoginPassword') }}
+          </button>
+        </section>
+
+        <section class="security-task security-block" data-security-task="funds">
+          <header>
+            <span class="security-task-icon"><ShieldCheck :size="20" /></span>
+            <div>
+              <strong>{{ fundPasswordLabel }}</strong>
+              <small>{{ t('security.fundPasswordDescription') }}</small>
+            </div>
+            <b class="status-badge" :class="profile?.fundPasswordSet ? 'is-positive' : 'is-pending'">
+              {{ profile?.fundPasswordSet ? t('security.enabled') : t('security.notSet') }}
+            </b>
+          </header>
+
+          <label v-if="!profile?.fundPasswordSet" class="field security-field" :data-field-state="fundLoginPassword ? 'complete' : 'idle'">
+            <span>{{ t('security.loginPassword') }}</span>
+            <div><input v-model="fundLoginPassword" type="password" autocomplete="current-password" :disabled="!session.isAuthenticated || !securityReady || loading" /></div>
+          </label>
+          <label v-else class="field security-field" :data-field-state="fundOldPassword ? 'complete' : 'idle'">
+            <span>{{ t('security.oldFundPassword') }}</span>
+            <div><input v-model="fundOldPassword" type="password" autocomplete="off" :disabled="!session.isAuthenticated || !securityReady || loading" /></div>
+          </label>
+          <label class="field security-field" :data-field-state="fundNewPassword ? 'complete' : 'idle'">
+            <span>{{ t('security.newFundPassword') }}</span>
+            <div><input v-model="fundNewPassword" type="password" autocomplete="new-password" :disabled="!session.isAuthenticated || !securityReady || loading" /></div>
+          </label>
+          <button class="button button--secondary button--full" type="button" :disabled="!session.isAuthenticated || !securityReady || saving === 'fund-password' || !canUpdateFundPassword" @click="updateFundPassword">
+            {{ saving === 'fund-password' ? t('common.saving') : fundPasswordLabel }}
+          </button>
+          <button
+            v-if="profile?.fundPasswordSet"
+            class="reset-toggle"
+            type="button"
+            :disabled="saving === 'fund-password-reset-code'"
+            @click="sendFundPasswordReset"
+          >
+            {{ saving === 'fund-password-reset-code' ? t('auth.sendingEllipsis') : t('security.forgotFundPassword') }}
+          </button>
+          <section v-if="showFundPasswordReset" class="reset-panel">
+            <MailCheck :size="19" />
+            <div>
+              <strong>{{ t('security.resetFundPassword') }}</strong>
+              <p>{{ t('security.resetFundDescription') }}</p>
+            </div>
+            <label class="field security-field" :data-field-state="fundPasswordResetCode.trim() ? 'complete' : 'idle'">
+              <span>{{ t('security.emailCode') }}</span>
+              <div><input v-model="fundPasswordResetCode" inputmode="numeric" autocomplete="one-time-code" :placeholder="t('security.emailCode')" /></div>
             </label>
-            <label v-else class="security-field">
-              <span>{{ t('security.oldFundPassword') }}</span>
-              <input v-model="fundOldPassword" type="password" autocomplete="off" />
-            </label>
-            <label class="security-field">
+            <label class="field security-field" :data-field-state="fundPasswordResetValue ? 'complete' : 'idle'">
               <span>{{ t('security.newFundPassword') }}</span>
-              <input v-model="fundNewPassword" type="password" autocomplete="new-password" />
+              <div><input v-model="fundPasswordResetValue" type="password" autocomplete="new-password" :placeholder="t('security.newFundPasswordPlaceholder')" /></div>
             </label>
-            <button class="button button--secondary button--full" type="button" :disabled="saving === 'fund-password' || !canUpdateFundPassword" @click="updateFundPassword">{{ saving === 'fund-password' ? t('common.saving') : fundPasswordLabel }}</button>
-            <button v-if="profile?.fundPasswordSet" class="reset-toggle" type="button" :disabled="saving === 'fund-password-reset-code'" @click="sendFundPasswordReset">{{ saving === 'fund-password-reset-code' ? t('auth.sendingEllipsis') : t('security.forgotFundPassword') }}</button>
-            <section v-if="showFundPasswordReset" class="reset-panel">
-              <MailCheck :size="19" />
-              <div>
-                <strong>{{ t('security.resetFundPassword') }}</strong>
-                <p>{{ t('security.resetFundDescription') }}</p>
-              </div>
-              <label class="security-field">
-                <span>{{ t('security.emailCode') }}</span>
-                <input v-model="fundPasswordResetCode" inputmode="numeric" autocomplete="one-time-code" :placeholder="t('security.emailCode')" />
-              </label>
-              <label class="security-field">
-                <span>{{ t('security.newFundPassword') }}</span>
-                <input v-model="fundPasswordResetValue" type="password" autocomplete="new-password" :placeholder="t('security.newFundPasswordPlaceholder')" />
-              </label>
-              <button class="button button--secondary button--full" type="button" :disabled="saving === 'fund-password-reset' || !canResetFundPassword" @click="confirmFundPasswordReset">{{ saving === 'fund-password-reset' ? t('auth.resetting') : t('security.confirmReset') }}</button>
-            </section>
+            <button class="button button--secondary button--full" type="button" :disabled="saving === 'fund-password-reset' || !canResetFundPassword" @click="confirmFundPasswordReset">
+              {{ saving === 'fund-password-reset' ? t('auth.resetting') : t('security.confirmReset') }}
+            </button>
           </section>
-        </template>
-      </template>
+        </section>
+
+        <section class="device-section">
+          <div class="section-heading-row">
+            <h3 class="group-title">{{ t('security.title') }}</h3>
+            <span>{{ t('security.managedByPolicy') }}</span>
+          </div>
+          <div class="device-list">
+            <article data-device-state="unavailable">
+              <span class="device-icon"><MonitorSmartphone :size="19" /></span>
+              <div>
+                <strong>{{ t('security.managedByPolicy') }}</strong>
+                <small>{{ t('security.twoFactorDescription') }}</small>
+              </div>
+              <button type="button" disabled>{{ t('security.notSet') }}</button>
+            </article>
+          </div>
+        </section>
+      </section>
     </div>
   </main>
 </template>
 
 <style scoped>
-.security-content { display: grid; gap: 22px; padding-bottom: calc(44px + env(safe-area-inset-bottom)); padding-top: 18px; }
-.security-feedback { background: var(--surface-elevated); border: 1px solid currentColor; border-radius: var(--radius); line-height: 1.45; margin: 0; padding: 12px 14px; }
-.success-message { color: var(--positive); font-size: 13px; font-weight: 680; }
-.security-overview {
-  background:
-    linear-gradient(var(--grid-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
-    var(--surface);
-  background-size: 34px 34px;
-  border-bottom: 1px solid var(--line);
-  border-top: 3px solid var(--signal-coral);
+.security-page {
   display: grid;
-  margin: 0 -16px;
+  gap: 16px;
+  min-width: 0;
 }
-.security-overview > header { display: grid; gap: 8px; min-height: 132px; padding: 18px 16px 14px; }
-.security-overview > header > span { align-items: center; display: flex; gap: 8px; }
-.security-overview > header small { color: var(--muted); font-size: 10px; }
-.security-overview > header strong { font-size: 32px; line-height: 1; }
-.security-overview > header p { color: var(--muted); font-size: 11px; margin: 0; }
-.security-overview > header > i { background: var(--soft); display: block; height: 4px; overflow: hidden; }
-.security-overview > header > i > b { background: var(--signal-green); display: block; height: 100%; max-width: 100%; }
-.security-overview__checks { border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.security-overview__checks > div { align-content: center; display: grid; gap: 7px; min-height: 86px; min-width: 0; padding: 10px; }
-.security-overview__checks > div + div { border-left: 1px solid var(--line); }
-.security-overview__checks > div:nth-child(1) { border-top: 3px solid var(--signal-blue); }
-.security-overview__checks > div:nth-child(2) { border-top: 3px solid var(--signal-green); }
-.security-overview__checks > div:nth-child(3) { border-top: 3px solid var(--signal-coral); }
-.security-overview svg { color: var(--accent); }
-.security-overview span { display: grid; gap: 4px; min-width: 0; }
-.security-overview small { color: var(--muted); font-size: 11px; line-height: 1.25; }
-.security-overview b { font-size: 13px; line-height: 1.25; }
-.security-block { background: var(--surface); border-top: 3px solid var(--signal-blue); display: grid; gap: 13px; padding: 20px 12px 14px; }
-.security-block:nth-of-type(3) { border-top-color: var(--signal-coral); }
-.security-block:nth-of-type(4) { border-top-color: var(--signal-green); }
-.security-block header { align-items: flex-start; display: flex; gap: 11px; }
-.security-block header > svg { color: var(--accent); flex: 0 0 auto; margin-top: 2px; }
-.security-block h2,
-.two-factor-setup h2 { font-size: 19px; letter-spacing: 0; margin: 0; }
-.security-block header p { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 4px 0 0; }
-.security-row { align-items: center; background: var(--soft); border: 1px solid var(--line); border-radius: var(--radius); display: flex; gap: 12px; justify-content: space-between; min-height: 68px; padding: 10px 12px; }
-.security-row > span:first-child { display: grid; gap: 4px; min-width: 0; }
-.security-row b { font-size: 14px; }
-.security-row small { color: var(--muted); font-size: 12px; line-height: 1.35; }
-.security-row .button { flex: 0 0 auto; font-size: 12px; min-height: 44px; padding: 0 13px; }
-.status-text { flex: 0 0 auto; font-size: 13px; font-weight: 750; }
-.switch { align-items: center; display: inline-flex; flex: 0 0 56px; height: 44px; justify-content: flex-end; position: relative; }
-.switch input { height: 1px; opacity: 0; position: absolute; width: 1px; }
-.switch i { background: var(--line-strong); border: 1px solid var(--line-strong); border-radius: var(--radius); display: block; height: 30px; position: relative; transition: background-color var(--motion-fast) var(--motion-ease), border-color var(--motion-fast) var(--motion-ease); width: 50px; }
-.switch i::after { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-soft); content: ''; height: 24px; left: 2px; position: absolute; top: 2px; transition: transform var(--motion-fast) var(--motion-ease); width: 24px; }
-.switch input:focus-visible + i { box-shadow: 0 0 0 3px var(--focus-ring); outline: 2px solid var(--focus); outline-offset: 2px; }
-.switch input:checked + i { background: var(--positive); border-color: var(--positive); }
-.switch input:checked + i::after { transform: translateX(20px); }
-.switch input:disabled + i { opacity: .55; }
-.two-factor-setup { border-bottom: 1px solid var(--line); border-top: 1px solid var(--accent); display: grid; gap: 13px; padding: 20px 0; }
-.two-factor-setup img { border: 1px solid var(--line); border-radius: var(--radius); justify-self: center; max-width: 100%; padding: 6px; width: 196px; }
-.two-factor-setup p { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 0; text-align: center; }
-.secret-row { align-items: center; background: var(--soft); border: 1px solid var(--line); border-radius: var(--radius); display: grid; grid-template-columns: minmax(0, 1fr) 44px; min-height: 48px; }
-.secret-row code { font-size: 12px; overflow: auto; padding-left: 12px; white-space: nowrap; }
-.security-field { background: var(--field-surface); border: 1px solid var(--line); border-radius: var(--radius); display: grid; gap: 2px; padding: 7px 12px; }
-.security-field:focus-within { background: var(--surface-elevated); border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-ring); }
-.security-field > span { color: var(--muted); font-size: 11px; font-weight: 650; }
-.security-field input { background: transparent; border: 0; color: var(--ink); min-height: 30px; outline: 0; padding: 0; width: 100%; }
-.reset-toggle { align-items: center; background: transparent; color: var(--accent); display: inline-flex; font-size: 12px; font-weight: 750; justify-self: start; min-height: 44px; padding: 0; }
-.reset-panel { background: var(--surface-elevated); border-bottom: 1px solid var(--line); border-top: 1px solid var(--line); display: grid; gap: 11px; grid-template-columns: auto minmax(0, 1fr); padding: 15px 0; }
-.reset-panel > svg { color: var(--accent); margin-top: 2px; }
-.reset-panel > div { display: grid; gap: 3px; }
+
+.security-feedback-slot {
+  display: grid;
+  min-height: 58px;
+}
+
+.security-feedback {
+  align-content: center;
+  background: var(--soft);
+  border-left: 3px solid var(--line-strong);
+  color: var(--muted);
+  display: grid;
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 0;
+  min-height: 52px;
+  padding: 9px 12px;
+}
+
+.error-message.security-feedback {
+  background: var(--negative-soft);
+  border-left-color: var(--negative);
+  color: var(--negative);
+}
+
+.success-message.security-feedback {
+  background: var(--positive-soft);
+  border-left-color: var(--positive);
+  color: var(--positive);
+}
+
+.protection-overview {
+  border-block: 1px solid var(--line-strong);
+  display: grid;
+  min-width: 0;
+}
+
+.protection-score {
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 7px;
+  padding: 16px 0;
+}
+
+.protection-score > span,
+.protection-score p {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.protection-score strong {
+  font-size: 31px;
+}
+
+.protection-score strong small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.protection-score > div {
+  background: var(--soft);
+  height: 4px;
+  overflow: hidden;
+}
+
+.protection-score i {
+  background: linear-gradient(90deg, var(--signal-coral), var(--signal-blue), var(--signal-green));
+  display: block;
+  height: 100%;
+  transition: width var(--motion-fast) var(--motion-ease);
+}
+
+.protection-score p { margin: 0; }
+
+.security-checklist {
+  display: grid;
+}
+
+.security-checklist article {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 9px;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  min-height: 66px;
+  min-width: 0;
+}
+
+.security-checklist article:last-child { border-bottom: 0; }
+
+.security-check-icon,
+.security-task-icon,
+.device-icon,
+.confirmation-icon {
+  border: 1px solid var(--line);
+  color: var(--accent);
+  display: grid;
+  height: 36px;
+  place-items: center;
+  width: 36px;
+}
+
+.security-checklist article.complete .security-check-icon {
+  color: var(--positive);
+}
+
+.security-checklist article > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.security-checklist strong,
+.security-checklist small {
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.security-checklist small { color: var(--muted); }
+
+.security-checklist article > b {
+  color: var(--negative);
+  font-size: 9px;
+}
+
+.security-checklist article.complete > b { color: var(--positive); }
+
+.security-task {
+  border-block: 1px solid var(--line-strong);
+  display: grid;
+  gap: 13px;
+  min-width: 0;
+  padding-block: 14px;
+}
+
+.security-task + .security-task {
+  border-top: 0;
+  margin-top: -17px;
+}
+
+.security-task > header {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  min-width: 0;
+}
+
+.security-task > header > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.security-task > header strong { font-size: 12px; }
+
+.security-task > header small,
+.security-task > p {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.status-badge {
+  color: var(--accent);
+  font-size: 9px;
+  max-width: 72px;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.status-badge.is-positive { color: var(--positive); }
+.status-badge.is-pending { color: var(--accent); }
+
+.security-row {
+  align-items: center;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 68px;
+  padding: 10px 12px;
+}
+
+.security-row > span:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.security-row b { font-size: 12px; }
+
+.security-row small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.security-row .button {
+  flex: 0 0 auto;
+  font-size: 11px;
+  min-height: 44px;
+  padding-inline: 13px;
+}
+
+.status-text {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.policy-toggle {
+  align-items: center;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) 50px;
+  min-height: 58px;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.policy-toggle > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.policy-toggle strong { font-size: 11px; }
+
+.policy-toggle small {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.policy-toggle i {
+  background: var(--line-strong);
+  border: 1px solid var(--line-strong);
+  display: block;
+  height: 28px;
+  position: relative;
+  width: 48px;
+}
+
+.policy-toggle i::after {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  content: '';
+  height: 22px;
+  left: 2px;
+  position: absolute;
+  top: 2px;
+  transition: transform var(--motion-fast) var(--motion-ease);
+  width: 22px;
+}
+
+.policy-toggle i.on {
+  background: var(--positive);
+  border-color: var(--positive);
+}
+
+.policy-toggle i.on::after { transform: translateX(20px); }
+
+.two-factor-setup img {
+  border: 1px solid var(--line);
+  max-height: 148px;
+  max-width: 148px;
+  padding: 4px;
+}
+
+.secret-box {
+  align-items: center;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr) 44px;
+  min-height: 64px;
+  padding: 7px;
+}
+
+.secret-box code {
+  font-size: 10px;
+  min-width: 0;
+  overflow: auto;
+  white-space: nowrap;
+}
+
+.secret-box button {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+.security-field {
+  background: var(--field-surface);
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px 12px;
+}
+
+.security-field:focus-within {
+  background: var(--surface-elevated);
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.security-field[data-field-state='invalid'] {
+  border-color: var(--negative);
+}
+
+.security-field > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.security-field > div {
+  align-items: center;
+  display: grid;
+  min-height: 36px;
+}
+
+.security-field input {
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  min-height: 36px;
+  min-width: 0;
+  outline: 0;
+  padding: 0;
+  width: 100%;
+}
+
+.reset-toggle {
+  align-items: center;
+  background: transparent;
+  color: var(--accent);
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 750;
+  justify-self: start;
+  min-height: 44px;
+  padding: 0;
+}
+
+.reset-panel {
+  background: var(--surface-elevated);
+  border-block: 1px solid var(--line);
+  display: grid;
+  gap: 11px;
+  grid-template-columns: auto minmax(0, 1fr);
+  padding: 15px 0;
+}
+
+.reset-panel > svg {
+  color: var(--accent);
+  margin-top: 2px;
+}
+
+.reset-panel > div {
+  display: grid;
+  gap: 3px;
+}
+
 .reset-panel strong { font-size: 14px; }
-.reset-panel p { color: var(--muted); font-size: 11px; line-height: 1.45; margin: 0; }
+
+.reset-panel p {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 0;
+}
+
 .reset-panel .security-field,
 .reset-panel button { grid-column: 1 / -1; }
-@media (max-width: 360px) {
-  .security-overview { margin-left: -12px; margin-right: -12px; }
+
+.device-section {
+  display: grid;
+  gap: 8px;
 }
+
+.device-section .section-heading-row > span {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.device-list {
+  border-top: 1px solid var(--line);
+  display: grid;
+}
+
+.device-list article {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  min-height: 70px;
+  min-width: 0;
+}
+
+.device-list article > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.device-list strong,
+.device-list small {
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.device-list small { color: var(--muted); }
+
+.device-list button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 9px;
+  min-height: 44px;
+  min-width: 78px;
+  padding-inline: 9px;
+}
+
 @media (max-width: 340px) {
-  .security-content { padding-left: 16px; padding-right: 16px; }
-  .security-overview { margin-left: -16px; margin-right: -16px; }
-  .security-overview__checks { grid-template-columns: 1fr; }
-  .security-overview__checks > div { grid-template-columns: 28px minmax(0, 1fr); min-height: 64px; }
-  .security-overview__checks > div + div { border-left: 0; }
-  .security-row { align-items: stretch; display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .security-task > header,
+  .device-list article {
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
+
+  .security-task > header > .status-badge,
+  .device-list button {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .security-row {
+    align-items: stretch;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
   .security-row .button { padding-inline: 10px; }
+
+  .secret-box {
+    grid-template-columns: minmax(0, 1fr) 44px;
+  }
+
+  .secret-box img {
+    grid-column: 1 / -1;
+    justify-self: center;
+  }
 }
 </style>
