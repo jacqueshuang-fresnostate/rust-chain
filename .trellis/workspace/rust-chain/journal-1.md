@@ -258,3 +258,36 @@ Audited and polished the mobile Sites prototype product hub, message center, sec
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: Android UI v16 原型对齐
+
+**Date**: 2026-07-28
+**Task**: Android UI v16 原型对齐
+**Branch**: `main`
+
+### Summary
+
+按 Sites v16 原型重构移动端共享视觉、一级与重点二级页面，保留真实 API/PWA/Tauri 合同，并完成三档浏览器、PWA、Android APK 与真机启动验收。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `69a96ff` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
