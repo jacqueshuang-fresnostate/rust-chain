@@ -291,3 +291,36 @@ Audited and polished the mobile Sites prototype product hub, message center, sec
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: Mobile UI pixel-perfect replica
+
+**Date**: 2026-07-28
+**Task**: Mobile UI pixel-perfect replica
+**Branch**: `main`
+
+### Summary
+
+Replicated the approved Sites v16 mobile UI across the production Vue/Tauri client, preserved real backend API semantics, made the visual snapshot self-contained, validated PWA/Tauri builds, and built/installed the Android debug APK on TAS-AL00.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `44fa3c1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
