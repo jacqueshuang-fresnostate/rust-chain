@@ -1,0 +1,2 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Defines the mobile build and native validation quality gates."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Defines Tauri isolation and Android APK validation requirements."}

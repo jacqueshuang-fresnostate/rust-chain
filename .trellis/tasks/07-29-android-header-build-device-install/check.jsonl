@@ -1,0 +1,2 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Verify the native Android build gate and required progress record."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Verify the installed package is produced by the Tauri build contract."}

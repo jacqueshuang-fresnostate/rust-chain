@@ -2,6 +2,20 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-07-29 07:34 - 审查 Android Header 实机部署记录
+
+- 完成内容：按任务 PRD 与 mobile 构建规范复核 Android aarch64 Debug APK、设备、安装和冷启动记录；离线确认现有 `app-universal-debug.apk` 的大小、SHA-256、包名、构建变体与版本元数据均和 07:32 记录一致，确认 `02457eb` 位于当前 `main` 历史中，且工作区没有应用源码或被跟踪的 Android 生成产物改动；移除任务 PRD 末尾的多余空白行。
+- 修改文件：`.trellis/tasks/07-29-android-header-build-device-install/prd.md`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm --prefix mobile run type-check` 通过；`npm --prefix mobile test` 151/151 通过；任务 JSON/JSONL 可解析；`git diff --check` 及任务目录未跟踪文件逐项空白检查通过；未重跑 Android 构建、ADB 安装或启动。
+- 后续事项：由主会话完成任务归档、开发者 journal 与提交。
+
+## 2026-07-29 07:32 - 安装 Header 最新构建到 Android 实机
+
+- 完成内容：基于包含 Header 拟物化控件提交 `02457eb` 的当前 `main` 重新构建 Android aarch64 Debug APK，保留应用数据更新安装到已连接的华为 TAS-AL00，并强制停止后冷启动 `com.hippo.exchange.mobile/.MainActivity`；确认新安装包更新时间、应用前台焦点和 Activity 生命周期状态，未采集设备屏幕内容。
+- 修改文件：`.trellis/tasks/07-29-android-header-build-device-install/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run tauri:android:build -- --debug --target aarch64 --apk` 通过，生成 `236446336` bytes 的 `app-universal-debug.apk`，SHA-256 为 `27a6b3f8af12e89902e48ea3feb560d1c8b4d1020aa87a49140448c28fe82327`；设备序列号 `JTK0219A16000297`、型号 TAS-AL00、物理分辨率 1080x2340、480dpi；`adb install -r` 返回 `Success`；包版本 `0.1.0`、versionCode `1000`、lastUpdateTime `2026-07-29 07:30:54`；冷启动返回 `Status: ok`、`LaunchState: COLD`、`TotalTime: 475ms`；`MainActivity` 为当前焦点窗口并满足 `mResumed=true`、`mStopped=false`。
+- 后续事项：无。
+
 ## 2026-07-29 02:48 - 完成手机端 Header 拟物控件最终验收
 
 - 完成内容：以 390x844 本地运行时复验浅色与深色 RootHeader、PageHeader、登录 Header 和行情详情 Header，确认返回、刷新、主题、消息、语言与分享按钮统一为冷中性金属边框、凸面高光、内凹下沿和实体投影的 44x44 圆形仪表控件；确认 PageHeader action 外层仅作为透明对齐轨，不再形成双重边框；验证 Lucide 图标精确居中、消息珊瑚提示点附着、2px 青色键盘焦点环、原有标题和页面主体几何不变，并在 320x720、390x844、448x900 检查根页与秒合约二级页无横向溢出。
