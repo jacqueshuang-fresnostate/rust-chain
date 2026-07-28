@@ -64,7 +64,10 @@ Moved trade input focus to the full field, strengthened light-theme input and bu
 
 ### Main Changes
 
-(Add details)
+- 将真实 Vue 手机端的 36 个路由统一到 Sites 原型的 448px 交易终端视觉系统。
+- 重构场景 Header、异形七栏导航、首页/行情/资产/个人中心、现货/合约/秒合约、订单与完整二级页面。
+- 保留真实 API、鉴权、Pinia、i18n、PWA 和 Tauri 合同，并修复交易余额比例、K 线时间归一化和路由层级风险。
+- 浏览器复验并修复深色首页资产 Hero 对比度回归。
 
 ### Git Commits
 
@@ -75,7 +78,12 @@ Moved trade input focus to the full field, strengthened light-theme input and bu
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] `npm --prefix mobile run type-check`
+- [OK] `npm --prefix mobile test` (102/102)
+- [OK] `npm --prefix mobile run build:pwa`
+- [OK] `npm --prefix mobile run build:tauri`
+- [OK] `git diff --check`
+- [OK] 320/390/448px 核心页面与深浅主题浏览器验收
 
 ### Status
 
@@ -83,7 +91,7 @@ Moved trade input focus to the full field, strengthened light-theme input and bu
 
 ### Next Steps
 
-- None - task complete
+- 本机 MySQL 持久卷账号与仓库 `.env` 不一致；匹配开发账号后补做登录态真实订单、资产和交易提交视觉验收。
 
 
 ## Session 3: Mobile seconds trading and navigation redesign
@@ -205,6 +213,39 @@ Audited and polished the mobile Sites prototype product hub, message center, sec
 | Hash | Message |
 |------|---------|
 | `f08ba41` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 7: 手机端 UI 对齐原型重构
+
+**Date**: 2026-07-28
+**Task**: 手机端 UI 对齐原型重构
+**Branch**: `main`
+
+### Summary
+
+将真实 Vue 手机端完整对齐 Sites 原型，重构共享壳、一级页面、交易域与二级页面，保留后端/PWA/Tauri 合同并通过 102 项测试、双构建和浏览器验收。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cf50d75` | (see git log) |
 
 ### Testing
 
