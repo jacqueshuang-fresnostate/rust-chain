@@ -192,7 +192,12 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="page page--plain prediction-page">
-    <PageHeader :title="t('prediction.title')" />
+    <PageHeader
+      :back="true"
+      :eyebrow="t('products.prediction')"
+      :subtitle="t('prediction.introDescription')"
+      :title="t('prediction.title')"
+    />
     <div class="page-content prediction-content">
       <div v-if="error && !dialogOpen" class="prediction-message prediction-message--error" role="alert">
         <CircleAlert :size="18" />

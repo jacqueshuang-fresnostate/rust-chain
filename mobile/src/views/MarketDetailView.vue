@@ -109,7 +109,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <main class="market-detail">
+  <main class="market-detail" data-market-workspace="live">
     <header class="market-detail__header">
       <button class="icon-button" type="button" :aria-label="t('common.back')" @click="goBack">
         <ArrowLeft :size="24" />
@@ -273,7 +273,7 @@ onUnmounted(() => {
   align-items: center;
   display: flex;
   gap: 9px;
-  justify-content: center;
+  justify-content: flex-start;
   min-width: 0;
 }
 

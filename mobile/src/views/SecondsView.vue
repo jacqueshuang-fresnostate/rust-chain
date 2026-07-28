@@ -25,11 +25,13 @@ import {
   type SecondsProduct,
 } from '@/api/seconds'
 import { fetchWalletAccounts } from '@/api/wallet'
-import { formatAmount, formatDateTime } from '@/core/format'
+import { formatAmount, formatDateTime, formatPrice } from '@/core/format'
+import { useMarketStore } from '@/stores/market'
 import { useSessionStore } from '@/stores/session'
 import type { WalletAccount } from '@/core/types'
 
 const session = useSessionStore()
+const marketStore = useMarketStore()
 const { t } = useI18n()
 const products = ref<SecondsProduct[]>([])
 const orders = ref<SecondsOrder[]>([])
@@ -53,6 +55,7 @@ const cycle = computed<SecondsCycle | undefined>(() => (
   || selected.value?.cycles[0]
 ))
 const account = computed(() => accounts.value.find((item) => item.assetId === selected.value?.stakeAssetId))
+const selectedTicker = computed(() => marketStore.tickerFor(selected.value?.symbol || ''))
 const amountNumber = computed(() => Number(amount.value || 0))
 const payoutRate = computed(() => cycle.value?.payoutRate || 0)
 const valid = computed(() => Boolean(
@@ -236,7 +239,9 @@ watch(confirmOpen, async (open) => {
   returnFocus = null
 })
 
-onMounted(() => { void load() })
+onMounted(() => {
+  void Promise.all([load(), marketStore.refresh()])
+})
 
 onBeforeUnmount(() => {
   document.body.style.overflow = previousBodyOverflow
@@ -245,7 +250,11 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="page page--plain seconds-page">
-    <PageHeader :title="t('seconds.title')">
+    <PageHeader
+      :eyebrow="t('trade.category')"
+      :title="t('seconds.title')"
+      :subtitle="t('seconds.introDescription')"
+    >
       <template #actions>
         <button
           class="icon-button"
@@ -297,18 +306,20 @@ onBeforeUnmount(() => {
               </div>
               <div class="seconds-rate">
                 <Gauge :size="17" />
-                <span>{{ t('seconds.payoutRate') }}</span>
+                <span>{{ t('seconds.highest', { rate: highestRate(selected) }) }}</span>
               </div>
             </header>
             <div class="seconds-reference">
-              <span>{{ t('seconds.highest', { rate: highestRate(selected) }) }}</span>
-              <strong>{{ (payoutRate * 100).toFixed(2) }}%</strong>
-              <small>{{ t('seconds.introDescription') }}</small>
+              <span>{{ t('marketDetail.latestPrice') }}</span>
+              <strong>{{ selectedTicker ? formatPrice(selectedTicker.lastPrice) : '--' }}</strong>
+              <small>
+                {{ selectedTicker ? t('common.liveData') : t('common.marketUnavailable') }}
+              </small>
             </div>
             <dl class="seconds-market-facts">
               <div>
-                <dt>{{ t('seconds.settledIn', { asset: selected.stakeAssetSymbol }) }}</dt>
-                <dd>{{ selected.stakeAssetSymbol }}</dd>
+                <dt>{{ t('seconds.payoutRate') }}</dt>
+                <dd>{{ (payoutRate * 100).toFixed(2) }}%</dd>
               </div>
               <div>
                 <dt>{{ t('seconds.term') }}</dt>
@@ -630,7 +641,7 @@ onBeforeUnmount(() => {
 .seconds-market-board {
   background:
     linear-gradient(128deg, color-mix(in srgb, var(--positive) 11%, transparent), transparent 45%),
-    linear-gradient(310deg, color-mix(in srgb, var(--focus, #1677ff) 8%, transparent), transparent 48%),
+    linear-gradient(310deg, color-mix(in srgb, var(--focus) 8%, transparent), transparent 48%),
     var(--surface);
   border: 1px solid var(--line);
   border-top: 3px solid var(--positive);
@@ -867,9 +878,9 @@ onBeforeUnmount(() => {
 
 .seconds-duration-grid button.is-active,
 .seconds-amount-presets button[aria-pressed="true"] {
-  background: color-mix(in srgb, var(--focus, #1677ff) 8%, var(--surface));
-  border-color: var(--focus, #1677ff);
-  box-shadow: inset 0 -3px 0 var(--focus, #1677ff);
+  background: color-mix(in srgb, var(--focus) 8%, var(--surface));
+  border-color: var(--focus);
+  box-shadow: inset 0 -3px 0 var(--focus);
   color: var(--ink);
 }
 
@@ -883,8 +894,8 @@ onBeforeUnmount(() => {
 
 .seconds-amount-field:focus-within {
   background: var(--surface);
-  border-color: var(--focus, #1677ff);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus, #1677ff) 15%, transparent);
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 15%, transparent);
 }
 
 .seconds-amount-field > span {
@@ -941,9 +952,9 @@ onBeforeUnmount(() => {
 
 .seconds-orders {
   border-top: 8px solid var(--soft);
-  margin: 8px -20px 0;
+  margin: 8px -16px 0;
   min-width: 0;
-  padding: 0 20px;
+  padding: 0 16px;
 }
 
 .seconds-orders .section-heading {
@@ -1006,7 +1017,7 @@ onBeforeUnmount(() => {
 
 .seconds-mask {
   align-items: flex-end;
-  background: rgb(5 10 16 / 62%);
+  background: var(--overlay);
   display: flex;
   inset: 0;
   justify-content: center;
@@ -1022,7 +1033,7 @@ onBeforeUnmount(() => {
   background: var(--surface);
   border: 1px solid var(--line);
   border-top: 3px solid var(--positive);
-  box-shadow: 0 24px 60px rgb(5 10 16 / 28%);
+  box-shadow: var(--shadow-soft);
   display: grid;
   gap: 15px;
   max-height: calc(100dvh - max(32px, env(safe-area-inset-top)) - max(32px, env(safe-area-inset-bottom)));
@@ -1116,12 +1127,12 @@ onBeforeUnmount(() => {
 :global([data-theme='dark']) .seconds-market-board,
 :global(.theme-dark) .seconds-market-board {
   background:
-    linear-gradient(128deg, rgb(41 210 133 / 18%), transparent 44%),
-    linear-gradient(310deg, rgb(0 126 255 / 14%), transparent 48%),
-    #101714;
-  border-color: #32433a;
-  border-top-color: #35d98d;
-  color: #f4f8f5;
+    linear-gradient(128deg, color-mix(in srgb, var(--positive) 18%, transparent), transparent 44%),
+    linear-gradient(310deg, color-mix(in srgb, var(--focus) 14%, transparent), transparent 48%),
+    var(--dark-surface);
+  border-color: color-mix(in srgb, var(--positive) 30%, var(--line));
+  border-top-color: var(--positive);
+  color: var(--ink);
 }
 
 :global(html[data-theme='dark']) .seconds-market-board .seconds-reference strong,
@@ -1130,7 +1141,7 @@ onBeforeUnmount(() => {
 :global(html[data-theme='dark']) .seconds-market-board header strong,
 :global([data-theme='dark']) .seconds-market-board header strong,
 :global(.theme-dark) .seconds-market-board header strong {
-  color: #f4f8f5;
+  color: var(--ink);
 }
 
 :global(html[data-theme='dark']) .seconds-market-board header span,
@@ -1145,7 +1156,7 @@ onBeforeUnmount(() => {
 :global(html[data-theme='dark']) .seconds-market-board dt,
 :global([data-theme='dark']) .seconds-market-board dt,
 :global(.theme-dark) .seconds-market-board dt {
-  color: #9fb0a7;
+  color: var(--muted);
 }
 
 .spin {

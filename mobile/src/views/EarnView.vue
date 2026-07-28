@@ -157,7 +157,12 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="page page--plain earn-page">
-    <PageHeader :title="t('earn.title')">
+    <PageHeader
+      :back="true"
+      :eyebrow="t('products.earn')"
+      :subtitle="t('earn.bannerDescription')"
+      :title="t('earn.title')"
+    >
       <template #actions>
         <button
           class="icon-button"

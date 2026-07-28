@@ -216,7 +216,12 @@ function statusLabel(status: string): string {
 
 <template>
   <main class="page page--plain orders-page">
-    <PageHeader :title="t('orders.title')">
+    <PageHeader
+      :eyebrow="t('orders.category')"
+      :title="t('orders.title')"
+      :subtitle="t('orders.loginDescription')"
+      :back="true"
+    >
       <template #actions>
         <button
           class="icon-button"
@@ -230,21 +235,25 @@ function statusLabel(status: string): string {
       </template>
     </PageHeader>
     <div class="page-content orders-content">
-      <LoginRequiredState v-if="!session.isAuthenticated" :description="t('orders.loginDescription')" />
-      <template v-else>
-        <nav class="order-tabs" :aria-label="t('orders.category')">
-          <button
-            v-for="item in tabs"
-            :key="item.value"
-            type="button"
-            :aria-pressed="activeTab === item.value"
-            :class="{ 'is-active': activeTab === item.value }"
-            @click="setTab(item.value)"
-          >
-            {{ item.label }}
-          </button>
-        </nav>
+      <nav class="order-tabs" :aria-label="t('orders.category')">
+        <button
+          v-for="item in tabs"
+          :key="item.value"
+          type="button"
+          :aria-pressed="activeTab === item.value"
+          :class="{ 'is-active': activeTab === item.value }"
+          @click="setTab(item.value)"
+        >
+          {{ item.label }}
+        </button>
+      </nav>
 
+      <LoginRequiredState
+        v-if="!session.isAuthenticated"
+        class="orders-login-state"
+        :description="t('orders.loginDescription')"
+      />
+      <template v-else>
         <div v-if="error" class="orders-message orders-message--error" role="alert">
           <CircleAlert :size="18" />
           <span>{{ error }}</span>
@@ -400,14 +409,15 @@ function statusLabel(status: string): string {
 .orders-content {
   min-width: 0;
   padding-bottom: calc(28px + env(safe-area-inset-bottom));
+  padding-top: 0;
 }
 
 .order-tabs {
   border-bottom: 1px solid var(--line);
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin: 0 -20px;
-  padding: 0 20px;
+  margin: 0 -16px;
+  padding: 0 16px;
 }
 
 .order-tabs button {
@@ -423,6 +433,10 @@ function statusLabel(status: string): string {
 .order-tabs button.is-active {
   border-color: var(--accent);
   color: var(--ink);
+}
+
+.orders-login-state {
+  margin-top: 12px;
 }
 
 .orders-message {
@@ -522,8 +536,8 @@ function statusLabel(status: string): string {
 .order-card {
   border-bottom: 1px solid var(--line);
   display: grid;
-  gap: 12px;
-  padding: 15px 0;
+  gap: 9px;
+  padding: 12px 0;
 }
 
 .order-card:last-child {
@@ -540,7 +554,7 @@ function statusLabel(status: string): string {
 }
 
 .order-card header strong {
-  font-size: 16px;
+  font-size: 14px;
 }
 
 .buy-tag,
@@ -570,9 +584,9 @@ function statusLabel(status: string): string {
 
 .order-card dl > div {
   display: grid;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
-  padding: 10px 8px;
+  padding: 8px 7px;
 }
 
 .order-card dl > div + div {
@@ -614,8 +628,8 @@ function statusLabel(status: string): string {
 
 .history-section {
   border-top: 8px solid var(--soft);
-  margin: 10px -20px 0;
-  padding: 0 20px;
+  margin: 10px -16px 0;
+  padding: 0 16px;
 }
 
 .history-section + .history-section {
@@ -705,17 +719,16 @@ function statusLabel(status: string): string {
     flex: 1;
   }
 
-  .order-card dl {
-    grid-template-columns: 1fr;
-  }
-
   .order-card dl > div {
-    grid-template-columns: minmax(0, 1fr) auto;
+    padding-inline: 4px;
   }
 
-  .order-card dl > div + div {
-    border-left: 0;
-    border-top: 1px solid var(--line);
+  .order-card dt {
+    font-size: 9px;
+  }
+
+  .order-card dd {
+    font-size: 10px;
   }
 }
 </style>

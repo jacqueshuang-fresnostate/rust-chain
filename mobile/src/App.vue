@@ -29,16 +29,26 @@ onUnmounted(() => window.removeEventListener('hippo-mobile-auth-expired', handle
 <template>
   <div class="app-frame" :class="{ 'app-frame--with-bottom-nav': showBottomNav }">
     <PwaStatus />
-    <RouterView v-slot="{ Component, route: currentRoute }">
-      <Transition :name="routeTransitionName">
-        <component :is="Component" :key="currentRoute.fullPath" class="app-route-layer" />
-      </Transition>
-    </RouterView>
+    <div class="app-route-host">
+      <RouterView v-slot="{ Component, route: currentRoute }">
+        <Transition :name="routeTransitionName">
+          <component :is="Component" :key="currentRoute.fullPath" class="app-route-layer" />
+        </Transition>
+      </RouterView>
+    </div>
     <AppBottomNav v-if="showBottomNav" />
   </div>
 </template>
 
 <style>
+.app-route-host {
+  min-height: 100dvh;
+  position: relative;
+}
+.app-route-layer {
+  min-width: 0;
+  width: 100%;
+}
 .route-forward-enter-active,.route-forward-leave-active,.route-back-enter-active,.route-back-leave-active,.route-fade-enter-active,.route-fade-leave-active {
   transition: opacity var(--motion-medium) var(--motion-ease), transform var(--motion-medium) var(--motion-ease);
 }
@@ -48,7 +58,7 @@ onUnmounted(() => window.removeEventListener('hippo-mobile-auth-expired', handle
   pointer-events: none;
   position: absolute;
   width: 100%;
-  z-index: var(--layer-route-transition);
+  z-index: var(--layer-content);
 }
 .route-forward-enter-from { opacity: 0; transform: translateX(8px); }
 .route-forward-leave-to { opacity: 0; transform: translateX(-6px); }

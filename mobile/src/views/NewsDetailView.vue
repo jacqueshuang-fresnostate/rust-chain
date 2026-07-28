@@ -44,7 +44,12 @@ watch(() => props.id, () => {
 
 <template>
   <main class="page page--plain news-detail-page">
-    <PageHeader :title="t('news.detailTitle')" />
+    <PageHeader
+      :back="true"
+      :eyebrow="t('messageCenter.categoryAnnouncement')"
+      :subtitle="t('messageCenter.categoryPlatform')"
+      :title="t('news.detailTitle')"
+    />
 
     <article class="page-content news-article" :aria-busy="loading">
       <div v-if="loading" class="news-detail-state" role="status">

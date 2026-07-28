@@ -95,7 +95,12 @@ onMounted(() => { void load() })
 
 <template>
   <main class="page page--plain new-coins-page">
-    <PageHeader :title="t('newCoin.title')">
+    <PageHeader
+      :back="true"
+      :eyebrow="t('products.newCoins')"
+      :subtitle="t('newCoin.introDescription')"
+      :title="t('newCoin.title')"
+    >
       <template #actions>
         <button
           class="icon-button"

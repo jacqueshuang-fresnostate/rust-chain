@@ -107,16 +107,19 @@ const items = computed(() => [
 <style scoped>
 .bottom-nav {
   align-items: end;
-  background: var(--surface);
-  border-top: 1px solid var(--line);
+  background: transparent;
+  border-top: 0;
   bottom: 0;
-  box-shadow: 0 -10px 28px rgb(15 23 42 / 8%);
+  box-shadow: none;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(56px, 1.2fr) repeat(3, minmax(0, 1fr));
+  height: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom));
+  isolation: isolate;
   left: 50%;
   max-width: var(--app-max-width);
   min-height: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom));
-  padding: 8px 0 calc(7px + env(safe-area-inset-bottom));
+  overflow: visible;
+  padding: 18px 2px env(safe-area-inset-bottom);
   position: fixed;
   transform: translateX(-50%);
   width: 100%;
@@ -125,17 +128,40 @@ const items = computed(() => [
 
 .bottom-nav::before {
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-bottom: 0;
-  border-radius: 48px 48px 0 0;
+  clip-path: polygon(
+    0 14px,
+    34% 14px,
+    38% 9px,
+    42% 0,
+    58% 0,
+    62% 9px,
+    66% 14px,
+    100% 14px,
+    100% 100%,
+    0 100%
+  );
   content: '';
-  height: 48px;
-  left: 50%;
+  inset: 0;
   pointer-events: none;
   position: absolute;
-  top: -24px;
-  transform: translateX(-50%);
-  width: 70px;
+  z-index: -2;
+}
+
+.bottom-nav::after {
+  background: linear-gradient(
+    90deg,
+    var(--line-strong) 0 34%,
+    transparent 34% 66%,
+    var(--line-strong) 66% 100%
+  );
+  content: '';
+  height: 1px;
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  top: 14px;
+  z-index: -1;
 }
 
 .bottom-nav__item {
@@ -144,7 +170,7 @@ const items = computed(() => [
   display: flex;
   flex-direction: column;
   font-size: 9px;
-  font-weight: 620;
+  font-weight: 650;
   gap: 1px;
   justify-content: flex-end;
   line-height: 1.05;
@@ -167,7 +193,7 @@ const items = computed(() => [
 .bottom-nav__icon {
   align-items: center;
   border: 1px solid transparent;
-  border-radius: 15px;
+  border-radius: var(--radius);
   display: flex;
   flex: 0 0 44px;
   height: 44px;
@@ -181,13 +207,15 @@ const items = computed(() => [
 }
 
 .bottom-nav__label {
-  align-items: flex-start;
-  display: flex;
-  justify-content: center;
+  display: -webkit-box;
+  line-height: 1.05;
   max-width: 100%;
   min-height: 18px;
+  overflow: hidden;
   overflow-wrap: anywhere;
   padding: 0 1px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .bottom-nav__item.is-active {
@@ -206,15 +234,15 @@ const items = computed(() => [
 }
 
 .bottom-nav__item.is-primary .bottom-nav__icon {
-  background: var(--ink);
+  background: var(--signal-green);
   border: 4px solid var(--surface);
   border-radius: 50%;
-  box-shadow: 0 5px 18px rgb(15 23 42 / 24%);
-  color: var(--surface);
-  flex-basis: 56px;
-  height: 56px;
-  margin-top: -28px;
-  width: 56px;
+  box-shadow: 0 0 0 1px var(--line-strong);
+  color: var(--on-positive);
+  flex-basis: 52px;
+  height: 52px;
+  margin-top: -24px;
+  width: 52px;
 }
 
 .bottom-nav__item.is-primary.is-active .bottom-nav__icon {
@@ -223,6 +251,10 @@ const items = computed(() => [
 }
 
 @media (max-width: 360px) {
+  .bottom-nav {
+    padding-inline: 0;
+  }
+
   .bottom-nav__item {
     font-size: 8px;
   }

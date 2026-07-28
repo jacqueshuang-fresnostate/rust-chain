@@ -168,7 +168,12 @@ onUnmounted(() => {
 
 <template>
   <main class="page page--plain login-two-factor-page">
-    <PageHeader :title="t('auth.securityVerification')" />
+    <PageHeader
+      :back="true"
+      :eyebrow="t('auth.authenticatorTitle')"
+      :subtitle="t('auth.authenticatorDescription')"
+      :title="t('auth.securityVerification')"
+    />
     <form v-if="challengeId" class="page-content login-two-factor-form" :aria-busy="submitting || resetting" @submit.prevent="submit">
       <div class="two-factor-intro">
         <span><ShieldCheck :size="23" /></span>

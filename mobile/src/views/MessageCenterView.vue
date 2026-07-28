@@ -77,7 +77,12 @@ onMounted(() => { void loadMessages() })
 
 <template>
   <main class="page page--plain message-center-page">
-    <PageHeader :title="t('messageCenter.title')">
+    <PageHeader
+      :back="true"
+      :eyebrow="t('messageCenter.categoryPlatform')"
+      :subtitle="t('messageCenter.summaryUnread', { unread: unreadCount })"
+      :title="t('messageCenter.title')"
+    >
       <template #actions>
         <button class="icon-button" type="button" :aria-label="t('messageCenter.retry')" :disabled="loading" @click="loadMessages">
           <RefreshCw :size="21" :class="{ spin: loading }" />

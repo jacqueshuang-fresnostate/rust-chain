@@ -222,7 +222,12 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="page page--plain new-coin-records-page">
-    <PageHeader :title="t('newCoin.recordTitle')" />
+    <PageHeader
+      :back="true"
+      :eyebrow="t('products.newCoins')"
+      :subtitle="t('newCoin.recordLoginDescription')"
+      :title="t('newCoin.recordTitle')"
+    />
     <div class="page-content new-coin-records-content">
       <LoginRequiredState v-if="!session.isAuthenticated" :description="t('newCoin.recordLoginDescription')" />
       <template v-else>

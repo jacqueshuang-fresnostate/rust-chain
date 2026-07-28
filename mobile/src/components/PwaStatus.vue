@@ -148,9 +148,9 @@ async function retry(): Promise<void> {
 <style scoped>
 .pwa-status {
   display: grid;
-  gap: 8px;
+  gap: 0;
   left: 50%;
-  max-width: min(calc(100vw - 20px), var(--app-max-width, 620px));
+  max-width: var(--app-max-width, 448px);
   pointer-events: none;
   position: fixed;
   top: calc(env(safe-area-inset-top, 0px) + 64px);
@@ -161,10 +161,11 @@ async function retry(): Promise<void> {
 
 .pwa-status__card {
   align-items: flex-start;
-  background: var(--surface);
+  background: var(--surface-elevated);
   border: 1px solid var(--line);
-  border-radius: var(--radius, 10px);
-  box-shadow: var(--shadow-soft);
+  border-left-width: 3px;
+  border-radius: 0;
+  box-shadow: none;
   color: var(--ink);
   display: grid;
   gap: 10px;
@@ -190,6 +191,15 @@ async function retry(): Promise<void> {
 
 .pwa-status__card--ready > svg {
   color: var(--positive);
+}
+
+.pwa-status__card--install,
+.pwa-status__card--update {
+  border-left-color: var(--accent);
+}
+
+.pwa-status__card--ready {
+  border-left-color: var(--positive);
 }
 
 .pwa-status__body {
@@ -221,7 +231,7 @@ async function retry(): Promise<void> {
   align-items: center;
   background: var(--surface-elevated);
   border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border-radius: var(--radius);
   color: var(--ink);
   cursor: pointer;
   display: inline-flex;

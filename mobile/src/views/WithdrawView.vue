@@ -103,7 +103,12 @@ onMounted(() => { void load() })
 
 <template>
   <main class="page page--plain">
-    <PageHeader :title="t('withdraw.title', { asset: asset?.symbol || props.asset.toUpperCase() })" />
+    <PageHeader
+      :back="true"
+      :eyebrow="t('assets.withdraw')"
+      :subtitle="t('withdraw.notice')"
+      :title="t('withdraw.title', { asset: asset?.symbol || props.asset.toUpperCase() })"
+    />
     <div class="page-content withdraw-page">
       <LoginRequiredState v-if="!session.isAuthenticated" :description="t('withdraw.loginDescription')" />
       <template v-else>

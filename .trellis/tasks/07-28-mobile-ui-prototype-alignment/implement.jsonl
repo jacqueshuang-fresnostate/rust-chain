@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "手机端组件、视觉、测试和响应式总规范"}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "保持路由、返回语义、底部导航和多语言合同"}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "保持 PWA、应用壳、安全区和固定导航行为"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "UI 重构必须保留真实接口、认证刷新和 WebSocket 合同"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 UI 状态与 API 数据边界，避免引入模拟数据"}
+{"file": ".trellis/tasks/07-28-mobile-ui-prototype-alignment/research/visual-parity-audit.md", "reason": "原型与真实端差异、文件分组和多尺寸验收依据"}

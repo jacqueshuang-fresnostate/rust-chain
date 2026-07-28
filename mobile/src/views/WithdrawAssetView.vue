@@ -46,7 +46,12 @@ onMounted(() => { void load() })
 
 <template>
   <main class="page page--plain">
-    <PageHeader :title="t('withdraw.selectAsset')" />
+    <PageHeader
+      :back="true"
+      :eyebrow="t('assets.withdraw')"
+      :subtitle="t('withdraw.searchPlaceholder')"
+      :title="t('withdraw.selectAsset')"
+    />
     <div class="page-content asset-page">
       <LoginRequiredState v-if="!session.isAuthenticated" :description="t('withdraw.assetLoginDescription')" />
       <template v-else>

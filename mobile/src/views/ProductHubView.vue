@@ -64,7 +64,7 @@ function openProduct(name: ProductRouteName): void {
 
 <template>
   <main class="page page--plain product-hub">
-    <PageHeader :title="t('products.title')" />
+    <PageHeader :title="t('products.title')" :subtitle="t('products.introDescription')" />
     <div class="page-content">
       <header class="product-hub__overview">
         <span>{{ t('products.title') }}</span>
@@ -103,7 +103,7 @@ function openProduct(name: ProductRouteName): void {
 
 .product-hub .page-content {
   background: var(--surface);
-  min-height: calc(100dvh - 56px);
+  min-height: calc(100dvh - 72px);
   padding-bottom: calc(36px + env(safe-area-inset-bottom));
   padding-top: 14px;
 }
@@ -111,16 +111,17 @@ function openProduct(name: ProductRouteName): void {
 .product-hub__overview {
   background: var(--surface);
   border-bottom: 1px solid var(--line);
-  border-top: 3px solid var(--accent);
+  border-top: 3px solid var(--signal-green);
   display: grid;
   gap: 6px;
-  margin: 0 -20px;
+  margin: 0 -16px;
   min-height: 132px;
   padding: 20px;
 }
 
 .product-hub__overview > span {
-  color: var(--accent);
+  color: var(--positive);
+  font-family: var(--data-font);
   font-size: 10px;
   font-weight: 760;
   letter-spacing: 0;
@@ -168,8 +169,8 @@ function openProduct(name: ProductRouteName): void {
 }
 
 .product-card--featured {
-  background: color-mix(in srgb, var(--accent) 7%, var(--surface-elevated, var(--surface)));
-  border-top: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--signal-green) 7%, var(--surface-elevated, var(--surface)));
+  border-top: 3px solid var(--signal-green);
   grid-column: span 3;
   min-height: 170px;
   padding: 15px 13px;
@@ -184,7 +185,7 @@ function openProduct(name: ProductRouteName): void {
 }
 
 .product-card[data-product="seconds"] {
-  border-top-color: var(--accent);
+  border-top-color: var(--signal-coral);
 }
 
 .product-card__top {
@@ -244,24 +245,24 @@ function openProduct(name: ProductRouteName): void {
 
 @media (max-width: 360px) {
   .product-hub__overview {
-    margin-left: -16px;
-    margin-right: -16px;
-    padding-left: 16px;
-    padding-right: 16px;
+    margin-left: -12px;
+    margin-right: -12px;
+    padding-left: 12px;
+    padding-right: 12px;
   }
 }
 
 @media (max-width: 340px) {
   .product-hub .page-content {
-    padding-left: 14px;
-    padding-right: 14px;
+    padding-left: 12px;
+    padding-right: 12px;
   }
 
   .product-hub__overview {
-    margin-left: -14px;
-    margin-right: -14px;
-    padding-left: 14px;
-    padding-right: 14px;
+    margin-left: -12px;
+    margin-right: -12px;
+    padding-left: 12px;
+    padding-right: 12px;
   }
 
   .product-hub__matrix {

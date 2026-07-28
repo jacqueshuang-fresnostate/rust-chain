@@ -39,7 +39,12 @@ onMounted(() => { void load() })
 
 <template>
   <main class="page page--plain">
-    <PageHeader :title="t('deposit.selectAsset')" />
+    <PageHeader
+      :back="true"
+      :eyebrow="t('assets.deposit')"
+      :subtitle="t('deposit.searchPlaceholder')"
+      :title="t('deposit.selectAsset')"
+    />
     <div class="page-content asset-page">
       <LoginRequiredState v-if="!session.isAuthenticated" :description="t('deposit.assetLoginDescription')" />
       <template v-else>

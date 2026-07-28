@@ -56,7 +56,12 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
 
 <template>
   <main class="page page--plain auth-page">
-    <PageHeader :title="t('auth.forgotTitle')" />
+    <PageHeader
+      :back="true"
+      :eyebrow="t('auth.resetTitle')"
+      :subtitle="t('auth.resetDescription')"
+      :title="t('auth.forgotTitle')"
+    />
     <form class="page-content auth-form" :aria-busy="submitting" @submit.prevent="submit">
       <div class="auth-form__intro">
         <span><KeyRound :size="20" /></span>

@@ -49,6 +49,12 @@ const fundPasswordResetCode = ref('')
 const fundPasswordResetValue = ref('')
 
 const fundPasswordLabel = computed(() => profile.value?.fundPasswordSet ? t('security.changeFundPassword') : t('security.setFundPassword'))
+const canUpdateLoginPassword = computed(() => Boolean(loginOldPassword.value && loginNewPassword.value))
+const canUpdateFundPassword = computed(() => Boolean(
+  fundNewPassword.value
+  && (profile.value?.fundPasswordSet ? fundOldPassword.value : fundLoginPassword.value),
+))
+const canResetFundPassword = computed(() => Boolean(fundPasswordResetCode.value.trim() && fundPasswordResetValue.value))
 
 async function load(): Promise<void> {
   if (!session.isAuthenticated) return
@@ -253,7 +259,12 @@ onMounted(() => { void load() })
 
 <template>
   <main class="page page--plain security-page">
-    <PageHeader :title="t('security.title')" />
+    <PageHeader
+      :back="true"
+      :eyebrow="t('security.authenticatorStatus')"
+      :subtitle="t('security.twoFactorDescription')"
+      :title="t('security.title')"
+    />
     <div class="page-content security-content">
       <LoginRequiredState v-if="!session.isAuthenticated" :description="t('security.loginDescription')" />
       <template v-else>
@@ -315,7 +326,7 @@ onMounted(() => { void load() })
                 <span>{{ t('security.emailCode') }}</span>
                 <input v-model="twoFactorResetCode" inputmode="numeric" autocomplete="one-time-code" :placeholder="t('security.emailCode')" />
               </label>
-              <button class="button button--secondary button--full" type="button" :disabled="saving === 'two-factor-reset'" @click="confirmTwoFactorReset">{{ saving === 'two-factor-reset' ? t('auth.resetting') : t('security.confirmReset') }}</button>
+              <button class="button button--secondary button--full" type="button" :disabled="saving === 'two-factor-reset' || !twoFactorResetCode.trim()" @click="confirmTwoFactorReset">{{ saving === 'two-factor-reset' ? t('auth.resetting') : t('security.confirmReset') }}</button>
             </section>
           </section>
 
@@ -334,7 +345,7 @@ onMounted(() => { void load() })
               <span>{{ t('security.authenticatorCodePlaceholder') }}</span>
               <input v-model="setupCode" inputmode="numeric" autocomplete="one-time-code" maxlength="8" :placeholder="t('security.authenticatorCodePlaceholder')" />
             </label>
-            <button class="button button--primary button--full" type="button" :disabled="saving === 'two-factor-confirm'" @click="confirmSetup">{{ saving === 'two-factor-confirm' ? t('auth.verifying') : t('security.confirmEnable') }}</button>
+            <button class="button button--primary button--full" type="button" :disabled="saving === 'two-factor-confirm' || !setupCode.trim()" @click="confirmSetup">{{ saving === 'two-factor-confirm' ? t('auth.verifying') : t('security.confirmEnable') }}</button>
           </section>
 
           <section class="security-block">
@@ -353,7 +364,7 @@ onMounted(() => { void load() })
               <span>{{ t('security.newLoginPassword') }}</span>
               <input v-model="loginNewPassword" type="password" autocomplete="new-password" />
             </label>
-            <button class="button button--secondary button--full" type="button" :disabled="saving === 'login-password'" @click="updateLoginPassword">{{ saving === 'login-password' ? t('security.updating') : t('security.updateLoginPassword') }}</button>
+            <button class="button button--secondary button--full" type="button" :disabled="saving === 'login-password' || !canUpdateLoginPassword" @click="updateLoginPassword">{{ saving === 'login-password' ? t('security.updating') : t('security.updateLoginPassword') }}</button>
           </section>
 
           <section class="security-block">
@@ -376,7 +387,7 @@ onMounted(() => { void load() })
               <span>{{ t('security.newFundPassword') }}</span>
               <input v-model="fundNewPassword" type="password" autocomplete="new-password" />
             </label>
-            <button class="button button--secondary button--full" type="button" :disabled="saving === 'fund-password'" @click="updateFundPassword">{{ saving === 'fund-password' ? t('common.saving') : fundPasswordLabel }}</button>
+            <button class="button button--secondary button--full" type="button" :disabled="saving === 'fund-password' || !canUpdateFundPassword" @click="updateFundPassword">{{ saving === 'fund-password' ? t('common.saving') : fundPasswordLabel }}</button>
             <button v-if="profile?.fundPasswordSet" class="reset-toggle" type="button" :disabled="saving === 'fund-password-reset-code'" @click="sendFundPasswordReset">{{ saving === 'fund-password-reset-code' ? t('auth.sendingEllipsis') : t('security.forgotFundPassword') }}</button>
             <section v-if="showFundPasswordReset" class="reset-panel">
               <MailCheck :size="19" />
@@ -392,7 +403,7 @@ onMounted(() => { void load() })
                 <span>{{ t('security.newFundPassword') }}</span>
                 <input v-model="fundPasswordResetValue" type="password" autocomplete="new-password" :placeholder="t('security.newFundPasswordPlaceholder')" />
               </label>
-              <button class="button button--secondary button--full" type="button" :disabled="saving === 'fund-password-reset'" @click="confirmFundPasswordReset">{{ saving === 'fund-password-reset' ? t('auth.resetting') : t('security.confirmReset') }}</button>
+              <button class="button button--secondary button--full" type="button" :disabled="saving === 'fund-password-reset' || !canResetFundPassword" @click="confirmFundPasswordReset">{{ saving === 'fund-password-reset' ? t('auth.resetting') : t('security.confirmReset') }}</button>
             </section>
           </section>
         </template>
@@ -426,8 +437,8 @@ onMounted(() => { void load() })
 .status-text { flex: 0 0 auto; font-size: 13px; font-weight: 750; }
 .switch { align-items: center; display: inline-flex; flex: 0 0 56px; height: 44px; justify-content: flex-end; position: relative; }
 .switch input { height: 1px; opacity: 0; position: absolute; width: 1px; }
-.switch i { background: var(--line-strong); border: 1px solid var(--line-strong); border-radius: 16px; display: block; height: 30px; position: relative; transition: background-color var(--motion-fast) var(--motion-ease), border-color var(--motion-fast) var(--motion-ease); width: 50px; }
-.switch i::after { background: var(--surface); border: 1px solid var(--line); border-radius: 50%; box-shadow: var(--shadow-soft); content: ''; height: 24px; left: 2px; position: absolute; top: 2px; transition: transform var(--motion-fast) var(--motion-ease); width: 24px; }
+.switch i { background: var(--line-strong); border: 1px solid var(--line-strong); border-radius: var(--radius); display: block; height: 30px; position: relative; transition: background-color var(--motion-fast) var(--motion-ease), border-color var(--motion-fast) var(--motion-ease); width: 50px; }
+.switch i::after { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-soft); content: ''; height: 24px; left: 2px; position: absolute; top: 2px; transition: transform var(--motion-fast) var(--motion-ease); width: 24px; }
 .switch input:focus-visible + i { box-shadow: 0 0 0 3px var(--focus-ring); outline: 2px solid var(--focus); outline-offset: 2px; }
 .switch input:checked + i { background: var(--positive); border-color: var(--positive); }
 .switch input:checked + i::after { transform: translateX(20px); }

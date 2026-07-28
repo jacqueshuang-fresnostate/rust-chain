@@ -25,7 +25,12 @@ onMounted(() => { void load() })
 
 <template>
   <main class="page page--plain news-page">
-    <PageHeader :title="t('news.title')">
+    <PageHeader
+      :back="true"
+      :eyebrow="t('messageCenter.categoryAnnouncement')"
+      :subtitle="t('messageCenter.categoryPlatform')"
+      :title="t('news.title')"
+    >
       <template #actions>
         <button
           class="icon-button"

@@ -45,7 +45,12 @@ onMounted(() => { void load() })
 
 <template>
   <main class="page page--plain">
-    <PageHeader :title="t('deposit.selectNetwork')" />
+    <PageHeader
+      :back="true"
+      :eyebrow="t('assets.deposit')"
+      :subtitle="t('deposit.networkNoteDescription')"
+      :title="t('deposit.selectNetwork')"
+    />
     <div class="page-content network-page">
       <LoginRequiredState v-if="!session.isAuthenticated" :description="t('deposit.networkLoginDescription')" />
       <template v-else>

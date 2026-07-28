@@ -92,6 +92,10 @@ prototype:
 - Root and secondary headers must use an opaque sticky layer above route
   transitions and scrolling content. Content stacking contexts must remain
   below the header layer.
+- A route host must not create a stacking context that traps sticky headers
+  below the shaped root navigation. During transitions, the entering route is
+  above navigation and the leaving route is demoted to the content layer so an
+  old header cannot cover the new route.
 - Light-theme border tokens must use the shared cool-neutral family. Do not
   reintroduce the retired `#0b1811` / `rgba(11, 24, 17, ...)` border family.
 - Product hubs must expose an operational hierarchy rather than a generic action
@@ -110,6 +114,13 @@ prototype:
 - Light-theme seconds trading uses a bright market board with dark text; retain
   the separate dark-theme instrument panel rather than sharing one dark board
   across both themes.
+- Trading percentage shortcuts must derive quantity or margin from the
+  authenticated user's real spot or margin available balance. Never use a
+  fixed demo budget, and never fall back to a different margin product when the
+  selected pair has no exact product match.
+- Market chart inputs may contain epoch seconds or milliseconds. Normalize to
+  UTC seconds before deduplication and sorting, ignore invalid rows, and skip
+  zero-sized `ResizeObserver` measurements without destroying the empty canvas.
 
 Run from `mobile/sites-prototype/` after shared surface changes:
 

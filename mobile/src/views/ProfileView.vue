@@ -159,6 +159,11 @@ onMounted(() => { void load() })
             <span :class="kycTone"><BadgeCheck :size="15" />{{ kycSummary }}</span>
             <span :class="{ up: profile.fundPasswordSet }"><ShieldCheck :size="15" />{{ profile.fundPasswordSet ? t('profile.fundPasswordSet') : t('profile.improveSecurity') }}</span>
           </div>
+          <div class="profile-metrics">
+            <span><small>{{ t('profile.kyc') }}</small><strong :class="kycTone">{{ kycSummary }}</strong></span>
+            <span><small>{{ t('profile.security') }}</small><strong>{{ profile.fundPasswordSet ? t('profile.fundPasswordSet') : t('profile.improveSecurity') }}</strong></span>
+            <span><small>{{ t('language.entry') }}</small><strong>{{ currentLanguageLabel }}</strong></span>
+          </div>
         </section>
         <p v-else-if="loading" class="empty-state">{{ t('profile.loading') }}</p>
 
@@ -221,27 +226,48 @@ onMounted(() => { void load() })
 
 <style scoped>
 .profile-page { background: var(--surface); }
-.profile-content { min-height: calc(100dvh - 56px); padding-bottom: calc(112px + env(safe-area-inset-bottom)); }
-.profile-summary { align-items: center; border-bottom: 1px solid var(--line); display: grid; gap: 13px; grid-template-columns: 58px minmax(0, 1fr) 44px; padding: 24px 0 20px; position: relative; }
-.profile-summary::before { background: var(--accent); content: ''; height: 3px; left: 0; position: absolute; top: 0; width: 44px; }
+.profile-content { min-height: calc(100dvh - 72px); padding-bottom: calc(112px + env(safe-area-inset-bottom)); }
+.profile-content > :deep(.login-required) { margin: 12px -16px 0; }
+.profile-summary {
+  align-items: center;
+  background:
+    linear-gradient(120deg, color-mix(in srgb, var(--signal-green) 13%, transparent), transparent 46%),
+    var(--surface-elevated);
+  border-bottom: 1px solid var(--line-strong);
+  border-top: 3px solid var(--signal-green);
+  display: grid;
+  gap: 13px;
+  grid-template-columns: 66px minmax(0, 1fr) 44px;
+  margin: 0 -16px;
+  min-height: 222px;
+  padding: 26px 16px 0;
+  position: relative;
+}
 .avatar-input { display: none; }
-.avatar-button { background: transparent; border-radius: 50%; height: 56px; overflow: visible; padding: 0; position: relative; width: 56px; }
+.avatar-button { background: transparent; border-radius: 50%; height: 64px; overflow: visible; padding: 0; position: relative; width: 64px; }
 .avatar-button img,
-.avatar-button > span { background: var(--soft); border: 1px solid var(--line); border-radius: 50%; display: block; height: 56px; object-fit: cover; width: 56px; }
-.avatar-button > span { align-items: center; background: var(--ink); color: var(--surface); display: inline-flex; font-size: 22px; font-weight: 780; justify-content: center; }
-.avatar-button i { align-items: center; background: var(--accent); border: 2px solid var(--surface); border-radius: 50%; bottom: -2px; color: var(--on-accent); display: inline-flex; height: 23px; justify-content: center; position: absolute; right: -2px; width: 23px; }
+.avatar-button > span { background: var(--soft); border: 1px solid var(--line-strong); border-radius: 50%; display: block; height: 64px; object-fit: cover; width: 64px; }
+.avatar-button > span { align-items: center; background: var(--signal-green); color: var(--on-positive); display: inline-flex; font-size: 23px; font-weight: 780; justify-content: center; }
+.avatar-button i { align-items: center; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 50%; bottom: -2px; color: var(--ink); display: inline-flex; height: 24px; justify-content: center; position: absolute; right: -2px; width: 24px; }
 .profile-summary__identity { display: grid; gap: 4px; min-width: 0; }
-.profile-summary strong { font-size: 21px; letter-spacing: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-summary strong { font-size: 24px; letter-spacing: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .profile-summary small,
 .profile-summary em { color: var(--muted); font-size: 12px; font-style: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .profile-summary__edit { justify-self: end; }
 .profile-status { display: flex; flex-wrap: wrap; gap: 7px; grid-column: 1 / -1; margin-top: 2px; }
-.profile-status span { align-items: center; background: var(--soft); border: 1px solid var(--line); border-radius: 999px; color: var(--muted-strong); display: inline-flex; font-size: 11px; font-weight: 700; gap: 5px; min-height: 30px; padding: 4px 9px; }
+.profile-status span { align-items: center; background: var(--soft); border: 1px solid var(--line); border-radius: 2px; color: var(--muted-strong); display: inline-flex; font-size: 11px; font-weight: 700; gap: 5px; min-height: 30px; padding: 4px 9px; }
 .profile-status span.up { background: var(--positive-soft); border-color: color-mix(in srgb, var(--positive) 30%, var(--line)); color: var(--positive); }
 .profile-status span.down { background: var(--negative-soft); border-color: color-mix(in srgb, var(--negative) 30%, var(--line)); color: var(--negative); }
-.profile-menu { border-top: 1px solid var(--line); display: grid; margin-top: 18px; }
+.profile-metrics { align-self: end; border-top: 1px solid var(--line); display: grid; grid-column: 1 / -1; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 2px -16px 0; width: calc(100% + 32px); }
+.profile-metrics > span { display: grid; gap: 4px; min-height: 66px; min-width: 0; padding: 10px 12px; }
+.profile-metrics > span + span { border-left: 1px solid var(--line); }
+.profile-metrics small { color: var(--muted); font-size: 9px; }
+.profile-metrics strong { font-family: var(--data-font); font-size: 11px; line-height: 1.3; white-space: normal; }
+.profile-menu { border-left: 1px solid var(--line); border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 18px; }
 .profile-menu button,
 .profile-preferences button { align-items: center; background: transparent; border-bottom: 1px solid var(--line); display: grid; gap: 12px; grid-template-columns: 44px minmax(0, 1fr) auto; min-height: 76px; padding: 10px 0; text-align: left; width: 100%; }
+.profile-menu button { border-right: 1px solid var(--line); grid-template-columns: 40px minmax(0, 1fr); min-height: 104px; padding: 12px 10px; }
+.profile-menu button > svg { display: none; }
 .profile-menu__icon,
 .profile-preferences button > span:first-child { align-items: center; background: var(--soft); border: 1px solid var(--line); border-radius: var(--radius); color: var(--muted-strong); display: inline-flex; height: 42px; justify-content: center; width: 42px; }
 .profile-menu__icon--positive { background: var(--positive-soft); border-color: color-mix(in srgb, var(--positive) 24%, var(--line)); color: var(--positive); }
@@ -256,22 +282,33 @@ onMounted(() => { void load() })
 .profile-menu button > svg,
 .profile-preferences button > svg { color: var(--muted); }
 .profile-preferences { border-top: 1px solid var(--line); margin-top: 20px; }
-.logout-button { align-items: center; background: var(--negative-soft); border: 1px solid color-mix(in srgb, var(--negative) 28%, var(--line)); border-radius: var(--radius); color: var(--negative); display: flex; font-size: 14px; font-weight: 720; gap: 8px; justify-content: center; margin-top: 20px; min-height: 48px; width: 100%; }
+.logout-button { align-items: center; background: var(--negative-soft); border: 1px solid color-mix(in srgb, var(--negative) 28%, var(--line)); border-radius: 0; color: var(--negative); display: flex; font-size: 14px; font-weight: 720; gap: 8px; justify-content: center; margin-top: 20px; min-height: 48px; width: 100%; }
 .profile-dialog-mask { align-items: flex-end; background: var(--overlay); display: flex; inset: 0; justify-content: center; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); position: fixed; z-index: var(--layer-overlay); }
-.profile-dialog { background: var(--surface-elevated); border: 1px solid var(--line); border-radius: calc(var(--radius) + 4px); box-shadow: var(--shadow-soft); display: grid; gap: 16px; max-height: calc(100dvh - 32px - env(safe-area-inset-top)); max-width: 520px; overflow-y: auto; padding: 20px; width: 100%; }
+.profile-dialog { background: var(--surface-elevated); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow-soft); display: grid; gap: 16px; max-height: calc(100dvh - 32px - env(safe-area-inset-top)); max-width: 448px; overflow-y: auto; padding: 20px; width: 100%; }
 .profile-dialog h2 { font-size: 20px; margin: 0; }
 .profile-dialog > div { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
 .profile-dialog .button { min-height: 46px; }
 .spin { animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 360px) {
+  .profile-content > :deep(.login-required),
+  .profile-summary { margin-left: -12px; margin-right: -12px; }
+  .profile-summary { padding-left: 12px; padding-right: 12px; }
+  .profile-metrics { margin-left: -12px; margin-right: -12px; width: calc(100% + 24px); }
+}
 @media (max-width: 340px) {
-  .profile-content { padding-left: 16px; padding-right: 16px; }
-  .profile-summary { gap: 10px; grid-template-columns: 52px minmax(0, 1fr) 44px; }
+  .profile-content { padding-left: 12px; padding-right: 12px; }
+  .profile-content > :deep(.login-required),
+  .profile-summary { margin-left: -12px; margin-right: -12px; }
+  .profile-summary { gap: 10px; grid-template-columns: 58px minmax(0, 1fr) 44px; padding-left: 12px; padding-right: 12px; }
   .avatar-button,
   .avatar-button img,
-  .avatar-button > span { height: 50px; width: 50px; }
+  .avatar-button > span { height: 56px; width: 56px; }
+  .profile-metrics { margin-left: -12px; margin-right: -12px; width: calc(100% + 24px); }
+  .profile-metrics > span { padding-inline: 8px; }
   .profile-menu button,
   .profile-preferences button { gap: 9px; grid-template-columns: 40px minmax(0, 1fr) auto; }
+  .profile-menu button { grid-template-columns: 36px minmax(0, 1fr); padding-inline: 8px; }
   .profile-menu__icon,
   .profile-preferences button > span:first-child { height: 38px; width: 38px; }
 }

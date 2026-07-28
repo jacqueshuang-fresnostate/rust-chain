@@ -54,11 +54,14 @@ export function apiErrorMessage(error: unknown, fallback = i18n.global.t('common
   if (axiosError.code === 'ECONNABORTED' || axiosError.code === 'ETIMEDOUT') {
     return i18n.global.t('common.requestTimeout')
   }
-  if (axios.isAxiosError(error) && !axiosError.response) {
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-      return i18n.global.t('common.deviceOffline')
+  if (axios.isAxiosError(error)) {
+    if (!axiosError.response) {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        return i18n.global.t('common.deviceOffline')
+      }
+      return i18n.global.t('common.networkUnavailable')
     }
-    return i18n.global.t('common.networkUnavailable')
+    return fallback
   }
   return error instanceof Error && error.message ? error.message : fallback
 }

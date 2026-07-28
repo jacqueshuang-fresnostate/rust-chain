@@ -5920,3 +5920,31 @@
 - 修改文件：`mobile/{src,tests,vite.config.ts,.env.example,README.md}`、`src/modules/auth/{application,presentation,routes}.rs`、`src/openapi{.rs,/auth.rs}`、`tests/{auth_login_setup_routes,openapi_routes,unit_src/src_modules_auth_routes_tests}.rs`、`.trellis/spec/{mobile,backend}`、`.trellis/tasks/07-28-mobile-backend-api-integration/`、`docs/superpowers/PROGRESS.md`
 - 验证结果：`cargo check --all-targets`、`cargo fmt --all -- --check`、Rust lib 180/180、OpenAPI 聚焦测试、真实 MySQL 2FA 路由 2/2、mobile 81/81、`type-check`、PWA/Tauri Web 构建和 `git diff --check` 通过；PWA 产物无 loopback API、API/WebSocket runtime cache；真实服务 `18080` 及移动代理 `1611` 的健康、登录配置、市场、公告、受保护 401、WS subscribe/ping/pong 均通过，浏览器真实数据渲染、主题持久化、无横向溢出和零 console warning/error。
 - 后续事项：正式 PWA 部署仍需由生产网关提供同源 `/api/v1`、`/health` 与 WebSocket upgrade，Tauri 发布构建需注入 `VITE_BACKEND_API_DOMAIN=https://...`。
+
+## 2026-07-28 13:05 - 手机端 UI 对齐：共享壳与一级页面
+
+- 完成内容：真实 Vue 客户端建立与 Sites 原型一致的 448px 手机画布、冷中性明暗主题、低圆角硬边界、数据字体和共享表单焦点；重构不透明场景 Header、异形七栏底部导航、登录/PWA 状态带，以及首页、行情、资产、我的和产品中心的信息层级。
+- 修改文件：`mobile/src/{App.vue,styles/base.css}`、`mobile/src/components/{AppBottomNav,PageHeader,LoginRequiredState,PwaStatus,AssetMark}.vue`、`mobile/src/views/{Home,Markets,Assets,Profile,ProductHub}View.vue`、`mobile/tests/ui-prototype-alignment-foundation.test.ts`
+- 验证结果：切片类型检查、全量测试、`git diff --check` 通过；320/390/448px 代表页面无横向溢出，七栏图标、标签和抬升秒合约入口不重叠。
+- 后续事项：继续交易域和完整二级页面对齐。
+
+## 2026-07-28 13:08 - 手机端 UI 对齐：交易、秒合约与订单中心
+
+- 完成内容：现货、合约和秒合约保持独立栏目，重构行情头、真实 K 线、盘口、价格/数量/金额输入、比例控制、确认弹窗和订单/持仓/历史；订单中心改为左对齐场景 Header、始终可见的三栏分类和紧凑数据面。
+- 修改文件：`mobile/src/components/{MobileMarketChart,OrderBookPanel}.vue`、`mobile/src/views/{Trade,Seconds,MarketDetail,Orders}View.vue`、`mobile/src/core/{marketChart,tradeForm}.ts`、`mobile/tests/ui-prototype-alignment-trading.test.ts`
+- 验证结果：真实 API、鉴权、WebSocket、现货/合约下单载荷、批量撤单/平仓合同测试通过；浏览器现货页生成非空 Canvas，订单分类和交易输入无横向溢出。
+- 后续事项：继续二级业务页和独立质量门。
+
+## 2026-07-28 13:12 - 手机端 UI 对齐：完整二级页面
+
+- 完成内容：消息、借贷、安全、KYC、绑定、推荐、理财、新币、预测、闪兑、充提、账单、公告和认证相关页面统一场景 Header、业务分组、容器聚焦输入、按钮状态及加载/空/错误反馈；借贷保持 340px 以上双列、以下单列。
+- 修改文件：`mobile/src/views/{AccountBindings,DepositAsset,DepositDetail,DepositNetwork,Earn,ForgotPassword,Kyc,Language,Loan,LoginTwoFactor,MessageCenter,NewCoinDetail,NewCoinRecords,NewCoins,NewsDetail,News,Prediction,QuickRecharge,Referrals,Security,Swap,WalletLedger,WithdrawAsset,Withdraw,WithdrawalRecords}View.vue`、`mobile/tests/ui-prototype-alignment-secondary.test.ts`
+- 验证结果：二级页面 API、认证、Pinia、路由、校验和 i18n 合同保持通过；320/390/448px 代表页面无 Header、返回按钮或字段重叠。
+- 后续事项：执行独立质量检查和生产构建。
+
+## 2026-07-28 13:20 - 手机端 UI 对齐：质量门与最终验收
+
+- 完成内容：独立质量门修复真实余额比例计算、合约产品精确匹配、K 线秒/毫秒归一化、路由转场层级、HTTP 本地化 fallback、共享焦点选择器和导航圆角；浏览器发现并修复深色首页资产 Hero 黑字黑底，新增双主题深色表面前景令牌；同步移动规范与 Trellis 任务资料。
+- 修改文件：`mobile/src/api/client.ts`、`mobile/src/core/{marketChart,tradeForm}.ts`、`mobile/src/{App.vue,styles/base.css}`、`mobile/src/components/{AppBottomNav,MobileMarketChart}.vue`、`mobile/src/views/{Home,Trade}View.vue`、`mobile/tests/{request-layer,ui-prototype-alignment-foundation,ui-prototype-alignment-trading}.test.ts`、`.trellis/spec/mobile/index.md`、`.trellis/tasks/07-28-mobile-ui-prototype-alignment/`
+- 验证结果：`npm --prefix mobile run type-check`、`npm --prefix mobile test`（102/102）、`npm --prefix mobile run build:pwa`（131 条静态壳预缓存）、`npm --prefix mobile run build:tauri`、`git diff --check` 通过；Tauri 产物无 `sw.js`/manifest；浏览器复验首页、现货、秒合约、订单、消息、借贷和深浅主题，无应用横向溢出，交易图表 Canvas 非空，控制台无 warning/error。真实后端手工联调因本机 MySQL 持久卷账号与仓库 `.env` 不一致无法启动，未重置数据库；API/鉴权/请求载荷由自动化合同覆盖。
+- 后续事项：在具备匹配本机 MySQL 开发账号的环境补做登录态真实订单、资产和交易提交视觉验收；生产 PWA 仍需网关提供同源 API、健康检查与 WebSocket upgrade。

@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import axios, { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios'
 import { installAuthSessionInterceptors, isAuthBootstrapRequest } from '../src/api/requestAuth.ts'
+
+const clientSource = readFileSync(new URL('../src/api/client.ts', import.meta.url), 'utf8')
 
 const bootstrapPaths = [
   '/api/v1/auth/login',
@@ -121,6 +124,14 @@ test('failed refresh clears the protected session without recursive replay', asy
   assert.equal(refreshCalls, 1)
   assert.equal(clearCalls, 1)
   assert.equal(expiredCalls, 1)
+})
+
+test('HTTP failures without a backend message keep the localized caller fallback', () => {
+  assert.match(
+    clientSource,
+    /if \(axios\.isAxiosError\(error\)\) \{[\s\S]*?if \(!axiosError\.response\) \{[\s\S]*?return i18n\.global\.t\('common\.networkUnavailable'\)[\s\S]*?\}[\s\S]*?return fallback/,
+  )
+  assert.doesNotMatch(clientSource, /return error instanceof Error[\s\S]*?axiosError\.response/)
 })
 
 function unauthorized(config: InternalAxiosRequestConfig): AxiosError {

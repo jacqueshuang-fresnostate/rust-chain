@@ -81,7 +81,7 @@ onUnmounted(() => marketStore.stopLiveUpdates())
 
 <template>
   <main class="page markets-page">
-    <PageHeader :title="title" :back="pickerMode" :fallback="navigation.lastTradePath">
+    <PageHeader :title="title" :eyebrow="t('markets.overview')" :back="pickerMode" :fallback="navigation.lastTradePath">
       <template #actions>
         <button class="icon-button" type="button" :aria-label="t('markets.refresh')" :disabled="marketStore.loading" @click="marketStore.refresh(true)">
           <RefreshCw :size="20" :class="{ spin: marketStore.loading }" />
@@ -169,14 +169,28 @@ onUnmounted(() => marketStore.stopLiveUpdates())
 }
 
 .market-signal {
-  background: var(--dark-surface);
-  border-top: 3px solid var(--accent);
-  color: var(--markets-contrast-ink);
+  background: var(--signal-green);
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--on-positive);
   display: grid;
   grid-template-columns: 1.25fr 1fr .72fr;
-  margin: 0 -20px;
-  min-height: 112px;
-  padding: 18px 20px;
+  margin: 0 -16px;
+  min-height: 124px;
+  overflow: hidden;
+  padding: 20px 16px;
+  position: relative;
+}
+
+.market-signal::after {
+  bottom: -24px;
+  color: color-mix(in srgb, var(--on-positive) 18%, transparent);
+  content: '///';
+  font-family: var(--data-font);
+  font-size: 84px;
+  line-height: 1;
+  pointer-events: none;
+  position: absolute;
+  right: 10px;
 }
 
 .market-signal > div {
@@ -184,21 +198,24 @@ onUnmounted(() => marketStore.stopLiveUpdates())
   display: grid;
   gap: 8px;
   min-width: 0;
+  position: relative;
+  z-index: 1;
 }
 
 .market-signal > div + div {
-  border-left: 1px solid color-mix(in srgb, var(--markets-contrast-ink) 18%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--on-positive) 22%, transparent);
   padding-left: 13px;
 }
 
 .market-signal span {
-  color: color-mix(in srgb, var(--markets-contrast-ink) 62%, transparent);
+  color: color-mix(in srgb, var(--on-positive) 72%, transparent);
   font-size: 10px;
   line-height: 1.25;
 }
 
 .market-signal strong {
-  color: var(--markets-contrast-ink);
+  color: var(--on-positive);
+  font-family: var(--data-font);
   font-size: 17px;
   min-width: 0;
   overflow: hidden;
@@ -207,7 +224,7 @@ onUnmounted(() => marketStore.stopLiveUpdates())
 }
 
 .market-signal strong.up {
-  color: var(--positive);
+  color: var(--on-positive);
 }
 
 .market-signal small {
@@ -220,7 +237,7 @@ onUnmounted(() => marketStore.stopLiveUpdates())
   border-bottom: 1px solid var(--line);
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin: 0 -20px;
+  margin: 0 -16px;
 }
 
 .market-destinations button {
@@ -266,9 +283,9 @@ onUnmounted(() => marketStore.stopLiveUpdates())
 
 .market-search {
   align-items: center;
-  background: var(--soft);
+  background: var(--field-surface);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: 0;
   color: var(--muted);
   display: flex;
   gap: 9px;
@@ -279,7 +296,7 @@ onUnmounted(() => marketStore.stopLiveUpdates())
 
 .market-search:focus-within {
   border-color: var(--focus, var(--accent));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus, var(--accent)) 14%, transparent);
+  box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
 .market-search input {
@@ -312,7 +329,7 @@ onUnmounted(() => marketStore.stopLiveUpdates())
 }
 
 .market-category .is-active {
-  border-color: var(--ink);
+  border-color: var(--signal-green);
   color: var(--ink);
   font-weight: 750;
 }
@@ -444,31 +461,31 @@ onUnmounted(() => marketStore.stopLiveUpdates())
 @media (max-width: 360px) {
   .market-signal,
   .market-destinations {
-    margin-left: -16px;
-    margin-right: -16px;
+    margin-left: -12px;
+    margin-right: -12px;
   }
 
   .market-signal {
-    padding-left: 16px;
-    padding-right: 16px;
+    padding-left: 12px;
+    padding-right: 12px;
   }
 }
 
 @media (max-width: 340px) {
   .markets-page .page-content {
-    padding-left: 14px;
-    padding-right: 14px;
+    padding-left: 12px;
+    padding-right: 12px;
   }
 
   .market-signal,
   .market-destinations {
-    margin-left: -14px;
-    margin-right: -14px;
+    margin-left: -12px;
+    margin-right: -12px;
   }
 
   .market-signal {
-    padding-left: 14px;
-    padding-right: 14px;
+    padding-left: 12px;
+    padding-right: 12px;
   }
 
   .market-list__heading,

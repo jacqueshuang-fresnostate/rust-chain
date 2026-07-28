@@ -57,7 +57,12 @@ onMounted(() => { void load() })
 
 <template>
   <main class="page page--plain">
-    <PageHeader :title="t('deposit.title', { asset: asset.toUpperCase() })" />
+    <PageHeader
+      :back="true"
+      :eyebrow="t('assets.deposit')"
+      :subtitle="t('deposit.networkWarning')"
+      :title="t('deposit.title', { asset: asset.toUpperCase() })"
+    />
     <div class="page-content deposit-detail">
       <LoginRequiredState v-if="!session.isAuthenticated" :description="t('deposit.detailLoginDescription')" />
       <template v-else>

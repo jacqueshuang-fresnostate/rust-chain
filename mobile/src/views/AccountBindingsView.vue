@@ -141,7 +141,12 @@ onMounted(() => { void load() })
 
 <template>
   <main class="page page--plain account-bindings-page">
-    <PageHeader :title="t('bindings.title')" />
+    <PageHeader
+      :back="true"
+      :eyebrow="t('bindings.externalAccounts')"
+      :subtitle="t('bindings.introDescription')"
+      :title="t('bindings.title')"
+    />
     <div class="page-content bindings-content">
       <LoginRequiredState v-if="!session.isAuthenticated" :description="t('bindings.loginDescription')" />
       <template v-else>
@@ -170,12 +175,15 @@ onMounted(() => { void load() })
               <div><b>{{ profile.email }}</b><small>{{ t('bindings.verified') }}</small></div>
             </div>
             <template v-else>
-              <label>
+              <label class="binding-field">
                 <span>{{ t('bindings.emailAddress') }}</span>
                 <input v-model="email" class="input" type="email" autocomplete="email" placeholder="name@example.com" />
               </label>
               <div class="code-row">
-                <input v-model="emailCode" class="input" inputmode="numeric" autocomplete="one-time-code" :placeholder="t('bindings.emailCode')" />
+                <label class="binding-field binding-field--code">
+                  <span>{{ t('bindings.emailCode') }}</span>
+                  <input v-model="emailCode" class="input" inputmode="numeric" autocomplete="one-time-code" :placeholder="t('bindings.emailCode')" />
+                </label>
                 <button class="button button--secondary" type="button" :disabled="saving === 'email-code'" @click="sendEmailCode">
                   {{ saving === 'email-code' ? t('auth.sendingEllipsis') : t('bindings.sendCode') }}
                 </button>
@@ -221,11 +229,11 @@ onMounted(() => { void load() })
           <Send :size="20" />
           <h2 id="provider-dialog-title">{{ t('bindings.bindProvider', { provider: provider === 'telegram_account' ? 'Telegram' : 'Coinbase Wallet' }) }}</h2>
         </header>
-        <label>
+        <label class="binding-field">
           <span>{{ t('bindings.accountIdentifier') }}</span>
           <input v-model="accountIdentifier" class="input" autofocus :placeholder="t('bindings.accountIdentifierPlaceholder')" />
         </label>
-        <label>
+        <label class="binding-field">
           <span>{{ t('bindings.displayNameOptional') }}</span>
           <input v-model="displayName" class="input" :placeholder="t('bindings.displayNamePlaceholder')" />
         </label>
@@ -259,8 +267,11 @@ onMounted(() => { void load() })
 .binding-section header p { color: var(--muted); font-size: 12px; line-height: 1.45; margin: 4px 0 0; }
 .binding-section label { display: grid; gap: 7px; }
 .binding-section label > span { color: var(--muted); font-size: 12px; font-weight: 650; }
-.binding-section .input { min-height: 52px; }
+.binding-field { background: var(--field-surface); border: 1px solid var(--line); border-radius: var(--radius); gap: 2px; min-height: 52px; padding: 7px 12px; }
+.binding-field:focus-within { background: var(--surface-elevated); border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-ring); }
+.binding-field .input { background: transparent; border: 0; border-radius: 0; min-height: 30px; outline: 0; padding: 0; width: 100%; }
 .code-row { display: grid; gap: 9px; grid-template-columns: minmax(0, 1fr) 112px; }
+.code-row .binding-field { min-width: 0; }
 .code-row .button { font-size: 12px; min-height: 52px; padding: 0 7px; }
 .binding-primary { min-height: 52px; }
 .binding-status,.provider-row { align-items: center; background: var(--field-surface); border: 1px solid var(--line); border-radius: var(--radius); display: flex; gap: 10px; min-height: 64px; padding: 10px 12px; }
@@ -278,7 +289,6 @@ onMounted(() => { void load() })
 .provider-dialog h2 { font-size: 19px; letter-spacing: 0; margin: 0; }
 .provider-dialog label { display: grid; gap: 7px; }
 .provider-dialog label > span { color: var(--muted); font-size: 12px; font-weight: 650; }
-.provider-dialog .input { min-height: 52px; }
 .provider-dialog__actions { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .provider-dialog .button { min-height: 48px; padding-inline: 10px; }
 @media (max-width: 340px) {

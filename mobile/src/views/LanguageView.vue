@@ -19,7 +19,12 @@ function selectLocale(nextLocale: MobileLocale): void {
 
 <template>
   <main class="page page--plain language-page">
-    <PageHeader :title="t('language.title')" />
+    <PageHeader
+      :back="true"
+      :eyebrow="t('language.entry')"
+      :subtitle="t('language.description')"
+      :title="t('language.title')"
+    />
     <div class="page-content language-content">
       <section class="language-intro">
         <span><Languages :size="23" /></span>

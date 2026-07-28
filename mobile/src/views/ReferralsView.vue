@@ -72,7 +72,12 @@ onMounted(() => { void load() })
 
 <template>
   <main class="page page--plain referrals-page">
-    <PageHeader :title="t('referrals.title')" />
+    <PageHeader
+      :back="true"
+      :eyebrow="t('referrals.myCode')"
+      :subtitle="t('referrals.bindDescription')"
+      :title="t('referrals.title')"
+    />
     <div class="page-content referrals-content">
       <LoginRequiredState v-if="!session.isAuthenticated" :description="t('referrals.loginDescription')" />
       <template v-else>
@@ -96,7 +101,10 @@ onMounted(() => { void load() })
               <div><strong>{{ t('referrals.bindCode') }}</strong><p>{{ t('referrals.bindDescription') }}</p></div>
             </header>
             <form :aria-busy="binding" @submit.prevent="bindCodeToAccount">
-              <input v-model="bindCode" class="input" maxlength="64" :placeholder="t('referrals.inputPlaceholder')" />
+              <label class="bind-field">
+                <span>{{ t('referrals.bindCode') }}</span>
+                <input v-model="bindCode" maxlength="64" :placeholder="t('referrals.inputPlaceholder')" />
+              </label>
               <button class="button button--secondary" type="submit" :disabled="binding">
                 {{ binding ? t('referrals.binding') : t('referrals.bind') }}
               </button>
@@ -140,7 +148,10 @@ onMounted(() => { void load() })
 .bind-code strong { font-size: 15px; }
 .bind-code p { color: var(--muted); font-size: 11px; line-height: 1.45; margin: 0; }
 .bind-code form { display: grid; gap: 9px; grid-template-columns: minmax(0, 1fr) 88px; }
-.bind-code .input { min-height: 52px; }
+.bind-field { background: var(--field-surface); border: 1px solid var(--line); border-radius: var(--radius); display: grid; gap: 2px; min-height: 52px; min-width: 0; padding: 7px 12px; }
+.bind-field:focus-within { background: var(--surface-elevated); border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-ring); }
+.bind-field span { color: var(--muted); font-size: 11px; font-weight: 650; }
+.bind-field input { background: transparent; border: 0; color: var(--ink); min-height: 30px; min-width: 0; outline: 0; padding: 0; width: 100%; }
 .bind-code .button { font-size: 12px; min-height: 52px; padding: 0 7px; }
 .invite-history { border-top: 1px solid var(--line); }
 .invite-history .section-heading { font-size: 19px; margin: 20px 0 8px; }

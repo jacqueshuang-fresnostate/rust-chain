@@ -145,7 +145,7 @@ watch(() => session.isAuthenticated, () => { void loadAccounts() }, { immediate:
 
 <template>
   <main class="page assets-page">
-    <PageHeader :title="t('assets.title')" :back="false">
+    <PageHeader :title="t('assets.title')" :eyebrow="t('assets.totalValue')" :back="false">
       <template #actions>
         <button class="icon-button" type="button" :aria-label="t('assets.refresh')" :disabled="loading" @click="loadAccounts">
           <RefreshCw :size="21" :class="{ spin: loading }" />
@@ -261,21 +261,42 @@ watch(() => session.isAuthenticated, () => { void loadAccounts() }, { immediate:
 
 <style scoped>
 .assets-content { padding-bottom: calc(36px + env(safe-area-inset-bottom)); }
-.assets-summary { border-bottom: 1px solid var(--line); padding: 22px 0 26px; position: relative; }
-.assets-summary::before { background: var(--accent); content: ''; height: 3px; left: 0; position: absolute; top: 0; width: 44px; }
+.assets-content > :deep(.login-required) { margin: 12px -16px 0; }
+.assets-summary {
+  background:
+    radial-gradient(circle at 86% 15%, color-mix(in srgb, var(--signal-blue) 16%, transparent), transparent 34%),
+    radial-gradient(circle at 12% 86%, color-mix(in srgb, var(--signal-green) 14%, transparent), transparent 34%),
+    var(--surface-elevated);
+  border-bottom: 1px solid var(--line-strong);
+  border-top: 3px solid var(--signal-green);
+  margin: 0 -16px;
+  min-height: 224px;
+  overflow: hidden;
+  padding: 30px 16px 26px;
+  position: relative;
+}
+.assets-summary::before {
+  background: linear-gradient(90deg, var(--line-strong) 0 42%, transparent 42% 52%, var(--signal-green) 52% 100%);
+  content: '';
+  height: 2px;
+  position: absolute;
+  right: 16px;
+  top: 16px;
+  width: 58px;
+}
 .assets-summary__heading { align-items: center; color: var(--muted); display: flex; font-size: 13px; font-weight: 700; justify-content: space-between; }
-.assets-summary__heading svg { color: var(--accent); }
-.assets-summary strong { display: block; font-size: 38px; letter-spacing: 0; line-height: 1.08; margin-top: 12px; }
+.assets-summary__heading svg { color: var(--signal-green); }
+.assets-summary strong { display: block; font-family: var(--data-font); font-size: 38px; letter-spacing: 0; line-height: 1.08; margin-top: 28px; }
 .assets-summary p { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 9px 0 0; }
-.asset-actions { border-bottom: 1px solid var(--line); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.asset-actions button { align-items: center; background: transparent; color: var(--ink); display: flex; flex-direction: column; font-size: 12px; font-weight: 720; gap: 7px; justify-content: center; min-height: 82px; min-width: 0; padding: 8px 2px; }
+.asset-actions { border-bottom: 1px solid var(--line); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0 -16px; }
+.asset-actions button { align-items: center; background: transparent; color: var(--ink); display: flex; flex-direction: column; font-size: 11px; font-weight: 720; gap: 7px; justify-content: center; min-height: 86px; min-width: 0; padding: 8px 2px; }
 .asset-actions button + button { border-left: 1px solid var(--line); }
-.asset-action__icon { align-items: center; background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line)); border-radius: 50%; color: var(--accent); display: inline-flex; height: 38px; justify-content: center; width: 38px; }
-.quick-recharge-entry { align-items: center; background: var(--surface-elevated); border-bottom: 1px solid var(--line); border-top: 1px solid var(--line); display: flex; justify-content: space-between; margin-top: 16px; min-height: 72px; padding: 12px 14px; text-align: left; width: 100%; }
+.asset-action__icon { align-items: center; background: var(--soft); border: 1px solid var(--line); border-radius: 50%; color: var(--signal-green); display: inline-flex; height: 40px; justify-content: center; width: 40px; }
+.quick-recharge-entry { align-items: center; background: var(--surface-elevated); border-bottom: 1px solid var(--line); border-top: 1px solid var(--line); display: flex; justify-content: space-between; margin: 16px -16px 0; min-height: 72px; padding: 12px 16px; text-align: left; width: calc(100% + 32px); }
 .quick-recharge-entry > span:first-child { display: grid; gap: 4px; min-width: 0; padding-right: 10px; }
 .quick-recharge-entry b { font-size: 15px; }
 .quick-recharge-entry small { color: var(--muted); font-size: 12px; line-height: 1.4; }
-.quick-recharge-entry__action { align-items: center; color: var(--accent); display: inline-flex; flex: 0 0 auto; font-size: 13px; font-weight: 750; gap: 2px; }
+.quick-recharge-entry__action { align-items: center; color: var(--signal-green); display: inline-flex; flex: 0 0 auto; font-size: 13px; font-weight: 750; gap: 2px; }
 .asset-list { border-top: 1px solid var(--line); display: grid; }
 .asset-row { align-items: center; border-bottom: 1px solid var(--line); display: grid; gap: 12px; grid-template-columns: 40px minmax(0, 1fr) minmax(90px, auto); min-height: 78px; }
 .asset-row__symbol,
@@ -285,11 +306,11 @@ watch(() => session.isAuthenticated, () => { void loadAccounts() }, { immediate:
 .asset-row__value { text-align: right; }
 .asset-row__value b { font-variant-numeric: tabular-nums; }
 .transfer-mask { align-items: flex-end; background: var(--overlay); display: flex; inset: 0; justify-content: center; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); position: fixed; z-index: var(--layer-overlay); }
-.transfer-dialog { background: var(--surface-elevated); border: 1px solid var(--line); border-radius: calc(var(--radius) + 4px); box-shadow: var(--shadow-soft); display: grid; gap: 13px; max-height: calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); max-width: 520px; overflow-y: auto; overscroll-behavior: contain; padding: 18px; width: 100%; }
+.transfer-dialog { background: var(--surface-elevated); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow-soft); display: grid; gap: 13px; max-height: calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); max-width: 448px; overflow-y: auto; overscroll-behavior: contain; padding: 18px; width: 100%; }
 .transfer-dialog header { align-items: center; display: flex; justify-content: space-between; }
 .transfer-dialog header strong { font-size: 20px; }
 .transfer-field { background: var(--field-surface); border: 1px solid var(--line); border-radius: var(--radius); display: grid; gap: 2px; padding: 7px 12px; }
-.transfer-field:focus-within { border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-ring); }
+.transfer-field:focus-within { border-color: var(--focus); box-shadow: 0 0 0 2px var(--focus-ring); }
 .transfer-field > span { color: var(--muted); font-size: 11px; font-weight: 650; }
 .transfer-field input,
 .transfer-field select { background: transparent; border: 0; color: var(--ink); min-height: 30px; outline: 0; padding: 0; width: 100%; }
@@ -299,12 +320,23 @@ watch(() => session.isAuthenticated, () => { void loadAccounts() }, { immediate:
 .transfer-feedback { font-size: 13px; margin: 0; text-align: center; }
 .spin { animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 360px) {
+  .assets-content > :deep(.login-required),
+  .assets-summary,
+  .asset-actions { margin-left: -12px; margin-right: -12px; }
+  .quick-recharge-entry { margin-left: -12px; margin-right: -12px; padding-inline: 12px; width: calc(100% + 24px); }
+  .assets-summary { padding-left: 12px; padding-right: 12px; }
+}
 @media (max-width: 340px) {
-  .assets-content { padding-left: 16px; padding-right: 16px; }
+  .assets-content { padding-left: 12px; padding-right: 12px; }
+  .assets-content > :deep(.login-required),
+  .assets-summary,
+  .asset-actions { margin-left: -12px; margin-right: -12px; }
+  .quick-recharge-entry { margin-left: -12px; margin-right: -12px; padding-inline: 12px; width: calc(100% + 24px); }
+  .assets-summary { padding-left: 12px; padding-right: 12px; }
   .asset-actions button { font-size: 11px; min-height: 76px; }
-  .asset-action__icon { height: 34px; width: 34px; }
+  .asset-action__icon { height: 38px; width: 38px; }
   .asset-row { gap: 9px; grid-template-columns: 36px minmax(0, 1fr) minmax(78px, auto); }
   .asset-row small { font-size: 10px; }
-  .quick-recharge-entry { padding-inline: 10px; }
 }
 </style>

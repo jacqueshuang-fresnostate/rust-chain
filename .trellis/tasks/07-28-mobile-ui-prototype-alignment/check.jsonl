@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "审查视觉系统、Lucide、表单、响应式和质量门禁"}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "审查路由、返回语义、导航和 i18n 回归"}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "审查 PWA、壳层、固定 Header 与安全区"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "审查后端接口、认证和实时数据行为没有回归"}
+{"file": ".trellis/tasks/07-28-mobile-ui-prototype-alignment/research/visual-parity-audit.md", "reason": "按可执行视觉差异和 320/390/448px 验收点检查"}

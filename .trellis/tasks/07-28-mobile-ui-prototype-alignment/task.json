@@ -1,0 +1,30 @@
+{
+  "id": "mobile-ui-prototype-alignment",
+  "name": "mobile-ui-prototype-alignment",
+  "title": "手机端 UI 对齐原型重构",
+  "description": "以已确认的 Sites 原型为视觉合同，完整重构真实 Vue 手机端，同时保留后端接口、认证、PWA 与 Tauri 行为。",
+  "status": "in_progress",
+  "dev_type": "frontend",
+  "scope": "mobile",
+  "package": "mobile",
+  "priority": "P2",
+  "creator": "rust-chain",
+  "assignee": "rust-chain",
+  "createdAt": "2026-07-28",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "mobile/sites-prototype/",
+    "mobile/src/",
+    "mobile/tests/"
+  ],
+  "notes": "视觉参照为 mobile/sites-prototype；生产数据必须继续来自现有 API 和 store。",
+  "meta": {}
+}

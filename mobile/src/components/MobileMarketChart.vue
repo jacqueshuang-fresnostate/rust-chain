@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChartNoAxesCombined, LoaderCircle } from 'lucide-vue-next'
 import {
@@ -15,6 +15,7 @@ import {
 } from 'lightweight-charts'
 import type { KlinePoint } from '@/core/types'
 import { currentIntlLocale } from '@/i18n'
+import { normalizeMarketChartPoints } from '@/core/marketChart'
 
 const props = withDefaults(defineProps<{
   points: KlinePoint[]
@@ -30,6 +31,8 @@ let candles: ISeriesApi<'Candlestick'> | null = null
 let volume: ISeriesApi<'Histogram'> | null = null
 let observer: ResizeObserver | null = null
 let themeObserver: MutationObserver | null = null
+const normalizedPoints = computed(() => normalizeMarketChartPoints(props.points))
+const hasRenderableData = computed(() => normalizedPoints.value.length > 0)
 
 interface ChartTheme {
   background: string
@@ -68,8 +71,8 @@ function withAlpha(color: string, alpha: number): string {
 }
 
 function candleRows(): CandlestickData<UTCTimestamp>[] {
-  return props.points.map((point) => ({
-    time: Math.floor(point.time / 1000) as UTCTimestamp,
+  return normalizedPoints.value.map((point) => ({
+    time: point.time as UTCTimestamp,
     open: point.open,
     high: point.high,
     low: point.low,
@@ -79,8 +82,8 @@ function candleRows(): CandlestickData<UTCTimestamp>[] {
 
 function volumeRows(): HistogramData<UTCTimestamp>[] {
   const theme = chartTheme()
-  return props.points.map((point) => ({
-    time: Math.floor(point.time / 1000) as UTCTimestamp,
+  return normalizedPoints.value.map((point) => ({
+    time: point.time as UTCTimestamp,
     value: point.volume,
     color: withAlpha(point.close >= point.open ? theme.positive : theme.negative, .4),
   }))
@@ -89,7 +92,7 @@ function volumeRows(): HistogramData<UTCTimestamp>[] {
 function renderData(): void {
   candles?.setData(candleRows())
   volume?.setData(volumeRows())
-  if (props.points.length > 0) chart?.timeScale().fitContent()
+  if (hasRenderableData.value) chart?.timeScale().fitContent()
 }
 
 function applyTheme(): void {
@@ -117,14 +120,17 @@ function applyTheme(): void {
 }
 
 function resize(): void {
-  if (chart && container.value) chart.resize(container.value.clientWidth, container.value.clientHeight)
+  if (!chart || !container.value) return
+  const width = container.value.clientWidth
+  const height = container.value.clientHeight
+  if (width <= 0 || height <= 0) return
+  chart.resize(width, height)
 }
 
 onMounted(() => {
   if (!container.value) return
   const theme = chartTheme()
   chart = createChart(container.value, {
-    autoSize: true,
     height: container.value.clientHeight || 300,
     layout: {
       background: { type: ColorType.Solid, color: theme.background },
@@ -178,7 +184,12 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="mobile-market-chart" :aria-busy="loading">
+  <div
+    class="mobile-market-chart"
+    :class="{ 'has-data': hasRenderableData }"
+    :data-chart-state="loading ? 'loading' : hasRenderableData ? 'ready' : 'empty'"
+    :aria-busy="loading"
+  >
     <div
       ref="container"
       class="mobile-market-chart__canvas"
@@ -186,11 +197,11 @@ onUnmounted(() => {
       role="img"
       :aria-label="t('marketDetail.market')"
     />
-    <div v-if="loading && !points.length" class="mobile-market-chart__state" role="status">
+    <div v-if="loading && !hasRenderableData" class="mobile-market-chart__state" role="status">
       <LoaderCircle :size="20" class="spin" />
       <span>{{ t('marketDetail.loadingChart') }}</span>
     </div>
-    <div v-else-if="!points.length" class="mobile-market-chart__state">
+    <div v-else-if="!hasRenderableData" class="mobile-market-chart__state">
       <ChartNoAxesCombined :size="22" />
       <span>{{ t('common.marketUnavailable') }}</span>
     </div>
@@ -201,14 +212,17 @@ onUnmounted(() => {
 .mobile-market-chart {
   background: var(--surface);
   height: 100%;
-  min-height: 260px;
+  min-height: 220px;
+  min-width: 0;
+  overflow: hidden;
   position: relative;
   width: 100%;
 }
 
 .mobile-market-chart__canvas {
   height: 100%;
-  min-height: 260px;
+  min-height: 220px;
+  min-width: 0;
   width: 100%;
 }
 

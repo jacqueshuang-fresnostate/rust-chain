@@ -126,7 +126,12 @@ onMounted(() => { void load() })
 
 <template>
   <main class="page page--plain swap-page">
-    <PageHeader :title="t('swap.title')">
+    <PageHeader
+      :back="true"
+      :eyebrow="t('products.title')"
+      :subtitle="t('swap.loginDescription')"
+      :title="t('swap.title')"
+    >
       <template #actions>
         <button
           class="icon-button"

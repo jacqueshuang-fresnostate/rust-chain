@@ -49,13 +49,10 @@ watch(() => props.src, () => {
   --asset-color: var(--positive);
   --asset-ink: var(--on-positive);
   align-items: center;
-  background:
-    linear-gradient(145deg, color-mix(in srgb, var(--asset-color) 72%, var(--surface)), var(--asset-color));
-  border: 1px solid color-mix(in srgb, var(--asset-color) 58%, var(--line));
+  background: color-mix(in srgb, var(--asset-color) 88%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--asset-color) 62%, var(--line-strong));
   border-radius: 50%;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--surface) 42%, transparent),
-    0 4px 12px color-mix(in srgb, var(--asset-color) 20%, transparent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--surface) 18%, transparent);
   color: var(--asset-ink);
   display: inline-flex;
   flex: 0 0 auto;

@@ -37,28 +37,29 @@ function goToLogin() {
 .login-required {
   align-items: center;
   background:
-    linear-gradient(135deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 48%),
+    linear-gradient(110deg, color-mix(in srgb, var(--positive) 7%, transparent), transparent 54%),
     var(--surface-elevated);
   border: 1px solid var(--line);
-  border-top: 3px solid var(--accent);
+  border-left: 3px solid var(--positive);
   color: var(--muted);
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 28px 20px 22px;
-  text-align: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  min-height: 96px;
+  padding: 14px;
+  text-align: left;
 }
 
 .login-required__icon {
   align-items: center;
-  background: var(--accent-soft);
-  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--line));
+  background: var(--positive-soft);
+  border: 1px solid color-mix(in srgb, var(--positive) 34%, var(--line));
   border-radius: 50%;
-  color: var(--accent);
+  color: var(--positive);
   display: inline-flex;
-  height: 52px;
+  height: 44px;
   justify-content: center;
-  width: 52px;
+  width: 44px;
 }
 
 .login-required__copy {
@@ -69,7 +70,7 @@ function goToLogin() {
 
 .login-required strong {
   color: var(--ink);
-  font-size: 16px;
+  font-size: 14px;
 }
 
 .login-required p {
@@ -80,6 +81,19 @@ function goToLogin() {
 
 .login-required .button {
   min-height: 46px;
-  min-width: min(220px, 100%);
+  padding-inline: 13px;
+  white-space: nowrap;
+}
+
+@media (max-width: 340px) {
+  .login-required {
+    align-items: start;
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+
+  .login-required .button {
+    grid-column: 2;
+    justify-self: start;
+  }
 }
 </style>

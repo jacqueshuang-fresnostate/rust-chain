@@ -283,12 +283,7 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
 
 <style scoped>
 .home-page {
-  --home-contrast-ink: var(--surface);
   padding-top: 0;
-}
-
-:global(:root[data-theme='dark']) .home-page {
-  --home-contrast-ink: var(--ink);
 }
 
 .home-header {
@@ -301,7 +296,8 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
   padding: env(safe-area-inset-top) 12px 0;
   position: sticky;
   top: 0;
-  z-index: 70;
+  isolation: isolate;
+  z-index: var(--layer-sticky-header);
 }
 
 .home-header > .icon-button {
@@ -323,9 +319,9 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
 
 .market-search {
   align-items: center;
-  background: var(--soft);
+  background: var(--field-surface);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: 0;
   color: var(--muted);
   display: flex;
   font-size: 13px;
@@ -347,18 +343,18 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
 .asset-glance {
   background: var(--dark-surface);
   border-bottom: 1px solid var(--line);
-  border-top: 3px solid var(--accent);
-  color: var(--home-contrast-ink);
-  margin: 14px -20px 0;
-  min-height: 204px;
+  border-top: 3px solid var(--signal-green);
+  color: var(--on-dark-surface);
+  margin: 12px -16px 0;
+  min-height: 218px;
   overflow: hidden;
-  padding: 25px 20px 22px;
+  padding: 27px 16px 22px;
   position: relative;
 }
 
 .asset-glance::after {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  border: 1px solid color-mix(in srgb, var(--home-contrast-ink) 18%, transparent);
+  background: color-mix(in srgb, var(--signal-green) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--on-dark-surface) 18%, transparent);
   border-radius: 50%;
   content: "";
   height: 150px;
@@ -370,7 +366,7 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
 
 .asset-glance__label {
   align-items: center;
-  color: color-mix(in srgb, var(--home-contrast-ink) 66%, transparent);
+  color: color-mix(in srgb, var(--on-dark-surface) 66%, transparent);
   display: flex;
   font-size: 13px;
   gap: 7px;
@@ -388,8 +384,9 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
 }
 
 .asset-glance strong {
-  color: var(--home-contrast-ink);
+  color: var(--on-dark-surface);
   display: block;
+  font-family: var(--data-font);
   font-size: 38px;
   font-weight: 760;
   letter-spacing: 0;
@@ -401,7 +398,7 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
 }
 
 .asset-glance p {
-  color: color-mix(in srgb, var(--home-contrast-ink) 72%, transparent);
+  color: color-mix(in srgb, var(--on-dark-surface) 72%, transparent);
   font-size: 12px;
   margin: 0;
   position: relative;
@@ -435,12 +432,12 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
   display: grid;
   gap: 8px;
   grid-template-columns: 1fr 1fr;
-  margin: 0 -20px;
-  padding: 12px 20px;
+  margin: 0 -16px;
+  padding: 12px 16px;
 }
 
 .funding-actions .button {
-  border-radius: var(--radius);
+  border-radius: 0;
   min-height: 48px;
 }
 
@@ -449,7 +446,7 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
   display: grid;
   gap: 12px 6px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  margin: 0 -20px;
+  margin: 0 -16px;
   padding: 18px 16px;
 }
 
@@ -471,7 +468,7 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
   background: var(--soft);
   border: 1px solid var(--line);
   border-radius: 50%;
-  color: var(--accent);
+  color: var(--positive);
   display: flex;
   height: 40px;
   justify-content: center;
@@ -489,9 +486,9 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
 
 .market-pulse {
   align-items: center;
-  background: var(--ink);
-  border: 1px solid var(--ink);
-  color: var(--home-contrast-ink);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--on-accent);
   display: grid;
   gap: 11px;
   grid-template-columns: 40px minmax(0, 1fr) auto;
@@ -504,9 +501,9 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
 
 .market-pulse > span {
   align-items: center;
-  background: var(--positive);
+  background: var(--dark-surface);
   border-radius: 50%;
-  color: var(--on-positive);
+  color: var(--signal-green);
   display: flex;
   height: 40px;
   justify-content: center;
@@ -520,12 +517,12 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
 }
 
 .market-pulse small {
-  color: color-mix(in srgb, var(--home-contrast-ink) 64%, transparent);
+  color: color-mix(in srgb, var(--on-accent) 66%, transparent);
   font-size: 10px;
 }
 
 .market-pulse strong {
-  color: var(--home-contrast-ink);
+  color: var(--on-accent);
   font-size: 14px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -533,13 +530,13 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
 }
 
 .market-pulse > svg {
-  color: color-mix(in srgb, var(--home-contrast-ink) 55%, transparent);
+  color: color-mix(in srgb, var(--on-accent) 64%, transparent);
 }
 
 .home-market-section {
   border-bottom: 8px solid var(--soft);
-  margin: 0 -20px;
-  padding: 0 20px 12px;
+  margin: 0 -16px;
+  padding: 0 16px 12px;
 }
 
 .market-heading {
@@ -564,7 +561,7 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
 }
 
 .market-tabs .is-active {
-  border-color: var(--ink);
+  border-color: var(--signal-green);
   color: var(--ink);
   font-weight: 750;
 }
@@ -742,47 +739,47 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
   .funding-actions,
   .shortcut-section,
   .home-market-section {
-    margin-left: -16px;
-    margin-right: -16px;
+    margin-left: -12px;
+    margin-right: -12px;
   }
 
   .asset-glance,
   .funding-actions,
   .home-market-section {
-    padding-left: 16px;
-    padding-right: 16px;
+    padding-left: 12px;
+    padding-right: 12px;
   }
 
   .shortcut-section {
-    padding-left: 12px;
-    padding-right: 12px;
+    padding-left: 8px;
+    padding-right: 8px;
   }
 }
 
 @media (max-width: 340px) {
   .home-page .page-content {
-    padding-left: 14px;
-    padding-right: 14px;
+    padding-left: 12px;
+    padding-right: 12px;
   }
 
   .asset-glance,
   .funding-actions,
   .shortcut-section,
   .home-market-section {
-    margin-left: -14px;
-    margin-right: -14px;
+    margin-left: -12px;
+    margin-right: -12px;
   }
 
   .asset-glance,
   .funding-actions,
   .home-market-section {
-    padding-left: 14px;
-    padding-right: 14px;
+    padding-left: 12px;
+    padding-right: 12px;
   }
 
   .shortcut-section {
-    padding-left: 10px;
-    padding-right: 10px;
+    padding-left: 8px;
+    padding-right: 8px;
   }
 
   .ticker-heading,

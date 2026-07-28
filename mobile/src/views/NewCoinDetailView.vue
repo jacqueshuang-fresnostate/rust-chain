@@ -158,7 +158,12 @@ onMounted(() => { void load() })
 
 <template>
   <main class="page page--plain new-coin-detail-page">
-    <PageHeader :title="t('newCoin.projectTitle', { symbol: props.symbol.toUpperCase() })">
+    <PageHeader
+      :back="true"
+      :eyebrow="t('products.newCoins')"
+      :subtitle="t('newCoin.projectDescription')"
+      :title="t('newCoin.projectTitle', { symbol: props.symbol.toUpperCase() })"
+    >
       <template #actions>
         <button
           class="icon-button"

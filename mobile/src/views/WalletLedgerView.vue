@@ -82,7 +82,12 @@ onMounted(() => { void load() })
 
 <template>
   <main class="page page--plain">
-    <PageHeader :title="t('ledger.title')">
+    <PageHeader
+      :back="true"
+      :eyebrow="t('assets.title')"
+      :subtitle="t('ledger.loginDescription')"
+      :title="t('ledger.title')"
+    >
       <template #actions>
         <button class="icon-button" type="button" :aria-label="t('ledger.refresh')" :disabled="loading" @click="load()">
           <RefreshCw :size="21" :class="{ spin: loading }" aria-hidden="true" />

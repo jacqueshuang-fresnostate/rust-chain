@@ -7,7 +7,10 @@ import { goBackOr } from '@/core/navigation'
 
 const props = defineProps<{
   title: string
+  eyebrow?: string
+  subtitle?: string
   back?: boolean
+  compact?: boolean
   fallback?: RouteLocationRaw
 }>()
 
@@ -22,12 +25,21 @@ function back(): void {
 </script>
 
 <template>
-  <header class="page-header">
+  <header
+    class="page-header"
+    :class="{
+      'page-header--root': !showBack,
+      'page-header--compact': compact,
+    }"
+  >
     <button v-if="showBack" class="icon-button" type="button" :aria-label="t('common.back')" @click="back">
       <ArrowLeft :size="25" />
     </button>
-    <span v-else class="page-header__placeholder" />
-    <h1>{{ title }}</h1>
+    <div class="page-header__copy">
+      <span v-if="eyebrow" class="page-header__eyebrow">{{ eyebrow }}</span>
+      <h1>{{ title }}</h1>
+      <small v-if="subtitle">{{ subtitle }}</small>
+    </div>
     <div class="page-header__actions"><slot name="actions" /></div>
   </header>
 </template>
@@ -38,22 +50,58 @@ function back(): void {
   background: var(--surface);
   border-bottom: 1px solid var(--line);
   display: grid;
-  grid-template-columns: minmax(44px, 1fr) minmax(0, auto) minmax(44px, 1fr);
+  gap: 8px;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
   isolation: isolate;
-  min-height: 56px;
-  padding: 0 12px;
+  min-height: 72px;
+  padding: 8px 12px;
   position: sticky;
   top: 0;
   z-index: var(--layer-sticky-header);
 }
 
+.page-header--root {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.page-header--compact {
+  min-height: 60px;
+}
+
+.page-header__copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  text-align: left;
+}
+
 .page-header h1 {
-  font-size: 19px;
-  font-weight: 760;
-  line-height: 1;
+  font-size: 17px;
+  font-weight: 780;
+  line-height: 1.2;
   margin: 0;
   overflow: hidden;
-  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-header__eyebrow {
+  color: var(--positive);
+  font-family: var(--data-font);
+  font-size: 9px;
+  font-weight: 750;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.page-header small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.3;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -64,10 +112,5 @@ function back(): void {
   justify-content: flex-end;
   min-height: 44px;
   min-width: 44px;
-}
-
-.page-header__placeholder {
-  height: 44px;
-  width: 44px;
 }
 </style>

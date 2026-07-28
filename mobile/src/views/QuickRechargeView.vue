@@ -90,7 +90,12 @@ onMounted(() => { void load() })
 
 <template>
   <main class="page page--plain">
-    <PageHeader :title="t('quickRecharge.title')" />
+    <PageHeader
+      :back="true"
+      :eyebrow="t('quickRecharge.quickPayment')"
+      :subtitle="t('quickRecharge.heroDescription')"
+      :title="t('quickRecharge.title')"
+    />
     <div class="page-content recharge-page">
       <LoginRequiredState v-if="!session.isAuthenticated" :description="t('quickRecharge.loginDescription')" />
       <template v-else>
@@ -428,7 +433,7 @@ onMounted(() => { void load() })
 
 .history-row__status {
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--radius);
   font-size: 10px;
   line-height: 1;
   max-width: 112px;

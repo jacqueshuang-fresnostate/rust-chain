@@ -31,7 +31,12 @@ function width(quantity: number): string {
     </header>
     <template v-if="hasRows">
       <div class="order-book__rows order-book__rows--asks">
-        <div v-for="item in asks.slice(0, 6).reverse()" :key="`ask-${item.price}`" class="order-book__row">
+        <div
+          v-for="(item, index) in asks.slice(0, 6).reverse()"
+          :key="`ask-${item.price}-${index}`"
+          class="order-book__row"
+          data-book-side="ask"
+        >
           <i class="order-book__bar order-book__bar--ask" :style="{ width: width(item.quantity) }" />
           <span class="down numeric">{{ formatPrice(item.price) }}</span>
           <span class="numeric">{{ formatAmount(item.quantity) }}</span>
@@ -42,7 +47,12 @@ function width(quantity: number): string {
         <span>{{ t('orderBook.lastPrice') }}</span>
       </div>
       <div class="order-book__rows">
-        <div v-for="item in bids.slice(0, 6)" :key="`bid-${item.price}`" class="order-book__row">
+        <div
+          v-for="(item, index) in bids.slice(0, 6)"
+          :key="`bid-${item.price}-${index}`"
+          class="order-book__row"
+          data-book-side="bid"
+        >
           <i class="order-book__bar order-book__bar--bid" :style="{ width: width(item.quantity) }" />
           <span class="up numeric">{{ formatPrice(item.price) }}</span>
           <span class="numeric">{{ formatAmount(item.quantity) }}</span>
@@ -62,6 +72,8 @@ function width(quantity: number): string {
   background: var(--surface-elevated);
   color: var(--ink);
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
   padding: 14px;
 }
 
@@ -78,7 +90,7 @@ function width(quantity: number): string {
 
 .order-book header strong {
   color: var(--ink);
-  font-size: 14px;
+  font-size: 12px;
 }
 
 .order-book__rows {
@@ -139,7 +151,10 @@ function width(quantity: number): string {
 
 .order-book__last strong {
   color: var(--positive);
-  font-size: 17px;
+  font-size: 16px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .order-book__last span {
@@ -155,7 +170,28 @@ function width(quantity: number): string {
   font-size: 11px;
   gap: 8px;
   justify-content: center;
-  min-height: 248px;
+  min-height: 220px;
+  padding-inline: 8px;
+  text-align: center;
+}
+
+@media (max-width: 340px) {
+  .order-book {
+    padding-inline: 8px;
+  }
+
+  .order-book__row {
+    font-size: 9px;
+    gap: 4px;
+  }
+
+  .order-book__last {
+    gap: 5px;
+  }
+
+  .order-book__last strong {
+    font-size: 14px;
+  }
 }
 
 .spin {

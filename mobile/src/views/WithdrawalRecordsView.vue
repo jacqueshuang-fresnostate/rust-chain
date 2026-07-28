@@ -58,7 +58,12 @@ onMounted(() => { void load() })
 
 <template>
   <main class="page page--plain">
-    <PageHeader :title="t('withdrawRecords.title')">
+    <PageHeader
+      :back="true"
+      :eyebrow="t('assets.withdraw')"
+      :subtitle="t('withdrawRecords.loginDescription')"
+      :title="t('withdrawRecords.title')"
+    >
       <template #actions>
         <button class="icon-button" type="button" :aria-label="t('withdrawRecords.refresh')" :disabled="loading" @click="load()">
           <RefreshCw :size="21" :class="{ spin: loading }" aria-hidden="true" />
@@ -146,7 +151,7 @@ onMounted(() => { void load() })
 
 .record-row__status {
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--radius);
   flex: 0 0 auto;
   font-size: 11px;
   font-weight: 750;

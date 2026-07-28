@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
@@ -11,23 +11,28 @@ import {
   Plus,
   RefreshCw,
   ShieldCheck,
+  X,
 } from 'lucide-vue-next'
 import AssetMark from '@/components/AssetMark.vue'
 import LoginRequiredState from '@/components/LoginRequiredState.vue'
+import MobileMarketChart from '@/components/MobileMarketChart.vue'
 import OrderBookPanel from '@/components/OrderBookPanel.vue'
 import { apiErrorMessage } from '@/api/client'
-import { fetchOrderBook } from '@/api/market'
+import { fetchKlines, fetchOrderBook } from '@/api/market'
 import {
   fetchMarginProducts,
+  fetchMarginWallets,
   placeMarginOrder,
   placeSpotOrder,
   updateMarginLeverage,
 } from '@/api/trading'
-import { formatPrice, normalizeSymbol } from '@/core/format'
+import { fetchWalletAccounts } from '@/api/wallet'
+import { formatAmount, formatPrice, normalizeSymbol } from '@/core/format'
+import { quantityForBalancePercentage } from '@/core/tradeForm'
 import { useMarketStore } from '@/stores/market'
 import { useSessionStore } from '@/stores/session'
 import { useNavigationStore } from '@/stores/navigation'
-import type { MarginProduct, OrderBookLevel } from '@/core/types'
+import type { KlinePoint, MarginProduct, OrderBookLevel, WalletAccount } from '@/core/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -43,24 +48,58 @@ const quantity = ref('')
 const leverage = ref(5)
 const marginMode = ref<'isolated'>('isolated')
 const products = ref<MarginProduct[]>([])
+const spotWallets = ref<WalletAccount[]>([])
+const marginWallets = ref<WalletAccount[]>([])
 const bids = ref<OrderBookLevel[]>([])
 const asks = ref<OrderBookLevel[]>([])
+const points = ref<KlinePoint[]>([])
+const interval = ref('15m')
 const feedback = ref('')
 const feedbackTone = ref<'success' | 'error'>('error')
 const submitting = ref(false)
 const settingsSaving = ref(false)
 const depthLoading = ref(false)
 const depthError = ref(false)
+const chartLoading = ref(false)
 const productsLoading = ref(false)
+const balancesLoading = ref(false)
+const balancesError = ref(false)
+const confirmOpen = ref(false)
+const confirmDialog = ref<HTMLElement | null>(null)
+const reviewButton = ref<HTMLButtonElement | null>(null)
+let returnFocus: HTMLElement | null = null
+let previousBodyOverflow = ''
 
 const pairSymbol = computed(() => String(route.params.symbol || 'BTC_USDT').replace(/[_-]/g, '/').toUpperCase())
 const ticker = computed(() => marketStore.tickerFor(pairSymbol.value))
 const baseAsset = computed(() => pairSymbol.value.split('/')[0] || '')
 const quoteAsset = computed(() => pairSymbol.value.split('/')[1] || 'USDT')
-const selectedProduct = computed(() => products.value.find((product) => normalizeSymbol(product.symbol) === normalizeSymbol(pairSymbol.value)) || products.value[0])
+const selectedProduct = computed(() => products.value.find((product) => normalizeSymbol(product.symbol) === normalizeSymbol(pairSymbol.value)))
 const currentPrice = computed(() => ticker.value?.lastPrice ?? 0)
 const isLive = computed(() => !marketStore.error && !!ticker.value)
 const hasDepth = computed(() => bids.value.length > 0 || asks.value.length > 0)
+const selectedOrderType = computed(() => mode.value === 'contract' ? 'market' : orderType.value)
+const effectivePrice = computed(() => selectedOrderType.value === 'limit' ? Number(price.value) : currentPrice.value)
+const availableAsset = computed(() => {
+  if (mode.value === 'contract') return selectedProduct.value?.marginAssetSymbol || quoteAsset.value
+  return side.value === 'buy' ? quoteAsset.value : baseAsset.value
+})
+const availableBalance = computed(() => {
+  const wallets = mode.value === 'contract' ? marginWallets.value : spotWallets.value
+  return wallets.find((wallet) => wallet.symbol === availableAsset.value)?.available || 0
+})
+const amountValue = computed({
+  get: () => {
+    const value = Number(quantity.value) * effectivePrice.value
+    return Number.isFinite(value) && value > 0 ? String(Number(value.toFixed(8))) : ''
+  },
+  set: (value: string) => {
+    const amount = Number(value)
+    quantity.value = Number.isFinite(amount) && amount > 0 && effectivePrice.value > 0
+      ? String(Number((amount / effectivePrice.value).toFixed(8)))
+      : ''
+  },
+})
 const orderButtonLabel = computed(() => {
   if (mode.value === 'contract') {
     return side.value === 'buy'
@@ -94,9 +133,20 @@ async function loadDepth(): Promise<void> {
   }
 }
 
+async function loadChart(): Promise<void> {
+  chartLoading.value = true
+  try {
+    points.value = await fetchKlines(pairSymbol.value, interval.value)
+  } catch {
+    points.value = []
+  } finally {
+    chartLoading.value = false
+  }
+}
+
 async function retryMarket(): Promise<void> {
   await marketStore.refresh(true)
-  await loadDepth()
+  await Promise.all([loadDepth(), loadChart()])
 }
 
 async function loadMarginProducts(): Promise<void> {
@@ -120,11 +170,50 @@ async function loadMarginProducts(): Promise<void> {
   }
 }
 
+async function loadTradingBalances(): Promise<void> {
+  if (!session.isAuthenticated) {
+    spotWallets.value = []
+    marginWallets.value = []
+    balancesLoading.value = false
+    balancesError.value = false
+    return
+  }
+  balancesLoading.value = true
+  balancesError.value = false
+  try {
+    if (mode.value === 'contract') {
+      marginWallets.value = (await fetchMarginWallets()).wallets
+    } else {
+      spotWallets.value = await fetchWalletAccounts()
+    }
+  } catch {
+    if (mode.value === 'contract') marginWallets.value = []
+    else spotWallets.value = []
+    balancesError.value = true
+  } finally {
+    balancesLoading.value = false
+  }
+}
+
 function setQuantity(percent: number): void {
-  const quoteBudget = 100 * percent
-  quantity.value = mode.value === 'contract'
-    ? String(quoteBudget)
-    : currentPrice.value ? String(quoteBudget / currentPrice.value) : ''
+  if (!session.isAuthenticated) {
+    openLogin()
+    return
+  }
+  const nextQuantity = quantityForBalancePercentage({
+    available: availableBalance.value,
+    mode: mode.value,
+    percentage: percent,
+    price: effectivePrice.value,
+    side: side.value,
+  })
+  quantity.value = nextQuantity > 0 ? String(Number(nextQuantity.toFixed(8))) : ''
+}
+
+function chooseInterval(value: string): void {
+  if (interval.value === value) return
+  interval.value = value
+  void loadChart()
 }
 
 function openPairPicker(): void {
@@ -176,11 +265,34 @@ async function changeLeverage(): Promise<void> {
   }
 }
 
+function reviewOrder(): void {
+  feedback.value = ''
+  const amount = Number(quantity.value)
+  if (!session.isAuthenticated) {
+    openLogin()
+    return
+  }
+  if (!isLive.value) {
+    setFeedback(t('trade.marketUnavailable'))
+    return
+  }
+  if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(effectivePrice.value) || effectivePrice.value <= 0) {
+    setFeedback(t('trade.invalidOrder'))
+    return
+  }
+  confirmOpen.value = true
+}
+
+function closeConfirm(): void {
+  if (submitting.value) return
+  confirmOpen.value = false
+}
+
 async function submitOrder(): Promise<void> {
   feedback.value = ''
   const amount = Number(quantity.value)
   const submittedOrderType = mode.value === 'contract' ? 'market' : orderType.value
-  const limitPrice = submittedOrderType === 'limit' ? Number(price.value) : currentPrice.value
+  const limitPrice = effectivePrice.value
   if (!session.isAuthenticated) {
     openLogin()
     return
@@ -216,10 +328,34 @@ async function submitOrder(): Promise<void> {
     }
     setFeedback(t('trade.orderSubmitted'), 'success')
     quantity.value = ''
+    confirmOpen.value = false
+    await loadTradingBalances()
   } catch (reason) {
     setFeedback(apiErrorMessage(reason, t('trade.orderFailed')))
   } finally {
     submitting.value = false
+  }
+}
+
+function trapDialogFocus(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeConfirm()
+    return
+  }
+  if (event.key !== 'Tab' || !confirmDialog.value) return
+  const focusable = Array.from(confirmDialog.value.querySelectorAll<HTMLElement>(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  ))
+  if (!focusable.length) return
+  const first = focusable[0]
+  const last = focusable.at(-1) || first
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
   }
 }
 
@@ -229,7 +365,7 @@ onMounted(async () => {
 
 watch(pairSymbol, (symbol) => {
   navigation.rememberTradeSymbol(symbol)
-  void loadDepth()
+  void Promise.all([loadDepth(), loadChart()])
 }, { immediate: true })
 
 watch(() => route.query.mode, (nextMode) => {
@@ -238,9 +374,32 @@ watch(() => route.query.mode, (nextMode) => {
   void loadMarginProducts()
 }, { immediate: true })
 
+watch([mode, () => session.isAuthenticated], () => {
+  void loadTradingBalances()
+}, { immediate: true })
+
 watch(currentPrice, (value) => {
   if (!price.value && value > 0) price.value = String(value)
 }, { immediate: true })
+
+watch(confirmOpen, async (open) => {
+  if (open) {
+    returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : reviewButton.value
+    previousBodyOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    await nextTick()
+    confirmDialog.value?.querySelector<HTMLElement>('[data-dialog-cancel]')?.focus()
+    return
+  }
+  document.body.style.overflow = previousBodyOverflow
+  await nextTick()
+  returnFocus?.focus()
+  returnFocus = null
+})
+
+onBeforeUnmount(() => {
+  document.body.style.overflow = previousBodyOverflow
+})
 </script>
 
 <template>
@@ -312,6 +471,28 @@ watch(currentPrice, (value) => {
         <span v-else>{{ t('trade.unavailableContract') }}</span>
       </section>
 
+      <section v-if="mode !== 'contract' || session.isAuthenticated" class="trade-chart-panel" :aria-busy="chartLoading">
+        <header>
+          <span>{{ t('marketDetail.market') }}</span>
+          <small>{{ t('common.liveData') }}</small>
+        </header>
+        <nav :aria-label="t('marketDetail.indicators')">
+          <button
+            v-for="item in ['1m', '15m', '1h', '4h', '1d']"
+            :key="item"
+            type="button"
+            :class="{ 'is-active': interval === item }"
+            :aria-pressed="interval === item"
+            @click="chooseInterval(item)"
+          >
+            {{ item }}
+          </button>
+        </nav>
+        <div class="trade-chart-panel__canvas">
+          <MobileMarketChart :points="points" :loading="chartLoading" />
+        </div>
+      </section>
+
       <div v-if="mode !== 'contract' || session.isAuthenticated" class="trade-columns">
         <section class="order-form">
           <div class="buy-sell" :aria-label="t('trade.category')">
@@ -377,6 +558,16 @@ watch(currentPrice, (value) => {
             />
           </label>
 
+          <label v-if="mode === 'spot'" class="trade-field">
+            <span>{{ t('common.amount') }} ({{ quoteAsset }})</span>
+            <input
+              v-model="amountValue"
+              class="input numeric"
+              inputmode="decimal"
+              :placeholder="t('common.amount')"
+            />
+          </label>
+
           <div class="percent-row">
             <button
               v-for="item in [0.25, 0.5, 0.75, 1]"
@@ -390,19 +581,27 @@ watch(currentPrice, (value) => {
 
           <p class="trade-balance">
             <span>{{ t('common.available') }}</span>
-            <button type="button" @click="openLogin">
-              {{ session.isAuthenticated ? t('trade.loadBalance') : t('trade.viewAfterLogin') }}
+            <button v-if="!session.isAuthenticated" type="button" @click="openLogin">
+              {{ t('trade.viewAfterLogin') }}
               <Plus :size="14" />
             </button>
+            <button v-else-if="balancesError" type="button" :disabled="balancesLoading" @click="loadTradingBalances">
+              {{ t('common.retry') }}
+              <RefreshCw :size="14" :class="{ spin: balancesLoading }" />
+            </button>
+            <strong v-else class="numeric">
+              {{ balancesLoading ? t('common.loading') : `${formatAmount(availableBalance)} ${availableAsset}` }}
+            </strong>
           </p>
 
           <button
+            ref="reviewButton"
             class="button button--full order-submit"
             :class="side === 'buy' ? 'button--primary' : 'button--danger'"
             type="button"
             :disabled="submitting"
             :aria-busy="submitting"
-            @click="submitOrder"
+            @click="reviewOrder"
           >
             {{ submitting ? t('trade.submittingOrder') : orderButtonLabel }}
           </button>
@@ -417,7 +616,12 @@ watch(currentPrice, (value) => {
         </section>
 
         <section class="order-book-shell" :aria-busy="depthLoading">
-          <OrderBookPanel :bids="bids" :asks="asks" :current-price="currentPrice" />
+          <OrderBookPanel
+            :bids="bids"
+            :asks="asks"
+            :current-price="currentPrice"
+            :loading="depthLoading"
+          />
           <div v-if="depthLoading && !hasDepth" class="book-state">
             <LoaderCircle :size="18" class="spin" />
             <span>{{ t('common.loading') }}</span>
@@ -482,6 +686,79 @@ watch(currentPrice, (value) => {
           <RefreshCw :size="17" :class="{ spin: marketStore.loading }" />
         </button>
       </div>
+    </div>
+
+    <div
+      v-if="confirmOpen"
+      class="trade-confirm-mask"
+      @click.self="closeConfirm"
+    >
+      <section
+        ref="confirmDialog"
+        class="trade-confirm-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="trade-confirm-title"
+        @keydown="trapDialogFocus"
+      >
+        <header>
+          <div>
+            <strong id="trade-confirm-title">{{ orderButtonLabel }}</strong>
+            <small>{{ pairSymbol }} · {{ mode === 'contract' ? t('trade.perpetual') : t('trade.spot') }}</small>
+          </div>
+          <button
+            class="icon-button"
+            type="button"
+            :aria-label="t('common.close')"
+            :disabled="submitting"
+            data-dialog-cancel
+            @click="closeConfirm"
+          >
+            <X :size="21" />
+          </button>
+        </header>
+        <dl>
+          <div>
+            <dt>{{ mode === 'contract' ? t('trade.marginField', { asset: quoteAsset }) : t('trade.quantityField', { asset: baseAsset }) }}</dt>
+            <dd class="numeric">{{ quantity || '--' }}</dd>
+          </div>
+          <div>
+            <dt>{{ t('trade.priceField', { asset: quoteAsset }) }}</dt>
+            <dd class="numeric">{{ selectedOrderType === 'market' ? t('trade.marketPrice') : formatPrice(effectivePrice) }}</dd>
+          </div>
+          <div v-if="mode === 'spot'">
+            <dt>{{ t('common.amount') }}</dt>
+            <dd class="numeric">{{ amountValue || '--' }} {{ quoteAsset }}</dd>
+          </div>
+          <div v-else>
+            <dt>{{ t('trade.isolated') }}</dt>
+            <dd class="numeric">{{ leverage }}x</dd>
+          </div>
+        </dl>
+        <p
+          v-if="feedback"
+          class="trade-feedback"
+          :class="feedbackIsPositive ? 'is-success' : 'is-error'"
+          :role="feedbackIsPositive ? 'status' : 'alert'"
+        >
+          {{ feedback }}
+        </p>
+        <div class="trade-confirm-actions">
+          <button class="button button--secondary" type="button" :disabled="submitting" @click="closeConfirm">
+            {{ t('common.cancel') }}
+          </button>
+          <button
+            class="button"
+            :class="side === 'buy' ? 'button--primary' : 'button--danger'"
+            type="button"
+            :disabled="submitting"
+            :aria-busy="submitting"
+            @click="submitOrder"
+          >
+            {{ submitting ? t('trade.submittingOrder') : orderButtonLabel }}
+          </button>
+        </div>
+      </section>
     </div>
   </main>
 </template>
@@ -627,11 +904,65 @@ watch(currentPrice, (value) => {
   white-space: nowrap;
 }
 
+.trade-chart-panel {
+  border-block: 1px solid var(--line);
+  margin: 0 -16px 14px;
+  min-width: 0;
+}
+
+.trade-chart-panel > header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  min-height: 40px;
+  padding: 0 20px;
+}
+
+.trade-chart-panel > header span {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.trade-chart-panel > header small {
+  color: var(--trade-accent);
+  font-size: 9px;
+}
+
+.trade-chart-panel > nav {
+  border-block: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.trade-chart-panel > nav button {
+  background: transparent;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-size: 10px;
+  min-height: 44px;
+  min-width: 0;
+  padding: 0 3px;
+}
+
+.trade-chart-panel > nav button.is-active {
+  background: var(--trade-accent-soft);
+  border-color: var(--trade-accent);
+  color: var(--trade-accent);
+  font-weight: 800;
+}
+
+.trade-chart-panel__canvas {
+  height: 224px;
+  min-width: 0;
+  overflow: hidden;
+}
+
 .trade-columns {
   display: grid;
   gap: 12px;
   grid-template-columns: minmax(0, 1.08fr) minmax(124px, .92fr);
-  margin: 0 -20px;
+  margin: 0 -16px;
   min-width: 0;
 }
 
@@ -659,12 +990,12 @@ watch(currentPrice, (value) => {
 
 .buy-sell .is-buy {
   background: var(--positive);
-  color: var(--on-positive, #fff);
+  color: var(--on-positive);
 }
 
 .buy-sell .is-sell {
   background: var(--negative);
-  color: var(--on-negative, #fff);
+  color: var(--on-negative);
 }
 
 .order-type {
@@ -700,8 +1031,8 @@ watch(currentPrice, (value) => {
 
 .trade-field:focus-within {
   background: var(--surface);
-  border-color: var(--focus, #1677ff);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus, #1677ff) 15%, transparent);
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 15%, transparent);
 }
 
 .trade-field > span {
@@ -795,6 +1126,15 @@ watch(currentPrice, (value) => {
   padding: 0;
 }
 
+.trade-balance strong {
+  color: var(--ink);
+  font-size: 10px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .order-submit {
   border-radius: 0;
   font-size: 13px;
@@ -821,7 +1161,7 @@ watch(currentPrice, (value) => {
 }
 
 .order-book-shell {
-  background: var(--dark-surface);
+  background: var(--surface-elevated);
   min-height: 388px;
   min-width: 0;
   position: relative;
@@ -842,8 +1182,8 @@ watch(currentPrice, (value) => {
 
 .book-state {
   align-content: center;
-  background: color-mix(in srgb, var(--dark-surface) 94%, transparent);
-  color: #aeb6bf;
+  background: color-mix(in srgb, var(--surface-elevated) 94%, transparent);
+  color: var(--muted);
   display: grid;
   gap: 8px;
   inset: 38px 0 0;
@@ -860,8 +1200,8 @@ watch(currentPrice, (value) => {
 }
 
 .book-state button {
-  background: #252b2e;
-  color: #f5f7f8;
+  background: var(--surface-elevated);
+  color: var(--ink);
   display: grid;
   min-height: 44px;
   min-width: 44px;
@@ -869,12 +1209,12 @@ watch(currentPrice, (value) => {
 }
 
 .book-state--error {
-  color: #ff8199;
+  color: var(--negative);
 }
 
 .trade-orders {
   border-top: 8px solid var(--soft);
-  margin: 24px -20px 0;
+  margin: 24px -16px 0;
   min-width: 0;
 }
 
@@ -937,6 +1277,107 @@ watch(currentPrice, (value) => {
   place-items: center;
 }
 
+.trade-confirm-mask {
+  align-items: flex-end;
+  background: var(--overlay);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding:
+    max(16px, env(safe-area-inset-top))
+    16px
+    max(16px, env(safe-area-inset-bottom));
+  position: fixed;
+  z-index: var(--layer-overlay);
+}
+
+.trade-confirm-dialog {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--trade-accent);
+  box-shadow: var(--shadow-soft);
+  display: grid;
+  gap: 15px;
+  max-height: calc(100dvh - max(32px, env(safe-area-inset-top)) - max(32px, env(safe-area-inset-bottom)));
+  max-width: var(--app-max-width);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 17px;
+  width: 100%;
+}
+
+.trade-confirm-dialog > header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.trade-confirm-dialog > header > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.trade-confirm-dialog > header strong {
+  font-size: 18px;
+}
+
+.trade-confirm-dialog > header small {
+  color: var(--muted);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.trade-confirm-dialog dl {
+  border-block: 1px solid var(--line);
+  display: grid;
+  margin: 0;
+}
+
+.trade-confirm-dialog dl > div {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 44px;
+}
+
+.trade-confirm-dialog dl > div:last-child {
+  border-bottom: 0;
+}
+
+.trade-confirm-dialog dt,
+.trade-confirm-dialog dd {
+  font-size: 11px;
+  margin: 0;
+}
+
+.trade-confirm-dialog dt {
+  color: var(--muted);
+}
+
+.trade-confirm-dialog dd {
+  font-weight: 750;
+  max-width: 62%;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.trade-confirm-actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr);
+}
+
+.trade-confirm-actions .button {
+  border-radius: 0;
+  min-height: 48px;
+  min-width: 0;
+  padding-inline: 8px;
+}
+
 .spin {
   animation: spin .8s linear infinite;
 }
@@ -961,6 +1402,7 @@ watch(currentPrice, (value) => {
   }
 
   .trade-columns,
+  .trade-chart-panel,
   .trade-orders {
     margin-left: -14px;
     margin-right: -14px;
@@ -968,6 +1410,10 @@ watch(currentPrice, (value) => {
 
   .order-form {
     padding-left: 14px;
+  }
+
+  .trade-chart-panel > header {
+    padding-inline: 14px;
   }
 
   .trade-orders__entry {
@@ -1009,6 +1455,10 @@ watch(currentPrice, (value) => {
     grid-template-columns: minmax(0, 1fr) minmax(116px, .8fr);
   }
 
+  .trade-chart-panel__canvas {
+    height: 210px;
+  }
+
   .order-form {
     padding-left: 12px;
   }
@@ -1019,6 +1469,10 @@ watch(currentPrice, (value) => {
 
   .order-book-shell :deep(.order-book__row) {
     font-size: 9px;
+  }
+
+  .trade-confirm-actions {
+    grid-template-columns: 1fr;
   }
 }
 </style>

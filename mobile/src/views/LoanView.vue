@@ -53,6 +53,20 @@ const amountNumber = computed(() => Number(amount.value || 0))
 const collateralAmountNumber = computed(() => Number(collateralAmount.value || 0))
 const selectedCollateral = computed(() => accounts.value.find((account) => account.assetId === collateralAssetId.value))
 const dialogOpen = computed(() => Boolean(selected.value || pendingAction.value))
+const amountInvalid = computed(() => {
+  const product = selected.value
+  if (!product) return false
+  return !Number.isFinite(amountNumber.value)
+    || amountNumber.value < product.minAmount
+    || Boolean(product.maxAmount && amountNumber.value > product.maxAmount)
+})
+const collateralInvalid = computed(() => {
+  if (selected.value?.loanType !== 'collateralized') return false
+  return !selectedCollateral.value
+    || !Number.isFinite(collateralAmountNumber.value)
+    || collateralAmountNumber.value <= 0
+    || collateralAmountNumber.value > selectedCollateral.value.available
+})
 const canApply = computed(() => {
   const product = selected.value
   if (!product || !Number.isFinite(amountNumber.value) || amountNumber.value < product.minAmount) return false
@@ -246,7 +260,12 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="page page--plain loan-page">
-    <PageHeader :title="t('loan.title')">
+    <PageHeader
+      :back="true"
+      :eyebrow="t('products.loan')"
+      :subtitle="t('loan.bannerDescription')"
+      :title="t('loan.title')"
+    >
       <template #actions>
         <button
           class="icon-button"
@@ -413,10 +432,10 @@ onBeforeUnmount(() => {
           </button>
         </header>
 
-        <label class="loan-field">
+        <label class="loan-field" :class="{ 'is-invalid': amountInvalid }">
           <span>{{ t('loan.loanAmount') }}</span>
           <div>
-            <input v-model="amount" class="numeric" inputmode="decimal" />
+            <input v-model="amount" class="numeric" inputmode="decimal" :aria-invalid="amountInvalid" />
             <b>{{ selected.assetSymbol }}</b>
           </div>
         </label>
@@ -437,10 +456,15 @@ onBeforeUnmount(() => {
               </option>
             </select>
           </label>
-          <label class="loan-field">
+          <label class="loan-field" :class="{ 'is-invalid': collateralInvalid }">
             <span>{{ t('loan.collateralAmount') }}</span>
             <div>
-              <input v-model="collateralAmount" class="numeric" inputmode="decimal" />
+              <input
+                v-model="collateralAmount"
+                class="numeric"
+                inputmode="decimal"
+                :aria-invalid="collateralInvalid"
+              />
               <b>{{ selectedCollateral?.symbol || '' }}</b>
             </div>
           </label>
@@ -465,7 +489,7 @@ onBeforeUnmount(() => {
         <button
           class="button button--primary button--full loan-submit"
           type="submit"
-          :disabled="submitting"
+          :disabled="submitting || !canApply"
           :aria-busy="submitting"
         >
           {{ submitting ? t('common.submitting') : t('loan.submit') }}
@@ -850,7 +874,7 @@ onBeforeUnmount(() => {
 
 .loan-mask {
   align-items: flex-end;
-  background: rgb(5 10 16 / 62%);
+  background: var(--overlay);
   display: flex;
   inset: 0;
   justify-content: center;
@@ -859,14 +883,14 @@ onBeforeUnmount(() => {
     16px
     max(16px, env(safe-area-inset-bottom));
   position: fixed;
-  z-index: 80;
+  z-index: var(--layer-overlay);
 }
 
 .loan-dialog {
   background: var(--surface);
   border: 1px solid var(--line);
   border-top: 3px solid var(--accent);
-  box-shadow: 0 24px 60px rgb(5 10 16 / 28%);
+  box-shadow: var(--shadow-soft);
   display: grid;
   gap: 14px;
   max-height: calc(100dvh - max(32px, env(safe-area-inset-top)) - max(32px, env(safe-area-inset-bottom)));
@@ -913,8 +937,17 @@ onBeforeUnmount(() => {
 
 .loan-field:focus-within {
   background: var(--surface);
-  border-color: var(--focus, #1677ff);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus, #1677ff) 15%, transparent);
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.loan-field.is-invalid {
+  border-color: var(--negative);
+}
+
+.loan-field.is-invalid:focus-within {
+  border-color: var(--negative);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--negative) 16%, transparent);
 }
 
 .loan-field > span {

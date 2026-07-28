@@ -207,7 +207,12 @@ onMounted(() => { void load() })
 
 <template>
   <main class="page page--plain kyc-page">
-    <PageHeader :title="t('kyc.title')" />
+    <PageHeader
+      :back="true"
+      :eyebrow="t('kyc.subjectInfo')"
+      :subtitle="t('kyc.loginDescription')"
+      :title="t('kyc.title')"
+    />
     <div class="page-content kyc-content">
       <LoginRequiredState v-if="!session.isAuthenticated" :description="t('kyc.loginDescription')" />
       <template v-else>
@@ -236,33 +241,33 @@ onMounted(() => { void load() })
 
             <section class="form-section">
               <h2>{{ t('kyc.subjectInfo') }}</h2>
-              <label>
+              <label class="kyc-field">
                 <span>{{ t('kyc.legalName') }}</span>
                 <input v-model="form.realName" class="input" :placeholder="t('kyc.legalNamePlaceholder')" />
               </label>
               <template v-if="submissionType === 'enterprise'">
-                <label>
+                <label class="kyc-field">
                   <span>{{ t('kyc.enterpriseName') }}</span>
                   <input v-model="form.enterpriseName" class="input" :placeholder="t('kyc.enterpriseNamePlaceholder')" />
                 </label>
-                <label>
+                <label class="kyc-field">
                   <span>{{ t('kyc.registrationNumber') }}</span>
                   <input v-model="form.businessRegistrationNumber" class="input" :placeholder="t('kyc.registrationNumberPlaceholder')" />
                 </label>
               </template>
-              <label>
+              <label class="kyc-field">
                 <span>{{ t('kyc.country') }}</span>
                 <select v-model="form.country">
                   <option v-for="country in countryOptions" :key="country.value" :value="country.value">{{ country.label }}</option>
                 </select>
               </label>
-              <label>
+              <label class="kyc-field">
                 <span>{{ t('kyc.documentType') }}</span>
                 <select v-model="form.documentType">
                   <option v-for="type in documentTypes" :key="type" :value="type">{{ documentLabel(type) }}</option>
                 </select>
               </label>
-              <label>
+              <label class="kyc-field">
                 <span>{{ t('kyc.documentNumber') }}</span>
                 <input v-model="form.idNumber" class="input" :placeholder="t('kyc.documentNumberPlaceholder')" />
               </label>
@@ -325,10 +330,10 @@ onMounted(() => { void load() })
 .form-section > p { color: var(--muted); font-size: 12px; line-height: 1.45; margin: -6px 0 0; }
 .form-section label { display: grid; gap: 7px; }
 .form-section label > span { color: var(--muted); font-size: 12px; font-weight: 650; }
-.form-section .input,
-.form-section select { appearance: none; background: var(--field-surface); border: 1px solid var(--line); border-radius: var(--radius); color: var(--ink); font: inherit; min-height: 52px; outline: 0; padding: 0 13px; width: 100%; }
-.form-section .input:focus,
-.form-section select:focus { background: var(--surface-elevated); border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-ring); }
+.form-section .kyc-field { background: var(--field-surface); border: 1px solid var(--line); border-radius: var(--radius); gap: 2px; min-height: 52px; padding: 7px 12px; }
+.form-section .kyc-field:focus-within { background: var(--surface-elevated); border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-ring); }
+.form-section .kyc-field .input,
+.form-section .kyc-field select { appearance: none; background: transparent; border: 0; border-radius: 0; color: var(--ink); font: inherit; min-height: 30px; outline: 0; padding: 0; width: 100%; }
 .document-grid { display: grid; gap: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .upload-tile { align-items: center; aspect-ratio: .92; background: var(--field-surface); border: 1px dashed var(--line-strong); border-radius: var(--radius); color: var(--muted); display: flex; flex-direction: column; font-size: 12px; gap: 8px; justify-content: center; min-height: 96px; overflow: hidden; padding: 6px; position: relative; }
 .upload-tile:hover { border-color: var(--accent); color: var(--accent); }
