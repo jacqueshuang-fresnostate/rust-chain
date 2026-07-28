@@ -390,3 +390,36 @@ Ported the Sites v16 signal Canvas and route veil into the Vue mobile shell, cor
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: Android 实机安装 Header 最新构建
+
+**Date**: 2026-07-29
+**Task**: Android 实机安装 Header 最新构建
+**Branch**: `main`
+
+### Summary
+
+重新构建包含拟物化 Header 的 Android Debug APK，更新安装到 TAS-AL00 并完成冷启动、前台 Activity 和包版本验收。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cd68269` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
