@@ -245,6 +245,7 @@ onBeforeUnmount(() => {
           <article v-for="order in orders" :key="order.id">
             <div>
               <strong>{{ marketText(order.marketTitle, 'title') }}</strong>
+              <small v-if="order.orderNo" class="order-number">{{ t('prediction.orderNumber', { orderNo: order.orderNo }) }}</small>
               <small>{{ formatDateTime(order.createdAt) }} · {{ outcomeLabel(order.outcome) }}</small>
             </div>
             <span>

@@ -3,24 +3,27 @@ use crate::{
     modules::auth::{
         AdminAuth, AdminCredentials, AdminRegistration, AgentCredentials, TokenScope,
         application::{
-            confirm_admin_two_factor, disable_admin_two_factor, get_admin_two_factor_status,
-            load_login_config, load_register_config, login_admin_actor, login_agent_actor,
+            confirm_admin_two_factor, confirm_login_two_factor_setup_and_issue_tokens,
+            disable_admin_two_factor, get_admin_two_factor_status, load_login_config,
+            load_register_config, login_admin_actor, login_agent_actor,
             login_user_with_optional_two_factor_response, mysql_pool, refresh_actor_tokens,
             register_admin_actor, register_user_with_email_code_response,
             reject_agent_registration, reset_login_two_factor_with_email_code,
             reset_password_with_email_code, send_login_two_factor_reset_email_code,
             send_password_reset_email_code, send_registration_email_code, setup_admin_two_factor,
-            verify_admin_login_two_factor, verify_login_two_factor_and_issue_tokens,
+            setup_login_two_factor_challenge, verify_admin_login_two_factor,
+            verify_login_two_factor_and_issue_tokens,
         },
         presentation::{
             AdminAuthRequest, AdminLoginResponse, AdminTwoFactorCodeRequest,
             AdminTwoFactorSetupResponse, AdminTwoFactorStatusResponse, AgentAuthRequest,
             LoginConfigResponse, LoginTwoFactorCodeResponse, LoginTwoFactorRequest,
             LoginTwoFactorResetCodeRequest, LoginTwoFactorResetRequest,
-            LoginTwoFactorResetResponse, PasswordResetCodeRequest, PasswordResetCodeResponse,
-            PasswordResetRequest, PasswordResetResponse, RefreshRequest, RegisterConfigResponse,
-            RegisterEmailCodeRequest, RegisterEmailCodeResponse, TokenResponse, UserAuthRequest,
-            UserLoginResponse,
+            LoginTwoFactorResetResponse, LoginTwoFactorSetupConfirmRequest,
+            LoginTwoFactorSetupRequest, LoginTwoFactorSetupResponse, PasswordResetCodeRequest,
+            PasswordResetCodeResponse, PasswordResetRequest, PasswordResetResponse, RefreshRequest,
+            RegisterConfigResponse, RegisterEmailCodeRequest, RegisterEmailCodeResponse,
+            TokenResponse, UserAuthRequest, UserLoginResponse,
         },
     },
     state::AppState,
@@ -43,6 +46,11 @@ pub fn user_routes() -> Router<AppState> {
         .route("/auth/password/reset", post(reset_password))
         .route("/auth/login", post(user_login))
         .route("/auth/login/2fa", post(user_login_two_factor))
+        .route("/auth/login/2fa/setup", post(user_login_two_factor_setup))
+        .route(
+            "/auth/login/2fa/setup/confirm",
+            post(user_login_two_factor_setup_confirm),
+        )
         .route(
             "/auth/login/2fa/reset-code",
             post(send_login_two_factor_reset_code),
@@ -167,6 +175,32 @@ async fn user_login_two_factor(
         &state,
         &pool,
         request.challenge_id,
+        request.totp_code,
+    )
+    .await?;
+
+    Ok(Json(tokens.into()))
+}
+
+async fn user_login_two_factor_setup(
+    State(state): State<AppState>,
+    Json(request): Json<LoginTwoFactorSetupRequest>,
+) -> AppResult<Json<LoginTwoFactorSetupResponse>> {
+    let pool = mysql_pool(&state)?;
+    Ok(Json(
+        setup_login_two_factor_challenge(&state, &pool, request.setup_challenge_id).await?,
+    ))
+}
+
+async fn user_login_two_factor_setup_confirm(
+    State(state): State<AppState>,
+    Json(request): Json<LoginTwoFactorSetupConfirmRequest>,
+) -> AppResult<Json<TokenResponse>> {
+    let pool = mysql_pool(&state)?;
+    let tokens = confirm_login_two_factor_setup_and_issue_tokens(
+        &state,
+        &pool,
+        request.setup_challenge_id,
         request.totp_code,
     )
     .await?;

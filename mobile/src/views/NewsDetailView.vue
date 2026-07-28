@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { CircleAlert, LoaderCircle, Newspaper } from 'lucide-vue-next'
+import NewsRichText from '@/components/NewsRichText.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
 import { fetchNewsDetail, type NewsDetail } from '@/api/news'
@@ -75,7 +76,7 @@ watch(() => props.id, () => {
           <h1>{{ detail.title }}</h1>
           <time v-if="detail.publishedAt">{{ formatDateTime(detail.publishedAt) }}</time>
         </header>
-        <div class="news-content">{{ detail.content || t('news.emptyContent') }}</div>
+        <NewsRichText :blocks="detail.content" :empty-text="t('news.emptyContent')" />
       </template>
 
       <div v-else class="news-detail-state">
@@ -142,15 +143,6 @@ watch(() => props.id, () => {
   font-variant-numeric: tabular-nums;
 }
 
-.news-content {
-  color: var(--muted-strong);
-  font-size: 15px;
-  line-height: 1.85;
-  margin-top: 22px;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-
 .news-detail-state {
   align-items: center;
   color: var(--muted);
@@ -194,9 +186,6 @@ watch(() => props.id, () => {
     font-size: 22px;
   }
 
-  .news-content {
-    font-size: 14px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

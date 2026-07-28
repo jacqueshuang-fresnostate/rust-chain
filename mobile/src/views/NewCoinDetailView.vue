@@ -28,6 +28,7 @@ import {
 import { fetchMarketTickers } from '@/api/market'
 import { fetchWalletAccounts } from '@/api/wallet'
 import { formatAmount, formatDateTime, formatPrice } from '@/core/format'
+import { newCoinPurchaseQuantity } from '@/core/newCoinPurchase'
 import type { MarketTicker, WalletAccount } from '@/core/types'
 import { useSessionStore } from '@/stores/session'
 
@@ -50,7 +51,9 @@ const canSubscribe = computed(() => lifecycle.value === 'subscription')
 const canPurchase = computed(() => lifecycle.value === 'listed' && Boolean(project.value?.postListingPurchaseEnabled && project.value?.postListingPairId))
 const selectedTicker = computed(() => tickers.value.find((ticker) => ticker.id === project.value?.postListingPairId))
 const quoteSymbol = computed(() => canPurchase.value ? selectedTicker.value?.quote || t('newCoin.quoteAsset') : 'USDT')
-const selectedAccount = computed(() => accounts.value.find((account) => account.assetId === quoteAssetId.value))
+const selectedAccount = computed(() => canPurchase.value
+  ? accounts.value.find((account) => account.symbol === selectedTicker.value?.quote)
+  : accounts.value.find((account) => account.assetId === quoteAssetId.value))
 const amountNumber = computed(() => Number(amount.value || 0))
 const executionPrice = computed(() => selectedTicker.value?.lastPrice || project.value?.issuePrice || 0)
 const paymentAmount = computed(() => canPurchase.value ? amountNumber.value * executionPrice.value : amountNumber.value)
@@ -110,7 +113,9 @@ function selectDefaultAccount(): void {
 
 function setAmount(value: number): void {
   const available = selectedAccount.value?.available || 0
-  const next = Math.max(0, Math.min(available * value, available))
+  const next = canPurchase.value
+    ? newCoinPurchaseQuantity(available, value, executionPrice.value)
+    : Math.max(0, Math.min(available * value, available))
   amount.value = next ? String(Number(next.toFixed(8))) : ''
 }
 
@@ -221,11 +226,15 @@ onMounted(() => { void load() })
           <p>{{ canSubscribe ? t('newCoin.subscribeDescription') : t('newCoin.purchaseDescription', { price: formatPrice(executionPrice), asset: quoteSymbol }) }}</p>
           <label class="entry-field">
             <span>{{ t('newCoin.paymentAsset') }}</span>
-            <select v-model="quoteAssetId">
+            <select v-if="canSubscribe" v-model="quoteAssetId">
               <option v-for="account in accounts" :key="account.assetId" :value="account.assetId">
                 {{ t('newCoin.assetAvailable', { asset: account.symbol, amount: formatAmount(account.available) }) }}
               </option>
             </select>
+            <div v-else class="entry-field__locked">
+              <b>{{ quoteSymbol }}</b>
+              <small>{{ t('newCoin.purchaseQuoteLocked') }}</small>
+            </div>
           </label>
           <label class="entry-field">
             <span>{{ t(canSubscribe ? 'newCoin.subscriptionAmount' : 'newCoin.purchaseQuantity', { asset: project.symbol }) }}</span>
@@ -518,6 +527,12 @@ onMounted(() => { void load() })
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   min-height: 44px;
+}
+
+.entry-field__locked small {
+  color: var(--muted);
+  font-size: 11px;
+  text-align: right;
 }
 
 .entry-field select,

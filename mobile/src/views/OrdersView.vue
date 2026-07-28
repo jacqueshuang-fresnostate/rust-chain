@@ -6,6 +6,7 @@ import { CheckCircle2, CircleAlert, LoaderCircle, PackageOpen, RefreshCw } from 
 import LoginRequiredState from '@/components/LoginRequiredState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
+import { fetchMarketPairs } from '@/api/market'
 import {
   cancelAllMarginPositions,
   cancelAllSpotOrders,
@@ -22,7 +23,7 @@ import {
 } from '@/api/trading'
 import { formatAmount, formatDateTime, formatPrice } from '@/core/format'
 import { useSessionStore } from '@/stores/session'
-import type { MarginProduct } from '@/core/types'
+import type { MarginProduct, MarketPair } from '@/core/types'
 
 type Tab = 'spot' | 'margin' | 'history'
 
@@ -40,6 +41,7 @@ const historyOrders = ref<SpotOrder[]>([])
 const positions = ref<MarginPosition[]>([])
 const historyPositions = ref<MarginPosition[]>([])
 const products = ref<MarginProduct[]>([])
+const pairs = ref<MarketPair[]>([])
 const loading = ref(false)
 const actionId = ref('')
 const feedback = ref('')
@@ -52,13 +54,14 @@ const sortedSpotOrders = computed(() => [...spotOrders.value].sort((left, right)
 const sortedHistoryOrders = computed(() => [...historyOrders.value].sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0)))
 
 function productFor(position: MarginPosition): MarginProduct | undefined {
-  return products.value.find((product) => product.id === position.productId)
+  return products.value.find((product) => product.id === position.productId || product.pairId === position.pairId)
 }
 
 function positionSymbol(position: MarginPosition): string {
   const product = productFor(position)
   if (product) return product.symbol
-  return position.symbol.includes('/') ? position.symbol : t('orders.contractNumber', { id: position.productId })
+  const pair = pairs.value.find((candidate) => candidate.id === position.pairId)
+  return pair?.symbol || t('orders.contractNumber', { id: position.productId })
 }
 
 function displayPair(symbol: string): string {
@@ -80,21 +83,28 @@ async function load(): Promise<void> {
       return
     }
     if (activeTab.value === 'margin') {
-      const [nextPositions, nextProducts] = await Promise.all([fetchMarginPositions('opened'), fetchMarginProducts()])
+      const [nextPositions, nextProducts, nextPairs] = await Promise.all([
+        fetchMarginPositions('opened'),
+        fetchMarginProducts(),
+        fetchMarketPairs(),
+      ])
       positions.value = nextPositions
       products.value = nextProducts
+      pairs.value = nextPairs
       return
     }
-    const [nextOrders, closed, liquidated, canceled, nextProducts] = await Promise.all([
+    const [nextOrders, closed, liquidated, canceled, nextProducts, nextPairs] = await Promise.all([
       fetchSpotOrderHistory(),
       fetchMarginPositions('closed'),
       fetchMarginPositions('liquidated'),
       fetchMarginPositions('canceled'),
       fetchMarginProducts(),
+      fetchMarketPairs(),
     ])
     historyOrders.value = nextOrders
     historyPositions.value = [...closed, ...liquidated, ...canceled]
     products.value = nextProducts
+    pairs.value = nextPairs
   } catch (reason) {
     error.value = apiErrorMessage(reason, t('orders.loadFailed'))
   } finally {

@@ -82,6 +82,17 @@ pub(super) struct LoginTwoFactorRequest {
 }
 
 #[derive(ToSchema)]
+pub(super) struct LoginTwoFactorSetupRequest {
+    setup_challenge_id: String,
+}
+
+#[derive(ToSchema)]
+pub(super) struct LoginTwoFactorSetupConfirmRequest {
+    setup_challenge_id: String,
+    totp_code: String,
+}
+
+#[derive(ToSchema)]
 pub(super) struct LoginTwoFactorResetCodeRequest {
     challenge_id: String,
 }
@@ -103,6 +114,13 @@ pub(super) struct LoginTwoFactorChallengeResponse {
 pub(super) struct LoginTwoFactorSetupChallengeResponse {
     requires_2fa_setup: bool,
     setup_challenge_id: String,
+    expires_in_seconds: i64,
+}
+
+#[derive(ToSchema)]
+pub(super) struct LoginTwoFactorSetupResponse {
+    secret: String,
+    otpauth_uri: String,
     expires_in_seconds: i64,
 }
 
@@ -200,6 +218,34 @@ fn user_login() {}
     )
 )]
 fn user_login_two_factor() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/login/2fa/setup",
+    tag = "auth",
+    summary = "首次强制 2FA 登录 challenge 生成 TOTP 密钥",
+    request_body = LoginTwoFactorSetupRequest,
+    responses(
+        (status = 200, description = "生成成功", body = LoginTwoFactorSetupResponse),
+        (status = 400, description = "challenge 类型错误、已过期或已消费", body = ErrorResponse),
+        (status = 500, description = "服务内部错误", body = ErrorResponse)
+    )
+)]
+fn user_login_two_factor_setup() {}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/login/2fa/setup/confirm",
+    tag = "auth",
+    summary = "确认首次强制 2FA 并完成登录",
+    request_body = LoginTwoFactorSetupConfirmRequest,
+    responses(
+        (status = 200, description = "确认成功并返回 token", body = TokenResponse),
+        (status = 400, description = "challenge 无效或 TOTP 验证码错误", body = ErrorResponse),
+        (status = 500, description = "服务内部错误", body = ErrorResponse)
+    )
+)]
+fn user_login_two_factor_setup_confirm() {}
 
 #[utoipa::path(
     post,
@@ -330,3 +376,55 @@ fn agent_login() {}
     )
 )]
 fn agent_refresh() {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use utoipa::{PartialSchema, Path};
+
+    #[test]
+    fn login_two_factor_setup_paths_document_public_request_and_response_contracts() {
+        assert_eq!(
+            <__path_user_login_two_factor_setup as Path>::path(),
+            "/api/v1/auth/login/2fa/setup"
+        );
+        assert_eq!(
+            <__path_user_login_two_factor_setup_confirm as Path>::path(),
+            "/api/v1/auth/login/2fa/setup/confirm"
+        );
+
+        let setup_operation =
+            serde_json::to_value(<__path_user_login_two_factor_setup as Path>::operation())
+                .unwrap();
+        assert_eq!(
+            setup_operation["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/LoginTwoFactorSetupRequest"
+        );
+        assert_eq!(
+            setup_operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/LoginTwoFactorSetupResponse"
+        );
+
+        let confirm_operation =
+            serde_json::to_value(<__path_user_login_two_factor_setup_confirm as Path>::operation())
+                .unwrap();
+        assert_eq!(
+            confirm_operation["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/LoginTwoFactorSetupConfirmRequest"
+        );
+        assert_eq!(
+            confirm_operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/TokenResponse"
+        );
+
+        let setup_response_schema =
+            serde_json::to_value(LoginTwoFactorSetupResponse::schema()).unwrap();
+        let properties = &setup_response_schema["properties"];
+        for field in ["secret", "otpauth_uri", "expires_in_seconds"] {
+            assert!(
+                properties.get(field).is_some(),
+                "missing LoginTwoFactorSetupResponse.{field}"
+            );
+        }
+    }
+}

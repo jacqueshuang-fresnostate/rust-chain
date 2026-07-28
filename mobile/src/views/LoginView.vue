@@ -74,7 +74,7 @@ async function submit(): Promise<void> {
       return
     }
     if (result.type === 'two-factor-setup') {
-      await router.push({ name: 'login-two-factor', query: { setup: result.setupChallengeId } })
+      await router.push({ name: 'login-two-factor', query: { setup: result.setupChallengeId, redirect: route.query.redirect } })
       return
     }
     session.sync()

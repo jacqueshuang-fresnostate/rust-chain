@@ -38,6 +38,7 @@ export interface PredictionQuote {
 
 export interface PredictionOrder {
   id: number
+  orderNo: string
   marketTitle: string
   outcome: string
   assetSymbol: string
@@ -101,6 +102,7 @@ export async function fetchPredictionOrders(limit = 50): Promise<PredictionOrder
   const response = await client.get<{ orders?: Array<Record<string, unknown>> }>(requestUrl('/prediction/orders'), { params: { limit } })
   return (response.data.orders || []).map((order) => ({
     id: asNumber(order.id),
+    orderNo: String(order.order_no || ''),
     marketTitle: String(order.market_title || ''),
     outcome: String(order.outcome || ''),
     assetSymbol: String(order.asset_symbol || '').toUpperCase(),

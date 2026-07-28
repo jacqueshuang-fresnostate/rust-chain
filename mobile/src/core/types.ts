@@ -13,6 +13,13 @@ export interface MarketTicker {
   observedAt?: number
 }
 
+export interface MarketPair {
+  id: number
+  symbol: string
+  base: string
+  quote: string
+}
+
 export interface KlinePoint {
   time: number
   open: number
@@ -68,6 +75,7 @@ export interface WalletAccount {
 
 export interface MarginProduct {
   id: number
+  pairId: number
   symbol: string
   marginAssetSymbol: string
   marginMode: 'cross' | 'isolated'

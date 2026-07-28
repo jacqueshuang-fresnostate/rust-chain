@@ -1,5 +1,6 @@
-import { APP_CONFIG } from '@/config/app'
+import { publicMarketWebSocketUrl } from '@/config/app'
 import { normalizeSymbol } from '@/core/format'
+import { parseMarketSocketFrame, tickerSubscriptionFrame } from './marketSocketProtocol'
 
 export interface TickerUpdate {
   symbol: string
@@ -21,34 +22,9 @@ let heartbeatTimer: ReturnType<typeof setInterval> | null = null
 const listeners = new Set<TickerListener>()
 const subscribedSymbols = new Set<string>()
 
-function websocketUrl(): string {
-  const base = APP_CONFIG.backendDomain || (typeof window === 'undefined' ? '' : window.location.origin)
-  if (!base) return '/ws/public'
-  const url = new URL('/ws/public', base)
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-  return url.toString()
-}
-
-function parseTicker(data: unknown): TickerUpdate | null {
-  if (typeof data !== 'string') return null
-  try {
-    const payload = JSON.parse(data) as { symbol?: unknown; last_price?: unknown; observed_at?: unknown }
-    if (typeof payload.symbol !== 'string') return null
-    const lastPrice = Number(payload.last_price)
-    if (!Number.isFinite(lastPrice)) return null
-    return {
-      symbol: normalizeSymbol(payload.symbol),
-      lastPrice,
-      observedAt: typeof payload.observed_at === 'number' ? payload.observed_at : undefined,
-    }
-  } catch {
-    return null
-  }
-}
-
 function sendSubscribe(symbol: string): void {
   if (socket?.readyState !== WebSocket.OPEN) return
-  socket.send(JSON.stringify({ op: 'subscribe', channel: 'ticker', symbol }))
+  socket.send(tickerSubscriptionFrame(symbol))
 }
 
 function clearTimers(): void {
@@ -76,7 +52,7 @@ function connect(): void {
   if (typeof window === 'undefined' || typeof window.WebSocket === 'undefined') return
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return
 
-  const next = new WebSocket(websocketUrl())
+  const next = new WebSocket(publicMarketWebSocketUrl())
   socket = next
 
   next.addEventListener('open', () => {
@@ -88,8 +64,14 @@ function connect(): void {
   })
 
   next.addEventListener('message', (event) => {
-    const update = parseTicker(event.data)
-    if (!update || !subscribedSymbols.has(update.symbol)) return
+    const frame = parseMarketSocketFrame(event.data)
+    if (!frame || frame.type !== 'ticker') return
+    const update: TickerUpdate = {
+      symbol: normalizeSymbol(frame.symbol),
+      lastPrice: frame.lastPrice,
+      observedAt: frame.observedAt,
+    }
+    if (!subscribedSymbols.has(update.symbol)) return
     listeners.forEach((listener) => listener(update))
   })
 

@@ -2,6 +2,7 @@ import { fileURLToPath, URL } from 'node:url'
 import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { VitePWA } from 'vite-plugin-pwa'
+import { normalizeBackendApiPrefix, resolveBackendDevProxyTarget } from './src/config/backend'
 
 function normalizePublicBase(value: string): string {
   const path = value.trim().replace(/^\/+|\/+$/g, '')
@@ -23,8 +24,8 @@ function isolateTauriIndexHtml(isTauriBuild: boolean) {
 export default defineConfig(({ mode }) => {
   const environment = loadEnv(mode, process.cwd(), '')
   const devHost = environment.TAURI_DEV_HOST || process.env.TAURI_DEV_HOST || '0.0.0.0'
-  const apiPrefix = environment.VITE_BACKEND_API_PREFIX || '/api/v1'
-  const backendTarget = environment.VITE_BACKEND_API_DOMAIN || 'http://127.0.0.1:8080'
+  const apiPrefix = normalizeBackendApiPrefix(environment.VITE_BACKEND_API_PREFIX)
+  const backendTarget = resolveBackendDevProxyTarget(environment.VITE_BACKEND_DEV_PROXY_TARGET)
   const appBase = normalizePublicBase(environment.VITE_PWA_BASE || '/')
   const isTauriBuild = Boolean(environment.TAURI_ENV_PLATFORM || process.env.TAURI_ENV_PLATFORM) || mode === 'tauri'
   const pwaEnabled = mode === 'pwa' && !isTauriBuild
@@ -120,6 +121,11 @@ export default defineConfig(({ mode }) => {
       strictPort: true,
       proxy: {
         [apiPrefix]: {
+          target: backendTarget,
+          changeOrigin: true,
+          ws: true,
+        },
+        '/health': {
           target: backendTarget,
           changeOrigin: true,
         },

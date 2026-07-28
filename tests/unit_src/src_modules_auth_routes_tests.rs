@@ -164,6 +164,18 @@ async fn user_auth_routes_return_clear_error_without_mysql() {
     .await;
     assert_auth_route_requires_mysql(
         app.clone(),
+        "/auth/login/2fa/setup",
+        r#"{"setup_challenge_id":"challenge-1"}"#,
+    )
+    .await;
+    assert_auth_route_requires_mysql(
+        app.clone(),
+        "/auth/login/2fa/setup/confirm",
+        r#"{"setup_challenge_id":"challenge-1","totp_code":"123456"}"#,
+    )
+    .await;
+    assert_auth_route_requires_mysql(
+        app.clone(),
         "/auth/login/2fa/reset-code",
         r#"{"challenge_id":"challenge-1"}"#,
     )

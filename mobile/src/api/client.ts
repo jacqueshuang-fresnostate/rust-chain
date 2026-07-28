@@ -1,10 +1,11 @@
-import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
+import axios, { type AxiosError } from 'axios'
 import { backendApiUrl } from '@/config/app'
+import { BackendConfigurationError } from '@/config/backend'
 import { i18n } from '@/i18n'
+import { installAuthSessionInterceptors } from './requestAuth'
 
 const ACCESS_TOKEN_KEY = 'hippo_mobile_access_token'
 const REFRESH_TOKEN_KEY = 'hippo_mobile_refresh_token'
-let refreshPromise: Promise<string | null> | null = null
 
 export const client = axios.create({
   timeout: 12_000,
@@ -23,12 +24,17 @@ export function readAccessToken(): string {
 
 export function persistAuthTokens(accessToken: string, refreshToken?: string): void {
   localStorage.setItem(ACCESS_TOKEN_KEY, accessToken)
-  if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken)
+  if (refreshToken?.trim()) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken)
+  else localStorage.removeItem(REFRESH_TOKEN_KEY)
 }
 
 export function clearAuthTokens(): void {
-  localStorage.removeItem(ACCESS_TOKEN_KEY)
-  localStorage.removeItem(REFRESH_TOKEN_KEY)
+  try {
+    localStorage.removeItem(ACCESS_TOKEN_KEY)
+    localStorage.removeItem(REFRESH_TOKEN_KEY)
+  } catch {
+    // Storage may be unavailable in a restricted WebView; in-memory session state still clears.
+  }
 }
 
 function readRefreshToken(): string {
@@ -40,15 +46,22 @@ function readRefreshToken(): string {
 }
 
 export function apiErrorMessage(error: unknown, fallback = i18n.global.t('common.serviceUnavailable')): string {
+  if (error instanceof BackendConfigurationError) {
+    return i18n.global.t('common.backendNotConfigured')
+  }
   const axiosError = error as AxiosError<{ message?: string }>
-  return axiosError.response?.data?.message || axiosError.message || fallback
+  if (axiosError.response?.data?.message) return axiosError.response.data.message
+  if (axiosError.code === 'ECONNABORTED' || axiosError.code === 'ETIMEDOUT') {
+    return i18n.global.t('common.requestTimeout')
+  }
+  if (axios.isAxiosError(error) && !axiosError.response) {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      return i18n.global.t('common.deviceOffline')
+    }
+    return i18n.global.t('common.networkUnavailable')
+  }
+  return error instanceof Error && error.message ? error.message : fallback
 }
-
-client.interceptors.request.use((config) => {
-  const token = readAccessToken()
-  if (token) config.headers.Authorization = `Bearer ${token}`
-  return config
-})
 
 async function refreshAccessToken(): Promise<string | null> {
   const refreshToken = readRefreshToken()
@@ -67,36 +80,16 @@ async function refreshAccessToken(): Promise<string | null> {
   }
 }
 
-function refreshAccessTokenOnce(): Promise<string | null> {
-  if (!refreshPromise) {
-    refreshPromise = refreshAccessToken().finally(() => { refreshPromise = null })
-  }
-  return refreshPromise
-}
-
-type RetriableRequest = InternalAxiosRequestConfig & { _hippoRetried?: boolean }
-
-client.interceptors.response.use(
-  (response) => response,
-  async (error: AxiosError) => {
-    const request = error.config as RetriableRequest | undefined
-    const isRefreshRequest = request?.url?.includes('/auth/refresh')
-    const wasAuthenticatedRequest = Boolean(request?.headers?.Authorization)
-    if (error.response?.status === 401 && request && !request._hippoRetried && !isRefreshRequest) {
-      const nextToken = await refreshAccessTokenOnce()
-      if (nextToken) {
-        request._hippoRetried = true
-        request.headers.Authorization = `Bearer ${nextToken}`
-        return client.request(request)
-      }
-    }
-    if (error.response?.status === 401 && wasAuthenticatedRequest) {
-      clearAuthTokens()
+installAuthSessionInterceptors(client, {
+  readAccessToken,
+  refreshAccessToken,
+  clearSession: clearAuthTokens,
+  onSessionExpired: () => {
+    if (typeof window !== 'undefined') {
       window.dispatchEvent(new Event('hippo-mobile-auth-expired'))
     }
-    return Promise.reject(error)
   },
-)
+})
 
 export function requestUrl(path: string): string {
   return backendApiUrl(path)

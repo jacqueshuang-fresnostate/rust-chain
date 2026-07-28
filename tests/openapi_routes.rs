@@ -784,6 +784,12 @@ async fn openapi_json_documents_user_2fa_security_policy_contract() {
 
     for (path, methods, requires_bearer) in [
         ("/api/v1/auth/login/2fa", ["post"].as_slice(), false),
+        ("/api/v1/auth/login/2fa/setup", ["post"].as_slice(), false),
+        (
+            "/api/v1/auth/login/2fa/setup/confirm",
+            ["post"].as_slice(),
+            false,
+        ),
         (
             "/api/v1/auth/login/2fa/reset-code",
             ["post"].as_slice(),
@@ -866,10 +872,13 @@ async fn openapi_json_documents_user_2fa_security_policy_contract() {
         "UpdateLoginTwoFactorRequest",
         "ResetTwoFactorRequest",
         "LoginTwoFactorRequest",
+        "LoginTwoFactorSetupRequest",
+        "LoginTwoFactorSetupConfirmRequest",
         "LoginTwoFactorResetCodeRequest",
         "LoginTwoFactorResetRequest",
         "LoginTwoFactorChallengeResponse",
         "LoginTwoFactorSetupChallengeResponse",
+        "LoginTwoFactorSetupResponse",
         "LoginConfigResponse",
         "UpdateUsernameRequest",
         "UpdateUsernameResponse",
@@ -899,6 +908,50 @@ async fn openapi_json_documents_user_2fa_security_policy_contract() {
             schema.get("properties").is_some(),
             "missing schema {schema_name}"
         );
+    }
+
+    let setup_operation = &openapi["paths"]["/api/v1/auth/login/2fa/setup"]["post"];
+    assert_eq!(
+        setup_operation["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/LoginTwoFactorSetupRequest"
+    );
+    assert_eq!(
+        setup_operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/LoginTwoFactorSetupResponse"
+    );
+
+    let setup_confirm_operation = &openapi["paths"]["/api/v1/auth/login/2fa/setup/confirm"]["post"];
+    assert_eq!(
+        setup_confirm_operation["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/LoginTwoFactorSetupConfirmRequest"
+    );
+    assert_eq!(
+        setup_confirm_operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/TokenResponse"
+    );
+
+    let setup_response_properties =
+        &openapi["components"]["schemas"]["LoginTwoFactorSetupResponse"]["properties"];
+    for field in ["secret", "otpauth_uri", "expires_in_seconds"] {
+        assert!(
+            setup_response_properties.get(field).is_some(),
+            "missing LoginTwoFactorSetupResponse.{field}"
+        );
+    }
+    for schema_name in [
+        "LoginTwoFactorChallengeResponse",
+        "LoginTwoFactorSetupChallengeResponse",
+    ] {
+        let challenge_schema_json =
+            serde_json::to_string(&openapi["components"]["schemas"][schema_name])
+                .unwrap()
+                .to_lowercase();
+        for forbidden in ["secret", "otpauth_uri", "totp_secret"] {
+            assert!(
+                !challenge_schema_json.contains(forbidden),
+                "{schema_name} leaks {forbidden}"
+            );
+        }
     }
 
     let policy_properties = &openapi["components"]["schemas"]["PaymentPolicies"]["properties"];

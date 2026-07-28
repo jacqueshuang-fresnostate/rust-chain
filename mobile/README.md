@@ -9,7 +9,19 @@ npm install
 npm run dev
 ```
 
-H5 开发地址默认为 `http://127.0.0.1:1611/`。未配置 `VITE_BACKEND_API_DOMAIN` 时，Vite 会将 `/api/v1` 同源代理到本机 `http://127.0.0.1:8080`，方便浏览器、Android 和 iOS 调试共享接口；原生发布与 H5 部署时应注入实际的 `VITE_BACKEND_API_DOMAIN` 和 `VITE_BACKEND_API_PREFIX`。
+H5 开发地址默认为 `http://127.0.0.1:1611/`。浏览器始终向 Vite 同源的
+`/api/v1`、`/api/v1/ws/public` 和 `/health` 发起请求，再由
+`VITE_BACKEND_DEV_PROXY_TARGET` 转发到后端；该代理目标默认是
+`http://127.0.0.1:8080`。例如真实测试服务运行在 18080 时可设置：
+
+```bash
+VITE_BACKEND_DEV_PROXY_TARGET=http://127.0.0.1:18080 npm run dev
+```
+
+设置代理目标不会让浏览器改为跨域直连。`VITE_BACKEND_API_DOMAIN` 是另一项独立配置：
+公开 PWA 留空时使用页面同源反向代理；Tauri 发布构建必须注入设备可访问的 HTTPS
+origin。原生发布环境不得使用 `localhost`、`127.0.0.1` 或其他设备 loopback 地址，
+缺少有效配置时客户端会显示明确的配置错误。
 
 ## 原生目标
 
@@ -54,7 +66,9 @@ npm run build:tauri
 ### Web 部署配置
 
 - 独立域名部署保持 `VITE_PWA_BASE=/`；固定子路径部署需设置同一个永久前缀，例如 `VITE_PWA_BASE=/mobile/`。
-- 公开 PWA 必须通过 HTTPS 提供，后端 API 必须使用 HTTPS，同源 `/ws/` 必须升级为 WSS。不能把生产 `VITE_BACKEND_API_DOMAIN` 留为 `http://127.0.0.1:8080`。
+- 公开 PWA 必须通过 HTTPS 提供。留空 `VITE_BACKEND_API_DOMAIN` 时，HTTP 使用同源 `/api/v1`、健康检查使用 `/health`，行情 WebSocket 使用同源 `/api/v1/ws/public` 并自动升级为 WSS。
+- 跨域部署可显式设置 HTTPS `VITE_BACKEND_API_DOMAIN`；生产配置会拒绝明文 HTTP、`localhost` 和 loopback 地址。
+- `VITE_BACKEND_DEV_PROXY_TARGET` 只在 Vite 开发服务器中生效，不会进入生产客户端的 API origin 选择。
 - `index.html`、`sw.js` 和 `manifest.webmanifest` 应使用 `no-cache` 或短期重新验证；带哈希的静态资源可使用长期 `immutable` 缓存。
 - 身份认证、账户、钱包、订单、KYC 和其他金融接口必须返回 `Cache-Control: private, no-store`，且 CDN/反向代理不得缓存。
 

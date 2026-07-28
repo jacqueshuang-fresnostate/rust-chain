@@ -99,6 +99,27 @@ async function retryMarket(): Promise<void> {
   await loadDepth()
 }
 
+async function loadMarginProducts(): Promise<void> {
+  if (mode.value !== 'contract' || !session.isAuthenticated) {
+    products.value = []
+    productsLoading.value = false
+    return
+  }
+  productsLoading.value = true
+  try {
+    products.value = await fetchMarginProducts()
+    const product = selectedProduct.value
+    if (product) {
+      leverage.value = product.leverageLevels.includes(5) ? 5 : product.leverageLevels[0] || 1
+      marginMode.value = 'isolated'
+    }
+  } catch {
+    products.value = []
+  } finally {
+    productsLoading.value = false
+  }
+}
+
 function setQuantity(percent: number): void {
   const quoteBudget = 100 * percent
   quantity.value = mode.value === 'contract'
@@ -204,19 +225,6 @@ async function submitOrder(): Promise<void> {
 
 onMounted(async () => {
   await marketStore.refresh()
-  productsLoading.value = true
-  try {
-    products.value = await fetchMarginProducts()
-    const product = selectedProduct.value
-    if (product) {
-      leverage.value = product.leverageLevels.includes(5) ? 5 : product.leverageLevels[0] || 1
-      marginMode.value = 'isolated'
-    }
-  } catch {
-    products.value = []
-  } finally {
-    productsLoading.value = false
-  }
 })
 
 watch(pairSymbol, (symbol) => {
@@ -227,6 +235,7 @@ watch(pairSymbol, (symbol) => {
 watch(() => route.query.mode, (nextMode) => {
   mode.value = nextMode === 'contract' ? 'contract' : 'spot'
   navigation.rememberTradeMode(mode.value)
+  void loadMarginProducts()
 }, { immediate: true })
 
 watch(currentPrice, (value) => {
@@ -283,7 +292,11 @@ watch(currentPrice, (value) => {
     </section>
 
     <div class="page-content trade-page__content">
-      <section v-if="mode === 'contract'" class="contract-settings" :aria-busy="productsLoading">
+      <LoginRequiredState
+        v-if="mode === 'contract' && !session.isAuthenticated"
+        :description="t('trade.contractLoginDescription')"
+      />
+      <section v-if="mode === 'contract' && session.isAuthenticated" class="contract-settings" :aria-busy="productsLoading">
         <span>{{ t('trade.isolated') }}</span>
         <button
           type="button"
@@ -299,7 +312,7 @@ watch(currentPrice, (value) => {
         <span v-else>{{ t('trade.unavailableContract') }}</span>
       </section>
 
-      <div class="trade-columns">
+      <div v-if="mode !== 'contract' || session.isAuthenticated" class="trade-columns">
         <section class="order-form">
           <div class="buy-sell" :aria-label="t('trade.category')">
             <button

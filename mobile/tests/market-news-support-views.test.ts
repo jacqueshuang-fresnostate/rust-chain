@@ -43,7 +43,8 @@ test('公告列表和详情保留真实 API、语言映射与命名路由合同'
   assert.match(newsSource, /apiErrorMessage\(reason, t\('news\.loadFailed'\)\)/)
   assert.match(newsDetailSource, /const result = await fetchNewsDetail\(id\)/)
   assert.match(newsDetailSource, /watch\(\(\) => props\.id,[\s\S]*\{ immediate: true \}\)/)
-  assert.match(newsDetailSource, /detail\.content \|\| t\('news\.emptyContent'\)/)
+  assert.match(newsDetailSource, /<NewsRichText :blocks="detail\.content" :empty-text="t\('news\.emptyContent'\)" \/>/)
+  assert.doesNotMatch(newsDetailSource, /v-html/)
   assert.match(newsDetailSource, /apiErrorMessage\(reason, t\('news\.detailLoadFailed'\)\)/)
 })
 

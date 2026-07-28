@@ -1,0 +1,11 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "检查移动端架构、测试与构建要求"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "验证移动端 URL、代理、鉴权、WebSocket 与 DTO 适配"}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "验证 PWA 不缓存金融接口且构建隔离"}
+{"file": ".trellis/spec/backend/auth-sessions.md", "reason": "验证 Bearer、refresh 与 bootstrap 排除行为"}
+{"file": ".trellis/spec/backend/realtime-websockets.md", "reason": "验证 WebSocket 路径、升级与帧协议"}
+{"file": ".trellis/tasks/07-28-mobile-backend-api-integration/research/mobile-backend-contract-audit.md", "reason": "逐项核对 P0-P3 差异已修复或明确阻断"}
+{"file": ".trellis/spec/backend/user-authentication.md", "reason": "验证首次强制 2FA 与认证边界"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核对前后端 DTO 与错误边界"}
+{"file": ".trellis/spec/backend/new-coin-mobile-contract.md", "reason": "检查新币购买计价资产与百分比换算"}
+{"file": ".trellis/spec/backend/public-news-contract.md", "reason": "检查公告富文本安全渲染"}
+{"file": ".trellis/spec/backend/prediction-markets.md", "reason": "检查预测订单业务编号展示"}

@@ -5899,3 +5899,24 @@
 - 修改文件：`mobile/{src,public,index.html,vite.config.ts,package*.json,README.md,.env.example,src-tauri/tauri.conf.json,tests}`、`.trellis/spec/mobile/{index,navigation-and-localization,pwa-and-shell}.md`、`.trellis/tasks/07-28-mobile-prototype-to-pwa-redesign/`、`docs/superpowers/PROGRESS.md`
 - 验证结果：`npm run type-check`、`npm test`（65/65）、`npm run build:tauri`（2011 modules）、`npm run build:pwa`（2011 modules，131 条静态壳预缓存，约 1.14 MiB）、`git diff --check` 通过；PWA Manifest、192/512/maskable/Apple 图标与生成式 Service Worker 完整，产物无 API/WebSocket、Background Sync 或运行时缓存策略，Tauri 产物无 PWA 文件；生产依赖审计 0 漏洞，完整开发工具链 12 项为既有 Workbox/Vite/vue-tsc 链告警且强制修复需要破坏性主版本升级；320x720、390x844、448x900 浏览器复验无横向溢出，七入口触控宽度为 44/44/44/56/44/44/44px，Header sticky 层级、主题刷新持久化、消息中心、现货/秒合约/合约独立路由、输入 2px 完整焦点轮廓和控制台零警告通过；关闭预览服务器后的真实离线重载成功。Android aarch64 Debug APK 构建通过，产物位于 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`；iOS 前端/Tauri Web 构建通过，但本机 Xcode Beta 未安装 Simulator SDK 27.0，且现有项目最低 iOS 14 低于该 Xcode 支持的 15-27，原生归档受外部工具链阻断，未为绕过本机问题擅自提高项目最低版本。
 - 后续事项：在具备匹配 Simulator SDK 或支持 iOS 14 的 Xcode 环境执行原生 iOS 归档；开发工具链漏洞应在可安排 Vite 8/vue-tsc 3/Workbox 兼容升级时单独处理。
+
+## 2026-07-28 08:51 - 首次强制 2FA 登录接口补全
+
+- 完成内容：为未绑定 TOTP 且命中强制登录 2FA 策略的用户补齐公开 challenge setup/confirm 契约；setup 校验 challenge 类型、有效期与消费状态后生成并加密保存 TOTP secret，confirm 校验验证码、启用 TOTP、原子消费 challenge 并签发标准用户 access/refresh token；错误验证码、错误类型、过期、已消费和重放均不会签发会话。
+- 修改文件：`src/modules/auth/{application,presentation,routes}.rs`、`src/openapi/auth.rs`、`tests/auth_login_setup_routes.rs`、`tests/unit_src/src_modules_auth_routes_tests.rs`
+- 验证结果：实现代理执行 `cargo check --all-targets`、Rust lib 测试 180/180、auth 聚焦测试 14/14、OpenAPI 测试 8/8、声明级测试 1/1、`rustfmt --check` 与 `git diff --check` 均通过；真实数据库集成将在主任务使用本地容器专用联调用户复验。
+- 后续事项：登记 OpenAPI 总入口，完成移动端扫码绑定流程与全链路联调。
+
+## 2026-07-28 09:09 - 移动端真实后端联调质量门
+
+- 完成内容：按任务 PRD、移动端/PWA、认证会话、WebSocket、新币、公告与预测市场规格审查整个工作树；确认首次强制 2FA setup/confirm、OpenAPI 总入口、PWA/Tauri/开发 URL、Vite HTTP/WS/健康代理、Bearer 与单次刷新、行情订阅、关键 DTO 和页面鉴权边界一致；补齐此前遗漏的移动端后端集成可执行规格。
+- 修改文件：`.trellis/spec/mobile/{index.md,backend-integration.md}`、`docs/superpowers/PROGRESS.md`
+- 验证结果：父会话已确认 `cargo check --all-targets`、Rust lib 180/180、mobile 81/81、移动端类型检查、PWA/Tauri 构建及真实 MySQL setup 路由 2/2；本质量门另执行受影响的轻量差异、格式与契约检查。
+- 后续事项：无。
+
+## 2026-07-28 09:15 - 移动端 PWA 与真实后端全链路联调完成
+
+- 完成内容：移动端统一接入 Rust `/api/v1`、`/health` 与 `/api/v1/ws/public`；开发环境固定经 Vite 同源 HTTP/WS 代理，PWA 默认同源部署，Tauri 发布缺少可访问 HTTPS 后端时明确报错且不回退设备 loopback；补齐 Bearer 单次刷新、首次强制 2FA 扫码绑定、新闻安全富文本、新币计价资产、预测订单号和历史合约名称映射。
+- 修改文件：`mobile/{src,tests,vite.config.ts,.env.example,README.md}`、`src/modules/auth/{application,presentation,routes}.rs`、`src/openapi{.rs,/auth.rs}`、`tests/{auth_login_setup_routes,openapi_routes,unit_src/src_modules_auth_routes_tests}.rs`、`.trellis/spec/{mobile,backend}`、`.trellis/tasks/07-28-mobile-backend-api-integration/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`cargo check --all-targets`、`cargo fmt --all -- --check`、Rust lib 180/180、OpenAPI 聚焦测试、真实 MySQL 2FA 路由 2/2、mobile 81/81、`type-check`、PWA/Tauri Web 构建和 `git diff --check` 通过；PWA 产物无 loopback API、API/WebSocket runtime cache；真实服务 `18080` 及移动代理 `1611` 的健康、登录配置、市场、公告、受保护 401、WS subscribe/ping/pong 均通过，浏览器真实数据渲染、主题持久化、无横向溢出和零 console warning/error。
+- 后续事项：正式 PWA 部署仍需由生产网关提供同源 `/api/v1`、`/health` 与 WebSocket upgrade，Tauri 发布构建需注入 `VITE_BACKEND_API_DOMAIN=https://...`。

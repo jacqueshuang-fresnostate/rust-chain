@@ -1,7 +1,7 @@
 import { client, requestUrl } from './client'
-import { asNumber, normalizeSymbol } from '@/core/format'
+import { asNumber, normalizeSymbol, splitSymbol } from '@/core/format'
 import { mapMarketTicker, type BackendMarketRecord, type BackendTickerRecord } from '@/core/marketMapper'
-import type { KlinePoint, MarketTicker, OrderBookLevel, TradePrint } from '@/core/types'
+import type { KlinePoint, MarketPair, MarketTicker, OrderBookLevel, TradePrint } from '@/core/types'
 
 type BackendMarket = BackendMarketRecord
 type BackendTicker = BackendTickerRecord
@@ -35,6 +35,21 @@ interface BackendTrade {
 }
 
 export { mapMarketTicker }
+
+export async function fetchMarketPairs(): Promise<MarketPair[]> {
+  const response = await client.get<{ markets?: BackendMarket[] }>(requestUrl('/markets'))
+  return (response.data.markets || [])
+    .map((market) => {
+      const pair = splitSymbol(market.symbol, market.base_asset, market.quote_asset)
+      return {
+        id: asNumber(market.id),
+        symbol: `${pair.base}/${pair.quote}`,
+        base: pair.base,
+        quote: pair.quote,
+      }
+    })
+    .filter((pair) => pair.id > 0 && Boolean(pair.base && pair.quote))
+}
 
 export async function fetchMarketTickers(): Promise<MarketTicker[]> {
   const response = await client.get<{ markets?: BackendMarket[] }>(requestUrl('/markets'))

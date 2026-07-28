@@ -1,0 +1,11 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "移动端目录、架构与质量规则"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "移动端后端 URL、代理、鉴权、WebSocket 与 DTO 契约"}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "PWA 构建、缓存与部署边界"}
+{"file": ".trellis/spec/backend/auth-sessions.md", "reason": "Bearer 与刷新会话契约"}
+{"file": ".trellis/spec/backend/realtime-websockets.md", "reason": "Rust WebSocket 路由与订阅协议"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "前后端数据边界与 DTO 对照"}
+{"file": ".trellis/tasks/07-28-mobile-backend-api-integration/research/mobile-backend-contract-audit.md", "reason": "P0-P3 可执行契约差异清单"}
+{"file": ".trellis/spec/backend/user-authentication.md", "reason": "登录标识与用户认证契约"}
+{"file": ".trellis/spec/backend/new-coin-mobile-contract.md", "reason": "新币购买计价资产与数量契约"}
+{"file": ".trellis/spec/backend/public-news-contract.md", "reason": "公告富文本响应契约"}
+{"file": ".trellis/spec/backend/prediction-markets.md", "reason": "预测订单号与列表展示契约"}

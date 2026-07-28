@@ -63,6 +63,10 @@ test('消息中心只展示真实公告、保存本机已读 ID 并进入公告�
   assert.match(messageCenterSource, /router\.push\(\{ name: 'news-detail', params: \{ id: String\(message\.id\) \} \}\)/)
   assert.doesNotMatch(messageCenterSource, /@\/api\/(?:user|wallet|trading|orders)/)
   assert.doesNotMatch(messageCenterSource, /messages\.value\s*=\s*\[/)
+  assert.match(zhCN.messageCenter.title, /平台公告/)
+  assert.match(zhCN.messageCenter.summaryUnread, /本设备/)
+  assert.match(en.messageCenter.title, /Platform announcements/)
+  assert.match(en.messageCenter.summaryUnread, /device/)
 })
 
 test('账户与消息视图满足主题、触控、窄屏和 Lucide 契约', () => {

@@ -20,6 +20,7 @@ export interface MarginOrderInput {
 
 interface BackendMarginProduct {
   id: number
+  pair_id?: number
   symbol: string
   margin_asset_symbol?: string
   margin_mode?: string
@@ -50,7 +51,6 @@ export interface MarginPosition {
   id: string
   productId: number
   pairId: number
-  symbol: string
   direction: 'long' | 'short'
   marginMode: 'cross' | 'isolated'
   marginAmount: number
@@ -134,6 +134,7 @@ export async function fetchMarginProducts(): Promise<MarginProduct[]> {
     const levels = parseLeverage(product.leverage_levels, product.max_leverage)
     return {
       id: product.id,
+      pairId: asNumber(product.pair_id),
       symbol: `${pair.base}/${pair.quote}`,
       marginAssetSymbol: (product.margin_asset_symbol || pair.quote).toUpperCase(),
       marginMode: modes[0] || 'isolated',
@@ -242,7 +243,6 @@ function mapMarginPosition(position: Record<string, unknown>): MarginPosition {
     id: String(position.id),
     productId: asNumber(position.product_id),
     pairId: asNumber(position.pair_id),
-    symbol: String(position.symbol || position.pair_symbol || position.pair_id || ''),
     direction: String(position.direction || '').toLowerCase() === 'short' ? 'short' : 'long',
     marginMode: String(position.margin_mode || 'isolated').toLowerCase() === 'cross' ? 'cross' : 'isolated',
     marginAmount: asNumber(position.margin_amount),

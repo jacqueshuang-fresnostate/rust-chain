@@ -62,6 +62,17 @@ pub(crate) struct LoginTwoFactorRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct LoginTwoFactorSetupRequest {
+    pub(crate) setup_challenge_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct LoginTwoFactorSetupConfirmRequest {
+    pub(crate) setup_challenge_id: String,
+    pub(crate) totp_code: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct AdminTwoFactorCodeRequest {
     pub(crate) totp_code: String,
 }
@@ -118,6 +129,13 @@ pub(crate) struct LoginTwoFactorChallengeResponse {
 pub(crate) struct LoginTwoFactorSetupChallengeResponse {
     pub(crate) requires_2fa_setup: bool,
     pub(crate) setup_challenge_id: String,
+    pub(crate) expires_in_seconds: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct LoginTwoFactorSetupResponse {
+    pub(crate) secret: String,
+    pub(crate) otpauth_uri: String,
     pub(crate) expires_in_seconds: i64,
 }
 

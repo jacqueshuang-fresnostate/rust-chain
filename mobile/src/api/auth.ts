@@ -24,6 +24,11 @@ export interface RegisterConfig {
   inviteCodeRequired: boolean
 }
 
+export interface LoginTwoFactorSetup {
+  secret: string
+  otpAuthUri: string
+}
+
 export type LoginOutcome =
   | { type: 'authenticated' }
   | { type: 'two-factor'; challengeId: string }
@@ -63,6 +68,25 @@ export async function loginWithPassword(account: string, password: string): Prom
 export async function submitLoginTwoFactor(challengeId: string, totpCode: string): Promise<void> {
   const response = await client.post<BackendLoginResponse>(requestUrl('/auth/login/2fa'), {
     challenge_id: challengeId,
+    totp_code: totpCode.trim(),
+  })
+  if (!response.data.access_token) throw new Error(i18n.global.t('auth.invalidSession'))
+  persistAuthTokens(response.data.access_token, response.data.refresh_token)
+}
+
+export async function setupLoginTwoFactor(setupChallengeId: string): Promise<LoginTwoFactorSetup> {
+  const response = await client.post<{ secret?: string; otpauth_uri?: string }>(requestUrl('/auth/login/2fa/setup'), {
+    setup_challenge_id: setupChallengeId,
+  })
+  const secret = response.data.secret?.trim()
+  const otpAuthUri = response.data.otpauth_uri?.trim()
+  if (!secret || !otpAuthUri) throw new Error(i18n.global.t('auth.setupLoadFailed'))
+  return { secret, otpAuthUri }
+}
+
+export async function confirmLoginTwoFactorSetup(setupChallengeId: string, totpCode: string): Promise<void> {
+  const response = await client.post<BackendLoginResponse>(requestUrl('/auth/login/2fa/setup/confirm'), {
+    setup_challenge_id: setupChallengeId,
     totp_code: totpCode.trim(),
   })
   if (!response.data.access_token) throw new Error(i18n.global.t('auth.invalidSession'))
