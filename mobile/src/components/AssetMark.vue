@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const props = withDefaults(defineProps<{
@@ -12,32 +12,87 @@ const props = withDefaults(defineProps<{
 
 const { t } = useI18n()
 
-const colors = ['#0f766e', '#2563eb', '#b45309', '#7c3aed', '#be123c', '#0369a1']
 const initial = computed(() => props.symbol.trim().replace(/[^a-z0-9]/gi, '').slice(0, 1).toUpperCase() || '?')
-const color = computed(() => colors[props.symbol.split('').reduce((total, char) => total + char.charCodeAt(0), 0) % colors.length])
+const imageFailed = ref(false)
+const tone = computed(() => props.symbol.split('').reduce((total, char) => total + char.charCodeAt(0), 0) % 5)
+const markStyle = computed(() => ({
+  height: `${props.size}px`,
+  width: `${props.size}px`,
+}))
+
+watch(() => props.src, () => {
+  imageFailed.value = false
+})
 </script>
 
 <template>
-  <span class="asset-mark" :style="{ '--asset-color': color, width: `${size}px`, height: `${size}px` }">
-    <img v-if="src" :src="src" :alt="t('common.assetIcon', { symbol })" loading="lazy" />
-    <b v-else>{{ initial }}</b>
+  <span
+    class="asset-mark"
+    :class="`asset-mark--tone-${tone}`"
+    :style="markStyle"
+    role="img"
+    :aria-label="t('common.assetIcon', { symbol })"
+  >
+    <img
+      v-if="src && !imageFailed"
+      :src="src"
+      alt=""
+      loading="lazy"
+      @error="imageFailed = true"
+    />
+    <b v-else aria-hidden="true">{{ initial }}</b>
   </span>
 </template>
 
 <style scoped>
 .asset-mark {
+  --asset-color: var(--positive);
+  --asset-ink: var(--on-positive);
   align-items: center;
-  background: var(--asset-color);
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--asset-color) 72%, var(--surface)), var(--asset-color));
+  border: 1px solid color-mix(in srgb, var(--asset-color) 58%, var(--line));
   border-radius: 50%;
-  color: white;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--surface) 42%, transparent),
+    0 4px 12px color-mix(in srgb, var(--asset-color) 20%, transparent);
+  color: var(--asset-ink);
   display: inline-flex;
   flex: 0 0 auto;
   font-size: 15px;
   justify-content: center;
   overflow: hidden;
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 22%), 0 2px 5px rgb(15 23 42 / 9%);
 }
 
-.asset-mark img { height: 100%; object-fit: cover; width: 100%; }
-.asset-mark b { font-weight: 750; }
+.asset-mark--tone-1 {
+  --asset-color: var(--focus);
+  --asset-ink: var(--surface);
+}
+
+.asset-mark--tone-2 {
+  --asset-color: var(--accent);
+  --asset-ink: var(--on-accent);
+}
+
+.asset-mark--tone-3 {
+  --asset-color: var(--negative);
+  --asset-ink: var(--on-negative);
+}
+
+.asset-mark--tone-4 {
+  --asset-color: var(--muted-strong);
+  --asset-ink: var(--surface);
+}
+
+.asset-mark img {
+  background: var(--surface-elevated);
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.asset-mark b {
+  font-weight: 800;
+  letter-spacing: 0;
+}
 </style>

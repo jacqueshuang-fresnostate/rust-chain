@@ -21,10 +21,10 @@ export const useMarketStore = defineStore('mobile-market', () => {
       if (!next.length) throw new Error('market list is empty')
       tickers.value = next
       error.value = false
+      updatedAt.value = Date.now()
     } catch {
       error.value = true
     } finally {
-      updatedAt.value = Date.now()
       loading.value = false
     }
   }

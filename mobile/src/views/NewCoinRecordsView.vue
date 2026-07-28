@@ -1,7 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { LockKeyhole, ReceiptText, UnlockKeyhole, WalletCards, X } from 'lucide-vue-next'
+import {
+  CheckCircle2,
+  CircleAlert,
+  LoaderCircle,
+  LockKeyhole,
+  PackageOpen,
+  ReceiptText,
+  RefreshCw,
+  UnlockKeyhole,
+  WalletCards,
+  X,
+} from 'lucide-vue-next'
 import LoginRequiredState from '@/components/LoginRequiredState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
@@ -40,10 +51,14 @@ const loading = ref(false)
 const saving = ref('')
 const error = ref('')
 const success = ref('')
+const feeDialog = ref<HTMLElement | null>(null)
+let returnFocus: HTMLElement | null = null
+let previousBodyOverflow = ''
 
 const paymentAccount = computed(() => accounts.value.find((account) => account.assetId === paymentAssetId.value))
 const paymentOptions = computed(() => pendingUnlock.value?.unlockFeeAssetId ? accounts.value.filter((account) => account.assetId === pendingUnlock.value?.unlockFeeAssetId) : accounts.value)
 const paymentAmount = computed(() => pendingUnlock.value?.unlockFeeAmount || 0)
+const dialogOpen = computed(() => Boolean(pendingUnlock.value))
 const tabs = computed<Array<{ key: RecordTab; label: string }>>(() => [
   { key: 'subscriptions', label: t('newCoin.tabSubscriptions') },
   { key: 'distributions', label: t('newCoin.tabDistributions') },
@@ -109,6 +124,12 @@ function openFeePayment(unlock: NewCoinUnlock): void {
   error.value = ''
 }
 
+function closeFeePayment(): void {
+  if (saving.value.startsWith('fee-')) return
+  pendingUnlock.value = null
+  error.value = ''
+}
+
 async function payFee(): Promise<void> {
   if (!pendingUnlock.value || !paymentAssetId.value || paymentAmount.value <= 0) {
     error.value = t('newCoin.invalidFeeConfig')
@@ -155,45 +176,592 @@ function feePaid(unlock: NewCoinUnlock): boolean {
   return unlock.feePaidStatus.toLowerCase() === 'paid'
 }
 
+function trapDialogFocus(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeFeePayment()
+    return
+  }
+  if (event.key !== 'Tab' || !feeDialog.value) return
+  const focusable = Array.from(feeDialog.value.querySelectorAll<HTMLElement>(
+    'button:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  ))
+  if (!focusable.length) return
+  const first = focusable[0]
+  const last = focusable.at(-1) || first
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
+watch(dialogOpen, async (open) => {
+  if (open) {
+    returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    previousBodyOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    await nextTick()
+    feeDialog.value?.querySelector<HTMLElement>('[data-dialog-cancel]')?.focus()
+    return
+  }
+  document.body.style.overflow = previousBodyOverflow
+  await nextTick()
+  returnFocus?.focus()
+  returnFocus = null
+})
+
 onMounted(() => { void load() })
+
+onBeforeUnmount(() => {
+  document.body.style.overflow = previousBodyOverflow
+})
 </script>
 
 <template>
   <main class="page page--plain new-coin-records-page">
     <PageHeader :title="t('newCoin.recordTitle')" />
-    <div class="page-content">
+    <div class="page-content new-coin-records-content">
       <LoginRequiredState v-if="!session.isAuthenticated" :description="t('newCoin.recordLoginDescription')" />
       <template v-else>
-        <p v-if="error" class="error-message">{{ error }}</p>
-        <p v-if="success" class="success-message">{{ success }}</p>
-        <nav class="record-tabs" :aria-label="t('newCoin.recordCategory')"><button v-for="tab in tabs" :key="tab.key" type="button" :class="{ active: activeTab === tab.key }" @click="activeTab = tab.key">{{ tab.label }}</button></nav>
-        <p v-if="loading" class="empty-state">{{ t('newCoin.loadingRecords') }}</p>
+        <div v-if="error && !dialogOpen" class="records-message records-message--error" role="alert">
+          <CircleAlert :size="18" />
+          <span>{{ error }}</span>
+          <button type="button" :aria-label="t('common.retry')" @click="load">
+            <RefreshCw :size="17" />
+          </button>
+        </div>
+        <div v-if="success" class="records-message records-message--success" role="status">
+          <CheckCircle2 :size="18" />
+          <span>{{ success }}</span>
+        </div>
+        <nav class="record-tabs" :aria-label="t('newCoin.recordCategory')">
+          <button
+            v-for="tab in tabs"
+            :key="tab.key"
+            type="button"
+            :aria-pressed="activeTab === tab.key"
+            :class="{ active: activeTab === tab.key }"
+            @click="activeTab = tab.key"
+          >
+            {{ tab.label }}
+          </button>
+        </nav>
+        <div v-if="loading" class="records-state" aria-live="polite">
+          <LoaderCircle :size="24" class="spin" />
+          <span>{{ t('newCoin.loadingRecords') }}</span>
+        </div>
         <template v-else>
-          <section v-if="activeTab === 'subscriptions'" class="record-list"><article v-for="record in subscriptions" :key="record.id"><div class="record-icon record-icon--green"><ReceiptText :size="19" /></div><div class="record-main"><strong>{{ t('newCoin.subscriptionRecord', { project: projectLabel(record.projectId) }) }}</strong><small>{{ formatDateTime(record.createdAt) }}</small></div><div class="record-value"><b>{{ formatAmount(record.requestedQuantity) }}</b><small>{{ t('newCoin.distributed', { amount: formatAmount(record.allocatedQuantity) }) }}</small><em>{{ statusLabel(record.status) }}</em></div></article><p v-if="!subscriptions.length" class="empty-state">{{ t('newCoin.noSubscriptions') }}</p></section>
-          <section v-else-if="activeTab === 'distributions'" class="record-list"><article v-for="record in distributions" :key="record.id"><div class="record-icon record-icon--blue"><WalletCards :size="19" /></div><div class="record-main"><strong>{{ t('newCoin.distributionRecord', { project: projectLabel(record.projectId) }) }}</strong><small>{{ formatDateTime(record.createdAt) }}</small></div><div class="record-value"><b>{{ formatAmount(record.quantity) }} {{ assetLabel(record.assetId) }}</b><small>{{ t(record.lockPositionId ? 'newCoin.locked' : 'newCoin.credited') }}</small><em>{{ statusLabel(record.status) }}</em></div></article><p v-if="!distributions.length" class="empty-state">{{ t('newCoin.noDistributions') }}</p></section>
-          <section v-else-if="activeTab === 'purchases'" class="record-list"><article v-for="record in purchases" :key="record.id"><div class="record-icon record-icon--orange"><LockKeyhole :size="19" /></div><div class="record-main"><strong>{{ t('newCoin.purchaseRecord', { project: projectLabel(record.projectId) }) }}</strong><small>{{ formatDateTime(record.createdAt) }}</small></div><div class="record-value"><b>{{ formatAmount(record.quantity) }} {{ assetLabel(record.baseAssetId) }}</b><small>{{ t('newCoin.paidAmount', { price: formatPrice(record.price), amount: formatAmount(record.quoteAmount) }) }}</small><em>{{ statusLabel(record.status) }}</em></div></article><p v-if="!purchases.length" class="empty-state">{{ t('newCoin.noPurchases') }}</p></section>
-          <section v-else class="record-list unlock-list"><article v-for="unlock in unlocks" :key="unlock.id"><div class="record-icon record-icon--purple"><UnlockKeyhole :size="19" /></div><div class="record-main"><strong>{{ t('newCoin.pendingUnlock', { asset: assetLabel(unlock.assetId) }) }}</strong><small>{{ formatDateTime(unlock.createdAt) }} · {{ statusLabel(unlock.status) }}</small></div><div class="record-value"><b>{{ formatAmount(unlock.unlockQuantity) }} {{ assetLabel(unlock.assetId) }}</b><small v-if="unlock.unlockFeeEnabled">{{ t('newCoin.feeAmount', { amount: formatAmount(unlock.unlockFeeAmount), asset: assetLabel(unlock.unlockFeeAssetId || 0) }) }}</small><small v-else>{{ t('newCoin.noUnlockFee') }}</small><em :class="{ paid: feePaid(unlock) }">{{ unlock.unlockFeeEnabled ? t('newCoin.feeStatus', { status: statusLabel(unlock.feePaidStatus) }) : t('newCoin.directlyReleasable') }}</em></div><div class="unlock-actions"><button v-if="unlock.unlockFeeEnabled && !feePaid(unlock)" class="button button--secondary" type="button" :disabled="saving === `fee-${unlock.id}`" @click="openFeePayment(unlock)">{{ t('newCoin.payFee') }}</button><button v-else class="button button--primary" type="button" :disabled="saving === `release-${unlock.id}`" @click="release(unlock)">{{ t(saving === `release-${unlock.id}` ? 'newCoin.releasing' : 'newCoin.release') }}</button></div></article><p v-if="!unlocks.length" class="empty-state">{{ t('newCoin.noUnlocks') }}</p></section>
+          <section v-if="activeTab === 'subscriptions'" class="record-list">
+            <article v-for="record in subscriptions" :key="record.id">
+              <div class="record-icon record-icon--positive"><ReceiptText :size="19" /></div>
+              <div class="record-main"><strong>{{ t('newCoin.subscriptionRecord', { project: projectLabel(record.projectId) }) }}</strong><small>{{ formatDateTime(record.createdAt) }}</small></div>
+              <div class="record-value"><b class="numeric">{{ formatAmount(record.requestedQuantity) }}</b><small>{{ t('newCoin.distributed', { amount: formatAmount(record.allocatedQuantity) }) }}</small><em>{{ statusLabel(record.status) }}</em></div>
+            </article>
+            <div v-if="!subscriptions.length" class="records-state records-state--empty">
+              <PackageOpen :size="22" />
+              <span>{{ t('newCoin.noSubscriptions') }}</span>
+            </div>
+          </section>
+
+          <section v-else-if="activeTab === 'distributions'" class="record-list">
+            <article v-for="record in distributions" :key="record.id">
+              <div class="record-icon record-icon--focus"><WalletCards :size="19" /></div>
+              <div class="record-main"><strong>{{ t('newCoin.distributionRecord', { project: projectLabel(record.projectId) }) }}</strong><small>{{ formatDateTime(record.createdAt) }}</small></div>
+              <div class="record-value"><b class="numeric">{{ formatAmount(record.quantity) }} {{ assetLabel(record.assetId) }}</b><small>{{ t(record.lockPositionId ? 'newCoin.locked' : 'newCoin.credited') }}</small><em>{{ statusLabel(record.status) }}</em></div>
+            </article>
+            <div v-if="!distributions.length" class="records-state records-state--empty">
+              <PackageOpen :size="22" />
+              <span>{{ t('newCoin.noDistributions') }}</span>
+            </div>
+          </section>
+
+          <section v-else-if="activeTab === 'purchases'" class="record-list">
+            <article v-for="record in purchases" :key="record.id">
+              <div class="record-icon record-icon--accent"><LockKeyhole :size="19" /></div>
+              <div class="record-main"><strong>{{ t('newCoin.purchaseRecord', { project: projectLabel(record.projectId) }) }}</strong><small>{{ formatDateTime(record.createdAt) }}</small></div>
+              <div class="record-value"><b class="numeric">{{ formatAmount(record.quantity) }} {{ assetLabel(record.baseAssetId) }}</b><small>{{ t('newCoin.paidAmount', { price: formatPrice(record.price), amount: formatAmount(record.quoteAmount) }) }}</small><em>{{ statusLabel(record.status) }}</em></div>
+            </article>
+            <div v-if="!purchases.length" class="records-state records-state--empty">
+              <PackageOpen :size="22" />
+              <span>{{ t('newCoin.noPurchases') }}</span>
+            </div>
+          </section>
+
+          <section v-else class="record-list unlock-list">
+            <article v-for="unlock in unlocks" :key="unlock.id">
+              <div class="record-icon record-icon--accent"><UnlockKeyhole :size="19" /></div>
+              <div class="record-main"><strong>{{ t('newCoin.pendingUnlock', { asset: assetLabel(unlock.assetId) }) }}</strong><small>{{ formatDateTime(unlock.createdAt) }} · {{ statusLabel(unlock.status) }}</small></div>
+              <div class="record-value">
+                <b class="numeric">{{ formatAmount(unlock.unlockQuantity) }} {{ assetLabel(unlock.assetId) }}</b>
+                <small v-if="unlock.unlockFeeEnabled">{{ t('newCoin.feeAmount', { amount: formatAmount(unlock.unlockFeeAmount), asset: assetLabel(unlock.unlockFeeAssetId || 0) }) }}</small>
+                <small v-else>{{ t('newCoin.noUnlockFee') }}</small>
+                <em :class="{ paid: feePaid(unlock) }">{{ unlock.unlockFeeEnabled ? t('newCoin.feeStatus', { status: statusLabel(unlock.feePaidStatus) }) : t('newCoin.directlyReleasable') }}</em>
+              </div>
+              <div class="unlock-actions">
+                <button
+                  v-if="unlock.unlockFeeEnabled && !feePaid(unlock)"
+                  class="button button--secondary"
+                  type="button"
+                  :disabled="saving === `fee-${unlock.id}`"
+                  @click="openFeePayment(unlock)"
+                >
+                  {{ t('newCoin.payFee') }}
+                </button>
+                <button
+                  v-else
+                  class="button button--primary"
+                  type="button"
+                  :disabled="saving === `release-${unlock.id}`"
+                  @click="release(unlock)"
+                >
+                  {{ t(saving === `release-${unlock.id}` ? 'newCoin.releasing' : 'newCoin.release') }}
+                </button>
+              </div>
+            </article>
+            <div v-if="!unlocks.length" class="records-state records-state--empty">
+              <PackageOpen :size="22" />
+              <span>{{ t('newCoin.noUnlocks') }}</span>
+            </div>
+          </section>
         </template>
       </template>
     </div>
 
-    <div v-if="pendingUnlock" class="fee-mask" @click.self="pendingUnlock = null"><form class="fee-dialog" role="dialog" aria-modal="true" @submit.prevent="payFee"><header><div><span>{{ t('newCoin.payFee') }}</span><h2>{{ t('newCoin.releaseAsset', { asset: assetLabel(pendingUnlock.assetId) }) }}</h2></div><button class="icon-button" type="button" :aria-label="t('common.close')" @click="pendingUnlock = null"><X :size="21" /></button></header><p>{{ t('newCoin.feeDescription') }}</p><label><span>{{ t('newCoin.paymentAsset') }}</span><select v-model="paymentAssetId"><option v-for="account in paymentOptions" :key="account.assetId" :value="account.assetId">{{ t('newCoin.assetAvailable', { asset: account.symbol, amount: formatAmount(account.available) }) }}</option></select></label><dl><div><dt>{{ t('newCoin.unlockFee') }}</dt><dd>{{ formatAmount(paymentAmount) }} {{ paymentAccount?.symbol || assetLabel(pendingUnlock.unlockFeeAssetId || 0) }}</dd></div><div><dt>{{ t('newCoin.availableBalance') }}</dt><dd>{{ formatAmount(paymentAccount?.available) }} {{ paymentAccount?.symbol }}</dd></div></dl><button class="button button--primary button--full" type="submit" :disabled="saving.startsWith('fee-')">{{ t(saving.startsWith('fee-') ? 'newCoin.paying' : 'newCoin.confirmPayment') }}</button></form></div>
+    <div v-if="pendingUnlock" class="fee-mask" @click.self="closeFeePayment">
+      <form
+        ref="feeDialog"
+        class="fee-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-coin-fee-title"
+        @keydown="trapDialogFocus"
+        @submit.prevent="payFee"
+      >
+        <header>
+          <div>
+            <span>{{ t('newCoin.payFee') }}</span>
+            <h2 id="new-coin-fee-title">{{ t('newCoin.releaseAsset', { asset: assetLabel(pendingUnlock.assetId) }) }}</h2>
+          </div>
+          <button
+            class="icon-button"
+            type="button"
+            :aria-label="t('common.close')"
+            :disabled="saving.startsWith('fee-')"
+            data-dialog-cancel
+            @click="closeFeePayment"
+          >
+            <X :size="21" />
+          </button>
+        </header>
+        <p>{{ t('newCoin.feeDescription') }}</p>
+        <label class="fee-field">
+          <span>{{ t('newCoin.paymentAsset') }}</span>
+          <select v-model="paymentAssetId">
+            <option v-for="account in paymentOptions" :key="account.assetId" :value="account.assetId">
+              {{ t('newCoin.assetAvailable', { asset: account.symbol, amount: formatAmount(account.available) }) }}
+            </option>
+          </select>
+        </label>
+        <dl class="fee-summary">
+          <div><dt>{{ t('newCoin.unlockFee') }}</dt><dd>{{ formatAmount(paymentAmount) }} {{ paymentAccount?.symbol || assetLabel(pendingUnlock.unlockFeeAssetId || 0) }}</dd></div>
+          <div><dt>{{ t('newCoin.availableBalance') }}</dt><dd>{{ formatAmount(paymentAccount?.available) }} {{ paymentAccount?.symbol }}</dd></div>
+        </dl>
+        <p v-if="error" class="dialog-feedback" role="alert">{{ error }}</p>
+        <button
+          class="button button--primary button--full fee-submit"
+          type="submit"
+          :disabled="saving.startsWith('fee-')"
+          :aria-busy="saving.startsWith('fee-')"
+        >
+          {{ t(saving.startsWith('fee-') ? 'newCoin.paying' : 'newCoin.confirmPayment') }}
+        </button>
+      </form>
+    </div>
   </main>
 </template>
 
 <style scoped>
-.new-coin-records-page .page-content { display: grid; gap: 16px; padding-bottom: 42px; padding-top: 16px; }
-.record-tabs { background: var(--soft); border-radius: var(--radius); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 3px; }
-.record-tabs button { background: transparent; border-radius: calc(var(--radius) - 2px); color: var(--muted-strong); font-size: 13px; min-height: 37px; padding: 0 3px; }
-.record-tabs button.active { background: white; box-shadow: var(--shadow-soft); color: var(--ink); font-weight: 700; }
-.record-list { border-top: 1px solid var(--line); display: grid; }
-.record-list article { align-items: center; border-bottom: 1px solid var(--line); display: grid; gap: 10px; grid-template-columns: 38px minmax(0, 1fr) minmax(88px, auto); min-height: 77px; padding: 10px 0; }
-.record-icon { align-items: center; border-radius: var(--radius); display: inline-flex; height: 36px; justify-content: center; width: 36px; }
-.record-icon--green { background: var(--positive-soft); color: var(--positive); }.record-icon--blue { background: #eaf1ff; color: #3975ca; }.record-icon--orange { background: #fff0dc; color: #bb6b12; }.record-icon--purple { background: #f1ebff; color: #7759c9; }
-.record-main,.record-value { display: grid; gap: 5px; min-width: 0; }
-.record-main strong,.record-value b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.record-main small,.record-value small { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.record-value { text-align: right; }.record-value em { color: var(--muted-strong); font-size: 11px; font-style: normal; }.record-value em.paid { color: var(--positive); }
-.unlock-list article { grid-template-columns: 38px minmax(0, 1fr) minmax(88px, auto); }.unlock-actions { grid-column: 2 / -1; justify-self: end; margin-top: -3px; }.unlock-actions .button { font-size: 12px; min-height: 34px; padding: 0 11px; }
-.fee-mask { align-items: flex-end; background: rgb(15 23 42 / 42%); display: flex; inset: 0; justify-content: center; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); position: fixed; z-index: 60; }.fee-dialog { background: white; border-radius: var(--radius); display: grid; gap: 14px; max-height: calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); max-width: 520px; overflow-y: auto; overscroll-behavior: contain; padding: 17px; width: 100%; }.fee-dialog header { align-items: center; display: flex; justify-content: space-between; }.fee-dialog header div { display: grid; gap: 4px; }.fee-dialog header span { color: var(--positive); font-size: 12px; font-weight: 700; }.fee-dialog h2 { font-size: 19px; margin: 0; }.fee-dialog > p { color: var(--muted); font-size: 12px; line-height: 1.45; margin: 0; }.fee-dialog label { display: grid; gap: 7px; }.fee-dialog label > span { color: var(--muted); font-size: 13px; }.fee-dialog select { background: var(--soft); border: 0; border-radius: var(--radius); color: var(--ink); font: inherit; min-height: 48px; padding: 0 12px; }.fee-dialog dl { border-top: 1px solid var(--line); display: grid; margin: 0; }.fee-dialog dl div { align-items: center; display: flex; justify-content: space-between; min-height: 34px; }.fee-dialog dt,.fee-dialog dd { color: var(--muted); font-size: 12px; margin: 0; }.fee-dialog dd { color: var(--ink); font-weight: 650; text-align: right; }.success-message { color: var(--positive); font-size: 13px; font-weight: 650; margin: 0; }
+.new-coin-records-page {
+  background: var(--surface);
+  min-width: 0;
+}
+
+.new-coin-records-content {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  padding-bottom: calc(28px + env(safe-area-inset-bottom));
+  padding-top: 14px;
+}
+
+.records-message {
+  align-items: center;
+  border: 1px solid currentColor;
+  display: grid;
+  font-size: 12px;
+  gap: 9px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  line-height: 1.45;
+  min-height: 52px;
+  padding: 4px 5px 4px 11px;
+}
+
+.records-message--error {
+  background: var(--negative-soft);
+  color: var(--negative);
+}
+
+.records-message--success {
+  background: var(--positive-soft);
+  color: var(--positive);
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.records-message button {
+  background: transparent;
+  color: inherit;
+  display: grid;
+  min-height: 44px;
+  min-width: 44px;
+  place-items: center;
+}
+
+.records-state {
+  align-content: center;
+  color: var(--muted);
+  display: grid;
+  font-size: 12px;
+  gap: 9px;
+  justify-items: center;
+  min-height: 148px;
+  text-align: center;
+}
+
+.records-state--empty {
+  min-height: 112px;
+}
+
+.record-tabs {
+  border: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.record-tabs button {
+  background: var(--field-surface);
+  border-bottom: 3px solid transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.15;
+  min-height: 48px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 4px 3px 1px;
+}
+
+.record-tabs button + button {
+  border-left: 1px solid var(--line);
+}
+
+.record-tabs button.active {
+  background: var(--surface);
+  border-bottom-color: var(--accent);
+  color: var(--ink);
+}
+
+.record-list {
+  border-top: 1px solid var(--line);
+  display: grid;
+  min-width: 0;
+}
+
+.record-list article {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 40px minmax(0, 1fr) minmax(88px, auto);
+  min-height: 78px;
+  min-width: 0;
+  padding: 10px 0;
+}
+
+.record-icon {
+  display: grid;
+  height: 40px;
+  place-items: center;
+  width: 40px;
+}
+
+.record-icon--positive {
+  background: var(--positive-soft);
+  color: var(--positive);
+}
+
+.record-icon--focus {
+  background: color-mix(in srgb, var(--focus) 12%, var(--surface));
+  color: var(--focus);
+}
+
+.record-icon--accent {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.record-main,
+.record-value {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.record-main strong,
+.record-value b {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.record-main small,
+.record-value small {
+  color: var(--muted);
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
+.record-value {
+  text-align: right;
+}
+
+.record-value em {
+  color: var(--accent);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.record-value em.paid {
+  color: var(--positive);
+}
+
+.unlock-list article {
+  grid-template-columns: 40px minmax(0, 1fr) minmax(88px, auto);
+}
+
+.unlock-actions {
+  grid-column: 2 / -1;
+  justify-self: end;
+}
+
+.unlock-actions .button {
+  border-radius: 0;
+  font-size: 11px;
+  min-height: 44px;
+  min-width: 104px;
+  padding: 0 11px;
+}
+
+.fee-mask {
+  align-items: flex-end;
+  background: var(--overlay);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding:
+    max(16px, env(safe-area-inset-top))
+    16px
+    max(16px, env(safe-area-inset-bottom));
+  position: fixed;
+  z-index: var(--layer-overlay);
+}
+
+.fee-dialog {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--accent);
+  box-shadow: var(--shadow-soft);
+  display: grid;
+  gap: 14px;
+  max-height: calc(100dvh - max(32px, env(safe-area-inset-top)) - max(32px, env(safe-area-inset-bottom)));
+  max-width: 520px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 17px;
+  width: 100%;
+}
+
+.fee-dialog > header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.fee-dialog > header > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.fee-dialog > header span {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.fee-dialog h2 {
+  font-size: 18px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.fee-dialog > p {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.fee-field {
+  background: var(--field-surface);
+  border: 1px solid var(--line);
+  display: grid;
+  min-width: 0;
+  padding: 7px 11px 6px;
+}
+
+.fee-field:focus-within {
+  background: var(--surface-elevated);
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.fee-field > span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.fee-field select {
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font-size: 12px;
+  min-height: 44px;
+  min-width: 0;
+  outline: 0;
+  width: 100%;
+}
+
+.fee-summary {
+  border-block: 1px solid var(--line);
+  display: grid;
+  margin: 0;
+}
+
+.fee-summary > div {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 44px;
+}
+
+.fee-summary > div:last-child {
+  border-bottom: 0;
+}
+
+.fee-summary dt,
+.fee-summary dd {
+  font-size: 11px;
+  margin: 0;
+}
+
+.fee-summary dt {
+  color: var(--muted);
+}
+
+.fee-summary dd {
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.dialog-feedback {
+  background: var(--negative-soft);
+  border-left: 3px solid var(--negative);
+  color: var(--negative);
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 0;
+  padding: 8px 10px;
+}
+
+.fee-submit {
+  border-radius: 0;
+  min-height: 52px;
+}
+
+.spin {
+  animation: spin .8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 390px) {
+  .new-coin-records-content {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+}
+
+@media (max-width: 340px) {
+  .record-tabs button {
+    font-size: 9px;
+  }
+
+  .record-list article,
+  .unlock-list article {
+    align-items: start;
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
+
+  .record-icon {
+    height: 36px;
+    width: 36px;
+  }
+
+  .record-value {
+    grid-column: 2;
+    justify-items: start;
+    text-align: left;
+  }
+
+  .unlock-actions {
+    grid-column: 2;
+    justify-self: stretch;
+  }
+
+  .unlock-actions .button {
+    width: 100%;
+  }
+
+  .fee-summary > div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+    justify-content: center;
+    padding: 8px 0;
+  }
+
+  .fee-summary dd {
+    text-align: left;
+  }
+}
 </style>

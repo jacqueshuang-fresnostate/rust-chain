@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ArrowDownUp, History, RefreshCw } from 'lucide-vue-next'
+import {
+  ArrowDownUp,
+  CheckCircle2,
+  CircleAlert,
+  History,
+  LoaderCircle,
+  PackageOpen,
+  RefreshCw,
+} from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import AssetMark from '@/components/AssetMark.vue'
 import LoginRequiredState from '@/components/LoginRequiredState.vue'
@@ -118,23 +126,405 @@ onMounted(() => { void load() })
 
 <template>
   <main class="page page--plain swap-page">
-    <PageHeader :title="t('swap.title')"><template #actions><button class="icon-button" type="button" :aria-label="t('swap.refresh')" :disabled="loading" @click="load"><RefreshCw :size="21" :class="{ spin: loading }" /></button></template></PageHeader>
-    <div class="page-content">
+    <PageHeader :title="t('swap.title')">
+      <template #actions>
+        <button
+          class="icon-button"
+          type="button"
+          :aria-label="t('swap.refresh')"
+          :disabled="loading"
+          @click="load"
+        >
+          <RefreshCw :size="20" :class="{ spin: loading }" />
+        </button>
+      </template>
+    </PageHeader>
+    <div class="page-content swap-content">
       <LoginRequiredState v-if="!session.isAuthenticated" :description="t('swap.loginDescription')" />
       <template v-else>
-        <p v-if="error" class="error-message">{{ error }}</p><p v-if="success" class="success-message">{{ success }}</p><p v-if="loading" class="empty-state">{{ t('swap.loading') }}</p>
+        <div v-if="error" class="swap-message swap-message--error" role="alert">
+          <CircleAlert :size="18" />
+          <span>{{ error }}</span>
+        </div>
+        <div v-if="success" class="swap-message swap-message--success" role="status">
+          <CheckCircle2 :size="18" />
+          <span>{{ success }}</span>
+        </div>
+        <div v-if="loading" class="swap-state" aria-live="polite">
+          <LoaderCircle :size="24" class="spin" />
+          <span>{{ t('swap.loading') }}</span>
+        </div>
         <template v-else-if="selectedPair">
-          <section class="swap-form"><label><span>{{ t('swap.pay') }}</span><div class="swap-input"><AssetMark :symbol="selectedPair.fromAssetSymbol" :size="30" /><select v-model="pairId" @change="quote = null"><option v-for="pair in pairs" :key="pair.id" :value="pair.id">{{ pair.fromAssetSymbol }}</option></select><input v-model="amount" inputmode="decimal" placeholder="0.00" @input="quote = null" /><button type="button" @click="useMaximum">{{ t('swap.all') }}</button></div><small>{{ t('swap.available', { amount: formatAmount(available), asset: selectedPair.fromAssetSymbol }) }}</small></label><button class="swap-direction" type="button" :aria-label="t('swap.direction')" @click="swapDirection"><ArrowDownUp :size="21" /></button><label><span>{{ t('swap.receive') }}</span><div class="swap-input swap-input--receive"><AssetMark :symbol="selectedPair.toAssetSymbol" :size="30" /><span>{{ selectedPair.toAssetSymbol }}</span><strong>{{ quote ? formatAmount(quote.toAmount) : '--' }}</strong></div></label></section>
-          <section class="swap-meta"><div><span>{{ t('swap.minimum') }}</span><b>{{ formatAmount(selectedPair.minAmount) }} {{ selectedPair.fromAssetSymbol }}</b></div><div><span>{{ t('swap.feeRate') }}</span><b>{{ formatPrice(selectedPair.feeRate * 100) }}%</b></div><div v-if="quote"><span>{{ t('swap.referenceRate') }}</span><b>1 {{ selectedPair.fromAssetSymbol }} = {{ formatPrice(quote.rate) }} {{ selectedPair.toAssetSymbol }}</b></div></section>
-          <button v-if="!quote" class="button button--primary button--full" type="button" :disabled="quoting" @click="getQuote">{{ quoting ? t('swap.quoting') : t('swap.getQuote') }}</button><button v-else class="button button--primary button--full" type="button" :disabled="confirming || quoteExpired" @click="confirm">{{ quoteExpired ? t('swap.quoteExpired') : confirming ? t('swap.confirming') : t('swap.confirm', { amount: formatAmount(quote.toAmount), asset: selectedPair.toAssetSymbol }) }}</button>
-          <section class="swap-history"><div class="section-heading"><span>{{ t('swap.history') }}</span><History :size="20" /></div><article v-for="order in orders" :key="order.id" class="swap-history__row"><div><strong>{{ order.fromAssetSymbol || t('swap.asset') }} → {{ order.toAssetSymbol || t('swap.asset') }}</strong><small>{{ formatDateTime(order.createdAt) }}</small></div><span><b>{{ formatAmount(order.fromAmount) }} → {{ formatAmount(order.toAmount) }}</b><small>{{ order.status }}</small></span></article><p v-if="!orders.length" class="empty-state">{{ t('swap.emptyHistory') }}</p></section>
+          <section class="swap-workspace">
+            <label class="swap-field">
+              <span>{{ t('swap.pay') }}</span>
+              <div class="swap-input">
+                <AssetMark :symbol="selectedPair.fromAssetSymbol" :size="32" />
+                <select v-model="pairId" @change="quote = null">
+                  <option v-for="pair in pairs" :key="pair.id" :value="pair.id">{{ pair.fromAssetSymbol }}</option>
+                </select>
+                <input v-model="amount" class="numeric" inputmode="decimal" placeholder="0.00" @input="quote = null" />
+                <button type="button" @click="useMaximum">{{ t('swap.all') }}</button>
+              </div>
+              <small>{{ t('swap.available', { amount: formatAmount(available), asset: selectedPair.fromAssetSymbol }) }}</small>
+            </label>
+
+            <button class="swap-direction" type="button" :aria-label="t('swap.direction')" @click="swapDirection">
+              <ArrowDownUp :size="20" />
+            </button>
+
+            <div class="swap-field">
+              <span>{{ t('swap.receive') }}</span>
+              <div class="swap-input swap-input--receive">
+                <AssetMark :symbol="selectedPair.toAssetSymbol" :size="32" />
+                <span>{{ selectedPair.toAssetSymbol }}</span>
+                <strong class="numeric">{{ quote ? formatAmount(quote.toAmount) : '--' }}</strong>
+              </div>
+            </div>
+          </section>
+
+          <section class="swap-meta">
+            <div><span>{{ t('swap.minimum') }}</span><b>{{ formatAmount(selectedPair.minAmount) }} {{ selectedPair.fromAssetSymbol }}</b></div>
+            <div><span>{{ t('swap.feeRate') }}</span><b>{{ formatPrice(selectedPair.feeRate * 100) }}%</b></div>
+            <div v-if="quote"><span>{{ t('swap.referenceRate') }}</span><b>1 {{ selectedPair.fromAssetSymbol }} = {{ formatPrice(quote.rate) }} {{ selectedPair.toAssetSymbol }}</b></div>
+          </section>
+
+          <button
+            v-if="!quote"
+            class="button button--primary button--full swap-submit"
+            type="button"
+            :disabled="quoting"
+            :aria-busy="quoting"
+            @click="getQuote"
+          >
+            {{ quoting ? t('swap.quoting') : t('swap.getQuote') }}
+          </button>
+          <button
+            v-else
+            class="button button--primary button--full swap-submit"
+            type="button"
+            :disabled="confirming || quoteExpired"
+            :aria-busy="confirming"
+            @click="confirm"
+          >
+            {{ quoteExpired ? t('swap.quoteExpired') : confirming ? t('swap.confirming') : t('swap.confirm', { amount: formatAmount(quote.toAmount), asset: selectedPair.toAssetSymbol }) }}
+          </button>
+
+          <section class="swap-history">
+            <div class="section-heading">
+              <span>{{ t('swap.history') }}</span>
+              <History :size="19" />
+            </div>
+            <article v-for="order in orders" :key="order.id" class="swap-history__row">
+              <div><strong>{{ order.fromAssetSymbol || t('swap.asset') }} → {{ order.toAssetSymbol || t('swap.asset') }}</strong><small>{{ formatDateTime(order.createdAt) }}</small></div>
+              <span><b>{{ formatAmount(order.fromAmount) }} → {{ formatAmount(order.toAmount) }}</b><small>{{ order.status }}</small></span>
+            </article>
+            <div v-if="!orders.length" class="swap-state swap-state--empty">
+              <PackageOpen :size="22" />
+              <span>{{ t('swap.emptyHistory') }}</span>
+            </div>
+          </section>
         </template>
-        <p v-else class="empty-state">{{ t('swap.noPairs') }}</p>
+        <div v-else class="swap-state swap-state--empty">
+          <PackageOpen :size="23" />
+          <span>{{ t('swap.noPairs') }}</span>
+        </div>
       </template>
     </div>
   </main>
 </template>
 
 <style scoped>
-.swap-page .page-content { display: grid; gap: 18px; padding-bottom: 42px; padding-top: 16px; }.swap-form { background: var(--soft); border: 1px solid var(--line); border-radius: var(--radius); display: grid; gap: 10px; padding: 14px; }.swap-form label { display: grid; gap: 8px; }.swap-form label > span,.swap-form small { color: var(--muted); font-size: 12px; }.swap-input { align-items: center; background: white; border: 1px solid transparent; border-radius: var(--radius); display: grid; gap: 9px; grid-template-columns: 30px minmax(67px, auto) 1fr auto; min-height: 58px; padding: 0 10px; }.swap-input:focus-within { border-color: var(--accent); }.swap-input select { appearance: none; background: transparent; border: 0; color: var(--ink); font-size: 15px; font-weight: 700; max-width: 88px; outline: 0; }.swap-input input { background: transparent; border: 0; color: var(--ink); font-size: 21px; font-weight: 740; min-width: 0; outline: 0; text-align: right; width: 100%; }.swap-input button { background: transparent; color: var(--accent); font-size: 12px; font-weight: 720; padding: 5px 0 5px 5px; }.swap-input--receive { grid-template-columns: 30px 1fr auto; }.swap-input--receive span { font-size: 15px; font-weight: 700; }.swap-input--receive strong { font-size: 21px; }.swap-direction { align-items: center; background: var(--ink); border: 3px solid var(--soft); border-radius: 50%; color: white; display: inline-flex; height: 40px; justify-content: center; justify-self: center; margin: -4px 0; width: 40px; z-index: 1; }.swap-meta { border-top: 1px solid var(--line); display: grid; margin-top: -2px; }.swap-meta div { align-items: center; display: flex; justify-content: space-between; min-height: 38px; }.swap-meta span { color: var(--muted); font-size: 12px; }.swap-meta b { font-size: 13px; text-align: right; }.swap-history { border-top: 1px solid var(--line); margin-top: 6px; }.swap-history .section-heading { align-items: center; margin-top: 20px; }.swap-history__row { align-items: center; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; min-height: 62px; }.swap-history__row div,.swap-history__row > span { display: grid; gap: 5px; }.swap-history__row strong,.swap-history__row b { font-size: 13px; }.swap-history__row small { color: var(--muted); font-size: 11px; }.swap-history__row > span { text-align: right; }.success-message { color: var(--positive); font-size: 13px; font-weight: 650; margin: 0; }.spin { animation: spin .8s linear infinite; }@keyframes spin { to { transform: rotate(360deg); } }
+.swap-page {
+  background: var(--surface);
+  min-width: 0;
+}
+
+.swap-content {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  padding-bottom: calc(28px + env(safe-area-inset-bottom));
+  padding-top: 14px;
+}
+
+.swap-message {
+  align-items: center;
+  border: 1px solid currentColor;
+  display: grid;
+  font-size: 12px;
+  gap: 9px;
+  grid-template-columns: auto minmax(0, 1fr);
+  line-height: 1.45;
+  min-height: 52px;
+  padding: 8px 11px;
+}
+
+.swap-message--error {
+  background: var(--negative-soft);
+  color: var(--negative);
+}
+
+.swap-message--success {
+  background: var(--positive-soft);
+  color: var(--positive);
+}
+
+.swap-state {
+  align-content: center;
+  color: var(--muted);
+  display: grid;
+  font-size: 12px;
+  gap: 9px;
+  justify-items: center;
+  min-height: 150px;
+  text-align: center;
+}
+
+.swap-state--empty {
+  min-height: 116px;
+}
+
+.swap-workspace {
+  background:
+    linear-gradient(132deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 62%),
+    var(--surface);
+  border-block: 1px solid var(--line);
+  border-top: 3px solid var(--accent);
+  display: grid;
+  gap: 0;
+  padding: 12px 0;
+}
+
+.swap-field {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.swap-field > span,
+.swap-field > small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.swap-input {
+  align-items: center;
+  background: var(--field-surface);
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 9px;
+  grid-template-columns: 32px minmax(62px, auto) minmax(0, 1fr) auto;
+  min-height: 60px;
+  min-width: 0;
+  padding: 0 10px;
+}
+
+.swap-input:focus-within {
+  background: var(--surface-elevated);
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.swap-input select {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 750;
+  min-height: 44px;
+  min-width: 0;
+  outline: 0;
+  width: 100%;
+}
+
+.swap-input input {
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 780;
+  min-height: 44px;
+  min-width: 0;
+  outline: 0;
+  text-align: right;
+  width: 100%;
+}
+
+.swap-input button {
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+  min-height: 44px;
+  padding: 0 2px 0 7px;
+}
+
+.swap-input--receive {
+  grid-template-columns: 32px minmax(62px, 1fr) auto;
+}
+
+.swap-input--receive span {
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.swap-input--receive strong {
+  font-size: 22px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.swap-direction {
+  align-items: center;
+  align-self: center;
+  background: var(--accent);
+  border: 3px solid var(--surface);
+  border-radius: 50%;
+  color: var(--on-accent);
+  display: inline-flex;
+  height: 46px;
+  justify-content: center;
+  justify-self: center;
+  margin: -2px 0;
+  min-height: 46px;
+  min-width: 46px;
+  width: 46px;
+  z-index: 1;
+}
+
+.swap-meta {
+  border-block: 1px solid var(--line);
+  display: grid;
+}
+
+.swap-meta > div {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  min-height: 44px;
+}
+
+.swap-meta > div + div {
+  border-top: 1px solid var(--line);
+}
+
+.swap-meta span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.swap-meta b {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.swap-submit {
+  border-radius: 0;
+  min-height: 52px;
+}
+
+.swap-history {
+  border-top: 8px solid var(--soft);
+  margin: 8px -20px 0;
+  padding: 0 20px;
+}
+
+.swap-history .section-heading {
+  border-bottom: 1px solid var(--line);
+  font-size: 16px;
+  margin: 0;
+  min-height: 56px;
+}
+
+.swap-history .section-heading svg {
+  color: var(--accent);
+}
+
+.swap-history__row {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  min-height: 68px;
+}
+
+.swap-history__row > div,
+.swap-history__row > span {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.swap-history__row strong,
+.swap-history__row b {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.swap-history__row small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.swap-history__row > span {
+  flex: 0 0 auto;
+  text-align: right;
+}
+
+.spin {
+  animation: spin .8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 390px) {
+  .swap-content {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .swap-history {
+    margin-left: -14px;
+    margin-right: -14px;
+    padding-inline: 14px;
+  }
+}
+
+@media (max-width: 340px) {
+  .swap-input {
+    gap: 6px;
+    grid-template-columns: 30px minmax(52px, auto) minmax(0, 1fr) auto;
+    padding-inline: 8px;
+  }
+
+  .swap-input--receive {
+    grid-template-columns: 30px minmax(52px, 1fr) auto;
+  }
+
+  .swap-input input,
+  .swap-input--receive strong {
+    font-size: 18px;
+  }
+
+  .swap-meta > div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+    justify-content: center;
+    padding-block: 8px;
+  }
+
+  .swap-meta b {
+    text-align: left;
+  }
+}
 </style>

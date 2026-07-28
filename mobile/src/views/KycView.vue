@@ -208,19 +208,91 @@ onMounted(() => { void load() })
 <template>
   <main class="page page--plain kyc-page">
     <PageHeader :title="t('kyc.title')" />
-    <div class="page-content">
+    <div class="page-content kyc-content">
       <LoginRequiredState v-if="!session.isAuthenticated" :description="t('kyc.loginDescription')" />
       <template v-else>
-        <p v-if="error" class="error-message">{{ error }}</p>
-        <p v-if="loading" class="empty-state">{{ t('kyc.loading') }}</p>
+        <p v-if="error" class="error-message kyc-feedback" role="alert">{{ error }}</p>
+        <p v-if="success" class="success-message kyc-feedback" role="status">{{ success }}</p>
+        <p v-if="loading" class="empty-state kyc-loading" role="status">{{ t('kyc.loading') }}</p>
         <template v-else-if="kyc">
-          <section v-if="latest" class="kyc-status" :class="`kyc-status--${latest.status}`"><CheckCircle2 :size="22" /><div><strong>{{ statusLabel(latest.status) }}</strong><p>{{ t('kyc.submittedAt', { type: latest.submissionType === 'enterprise' ? t('kyc.enterprise') : t('kyc.personal'), time: formatDateTime(latest.submittedAt) }) }}</p><small v-if="latest.reviewReason">{{ latest.reviewReason }}</small></div></section>
+          <section v-if="latest" class="kyc-status" :class="`kyc-status--${latest.status}`" role="status">
+            <CheckCircle2 :size="22" />
+            <div>
+              <strong>{{ statusLabel(latest.status) }}</strong>
+              <p>{{ t('kyc.submittedAt', { type: latest.submissionType === 'enterprise' ? t('kyc.enterprise') : t('kyc.personal'), time: formatDateTime(latest.submittedAt) }) }}</p>
+              <small v-if="latest.reviewReason">{{ latest.reviewReason }}</small>
+            </div>
+          </section>
           <p v-if="!kyc.config.enabled" class="surface-note">{{ t('kyc.disabled') }}</p>
-          <form v-else-if="!isLocked" class="kyc-form" @submit.prevent="submit">
-            <div class="kyc-type"><button type="button" :class="{ 'is-active': submissionType === 'personal' }" @click="submissionType = 'personal'"><UserRound :size="19" />{{ t('kyc.personal') }}</button><button type="button" :class="{ 'is-active': submissionType === 'enterprise' }" @click="submissionType = 'enterprise'"><Building2 :size="19" />{{ t('kyc.enterprise') }}</button></div>
-            <section class="form-section"><h2>{{ t('kyc.subjectInfo') }}</h2><label><span>{{ t('kyc.legalName') }}</span><input v-model="form.realName" class="input" :placeholder="t('kyc.legalNamePlaceholder')" /></label><template v-if="submissionType === 'enterprise'"><label><span>{{ t('kyc.enterpriseName') }}</span><input v-model="form.enterpriseName" class="input" :placeholder="t('kyc.enterpriseNamePlaceholder')" /></label><label><span>{{ t('kyc.registrationNumber') }}</span><input v-model="form.businessRegistrationNumber" class="input" :placeholder="t('kyc.registrationNumberPlaceholder')" /></label></template><label><span>{{ t('kyc.country') }}</span><select v-model="form.country"><option v-for="country in countryOptions" :key="country.value" :value="country.value">{{ country.label }}</option></select></label><label><span>{{ t('kyc.documentType') }}</span><select v-model="form.documentType"><option v-for="type in documentTypes" :key="type" :value="type">{{ documentLabel(type) }}</option></select></label><label><span>{{ t('kyc.documentNumber') }}</span><input v-model="form.idNumber" class="input" :placeholder="t('kyc.documentNumberPlaceholder')" /></label></section>
-            <section class="form-section"><h2>{{ t('kyc.documents') }}</h2><p>{{ t('kyc.fileHint', { size: maxDocumentSizeMb }) }}</p><div class="document-grid"><button v-for="item in uploadItems" :key="item.kind" class="upload-tile" type="button" @click="chooseFile(item.kind)"><img v-if="previews[item.kind]" :src="previews[item.kind]" :alt="item.label" /><template v-else><Camera :size="23" /><span>{{ item.label }}</span></template></button></div><input ref="frontInput" class="hidden-input" type="file" accept="image/*" @change="handleFile($event, 'front')" /><input ref="backInput" class="hidden-input" type="file" accept="image/*" @change="handleFile($event, 'back')" /><input ref="handheldInput" class="hidden-input" type="file" accept="image/*" @change="handleFile($event, 'handheld')" /></section>
-            <p v-if="success" class="success-message">{{ success }}</p><button class="button button--primary button--full" type="submit" :disabled="submitting">{{ submitting ? t('common.submitting') : t('kyc.submit') }}</button>
+          <form v-else-if="!isLocked" class="kyc-form" :aria-busy="submitting" @submit.prevent="submit">
+            <div class="kyc-type" role="group" :aria-label="t('kyc.subjectInfo')">
+              <button type="button" :aria-pressed="submissionType === 'personal'" :class="{ 'is-active': submissionType === 'personal' }" @click="submissionType = 'personal'">
+                <UserRound :size="19" />{{ t('kyc.personal') }}
+              </button>
+              <button type="button" :aria-pressed="submissionType === 'enterprise'" :class="{ 'is-active': submissionType === 'enterprise' }" @click="submissionType = 'enterprise'">
+                <Building2 :size="19" />{{ t('kyc.enterprise') }}
+              </button>
+            </div>
+
+            <section class="form-section">
+              <h2>{{ t('kyc.subjectInfo') }}</h2>
+              <label>
+                <span>{{ t('kyc.legalName') }}</span>
+                <input v-model="form.realName" class="input" :placeholder="t('kyc.legalNamePlaceholder')" />
+              </label>
+              <template v-if="submissionType === 'enterprise'">
+                <label>
+                  <span>{{ t('kyc.enterpriseName') }}</span>
+                  <input v-model="form.enterpriseName" class="input" :placeholder="t('kyc.enterpriseNamePlaceholder')" />
+                </label>
+                <label>
+                  <span>{{ t('kyc.registrationNumber') }}</span>
+                  <input v-model="form.businessRegistrationNumber" class="input" :placeholder="t('kyc.registrationNumberPlaceholder')" />
+                </label>
+              </template>
+              <label>
+                <span>{{ t('kyc.country') }}</span>
+                <select v-model="form.country">
+                  <option v-for="country in countryOptions" :key="country.value" :value="country.value">{{ country.label }}</option>
+                </select>
+              </label>
+              <label>
+                <span>{{ t('kyc.documentType') }}</span>
+                <select v-model="form.documentType">
+                  <option v-for="type in documentTypes" :key="type" :value="type">{{ documentLabel(type) }}</option>
+                </select>
+              </label>
+              <label>
+                <span>{{ t('kyc.documentNumber') }}</span>
+                <input v-model="form.idNumber" class="input" :placeholder="t('kyc.documentNumberPlaceholder')" />
+              </label>
+            </section>
+
+            <section class="form-section document-section">
+              <h2>{{ t('kyc.documents') }}</h2>
+              <p>{{ t('kyc.fileHint', { size: maxDocumentSizeMb }) }}</p>
+              <div class="document-grid">
+                <button
+                  v-for="item in uploadItems"
+                  :key="item.kind"
+                  class="upload-tile"
+                  :class="{ 'upload-tile--selected': documents[item.kind] }"
+                  type="button"
+                  @click="chooseFile(item.kind)"
+                >
+                  <img v-if="previews[item.kind]" :src="previews[item.kind]" :alt="item.label" />
+                  <template v-else><Camera :size="23" /><span>{{ item.label }}</span></template>
+                  <span v-if="previews[item.kind]" class="upload-tile__status"><FileBadge :size="15" />{{ item.label }}</span>
+                </button>
+              </div>
+              <input ref="frontInput" class="hidden-input" type="file" accept="image/*" @change="handleFile($event, 'front')" />
+              <input ref="backInput" class="hidden-input" type="file" accept="image/*" @change="handleFile($event, 'back')" />
+              <input ref="handheldInput" class="hidden-input" type="file" accept="image/*" @change="handleFile($event, 'handheld')" />
+            </section>
+
+            <button class="button button--primary button--full kyc-submit" type="submit" :disabled="submitting">
+              {{ submitting ? t('common.submitting') : t('kyc.submit') }}
+            </button>
           </form>
           <p v-else class="surface-note">{{ latest?.status === 'approved' ? t('kyc.completedLevel', { level: latest.targetKycLevel }) : t('kyc.reviewPending') }}</p>
         </template>
@@ -230,5 +302,44 @@ onMounted(() => { void load() })
 </template>
 
 <style scoped>
-.kyc-page .page-content { display: grid; gap: 18px; padding-bottom: 42px; padding-top: 16px; }.kyc-status { align-items: flex-start; border: 1px solid var(--line); border-radius: var(--radius); display: flex; gap: 11px; padding: 14px; }.kyc-status--approved { background: var(--positive-soft); border-color: #caeddb; color: var(--positive); }.kyc-status--pending { background: #fff8e6; border-color: #f2dfaf; color: #8a5a00; }.kyc-status--rejected { background: var(--negative-soft); border-color: #f5cbd5; color: var(--negative); }.kyc-status div { display: grid; gap: 4px; }.kyc-status strong { color: var(--ink); font-size: 16px; }.kyc-status p,.kyc-status small { color: var(--muted-strong); font-size: 12px; line-height: 1.4; margin: 0; }.kyc-form { display: grid; gap: 22px; }.kyc-type { background: var(--soft); border-radius: 25px; display: grid; grid-template-columns: 1fr 1fr; padding: 4px; }.kyc-type button { align-items: center; background: transparent; border-radius: 20px; color: var(--muted); display: flex; font-size: 14px; font-weight: 700; gap: 6px; justify-content: center; min-height: 39px; }.kyc-type .is-active { background: white; box-shadow: 0 1px 4px rgb(15 23 42 / 10%); color: var(--ink); }.form-section { border-top: 1px solid var(--line); display: grid; gap: 13px; padding-top: 18px; }.form-section h2 { font-size: 18px; margin: 0; }.form-section > p { color: var(--muted); font-size: 12px; margin: -5px 0 0; }.form-section label { display: grid; gap: 7px; }.form-section label > span { color: var(--muted); font-size: 13px; }.form-section select { appearance: none; background: var(--soft); border: 1px solid transparent; border-radius: var(--radius); color: var(--ink); font: inherit; min-height: 48px; outline: 0; padding: 0 13px; }.form-section select:focus { background: white; border-color: var(--accent); box-shadow: 0 0 0 3px rgb(22 124 103 / 9%); }.document-grid { display: grid; gap: 10px; grid-template-columns: repeat(3, 1fr); }.upload-tile { align-items: center; aspect-ratio: .9; background: var(--soft); border: 1px dashed #cbd2d8; border-radius: var(--radius); color: var(--muted); display: flex; flex-direction: column; font-size: 12px; gap: 8px; justify-content: center; overflow: hidden; padding: 6px; }.upload-tile img { height: 100%; object-fit: cover; width: 100%; }.hidden-input { display: none; }.success-message { color: var(--positive); font-size: 13px; font-weight: 650; margin: -8px 0 0; }
+.kyc-page { background: var(--background); }
+.kyc-content { display: grid; gap: 20px; margin: 0 auto; max-width: 520px; padding-bottom: calc(44px + env(safe-area-inset-bottom)); padding-top: 18px; width: 100%; }
+.kyc-feedback { border: 1px solid currentColor; border-radius: var(--radius); line-height: 1.45; margin: 0; padding: 11px 13px; }
+.error-message.kyc-feedback { background: var(--negative-soft); }
+.success-message { background: var(--positive-soft); color: var(--positive); font-size: 13px; font-weight: 680; }
+.kyc-loading { background: var(--soft); border: 1px solid var(--line); border-radius: var(--radius); margin: 0; padding: 24px 12px; }
+.kyc-status { align-items: flex-start; background: var(--surface-elevated); border: 1px solid var(--line); border-left: 4px solid currentColor; border-radius: var(--radius); display: flex; gap: 11px; padding: 14px; }
+.kyc-status--approved { background: var(--positive-soft); color: var(--positive); }
+.kyc-status--pending { background: var(--accent-soft); color: var(--accent); }
+.kyc-status--rejected { background: var(--negative-soft); color: var(--negative); }
+.kyc-status > svg { flex: 0 0 auto; margin-top: 1px; }
+.kyc-status div { display: grid; gap: 4px; min-width: 0; }
+.kyc-status strong { color: var(--ink); font-size: 16px; }
+.kyc-status p,.kyc-status small { color: var(--muted-strong); font-size: 12px; line-height: 1.45; margin: 0; overflow-wrap: anywhere; }
+.kyc-form { display: grid; gap: 22px; }
+.kyc-type { background: var(--soft); border: 1px solid var(--line); border-radius: var(--radius); display: grid; gap: 4px; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 4px; }
+.kyc-type button { align-items: center; background: transparent; border: 1px solid transparent; border-radius: calc(var(--radius) - 3px); color: var(--muted); display: flex; font-size: 14px; font-weight: 720; gap: 6px; justify-content: center; min-height: 44px; padding: 0 8px; }
+.kyc-type .is-active { background: var(--surface-elevated); border-color: var(--line-strong); box-shadow: var(--shadow-soft); color: var(--ink); }
+.form-section { border-top: 1px solid var(--line); display: grid; gap: 14px; padding-top: 20px; }
+.form-section h2 { font-size: 19px; letter-spacing: 0; margin: 0; }
+.form-section > p { color: var(--muted); font-size: 12px; line-height: 1.45; margin: -6px 0 0; }
+.form-section label { display: grid; gap: 7px; }
+.form-section label > span { color: var(--muted); font-size: 12px; font-weight: 650; }
+.form-section .input,
+.form-section select { appearance: none; background: var(--field-surface); border: 1px solid var(--line); border-radius: var(--radius); color: var(--ink); font: inherit; min-height: 52px; outline: 0; padding: 0 13px; width: 100%; }
+.form-section .input:focus,
+.form-section select:focus { background: var(--surface-elevated); border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-ring); }
+.document-grid { display: grid; gap: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.upload-tile { align-items: center; aspect-ratio: .92; background: var(--field-surface); border: 1px dashed var(--line-strong); border-radius: var(--radius); color: var(--muted); display: flex; flex-direction: column; font-size: 12px; gap: 8px; justify-content: center; min-height: 96px; overflow: hidden; padding: 6px; position: relative; }
+.upload-tile:hover { border-color: var(--accent); color: var(--accent); }
+.upload-tile:focus-visible { box-shadow: 0 0 0 3px var(--focus-ring); }
+.upload-tile--selected { border-style: solid; border-color: var(--positive); }
+.upload-tile img { height: 100%; inset: 0; object-fit: cover; position: absolute; width: 100%; }
+.upload-tile__status { align-items: center; background: var(--surface-elevated); border-top: 1px solid var(--line); bottom: 0; color: var(--positive); display: flex; font-size: 10px; font-weight: 720; gap: 4px; inset-inline: 0; justify-content: center; min-height: 28px; overflow: hidden; padding: 4px; position: absolute; text-overflow: ellipsis; white-space: nowrap; z-index: 1; }
+.hidden-input { display: none; }
+.kyc-submit { min-height: 52px; }
+@media (max-width: 340px) {
+  .kyc-content { padding-left: 16px; padding-right: 16px; }
+  .document-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 </style>

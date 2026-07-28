@@ -111,22 +111,22 @@ onMounted(async () => {
         <h1>{{ step === 1 ? t('auth.login') : t('auth.welcomeBack') }}</h1>
         <p>{{ step === 1 ? identityDescription : t('auth.passwordStepDescription') }}</p>
 
-        <form @submit.prevent="submit">
+        <form :aria-busy="submitting" @submit.prevent="submit">
           <template v-if="step === 1">
             <div v-if="usernameLoginEnabled" class="login-modes" role="tablist" :aria-label="t('auth.loginMethod')">
               <button type="button" role="tab" :aria-selected="loginMode === 'email'" :class="{ active: loginMode === 'email' }" @click="selectMode('email')">{{ t('auth.email') }}</button>
               <button type="button" role="tab" :aria-selected="loginMode === 'username'" :class="{ active: loginMode === 'username' }" @click="selectMode('username')">{{ t('auth.username') }}</button>
             </div>
-            <label class="auth-label"><span>{{ t(loginMode === 'email' ? 'auth.email' : 'auth.username') }}</span><div class="auth-field"><UserRound :size="19" /><input ref="accountInput" v-model="account" :autocomplete="loginMode === 'email' ? 'email' : 'username'" :inputmode="loginMode === 'email' ? 'email' : 'text'" :placeholder="t(loginMode === 'email' ? 'auth.emailPlaceholder' : 'auth.usernamePlaceholder')" /></div></label>
+            <label class="auth-label"><span>{{ t(loginMode === 'email' ? 'auth.email' : 'auth.username') }}</span><div class="auth-field"><UserRound :size="19" /><input ref="accountInput" v-model="account" :aria-invalid="Boolean(error)" :autocomplete="loginMode === 'email' ? 'email' : 'username'" :inputmode="loginMode === 'email' ? 'email' : 'text'" :placeholder="t(loginMode === 'email' ? 'auth.emailPlaceholder' : 'auth.usernamePlaceholder')" /></div></label>
           </template>
 
           <template v-else>
             <button class="account-summary" type="button" @click="handleBack"><span><UserRound :size="18" />{{ account }}</span><b>{{ t('auth.change') }}</b></button>
-            <label class="auth-label"><span>{{ t('auth.password') }}</span><div class="auth-field"><input ref="passwordInput" v-model="password" :type="showPassword ? 'text' : 'password'" autocomplete="current-password" :placeholder="t('auth.passwordPlaceholder')" /><button class="password-toggle" type="button" :aria-label="t(showPassword ? 'auth.hidePassword' : 'auth.showPassword')" @click="showPassword = !showPassword"><EyeOff v-if="showPassword" :size="19" /><Eye v-else :size="19" /></button></div></label>
+            <label class="auth-label"><span>{{ t('auth.password') }}</span><div class="auth-field"><input ref="passwordInput" v-model="password" :aria-invalid="Boolean(error)" :type="showPassword ? 'text' : 'password'" autocomplete="current-password" :placeholder="t('auth.passwordPlaceholder')" /><button class="password-toggle" type="button" :aria-label="t(showPassword ? 'auth.hidePassword' : 'auth.showPassword')" @click="showPassword = !showPassword"><EyeOff v-if="showPassword" :size="19" /><Eye v-else :size="19" /></button></div></label>
             <button class="forgot-link" type="button" @click="router.push({ name: 'forgot-password' })">{{ t('auth.forgotPassword') }}</button>
           </template>
 
-          <p v-if="error" class="error-message" aria-live="polite">{{ error }}</p>
+          <p v-if="error" class="error-message auth-feedback" role="alert">{{ error }}</p>
           <button class="button button--primary button--full login-submit" type="submit" :disabled="submitting">{{ submitting ? t('auth.loggingIn') : step === 1 ? t('auth.next') : t('auth.login') }}</button>
         </form>
       </div>
@@ -137,43 +137,45 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.login-page { background: var(--surface); display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 100dvh; padding-top: env(safe-area-inset-top); }
-.auth-topbar { align-items: center; display: flex; justify-content: space-between; min-height: 68px; padding: 8px 16px; }
-.login-panel { display: flex; flex-direction: column; margin: 0 auto; max-width: 430px; padding: 22px 24px calc(26px + env(safe-area-inset-bottom)); width: 100%; }
+.login-page { background: var(--background); display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 100dvh; padding-top: env(safe-area-inset-top); }
+.auth-topbar { align-items: center; background: var(--background); display: flex; justify-content: space-between; min-height: 60px; padding: 8px 16px; position: sticky; top: 0; z-index: var(--layer-sticky-header); }
+.auth-topbar .icon-button { border: 1px solid var(--line); }
+.login-panel { display: flex; flex-direction: column; margin: 0 auto; max-width: 448px; padding: 24px 24px calc(28px + env(safe-area-inset-bottom)); width: 100%; }
 .login-panel__main { width: 100%; }
-.login-panel__logo { display: block; height: 28px; margin-bottom: 36px; max-width: 112px; object-fit: contain; object-position: left center; }
+.login-panel__logo { display: block; height: 30px; margin-bottom: 34px; max-width: 120px; object-fit: contain; object-position: left center; }
 .auth-progress { display: grid; gap: 7px; grid-template-columns: repeat(2, 36px); margin-bottom: 20px; }
-.auth-progress i { background: var(--line); border-radius: 2px; height: 3px; transition: background-color 160ms ease; }
-.auth-progress i.active { background: var(--ink); }
-.login-panel h1 { font-size: 36px; line-height: 1.15; margin: 0; overflow-wrap: anywhere; }
-.login-panel__main > p { color: var(--muted-strong); font-size: 15px; line-height: 1.65; margin: 12px 0 34px; }
+.auth-progress i { background: var(--line-strong); border-radius: 2px; height: 3px; transition: background-color var(--motion-fast) var(--motion-ease); }
+.auth-progress i.active { background: var(--accent); }
+.login-panel h1 { font-size: 36px; letter-spacing: 0; line-height: 1.08; margin: 0; overflow-wrap: anywhere; }
+.login-panel__main > p { color: var(--muted-strong); font-size: 15px; line-height: 1.6; margin: 13px 0 32px; }
 .login-panel form { display: grid; gap: 18px; }
-.login-modes { border-bottom: 1px solid var(--line); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.login-modes button { background: transparent; color: var(--muted); font-size: 16px; font-weight: 700; min-height: 49px; padding: 0 4px; position: relative; }
-.login-modes button.active { color: var(--ink); }
-.login-modes button.active::after { background: var(--ink); bottom: -1px; content: ''; height: 2px; inset-inline: 16px; position: absolute; }
+.login-modes { background: var(--soft); border: 1px solid var(--line); border-radius: var(--radius); display: grid; gap: 4px; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 4px; }
+.login-modes button { background: transparent; border: 1px solid transparent; border-radius: calc(var(--radius) - 3px); color: var(--muted); font-size: 14px; font-weight: 720; min-height: 44px; padding: 0 8px; }
+.login-modes button.active { background: var(--surface-elevated); border-color: var(--line-strong); box-shadow: var(--shadow-soft); color: var(--ink); }
 .auth-label { display: grid; gap: 9px; }
 .auth-label > span { font-size: 14px; font-weight: 720; }
-.auth-field { align-items: center; background: var(--soft); border: 1px solid transparent; border-radius: var(--radius); color: var(--muted-strong); display: flex; gap: 11px; min-height: 58px; padding: 0 15px; transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease; }
-.auth-field:focus-within { background: white; border-color: var(--accent); box-shadow: 0 0 0 3px rgb(22 124 103 / 9%); }
-.auth-field input { background: transparent; border: 0; color: var(--ink); font-size: 16px; min-width: 0; outline: 0; width: 100%; }
-.auth-field input::placeholder { color: #a3a8ad; }
-.password-toggle { align-items: center; background: transparent; color: var(--muted-strong); display: inline-flex; flex: 0 0 40px; height: 40px; justify-content: center; margin-right: -8px; padding: 0; }
-.account-summary { align-items: center; background: var(--soft); border-radius: var(--radius); color: var(--ink); display: flex; gap: 12px; justify-content: space-between; min-height: 54px; padding: 0 14px; text-align: left; width: 100%; }
+.auth-field { align-items: center; background: var(--field-surface); border: 1px solid var(--line); border-radius: var(--radius); color: var(--muted-strong); display: flex; gap: 11px; min-height: 56px; padding: 0 14px; transition: background-color var(--motion-fast) var(--motion-ease), border-color var(--motion-fast) var(--motion-ease), box-shadow var(--motion-fast) var(--motion-ease); }
+.auth-field:focus-within { background: var(--surface-elevated); border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-ring); }
+.auth-field:has(input[aria-invalid='true']) { border-color: var(--negative); }
+.auth-field input { background: transparent; border: 0; color: var(--ink); font-size: 16px; min-height: 44px; min-width: 0; outline: 0; width: 100%; }
+.password-toggle { align-items: center; background: transparent; border-radius: var(--radius); color: var(--muted-strong); display: inline-flex; flex: 0 0 44px; height: 44px; justify-content: center; margin-right: -8px; padding: 0; }
+.account-summary { align-items: center; background: var(--soft); border: 1px solid var(--line); border-radius: var(--radius); color: var(--ink); display: flex; gap: 12px; justify-content: space-between; min-height: 54px; padding: 0 14px; text-align: left; width: 100%; }
 .account-summary span { align-items: center; display: inline-flex; gap: 9px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account-summary b { color: var(--accent); flex: 0 0 auto; font-size: 12px; }
-.forgot-link { background: transparent; color: var(--accent); font-size: 13px; font-weight: 700; justify-self: end; margin-top: -7px; padding: 4px 0; }
-.login-submit { margin-top: 4px; min-height: 54px; }
+.forgot-link { background: transparent; color: var(--accent); font-size: 13px; font-weight: 720; justify-self: end; margin-top: -9px; min-height: 44px; padding: 0; }
+.auth-feedback { background: var(--negative-soft); border: 1px solid currentColor; border-radius: var(--radius); margin: 0; padding: 11px 13px; }
+.login-submit { margin-top: 2px; min-height: 52px; }
 .login-panel__footer { color: var(--muted-strong); font-size: 14px; margin: auto 0 0; padding-top: 44px; text-align: center; }
-.login-panel__footer button { background: transparent; color: var(--ink); font-weight: 750; padding: 4px; text-decoration: underline; text-underline-offset: 3px; }
+.login-panel__footer button { background: transparent; color: var(--accent); font-weight: 750; min-height: 44px; padding: 0 6px; text-decoration: underline; text-underline-offset: 3px; }
 @media (max-height: 690px) {
   .login-panel { padding-top: 8px; }
   .login-panel__logo { margin-bottom: 22px; }
   .login-panel__main > p { margin-bottom: 22px; }
   .login-panel__footer { padding-top: 28px; }
 }
-@media (max-width: 360px) {
+@media (max-width: 340px) {
   .login-panel { padding-left: 18px; padding-right: 18px; }
-  .login-panel h1 { font-size: 32px; }
+  .login-panel__logo { margin-bottom: 26px; }
+  .login-panel__main > p { margin-bottom: 26px; }
 }
 </style>

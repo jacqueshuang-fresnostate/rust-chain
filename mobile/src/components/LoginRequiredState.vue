@@ -17,15 +17,69 @@ function goToLogin() {
 </script>
 
 <template>
-  <div class="login-required">
+  <section
+    class="login-required"
+    role="group"
+    :aria-label="t('common.loginRequiredTitle')"
+  >
     <span class="login-required__icon"><LockKeyhole :size="22" /></span>
-    <p>{{ resolvedDescription }}</p>
-    <button class="button button--secondary" type="button" @click="goToLogin">{{ t('common.loginNow') }}</button>
-  </div>
+    <div class="login-required__copy">
+      <strong>{{ t('common.loginRequiredTitle') }}</strong>
+      <p>{{ resolvedDescription }}</p>
+    </div>
+    <button class="button button--secondary" type="button" @click="goToLogin">
+      {{ t('common.loginNow') }}
+    </button>
+  </section>
 </template>
 
 <style scoped>
-.login-required { align-items: center; color: var(--muted); display: flex; flex-direction: column; gap: 12px; padding: 34px 24px; text-align: center; }
-.login-required__icon { align-items: center; background: var(--soft); border-radius: 50%; color: var(--ink); display: inline-flex; height: 44px; justify-content: center; width: 44px; }
-.login-required p { font-size: 14px; margin: 0; }
+.login-required {
+  align-items: center;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 48%),
+    var(--surface-elevated);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--accent);
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 28px 20px 22px;
+  text-align: center;
+}
+
+.login-required__icon {
+  align-items: center;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--line));
+  border-radius: 50%;
+  color: var(--accent);
+  display: inline-flex;
+  height: 52px;
+  justify-content: center;
+  width: 52px;
+}
+
+.login-required__copy {
+  display: grid;
+  gap: 6px;
+  max-width: 320px;
+}
+
+.login-required strong {
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.login-required p {
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.login-required .button {
+  min-height: 46px;
+  min-width: min(220px, 100%);
+}
 </style>

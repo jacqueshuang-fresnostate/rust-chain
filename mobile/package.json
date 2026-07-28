@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "vue-tsc --noEmit && vite build",
+    "build": "npm run build:pwa",
+    "build:pwa": "vue-tsc --noEmit && vite build --mode pwa",
+    "build:tauri": "vue-tsc --noEmit && vite build --mode tauri",
     "type-check": "vue-tsc --noEmit",
     "preview": "vite preview --host 0.0.0.0",
     "test": "node --test --experimental-strip-types tests/*.test.ts",
@@ -36,6 +38,7 @@
     "@vitejs/plugin-vue": "^5.0.0",
     "typescript": "^5.4.0",
     "vite": "^5.2.0",
+    "vite-plugin-pwa": "1.3.0",
     "vue-tsc": "^2.0.0"
   }
 }

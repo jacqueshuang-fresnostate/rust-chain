@@ -1,0 +1,108 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import test from 'node:test'
+import en from '../src/i18n/messages/en.ts'
+import zhCN from '../src/i18n/messages/zh-CN.ts'
+
+const marketDetailSource = readFileSync(new URL('../src/views/MarketDetailView.vue', import.meta.url), 'utf8')
+const newsSource = readFileSync(new URL('../src/views/NewsView.vue', import.meta.url), 'utf8')
+const newsDetailSource = readFileSync(new URL('../src/views/NewsDetailView.vue', import.meta.url), 'utf8')
+const assetMarkSource = readFileSync(new URL('../src/components/AssetMark.vue', import.meta.url), 'utf8')
+const loginRequiredSource = readFileSync(new URL('../src/components/LoginRequiredState.vue', import.meta.url), 'utf8')
+const chartSource = readFileSync(new URL('../src/components/MobileMarketChart.vue', import.meta.url), 'utf8')
+const orderBookSource = readFileSync(new URL('../src/components/OrderBookPanel.vue', import.meta.url), 'utf8')
+
+const ownedSources = [
+  marketDetailSource,
+  newsSource,
+  newsDetailSource,
+  assetMarkSource,
+  loginRequiredSource,
+  chartSource,
+  orderBookSource,
+]
+
+test('行情详情保留真实 ticker、K 线、盘口、成交和交易导航合同', () => {
+  assert.match(marketDetailSource, /marketStore\.tickerFor\(pairSymbol\.value\)/)
+  assert.match(marketDetailSource, /marketStore\.refresh\(forceMarket\)/)
+  assert.match(marketDetailSource, /fetchKlines\(pairSymbol\.value, interval\.value\)/)
+  assert.match(marketDetailSource, /fetchOrderBook\(pairSymbol\.value\)/)
+  assert.match(marketDetailSource, /fetchRecentTrades\(pairSymbol\.value\)/)
+  assert.match(marketDetailSource, /Promise\.allSettled/)
+  assert.match(marketDetailSource, /<MobileMarketChart :points="points" :loading="loading" \/>/)
+  assert.match(marketDetailSource, /<OrderBookPanel[\s\S]*:bids="bids"[\s\S]*:asks="asks"[\s\S]*:current-price="latestPrice"/)
+  assert.match(marketDetailSource, /query: mode === 'contract' \? \{ mode: 'contract' \} : undefined/)
+  assert.match(marketDetailSource, /openTrade\('spot'\)/)
+  assert.match(marketDetailSource, /openTrade\('contract'\)/)
+  assert.match(marketDetailSource, /goBackOr\(router, \{ name: 'markets' \}\)/)
+})
+
+test('公告列表和详情保留真实 API、语言映射与命名路由合同', () => {
+  assert.match(newsSource, /rows\.value = await fetchNews\(50\)/)
+  assert.match(newsSource, /router\.push\(\{ name: 'news-detail', params: \{ id: notice\.id \} \}\)/)
+  assert.match(newsSource, /apiErrorMessage\(reason, t\('news\.loadFailed'\)\)/)
+  assert.match(newsDetailSource, /const result = await fetchNewsDetail\(id\)/)
+  assert.match(newsDetailSource, /watch\(\(\) => props\.id,[\s\S]*\{ immediate: true \}\)/)
+  assert.match(newsDetailSource, /detail\.content \|\| t\('news\.emptyContent'\)/)
+  assert.match(newsDetailSource, /apiErrorMessage\(reason, t\('news\.detailLoadFailed'\)\)/)
+})
+
+test('共享行情与登录支撑组件使用真实数据、主题变量和安全回退', () => {
+  assert.match(assetMarkSource, /@error="imageFailed = true"/)
+  assert.match(assetMarkSource, /watch\(\(\) => props\.src/)
+  assert.match(assetMarkSource, /var\(--positive\)/)
+  assert.match(loginRequiredSource, /query: \{ redirect: route\.fullPath \}/)
+  assert.match(loginRequiredSource, /t\('common\.loginRequiredTitle'\)/)
+
+  assert.match(chartSource, /createChart\(container\.value/)
+  assert.match(chartSource, /chart\.addSeries\(CandlestickSeries/)
+  assert.match(chartSource, /chart\.addSeries\(HistogramSeries/)
+  assert.match(chartSource, /getPropertyValue\('--surface'\)/)
+  assert.match(chartSource, /getPropertyValue\('--positive'\)/)
+  assert.match(chartSource, /new MutationObserver\(applyTheme\)/)
+  assert.match(chartSource, /data-kline-provider="tradingview"/)
+
+  assert.match(orderBookSource, /asks\.slice\(0, 6\)\.reverse\(\)/)
+  assert.match(orderBookSource, /bids\.slice\(0, 6\)/)
+  assert.match(orderBookSource, /width\(item\.quantity\)/)
+  assert.match(orderBookSource, /loading \? t\('common\.loading'\) : t\('common\.marketUnavailable'\)/)
+})
+
+test('行情、公告与共享支撑切片满足主题、触控、窄屏和 Lucide 契约', () => {
+  for (const source of ownedSources) {
+    assert.doesNotMatch(source, /<svg/)
+    assert.doesNotMatch(source, /\p{Extended_Pictographic}/u)
+    assert.doesNotMatch(source, /[\u3400-\u9fff]/)
+    assert.doesNotMatch(source, /#[0-9a-f]{3,8}/i)
+    assert.doesNotMatch(source, /background:\s*(?:white|rgb\()/i)
+  }
+
+  for (const source of [marketDetailSource, newsSource, newsDetailSource]) {
+    assert.match(source, /@media \(max-width: 340px\)/)
+    assert.match(source, /env\(safe-area-inset-/)
+    assert.match(source, /min-height: (?:4[4-9]|[5-9]\d)px/)
+  }
+
+  assert.match(marketDetailSource, /position: sticky/)
+  assert.match(marketDetailSource, /z-index: var\(--layer-sticky-header\)/)
+  assert.match(loginRequiredSource, /min-height: 46px/)
+})
+
+test('切片使用的固定文案键全部存在于中英文资源', () => {
+  const keys = new Set<string>()
+  for (const source of ownedSources) {
+    for (const match of source.matchAll(/\bt\('([^']+)'/g)) keys.add(match[1])
+  }
+
+  for (const key of keys) {
+    assert.notEqual(resolveMessage(zhCN, key), undefined, `zh-CN missing ${key}`)
+    assert.notEqual(resolveMessage(en, key), undefined, `en missing ${key}`)
+  }
+})
+
+function resolveMessage(messages: unknown, key: string): unknown {
+  return key.split('.').reduce<unknown>((value, segment) => {
+    if (!value || typeof value !== 'object') return undefined
+    return (value as Record<string, unknown>)[segment]
+  }, messages)
+}

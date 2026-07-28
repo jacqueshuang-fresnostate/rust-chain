@@ -2,9 +2,17 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/src/assets/logo.png" />
+    <link data-pwa-only rel="icon" type="image/png" href="%BASE_URL%pwa/icon-192.png" />
+    <link data-pwa-only rel="apple-touch-icon" sizes="180x180" href="%BASE_URL%pwa/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#ffffff" />
+    <meta data-pwa-only name="application-name" content="Hippo Mobile" />
+    <meta data-pwa-only name="mobile-web-app-capable" content="yes" />
+    <meta data-pwa-only name="apple-mobile-web-app-capable" content="yes" />
+    <meta data-pwa-only name="apple-mobile-web-app-title" content="Hippo" />
+    <meta data-pwa-only name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="theme-color" content="#f7f8fa" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)" />
     <title>Hippo Mobile</title>
   </head>
   <body>
@@ -12,4 +20,3 @@
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
-

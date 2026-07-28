@@ -171,7 +171,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
       <button class="icon-button" type="button" :aria-label="t('language.title')" @click="router.push({ name: 'language' })"><Languages :size="21" /></button>
     </header>
 
-    <form class="register-form" @submit.prevent="submit">
+    <form class="register-form" :aria-busy="submitting" @submit.prevent="submit">
       <div class="register-form__intro">
         <span>{{ t('auth.stepProgress', { current: step, total: 2 }) }}</span>
         <h1>{{ t(step === 1 ? 'auth.residenceTitle' : 'auth.registrationDetailsTitle') }}</h1>
@@ -180,7 +180,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
 
       <template v-if="step === 1">
         <label class="auth-label"><span>{{ t('auth.country') }}</span><div class="field-shell field-shell--select"><Globe2 :size="19" /><select v-model="countryCode" autocomplete="country"><option value="" disabled>{{ t('auth.selectCountry') }}</option><option v-for="country in countries" :key="country.code" :value="country.code">{{ countryLabel(country) }} ({{ country.code }})</option></select><ChevronDown :size="18" /></div></label>
-        <p v-if="countriesNotice" class="countries-notice">{{ countriesNotice }}</p>
+        <p v-if="countriesNotice" class="countries-notice" role="status">{{ countriesNotice }}</p>
         <label class="terms-row"><input v-model="acceptedTerms" type="checkbox" /><span class="terms-check"><Check :size="15" /></span><span>{{ t('auth.termsAgreement') }}</span></label>
       </template>
 
@@ -193,7 +193,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
         <label class="auth-label"><span>{{ t(inviteCodeRequired ? 'auth.inviteCodeRequired' : 'auth.inviteCodeOptional') }}</span><div class="field-shell"><input v-model="inviteCode" :placeholder="t('auth.inviteCodePlaceholder')" /></div></label>
       </template>
 
-      <p v-if="error" class="error-message" aria-live="polite">{{ error }}</p>
+      <p v-if="error" class="error-message register-feedback" role="alert">{{ error }}</p>
       <div class="register-form__actions">
         <button v-if="step === 1" class="button button--primary button--full" type="button" @click="continueRegistration">{{ t('auth.next') }}</button>
         <button v-else class="button button--primary button--full" type="submit" :disabled="submitting">{{ submitting ? t('auth.registering') : t('auth.createAccount') }}</button>
@@ -204,41 +204,41 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
 </template>
 
 <style scoped>
-.register-page { background: var(--surface); display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 100dvh; padding-top: env(safe-area-inset-top); }
-.auth-topbar { align-items: center; display: flex; justify-content: space-between; min-height: 68px; padding: 8px 16px; }
-.register-form { display: flex; flex-direction: column; gap: 20px; margin: 0 auto; max-width: 430px; padding: 24px 24px calc(24px + env(safe-area-inset-bottom)); width: 100%; }
+.register-page { background: var(--background); display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 100dvh; padding-top: env(safe-area-inset-top); }
+.auth-topbar { align-items: center; background: var(--background); display: flex; justify-content: space-between; min-height: 60px; padding: 8px 16px; position: sticky; top: 0; z-index: var(--layer-sticky-header); }
+.auth-topbar .icon-button { border: 1px solid var(--line); }
+.register-form { display: flex; flex-direction: column; gap: 20px; margin: 0 auto; max-width: 448px; padding: 24px 24px calc(28px + env(safe-area-inset-bottom)); width: 100%; }
 .register-form__intro { margin-bottom: 12px; }
-.register-form__intro > span { color: var(--positive); display: block; font-size: 12px; font-weight: 750; margin-bottom: 15px; }
-.register-form h1 { font-size: 36px; line-height: 1.16; margin: 0; overflow-wrap: anywhere; }
-.register-form__intro p { color: var(--muted-strong); font-size: 15px; line-height: 1.65; margin: 13px 0 0; }
+.register-form__intro > span { color: var(--accent); display: block; font-size: 12px; font-weight: 780; letter-spacing: 0; margin-bottom: 15px; }
+.register-form h1 { font-size: 36px; letter-spacing: 0; line-height: 1.08; margin: 0; overflow-wrap: anywhere; }
+.register-form__intro p { color: var(--muted-strong); font-size: 15px; line-height: 1.6; margin: 13px 0 0; }
 .auth-label { display: grid; gap: 9px; }
 .auth-label > span { font-size: 14px; font-weight: 720; }
-.field-shell { align-items: center; background: var(--soft); border: 1px solid transparent; border-radius: var(--radius); color: var(--muted-strong); display: flex; gap: 11px; min-height: 58px; padding: 0 15px; transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease; }
-.field-shell:focus-within { background: white; border-color: var(--accent); box-shadow: 0 0 0 3px rgb(22 124 103 / 9%); }
-.field-shell input,.field-shell select { background: transparent; border: 0; color: var(--ink); font-size: 15px; min-width: 0; outline: 0; width: 100%; }
-.field-shell input::placeholder { color: #a3a8ad; }
+.field-shell { align-items: center; background: var(--field-surface); border: 1px solid var(--line); border-radius: var(--radius); color: var(--muted-strong); display: flex; gap: 11px; min-height: 56px; padding: 0 14px; transition: background-color var(--motion-fast) var(--motion-ease), border-color var(--motion-fast) var(--motion-ease), box-shadow var(--motion-fast) var(--motion-ease); }
+.field-shell:focus-within { background: var(--surface-elevated); border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-ring); }
+.field-shell input,.field-shell select { background: transparent; border: 0; color: var(--ink); font-size: 15px; min-height: 44px; min-width: 0; outline: 0; width: 100%; }
 .field-shell select { appearance: none; }
 .field-shell--select > svg:last-child { flex: 0 0 auto; pointer-events: none; }
-.password-toggle { align-items: center; background: transparent; color: var(--muted-strong); display: inline-flex; flex: 0 0 40px; height: 40px; justify-content: center; margin-right: -8px; padding: 0; }
+.password-toggle { align-items: center; background: transparent; border-radius: var(--radius); color: var(--muted-strong); display: inline-flex; flex: 0 0 44px; height: 44px; justify-content: center; margin-right: -8px; padding: 0; }
 .verification-field { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) 112px; }
-.verification-field .button { font-size: 12px; min-height: 58px; padding: 0 8px; }
+.verification-field .button { font-size: 12px; min-height: 56px; padding: 0 8px; }
 .terms-row { align-items: flex-start; cursor: pointer; display: grid; gap: 11px; grid-template-columns: 22px minmax(0, 1fr); margin-top: 6px; position: relative; }
-.terms-row input { height: 22px; inset: 0 auto auto 0; margin: 0; opacity: 0; position: absolute; width: 22px; }
-.terms-check { align-items: center; background: white; border: 1px solid var(--muted); border-radius: 4px; color: transparent; display: inline-flex; height: 22px; justify-content: center; transition: background-color 160ms ease, border-color 160ms ease; width: 22px; }
-.terms-row input:checked + .terms-check { background: var(--ink); border-color: var(--ink); color: white; }
-.terms-row input:focus-visible + .terms-check { outline: 2px solid color-mix(in srgb, var(--accent) 70%, white); outline-offset: 2px; }
+.terms-row input { height: 44px; inset: -11px auto auto -11px; margin: 0; opacity: 0; position: absolute; width: 44px; }
+.terms-check { align-items: center; background: var(--field-surface); border: 1px solid var(--line-strong); border-radius: 4px; color: transparent; display: inline-flex; height: 22px; justify-content: center; transition: background-color var(--motion-fast) var(--motion-ease), border-color var(--motion-fast) var(--motion-ease); width: 22px; }
+.terms-row input:checked + .terms-check { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.terms-row input:focus-visible + .terms-check { box-shadow: 0 0 0 3px var(--focus-ring); outline: 2px solid var(--focus); outline-offset: 2px; }
 .terms-row > span:last-child { color: var(--muted-strong); font-size: 13px; line-height: 1.65; }
-.countries-notice { color: var(--muted); font-size: 11px; line-height: 1.5; margin: -12px 0 0; }
+.countries-notice { background: var(--soft); border-left: 3px solid var(--accent); color: var(--muted-strong); font-size: 11px; line-height: 1.5; margin: -12px 0 0; padding: 9px 10px; }
 .password-checks { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: -8px; }
 .password-checks span { align-items: center; color: var(--muted); display: inline-flex; font-size: 11px; gap: 4px; }
 .password-checks span.valid { color: var(--positive); }
+.register-feedback { background: var(--negative-soft); border: 1px solid currentColor; border-radius: var(--radius); margin: 0; padding: 11px 13px; }
 .register-form__actions { margin-top: auto; padding-top: 28px; }
-.register-form__actions > .button { min-height: 54px; }
+.register-form__actions > .button { min-height: 52px; }
 .register-form__actions p { color: var(--muted-strong); font-size: 14px; margin: 18px 0 0; text-align: center; }
-.register-form__actions p button { background: transparent; color: var(--ink); font-weight: 750; padding: 4px; text-decoration: underline; text-underline-offset: 3px; }
-@media (max-width: 360px) {
+.register-form__actions p button { background: transparent; color: var(--accent); font-weight: 750; min-height: 44px; padding: 0 6px; text-decoration: underline; text-underline-offset: 3px; }
+@media (max-width: 340px) {
   .register-form { padding-left: 18px; padding-right: 18px; }
-  .register-form h1 { font-size: 32px; }
   .verification-field { grid-template-columns: minmax(0, 1fr) 96px; }
 }
 @media (max-height: 720px) {

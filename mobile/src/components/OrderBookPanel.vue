@@ -1,12 +1,22 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ChartNoAxesCombined, LoaderCircle } from 'lucide-vue-next'
 import { formatAmount, formatPrice } from '@/core/format'
 import type { OrderBookLevel } from '@/core/types'
 
-const props = defineProps<{ bids: OrderBookLevel[]; asks: OrderBookLevel[]; currentPrice: number }>()
+const props = withDefaults(defineProps<{
+  bids: OrderBookLevel[]
+  asks: OrderBookLevel[]
+  currentPrice: number
+  loading?: boolean
+}>(), {
+  loading: false,
+})
+
 const { t } = useI18n()
 const maxQuantity = computed(() => Math.max(1, ...props.bids.map((item) => item.quantity), ...props.asks.map((item) => item.quantity)))
+const hasRows = computed(() => props.bids.length > 0 || props.asks.length > 0)
 
 function width(quantity: number): string {
   return `${Math.max(7, (quantity / maxQuantity.value) * 100)}%`
@@ -14,37 +24,151 @@ function width(quantity: number): string {
 </script>
 
 <template>
-  <section class="order-book">
-    <header><strong>{{ t('orderBook.title') }}</strong><span>{{ t('orderBook.priceQuantity') }}</span></header>
-    <div class="order-book__rows order-book__rows--asks">
-      <div v-for="item in asks.slice(0, 6).reverse()" :key="`ask-${item.price}`" class="order-book__row">
-        <i class="order-book__bar order-book__bar--ask" :style="{ width: width(item.quantity) }" />
-        <span class="down">{{ formatPrice(item.price) }}</span><span>{{ formatAmount(item.quantity) }}</span>
+  <section class="order-book" :aria-label="t('orderBook.title')" :aria-busy="loading">
+    <header>
+      <strong>{{ t('orderBook.title') }}</strong>
+      <span>{{ t('orderBook.priceQuantity') }}</span>
+    </header>
+    <template v-if="hasRows">
+      <div class="order-book__rows order-book__rows--asks">
+        <div v-for="item in asks.slice(0, 6).reverse()" :key="`ask-${item.price}`" class="order-book__row">
+          <i class="order-book__bar order-book__bar--ask" :style="{ width: width(item.quantity) }" />
+          <span class="down numeric">{{ formatPrice(item.price) }}</span>
+          <span class="numeric">{{ formatAmount(item.quantity) }}</span>
+        </div>
       </div>
-    </div>
-    <div class="order-book__last"><strong>{{ formatPrice(currentPrice) }}</strong><span>{{ t('orderBook.lastPrice') }}</span></div>
-    <div class="order-book__rows">
-      <div v-for="item in bids.slice(0, 6)" :key="`bid-${item.price}`" class="order-book__row">
-        <i class="order-book__bar order-book__bar--bid" :style="{ width: width(item.quantity) }" />
-        <span class="up">{{ formatPrice(item.price) }}</span><span>{{ formatAmount(item.quantity) }}</span>
+      <div class="order-book__last">
+        <strong class="numeric">{{ currentPrice > 0 ? formatPrice(currentPrice) : '--' }}</strong>
+        <span>{{ t('orderBook.lastPrice') }}</span>
       </div>
+      <div class="order-book__rows">
+        <div v-for="item in bids.slice(0, 6)" :key="`bid-${item.price}`" class="order-book__row">
+          <i class="order-book__bar order-book__bar--bid" :style="{ width: width(item.quantity) }" />
+          <span class="up numeric">{{ formatPrice(item.price) }}</span>
+          <span class="numeric">{{ formatAmount(item.quantity) }}</span>
+        </div>
+      </div>
+    </template>
+    <div v-else class="order-book__state" role="status">
+      <LoaderCircle v-if="loading" :size="19" class="spin" />
+      <ChartNoAxesCombined v-else :size="20" />
+      <span>{{ loading ? t('common.loading') : t('common.marketUnavailable') }}</span>
     </div>
   </section>
 </template>
 
 <style scoped>
-.order-book { background: var(--dark-surface); color: #e5e7eb; min-height: 0; padding: 14px; }
-.order-book header { color: #9ca3af; display: flex; font-size: 11px; justify-content: space-between; margin-bottom: 10px; }
-.order-book header strong { color: #f3f4f6; font-size: 14px; }
-.order-book__rows { display: grid; gap: 3px; }
-.order-book__row { display: grid; font-size: 12px; grid-template-columns: 1fr 1fr; overflow: hidden; padding: 2px 0; position: relative; }
-.order-book__row span { position: relative; z-index: 1; }
-.order-book__row span:last-child { color: #c7cbd1; text-align: right; }
-.order-book__bar { height: 100%; opacity: .3; position: absolute; right: 0; top: 0; }
-.order-book__bar--ask { background: #74283d; }
-.order-book__bar--bid { background: #164d38; }
-.order-book__last { align-items: baseline; display: flex; gap: 8px; padding: 9px 0; }
-.order-book__last strong { color: #00b86b; font-size: 17px; }
-.order-book__last span { color: #9ca3af; font-size: 11px; }
-.up { color: #00c076; }.down { color: #f05b7c; }
+.order-book {
+  background: var(--surface-elevated);
+  color: var(--ink);
+  min-height: 0;
+  padding: 14px;
+}
+
+.order-book header {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  display: flex;
+  font-size: 10px;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  min-height: 34px;
+}
+
+.order-book header strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.order-book__rows {
+  display: grid;
+  gap: 2px;
+}
+
+.order-book__row {
+  display: grid;
+  font-size: 11px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 22px;
+  overflow: hidden;
+  padding: 3px 0;
+  position: relative;
+}
+
+.order-book__row span {
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  z-index: 1;
+}
+
+.order-book__row span:last-child {
+  color: var(--muted-strong);
+  text-align: right;
+}
+
+.order-book__bar {
+  height: 100%;
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+
+.order-book__bar--ask {
+  background: color-mix(in srgb, var(--negative) 18%, transparent);
+  border-right: 2px solid var(--negative);
+}
+
+.order-book__bar--bid {
+  background: color-mix(in srgb, var(--positive) 18%, transparent);
+  border-right: 2px solid var(--positive);
+}
+
+.order-book__last {
+  align-items: baseline;
+  border-block: 1px solid var(--line);
+  display: flex;
+  gap: 8px;
+  margin: 6px 0;
+  min-height: 42px;
+  padding: 9px 0;
+}
+
+.order-book__last strong {
+  color: var(--positive);
+  font-size: 17px;
+}
+
+.order-book__last span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.order-book__state {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  gap: 8px;
+  justify-content: center;
+  min-height: 248px;
+}
+
+.spin {
+  animation: spin .8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}
 </style>
