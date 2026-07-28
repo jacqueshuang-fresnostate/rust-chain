@@ -16,14 +16,16 @@ const navigation = useNavigationStore()
 const { t } = useI18n()
 
 const query = ref('')
-type MarketCategory = 'popular' | 'gainers' | 'losers'
+type MarketCategory = 'popular' | 'favorites' | 'spot' | 'contract' | 'gainers'
 type TradeMode = 'spot' | 'contract'
 const category = ref<MarketCategory>('popular')
 
 const categories = computed(() => [
   { key: 'popular' as const, label: t('markets.popular') },
+  { key: 'favorites' as const, label: t('home.favorites') },
+  { key: 'spot' as const, label: t('trade.spot') },
+  { key: 'contract' as const, label: t('trade.contract') },
   { key: 'gainers' as const, label: t('markets.gainers') },
-  { key: 'losers' as const, label: t('markets.losers') },
 ])
 
 const pickerMode = computed(() => route.query.purpose === 'trade')
@@ -34,14 +36,15 @@ const rows = computed(() => {
   const keyword = query.value.trim().toUpperCase()
   const filtered = keyword ? source.filter((item) => item.symbol.includes(keyword)) : source
   if (category.value === 'gainers') return filtered.sort((left, right) => right.changePercent - left.changePercent)
-  if (category.value === 'losers') return filtered.sort((left, right) => left.changePercent - right.changePercent)
-  return filtered.sort((left, right) => right.volume - left.volume)
+  if (category.value === 'popular') return filtered.sort((left, right) => right.volume - left.volume)
+  return filtered
 })
 
 const turnover = computed(() => rows.value.reduce((total, item) => total + item.volume * item.lastPrice, 0))
 const positiveRate = computed(() => rows.value.length
   ? (rows.value.filter((item) => item.changePercent >= 0).length / rows.value.length) * 100
   : 0)
+const marketTemperature = computed(() => Math.round(positiveRate.value))
 
 function openMarket(symbol: string): void {
   const routeSymbol = symbol.replace('/', '_')
@@ -90,18 +93,18 @@ onUnmounted(() => marketStore.stopLiveUpdates())
     </PageHeader>
 
     <div class="page-content">
-      <section class="market-signal" :aria-label="t('markets.overview')">
-        <div>
-          <span>{{ t('markets.turnover24h') }}</span>
-          <strong class="numeric">{{ formatCompact(turnover) }} <small>{{ rows[0]?.quote || '' }}</small></strong>
-        </div>
-        <div>
-          <span>{{ t('markets.advancingShare') }}</span>
-          <strong class="numeric up">{{ positiveRate.toFixed(1) }}%</strong>
-        </div>
-        <div>
-          <span>{{ t('markets.marketCount') }}</span>
-          <strong class="numeric">{{ rows.length }}</strong>
+      <section class="market-intro" :aria-label="t('markets.overview')">
+        <span>{{ t('markets.overview') }}</span>
+        <h1>{{ title }}</h1>
+        <div class="market-intro__metrics">
+          <span>
+            <small>{{ t('markets.turnover24h') }}</small>
+            <strong class="numeric">{{ formatCompact(turnover) }}</strong>
+          </span>
+          <span>
+            <small>{{ t('markets.marketCount') }}</small>
+            <strong class="numeric">{{ rows.length }}</strong>
+          </span>
         </div>
       </section>
 
@@ -113,7 +116,7 @@ onUnmounted(() => marketStore.stopLiveUpdates())
 
       <label class="market-search">
         <Search :size="19" />
-        <input v-model="query" type="search" :placeholder="t('markets.searchPlaceholder')" />
+        <input v-model="query" type="search" :aria-label="t('markets.searchPlaceholder')" :placeholder="t('markets.searchPlaceholder')" />
       </label>
 
       <div class="market-category" role="tablist" :aria-label="t('markets.overview')">
@@ -129,6 +132,15 @@ onUnmounted(() => marketStore.stopLiveUpdates())
           {{ item.label }}
         </button>
       </div>
+
+      <section class="market-temperature" :aria-label="t('markets.advancingShare')">
+        <div>
+          <span>{{ t('markets.advancingShare') }}</span>
+          <strong class="numeric">{{ marketTemperature }}</strong>
+        </div>
+        <span class="market-temperature__track" aria-hidden="true"><i :style="{ width: `${marketTemperature}%` }" /></span>
+        <small class="numeric">{{ positiveRate.toFixed(1) }}%</small>
+      </section>
 
       <div v-if="marketStore.error" class="market-error">
         <span>{{ t('common.marketLoadFailed') }}</span>
@@ -146,6 +158,7 @@ onUnmounted(() => marketStore.stopLiveUpdates())
             <AssetMark :symbol="ticker.base" :src="ticker.iconUrl" :size="32" />
             <span><b>{{ ticker.base }}<small>/{{ ticker.quote }}</small></b><em>{{ t('markets.volume', { value: formatCompact(ticker.volume) }) }}</em></span>
           </span>
+          <span class="market-list__spark" :class="ticker.changePercent >= 0 ? 'is-up' : 'is-down'" aria-hidden="true" />
           <span class="market-list__price"><b>{{ formatPrice(ticker.lastPrice) }}</b><small>{{ ticker.quote }}</small></span>
           <span class="market-list__change" :class="ticker.changePercent >= 0 ? 'is-up' : 'is-down'">{{ formatPercent(ticker.changePercent) }}</span>
         </button>
@@ -505,6 +518,248 @@ onUnmounted(() => marketStore.stopLiveUpdates())
 @media (prefers-reduced-motion: reduce) {
   .spin {
     animation: none;
+  }
+}
+</style>
+
+<style scoped>
+.markets-page {
+  background-color: var(--surface);
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.markets-page .page-content {
+  padding-top: 0;
+}
+
+.market-intro {
+  background: var(--signal-green);
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--on-positive);
+  margin: 0 -16px;
+  min-height: 176px;
+  overflow: hidden;
+  padding: 25px 20px 18px;
+  position: relative;
+}
+
+.market-intro::after {
+  bottom: -28px;
+  color: color-mix(in srgb, var(--on-positive) 16%, transparent);
+  content: '///';
+  font-family: var(--data-font);
+  font-size: 100px;
+  line-height: 1;
+  position: absolute;
+  right: 14px;
+}
+
+.market-intro > span {
+  font-family: var(--data-font);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.market-intro h1 {
+  font-size: 38px;
+  line-height: 1;
+  margin: 14px 0 19px;
+  position: relative;
+  z-index: 1;
+}
+
+.market-intro__metrics {
+  display: flex;
+  gap: 26px;
+  position: relative;
+  z-index: 1;
+}
+
+.market-intro__metrics span {
+  display: grid;
+  gap: 3px;
+}
+
+.market-intro__metrics small {
+  color: color-mix(in srgb, var(--on-positive) 68%, transparent);
+  font-size: 9px;
+}
+
+.market-intro__metrics strong {
+  font-size: 13px;
+}
+
+.market-destinations {
+  margin: 0 -16px;
+}
+
+.market-search {
+  background: var(--surface);
+  margin-top: 14px;
+}
+
+.market-category {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin-top: 10px;
+}
+
+.market-category button {
+  font-size: 10px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 2px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.market-category .is-active {
+  background: var(--signal-green);
+  border-bottom-color: var(--signal-green);
+  color: var(--on-positive);
+}
+
+.market-temperature {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  margin: 14px 0 18px;
+  min-height: 70px;
+  padding: 12px 14px;
+}
+
+.market-temperature > div {
+  align-items: baseline;
+  display: flex;
+  gap: 7px;
+}
+
+.market-temperature span,
+.market-temperature small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.market-temperature strong {
+  color: var(--ink);
+  font-size: 22px;
+}
+
+.market-temperature__track {
+  background: var(--soft);
+  display: block;
+  height: 3px;
+  position: relative;
+}
+
+.market-temperature__track i {
+  background: var(--positive);
+  display: block;
+  height: 100%;
+  max-width: 100%;
+  min-width: 0;
+  position: relative;
+}
+
+.market-temperature__track i::after {
+  background: var(--positive);
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--positive) 14%, transparent);
+  content: '';
+  height: 8px;
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translate(50%, -50%);
+  width: 8px;
+}
+
+.market-list__heading,
+.market-list__row {
+  grid-template-columns: minmax(0, 1fr) 62px minmax(72px, .82fr) 70px;
+}
+
+.market-list__heading span:nth-child(2) {
+  grid-column: 3;
+}
+
+.market-list__heading span:nth-child(3) {
+  grid-column: 4;
+}
+
+.market-list__spark {
+  color: var(--positive);
+  height: 34px;
+  overflow: hidden;
+  position: relative;
+  width: 62px;
+}
+
+.market-list__spark::before,
+.market-list__spark::after {
+  background: currentColor;
+  content: '';
+  height: 2px;
+  left: 4px;
+  position: absolute;
+  top: 18px;
+  transform: rotate(-9deg);
+  transform-origin: left center;
+  width: 56px;
+}
+
+.market-list__spark::after {
+  left: 30px;
+  top: 14px;
+  transform: rotate(11deg);
+  width: 28px;
+}
+
+.market-list__spark.is-down {
+  color: var(--negative);
+  transform: scaleY(-1);
+}
+
+@media (max-width: 360px) {
+  .market-intro,
+  .market-destinations {
+    margin-left: -12px;
+    margin-right: -12px;
+  }
+
+  .market-intro {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .market-list__heading,
+  .market-list__row {
+    grid-template-columns: minmax(0, 1fr) 52px 68px 64px;
+    gap: 6px;
+  }
+
+  .market-list__spark {
+    width: 52px;
+  }
+
+  .market-list__spark::before {
+    width: 46px;
+  }
+}
+
+@media (max-width: 340px) {
+  .market-intro h1 {
+    font-size: 32px;
+  }
+
+  .market-list__symbol em {
+    display: none;
   }
 }
 </style>

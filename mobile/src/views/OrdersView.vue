@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { CheckCircle2, CircleAlert, LoaderCircle, PackageOpen, RefreshCw } from 'lucide-vue-next'
+import { CheckCircle2, CircleAlert, LoaderCircle, PackageOpen, RefreshCw, X } from 'lucide-vue-next'
 import LoginRequiredState from '@/components/LoginRequiredState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
@@ -26,6 +26,12 @@ import { useSessionStore } from '@/stores/session'
 import type { MarginProduct, MarketPair } from '@/core/types'
 
 type Tab = 'spot' | 'margin' | 'history'
+type PendingAction =
+  | { kind: 'spot'; order: SpotOrder }
+  | { kind: 'spot-all' }
+  | { kind: 'margin'; position: MarginPosition }
+  | { kind: 'margin-cancel-all' }
+  | { kind: 'margin-close-all' }
 
 const route = useRoute()
 const session = useSessionStore()
@@ -46,12 +52,42 @@ const loading = ref(false)
 const actionId = ref('')
 const feedback = ref('')
 const error = ref('')
+const pendingAction = ref<PendingAction | null>(null)
+const confirmDialog = ref<HTMLElement | null>(null)
+let returnFocus: HTMLElement | null = null
+let previousBodyOverflow = ''
 
 const openedPositions = computed(() => positions.value.filter((position) => position.status === 'opened'))
 const cancelablePositions = computed(() => openedPositions.value.filter((position) => position.entryPrice <= 0))
 const closablePositions = computed(() => openedPositions.value.filter((position) => position.entryPrice > 0))
 const sortedSpotOrders = computed(() => [...spotOrders.value].sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0)))
 const sortedHistoryOrders = computed(() => [...historyOrders.value].sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0)))
+const pendingActionLabel = computed(() => {
+  const action = pendingAction.value
+  if (!action) return ''
+  if (action.kind === 'spot') return t('orders.cancel')
+  if (action.kind === 'spot-all') return t('orders.cancelAll')
+  if (action.kind === 'margin') return action.position.entryPrice > 0 ? t('orders.close') : t('orders.cancel')
+  if (action.kind === 'margin-cancel-all') return t('orders.cancelPending')
+  return t('orders.closeAll')
+})
+const pendingActionSummary = computed(() => {
+  const action = pendingAction.value
+  if (!action) return ''
+  if (action.kind === 'spot') {
+    return `${displayPair(action.order.symbol)} · ${formatAmount(action.order.quantity)}`
+  }
+  if (action.kind === 'spot-all') {
+    return t('orders.currentOrders', { count: sortedSpotOrders.value.length })
+  }
+  if (action.kind === 'margin') {
+    return `${positionSymbol(action.position)} · ${action.position.leverage}x`
+  }
+  const count = action.kind === 'margin-cancel-all'
+    ? cancelablePositions.value.length
+    : closablePositions.value.length
+  return t('orders.currentPositions', { count })
+})
 
 function productFor(position: MarginPosition): MarginProduct | undefined {
   return products.value.find((product) => product.id === position.productId || product.pairId === position.pairId)
@@ -112,86 +148,160 @@ async function load(): Promise<void> {
   }
 }
 
-async function cancelSpot(order: SpotOrder): Promise<void> {
+async function cancelSpot(order: SpotOrder): Promise<boolean> {
   actionId.value = `spot-${order.id}`
   error.value = ''
   try {
     await cancelSpotOrder(order.id)
-    feedback.value = t('orders.spotCanceled')
     await load()
+    feedback.value = t('orders.spotCanceled')
+    return true
   } catch (reason) {
     error.value = apiErrorMessage(reason, t('orders.spotCancelFailed'))
+    return false
   } finally {
     actionId.value = ''
   }
 }
 
-async function cancelAllSpot(): Promise<void> {
-  if (!spotOrders.value.length) return
+async function cancelAllSpot(): Promise<boolean> {
+  if (!spotOrders.value.length) return false
   actionId.value = 'spot-all'
   error.value = ''
   try {
     await cancelAllSpotOrders(spotOrders.value.map((order) => order.id))
-    feedback.value = t('orders.allSpotCanceled')
     await load()
+    feedback.value = t('orders.allSpotCanceled')
+    return true
   } catch (reason) {
     error.value = apiErrorMessage(reason, t('orders.allSpotCancelFailed'))
+    return false
   } finally {
     actionId.value = ''
   }
 }
 
-async function actOnPosition(position: MarginPosition): Promise<void> {
+async function actOnPosition(position: MarginPosition): Promise<boolean> {
   const shouldCancel = position.entryPrice <= 0
   actionId.value = `margin-${position.id}`
   error.value = ''
   try {
     if (shouldCancel) await cancelMarginPosition(position.id)
     else await closeMarginPosition(position.id)
-    feedback.value = shouldCancel ? t('orders.marginCanceled') : t('orders.closeSubmitted')
     await load()
+    feedback.value = shouldCancel ? t('orders.marginCanceled') : t('orders.closeSubmitted')
+    return true
   } catch (reason) {
     error.value = apiErrorMessage(reason, shouldCancel ? t('orders.marginCancelFailed') : t('orders.closeFailed'))
+    return false
   } finally {
     actionId.value = ''
   }
 }
 
-async function cancelAllMargin(): Promise<void> {
-  if (!cancelablePositions.value.length) return
+async function cancelAllMargin(): Promise<boolean> {
+  if (!cancelablePositions.value.length) return false
   actionId.value = 'margin-cancel-all'
   error.value = ''
   try {
     await cancelAllMarginPositions()
-    feedback.value = t('orders.allPendingCanceled')
     await load()
+    feedback.value = t('orders.allPendingCanceled')
+    return true
   } catch (reason) {
     error.value = apiErrorMessage(reason, t('orders.batchCancelFailed'))
+    return false
   } finally {
     actionId.value = ''
   }
 }
 
-async function closeAllMargin(): Promise<void> {
-  if (!closablePositions.value.length) return
+async function closeAllMargin(): Promise<boolean> {
+  if (!closablePositions.value.length) return false
   actionId.value = 'margin-close-all'
   error.value = ''
   try {
     await closeAllMarginPositions()
-    feedback.value = t('orders.allCloseSubmitted')
     await load()
+    feedback.value = t('orders.allCloseSubmitted')
+    return true
   } catch (reason) {
     error.value = apiErrorMessage(reason, t('orders.allCloseFailed'))
+    return false
   } finally {
     actionId.value = ''
   }
 }
 
+function requestAction(action: PendingAction): void {
+  error.value = ''
+  feedback.value = ''
+  pendingAction.value = action
+}
+
+function closeConfirm(): void {
+  if (actionId.value) return
+  pendingAction.value = null
+}
+
+async function confirmAction(): Promise<void> {
+  const action = pendingAction.value
+  if (!action) return
+  let completed = false
+  if (action.kind === 'spot') completed = await cancelSpot(action.order)
+  else if (action.kind === 'spot-all') completed = await cancelAllSpot()
+  else if (action.kind === 'margin') completed = await actOnPosition(action.position)
+  else if (action.kind === 'margin-cancel-all') completed = await cancelAllMargin()
+  else completed = await closeAllMargin()
+  if (completed) pendingAction.value = null
+}
+
+function trapDialogFocus(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeConfirm()
+    return
+  }
+  if (event.key !== 'Tab' || !confirmDialog.value) return
+  const focusable = Array.from(confirmDialog.value.querySelectorAll<HTMLElement>(
+    'button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  ))
+  if (!focusable.length) return
+  const first = focusable[0]
+  const last = focusable.at(-1) || first
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
 watch(activeTab, () => { void load() })
+watch(pendingAction, async (action) => {
+  if (action) {
+    returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    previousBodyOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    await nextTick()
+    confirmDialog.value?.querySelector<HTMLElement>('[data-dialog-cancel]')?.focus()
+    return
+  }
+  document.body.style.overflow = previousBodyOverflow
+  await nextTick()
+  returnFocus?.focus()
+  returnFocus = null
+})
+
 onMounted(() => {
   if (route.query.tab === 'positions') activeTab.value = 'margin'
   else if (route.query.tab === 'history') activeTab.value = 'history'
   void load()
+})
+
+onBeforeUnmount(() => {
+  document.body.style.overflow = previousBodyOverflow
 })
 
 function statusLabel(status: string): string {
@@ -215,7 +325,7 @@ function statusLabel(status: string): string {
 </script>
 
 <template>
-  <main class="page page--plain orders-page">
+  <main class="page page--plain orders-page" data-orders-workspace="live">
     <PageHeader
       :eyebrow="t('orders.category')"
       :title="t('orders.title')"
@@ -278,7 +388,7 @@ function statusLabel(status: string): string {
               v-if="sortedSpotOrders.length"
               type="button"
               :disabled="actionId === 'spot-all'"
-              @click="cancelAllSpot"
+              @click="requestAction({ kind: 'spot-all' })"
             >
               {{ actionId === 'spot-all' ? t('orders.canceling') : t('orders.cancelAll') }}
             </button>
@@ -302,7 +412,7 @@ function statusLabel(status: string): string {
                   class="button button--secondary"
                   type="button"
                   :disabled="actionId === `spot-${order.id}`"
-                  @click="cancelSpot(order)"
+                  @click="requestAction({ kind: 'spot', order })"
                 >
                   {{ actionId === `spot-${order.id}` ? t('orders.processing') : t('orders.cancel') }}
                 </button>
@@ -323,7 +433,7 @@ function statusLabel(status: string): string {
                 v-if="cancelablePositions.length"
                 type="button"
                 :disabled="actionId === 'margin-cancel-all'"
-                @click="cancelAllMargin"
+                @click="requestAction({ kind: 'margin-cancel-all' })"
               >
                 {{ t('orders.cancelPending') }}
               </button>
@@ -332,7 +442,7 @@ function statusLabel(status: string): string {
                 class="order-toolbar__danger"
                 type="button"
                 :disabled="actionId === 'margin-close-all'"
-                @click="closeAllMargin"
+                @click="requestAction({ kind: 'margin-close-all' })"
               >
                 {{ actionId === 'margin-close-all' ? t('orders.closing') : t('orders.closeAll') }}
               </button>
@@ -358,7 +468,7 @@ function statusLabel(status: string): string {
                   :class="position.entryPrice > 0 ? 'button--danger' : 'button--secondary'"
                   type="button"
                   :disabled="actionId === `margin-${position.id}`"
-                  @click="actOnPosition(position)"
+                  @click="requestAction({ kind: 'margin', position })"
                 >
                   {{ actionId === `margin-${position.id}` ? t('orders.processing') : position.entryPrice > 0 ? t('orders.close') : t('orders.cancel') }}
                 </button>
@@ -396,6 +506,58 @@ function statusLabel(status: string): string {
           </section>
         </template>
       </template>
+    </div>
+
+    <div
+      v-if="pendingAction"
+      class="orders-mask"
+      @click.self="closeConfirm"
+    >
+      <section
+        ref="confirmDialog"
+        class="orders-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="orders-confirm-title"
+        @keydown="trapDialogFocus"
+      >
+        <header>
+          <div>
+            <strong id="orders-confirm-title">{{ pendingActionLabel }}</strong>
+            <small>{{ pendingActionSummary }}</small>
+          </div>
+          <button
+            class="icon-button"
+            type="button"
+            :aria-label="t('common.close')"
+            :disabled="Boolean(actionId)"
+            data-dialog-cancel
+            @click="closeConfirm"
+          >
+            <X :size="21" />
+          </button>
+        </header>
+        <p v-if="error" class="orders-dialog__error" role="alert">{{ error }}</p>
+        <div class="orders-dialog__actions">
+          <button
+            class="button button--secondary"
+            type="button"
+            :disabled="Boolean(actionId)"
+            @click="closeConfirm"
+          >
+            {{ t('common.cancel') }}
+          </button>
+          <button
+            class="button button--danger"
+            type="button"
+            :disabled="Boolean(actionId)"
+            :aria-busy="Boolean(actionId)"
+            @click="confirmAction"
+          >
+            {{ actionId ? t('orders.processing') : pendingActionLabel }}
+          </button>
+        </div>
+      </section>
     </div>
   </main>
 </template>
@@ -676,6 +838,81 @@ function statusLabel(status: string): string {
   text-align: right;
 }
 
+.orders-mask {
+  align-items: flex-end;
+  background: var(--overlay);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding:
+    max(16px, env(safe-area-inset-top))
+    16px
+    max(16px, env(safe-area-inset-bottom));
+  position: fixed;
+  z-index: var(--layer-overlay);
+}
+
+.orders-dialog {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--negative);
+  box-shadow: var(--shadow-soft);
+  display: grid;
+  gap: 15px;
+  max-height: calc(100dvh - max(32px, env(safe-area-inset-top)) - max(32px, env(safe-area-inset-bottom)));
+  max-width: var(--app-max-width);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 17px;
+  width: 100%;
+}
+
+.orders-dialog > header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.orders-dialog > header > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.orders-dialog > header strong {
+  font-size: 18px;
+}
+
+.orders-dialog > header small {
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.orders-dialog__error {
+  background: var(--negative-soft);
+  border-left: 3px solid var(--negative);
+  color: var(--negative);
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 0;
+  padding: 8px 10px;
+}
+
+.orders-dialog__actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr);
+}
+
+.orders-dialog__actions .button {
+  border-radius: 0;
+  min-height: 48px;
+  min-width: 0;
+  padding-inline: 8px;
+}
+
 .spin {
   animation: spin .8s linear infinite;
 }
@@ -729,6 +966,10 @@ function statusLabel(status: string): string {
 
   .order-card dd {
     font-size: 10px;
+  }
+
+  .orders-dialog__actions {
+    grid-template-columns: 1fr;
   }
 }
 </style>

@@ -112,7 +112,7 @@ const items = computed(() => [
   bottom: 0;
   box-shadow: none;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(56px, 1.2fr) repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(44px, 1fr));
   height: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom));
   isolation: isolate;
   left: 50%;
@@ -144,6 +144,7 @@ const items = computed(() => [
   inset: 0;
   pointer-events: none;
   position: absolute;
+  filter: drop-shadow(0 -1px 0 var(--line-strong));
   z-index: -2;
 }
 
@@ -174,7 +175,7 @@ const items = computed(() => [
   gap: 1px;
   justify-content: flex-end;
   line-height: 1.05;
-  min-height: 62px;
+  min-height: 66px;
   min-width: 0;
   position: relative;
   text-align: center;
@@ -193,7 +194,7 @@ const items = computed(() => [
 .bottom-nav__icon {
   align-items: center;
   border: 1px solid transparent;
-  border-radius: var(--radius);
+  border-radius: 4px;
   display: flex;
   flex: 0 0 44px;
   height: 44px;
@@ -210,7 +211,7 @@ const items = computed(() => [
   display: -webkit-box;
   line-height: 1.05;
   max-width: 100%;
-  min-height: 18px;
+  min-height: 16px;
   overflow: hidden;
   overflow-wrap: anywhere;
   padding: 0 1px;
@@ -224,8 +225,9 @@ const items = computed(() => [
 }
 
 .bottom-nav__item.is-active:not(.is-primary) .bottom-nav__icon {
-  background: var(--soft);
-  border-color: var(--line);
+  background: linear-gradient(var(--signal-green), var(--signal-green)) center / 28px 28px no-repeat;
+  border-color: transparent;
+  color: var(--on-positive);
 }
 
 .bottom-nav__item.is-primary {
@@ -239,15 +241,16 @@ const items = computed(() => [
   border-radius: 50%;
   box-shadow: 0 0 0 1px var(--line-strong);
   color: var(--on-positive);
-  flex-basis: 52px;
-  height: 52px;
+  flex-basis: 48px;
+  height: 48px;
   margin-top: -24px;
-  width: 52px;
+  width: 48px;
 }
 
 .bottom-nav__item.is-primary.is-active .bottom-nav__icon {
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--signal-green);
+  box-shadow: 0 0 0 1px var(--line-strong), 0 0 0 5px color-mix(in srgb, var(--signal-green) 12%, transparent);
+  color: var(--on-positive);
 }
 
 @media (max-width: 360px) {

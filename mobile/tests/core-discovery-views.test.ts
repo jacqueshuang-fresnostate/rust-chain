@@ -35,8 +35,9 @@ test('首页通知按钮打开真实消息中心命名路由', () => {
   assert.match(homeSource, /class="announcement-row"[\s\S]*?name: 'news-detail'/)
   assert.match(
     homeSource,
-    /grid-template-columns:\s*minmax\(88px,\s*1fr\)\s*minmax\(96px,\s*auto\)\s*minmax\(88px,\s*1fr\)/,
+    /\.home-header\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\)\s*auto/,
   )
+  assert.doesNotMatch(homeSource, /grid-template-columns:\s*minmax\(88px,\s*1fr\)/)
 })
 
 test('行情页保留交易对选择器的交易模式、查询参数和历史语义', () => {
@@ -56,6 +57,8 @@ test('产品中心维持两项精选与三项次级产品的真实路由矩阵',
     assert.match(productHubSource, new RegExp(`name: '${routeName}'`))
   }
   assert.match(productHubSource, /router\.push\(\{ name \}\)/)
+  assert.match(productHubSource, /featuredProducts/)
+  assert.match(productHubSource, /secondaryProducts/)
 })
 
 test('核心发现视图遵守窄屏、触控与图标契约', () => {

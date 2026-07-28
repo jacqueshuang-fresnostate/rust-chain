@@ -47,12 +47,14 @@ watch(() => props.src, () => {
 <style scoped>
 .asset-mark {
   --asset-color: var(--positive);
-  --asset-ink: var(--on-positive);
+  --asset-ink: var(--positive);
   align-items: center;
-  background: color-mix(in srgb, var(--asset-color) 88%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--asset-color) 62%, var(--line-strong));
+  background: color-mix(in srgb, var(--asset-color) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--asset-color) 46%, var(--line-strong));
   border-radius: 50%;
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--surface) 18%, transparent);
+  box-shadow:
+    inset 0 0 0 3px var(--surface),
+    inset 0 0 0 4px color-mix(in srgb, var(--asset-color) 22%, transparent);
   color: var(--asset-ink);
   display: inline-flex;
   flex: 0 0 auto;
@@ -63,22 +65,22 @@ watch(() => props.src, () => {
 
 .asset-mark--tone-1 {
   --asset-color: var(--focus);
-  --asset-ink: var(--surface);
+  --asset-ink: var(--focus);
 }
 
 .asset-mark--tone-2 {
   --asset-color: var(--accent);
-  --asset-ink: var(--on-accent);
+  --asset-ink: var(--accent);
 }
 
 .asset-mark--tone-3 {
   --asset-color: var(--negative);
-  --asset-ink: var(--on-negative);
+  --asset-ink: var(--negative);
 }
 
 .asset-mark--tone-4 {
   --asset-color: var(--muted-strong);
-  --asset-ink: var(--surface);
+  --asset-ink: var(--muted-strong);
 }
 
 .asset-mark img {

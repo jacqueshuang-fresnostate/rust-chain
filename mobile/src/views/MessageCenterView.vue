@@ -76,7 +76,7 @@ onMounted(() => { void loadMessages() })
 </script>
 
 <template>
-  <main class="page page--plain message-center-page">
+  <main class="page page--plain page--prototype-grid message-center-page" data-message-workspace="live">
     <PageHeader
       :back="true"
       :eyebrow="t('messageCenter.categoryPlatform')"
@@ -99,6 +99,16 @@ onMounted(() => { void loadMessages() })
             <small>{{ t('messageCenter.summaryUnread', { unread: unreadCount }) }}</small>
           </div>
         </div>
+        <dl class="message-summary__metrics">
+          <div>
+            <dt>{{ t('messageCenter.categoryPlatform') }}</dt>
+            <dd class="numeric">{{ messages.length }}</dd>
+          </div>
+          <div>
+            <dt>{{ t('messageCenter.filterUnread') }}</dt>
+            <dd class="numeric">{{ unreadCount }}</dd>
+          </div>
+        </dl>
         <button class="mark-all-button" type="button" :disabled="unreadCount === 0" @click="markAllRead">
           <CheckCheck :size="18" />
           <span>{{ unreadCount === 0 ? t('messageCenter.allRead') : t('messageCenter.markAllRead') }}</span>
@@ -143,19 +153,44 @@ onMounted(() => { void loadMessages() })
 
 <style scoped>
 .message-center-content { padding-bottom: calc(40px + env(safe-area-inset-bottom)); }
-.message-summary { align-items: center; border-bottom: 1px solid var(--line); display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr) auto; padding: 20px 0; position: relative; }
-.message-summary::before { background: var(--accent); content: ''; height: 3px; left: 0; position: absolute; top: 0; width: 44px; }
+.message-summary {
+  align-items: center;
+  background:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
+    var(--signal-coral);
+  background-size: 32px 32px;
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--on-accent);
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin: 0 -16px;
+  min-height: 190px;
+  padding: 22px 16px 0;
+  position: relative;
+}
+.message-summary::before { background: var(--dark-surface); content: ''; height: 3px; left: 16px; position: absolute; top: 0; width: 44px; }
 .message-summary__signal { align-items: center; display: grid; gap: 11px; grid-template-columns: 42px minmax(0, 1fr); }
-.message-summary__signal > span { align-items: center; background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line)); border-radius: 50%; color: var(--accent); display: inline-flex; height: 42px; justify-content: center; width: 42px; }
+.message-summary__signal > span { align-items: center; background: var(--dark-surface); border: 1px solid var(--dark-surface); border-radius: 50%; color: var(--on-dark-surface); display: inline-flex; height: 42px; justify-content: center; width: 42px; }
 .message-summary__signal div { display: grid; gap: 4px; min-width: 0; }
 .message-summary__signal strong { font-size: 17px; }
-.message-summary__signal small { color: var(--muted); font-size: 12px; }
-.mark-all-button { align-items: center; background: transparent; color: var(--accent); display: inline-flex; font-size: 12px; font-weight: 750; gap: 6px; justify-content: flex-end; max-width: 132px; min-height: 44px; padding: 0; text-align: right; }
+.message-summary__signal small { color: color-mix(in srgb, var(--on-accent) 72%, transparent); font-size: 12px; }
+.message-summary__metrics { align-self: end; border-top: 1px solid color-mix(in srgb, var(--on-accent) 22%, transparent); display: grid; grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0 -16px; }
+.message-summary__metrics > div { display: grid; gap: 3px; min-height: 62px; padding: 9px 16px; }
+.message-summary__metrics > div + div { border-left: 1px solid color-mix(in srgb, var(--on-accent) 22%, transparent); }
+.message-summary__metrics > div:first-child { border-top: 3px solid var(--signal-green); }
+.message-summary__metrics > div:last-child { border-top: 3px solid var(--signal-blue); }
+.message-summary__metrics dt,
+.message-summary__metrics dd { margin: 0; }
+.message-summary__metrics dt { color: color-mix(in srgb, var(--on-accent) 68%, transparent); font-size: 9px; }
+.message-summary__metrics dd { font-size: 17px; font-weight: 800; }
+.mark-all-button { align-items: center; background: var(--dark-surface); color: var(--on-dark-surface); display: inline-flex; font-size: 11px; font-weight: 750; gap: 6px; justify-content: center; max-width: 132px; min-height: 44px; padding: 0 10px; text-align: center; }
 .message-filters { background: var(--soft); border: 1px solid var(--line); border-radius: var(--radius); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 16px 0 18px; padding: 3px; }
 .message-filters button { background: transparent; border: 1px solid transparent; border-radius: calc(var(--radius) - 3px); color: var(--muted); font-size: 13px; font-weight: 750; min-height: 44px; }
 .message-filters button[aria-pressed='true'] { background: var(--surface-elevated); border-color: var(--line); box-shadow: var(--shadow-soft); color: var(--ink); }
 .message-error { margin-bottom: 12px; }
-.message-list { border-top: 1px solid var(--line); display: grid; }
+.message-list { background: var(--surface); border-top: 1px solid var(--line); display: grid; }
 .message-row { align-items: center; background: transparent; border-bottom: 1px solid var(--line); color: var(--ink); display: grid; gap: 11px; grid-template-columns: 40px minmax(0, 1fr) 8px 18px; min-height: 94px; padding: 12px 0; position: relative; text-align: left; width: 100%; }
 .message-row::before { background: transparent; bottom: 12px; content: ''; left: -20px; position: absolute; top: 12px; width: 3px; }
 .message-row--unread::before { background: var(--accent); }
@@ -172,10 +207,13 @@ onMounted(() => { void loadMessages() })
 .message-row > svg { color: var(--muted); }
 .spin { animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 360px) {
+  .message-summary { margin-left: -12px; margin-right: -12px; }
+}
 @media (max-width: 340px) {
   .message-center-content { padding-left: 16px; padding-right: 16px; }
-  .message-summary { align-items: stretch; grid-template-columns: 1fr; }
-  .mark-all-button { justify-content: flex-start; max-width: none; text-align: left; }
+  .message-summary { margin-left: -16px; margin-right: -16px; }
+  .mark-all-button { max-width: 112px; }
   .message-row { gap: 8px; grid-template-columns: 36px minmax(0, 1fr) 7px 16px; }
   .message-row::before { left: -16px; }
   .message-row__icon { height: 36px; width: 36px; }

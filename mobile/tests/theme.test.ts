@@ -53,6 +53,7 @@ test('明暗主题提供高对比共享令牌与稳定主题色', () => {
     '--negative',
     '--accent',
     '--focus',
+    '--signal-green',
   ]) {
     assert.match(baseCss, new RegExp(`${token}:`))
   }
@@ -67,7 +68,10 @@ test('两套主题的正文、辅助文字和语义色达到正文对比阈值',
     for (const token of ['--muted', '--positive', '--negative', '--accent', '--focus']) {
       assert.ok(contrastRatio(tokenHex(source, token), surface) >= 4.5, `${token} contrast is too low`)
     }
+    const signalGreen = tokenHex(source, '--signal-green')
+    assert.ok(contrastRatio(tokenHex(source, '--on-positive'), signalGreen) >= 4.5)
   }
+  assert.notEqual(tokenHex(baseCss, '--positive'), tokenHex(baseCss, '--signal-green'))
 })
 
 test('壳层层级遵循内容、导航、转场、粘性头部、浮层顺序', () => {

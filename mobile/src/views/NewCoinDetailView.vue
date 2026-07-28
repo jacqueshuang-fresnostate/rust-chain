@@ -14,6 +14,7 @@ import {
   ReceiptText,
   RefreshCw,
   ShieldCheck,
+  X,
 } from 'lucide-vue-next'
 import AssetMark from '@/components/AssetMark.vue'
 import LoginRequiredState from '@/components/LoginRequiredState.vue'
@@ -28,6 +29,7 @@ import {
 import { fetchMarketTickers } from '@/api/market'
 import { fetchWalletAccounts } from '@/api/wallet'
 import { formatAmount, formatDateTime, formatPrice } from '@/core/format'
+import { useModalDialog } from '@/core/modalDialog'
 import { newCoinPurchaseQuantity } from '@/core/newCoinPurchase'
 import type { MarketTicker, WalletAccount } from '@/core/types'
 import { useSessionStore } from '@/stores/session'
@@ -45,6 +47,9 @@ const loading = ref(false)
 const submitting = ref(false)
 const error = ref('')
 const success = ref('')
+const reviewOpen = ref(false)
+const reviewDialog = ref<HTMLElement | null>(null)
+const { trapFocus: trapReviewFocus } = useModalDialog(reviewOpen, reviewDialog, '[data-dialog-cancel]')
 
 const lifecycle = computed(() => project.value?.lifecycleStatus.toLowerCase() || '')
 const canSubscribe = computed(() => lifecycle.value === 'subscription')
@@ -119,8 +124,23 @@ function setAmount(value: number): void {
   amount.value = next ? String(Number(next.toFixed(8))) : ''
 }
 
-async function submit(): Promise<void> {
+function requestSubmit(): void {
   if (!project.value || !canSubmit.value) {
+    error.value = t('newCoin.invalidAmount')
+    return
+  }
+  error.value = ''
+  reviewOpen.value = true
+}
+
+function closeReview(): void {
+  if (submitting.value) return
+  reviewOpen.value = false
+  error.value = ''
+}
+
+async function submit(): Promise<void> {
+  if (!project.value || !reviewOpen.value || !canSubmit.value) {
     error.value = t('newCoin.invalidAmount')
     return
   }
@@ -145,12 +165,17 @@ async function submit(): Promise<void> {
       success.value = t('newCoin.purchaseSubmitted')
     }
     amount.value = ''
+    reviewOpen.value = false
     await load()
   } catch (reason) {
     error.value = apiErrorMessage(reason, t(canPurchase.value ? 'newCoin.purchaseFailed' : 'newCoin.subscriptionFailed'))
   } finally {
     submitting.value = false
   }
+}
+
+function handleReviewKeydown(event: KeyboardEvent): void {
+  trapReviewFocus(event, closeReview)
 }
 
 onMounted(() => { void load() })
@@ -176,7 +201,7 @@ onMounted(() => { void load() })
       </template>
     </PageHeader>
     <div class="page-content new-coin-detail-content">
-      <div v-if="error" class="detail-message detail-message--error" role="alert">
+      <div v-if="error && !reviewOpen" class="detail-message detail-message--error" role="alert">
         <CircleAlert :size="18" />
         <span>{{ error }}</span>
         <button type="button" :aria-label="t('common.retry')" @click="load">
@@ -262,7 +287,7 @@ onMounted(() => { void load() })
             type="button"
             :disabled="submitting || !canSubmit"
             :aria-busy="submitting"
-            @click="submit"
+            @click="requestSubmit"
           >
             {{ submitting ? t('common.submitting') : t(canSubscribe ? 'newCoin.subscribeAsset' : 'newCoin.purchaseAsset', { asset: project.symbol }) }}
           </button>
@@ -279,6 +304,52 @@ onMounted(() => { void load() })
         <PackageOpen :size="23" />
         <span>{{ t('newCoin.noProjects') }}</span>
       </div>
+    </div>
+
+    <div v-if="reviewOpen && project && selectedAccount" class="entry-review-mask" @click.self="closeReview">
+      <section
+        ref="reviewDialog"
+        class="entry-review"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="entry-review-title"
+        aria-describedby="entry-review-description"
+        @keydown="handleReviewKeydown"
+      >
+        <header>
+          <div>
+            <span>{{ t(canSubscribe ? 'newCoin.subscribe' : 'newCoin.postListingPurchase') }}</span>
+            <h2 id="entry-review-title">{{ t(canSubscribe ? 'newCoin.subscribeTitle' : 'newCoin.purchaseTitle') }}</h2>
+            <small id="entry-review-description">
+              {{ canSubscribe ? t('newCoin.subscribeDescription') : t('newCoin.purchaseDescription', { price: formatPrice(executionPrice), asset: quoteSymbol }) }}
+            </small>
+          </div>
+          <button class="icon-button" type="button" :aria-label="t('common.close')" :disabled="submitting" @click="closeReview">
+            <X :size="21" aria-hidden="true" />
+          </button>
+        </header>
+        <dl class="entry-review__summary">
+          <div><dt>{{ t('newCoin.paymentAsset') }}</dt><dd>{{ selectedAccount.symbol }}</dd></div>
+          <div>
+            <dt>{{ t(canSubscribe ? 'newCoin.subscriptionAmount' : 'newCoin.purchaseQuantity', { asset: project.symbol }) }}</dt>
+            <dd class="numeric">{{ formatAmount(amountNumber) }} {{ canSubscribe ? selectedAccount.symbol : project.symbol }}</dd>
+          </div>
+          <div>
+            <dt>{{ t(canSubscribe ? 'newCoin.estimatedSubscription' : 'newCoin.estimatedPayment') }}</dt>
+            <dd class="numeric up">{{ formatAmount(canSubscribe ? estimatedQuantity : paymentAmount) }} {{ canSubscribe ? project.symbol : selectedAccount.symbol }}</dd>
+          </div>
+          <div><dt>{{ t('newCoin.availableBalance') }}</dt><dd class="numeric">{{ formatAmount(selectedAccount.available) }} {{ selectedAccount.symbol }}</dd></div>
+        </dl>
+        <p v-if="error" class="entry-review__error" role="alert">{{ error }}</p>
+        <div class="entry-review__actions">
+          <button class="button button--secondary" type="button" :disabled="submitting" data-dialog-cancel @click="closeReview">
+            {{ t('common.cancel') }}
+          </button>
+          <button class="button button--primary" type="button" :disabled="submitting || !canSubmit" :aria-busy="submitting" @click="submit">
+            {{ submitting ? t('common.submitting') : t(canSubscribe ? 'newCoin.subscribeAsset' : 'newCoin.purchaseAsset', { asset: project.symbol }) }}
+          </button>
+        </div>
+      </section>
     </div>
   </main>
 </template>
@@ -657,6 +728,124 @@ onMounted(() => { void load() })
   margin: 0;
 }
 
+.entry-review-mask {
+  align-items: flex-end;
+  background: var(--overlay);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding:
+    max(16px, env(safe-area-inset-top))
+    16px
+    max(16px, env(safe-area-inset-bottom));
+  position: fixed;
+  z-index: var(--layer-overlay);
+}
+
+.entry-review {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--accent);
+  box-shadow: var(--shadow-soft);
+  display: grid;
+  gap: 14px;
+  max-height: calc(100dvh - max(32px, env(safe-area-inset-top)) - max(32px, env(safe-area-inset-bottom)));
+  max-width: 520px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 17px;
+  width: 100%;
+}
+
+.entry-review > header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.entry-review > header > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.entry-review > header span {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.entry-review h2 {
+  font-size: 18px;
+  margin: 0;
+}
+
+.entry-review > header small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.entry-review__summary {
+  border-block: 1px solid var(--line);
+  display: grid;
+  margin: 0;
+}
+
+.entry-review__summary > div {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 44px;
+}
+
+.entry-review__summary > div:last-child {
+  border-bottom: 0;
+}
+
+.entry-review__summary dt,
+.entry-review__summary dd {
+  font-size: 11px;
+  margin: 0;
+}
+
+.entry-review__summary dt {
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.entry-review__summary dd {
+  font-weight: 750;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.entry-review__error {
+  background: var(--negative-soft);
+  border-left: 3px solid var(--negative);
+  color: var(--negative);
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 0;
+  padding: 8px 10px;
+}
+
+.entry-review__actions {
+  display: grid;
+  gap: 9px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.entry-review__actions .button {
+  min-height: 48px;
+  padding-inline: 10px;
+}
+
 .spin {
   animation: spin .8s linear infinite;
 }
@@ -721,6 +910,22 @@ onMounted(() => { void load() })
 
   .quick-values {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .entry-review__summary > div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+    justify-content: center;
+    padding-block: 8px;
+  }
+
+  .entry-review__summary dd {
+    text-align: left;
+  }
+
+  .entry-review__actions {
+    grid-template-columns: 1fr;
   }
 }
 </style>

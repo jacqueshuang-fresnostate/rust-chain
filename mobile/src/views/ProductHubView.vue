@@ -56,6 +56,8 @@ const products = computed<ProductEntry[]>(() => [
     icon: Gauge,
   },
 ])
+const featuredProducts = computed(() => products.value.filter((product) => product.tier === 'featured'))
+const secondaryProducts = computed(() => products.value.filter((product) => product.tier === 'secondary'))
 
 function openProduct(name: ProductRouteName): void {
   void router.push({ name })
@@ -63,7 +65,7 @@ function openProduct(name: ProductRouteName): void {
 </script>
 
 <template>
-  <main class="page page--plain product-hub">
+  <main class="page page--plain page--prototype-grid product-hub" data-product-workspace="live">
     <PageHeader :title="t('products.title')" :subtitle="t('products.introDescription')" />
     <div class="page-content">
       <header class="product-hub__overview">
@@ -72,25 +74,56 @@ function openProduct(name: ProductRouteName): void {
         <p>{{ t('products.introDescription') }}</p>
       </header>
 
-      <section class="product-hub__matrix" :aria-label="t('products.title')">
-        <button
-          v-for="product in products"
-          :key="product.name"
-          class="product-card"
-          :class="`product-card--${product.tier}`"
-          :data-product="product.name"
-          :data-product-tier="product.tier"
-          type="button"
-          :aria-label="product.label"
-          @click="openProduct(product.name)"
-        >
-          <span class="product-card__top">
-            <span class="product-card__icon"><component :is="product.icon" :size="20" /></span>
-            <ArrowRight :size="17" />
-          </span>
-          <strong>{{ product.label }}</strong>
-          <small>{{ product.description }}</small>
-        </button>
+      <section class="product-hub__group" :aria-labelledby="'featured-products-title'">
+        <header>
+          <span>01</span>
+          <h2 id="featured-products-title">{{ t('products.featuredServices') }}</h2>
+        </header>
+        <div class="product-hub__matrix product-hub__matrix--featured">
+          <button
+            v-for="product in featuredProducts"
+            :key="product.name"
+            class="product-card product-card--featured"
+            :data-product="product.name"
+            :data-product-tier="product.tier"
+            type="button"
+            :aria-label="product.label"
+            @click="openProduct(product.name)"
+          >
+            <span class="product-card__top">
+              <span class="product-card__icon"><component :is="product.icon" :size="20" /></span>
+              <ArrowRight :size="17" />
+            </span>
+            <strong>{{ product.label }}</strong>
+            <small>{{ product.description }}</small>
+          </button>
+        </div>
+      </section>
+
+      <section class="product-hub__group" :aria-labelledby="'specialized-products-title'">
+        <header>
+          <span>02</span>
+          <h2 id="specialized-products-title">{{ t('products.specializedServices') }}</h2>
+        </header>
+        <div class="product-hub__matrix product-hub__matrix--secondary">
+          <button
+            v-for="product in secondaryProducts"
+            :key="product.name"
+            class="product-card product-card--secondary"
+            :data-product="product.name"
+            :data-product-tier="product.tier"
+            type="button"
+            :aria-label="product.label"
+            @click="openProduct(product.name)"
+          >
+            <span class="product-card__top">
+              <span class="product-card__icon"><component :is="product.icon" :size="20" /></span>
+              <ArrowRight :size="17" />
+            </span>
+            <strong>{{ product.label }}</strong>
+            <small>{{ product.description }}</small>
+          </button>
+        </div>
       </section>
     </div>
   </main>
@@ -98,7 +131,7 @@ function openProduct(name: ProductRouteName): void {
 
 <style scoped>
 .product-hub {
-  background: var(--background);
+  background-color: var(--background);
 }
 
 .product-hub .page-content {
@@ -109,7 +142,11 @@ function openProduct(name: ProductRouteName): void {
 }
 
 .product-hub__overview {
-  background: var(--surface);
+  background:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
+    var(--surface);
+  background-size: 36px 36px;
   border-bottom: 1px solid var(--line);
   border-top: 3px solid var(--signal-green);
   display: grid;
@@ -117,6 +154,17 @@ function openProduct(name: ProductRouteName): void {
   margin: 0 -16px;
   min-height: 132px;
   padding: 20px;
+  position: relative;
+}
+
+.product-hub__overview::after {
+  background: linear-gradient(90deg, var(--signal-green) 0 34%, var(--signal-coral) 34% 67%, var(--signal-blue) 67%);
+  bottom: 0;
+  content: '';
+  height: 4px;
+  left: 20px;
+  position: absolute;
+  width: 96px;
 }
 
 .product-hub__overview > span {
@@ -143,11 +191,36 @@ function openProduct(name: ProductRouteName): void {
   margin: 0;
 }
 
+.product-hub__group {
+  margin-top: 18px;
+}
+
+.product-hub__group > header {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 30px minmax(0, 1fr);
+  min-height: 44px;
+}
+
+.product-hub__group > header span {
+  color: var(--accent);
+  font-family: var(--data-font);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.product-hub__group > header h2 {
+  font-size: 15px;
+  margin: 0;
+}
+
 .product-hub__matrix {
   display: grid;
   gap: 8px;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  margin-top: 14px;
+  margin-top: 8px;
   min-width: 0;
 }
 
@@ -181,7 +254,7 @@ function openProduct(name: ProductRouteName): void {
 }
 
 .product-card[data-product="prediction"] {
-  border-top-color: var(--focus, var(--accent));
+  border-top-color: var(--signal-blue);
 }
 
 .product-card[data-product="seconds"] {

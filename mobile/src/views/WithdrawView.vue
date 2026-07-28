@@ -2,13 +2,14 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, LoaderCircle, ShieldCheck } from 'lucide-vue-next'
+import { ChevronDown, LoaderCircle, ShieldCheck, X } from 'lucide-vue-next'
 import AssetMark from '@/components/AssetMark.vue'
 import LoginRequiredState from '@/components/LoginRequiredState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
 import { fetchDepositNetworks, fetchWalletAccounts, fetchWithdrawalAssets, submitWithdrawal, type WithdrawalAsset } from '@/api/wallet'
 import { formatAmount } from '@/core/format'
+import { useModalDialog } from '@/core/modalDialog'
 import { useSessionStore } from '@/stores/session'
 import type { DepositNetwork, WalletAccount } from '@/core/types'
 
@@ -29,6 +30,9 @@ const submitting = ref(false)
 const error = ref('')
 const success = ref('')
 const validationAttempted = ref(false)
+const reviewOpen = ref(false)
+const reviewDialog = ref<HTMLElement | null>(null)
+const { trapFocus: trapReviewFocus } = useModalDialog(reviewOpen, reviewDialog, '[data-dialog-cancel]')
 
 const available = computed(() => account.value?.available || 0)
 const fee = computed(() => asset.value?.withdrawFee || 0)
@@ -62,7 +66,7 @@ function useMaximum(): void {
   amount.value = String(Math.max(0, available.value - fee.value))
 }
 
-async function submit(): Promise<void> {
+function requestSubmit(): void {
   error.value = ''
   success.value = ''
   validationAttempted.value = true
@@ -74,6 +78,17 @@ async function submit(): Promise<void> {
     error.value = t('withdraw.exceedsBalance')
     return
   }
+  reviewOpen.value = true
+}
+
+function closeReview(): void {
+  if (submitting.value) return
+  reviewOpen.value = false
+  error.value = ''
+}
+
+async function submit(): Promise<void> {
+  if (!asset.value || !reviewOpen.value) return
   submitting.value = true
   try {
     await submitWithdrawal({
@@ -90,12 +105,17 @@ async function submit(): Promise<void> {
     fundPassword.value = ''
     totpCode.value = ''
     validationAttempted.value = false
+    reviewOpen.value = false
     await load()
   } catch (reason) {
     error.value = apiErrorMessage(reason, t('withdraw.failed'))
   } finally {
     submitting.value = false
   }
+}
+
+function handleReviewKeydown(event: KeyboardEvent): void {
+  trapReviewFocus(event, closeReview)
 }
 
 onMounted(() => { void load() })
@@ -112,7 +132,7 @@ onMounted(() => { void load() })
     <div class="page-content withdraw-page">
       <LoginRequiredState v-if="!session.isAuthenticated" :description="t('withdraw.loginDescription')" />
       <template v-else>
-        <p v-if="error" id="withdraw-error" class="error-message" role="alert">{{ error }}</p>
+        <p v-if="error && !reviewOpen" id="withdraw-error" class="error-message" role="alert">{{ error }}</p>
         <div v-if="loading" class="withdraw-loading" role="status">
           <LoaderCircle :size="23" class="spin" aria-hidden="true" />
           <span>{{ t('withdraw.loading') }}</span>
@@ -129,7 +149,7 @@ onMounted(() => { void load() })
               <button type="button" @click="router.push({ name: 'wallet-ledger' })">{{ t('assets.ledger') }}</button>
             </span>
           </section>
-          <form class="withdraw-workflow" @submit.prevent="submit">
+          <form class="withdraw-workflow" @submit.prevent="requestSubmit">
             <label class="withdraw-field">
               <span>{{ t('withdraw.network') }}</span>
               <div class="select-shell">
@@ -190,6 +210,52 @@ onMounted(() => { void load() })
         </template>
         <p v-else-if="!loading" class="empty-state">{{ t('withdraw.unavailable') }}</p>
       </template>
+    </div>
+
+    <div v-if="reviewOpen && asset" class="withdraw-review-mask" @click.self="closeReview">
+      <section
+        ref="reviewDialog"
+        class="withdraw-review"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="withdraw-review-title"
+        aria-describedby="withdraw-review-description"
+        @keydown="handleReviewKeydown"
+      >
+        <header>
+          <div>
+            <span>{{ t('assets.withdraw') }}</span>
+            <h2 id="withdraw-review-title">{{ t('withdraw.submit') }}</h2>
+            <small>{{ t('withdraw.notice') }}</small>
+          </div>
+          <button
+            class="icon-button"
+            type="button"
+            :aria-label="t('common.close')"
+            :disabled="submitting"
+            @click="closeReview"
+          >
+            <X :size="21" aria-hidden="true" />
+          </button>
+        </header>
+        <dl class="withdraw-review__summary">
+          <div><dt>{{ t('withdraw.network') }}</dt><dd>{{ selectedNetwork || t('withdraw.reviewedNetwork') }}</dd></div>
+          <div><dt>{{ t('withdraw.address') }}</dt><dd class="numeric">{{ address }}</dd></div>
+          <div><dt>{{ t('withdraw.quantity') }}</dt><dd class="numeric">{{ formatAmount(numericAmount) }} {{ asset.symbol }}</dd></div>
+          <div><dt>{{ t('withdraw.networkFee') }}</dt><dd class="numeric">{{ formatAmount(fee) }} {{ asset.symbol }}</dd></div>
+          <div><dt>{{ t('withdraw.estimatedArrival') }}</dt><dd class="numeric up">{{ formatAmount(receiveAmount) }} {{ asset.symbol }}</dd></div>
+        </dl>
+        <p id="withdraw-review-description" class="withdraw-review__notice">{{ t('withdraw.notice') }}</p>
+        <p v-if="error" class="withdraw-review__error" role="alert">{{ error }}</p>
+        <div class="withdraw-review__actions">
+          <button class="button button--secondary" type="button" :disabled="submitting" data-dialog-cancel @click="closeReview">
+            {{ t('common.cancel') }}
+          </button>
+          <button class="button button--primary" type="button" :disabled="submitting" :aria-busy="submitting" @click="submit">
+            {{ submitting ? t('common.submitting') : t('withdraw.submit') }}
+          </button>
+        </div>
+      </section>
     </div>
   </main>
 </template>
@@ -409,6 +475,131 @@ onMounted(() => { void load() })
   text-align: center;
 }
 
+.withdraw-review-mask {
+  align-items: flex-end;
+  background: var(--overlay);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding:
+    max(16px, env(safe-area-inset-top))
+    16px
+    max(16px, env(safe-area-inset-bottom));
+  position: fixed;
+  z-index: var(--layer-overlay);
+}
+
+.withdraw-review {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--accent);
+  box-shadow: var(--shadow-soft);
+  display: grid;
+  gap: 14px;
+  max-height: calc(100dvh - max(32px, env(safe-area-inset-top)) - max(32px, env(safe-area-inset-bottom)));
+  max-width: 520px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 17px;
+  width: 100%;
+}
+
+.withdraw-review > header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.withdraw-review > header > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.withdraw-review > header span {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.withdraw-review h2 {
+  font-size: 18px;
+  margin: 0;
+}
+
+.withdraw-review > header small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.withdraw-review__summary {
+  border-block: 1px solid var(--line);
+  display: grid;
+  margin: 0;
+}
+
+.withdraw-review__summary > div {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 44px;
+}
+
+.withdraw-review__summary > div:last-child {
+  border-bottom: 0;
+}
+
+.withdraw-review__summary dt,
+.withdraw-review__summary dd {
+  font-size: 11px;
+  margin: 0;
+}
+
+.withdraw-review__summary dt {
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.withdraw-review__summary dd {
+  font-weight: 750;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.withdraw-review__notice {
+  background: var(--negative-soft);
+  border-left: 3px solid var(--negative);
+  color: var(--negative);
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0;
+  padding: 9px 10px;
+}
+
+.withdraw-review__error {
+  color: var(--negative);
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.withdraw-review__actions {
+  display: grid;
+  gap: 9px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.withdraw-review__actions .button {
+  min-height: 48px;
+  padding-inline: 10px;
+}
+
 .spin {
   animation: spin .8s linear infinite;
 }
@@ -430,6 +621,10 @@ onMounted(() => { void load() })
   .withdraw-estimate div + div {
     border-left: 0;
     border-top: 1px solid var(--line);
+  }
+
+  .withdraw-review__actions {
+    grid-template-columns: 1fr;
   }
 }
 </style>

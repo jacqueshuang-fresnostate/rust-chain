@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "Mobile UI, accessibility, responsive, icon, focus, navigation and build quality contracts."}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "Preserve seven root routes, trade mode separation, back behavior and i18n while restructuring templates."}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "Preserve shared Android/PWA/Tauri shell, theme, cache isolation and bottom navigation contracts."}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Keep existing API, authentication, WebSocket and native backend runtime behavior unchanged."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Consolidate prototype tokens and repeated field/button/surface patterns instead of copying per-page CSS."}
+{"file": ".trellis/tasks/07-28-android-ui-prototype-alignment/research/prototype-v16-visual-audit.md", "reason": "Exact prototype v16 tokens, dimensions, structure, observed parity gaps and Android packaging risk."}

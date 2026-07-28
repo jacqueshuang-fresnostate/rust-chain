@@ -8,6 +8,7 @@ import {
   LoaderCircle,
   PackageOpen,
   RefreshCw,
+  X,
 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import AssetMark from '@/components/AssetMark.vue'
@@ -17,6 +18,7 @@ import { apiErrorMessage } from '@/api/client'
 import { confirmConvertQuote, fetchConvertOrders, fetchConvertPairs, requestConvertQuote, type ConvertOrder, type ConvertPair, type ConvertQuote } from '@/api/swap'
 import { fetchWalletAccounts } from '@/api/wallet'
 import { formatAmount, formatDateTime, formatPrice } from '@/core/format'
+import { useModalDialog } from '@/core/modalDialog'
 import { useSessionStore } from '@/stores/session'
 import type { WalletAccount } from '@/core/types'
 
@@ -33,6 +35,9 @@ const quoting = ref(false)
 const confirming = ref(false)
 const error = ref('')
 const success = ref('')
+const reviewOpen = ref(false)
+const reviewDialog = ref<HTMLElement | null>(null)
+const { trapFocus: trapReviewFocus } = useModalDialog(reviewOpen, reviewDialog, '[data-dialog-cancel]')
 
 const selectedPair = computed(() => pairs.value.find((pair) => pair.id === pairId.value) || pairs.value[0])
 const available = computed(() => accounts.value.find((account) => account.symbol === selectedPair.value?.fromAssetSymbol)?.available || 0)
@@ -98,10 +103,27 @@ async function getQuote(): Promise<void> {
   }
 }
 
+function openReview(): void {
+  if (!quote.value || quoteExpired.value) {
+    error.value = t('swap.expired')
+    quote.value = null
+    return
+  }
+  error.value = ''
+  reviewOpen.value = true
+}
+
+function closeReview(): void {
+  if (confirming.value) return
+  reviewOpen.value = false
+  error.value = ''
+}
+
 async function confirm(): Promise<void> {
   if (!quote.value || quoteExpired.value) {
     error.value = t('swap.expired')
     quote.value = null
+    reviewOpen.value = false
     return
   }
   confirming.value = true
@@ -111,6 +133,7 @@ async function confirm(): Promise<void> {
     success.value = t('swap.completed')
     quote.value = null
     amount.value = ''
+    reviewOpen.value = false
     const [wallets, history] = await Promise.all([fetchWalletAccounts(), fetchConvertOrders()])
     accounts.value = wallets
     orders.value = history
@@ -119,6 +142,10 @@ async function confirm(): Promise<void> {
   } finally {
     confirming.value = false
   }
+}
+
+function handleReviewKeydown(event: KeyboardEvent): void {
+  trapReviewFocus(event, closeReview)
 }
 
 onMounted(() => { void load() })
@@ -147,7 +174,7 @@ onMounted(() => { void load() })
     <div class="page-content swap-content">
       <LoginRequiredState v-if="!session.isAuthenticated" :description="t('swap.loginDescription')" />
       <template v-else>
-        <div v-if="error" class="swap-message swap-message--error" role="alert">
+        <div v-if="error && !reviewOpen" class="swap-message swap-message--error" role="alert">
           <CircleAlert :size="18" />
           <span>{{ error }}</span>
         </div>
@@ -210,7 +237,7 @@ onMounted(() => { void load() })
             type="button"
             :disabled="confirming || quoteExpired"
             :aria-busy="confirming"
-            @click="confirm"
+            @click="openReview"
           >
             {{ quoteExpired ? t('swap.quoteExpired') : confirming ? t('swap.confirming') : t('swap.confirm', { amount: formatAmount(quote.toAmount), asset: selectedPair.toAssetSymbol }) }}
           </button>
@@ -235,6 +262,44 @@ onMounted(() => { void load() })
           <span>{{ t('swap.noPairs') }}</span>
         </div>
       </template>
+    </div>
+
+    <div v-if="reviewOpen && quote && selectedPair" class="swap-review-mask" @click.self="closeReview">
+      <section
+        ref="reviewDialog"
+        class="swap-review"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="swap-review-title"
+        aria-describedby="swap-review-description"
+        @keydown="handleReviewKeydown"
+      >
+        <header>
+          <div>
+            <span>{{ t('swap.title') }}</span>
+            <h2 id="swap-review-title">{{ t('swap.confirm', { amount: formatAmount(quote.toAmount), asset: selectedPair.toAssetSymbol }) }}</h2>
+            <small id="swap-review-description">{{ t('swap.loginDescription') }}</small>
+          </div>
+          <button class="icon-button" type="button" :aria-label="t('common.close')" :disabled="confirming" @click="closeReview">
+            <X :size="21" aria-hidden="true" />
+          </button>
+        </header>
+        <dl class="swap-review__summary">
+          <div><dt>{{ t('swap.pay') }}</dt><dd class="numeric">{{ formatAmount(quote.fromAmount) }} {{ selectedPair.fromAssetSymbol }}</dd></div>
+          <div><dt>{{ t('swap.receive') }}</dt><dd class="numeric up">{{ formatAmount(quote.toAmount) }} {{ selectedPair.toAssetSymbol }}</dd></div>
+          <div><dt>{{ t('swap.referenceRate') }}</dt><dd class="numeric">1 {{ selectedPair.fromAssetSymbol }} = {{ formatPrice(quote.rate) }} {{ selectedPair.toAssetSymbol }}</dd></div>
+          <div><dt>{{ t('common.fee') }}</dt><dd class="numeric">{{ formatAmount(quote.feeAmount) }} {{ selectedPair.fromAssetSymbol }}</dd></div>
+        </dl>
+        <p v-if="error" class="swap-review__error" role="alert">{{ error }}</p>
+        <div class="swap-review__actions">
+          <button class="button button--secondary" type="button" :disabled="confirming" data-dialog-cancel @click="closeReview">
+            {{ t('common.cancel') }}
+          </button>
+          <button class="button button--primary" type="button" :disabled="confirming || quoteExpired" :aria-busy="confirming" @click="confirm">
+            {{ confirming ? t('swap.confirming') : t('common.confirm') }}
+          </button>
+        </div>
+      </section>
     </div>
   </main>
 </template>
@@ -483,6 +548,125 @@ onMounted(() => { void load() })
   text-align: right;
 }
 
+.swap-review-mask {
+  align-items: flex-end;
+  background: var(--overlay);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding:
+    max(16px, env(safe-area-inset-top))
+    16px
+    max(16px, env(safe-area-inset-bottom));
+  position: fixed;
+  z-index: var(--layer-overlay);
+}
+
+.swap-review {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--accent);
+  box-shadow: var(--shadow-soft);
+  display: grid;
+  gap: 14px;
+  max-height: calc(100dvh - max(32px, env(safe-area-inset-top)) - max(32px, env(safe-area-inset-bottom)));
+  max-width: 520px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 17px;
+  width: 100%;
+}
+
+.swap-review > header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.swap-review > header > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.swap-review > header span {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.swap-review h2 {
+  font-size: 18px;
+  line-height: 1.3;
+  margin: 0;
+}
+
+.swap-review > header small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.swap-review__summary {
+  border-block: 1px solid var(--line);
+  display: grid;
+  margin: 0;
+}
+
+.swap-review__summary > div {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 44px;
+}
+
+.swap-review__summary > div:last-child {
+  border-bottom: 0;
+}
+
+.swap-review__summary dt,
+.swap-review__summary dd {
+  font-size: 11px;
+  margin: 0;
+}
+
+.swap-review__summary dt {
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.swap-review__summary dd {
+  font-weight: 750;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.swap-review__error {
+  background: var(--negative-soft);
+  border-left: 3px solid var(--negative);
+  color: var(--negative);
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 0;
+  padding: 8px 10px;
+}
+
+.swap-review__actions {
+  display: grid;
+  gap: 9px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.swap-review__actions .button {
+  min-height: 48px;
+  padding-inline: 10px;
+}
+
 .spin {
   animation: spin .8s linear infinite;
 }
@@ -530,6 +714,22 @@ onMounted(() => { void load() })
 
   .swap-meta b {
     text-align: left;
+  }
+
+  .swap-review__summary > div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+    justify-content: center;
+    padding-block: 8px;
+  }
+
+  .swap-review__summary dd {
+    text-align: left;
+  }
+
+  .swap-review__actions {
+    grid-template-columns: 1fr;
   }
 }
 </style>

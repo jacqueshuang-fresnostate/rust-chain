@@ -113,7 +113,8 @@ lastTradePath: ComputedRef<string>
 - Browser: pair picker returns to the selected trade pair and preserves futures mode.
 - Browser: main tabs do not remain in history; direct-open detail back uses its fallback.
 - Browser: all seven root destinations remain visible with at least 44px icon
-  targets and no horizontal page overflow at 320px, 390px, and 448px.
+  targets, 66px item rails inside the 84px v16 navigation, and no horizontal
+  page overflow at 320px, 390px, and 448px.
 - Browser: switching language survives reload and both 390px mobile and wide H5 layouts remain usable.
 - Build: H5, Android Debug APK, and iOS simulator bundle after dependency or startup changes.
 

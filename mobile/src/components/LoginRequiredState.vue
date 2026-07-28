@@ -27,7 +27,7 @@ function goToLogin() {
       <strong>{{ t('common.loginRequiredTitle') }}</strong>
       <p>{{ resolvedDescription }}</p>
     </div>
-    <button class="button button--secondary" type="button" @click="goToLogin">
+    <button class="button button--primary" type="button" @click="goToLogin">
       {{ t('common.loginNow') }}
     </button>
   </section>
@@ -37,8 +37,11 @@ function goToLogin() {
 .login-required {
   align-items: center;
   background:
-    linear-gradient(110deg, color-mix(in srgb, var(--positive) 7%, transparent), transparent 54%),
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(110deg, color-mix(in srgb, var(--signal-green) 12%, transparent), transparent 58%),
     var(--surface-elevated);
+  background-size: 36px 36px, 36px 36px, auto, auto;
   border: 1px solid var(--line);
   border-left: 3px solid var(--positive);
   color: var(--muted);
@@ -52,10 +55,10 @@ function goToLogin() {
 
 .login-required__icon {
   align-items: center;
-  background: var(--positive-soft);
-  border: 1px solid color-mix(in srgb, var(--positive) 34%, var(--line));
+  background: var(--signal-green);
+  border: 1px solid var(--line-strong);
   border-radius: 50%;
-  color: var(--positive);
+  color: var(--on-positive);
   display: inline-flex;
   height: 44px;
   justify-content: center;

@@ -40,11 +40,9 @@ const assetRows = computed(() => {
   return [...rows.values()].sort((left, right) => left.symbol.localeCompare(right.symbol))
 })
 
-const totalEstimate = computed(() => assetRows.value.reduce((total, row) => {
-  const amount = walletTotal(row.spot) + walletTotal(row.margin)
-  if (row.symbol === 'USDT' || row.symbol === 'USDC' || row.symbol === 'USD') return total + amount
-  return total + amount * (marketStore.tickerFor(`${row.symbol}/USDT`)?.lastPrice || 0)
-}, 0))
+const spotEstimate = computed(() => estimateWallets(accounts.value))
+const marginEstimate = computed(() => estimateWallets(marginAccounts.value))
+const totalEstimate = computed(() => spotEstimate.value + marginEstimate.value)
 
 const transferAccounts = computed(() => transferFrom.value === 'spot' ? accounts.value : marginAccounts.value)
 const transferAccount = computed(() => transferAccounts.value.find((account) => account.symbol === transferAsset.value))
@@ -135,6 +133,14 @@ function walletTotal(account?: WalletAccount): number {
   return account ? account.available + account.frozen + account.locked : 0
 }
 
+function estimateWallets(wallets: WalletAccount[]): number {
+  return wallets.reduce((total, account) => {
+    const amount = walletTotal(account)
+    if (account.symbol === 'USDT' || account.symbol === 'USDC' || account.symbol === 'USD') return total + amount
+    return total + amount * (marketStore.tickerFor(`${account.symbol}/USDT`)?.lastPrice || 0)
+  }, 0)
+}
+
 function syncTransferAsset(): void {
   if (!transferAccounts.value.some((account) => account.symbol === transferAsset.value)) transferAsset.value = transferAccounts.value[0]?.symbol || ''
 }
@@ -144,7 +150,7 @@ watch(() => session.isAuthenticated, () => { void loadAccounts() }, { immediate:
 </script>
 
 <template>
-  <main class="page assets-page">
+  <main class="page page--prototype-grid assets-page" data-assets-workspace="live">
     <PageHeader :title="t('assets.title')" :eyebrow="t('assets.totalValue')" :back="false">
       <template #actions>
         <button class="icon-button" type="button" :aria-label="t('assets.refresh')" :disabled="loading" @click="loadAccounts">
@@ -154,17 +160,30 @@ watch(() => session.isAuthenticated, () => { void loadAccounts() }, { immediate:
     </PageHeader>
     <div class="page-content assets-content">
       <LoginRequiredState v-if="!session.isAuthenticated" :description="t('assets.loginDescription')" />
-      <template v-else>
-        <section class="assets-summary">
+      <section class="assets-summary">
           <div class="assets-summary__heading">
             <span>{{ t('assets.totalValue') }}</span>
             <WalletCards :size="20" aria-hidden="true" />
           </div>
           <strong class="numeric">{{ formatFiat(totalEstimate) }}</strong>
           <p>{{ t('assets.estimateNote') }}</p>
-        </section>
+          <dl class="assets-summary__metrics">
+            <div>
+              <dt>{{ t('assets.fundingAccount') }}</dt>
+              <dd class="numeric">{{ formatFiat(spotEstimate) }}</dd>
+            </div>
+            <div>
+              <dt>{{ t('assets.contractAccount') }}</dt>
+              <dd class="numeric">{{ formatFiat(marginEstimate) }}</dd>
+            </div>
+            <div>
+              <dt>{{ t('assets.list') }}</dt>
+              <dd class="numeric">{{ assetRows.length }}</dd>
+            </div>
+          </dl>
+      </section>
 
-        <div class="asset-actions" :aria-label="t('assets.operations')">
+      <div class="asset-actions" :aria-label="t('assets.operations')">
           <button type="button" @click="openDeposit">
             <span class="asset-action__icon"><Download :size="19" /></span>
             <span>{{ t('assets.deposit') }}</span>
@@ -181,22 +200,22 @@ watch(() => session.isAuthenticated, () => { void loadAccounts() }, { immediate:
             <span class="asset-action__icon"><ReceiptText :size="19" /></span>
             <span>{{ t('assets.ledger') }}</span>
           </button>
-        </div>
+      </div>
 
-        <button class="quick-recharge-entry" type="button" @click="openProtectedRoute('quick-recharge')">
+      <button class="quick-recharge-entry" type="button" @click="openProtectedRoute('quick-recharge')">
           <span>
             <b>{{ t('assets.quickBuy') }}</b>
             <small>{{ t('assets.quickBuyDescription') }}</small>
           </span>
           <span class="quick-recharge-entry__action">{{ t('assets.go') }}<ChevronRight :size="18" /></span>
-        </button>
+      </button>
 
-        <div class="section-heading">
-          <span>{{ t('assets.list') }}</span>
-          <button class="section-heading__action" type="button" @click="session.logout">{{ t('assets.logout') }}</button>
-        </div>
-        <p v-if="error" class="error-message" role="alert">{{ error }}</p>
-        <div v-if="assetRows.length" class="asset-list" role="list">
+      <div class="section-heading">
+        <span>{{ t('assets.list') }}</span>
+        <button v-if="session.isAuthenticated" class="section-heading__action" type="button" @click="session.logout">{{ t('assets.logout') }}</button>
+      </div>
+      <p v-if="error" class="error-message" role="alert">{{ error }}</p>
+      <div v-if="assetRows.length" class="asset-list" role="list">
           <div v-for="account in assetRows" :key="account.symbol" class="asset-row" role="listitem">
             <AssetMark :symbol="account.symbol" :src="account.spot?.logoUrl || account.margin?.logoUrl" />
             <span class="asset-row__symbol">
@@ -208,9 +227,8 @@ watch(() => session.isAuthenticated, () => { void loadAccounts() }, { immediate:
               <small>{{ t('assets.frozen', { amount: formatAmount((account.spot?.frozen || 0) + (account.spot?.locked || 0) + (account.margin?.frozen || 0) + (account.margin?.locked || 0)) }) }}</small>
             </span>
           </div>
-        </div>
-        <p v-else-if="!loading" class="empty-state">{{ t('assets.empty') }}</p>
-      </template>
+      </div>
+      <p v-else-if="!loading" class="empty-state">{{ t('assets.empty') }}</p>
     </div>
 
     <div v-if="transferOpen" class="transfer-mask" @click.self="closeTransfer">
@@ -264,15 +282,16 @@ watch(() => session.isAuthenticated, () => { void loadAccounts() }, { immediate:
 .assets-content > :deep(.login-required) { margin: 12px -16px 0; }
 .assets-summary {
   background:
-    radial-gradient(circle at 86% 15%, color-mix(in srgb, var(--signal-blue) 16%, transparent), transparent 34%),
-    radial-gradient(circle at 12% 86%, color-mix(in srgb, var(--signal-green) 14%, transparent), transparent 34%),
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
     var(--surface-elevated);
+  background-size: 36px 36px;
   border-bottom: 1px solid var(--line-strong);
   border-top: 3px solid var(--signal-green);
   margin: 0 -16px;
-  min-height: 224px;
+  min-height: 256px;
   overflow: hidden;
-  padding: 30px 16px 26px;
+  padding: 30px 16px 0;
   position: relative;
 }
 .assets-summary::before {
@@ -288,10 +307,22 @@ watch(() => session.isAuthenticated, () => { void loadAccounts() }, { immediate:
 .assets-summary__heading svg { color: var(--signal-green); }
 .assets-summary strong { display: block; font-family: var(--data-font); font-size: 38px; letter-spacing: 0; line-height: 1.08; margin-top: 28px; }
 .assets-summary p { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 9px 0 0; }
+.assets-summary__metrics { border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 22px -16px 0; }
+.assets-summary__metrics > div { display: grid; gap: 5px; min-height: 66px; min-width: 0; padding: 10px 12px; }
+.assets-summary__metrics > div + div { border-left: 1px solid var(--line); }
+.assets-summary__metrics dt,
+.assets-summary__metrics dd { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.assets-summary__metrics dt { color: var(--muted); font-size: 9px; }
+.assets-summary__metrics dd { font-size: 11px; font-weight: 760; }
+.assets-summary__metrics > div:nth-child(1) { border-top: 3px solid var(--signal-green); }
+.assets-summary__metrics > div:nth-child(2) { border-top: 3px solid var(--signal-blue); }
+.assets-summary__metrics > div:nth-child(3) { border-top: 3px solid var(--signal-coral); }
 .asset-actions { border-bottom: 1px solid var(--line); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0 -16px; }
 .asset-actions button { align-items: center; background: transparent; color: var(--ink); display: flex; flex-direction: column; font-size: 11px; font-weight: 720; gap: 7px; justify-content: center; min-height: 86px; min-width: 0; padding: 8px 2px; }
 .asset-actions button + button { border-left: 1px solid var(--line); }
 .asset-action__icon { align-items: center; background: var(--soft); border: 1px solid var(--line); border-radius: 50%; color: var(--signal-green); display: inline-flex; height: 40px; justify-content: center; width: 40px; }
+.asset-actions button:nth-child(2) .asset-action__icon { color: var(--signal-coral); }
+.asset-actions button:nth-child(3) .asset-action__icon { color: var(--signal-blue); }
 .quick-recharge-entry { align-items: center; background: var(--surface-elevated); border-bottom: 1px solid var(--line); border-top: 1px solid var(--line); display: flex; justify-content: space-between; margin: 16px -16px 0; min-height: 72px; padding: 12px 16px; text-align: left; width: calc(100% + 32px); }
 .quick-recharge-entry > span:first-child { display: grid; gap: 4px; min-width: 0; padding-right: 10px; }
 .quick-recharge-entry b { font-size: 15px; }

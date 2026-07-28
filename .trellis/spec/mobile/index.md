@@ -85,6 +85,8 @@ prototype:
 - A shaped root navigation may raise one protected destination above the
   navigation body, but all root destinations must remain visible and the full
   control must fit from 320px through 448px without horizontal page overflow.
+- The v16 root navigation is 84px plus the bottom safe area. Its seven item
+  rails use a 66px minimum height, and the raised Seconds control is 48px.
 - Seconds trading remains a deterministic local prototype. It must expose pair,
   reference price, round, direction, duration, amount, payout, balance,
   confirmation, and session feedback while explicitly avoiding real orders or
@@ -114,6 +116,9 @@ prototype:
 - Light-theme seconds trading uses a bright market board with dark text; retain
   the separate dark-theme instrument panel rather than sharing one dark board
   across both themes.
+- Keep bright `--signal-green` for positive fills, charts, and signal surfaces.
+  Positive body text uses the contrast-safe `--positive` role and must reach
+  WCAG AA against `--surface`; do not use the bright fill token as small text.
 - Trading percentage shortcuts must derive quantity or margin from the
   authenticated user's real spot or margin available balance. Never use a
   fixed demo budget, and never fall back to a different margin product when the

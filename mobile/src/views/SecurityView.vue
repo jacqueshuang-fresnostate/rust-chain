@@ -55,6 +55,12 @@ const canUpdateFundPassword = computed(() => Boolean(
   && (profile.value?.fundPasswordSet ? fundOldPassword.value : fundLoginPassword.value),
 ))
 const canResetFundPassword = computed(() => Boolean(fundPasswordResetCode.value.trim() && fundPasswordResetValue.value))
+const protectionCount = computed(() => [
+  profile.value?.emailVerified,
+  twoFactor.value?.totpEnabled,
+  profile.value?.fundPasswordSet,
+].filter(Boolean).length)
+const protectionPercent = computed(() => Math.round((protectionCount.value / 3) * 100))
 
 async function load(): Promise<void> {
   if (!session.isAuthenticated) return
@@ -258,7 +264,7 @@ onMounted(() => { void load() })
 </script>
 
 <template>
-  <main class="page page--plain security-page">
+  <main class="page page--plain page--prototype-grid security-page" data-security-workspace="live">
     <PageHeader
       :back="true"
       :eyebrow="t('security.authenticatorStatus')"
@@ -267,28 +273,45 @@ onMounted(() => { void load() })
     />
     <div class="page-content security-content">
       <LoginRequiredState v-if="!session.isAuthenticated" :description="t('security.loginDescription')" />
-      <template v-else>
+      <section class="security-overview" :aria-label="t('security.title')">
+        <header>
+          <span>
+            <ShieldCheck :size="22" />
+            <small>{{ t('security.protectionScore') }}</small>
+          </span>
+          <strong class="numeric">{{ protectionPercent }}%</strong>
+          <p>{{ t('security.protectionSummary', { completed: protectionCount, total: 3 }) }}</p>
+          <i aria-hidden="true"><b :style="{ width: `${protectionPercent}%` }" /></i>
+        </header>
+        <div class="security-overview__checks">
+          <div>
+            <MailCheck :size="18" />
+            <span>
+              <small>{{ t('security.emailStatus') }}</small>
+              <b :class="{ up: profile?.emailVerified }">{{ profile?.emailVerified ? t('security.enabled') : t('security.notSet') }}</b>
+            </span>
+          </div>
+          <div>
+            <ShieldCheck :size="18" />
+            <span>
+              <small>{{ t('security.authenticatorStatus') }}</small>
+              <b :class="{ up: twoFactor?.totpEnabled }">{{ twoFactor?.totpEnabled ? t('security.enabled') : t('security.notSet') }}</b>
+            </span>
+          </div>
+          <div>
+            <LockKeyhole :size="18" />
+            <span>
+              <small>{{ fundPasswordLabel }}</small>
+              <b :class="{ up: profile?.fundPasswordSet }">{{ profile?.fundPasswordSet ? t('security.enabled') : t('security.notSet') }}</b>
+            </span>
+          </div>
+        </div>
+      </section>
+      <template v-if="session.isAuthenticated">
         <p v-if="error" class="error-message security-feedback" role="alert">{{ error }}</p>
         <p v-if="success" class="success-message security-feedback" role="status">{{ success }}</p>
         <p v-if="loading" class="empty-state">{{ t('security.loading') }}</p>
         <template v-else>
-          <section class="security-overview" :aria-label="t('security.title')">
-            <div>
-              <ShieldCheck :size="18" />
-              <span>
-                <small>{{ t('security.authenticatorStatus') }}</small>
-                <b :class="{ up: twoFactor?.totpEnabled }">{{ twoFactor?.totpEnabled ? t('security.enabled') : t('security.notSet') }}</b>
-              </span>
-            </div>
-            <div>
-              <LockKeyhole :size="18" />
-              <span>
-                <small>{{ fundPasswordLabel }}</small>
-                <b :class="{ up: profile?.fundPasswordSet }">{{ profile?.fundPasswordSet ? t('security.enabled') : t('security.notSet') }}</b>
-              </span>
-            </div>
-          </section>
-
           <section class="security-block">
             <header>
               <ShieldCheck :size="21" />
@@ -416,14 +439,37 @@ onMounted(() => { void load() })
 .security-content { display: grid; gap: 22px; padding-bottom: calc(44px + env(safe-area-inset-bottom)); padding-top: 18px; }
 .security-feedback { background: var(--surface-elevated); border: 1px solid currentColor; border-radius: var(--radius); line-height: 1.45; margin: 0; padding: 12px 14px; }
 .success-message { color: var(--positive); font-size: 13px; font-weight: 680; }
-.security-overview { border-bottom: 1px solid var(--line); border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.security-overview > div { align-items: center; display: grid; gap: 10px; grid-template-columns: 32px minmax(0, 1fr); min-height: 72px; padding: 10px 12px; }
-.security-overview > div + div { border-left: 1px solid var(--line); }
+.security-overview {
+  background:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
+    var(--surface);
+  background-size: 34px 34px;
+  border-bottom: 1px solid var(--line);
+  border-top: 3px solid var(--signal-coral);
+  display: grid;
+  margin: 0 -16px;
+}
+.security-overview > header { display: grid; gap: 8px; min-height: 132px; padding: 18px 16px 14px; }
+.security-overview > header > span { align-items: center; display: flex; gap: 8px; }
+.security-overview > header small { color: var(--muted); font-size: 10px; }
+.security-overview > header strong { font-size: 32px; line-height: 1; }
+.security-overview > header p { color: var(--muted); font-size: 11px; margin: 0; }
+.security-overview > header > i { background: var(--soft); display: block; height: 4px; overflow: hidden; }
+.security-overview > header > i > b { background: var(--signal-green); display: block; height: 100%; max-width: 100%; }
+.security-overview__checks { border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.security-overview__checks > div { align-content: center; display: grid; gap: 7px; min-height: 86px; min-width: 0; padding: 10px; }
+.security-overview__checks > div + div { border-left: 1px solid var(--line); }
+.security-overview__checks > div:nth-child(1) { border-top: 3px solid var(--signal-blue); }
+.security-overview__checks > div:nth-child(2) { border-top: 3px solid var(--signal-green); }
+.security-overview__checks > div:nth-child(3) { border-top: 3px solid var(--signal-coral); }
 .security-overview svg { color: var(--accent); }
 .security-overview span { display: grid; gap: 4px; min-width: 0; }
 .security-overview small { color: var(--muted); font-size: 11px; line-height: 1.25; }
 .security-overview b { font-size: 13px; line-height: 1.25; }
-.security-block { border-top: 1px solid var(--line); display: grid; gap: 13px; padding-top: 20px; }
+.security-block { background: var(--surface); border-top: 3px solid var(--signal-blue); display: grid; gap: 13px; padding: 20px 12px 14px; }
+.security-block:nth-of-type(3) { border-top-color: var(--signal-coral); }
+.security-block:nth-of-type(4) { border-top-color: var(--signal-green); }
 .security-block header { align-items: flex-start; display: flex; gap: 11px; }
 .security-block header > svg { color: var(--accent); flex: 0 0 auto; margin-top: 2px; }
 .security-block h2,
@@ -460,10 +506,15 @@ onMounted(() => { void load() })
 .reset-panel p { color: var(--muted); font-size: 11px; line-height: 1.45; margin: 0; }
 .reset-panel .security-field,
 .reset-panel button { grid-column: 1 / -1; }
+@media (max-width: 360px) {
+  .security-overview { margin-left: -12px; margin-right: -12px; }
+}
 @media (max-width: 340px) {
   .security-content { padding-left: 16px; padding-right: 16px; }
-  .security-overview { grid-template-columns: 1fr; }
-  .security-overview > div + div { border-left: 0; border-top: 1px solid var(--line); }
+  .security-overview { margin-left: -16px; margin-right: -16px; }
+  .security-overview__checks { grid-template-columns: 1fr; }
+  .security-overview__checks > div { grid-template-columns: 28px minmax(0, 1fr); min-height: 64px; }
+  .security-overview__checks > div + div { border-left: 0; }
   .security-row { align-items: stretch; display: grid; grid-template-columns: minmax(0, 1fr) auto; }
   .security-row .button { padding-inline: 10px; }
 }

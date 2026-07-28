@@ -125,7 +125,7 @@ onMounted(() => { void load() })
 </script>
 
 <template>
-  <main class="page profile-page">
+  <main class="page page--prototype-grid profile-page" data-profile-workspace="live">
     <PageHeader :title="t('profile.title')" :back="false">
       <template #actions>
         <button class="icon-button" type="button" :aria-label="t('language.title')" @click="router.push({ name: 'language' })">
@@ -138,9 +138,8 @@ onMounted(() => { void load() })
     </PageHeader>
     <div class="page-content profile-content">
       <LoginRequiredState v-if="!session.isAuthenticated" :description="t('profile.loginDescription')" />
-      <template v-else>
-        <p v-if="error" class="error-message" role="alert">{{ error }}</p>
-        <section v-if="profile" class="profile-summary">
+      <p v-if="error" class="error-message" role="alert">{{ error }}</p>
+      <section v-if="profile" class="profile-summary">
           <input ref="avatarInput" class="avatar-input" type="file" accept="image/*" @change="uploadAvatar" />
           <button class="avatar-button" type="button" :aria-label="t('profile.updateAvatar')" :disabled="updatingAvatar" @click="openAvatarPicker">
             <img v-if="profile.avatarUrl" :src="profile.avatarUrl" :alt="t('profile.updateAvatar')" />
@@ -164,10 +163,28 @@ onMounted(() => { void load() })
             <span><small>{{ t('profile.security') }}</small><strong>{{ profile.fundPasswordSet ? t('profile.fundPasswordSet') : t('profile.improveSecurity') }}</strong></span>
             <span><small>{{ t('language.entry') }}</small><strong>{{ currentLanguageLabel }}</strong></span>
           </div>
-        </section>
-        <p v-else-if="loading" class="empty-state">{{ t('profile.loading') }}</p>
+      </section>
+      <section v-else-if="!session.isAuthenticated" class="profile-summary profile-summary--guest">
+        <span class="avatar-button" aria-hidden="true">
+          <span>{{ initials }}</span>
+        </span>
+        <div class="profile-summary__identity">
+          <strong>{{ displayName }}</strong>
+          <small>{{ t('profile.loginDescription') }}</small>
+        </div>
+        <div class="profile-status">
+          <span><BadgeCheck :size="15" />{{ t('profile.kycUnverified') }}</span>
+          <span><ShieldCheck :size="15" />{{ t('profile.improveSecurity') }}</span>
+        </div>
+        <div class="profile-metrics">
+          <span><small>{{ t('profile.kyc') }}</small><strong>{{ t('profile.kycUnverified') }}</strong></span>
+          <span><small>{{ t('profile.security') }}</small><strong>{{ t('profile.improveSecurity') }}</strong></span>
+          <span><small>{{ t('language.entry') }}</small><strong>{{ currentLanguageLabel }}</strong></span>
+        </div>
+      </section>
+      <p v-else-if="loading" class="empty-state">{{ t('profile.loading') }}</p>
 
-        <section class="profile-menu" :aria-label="t('profile.title')">
+      <section class="profile-menu" :aria-label="t('profile.title')">
           <button type="button" @click="router.push({ name: 'kyc' })">
             <span class="profile-menu__icon profile-menu__icon--positive"><BadgeCheck :size="20" /></span>
             <span><b>{{ t('profile.kyc') }}</b><small :class="kycTone">{{ kycSummary }}</small></span>
@@ -188,11 +205,10 @@ onMounted(() => { void load() })
             <span><b>{{ t('profile.referrals') }}</b><small>{{ t('profile.referralDescription') }}</small></span>
             <ChevronRight :size="19" />
           </button>
-        </section>
-        <button class="logout-button" type="button" @click="logout">
-          <LogOut :size="18" />{{ t('profile.logout') }}
-        </button>
-      </template>
+      </section>
+      <button v-if="session.isAuthenticated" class="logout-button" type="button" @click="logout">
+        <LogOut :size="18" />{{ t('profile.logout') }}
+      </button>
 
       <section class="profile-preferences">
         <button type="button" @click="router.push({ name: 'language' })">
@@ -225,14 +241,16 @@ onMounted(() => { void load() })
 </template>
 
 <style scoped>
-.profile-page { background: var(--surface); }
+.profile-page { background-color: var(--surface); }
 .profile-content { min-height: calc(100dvh - 72px); padding-bottom: calc(112px + env(safe-area-inset-bottom)); }
 .profile-content > :deep(.login-required) { margin: 12px -16px 0; }
 .profile-summary {
   align-items: center;
   background:
-    linear-gradient(120deg, color-mix(in srgb, var(--signal-green) 13%, transparent), transparent 46%),
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
     var(--surface-elevated);
+  background-size: 36px 36px;
   border-bottom: 1px solid var(--line-strong);
   border-top: 3px solid var(--signal-green);
   display: grid;
@@ -254,6 +272,7 @@ onMounted(() => { void load() })
 .profile-summary small,
 .profile-summary em { color: var(--muted); font-size: 12px; font-style: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .profile-summary__edit { justify-self: end; }
+.profile-summary--guest { grid-template-columns: 66px minmax(0, 1fr); }
 .profile-status { display: flex; flex-wrap: wrap; gap: 7px; grid-column: 1 / -1; margin-top: 2px; }
 .profile-status span { align-items: center; background: var(--soft); border: 1px solid var(--line); border-radius: 2px; color: var(--muted-strong); display: inline-flex; font-size: 11px; font-weight: 700; gap: 5px; min-height: 30px; padding: 4px 9px; }
 .profile-status span.up { background: var(--positive-soft); border-color: color-mix(in srgb, var(--positive) 30%, var(--line)); color: var(--positive); }
@@ -261,9 +280,12 @@ onMounted(() => { void load() })
 .profile-metrics { align-self: end; border-top: 1px solid var(--line); display: grid; grid-column: 1 / -1; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 2px -16px 0; width: calc(100% + 32px); }
 .profile-metrics > span { display: grid; gap: 4px; min-height: 66px; min-width: 0; padding: 10px 12px; }
 .profile-metrics > span + span { border-left: 1px solid var(--line); }
+.profile-metrics > span:nth-child(1) { border-top: 3px solid var(--signal-green); }
+.profile-metrics > span:nth-child(2) { border-top: 3px solid var(--signal-coral); }
+.profile-metrics > span:nth-child(3) { border-top: 3px solid var(--signal-blue); }
 .profile-metrics small { color: var(--muted); font-size: 9px; }
 .profile-metrics strong { font-family: var(--data-font); font-size: 11px; line-height: 1.3; white-space: normal; }
-.profile-menu { border-left: 1px solid var(--line); border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 18px; }
+.profile-menu { background: var(--surface); border-left: 1px solid var(--line); border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 18px; }
 .profile-menu button,
 .profile-preferences button { align-items: center; background: transparent; border-bottom: 1px solid var(--line); display: grid; gap: 12px; grid-template-columns: 44px minmax(0, 1fr) auto; min-height: 76px; padding: 10px 0; text-align: left; width: 100%; }
 .profile-menu button { border-right: 1px solid var(--line); grid-template-columns: 40px minmax(0, 1fr); min-height: 104px; padding: 12px 10px; }

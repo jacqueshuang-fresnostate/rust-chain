@@ -58,6 +58,11 @@ const account = computed(() => accounts.value.find((item) => item.assetId === se
 const selectedTicker = computed(() => marketStore.tickerFor(selected.value?.symbol || ''))
 const amountNumber = computed(() => Number(amount.value || 0))
 const payoutRate = computed(() => cycle.value?.payoutRate || 0)
+const estimatedPayout = computed(() => (
+  Number.isFinite(amountNumber.value) && amountNumber.value > 0
+    ? amountNumber.value * (1 + payoutRate.value)
+    : 0
+))
 const valid = computed(() => Boolean(
   cycle.value
   && Number.isFinite(amountNumber.value)
@@ -83,16 +88,14 @@ const quickAmounts = computed(() => {
 })
 
 async function load(): Promise<void> {
-  if (!session.isAuthenticated) return
   loading.value = true
   error.value = ''
   try {
     const currentProductId = selected.value?.id
-    const [nextProducts, nextOrders, nextAccounts] = await Promise.all([
-      fetchSecondsProducts(),
-      fetchSecondsOrders(),
-      fetchWalletAccounts(),
-    ])
+    const productsRequest = fetchSecondsProducts()
+    const [nextProducts, nextOrders, nextAccounts] = session.isAuthenticated
+      ? await Promise.all([productsRequest, fetchSecondsOrders(), fetchWalletAccounts()])
+      : [await productsRequest, [], []] as [SecondsProduct[], SecondsOrder[], WalletAccount[]]
     products.value = nextProducts
     orders.value = nextOrders
     accounts.value = nextAccounts
@@ -138,6 +141,10 @@ function setAmount(value: string | number): void {
 }
 
 function reviewOrder(): void {
+  if (!session.isAuthenticated) {
+    error.value = t('seconds.loginDescription')
+    return
+  }
   if (!selected.value || !cycle.value || !valid.value) {
     error.value = t('seconds.invalidAmount')
     return
@@ -152,6 +159,10 @@ function closeConfirm(): void {
 }
 
 async function submit(): Promise<void> {
+  if (!session.isAuthenticated) {
+    error.value = t('seconds.loginDescription')
+    return
+  }
   if (!selected.value || !cycle.value || !valid.value) {
     error.value = t('seconds.invalidAmount')
     return
@@ -260,7 +271,7 @@ onBeforeUnmount(() => {
           class="icon-button"
           type="button"
           :aria-label="t('common.refresh')"
-          :disabled="loading || !session.isAuthenticated"
+          :disabled="loading"
           @click="load"
         >
           <RefreshCw :size="20" :class="{ spin: loading }" />
@@ -274,8 +285,7 @@ onBeforeUnmount(() => {
         :description="t('seconds.loginDescription')"
       />
 
-      <template v-else>
-        <div v-if="error" class="seconds-message seconds-message--error" role="alert">
+      <div v-if="error" class="seconds-message seconds-message--error" role="alert">
           <CircleAlert :size="18" />
           <span>{{ error }}</span>
           <button
@@ -287,7 +297,12 @@ onBeforeUnmount(() => {
             <RefreshCw :size="17" />
           </button>
         </div>
-        <div v-if="success" class="seconds-message seconds-message--success" role="status">
+        <div
+          v-if="success"
+          class="seconds-message seconds-message--success"
+          data-session-feedback="created"
+          role="status"
+        >
           <CheckCircle2 :size="18" />
           <span>{{ success }}</span>
         </div>
@@ -298,7 +313,12 @@ onBeforeUnmount(() => {
         </div>
 
         <template v-else>
-          <section v-if="selected" class="seconds-market-board">
+          <section
+            v-if="selected"
+            class="seconds-market-board"
+            data-seconds-market="live"
+            :aria-busy="marketStore.loading"
+          >
             <header>
               <div>
                 <span>{{ t('seconds.title') }}</span>
@@ -327,7 +347,7 @@ onBeforeUnmount(() => {
               </div>
               <div>
                 <dt>{{ t('common.available') }}</dt>
-                <dd>{{ formatAmount(account?.available) }}</dd>
+                <dd>{{ formatAmount(account?.available) }} {{ selected.stakeAssetSymbol }}</dd>
               </div>
             </dl>
           </section>
@@ -357,10 +377,45 @@ onBeforeUnmount(() => {
             </button>
           </div>
 
-          <div v-if="!products.length" class="seconds-empty">
-            <Gauge :size="24" />
-            <span>{{ t('seconds.noProducts') }}</span>
-          </div>
+          <section
+            v-if="!products.length"
+            class="seconds-market-board seconds-market-board--empty"
+            data-seconds-market="empty"
+          >
+            <header>
+              <div>
+                <span>{{ t('seconds.title') }}</span>
+                <strong>--/--</strong>
+              </div>
+              <div class="seconds-rate">
+                <Gauge :size="17" />
+                <span>{{ t('common.marketUnavailable') }}</span>
+              </div>
+            </header>
+            <div class="seconds-reference">
+              <span>{{ t('marketDetail.latestPrice') }}</span>
+              <strong>--</strong>
+              <small>{{ t('common.marketUnavailable') }}</small>
+            </div>
+            <dl class="seconds-market-facts">
+              <div>
+                <dt>{{ t('seconds.payoutRate') }}</dt>
+                <dd>--</dd>
+              </div>
+              <div>
+                <dt>{{ t('seconds.term') }}</dt>
+                <dd>--</dd>
+              </div>
+              <div>
+                <dt>{{ t('common.available') }}</dt>
+                <dd>--</dd>
+              </div>
+            </dl>
+            <div class="seconds-empty">
+              <Gauge :size="24" />
+              <span>{{ t('seconds.noProducts') }}</span>
+            </div>
+          </section>
 
           <template v-if="selected">
             <section class="seconds-control-group">
@@ -443,7 +498,10 @@ onBeforeUnmount(() => {
             <dl class="seconds-order-summary">
               <div>
                 <dt>{{ t('seconds.payoutRate') }}</dt>
-                <dd>{{ (payoutRate * 100).toFixed(2) }}%</dd>
+                <dd class="seconds-payout">
+                  <strong>{{ (payoutRate * 100).toFixed(2) }}%</strong>
+                  <small>{{ formatAmount(estimatedPayout) }} {{ selected.stakeAssetSymbol }}</small>
+                </dd>
               </div>
               <div>
                 <dt>{{ t('common.available') }}</dt>
@@ -502,7 +560,6 @@ onBeforeUnmount(() => {
               <span>{{ t('seconds.noOrders') }}</span>
             </div>
           </section>
-        </template>
       </template>
     </div>
 
@@ -551,7 +608,14 @@ onBeforeUnmount(() => {
           </div>
           <div>
             <dt>{{ t('seconds.payoutRate') }}</dt>
-            <dd>{{ (cycle.payoutRate * 100).toFixed(2) }}%</dd>
+            <dd>
+              {{ (cycle.payoutRate * 100).toFixed(2) }}% ·
+              {{ formatAmount(estimatedPayout) }} {{ selected.stakeAssetSymbol }}
+            </dd>
+          </div>
+          <div>
+            <dt>{{ t('marketDetail.latestPrice') }}</dt>
+            <dd>{{ selectedTicker ? formatPrice(selectedTicker.lastPrice) : '--' }}</dd>
           </div>
         </dl>
 
@@ -740,6 +804,21 @@ onBeforeUnmount(() => {
   font-weight: 750;
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.seconds-order-summary .seconds-payout {
+  display: grid;
+  gap: 3px;
+}
+
+.seconds-order-summary .seconds-payout strong {
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.seconds-order-summary .seconds-payout small {
+  color: var(--positive);
+  font-size: 9px;
 }
 
 .seconds-products {

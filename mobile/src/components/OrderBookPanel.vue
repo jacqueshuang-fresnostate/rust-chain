@@ -9,13 +9,23 @@ const props = withDefaults(defineProps<{
   bids: OrderBookLevel[]
   asks: OrderBookLevel[]
   currentPrice: number
+  baseAsset?: string
+  quoteAsset?: string
   loading?: boolean
 }>(), {
+  baseAsset: '',
+  quoteAsset: '',
   loading: false,
 })
 
 const { t } = useI18n()
-const maxQuantity = computed(() => Math.max(1, ...props.bids.map((item) => item.quantity), ...props.asks.map((item) => item.quantity)))
+const visibleAsks = computed(() => props.asks.slice(0, 6).reverse())
+const visibleBids = computed(() => props.bids.slice(0, 6))
+const maxQuantity = computed(() => Math.max(
+  1,
+  ...visibleBids.value.map((item) => item.quantity),
+  ...visibleAsks.value.map((item) => item.quantity),
+))
 const hasRows = computed(() => props.bids.length > 0 || props.asks.length > 0)
 
 function width(quantity: number): string {
@@ -27,12 +37,21 @@ function width(quantity: number): string {
   <section class="order-book" :aria-label="t('orderBook.title')" :aria-busy="loading">
     <header>
       <strong>{{ t('orderBook.title') }}</strong>
-      <span>{{ t('orderBook.priceQuantity') }}</span>
+      <span class="order-book__columns">
+        <b>
+          {{ t('marketDetail.price') }}
+          <small v-if="quoteAsset">{{ quoteAsset }}</small>
+        </b>
+        <b>
+          {{ t('marketDetail.quantity') }}
+          <small v-if="baseAsset">{{ baseAsset }}</small>
+        </b>
+      </span>
     </header>
     <template v-if="hasRows">
       <div class="order-book__rows order-book__rows--asks">
         <div
-          v-for="(item, index) in asks.slice(0, 6).reverse()"
+          v-for="(item, index) in visibleAsks"
           :key="`ask-${item.price}-${index}`"
           class="order-book__row"
           data-book-side="ask"
@@ -48,7 +67,7 @@ function width(quantity: number): string {
       </div>
       <div class="order-book__rows">
         <div
-          v-for="(item, index) in bids.slice(0, 6)"
+          v-for="(item, index) in visibleBids"
           :key="`bid-${item.price}-${index}`"
           class="order-book__row"
           data-book-side="bid"
@@ -91,6 +110,35 @@ function width(quantity: number): string {
 .order-book header strong {
   color: var(--ink);
   font-size: 12px;
+}
+
+.order-book__columns {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+  width: 66%;
+}
+
+.order-book__columns b {
+  color: var(--muted);
+  display: grid;
+  font-size: 9px;
+  font-weight: 650;
+  gap: 2px;
+  min-width: 0;
+}
+
+.order-book__columns b:last-child {
+  text-align: right;
+}
+
+.order-book__columns small {
+  color: var(--muted);
+  font-size: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .order-book__rows {

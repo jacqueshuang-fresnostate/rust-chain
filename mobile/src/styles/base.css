@@ -1,38 +1,40 @@
 :root,
 :root[data-theme='light'] {
   --app-max-width: 448px;
-  --background: #eef2f3;
+  --background: #edf1ee;
   --surface: #ffffff;
-  --surface-elevated: #f7f9f8;
-  --soft: #edf1ef;
-  --field-surface: #f8faf9;
-  --line: #d4ddd8;
-  --line-strong: #aab8b1;
-  --ink: #101612;
-  --muted: #56655e;
-  --muted-strong: #33433b;
+  --surface-elevated: #fbfcfa;
+  --soft: #f0f3f1;
+  --field-surface: #ffffff;
+  --line: rgb(71 85 105 / 18%);
+  --line-strong: rgb(71 85 105 / 34%);
+  --grid-line: rgb(71 85 105 / 8%);
+  --ink: #0c110e;
+  --muted: #667169;
+  --muted-strong: #2e3832;
   --positive: #007a4d;
-  --positive-soft: #dff4e9;
-  --negative: #bd3048;
-  --negative-soft: #fbe8eb;
+  --positive-soft: #e2f4eb;
+  --negative: #c9361d;
+  --negative-soft: #fff0ec;
   --accent: #b94232;
-  --accent-soft: #f9e8e4;
-  --focus: #075fca;
-  --focus-ring: rgb(7 95 202 / 22%);
-  --on-accent: #ffffff;
-  --on-positive: #ffffff;
+  --accent-soft: #fff0ea;
+  --focus: #006fe6;
+  --focus-ring: rgb(0 111 230 / 20%);
+  --on-accent: #1b0b06;
+  --on-positive: #07110c;
   --on-negative: #ffffff;
   --on-dark-surface: #f3f7f4;
   --disabled: #8b9992;
   --overlay: rgb(4 9 16 / 54%);
-  --dark-surface: #080d0b;
-  --signal-green: #007a4d;
-  --signal-coral: #b94232;
-  --signal-blue: #075fca;
+  --dark-surface: #090b0a;
+  --signal-green: #55f7a5;
+  --signal-coral: #ff5c4d;
+  --signal-blue: #398dff;
+  --signal-yellow: #ffd166;
   --data-font: "SFMono-Regular", "Roboto Mono", "Cascadia Mono", Consolas, monospace;
   --radius: 6px;
   --shadow-soft: 0 1px 2px rgb(16 22 18 / 7%);
-  --bottom-nav-height: 88px;
+  --bottom-nav-height: 84px;
   --layer-content: 0;
   --layer-navigation: 30;
   --layer-route-transition: 40;
@@ -49,34 +51,36 @@
 }
 
 :root[data-theme='dark'] {
-  --background: #060907;
-  --surface: #0b100d;
-  --surface-elevated: #121914;
-  --soft: #18211b;
-  --field-surface: #101712;
-  --line: #2a382f;
-  --line-strong: #465b4e;
-  --ink: #f3f7f4;
-  --muted: #aab7af;
-  --muted-strong: #d3ddd7;
-  --positive: #54e99a;
+  --background: #090b0a;
+  --surface: #0d100f;
+  --surface-elevated: #141816;
+  --soft: #1a201d;
+  --field-surface: #141816;
+  --line: rgb(220 240 231 / 11%);
+  --line-strong: rgb(220 240 231 / 20%);
+  --grid-line: rgb(220 240 231 / 6%);
+  --ink: #f2f6f3;
+  --muted: #8f9b95;
+  --muted-strong: #bec8c2;
+  --positive: #49f7b0;
   --positive-soft: #123125;
-  --negative: #ff7a8b;
+  --negative: #ff7050;
   --negative-soft: #391a20;
-  --accent: #ff927d;
+  --accent: #ff7050;
   --accent-soft: #3a211c;
-  --focus: #75adff;
-  --focus-ring: rgb(117 173 255 / 30%);
-  --on-accent: #23100c;
-  --on-positive: #04130b;
-  --on-negative: #25070d;
+  --focus: #47c8ff;
+  --focus-ring: rgb(71 200 255 / 28%);
+  --on-accent: #21100b;
+  --on-positive: #07110c;
+  --on-negative: #250b06;
   --on-dark-surface: #f3f7f4;
   --disabled: #69766f;
   --overlay: rgb(0 0 0 / 72%);
-  --dark-surface: #050806;
-  --signal-green: #54e99a;
-  --signal-coral: #ff927d;
-  --signal-blue: #75adff;
+  --dark-surface: #090b0a;
+  --signal-green: #49f7b0;
+  --signal-coral: #ff7050;
+  --signal-blue: #47c8ff;
+  --signal-yellow: #f1c75b;
   --shadow-soft: 0 1px 2px rgb(0 0 0 / 30%);
   color-scheme: dark;
 }
@@ -183,7 +187,7 @@ textarea::placeholder {
 .page {
   background: var(--surface);
   min-height: 100dvh;
-  padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  padding-bottom: calc(30px + env(safe-area-inset-bottom));
   padding-top: env(safe-area-inset-top);
   position: relative;
 }
@@ -194,6 +198,14 @@ textarea::placeholder {
 
 .page--plain {
   padding-bottom: calc(24px + env(safe-area-inset-bottom));
+}
+
+.page--prototype-grid {
+  background-color: var(--surface);
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 48px 48px;
 }
 
 .page-content {
@@ -215,12 +227,13 @@ textarea::placeholder {
 
 .icon-button {
   align-items: center;
-  background: transparent;
+  background: var(--surface);
+  border: 1px solid transparent;
   border-radius: 50%;
   color: var(--ink);
-  display: inline-flex;
+  display: grid;
   height: 44px;
-  justify-content: center;
+  place-items: center;
   min-width: 44px;
   padding: 0;
 }
@@ -228,6 +241,7 @@ textarea::placeholder {
 .icon-button:hover,
 .icon-button:active {
   background: var(--soft);
+  border-color: var(--line);
 }
 
 .button {
@@ -311,7 +325,7 @@ textarea::placeholder {
   font-weight: 750;
   justify-content: space-between;
   line-height: 1.25;
-  margin: 32px 0 14px;
+  margin: 28px 0 12px;
 }
 
 .section-heading__action {

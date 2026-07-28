@@ -82,6 +82,8 @@ const canApply = computed(() => {
   ) return false
   return true
 })
+const collateralProductCount = computed(() => products.value.filter((product) => product.loanType === 'collateralized').length)
+const creditProductCount = computed(() => products.value.length - collateralProductCount.value)
 
 async function load(): Promise<void> {
   loading.value = true
@@ -259,7 +261,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="page page--plain loan-page">
+  <main class="page page--plain page--prototype-grid loan-page" data-loan-workspace="live">
     <PageHeader
       :back="true"
       :eyebrow="t('products.loan')"
@@ -305,6 +307,20 @@ onBeforeUnmount(() => {
             <p>{{ t('loan.bannerDescription') }}</p>
           </div>
           <ShieldCheck :size="20" />
+          <dl class="loan-overview__metrics">
+            <div>
+              <dt>{{ t('loan.collateralized') }}</dt>
+              <dd class="numeric">{{ collateralProductCount }}</dd>
+            </div>
+            <div>
+              <dt>{{ t('loan.credit') }}</dt>
+              <dd class="numeric">{{ creditProductCount }}</dd>
+            </div>
+            <div>
+              <dt>{{ t('loan.myLoans') }}</dt>
+              <dd class="numeric">{{ session.isAuthenticated ? orders.length : '--' }}</dd>
+            </div>
+          </dl>
         </section>
 
         <div v-if="products.length" class="loan-list">
@@ -565,7 +581,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .loan-page {
-  background: var(--surface);
+  background-color: var(--surface);
   min-width: 0;
 }
 
@@ -624,8 +640,10 @@ onBeforeUnmount(() => {
 .loan-overview {
   align-items: center;
   background:
-    linear-gradient(132deg, color-mix(in srgb, var(--accent) 9%, transparent), transparent 64%),
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
     var(--surface);
+  background-size: 34px 34px;
   border-block: 1px solid var(--line);
   border-top: 3px solid var(--accent);
   display: grid;
@@ -666,6 +684,43 @@ onBeforeUnmount(() => {
   color: var(--positive);
 }
 
+.loan-overview__metrics {
+  border-top: 1px solid var(--line);
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 2px -4px -12px;
+}
+
+.loan-overview__metrics > div {
+  display: grid;
+  gap: 4px;
+  min-height: 58px;
+  min-width: 0;
+  padding: 9px 10px;
+}
+
+.loan-overview__metrics > div + div {
+  border-left: 1px solid var(--line);
+}
+
+.loan-overview__metrics > div:nth-child(1) { border-top: 3px solid var(--signal-green); }
+.loan-overview__metrics > div:nth-child(2) { border-top: 3px solid var(--signal-blue); }
+.loan-overview__metrics > div:nth-child(3) { border-top: 3px solid var(--signal-coral); }
+
+.loan-overview__metrics dt,
+.loan-overview__metrics dd {
+  font-size: 9px;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loan-overview__metrics dt { color: var(--muted); }
+.loan-overview__metrics dd { font-size: 14px; font-weight: 800; }
+
 .loan-list {
   display: grid;
   gap: 8px;
@@ -685,6 +740,10 @@ onBeforeUnmount(() => {
   padding: 11px;
   text-align: left;
 }
+
+.loan-card:nth-child(3n + 1) { border-top: 3px solid var(--signal-green); }
+.loan-card:nth-child(3n + 2) { border-top: 3px solid var(--signal-blue); }
+.loan-card:nth-child(3n + 3) { border-top: 3px solid var(--signal-coral); }
 
 .loan-card:not(:disabled):hover,
 .loan-card:not(:disabled):focus-visible {

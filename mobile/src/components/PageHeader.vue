@@ -53,8 +53,8 @@ function back(): void {
   gap: 8px;
   grid-template-columns: 44px minmax(0, 1fr) auto;
   isolation: isolate;
-  min-height: 72px;
-  padding: 8px 12px;
+  min-height: 66px;
+  padding: 8px 16px;
   position: sticky;
   top: 0;
   z-index: var(--layer-sticky-header);
@@ -65,7 +65,7 @@ function back(): void {
 }
 
 .page-header--compact {
-  min-height: 60px;
+  min-height: 58px;
 }
 
 .page-header__copy {
@@ -76,8 +76,8 @@ function back(): void {
 }
 
 .page-header h1 {
-  font-size: 17px;
-  font-weight: 780;
+  font-size: 18px;
+  font-weight: 760;
   line-height: 1.2;
   margin: 0;
   overflow: hidden;
@@ -86,7 +86,7 @@ function back(): void {
 }
 
 .page-header__eyebrow {
-  color: var(--positive);
+  color: var(--muted);
   font-family: var(--data-font);
   font-size: 9px;
   font-weight: 750;
@@ -109,8 +109,19 @@ function back(): void {
 .page-header__actions {
   align-items: center;
   display: flex;
+  gap: 6px;
   justify-content: flex-end;
   min-height: 44px;
   min-width: 44px;
+}
+
+.page-header__actions:empty {
+  min-width: 0;
+}
+
+@media (max-width: 360px) {
+  .page-header {
+    padding-inline: 12px;
+  }
 }
 </style>

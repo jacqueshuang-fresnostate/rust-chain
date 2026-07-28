@@ -101,6 +101,11 @@ onMounted(async () => {
   <main class="login-page">
     <header class="auth-topbar">
       <button class="icon-button" type="button" :aria-label="t('common.back')" @click="handleBack"><ArrowLeft v-if="step === 2" :size="24" /><X v-else :size="25" /></button>
+      <div class="auth-topbar__copy">
+        <span>{{ t('auth.loginMethod') }}</span>
+        <strong>{{ step === 1 ? t('auth.login') : t('auth.welcomeBack') }}</strong>
+        <small>{{ t('auth.stepProgress', { current: step, total: 2 }) }}</small>
+      </div>
       <button class="icon-button" type="button" :aria-label="t('language.title')" @click="router.push({ name: 'language' })"><Languages :size="21" /></button>
     </header>
 
@@ -138,8 +143,12 @@ onMounted(async () => {
 
 <style scoped>
 .login-page { background: var(--background); display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 100dvh; padding-top: env(safe-area-inset-top); }
-.auth-topbar { align-items: center; background: var(--background); display: flex; justify-content: space-between; min-height: 60px; padding: 8px 16px; position: sticky; top: 0; z-index: var(--layer-sticky-header); }
+.auth-topbar { align-items: center; background: var(--surface); border-bottom: 1px solid var(--line); display: grid; gap: 8px; grid-template-columns: 44px minmax(0, 1fr) 44px; isolation: isolate; min-height: 72px; padding: 8px 12px; position: sticky; top: 0; z-index: var(--layer-sticky-header); }
 .auth-topbar .icon-button { border: 1px solid var(--line); }
+.auth-topbar__copy { display: grid; gap: 2px; min-width: 0; text-align: left; }
+.auth-topbar__copy span { color: var(--positive); font-family: var(--data-font); font-size: 9px; font-weight: 750; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.auth-topbar__copy strong { font-size: 17px; font-weight: 780; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.auth-topbar__copy small { color: var(--muted); font-size: 10px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .login-panel { display: flex; flex-direction: column; margin: 0 auto; max-width: 448px; padding: 24px 24px calc(28px + env(safe-area-inset-bottom)); width: 100%; }
 .login-panel__main { width: 100%; }
 .login-panel__logo { display: block; height: 30px; margin-bottom: 34px; max-width: 120px; object-fit: contain; object-position: left center; }

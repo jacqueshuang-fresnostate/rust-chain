@@ -52,16 +52,20 @@ test('共享视觉令牌固定为 448px 冷中性双主题与低圆角', () => {
   assert.doesNotMatch(baseCss, /#0b1811|rgba\(\s*11\s*,\s*24\s*,\s*17/i)
 })
 
-test('深色表面前景令牌在双主题中保持亮色且首页资产 Hero 直接使用', () => {
+test('首页资产 Hero 使用明亮浅色面并保留独立深色覆盖', () => {
   for (const theme of ['light', 'dark'] as const) {
     const onDarkSurface = readHexToken(themeTokenBlock(theme), '--on-dark-surface')
     assert.match(onDarkSurface, /^#[\da-f]{6}$/i)
     assert.ok(relativeLuminance(onDarkSurface) >= 0.8)
   }
 
-  const assetGlanceRules = homeSource.match(/\.asset-glance\s*\{([\s\S]*?)\}/)?.[1] || ''
-  assert.match(assetGlanceRules, /background:\s*var\(--dark-surface\)/)
-  assert.match(assetGlanceRules, /color:\s*var\(--on-dark-surface\)/)
+  const assetGlanceRules = [...homeSource.matchAll(/\.asset-glance\s*\{([\s\S]*?)\}/g)]
+    .map((match) => match[1] || '')
+    .find((rules) => rules.includes('color: var(--ink)')) || ''
+  assert.match(assetGlanceRules, /var\(--surface\)/)
+  assert.match(assetGlanceRules, /color:\s*var\(--ink\)/)
+  assert.doesNotMatch(assetGlanceRules, /background:\s*var\(--dark-surface\)/)
+  assert.match(homeSource, /:global\(:root\[data-theme='dark'\]\) \.asset-glance[\s\S]*?var\(--dark-surface\)/)
   assert.match(homeSource, /color-mix\(in srgb,\s*var\(--on-dark-surface\)/)
   assert.doesNotMatch(homeSource, /--home-contrast-ink/)
 })
@@ -90,7 +94,8 @@ test('七栏根导航保留独立入口、44px 图标焦点与抬升秒合约', 
   const keys = [...bottomNavSource.matchAll(/\bkey:\s*'([^']+)'/g)].map((match) => match[1])
   assert.deepEqual(keys, ['home', 'markets', 'spot', 'seconds', 'contract', 'assets', 'profile'])
   assert.match(bottomNavSource, /clip-path:\s*polygon\(/)
-  assert.match(bottomNavSource, /grid-template-columns:[^;]*repeat\(3,[^;]*repeat\(3,/)
+  assert.match(bottomNavSource, /grid-template-columns:\s*repeat\(7,\s*minmax\(44px,\s*1fr\)\)/)
+  assert.match(bottomNavSource, /min-height:\s*66px/)
   assert.match(bottomNavSource, /flex:\s*0 0 44px/)
   assert.match(bottomNavSource, /\.is-primary[\s\S]*?margin-top:\s*-24px/)
   assert.match(bottomNavSource, /:focus-visible \.bottom-nav__icon/)
@@ -112,5 +117,8 @@ test('一级页面保持窄屏合同且不引入视口字号、负字距、手�
     assert.doesNotMatch(source, /letter-spacing:\s*-\d/)
     assert.doesNotMatch(source, /<svg/)
     assert.doesNotMatch(source, /\p{Extended_Pictographic}/u)
+  }
+  for (const source of rootViewSources.slice(2)) {
+    assert.match(source, /page--prototype-grid/)
   }
 })

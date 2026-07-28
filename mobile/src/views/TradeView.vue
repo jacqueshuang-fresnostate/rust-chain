@@ -220,17 +220,6 @@ function openPairPicker(): void {
   void router.push({ name: 'markets', query: { purpose: 'trade', mode: mode.value } })
 }
 
-function selectTradeMode(nextMode: 'spot' | 'contract'): void {
-  mode.value = nextMode
-  navigation.rememberTradeMode(nextMode)
-  feedback.value = ''
-  void router.replace({
-    name: 'trade',
-    params: { symbol: pairSymbol.value.replace('/', '_') },
-    query: nextMode === 'contract' ? { mode: 'contract' } : undefined,
-  })
-}
-
 function openLogin(): void {
   void router.push({ name: 'login', query: { redirect: route.fullPath } })
 }
@@ -408,38 +397,12 @@ onBeforeUnmount(() => {
     :class="`trade-page--${mode}`"
     :data-trade-mode="mode"
   >
-    <nav class="trade-category" :aria-label="t('trade.category')">
-      <button type="button" @click="router.push({ name: 'swap' })">
-        {{ t('trade.swap') }}
-      </button>
-      <button
-        type="button"
-        :class="{ 'is-active': mode === 'spot' }"
-        :aria-pressed="mode === 'spot'"
-        @click="selectTradeMode('spot')"
-      >
-        {{ t('trade.spot') }}
-      </button>
-      <button
-        type="button"
-        :class="{ 'is-active': mode === 'contract' }"
-        :aria-pressed="mode === 'contract'"
-        @click="selectTradeMode('contract')"
-      >
-        {{ t('trade.contract') }}
-      </button>
-    </nav>
-
     <section class="trade-instrument">
       <button type="button" class="trade-pair__selector" @click="openPairPicker">
         <AssetMark :symbol="baseAsset" :src="ticker?.iconUrl" :size="34" />
         <span>
           <b>{{ baseAsset }}/{{ quoteAsset }}</b>
-          <small v-if="ticker" :class="ticker.changePercent >= 0 ? 'up' : 'down'">
-            {{ formatPrice(currentPrice) }}
-            {{ ticker.changePercent >= 0 ? '+' : '' }}{{ ticker.changePercent.toFixed(2) }}%
-          </small>
-          <small v-else>--</small>
+          <small>{{ mode === 'contract' ? t('trade.perpetual') : t('marketDetail.spot') }}</small>
         </span>
         <ChevronDown :size="18" />
       </button>
@@ -450,26 +413,43 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
+    <section class="trade-quote" :aria-busy="marketStore.loading" data-market-quote="live">
+      <div class="trade-quote__price">
+        <span>{{ t('marketDetail.latestPrice') }}</span>
+        <strong
+          v-if="ticker"
+          class="numeric"
+          :class="ticker.changePercent >= 0 ? 'up' : 'down'"
+        >
+          {{ formatPrice(currentPrice) }}
+        </strong>
+        <strong v-else class="numeric">--</strong>
+        <small v-if="ticker" :class="ticker.changePercent >= 0 ? 'up' : 'down'">
+          {{ ticker.changePercent >= 0 ? '+' : '' }}{{ ticker.changePercent.toFixed(2) }}%
+        </small>
+        <small v-else>{{ marketStore.loading ? t('common.loading') : t('common.marketUnavailable') }}</small>
+      </div>
+      <dl>
+        <div>
+          <dt>{{ t('marketDetail.high24h') }}</dt>
+          <dd class="numeric">{{ ticker ? formatPrice(ticker.highPrice) : '--' }}</dd>
+        </div>
+        <div>
+          <dt>{{ t('marketDetail.low24h') }}</dt>
+          <dd class="numeric">{{ ticker ? formatPrice(ticker.lowPrice) : '--' }}</dd>
+        </div>
+        <div>
+          <dt>{{ t('marketDetail.volume24h') }}</dt>
+          <dd class="numeric">{{ ticker ? formatAmount(ticker.volume) : '--' }}</dd>
+        </div>
+      </dl>
+    </section>
+
     <div class="page-content trade-page__content">
       <LoginRequiredState
         v-if="mode === 'contract' && !session.isAuthenticated"
         :description="t('trade.contractLoginDescription')"
       />
-      <section v-if="mode === 'contract' && session.isAuthenticated" class="contract-settings" :aria-busy="productsLoading">
-        <span>{{ t('trade.isolated') }}</span>
-        <button
-          type="button"
-          :disabled="settingsSaving || productsLoading"
-          @click="changeLeverage"
-        >
-          <b>{{ leverage }}x</b>
-          <ChevronDown :size="15" />
-        </button>
-        <span v-if="selectedProduct">
-          {{ t('trade.marginAsset', { asset: selectedProduct.marginAssetSymbol }) }}
-        </span>
-        <span v-else>{{ t('trade.unavailableContract') }}</span>
-      </section>
 
       <section v-if="mode !== 'contract' || session.isAuthenticated" class="trade-chart-panel" :aria-busy="chartLoading">
         <header>
@@ -491,6 +471,40 @@ onBeforeUnmount(() => {
         <div class="trade-chart-panel__canvas">
           <MobileMarketChart :points="points" :loading="chartLoading" />
         </div>
+      </section>
+
+      <section
+        v-if="mode !== 'contract' || session.isAuthenticated"
+        class="trade-console-heading"
+        data-order-surface="live"
+      >
+        <div>
+          <span>{{ mode === 'contract' ? t('trade.perpetual') : t('trade.spot') }}</span>
+          <strong>{{ t('trade.orders') }}</strong>
+        </div>
+        <button
+          type="button"
+          @click="openOrders(mode === 'contract' ? 'positions' : 'spot')"
+        >
+          {{ mode === 'contract' ? t('trade.viewPositions') : t('trade.viewOpenOrders') }}
+          <ArrowUpRight :size="15" />
+        </button>
+      </section>
+
+      <section v-if="mode === 'contract' && session.isAuthenticated" class="contract-settings" :aria-busy="productsLoading">
+        <div>
+          <span>{{ t('trade.marginAsset', { asset: selectedProduct?.marginAssetSymbol || quoteAsset }) }}</span>
+          <strong>{{ t('trade.isolated') }}</strong>
+        </div>
+        <button
+          type="button"
+          :disabled="settingsSaving || productsLoading || !selectedProduct"
+          @click="changeLeverage"
+        >
+          <span>{{ t('trade.perpetual') }}</span>
+          <b>{{ leverage }}x</b>
+          <ChevronDown :size="15" />
+        </button>
       </section>
 
       <div v-if="mode !== 'contract' || session.isAuthenticated" class="trade-columns">
@@ -620,6 +634,8 @@ onBeforeUnmount(() => {
             :bids="bids"
             :asks="asks"
             :current-price="currentPrice"
+            :base-asset="baseAsset"
+            :quote-asset="quoteAsset"
             :loading="depthLoading"
           />
           <div v-if="depthLoading && !hasDepth" class="book-state">
@@ -776,33 +792,6 @@ onBeforeUnmount(() => {
   --trade-accent-soft: color-mix(in srgb, var(--trade-accent) 12%, var(--surface));
 }
 
-.trade-category {
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  min-width: 0;
-  position: sticky;
-  top: env(safe-area-inset-top);
-  z-index: 18;
-}
-
-.trade-category button {
-  background: transparent;
-  border-bottom: 3px solid transparent;
-  color: var(--muted);
-  font-size: 14px;
-  font-weight: 700;
-  min-height: 48px;
-  min-width: 0;
-  padding: 0 8px;
-}
-
-.trade-category .is-active {
-  border-bottom-color: var(--trade-accent);
-  color: var(--ink);
-}
-
 .trade-instrument {
   align-items: center;
   background:
@@ -844,6 +833,7 @@ onBeforeUnmount(() => {
 }
 
 .trade-pair__selector small {
+  color: var(--muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   margin-top: 3px;
@@ -869,39 +859,119 @@ onBeforeUnmount(() => {
   text-transform: uppercase;
 }
 
+.trade-quote {
+  background:
+    linear-gradient(112deg, color-mix(in srgb, var(--trade-accent) 9%, transparent), transparent 55%),
+    var(--surface-elevated);
+  border-bottom: 1px solid var(--line);
+  border-top: 3px solid var(--trade-accent);
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1.15fr) minmax(126px, .85fr);
+  min-width: 0;
+  padding: 16px 20px;
+}
+
+.trade-quote__price {
+  display: grid;
+  min-width: 0;
+}
+
+.trade-quote__price > span,
+.trade-quote dt {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.trade-quote__price > strong {
+  font-size: 30px;
+  line-height: 1.08;
+  margin-top: 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trade-quote__price > small {
+  font-size: 11px;
+  margin-top: 5px;
+}
+
+.trade-quote dl {
+  align-self: center;
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  min-width: 0;
+}
+
+.trade-quote dl > div {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+}
+
+.trade-quote dd {
+  color: var(--muted-strong);
+  font-size: 10px;
+  margin: 0;
+  max-width: 88px;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .trade-page__content {
   min-width: 0;
   padding-top: 14px;
 }
 
 .contract-settings {
-  align-items: center;
-  border-block: 1px solid var(--line);
-  display: flex;
+  display: grid;
   gap: 8px;
-  margin-bottom: 14px;
-  min-height: 54px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 12px;
   min-width: 0;
-  overflow-x: auto;
+}
+
+.contract-settings > div,
+.contract-settings button {
+  align-content: center;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  display: grid;
+  min-height: 58px;
+  min-width: 0;
+  padding: 7px 11px;
+  text-align: left;
 }
 
 .contract-settings button {
-  align-items: center;
-  background: var(--trade-accent-soft);
-  border: 1px solid color-mix(in srgb, var(--trade-accent) 35%, var(--line));
   color: var(--ink);
-  display: inline-flex;
-  flex: 0 0 auto;
-  gap: 4px;
-  min-height: 44px;
-  padding: 0 12px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 5px;
 }
 
 .contract-settings span {
   color: var(--muted);
-  flex: 0 0 auto;
-  font-size: 11px;
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.contract-settings > div strong,
+.contract-settings button b {
+  color: var(--ink);
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.contract-settings button b {
+  color: var(--trade-accent);
+  margin-top: 0;
 }
 
 .trade-chart-panel {
@@ -956,6 +1026,48 @@ onBeforeUnmount(() => {
   height: 224px;
   min-width: 0;
   overflow: hidden;
+}
+
+.trade-console-heading {
+  align-items: center;
+  border-top: 8px solid var(--soft);
+  display: flex;
+  justify-content: space-between;
+  margin: 0 -16px 12px;
+  min-height: 72px;
+  min-width: 0;
+  padding: 8px 20px 0;
+}
+
+.trade-console-heading > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.trade-console-heading > div span {
+  color: var(--trade-accent);
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.trade-console-heading > div strong {
+  font-size: 17px;
+}
+
+.trade-console-heading > button {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  color: var(--muted-strong);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 750;
+  gap: 5px;
+  min-height: 44px;
+  padding: 0 10px;
 }
 
 .trade-columns {
@@ -1081,7 +1193,7 @@ onBeforeUnmount(() => {
 
 .percent-row {
   display: grid;
-  gap: 5px;
+  gap: 3px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   margin-top: 9px;
   min-width: 0;
@@ -1391,6 +1503,10 @@ onBeforeUnmount(() => {
     padding-left: 14px;
   }
 
+  .trade-quote {
+    padding-inline: 14px;
+  }
+
   .trade-mode-signal {
     font-size: 9px;
     padding-inline: 7px;
@@ -1403,6 +1519,7 @@ onBeforeUnmount(() => {
 
   .trade-columns,
   .trade-chart-panel,
+  .trade-console-heading,
   .trade-orders {
     margin-left: -14px;
     margin-right: -14px;
@@ -1419,14 +1536,13 @@ onBeforeUnmount(() => {
   .trade-orders__entry {
     padding-inline: 14px;
   }
+
+  .trade-console-heading {
+    padding-inline: 14px;
+  }
 }
 
 @media (max-width: 340px) {
-  .trade-category button {
-    font-size: 12px;
-    padding-inline: 3px;
-  }
-
   .trade-instrument {
     padding-inline: 12px;
   }
@@ -1455,12 +1571,43 @@ onBeforeUnmount(() => {
     grid-template-columns: minmax(0, 1fr) minmax(116px, .8fr);
   }
 
+  .trade-quote {
+    gap: 10px;
+    grid-template-columns: minmax(0, 1fr) 112px;
+    padding-inline: 12px;
+  }
+
+  .trade-quote__price > strong {
+    font-size: 25px;
+  }
+
+  .trade-console-heading {
+    padding-inline: 12px;
+  }
+
+  .trade-console-heading > button {
+    max-width: 148px;
+  }
+
+  .contract-settings {
+    gap: 6px;
+  }
+
+  .contract-settings > div,
+  .contract-settings button {
+    padding-inline: 8px;
+  }
+
   .trade-chart-panel__canvas {
     height: 210px;
   }
 
   .order-form {
     padding-left: 12px;
+  }
+
+  .percent-row {
+    grid-template-columns: repeat(2, minmax(44px, 1fr));
   }
 
   .order-book-shell :deep(.order-book) {

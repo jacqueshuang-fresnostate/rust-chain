@@ -40,12 +40,15 @@ test('现货和合约工作台保留真实数据链路并提供完整下单面',
   assert.match(tradeSource, /aria-modal="true"/)
   assert.match(tradeSource, /document\.body\.style\.overflow = 'hidden'/)
   assert.match(tradeSource, /data-dialog-cancel/)
-  assert.match(tradeSource, /query: nextMode === 'contract' \? \{ mode: 'contract' \} : undefined/)
+  assert.match(tradeSource, /watch\(\(\) => route\.query\.mode/)
+  assert.doesNotMatch(tradeSource, /class="trade-category"/)
+  assert.doesNotMatch(tradeSource, /selectTradeMode/)
   assert.match(tradeSource, /:data-trade-mode="mode"/)
 })
 
 test('秒合约保持独立真实产品工作台和市场参考价', () => {
-  assert.match(secondsSource, /fetchSecondsProducts\(\),\s*fetchSecondsOrders\(\),\s*fetchWalletAccounts\(\),/)
+  assert.match(secondsSource, /const productsRequest = fetchSecondsProducts\(\)/)
+  assert.match(secondsSource, /session\.isAuthenticated\s*\?\s*await Promise\.all\(\[productsRequest, fetchSecondsOrders\(\), fetchWalletAccounts\(\)\]\)\s*:\s*\[await productsRequest, \[\], \[\]\]/)
   assert.match(secondsSource, /marketStore\.tickerFor\(selected\.value\?\.symbol \|\| ''\)/)
   assert.match(secondsSource, /selectedTicker \? formatPrice\(selectedTicker\.lastPrice\) : '--'/)
   assert.match(secondsSource, /class="seconds-market-board"/)

@@ -30,8 +30,9 @@ test('秒合约根路由保留旧深链，消息中心使用安全返回元数�
 })
 
 test('导航触控和头部层级契约保持可访问且不透明', () => {
-  assert.match(bottomNavSource, /grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)\s*minmax\(56px,\s*1\.2fr\)\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/)
-  assert.match(bottomNavSource, /min-height:\s*62px/)
+  assert.match(bottomNavSource, /grid-template-columns:\s*repeat\(7,\s*minmax\(44px,\s*1fr\)\)/)
+  assert.match(bottomNavSource, /min-height:\s*66px/)
+  assert.match(baseStyles, /--bottom-nav-height:\s*84px/)
   assert.match(bottomNavSource, /flex:\s*0 0 44px/)
   assert.match(bottomNavSource, /:focus-visible \.bottom-nav__icon/)
   assert.match(baseStyles, /html\s*\{[\s\S]*scrollbar-width:\s*none/)

@@ -204,6 +204,8 @@ onUnmounted(() => {
         :bids="bids"
         :asks="asks"
         :current-price="latestPrice"
+        :base-asset="baseAsset"
+        :quote-asset="quoteAsset"
         :loading="loading"
       />
     </section>
