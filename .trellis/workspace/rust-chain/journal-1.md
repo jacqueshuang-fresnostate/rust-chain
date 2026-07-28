@@ -324,3 +324,36 @@ Replicated the approved Sites v16 mobile UI across the production Vue/Tauri clie
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: Mobile signal background and route motion parity
+
+**Date**: 2026-07-29
+**Task**: Mobile signal background and route motion parity
+**Branch**: `main`
+
+### Summary
+
+Ported the Sites v16 signal Canvas and route veil into the Vue mobile shell, corrected root/secondary direction semantics, verified responsive dark/light behavior, PWA/Tauri builds, and installed the Android APK on TAS-AL00.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5cae883` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
