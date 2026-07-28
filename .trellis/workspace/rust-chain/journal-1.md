@@ -184,3 +184,36 @@ Audited and polished the mobile Sites prototype product hub, message center, sec
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: 移动端 PWA 真实后端接口联调
+
+**Date**: 2026-07-28
+**Task**: 移动端 PWA 真实后端接口联调
+**Branch**: `main`
+
+### Summary
+
+统一移动端 PWA/Tauri 后端运行时配置，补齐首次登录 2FA setup/confirm，修正鉴权刷新、行情 WebSocket 与关键 DTO，并通过真实 MySQL、HTTP/WS 代理和浏览器联调。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f08ba41` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

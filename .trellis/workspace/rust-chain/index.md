@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 5
+- **Total Sessions**: 6
 - **Last Active**: 2026-07-28
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~186 | Active |
+| `journal-1.md` | ~219 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 6 | 2026-07-28 | 移动端 PWA 真实后端接口联调 | `f08ba41` | `main` |
 | 5 | 2026-07-28 | 真实手机端重设计与 PWA | `8a0fa6c`, `c3682f8` | `main` |
 | 4 | 2026-07-27 | Mobile prototype system polish | `232de02` | `main` |
 | 3 | 2026-07-27 | Mobile seconds trading and navigation redesign | `8dbe4e7` | `main` |
