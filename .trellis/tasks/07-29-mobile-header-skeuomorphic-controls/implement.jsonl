@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Shared mobile control geometry, Lucide icon, touch target, and validation requirements."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Root/secondary header layer, theme, PWA shell, and production parity contracts."}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Back-button goBackOr and mobile navigation contracts must remain unchanged."}
+{"file":".trellis/tasks/07-29-mobile-header-skeuomorphic-controls/research/header-control-audit.md","reason":"Audited header surfaces, browser baseline, structural wrapper finding, and agreed visual direction."}

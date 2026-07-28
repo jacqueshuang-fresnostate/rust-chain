@@ -48,7 +48,34 @@ body,
   --positive: var(--green);
   --positive-soft: color-mix(in srgb, var(--green) 12%, var(--surface));
   --surface-elevated: var(--surface);
+  --header-control-face-top: #313a36;
+  --header-control-face-mid: #222a26;
+  --header-control-face-bottom: #151b18;
+  --header-control-bezel-highlight: #7f8c85;
+  --header-control-bezel-mid: #46524c;
+  --header-control-bezel-shadow: #101411;
+  --header-control-inner-highlight: rgb(244 255 249 / 16%);
+  --header-control-inner-depth: rgb(0 0 0 / 38%);
+  --header-control-elevation:
+    0 1px 0 rgb(255 255 255 / 5%),
+    0 4px 8px rgb(0 0 0 / 42%);
+  --header-control-pressed-shadow: 0 1px 2px rgb(0 0 0 / 34%);
   font-family: var(--font-geist-sans), 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+}
+
+.app-stage.theme-light {
+  --header-control-face-top: #ffffff;
+  --header-control-face-mid: #f2f5f3;
+  --header-control-face-bottom: #dce3df;
+  --header-control-bezel-highlight: #ffffff;
+  --header-control-bezel-mid: #aab6b0;
+  --header-control-bezel-shadow: #738179;
+  --header-control-inner-highlight: rgb(255 255 255 / 96%);
+  --header-control-inner-depth: rgb(62 78 70 / 24%);
+  --header-control-elevation:
+    0 1px 0 rgb(255 255 255 / 92%),
+    0 4px 9px rgb(26 43 34 / 18%);
+  --header-control-pressed-shadow: 0 1px 2px rgb(26 43 34 / 16%);
 }
 
 .mobile-canvas.app-frame {
@@ -64,6 +91,178 @@ body,
  */
 .bottom-nav button {
   min-height: 66px;
+}
+
+/*
+ * Header icon controls are one shared precision-instrument system. Keep these
+ * selectors scoped to header rails so page-body icon buttons retain their
+ * existing semantics.
+ */
+.app-stage .mobile-canvas :is(
+  .topbar-actions > .icon-button.icon-button,
+  .secondary-header > .icon-button.icon-button,
+  .secondary-header-action > .icon-button.icon-button,
+  .auth-topbar > .icon-button.icon-button,
+  .market-detail__header > .icon-button.icon-button
+) {
+  align-items: center;
+  animation: none;
+  background:
+    linear-gradient(
+      145deg,
+      var(--header-control-face-top),
+      var(--header-control-face-mid) 48%,
+      var(--header-control-face-bottom)
+    ) padding-box,
+    linear-gradient(
+      145deg,
+      var(--header-control-bezel-highlight),
+      var(--header-control-bezel-mid) 52%,
+      var(--header-control-bezel-shadow)
+    ) border-box;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  box-shadow:
+    inset 0 1px 0 var(--header-control-inner-highlight),
+    inset 0 -2px 0 var(--header-control-inner-depth),
+    var(--header-control-elevation);
+  box-sizing: border-box;
+  color: var(--text);
+  display: grid;
+  flex: 0 0 44px;
+  height: 44px;
+  justify-items: center;
+  line-height: 0;
+  min-height: 44px;
+  min-width: 44px;
+  overflow: visible;
+  padding: 0;
+  position: relative;
+  transform: translateY(0);
+  transition:
+    box-shadow 120ms var(--ease-control),
+    filter 120ms var(--ease-control),
+    opacity 120ms var(--ease-control),
+    transform 120ms var(--ease-control);
+  width: 44px;
+}
+
+.app-stage .mobile-canvas :is(
+  .topbar-actions > .icon-button.icon-button,
+  .secondary-header > .icon-button.icon-button,
+  .secondary-header-action > .icon-button.icon-button,
+  .auth-topbar > .icon-button.icon-button,
+  .market-detail__header > .icon-button.icon-button
+):not(:disabled):hover {
+  filter: brightness(1.035);
+}
+
+.app-stage .mobile-canvas :is(
+  .topbar-actions > .icon-button.icon-button,
+  .secondary-header > .icon-button.icon-button,
+  .secondary-header-action > .icon-button.icon-button,
+  .auth-topbar > .icon-button.icon-button,
+  .market-detail__header > .icon-button.icon-button
+):not(:disabled):active {
+  box-shadow:
+    inset 0 1px 0 var(--header-control-inner-highlight),
+    inset 0 -1px 0 var(--header-control-inner-depth),
+    var(--header-control-pressed-shadow);
+  filter: brightness(0.985);
+  transform: translateY(1px);
+}
+
+.app-stage .mobile-canvas :is(
+  .topbar-actions > .icon-button.icon-button,
+  .secondary-header > .icon-button.icon-button,
+  .secondary-header-action > .icon-button.icon-button,
+  .auth-topbar > .icon-button.icon-button,
+  .market-detail__header > .icon-button.icon-button
+):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+  z-index: 1;
+}
+
+.app-stage .mobile-canvas :is(
+  .topbar-actions > .icon-button.icon-button,
+  .secondary-header > .icon-button.icon-button,
+  .secondary-header-action > .icon-button.icon-button,
+  .auth-topbar > .icon-button.icon-button,
+  .market-detail__header > .icon-button.icon-button
+):disabled {
+  animation: none;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--header-control-inner-highlight) 55%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, var(--header-control-inner-depth) 62%, transparent);
+  cursor: not-allowed;
+  filter: grayscale(0.42) saturate(0.55);
+  opacity: 0.48;
+  transform: none;
+  transition: none;
+}
+
+.app-stage .mobile-canvas :is(
+  .topbar-actions > .icon-button.icon-button,
+  .secondary-header > .icon-button.icon-button,
+  .secondary-header-action > .icon-button.icon-button,
+  .auth-topbar > .icon-button.icon-button,
+  .market-detail__header > .icon-button.icon-button
+) > svg {
+  display: block;
+  flex: none;
+  grid-area: 1 / 1;
+  margin: auto;
+  place-self: center;
+  pointer-events: none;
+}
+
+.app-stage .mobile-canvas .secondary-header-action.secondary-header-action {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  display: grid;
+  height: 44px;
+  overflow: visible;
+  padding: 0;
+  place-items: center;
+  transform: none;
+  transition: none;
+  width: 44px;
+}
+
+.app-stage .mobile-canvas .topbar-actions .has-dot.has-dot::after {
+  background: var(--coral);
+  box-shadow:
+    0 0 0 1px var(--header-control-face-top),
+    0 1px 3px rgb(0 0 0 / 28%);
+  height: 8px;
+  right: 1px;
+  top: 2px;
+  width: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-stage .mobile-canvas :is(
+    .topbar-actions > .icon-button.icon-button,
+    .secondary-header > .icon-button.icon-button,
+    .secondary-header-action > .icon-button.icon-button,
+    .auth-topbar > .icon-button.icon-button,
+    .market-detail__header > .icon-button.icon-button
+  ) {
+    transition: none;
+  }
+
+  .app-stage .mobile-canvas :is(
+    .topbar-actions > .icon-button.icon-button,
+    .secondary-header > .icon-button.icon-button,
+    .secondary-header-action > .icon-button.icon-button,
+    .auth-topbar > .icon-button.icon-button,
+    .market-detail__header > .icon-button.icon-button
+  ):not(:disabled):active {
+    transform: none;
+  }
 }
 
 .app-route-host {

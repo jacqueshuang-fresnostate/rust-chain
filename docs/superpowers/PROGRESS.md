@@ -2,6 +2,20 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-07-29 02:48 - 完成手机端 Header 拟物控件最终验收
+
+- 完成内容：以 390x844 本地运行时复验浅色与深色 RootHeader、PageHeader、登录 Header 和行情详情 Header，确认返回、刷新、主题、消息、语言与分享按钮统一为冷中性金属边框、凸面高光、内凹下沿和实体投影的 44x44 圆形仪表控件；确认 PageHeader action 外层仅作为透明对齐轨，不再形成双重边框；验证 Lucide 图标精确居中、消息珊瑚提示点附着、2px 青色键盘焦点环、原有标题和页面主体几何不变，并在 320x720、390x844、448x900 检查根页与秒合约二级页无横向溢出。
+- 修改文件：`mobile/src/styles/prototype-parity.css`、`mobile/tests/header-controls.test.ts`、`.trellis/spec/mobile/index.md`、`.trellis/tasks/07-29-mobile-header-skeuomorphic-controls/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：在 `mobile/` 执行 `npm run type-check` 通过；`npm test` 151/151 通过；`npm run build:pwa` 通过（2022 modules，132 条静态壳预缓存，生成 manifest、service worker 与 Workbox）；`npm run build:tauri` 通过（2022 modules），最终 `dist/` 不含 manifest、service worker、Workbox 或 `pwa/` 目录；仓库根 `git diff --check` 通过。浏览器运行时确认五类 Header 目标控件均为 44x44、圆形、SVG 中心偏差 0px，RootHeader/PageHeader 保持 64px/76px、sticky、z-index 70，action wrapper 为透明/0 边框/无阴影，键盘焦点为 2px `rgb(71, 200, 255)` 且偏移 3px，三档视口横向溢出均为 0，控制台无 warning/error。
+- 后续事项：无。
+
+## 2026-07-29 02:39 - 完成手机端 Header 拟物控件质量审查
+
+- 完成内容：按 PRD、实现/检查上下文和共享 mobile spec 审查 RootHeader、PageHeader、登录、注册与行情详情五类 Header 控件；确认生产选择器只覆盖指定直接子控件且特异性足以覆盖原型及 scoped 边框规则，明暗主题分别使用冷中性材质令牌，PageHeader action 包装层保持 44x44 透明轨道，控件保持 44x44 圆形几何、Lucide SVG 显式双轴居中、1px 按压、完整青色焦点环、禁用与 reduced-motion 合同，并保留 `goBackOr`、主题/消息/语言/分享及刷新处理器和 SVG loading 动画。修复聚焦源契约测试可能因仅检查字符串存在而误通过的问题，改为精确解析选择器与规则、比较两套主题令牌，并遍历全部 PageHeader action 消费者验证直接 `.icon-button` 合同。
+- 修改文件：`mobile/tests/header-controls.test.ts`、`docs/superpowers/PROGRESS.md`；本任务已审查交付还包括 `mobile/src/styles/prototype-parity.css`、`.trellis/spec/mobile/index.md` 与 `.trellis/tasks/07-29-mobile-header-skeuomorphic-controls/`。
+- 验证结果：在 `mobile/` 执行 `node --test --experimental-strip-types tests/header-controls.test.ts`，6/6 通过；执行 `npm test`，151/151 通过；执行 `npm run type-check`，退出码 0；仓库根执行 `git diff --check`，退出码 0。
+- 后续事项：无。
+
 ## 2026-07-29 01:31 - 完成背景动效 Android 实机验收
 
 - 完成内容：基于本轮最终代码重新生成 Android aarch64 Debug APK，更新安装到已连接的华为 TAS-AL00，并冷启动 `com.hippo.exchange.mobile/.MainActivity`；确认应用在 360dp 可用宽度下处于 resumed 前台，Android Choreographer 持续调度帧，证明 SignalField Canvas 在真实 RustWebView 中运行。

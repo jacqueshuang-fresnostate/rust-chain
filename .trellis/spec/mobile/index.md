@@ -46,6 +46,50 @@ not rely on inherited `text-align` or the browser's default button layout.
 For shared control changes, verify the SVG and button bounding-box centers
 match on both axes and preserve a minimum 44x44 touch target.
 
+## Shared Header Icon-Control Contract
+
+Production header icon controls use one CSS-owned 44x44 circular instrument
+system. Apply it only to:
+
+- `RootHeader` theme and message actions;
+- `PageHeader` back and direct slotted action buttons;
+- login and registration header actions;
+- market-detail back and share actions.
+
+The control face must provide a cool-neutral metal bezel, convex light-to-dark
+surface, inset upper highlight, lower-edge depth, and restrained elevation.
+Light and dark themes own distinct material tokens, and neither may restore
+the retired `#0b1811` / `rgba(11, 24, 17, ...)` border family.
+
+Keep these interaction contracts executable:
+
+- normal controls remain exactly 44x44 with a circular border box;
+- active controls translate down by 1px and compress their shadow without
+  changing width, height, margin, or surrounding header geometry;
+- `:focus-visible` draws a complete cyan ring outside the bezel;
+- disabled controls remove motion and elevation, retain clear unavailable
+  contrast, and never receive the active press treatment;
+- reduced-motion mode removes transitions and press travel;
+- direct Lucide SVG children use explicit grid centering on both axes;
+- the coral message indicator remains attached to the message bezel.
+
+`PageHeader`'s `.secondary-header-action` is an alignment track, not an
+interactive surface. It must remain 44x44 but render with transparent
+background, zero border, and no shadow; only its direct `.icon-button` child
+receives the instrument treatment. Do not alter `goBackOr`, route fallbacks,
+action handlers, sticky header height/z-index, PWA behavior, or page-body icon
+buttons while changing this system.
+
+Required validation:
+
+```text
+focused header-control source contract tests
+button/SVG center delta <= 0.5px on each axis
+light and dark runtime checks for all four header families
+320x720, 390x844, and 448x900 horizontal overflow = 0
+sticky root/secondary headers retain 64px/76px geometry and z-index 70
+```
+
 ## Local Sites Prototype Surface Contract
 
 Apply this contract to `mobile/sites-prototype/` secondary routes:
