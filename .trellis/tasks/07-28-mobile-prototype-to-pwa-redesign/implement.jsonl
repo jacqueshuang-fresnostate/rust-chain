@@ -1,0 +1,7 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Mobile client quality checks, icon/touch contracts, and approved prototype visual/navigation rules."}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Route history, trade mode, back fallback, localization, and cross-platform build contracts must remain intact."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"PWA runtime, browser/Tauri boundaries, routes, stores, and API display changes span multiple layers."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"The redesign must extend shared primitives and avoid duplicating theme, navigation, and install-state logic."}
+{"file":".trellis/tasks/07-28-mobile-prototype-to-pwa-redesign/research/mobile-architecture.md","reason":"Maps existing routes, APIs, prototype contracts, and implementation boundaries."}
+{"file":".trellis/tasks/07-28-mobile-prototype-to-pwa-redesign/research/pwa-integration.md","reason":"Defines the supported PWA plugin, secure cache policy, Tauri coexistence, install/update UX, and verification approach."}
+{"file":".trellis/tasks/07-28-mobile-prototype-to-pwa-redesign/research/implementation-slices.md","reason":"Defines disjoint implementation waves and the full route-coverage validation matrix."}

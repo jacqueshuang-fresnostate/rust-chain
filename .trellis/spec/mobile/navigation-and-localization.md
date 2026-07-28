@@ -46,7 +46,12 @@ lastTradePath: ComputedRef<string>
 
 ### Router history
 
-- Bottom tabs (`home`, `markets`, `trade`, `assets`, `profile`) use router `replace`.
+- Root navigation has exactly seven ordered destinations and uses router
+  `replace`: `home`, `markets`, spot `trade`, `seconds`, contract `trade`,
+  `assets`, and `profile`.
+- Spot resolves to `/trade/:symbol`; contract resolves to
+  `/trade/:symbol?mode=contract`; seconds resolves to `/seconds`. Do not merge
+  these three operational surfaces into one root destination.
 - Drill-down pages and modals represented as routes use router `push`.
 - Every detail route defines `meta.depth`, `meta.showBottomNav: false`, and `meta.backFallback`.
 - `PageHeader` calls `goBackOr`; it must not call `router.back()` directly.
@@ -83,6 +88,9 @@ lastTradePath: ComputedRef<string>
 | Redirect does not start with exactly one `/` | Use internal fallback |
 | Router history has no internal `state.back` | `router.replace(meta.backFallback)` |
 | Main tab selected | Replace current history entry |
+| Spot root selected | Open persisted symbol without `mode=contract` |
+| Contract root selected | Open persisted symbol with `mode=contract` |
+| Seconds root selected | Open the independent named route `seconds` |
 | Trade mode changes | Replace route and persist mode |
 | Stored locale is unknown | Use system locale, then `zh-CN` |
 | Locale persistence is unavailable | Keep the in-memory locale active |
@@ -104,6 +112,8 @@ lastTradePath: ComputedRef<string>
 - Unit: dynamic prediction text preserves English and localizes supported Chinese patterns.
 - Browser: pair picker returns to the selected trade pair and preserves futures mode.
 - Browser: main tabs do not remain in history; direct-open detail back uses its fallback.
+- Browser: all seven root destinations remain visible with at least 44px icon
+  targets and no horizontal page overflow at 320px, 390px, and 448px.
 - Browser: switching language survives reload and both 390px mobile and wide H5 layouts remain usable.
 - Build: H5, Android Debug APK, and iOS simulator bundle after dependency or startup changes.
 
@@ -127,8 +137,13 @@ selectTradeMode('contract') // persists mode and replaces the route
 const label = t('prediction.confirmOrder')
 ```
 
-## 8. Local Design Preview
+## 8. Prototype-to-Client Handoff
 
-- The standalone visual prototype lives in `mobile/design/` and must remain independent from `mobile/src/` business screens until a visual direction is approved.
-- At widths up to `480px`, the preview hides its outer desktop toolbar; language and theme controls must therefore be duplicated inside the mobile canvas rather than relying only on the outer preview chrome.
-- The preview must be checked at `390px` width for horizontal overflow, bottom navigation occlusion, and reachable language switching before the visual direction is handed off to Vue components.
+- The approved visual reference lives in `mobile/sites-prototype/`; the
+  production implementation lives in `mobile/src/`.
+- Reuse visual hierarchy, tokens, and route intent from the prototype, but keep
+  all real API calls, validation, stores, authentication redirects, and route
+  names from the Vue client. Never copy deterministic prototype data into a
+  financial workflow.
+- The real client owns light/dark theme controls, localization, safe areas, and
+  PWA behavior. Prototype-only controls must not become a second runtime shell.

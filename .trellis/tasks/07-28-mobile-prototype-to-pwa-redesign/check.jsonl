@@ -1,0 +1,6 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Verify design, touch, theme, prototype, and package quality contracts."}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Verify route names/history, trade context, i18n completeness, and Tauri/H5 compatibility."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review Web/Tauri registration boundaries and data flow across PWA, stores, routes, and views."}
+{"file":".trellis/tasks/07-28-mobile-prototype-to-pwa-redesign/research/mobile-architecture.md","reason":"Check preserved backend functionality and intended page scope."}
+{"file":".trellis/tasks/07-28-mobile-prototype-to-pwa-redesign/research/pwa-integration.md","reason":"Check manifest, service worker caching safety, install/update behavior, and offline validation."}
+{"file":".trellis/tasks/07-28-mobile-prototype-to-pwa-redesign/research/implementation-slices.md","reason":"Verify every root and secondary route slice is covered and all integration gates are exercised."}

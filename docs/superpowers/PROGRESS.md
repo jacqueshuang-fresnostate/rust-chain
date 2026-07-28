@@ -2,6 +2,13 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-07-28 07:23 - 重构手机端访问、身份与设置二级视图
+
+- 完成内容：将登录、注册、找回密码、登录双重验证、KYC、账户绑定、邀请和语言设置迁移到 HIPPO 高对比主题变量；统一完整字段焦点、主次按钮、错误/成功/加载状态、KYC 文件上传选择态、账户绑定底部确认层及语言选中态；补齐 320px 窄屏布局、44px 触控、safe area、ARIA 状态和 Lucide-only 契约；保持全部鉴权 challenge/redirect、注册策略、密码重置、2FA、KYC 文件转换与提交、邮箱/第三方账户绑定、邀请和语言持久化调用及请求载荷不变。
+- 修改文件：`mobile/src/views/LoginView.vue`、`mobile/src/views/RegisterView.vue`、`mobile/src/views/ForgotPasswordView.vue`、`mobile/src/views/LoginTwoFactorView.vue`、`mobile/src/views/KycView.vue`、`mobile/src/views/AccountBindingsView.vue`、`mobile/src/views/ReferralsView.vue`、`mobile/src/views/LanguageView.vue`、`mobile/tests/access-identity-settings-views.test.ts`、`docs/superpowers/PROGRESS.md`
+- 验证结果：聚焦 `node --test --experimental-strip-types tests/access-identity-settings-views.test.ts` 6/6 通过；`npm run type-check` 通过；`npm test` 62/62 通过；目标文件 `git diff --check`、硬编码颜色、emoji、内联 SVG 和中文模板字面量扫描通过。浏览器完成 320x720、390x844、448x900 三档 8 条目标路由检查，文档无横向溢出且可见控件均不小于 44px；390x844 浅色模式检查登录两步、注册两步、找回密码、2FA 和语言页，完整字段焦点与滚动可达性正常，控制台无 warning/error。深色模式由目标文件仅消费共享变量的静态扫描及全量主题对比测试覆盖；当前并行壳层未暴露可达主题切换入口，因此未伪造 DOM 状态截图。
+- 后续事项：受保护的 KYC、账户绑定和邀请页因本地后端未运行只完成未登录态浏览器验收；待并行环境提供真实会话后可补做上传、绑定确认层和邀请列表的实数据视觉验收。
+
 ## 2026-07-27 03:02 - 修正手机原型浅色输入与按钮状态并发布版本 14
 
 - 完成内容：移除交易价格/数量输入框内部的蓝色焦点矩形，将焦点反馈统一到完整字段容器；统一浅色模式交易字段、二级表单、买入/卖出、订单类型、余额比例、金额预设及主次按钮的默认、选中、聚焦、错误和禁用层级；缩窄二级页面选中态选择器，避免误改收藏按钮和安全开关；将完整字段聚焦及浅色选中态约束写入移动端规范，并发布到现有公开 Sites 地址。
@@ -5836,3 +5843,59 @@
 - 修改文件：`mobile/sites-prototype/app/secondary-pages.tsx`、`mobile/sites-prototype/app/globals.css`、`mobile/sites-prototype/tests/rendered-html.test.mjs`、`.trellis/spec/mobile/index.md`、`.trellis/tasks/07-27-mobile-prototype-system-polish/`、`docs/superpowers/PROGRESS.md`
 - 验证结果：`npm run lint`、`npm test`（含构建，33/33）、`git diff --check` 通过；禁用浅色边框与表情符号扫描无命中；320x720、390x844、448x900 浏览器复验无横向溢出，消息分类触控高度 44px，贷款 320px 单列/390px 双列，浅深秒合约对比度、底栏图标焦点与 1/40/60/70 层级通过；全量 `npx tsc --noEmit` 仍被既有 Cloudflare ambient 类型缺失阻断，归属文件针对性检查通过。原型提交 `75ebd77fc0790f59f00218eb50b45bd82313c8c5` 已推送并部署为公开 Sites 版本 16，生产地址 `https://hippo-mobile-signal-2026.ikuboy.chatgpt.site/` 复验通过。
 - 后续事项：原型中的交易、借贷、预测与秒合约仍为确定性本地演示，不连接真实账户或资金；接入真实后端接口需另立任务。
+
+## 2026-07-28 06:45 - 真实手机端重设计与 PWA 任务建模
+
+- 完成内容：完成 `mobile` 真实 Vue/Tauri 客户端与已确认 Sites 原型的架构、路由、接口、主题及 PWA 基线审计；建立并启动 Trellis 任务 `07-28-mobile-prototype-to-pwa-redesign`，固化七入口导航、现货/秒合约/合约独立信息架构、真实业务逻辑保留、PWA 离线安全边界、Tauri 共存和多尺寸验收标准。
+- 修改文件：`.trellis/tasks/07-28-mobile-prototype-to-pwa-redesign/{prd.md,research/*.md,implement.jsonl,check.jsonl,task.json}`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`python3 ./.trellis/scripts/task.py validate 07-28-mobile-prototype-to-pwa-redesign` 通过（implement 6 条、check 5 条）；任务状态已由 planning 切换为 in_progress；改动前 `mobile` 的 `npm run type-check` 与 `npm test`（12/12）通过。
+- 后续事项：完成共享壳、PWA、核心与二级页面实现，并执行生产构建、离线与 320/390/448px 浏览器验证。
+
+## 2026-07-28 07:04 - 手机端共享壳与核心业务工作台重构
+
+- 完成内容：真实 Vue 客户端建立 HIPPO 高对比明暗主题与持久化主题状态；底部导航升级为首页、行情、现货、秒合约、合约、资产、我的七个真实入口，秒合约中置抬升，现货/合约分别保留真实交易模式；统一不透明 sticky Header、安全区、44px 触控和路由转场层级。首页接入真实钱包与合约资产估值并重构行情/公告/产品入口；行情和产品中心升级为密集操作布局；现货/合约、秒合约、借贷页面保留并强化真实下单、杠杆、申请、撤销、还款及历史流程。
+- 修改文件：`mobile/src/{App.vue,styles/base.css,stores/theme.ts,router/index.ts}`、`mobile/src/components/{AppBottomNav,PageHeader}.vue`、`mobile/src/views/{Home,Markets,ProductHub,Trade,Seconds,Loan}View.vue`、`mobile/tests/{theme,shell-navigation,core-discovery-views,trading-lending-views}.test.ts`
+- 验证结果：共享壳聚焦测试 28/28、核心发现页聚焦测试 5/5、交易借贷聚焦测试 5/5 通过；交易借贷完成 SFC 语法和隔离 `vue-tsc --noEmit`；各切片 `git diff --check` 通过，禁用颜色、表情符号、内联 SVG 扫描无命中。全量类型检查暂被并行中的 `MessageCenterView.vue` 尚未落盘阻断。
+- 后续事项：补齐消息中心、PWA 全局状态挂载和其余二级页面，随后执行全量类型、测试、构建与浏览器验证。
+
+## 2026-07-28 07:12 - PWA、账户、安全与真实公告消息中心
+
+- 完成内容：新增 `vite-plugin-pwa@1.3.0`、Web Manifest、shell-only Workbox worker、浏览器安装/iOS 主屏说明、提示式更新、离线与注册错误状态；拆分 PWA/Tauri 构建并在构建时和运行时双重禁止 Tauri 注册 Service Worker；从官方 Logo 机械裁切独立品牌符号生成 192/512、maskable 512 和 Apple 180 图标。资产、个人中心和安全中心完成明暗主题重构并保留全部真实资金与安全 API；新增 `/messages` 消息中心，使用真实平台公告和本地已读 ID，未虚构账户、订单、资金或安全消息；PWA 状态组件已挂载至应用壳。
+- 修改文件：`mobile/{package.json,package-lock.json,vite.config.ts,index.html,.env.example,README.md}`、`mobile/src-tauri/tauri.conf.json`、`mobile/public/pwa/*`、`mobile/src/{main.ts,env.d.ts,core/platform.ts,pwa/**,components/PwaStatus.vue,App.vue}`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/src/views/{Assets,Profile,Security,MessageCenter}View.vue`、`mobile/tests/{pwa,platform,account-message-views}.test.ts`
+- 验证结果：`npm ls` 确认 Vite 5.4.21、PWA 插件 1.3.0、Workbox 7.4.1；PWA 隔离构建成功并生成 manifest、`sw.js` 与 135 个静态壳条目（约 1.17 MiB），无 runtime cache、Background Sync 或 API/WebSocket 导航回退；账户切片后 `npm run type-check`、`npm test`（39/39）、`npm run build:pwa`、聚焦 `git diff --check` 通过；生产依赖审计为 0，完整开发工具链仍有 12 项来自既定 Workbox/Vite/vue-tsc 链的告警，未执行破坏性强制升级/降级。
+- 后续事项：完成其余二级页面、真实 Tauri 构建、生产预览离线/安装/响应式验收。
+
+## 2026-07-28 07:16 - 充提币、钱包流水与快捷买币二级页重构
+
+- 完成内容：完成资产选择、充值网络、充值地址与二维码、提现资产与提现表单、提现记录、钱包流水、快捷买币 8 个真实二级页面的 HIPPO 明暗主题迁移；保留地址/Memo/二维码、网络和资产路由、提现校验与提交、记录筛选和快捷买币订单等全部既有接口与交互，补齐主题感知字段焦点/错误态、结构化状态标签、加载/空态及 320/390/448px 收缩规则。
+- 修改文件：`mobile/src/views/{DepositAsset,DepositNetwork,DepositDetail,WithdrawAsset,Withdraw,WithdrawalRecords,WalletLedger,QuickRecharge}View.vue`、`mobile/tests/wallet-secondary-views.test.ts`
+- 验证结果：聚焦测试 5/5、`npm test` 44/44、`npm run type-check`、`npm run build:pwa`、全仓与归属文件 `git diff --check` 通过。
+- 后续事项：完成产品、身份与行情新闻二级页面并统一浏览器验收。
+
+## 2026-07-28 07:19 - 订单、兑换、理财、预测与新币页面重构
+
+- 完成内容：完成订单中心、闪兑、理财、预测市场、新币列表/详情/个人记录 7 个真实页面的明暗主题迁移；保留订单查询/单笔与批量撤单/平仓、报价与闪兑确认、申购赎回、预测下单、新币认购购买、解锁手续费支付与资产释放链路；理财、预测和手续费弹层补齐 Escape、Tab 焦点闭环、滚动锁、焦点恢复与安全区。
+- 修改文件：`mobile/src/views/{Orders,Swap,Earn,Prediction,NewCoins,NewCoinDetail,NewCoinRecords}View.vue`、`mobile/tests/secondary-product-order-views.test.ts`
+- 验证结果：聚焦测试 7/7、`npm test` 51/51、`npm run type-check`、`npm run build:pwa`、归属文件 `git diff --check` 通过。
+- 后续事项：完成身份与行情新闻二级页面并统一浏览器验收。
+
+## 2026-07-28 07:32 - 首页主题入口与 PWA 共享集成收口
+
+- 完成内容：首页顶部重复公告图标替换为可达的 Lucide Sun/Moon 明暗主题切换，复用并验证现有 localStorage 持久化主题 store；Bell 保持唯一进入真实消息中心，下方公告详情和完整公告入口保留；Header 改为对称轨道以保持 320px 品牌居中；补齐中英文主题与消息中心可访问标签，并锁定 App 只挂载一次 PWA 状态组件及 Tauri 双重隔离契约。
+- 修改文件：`mobile/src/views/HomeView.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{theme,pwa,core-discovery-views}.test.ts`、`docs/superpowers/PROGRESS.md`
+- 验证结果：聚焦测试 16/16、`npm test` 63/63、`npm run type-check`、`npm run build:pwa`、`npm run build:tauri`、全仓 `git diff --check` 通过；PWA 产物 135 条预缓存均为编译 shell/静态资源，无 API/WebSocket URL、Background Sync 或宽泛运行时缓存，Tauri 产物无 manifest/service worker/Workbox；320x720 浏览器检查无横向溢出，Header 与 Logo 中心偏差 0px，主题切换刷新后保持，Bell 到达 `#/messages`。
+- 后续事项：未执行 Android/iOS 原生包构建和真实设备 PWA 安装/离线验收，由主任务统一收尾。
+
+## 2026-07-28 08:03 - 身份、设置、行情与公告二级页面迁移
+
+- 完成内容：完成登录、注册、找回密码、登录二次验证、KYC、账户绑定、邀请、语言设置、行情详情、公告列表与公告详情等剩余真实二级页面的 HIPPO 明暗主题迁移；保留登录配置、发码、挑战、内部重定向、KYC 文件与国家规则、绑定写操作、行情/K 线/盘口/成交、公告语言与详情路由；所有控件继续使用 Lucide，并统一 44px 触控、主题化字段、加载/错误/空态及窄屏收缩规则。
+- 修改文件：`mobile/src/views/{Login,Register,ForgotPassword,LoginTwoFactor,Kyc,AccountBindings,Referrals,Language,MarketDetail,News,NewsDetail}View.vue`、`mobile/src/components/{AssetMark,LoginRequiredState,MobileMarketChart,OrderBookPanel}.vue`、`mobile/tests/{access-identity-settings-views,market-news-support-views}.test.ts`
+- 验证结果：聚焦契约测试、全量 `npm test`（65/65）、`npm run type-check`、`git diff --check` 通过；禁用颜色、表情符号、内联 SVG 扫描无命中。
+- 后续事项：完成最终 PWA/Tauri/原生包、离线与多尺寸验收并提交归档。
+
+## 2026-07-28 08:06 - 真实手机端重设计与 PWA 最终验收
+
+- 完成内容：完成 `mobile` 真实客户端 36 个路由页面的 HIPPO 明暗主题与交互重设计，固化首页/行情/现货/秒合约/合约/资产/我的七入口异形导航，真实公告消息中心、共享可访问弹层与输入焦点体系；加入可安装 Web Manifest、官方品牌图标、shell-only Service Worker、安装/iOS/离线/更新/失败状态，并通过 Vite 模式、HTML 元数据、publicDir 与运行时检测四层隔离 Tauri；移除 viewport 插值字号与非零字距，保持 320-448px 稳定排版。
+- 修改文件：`mobile/{src,public,index.html,vite.config.ts,package*.json,README.md,.env.example,src-tauri/tauri.conf.json,tests}`、`.trellis/spec/mobile/{index,navigation-and-localization,pwa-and-shell}.md`、`.trellis/tasks/07-28-mobile-prototype-to-pwa-redesign/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run type-check`、`npm test`（65/65）、`npm run build:tauri`（2011 modules）、`npm run build:pwa`（2011 modules，131 条静态壳预缓存，约 1.14 MiB）、`git diff --check` 通过；PWA Manifest、192/512/maskable/Apple 图标与生成式 Service Worker 完整，产物无 API/WebSocket、Background Sync 或运行时缓存策略，Tauri 产物无 PWA 文件；生产依赖审计 0 漏洞，完整开发工具链 12 项为既有 Workbox/Vite/vue-tsc 链告警且强制修复需要破坏性主版本升级；320x720、390x844、448x900 浏览器复验无横向溢出，七入口触控宽度为 44/44/44/56/44/44/44px，Header sticky 层级、主题刷新持久化、消息中心、现货/秒合约/合约独立路由、输入 2px 完整焦点轮廓和控制台零警告通过；关闭预览服务器后的真实离线重载成功。Android aarch64 Debug APK 构建通过，产物位于 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`；iOS 前端/Tauri Web 构建通过，但本机 Xcode Beta 未安装 Simulator SDK 27.0，且现有项目最低 iOS 14 低于该 Xcode 支持的 15-27，原生归档受外部工具链阻断，未为绕过本机问题擅自提高项目最低版本。
+- 后续事项：在具备匹配 Simulator SDK 或支持 iOS 14 的 Xcode 环境执行原生 iOS 归档；开发工具链漏洞应在可安排 Vite 8/vue-tsc 3/Workbox 兼容升级时单独处理。

@@ -9,6 +9,7 @@
 | Guide | Description | Status |
 |-------|-------------|--------|
 | [Navigation and Localization](./navigation-and-localization.md) | Router history, trade context, safe back behavior, and `vue-i18n` contracts | Active |
+| [PWA, Theme, and Application Shell](./pwa-and-shell.md) | Web/Tauri build isolation, shell-only caching, persisted themes, root navigation, and message truthfulness | Active |
 
 ## Quality Check
 
@@ -17,7 +18,8 @@ Run from `mobile/` after navigation, localization, or shared UI changes:
 ```bash
 npm run type-check
 npm test
-npm run build
+npm run build:pwa
+npm run build:tauri
 ```
 
 For changes that affect Tauri startup or dependencies, also build Android and iOS targets:
