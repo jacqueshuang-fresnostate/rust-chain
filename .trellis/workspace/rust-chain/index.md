@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 10
+- **Total Sessions**: 11
 - **Last Active**: 2026-07-29
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~359 | Active |
+| `journal-1.md` | ~392 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 11 | 2026-07-29 | 手机端 Header 拟物化控件优化 | `02457eb` | `main` |
 | 10 | 2026-07-29 | Mobile signal background and route motion parity | `5cae883` | `main` |
 | 9 | 2026-07-28 | Mobile UI pixel-perfect replica | `44fa3c1` | `main` |
 | 8 | 2026-07-28 | Android UI v16 原型对齐 | `69a96ff` | `main` |

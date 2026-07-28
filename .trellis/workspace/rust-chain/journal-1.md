@@ -357,3 +357,36 @@ Ported the Sites v16 signal Canvas and route veil into the Vue mobile shell, cor
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: 手机端 Header 拟物化控件优化
+
+**Date**: 2026-07-29
+**Task**: 手机端 Header 拟物化控件优化
+**Branch**: `main`
+
+### Summary
+
+统一 RootHeader、PageHeader、认证与行情详情的 44px 拟物化 Lucide 控件，补齐双主题、焦点、禁用、低动态与视觉验收。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `02457eb` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
