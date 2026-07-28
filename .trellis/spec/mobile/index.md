@@ -9,7 +9,7 @@
 | Guide | Description | Status |
 |-------|-------------|--------|
 | [Navigation and Localization](./navigation-and-localization.md) | Router history, trade context, safe back behavior, and `vue-i18n` contracts | Active |
-| [PWA, Theme, and Application Shell](./pwa-and-shell.md) | Web/Tauri build isolation, shell-only caching, persisted themes, root navigation, and message truthfulness | Active |
+| [PWA, Theme, and Application Shell](./pwa-and-shell.md) | Web/Tauri build isolation, shell-only caching, persisted themes, root navigation, Canvas background, route motion, and message truthfulness | Active |
 | [Backend Integration](./backend-integration.md) | Runtime URL selection, Vite proxying, auth refresh, WebSocket, and DTO adapter contracts | Active |
 
 ## Quality Check

@@ -1,5 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-import { updateRouteTransition } from '@/core/navigation'
+import { resolveRootRouteKey, updateRouteTransition } from '@/core/navigation'
 const AssetsView = () => import('@/views/AssetsView.vue')
 const AccountBindingsView = () => import('@/views/AccountBindingsView.vue')
 const DepositAssetView = () => import('@/views/DepositAssetView.vue')
@@ -81,7 +81,13 @@ const router = createRouter({
 })
 
 router.beforeEach((to, from) => {
-  updateRouteTransition(to.meta.depth, from.meta.depth)
+  updateRouteTransition(
+    to.meta.depth,
+    from.meta.depth,
+    resolveRootRouteKey(to.name, to.query.mode, to.query.purpose),
+    resolveRootRouteKey(from.name, from.query.mode, from.query.purpose),
+    to.fullPath !== from.fullPath,
+  )
 })
 
 export default router

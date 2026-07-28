@@ -90,9 +90,11 @@ test('根壳层保持原型舞台、64px 顶栏、路由栈、PWA 状态与异�
     'class="app-stage"',
     'class="stage-art"',
     'class="app-frame mobile-canvas"',
+    'class="ambient-layer"',
+    'class="route-veil"',
     '<PwaStatus />',
     '<RootHeader v-if="showBottomNav" />',
-    'class="app-route-host view-stack"',
+    'class="app-route-host"',
     '<AppBottomNav v-if="showBottomNav" />',
   ])
   assert.equal((appSource.match(/<PwaStatus \/>/g) || []).length, 1)

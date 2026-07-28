@@ -37,8 +37,10 @@ test('共享输入把可见焦点提升到容器且清除嵌套输入内框', ()
 })
 
 test('路由转场被内容栈隔离，根头部与异形导航保持独立层级', () => {
-  assert.match(appSource, /class="app-route-host view-stack"/)
-  assert.match(appSource, /route-forward-leave-active[\s\S]*?z-index:\s*var\(--layer-content\)/)
+  assert.match(appSource, /class="app-route-host"/)
+  assert.doesNotMatch(appSource, /class="app-route-host view-stack"/)
+  assert.match(appSource, /'app-route-layer',[\s\S]*?'view-stack',[\s\S]*?\.\.\.routeMotionClasses/)
+  assert.match(parityCss, /route-forward-leave-active[\s\S]*?z-index:\s*var\(--layer-content\)/)
   assert.match(pageHeaderSource, /eyebrow\?:\s*string/)
   assert.match(pageHeaderSource, /subtitle\?:\s*string/)
   assert.match(pageHeaderSource, /compact\?:\s*boolean/)

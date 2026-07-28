@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "Mobile shell, prototype snapshot, navigation, accessibility, and validation contracts."}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "PWA/Tauri application shell behavior and build isolation."}
+{"file": ".trellis/tasks/07-29-mobile-background-motion-parity/prd.md", "reason": "Approved scope and acceptance criteria for background and motion parity."}
+{"file": ".trellis/tasks/07-29-mobile-background-motion-parity/research/motion-parity-audit.md", "reason": "Measured public-vs-production runtime differences and exact animation contract."}

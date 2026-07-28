@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "Verify the mobile shell and production prototype snapshot contracts."}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "Verify PWA/Tauri shell and lifecycle behavior."}
+{"file": ".trellis/tasks/07-29-mobile-background-motion-parity/prd.md", "reason": "Check every background, motion, accessibility, viewport, and build criterion."}
+{"file": ".trellis/tasks/07-29-mobile-background-motion-parity/research/motion-parity-audit.md", "reason": "Compare implementation against the measured reference behavior."}

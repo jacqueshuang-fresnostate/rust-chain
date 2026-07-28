@@ -2,6 +2,34 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-07-29 01:31 - 完成背景动效 Android 实机验收
+
+- 完成内容：基于本轮最终代码重新生成 Android aarch64 Debug APK，更新安装到已连接的华为 TAS-AL00，并冷启动 `com.hippo.exchange.mobile/.MainActivity`；确认应用在 360dp 可用宽度下处于 resumed 前台，Android Choreographer 持续调度帧，证明 SignalField Canvas 在真实 RustWebView 中运行。
+- 修改文件：`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run tauri:android:build -- --debug --target aarch64 --apk` 通过，生成 225MB universal debug APK，SHA-256 为 `d858b4ee867bd5199d716472400690c4176d79f2f43dfd6daf93ec119bd5ab0c`；`adb install -r` 返回 `Success`；冷启动返回 `Status: ok`、`LaunchState: COLD`、`TotalTime: 431ms`；设备为 1080x2340、480dpi、`sw360dp w360dp h745dp`，`MainActivity` 为 `mResumed=true`、`mStopped=false`，WebView 主线程存在持续 Choreographer 帧。未采集设备屏幕内容。
+- 后续事项：无。
+
+## 2026-07-29 01:27 - 完成手机端背景动效 Trellis 质量审查
+
+- 完成内容：按 PRD、移动端壳层规范和 Sites v16 审计当前完整 diff，核对 SignalField 的 DPR/像素上限、零尺寸跳过、resize 合并、隐藏页暂停、卸载清理与 reduced-motion 固定帧合同，以及 ambient/veil、sticky Header、底栏和路由栈层级；修复交易选币 `markets?purpose=trade` 返回同深度 Spot/Contract 时被误判为 `forward/secondary` 的方向缺口，改为 `back/secondary`，补充行为回归断言并同步可执行规范；未改动 API 或业务视图行为。
+- 修改文件：`mobile/src/core/navigation.ts`、`mobile/tests/navigation.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`docs/superpowers/PROGRESS.md`
+- 验证结果：在 `mobile/` 执行 `npm run type-check` 退出码 0；`npm test` 145/145 通过；`npm run build:pwa` 退出码 0，Vite 转换 2022 个模块并生成 132 条（3218.06 KiB）预缓存，manifest、service worker、Workbox 与四张 PWA 图标存在；`npm run build:tauri` 退出码 0，Vite 转换 2022 个模块，产物不含 manifest、service worker、Workbox 或 PWA 图标目录；仓库根 `git diff --check` 退出码 0。390x844 浏览器运行时确认 Canvas 为 390x844 CSS 像素、正常动态两帧 SHA-256 不同、Home→Markets/返回分别为 `forward/root` 与 `back/root`、Seconds 和交易选币均为 secondary 且不挂载 Canvas、交易选币返回为 `back/secondary`、Header/veil/nav 分层为 70/60/40、ambient 与 veil 均不接收指针；320x720、360x745、390x844、448x900 均无横向溢出，明暗主题 Canvas 均存在，控制台无 warning/error。reduced-motion 通过固定时间戳 1800、停止后续 `requestAnimationFrame`、幕帘 `display: none !important` 及监听器清理合同测试复核。
+- 后续事项：PRD 中 Android aarch64 debug APK 与实机启动验收未包含在本轮用户指定命令内，本轮未重复执行。
+
+## 2026-07-29 01:13 - 修正 Seconds 路由动效层级
+
+- 完成内容：按 Sites v16 的 `NAV_ITEMS` 源顺序将动效根路由收口为首页、行情、现货、合约、资产、我的六项；保留七项可视底栏及抬升 Seconds 中心入口，但让 `seconds` 解析为非根路由并使用无根幕帘的 secondary tier；同步补充行为回归断言与移动端壳层可执行规范，并修正上一切片“七栏方向分类”的错误措辞。
+- 修改文件：`mobile/src/core/navigation.ts`、`mobile/tests/navigation.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`docs/superpowers/PROGRESS.md`
+- 验证结果：在 `mobile/` 执行 `npm run type-check` 通过；`npm test` 145/145 通过。
+- 后续事项：无。
+
+## 2026-07-29 00:50 - 完成手机端背景与路由动效生产对齐
+
+- 完成内容：将 Sites v16 的 SignalField Canvas 等价移植为 Vue 运行时，补齐 DPR/像素上限、四组波形、确定性粒子、扫描带、指针/触控响应、窗口变化、页面隐藏暂停、卸载清理和 reduced-motion 静态帧；在首页、行情、资产、我的四个表现型根页挂载 ambient 背景，确保现货、合约、秒合约、交易选币和二级页不挂载；应用壳新增持续 route veil DOM、六项根栏目动效方向分类与 root/secondary tier 状态，保留七项可视底栏并让抬升 Seconds 入口使用无根幕帘的 secondary tier，接入原型 360ms 幕帘、280ms 根转场和 170–180ms 二级转场，同时保持 sticky Header、异形底栏、44px 触控、PWA/Tauri 和真实 API 数据流不变；补充可执行移动端规范与聚焦合同测试。
+- 修改文件：`mobile/src/components/SignalField.vue`、`mobile/src/App.vue`、`mobile/src/core/navigation.ts`、`mobile/src/router/index.ts`、`mobile/src/styles/prototype-parity.css`、`mobile/tests/motion-parity.test.ts`、`mobile/tests/navigation.test.ts`、`mobile/tests/root-prototype-parity.test.ts`、`mobile/tests/ui-prototype-alignment-foundation.test.ts`、`.trellis/spec/mobile/index.md`、`.trellis/spec/mobile/pwa-and-shell.md`、`docs/superpowers/PROGRESS.md`
+- 验证结果：在 `mobile/` 执行 `npm run type-check` 通过；`npm test` 145/145 通过。
+- 后续事项：PWA/Tauri、浏览器与 Android 验收由 01:27 和 01:31 后续切片完成。
+
 ## 2026-07-28 21:42 - 完成手机端原型 1:1 重构与 Android 实机交付
 
 - 完成内容：以已发布 v16 Sites 原型及其精确 CSS 为视觉基线，完成首页、行情、现货、合约、资产、我的与独立秒合约七个一级入口的正式 Vue/Tauri 重构，并完整迁移消息中心、贷款、安全中心等重点二级页面；复刻 64px 根 Header、76px 二级 Header、84px 七栏异形底栏、48px 抬升秒合约入口、原型排版/颜色/字段/按钮/弹层和 Geist 字体；保留真实行情、钱包、保证金、现货/合约下单、秒合约、贷款、公告、账户与安全 API，接口失败时仅显示同尺寸 skeleton、`--`、禁用或错误状态，不伪造余额、评分、订单、趋势和消息；修正交易百分比将 25/50/75/100 错当 0–1 比例以及合约输入误映射名义数量的问题，现货按精确基础/报价钱包计算，合约按精确产品的保证金钱包计算并以 `marginAmount` 提交；将精确 CSS、字体、品牌图和舞台图收口为正式受跟踪资源，消除对忽略原型目录的构建依赖；完成 PWA/Tauri 隔离、Android debug APK 构建、TAS-AL00 更新安装与前台启动。

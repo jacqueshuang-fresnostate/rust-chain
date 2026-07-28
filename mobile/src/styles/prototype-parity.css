@@ -77,6 +77,29 @@ body,
 }
 
 /*
+ * Vue owns route component lifecycles while the approved prototype classes on
+ * each new view-stack own the exact 280ms root and 170-180ms secondary motion.
+ * The outgoing view is demoted so it cannot cover the entering sticky header.
+ */
+.route-forward-enter-active,
+.route-back-enter-active,
+.route-fade-enter-active {
+  position: relative;
+  z-index: var(--layer-route-transition);
+}
+
+.route-forward-leave-active,
+.route-back-leave-active,
+.route-fade-leave-active {
+  inset: 0;
+  width: 100%;
+  position: absolute;
+  z-index: var(--layer-content);
+  pointer-events: none;
+  animation: none !important;
+}
+
+/*
  * Existing secondary pages keep their legacy scoped token meaning until their
  * own parity slice migrates them to the prototype secondary DOM.
  */
