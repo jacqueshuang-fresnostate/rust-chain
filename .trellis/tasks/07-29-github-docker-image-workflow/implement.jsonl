@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Preserve backend build and verification quality requirements while adding the migration binary."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Keep Dockerfile, workflow, image commands, environment variables, Compose dependencies, and documentation aligned."}
+{"file":"src/main.rs","reason":"Match the production API binary name, startup dependencies, and runtime behavior."}
+{"file":"src/config.rs","reason":"Expose every required runtime environment variable in the Compose contract."}
+{"file":"docker-compose.yml","reason":"Preserve existing dependency image versions and local development conventions."}
+{"file":".trellis/tasks/07-29-github-docker-image-workflow/prd.md","reason":"Implement the accepted GHCR and Compose delivery contract."}

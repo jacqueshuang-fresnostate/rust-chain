@@ -1,0 +1,126 @@
+x-api-environment: &api-environment
+  APP_ENV: production
+  APP_HOST: 0.0.0.0
+  APP_PORT: "8080"
+  DATABASE_URL: mysql://${MYSQL_USER:?set MYSQL_USER}:${MYSQL_PASSWORD:?set MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:?set MYSQL_DATABASE}
+  MONGODB_URI: mongodb://${MONGO_INITDB_ROOT_USERNAME:?set MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD:?set MONGO_INITDB_ROOT_PASSWORD}@mongo:27017/?authSource=admin
+  MONGODB_DATABASE: ${MONGODB_DATABASE:?set MONGODB_DATABASE}
+  REDIS_URL: redis://redis:6379/
+  RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER:?set RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS:?set RABBITMQ_DEFAULT_PASS}@rabbitmq:5672/%2f
+  JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+  CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?set CREDENTIAL_ENCRYPTION_KEY}
+  BITGET_REST_BASE_URL: ${BITGET_REST_BASE_URL:-https://api.bitget.com}
+  BITGET_WS_URL: ${BITGET_WS_URL:-wss://ws.bitget.com/v2/ws/public}
+  HTX_REST_BASE_URL: ${HTX_REST_BASE_URL:-https://api.huobi.pro}
+  HTX_WS_URL: ${HTX_WS_URL:-wss://api.huobi.pro/ws}
+  RUST_LOG: ${RUST_LOG:-info}
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?set MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER:?set MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD}
+    command: ["mysqld", "--mysql-native-password=ON"]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - mysqladmin ping -h 127.0.0.1 -u"$${MYSQL_USER}" -p"$${MYSQL_PASSWORD}" --silent
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:?set MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:?set MONGO_INITDB_ROOT_PASSWORD}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet
+          --username "$${MONGO_INITDB_ROOT_USERNAME}"
+          --password "$${MONGO_INITDB_ROOT_PASSWORD}"
+          --authenticationDatabase admin
+          --eval "quit(db.adminCommand('ping').ok ? 0 : 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    volumes:
+      - mongo-data:/data/db
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    volumes:
+      - redis-data:/data
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:?set RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?set RABBITMQ_DEFAULT_PASS}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+
+  migrate:
+    image: ${EXCHANGE_IMAGE:-ghcr.io/jacqueshuang-fresnostate/rust-chain:latest}
+    restart: "no"
+    command: ["/usr/local/bin/exchange-migrate"]
+    environment:
+      DATABASE_URL: mysql://${MYSQL_USER:?set MYSQL_USER}:${MYSQL_PASSWORD:?set MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:?set MYSQL_DATABASE}
+      RUST_LOG: ${RUST_LOG:-info}
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  api:
+    image: ${EXCHANGE_IMAGE:-ghcr.io/jacqueshuang-fresnostate/rust-chain:latest}
+    restart: unless-stopped
+    init: true
+    environment: *api-environment
+    depends_on:
+      mysql:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "${API_PORT:-8080}:8080"
+    volumes:
+      - uploads-data:/app/uploads
+
+volumes:
+  mysql-data:
+  mongo-data:
+  redis-data:
+  rabbitmq-data:
+  uploads-data:

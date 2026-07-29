@@ -2,6 +2,34 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-07-29 11:05 - 完成 GitHub Docker 镜像与 Compose 端到端验收
+
+- 完成内容：完成 GHCR 双架构 Workflow、Rust 多阶段非 root 镜像、独立 SQLx migration runner、全依赖 Compose 示例、无密钥环境模板及部署文档；补充容器交付可执行规范，并用原生 ARM64 镜像和全新 Compose 数据卷完成真实启动验收。
+- 修改文件：`.github/workflows/docker-image.yml`、`Dockerfile`、`.dockerignore`、`.gitignore`、`src/bin/exchange-migrate.rs`、`docker-compose.example.yml`、`docker-compose.env.example`、`docs/deployment/docker.md`、`.trellis/spec/backend/{index,container-delivery}.md`、`.trellis/tasks/07-29-github-docker-image-workflow/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`cargo fmt --manifest-path Cargo.toml -- --check`、`cargo check --manifest-path Cargo.toml --all-targets`、Workflow YAML/事件/权限/标签/双架构静态断言、`docker compose ... config --quiet`、`git diff --check` 均通过；`docker build --tag rust-chain:container-local .` 成功生成 `linux/arm64` 镜像，容器确认 UID/GID `10001:10001`、双二进制存在且 `/app/uploads` 可写；独立 Compose 测试栈中 MySQL、MongoDB、Redis、RabbitMQ 与 API 均健康，migration 以 `0` 退出，SQLx 迁移记录 `93/93` 成功，`GET /health` 返回 `{"status":"ok"}`；测试容器、网络和命名卷已清理。
+- 后续事项：推送后由 GitHub Actions 完成首次实际 `linux/amd64`、`linux/arm64` 构建与 GHCR 发布。
+
+## 2026-07-29 10:45 - 完成容器交付最终配置复核
+
+- 完成内容：快速复核 Dockerfile、忽略规则、GHCR Workflow、Compose、环境模板、迁移 runner 和部署文档；确认 PR/main/v* /手动事件分流、最小权限、双架构标签、双可执行文件、非 root 运行、依赖健康与 migration 完成门禁、无真实密钥、本地上传命名卷均无阻塞；修正文档遗漏的稳定 semver 自动更新 `latest` 行为。
+- 修改文件：`docs/deployment/docker.md`、`docs/superpowers/PROGRESS.md`
+- 验证结果：PyYAML 语法与 Workflow 事件/权限/标签静态断言通过；`docker compose --env-file docker-compose.env.example -f docker-compose.example.yml config --quiet` 及 Compose 依赖链/命名卷静态断言通过；Dockerfile、忽略规则、密钥占位与可执行文件静态断言通过；`git diff --check` 通过。按用户要求未运行 Cargo 或 Docker 构建。
+- 后续事项：由 GitHub Actions 完成首次实际双架构构建与 GHCR 推送验收。
+
+## 2026-07-29 10:41 - 复核并修复容器交付生产契约
+
+- 完成内容：按 PRD 独立复核 Dockerfile、GHCR Workflow、Compose、环境模板、迁移 runner 与部署文档；将 PR 构建和发布拆成独立 job，使 PR 仅有 `contents: read`、发布 job 才有 `packages: write`；将实际 `docker-compose.env` 加入 Git 忽略；为非 root 容器创建 `/app/uploads` 可写目录并在 Compose 增加 `uploads-data` 命名卷，补充本地上传 provider 与静态服务职责说明；确认依赖健康、migration 完成门禁、环境变量名、可执行文件路径和 Compose `$${...}` 转义一致。
+- 修改文件：`.gitignore`、`Dockerfile`、`.github/workflows/docker-image.yml`、`docker-compose.example.yml`、`docs/deployment/docker.md`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`cargo fmt --manifest-path Cargo.toml -- --check` 通过；`cargo check --manifest-path Cargo.toml --all-targets` 通过；PyYAML 解析 Workflow 并完成事件、标签、平台、push 条件和逐 job 权限断言；`docker compose --env-file docker-compose.env.example -f docker-compose.example.yml config --quiet` 通过，Compose JSON 依赖链、环境变量、migration 命令和五个命名卷断言通过；Dockerfile 双二进制、非 root、可写上传目录、默认命令及 Git 忽略静态断言通过；`git diff --check` 和交付文件空白/冲突标记检查通过。实际双架构 Buildx 验证使用临时 `docker-container` builder，已确认 amd64/arm64 基础镜像和两种 runtime 安装层可执行，但 Rust builder 基础层下载耗时过长，按用户指示中止，尚未完成双架构 release 编译；临时 builder 已移除。
+- 后续事项：由 GitHub Actions 或具备已预热多架构缓存的 builder 完成 `linux/amd64`、`linux/arm64` release 镜像构建和 GHCR 推送验收。
+
+## 2026-07-29 10:28 - 完成 GitHub Docker 镜像交付链路
+
+- 完成内容：新增 Rust 1.92 多阶段锁定 release 构建与 Debian slim 非 root 运行镜像，同时交付 `exchange-api` 和一次性 SQLx migration runner；新增 GHCR 双架构构建发布 Workflow，pull request 仅构建，`main`、`v*` 标签及手动触发发布；新增包含 MySQL、MongoDB、Redis、RabbitMQ 健康检查、迁移完成门禁和 API 启动门禁的 Compose 示例、无真实密钥的环境模板及部署文档；保留现有 `docker-compose.yml` 不变，并阻止实际 `docker-compose.env` 进入镜像构建上下文。
+- 修改文件：`Dockerfile`、`.dockerignore`、`.github/workflows/docker-image.yml`、`src/bin/exchange-migrate.rs`、`docker-compose.example.yml`、`docker-compose.env.example`、`docs/deployment/docker.md`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`cargo fmt --manifest-path Cargo.toml -- --check` 通过；`cargo check --manifest-path Cargo.toml --all-targets` 通过；Cargo metadata 确认 `exchange-api`、`exchange-migrate` 双二进制目标存在；`docker compose --env-file docker-compose.env.example -f docker-compose.example.yml config --quiet` 通过；解析 Compose JSON 后确认四项依赖均有健康检查、API 等待四项 `service_healthy` 且等待 migration `service_completed_successfully`、四个命名卷均存在；GitHub Workflow YAML 语法解析通过；Trellis 任务校验和交付文件空白检查通过。未执行完整 Docker release 构建或多架构推送；本机未安装 `actionlint`。
+- 后续事项：首次 GitHub Actions 运行时确认 GHCR 包可见性，并以实际 Docker builder 完成 `linux/amd64`、`linux/arm64` release 镜像构建与发布验收。
+
 ## 2026-07-29 07:34 - 审查 Android Header 实机部署记录
 
 - 完成内容：按任务 PRD 与 mobile 构建规范复核 Android aarch64 Debug APK、设备、安装和冷启动记录；离线确认现有 `app-universal-debug.apk` 的大小、SHA-256、包名、构建变体与版本元数据均和 07:32 记录一致，确认 `02457eb` 位于当前 `main` 历史中，且工作区没有应用源码或被跟踪的 Android 生成产物改动；移除任务 PRD 末尾的多余空白行。
