@@ -8,9 +8,7 @@ import {
     fetchSecondOrderResult,
     fetchSecondBalance,
     submitSecondOrder,
-    transferSecondFunds,
-    type SecondOrderParams,
-    type SecondTransferParams
+    type SecondOrderParams
 } from '@/api/second'
 
 export interface Ticker {
@@ -295,19 +293,6 @@ export const useSecondStore = defineStore('second', () => {
         }
     }
 
-    // ========== Transfer ==========
-
-    async function transfer(params: SecondTransferParams) {
-        loading.value = true
-        try {
-            const res = await transferSecondFunds(params)
-            await loadBalance()
-            return res.data
-        } finally {
-            loading.value = false
-        }
-    }
-
     // ========== Tickers Loading ==========
 
     async function loadTickers() {
@@ -343,8 +328,7 @@ export const useSecondStore = defineStore('second', () => {
         loadHistoryOrders,
         checkOrderResult,
         placeOrder,
-        loadBalance,
-        transfer
+        loadBalance
     }
 }, {
     persist: {

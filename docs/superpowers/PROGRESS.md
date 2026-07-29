@@ -6088,3 +6088,10 @@
 - 修改文件：`mobile/src/components/PageHeader.vue`、`mobile/src/views/{Seconds,MessageCenter,Loan,Security}View.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/src/styles/prototype-parity.css`、`mobile/tests/{priority-secondary-page-parity,account-message-views,ui-prototype-alignment-secondary,shell-navigation,pwa}.test.ts`、`docs/superpowers/PROGRESS.md`
 - 验证结果：在 `mobile/` 执行二级页面聚焦测试 33/33 通过；`npm run type-check` 通过；`npm test` 131/131 通过；仓库根 `git diff --check` 通过；自动化合同直接断言原型 76px header、20px content top、44/minmax/44 网格、四页共享类、五分类顺序与公告唯一真实来源。改动未触及根页面 64px 顶栏、84px 底栏、66px 普通导航轨或 48px Seconds 抬升按钮尺寸。
 - 后续事项：无。
+
+## 2026-07-29 09:50 - 完成贷款产品后台筛选与秒合约共享现货钱包
+
+- 完成内容：后台贷款产品列表新增可选 `loan_type` 与 `status` 服务端筛选，空值按未筛选处理，非空值复用既有枚举校验，行查询和分页 `total` 共用相同 AND 谓词；确认秒合约下单和结算继续直接使用共享 `wallet_accounts`，移除 PC API/Store 中未实现且不再需要的秒合约资金划转类型、方法与导出。
+- 修改文件：`src/modules/loan/{presentation,application,infrastructure}.rs`、`tests/loan_routes.rs`、`pc/src/api/second.ts`、`pc/src/stores/second.ts`、`pc/tests/second-options-transfer.test.ts`、`.trellis/spec/backend/{index,loan-products,seconds-contracts}.md`、`.trellis/tasks/07-29-backend-loan-filters-seconds-spot-wallet/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：隔离临时 MySQL 中完整贷款路由测试 4/4 通过，覆盖类型、状态、组合、空筛选、非法枚举和前台启用产品回归；隔离临时 MySQL + Redis 中秒合约下单扣减共享钱包、盈利结算回款测试各 1/1 通过，临时容器已移除；`cargo fmt -- --check`、`cargo check --all-targets`、PC `npm run type-check`、PC 秒合约及后端适配契约测试 34/34、`git diff --check` 均通过。
+- 后续事项：无。

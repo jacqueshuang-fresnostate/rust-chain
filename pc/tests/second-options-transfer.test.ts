@@ -36,3 +36,16 @@ test('seconds options page does not expose transfer actions', () => {
   assert.match(source, /handleOrder\(0\)/)
   assert.match(source, /handleOrder\(1\)/)
 })
+
+test('seconds API and store use the shared spot wallet without transfer contracts', () => {
+  const apiSource = readProjectFile('src/api/second.ts')
+  const storeSource = readProjectFile('src/stores/second.ts')
+
+  assert.match(apiSource, /backendApiUrl\('\/wallet\/accounts'\)/)
+  assert.doesNotMatch(apiSource, /SecondTransferParams/)
+  assert.doesNotMatch(apiSource, /transferSecondFunds/)
+  assert.doesNotMatch(storeSource, /SecondTransferParams/)
+  assert.doesNotMatch(storeSource, /transferSecondFunds/)
+  assert.doesNotMatch(storeSource, /\basync function transfer\s*\(/)
+  assert.doesNotMatch(storeSource, /\btransfer\s*,?\s*\n/)
+})

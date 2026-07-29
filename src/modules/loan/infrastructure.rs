@@ -181,7 +181,7 @@ pub(crate) async fn list_loan_products(
     limit: u32,
 ) -> AppResult<Vec<LoanProductResponse>> {
     let mut builder = loan_product_query_builder();
-    push_loan_product_filters(&mut builder, status);
+    push_loan_product_filters(&mut builder, None, status);
     builder.push(LOAN_PRODUCT_ORDER_BY);
     builder.push(" LIMIT ");
     builder.push_bind(limit as i64);
@@ -194,6 +194,7 @@ pub(crate) async fn list_loan_products(
 /// 后台产品列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
 pub(crate) async fn list_admin_loan_products(
     pool: &Pool<MySql>,
+    loan_type: Option<&str>,
     status: Option<&str>,
     limit: u32,
     offset: u32,
@@ -205,7 +206,7 @@ pub(crate) async fn list_admin_loan_products(
            INNER JOIN assets ON assets.id = products.asset_id"#,
     );
     for builder in [&mut rows, &mut total] {
-        push_loan_product_filters(builder, status);
+        push_loan_product_filters(builder, loan_type, status);
     }
 
     fetch_admin_page(pool, rows, total, LOAN_PRODUCT_ORDER_BY, limit, offset).await
@@ -223,8 +224,16 @@ fn loan_product_query_builder() -> QueryBuilder<'static, MySql> {
     )
 }
 
-fn push_loan_product_filters(builder: &mut QueryBuilder<'_, MySql>, status: Option<&str>) {
+fn push_loan_product_filters(
+    builder: &mut QueryBuilder<'_, MySql>,
+    loan_type: Option<&str>,
+    status: Option<&str>,
+) {
     builder.push(" WHERE 1 = 1");
+    if let Some(loan_type) = loan_type {
+        builder.push(" AND products.loan_type = ");
+        builder.push_bind(loan_type.to_owned());
+    }
     if let Some(status) = status {
         builder.push(" AND products.status = ");
         builder.push_bind(status.to_owned());

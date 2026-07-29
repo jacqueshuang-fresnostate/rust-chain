@@ -18,6 +18,8 @@ pub(crate) struct ListQuery {
 pub(crate) struct AdminLoanProductsQuery {
     pub(crate) limit: Option<u32>,
     pub(crate) offset: Option<u32>,
+    pub(crate) loan_type: Option<String>,
+    pub(crate) status: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

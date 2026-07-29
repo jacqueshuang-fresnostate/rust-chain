@@ -34,13 +34,6 @@ export interface SecondHistoryParams {
   pageSize: number
 }
 
-export interface SecondTransferParams {
-  unit: string
-  from: 'SPOT' | 'SECOND'
-  to: 'SPOT' | 'SECOND'
-  amount: number
-}
-
 export async function fetchSecondSnapshot(): Promise<{ data: any }> {
   const productsResponse = await request.instance.get<BackendSecondsProductsResponse>(backendApiUrl('/seconds-contracts/products'))
   const tickersBySymbol = await fetchSecondTickersBySymbol(productsResponse.data.products)
@@ -94,10 +87,6 @@ export async function fetchSecondCoins(): Promise<{ data: any }> {
 export async function fetchSecondWallets(): Promise<{ data: any }> {
   const response = await request.instance.get<BackendWalletAccountsResponse>(backendApiUrl('/wallet/accounts'))
   return { data: response.data.accounts }
-}
-
-export function transferSecondFunds(_params: SecondTransferParams): Promise<{ data: any }> {
-  return Promise.reject(new Error('Seconds contract transfer is not supported by the Rust backend yet.'))
 }
 
 export async function fetchSecondBalance(symbol: string): Promise<{ data: any }> {

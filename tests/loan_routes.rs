@@ -5,6 +5,7 @@ use axum::{
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, TimeDelta, Utc};
 use exchange_api::{
+    build_router,
     config::Settings,
     modules::{
         auth::{TokenScope, issue_token},
@@ -15,7 +16,7 @@ use exchange_api::{
 use secrecy::SecretString;
 use serde_json::{Value, json};
 use sqlx::{MySqlPool, mysql::MySqlPoolOptions, types::Json as SqlxJson};
-use std::{error::Error, str::FromStr};
+use std::{error::Error, str::FromStr, time::Duration};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -109,6 +110,11 @@ struct LoanFixture {
     order_id: u64,
 }
 
+struct LoanProductFilterFixture {
+    asset_id: u64,
+    product_ids: [u64; 4],
+}
+
 async fn create_asset(pool: &MySqlPool, prefix: &str) -> Result<u64, sqlx::Error> {
     let suffix = Uuid::now_v7().simple().to_string();
     let symbol = format!("{prefix}{}", &suffix[suffix.len() - 10..]).to_ascii_uppercase();
@@ -120,6 +126,110 @@ async fn create_asset(pool: &MySqlPool, prefix: &str) -> Result<u64, sqlx::Error
     .execute(pool)
     .await?
     .last_insert_id())
+}
+
+async fn seed_loan_product_filter_fixture(
+    pool: &MySqlPool,
+) -> Result<LoanProductFilterFixture, sqlx::Error> {
+    let asset_id = create_asset(pool, "LNF").await?;
+    let suffix = Uuid::now_v7().simple().to_string();
+    let mut product_ids = [0_u64; 4];
+    for (index, (loan_type, status)) in [
+        ("credit", "active"),
+        ("credit", "disabled"),
+        ("collateralized", "active"),
+        ("collateralized", "disabled"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let name = format!("loan-filter-{suffix}-{loan_type}-{status}");
+        product_ids[index] = sqlx::query(
+            r#"INSERT INTO loan_products
+               (loan_type, asset_id, name, name_json, term_days, interest_rate,
+                interest_calculation_mode, min_kyc_level, min_amount, max_amount, status)
+               VALUES (?, ?, ?, ?, 30, 0.02, 'full_term', 0, 1, NULL, ?)"#,
+        )
+        .bind(loan_type)
+        .bind(asset_id)
+        .bind(&name)
+        .bind(SqlxJson(json!({
+            "version": 1,
+            "default_locale": "zh-CN",
+            "items": [{ "locale": "zh-CN", "country": "CN", "title": name }]
+        })))
+        .bind(status)
+        .execute(pool)
+        .await?
+        .last_insert_id();
+    }
+    Ok(LoanProductFilterFixture {
+        asset_id,
+        product_ids,
+    })
+}
+
+async fn cleanup_loan_product_filter_fixture(
+    pool: &MySqlPool,
+    fixture: &LoanProductFilterFixture,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM loan_products WHERE asset_id = ?")
+        .bind(fixture.asset_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id = ?")
+        .bind(fixture.asset_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+async fn loan_product_count(
+    pool: &MySqlPool,
+    loan_type: Option<&str>,
+    status: Option<&str>,
+) -> Result<i64, sqlx::Error> {
+    let mut builder =
+        sqlx::QueryBuilder::<sqlx::MySql>::new("SELECT COUNT(*) FROM loan_products WHERE 1 = 1");
+    if let Some(loan_type) = loan_type {
+        builder.push(" AND loan_type = ");
+        builder.push_bind(loan_type.to_owned());
+    }
+    if let Some(status) = status {
+        builder.push(" AND status = ");
+        builder.push_bind(status.to_owned());
+    }
+    builder.build_query_scalar().fetch_one(pool).await
+}
+
+async fn admin_loan_products(
+    app: axum::Router,
+    query: &str,
+) -> Result<(StatusCode, Value), Box<dyn Error>> {
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/admin/api/v1/loan/products?{query}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    let status = response.status();
+    Ok((status, body_json(response).await?))
+}
+
+async fn public_loan_products(
+    app: axum::Router,
+    query: &str,
+) -> Result<(StatusCode, Value), Box<dyn Error>> {
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/loan/products?{query}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    let status = response.status();
+    Ok((status, body_json(response).await?))
 }
 
 /// 播种一笔抵押贷订单：状态与放款时间由调用方决定，用于分别覆盖逾期还款与非法状态还款。
@@ -283,6 +393,145 @@ async fn repay(
         .await?;
     let status = response.status();
     Ok((status, body_json(response).await?))
+}
+
+#[tokio::test]
+async fn admin_loan_products_filter_rows_and_total_by_type_and_status() -> Result<(), Box<dyn Error>>
+{
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let fixture = seed_loan_product_filter_fixture(&pool).await?;
+    let app = build_router(AppState::new(test_settings()).with_mysql(pool.clone()));
+
+    let outcome: Result<(), Box<dyn Error>> = async {
+        let (status, credit_payload) =
+            admin_loan_products(app.clone(), "loan_type=%20credit%20&limit=200").await?;
+        assert_eq!(status, StatusCode::OK, "payload: {credit_payload}");
+        assert_eq!(
+            credit_payload["total"],
+            loan_product_count(&pool, Some("credit"), None).await?
+        );
+        let credit_products = credit_payload["products"].as_array().unwrap();
+        assert!(
+            credit_products
+                .iter()
+                .all(|product| product["loan_type"] == "credit")
+        );
+        let credit_ids = credit_products
+            .iter()
+            .filter_map(|product| product["id"].as_u64())
+            .collect::<Vec<_>>();
+        assert!(credit_ids.contains(&fixture.product_ids[0]));
+        assert!(credit_ids.contains(&fixture.product_ids[1]));
+        assert!(!credit_ids.contains(&fixture.product_ids[2]));
+        assert!(!credit_ids.contains(&fixture.product_ids[3]));
+
+        let (status, disabled_payload) =
+            admin_loan_products(app.clone(), "status=disabled&limit=200").await?;
+        assert_eq!(status, StatusCode::OK, "payload: {disabled_payload}");
+        assert_eq!(
+            disabled_payload["total"],
+            loan_product_count(&pool, None, Some("disabled")).await?
+        );
+        let disabled_products = disabled_payload["products"].as_array().unwrap();
+        assert!(
+            disabled_products
+                .iter()
+                .all(|product| product["status"] == "disabled")
+        );
+        let disabled_ids = disabled_products
+            .iter()
+            .filter_map(|product| product["id"].as_u64())
+            .collect::<Vec<_>>();
+        assert!(!disabled_ids.contains(&fixture.product_ids[0]));
+        assert!(disabled_ids.contains(&fixture.product_ids[1]));
+        assert!(!disabled_ids.contains(&fixture.product_ids[2]));
+        assert!(disabled_ids.contains(&fixture.product_ids[3]));
+
+        let (status, combined_payload) =
+            admin_loan_products(app.clone(), "loan_type=credit&status=disabled&limit=200").await?;
+        assert_eq!(status, StatusCode::OK, "payload: {combined_payload}");
+        assert_eq!(
+            combined_payload["total"],
+            loan_product_count(&pool, Some("credit"), Some("disabled")).await?
+        );
+        let combined_products = combined_payload["products"].as_array().unwrap();
+        assert!(combined_products.iter().all(|product| {
+            product["loan_type"] == "credit" && product["status"] == "disabled"
+        }));
+        let combined_ids = combined_products
+            .iter()
+            .filter_map(|product| product["id"].as_u64())
+            .collect::<Vec<_>>();
+        assert!(!combined_ids.contains(&fixture.product_ids[0]));
+        assert!(combined_ids.contains(&fixture.product_ids[1]));
+        assert!(!combined_ids.contains(&fixture.product_ids[2]));
+        assert!(!combined_ids.contains(&fixture.product_ids[3]));
+
+        let (status, blank_payload) =
+            admin_loan_products(app.clone(), "loan_type=%20%20&status=&limit=200").await?;
+        assert_eq!(status, StatusCode::OK, "payload: {blank_payload}");
+        assert_eq!(
+            blank_payload["total"],
+            loan_product_count(&pool, None, None).await?
+        );
+        let blank_ids = blank_payload["products"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|product| product["id"].as_u64())
+            .collect::<Vec<_>>();
+        for product_id in fixture.product_ids {
+            assert!(blank_ids.contains(&product_id));
+        }
+
+        let (status, public_payload) = public_loan_products(app, "limit=200").await?;
+        assert_eq!(status, StatusCode::OK, "payload: {public_payload}");
+        let public_products = public_payload["products"].as_array().unwrap();
+        assert!(
+            public_products
+                .iter()
+                .all(|product| product["status"] == "active")
+        );
+        let public_ids = public_products
+            .iter()
+            .filter_map(|product| product["id"].as_u64())
+            .collect::<Vec<_>>();
+        assert!(public_ids.contains(&fixture.product_ids[0]));
+        assert!(!public_ids.contains(&fixture.product_ids[1]));
+        assert!(public_ids.contains(&fixture.product_ids[2]));
+        assert!(!public_ids.contains(&fixture.product_ids[3]));
+        Ok(())
+    }
+    .await;
+
+    cleanup_loan_product_filter_fixture(&pool, &fixture).await?;
+    outcome
+}
+
+#[tokio::test]
+async fn admin_loan_products_reject_invalid_enum_filters_before_query() -> Result<(), Box<dyn Error>>
+{
+    // 不可连接的惰性连接池可证明非法枚举在执行 SQL 前即被拒绝。
+    let pool = MySqlPoolOptions::new()
+        .acquire_timeout(Duration::from_millis(100))
+        .connect_lazy("mysql://test:test@127.0.0.1:1/test")?;
+    let app = build_router(AppState::new(test_settings()).with_mysql(pool));
+
+    for (query, expected_message) in [
+        ("loan_type=margin", "unsupported loan_type"),
+        ("status=pending", "unsupported loan product status"),
+    ] {
+        let (status, payload) = admin_loan_products(app.clone(), query).await?;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "payload: {payload}");
+        assert_eq!(payload["code"], "VALIDATION_ERROR");
+        assert_eq!(
+            payload["message"],
+            format!("validation error: {expected_message}")
+        );
+    }
+    Ok(())
 }
 
 #[tokio::test]

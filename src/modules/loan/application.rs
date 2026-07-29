@@ -55,10 +55,17 @@ pub(crate) async fn list_admin_products_use_case(
     pool: &Pool<MySql>,
     query: AdminLoanProductsQuery,
 ) -> AppResult<AdminLoanProductsResponse> {
-    // 查询后台可见的全部产品清单，使用统一分页策略。
+    let loan_type = optional_string(query.loan_type)
+        .map(|loan_type| validate_loan_type(&loan_type))
+        .transpose()?;
+    let status = optional_string(query.status)
+        .map(|status| validate_product_status(&status))
+        .transpose()?;
+    // 非空筛选先完成枚举校验，再交给基础设施层构造参数化查询。
     let (products, total) = list_admin_loan_products(
         pool,
-        None,
+        loan_type.as_deref(),
+        status.as_deref(),
         route_limit(query.limit),
         route_offset(query.offset),
     )

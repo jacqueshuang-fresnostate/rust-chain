@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/directory-structure.md","reason":"Preserve the existing loan and seconds-contract DDD layer responsibilities."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Use the repository's validation and transport error conventions for invalid filters."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Follow backend implementation and test quality requirements."}
+{"file":".trellis/spec/backend/seconds-contracts.md","reason":"Preserve seconds order, wallet debit, settlement, and PC adapter contracts."}
+{"file":".trellis/spec/backend/wallet-amount-precision.md","reason":"Keep shared wallet balance and ledger precision semantics unchanged."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Keep admin filters and PC seconds API/store contracts aligned across layers."}

@@ -23,6 +23,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Spot Order Contracts](./spot-orders.md) | Spot market order reference-price protection, Redis ticker execution, and wallet reservation contract | Active |
 | [Margin Trading Actions](./margin-trading-actions.md) | Margin ticker, wallet-scope settlement, transfer idempotency, bulk actions, and supported-mode contracts | Active |
 | [Earn Product Contracts](./earn-products.md) | Earn product fee snapshots and redemption settlement contracts | Active |
+| [Loan Product Contracts](./loan-products.md) | Admin loan-product filtering, enum validation, and paginated total contracts | Active |
 | [Seconds Contract Contracts](./seconds-contracts.md) | Seconds product cycle, order duration, and PC/admin payload contracts | Active |
 | [Agent Hierarchy Contracts](./agent-hierarchy.md) | Three-level agent organization, subtree scope, and multi-business differential commission contracts | Active |
 | [Wallet Amount Precision Contract](./wallet-amount-precision.md) | Asset precision rules for calculated wallet balances and ledger snapshots | Active |

@@ -220,3 +220,61 @@ export const fetchSecondSnapshot = fetchMarketSnapshot
 const products = await GET("/api/v1/seconds-contracts/products")
 const secondsPairs = unique(products.map(product => product.symbol))
 ```
+
+## Scenario: Shared Spot Wallet Funding
+
+### 1. Scope / Trigger
+
+- Trigger: changing seconds-contract balances, opening debit, settlement credit, PC balance display, or adding any transfer-like action.
+- Applies to Rust order application/infrastructure, manual and worker settlement, `wallet_accounts`, `wallet_ledger`, and the PC seconds API/Store.
+
+### 2. Signatures
+
+- Balance API: `GET /api/v1/wallet/accounts`.
+- Open API: `POST /api/v1/seconds-contracts/orders`.
+- Wallet persistence: `wallet_accounts(user_id, asset_id, available, frozen, locked)`.
+- Ledger references: `ref_type = "seconds_contract_order"`.
+
+### 3. Contracts
+
+- Seconds contracts do not have a separate wallet or balance namespace.
+- Opening debits the stake asset directly from the user's shared spot `wallet_accounts.available`.
+- Winning manual and worker settlement credits the same shared wallet account.
+- Wallet mutation, ledger entry, and order state must remain in one transaction.
+- PC reads the shared wallet through `/wallet/accounts`.
+- No seconds-contract transfer endpoint, transfer request type, Store method, or transfer UI may be introduced.
+
+### 4. Validation & Error Matrix
+
+- Shared wallet account missing -> wallet error and no order mutation.
+- Shared wallet available balance below stake -> wallet error and no order/ledger mutation.
+- Idempotent replay -> returns the existing order without a second debit.
+- Any proposed SPOT/SECOND transfer request -> unsupported by design; remove the caller instead of adding a backend route.
+
+### 5. Good/Base/Bad Cases
+
+- Good: a user with `100 USDT` opens a `10 USDT` order and the shared account becomes `90 USDT`.
+- Base: a losing order creates no settlement credit; a winning order credits the calculated payout to the same account.
+- Bad: adding `seconds_wallet_accounts` creates duplicate balances and requires unnecessary reconciliation.
+- Bad: retaining a client method that always rejects implies a transfer workflow that the product does not support.
+
+### 6. Tests Required
+
+- Route tests assert opening debits `wallet_accounts` once and writes `seconds_contract_open`.
+- Manual and worker settlement tests assert payout credits `wallet_accounts` and writes the settlement ledger entry.
+- PC contract tests assert `/wallet/accounts` remains the balance source and transfer symbols are absent.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+await transferSecondFunds({ from: "SPOT", to: "SECOND", amount });
+```
+
+#### Correct
+
+```typescript
+const accounts = await GET("/api/v1/wallet/accounts");
+await POST("/api/v1/seconds-contracts/orders", order);
+```

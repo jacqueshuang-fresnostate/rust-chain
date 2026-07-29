@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/error-handling.md","reason":"Verify invalid filter values fail through the expected validation contract."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Apply the backend quality gate and focused verification requirements."}
+{"file":".trellis/spec/backend/seconds-contracts.md","reason":"Verify seconds orders still use the shared spot wallet and expose no transfer contract."}
+{"file":".trellis/spec/backend/wallet-amount-precision.md","reason":"Verify wallet debit, credit, and ledger behavior remains precise and atomic."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check backend query DTO, SQL predicates, response total, PC API, and Store stay aligned."}
