@@ -507,3 +507,43 @@ Ported the Sites v16 signal Canvas and route veil into the Vue mobile shell, cor
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: 修复 GitHub Docker 双架构构建超时
+
+**Date**: 2026-07-29
+**Task**: 修复 GitHub Docker 双架构构建超时
+**Branch**: `main`
+
+### Summary
+
+将 GHCR 多架构构建从单 runner QEMU 改为 AMD64/ARM64 原生矩阵与 digest manifest 合并；GitHub Actions 运行 30430548301 在 8 分 58 秒内成功，latest 镜像已验证包含 linux/amd64 与 linux/arm64。
+
+### Main Changes
+
+- 将 `linux/amd64`、`linux/arm64` 映射到 `ubuntu-24.04`、`ubuntu-24.04-arm` 原生 runner 并行构建。
+- 每个平台使用 checkout 后的本地 Docker context 按 digest 推送，最终 job 合并 branch、semver、SHA 与 `latest` 标签。
+- 保留 PR 仅构建、发布 job 才有 `packages: write` 的最小权限边界，并移除 QEMU 构建路径。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `df563b9` | (see git log) |
+| `748db9d` | (see git log) |
+| `62c64ad` | (see git log) |
+
+### Testing
+
+- [OK] Workflow 结构化矩阵、权限、digest artifact、manifest 合并和无 QEMU 断言通过。
+- [OK] GitHub Actions 运行 `30430548301` 成功，两个平台 job 均完成，总耗时 8 分 58 秒。
+- [OK] `docker buildx imagetools inspect` 确认 GHCR `latest` 同时包含 `linux/amd64` 与 `linux/arm64`。
+- [OK] Compose 配置、Trellis 任务数据及 `git diff --check` 通过。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
