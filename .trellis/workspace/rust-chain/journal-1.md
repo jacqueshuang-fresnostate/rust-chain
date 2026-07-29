@@ -144,7 +144,14 @@ Audited and polished the mobile Sites prototype product hub, message center, sec
 
 ### Main Changes
 
-(Add details)
+- Added a minimal-permission GitHub Actions workflow that builds pull requests and publishes
+  `linux/amd64` and `linux/arm64` images to GHCR from `main`, `v*` tags, and manual runs.
+- Added a multi-stage non-root backend image containing both `exchange-api` and
+  `exchange-migrate`, plus build-context exclusions.
+- Added a production-oriented Compose example with four healthy dependencies, a one-shot
+  migration gate, persistent volumes, secret placeholders, and deployment documentation.
+- Added the executable container-delivery code specification and completed the task acceptance
+  record.
 
 ### Git Commits
 
@@ -154,7 +161,13 @@ Audited and polished the mobile Sites prototype product hub, message center, sec
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] `cargo fmt --manifest-path Cargo.toml -- --check`
+- [OK] `cargo check --manifest-path Cargo.toml --all-targets`
+- [OK] Workflow YAML and trigger, permission, tag, platform, cache, and push contract assertions
+- [OK] `docker compose --env-file docker-compose.env.example -f docker-compose.example.yml config --quiet`
+- [OK] Native ARM64 Docker image build and non-root runtime inspection
+- [OK] Fresh Compose stack: four healthy dependencies, 93/93 successful SQLx migrations, and
+  `GET /health` returning `{"status":"ok"}`
 
 ### Status
 
@@ -449,6 +462,39 @@ Ported the Sites v16 signal Canvas and route veil into the Vue mobile shell, cor
 | Hash | Message |
 |------|---------|
 | `3dd4901` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 14: 完成 GitHub Docker 镜像交付
+
+**Date**: 2026-07-29
+**Task**: 完成 GitHub Docker 镜像交付
+**Branch**: `main`
+
+### Summary
+
+新增 GHCR 双架构 GitHub Actions、非 root Rust 后端镜像、SQLx migration runner 与完整 Compose 示例，并通过本地镜像构建及全新 Compose 栈端到端验收。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `68a80f1` | (see git log) |
 
 ### Testing
 
