@@ -6,8 +6,8 @@
 
 - 完成内容：定位原单个 x86 runner 通过 QEMU 构建双架构在约 58 分钟后超时取消；首次原生 runner 修复证明 `ubuntu-24.04-arm` 分发有效，但发现 Docker 可复用 Workflow 的远程 Git context 与 ARM BuildKit `source.git.checksum` capability 不兼容；最终改为 AMD64/ARM64 原生矩阵、本地 checkout context、按 digest 推送及独立 manifest 合并 job，保留 PR/publish 权限隔离和原标签合同。
 - 修改文件：`.github/workflows/docker-image.yml`、`docs/deployment/docker.md`、`.trellis/spec/backend/container-delivery.md`、`.trellis/tasks/07-29-07-29-github-docker-native-parallel/`、`docs/superpowers/PROGRESS.md`
-- 验证结果：Workflow YAML、矩阵 runner、权限、local context、digest artifact、manifest 合并、标签、分架构缓存及无 QEMU 静态断言通过；GitHub 运行 `30430170926` 验证 ARM64 原生 runner 生效并准确暴露远程 Git context capability 问题。最终矩阵版本待下一次 GitHub Actions 运行验收。
-- 后续事项：确认最终运行成功，并验证 GHCR manifest 同时包含 `linux/amd64` 与 `linux/arm64`。
+- 验证结果：Workflow YAML、矩阵 runner、权限、local context、digest artifact、manifest 合并、标签、分架构缓存及无 QEMU 静态断言通过；GitHub 运行 `30430548301` 成功，AMD64/ARM64 两个原生平台 job 均完成，完整运行耗时 8 分 58 秒；`docker buildx imagetools inspect ghcr.io/jacqueshuang-fresnostate/rust-chain:latest` 通过，OCI index digest 为 `sha256:84db87e7baa2f31d83c64d2d86917efed5f19aab901e8d82ab40d36c9fd51da0`，包含 `linux/amd64`、`linux/arm64` 及对应 provenance attestation manifest。
+- 后续事项：无。
 
 ## 2026-07-29 11:05 - 完成 GitHub Docker 镜像与 Compose 端到端验收
 

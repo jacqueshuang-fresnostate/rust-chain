@@ -30,8 +30,8 @@
 - [x] publish job 增加 `packages: write`，使用 `GITHUB_TOKEN` 登录 GHCR。
 - [x] 两个 job 都将 `linux/amd64`、`linux/arm64` 映射到对应原生 runner。
 - [x] Workflow 中不再调用 QEMU setup。
-- [ ] GitHub 新运行在原生 AMD64/ARM64 runner 上并行构建成功。
-- [ ] GHCR `latest` manifest 同时包含 `linux/amd64`、`linux/arm64`。
+- [x] GitHub 新运行在原生 AMD64/ARM64 runner 上并行构建成功。
+- [x] GHCR `latest` manifest 同时包含 `linux/amd64`、`linux/arm64`。
 
 ## Out Of Scope
 
