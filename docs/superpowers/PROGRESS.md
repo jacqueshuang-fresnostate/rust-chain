@@ -2,12 +2,12 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
-## 2026-07-29 14:54 - 记录 GitHub Docker 原生双架构交付契约
+## 2026-07-29 14:54 - 修复 GitHub Docker 双架构构建超时
 
-- 完成内容：记录原单个 x86 runner 通过 QEMU 串行构建 AMD64/ARM64 的运行在约 58 分钟后仍处于 Rust crate 编译阶段并超时取消；同步 Docker 官方 `github-builder@v1` 替代方案，明确 `linux/amd64` 分配到 `ubuntu-24.04`、`linux/arm64` 分配到 `ubuntu-24.04-arm` 并行原生构建，补充 OIDC 签名缓存/发布 provenance、PR 与 publish 独立最小权限及 GHCR 发布合同。
-- 修改文件：`docs/deployment/docker.md`、`.trellis/spec/backend/container-delivery.md`、`docs/superpowers/PROGRESS.md`
-- 验证结果：限定三个文件的 `git diff --check` 通过；差异复核确认仅新增原 QEMU 超时记录、Docker 官方 builder、原生 runner 映射、OIDC 签名缓存/provenance 和独立权限合同；关键契约 `rg` 扫描全部命中，冲突标记与尾随空白扫描无匹配。文档切片未运行 Cargo、Docker 或远程 GitHub Actions。
-- 后续事项：由 Workflow 所有者推送后验证 GitHub-hosted AMD64/ARM64 runner 并行构建成功，以及 GHCR manifest 同时包含两个平台。
+- 完成内容：定位原单个 x86 runner 通过 QEMU 构建双架构在约 58 分钟后超时取消；首次原生 runner 修复证明 `ubuntu-24.04-arm` 分发有效，但发现 Docker 可复用 Workflow 的远程 Git context 与 ARM BuildKit `source.git.checksum` capability 不兼容；最终改为 AMD64/ARM64 原生矩阵、本地 checkout context、按 digest 推送及独立 manifest 合并 job，保留 PR/publish 权限隔离和原标签合同。
+- 修改文件：`.github/workflows/docker-image.yml`、`docs/deployment/docker.md`、`.trellis/spec/backend/container-delivery.md`、`.trellis/tasks/07-29-07-29-github-docker-native-parallel/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：Workflow YAML、矩阵 runner、权限、local context、digest artifact、manifest 合并、标签、分架构缓存及无 QEMU 静态断言通过；GitHub 运行 `30430170926` 验证 ARM64 原生 runner 生效并准确暴露远程 Git context capability 问题。最终矩阵版本待下一次 GitHub Actions 运行验收。
+- 后续事项：确认最终运行成功，并验证 GHCR manifest 同时包含 `linux/amd64` 与 `linux/arm64`。
 
 ## 2026-07-29 11:05 - 完成 GitHub Docker 镜像与 Compose 端到端验收
 

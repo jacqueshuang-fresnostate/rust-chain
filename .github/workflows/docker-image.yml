@@ -9,56 +9,160 @@ on:
       - "v*"
   workflow_dispatch:
 
+env:
+  REGISTRY_IMAGE: ghcr.io/${{ github.repository }}
+
 jobs:
   pull-request-build:
     name: Build pull request
     if: github.event_name == 'pull_request'
-    uses: docker/github-builder/.github/workflows/build.yml@v1
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
-      id-token: write
-    with:
-      output: image
-      push: false
-      platforms: linux/amd64,linux/arm64
-      distribute: true
-      cache: true
-      cache-mode: max
-      cache-scope: backend-image
-      sign: "false"
-      meta-images: ghcr.io/${{ github.repository }}
-      meta-tags: |
-        type=ref,event=pr
-        type=sha,format=short,prefix=sha-
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
 
-  publish:
-    name: Build and publish
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build ${{ matrix.platform }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          push: false
+          cache-from: type=gha,scope=backend-image-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=backend-image-${{ matrix.arch }}
+
+  publish-platform:
+    name: Build and publish ${{ matrix.platform }}
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    uses: docker/github-builder/.github/workflows/build.yml@v1
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
-      id-token: write
-    with:
-      output: image
-      push: true
-      platforms: linux/amd64,linux/arm64
-      distribute: true
-      cache: true
-      cache-mode: max
-      cache-scope: backend-image
-      sign: auto
-      set-meta-labels: true
-      meta-images: ghcr.io/${{ github.repository }}
-      meta-tags: |
-        type=ref,event=branch
-        type=semver,pattern={{version}}
-        type=semver,pattern={{major}}.{{minor}}
-        type=semver,pattern={{major}}
-        type=sha,format=short,prefix=sha-
-        type=raw,value=latest,enable={{is_default_branch}}
-    secrets:
-      registry-auths: |
-        - registry: ghcr.io
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.platform }} by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=backend-image-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=backend-image-${{ matrix.arch }}
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-manifest:
+    name: Publish multi-platform manifest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs:
+      - publish-platform
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: digests-*
+          path: /tmp/digests
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY_IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,format=short,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Create manifest list and tags
+        working-directory: /tmp/digests
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          tag_args=()
+          while IFS= read -r tag; do
+            tag_args+=("-t" "$tag")
+          done <<< "$IMAGE_TAGS"
+
+          source_args=()
+          for digest in *; do
+            source_args+=("${REGISTRY_IMAGE}@sha256:${digest}")
+          done
+
+          docker buildx imagetools create "${tag_args[@]}" "${source_args[@]}"
+
+      - name: Inspect published manifest
+        run: docker buildx imagetools inspect "${REGISTRY_IMAGE}:${{ steps.meta.outputs.version }}"

@@ -14,23 +14,26 @@
 `30418701410` 约 58 分钟后仍停留在 Rust crate 编译阶段并被取消，问题不是代码编译错误
 或 GHCR 登录失败。
 
-当前 Workflow 改用 Docker 官方可复用 Workflow
-`docker/github-builder/.github/workflows/build.yml@v1`，启用分布式原生构建：
+第一次原生 runner 修复尝试使用 Docker 官方可复用 Workflow，但运行 `30430170926`
+在 ARM64 runner 解析远程 Git context 时遇到
+`unknown API capability source.git.checksum`。当前 Workflow 因此改用本地 checkout
+context 和显式矩阵：
 
 - `linux/amd64` 分配到 `ubuntu-24.04`。
 - `linux/arm64` 分配到 `ubuntu-24.04-arm`。
 
-两个平台在各自的 GitHub-hosted runner 上并行构建，不再安装或使用 QEMU，完成后由
-GitHub Builder 合并统一的多架构 manifest。构建缓存使用 `max` 模式和稳定的
-`backend-image` scope，并通过 OIDC 签名；发布构建还会生成签名 provenance。
+两个平台在各自的 GitHub-hosted runner 上并行构建，不再安装或使用 QEMU。发布 job
+使用 `actions/checkout` 后以 `context: .` 构建，每个平台按 digest 推送并上传一个短期
+digest artifact；只有两个平台都成功，最终 job 才会把 digest 合并为统一的多架构
+manifest，并附加 branch、semver、SHA 和 `latest` 标签。构建缓存使用 `max` 模式和按架构
+隔离的 `backend-image-<arch>` scope。
 
 ## 镜像标签
 
 GitHub Actions 对 pull request 只执行 `linux/amd64`、`linux/arm64` 构建，不推送镜像。
-PR job 只授予 `contents: read`、`id-token: write`，设置 `push: false`，且没有
-`packages: write` 或 GHCR 登录凭据。发布 job 才额外授予 `packages: write`，通过
-`GITHUB_TOKEN` 登录 GHCR，并使用 `id-token: write` 签名 provenance；OIDC 权限本身不授予
-仓库内容写权限。
+PR job 只授予 `contents: read`，设置 `push: false`，且没有 `packages: write` 或 GHCR
+登录凭据。按 digest 推送的平台 job 和最终 manifest job 才授予 `packages: write`，并通过
+`GITHUB_TOKEN` 登录 GHCR。
 `main`、`v*` 标签和手动触发会发布镜像：
 
 - `main`：`main`、`latest` 和 `sha-<短提交号>`。

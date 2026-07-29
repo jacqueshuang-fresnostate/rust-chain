@@ -9,12 +9,15 @@
 - 首次运行 `30418701410` 在 QEMU 构建步骤执行约 58 分钟后被取消。
 - 失败日志仍处于 Rust crate 编译阶段，不是代码编译错误或 GHCR 登录错误。
 - 仓库公开，GitHub 提供 `ubuntu-24.04` 与 `ubuntu-24.04-arm` 原生托管 runner。
-- Docker 官方 `docker/github-builder/.github/workflows/build.yml@v1` 默认按平台分发 runner 并在 finalize 阶段合并 manifest。
+- Docker 官方可复用 Workflow 能按平台分发 runner，但运行 `30430170926` 在 ARM64
+  runner 上因远程 Git context 与 BuildKit 的 `source.git.checksum` capability 不兼容而失败。
+- 本任务最终使用仓库内矩阵，在 checkout 后通过本地 context 构建，再按 digest 合并 manifest。
 
 ## Requirements
 
-- 使用 Docker 官方可复用 Workflow 分发 `linux/amd64`、`linux/arm64` 构建。
+- 使用 GitHub Actions 矩阵分发 `linux/amd64`、`linux/arm64` 原生构建。
 - 不再为这两个平台启用 QEMU。
+- 每个平台先按 digest 推送，只有两个平台都成功后才合并正式 manifest 与标签。
 - pull request 只构建不推送，不能获得 `packages: write`。
 - `main`、`v*` 标签和手动触发继续发布 GHCR。
 - 保留 branch、semver、SHA、`latest` 标签语义。
@@ -22,10 +25,10 @@
 
 ## Acceptance Criteria
 
-- [x] Workflow YAML 和可复用 workflow 调用契约可解析。
-- [x] PR job 仅有 `contents: read`、`id-token: write`，并设置 `push: false`。
+- [x] Workflow YAML 和矩阵、digest、manifest 合并契约可解析。
+- [x] PR job 仅有 `contents: read`，并设置 `push: false`。
 - [x] publish job 增加 `packages: write`，使用 `GITHUB_TOKEN` 登录 GHCR。
-- [x] 两个 job 都请求 `linux/amd64,linux/arm64`，并启用分布式原生构建。
+- [x] 两个 job 都将 `linux/amd64`、`linux/arm64` 映射到对应原生 runner。
 - [x] Workflow 中不再调用 QEMU setup。
 - [ ] GitHub 新运行在原生 AMD64/ARM64 runner 上并行构建成功。
 - [ ] GHCR `latest` manifest 同时包含 `linux/amd64`、`linux/arm64`。
@@ -39,8 +42,8 @@
 ## Technical Notes
 
 - Docker 官方建议复杂多平台镜像分发到每个平台各自 runner，避免同机 QEMU 长时间构建。
-- Docker GitHub Builder 默认把 Linux ARM64 映射到 `ubuntu-24.04-arm`，其他 Linux 平台映射到 `ubuntu-24.04`。
-- `id-token: write` 用于签名 provenance 和 GitHub Actions cache，不授予仓库内容写权限。
+- 使用 `actions/checkout` 和 `context: .`，避免 ARM runner 的远程 Git context capability 兼容问题。
+- 平台构建按 digest 推送，manifest job 下载 digest artifact 后生成正式 branch、semver、SHA 和 `latest` 标签。
 
 ## Definition Of Done
 

@@ -14,7 +14,7 @@
 - Migration process: `/usr/local/bin/exchange-migrate`, applying embedded SQLx migrations and exiting.
 - Health endpoint: `GET /health` returns HTTP 200 with `{"status":"ok"}`.
 - Published image: `ghcr.io/jacqueshuang-fresnostate/rust-chain:<tag>`.
-- Build workflow: `docker/github-builder/.github/workflows/build.yml@v1`.
+- Build workflow: native GitHub Actions matrix plus digest-based manifest finalization.
 
 ### 3. Contracts
 
@@ -24,19 +24,20 @@
 - `CREDENTIAL_ENCRYPTION_KEY` must remain exactly 32 bytes and stable after encrypted data exists.
 - The migration service requires only `DATABASE_URL`; it must complete successfully before API start.
 - Compose persists MySQL, MongoDB, Redis, RabbitMQ, and `/app/uploads` in named volumes.
-- Both caller jobs request `linux/amd64,linux/arm64` with distributed builds enabled. The official
-  builder maps `linux/amd64` to `ubuntu-24.04` and `linux/arm64` to `ubuntu-24.04-arm`, builds them
-  concurrently on native GitHub-hosted runners, and finalizes one multi-architecture manifest.
+- The workflow maps `linux/amd64` to `ubuntu-24.04` and `linux/arm64` to
+  `ubuntu-24.04-arm`, then builds them concurrently on native GitHub-hosted runners.
 - The workflow must not install or use QEMU for these two platforms. The superseded single x86
   runner/QEMU build was cancelled after about 58 minutes while still compiling Rust crates; it did
   not fail because of a compiler error or GHCR authentication.
-- Both jobs enable the signed GitHub Actions cache in `max` mode with stable scope
-  `backend-image` and grant `id-token: write` for OIDC signing.
-- The pull-request caller has only `contents: read` and `id-token: write`, sets `push: false`, does
-  not request `packages: write`, does not receive registry credentials, and disables image signing.
-- The publish caller adds `packages: write`, sets `push: true`, authenticates to GHCR with
-  `GITHUB_TOKEN`, and uses automatic signing to emit signed provenance. Pushes to `main`, `v*`
-  tags, and manual dispatches retain the branch, semver, SHA, and `latest` tag contracts.
+- A superseded reusable-builder attempt proved native ARM routing but failed with
+  `unknown API capability source.git.checksum`; every platform job must therefore check out the
+  repository and use local `context: .`.
+- Both matrix jobs enable GitHub Actions cache in `max` mode with architecture-specific scopes.
+- The pull-request matrix has only `contents: read`, sets `push: false`, does not request
+  `packages: write`, and does not receive registry credentials.
+- Each publish platform job adds `packages: write`, authenticates with `GITHUB_TOKEN`, and pushes
+  one canonical image by digest. The manifest job runs only after both platform jobs succeed,
+  downloads both digest artifacts, and applies branch, semver, SHA, and `latest` tags.
 
 ### 4. Validation & Error Matrix
 
@@ -48,8 +49,8 @@
 | MongoDB, Redis, or RabbitMQ is unhealthy | API remains blocked |
 | API `/health` is non-200 | Container health becomes unhealthy |
 | A pull request runs the workflow | Build both platforms on native runners, never log in or push |
-| `main`, `v*`, or manual dispatch runs the workflow | Log in to GHCR, push generated tags, and emit signed provenance |
-| Either architecture build runs | Use its native runner and the signed shared cache; never set up QEMU |
+| `main`, `v*`, or manual dispatch runs the workflow | Push both platform digests, then create and tag one manifest |
+| Either architecture build runs | Use its native runner, local checkout context, and isolated cache; never set up QEMU |
 | One distributed platform build fails | Do not finalize or publish an incomplete multi-architecture manifest |
 
 ### 5. Good/Base/Bad Cases
@@ -64,9 +65,9 @@
 ### 6. Tests Required
 
 - Run `cargo fmt -- --check` and `cargo check --all-targets`.
-- Parse the workflow and assert the official `build.yml@v1` reusable workflow, triggers, exact
-  per-job permissions, native distributed platforms, tags, signed cache configuration, provenance,
-  registry authentication, and push policy.
+- Parse the workflow and assert triggers, exact per-job permissions, native platform matrix,
+  local checkout context, per-platform digest export, artifact merge, tags, cache scopes, registry
+  authentication, and push policy.
 - Assert `linux/amd64` resolves to `ubuntu-24.04`, `linux/arm64` resolves to
   `ubuntu-24.04-arm`, and no QEMU setup action remains.
 - Run `docker compose --env-file docker-compose.env.example -f docker-compose.example.yml config`.

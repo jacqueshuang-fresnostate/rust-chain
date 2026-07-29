@@ -8,13 +8,17 @@
 
 ## Decision
 
-Use Docker's official reusable builder instead of maintaining a custom digest artifact and manifest merge workflow. Keep separate PR and publish caller jobs so registry write permission remains unavailable to pull requests.
+Use a repository-owned native matrix with local checkout context, per-platform digest pushes, and
+a manifest merge job. Docker's official reusable builder was attempted first, but its ARM64 job
+failed to resolve the remote Git context with `unknown API capability source.git.checksum`.
+The local context keeps native parallelism while removing that compatibility boundary.
 
 ## Repository Mapping
 
 - Image: `ghcr.io/${{ github.repository }}`.
 - Platforms: `linux/amd64,linux/arm64`.
-- Cache: enabled in `max` mode with a stable backend image scope.
-- PR: image output, no push, no registry secret.
-- Publish: image output, push enabled, GHCR authentication from `GITHUB_TOKEN`.
-- Signing: automatic for publish; OIDC also signs cache entries.
+- Cache: enabled in `max` mode with one scope per architecture.
+- PR: local checkout and build, no push, no registry secret.
+- Publish: local checkout, GHCR authentication from `GITHUB_TOKEN`, and push by digest.
+- Finalize: download both digest artifacts and create the tagged multi-platform manifest only after
+  both builds succeed.
