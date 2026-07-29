@@ -2,6 +2,13 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-07-29 14:54 - 记录 GitHub Docker 原生双架构交付契约
+
+- 完成内容：记录原单个 x86 runner 通过 QEMU 串行构建 AMD64/ARM64 的运行在约 58 分钟后仍处于 Rust crate 编译阶段并超时取消；同步 Docker 官方 `github-builder@v1` 替代方案，明确 `linux/amd64` 分配到 `ubuntu-24.04`、`linux/arm64` 分配到 `ubuntu-24.04-arm` 并行原生构建，补充 OIDC 签名缓存/发布 provenance、PR 与 publish 独立最小权限及 GHCR 发布合同。
+- 修改文件：`docs/deployment/docker.md`、`.trellis/spec/backend/container-delivery.md`、`docs/superpowers/PROGRESS.md`
+- 验证结果：限定三个文件的 `git diff --check` 通过；差异复核确认仅新增原 QEMU 超时记录、Docker 官方 builder、原生 runner 映射、OIDC 签名缓存/provenance 和独立权限合同；关键契约 `rg` 扫描全部命中，冲突标记与尾随空白扫描无匹配。文档切片未运行 Cargo、Docker 或远程 GitHub Actions。
+- 后续事项：由 Workflow 所有者推送后验证 GitHub-hosted AMD64/ARM64 runner 并行构建成功，以及 GHCR manifest 同时包含两个平台。
+
 ## 2026-07-29 11:05 - 完成 GitHub Docker 镜像与 Compose 端到端验收
 
 - 完成内容：完成 GHCR 双架构 Workflow、Rust 多阶段非 root 镜像、独立 SQLx migration runner、全依赖 Compose 示例、无密钥环境模板及部署文档；补充容器交付可执行规范，并用原生 ARM64 镜像和全新 Compose 数据卷完成真实启动验收。

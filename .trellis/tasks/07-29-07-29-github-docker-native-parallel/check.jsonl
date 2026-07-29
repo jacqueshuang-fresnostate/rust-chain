@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/container-delivery.md","reason":"Verify permissions, triggers, platforms, tags, cache, signing, and publication behavior."}
+{"file":".trellis/tasks/07-29-07-29-github-docker-native-parallel/prd.md","reason":"Check every timeout remediation acceptance criterion and the live GitHub run."}
