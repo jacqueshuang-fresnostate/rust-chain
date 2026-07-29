@@ -106,7 +106,10 @@ Replaced the retired light border color, added a dedicated local seconds-contrac
 
 ### Main Changes
 
-(Add details)
+- `GET /admin/api/v1/loan/products` 支持经过标准化和枚举校验的 `loan_type`、`status` 可选筛选。
+- 贷款产品行查询与 `COUNT(*)` 复用相同的参数化 AND 谓词。
+- PC 秒合约余额继续读取 `/wallet/accounts`，删除未实现的划转类型、API 和 Store 方法。
+- 新增贷款筛选与秒合约共享现货钱包的后端规范和回归测试。
 
 ### Git Commits
 
@@ -116,7 +119,9 @@ Replaced the retired light border color, added a dedicated local seconds-contrac
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] 临时 MySQL 完整贷款路由测试 4/4。
+- [OK] 临时 MySQL + Redis 秒合约钱包扣款与盈利回款测试各 1/1。
+- [OK] Rust 格式检查、全目标编译、PC 类型检查和 PC 契约测试 34/34。
 
 ### Status
 
@@ -411,6 +416,39 @@ Ported the Sites v16 signal Canvas and route veil into the Vue mobile shell, cor
 | Hash | Message |
 |------|---------|
 | `cd68269` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 13: 完成贷款产品筛选与秒合约共享钱包语义
+
+**Date**: 2026-07-29
+**Task**: 完成贷款产品筛选与秒合约共享钱包语义
+**Branch**: `main`
+
+### Summary
+
+后台贷款产品支持类型与状态筛选并保持分页总数一致；秒合约直接使用现货钱包，移除 PC 划转契约；真实 MySQL/Redis 集成测试和前后端质量门通过。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3dd4901` | (see git log) |
 
 ### Testing
 
