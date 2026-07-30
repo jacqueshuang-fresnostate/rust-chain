@@ -106,6 +106,11 @@ ALTER TABLE loan_products MODIFY COLUMN name_json JSON NOT NULL;
 - Regression fixture: create the expected text table, drift the affected
   columns to both `VARBINARY` and binary-collated `utf8mb4` `VARCHAR`, then
   execute the exact migration file through `include_str!`.
+- Auth credential metadata:
+  - `users|admin_users|agent_admin_users.password_hash VARCHAR(255) ... NOT NULL`
+  - `users|admin_users|agent_admin_users.status VARCHAR(32) ... NOT NULL DEFAULT 'active'`
+- Auth credential regression boundary: call the production
+  `MySqlAuthRepository` methods rather than copying their SQL into the test.
 
 #### 3. Contracts
 
@@ -116,6 +121,8 @@ ALTER TABLE loan_products MODIFY COLUMN name_json JSON NOT NULL;
 - Nullable text remains nullable; required text remains `NOT NULL`.
 - The same `ALTER TABLE ... MODIFY COLUMN` migration must also succeed against
   an already-correct `VARCHAR` schema.
+- Credential repairs must preserve each exact Argon2 hash and account status;
+  they must not reset passwords, reactivate accounts, or change lookup logic.
 
 #### 4. Validation & Error Matrix
 
@@ -124,8 +131,20 @@ ALTER TABLE loan_products MODIFY COLUMN name_json JSON NOT NULL;
   failure; investigate the data instead of silently replacing it.
 - Omitted `DEFAULT` or nullability in `MODIFY COLUMN` -> MySQL may change the
   column contract even when the type conversion succeeds.
+- MySQL 8.4 may expose a `VARBINARY` default through
+  `information_schema.COLUMNS` as hexadecimal (for example, `'active'` as
+  `0x616374697665`); assert the equivalent binary value before repair and the
+  canonical text default after repair.
 
-#### 5. Tests Required
+#### 5. Good/Base/Bad Cases
+
+- Good: add an immutable follow-up migration that explicitly restores text
+  metadata and preserves every application-owned value.
+- Base: the same repair succeeds when the columns are already correct.
+- Bad: change Rust fields to `Vec<u8>`, cast individual queries, or replace
+  stored text to make decoding pass.
+
+#### 6. Tests Required
 
 - Use a real isolated MySQL database, not a mocked row decoder.
 - Assert the pre-migration SQLx `String` decode failure for both `VARBINARY`
@@ -137,6 +156,42 @@ ALTER TABLE loan_products MODIFY COLUMN name_json JSON NOT NULL;
 - Repeat the repair from a binary-collated `utf8mb4` `VARCHAR` fixture,
   including byte preservation and the pre-repair decode failure.
 - Execute the same SQL once more after the columns are correct.
+- Credential regression tests must exercise
+  `find_user_by_email`, `find_user_by_phone`, `find_user_by_username`,
+  `find_admin_by_username`, and `find_agent_by_username`, assert the
+  pre-repair `ColumnDecode` points to index `1` (`password_hash`), and verify
+  the exact hashes with Argon2 after repair.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+
+```rust
+// This bypasses the production repository and can drift from the failing query.
+sqlx::query_as::<_, (u64, Vec<u8>, Vec<u8>)>(
+    "SELECT id, password_hash, status FROM admin_users WHERE username = ?",
+);
+```
+
+Correct:
+
+```rust
+let repository = MySqlAuthRepository::new(pool.clone());
+let error = repository
+    .find_admin_by_username(username)
+    .await
+    .expect_err("binary metadata must fail before repair");
+assert!(matches!(
+    error,
+    AppError::Database(sqlx::Error::ColumnDecode { .. })
+));
+
+sqlx::raw_sql(include_str!(
+    "../migrations/0098_auth_credential_text_metadata.sql"
+))
+.execute(&pool)
+.await?;
+```
 
 ---
 

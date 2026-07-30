@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Follow immutable migration and binary metadata repair contracts."}
+{"file": ".trellis/spec/backend/auth-sessions.md", "reason": "Preserve user, admin, and agent authentication/session behavior."}
+{"file": ".trellis/spec/backend/user-authentication.md", "reason": "Keep user credential lookup and username policy contracts unchanged."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Apply backend layering and focused real-database test requirements."}

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Verify exact migration SQL repairs both binary metadata forms without editing history."}
+{"file": ".trellis/spec/backend/auth-sessions.md", "reason": "Verify all three actor credential lookups retain existing behavior."}
+{"file": ".trellis/spec/backend/user-authentication.md", "reason": "Verify user credential lookup contracts and inactive status handling remain intact."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Run real MySQL, migration, formatting, compile, and diff checks."}

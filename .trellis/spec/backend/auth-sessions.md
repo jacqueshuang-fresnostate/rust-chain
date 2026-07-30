@@ -134,3 +134,84 @@ Correct:
 LoginResponse { requires_2fa_setup: true, setup_challenge_id, expires_in_seconds }
 // The secret is returned only by POST /auth/login/2fa/setup after challenge validation.
 ```
+
+## Scenario: SQLx-compatible auth credential text metadata
+
+### 1. Scope / Trigger
+
+- Trigger: changes to `users`, `admin_users`, or `agent_admin_users`
+  credential columns, migrations, or `MySqlAuthRepository` credential lookups.
+- Scope: user email/phone/username login, admin username login, and agent
+  username login.
+
+### 2. Signatures
+
+- `password_hash VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL`
+- `status VARCHAR(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active'`
+- Production read shape:
+  `SELECT id, password_hash, status ... -> (u64, String, String)`.
+
+### 3. Contracts
+
+- All three actor tables own password hashes and statuses as text, never binary
+  application values.
+- Metadata repair must preserve exact Argon2 hash strings, existing status
+  values, lengths, nullability, and the `active` status default.
+- A repair changes only column metadata. It must not change login identifiers,
+  status policy, password verification, token issuance, or session behavior.
+
+### 4. Validation & Error Matrix
+
+- `VARBINARY` credential column -> production repository returns
+  `AppError::Database(sqlx::Error::ColumnDecode { .. })`.
+- `utf8mb4_bin VARCHAR` credential column -> same decode failure under the
+  supported SQLx/MySQL boundary.
+- Invalid UTF-8 stored bytes -> migration failure; do not replace or reset the
+  credential.
+- Correct `utf8mb4_unicode_ci VARCHAR` metadata -> all credential lookups
+  decode into `StoredActorCredential`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: repair all six credential columns in a new immutable migration and
+  verify user, admin, and agent lookups with their original hashes/statuses.
+- Base: run the repair SQL against already-correct metadata without changing
+  values or defaults.
+- Bad: cast each login query to `CHAR`, decode into `Vec<u8>`, or reset
+  password hashes to avoid fixing the schema drift.
+
+### 6. Tests Required
+
+- Use real MySQL 8.4 and the production `MySqlAuthRepository`.
+- Reproduce both real `VARBINARY` and `utf8mb4_bin VARCHAR` metadata before
+  executing the migration through `include_str!`.
+- Assert all three user lookup identifiers plus admin and agent lookup fail at
+  `ColumnDecode` index `1` (`password_hash`) before repair and succeed after
+  repair.
+- Assert exact Argon2 hashes, password verification, non-active status values,
+  default `active` statuses, lengths, nullability, character set, and collation.
+- Run the full SQLx migration set twice and keep historical migrations
+  unchanged.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```rust
+let row = sqlx::query_as::<_, (u64, Vec<u8>, Vec<u8>)>(
+    "SELECT id, password_hash, status FROM users WHERE email = ? LIMIT 1",
+)
+.fetch_optional(pool)
+.await?;
+```
+
+Correct:
+
+```sql
+ALTER TABLE users
+    MODIFY COLUMN password_hash VARCHAR(255)
+        CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+    MODIFY COLUMN status VARCHAR(32)
+        CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+        NOT NULL DEFAULT 'active';
+```

@@ -2,6 +2,20 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-07-31 05:57 - 独立审查认证凭据二进制元数据修复
+
+- 完成内容：独立复核管理员登录故障对应的生产 `SELECT id, password_hash, status` 查询、用户三种标识与代理查询、`0098` 迁移及真实数据库回归测试；发现迁移前断言只检查任意 `ColumnDecode`、未锁定现场日志中的 `column 1`，现收紧五条生产 `MySqlAuthRepository` 查询的两种漂移断言，必须精确失败于索引 `1`（`password_hash`），并将该合同同步到数据库与认证规范。确认迁移保持三张表的原 Argon2 哈希、非 active 状态、`active` 默认值、255/32 长度、`NOT NULL`、字符集和排序规则，且同时复现真实 `VARBINARY` 与 `utf8mb4_bin VARCHAR`。
+- 修改文件：`tests/auth_credential_migration.rs`、`.trellis/spec/backend/database-guidelines.md`、`.trellis/spec/backend/auth-sessions.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：一次性 MySQL `8.4.9` 上聚焦测试 1/1 通过；专用空库首次完整应用迁移 1–98，第二次无待应用迁移，版本 1/2/97/98 均为 `success=1`，六列最终均为对应长度的 `varchar`、`NOT NULL`、`utf8mb4_unicode_ci`，status 默认值均为 `active`；`cargo fmt --manifest-path Cargo.toml -- --check`、`cargo check --manifest-path Cargo.toml --all-targets`、跟踪与未跟踪文件空白/冲突标记检查、任务 JSON/JSONL 解析、迁移版本冲突检查和 `0001_users_auth.sql`、`0002_admin_agent_rbac.sql`、`0097_prediction_settings_text_metadata.sql` 对 `HEAD` 零 diff 均通过。
+- 后续事项：无。
+
+## 2026-07-31 05:50 - 修复认证凭据二进制元数据解码
+
+- 完成内容：新增不可变后续迁移 `0098`，将 `users`、`admin_users`、`agent_admin_users` 的 `password_hash` 与 `status` 显式规范化为 `utf8mb4_unicode_ci VARCHAR`，保持 255/32 长度、`NOT NULL`、`active` 默认值、非 active 状态和原 Argon2 哈希；新增真实 MySQL 聚焦回归测试，分别制造真实 `VARBINARY` 与 `utf8mb4_bin VARCHAR` 漂移，使用生产 `MySqlAuthRepository` 的用户邮箱/手机/用户名、管理员、代理五条凭据查询证明迁移前均为 SQLx `ColumnDecode`，再通过 `include_str!` 执行迁移原文，验证查询恢复、哈希字节和 Argon2 校验、状态、默认值及元数据完整保留，并覆盖已正确结构再次执行；同步数据库/认证规范与任务验收勾选。
+- 修改文件：`migrations/0098_auth_credential_text_metadata.sql`、`tests/auth_credential_migration.rs`、`.trellis/spec/backend/database-guidelines.md`、`.trellis/spec/backend/auth-sessions.md`、`.trellis/tasks/07-31-fix-auth-credential-binary-metadata/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`DATABASE_URL=<一次性 MySQL 8.4.9> cargo test --manifest-path Cargo.toml --test auth_credential_migration -- --nocapture` 1/1 通过；专用空库首次 `sqlx migrate run --source migrations` 完整应用 1–98，第二次零输出成功，版本 1/2/97/98 均记录 `success=1`，六列最终均为对应长度的 `varchar`、`NOT NULL`、`utf8mb4_unicode_ci`，status 默认值均为 `active`；`cargo fmt --manifest-path Cargo.toml -- --check`、`cargo check --manifest-path Cargo.toml --all-targets`、跟踪与未跟踪文件空白/冲突标记检查、任务 JSON/JSONL 解析和 `0001_users_auth.sql`、`0002_admin_agent_rbac.sql`、`0097_prediction_settings_text_metadata.sql` 对 `HEAD` 零 diff 断言均通过；一次性测试数据库、完整迁移验证库和 `--rm` MySQL 容器均已清理。
+- 后续事项：无。
+
 ## 2026-07-31 05:18 - 独立审查预测设置二进制元数据修复
 
 - 完成内容：独立复核 `0097`、SQLx 设置读取路径和历史 `0075`，确认迁移显式保持四列的长度、默认值、NULL/NOT NULL 与有效 UTF-8 文本值；发现回归测试只覆盖实际 `VARBINARY`、未覆盖二进制排序规则的 `VARCHAR`，新增 `utf8mb4_bin` 漂移场景，并以真实 MySQL 8.4 证明 SQLx 0.8.6 对两种漂移都会产生 `ColumnDecode`、迁移原文均可修复且字节/默认值/NULL/元数据完整保留；同步两份可执行规范，未修改 `0097` 实现或历史 `0075`。
