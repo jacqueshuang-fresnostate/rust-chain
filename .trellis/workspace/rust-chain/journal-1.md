@@ -646,3 +646,36 @@ Ported the Sites v16 signal Canvas and route veil into the Vue mobile shell, cor
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: 修复后台登录凭据二进制元数据
+
+**Date**: 2026-07-31
+**Task**: 修复后台登录凭据二进制元数据
+**Branch**: `main`
+
+### Summary
+
+新增 0098 迁移，修复用户、管理员和代理 password_hash/status 的 VARBINARY 或 utf8mb4_bin 元数据，并以生产认证仓储查询在真实 MySQL 8.4.9 验证 column 1 故障与修复。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fe8d702` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

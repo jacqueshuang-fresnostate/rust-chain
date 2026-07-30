@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 18
+- **Total Sessions**: 19
 - **Last Active**: 2026-07-31
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~648 | Active |
+| `journal-1.md` | ~681 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 19 | 2026-07-31 | 修复后台登录凭据二进制元数据 | `fe8d702` | `main` |
 | 18 | 2026-07-31 | 修复预测设置二进制元数据解码 | `ac4f9ec` | `main` |
 | 17 | 2026-07-31 | 初始化默认管理员账号 | `9379b22` | `main` |
 | 16 | 2026-07-31 | 修复一体化镜像启动端口冲突 | `ba44168` | `main` |
