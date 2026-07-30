@@ -3,7 +3,8 @@
 业务镜像发布到 `ghcr.io/jacqueshuang-fresnostate/rust-chain`。镜像同时包含：
 
 - `/usr/local/bin/exchange-api`：Rust API，只监听容器回环地址 `127.0.0.1:8081`。
-- `/usr/local/bin/exchange-migrate`：只读取 `DATABASE_URL`、执行内置 SQLx migrations 并退出。
+- `/usr/local/bin/exchange-migrate`：读取 `DATABASE_URL`，执行内置 SQLx migrations，
+  在管理员表为空时创建首个后台管理员后退出。
 - `/usr/share/nginx/html`：由 `web/` 锁定依赖构建的后台管理与代理门户静态资源。
 - Nginx：在 `0.0.0.0:8080` 提供 SPA、`/uploads/` 静态文件，并把后端路径转发给 Rust。
 
@@ -77,7 +78,7 @@ docker compose --env-file docker-compose.env -f docker-compose.example.yml up -d
 启动顺序由 Compose 条件控制：
 
 1. MySQL、MongoDB、Redis 和 RabbitMQ 通过各自健康检查。
-2. `migrate` 等待 MySQL 健康，执行全部 migrations，并以状态码 0 退出。
+2. `migrate` 等待 MySQL 健康，执行全部 migrations，引导首个管理员，并以状态码 0 退出。
 3. `api` 等待四个依赖健康且 `migrate` 成功完成后启动集成的 Nginx 与 Rust 服务。
 
 Compose 只把容器的 Nginx `8080` 映射到宿主机；`APP_HOST=127.0.0.1` 和
@@ -93,6 +94,31 @@ curl --fail http://127.0.0.1:8080/health
 
 更新已部署镜像时重新执行 `pull` 和 `up -d`。SQLx migration runner 是幂等的，
 每次更新都会先确认 migrations 已应用，再启动新 API 容器。
+
+## 初始化首个后台管理员
+
+项目内置以下默认管理员，数据库全新且 `admin_users` 为空时由一次性的 `migrate` 服务
+自动创建：
+
+```dotenv
+BOOTSTRAP_ADMIN_USERNAME=admin
+BOOTSTRAP_ADMIN_PASSWORD=Qaz123456@
+BOOTSTRAP_ADMIN_ROLE_NAME=super_admin
+```
+
+三个环境变量未配置或为空时使用上述内置值；设置非空值可以覆盖对应默认值。覆盖账号或
+角色格式非法、覆盖密码少于 8 个或超过 128 个字符时，迁移器以非零状态退出并阻止 API
+启动。账号会去除首尾空白、转为小写，并限制为 3–32 位字母、数字或下划线；角色名会转为
+小写并限制为 1–64 位字母、数字、下划线或连字符。
+
+`admin_users` 为空时，迁移器在同一事务内创建或复用角色，并使用项目现有 Argon2 helper
+保存密码哈希。若已经存在任意管理员，则整段引导跳过，不创建额外角色，也不修改现有
+账号、角色或密码。并发迁移器通过数据库命名锁串行执行该步骤，日志和错误信息不会包含
+明文密码。
+
+`Qaz123456@` 是公开默认密码。生产环境应在首次初始化前通过
+`BOOTSTRAP_ADMIN_PASSWORD` 覆盖它；数据库已经存在管理员后重新设置该变量不会重置密码。
+三个引导变量只传给 `migrate`，不会传给长期运行的 `api` 容器。
 
 ## 通过 1Panel 部署，第三方服务独立管理
 
@@ -122,8 +148,9 @@ openssl rand -hex 16
 映射内容，不会把 `x-api-environment` 中直接填写的值注册为 `${DATABASE_URL}`。如果
 确实要把值直接写进 Compose，应把 `DATABASE_URL` 和 `RUST_LOG` 写在
 `x-common-environment`，让 `api` 与 `migrate` 同时复用；不要只修改 API 环境而保留
-迁移器的 `${DATABASE_URL}`。外部网络名称应填写 `1panel-network` 或真实网络名，不要
-误写成带前导连字符的 `-1panel-network`。
+迁移器的 `${DATABASE_URL}`。管理员引导变量则必须保留在 `migrate.environment`，不得
+移入公共或 API 环境锚点。外部网络名称应填写 `1panel-network` 或真实网络名，不要误写
+成带前导连字符的 `-1panel-network`。
 
 至少需要确认这些完整连接 URL：
 
@@ -190,6 +217,9 @@ docker run --rm \
   ghcr.io/jacqueshuang-fresnostate/rust-chain:1.2.3 \
   /usr/local/bin/exchange-migrate
 ```
+
+不提供引导变量时，上述命令使用内置的 `admin / Qaz123456@`；生产环境可通过同名
+`--env` 参数覆盖。
 
 启动默认集成服务时，使用 `--env-file` 提供与
 [`docker-compose.env.example`](../../docker-compose.env.example) 等价的运行时配置，
@@ -285,6 +315,8 @@ GitHub Actions 发布流程使用仓库自带的 `GITHUB_TOKEN`，不需要保�
 - `JWT_SECRET`：使用高熵随机值。
 - `CREDENTIAL_ENCRYPTION_KEY`：必须恰好为 32 字节。该值用于 AES-256-GCM，
   一旦保存过加密凭据就必须保持稳定，否则旧数据无法解密。
+- `BOOTSTRAP_ADMIN_PASSWORD`：内置公开默认值为 `Qaz123456@`，生产初始化前应覆盖；只提供
+  给一次性迁移容器，不得加入 API 环境。
 
 不要提交实际的环境文件。生产环境应从受控的 secret manager 或受限权限文件注入这些值。
 完整 Compose 需定期备份 `mysql-data`、`mongo-data`、`redis-data`、`rabbitmq-data` 和

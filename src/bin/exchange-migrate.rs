@@ -1,4 +1,7 @@
 use anyhow::Context;
+use exchange_api::bootstrap::{
+    BootstrapAdminConfig, BootstrapAdminOutcome, bootstrap_default_admin,
+};
 use sqlx::mysql::MySqlPoolOptions;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -23,8 +26,22 @@ async fn main() -> anyhow::Result<()> {
         .run(&pool)
         .await
         .context("执行 SQLx migrations 失败")?;
+    tracing::info!("数据库 migrations 已全部应用");
+
+    let bootstrap_result = match BootstrapAdminConfig::from_env() {
+        Ok(config) => bootstrap_default_admin(&pool, &config).await,
+        Err(error) => Err(error),
+    };
     pool.close().await;
 
-    tracing::info!("数据库 migrations 已全部应用");
+    match bootstrap_result.context("初始化默认管理员失败")? {
+        BootstrapAdminOutcome::Created => {
+            tracing::info!("默认管理员已创建");
+        }
+        BootstrapAdminOutcome::SkippedExistingAdmin => {
+            tracing::info!("数据库已存在管理员，默认管理员引导已跳过");
+        }
+    }
+
     Ok(())
 }

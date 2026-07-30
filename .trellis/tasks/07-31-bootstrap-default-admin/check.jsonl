@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Verify idempotent database initialization without editing applied migrations."}
+{"file": ".trellis/spec/backend/auth-sessions.md", "reason": "Verify stored administrator credentials remain compatible with login."}
+{"file": ".trellis/spec/backend/container-delivery.md", "reason": "Verify migrate-only secret injection and Compose expansion."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Apply backend quality gates and scope checks."}

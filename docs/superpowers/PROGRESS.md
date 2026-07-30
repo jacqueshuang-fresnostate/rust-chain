@@ -2,6 +2,20 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-07-31 04:34 - 复核并加固默认管理员引导
+
+- 完成内容：按更新后的 PRD 复核真实迁移器、MySQL 命名锁、事务、Argon2、日志脱敏、默认值/环境覆盖和三份 Compose 秘密边界；修复 `RELEASE_LOCK` 查询自身失败时连接仍可能回池的问题，改为关闭物理 MySQL 连接兜底；扩展集成测试以直接运行无引导环境变量的 `exchange-migrate`，并覆盖公开默认账号、有效/非法覆盖、已有管理员不覆盖、角色复用、并发迁移只创建一个管理员、强制插入失败时角色回滚、成功/失败路径命名锁释放和密码不出现在进程输出或错误中；同步容器交付规范。
+- 修改文件：`src/bootstrap.rs`、`tests/bootstrap_admin.rs`、`.trellis/spec/backend/container-delivery.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo test --manifest-path Cargo.toml --test bootstrap_admin -- --nocapture` 在临时 MySQL 8.4 上 2/2 通过，隔离测试数据库及 `--rm` 容器均已清理；`cargo fmt --manifest-path Cargo.toml -- --check`、`cargo check --manifest-path Cargo.toml --all-targets`、完整/公开 1Panel/ignored 本地 1Panel 三份 Compose JSON 展开及 migrate-only 引导变量断言、migration 不变断言和 `git diff --check` 均通过。额外执行的严格 `cargo clippy --all-targets -- -D warnings` 被任务外既有 57 项告警阻断，目标引导文件未产生 Clippy 告警。
+- 后续事项：全仓库既有 Clippy 告警应另立任务治理；本次默认管理员引导无遗留问题。
+
+## 2026-07-31 04:13 - 初始化默认管理员账号
+
+- 完成内容：在内置 SQLx migrations 成功后增加首个后台管理员引导，未配置覆盖变量时使用用户指定的 `admin / Qaz123456@` 和 `super_admin` 角色；使用数据库命名锁和单事务实现任意管理员存在即整体跳过、角色创建/复用及 active 管理员写入，并复用现有账号规范化与 Argon2 helper，数据库只保存密码哈希且日志不暴露明文；保留三个 `BOOTSTRAP_ADMIN_*` 变量用于生产覆盖，同步完整 Compose、公开与本地 1Panel Compose、env 示例、部署文档和容器交付规范，并确保这些变量只传给 `migrate`。
+- 修改文件：`src/bootstrap.rs`、`src/bin/exchange-migrate.rs`、`src/lib.rs`、`tests/bootstrap_admin.rs`、`docker-compose.example.yml`、`docker-compose.env.example`、`docker-compose.1panel.example.yml`、`docker-compose.1panel.env.example`、ignored 的本地 `docker-compose.1panel.yml`、`docs/deployment/docker.md`、`.trellis/spec/backend/container-delivery.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo test --manifest-path Cargo.toml --test bootstrap_admin -- --nocapture` 在隔离 MySQL 8.4 上 3/3 通过，覆盖空表创建、active 状态、Argon2 校验、重复运行不覆盖、已有其他管理员整体跳过及角色复用，临时数据库和 `--rm` 容器均已清理；`cargo check --manifest-path Cargo.toml --all-targets`、`cargo fmt --manifest-path Cargo.toml -- --check`、无数据库聚焦测试 3/3、完整/公开 1Panel/本地 1Panel 三份 Compose JSON 展开及 migrate-only 秘密边界断言、部署文档全部 Bash 代码块语法检查、migration 不变断言、日志秘密扫描和 `git diff --check` 均通过。
+- 后续事项：无。
+
 ## 2026-07-31 03:36 - 发布一体化镜像启动修复
 
 - 完成内容：提交并推送一体化镜像固定内部端口和 Tini subreaper 修复，归档 Trellis 任务并记录会话；GitHub Workflow 已重新发布 `latest` 多架构镜像。

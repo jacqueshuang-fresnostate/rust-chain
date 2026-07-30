@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Preserve immutable SQLx migration and database write conventions."}
+{"file": ".trellis/spec/backend/auth-sessions.md", "reason": "Keep administrator credential hashing and authentication compatibility."}
+{"file": ".trellis/spec/backend/container-delivery.md", "reason": "Update migration-runner and Compose environment contracts consistently."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Follow backend layering and verification requirements."}

@@ -33,7 +33,11 @@ services:
     container_name: ${MIGRATE_CONTAINER_NAME:-hippo-exchange-migrate}
     restart: "no"
     command: ["/usr/local/bin/exchange-migrate"]
-    environment: *common-environment
+    environment:
+      <<: *common-environment
+      BOOTSTRAP_ADMIN_USERNAME: "${BOOTSTRAP_ADMIN_USERNAME:-admin}"
+      BOOTSTRAP_ADMIN_PASSWORD: "${BOOTSTRAP_ADMIN_PASSWORD:-Qaz123456@}"
+      BOOTSTRAP_ADMIN_ROLE_NAME: "${BOOTSTRAP_ADMIN_ROLE_NAME:-super_admin}"
     logging: *default-logging
     networks:
       - onepanel
