@@ -103,6 +103,11 @@ ALTER TABLE loan_products MODIFY COLUMN name_json JSON NOT NULL;
 #### 2. Signatures
 
 - Text metadata: `VARCHAR(length) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+- Schema-wide repair source: a fresh MySQL 8.4 database after applying every
+  immutable migration preceding the repair. Do not derive canonical column
+  definitions from a production database that may already contain drift.
+- Schema-wide repair target: every application `CHAR`, `VARCHAR`, `TINYTEXT`,
+  `TEXT`, `MEDIUMTEXT`, and `LONGTEXT` column outside `_sqlx_migrations`.
 - Regression fixture: create the expected text table, drift the affected
   columns to both `VARBINARY` and binary-collated `utf8mb4` `VARCHAR`, then
   execute the exact migration file through `include_str!`.
@@ -115,12 +120,21 @@ ALTER TABLE loan_products MODIFY COLUMN name_json JSON NOT NULL;
 #### 3. Contracts
 
 - A metadata repair must explicitly restate each affected column's length,
-  character set, non-binary collation, nullability, and default.
+  character set, non-binary collation, nullability, default, and comment.
 - Existing bytes must remain valid UTF-8 application text and survive the
   `VARBINARY` to `VARCHAR` conversion unchanged.
 - Nullable text remains nullable; required text remains `NOT NULL`.
 - The same `ALTER TABLE ... MODIFY COLUMN` migration must also succeed against
   an already-correct `VARCHAR` schema.
+- A schema-wide repair must use a static, reviewable column list generated from
+  the fresh canonical schema. It must restore database and every business table
+  default to `utf8mb4_unicode_ci`, including tables that currently have no text
+  columns.
+- True `BLOB` payloads and canonical binary columns are outside the text repair
+  target. Do not infer that every binary value is application text.
+- Group complete `MODIFY COLUMN` clauses by table so indexes remain attached to
+  their canonical columns. Compare `information_schema.STATISTICS` before and
+  after the repair rather than assuming index preservation.
 - Credential repairs must preserve each exact Argon2 hash and account status;
   they must not reset passwords, reactivate accounts, or change lookup logic.
 
@@ -131,6 +145,14 @@ ALTER TABLE loan_products MODIFY COLUMN name_json JSON NOT NULL;
   failure; investigate the data instead of silently replacing it.
 - Omitted `DEFAULT` or nullability in `MODIFY COLUMN` -> MySQL may change the
   column contract even when the type conversion succeeds.
+- Omitted `COMMENT` in `MODIFY COLUMN` -> MySQL clears the canonical column
+  comment.
+- Production schema used as the canonical source -> drift can be copied into
+  the repair migration and made permanent.
+- MySQL DDL failure after SQLx starts a migration -> earlier `ALTER TABLE`
+  statements may remain committed and `_sqlx_migrations` retains
+  `success=FALSE`; never mark that row successful without rerunning the full
+  immutable migration.
 - MySQL 8.4 may expose a `VARBINARY` default through
   `information_schema.COLUMNS` as hexadecimal (for example, `'active'` as
   `0x616374697665`); assert the equivalent binary value before repair and the
@@ -156,6 +178,21 @@ ALTER TABLE loan_products MODIFY COLUMN name_json JSON NOT NULL;
 - Repeat the repair from a binary-collated `utf8mb4` `VARCHAR` fixture,
   including byte preservation and the pre-repair decode failure.
 - Execute the same SQL once more after the columns are correct.
+- For a schema-wide repair, run all migrations on two fresh MySQL 8.4
+  databases: retain one as the canonical comparison and drift every canonical
+  text position in the other. Include true `BINARY`/`VARBINARY` positions and
+  binary-collated text positions.
+- Compare every business column's type, length, nullability, default, comment,
+  character set, collation, and extra metadata with the canonical database.
+  Compare stable index metadata and all stored text bytes as well.
+- Audit for zero application `BINARY`/`VARBINARY` columns and zero
+  binary-collated text columns after repair. Assert database and all business
+  table defaults are `utf8mb4_unicode_ci`.
+- Add a BLOB payload probe to a repaired table and prove its metadata and bytes
+  are unchanged.
+- Inject invalid UTF-8 into one drifted binary text column, execute the real
+  SQLx migrator, and assert conversion failure, byte preservation, and the
+  `success=FALSE` dirty migration record.
 - Credential regression tests must exercise
   `find_user_by_email`, `find_user_by_phone`, `find_user_by_username`,
   `find_admin_by_username`, and `find_agent_by_username`, assert the

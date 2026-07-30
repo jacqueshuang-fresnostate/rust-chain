@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Audit that the new migration repairs both VARBINARY and binary-collated text across the complete schema."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Verify real MySQL tests, full migration execution, and production-query coverage."}
+{"file": ".trellis/spec/backend/auth-sessions.md", "reason": "Check that the prior authentication metadata protections remain intact."}
+{"file": ".trellis/spec/backend/container-delivery.md", "reason": "Review rollout safety and operator documentation for a broad schema migration."}

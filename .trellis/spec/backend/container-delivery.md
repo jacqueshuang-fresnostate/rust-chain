@@ -78,6 +78,22 @@
   `hippo-exchange-api:8080` network alias or explicitly override the bind address.
 - External dependency readiness is an operator responsibility in the 1Panel variant. The
   migration completion gate remains mandatory, and a migration failure must block API startup.
+- A schema-wide text metadata repair that issues DDL across all business tables must be deployed
+  in a planned maintenance window with application writes stopped and a verified database backup.
+  `ALTER TABLE` may wait for metadata locks and may rebuild tables or indexes; operators must
+  inspect long-running transactions before starting the migration and monitor MySQL until it
+  completes.
+- Invalid UTF-8 bytes in a drifted binary text column must make the migration fail. The migration
+  process must remain non-zero and keep the API blocked; operators must restore or clean the
+  affected data deliberately, never enable replacement-character conversion.
+- MySQL DDL implicit commits mean a failed schema-wide repair can leave earlier tables repaired
+  while SQLx retains a `success=FALSE` dirty row. After resolving the lock or invalid bytes, verify
+  that exact failed version, delete only its dirty row, and rerun the same immutable migration
+  while writes remain stopped. Never mark the row successful or hand-write reverse DDL.
+- A successful text metadata repair has no automatic down migration. An application-image rollback
+  may keep the canonical repaired schema when compatibility is confirmed; exact database rollback
+  must restore the verified pre-maintenance backup into an isolated target and switch only after
+  consistency checks.
 - The workflow maps `linux/amd64` to `ubuntu-24.04` and `linux/arm64` to
   `ubuntu-24.04-arm`, then builds them concurrently on native GitHub-hosted runners.
 - The workflow must not install or use QEMU for these two platforms. The superseded single x86
@@ -105,6 +121,10 @@
 | Concurrent migration runners request bootstrap | Serialize bootstrap; create at most one administrator |
 | Full-stack MySQL is unhealthy | Do not start migration or API |
 | A migration fails | Migration exits non-zero and API remains blocked |
+| A schema-wide metadata repair waits on a long transaction | Keep writes stopped; identify and resolve the metadata-lock owner before retrying deployment |
+| A binary text value is not valid UTF-8 | Migration fails; preserve the backup and clean the specific value without lossy replacement |
+| A schema-wide repair partially commits before failing | Keep writes stopped; resolve the cause, delete only the verified `success=FALSE` row, and rerun the same immutable migration |
+| Exact pre-repair database state is required | Restore the verified full backup into an isolated target; do not reverse columns in place |
 | Full-stack MongoDB, Redis, or RabbitMQ is unhealthy | API remains blocked |
 | A 1Panel dependency URL or external network is invalid | Migration or API exits diagnostically; do not create a replacement dependency |
 | The `web/` lockfile cannot complete a clean `npm ci` | Fail the image build; do not use an unlocked install |
@@ -170,6 +190,10 @@
   a forced administrator insert failure, named-lock release after both successful and failed
   bootstrap attempts, and access through Nginx to `GET /health`, `/login`, a deep admin route, an
   API or WebSocket route, and a test file under `/uploads/`.
+- For a schema-wide metadata repair, run the complete migration set on fresh MySQL 8.4, execute the
+  exact repair SQL against an already-correct schema, and run the drift regression against a
+  separate real MySQL database. Verify canonical column/index metadata, stored text bytes, database
+  and table defaults, and untouched BLOB payloads.
 - Inject stale `APP_HOST=0.0.0.0` and `APP_PORT=8080` values while starting the API with an outer
   Docker init. Assert Rust listens only on `127.0.0.1:8081`, Nginx owns `0.0.0.0:8080`, `/health`
   succeeds, and no non-PID-1 Tini warning is logged.

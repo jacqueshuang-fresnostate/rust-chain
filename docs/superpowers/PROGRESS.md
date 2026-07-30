@@ -2,6 +2,27 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-07-31 07:08 - 主会话复验全库文本元数据修复
+
+- 完成内容：在独立检查修正规范基线、外键及无效 UTF-8 覆盖后，主会话使用新建的一次性 MySQL 8.4.9 容器再次执行最终 `schema_text_metadata_migration`，确认 0099 全库修复合同在干净环境中独立成立；测试结束后已移除临时容器。
+- 修改文件：`docs/superpowers/PROGRESS.md`。
+- 验证结果：主会话 `schema_text_metadata_migration` 1/1 通过（40.40 秒）；`cargo fmt --manifest-path Cargo.toml -- --check`、`cargo check --manifest-path Cargo.toml --all-targets`、Trellis implement/check JSONL 校验和 `git diff --check` 通过；历史迁移无修改，工作区仅包含本任务的 0099、回归测试、规范、部署文档与任务记录。
+- 后续事项：提交、归档任务并推送 GitHub。
+
+## 2026-07-31 06:59 - 独立审查全库文本元数据修复
+
+- 完成内容：独立用不含 0099 的 `0001`–`0098` 迁移源建立 MySQL 8.4.9 规范库，确认 96 张业务表、340 个 `VARCHAR`、31 个 `TEXT`、3 个 `MEDIUMTEXT`、3 个 `CHAR`，并逐列证明 0099 后完整元数据与规范库零差异、静态 96 表/377 列清单无遗漏、154 条外键及全部索引不变、业务文本无外键/生成列/默认表达式；修复全库测试先应用 0099 再以结果作为规范基线的循环自证，改为独立 `<=98` 基线与 fresh `<=99` 对照，新增生成表达式、完整外键和真实 SQLx 无效 UTF-8 失败/原字节/`success=FALSE` 断言；补齐完整 Compose 与 1Panel 锁预检、备份恢复演练、单独 migrate 门禁、应用/数据库回滚边界和 dirty 0099 受控恢复说明；修正 PRD 的文本类型精确分布与 BLOB 探针表述。
+- 修改文件：`tests/schema_text_metadata_migration.rs`、`.trellis/spec/backend/database-guidelines.md`、`.trellis/spec/backend/container-delivery.md`、`docs/deployment/docker.md`、`.trellis/tasks/07-31-repair-all-binary-text-metadata/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`schema_text_metadata_migration`、`auth_credential_migration`、`prediction_settings_migration` 在一次性 MySQL 8.4.9 上 3/3 通过；额外从空库执行 `sqlx migrate run --source migrations` 完整应用 0001–0099 并第二次零待办，96 条 migration 全部成功，版本 97/98/99 均为 `success=1`，最终 96 表、377 文本列、0 不安全列、0 错误表默认值；无效 UTF-8 `X'FF'` 实测以 MySQL 1366 失败、原字节和 `VARBINARY` 保留、0099 为 `success=0`，清理具体数据并删除唯一 dirty 行后同一 0099 重跑成功；`cargo fmt --manifest-path Cargo.toml -- --check`、`cargo check --manifest-path Cargo.toml --all-targets`、聚焦 `cargo clippy --manifest-path Cargo.toml --test schema_text_metadata_migration --no-deps`、`git diff --check`、历史迁移零 diff、静态清单/冲突标记/JSONL 检查、部署文档 Bash 代码块语法和两份 Compose 展开检查均以状态 0 通过；Clippy 未报告本次测试文件告警，仍显示 57 项任务外既有库级告警。
+- 后续事项：无。
+
+## 2026-07-31 06:39 - 全库修复二进制文本元数据
+
+- 完成内容：从全新 MySQL 8.4.9 执行不可变迁移 `0001`–`0098` 后的规范 schema 机械生成后续迁移 `0099`，显式恢复 96 张业务表默认字符集/排序规则和全部 377 个 `CHAR`/`VARCHAR`/`TEXT` 系列列的规范类型、长度、可空性、默认值、注释及 `utf8mb4_unicode_ci`，不触碰 `BLOB` 或 SQLx 自有表；新增真实 MySQL 全库回归，先通过后台 `GET /admin/api/v1/kyc/config` 精确复现 `kyc_configs.name` 的 `String`/`VARBINARY` 解码失败，再对全部规范文本列制造真实 `BINARY`/`VARBINARY` 或二进制排序规则漂移，执行 `include_str!` 引入的迁移原文，验证 KYC 生产查询、认证五条仓储查询和预测设置读取恢复，并逐列比较完整元数据、全部文本字节、稳定索引、库表默认值及额外 BLOB 探针；补充数据库规范、容器交付合同和生产维护窗口/备份/锁等待/无效 UTF-8 处置文档。
+- 修改文件：`migrations/0099_schema_wide_text_metadata.sql`、`tests/schema_text_metadata_migration.rs`、`.trellis/spec/backend/database-guidelines.md`、`.trellis/spec/backend/container-delivery.md`、`docs/deployment/docker.md`、`.trellis/tasks/07-31-repair-all-binary-text-metadata/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：一次性 MySQL 8.4.9 上全新空库完整执行 `0001`–`0099` 成功，最终 checksum 的 0099 约 1.44 秒，第二次 `sqlx migrate run` 无待应用迁移，版本 97/98/99 均为 `success=1`，最终 96 张业务表、377 个文本列、0 个不安全文本/二进制漂移、0 张非规范默认排序规则表；`auth_credential_migration`、`prediction_settings_migration`、`schema_text_metadata_migration` 三组真实 MySQL 测试 3/3 通过，其中全库测试同时覆盖 fresh schema、已正确 schema 重跑、377 列漂移、完整元数据/索引/值对照和 BLOB 不变；`cargo fmt --manifest-path Cargo.toml -- --check`、`cargo check --manifest-path Cargo.toml --all-targets`、历史迁移零 diff、静态迁移 96 个 `ALTER TABLE`/377 个 `MODIFY COLUMN` 覆盖计数、冲突标记扫描及 `git diff --check` 通过。
+- 后续事项：由主会话执行独立 `trellis-check` 复核后提交并推送。
+
 ## 2026-07-31 05:57 - 独立审查认证凭据二进制元数据修复
 
 - 完成内容：独立复核管理员登录故障对应的生产 `SELECT id, password_hash, status` 查询、用户三种标识与代理查询、`0098` 迁移及真实数据库回归测试；发现迁移前断言只检查任意 `ColumnDecode`、未锁定现场日志中的 `column 1`，现收紧五条生产 `MySqlAuthRepository` 查询的两种漂移断言，必须精确失败于索引 `1`（`password_hash`），并将该合同同步到数据库与认证规范。确认迁移保持三张表的原 Argon2 哈希、非 active 状态、`active` 默认值、255/32 长度、`NOT NULL`、字符集和排序规则，且同时复现真实 `VARBINARY` 与 `utf8mb4_bin VARCHAR`。

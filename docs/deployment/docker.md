@@ -95,6 +95,137 @@ curl --fail http://127.0.0.1:8080/health
 更新已部署镜像时重新执行 `pull` 和 `up -d`。SQLx migration runner 是幂等的，
 每次更新都会先确认 migrations 已应用，再启动新 API 容器。
 
+## 0099 全库文本元数据修复维护窗口
+
+`0099_schema_wide_text_metadata.sql` 基于全新 MySQL 8.4 执行 `0001`–`0098` 后的规范
+schema 生成，会显式恢复 96 张业务表的默认排序规则，并恢复其中 377 个
+`CHAR`/`VARCHAR`/`TEXT` 系列列的完整类型、长度、可空性、默认值和注释。迁移不会转换
+`BLOB` 或其他真实二进制负载。
+
+这不是无锁的小型迁移。每张表都会执行 `ALTER TABLE`；MySQL 可能等待元数据锁，并可能
+重建表或相关索引。生产升级必须安排维护窗口，停止 API 写入，并在开始前完成可恢复性已
+验证的全库备份。先检查并结束会长期占用目标表的事务，再单独运行固定镜像版本的
+`exchange-migrate`。不要让 API 与迁移并行启动；现有 Compose 的
+`service_completed_successfully` 门禁必须保留。
+
+建议按以下顺序升级：
+
+1. 固定待发布的 semver 或 `sha-*` 镜像标签并提前拉取，尚不要重建 API。
+2. 进入维护窗口，停止旧 API 或全部业务写入；检查并处理长事务和 metadata lock 等待。
+3. 在写入停止后完成 MySQL 全库备份，并把备份恢复到独立实例或隔离库完成恢复演练。只有
+   备份文件存在、但没有实际验证恢复，不满足本次迁移的备份要求。
+4. 只启动 `migrate`，持续观察 MySQL 和迁移日志，直至 0099 成功且容器退出码为 `0`。
+5. 执行下方审计；确认无不安全漂移后再启动新 API，并验证后台 KYC 配置读取和登录。
+6. 若迁移因无效 UTF-8 二进制字节失败，保持 API 停止，定位并备份具体记录后人工清理；
+   禁止使用替换字符或把 Rust 字段改为二进制类型掩盖数据问题。
+
+维护窗口开始后可先从 MySQL 执行以下锁预检。`information_schema.innodb_trx` 返回的长事务
+必须先确认归属；`performance_schema.metadata_locks` 中目标业务库的等待项必须解决后再
+启动迁移，不要在不清楚业务影响时直接终止连接：
+
+```sql
+SELECT trx_mysql_thread_id, trx_started, trx_state, trx_rows_locked, trx_query
+FROM information_schema.innodb_trx
+ORDER BY trx_started;
+
+SELECT OBJECT_SCHEMA, OBJECT_NAME, LOCK_TYPE, LOCK_DURATION, LOCK_STATUS,
+       OWNER_THREAD_ID
+FROM performance_schema.metadata_locks
+WHERE OBJECT_SCHEMA = DATABASE()
+ORDER BY LOCK_STATUS, OBJECT_NAME;
+```
+
+完整 Compose 应显式让 `migrate` 的退出码成为门禁：
+
+```bash
+docker compose --env-file docker-compose.env -f docker-compose.example.yml pull migrate api
+docker compose --env-file docker-compose.env -f docker-compose.example.yml stop api
+
+# 此处完成并验证 MySQL 全库备份，再运行迁移。
+docker compose --env-file docker-compose.env -f docker-compose.example.yml \
+  up --no-deps --force-recreate --abort-on-container-exit --exit-code-from migrate migrate
+
+# 执行本节的 SQL 审计后才恢复 API。
+docker compose --env-file docker-compose.env -f docker-compose.example.yml \
+  up --detach --no-deps --force-recreate api
+```
+
+1Panel 编排使用实际保存的 Compose 文件执行相同顺序；也可以在 1Panel 界面中依次完成
+“拉取固定标签 → 停止 API → 备份并验证恢复 → 仅重建 migrate → 审计 → 重建 API”：
+
+```bash
+docker compose --env-file docker-compose.1panel.env -f docker-compose.1panel.yml pull migrate api
+docker compose --env-file docker-compose.1panel.env -f docker-compose.1panel.yml stop api
+
+# 使用 1Panel/外部 MySQL 自身的备份能力完成并验证全库恢复后，再运行迁移。
+docker compose --env-file docker-compose.1panel.env -f docker-compose.1panel.yml \
+  up --no-deps --force-recreate --abort-on-container-exit --exit-code-from migrate migrate
+
+# 执行本节的 SQL 审计后才恢复 API。
+docker compose --env-file docker-compose.1panel.env -f docker-compose.1panel.yml \
+  up --detach --no-deps --force-recreate api
+```
+
+修复后审计：
+
+```sql
+SELECT COUNT(*) AS unsafe_text_columns
+FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE()
+  AND TABLE_NAME <> '_sqlx_migrations'
+  AND (
+    DATA_TYPE IN ('binary', 'varbinary')
+    OR (
+      DATA_TYPE IN ('char', 'varchar', 'tinytext', 'text', 'mediumtext', 'longtext')
+      AND (
+        CHARACTER_SET_NAME = 'binary'
+        OR COLLATION_NAME = 'binary'
+        OR RIGHT(COLLATION_NAME, 4) = '_bin'
+      )
+    )
+  );
+
+SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME
+FROM information_schema.SCHEMATA
+WHERE SCHEMA_NAME = DATABASE();
+
+SELECT TABLE_NAME, TABLE_COLLATION
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = DATABASE()
+  AND TABLE_NAME <> '_sqlx_migrations'
+  AND TABLE_TYPE = 'BASE TABLE'
+  AND TABLE_COLLATION <> 'utf8mb4_unicode_ci';
+```
+
+第一条必须返回 `0`，数据库默认值必须为 `utf8mb4 / utf8mb4_unicode_ci`，第三条必须
+返回空集。由于 MySQL DDL 会隐式提交，迁移中途失败时可能已有部分表完成修复；不要手工
+把失败记录改成成功或跳过 0099。SQLx 0.8.6 会保留 `success = 0` 的 0099 dirty 记录，
+已完成的 DDL 也不会自动回滚；后续迁移器会提示
+`migration 99 is partially applied` 并拒绝继续。
+
+保留失败日志和备份，定位并修复锁或无效 UTF-8 数据后，先确认只有 0099 是失败记录，
+再删除这一条 `success = 0` 记录，并从固定的同一镜像重新运行完整 0099。不要执行
+`UPDATE ... SET success = 1`；只有完整迁移成功后才允许迁移器自己写入成功状态。
+
+```sql
+SELECT version, description, success
+FROM _sqlx_migrations
+WHERE version = 99;
+
+DELETE FROM _sqlx_migrations
+WHERE version = 99
+  AND success = FALSE;
+```
+
+0099 对已正确的列定义是幂等的，因此会安全重放失败前已经完成的表，但仍会重新获取
+元数据锁。删除 dirty 记录和重跑期间必须继续停止业务写入。
+
+0099 没有自动 down migration，也不应把规范文本列改回二进制元数据。若 0099 已成功、
+但新应用镜像有独立故障，可以保留规范 schema 并回退到确认兼容的旧应用镜像；若必须精确
+恢复迁移前数据库状态，保持写入停止，把维护窗口前已验证的全库备份恢复到独立实例，完成
+一致性检查后再切换 `DATABASE_URL`。禁止在部分完成的生产库中手写逆向 `ALTER TABLE`
+充当回滚。
+
 ## 初始化首个后台管理员
 
 项目内置以下默认管理员，数据库全新且 `admin_users` 为空时由一次性的 `migrate` 服务

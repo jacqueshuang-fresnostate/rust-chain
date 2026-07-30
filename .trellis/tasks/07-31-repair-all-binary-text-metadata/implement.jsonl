@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Follow immutable migration, real MySQL, and binary metadata drift regression requirements."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Apply backend verification, test isolation, and production-query regression standards."}
+{"file": ".trellis/spec/backend/auth-sessions.md", "reason": "Keep the existing authentication text-metadata repair path covered while broadening the migration."}
+{"file": ".trellis/spec/backend/container-delivery.md", "reason": "Document migration rollout and maintenance-window implications for the shipped container image."}
