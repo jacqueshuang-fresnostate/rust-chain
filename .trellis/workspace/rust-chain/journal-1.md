@@ -580,3 +580,36 @@ Ported the Sites v16 signal Canvas and route veil into the Vue mobile shell, cor
 ### Next Steps
 
 - None - task complete
+
+
+## Session 17: 初始化默认管理员账号
+
+**Date**: 2026-07-31
+**Task**: 初始化默认管理员账号
+**Branch**: `main`
+
+### Summary
+
+迁移器在空管理员表时创建 admin / Qaz123456@，支持环境覆盖，使用 Argon2、事务与 MySQL 命名锁并同步 Compose 和部署文档。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9379b22` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
