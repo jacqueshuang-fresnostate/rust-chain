@@ -613,3 +613,36 @@ Ported the Sites v16 signal Canvas and route veil into the Vue mobile shell, cor
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: 修复预测设置二进制元数据解码
+
+**Date**: 2026-07-31
+**Task**: 修复预测设置二进制元数据解码
+**Branch**: `main`
+
+### Summary
+
+新增 0097 迁移，将预测设置四个文本字段从 VARBINARY 或二进制排序规则规范化为 utf8mb4_unicode_ci VARCHAR，并用真实 MySQL 8.4 覆盖两类漂移、值保留和重复迁移。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ac4f9ec` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

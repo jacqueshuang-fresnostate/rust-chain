@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 17
+- **Total Sessions**: 18
 - **Last Active**: 2026-07-31
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~615 | Active |
+| `journal-1.md` | ~648 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 18 | 2026-07-31 | 修复预测设置二进制元数据解码 | `ac4f9ec` | `main` |
 | 17 | 2026-07-31 | 初始化默认管理员账号 | `9379b22` | `main` |
 | 16 | 2026-07-31 | 修复一体化镜像启动端口冲突 | `ba44168` | `main` |
 | 15 | 2026-07-29 | 修复 GitHub Docker 双架构构建超时 | `df563b9`, `748db9d`, `62c64ad` | `main` |
