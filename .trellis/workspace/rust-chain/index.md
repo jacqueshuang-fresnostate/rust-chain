@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
-- **Last Active**: 2026-07-29
+- **Total Sessions**: 16
+- **Last Active**: 2026-07-31
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~544 | Active |
+| `journal-1.md` | ~582 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-07-31 | 修复一体化镜像启动端口冲突 | `ba44168` | `main` |
 | 15 | 2026-07-29 | 修复 GitHub Docker 双架构构建超时 | `df563b9`, `748db9d`, `62c64ad` | `main` |
 | 14 | 2026-07-29 | 完成 GitHub Docker 镜像交付 | `68a80f1` | `main` |
 | 13 | 2026-07-29 | 完成贷款产品筛选与秒合约共享钱包语义 | `3dd4901` | `main` |

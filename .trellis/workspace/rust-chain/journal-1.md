@@ -547,3 +547,36 @@ Ported the Sites v16 signal Canvas and route veil into the Vue mobile shell, cor
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: 修复一体化镜像启动端口冲突
+
+**Date**: 2026-07-31
+**Task**: 修复一体化镜像启动端口冲突
+**Branch**: `main`
+
+### Summary
+
+强制 Rust 使用 127.0.0.1:8081，并让 Tini 在 1Panel 外层 init 下以 subreaper 运行；完整 Compose 回归验证旧变量不再造成端口冲突。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ba44168` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
