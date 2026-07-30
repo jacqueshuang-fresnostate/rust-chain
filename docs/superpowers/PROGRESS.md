@@ -2,6 +2,20 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-07-31 03:31 - 审查一体化镜像启动回归修复
+
+- 完成内容：按容器交付规范复核 Dockerfile、supervisor、部署文档、任务资料和既有进度记录，未发现需要修改的启动实现或文档缺陷；确认旧 `APP_HOST`/`APP_PORT` 不能改变 Rust 内部监听，外层 Docker init 包装镜像 Tini 时无警告，直接 command 与迁移覆盖继续绕过 supervisor/Nginx，文档命令语法和本机 Compose 参数有效。
+- 修改文件：`docs/superpowers/PROGRESS.md`。
+- 验证结果：`bash -n docker/supervise.sh`、supervisor 导出顺序和 Dockerfile 入口精确断言、两份 Compose 展开及结构断言、部署文档全部 Bash 代码块语法检查、`docker buildx build --check .`、本地 `rust-chain:startup-regression` 镜像元数据/文件/用户/端口检查、镜像内 `nginx -t`、直接 command 覆盖、`cargo fmt -- --check`、`cargo check --all-targets`、`npm --prefix web run build` 和归属文件 `git diff --check` 均通过。独立 Compose 项目注入 `APP_HOST=0.0.0.0`、`APP_PORT=8080` 并设置 `init: true` 后，迁移退出码为 `0`、API healthy、宿主 `/health` 返回 `{"status":"ok"}`；精确确认 Rust 子进程持有 `127.0.0.1:8081`、Nginx 持有 `0.0.0.0:8080`，进程入口为 `docker-init → tini -s → supervisor`，日志无 Tini 非 PID 1 警告或 `Address already in use`，迁移容器未启动 supervisor/Nginx。测试容器、网络和五个专用卷已清理；`shellcheck` 未执行，因为本机未安装。后台构建仅保留既有 `lottie-web` 直接 `eval` 和大 chunk 警告。
+- 后续事项：代码尚未提交或推送；由主会话提交并推送后确认 GitHub 多架构镜像 Workflow 成功，再在实际 1Panel 编排中更新镜像并复验健康状态。
+
+## 2026-07-31 03:20 - 修复一体化镜像旧端口变量与嵌套 Tini 启动回归
+
+- 完成内容：在 supervisor 启动 Rust 前无条件导出 `APP_HOST=127.0.0.1` 与 `APP_PORT=8081`，阻止 1Panel 旧编排变量让 Rust 与 Nginx 抢占 `8080`；将镜像 Tini 入口改为 `-s --`，使其被外层 Docker init 包装时仍注册为 subreaper；保留迁移 command 直接绕过 supervisor 的行为，并补齐部署说明、可执行镜像验收步骤和容器交付规范。
+- 修改文件：`Dockerfile`、`docker/supervise.sh`、`docs/deployment/docker.md`、`.trellis/spec/backend/container-delivery.md`、`.trellis/tasks/07-31-fix-integrated-image-port-tini/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`bash -n docker/supervise.sh`、supervisor 导出顺序与 Dockerfile 入口精确断言、两份 Compose JSON 展开及迁移 command/完成门禁断言、`docker buildx build --check .`、`docker build --tag rust-chain:startup-regression .`、镜像入口/命令/用户/端口检查、镜像内 `nginx -t`、`cargo fmt -- --check`、`cargo check --all-targets`、`npm --prefix web run build` 和归属文件 `git diff --check` 均通过。隔离完整 Compose 故意注入 `APP_HOST=0.0.0.0`、`APP_PORT=8080` 并设置外层 `init: true` 后，迁移退出码为 `0`、API healthy、宿主 `/health` 返回 `{"status":"ok"}`；容器配置保留旧变量而 Rust 子进程环境已被覆盖，实际监听为 Rust `127.0.0.1:8081`、Nginx `0.0.0.0:8080`，进程树为 `docker-init → tini -s → supervisor`，日志无 Tini 非 PID 1 警告和 `Address already in use`；直接覆盖 command 未生成 Nginx PID 文件。测试容器、网络、五个数据卷和临时覆盖文件已清理。`shellcheck` 未执行，因为本机未安装；后台构建仅保留既有 `lottie-web` 直接 `eval` 和大 chunk 警告。
+- 后续事项：代码尚未提交或推送；由主会话提交并推送后确认 GitHub 多架构镜像 Workflow 成功，再在实际 1Panel 编排中更新镜像并复验健康状态。
+
 ## 2026-07-31 02:49 - 整理手机端与一体化镜像改动用于 GitHub 发布
 
 - 完成内容：汇总当前已完成的手机端 Header/配色、安全区、Android 原生越界反馈和 GSAP 启动首屏改动，以及 1Panel 外部依赖部署和 Rust/后台/Nginx 一体化镜像改动；新增可公开提交的 `docker-compose.1panel.example.yml`，全部连接信息和密钥通过环境变量注入；将本地含真实部署值的 `docker-compose.1panel.yml` 同时加入 Git 与 Docker 构建忽略规则，避免凭据进入仓库或镜像上下文。

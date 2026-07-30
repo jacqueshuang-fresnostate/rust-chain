@@ -21,6 +21,9 @@ stop_children() {
 
 trap stop_children HUP INT QUIT TERM
 
+export APP_HOST=127.0.0.1
+export APP_PORT=8081
+
 /usr/local/bin/exchange-api &
 api_pid=$!
 

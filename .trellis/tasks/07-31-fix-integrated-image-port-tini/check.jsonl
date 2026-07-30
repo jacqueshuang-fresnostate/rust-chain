@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/container-delivery.md", "reason": "Verify the image still satisfies the complete listener, process, migration, and Compose runtime contract."}
+{"file": ".trellis/tasks/07-31-fix-integrated-image-port-tini/research/root-cause.md", "reason": "Verify the regression test actually covers stale environment values and nested init behavior."}

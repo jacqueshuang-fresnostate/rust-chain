@@ -7,9 +7,16 @@
 - `/usr/share/nginx/html`：由 `web/` 锁定依赖构建的后台管理与代理门户静态资源。
 - Nginx：在 `0.0.0.0:8080` 提供 SPA、`/uploads/` 静态文件，并把后端路径转发给 Rust。
 
-默认命令由 Tini 启动 supervisor，同时监管 Rust 与 Nginx；任一进程退出时都会终止另一
-进程并退出容器。运行阶段整体使用非 root 用户（UID/GID `10001`），并通过镜像内置的
-`GET http://127.0.0.1:8080/health` 健康检查经 Nginx 确认 Rust API 状态。
+默认命令由启用 subreaper 模式的 Tini 启动 supervisor，同时监管 Rust 与 Nginx；任一
+进程退出时都会终止另一进程并退出容器。Tini 既可直接作为 PID 1，也可被 1Panel 或
+Docker 自动提供的外层 init 包装。运行阶段整体使用非 root 用户（UID/GID `10001`），
+并通过镜像内置的 `GET http://127.0.0.1:8080/health` 健康检查经 Nginx 确认 Rust API
+状态。
+
+supervisor 在启动 Rust 前会无条件导出 `APP_HOST=127.0.0.1` 和 `APP_PORT=8081`。
+因此旧编排或平台即使注入 `APP_HOST=0.0.0.0`、`APP_PORT=8080`，也不能改变一体化镜像
+内部的监听边界或与 Nginx 抢占 `8080`。Compose 示例仍显式声明正确值，作为可读部署
+合同。
 
 Nginx 会把 `/health`、`/api/v1/*`、`/admin/api/v1/*`、`/agent/api/v1/*`、
 `/ws/*`、`/events/*`、`/docs`、`/openapi.json`、`/api/docs` 和
@@ -187,7 +194,75 @@ docker run --rm \
 启动默认集成服务时，使用 `--env-file` 提供与
 [`docker-compose.env.example`](../../docker-compose.env.example) 等价的运行时配置，
 并确保 MySQL、MongoDB、Redis 和 RabbitMQ 已可访问。不要覆盖镜像命令即可由 Tini 和
-supervisor 同时启动 Nginx 与 Rust。
+supervisor 同时启动 Nginx 与 Rust。覆盖镜像 command 时，Tini 会直接执行指定命令，
+不会先启动 supervisor；因此上面的迁移命令只运行 `exchange-migrate`，不会启动 Nginx。
+
+## 启动回归镜像验收
+
+仓库没有独立的容器轻量测试框架。发布前可用完整 Compose 执行以下回归验收；临时覆盖
+会故意注入旧监听变量并启用外层 Docker init：
+
+```bash
+docker build --tag rust-chain:startup-regression .
+
+startup_override="$(mktemp)"
+cat >"$startup_override" <<'YAML'
+services:
+  api:
+    init: true
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: "8080"
+YAML
+
+export EXCHANGE_IMAGE=rust-chain:startup-regression
+export API_PORT=18080
+docker compose \
+  --project-name exchange-startup-regression \
+  --env-file docker-compose.env.example \
+  -f docker-compose.example.yml \
+  -f "$startup_override" \
+  up --detach --wait
+
+curl --fail http://127.0.0.1:18080/health
+docker compose \
+  --project-name exchange-startup-regression \
+  --env-file docker-compose.env.example \
+  -f docker-compose.example.yml \
+  -f "$startup_override" \
+  exec --no-TTY api bash -Eeuo pipefail -c '
+    grep --quiet "0100007F:1F91" /proc/net/tcp
+    grep --quiet "00000000:1F90" /proc/net/tcp
+    ! grep --quiet "00000000:1F91" /proc/net/tcp
+  '
+if docker compose \
+  --project-name exchange-startup-regression \
+  --env-file docker-compose.env.example \
+  -f docker-compose.example.yml \
+  -f "$startup_override" \
+  logs api | grep --fixed-strings "Tini is not running as PID 1"; then
+  exit 1
+fi
+
+docker image inspect rust-chain:startup-regression \
+  --format '{{json .Config.Entrypoint}} {{json .Config.Cmd}}'
+docker run --rm rust-chain:startup-regression \
+  /bin/bash -Eeuo pipefail -c 'test ! -e /tmp/exchange-nginx/nginx.pid'
+
+docker compose \
+  --project-name exchange-startup-regression \
+  --env-file docker-compose.env.example \
+  -f docker-compose.example.yml \
+  -f "$startup_override" \
+  down --volumes
+rm -f "$startup_override"
+```
+
+监听断言中的 `/proc/net/tcp` 十六进制地址分别对应 `127.0.0.1:8081`、
+`0.0.0.0:8080` 和禁止出现的 `0.0.0.0:8081`。镜像检查应显示入口为
+`["/usr/bin/tini","-s","--"]`，默认命令为
+`["/usr/local/bin/exchange-supervisor"]`；command 覆盖检查则确认不会生成 Nginx PID
+文件。
 
 ## 私有 GHCR 包登录
 

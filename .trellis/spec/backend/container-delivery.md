@@ -13,7 +13,8 @@
 
 ### 2. Signatures
 
-- Entrypoint: `/usr/bin/tini --`, which remains PID 1 for signal forwarding and child reaping.
+- Entrypoint: `/usr/bin/tini -s --`, which forwards signals and acts as a child subreaper whether it
+  is PID 1 or is nested below a platform-provided init.
 - Default command: `/usr/local/bin/exchange-supervisor`, which starts and monitors Rust plus Nginx.
 - Public listener: Nginx on `0.0.0.0:8080`.
 - Internal listener: `/usr/local/bin/exchange-api` on `127.0.0.1:8081`.
@@ -37,8 +38,12 @@
   complete runtime can remain non-root.
 - The supervisor must terminate the sibling process and exit whenever Rust or Nginx exits. Compose
   restart policy then restarts the complete application boundary.
-- Compose must not set `init: true`; the image already supplies Tini and nested init processes emit
-  warnings and obscure the PID 1 contract.
+- Before starting Rust, the supervisor must unconditionally export `APP_HOST=127.0.0.1` and
+  `APP_PORT=8081`. Stale deployment environment values must never alter the integrated image's
+  internal listener contract.
+- Compose examples must not set `init: true` because the image already supplies Tini. Tini must use
+  subreaper mode so an unavoidable 1Panel or Docker outer init remains supported without a
+  non-PID-1 warning or child-reaping gap.
 - Required API environment keys are `DATABASE_URL`, `MONGODB_URI`, `MONGODB_DATABASE`,
   `REDIS_URL`, `RABBITMQ_URL`, `JWT_SECRET`, and `CREDENTIAL_ENCRYPTION_KEY`.
 - `CREDENTIAL_ENCRYPTION_KEY` must remain exactly 32 bytes and stable after encrypted data exists.
@@ -85,6 +90,8 @@
 | A browser opens `/login`, `/admin/*`, or `/agent/*` | Return the built SPA `index.html` |
 | An API, WebSocket, event, or documentation path is requested | Proxy to Rust; never return the SPA fallback |
 | Rust or Nginx exits | Supervisor terminates its sibling and exits so Compose can restart the container |
+| Stale `APP_HOST=0.0.0.0` and `APP_PORT=8080` reach the default container | Supervisor replaces them and Rust listens only on `127.0.0.1:8081` |
+| A platform-provided init wraps image Tini | Tini registers as a subreaper and emits no non-PID-1 warning |
 | The migration command overrides the default command | Run only `exchange-migrate`; do not start Nginx or the supervisor |
 | A pull request runs the workflow | Build both platforms on native runners, never log in or push |
 | `main`, `v*`, or manual dispatch runs the workflow | Push both platform digests, then create and tag one manifest |
@@ -102,8 +109,9 @@
 - Base: run the local image with all four external dependencies and the required environment keys;
   access browser pages and API paths through the same origin.
 - Bad: start the API and migration in parallel, use `depends_on` without health/completion
-  conditions, expose Rust port `8081`, add Compose `init: true`, commit `docker-compose.env`, run
-  the final container as root, or serialize both architectures through QEMU on one x86 runner.
+  conditions, let injected `APP_HOST` or `APP_PORT` override the supervisor-owned listener, expose
+  Rust port `8081`, add redundant Compose `init: true`, commit `docker-compose.env`, run the final
+  container as root, or serialize both architectures through QEMU on one x86 runner.
 - Bad (1Panel): redefine MySQL or Redis in the application Compose, hard-code secrets in YAML,
   assume App Store container names, expose port `8080` publicly without intent, or treat a
   successfully exited migration container as a failure.
@@ -112,7 +120,8 @@
 
 - Run `cargo fmt -- --check` and `cargo check --all-targets`.
 - Run `npm --prefix web run build` and verify a clean Docker `npm ci` succeeds from the lockfile.
-- Run `bash -n docker/supervise.sh` and `nginx -t` against the image configuration.
+- Run `bash -n docker/supervise.sh`; assert it unconditionally exports `APP_HOST=127.0.0.1` and
+  `APP_PORT=8081` before starting Rust; run `nginx -t` against the image configuration.
 - Parse the workflow and assert triggers, exact per-job permissions, native platform matrix,
   local checkout context, per-platform digest export, artifact merge, tags, cache scopes, registry
   authentication, and push policy.
@@ -128,11 +137,15 @@
   values.
 - Build the image and assert UID/GID, both Rust executable paths, Tini entrypoint, supervisor command,
   built `index.html`, Nginx config, health check, exposed port `8080`, and writable runtime paths.
+- Assert the image entrypoint is exactly `["/usr/bin/tini","-s","--"]` and a direct migration
+  command override bypasses the supervisor and Nginx.
 - Start a fresh Compose project and assert dependency health, migration exit `0`, every SQLx
   migration marked successful, and access through Nginx to `GET /health`, `/login`, a deep admin
   route, an API or WebSocket route, and a test file under `/uploads/`.
-- Kill one supervised child and assert the complete container restarts, PID 1 remains Tini, and
-  `/health` recovers without a nested-Tini warning.
+- Inject stale `APP_HOST=0.0.0.0` and `APP_PORT=8080` values while starting the API with an outer
+  Docker init. Assert Rust listens only on `127.0.0.1:8081`, Nginx owns `0.0.0.0:8080`, `/health`
+  succeeds, and no non-PID-1 Tini warning is logged.
+- Kill one supervised child and assert the complete container restarts and `/health` recovers.
 
 ### 7. Wrong vs Correct
 
@@ -152,9 +165,9 @@ process shutdown.
 ```dockerfile
 ENV APP_HOST=127.0.0.1 APP_PORT=8081
 EXPOSE 8080
-ENTRYPOINT ["/usr/bin/tini", "--"]
+ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
 CMD ["/usr/local/bin/exchange-supervisor"]
 ```
 
-Nginx is the only public listener, Tini remains PID 1, and the supervisor treats Rust plus Nginx as
-one restartable application.
+Nginx is the only public listener, Tini remains a subreaper even when nested, and the supervisor
+treats Rust plus Nginx as one restartable application.

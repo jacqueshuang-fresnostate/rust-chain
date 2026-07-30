@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/container-delivery.md", "reason": "Defines the integrated Nginx/Rust listener, Tini, supervisor, migration override, and Compose contracts."}
+{"file": ".trellis/tasks/07-31-fix-integrated-image-port-tini/research/root-cause.md", "reason": "Documents the stale APP_PORT and nested init root cause plus required validation scenario."}

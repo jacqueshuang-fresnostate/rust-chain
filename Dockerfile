@@ -77,5 +77,5 @@ STOPSIGNAL SIGTERM
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \
     CMD ["curl", "--fail", "--silent", "--show-error", "--max-time", "5", "http://127.0.0.1:8080/health"]
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
+ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
 CMD ["/usr/local/bin/exchange-supervisor"]
