@@ -2,6 +2,13 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-07-31 03:36 - 发布一体化镜像启动修复
+
+- 完成内容：提交并推送一体化镜像固定内部端口和 Tini subreaper 修复，归档 Trellis 任务并记录会话；GitHub Workflow 已重新发布 `latest` 多架构镜像。
+- 修改文件：`docs/superpowers/PROGRESS.md`；功能提交 `ba44168`，任务归档提交 `ed83c1d`，会话提交 `ed76430`。
+- 验证结果：GitHub Actions 运行 `30575427599` 成功；原生 ARM64 构建、原生 AMD64 构建和 multi-platform manifest 发布均为 success。Workflow 仅报告 `actions/download-artifact@v4` 的 Node.js 20 弃用提醒，不影响镜像构建或发布。
+- 后续事项：在目标 1Panel 拉取 `ghcr.io/jacqueshuang-fresnostate/rust-chain:latest` 并强制重建 `migrate` 与 `api`，确认 `/health` 正常且日志不再出现端口占用和 Tini 警告；预测市场 `default_settlement_mode` 的 `VARBINARY` 解码警告属于独立数据库兼容问题。
+
 ## 2026-07-31 03:31 - 审查一体化镜像启动回归修复
 
 - 完成内容：按容器交付规范复核 Dockerfile、supervisor、部署文档、任务资料和既有进度记录，未发现需要修改的启动实现或文档缺陷；确认旧 `APP_HOST`/`APP_PORT` 不能改变 Rust 内部监听，外层 Docker init 包装镜像 Tini 时无警告，直接 command 与迁移覆盖继续绕过 supervisor/Nginx，文档命令语法和本机 Compose 参数有效。
