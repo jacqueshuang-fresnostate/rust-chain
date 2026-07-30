@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/container-delivery.md", "reason": "Container image, Compose, migration, workflow, and runtime contracts"}
+{"file": ".trellis/tasks/07-30-integrated-admin-nginx-image/research/container-architecture.md", "reason": "Chosen single-image Nginx and API architecture"}

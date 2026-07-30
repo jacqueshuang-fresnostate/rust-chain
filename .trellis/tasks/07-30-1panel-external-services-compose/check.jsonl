@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/container-delivery.md", "reason": "Verify entrypoints, environment keys, migration ordering, image, health, network, and persistence contracts."}
+{"file": ".trellis/tasks/07-30-1panel-external-services-compose/research/onepanel-compose.md", "reason": "Verify the resulting Compose remains importable by 1Panel and does not own third-party services."}

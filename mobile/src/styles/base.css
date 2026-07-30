@@ -40,6 +40,7 @@
   --layer-route-transition: 40;
   --layer-sticky-header: 50;
   --layer-overlay: 80;
+  --layer-launch: 120;
   --motion-fast: 120ms;
   --motion-medium: 170ms;
   --motion-ease: cubic-bezier(.2, .7, .25, 1);
@@ -87,6 +88,11 @@
 
 * {
   box-sizing: border-box;
+}
+
+html,
+body {
+  overscroll-behavior: none;
 }
 
 html {

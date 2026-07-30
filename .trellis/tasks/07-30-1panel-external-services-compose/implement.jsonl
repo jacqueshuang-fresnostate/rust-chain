@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/container-delivery.md", "reason": "Preserve backend image entrypoints, required environment, migration gating, runtime user, health endpoint, and uploads persistence."}
+{"file": ".trellis/tasks/07-30-1panel-external-services-compose/research/onepanel-compose.md", "reason": "Use the verified 1Panel Compose import, environment, external-network, and reverse-proxy deployment model."}

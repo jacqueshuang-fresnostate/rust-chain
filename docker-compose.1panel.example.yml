@@ -1,0 +1,69 @@
+x-common-environment: &common-environment
+  # MySQL 完整连接地址，由 1Panel 环境变量或 env 文件注入。
+  DATABASE_URL: ${DATABASE_URL:?请设置 DATABASE_URL}
+  # Rust 日志级别，生产环境建议使用 info。
+  RUST_LOG: ${RUST_LOG:-info}
+
+x-api-environment: &api-environment
+  <<: *common-environment
+  APP_ENV: production
+  # Rust 只在容器回环地址监听，由同镜像内的 Nginx 转发。
+  APP_HOST: 127.0.0.1
+  APP_PORT: "8081"
+  MONGODB_URI: ${MONGODB_URI:?请设置 MONGODB_URI}
+  MONGODB_DATABASE: ${MONGODB_DATABASE:?请设置 MONGODB_DATABASE}
+  REDIS_URL: ${REDIS_URL:?请设置 REDIS_URL}
+  RABBITMQ_URL: ${RABBITMQ_URL:?请设置 RABBITMQ_URL}
+  JWT_SECRET: ${JWT_SECRET:?请设置 JWT_SECRET}
+  CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?请设置 CREDENTIAL_ENCRYPTION_KEY}
+  BITGET_REST_BASE_URL: ${BITGET_REST_BASE_URL:-https://api.bitget.com}
+  BITGET_WS_URL: ${BITGET_WS_URL:-wss://ws.bitget.com/v2/ws/public}
+  HTX_REST_BASE_URL: ${HTX_REST_BASE_URL:-https://api.huobi.pro}
+  HTX_WS_URL: ${HTX_WS_URL:-wss://api.huobi.pro/ws}
+
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-file: ${LOG_MAX_FILE:-5}
+    max-size: ${LOG_MAX_SIZE:-20m}
+
+services:
+  migrate:
+    image: ${EXCHANGE_IMAGE:-ghcr.io/jacqueshuang-fresnostate/rust-chain:latest}
+    container_name: ${MIGRATE_CONTAINER_NAME:-hippo-exchange-migrate}
+    restart: "no"
+    command: ["/usr/local/bin/exchange-migrate"]
+    environment: *common-environment
+    logging: *default-logging
+    networks:
+      - onepanel
+
+  api:
+    image: ${EXCHANGE_IMAGE:-ghcr.io/jacqueshuang-fresnostate/rust-chain:latest}
+    container_name: ${API_CONTAINER_NAME:-hippo-exchange-api}
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment: *api-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    expose:
+      - "8080"
+    ports:
+      - "${API_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8080}:8080"
+    volumes:
+      - uploads-data:/app/uploads
+    logging: *default-logging
+    networks:
+      onepanel:
+        aliases:
+          - hippo-exchange-api
+
+volumes:
+  uploads-data:
+    name: ${UPLOADS_VOLUME:-hippo-exchange-uploads}
+
+networks:
+  onepanel:
+    name: ${ONEPANEL_NETWORK:-1panel-network}
+    external: true

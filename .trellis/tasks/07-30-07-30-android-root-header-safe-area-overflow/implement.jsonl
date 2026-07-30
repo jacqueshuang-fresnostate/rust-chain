@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "Production RootHeader geometry, 44px control, responsive overflow, and mobile validation contracts."}
+{"file": ".trellis/tasks/07-30-07-30-android-root-header-safe-area-overflow/research/device-layout.md", "reason": "Measured TAS-AL00 WebView safe-area, Header, brand, action, and overflow geometry before the fix."}

@@ -26,7 +26,7 @@ test('共享视觉令牌固定为 448px 冷中性双主题与低圆角', () => {
   assert.match(baseCss, /--signal-coral:/)
   assert.match(baseCss, /--data-font:/)
   assert.match(baseCss, /:root\[data-theme='dark'\]/)
-  assert.match(prototypeCss, /\.app-stage\.theme-light\s*\{[\s\S]*?--page:\s*#fbfcfa/)
+  assert.match(parityCss, /\.app-stage\.theme-light\s*\{[\s\S]*?--page:\s*#f6f8fb/)
 })
 
 test('共享输入把可见焦点提升到容器且清除嵌套输入内框', () => {
@@ -34,6 +34,16 @@ test('共享输入把可见焦点提升到容器且清除嵌套输入内框', ()
   assert.match(baseCss, /:is\(input,\s*select,\s*textarea\):focus-visible/)
   assert.match(baseCss, /box-shadow:\s*none/)
   assert.match(baseCss, /outline:\s*0/)
+  assert.match(parityCss, /background:\s*color-mix\(in srgb,\s*var\(--focus\)\s*5%,\s*var\(--surface\)\)/)
+  assert.match(parityCss, /border-color:\s*var\(--focus\)/)
+  assert.match(parityCss, /inset 3px 0 0 var\(--focus\)/)
+})
+
+test('二级页分组标题不再继承旧页面的背景型 soft 令牌', () => {
+  assert.match(
+    parityCss,
+    /\.app-stage \.mobile-canvas \.group-title\s*\{[\s\S]*?color:\s*var\(--text\)/,
+  )
 })
 
 test('路由转场被内容栈隔离，根头部与异形导航保持独立层级', () => {

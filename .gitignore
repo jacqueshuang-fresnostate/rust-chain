@@ -3,6 +3,8 @@
 .env.*
 !.env.example
 /docker-compose.env
+/docker-compose.1panel.env
+/docker-compose.1panel.yml
 
 # Rust
 /target/

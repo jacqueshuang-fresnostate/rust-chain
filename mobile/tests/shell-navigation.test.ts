@@ -42,7 +42,7 @@ test('导航触控和头部层级由受检原型 CSS 统一提供', () => {
   assert.match(baseStyles, /--bottom-nav-height:\s*84px/)
   assert.match(prototypeStyles, /\.bottom-nav button:focus-visible span\s*\{[\s\S]*?outline:\s*2px solid var\(--cyan\)/)
   assert.match(baseStyles, /html\s*\{[\s\S]*scrollbar-width:\s*none/)
-  assert.match(rootHeaderSource, /class="topbar"/)
+  assert.match(rootHeaderSource, /class="topbar root-header"/)
   assert.match(prototypeStyles, /\.topbar,[\s\S]*?\.secondary-header\s*\{[\s\S]*?z-index:\s*70/)
   assert.match(pageHeaderSource, /class="secondary-header page-header"/)
   assert.match(prototypeStyles, /Signal Theatre final secondary-surface contract[\s\S]*?\.secondary-header\s*\{[\s\S]*?min-height:\s*76px/)

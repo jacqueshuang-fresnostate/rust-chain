@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import AppBottomNav from '@/components/AppBottomNav.vue'
+import LaunchIntro from '@/components/LaunchIntro.vue'
 import PwaStatus from '@/components/PwaStatus.vue'
 import RootHeader from '@/components/RootHeader.vue'
 import SignalField from '@/components/SignalField.vue'
@@ -81,6 +82,7 @@ onUnmounted(() => window.removeEventListener('hippo-mobile-auth-expired', handle
       :class="{ 'app-frame--with-bottom-nav': showBottomNav }"
       :data-surface="showBottomNav ? rootSurface : 'protected'"
     >
+      <LaunchIntro />
       <div v-if="showSignalField" class="ambient-layer" aria-hidden="true">
         <SignalField :light="!theme.isDark" />
       </div>

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "Verify Header geometry, 44px controls, responsive overflow, visual roles, and required mobile quality gate."}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "Verify meta theme-color and PWA/Tauri mode separation remain intact."}

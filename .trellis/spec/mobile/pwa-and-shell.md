@@ -288,3 +288,46 @@ resolveRootRouteKey('seconds', undefined) // incorrectly treated as a motion roo
 resolveRootRouteKey('markets', undefined, 'trade') // null: secondary tier
 resolveRootRouteKey('seconds', undefined) // null: raised secondary action
 ```
+
+## Launch Intro Contract
+
+- The production mobile shell may mount one decorative `LaunchIntro` above all
+  shell layers. It must use the official GSAP package and the existing HIPPO
+  brand asset rather than a duplicated animation engine or remote media.
+- Use a versioned `sessionStorage` key so the intro plays once per app session.
+  Mark the session when playback starts; route changes must never replay it.
+  Storage access failures must not block the application.
+- The application, router, authentication, stores, and API requests initialize
+  behind the intro without awaiting it. The intro is visual presentation only,
+  uses `aria-hidden="true"`, and adds no focusable controls.
+- Normal motion lasts about two seconds and exits by revealing the live route.
+  `prefers-reduced-motion: reduce` skips immediately. Completion and unmount
+  must both kill the GSAP timeline, revert its context, and remove scroll lock.
+- The fixed launch layer must use the highest shell layer, cover safe areas,
+  avoid horizontal overflow from 320px through 448px, and remain independent
+  of light/dark application surfaces.
+
+## Root Scroll Boundary Contract
+
+- The document remains the root vertical scroll owner. Apply
+  `overscroll-behavior: none` to both `html` and `body` so browser and PWA
+  surfaces do not stretch or chain at the top and bottom boundaries.
+- CSS scroll-boundary policy does not replace the Android host policy.
+  Android 12+ WebView may keep `scrollY` clamped while its native EdgeEffect
+  temporarily stretches the composed page. The Tauri `MainActivity` must
+  override `onWebViewCreate`, call its parent implementation, and set
+  `webView.overScrollMode = View.OVER_SCROLL_NEVER`.
+- `src-tauri/gen/` is generated and ignored. Keep the application-owned
+  `MainActivity` template under tracked source and synchronize it before
+  Android build/dev commands and after a successful Android init. Never make a
+  generated Wry or Tauri base class the source of truth for this policy.
+- Do not replace the root policy with global `touch-action`, JavaScript
+  `touchmove` cancellation, fixed document heights, or `overflow-y: hidden`.
+  Normal vertical and inertial scrolling, sticky headers, input interaction,
+  and chart gestures must remain browser-owned.
+- Nested sheets may keep their local `overflow-y: auto` and
+  `overscroll-behavior: contain` contracts. The root rule must not convert
+  those workflow surfaces into document scrolling.
+- Android verification must inspect the compiled `MainActivity` callback and,
+  when a device is available, test the visual state during an in-progress
+  boundary drag. Checking only the final JavaScript `scrollY` is insufficient.

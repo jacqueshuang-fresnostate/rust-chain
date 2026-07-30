@@ -1,0 +1,4 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/mobile/index.md", "reason": "Mobile shared UI and validation rules"}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "Root shell, PWA and Tauri behavior contract"}
+{"file": ".trellis/tasks/07-30-07-30-mobile-scroll-overscroll/research/diagnosis.md", "reason": "Observed root scroll owner and minimal CSS fix"}

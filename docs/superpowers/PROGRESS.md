@@ -2,6 +2,104 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-07-31 02:49 - 整理手机端与一体化镜像改动用于 GitHub 发布
+
+- 完成内容：汇总当前已完成的手机端 Header/配色、安全区、Android 原生越界反馈和 GSAP 启动首屏改动，以及 1Panel 外部依赖部署和 Rust/后台/Nginx 一体化镜像改动；新增可公开提交的 `docker-compose.1panel.example.yml`，全部连接信息和密钥通过环境变量注入；将本地含真实部署值的 `docker-compose.1panel.yml` 同时加入 Git 与 Docker 构建忽略规则，避免凭据进入仓库或镜像上下文。
+- 修改文件：手机端源码、测试、Android Activity 覆盖和 Trellis 规范/任务；`Dockerfile`、`docker/`、`docker-compose.example.yml`、`docker-compose.1panel.example.yml`、`docker-compose.1panel.env.example`、`.gitignore`、`.dockerignore`、后台锁文件、容器部署文档及 `docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt -- --check`、`cargo check --all-targets`、手机端 `npm run type-check` 与全量测试 163/163、后台 `npm run build`、supervisor Bash 语法、完整 Compose 和公开 1Panel Compose 展开及结构断言、`git diff --check` 均通过；提交候选与本地 1Panel 配置中的 6 项敏感连接/密钥逐值比对为零命中，本地生产 Compose 确认为 ignored。后台构建仅保留既有 `lottie-web` 直接 `eval` 与大 chunk 警告。
+- 后续事项：推送 `main` 后由现有 GitHub Workflow 在原生 AMD64/ARM64 runner 上构建并发布一体化 GHCR 镜像，需在 GitHub Actions 页面确认本次远端构建结果。
+
+## 2026-07-30 23:25 - 重新安装最新 Android 应用
+
+- 完成内容：确认已连接的 vivo `V2301A` 可通过 ADB 访问；现有 Debug APK 生成时间晚于最新手机端源码，因此未重复构建，直接使用 `adb install -r` 覆盖安装并保留应用数据，随后强制重启 HIPPO 手机端。
+- 修改文件：`docs/superpowers/PROGRESS.md`；安装产物 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`。
+- 验证结果：ADB 设备序列号 `10AD5T22KU0010P` 状态为 `device`；流式覆盖安装返回 `Success`；`com.hippo.exchange.mobile/.MainActivity` 为 `topResumedActivity` 且窗口可见，进程 PID `28034`；APK 大小 `236478592` bytes，SHA-256 为 `bf5b0e352b6c5203b484cc372a79737f9a4bb50ebed466c43529731108dc836f`。
+- 后续事项：无。
+
+## 2026-07-30 20:55 - 构建 Rust 与后台前端一体化 Nginx 镜像
+
+- 完成内容：将 `web/` 后台管理与代理门户加入业务镜像的独立 Node 锁定构建阶段，最终 Debian 镜像同时包含后台静态资源、Rust API/迁移器、Nginx、Tini 和进程监管脚本；Nginx 统一监听 `0.0.0.0:8080`，提供 SPA history fallback 与 `/uploads/`，并转发健康检查、三组 API、WebSocket、事件和 OpenAPI 路径到仅监听 `127.0.0.1:8081` 的 Rust；任一常驻进程退出时整体容器退出并由 Compose 重启；完整 Compose 与 1Panel Compose 保持外部端口 `8080`、迁移命令覆盖和迁移完成门禁，移除重复的 Compose init；补齐后台锁文件缺失的可选传递依赖以及一体化部署文档和可执行规范。
+- 修改文件：`Dockerfile`、`docker/nginx.conf`、`docker/supervise.sh`、`docker-compose.example.yml`、`docker-compose.1panel.yml`、`web/package-lock.json`、`docs/deployment/docker.md`、`.trellis/spec/backend/container-delivery.md`、`.trellis/tasks/archive/2026-07/07-30-integrated-admin-nginx-image/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt -- --check`、`cargo check --all-targets`、`npm --prefix web run build`、两份 Compose 完整展开与结构断言、GitHub 原生双架构 workflow 静态合同、supervisor Bash 语法、Trellis context 和归属文件 `git diff --check` 均通过；本地镜像 `sha256:cb84c391d56b3f573ff794db52de88a10e92d1b6d3e226c4d4be47396785fbde` 构建成功，大小 `187542639` bytes，运行用户 `10001:10001`，只公开 `8080/tcp`，Nginx 配置检查与迁移命令覆盖通过；隔离完整依赖栈中 migration 退出码为 `0`、API healthy，`/health`、`/login`、深层后台路由、OpenAPI、WebSocket 转发和 `/uploads/` 均通过，杀死 Nginx 后容器完整重启一次并恢复健康，PID 1 保持 Tini且无嵌套 Tini 警告；临时容器、网络和数据卷已清理。
+- 后续事项：后台生产构建仍有既有的 `lottie-web` 直接 `eval` 和大 chunk 警告，`npm audit` 报告 7 项依赖风险（1 low、1 moderate、5 high），不阻塞本次镜像发布，但应作为独立前端依赖治理任务处理。
+
+## 2026-07-30 19:18 - 修复 1Panel 外部依赖 DNS 配置
+
+- 完成内容：根据用户服务器 `docker ps` 中的实际容器名称和后端启动顺序定位故障；确认迁移成功后 API 按 MySQL、MongoDB、Redis、RabbitMQ 顺序初始化，因此当前错误发生在 MongoDB DNS 阶段；保留已匹配的 `mysql`、`mongo`、`redis`，将 Compose 中不存在的 RabbitMQ 主机名 `rabbit` 修正为实际容器名 `rabbitmq`；明确运行时还需将三个外部依赖容器加入 `1panel-network`。
+- 修改文件：`docker-compose.1panel.yml`、`.trellis/tasks/archive/2026-07/07-30-fix-1panel-dependency-dns/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`docker compose -f docker-compose.1panel.yml config --quiet` 通过；展开配置断言确认四项依赖主机名依次为 `mysql`、`mongo`、`redis`、`rabbitmq`，API 继续等待迁移成功；Trellis context 校验和归属文件 `git diff --check` 通过。无法从本机直接操作用户 1Panel 服务器，外部容器接入网络和 API 重启需在服务器执行。
+- 后续事项：在服务器执行 `docker network connect 1panel-network mongo`、`docker network connect 1panel-network redis`、`docker network connect 1panel-network rabbitmq`，然后重新部署更新后的 Compose；若命令提示 endpoint 已存在，表示该容器已在目标网络，可继续下一项。
+
+## 2026-07-30 18:28 - 修复用户更新的 1Panel Compose
+
+- 完成内容：基于用户刚更新的部署值修复 `docker-compose.1panel.yml`；新增 `x-common-environment` 公共锚点集中保存 `DATABASE_URL` 与 `RUST_LOG`，让 API 通过 YAML merge 继承并让迁移器直接复用，避免迁移器继续从宿主机解析不存在的 `${DATABASE_URL}`；将误写的外部网络 `-1panel-network` 修正为 `1panel-network`；保留用户现有镜像、容器名、第三方服务地址、宿主机端口 `18003` 和上传目录 `/hipoex/uploads`。
+- 修改文件：`docker-compose.1panel.yml`、`.trellis/tasks/archive/2026-07/07-30-fix-updated-1panel-compose/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`docker compose -f docker-compose.1panel.yml config --quiet` 通过且不再要求外部环境变量；展开配置结构断言通过，确认仅有 `api`/`migrate`、两者 `DATABASE_URL` 与 `RUST_LOG` 一致、API 等待迁移成功、外部网络名为 `1panel-network`、宿主机 `18003` 映射容器 `8080`、凭据加密密钥长度为 32 bytes；源码回归断言和 `git diff --check` 通过。本机沙箱无权访问 OrbStack Docker socket，未连接实际 1Panel 外部网络或启动生产容器。
+- 后续事项：部署前确认 MySQL、MongoDB、Redis、RabbitMQ 均已加入 `1panel-network`，且容器网络别名分别与配置中的 `mysql`、`mongo`、`redis`、`rabbit` 一致；当前 YAML 含用户填写的真实连接凭据与密钥，不应提交到 GitHub，已在对话中暴露的凭据应按数据兼容性要求更换。
+
+## 2026-07-30 18:17 - 修复 1Panel 迁移器环境变量缺失
+
+- 完成内容：定位用户把数据库地址直接填写在 `x-api-environment` 后，`migrate` 仍单独解析 `${DATABASE_URL}` 导致 1Panel 报环境变量不存在；新增 `x-common-environment`，集中定义 `DATABASE_URL` 与 `RUST_LOG`，API 通过 YAML merge 继承，迁移器直接复用同一锚点，消除两处配置漂移；补充中文说明和案例，明确 YAML 锚点不会注册 Compose 插值变量、直接填写时应修改公共锚点，并提醒外部网络名不能误写为 `-1panel-network`；未保存用户粘贴的任何真实凭据。
+- 修改文件：`docker-compose.1panel.yml`、`docs/deployment/docker.md`、`.trellis/spec/backend/container-delivery.md`、`.trellis/tasks/07-30-1panel-shared-environment-anchor/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`docker compose --env-file docker-compose.1panel.env.example -f docker-compose.1panel.yml config --quiet` 通过；展开配置断言服务仅含 `api`/`migrate`、两者 `DATABASE_URL` 与 `RUST_LOG` 完全相同、API 保留 `service_completed_successfully` 门禁且外部网络有效；用户粘贴的数据库、Redis 和密钥值在交付文件中零命中；归属文件 `git diff --check` 通过。
+- 后续事项：用户粘贴到对话中的数据库、Redis、JWT 和凭据加密密钥应视为已暴露并更换；若旧凭据已使用该加密密钥保存，变更前需先规划数据重新加密，不能直接替换后导致历史数据无法解密。
+
+## 2026-07-30 17:57 - 补齐 1Panel 全部环境变量案例
+
+- 完成内容：在 `docker-compose.1panel.env.example` 中为全部 21 个环境变量逐项增加明确的中文“示例”行，覆盖镜像、网络、容器名、端口、数据卷、MySQL、MongoDB、Redis、RabbitMQ、JWT、32 字符凭据密钥、行情源和日志轮转；同步在 `docker-compose.1panel.yml` 的环境变量、镜像、容器名、端口、网络和数据卷注释中加入对应案例；所有密码与密钥均继续使用 `change-me` 安全占位值，未修改 Compose 的变量引用、默认值或运行行为。
+- 修改文件：`docker-compose.1panel.yml`、`docker-compose.1panel.env.example`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：环境示例变量赋值 21 项、“示例”注释 21 项，数量一一对应；`docker compose --env-file docker-compose.1panel.env.example -f docker-compose.1panel.yml config --quiet` 通过；归属文件 `git diff --check` 通过。
+- 后续事项：无。
+
+## 2026-07-30 17:45 - 补充 1Panel Compose 环境变量中文注释
+
+- 完成内容：为 `docker-compose.1panel.yml` 的 API 运行环境、迁移器环境、日志轮转、外部网络和上传卷补充中文用途及安全说明；将 `docker-compose.1panel.env.example` 原有英文说明完整改为中文，并为镜像、容器名、端口、数据卷、四项外部依赖连接 URL、JWT、凭据加密密钥、行情源和日志配置逐项补充格式、取值与注意事项；未修改任何变量名、默认值、服务、依赖关系或部署行为。
+- 修改文件：`docker-compose.1panel.yml`、`docker-compose.1panel.env.example`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`docker compose --env-file docker-compose.1panel.env.example -f docker-compose.1panel.yml config --quiet` 通过；两个配置文件的中文注释扫描通过；归属文件 `git diff --check` 通过。
+- 后续事项：无。
+
+## 2026-07-30 15:31 - 完成 Android WebView 边界拉伸真机交付
+
+- 完成内容：目标华为 TAS-AL00 重新上线后，将包含 `View.OVER_SCROLL_NEVER` 的最新 Debug APK 通过非流式 ADB 覆盖安装；确认旧进程完全退出后执行可信冷启动；连接真实 Android WebView，把首页分别精确置于顶部和底部，使用 3 秒持续越界拖动并在手势进行中采集画面，与各自静止基准帧比较；确认 Header、正文边缘和底栏始终保持原几何，没有整页弹性拉伸或空白露出，最后把页面恢复到顶部并移除临时调试端口。
+- 修改文件：`.trellis/tasks/07-30-android-webview-native-overscroll/research/bug-analysis.md`、`docs/superpowers/PROGRESS.md`；安装产物 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`。
+- 验证结果：ADB 目标为 `JTK0219A16000297`、型号 `TAS_AL00`，覆盖安装返回 `Success`；包版本 `0.1.0`、versionCode `1000`、lastUpdateTime `2026-07-30 15:25:06`；确认 `pidof` 无结果后冷启动返回 `Status: ok`、`LaunchState: COLD`、`TotalTime: 438ms`、`WaitTime: 444ms`；MainActivity 为 `RESUMED`、visible、reportedDrawn，进程 PID `24184`；真机 WebView 的 `html/body overscroll-behavior-y=none`、横向溢出为 0，底部越界拖动结束后仍为最大 `scrollY=820.3333`（CSS 最大值因设备缩放显示为 `820`），RootHeader 保持 `top=0`；顶部/底部进行中拖动帧均未出现原生拉伸。应用已恢复 `scrollY=0` 且保持前台，临时 `tcp:9223` 转发已移除。
+- 后续事项：无。
+
+## 2026-07-30 14:56 - 完成 Android WebView 原生边界拉伸修复
+
+- 完成内容：根据用户真机反馈纠正上一轮仅检查 CSS 与最终 `scrollY` 的不完整结论；在受 Git 跟踪的 Android `MainActivity` 模板中覆写 `onWebViewCreate` 并设置 `webView.overScrollMode = View.OVER_SCROLL_NEVER`，关闭 Android 12+ WebView 原生 EdgeEffect 画面拉伸，同时保留 edge-to-edge、正常滚动、惯性、输入和网页局部滚动；增强 Android runner，在 build/dev 前及成功 init 后把模板同步到被忽略的生成工程；增加原生合同测试、修正移动端壳规范并记录重复调试复盘。
+- 修改文件：`mobile/src-tauri/android/MainActivity.kt`、`mobile/scripts/run-android-tauri.mjs`、`mobile/tests/android-native-overscroll.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/07-30-android-webview-native-overscroll/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Android 原生与 CSS 边界聚焦测试 4/4、`node --check scripts/run-android-tauri.mjs`、`npm run type-check`、`npm test`（163/163）、`npm run build:tauri` 和 Android aarch64 Debug APK 构建通过；受跟踪模板与生成 `MainActivity.kt` 字节一致，`javap` 确认编译后的 `onWebViewCreate` 调用 `WebView.setOverScrollMode(2)`；APK 为 `236478592` bytes，SHA-256 为 `bf5b0e352b6c5203b484cc372a79737f9a4bb50ebed466c43529731108dc836f`。首次 Android 构建在沙箱内因 Tauri 本地 WebSocket 绑定权限失败，改在已批准的沙箱外环境重跑后成功。当前 `adb devices -l` 为空，macOS USB 树没有 Huawei/TAS/Android/MTP 设备节点；局域网仅发现非目标小米 LX04，确认型号后已断开且未安装。因此尚未完成目标华为 TAS-AL00 的覆盖安装和拖动过程真机验收。
+- 后续事项：手机以支持数据传输的线缆重新连接、选择“传输文件”、开启 USB 调试并完成 Mac/手机授权后，覆盖安装最新 APK；分别在顶部和底部持续越界拖动，确认页面不再产生原生拉伸，再完成任务归档。
+
+## 2026-07-30 14:30 - 完成滚动边界修复 Android 真机交付
+
+- 完成内容：在重新连接的华为 TAS-AL00 上通过非流式 ADB 覆盖安装滚动边界修复 APK；用户手动完成系统强制拼图安全验证后执行冷启动，并通过 Android WebView 调试协议核对真机实际计算样式和滚动边界；最后将行情页滚回顶部并保持应用前台运行。
+- 修改文件：`docs/superpowers/PROGRESS.md`；安装产物 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`。
+- 验证结果：ADB 安装返回 `Success`；包 `com.hippo.exchange.mobile` 的 `lastUpdateTime=2026-07-30 14:26:45`，版本 `0.1.0`；冷启动 `LaunchState: COLD`、`TotalTime: 439ms`；`MainActivity` 为 `RESUMED`、visible、reportedDrawn 且持有窗口焦点，进程 PID `20184`；真机 `http://tauri.localhost/#/markets` 中 `html/body overscroll-behavior-y=none`、横向溢出为 0，正常滑动由 `scrollY=0` 到最大 `198px`，到达底部后再次越界上滑仍保持 `scrollY=198`，RootHeader 始终 `top=0`；临时 WebView 调试端口已移除，归属文件 `git diff --check` 通过。
+- 后续事项：无。
+
+## 2026-07-30 03:50 - 修复手机端页面滚动边界拉伸
+
+- 完成内容：确认 Android WebView 的拉扯感来自根文档只禁止横向越界、未抑制纵向系统 stretch affordance；在 `html/body` 根滚动层统一加入 `overscroll-behavior: none`，不新增全局 `touch-action`、`overflow-y: hidden` 或触摸事件拦截，保留正常纵向惯性滚动、黏性 Header、图表手势、输入交互和已有弹窗局部滚动；新增根滚动所有权与防回退测试，并固化 PWA/Tauri 共享壳滚动边界规范。
+- 修改文件：`mobile/src/styles/base.css`、`mobile/tests/scroll-boundary.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/07-30-07-30-mobile-scroll-overscroll/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦测试先按预期失败后通过 2/2；`npm run type-check`、`npm test`（161/161）、`npm run build:pwa`（132 条预缓存）、`npm run build:tauri`、Android aarch64 Debug APK 构建、Trellis context 校验和归属文件 `git diff --check` 通过；390x844 浏览器实测 `html/body` 的 `overscroll-behavior-y` 均为 `none`，页面仍从 `scrollY=0` 正常滚动至 `729px` 底部，Header 保持 `top=0`，横向溢出和控制台 warning/error 均为 0；APK 为 `236478592` bytes，SHA-256 为 `93f1f7bc78f655a1aabad9e9a83302bdae3e62aec7852efed8aae78636c3b641`。
+- 后续事项：华为 TAS-AL00 的覆盖安装进入系统强制拼图 CAPTCHA，按安全规则必须由用户手动完成；等待用户确认后重新执行非流式 ADB 安装、启动新版应用并完成真机滑动验收。
+
+## 2026-07-30 03:17 - 优化 GSAP 首屏并完成 Android 实机交付
+
+- 完成内容：根据第一版真机观感将偏仪表盘的全屏网格、四角框、数字计数、三色轨道和横向中线移除，避免视觉噪音和线条切过 Logo；重构为中心舒展显现的 HIPPO Logo、低亮扫光、单条细进度线、极简品牌签名和左右幕布离场，保持约 2 秒、首次会话一次、低动态立即退出、滚动锁、GSAP 清理、安全区和业务初始化合同不变；重启开发服务器消除删除重建组件后残留的旧 scoped CSS 热更新缓存。
+- 修改文件：`mobile/src/components/LaunchIntro.vue`、`mobile/tests/launch-intro.test.ts`、`.trellis/tasks/07-30-mobile-gsap-launch-intro/prd.md`、`docs/superpowers/PROGRESS.md`
+- 验证结果：聚焦启动测试 5/5、`npm run type-check`、全量 `npm test` 159/159、`npm run build:pwa`、Android aarch64 Debug APK 构建及 `git diff --check` 通过；390x844 浏览器中段确认 Logo 居中且无穿越中线，约 2 秒后启动层和滚动锁均移除，控制台 0 条 warning/error；320x720、448x900 的 Logo 左右留白稳定且无横向溢出；优化版 APK 大小 `236478592` bytes，SHA-256 为 `8b8c7a9ab9628561e98ff59f5249cdaf8682243d8a0cddb409539e04084548d2`，覆盖安装到华为 TAS-AL00 成功；确认进程 PID 消失后冷启动返回 `LaunchState: COLD`、`TotalTime: 428ms`，`MainActivity` 为前台 `RESUMED`，包版本 `0.1.0`、lastUpdateTime `2026-07-30 03:17:03`。
+- 后续事项：无。
+
+## 2026-07-30 03:07 - 新增手机端 GSAP 会话启动首屏
+
+- 完成内容：安装官方 GSAP 生产依赖，在生产 Vue/Tauri/PWA 应用壳新增独立 HIPPO 品牌启动首屏；使用现有紧凑 Logo、34px 技术网格、绿色/蓝色/珊瑚信号轨、计数扫描与上下幕帘完成约 2 秒过渡；通过版本化 `sessionStorage` 键确保每个应用会话只播放一次，路由切换和同会话刷新不重播；补齐存储异常、低动态立即退出、滚动锁、GSAP timeline/context 完整清理、最高壳层、安全区和 320-448px 响应式合同，不修改接口、鉴权、路由或业务页面。
+- 修改文件：`mobile/package.json`、`mobile/package-lock.json`、`mobile/src/App.vue`、`mobile/src/components/LaunchIntro.vue`、`mobile/src/core/launchIntro.ts`、`mobile/src/styles/base.css`、`mobile/tests/launch-intro.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/07-30-mobile-gsap-launch-intro/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：聚焦启动首屏测试 5/5、`npm run type-check`、全量 `npm test` 159/159、`npm run build:pwa`、`npm run build:tauri`、Trellis context 校验和 `git diff --check` 均通过；PWA 正常生成 132 条预缓存及 Service Worker，Tauri 最终产物不含 PWA 文件；320x720、390x844、448x900 浏览器实渲染均无横向溢出，首次播放、约 2 秒离场、滚动锁清理和同会话刷新跳过通过，三档控制台均为 0 条 warning/error；Android aarch64 Debug APK 构建通过，大小 `236479104` bytes，SHA-256 为 `95e162d1409cd908a17f73f0aed5b64b666e0dcdca6112edc57e4b1b9602e6c5`。
+- 后续事项：当前 `adb devices -l` 未识别到物理设备，待手机重新连接并授权 ADB 后安装最新 APK 并执行冷启动实机验收。
+
 ## 2026-07-29 14:54 - 修复 GitHub Docker 双架构构建超时
 
 - 完成内容：定位原单个 x86 runner 通过 QEMU 构建双架构在约 58 分钟后超时取消；首次原生 runner 修复证明 `ubuntu-24.04-arm` 分发有效，但发现 Docker 可复用 Workflow 的远程 Git context 与 ARM BuildKit `source.git.checksum` capability 不兼容；最终改为 AMD64/ARM64 原生矩阵、本地 checkout context、按 digest 推送及独立 manifest 合并 job，保留 PR/publish 权限隔离和原标签合同。
@@ -6130,3 +6228,31 @@
 - 修改文件：`src/modules/loan/{presentation,application,infrastructure}.rs`、`tests/loan_routes.rs`、`pc/src/api/second.ts`、`pc/src/stores/second.ts`、`pc/tests/second-options-transfer.test.ts`、`.trellis/spec/backend/{index,loan-products,seconds-contracts}.md`、`.trellis/tasks/07-29-backend-loan-filters-seconds-spot-wallet/`、`docs/superpowers/PROGRESS.md`
 - 验证结果：隔离临时 MySQL 中完整贷款路由测试 4/4 通过，覆盖类型、状态、组合、空筛选、非法枚举和前台启用产品回归；隔离临时 MySQL + Redis 中秒合约下单扣减共享钱包、盈利结算回款测试各 1/1 通过，临时容器已移除；`cargo fmt -- --check`、`cargo check --all-targets`、PC `npm run type-check`、PC 秒合约及后端适配契约测试 34/34、`git diff --check` 均通过。
 - 后续事项：无。
+
+## 2026-07-29 20:13 - 优化手机端 Header 与全局配色
+
+- 完成内容：将生产手机端明暗主题调整为冷中性结构色板，统一页面、表面、边框、正文、弱化文字和语义状态色；RootHeader 与 PageHeader 使用不透底的黏性材质层，深色 Logo 提升识别度，拟物化 Header 控件保持 44px、完整焦点/按压/禁用/低动态状态；修复深色首页公告卡低对比、浅色输入框焦点边框、按钮层级以及贷款、安全、消息等二级页的表面层级；修复旧 `.page --soft` 背景令牌导致分组标题在浅色模式近乎隐形的冲突，未改动接口、路由、PWA 缓存或 Tauri 配置。
+- 修改文件：`mobile/src/components/RootHeader.vue`、`mobile/src/stores/theme.ts`、`mobile/src/styles/prototype-parity.css`、`mobile/tests/{android-ui-foundation-slice-a,core-discovery-views,header-controls,root-prototype-parity,shell-navigation,theme,ui-prototype-alignment-foundation}.test.ts`、`.trellis/spec/mobile/index.md`、`.trellis/tasks/07-29-mobile-header-color-system-polish/`、`docs/superpowers/PROGRESS.md`
+- 验证结果：`npm run type-check`、`npm test`（154/154）、`npm run build:pwa`（132 条预缓存，3230.55 KiB）、`npm run build:tauri`、`git diff --check` 通过；浏览器复验首页、现货、消息、贷款、安全中心的明暗主题，RootHeader 64px、PageHeader 76px、Header `z-index: 70`、图标控件 44x44；320x720、390x844、448x900 核心路由无横向溢出，滚动后 Header 仍位于顶层。
+- 后续事项：登录态接口数据当前不可用，未覆盖真实账户加载完成后的高密度列表视觉；现有自动化合同和游客态/错误态浏览器验收均已通过。
+
+## 2026-07-30 02:33 - 安装最新手机端优化版本到 Android 真机
+
+- 完成内容：基于当前工作区最新 Header、明暗主题与二级页面视觉优化重新构建 `aarch64` Debug APK，覆盖安装到已连接的华为 `TAS-AL00`，并重新启动 HIPPO 手机端。
+- 修改文件：`docs/superpowers/PROGRESS.md`；生成产物 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`。
+- 验证结果：`npm run tauri:android:build -- --debug --target aarch64 --apk` 成功；ADB 流式覆盖安装返回 `Success`；`com.hippo.exchange.mobile/.MainActivity` 为 `mResumed=true` 且持有窗口焦点，进程 PID `31947`；APK SHA-256 为 `8a37ea9bec0958fab70053c3fac8a20d1ae579127c8424f504ba1c82dc8afaa8`。
+- 后续事项：用户可直接在手机上检查首页、主题切换、交易、消息、贷款和安全中心的实际视觉效果。
+
+## 2026-07-30 02:39 - 修复 Android 首页 Header 安全区溢出
+
+- 完成内容：通过 Android WebView 调试协议确认 TAS-AL00 首页 Header 为纵向安全区溢出而非横向溢出；将 RootHeader 改为 56px 内容轨加 `max(8px, safe-area-inset-top)` 的自适应总高度，普通浏览器保持 64px，35px 真机安全区下扩展为 91px；新增安全区几何回归测试和移动端规范，重新构建、覆盖安装并启动 Debug APK。
+- 修改文件：`mobile/src/styles/prototype-parity.css`、`mobile/tests/header-controls.test.ts`、`.trellis/spec/mobile/index.md`、`.trellis/tasks/07-30-07-30-android-root-header-safe-area-overflow/`、`docs/superpowers/PROGRESS.md`；生成产物 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`。
+- 验证结果：聚焦 Header 测试 7/7、`npm run type-check`、`npm test` 154/154、`npm run tauri:android:build -- --debug --target aarch64 --apk`、ADB 覆盖安装和 `git diff --check` 通过；修复前 Header `64px`、内部滚动高度 `71px`、控件底边 `71px`，修复后 Header `91px`、`scrollHeight=clientHeight=90px`、控件底边 `84.5px`，`fitsHeader=true`、`noInternalOverflow=true`、页面宽度保持 360px；应用 PID `2492`，`MainActivity` 为 `RESUMED`、visible、fully drawn 且持有窗口焦点；APK SHA-256 为 `71539ed397836433a285ecb4e957d9f2ba08128490199be077d9cdedbf8d0afd`。
+- 后续事项：无。
+
+## 2026-07-30 02:47 - 新增 1Panel 外部依赖 Compose 配置
+
+- 完成内容：新增专用于 1Panel 的后端 Compose 和环境变量模板，只运行一次性 `migrate` 与常驻 `api`，不创建 MySQL、MongoDB、Redis、RabbitMQ；通过完整连接 URL 对接用户在 1Panel 中独立安装的服务，默认加入外部 `1panel-network`，API 等待迁移成功后启动，宿主端口默认仅绑定 `127.0.0.1:8080`，并保留独立上传卷、日志轮转和可覆盖的网络/端口/容器名；补充 1Panel 导入、反向代理、迁移、升级、备份和排障文档。
+- 修改文件：`docker-compose.1panel.yml`、`docker-compose.1panel.env.example`、`.gitignore`、`.dockerignore`、`docs/deployment/docker.md`、`.trellis/spec/backend/container-delivery.md`、`.trellis/tasks/07-30-1panel-external-services-compose/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`docker compose --env-file docker-compose.1panel.env.example -f docker-compose.1panel.yml config` 和现有完整 Compose 解析通过；JSON 机器断言确认服务精确为 `api/migrate`、同一镜像、外部网络、迁移完成门禁、全部必填环境变量、仅 API 端口和上传卷、无第三方 service/volume；缺少 `DATABASE_URL` 时按预期拒绝解析，自定义网络/绑定地址/端口覆盖通过；`cargo fmt -- --check`、`cargo check --all-targets`、`git check-ignore docker-compose.1panel.env` 和 `git diff --check` 通过。
+- 后续事项：在目标 1Panel 中填入四个第三方服务的实际容器名或内网地址及真实凭据，再创建编排并检查迁移退出码与 `/health`。

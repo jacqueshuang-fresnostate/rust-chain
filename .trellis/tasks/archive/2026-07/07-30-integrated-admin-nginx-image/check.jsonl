@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/container-delivery.md", "reason": "Verify integrated image preserves container delivery contracts"}
+{"file": ".trellis/tasks/07-30-integrated-admin-nginx-image/research/container-architecture.md", "reason": "Verify route split, process supervision, and migration override"}

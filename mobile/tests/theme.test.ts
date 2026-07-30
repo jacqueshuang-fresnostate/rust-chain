@@ -10,6 +10,7 @@ import en from '../src/i18n/messages/en.ts'
 import zhCN from '../src/i18n/messages/zh-CN.ts'
 
 const baseCss = readFileSync(new URL('../src/styles/base.css', import.meta.url), 'utf8')
+const parityCss = readFileSync(new URL('../src/styles/prototype-parity.css', import.meta.url), 'utf8')
 const rootHeaderSource = readFileSync(new URL('../src/components/RootHeader.vue', import.meta.url), 'utf8')
 const themeStoreSource = readFileSync(new URL('../src/stores/theme.ts', import.meta.url), 'utf8')
 
@@ -39,8 +40,8 @@ test('主题偏好只接受受支持值并以系统偏好兜底', () => {
 })
 
 test('明暗主题提供高对比共享令牌与稳定主题色', () => {
-  assert.equal(THEME_META_COLORS.light, '#f1f4f8')
-  assert.equal(THEME_META_COLORS.dark, '#07090c')
+  assert.equal(THEME_META_COLORS.light, '#f6f8fb')
+  assert.equal(THEME_META_COLORS.dark, '#080b0f')
   assert.match(baseCss, /:root\[data-theme='dark'\]/)
   for (const token of [
     '--background',
@@ -72,6 +73,21 @@ test('两套主题的正文、辅助文字和语义色达到正文对比阈值',
     assert.ok(contrastRatio(tokenHex(source, '--on-positive'), signalGreen) >= 4.5)
   }
   assert.notEqual(tokenHex(baseCss, '--positive'), tokenHex(baseCss, '--signal-green'))
+})
+
+test('生产原型覆盖层的中性色板在明暗主题下保持可访问对比', () => {
+  const darkRule = parityCss.match(/\.app-stage\s*\{([^}]*)\}/)
+  const lightRule = parityCss.match(/\.app-stage\.theme-light\s*\{([^}]*)\}/)
+  assert.ok(darkRule)
+  assert.ok(lightRule)
+
+  for (const source of [darkRule[1], lightRule[1]]) {
+    const surface = tokenHex(source, '--surface')
+    assert.ok(contrastRatio(tokenHex(source, '--text'), surface) >= 7)
+    for (const token of ['--muted', '--green', '--coral', '--cyan', '--yellow']) {
+      assert.ok(contrastRatio(tokenHex(source, token), surface) >= 4.5, `${token} contrast is too low`)
+    }
+  }
 })
 
 test('壳层层级遵循内容、导航、转场、粘性头部、浮层顺序', () => {

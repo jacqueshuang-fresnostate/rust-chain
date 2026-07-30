@@ -98,11 +98,11 @@ test('根壳层保持原型舞台、64px 顶栏、路由栈、PWA 状态与异�
     '<AppBottomNav v-if="showBottomNav" />',
   ])
   assert.equal((appSource.match(/<PwaStatus \/>/g) || []).length, 1)
-  assert.match(headerSource, /class="topbar"/)
-  assert.match(headerSource, /class="brand-button"/)
+  assert.match(headerSource, /class="topbar root-header"/)
+  assert.match(headerSource, /class="brand-button root-header__brand"/)
   assert.match(headerSource, /class="brand-logo"/)
-  assert.match(headerSource, /class="topbar-actions action-cluster"/)
-  assert.match(headerSource, /class="icon-button has-dot"/)
+  assert.match(headerSource, /class="topbar-actions action-cluster root-header__actions"/)
+  assert.match(headerSource, /class="icon-button has-dot root-header__control root-header__message"/)
   assert.match(appSource, /class="stage-art" aria-hidden="true"/)
   for (const key of [
     'desktopStageIndex',

@@ -27,7 +27,7 @@ test('共享根头部打开真实消息中心并复用主题 store', () => {
   assert.match(rootHeaderSource, /const theme = useThemeStore\(\)/)
   assert.match(rootHeaderSource, /@click="theme\.toggleTheme"/)
   assert.match(rootHeaderSource, /<Sun v-if="theme\.isDark"[\s\S]*?<Moon v-else/)
-  assert.match(rootHeaderSource, /class="topbar-actions action-cluster"/)
+  assert.match(rootHeaderSource, /class="topbar-actions action-cluster root-header__actions"/)
 })
 
 test('行情页保留交易对选择器的模式、查询参数和历史语义', () => {

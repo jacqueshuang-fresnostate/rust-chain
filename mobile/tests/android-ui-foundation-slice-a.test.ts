@@ -16,7 +16,7 @@ const productHubSource = read('../src/views/ProductHubView.vue')
 
 test('v16 共享基础使用原型纸面、信号色和 84px 七栏导航', () => {
   assert.match(baseCss, /--bottom-nav-height:\s*84px/)
-  assert.match(prototypeCss, /\.app-stage\.theme-light\s*\{[\s\S]*?--page:\s*#fbfcfa/)
+  assert.match(parityCss, /\.app-stage\.theme-light\s*\{[\s\S]*?--page:\s*#f6f8fb/)
   assert.match(prototypeCss, /--signal-green:\s*#55f7a5/)
   assert.match(prototypeCss, /--signal-coral:\s*#ff5c4d/)
   assert.match(parityCss, /@import '\.\/prototype-base\.css';/)
@@ -28,9 +28,9 @@ test('v16 共享基础使用原型纸面、信号色和 84px 七栏导航', () =
 })
 
 test('根头部与首页对齐原型工具栏、资产图、双资金动作和八宫格', () => {
-  assert.match(rootHeaderSource, /class="topbar"/)
+  assert.match(rootHeaderSource, /class="topbar root-header"/)
   assert.match(rootHeaderSource, /class="brand-logo"/)
-  assert.match(rootHeaderSource, /class="icon-button has-dot"/)
+  assert.match(rootHeaderSource, /class="icon-button has-dot root-header__control root-header__message"/)
   assert.match(homeSource, /class="home-utility-row"/)
   assert.match(homeSource, /class="portfolio-overview"/)
   assert.match(homeSource, /class="portfolio-chart"/)

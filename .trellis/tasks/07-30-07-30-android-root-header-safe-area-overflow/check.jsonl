@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "Verify RootHeader control geometry, sticky behavior, overflow checks, and required mobile quality gate."}
+{"file": ".trellis/tasks/07-30-07-30-android-root-header-safe-area-overflow/research/device-layout.md", "reason": "Compare post-install WebView measurements against the observed 35px safe-area failure."}

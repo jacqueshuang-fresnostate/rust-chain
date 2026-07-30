@@ -5,8 +5,8 @@ export type AppTheme = 'light' | 'dark'
 
 export const THEME_STORAGE_KEY = 'hippo_mobile_theme'
 export const THEME_META_COLORS: Record<AppTheme, string> = {
-  light: '#f1f4f8',
-  dark: '#07090c',
+  light: '#f6f8fb',
+  dark: '#080b0f',
 }
 
 export function normalizeAppTheme(value: unknown): AppTheme | null {

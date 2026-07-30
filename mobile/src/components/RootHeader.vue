@@ -11,9 +11,9 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <header class="topbar">
+  <header class="topbar root-header">
     <button
-      class="brand-button"
+      class="brand-button root-header__brand"
       type="button"
       :aria-label="t('nav.profile')"
       @click="router.replace({ name: 'profile' })"
@@ -24,9 +24,9 @@ const { t } = useI18n()
         aria-hidden="true"
       />
     </button>
-    <div class="topbar-actions action-cluster" role="group" :aria-label="t('nav.main')">
+    <div class="topbar-actions action-cluster root-header__actions" role="group" :aria-label="t('nav.main')">
       <button
-        class="icon-button"
+        class="icon-button root-header__control"
         type="button"
         :aria-label="t(theme.isDark ? 'home.switchToLightTheme' : 'home.switchToDarkTheme')"
         :title="t(theme.isDark ? 'home.switchToLightTheme' : 'home.switchToDarkTheme')"
@@ -37,7 +37,7 @@ const { t } = useI18n()
         <Moon v-else :size="18" aria-hidden="true" />
       </button>
       <button
-        class="icon-button has-dot"
+        class="icon-button has-dot root-header__control root-header__message"
         type="button"
         :aria-label="t('home.openMessageCenter')"
         @click="router.push({ name: 'message-center' })"

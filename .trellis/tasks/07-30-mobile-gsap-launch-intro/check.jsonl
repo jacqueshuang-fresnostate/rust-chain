@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "Verify once-per-session launch behavior, reduced motion, cleanup, layer order, PWA/Tauri isolation, builds, and Android validation."}
+{"file": ".trellis/spec/mobile/index.md", "reason": "Verify official asset use, no emoji or inline SVG, responsive width, theme behavior, and production-owned source."}
+{"file": ".trellis/tasks/07-30-mobile-gsap-launch-intro/research/launch-motion.md", "reason": "Verify the final runtime sequence and every completion/unmount cleanup path."}

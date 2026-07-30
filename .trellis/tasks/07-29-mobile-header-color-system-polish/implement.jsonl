@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "Production visual snapshot, Header control, responsive geometry, and color-role contracts."}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "Theme persistence, meta theme-color, PWA/Tauri shell isolation, and build validation."}
+{"file": ".trellis/tasks/07-29-mobile-header-color-system-polish/research/visual-audit.md", "reason": "Observed light/dark Header, field, card, notice, and secondary-page defects."}

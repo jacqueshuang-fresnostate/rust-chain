@@ -1,7 +1,7 @@
 x-api-environment: &api-environment
   APP_ENV: production
-  APP_HOST: 0.0.0.0
-  APP_PORT: "8080"
+  APP_HOST: 127.0.0.1
+  APP_PORT: "8081"
   DATABASE_URL: mysql://${MYSQL_USER:?set MYSQL_USER}:${MYSQL_PASSWORD:?set MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:?set MYSQL_DATABASE}
   MONGODB_URI: mongodb://${MONGO_INITDB_ROOT_USERNAME:?set MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD:?set MONGO_INITDB_ROOT_PASSWORD}@mongo:27017/?authSource=admin
   MONGODB_DATABASE: ${MONGODB_DATABASE:?set MONGODB_DATABASE}
@@ -100,7 +100,6 @@ services:
   api:
     image: ${EXCHANGE_IMAGE:-ghcr.io/jacqueshuang-fresnostate/rust-chain:latest}
     restart: unless-stopped
-    init: true
     environment: *api-environment
     depends_on:
       mysql:

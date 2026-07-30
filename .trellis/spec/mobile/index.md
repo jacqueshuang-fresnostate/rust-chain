@@ -87,7 +87,9 @@ focused header-control source contract tests
 button/SVG center delta <= 0.5px on each axis
 light and dark runtime checks for all four header families
 320x720, 390x844, and 448x900 horizontal overflow = 0
-sticky root/secondary headers retain 64px/76px geometry and z-index 70
+sticky RootHeader retains a 64px total height through an 8px top inset, then
+grows with larger safe-area-inset-top values; secondary headers retain 76px
+geometry and both header families retain z-index 70
 ```
 
 ## Local Sites Prototype Surface Contract
@@ -204,6 +206,40 @@ must own a tracked, self-contained snapshot of every visual build input:
   `100`, but calculations must normalize them to `0.25`, `0.5`, `0.75`, and
   `1`. Contract input/submission remains margin amount; displayed notional is
   `marginAmount * leverage`.
+
+### Production Color-Role Boundary
+
+The tracked prototype and legacy scoped secondary views do not share the same
+meaning for `--soft`: prototype rules may use it as readable text, while
+legacy `.page` rules remap it to `--surface-2` for backgrounds. Production
+corrections must therefore use explicit semantic roles at this boundary:
+
+```css
+.page {
+  --soft: var(--surface-2);
+}
+
+.app-stage .mobile-canvas .group-title {
+  color: var(--text);
+}
+```
+
+- Use `--page`, `--surface`, `--surface-2`, and `--surface-3` for structure.
+- Use `--text`, `--muted-strong`, and `--muted` for copy.
+- Use `--focus` and `--focus-ring` for complete field-container focus states.
+- Do not use `--soft` as text inside a legacy `.page` without an explicit
+  production override.
+- Keep bright signal tokens for charts, fills, and decorative rails; small
+  status text must use the contrast-safe semantic role.
+
+Required regression assertions:
+
+```text
+light and dark text/muted/semantic colors meet WCAG AA against --surface
+group-title resolves to --text inside legacy secondary pages
+nested inputs have no independent outline when the field container is focused
+disabled fields remain structurally distinct without hiding their labels
+```
 
 Required assertions:
 

@@ -95,6 +95,19 @@ test('明暗主题分别定义冷中性面板与金属边框且不恢复退役�
   const lightTokens = ruleFor(sources.css, '.app-stage.theme-light')
 
   for (const token of [
+    '--page',
+    '--surface',
+    '--surface-2',
+    '--surface-3',
+    '--text',
+    '--muted',
+    '--green',
+    '--coral',
+    '--cyan',
+    '--header-surface-top',
+    '--header-surface-bottom',
+    '--header-border',
+    '--header-shadow',
     '--header-control-face-top',
     '--header-control-face-mid',
     '--header-control-face-bottom',
@@ -111,12 +124,70 @@ test('明暗主题分别定义冷中性面板与金属边框且不恢复退役�
     assert.notEqual(darkValue, lightValue, `${token} must differ between themes`)
   }
 
+  assert.equal(declarationValue(darkTokens, '--page'), '#080b0f')
+  assert.equal(declarationValue(darkTokens, '--surface'), '#0e1319')
+  assert.equal(declarationValue(darkTokens, '--text'), '#f3f6f8')
+  assert.equal(declarationValue(lightTokens, '--page'), '#f6f8fb')
+  assert.equal(declarationValue(lightTokens, '--surface'), '#ffffff')
+  assert.equal(declarationValue(lightTokens, '--text'), '#101820')
   assert.match(sources.app, /class="app-stage"/)
   assert.match(sources.app, /:class="theme\.isDark \? 'theme-dark' : 'theme-light'"/)
   assert.doesNotMatch(
     `${sources.baseCss}\n${sources.css}`,
     /#0b1811|rgba\(11,\s*24,\s*17\s*,/i,
   )
+})
+
+test('根 Header 使用不透底材质层、清晰品牌和稳定动作分组', () => {
+  const surfaceRules = rulesFor(
+    sources.css,
+    '.app-stage .mobile-canvas > .topbar.topbar,.app-stage .mobile-canvas .secondary-header.secondary-header',
+  )
+  const surfaceRule = surfaceRules[0]
+  const rootHeaderRule = ruleFor(
+    sources.css,
+    '.app-stage .mobile-canvas > .root-header.root-header',
+  )
+  const darkLogoRule = ruleFor(
+    sources.css,
+    '.app-stage.theme-dark .mobile-canvas .brand-logo',
+  )
+
+  assert.match(surfaceRule, /background:\s*linear-gradient\(180deg,\s*var\(--header-surface-top\),\s*var\(--header-surface-bottom\)\);/)
+  assert.match(surfaceRule, /border-bottom-color:\s*var\(--header-border\);/)
+  assert.match(surfaceRule, /box-shadow:\s*var\(--header-shadow\);/)
+  assert.equal(
+    declarationValue(rootHeaderRule, '--root-header-top-inset'),
+    'max(8px, env(safe-area-inset-top, 0px))',
+  )
+  assert.equal(
+    declarationValue(rootHeaderRule, 'height'),
+    'calc(56px + var(--root-header-top-inset))',
+  )
+  assert.equal(
+    declarationValue(rootHeaderRule, 'min-height'),
+    'calc(56px + var(--root-header-top-inset))',
+  )
+  assert.equal(
+    declarationValue(rootHeaderRule, 'padding'),
+    'var(--root-header-top-inset) 16px 0',
+  )
+  assert.equal(declarationValue(rootHeaderRule, 'box-sizing'), 'border-box')
+  assert.match(darkLogoRule, /brightness\(1\.48\)/)
+  assert.match(darkLogoRule, /drop-shadow\(/)
+  assert.match(sources.rootHeader, /class="topbar root-header"/)
+  assert.match(sources.rootHeader, /class="brand-button root-header__brand"/)
+  assert.match(sources.rootHeader, /class="topbar-actions action-cluster root-header__actions"/)
+  assert.equal((sources.rootHeader.match(/\broot-header__control\b/g) || []).length, 2)
+
+  for (const safeAreaTop of [0, 8, 35]) {
+    const topInset = Math.max(8, safeAreaTop)
+    const headerHeight = 56 + topInset
+    const controlBottom = topInset + ((56 - 44) / 2) + 44
+
+    assert.ok(controlBottom <= headerHeight, `control must fit at ${safeAreaTop}px safe area`)
+    if (safeAreaTop <= 8) assert.equal(headerHeight, 64)
+  }
 })
 
 test('按压、键盘焦点、禁用与减弱动效状态有独立且无布局漂移的合同', () => {
