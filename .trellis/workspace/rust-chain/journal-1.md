@@ -190,7 +190,12 @@ Audited and polished the mobile Sites prototype product hub, message center, sec
 
 ### Main Changes
 
-(Add details)
+- 新增不可变迁移 `0099_schema_wide_text_metadata.sql`，从 `0001`–`0098`
+  规范 schema 恢复 96 张业务表默认排序规则和 377 个文本列定义。
+- 新增真实 MySQL 全库回归，覆盖 KYC `name` 解码、认证、预测、数据、
+  索引、154 条外键、BLOB 不变和无效 UTF-8 失败合同。
+- 更新数据库与容器交付规范，并补充生产维护窗口、锁预检、备份恢复和
+  SQLx dirty migration 处置说明。
 
 ### Git Commits
 
@@ -201,7 +206,11 @@ Audited and polished the mobile Sites prototype product hub, message center, sec
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] MySQL 8.4.9 `schema_text_metadata_migration` 1/1
+- [OK] MySQL 8.4.9 认证与预测迁移回归 2/2
+- [OK] 全新数据库完整迁移 `0001`–`0099`，二次运行零待办
+- [OK] `cargo fmt -- --check`、`cargo check --all-targets`、聚焦 Clippy
+- [OK] `git diff --check`、Compose 展开与 Trellis 上下文校验
 
 ### Status
 
@@ -667,6 +676,39 @@ Ported the Sites v16 signal Canvas and route veil into the Vue mobile shell, cor
 | Hash | Message |
 |------|---------|
 | `fe8d702` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 20: 全库修复二进制文本元数据
+
+**Date**: 2026-07-31
+**Task**: 全库修复二进制文本元数据
+**Branch**: `main`
+
+### Summary
+
+新增 0099 全库文本元数据修复，覆盖 96 张业务表和 377 个文本列；真实 MySQL 验证 KYC、认证、预测、数据、索引、外键及 BLOB 合同，并补充生产维护窗口与 dirty migration 恢复文档。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f9d83a0` | (see git log) |
 
 ### Testing
 
