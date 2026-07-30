@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Verify no applied migration was edited and the new migration runs twice cleanly through SQLx."}
+{"file": ".trellis/spec/backend/prediction-markets.md", "reason": "Verify settings reads and prediction behavior remain compatible."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Run focused tests, formatting, compile checks, and diff validation."}

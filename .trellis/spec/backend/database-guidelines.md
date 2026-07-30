@@ -90,6 +90,54 @@ UPDATE loan_products SET name_json = JSON_OBJECT('version', 1) WHERE name_json I
 ALTER TABLE loan_products MODIFY COLUMN name_json JSON NOT NULL;
 ```
 
+### Scenario: Repair Binary Metadata Drift for Rust Strings
+
+#### 1. Scope / Trigger
+
+- Trigger: SQLx reports that Rust `String`/SQL `VARCHAR` is incompatible with
+  MySQL `VARBINARY`, or `information_schema.COLUMNS` shows binary string
+  metadata for a field owned as text by the application contract.
+- Repair schema metadata with a new migration. Do not weaken the Rust model to
+  `Vec<u8>` and do not add per-query casts that leave the drift in place.
+
+#### 2. Signatures
+
+- Text metadata: `VARCHAR(length) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+- Regression fixture: create the expected text table, drift the affected
+  columns to both `VARBINARY` and binary-collated `utf8mb4` `VARCHAR`, then
+  execute the exact migration file through `include_str!`.
+
+#### 3. Contracts
+
+- A metadata repair must explicitly restate each affected column's length,
+  character set, non-binary collation, nullability, and default.
+- Existing bytes must remain valid UTF-8 application text and survive the
+  `VARBINARY` to `VARCHAR` conversion unchanged.
+- Nullable text remains nullable; required text remains `NOT NULL`.
+- The same `ALTER TABLE ... MODIFY COLUMN` migration must also succeed against
+  an already-correct `VARCHAR` schema.
+
+#### 4. Validation & Error Matrix
+
+- `VARBINARY` selected into Rust `String` -> SQLx `ColumnDecode` error.
+- Binary bytes that are not valid in the target character set -> migration
+  failure; investigate the data instead of silently replacing it.
+- Omitted `DEFAULT` or nullability in `MODIFY COLUMN` -> MySQL may change the
+  column contract even when the type conversion succeeds.
+
+#### 5. Tests Required
+
+- Use a real isolated MySQL database, not a mocked row decoder.
+- Assert the pre-migration SQLx `String` decode failure for both `VARBINARY`
+  and binary-collated `VARCHAR` metadata.
+- Execute the migration with `sqlx::raw_sql(include_str!(...))`.
+- Assert post-migration `String`/`Option<String>` decoding, value preservation,
+  defaults, lengths, nullability, `utf8mb4`, and the explicit non-binary
+  collation.
+- Repeat the repair from a binary-collated `utf8mb4` `VARCHAR` fixture,
+  including byte preservation and the pre-repair decode failure.
+- Execute the same SQL once more after the columns are correct.
+
 ---
 
 ## Naming Conventions

@@ -2,6 +2,20 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-07-31 05:18 - 独立审查预测设置二进制元数据修复
+
+- 完成内容：独立复核 `0097`、SQLx 设置读取路径和历史 `0075`，确认迁移显式保持四列的长度、默认值、NULL/NOT NULL 与有效 UTF-8 文本值；发现回归测试只覆盖实际 `VARBINARY`、未覆盖二进制排序规则的 `VARCHAR`，新增 `utf8mb4_bin` 漂移场景，并以真实 MySQL 8.4 证明 SQLx 0.8.6 对两种漂移都会产生 `ColumnDecode`、迁移原文均可修复且字节/默认值/NULL/元数据完整保留；同步两份可执行规范，未修改 `0097` 实现或历史 `0075`。
+- 修改文件：`tests/prediction_settings_migration.rs`、`.trellis/spec/backend/database-guidelines.md`、`.trellis/spec/backend/prediction-markets.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`DATABASE_URL=<一次性 MySQL 8.4> cargo test --manifest-path Cargo.toml --test prediction_settings_migration -- --nocapture` 1/1 通过；专用空库首次 `sqlx migrate run --source migrations` 完整应用 1–97，第二次零输出成功，版本 75/97 均记录成功且四列最终元数据精确匹配；`cargo fmt --manifest-path Cargo.toml -- --check`、`cargo check --manifest-path Cargo.toml --all-targets`、跟踪与未跟踪文件空白检查、冲突标记扫描、任务 JSON/JSONL 解析和 `0075_prediction_markets.sql` 对 `HEAD` 及首次提交 `bdd8639` 的 blob/零 diff 双重断言均通过。额外严格 `cargo clippy --manifest-path Cargo.toml --test prediction_settings_migration -- -D warnings` 被任务外既有 57 项库级告警阻断，本次迁移与测试文件无 Clippy 告警；一次性容器及专用测试库均已清理。
+- 后续事项：全仓库既有严格 Clippy 告警应另立任务治理；本次二进制元数据修复无任务内遗留。
+
+## 2026-07-31 05:08 - 修复预测设置 VARBINARY 字符串解码
+
+- 完成内容：新增后续 SQLx 迁移，将 `prediction_settings` 的默认结算模式、无效退款策略、最近同步状态和错误四个文本字段显式规范化为 `utf8mb4`、`utf8mb4_unicode_ci` 的非二进制 `VARCHAR`，保持原长度、默认值、NULL/NOT NULL 和已有值不变，未修改历史 `0075`；新增真实 MySQL 回归测试，先制造 `VARBINARY` 漂移并确认 SQLx `String` 解码失败，再执行迁移文件原文，验证四列可解码、值/多字节文本/默认值/NULL/元数据完整保留，并覆盖已正确 `VARCHAR` 上再次执行；同步数据库和预测市场规范及任务验收记录。
+- 修改文件：`migrations/0097_prediction_settings_text_metadata.sql`、`tests/prediction_settings_migration.rs`、`.trellis/spec/backend/database-guidelines.md`、`.trellis/spec/backend/prediction-markets.md`、`.trellis/tasks/07-31-fix-varbinary-string-decode/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo test --manifest-path Cargo.toml --test prediction_settings_migration -- --nocapture` 在一次性 MySQL 8.4 上 1/1 通过；专用空库首次 `sqlx migrate run` 完整应用 1–97，第二次执行无待应用迁移且成功退出；`cargo fmt --manifest-path Cargo.toml -- --check`、`cargo check --manifest-path Cargo.toml --all-targets`、`git diff --check`、冲突标记扫描和 `0075_prediction_markets.sql` 零 diff 断言均通过；隔离测试库、完整迁移验证库和 `--rm` MySQL 容器均已清理。
+- 后续事项：由主会话审阅、提交并归档当前 Trellis 任务。
+
 ## 2026-07-31 04:34 - 复核并加固默认管理员引导
 
 - 完成内容：按更新后的 PRD 复核真实迁移器、MySQL 命名锁、事务、Argon2、日志脱敏、默认值/环境覆盖和三份 Compose 秘密边界；修复 `RELEASE_LOCK` 查询自身失败时连接仍可能回池的问题，改为关闭物理 MySQL 连接兜底；扩展集成测试以直接运行无引导环境变量的 `exchange-migrate`，并覆盖公开默认账号、有效/非法覆盖、已有管理员不覆盖、角色复用、并发迁移只创建一个管理员、强制插入失败时角色回滚、成功/失败路径命名锁释放和密码不出现在进程输出或错误中；同步容器交付规范。

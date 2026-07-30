@@ -67,6 +67,13 @@
 - Settlement results are `yes`, `no`, or `invalid`. Win/loss/invalid settlement must use one wallet path so manual settlement and auto settlement are idempotent and consistent.
 - Settlement mode defaults to global `prediction_settings.default_settlement_mode` and may be overridden per market by `prediction_markets.settlement_mode_override`.
 - Invalid market refund behavior defaults to `prediction_settings.default_invalid_refund_policy`; the concrete policy used must be copied to order/market fields such as `invalid_refund_policy_used`.
+- `prediction_settings.default_settlement_mode`,
+  `default_invalid_refund_policy`, `last_sync_status`, and `last_sync_error`
+  are application text. Their MySQL columns must use explicit `utf8mb4`
+  `VARCHAR` metadata with a non-binary collation so SQLx can decode them into
+  `String`/`Option<String>`; historical binary metadata drift must be repaired
+  by a follow-up migration without changing values, defaults, lengths, or
+  nullability.
 - Effective allowed assets are global `prediction_settings.allowed_asset_ids_json` unless `prediction_markets.allowed_asset_ids_override_json` is present.
 - Effective payout cap is per-asset `prediction_asset_configs.max_payout_amount` unless overridden by `prediction_markets.payout_cap_overrides_json`.
 - Effective fee rate is global `prediction_settings.default_fee_rate` unless `prediction_markets.fee_rate_override` is present.
@@ -95,6 +102,9 @@
 - Manual invalid refund policy selected but no concrete policy supplied at settlement time -> validation error.
 - External invalid result plus manual invalid refund policy -> set market to pending confirmation instead of auto-refunding.
 - Replayed idempotency key -> return the existing order with `changed = false`.
+- Any of the four prediction settings text columns exposed as `VARBINARY` ->
+  SQLx settings reads fail with a column decode error; normalize the schema
+  metadata instead of changing DTOs or casting individual reads.
 
 ### 5. Good/Base/Bad Cases
 
@@ -113,6 +123,11 @@
 - PC localization tests must cover configured locale documents and common Polymarket fallback phrases such as Fed rate cuts, FDV after token launch, categories, and YES/NO outcomes.
 - PC prediction page tests must cover `/prediction/:id` route registration, detail API usage, list-to-detail navigation, and the i18n keys needed by the category/detail experience.
 - Migration validation should be run in an environment without prior checksum conflicts. If historical migration checksums are already dirty, document why `sqlx migrate run` was skipped and never edit old applied migrations.
+- Prediction settings metadata regression tests must create real MySQL
+  `VARBINARY` and binary-collated `utf8mb4` `VARCHAR` drift, prove both make
+  SQLx `String` decoding fail before repair, execute the exact follow-up
+  migration SQL, and verify values/defaults/nullability plus explicit
+  non-binary `utf8mb4` `VARCHAR` metadata afterward.
 
 ### 7. Wrong vs Correct
 
