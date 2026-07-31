@@ -787,3 +787,36 @@ Ported the Sites v16 signal Canvas and route veil into the Vue mobile shell, cor
 ### Next Steps
 
 - None - task complete
+
+
+## Session 23: 修复手机端现货订单簿与最新成交实时刷新
+
+**Date**: 2026-07-31
+**Task**: 修复手机端现货订单簿与最新成交实时刷新
+**Branch**: `main`
+
+### Summary
+
+接入 depth/trade 公共 WebSocket，解决详情页订单簿和最新成交不实时更新；补齐竞态、重连、去重、构建与 Android 真机动态验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a1bff6e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
