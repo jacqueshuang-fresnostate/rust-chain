@@ -95,25 +95,40 @@ describe('SecurityPolicyPage', () => {
 
     expect(await screen.findByText('安全策略')).toBeInTheDocument();
     expect(semiSelectByLabel('登录 2FA 策略')).toHaveTextContent('用户自选');
-    expect(screen.getByRole('checkbox', { name: '启用提现校验' })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: '启用闪兑校验' })).not.toBeChecked();
     expect(screen.getByRole('checkbox', { name: '注册时必须填写邀请码' })).not.toBeChecked();
     expect(screen.getByRole('switch', { name: '允许用户名登录' })).not.toBeChecked();
-    expect(screen.getByRole('switch', { name: '允许绑定Coinbase 钱包' })).not.toBeChecked();
-    expect(screen.getByRole('switch', { name: '允许绑定TG 账号' })).not.toBeChecked();
-    expect(semiSelectByLabel('提现校验方式')).toHaveTextContent('资金密码');
-    expect(screen.getByText('登录策略：用户自选')).toBeInTheDocument();
-    expect(screen.getByText('注册策略：邀请码选填')).toBeInTheDocument();
-    expect(screen.getByText('用户名登录未开启')).toBeInTheDocument();
-    expect(screen.getByText('Coinbase 钱包：未开启，TG 账号：未开启')).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: '启用提现校验' })).not.toBeInTheDocument();
+    expect(screen.getByRole('tabpanel', { name: '登录策略' })).toBeInTheDocument();
 
     await selectSemiOption(user, '登录 2FA 策略', '强制要求');
     await user.click(screen.getByRole('checkbox', { name: '注册时必须填写邀请码' }));
     await user.click(screen.getByRole('switch', { name: '允许用户名登录' }));
+
+    await user.click(screen.getByRole('tab', { name: '资金动作校验' }));
+    expect(screen.getByRole('tabpanel', { name: '资金动作校验' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: '启用提现校验' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: '启用闪兑校验' })).not.toBeChecked();
+    expect(semiSelectByLabel('提现校验方式')).toHaveTextContent('资金密码');
     await user.click(screen.getByRole('checkbox', { name: '启用闪兑校验' }));
+    await selectSemiOption(user, '闪兑校验方式', '双因素认证');
+
+    await user.click(screen.getByRole('tab', { name: '第三方绑定' }));
+    expect(screen.getByRole('switch', { name: '允许绑定Coinbase 钱包' })).not.toBeChecked();
+    expect(screen.getByRole('switch', { name: '允许绑定TG 账号' })).not.toBeChecked();
     await user.click(screen.getByRole('switch', { name: '允许绑定Coinbase 钱包' }));
     await user.click(screen.getByRole('switch', { name: '允许绑定TG 账号' }));
-    await selectSemiOption(user, '闪兑校验方式', '双因素认证');
+
+    await user.click(screen.getByRole('tab', { name: '登录策略' }));
+    expect(semiSelectByLabel('登录 2FA 策略')).toHaveTextContent('强制要求');
+    expect(screen.getByRole('checkbox', { name: '注册时必须填写邀请码' })).toBeChecked();
+    expect(screen.getByRole('switch', { name: '允许用户名登录' })).toBeChecked();
+
+    await user.click(screen.getByRole('tab', { name: '策略摘要' }));
+    expect(screen.getByRole('tabpanel', { name: '策略摘要' })).toBeInTheDocument();
+    expect(screen.getByText('登录策略：强制要求')).toBeInTheDocument();
+    expect(screen.getByText('注册策略：邀请码必填')).toBeInTheDocument();
+    expect(screen.getByText('用户名登录已开启')).toBeInTheDocument();
+    expect(screen.getByText('Coinbase 钱包：已开启，TG 账号：已开启')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '保存安全策略' }));
     await user.type(screen.getByLabelText('操作原因'), 'tighten policy');
     await user.click(screen.getByRole('button', { name: '确认' }));

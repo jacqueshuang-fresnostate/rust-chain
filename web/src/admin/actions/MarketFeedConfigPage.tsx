@@ -362,7 +362,13 @@ export function MarketFeedConfigPage() {
           <Tabs activeKey={activeTab} className="admin-action-tabs" onChange={(nextTab) => setActiveTab(nextTab as MarketFeedTab)} tabList={marketFeedTabs} type="button" />
 
           {activeTab === 'subscriptions' ? (
-            <div className="admin-action-workbench-grid">
+            <div
+              aria-labelledby="semiTabsubscriptions"
+              className="admin-action-workbench-grid"
+              id="semiTabPanelsubscriptions"
+              role="tabpanel"
+              tabIndex={0}
+            >
               <section className="admin-action-panel">
                 <Title heading={4}>订阅配置</Title>
                 <div className="admin-action-form admin-action-form-wide">
@@ -452,7 +458,6 @@ export function MarketFeedConfigPage() {
                   dataSource={rows}
                   loading={loading}
                   pagination={false}
-                  resizable
                   rowKey="key"
                   scroll={containedTableScroll}
                   style={containedTableStyle}
@@ -462,7 +467,13 @@ export function MarketFeedConfigPage() {
           ) : null}
 
           {activeTab === 'runtime' ? (
-            <section className="admin-action-panel">
+            <section
+              aria-labelledby="semiTabruntime"
+              className="admin-action-panel"
+              id="semiTabPanelruntime"
+              role="tabpanel"
+              tabIndex={0}
+            >
               <Title heading={4}>运行状态</Title>
               <Descriptions align="plain" column={3} data={runtimeData} layout="horizontal" />
               <div data-testid="runtime-providers">
@@ -476,7 +487,13 @@ export function MarketFeedConfigPage() {
           ) : null}
 
           {activeTab === 'credentials' ? (
-            <div className="admin-action-workbench-grid">
+            <div
+              aria-labelledby="semiTabcredentials"
+              className="admin-action-workbench-grid"
+              id="semiTabPanelcredentials"
+              role="tabpanel"
+              tabIndex={0}
+            >
               <section className="admin-action-panel">
                 <Title heading={4}>Provider 凭证</Title>
                 <div className="admin-action-form admin-action-form-wide">

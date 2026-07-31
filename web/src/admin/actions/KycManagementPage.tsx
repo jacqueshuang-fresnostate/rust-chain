@@ -1,5 +1,5 @@
 import { IconRefresh, IconSetting, IconShield } from '@douyinfe/semi-icons';
-import { Button, Card, Descriptions, Divider, Image, Select, SideSheet, Space, Table, Tabs, Toast, Typography } from '@douyinfe/semi-ui';
+import { Button, Card, Descriptions, Divider, Empty, Image, Select, SideSheet, Space, Table, Tabs, Toast, Typography } from '@douyinfe/semi-ui';
 import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -9,7 +9,7 @@ import { ConfirmAction } from '../../shared/ConfirmAction';
 import { AdminSelect, AdminTextArea, AdminTextInput, type SemiSelectOption } from '../../shared/SemiFormControls';
 import { StatusTag } from '../../shared/StatusTag';
 import { TimestampText } from '../../shared/TimestampText';
-import { containedTableScroll, containedTableStyle } from '../../shared/tableLayout';
+import { containedTableScroll, containedTableScrollForColumns, containedTableStyle } from '../../shared/tableLayout';
 
 const { Text, Title } = Typography;
 
@@ -423,11 +423,18 @@ export function KycManagementPage() {
       { dataIndex: 'submitted_at', key: 'submitted_at', title: '提交时间', width: 190, render: (value) => <TimestampText value={typeof value === 'number' ? value : null} /> },
       {
         dataIndex: 'id',
+        fixed: 'right',
         key: 'actions',
         title: '操作',
         width: 120,
         render: (value) => (
-          <Button disabled={typeof value !== 'number'} onClick={() => openDetail(Number(value))} size="small" theme="borderless">
+          <Button
+            aria-label={typeof value === 'number' ? `查看 KYC 申请 ${value}` : '查看 KYC 申请'}
+            disabled={typeof value !== 'number'}
+            onClick={() => openDetail(Number(value))}
+            size="small"
+            theme="borderless"
+          >
             查看
           </Button>
         )
@@ -444,9 +451,14 @@ export function KycManagementPage() {
         title: '国家 / 地区',
         width: 220,
         render: (_value, record) => (
-          <div aria-label={`规则国家 ${record.index + 1}`}>
+          <div>
+            <span className="admin-sr-only" id={`kyc-rule-country-${record.index}`}>
+              规则国家 {record.index + 1}
+            </span>
             <Select
+              aria-labelledby={`kyc-rule-country-${record.index}`}
               filter
+              inputProps={{ 'aria-labelledby': `kyc-rule-country-${record.index}` }}
               onChange={(country) => updateCountryDocumentRule(record.index, { country: String(country) })}
               onSelect={(country) => updateCountryDocumentRule(record.index, { country: String(country) })}
               optionList={countryRuleOptions}
@@ -463,18 +475,24 @@ export function KycManagementPage() {
         key: 'document_types',
         title: '允许证件类型',
         render: (_value, record) => (
-          <Select
-            aria-label={`允许证件类型 ${record.index + 1}`}
-            filter
-            maxTagCount={3}
-            multiple
-            onChange={(value) => updateCountryDocumentRule(record.index, { document_types: selectValues(value) })}
-            optionList={kycDocumentTypeOptions}
-            placeholder="请选择证件类型"
-            showClear
-            style={{ width: '100%' }}
-            value={record.document_types}
-          />
+          <>
+            <span className="admin-sr-only" id={`kyc-rule-documents-${record.index}`}>
+              允许证件类型 {record.index + 1}
+            </span>
+            <Select
+              aria-labelledby={`kyc-rule-documents-${record.index}`}
+              filter
+              inputProps={{ 'aria-labelledby': `kyc-rule-documents-${record.index}` }}
+              maxTagCount={3}
+              multiple
+              onChange={(value) => updateCountryDocumentRule(record.index, { document_types: selectValues(value) })}
+              optionList={kycDocumentTypeOptions}
+              placeholder="请选择证件类型"
+              showClear
+              style={{ width: '100%' }}
+              value={record.document_types}
+            />
+          </>
         )
       },
       {
@@ -482,19 +500,25 @@ export function KycManagementPage() {
         key: 'handheld_document_types',
         title: '需手持证件照',
         render: (_value, record) => (
-          <Select
-            aria-label={`需手持证件照 ${record.index + 1}`}
-            disabled={record.document_types.length === 0}
-            filter
-            maxTagCount={3}
-            multiple
-            onChange={(value) => updateCountryDocumentRule(record.index, { handheld_document_types: selectValues(value) })}
-            optionList={ruleDocumentTypeOptions(record)}
-            placeholder="不需要可留空"
-            showClear
-            style={{ width: '100%' }}
-            value={record.handheld_document_types ?? []}
-          />
+          <>
+            <span className="admin-sr-only" id={`kyc-rule-handheld-${record.index}`}>
+              需手持证件照 {record.index + 1}
+            </span>
+            <Select
+              aria-labelledby={`kyc-rule-handheld-${record.index}`}
+              disabled={record.document_types.length === 0}
+              filter
+              inputProps={{ 'aria-labelledby': `kyc-rule-handheld-${record.index}` }}
+              maxTagCount={3}
+              multiple
+              onChange={(value) => updateCountryDocumentRule(record.index, { handheld_document_types: selectValues(value) })}
+              optionList={ruleDocumentTypeOptions(record)}
+              placeholder="不需要可留空"
+              showClear
+              style={{ width: '100%' }}
+              value={record.handheld_document_types ?? []}
+            />
+          </>
         )
       },
       {
@@ -503,7 +527,7 @@ export function KycManagementPage() {
         title: '操作',
         width: 100,
         render: (_value, record) => (
-          <Button onClick={() => removeCountryDocumentRule(record.index)} theme="borderless" type="danger">
+          <Button aria-label={`删除国家规则 ${record.index + 1}`} onClick={() => removeCountryDocumentRule(record.index)} theme="borderless" type="danger">
             删除
           </Button>
         )
@@ -511,6 +535,7 @@ export function KycManagementPage() {
     ],
     [countryRuleOptions]
   );
+  const reviewTableScroll = useMemo(() => containedTableScrollForColumns(columns), [columns]);
 
   return (
     <main className="exchange-page admin-action-page">
@@ -520,134 +545,169 @@ export function KycManagementPage() {
             刷新
           </Button>
         }
+        description="集中处理身份认证待办，并维护国家、证件类型与目标等级规则。"
         title="KYC 管理"
       />
-      <Card bordered={false} className="admin-action-workbench" shadows="always">
+      <Card bordered={false} className="admin-action-workbench admin-kyc-workbench">
         <Tabs activeKey={activeTab} className="admin-action-tabs" onChange={(key) => setActiveTab(key as KycTab)} tabList={kycTabs} type="button" />
 
         {activeTab === 'config' ? (
-          <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-            <Title heading={4}>KYC 配置</Title>
-            <div className="admin-action-form">
-              <label>
-                配置状态
-                <AdminSelect
-                  ariaLabel="KYC 配置状态"
-                  onChange={(enabled) => setConfigForm({ ...configForm, enabled: enabled === 'enabled' })}
-                  optionList={enabledOptions}
-                  value={configForm.enabled ? 'enabled' : 'disabled'}
-                />
-              </label>
-              <label>
-                目标 KYC 等级
-                <AdminTextInput ariaLabel="目标 KYC 等级" onChange={(targetKycLevel) => setConfigForm({ ...configForm, targetKycLevel })} value={configForm.targetKycLevel} />
-              </label>
-              <label>
-                单个证件大小 MB
-                <AdminTextInput ariaLabel="单个证件大小 MB" onChange={(maxDocumentSizeMb) => setConfigForm({ ...configForm, maxDocumentSizeMb })} value={configForm.maxDocumentSizeMb} />
-              </label>
-              <label>
-                允许国家
-                <AdminTextInput ariaLabel="允许国家" onChange={(allowedCountries) => setConfigForm({ ...configForm, allowedCountries })} placeholder="留空表示不限" value={configForm.allowedCountries} />
-              </label>
-              <fieldset className="admin-action-choice-group">
-                <legend>必传证件</legend>
-                <div className="admin-action-choice-list">
-                  {documentOptions.map((option) => (
-                    <Text key={option.value} strong>{option.label}</Text>
-                  ))}
-                  <Text type="secondary">本人手持证件照：{handheldDocumentTypeRuleCount > 0 ? `${handheldDocumentTypeRuleCount} 个证件类型` : '未配置'}</Text>
+          <div aria-labelledby="semiTabconfig" id="semiTabPanelconfig" role="tabpanel" tabIndex={0}>
+            <Space align="start" className="admin-kyc-panel" spacing={16} vertical style={{ width: '100%' }}>
+              <div className="admin-section-heading">
+                <div>
+                  <Text className="admin-section-kicker">POLICY CONFIGURATION</Text>
+                  <Title heading={4}>KYC 配置</Title>
                 </div>
-              </fieldset>
-            </div>
-            <Space align="center" style={{ width: '100%', justifyContent: 'space-between' }}>
-              <Title heading={5}>证件类型规则</Title>
-              <Button onClick={addCountryDocumentRule} theme="solid" type="primary">
-                添加国家规则
-              </Button>
+                <Text type="tertiary">修改配置后需填写操作原因并保留审计记录</Text>
+              </div>
+              <div className="admin-action-form">
+                <label>
+                  配置状态
+                  <AdminSelect
+                    ariaLabel="KYC 配置状态"
+                    onChange={(enabled) => setConfigForm({ ...configForm, enabled: enabled === 'enabled' })}
+                    optionList={enabledOptions}
+                    value={configForm.enabled ? 'enabled' : 'disabled'}
+                  />
+                </label>
+                <label>
+                  目标 KYC 等级
+                  <AdminTextInput ariaLabel="目标 KYC 等级" onChange={(targetKycLevel) => setConfigForm({ ...configForm, targetKycLevel })} value={configForm.targetKycLevel} />
+                </label>
+                <label>
+                  单个证件大小 MB
+                  <AdminTextInput ariaLabel="单个证件大小 MB" onChange={(maxDocumentSizeMb) => setConfigForm({ ...configForm, maxDocumentSizeMb })} value={configForm.maxDocumentSizeMb} />
+                </label>
+                <label>
+                  允许国家
+                  <AdminTextInput ariaLabel="允许国家" onChange={(allowedCountries) => setConfigForm({ ...configForm, allowedCountries })} placeholder="留空表示不限" value={configForm.allowedCountries} />
+                </label>
+                <fieldset className="admin-action-choice-group">
+                  <legend>必传证件</legend>
+                  <div className="admin-action-choice-list">
+                    {documentOptions.map((option) => (
+                      <Text key={option.value} strong>{option.label}</Text>
+                    ))}
+                    <Text type="secondary">本人手持证件照：{handheldDocumentTypeRuleCount > 0 ? `${handheldDocumentTypeRuleCount} 个证件类型` : '未配置'}</Text>
+                  </div>
+                </fieldset>
+              </div>
+              <Space align="center" style={{ width: '100%', justifyContent: 'space-between' }}>
+                <Title heading={5}>证件类型规则</Title>
+                <Button onClick={addCountryDocumentRule} theme="solid" type="primary">
+                  添加国家规则
+                </Button>
+              </Space>
+              <Table
+                aria-label="KYC 证件类型规则"
+                bordered
+                className="admin-business-table admin-kyc-rule-table"
+                columns={countryDocumentColumns}
+                dataSource={configForm.countryDocumentTypes.map((rule, index) => ({ ...rule, index }))}
+                pagination={false}
+                rowKey="index"
+                scroll={containedTableScroll}
+                style={containedTableStyle}
+              />
+              <div className="admin-action-summary">
+                {configSummary.map((item) => (
+                  <span key={item}>{item}</span>
+                ))}
+                <span>最后更新：<TimestampText value={config?.updated_at ?? null} /></span>
+              </div>
+              <ConfirmAction
+                actionText="保存配置"
+                disabled={normalizeRequiredDocuments(configForm.requiredDocuments).length === 0}
+                title="确认保存 KYC 配置"
+                onConfirm={(reason) =>
+                  submitAction('保存 KYC 配置', async () => {
+                    const saved = await apiRequest<KycConfig>('/admin/api/v1/kyc/config', {
+                      method: 'PATCH',
+                      body: JSON.stringify({
+                        allowed_countries: uniqueItems(splitCsv(configForm.allowedCountries)),
+                        country_document_types: serializeCountryDocumentTypes(configForm.countryDocumentTypes),
+                        enabled: configForm.enabled,
+                        max_document_size_bytes: mbToBytes(configForm.maxDocumentSizeMb),
+                        reason,
+                        required_documents: normalizeRequiredDocuments(configForm.requiredDocuments),
+                        target_kyc_level: positiveInteger(configForm.targetKycLevel, '目标 KYC 等级')
+                      })
+                    });
+                    setConfig(saved);
+                    setConfigForm(configToForm(saved));
+                  })
+                }
+              />
             </Space>
-            <Table
-              aria-label="KYC 证件类型规则"
-              bordered
-              columns={countryDocumentColumns}
-              dataSource={configForm.countryDocumentTypes.map((rule, index) => ({ ...rule, index }))}
-              pagination={false}
-              rowKey="index"
-              scroll={containedTableScroll}
-              style={containedTableStyle}
-            />
-            <div className="admin-action-summary">
-              {configSummary.map((item) => (
-                <span key={item}>{item}</span>
-              ))}
-              <span>最后更新：<TimestampText value={config?.updated_at ?? null} /></span>
-            </div>
-            <ConfirmAction
-              actionText="保存配置"
-              disabled={normalizeRequiredDocuments(configForm.requiredDocuments).length === 0}
-              title="确认保存 KYC 配置"
-              onConfirm={(reason) =>
-                submitAction('保存 KYC 配置', async () => {
-                  const saved = await apiRequest<KycConfig>('/admin/api/v1/kyc/config', {
-                    method: 'PATCH',
-                    body: JSON.stringify({
-                      allowed_countries: uniqueItems(splitCsv(configForm.allowedCountries)),
-                      country_document_types: serializeCountryDocumentTypes(configForm.countryDocumentTypes),
-                      enabled: configForm.enabled,
-                      max_document_size_bytes: mbToBytes(configForm.maxDocumentSizeMb),
-                      reason,
-                      required_documents: normalizeRequiredDocuments(configForm.requiredDocuments),
-                      target_kyc_level: positiveInteger(configForm.targetKycLevel, '目标 KYC 等级')
-                    })
-                  });
-                  setConfig(saved);
-                  setConfigForm(configToForm(saved));
-                })
-              }
-            />
-          </Space>
+          </div>
         ) : null}
 
         {activeTab === 'reviews' ? (
-          <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-            <Title heading={4}>人工审核</Title>
-            <Text type="tertiary">
-              {submissionTotal > submissions.length
-                ? `共 ${submissionTotal} 条，当前展示最新 ${submissions.length} 条`
-                : `共 ${submissionTotal} 条`}
-            </Text>
-            <div className="admin-action-form admin-action-form-narrow">
-              <label>
-                审核状态
-                <AdminSelect
-                  ariaLabel="审核状态"
-                  onChange={(status) => {
-                    const nextStatus = status as KycStatus;
-                    setReviewStatus(nextStatus);
-                    loadPage(nextStatus).catch((error) => Toast.error(errorMessage(error)));
-                  }}
-                  optionList={reviewStatusOptions}
-                  value={reviewStatus}
-                />
-              </label>
-            </div>
-            <Table
-              aria-label="KYC 审核列表"
-              bordered
-              columns={columns}
-              dataSource={submissions}
-              loading={loading}
-              pagination={{ pageSize: 20, showSizeChanger: true }}
-              resizable
-              rowKey="id"
-              scroll={containedTableScroll}
-              style={containedTableStyle}
-            />
-          </Space>
+          <div aria-labelledby="semiTabreviews" id="semiTabPanelreviews" role="tabpanel" tabIndex={0}>
+            <Space align="start" className="admin-kyc-panel" spacing={16} vertical style={{ width: '100%' }}>
+              <div className="admin-kyc-review-toolbar">
+                <div>
+                  <Text className="admin-section-kicker">REVIEW QUEUE</Text>
+                  <Title heading={4}>人工审核</Title>
+                  <Text type="tertiary">
+                    {submissionTotal > submissions.length
+                      ? `共 ${submissionTotal} 条，当前展示最新 ${submissions.length} 条`
+                      : `共 ${submissionTotal} 条`}
+                  </Text>
+                </div>
+                <div className="admin-action-form admin-action-form-narrow admin-kyc-review-filter">
+                  <label>
+                    审核状态
+                    <AdminSelect
+                      ariaLabel="审核状态"
+                      onChange={(status) => {
+                        const nextStatus = status as KycStatus;
+                        setReviewStatus(nextStatus);
+                        loadPage(nextStatus).catch((error) => Toast.error(errorMessage(error)));
+                      }}
+                      optionList={reviewStatusOptions}
+                      value={reviewStatus}
+                    />
+                  </label>
+                </div>
+              </div>
+              <div className="admin-kyc-table-stage">
+                {!loading && submissions.length === 0 ? (
+                  <div aria-live="polite" className="admin-table-state admin-table-empty" role="status">
+                    <Empty description="当前状态暂无 KYC 申请" />
+                    <Text type="tertiary">审核队列已清空，可切换状态查看历史申请。</Text>
+                  </div>
+                ) : (
+                  <Table
+                    aria-label="KYC 审核列表"
+                    bordered
+                    className="admin-business-table admin-kyc-table"
+                    columns={columns}
+                    dataSource={submissions}
+                    loading={loading}
+                    pagination={{ pageSize: 20, showSizeChanger: true }}
+                    rowKey="id"
+                    scroll={reviewTableScroll}
+                    style={containedTableStyle}
+                  />
+                )}
+              </div>
+            </Space>
+          </div>
         ) : null}
       </Card>
 
-      <SideSheet onCancel={() => setDetail(null)} title="KYC 审核详情" visible={detail !== null} width={760}>
+      <SideSheet
+        bodyStyle={{ overflowY: 'auto' }}
+        className="admin-kyc-detail-drawer"
+        closeOnEsc
+        maskClosable={false}
+        onCancel={() => setDetail(null)}
+        title="KYC 审核详情"
+        visible={detail !== null}
+        width={920}
+      >
         {detail ? (
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
             <Descriptions
@@ -672,28 +732,28 @@ export function KycManagementPage() {
               size="medium"
             />
             <Divider margin="12px" />
-            <Space align="start" spacing={12} style={{ width: '100%' }}>
-              <Card bordered={false} shadows="hover" style={{ flex: 1 }}>
+            <div className="admin-kyc-document-grid">
+              <Card bordered={false} className="admin-kyc-document-card">
                 <Space align="start" vertical style={{ width: '100%' }}>
                   <Text strong>证件正面</Text>
                   <Image alt="证件正面" height={220} imgStyle={{ objectFit: 'contain' }} preview src={detail.document_front_image} width="100%" />
                 </Space>
               </Card>
-              <Card bordered={false} shadows="hover" style={{ flex: 1 }}>
+              <Card bordered={false} className="admin-kyc-document-card">
                 <Space align="start" vertical style={{ width: '100%' }}>
                   <Text strong>证件反面</Text>
                   <Image alt="证件反面" height={220} imgStyle={{ objectFit: 'contain' }} preview src={detail.document_back_image} width="100%" />
                 </Space>
               </Card>
               {detail.document_handheld_image ? (
-                <Card bordered={false} shadows="hover" style={{ flex: 1 }}>
+                <Card bordered={false} className="admin-kyc-document-card">
                   <Space align="start" vertical style={{ width: '100%' }}>
                     <Text strong>本人手持证件照</Text>
                     <Image alt="本人手持证件照" height={220} imgStyle={{ objectFit: 'contain' }} preview src={detail.document_handheld_image} width="100%" />
                   </Space>
                 </Card>
               ) : null}
-            </Space>
+            </div>
 
             {detail.status === 'pending' ? (
               <>

@@ -1,13 +1,14 @@
 import { IconLock, IconShield } from '@douyinfe/semi-icons';
 import { Button, Card, Form, Radio, RadioGroup, Toast, Typography } from '@douyinfe/semi-ui';
 import { useMutation } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { adminLogin, adminLoginTwoFactor, isAdminLoginTwoFactorChallenge } from '../api/adminAuth';
 import { agentLogin } from '../api/agentAuth';
 import { ApiError } from '../api/client';
 import type { AdminLoginResponse } from '../api/types';
+import hippoLogoLandscape from '../assets/brand/hippo-logo-landscape.png';
 import { authStore, type AuthScope } from './authStore';
 
 const { Title, Text } = Typography;
@@ -65,21 +66,36 @@ export function LoginPage() {
   const isAgentLogin = loginScope === 'agent';
   const accountLabel = isAgentLogin ? '代理账号' : '管理员账号';
 
+  useEffect(() => {
+    document.title = '登录 · HIPPO Operations';
+  }, []);
+
   return (
     <main className="admin-login-page">
       <section className="admin-login-hero" aria-label="交易所管理后台登录">
         <div className="admin-login-copy">
-          <Text className="admin-login-eyebrow">RUST CHAIN EXCHANGE</Text>
-          <Title heading={1}>管理后台入口</Title>
+          <img alt="HIPPO" className="admin-login-logo" src={hippoLogoLandscape} />
+          <div className="admin-login-environment">
+            <span aria-hidden="true" />
+            <Text>PRODUCTION OPERATIONS</Text>
+          </div>
+          <Text className="admin-login-eyebrow">HIPPO OPERATIONS</Text>
+          <Title heading={1}>让每一次运营决策清晰可控</Title>
           <Text className="admin-login-description">
-            面向管理员的资产、行情、新币、代理与审计控制台，也支持代理登录查看团队与佣金数据。
+            统一管理用户身份、资产资金、交易市场与风险策略。所有关键操作保留权限校验和审计链路。
           </Text>
+          <div className="admin-login-capabilities" aria-label="后台能力">
+            <span>实时运营总览</span>
+            <span>安全审核工作台</span>
+            <span>生产环境审计</span>
+          </div>
         </div>
         <Card bordered={false} shadows="always" className="admin-login-card">
           <div className="admin-login-badge">
             <IconShield />
+            <span>SECURE ACCESS</span>
           </div>
-          <Title heading={3}>登录管理后台</Title>
+          <Title heading={3}>登录 HIPPO Operations</Title>
           {challengeId ? (
             <>
               <Text type="tertiary">请输入验证器应用中的 6 位动态码</Text>

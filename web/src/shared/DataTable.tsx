@@ -2,11 +2,12 @@ import { Empty, Spin, Table, Typography } from '@douyinfe/semi-ui';
 import type { ColumnProps, RowSelectionProps } from '@douyinfe/semi-ui/lib/es/table';
 import { useEffect, useMemo, useState } from 'react';
 
-import { containedTableScroll, containedTableStyle } from './tableLayout';
+import { containedTableScrollForColumns, containedTableStyle } from './tableLayout';
 
 const { Text } = Typography;
 
 const DEFAULT_COLUMN_WIDTH = 160;
+const ROW_SELECTION_COLUMN_WIDTH = 48;
 export const DEFAULT_PAGE_SIZE = 10;
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 const adaptiveTableScroll = { x: '100%' };
@@ -58,6 +59,13 @@ export function DataTable<T extends Record<string, unknown>>({ columns, data, di
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const tableColumns = useMemo(() => normalizeTableColumns(columns, displayMode), [columns, displayMode]);
+  const tableScroll = useMemo(
+    () =>
+      displayMode === 'compact'
+        ? containedTableScrollForColumns(tableColumns, rowSelection ? ROW_SELECTION_COLUMN_WIDTH : 0)
+        : adaptiveTableScroll,
+    [displayMode, rowSelection, tableColumns]
+  );
 
   useEffect(() => {
     setCurrentPage(1);
@@ -71,10 +79,29 @@ export function DataTable<T extends Record<string, unknown>>({ columns, data, di
     const start = (currentPage - 1) * pageSize;
     return data.slice(start, start + pageSize);
   }, [currentPage, data, pageSize, pagination]);
+  const tablePagination = useMemo(
+    () => ({
+      currentPage: pagination ? pagination.currentPage : currentPage,
+      pageSize: pagination ? pagination.pageSize : pageSize,
+      pageSizeOpts: PAGE_SIZE_OPTIONS,
+      showSizeChanger: true,
+      total: pagination ? pagination.total : data.length,
+      onPageChange: pagination ? pagination.onPageChange : setCurrentPage,
+      onPageSizeChange: (nextPageSize: number) => {
+        if (pagination) {
+          pagination.onPageSizeChange(nextPageSize);
+          return;
+        }
+        setPageSize(nextPageSize);
+        setCurrentPage(1);
+      }
+    }),
+    [currentPage, data.length, pageSize, pagination]
+  );
 
   if (loading) {
     return (
-      <div style={{ display: 'grid', minHeight: 220, placeItems: 'center' }}>
+      <div aria-live="polite" className="admin-table-state admin-table-loading" role="status">
         <Spin size="large" tip="加载中" />
       </div>
     );
@@ -82,14 +109,20 @@ export function DataTable<T extends Record<string, unknown>>({ columns, data, di
 
   if (error) {
     return (
-      <div role="alert" style={{ padding: 24 }}>
+      <div className="admin-table-state admin-table-error" role="alert">
         <Text type="danger">加载失败：{error.message}</Text>
+        <Text type="tertiary">请检查网络连接后刷新当前资源。</Text>
       </div>
     );
   }
 
   if (data.length === 0 && !(pagination && pagination.total > 0)) {
-    return <Empty description="暂无数据" />;
+    return (
+      <div aria-live="polite" className="admin-table-state admin-table-empty" role="status">
+        <Empty description="暂无数据" />
+        <Text type="tertiary">当前条件下没有可展示的记录，可调整筛选条件后重新查询。</Text>
+      </div>
+    );
   }
 
   return (
@@ -98,26 +131,10 @@ export function DataTable<T extends Record<string, unknown>>({ columns, data, di
       className={`admin-data-table admin-business-table admin-data-table-${displayMode}`}
       columns={tableColumns}
       dataSource={pageData}
-      pagination={{
-        currentPage: pagination ? pagination.currentPage : currentPage,
-        pageSize: pagination ? pagination.pageSize : pageSize,
-        pageSizeOpts: PAGE_SIZE_OPTIONS,
-        showSizeChanger: true,
-        total: pagination ? pagination.total : data.length,
-        onPageChange: pagination ? pagination.onPageChange : setCurrentPage,
-        onPageSizeChange: (nextPageSize) => {
-          if (pagination) {
-            pagination.onPageSizeChange(nextPageSize);
-            return;
-          }
-          setPageSize(nextPageSize);
-          setCurrentPage(1);
-        }
-      }}
-      resizable
+      pagination={tablePagination}
       rowKey={resolveRowKey(rowKey)}
       rowSelection={rowSelection}
-      scroll={displayMode === 'compact' ? containedTableScroll : adaptiveTableScroll}
+      scroll={tableScroll}
       size={displayMode === 'compact' ? 'small' : 'default'}
       style={containedTableStyle}
     />

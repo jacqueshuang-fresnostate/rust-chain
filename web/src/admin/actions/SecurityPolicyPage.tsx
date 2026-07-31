@@ -7,12 +7,13 @@ import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
 import { AdminCheckbox, AdminSelect, type SemiSelectOption } from '../../shared/SemiFormControls';
 
-const { Title } = Typography;
+const { Text, Title } = Typography;
 
 type LoginTwoFactorMode = 'none' | 'user_enabled' | 'mandatory';
 type SecurityVerificationMethod = 'fund_password' | 'two_factor' | 'fund_password_and_two_factor';
 type SecurityActionKey = 'withdraw' | 'spot_order' | 'convert' | 'earn_subscribe';
 type ThirdPartyBindingKey = 'coinbase_wallet_enabled' | 'telegram_account_enabled';
+type SecurityTab = 'login' | 'payment' | 'third-party' | 'summary';
 
 type PaymentPolicy = {
   enabled: boolean;
@@ -106,6 +107,7 @@ function normalizePolicy(value: UserSecurityPolicy): UserSecurityPolicy {
 }
 
 export function SecurityPolicyPage() {
+  const [activeTab, setActiveTab] = useState<SecurityTab>('login');
   const [policy, setPolicy] = useState<UserSecurityPolicy>(defaultPolicy);
   const [loading, setLoading] = useState(true);
 
@@ -169,132 +171,165 @@ export function SecurityPolicyPage() {
 
   return (
     <main className="exchange-page admin-action-page">
-      <PageHeader title="安全策略" />
-      <Tabs
-        className="admin-action-tabs admin-policy-tabs"
-        defaultActiveKey="login"
-        tabBarExtraContent={
-          <Button icon={<IconRefresh aria-hidden="true" />} loading={loading} onClick={() => loadPolicy().catch((error) => Toast.error(errorMessage(error)))} theme="borderless">
-            刷新策略
-          </Button>
-        }
-        tabList={securityTabs}
-        type="button"
-      />
-      <div className="admin-action-grid">
-        <Card bordered={false} shadows="always">
-          <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-            <Title heading={4}>登录策略</Title>
-            <div className="admin-action-form">
-              <label>
-                登录 2FA 策略
-                <AdminSelect
-                  ariaLabel="登录 2FA 策略"
-                  onChange={(login_2fa_mode) => setPolicy({ ...policy, login_2fa_mode: login_2fa_mode as LoginTwoFactorMode })}
-                  optionList={loginModeOptions}
-                  value={policy.login_2fa_mode}
-                />
-              </label>
-              <fieldset className="admin-action-choice-group">
-                <legend>注册策略</legend>
-                <div className="admin-action-choice-list">
-                  <div className="admin-action-checkbox">
-                    <AdminCheckbox
-                      checked={policy.registration_invite_required}
-                      onChange={(registration_invite_required) => setPolicy({ ...policy, registration_invite_required })}
-                    >
-                      注册时必须填写邀请码
-                    </AdminCheckbox>
-                  </div>
+      <PageHeader description="统一控制登录、资金动作验证与第三方绑定策略；保存时需要记录操作原因。" title="安全策略" />
+      <div className="admin-policy-workbench">
+        <Tabs
+          activeKey={activeTab}
+          className="admin-action-tabs admin-policy-tabs"
+          onChange={(key) => setActiveTab(key as SecurityTab)}
+          tabBarExtraContent={
+            <Button icon={<IconRefresh aria-hidden="true" />} loading={loading} onClick={() => loadPolicy().catch((error) => Toast.error(errorMessage(error)))} theme="borderless">
+              刷新策略
+            </Button>
+          }
+          tabList={securityTabs}
+          type="button"
+        />
+        <div aria-labelledby={`semiTab${activeTab}`} id={`semiTabPanel${activeTab}`} role="tabpanel" tabIndex={0}>
+          <Card bordered={false} className="admin-policy-card">
+          {activeTab === 'login' ? (
+            <Space align="start" spacing={20} vertical style={{ width: '100%' }}>
+              <div className="admin-section-heading">
+                <div>
+                  <Text className="admin-section-kicker">ACCESS CONTROL</Text>
+                  <Title heading={4}>登录策略</Title>
                 </div>
-              </fieldset>
-              <fieldset className="admin-action-choice-group">
-                <legend>登录入口</legend>
-                <div className="admin-action-choice-list">
-                  <Space align="center" style={{ justifyContent: 'space-between', width: '100%' }}>
-                    <span>允许用户使用用户名和密码登录 PC 端</span>
-                    <Switch
-                      aria-label="允许用户名登录"
-                      checked={policy.username_login_enabled}
-                      onChange={(username_login_enabled) => setPolicy({ ...policy, username_login_enabled })}
-                    />
-                  </Space>
-                </div>
-              </fieldset>
-            </div>
-          </Space>
-        </Card>
-
-        <Card bordered={false} shadows="always">
-          <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-            <Title heading={4}>资金动作校验</Title>
-            <div className="admin-action-form">
-              {actionConfigs.map(({ key, label }) => {
-                const paymentPolicy = policy.payment_policies[key];
-                return (
-                  <fieldset className="admin-action-choice-group" key={key}>
-                    <legend>{label}校验</legend>
-                    <div className="admin-action-choice-list">
-                      <div className="admin-action-checkbox">
-                        <AdminCheckbox checked={paymentPolicy.enabled} onChange={(enabled) => updatePaymentPolicy(key, { enabled })}>
-                          启用{label}校验
-                        </AdminCheckbox>
-                      </div>
-                      <label>
-                        {label}校验方式
-                        <AdminSelect
-                          ariaLabel={`${label}校验方式`}
-                          onChange={(method) => updatePaymentPolicy(key, { method: method as SecurityVerificationMethod })}
-                          optionList={methodOptions}
-                          value={paymentPolicy.method}
-                        />
-                      </label>
+                <Text type="tertiary">管理用户进入 PC 端时的身份验证强度</Text>
+              </div>
+              <div className="admin-action-form admin-policy-form">
+                <label>
+                  登录 2FA 策略
+                  <AdminSelect
+                    ariaLabel="登录 2FA 策略"
+                    onChange={(login_2fa_mode) => setPolicy({ ...policy, login_2fa_mode: login_2fa_mode as LoginTwoFactorMode })}
+                    optionList={loginModeOptions}
+                    value={policy.login_2fa_mode}
+                  />
+                </label>
+                <fieldset className="admin-action-choice-group">
+                  <legend>注册策略</legend>
+                  <div className="admin-action-choice-list">
+                    <div className="admin-action-checkbox">
+                      <AdminCheckbox
+                        checked={policy.registration_invite_required}
+                        onChange={(registration_invite_required) => setPolicy({ ...policy, registration_invite_required })}
+                      >
+                        注册时必须填写邀请码
+                      </AdminCheckbox>
                     </div>
-                  </fieldset>
-                );
-              })}
-            </div>
-          </Space>
-        </Card>
-
-        <Card bordered={false} shadows="always">
-          <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-            <Title heading={4}>第三方账号绑定</Title>
-            <div className="admin-action-form">
-              {thirdPartyBindingConfigs.map(({ key, label, description }) => (
-                <fieldset className="admin-action-choice-group" key={key}>
-                  <legend>{label}</legend>
+                  </div>
+                </fieldset>
+                <fieldset className="admin-action-choice-group admin-policy-setting">
+                  <legend>登录入口</legend>
                   <div className="admin-action-choice-list">
                     <Space align="center" style={{ justifyContent: 'space-between', width: '100%' }}>
-                      <span>{description}</span>
+                      <span>允许用户使用用户名和密码登录 PC 端</span>
                       <Switch
-                        aria-label={`允许绑定${label}`}
-                        checked={policy.third_party_bindings[key]}
-                        onChange={(enabled) => updateThirdPartyBinding(key, enabled)}
+                        aria-label="允许用户名登录"
+                        checked={policy.username_login_enabled}
+                        onChange={(username_login_enabled) => setPolicy({ ...policy, username_login_enabled })}
                       />
                     </Space>
                   </div>
                 </fieldset>
-              ))}
-            </div>
-          </Space>
-        </Card>
-
-        <Card bordered={false} shadows="always">
-          <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
-            <Title heading={4}>策略摘要</Title>
-            <div className="admin-action-summary">
-              <span>登录策略：{optionLabel(loginModeOptions, policy.login_2fa_mode)}</span>
-              <span>注册策略：{registrationSummary}</span>
-              <span>{usernameLoginSummary}</span>
-              <span>{paymentSummary}</span>
-              <span>{thirdPartySummary}</span>
-            </div>
-            <Space>
-              <ConfirmAction actionText="保存安全策略" title="确认保存安全策略" onConfirm={savePolicy} />
+              </div>
             </Space>
-          </Space>
-        </Card>
+          ) : null}
+
+          {activeTab === 'payment' ? (
+            <Space align="start" spacing={20} vertical style={{ width: '100%' }}>
+              <div className="admin-section-heading">
+                <div>
+                  <Text className="admin-section-kicker">PAYMENT VERIFICATION</Text>
+                  <Title heading={4}>资金动作校验</Title>
+                </div>
+                <Text type="tertiary">按动作独立启用资金密码或双因素认证</Text>
+              </div>
+              <div className="admin-policy-action-grid">
+                {actionConfigs.map(({ key, label }) => {
+                  const paymentPolicy = policy.payment_policies[key];
+                  return (
+                    <fieldset className="admin-action-choice-group admin-policy-setting" key={key}>
+                      <legend>{label}校验</legend>
+                      <div className="admin-action-choice-list">
+                        <div className="admin-action-checkbox">
+                          <AdminCheckbox checked={paymentPolicy.enabled} onChange={(enabled) => updatePaymentPolicy(key, { enabled })}>
+                            启用{label}校验
+                          </AdminCheckbox>
+                        </div>
+                        <label>
+                          {label}校验方式
+                          <AdminSelect
+                            ariaLabel={`${label}校验方式`}
+                            onChange={(method) => updatePaymentPolicy(key, { method: method as SecurityVerificationMethod })}
+                            optionList={methodOptions}
+                            value={paymentPolicy.method}
+                          />
+                        </label>
+                      </div>
+                    </fieldset>
+                  );
+                })}
+              </div>
+            </Space>
+          ) : null}
+
+          {activeTab === 'third-party' ? (
+            <Space align="start" spacing={20} vertical style={{ width: '100%' }}>
+              <div className="admin-section-heading">
+                <div>
+                  <Text className="admin-section-kicker">CONNECTED IDENTITIES</Text>
+                  <Title heading={4}>第三方账号绑定</Title>
+                </div>
+                <Text type="tertiary">控制用户安全中心中可见的外部身份入口</Text>
+              </div>
+              <div className="admin-policy-action-grid">
+                {thirdPartyBindingConfigs.map(({ key, label, description }) => (
+                  <fieldset className="admin-action-choice-group admin-policy-setting" key={key}>
+                    <legend>{label}</legend>
+                    <div className="admin-action-choice-list">
+                      <Space align="center" style={{ justifyContent: 'space-between', width: '100%' }}>
+                        <span>{description}</span>
+                        <Switch
+                          aria-label={`允许绑定${label}`}
+                          checked={policy.third_party_bindings[key]}
+                          onChange={(enabled) => updateThirdPartyBinding(key, enabled)}
+                        />
+                      </Space>
+                    </div>
+                  </fieldset>
+                ))}
+              </div>
+            </Space>
+          ) : null}
+
+          {activeTab === 'summary' ? (
+            <Space align="start" spacing={20} vertical style={{ width: '100%' }}>
+              <div className="admin-section-heading">
+                <div>
+                  <Text className="admin-section-kicker">POLICY OVERVIEW</Text>
+                  <Title heading={4}>策略摘要</Title>
+                </div>
+                <Text type="tertiary">提交前复核当前工作区内的完整策略状态</Text>
+              </div>
+              <div className="admin-action-summary admin-policy-summary">
+                <span>登录策略：{optionLabel(loginModeOptions, policy.login_2fa_mode)}</span>
+                <span>注册策略：{registrationSummary}</span>
+                <span>{usernameLoginSummary}</span>
+                <span>{paymentSummary}</span>
+                <span>{thirdPartySummary}</span>
+              </div>
+            </Space>
+          ) : null}
+          </Card>
+        </div>
+        <div className="admin-policy-save-bar">
+          <div>
+            <Text strong>保存当前安全策略</Text>
+            <Text type="tertiary">提交前将要求填写操作原因，并沿用现有审计流程。</Text>
+          </div>
+          <ConfirmAction actionText="保存安全策略" title="确认保存安全策略" onConfirm={savePolicy} />
+        </div>
       </div>
     </main>
   );

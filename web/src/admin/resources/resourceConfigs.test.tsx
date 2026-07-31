@@ -1289,7 +1289,10 @@ describe('resourceConfigs create actions', () => {
     await selectSemiOption(user, editDialog, '状态', '禁用');
     await user.click(within(editDialog).getByLabelText('支持充值'));
     await user.click(within(editDialog).getByLabelText('支持提现'));
-    await user.click(within(editDialog).getByRole('button', { name: '提交修改' }));
+    const submitAssetEdit = within(editDialog).getByRole('button', { name: '提交修改' });
+    expect(submitAssetEdit).toHaveClass('semi-button-primary', 'semi-button-solid');
+    expect(submitAssetEdit).not.toHaveClass('semi-button-danger');
+    await user.click(submitAssetEdit);
     await user.type(screen.getByLabelText('操作原因'), 'update asset config');
     await user.click(screen.getByRole('button', { name: '确认' }));
 

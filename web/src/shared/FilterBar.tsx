@@ -1,4 +1,4 @@
-import { IconSearch } from '@douyinfe/semi-icons';
+import { IconRefresh, IconSearch } from '@douyinfe/semi-icons';
 import { Button, Input, Switch } from '@douyinfe/semi-ui';
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
 
@@ -85,6 +85,7 @@ export function FilterBar({ fields = [], loading, onChange, value }: FilterBarPr
         ) : (
           <Input
             aria-label={field.label}
+            disabled={loading}
             onChange={(nextValue) => updateField(field, nextValue)}
             placeholder={field.placeholder ?? field.label}
             prefix={<IconSearch aria-hidden="true" />}
@@ -99,13 +100,22 @@ export function FilterBar({ fields = [], loading, onChange, value }: FilterBarPr
 
   return (
     <form className="admin-filter-bar" onSubmit={handleSubmit}>
-      {controls}
-      <Button htmlType="submit" loading={loading} theme="solid" type="primary">
-        查询
-      </Button>
-      <Button disabled={loading} htmlType="button" onClick={handleReset}>
-        重置
-      </Button>
+      <div className="admin-filter-fields">{controls}</div>
+      <div className="admin-filter-actions">
+        <Button
+          disabled={loading}
+          htmlType="submit"
+          icon={<IconSearch aria-hidden="true" />}
+          loading={loading}
+          theme="solid"
+          type="primary"
+        >
+          查询
+        </Button>
+        <Button disabled={loading} htmlType="button" icon={<IconRefresh aria-hidden="true" />} onClick={handleReset}>
+          重置
+        </Button>
+      </div>
     </form>
   );
 }

@@ -86,6 +86,12 @@ describe('AdminLayout', () => {
     const { container } = renderAdminLayout();
 
     expect(container.querySelector('.semi-always-light')).toBeInTheDocument();
+    expect(screen.getByAltText('HIPPO')).toBeInTheDocument();
+    expect(screen.getByText('HIPPO')).toBeInTheDocument();
+    expect(screen.getByText('OPERATIONS')).toBeInTheDocument();
+    expect(screen.getByText('生产环境')).toBeInTheDocument();
+    expect(container.querySelector('.admin-header-context')).toHaveTextContent('运营总览总览仪表盘');
+    expect(document.title).toBe('总览仪表盘 · HIPPO Operations');
     expect(container.querySelector('.admin-shell')).not.toBeInTheDocument();
     expect(container.querySelector('.admin-shell-nav')).not.toBeInTheDocument();
   });
@@ -173,18 +179,29 @@ describe('AdminLayout', () => {
   });
 
   it('uses the Semi Navigation footer collapse control', () => {
-    const { container } = renderAdminLayout();
+    const { container } = renderAdminLayout('/admin/users');
 
     const sider = screen.getByLabelText('后台侧边栏');
+    const activeGroup = screen.getByRole('menuitem', { name: /用户与代理/ });
     const collapseButton = container.querySelector('.semi-navigation-footer button') as HTMLElement | null;
 
     expect(sider).toHaveClass('admin-layout-sider');
     expect(sider).not.toHaveClass('admin-layout-sider-collapsed');
+    expect(activeGroup).toHaveAttribute('aria-expanded', 'true');
     expect(collapseButton).toBeInTheDocument();
 
     fireEvent.click(collapseButton as HTMLElement);
 
     expect(sider).toHaveClass('admin-layout-sider-collapsed');
     expect(screen.queryByText('Rust Chain')).not.toBeInTheDocument();
+    expect(screen.getByAltText('HIPPO')).toBeInTheDocument();
+
+    const expandButton = container.querySelector('.semi-navigation-footer button') as HTMLElement | null;
+    expect(expandButton).toBeInTheDocument();
+    fireEvent.click(expandButton as HTMLElement);
+
+    expect(sider).not.toHaveClass('admin-layout-sider-collapsed');
+    expect(screen.getByRole('menuitem', { name: /用户与代理/ })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('menuitem', { name: '用户管理' })).toHaveClass('semi-navigation-item-selected');
   });
 });

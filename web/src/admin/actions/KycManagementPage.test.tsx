@@ -76,12 +76,8 @@ function semiSelectByLabel(label: string): HTMLElement {
   return select as HTMLElement;
 }
 
-function semiSelectByAriaLabel(label: string): HTMLElement {
-  const node = document.querySelector(`[aria-label="${label}"]`) as HTMLElement | null;
-  expect(node).toBeInTheDocument();
-  const select = (node?.matches('.semi-select') ? node : node?.querySelector('.semi-select') ?? node?.closest('.semi-select')) as HTMLElement | null;
-  expect(select ?? node).toBeInTheDocument();
-  return (select ?? node) as HTMLElement;
+function semiSelectByAccessibleName(label: string): HTMLElement {
+  return screen.getByRole('combobox', { name: label });
 }
 
 async function selectSemiOption(user: ReturnType<typeof userEvent.setup>, label: string, optionLabel: string) {
@@ -97,8 +93,8 @@ async function selectSemiOption(user: ReturnType<typeof userEvent.setup>, label:
   fireEvent.click(option as HTMLElement);
 }
 
-async function selectSemiOptionByAriaLabel(user: ReturnType<typeof userEvent.setup>, label: string, optionLabel: string) {
-  await user.click(semiSelectByAriaLabel(label));
+async function selectSemiOptionByAccessibleName(user: ReturnType<typeof userEvent.setup>, label: string, optionLabel: string) {
+  await user.click(semiSelectByAccessibleName(label));
   await waitFor(() => {
     expect([...document.querySelectorAll('.semi-select-option')].some((option) => option.textContent === optionLabel)).toBe(true);
   });
@@ -167,14 +163,18 @@ describe('KycManagementPage', () => {
     const emailCell = await screen.findByText('kyc-user@example.test');
     const tableWrapper = emailCell.closest('.semi-table-wrapper');
     expect(tableWrapper).toHaveStyle({ maxWidth: '100%', width: '100%' });
+    expect(tableWrapper).toHaveClass('admin-business-table', 'admin-kyc-table');
+    expect(tableWrapper?.querySelector('.react-resizable-handle')).not.toBeInTheDocument();
     expect(within(tableWrapper as HTMLElement).getByText('kyc-user@example.test')).toBeInTheDocument();
     expect(within(tableWrapper as HTMLElement).getByText('Zhang San')).toBeInTheDocument();
     expect(within(tableWrapper as HTMLElement).getByText('CN12****7890')).toBeInTheDocument();
     expect(within(tableWrapper as HTMLElement).getByText('身份证')).toBeInTheDocument();
+    expect(screen.getByRole('tabpanel', { name: '人工审核' })).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: '查看' }));
+    await user.click(screen.getByRole('button', { name: '查看 KYC 申请 501' }));
 
     expect(await screen.findByText('KYC 审核详情')).toBeInTheDocument();
+    expect(screen.getByText('KYC 审核详情').closest('.semi-sidesheet-inner')).toHaveStyle({ width: '920px' });
     expect(screen.getByText('18800000000')).toBeInTheDocument();
     expect(screen.getByRole('img', { name: '证件正面' })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: '证件反面' })).toBeInTheDocument();
@@ -183,12 +183,33 @@ describe('KycManagementPage', () => {
     expect(screen.getAllByText('91310000712345678A').length).toBeGreaterThan(0);
   });
 
+  it('renders a complete empty review queue when no submissions match', async () => {
+    apiRequestMock.mockImplementation((path) => {
+      if (path === '/admin/api/v1/kyc/config') {
+        return Promise.resolve(kycConfig);
+      }
+      if (path === '/admin/api/v1/countries?status=active&limit=200') {
+        return Promise.resolve({ countries: [] });
+      }
+      if (String(path).startsWith('/admin/api/v1/kyc/submissions?')) {
+        return Promise.resolve({ submissions: [], total: 0 });
+      }
+      return Promise.resolve({});
+    });
+
+    render(<KycManagementPage />);
+
+    expect(await screen.findByText('当前状态暂无 KYC 申请')).toBeInTheDocument();
+    expect(screen.getByText('审核队列已清空，可切换状态查看历史申请。')).toBeInTheDocument();
+    expect(screen.queryByRole('grid', { name: 'KYC 审核列表' })).not.toBeInTheDocument();
+  });
+
   it('approves a pending submission, closes the SideSheet, and refreshes the list', async () => {
     const user = userEvent.setup();
 
     render(<KycManagementPage />);
 
-    await user.click(await screen.findByRole('button', { name: '查看' }));
+    await user.click(await screen.findByRole('button', { name: '查看 KYC 申请 501' }));
     await user.clear(await screen.findByLabelText('通过后 KYC 等级'));
     await user.type(screen.getByLabelText('通过后 KYC 等级'), '2');
     await user.type(screen.getByLabelText('审核原因'), 'identity checked');
@@ -218,6 +239,7 @@ describe('KycManagementPage', () => {
     render(<KycManagementPage />);
 
     await user.click(await screen.findByRole('tab', { name: 'KYC 配置' }));
+    expect(screen.getByRole('tabpanel', { name: 'KYC 配置' })).toBeInTheDocument();
     expect(screen.getByText('身份证件正面')).toBeInTheDocument();
     expect(screen.getByText('身份证件反面')).toBeInTheDocument();
     expect(screen.getByText('本人手持证件照：1 个证件类型')).toBeInTheDocument();
@@ -228,7 +250,9 @@ describe('KycManagementPage', () => {
     await user.type(screen.getByLabelText('目标 KYC 等级'), '2');
     await user.clear(screen.getByLabelText('允许国家'));
     await user.type(screen.getByLabelText('允许国家'), 'Singapore');
-    await selectSemiOptionByAriaLabel(user, '规则国家 1', 'Singapore (SG)');
+    expect(screen.getByRole('combobox', { name: '允许证件类型 1' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: '需手持证件照 1' })).toBeInTheDocument();
+    await selectSemiOptionByAccessibleName(user, '规则国家 1', 'Singapore (SG)');
     await user.click(screen.getByRole('button', { name: '保存配置' }));
     await user.type(screen.getByLabelText('操作原因'), 'update kyc config');
     await user.click(screen.getByRole('button', { name: '确认' }));

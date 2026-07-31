@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DataTable, normalizeTableColumns } from './DataTable';
+import { containedTableScrollForColumns } from './tableLayout';
 
 type Row = {
   id: number;
@@ -56,7 +57,7 @@ describe('DataTable', () => {
     expect(screen.getByText('记录 20')).toBeInTheDocument();
   });
 
-  it('renders bordered and resizable tables with compact table styling by default', () => {
+  it('renders bordered tables with compact table styling by default', () => {
     render(<DataTable<Row> columns={columns} data={rows} />);
 
     const table = screen.getByRole('grid');
@@ -74,7 +75,7 @@ describe('DataTable', () => {
     const table = screen.getByRole('grid');
     expect(table.closest('.semi-table-wrapper')).toHaveClass('admin-data-table-compact');
     expect(table.closest('.semi-table-bordered')).toHaveClass('semi-table-small');
-    expect(table.querySelector('.react-resizable-handle')).toBeInTheDocument();
+    expect(table.querySelector('.react-resizable-handle')).not.toBeInTheDocument();
   });
 
   it('normalizes missing column widths without changing existing column props', () => {
@@ -87,6 +88,7 @@ describe('DataTable', () => {
     expect(normalized[0]).toMatchObject({ dataIndex: 'name', title: '名称', width: 160 });
     expect(normalized[1]).toMatchObject({ dataIndex: 'id', fixed: 'right', title: '操作', width: 300 });
     expect(normalized[1].render).toBe(fixedRender);
+    expect(containedTableScrollForColumns(normalized)).toEqual({ x: 460 });
   });
 
   it('keeps adaptive columns fluid when adaptive mode is explicitly configured', () => {

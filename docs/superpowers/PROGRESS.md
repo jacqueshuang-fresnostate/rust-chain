@@ -6375,3 +6375,24 @@
 - 修改文件：`docker-compose.1panel.yml`、`docker-compose.1panel.env.example`、`.gitignore`、`.dockerignore`、`docs/deployment/docker.md`、`.trellis/spec/backend/container-delivery.md`、`.trellis/tasks/07-30-1panel-external-services-compose/`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：`docker compose --env-file docker-compose.1panel.env.example -f docker-compose.1panel.yml config` 和现有完整 Compose 解析通过；JSON 机器断言确认服务精确为 `api/migrate`、同一镜像、外部网络、迁移完成门禁、全部必填环境变量、仅 API 端口和上传卷、无第三方 service/volume；缺少 `DATABASE_URL` 时按预期拒绝解析，自定义网络/绑定地址/端口覆盖通过；`cargo fmt -- --check`、`cargo check --all-targets`、`git check-ignore docker-compose.1panel.env` 和 `git diff --check` 通过。
 - 后续事项：在目标 1Panel 中填入四个第三方服务的实际容器名或内网地址及真实凭据，再创建编排并检查迁移退出码与 `/health`。
+
+## 2026-07-31 10:02 - 重构 HIPPO 管理端 UI/UX
+
+- 完成内容：以 HIPPO 石墨、暖白和橙色体系重构管理端公共外壳、品牌资产、页面标题与响应式内容画布；统一资源页主操作区、常显标签筛选器、空/错/加载状态、表格密度与固定操作列，按 Semi Table 文档移除全部 `resizable`/`scroll.x` 冲突；收敛 DetailDrawer、SideSheet、Modal、双列表单和普通/危险按钮语义；专项优化登录、Dashboard 整数 KPI、KYC 审核工作台和安全策略单面板 Tabs；保留全部 API、权限、分页、筛选、导出和写操作逻辑。1280px 侧栏实际收窄为 208px，导航不再以 Semi 默认 240px 覆盖主内容；资产操作列固定为 216px，资产编辑侧栏为 720px 双列并使用右对齐橙色提交动作。
+- 修改文件：`web/index.html`、`web/src/styles.css`、`web/src/assets/brand/{hippo-logo-compact.png,hippo-logo-landscape.png}`、`web/src/layouts/{AdminLayout,PageHeader}.tsx`、`web/src/auth/LoginPage.tsx`、`web/src/shared/{FilterBar,DataTable,DetailDrawer,ConfirmAction}.tsx`、`web/src/admin/resources/{AdminResourcePage.tsx,actions/wallet.tsx}`、`web/src/admin/actions/{KycManagementPage,MarketFeedConfigPage,SecurityPolicyPage}.tsx`、`web/src/admin/dashboard/DashboardPage.tsx`、对应 `*.test.tsx`、`.trellis/tasks/07-31-07-31-admin-ui-ux-audit-polish/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix web run typecheck`、`npm --prefix web run lint`、`npm --prefix web run test`（34 个测试文件、256/256）、`npm --prefix web run build` 和 `git diff --check` 通过；Ego Browser 使用本地 Vite 与现有生产管理员会话完成登录、Dashboard、用户、资产、KYC、安全策略、资产 SideSheet 的 1728px/1280px 截图与交互回归，页面文档横向溢出均为 0，安全策略 Tabs 仅显示当前面板，资产表无伸缩手柄，最终严重控制台事件为 0；`pc/src/config/app.ts` SHA-256 保持 `66af4ce19deeea62c9a5d51a4dd0f5fe6670009ce6df75b1df2fc7a76671decb`，未修改、还原或暂存；未覆盖任务审查截图。
+- 后续事项：按用户要求未创建 Git 提交、未归档 Trellis 任务；生产构建仍有依赖 `lottie-web` 的直接 `eval` 提示及单包超过 500 kB 的既有体积告警，可后续单独安排代码分割优化。
+
+## 2026-07-31 10:27 - HIPPO 管理端 UI/UX 独立审查与自修复
+
+- 完成内容：按 PRD、审计研究记录与 Semi Design 文档独立复核未提交重构；修复紧凑表格固定列横向滚动宽度不足、FilterBar 加载态仍可提交、确认弹窗取消后遗留原因及危险操作确认按钮层级、KYC 行内 Select 缺少稳定可访问名称、Tabs 外置内容缺失 tabpanel 语义、低对比主色和通用加载/空状态播报；补齐 AdminLayout 折叠后恢复激活分组、FilterBar 受控草稿、SecurityPolicy 跨 Tabs 表单状态、KYC/MarketFeed tabpanel 与既有提交载荷的行为回归。
+- 修改文件：`web/src/shared/{tableLayout.ts,DataTable.tsx,DataTable.test.tsx,FilterBar.tsx,FilterBar.test.tsx,ConfirmAction.tsx,ConfirmAction.test.tsx}`、`web/src/layouts/AdminLayout.test.tsx`、`web/src/admin/actions/{KycManagementPage.tsx,KycManagementPage.test.tsx,SecurityPolicyPage.tsx,SecurityPolicyPage.test.tsx,MarketFeedConfigPage.tsx,MarketFeedConfigPage.test.tsx}`、`web/src/styles.css`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix web run typecheck`、`npm --prefix web run lint`、`npm --prefix web run test`（36 个测试文件、260/260）、`npm --prefix web run build`、`git diff --check` 全部通过；Ego Browser 在本地 Vite 中实测 1728px/1280px Dashboard、1280px 用户/KYC/安全策略/行情订阅及导航折叠恢复，文档横向溢出为 0、1280px 侧栏为 208px、关键页均暴露当前 tabpanel；本地后端未运行时关键页按既有错误/空状态呈现。`pc/src/config/app.ts` SHA-256 仍为 `66af4ce19deeea62c9a5d51a4dd0f5fe6670009ce6df75b1df2fc7a76671decb`，未修改、还原、暂存；任务截图未覆盖，未创建提交。
+- 后续事项：生产构建仍报告第三方 `lottie-web` 直接 `eval` 与主 JS/CSS 包超过 500 kB 的非阻断告警；真实后端数据密集态的 1280px 浏览器复验可在服务恢复后补做。
+
+## 2026-07-31 10:34 - HIPPO 管理端主会话最终验收与规范沉淀
+
+- 完成内容：主会话重新执行完整 Web 质量门，并使用 Ego Browser 连接本地 Vite、真实远程 API 与管理员账号复验登录、Dashboard、1280px 用户管理、资产表、KYC、安全策略及资产编辑 SideSheet；将修复前后截图和实测几何补入任务研究记录；新增 Admin Web 规范，固化 HIPPO 外壳、资源页结构、受控 FilterBar、Semi Table 数值滚动宽度、禁止 `resizable`/横向滚动组合、216px 固定操作列、确认弹窗、Tabs、响应式与浏览器断言。
+- 修改文件：`.trellis/spec/admin/{index,ui-system}.md`、`.trellis/tasks/07-31-07-31-admin-ui-ux-audit-polish/research/admin-ui-audit.md`、任务 `research/screenshots/*-after.png`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：主会话执行 `npm --prefix web run typecheck`、`npm --prefix web run lint`、`npm --prefix web run test`（36 个测试文件、260/260）、`npm --prefix web run build`、`git diff --check` 全部通过；Ego Browser 实测登录页、Dashboard、用户、资产、KYC、安全策略、SideSheet 文档横向溢出均为 0，1280px 侧栏 208px、资产操作列 216px、资产表伸缩手柄 0、SideSheet 720px 且双列 307px、安全策略仅一个可见面板；浏览器任务空间已正常关闭，本地 Vite 已停止。
+- 后续事项：第三方 `lottie-web` 的直接 `eval` 和主 JS/CSS 包超过 500 kB 的构建告警仍为非阻断既有问题，可单独安排代码分割与依赖收敛；本任务无功能阻塞。

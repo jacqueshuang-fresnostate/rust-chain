@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { ApiError, apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
-import { formatAdminNumber } from '../../shared/numberFormat';
 import { StatusTag } from '../../shared/StatusTag';
 import { TimestampText } from '../../shared/TimestampText';
 
@@ -60,6 +59,7 @@ type DashboardResponse = {
 type KpiCard = {
   description: string;
   label: string;
+  tone: 'brand' | 'info' | 'neutral' | 'warning';
   value: string;
 };
 
@@ -79,7 +79,7 @@ function custodyText(status: string) {
 }
 
 function displayNumber(value: number) {
-  return formatAdminNumber(value) ?? String(value);
+  return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 }).format(value);
 }
 
 export function DashboardPage() {
@@ -93,15 +93,16 @@ export function DashboardPage() {
     }
 
     return [
-      { label: '用户总数', value: displayNumber(dashboard.users.total), description: `活跃 ${displayNumber(dashboard.users.active)}，24h 新增 ${displayNumber(dashboard.users.new_24h)}` },
-      { label: '活跃资产', value: displayNumber(dashboard.wallet.active_assets), description: `钱包账户 ${displayNumber(dashboard.wallet.wallet_accounts)}，非零账户 ${displayNumber(dashboard.wallet.non_zero_accounts)}` },
-      { label: '活跃交易对', value: displayNumber(dashboard.market.active_pairs), description: `外部行情 ${displayNumber(dashboard.market.external_pairs)}，策略行情 ${displayNumber(dashboard.market.strategy_pairs)}` },
-      { label: '现货挂单', value: displayNumber(dashboard.trading.spot_open_orders), description: `24h 成交 ${displayNumber(dashboard.trading.spot_trades_24h)}` },
-      { label: '24h 成交', value: displayNumber(dashboard.trading.spot_trades_24h), description: `闪兑待处理 ${displayNumber(dashboard.trading.convert_pending_orders)}` },
+      { label: '用户总数', value: displayNumber(dashboard.users.total), description: `活跃 ${displayNumber(dashboard.users.active)}，24h 新增 ${displayNumber(dashboard.users.new_24h)}`, tone: 'brand' },
+      { label: '活跃资产', value: displayNumber(dashboard.wallet.active_assets), description: `钱包账户 ${displayNumber(dashboard.wallet.wallet_accounts)}，非零账户 ${displayNumber(dashboard.wallet.non_zero_accounts)}`, tone: 'info' },
+      { label: '活跃交易对', value: displayNumber(dashboard.market.active_pairs), description: `外部行情 ${displayNumber(dashboard.market.external_pairs)}，策略行情 ${displayNumber(dashboard.market.strategy_pairs)}`, tone: 'info' },
+      { label: '现货挂单', value: displayNumber(dashboard.trading.spot_open_orders), description: `24h 成交 ${displayNumber(dashboard.trading.spot_trades_24h)}`, tone: 'neutral' },
+      { label: '24h 成交', value: displayNumber(dashboard.trading.spot_trades_24h), description: `闪兑待处理 ${displayNumber(dashboard.trading.convert_pending_orders)}`, tone: 'neutral' },
       {
         label: '事件积压',
         value: displayNumber(dashboard.risk.pending_outbox_events + dashboard.risk.retry_inbox_events + dashboard.risk.dead_letter_inbox_events),
-        description: `风控事件 ${displayNumber(dashboard.risk.risk_events_24h)}，阻断 ${displayNumber(dashboard.risk.blocked_events_24h)}`
+        description: `风控事件 ${displayNumber(dashboard.risk.risk_events_24h)}，阻断 ${displayNumber(dashboard.risk.blocked_events_24h)}`,
+        tone: 'warning'
       }
     ];
   }, [dashboard]);
@@ -125,30 +126,37 @@ export function DashboardPage() {
 
   return (
     <main className="exchange-page admin-dashboard-page">
-      <PageHeader title="总览仪表盘" />
-      <div className="admin-dashboard-toolbar">
-        <Space wrap>
-          <Button loading={loading} onClick={loadDashboard} theme="solid" type="primary">
-            刷新总览
-          </Button>
-          <Text type="secondary">生成时间：{dashboard ? <TimestampText value={dashboard.generated_at} /> : '-'}</Text>
-        </Space>
-      </div>
+      <PageHeader
+        actions={
+          <Space className="admin-dashboard-toolbar" wrap>
+            <Text type="secondary">数据时间：{dashboard ? <TimestampText value={dashboard.generated_at} /> : '-'}</Text>
+            <Button loading={loading} onClick={loadDashboard} theme="solid" type="primary">
+              刷新总览
+            </Button>
+          </Space>
+        }
+        description="集中查看用户、资金、交易与风险事件的生产运行状态。"
+        title="总览仪表盘"
+      />
       {error ? <Banner type="danger" description={`加载失败：${error}`} /> : null}
       {dashboard ? (
         <>
-          <section className="admin-dashboard-kpi-grid">
+          <section aria-label="核心运营指标" className="admin-dashboard-kpi-grid">
             {kpis.map((card) => (
-              <Card bordered={false} className="admin-dashboard-card" key={card.label} shadows="always">
-                <Text type="secondary">{card.label}</Text>
+              <Card bordered={false} className="admin-dashboard-card" data-tone={card.tone} key={card.label}>
+                <div className="admin-dashboard-card-heading">
+                  <Text type="secondary">{card.label}</Text>
+                  <span aria-hidden="true" />
+                </div>
                 <Title heading={3}>{card.value}</Title>
                 <Text type="tertiary">{card.description}</Text>
               </Card>
             ))}
           </section>
           <section className="admin-dashboard-detail-grid">
-            <Card bordered={false} shadows="always">
+            <Card bordered={false} className="admin-dashboard-detail-card">
               <Space align="start" spacing={12} vertical>
+                <Text className="admin-dashboard-section-kicker">MARKET FEED</Text>
                 <Title heading={4}>行情订阅</Title>
                 <StatusTag value={dashboard.market.feed_runtime_status} />
                 <Text>当前启动 providers：{joinList(dashboard.market.feed_providers)}</Text>
@@ -156,8 +164,9 @@ export function DashboardPage() {
                 <Text>配置重载：{dashboard.market.feed_needs_reload ? '需要重载' : '无需重载'}</Text>
               </Space>
             </Card>
-            <Card bordered={false} shadows="always">
+            <Card bordered={false} className="admin-dashboard-detail-card admin-dashboard-detail-card-warning">
               <Space align="start" spacing={12} vertical>
+                <Text className="admin-dashboard-section-kicker">CUSTODY</Text>
                 <Title heading={4}>资金与链上状态</Title>
                 <Banner type="warning" description={custodyText(dashboard.wallet.custody_status)} />
                 <Text>待解禁：{displayNumber(dashboard.wallet.pending_unlocks)}</Text>
@@ -165,8 +174,9 @@ export function DashboardPage() {
                 <Text>待提现处理：{displayNumber(dashboard.wallet.pending_withdrawals)}</Text>
               </Space>
             </Card>
-            <Card bordered={false} shadows="always">
+            <Card bordered={false} className="admin-dashboard-detail-card">
               <Space align="start" spacing={12} vertical>
+                <Text className="admin-dashboard-section-kicker">PRODUCTS</Text>
                 <Title heading={4}>产品运行</Title>
                 <Text>秒合约未结算订单：{displayNumber(dashboard.products.seconds_open_orders)}</Text>
                 <Text>杠杆持仓：{displayNumber(dashboard.products.margin_open_positions)}</Text>
@@ -175,8 +185,9 @@ export function DashboardPage() {
                 <Text>24h 到期 Earn：{displayNumber(dashboard.products.earn_maturing_24h)}</Text>
               </Space>
             </Card>
-            <Card bordered={false} shadows="always">
+            <Card bordered={false} className="admin-dashboard-detail-card admin-dashboard-detail-card-risk">
               <Space align="start" spacing={12} vertical>
+                <Text className="admin-dashboard-section-kicker">RISK EVENTS</Text>
                 <Title heading={4}>风控 / 事件积压</Title>
                 <Text>24h 风控事件：{displayNumber(dashboard.risk.risk_events_24h)}</Text>
                 <Text>24h 阻断事件：{displayNumber(dashboard.risk.blocked_events_24h)}</Text>

@@ -669,34 +669,36 @@ function AssetEditAction({ assetId, helpers, record }: { assetId: string; helper
               <label>提现手续费<AdminTextInput ariaLabel="提现手续费" value={config.withdrawFee} onChange={(withdrawFee) => setConfig({ ...config, withdrawFee })} /></label>
               <AssetWithdrawFeeTiersEditor values={config.withdrawFeeTiers} onChange={(withdrawFeeTiers) => setConfig({ ...config, withdrawFeeTiers })} />
             </div>
-            <ConfirmAction
-              actionText="提交修改"
-              disabled={!isAssetConfigUpdatable(config)}
-              title="确认修改资产配置"
-              onConfirm={async (reason) => {
-                await submitAction('修改资产配置', () =>
-                  apiRequest(`/admin/api/v1/assets/${assetId}`, {
-                    method: 'PATCH',
-                    body: JSON.stringify({
-                      name: requiredString(config.name, '资产名称'),
-                      logo_url: optionalString(config.logoUrl),
-                      precision_scale: requiredNonNegativeInteger(config.precisionScale, '资产精度'),
-                      asset_type: requiredString(config.assetType, '资产类型'),
-                      status: requiredString(config.status, '状态'),
-                      deposit_enabled: config.depositEnabled,
-                      withdraw_enabled: config.withdrawEnabled,
-                      min_deposit_amount: requiredNonNegativeDecimal(config.minDepositAmount, '最小充值数量'),
-                      deposit_fee: requiredNonNegativeDecimal(config.depositFee, '充值手续费'),
-                      withdraw_fee: requiredNonNegativeDecimal(config.withdrawFee, '提现手续费'),
-                      withdraw_fee_tiers: withdrawFeeTierPayload(config.withdrawFeeTiers),
-                      reason
+            <div className="admin-action-footer">
+              <ConfirmAction
+                actionText="提交修改"
+                disabled={!isAssetConfigUpdatable(config)}
+                title="确认修改资产配置"
+                onConfirm={async (reason) => {
+                  await submitAction('修改资产配置', () =>
+                    apiRequest(`/admin/api/v1/assets/${assetId}`, {
+                      method: 'PATCH',
+                      body: JSON.stringify({
+                        name: requiredString(config.name, '资产名称'),
+                        logo_url: optionalString(config.logoUrl),
+                        precision_scale: requiredNonNegativeInteger(config.precisionScale, '资产精度'),
+                        asset_type: requiredString(config.assetType, '资产类型'),
+                        status: requiredString(config.status, '状态'),
+                        deposit_enabled: config.depositEnabled,
+                        withdraw_enabled: config.withdrawEnabled,
+                        min_deposit_amount: requiredNonNegativeDecimal(config.minDepositAmount, '最小充值数量'),
+                        deposit_fee: requiredNonNegativeDecimal(config.depositFee, '充值手续费'),
+                        withdraw_fee: requiredNonNegativeDecimal(config.withdrawFee, '提现手续费'),
+                        withdraw_fee_tiers: withdrawFeeTierPayload(config.withdrawFeeTiers),
+                        reason
+                      })
                     })
-                  })
-                );
-                setVisible(false);
-                helpers.reload();
-              }}
-            />
+                  );
+                  setVisible(false);
+                  helpers.reload();
+                }}
+              />
+            </div>
           </Space>
         </Card>
       </SideSheet>

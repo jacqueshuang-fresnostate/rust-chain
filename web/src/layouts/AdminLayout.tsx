@@ -1,10 +1,11 @@
 import { IconExit } from '@douyinfe/semi-icons';
-import { Avatar, Button, Layout, Nav, Space, Typography } from '@douyinfe/semi-ui';
+import { Avatar, Button, Layout, Nav, Tag, Typography } from '@douyinfe/semi-ui';
 import type { NavItems, OnSelectedData } from '@douyinfe/semi-ui/lib/es/navigation';
 import { useEffect, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 
 import { adminNavItems, type AdminNavItem } from '../admin/navigation';
+import hippoLogoCompact from '../assets/brand/hippo-logo-compact.png';
 import { authStore } from '../auth/authStore';
 
 const { Header, Sider, Content } = Layout;
@@ -20,6 +21,21 @@ function containsActivePath(item: AdminNavItem, activePath: string) {
 
 function activeGroupKeys(activePath: string) {
   return adminNavItems.filter((item) => item.children && containsActivePath(item, activePath)).map((item) => item.label);
+}
+
+function adminNavContext(activePath: string) {
+  for (const item of adminNavItems) {
+    if (item.path === activePath) {
+      return { domain: '运营总览', page: item.label };
+    }
+
+    const child = item.children?.find((candidate) => candidate.path === activePath);
+    if (child) {
+      return { domain: item.label, page: child.label };
+    }
+  }
+
+  return { domain: '运营后台', page: '管理工作台' };
 }
 
 const semiNavItems: NavItems = adminNavItems.map((item) =>
@@ -46,8 +62,13 @@ export function AdminLayout() {
   const session = authStore.getSession();
   const subject = session?.subject ?? 'admin';
   const activePath = normalizePath(location.pathname);
+  const navContext = adminNavContext(activePath);
   const [openKeys, setOpenKeys] = useState<string[]>(() => activeGroupKeys(activePath));
   const [isCollapsed, setIsCollapsed] = useState(false);
+
+  useEffect(() => {
+    document.title = `${navContext.page} · HIPPO Operations`;
+  }, [navContext.page]);
 
   useEffect(() => {
     const activeGroups = activeGroupKeys(activePath);
@@ -78,8 +99,15 @@ export function AdminLayout() {
             collapseButton: true
           }}
           header={{
-            logo: <Avatar size="small">RC</Avatar>,
-            text: isCollapsed ? '' : 'Rust Chain'
+            logo: <img alt="HIPPO" className="admin-brand-logo" src={hippoLogoCompact} />,
+            text: isCollapsed ? (
+              ''
+            ) : (
+              <span className="admin-brand-copy">
+                <strong>HIPPO</strong>
+                <small>OPERATIONS</small>
+              </span>
+            )
           }}
           isCollapsed={isCollapsed}
           items={semiNavItems}
@@ -95,21 +123,32 @@ export function AdminLayout() {
       </Sider>
       <Layout className="admin-layout-main">
         <Header className="admin-layout-header">
-          <Space>
-            <Avatar size="small">{subject.slice(0, 1).toUpperCase()}</Avatar>
-            <Text>{subject}</Text>
-          </Space>
-          <Button
-            icon={<IconExit />}
-            onClick={() => {
-              authStore.clearSession();
-              navigate('/login', { replace: true });
-            }}
-            theme="borderless"
-            type="tertiary"
-          >
-            退出登录
-          </Button>
+          <div className="admin-header-context">
+            <Text className="admin-header-domain">{navContext.domain}</Text>
+            <Text className="admin-header-page" strong>{navContext.page}</Text>
+          </div>
+          <div className="admin-header-account">
+            <Tag className="admin-environment-tag" color="orange" size="large">生产环境</Tag>
+            <div className="admin-header-identity">
+              <Avatar className="admin-header-avatar" size="small">{subject.slice(0, 1).toUpperCase()}</Avatar>
+              <span>
+                <Text className="admin-header-role">管理员</Text>
+                <Text className="admin-header-subject" strong>{subject}</Text>
+              </span>
+            </div>
+            <Button
+              aria-label="退出登录"
+              icon={<IconExit />}
+              onClick={() => {
+                authStore.clearSession();
+                navigate('/login', { replace: true });
+              }}
+              theme="borderless"
+              type="tertiary"
+            >
+              退出
+            </Button>
+          </div>
         </Header>
         <Content className="admin-layout-content">
           <Outlet />

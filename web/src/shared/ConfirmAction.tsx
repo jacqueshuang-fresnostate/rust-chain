@@ -6,15 +6,25 @@ const { Text } = Typography;
 type ConfirmActionProps = {
   actionText?: string;
   confirmText?: string;
+  dangerous?: boolean;
   disabled?: boolean;
   onConfirm: (reason: string) => Promise<void> | void;
   title: string;
 };
 
-export function ConfirmAction({ actionText = '执行', confirmText = '确认', disabled, onConfirm, title }: ConfirmActionProps) {
+export function ConfirmAction({ actionText = '执行', confirmText = '确认', dangerous, disabled, onConfirm, title }: ConfirmActionProps) {
   const [reason, setReason] = useState('');
   const [visible, setVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const destructive = dangerous ?? /删除|拒绝|驳回|作废|禁用|停用|标记失败|注销|移除|冲正|回收|撤单|重置|归档/.test(`${actionText}${title}`);
+
+  function closeModal() {
+    if (submitting) {
+      return;
+    }
+    setVisible(false);
+    setReason('');
+  }
 
   async function handleConfirm() {
     const trimmed = reason.trim();
@@ -34,15 +44,18 @@ export function ConfirmAction({ actionText = '执行', confirmText = '确认', d
 
   return (
     <>
-      <Button disabled={disabled} onClick={() => setVisible(true)} type="danger">
+      <Button disabled={disabled} onClick={() => setVisible(true)} theme={destructive ? 'light' : 'solid'} type={destructive ? 'danger' : 'primary'}>
         {actionText}
       </Button>
       <Modal
+        cancelButtonProps={{ 'aria-label': '取消', disabled: submitting }}
+        closeOnEsc={!submitting}
         confirmLoading={submitting}
+        maskClosable={false}
         motion={false}
-        okButtonProps={{ 'aria-label': confirmText, disabled: reason.trim().length === 0 }}
+        okButtonProps={{ 'aria-label': confirmText, disabled: reason.trim().length === 0, type: destructive ? 'danger' : 'primary' }}
         okText={confirmText}
-        onCancel={() => setVisible(false)}
+        onCancel={closeModal}
         onOk={handleConfirm}
         title={title}
         visible={visible}

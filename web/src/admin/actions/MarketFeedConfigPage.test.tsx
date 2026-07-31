@@ -117,6 +117,7 @@ describe('MarketFeedConfigPage', () => {
     expect(screen.getByRole('tab', { name: '订阅配置' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '运行状态' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Provider 凭证' })).toBeInTheDocument();
+    expect(screen.getByRole('tabpanel', { name: '订阅配置' })).toBeInTheDocument();
     expect(screen.queryByText('配置第三方行情 symbols、intervals、providers 和 API Key；保存后需手动重载才会生效。')).not.toBeInTheDocument();
     expect(screen.queryByText('交易对支持逗号分隔输入；K 线周期和行情源可多选，保存后需手动重载。')).not.toBeInTheDocument();
     expect(screen.queryByText('保存配置不会立即影响 worker，只有手动重载会更新运行态。')).not.toBeInTheDocument();
@@ -130,6 +131,7 @@ describe('MarketFeedConfigPage', () => {
 
     await user.click(screen.getByRole('tab', { name: '运行状态' }));
 
+    expect(screen.getByRole('tabpanel', { name: '运行状态' })).toBeInTheDocument();
     expect(screen.getByTestId('runtime-providers')).toHaveTextContent('当前启动 providers');
     expect(screen.getByTestId('runtime-providers')).toHaveTextContent('Bitget 行情');
     expect(screen.getByTestId('runtime-providers')).toHaveTextContent('HTX 行情');
@@ -140,6 +142,7 @@ describe('MarketFeedConfigPage', () => {
 
     await user.click(screen.getByRole('tab', { name: 'Provider 凭证' }));
 
+    expect(screen.getByRole('tabpanel', { name: 'Provider 凭证' })).toBeInTheDocument();
     expect(semiSelectByLabel('行情源')).toHaveTextContent('Bitget 行情');
     expect(semiSelectByLabel('鉴权方式')).toHaveTextContent('API Key 鉴权');
     expect(screen.getByLabelText('API Key').closest('.semi-input-wrapper')).toBeInTheDocument();
@@ -163,7 +166,7 @@ describe('MarketFeedConfigPage', () => {
     expect(list.closest('.semi-table-bordered')).toBeInTheDocument();
     expect(tableWrapper).not.toHaveClass('admin-action-subscription-list');
     expect(tableWrapper).toHaveStyle({ maxWidth: '100%', width: '100%' });
-    expect(list.querySelector('.react-resizable-handle')).toBeInTheDocument();
+    expect(list.querySelector('.react-resizable-handle')).not.toBeInTheDocument();
     expect(document.querySelector('.admin-action-subscription-list')).not.toBeInTheDocument();
     expect(within(list).getByRole('columnheader', { name: '类型' })).toBeInTheDocument();
     expect(within(list).getByRole('columnheader', { name: '订阅项' })).toBeInTheDocument();

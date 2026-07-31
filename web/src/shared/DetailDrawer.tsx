@@ -465,7 +465,6 @@ export function DetailFieldTable({ fieldMeta, record }: DetailFieldTableProps) {
       columns={fieldColumns(fieldMeta)}
       dataSource={record ? toRows(record) : []}
       pagination={false}
-      resizable
       rowKey="field"
       scroll={containedTableScroll}
       style={containedTableStyle}
@@ -479,14 +478,22 @@ export function DetailDrawer({ detail, onClose }: DetailDrawerProps) {
   const records = Array.isArray(data) ? data : [];
 
   return (
-    <SideSheet onCancel={onClose} title={detail?.title ?? '详情'} visible={detail !== null} width="80%">
+    <SideSheet
+      bodyStyle={{ overflowY: 'auto' }}
+      className="admin-detail-drawer"
+      closeOnEsc
+      maskClosable={false}
+      onCancel={onClose}
+      title={detail?.title ?? '详情'}
+      visible={detail !== null}
+      width={920}
+    >
       {Array.isArray(data) ? (
         <Table
           bordered
           columns={recordColumns(records, meta)}
           dataSource={records}
           pagination={false}
-          resizable
           rowKey={(record) => String(record?.id ?? displayValue(record))}
           scroll={containedTableScroll}
           style={containedTableStyle}

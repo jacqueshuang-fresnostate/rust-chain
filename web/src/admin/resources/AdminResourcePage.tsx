@@ -327,7 +327,7 @@ export function AdminResourcePage<T extends ApiRecord>({
   const recordCount = serverPaged && total !== null ? total : rows.length;
   const filterCount = filterFields?.length ?? 0;
   const nextDisplayMode: DataTableDisplayMode = tableDisplayMode === 'adaptive' ? 'compact' : 'adaptive';
-  const displayModeButtonText = tableDisplayMode === 'adaptive' ? '自适应列表' : '紧凑列表';
+  const displayModeButtonText = nextDisplayMode === 'adaptive' ? '切换到自适应' : '切换到紧凑';
   const detailFieldMeta = useMemo<DetailDrawerFieldMeta>(
     () =>
       columns.reduce<DetailDrawerFieldMeta>(
@@ -378,7 +378,7 @@ export function AdminResourcePage<T extends ApiRecord>({
           </Space>
         ),
         title: '操作',
-        width: 300
+        width: 216
       }
     ];
   }, [columns, openDetail, reload, rowActions, showJsonAction]);
@@ -404,55 +404,67 @@ export function AdminResourcePage<T extends ApiRecord>({
       />
       <Card bordered={false} className="admin-resource-shell">
         <div className="admin-resource-toolbar">
-          <Space className="admin-resource-toolbar-actions" spacing={10} wrap>
-            {renderedActions}
-            {renderedBatchActions}
-            {csvFileName ? (
-              <Tooltip content="以 CSV 导出当前已加载数据（非全量）">
-                <Button
-                  disabled={rows.length === 0}
-                  icon={<IconDownload aria-hidden="true" />}
-                  onClick={() => downloadCsv(csvFileName, toCsv(columns, rows))}
-                  theme="borderless"
-                >
-                  导出已加载数据
+          <div className="admin-resource-toolbar-primary">
+            <div className="admin-resource-toolbar-heading">
+              <Text strong>数据操作</Text>
+              <Text type="tertiary">创建、批量处理与导出当前已加载记录</Text>
+            </div>
+            <Space className="admin-resource-toolbar-actions" spacing={10} wrap>
+              {renderedActions}
+              {renderedBatchActions}
+              {csvFileName ? (
+                <Tooltip content="以 CSV 导出当前已加载数据（非全量）">
+                  <Button
+                    disabled={rows.length === 0}
+                    icon={<IconDownload aria-hidden="true" />}
+                    onClick={() => downloadCsv(csvFileName, toCsv(columns, rows))}
+                    theme="borderless"
+                  >
+                    导出已加载数据
+                  </Button>
+                </Tooltip>
+              ) : null}
+              <Tooltip content="重新加载当前资源">
+                <Button icon={<IconRefresh aria-hidden="true" />} loading={loading} onClick={reload} theme="borderless">
+                  刷新
                 </Button>
               </Tooltip>
-            ) : null}
-            <Tooltip content="重新加载当前资源">
-              <Button icon={<IconRefresh aria-hidden="true" />} loading={loading} onClick={reload} theme="borderless">
-                刷新
-              </Button>
-            </Tooltip>
-          </Space>
+            </Space>
+          </div>
           {filterCount > 0 ? (
             <div className="admin-resource-toolbar-filters">
+              <div className="admin-resource-toolbar-heading">
+                <Text strong>筛选条件</Text>
+                <Text type="tertiary">{activeFilterCount > 0 ? `当前启用 ${activeFilterCount} 项` : '组合条件后统一查询'}</Text>
+              </div>
               <FilterBar fields={filterFields} loading={loading} onChange={handleFilterChange} value={filterValues} />
             </div>
           ) : null}
         </div>
-        <DataTable
-          columns={tableColumns}
-          data={rows}
-          displayMode={tableDisplayMode}
-          error={error}
-          loading={loading}
-          pagination={
-            serverPaged
-              ? {
-                  currentPage: page,
-                  onPageChange: setPage,
-                  onPageSizeChange: (nextPageSize) => {
-                    setPageSize(nextPageSize);
-                    setPage(1);
-                  },
-                  pageSize,
-                  total: total ?? rows.length
-                }
-              : undefined
-          }
-          rowSelection={rowSelection}
-        />
+        <div className="admin-resource-table-stage">
+          <DataTable
+            columns={tableColumns}
+            data={rows}
+            displayMode={tableDisplayMode}
+            error={error}
+            loading={loading}
+            pagination={
+              serverPaged
+                ? {
+                    currentPage: page,
+                    onPageChange: setPage,
+                    onPageSizeChange: (nextPageSize) => {
+                      setPageSize(nextPageSize);
+                      setPage(1);
+                    },
+                    pageSize,
+                    total: total ?? rows.length
+                  }
+                : undefined
+            }
+            rowSelection={rowSelection}
+          />
+        </div>
       </Card>
       <DetailDrawer detail={detail} onClose={() => setDetail(null)} />
     </main>

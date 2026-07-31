@@ -97,7 +97,8 @@ describe('AdminResourcePage', () => {
     expect(screen.getByText('启用')).toBeInTheDocument();
     expect(screen.getByText('123.45 USDT')).toBeInTheDocument();
     expect(screen.getByText(/^2025年1月1日/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '紧凑列表' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '切换到自适应' })).toBeInTheDocument();
+    expect(screen.getByText('筛选条件')).toBeVisible();
     expect(screen.getByRole('button', { name: '查询' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '重置' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /刷新/ })).toBeInTheDocument();
@@ -129,7 +130,7 @@ describe('AdminResourcePage', () => {
     expect(tableWrapper).toHaveClass('admin-data-table', 'admin-data-table-compact');
     expect(tableWrapper).toHaveStyle({ maxWidth: '100%', width: '100%' });
     expect(grid.closest('.semi-table-bordered')).toHaveClass('semi-table-small');
-    expect(grid.querySelector('.react-resizable-handle')).toBeInTheDocument();
+    expect(grid.querySelector('.react-resizable-handle')).not.toBeInTheDocument();
     expect(document.querySelector('.admin-data-table')).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: '操作' })).toHaveClass('semi-table-cell-fixed-right');
     expect(screen.getByRole('button', { name: '查看详情' }).closest('td')).toHaveClass('semi-table-cell-fixed-right');
@@ -153,10 +154,10 @@ describe('AdminResourcePage', () => {
     render(<AdminResourcePage<TestRecord> title="管理员资源" endpoint="/admin/accounts" responseKey="items" columns={columns} />);
 
     expect(await screen.findByText('密度切换')).toBeInTheDocument();
-    const modeButton = screen.getByRole('button', { name: '紧凑列表' });
+    const modeButton = screen.getByRole('button', { name: '切换到自适应' });
     await user.click(modeButton);
 
-    expect(modeButton).toHaveTextContent('自适应列表');
+    expect(modeButton).toHaveTextContent('切换到紧凑');
     expect(screen.getByRole('grid').closest('.semi-table-wrapper')).toHaveClass('admin-data-table-adaptive');
   });
 
@@ -201,7 +202,7 @@ describe('AdminResourcePage', () => {
     await screen.findByText('暂无数据');
     const switchControl = screen.getByLabelText('显示机器人数据');
     expect(switchControl.closest('.admin-resource-head-switch')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '紧凑列表' }).closest('.admin-resource-head-actions')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '切换到自适应' }).closest('.admin-resource-head-actions')).toBeInTheDocument();
 
     await user.click(switchControl);
     await waitFor(() => {
@@ -428,7 +429,8 @@ describe('AdminResourcePage', () => {
     await user.click(screen.getByRole('button', { name: '查看详情' }));
 
     expect(await screen.findByText('字段')).toBeInTheDocument();
-    expect(screen.getByText('详情').closest('.semi-sidesheet-inner')).toHaveStyle({ width: '80%' });
+    expect(screen.getByText('详情').closest('.semi-sidesheet')).toHaveClass('admin-detail-drawer');
+    expect(screen.getByText('详情').closest('.semi-sidesheet-inner')).toHaveStyle({ width: '920px' });
     expect(screen.getByText('内容')).toBeInTheDocument();
     const detailTableWrapper = screen.getAllByRole('grid').at(-1)?.closest('.semi-table-wrapper');
     expect(detailTableWrapper).toHaveStyle({ maxWidth: '100%', width: '100%' });
