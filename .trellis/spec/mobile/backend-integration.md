@@ -41,12 +41,17 @@ Public market WebSocket:
 ```text
 GET /api/v1/ws/public
 subscribe -> {"op":"subscribe","channel":"ticker|depth|trade","symbol":"BTCUSDT"}
+kline subscribe -> {"op":"subscribe","channel":"kline","symbol":"BTCUSDT","interval":"1m|5m|15m|1h|1d"}
 heartbeat -> text "ping" / text "pong"
 depth -> {"symbol":"BTCUSDT","bids":[{"price":"...","quantity":"..."}],"asks":[...],"observed_at":<unix-ms>,"provider":"..."}
 trade -> {"symbol":"BTCUSDT","trade_id":"...","side":"buy|sell","price":"...","quantity":"...","traded_at":<unix-ms>,"provider":"..."}
+kline -> {"symbol":"BTCUSDT","interval":"1m","open_time":<unix-ms>,"open":"...","high":"...","low":"...","close":"...","volume":"...","observed_at":<unix-ms>,"provider":"..."}
 ```
 
-Depth and trade broadcasts are direct payloads without a `type` discriminator.
+Depth, trade, and K-line broadcasts are direct payloads without a `type`
+discriminator. Live K-line timestamps are JSON numbers in Unix milliseconds;
+OHLCV values are decimal strings, `volume` may be zero, and `provider` is a
+non-empty string.
 The REST compatibility shapes remain `bids/asks[].amount` for depth and
 `trades[].id/direction/amount/time` for recent trades.
 
@@ -103,13 +108,30 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
   text/JSON pong frames. Unknown or backend error frames must not be treated as
   ticker updates.
 - The market-detail page owns a separate single-symbol public connection. It
-  subscribes to `depth` and `trade` alongside the initial REST requests, closes
-  the old connection before a symbol switch, and clears heartbeat, reconnect,
-  and pending render-frame work on stop.
+  subscribes to `depth`, `trade`, and the selected `kline` interval alongside
+  the initial REST requests, closes the old connection before a symbol or
+  interval switch, and clears heartbeat, reconnect, and pending render-frame
+  work on stop.
+- `MARKET_KLINE_INTERVALS` is the single mobile market-detail interval source
+  and must match the backend domain exactly: `1m`, `5m`, `15m`, `1h`, `1d`.
+  Do not expose `4h` on this surface or accept arbitrary interval suffixes.
 - REST depth and recent trades remain first-screen fallbacks. A settled REST
   response must not replace a depth snapshot already received from WebSocket;
   recent REST history may only append behind already rendered live trades and
   must deduplicate by trade id.
+- REST K-lines and live K-lines share one adapter and merge function. REST may
+  accept the compatibility number/string and seconds/milliseconds shapes, but
+  the direct WebSocket parser validates the deployed payload strictly. The
+  live list is the primary argument during reconciliation, so a matching
+  `open_time` from WebSocket always wins over a later REST row.
+- The detail session is identified by normalized symbol, selected interval,
+  page request version, and monotonically increasing generation. Replacing a
+  session invalidates the previous stream, pending REST request token, and any
+  cancelled render-frame callback, including an `A -> B -> A` interval switch.
+- A live K-line with the current `open_time` replaces the forming candle; a
+  newer `open_time` appends a candle. Normalize, deduplicate, sort ascending,
+  and retain the newest 160 points. Coalesce high-frequency updates so only
+  the latest valid pending K-line is committed per animation frame.
 - Each direct depth broadcast is a complete snapshot. Normalize numeric
   strings, reject the whole malformed frame, sort bids descending and asks
   ascending, retain at most 12 levels per side, and coalesce high-frequency
@@ -122,25 +144,29 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
 ### Market-detail Good / Base / Bad Cases
 
 - **Good**: REST and WebSocket start together; a live depth snapshot wins over
-  a later REST response, and REST trade history appends behind live trades.
+  a later REST response, REST trade history appends behind live trades, and a
+  live forming candle wins over the same `open_time` in later REST history.
 - **Base**: WebSocket is temporarily unavailable; REST depth/trades remain
-  visible while the connection reconnects with bounded exponential backoff.
+  visible and REST K-lines render the chart while the connection reconnects
+  with bounded exponential backoff and resubscribes all three channels.
 - **Bad**: a frame has an invalid side, zero/boolean numeric value, incomplete
-  depth side, or mismatched symbol; ignore the whole frame and preserve the
-  last valid state.
+  depth side, unsupported interval, non-millisecond live K-line timestamp,
+  malformed OHLC relationship, missing provider, or mismatched symbol; ignore
+  the whole frame and preserve the last valid state.
 
 ### Market-detail Wrong vs Correct
 
 ```ts
-// Wrong: every interval change blanks live data and late REST overwrites WS.
+// Wrong: keep one interval-agnostic stream and let late REST overwrite WS.
 await Promise.all([fetchKlines(symbol), fetchOrderBook(symbol)])
 startDetailStream(symbol)
 
-// Correct: connect alongside REST, guard by symbol/version, and only refresh
-// klines when the chart interval changes.
-const live = startDetailStream(symbol)
+// Correct: replace the session for each supported interval, connect alongside
+// REST, and reconcile with live points as the primary source.
+const context = detailSession.replace(symbol, interval, requestVersion)
+const request = detailSession.beginKlineRequest(context)
 const initial = await Promise.allSettled([fetchKlines(symbol), fetchOrderBook(symbol)])
-if (!live.depthReceived) applyRestDepth(initial)
+const points = detailSession.resolveKlineRequest(request, restKlines(initial))
 ```
 
 - New-coin purchase uses the backend-configured pair id, locks the displayed
@@ -165,6 +191,10 @@ if (!live.depthReceived) applyRestDepth(initial)
 | Backend returns an error body | Preserve the backend message when present |
 | WebSocket closes while listeners remain | Reconnect with bounded backoff and resubscribe |
 | WebSocket has no listeners | Cancel timers, clear subscriptions, and close |
+| Detail interval is unsupported | Do not create a socket or send an empty K-line subscription |
+| Direct K-line timestamp is seconds/string, OHLCV has a non-string, or provider is empty | Reject the whole live frame; keep the last valid chart |
+| REST K-line settles after one or more live candles | Merge REST behind live points; never replace a matching live `open_time` |
+| Symbol/interval changes or repeats through an ABA sequence | Invalidate the old context, REST token, and pending animation-frame callback |
 
 ## 7. Tests Required
 
@@ -176,11 +206,15 @@ if (!live.depthReceived) applyRestDepth(initial)
   `ws: true`, `/health` proxy, and absence of a startup health gate.
 - Request-layer tests for bootstrap Bearer removal, bootstrap 401 exclusion,
   singleton refresh, one replay, and failed-refresh session cleanup.
-- WebSocket protocol tests for ticker/depth/trade subscribe frames,
-  confirmation, verified direct payload shapes, heartbeat, and invalid frames.
-- Market-detail lifecycle tests for REST/WebSocket races, latest-only depth
-  frame coalescing, symbol filtering, reconnect resubscription and backoff,
-  duplicate close/error idempotency, and stop-before-open cleanup.
+- WebSocket protocol tests for ticker/depth/trade/K-line subscribe frames,
+  supported interval normalization, confirmation, verified direct payload
+  shapes, heartbeat, strict live K-line rejection, and malformed frames.
+- Market-detail lifecycle tests for REST/WebSocket races, live K-line upsert,
+  new-candle append, 160-point retention, latest-only depth/K-line frame
+  coalescing, symbol/interval filtering, ABA interval isolation, reconnect
+  resubscription and backoff, duplicate close/error idempotency, cancelled RAF
+  callbacks, and stop-before-open cleanup. Race tests must execute fake sockets
+  and delayed promises rather than assert source text alone.
 - Adapter tests for new-coin quote quantity, safe news rich text, prediction
   order number, and stable margin pair labels.
 - Run `npm run type-check`, `npm test`, `npm run build:pwa`, and

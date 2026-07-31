@@ -1,6 +1,10 @@
-import type { OrderBookLevel, TradePrint } from '../core/types.ts'
+import type { KlinePoint, OrderBookLevel, TradePrint } from '../core/types.ts'
 import {
+  DEFAULT_MARKET_KLINE_LIMIT,
   depthSubscriptionFrame,
+  klineSubscriptionFrame,
+  mergeMarketKlines,
+  normalizeMarketKlineInterval,
   normalizeMarketSocketSymbol,
   parseMarketSocketFrame,
   tradeSubscriptionFrame,
@@ -40,14 +44,62 @@ export interface MarketDetailStreamScheduler {
 
 export interface MarketDetailStreamOptions {
   symbol: string
+  interval: string
   url: string
   onDepth(snapshot: { bids: OrderBookLevel[]; asks: OrderBookLevel[] }): void
   onTrade(trade: TradePrint): void
+  onKline(point: KlinePoint): void
   createSocket?: (url: string) => MarketDetailSocket | null
   scheduler?: MarketDetailStreamScheduler
   reconnectBaseMs?: number
   reconnectMaxMs?: number
   heartbeatMs?: number
+}
+
+export interface MarketDetailStreamContext {
+  symbol: string
+  interval: string
+  requestVersion: number
+  generation: number
+  depthReceived: boolean
+  tradeReceived: boolean
+  klineReceived: boolean
+}
+
+export interface MarketDetailKlineRequest {
+  context: MarketDetailStreamContext
+  generation: number
+}
+
+export interface MarketDetailStreamSessionOptions {
+  getUrl(): string
+  onDepth(
+    context: MarketDetailStreamContext,
+    snapshot: { bids: OrderBookLevel[]; asks: OrderBookLevel[] },
+  ): void
+  onTrade(context: MarketDetailStreamContext, trade: TradePrint): void
+  onKlines(context: MarketDetailStreamContext, points: KlinePoint[]): void
+  startStream?: (options: MarketDetailStreamOptions) => () => void
+  klineLimit?: number
+}
+
+export interface MarketDetailStreamSession {
+  replace(symbol: string, interval: string, requestVersion: number): MarketDetailStreamContext
+  stop(): void
+  current(): MarketDetailStreamContext | null
+  currentPoints(): KlinePoint[]
+  isCurrent(
+    context: MarketDetailStreamContext,
+    symbol?: string,
+    interval?: string,
+    requestVersion?: number,
+  ): boolean
+  beginKlineRequest(context: MarketDetailStreamContext): MarketDetailKlineRequest | null
+  isCurrentKlineRequest(request: MarketDetailKlineRequest): boolean
+  resolveKlineRequest(
+    request: MarketDetailKlineRequest,
+    restPoints: readonly KlinePoint[],
+  ): KlinePoint[] | null
 }
 
 const defaultScheduler: MarketDetailStreamScheduler = {
@@ -76,7 +128,8 @@ function createBrowserSocket(url: string): MarketDetailSocket | null {
 
 export function startMarketDetailStream(options: MarketDetailStreamOptions): () => void {
   const symbol = normalizeMarketSocketSymbol(options.symbol)
-  if (!symbol || !options.url.trim()) return () => undefined
+  const interval = normalizeMarketKlineInterval(options.interval)
+  if (!symbol || !interval || !options.url.trim()) return () => undefined
 
   const scheduler = options.scheduler ?? defaultScheduler
   const createSocket = options.createSocket ?? createBrowserSocket
@@ -93,7 +146,11 @@ export function startMarketDetailStream(options: MarketDetailStreamOptions): () 
   let reconnectTimer: unknown = null
   let heartbeatTimer: unknown = null
   let depthFrame: unknown = null
+  let depthFrameToken: object | null = null
   let pendingDepth: { bids: OrderBookLevel[]; asks: OrderBookLevel[] } | null = null
+  let klineFrame: unknown = null
+  let klineFrameToken: object | null = null
+  let pendingKline: KlinePoint | null = null
 
   const clearHeartbeat = (): void => {
     if (heartbeatTimer === null) return
@@ -109,9 +166,18 @@ export function startMarketDetailStream(options: MarketDetailStreamOptions): () 
 
   const clearPendingDepth = (): void => {
     pendingDepth = null
+    depthFrameToken = null
     if (depthFrame === null) return
     scheduler.cancelFrame(depthFrame)
     depthFrame = null
+  }
+
+  const clearPendingKline = (): void => {
+    pendingKline = null
+    klineFrameToken = null
+    if (klineFrame === null) return
+    scheduler.cancelFrame(klineFrame)
+    klineFrame = null
   }
 
   const scheduleReconnect = (): void => {
@@ -150,10 +216,12 @@ export function startMarketDetailStream(options: MarketDetailStreamOptions): () 
       if (socket === next) socket = null
       clearHeartbeat()
       clearPendingDepth()
+      clearPendingKline()
       scheduleReconnect()
     }
 
     const closeAfterFailure = (): void => {
+      if (!active || socket !== next || disconnected) return
       disconnect()
       try {
         next.close()
@@ -177,6 +245,7 @@ export function startMarketDetailStream(options: MarketDetailStreamOptions): () 
       try {
         next.send(depthSubscriptionFrame(symbol))
         next.send(tradeSubscriptionFrame(symbol))
+        next.send(klineSubscriptionFrame(symbol, interval))
       } catch {
         closeAfterFailure()
         return
@@ -197,16 +266,36 @@ export function startMarketDetailStream(options: MarketDetailStreamOptions): () 
       if (!frame || normalizeFrameSymbol(frame) !== symbol) return
       if (frame.type === 'depth') {
         pendingDepth = { bids: frame.bids, asks: frame.asks }
-        if (depthFrame !== null) return
-        depthFrame = scheduler.requestFrame(() => {
+        if (depthFrameToken !== null) return
+        const frameToken = {}
+        depthFrameToken = frameToken
+        const scheduledFrame = scheduler.requestFrame(() => {
+          if (depthFrameToken !== frameToken) return
+          depthFrameToken = null
           depthFrame = null
           const snapshot = pendingDepth
           pendingDepth = null
           if (!snapshot || !active || socket !== next || disconnected) return
           options.onDepth(snapshot)
         })
+        if (depthFrameToken === frameToken) depthFrame = scheduledFrame
       } else if (frame.type === 'trade') {
         options.onTrade(frame.trade)
+      } else if (frame.type === 'kline' && frame.interval === interval) {
+        pendingKline = frame.point
+        if (klineFrameToken !== null) return
+        const frameToken = {}
+        klineFrameToken = frameToken
+        const scheduledFrame = scheduler.requestFrame(() => {
+          if (klineFrameToken !== frameToken) return
+          klineFrameToken = null
+          klineFrame = null
+          const point = pendingKline
+          pendingKline = null
+          if (!point || !active || socket !== next || disconnected) return
+          options.onKline(point)
+        })
+        if (klineFrameToken === frameToken) klineFrame = scheduledFrame
       }
     })
 
@@ -222,6 +311,7 @@ export function startMarketDetailStream(options: MarketDetailStreamOptions): () 
     clearReconnect()
     clearHeartbeat()
     clearPendingDepth()
+    clearPendingKline()
     const current = socket
     socket = null
     if (!current) return
@@ -233,10 +323,144 @@ export function startMarketDetailStream(options: MarketDetailStreamOptions): () 
   }
 }
 
+export function createMarketDetailStreamSession(
+  options: MarketDetailStreamSessionOptions,
+): MarketDetailStreamSession {
+  const startStream = options.startStream ?? startMarketDetailStream
+  const klineLimit = options.klineLimit ?? DEFAULT_MARKET_KLINE_LIMIT
+  let generation = 0
+  let klineRequestGeneration = 0
+  let currentContext: MarketDetailStreamContext | null = null
+  let stopStream: (() => void) | null = null
+  let points: KlinePoint[] = []
+
+  const isCurrent = (
+    context: MarketDetailStreamContext,
+    symbol?: string,
+    interval?: string,
+    requestVersion?: number,
+  ): boolean => {
+    if (
+      context !== currentContext
+      || context.generation !== generation
+      || (symbol !== undefined && context.symbol !== normalizeMarketSocketSymbol(symbol))
+      || (interval !== undefined && context.interval !== normalizeMarketKlineInterval(interval))
+      || (requestVersion !== undefined && context.requestVersion !== requestVersion)
+    ) {
+      return false
+    }
+    return true
+  }
+
+  const stop = (): void => {
+    if (!currentContext && !stopStream) return
+    generation += 1
+    klineRequestGeneration += 1
+    currentContext = null
+    const previousStop = stopStream
+    stopStream = null
+    try {
+      previousStop?.()
+    } catch {
+      return
+    }
+  }
+
+  const replace = (
+    symbol: string,
+    interval: string,
+    requestVersion: number,
+  ): MarketDetailStreamContext => {
+    stop()
+    const context: MarketDetailStreamContext = {
+      symbol: normalizeMarketSocketSymbol(symbol),
+      interval: normalizeMarketKlineInterval(interval),
+      requestVersion,
+      generation: ++generation,
+      depthReceived: false,
+      tradeReceived: false,
+      klineReceived: false,
+    }
+    klineRequestGeneration += 1
+    currentContext = context
+    points = []
+
+    if (!context.symbol || !context.interval) return context
+    try {
+      stopStream = startStream({
+        symbol: context.symbol,
+        interval: context.interval,
+        url: options.getUrl(),
+        onDepth: (snapshot) => {
+          if (!isCurrent(context)) return
+          context.depthReceived = true
+          options.onDepth(context, snapshot)
+        },
+        onTrade: (trade) => {
+          if (!isCurrent(context)) return
+          context.tradeReceived = true
+          options.onTrade(context, trade)
+        },
+        onKline: (point) => {
+          if (!isCurrent(context)) return
+          context.klineReceived = true
+          points = mergeMarketKlines([point], points, klineLimit)
+          options.onKlines(context, [...points])
+        },
+      })
+    } catch {
+      stopStream = null
+    }
+    return context
+  }
+
+  const beginKlineRequest = (
+    context: MarketDetailStreamContext,
+  ): MarketDetailKlineRequest | null => {
+    if (!isCurrent(context)) return null
+    return {
+      context,
+      generation: ++klineRequestGeneration,
+    }
+  }
+
+  const isCurrentKlineRequest = (request: MarketDetailKlineRequest): boolean => {
+    return request.generation === klineRequestGeneration && isCurrent(request.context)
+  }
+
+  const resolveKlineRequest = (
+    request: MarketDetailKlineRequest,
+    restPoints: readonly KlinePoint[],
+  ): KlinePoint[] | null => {
+    if (!isCurrentKlineRequest(request)) return null
+    points = mergeMarketKlines(points, restPoints, klineLimit)
+    return [...points]
+  }
+
+  return {
+    replace,
+    stop,
+    current: () => currentContext,
+    currentPoints: () => [...points],
+    isCurrent,
+    beginKlineRequest,
+    isCurrentKlineRequest,
+    resolveKlineRequest,
+  }
+}
+
 function normalizeFrameSymbol(
   frame: ReturnType<typeof parseMarketSocketFrame>,
 ): string {
-  if (!frame || (frame.type !== 'ticker' && frame.type !== 'depth' && frame.type !== 'trade')) {
+  if (
+    !frame
+    || (
+      frame.type !== 'ticker'
+      && frame.type !== 'depth'
+      && frame.type !== 'trade'
+      && frame.type !== 'kline'
+    )
+  ) {
     return ''
   }
   return normalizeMarketSocketSymbol(frame.symbol)

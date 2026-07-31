@@ -172,6 +172,10 @@ prototype:
 - Market chart inputs may contain epoch seconds or milliseconds. Normalize to
   UTC seconds before deduplication and sorting, ignore invalid rows, and skip
   zero-sized `ResizeObserver` measurements without destroying the empty canvas.
+- Market-detail K-line intervals come from the backend-matched shared source
+  `MARKET_KLINE_INTERVALS`: `1m`, `5m`, `15m`, `1h`, `1d`. Each interval
+  replacement must create an isolated detail-stream session, keep order-book
+  and trade state visible, and make live candles authoritative over late REST.
 
 Run from `mobile/sites-prototype/` after shared surface changes:
 

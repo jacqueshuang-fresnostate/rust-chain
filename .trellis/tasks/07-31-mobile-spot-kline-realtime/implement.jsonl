@@ -1,0 +1,5 @@
+{"file":".trellis/tasks/07-31-mobile-spot-kline-realtime/prd.md","reason":"任务目标、实时 K 线协议、竞态处理、验收与范围边界"}
+{"file":".trellis/spec/mobile/index.md","reason":"手机端质量门、图表时间归一化及生产实现约束"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"公共行情 WebSocket、REST 兜底、详情连接生命周期和适配合同"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"后端直接载荷到图表状态的跨层格式与验证边界"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复用现有详情流和共享适配函数，避免 REST/WS 逻辑漂移"}

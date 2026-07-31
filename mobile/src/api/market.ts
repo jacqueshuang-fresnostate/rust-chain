@@ -1,5 +1,10 @@
 import { client, requestUrl } from './client'
-import { mapMarketDepthSnapshot, mapMarketTrades } from './marketSocketProtocol'
+import {
+  DEFAULT_MARKET_KLINE_LIMIT,
+  mapMarketDepthSnapshot,
+  mapMarketKlines,
+  mapMarketTrades,
+} from './marketSocketProtocol'
 import { asNumber, normalizeSymbol, splitSymbol } from '@/core/format'
 import { mapMarketTicker, type BackendMarketRecord, type BackendTickerRecord } from '@/core/marketMapper'
 import type { KlinePoint, MarketPair, MarketTicker, OrderBookLevel, TradePrint } from '@/core/types'
@@ -69,7 +74,11 @@ export async function fetchMarketTickers(): Promise<MarketTicker[]> {
     .sort((left, right) => right.volume - left.volume)
 }
 
-export async function fetchKlines(symbol: string, interval = '15m', limit = 160): Promise<KlinePoint[]> {
+export async function fetchKlines(
+  symbol: string,
+  interval = '15m',
+  limit = DEFAULT_MARKET_KLINE_LIMIT,
+): Promise<KlinePoint[]> {
   const end = Date.now()
   const start = end - intervalDuration(interval) * limit
   const response = await client.get<BackendKline[] | { klines?: BackendKline[] }>(
@@ -78,17 +87,7 @@ export async function fetchKlines(symbol: string, interval = '15m', limit = 160)
   )
   const rawRows = Array.isArray(response.data) ? response.data : response.data.klines || []
 
-  return rawRows
-    .map((row) => ({
-      time: normalizeTimestamp(row.open_time ?? row.time ?? row.timestamp),
-      open: asNumber(row.open),
-      high: asNumber(row.high),
-      low: asNumber(row.low),
-      close: asNumber(row.close),
-      volume: asNumber(row.volume),
-    }))
-    .filter((row) => row.time > 0 && row.high > 0 && row.low > 0)
-    .sort((left, right) => left.time - right.time)
+  return mapMarketKlines(rawRows, limit)
 }
 
 export async function fetchOrderBook(symbol: string): Promise<{ bids: OrderBookLevel[]; asks: OrderBookLevel[] }> {
@@ -112,9 +111,4 @@ function intervalDuration(interval: string): number {
   if (normalized.endsWith('h')) return asNumber(normalized.slice(0, -1), 1) * 60 * 60 * 1000
   if (normalized.endsWith('d')) return asNumber(normalized.slice(0, -1), 1) * 24 * 60 * 60 * 1000
   return asNumber(normalized.replace('m', ''), 15) * 60 * 1000
-}
-
-function normalizeTimestamp(value: unknown): number {
-  const time = asNumber(value)
-  return time > 0 && time < 1_000_000_000_000 ? time * 1000 : time
 }

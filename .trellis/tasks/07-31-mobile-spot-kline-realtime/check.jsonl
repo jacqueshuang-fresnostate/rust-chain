@@ -1,0 +1,5 @@
+{"file":".trellis/tasks/07-31-mobile-spot-kline-realtime/prd.md","reason":"逐项审查验收标准、范围、质量门和真机验证要求"}
+{"file":".trellis/spec/mobile/index.md","reason":"复核手机端类型检查、测试、构建和图表输入合同"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"复核 K 线订阅、解析、竞态、重连和错误帧行为"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查时间戳、十进制字段及状态合并的跨层一致性"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查适配与合并逻辑是否存在重复或不一致"}

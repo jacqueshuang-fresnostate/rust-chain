@@ -2,11 +2,18 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
+  DEFAULT_MARKET_KLINE_LIMIT,
+  MARKET_KLINE_INTERVALS,
   depthSubscriptionFrame,
+  klineSubscriptionFrame,
   mapMarketDepthSnapshot,
+  mapMarketKline,
+  mapMarketKlines,
   mapMarketTrades,
+  mergeMarketKlines,
   mergeMarketTradeHistory,
   mergeMarketTrades,
+  normalizeMarketKlineInterval,
   parseMarketSocketFrame,
   tickerSubscriptionFrame,
   tradeSubscriptionFrame,
@@ -15,6 +22,9 @@ import {
 const marketApiSource = readFileSync(new URL('../src/api/market.ts', import.meta.url), 'utf8')
 
 test('market WebSocket subscription payloads match every backend public channel contract', () => {
+  assert.deepEqual(MARKET_KLINE_INTERVALS, ['1m', '5m', '15m', '1h', '1d'])
+  assert.equal(normalizeMarketKlineInterval('5M'), '5m')
+  assert.equal(normalizeMarketKlineInterval('4h'), '')
   assert.deepEqual(JSON.parse(tickerSubscriptionFrame('btc/usdt')), {
     op: 'subscribe',
     channel: 'ticker',
@@ -30,6 +40,19 @@ test('market WebSocket subscription payloads match every backend public channel 
     channel: 'trade',
     symbol: 'BTCUSDT',
   })
+  assert.deepEqual(JSON.parse(klineSubscriptionFrame('btc usdt', '15M')), {
+    op: 'subscribe',
+    channel: 'kline',
+    symbol: 'BTCUSDT',
+    interval: '15m',
+  })
+  assert.deepEqual(JSON.parse(klineSubscriptionFrame('btc usdt', '5m')), {
+    op: 'subscribe',
+    channel: 'kline',
+    symbol: 'BTCUSDT',
+    interval: '5m',
+  })
+  assert.throws(() => klineSubscriptionFrame('BTCUSDT', '4h'), /supported kline interval/)
 })
 
 test('market WebSocket parser preserves confirmations, ticker, and text heartbeat frames', () => {
@@ -106,6 +129,114 @@ test('trade frames map the verified direct payload shape to a normalized trade p
   )
 })
 
+test('kline frames strictly map the verified direct payload shape with millisecond timestamps', () => {
+  assert.deepEqual(
+    parseMarketSocketFrame(JSON.stringify({
+      symbol: 'BTC-USDT',
+      interval: '15M',
+      open_time: 1_720_000_000_000,
+      open: '61000.5',
+      high: '61300',
+      low: '60900',
+      close: '61234.5',
+      volume: '0',
+      observed_at: 1_720_000_001_000,
+      provider: 'binance',
+    })),
+    {
+      type: 'kline',
+      symbol: 'BTC-USDT',
+      interval: '15m',
+      point: {
+        time: 1_720_000_000_000,
+        open: 61000.5,
+        high: 61300,
+        low: 60900,
+        close: 61234.5,
+        volume: 0,
+      },
+      observedAt: 1_720_000_001_000,
+    },
+  )
+})
+
+test('shared kline adapters sort, deduplicate, upsert live candles, and retain the newest configured limit', () => {
+  const mapped = mapMarketKlines([
+    { open_time: 1_720_000_120, open: 102, high: 105, low: 101, close: 104, volume: 3 },
+    { open_time: 1_720_000_000, open: 100, high: 103, low: 99, close: 102, volume: 1 },
+    { open_time: 1_720_000_000_000, open: 100, high: 104, low: 98, close: 103, volume: 2 },
+    { open_time: 1_720_000_060_000, open: 103, high: 102, low: 100, close: 101, volume: 1 },
+  ], 2)
+  assert.deepEqual(mapped, [
+    {
+      time: 1_720_000_000_000,
+      open: 100,
+      high: 104,
+      low: 98,
+      close: 103,
+      volume: 2,
+    },
+    {
+      time: 1_720_000_120_000,
+      open: 102,
+      high: 105,
+      low: 101,
+      close: 104,
+      volume: 3,
+    },
+  ])
+
+  const rest = mapMarketKlines([
+    { open_time: 1_720_000_000_000, open: 100, high: 103, low: 99, close: 101, volume: 1 },
+    { open_time: 1_720_000_060_000, open: 101, high: 104, low: 100, close: 102, volume: 2 },
+  ])
+  const live = mapMarketKline({
+    open_time: 1_720_000_060_000,
+    open: 101,
+    high: 106,
+    low: 100,
+    close: 105,
+    volume: 4,
+  })
+  const appended = mapMarketKline({
+    open_time: 1_720_000_120_000,
+    open: 105,
+    high: 107,
+    low: 104,
+    close: 106,
+    volume: 1,
+  })
+  assert.ok(live)
+  assert.ok(appended)
+  if (!live || !appended) return
+
+  const reconciled = mergeMarketKlines([live, appended], rest, DEFAULT_MARKET_KLINE_LIMIT)
+  assert.deepEqual(reconciled.map((point) => point.time), [
+    1_720_000_000_000,
+    1_720_000_060_000,
+    1_720_000_120_000,
+  ])
+  assert.equal(reconciled[1]?.close, 105)
+  assert.equal(new Set(reconciled.map((point) => point.time)).size, reconciled.length)
+  assert.deepEqual(mergeMarketKlines([appended], reconciled, 2).map((point) => point.time), [
+    1_720_000_060_000,
+    1_720_000_120_000,
+  ])
+
+  const overLimit = Array.from({ length: DEFAULT_MARKET_KLINE_LIMIT + 1 }, (_, index) => ({
+    time: 1_720_000_000_000 + index * 60_000,
+    open: 100,
+    high: 101,
+    low: 99,
+    close: 100,
+    volume: index,
+  }))
+  const capped = mergeMarketKlines(overLimit, [])
+  assert.equal(capped.length, DEFAULT_MARKET_KLINE_LIMIT)
+  assert.equal(capped[0]?.time, 1_720_000_060_000)
+  assert.equal(capped.at(-1)?.time, 1_720_000_000_000 + DEFAULT_MARKET_KLINE_LIMIT * 60_000)
+})
+
 test('shared REST adapters filter invalid rows before sorting, dedupe trades, and enforce limits', () => {
   const snapshot = mapMarketDepthSnapshot({
     bids: [
@@ -143,6 +274,9 @@ test('shared REST adapters filter invalid rows before sorting, dedupe trades, an
 })
 
 test('REST market functions preserve endpoint envelopes while delegating to the shared adapters', () => {
+  const klineSource = marketApiSource.match(
+    /export async function fetchKlines[\s\S]*?\n}/,
+  )?.[0] ?? ''
   const depthSource = marketApiSource.match(
     /export async function fetchOrderBook[\s\S]*?\n}/,
   )?.[0] ?? ''
@@ -150,6 +284,9 @@ test('REST market functions preserve endpoint envelopes while delegating to the 
     /export async function fetchRecentTrades[\s\S]*?\n}/,
   )?.[0] ?? ''
 
+  assert.match(klineSource, /requestUrl\(`\/markets\/\$\{encodeURIComponent\(normalizeSymbol\(symbol\)\)\}\/klines`\)/)
+  assert.match(klineSource, /\{ params: \{ interval, start, end, limit } }/)
+  assert.match(klineSource, /return mapMarketKlines\(rawRows, limit\)/)
   assert.match(depthSource, /requestUrl\(`\/markets\/\$\{encodeURIComponent\(normalizeSymbol\(symbol\)\)\}\/depth`\)/)
   assert.match(depthSource, /return mapMarketDepthSnapshot\(response\.data\)/)
   assert.match(tradesSource, /requestUrl\(`\/markets\/\$\{encodeURIComponent\(normalizeSymbol\(symbol\)\)\}\/trades`\)/)
@@ -219,7 +356,7 @@ test('REST history reconciliation keeps already-rendered live trades first and d
   ])
 })
 
-test('malformed depth and trade frames are ignored instead of replacing REST fallback state', () => {
+test('malformed depth, trade, and kline frames are ignored instead of replacing valid fallback state', () => {
   assert.equal(parseMarketSocketFrame(JSON.stringify({
     symbol: 'BTCUSDT',
     bids: [{ price: 'bad', quantity: 1 }],
@@ -256,4 +393,42 @@ test('malformed depth and trade frames are ignored instead of replacing REST fal
     quantity: 1,
     traded_at: true,
   })), null)
+  const validKline = {
+    symbol: 'BTCUSDT',
+    interval: '15m',
+    open_time: 1_720_000_000_000,
+    open: '100',
+    high: '105',
+    low: '99',
+    close: '103',
+    volume: '2',
+    observed_at: 1_720_000_001_000,
+    provider: 'bitget',
+  }
+  for (const payload of [
+    { ...validKline, interval: 'fifteen-minutes' },
+    { ...validKline, interval: '4h' },
+    {
+      ...validKline,
+      interval: '4h',
+      trade_id: 'must-not-fall-through',
+      side: 'buy',
+      price: '103',
+      quantity: '1',
+      traded_at: 1_720_000_001_000,
+    },
+    { ...validKline, observed_at: true },
+    { ...validKline, observed_at: 1_720_000_001 },
+    { ...validKline, open_time: undefined },
+    { ...validKline, open_time: 1_720_000_000 },
+    { ...validKline, close: false },
+    { ...validKline, close: 103 },
+    { ...validKline, close: '1e2' },
+    { ...validKline, volume: '-1' },
+    { ...validKline, high: '102', close: '103' },
+    { ...validKline, provider: '' },
+    { ...validKline, provider: undefined },
+  ]) {
+    assert.equal(parseMarketSocketFrame(JSON.stringify(payload)), null)
+  }
 })

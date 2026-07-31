@@ -1,6 +1,11 @@
-import type { OrderBookLevel, TradePrint } from '../core/types.ts'
+import type { KlinePoint, OrderBookLevel, TradePrint } from '../core/types.ts'
 
-export type MarketSocketChannel = 'ticker' | 'depth' | 'trade'
+export const DEFAULT_MARKET_KLINE_LIMIT = 160
+export const MARKET_KLINE_INTERVALS = ['1m', '5m', '15m', '1h', '1d'] as const
+
+export type MarketKlineInterval = (typeof MARKET_KLINE_INTERVALS)[number]
+
+export type MarketSocketChannel = 'ticker' | 'depth' | 'trade' | 'kline'
 
 export type MarketSocketFrame =
   | { type: 'subscribed'; channel: string }
@@ -13,18 +18,42 @@ export type MarketSocketFrame =
       observedAt?: number
     }
   | { type: 'trade'; symbol: string; trade: TradePrint }
+  | {
+      type: 'kline'
+      symbol: string
+      interval: string
+      point: KlinePoint
+      observedAt: number
+    }
   | { type: 'pong' }
 
 export function normalizeMarketSocketSymbol(symbol: string): string {
   return symbol.replace(/[-_/\s]/g, '').toUpperCase()
 }
 
-export function marketSubscriptionFrame(channel: MarketSocketChannel, symbol: string): string {
-  return JSON.stringify({
+export function normalizeMarketKlineInterval(interval: string): MarketKlineInterval | '' {
+  const normalized = interval.trim().toLowerCase()
+  return MARKET_KLINE_INTERVALS.includes(normalized as MarketKlineInterval)
+    ? normalized as MarketKlineInterval
+    : ''
+}
+
+export function marketSubscriptionFrame(
+  channel: MarketSocketChannel,
+  symbol: string,
+  interval?: string,
+): string {
+  const payload: Record<string, string> = {
     op: 'subscribe',
     channel,
     symbol: normalizeMarketSocketSymbol(symbol),
-  })
+  }
+  if (channel === 'kline') {
+    const normalizedInterval = normalizeMarketKlineInterval(interval ?? '')
+    if (!normalizedInterval) throw new TypeError('A supported kline interval is required')
+    payload.interval = normalizedInterval
+  }
+  return JSON.stringify(payload)
 }
 
 export function tickerSubscriptionFrame(symbol: string): string {
@@ -37,6 +66,62 @@ export function depthSubscriptionFrame(symbol: string): string {
 
 export function tradeSubscriptionFrame(symbol: string): string {
   return marketSubscriptionFrame('trade', symbol)
+}
+
+export function klineSubscriptionFrame(symbol: string, interval: string): string {
+  return marketSubscriptionFrame('kline', symbol, interval)
+}
+
+export function mapMarketKline(payload: unknown): KlinePoint | null {
+  if (!isRecord(payload)) return null
+
+  const time = normalizeMarketTimestamp(payload.open_time ?? payload.time ?? payload.timestamp)
+  const open = positiveNumber(payload.open)
+  const high = positiveNumber(payload.high)
+  const low = positiveNumber(payload.low)
+  const close = positiveNumber(payload.close)
+  const volume = nonNegativeNumber(payload.volume)
+  if (
+    time === null
+    || open === null
+    || high === null
+    || low === null
+    || close === null
+    || volume === null
+  ) {
+    return null
+  }
+
+  return normalizeKlinePoint({ time, open, high, low, close, volume })
+}
+
+export function mapMarketKlines(
+  rows: unknown,
+  limit = DEFAULT_MARKET_KLINE_LIMIT,
+): KlinePoint[] {
+  if (!Array.isArray(rows)) return []
+  const points = rows
+    .map(mapMarketKline)
+    .filter((point): point is KlinePoint => point !== null)
+  return mergeMarketKlines(points, [], limit)
+}
+
+export function mergeMarketKlines(
+  primary: readonly KlinePoint[],
+  secondary: readonly KlinePoint[],
+  limit = DEFAULT_MARKET_KLINE_LIMIT,
+): KlinePoint[] {
+  const normalizedLimit = normalizeLimit(limit, DEFAULT_MARKET_KLINE_LIMIT)
+  if (normalizedLimit === 0) return []
+
+  const unique = new Map<number, KlinePoint>()
+  for (const point of [...secondary, ...primary]) {
+    const normalized = normalizeKlinePoint(point)
+    if (normalized) unique.set(normalized.time, normalized)
+  }
+  return [...unique.values()]
+    .sort((left, right) => left.time - right.time)
+    .slice(-normalizedLimit)
 }
 
 export function mapMarketDepthSnapshot(
@@ -151,6 +236,27 @@ export function parseMarketSocketFrame(data: unknown): MarketSocketFrame | null 
       }
     }
 
+    if (
+      payload.type === 'kline'
+      || payload.interval !== undefined
+      || payload.open_time !== undefined
+    ) {
+      if (!isDirectMarketKlinePayload(payload)) return null
+      const interval = typeof payload.interval === 'string'
+        ? normalizeMarketKlineInterval(payload.interval)
+        : ''
+      const point = mapMarketKline(payload)
+      const observedAt = normalizeMarketTimestamp(payload.observed_at)
+      if (!interval || !point || observedAt === null) return null
+      return {
+        type: 'kline',
+        symbol,
+        interval,
+        point,
+        observedAt,
+      }
+    }
+
     if (payload.trade_id !== undefined || payload.type === 'trade') {
       const trade = mapMarketTrade(payload)
       if (!trade) return null
@@ -192,6 +298,42 @@ function hasOnlyValidDepthLevels(rows: unknown[]): boolean {
   })
 }
 
+function isDirectMarketKlinePayload(payload: Record<string, unknown>): boolean {
+  return typeof payload.interval === 'string'
+    && Boolean(normalizeMarketKlineInterval(payload.interval))
+    && isUnixMillisecondTimestamp(payload.open_time)
+    && isPositiveDecimalString(payload.open)
+    && isPositiveDecimalString(payload.high)
+    && isPositiveDecimalString(payload.low)
+    && isPositiveDecimalString(payload.close)
+    && isNonNegativeDecimalString(payload.volume)
+    && isUnixMillisecondTimestamp(payload.observed_at)
+    && typeof payload.provider === 'string'
+    && Boolean(payload.provider.trim())
+}
+
+function normalizeKlinePoint(point: KlinePoint): KlinePoint | null {
+  const time = normalizeMarketTimestamp(point.time)
+  if (
+    time === null
+    || !Number.isFinite(point.open)
+    || !Number.isFinite(point.high)
+    || !Number.isFinite(point.low)
+    || !Number.isFinite(point.close)
+    || !Number.isFinite(point.volume)
+    || point.open <= 0
+    || point.high <= 0
+    || point.low <= 0
+    || point.close <= 0
+    || point.volume < 0
+    || point.high < Math.max(point.open, point.low, point.close)
+    || point.low > Math.min(point.open, point.high, point.close)
+  ) {
+    return null
+  }
+  return { ...point, time }
+}
+
 function positiveNumber(value: unknown): number | null {
   if (
     (typeof value !== 'number' && typeof value !== 'string')
@@ -203,6 +345,37 @@ function positiveNumber(value: unknown): number | null {
   return Number.isFinite(numberValue) && numberValue > 0 ? numberValue : null
 }
 
+function nonNegativeNumber(value: unknown): number | null {
+  if (
+    (typeof value !== 'number' && typeof value !== 'string')
+    || (typeof value === 'string' && !value.trim())
+  ) {
+    return null
+  }
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) && numberValue >= 0 ? numberValue : null
+}
+
+function isPositiveDecimalString(value: unknown): boolean {
+  return isDecimalString(value) && Number(value) > 0
+}
+
+function isNonNegativeDecimalString(value: unknown): boolean {
+  return isDecimalString(value) && Number(value) >= 0
+}
+
+function isDecimalString(value: unknown): value is string {
+  if (typeof value !== 'string' || value !== value.trim() || !value) return false
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value)) return false
+  return Number.isFinite(Number(value))
+}
+
+function isUnixMillisecondTimestamp(value: unknown): value is number {
+  return typeof value === 'number'
+    && Number.isSafeInteger(value)
+    && value >= 1_000_000_000_000
+}
+
 function normalizeMarketTimestamp(value: unknown): number | null {
   if (
     (typeof value !== 'number' && typeof value !== 'string')
@@ -211,8 +384,9 @@ function normalizeMarketTimestamp(value: unknown): number | null {
     return null
   }
   const numberValue = Number(value)
-  if (!Number.isFinite(numberValue) || numberValue <= 0) return null
-  return numberValue < 1_000_000_000_000 ? numberValue * 1_000 : numberValue
+  if (!Number.isSafeInteger(numberValue) || numberValue <= 0) return null
+  const milliseconds = numberValue < 1_000_000_000_000 ? numberValue * 1_000 : numberValue
+  return Number.isSafeInteger(milliseconds) ? milliseconds : null
 }
 
 function optionalTimestamp(value: unknown): number | null | undefined {
