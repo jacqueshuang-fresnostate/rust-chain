@@ -10,18 +10,24 @@ npm run dev
 ```
 
 H5 开发地址默认为 `http://127.0.0.1:1611/`。浏览器始终向 Vite 同源的
-`/api/v1`、`/api/v1/ws/public` 和 `/health` 发起请求，再由
+`/api/v1` 和 `/api/v1/ws/public` 发起业务请求，再由
 `VITE_BACKEND_DEV_PROXY_TARGET` 转发到后端；该代理目标默认是
-`http://127.0.0.1:8080`。例如真实测试服务运行在 18080 时可设置：
+`https://hipoex.cllbmz.kdns.fr`。例如本地后端运行在 18080 时可设置：
 
 ```bash
 VITE_BACKEND_DEV_PROXY_TARGET=http://127.0.0.1:18080 npm run dev
 ```
 
-设置代理目标不会让浏览器改为跨域直连。`VITE_BACKEND_API_DOMAIN` 是另一项独立配置：
-公开 PWA 留空时使用页面同源反向代理；Tauri 发布构建必须注入设备可访问的 HTTPS
-origin。原生发布环境不得使用 `localhost`、`127.0.0.1` 或其他设备 loopback 地址，
-缺少有效配置时客户端会显示明确的配置错误。
+设置代理目标不会让浏览器改为跨域直连。PWA 和 Tauri 发布包默认使用
+`https://hipoex.cllbmz.kdns.fr`，HTTP API 为
+`https://hipoex.cllbmz.kdns.fr/api/v1`，公共行情 WebSocket 为
+`wss://hipoex.cllbmz.kdns.fr/api/v1/ws/public`。非空的
+`VITE_BACKEND_API_DOMAIN` 会优先覆盖产品默认域名；生产配置仍会拒绝明文 HTTP、
+`localhost`、`127.0.0.1` 和其他设备 loopback 地址。
+
+客户端启动和业务页面展示不以 `/health` 为门禁。该地址在产品域名上可能被
+Cloudflare Managed Challenge 返回 HTTP 403，而市场、认证配置、Tauri CORS 和公共
+WebSocket 业务入口仍可正常使用。
 
 ## 原生目标
 
@@ -66,9 +72,10 @@ npm run build:tauri
 ### Web 部署配置
 
 - 独立域名部署保持 `VITE_PWA_BASE=/`；固定子路径部署需设置同一个永久前缀，例如 `VITE_PWA_BASE=/mobile/`。
-- 公开 PWA 必须通过 HTTPS 提供。留空 `VITE_BACKEND_API_DOMAIN` 时，HTTP 使用同源 `/api/v1`、健康检查使用 `/health`，行情 WebSocket 使用同源 `/api/v1/ws/public` 并自动升级为 WSS。
-- 跨域部署可显式设置 HTTPS `VITE_BACKEND_API_DOMAIN`；生产配置会拒绝明文 HTTP、`localhost` 和 loopback 地址。
+- 公开 PWA 必须通过 HTTPS 提供。未提供非空 `VITE_BACKEND_API_DOMAIN` 时，产品默认 HTTP API 使用 `https://hipoex.cllbmz.kdns.fr/api/v1`，行情 WebSocket 使用 `wss://hipoex.cllbmz.kdns.fr/api/v1/ws/public`。
+- 跨域部署可显式设置其他 HTTPS `VITE_BACKEND_API_DOMAIN`；非空环境值优先，生产配置会拒绝明文 HTTP、`localhost` 和 loopback 地址。
 - `VITE_BACKEND_DEV_PROXY_TARGET` 只在 Vite 开发服务器中生效，不会进入生产客户端的 API origin 选择。
+- `/health` 只保留为独立诊断地址，不参与客户端启动、路由进入或业务 API 可用性判断。
 - `index.html`、`sw.js` 和 `manifest.webmanifest` 应使用 `no-cache` 或短期重新验证；带哈希的静态资源可使用长期 `immutable` 缓存。
 - 身份认证、账户、钱包、订单、KYC 和其他金融接口必须返回 `Cache-Control: private, no-store`，且 CDN/反向代理不得缓存。
 

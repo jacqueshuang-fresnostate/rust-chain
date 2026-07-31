@@ -1,5 +1,7 @@
+import { PRODUCT_BACKEND_ORIGIN, resolveProductBackendOrigin } from './product.ts'
+
 export const DEFAULT_BACKEND_API_PREFIX = '/api/v1'
-export const DEFAULT_BACKEND_DEV_PROXY_TARGET = 'http://127.0.0.1:8080'
+export const DEFAULT_BACKEND_DEV_PROXY_TARGET = PRODUCT_BACKEND_ORIGIN
 
 export class BackendConfigurationError extends Error {
   readonly code = 'BACKEND_CONFIGURATION_ERROR'
@@ -75,7 +77,7 @@ export function resolveBackendRuntimeConfig(input: BackendRuntimeInput): Backend
 }
 
 export function resolveBackendDevProxyTarget(value?: string): string {
-  return normalizeBackendOrigin(String(value || DEFAULT_BACKEND_DEV_PROXY_TARGET).trim())
+  return normalizeBackendOrigin(resolveProductBackendOrigin(value))
 }
 
 export function resolveBackendApiUrl(config: BackendRuntimeConfig, path: string): string {

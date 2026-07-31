@@ -60,6 +60,7 @@ onMounted(() => { void load() })
     <PageHeader
       :back="true"
       :eyebrow="t('assets.deposit')"
+      :fallback="{ name: 'deposit-network', params: { asset } }"
       :subtitle="t('deposit.networkWarning')"
       :title="t('deposit.title', { asset: asset.toUpperCase() })"
     />

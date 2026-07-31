@@ -24,6 +24,10 @@ import {
 } from '@/api/seconds'
 import { fetchWalletAccounts } from '@/api/wallet'
 import { formatAmount, formatDateTime, formatPrice } from '@/core/format'
+import {
+  createBottomNavSecondsFallbackTarget,
+  isBottomNavigationSecondsEntry,
+} from '@/core/navigation'
 import { useMarketStore } from '@/stores/market'
 import { useSessionStore } from '@/stores/session'
 import type { WalletAccount } from '@/core/types'
@@ -89,6 +93,11 @@ const quickAmounts = computed(() => {
 const quickAmountSlots = computed(() => (
   quickAmounts.value.length ? quickAmounts.value : [0, 0, 0, 0]
 ))
+const homeFallback = createBottomNavSecondsFallbackTarget()
+const preferHomeFallback = computed(() => {
+  void router.currentRoute.value.fullPath
+  return isBottomNavigationSecondsEntry(router.options.history.state)
+})
 
 async function load(): Promise<void> {
   loading.value = true
@@ -273,6 +282,8 @@ onBeforeUnmount(() => {
     <PageHeader
       :back="true"
       :eyebrow="t('seconds.scene')"
+      :fallback="homeFallback"
+      :prefer-fallback="preferHomeFallback"
       :title="t('seconds.title')"
       :subtitle="t('seconds.context')"
     >

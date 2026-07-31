@@ -241,7 +241,7 @@ test('行情曲线、自选和加载失败状态保持真实语义与固定五�
 test('Seconds 是保留旧深链的二级面，不继承根头部与底栏', () => {
   assert.match(
     routerSource,
-    /\{\s*path:\s*'\/seconds',\s*alias:\s*'\/products\/seconds',\s*name:\s*'seconds',[\s\S]*?meta:\s*\{\s*showBottomNav:\s*false,\s*depth:\s*1,\s*backFallback:\s*'\/products'\s*\}\s*\}/,
+    /\{\s*path:\s*'\/seconds',\s*alias:\s*'\/products\/seconds',\s*name:\s*'seconds',[\s\S]*?meta:\s*\{\s*showBottomNav:\s*false,\s*depth:\s*1,\s*backFallback:\s*'\/'\s*\}\s*\}/,
   )
   assert.match(appSource, /<RootHeader v-if="showBottomNav" \/>/)
   assert.match(appSource, /<AppBottomNav v-if="showBottomNav" \/>/)

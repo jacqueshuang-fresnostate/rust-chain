@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { Check, Languages } from 'lucide-vue-next'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import PageHeader from '@/components/PageHeader.vue'
+import { sanitizeInternalRedirect } from '@/core/navigation'
 import { normalizeMobileLocale, setAppLocale, SUPPORTED_LOCALES, type MobileLocale } from '@/i18n'
 
+const route = useRoute()
 const { locale, t } = useI18n()
 const changed = ref(false)
 const currentLocale = computed(() => normalizeMobileLocale(locale.value) || 'zh-CN')
+const backTarget = computed(() => sanitizeInternalRedirect(route.query.back, '/profile'))
 
 function selectLocale(nextLocale: MobileLocale): void {
   if (nextLocale === currentLocale.value) return
@@ -22,6 +26,7 @@ function selectLocale(nextLocale: MobileLocale): void {
     <PageHeader
       :back="true"
       :eyebrow="t('language.entry')"
+      :fallback="backTarget"
       :subtitle="t('language.description')"
       :title="t('language.title')"
     />

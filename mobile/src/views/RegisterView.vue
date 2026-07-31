@@ -1,13 +1,19 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ArrowLeft, AtSign, Check, ChevronDown, Eye, EyeOff, Globe2, KeyRound, Languages, MailCheck } from 'lucide-vue-next'
 import { apiErrorMessage } from '@/api/client'
 import { fetchCountries, fetchRegisterConfig, registerWithEmail, sendRegistrationCode, type CountryOption } from '@/api/auth'
-import { goBackOr } from '@/core/navigation'
+import {
+  createLoginRedirectTarget,
+  goBackOr,
+  replaceAuthStep,
+  sanitizeInternalRedirect,
+} from '@/core/navigation'
 import { useSessionStore } from '@/stores/session'
 
+const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
 const { locale, t } = useI18n()
@@ -32,6 +38,8 @@ const inviteCodeRequired = ref(false)
 const emailInput = ref<HTMLInputElement | null>(null)
 let timer: number | undefined
 
+const safeRedirect = computed(() => sanitizeInternalRedirect(route.query.redirect))
+const loginTarget = computed<RouteLocationRaw>(() => createLoginRedirectTarget(safeRedirect.value))
 const sendLabel = computed(() => remainingSeconds.value ? `${remainingSeconds.value}s` : sent.value ? t('auth.resend') : t('auth.sendCode'))
 const passwordLengthValid = computed(() => password.value.length >= 8)
 const passwordsMatch = computed(() => Boolean(confirmation.value) && password.value === confirmation.value)
@@ -64,13 +72,25 @@ function countryLabel(country: CountryOption): string {
   return regionNames.value?.of(country.code) || country.name || country.code
 }
 
+function openLanguage(): void {
+  const back = sanitizeInternalRedirect(router.resolve({
+    name: 'register',
+    query: { redirect: safeRedirect.value },
+  }).fullPath)
+  void router.push({ name: 'language', query: { back } })
+}
+
 function handleBack(): void {
   if (step.value === 2) {
     step.value = 1
     error.value = ''
     return
   }
-  void goBackOr(router, '/login')
+  void goBackOr(router, loginTarget.value, { preferFallback: true })
+}
+
+function returnToLogin(): void {
+  void replaceAuthStep(router, loginTarget.value)
 }
 
 function continueRegistration(): void {
@@ -137,7 +157,7 @@ async function submit() {
   try {
     await registerWithEmail({ email: email.value, password: password.value, code: code.value, countryCode: countryCode.value, inviteCode: inviteCode.value })
     session.sync()
-    await router.replace('/')
+    await replaceAuthStep(router, safeRedirect.value)
   } catch (reason) {
     error.value = apiErrorMessage(reason, t('auth.registerFailed'))
   } finally {
@@ -173,7 +193,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
         <strong>{{ t(step === 1 ? 'auth.residenceTitle' : 'auth.registrationDetailsTitle') }}</strong>
         <small>{{ t('auth.stepProgress', { current: step, total: 2 }) }}</small>
       </div>
-      <button class="icon-button" type="button" :aria-label="t('language.title')" @click="router.push({ name: 'language' })"><Languages :size="21" /></button>
+      <button class="icon-button" type="button" :aria-label="t('language.title')" @click="openLanguage"><Languages :size="21" /></button>
     </header>
 
     <form class="register-form" :aria-busy="submitting" @submit.prevent="submit">
@@ -202,7 +222,7 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
       <div class="register-form__actions">
         <button v-if="step === 1" class="button button--primary button--full" type="button" @click="continueRegistration">{{ t('auth.next') }}</button>
         <button v-else class="button button--primary button--full" type="submit" :disabled="submitting">{{ submitting ? t('auth.registering') : t('auth.createAccount') }}</button>
-        <p>{{ t('auth.alreadyHaveAccount') }} <button type="button" @click="router.replace({ name: 'login' })">{{ t('auth.goLogin') }}</button></p>
+        <p>{{ t('auth.alreadyHaveAccount') }} <button type="button" @click="returnToLogin">{{ t('auth.goLogin') }}</button></p>
       </div>
     </form>
   </main>

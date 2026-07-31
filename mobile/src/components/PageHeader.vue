@@ -12,6 +12,7 @@ const props = defineProps<{
   back?: boolean
   compact?: boolean
   fallback?: RouteLocationRaw
+  preferFallback?: boolean
 }>()
 
 const route = useRoute()
@@ -22,7 +23,11 @@ const showBack = computed(() => props.back ?? (Number(route.meta.depth || 0) > 0
 const hasActions = computed(() => Boolean(slots.actions))
 
 function back(): void {
-  void goBackOr(router, props.fallback || route.meta.backFallback || '/')
+  void goBackOr(
+    router,
+    props.fallback || route.meta.backFallback || '/',
+    { preferFallback: props.preferFallback },
+  )
 }
 </script>
 

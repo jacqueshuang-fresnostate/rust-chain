@@ -1,12 +1,18 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { KeyRound, MailCheck } from 'lucide-vue-next'
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
 import { resetPasswordWithCode, sendPasswordResetCode } from '@/api/auth'
+import {
+  createLoginRedirectTarget,
+  replaceAuthStep,
+  sanitizeInternalRedirect,
+} from '@/core/navigation'
 
+const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 const email = ref('')
@@ -20,6 +26,8 @@ const error = ref('')
 const success = ref('')
 let timer: number | undefined
 
+const safeRedirect = computed(() => sanitizeInternalRedirect(route.query.redirect))
+const loginTarget = computed<RouteLocationRaw>(() => createLoginRedirectTarget(safeRedirect.value))
 const sendLabel = computed(() => remainingSeconds.value ? `${remainingSeconds.value}s` : t('auth.sendCode'))
 
 function startCountdown() {
@@ -47,7 +55,7 @@ async function submit() {
   try {
     await resetPasswordWithCode({ email: email.value, code: code.value, password: password.value })
     success.value = t('auth.passwordUpdated')
-    window.setTimeout(() => { void router.replace({ name: 'login' }) }, 900)
+    window.setTimeout(() => { void replaceAuthStep(router, loginTarget.value) }, 900)
   } catch (reason) { error.value = apiErrorMessage(reason, t('auth.resetFailed')) } finally { submitting.value = false }
 }
 
@@ -59,6 +67,8 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
     <PageHeader
       :back="true"
       :eyebrow="t('auth.resetTitle')"
+      :fallback="loginTarget"
+      :prefer-fallback="true"
       :subtitle="t('auth.resetDescription')"
       :title="t('auth.forgotTitle')"
     />

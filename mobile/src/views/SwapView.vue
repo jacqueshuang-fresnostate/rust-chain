@@ -19,10 +19,12 @@ import { confirmConvertQuote, fetchConvertOrders, fetchConvertPairs, requestConv
 import { fetchWalletAccounts } from '@/api/wallet'
 import { formatAmount, formatDateTime, formatPrice } from '@/core/format'
 import { useModalDialog } from '@/core/modalDialog'
+import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import type { WalletAccount } from '@/core/types'
 
 const session = useSessionStore()
+const navigation = useNavigationStore()
 const { t } = useI18n()
 const pairs = ref<ConvertPair[]>([])
 const accounts = ref<WalletAccount[]>([])
@@ -156,6 +158,7 @@ onMounted(() => { void load() })
     <PageHeader
       :back="true"
       :eyebrow="t('products.title')"
+      :fallback="navigation.lastTradePath"
       :subtitle="t('swap.loginDescription')"
       :title="t('swap.title')"
     >

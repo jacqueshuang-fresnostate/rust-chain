@@ -40,7 +40,10 @@ test('共享二级壳复用原型 PageShell DOM 与 76/20px 几何合同', () =>
   assert.match(sources.pageHeader, /class="secondary-header-action page-header__actions"/)
   assert.match(sources.pageHeader, /:data-empty="hasActions \? 'false' : 'true'"/)
   assert.match(sources.pageHeader, /class="secondary-header-rail"/)
-  assert.match(sources.pageHeader, /goBackOr\(router, props\.fallback \|\| route\.meta\.backFallback \|\| '\/'\)/)
+  assert.match(
+    sources.pageHeader,
+    /goBackOr\([\s\S]*?router,[\s\S]*?props\.fallback \|\| route\.meta\.backFallback \|\| '\/',[\s\S]*?\{ preferFallback: props\.preferFallback \},[\s\S]*?\)/,
+  )
 
   assert.match(
     prototypeCss,

@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "核对手机端整体质量门禁。"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "核对远程后端地址、协议和覆盖机制。"}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "核对导航层级、历史栈与安全重定向。"}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "核对 PWA/Tauri 构建和壳层行为。"}
+{"file": ".trellis/tasks/07-31-mobile-remote-api-navigation-repair/research/remote-service-verification.md", "reason": "按远程服务实测结果验证实现。"}

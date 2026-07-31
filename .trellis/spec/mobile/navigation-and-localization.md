@@ -14,7 +14,16 @@ Core navigation signatures live in `mobile/src/core/navigation.ts`:
 normalizeRouteSymbol(value: unknown): string
 sanitizeInternalRedirect(value: unknown, fallback?: string): string
 hasUsableRouterBack(state: unknown): boolean
-goBackOr(router: Router, fallback?: RouteLocationRaw): Promise<void>
+goBackOr(
+  router: Router,
+  fallback?: RouteLocationRaw,
+  options?: { preferFallback?: boolean },
+): Promise<void>
+createBottomNavSecondsTarget(): RouteLocationRaw
+createBottomNavSecondsFallbackTarget(): RouteLocationRaw
+isBottomNavigationSecondsEntry(state: unknown): boolean
+createLoginRedirectTarget(redirect: unknown): RouteLocationRaw
+replaceAuthStep(router: Router, target: RouteLocationRaw): ReturnType<Router['replace']>
 updateRouteTransition(toDepth: unknown, fromDepth: unknown): void
 ```
 
@@ -55,6 +64,16 @@ lastTradePath: ComputedRef<string>
 - Drill-down pages and modals represented as routes use router `push`.
 - Every detail route defines `meta.depth`, `meta.showBottomNav: false`, and `meta.backFallback`.
 - `PageHeader` calls `goBackOr`; it must not call `router.back()` directly.
+- `PageHeader` exposes an explicit `preferFallback` input. It bypasses a usable
+  `history.state.back` only when the owning workflow requires a deterministic
+  replacement target.
+- The bottom Seconds item adds the `bottom-navigation-seconds` history-state
+  source while replacing `/seconds`. Only that explicit source makes the
+  Seconds header prefer `/`; Product Hub continues to push Seconds without the
+  marker and therefore returns through history to `/products`. The deterministic
+  Home replacement must explicitly clear the custom source because Vue Router
+  web history merges user state during `replace`; later replacement routes must
+  never inherit an active Seconds source.
 - `scrollBehavior` restores `savedPosition` and otherwise returns `{ top: 0, left: 0 }`.
 
 ### Trade picker
@@ -67,8 +86,24 @@ lastTradePath: ComputedRef<string>
 ### Authentication redirects
 
 - Only single-slash internal paths are accepted.
-- Values such as `https://host`, `//host`, non-strings, and empty values fall back to `/` or the caller-provided internal fallback.
+- Values such as `https://host`, `//host`, `/\host`, paths containing
+  backslashes or ASCII control characters, non-strings, and empty values fall
+  back to `/` or a validated caller-provided internal fallback. An unsafe
+  fallback itself resolves to `/`.
 - Successful login and registration use `replace` to avoid returning to a completed auth step.
+- Login replaces itself with registration, forgot-password, and two-factor
+  steps while carrying only sanitized internal `redirect` context. Completion
+  cannot expose the replaced login entry through browser Back.
+- Registration and password reset explicitly prefer their redirect-carrying
+  login fallback over stale root history. Two-factor header back, reset, and
+  invalid-challenge branches use the same sanitized login target. Successful
+  verification and setup replace to the sanitized business redirect.
+- Login and registration use `push` only for the language page, carrying a
+  sanitized `back` value so a refreshed or directly opened page still returns
+  to the correct authentication step.
+- Authentication form values such as account, email, password, verification
+  code, confirmation, and invitation code stay in component/request state and
+  must never be copied into route params or query strings.
 - Login only exposes username mode when `/auth/login/config` enables it.
 - Registration requires or hides the email-code field and requires the invitation code according to `/auth/register/config`.
 
@@ -86,7 +121,10 @@ lastTradePath: ComputedRef<string>
 |-----------|-------------------|
 | Pair has fewer than two assets | Use `BTC_USDT` |
 | Redirect does not start with exactly one `/` | Use internal fallback |
+| Redirect/back contains a backslash or ASCII control character | Use internal fallback |
 | Router history has no internal `state.back` | `router.replace(meta.backFallback)` |
+| Seconds history source is `bottom-navigation-seconds` | Ignore stale `state.back` and replace Home |
+| Seconds was pushed from Product Hub | Use history Back and return Products |
 | Main tab selected | Replace current history entry |
 | Spot root selected | Open persisted symbol without `mode=contract` |
 | Contract root selected | Open persisted symbol with `mode=contract` |
@@ -97,6 +135,8 @@ lastTradePath: ComputedRef<string>
 | Content translation is unknown | Preserve backend source text |
 | Public country endpoint is unavailable | Show the basic region list and keep server validation on submit |
 | Authentication config endpoint is unavailable | Default to email-only login, required email code, and optional invitation code |
+| Login opens register, forgot-password, or 2FA | Replace Login while preserving sanitized `redirect` |
+| Register, forgot-password, or invalid/reset 2FA returns to Login | Replace the explicit Login target with sanitized `redirect` |
 
 ## 5. Good / Base / Bad Cases
 
@@ -108,6 +148,11 @@ lastTradePath: ComputedRef<string>
 ## 6. Tests Required
 
 - Unit: route symbol normalization, redirect sanitization, usable back-state detection, and transition direction.
+- Router/history: use Vue Router memory history to prove bottom Seconds forces
+  Home, Product Hub Seconds returns Products, auth-step replacement leaves no
+  Login entry, and 2FA reset/invalid returns preserve sanitized redirects. Also
+  exercise Vue Router web history replacement semantics to prove the custom
+  Seconds source is cleared rather than merged into later routes.
 - Unit: locale normalization and app-locale to API-locale mapping.
 - Unit: dynamic prediction text preserves English and localizes supported Chinese patterns.
 - Browser: pair picker returns to the selected trade pair and preserves futures mode.

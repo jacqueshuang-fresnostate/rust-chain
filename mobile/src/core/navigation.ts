@@ -14,6 +14,11 @@ export const ROOT_ROUTE_ORDER = [
 export type RootRouteKey = typeof ROOT_ROUTE_ORDER[number]
 export type RouteDirection = 'forward' | 'back' | 'still'
 export type RouteTransitionTier = 'root' | 'secondary'
+export interface GoBackOrOptions {
+  preferFallback?: boolean
+}
+
+export const BOTTOM_NAV_SECONDS_ENTRY_SOURCE = 'bottom-navigation-seconds'
 
 export const routeTransitionName = ref('route-fade')
 export const routeDirection = ref<RouteDirection>('still')
@@ -30,20 +35,68 @@ export function normalizeRouteSymbol(value: unknown): string {
   return `${parts[0]}_${parts[1]}`
 }
 
-export function sanitizeInternalRedirect(value: unknown, fallback = '/'): string {
-  if (typeof value !== 'string') return fallback
+function normalizeInternalPath(value: unknown): string | null {
+  if (typeof value !== 'string') return null
   const target = value.trim()
-  if (!target.startsWith('/') || target.startsWith('//')) return fallback
+  if (
+    !target.startsWith('/')
+    || target.startsWith('//')
+    || target.includes('\\')
+    || /[\u0000-\u001f\u007f]/.test(target)
+  ) {
+    return null
+  }
   return target
+}
+
+export function sanitizeInternalRedirect(value: unknown, fallback = '/'): string {
+  return normalizeInternalPath(value) || normalizeInternalPath(fallback) || '/'
+}
+
+export function createLoginRedirectTarget(redirect: unknown): RouteLocationRaw {
+  return {
+    name: 'login',
+    query: { redirect: sanitizeInternalRedirect(redirect) },
+  }
+}
+
+export function replaceAuthStep(
+  router: Router,
+  target: RouteLocationRaw,
+): ReturnType<Router['replace']> {
+  return router.replace(target)
+}
+
+export function createBottomNavSecondsTarget(): RouteLocationRaw {
+  return {
+    name: 'seconds',
+    state: { entrySource: BOTTOM_NAV_SECONDS_ENTRY_SOURCE },
+  }
+}
+
+export function createBottomNavSecondsFallbackTarget(): RouteLocationRaw {
+  return {
+    name: 'home',
+    state: { entrySource: null },
+  }
+}
+
+export function isBottomNavigationSecondsEntry(state: unknown): boolean {
+  return (state as { entrySource?: unknown } | null)?.entrySource
+    === BOTTOM_NAV_SECONDS_ENTRY_SOURCE
 }
 
 export function hasUsableRouterBack(state: unknown): boolean {
   const back = (state as { back?: unknown } | null)?.back
-  return typeof back === 'string' && back.startsWith('/') && !back.startsWith('//')
+  return normalizeInternalPath(back) !== null
 }
 
-export async function goBackOr(router: Router, fallback: RouteLocationRaw = '/'): Promise<void> {
-  if (hasUsableRouterBack(router.options.history.state)) {
+export async function goBackOr(
+  router: Router,
+  fallback: RouteLocationRaw = '/',
+  options: GoBackOrOptions = {},
+): Promise<void> {
+  if (!options.preferFallback && hasUsableRouterBack(router.options.history.state)) {
     router.back()
     return
   }

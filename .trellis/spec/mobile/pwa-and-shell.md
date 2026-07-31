@@ -56,6 +56,11 @@ hippo_mobile_message_read_ids
   and must not emit `manifest.webmanifest`, `sw.js`, Workbox code, or PWA icons.
 - `src-tauri/tauri.conf.json` must keep
   `beforeBuildCommand: "npm run build:tauri"`.
+- Product PWA and Tauri builds use
+  `https://hipoex.cllbmz.kdns.fr` when
+  `VITE_BACKEND_API_DOMAIN` is missing or whitespace-only. Non-empty validated
+  environment values retain priority; browser development still calls the
+  Vite origin and uses its independently configurable proxy.
 
 ### Manifest and service worker
 
@@ -86,8 +91,12 @@ hippo_mobile_message_read_ids
   font size with viewport width.
 - The visual bottom navigation order is Home, Markets, Spot, Seconds,
   Contract, Assets, Profile. Seconds is the raised center action and remains a
-  secondary motion route; all icon targets remain at least 44x44px from 320px
-  through 448px.
+  secondary motion route; its replace target carries the dedicated
+  `bottom-navigation-seconds` history source so PageHeader returns Home despite
+  stale root history, while Product Hub keeps normal push/back behavior. The
+  Home fallback clears that custom source explicitly so Vue Router's
+  replace-state merge cannot leak it into later routes. All icon targets remain
+  at least 44x44px from 320px through 448px.
 - The message center calls `fetchNews(40)` and may persist only local read IDs.
   It must not invent account, order, wallet, security, or transaction events.
 

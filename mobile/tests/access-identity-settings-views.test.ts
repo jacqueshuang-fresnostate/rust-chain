@@ -20,11 +20,14 @@ const allSources = Object.values(sources)
 test('登录与注册保留配置、挑战、重定向和请求载荷合同', () => {
   assert.match(sources.login, /fetchLoginConfig\(\)/)
   assert.match(sources.login, /loginWithPassword\(account\.value, password\.value\)/)
-  assert.match(sources.login, /name: 'login-two-factor', query: \{ challenge: result\.challengeId, redirect: route\.query\.redirect \}/)
-  assert.match(sources.login, /name: 'login-two-factor', query: \{ setup: result\.setupChallengeId, redirect: route\.query\.redirect \}/)
-  assert.match(sources.login, /sanitizeInternalRedirect\(route\.query\.redirect\)/)
+  assert.match(sources.login, /const safeRedirect = computed\(\(\) => sanitizeInternalRedirect\(route\.query\.redirect\)\)/)
+  assert.match(sources.login, /name: 'login-two-factor', query: \{ challenge: result\.challengeId, redirect: safeRedirect\.value \}/)
+  assert.match(sources.login, /name: 'login-two-factor', query: \{ setup: result\.setupChallengeId, redirect: safeRedirect\.value \}/)
+  assert.match(sources.login, /replaceAuthStep\(router, \{ name, query: \{ redirect: safeRedirect\.value \} \}\)/)
+  assert.match(sources.login, /const back = sanitizeInternalRedirect\(router\.resolve\(\{[\s\S]*?name: 'login',[\s\S]*?query: \{ redirect: safeRedirect\.value \},[\s\S]*?\}\)\.fullPath\)/)
+  assert.match(sources.login, /router\.push\(\{ name: 'language', query: \{ back \} \}\)/)
   assert.match(sources.login, /session\.sync\(\)/)
-  assert.match(sources.login, /router\.replace\(redirect\)/)
+  assert.match(sources.login, /replaceAuthStep\(router, safeRedirect\.value\)/)
 
   assert.match(sources.register, /Promise\.allSettled\(\[fetchCountries\(\), fetchRegisterConfig\(\)\]\)/)
   assert.match(sources.register, /await sendRegistrationCode\(email\.value\)/)
@@ -34,8 +37,14 @@ test('登录与注册保留配置、挑战、重定向和请求载荷合同', ()
   )
   assert.match(sources.register, /emailCodeRequired\.value && !code\.value\.trim\(\)/)
   assert.match(sources.register, /inviteCodeRequired\.value && !inviteCode\.value\.trim\(\)/)
+  assert.match(sources.register, /const safeRedirect = computed\(\(\) => sanitizeInternalRedirect\(route\.query\.redirect\)\)/)
+  assert.match(sources.register, /createLoginRedirectTarget\(safeRedirect\.value\)/)
+  assert.match(sources.register, /const back = sanitizeInternalRedirect\(router\.resolve\(\{[\s\S]*?name: 'register',[\s\S]*?query: \{ redirect: safeRedirect\.value \},[\s\S]*?\}\)\.fullPath\)/)
+  assert.match(sources.register, /router\.push\(\{ name: 'language', query: \{ back \} \}\)/)
+  assert.match(sources.register, /goBackOr\(router, loginTarget\.value, \{ preferFallback: true \}\)/)
   assert.match(sources.register, /session\.sync\(\)/)
-  assert.match(sources.register, /router\.replace\('\/'\)/)
+  assert.match(sources.register, /replaceAuthStep\(router, safeRedirect\.value\)/)
+  assert.match(sources.register, /replaceAuthStep\(router, loginTarget\.value\)/)
 })
 
 test('密码找回和登录二次验证保留发码、重置与安全跳转合同', () => {
@@ -44,7 +53,11 @@ test('密码找回和登录二次验证保留发码、重置与安全跳转合�
     sources.forgotPassword,
     /resetPasswordWithCode\(\{ email: email\.value, code: code\.value, password: password\.value \}\)/,
   )
-  assert.match(sources.forgotPassword, /router\.replace\(\{ name: 'login' \}\)/)
+  assert.match(sources.forgotPassword, /const safeRedirect = computed\(\(\) => sanitizeInternalRedirect\(route\.query\.redirect\)\)/)
+  assert.match(sources.forgotPassword, /createLoginRedirectTarget\(safeRedirect\.value\)/)
+  assert.match(sources.forgotPassword, /replaceAuthStep\(router, loginTarget\.value\)/)
+  assert.match(sources.forgotPassword, /:fallback="loginTarget"/)
+  assert.match(sources.forgotPassword, /:prefer-fallback="true"/)
 
   assert.match(sources.loginTwoFactor, /submitLoginTwoFactor\(challengeId\.value, code\.value\)/)
   assert.match(sources.loginTwoFactor, /setupLoginTwoFactor\(setupChallengeId\.value\)/)
@@ -53,9 +66,27 @@ test('密码找回和登录二次验证保留发码、重置与安全跳转合�
   assert.match(sources.loginTwoFactor, /setup\.secret/)
   assert.match(sources.loginTwoFactor, /sendLoginTwoFactorResetCode\(challengeId\.value\)/)
   assert.match(sources.loginTwoFactor, /resetLoginTwoFactor\(challengeId\.value, resetCode\.value\)/)
-  assert.match(sources.loginTwoFactor, /sanitizeInternalRedirect\(route\.query\.redirect\)/)
+  assert.match(sources.loginTwoFactor, /const safeRedirect = computed\(\(\) => sanitizeInternalRedirect\(route\.query\.redirect\)\)/)
+  assert.match(sources.loginTwoFactor, /createLoginRedirectTarget\(safeRedirect\.value\)/)
   assert.match(sources.loginTwoFactor, /session\.sync\(\)/)
-  assert.match(sources.loginTwoFactor, /router\.replace\(redirect\)/)
+  assert.match(sources.loginTwoFactor, /replaceAuthStep\(router, safeRedirect\.value\)/)
+  assert.match(sources.loginTwoFactor, /await returnToLogin\(\)/)
+  assert.match(sources.loginTwoFactor, /replaceAuthStep\(router, loginTarget\.value\)/)
+  assert.match(sources.loginTwoFactor, /@click="returnToLogin"/)
+})
+
+test('认证与语言跳转不会把敏感表单字段写入 URL 查询参数', () => {
+  for (const source of [
+    sources.login,
+    sources.register,
+    sources.forgotPassword,
+    sources.language,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      /query:\s*\{[^}]*\b(?:account|email|password|confirmation|code|inviteCode)\b[^}]*\}/,
+    )
+  }
 })
 
 test('KYC 保留国家规则、文件校验、图片转换和完整提交载荷', () => {
@@ -102,6 +133,8 @@ test('账户绑定、邀请和语言设置保留真实读写行为', () => {
   assert.match(sources.language, /normalizeMobileLocale\(locale\.value\)/)
   assert.match(sources.language, /v-for="option in SUPPORTED_LOCALES"/)
   assert.match(sources.language, /setAppLocale\(nextLocale\)/)
+  assert.match(sources.language, /sanitizeInternalRedirect\(route\.query\.back, '\/profile'\)/)
+  assert.match(sources.language, /:fallback="backTarget"/)
   assert.match(sources.language, /role="radiogroup"/)
   assert.match(sources.language, /role="radio"/)
 })

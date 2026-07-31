@@ -2,6 +2,41 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-07-31 09:18 - 主会话终验手机端远程接口与导航
+
+- 完成内容：主会话复验手机端产品默认后端、Vite 同源代理、PWA/Tauri 构建产物及最终历史栈修复；在 390x844 移动视口中确认远程 BTC/USDT 行情真实加载、Header 品牌返回首页、底栏秒合约保留 `/seconds` 登录回跳、登录到注册使用替换式认证步骤且注册返回继续保留 `/seconds`，浏览器控制台无警告或错误；使用真实 Vue Router Web/Memory History 覆盖底栏 Seconds 强制回首页、Products push 自然返回、认证完成不残留登录页、2FA 重置/失效保留安全回跳。
+- 修改文件：`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix mobile run type-check` 通过；`npm --prefix mobile test` 171/171 通过；`npm --prefix mobile run build:pwa`、`npm --prefix mobile run build:tauri` 和 `git diff --check` 通过；本地 `http://127.0.0.1:1611/api/v1/markets` 经 Vite 默认代理返回 HTTP 200；390x844 浏览器交互验证通过且控制台零错误；最终 `npm --prefix mobile run tauri:android:build -- --debug --target aarch64 --apk` 成功生成 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`。
+- 后续事项：提交、归档任务并推送 GitHub；保留任务外 `pc/src/config/app.ts` 工作区改动。
+
+## 2026-07-31 09:15 - 最终独立检查第二轮导航历史栈
+
+- 完成内容：使用 Vue Router Web History 的真实 `replaceState` 合并语义复现并修复底栏 Seconds 来源标记在 Header 返回 Home 后残留的问题，新增显式清除标记的 Home fallback；同时以真实 Web/Memory History 覆盖任意旧根历史到 Seconds、Products push 到 Seconds、后续 replace 不受污染、PageHeader 默认回退不变、登录 replace 到注册/忘记密码/2FA、认证子页显式返回、2FA 验证/设置完成及重置/失效的安全 redirect，外链统一回落首页；同步导航与壳层规范。
+- 修改文件：`mobile/src/core/navigation.ts`、`mobile/src/views/SecondsView.vue`、`mobile/tests/router-history.test.ts`、`mobile/tests/shell-navigation.test.ts`、`.trellis/spec/mobile/navigation-and-localization.md`、`.trellis/spec/mobile/pwa-and-shell.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦导航/认证/后端/PWA 测试 33/33 通过；`npm --prefix mobile run type-check` 通过；`npm --prefix mobile test` 171/171 通过；`npm --prefix mobile run build:pwa` 通过并生成 132 条预缓存，产品后端/API/WSS 标记存在且 Service Worker 不含运行时远程入口；`npm --prefix mobile run build:tauri` 通过，产品后端/API/WSS 标记存在且无 Manifest、Service Worker、Workbox、PWA 图标或元数据；远程市场、登录配置、Tauri CORS 预检/实际请求均为 HTTP 200，公共 WebSocket Upgrade 成功，`/health` 独立为预期 HTTP 403；现有 Vite 默认代理的市场、登录配置为 200、WebSocket Upgrade 成功、`/health` 为 403；`npm --prefix mobile run lint --if-present`、`git diff --check` 通过；无暂存文件，`pc/src/config/app.ts` 未触碰且 SHA-256 保持 `66af4ce19deeea62c9a5d51a4dd0f5fe6670009ce6df75b1df2fc7a76671decb`。
+- 后续事项：无。
+
+## 2026-07-31 08:59 - 第二轮修复手机端导航历史栈
+
+- 完成内容：为 PageHeader 与共享返回逻辑增加显式优先兜底能力，底部 Seconds 入口通过独立 history 来源标记强制返回首页，同时保持 ProductHub `push` 后自然返回 Products、Seconds 二级动效及无底栏；将登录到注册、忘记密码和 2FA 的跳转统一为 `replace`，注册/忘记密码/2FA 返回登录时显式保留清洗后的 `redirect`，并修复 2FA 重置、挑战失效及正常完成的安全回跳；新增真实 Vue Router 内存 history 回归而非只依赖源码字符串。
+- 修改文件：`mobile/src/core/navigation.ts`、`mobile/src/components/PageHeader.vue`、`mobile/src/components/AppBottomNav.vue`、`mobile/src/views/SecondsView.vue`、`mobile/src/views/LoginView.vue`、`mobile/src/views/RegisterView.vue`、`mobile/src/views/ForgotPasswordView.vue`、`mobile/src/views/LoginTwoFactorView.vue`、`mobile/tests/router-history.test.ts`、`mobile/tests/navigation.test.ts`、`mobile/tests/shell-navigation.test.ts`、`mobile/tests/access-identity-settings-views.test.ts`、`mobile/tests/header-controls.test.ts`、`mobile/tests/priority-secondary-page-parity.test.ts`、`.trellis/tasks/07-31-mobile-remote-api-navigation-repair/prd.md`、`.trellis/spec/mobile/navigation-and-localization.md`、`.trellis/spec/mobile/pwa-and-shell.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦 router/history 与导航组件测试 21/21 通过，Header/二级壳聚焦测试 15/15 通过；`npm --prefix mobile run type-check` 通过；`npm --prefix mobile test` 171/171 通过；`npm --prefix mobile run build:pwa` 与 `npm --prefix mobile run build:tauri` 通过；`git diff --check` 通过；`pc/src/config/app.ts` 未触碰且 SHA-256 保持 `66af4ce19deeea62c9a5d51a4dd0f5fe6670009ce6df75b1df2fc7a76671decb`。
+- 后续事项：无。
+
+## 2026-07-31 08:41 - 独立审查手机端远程接口与导航修复
+
+- 完成内容：独立复核产品默认后端在 PWA、Tauri 与 Vite 开发代理中的注入边界、通用 resolver 原合同、HTTP/WSS 路径、健康检查解耦及全部指定导航链路；修复站内 redirect/back 清洗只覆盖前缀形式、仍允许路径内反斜杠、ASCII 控制字符和不安全 fallback 的边界，统一拒绝为根路径；补充 PWA/Tauri 默认与非空覆盖、共享返回 replace、敏感认证表单不入 URL、PWA 导航 denylist 的回归断言，并同步三份手机端 Trellis 规范。
+- 修改文件：`mobile/src/core/navigation.ts`、`mobile/tests/navigation.test.ts`、`mobile/tests/backend-runtime.test.ts`、`mobile/tests/access-identity-settings-views.test.ts`、`mobile/tests/pwa.test.ts`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/spec/mobile/navigation-and-localization.md`、`.trellis/spec/mobile/pwa-and-shell.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix mobile run type-check` 通过；`npm --prefix mobile test` 167/167 通过；`npm --prefix mobile run build:pwa` 与 `npm --prefix mobile run build:tauri` 通过；PWA 产物确认产品后端/API/WSS 标记存在、Service Worker 不含远程/API/WS 响应路径且 denylist 覆盖 `/api`、`/ws`、`/health`、下载路径；Tauri 产物确认产品后端/API/WSS 标记存在且无 Manifest、Service Worker、Workbox、PWA 图标或元数据；产品市场、登录配置、Tauri CORS、公共 WebSocket 直连通过，`/health` 独立返回预期 Cloudflare 403；Vite 默认代理实测市场、登录配置和 WebSocket 通过且 `/health` 403 不阻断；`git diff --check` 通过，未暂存文件，`pc/src/config/app.ts` 审查前后 SHA-256 保持 `66af4ce19deeea62c9a5d51a4dd0f5fe6670009ce6df75b1df2fc7a76671decb`。
+- 后续事项：无。
+
+## 2026-07-31 08:31 - 手机端远程接口接入与导航修复
+
+- 完成内容：为 PWA/Tauri 注入 `https://hipoex.cllbmz.kdns.fr` 产品默认后端并保持非空环境变量优先，开发代理同步默认远程，HTTP/WS 分别保持 `/api/v1` 与 `/api/v1/ws/public`，且启动流程不依赖受 Cloudflare Challenge 影响的 `/health`；修复首页 Logo、交易相关页最近路径回退、秒合约首页兜底与产品中心历史、充值详情当前资产网络回退，以及登录/注册/忘记密码/语言页经站内清洗的上下文传递，并保留七根栏目 `replace`、详情 `push` 和 Seconds 二级动效/无底栏合同。
+- 修改文件：`mobile/src/config/product.ts`、`mobile/src/config/backend.ts`、`mobile/src/config/app.ts`、`mobile/src/core/navigation.ts`、`mobile/src/router/index.ts`、`mobile/src/components/RootHeader.vue`、`mobile/src/views/SwapView.vue`、`mobile/src/views/OrdersView.vue`、`mobile/src/views/DepositDetailView.vue`、`mobile/src/views/LoginView.vue`、`mobile/src/views/RegisterView.vue`、`mobile/src/views/ForgotPasswordView.vue`、`mobile/src/views/LanguageView.vue`、`mobile/.env.example`、`mobile/README.md`、`mobile/tests/backend-runtime.test.ts`、`mobile/tests/navigation.test.ts`、`mobile/tests/shell-navigation.test.ts`、`mobile/tests/root-prototype-parity.test.ts`、`mobile/tests/secondary-product-order-views.test.ts`、`mobile/tests/wallet-secondary-views.test.ts`、`mobile/tests/access-identity-settings-views.test.ts`、`mobile/tests/header-controls.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix mobile run type-check` 通过；`npm --prefix mobile test` 165/165 通过；`npm --prefix mobile run build:pwa` 通过并生成 Manifest/Service Worker；`npm --prefix mobile run build:tauri` 通过，产物确认不含 Manifest/Service Worker/Workbox 且编译包包含产品后端、`/api/v1` 和 `/ws/public` 标记；`git diff --check` 通过。
+- 后续事项：无。
+
 ## 2026-07-31 07:08 - 主会话复验全库文本元数据修复
 
 - 完成内容：在独立检查修正规范基线、外键及无效 UTF-8 覆盖后，主会话使用新建的一次性 MySQL 8.4.9 容器再次执行最终 `schema_text_metadata_migration`，确认 0099 全库修复合同在干净环境中独立成立；测试结束后已移除临时容器。

@@ -17,7 +17,14 @@ Environment variables:
 ```text
 VITE_BACKEND_API_DOMAIN
 VITE_BACKEND_API_PREFIX=/api/v1
-VITE_BACKEND_DEV_PROXY_TARGET=http://127.0.0.1:8080
+VITE_BACKEND_DEV_PROXY_TARGET=https://hipoex.cllbmz.kdns.fr
+```
+
+Product policy:
+
+```ts
+PRODUCT_BACKEND_ORIGIN = 'https://hipoex.cllbmz.kdns.fr'
+resolveProductBackendOrigin(value): string
 ```
 
 Runtime URL functions:
@@ -42,19 +49,27 @@ heartbeat -> text "ping" / text "pong"
 - Browser development always calls the Vite origin. `VITE_BACKEND_API_DOMAIN`
   does not bypass the development proxy.
 - Vite proxies the normalized API prefix with `ws: true` and proxies
-  `/health` to `VITE_BACKEND_DEV_PROXY_TARGET`.
-- A production PWA with no explicit backend domain uses the current page
-  origin, `/api/v1` for HTTP, `/health` for health, and
-  `/api/v1/ws/public` for public market WebSockets.
+  `/health` to `VITE_BACKEND_DEV_PROXY_TARGET`. A missing or whitespace-only
+  proxy target uses `PRODUCT_BACKEND_ORIGIN`; a non-empty value wins.
+- The mobile product adapter passes a missing or whitespace-only
+  `VITE_BACKEND_API_DOMAIN` through `resolveProductBackendOrigin` before
+  calling the generic runtime resolver. Production PWA and Tauri builds
+  therefore default to `https://hipoex.cllbmz.kdns.fr/api/v1` for HTTP and
+  `wss://hipoex.cllbmz.kdns.fr/api/v1/ws/public` for public market data.
+- A non-empty `VITE_BACKEND_API_DOMAIN` wins over the product default and must
+  satisfy the production-origin validation rules.
 - An explicit production backend domain must be an absolute HTTPS origin
   without credentials, path, query, or fragment.
 - Production configuration rejects `localhost`, IPv4 loopback, IPv6 loopback,
   and `0.0.0.0`.
-- A Tauri production build without a valid explicit backend domain keeps a
-  diagnostic `BackendConfigurationError`; it must never fall back to device
-  loopback.
+- The generic `resolveBackendRuntimeConfig` contract remains reusable and
+  product-neutral: no domain means same-origin for browser production and a
+  diagnostic `BackendConfigurationError` for native production. Product
+  defaults belong to the adapter, not this generic fallback.
 - HTTP, health, and WebSocket URLs are derived from one validated runtime
   configuration. WebSocket schemes map `https -> wss` and `http -> ws`.
+- `/health` remains an independently derived diagnostic URL. Mobile startup,
+  routing, and business-page availability must not await or gate on it.
 
 ## 4. Authentication and Refresh Contracts
 
@@ -95,7 +110,8 @@ heartbeat -> text "ping" / text "pong"
 
 | Condition | Required behavior |
 | --- | --- |
-| Native production backend is missing or invalid | Show backend-not-configured diagnostics; make no loopback request |
+| Product backend environment is empty | Use `PRODUCT_BACKEND_ORIGIN` for PWA and Tauri |
+| Generic native production resolver receives no domain, or the product override is invalid | Show backend-not-configured diagnostics; make no loopback request |
 | Request times out | Show the localized timeout state |
 | Browser reports offline | Show the localized device-offline state |
 | Network fails without an HTTP response | Show the localized backend/network state |
@@ -105,11 +121,12 @@ heartbeat -> text "ping" / text "pong"
 
 ## 7. Tests Required
 
-- Unit tests for prefix/origin normalization, PWA same-origin URLs, Tauri
+- Unit tests for product defaults and non-empty overrides in PWA/Tauri,
+  prefix/origin normalization, generic PWA same-origin URLs, generic Tauri
   configuration errors, HTTPS/loopback rejection, health URLs, and WS scheme
   conversion.
 - Source/config tests for the dedicated development proxy target, API
-  `ws: true`, and `/health` proxy.
+  `ws: true`, `/health` proxy, and absence of a startup health gate.
 - Request-layer tests for bootstrap Bearer removal, bootstrap 401 exclusion,
   singleton refresh, one replay, and failed-refresh session cleanup.
 - WebSocket protocol tests for subscribe, confirmation, ticker, heartbeat, and

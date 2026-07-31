@@ -11,6 +11,7 @@ import {
   WalletCards,
   Zap,
 } from 'lucide-vue-next'
+import { createBottomNavSecondsTarget } from '@/core/navigation'
 import { useNavigationStore } from '@/stores/navigation'
 
 const route = useRoute()
@@ -46,7 +47,7 @@ const items = computed(() => [
   {
     key: 'seconds',
     label: t('seconds.title'),
-    to: { name: 'seconds' },
+    to: createBottomNavSecondsTarget(),
     icon: Zap,
     active: activeName.value === 'seconds',
     primary: true,

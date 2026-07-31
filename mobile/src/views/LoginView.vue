@@ -6,7 +6,7 @@ import { useI18n } from 'vue-i18n'
 import { fetchLoginConfig, loginWithPassword } from '@/api/auth'
 import { apiErrorMessage } from '@/api/client'
 import { useSessionStore } from '@/stores/session'
-import { goBackOr, sanitizeInternalRedirect } from '@/core/navigation'
+import { goBackOr, replaceAuthStep, sanitizeInternalRedirect } from '@/core/navigation'
 import logo from '@/assets/logo.png'
 
 type LoginMode = 'email' | 'username'
@@ -26,6 +26,19 @@ const usernameLoginEnabled = ref(false)
 const accountInput = ref<HTMLInputElement | null>(null)
 const passwordInput = ref<HTMLInputElement | null>(null)
 const identityDescription = computed(() => t(usernameLoginEnabled.value ? 'auth.loginIdentityDescription' : 'auth.loginEmailDescription'))
+const safeRedirect = computed(() => sanitizeInternalRedirect(route.query.redirect))
+
+function openAuthRoute(name: 'register' | 'forgot-password'): void {
+  void replaceAuthStep(router, { name, query: { redirect: safeRedirect.value } })
+}
+
+function openLanguage(): void {
+  const back = sanitizeInternalRedirect(router.resolve({
+    name: 'login',
+    query: { redirect: safeRedirect.value },
+  }).fullPath)
+  void router.push({ name: 'language', query: { back } })
+}
 
 function selectMode(mode: LoginMode): void {
   loginMode.value = mode
@@ -53,7 +66,7 @@ function handleBack(): void {
     void nextTick(() => accountInput.value?.focus())
     return
   }
-  void goBackOr(router, '/')
+  void goBackOr(router, safeRedirect.value)
 }
 
 async function submit(): Promise<void> {
@@ -70,16 +83,15 @@ async function submit(): Promise<void> {
   try {
     const result = await loginWithPassword(account.value, password.value)
     if (result.type === 'two-factor') {
-      await router.push({ name: 'login-two-factor', query: { challenge: result.challengeId, redirect: route.query.redirect } })
+      await replaceAuthStep(router, { name: 'login-two-factor', query: { challenge: result.challengeId, redirect: safeRedirect.value } })
       return
     }
     if (result.type === 'two-factor-setup') {
-      await router.push({ name: 'login-two-factor', query: { setup: result.setupChallengeId, redirect: route.query.redirect } })
+      await replaceAuthStep(router, { name: 'login-two-factor', query: { setup: result.setupChallengeId, redirect: safeRedirect.value } })
       return
     }
     session.sync()
-    const redirect = sanitizeInternalRedirect(route.query.redirect)
-    await router.replace(redirect)
+    await replaceAuthStep(router, safeRedirect.value)
   } catch (reason) {
     error.value = apiErrorMessage(reason, t('auth.loginFailed'))
   } finally {
@@ -106,7 +118,7 @@ onMounted(async () => {
         <strong>{{ step === 1 ? t('auth.login') : t('auth.welcomeBack') }}</strong>
         <small>{{ t('auth.stepProgress', { current: step, total: 2 }) }}</small>
       </div>
-      <button class="icon-button" type="button" :aria-label="t('language.title')" @click="router.push({ name: 'language' })"><Languages :size="21" /></button>
+      <button class="icon-button" type="button" :aria-label="t('language.title')" @click="openLanguage"><Languages :size="21" /></button>
     </header>
 
     <section class="login-panel">
@@ -128,7 +140,7 @@ onMounted(async () => {
           <template v-else>
             <button class="account-summary" type="button" @click="handleBack"><span><UserRound :size="18" />{{ account }}</span><b>{{ t('auth.change') }}</b></button>
             <label class="auth-label"><span>{{ t('auth.password') }}</span><div class="auth-field"><input ref="passwordInput" v-model="password" :aria-invalid="Boolean(error)" :type="showPassword ? 'text' : 'password'" autocomplete="current-password" :placeholder="t('auth.passwordPlaceholder')" /><button class="password-toggle" type="button" :aria-label="t(showPassword ? 'auth.hidePassword' : 'auth.showPassword')" @click="showPassword = !showPassword"><EyeOff v-if="showPassword" :size="19" /><Eye v-else :size="19" /></button></div></label>
-            <button class="forgot-link" type="button" @click="router.push({ name: 'forgot-password' })">{{ t('auth.forgotPassword') }}</button>
+            <button class="forgot-link" type="button" @click="openAuthRoute('forgot-password')">{{ t('auth.forgotPassword') }}</button>
           </template>
 
           <p v-if="error" class="error-message auth-feedback" role="alert">{{ error }}</p>
@@ -136,7 +148,7 @@ onMounted(async () => {
         </form>
       </div>
 
-      <p class="login-panel__footer">{{ t('auth.noAccount') }} <button type="button" @click="router.push({ name: 'register' })">{{ t('auth.registerNow') }}</button></p>
+      <p class="login-panel__footer">{{ t('auth.noAccount') }} <button type="button" @click="openAuthRoute('register')">{{ t('auth.registerNow') }}</button></p>
     </section>
   </main>
 </template>

@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "手机端包级约束与验证入口。"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "后端地址、HTTP/WebSocket、PWA/Tauri 运行时配置约束。"}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "根导航、详情跳转、回退与认证重定向约束。"}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "PWA 与原生壳层构建、运行和验证约束。"}
+{"file": ".trellis/tasks/07-31-mobile-remote-api-navigation-repair/research/remote-service-verification.md", "reason": "远程服务业务 API、CORS、WebSocket 与健康检查实测结论。"}

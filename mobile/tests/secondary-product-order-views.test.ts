@@ -24,6 +24,8 @@ const sources = [
 ]
 
 test('订单页保留现货、杠杆查询与逐笔/批量撤单平仓合同', () => {
+  assert.match(ordersSource, /const navigation = useNavigationStore\(\)/)
+  assert.match(ordersSource, /:fallback="navigation\.lastTradePath"/)
   assert.match(ordersSource, /fetchOpenSpotOrders\(\)/)
   assert.match(ordersSource, /fetchSpotOrderHistory\(\)/)
   assert.match(ordersSource, /fetchMarginPositions\('opened'\)/)
@@ -45,6 +47,8 @@ test('订单页保留现货、杠杆查询与逐笔/批量撤单平仓合同', (
 })
 
 test('闪兑与理财页保留实时报价、确认、申购和赎回链路', () => {
+  assert.match(swapSource, /const navigation = useNavigationStore\(\)/)
+  assert.match(swapSource, /:fallback="navigation\.lastTradePath"/)
   assert.match(swapSource, /fetchConvertPairs\(\)/)
   assert.match(swapSource, /fetchWalletAccounts\(\), fetchConvertOrders\(\)/)
   assert.match(swapSource, /quote\.value = await requestConvertQuote\(selectedPair\.value, amountNumber\.value\)/)

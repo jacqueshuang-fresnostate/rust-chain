@@ -4,6 +4,7 @@ import {
   DEFAULT_TRADE_SYMBOL,
   ROOT_ROUTE_ORDER,
   classifyRootRouteDirection,
+  goBackOr,
   hasUsableRouterBack,
   normalizeRouteSymbol,
   resolveRootRouteKey,
@@ -23,14 +24,42 @@ test('交易路由统一交易对格式并拒绝残缺参数', () => {
 test('登录后重定向仅接受应用内部路径', () => {
   assert.equal(sanitizeInternalRedirect('/assets?tab=funding'), '/assets?tab=funding')
   assert.equal(sanitizeInternalRedirect('//example.com/steal'), '/')
+  assert.equal(sanitizeInternalRedirect('/\\example.com/steal'), '/')
+  assert.equal(sanitizeInternalRedirect('/assets\\example.com/steal'), '/')
+  assert.equal(sanitizeInternalRedirect('/\n/example.com/steal'), '/')
   assert.equal(sanitizeInternalRedirect('https://example.com/steal'), '/')
   assert.equal(sanitizeInternalRedirect(undefined, '/login'), '/login')
+  assert.equal(sanitizeInternalRedirect(undefined, '//example.com/steal'), '/')
 })
 
 test('直开详情页没有可用历史时必须走返回兜底', () => {
   assert.equal(hasUsableRouterBack({ back: '/markets' }), true)
   assert.equal(hasUsableRouterBack({ back: '//example.com' }), false)
+  assert.equal(hasUsableRouterBack({ back: '/\\example.com' }), false)
+  assert.equal(hasUsableRouterBack({ back: '/markets\\example.com' }), false)
+  assert.equal(hasUsableRouterBack({ back: '/\n/example.com' }), false)
   assert.equal(hasUsableRouterBack({ back: null }), false)
+})
+
+test('共享返回逻辑只使用安全历史，否则 replace 到页面兜底', async () => {
+  const calls: string[] = []
+  const router = {
+    options: { history: { state: { back: '/markets' } } },
+    back: () => { calls.push('back') },
+    replace: async (target: unknown) => { calls.push(`replace:${JSON.stringify(target)}`) },
+  }
+
+  await goBackOr(router as never, { name: 'home' })
+  assert.deepEqual(calls, ['back'])
+
+  calls.length = 0
+  await goBackOr(router as never, { name: 'home' }, { preferFallback: true })
+  assert.deepEqual(calls, ['replace:{"name":"home"}'])
+
+  calls.length = 0
+  router.options.history.state.back = '/\\example.com'
+  await goBackOr(router as never, { name: 'home' })
+  assert.deepEqual(calls, ['replace:{"name":"home"}'])
 })
 
 test('路由层级决定前进与返回动画方向', () => {

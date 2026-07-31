@@ -30,6 +30,7 @@ test('充值流程保留真实资产、网络、地址、二维码与复制合�
   assert.match(sources.depositDetail, /navigator\.clipboard\.writeText\(address\.value\.address\)/)
   assert.match(sources.depositDetail, /document\.execCommand\('copy'\)/)
   assert.match(sources.depositDetail, /v-if="address\.memo"/)
+  assert.match(sources.depositDetail, /:fallback="\{ name: 'deposit-network', params: \{ asset \} \}"/)
 })
 
 test('提币流程保留真实资产路由、余额网络加载、校验和提交载荷', () => {

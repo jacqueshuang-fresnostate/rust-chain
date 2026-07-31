@@ -273,24 +273,25 @@ test('所有目标 Header 保留 Lucide 图标、导航与动作处理器', () =
   assert.match(sources.pageHeader, /import \{ ArrowLeft \} from 'lucide-vue-next'/)
   assert.match(
     sources.pageHeader,
-    /goBackOr\(router, props\.fallback \|\| route\.meta\.backFallback \|\| '\/'\)/,
+    /goBackOr\([\s\S]*?router,[\s\S]*?props\.fallback \|\| route\.meta\.backFallback \|\| '\/',[\s\S]*?\{ preferFallback: props\.preferFallback \},[\s\S]*?\)/,
   )
 
   for (const source of [sources.login, sources.register]) {
     assert.match(source, /class="auth-topbar"/)
     assert.match(source, /class="icon-button"/)
     assert.match(source, /<Languages :size="21" \/>/)
-    assert.match(source, /@click="router\.push\(\{ name: 'language' \}\)"/)
+    assert.match(source, /@click="openLanguage"/)
+    assert.match(source, /router\.push\(\{ name: 'language', query: \{ back \} \}\)/)
   }
   assert.match(sources.login, /@click="handleBack"/)
   assert.match(
     sources.login,
-    /function handleBack\(\): void \{[\s\S]*?if \(step\.value === 2\)[\s\S]*?goBackOr\(router, '\/'\)/,
+    /function handleBack\(\): void \{[\s\S]*?if \(step\.value === 2\)[\s\S]*?goBackOr\(router, safeRedirect\.value\)/,
   )
   assert.match(sources.register, /@click="handleBack"/)
   assert.match(
     sources.register,
-    /function handleBack\(\): void \{[\s\S]*?if \(step\.value === 2\)[\s\S]*?goBackOr\(router, '\/login'\)/,
+    /function handleBack\(\): void \{[\s\S]*?if \(step\.value === 2\)[\s\S]*?goBackOr\(router, loginTarget\.value, \{ preferFallback: true \}\)/,
   )
 
   assert.match(sources.marketDetail, /class="market-detail__header"/)

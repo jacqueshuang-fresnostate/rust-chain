@@ -4,10 +4,11 @@ import {
   resolveBackendRuntimeConfig,
   resolveBackendWebSocketUrl,
 } from './backend'
+import { resolveProductBackendOrigin } from './product'
 
 const env = import.meta.env
 const backend = resolveBackendRuntimeConfig({
-  apiDomain: env.VITE_BACKEND_API_DOMAIN,
+  apiDomain: resolveProductBackendOrigin(env.VITE_BACKEND_API_DOMAIN),
   apiPrefix: env.VITE_BACKEND_API_PREFIX,
   dev: env.DEV,
   native: env.MODE === 'tauri' || Boolean(env.TAURI_ENV_PLATFORM),

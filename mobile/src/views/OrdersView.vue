@@ -22,6 +22,7 @@ import {
   type SpotOrder,
 } from '@/api/trading'
 import { formatAmount, formatDateTime, formatPrice } from '@/core/format'
+import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import type { MarginProduct, MarketPair } from '@/core/types'
 
@@ -35,6 +36,7 @@ type PendingAction =
 
 const route = useRoute()
 const session = useSessionStore()
+const navigation = useNavigationStore()
 const { t } = useI18n()
 const activeTab = ref<Tab>('spot')
 const tabs = computed(() => [
@@ -328,6 +330,7 @@ function statusLabel(status: string): string {
   <main class="page page--plain orders-page" data-orders-workspace="live">
     <PageHeader
       :eyebrow="t('orders.category')"
+      :fallback="navigation.lastTradePath"
       :title="t('orders.title')"
       :subtitle="t('orders.loginDescription')"
       :back="true"

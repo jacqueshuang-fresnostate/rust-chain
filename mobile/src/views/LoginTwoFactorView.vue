@@ -15,7 +15,11 @@ import {
   type LoginTwoFactorSetup,
 } from '@/api/auth'
 import { useSessionStore } from '@/stores/session'
-import { sanitizeInternalRedirect } from '@/core/navigation'
+import {
+  createLoginRedirectTarget,
+  replaceAuthStep,
+  sanitizeInternalRedirect,
+} from '@/core/navigation'
 
 const route = useRoute()
 const router = useRouter()
@@ -40,6 +44,8 @@ const remainingSeconds = ref(0)
 let timer: number | undefined
 let copiedTimer: number | undefined
 
+const safeRedirect = computed(() => sanitizeInternalRedirect(route.query.redirect))
+const loginTarget = computed(() => createLoginRedirectTarget(safeRedirect.value))
 const sendLabel = computed(() => remainingSeconds.value ? `${remainingSeconds.value}s` : sent.value ? t('auth.resend') : t('auth.sendResetCode'))
 
 function startCountdown(): void {
@@ -61,8 +67,7 @@ async function submit(): Promise<void> {
   try {
     await submitLoginTwoFactor(challengeId.value, code.value)
     session.sync()
-    const redirect = sanitizeInternalRedirect(route.query.redirect)
-    await router.replace(redirect)
+    await replaceAuthStep(router, safeRedirect.value)
   } catch (reason) {
     error.value = apiErrorMessage(reason, t('auth.twoFactorFailed'))
   } finally {
@@ -97,8 +102,7 @@ async function confirmSetup(): Promise<void> {
   try {
     await confirmLoginTwoFactorSetup(setupChallengeId.value, setupCode.value)
     session.sync()
-    const redirect = sanitizeInternalRedirect(route.query.redirect)
-    await router.replace(redirect)
+    await replaceAuthStep(router, safeRedirect.value)
   } catch (reason) {
     error.value = apiErrorMessage(reason, t('auth.setupConfirmFailed'))
   } finally {
@@ -150,12 +154,16 @@ async function resetTwoFactor(): Promise<void> {
   error.value = ''
   try {
     await resetLoginTwoFactor(challengeId.value, resetCode.value)
-    await router.replace({ name: 'login' })
+    await returnToLogin()
   } catch (reason) {
     error.value = apiErrorMessage(reason, t('auth.twoFactorResetFailed'))
   } finally {
     resetting.value = false
   }
+}
+
+async function returnToLogin(): Promise<void> {
+  await replaceAuthStep(router, loginTarget.value)
 }
 
 watch(setupChallengeId, () => { void loadSetup() }, { immediate: true })
@@ -171,6 +179,8 @@ onUnmounted(() => {
     <PageHeader
       :back="true"
       :eyebrow="t('auth.authenticatorTitle')"
+      :fallback="loginTarget"
+      :prefer-fallback="true"
       :subtitle="t('auth.authenticatorDescription')"
       :title="t('auth.securityVerification')"
     />
@@ -272,7 +282,7 @@ onUnmounted(() => {
     <div v-else class="page-content setup-required" role="status">
       <span class="setup-required__icon"><ShieldCheck :size="28" /></span>
       <p>{{ t('auth.challengeExpired') }}</p>
-      <button class="button button--secondary" type="button" @click="router.replace({ name: 'login' })">{{ t('auth.returnLogin') }}</button>
+      <button class="button button--secondary" type="button" @click="returnToLogin">{{ t('auth.returnLogin') }}</button>
     </div>
   </main>
 </template>

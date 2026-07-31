@@ -15,8 +15,8 @@ const { t } = useI18n()
     <button
       class="brand-button root-header__brand"
       type="button"
-      :aria-label="t('nav.profile')"
-      @click="router.replace({ name: 'profile' })"
+      :aria-label="t('nav.home')"
+      @click="router.replace({ name: 'home' })"
     >
       <span
         class="brand-logo"
