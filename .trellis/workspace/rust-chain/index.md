@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 20
+- **Total Sessions**: 21
 - **Last Active**: 2026-07-31
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~714 | Active |
+| `journal-1.md` | ~756 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 21 | 2026-07-31 | 手机端接入远程服务并修复导航 | `f1d4b98` | `main` |
 | 20 | 2026-07-31 | 全库修复二进制文本元数据 | `f9d83a0` | `main` |
 | 19 | 2026-07-31 | 修复后台登录凭据二进制元数据 | `fe8d702` | `main` |
 | 18 | 2026-07-31 | 修复预测设置二进制元数据解码 | `ac4f9ec` | `main` |

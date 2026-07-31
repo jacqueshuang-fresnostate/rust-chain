@@ -721,3 +721,36 @@ Ported the Sites v16 signal Canvas and route veil into the Vue mobile shell, cor
 ### Next Steps
 
 - None - task complete
+
+
+## Session 21: 手机端接入远程服务并修复导航
+
+**Date**: 2026-07-31
+**Task**: 手机端接入远程服务并修复导航
+**Branch**: `main`
+
+### Summary
+
+手机端 PWA、Tauri 与开发代理默认接入 hipoex.cllbmz.kdns.fr，修复 Header、交易、秒合约、充值及认证回跳，并通过 171 项测试、PWA/Tauri/Android 构建和移动视口实测。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f1d4b98` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
