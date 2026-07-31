@@ -820,3 +820,36 @@ Ported the Sites v16 signal Canvas and route veil into the Vue mobile shell, cor
 ### Next Steps
 
 - None - task complete
+
+
+## Session 24: 修复手机端现货 K 线实时刷新
+
+**Date**: 2026-07-31
+**Task**: 修复手机端现货 K 线实时刷新
+**Branch**: `main`
+
+### Summary
+
+接入详情页 kline WebSocket，完成实时蜡烛合并、周期隔离、竞态测试、远程与 Android 真机验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5e5dc86` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

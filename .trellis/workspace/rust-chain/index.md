@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 23
+- **Total Sessions**: 24
 - **Last Active**: 2026-07-31
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~822 | Active |
+| `journal-1.md` | ~855 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 24 | 2026-07-31 | 修复手机端现货 K 线实时刷新 | `5e5dc86` | `main` |
 | 23 | 2026-07-31 | 修复手机端现货订单簿与最新成交实时刷新 | `a1bff6e` | `main` |
 | 22 | 2026-07-31 | HIPPO 管理端 UI/UX 审计与重构 | `f104bf2` | `main` |
 | 21 | 2026-07-31 | 手机端接入远程服务并修复导航 | `f1d4b98` | `main` |
