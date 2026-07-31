@@ -14,6 +14,9 @@ import AssetMark from '@/components/AssetMark.vue'
 import MobileMarketChart from '@/components/MobileMarketChart.vue'
 import OrderBookPanel from '@/components/OrderBookPanel.vue'
 import { fetchKlines, fetchOrderBook, fetchRecentTrades } from '@/api/market'
+import { startMarketDetailStream } from '@/api/marketDetailStream'
+import { mergeMarketTradeHistory, mergeMarketTrades } from '@/api/marketSocketProtocol'
+import { publicMarketWebSocketUrl } from '@/config/app'
 import { formatAmount, formatPercent, formatPrice } from '@/core/format'
 import { currentIntlLocale } from '@/i18n'
 import { goBackOr } from '@/core/navigation'
@@ -26,44 +29,142 @@ const marketStore = useMarketStore()
 const { t } = useI18n()
 const interval = ref('15m')
 const loading = ref(true)
-const dataError = ref(false)
+const chartLoading = ref(true)
+const klineError = ref(false)
+const depthError = ref(false)
+const tradesError = ref(false)
 const points = ref<KlinePoint[]>([])
 const bids = ref<OrderBookLevel[]>([])
 const asks = ref<OrderBookLevel[]>([])
 const trades = ref<TradePrint[]>([])
 let requestVersion = 0
+let klineRequestVersion = 0
+let stopDetailStream: (() => void) | null = null
+
+interface LiveDetailState {
+  depthReceived: boolean
+  tradeReceived: boolean
+}
 
 const pairSymbol = computed(() => props.symbol.replace(/[_-]/g, '/').toUpperCase())
 const ticker = computed(() => marketStore.tickerFor(pairSymbol.value))
 const baseAsset = computed(() => pairSymbol.value.split('/')[0] || '')
 const quoteAsset = computed(() => pairSymbol.value.split('/')[1] || 'USDT')
 const latestPrice = computed(() => ticker.value?.lastPrice ?? 0)
+const dataError = computed(() => klineError.value || depthError.value || tradesError.value)
+
+function stopLiveDetail(): void {
+  stopDetailStream?.()
+  stopDetailStream = null
+}
+
+function startLiveDetail(symbol: string, version: number, state: LiveDetailState): void {
+  stopLiveDetail()
+  try {
+    stopDetailStream = startMarketDetailStream({
+      symbol,
+      url: publicMarketWebSocketUrl(),
+      onDepth: (snapshot) => {
+        if (version !== requestVersion || symbol !== pairSymbol.value) return
+        state.depthReceived = true
+        bids.value = snapshot.bids
+        asks.value = snapshot.asks
+        depthError.value = false
+      },
+      onTrade: (trade) => {
+        if (version !== requestVersion || symbol !== pairSymbol.value) return
+        state.tradeReceived = true
+        trades.value = mergeMarketTrades(trades.value, trade, 16)
+        tradesError.value = false
+      },
+    })
+  } catch {
+    stopDetailStream = null
+  }
+}
 
 async function load(forceMarket = false): Promise<void> {
   const version = ++requestVersion
+  const klineVersion = ++klineRequestVersion
+  const symbol = pairSymbol.value
+  stopLiveDetail()
   loading.value = true
-  dataError.value = false
+  chartLoading.value = true
+  klineError.value = false
+  depthError.value = false
+  tradesError.value = false
   points.value = []
   bids.value = []
   asks.value = []
   trades.value = []
+  const liveState: LiveDetailState = {
+    depthReceived: false,
+    tradeReceived: false,
+  }
+  startLiveDetail(symbol, version, liveState)
   void marketStore.refresh(forceMarket)
   const [klineResult, depthResult, tradesResult] = await Promise.allSettled([
     fetchKlines(pairSymbol.value, interval.value),
     fetchOrderBook(pairSymbol.value),
     fetchRecentTrades(pairSymbol.value),
   ])
-  if (version !== requestVersion) return
+  if (version !== requestVersion || symbol !== pairSymbol.value) return
 
   const hasKlines = klineResult.status === 'fulfilled' && klineResult.value.length > 0
-  const hasDepth = depthResult.status === 'fulfilled' && (depthResult.value.bids.length > 0 || depthResult.value.asks.length > 0)
-  const hasTrades = tradesResult.status === 'fulfilled' && tradesResult.value.length > 0
-  dataError.value = [klineResult, depthResult, tradesResult].some((result) => result.status === 'rejected')
-  points.value = hasKlines ? klineResult.value : []
-  bids.value = hasDepth ? depthResult.value.bids : []
-  asks.value = hasDepth ? depthResult.value.asks : []
-  trades.value = hasTrades ? tradesResult.value : []
+  if (klineVersion === klineRequestVersion) {
+    points.value = hasKlines ? klineResult.value : []
+    klineError.value = klineResult.status === 'rejected'
+    chartLoading.value = false
+  }
+  if (!liveState.depthReceived) {
+    bids.value = depthResult.status === 'fulfilled' ? depthResult.value.bids : []
+    asks.value = depthResult.status === 'fulfilled' ? depthResult.value.asks : []
+    depthError.value = depthResult.status === 'rejected'
+  }
+  const restTrades = tradesResult.status === 'fulfilled' ? tradesResult.value : []
+  if (liveState.tradeReceived) {
+    trades.value = mergeMarketTradeHistory(trades.value, restTrades, 16)
+  } else {
+    trades.value = restTrades
+    tradesError.value = tradesResult.status === 'rejected'
+  }
   loading.value = false
+}
+
+async function refreshKlines(): Promise<void> {
+  const version = requestVersion
+  const klineVersion = ++klineRequestVersion
+  const symbol = pairSymbol.value
+  chartLoading.value = true
+  klineError.value = false
+  try {
+    const nextPoints = await fetchKlines(pairSymbol.value, interval.value)
+    if (
+      version !== requestVersion
+      || klineVersion !== klineRequestVersion
+      || symbol !== pairSymbol.value
+    ) {
+      return
+    }
+    points.value = nextPoints
+  } catch {
+    if (
+      version !== requestVersion
+      || klineVersion !== klineRequestVersion
+      || symbol !== pairSymbol.value
+    ) {
+      return
+    }
+    klineError.value = true
+  } finally {
+    if (
+      version === requestVersion
+      && klineVersion === klineRequestVersion
+      && symbol === pairSymbol.value
+    ) {
+      chartLoading.value = false
+    }
+  }
 }
 
 function retry(): void {
@@ -73,7 +174,7 @@ function retry(): void {
 function chooseInterval(value: string): void {
   if (interval.value === value) return
   interval.value = value
-  void load()
+  void refreshKlines()
 }
 
 function openTrade(mode: 'spot' | 'contract' = 'spot'): void {
@@ -105,6 +206,8 @@ watch(() => props.symbol, () => { void load() }, { immediate: true })
 
 onUnmounted(() => {
   requestVersion += 1
+  klineRequestVersion += 1
+  stopLiveDetail()
 })
 </script>
 
@@ -195,7 +298,7 @@ onUnmounted(() => {
         </button>
       </nav>
       <div class="market-detail__chart">
-        <MobileMarketChart :points="points" :loading="loading" />
+        <MobileMarketChart :points="points" :loading="chartLoading" />
       </div>
     </section>
 
@@ -224,7 +327,7 @@ onUnmounted(() => {
         {{ t('common.marketUnavailable') }}
       </div>
       <div v-else>
-        <div v-for="trade in trades.slice(0, 8)" :key="trade.id" class="market-detail__trade">
+        <div v-for="trade in trades" :key="trade.id" class="market-detail__trade">
           <span class="numeric" :class="trade.side === 'buy' ? 'up' : 'down'">
             {{ formatPrice(trade.price) }}
           </span>

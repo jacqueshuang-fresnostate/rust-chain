@@ -29,7 +29,7 @@ test('行情详情保留真实 ticker、K 线、盘口、成交和交易导航�
   assert.match(marketDetailSource, /fetchOrderBook\(pairSymbol\.value\)/)
   assert.match(marketDetailSource, /fetchRecentTrades\(pairSymbol\.value\)/)
   assert.match(marketDetailSource, /Promise\.allSettled/)
-  assert.match(marketDetailSource, /<MobileMarketChart :points="points" :loading="loading" \/>/)
+  assert.match(marketDetailSource, /<MobileMarketChart :points="points" :loading="chartLoading" \/>/)
   assert.match(marketDetailSource, /<OrderBookPanel[\s\S]*:bids="bids"[\s\S]*:asks="asks"[\s\S]*:current-price="latestPrice"/)
   assert.match(marketDetailSource, /query: mode === 'contract' \? \{ mode: 'contract' \} : undefined/)
   assert.match(marketDetailSource, /openTrade\('spot'\)/)

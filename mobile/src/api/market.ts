@@ -1,4 +1,5 @@
 import { client, requestUrl } from './client'
+import { mapMarketDepthSnapshot, mapMarketTrades } from './marketSocketProtocol'
 import { asNumber, normalizeSymbol, splitSymbol } from '@/core/format'
 import { mapMarketTicker, type BackendMarketRecord, type BackendTickerRecord } from '@/core/marketMapper'
 import type { KlinePoint, MarketPair, MarketTicker, OrderBookLevel, TradePrint } from '@/core/types'
@@ -25,6 +26,7 @@ interface BackendDepthLevel {
 
 interface BackendTrade {
   id?: string | number
+  trade_id?: string | number
   side?: string
   direction?: string
   price?: number | string
@@ -93,10 +95,7 @@ export async function fetchOrderBook(symbol: string): Promise<{ bids: OrderBookL
   const response = await client.get<{ bids?: BackendDepthLevel[]; asks?: BackendDepthLevel[] }>(
     requestUrl(`/markets/${encodeURIComponent(normalizeSymbol(symbol))}/depth`),
   )
-  return {
-    bids: mapDepth(response.data.bids).sort((left, right) => right.price - left.price),
-    asks: mapDepth(response.data.asks).sort((left, right) => left.price - right.price),
-  }
+  return mapMarketDepthSnapshot(response.data)
 }
 
 export async function fetchRecentTrades(symbol: string, limit = 16): Promise<TradePrint[]> {
@@ -105,20 +104,7 @@ export async function fetchRecentTrades(symbol: string, limit = 16): Promise<Tra
     { params: { limit } },
   )
   const rows = Array.isArray(response.data.trades) ? response.data.trades : []
-  return rows.map((trade, index) => ({
-    id: String(trade.id ?? `${trade.price}-${index}`),
-    side: String(trade.side || trade.direction || '').toLowerCase() === 'sell' ? 'sell' : 'buy',
-    price: asNumber(trade.price),
-    quantity: asNumber(trade.quantity ?? trade.amount),
-    time: normalizeTimestamp(trade.traded_at ?? trade.time) || Date.now(),
-  }))
-}
-
-function mapDepth(rows: BackendDepthLevel[] | undefined): OrderBookLevel[] {
-  return (rows || [])
-    .map((row) => ({ price: asNumber(row.price), quantity: asNumber(row.quantity ?? row.amount) }))
-    .filter((row) => row.price > 0 && row.quantity > 0)
-    .slice(0, 12)
+  return mapMarketTrades(rows, limit)
 }
 
 function intervalDuration(interval: string): number {

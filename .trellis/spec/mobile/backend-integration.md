@@ -40,9 +40,15 @@ Public market WebSocket:
 
 ```text
 GET /api/v1/ws/public
-subscribe -> {"op":"subscribe","channel":"ticker","symbol":"BTCUSDT"}
+subscribe -> {"op":"subscribe","channel":"ticker|depth|trade","symbol":"BTCUSDT"}
 heartbeat -> text "ping" / text "pong"
+depth -> {"symbol":"BTCUSDT","bids":[{"price":"...","quantity":"..."}],"asks":[...],"observed_at":<unix-ms>,"provider":"..."}
+trade -> {"symbol":"BTCUSDT","trade_id":"...","side":"buy|sell","price":"...","quantity":"...","traded_at":<unix-ms>,"provider":"..."}
 ```
+
+Depth and trade broadcasts are direct payloads without a `type` discriminator.
+The REST compatibility shapes remain `bids/asks[].amount` for depth and
+`trades[].id/direction/amount/time` for recent trades.
 
 ## 3. Runtime URL and Proxy Contracts
 
@@ -96,6 +102,47 @@ heartbeat -> text "ping" / text "pong"
 - The client accepts subscription confirmations, direct ticker payloads, and
   text/JSON pong frames. Unknown or backend error frames must not be treated as
   ticker updates.
+- The market-detail page owns a separate single-symbol public connection. It
+  subscribes to `depth` and `trade` alongside the initial REST requests, closes
+  the old connection before a symbol switch, and clears heartbeat, reconnect,
+  and pending render-frame work on stop.
+- REST depth and recent trades remain first-screen fallbacks. A settled REST
+  response must not replace a depth snapshot already received from WebSocket;
+  recent REST history may only append behind already rendered live trades and
+  must deduplicate by trade id.
+- Each direct depth broadcast is a complete snapshot. Normalize numeric
+  strings, reject the whole malformed frame, sort bids descending and asks
+  ascending, retain at most 12 levels per side, and coalesce high-frequency
+  snapshots so only the latest pending snapshot is committed per animation
+  frame.
+- Live trades are validated, prepended in arrival order, deduplicated by id,
+  and capped at 16. A replayed id must not reorder or replace an already
+  rendered trade.
+
+### Market-detail Good / Base / Bad Cases
+
+- **Good**: REST and WebSocket start together; a live depth snapshot wins over
+  a later REST response, and REST trade history appends behind live trades.
+- **Base**: WebSocket is temporarily unavailable; REST depth/trades remain
+  visible while the connection reconnects with bounded exponential backoff.
+- **Bad**: a frame has an invalid side, zero/boolean numeric value, incomplete
+  depth side, or mismatched symbol; ignore the whole frame and preserve the
+  last valid state.
+
+### Market-detail Wrong vs Correct
+
+```ts
+// Wrong: every interval change blanks live data and late REST overwrites WS.
+await Promise.all([fetchKlines(symbol), fetchOrderBook(symbol)])
+startDetailStream(symbol)
+
+// Correct: connect alongside REST, guard by symbol/version, and only refresh
+// klines when the chart interval changes.
+const live = startDetailStream(symbol)
+const initial = await Promise.allSettled([fetchKlines(symbol), fetchOrderBook(symbol)])
+if (!live.depthReceived) applyRestDepth(initial)
+```
+
 - New-coin purchase uses the backend-configured pair id, locks the displayed
   payment asset to that pair's quote asset, and computes percentage quantity
   as `quote_available * percentage / execution_price`.
@@ -129,8 +176,11 @@ heartbeat -> text "ping" / text "pong"
   `ws: true`, `/health` proxy, and absence of a startup health gate.
 - Request-layer tests for bootstrap Bearer removal, bootstrap 401 exclusion,
   singleton refresh, one replay, and failed-refresh session cleanup.
-- WebSocket protocol tests for subscribe, confirmation, ticker, heartbeat, and
-  invalid frames.
+- WebSocket protocol tests for ticker/depth/trade subscribe frames,
+  confirmation, verified direct payload shapes, heartbeat, and invalid frames.
+- Market-detail lifecycle tests for REST/WebSocket races, latest-only depth
+  frame coalescing, symbol filtering, reconnect resubscription and backoff,
+  duplicate close/error idempotency, and stop-before-open cleanup.
 - Adapter tests for new-coin quote quantity, safe news rich text, prediction
   order number, and stable margin pair labels.
 - Run `npm run type-check`, `npm test`, `npm run build:pwa`, and

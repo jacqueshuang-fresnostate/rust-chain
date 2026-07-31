@@ -6396,3 +6396,10 @@
 - 修改文件：`.trellis/spec/admin/{index,ui-system}.md`、`.trellis/tasks/07-31-07-31-admin-ui-ux-audit-polish/research/admin-ui-audit.md`、任务 `research/screenshots/*-after.png`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：主会话执行 `npm --prefix web run typecheck`、`npm --prefix web run lint`、`npm --prefix web run test`（36 个测试文件、260/260）、`npm --prefix web run build`、`git diff --check` 全部通过；Ego Browser 实测登录页、Dashboard、用户、资产、KYC、安全策略、SideSheet 文档横向溢出均为 0，1280px 侧栏 208px、资产操作列 216px、资产表伸缩手柄 0、SideSheet 720px 且双列 307px、安全策略仅一个可见面板；浏览器任务空间已正常关闭，本地 Vite 已停止。
 - 后续事项：第三方 `lottie-web` 的直接 `eval` 和主 JS/CSS 包超过 500 kB 的构建告警仍为非阻断既有问题，可单独安排代码分割与依赖收敛；本任务无功能阻塞。
+
+## 2026-07-31 13:20 - 修复手机端现货订单簿与最新成交实时刷新
+
+- 完成内容：为现货行情详情页接入公共 `depth` 与 `trade` WebSocket 实时频道，保留 REST 首屏兜底；深度完整快照按动画帧合并并固定买盘降序、卖盘升序及每侧 12 档，最新成交按到达顺序置顶、按 ID 去重并保留 16 条；补齐交易对切换/卸载清理、心跳、1–30 秒指数退避重连、REST/WS 竞态保护，以及 K 线周期切换不清空实时盘口和成交。
+- 修改文件：`mobile/src/api/{market,marketSocketProtocol,marketDetailStream}.ts`、`mobile/src/views/MarketDetailView.vue`、`mobile/tests/{market-socket,market-detail-stream,market-news-support-views}.test.ts`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/tasks/07-31-mobile-spot-orderbook-trades-realtime/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：远程 `wss://hipoex.cllbmz.kdns.fr/api/v1/ws/public` 实测收到 `depth`/`trade` 订阅确认、完整深度快照和逐笔成交；`npm --prefix mobile run type-check`、`npm --prefix mobile test`（183/183）、`npm --prefix mobile run build:pwa`（132 条预缓存）、`npm --prefix mobile run build:tauri`、Android APK 构建和 `git diff --check` 通过；APK SHA-256 为 `220442e371dd4251ef29fde30c5c779b03610640def4d7ec16ab6b937d250b95`，覆盖安装到华为 `TAS-AL00` 后冷启动成功，安装时间 `2026-07-31 13:18:00`、进程 PID `24280`、`MainActivity` 为前台恢复态；真机 WebView 在 `#/markets/BTC_USDT` 连续采样 16 秒得到 15 组不同订单簿快照、6 组不同成交列表，最新成交由 2 条增长到 12 条，页面无行情错误状态。
+- 后续事项：无。

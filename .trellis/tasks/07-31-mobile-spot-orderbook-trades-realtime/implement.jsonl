@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "手机端页面、真实数据与质量门规范"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "公共行情 WebSocket、重连、URL 与适配器合同"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核对后端推送字段到前端页面的跨层数据合同"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用 REST 与 WebSocket 的深度/成交适配逻辑"}
+{"file": ".trellis/tasks/07-31-mobile-spot-orderbook-trades-realtime/prd.md", "reason": "本任务范围、技术方案与验收标准"}

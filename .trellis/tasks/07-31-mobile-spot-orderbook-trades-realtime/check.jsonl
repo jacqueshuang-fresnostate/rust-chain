@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "复核页面真实数据、测试与构建质量门"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "复核 WebSocket 协议、断线重连、无人订阅清理和规定构建"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "复核深度与成交字段边界和异常帧处理"}
+{"file": ".trellis/tasks/07-31-mobile-spot-orderbook-trades-realtime/prd.md", "reason": "逐项核对验收标准与任务边界"}
