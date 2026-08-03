@@ -213,41 +213,47 @@ onUnmounted(() => {
   </main>
 
   <main v-else class="view markets-view prototype-root-view">
-    <div class="page-intro">
+    <header class="page-intro markets-hero">
       <span class="eyebrow">{{ t('rootPrototype.marketPulse') }}</span>
       <h1>{{ t('rootPrototype.marketHeadlineLine1') }}<br />{{ t('rootPrototype.marketHeadlineLine2') }}</h1>
-    </div>
+    </header>
 
-    <label class="search-field">
-      <Search :size="18" aria-hidden="true" />
-      <input v-model="query" type="search" :placeholder="t('markets.searchPlaceholder')" />
-      <button class="inline-icon" type="button" :aria-label="t('rootPrototype.cycleMarketFilter')" @click="cycleCategory">
-        <SlidersHorizontal :size="17" aria-hidden="true" />
-      </button>
-    </label>
+    <section class="market-controls" :aria-label="t('markets.overview')">
+      <label class="search-field">
+        <Search :size="18" aria-hidden="true" />
+        <input v-model="query" type="search" :placeholder="t('markets.searchPlaceholder')" />
+        <button class="inline-icon" type="button" :aria-label="t('rootPrototype.cycleMarketFilter')" @click="cycleCategory">
+          <SlidersHorizontal :size="17" aria-hidden="true" />
+        </button>
+      </label>
 
-    <div class="filter-rail" role="tablist" :aria-label="t('markets.overview')">
-      <button
-        v-for="item in categories"
-        :key="item.key"
-        type="button"
-        role="tab"
-        :aria-selected="category === item.key"
-        :class="{ active: category === item.key }"
-        @click="category = item.key"
-      >
-        {{ item.label }}
-      </button>
-    </div>
+      <div class="filter-rail" role="tablist" :aria-label="t('markets.overview')">
+        <button
+          v-for="item in categories"
+          :key="item.key"
+          type="button"
+          role="tab"
+          :aria-selected="category === item.key"
+          :class="{ active: category === item.key }"
+          @click="category = item.key"
+        >
+          {{ item.label }}
+        </button>
+      </div>
+    </section>
 
-    <div class="market-index">
-      <div>
+    <section class="market-index" :aria-label="t('rootPrototype.marketTemperature')">
+      <div class="market-index__summary">
         <span>{{ t('rootPrototype.marketTemperature') }}</span>
-        <strong class="numeric">{{ hasTemperatureSample ? marketTemperature : '--' }}</strong>
+        <strong v-if="hasTemperatureSample" class="numeric">
+          {{ marketTemperature }}<small>%</small>
+        </strong>
       </div>
       <div class="temperature-line"><i :style="{ width: `${hasTemperatureSample ? marketTemperature : 0}%` }" /></div>
-      <span>{{ t(hasTemperatureSample ? 'rootPrototype.marketStrong' : 'rootPrototype.marketNoSample') }}</span>
-    </div>
+      <span class="market-index__state">
+        {{ t(hasTemperatureSample ? 'rootPrototype.marketStrong' : 'rootPrototype.marketNoSample') }}
+      </span>
+    </section>
 
     <div class="market-table-head" aria-hidden="true">
       <span>{{ t('rootPrototype.pairAndVolume') }}</span>

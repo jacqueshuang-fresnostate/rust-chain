@@ -30,22 +30,23 @@ body,
 .app-stage {
   --font-geist-sans: 'Geist';
   --font-geist-mono: 'Geist Mono';
-  --page: #080b0f;
-  --surface: #0e1319;
-  --surface-2: #151d24;
-  --surface-3: #1d2932;
-  --line: rgb(198 220 232 / 14%);
-  --line-strong: rgb(198 220 232 / 28%);
-  --text: #f3f6f8;
-  --muted: #a3afb7;
-  --soft: #d3dce2;
-  --green: #58dca1;
-  --coral: #ff725e;
-  --cyan: #66a9ff;
-  --yellow: #f3c969;
+  --page: #080a09;
+  --surface: #0c100e;
+  --surface-2: #131816;
+  --surface-3: #1a211d;
+  --line: rgb(224 240 231 / 10%);
+  --line-strong: rgb(224 240 231 / 19%);
+  --text: #f4f7f5;
+  --muted: #9aa69f;
+  --soft: #ced6d1;
+  --green: #52e2a1;
+  --coral: #ff7860;
+  --cyan: #70b9f7;
+  --yellow: #f0ca73;
+  --bitcoin-orange: #f7931a;
   --shadow: rgb(0 0 0 / 48%);
-  --accent: var(--coral);
-  --accent-soft: color-mix(in srgb, var(--coral) 12%, var(--surface));
+  --accent: var(--green);
+  --accent-soft: color-mix(in srgb, var(--green) 12%, var(--surface));
   --background: var(--page);
   --disabled: var(--muted);
   --field-surface: var(--surface-2);
@@ -62,62 +63,64 @@ body,
   --positive: var(--green);
   --positive-soft: color-mix(in srgb, var(--green) 12%, var(--surface));
   --surface-elevated: var(--surface);
-  --header-surface-top: #111820;
-  --header-surface-bottom: #0b1015;
-  --header-border: rgb(198 220 232 / 22%);
+  --header-surface-top: #101512;
+  --header-surface-bottom: #090c0a;
+  --header-border: rgb(224 240 231 / 16%);
   --header-shadow:
     0 1px 0 rgb(255 255 255 / 4%),
     0 5px 16px rgb(0 0 0 / 26%);
   --surface-shadow: 0 8px 24px rgb(0 0 0 / 16%);
-  --header-control-face-top: #323e48;
-  --header-control-face-mid: #202a33;
-  --header-control-face-bottom: #121920;
-  --header-control-bezel-highlight: #82939e;
-  --header-control-bezel-mid: #40505b;
-  --header-control-bezel-shadow: #090d11;
-  --header-control-inner-highlight: rgb(244 250 255 / 17%);
+  --header-control-face-top: #303a34;
+  --header-control-face-mid: #202822;
+  --header-control-face-bottom: #111613;
+  --header-control-bezel-highlight: #829087;
+  --header-control-bezel-mid: #445149;
+  --header-control-bezel-shadow: #080b09;
+  --header-control-inner-highlight: rgb(244 250 246 / 17%);
   --header-control-inner-depth: rgb(0 0 0 / 38%);
   --header-control-elevation:
     0 1px 0 rgb(255 255 255 / 6%),
     0 3px 7px rgb(0 0 0 / 38%);
   --header-control-pressed-shadow: 0 1px 2px rgb(0 0 0 / 32%);
+  --nav-active-glow: rgb(82 226 161 / 12%);
   font-family: var(--font-geist-sans), 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
 }
 
 .app-stage.theme-light {
-  --page: #f6f8fb;
+  --page: #f8faf8;
   --surface: #ffffff;
-  --surface-2: #edf2f6;
-  --surface-3: #dce5eb;
-  --line: rgb(38 55 69 / 16%);
-  --line-strong: rgb(38 55 69 / 30%);
-  --text: #101820;
-  --muted: #586672;
-  --soft: #34434f;
-  --green: #067a50;
-  --coral: #c93e2a;
-  --cyan: #126bc4;
-  --yellow: #855a00;
-  --shadow: rgb(21 34 45 / 16%);
+  --surface-2: #f1f5f2;
+  --surface-3: #e3e9e5;
+  --line: rgb(25 43 34 / 14%);
+  --line-strong: rgb(25 43 34 / 26%);
+  --text: #0a100d;
+  --muted: #536159;
+  --soft: #26332c;
+  --green: #007a4d;
+  --coral: #c43b25;
+  --cyan: #006bb6;
+  --yellow: #795900;
+  --shadow: rgb(18 32 24 / 14%);
   --header-surface-top: #ffffff;
-  --header-surface-bottom: #f3f6f8;
-  --header-border: rgb(38 55 69 / 20%);
+  --header-surface-bottom: #f5f8f6;
+  --header-border: rgb(25 43 34 / 18%);
   --header-shadow:
     0 1px 0 rgb(255 255 255 / 96%),
-    0 5px 16px rgb(21 34 45 / 10%);
-  --surface-shadow: 0 8px 24px rgb(21 34 45 / 8%);
+    0 5px 16px rgb(18 32 24 / 9%);
+  --surface-shadow: 0 8px 24px rgb(18 32 24 / 7%);
   --header-control-face-top: #ffffff;
-  --header-control-face-mid: #f0f4f6;
-  --header-control-face-bottom: #dce4e8;
+  --header-control-face-mid: #f0f4f1;
+  --header-control-face-bottom: #dce5df;
   --header-control-bezel-highlight: #ffffff;
-  --header-control-bezel-mid: #9eacb5;
-  --header-control-bezel-shadow: #6d7c85;
+  --header-control-bezel-mid: #9eaaa3;
+  --header-control-bezel-shadow: #6d7972;
   --header-control-inner-highlight: rgb(255 255 255 / 94%);
-  --header-control-inner-depth: rgb(43 61 73 / 22%);
+  --header-control-inner-depth: rgb(35 53 43 / 21%);
   --header-control-elevation:
     0 1px 0 rgb(255 255 255 / 92%),
-    0 3px 8px rgb(21 34 45 / 14%);
-  --header-control-pressed-shadow: 0 1px 2px rgb(21 34 45 / 14%);
+    0 3px 8px rgb(18 32 24 / 13%);
+  --header-control-pressed-shadow: 0 1px 2px rgb(18 32 24 / 13%);
+  --nav-active-glow: rgb(0 122 77 / 12%);
 }
 
 .mobile-canvas.app-frame {
@@ -235,8 +238,8 @@ body,
 ):disabled {
   animation: none;
   box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--header-control-inner-highlight) 55%, transparent),
-    inset 0 -1px 0 color-mix(in srgb, var(--header-control-inner-depth) 62%, transparent);
+    inset 0 1px 0 var(--line),
+    inset 0 -1px 0 rgb(0 0 0 / 28%);
   cursor: not-allowed;
   filter: grayscale(0.42) saturate(0.55);
   opacity: 0.48;
@@ -294,20 +297,28 @@ body,
   background: linear-gradient(180deg, var(--header-surface-top), var(--header-surface-bottom));
   border-bottom-color: var(--header-border);
   box-shadow: var(--header-shadow);
+  z-index: var(--layer-sticky-header);
 }
 
 .app-stage .mobile-canvas > .root-header.root-header {
   --root-header-top-inset: max(8px, env(safe-area-inset-top, 0px));
 
+  align-items: center;
   box-sizing: border-box;
+  column-gap: 12px;
   height: calc(56px + var(--root-header-top-inset));
   isolation: isolate;
+  max-width: 100%;
   min-height: calc(56px + var(--root-header-top-inset));
   padding: var(--root-header-top-inset) 16px 0;
+  position: sticky;
+  top: 0;
+  z-index: var(--layer-sticky-header);
 }
 
 .app-stage .mobile-canvas .root-header__actions {
-  gap: 8px;
+  flex: 0 0 auto;
+  gap: 6px;
 }
 
 .app-stage .mobile-canvas .root-header__brand::after {
@@ -317,13 +328,20 @@ body,
     var(--signal-green) 38% 72%,
     transparent 72%
   );
-  width: 44px;
+  bottom: 2px;
+  height: 2px;
+  left: 2px;
+  opacity: 0.88;
+  width: 38px;
 }
 
 .app-stage .mobile-canvas .brand-logo {
-  background-size: 112px 112px;
-  height: 29px;
-  width: 112px;
+  background-image: none;
+  background-size: 106px 106px;
+  height: 28px;
+  object-fit: cover;
+  object-position: center;
+  width: 106px;
 }
 
 .app-stage.theme-dark .mobile-canvas .brand-logo {
@@ -352,6 +370,7 @@ body,
 }
 
 .app-stage .mobile-canvas .page-header__title {
+  color: var(--text);
   font-size: 16px;
   font-weight: 780;
   line-height: 1.08;
@@ -884,7 +903,7 @@ body,
 ) {
   background: var(--surface);
   border-color: var(--line-strong);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
+  box-shadow: inset 0 1px 0 var(--line);
 }
 
 .app-stage .mobile-canvas :is(
@@ -910,9 +929,7 @@ body,
 ) {
   background: color-mix(in srgb, var(--focus) 5%, var(--surface));
   border-color: var(--focus);
-  box-shadow:
-    inset 3px 0 0 var(--focus),
-    0 0 0 3px var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .app-stage .mobile-canvas :is(
@@ -943,7 +960,7 @@ body,
 ) {
   background: var(--text);
   border-color: var(--text);
-  box-shadow: inset 0 -3px 0 color-mix(in srgb, var(--page) 72%, transparent);
+  box-shadow: inset 0 -3px 0 rgb(0 0 0 / 28%);
   color: var(--page);
 }
 
@@ -954,7 +971,7 @@ body,
 ) {
   background: var(--surface);
   border-color: var(--line-strong);
-  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--text) 9%, transparent);
+  box-shadow: inset 0 -1px 0 var(--line);
   color: var(--text);
 }
 
@@ -965,7 +982,7 @@ body,
   .secondary-action,
   .link-action
 ):not(:disabled):active {
-  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--shadow) 62%, transparent);
+  box-shadow: inset 0 1px 2px var(--shadow);
   transform: translateY(1px);
 }
 
@@ -1060,7 +1077,7 @@ body,
   .secret-box
 ) {
   border-color: var(--line-strong);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
+  box-shadow: inset 0 1px 0 var(--line);
 }
 
 .app-stage .mobile-canvas :is(
@@ -1080,8 +1097,7 @@ body,
   .security-check-icon,
   .security-task-icon,
   .device-icon,
-  .confirmation-icon,
-  .message-icon
+  .confirmation-icon
 ) {
   background: var(--surface);
   border-color: var(--line-strong);
@@ -1095,24 +1111,2085 @@ body,
   opacity: 0.7;
 }
 
-.app-stage .mobile-canvas .message-filter-bar button {
-  background: var(--surface);
-  border-color: var(--line-strong);
+/* HIPPO Instrument Editorial: canvas, instrument plate, primary action. */
+.app-stage .mobile-canvas {
+  background: var(--page);
 }
 
-.app-stage .mobile-canvas .message-filter-bar button.active {
+.app-stage .mobile-canvas .ambient-layer {
+  opacity: 0.14;
+}
+
+.app-stage .mobile-canvas .ambient-layer::after {
+  opacity: 0.12;
+}
+
+.app-stage .mobile-canvas .signal-static-fallback {
+  opacity: 0.2;
+}
+
+.app-stage .mobile-canvas .markets-view {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--green) 3%, var(--page)) 0,
+    var(--page) 290px
+  );
+  min-width: 0;
+  overflow-x: clip;
+}
+
+/* Root header keeps one compact, opaque instrument rail above route motion. */
+.app-stage .mobile-canvas .root-header__brand {
+  flex: 0 1 auto;
+  min-width: 44px;
+  overflow: visible;
+}
+
+/* The legacy shaped rail stays safe-area aware while keeping Seconds compact. */
+.app-stage .mobile-canvas .bottom-nav {
+  align-items: end;
+  background: transparent;
+  border: 0;
+  bottom: 0;
+  box-shadow: none;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(44px, 1fr));
+  height: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom));
+  isolation: isolate;
+  left: 50%;
+  max-width: var(--app-max-width);
+  min-height: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom));
+  overflow: visible;
+  padding: 18px 2px env(safe-area-inset-bottom);
+  pointer-events: auto;
+  position: fixed;
+  transform: translateX(-50%);
+  width: 100%;
+  z-index: var(--layer-navigation);
+}
+
+.app-stage .mobile-canvas .bottom-nav::before {
+  background: var(--surface);
+  clip-path: polygon(
+    0 14px,
+    34% 14px,
+    38% 9px,
+    42% 0,
+    58% 0,
+    62% 9px,
+    66% 14px,
+    100% 14px,
+    100% 100%,
+    0 100%
+  );
+  content: '';
+  filter: drop-shadow(0 -1px 0 var(--line-strong));
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: -2;
+}
+
+.app-stage .mobile-canvas .bottom-nav::after {
+  background: linear-gradient(
+    90deg,
+    var(--line-strong) 0 34%,
+    transparent 34% 66%,
+    var(--line-strong) 66% 100%
+  );
+  content: '';
+  height: 1px;
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  top: 14px;
+  z-index: -1;
+}
+
+.app-stage .mobile-canvas .bottom-nav__item {
+  align-items: center;
+  background: transparent;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  font-size: 9px;
+  font-weight: 650;
+  gap: 1px;
+  justify-content: flex-end;
+  line-height: 1.05;
+  min-height: 66px;
+  min-width: 44px;
+  padding: 0;
+  pointer-events: auto;
+  position: relative;
+  text-align: center;
+  z-index: 1;
+}
+
+.app-stage .mobile-canvas .bottom-nav__icon {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: currentColor;
+  display: flex;
+  flex: 0 0 44px;
+  height: 44px;
+  justify-content: center;
+  width: 44px;
+}
+
+.app-stage .mobile-canvas .bottom-nav__label {
+  color: currentColor;
+  font-size: 9px;
+  font-weight: 620;
+  line-height: 1;
+  max-width: 44px;
+  white-space: nowrap;
+}
+
+.app-stage .mobile-canvas .bottom-nav__item.active {
+  color: var(--ink);
+  font-weight: 760;
+}
+
+.app-stage .mobile-canvas .bottom-nav__item.active::after {
+  display: none;
+}
+
+.app-stage .mobile-canvas .bottom-nav__item.active:not(.seconds-nav-action):not(.trade-nav-action) .bottom-nav__icon {
+  background: linear-gradient(var(--signal-green), var(--signal-green)) center / 28px 28px no-repeat;
+  border-color: transparent;
+  color: var(--on-positive);
+}
+
+.app-stage .mobile-canvas .bottom-nav .seconds-nav-action {
+  color: var(--ink);
+  gap: 2px;
+  transform: translateY(-16px);
+}
+
+.app-stage .mobile-canvas .bottom-nav .seconds-nav-action:active {
+  transform: translateY(-14px);
+}
+
+.app-stage .mobile-canvas .bottom-nav .seconds-nav-action .bottom-nav__icon {
+  background: var(--signal-green);
+  border: 4px solid var(--surface);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--line-strong);
+  color: var(--on-positive);
+  flex-basis: 48px;
+  height: 48px;
+  margin-top: -24px;
+  width: 48px;
+}
+
+.app-stage .mobile-canvas .bottom-nav .seconds-nav-action .bottom-nav__label {
+  line-height: 1.05;
+  max-width: 100%;
+  white-space: normal;
+}
+
+.app-stage .mobile-canvas .bottom-nav .seconds-nav-action.active .bottom-nav__icon {
+  background: var(--signal-green);
+  border-color: var(--surface);
+  box-shadow: 0 0 0 1px var(--line-strong), 0 0 0 5px var(--nav-active-glow);
+  color: var(--on-positive);
+}
+
+.app-stage .mobile-canvas .bottom-nav__item:focus-visible {
+  outline: 0;
+}
+
+.app-stage .mobile-canvas .bottom-nav__item:focus-visible .bottom-nav__icon {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+
+/* Markets: compact editorial lead, one control deck, continuous instrument list. */
+.app-stage .mobile-canvas .markets-view .markets-hero {
+  animation: editorial-hero-enter 480ms var(--ease-signal) both;
+  background:
+    linear-gradient(112deg, rgb(255 255 255 / 10%), transparent 46%),
+    var(--signal-green);
+  border-bottom: 1px solid color-mix(in srgb, #07110b 20%, transparent);
+  border-radius: 0 0 22px 22px;
+  color: #07110b;
+  min-height: 128px;
+  padding: 17px 16px 20px;
+}
+
+.app-stage .mobile-canvas .markets-view .markets-hero::after {
+  bottom: -14px;
+  font-size: 76px;
+  opacity: 0.58;
+  right: 14px;
+}
+
+.app-stage .mobile-canvas .markets-view .markets-hero .eyebrow {
+  color: rgb(7 17 11 / 62%);
+  display: block;
+  font-size: 9px;
+}
+
+.app-stage .mobile-canvas .markets-view .markets-hero h1 {
+  font-size: 30px;
+  font-weight: 790;
+  line-height: 1.02;
+  margin: 10px 0 0;
+  max-width: 330px;
+}
+
+.app-stage .mobile-canvas .markets-view .market-controls {
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 4px;
+  padding: 10px 14px 0;
+}
+
+.app-stage .mobile-canvas .markets-view .search-field {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin: 0;
+  min-height: 46px;
+  padding: 0 4px 0 12px;
+}
+
+.app-stage .mobile-canvas .markets-view .search-field input {
+  border: 0;
+  box-shadow: none;
+  box-sizing: border-box;
+  min-height: 44px;
+  min-width: 0;
+  outline: 0;
+}
+
+.app-stage .mobile-canvas .markets-view .search-field:focus-within {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.app-stage .mobile-canvas .markets-view .search-field .inline-icon {
+  color: var(--muted);
+  flex: 0 0 44px;
+}
+
+.app-stage .mobile-canvas .markets-view .filter-rail {
+  border: 0;
+  display: grid;
+  gap: 0;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  overflow: visible;
+  padding: 0;
+}
+
+.app-stage .mobile-canvas .markets-view .filter-rail button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-size: 10px;
+  min-height: 44px;
+  min-width: 0;
+  padding: 0 2px;
+  white-space: nowrap;
+}
+
+.app-stage .mobile-canvas .markets-view .filter-rail button.active {
+  background: transparent;
+  border-bottom-color: var(--green);
+  color: var(--text);
+}
+
+.app-stage .mobile-canvas .markets-view .market-index {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  color: var(--text);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto minmax(48px, 1fr) auto;
+  margin: 0;
+  min-height: 54px;
+  padding: 8px 14px;
+}
+
+.app-stage .mobile-canvas .markets-view .market-index__summary {
+  align-items: baseline;
+  display: flex;
+  gap: 6px;
+}
+
+.app-stage .mobile-canvas .markets-view .market-index span {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.app-stage .mobile-canvas .markets-view .market-index strong {
+  color: var(--text);
+  font-size: 16px;
+}
+
+.app-stage .mobile-canvas .markets-view .market-index strong small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.app-stage .mobile-canvas .markets-view .temperature-line {
+  background: var(--surface-3);
+  border-radius: 999px;
+  height: 3px;
+  overflow: hidden;
+}
+
+.app-stage .mobile-canvas .markets-view .temperature-line i {
+  background: var(--green);
+  border-radius: inherit;
+}
+
+.app-stage .mobile-canvas .markets-view .temperature-line i::after {
+  display: none;
+}
+
+.app-stage .mobile-canvas .markets-view .market-index__state {
+  color: var(--text);
+  font-weight: 680;
+  text-align: right;
+}
+
+.app-stage .mobile-canvas .markets-view .market-table-head {
+  background: var(--page);
+  color: var(--muted);
+  font-size: 9px;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) minmax(54px, 66px) minmax(86px, auto);
+  padding: 10px 12px 8px 56px;
+}
+
+.app-stage .mobile-canvas .markets-view .market-list {
+  background: var(--page);
+  border-top: 1px solid var(--line);
+}
+
+.app-stage .mobile-canvas .markets-view .market-row {
+  background: transparent;
+  border-bottom: 1px solid var(--line);
+  grid-template-columns: 44px minmax(0, 1fr);
+  min-height: 68px;
+  padding: 0 10px 0 2px;
+}
+
+.app-stage .mobile-canvas .markets-view .favorite-button {
+  height: 44px;
+  min-width: 44px;
+  width: 44px;
+}
+
+.app-stage .mobile-canvas .markets-view .market-main {
+  gap: 6px;
+  grid-template-columns: 34px minmax(74px, 1fr) minmax(54px, 66px) minmax(86px, auto);
+  min-height: 67px;
+}
+
+.app-stage .mobile-canvas .markets-view .market-name strong,
+.app-stage .mobile-canvas .markets-view .market-price strong {
+  font-size: 12px;
+}
+
+.app-stage .mobile-canvas .markets-view .market-name small,
+.app-stage .mobile-canvas .markets-view .market-price small {
+  font-size: 9px;
+}
+
+.app-stage .mobile-canvas .markets-view .sparkline {
+  height: 32px;
+  width: 100%;
+}
+
+.app-stage .mobile-canvas .markets-view .empty-state {
+  background: transparent;
+  min-height: 280px;
+}
+
+@keyframes editorial-hero-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@media (max-width: 360px) {
+  .app-stage .mobile-canvas .root-header.root-header {
+    padding-inline: 12px;
+  }
+
+  .app-stage .mobile-canvas .root-header .brand-logo {
+    background-size: 98px 98px;
+    width: 98px;
+  }
+
+  .app-stage .mobile-canvas .markets-view .markets-hero h1 {
+    font-size: 28px;
+  }
+
+  .app-stage .mobile-canvas .markets-view .market-controls,
+  .app-stage .mobile-canvas .markets-view .market-index {
+    padding-inline: 12px;
+  }
+
+  .app-stage .mobile-canvas .bottom-nav__label {
+    font-size: 8.5px;
+  }
+}
+
+@media (max-width: 340px) {
+  .app-stage .mobile-canvas .root-header.root-header {
+    column-gap: 8px;
+    padding-inline: 10px;
+  }
+
+  .app-stage .mobile-canvas .root-header .brand-logo {
+    background-size: 92px 92px;
+    width: 92px;
+  }
+
+  .app-stage .mobile-canvas .root-header__actions {
+    gap: 4px;
+  }
+
+  .app-stage .mobile-canvas .markets-view .markets-hero {
+    min-height: 120px;
+  }
+
+  .app-stage .mobile-canvas .markets-view .markets-hero h1 {
+    font-size: 26px;
+  }
+
+  .app-stage .mobile-canvas .markets-view .filter-rail button {
+    font-size: 9px;
+  }
+
+  .app-stage .mobile-canvas .markets-view .market-table-head {
+    grid-template-columns: minmax(0, 1fr) minmax(86px, auto);
+  }
+
+  .app-stage .mobile-canvas .markets-view .market-table-head span:nth-child(2),
+  .app-stage .mobile-canvas .markets-view .sparkline {
+    display: none;
+  }
+
+  .app-stage .mobile-canvas .markets-view .market-main {
+    grid-template-columns: 32px minmax(0, 1fr) minmax(86px, auto);
+  }
+
+  .app-stage .mobile-canvas .bottom-nav {
+    padding-inline: 2px;
+  }
+
+  .app-stage .mobile-canvas .bottom-nav__label {
+    font-size: 8px;
+  }
+
+  .app-stage .mobile-canvas .bottom-nav .seconds-nav-action .bottom-nav__label {
+    font-size: 7.5px;
+  }
+
+  .app-stage .mobile-canvas .bottom-nav .seconds-nav-action .bottom-nav__icon {
+    height: 42px;
+    width: 42px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-stage .mobile-canvas .markets-view .markets-hero {
+    animation: none;
+    transform: none;
+  }
+
+  .app-stage .mobile-canvas .bottom-nav__item,
+  .app-stage .mobile-canvas .bottom-nav .seconds-nav-action,
+  .app-stage .mobile-canvas .bottom-nav .seconds-nav-action:active {
+    transform: none;
+    transition: none;
+  }
+}
+
+/* Secondary workspaces inherit the same light canvas and instrument rhythm as
+ * the restored Home/Markets surfaces.  Keep their scoped workflow styles for
+ * layout/state, then use this layer only for shared presentation. */
+.app-stage .mobile-canvas :is(
+  .assets-view,
+  .profile-view,
+  .secondary-view.page--prototype-grid,
+  .trade-view,
+  .seconds-page
+) {
+  background-color: var(--page);
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 34px 34px;
+  color: var(--text);
+  min-width: 0;
+  overflow-x: clip;
+}
+
+.app-stage .mobile-canvas :is(
+  .message-center-page,
+  .loan-view,
+  .security-view
+) {
+  background-color: var(--page);
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 34px 34px;
+}
+
+/* Assets keeps the approved mint lead, with a white instrument plate beneath
+ * it so balances and wallet actions remain readable in both themes. */
+.app-stage .mobile-canvas .assets-view .page-intro {
+  background:
+    linear-gradient(112deg, rgb(255 255 255 / 10%), transparent 48%),
+    var(--signal-green);
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
+  border-radius: 0 0 18px 18px;
+  color: var(--on-positive);
+  min-height: 138px;
+  padding: 17px 18px 20px;
+}
+
+.app-stage .mobile-canvas .assets-view .page-intro .eyebrow {
+  color: color-mix(in srgb, var(--on-positive) 64%, transparent);
+}
+
+.app-stage .mobile-canvas .assets-view .page-intro h1 {
+  color: var(--on-positive);
+  font-size: 29px;
+  font-weight: 790;
+  line-height: 1.03;
+  margin: 10px 0 0;
+}
+
+.app-stage .mobile-canvas .assets-view .asset-hero {
+  background:
+    radial-gradient(circle at 78% 42%, color-mix(in srgb, var(--focus) 9%, transparent), transparent 30%),
+    var(--surface);
+  border: 0;
+  border-bottom: 1px solid var(--line-strong);
+  border-radius: 0;
+  box-shadow: none;
+  margin: 0;
+  min-height: 244px;
+  padding: 36px 42px 28px;
+}
+
+.app-stage .mobile-canvas .assets-view .asset-hero-copy {
+  max-width: 270px;
+}
+
+.app-stage .mobile-canvas .assets-view .asset-hero .hero-value,
+.app-stage .mobile-canvas .assets-view .asset-hero .heroValue {
+  color: var(--text);
+}
+
+.app-stage .mobile-canvas .assets-view .asset-orbit {
+  opacity: .58;
+  right: -6px;
+  top: -17px;
+}
+
+.app-stage .mobile-canvas .assets-view .asset-instrument {
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  border: 0;
+  border-radius: 0;
+  margin: 0;
+  box-shadow: none;
+}
+
+.app-stage .mobile-canvas .assets-view .asset-actions {
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  padding: 14px 18px 11px;
+}
+
+.app-stage .mobile-canvas .assets-view .asset-actions button {
+  color: var(--muted-strong);
+  min-height: 70px;
+}
+
+.app-stage .mobile-canvas .assets-view .asset-actions button span {
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--positive);
+  height: 40px;
+  width: 40px;
+}
+
+.app-stage .mobile-canvas .assets-view .instrument-section {
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  margin: 0;
+  padding: 18px 18px 16px;
+}
+
+/* Profile guest state keeps the reference's quiet identity card, while the
+ * authenticated state uses the same thin mint accent and low-radius cards. */
+.app-stage .mobile-canvas .profile-view .profile-identity {
+  background:
+    linear-gradient(128deg, color-mix(in srgb, var(--signal-green) 8%, transparent), transparent 58%),
+    color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+.app-stage .mobile-canvas .profile-view.guest-profile .profile-identity {
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  border-color: var(--line);
+  margin-top: 24px;
+}
+
+.app-stage .mobile-canvas .profile-view .profile-auth-actions {
+  margin-top: 12px;
+}
+
+.app-stage .mobile-canvas .profile-view .profile-auth-actions button {
+  border-radius: 2px;
+}
+
+.app-stage .mobile-canvas .profile-view .profile-auth-actions button:first-child {
   background: var(--text);
   border-color: var(--text);
   color: var(--page);
 }
 
-.app-stage .mobile-canvas .message-list > button {
-  background: color-mix(in srgb, var(--surface) 72%, transparent);
-  border-bottom-color: var(--line-strong);
+.app-stage .mobile-canvas .profile-view .profile-section {
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+  border-color: var(--line);
+  border-radius: 4px;
+  box-shadow: none;
 }
 
-.app-stage .mobile-canvas .message-list > button.unread {
+.app-stage .mobile-canvas .profile-view .settings-list button {
+  border-bottom-color: var(--line);
+}
+
+/* Message, loan and security share the secondary header's compact, ruled
+ * content rhythm instead of isolated rounded cards. */
+.app-stage .mobile-canvas :is(
+  .message-center,
+  .loan-page,
+  .security-page
+) {
+  gap: 14px;
+}
+
+.app-stage .mobile-canvas :is(
+  .inbox-summary,
+  .borrowing-overview,
+  .protection-overview
+) {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.app-stage .mobile-canvas .inbox-summary {
+  --overview-accent: var(--signal-green);
   background:
-    linear-gradient(90deg, color-mix(in srgb, var(--accent) 9%, transparent), transparent 48%),
+    linear-gradient(130deg, color-mix(in srgb, var(--signal-green) 6%, transparent), transparent 62%),
     color-mix(in srgb, var(--surface) 88%, transparent);
+  border-top-width: 3px;
+  min-height: 124px;
+}
+
+.app-stage .mobile-canvas .inbox-summary__source {
+  color: var(--muted);
+}
+
+.app-stage .mobile-canvas .message-tools button {
+  border-radius: 2px;
+}
+
+.app-stage .mobile-canvas .borrowing-overview {
+  --overview-accent: var(--signal-green);
+  background:
+    linear-gradient(130deg, color-mix(in srgb, var(--signal-green) 6%, transparent), transparent 62%),
+    color-mix(in srgb, var(--surface) 88%, transparent);
+  border-top-width: 3px;
+}
+
+.app-stage .mobile-canvas .loan-card {
+  border-radius: 2px;
+  min-height: 146px;
+}
+
+.app-stage .mobile-canvas .loan-card.active {
+  background: color-mix(in srgb, var(--signal-green) 7%, var(--surface));
+  border-color: var(--positive);
+}
+
+.app-stage .mobile-canvas .loan-submit {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.app-stage .mobile-canvas .protection-overview {
+  --overview-accent: var(--signal-green);
+  background:
+    linear-gradient(130deg, color-mix(in srgb, var(--signal-green) 6%, transparent), transparent 62%),
+    color-mix(in srgb, var(--surface) 88%, transparent);
+  border-top-width: 3px;
+}
+
+.app-stage .mobile-canvas .protection-score strong,
+.app-stage .mobile-canvas .protection-score .protection-guest-title {
+  color: var(--text);
+}
+
+.app-stage .mobile-canvas :is(.security-row, .policy-toggle, .secret-box) {
+  border-radius: 2px;
+}
+
+/* Spot/contract trading and Seconds keep their real data panels, but use the
+ * homepage's bright green signal and ruled plate hierarchy. */
+.app-stage .mobile-canvas .trade-view .trade-instrument-hero {
+  background:
+    linear-gradient(118deg, color-mix(in srgb, var(--signal-green) 8%, transparent), transparent 54%),
+    var(--page);
+}
+
+.app-stage .mobile-canvas .trade-view .trade-console,
+.app-stage .mobile-canvas .seconds-page .seconds-order-console {
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+}
+
+.app-stage .mobile-canvas .trade-view .submit-order,
+.app-stage .mobile-canvas .seconds-page .seconds-submit {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.app-stage .mobile-canvas .seconds-page .seconds-market-board {
+  background:
+    linear-gradient(120deg, color-mix(in srgb, var(--signal-green) 9%, transparent), transparent 56%),
+    var(--page);
+}
+
+.app-stage .mobile-canvas .seconds-page .seconds-order-console,
+.app-stage .mobile-canvas .seconds-page .seconds-session-records {
+  border-radius: 0;
+}
+
+@media (max-width: 350px) {
+  .app-stage .mobile-canvas .assets-view .page-intro {
+    min-height: 126px;
+    padding-inline: 14px;
+  }
+
+  .app-stage .mobile-canvas .assets-view .page-intro h1 {
+    font-size: 26px;
+  }
+
+  .app-stage .mobile-canvas .assets-view .asset-hero {
+    min-height: 224px;
+    padding-inline: 28px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-stage .mobile-canvas :is(
+    .assets-view,
+    .profile-view,
+    .message-center,
+    .loan-page,
+    .security-page,
+    .trade-view,
+    .seconds-page
+  ) *,
+  .app-stage .mobile-canvas :is(
+    .assets-view,
+    .profile-view,
+    .message-center,
+    .loan-page,
+    .security-page,
+    .trade-view,
+    .seconds-page
+  ) *::before,
+  .app-stage .mobile-canvas :is(
+    .assets-view,
+    .profile-view,
+    .message-center,
+    .loan-page,
+    .security-page,
+    .trade-view,
+    .seconds-page
+  ) *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/*
+ * Legacy home shell restoration.  The approved home-light reference uses a
+ * quiet ruled paper surface and a compact seven-rail navigation.  Keep this
+ * layer after the prototype snapshot so newer page-specific plates cannot
+ * bring back the oversized white Seconds tile.
+ */
+.app-stage .mobile-canvas {
+  background-color: var(--page);
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.app-stage .mobile-canvas > .topbar.topbar,
+.app-stage .mobile-canvas .secondary-header.secondary-header {
+  background: var(--surface);
+  backdrop-filter: none;
+  border-bottom-color: var(--line-strong);
+  box-shadow: 0 1px 0 var(--line);
+}
+
+.app-stage .mobile-canvas .bottom-nav {
+  align-items: end;
+  background: transparent;
+  border: 0;
+  bottom: 0;
+  box-shadow: none;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(44px, 1fr));
+  height: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom));
+  isolation: isolate;
+  left: 50%;
+  max-width: var(--app-max-width);
+  min-height: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom));
+  overflow: visible;
+  padding: 18px 2px env(safe-area-inset-bottom);
+  position: fixed;
+  transform: translateX(-50%);
+  width: 100%;
+  z-index: var(--layer-navigation);
+}
+
+.app-stage .mobile-canvas .bottom-nav::before {
+  background: var(--surface);
+  clip-path: polygon(
+    0 14px,
+    34% 14px,
+    38% 9px,
+    42% 0,
+    58% 0,
+    62% 9px,
+    66% 14px,
+    100% 14px,
+    100% 100%,
+    0 100%
+  );
+  content: '';
+  filter: drop-shadow(0 -1px 0 var(--line-strong));
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: -2;
+}
+
+.app-stage .mobile-canvas .bottom-nav::after {
+  background: linear-gradient(
+    90deg,
+    var(--line-strong) 0 34%,
+    transparent 34% 66%,
+    var(--line-strong) 66% 100%
+  );
+  content: '';
+  height: 1px;
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  top: 14px;
+  z-index: -1;
+}
+
+.app-stage .mobile-canvas .bottom-nav__item {
+  align-items: center;
+  background: transparent;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  font-size: 9px;
+  font-weight: 650;
+  gap: 1px;
+  justify-content: flex-end;
+  line-height: 1.05;
+  min-height: 66px;
+  min-width: 44px;
+  padding: 0;
+  position: relative;
+  text-align: center;
+  z-index: 1;
+}
+
+.app-stage .mobile-canvas .bottom-nav__item:focus {
+  outline: none;
+}
+
+.app-stage .mobile-canvas .bottom-nav__item:focus-visible .bottom-nav__icon {
+  box-shadow: 0 0 0 3px var(--focus-ring), inset 0 0 0 2px var(--focus);
+}
+
+.app-stage .mobile-canvas .bottom-nav__icon {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  display: flex;
+  flex: 0 0 44px;
+  height: 44px;
+  justify-content: center;
+  transition:
+    background-color var(--motion-fast) var(--motion-ease),
+    box-shadow var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease),
+    transform var(--motion-fast) var(--motion-ease);
+  width: 44px;
+}
+
+.app-stage .mobile-canvas .bottom-nav__item.active {
+  color: var(--ink);
+  font-weight: 760;
+}
+
+.app-stage .mobile-canvas .bottom-nav__item.active:not(.seconds-nav-action):not(.trade-nav-action) .bottom-nav__icon {
+  background: linear-gradient(var(--signal-green), var(--signal-green)) center / 28px 28px no-repeat;
+  border-color: transparent;
+  color: var(--on-positive);
+}
+
+.app-stage .mobile-canvas .bottom-nav__item.active::after {
+  display: none;
+}
+
+.app-stage .mobile-canvas .bottom-nav .seconds-nav-action {
+  color: var(--ink);
+  gap: 2px;
+  transform: translateY(-16px);
+}
+
+.app-stage .mobile-canvas .bottom-nav .seconds-nav-action:active {
+  transform: translateY(-14px);
+}
+
+.app-stage .mobile-canvas .bottom-nav .seconds-nav-action .bottom-nav__icon {
+  background: var(--signal-green);
+  border: 4px solid var(--surface);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--line-strong);
+  color: var(--on-positive);
+  flex-basis: 48px;
+  height: 48px;
+  margin-top: -24px;
+  width: 48px;
+}
+
+.app-stage .mobile-canvas .bottom-nav .seconds-nav-action.active .bottom-nav__icon {
+  background: var(--signal-green);
+  border-color: var(--surface);
+  box-shadow: 0 0 0 1px var(--line-strong), 0 0 0 5px var(--nav-active-glow);
+  color: var(--on-positive);
+}
+
+@media (max-width: 360px) {
+  .app-stage .mobile-canvas .bottom-nav {
+    padding-inline: 0;
+  }
+
+  .app-stage .mobile-canvas .bottom-nav__item {
+    font-size: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-stage .mobile-canvas .bottom-nav__icon,
+  .app-stage .mobile-canvas .bottom-nav .seconds-nav-action,
+  .app-stage .mobile-canvas .bottom-nav .seconds-nav-action:active {
+    transform: none;
+    transition: none;
+  }
+}
+
+/*
+ * Dark-theme separator correction. The approved prototype contains a few
+ * legacy white-alpha rules for its dark editorial board. They read as bright
+ * white rails once the board is used as the production mobile shell. Keep the
+ * visual hierarchy, but route separators through the shared graphite tokens.
+ */
+.app-stage.theme-dark {
+  --line: rgb(184 204 194 / 9%);
+  --line-strong: rgb(184 204 194 / 14%);
+  --header-border: rgb(184 204 194 / 12%);
+}
+
+.app-stage.theme-dark .mobile-canvas {
+  border-inline-color: var(--line);
+  box-shadow:
+    0 0 0 1px rgb(184 204 194 / 5%),
+    0 32px 100px rgb(0 0 0 / 48%);
+}
+
+.app-stage.theme-dark .mobile-canvas > .topbar.topbar,
+.app-stage.theme-dark .mobile-canvas .secondary-header.secondary-header {
+  box-shadow:
+    0 1px 0 rgb(184 204 194 / 7%),
+    0 5px 16px rgb(0 0 0 / 26%);
+}
+
+.app-stage.theme-dark .mobile-canvas :is(
+  .hero-ticker,
+  .stage-tape,
+  .portfolio-overview
+) {
+  border-color: var(--line);
+}
+
+.app-stage.theme-dark .mobile-canvas .portfolio-periods button.active {
+  border-color: var(--line-strong);
+}
+
+.app-stage.theme-dark .mobile-canvas .hero-grid {
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+}
+
+.app-stage.theme-dark .stage-art::after {
+  border-right-color: var(--line);
+}
+
+/* Older Android WebViews accept color-mix() inside box-shadow but resolve the
+ * color to opaque currentColor. On dark pages that turns subtle separators
+ * into pure white rails, so critical dark controls use alpha-safe tokens. */
+.app-stage.theme-dark .mobile-canvas .profile-view .avatar {
+  border-color: var(--signal-green);
+}
+
+.app-stage.theme-dark .mobile-canvas :is(
+  .profile-view .profile-auth-actions button:nth-child(2),
+  .button--secondary,
+  .secondary-action,
+  .link-action
+) {
+  border-color: var(--line-strong);
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+
+.app-stage.theme-dark .mobile-canvas :is(
+  .order-book--split header,
+  .market-detail__rail,
+  .market-detail__summary,
+  .market-detail__chart-panel
+) {
+  box-shadow: inset 0 1px 0 var(--line);
+}
+
+.app-stage.theme-dark .mobile-canvas .market-detail__chart-toggle,
+.app-stage.theme-dark .mobile-canvas .market-detail__actions button {
+  box-shadow:
+    inset 0 1px 0 var(--line),
+    inset 0 -1px 0 rgb(0 0 0 / 32%);
+}
+
+.app-stage.theme-dark .mobile-canvas .market-detail__actions {
+  box-shadow:
+    inset 0 1px 0 var(--line),
+    0 -8px 22px rgb(0 0 0 / 36%);
+}
+
+.app-stage.theme-dark .mobile-canvas .market-detail__actions .is-primary {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 12%),
+    inset 0 -3px 0 rgb(0 0 0 / 26%);
+}
+
+@media (max-width: 820px) {
+  .app-stage.theme-dark .mobile-canvas {
+    box-shadow: none;
+  }
+}
+
+/*
+ * Pencil selected production source (2026-08-03): FwNBM / W1cWyh /
+ * miHnt / CvipW.  This layer intentionally follows the selected nodes rather
+ * than the older seven-rail and portfolio snapshot above it.
+ */
+.app-stage {
+  --pencil-canvas: #070a09;
+  --pencil-surface: #0c100e;
+  --pencil-surface-strong: #121714;
+  --pencil-border: #29342e;
+  --pencil-text: #f2f7f4;
+  --pencil-muted: #95a19a;
+  --pencil-positive: #61f1b6;
+  --pencil-mint: #43efa9;
+  --pencil-coral: #ff654a;
+  --market-detail-background: #000000;
+  --market-detail-surface: #000000;
+  --market-detail-ink: #f2f7f4;
+  --market-detail-muted: #95a19a;
+  --market-detail-line: #17211c;
+  --market-detail-positive: #43efa9;
+  --market-detail-negative: #ff654a;
+  --market-detail-action: #43efa9;
+  --market-detail-ma20: #407cff;
+  --market-detail-on-action: #07110d;
+}
+
+.app-stage.theme-light {
+  --pencil-canvas: #f7f9f8;
+  --pencil-surface: #ffffff;
+  --pencil-surface-strong: #ffffff;
+  --pencil-border: #ccd5d0;
+  --pencil-text: #111714;
+  --pencil-muted: #68736d;
+  --pencil-positive: #087b52;
+  --market-detail-background: #ffffff;
+  --market-detail-surface: #ffffff;
+  --market-detail-ink: #111714;
+  --market-detail-muted: #68736d;
+  --market-detail-line: #e0e7e3;
+  --market-detail-positive: #087b52;
+  --market-detail-negative: #ff654a;
+}
+
+/* Selected Root Header: 64px rail, 136x34 landscape mark and transparent controls. */
+.app-stage .mobile-canvas > .root-header.root-header {
+  align-items: center;
+  background: var(--pencil-canvas);
+  border: 0;
+  box-shadow: none;
+  column-gap: 8px;
+  height: calc(56px + var(--root-header-top-inset));
+  padding-inline: 16px;
+}
+
+.app-stage .mobile-canvas .root-header__brand {
+  flex: 0 0 136px;
+  height: 44px;
+  min-height: 44px;
+  min-width: 136px;
+  padding: 0;
+  width: 136px;
+}
+
+.app-stage .mobile-canvas .root-header__brand::after {
+  display: none;
+}
+
+.app-stage .mobile-canvas .root-header .brand-logo {
+  background: none;
+  filter: none;
+  height: 34px;
+  max-width: none;
+  object-fit: contain;
+  object-position: center;
+  width: 136px;
+}
+
+.app-stage .mobile-canvas .root-header__actions {
+  gap: 8px;
+}
+
+.app-stage .mobile-canvas .root-header .root-header__control.root-header__control,
+.app-stage .mobile-canvas .root-header .root-header__control.root-header__control:hover,
+.app-stage .mobile-canvas .root-header .root-header__control.root-header__control:active {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  color: var(--pencil-text);
+  filter: none;
+}
+
+.app-stage .mobile-canvas .root-header .root-header__control.root-header__control:active {
+  transform: translateY(1px);
+}
+
+.app-stage .mobile-canvas .root-header .root-header__control.root-header__control:focus-visible {
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.app-stage .mobile-canvas .root-header .has-dot.has-dot::after {
+  background: var(--pencil-coral);
+  box-shadow: 0 0 0 2px var(--pencil-canvas);
+  height: 8px;
+  right: 1px;
+  top: 2px;
+  width: 8px;
+}
+
+/* Selected Home geometry: 56 / 302 / 64 / 176 / 80 / 290. */
+.app-stage .mobile-canvas .home-view {
+  background: var(--pencil-canvas);
+  color: var(--pencil-text);
+  min-width: 0;
+  overflow-x: clip;
+  padding-bottom: calc(84px + env(safe-area-inset-bottom));
+}
+
+.app-stage .mobile-canvas .home-view .home-workspace {
+  background: var(--pencil-canvas);
+  padding: 0;
+}
+
+.app-stage .mobile-canvas .home-view .home-utility-row {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  height: 56px;
+  padding: 6px 16px;
+}
+
+.app-stage .mobile-canvas .home-view .home-search {
+  align-items: center;
+  background: var(--pencil-surface);
+  border: 1px solid var(--pencil-border);
+  border-radius: 0;
+  color: var(--pencil-muted);
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  height: 44px;
+  min-height: 44px;
+  min-width: 0;
+  padding: 0 12px;
+}
+
+.app-stage .mobile-canvas .home-view .home-search:focus-visible,
+.app-stage .mobile-canvas .home-view .utility-icon:focus-visible {
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.app-stage .mobile-canvas .home-view .home-utility-actions {
+  display: block;
+  height: 44px;
+  width: 44px;
+}
+
+.app-stage .mobile-canvas .home-view .home-utility-actions .utility-icon {
+  background: var(--pencil-surface);
+  border: 1px solid var(--pencil-border);
+  border-radius: 50%;
+  box-shadow: none;
+  color: var(--pencil-text);
+  height: 44px;
+  min-height: 44px;
+  min-width: 44px;
+  width: 44px;
+}
+
+.app-stage .mobile-canvas .home-view .home-portfolio {
+  box-sizing: border-box;
+  height: 302px;
+  min-height: 302px;
+  width: 100%;
+}
+
+.app-stage .mobile-canvas .home-view .home-portfolio--guest {
+  background: var(--pencil-surface-strong);
+  border-bottom: 1px solid var(--pencil-border);
+  padding: 16px;
+}
+
+.app-stage .mobile-canvas .home-view .home-guest-hero {
+  align-items: stretch;
+  border: 1px solid var(--pencil-border);
+  border-radius: 20px;
+  display: flex;
+  flex-direction: column;
+  height: 270px;
+  justify-content: center;
+  overflow: hidden;
+  padding: 18px 20px 16px;
+  position: relative;
+  width: 100%;
+}
+
+.app-stage .mobile-canvas .home-view .home-guest-hero__image,
+.app-stage .mobile-canvas .home-view .home-guest-hero__overlay {
+  height: 100%;
+  inset: 0;
+  object-fit: cover;
+  object-position: center;
+  position: absolute;
+  width: 100%;
+}
+
+.app-stage.theme-dark .mobile-canvas .home-view .home-guest-hero__image--light,
+.app-stage.theme-light .mobile-canvas .home-view .home-guest-hero__image--dark {
+  display: none;
+}
+
+.app-stage .mobile-canvas .home-view .home-guest-hero__overlay {
+  background: transparent;
+  z-index: 1;
+}
+
+.app-stage.theme-dark .mobile-canvas .home-view .home-guest-hero__overlay {
+  background: rgb(10 16 13 / 75%);
+}
+
+.app-stage .mobile-canvas .home-view .home-guest-hero__bloom {
+  background: radial-gradient(circle, rgb(67 239 169 / 18%), transparent 70%);
+  border-radius: 50%;
+  height: 200px;
+  left: -70px;
+  position: absolute;
+  top: 150px;
+  width: 200px;
+  z-index: 2;
+}
+
+.app-stage .mobile-canvas .home-view .home-guest-hero__copy {
+  display: grid;
+  gap: 10px;
+  position: relative;
+  z-index: 3;
+}
+
+.app-stage .mobile-canvas .home-view .home-guest-hero__copy h1 {
+  display: grid;
+  font-size: 44px;
+  font-weight: 400;
+  gap: 2px;
+  line-height: 1.08;
+  margin: 0;
+}
+
+.app-stage .mobile-canvas .home-view .home-guest-hero__copy h1 span:last-child {
+  color: var(--pencil-positive);
+  justify-self: end;
+}
+
+.app-stage .mobile-canvas .home-view .home-guest-hero__copy p {
+  color: var(--pencil-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.app-stage .mobile-canvas .home-view .home-guest-hero__login {
+  align-items: center;
+  background: var(--pencil-mint);
+  border: 0;
+  border-radius: 4px;
+  color: #07110d;
+  display: flex;
+  flex: 0 0 48px;
+  font-size: 13px;
+  font-weight: 600;
+  gap: 8px;
+  height: 48px;
+  justify-content: center;
+  margin-top: 24px;
+  min-height: 48px;
+  position: relative;
+  width: 100%;
+  z-index: 4;
+}
+
+.app-stage .mobile-canvas .home-view .home-guest-hero__login:focus-visible {
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.app-stage .mobile-canvas .home-view .home-portfolio--member.portfolio-overview {
+  background: var(--pencil-surface-strong);
+  border: 0;
+  border-bottom: 1px solid var(--pencil-border);
+  color: var(--pencil-text);
+  display: grid;
+  gap: 0;
+  grid-template-rows: 82px 153px 43px;
+  margin: 0;
+  min-height: 302px;
+  padding: 16px 16px 8px;
+}
+
+.app-stage .mobile-canvas .home-view .home-portfolio--member.portfolio-overview::before {
+  display: none;
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-heading {
+  align-items: end;
+  display: flex;
+  height: 82px;
+  justify-content: space-between;
+  padding: 6px 0 10px;
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-heading > div:first-child {
+  min-width: 0;
+}
+
+.app-stage .mobile-canvas .home-view .balance-label {
+  color: var(--pencil-muted);
+  font-size: 11px;
+  gap: 6px;
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-overview .inline-icon {
+  color: var(--pencil-muted);
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-balance {
+  color: var(--pencil-text);
+  display: block;
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1.1;
+  margin-top: 6px;
+  max-width: 238px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-balance small {
+  color: var(--pencil-muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-change {
+  align-items: end;
+  color: var(--pencil-muted);
+  display: grid;
+  gap: 6px;
+  justify-items: end;
+  padding-bottom: 1px;
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-change span,
+.app-stage .mobile-canvas .home-view .portfolio-change strong,
+.app-stage .mobile-canvas .home-view .portfolio-change small {
+  color: var(--pencil-muted);
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-change span {
+  font-size: 11px;
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-change strong {
+  font-size: 16px;
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-change small {
+  font-size: 10px;
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-chart {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0 29px,
+    var(--pencil-border) 29px 30px
+  );
+  height: 153px;
+  margin: 0;
+  min-height: 153px;
+  overflow: hidden;
+  position: relative;
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-chart::before,
+.app-stage .mobile-canvas .home-view .portfolio-chart::after {
+  display: none;
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-chart svg {
+  display: block;
+  height: 153px;
+  inset: 0;
+  position: absolute;
+  width: 100%;
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-periods {
+  align-items: center;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  height: 43px;
+  padding: 4px 0 0;
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-periods span {
+  color: var(--pencil-muted);
+  font-family: var(--font-geist-mono), var(--data-font);
+  font-size: 11px;
+  font-weight: 500;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-periods span.active {
+  color: var(--pencil-positive);
+  font-weight: 700;
+}
+
+.app-stage .mobile-canvas .home-view .funding-actions {
+  border: 0;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  height: 64px;
+  padding: 6px 16px;
+}
+
+.app-stage .mobile-canvas .home-view .funding-actions button {
+  border-radius: 4px;
+  box-shadow: none;
+  font-size: 13px;
+  gap: 8px;
+  height: 52px;
+  min-height: 52px;
+}
+
+.app-stage .mobile-canvas .home-view .buy-crypto {
+  background: var(--pencil-mint);
+  border: 1px solid var(--pencil-mint);
+  color: #07110d;
+}
+
+.app-stage .mobile-canvas .home-view .deposit-crypto {
+  background: #0c100e;
+  border: 1px solid var(--pencil-border);
+  color: #f2f7f4;
+}
+
+.app-stage.theme-light .mobile-canvas .home-view .deposit-crypto {
+  background: #111714;
+  border-color: #111714;
+}
+
+.app-stage .mobile-canvas .home-view .shortcut-section {
+  box-sizing: border-box;
+  height: 176px;
+  padding: 8px 16px;
+}
+
+.app-stage .mobile-canvas .home-view .shortcut-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  height: 160px;
+}
+
+.app-stage .mobile-canvas .home-view .shortcut-grid button {
+  align-items: center;
+  color: var(--pencil-text);
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  gap: 6px;
+  height: 72px;
+  justify-content: center;
+  min-height: 72px;
+  min-width: 0;
+  padding: 0;
+}
+
+.app-stage .mobile-canvas .home-view .shortcut-grid button > span {
+  background: var(--pencil-surface);
+  border: 1px solid var(--pencil-border);
+  border-radius: 12px;
+  height: 40px;
+  width: 40px;
+}
+
+.app-stage .mobile-canvas .home-view .shortcut-grid button small {
+  color: var(--pencil-text);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.app-stage .mobile-canvas .home-view .market-brief {
+  background: var(--pencil-surface-strong);
+  border: 1px solid var(--pencil-border);
+  border-radius: 12px;
+  box-shadow: none;
+  box-sizing: border-box;
+  color: var(--pencil-text);
+  height: 64px;
+  margin: 8px 16px;
+  min-height: 64px;
+  padding: 12px 14px;
+  width: calc(100% - 32px);
+}
+
+.app-stage.theme-light .mobile-canvas .home-view .market-brief {
+  background: #07110d;
+  border-color: #07110d;
+  color: #f2f7f4;
+}
+
+.app-stage .mobile-canvas .home-view .brief-icon {
+  background: #103326;
+  border-radius: 10px;
+  color: var(--pencil-positive);
+  height: 36px;
+  min-width: 36px;
+  width: 36px;
+}
+
+.app-stage.theme-light .mobile-canvas .home-view .brief-icon {
+  background: #d9f9eb;
+  color: #087b52;
+}
+
+.app-stage .mobile-canvas .home-view .market-brief > span:nth-child(2) {
+  gap: 3px;
+}
+
+.app-stage .mobile-canvas .home-view .market-brief small {
+  color: var(--pencil-positive);
+  font-size: 9px;
+}
+
+.app-stage .mobile-canvas .home-view .market-brief strong {
+  color: inherit;
+  font-size: 13px;
+}
+
+.app-stage .mobile-canvas .home-view .market-brief em,
+.app-stage .mobile-canvas .home-view .market-brief > svg {
+  color: var(--pencil-muted);
+  font-size: 9px;
+}
+
+.app-stage.theme-light .mobile-canvas .home-view .market-brief em,
+.app-stage.theme-light .mobile-canvas .home-view .market-brief > svg {
+  color: #95a19a;
+}
+
+/* An unavailable brief is informational, not a dimmed action. */
+.app-stage.theme-light .mobile-canvas .home-view .market-brief:disabled {
+  color: #f2f7f4;
+  filter: none;
+  opacity: 1;
+  -webkit-text-fill-color: #f2f7f4;
+}
+
+.app-stage.theme-light .mobile-canvas .home-view .market-brief:disabled small {
+  color: var(--pencil-mint);
+  -webkit-text-fill-color: var(--pencil-mint);
+}
+
+.app-stage.theme-light .mobile-canvas .home-view .market-brief:disabled strong {
+  color: #f2f7f4;
+  -webkit-text-fill-color: #f2f7f4;
+}
+
+.app-stage.theme-light .mobile-canvas .home-view .market-brief:disabled em,
+.app-stage.theme-light .mobile-canvas .home-view .market-brief:disabled > svg {
+  color: #95a19a;
+  -webkit-text-fill-color: #95a19a;
+}
+
+.app-stage .mobile-canvas .home-view .home-market-section {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  height: 290px;
+  padding: 14px 16px 4px;
+}
+
+.app-stage .mobile-canvas .home-view .section-heading {
+  align-items: center;
+  display: flex;
+  height: 40px;
+  justify-content: space-between;
+  min-height: 40px;
+}
+
+.app-stage .mobile-canvas .home-view .section-heading h2 {
+  color: var(--pencil-text);
+  font-size: 22px;
+  font-weight: 500;
+  margin: 0;
+}
+
+.app-stage .mobile-canvas .home-view .text-action {
+  color: var(--pencil-muted);
+  font-size: 10px;
+  min-height: 40px;
+}
+
+.app-stage .mobile-canvas .home-view .home-market-tabs {
+  align-items: center;
+  display: grid;
+  gap: 20px;
+  grid-auto-columns: max-content;
+  grid-auto-flow: column;
+  height: 44px;
+  min-height: 44px;
+  overflow: visible;
+  padding: 0;
+}
+
+.app-stage .mobile-canvas .home-view .home-market-tabs button {
+  border: 0;
+  color: var(--pencil-muted);
+  font-size: 11px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  position: relative;
+}
+
+.app-stage .mobile-canvas .home-view .home-market-tabs button.active {
+  color: var(--pencil-text);
+}
+
+.app-stage .mobile-canvas .home-view .home-market-tabs button.active::after {
+  background: var(--pencil-text);
+  border-radius: 2px;
+  bottom: 1px;
+  height: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 18px;
+}
+
+.app-stage .mobile-canvas .home-view .home-market-head {
+  color: var(--pencil-muted);
+  display: grid;
+  font-size: 9px;
+  grid-template-columns: minmax(0, 1fr) 104px 88px;
+  height: 24px;
+  padding: 4px 0 2px;
+}
+
+.app-stage .mobile-canvas .home-view .home-market-head span:nth-child(n + 2) {
+  text-align: right;
+}
+
+.app-stage .mobile-canvas .home-view .home-market-list {
+  min-height: 162px;
+}
+
+.app-stage .mobile-canvas .home-view .home-market-list > button,
+.app-stage .mobile-canvas .home-view .home-market-skeleton-row {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) 104px 88px;
+  height: 54px;
+  min-height: 54px;
+  padding: 7px 0;
+}
+
+.app-stage .mobile-canvas .home-view .home-market-name {
+  gap: 10px;
+  min-width: 0;
+}
+
+.app-stage .mobile-canvas .home-view .home-market-name strong,
+.app-stage .mobile-canvas .home-view .home-market-price strong {
+  color: var(--pencil-text);
+  font-size: 12px;
+}
+
+.app-stage .mobile-canvas .home-view .home-market-name small,
+.app-stage .mobile-canvas .home-view .home-market-price small {
+  color: var(--pencil-muted);
+  font-size: 9px;
+}
+
+.app-stage .mobile-canvas .home-view .market-change {
+  border-radius: 6px;
+  color: #07110d;
+  font-size: 11px;
+  height: 30px;
+  min-height: 30px;
+  min-width: 88px;
+  width: 88px;
+}
+
+.app-stage .mobile-canvas .home-view .market-change.positive-bg {
+  background: var(--pencil-mint);
+}
+
+.app-stage .mobile-canvas .home-view .market-change.negative-bg {
+  background: var(--pencil-coral);
+  color: #ffffff;
+}
+
+/* Selected five-entry floating Dock with one 56px central trade action. */
+.app-stage .mobile-canvas .bottom-nav {
+  background: transparent;
+  border: 0;
+  bottom: 0;
+  box-shadow: none;
+  display: block;
+  height: calc(84px + env(safe-area-inset-bottom));
+  left: 50%;
+  max-width: var(--app-max-width);
+  min-height: calc(84px + env(safe-area-inset-bottom));
+  padding: 6px 16px calc(10px + env(safe-area-inset-bottom));
+  pointer-events: none;
+  position: fixed;
+  transform: translateX(-50%);
+  width: 100%;
+  z-index: var(--layer-navigation);
+}
+
+.app-stage .mobile-canvas .bottom-nav::before,
+.app-stage .mobile-canvas .bottom-nav::after {
+  display: none;
+}
+
+.app-stage .mobile-canvas .bottom-nav__dock {
+  align-items: center;
+  background: var(--pencil-surface);
+  border: 1px solid var(--pencil-border);
+  border-radius: 24px;
+  box-shadow: 0 8px 24px rgb(7 17 13 / 8%);
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  height: 68px;
+  overflow: visible;
+  padding: 0 16px;
+  pointer-events: auto;
+  position: relative;
+  width: 100%;
+}
+
+.app-stage.theme-dark .mobile-canvas .bottom-nav__dock {
+  box-shadow: 0 8px 24px rgb(0 0 0 / 50%);
+}
+
+.app-stage .mobile-canvas .bottom-nav__item {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--pencil-muted);
+  display: flex;
+  flex-direction: column;
+  font-size: 10px;
+  gap: 4px;
+  height: 56px;
+  justify-content: center;
+  min-height: 56px;
+  min-width: 44px;
+  padding: 0;
+  position: relative;
+}
+
+.app-stage .mobile-canvas .bottom-nav__icon {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: currentColor;
+  display: flex;
+  flex: 0 0 24px;
+  height: 24px;
+  justify-content: center;
+  width: 44px;
+}
+
+.app-stage .mobile-canvas .bottom-nav__label {
+  color: currentColor;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  max-width: none;
+  white-space: nowrap;
+}
+
+.app-stage .mobile-canvas .bottom-nav__item.active {
+  color: var(--pencil-positive);
+}
+
+.app-stage .mobile-canvas .bottom-nav__item.active .bottom-nav__label {
+  color: var(--pencil-text);
+}
+
+.app-stage .mobile-canvas .bottom-nav__item.active:not(.trade-nav-action) .bottom-nav__icon {
+  background: transparent;
+  border: 0;
+  color: var(--pencil-positive);
+}
+
+.app-stage .mobile-canvas .bottom-nav .trade-nav-action,
+.app-stage .mobile-canvas .bottom-nav .trade-nav-action:active {
+  color: var(--pencil-text);
+  justify-content: flex-end;
+  padding-bottom: 2px;
+  transform: none;
+}
+
+.app-stage .mobile-canvas .bottom-nav .trade-nav-action .bottom-nav__icon {
+  background: var(--pencil-mint);
+  border: 0;
+  border-radius: 50%;
+  box-shadow: 0 6px 16px rgb(67 239 169 / 40%);
+  color: #07110d;
+  height: 56px;
+  left: 50%;
+  position: absolute;
+  top: -18px;
+  transform: translateX(-50%);
+  width: 56px;
+}
+
+.app-stage .mobile-canvas .bottom-nav .trade-nav-action .bottom-nav__label {
+  color: var(--pencil-muted);
+}
+
+.app-stage .mobile-canvas .bottom-nav__item:focus-visible {
+  outline: 0;
+}
+
+.app-stage .mobile-canvas .bottom-nav__item:focus-visible .bottom-nav__icon {
+  box-shadow: 0 0 0 3px var(--focus-ring), 0 0 0 1px var(--focus);
+}
+
+@media (max-width: 360px) {
+  .app-stage .mobile-canvas > .root-header.root-header {
+    padding-inline: 12px;
+  }
+
+  .app-stage .mobile-canvas .root-header .brand-logo,
+  .app-stage .mobile-canvas .root-header__brand {
+    width: 136px;
+  }
+
+  .app-stage .mobile-canvas .home-view .home-utility-row,
+  .app-stage .mobile-canvas .home-view .home-portfolio--guest,
+  .app-stage .mobile-canvas .home-view .funding-actions,
+  .app-stage .mobile-canvas .home-view .shortcut-section,
+  .app-stage .mobile-canvas .home-view .home-market-section {
+    padding-inline: 12px;
+  }
+
+  .app-stage .mobile-canvas .home-view .home-guest-hero__copy h1 {
+    font-size: 38px;
+  }
+
+  .app-stage .mobile-canvas .home-view .home-market-tabs {
+    gap: 14px;
+  }
+
+  .app-stage .mobile-canvas .home-view .home-market-head,
+  .app-stage .mobile-canvas .home-view .home-market-list > button,
+  .app-stage .mobile-canvas .home-view .home-market-skeleton-row {
+    gap: 6px;
+    grid-template-columns: minmax(0, 1fr) 88px 78px;
+  }
+
+  .app-stage .mobile-canvas .home-view .market-change {
+    min-width: 78px;
+    width: 78px;
+  }
+
+  .app-stage .mobile-canvas .bottom-nav {
+    padding-inline: 12px;
+  }
+
+  .app-stage .mobile-canvas .bottom-nav__dock {
+    padding-inline: 10px;
+  }
+}
+
+@media (max-width: 340px) {
+  .app-stage .mobile-canvas > .root-header.root-header {
+    column-gap: 4px;
+    padding-inline: 10px;
+  }
+
+  .app-stage .mobile-canvas .root-header__actions {
+    gap: 4px;
+  }
+
+  .app-stage .mobile-canvas .home-view .home-guest-hero {
+    padding-inline: 16px;
+  }
+
+  .app-stage .mobile-canvas .home-view .home-guest-hero__copy h1 {
+    font-size: 34px;
+  }
+
+  .app-stage .mobile-canvas .home-view .home-market-tabs {
+    gap: 10px;
+  }
+
+  .app-stage .mobile-canvas .home-view .home-market-head,
+  .app-stage .mobile-canvas .home-view .home-market-list > button,
+  .app-stage .mobile-canvas .home-view .home-market-skeleton-row {
+    grid-template-columns: minmax(0, 1fr) 80px 72px;
+  }
+
+  .app-stage .mobile-canvas .home-view .market-change {
+    min-width: 72px;
+    width: 72px;
+  }
+
+  .app-stage .mobile-canvas .bottom-nav {
+    padding-inline: 8px;
+  }
+
+  .app-stage .mobile-canvas .bottom-nav__dock {
+    padding-inline: 6px;
+  }
+}
+
+html[lang='en'] .app-stage .mobile-canvas .home-view .home-guest-hero__copy h1 {
+  font-size: 36px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-stage .mobile-canvas .root-header .root-header__control.root-header__control,
+  .app-stage .mobile-canvas .root-header .root-header__control.root-header__control:active,
+  .app-stage .mobile-canvas .bottom-nav__item,
+  .app-stage .mobile-canvas .bottom-nav__icon {
+    transition: none;
+  }
+}
+
+/* Pencil selected market detail source: ftTny / VoZfE. */
+.app-stage.theme-dark .mobile-canvas :is(
+  .market-detail__rail,
+  .market-detail__summary,
+  .market-detail__chart-panel,
+  .market-detail__actions,
+  .market-detail__actions button,
+  .market-detail__actions .is-primary
+) {
+  box-shadow: none;
+}
+
+.app-stage .mobile-canvas .market-detail__header :is(
+  .market-detail__icon-button,
+  .market-detail__instrument
+) {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  filter: none;
 }

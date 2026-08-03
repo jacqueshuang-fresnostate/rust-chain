@@ -50,7 +50,7 @@ test('应用壳只在表现型根页挂载背景并持续渲染方向幕帘', ()
   assert.match(appSource, /import SignalField from '@\/components\/SignalField\.vue'/)
   assert.match(
     appSource,
-    /\['home', 'markets', 'assets', 'profile'\]\.includes\(String\(route\.name \|\| ''\)\)/,
+    /\['home', 'markets'\]\.includes\(String\(route\.name \|\| ''\)\)/,
   )
   assert.match(appSource, /<div v-if="showSignalField" class="ambient-layer" aria-hidden="true">/)
   assert.match(appSource, /<SignalField :light="!theme\.isDark" \/>/)

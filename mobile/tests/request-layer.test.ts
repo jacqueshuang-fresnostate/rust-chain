@@ -97,6 +97,30 @@ test('protected requests attach Bearer, share one refresh, and replay once with 
   assert.equal(authorizations.filter((value) => value === 'Bearer fresh-access').length, 2)
 })
 
+test('guest 401 responses stay local and cannot redirect a later public page', async () => {
+  const instance = axios.create()
+  let refreshCalls = 0
+  let clearCalls = 0
+  let expiredCalls = 0
+  installAuthSessionInterceptors(instance, {
+    readAccessToken: () => '',
+    refreshAccessToken: async () => {
+      refreshCalls += 1
+      return null
+    },
+    clearSession: () => { clearCalls += 1 },
+    onSessionExpired: () => { expiredCalls += 1 },
+  })
+
+  await assert.rejects(instance.get('/api/v1/earn/products', {
+    adapter: async (config) => { throw unauthorized(config) },
+  }))
+
+  assert.equal(refreshCalls, 0)
+  assert.equal(clearCalls, 0)
+  assert.equal(expiredCalls, 0)
+})
+
 test('failed refresh clears the protected session without recursive replay', async () => {
   const instance = axios.create()
   let refreshCalls = 0

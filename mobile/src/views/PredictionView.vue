@@ -1,17 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import {
   CheckCircle2,
   CircleAlert,
-  CircleDollarSign,
   LoaderCircle,
   PackageOpen,
-  ShieldCheck,
   X,
 } from 'lucide-vue-next'
-import AssetMark from '@/components/AssetMark.vue'
-import LoginRequiredState from '@/components/LoginRequiredState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
 import { confirmPredictionQuote, fetchPredictionConfig, fetchPredictionMarkets, fetchPredictionOrders, requestPredictionQuote, type PredictionAsset, type PredictionMarket, type PredictionOrder, type PredictionOutcome, type PredictionQuote } from '@/api/prediction'
@@ -22,6 +19,8 @@ import { useSessionStore } from '@/stores/session'
 import type { WalletAccount } from '@/core/types'
 
 const session = useSessionStore()
+const route = useRoute()
+const router = useRouter()
 const { locale, t } = useI18n()
 const markets = ref<PredictionMarket[]>([])
 const assets = ref<PredictionAsset[]>([])
@@ -37,15 +36,29 @@ const quoting = ref(false)
 const confirming = ref(false)
 const error = ref('')
 const success = ref('')
+const marketTab = ref<'active' | 'settled'>('active')
 const orderDialog = ref<HTMLElement | null>(null)
 let returnFocus: HTMLElement | null = null
 let previousBodyOverflow = ''
+const TERMINAL_MARKET_STATUSES = new Set([
+  'settled',
+  'resolved',
+  'won',
+  'lost',
+  'refunded',
+  'cancelled',
+  'canceled',
+  'closed',
+])
 
 const selectedAsset = computed(() => assets.value.find((asset) => asset.assetId === assetId.value))
 const selectedAccount = computed(() => accounts.value.find((account) => account.assetId === assetId.value))
 const amountNumber = computed(() => Number(amount.value || 0))
 const valid = computed(() => Number.isFinite(amountNumber.value) && amountNumber.value > 0 && amountNumber.value <= (selectedAccount.value?.available || 0))
 const dialogOpen = computed(() => Boolean(selected.value))
+const visibleMarkets = computed(() => markets.value.filter((market) => (
+  marketTab.value === 'settled' ? isSettledMarket(market) : !isSettledMarket(market)
+)))
 
 async function load(): Promise<void> {
   loading.value = true
@@ -67,7 +80,10 @@ async function load(): Promise<void> {
 }
 
 function openOrder(market: PredictionMarket, nextOutcome: PredictionOutcome): void {
-  if (!session.isAuthenticated) return
+  if (!session.isAuthenticated) {
+    void router.push({ name: 'login', query: { redirect: route.fullPath } })
+    return
+  }
   selected.value = market
   outcome.value = nextOutcome
   assetId.value = assets.value.find((asset) => accounts.value.some((account) => account.assetId === asset.assetId))?.assetId || assets.value[0]?.assetId || 0
@@ -102,13 +118,18 @@ async function confirm(): Promise<void> {
   confirming.value = true
   error.value = ''
   try {
-    await confirmPredictionQuote(quote.value.quoteId)
+    const createdOrder = await confirmPredictionQuote(quote.value.quoteId)
+    orders.value = [createdOrder, ...orders.value.filter((order) => order.id !== createdOrder.id)]
     selected.value = null
     quote.value = null
     success.value = t('prediction.created')
-    const [wallets, history] = await Promise.all([fetchWalletAccounts(), fetchPredictionOrders()])
-    accounts.value = wallets
-    orders.value = history
+    try {
+      const [wallets, history] = await Promise.all([fetchWalletAccounts(), fetchPredictionOrders()])
+      accounts.value = wallets
+      orders.value = history
+    } catch (reason) {
+      error.value = apiErrorMessage(reason, t('prediction.refreshAfterOrderFailed'))
+    }
   } catch (reason) {
     error.value = apiErrorMessage(reason, t('prediction.confirmFailed'))
   } finally {
@@ -144,6 +165,39 @@ function statusTone(status: string): string {
   if (normalized === 'won' || normalized === 'settled') return 'is-positive'
   if (normalized === 'lost' || normalized === 'cancelled' || normalized === 'canceled') return 'is-negative'
   return 'is-pending'
+}
+
+function orderStatusLabel(order: PredictionOrder): string {
+  const result = order.result?.toLowerCase()
+  if (result === 'invalid' || order.refundAmount > 0) return t('prediction.statusRefunded')
+  if (order.status.toLowerCase() === 'settled' && result) {
+    return t(result === order.outcome.toLowerCase() ? 'prediction.statusWon' : 'prediction.statusLost')
+  }
+  return statusLabel(order.status)
+}
+
+function orderStatusTone(order: PredictionOrder): string {
+  const result = order.result?.toLowerCase()
+  if (result === 'invalid' || order.refundAmount > 0) return 'is-pending'
+  if (order.status.toLowerCase() === 'settled' && result) {
+    return result === order.outcome.toLowerCase() ? 'is-positive' : 'is-negative'
+  }
+  return statusTone(order.status)
+}
+
+function isSettledMarket(market: PredictionMarket): boolean {
+  return [market.displayStatus, market.settlementStatus]
+    .some((status) => TERMINAL_MARKET_STATUSES.has(status.trim().toLowerCase()))
+}
+
+function marketStatus(market: PredictionMarket): string {
+  const settled = isSettledMarket(market)
+  const status = settled
+    ? market.settlementStatus || market.displayStatus
+    : market.displayStatus || market.settlementStatus
+  const normalized = status.trim().toLowerCase()
+  if (['open', 'opened', 'trading', 'live'].includes(normalized)) return t('prediction.statusActive')
+  return statusLabel(status || (settled ? 'settled' : 'active'))
 }
 
 function trapDialogFocus(event: KeyboardEvent): void {
@@ -191,10 +245,15 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="page page--plain prediction-page">
+  <main
+    class="page page--plain prediction-page"
+    data-pencil-source="pU7Kz IcvzQ"
+    data-prediction-workspace="live"
+  >
     <PageHeader
       :back="true"
       :eyebrow="t('products.prediction')"
+      :pencil="true"
       :subtitle="t('prediction.introDescription')"
       :title="t('prediction.title')"
     />
@@ -213,30 +272,64 @@ onBeforeUnmount(() => {
       </div>
 
       <template v-else>
-        <section class="prediction-overview">
-          <div class="prediction-overview__icon"><CircleDollarSign :size="23" /></div>
-          <div>
-            <strong>{{ t('prediction.title') }}</strong>
-            <p>{{ t('prediction.introDescription') }}</p>
-          </div>
-          <ShieldCheck :size="20" />
-        </section>
+        <nav class="prediction-tabs" :aria-label="t('prediction.market')">
+          <button
+            type="button"
+            :class="{ active: marketTab === 'active' }"
+            :aria-pressed="marketTab === 'active'"
+            @click="marketTab = 'active'"
+          >
+            {{ t('prediction.statusActive') }}
+          </button>
+          <button
+            type="button"
+            :class="{ active: marketTab === 'settled' }"
+            :aria-pressed="marketTab === 'settled'"
+            @click="marketTab = 'settled'"
+          >
+            {{ t('prediction.statusSettled') }}
+          </button>
+        </nav>
 
-        <div v-if="markets.length" class="prediction-list">
-          <article v-for="market in markets" :key="market.id">
-            <span>{{ marketText(market.category, 'category') || t('prediction.market') }}</span>
+        <div v-if="visibleMarkets.length" class="prediction-list" :data-market-tab="marketTab">
+          <article
+            v-for="market in visibleMarkets"
+            :key="market.id"
+            data-market-source="api"
+            :data-market-status="isSettledMarket(market) ? 'settled' : 'active'"
+          >
+            <header>
+              <strong>{{ marketText(market.category, 'category') || t('prediction.market') }}</strong>
+              <span :class="{ settled: isSettledMarket(market) }">
+                <i aria-hidden="true" />
+                {{ marketStatus(market) }}
+              </span>
+            </header>
             <h2>{{ marketText(market.title, 'title') }}</h2>
-            <p v-if="market.description">{{ marketText(market.description, 'description') }}</p>
             <div class="prediction-outcomes">
-              <button type="button" :disabled="!session.isAuthenticated" @click="openOrder(market, 'yes')">
+              <button
+                type="button"
+                :disabled="isSettledMarket(market)"
+                @click="openOrder(market, 'yes')"
+              >
                 <b>{{ outcomeLabel(market.yesLabel) }}</b>
                 <small class="numeric">{{ formatPercent(market.yesPrice * 100) }}</small>
               </button>
-              <button type="button" :disabled="!session.isAuthenticated" @click="openOrder(market, 'no')">
+              <button
+                type="button"
+                :disabled="isSettledMarket(market)"
+                @click="openOrder(market, 'no')"
+              >
                 <b>{{ outcomeLabel(market.noLabel) }}</b>
                 <small class="numeric">{{ formatPercent(market.noPrice * 100) }}</small>
               </button>
             </div>
+            <p v-if="market.description || market.endAt" class="prediction-market-meta">
+              <span v-if="market.description">{{ marketText(market.description, 'description') }}</span>
+              <time v-if="market.endAt" :datetime="new Date(market.endAt).toISOString()">
+                {{ formatDateTime(market.endAt) }}
+              </time>
+            </p>
           </article>
         </div>
         <div v-else class="prediction-state prediction-state--empty">
@@ -244,8 +337,12 @@ onBeforeUnmount(() => {
           <span>{{ t('prediction.noMarkets') }}</span>
         </div>
 
-        <LoginRequiredState v-if="!session.isAuthenticated" :description="t('prediction.loginDescription')" />
-        <section v-else class="prediction-orders">
+        <p class="prediction-note">
+          <CircleAlert :size="14" aria-hidden="true" />
+          <span>{{ session.isAuthenticated ? t('prediction.introDescription') : t('prediction.loginDescription') }}</span>
+        </p>
+
+        <section v-if="session.isAuthenticated" class="prediction-orders">
           <div class="section-heading"><span>{{ t('prediction.myPredictions') }}</span><b>{{ orders.length }}</b></div>
           <article v-for="order in orders" :key="order.id">
             <div>
@@ -255,7 +352,7 @@ onBeforeUnmount(() => {
             </div>
             <span>
               <b class="numeric">{{ formatAmount(order.stakeAmount) }} {{ order.assetSymbol }}</b>
-              <small :class="statusTone(order.status)">{{ statusLabel(order.status) }}</small>
+              <small :class="orderStatusTone(order)">{{ orderStatusLabel(order) }}</small>
             </span>
           </article>
           <div v-if="!orders.length" class="prediction-state prediction-state--empty">
@@ -342,27 +439,29 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .prediction-page {
-  background: var(--surface);
+  background: var(--page);
+  color: var(--text);
   min-width: 0;
+  overflow-x: clip;
 }
 
 .prediction-content {
   display: grid;
-  gap: 16px;
+  gap: 14px;
   min-width: 0;
-  padding-bottom: calc(28px + env(safe-area-inset-bottom));
-  padding-top: 14px;
+  padding: 6px 20px calc(20px + env(safe-area-inset-bottom));
 }
 
 .prediction-message {
   align-items: center;
   border: 1px solid currentColor;
+  border-radius: 8px;
   display: grid;
-  font-size: 12px;
+  font-size: 11px;
   gap: 9px;
   grid-template-columns: auto minmax(0, 1fr);
-  line-height: 1.45;
-  min-height: 52px;
+  line-height: 16px;
+  min-height: 44px;
   padding: 8px 11px;
 }
 
@@ -376,11 +475,190 @@ onBeforeUnmount(() => {
   color: var(--positive);
 }
 
+.prediction-tabs {
+  align-items: start;
+  display: flex;
+  gap: 20px;
+  min-height: 27px;
+}
+
+.prediction-tabs button {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  display: grid;
+  font-size: 12px;
+  font-weight: 650;
+  gap: 5px;
+  justify-items: start;
+  line-height: 18px;
+  min-height: 27px;
+  padding: 0;
+}
+
+.prediction-tabs button::after {
+  background: transparent;
+  border-radius: 50%;
+  content: '';
+  height: 2px;
+  width: 18px;
+}
+
+.prediction-tabs button.active {
+  color: var(--text);
+}
+
+.prediction-tabs button.active::after {
+  background: var(--positive);
+}
+
+.prediction-tabs button:focus-visible {
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  outline: 0;
+}
+
+.prediction-list {
+  display: grid;
+  min-width: 0;
+}
+
+.prediction-list article {
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 0 6px;
+}
+
+.prediction-list article > header {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.prediction-list article > header strong {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 18px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prediction-list article > header span {
+  align-items: center;
+  background: var(--positive-soft);
+  border-radius: 50%;
+  color: var(--positive);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 650;
+  gap: 4px;
+  height: 20px;
+  padding: 0 8px;
+}
+
+.prediction-list article > header span.settled {
+  background: var(--soft);
+  color: var(--muted);
+}
+
+.prediction-list article > header i {
+  background: currentColor;
+  border-radius: 50%;
+  height: 4px;
+  width: 4px;
+}
+
+.prediction-list h2 {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 20px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.prediction-outcomes {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+}
+
+.prediction-outcomes button {
+  align-items: center;
+  background: var(--positive-soft);
+  border: 0;
+  border-radius: 50%;
+  color: var(--positive);
+  display: flex;
+  gap: 8px;
+  height: 38px;
+  justify-content: center;
+  min-height: 38px;
+  min-width: 0;
+  padding: 0 12px;
+}
+
+.prediction-outcomes button:last-child {
+  background: var(--negative-soft);
+  color: var(--negative);
+}
+
+.prediction-outcomes button:disabled {
+  cursor: default;
+  filter: saturate(.4);
+  opacity: .66;
+}
+
+.prediction-outcomes button:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--focus);
+  outline: 0;
+}
+
+.prediction-outcomes b {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prediction-outcomes small {
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.prediction-market-meta {
+  color: var(--muted);
+  display: flex;
+  font-size: 10px;
+  gap: 6px;
+  justify-content: space-between;
+  line-height: 15px;
+  margin: 0;
+  min-width: 0;
+}
+
+.prediction-market-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prediction-market-meta time {
+  flex: 0 0 auto;
+}
+
 .prediction-state {
   align-content: center;
   color: var(--muted);
   display: grid;
-  font-size: 12px;
+  font-size: 11px;
   gap: 9px;
   justify-items: center;
   min-height: 148px;
@@ -391,141 +669,42 @@ onBeforeUnmount(() => {
   min-height: 112px;
 }
 
-.prediction-overview {
-  align-items: center;
-  background:
-    linear-gradient(132deg, color-mix(in srgb, var(--accent) 9%, transparent), transparent 64%),
-    var(--surface);
-  border-block: 1px solid var(--line);
-  border-top: 3px solid var(--accent);
-  display: grid;
-  gap: 11px;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
-  min-height: 92px;
-  padding: 12px 4px;
-}
-
-.prediction-overview__icon {
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
-  color: var(--accent);
-  display: grid;
-  height: 44px;
-  place-items: center;
-  width: 44px;
-}
-
-.prediction-overview > div:nth-child(2) {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.prediction-overview strong {
-  font-size: 17px;
-}
-
-.prediction-overview p {
+.prediction-note {
+  align-items: flex-start;
   color: var(--muted);
-  font-size: 11px;
-  line-height: 1.45;
-  margin: 0;
-}
-
-.prediction-overview > svg {
-  color: var(--positive);
-}
-
-.prediction-list {
-  border-top: 1px solid var(--line);
-  display: grid;
-}
-
-.prediction-list article {
-  border-bottom: 1px solid var(--line);
-  display: grid;
-  padding: 15px 0;
-}
-
-.prediction-list article > span {
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 750;
-}
-
-.prediction-list h2 {
-  font-size: 16px;
-  line-height: 1.4;
-  margin: 6px 0;
-  overflow-wrap: anywhere;
-}
-
-.prediction-list p {
-  color: var(--muted);
-  display: -webkit-box;
-  font-size: 11px;
-  line-height: 1.45;
-  margin: 0 0 12px;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.prediction-outcomes {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.prediction-outcomes button {
-  border: 1px solid currentColor;
-  color: var(--ink);
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  justify-content: center;
-  min-height: 54px;
-  padding: 8px 11px;
-  text-align: left;
-}
-
-.prediction-outcomes button:first-child {
-  background: var(--positive-soft);
-  color: var(--positive);
-}
-
-.prediction-outcomes button:last-child {
-  background: var(--negative-soft);
-  color: var(--negative);
-}
-
-.prediction-outcomes button:disabled {
-  opacity: .68;
-}
-
-.prediction-outcomes b {
-  font-size: 13px;
-}
-
-.prediction-outcomes small {
   font-size: 11px;
+  gap: 8px;
+  line-height: 16px;
+  margin: 0;
+  padding-top: 2px;
+}
+
+.prediction-note svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
 }
 
 .prediction-orders {
-  border-top: 8px solid var(--soft);
-  margin: 8px -20px 0;
-  padding: 0 20px;
+  border-top: 1px solid var(--line);
+  display: grid;
+  margin-top: 48px;
+  min-width: 0;
 }
 
 .prediction-orders .section-heading {
+  align-items: center;
   border-bottom: 1px solid var(--line);
-  font-size: 16px;
+  display: flex;
+  font-size: 14px;
+  justify-content: space-between;
   margin: 0;
-  min-height: 56px;
+  min-height: 52px;
 }
 
 .prediction-orders .section-heading b {
-  color: var(--accent);
-  font-size: 12px;
+  color: var(--positive);
+  font-size: 11px;
 }
 
 .prediction-orders article {
@@ -589,7 +768,7 @@ onBeforeUnmount(() => {
 .prediction-dialog {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-top: 3px solid var(--accent);
+  border-radius: 8px;
   box-shadow: var(--shadow-soft);
   display: grid;
   gap: 14px;
@@ -629,6 +808,7 @@ onBeforeUnmount(() => {
 .prediction-field {
   background: var(--field-surface);
   border: 1px solid var(--line);
+  border-radius: 8px;
   display: grid;
   min-width: 0;
   padding: 7px 11px 6px;
@@ -722,7 +902,7 @@ onBeforeUnmount(() => {
 }
 
 .prediction-submit {
-  border-radius: 0;
+  border-radius: 8px;
   min-height: 52px;
 }
 
@@ -731,34 +911,19 @@ onBeforeUnmount(() => {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-@media (max-width: 390px) {
-  .prediction-content {
-    padding-left: 14px;
-    padding-right: 14px;
-  }
-
-  .prediction-orders {
-    margin-left: -14px;
-    margin-right: -14px;
-    padding-inline: 14px;
+  to {
+    transform: rotate(360deg);
   }
 }
 
 @media (max-width: 340px) {
-  .prediction-overview {
-    grid-template-columns: 40px minmax(0, 1fr);
+  .prediction-content {
+    padding-inline: 16px;
   }
 
-  .prediction-overview__icon {
-    height: 40px;
-    width: 40px;
-  }
-
-  .prediction-overview > svg {
-    display: none;
+  .prediction-market-meta {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .prediction-orders article {
@@ -772,6 +937,20 @@ onBeforeUnmount(() => {
     display: flex;
     justify-content: space-between;
     width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prediction-page *,
+  .prediction-page *::before,
+  .prediction-page *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+
+  .spin {
+    animation: none;
   }
 }
 </style>

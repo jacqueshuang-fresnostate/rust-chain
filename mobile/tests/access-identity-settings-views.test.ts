@@ -16,6 +16,7 @@ const sources = {
 }
 
 const allSources = Object.values(sources)
+const selectedCss = readFileSync(new URL('../src/styles/pencil-selected-pages.css', import.meta.url), 'utf8')
 
 test('登录与注册保留配置、挑战、重定向和请求载荷合同', () => {
   assert.match(sources.login, /fetchLoginConfig\(\)/)
@@ -24,8 +25,8 @@ test('登录与注册保留配置、挑战、重定向和请求载荷合同', ()
   assert.match(sources.login, /name: 'login-two-factor', query: \{ challenge: result\.challengeId, redirect: safeRedirect\.value \}/)
   assert.match(sources.login, /name: 'login-two-factor', query: \{ setup: result\.setupChallengeId, redirect: safeRedirect\.value \}/)
   assert.match(sources.login, /replaceAuthStep\(router, \{ name, query: \{ redirect: safeRedirect\.value \} \}\)/)
-  assert.match(sources.login, /const back = sanitizeInternalRedirect\(router\.resolve\(\{[\s\S]*?name: 'login',[\s\S]*?query: \{ redirect: safeRedirect\.value \},[\s\S]*?\}\)\.fullPath\)/)
-  assert.match(sources.login, /router\.push\(\{ name: 'language', query: \{ back \} \}\)/)
+  assert.match(sources.login, /data-pencil-source="u99Fpg WNbsc"/)
+  assert.doesNotMatch(sources.login, /handleBack|openLanguage|name: 'language'/)
   assert.match(sources.login, /session\.sync\(\)/)
   assert.match(sources.login, /replaceAuthStep\(router, safeRedirect\.value\)/)
 
@@ -39,9 +40,9 @@ test('登录与注册保留配置、挑战、重定向和请求载荷合同', ()
   assert.match(sources.register, /inviteCodeRequired\.value && !inviteCode\.value\.trim\(\)/)
   assert.match(sources.register, /const safeRedirect = computed\(\(\) => sanitizeInternalRedirect\(route\.query\.redirect\)\)/)
   assert.match(sources.register, /createLoginRedirectTarget\(safeRedirect\.value\)/)
-  assert.match(sources.register, /const back = sanitizeInternalRedirect\(router\.resolve\(\{[\s\S]*?name: 'register',[\s\S]*?query: \{ redirect: safeRedirect\.value \},[\s\S]*?\}\)\.fullPath\)/)
-  assert.match(sources.register, /router\.push\(\{ name: 'language', query: \{ back \} \}\)/)
-  assert.match(sources.register, /goBackOr\(router, loginTarget\.value, \{ preferFallback: true \}\)/)
+  assert.match(sources.register, /data-pencil-source="MCuqb RGYGj"/)
+  assert.match(sources.register, /function returnToLogin\(\): void \{\s*void replaceAuthStep\(router, loginTarget\.value\)\s*\}/)
+  assert.doesNotMatch(sources.register, /handleBack|openLanguage|name: 'language'/)
   assert.match(sources.register, /session\.sync\(\)/)
   assert.match(sources.register, /replaceAuthStep\(router, safeRedirect\.value\)/)
   assert.match(sources.register, /replaceAuthStep\(router, loginTarget\.value\)/)
@@ -143,7 +144,7 @@ test('访问、身份与设置视图遵守主题、触控、窄屏和 Lucide 合
   for (const source of allSources) {
     assert.match(source, /@media \(max-width: 340px\)/)
     assert.match(source, /env\(safe-area-inset-bottom\)/)
-    assert.match(source, /var\(--background\)/)
+    assert.match(source, /var\(--(?:background|surface|page)\)/)
     assert.match(source, /min-height:\s*(?:4[4-9]|[5-9]\d)px/)
     assert.match(source, /from 'lucide-vue-next'/)
     assert.doesNotMatch(source, /#[0-9a-f]{3,8}/i)
@@ -163,7 +164,7 @@ test('访问、身份与设置视图遵守主题、触控、窄屏和 Lucide 合
     sources.bindings,
     sources.referrals,
   ]) {
-    assert.match(source, /(?:focus-within|\.input)/)
+    assert.match(`${source}\n${selectedCss}`, /(?:focus-within|\.input)/)
   }
 })
 

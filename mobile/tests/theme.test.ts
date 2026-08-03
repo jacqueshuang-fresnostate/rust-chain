@@ -11,7 +11,13 @@ import zhCN from '../src/i18n/messages/zh-CN.ts'
 
 const baseCss = readFileSync(new URL('../src/styles/base.css', import.meta.url), 'utf8')
 const parityCss = readFileSync(new URL('../src/styles/prototype-parity.css', import.meta.url), 'utf8')
+const indexHtml = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
+const viteConfigSource = readFileSync(new URL('../vite.config.ts', import.meta.url), 'utf8')
 const rootHeaderSource = readFileSync(new URL('../src/components/RootHeader.vue', import.meta.url), 'utf8')
+const assetsViewSource = readFileSync(new URL('../src/views/AssetsView.vue', import.meta.url), 'utf8')
+const profileViewSource = readFileSync(new URL('../src/views/ProfileView.vue', import.meta.url), 'utf8')
+const orderBookSource = readFileSync(new URL('../src/components/OrderBookPanel.vue', import.meta.url), 'utf8')
+const selectedPageCss = readFileSync(new URL('../src/styles/pencil-selected-pages.css', import.meta.url), 'utf8')
 const themeStoreSource = readFileSync(new URL('../src/stores/theme.ts', import.meta.url), 'utf8')
 
 function tokenHex(source: string, name: string): string {
@@ -40,8 +46,12 @@ test('主题偏好只接受受支持值并以系统偏好兜底', () => {
 })
 
 test('明暗主题提供高对比共享令牌与稳定主题色', () => {
-  assert.equal(THEME_META_COLORS.light, '#f6f8fb')
-  assert.equal(THEME_META_COLORS.dark, '#080b0f')
+  assert.equal(THEME_META_COLORS.light, '#f7faf8')
+  assert.equal(THEME_META_COLORS.dark, '#070908')
+  assert.match(indexHtml, /name="theme-color" content="#f7faf8" media="\(prefers-color-scheme: light\)"/)
+  assert.match(indexHtml, /name="theme-color" content="#070908" media="\(prefers-color-scheme: dark\)"/)
+  assert.match(viteConfigSource, /theme_color: '#f7faf8'/)
+  assert.match(viteConfigSource, /background_color: '#f7faf8'/)
   assert.match(baseCss, /:root\[data-theme='dark'\]/)
   for (const token of [
     '--background',
@@ -90,7 +100,53 @@ test('生产原型覆盖层的中性色板在明暗主题下保持可访问对�
   }
 })
 
-test('壳层层级遵循内容、导航、转场、粘性头部、浮层顺序', () => {
+test('深色主题的旧版分隔线使用石墨令牌而不是白色边框', () => {
+  assert.match(
+    parityCss,
+    /\.app-stage\.theme-dark\s*\{[\s\S]*?--line:\s*rgb\(184 204 194 \/ 9%\);[\s\S]*?--line-strong:\s*rgb\(184 204 194 \/ 14%\);[\s\S]*?--header-border:\s*rgb\(184 204 194 \/ 12%\);/,
+  )
+  assert.match(
+    parityCss,
+    /\.app-stage\.theme-dark \.mobile-canvas :is\([\s\S]*?\.portfolio-overview\s*\)\s*\{[\s\S]*?border-color:\s*var\(--line\);/,
+  )
+  assert.match(
+    parityCss,
+    /\.app-stage\.theme-dark \.mobile-canvas \.portfolio-periods button\.active\s*\{[\s\S]*?border-color:\s*var\(--line-strong\);/,
+  )
+  assert.match(
+    parityCss,
+    /\.app-stage\.theme-dark \.mobile-canvas \.hero-grid\s*\{[\s\S]*?linear-gradient\(var\(--grid-line\) 1px, transparent 1px\)/,
+  )
+  assert.match(
+    parityCss,
+    /\.app-stage\.theme-dark \.mobile-canvas > \.topbar\.topbar,[\s\S]*?0 1px 0 rgb\(184 204 194 \/ 7%\)/,
+  )
+  assert.match(
+    parityCss,
+    /@media \(max-width: 820px\)\s*\{\s*\.app-stage\.theme-dark \.mobile-canvas\s*\{\s*box-shadow:\s*none;/,
+  )
+})
+
+test('深色主题关键阴影兼容旧版 Android WebView', () => {
+  for (const source of [parityCss, assetsViewSource, profileViewSource, orderBookSource, selectedPageCss]) {
+    assert.doesNotMatch(source, /box-shadow:[^;]*color-mix\([^;]*;/s)
+  }
+  assert.match(
+    selectedPageCss,
+    /\.pencil-hero\s*\{[\s\S]*?box-shadow:\s*none;/,
+  )
+  assert.match(selectedPageCss, /\.pencil-field__shell:focus-within[\s\S]*?box-shadow:\s*0 0 0 2px var\(--focus-ring\);/)
+  assert.match(
+    profileViewSource,
+    /\.profile-register-action\s*\{[\s\S]*?background:\s*var\(--ink\);[\s\S]*?color:\s*var\(--surface\);/,
+  )
+  assert.match(
+    orderBookSource,
+    /\.order-book--split header\s*\{[\s\S]*?box-shadow:\s*inset 0 1px 0 var\(--line\);/,
+  )
+})
+
+test('壳层层级确保转场低于导航和头部，浮层与启动层仍在最上方', () => {
   const readLayer = (name: string): number => {
     const match = baseCss.match(new RegExp(`--layer-${name}:\\s*(\\d+)`))
     assert.ok(match, `missing layer token: ${name}`)
@@ -99,13 +155,17 @@ test('壳层层级遵循内容、导航、转场、粘性头部、浮层顺序',
 
   const layers = [
     readLayer('content'),
-    readLayer('navigation'),
     readLayer('route-transition'),
+    readLayer('navigation'),
     readLayer('sticky-header'),
     readLayer('overlay'),
+    readLayer('launch'),
   ]
   assert.deepEqual([...layers].sort((left, right) => left - right), layers)
   assert.equal(new Set(layers).size, layers.length)
+  assert.match(parityCss, /\.route-forward-enter-active,[\s\S]*?z-index: var\(--layer-route-transition\)/)
+  assert.match(parityCss, /\.bottom-nav\s*\{[\s\S]*?pointer-events: auto;[\s\S]*?z-index: var\(--layer-navigation\)/)
+  assert.match(parityCss, /> \.root-header\.root-header\s*\{[\s\S]*?z-index: var\(--layer-sticky-header\)/)
 })
 
 test('共享根头部主题按钮复用持久化主题 store 并提供双语可访问标签', () => {

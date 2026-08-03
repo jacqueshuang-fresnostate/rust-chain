@@ -9,6 +9,7 @@ import {
 } from '@/core/launchIntro'
 
 const SCROLL_LOCK_CLASS = 'launch-intro-active'
+const AUTO_DISMISS_MS = 3000
 
 function resolveSessionStorage(): LaunchIntroStorage | null {
   try {
@@ -24,6 +25,7 @@ const rootRef = ref<HTMLElement | null>(null)
 
 let animationContext: gsap.Context | null = null
 let timeline: gsap.core.Timeline | null = null
+let autoDismissTimer: number | null = null
 let hasFinished = false
 
 if (isVisible.value) {
@@ -32,6 +34,12 @@ if (isVisible.value) {
 
 function unlockScroll() {
   document.documentElement.classList.remove(SCROLL_LOCK_CLASS)
+}
+
+function clearAutoDismissTimer() {
+  if (autoDismissTimer === null) return
+  window.clearTimeout(autoDismissTimer)
+  autoDismissTimer = null
 }
 
 function releaseAnimation() {
@@ -44,6 +52,7 @@ function releaseAnimation() {
 function finishIntro() {
   if (hasFinished) return
   hasFinished = true
+  clearAutoDismissTimer()
   unlockScroll()
   releaseAnimation()
   isVisible.value = false
@@ -64,85 +73,91 @@ onMounted(() => {
   }
 
   document.documentElement.classList.add(SCROLL_LOCK_CLASS)
+  autoDismissTimer = window.setTimeout(finishIntro, AUTO_DISMISS_MS)
 
-  animationContext = gsap.context(() => {
-    timeline = gsap.timeline({
-      defaults: { ease: 'power3.out' },
-      onComplete: finishIntro,
-    })
+  try {
+    animationContext = gsap.context(() => {
+      timeline = gsap.timeline({
+        defaults: { ease: 'power3.out' },
+        onComplete: finishIntro,
+      })
 
-    timeline
-      .to('.launch-intro__edge', {
-        duration: 0.32,
-        opacity: 0.54,
-        scaleY: 1,
-        stagger: 0.06,
-      }, 0)
-      .to('.launch-intro__logo-window', {
-        clipPath: 'inset(0 0% 0 0%)',
-        duration: 0.72,
-        ease: 'power4.out',
-      }, 0.08)
-      .fromTo('.launch-intro__logo-mark', {
-        opacity: 0.46,
-        scale: 0.965,
-      }, {
-        duration: 0.92,
-        ease: 'expo.out',
-        opacity: 1,
-        scale: 1,
-      }, 0.08)
-      .to('.launch-intro__progress-fill', {
-        duration: 0.66,
-        ease: 'power3.inOut',
-        scaleX: 1,
-      }, 0.34)
-      .to('.launch-intro__signature', {
-        autoAlpha: 1,
-        duration: 0.36,
-        y: 0,
-      }, 0.42)
-      .to('.launch-intro__light-pass', {
-        autoAlpha: 0.42,
-        duration: 0.1,
-      }, 0.32)
-      .to('.launch-intro__light-pass', {
-        duration: 0.76,
-        ease: 'power2.inOut',
-        xPercent: 850,
-      }, 0.32)
-      .to('.launch-intro__light-pass', {
-        autoAlpha: 0,
-        duration: 0.14,
-      }, 0.92)
-      .to('.launch-intro__brand', {
-        autoAlpha: 0,
-        duration: 0.22,
-        ease: 'power2.in',
-        y: -4,
-      }, 1.28)
-      .to('.launch-intro__edge', {
-        duration: 0.18,
-        opacity: 0,
-      }, 1.3)
-      .to('.launch-intro__curtain--left', {
-        duration: 0.62,
-        ease: 'expo.inOut',
-        xPercent: -101,
-      }, 1.4)
-      .to('.launch-intro__curtain--right', {
-        duration: 0.62,
-        ease: 'expo.inOut',
-        xPercent: 101,
-      }, 1.4)
-      .to(root, {
-        autoAlpha: 0,
-        duration: 0.04,
-      }, 2.02)
-  }, root)
+      timeline
+        .to('.launch-intro__edge', {
+          duration: 0.32,
+          opacity: 0.54,
+          scaleY: 1,
+          stagger: 0.06,
+        }, 0)
+        .to('.launch-intro__logo-window', {
+          clipPath: 'inset(0 0% 0 0%)',
+          duration: 0.72,
+          ease: 'power4.out',
+        }, 0.08)
+        .fromTo('.launch-intro__logo-mark', {
+          opacity: 0.46,
+          scale: 0.965,
+        }, {
+          duration: 0.92,
+          ease: 'expo.out',
+          opacity: 1,
+          scale: 1,
+        }, 0.08)
+        .to('.launch-intro__progress-fill', {
+          duration: 0.66,
+          ease: 'power3.inOut',
+          scaleX: 1,
+        }, 0.34)
+        .to('.launch-intro__signature', {
+          autoAlpha: 1,
+          duration: 0.36,
+          y: 0,
+        }, 0.42)
+        .to('.launch-intro__light-pass', {
+          autoAlpha: 0.42,
+          duration: 0.1,
+        }, 0.32)
+        .to('.launch-intro__light-pass', {
+          duration: 0.76,
+          ease: 'power2.inOut',
+          xPercent: 850,
+        }, 0.32)
+        .to('.launch-intro__light-pass', {
+          autoAlpha: 0,
+          duration: 0.14,
+        }, 0.92)
+        .to('.launch-intro__brand', {
+          autoAlpha: 0,
+          duration: 0.22,
+          ease: 'power2.in',
+          y: -4,
+        }, 1.28)
+        .to('.launch-intro__edge', {
+          duration: 0.18,
+          opacity: 0,
+        }, 1.3)
+        .to('.launch-intro__curtain--left', {
+          duration: 0.62,
+          ease: 'expo.inOut',
+          xPercent: -101,
+        }, 1.4)
+        .to('.launch-intro__curtain--right', {
+          duration: 0.62,
+          ease: 'expo.inOut',
+          xPercent: 101,
+        }, 1.4)
+        .to(root, {
+          autoAlpha: 0,
+          duration: 0.04,
+        }, 2.02)
+    }, root)
+  } catch {
+    finishIntro()
+  }
 })
 
 onBeforeUnmount(() => {
+  clearAutoDismissTimer()
   unlockScroll()
   releaseAnimation()
 })

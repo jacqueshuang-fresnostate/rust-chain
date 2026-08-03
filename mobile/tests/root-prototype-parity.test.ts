@@ -44,9 +44,9 @@ test('共享样式机械导入受检原型 CSS，并只提供 Vue/API 兼容桥�
   assert.match(prototypeCss, /\.app-stage\.theme-light\s*\{/)
   assert.match(prototypeCss, /\.topbar\s*\{[\s\S]*?height:\s*64px/)
   assert.match(prototypeCss, /\.bottom-nav\s*\{[\s\S]*?height:\s*84px/)
-  assert.match(prototypeCss, /grid-template-columns:\s*repeat\(7,\s*minmax\(44px,\s*1fr\)\)/)
-  assert.match(prototypeCss, /\.bottom-nav \.seconds-nav-action span\s*\{[\s\S]*?height:\s*48px/)
-  assert.match(parityCss, /\.bottom-nav button\s*\{[\s\S]*?min-height:\s*66px/)
+  assert.match(parityCss, /\.bottom-nav__dock\s*\{[\s\S]*?grid-template-columns:\s*repeat\(5,\s*minmax\(0,\s*1fr\)\)/)
+  assert.match(parityCss, /\.bottom-nav \.trade-nav-action \.bottom-nav__icon\s*\{[\s\S]*?height:\s*56px/)
+  assert.match(parityCss, /\.bottom-nav__item\s*\{[\s\S]*?min-height:\s*56px;[\s\S]*?min-width:\s*44px/)
 })
 
 test('根壳使用原型 Geist 变量字体并保留中文系统字体回退', () => {
@@ -93,7 +93,7 @@ test('根壳层保持原型舞台、64px 顶栏、路由栈、PWA 状态与异�
     'class="ambient-layer"',
     'class="route-veil"',
     '<PwaStatus />',
-    '<RootHeader v-if="showBottomNav" />',
+    '<RootHeader v-if="showRootHeader" />',
     'class="app-route-host"',
     '<AppBottomNav v-if="showBottomNav" />',
   ])
@@ -118,31 +118,32 @@ test('根壳层保持原型舞台、64px 顶栏、路由栈、PWA 状态与异�
   assert.doesNotMatch(appSource, /SIGNAL THEATRE|SIGNALS|LIVE EXCHANGE INSTRUMENT|HONG KONG/)
 })
 
-test('七项根导航保持独立 Spot/Contract、抬升 Seconds 与类型化 replace', () => {
+test('五项根导航保留单一抬升交易入口与类型化 replace', () => {
   const keys = [...navSource.matchAll(/\bkey:\s*'([^']+)'/g)].map((match) => match[1])
-  assert.deepEqual(keys, ['home', 'markets', 'spot', 'seconds', 'contract', 'assets', 'profile'])
-  assert.match(navSource, /to:\s*\{\s*name:\s*'trade',\s*params:[\s\S]*?key:\s*'seconds'/)
-  assert.match(navSource, /query:\s*\{\s*mode:\s*'contract'\s*\}/)
-  assert.match(navSource, /'seconds-nav-action': item\.primary/)
+  assert.deepEqual(keys, ['home', 'markets', 'trade', 'assets', 'profile'])
+  assert.match(navSource, /params:\s*\{\s*symbol:\s*navigation\.lastTradeSymbol\s*\}/)
+  assert.match(navSource, /navigation\.lastTradeMode === 'contract' \? \{ mode: 'contract' \} : undefined/)
+  assert.match(navSource, /'trade-nav-action': item\.primary/)
   assert.match(navSource, /function selectRoot\(to: RouteLocationRaw\)/)
   assert.match(navSource, /router\.replace\(to\)/)
   assert.doesNotMatch(navSource, /<RouterLink|<svg|\p{Extended_Pictographic}/u)
 })
 
-test('Home、Markets、Trade、Assets、Profile 使用原型块级顺序且不带 scoped 覆盖', () => {
+test('根栏目保持既有首页行情，并让现货、合约、资产与我的映射当前 Pencil 选中稿', () => {
   assertOrdered(views.home, [
     'class="view home-view prototype-root-view"',
     'class="home-workspace"',
-    'class="portfolio-overview"',
+    'class="home-portfolio home-portfolio--guest"',
+    'class="portfolio-overview home-portfolio home-portfolio--member"',
     'class="funding-actions"',
     'class="shortcut-section"',
     'class="market-brief"',
     'class="home-market-section"',
-    'class="home-benefits"',
   ])
   assertOrdered(views.markets, [
     'class="view markets-view prototype-root-view"',
-    'class="page-intro"',
+    'class="page-intro markets-hero"',
+    'class="market-controls"',
     'class="search-field"',
     'class="filter-rail"',
     'class="market-index"',
@@ -151,36 +152,42 @@ test('Home、Markets、Trade、Assets、Profile 使用原型块级顺序且不�
   ])
   assertOrdered(views.trade, [
     'class="view trade-view prototype-root-view"',
-    'class="trade-heading"',
-    'class="trade-quote"',
-    'class="chart-panel trade-chart-panel"',
-    'class="trade-console"',
+    '<template v-if="isSpotMode">',
+    'class="spot-pencil-header" data-pencil-source="yzOPc-bo8k5"',
+    'class="spot-pencil-workspace"',
+    'class="spot-order-console"',
+    'class="spot-account-workspace"',
+    'class="spot-chart-entry"',
+    'class="contract-pencil-surface"',
+    'data-pencil-source="by3G9 pKHeU"',
+    'class="contract-pencil-header"',
+    'class="contract-pencil-module"',
   ])
+  assert.match(views.trade, /:class="mode === 'contract' \? 'contract-trade' : 'spot-trade'"/)
   assertOrdered(views.assets, [
-    'class="view assets-view prototype-root-view"',
-    'class="page-intro compact"',
-    'class="asset-hero"',
-    'class="asset-actions"',
-    'class="content-section allocation-section"',
-    'class="allocation-track"',
-    'class="account-list"',
-    'class="content-section"',
+    'class="page pencil-page pencil-root-page assets-pencil"',
+    'class="pencil-hero assets-summary"',
+    'class="pencil-action-grid assets-actions"',
+    'class="pencil-section assets-distribution"',
+    'class="assets-allocation"',
+    'class="pencil-section assets-tools"',
   ])
   assertOrdered(views.profile, [
-    'class="view profile-view prototype-root-view"',
-    'class="profile-identity"',
-    'class="dual-actions profile-auth-actions"',
-    'class="content-section"',
-    'class="profile-identity"',
-    'class="profile-metrics"',
-    'class="settings-list"',
+    'class="page pencil-page pencil-root-page profile-pencil"',
+    'class="profile-identity-pencil"',
+    'class="profile-auth-actions"',
+    'class="profile-group"',
+    'class="profile-group profile-group--support"',
   ])
 
-  for (const source of Object.values(views)) {
+  for (const source of [views.home, views.markets, views.trade]) {
     assert.doesNotMatch(source, /<style scoped/)
-    assert.doesNotMatch(source, /\p{Extended_Pictographic}/u)
   }
-  assert.match(views.home, /<svg viewBox="0 0 360 84"[\s\S]*?d="M0 67 C28 62 39 70 62 57/)
+  for (const source of Object.values(views)) assert.doesNotMatch(source, /\p{Extended_Pictographic}/u)
+  for (const source of [views.assets, views.profile]) assert.match(source, /<style scoped>/)
+  assert.match(views.home, /<svg viewBox="0 0 358 153"[\s\S]*?v-if="portfolioGeometry"[\s\S]*?:d="portfolioGeometry\.path"/)
+  assert.match(views.home, /v-for="period in portfolioPeriods"[\s\S]*?period\.days === 1/)
+  assert.doesNotMatch(views.home, /portfolio-kicker|home-auth-primary|assetEstimateState|hasAssetEstimate/)
   assert.match(views.markets, /<svg[\s\S]*?class="sparkline"[\s\S]*?<polyline/)
   for (const source of [views.trade, views.assets, views.profile]) assert.doesNotMatch(source, /<svg/)
 })
@@ -195,8 +202,10 @@ test('根视图继续调用真实 API/store，访客与加载错误状态不改�
 
   assert.match(views.markets, /marketStore\.startLiveUpdates\(\)/)
   assert.match(views.markets, /router\.push\(\{ name: 'market-detail'/)
-  assert.match(views.trade, /fetchKlines\(pairSymbol\.value, interval\.value\)/)
-  assert.match(views.trade, /fetchOrderBook\(pairSymbol\.value\)/)
+  assert.match(views.trade, /fetchKlines\(symbol, selectedInterval\)/)
+  assert.match(views.trade, /fetchOrderBook\(symbol\)/)
+  assert.match(views.trade, /fetchRecentTrades\(symbol\)/)
+  assert.match(views.trade, /createMarketDetailStreamSession\(\{/)
   assert.match(views.trade, /await placeSpotOrder\(\{/)
   assert.match(views.trade, /await placeMarginOrder\(\{/)
   assert.match(views.assets, /fetchWalletAccounts\(\)/)
@@ -205,8 +214,8 @@ test('根视图继续调用真实 API/store，访客与加载错误状态不改�
   assert.match(views.profile, /fetchUserProfile\(\)/)
   assert.match(views.profile, /fetchKycStatus\(\)/)
   assert.match(views.profile, /await updateUsername\(nameDraft\.value\)/)
-  assert.match(views.profile, /<template v-if="!session\.isAuthenticated">/)
-  assert.match(views.profile, /<template v-else>/)
+  assert.match(views.profile, /v-if="!session\.isAuthenticated" class="profile-auth-actions"/)
+  assert.match(views.profile, /v-else class="profile-status-row"/)
   assert.doesNotMatch(views.home, /fallbackNews|usingFallbackNews/)
   assert.match(views.home, /:disabled="!briefNotice"/)
 })
@@ -218,20 +227,22 @@ test('行情曲线、自选和加载失败状态保持真实语义与固定五�
   assert.doesNotMatch(views.markets, /prototypeSparkPoints|new Set\(\['BTC\/USDT'/)
   assert.match(views.markets, /const neutralSparklinePoints = '0,17 76,17'/)
   assert.match(views.markets, /const hasTemperatureSample = computed\(\(\) => !marketRowsUnavailable\.value && rows\.value\.length > 0\)/)
-  assert.match(views.markets, /hasTemperatureSample \? marketTemperature : '--'/)
+  assert.match(views.markets, /<strong v-if="hasTemperatureSample" class="numeric">/)
+  assert.doesNotMatch(views.markets, /hasTemperatureSample \? marketTemperature : '--'/)
   assert.match(views.markets, /hasTemperatureSample \? 'rootPrototype\.marketStrong' : 'rootPrototype\.marketNoSample'/)
   assert.match(views.markets, /:class="sparklineTone\(ticker\.symbol\)"/)
   assert.match(views.markets, /:points="sparklinePoints\(ticker\.symbol\)"/)
   assert.match(views.home, /if \(activeTab\.value === 'favorites'\) return \[\]/)
 
   for (const source of [views.home, views.markets]) {
-    assert.match(source, /v-for="row in 5"/)
     assert.match(source, /class="root-market-reserved-state" role="alert"/)
     assert.match(source, /:aria-busy="marketRowsUnavailable && !marketStore\.error"/)
   }
+  assert.match(views.home, /v-for="row in 3"/)
+  assert.match(views.markets, /v-for="row in 5"/)
   assert.match(views.markets, /class="market-picker-list"[\s\S]*?v-for="row in 5"[\s\S]*?class="market-picker-state" role="alert"/)
   assert.match(prototypeCss, /\.market-row\s*\{[\s\S]*?min-height:\s*72px/)
-  assert.match(parityCss, /\.home-market-skeleton-row\s*\{[\s\S]*?min-height:\s*70px/)
+  assert.match(parityCss, /\.home-view \.home-market-skeleton-row\s*\{[\s\S]*?min-height:\s*54px/)
   assert.match(parityCss, /\.root-market-reserved-state\s*\{[\s\S]*?inset:\s*0/)
   assert.match(parityCss, /\.market-picker-skeleton-row\s*\{[\s\S]*?min-height:\s*68px/)
   assert.match(parityCss, /\.market-picker-state\s*\{[\s\S]*?inset:\s*0/)
@@ -243,7 +254,8 @@ test('Seconds 是保留旧深链的二级面，不继承根头部与底栏', () 
     routerSource,
     /\{\s*path:\s*'\/seconds',\s*alias:\s*'\/products\/seconds',\s*name:\s*'seconds',[\s\S]*?meta:\s*\{\s*showBottomNav:\s*false,\s*depth:\s*1,\s*backFallback:\s*'\/'\s*\}\s*\}/,
   )
-  assert.match(appSource, /<RootHeader v-if="showBottomNav" \/>/)
+  assert.match(appSource, /const showRootHeader = computed\(\(\) => \([\s\S]*?\['home', 'markets'\]/)
+  assert.match(appSource, /<RootHeader v-if="showRootHeader" \/>/)
   assert.match(appSource, /<AppBottomNav v-if="showBottomNav" \/>/)
 })
 

@@ -12,7 +12,7 @@ const prototypeCss = read('../src/styles/prototype-base.css')
 test('首页保留真实数据链路并提供独立现货与合约入口', () => {
   assert.match(homeSource, /fetchWalletAccounts\(\)/)
   assert.match(homeSource, /fetchMarginWallets\(\)/)
-  assert.match(homeSource, /formatFiat\(totalAssetEstimate\.value\)/)
+  assert.match(homeSource, /formatAmount\(totalAssetEstimate\.value\)/)
   assert.match(homeSource, /openTrade\('spot'\)/)
   assert.match(homeSource, /openTrade\('contract'\)/)
   assert.match(homeSource, /navigation\.rememberTradeMode\(mode\)/)
@@ -39,13 +39,14 @@ test('行情页保留交易对选择器的模式、查询参数和历史语义',
   assert.match(marketsSource, /router\.push\(\{ name: 'market-detail'/)
 })
 
-test('产品中心维持两项精选与三项次级产品的真实路由矩阵', () => {
-  assert.equal((productHubSource.match(/tier: 'featured'/g) || []).length, 2)
-  assert.equal((productHubSource.match(/tier: 'secondary'/g) || []).length, 3)
-  for (const routeName of ['earn', 'loan', 'new-coins', 'prediction', 'seconds']) {
-    assert.match(productHubSource, new RegExp(`name: '${routeName}'`))
-  }
-  assert.match(productHubSource, /router\.push\(\{ name \}\)/)
+test('产品中心按 Z0B0N6 仅提供预测、新闻与产品说明真实路由', () => {
+  assert.equal((productHubSource.match(/class="product-card product-card--secondary product-hub__row"/g) || []).length, 2)
+  assert.match(productHubSource, /data-product="prediction"[\s\S]*?@click="openPrediction"/)
+  assert.match(productHubSource, /data-product="news"[\s\S]*?@click="openNews"/)
+  assert.match(productHubSource, /router\.push\(\{ name: 'prediction' \}\)/)
+  assert.match(productHubSource, /router\.push\(\{ name: 'news' \}\)/)
+  assert.match(productHubSource, /router\.push\(\{ name: 'news', query: \{ category: 'product' \} \}\)/)
+  assert.doesNotMatch(productHubSource, /featuredProducts|secondaryProducts|tier: 'featured'|v-for="product in/)
 })
 
 test('核心发现视图遵守共享窄屏、触控与 Lucide 图标契约', () => {
@@ -57,6 +58,7 @@ test('核心发现视图遵守共享窄屏、触控与 Lucide 图标契约', () 
     assert.doesNotMatch(source, /[\u3400-\u9fff]/)
     assert.doesNotMatch(source, /#[0-9a-f]{3,8}/i)
   }
-  assert.match(homeSource, /<svg viewBox="0 0 360 84"/)
+  assert.match(homeSource, /<svg viewBox="0 0 358 153"/)
+  assert.match(homeSource, /v-if="portfolioGeometry"[\s\S]*:d="portfolioGeometry\.path"/)
   assert.match(marketsSource, /class="sparkline"/)
 })

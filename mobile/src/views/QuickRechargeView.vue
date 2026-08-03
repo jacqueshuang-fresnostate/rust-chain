@@ -89,28 +89,34 @@ onMounted(() => { void load() })
 </script>
 
 <template>
-  <main class="page page--plain">
+  <main
+    class="page page--plain pencil-page wallet-pencil-page quick-recharge-pencil"
+    data-pencil-source="CyRqi cM0eg"
+  >
     <PageHeader
       :back="true"
       :eyebrow="t('quickRecharge.quickPayment')"
+      :fallback="{ name: 'assets' }"
+      :pencil="true"
       :subtitle="t('quickRecharge.heroDescription')"
-      :title="t('quickRecharge.title')"
+      :title="t('assets.quickRecharge')"
     />
     <div class="page-content recharge-page">
-      <LoginRequiredState v-if="!session.isAuthenticated" :description="t('quickRecharge.loginDescription')" />
+      <LoginRequiredState
+        v-if="!session.isAuthenticated"
+        class="wallet-login-prompt"
+        :description="t('quickRecharge.loginDescription')"
+      />
       <template v-else>
-        <p v-if="error" id="quick-recharge-error" class="error-message" role="alert">{{ error }}</p>
+        <p v-if="error" id="quick-recharge-error" class="error-message wallet-feedback" role="alert">{{ error }}</p>
         <div v-if="loading" class="recharge-loading" role="status">
           <span class="recharge-loading__icon"><Landmark :size="22" aria-hidden="true" /></span>
           <span>{{ t('quickRecharge.loading') }}</span>
         </div>
         <template v-else-if="config">
-          <section class="recharge-hero">
-            <span><Landmark :size="22" aria-hidden="true" /></span>
-            <div>
-              <strong>{{ t('quickRecharge.hero', { token: config.token }) }}</strong>
-              <p>{{ t('quickRecharge.heroDescription') }}</p>
-            </div>
+          <section class="recharge-intro">
+            <strong>{{ t('quickRecharge.hero', { token: config.token }) }}</strong>
+            <p>{{ t('quickRecharge.heroDescription') }}</p>
           </section>
           <template v-if="config.enabled">
             <form class="recharge-form" @submit.prevent="submit">
@@ -143,7 +149,7 @@ onMounted(() => { void load() })
                 <div><dt>{{ t('quickRecharge.network') }}</dt><dd>{{ config.network || t('quickRecharge.providerNetwork') }}</dd></div>
                 <div><dt>{{ t('quickRecharge.amountRange') }}</dt><dd class="numeric">{{ formatFiat(config.minAmount, config.currency) }}<span v-if="config.maxAmount"> - {{ formatFiat(config.maxAmount, config.currency) }}</span></dd></div>
               </dl>
-              <button class="button button--primary button--full" type="submit" :disabled="submitting">{{ submitting ? t('quickRecharge.creating') : t('quickRecharge.buy', { token: config.token }) }}</button>
+              <button class="button button--primary button--full recharge-submit" type="submit" :disabled="submitting">{{ submitting ? t('quickRecharge.creating') : t('quickRecharge.buy', { token: config.token }) }}</button>
             </form>
             <section v-if="submittedOrder" class="order-result" aria-live="polite">
               <div><ReceiptText :size="20" aria-hidden="true" /><span>{{ t('quickRecharge.order', { id: submittedOrder.orderId }) }}</span></div>
@@ -182,11 +188,14 @@ onMounted(() => { void load() })
 </template>
 
 <style scoped>
+.wallet-pencil-page {
+  background: var(--page);
+}
+
 .recharge-page {
   display: grid;
-  gap: 18px;
-  padding-bottom: calc(38px + env(safe-area-inset-bottom));
-  padding-top: 16px;
+  gap: 12px;
+  padding: 6px 20px calc(20px + env(safe-area-inset-bottom));
 }
 
 .recharge-loading {
@@ -196,57 +205,38 @@ onMounted(() => { void load() })
   font-size: 13px;
   gap: 10px;
   justify-content: center;
-  min-height: 180px;
+  min-height: 160px;
 }
 
 .recharge-loading__icon {
   animation: pulse 1.1s ease-in-out infinite alternate;
-  color: var(--accent);
+  color: var(--positive);
   display: grid;
   place-items: center;
 }
 
-.recharge-hero {
-  align-items: center;
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  gap: 13px;
-  padding: 2px 0 18px;
-}
-
-.recharge-hero > span {
-  align-items: center;
-  background: var(--accent-soft);
-  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
-  border-radius: 50%;
-  color: var(--accent);
-  display: inline-flex;
-  flex: 0 0 auto;
-  height: 46px;
-  justify-content: center;
-  width: 46px;
-}
-
-.recharge-hero div {
+.recharge-intro {
   display: grid;
-  gap: 5px;
-  min-width: 0;
+  gap: 4px;
+  min-height: 46px;
 }
 
-.recharge-hero strong {
-  font-size: 17px;
+.recharge-intro strong {
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 28px;
 }
 
-.recharge-hero p {
+.recharge-intro p {
   color: var(--muted);
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: 11px;
+  line-height: 15px;
   margin: 0;
 }
 
 .recharge-form {
   display: grid;
-  gap: 14px;
+  gap: 12px;
 }
 
 .recharge-amount {
@@ -254,27 +244,29 @@ onMounted(() => { void load() })
   border: 1px solid var(--line);
   border-radius: var(--radius);
   display: grid;
-  gap: 3px;
-  min-height: 68px;
-  padding: 8px 13px;
+  gap: 5px;
+  min-height: 64px;
+  padding: 8px 12px;
+  transition: border-color var(--motion-fast) var(--motion-ease), box-shadow var(--motion-fast) var(--motion-ease);
 }
 
 .recharge-amount:focus-within {
   background: var(--surface-elevated);
-  border-color: var(--focus);
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  border-color: var(--positive);
+  box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
 .recharge-amount.is-invalid,
 .recharge-amount.is-invalid:focus-within {
   border-color: var(--negative);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--negative) 22%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--negative) 22%, transparent);
 }
 
 .recharge-amount > span:first-child {
   color: var(--muted);
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 500;
+  line-height: 15px;
 }
 
 .recharge-amount__control {
@@ -286,20 +278,28 @@ onMounted(() => { void load() })
 .recharge-amount input {
   background: transparent;
   border: 0;
+  border-radius: 0;
+  box-shadow: none;
   color: var(--ink);
   flex: 1;
-  font-size: 25px;
-  font-weight: 730;
-  min-height: 36px;
+  font-size: 14px;
+  font-weight: 600;
+  min-height: 32px;
   min-width: 0;
   outline: 0;
   padding: 0;
 }
 
+.recharge-amount input:focus-visible {
+  box-shadow: none;
+  outline: 0;
+}
+
 .recharge-amount b {
-  color: var(--muted-strong);
+  color: var(--muted);
   flex: 0 0 auto;
-  font-size: 13px;
+  font-size: 10px;
+  font-weight: 500;
 }
 
 .quick-values {
@@ -309,12 +309,12 @@ onMounted(() => { void load() })
 }
 
 .quick-values button {
-  background: var(--soft);
+  background: transparent;
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: var(--wallet-pill-radius, 999px);
   color: var(--ink);
   font-size: 11px;
-  font-weight: 680;
+  font-weight: 500;
   min-height: 44px;
   min-width: 0;
   padding: 4px;
@@ -323,23 +323,22 @@ onMounted(() => { void load() })
 .quick-values button.is-active {
   background: var(--accent-soft);
   border-color: var(--accent);
-  color: var(--accent);
-  font-weight: 760;
+  color: var(--positive);
+  font-weight: 600;
 }
 
 .recharge-form dl {
-  border-top: 1px solid var(--line);
   display: grid;
-  margin: 2px 0 0;
+  gap: 8px;
+  margin: 0;
 }
 
 .recharge-form dl div {
   align-items: center;
-  border-bottom: 1px solid var(--line);
   display: grid;
   gap: 12px;
   grid-template-columns: minmax(90px, auto) minmax(0, 1fr);
-  min-height: 46px;
+  min-height: 20px;
 }
 
 .recharge-form dt,
@@ -350,22 +349,30 @@ onMounted(() => { void load() })
 
 .recharge-form dt {
   color: var(--muted);
+  font-weight: 500;
 }
 
 .recharge-form dd {
-  color: var(--muted-strong);
+  color: var(--ink);
+  font-weight: 600;
   min-width: 0;
   overflow-wrap: anywhere;
   text-align: right;
 }
 
+.recharge-submit {
+  border-radius: var(--wallet-pill-radius, 999px);
+  height: 48px;
+  min-height: 48px;
+}
+
 .order-result {
   background: var(--accent-soft);
-  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
+  border: 1px solid var(--line);
   border-radius: var(--radius);
   display: grid;
-  gap: 11px;
-  padding: 14px;
+  gap: 10px;
+  padding: 12px;
 }
 
 .order-result > div {
@@ -378,24 +385,31 @@ onMounted(() => { void load() })
 }
 
 .order-result > strong {
-  font-size: 18px;
+  font-size: 16px;
   overflow-wrap: anywhere;
 }
 
-.order-result p {
+.order-result .button {
+  min-height: 44px;
+}
+
+.order-result p,
+.surface-note {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.45;
   margin: 0;
 }
 
 .history {
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--hairline);
+  padding-top: 10px;
 }
 
 .history .section-heading {
-  font-size: 15px;
-  margin: 20px 0 0;
+  font-size: 14px;
+  margin: 0;
+  min-height: 24px;
 }
 
 .history-list {
@@ -404,18 +418,18 @@ onMounted(() => { void load() })
 
 .history-row {
   align-items: center;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--hairline);
   display: grid;
   gap: 12px;
   grid-template-columns: minmax(0, 1fr) minmax(88px, auto);
-  min-height: 68px;
-  padding: 9px 0;
+  min-height: 56px;
+  padding: 7px 0;
 }
 
 .history-row > div,
 .history-row > span {
   display: grid;
-  gap: 5px;
+  gap: 3px;
   min-width: 0;
 }
 
@@ -432,41 +446,83 @@ onMounted(() => { void load() })
 }
 
 .history-row__status {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border: 0;
+  border-radius: var(--wallet-pill-radius, 999px);
   font-size: 10px;
-  line-height: 1;
+  line-height: 14px;
   max-width: 112px;
   overflow: hidden;
-  padding: 5px 7px;
+  padding: 2px 7px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .history-row__status.is-positive {
   background: var(--positive-soft);
-  border-color: color-mix(in srgb, var(--positive) 28%, var(--line));
   color: var(--positive);
 }
 
 .history-row__status.is-negative {
   background: var(--negative-soft);
-  border-color: color-mix(in srgb, var(--negative) 28%, var(--line));
   color: var(--negative);
 }
 
 .history-row__status.is-pending {
-  background: var(--soft);
+  background: var(--surface-2);
   color: var(--muted-strong);
 }
 
 .history-row small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
+  line-height: 14px;
 }
 
 .history-row > span {
   text-align: right;
+}
+
+.wallet-feedback {
+  margin: 0;
+}
+
+.wallet-login-prompt {
+  background: transparent;
+  background-image: none;
+  border: 0;
+  border-top: 1px solid var(--hairline);
+  gap: 10px;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  min-height: 72px;
+  padding: 10px 0;
+}
+
+.wallet-login-prompt :deep(.login-required__icon) {
+  background: var(--accent-soft);
+  border: 0;
+  color: var(--positive);
+  height: 34px;
+  width: 34px;
+}
+
+.wallet-login-prompt :deep(.login-required__copy) {
+  gap: 2px;
+}
+
+.wallet-login-prompt :deep(.login-required__copy strong) {
+  font-size: 13px;
+}
+
+.wallet-login-prompt :deep(.login-required__copy p) {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.wallet-login-prompt :deep(.button) {
+  border-radius: var(--wallet-pill-radius, 999px);
+  min-height: 44px;
+  padding-inline: 14px;
 }
 
 @keyframes pulse {
@@ -476,8 +532,7 @@ onMounted(() => { void load() })
 
 @media (max-width: 340px) {
   .recharge-page {
-    padding-left: 16px;
-    padding-right: 16px;
+    padding-inline: 16px;
   }
 
   .quick-values {
@@ -491,6 +546,26 @@ onMounted(() => { void load() })
   .history-row {
     gap: 9px;
     grid-template-columns: minmax(0, 1fr) minmax(78px, auto);
+  }
+
+  .wallet-login-prompt {
+    align-items: center;
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .wallet-login-prompt :deep(.button) {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .recharge-loading__icon {
+    animation: none;
+  }
+
+  .recharge-amount {
+    transition: none;
   }
 }
 </style>

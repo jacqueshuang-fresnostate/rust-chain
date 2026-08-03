@@ -44,6 +44,7 @@ export interface TradePrint {
 
 export interface DepositAsset {
   symbol: string
+  name?: string
   depositEnabled: boolean
   minDepositAmount: number
   logoUrl?: string
@@ -52,7 +53,6 @@ export interface DepositAsset {
 export interface DepositNetwork {
   network: string
   displayName: string
-  estimatedMinutes: number
   minDepositAmount: number
 }
 
@@ -88,5 +88,7 @@ export interface MarginProduct {
 export interface NewsItem {
   id: number
   title: string
+  category?: string
+  bannerUrl?: string
   publishedAt?: number
 }

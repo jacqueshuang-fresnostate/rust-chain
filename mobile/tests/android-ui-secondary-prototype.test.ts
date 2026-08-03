@@ -14,16 +14,15 @@ const sources = {
 }
 const modalHelperSource = readFileSync(new URL('../src/core/modalDialog.ts', import.meta.url), 'utf8')
 
-test('登录与注册工具栏使用原型三层 sticky 信息 Header', () => {
+test('登录与注册逐项映射 Pencil 单页身份区且不叠加额外 Header 动作', () => {
   for (const source of [sources.login, sources.register]) {
-    assert.match(source, /class="auth-topbar__copy"/)
-    assert.match(source, /\.auth-topbar \{[^}]*background: var\(--surface\)/)
-    assert.match(source, /\.auth-topbar \{[^}]*border-bottom: 1px solid var\(--line\)/)
-    assert.match(source, /\.auth-topbar \{[^}]*grid-template-columns: 44px minmax\(0, 1fr\) 44px/)
-    assert.match(source, /\.auth-topbar \{[^}]*position: sticky/)
-    assert.match(source, /\.auth-topbar \{[^}]*z-index: var\(--layer-sticky-header\)/)
-    assert.match(source, /\.auth-topbar__copy span \{[^}]*color: var\(--positive\)/)
-    assert.match(source, /\.auth-topbar__copy small \{[^}]*color: var\(--muted\)/)
+    assert.match(source, /class="auth-pencil-page/)
+    assert.match(source, /class="auth-pencil-canvas"/)
+    assert.match(source, /class="auth-brand-row"/)
+    assert.match(source, /class="auth-pencil-title"/)
+    assert.match(source, /data-pencil-source=/)
+    assert.match(source, /\.auth-brand-row \{[\s\S]*?height: 62px;/)
+    assert.doesNotMatch(source, /@click="(?:handleBack|openLanguage)"|<Languages|<X :size="22"/)
   }
 })
 
@@ -64,24 +63,31 @@ test('复核层没有改变真实校验、请求与载荷合同', () => {
   assert.match(sources.newCoinDetail, /@click="requestSubmit"/)
 })
 
-test('消息、借贷与安全工作台使用共享原型网格和真实业务摘要', () => {
-  for (const source of [sources.messageCenter, sources.loan, sources.security]) {
-    assert.match(source, /page--prototype-grid/)
-    assert.match(source, /data-(?:message|loan|security)-workspace="live"/)
-  }
+test('消息、借贷与安全工作台使用选中稿连续画布和真实业务摘要', () => {
+  assert.match(sources.messageCenter, /class="page page--plain pencil-page message-center-page"/)
+  assert.match(sources.messageCenter, /data-message-workspace="live"/)
+  assert.match(sources.security, /class="page page--plain pencil-page security-view"/)
+  assert.match(sources.security, /data-security-workspace="live"/)
+  assert.doesNotMatch(sources.messageCenter, /page--prototype-grid|secondary-view|secondary-content/)
+  assert.doesNotMatch(sources.security, /page--prototype-grid|secondary-view|secondary-content/)
+  assert.match(sources.loan, /class="page page--plain pencil-page loan-pencil"/)
+  assert.match(sources.loan, /data-pencil-source="kIOBX yrsRy"/)
+  assert.match(sources.loan, /data-loan-workspace="live"/)
 
   assert.match(sources.messageCenter, /messages\.value = await fetchNews\(40\)/)
-  assert.match(sources.messageCenter, /class="inbox-summary"/)
-  assert.match(sources.messageCenter, /var\(--signal-blue\)/)
+  assert.match(sources.messageCenter, /class="message-root-header"/)
+  assert.match(sources.messageCenter, /class="message-list"[\s\S]*data-message-source="live"/)
+  assert.match(sources.messageCenter, /\.message-row,[\s\S]*?min-height: 64px;/)
 
-  assert.match(sources.loan, /collateralProductCount/)
-  assert.match(sources.loan, /creditProductCount/)
-  assert.match(sources.loan, /session\.isAuthenticated \? orders\.length : '--'/)
-  assert.match(sources.loan, /class="borrowing-overview"/)
+  assert.match(sources.loan, /const loanAssetFilters = computed/)
+  assert.match(sources.loan, /class="loan-access-pencil__summary"/)
+  assert.match(sources.loan, /class="pencil-segmented pencil-segmented--soft loan-categories"/)
+  assert.match(sources.loan, /class="pencil-note loan-risk-note"/)
+  assert.match(sources.loan, /class="loan-hero-pencil"/)
 
   assert.match(sources.security, /const protectionCount = computed/)
   assert.match(sources.security, /profile\.value\?\.emailVerified/)
   assert.match(sources.security, /twoFactor\.value\?\.totpEnabled/)
-  assert.match(sources.security, /class="protection-overview"/)
-  assert.match(sources.security, /class="security-checklist"/)
+  assert.match(sources.security, /class="security-hero"/)
+  assert.match(sources.security, /class="security-methods"/)
 })

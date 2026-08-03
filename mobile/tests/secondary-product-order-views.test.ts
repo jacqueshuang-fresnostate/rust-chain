@@ -13,6 +13,7 @@ const tradingApiSource = readFileSync(new URL('../src/api/trading.ts', import.me
 const newCoinsSource = readFileSync(new URL('../src/views/NewCoinsView.vue', import.meta.url), 'utf8')
 const newCoinDetailSource = readFileSync(new URL('../src/views/NewCoinDetailView.vue', import.meta.url), 'utf8')
 const newCoinRecordsSource = readFileSync(new URL('../src/views/NewCoinRecordsView.vue', import.meta.url), 'utf8')
+const selectedCss = readFileSync(new URL('../src/styles/pencil-selected-pages.css', import.meta.url), 'utf8')
 const sources = [
   ordersSource,
   swapSource,
@@ -24,8 +25,8 @@ const sources = [
 ]
 
 test('订单页保留现货、杠杆查询与逐笔/批量撤单平仓合同', () => {
-  assert.match(ordersSource, /const navigation = useNavigationStore\(\)/)
-  assert.match(ordersSource, /:fallback="navigation\.lastTradePath"/)
+  assert.match(ordersSource, /data-pencil-source="kcP5D A85if n6oGO t2GTW4"/)
+  assert.match(ordersSource, /<PageHeader :back="false" :pencil="true"/)
   assert.match(ordersSource, /fetchOpenSpotOrders\(\)/)
   assert.match(ordersSource, /fetchSpotOrderHistory\(\)/)
   assert.match(ordersSource, /fetchMarginPositions\('opened'\)/)
@@ -47,15 +48,16 @@ test('订单页保留现货、杠杆查询与逐笔/批量撤单平仓合同', (
 })
 
 test('闪兑与理财页保留实时报价、确认、申购和赎回链路', () => {
-  assert.match(swapSource, /const navigation = useNavigationStore\(\)/)
-  assert.match(swapSource, /:fallback="navigation\.lastTradePath"/)
+  assert.match(swapSource, /data-pencil-source="x9T4CL eXdnN sf288 xvVss"/)
+  assert.match(swapSource, /useModalDialog\(pickerOpen, pickerDialog, '\[data-picker-search\]'\)/)
   assert.match(swapSource, /fetchConvertPairs\(\)/)
   assert.match(swapSource, /fetchWalletAccounts\(\), fetchConvertOrders\(\)/)
   assert.match(swapSource, /quote\.value = await requestConvertQuote\(selectedPair\.value, amountNumber\.value\)/)
   assert.match(swapSource, /await confirmConvertQuote\(quote\.value\.quoteId\)/)
   assert.match(swapSource, /quote\.value\.expiresAt <= Date\.now\(\)/)
 
-  assert.match(earnSource, /fetchEarnProducts\(\), fetchEarnSubscriptions\(\), fetchWalletAccounts\(\)/)
+  assert.match(earnSource, /const productPromise = fetchEarnProducts\(\)/)
+  assert.match(earnSource, /Promise\.all\(\[productPromise, fetchEarnSubscriptions\(\), fetchWalletAccounts\(\)\]\)/)
   assert.match(earnSource, /await subscribeEarnProduct\(selected\.value\.id, amountNumber\.value\)/)
   assert.match(earnSource, /await redeemEarnSubscription\(subscription\.id\)/)
   assert.match(earnSource, /amountNumber\.value <= available\.value/)
@@ -66,9 +68,15 @@ test('预测页保留市场本地化、钱包、报价和订单确认链路', ()
   assert.match(predictionSource, /fetchWalletAccounts\(\), fetchPredictionOrders\(\)/)
   assert.match(predictionSource, /requestPredictionQuote\(\{ marketId: selected\.value\.id, outcome: outcome\.value, assetId: assetId\.value, stakeAmount: amountNumber\.value \}\)/)
   assert.match(predictionSource, /await confirmPredictionQuote\(quote\.value\.quoteId\)/)
+  assert.match(predictionSource, /orders\.value = \[createdOrder, \.\.\.orders\.value\.filter/)
+  assert.match(predictionSource, /prediction\.refreshAfterOrderFailed/)
   assert.match(predictionSource, /quote\.value\.expiresAt <= Date\.now\(\)/)
   assert.match(predictionSource, /localizePredictionMarketText\(value, locale\.value, kind\)/)
   assert.match(predictionApiSource, /orderNo: String\(order\.order_no \|\| ''\)/)
+  assert.match(predictionApiSource, /confirmPredictionQuote\(quoteId: string\): Promise<PredictionOrder>/)
+  assert.match(predictionApiSource, /result: optionalText\(order\.result\)/)
+  assert.match(predictionApiSource, /refundAmount: asNumber\(order\.refund_amount\)/)
+  assert.doesNotMatch(predictionApiSource, /response\.data\.outcome \|\| 'yes'/)
   assert.match(predictionSource, /prediction\.orderNumber/)
 })
 
@@ -111,16 +119,17 @@ test('资金弹层具备焦点闭环、Escape、滚动锁和主题化遮罩', ()
     assert.match(source, /document\.body\.style\.overflow = 'hidden'/)
     assert.match(source, /data-dialog-cancel/)
     assert.match(source, /background: var\(--overlay\)/)
-    assert.match(source, /:focus-within/)
+    assert.match(`${source}\n${selectedCss}`, /:focus-within/)
   }
 })
 
 test('七个视图遵守主题、Lucide、44px 和窄屏合同', () => {
   for (const source of sources) {
-    assert.match(source, /min-height: 44px/)
+    const contracts = `${source}\n${selectedCss}`
+    assert.match(contracts, /min-height:\s*(?:44|4[5-9]|[5-9]\d)px/)
     assert.match(source, /@media \(max-width: 340px\)/)
-    assert.match(source, /env\(safe-area-inset-bottom\)/)
-    assert.match(source, /var\(--surface\)/)
+    assert.match(contracts, /env\(safe-area-inset-bottom\)/)
+    assert.match(contracts, /var\(--(?:surface|page|ink)\)/)
     assert.doesNotMatch(source, /#[0-9a-f]{3,8}/i)
     assert.doesNotMatch(source, /(?:background|color):\s*white\b/i)
     assert.doesNotMatch(source, /rgba?\(/i)
@@ -130,7 +139,7 @@ test('七个视图遵守主题、Lucide、44px 和窄屏合同', () => {
   }
 
   for (const source of [swapSource, earnSource, predictionSource, newCoinDetailSource, newCoinRecordsSource]) {
-    assert.match(source, /:focus-within/)
+    assert.match(`${source}\n${selectedCss}`, /:focus-within/)
   }
 })
 

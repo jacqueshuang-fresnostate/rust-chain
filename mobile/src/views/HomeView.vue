@@ -4,14 +4,13 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   ArrowDownLeft,
+  ArrowRight,
   CandlestickChart,
   ChevronRight,
   CircleDollarSign,
   CreditCard,
   Eye,
   EyeOff,
-  Gauge,
-  Gift,
   Grid2X2,
   Landmark,
   Layers3,
@@ -20,13 +19,15 @@ import {
   Rocket,
   ScanQrCode,
   Search,
-  ShieldCheck,
+  Zap,
 } from 'lucide-vue-next'
 import AssetMark from '@/components/AssetMark.vue'
+import guestHeroDark from '@/assets/home/market-hero-dark.jpg'
+import guestHeroLight from '@/assets/home/market-hero-light.jpg'
 import { fetchNews } from '@/api/news'
 import { fetchMarginWallets } from '@/api/trading'
 import { fetchWalletAccounts } from '@/api/wallet'
-import { formatAmount, formatFiat, formatPercent, formatPrice } from '@/core/format'
+import { formatAmount, formatPercent, formatPrice } from '@/core/format'
 import { useMarketStore } from '@/stores/market'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
@@ -43,16 +44,16 @@ type TradeMode = 'spot' | 'contract'
 
 const activeTab = ref<HomeTab>('popular')
 const assetVisible = ref(true)
-const portfolioPeriod = ref(1)
 const announcements = ref<NewsItem[]>([])
 const announcementState = ref<'loading' | 'ready' | 'empty' | 'error'>('loading')
 const spotAccounts = ref<WalletAccount[]>([])
 const marginAccounts = ref<WalletAccount[]>([])
 const assetEstimateReady = ref(false)
+const portfolioSamples = ref<number[]>([])
 
 const tabs = computed(() => [
   { key: 'favorites' as const, label: t('home.favorites') },
-  { key: 'mainstream' as const, label: t('trade.spot') },
+  { key: 'mainstream' as const, label: t('home.mainstream') },
   { key: 'popular' as const, label: t('home.popular') },
   { key: 'gainers' as const, label: t('home.gainers') },
   { key: 'newCoins' as const, label: t('products.newCoins') },
@@ -99,17 +100,29 @@ const assetEstimateComplete = computed(() => [...spotAccounts.value, ...marginAc
     || Boolean(marketStore.tickerFor(`${account.symbol}/USDT`))
 }))
 
-const displayedAssetEstimate = computed(() => (
-  session.isAuthenticated && assetEstimateReady.value && assetEstimateComplete.value
-    ? formatFiat(totalAssetEstimate.value)
-    : '--'
-))
-
 const displayedAssetAmount = computed(() => (
   session.isAuthenticated && assetEstimateReady.value && assetEstimateComplete.value
     ? formatAmount(totalAssetEstimate.value)
     : '--'
 ))
+
+const portfolioGeometry = computed(() => {
+  const values = portfolioSamples.value
+  if (values.length < 2) return null
+  const width = 358
+  const height = 153
+  const minimum = Math.min(...values)
+  const maximum = Math.max(...values)
+  const range = maximum - minimum || Math.max(Math.abs(maximum) * .005, 1)
+  const points = values.map((value, index) => ({
+    x: (index / (values.length - 1)) * width,
+    y: 12 + ((maximum - value) / range) * (height - 24),
+  }))
+  return {
+    path: points.map((point, index) => `${index ? 'L' : 'M'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(' '),
+    latest: points.at(-1)!,
+  }
+})
 
 function openMarket(symbol: string): void {
   void router.push({ name: 'market-detail', params: { symbol: symbol.replace('/', '_') } })
@@ -141,6 +154,10 @@ async function loadAnnouncements(): Promise<void> {
 function openBriefNotice(): void {
   if (!briefNotice.value) return
   void router.push({ name: 'news-detail', params: { id: String(briefNotice.value.id) } })
+}
+
+function openLogin(): void {
+  void router.push({ name: 'login', query: { redirect: '/' } })
 }
 
 async function loadAssetEstimate(): Promise<void> {
@@ -178,6 +195,24 @@ onMounted(async () => {
 onUnmounted(() => marketStore.stopLiveUpdates())
 watch(locale, () => { void loadAnnouncements() })
 watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immediate: true })
+watch(
+  [
+    () => session.isAuthenticated,
+    assetEstimateReady,
+    assetEstimateComplete,
+    totalAssetEstimate,
+  ],
+  ([authenticated, ready, complete, value]) => {
+    if (!authenticated) {
+      portfolioSamples.value = []
+      return
+    }
+    if (!ready || !complete || !Number.isFinite(value)) return
+    if (portfolioSamples.value.at(-1) === value) return
+    portfolioSamples.value = [...portfolioSamples.value, value].slice(-32)
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -199,8 +234,34 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
           </button>
         </div>
       </div>
+    </section>
 
-      <div class="portfolio-overview">
+    <section v-if="!session.isAuthenticated" class="home-portfolio home-portfolio--guest">
+      <article class="home-guest-hero">
+        <img class="home-guest-hero__image home-guest-hero__image--light" :src="guestHeroLight" alt="">
+        <img class="home-guest-hero__image home-guest-hero__image--dark" :src="guestHeroDark" alt="">
+        <span class="home-guest-hero__overlay" aria-hidden="true" />
+        <span class="home-guest-hero__bloom" aria-hidden="true" />
+        <div class="home-guest-hero__copy">
+          <h1>
+            <span>{{ t('home.guestHeroLine1') }}</span>
+            <span>{{ t('home.guestHeroLine2') }}</span>
+          </h1>
+          <p>{{ t('home.guestHeroDescription') }}</p>
+        </div>
+        <button class="home-guest-hero__login" type="button" @click="openLogin">
+          {{ t('home.guestHeroLogin') }}
+          <ArrowRight :size="18" aria-hidden="true" />
+        </button>
+      </article>
+    </section>
+
+    <section
+      v-else
+      class="portfolio-overview home-portfolio home-portfolio--member"
+      data-portfolio-source="live-wallet-estimate"
+      :aria-busy="!assetEstimateReady"
+    >
         <div class="portfolio-heading">
           <div>
             <div class="balance-label">
@@ -220,41 +281,49 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
               {{ assetVisible ? displayedAssetAmount : '••••••' }}
               <small> USDT</small>
             </strong>
-            <span class="portfolio-fiat numeric">
-              {{ assetVisible ? displayedAssetEstimate : '••••••' }}
-            </span>
           </div>
           <div class="portfolio-change">
             <span>{{ t('rootPrototype.todayReturn') }}</span>
-            <strong class="positive numeric">--</strong>
-            <small class="positive numeric">--</small>
+            <strong class="numeric">--</strong>
+            <small class="numeric">--</small>
           </div>
         </div>
-        <div class="portfolio-chart" :aria-label="t('home.assetOverview')">
-          <svg viewBox="0 0 360 84" preserveAspectRatio="none" aria-hidden="true">
+        <div
+          class="portfolio-chart"
+          :class="{ 'has-live-history': portfolioGeometry }"
+          :aria-label="t('home.assetOverview')"
+        >
+          <svg viewBox="0 0 358 153" preserveAspectRatio="none" aria-hidden="true">
             <path
-              d="M0 67 C28 62 39 70 62 57 S103 50 122 48 S157 62 178 43 S216 45 235 32 S270 40 294 23 S331 26 360 9"
+              v-if="portfolioGeometry"
+              :d="portfolioGeometry.path"
               fill="none"
-              stroke="var(--green)"
+              stroke="var(--signal-green)"
+              stroke-width="2"
+              vector-effect="non-scaling-stroke"
+            />
+            <circle
+              v-if="portfolioGeometry"
+              :cx="portfolioGeometry.latest.x"
+              :cy="portfolioGeometry.latest.y"
+              r="5"
+              fill="var(--surface)"
+              stroke="var(--signal-green)"
               stroke-width="2"
               vector-effect="non-scaling-stroke"
             />
           </svg>
-          <span class="chart-current-dot" aria-hidden="true" />
         </div>
-        <div class="portfolio-periods" role="group" :aria-label="t('home.assetOverview')">
-          <button
+        <div class="portfolio-periods" role="list" :aria-label="t('home.assetOverview')">
+          <span
             v-for="period in portfolioPeriods"
             :key="period.days"
-            type="button"
-            :class="{ active: portfolioPeriod === period.days }"
-            :aria-pressed="portfolioPeriod === period.days"
-            @click="portfolioPeriod = period.days"
+            role="listitem"
+            :class="{ active: period.days === 1 }"
           >
             {{ period.label }}
-          </button>
+          </span>
         </div>
-      </div>
     </section>
 
     <section class="funding-actions" :aria-label="t('assets.operations')">
@@ -276,7 +345,7 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
         <button type="button" @click="router.push({ name: 'earn' })"><span><Landmark :size="20" /></span><small>{{ t('products.earn') }}</small></button>
         <button type="button" @click="router.push({ name: 'loan' })"><span><CircleDollarSign :size="20" /></span><small>{{ t('products.loan') }}</small></button>
         <button type="button" @click="router.push({ name: 'new-coins' })"><span><Rocket :size="20" /></span><small>{{ t('home.newCoinsShortcut') }}</small></button>
-        <button type="button" @click="router.push({ name: 'prediction' })"><span><Gauge :size="20" /></span><small>{{ t('home.predictionShortcut') }}</small></button>
+        <button type="button" data-home-shortcut="seconds" @click="router.push({ name: 'seconds' })"><span><Zap :size="19" /></span><small>{{ t('home.secondsShortcut') }}</small></button>
         <button type="button" @click="router.push({ name: 'products' })"><span><Grid2X2 :size="20" /></span><small>{{ t('common.more') }}</small></button>
       </div>
     </section>
@@ -329,7 +398,7 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
         :aria-label="marketRowsUnavailable ? t(marketStore.error ? 'common.marketLoadFailed' : 'common.loading') : undefined"
       >
         <template v-if="marketRowsUnavailable">
-          <div v-for="row in 5" :key="`home-market-skeleton-${row}`" class="home-market-skeleton-row" aria-hidden="true">
+          <div v-for="row in 3" :key="`home-market-skeleton-${row}`" class="home-market-skeleton-row" aria-hidden="true">
             <span class="home-market-name">
               <span class="coin-orbit root-skeleton" />
               <span>
@@ -351,7 +420,7 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
 
         <template v-else>
           <button
-            v-for="ticker in visibleTickers.slice(0, 5)"
+            v-for="ticker in visibleTickers.slice(0, 3)"
             :key="ticker.symbol"
             type="button"
             @click="openMarket(ticker.symbol)"
@@ -383,18 +452,6 @@ watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immed
       </div>
     </section>
 
-    <section class="home-benefits">
-      <button type="button" @click="router.push({ name: 'kyc' })">
-        <span><Gift :size="19" aria-hidden="true" /></span>
-        <div><strong>{{ t('rootPrototype.newUserTasks') }}</strong><small>{{ t('rootPrototype.newUserTasksDescription') }}</small></div>
-        <ChevronRight :size="16" aria-hidden="true" />
-      </button>
-      <button type="button" @click="router.push({ name: 'security' })">
-        <span><ShieldCheck :size="19" aria-hidden="true" /></span>
-        <div><strong>{{ t('profile.security') }}</strong><small>{{ t('profile.improveSecurity') }}</small></div>
-        <ChevronRight :size="16" aria-hidden="true" />
-      </button>
-    </section>
   </main>
 </template>
 

@@ -2,7 +2,6 @@
 import { computed, onMounted, ref } from 'vue'
 import { LoaderCircle, RefreshCw } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
-import AssetMark from '@/components/AssetMark.vue'
 import LoginRequiredState from '@/components/LoginRequiredState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
@@ -81,21 +80,30 @@ onMounted(() => { void load() })
 </script>
 
 <template>
-  <main class="page page--plain">
+  <main
+    class="page page--plain pencil-page wallet-pencil-page wallet-ledger-pencil"
+    data-pencil-source="y6Y7TW m25xr0"
+  >
     <PageHeader
       :back="true"
       :eyebrow="t('assets.title')"
+      :fallback="{ name: 'assets' }"
+      :pencil="true"
       :subtitle="t('ledger.loginDescription')"
-      :title="t('ledger.title')"
+      :title="t('assets.fundLedger')"
     >
       <template #actions>
         <button class="icon-button" type="button" :aria-label="t('ledger.refresh')" :disabled="loading" @click="load()">
-          <RefreshCw :size="21" :class="{ spin: loading }" aria-hidden="true" />
+          <RefreshCw :size="18" :class="{ spin: loading }" aria-hidden="true" />
         </button>
       </template>
     </PageHeader>
     <div class="page-content ledger-page">
-      <LoginRequiredState v-if="!session.isAuthenticated" :description="t('ledger.loginDescription')" />
+      <LoginRequiredState
+        v-if="!session.isAuthenticated"
+        class="wallet-login-prompt"
+        :description="t('ledger.loginDescription')"
+      />
       <template v-else>
         <nav class="ledger-filter" :aria-label="t('ledger.filterLabel')">
           <button
@@ -110,17 +118,16 @@ onMounted(() => { void load() })
             {{ filterLabel(filter.key) }}
           </button>
         </nav>
-        <p v-if="error" class="error-message" role="alert">{{ error }}</p>
+        <p v-if="error" class="error-message wallet-feedback" role="alert">{{ error }}</p>
         <div v-if="loading" class="ledger-loading" role="status">
           <LoaderCircle :size="23" class="spin" aria-hidden="true" />
           <span>{{ t('ledger.loading') }}</span>
         </div>
         <div v-else-if="sortedEntries.length" class="ledger-list" role="list">
           <article v-for="entry in sortedEntries" :key="entry.id" class="ledger-row" role="listitem">
-            <AssetMark :symbol="entry.symbol" :size="38" />
             <div class="ledger-row__title">
               <strong>{{ entryLabel(entry.changeType) }}</strong>
-              <small>{{ formatDateTime(entry.createdAt) }}</small>
+              <small>{{ entry.symbol }} · {{ formatDateTime(entry.createdAt) }}</small>
             </div>
             <div class="ledger-row__amount">
               <strong class="numeric" :class="isPositive(entry) ? 'up' : 'down'">{{ isPositive(entry) ? '+' : '' }}{{ formatAmount(entry.amount) }} {{ entry.symbol }}</strong>
@@ -136,39 +143,53 @@ onMounted(() => { void load() })
 </template>
 
 <style scoped>
+.wallet-pencil-page {
+  background: var(--page);
+}
+
 .ledger-page {
-  padding-bottom: calc(36px + env(safe-area-inset-bottom));
-  padding-top: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 6px 20px calc(20px + env(safe-area-inset-bottom));
 }
 
 .ledger-filter {
-  background: var(--soft);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  display: grid;
-  gap: 3px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  padding: 3px;
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-height: 44px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.ledger-filter::-webkit-scrollbar {
+  display: none;
 }
 
 .ledger-filter button {
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: calc(var(--radius) - 3px);
+  border: 0;
+  border-radius: var(--wallet-pill-radius, 999px);
   color: var(--muted);
+  flex: 0 0 auto;
   font-size: 12px;
-  font-weight: 680;
-  min-height: 44px;
-  min-width: 0;
-  padding: 0 4px;
+  font-weight: 500;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 12px;
+  position: relative;
+}
+
+.ledger-filter button::before {
+  content: '';
+  inset: -8px 0;
+  position: absolute;
 }
 
 .ledger-filter .is-active {
-  background: var(--surface-elevated);
-  border-color: var(--line-strong);
-  box-shadow: var(--shadow-soft);
-  color: var(--ink);
-  font-weight: 760;
+  background: var(--accent-soft);
+  color: var(--positive);
+  font-weight: 400;
 }
 
 .ledger-loading {
@@ -182,31 +203,30 @@ onMounted(() => { void load() })
 }
 
 .ledger-list {
-  border-top: 1px solid var(--line);
   display: grid;
-  margin-top: 14px;
 }
 
 .ledger-row {
   align-items: center;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--hairline);
   display: grid;
-  gap: 11px;
-  grid-template-columns: 38px minmax(0, 1fr) minmax(96px, auto);
-  min-height: 78px;
-  padding: 8px 0;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, auto);
+  height: 56px;
+  min-height: 56px;
+  padding: 0;
 }
 
 .ledger-row__title,
 .ledger-row__amount {
   display: grid;
-  gap: 5px;
+  gap: 3px;
   min-width: 0;
 }
 
 .ledger-row strong {
   font-size: 13px;
-  line-height: 1.35;
+  line-height: 18px;
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -220,12 +240,63 @@ onMounted(() => { void load() })
 .ledger-row small {
   color: var(--muted);
   font-size: 11px;
-  line-height: 1.35;
+  line-height: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ledger-row__amount {
   max-width: 168px;
   text-align: right;
+}
+
+.ledger-page > .button {
+  border-radius: var(--wallet-pill-radius, 999px);
+  min-height: 44px;
+}
+
+.wallet-feedback {
+  margin: 0;
+}
+
+.wallet-login-prompt {
+  background: transparent;
+  background-image: none;
+  border: 0;
+  border-top: 1px solid var(--hairline);
+  gap: 10px;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  min-height: 72px;
+  padding: 10px 0;
+}
+
+.wallet-login-prompt :deep(.login-required__icon) {
+  background: var(--accent-soft);
+  border: 0;
+  color: var(--positive);
+  height: 34px;
+  width: 34px;
+}
+
+.wallet-login-prompt :deep(.login-required__copy) {
+  gap: 2px;
+}
+
+.wallet-login-prompt :deep(.login-required__copy strong) {
+  font-size: 13px;
+}
+
+.wallet-login-prompt :deep(.login-required__copy p) {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.wallet-login-prompt :deep(.button) {
+  border-radius: var(--wallet-pill-radius, 999px);
+  min-height: 44px;
+  padding-inline: 14px;
 }
 
 .spin {
@@ -249,11 +320,27 @@ onMounted(() => { void load() })
 
   .ledger-row {
     gap: 8px;
-    grid-template-columns: 34px minmax(0, 1fr) minmax(84px, auto);
+    grid-template-columns: minmax(0, 1fr) minmax(84px, auto);
   }
 
   .ledger-row__amount {
     max-width: 128px;
+  }
+
+  .wallet-login-prompt {
+    align-items: center;
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .wallet-login-prompt :deep(.button) {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
   }
 }
 </style>

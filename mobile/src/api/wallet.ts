@@ -5,7 +5,6 @@ import type { DepositAddress, DepositAsset, DepositNetwork, WalletAccount } from
 export interface WithdrawalAsset extends DepositAsset {
   withdrawEnabled: boolean
   withdrawFee: number
-  name?: string
 }
 
 export interface WalletLedgerEntry {
@@ -102,6 +101,7 @@ export async function fetchDepositAssets(): Promise<DepositAsset[]> {
   return (response.data.assets || [])
     .map((asset) => ({
       symbol: asset.symbol.toUpperCase(),
+      name: asset.name?.trim() || undefined,
       logoUrl: asset.logo_url?.trim() || undefined,
       depositEnabled: asset.deposit_enabled !== false,
       minDepositAmount: asNumber(asset.min_deposit_amount),
@@ -131,7 +131,6 @@ export async function fetchDepositNetworks(assetSymbol: string, minimum = 0): Pr
   return (response.data.networks || []).map((network) => ({
     network: network.network,
     displayName: network.display_name?.trim() || network.network,
-    estimatedMinutes: networkMinutes(network.network),
     minDepositAmount: minimum,
   }))
 }
@@ -231,8 +230,8 @@ export async function fetchQuickRechargeConfig(): Promise<QuickRechargeConfig> {
   const response = await client.get<{ enabled?: boolean; currency?: string; token?: string; network?: string; min_amount?: string | number; max_amount?: string | number | null }>(requestUrl('/wallet/quick-recharge/config'))
   return {
     enabled: Boolean(response.data.enabled),
-    currency: String(response.data.currency || 'USD').toUpperCase(),
-    token: String(response.data.token || 'USDT').toUpperCase(),
+    currency: String(response.data.currency || '').toUpperCase(),
+    token: String(response.data.token || '').toUpperCase(),
     network: String(response.data.network || ''),
     minAmount: asNumber(response.data.min_amount),
     maxAmount: response.data.max_amount === null || response.data.max_amount === undefined ? undefined : asNumber(response.data.max_amount),
@@ -274,13 +273,6 @@ export async function transferWalletFunds(assetSymbol: string, from: 'spot' | 'm
     to,
     amount: String(amount),
   })
-}
-
-function networkMinutes(network: string): number {
-  const normalized = network.toLowerCase()
-  if (normalized.includes('ethereum') || normalized.includes('erc20')) return 7
-  if (normalized.includes('arbitrum')) return 19
-  return 1
 }
 
 function mapQuickRechargeOrder(order: BackendQuickRechargeOrder): QuickRechargeOrder {

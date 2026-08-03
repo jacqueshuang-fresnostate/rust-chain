@@ -1,18 +1,60 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
-import { ArrowUpRight, CircleAlert, LoaderCircle, Newspaper, RefreshCw } from 'lucide-vue-next'
+import { useRoute, useRouter } from 'vue-router'
+import { CircleAlert, LoaderCircle, Newspaper, Search, X } from 'lucide-vue-next'
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
 import { fetchNews, type NewsItem } from '@/api/news'
 import { formatDateTime } from '@/core/format'
 
+type NewsCategory = 'all' | 'market' | 'product' | 'research'
+
+const NEWS_CATEGORIES: readonly NewsCategory[] = ['all', 'market', 'product', 'research']
+
+function normalizeNewsCategory(value: unknown): NewsCategory {
+  return typeof value === 'string' && NEWS_CATEGORIES.includes(value as NewsCategory)
+    ? value as NewsCategory
+    : 'all'
+}
+
+const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 const rows = ref<NewsItem[]>([])
 const loading = ref(false)
 const error = ref('')
+const activeCategory = ref<NewsCategory>(normalizeNewsCategory(route.query.category))
+const query = ref('')
+const searchOpen = ref(false)
+const categories = computed<Array<{ value: NewsCategory; label: string }>>(() => [
+  { value: 'all', label: t('news.all') },
+  { value: 'market', label: t('news.market') },
+  { value: 'product', label: t('news.product') },
+  { value: 'research', label: t('news.research') },
+])
+const categoryMarkers = computed<Record<string, string[]>>(() => ({
+  market: ['market', t('news.market'), t('nav.markets')],
+  product: ['product', t('news.product')],
+  research: ['research', t('news.research')],
+}))
+
+function matchesCategory(category: string | undefined, selected: NewsCategory): boolean {
+  if (selected === 'all') return true
+  const normalized = category?.trim().toLocaleLowerCase() || ''
+  return Boolean(normalized && categoryMarkers.value[selected]
+    ?.some((marker) => normalized.includes(marker.toLocaleLowerCase())))
+}
+
+const visibleRows = computed(() => {
+  const needle = query.value.trim().toLocaleLowerCase()
+  return rows.value.filter((item) => (
+    matchesCategory(item.category, activeCategory.value)
+    && (!needle || item.title.toLocaleLowerCase().includes(needle))
+  ))
+})
+const featured = computed(() => visibleRows.value[0])
+const listRows = computed(() => visibleRows.value.slice(1))
 
 async function load(): Promise<void> {
   loading.value = true
@@ -20,261 +62,320 @@ async function load(): Promise<void> {
   try { rows.value = await fetchNews(50) } catch (reason) { error.value = apiErrorMessage(reason, t('news.loadFailed')) } finally { loading.value = false }
 }
 
+watch(
+  () => route.query.category,
+  (category) => { activeCategory.value = normalizeNewsCategory(category) },
+)
+
 onMounted(() => { void load() })
 </script>
 
 <template>
-  <main class="page page--plain news-page">
-    <PageHeader
-      :back="true"
-      :eyebrow="t('messageCenter.categoryAnnouncement')"
-      :subtitle="t('messageCenter.categoryPlatform')"
-      :title="t('news.title')"
-    >
+  <main class="page page--plain pencil-page news-pencil" data-pencil-source="VGPW0 b6EGF">
+    <PageHeader class="news-pencil__header" :back="false" :pencil="true" :title="t('news.title')">
       <template #actions>
-        <button
-          class="icon-button"
-          type="button"
-          :aria-label="t('news.refresh')"
-          :disabled="loading"
-          @click="load"
-        >
-          <RefreshCw :size="20" :class="{ spin: loading }" />
+        <button class="icon-button" type="button" :aria-label="t('news.search')" :aria-pressed="searchOpen" @click="searchOpen = !searchOpen">
+          <X v-if="searchOpen" :size="20" /><Search v-else :size="20" />
         </button>
       </template>
     </PageHeader>
 
-    <div class="page-content news-page__content" :aria-busy="loading">
-      <section v-if="!loading && !error && rows.length" class="news-summary">
-        <span class="news-summary__icon"><Newspaper :size="20" /></span>
-        <span>{{ t('common.liveData') }}</span>
-        <strong class="numeric">{{ rows.length }}</strong>
-      </section>
+    <div class="pencil-content news-pencil__content" :aria-busy="loading">
+      <label v-if="searchOpen" class="news-search">
+        <Search :size="17" />
+        <input v-model="query" type="search" :placeholder="t('news.searchPlaceholder')" autofocus />
+      </label>
 
-      <div v-if="loading" class="news-state" role="status">
-        <LoaderCircle :size="22" class="spin" />
-        <span>{{ t('news.loading') }}</span>
-      </div>
-
-      <div v-else-if="error" class="news-state news-state--error" role="alert">
-        <CircleAlert :size="22" />
-        <span>{{ error }}</span>
-        <button class="button button--secondary" type="button" @click="load">
-          {{ t('common.retry') }}
-        </button>
-      </div>
-
-      <div v-else-if="rows.length" class="news-list">
+      <nav class="pencil-segmented news-categories" :aria-label="t('news.categories')">
         <button
-          v-for="notice in rows"
-          :key="notice.id"
+          v-for="category in categories.slice(0, 4)"
+          :key="category.value"
           type="button"
-          :aria-label="notice.title"
-          @click="router.push({ name: 'news-detail', params: { id: notice.id } })"
+          :aria-pressed="activeCategory === category.value"
+          @click="activeCategory = category.value"
         >
-          <span class="news-list__signal"><Newspaper :size="18" /></span>
-          <span class="news-list__copy">
-            <strong>{{ notice.title }}</strong>
-            <small>
-              <span>{{ t('news.title') }}</span>
-              <time v-if="notice.publishedAt">{{ formatDateTime(notice.publishedAt) }}</time>
-            </small>
-          </span>
-          <ArrowUpRight :size="18" />
+          {{ category.label }}
         </button>
+      </nav>
+
+      <div v-if="loading" class="pencil-state" role="status">
+        <LoaderCircle :size="22" class="spin" /><span>{{ t('news.loading') }}</span>
+      </div>
+      <div v-else-if="error" class="pencil-state news-state--error" role="alert">
+        <CircleAlert :size="22" /><span>{{ error }}</span>
+        <button class="pencil-secondary" type="button" @click="load">{{ t('common.retry') }}</button>
       </div>
 
-      <div v-else class="news-state">
-        <Newspaper :size="23" />
-        <span>{{ t('news.empty') }}</span>
+      <template v-else-if="featured">
+        <button
+          class="news-feature"
+          type="button"
+          :aria-label="featured.title"
+          @click="router.push({ name: 'news-detail', params: { id: featured.id } })"
+        >
+          <span
+            class="news-feature__visual"
+            :class="{ 'news-feature__visual--empty': !featured.bannerUrl }"
+            :style="featured.bannerUrl ? { backgroundImage: `url(${featured.bannerUrl})` } : undefined"
+          />
+          <span class="news-feature__meta">
+            <span>{{ featured.category || t('news.title') }}</span>
+            <template v-if="featured.publishedAt">
+              <i aria-hidden="true">·</i>
+              <time>{{ formatDateTime(featured.publishedAt) }}</time>
+            </template>
+          </span>
+          <strong>{{ featured.title }}</strong>
+        </button>
+
+        <div v-if="listRows.length" class="news-list-pencil">
+          <button
+            v-for="notice in listRows"
+            :key="notice.id"
+            type="button"
+            :aria-label="notice.title"
+            @click="router.push({ name: 'news-detail', params: { id: notice.id } })"
+          >
+            <span
+              class="news-list-pencil__visual"
+              :style="notice.bannerUrl ? { backgroundImage: `url(${notice.bannerUrl})` } : undefined"
+            />
+            <span class="news-list-pencil__copy">
+              <small>{{ notice.category || t('news.title') }}</small>
+              <strong>{{ notice.title }}</strong>
+              <time v-if="notice.publishedAt">{{ formatDateTime(notice.publishedAt) }}</time>
+            </span>
+          </button>
+        </div>
+      </template>
+
+      <div v-else class="pencil-state">
+        <Newspaper :size="23" /><span>{{ query ? t('news.noSearchResults') : t('news.empty') }}</span>
       </div>
     </div>
   </main>
 </template>
 
 <style scoped>
-.news-page {
-  background: var(--surface);
+.news-pencil {
+  background: var(--page);
+  color: var(--ink);
 }
 
-.news-page__content {
-  min-width: 0;
-  padding-bottom: calc(28px + env(safe-area-inset-bottom));
+.news-pencil :deep(.news-pencil__header.pencil-page-header) {
+  --pencil-root-header-margin: 8px;
 }
 
-.news-summary {
+.news-pencil__content {
+  padding-top: 8px;
+}
+
+.news-search {
   align-items: center;
-  background:
-    linear-gradient(100deg, color-mix(in srgb, var(--accent) 13%, transparent), transparent 64%),
-    var(--surface-elevated);
-  border-bottom: 1px solid var(--line);
-  border-top: 3px solid var(--accent);
-  color: var(--muted-strong);
-  display: grid;
-  font-size: 11px;
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: 12px;
+  display: flex;
   gap: 9px;
-  grid-template-columns: 36px 1fr auto;
-  margin: 0 -20px;
-  min-height: 62px;
-  padding: 8px 20px;
+  margin: 0 0 8px;
+  min-height: 44px;
+  padding: 0 12px;
 }
 
-.news-summary__icon {
-  align-items: center;
-  background: var(--accent-soft);
-  color: var(--accent);
-  display: inline-flex;
-  height: 36px;
-  justify-content: center;
-  width: 36px;
+.news-search:focus-within {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
-.news-summary strong {
-  color: var(--ink);
-  font-size: 20px;
-}
-
-.news-list {
-  display: grid;
-  min-width: 0;
-}
-
-.news-list button {
-  align-items: center;
+.news-search input {
   background: transparent;
-  border-bottom: 1px solid var(--line);
+  border: 0;
+  color: var(--ink);
+  min-height: 42px;
+  min-width: 0;
+  outline: 0;
+  width: 100%;
+}
+
+.news-search input:focus-visible {
+  outline: 0;
+}
+
+.news-categories {
+  gap: 21px;
+}
+
+.news-categories button[aria-pressed='true'] {
+  font-weight: 650;
+}
+
+.news-feature {
+  background: transparent;
+  box-sizing: border-box;
   color: var(--ink);
   display: grid;
-  gap: 11px;
-  grid-template-columns: 38px minmax(0, 1fr) 24px;
-  min-height: 82px;
-  min-width: 0;
-  padding: 11px 0;
+  gap: 10px;
+  grid-template-rows: 140px auto minmax(0, 1fr);
+  height: 243px;
+  margin-top: 8px;
+  padding: 8px 0;
   text-align: left;
   width: 100%;
 }
 
-.news-list button:hover,
-.news-list button:focus-visible {
-  background: color-mix(in srgb, var(--soft) 72%, transparent);
-}
-
-.news-list__signal {
-  align-items: center;
-  background: var(--soft);
-  border: 1px solid var(--line);
-  color: var(--accent);
-  display: inline-flex;
-  height: 38px;
-  justify-content: center;
-  width: 38px;
-}
-
-.news-list__copy {
-  display: grid;
-  gap: 7px;
-  min-width: 0;
-}
-
-.news-list strong {
-  display: -webkit-box;
-  font-size: 14px;
-  line-height: 1.45;
+.news-feature__visual {
+  background-position: center;
+  background-size: cover;
+  border-radius: 12px;
+  display: block;
+  height: 140px;
   overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  width: 100%;
 }
 
-.news-list small {
+.news-feature__visual--empty {
+  background: linear-gradient(
+    45deg,
+    var(--accent),
+    color-mix(in srgb, var(--accent) 42%, var(--on-accent)) 55%,
+    var(--on-accent)
+  );
+}
+
+.news-feature__meta {
   align-items: center;
   color: var(--muted);
   display: flex;
   font-size: 10px;
-  gap: 7px;
+  font-weight: 500;
+  gap: 6px;
+  line-height: 13px;
   min-width: 0;
 }
 
-.news-list small span {
-  color: var(--accent);
-  font-weight: 750;
+.news-feature__meta i {
+  font-style: normal;
 }
 
-.news-list time {
-  font-variant-numeric: tabular-nums;
+.news-feature__meta time {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.news-list button > svg {
-  color: var(--muted);
-  justify-self: end;
+.news-feature > strong {
+  display: -webkit-box;
+  font-size: 18px;
+  font-weight: 750;
+  letter-spacing: 0;
+  line-height: 1.25;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
-.news-state {
+.news-list-pencil {
+  display: grid;
+  margin-top: 8px;
+  padding-top: 4px;
+}
+
+.news-list-pencil > button {
   align-items: center;
-  color: var(--muted);
+  background: transparent;
+  border: 0;
+  box-sizing: border-box;
+  color: var(--ink);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 64px minmax(0, 1fr);
+  height: 88px;
+  min-height: 88px;
+  padding: 12px 0;
+  text-align: left;
+  width: 100%;
+}
+
+.news-feature:focus-visible,
+.news-list-pencil > button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.news-list-pencil__visual {
+  align-items: center;
+  background-color: var(--surface-2);
+  background-position: center;
+  background-size: cover;
+  border-radius: 10px;
+  color: var(--positive);
   display: flex;
-  flex-direction: column;
-  font-size: 13px;
-  gap: 10px;
+  height: 64px;
   justify-content: center;
-  min-height: 280px;
-  padding: 32px 16px;
-  text-align: center;
+  width: 64px;
+}
+
+.news-list-pencil__copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.news-list-pencil__copy small {
+  color: var(--positive);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 13px;
+}
+
+.news-list-pencil__copy strong {
+  display: -webkit-box;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 16px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.news-list-pencil__copy time {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 450;
+  line-height: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.news-pencil__content > .pencil-state {
+  margin-top: 8px;
+  min-height: 243px;
 }
 
 .news-state--error {
-  background: var(--negative-soft);
-  border: 1px solid color-mix(in srgb, var(--negative) 28%, var(--line));
   color: var(--negative);
-  margin-top: 16px;
-  min-height: 220px;
-}
-
-.news-state .button {
-  min-height: 44px;
-  min-width: 132px;
 }
 
 .spin {
-  animation: spin .8s linear infinite;
+  animation: news-spin .8s linear infinite;
 }
 
-@keyframes spin {
+@keyframes news-spin {
   to { transform: rotate(360deg); }
 }
 
-@media (max-width: 360px) {
-  .news-summary {
-    margin-left: -16px;
-    margin-right: -16px;
-    padding-left: 16px;
-    padding-right: 16px;
-  }
-}
-
 @media (max-width: 340px) {
-  .news-page__content {
-    padding-left: 14px;
-    padding-right: 14px;
+  .news-list-pencil > button {
+    gap: 10px;
+    grid-template-columns: 58px minmax(0, 1fr);
   }
 
-  .news-summary {
-    margin-left: -14px;
-    margin-right: -14px;
-    padding-left: 14px;
-    padding-right: 14px;
-  }
-
-  .news-list button {
-    gap: 8px;
-    grid-template-columns: 34px minmax(0, 1fr) 20px;
-  }
-
-  .news-list__signal {
-    height: 34px;
-    width: 34px;
+  .news-list-pencil__visual {
+    height: 58px;
+    width: 58px;
   }
 }
 

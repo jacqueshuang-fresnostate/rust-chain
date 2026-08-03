@@ -1,0 +1,3 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Provides the mobile build and Android target validation commands."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Defines the Tauri mobile shell and device-runtime contracts relevant to the preview."}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Defines the seven-item navigation, route behavior, and accessibility contracts that must survive the visual restoration."}

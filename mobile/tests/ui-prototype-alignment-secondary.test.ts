@@ -40,39 +40,85 @@ const sources = Object.fromEntries(viewNames.map((name) => [
 ])) as Record<(typeof viewNames)[number], string>
 const prototypeCss = readFileSync(new URL('../src/styles/prototype-base.css', import.meta.url), 'utf8')
 const prototypeManagedContent = new Set(['LoanView', 'MessageCenterView', 'SecurityView'])
+const selectedCss = readFileSync(new URL('../src/styles/pencil-selected-pages.css', import.meta.url), 'utf8')
+const pencilSelectedViews = new Set([
+  'EarnView',
+  'LoanView',
+  'LoginView',
+  'NewCoinDetailView',
+  'NewCoinsView',
+  'NewsDetailView',
+  'NewsView',
+  'RegisterView',
+  'SwapView',
+])
 
 test('二级页面使用场景 Header 或完整认证身份区', () => {
   for (const name of viewNames) {
     const source = sources[name]
     if (name === 'LoginView') {
-      assert.match(source, /class="login-panel__logo"/)
-      assert.match(source, /class="auth-progress"/)
+      assert.match(source, /class="auth-brand-row"/)
+      assert.match(source, /data-pencil-source="u99Fpg WNbsc"/)
       continue
     }
     if (name === 'RegisterView') {
-      assert.match(source, /class="register-form__intro"/)
-      assert.match(source, /auth\.stepProgress/)
+      assert.match(source, /class="auth-brand-row"/)
+      assert.match(source, /data-pencil-source="MCuqb RGYGj"/)
+      continue
+    }
+    if (name === 'NewsView') {
+      assert.match(source, /<PageHeader[\s\S]*?:back="false"/)
+      assert.match(source, /<PageHeader[\s\S]*?:pencil="true"/)
+      continue
+    }
+    if (name === 'MessageCenterView') {
+      assert.match(source, /<header class="message-root-header">/)
+      assert.doesNotMatch(source, /<PageHeader/)
       continue
     }
     assert.match(source, /<PageHeader[\s\S]*?:back="true"/, `${name} missing explicit secondary back action`)
-    assert.match(source, /<PageHeader[\s\S]*?:eyebrow=/, `${name} missing header eyebrow`)
-    assert.match(source, /<PageHeader[\s\S]*?:subtitle=/, `${name} missing header subtitle`)
+    if (source.includes(':pencil="true"')) {
+      assert.match(source, /<PageHeader[\s\S]*?:pencil="true"/, `${name} missing Pencil header mode`)
+    } else {
+      assert.match(source, /<PageHeader[\s\S]*?:eyebrow=/, `${name} missing header eyebrow`)
+      assert.match(source, /<PageHeader[\s\S]*?:subtitle=/, `${name} missing header subtitle`)
+    }
   }
 })
 
 test('重点业务页保留各自的信息层级和完整状态表面', () => {
-  assert.match(sources.MessageCenterView, /class="inbox-summary"/)
-  assert.match(sources.MessageCenterView, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/)
-  assert.match(sources.MessageCenterView, /\.message-filter-bar\s*\{[\s\S]*?grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/)
+  assert.match(sources.MessageCenterView, /data-pencil-source="FkZ6j bRz9K"/)
+  assert.match(sources.MessageCenterView, /class="message-root-header"/)
+  assert.match(sources.MessageCenterView, /class="message-list"/)
+  assert.match(sources.MessageCenterView, /\.message-filter-bar\s*\{[\s\S]*?display: flex;[\s\S]*?height: 38px;/)
+  assert.equal((sources.MessageCenterView.match(/\{ value: '(?:all|account|funds|trade)'/g) || []).length, 4)
+  assert.doesNotMatch(sources.MessageCenterView, /inbox-summary|grid-template-columns: repeat\(5/)
   assert.match(sources.MessageCenterView, /message-row--unread/)
 
-  assert.match(sources.LoanView, /\.loan-list \{\s*display: grid;[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/)
-  assert.match(sources.LoanView, /@media \(max-width: 340px\) \{[\s\S]*\.loan-list \{\s*grid-template-columns: 1fr;/)
+  assert.match(sources.LoanView, /class="loan-hero-pencil"/)
+  assert.match(sources.LoanView, /class="loan-product-pencil"/)
+  assert.match(sources.LoanView, /class="loan-application-pencil"/)
   assert.match(sources.LoanView, /:class="\{ 'is-invalid': amountInvalid \}"/)
   assert.match(sources.LoanView, /:disabled="submitting \|\| \(session\.isAuthenticated && !canApply\)"/)
 
-  assert.match(sources.SecurityView, /class="protection-overview"/)
-  assert.match(sources.SecurityView, /class="security-checklist"/)
+  assert.match(
+    sources.SecurityView,
+    /class="security-hero"[\s\S]*?:data-protection-score="securityReady \? protectionPercent : '--'"/,
+  )
+  assert.match(sources.SecurityView, /class="security-methods"/)
+  assert.match(sources.SecurityView, /class="security-method__state is-positive"/)
+  assert.match(
+    sources.SecurityView,
+    /\.security-hero,\s*\.compact-state,\s*\.account-login-state\s*\{[\s\S]*?grid-template-columns: 44px minmax\(0, 1fr\);/,
+  )
+  assert.match(
+    sources.SecurityView,
+    /\.security-methods\s*\{[\s\S]*?display: flex;[\s\S]*?flex-direction: column;[\s\S]*?gap: 12px;/,
+  )
+  assert.match(
+    sources.SecurityView,
+    /\.security-method\s*\{[\s\S]*?height: 52px;[\s\S]*?min-height: 52px;/,
+  )
   assert.match(sources.SecurityView, /canUpdateLoginPassword/)
   assert.match(sources.SecurityView, /canUpdateFundPassword/)
 
@@ -105,29 +151,31 @@ test('组合输入把焦点、错误和禁用反馈放在完整字段容器', ()
     'WithdrawAssetView',
     'WithdrawView',
   ] as const) {
-    assert.match(sources[name], /:focus-within/, `${name} missing container focus`)
+    const contracts = pencilSelectedViews.has(name) ? `${sources[name]}\n${selectedCss}` : sources[name]
+    assert.match(contracts, /:focus-within/, `${name} missing container focus`)
   }
   assert.match(sources.KycView, /\.kyc-field:focus-within/)
-  assert.match(sources.LoanView, /\.loan-field\.is-invalid:focus-within/)
+  assert.match(selectedCss, /\.pencil-field__shell\.is-invalid/)
   assert.match(sources.WithdrawView, /aria-invalid/)
   assert.match(sources.QuickRechargeView, /aria-invalid/)
 })
 
-test('全部二级页面遵守窄屏、硬边界、主题变量和 Lucide 合同', () => {
+test('全部二级页面遵守窄屏、主题变量、无固定宽屏溢出和 Lucide 合同', () => {
   for (const [name, source] of Object.entries(sources)) {
     const styles = source.match(/<style scoped>([\s\S]*?)<\/style>/)?.[1] || ''
-    assert.match(styles, /@media \(max-width: 340px\)/, `${name} missing 340px layout`)
-    if (prototypeManagedContent.has(name)) {
+    const contracts = pencilSelectedViews.has(name) ? `${styles}\n${selectedCss}` : styles
+    assert.match(contracts, /@media \(max-width: 340px\)/, `${name} missing 340px layout`)
+    if (prototypeManagedContent.has(name) && !pencilSelectedViews.has(name)) {
       assert.match(
         prototypeCss,
         /\.secondary-content\s*\{[\s\S]*?env\(safe-area-inset-bottom\)/,
         `${name} missing shared safe area`,
       )
     } else {
-      assert.match(styles, /env\(safe-area-inset-bottom\)/, `${name} missing safe area`)
+      assert.match(contracts, /env\(safe-area-inset-bottom\)/, `${name} missing safe area`)
     }
-    assert.doesNotMatch(styles, /border-radius:\s*(?:[1-9]\d+|999)px/, `${name} has a radius over 8px`)
-    assert.doesNotMatch(styles, /rgba?\(11,\s*24,\s*17/i)
+    assert.doesNotMatch(styles, /(?:^|\n)\s*width:\s*(?:[5-9]\d{2}|\d{4,})px/, `${name} can overflow a phone viewport`)
+    assert.doesNotMatch(contracts, /rgba?\(11,\s*24,\s*17/i)
     assert.doesNotMatch(source, /<svg/)
     assert.doesNotMatch(source, /\p{Extended_Pictographic}/u)
   }

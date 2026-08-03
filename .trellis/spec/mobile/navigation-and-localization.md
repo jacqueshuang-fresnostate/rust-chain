@@ -55,25 +55,37 @@ lastTradePath: ComputedRef<string>
 
 ### Router history
 
-- Root navigation has exactly seven ordered destinations and uses router
-  `replace`: `home`, `markets`, spot `trade`, `seconds`, contract `trade`,
-  `assets`, and `profile`.
+- Root navigation has exactly five ordered visual destinations and uses router
+  `replace`: `home`, `markets`, persisted `trade`, `assets`, and `profile`.
+- The central Trade destination restores both the persisted symbol and the
+  persisted spot/contract mode. Spot, contract, and seconds remain independent
+  operational routes and stay reachable through product/page actions; visual
+  dock consolidation must not merge their business behavior.
 - Spot resolves to `/trade/:symbol`; contract resolves to
   `/trade/:symbol?mode=contract`; seconds resolves to `/seconds`. Do not merge
   these three operational surfaces into one root destination.
+- The selected Home shortcut grid links its seventh product cell to the named
+  `seconds` route and labels it with the localized `home.secondsShortcut` copy.
+  Prediction remains reachable from Product Hub, but must not replace Seconds
+  in the selected Home grid.
 - Drill-down pages and modals represented as routes use router `push`.
 - Every detail route defines `meta.depth`, `meta.showBottomNav: false`, and `meta.backFallback`.
+- Message Center is one of those detail routes. The Home Bell pushes the named
+  `message-center` route; `/messages` declares depth 1, hides the Dock, and
+  falls back to named Home. Its custom selected-frame ArrowLeft calls
+  `goBackOr` exactly like `PageHeader` rather than calling `router.back()`.
 - `PageHeader` calls `goBackOr`; it must not call `router.back()` directly.
 - `PageHeader` exposes an explicit `preferFallback` input. It bypasses a usable
   `history.state.back` only when the owning workflow requires a deterministic
   replacement target.
-- The bottom Seconds item adds the `bottom-navigation-seconds` history-state
-  source while replacing `/seconds`. Only that explicit source makes the
-  Seconds header prefer `/`; Product Hub continues to push Seconds without the
-  marker and therefore returns through history to `/products`. The deterministic
-  Home replacement must explicitly clear the custom source because Vue Router
-  web history merges user state during `replace`; later replacement routes must
-  never inherit an active Seconds source.
+- The retained legacy bottom-navigation Seconds target adds the
+  `bottom-navigation-seconds` history-state source while replacing `/seconds`.
+  Only that explicit source makes the Seconds header prefer `/`; the selected
+  Home shortcut pushes Seconds without the marker and therefore returns
+  through history to Home. The deterministic Home replacement must explicitly
+  clear the custom source because Vue Router web history merges user state
+  during `replace`; later replacement routes must never inherit an active
+  Seconds source.
 - `scrollBehavior` restores `savedPosition` and otherwise returns `{ top: 0, left: 0 }`.
 
 ### Trade picker
@@ -124,11 +136,15 @@ lastTradePath: ComputedRef<string>
 | Redirect/back contains a backslash or ASCII control character | Use internal fallback |
 | Router history has no internal `state.back` | `router.replace(meta.backFallback)` |
 | Seconds history source is `bottom-navigation-seconds` | Ignore stale `state.back` and replace Home |
-| Seconds was pushed from Product Hub | Use history Back and return Products |
+| Seconds was pushed from the selected Home shortcut | Use history Back and return Home |
 | Main tab selected | Replace current history entry |
 | Spot root selected | Open persisted symbol without `mode=contract` |
 | Contract root selected | Open persisted symbol with `mode=contract` |
 | Seconds root selected | Open the independent named route `seconds` |
+| Home seventh product shortcut selected | Push the named `seconds` route; do not open Prediction |
+| Home Bell opens Message Center | Push `/messages`, hide the Dock, and preserve Home in history |
+| Message Center Back has usable Home history | Use router Back and return Home |
+| Message Center Back has no usable history | Replace with named Home fallback |
 | Trade mode changes | Replace route and persist mode |
 | Stored locale is unknown | Use system locale, then `zh-CN` |
 | Locale persistence is unavailable | Keep the in-memory locale active |
@@ -148,8 +164,9 @@ lastTradePath: ComputedRef<string>
 ## 6. Tests Required
 
 - Unit: route symbol normalization, redirect sanitization, usable back-state detection, and transition direction.
-- Router/history: use Vue Router memory history to prove bottom Seconds forces
-  Home, Product Hub Seconds returns Products, auth-step replacement leaves no
+- Router/history: use Vue Router memory history to prove the legacy marked
+  Seconds target forces Home, an unmarked Home Seconds push returns Home,
+  auth-step replacement leaves no
   Login entry, and 2FA reset/invalid returns preserve sanitized redirects. Also
   exercise Vue Router web history replacement semantics to prove the custom
   Seconds source is cleared rather than merged into later routes.
@@ -157,9 +174,16 @@ lastTradePath: ComputedRef<string>
 - Unit: dynamic prediction text preserves English and localizes supported Chinese patterns.
 - Browser: pair picker returns to the selected trade pair and preserves futures mode.
 - Browser: main tabs do not remain in history; direct-open detail back uses its fallback.
-- Browser: all seven root destinations remain visible with at least 44px icon
-  targets, 66px item rails inside the 84px v16 navigation, and no horizontal
-  page overflow at 320px, 390px, and 448px.
+- Browser: Home Bell opens Message Center without Root Header or Dock; its
+  ArrowLeft returns Home, while a direct-open message route uses the same Home
+  fallback.
+- Browser: all five dock destinations remain visible with at least 44px icon
+  targets inside the 84px navigation, and no horizontal page overflow at
+  320px, 390px, and 448px. Independently verify spot, contract, and seconds
+  route reachability.
+- Source/browser: the selected Home product cell renders the 19px Lucide Zap,
+  localized Seconds label, and reaches `#/seconds`; no Prediction target is
+  present in that shortcut grid.
 - Browser: switching language survives reload and both 390px mobile and wide H5 layouts remain usable.
 - Build: H5, Android Debug APK, and iOS simulator bundle after dependency or startup changes.
 

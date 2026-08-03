@@ -1,5 +1,9 @@
 import { client, requestUrl } from './client'
 import { asNumber } from '@/core/format'
+import { mapSecondsOrder, type SecondsOrder } from '@/core/secondsOrder'
+
+export { mapSecondsOrder }
+export type { SecondsOrder }
 
 export interface SecondsCycle {
   id: number
@@ -16,19 +20,6 @@ export interface SecondsProduct {
   stakeAssetSymbol: string
   cycles: SecondsCycle[]
   status: string
-}
-
-export interface SecondsOrder {
-  id: number
-  symbol: string
-  stakeAssetSymbol: string
-  direction: 'up' | 'down'
-  stakeAmount: number
-  durationSeconds: number
-  status: string
-  result?: string
-  expiresAt: number
-  createdAt: number
 }
 
 export async function fetchSecondsProducts(limit = 50): Promise<SecondsProduct[]> {
@@ -58,28 +49,19 @@ export async function fetchSecondsProducts(limit = 50): Promise<SecondsProduct[]
 
 export async function fetchSecondsOrders(limit = 50): Promise<SecondsOrder[]> {
   const response = await client.get<{ orders?: Array<Record<string, unknown>> }>(requestUrl('/seconds-contracts/orders'), { params: { limit } })
-  return (response.data.orders || []).map((order) => ({
-    id: asNumber(order.id),
-    symbol: String(order.symbol || ''),
-    stakeAssetSymbol: String(order.stake_asset_symbol || '').toUpperCase(),
-    direction: String(order.direction || '').toLowerCase() === 'down' ? 'down' : 'up',
-    stakeAmount: asNumber(order.stake_amount),
-    durationSeconds: asNumber(order.duration_seconds),
-    status: String(order.status || ''),
-    result: optionalText(order.result),
-    expiresAt: normalizeTimestamp(order.expires_at),
-    createdAt: normalizeTimestamp(order.created_at),
-  }))
+  return (response.data.orders || []).map(mapSecondsOrder)
 }
 
-export async function openSecondsOrder(input: { productId: number; durationSeconds: number; direction: 'up' | 'down'; stakeAmount: number }): Promise<void> {
-  await client.post(requestUrl('/seconds-contracts/orders'), {
+export async function openSecondsOrder(input: { productId: number; durationSeconds: number; direction: 'up' | 'down'; stakeAmount: number }): Promise<SecondsOrder> {
+  const response = await client.post<{ order?: Record<string, unknown> }>(requestUrl('/seconds-contracts/orders'), {
     product_id: input.productId,
     duration_seconds: input.durationSeconds,
     direction: input.direction,
     stake_amount: String(input.stakeAmount),
     idempotency_key: createIdempotencyKey('mobile-seconds'),
   })
+  if (!response.data.order) throw new Error('Seconds-contract order response is missing order data')
+  return mapSecondsOrder(response.data.order)
 }
 
 function mapCycle(cycle: Record<string, unknown>): SecondsCycle {
@@ -90,16 +72,6 @@ function mapCycle(cycle: Record<string, unknown>): SecondsCycle {
     minStake: asNumber(cycle.min_stake),
     maxStake: cycle.max_stake === null || cycle.max_stake === undefined ? undefined : asNumber(cycle.max_stake),
   }
-}
-
-function optionalText(value: unknown): string | undefined {
-  const text = typeof value === 'string' ? value.trim() : ''
-  return text || undefined
-}
-
-function normalizeTimestamp(value: unknown): number {
-  const timestamp = asNumber(value)
-  return timestamp > 0 && timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp
 }
 
 function createIdempotencyKey(scope: string): string {

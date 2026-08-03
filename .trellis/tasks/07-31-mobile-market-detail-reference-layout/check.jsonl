@@ -1,0 +1,20 @@
+{"file":".trellis/tasks/07-31-mobile-market-detail-reference-layout/prd.md","reason":"逐项审查结构、交互、视觉、真机和质量门验收"}
+{"file":".trellis/tasks/07-31-mobile-market-detail-reference-layout/research/reference-structure.md","reason":"核对参考层级和禁止伪功能边界"}
+{"file":".trellis/spec/mobile/index.md","reason":"复核主题对比、触控、图表和响应式合同"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"复核 sticky/fixed 层级、安全区和滚动行为"}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"复核导航、返回、路由上下文与 i18n"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"复核实时 K 线/深度/成交与竞态逻辑未被视觉重构破坏"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查共享组件变体和重复实现"}
+{"file": ".trellis/tasks/07-31-mobile-market-detail-reference-layout/research/local-kline-framework.md", "reason": "复核双引擎本地打包、无在线 Widget/CDN/datafeed、切换与实时数据合同"}
+{"file": ".trellis/tasks/07-31-mobile-market-detail-reference-layout/research/award-mobile-ui-audit.md", "reason": "复核全局色彩、材质、页面层级、空态和移动端几何合同"}
+{"file": "mobile/pencil/artboards.json", "reason": "核对当前 43 个画板 ID、顺序和路由覆盖"}
+{"file": "mobile/pencil/exports/hippo-mobile-uiux-review.pdf", "reason": "全量 43 页视觉审阅产物"}
+{"file": "mobile/pencil/README.md", "reason": "Pencil 文件、编辑与验收说明"}
+{"file": "mobile/tests/spot-trading-ui-optimization.test.ts", "reason": "现货实时数据链路、结构、触控与双语回归测试"}
+{"file": "mobile/pencil/exports/yzOPc.png", "reason": "当前浅色现货工作台视觉验收导出"}
+{"file": "mobile/pencil/exports/bo8k5.png", "reason": "当前深色现货工作台视觉验收导出"}
+{"file": "mobile/tests/pencil-selected-unmapped-pages.test.ts", "reason": "选中画板来源、真实 API、状态与双语静态合同回归"}
+{"file": "mobile/tests/request-layer.test.ts", "reason": "访客 401 与受保护会话刷新边界回归"}
+{"file": ".trellis/tasks/07-31-mobile-market-detail-reference-layout/research/pencil-selected-production-gap-20260804.md", "reason": "按当前选中画板和跳转合同执行视觉与行为验收"}
+{"file": "mobile/tests/pencil-account-flow-parity.test.ts", "reason": "消息中心 56/38/64px 几何、真实数据与旧样式隔离回归"}
+{"file": "mobile/tests/pencil-navigation-flow-20260804.test.ts", "reason": "消息中心无 Dock 和 Home 返回导航回归"}

@@ -82,3 +82,11 @@ test('启动层处理低动态、安全区、最高层级和完整清理', () =>
   assert.match(baseStyles, /--layer-overlay:\s*80;[\s\S]*?--layer-launch:\s*120;/)
   assert.match(componentSource, /z-index:\s*var\(--layer-launch\)/)
 })
+
+test('启动层在 GSAP 未完成或初始化异常时仍会确定性自动移除', () => {
+  assert.match(componentSource, /const AUTO_DISMISS_MS = 3000/)
+  assert.match(componentSource, /autoDismissTimer = window\.setTimeout\(finishIntro, AUTO_DISMISS_MS\)/)
+  assert.match(componentSource, /function finishIntro\(\)[\s\S]*?clearAutoDismissTimer\(\)[\s\S]*?isVisible\.value = false/)
+  assert.match(componentSource, /try \{[\s\S]*?gsap\.context\([\s\S]*?\} catch \{\s*finishIntro\(\)\s*\}/)
+  assert.match(componentSource, /onBeforeUnmount\(\(\) => \{\s*clearAutoDismissTimer\(\)/)
+})

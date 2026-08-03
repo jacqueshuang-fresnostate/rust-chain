@@ -2,7 +2,10 @@ import type { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axio
 
 const AUTH_BOOTSTRAP_PATTERN = /\/auth\/(?:login|register|password|refresh)(?:\/|$)/
 
-type RetriableRequest = InternalAxiosRequestConfig & { _hippoRetried?: boolean }
+type RetriableRequest = InternalAxiosRequestConfig & {
+  _hippoHadAuth?: boolean
+  _hippoRetried?: boolean
+}
 
 export interface AuthSessionInterceptorDependencies {
   clearSession: () => void
@@ -35,13 +38,15 @@ export function installAuthSessionInterceptors(
     return refreshPromise
   }
 
-  instance.interceptors.request.use((config) => {
+  instance.interceptors.request.use((config: RetriableRequest) => {
     if (isAuthBootstrapRequest(config.url)) {
       config.headers.delete('Authorization')
+      config._hippoHadAuth = false
       return config
     }
     const token = dependencies.readAccessToken()
     if (token) config.headers.set('Authorization', `Bearer ${token}`)
+    config._hippoHadAuth = Boolean(token || config.headers.get('Authorization'))
     return config
   })
 
@@ -49,7 +54,11 @@ export function installAuthSessionInterceptors(
     (response) => response,
     async (error: AxiosError) => {
       const request = error.config as RetriableRequest | undefined
-      const protectedRequest = Boolean(request && !isAuthBootstrapRequest(request.url))
+      const protectedRequest = Boolean(
+        request
+        && !isAuthBootstrapRequest(request.url)
+        && request._hippoHadAuth,
+      )
       if (error.response?.status === 401 && request && protectedRequest && !request._hippoRetried) {
         const nextToken = await refreshAccessTokenOnce()
         if (nextToken) {

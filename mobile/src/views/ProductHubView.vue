@@ -1,361 +1,220 @@
 <script setup lang="ts">
-import { computed, type Component } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowRight, Banknote, CircleDollarSign, Gauge, Landmark, Rocket } from 'lucide-vue-next'
+import {
+  BookOpen,
+  ChevronRight,
+  Ellipsis,
+  Gauge,
+  Newspaper,
+} from 'lucide-vue-next'
 import PageHeader from '@/components/PageHeader.vue'
-
-type ProductRouteName = 'earn' | 'loan' | 'new-coins' | 'prediction' | 'seconds'
-type ProductTier = 'featured' | 'secondary'
-
-interface ProductEntry {
-  name: ProductRouteName
-  tier: ProductTier
-  label: string
-  description: string
-  icon: Component
-}
 
 const router = useRouter()
 const { t } = useI18n()
 
-const products = computed<ProductEntry[]>(() => [
-  {
-    name: 'earn',
-    tier: 'featured',
-    label: t('products.earn'),
-    description: t('products.earnDescription'),
-    icon: Landmark,
-  },
-  {
-    name: 'loan',
-    tier: 'featured',
-    label: t('products.loan'),
-    description: t('products.loanDescription'),
-    icon: Banknote,
-  },
-  {
-    name: 'new-coins',
-    tier: 'secondary',
-    label: t('products.newCoins'),
-    description: t('products.newCoinsDescription'),
-    icon: Rocket,
-  },
-  {
-    name: 'prediction',
-    tier: 'secondary',
-    label: t('products.prediction'),
-    description: t('products.predictionDescription'),
-    icon: CircleDollarSign,
-  },
-  {
-    name: 'seconds',
-    tier: 'secondary',
-    label: t('products.seconds'),
-    description: t('products.secondsDescription'),
-    icon: Gauge,
-  },
-])
-const featuredProducts = computed(() => products.value.filter((product) => product.tier === 'featured'))
-const secondaryProducts = computed(() => products.value.filter((product) => product.tier === 'secondary'))
+function openPrediction(): void {
+  void router.push({ name: 'prediction' })
+}
 
-function openProduct(name: ProductRouteName): void {
-  void router.push({ name })
+function openNews(): void {
+  void router.push({ name: 'news' })
+}
+
+function openProductHelp(): void {
+  void router.push({ name: 'news', query: { category: 'product' } })
 }
 </script>
 
 <template>
-  <main class="page page--plain page--prototype-grid product-hub" data-product-workspace="live">
-    <PageHeader :title="t('products.title')" :subtitle="t('products.introDescription')" />
-    <div class="page-content">
-      <header class="product-hub__overview">
-        <span>{{ t('products.title') }}</span>
-        <h1>{{ t('products.introTitle') }}</h1>
-        <p>{{ t('products.introDescription') }}</p>
-      </header>
+  <main
+    class="page page--plain product-hub"
+    data-pencil-source="Z0B0N6 zMsKE"
+    data-product-workspace="live"
+  >
+    <PageHeader :back="true" :pencil="true" :title="t('products.title')" :subtitle="t('products.introDescription')">
+      <template #actions>
+        <button class="icon-button" type="button" :aria-label="t('news.product')" @click="openProductHelp">
+          <Ellipsis :size="20" aria-hidden="true" />
+        </button>
+      </template>
+    </PageHeader>
 
-      <section class="product-hub__group" :aria-labelledby="'featured-products-title'">
-        <header>
-          <span>01</span>
-          <h2 id="featured-products-title">{{ t('products.featuredServices') }}</h2>
-        </header>
-        <div class="product-hub__matrix product-hub__matrix--featured">
-          <button
-            v-for="product in featuredProducts"
-            :key="product.name"
-            class="product-card product-card--featured"
-            :data-product="product.name"
-            :data-product-tier="product.tier"
-            type="button"
-            :aria-label="product.label"
-            @click="openProduct(product.name)"
-          >
-            <span class="product-card__top">
-              <span class="product-card__icon"><component :is="product.icon" :size="20" /></span>
-              <ArrowRight :size="17" />
-            </span>
-            <strong>{{ product.label }}</strong>
-            <small>{{ product.description }}</small>
-          </button>
-        </div>
+    <div class="page-content product-hub__body" data-product-count="2">
+      <section class="product-hub__list" :aria-label="t('products.specializedServices')">
+        <button
+          class="product-card product-card--secondary product-hub__row"
+          data-product="prediction"
+          data-product-tier="secondary"
+          type="button"
+          @click="openPrediction"
+        >
+          <span class="product-card__icon"><Gauge :size="19" aria-hidden="true" /></span>
+          <span class="product-hub__copy">
+            <strong>{{ t('products.hubPrediction') }}</strong>
+            <small>{{ t('products.hubPredictionDescription') }}</small>
+          </span>
+          <ChevronRight :size="18" aria-hidden="true" />
+        </button>
+
+        <button
+          class="product-card product-card--secondary product-hub__row"
+          data-product="news"
+          data-product-tier="secondary"
+          type="button"
+          @click="openNews"
+        >
+          <span class="product-card__icon"><Newspaper :size="19" aria-hidden="true" /></span>
+          <span class="product-hub__copy">
+            <strong>{{ t('products.hubNews') }}</strong>
+            <small>{{ t('products.hubNewsDescription') }}</small>
+          </span>
+          <ChevronRight :size="18" aria-hidden="true" />
+        </button>
       </section>
 
-      <section class="product-hub__group" :aria-labelledby="'specialized-products-title'">
-        <header>
-          <span>02</span>
-          <h2 id="specialized-products-title">{{ t('products.specializedServices') }}</h2>
-        </header>
-        <div class="product-hub__matrix product-hub__matrix--secondary">
-          <button
-            v-for="product in secondaryProducts"
-            :key="product.name"
-            class="product-card product-card--secondary"
-            :data-product="product.name"
-            :data-product-tier="product.tier"
-            type="button"
-            :aria-label="product.label"
-            @click="openProduct(product.name)"
-          >
-            <span class="product-card__top">
-              <span class="product-card__icon"><component :is="product.icon" :size="20" /></span>
-              <ArrowRight :size="17" />
-            </span>
-            <strong>{{ product.label }}</strong>
-            <small>{{ product.description }}</small>
-          </button>
-        </div>
-      </section>
+      <button class="product-hub__help" type="button" @click="openProductHelp">
+        <BookOpen :size="16" aria-hidden="true" />
+        <span>{{ t('products.hubHelp') }}</span>
+        <ChevronRight :size="16" aria-hidden="true" />
+      </button>
     </div>
   </main>
 </template>
 
 <style scoped>
 .product-hub {
-  background-color: var(--background);
+  background: var(--page);
+  color: var(--text);
+  display: block;
+  gap: 0;
+  min-width: 0;
 }
 
-.product-hub .page-content {
-  background: var(--surface);
-  min-height: calc(100dvh - 72px);
-  padding-bottom: calc(36px + env(safe-area-inset-bottom));
-  padding-top: 14px;
-}
-
-.product-hub__overview {
-  background:
-    linear-gradient(var(--grid-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
-    var(--surface);
-  background-size: 36px 36px;
-  border-bottom: 1px solid var(--line);
-  border-top: 3px solid var(--signal-green);
+.product-hub__body {
   display: grid;
-  gap: 6px;
-  margin: 0 -16px;
-  min-height: 132px;
-  padding: 20px;
-  position: relative;
+  gap: 18px;
+  min-width: 0;
+  padding: 8px 20px calc(20px + env(safe-area-inset-bottom));
 }
 
-.product-hub__overview::after {
-  background: linear-gradient(90deg, var(--signal-green) 0 34%, var(--signal-coral) 34% 67%, var(--signal-blue) 67%);
-  bottom: 0;
-  content: '';
-  height: 4px;
-  left: 20px;
-  position: absolute;
-  width: 96px;
+.product-hub__list {
+  display: grid;
+  gap: 0;
+  min-width: 0;
 }
 
-.product-hub__overview > span {
-  color: var(--positive);
-  font-family: var(--data-font);
-  font-size: 10px;
-  font-weight: 760;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
-
-.product-hub__overview h1 {
-  color: var(--ink);
-  font-size: 28px;
-  letter-spacing: 0;
-  line-height: 1.08;
-  margin: 0;
-}
-
-.product-hub__overview p {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
-  margin: 0;
-}
-
-.product-hub__group {
-  margin-top: 18px;
-}
-
-.product-hub__group > header {
+.product-hub__row {
   align-items: center;
+  background: transparent;
+  border: 0;
   border-bottom: 1px solid var(--line);
-  display: grid;
-  gap: 10px;
-  grid-template-columns: 30px minmax(0, 1fr);
-  min-height: 44px;
-}
-
-.product-hub__group > header span {
-  color: var(--accent);
-  font-family: var(--data-font);
-  font-size: 10px;
-  font-weight: 800;
-}
-
-.product-hub__group > header h2 {
-  font-size: 15px;
-  margin: 0;
-}
-
-.product-hub__matrix {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  margin-top: 8px;
+  border-radius: 0;
+  color: var(--text);
+  display: flex;
+  gap: 14px;
+  height: 64px;
+  min-height: 64px;
   min-width: 0;
-}
-
-.product-card {
-  align-content: start;
-  background: var(--surface-elevated, var(--surface));
-  border: 1px solid var(--line);
-  border-top: 2px solid var(--line-strong, var(--line));
-  color: var(--ink);
-  display: grid;
-  gap: 9px;
-  grid-column: span 2;
-  min-height: 150px;
-  min-width: 0;
-  overflow: hidden;
-  padding: 12px 10px;
+  padding: 0;
   text-align: left;
   width: 100%;
 }
 
-.product-card--featured {
-  background: color-mix(in srgb, var(--signal-green) 7%, var(--surface-elevated, var(--surface)));
-  border-top: 3px solid var(--signal-green);
-  grid-column: span 3;
-  min-height: 170px;
-  padding: 15px 13px;
-}
-
-.product-card[data-product="new-coins"] {
-  border-top-color: var(--positive);
-}
-
-.product-card[data-product="prediction"] {
-  border-top-color: var(--signal-blue);
-}
-
-.product-card[data-product="seconds"] {
-  border-top-color: var(--signal-coral);
-}
-
-.product-card__top {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
-}
-
-.product-card__top > svg {
-  color: var(--muted);
-}
-
 .product-card__icon {
   align-items: center;
-  background: var(--soft);
-  border: 1px solid var(--line);
-  color: var(--accent);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--positive);
   display: flex;
-  height: 40px;
-  justify-content: center;
-  width: 40px;
-}
-
-.product-card--featured .product-card__icon {
-  background: var(--ink);
-  border-color: var(--ink);
-  color: var(--surface);
+  flex: 0 0 44px;
   height: 44px;
+  justify-content: center;
   width: 44px;
 }
 
-.product-card strong {
-  font-size: 15px;
-  line-height: 1.25;
-  overflow-wrap: anywhere;
+.product-hub__row[data-product="news"] .product-card__icon {
+  color: var(--accent);
 }
 
-.product-card small {
-  color: var(--muted);
-  display: -webkit-box;
-  font-size: 10px;
-  line-height: 1.45;
+.product-hub__copy {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 3px;
+  min-width: 0;
+}
+
+.product-hub__copy strong {
+  font-size: 14px;
+  line-height: 20px;
   overflow: hidden;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.product-card--featured strong {
-  font-size: 18px;
-}
-
-.product-card--featured small {
+.product-hub__copy small {
+  color: var(--muted);
   font-size: 11px;
-  -webkit-line-clamp: 2;
+  line-height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-@media (max-width: 360px) {
-  .product-hub__overview {
-    margin-left: -12px;
-    margin-right: -12px;
-    padding-left: 12px;
-    padding-right: 12px;
-  }
+.product-hub__row > svg,
+.product-hub__help > svg:last-child {
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.product-hub__help {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  color: var(--muted);
+  display: flex;
+  font-size: 12px;
+  gap: 10px;
+  height: 48px;
+  justify-content: flex-start;
+  min-height: 48px;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+}
+
+.product-hub__help > svg:first-child {
+  color: var(--positive);
+  flex: 0 0 auto;
+}
+
+.product-hub__help span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-hub__row:focus-visible,
+.product-hub__help:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--focus);
+  outline: 0;
 }
 
 @media (max-width: 340px) {
-  .product-hub .page-content {
-    padding-left: 12px;
-    padding-right: 12px;
-  }
-
-  .product-hub__overview {
-    margin-left: -12px;
-    margin-right: -12px;
-    padding-left: 12px;
-    padding-right: 12px;
-  }
-
-  .product-hub__matrix {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .product-card,
-  .product-card--featured {
-    grid-column: span 1;
-    min-height: 154px;
-  }
-
-  .product-card--secondary:last-child {
-    grid-column: 1 / -1;
-    min-height: 122px;
+  .product-hub__body {
+    padding-inline: 16px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .product-card {
+  .product-hub__row,
+  .product-hub__help {
     transition: none;
   }
 }

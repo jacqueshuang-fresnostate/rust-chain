@@ -8,6 +8,7 @@ import PwaStatus from '@/components/PwaStatus.vue'
 import RootHeader from '@/components/RootHeader.vue'
 import SignalField from '@/components/SignalField.vue'
 import {
+  resolveRouteShellVisibility,
   routeDirection,
   routeTransitionName,
   routeTransitionSequence,
@@ -23,11 +24,20 @@ const router = useRouter()
 const session = useSessionStore()
 const theme = useThemeStore()
 const { t } = useI18n()
-const showBottomNav = computed(() => route.meta.showBottomNav !== false && !(route.name === 'markets' && route.query.purpose === 'trade'))
-const rootSurface = computed(() => ['trade'].includes(String(route.name || '')) ? 'protected' : 'expressive')
-const showSignalField = computed(() => (
-  showBottomNav.value
-  && ['home', 'markets', 'assets', 'profile'].includes(String(route.name || ''))
+const shellVisibility = computed(() => resolveRouteShellVisibility(
+  route.name,
+  route.query.mode,
+  route.query.purpose,
+  route.meta.showBottomNav,
+))
+const showBottomNav = computed(() => shellVisibility.value.showBottomNav)
+const showRootHeader = computed(() => (
+  shellVisibility.value.showRootHeader
+  && ['home', 'markets'].includes(String(route.name || ''))
+))
+const showSignalField = computed(() => shellVisibility.value.showSignalField)
+const rootSurface = computed(() => (
+  ['trade', 'message-center'].includes(String(route.name || '')) ? 'protected' : 'expressive'
 ))
 const routeMotionClasses = computed(() => [
   `route-${routeDirection.value}`,
@@ -97,7 +107,7 @@ onUnmounted(() => window.removeEventListener('hippo-mobile-auth-expired', handle
         <i />
       </div>
       <PwaStatus />
-      <RootHeader v-if="showBottomNav" />
+      <RootHeader v-if="showRootHeader" />
       <div class="app-route-host">
         <RouterView v-slot="{ Component, route: currentRoute }">
           <Transition :name="routeTransitionName">

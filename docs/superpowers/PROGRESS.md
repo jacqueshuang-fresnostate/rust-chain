@@ -2,6 +2,104 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-08-04 04:25 - 消息中心按 Pencil 选中画板完成 1:1 重构
+
+- 完成内容：重新以 Pencil `FkZ6j/bRz9K` 为消息中心唯一视觉基准，去除画板原生状态栏后精确实现 56px sticky Header、20/12/40/40 返回键、22px 标题、49px“全部已读”、38px 四分类栏、`y=94` 列表起点及 64px 连续消息行；补回 Lucide ArrowLeft 并统一通过 `goBackOr` 返回，消息路由改为二级无 Dock 页面，不再挂载 Root Header 或底部导航。移除旧 `prototype-parity.css` 对分类按钮、78px 卡片行和 `.message-icon` 的高优先级覆盖，使浅色图标盘使用 `#ffffff/#ccd5d0`、深色使用 `#0c100e/#29342e`；继续只消费 `fetchNews(40)` 的真实公告并保留诚实加载、错误和空态，没有复制设计图中的演示登录、充值或成交消息。
+- 修改文件：`mobile/src/views/MessageCenterView.vue`、`mobile/src/router/index.ts`、`mobile/src/core/navigation.ts`、`mobile/src/styles/prototype-parity.css`、`mobile/tests/{account-message-views,pencil-account-flow-parity,pencil-navigation-flow-20260804,shell-navigation,award-ui-secondary-workspaces,priority-secondary-page-parity,ui-prototype-alignment-secondary}.test.ts`、`.trellis/spec/mobile/{pwa-and-shell,navigation-and-localization}.md`、`.trellis/tasks/07-31-mobile-market-detail-reference-layout/{implement,check}.jsonl`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦测试先后 38/38 与 19/19 通过；`npm --prefix mobile run lint --if-present`（项目无 lint 脚本）、`npm --prefix mobile run type-check`、`npm --prefix mobile test`（274/274）、`npm --prefix mobile run build:pwa`（127 条预缓存）和 `npm --prefix mobile run build:tauri` 全部通过。Ego Browser 在 390×892 浅色/深色与 320×720 浅色确认 Header 为 56px、分类栏为 38px、列表 `y=94`、首行 64px、无 Root Header/Dock、无横向溢出；深色图标盘计算值为 `rgb(12,16,14)`/`rgb(41,52,46)`，分类切换可达，并实际点击验证 Home 消息按钮进入后返回键回到 Home。终验截图为 `/private/tmp/hippo-message-after-light.png`、`/private/tmp/hippo-message-after-dark.png` 与 `/private/tmp/hippo-message-after-320.png`。
+- 后续事项：无；本地预览保留在消息中心浅色最终页，代码尚未提交。
+
+## 2026-08-04 03:49 - 修复 Trade 中央导航按钮并恢复首页秒合约入口
+
+- 完成内容：按 Pencil `yzOPc/bo8k5` 的五入口 Dock 复现 Trade 激活态，定位到两处旧版 `.active:not(.seconds-nav-action)` 高优先级规则把中央 56px mint FAB 覆盖为 28px 方形渐变；旧规则现同时排除 `.trade-nav-action`，中央按钮恢复为单一完整圆形、24px Lucide ArrowLeftRight 和原有 56px 点击面。按 Pencil `FwNBM/miHnt` 将首页第七个“预测”快捷入口替换为“秒合约”，使用 19px Lucide Zap、双语 `home.secondsShortcut`，并通过命名路由 `seconds` 进入独立秒合约页面；预测市场继续仅由产品中心进入。
+- 修改文件：`mobile/src/styles/prototype-parity.css`、`mobile/src/views/HomeView.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{home-prototype-parity,pencil-selected-home-layout,android-ui-foundation-slice-a}.test.ts`、`.trellis/spec/mobile/{navigation-and-localization,pwa-and-shell}.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦测试 9/9、`npm --prefix mobile run type-check`、`npm --prefix mobile test`（274/274）、`npm --prefix mobile run build:pwa`（127 条预缓存）、`npm --prefix mobile run build:tauri` 与 `git diff --check` 通过。Ego Browser 在 320×720 浅色、390×892 深色和 448×900 浅色 Trade 页确认中央面均为 56×56、`border-radius: 50%`、mint `rgb(67, 239, 169)`、`background-image: none`、中心点击命中且页面无横向溢出；首页确认入口文字“秒合约”、19px Zap、无预测快捷入口，点击进入 `#/seconds` 且秒合约保持无 Dock，随后中央交易点击正确返回 `#/trade/BTC_USDT`。修复前后截图为 `/private/tmp/hippo-trade-nav-before.png` 与 `/private/tmp/hippo-trade-nav-after.png`，首页终验截图为 `/private/tmp/hippo-home-seconds-final.png`。
+- 后续事项：无；本地预览保持在修复后的首页，代码尚未提交。
+
+## 2026-08-04 03:31 - 按 Pencil 当前所选页面完成生产端 1:1 映射与导航修复
+
+- 完成内容：重新读取并盘点 Pencil 当前选中的 84 个顶层画板，逐路由比对现有生产页面，补齐合约、秒合约及持仓态、产品中心、预测、消息中心、充值三步、提币两步、资金账单、提币记录、快捷充值、双重验证、找回密码、安全中心、KYC、账号绑定、邀请好友和语言等未完整映射页面；统一复刻 60px 二级 Header、纯白/纯黑画布、薄荷主动作、Lucide 图标、字段、分段控件、状态面、订单簿和 390px 几何，同时修复产品中心旧 Grid 级联导致的纵向拉伸、钱包页 scoped `:global` 深色规则失效和账户页浅色根背景偏灰。修正消息中心五入口 Dock、产品入口、新闻分类、访客登录/注册回跳、Profile 设置入口及充提币多级返回路径，现货、合约和秒合约继续作为独立栏目。秒合约新增严格订单适配，保留后端锁定赔率、成交/结算价和真实收益；预测只接受真实 yes/no 结果并即时保留提交成功订单；钱包不再猜测资产名称、到账时间或法币估值。
+- 修改文件：`mobile/src/{App.vue,router/index.ts,core/{navigation,secondsOrder}.ts,api/{prediction,seconds,wallet}.ts,styles/pencil-selected-pages.css}`、`mobile/src/views/{TradeView,SecondsView,ProductHubView,PredictionView,MessageCenterView,DepositAssetView,DepositNetworkView,DepositDetailView,WithdrawAssetView,WithdrawView,WalletLedgerView,WithdrawalRecordsView,QuickRechargeView,LoginTwoFactorView,ForgotPasswordView,SecurityView,KycView,AccountBindingsView,ReferralsView,LanguageView,ProfileView,NewsView}.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/pencil-*-parity.test.ts`、`.trellis/tasks/07-31-mobile-market-detail-reference-layout/research/pencil-selected-20260804/*`、`.trellis/spec/mobile/{backend-integration,pwa-and-shell}.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix mobile run lint --if-present`、`npm --prefix mobile run type-check`、`npm --prefix mobile test`（274/274）、`npm --prefix mobile run build:pwa`（128 条预缓存）与 `npm --prefix mobile run build:tauri` 全部通过；Ego Browser 对 20 个目标路由执行 390×892 浅色、390×892 深色和 320×720 浅色共 60 组检查，均无横向溢出，二级 Header、Dock 和页面层级符合所选稿；另对消息、双重验证、找回密码、安全、KYC、绑定、邀请、语言、登录和注册复核根背景，浅色精确为所选 `#FFFFFF`/`#F7F9F8`、深色为 `#000000`。实际点击验证消息 Dock、产品预测/资讯/帮助、访客设置与注册回跳、充币深链返回均进入预期命名路由。
+- 后续事项：无；本地预览保留在 `http://127.0.0.1:4178/`，代码尚未提交。
+
+## 2026-08-03 06:24 - Home / Market Detail 最终 Trellis 质量审查
+
+- 完成内容：以 Pencil 当前源 `mobile/pencil/hippo-mobile-uiux.pen` 的 `FwNBM/W1cWyh/miHnt/CvipW/ftTny/VoZfE` 为唯一视觉范围，复核 Home 四状态、Market Detail 双主题及共享 Header、五入口 Dock、本地双 K 线、真实行情与可访问交互；关闭 Lightweight Charts 创建与主题更新阶段的 attribution logo，确保渲染态不生成 TradingView 外链；修正两套图表根节点的 220px 最小高度，使 204px 内联视口与沉浸展开均完整显示坐标轴；将详情订单簿明确为 paired 布局并补齐空态/表格语义，修复紧凑引擎菜单选中后焦点回归；补充生产运行时无 Pencil 依赖和图表无外部 iframe/script/anchor 的回归合同；同步当前 43 个 Pencil 顶层画板元数据并重导六个选中画板及 43 页 PDF，未扩展审查其他未选中画板。
+- 修改文件：`mobile/src/components/{TradingViewMarketChart,KLineChartMarketChart,MobileMarketChart,OrderBookPanel}.vue`、`mobile/src/views/MarketDetailView.vue`、`mobile/tests/{market-detail-reference-layout,pencil-selected-home-layout}.test.ts`、`.trellis/spec/mobile/{index,pwa-and-shell,navigation-and-localization,backend-integration}.md`、`.trellis/tasks/07-31-mobile-market-detail-reference-layout/{prd.md,check.jsonl,research/reference-structure.md,research/local-kline-framework.md}`、`mobile/pencil/{README.md,screen-inventory.md,artboards.json,exports/*}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Pencil 当前源读取及六个选中 frame 结构/截图通过，43 个顶层 ID 唯一且 43 页 PDF 导出通过；`npm run lint --if-present`、`npm run type-check`、聚焦测试 41/41、`npm test` 239/239、`npm run build:pwa`（2046 modules、136 条预缓存）、`npm run build:tauri` 与 `git diff --check` 通过；Ego Browser 在 320/360/390/448px × 明暗主题复核 Home/Market Detail 均无横向溢出，访客/登录源语义诚实，启动动画超时兜底可解除遮罩与滚动锁；KLineChart 与本地 Lightweight Charts 内联根节点均为 204px，展开后均填满剩余视口，TradingView 渲染态的外部 anchor/iframe/script、在线 Widget/CDN/第三方图表请求均为 0，x 轴标签完整可见。Android APK/真机按用户最终收口范围不执行。
+- 后续事项：无；未 commit/push。
+
+## 2026-08-04 09:20 - Pencil 秒合约/合约/邀请登录态补齐
+
+- 完成内容：重做 `07 / Seconds`（轮次+大价+payout、微走势图、看涨/看跌、期限 chips、金额、确认胶囊、风险提示）并新增 `07b / Seconds Active` 持仓态（看涨 chip+结算倒计时+73% 进度条+成交/当前/投入/预计收益，确认键变等待结算）；重做 `06 / Contract` 杠杆页（永续 10x 标签、逐仓/全仓/杠杆 chips、左开多开空表单+右迷你簿深度条、强平提示）；新增 `36b / Referrals Member` 邀请登录后态（真实邀请码 HIPPO88、绑定框、12/8/126.5 统计、3 条邀请记录）。均 Light+Dark。
+- 修改文件：`mobile/pencil/hippo-mobile-uiux.pen`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Pencil 整屏截图验证 06/07/07b/36b 六屏渲染，无破版。
+- 后续事项：旧散放 Spot 区块待清理；资产页登录后态未画。
+
+## 2026-08-03 12:30 - Pencil 16 个二级屏批量重构（Light + Dark 共 32 屏）
+
+- 完成内容：按统一沉浸规范（裸返回 Header、白/纯黑底、薄荷胶囊 CTA、文字 Tab+下划线、无灰底框）重做 20 预测、21-23 充币三屏、24-25 提币两屏、26 资金账单、27 提币记录、28 快捷充值、31 双重验证（6 位码格）、32 找回密码（步骤条）、33 安全中心、34 KYC（含上传格）、35 账号绑定、36 邀请好友（邀请码薄荷底+统计）、37 语言，并批量复制深色版。产品中心同步精简为仅「预测/新闻中心」单色幽灵图标；首页宫格预测换秒合约；消息中心已重构。
+- 修改文件：`mobile/pencil/hippo-mobile-uiux.pen`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Pencil 整屏截图抽查预测/提币表单/双重验证/KYC 四屏渲染正常，无破版。
+- 后续事项：旧散放 Spot 区块待清理；合约/秒合约交易屏未翻新；资产登录后态未画。
+
+## 2026-08-03 10:05 - Pencil 理财/借贷/新币/发行详情重构（Light + Dark）
+
+- 完成内容：重做 `16 Earn`、`17 Loan`、`18 New Coins`、`19 New Coin Detail` 浅色版，并各自复制深色版。统一裸返回 Header、去英文眉标、薄荷 Tab/胶囊 CTA、软字段卡片；理财含产品卡+空态；借贷含额度引导+筛选+风险提示；新币含进度卡+认购记录；详情含事实表+三步流程+金额字段。
+- 修改文件：`mobile/pencil/hippo-mobile-uiux.pen`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Pencil 整屏截图验证四浅色屏与理财深色屏，无破版。
+- 后续事项：合约/秒合约等二级屏未翻新；资产登录后态未画。
+
+## 2026-08-03 09:35 - Pencil 闪兑币种选择面板（Light + Dark）
+
+- 完成内容：新增 `15b / Swap · Asset Picker · Light/Dark`。在闪兑页上叠加半透明遮罩 + 底部圆角面板：拖拽条、选择币种标题、关闭、搜索、热门/持有/全部 Tab、币种列表（USDT 选中态薄荷底+勾、BTC/ETH/SOL/HIPPO/XRP 含余额与折合美元）。
+- 修改文件：`mobile/pencil/hippo-mobile-uiux.pen`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Pencil 整屏截图验证 Light/Dark 面板层级与选中态，无破版。
+- 后续事项：旧 Spot 散件待清理；合约/秒合约等二级屏未翻新。
+
+## 2026-08-03 09:20 - Pencil 闪兑页完整重做（Light + Dark）
+
+- 完成内容：将旧散件式 `15 / Swap` 重做为完整闪兑屏 `15 / Swap · Light` 与 `15 / Swap · Dark`。结构对齐 `SwapView.vue`：返回+标题+历史、支付/获得双卡片（金额+币种选择+全部）、中间方向切换、参考汇率/手续费/报价有效期、确认闪兑薄荷胶囊、钱包提示、最近闪兑列表。
+- 修改文件：`mobile/pencil/hippo-mobile-uiux.pen`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Pencil 整屏截图验证 Light/Dark 两屏，无破版。
+- 后续事项：旧 Spot 散件待清理；合约/秒合约等二级屏未翻新；资产登录后态未画。
+
+## 2026-08-03 04:40 - Pencil 资产/我的屏重构（含深色版）
+
+- 完成内容：`09 / Assets` 重构（资产标题+眼睛、掩码总资产 $ •••••• + 登录查看资产薄荷胶囊、充币/提币/划转/账单四快捷、资产分布空态、资金工具三行、Dock 资产激活）;`10 / Profile` 重构（我的标题+设置、黑圆头像访客 Hero + 登录 HIPPO 账户、登录薄荷/注册黑双胶囊、身份与安全组（身份认证/安全中心/账号绑定）、偏好与支持组（语言/帮助与客服）、Dock 我的激活）。两屏画布统一 920，各复制深色版（09/10 · Dark）置于下方。
+- 修改文件：`mobile/pencil/hippo-mobile-uiux.pen`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Pencil 整屏截图验证 09/10 浅色与深色四屏渲染，无破版。
+- 后续事项：旧散放 Spot 区块待清理；合约/秒合约/订单/消息等二级屏未翻新。
+
+## 2026-08-03 04:10 - Pencil 行情屏与登录/注册屏重构（含深色版）
+
+- 完成内容：`03 / Markets` 重构为 03 · Light + 08 · Dark（Logo Header、行情大字+搜索+文字 Tab、7 币种行彩色图标+涨跌 chip、市场信号三统计、悬浮 Dock 行情激活）；`29 / Login`、`30 / Register` 重构并各出深色版（共 4 屏，画布统一 390×920）：金属 Logo、大标题去英文、软字段表单（$surface-2，小号标签+值）、邮箱/手机号 Tab（登录）、薄荷胶囊主按钮、文字链切换、注册含确认密码错误态/邀请码/协议勾选；注册页新增**国家/地区选择字段**（中国大陆 +86 ▾，点击下拉效果）。
+- 修改文件：`mobile/pencil/hippo-mobile-uiux.pen`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Pencil 整屏截图验证 03/08/29/30 六屏渲染与布局 bounds，无裁切无破版。
+- 后续事项：旧散放 Spot 区块待清理；合约/秒合约/订单/资产/我的等二级屏未翻新。
+
+## 2026-08-03 03:20 - Pencil 现货交易屏与行情详情沉浸化
+
+- 完成内容：新建 `06 / Spot Trading · Light` 与 `07 / Spot Trading · Dark`：复用行情详情 Header（₿ BTC/USDT ▾ + 收藏/分享裸图标）与悬浮 Dock 底导航；核心交易模块按 OKX 参考无边布局——左侧表单（买入/卖出分段开关、限价委托、价格/数量/金额字段、百分比 chips、可用/可买、买入 BTC 胶囊按钮）+ 右侧迷你订单簿（5 卖 coral + 中间价 mint + 5 买 mint + B/S 比例）；下方 委托（0)/仓位（0）和资产 Tab 行与「暂无资产 + 前往充币」空态（fill_container 撑满）。行情详情两屏同步沉浸化：区块分隔线全除、订单簿无边（行间发丝线去除、深度条撑满行高零空隙）、Header 极简化（裸返回 + BTC/USDT ▾ + 裸星标/分享）、大 Tab 改「行情/币种概述」、底部改迷你动作 + 薄荷大胶囊「现货交易」、全屏按钮悬浮进 K 线右上角。首页：Header 工具按钮全裸图标、Root Header 与 Portfolio 顶边界去除融入底色。
+- 修改文件：`mobile/pencil/hippo-mobile-uiux.pen`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Pencil 整屏截图验证 06/07 两屏布局（表单/迷你簿/空态/导航）与 04/05 两屏无边渲染，布局 bounds 检查无裁切（Nav FAB 上浮为有意出血）。
+- 后续事项：06/07 与旧散放 Spot 区块（文档根部未组屏的旧版现货模块）并存，旧区块待清理；其余二级屏未翻新。
+
+## 2026-08-03 01:40 - Pencil 行情详情页对齐 App 重构 + 深色版
+
+- 完成内容：`04 / Market Detail` 按 `mobile/src/views/MarketDetailView.vue` 真实布局重构：Header 改为黑底返回/分享 + 品种锁up（橙底₿ + BTC/USDT·现货 + 微型报价）；锚点导航对齐 App 四项（图表/订单簿/最新成交/交易，下划线文字 Tab）；报价区中文化并加实时状态行；周期按钮去灰底改选中变色；MA 图例分色（mint/coral/blue）；数据 Tab 改下划线式；订单簿 7 行加买卖深度条（mint-soft/coral-soft）；底部操作对齐 App 三键（现货交易 mint / 合约黑 / 订单描边）。复制生成 `05 / Market Detail · Dark`(theme mode: dark）置于浅色版下方。
+- 修改文件：`mobile/pencil/hippo-mobile-uiux.pen`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Pencil 截图逐区验证 Header/报价/K线/订单簿/操作行渲染，Light/Dark 两屏整屏截图无破版；期间发现 Pencil 嵌套 layout 异常（Qat2p 子级 +50px 偏移），以扁平化直挂子元素规避并复验通过。
+- 后续事项：其余二级屏（合约、秒合约、订单、资产等）未同步新导航与按钮语言；行情首页 05 之后编号未整理。
+
+## 2026-08-03 00:30 - Pencil 首页 Guest/Member 双状态与品牌 Logo 设计
+
+- 完成内容：`hippo-mobile-uiux.pen` 首页重构为四屏：01/02 Home Guest（未登录，液态铬/白丝绸 AI 底图广告卡「全球市场/一手掌握」+ 全宽去登录 CTA，全中文、无英文/锁环/注册链/状态标签）与 03/04 Home Member（已登录，真实数据：总资产估值 24,806.32 USDT、今日收益 +1,204.55/+4.85%、走势图与周期 Tab）；浅色屏充币按钮改纯黑实心、消息按钮改黑底白铃形成 mint+黑按钮语言；`mobile/src/assets/logo.png` 复制为 `pencil/images/hippo-logo.png` 并替换四个首页 Header 的文字 Brand 为 136×34 金属 Logo 图。
+- 修改文件：`mobile/pencil/hippo-mobile-uiux.pen`、`mobile/pencil/images/hippo-logo.png`（新增）、`mobile/pencil/images/generated-*.png`（新增 4 张 AI 底图）、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Pencil 内逐屏截图验证 Light/Dark 卡片、Member 资产模块、整页协调性与 Header Logo 渲染，布局 bounds 检查无裁切/溢出（除有意的装饰出血）。
+- 后续事项：深色屏按钮风格待确认是否同步；登录/注册页 HIPPO Brand 块可换 Logo；Guest→Member 隐藏金额中间态待做。
+
 ## 2026-07-31 09:18 - 主会话终验手机端远程接口与导航
 
 - 完成内容：主会话复验手机端产品默认后端、Vite 同源代理、PWA/Tauri 构建产物及最终历史栈修复；在 390x844 移动视口中确认远程 BTC/USDT 行情真实加载、Header 品牌返回首页、底栏秒合约保留 `/seconds` 登录回跳、登录到注册使用替换式认证步骤且注册返回继续保留 `/seconds`，浏览器控制台无警告或错误；使用真实 Vue Router Web/Memory History 覆盖底栏 Seconds 强制回首页、Products push 自然返回、认证完成不残留登录页、2FA 重置/失效保留安全回跳。
@@ -14,6 +112,13 @@
 - 完成内容：使用 Vue Router Web History 的真实 `replaceState` 合并语义复现并修复底栏 Seconds 来源标记在 Header 返回 Home 后残留的问题，新增显式清除标记的 Home fallback；同时以真实 Web/Memory History 覆盖任意旧根历史到 Seconds、Products push 到 Seconds、后续 replace 不受污染、PageHeader 默认回退不变、登录 replace 到注册/忘记密码/2FA、认证子页显式返回、2FA 验证/设置完成及重置/失效的安全 redirect，外链统一回落首页；同步导航与壳层规范。
 - 修改文件：`mobile/src/core/navigation.ts`、`mobile/src/views/SecondsView.vue`、`mobile/tests/router-history.test.ts`、`mobile/tests/shell-navigation.test.ts`、`.trellis/spec/mobile/navigation-and-localization.md`、`.trellis/spec/mobile/pwa-and-shell.md`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：聚焦导航/认证/后端/PWA 测试 33/33 通过；`npm --prefix mobile run type-check` 通过；`npm --prefix mobile test` 171/171 通过；`npm --prefix mobile run build:pwa` 通过并生成 132 条预缓存，产品后端/API/WSS 标记存在且 Service Worker 不含运行时远程入口；`npm --prefix mobile run build:tauri` 通过，产品后端/API/WSS 标记存在且无 Manifest、Service Worker、Workbox、PWA 图标或元数据；远程市场、登录配置、Tauri CORS 预检/实际请求均为 HTTP 200，公共 WebSocket Upgrade 成功，`/health` 独立为预期 HTTP 403；现有 Vite 默认代理的市场、登录配置为 200、WebSocket Upgrade 成功、`/health` 为 403；`npm --prefix mobile run lint --if-present`、`git diff --check` 通过；无暂存文件，`pc/src/config/app.ts` 未触碰且 SHA-256 保持 `66af4ce19deeea62c9a5d51a4dd0f5fe6670009ce6df75b1df2fc7a76671decb`。
+- 后续事项：无。
+
+## 2026-08-01 23:12 - 修复手机端深色主题白线并完成真机验收
+
+- 完成内容：通过 Android WebView DevTools 定位旧版 Huawei WebView 将 `box-shadow` 中的 `color-mix(..., transparent)` 解析为不透明 `currentColor`，导致深色主题出现纯白轨道；将共享 Header、手机画布、输入、次按钮、资产/我的卡片、订单簿和行情详情动作层切换为直接 alpha/石墨令牌，保留浅色主题、焦点环、布局和业务行为；新增 WebView 兼容性回归断言。
+- 修改文件：`mobile/src/styles/prototype-parity.css`、`mobile/src/views/AssetsView.vue`、`mobile/src/views/ProfileView.vue`、`mobile/src/components/OrderBookPanel.vue`、`mobile/tests/theme.test.ts`、`.trellis/tasks/08-01-08-01-mobile-dark-theme-white-lines/prd.md`、`docs/superpowers/PROGRESS.md`；安装产物 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`。
+- 验证结果：`node --test --experimental-strip-types mobile/tests/theme.test.ts`（8/8）、`npm --prefix mobile test`（227/227）、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（135 条预缓存）、`npm --prefix mobile run build:tauri`、`npm --prefix mobile run tauri:android:build -- --debug --target aarch64 --apk`、`git diff --check` 均通过；APK 大小 238816216 字节、SHA-256 为 `5bd254caa7bd5a98a579a7b0195766cf69083d3d3bbd433ebd75b37cc9410673`；Huawei TAS-AL00 / Android 12 / 1080×2340 / 480dpi 覆盖安装返回 `Success`，冷启动 `Status: ok`，真机深色首页及 Orders 二级页复验无误用白线，截图为 `/private/tmp/hippo-dark-lines-fixed-orders-final.png`。
 - 后续事项：无。
 
 ## 2026-07-31 08:59 - 第二轮修复手机端导航历史栈
@@ -6397,11 +6502,25 @@
 - 验证结果：主会话执行 `npm --prefix web run typecheck`、`npm --prefix web run lint`、`npm --prefix web run test`（36 个测试文件、260/260）、`npm --prefix web run build`、`git diff --check` 全部通过；Ego Browser 实测登录页、Dashboard、用户、资产、KYC、安全策略、SideSheet 文档横向溢出均为 0，1280px 侧栏 208px、资产操作列 216px、资产表伸缩手柄 0、SideSheet 720px 且双列 307px、安全策略仅一个可见面板；浏览器任务空间已正常关闭，本地 Vite 已停止。
 - 后续事项：第三方 `lottie-web` 的直接 `eval` 和主 JS/CSS 包超过 500 kB 的构建告警仍为非阻断既有问题，可单独安排代码分割与依赖收敛；本任务无功能阻塞。
 
+## 2026-07-31 11:32 - 安装最新手机端版本到 Android 真机
+
+- 完成内容：基于当前最新代码重新构建 `aarch64` Tauri Android Debug APK，并覆盖安装到已连接的华为 `TAS-AL00`；安装过程保留应用数据，完成后冷启动 HIPPO 手机端。
+- 修改文件：`docs/superpowers/PROGRESS.md`；生成产物 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`。
+- 验证结果：`npm --prefix mobile run tauri:android:build -- --debug --target aarch64 --apk` 通过；ADB 设备 `JTK0219A16000297` 状态为 `device`，流式覆盖安装返回 `Success`；`com.hippo.exchange.mobile/.MainActivity` 为 `mResumedActivity` 且任务可见，进程 PID `16846`，安装更新时间为 `2026-07-31 11:31:39`；APK 大小约 226 MB，SHA-256 为 `8bd93a62dd7904fb7036c50c128c4e7ef6cc4b2128e0ccb00052cd4d859ba900`。
+- 后续事项：无。
+
 ## 2026-07-31 13:20 - 修复手机端现货订单簿与最新成交实时刷新
 
 - 完成内容：为现货行情详情页接入公共 `depth` 与 `trade` WebSocket 实时频道，保留 REST 首屏兜底；深度完整快照按动画帧合并并固定买盘降序、卖盘升序及每侧 12 档，最新成交按到达顺序置顶、按 ID 去重并保留 16 条；补齐交易对切换/卸载清理、心跳、1–30 秒指数退避重连、REST/WS 竞态保护，以及 K 线周期切换不清空实时盘口和成交。
 - 修改文件：`mobile/src/api/{market,marketSocketProtocol,marketDetailStream}.ts`、`mobile/src/views/MarketDetailView.vue`、`mobile/tests/{market-socket,market-detail-stream,market-news-support-views}.test.ts`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/tasks/07-31-mobile-spot-orderbook-trades-realtime/`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：远程 `wss://hipoex.cllbmz.kdns.fr/api/v1/ws/public` 实测收到 `depth`/`trade` 订阅确认、完整深度快照和逐笔成交；`npm --prefix mobile run type-check`、`npm --prefix mobile test`（183/183）、`npm --prefix mobile run build:pwa`（132 条预缓存）、`npm --prefix mobile run build:tauri`、Android APK 构建和 `git diff --check` 通过；APK SHA-256 为 `220442e371dd4251ef29fde30c5c779b03610640def4d7ec16ab6b937d250b95`，覆盖安装到华为 `TAS-AL00` 后冷启动成功，安装时间 `2026-07-31 13:18:00`、进程 PID `24280`、`MainActivity` 为前台恢复态；真机 WebView 在 `#/markets/BTC_USDT` 连续采样 16 秒得到 15 组不同订单簿快照、6 组不同成交列表，最新成交由 2 条增长到 12 条，页面无行情错误状态。
+- 后续事项：无。
+
+## 2026-07-31 19:52 - 重新安装手机端实时行情修复版
+
+- 完成内容：将已验证的现货订单簿与最新成交实时刷新版 APK 再次覆盖安装到已连接的华为 `TAS-AL00`，保留应用数据并完成冷启动。
+- 修改文件：`docs/superpowers/PROGRESS.md`；安装产物 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`。
+- 验证结果：ADB 设备 `JTK0219A16000297` 状态为 `device`，流式覆盖安装返回 `Success`；APK SHA-256 为 `220442e371dd4251ef29fde30c5c779b03610640def4d7ec16ab6b937d250b95`；安装更新时间为 `2026-07-31 19:51:08`，`com.hippo.exchange.mobile/.MainActivity` 冷启动成功并处于前台恢复态，进程 PID `8371`。
 - 后续事项：无。
 
 ## 2026-07-31 21:27 - 修复手机端现货 K 线实时刷新并安装真机
@@ -6410,3 +6529,163 @@
 - 修改文件：`mobile/src/api/{market,marketSocketProtocol,marketDetailStream}.ts`、`mobile/src/views/MarketDetailView.vue`、`mobile/tests/{market-socket,market-detail-stream}.test.ts`、`.trellis/spec/mobile/{index,backend-integration}.md`、`.trellis/tasks/07-31-mobile-spot-kline-realtime/`、`docs/superpowers/PROGRESS.md`；生成产物 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`。
 - 验证结果：远程 `wss://hipoex.cllbmz.kdns.fr/api/v1/ws/public` 实测 `BTCUSDT/1m` 连续返回 5 个同一 `open_time` 的不同 OHLCV 状态；主会话执行 `npm --prefix mobile run type-check`、`npm --prefix mobile test`（188/188）、`npm --prefix mobile run build:pwa`（132 条预缓存）、`npm --prefix mobile run build:tauri`、`git diff --check` 均通过，独立审查另行完成 Android Debug APK 构建；APK 大小 236482560 字节、SHA-256 为 `e364f28b4abd0dff414677b62656ac2194dba915b27241a54237d1bb2d13dea4`，ADB 流式覆盖安装返回 `Success`，安装时间 `2026-07-31 21:21:34`，应用 PID `14720`、`MainActivity` 前台恢复；真机 WebView 在 `#/markets/BTC_USDT` 切换至 `1m` 后实际发送 `depth/trade/kline` 三个订阅，16 秒内收到 7 个不同实时 K 线状态，图表为 `ready`、无行情错误。
 - 后续事项：`TradeView.vue` 的独立下单页仍保留既有 `4h` 周期；本任务按范围只修复现货行情详情页，可另行统一交易工作台周期与实时 K 线。
+
+## 2026-08-01 00:10 - 重构手机端现货行情详情终端
+
+- 完成内容：按专业交易终端参考图重构现货行情详情页为紧凑 Header、行情导航、双栏报价摘要、边到边 K 线工作台、订单簿/最新成交切换面板和安全区底部交易动作；全部控件连接真实锚点或现有命名路由，保留既有 REST/WebSocket 会话；K 线新增基于真实收盘价的 MA5/MA10/MA20 与成交量，实时蜡烛更新不再强制重置用户视口；订单簿新增可复用的双边分栏模式；沉浸图表具备滚动锁、焦点闭环、Escape、焦点/滚动恢复；修复 Android WebView 切换明暗主题后图表画布未同步的问题。
+- 修改文件：`mobile/src/views/{MarketDetailView,TradeView}.vue`、`mobile/src/components/{MobileMarketChart,OrderBookPanel}.vue`、`mobile/src/core/{marketChartTheme,marketIndicators}.ts`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{android-ui-trading-prototype-v16,market-chart-theme,market-detail-reference-layout,market-news-support-views,ui-prototype-alignment-trading}.test.ts`、`.trellis/spec/mobile/{backend-integration,pwa-and-shell}.md`、`.trellis/tasks/07-31-mobile-market-detail-reference-layout/`、`docs/superpowers/PROGRESS.md`；生成产物 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`。
+- 验证结果：`npm --prefix mobile run type-check`、`npm --prefix mobile test`（197/197）、`npm --prefix mobile run build:pwa`（132 条预缓存）、`npm --prefix mobile run build:tauri`、Android Debug APK 构建和 `git diff --check` 全部通过；Ego Browser 完成 320/360/390/448px、明暗主题、沉浸图表、无横向溢出和 44px 触控验收；APK 大小 448198921 字节、SHA-256 为 `1c179741e1052d77abd354d39c838f0d46f91bea378a99c43dfe03bb9eb77b69`，ADB 覆盖安装返回 `Success`，Vivo `V2301A` 上版本 `0.1.0` 的更新时间为 `2026-07-31 23:55:42`、进程 PID `6958`、`MainActivity` 为前台恢复态；真机 WebView 在 384x853 CSS 像素下明暗主题均无横向溢出、18 个交互控件均不小于 44px，沉浸图表覆盖完整视口并锁定背景，真实价格、MA、成交量和双边订单簿恢复加载且保持实时状态。
+- 后续事项：无。
+
+## 2026-08-01 01:15 - 补齐手机端本地双 K 线引擎
+
+- 完成内容：安装并锁定 `klinecharts@10.0.0`，将共享行情图表拆分为轻量包装器、KLineChart v10 渲染器和 TradingView Lightweight Charts 渲染器；默认使用 KLineChart，提供持久化且支持键盘/触控的双引擎切换，只挂载当前引擎。两套渲染器共用既有 HIPPO `KlinePoint[]`，均展示真实蜡烛、MA5/10/20 与成交量；KLineChart 使用纯内存 `DataLoader`，TradingView 保留本地库归属入口；形成中蜡烛走增量更新，周期替换重新适配，主题、尺寸、空态和卸载清理保持完整，切换不接触 REST/WebSocket 会话。
+- 修改文件：`mobile/package{,-lock}.json`、`mobile/src/components/{MobileMarketChart,KLineChartMarketChart,TradingViewMarketChart}.vue`、`mobile/src/core/{marketChartEngine,marketChartTheme}.ts`、`mobile/src/views/MarketDetailView.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{android-ui-trading-prototype-v16,market-detail-reference-layout,market-news-support-views,ui-prototype-alignment-trading}.test.ts`、`.trellis/spec/mobile/{backend-integration,pwa-and-shell}.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：确认没有遗留 npm/Vite/vue-tsc 后台进程；直接核对 `mobile/node_modules/klinecharts/dist/index.d.ts` 的 v10 `DataLoader`、`Chart`、`init`/`dispose` API；`npm --prefix mobile run type-check` 通过；双引擎聚焦测试 28/28 通过；`npm --prefix mobile test` 198/198 通过；`npm --prefix mobile run build:pwa` 与 `npm --prefix mobile run build:tauri` 通过，两种产物的同一本地 Vite chunk 均含 `klinecharts@10.0.0` 和 `lightweight-charts@5.2.0` 标记；`git diff --check` 通过。
+- 后续事项：本切片未重新生成或安装 Android APK；Android 构建复用已验证的 Tauri/Vite 双引擎前端产物，可在需要真机验收时执行既有 Android Debug 构建流程。
+
+## 2026-08-01 01:40 - 修复 KLineChart 移动端精度与重复图例
+
+- 完成内容：将 KLineChart 的交易对元数据改为由页面实际 `pairSymbol` 透传，按最新有效价格分档设置 2–8 位价格精度（BTC/USDT 为 2 位），并按最新有效成交量设置 0–6 位成交量精度；移除硬编码 `HIPPO` 与 8/8 精度。依据本地 `klinecharts@10.0.0` 类型将 candle/indicator 内置 tooltip 的 `showRule` 设为 `none`，保留外层 MA5/10/20/VOL 图例、坐标轴和十字光标；精度元数据只在交易对或完整数据集变化时同步，同一形成中蜡烛和追加蜡烛继续走既有 `updateBar` 增量路径，未改动 TradingView 渲染器或数据连接。
+- 修改文件：`mobile/src/components/{KLineChartMarketChart,MobileMarketChart}.vue`、`mobile/src/core/marketChartEngine.ts`、`mobile/src/views/{MarketDetailView,TradeView}.vue`、`mobile/tests/{market-detail-reference-layout,android-ui-trading-prototype-v16,ui-prototype-alignment-trading}.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：直接核对 `mobile/node_modules/klinecharts/dist/index.d.ts` 中 `SymbolInfo`、`TooltipShowRule`、`CandleTooltipStyle`、`IndicatorTooltipStyle` 与 `Chart.setSymbol` 类型；`npm --prefix mobile run type-check` 通过；图表聚焦测试 28/28 通过；`npm --prefix mobile test` 199/199 通过；仓库根 `git diff --check` 通过。
+- 后续事项：无。
+
+## 2026-08-01 01:57 - Ego Browser 复验本地双 K 线引擎并生成 Android APK
+
+- 完成内容：启动手机端本地 Vite 并使用 Ego Browser 对现货行情详情页做最终交互调试；确认默认 KLineChart 与可切换 TradingView Lightweight Charts 均只挂载一个本地渲染器，共用同一 HIPPO 行情会话，支持引擎偏好持久化、实时价格/K 线、周期切换、明暗主题、沉浸展开和 320–448px 响应式；修复 KLineChart 的实际交易对、价格/成交量精度和重复内置 tooltip，并经独立审查补齐时间戳锚定视口恢复及语言原地同步。重新生成包含双本地图表引擎的 aarch64 Android Debug APK。
+- 修改文件：`mobile/package{,-lock}.json`、`mobile/src/components/{MobileMarketChart,KLineChartMarketChart,TradingViewMarketChart,OrderBookPanel}.vue`、`mobile/src/core/{marketChartEngine,marketChartTheme,marketIndicators}.ts`、`mobile/src/views/{MarketDetailView,TradeView}.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{android-ui-trading-prototype-v16,market-chart-theme,market-detail-reference-layout,market-news-support-views,ui-prototype-alignment-trading}.test.ts`、`.trellis/spec/mobile/{backend-integration,pwa-and-shell}.md`、`.trellis/tasks/07-31-mobile-market-detail-reference-layout/`、`docs/superpowers/PROGRESS.md`；生成产物 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`。
+- 验证结果：Ego Browser 在 390x844 实测默认 `klinecharts@10.0.0`、切换及重载恢复 `lightweight-charts@5.2.0`、单一 `/api/v1/ws/public` 行情连接、`1m` 周期真实请求、实时价格/时间变化、单渲染器挂载、无外部图表资源、无横向溢出且控制高度不小于 44px；320/360/390/448px、明暗主题和沉浸展开无严重控制台错误。`npm --prefix mobile run type-check`、`npm --prefix mobile test`（199/199）、`npm --prefix mobile run build:pwa`、`npm --prefix mobile run build:tauri`、`npm --prefix mobile run tauri:android:build -- --debug --target aarch64 --apk`、`git diff --check` 均通过；APK 为 122981098 字节，SHA-256 为 `d928902e8713f8c8ca5e4513a6460905724ad92c6cd2c5eee9798a3b541ff922`；Ego Browser 任务空间和本地 Vite 均已关闭。
+- 后续事项：ADB 当前未检测到实体设备，因此本轮未覆盖安装或执行最新 APK 真机明暗主题检查；设备重新连接后可直接安装上述产物。代码提交与 Trellis 归档待确认。
+
+## 2026-08-01 01:52 - 完成本地双 K 线引擎独立审查与视口修复
+
+- 完成内容：按最新 PRD、移动端规范与本地框架研究逐路径复核双引擎；修复 KLineChart 同周期全量替换的单根偏移、两个引擎未随应用语言原地更新、TradingView 在历史前缀/裁剪时仅保留逻辑索引而丢失原可见蜡烛、无 ticker 时真实成交/K 线价格被隐藏、沉浸图表卸载时滚动位置丢失；将 `lightweight-charts` 锁定为精确 `5.2.0`。TradingView 现以时间戳锚点、右缘偏移和视口宽度恢复，并在 `setData` 的绘制帧后应用，卸载时取消待执行恢复。
+- 修改文件：`mobile/package{,-lock}.json`、`mobile/src/components/{MobileMarketChart,KLineChartMarketChart,TradingViewMarketChart}.vue`、`mobile/src/core/marketChartEngine.ts`、`mobile/src/views/MarketDetailView.vue`、`mobile/tests/market-detail-reference-layout.test.ts`、`.trellis/spec/mobile/{backend-integration,pwa-and-shell}.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm run lint --if-present` 成功（当前未配置独立 lint 脚本）；`npm run type-check` 通过；双引擎/主题/实时流聚焦测试 19/19 通过；`npm test` 199/199 通过；`npm run build:pwa` 与 `npm run build:tauri` 通过；`git diff --check` 通过。Ego Browser 实测两引擎只挂载其一、切换复用同一详情会话、KLineChart MA/VOL 结果真实且 pane ID 正确、TradingView 归属链接 44×44px 且无新外部资源、形成中蜡烛/追加更新不重置已拖动视口、历史前缀后逻辑范围由 `12–42` 对应调整为 `13–43` 而保持左右可见时间戳完全一致，恢复原数据后回到 `12–42`。
+- 后续事项：主会话已在独立审查后重新生成最新 Android APK；ADB 当前未检测到实体设备，尚待设备连接后覆盖安装并执行明暗主题真机检查。
+
+## 2026-08-01 02:48 - 完成移动端全局外壳、首页与行情列表切片
+
+- 完成内容：落地 HIPPO Instrument Editorial 冷白/石墨/薄荷双主题材质，收敛随机描边、重复网格和割裂卡片；优化保留真实行为的 sticky Root Header 与七项安全区底部导航，降低中央秒合约常驻权重并补齐键盘焦点；首页重排为单一真实资产或登录主舞台，移除伪造资产曲线、周期与收益占位，保留全部真实 CTA、八项工具、行情和公告链路；行情页压缩 Hero，将搜索和五分类合并为控制层，并强化真实广度与连续行情列表；覆盖 320/360/390/448px、双主题、安全区及 reduced-motion 合同。
+- 修改文件：`mobile/src/styles/{base,prototype-parity}.css`、`mobile/src/components/{RootHeader,AppBottomNav}.vue`、`mobile/src/views/{HomeView,MarketsView}.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{editorial-shell-home-markets,android-ui-foundation-slice-a,core-discovery-views,header-controls,root-prototype-parity,ui-prototype-alignment-foundation}.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：相关聚焦测试 52/52 通过；`npm --prefix mobile run type-check` 通过；`git diff --check` 通过；Ego Browser 完成 320/360/390/448px、明暗主题、中英文、安全区、44px 触控、无横向溢出与 reduced-motion 验收。完整 `npm --prefix mobile test` 共 220 项通过 219 项，唯一失败来自本切片写入范围外的并行未提交 `TradeView.vue`：现有 `layout="split"` 与 `market-detail-reference-layout.test.ts` 的默认 stacked 合同不一致，本切片未改动或回退该文件。
+- 后续事项：由负责交易页/订单簿并行改动的会话统一 `TradeView` 的 split 变体与对应合同后，再复跑完整移动端测试。
+
+## 2026-08-01 03:06 - 完成全手机端设计切片独立审查与自修复
+
+- 完成内容：逐路径复核 Home、Markets、Assets、Profile、Message、Loan、Security、Trade、Seconds 的真实 API、命名路由、对话框焦点、现货/合约独立及秒合约共享现货钱包合同；将路由进场层降到导航之下，使 Root/Secondary Header 和七项底栏在进场类异常滞留时仍可见、可点，保留 Overlay/Launch 更高层级；修复 Trade 320px 价格折行，加强 Message/Loan/Security 主标题、状态和主按钮对比度以及 Profile 暗色访客文字对比度；保留 MarketDetail/Trade 显式 split 订单簿并更新旧合同；同步 PWA HTML、运行时主题 store 和 manifest 的冷白/石墨主题色，并更新 Trellis 层级规范与回归测试。
+- 修改文件：`mobile/index.html`、`mobile/vite.config.ts`、`mobile/src/stores/theme.ts`、`mobile/src/styles/{base,prototype-parity}.css`、`mobile/src/views/{TradeView,MessageCenterView,LoanView,SecurityView,ProfileView}.vue`、`mobile/tests/{theme,editorial-shell-home-markets,award-ui-assets-profile,award-ui-secondary-workspaces,award-ui-trading-workspaces,market-detail-reference-layout}.test.ts`、`.trellis/spec/mobile/{index,pwa-and-shell}.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：初次聚焦回归 86/86 通过，末次局部变更后聚焦回归 38/38 通过；`npm --prefix mobile run lint --if-present` 成功（当前未配置独立 lint 脚本）；`npm --prefix mobile run type-check` 通过；`npm --prefix mobile test` 221/221 通过；`npm --prefix mobile run build:pwa` 通过（135 条预缓存）；`npm --prefix mobile run build:tauri` 通过；`git diff --check` 通过。
+- 后续事项：主会话需用 Ego Browser 在 320/360/390/448px 及明暗主题下复验导航区 `document.elementFromPoint` 命中 nav/item、Trade 长价格单行与各二级页实际对比度；最新切片还需 Android APK 构建/覆盖安装后验收 WebView 安全区、触控、键盘、主题和真实行情。
+
+## 2026-08-01 03:27 - 优化手机端资产与我的页面
+
+- 完成内容：将资产页重排为唯一资产主舞台、连续快捷操作与真实持仓面，移除访客/空资产下的伪分布、空图例和三条 `--` 持仓；保留真实钱包、保证金、充提划转、快捷买币和划转对话框行为。将我的页压缩为清晰的访客/登录身份主卡，明确登录与注册主次，重排语言和客服；登录态继续保留头像、昵称、UID、KYC、安全、绑定、邀请、主题、语言和退出能力。
+- 修改文件：`mobile/src/views/{AssetsView,ProfileView}.vue`、`mobile/tests/award-ui-assets-profile.test.ts`。
+- 验证结果：新增聚焦测试 5/5、相关回归 30/30、`npm --prefix mobile run type-check`、`git diff --check` 通过；最终 Ego Browser 在 320/360/390/448px 明暗主题下确认无横向溢出、首屏控件不小于 44px，访客页主次和对比度正常。
+- 后续事项：无。
+
+## 2026-08-01 03:27 - 优化消息、借贷与安全中心
+
+- 完成内容：三页统一为 Page Header、唯一状态主舞台和渐进披露结构；消息中心保留真实公告、分类、未读和本地已读状态；借贷移除两张充满 `--` 的伪产品卡并保留申请、撤销、还款、钱包与对话框焦点；安全中心访客只显示真实安全状态和登录引导，登录后完整保留登录密码、资金密码、TOTP、登录双重验证和重置流程；加强明暗主题标题、状态与主操作对比度。
+- 修改文件：`mobile/src/views/{MessageCenterView,LoanView,SecurityView}.vue`、`mobile/tests/award-ui-secondary-workspaces.test.ts`。
+- 验证结果：新增测试 4/4、相关回归 32/32、`npm --prefix mobile run type-check`、`git diff --check` 通过；最终 Ego Browser 在 320/390/448px 明暗主题下确认消息、借贷、安全页横向溢出为 0、首屏控件不小于 44px，状态文案和主动作具备清晰对比度。
+- 后续事项：无。
+
+## 2026-08-01 03:27 - 收敛现货、合约与秒合约交易工作台
+
+- 完成内容：保留现货、合约和秒合约三个独立栏目，将交易对/价格设为唯一首屏主角，图表、周期工具、split 订单簿与下单区统一为连续 Instrument plate；输入、选择器、百分比和主按钮统一为 44–52px；现货/合约模式、余额、委托、下单、行情和 WebSocket 未改变；秒合约继续直接使用现货钱包，不增加划转入口。修复 320px 长价格折行，并将 Trade 与 MarketDetail 的 split 订单簿写入准确合同。
+- 修改文件：`mobile/src/views/{TradeView,SecondsView}.vue`、`mobile/tests/{award-ui-trading-workspaces,market-detail-reference-layout}.test.ts`。
+- 验证结果：新增测试 6/6、相关交易回归 36/36、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`、`git diff --check` 通过；最终 Ego Browser 实测 320px 价格高度 29px、单行且不溢出，split 订单簿和底栏均可见可点。
+- 后续事项：无。
+
+## 2026-08-01 03:27 - 完成手机端获奖级视觉重构总验收并生成 APK
+
+- 完成内容：按 Ego Browser 研究的 Awwwards、Wise、Linear、Coinbase Advanced 与 OKX 规律，完成 HIPPO Instrument Editorial 全局视觉系统、Root Header、七项异形导航、首页、行情、交易、资产、我的、消息、借贷和安全中心的集成验收；修复路由进场层覆盖底栏点击、PWA/HTML/Tauri 主题色不一致、行情搜索输入本体仅 19px、Markets 重复状态段以及输入聚焦左侧 inset 条，聚焦现为单一完整外环。研究、前后截图、PRD 和移动端规范均已同步。
+- 修改文件：`.trellis/tasks/07-31-mobile-market-detail-reference-layout/{prd.md,research/award-mobile-ui-audit.md,research/screenshots/award-audit/*}`、`.trellis/spec/mobile/{index,pwa-and-shell}.md`、`mobile/{index.html,vite.config.ts}`、`mobile/src/stores/theme.ts`、`mobile/src/styles/{base,prototype-parity}.css`、相关页面/组件/i18n 与 UI 合同测试、`docs/superpowers/PROGRESS.md`；生成 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`。
+- 验证结果：主会话执行 `npm --prefix mobile run type-check`、`npm --prefix mobile test`（222/222）、`npm --prefix mobile run build:pwa`（135 条预缓存）、`npm --prefix mobile run build:tauri`、`npm --prefix mobile run tauri:android:build -- --debug --target aarch64 --apk`、`git diff --check` 全部通过；Ego Browser 对根页面完成 320/360/390/448px × 明暗主题 40 组检查，对消息/借贷/安全/登录/产品完成 320/390/448px × 明暗主题 30 组检查，全部横向溢出为 0、首屏交互目标不小于 44px，导航命中、长价格单行、完整 focus ring、reduced-motion、真实路由点击和零严重浏览器事件均通过。APK 大小 238815576 字节，SHA-256 为 `8dab119bec2d65c25f81d7eaaf3ab573a1df382b017558254b8feffe82281bc6`。
+- 后续事项：ADB 当前只发现 `emulator-5570 offline`，未检测到实体设备，因此本轮未覆盖安装或执行真机软键盘/安全区验收；设备连接后可直接安装上述 APK。代码提交与 Trellis 归档待用户确认。
+
+## 2026-08-01 19:30 - 安装并打开最新 Android 真机预览
+
+- 完成内容：识别用户新接入的华为 TAS-AL00，确认现有 Debug APK 生成时间晚于全部相关手机端源码后未重复构建；通过非流式 ADB 覆盖安装以保留应用数据，强制停止后执行可信冷启动，并采集当前首页真机画面供用户查看。
+- 修改文件：`.trellis/tasks/08-01-mobile-device-preview/{task.json,prd.md,implement.jsonl,check.jsonl}`、`docs/superpowers/PROGRESS.md`；安装产物 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`。
+- 验证结果：ADB 设备序列号 `JTK0219A16000297`、型号 `TAS-AL00`、Android 12、物理分辨率 `1080x2340`、`480dpi`；APK 为 `238815576` 字节，SHA-256 为 `8dab119bec2d65c25f81d7eaaf3ab573a1df382b017558254b8feffe82281bc6`，覆盖安装返回 `Success`，包版本 `0.1.0`、versionCode `1000`、lastUpdateTime `2026-08-01 19:29:51`；冷启动返回 `Status: ok`、`LaunchState: COLD`、`TotalTime: 454ms`，`MainActivity` 为 `mResumedActivity` 且任务 `visible=true`，应用进程 PID `32131`；真机截图为有效 `1080x2340` PNG，首页 Header、访客资产主舞台、产品中心、行情栏目和七项底栏均已渲染。
+- 后续事项：应用已保持在手机前台，用户可直接操作查看行情、现货、秒合约、合约、资产与我的页面。
+
+## 2026-08-01 19:46 - 恢复旧版首页并重新安装真机预览
+
+- 完成内容：按用户要求将首页模板精确恢复到本轮 Instrument Editorial 重构前的 Git 基线；恢复顶部搜索、资产概览与曲线/周期、买币/充币双动作、八项产品入口、行情日报、行情列表与权益入口的旧版顺序和视觉；仅移除首页专属新版登录主舞台覆盖，Markets、Root Header、七项底栏和其他页面改动保持不变。
+- 修改文件：`mobile/tests/{editorial-shell-home-markets,android-ui-foundation-slice-a,core-discovery-views,root-prototype-parity}.test.ts`、`.trellis/tasks/08-01-mobile-device-preview/prd.md`、`docs/superpowers/PROGRESS.md`；`mobile/src/views/HomeView.vue` 与首页专属 `prototype-parity.css` 规则均恢复为 Git HEAD，无新增实现差异；安装产物 `mobile/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`。
+- 验证结果：归属首页/基础/发现/原型测试 27/27 通过；`npm --prefix mobile run type-check` 通过；全量 `npm --prefix mobile test` 222/222 通过；`npm --prefix mobile run tauri:android:build -- --debug --target aarch64 --apk` 在获授权的沙箱外环境成功，产物 `238814616` 字节、SHA-256 `352c98115dfa5d6e822035021b2806b5628fd9d8149dfd6efeda203a4fc89853`；华为 TAS-AL00（ADB `JTK0219A16000297`，Android 12，1080x2340，480dpi）覆盖安装最终返回 `Success`（首次安装经系统风险提示与安全滑块确认完成），lastUpdateTime `2026-08-01 19:45:12`；冷启动 `Status: ok`、`LaunchState: COLD`、`TotalTime: 463ms`，`MainActivity` 为 `mResumedActivity`、任务 `visible=true`，PID `4094`；真机截图 `/private/tmp/hippo-home-restored.png` 已确认旧版首页布局和实时曲线渲染。
+- 后续事项：应用已保持在手机前台，旧版首页可直接查看；若需要继续调整底栏或其他页面，另起范围明确的切片。
+
+## 2026-08-01 22:32 - 统一旧版首页视觉并完成底栏及主要页面真机验收
+
+- 完成内容：恢复底部七栏旧版网格导航与抬升薄荷绿色 Seconds 控件，保留 Home/Markets/Spot/Seconds/Contract/Assets/Profile 的真实路由、当前项、键盘焦点与可访问属性；将 Markets、Assets、Profile、Message、Loan、Security、Trade、Seconds 的背景、Hero、列表、卡片、按钮和状态面板收敛到首页的淡网格、薄边框、低圆角和薄荷主动作体系，未改动 API、WebSocket、路由、表单或本地 K 线引擎；同步更新视觉回归断言，修正底栏测试对旧版抬升距离和中心圆形控件的合同。
+- 修改文件：`mobile/src/components/AppBottomNav.vue`、`mobile/src/styles/{base,prototype-parity}.css`、`mobile/tests/{editorial-shell-home-markets,award-ui-assets-profile,award-ui-secondary-workspaces,award-ui-trading-workspaces}.test.ts`、`.trellis/tasks/08-01-mobile-device-preview/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix mobile test` 225/225 通过；`npm --prefix mobile run type-check` 通过；`npm --prefix mobile run build:pwa`（135 条预缓存）通过；`npm --prefix mobile run build:tauri` 通过；`git diff --check` 通过；`python3 ./.trellis/scripts/task.py validate 08-01-mobile-device-preview` 通过。aarch64 Android Debug APK 为 `238815896` 字节，SHA-256 `85938760b9c526a93a51f9c64c675bcbdbd89925acd114f294248f19e33656fc`，实体设备为 Huawei TAS-AL00 / Android 12 / 1080×2340 / 480dpi，包 `0.1.0`（versionCode 1000）覆盖安装返回 `Success`，`lastUpdateTime=2026-08-01 20:30:34`；冷启动 `Status: ok`、`LaunchState: COLD`、`MainActivity` 前台可见，最新截图为 `/private/tmp/hippo-home-final.png`。真机抽查确认首页旧版搜索、资产曲线、周期、买币/充币、八项产品和七栏底栏；Markets、Assets、Profile、Trade/Spot 参考画面均保持网格/薄荷/卡片体系，截图保存在 `/private/tmp/hippo-legacy-style-home.png`、`/private/tmp/hippo-assets-device-final.png`、`/private/tmp/hippo-after-back.png`、`/private/tmp/hippo-legacy-home-final.png`。
+- 后续事项：无。
+
+## 2026-08-02 17:35 - 生成 Pencil 手机端基础、行情与交易 UI/UX 蓝图
+
+- 完成内容：使用本地 Pencil CLI（headless MCP-backed runtime）建立 `hippo-mobile-uiux.pen`，以现有首页的冷白/石墨、淡网格、薄边框、薄荷主动作、珊瑚风险色和 Geist/Geist Mono 为统一模板；完成设计变量、字体层级、44/52px 控件、Header、七项底栏和交互原则；生成首页浅色/深色、行情列表、行情详情、现货交易（浅色/深色）、合约交易、秒合约和订单中心画板。现货、合约、秒合约为独立栏目，秒合约明确使用现货钱包，不引入划转入口；行情详情包含本地 K 线/TradingView 本地引擎切换语义、订单簿和最新成交切换。
+- 修改文件：`mobile/pencil/hippo-mobile-uiux.pen`、`mobile/pencil/README.md`、`mobile/pencil/screen-inventory.md`、`mobile/pencil/run-execute.sh`、`mobile/pencil/scripts/{00-fix-foundation,01-foundations,02-home-markets,02-fix,03-fix-market-row,04-market-trading,04-fix}.js`、`mobile/pencil/exports/{FISId,FwNBM,sVhbF,ftTny,leaxT,xCMW6,by3G9,VL8er,kcP5D}.png`、`.trellis/tasks/07-31-mobile-market-detail-reference-layout/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`node --check mobile/pencil/scripts/04-market-trading.js` 通过；Pencil CLI 执行、保存和批量 PNG 导出成功；已视觉检查设计系统、行情详情、现货浅色/深色、秒合约和订单中心导出，未发现空白画板、主要文字溢出或非法图标；`git diff --check` 待本切片全部画板完成后统一执行。
+- 后续事项：继续补齐产品、资产/钱包、消息/公告、登录注册、KYC、安全、绑定、邀请和语言等二级画板，再执行全量 Pencil 结构检查、PDF 导出和生产页面映射。
+
+## 2026-08-02 18:22 - 完成 Pencil 全手机端 UI/UX 蓝图与 39 页审阅产物
+
+- 完成内容：以恢复后的首页为唯一视觉模板，使用本地 Pencil CLI 完成 `00`–`37` 全手机端 UI/UX 蓝图，并增加 `05B` 现货深色变体，共 39 个顶层画板。覆盖首页、行情、行情详情、独立现货、独立合约、独立秒合约、订单、资产、我的、消息、资讯、产品中心、闪兑、理财、借贷、新币、预测、充提币全链路、账单、快捷充值、登录注册、双重验证、找回密码、KYC、安全、账号绑定、邀请和语言。现货工作台重做为实时价格、限价/市价、双本地图表语义、买卖、余额、百分比、委托和独立底栏的连续界面；移除现货页中的合约切换、虚假收藏和未支持的指标按钮。建立有序画板 ID/路由映射、关键 PNG 和 39 页 PDF。
+- 修改文件：`mobile/pencil/{hippo-mobile-uiux.pen,README.md,artboards.json,screen-inventory.md,run-execute.sh}`、`mobile/pencil/scripts/*.js`、`mobile/pencil/exports/*.png`、`mobile/pencil/exports/hippo-mobile-uiux-review.pdf`、`.trellis/tasks/07-31-mobile-market-detail-reference-layout/{prd.md,implement.jsonl,check.jsonl}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：全部 `mobile/pencil/scripts/*.js` 经 `node --check` 通过；`artboards.json` 为 39 个唯一且有序的画板 ID；Pencil CLI 全量结构审计结果为顶层画板 39、placeholder 0、zero-size 0、horizontal-overflow 0、boundary 0，且无图标或字体警告；关键 PNG 导出成功。最终 PDF 为 39 页、7.8MB，使用 Poppler 渲染全部 39 页并以 4 张联系表逐页目视复核，另以 144dpi 复核新币详情 Header 修正；`pypdf` 重新打开并确认 39 页；Trellis context 24 项校验通过；`git diff --check` 通过。
+- 后续事项：Pencil 设计交付无遗留；如继续进入生产实现，可按 `artboards.json` 和 `screen-inventory.md` 逐路由映射到 `mobile/src/`，再执行浏览器与 Android 真机验收。
+
+## 2026-08-02 19:28 - 深化现货交易工作台并接入实时行情链路
+
+- 完成内容：重建 Pencil 现货交易浅色/深色画板，将页面收敛为紧凑品种 Header、行情摘要、REST+WebSocket 状态、单行周期栏、本地 K 线、订单簿/最新成交和完整买卖表单；同步重构生产端 `TradeView`，复用行情详情的实时会话，接入真实 K 线、盘口和最新成交并处理 REST/WS 竞态，补齐订单簿/成交切换、44px 返回与委托入口、68px 组合输入、比例选择、余额和提交状态；修正 Root Header 品牌图像在移动 WebView/无头浏览器中的可靠渲染，保持现货、合约与秒合约独立栏目。
+- 修改文件：`mobile/src/views/TradeView.vue`、`mobile/src/components/RootHeader.vue`、`mobile/src/styles/prototype-parity.css`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{spot-trading-ui-optimization,award-ui-trading-workspaces,ui-prototype-alignment-trading,root-prototype-parity}.test.ts`、`mobile/pencil/{hippo-mobile-uiux.pen,README.md,artboards.json,screen-inventory.md}`、`mobile/pencil/scripts/{13-rebuild-spot,14-fix-spot-submit}.js`、`mobile/pencil/exports/{W8ySp,RLtFq}.png`、`mobile/pencil/exports/hippo-mobile-uiux-review.pdf`、`.trellis/tasks/07-31-mobile-market-detail-reference-layout/{implement,check}.jsonl`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix mobile test` 232/232 通过；`npm --prefix mobile run build:pwa` 通过并生成 135 项预缓存；两个 Pencil 脚本 `node --check`、`git diff --check` 与 Trellis context 31 项校验通过。Pencil 结构审计保持 39 个顶层画板、placeholder/零尺寸/横向越界均为 0，39 页 PDF SHA-256 为 `8ed53698fc14958c70d0341f70c8983aedbab6c1f33c86b9a0ba0a3f8f744206`；Ego/CDP 在 320px 与 390px 新载入环境确认页面 `scrollWidth` 等于视口、Header/图表/盘口/表单无横向溢出，订单簿与最新成交标签可真实切换，浅色/深色 Pencil 导出已逐张目视复核。
+- 后续事项：生产端现货 UI 与 PWA 构建无遗留；Android 真机安装可在用户下一次要求预览时单独执行。
+
+## 2026-08-03 05:44 - 对齐 Pencil 当前选中的首页与行情详情生产布局
+
+- 完成内容：以 Pencil 当前选中的六张 2x 导出为唯一视觉源，完成 390px 首页访客/会员与明暗四状态，将访客 Hero 复制到生产素材并保持登录后真实资产观测曲线；Root Header 改用现有 1000x250 横版 Logo 并精确渲染为 136x34，根 Dock 收敛为首页/行情/中央交易/资产/我的五入口；按 64/42/112/48/204/28/48/272/67px 重构行情详情，扩展紧凑 Settings2 双引擎切换与七行四列 matrix 盘口，保留 REST/WS 竞态、图表展开、键盘、分享、路由和下单语义，真实数据缺失时仅保留几何占位。
+- 修改文件：`mobile/src/assets/home/{market-hero-light,market-hero-dark}.jpg`、`mobile/src/components/{RootHeader,AppBottomNav,MobileMarketChart,OrderBookPanel}.vue`、`mobile/src/views/{HomeView,MarketDetailView}.vue`、`mobile/src/styles/prototype-parity.css`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{pencil-selected-home-layout,market-detail-reference-layout,android-ui-foundation-slice-a,core-discovery-views,editorial-shell-home-markets,header-controls,root-prototype-parity,shell-navigation,spot-trading-ui-optimization,ui-prototype-alignment-foundation}.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Ego Browser 实测 320/360/390/448px 首页明暗状态及 390px 行情详情几何，确认无水平溢出、Logo 为 136x34、390px 访客 Hero 为 358x270、图表引擎菜单在 320px 不越界；选中设计聚焦及相关回归测试 39/39 通过，导航/根页相关回归 25/25 通过；`npm --prefix mobile run type-check`、`npm --prefix mobile test`（237/237）与 `git diff --check` 全部通过。
+- 后续事项：无。
+
+## 2026-08-03 05:49 - 修复首页日报禁用态与启动层自动关闭回归
+
+- 完成内容：仅收敛 Visual QA 指出的两项回归：为浅色访客首页空日报禁用态显式锁定薄荷标签、白色标题、灰绿说明/箭头及不透明度 1，同时覆盖 WebKit 禁用文字填充；为 GSAP `LaunchIntro` 增加 3000ms 原生定时器兜底、异常立即退出和完整定时器清理，避免动画未完成时永久遮挡首页。
+- 修改文件：`mobile/src/styles/prototype-parity.css`、`mobile/src/components/LaunchIntro.vue`、`mobile/tests/{pencil-selected-home-layout,launch-intro}.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Ego Browser 在 390x1116 实测启动层初始存在且锁定滚动，4.1s 后 DOM 已移除且滚动锁已释放；浅色禁用日报计算样式为标签 `rgb(67,239,169)`、标题 `rgb(242,247,244)`、说明/箭头 `rgb(149,161,154)`、不透明度 `1`，页面宽度 390px 无水平溢出；聚焦测试 14/14、`npm --prefix mobile run type-check`、`npm --prefix mobile test`（238/238）与 `git diff --check` 全部通过。
+- 后续事项：无。
+
+## 2026-08-03 06:24 - 完成 Pencil 选中态生产实现最终审查
+
+- 完成内容：以 Pencil 当前选中的 `FwNBM`、`W1cWyh`、`miHnt`、`CvipW`、`ftTny`、`VoZfE` 为最终来源，完成首页访客/会员明暗四态和行情详情明暗两态的生产对齐；独立审查并修复 Lightweight Charts 外部归属链接、204px 图表视口裁切、紧凑引擎菜单焦点恢复、paired 盘口语义及空态伪行问题；同步五入口 Dock、本地双图表引擎、43 个 Pencil 画板元数据、选中画板导出和移动端规范，保持真实 REST/WebSocket、PWA/Tauri、命名路由和无 `mobile/pencil` 运行时依赖。
+- 修改文件：`mobile/src/components/{RootHeader,AppBottomNav,LaunchIntro,MobileMarketChart,KLineChartMarketChart,TradingViewMarketChart,OrderBookPanel}.vue`、`mobile/src/views/{HomeView,MarketDetailView}.vue`、`mobile/src/styles/prototype-parity.css`、`mobile/src/assets/home/*`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{market-detail-reference-layout,pencil-selected-home-layout,launch-intro}.test.ts` 及相关根壳回归、`mobile/pencil/{artboards.json,README.md,screen-inventory.md,exports/*}`、`.trellis/spec/mobile/*`、`.trellis/tasks/07-31-mobile-market-detail-reference-layout/*`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Ego Browser 实测首页与行情详情在 320/360/390/448px、明暗主题下 `scrollWidth === viewport`；390px 首页块级几何为 Header 64、搜索 56、资产/Hero 302、资金动作 64、快捷入口 176、日报 80、行情 290、Dock 68px，行情详情为 64/42/112/48/204/28/48/272/67px；会员无真实资产时不绘制伪曲线，启动层 3 秒兜底后移除并释放滚动锁，Header 滚动后仍位于顶层且可命中；KLineChart/TradingView 两个本地引擎均精确填充 204px，320px 引擎菜单不越界，外部图表 anchor/iframe/script 为 0。`npm --prefix mobile run lint --if-present`、`npm --prefix mobile run type-check`、`npm --prefix mobile test`（239/239）、`npm --prefix mobile run build:pwa`（2046 modules、136 条预缓存）、`npm --prefix mobile run build:tauri`、`git diff --check`、`python3 ./.trellis/scripts/task.py validate 07-31-mobile-market-detail-reference-layout` 全部通过。
+- 后续事项：无。
+
+## 2026-08-03 14:34 - 现货交易页按 Pencil 选中稿完成生产映射
+
+- 完成内容：直接读取并锁定 Pencil 当前选中节点 `yzOPc` / `bo8k5`，将现货默认态重构为独立 64px 交易 Header、左侧下单表单、右侧 148px 五档迷你盘口、真实账户状态和默认折叠的本地图表入口；现货保留五入口异形 Dock 但不再叠加 Root Header，合约分支与真实下单、行情 REST/WebSocket、余额和路由行为保持独立；补齐明暗主题、320px 紧凑盘口、收藏/分享、资产入口和双语状态；修复屏幕阅读器“快照”文字误入可视布局、输入框子元素出现第二层 inset 聚焦框，以及旧测试只检查首个订单簿实例的问题；同步 Trellis 设计源、研究记录与壳层合同。
+- 修改文件：`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/07-31-mobile-market-detail-reference-layout/{prd.md,research/pencil-spot-selected-layout.md}`、`mobile/src/App.vue`、`mobile/src/components/OrderBookPanel.vue`、`mobile/src/views/TradeView.vue`、`mobile/src/styles/{base,prototype-parity}.css`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{spot-trading-ui-optimization,market-detail-reference-layout,root-prototype-parity,shell-navigation}.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix mobile run type-check` 通过；`npm --prefix mobile test` 239/239 通过；`npm --prefix mobile run build:pwa` 通过；`npm --prefix mobile run build:tauri` 通过；`git diff --check` 通过；Trellis task validate 通过；Ego Browser 在 320x720、360x800、390x844、448x900 验证无横向溢出、Sticky Header 稳定、末尾内容不被 Dock 遮挡，并在 390x920 明暗主题核对 Pencil 几何；展开图表只挂载一个本地渲染器，0 iframe、0 外部图表链接、0 远程脚本；输入聚焦只保留完整字段壳光环。
+- 后续事项：浏览器本地预览继续保留在 `http://127.0.0.1:4178/?spot-parity=20260803-final#/trade/BTC_USDT`；如需本轮同时验收原生 WebView，再构建并安装 Android Debug APK 到连接设备。
+## 2026-08-03 18:05 - 按 Pencil 选中稿补齐手机端未映射页面
+
+- 完成内容：逐一读取 Pencil 当前选中的浅色/深色画板并建立生产映射，重构资产、我的访客/会员、现货/杠杆订单、登录、注册、资讯、资讯详情、闪兑与币种面板、理财、借贷、新币及新币详情；新增统一 60px Pencil Page Header、字段、分段控件、状态面、列表、按钮和底部复核层，保留真实 API、路由、访客/加载/空/错误状态与 Lucide 图标；资产、我的和订单继续使用五入口 Dock 且不重复 Root Header。Ego Browser 调试时同时修复访客接口延迟返回 401 后把已经打开的公开页面错误重定向到登录页的问题，请求层现按该次请求是否实际携带 Bearer 判断刷新与全局会话失效。
+- 修改文件：`mobile/src/{App.vue,main.ts}`、`mobile/src/api/{news,requestAuth}.ts`、`mobile/src/components/PageHeader.vue`、`mobile/src/core/types.ts`、`mobile/src/router/index.ts`、`mobile/src/styles/pencil-selected-pages.css`、`mobile/src/views/{AssetsView,ProfileView,OrdersView,LoginView,RegisterView,NewsView,NewsDetailView,SwapView,EarnView,LoanView,NewCoinsView,NewCoinDetailView}.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{pencil-selected-unmapped-pages,request-layer}.test.ts` 及相关既有 UI 合同测试、`.trellis/tasks/07-31-mobile-market-detail-reference-layout/{prd.md,research/pencil-selected-unmapped-pages.md,implement.jsonl,check.jsonl}`、`.trellis/spec/mobile/{backend-integration,pwa-and-shell}.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix mobile run lint --if-present`、`npm --prefix mobile run type-check`、`npm --prefix mobile test`（242/242）、`npm --prefix mobile run build:pwa`（138 条预缓存）、`npm --prefix mobile run build:tauri`、`git diff --check` 均通过；Ego Browser 在 320px/390px、明暗主题下检查目标页面，文档横向溢出为 0，实际可见控件未出现小于 40px 的目标，主要与图标控件保持 44px，Pencil Header 为 60px、sticky、z-index 70；资讯、理财和新币等待 13 秒后均从加载态正常进入真实空态/错误态；资产、我的、登录浅色页面完成截图目视复核，Profile 滚动后 Header 顶部仍为 0 且命中标题而非内容遮挡。
+- 后续事项：无；本地预览继续保留在 `http://127.0.0.1:4178/`。
+
+## 2026-08-03 20:03 - 按 Pencil 当前选中画板完成逐坐标 1:1 校准
+
+- 完成内容：针对“仅风格接近、没有 1:1”的反馈，重新以 390×920 Pencil 当前选中浅色/深色画板为唯一基准，逐页校准资产、我的访客/会员、现货/杠杆订单、登录、注册、资讯、资讯详情、闪兑、理财、借贷、新币和新币详情的 Header、纵向坐标、区块高度、字段、按钮、分段控件、状态面、Dock 与明暗色板；清除认证页设计稿中不存在的额外 Header 操作，统一完整字段聚焦外环，并修正借贷准入图标的正向语义色。Pencil 演示数据仍不写入生产端，页面继续呈现真实接口的访客、加载、空、错误和业务状态。
+- 修改文件：`mobile/src/components/PageHeader.vue`、`mobile/src/styles/pencil-selected-pages.css`、`mobile/src/views/{AssetsView,ProfileView,OrdersView,LoginView,RegisterView,NewsView,NewsDetailView,SwapView,EarnView,LoanView,NewCoinsView,NewCoinDetailView}.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、相关 UI 合同测试、`.trellis/spec/mobile/index.md`、`.trellis/tasks/07-31-mobile-market-detail-reference-layout/research/pencil-selected-unmapped-pages.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix mobile run type-check` 通过；`npm --prefix mobile test` 245/245 通过；`npm --prefix mobile run build:pwa` 与 `npm --prefix mobile run build:tauri` 通过；`git diff --check` 通过。Ego Browser 对全部目标路由执行 390px 明暗主题与 320×720 窄屏审计，横向溢出均为 0；逐项核对 390px 区块坐标与高度，借贷真实数据稳定后空态 y=319/h=143、风险行 y=478/h=36；最终运行截图与 15 组 Pencil 导出完成目视复核。
+- 后续事项：无；本地预览保持在 `http://127.0.0.1:4178/#/assets`。

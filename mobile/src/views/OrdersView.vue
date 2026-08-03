@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { CheckCircle2, CircleAlert, LoaderCircle, PackageOpen, RefreshCw, X } from 'lucide-vue-next'
+import { CheckCircle2, CircleAlert, History, LoaderCircle, PackageOpen, RefreshCw, X } from 'lucide-vue-next'
 import LoginRequiredState from '@/components/LoginRequiredState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
@@ -21,12 +21,12 @@ import {
   type MarginPosition,
   type SpotOrder,
 } from '@/api/trading'
-import { formatAmount, formatDateTime, formatPrice } from '@/core/format'
-import { useNavigationStore } from '@/stores/navigation'
+import { formatAmount, formatPrice } from '@/core/format'
 import { useSessionStore } from '@/stores/session'
 import type { MarginProduct, MarketPair } from '@/core/types'
 
-type Tab = 'spot' | 'margin' | 'history'
+type MarketTab = 'spot' | 'margin'
+type StateTab = 'current' | 'history' | 'positions'
 type PendingAction =
   | { kind: 'spot'; order: SpotOrder }
   | { kind: 'spot-all' }
@@ -36,13 +36,17 @@ type PendingAction =
 
 const route = useRoute()
 const session = useSessionStore()
-const navigation = useNavigationStore()
 const { t } = useI18n()
-const activeTab = ref<Tab>('spot')
-const tabs = computed(() => [
-  { value: 'spot' as const, label: t('orders.spotOrders') },
-  { value: 'margin' as const, label: t('orders.marginPositions') },
-  { value: 'history' as const, label: t('orders.history') },
+const marketTab = ref<MarketTab>('spot')
+const stateTab = ref<StateTab>('current')
+const marketTabs = computed(() => [
+  { value: 'spot' as const, label: t('orders.spot') },
+  { value: 'margin' as const, label: t('orders.marginMarket') },
+])
+const stateTabs = computed(() => [
+  { value: 'current' as const, label: t('orders.current') },
+  { value: 'history' as const, label: t('orders.historyOrdersTab') },
+  { value: 'positions' as const, label: t('orders.positions') },
 ])
 const spotOrders = ref<SpotOrder[]>([])
 const historyOrders = ref<SpotOrder[]>([])
@@ -106,8 +110,74 @@ function displayPair(symbol: string): string {
   return symbol.replace(/_/g, '/').replace(/-/g, '/')
 }
 
-function setTab(tab: Tab): void {
-  activeTab.value = tab
+function setMarketTab(tab: MarketTab): void {
+  if (marketTab.value === tab) {
+    void load()
+    return
+  }
+  marketTab.value = tab
+  if (tab === 'spot' && stateTab.value === 'positions') stateTab.value = 'current'
+}
+
+function setStateTab(tab: StateTab): void {
+  if (stateTab.value === tab) {
+    void load()
+    return
+  }
+  stateTab.value = tab
+}
+
+function openHistory(): void {
+  setStateTab('history')
+}
+
+function baseAsset(symbol: string): string {
+  return displayPair(symbol).split('/')[0] || symbol
+}
+
+function quoteAsset(symbol: string): string {
+  return displayPair(symbol).split('/')[1] || ''
+}
+
+function spotOrderTypeLabel(order: SpotOrder): string {
+  return t(order.orderType === 'market' ? 'trade.marketOrderShort' : 'trade.limitOrderShort')
+}
+
+function spotOrderPriceLabel(order: SpotOrder): string {
+  return order.price > 0 ? formatPrice(order.price) : t('orders.marketPrice')
+}
+
+function currentOrderStatusLabel(status: string): string {
+  if (['submitted', 'pending', 'trading', 'open'].includes(status.trim().toLowerCase())) return t('orders.waitingFill')
+  return statusLabel(status)
+}
+
+function positionDirectionLabel(position: MarginPosition): string {
+  return t(position.direction === 'long' ? 'trade.openLong' : 'trade.openShort')
+}
+
+function currentPositionStatusLabel(position: MarginPosition): string {
+  if (position.status.trim().toLowerCase() === 'opened') {
+    return position.entryPrice > 0 ? t('orders.statusHolding') : t('orders.waitingFill')
+  }
+  return currentOrderStatusLabel(position.status)
+}
+
+function positionAmount(position: MarginPosition): string {
+  const symbol = positionSymbol(position)
+  const asset = baseAsset(symbol)
+  if (position.entryPrice > 0 && position.notionalAmount > 0) {
+    return `${formatAmount(position.notionalAmount / position.entryPrice)} ${asset}`
+  }
+  const product = productFor(position)
+  return `${formatAmount(position.marginAmount)} ${product?.marginAssetSymbol || quoteAsset(symbol)}`.trim()
+}
+
+function statusTone(status: string): 'positive' | 'negative' | 'info' {
+  const normalized = status.trim().toLowerCase()
+  if (['completed', 'filled', 'closed'].includes(normalized)) return 'positive'
+  if (['canceled', 'cancelled', 'liquidated', 'rejected'].includes(normalized)) return 'negative'
+  return 'info'
 }
 
 async function load(): Promise<void> {
@@ -116,11 +186,12 @@ async function load(): Promise<void> {
   feedback.value = ''
   error.value = ''
   try {
-    if (activeTab.value === 'spot') {
-      spotOrders.value = await fetchOpenSpotOrders()
+    if (marketTab.value === 'spot') {
+      if (stateTab.value === 'current') spotOrders.value = await fetchOpenSpotOrders()
+      else if (stateTab.value === 'history') historyOrders.value = await fetchSpotOrderHistory()
       return
     }
-    if (activeTab.value === 'margin') {
+    if (stateTab.value !== 'history') {
       const [nextPositions, nextProducts, nextPairs] = await Promise.all([
         fetchMarginPositions('opened'),
         fetchMarginProducts(),
@@ -131,15 +202,13 @@ async function load(): Promise<void> {
       pairs.value = nextPairs
       return
     }
-    const [nextOrders, closed, liquidated, canceled, nextProducts, nextPairs] = await Promise.all([
-      fetchSpotOrderHistory(),
+    const [closed, liquidated, canceled, nextProducts, nextPairs] = await Promise.all([
       fetchMarginPositions('closed'),
       fetchMarginPositions('liquidated'),
       fetchMarginPositions('canceled'),
       fetchMarginProducts(),
       fetchMarketPairs(),
     ])
-    historyOrders.value = nextOrders
     historyPositions.value = [...closed, ...liquidated, ...canceled]
     products.value = nextProducts
     pairs.value = nextPairs
@@ -280,7 +349,7 @@ function trapDialogFocus(event: KeyboardEvent): void {
   }
 }
 
-watch(activeTab, () => { void load() })
+watch([marketTab, stateTab], () => { void load() })
 watch(pendingAction, async (action) => {
   if (action) {
     returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -297,8 +366,14 @@ watch(pendingAction, async (action) => {
 })
 
 onMounted(() => {
-  if (route.query.tab === 'positions') activeTab.value = 'margin'
-  else if (route.query.tab === 'history') activeTab.value = 'history'
+  if (route.query.tab === 'positions') {
+    marketTab.value = 'margin'
+    stateTab.value = 'positions'
+  } else if (route.query.tab === 'history') {
+    stateTab.value = 'history'
+  } else if (route.query.tab === 'margin') {
+    marketTab.value = 'margin'
+  }
   void load()
 })
 
@@ -327,35 +402,39 @@ function statusLabel(status: string): string {
 </script>
 
 <template>
-  <main class="page page--plain orders-page" data-orders-workspace="live">
-    <PageHeader
-      :eyebrow="t('orders.category')"
-      :fallback="navigation.lastTradePath"
-      :title="t('orders.title')"
-      :subtitle="t('orders.loginDescription')"
-      :back="true"
-    >
+  <main
+    class="page pencil-page pencil-root-page orders-pencil"
+    data-orders-workspace="live"
+    data-pencil-source="kcP5D A85if n6oGO t2GTW4"
+  >
+    <PageHeader :back="false" :pencil="true" :title="t('orders.titleShort')">
       <template #actions>
-        <button
-          class="icon-button"
-          type="button"
-          :aria-label="t('orders.refresh')"
-          :disabled="loading"
-          @click="load"
-        >
-          <RefreshCw :size="20" :class="{ spin: loading }" />
+        <button class="icon-button" type="button" :aria-label="t('orders.historyOrdersTab')" @click="openHistory">
+          <History :size="19" />
         </button>
       </template>
     </PageHeader>
-    <div class="page-content orders-content">
-      <nav class="order-tabs" :aria-label="t('orders.category')">
+
+    <div class="pencil-content orders-pencil__content">
+      <nav class="pencil-segmented orders-market-tabs" :aria-label="t('orders.category')">
         <button
-          v-for="item in tabs"
+          v-for="item in marketTabs"
           :key="item.value"
           type="button"
-          :aria-pressed="activeTab === item.value"
-          :class="{ 'is-active': activeTab === item.value }"
-          @click="setTab(item.value)"
+          :aria-pressed="marketTab === item.value"
+          @click="setMarketTab(item.value)"
+        >
+          {{ item.label }}
+        </button>
+      </nav>
+      <nav class="pencil-segmented orders-state-tabs" :aria-label="t('orders.stateCategory')">
+        <button
+          v-for="item in stateTabs"
+          :key="item.value"
+          type="button"
+          :disabled="marketTab === 'spot' && item.value === 'positions'"
+          :aria-pressed="stateTab === item.value"
+          @click="setStateTab(item.value)"
         >
           {{ item.label }}
         </button>
@@ -367,73 +446,119 @@ function statusLabel(status: string): string {
         :description="t('orders.loginDescription')"
       />
       <template v-else>
-        <div v-if="error" class="orders-message orders-message--error" role="alert">
+        <div v-if="error" class="pencil-message pencil-message--error" role="alert">
           <CircleAlert :size="18" />
           <span>{{ error }}</span>
-          <button type="button" :aria-label="t('orders.refresh')" @click="load">
-            <RefreshCw :size="17" />
-          </button>
+          <button type="button" :aria-label="t('orders.refresh')" @click="load"><RefreshCw :size="17" /></button>
         </div>
-        <div v-if="feedback" class="orders-message orders-message--success" role="status">
+        <div v-if="feedback" class="pencil-message pencil-message--success" role="status">
           <CheckCircle2 :size="18" />
           <span>{{ feedback }}</span>
         </div>
 
-        <div v-if="loading" class="orders-state" aria-live="polite">
+        <div v-if="loading" class="pencil-state orders-loading" aria-live="polite">
           <LoaderCircle :size="24" class="spin" />
           <span>{{ t('orders.loading') }}</span>
         </div>
 
-        <template v-else-if="activeTab === 'spot'">
-          <div class="order-toolbar">
-            <span>{{ t('orders.currentOrders', { count: sortedSpotOrders.length }) }}</span>
-            <button
-              v-if="sortedSpotOrders.length"
-              type="button"
-              :disabled="actionId === 'spot-all'"
-              @click="requestAction({ kind: 'spot-all' })"
-            >
-              {{ actionId === 'spot-all' ? t('orders.canceling') : t('orders.cancelAll') }}
-            </button>
-          </div>
-          <div v-if="sortedSpotOrders.length" class="order-list">
-            <article v-for="order in sortedSpotOrders" :key="order.id" class="order-card">
-              <header>
+        <template v-else-if="marketTab === 'spot' && stateTab === 'current'">
+          <div v-if="sortedSpotOrders.length" class="orders-list">
+            <article v-for="order in sortedSpotOrders" :key="order.id" class="orders-row">
+              <header class="orders-row__head">
                 <strong>{{ displayPair(order.symbol) }}</strong>
-                <span :class="order.side === 'buy' ? 'buy-tag' : 'sell-tag'">
+                <span :class="order.side === 'buy' ? 'orders-side-chip' : 'orders-side-chip orders-side-chip--negative'">
                   {{ order.side === 'buy' ? t('orders.buy') : t('orders.sell') }}
                 </span>
-              </header>
-              <dl>
-                <div><dt>{{ t('orders.orderPrice') }}</dt><dd>{{ order.orderType === 'market' ? t('orders.marketPrice') : formatPrice(order.price) }}</dd></div>
-                <div><dt>{{ t('orders.orderQuantity') }}</dt><dd>{{ formatAmount(order.quantity) }}</dd></div>
-                <div><dt>{{ t('orders.filled') }}</dt><dd>{{ formatAmount(order.filledQuantity) }}</dd></div>
-              </dl>
-              <footer>
-                <small>{{ formatDateTime(order.createdAt) }}</small>
                 <button
-                  class="button button--secondary"
+                  class="orders-row__state"
+                  :class="`is-${statusTone(order.status)}`"
                   type="button"
+                  :aria-label="`${t('orders.cancel')} ${displayPair(order.symbol)}`"
                   :disabled="actionId === `spot-${order.id}`"
                   @click="requestAction({ kind: 'spot', order })"
                 >
-                  {{ actionId === `spot-${order.id}` ? t('orders.processing') : t('orders.cancel') }}
+                  {{ actionId === `spot-${order.id}` ? t('orders.processing') : currentOrderStatusLabel(order.status) }}
                 </button>
-              </footer>
+              </header>
+              <div class="orders-row__summary">
+                <span>{{ spotOrderTypeLabel(order) }}{{ order.side === 'buy' ? t('orders.buy') : t('orders.sell') }}</span>
+                <strong class="pencil-numeric">
+                  {{ formatAmount(order.quantity) }} {{ baseAsset(order.symbol) }}
+                  <small>@ {{ spotOrderPriceLabel(order) }}</small>
+                </strong>
+              </div>
             </article>
+            <div class="orders-batch-footer">
+              <span>{{ t('orders.currentOrders', { count: sortedSpotOrders.length }) }}</span>
+              <button type="button" :disabled="actionId === 'spot-all'" @click="requestAction({ kind: 'spot-all' })">
+                {{ actionId === 'spot-all' ? t('orders.canceling') : t('orders.cancelAll') }}
+              </button>
+            </div>
           </div>
-          <div v-else class="orders-state orders-state--empty">
-            <PackageOpen :size="23" />
-            <span>{{ t('orders.noSpotOrders') }}</span>
-          </div>
+          <div v-else class="pencil-state"><PackageOpen :size="23" /><span>{{ t('orders.noSpotOrders') }}</span></div>
         </template>
 
-        <template v-else-if="activeTab === 'margin'">
-          <div class="order-toolbar">
-            <span>{{ t('orders.currentPositions', { count: openedPositions.length }) }}</span>
-            <div>
+        <template v-else-if="marketTab === 'spot' && stateTab === 'history'">
+          <div v-if="sortedHistoryOrders.length" class="orders-list">
+            <article v-for="order in sortedHistoryOrders" :key="order.id" class="orders-row orders-row--history">
+              <header class="orders-row__head">
+                <strong>{{ displayPair(order.symbol) }}</strong>
+                <span :class="order.side === 'buy' ? 'orders-side-chip' : 'orders-side-chip orders-side-chip--negative'">
+                  {{ order.side === 'buy' ? t('orders.buy') : t('orders.sell') }}
+                </span>
+                <span class="orders-row__state" :class="`is-${statusTone(order.status)}`">{{ statusLabel(order.status) }}</span>
+              </header>
+              <div class="orders-row__summary">
+                <span>{{ spotOrderTypeLabel(order) }}{{ order.side === 'buy' ? t('orders.buy') : t('orders.sell') }}</span>
+                <strong class="pencil-numeric">
+                  {{ formatAmount(order.filledQuantity || order.quantity) }} {{ baseAsset(order.symbol) }}
+                  <small>@ {{ spotOrderPriceLabel(order) }}</small>
+                </strong>
+              </div>
+            </article>
+          </div>
+          <div v-else class="pencil-state"><PackageOpen :size="23" /><span>{{ t('orders.noSpotHistory') }}</span></div>
+        </template>
+
+        <template v-else-if="marketTab === 'margin' && stateTab !== 'history'">
+          <div v-if="(stateTab === 'positions' ? closablePositions : cancelablePositions).length" class="orders-list">
+            <article
+              v-for="position in (stateTab === 'positions' ? closablePositions : cancelablePositions)"
+              :key="position.id"
+              class="orders-row"
+            >
+              <header class="orders-row__head">
+                <strong>{{ positionSymbol(position) }}</strong>
+                <span :class="position.direction === 'long' ? 'orders-side-chip' : 'orders-side-chip orders-side-chip--negative'">
+                  {{ positionDirectionLabel(position) }}
+                </span>
+                <button
+                  class="orders-row__state"
+                  :class="`is-${statusTone(position.status)}`"
+                  type="button"
+                  :aria-label="`${position.entryPrice > 0 ? t('orders.close') : t('orders.cancel')} ${positionSymbol(position)}`"
+                  :disabled="actionId === `margin-${position.id}`"
+                  @click="requestAction({ kind: 'margin', position })"
+                >
+                  {{ actionId === `margin-${position.id}` ? t('orders.processing') : currentPositionStatusLabel(position) }}
+                </button>
+              </header>
+              <div class="orders-row__summary">
+                <span>{{ positionDirectionLabel(position) }} · {{ position.leverage }}x · {{ position.entryPrice > 0 ? t('orders.marketPrice') : t('trade.limitOrderLabel') }}</span>
+                <strong class="pencil-numeric">
+                  {{ positionAmount(position) }}
+                  <small>@ {{ position.entryPrice > 0 ? formatPrice(position.entryPrice) : t('orders.waitingFill') }}</small>
+                </strong>
+              </div>
+            </article>
+            <div class="orders-batch-footer">
+              <span>
+                {{ stateTab === 'positions'
+                  ? t('orders.currentPositions', { count: closablePositions.length })
+                  : t('orders.currentOrders', { count: cancelablePositions.length }) }}
+              </span>
               <button
-                v-if="cancelablePositions.length"
+                v-if="stateTab === 'current'"
                 type="button"
                 :disabled="actionId === 'margin-cancel-all'"
                 @click="requestAction({ kind: 'margin-cancel-all' })"
@@ -441,8 +566,8 @@ function statusLabel(status: string): string {
                 {{ t('orders.cancelPending') }}
               </button>
               <button
-                v-if="closablePositions.length"
-                class="order-toolbar__danger"
+                v-else
+                class="is-danger"
                 type="button"
                 :disabled="actionId === 'margin-close-all'"
                 @click="requestAction({ kind: 'margin-close-all' })"
@@ -451,71 +576,34 @@ function statusLabel(status: string): string {
               </button>
             </div>
           </div>
-          <div v-if="openedPositions.length" class="order-list">
-            <article v-for="position in openedPositions" :key="position.id" class="order-card">
-              <header>
-                <strong>{{ positionSymbol(position) }}</strong>
-                <span :class="position.direction === 'long' ? 'buy-tag' : 'sell-tag'">
-                  {{ position.direction === 'long' ? t('orders.long') : t('orders.short') }} {{ position.leverage }}x
-                </span>
-              </header>
-              <dl>
-                <div><dt>{{ t('orders.margin') }}</dt><dd>{{ formatAmount(position.marginAmount) }}</dd></div>
-                <div><dt>{{ t('orders.entryPrice') }}</dt><dd>{{ position.entryPrice > 0 ? formatPrice(position.entryPrice) : t('orders.waitingFill') }}</dd></div>
-                <div><dt>{{ position.realizedPnl >= 0 ? t('orders.realizedProfit') : t('orders.realizedLoss') }}</dt><dd :class="position.realizedPnl >= 0 ? 'up' : 'down'">{{ formatAmount(position.realizedPnl) }}</dd></div>
-              </dl>
-              <footer>
-                <small>{{ position.marginMode === 'cross' ? t('orders.cross') : t('orders.isolated') }} · {{ t('orders.notionalValue', { amount: formatAmount(position.notionalAmount) }) }}</small>
-                <button
-                  class="button"
-                  :class="position.entryPrice > 0 ? 'button--danger' : 'button--secondary'"
-                  type="button"
-                  :disabled="actionId === `margin-${position.id}`"
-                  @click="requestAction({ kind: 'margin', position })"
-                >
-                  {{ actionId === `margin-${position.id}` ? t('orders.processing') : position.entryPrice > 0 ? t('orders.close') : t('orders.cancel') }}
-                </button>
-              </footer>
-            </article>
-          </div>
-          <div v-else class="orders-state orders-state--empty">
-            <PackageOpen :size="23" />
-            <span>{{ t('orders.noPositions') }}</span>
-          </div>
+          <div v-else class="pencil-state"><PackageOpen :size="23" /><span>{{ stateTab === 'positions' ? t('orders.noPositions') : t('orders.noMarginOrders') }}</span></div>
         </template>
 
-        <template v-else>
-          <section class="history-section">
-            <h2>{{ t('orders.spotHistory') }}</h2>
-            <article v-for="order in sortedHistoryOrders" :key="order.id" class="history-row">
-              <div><strong>{{ displayPair(order.symbol) }} · {{ order.side === 'buy' ? t('orders.buy') : t('orders.sell') }}</strong><small>{{ formatDateTime(order.createdAt) }}</small></div>
-              <span><b>{{ statusLabel(order.status) }}</b><small>{{ formatAmount(order.filledQuantity) }} / {{ formatAmount(order.quantity) }}</small></span>
+        <template v-else-if="marketTab === 'margin' && stateTab === 'history'">
+          <div v-if="historyPositions.length" class="orders-list">
+            <article v-for="position in historyPositions" :key="position.id" class="orders-row orders-row--history">
+              <header class="orders-row__head">
+                <strong>{{ positionSymbol(position) }}</strong>
+                <span :class="position.direction === 'long' ? 'orders-side-chip' : 'orders-side-chip orders-side-chip--negative'">
+                  {{ positionDirectionLabel(position) }}
+                </span>
+                <span class="orders-row__state" :class="`is-${statusTone(position.status)}`">{{ statusLabel(position.status) }}</span>
+              </header>
+              <div class="orders-row__summary">
+                <span>{{ positionDirectionLabel(position) }} · {{ position.leverage }}x · {{ position.marginMode === 'cross' ? t('orders.cross') : t('orders.isolated') }}</span>
+                <strong class="pencil-numeric">
+                  {{ positionAmount(position) }}
+                  <small>@ {{ position.entryPrice > 0 ? formatPrice(position.entryPrice) : t('orders.waitingFill') }}</small>
+                </strong>
+              </div>
             </article>
-            <div v-if="!sortedHistoryOrders.length" class="orders-state orders-state--empty">
-              <PackageOpen :size="22" />
-              <span>{{ t('orders.noSpotHistory') }}</span>
-            </div>
-          </section>
-          <section class="history-section">
-            <h2>{{ t('orders.marginHistory') }}</h2>
-            <article v-for="position in historyPositions" :key="position.id" class="history-row">
-              <div><strong>{{ positionSymbol(position) }} · {{ position.direction === 'long' ? t('orders.long') : t('orders.short') }}</strong><small>{{ position.marginMode === 'cross' ? t('orders.cross') : t('orders.isolated') }} · {{ position.leverage }}x</small></div>
-              <span><b :class="position.realizedPnl >= 0 ? 'up' : 'down'">{{ formatAmount(position.realizedPnl) }}</b><small>{{ statusLabel(position.status) }}</small></span>
-            </article>
-            <div v-if="!historyPositions.length" class="orders-state orders-state--empty">
-              <PackageOpen :size="22" />
-              <span>{{ t('orders.noMarginHistory') }}</span>
-            </div>
-          </section>
+          </div>
+          <div v-else class="pencil-state"><PackageOpen :size="23" /><span>{{ t('orders.noMarginHistory') }}</span></div>
         </template>
       </template>
     </div>
 
-    <div
-      v-if="pendingAction"
-      class="orders-mask"
-      @click.self="closeConfirm"
-    >
+    <div v-if="pendingAction" class="orders-mask" @click.self="closeConfirm">
       <section
         ref="confirmDialog"
         class="orders-dialog"
@@ -529,34 +617,14 @@ function statusLabel(status: string): string {
             <strong id="orders-confirm-title">{{ pendingActionLabel }}</strong>
             <small>{{ pendingActionSummary }}</small>
           </div>
-          <button
-            class="icon-button"
-            type="button"
-            :aria-label="t('common.close')"
-            :disabled="Boolean(actionId)"
-            data-dialog-cancel
-            @click="closeConfirm"
-          >
+          <button class="icon-button" type="button" :aria-label="t('common.close')" :disabled="Boolean(actionId)" data-dialog-cancel @click="closeConfirm">
             <X :size="21" />
           </button>
         </header>
         <p v-if="error" class="orders-dialog__error" role="alert">{{ error }}</p>
         <div class="orders-dialog__actions">
-          <button
-            class="button button--secondary"
-            type="button"
-            :disabled="Boolean(actionId)"
-            @click="closeConfirm"
-          >
-            {{ t('common.cancel') }}
-          </button>
-          <button
-            class="button button--danger"
-            type="button"
-            :disabled="Boolean(actionId)"
-            :aria-busy="Boolean(actionId)"
-            @click="confirmAction"
-          >
+          <button class="button button--secondary" type="button" :disabled="Boolean(actionId)" @click="closeConfirm">{{ t('common.cancel') }}</button>
+          <button class="button button--danger" type="button" :disabled="Boolean(actionId)" :aria-busy="Boolean(actionId)" @click="confirmAction">
             {{ actionId ? t('orders.processing') : pendingActionLabel }}
           </button>
         </div>
@@ -566,413 +634,205 @@ function statusLabel(status: string): string {
 </template>
 
 <style scoped>
-.orders-page {
-  background: var(--surface);
-  min-width: 0;
+.orders-pencil {
+  --pencil-root-header-margin: 4px;
 }
 
-.orders-content {
-  min-width: 0;
-  padding-bottom: calc(28px + env(safe-area-inset-bottom));
-  padding-top: 0;
+.orders-pencil__content {
+  padding-bottom: 0;
+  padding-top: 4px;
 }
 
-.order-tabs {
-  border-bottom: 1px solid var(--line);
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin: 0 -16px;
-  padding: 0 16px;
+.orders-market-tabs {
+  gap: 24px;
+  height: 45px;
+  min-height: 45px;
+  padding-top: 8px;
 }
 
-.order-tabs button {
-  background: transparent;
-  border-bottom: 3px solid transparent;
-  color: var(--muted);
+.orders-market-tabs button {
+  font-size: 18px;
+  font-weight: 500;
+  height: 34px;
+  line-height: 26px;
+  min-height: 34px;
+  padding-bottom: 8px;
+}
+
+.orders-market-tabs button[aria-pressed='true'] {
+  color: var(--positive);
+  font-weight: 500;
+}
+
+.orders-state-tabs {
+  height: 34px;
+  margin-top: 4px;
+  min-height: 34px;
+  padding-top: 4px;
+}
+
+.orders-state-tabs button {
   font-size: 13px;
-  font-weight: 700;
-  min-height: 50px;
-  padding: 0 6px;
+  height: 26px;
+  min-height: 26px;
+  padding-bottom: 7px;
 }
 
-.order-tabs button.is-active {
-  border-color: var(--accent);
-  color: var(--ink);
+.orders-state-tabs button[aria-pressed='true'] {
+  font-weight: 500;
 }
 
-.orders-login-state {
-  margin-top: 12px;
+.orders-state-tabs button:disabled {
+  opacity: .42;
 }
 
-.orders-message {
+.orders-list,
+.orders-loading,
+.orders-login-state,
+.orders-pencil__content > .pencil-state {
+  margin-top: 4px;
+}
+
+.orders-list {
+  display: grid;
+}
+
+.orders-row {
+  box-sizing: border-box;
+  display: grid;
+  gap: 8px;
+  grid-template-rows: 20px 16px;
+  height: 64px;
+  min-height: 64px;
+  padding: 10px 0;
+}
+
+.orders-row__head {
   align-items: center;
-  border: 1px solid currentColor;
   display: grid;
-  font-size: 12px;
-  gap: 9px;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  line-height: 1.45;
-  margin-top: 14px;
-  min-height: 52px;
-  padding: 4px 5px 4px 11px;
-}
-
-.orders-message--error {
-  background: var(--negative-soft);
-  color: var(--negative);
-}
-
-.orders-message--success {
-  background: var(--positive-soft);
-  color: var(--positive);
-  grid-template-columns: auto minmax(0, 1fr);
-}
-
-.orders-message button {
-  background: transparent;
-  color: inherit;
-  display: grid;
-  min-height: 44px;
-  min-width: 44px;
-  place-items: center;
-}
-
-.orders-state {
-  align-content: center;
-  color: var(--muted);
-  display: grid;
-  font-size: 12px;
-  gap: 9px;
-  justify-items: center;
-  min-height: 150px;
-  text-align: center;
-}
-
-.orders-state--empty {
-  min-height: 120px;
-}
-
-.order-toolbar {
-  align-items: center;
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  font-size: 12px;
-  gap: 10px;
-  justify-content: space-between;
-  min-height: 60px;
-}
-
-.order-toolbar > span {
-  color: var(--muted);
-  font-weight: 650;
-}
-
-.order-toolbar > div {
-  display: flex;
   gap: 7px;
-}
-
-.order-toolbar button {
-  background: var(--soft);
-  border: 1px solid var(--line);
-  color: var(--muted-strong);
-  font-size: 11px;
-  font-weight: 750;
-  min-height: 44px;
-  padding: 0 11px;
-}
-
-.order-toolbar button:focus-visible,
-.order-toolbar button:not(:disabled):hover {
-  border-color: var(--focus);
-}
-
-.order-toolbar .order-toolbar__danger {
-  background: var(--negative-soft);
-  border-color: color-mix(in srgb, var(--negative) 28%, var(--line));
-  color: var(--negative);
-}
-
-.order-list {
-  border-bottom: 1px solid var(--line);
-  display: grid;
-}
-
-.order-card {
-  border-bottom: 1px solid var(--line);
-  display: grid;
-  gap: 9px;
-  padding: 12px 0;
-}
-
-.order-card:last-child {
-  border-bottom: 0;
-}
-
-.order-card header,
-.order-card footer {
-  align-items: center;
-  display: flex;
-  gap: 12px;
-  justify-content: space-between;
+  grid-template-columns: minmax(0, auto) auto minmax(0, 1fr);
+  height: 20px;
   min-width: 0;
 }
 
-.order-card header strong {
+.orders-row__head > strong {
   font-size: 14px;
+  font-weight: 700;
+  line-height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.buy-tag,
-.sell-tag {
-  border: 1px solid currentColor;
-  font-size: 10px;
-  font-weight: 800;
-  padding: 4px 7px;
-}
-
-.buy-tag {
-  background: var(--positive-soft);
+.orders-side-chip {
+  align-items: center;
+  background: var(--accent-soft);
+  border-radius: 4px;
   color: var(--positive);
+  display: inline-flex;
+  font-size: 10px;
+  font-weight: 500;
+  height: 20px;
+  justify-content: center;
+  line-height: 14px;
+  padding: 0 7px;
+  white-space: nowrap;
 }
 
-.sell-tag {
+.orders-side-chip--negative {
   background: var(--negative-soft);
   color: var(--negative);
 }
 
-.order-card dl {
-  border-block: 1px solid var(--line);
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin: 0;
-}
-
-.order-card dl > div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  padding: 8px 7px;
-}
-
-.order-card dl > div + div {
-  border-left: 1px solid var(--line);
-}
-
-.order-card dt {
-  color: var(--muted);
-  font-size: 10px;
-}
-
-.order-card dd {
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-  margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.order-card footer small {
-  color: var(--muted);
-  font-size: 10px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.order-card footer .button {
-  border-radius: 0;
-  flex: 0 0 auto;
+.orders-row__state {
+  background: transparent;
+  border: 0;
   font-size: 11px;
-  min-height: 44px;
-  min-width: 90px;
-  padding: 0 12px;
+  font-weight: 500;
+  height: 20px;
+  justify-self: end;
+  line-height: 20px;
+  min-height: 20px;
+  overflow: hidden;
+  padding: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.history-section {
-  border-top: 8px solid var(--soft);
-  margin: 10px -16px 0;
-  padding: 0 16px;
-}
+.orders-row__state.is-info { color: var(--focus); }
+.orders-row__state.is-positive { color: var(--positive); }
+.orders-row__state.is-negative { color: var(--negative); }
 
-.history-section + .history-section {
-  margin-top: 0;
-}
-
-.history-section h2 {
-  border-bottom: 1px solid var(--line);
-  font-size: 15px;
-  margin: 0;
-  min-height: 52px;
-  padding-top: 17px;
-}
-
-.history-row {
+.orders-row__summary {
   align-items: center;
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  gap: 14px;
-  justify-content: space-between;
-  min-height: 68px;
-}
-
-.history-row div,
-.history-row > span {
+  color: var(--muted);
   display: grid;
-  gap: 5px;
+  font-size: 11px;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  height: 16px;
+  line-height: 16px;
   min-width: 0;
 }
 
-.history-row strong,
-.history-row b {
+.orders-row__summary > span,
+.orders-row__summary > strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orders-row__summary > strong {
+  color: var(--ink);
   font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
-.history-row small {
-  color: var(--muted);
-  font-size: 10px;
-}
-
-.history-row > span {
-  flex: 0 0 auto;
+  font-weight: 650;
   text-align: right;
 }
 
-.orders-mask {
-  align-items: flex-end;
-  background: var(--overlay);
-  display: flex;
-  inset: 0;
-  justify-content: center;
-  padding:
-    max(16px, env(safe-area-inset-top))
-    16px
-    max(16px, env(safe-area-inset-bottom));
-  position: fixed;
-  z-index: var(--layer-overlay);
+.orders-row__summary small {
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  margin-left: 4px;
 }
 
-.orders-dialog {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-top: 3px solid var(--negative);
-  box-shadow: var(--shadow-soft);
-  display: grid;
-  gap: 15px;
-  max-height: calc(100dvh - max(32px, env(safe-area-inset-top)) - max(32px, env(safe-area-inset-bottom)));
-  max-width: var(--app-max-width);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 17px;
-  width: 100%;
-}
-
-.orders-dialog > header {
+.orders-batch-footer {
   align-items: center;
+  color: var(--muted);
   display: flex;
-  gap: 12px;
+  font-size: 11px;
+  height: 44px;
   justify-content: space-between;
 }
 
-.orders-dialog > header > div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.orders-dialog > header strong {
-  font-size: 18px;
-}
-
-.orders-dialog > header small {
-  color: var(--muted);
+.orders-batch-footer button {
+  background: transparent;
+  color: var(--positive);
   font-size: 11px;
-  overflow-wrap: anywhere;
+  font-weight: 650;
+  min-height: 44px;
+  padding: 0;
 }
 
-.orders-dialog__error {
-  background: var(--negative-soft);
-  border-left: 3px solid var(--negative);
+.orders-batch-footer button.is-danger {
   color: var(--negative);
-  font-size: 11px;
-  line-height: 1.45;
-  margin: 0;
-  padding: 8px 10px;
 }
 
-.orders-dialog__actions {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr);
+.orders-loading {
+  min-height: 180px;
 }
 
-.orders-dialog__actions .button {
-  border-radius: 0;
-  min-height: 48px;
-  min-width: 0;
-  padding-inline: 8px;
-}
-
-.spin {
-  animation: spin .8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-@media (max-width: 390px) {
-  .orders-content {
-    padding-left: 14px;
-    padding-right: 14px;
-  }
-
-  .order-tabs,
-  .history-section {
-    margin-left: -14px;
-    margin-right: -14px;
-    padding-inline: 14px;
-  }
-}
-
+.orders-mask { align-items: end; background: var(--overlay); display: grid; inset: 0; position: fixed; z-index: var(--layer-overlay); }
+.orders-dialog { background: var(--surface); border-radius: 18px 18px 0 0; box-shadow: 0 -14px 36px var(--shadow); padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); width: 100%; }
+.orders-dialog > header { align-items: center; display: flex; justify-content: space-between; }
+.orders-dialog > header div { display: grid; gap: 5px; }
+.orders-dialog > header small { color: var(--muted); font-size: 11px; }
+.orders-dialog__error { color: var(--negative); font-size: 12px; }
+.orders-dialog__actions { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; margin-top: 18px; }
 @media (max-width: 340px) {
-  .order-tabs button {
-    font-size: 11px;
-    padding-inline: 2px;
-  }
-
-  .order-toolbar {
-    align-items: stretch;
-    flex-direction: column;
-    padding: 9px 0;
-  }
-
-  .order-toolbar > div,
-  .order-toolbar > button {
-    align-self: stretch;
-  }
-
-  .order-toolbar button {
-    flex: 1;
-  }
-
-  .order-card dl > div {
-    padding-inline: 4px;
-  }
-
-  .order-card dt {
-    font-size: 9px;
-  }
-
-  .order-card dd {
-    font-size: 10px;
-  }
-
-  .orders-dialog__actions {
-    grid-template-columns: 1fr;
-  }
+  .orders-row__summary { gap: 6px; }
+  .orders-row__summary > strong { font-size: 11px; }
 }
 </style>

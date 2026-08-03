@@ -7,6 +7,8 @@ import { normalizeMarketChartPoints } from '../src/core/marketChart.ts'
 import { quantityForBalancePercentage } from '../src/core/tradeForm.ts'
 
 const chartSource = source('../src/components/MobileMarketChart.vue')
+const klineChartSource = source('../src/components/KLineChartMarketChart.vue')
+const tradingViewChartSource = source('../src/components/TradingViewMarketChart.vue')
 const chartUtilitySource = source('../src/core/marketChart.ts')
 const bookSource = source('../src/components/OrderBookPanel.vue')
 const tradeSource = source('../src/views/TradeView.vue')
@@ -17,6 +19,8 @@ const marketDetailSource = source('../src/views/MarketDetailView.vue')
 const ordersSource = source('../src/views/OrdersView.vue')
 const productionSources = [
   chartSource,
+  klineChartSource,
+  tradingViewChartSource,
   bookSource,
   tradeSource,
   secondsSource,
@@ -25,9 +29,12 @@ const productionSources = [
 ]
 
 test('现货和合约工作台保留真实数据链路并提供完整下单面', () => {
-  assert.match(tradeSource, /fetchKlines\(pairSymbol\.value, interval\.value\)/)
-  assert.match(tradeSource, /fetchOrderBook\(pairSymbol\.value\)/)
-  assert.match(tradeSource, /<MobileMarketChart :points="points" :loading="chartLoading" \/>/)
+  assert.match(tradeSource, /fetchKlines\(symbol, selectedInterval\)/)
+  assert.match(tradeSource, /fetchOrderBook\(symbol\)/)
+  assert.match(tradeSource, /fetchRecentTrades\(symbol\)/)
+  assert.match(tradeSource, /createMarketDetailStreamSession\(\{/)
+  assert.match(tradeSource, /detailStreamSession\.stop\(\)/)
+  assert.match(tradeSource, /<MobileMarketChart :points="points" :loading="chartLoading" :interval="interval" :symbol="pairSymbol" \/>/)
   assert.match(tradeSource, /class="chart-panel trade-chart-panel"/)
   assert.match(tradeSource, /v-model="price"/)
   assert.match(tradeSource, /v-model="quantity"/)
@@ -74,11 +81,16 @@ test('行情详情使用真实 K 线、深度、成交和双交易入口', () =>
 })
 
 test('图表和盘口在空数据与重复时间点下仍保留稳定画布', () => {
-  assert.match(chartSource, /createChart\(container\.value/)
-  assert.match(chartSource, /data-kline-provider="tradingview"/)
+  assert.match(klineChartSource, /init\(container\.value/)
+  assert.match(klineChartSource, /data-kline-provider="klinecharts"/)
+  assert.match(tradingViewChartSource, /createChart\(container\.value/)
+  assert.match(tradingViewChartSource, /data-kline-provider="tradingview"/)
+  assert.match(chartSource, /v-if="engine === 'klinecharts'"/)
+  assert.match(chartSource, /<TradingViewMarketChart[\s\S]*v-else/)
   assert.match(chartSource, /data-chart-state=/)
   assert.match(chartSource, /normalizeMarketChartPoints\(props\.points\)/)
-  assert.match(chartSource, /if \(width <= 0 \|\| height <= 0\) return/)
+  assert.match(klineChartSource, /if \(width <= 0 \|\| height <= 0\) return/)
+  assert.match(tradingViewChartSource, /if \(width <= 0 \|\| height <= 0\) return/)
   assert.match(chartUtilitySource, /const unique = new Map<number, NormalizedMarketChartPoint>\(\)/)
   assert.match(chartUtilitySource, /sort\(\(left, right\) => left\.time - right\.time\)/)
   assert.match(chartSource, /min-width: 0/)
@@ -132,16 +144,15 @@ test('百分比数量使用真实可用余额并区分现货买卖与保证金�
   }), 0)
 })
 
-test('订单中心始终展示场景标题、等宽三栏和紧凑真实数据面', () => {
-  const tabsAt = ordersSource.indexOf('<nav class="order-tabs"')
+test('订单中心展示 Pencil 双层分类、访客状态和紧凑真实数据面', () => {
+  const tabsAt = ordersSource.indexOf('<nav class="pencil-segmented orders-market-tabs"')
   const authAt = ordersSource.indexOf('v-if="!session.isAuthenticated"')
   assert.ok(tabsAt > 0 && authAt > tabsAt, 'tabs should remain visible before the guest state')
-  assert.match(ordersSource, /:eyebrow="t\('orders\.category'\)"/)
-  assert.match(ordersSource, /:subtitle="t\('orders\.loginDescription'\)"/)
-  assert.match(ordersSource, /:back="true"/)
-  assert.match(ordersSource, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/)
-  assert.match(ordersSource, /class="order-card"/)
-  assert.match(ordersSource, /class="history-row"/)
+  assert.match(ordersSource, /data-pencil-source="kcP5D A85if n6oGO t2GTW4"/)
+  assert.match(ordersSource, /<PageHeader :back="false" :pencil="true"/)
+  assert.match(ordersSource, /class="pencil-segmented orders-state-tabs"/)
+  assert.match(ordersSource, /class="orders-row"/)
+  assert.match(ordersSource, /class="orders-row orders-row--history"/)
   assert.match(ordersSource, /await cancelAllSpotOrders\(spotOrders\.value\.map\(\(order\) => order\.id\)\)/)
   assert.match(ordersSource, /await cancelAllMarginPositions\(\)/)
   assert.match(ordersSource, /await closeAllMarginPositions\(\)/)
@@ -168,7 +179,7 @@ test('交易切片遵守 i18n、Lucide、焦点和窄屏视觉合同', () => {
   assert.match(prototypeCss, /@media \(max-width: 350px\)/)
   assert.match(secondsSource, /:focus-within/)
   assert.match(secondsSource, /var\(--overlay\)/)
-  assert.match(ordersSource, /padding-bottom: calc\(28px \+ env\(safe-area-inset-bottom\)\)/)
+  assert.match(ordersSource, /env\(safe-area-inset-bottom\)/)
 
   const keys = new Set<string>()
   for (const fileSource of productionSources) {

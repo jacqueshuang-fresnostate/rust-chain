@@ -1,19 +1,17 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import {
   ChevronRight,
   CircleAlert,
+  History,
   LoaderCircle,
   PackageOpen,
   ReceiptText,
   RefreshCw,
-  Rocket,
-  ShieldCheck,
 } from 'lucide-vue-next'
 import AssetMark from '@/components/AssetMark.vue'
-import LoginRequiredState from '@/components/LoginRequiredState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
 import { fetchNewCoinProjects, fetchNewCoinSubscriptions, type NewCoinProject, type NewCoinSubscription } from '@/api/newCoin'
@@ -27,6 +25,13 @@ const projects = ref<NewCoinProject[]>([])
 const subscriptions = ref<NewCoinSubscription[]>([])
 const loading = ref(false)
 const error = ref('')
+const lifecycleFilter = ref<'all' | 'active' | 'closed'>('all')
+const visibleProjects = computed(() => projects.value.filter((project) => {
+  const status = project.lifecycleStatus.toLowerCase()
+  if (lifecycleFilter.value === 'active') return ['subscription', 'distribution', 'listed'].includes(status)
+  if (lifecycleFilter.value === 'closed') return status === 'closed'
+  return true
+}))
 
 async function load(): Promise<void> {
   loading.value = true
@@ -57,6 +62,10 @@ function lifecycleLabel(status: string): string {
   }
   const key = keys[status.toLowerCase()]
   return key ? t(key) : status
+}
+
+function lifecycleStep(status: string): number {
+  return ({ subscription: 1, distribution: 2, listed: 3, closed: 4 } as Record<string, number>)[status.toLowerCase()] || 0
 }
 
 function unlockTypeLabel(type: string): string {
@@ -94,365 +103,301 @@ onMounted(() => { void load() })
 </script>
 
 <template>
-  <main class="page page--plain new-coins-page">
-    <PageHeader
-      :back="true"
-      :eyebrow="t('products.newCoins')"
-      :subtitle="t('newCoin.introDescription')"
-      :title="t('newCoin.title')"
-    >
+  <main class="page page--plain pencil-page new-coins-pencil" data-pencil-source="oOJ0q ZTtvY">
+    <PageHeader :back="true" :pencil="true" :title="t('newCoin.title')">
       <template #actions>
-        <button
-          class="icon-button"
-          type="button"
-          :aria-label="t('newCoin.records')"
-          @click="router.push({ name: 'new-coin-records' })"
-        >
-          <ReceiptText :size="20" />
-        </button>
+        <button class="icon-button" type="button" :aria-label="t('newCoin.records')" @click="router.push({ name: 'new-coin-records' })"><History :size="18" /></button>
       </template>
     </PageHeader>
-    <div class="page-content new-coins-content">
-      <div v-if="error" class="new-coin-message" role="alert">
-        <CircleAlert :size="18" />
-        <span>{{ error }}</span>
-        <button type="button" :aria-label="t('common.retry')" @click="load">
-          <RefreshCw :size="17" />
+
+    <div class="pencil-content new-coins-pencil__content">
+      <section class="new-coins-hero">
+        <h1>{{ t('newCoin.heroTitle') }}</h1>
+        <p>{{ t('newCoin.heroDescription') }}</p>
+      </section>
+
+      <nav class="pencil-segmented pencil-segmented--soft new-coins-tabs" :aria-label="t('newCoin.projectFilters')">
+        <button type="button" :aria-pressed="lifecycleFilter === 'all'" @click="lifecycleFilter = 'all'">{{ t('common.all') }}</button>
+        <button type="button" :aria-pressed="lifecycleFilter === 'active'" @click="lifecycleFilter = 'active'">{{ t('newCoin.inProgress') }}</button>
+        <button type="button" :aria-pressed="lifecycleFilter === 'closed'" @click="lifecycleFilter = 'closed'">{{ t('newCoin.ended') }}</button>
+      </nav>
+
+      <div v-if="error" class="pencil-message pencil-message--error new-coin-project-state" role="alert">
+        <CircleAlert :size="18" /><span>{{ error }}</span>
+        <button type="button" :aria-label="t('common.retry')" @click="load"><RefreshCw :size="17" /></button>
+      </div>
+      <div v-else-if="loading" class="pencil-state new-coin-project-state" aria-live="polite"><LoaderCircle :size="24" class="spin" /><span>{{ t('newCoin.loading') }}</span></div>
+
+      <div v-else-if="visibleProjects.length" class="new-coin-projects">
+        <button v-for="project in visibleProjects" :key="project.id" class="new-coin-project" type="button" @click="openProject(project)">
+          <header>
+            <AssetMark :symbol="project.symbol" :size="42" />
+            <span><strong>{{ project.symbol }}</strong><small>{{ unlockTypeLabel(project.unlockType) }}</small></span>
+            <b class="pencil-pill" :class="{ 'pencil-pill--negative': project.lifecycleStatus.toLowerCase() === 'closed' }">{{ lifecycleLabel(project.lifecycleStatus) }}</b>
+          </header>
+          <div class="new-coin-stage" :aria-label="lifecycleLabel(project.lifecycleStatus)">
+            <i :style="{ width: `${lifecycleStep(project.lifecycleStatus) * 25}%` }" />
+          </div>
+          <footer>
+            <dl>
+              <div><dt>{{ t('newCoin.issuePrice') }}</dt><dd class="pencil-numeric">{{ formatPrice(project.issuePrice) }}</dd></div>
+              <div><dt>{{ t('newCoin.plannedIssue') }}</dt><dd class="pencil-numeric">{{ formatAmount(project.totalSupply) }} {{ project.symbol }}</dd></div>
+            </dl>
+            <span class="new-coin-project__action">{{ t('newCoin.viewDetails') }}<ChevronRight :size="16" /></span>
+          </footer>
         </button>
       </div>
-      <div v-if="loading" class="new-coin-state" aria-live="polite">
-        <LoaderCircle :size="24" class="spin" />
-        <span>{{ t('newCoin.loading') }}</span>
-      </div>
-      <template v-else>
-        <section class="new-coin-overview">
-          <div class="new-coin-overview__icon"><Rocket :size="23" /></div>
-          <div>
-            <strong>{{ t('newCoin.title') }}</strong>
-            <p>{{ t('newCoin.introDescription') }}</p>
-          </div>
-          <ShieldCheck :size="20" />
-        </section>
+      <div v-else class="pencil-state new-coin-project-state"><PackageOpen :size="23" /><span>{{ t('newCoin.noProjects') }}</span></div>
 
-        <div v-if="projects.length" class="new-coin-list">
-          <button v-for="project in projects" :key="project.id" type="button" @click="openProject(project)">
-            <AssetMark :symbol="project.symbol" :size="42" />
-            <div>
-              <strong>{{ project.symbol }}</strong>
-              <small>{{ lifecycleLabel(project.lifecycleStatus) }} · {{ unlockTypeLabel(project.unlockType) }}</small>
-            </div>
-            <span>
-              <b class="numeric">{{ formatPrice(project.issuePrice) }}</b>
-              <small>{{ t('newCoin.issuePrice') }}</small>
-            </span>
-            <ChevronRight :size="18" />
-          </button>
-        </div>
-        <div v-else class="new-coin-state new-coin-state--empty">
-          <PackageOpen :size="23" />
-          <span>{{ t('newCoin.noProjects') }}</span>
-        </div>
+      <button class="new-coin-records-link" type="button" @click="router.push({ name: 'new-coin-records' })">
+        <ReceiptText :size="18" />
+        <span>{{ t('newCoin.records') }}</span>
+        <ChevronRight :size="17" />
+      </button>
 
-        <LoginRequiredState v-if="!session.isAuthenticated" :description="t('newCoin.loginDescription')" />
-        <section v-else class="new-coin-history">
-          <div class="section-heading">
-            <span>{{ t('newCoin.recentSubscriptions') }}</span>
-            <button type="button" @click="router.push({ name: 'new-coin-records' })">{{ t('newCoin.allRecords') }}</button>
-          </div>
-          <article v-for="order in subscriptions.slice(0, 3)" :key="order.id">
-            <div>
-              <strong>{{ t('newCoin.subscriptionUnits', { amount: formatAmount(order.requestedQuantity) }) }}</strong>
-              <small>{{ formatDateTime(order.createdAt) }}</small>
-            </div>
-            <span>
-              <b>{{ statusLabel(order.status) }}</b>
-              <small>{{ t('newCoin.allocated', { amount: formatAmount(order.allocatedQuantity) }) }}</small>
-            </span>
+      <section v-if="session.isAuthenticated" class="pencil-section new-coin-records-pencil">
+        <div class="pencil-section__heading">
+          <h2>{{ t('newCoin.recentSubscriptions') }}</h2>
+          <button type="button" @click="router.push({ name: 'new-coin-records' })">{{ t('newCoin.allRecords') }}</button>
+        </div>
+        <div v-if="subscriptions.length" class="pencil-list">
+          <article v-for="order in subscriptions.slice(0, 3)" :key="order.id" class="pencil-row new-coin-record-row">
+            <span class="pencil-row__icon"><ReceiptText :size="18" /></span>
+            <span class="pencil-row__copy"><strong>{{ t('newCoin.subscriptionUnits', { amount: formatAmount(order.requestedQuantity) }) }}</strong><small>{{ formatDateTime(order.createdAt) }}</small></span>
+            <span class="pencil-row__value"><strong>{{ statusLabel(order.status) }}</strong><small>{{ t('newCoin.allocated', { amount: formatAmount(order.allocatedQuantity) }) }}</small></span>
           </article>
-          <div v-if="!subscriptions.length" class="new-coin-state new-coin-state--empty">
-            <PackageOpen :size="22" />
-            <span>{{ t('newCoin.noSubscriptions') }}</span>
-          </div>
-        </section>
-      </template>
+        </div>
+        <div v-else class="pencil-state"><PackageOpen :size="22" /><span>{{ t('newCoin.noSubscriptions') }}</span></div>
+      </section>
     </div>
   </main>
 </template>
 
 <style scoped>
-.new-coins-page {
-  background: var(--surface);
-  min-width: 0;
+.new-coins-pencil__content {
+  min-height: 461px;
+  padding-top: 0;
 }
 
-.new-coins-content {
-  display: grid;
-  gap: 16px;
-  min-width: 0;
-  padding-bottom: calc(28px + env(safe-area-inset-bottom));
-  padding-top: 14px;
+.new-coins-hero {
+  height: 72px;
+  padding-top: 8px;
 }
 
-.new-coin-message {
-  align-items: center;
-  background: var(--negative-soft);
-  border: 1px solid var(--negative);
-  color: var(--negative);
-  display: grid;
-  font-size: 12px;
-  gap: 9px;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  line-height: 1.45;
-  min-height: 52px;
-  padding: 4px 5px 4px 11px;
-}
-
-.new-coin-message button {
-  background: transparent;
-  color: inherit;
-  display: grid;
-  min-height: 44px;
-  min-width: 44px;
-  place-items: center;
-}
-
-.new-coin-state {
-  align-content: center;
-  color: var(--muted);
-  display: grid;
-  font-size: 12px;
-  gap: 9px;
-  justify-items: center;
-  min-height: 148px;
-  text-align: center;
-}
-
-.new-coin-state--empty {
-  min-height: 112px;
-}
-
-.new-coin-overview {
-  align-items: center;
-  background:
-    linear-gradient(132deg, color-mix(in srgb, var(--accent) 9%, transparent), transparent 64%),
-    var(--surface);
-  border-block: 1px solid var(--line);
-  border-top: 3px solid var(--accent);
-  display: grid;
-  gap: 11px;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
-  min-height: 92px;
-  padding: 12px 4px;
-}
-
-.new-coin-overview__icon {
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
-  color: var(--accent);
-  display: grid;
-  height: 44px;
-  place-items: center;
-  width: 44px;
-}
-
-.new-coin-overview > div:nth-child(2) {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.new-coin-overview strong {
-  font-size: 17px;
-}
-
-.new-coin-overview p {
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.45;
+.new-coins-hero h1 {
+  font-size: 22px;
+  font-weight: 750;
+  letter-spacing: 0;
+  line-height: 32px;
   margin: 0;
-}
-
-.new-coin-overview > svg {
-  color: var(--positive);
-}
-
-.new-coin-list {
-  border-block: 1px solid var(--line);
-  display: grid;
-}
-
-.new-coin-list button {
-  align-items: center;
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
-  color: var(--ink);
-  display: grid;
-  gap: 11px;
-  grid-template-columns: 42px minmax(0, 1fr) auto 18px;
-  min-height: 78px;
-  min-width: 0;
-  padding: 10px 4px;
-  text-align: left;
-  width: 100%;
-}
-
-.new-coin-list button:last-child {
-  border-bottom: 0;
-}
-
-.new-coin-list button:focus-visible,
-.new-coin-list button:hover {
-  background: var(--surface-elevated);
-  box-shadow: inset 3px 0 0 var(--accent);
-}
-
-.new-coin-list button > div,
-.new-coin-list button > span {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-}
-
-.new-coin-list strong {
-  font-size: 15px;
-}
-
-.new-coin-list small {
-  color: var(--muted);
-  font-size: 10px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.new-coin-list button > span {
-  text-align: right;
-}
-
-.new-coin-list button > span b {
-  font-size: 14px;
-}
-
-.new-coin-list button > svg {
+.new-coins-hero p {
   color: var(--muted);
-}
-
-.new-coin-history {
-  border-top: 8px solid var(--soft);
-  margin: 8px -20px 0;
-  padding: 0 20px;
-}
-
-.new-coin-history .section-heading {
-  border-bottom: 1px solid var(--line);
-  font-size: 16px;
-  margin: 0;
-  min-height: 56px;
-}
-
-.new-coin-history .section-heading button {
-  background: transparent;
-  color: var(--accent);
   font-size: 11px;
-  font-weight: 800;
-  min-height: 44px;
-  padding: 0;
+  line-height: 16px;
+  margin: 16px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.new-coin-history article {
-  align-items: center;
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  gap: 14px;
-  justify-content: space-between;
-  min-height: 68px;
+.new-coins-tabs {
+  height: 30px;
+  margin-top: 17px;
+  min-height: 30px;
+  overflow: visible;
 }
 
-.new-coin-history article > div,
-.new-coin-history article > span {
+.new-coins-tabs button {
+  height: 30px;
+  min-height: 30px;
+}
+
+.new-coins-tabs button::before {
+  inset: -7px 0;
+}
+
+.new-coin-projects {
   display: grid;
-  gap: 5px;
+  gap: 16px;
+  padding-top: 16px;
+}
+
+.new-coin-project {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--ink);
+  display: block;
+  height: 113px;
+  padding: 15px 0 0;
+  text-align: left;
+  width: 100%;
+}
+
+.new-coin-project:focus-visible,
+.new-coin-records-link:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.new-coin-project > header {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  height: 42px;
+}
+
+.new-coin-project > header > span {
+  display: grid;
+  gap: 3px;
   min-width: 0;
 }
 
-.new-coin-history strong,
-.new-coin-history b {
-  font-size: 12px;
-  overflow-wrap: anywhere;
+.new-coin-project > header strong {
+  font-size: 15px;
+  line-height: 20px;
 }
 
-.new-coin-history small {
+.new-coin-project > header small {
   color: var(--muted);
+  font-size: 9px;
+  line-height: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.new-coin-stage {
+  background: var(--accent-soft);
+  border-radius: 999px;
+  height: 4px;
+  margin-top: 10px;
+  overflow: hidden;
+}
+
+.new-coin-stage i {
+  background: var(--accent);
+  border-radius: inherit;
+  display: block;
+  height: 4px;
+}
+
+.new-coin-project > footer {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  height: 34px;
+  margin-top: 8px;
+}
+
+.new-coin-project dl {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+  min-width: 0;
+}
+
+.new-coin-project dl > div {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.new-coin-project dt {
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 11px;
+}
+
+.new-coin-project dd {
+  font-size: 9px;
+  line-height: 13px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.new-coin-project__action {
+  align-items: center;
+  color: var(--positive);
+  display: inline-flex;
+  font-size: 10px;
+  font-weight: 700;
+  gap: 3px;
+  justify-self: end;
+  white-space: nowrap;
+}
+
+.new-coin-project-state {
+  height: 242px;
+  margin-top: 16px;
+  min-height: 242px;
+}
+
+.new-coin-records-link {
+  align-items: center;
+  background: transparent;
+  color: var(--ink);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 18px minmax(0, 1fr) 18px;
+  height: 48px;
+  margin-top: 16px;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+}
+
+.new-coin-records-link span {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.new-coin-records-link > svg:last-child {
+  color: var(--muted);
+}
+
+.new-coin-records-pencil {
+  margin-top: 16px;
+}
+
+.new-coin-record-row {
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+}
+
+.new-coin-record-row .pencil-row__value strong {
   font-size: 10px;
 }
 
-.new-coin-history article > span {
-  flex: 0 0 auto;
-  text-align: right;
-}
-
-.spin {
-  animation: spin .8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-@media (max-width: 390px) {
-  .new-coins-content {
-    padding-left: 14px;
-    padding-right: 14px;
-  }
-
-  .new-coin-history {
-    margin-left: -14px;
-    margin-right: -14px;
-    padding-inline: 14px;
-  }
+.new-coins-pencil :deep(.asset-mark) {
+  --asset-color: var(--accent);
+  --asset-ink: var(--on-accent);
+  background: var(--accent);
+  border: 0;
+  box-shadow: none;
+  color: var(--on-accent);
 }
 
 @media (max-width: 340px) {
-  .new-coin-overview {
-    grid-template-columns: 40px minmax(0, 1fr);
-  }
-
-  .new-coin-overview__icon {
-    height: 40px;
-    width: 40px;
-  }
-
-  .new-coin-overview > svg {
-    display: none;
-  }
-
-  .new-coin-list button {
+  .new-coin-project > header {
     gap: 8px;
-    grid-template-columns: 38px minmax(0, 1fr) 16px;
   }
 
-  .new-coin-list button > span {
-    grid-column: 2;
-    grid-row: 2;
-    justify-items: start;
-    text-align: left;
+  .new-coin-project dl {
+    gap: 6px;
   }
 
-  .new-coin-list button > svg {
-    grid-column: 3;
-    grid-row: 1 / span 2;
-  }
-
-  .new-coin-history article {
-    align-items: flex-start;
-    flex-direction: column;
-    padding: 11px 0;
-  }
-
-  .new-coin-history article > span {
-    align-items: center;
-    display: flex;
-    justify-content: space-between;
-    width: 100%;
+  .new-coin-project__action {
+    font-size: 9px;
   }
 }
 </style>

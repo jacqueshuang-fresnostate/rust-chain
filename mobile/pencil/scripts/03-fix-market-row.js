@@ -1,0 +1,1 @@
+for(let id of ["HUFV1","ocFVv","ZKHiY","XADdL","YVmnO","TxdXM","eItLb"]){Update(id,{width:100,textGrowth:"fixed-width",textAlign:"right"});}for(let id of ["YltcH","bHbnn","BRCxs","irMyM","DouWU","uWXXU","COWrj"]){Update(id,{width:62,textGrowth:"fixed-width",textAlign:"right"});}

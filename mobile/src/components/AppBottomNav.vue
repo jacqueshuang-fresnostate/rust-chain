@@ -3,15 +3,12 @@ import { computed } from 'vue'
 import { useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
-  Activity,
   ArrowLeftRight,
   ChartNoAxesCombined,
   House,
   UserRound,
   WalletCards,
-  Zap,
 } from 'lucide-vue-next'
-import { createBottomNavSecondsTarget } from '@/core/navigation'
 import { useNavigationStore } from '@/stores/navigation'
 
 const route = useRoute()
@@ -20,8 +17,6 @@ const navigation = useNavigationStore()
 const { t } = useI18n()
 
 const activeName = computed(() => String(route.name || ''))
-const contractMode = computed(() => route.query.mode === 'contract')
-
 const items = computed(() => [
   {
     key: 'home',
@@ -38,30 +33,16 @@ const items = computed(() => [
     active: activeName.value === 'markets',
   },
   {
-    key: 'spot',
-    label: t('trade.spot'),
-    to: { name: 'trade', params: { symbol: navigation.lastTradeSymbol } },
-    icon: ArrowLeftRight,
-    active: activeName.value === 'trade' && !contractMode.value,
-  },
-  {
-    key: 'seconds',
-    label: t('seconds.title'),
-    to: createBottomNavSecondsTarget(),
-    icon: Zap,
-    active: activeName.value === 'seconds',
-    primary: true,
-  },
-  {
-    key: 'contract',
-    label: t('trade.contract'),
+    key: 'trade',
+    label: t('nav.trade'),
     to: {
       name: 'trade',
       params: { symbol: navigation.lastTradeSymbol },
-      query: { mode: 'contract' },
+      query: navigation.lastTradeMode === 'contract' ? { mode: 'contract' } : undefined,
     },
-    icon: Activity,
-    active: activeName.value === 'trade' && contractMode.value,
+    icon: ArrowLeftRight,
+    active: activeName.value === 'trade' || activeName.value === 'seconds',
+    primary: true,
   },
   {
     key: 'assets',
@@ -86,18 +67,23 @@ function selectRoot(to: RouteLocationRaw): void {
 
 <template>
   <nav class="bottom-nav" :aria-label="t('nav.main')">
-    <button
-      v-for="item in items"
-      :key="item.key"
-      type="button"
-      :class="{ active: item.active, 'seconds-nav-action': item.primary }"
-      :aria-current="item.active ? 'page' : undefined"
-      @click="selectRoot(item.to)"
-    >
-      <span aria-hidden="true">
-        <component :is="item.icon" :size="item.primary ? 22 : 19" :stroke-width="item.active ? 2.35 : 2" />
-      </span>
-      <small>{{ item.label }}</small>
-    </button>
+    <div class="bottom-nav__dock">
+      <button
+        v-for="item in items"
+        :key="item.key"
+        type="button"
+        class="bottom-nav__item"
+        :class="{ active: item.active, 'trade-nav-action': item.primary }"
+        :data-nav-key="item.key"
+        :aria-label="item.label"
+        :aria-current="item.active ? 'page' : undefined"
+        @click="selectRoot(item.to)"
+      >
+        <span class="bottom-nav__icon" aria-hidden="true">
+          <component :is="item.icon" :size="item.primary ? 24 : 21" :stroke-width="item.active ? 2.35 : 2" />
+        </span>
+        <small class="bottom-nav__label">{{ item.label }}</small>
+      </button>
+    </div>
   </nav>
 </template>

@@ -44,7 +44,9 @@ export interface PredictionOrder {
   assetSymbol: string
   stakeAmount: number
   status: string
+  result?: string
   payoutAmount: number
+  refundAmount: number
   createdAt: number
 }
 
@@ -83,7 +85,7 @@ export async function requestPredictionQuote(input: { marketId: number; outcome:
   })
   return {
     quoteId: String(response.data.quote_id || ''),
-    outcome: String(response.data.outcome || 'yes') === 'no' ? 'no' : 'yes',
+    outcome: predictionOutcome(response.data.outcome),
     assetId: asNumber(response.data.asset_id),
     assetSymbol: String(response.data.asset_symbol || '').toUpperCase(),
     stakeAmount: asNumber(response.data.stake_amount),
@@ -94,13 +96,22 @@ export async function requestPredictionQuote(input: { marketId: number; outcome:
   }
 }
 
-export async function confirmPredictionQuote(quoteId: string): Promise<void> {
-  await client.post(requestUrl('/prediction/orders'), { quote_id: quoteId, idempotency_key: createIdempotencyKey('mobile-prediction') })
+export async function confirmPredictionQuote(quoteId: string): Promise<PredictionOrder> {
+  const response = await client.post<{ order?: Record<string, unknown> }>(requestUrl('/prediction/orders'), {
+    quote_id: quoteId,
+    idempotency_key: createIdempotencyKey('mobile-prediction'),
+  })
+  if (!response.data.order) throw new Error('Prediction order response is missing order data')
+  return mapPredictionOrder(response.data.order)
 }
 
 export async function fetchPredictionOrders(limit = 50): Promise<PredictionOrder[]> {
   const response = await client.get<{ orders?: Array<Record<string, unknown>> }>(requestUrl('/prediction/orders'), { params: { limit } })
-  return (response.data.orders || []).map((order) => ({
+  return (response.data.orders || []).map(mapPredictionOrder)
+}
+
+function mapPredictionOrder(order: Record<string, unknown>): PredictionOrder {
+  return {
     id: asNumber(order.id),
     orderNo: String(order.order_no || ''),
     marketTitle: String(order.market_title || ''),
@@ -108,9 +119,17 @@ export async function fetchPredictionOrders(limit = 50): Promise<PredictionOrder
     assetSymbol: String(order.asset_symbol || '').toUpperCase(),
     stakeAmount: asNumber(order.stake_amount),
     status: String(order.status || ''),
+    result: optionalText(order.result),
     payoutAmount: asNumber(order.payout_amount),
+    refundAmount: asNumber(order.refund_amount),
     createdAt: normalizeTimestamp(order.created_at),
-  }))
+  }
+}
+
+function predictionOutcome(value: unknown): PredictionOutcome {
+  const outcome = String(value || '').trim().toLowerCase()
+  if (outcome === 'yes' || outcome === 'no') return outcome
+  throw new Error('Prediction quote response contains an invalid outcome')
 }
 
 function optionalText(value: unknown): string | undefined {

@@ -7,31 +7,26 @@ import {
   CheckCircle2,
   ChevronRight,
   Copy,
-  Headphones,
-  History,
+  IdCard,
   Languages,
+  LifeBuoy,
   Link2,
-  LockKeyhole,
   LogOut,
-  Mail,
-  Moon,
-  Settings2,
-  Sun,
+  Settings,
+  ShieldCheck,
   UserRound,
-  Users,
   X,
 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
+import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
 import { fetchKycStatus, fetchUserProfile, updateUsername, uploadUserAvatar, type KycStatus, type UserProfile } from '@/api/user'
 import { useModalDialog } from '@/core/modalDialog'
 import { useSessionStore } from '@/stores/session'
-import { useThemeStore } from '@/stores/theme'
 import { normalizeMobileLocale, SUPPORTED_LOCALES } from '@/i18n'
 
 const router = useRouter()
 const session = useSessionStore()
-const theme = useThemeStore()
 const { locale, t } = useI18n()
 const profile = ref<UserProfile | null>(null)
 const kyc = ref<KycStatus | null>(null)
@@ -49,7 +44,7 @@ const { trapFocus: trapProfileFocus } = useModalDialog(editOpen, profileDialog, 
 
 const displayName = computed(() => profileReady.value
   ? profile.value?.username || profile.value?.email || profile.value?.phone || t('profile.defaultUser')
-  : '--')
+  : t('profile.loading'))
 const initials = computed(() => displayName.value.slice(0, 1).toUpperCase())
 const profileStateLabel = computed(() => {
   if (loading.value) return t('profile.loading')
@@ -70,9 +65,10 @@ const kycSummary = computed(() => {
   return t('profile.kycUnverified')
 })
 const kycTone = computed(() => kyc.value?.latestSubmission?.status === 'approved' ? 'positive' : kyc.value?.latestSubmission?.status === 'rejected' ? 'negative' : '')
-const memberLevel = computed(() => profileReady.value
-  ? `LEVEL ${String(profile.value?.kycLevel || 0).padStart(2, '0')}`
-  : 'LEVEL --')
+const bindingCount = computed(() => {
+  if (!profileReady.value || !profile.value) return 0
+  return Number(profile.value.emailVerified) + Number(Boolean(profile.value.phone)) + Number(profile.value.fundPasswordSet)
+})
 
 async function load(): Promise<void> {
   if (!session.isAuthenticated) {
@@ -180,153 +176,129 @@ function logout(): void {
   void router.replace('/')
 }
 
+function openSettings(): void {
+  void router.push({ name: session.isAuthenticated ? 'security' : 'language' })
+}
+
 onMounted(() => { void load() })
 </script>
 
 <template>
   <main
-    class="view profile-view prototype-root-view"
-    :class="{ 'guest-profile': !session.isAuthenticated }"
+    class="page pencil-page pencil-root-page profile-pencil"
+    :class="session.isAuthenticated ? 'profile-pencil--member' : 'profile-pencil--guest'"
     data-profile-workspace="live"
+    data-pencil-source="dUqOS duJTW S23rM S0Bj8"
   >
-    <template v-if="!session.isAuthenticated">
-      <section class="profile-identity">
-        <div class="profile-noise" aria-hidden="true" />
-        <span class="avatar"><UserRound :size="26" aria-hidden="true" /></span>
-        <div class="identity-copy">
-          <span class="eyebrow">{{ t('rootPrototype.guestModeEyebrow') }}</span>
-          <h1>{{ t('rootPrototype.guestMode') }}</h1>
-          <p>{{ t('rootPrototype.guestDescription') }}</p>
-        </div>
-      </section>
-      <div class="dual-actions profile-auth-actions">
-        <button type="button" @click="router.push({ name: 'login', query: { redirect: '/profile' } })">{{ t('auth.login') }}</button>
-        <button type="button" @click="router.push({ name: 'register' })">{{ t('auth.register') }}</button>
-      </div>
-      <section class="content-section">
-        <div class="settings-list">
-          <button type="button" @click="router.push({ name: 'language' })">
-            <span class="settings-icon"><Languages :size="19" /></span>
-            <strong>{{ t('language.entry') }}</strong>
-            <small>{{ currentLanguageLabel }}</small>
-            <ChevronRight :size="16" />
-          </button>
-          <button type="button" @click="router.push({ name: 'message-center' })">
-            <span class="settings-icon"><Headphones :size="19" /></span>
-            <strong>{{ t('rootPrototype.support') }}</strong>
-            <small>{{ t('rootPrototype.alwaysAvailable') }}</small>
-            <ChevronRight :size="16" />
-          </button>
-        </div>
-      </section>
-    </template>
+    <PageHeader :back="false" :pencil="true" :title="t('profile.title')">
+      <template #actions>
+        <button
+          class="icon-button"
+          type="button"
+          :aria-label="session.isAuthenticated ? t('profile.securityCenter') : t('language.entry')"
+          @click="openSettings"
+        >
+          <Settings :size="20" aria-hidden="true" />
+        </button>
+      </template>
+    </PageHeader>
 
-    <template v-else>
-      <section class="profile-identity" :aria-busy="loading">
-        <div class="profile-noise" aria-hidden="true" />
+    <div class="pencil-content profile-pencil__content">
+      <section class="profile-identity-pencil" :aria-busy="loading">
         <input ref="avatarInput" class="avatar-input" type="file" accept="image/*" @change="uploadAvatar" />
-        <button class="avatar" type="button" :aria-label="t('profile.updateAvatar')" :disabled="updatingAvatar || !profileReady" @click="openAvatarPicker">
+        <button
+          v-if="session.isAuthenticated"
+          class="profile-avatar profile-avatar--button"
+          type="button"
+          :aria-label="t('profile.updateAvatar')"
+          :disabled="updatingAvatar || !profileReady"
+          @click="openAvatarPicker"
+        >
           <img v-if="profile?.avatarUrl" :src="profile.avatarUrl" :alt="t('profile.updateAvatar')" />
           <span v-else-if="profileReady">{{ initials }}</span>
-          <UserRound v-else :size="24" aria-hidden="true" />
-          <i><Camera :size="13" /></i>
+          <UserRound v-else :size="23" aria-hidden="true" />
+          <i><Camera :size="12" /></i>
         </button>
-        <div class="identity-copy">
-          <span class="eyebrow">{{ t('rootPrototype.verifiedMemberEyebrow') }}</span>
-          <h1>{{ displayName }}</h1>
-          <button type="button" :disabled="!profileReady || !profile" @click="copyUid">
-            UID {{ profile?.id || '--' }} <CheckCircle2 v-if="copied" :size="13" /><Copy v-else :size="13" />
-          </button>
+        <span v-else class="profile-avatar"><UserRound :size="23" aria-hidden="true" /></span>
+
+        <div class="profile-identity-pencil__copy">
+          <template v-if="session.isAuthenticated">
+            <strong>{{ displayName }}</strong>
+            <button v-if="profileReady && profile" type="button" @click="copyUid">
+              UID {{ profile.id }}
+              <CheckCircle2 v-if="copied" :size="13" />
+              <Copy v-else :size="13" />
+            </button>
+            <small v-else>{{ profileStateLabel }}</small>
+          </template>
+          <template v-else>
+            <strong>{{ t('profile.loginAccount') }}</strong>
+            <small>{{ t('profile.guestSubtitle') }}</small>
+          </template>
         </div>
-        <button class="icon-button" type="button" :aria-label="t('profile.editNickname')" :disabled="!profileReady" @click="openNameEditor">
-          <Settings2 :size="18" />
+      </section>
+
+      <div v-if="!session.isAuthenticated" class="profile-auth-actions">
+        <button class="pencil-primary" type="button" @click="router.push({ name: 'login', query: { redirect: '/profile' } })">
+          {{ t('auth.login') }}
         </button>
-        <div v-if="error" class="profile-identity-state" role="alert">
-          <span>{{ error }}</span>
-          <button type="button" :disabled="loading" @click="load">{{ t('common.retry') }}</button>
-        </div>
-      </section>
+        <button class="profile-register-action" type="button" @click="router.push({ name: 'register', query: { redirect: '/profile' } })">
+          {{ t('auth.register') }}
+        </button>
+      </div>
+      <div v-else class="profile-status-row" aria-live="polite">
+        <span class="pencil-pill" :class="{ 'pencil-pill--negative': kycTone === 'negative' }">
+          <BadgeCheck :size="14" />{{ kycSummary }}
+        </span>
+        <span class="pencil-pill"><Link2 :size="13" />{{ t('profile.bindingProgress', { current: bindingCount, total: 3 }) }}</span>
+      </div>
 
-      <section class="profile-level">
-        <div><span>{{ t('rootPrototype.identityLevel') }}</span><strong>{{ memberLevel }}</strong></div>
-        <div class="level-track"><i :style="{ width: `${profileReady ? Math.min(100, (profile?.kycLevel || 0) * 25) : 0}%` }" /></div>
-        <span>{{ t('rootPrototype.nextLevel') }} --</span>
-      </section>
+      <div v-if="error" class="pencil-message pencil-message--error" role="alert">
+        <span>{{ error }}</span>
+        <button class="pencil-secondary" type="button" :disabled="loading" @click="load">{{ t('common.retry') }}</button>
+      </div>
 
-      <section class="profile-metrics">
-        <div><strong>--</strong><span>{{ t('rootPrototype.tradingDays') }}</span></div>
-        <div><strong>--</strong><span>{{ t('rootPrototype.winRate') }}</span></div>
-        <div><strong>--</strong><span>{{ t('rootPrototype.profitFactor') }}</span></div>
-      </section>
-
-      <section class="content-section">
-        <div class="section-heading"><div><span class="eyebrow">{{ t('rootPrototype.accountMatrix') }}</span><h2>{{ t('rootPrototype.accountAndSecurity') }}</h2></div></div>
-        <div class="settings-list">
-          <button type="button" @click="router.push({ name: 'kyc' })">
-            <span class="settings-icon"><BadgeCheck :size="19" /></span>
-            <strong>{{ t('profile.kyc') }}</strong>
-            <small :class="kycTone">{{ kycSummary }}</small>
-            <ChevronRight :size="16" />
+      <section class="profile-group">
+        <h2 class="profile-group__heading">{{ t('profile.identitySecurityGroup') }}</h2>
+        <div class="pencil-list">
+          <button class="pencil-row" type="button" @click="router.push({ name: 'kyc' })">
+            <span class="pencil-row__icon"><IdCard :size="18" /></span>
+            <span class="pencil-row__copy"><strong>{{ t('profile.kyc') }}</strong></span>
+            <span class="pencil-row__value"><small v-if="session.isAuthenticated" :class="kycTone">{{ kycSummary }}</small><ChevronRight :size="16" /></span>
           </button>
-          <button type="button" @click="router.push({ name: 'security' })">
-            <span class="settings-icon"><LockKeyhole :size="19" /></span>
-            <strong>{{ t('profile.security') }}</strong>
-            <small>
-              {{ profileReady
-                ? profile?.fundPasswordSet
-                  ? t('profile.fundPasswordSet')
-                  : t('profile.improveSecurity')
-                : profileStateLabel }}
-            </small>
-            <ChevronRight :size="16" />
+          <button class="pencil-row" type="button" @click="router.push({ name: 'security' })">
+            <span class="pencil-row__icon"><ShieldCheck :size="18" /></span>
+            <span class="pencil-row__copy"><strong>{{ t('profile.securityCenter') }}</strong></span>
+            <span class="pencil-row__value"><ChevronRight :size="16" /></span>
           </button>
-          <button type="button" @click="router.push({ name: 'account-bindings' })">
-            <span class="settings-icon"><Mail :size="19" /></span>
-            <strong>{{ t('profile.bindings') }}</strong>
-            <small>
-              {{ profileReady
-                ? profile?.emailVerified
-                  ? t('profile.emailVerified')
-                  : t('profile.bindAccounts')
-                : profileStateLabel }}
-            </small>
-            <ChevronRight :size="16" />
-          </button>
-          <button type="button" @click="router.push({ name: 'referrals' })">
-            <span class="settings-icon"><Users :size="19" /></span>
-            <strong>{{ t('profile.referrals') }}</strong>
-            <small>{{ t('profile.referralDescription') }}</small>
-            <ChevronRight :size="16" />
-          </button>
-          <button type="button" @click="router.push({ name: 'language' })">
-            <span class="settings-icon"><Languages :size="19" /></span>
-            <strong>{{ t('language.entry') }}</strong>
-            <small>{{ currentLanguageLabel }}</small>
-            <ChevronRight :size="16" />
-          </button>
-          <button type="button" @click="router.push({ name: 'orders' })">
-            <span class="settings-icon"><History :size="19" /></span>
-            <strong>{{ t('orders.title') }}</strong>
-            <small>{{ t('common.viewAll') }}</small>
-            <ChevronRight :size="16" />
-          </button>
-          <button type="button" @click="router.push({ name: 'message-center' })">
-            <span class="settings-icon"><Headphones :size="19" /></span>
-            <strong>{{ t('rootPrototype.support') }}</strong>
-            <small>{{ t('rootPrototype.alwaysAvailable') }}</small>
-            <ChevronRight :size="16" />
-          </button>
-          <button type="button" @click="theme.toggleTheme">
-            <span class="settings-icon"><Moon v-if="theme.isDark" :size="19" /><Sun v-else :size="19" /></span>
-            <strong>{{ t('rootPrototype.interfaceTheme') }}</strong>
-            <small>{{ t(theme.isDark ? 'rootPrototype.darkTheme' : 'rootPrototype.lightTheme') }}</small>
-            <span class="toggle" :class="{ on: !theme.isDark }"><i /></span>
+          <button class="pencil-row" type="button" @click="router.push({ name: 'account-bindings' })">
+            <span class="pencil-row__icon"><Link2 :size="18" /></span>
+            <span class="pencil-row__copy"><strong>{{ t('profile.accountBindings') }}</strong></span>
+            <span class="pencil-row__value"><small v-if="session.isAuthenticated">{{ bindingCount }}/3</small><ChevronRight :size="16" /></span>
           </button>
         </div>
       </section>
 
-      <button class="logout-button" type="button" @click="logout"><LogOut :size="18" />{{ t('profile.logout') }}</button>
-    </template>
+      <section class="profile-group profile-group--support">
+        <h2 class="profile-group__heading">{{ t('profile.preferencesSupportGroup') }}</h2>
+        <div class="pencil-list">
+          <button class="pencil-row" type="button" @click="router.push({ name: 'language' })">
+            <span class="pencil-row__icon"><Languages :size="18" /></span>
+            <span class="pencil-row__copy"><strong>{{ t('language.entry') }}</strong></span>
+            <span class="pencil-row__value"><small v-if="session.isAuthenticated">{{ currentLanguageLabel }}</small><ChevronRight :size="16" /></span>
+          </button>
+          <button class="pencil-row" type="button" @click="router.push({ name: 'message-center' })">
+            <span class="pencil-row__icon"><LifeBuoy :size="18" /></span>
+            <span class="pencil-row__copy"><strong>{{ t('profile.helpSupport') }}</strong></span>
+            <span class="pencil-row__value"><ChevronRight :size="16" /></span>
+          </button>
+        </div>
+      </section>
+
+      <button v-if="session.isAuthenticated" class="profile-logout" type="button" @click="logout">
+        <LogOut :size="17" />{{ t('profile.logout') }}
+      </button>
+    </div>
 
     <div v-if="editOpen" class="confirmation-layer">
       <button class="confirmation-overlay-dismiss" type="button" :aria-label="t('common.close')" :disabled="updatingName" tabindex="-1" @click="closeNameEditor" />
@@ -358,3 +330,73 @@ onMounted(() => { void load() })
     </div>
   </main>
 </template>
+
+<style scoped>
+.profile-pencil__content {
+  display: grid;
+  gap: 10px;
+  padding-bottom: 0;
+  padding-top: 10px;
+}
+
+.profile-identity-pencil {
+  align-items: center;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 56px minmax(0, 1fr);
+  height: 72px;
+  min-height: 72px;
+  padding: 12px 0 4px;
+}
+
+.avatar-input { display: none; }
+.profile-avatar { align-items: center; background: var(--ink); border: 0; border-radius: 50%; color: var(--surface); display: inline-flex; height: 56px; justify-content: center; overflow: hidden; padding: 0; position: relative; width: 56px; }
+.profile-avatar--button { background: var(--accent); color: var(--on-accent); }
+.profile-avatar img { height: 100%; object-fit: cover; width: 100%; }
+.profile-avatar i { display: none; }
+.profile-identity-pencil__copy { display: grid; gap: 5px; min-width: 0; }
+.profile-identity-pencil__copy strong { font-size: 17px; font-weight: 750; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-identity-pencil__copy small { color: var(--muted); font-size: 11px; line-height: 1.4; }
+.profile-identity-pencil__copy button { align-items: center; background: transparent; color: var(--muted); display: inline-flex; font-family: var(--font-geist-mono), var(--data-font); font-size: 10px; gap: 5px; justify-self: start; min-height: 24px; padding: 0; }
+.profile-auth-actions { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; height: 58px; min-height: 58px; padding: 8px 0 4px; }
+.profile-auth-actions > button { height: 46px; min-height: 46px; }
+.profile-register-action { background: var(--ink); border-radius: 999px; color: var(--surface); font-size: 14px; font-weight: 700; }
+.profile-status-row { align-items: center; display: flex; gap: 8px; height: 44px; min-height: 44px; overflow-x: auto; padding: 8px 0 4px; }
+.profile-status-row .pencil-pill { height: 32px; min-height: 32px; padding-inline: 12px; }
+.profile-group {
+  box-sizing: border-box;
+  display: grid;
+  gap: 6px;
+  grid-template-rows: 23px 156px;
+  height: 201px;
+  margin: 0;
+  min-height: 201px;
+  padding: 12px 0 4px;
+}
+
+.profile-group--support {
+  grid-template-rows: 23px 104px;
+  height: 143px;
+  min-height: 143px;
+  padding: 10px 0 0;
+}
+
+.profile-group__heading {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 23px;
+  margin: 0;
+}
+
+.profile-group .pencil-list { grid-template-rows: repeat(3, 52px); }
+.profile-group--support .pencil-list { grid-template-rows: repeat(2, 52px); }
+.profile-group .pencil-row { height: 52px; min-height: 52px; }
+.profile-group .pencil-row__value { align-items: center; display: flex; gap: 4px; max-width: 112px; }
+.profile-group .pencil-row__value small { max-width: 84px; }
+.profile-logout { align-items: center; background: transparent; border: 1px solid var(--negative); border-radius: 999px; color: var(--negative); display: flex; font-size: 13px; font-weight: 650; gap: 6px; height: 44px; justify-content: center; margin: 0; min-height: 44px; width: 100%; }
+@media (max-width: 340px) {
+  .profile-group .pencil-row__value { max-width: 88px; }
+  .profile-group .pencil-row__value small { max-width: 62px; }
+}
+</style>

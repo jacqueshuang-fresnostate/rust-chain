@@ -40,6 +40,11 @@ const numericAmount = computed(() => Number(amount.value))
 const receiveAmount = computed(() => Math.max(0, Number(amount.value || 0) - fee.value))
 const addressInvalid = computed(() => validationAttempted.value && !address.value.trim())
 const amountInvalid = computed(() => validationAttempted.value && (!Number.isFinite(numericAmount.value) || numericAmount.value <= 0 || numericAmount.value > available.value))
+const selectedNetworkLabel = computed(() => {
+  return networks.value.find((network) => network.network === selectedNetwork.value)?.displayName
+    || selectedNetwork.value
+    || t('withdraw.reviewedNetwork')
+})
 
 async function load(): Promise<void> {
   if (!session.isAuthenticated) return
@@ -122,58 +127,72 @@ onMounted(() => { void load() })
 </script>
 
 <template>
-  <main class="page page--plain">
+  <main
+    class="page page--plain pencil-page wallet-pencil-page withdraw-pencil"
+    data-pencil-source="Qa9dW o8Wsh"
+  >
     <PageHeader
       :back="true"
       :eyebrow="t('assets.withdraw')"
+      :fallback="{ name: 'withdraw-asset' }"
+      :pencil="true"
       :subtitle="t('withdraw.notice')"
-      :title="t('withdraw.title', { asset: asset?.symbol || props.asset.toUpperCase() })"
+      :title="t('assets.withdraw')"
     />
     <div class="page-content withdraw-page">
-      <LoginRequiredState v-if="!session.isAuthenticated" :description="t('withdraw.loginDescription')" />
+      <LoginRequiredState
+        v-if="!session.isAuthenticated"
+        class="wallet-login-prompt"
+        :description="t('withdraw.loginDescription')"
+      />
       <template v-else>
-        <p v-if="error && !reviewOpen" id="withdraw-error" class="error-message" role="alert">{{ error }}</p>
+        <p v-if="error && !reviewOpen" id="withdraw-error" class="error-message wallet-feedback" role="alert">{{ error }}</p>
         <div v-if="loading" class="withdraw-loading" role="status">
           <LoaderCircle :size="23" class="spin" aria-hidden="true" />
           <span>{{ t('withdraw.loading') }}</span>
         </div>
         <template v-else-if="asset">
-          <section class="withdraw-balance">
-            <AssetMark :symbol="asset.symbol" :src="asset.logoUrl" :size="42" />
-            <div>
-              <span>{{ t('withdraw.availableBalance') }}</span>
-              <strong class="numeric">{{ formatAmount(available) }} {{ asset.symbol }}</strong>
-            </div>
-            <span class="withdraw-balance__links">
-              <button type="button" @click="router.push({ name: 'withdrawal-records' })">{{ t('withdrawRecords.title') }}</button>
-              <button type="button" @click="router.push({ name: 'wallet-ledger' })">{{ t('assets.ledger') }}</button>
-            </span>
-          </section>
-          <form class="withdraw-workflow" @submit.prevent="requestSubmit">
-            <label class="withdraw-field">
-              <span>{{ t('withdraw.network') }}</span>
-              <div class="select-shell">
-                <select v-model="selectedNetwork">
+          <section class="withdraw-identity">
+            <AssetMark :symbol="asset.symbol" :src="asset.logoUrl" :size="34" />
+            <div class="withdraw-identity__asset">
+              <strong>{{ asset.symbol }}</strong>
+              <label class="withdraw-identity__network">
+                <span class="sr-only">{{ t('withdraw.network') }}</span>
+                <select v-model="selectedNetwork" :aria-label="t('withdraw.network')">
                   <option v-for="network in networks" :key="network.network" :value="network.network">{{ network.displayName }}</option>
                   <option v-if="!networks.length" value="">{{ t('withdraw.reviewedNetwork') }}</option>
                 </select>
-                <ChevronDown :size="18" aria-hidden="true" />
-              </div>
-            </label>
+                <ChevronDown :size="14" aria-hidden="true" />
+              </label>
+            </div>
+            <span class="withdraw-identity__balance">
+              <small>{{ t('withdraw.availableBalance') }}</small>
+              <strong class="numeric">{{ formatAmount(available) }} {{ asset.symbol }}</strong>
+            </span>
+          </section>
+          <form class="withdraw-workflow" @submit.prevent="requestSubmit">
             <label class="withdraw-field" :class="{ 'is-invalid': addressInvalid }">
-              <span>{{ t('withdraw.address') }}</span>
-              <textarea
-                v-model="address"
-                rows="3"
-                autocomplete="off"
-                :aria-invalid="addressInvalid"
-                :aria-describedby="addressInvalid ? 'withdraw-error' : undefined"
-                :placeholder="t('withdraw.addressPlaceholder')"
-              />
+              <span class="withdraw-field__top">
+                <span>{{ t('withdraw.address') }}</span>
+                <small>{{ selectedNetworkLabel }}</small>
+              </span>
+              <div class="withdraw-field__control">
+                <input
+                  v-model="address"
+                  autocomplete="off"
+                  :aria-invalid="addressInvalid"
+                  :aria-describedby="addressInvalid ? 'withdraw-error' : undefined"
+                  :placeholder="t('withdraw.addressPlaceholder')"
+                />
+              </div>
+              <small v-if="addressInvalid" class="withdraw-field__error">{{ t('withdraw.invalidRequest') }}</small>
             </label>
             <label class="withdraw-field" :class="{ 'is-invalid': amountInvalid }">
-              <span>{{ t('withdraw.quantity') }}</span>
-              <div class="amount-shell">
+              <span class="withdraw-field__top">
+                <span>{{ t('withdraw.quantity') }}</span>
+                <small>{{ asset.symbol }}</small>
+              </span>
+              <div class="withdraw-field__control amount-shell">
                 <input
                   v-model="amount"
                   inputmode="decimal"
@@ -181,9 +200,9 @@ onMounted(() => { void load() })
                   :aria-describedby="amountInvalid ? 'withdraw-error' : undefined"
                   :placeholder="t('withdraw.minimumPlaceholder')"
                 />
-                <b>{{ asset.symbol }}</b>
                 <button type="button" @click="useMaximum">{{ t('withdraw.all') }}</button>
               </div>
+              <small v-if="amountInvalid" class="withdraw-field__error">{{ t('withdraw.invalidRequest') }}</small>
             </label>
             <section class="withdraw-estimate">
               <div><span>{{ t('withdraw.networkFee') }}</span><strong class="numeric">{{ formatAmount(fee) }} {{ asset.symbol }}</strong></div>
@@ -191,21 +210,35 @@ onMounted(() => { void load() })
             </section>
             <section class="security-section">
               <div class="security-section__title">
-                <ShieldCheck :size="19" aria-hidden="true" />
+                <ShieldCheck :size="16" aria-hidden="true" />
                 <span>{{ t('withdraw.security') }}</span>
               </div>
               <label class="withdraw-field">
-                <span>{{ t('withdraw.fundPassword') }}</span>
-                <input v-model="fundPassword" type="password" autocomplete="off" :placeholder="t('withdraw.fundPasswordPlaceholder')" />
+                <span class="withdraw-field__top">
+                  <span>{{ t('withdraw.fundPassword') }}</span>
+                  <small>{{ t('common.optional') }}</small>
+                </span>
+                <div class="withdraw-field__control">
+                  <input v-model="fundPassword" type="password" autocomplete="off" :placeholder="t('withdraw.fundPasswordPlaceholder')" />
+                </div>
               </label>
               <label class="withdraw-field">
-                <span>{{ t('withdraw.twoFactorCode') }}</span>
-                <input v-model="totpCode" inputmode="numeric" autocomplete="one-time-code" :placeholder="t('withdraw.twoFactorPlaceholder')" />
+                <span class="withdraw-field__top">
+                  <span>{{ t('withdraw.twoFactorCode') }}</span>
+                  <small>{{ t('common.optional') }}</small>
+                </span>
+                <div class="withdraw-field__control">
+                  <input v-model="totpCode" inputmode="numeric" autocomplete="one-time-code" :placeholder="t('withdraw.twoFactorPlaceholder')" />
+                </div>
               </label>
             </section>
             <p v-if="success" class="success-message" aria-live="polite">{{ success }}</p>
-            <button class="button button--primary button--full" type="submit" :disabled="submitting">{{ submitting ? t('common.submitting') : t('withdraw.submit') }}</button>
+            <button class="button button--primary button--full withdraw-submit" type="submit" :disabled="submitting">{{ submitting ? t('common.submitting') : t('withdraw.submit') }}</button>
             <p class="withdraw-notice">{{ t('withdraw.notice') }}</p>
+            <nav class="withdraw-shortcuts" :aria-label="t('assets.fundTools')">
+              <button type="button" @click="router.push({ name: 'withdrawal-records' })">{{ t('withdrawRecords.title') }}</button>
+              <button type="button" @click="router.push({ name: 'wallet-ledger' })">{{ t('assets.ledger') }}</button>
+            </nav>
           </form>
         </template>
         <p v-else-if="!loading" class="empty-state">{{ t('withdraw.unavailable') }}</p>
@@ -261,11 +294,14 @@ onMounted(() => { void load() })
 </template>
 
 <style scoped>
+.wallet-pencil-page {
+  background: var(--page);
+}
+
 .withdraw-page {
   display: grid;
-  gap: 16px;
-  padding-bottom: calc(36px + env(safe-area-inset-bottom));
-  padding-top: 16px;
+  gap: 12px;
+  padding: 6px 20px calc(20px + env(safe-area-inset-bottom));
 }
 
 .withdraw-loading {
@@ -275,57 +311,94 @@ onMounted(() => { void load() })
   font-size: 13px;
   gap: 10px;
   justify-content: center;
-  min-height: 180px;
+  min-height: 160px;
 }
 
-.withdraw-balance {
+.withdraw-identity {
   align-items: center;
-  border-bottom: 1px solid var(--line);
   display: grid;
-  gap: 12px;
-  grid-template-columns: 42px minmax(0, 1fr);
-  padding: 2px 0 16px;
+  gap: 10px;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  min-height: 42px;
+  padding: 2px 0 6px;
 }
 
-.withdraw-balance > div {
-  display: grid;
-  gap: 4px;
+.withdraw-identity__asset {
+  align-items: center;
+  display: flex;
   min-width: 0;
 }
 
-.withdraw-balance > div span,
-.withdraw-field > span {
+.withdraw-identity__asset > strong {
+  flex: 0 0 auto;
+  font-size: 15px;
+  line-height: 21px;
+}
+
+.withdraw-identity__network {
+  align-items: center;
   color: var(--muted);
-  font-size: 11px;
-  font-weight: 650;
+  display: flex;
+  min-height: 44px;
+  min-width: 0;
+  position: relative;
 }
 
-.withdraw-balance strong {
-  font-size: 18px;
-  overflow-wrap: anywhere;
+.withdraw-identity__network::before {
+  content: '·';
+  padding-inline: 5px;
 }
 
-.withdraw-balance__links {
-  display: grid;
-  gap: 8px;
-  grid-column: 1 / -1;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.withdraw-balance button {
-  background: var(--soft);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+.withdraw-identity__network select {
+  appearance: none;
+  background: transparent;
+  border: 0;
   color: var(--ink);
-  font-size: 12px;
+  font: inherit;
+  font-size: 13px;
   font-weight: 700;
   min-height: 44px;
-  padding: 0 10px;
+  min-width: 0;
+  outline: 0;
+  padding: 0 18px 0 0;
+  width: 100%;
+}
+
+.withdraw-identity__network svg {
+  color: var(--muted);
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+}
+
+.withdraw-identity__balance {
+  display: grid;
+  gap: 2px;
+  justify-items: end;
+  max-width: 122px;
+  min-width: 0;
+  text-align: right;
+}
+
+.withdraw-identity__balance small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 14px;
+}
+
+.withdraw-identity__balance strong {
+  font-size: 11px;
+  line-height: 15px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .withdraw-workflow {
   display: grid;
-  gap: 16px;
+  gap: 12px;
 }
 
 .withdraw-field {
@@ -333,146 +406,220 @@ onMounted(() => { void load() })
   border: 1px solid var(--line);
   border-radius: var(--radius);
   display: grid;
-  gap: 3px;
+  gap: 5px;
+  min-height: 60px;
   padding: 8px 12px;
+  transition: border-color var(--motion-fast) var(--motion-ease), box-shadow var(--motion-fast) var(--motion-ease);
 }
 
 .withdraw-field:focus-within {
   background: var(--surface-elevated);
-  border-color: var(--focus);
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  border-color: var(--positive);
+  box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
 .withdraw-field.is-invalid,
 .withdraw-field.is-invalid:focus-within {
   border-color: var(--negative);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--negative) 22%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--negative) 22%, transparent);
 }
 
-.withdraw-field input,
-.withdraw-field textarea,
-.select-shell select {
+.withdraw-field__top {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 11px;
+  font-weight: 500;
+  gap: 10px;
+  justify-content: space-between;
+  line-height: 15px;
+}
+
+.withdraw-field__top small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.withdraw-field__control {
+  align-items: center;
+  display: flex;
+  min-width: 0;
+}
+
+.withdraw-field input {
   background: transparent;
   border: 0;
+  border-radius: 0;
+  box-shadow: none;
   color: var(--ink);
   font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  min-height: 32px;
   min-width: 0;
   outline: 0;
   padding: 0;
   width: 100%;
 }
 
-.withdraw-field input,
-.select-shell select {
-  min-height: 36px;
+.withdraw-field input:focus-visible {
+  box-shadow: none;
+  outline: 0;
 }
 
-.withdraw-field textarea {
-  line-height: 1.45;
-  min-height: 76px;
-  padding-top: 5px;
-  resize: vertical;
-}
-
-.select-shell {
-  align-items: center;
-  display: flex;
-  min-width: 0;
-}
-
-.select-shell select {
-  appearance: none;
-  flex: 1;
-}
-
-.select-shell svg {
-  color: var(--muted);
-  flex: 0 0 auto;
-  pointer-events: none;
+.withdraw-field__error {
+  color: var(--negative);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 14px;
 }
 
 .amount-shell {
-  align-items: center;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  min-width: 0;
-}
-
-.amount-shell b {
-  font-size: 12px;
-  margin-left: 8px;
+  gap: 8px;
 }
 
 .amount-shell button {
+  align-items: center;
   background: transparent;
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 750;
+  color: var(--positive);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
+  justify-content: center;
   min-height: 44px;
-  padding: 0 4px 0 12px;
+  min-width: 44px;
+  padding: 0;
 }
 
 .withdraw-estimate {
-  background: var(--soft);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .withdraw-estimate div {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-  padding: 13px;
-}
-
-.withdraw-estimate div + div {
-  border-left: 1px solid var(--line);
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 18px;
 }
 
 .withdraw-estimate span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .withdraw-estimate strong {
-  font-size: 13px;
+  font-size: 12px;
+  min-width: 0;
   overflow-wrap: anywhere;
+  text-align: right;
 }
 
 .security-section {
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--hairline);
   display: grid;
-  gap: 13px;
-  padding-top: 18px;
+  gap: 12px;
+  padding-top: 12px;
 }
 
 .security-section__title {
   align-items: center;
+  color: var(--muted);
   display: flex;
-  font-size: 15px;
-  font-weight: 720;
-  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  gap: 7px;
+  min-height: 18px;
 }
 
 .security-section__title svg {
-  color: var(--accent);
+  color: var(--positive);
 }
 
 .success-message {
   color: var(--positive);
-  font-size: 13px;
-  font-weight: 650;
+  font-size: 12px;
+  font-weight: 600;
   margin: 0;
+}
+
+.withdraw-submit {
+  border-radius: var(--wallet-pill-radius, 999px);
+  height: 48px;
+  min-height: 48px;
 }
 
 .withdraw-notice {
   color: var(--muted);
-  font-size: 12px;
-  line-height: 1.55;
-  margin: -3px 0 0;
-  text-align: center;
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.withdraw-shortcuts {
+  border-top: 1px solid var(--hairline);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding-top: 8px;
+}
+
+.withdraw-shortcuts button {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+  min-height: 44px;
+  padding: 0 8px;
+}
+
+.wallet-feedback {
+  margin: 0;
+}
+
+.wallet-login-prompt {
+  background: transparent;
+  background-image: none;
+  border: 0;
+  border-top: 1px solid var(--hairline);
+  gap: 10px;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  min-height: 72px;
+  padding: 10px 0;
+}
+
+.wallet-login-prompt :deep(.login-required__icon) {
+  background: var(--accent-soft);
+  border: 0;
+  color: var(--positive);
+  height: 34px;
+  width: 34px;
+}
+
+.wallet-login-prompt :deep(.login-required__copy) {
+  gap: 2px;
+}
+
+.wallet-login-prompt :deep(.login-required__copy strong) {
+  font-size: 13px;
+}
+
+.wallet-login-prompt :deep(.login-required__copy p) {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.wallet-login-prompt :deep(.button) {
+  border-radius: var(--wallet-pill-radius, 999px);
+  min-height: 44px;
+  padding-inline: 14px;
 }
 
 .withdraw-review-mask {
@@ -490,17 +637,16 @@ onMounted(() => { void load() })
 }
 
 .withdraw-review {
-  background: var(--surface);
+  background: var(--surface-elevated);
   border: 1px solid var(--line);
-  border-top: 3px solid var(--accent);
-  box-shadow: var(--shadow-soft);
+  border-radius: var(--wallet-sheet-radius, 20px) var(--wallet-sheet-radius, 20px) 0 0;
   display: grid;
   gap: 14px;
   max-height: calc(100dvh - max(32px, env(safe-area-inset-top)) - max(32px, env(safe-area-inset-bottom)));
   max-width: 520px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 17px;
+  padding: 18px;
   width: 100%;
 }
 
@@ -514,14 +660,14 @@ onMounted(() => { void load() })
 
 .withdraw-review > header > div {
   display: grid;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
 }
 
 .withdraw-review > header span {
-  color: var(--accent);
+  color: var(--positive);
   font-size: 10px;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .withdraw-review h2 {
@@ -536,14 +682,14 @@ onMounted(() => { void load() })
 }
 
 .withdraw-review__summary {
-  border-block: 1px solid var(--line);
+  border-block: 1px solid var(--hairline);
   display: grid;
   margin: 0;
 }
 
 .withdraw-review__summary > div {
   align-items: center;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--hairline);
   display: flex;
   gap: 12px;
   justify-content: space-between;
@@ -566,7 +712,7 @@ onMounted(() => { void load() })
 }
 
 .withdraw-review__summary dd {
-  font-weight: 750;
+  font-weight: 700;
   min-width: 0;
   overflow-wrap: anywhere;
   text-align: right;
@@ -610,21 +756,39 @@ onMounted(() => { void load() })
 
 @media (max-width: 340px) {
   .withdraw-page {
-    padding-left: 16px;
-    padding-right: 16px;
+    padding-inline: 16px;
   }
 
-  .withdraw-estimate {
-    grid-template-columns: 1fr;
+  .withdraw-identity {
+    gap: 8px;
   }
 
-  .withdraw-estimate div + div {
-    border-left: 0;
-    border-top: 1px solid var(--line);
+  .withdraw-identity__balance {
+    max-width: 94px;
   }
 
   .withdraw-review__actions {
     grid-template-columns: 1fr;
+  }
+
+  .wallet-login-prompt {
+    align-items: center;
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .wallet-login-prompt :deep(.button) {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+
+  .withdraw-field {
+    transition: none;
   }
 }
 </style>

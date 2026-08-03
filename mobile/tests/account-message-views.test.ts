@@ -17,9 +17,11 @@ test('资产页保留真实钱包、行情、资金划转与资金路由合同',
   assert.match(assetsSource, /Promise\.all\(\[marketStore\.refresh\(\), fetchWalletAccounts\(\), fetchMarginWallets\(\)\]\)/)
   assert.match(assetsSource, /await transferWalletFunds\(transferAsset\.value, transferFrom\.value, to, transferValue\)/)
   assert.match(assetsSource, /const accountsReady = ref\(false\)/)
-  assert.match(assetsSource, /if \(total <= 0\) return \{ btc: 0, eth: 0, usdt: 0, other: 0 \}/)
-  assert.match(assetsSource, /class="asset-hero-state" role="alert"/)
-  assert.match(assetsSource, /accountDataAvailable && !row\.placeholder/)
+  assert.match(assetsSource, /const allocationRows = computed\(\(\) =>/)
+  assert.match(assetsSource, /const hasAllocation = computed\(\(\) => hasHoldings\.value && totalEstimate\.value > 0\)/)
+  assert.match(assetsSource, /:data-account-state="accountDataAvailable \? 'ready' : loading \? 'loading' : error \? 'error' : 'guest'"/)
+  assert.match(assetsSource, /v-else-if="error" class="pencil-secondary"/)
+  assert.match(assetsSource, /v-if="accountDataAvailable && hasAllocation"/)
   assert.match(assetsSource, /name: 'deposit-asset'/)
   for (const routeName of ['withdraw-asset', 'wallet-ledger', 'quick-recharge']) {
     assert.match(assetsSource, new RegExp(`'${routeName}'`))
@@ -33,11 +35,12 @@ test('资料页保留资料、头像、认证状态与账户操作合同', () =>
   assert.match(profileSource, /await updateUsername\(nameDraft\.value\)/)
   assert.match(profileSource, /await uploadUserAvatar\(file\)/)
   assert.match(profileSource, /const profileReady = ref\(false\)/)
-  assert.match(profileSource, /class="profile-identity-state" role="alert"/)
+  assert.match(profileSource, /class="pencil-message pencil-message--error" role="alert"/)
   assert.match(profileSource, /:disabled="updatingAvatar \|\| !profileReady"/)
-  for (const routeName of ['kyc', 'security', 'account-bindings', 'referrals', 'language']) {
+  for (const routeName of ['kyc', 'security', 'account-bindings', 'language', 'message-center']) {
     assert.match(profileSource, new RegExp(`name: '${routeName}'`))
   }
+  assert.doesNotMatch(profileSource, /name: 'referrals'/)
   assert.match(profileSource, /session\.logout\(\)/)
   assert.match(profileSource, /router\.replace\('\/'\)/)
   assert.match(profileSource, /role="dialog"/)
@@ -86,9 +89,8 @@ test('消息中心只展示真实公告、保存本机已读 ID 并进入公告�
       zhCN.messageCenter.categoryAccount,
       zhCN.messageCenter.categoryFunds,
       zhCN.messageCenter.categoryTrade,
-      zhCN.messageCenter.categoryAnnouncement,
     ],
-    ['全部', '账户', '资金', '交易', '公告'],
+    ['全部', '账户', '资金', '交易'],
   )
   assert.deepEqual(
     [
@@ -96,10 +98,11 @@ test('消息中心只展示真实公告、保存本机已读 ID 并进入公告�
       en.messageCenter.categoryAccount,
       en.messageCenter.categoryFunds,
       en.messageCenter.categoryTrade,
-      en.messageCenter.categoryAnnouncement,
     ],
-    ['All', 'Account', 'Funds', 'Trade', 'Notices'],
+    ['All', 'Account', 'Funds', 'Trade'],
   )
+  assert.equal(zhCN.messageCenter.markAllReadShort, '全部已读')
+  assert.equal(en.messageCenter.markAllReadShort, 'Read all')
 })
 
 test('账户与消息视图满足主题、触控、窄屏和 Lucide 契约', () => {
@@ -121,7 +124,8 @@ test('账户与消息视图满足主题、触控、窄屏和 Lucide 契约', () 
   assert.match(sharedPrototypeCss, /:focus-within/)
   assert.match(securitySource, /:focus-within/)
   assert.match(securitySource, /\.policy-toggle/)
-  assert.match(messageCenterSource, /\.message-filter-bar\s*\{[\s\S]*?grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/)
+  assert.match(messageCenterSource, /\.message-filter-bar\s*\{[\s\S]*?display: flex;[\s\S]*?gap: 20px;[\s\S]*?height: 38px;/)
+  assert.doesNotMatch(messageCenterSource, /grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/)
   assert.match(messageCenterSource, /aria-pressed/)
 })
 

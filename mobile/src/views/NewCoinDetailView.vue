@@ -3,21 +3,15 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import {
-  ArrowUpRight,
-  CalendarDays,
   CheckCircle2,
   CircleAlert,
-  CircleDollarSign,
-  Clock3,
   LoaderCircle,
   PackageOpen,
-  ReceiptText,
   RefreshCw,
-  ShieldCheck,
+  Share2,
   X,
 } from 'lucide-vue-next'
 import AssetMark from '@/components/AssetMark.vue'
-import LoginRequiredState from '@/components/LoginRequiredState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
 import {
@@ -47,6 +41,7 @@ const loading = ref(false)
 const submitting = ref(false)
 const error = ref('')
 const success = ref('')
+const shareFeedback = ref('')
 const reviewOpen = ref(false)
 const reviewDialog = ref<HTMLElement | null>(null)
 const { trapFocus: trapReviewFocus } = useModalDialog(reviewOpen, reviewDialog, '[data-dialog-cancel]')
@@ -79,6 +74,19 @@ const lifecycleLabel = computed(() => {
   }
   const key = keys[lifecycle.value]
   return key ? t(key) : project.value?.lifecycleStatus || '--'
+})
+
+const unlockSummary = computed(() => {
+  const current = project.value
+  if (!current) return '--'
+  const parts = [unlockTypeLabel(current.unlockType)]
+  if (current.fixedUnlockAt) parts.push(formatDateTime(current.fixedUnlockAt))
+  else if (current.relativeUnlockSeconds) parts.push(t('newCoin.days', { days: Math.ceil(current.relativeUnlockSeconds / 86400) }))
+  const fee = current.unlockFeeEnabled
+    ? `${formatAmount(current.unlockFeeRate || 0)} ${current.unlockFeeBasis || ''}`.trim()
+    : t('newCoin.none')
+  parts.push(`${t('newCoin.unlockFee')}: ${fee}`)
+  return parts.join(' · ')
 })
 
 function unlockTypeLabel(type: string): string {
@@ -124,7 +132,26 @@ function setAmount(value: number): void {
   amount.value = next ? String(Number(next.toFixed(8))) : ''
 }
 
+function openLogin(): void {
+  void router.push({ name: 'login', query: { redirect: router.currentRoute.value.fullPath } })
+}
+
+async function shareProject(): Promise<void> {
+  const data = { title: project.value?.symbol || props.symbol.toUpperCase(), url: window.location.href }
+  try {
+    if (navigator.share) await navigator.share(data)
+    else await navigator.clipboard.writeText(data.url)
+    shareFeedback.value = t('newCoin.linkCopied')
+  } catch {
+    shareFeedback.value = ''
+  }
+}
+
 function requestSubmit(): void {
+  if (!session.isAuthenticated) {
+    openLogin()
+    return
+  }
   if (!project.value || !canSubmit.value) {
     error.value = t('newCoin.invalidAmount')
     return
@@ -182,128 +209,86 @@ onMounted(() => { void load() })
 </script>
 
 <template>
-  <main class="page page--plain new-coin-detail-page">
-    <PageHeader
-      :back="true"
-      :eyebrow="t('products.newCoins')"
-      :subtitle="t('newCoin.projectDescription')"
-      :title="t('newCoin.projectTitle', { symbol: props.symbol.toUpperCase() })"
-    >
+  <main class="page page--plain pencil-page new-coin-detail-pencil" data-pencil-source="nFwYy B6Qh9J">
+    <PageHeader :back="true" :pencil="true" :title="t('newCoin.detailTitle')">
       <template #actions>
-        <button
-          class="icon-button"
-          type="button"
-          :aria-label="t('newCoin.records')"
-          @click="router.push({ name: 'new-coin-records' })"
-        >
-          <ReceiptText :size="20" />
-        </button>
+        <button class="icon-button" type="button" :aria-label="t('newCoin.shareProject')" @click="shareProject"><Share2 :size="18" /></button>
       </template>
     </PageHeader>
-    <div class="page-content new-coin-detail-content">
-      <div v-if="error && !reviewOpen" class="detail-message detail-message--error" role="alert">
-        <CircleAlert :size="18" />
-        <span>{{ error }}</span>
-        <button type="button" :aria-label="t('common.retry')" @click="load">
-          <RefreshCw :size="17" />
-        </button>
+
+    <div class="pencil-content new-coin-detail-pencil__content">
+      <div v-if="success" class="pencil-message pencil-message--success" role="status"><CheckCircle2 :size="18" /><span>{{ success }}</span></div>
+      <div v-if="shareFeedback" class="pencil-message pencil-message--success" role="status"><Share2 :size="17" /><span>{{ shareFeedback }}</span></div>
+      <div v-if="loading" class="pencil-state" aria-live="polite"><LoaderCircle :size="24" class="spin" /><span>{{ t('newCoin.loadingProject') }}</span></div>
+      <div v-else-if="error && !project && !reviewOpen" class="pencil-message pencil-message--error" role="alert">
+        <CircleAlert :size="18" /><span>{{ error }}</span>
+        <button type="button" :aria-label="t('common.retry')" @click="load"><RefreshCw :size="17" /></button>
       </div>
-      <div v-if="success" class="detail-message detail-message--success" role="status">
-        <CheckCircle2 :size="18" />
-        <span>{{ success }}</span>
-      </div>
-      <div v-if="loading" class="detail-state" aria-live="polite">
-        <LoaderCircle :size="24" class="spin" />
-        <span>{{ t('newCoin.loadingProject') }}</span>
-      </div>
+
       <template v-else-if="project">
-        <section class="project-hero">
-          <AssetMark :symbol="project.symbol" :size="56" />
+        <div v-if="error && !reviewOpen" class="pencil-message pencil-message--error" role="alert">
+          <CircleAlert :size="18" /><span>{{ error }}</span>
+        </div>
+        <section class="new-coin-detail-hero">
+          <AssetMark :symbol="project.symbol" :size="54" />
           <div>
-            <span>{{ lifecycleLabel }}</span>
             <h1>{{ project.symbol }}</h1>
-            <p>{{ t('newCoin.projectDescription') }}</p>
+            <span :class="{ 'is-closed': lifecycle === 'closed' }">{{ lifecycleLabel }}</span>
           </div>
-          <ShieldCheck :size="20" />
         </section>
 
-        <section class="project-metrics">
-          <article><span>{{ t('newCoin.issuePrice') }}</span><strong class="numeric">{{ formatPrice(project.issuePrice) }}</strong><small>{{ t('newCoin.referenceAsset', { asset: quoteSymbol }) }}</small></article>
-          <article><span>{{ t('newCoin.plannedIssue') }}</span><strong class="numeric">{{ formatAmount(project.totalSupply) }}</strong><small>{{ project.symbol }}</small></article>
-          <article><span>{{ t('newCoin.currentStage') }}</span><strong>{{ lifecycleLabel }}</strong><small>{{ project.status || lifecycleLabel }}</small></article>
+        <dl class="new-coin-facts">
+          <div><dt>{{ t('newCoin.issuePrice') }}</dt><dd class="pencil-numeric">{{ formatPrice(project.issuePrice) }} {{ quoteSymbol }}</dd></div>
+          <div><dt>{{ t('newCoin.listingTime') }}</dt><dd>{{ project.listedAt ? formatDateTime(project.listedAt) : t('newCoin.pendingSchedule') }}</dd></div>
+          <div><dt>{{ t('newCoin.plannedIssue') }}</dt><dd class="pencil-numeric">{{ formatAmount(project.totalSupply) }} {{ project.symbol }}</dd></div>
+          <div><dt>{{ t('newCoin.unlockMethod') }}</dt><dd :title="unlockSummary">{{ unlockSummary }}</dd></div>
+        </dl>
+
+        <section class="new-coin-process">
+          <h2>{{ t('newCoin.processTitle') }}</h2>
+          <ol>
+            <li><span>01</span><strong>{{ t('newCoin.subscribe') }}</strong><small class="sr-only">{{ t('newCoin.processChooseDescription') }}</small></li>
+            <li><span>02</span><strong>{{ t('newCoin.waitingDistribution') }}</strong><small class="sr-only">{{ t('newCoin.processConfirmDescription') }}</small></li>
+            <li><span>03</span><strong>{{ t('newCoin.listed') }}</strong><small class="sr-only">{{ t('newCoin.processDistributionDescription') }}</small></li>
+          </ol>
         </section>
 
-        <section class="project-section">
-          <div class="section-heading"><span>{{ t('newCoin.rules') }}</span></div>
-          <dl class="detail-list">
-            <div><dt><CalendarDays :size="17" />{{ t('newCoin.listingTime') }}</dt><dd>{{ formatDateTime(project.listedAt) }}</dd></div>
-            <div><dt><Clock3 :size="17" />{{ t('newCoin.unlockMethod') }}</dt><dd>{{ unlockTypeLabel(project.unlockType) }}</dd></div>
-            <div v-if="project.fixedUnlockAt"><dt><ArrowUpRight :size="17" />{{ t('newCoin.estimatedUnlock') }}</dt><dd>{{ formatDateTime(project.fixedUnlockAt) }}</dd></div>
-            <div v-else-if="project.relativeUnlockSeconds"><dt><ArrowUpRight :size="17" />{{ t('newCoin.unlockPeriod') }}</dt><dd>{{ t('newCoin.days', { days: Math.ceil(project.relativeUnlockSeconds / 86400) }) }}</dd></div>
-            <div><dt><ShieldCheck :size="17" />{{ t('newCoin.unlockFee') }}</dt><dd>{{ project.unlockFeeEnabled ? `${formatAmount(project.unlockFeeRate)} ${project.unlockFeeBasis || ''}` : t('newCoin.none') }}</dd></div>
-          </dl>
-        </section>
-
-        <LoginRequiredState v-if="!session.isAuthenticated" :description="t('newCoin.detailLoginDescription')" />
-        <section v-else-if="canSubscribe || canPurchase" class="entry-panel">
+        <section class="new-coin-entry-pencil">
           <header>
-            <div>
-              <span>{{ t(canSubscribe ? 'newCoin.subscribe' : 'newCoin.postListingPurchase') }}</span>
-              <h2>{{ t(canSubscribe ? 'newCoin.subscribeTitle' : 'newCoin.purchaseTitle') }}</h2>
-            </div>
-            <CircleDollarSign :size="23" />
+            <span>{{ t(canPurchase ? 'newCoin.purchaseQuantity' : 'newCoin.subscriptionAmount', { asset: project.symbol }) }}</span>
+            <button v-if="session.isAuthenticated && (canSubscribe || canPurchase)" type="button" @click="setAmount(1)">{{ t('newCoin.maximum') }}</button>
           </header>
-          <p>{{ canSubscribe ? t('newCoin.subscribeDescription') : t('newCoin.purchaseDescription', { price: formatPrice(executionPrice), asset: quoteSymbol }) }}</p>
-          <label class="entry-field">
-            <span>{{ t('newCoin.paymentAsset') }}</span>
-            <select v-if="canSubscribe" v-model="quoteAssetId">
-              <option v-for="account in accounts" :key="account.assetId" :value="account.assetId">
-                {{ t('newCoin.assetAvailable', { asset: account.symbol, amount: formatAmount(account.available) }) }}
-              </option>
-            </select>
-            <div v-else class="entry-field__locked">
-              <b>{{ quoteSymbol }}</b>
-              <small>{{ t('newCoin.purchaseQuoteLocked') }}</small>
-            </div>
-          </label>
-          <label class="entry-field">
-            <span>{{ t(canSubscribe ? 'newCoin.subscriptionAmount' : 'newCoin.purchaseQuantity', { asset: project.symbol }) }}</span>
-            <div>
-              <input v-model="amount" class="numeric" inputmode="decimal" placeholder="0.00" />
-              <b>{{ canSubscribe ? selectedAccount?.symbol || quoteSymbol : project.symbol }}</b>
-            </div>
-          </label>
-          <div class="quick-values">
-            <button v-for="value in [0.25, 0.5, 0.75, 1]" :key="value" type="button" @click="setAmount(value)">
-              {{ value === 1 ? t('newCoin.maximum') : `${value * 100}%` }}
-            </button>
+          <div class="new-coin-entry-pencil__control">
+            <input v-model="amount" class="pencil-numeric" inputmode="decimal" placeholder="0.00" :disabled="!session.isAuthenticated || (!canSubscribe && !canPurchase)" aria-describedby="new-coin-entry-summary" />
+            <span class="new-coin-entry-pencil__asset">
+              <select v-if="canSubscribe" v-model="quoteAssetId">
+                <option v-if="!accounts.length" :value="0">{{ quoteSymbol }}</option>
+                <option v-for="account in accounts" :key="account.assetId" :value="account.assetId">{{ t('newCoin.assetAvailable', { asset: account.symbol, amount: formatAmount(account.available) }) }}</option>
+              </select>
+              <template v-else>{{ canPurchase ? project.symbol : selectedAccount?.symbol || quoteSymbol }}</template>
+            </span>
           </div>
-          <dl class="entry-summary">
-            <div><dt>{{ t(canSubscribe ? 'newCoin.estimatedSubscription' : 'newCoin.estimatedPayment') }}</dt><dd>{{ formatAmount(canSubscribe ? estimatedQuantity : paymentAmount) }} {{ canSubscribe ? project.symbol : selectedAccount?.symbol || quoteSymbol }}</dd></div>
-            <div><dt>{{ t('newCoin.availableBalance') }}</dt><dd>{{ formatAmount(selectedAccount?.available) }} {{ selectedAccount?.symbol }}</dd></div>
+          <dl id="new-coin-entry-summary" class="sr-only">
+            <div><dt>{{ t(canSubscribe ? 'newCoin.estimatedSubscription' : 'newCoin.estimatedPayment') }}</dt><dd class="pencil-numeric">{{ formatAmount(canSubscribe ? estimatedQuantity : paymentAmount) }} {{ canSubscribe ? project.symbol : selectedAccount?.symbol || quoteSymbol }}</dd></div>
+            <div v-if="selectedAccount"><dt>{{ t('newCoin.availableBalance') }}</dt><dd class="pencil-numeric">{{ formatAmount(selectedAccount.available) }} {{ selectedAccount.symbol }}</dd></div>
           </dl>
-          <button
-            class="button button--primary button--full entry-submit"
-            type="button"
-            :disabled="submitting || !canSubmit"
-            :aria-busy="submitting"
-            @click="requestSubmit"
-          >
-            {{ submitting ? t('common.submitting') : t(canSubscribe ? 'newCoin.subscribeAsset' : 'newCoin.purchaseAsset', { asset: project.symbol }) }}
-          </button>
         </section>
-        <section v-else class="stage-note">
-          <Clock3 :size="19" />
-          <div>
-            <strong>{{ t('newCoin.stageUnavailable') }}</strong>
-            <p>{{ t('newCoin.stageUnavailableDescription') }}</p>
-          </div>
-        </section>
+
+        <button
+          class="pencil-primary pencil-primary--full new-coin-detail-primary"
+          type="button"
+          :disabled="session.isAuthenticated && (submitting || (!canSubscribe && !canPurchase) || !canSubmit)"
+          :aria-busy="submitting"
+          @click="requestSubmit"
+        >
+          {{ submitting
+            ? t('common.submitting')
+            : !session.isAuthenticated
+              ? t('auth.login')
+              : t(canSubscribe ? 'newCoin.subscribeAsset' : canPurchase ? 'newCoin.purchaseAsset' : 'newCoin.stageUnavailable', { asset: project.symbol }) }}
+        </button>
       </template>
-      <div v-else class="detail-state detail-state--empty">
-        <PackageOpen :size="23" />
-        <span>{{ t('newCoin.noProjects') }}</span>
-      </div>
+      <div v-else class="pencil-state"><PackageOpen :size="23" /><span>{{ t('newCoin.noProjects') }}</span></div>
     </div>
 
     <div v-if="reviewOpen && project && selectedAccount" class="entry-review-mask" @click.self="closeReview">
@@ -320,34 +305,20 @@ onMounted(() => { void load() })
           <div>
             <span>{{ t(canSubscribe ? 'newCoin.subscribe' : 'newCoin.postListingPurchase') }}</span>
             <h2 id="entry-review-title">{{ t(canSubscribe ? 'newCoin.subscribeTitle' : 'newCoin.purchaseTitle') }}</h2>
-            <small id="entry-review-description">
-              {{ canSubscribe ? t('newCoin.subscribeDescription') : t('newCoin.purchaseDescription', { price: formatPrice(executionPrice), asset: quoteSymbol }) }}
-            </small>
+            <small id="entry-review-description">{{ canSubscribe ? t('newCoin.subscribeDescription') : t('newCoin.purchaseDescription', { price: formatPrice(executionPrice), asset: quoteSymbol }) }}</small>
           </div>
-          <button class="icon-button" type="button" :aria-label="t('common.close')" :disabled="submitting" @click="closeReview">
-            <X :size="21" aria-hidden="true" />
-          </button>
+          <button class="icon-button" type="button" :aria-label="t('common.close')" :disabled="submitting" @click="closeReview"><X :size="21" /></button>
         </header>
         <dl class="entry-review__summary">
           <div><dt>{{ t('newCoin.paymentAsset') }}</dt><dd>{{ selectedAccount.symbol }}</dd></div>
-          <div>
-            <dt>{{ t(canSubscribe ? 'newCoin.subscriptionAmount' : 'newCoin.purchaseQuantity', { asset: project.symbol }) }}</dt>
-            <dd class="numeric">{{ formatAmount(amountNumber) }} {{ canSubscribe ? selectedAccount.symbol : project.symbol }}</dd>
-          </div>
-          <div>
-            <dt>{{ t(canSubscribe ? 'newCoin.estimatedSubscription' : 'newCoin.estimatedPayment') }}</dt>
-            <dd class="numeric up">{{ formatAmount(canSubscribe ? estimatedQuantity : paymentAmount) }} {{ canSubscribe ? project.symbol : selectedAccount.symbol }}</dd>
-          </div>
-          <div><dt>{{ t('newCoin.availableBalance') }}</dt><dd class="numeric">{{ formatAmount(selectedAccount.available) }} {{ selectedAccount.symbol }}</dd></div>
+          <div><dt>{{ t(canSubscribe ? 'newCoin.subscriptionAmount' : 'newCoin.purchaseQuantity', { asset: project.symbol }) }}</dt><dd class="pencil-numeric">{{ formatAmount(amountNumber) }} {{ canSubscribe ? selectedAccount.symbol : project.symbol }}</dd></div>
+          <div><dt>{{ t(canSubscribe ? 'newCoin.estimatedSubscription' : 'newCoin.estimatedPayment') }}</dt><dd class="pencil-numeric up">{{ formatAmount(canSubscribe ? estimatedQuantity : paymentAmount) }} {{ canSubscribe ? project.symbol : selectedAccount.symbol }}</dd></div>
+          <div><dt>{{ t('newCoin.availableBalance') }}</dt><dd class="pencil-numeric">{{ formatAmount(selectedAccount.available) }} {{ selectedAccount.symbol }}</dd></div>
         </dl>
         <p v-if="error" class="entry-review__error" role="alert">{{ error }}</p>
         <div class="entry-review__actions">
-          <button class="button button--secondary" type="button" :disabled="submitting" data-dialog-cancel @click="closeReview">
-            {{ t('common.cancel') }}
-          </button>
-          <button class="button button--primary" type="button" :disabled="submitting || !canSubmit" :aria-busy="submitting" @click="submit">
-            {{ submitting ? t('common.submitting') : t(canSubscribe ? 'newCoin.subscribeAsset' : 'newCoin.purchaseAsset', { asset: project.symbol }) }}
-          </button>
+          <button class="pencil-secondary" type="button" :disabled="submitting" data-dialog-cancel @click="closeReview">{{ t('common.cancel') }}</button>
+          <button class="pencil-primary" type="button" :disabled="submitting || !canSubmit" :aria-busy="submitting" @click="submit">{{ submitting ? t('common.submitting') : t(canSubscribe ? 'newCoin.subscribeAsset' : 'newCoin.purchaseAsset', { asset: project.symbol }) }}</button>
         </div>
       </section>
     </div>
@@ -355,426 +326,263 @@ onMounted(() => { void load() })
 </template>
 
 <style scoped>
-.new-coin-detail-page {
-  background: var(--surface);
-  min-width: 0;
+.new-coin-detail-pencil__content {
+  display: flow-root;
+  min-height: 516px;
+  padding-top: 0;
 }
 
-.new-coin-detail-content {
-  display: grid;
-  gap: 16px;
-  min-width: 0;
-  padding-bottom: calc(28px + env(safe-area-inset-bottom));
-  padding-top: 14px;
-}
-
-.detail-message {
+.new-coin-detail-hero {
   align-items: center;
-  border: 1px solid currentColor;
   display: grid;
-  font-size: 12px;
-  gap: 9px;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  line-height: 1.45;
-  min-height: 52px;
-  padding: 4px 5px 4px 11px;
+  gap: 14px;
+  grid-template-columns: 54px minmax(0, 1fr);
+  height: 56px;
+  margin-top: 8px;
 }
 
-.detail-message--error {
-  background: var(--negative-soft);
+.new-coin-detail-hero > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.new-coin-detail-hero h1 {
+  font-size: 23px;
+  font-weight: 500;
+  letter-spacing: -.02em;
+  line-height: 29px;
+  margin: 0;
+}
+
+.new-coin-detail-hero > div > span {
+  color: var(--positive);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.new-coin-detail-hero > div > span.is-closed {
   color: var(--negative);
 }
 
-.detail-message--success {
-  background: var(--positive-soft);
-  color: var(--positive);
-  grid-template-columns: auto minmax(0, 1fr);
-}
-
-.detail-message button {
-  background: transparent;
-  color: inherit;
+.new-coin-facts {
   display: grid;
-  min-height: 44px;
-  min-width: 44px;
-  place-items: center;
+  grid-template-rows: repeat(4, 39px);
+  height: 156px;
+  margin: 18px 0 0;
 }
 
-.detail-state {
-  align-content: center;
+.new-coin-facts > div {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.new-coin-facts dt {
   color: var(--muted);
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.new-coin-facts dd {
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 16px;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.new-coin-process {
+  margin-top: 18px;
+}
+
+.new-coin-process h2 {
+  font-size: 14px;
+  font-weight: 700;
+  height: 22px;
+  line-height: 22px;
+  margin: 0;
+}
+
+.new-coin-process ol {
   display: grid;
-  font-size: 12px;
-  gap: 9px;
-  justify-items: center;
-  min-height: 148px;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  height: 65px;
+  list-style: none;
+  margin: 18px 0 0;
+  padding: 0;
+}
+
+.new-coin-process li {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
   text-align: center;
 }
 
-.detail-state--empty {
-  min-height: 112px;
-}
-
-.project-hero {
-  align-items: center;
-  background:
-    linear-gradient(132deg, color-mix(in srgb, var(--accent) 9%, transparent), transparent 64%),
-    var(--surface);
-  border-block: 1px solid var(--line);
-  border-top: 3px solid var(--accent);
-  display: grid;
-  gap: 13px;
-  grid-template-columns: 56px minmax(0, 1fr) auto;
-  min-height: 106px;
-  padding: 14px 4px;
-}
-
-.project-hero > div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.project-hero span {
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 800;
-}
-
-.project-hero h1 {
-  font-size: 24px;
-  line-height: 1;
-  margin: 0;
-}
-
-.project-hero p {
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.45;
-  margin: 0;
-}
-
-.project-hero > svg {
+.new-coin-process li > span {
   color: var(--positive);
-}
-
-.project-metrics {
-  border-block: 1px solid var(--line);
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.project-metrics article {
-  display: grid;
-  gap: 5px;
-  min-height: 96px;
-  min-width: 0;
-  padding: 14px 10px;
-}
-
-.project-metrics article + article {
-  border-left: 1px solid var(--line);
-}
-
-.project-metrics span,
-.project-metrics small {
-  color: var(--muted);
-  font-size: 9px;
-}
-
-.project-metrics strong {
-  font-size: 13px;
-  line-height: 1.25;
-  overflow-wrap: anywhere;
-}
-
-.project-section {
-  border-top: 8px solid var(--soft);
-  margin: 6px -20px 0;
-  padding: 0 20px;
-}
-
-.project-section .section-heading {
-  border-bottom: 1px solid var(--line);
-  font-size: 16px;
-  margin: 0;
-  min-height: 54px;
-}
-
-.detail-list {
-  display: grid;
-  margin: 0;
-}
-
-.detail-list > div {
-  align-items: center;
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  gap: 18px;
-  justify-content: space-between;
-  min-height: 52px;
-}
-
-.detail-list dt {
-  align-items: center;
-  color: var(--muted-strong);
-  display: inline-flex;
+  font-family: var(--font-geist-mono), var(--data-font);
   font-size: 11px;
-  gap: 8px;
+  font-weight: 700;
+  line-height: 15px;
 }
 
-.detail-list dt svg {
-  color: var(--accent);
-  flex: 0 0 auto;
-}
-
-.detail-list dd {
-  color: var(--ink);
+.new-coin-process li strong {
   font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  margin: 0;
-  overflow-wrap: anywhere;
-  text-align: right;
+  font-weight: 500;
+  line-height: 16px;
+  margin-top: 10px;
+  max-width: 100%;
 }
 
-.entry-panel {
-  border-block: 1px solid var(--line);
-  border-top: 3px solid var(--accent);
-  display: grid;
-  gap: 13px;
-  padding: 15px 0 0;
+.new-coin-entry-pencil {
+  height: 51px;
+  margin-top: 18px;
 }
 
-.entry-panel > header {
+.new-coin-entry-pencil > header {
   align-items: center;
   display: flex;
-  gap: 12px;
+  height: 15px;
   justify-content: space-between;
+  position: relative;
 }
 
-.entry-panel > header > div {
-  display: grid;
-  gap: 4px;
-}
-
-.entry-panel > header span {
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 800;
-}
-
-.entry-panel h2 {
-  font-size: 18px;
-  margin: 0;
-}
-
-.entry-panel > header > svg {
-  color: var(--accent);
-}
-
-.entry-panel > p {
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.45;
-  margin: -2px 0 2px;
-}
-
-.entry-field {
-  background: var(--field-surface);
-  border: 1px solid var(--line);
-  display: grid;
-  min-width: 0;
-  padding: 7px 11px 6px;
-}
-
-.entry-field:focus-within {
-  background: var(--surface-elevated);
-  border-color: var(--focus);
-  box-shadow: 0 0 0 3px var(--focus-ring);
-}
-
-.entry-field > span {
+.new-coin-entry-pencil > header span {
   color: var(--muted);
   font-size: 10px;
+  line-height: 15px;
 }
 
-.entry-field > div {
-  align-items: center;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+.new-coin-entry-pencil > header button {
+  background: transparent;
+  color: var(--positive);
+  font-size: 10px;
+  font-weight: 600;
   min-height: 44px;
+  padding: 0;
+  position: absolute;
+  right: 0;
+  top: -14px;
 }
 
-.entry-field__locked small {
-  color: var(--muted);
-  font-size: 11px;
-  text-align: right;
+.new-coin-entry-pencil__control {
+  align-items: center;
+  border-bottom: 1px solid transparent;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  height: 32px;
+  margin-top: 4px;
 }
 
-.entry-field select,
-.entry-field input {
+.new-coin-entry-pencil__control:focus-within {
+  border-bottom-color: var(--positive);
+}
+
+.new-coin-entry-pencil__control input {
   background: transparent;
   border: 0;
   color: var(--ink);
-  min-height: 44px;
+  font-size: 22px;
+  font-weight: 700;
+  height: 32px;
   min-width: 0;
   outline: 0;
+  padding: 0;
   width: 100%;
 }
 
-.entry-field select {
-  font-size: 12px;
+.new-coin-entry-pencil__control input:disabled {
+  opacity: 1;
 }
 
-.entry-field input {
-  font-size: 20px;
-  font-weight: 750;
-}
-
-.entry-field b {
-  font-size: 12px;
-}
-
-.quick-values {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.quick-values button {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  color: var(--ink);
-  font-size: 11px;
-  min-height: 44px;
-}
-
-.quick-values button:focus-visible,
-.quick-values button:hover {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.entry-summary {
-  border-block: 1px solid var(--line);
-  display: grid;
-  margin: 0;
-}
-
-.entry-summary > div {
-  align-items: center;
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  gap: 12px;
-  justify-content: space-between;
-  min-height: 44px;
-}
-
-.entry-summary > div:last-child {
-  border-bottom: 0;
-}
-
-.entry-summary dt,
-.entry-summary dd {
-  font-size: 11px;
-  margin: 0;
-}
-
-.entry-summary dt {
+.new-coin-entry-pencil__asset {
   color: var(--muted);
+  font-size: 10px;
+  max-width: 142px;
+  min-width: 0;
 }
 
-.entry-summary dd {
-  font-variant-numeric: tabular-nums;
-  font-weight: 750;
-  overflow-wrap: anywhere;
+.new-coin-entry-pencil__asset select {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-size: 10px;
+  max-width: 142px;
+  outline: 0;
   text-align: right;
+  text-overflow: ellipsis;
 }
 
-.entry-submit {
-  border-radius: 0;
-  min-height: 52px;
+.new-coin-detail-primary {
+  height: 48px;
+  margin-top: 18px;
+  min-height: 48px;
 }
 
-.stage-note {
-  align-items: flex-start;
-  background: var(--soft);
-  border-left: 3px solid var(--muted-strong);
-  display: flex;
-  gap: 10px;
-  padding: 15px;
+.new-coin-detail-primary:disabled {
+  background: var(--accent-soft);
+  color: var(--positive);
+  opacity: 1;
 }
 
-.stage-note > svg {
-  color: var(--muted-strong);
-  flex: 0 0 auto;
-  margin-top: 2px;
-}
-
-.stage-note > div {
-  display: grid;
-  gap: 5px;
-}
-
-.stage-note strong {
-  font-size: 13px;
-}
-
-.stage-note p {
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.45;
-  margin: 0;
+.new-coin-detail-pencil :deep(.asset-mark) {
+  --asset-color: var(--accent);
+  --asset-ink: var(--on-accent);
+  background: var(--accent);
+  border: 0;
+  box-shadow: none;
+  color: var(--on-accent);
 }
 
 .entry-review-mask {
-  align-items: flex-end;
+  align-items: end;
   background: var(--overlay);
-  display: flex;
+  display: grid;
   inset: 0;
-  justify-content: center;
-  padding:
-    max(16px, env(safe-area-inset-top))
-    16px
-    max(16px, env(safe-area-inset-bottom));
   position: fixed;
   z-index: var(--layer-overlay);
 }
 
 .entry-review {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-top: 3px solid var(--accent);
-  box-shadow: var(--shadow-soft);
-  display: grid;
-  gap: 14px;
-  max-height: calc(100dvh - max(32px, env(safe-area-inset-top)) - max(32px, env(safe-area-inset-bottom)));
-  max-width: 520px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 17px;
+  background: var(--surface-elevated);
+  border-radius: 20px 20px 0 0;
+  box-shadow: none;
+  padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
   width: 100%;
 }
 
 .entry-review > header {
-  align-items: center;
+  align-items: start;
   display: flex;
-  gap: 12px;
   justify-content: space-between;
-  min-width: 0;
 }
 
-.entry-review > header > div {
+.entry-review > header div {
   display: grid;
   gap: 4px;
-  min-width: 0;
 }
 
-.entry-review > header span {
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 800;
+.entry-review > header span,
+.entry-review > header small {
+  color: var(--muted);
+  font-size: 9px;
 }
 
 .entry-review h2 {
@@ -782,150 +590,59 @@ onMounted(() => { void load() })
   margin: 0;
 }
 
-.entry-review > header small {
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.4;
-}
-
 .entry-review__summary {
-  border-block: 1px solid var(--line);
   display: grid;
-  margin: 0;
+  gap: 10px;
+  margin: 17px 0;
 }
 
 .entry-review__summary > div {
   align-items: center;
-  border-bottom: 1px solid var(--line);
   display: flex;
-  gap: 12px;
+  font-size: 10px;
   justify-content: space-between;
-  min-height: 44px;
-}
-
-.entry-review__summary > div:last-child {
-  border-bottom: 0;
-}
-
-.entry-review__summary dt,
-.entry-review__summary dd {
-  font-size: 11px;
-  margin: 0;
 }
 
 .entry-review__summary dt {
   color: var(--muted);
-  flex: 0 0 auto;
 }
 
 .entry-review__summary dd {
-  font-weight: 750;
-  min-width: 0;
-  overflow-wrap: anywhere;
+  margin: 0;
   text-align: right;
 }
 
 .entry-review__error {
-  background: var(--negative-soft);
-  border-left: 3px solid var(--negative);
   color: var(--negative);
   font-size: 11px;
-  line-height: 1.45;
-  margin: 0;
-  padding: 8px 10px;
 }
 
 .entry-review__actions {
   display: grid;
-  gap: 9px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.entry-review__actions .button {
-  min-height: 48px;
-  padding-inline: 10px;
-}
-
-.spin {
-  animation: spin .8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-@media (max-width: 390px) {
-  .new-coin-detail-content {
-    padding-left: 14px;
-    padding-right: 14px;
-  }
-
-  .project-section {
-    margin-left: -14px;
-    margin-right: -14px;
-    padding-inline: 14px;
-  }
+  gap: 10px;
+  grid-template-columns: 1fr 1fr;
 }
 
 @media (max-width: 340px) {
-  .project-hero {
-    grid-template-columns: 48px minmax(0, 1fr);
+  .new-coin-detail-hero {
+    gap: 10px;
+    grid-template-columns: 50px minmax(0, 1fr);
   }
 
-  .project-hero > svg {
-    display: none;
+  .new-coin-detail-hero h1 {
+    font-size: 21px;
   }
 
-  .project-metrics {
-    grid-template-columns: 1fr;
+  .new-coin-facts > div {
+    gap: 10px;
   }
 
-  .project-metrics article {
-    grid-template-columns: minmax(0, 1fr) auto;
-    min-height: 56px;
+  .new-coin-process ol {
+    gap: 6px;
   }
 
-  .project-metrics article + article {
-    border-left: 0;
-    border-top: 1px solid var(--line);
-  }
-
-  .project-metrics small {
-    grid-column: 1 / -1;
-  }
-
-  .detail-list > div,
-  .entry-summary > div {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 5px;
-    justify-content: center;
-    padding: 8px 0;
-  }
-
-  .detail-list dd,
-  .entry-summary dd {
-    text-align: left;
-  }
-
-  .quick-values {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .entry-review__summary > div {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 4px;
-    justify-content: center;
-    padding-block: 8px;
-  }
-
-  .entry-review__summary dd {
-    text-align: left;
-  }
-
-  .entry-review__actions {
-    grid-template-columns: 1fr;
+  .new-coin-process li strong {
+    font-size: 10px;
   }
 }
 </style>

@@ -14,6 +14,11 @@ export const ROOT_ROUTE_ORDER = [
 export type RootRouteKey = typeof ROOT_ROUTE_ORDER[number]
 export type RouteDirection = 'forward' | 'back' | 'still'
 export type RouteTransitionTier = 'root' | 'secondary'
+export interface RouteShellVisibility {
+  showBottomNav: boolean
+  showRootHeader: boolean
+  showSignalField: boolean
+}
 export interface GoBackOrOptions {
   preferFallback?: boolean
 }
@@ -89,6 +94,29 @@ export function isBottomNavigationSecondsEntry(state: unknown): boolean {
 export function hasUsableRouterBack(state: unknown): boolean {
   const back = (state as { back?: unknown } | null)?.back
   return normalizeInternalPath(back) !== null
+}
+
+export function resolveRouteShellVisibility(
+  routeName: unknown,
+  mode: unknown,
+  purpose: unknown,
+  configuredBottomNav: unknown,
+): RouteShellVisibility {
+  const name = String(routeName || '')
+  const isTradePicker = name === 'markets' && purpose === 'trade'
+  const isContract = name === 'trade' && mode === 'contract'
+  const isSeconds = name === 'seconds'
+  const showBottomNav = configuredBottomNav !== false
+    && !isTradePicker
+    && !isContract
+    && !isSeconds
+  const showRootHeader = showBottomNav && (name === 'home' || name === 'markets')
+
+  return {
+    showBottomNav,
+    showRootHeader,
+    showSignalField: showRootHeader,
+  }
 }
 
 export async function goBackOr(

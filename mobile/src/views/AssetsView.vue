@@ -3,22 +3,21 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
-  ArrowDownLeft,
+  ArrowDownToLine,
   ArrowLeftRight,
-  ArrowUpRight,
-  CandlestickChart,
+  ArrowRight,
+  ArrowUpFromLine,
   CheckCircle2,
   ChevronRight,
-  CreditCard,
   Eye,
   EyeOff,
-  History,
-  Landmark,
-  Layers3,
-  SlidersHorizontal,
-  WalletCards,
+  PieChart,
+  ReceiptText,
+  Zap,
   X,
 } from 'lucide-vue-next'
+import AssetMark from '@/components/AssetMark.vue'
+import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
 import { fetchMarginWallets } from '@/api/trading'
 import { fetchWalletAccounts, transferWalletFunds } from '@/api/wallet'
@@ -55,41 +54,30 @@ const assetRows = computed(() => {
   return [...rows.values()].sort((left, right) => left.symbol.localeCompare(right.symbol))
 })
 
-const visibleAssetRows = computed<Array<{
-  key: string
-  symbol: string
-  spot?: WalletAccount
-  margin?: WalletAccount
-  placeholder?: boolean
-}>>(() => assetRows.value.length
-  ? assetRows.value.slice(0, 3).map((row) => ({ ...row, key: row.symbol }))
-  : [1, 2, 3].map((slot) => ({ key: `placeholder-${slot}`, symbol: '--', placeholder: true })))
-const spotEstimate = computed(() => estimateWallets(accounts.value))
-const marginEstimate = computed(() => estimateWallets(marginAccounts.value))
-const totalEstimate = computed(() => spotEstimate.value + marginEstimate.value)
+const totalEstimate = computed(() => estimateWallets(accounts.value) + estimateWallets(marginAccounts.value))
 const accountDataAvailable = computed(() => session.isAuthenticated && accountsReady.value && !error.value)
+const hasHoldings = computed(() => accountDataAvailable.value && assetRows.value.some((row) => walletTotal(row.spot) + walletTotal(row.margin) > 0))
+const hasAllocation = computed(() => hasHoldings.value && totalEstimate.value > 0)
 const accountStateLabel = computed(() => {
   if (!session.isAuthenticated) return t('common.loginRequiredTitle')
   if (loading.value) return t('common.loading')
   if (error.value) return t('common.serviceUnavailable')
+  if (!hasHoldings.value) return t('assets.empty')
   return t('common.liveData')
 })
-const allocation = computed(() => {
-  const values = new Map<string, number>()
-  for (const row of assetRows.value) {
+const allocationRows = computed(() => {
+  const rows = assetRows.value.map((row) => {
     const amount = walletTotal(row.spot) + walletTotal(row.margin)
     const value = ['USDT', 'USDC', 'USD'].includes(row.symbol)
       ? amount
       : amount * (marketStore.tickerFor(`${row.symbol}/USDT`)?.lastPrice || 0)
-    values.set(row.symbol, value)
-  }
-  const total = [...values.values()].reduce((sum, value) => sum + value, 0)
-  if (total <= 0) return { btc: 0, eth: 0, usdt: 0, other: 0 }
-  const ratio = (symbol: string) => total > 0 ? Math.round(((values.get(symbol) || 0) / total) * 100) : 0
-  const btc = ratio('BTC')
-  const eth = ratio('ETH')
-  const usdt = ratio('USDT') + ratio('USDC') + ratio('USD')
-  return { btc, eth, usdt, other: Math.max(0, 100 - btc - eth - usdt) }
+    return { ...row, amount, value }
+  }).filter((row) => row.amount > 0 && row.value > 0)
+  const total = rows.reduce((sum, row) => sum + row.value, 0)
+  return rows
+    .map((row) => ({ ...row, percent: total > 0 ? Math.max(1, Math.round((row.value / total) * 100)) : 0 }))
+    .sort((left, right) => right.value - left.value)
+    .slice(0, 4)
 })
 
 const transferAccounts = computed(() => transferFrom.value === 'spot' ? accounts.value : marginAccounts.value)
@@ -131,6 +119,10 @@ function openDeposit(): void {
   void router.push({ name: 'deposit-asset' })
 }
 
+function openAssetsLogin(): void {
+  void router.push({ name: 'login', query: { redirect: '/assets' } })
+}
+
 function openTransfer(): void {
   if (!session.isAuthenticated) {
     void router.push({ name: 'login', query: { redirect: '/assets' } })
@@ -151,7 +143,7 @@ function handleTransferDialogKeydown(event: KeyboardEvent): void {
   trapTransferFocus(event, closeTransfer)
 }
 
-function openProtectedRoute(name: 'withdraw-asset' | 'wallet-ledger' | 'quick-recharge'): void {
+function openProtectedRoute(name: 'withdraw-asset' | 'wallet-ledger' | 'withdrawal-records' | 'quick-recharge'): void {
   if (!session.isAuthenticated) {
     void router.push({ name: 'login', query: { redirect: '/assets' } })
     return
@@ -209,132 +201,113 @@ watch(() => session.isAuthenticated, () => { void loadAccounts() }, { immediate:
 </script>
 
 <template>
-  <main class="view assets-view prototype-root-view" data-assets-workspace="live">
-    <div class="page-intro compact">
-      <span class="eyebrow">{{ t('rootPrototype.assetField') }}</span>
-      <h1>{{ t('rootPrototype.assetHeadlineLine1') }}<br />{{ t('rootPrototype.assetHeadlineLine2') }}</h1>
-    </div>
+  <main
+    class="page pencil-page pencil-root-page assets-pencil"
+    data-assets-workspace="live"
+    data-pencil-source="CUK3y i6YDBr"
+  >
+    <PageHeader :back="false" :pencil="true" :title="t('assets.title')">
+      <template #actions>
+        <button
+          class="icon-button"
+          type="button"
+          :aria-label="t('home.assetOverview')"
+          :aria-pressed="!balanceVisible"
+          @click="balanceVisible = !balanceVisible"
+        >
+          <Eye v-if="balanceVisible" :size="20" aria-hidden="true" />
+          <EyeOff v-else :size="20" aria-hidden="true" />
+        </button>
+      </template>
+    </PageHeader>
 
-    <section class="asset-hero" :aria-busy="loading">
-      <div class="asset-orbit" aria-hidden="true"><span /><i /><b /></div>
-      <div class="asset-hero-copy">
-        <div class="balance-label">
-          <span>{{ t('home.totalAssetValue') }}</span>
+    <div class="pencil-content assets-pencil__content">
+      <section
+        class="pencil-hero assets-summary"
+        :aria-busy="loading"
+        :data-account-state="accountDataAvailable ? 'ready' : loading ? 'loading' : error ? 'error' : 'guest'"
+      >
+        <span class="pencil-eyebrow">{{ t('assets.totalValue') }}</span>
+        <strong class="pencil-numeric assets-summary__value">
+          <span>$</span>
+          <b>{{ !balanceVisible
+            ? '••••••'
+            : accountDataAvailable
+              ? formatFiat(totalEstimate).replace(/^\$/, '')
+              : session.isAuthenticated && loading
+                ? t('common.loading')
+                : session.isAuthenticated && error
+                  ? t('common.serviceUnavailable')
+                  : '••••••' }}</b>
+        </strong>
+        <p>
+          {{ !session.isAuthenticated
+            ? t('assets.syncEstimateHint')
+            : accountDataAvailable && !hasHoldings
+              ? t('assets.empty')
+              : t('assets.estimateNote') }}
+        </p>
+        <button v-if="!session.isAuthenticated" class="pencil-primary" type="button" @click="openAssetsLogin">
+          {{ t('assets.loginViewAssets') }}
+          <ArrowRight :size="17" aria-hidden="true" />
+        </button>
+        <button v-else-if="error" class="pencil-secondary" type="button" :disabled="loading" @click="loadAccounts">
+          {{ t('common.retry') }}
+        </button>
+      </section>
+
+      <nav class="pencil-action-grid assets-actions" :aria-label="t('assets.operations')">
+        <button type="button" @click="openDeposit"><span><ArrowDownToLine :size="19" /></span>{{ t('assets.deposit') }}</button>
+        <button type="button" @click="openProtectedRoute('withdraw-asset')"><span><ArrowUpFromLine :size="19" /></span>{{ t('assets.withdraw') }}</button>
+        <button type="button" @click="openTransfer"><span><ArrowLeftRight :size="19" /></span>{{ t('assets.transfer') }}</button>
+        <button type="button" @click="openProtectedRoute('wallet-ledger')"><span><ReceiptText :size="20" /></span>{{ t('assets.quickLedger') }}</button>
+      </nav>
+
+      <section class="pencil-section assets-distribution" :aria-busy="loading">
+        <div class="pencil-section__heading">
+          <h2>{{ t('rootPrototype.assetAllocation') }}</h2>
+          <span v-if="hasAllocation" class="pencil-pill">{{ t('common.liveData') }}</span>
+        </div>
+        <div v-if="accountDataAvailable && hasAllocation" class="assets-allocation">
           <button
-            class="inline-icon"
+            v-for="row in allocationRows"
+            :key="row.symbol"
+            class="assets-allocation__row"
             type="button"
-            :aria-label="t('home.assetOverview')"
-            :aria-pressed="!balanceVisible"
-            @click="balanceVisible = !balanceVisible"
+            @click="openProtectedRoute('wallet-ledger')"
           >
-            <Eye v-if="balanceVisible" :size="16" aria-hidden="true" />
-            <EyeOff v-else :size="16" aria-hidden="true" />
+            <AssetMark :symbol="row.symbol" :size="32" />
+            <span><strong>{{ row.symbol }}</strong><i><b :style="{ width: `${row.percent}%` }" /></i></span>
+            <em class="pencil-numeric">{{ row.percent }}%</em>
           </button>
         </div>
-        <strong class="numeric">
-          {{ !balanceVisible
-            ? '$••••••'
-            : accountDataAvailable
-              ? formatFiat(totalEstimate)
-              : session.isAuthenticated
-                ? '$--'
-                : '$••••••' }}
-        </strong>
-        <span class="positive">{{ t('rootPrototype.todayReturn') }} --</span>
-      </div>
-      <div v-if="error" class="asset-hero-state" role="alert">
-        <span>{{ error }}</span>
-        <button type="button" :disabled="loading" @click="loadAccounts">{{ t('common.retry') }}</button>
-      </div>
-    </section>
+        <div v-else class="pencil-state assets-distribution__state" role="status">
+          <PieChart :size="27" aria-hidden="true" />
+          <span>{{ loading ? t('common.loading') : session.isAuthenticated ? accountStateLabel : t('assets.distributionLoginHint') }}</span>
+        </div>
+      </section>
 
-    <div class="asset-actions">
-      <button type="button" @click="openDeposit"><span><ArrowDownLeft :size="20" /></span>{{ t('assets.deposit') }}</button>
-      <button type="button" @click="openProtectedRoute('withdraw-asset')"><span><ArrowUpRight :size="20" /></span>{{ t('assets.withdraw') }}</button>
-      <button type="button" @click="openTransfer"><span><ArrowLeftRight :size="20" /></span>{{ t('assets.transfer') }}</button>
-      <button type="button" @click="openProtectedRoute('quick-recharge')"><span><CreditCard :size="20" /></span>{{ t('assets.quickBuy') }}</button>
+      <section class="pencil-section assets-tools">
+        <div class="pencil-section__heading"><h2>{{ t('assets.fundTools') }}</h2></div>
+        <div class="pencil-list">
+          <button class="pencil-row" type="button" @click="openProtectedRoute('wallet-ledger')">
+            <span class="pencil-row__icon"><ReceiptText :size="18" /></span>
+            <span class="pencil-row__copy"><strong>{{ t('assets.fundLedger') }}</strong></span>
+            <ChevronRight :size="17" />
+          </button>
+          <button class="pencil-row" type="button" @click="openProtectedRoute('withdrawal-records')">
+            <span class="pencil-row__icon"><ArrowUpFromLine :size="19" /></span>
+            <span class="pencil-row__copy"><strong>{{ t('withdrawRecords.title') }}</strong></span>
+            <ChevronRight :size="17" />
+          </button>
+          <button class="pencil-row" type="button" @click="openProtectedRoute('quick-recharge')">
+            <span class="pencil-row__icon"><Zap :size="18" /></span>
+            <span class="pencil-row__copy"><strong>{{ t('assets.quickRecharge') }}</strong></span>
+            <ChevronRight :size="17" />
+          </button>
+        </div>
+      </section>
     </div>
-
-    <section class="content-section allocation-section">
-      <div class="section-heading">
-        <div><span class="eyebrow">{{ t('rootPrototype.allocationLabel') }}</span><h2>{{ t('rootPrototype.assetAllocation') }}</h2></div>
-        <button class="icon-button small" type="button" :aria-label="t('rootPrototype.assetAllocation')" @click="openProtectedRoute('wallet-ledger')">
-          <SlidersHorizontal :size="15" />
-        </button>
-      </div>
-      <div class="allocation-track" :aria-label="t('rootPrototype.assetAllocation')">
-        <i class="allocation-btc" :style="{ width: `${allocation.btc}%` }" />
-        <i class="allocation-eth" :style="{ width: `${allocation.eth}%` }" />
-        <i class="allocation-usdt" :style="{ width: `${allocation.usdt}%` }" />
-        <i class="allocation-other" :style="{ width: `${allocation.other}%` }" />
-      </div>
-      <div class="allocation-legend">
-        <span><i class="btc-dot" /> BTC <b>{{ allocation.btc }}%</b></span>
-        <span><i class="eth-dot" /> ETH <b>{{ allocation.eth }}%</b></span>
-        <span><i class="usdt-dot" /> USDT <b>{{ allocation.usdt }}%</b></span>
-        <span><i class="other-dot" /> {{ t('rootPrototype.otherAssets') }} <b>{{ allocation.other }}%</b></span>
-      </div>
-    </section>
-
-    <section class="content-section">
-      <div class="section-heading"><div><span class="eyebrow">{{ t('rootPrototype.holdingsLabel') }}</span><h2>{{ t('rootPrototype.holdings') }}</h2></div></div>
-      <div class="account-list">
-        <button
-          v-for="row in visibleAssetRows"
-          :key="row.key"
-          type="button"
-          class="account-row"
-          :disabled="row.placeholder"
-          @click="openProtectedRoute('wallet-ledger')"
-        >
-          <span class="account-icon"><WalletCards :size="19" /></span>
-          <span>
-            <strong>{{ row.symbol }}</strong>
-            <small>
-              {{ t('common.available') }}
-              {{ accountDataAvailable && !row.placeholder ? formatAmount(row.spot?.available || 0) : '--' }}
-            </small>
-          </span>
-          <b class="numeric">
-            {{ !balanceVisible
-              ? '••••'
-              : accountDataAvailable && !row.placeholder
-                ? formatAmount(walletTotal(row.spot) + walletTotal(row.margin))
-                : '--' }}
-          </b>
-          <ChevronRight :size="16" />
-        </button>
-      </div>
-    </section>
-
-    <section class="content-section">
-      <div class="section-heading">
-        <div><span class="eyebrow">{{ t('rootPrototype.accountsLabel') }}</span><h2>{{ t('rootPrototype.accounts') }}</h2></div>
-        <button class="text-action" type="button" @click="openProtectedRoute('wallet-ledger')">
-          {{ t('assets.ledger') }} <History :size="15" />
-        </button>
-      </div>
-      <div class="account-list">
-        <button class="account-row" type="button" @click="openProtectedRoute('wallet-ledger')">
-          <span class="account-icon"><CandlestickChart :size="19" /></span>
-          <span><strong>{{ t('assets.fundingAccount') }}</strong><small :class="{ positive: accountDataAvailable }">{{ accountStateLabel }}</small></span>
-          <b class="numeric">{{ balanceVisible && accountDataAvailable ? formatFiat(spotEstimate) : '$••••' }}</b>
-          <ChevronRight :size="16" />
-        </button>
-        <button class="account-row" type="button" @click="openProtectedRoute('wallet-ledger')">
-          <span class="account-icon"><Layers3 :size="19" /></span>
-          <span><strong>{{ t('assets.marginAccount') }}</strong><small :class="{ positive: accountDataAvailable }">{{ accountStateLabel }}</small></span>
-          <b class="numeric">{{ balanceVisible && accountDataAvailable ? formatFiat(marginEstimate) : '$••••' }}</b>
-          <ChevronRight :size="16" />
-        </button>
-        <button class="account-row" type="button" @click="router.push({ name: 'earn' })">
-          <span class="account-icon"><Landmark :size="19" /></span>
-          <span><strong>{{ t('rootPrototype.earnAccount') }}</strong><small>{{ t('products.earn') }}</small></span>
-          <b>--</b>
-          <ChevronRight :size="16" />
-        </button>
-      </div>
-    </section>
 
     <div v-if="transferOpen" class="confirmation-layer">
       <button class="confirmation-overlay-dismiss" type="button" :aria-label="t('common.close')" :disabled="transferring" tabindex="-1" @click="closeTransfer" />
@@ -380,3 +353,139 @@ watch(() => session.isAuthenticated, () => { void loadAccounts() }, { immediate:
     </div>
   </main>
 </template>
+
+<style scoped>
+.assets-pencil__content {
+  display: grid;
+  gap: 10px;
+  grid-template-rows: 157px 80px 159px 207px;
+  padding-bottom: 0;
+  padding-top: 10px;
+}
+
+.assets-summary {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 157px;
+  justify-content: flex-start;
+  margin-inline: -20px;
+  min-height: 157px;
+  padding: 10px 20px 8px;
+}
+
+.assets-summary > .pencil-eyebrow {
+  line-height: 16px;
+}
+
+.assets-summary__value {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  letter-spacing: 0;
+  height: 39px;
+  line-height: 39px;
+  min-height: 39px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.assets-summary__value > span {
+  color: var(--accent);
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 26px;
+  transform: translateY(.5px);
+}
+
+.assets-summary__value > b {
+  color: var(--ink);
+  font-size: 30px;
+  font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.assets-summary p {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 14px;
+  margin: 0;
+  min-height: 14px;
+}
+
+.assets-summary .pencil-primary,
+.assets-summary .pencil-secondary {
+  align-self: stretch;
+  flex: 0 0 46px;
+  height: 46px;
+  margin: 0;
+  min-height: 46px;
+  width: 100%;
+}
+
+.assets-actions {
+  align-items: start;
+  box-sizing: border-box;
+  height: 80px;
+  min-height: 80px;
+  padding: 6px 0 0;
+}
+
+.assets-actions button {
+  min-height: 68px;
+}
+
+.assets-distribution {
+  box-sizing: border-box;
+  display: grid;
+  gap: 10px;
+  grid-template-rows: 23px 110px;
+  height: 159px;
+  min-height: 159px;
+  padding: 12px 0 4px;
+}
+
+.assets-allocation {
+  align-content: center;
+  display: grid;
+  gap: 1px;
+  height: 110px;
+  overflow: hidden;
+}
+
+.assets-allocation__row { align-items: center; background: transparent; display: grid; gap: 10px; grid-template-columns: 28px minmax(0, 1fr) 40px; height: 27px; min-height: 27px; padding: 0; text-align: left; width: 100%; }
+.assets-allocation__row :deep(.asset-mark) { height: 26px !important; width: 26px !important; }
+.assets-allocation__row > span { display: grid; gap: 6px; min-width: 0; }
+.assets-allocation__row strong { font-size: 12px; }
+.assets-allocation__row i { background: var(--surface-3); border-radius: 999px; display: block; height: 3px; overflow: hidden; }
+.assets-allocation__row i b { background: var(--accent); border-radius: inherit; display: block; height: 100%; }
+.assets-allocation__row em { color: var(--muted-strong); font-size: 11px; font-style: normal; text-align: right; }
+.assets-distribution__state { height: 110px; min-height: 110px; padding: 0; }
+.assets-distribution__state strong { color: var(--ink); font-size: 13px; }
+.assets-distribution__state span { font-size: 11px; }
+.assets-tools {
+  box-sizing: border-box;
+  display: grid;
+  gap: 6px;
+  grid-template-rows: 23px 156px;
+  height: 207px;
+  min-height: 207px;
+  padding: 10px 0 12px;
+}
+
+.assets-tools .pencil-list {
+  grid-template-rows: repeat(3, 52px);
+}
+
+.assets-tools .pencil-row {
+  height: 52px;
+  min-height: 52px;
+}
+
+@media (max-width: 340px) {
+  .assets-summary__value > b { font-size: 28px; }
+}
+</style>

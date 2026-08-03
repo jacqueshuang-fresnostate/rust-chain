@@ -9,6 +9,8 @@ const secondsSource = source('../src/views/SecondsView.vue')
 const marketDetailSource = source('../src/views/MarketDetailView.vue')
 const ordersSource = source('../src/views/OrdersView.vue')
 const chartSource = source('../src/components/MobileMarketChart.vue')
+const klineChartSource = source('../src/components/KLineChartMarketChart.vue')
+const tradingViewChartSource = source('../src/components/TradingViewMarketChart.vue')
 const bookSource = source('../src/components/OrderBookPanel.vue')
 
 test('v16 现货与合约保留独立路由、实时报价、盘口和真实下单链路', () => {
@@ -17,7 +19,7 @@ test('v16 现货与合约保留独立路由、实时报价、盘口和真实下�
   assert.match(tradeSource, /data-order-surface="live"/)
   assert.match(tradeSource, /t\('marketDetail\.high24h'\)/)
   assert.match(tradeSource, /t\('marketDetail\.low24h'\)/)
-  assert.match(tradeSource, /<MobileMarketChart :points="points" :loading="chartLoading" \/>/)
+  assert.match(tradeSource, /<MobileMarketChart :points="points" :loading="chartLoading" :interval="interval" :symbol="pairSymbol" \/>/)
   assert.match(tradeSource, /<OrderBookPanel/)
   assert.match(tradeSource, /fetchWalletAccounts\(\)/)
   assert.match(tradeSource, /fetchMarginWallets\(\)/)
@@ -60,12 +62,19 @@ test('余额百分比严格使用真实可用额并区分现货买卖与合约�
   }), 0)
 })
 
-test('秒合约显示真实参考价、预计返还、确认与订单记录', () => {
+test('秒合约显示真实参考价、预计收益、确认与后端返回订单记录', () => {
   assert.match(secondsSource, /const productsRequest = fetchSecondsProducts\(\)/)
   assert.match(secondsSource, /session\.isAuthenticated\s*\?\s*await Promise\.all\(\[productsRequest, fetchSecondsOrders\(\), fetchWalletAccounts\(\)\]\)\s*:\s*\[await productsRequest, \[\], \[\]\]/)
   assert.match(secondsSource, /function reviewOrder\(\): void \{\s*if \(!session\.isAuthenticated\)/)
   assert.match(secondsSource, /marketStore\.tickerFor\(selected\.value\?\.symbol \|\| ''\)/)
-  assert.match(secondsSource, /amountNumber\.value \* \(1 \+ payoutRate\.value\)/)
+  assert.match(secondsSource, /amountNumber\.value \* payoutRate\.value/)
+  assert.match(secondsSource, /const openedOrder = await openSecondsOrder\(\{/)
+  assert.match(secondsSource, /orders\.value = \[openedOrder, \.\.\.orders\.value\.filter/)
+  assert.match(secondsSource, /activeOrder\.entryPrice !== undefined \? formatPrice\(activeOrder\.entryPrice\) : '--'/)
+  assert.match(
+    secondsSource,
+    /const activeEstimatedProfit = computed\(\(\) => \{\s*const (\w+) = activeOrder\.value\s*return \1 \? \1\.stakeAmount \* \1\.payoutRate : 0\s*\}\)/,
+  )
   assert.match(secondsSource, /:data-seconds-market="selected \? 'live' : loading \? 'loading' : 'empty'"/)
   assert.match(secondsSource, /data-session-feedback="created"/)
   assert.match(secondsSource, /t\('marketDetail\.latestPrice'\)/)
@@ -83,7 +92,8 @@ test('行情详情与订单中心保持真实数据、二级操作面和危险�
   assert.match(marketDetailSource, /openTrade\('contract'\)/)
 
   assert.match(ordersSource, /data-orders-workspace="live"/)
-  assert.match(ordersSource, /class="order-tabs"/)
+  assert.match(ordersSource, /class="pencil-segmented orders-market-tabs"/)
+  assert.match(ordersSource, /class="pencil-segmented orders-state-tabs"/)
   assert.match(ordersSource, /role="dialog"/)
   assert.match(ordersSource, /aria-modal="true"/)
   assert.match(ordersSource, /document\.body\.style\.overflow = 'hidden'/)
@@ -95,8 +105,12 @@ test('行情详情与订单中心保持真实数据、二级操作面和危险�
 })
 
 test('图表与盘口使用稳定实时数据画布并兼容秒和毫秒时间戳', () => {
-  assert.match(chartSource, /data-kline-provider="tradingview"/)
-  assert.match(chartSource, /if \(width <= 0 \|\| height <= 0\) return/)
+  assert.match(chartSource, /v-if="engine === 'klinecharts'"/)
+  assert.match(chartSource, /<TradingViewMarketChart[\s\S]*v-else/)
+  assert.match(klineChartSource, /data-kline-provider="klinecharts"/)
+  assert.match(tradingViewChartSource, /data-kline-provider="tradingview"/)
+  assert.match(klineChartSource, /if \(width <= 0 \|\| height <= 0\) return/)
+  assert.match(tradingViewChartSource, /if \(width <= 0 \|\| height <= 0\) return/)
   assert.match(bookSource, /visibleAsks = computed/)
   assert.match(bookSource, /visibleBids = computed/)
   assert.match(bookSource, /t\('marketDetail\.price'\)/)

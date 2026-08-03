@@ -53,7 +53,9 @@ system. Apply it only to:
 
 - `RootHeader` theme and message actions;
 - `PageHeader` back and direct slotted action buttons;
-- login and registration header actions;
+- legacy login and registration header actions only when the selected screen
+  explicitly contains them; the current full-page Pencil auth screens use the
+  brand identity row without extra close or language controls;
 - market-detail back and share actions.
 
 The control face must provide a cool-neutral metal bezel, convex light-to-dark
@@ -128,11 +130,14 @@ prototype:
 - Keep spot, contract, and seconds trading as separate operational surfaces.
   Seconds trading must use its typed protected route and must not be folded into
   either root trading column.
-- A shaped root navigation may raise one protected destination above the
-  navigation body, but all root destinations must remain visible and the full
-  control must fit from 320px through 448px without horizontal page overflow.
-- The v16 root navigation is 84px plus the bottom safe area. Its seven item
-  rails use a 66px minimum height, and the raised Seconds control is 48px.
+- The selected shaped root navigation exposes five entries and raises the
+  Trade destination above the dock body. The independent spot, contract, and
+  seconds routes remain reachable outside the visual dock consolidation, and
+  the full control must fit from 320px through 448px without horizontal page
+  overflow.
+- The selected root navigation is 84px plus the bottom safe area. Its dock is
+  68px high, every item owns at least a 44px target, and the raised Trade
+  control is 56px.
 - Seconds trading remains a deterministic local prototype. It must expose pair,
   reference price, round, direction, duration, amount, payout, balance,
   confirmation, and session feedback while explicitly avoiding real orders or
@@ -140,10 +145,10 @@ prototype:
 - Root and secondary headers must use an opaque sticky layer above route
   transitions and scrolling content. Content stacking contexts must remain
   below the header layer.
-- A route host must not create a stacking context that traps sticky headers
-  below the shaped root navigation. During transitions, the entering route is
-  above navigation and the leaving route is demoted to the content layer so an
-  old header cannot cover the new route.
+- A route host must not create a stacking context that traps sticky headers.
+  During transitions, both an entering route and any stale `*-enter-active`
+  class must remain below the shaped root navigation; the leaving route is
+  demoted to the content layer so old content cannot intercept navigation.
 - Light-theme border tokens must use the shared cool-neutral family. Do not
   reintroduce the retired `#0b1811` / `rgba(11, 24, 17, ...)` border family.
 - Product hubs must expose an operational hierarchy rather than a generic action
@@ -154,8 +159,9 @@ prototype:
   model is implemented, and distinguish unread rows structurally as well as by
   color.
 - Root navigation keyboard focus belongs to the icon target, not the full grid
-  cell. Keep the layer order explicit: content below the shaped navigation,
-  navigation below route transitions, and transitions below sticky headers.
+  cell. Keep the layer order explicit: content below route transitions, route
+  transitions below the shaped navigation, navigation below sticky headers,
+  and overlays/launch intro above all shell controls.
 - Loan product comparison remains two columns at normal phone widths and
   collapses to one column at 340px and below. Both layouts must keep 44px touch
   targets and avoid horizontal page overflow.

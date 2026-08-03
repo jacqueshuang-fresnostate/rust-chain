@@ -1,23 +1,22 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, AtSign, Check, ChevronDown, Eye, EyeOff, Globe2, KeyRound, Languages, MailCheck } from 'lucide-vue-next'
+import { Check, ChevronDown, Eye, EyeOff, MailCheck } from 'lucide-vue-next'
 import { apiErrorMessage } from '@/api/client'
 import { fetchCountries, fetchRegisterConfig, registerWithEmail, sendRegistrationCode, type CountryOption } from '@/api/auth'
 import {
   createLoginRedirectTarget,
-  goBackOr,
   replaceAuthStep,
   sanitizeInternalRedirect,
 } from '@/core/navigation'
 import { useSessionStore } from '@/stores/session'
+import logo from '@/assets/logo.png'
 
 const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
 const { locale, t } = useI18n()
-const step = ref<1 | 2>(1)
 const countries = ref<CountryOption[]>([])
 const email = ref('')
 const countryCode = ref('')
@@ -43,7 +42,6 @@ const loginTarget = computed<RouteLocationRaw>(() => createLoginRedirectTarget(s
 const sendLabel = computed(() => remainingSeconds.value ? `${remainingSeconds.value}s` : sent.value ? t('auth.resend') : t('auth.sendCode'))
 const passwordLengthValid = computed(() => password.value.length >= 8)
 const passwordsMatch = computed(() => Boolean(confirmation.value) && password.value === confirmation.value)
-const registrationDescription = computed(() => t(emailCodeRequired.value ? 'auth.registrationDetailsDescription' : 'auth.registrationDetailsDescriptionNoCode'))
 const regionNames = computed(() => {
   void locale.value
   try {
@@ -72,39 +70,8 @@ function countryLabel(country: CountryOption): string {
   return regionNames.value?.of(country.code) || country.name || country.code
 }
 
-function openLanguage(): void {
-  const back = sanitizeInternalRedirect(router.resolve({
-    name: 'register',
-    query: { redirect: safeRedirect.value },
-  }).fullPath)
-  void router.push({ name: 'language', query: { back } })
-}
-
-function handleBack(): void {
-  if (step.value === 2) {
-    step.value = 1
-    error.value = ''
-    return
-  }
-  void goBackOr(router, loginTarget.value, { preferFallback: true })
-}
-
 function returnToLogin(): void {
   void replaceAuthStep(router, loginTarget.value)
-}
-
-function continueRegistration(): void {
-  if (!countryCode.value) {
-    error.value = t('auth.countryRequired')
-    return
-  }
-  if (!acceptedTerms.value) {
-    error.value = t('auth.termsRequired')
-    return
-  }
-  error.value = ''
-  step.value = 2
-  void nextTick(() => emailInput.value?.focus())
 }
 
 function startCountdown() {
@@ -137,6 +104,10 @@ async function sendCode() {
 
 async function submit() {
   error.value = ''
+  if (!acceptedTerms.value) {
+    error.value = t('auth.termsRequired')
+    return
+  }
   if (!email.value.trim() || !email.value.includes('@') || !countryCode.value || (emailCodeRequired.value && !code.value.trim()) || !password.value) {
     error.value = t('auth.completeRegistration')
     return
@@ -185,94 +156,338 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
 </script>
 
 <template>
-  <main class="register-page">
-    <header class="auth-topbar">
-      <button class="icon-button" type="button" :aria-label="t('common.back')" @click="handleBack"><ArrowLeft :size="24" /></button>
-      <div class="auth-topbar__copy">
-        <span>{{ t('auth.registerNow') }}</span>
-        <strong>{{ t(step === 1 ? 'auth.residenceTitle' : 'auth.registrationDetailsTitle') }}</strong>
-        <small>{{ t('auth.stepProgress', { current: step, total: 2 }) }}</small>
-      </div>
-      <button class="icon-button" type="button" :aria-label="t('language.title')" @click="openLanguage"><Languages :size="21" /></button>
-    </header>
+  <main class="auth-pencil-page register-pencil" data-pencil-source="MCuqb RGYGj">
+    <form class="auth-pencil-canvas" :aria-busy="submitting" @submit.prevent="submit">
+      <header class="auth-brand-row">
+        <img :src="logo" alt="Hippo" />
+      </header>
 
-    <form class="register-form" :aria-busy="submitting" @submit.prevent="submit">
-      <div class="register-form__intro">
-        <span>{{ t('auth.stepProgress', { current: step, total: 2 }) }}</span>
-        <h1>{{ t(step === 1 ? 'auth.residenceTitle' : 'auth.registrationDetailsTitle') }}</h1>
-        <p>{{ step === 1 ? t('auth.residenceDescription') : registrationDescription }}</p>
+      <div class="auth-pencil-title">
+        <h1>{{ t('auth.pencilRegisterTitle') }}</h1>
+        <p>{{ t('auth.pencilRegisterDescription') }}</p>
       </div>
 
-      <template v-if="step === 1">
-        <label class="auth-label"><span>{{ t('auth.country') }}</span><div class="field-shell field-shell--select"><Globe2 :size="19" /><select v-model="countryCode" autocomplete="country"><option value="" disabled>{{ t('auth.selectCountry') }}</option><option v-for="country in countries" :key="country.code" :value="country.code">{{ countryLabel(country) }} ({{ country.code }})</option></select><ChevronDown :size="18" /></div></label>
-        <p v-if="countriesNotice" class="countries-notice" role="status">{{ countriesNotice }}</p>
-        <label class="terms-row"><input v-model="acceptedTerms" type="checkbox" /><span class="terms-check"><Check :size="15" /></span><span>{{ t('auth.termsAgreement') }}</span></label>
-      </template>
+      <div class="register-fields">
+        <label class="pencil-field__shell auth-pencil-field auth-pencil-field--action">
+          <span>{{ t('auth.country') }}</span>
+          <select v-model="countryCode" autocomplete="country">
+            <option value="" disabled>{{ t('auth.selectCountry') }}</option>
+            <option v-for="country in countries" :key="country.code" :value="country.code">{{ countryLabel(country) }}</option>
+          </select>
+          <i class="auth-pencil-field__action"><ChevronDown :size="16" /></i>
+        </label>
 
-      <template v-else>
-        <label class="auth-label"><span>{{ t('auth.email') }}</span><div class="field-shell"><AtSign :size="18" /><input ref="emailInput" v-model="email" autocomplete="email" inputmode="email" placeholder="name@example.com" /></div></label>
-        <label v-if="emailCodeRequired" class="auth-label"><span>{{ t('auth.emailCode') }}</span><div class="verification-field"><div class="field-shell"><MailCheck :size="18" /><input v-model="code" autocomplete="one-time-code" inputmode="numeric" maxlength="8" :placeholder="t('auth.codePlaceholder')" /></div><button class="button button--secondary" type="button" :disabled="sending || remainingSeconds > 0" @click="sendCode">{{ sending ? t('auth.sending') : sendLabel }}</button></div></label>
-        <label class="auth-label"><span>{{ t('auth.loginPassword') }}</span><div class="field-shell"><KeyRound :size="18" /><input v-model="password" :type="showPassword ? 'text' : 'password'" autocomplete="new-password" :placeholder="t('auth.passwordMinimum')" /><button class="password-toggle" type="button" :aria-label="t(showPassword ? 'auth.hidePassword' : 'auth.showPassword')" @click="showPassword = !showPassword"><EyeOff v-if="showPassword" :size="19" /><Eye v-else :size="19" /></button></div></label>
-        <label class="auth-label"><span>{{ t('auth.confirmPassword') }}</span><div class="field-shell"><KeyRound :size="18" /><input v-model="confirmation" :type="showPassword ? 'text' : 'password'" autocomplete="new-password" :placeholder="t('auth.reenterPassword')" /></div></label>
-        <div class="password-checks" aria-live="polite"><span :class="{ valid: passwordLengthValid }"><Check :size="14" />{{ t('auth.passwordLengthRule') }}</span><span :class="{ valid: passwordsMatch }"><Check :size="14" />{{ t('auth.passwordMatchRule') }}</span></div>
-        <label class="auth-label"><span>{{ t(inviteCodeRequired ? 'auth.inviteCodeRequired' : 'auth.inviteCodeOptional') }}</span><div class="field-shell"><input v-model="inviteCode" :placeholder="t('auth.inviteCodePlaceholder')" /></div></label>
-      </template>
+        <label class="pencil-field__shell auth-pencil-field" :class="{ 'auth-pencil-field--action': emailCodeRequired && email.includes('@') }">
+          <span>{{ t('auth.email') }}</span>
+          <input ref="emailInput" v-model="email" autocomplete="email" inputmode="email" placeholder="name@example.com" />
+          <button v-if="emailCodeRequired && email.includes('@')" type="button" :disabled="sending || remainingSeconds > 0" @click="sendCode">
+            {{ sending ? t('auth.sending') : sendLabel }}
+          </button>
+        </label>
 
-      <p v-if="error" class="error-message register-feedback" role="alert">{{ error }}</p>
-      <div class="register-form__actions">
-        <button v-if="step === 1" class="button button--primary button--full" type="button" @click="continueRegistration">{{ t('auth.next') }}</button>
-        <button v-else class="button button--primary button--full" type="submit" :disabled="submitting">{{ submitting ? t('auth.registering') : t('auth.createAccount') }}</button>
-        <p>{{ t('auth.alreadyHaveAccount') }} <button type="button" @click="returnToLogin">{{ t('auth.goLogin') }}</button></p>
+        <label v-if="emailCodeRequired && sent" class="pencil-field__shell auth-pencil-field auth-pencil-field--with-icon">
+          <span>{{ t('auth.emailCode') }}</span>
+          <input v-model="code" autocomplete="one-time-code" inputmode="numeric" maxlength="8" :placeholder="t('auth.codePlaceholder')" />
+          <i class="auth-pencil-field__action"><MailCheck :size="16" /></i>
+        </label>
+
+        <label class="pencil-field__shell auth-pencil-field auth-pencil-field--action">
+          <span>{{ t('auth.loginPassword') }}</span>
+          <input
+            v-model="password"
+            :aria-invalid="Boolean(password) && !passwordLengthValid"
+            :type="showPassword ? 'text' : 'password'"
+            autocomplete="new-password"
+            :placeholder="t('auth.passwordMinimum')"
+          />
+          <button type="button" :aria-label="t(showPassword ? 'auth.hidePassword' : 'auth.showPassword')" @click="showPassword = !showPassword">
+            <EyeOff v-if="showPassword" :size="18" /><Eye v-else :size="18" />
+          </button>
+        </label>
+
+        <label class="register-confirm-field">
+          <span class="pencil-field__shell auth-pencil-field auth-pencil-field--action">
+            <span>{{ t('auth.confirmPassword') }}</span>
+            <input
+              v-model="confirmation"
+              :aria-invalid="Boolean(confirmation) && !passwordsMatch"
+              :type="showPassword ? 'text' : 'password'"
+              autocomplete="new-password"
+              :placeholder="t('auth.reenterPassword')"
+            />
+            <button type="button" :aria-label="t(showPassword ? 'auth.hidePassword' : 'auth.showPassword')" @click="showPassword = !showPassword">
+              <EyeOff v-if="showPassword" :size="18" /><Eye v-else :size="18" />
+            </button>
+          </span>
+          <small :class="{ 'is-visible': Boolean(confirmation) && !passwordsMatch }" aria-live="polite">
+            {{ confirmation && !passwordsMatch ? t('auth.passwordMismatch') : '' }}
+          </small>
+        </label>
+
+        <label class="pencil-field__shell auth-pencil-field">
+          <span>{{ t(inviteCodeRequired ? 'auth.inviteCodeRequired' : 'auth.inviteCodeOptional') }}</span>
+          <input v-model="inviteCode" :placeholder="t('auth.inviteCodePlaceholder')" />
+        </label>
       </div>
+
+      <label class="terms-row">
+        <input v-model="acceptedTerms" type="checkbox" />
+        <span class="terms-check"><Check :size="12" /></span>
+        <span>{{ t('auth.termsAgreement') }}</span>
+      </label>
+
+      <div class="register-submit-wrap">
+        <button class="pencil-primary pencil-primary--full auth-pencil-submit" type="submit" :disabled="submitting">
+          {{ submitting ? t('auth.registering') : t('auth.createAccount') }}
+        </button>
+      </div>
+
+      <p class="auth-switch">{{ t('auth.alreadyHaveAccount') }} <button type="button" @click="returnToLogin">{{ t('auth.goLogin') }}</button></p>
+      <p v-if="countriesNotice" class="register-notice" role="status">{{ countriesNotice }}</p>
+      <p v-if="error" class="auth-pencil-feedback" role="alert">{{ error }}</p>
     </form>
   </main>
 </template>
 
 <style scoped>
-.register-page { background: var(--background); display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 100dvh; padding-top: env(safe-area-inset-top); }
-.auth-topbar { align-items: center; background: var(--surface); border-bottom: 1px solid var(--line); display: grid; gap: 8px; grid-template-columns: 44px minmax(0, 1fr) 44px; isolation: isolate; min-height: 72px; padding: 8px 12px; position: sticky; top: 0; z-index: var(--layer-sticky-header); }
-.auth-topbar .icon-button { border: 1px solid var(--line); }
-.auth-topbar__copy { display: grid; gap: 2px; min-width: 0; text-align: left; }
-.auth-topbar__copy span { color: var(--positive); font-family: var(--data-font); font-size: 9px; font-weight: 750; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
-.auth-topbar__copy strong { font-size: 17px; font-weight: 780; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.auth-topbar__copy small { color: var(--muted); font-size: 10px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.register-form { display: flex; flex-direction: column; gap: 20px; margin: 0 auto; max-width: 448px; padding: 24px 24px calc(28px + env(safe-area-inset-bottom)); width: 100%; }
-.register-form__intro { margin-bottom: 12px; }
-.register-form__intro > span { color: var(--accent); display: block; font-size: 12px; font-weight: 780; letter-spacing: 0; margin-bottom: 15px; }
-.register-form h1 { font-size: 36px; letter-spacing: 0; line-height: 1.08; margin: 0; overflow-wrap: anywhere; }
-.register-form__intro p { color: var(--muted-strong); font-size: 15px; line-height: 1.6; margin: 13px 0 0; }
-.auth-label { display: grid; gap: 9px; }
-.auth-label > span { font-size: 14px; font-weight: 720; }
-.field-shell { align-items: center; background: var(--field-surface); border: 1px solid var(--line); border-radius: var(--radius); color: var(--muted-strong); display: flex; gap: 11px; min-height: 56px; padding: 0 14px; transition: background-color var(--motion-fast) var(--motion-ease), border-color var(--motion-fast) var(--motion-ease), box-shadow var(--motion-fast) var(--motion-ease); }
-.field-shell:focus-within { background: var(--surface-elevated); border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-ring); }
-.field-shell input,.field-shell select { background: transparent; border: 0; color: var(--ink); font-size: 15px; min-height: 44px; min-width: 0; outline: 0; width: 100%; }
-.field-shell select { appearance: none; }
-.field-shell--select > svg:last-child { flex: 0 0 auto; pointer-events: none; }
-.password-toggle { align-items: center; background: transparent; border-radius: var(--radius); color: var(--muted-strong); display: inline-flex; flex: 0 0 44px; height: 44px; justify-content: center; margin-right: -8px; padding: 0; }
-.verification-field { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) 112px; }
-.verification-field .button { font-size: 12px; min-height: 56px; padding: 0 8px; }
-.terms-row { align-items: flex-start; cursor: pointer; display: grid; gap: 11px; grid-template-columns: 22px minmax(0, 1fr); margin-top: 6px; position: relative; }
-.terms-row input { height: 44px; inset: -11px auto auto -11px; margin: 0; opacity: 0; position: absolute; width: 44px; }
-.terms-check { align-items: center; background: var(--field-surface); border: 1px solid var(--line-strong); border-radius: 4px; color: transparent; display: inline-flex; height: 22px; justify-content: center; transition: background-color var(--motion-fast) var(--motion-ease), border-color var(--motion-fast) var(--motion-ease); width: 22px; }
+.auth-pencil-page {
+  background: var(--surface);
+  min-height: 100dvh;
+  padding-top: env(safe-area-inset-top);
+}
+
+.auth-pencil-canvas {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0 auto;
+  max-width: 448px;
+  min-height: calc(100dvh - env(safe-area-inset-top));
+  padding: 12px 20px calc(24px + env(safe-area-inset-bottom));
+  width: 100%;
+}
+
+.auth-brand-row {
+  box-sizing: border-box;
+  height: 62px;
+  min-height: 62px;
+  padding-top: 28px;
+}
+
+.auth-brand-row img {
+  display: block;
+  height: 34px;
+  object-fit: contain;
+  object-position: left center;
+  width: 136px;
+}
+
+.auth-pencil-title {
+  box-sizing: border-box;
+  height: 88px;
+  min-height: 88px;
+  padding: 20px 0 8px;
+}
+
+.auth-pencil-title h1 {
+  font-size: 24px;
+  font-weight: 750;
+  letter-spacing: 0;
+  line-height: 35px;
+  margin: 0;
+}
+
+.auth-pencil-title p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 17px;
+  margin: 8px 0 0;
+  max-width: 340px;
+}
+
+.register-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.auth-pencil-field {
+  align-content: center;
+  box-sizing: border-box;
+  display: grid;
+  gap: 1px 8px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 11px 22px;
+  height: 48px;
+  min-height: 48px;
+  padding: 5px 14px;
+}
+
+.auth-pencil-field--action,
+.auth-pencil-field--with-icon {
+  grid-template-columns: minmax(0, 1fr) 44px;
+}
+
+.auth-pencil-field > span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 500;
+  grid-column: 1;
+  grid-row: 1;
+  line-height: 11px;
+}
+
+.auth-pencil-field > input,
+.auth-pencil-field > select {
+  font-size: 13px;
+  grid-column: 1;
+  grid-row: 2;
+  line-height: 20px;
+  min-height: 22px;
+}
+
+.auth-pencil-field > input {
+  font-family: var(--font-geist-mono), var(--data-font);
+}
+
+.auth-pencil-field > button,
+.auth-pencil-field__action {
+  align-items: center;
+  align-self: center;
+  display: inline-flex;
+  grid-column: 2;
+  grid-row: 1 / 3;
+  height: 44px;
+  justify-content: center;
+  margin: -5px -12px -5px 0;
+  min-height: 44px;
+  width: 44px;
+}
+
+.auth-pencil-field__action {
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.register-confirm-field {
+  display: grid;
+  grid-template-rows: 48px 20px;
+  height: 68px;
+  min-height: 68px;
+}
+
+.register-confirm-field > small {
+  color: transparent;
+  font-size: 10px;
+  line-height: 16px;
+  padding-top: 2px;
+}
+
+.register-confirm-field > small.is-visible {
+  color: var(--negative);
+}
+
+.terms-row {
+  align-items: center;
+  cursor: pointer;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 16px minmax(0, 1fr);
+  height: 16px;
+  margin-top: 0;
+  min-height: 16px;
+  position: relative;
+}
+
+.terms-row input {
+  height: 44px;
+  left: -14px;
+  margin: 0;
+  opacity: 0;
+  position: absolute;
+  top: -14px;
+  width: 44px;
+}
+
+.terms-check {
+  align-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  box-sizing: border-box;
+  color: transparent;
+  display: inline-flex;
+  height: 16px;
+  justify-content: center;
+  width: 16px;
+}
+
 .terms-row input:checked + .terms-check { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .terms-row input:focus-visible + .terms-check { box-shadow: 0 0 0 3px var(--focus-ring); outline: 2px solid var(--focus); outline-offset: 2px; }
-.terms-row > span:last-child { color: var(--muted-strong); font-size: 13px; line-height: 1.65; }
-.countries-notice { background: var(--soft); border-left: 3px solid var(--accent); color: var(--muted-strong); font-size: 11px; line-height: 1.5; margin: -12px 0 0; padding: 9px 10px; }
-.password-checks { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: -8px; }
-.password-checks span { align-items: center; color: var(--muted); display: inline-flex; font-size: 11px; gap: 4px; }
-.password-checks span.valid { color: var(--positive); }
-.register-feedback { background: var(--negative-soft); border: 1px solid currentColor; border-radius: var(--radius); margin: 0; padding: 11px 13px; }
-.register-form__actions { margin-top: auto; padding-top: 28px; }
-.register-form__actions > .button { min-height: 52px; }
-.register-form__actions p { color: var(--muted-strong); font-size: 14px; margin: 18px 0 0; text-align: center; }
-.register-form__actions p button { background: transparent; color: var(--accent); font-weight: 750; min-height: 44px; padding: 0 6px; text-decoration: underline; text-underline-offset: 3px; }
-@media (max-width: 340px) {
-  .register-form { padding-left: 18px; padding-right: 18px; }
-  .verification-field { grid-template-columns: minmax(0, 1fr) 96px; }
+.terms-row > span:last-child {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 16px;
 }
-@media (max-height: 720px) {
-  .register-form { padding-top: 10px; }
-  .register-form__intro { margin-bottom: 2px; }
-  .register-form__actions { padding-top: 16px; }
+
+.register-submit-wrap {
+  box-sizing: border-box;
+  height: 56px;
+  min-height: 56px;
+  padding-top: 8px;
+}
+
+.auth-pencil-submit {
+  height: 48px;
+  min-height: 48px;
+  width: 100%;
+}
+
+.auth-switch {
+  align-items: flex-end;
+  color: var(--muted);
+  display: flex;
+  font-size: 13px;
+  height: 33px;
+  justify-content: center;
+  margin: 0;
+  min-height: 33px;
+}
+
+.auth-switch button {
+  background: transparent;
+  color: var(--positive);
+  font-weight: 600;
+  line-height: 19px;
+  min-height: 19px;
+  padding: 0 5px;
+  position: relative;
+}
+
+.auth-switch button::before {
+  content: '';
+  inset: -10px;
+  position: absolute;
+}
+
+.register-notice,
+.auth-pencil-feedback {
+  border-left: 3px solid currentColor;
+  font-size: 10px;
+  line-height: 1.4;
+  margin: 0;
+  padding: 5px 8px;
+}
+
+.register-notice {
+  color: var(--muted);
+}
+
+.auth-pencil-feedback {
+  background: var(--negative-soft);
+  color: var(--negative);
+}
+
+@media (max-width: 340px) {
+  .auth-pencil-canvas { padding-inline: 16px; }
 }
 </style>

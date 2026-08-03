@@ -31,8 +31,8 @@ function assertOrdered(source: string, classNames: string[]): void {
   }
 }
 
-test('共享二级壳复用原型 PageShell DOM 与 76/20px 几何合同', () => {
-  assert.match(sources.pageHeader, /class="secondary-header page-header"/)
+test('共享 PageHeader 同时支持旧二级壳与 Pencil 60px 选中稿', () => {
+  assert.match(sources.pageHeader, /pencil \? 'pencil-page-header' : 'secondary-header'/)
   assert.match(sources.pageHeader, /class="icon-button page-header__back"/)
   assert.match(sources.pageHeader, /class="secondary-scene page-header__eyebrow"/)
   assert.match(sources.pageHeader, /<strong class="page-header__title">\{\{ title \}\}<\/strong>/)
@@ -54,58 +54,66 @@ test('共享二级壳复用原型 PageShell DOM 与 76/20px 几何合同', () =>
     /Signal Theatre final secondary-surface contract[\s\S]*?\.secondary-content\s*\{[\s\S]*?padding:\s*20px 18px calc\(36px \+ env\(safe-area-inset-bottom\)\);/,
   )
   assert.match(parityCss, /\.secondary-view\.page\s*\{[\s\S]*?padding-block:\s*0;/)
+  assert.match(sources.pageHeader, /\.pencil-page-header\s*\{[\s\S]*?height:\s*60px;[\s\S]*?position:\s*sticky;[\s\S]*?z-index: var\(--layer-sticky-header\)/)
 
-  for (const source of [sources.seconds, sources.message, sources.loan, sources.security]) {
-    const template = templateOf(source)
-    assert.match(template, /class="secondary-view page /)
-    assert.match(template, /class="secondary-content page-content /)
-    assert.doesNotMatch(source, /\.(?:seconds|message-center|loan|security)-content\s*\{[\s\S]*?padding-top:/)
+  assert.match(sources.seconds, /class="page page--plain seconds-page"/)
+  assert.match(sources.seconds, /<PageHeader[\s\S]*?:pencil="true"/)
+  assert.match(sources.seconds, /class="page-content seconds-content"/)
+  assert.match(sources.message, /class="page page--plain pencil-page message-center-page"/)
+  assert.match(sources.message, /class="message-root-header"/)
+  assert.doesNotMatch(sources.message, /<PageHeader/)
+  assert.match(sources.security, /class="page page--plain pencil-page security-view"/)
+  assert.match(sources.security, /<PageHeader[\s\S]*?:pencil="true"/)
+  for (const source of [sources.seconds, sources.message, sources.security]) {
+    assert.doesNotMatch(source, /secondary-view|secondary-content|page--prototype-grid/)
   }
+  assert.match(sources.loan, /class="page page--plain pencil-page loan-pencil"/)
+  assert.match(sources.loan, /<PageHeader :back="true" :pencil="true"/)
 })
 
-test('四个优先页面精确使用公开原型的 PageShell 场景与上下文文案', () => {
-  assert.match(sources.seconds, /:eyebrow="t\('seconds\.scene'\)"/)
-  assert.match(sources.seconds, /:subtitle="t\('seconds\.context'\)"/)
-  assert.match(sources.message, /:eyebrow="t\('messageCenter\.scene'\)"/)
-  assert.match(sources.message, /:subtitle="t\('messageCenter\.context'\)"/)
-  assert.match(sources.loan, /:eyebrow="t\('loan\.scene'\)"/)
-  assert.match(sources.loan, /:subtitle="t\('loan\.context'\)"/)
-  assert.match(sources.security, /:eyebrow="t\('security\.scene'\)"/)
-  assert.match(sources.security, /:subtitle="t\('security\.context'\)"/)
+test('四个优先页面精确使用当前 Pencil Header 与独立消息根头部', () => {
+  assert.match(sources.seconds, /:pencil="true"[\s\S]*?:title="selected\?\.symbol \|\| t\('seconds\.title'\)"/)
+  assert.match(sources.message, /<header class="message-root-header">[\s\S]*?t\('messageCenter\.title'\)[\s\S]*?t\('messageCenter\.markAllReadShort'\)/)
+  assert.match(sources.loan, /:pencil="true" :title="t\('loan\.title'\)"/)
+  assert.match(sources.security, /:pencil="true"[\s\S]*?:title="t\('security\.title'\)"/)
 
   assert.deepEqual({
-    seconds: [zhCN.seconds.scene, zhCN.seconds.context],
-    message: [zhCN.messageCenter.scene, zhCN.messageCenter.context],
-    loan: [zhCN.loan.scene, zhCN.loan.context],
-    security: [zhCN.security.scene, zhCN.security.context],
+    seconds: zhCN.seconds.title,
+    message: zhCN.messageCenter.title,
+    loan: zhCN.loan.title,
+    security: zhCN.security.title,
+    markAllRead: zhCN.messageCenter.markAllReadShort,
   }, {
-    seconds: ['产品与服务', '短周期方向交易'],
-    message: ['消息与提醒', '账户、资金与交易动态'],
-    loan: ['借贷工作台', '额度、成本与订单周期'],
-    security: ['安全中心', '账户、资金与设备保护'],
+    seconds: '秒合约',
+    message: '消息中心',
+    loan: '借贷',
+    security: '安全中心',
+    markAllRead: '全部已读',
   })
 
   assert.deepEqual({
-    seconds: [en.seconds.scene, en.seconds.context],
-    message: [en.messageCenter.scene, en.messageCenter.context],
-    loan: [en.loan.scene, en.loan.context],
-    security: [en.security.scene, en.security.context],
+    seconds: en.seconds.title,
+    message: en.messageCenter.title,
+    loan: en.loan.title,
+    security: en.security.title,
+    markAllRead: en.messageCenter.markAllReadShort,
   }, {
-    seconds: ['Products & services', 'Short-cycle directional trading'],
-    message: ['Messages & alerts', 'Account, funds & trading activity'],
-    loan: ['Lending workbench', 'Limits, costs & order lifecycle'],
-    security: ['Security center', 'Account, funds & device protection'],
+    seconds: 'Seconds contract',
+    message: 'Message center',
+    loan: 'Loans',
+    security: 'Account & security',
+    markAllRead: 'Read all',
   })
 })
 
 test('贷款与安全中心标题精确对齐公开路由且保留根页面入口文案', () => {
   assert.match(sources.loan, /:title="t\('loan\.title'\)"/)
   assert.match(sources.security, /:title="t\('security\.title'\)"/)
-  assert.equal(zhCN.loan.title, '贷款')
+  assert.equal(zhCN.loan.title, '借贷')
   assert.equal(zhCN.security.title, '安全中心')
 
   assert.match(sources.home, /t\('products\.loan'\)/)
-  assert.match(sources.profile, /t\('rootPrototype\.accountAndSecurity'\)/)
+  assert.match(sources.profile, /t\('profile\.securityCenter'\)/)
   assert.equal(zhCN.products.loan, '借贷')
   assert.equal(zhCN.rootPrototype.accountAndSecurity, '账户与安全')
 })
@@ -113,9 +121,12 @@ test('贷款与安全中心标题精确对齐公开路由且保留根页面入�
 test('秒合约工作台保持原型顺序、真实接口与登录回跳', () => {
   const template = templateOf(sources.seconds)
   assertOrdered(template, [
+    'seconds-pair-field',
+    'seconds-content',
     'seconds-workspace',
     'seconds-market-board',
-    'seconds-pair-field',
+    'seconds-active-order',
+    'seconds-order-console',
     'seconds-direction-grid',
     'seconds-duration-grid',
     'seconds-amount-field',
@@ -126,49 +137,25 @@ test('秒合约工作台保持原型顺序、真实接口与登录回跳', () =>
     'seconds-session-records',
   ])
   assertOrdered(template, [
-    "t('seconds.workbenchTitle')",
-    'selected?.symbol',
-    "t('seconds.referencePrice')",
-    'selected.stakeAssetSymbol',
     "t('seconds.currentRound')",
-    "t('seconds.settlementWindow')",
-    "t('seconds.payoutCoefficient')",
-    "t('seconds.estimatedPayout')",
-    "t('seconds.availableBalance')",
-    "t('seconds.localResult')",
+    "t('orders.entryPrice')",
+    "t('marketDetail.latestPrice')",
+    "t('seconds.stakeAmount')",
+    "t('seconds.estimatedProfit')",
+    "t('seconds.direction')",
+    "t('seconds.term')",
+    "t('seconds.myOrders')",
   ])
+  assert.equal(zhCN.seconds.estimatedProfit, '预计收益')
+  assert.equal(en.seconds.estimatedProfit, 'Estimated profit')
+  assert.match(sources.seconds, /amountNumber\.value \* payoutRate\.value/)
   assert.match(
-    template,
-    /<dt>\{\{ t\('seconds\.currentRound'\) \}\}<\/dt>\s*<dd>--<\/dd>/,
+    sources.seconds,
+    /const activeEstimatedProfit = computed\(\(\) => \{\s*const (\w+) = activeOrder\.value\s*return \1 \? \1\.stakeAmount \* \1\.payoutRate : 0\s*\}\)/,
   )
-  assert.ok(template.includes('`${payoutCoefficient.toFixed(2)}x`'))
-  assert.match(sources.seconds, /const payoutCoefficient = computed\(\(\) => 1 \+ payoutRate\.value\)/)
-  assert.match(sources.seconds, /amountNumber\.value \* \(1 \+ payoutRate\.value\)/)
-  assert.match(template, /t\('seconds\.directionHelper'\)/)
-  assert.match(template, /t\('seconds\.durationHelper'\)/)
-  assert.deepEqual([
-    zhCN.seconds.workbenchTitle,
-    zhCN.seconds.referencePrice,
-    zhCN.seconds.currentRound,
-    zhCN.seconds.settlementWindow,
-    zhCN.seconds.payoutCoefficient,
-    zhCN.seconds.estimatedPayout,
-    zhCN.seconds.availableBalance,
-    zhCN.seconds.localResult,
-    zhCN.seconds.directionHelper,
-    zhCN.seconds.durationHelper,
-  ], [
-    '短周期交易工作台',
-    '实时参考价',
-    '当前轮次',
-    '结算窗口',
-    '派彩系数',
-    '预计派彩',
-    '可用余额',
-    '本地结果',
-    '按轮次结束时的参考价方向判定',
-    '选择本地判定周期',
-  ])
+  assert.match(sources.seconds, /activeOrder\.entryPrice !== undefined \? formatPrice\(activeOrder\.entryPrice\) : '--'/)
+  assert.match(sources.seconds, /const openedOrder = await openSecondsOrder\(\{/)
+  assert.match(sources.seconds, /orders\.value = \[openedOrder, \.\.\.orders\.value\.filter/)
   assert.match(sources.seconds, /fetchSecondsProducts\(\)/)
   assert.match(sources.seconds, /fetchSecondsOrders\(\)/)
   assert.match(sources.seconds, /fetchWalletAccounts\(\)/)
@@ -179,26 +166,23 @@ test('秒合约工作台保持原型顺序、真实接口与登录回跳', () =>
   assert.doesNotMatch(sources.seconds, /LoginRequiredState/)
 })
 
-test('消息中心使用公告真实源并保持原型时间线结构', () => {
+test('消息中心使用公告真实源并保持 FkZ6j 四分类连续列表结构', () => {
   assertOrdered(templateOf(sources.message), [
-    'message-center',
-    'inbox-summary',
+    'message-center-page',
+    'message-root-header',
     'message-filter-bar',
-    'message-tools',
-    'inbox-all-read',
-    'message-timeline',
-    'message-time-group',
     'message-list',
   ])
   assert.match(sources.message, /messages\.value = await fetchNews\(40\)/)
   assert.match(
     sources.message,
-    /\{ value: 'all'[\s\S]*\{ value: 'account'[\s\S]*\{ value: 'funds'[\s\S]*\{ value: 'trade'[\s\S]*\{ value: 'announcement'/,
+    /\{ value: 'all'[\s\S]*\{ value: 'account'[\s\S]*\{ value: 'funds'[\s\S]*\{ value: 'trade'/,
   )
-  assert.match(sources.message, /categoryHasNewsSource = computed\(\(\) => activeCategory\.value === 'all' \|\| activeCategory\.value === 'announcement'\)/)
-  assert.match(sources.message, /categoryMessages = computed\(\(\) => categoryHasNewsSource\.value \? messages\.value : \[\]\)/)
-  assert.match(sources.message, /const unreadOnly = ref\(false\)/)
-  assert.match(sources.message, /\.message-filter-bar\s*\{[\s\S]*?grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/)
+  assert.equal((sources.message.match(/\{ value: '(?:all|account|funds|trade)'/g) || []).length, 4)
+  assert.doesNotMatch(sources.message, /value: 'announcement'|const unreadOnly|categoryHasNewsSource/)
+  assert.match(sources.message, /const visibleMessages = computed\(\(\) => activeCategory\.value === 'all' \? messages\.value : \[\]\)/)
+  assert.match(sources.message, /\.message-filter-bar\s*\{[\s\S]*?display: flex;[\s\S]*?height: 38px;/)
+  assert.match(sources.message, /\.message-row,[\s\S]*?grid-template-columns: 40px minmax\(0, 1fr\) auto;[\s\S]*?min-height: 64px;/)
   assert.match(sources.message, /globalThis\.localStorage\?\.getItem\(READ_IDS_STORAGE_KEY\)/)
   assert.match(sources.message, /globalThis\.localStorage\?\.setItem\(READ_IDS_STORAGE_KEY, JSON\.stringify\(values\)\)/)
   assert.match(sources.message, /router\.push\(\{ name: 'news-detail', params: \{ id: String\(message\.id\) \} \}\)/)
@@ -207,16 +191,16 @@ test('消息中心使用公告真实源并保持原型时间线结构', () => {
 
 test('借贷页保持原型申请与生命周期结构且沿用真实订单接口', () => {
   assertOrdered(templateOf(sources.loan), [
-    'borrowing-overview',
-    'product-choice-grid',
-    'loan-disclosures',
-    'loan-requirement',
-    'loan-application',
-    'amount-presets',
-    'loan-estimate',
-    'loan-feedback',
-    'loan-submit',
-    'loan-order-columns',
+    'loan-hero-pencil',
+    'loan-access-pencil',
+    'loan-categories',
+    'loan-products-pencil',
+    'loan-application-pencil',
+    'loan-presets',
+    'loan-estimate-pencil',
+    'pencil-primary pencil-primary--full',
+    'loan-orders-pencil',
+    'loan-risk-note',
   ])
   assert.match(sources.loan, /fetchLoanProducts\(\)/)
   assert.match(sources.loan, /fetchLoanOrders\(\)/)
@@ -233,15 +217,15 @@ test('借贷页保持原型申请与生命周期结构且沿用真实订单接�
 
 test('安全页保持原型防护任务结构并只暴露后端支持的真实动作', () => {
   assertOrdered(templateOf(sources.security), [
-    'protection-overview',
-    'protection-score',
-    'security-checklist',
-    'security-feedback-slot',
-    'data-security-task="two-factor"',
+    'security-hero',
+    'security-feedback',
+    'security-methods',
     'data-security-task="password"',
     'data-security-task="funds"',
-    'device-section',
-    'device-list',
+    'data-security-task="two-factor"',
+    'security-method--policy',
+    'security-recovery',
+    'data-security-task="recovery"',
   ])
   assert.match(sources.security, /Promise\.all\(\[fetchUserProfile\(\), fetchTwoFactorStatus\(\)\]\)/)
   assert.match(sources.security, /const securityReady = ref\(false\)/)
@@ -251,8 +235,9 @@ test('安全页保持原型防护任务结构并只暴露后端支持的真实�
   assert.match(sources.security, /await changeFundPassword\(fundOldPassword\.value, fundNewPassword\.value\)/)
   assert.match(sources.security, /await setFundPassword\(fundLoginPassword\.value, fundNewPassword\.value\)/)
   assert.match(sources.security, /await updateLoginTwoFactor\(enabled\)/)
-  assert.match(sources.security, /data-device-state="unavailable"/)
-  assert.match(sources.security, /<button type="button" disabled>\{\{ t\('security\.notSet'\) \}\}<\/button>/)
+  assert.match(sources.security, /sendUserTwoFactorResetCode\(\)/)
+  assert.match(sources.security, /sendFundPasswordResetCode\(\)/)
+  assert.doesNotMatch(sources.security, /device-section|device-list|data-device-state/)
   assert.doesNotMatch(sources.security, /(?:remove|revoke|delete)(?:Device|Session)/)
   assert.doesNotMatch(sources.security, /LoginRequiredState/)
 })

@@ -45,55 +45,71 @@ onMounted(() => { void load() })
 </script>
 
 <template>
-  <main class="page page--plain">
+  <main
+    class="page page--plain pencil-page wallet-pencil-page withdraw-asset-pencil"
+    data-pencil-source="NGBmq h0WWYC"
+  >
     <PageHeader
       :back="true"
       :eyebrow="t('assets.withdraw')"
+      :fallback="{ name: 'assets' }"
+      :pencil="true"
       :subtitle="t('withdraw.searchPlaceholder')"
       :title="t('withdraw.selectAsset')"
     />
     <div class="page-content asset-page">
-      <LoginRequiredState v-if="!session.isAuthenticated" :description="t('withdraw.assetLoginDescription')" />
+      <LoginRequiredState
+        v-if="!session.isAuthenticated"
+        class="wallet-login-prompt"
+        :description="t('withdraw.assetLoginDescription')"
+      />
       <template v-else>
         <label class="asset-search">
-          <Search :size="20" aria-hidden="true" />
+          <Search :size="16" aria-hidden="true" />
           <input v-model="query" type="search" :aria-label="t('withdraw.searchPlaceholder')" :placeholder="t('withdraw.searchPlaceholder')" />
         </label>
-        <div class="section-heading asset-heading"><span>{{ t('withdraw.availableAssets') }}</span></div>
-        <p v-if="error" class="error-message" role="alert">{{ error }}</p>
+        <p v-if="error" class="error-message wallet-feedback" role="alert">{{ error }}</p>
         <div v-if="loading" class="loading-state" role="status" :aria-label="t('common.loading')">
           <LoaderCircle :size="22" class="spin" aria-hidden="true" />
           <span>{{ t('common.loading') }}</span>
         </div>
         <div v-else-if="filteredAssets.length" class="asset-picker">
           <button v-for="asset in filteredAssets" :key="asset.symbol" type="button" @click="selectAsset(asset)">
-            <AssetMark :symbol="asset.symbol" :src="asset.logoUrl" :size="44" />
-            <span><b>{{ asset.symbol }}</b><small>{{ asset.name || t('withdraw.onchain') }}</small></span>
-            <em>{{ t('withdraw.feeLabel', { amount: formatAmount(asset.withdrawFee) }) }}</em>
-            <ChevronRight :size="18" aria-hidden="true" />
+            <AssetMark :symbol="asset.symbol" :src="asset.logoUrl" :size="36" />
+            <span>
+              <b>{{ asset.symbol }}</b>
+              <small>{{ asset.name || t('withdraw.onchain') }} · {{ t('withdraw.feeLabel', { amount: formatAmount(asset.withdrawFee) }) }}</small>
+            </span>
+            <ChevronRight :size="16" aria-hidden="true" />
           </button>
         </div>
         <p v-else class="empty-state">{{ t('withdraw.noAssets') }}</p>
+        <p class="asset-note">{{ t('withdraw.notice') }}</p>
       </template>
     </div>
   </main>
 </template>
 
 <style scoped>
+.wallet-pencil-page {
+  background: var(--page);
+}
+
 .asset-page {
-  padding-bottom: calc(36px + env(safe-area-inset-bottom));
-  padding-top: 16px;
+  display: grid;
+  gap: 12px;
+  padding: 6px 20px calc(20px + env(safe-area-inset-bottom));
 }
 
 .asset-search {
   align-items: center;
   background: var(--field-surface);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: var(--wallet-pill-radius, 999px);
   color: var(--muted);
   display: flex;
-  gap: 10px;
-  min-height: 50px;
+  gap: 8px;
+  height: 44px;
   padding: 0 14px;
 }
 
@@ -108,18 +124,16 @@ onMounted(() => { void load() })
   background: transparent;
   border: 0;
   color: var(--ink);
-  font-size: 15px;
-  min-height: 48px;
+  font-size: 12px;
+  min-height: 42px;
   min-width: 0;
   outline: 0;
+  padding: 0;
   width: 100%;
 }
 
-.asset-heading {
-  border-bottom: 1px solid var(--line);
-  font-size: 14px;
-  margin: 26px 0 0;
-  padding-bottom: 10px;
+.asset-search input::placeholder {
+  color: var(--muted);
 }
 
 .loading-state {
@@ -139,14 +153,15 @@ onMounted(() => { void load() })
 .asset-picker button {
   align-items: center;
   background: transparent;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--hairline);
   border-radius: 0;
   color: var(--ink);
   display: grid;
   gap: 12px;
-  grid-template-columns: 44px minmax(0, 1fr) minmax(76px, auto) 18px;
-  min-height: 78px;
-  padding: 8px 2px;
+  grid-template-columns: 36px minmax(0, 1fr) 16px;
+  height: 60px;
+  min-height: 60px;
+  padding: 0;
   text-align: left;
   width: 100%;
 }
@@ -157,29 +172,77 @@ onMounted(() => { void load() })
 
 .asset-picker button > span {
   display: grid;
+  gap: 3px;
   min-width: 0;
 }
 
 .asset-picker b {
-  font-size: 17px;
+  font-size: 14px;
+  line-height: 20px;
 }
 
-.asset-picker small,
-.asset-picker em {
+.asset-picker small {
   color: var(--muted);
-  font-size: 12px;
-  font-style: normal;
-  margin-top: 4px;
-}
-
-.asset-picker em {
-  margin: 0;
-  text-align: right;
+  font-size: 11px;
+  line-height: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .asset-picker svg {
   color: var(--muted);
   justify-self: end;
+}
+
+.asset-note {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.wallet-feedback {
+  margin: 0;
+}
+
+.wallet-login-prompt {
+  background: transparent;
+  background-image: none;
+  border: 0;
+  border-top: 1px solid var(--hairline);
+  gap: 10px;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  min-height: 72px;
+  padding: 10px 0;
+}
+
+.wallet-login-prompt :deep(.login-required__icon) {
+  background: var(--accent-soft);
+  border: 0;
+  color: var(--positive);
+  height: 34px;
+  width: 34px;
+}
+
+.wallet-login-prompt :deep(.login-required__copy) {
+  gap: 2px;
+}
+
+.wallet-login-prompt :deep(.login-required__copy strong) {
+  font-size: 13px;
+}
+
+.wallet-login-prompt :deep(.login-required__copy p) {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.wallet-login-prompt :deep(.button) {
+  border-radius: var(--wallet-pill-radius, 999px);
+  min-height: 44px;
+  padding-inline: 14px;
 }
 
 .spin {
@@ -191,13 +254,28 @@ onMounted(() => { void load() })
 }
 
 @media (max-width: 340px) {
-  .asset-picker button {
-    gap: 9px;
-    grid-template-columns: 40px minmax(0, 1fr) minmax(62px, auto) 16px;
+  .asset-page {
+    padding-inline: 16px;
   }
 
-  .asset-picker em {
-    font-size: 11px;
+  .asset-picker button {
+    gap: 9px;
+  }
+
+  .wallet-login-prompt {
+    align-items: center;
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .wallet-login-prompt :deep(.button) {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
   }
 }
 </style>

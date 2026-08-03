@@ -8,6 +8,7 @@ const tradeSource = readFileSync(new URL('../src/views/TradeView.vue', import.me
 const secondsSource = readFileSync(new URL('../src/views/SecondsView.vue', import.meta.url), 'utf8')
 const loanSource = readFileSync(new URL('../src/views/LoanView.vue', import.meta.url), 'utf8')
 const prototypeCss = readFileSync(new URL('../src/styles/prototype-base.css', import.meta.url), 'utf8')
+const selectedCss = readFileSync(new URL('../src/styles/pencil-selected-pages.css', import.meta.url), 'utf8')
 
 test('交易页保留现货、合约和 mode 路由合同', () => {
   assert.match(tradeSource, /await placeSpotOrder\(\{\s*symbol: pairSymbol\.value,\s*side: side\.value,\s*type: submittedOrderType,\s*price: limitPrice,\s*quantity: orderAmount,/)
@@ -59,14 +60,16 @@ test('借贷页保留真实申请、撤销、还款并开放逾期还款', () =>
   assert.doesNotMatch(loanSource, /product\.interestRate \* product\.termDays \/ 365/)
   assert.match(loanSource, /function statusLabel\(status: string\)/)
   assert.match(loanSource, /const productsReady = ref\(false\)/)
-  assert.match(loanSource, /loading \? t\('loan\.loading'\) : error \|\| t\('loan\.noProducts'\)/)
+  assert.match(loanSource, /v-else-if="loading && !hasProducts"[\s\S]*?t\('loan\.loading'\)/)
+  assert.match(loanSource, /v-if="!visibleProducts\.length"[\s\S]*?t\('loan\.noProducts'\)/)
 })
 
 test('三页满足聚焦、确认层、触控和窄屏合同', () => {
   for (const source of [secondsSource, loanSource]) {
-    assert.match(source, /:focus-within/)
-    assert.match(source, /min-height: 44px/)
-    assert.match(source, /env\(safe-area-inset-/)
+    const contracts = source === loanSource ? `${source}\n${selectedCss}` : source
+    assert.match(contracts, /:focus-within/)
+    assert.match(contracts, /min-height:\s*(?:44|4[5-9]|[5-9]\d)px/)
+    assert.match(contracts, /env\(safe-area-inset-/)
     assert.doesNotMatch(source, /\p{Extended_Pictographic}/u)
   }
 
@@ -85,7 +88,7 @@ test('三页满足聚焦、确认层、触控和窄屏合同', () => {
   assert.match(prototypeCss, /@media \(max-width: 350px\)/)
   assert.match(secondsSource, /@media \(max-width: 340px\)/)
   assert.match(loanSource, /@media \(max-width: 340px\)/)
-  assert.match(loanSource, /\.loan-list \{\s*grid-template-columns: 1fr;/)
+  assert.match(loanSource, /@media \(max-width: 340px\)/)
 })
 
 test('三个视图使用的静态文案键在中英文资源中均存在', () => {

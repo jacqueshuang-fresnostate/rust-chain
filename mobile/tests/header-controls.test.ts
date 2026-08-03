@@ -62,7 +62,7 @@ function ruleFor(source: string, selector: string): string {
 
 function declarationValue(rule: string, property: string): string {
   const escapedProperty = property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const match = rule.match(new RegExp(`${escapedProperty}:\\s*([^;]+);`))
+  const match = rule.match(new RegExp(`(?:^|;)\\s*${escapedProperty}:\\s*([^;]+);`))
   assert.ok(match, `missing declaration: ${property}`)
   return match[1].replace(/\s+/g, ' ').trim()
 }
@@ -91,8 +91,10 @@ test('共享头部控件只覆盖五类头部轨道并保留 44px 圆形精密�
 })
 
 test('明暗主题分别定义冷中性面板与金属边框且不恢复退役绿色边框族', () => {
-  const darkTokens = ruleFor(sources.css, '.app-stage')
-  const lightTokens = ruleFor(sources.css, '.app-stage.theme-light')
+  const darkTokens = rulesFor(sources.css, '.app-stage').find((rule) => /--page:/.test(rule))
+  const lightTokens = rulesFor(sources.css, '.app-stage.theme-light').find((rule) => /--page:/.test(rule))
+  assert.ok(darkTokens)
+  assert.ok(lightTokens)
 
   for (const token of [
     '--page',
@@ -124,12 +126,12 @@ test('明暗主题分别定义冷中性面板与金属边框且不恢复退役�
     assert.notEqual(darkValue, lightValue, `${token} must differ between themes`)
   }
 
-  assert.equal(declarationValue(darkTokens, '--page'), '#080b0f')
-  assert.equal(declarationValue(darkTokens, '--surface'), '#0e1319')
-  assert.equal(declarationValue(darkTokens, '--text'), '#f3f6f8')
-  assert.equal(declarationValue(lightTokens, '--page'), '#f6f8fb')
+  assert.equal(declarationValue(darkTokens, '--page'), '#080a09')
+  assert.equal(declarationValue(darkTokens, '--surface'), '#0c100e')
+  assert.equal(declarationValue(darkTokens, '--text'), '#f4f7f5')
+  assert.equal(declarationValue(lightTokens, '--page'), '#f8faf8')
   assert.equal(declarationValue(lightTokens, '--surface'), '#ffffff')
-  assert.equal(declarationValue(lightTokens, '--text'), '#101820')
+  assert.equal(declarationValue(lightTokens, '--text'), '#0a100d')
   assert.match(sources.app, /class="app-stage"/)
   assert.match(sources.app, /:class="theme\.isDark \? 'theme-dark' : 'theme-light'"/)
   assert.doesNotMatch(
@@ -138,24 +140,20 @@ test('明暗主题分别定义冷中性面板与金属边框且不恢复退役�
   )
 })
 
-test('根 Header 使用不透底材质层、清晰品牌和稳定动作分组', () => {
-  const surfaceRules = rulesFor(
-    sources.css,
-    '.app-stage .mobile-canvas > .topbar.topbar,.app-stage .mobile-canvas .secondary-header.secondary-header',
-  )
-  const surfaceRule = surfaceRules[0]
-  const rootHeaderRule = ruleFor(
+test('根 Header 使用选中画板透明控件、136x34 横版品牌和稳定动作分组', () => {
+  const rootHeaderRules = rulesFor(
     sources.css,
     '.app-stage .mobile-canvas > .root-header.root-header',
   )
-  const darkLogoRule = ruleFor(
+  const rootHeaderRule = rootHeaderRules.find((rule) => /--root-header-top-inset:/.test(rule))
+  const selectedRootHeaderRule = rootHeaderRules.find((rule) => /background:\s*var\(--pencil-canvas\)/.test(rule))
+  const selectedLogoRule = rulesFor(
     sources.css,
-    '.app-stage.theme-dark .mobile-canvas .brand-logo',
-  )
-
-  assert.match(surfaceRule, /background:\s*linear-gradient\(180deg,\s*var\(--header-surface-top\),\s*var\(--header-surface-bottom\)\);/)
-  assert.match(surfaceRule, /border-bottom-color:\s*var\(--header-border\);/)
-  assert.match(surfaceRule, /box-shadow:\s*var\(--header-shadow\);/)
+    '.app-stage .mobile-canvas .root-header .brand-logo',
+  ).find((rule) => /object-fit:\s*contain;/.test(rule) && /width:\s*136px;/.test(rule))
+  assert.ok(rootHeaderRule)
+  assert.ok(selectedRootHeaderRule)
+  assert.ok(selectedLogoRule)
   assert.equal(
     declarationValue(rootHeaderRule, '--root-header-top-inset'),
     'max(8px, env(safe-area-inset-top, 0px))',
@@ -173,9 +171,15 @@ test('根 Header 使用不透底材质层、清晰品牌和稳定动作分组', 
     'var(--root-header-top-inset) 16px 0',
   )
   assert.equal(declarationValue(rootHeaderRule, 'box-sizing'), 'border-box')
-  assert.match(darkLogoRule, /brightness\(1\.48\)/)
-  assert.match(darkLogoRule, /drop-shadow\(/)
+  assert.equal(declarationValue(selectedRootHeaderRule, 'background'), 'var(--pencil-canvas)')
+  assert.equal(declarationValue(selectedRootHeaderRule, 'border'), '0')
+  assert.equal(declarationValue(selectedRootHeaderRule, 'box-shadow'), 'none')
+  assert.equal(declarationValue(selectedLogoRule, 'height'), '34px')
+  assert.equal(declarationValue(selectedLogoRule, 'width'), '136px')
+  assert.equal(declarationValue(selectedLogoRule, 'object-fit'), 'contain')
+  assert.equal(declarationValue(selectedLogoRule, 'filter'), 'none')
   assert.match(sources.rootHeader, /class="topbar root-header"/)
+  assert.match(sources.rootHeader, /hippo-logo-landscape\.png/)
   assert.match(sources.rootHeader, /class="brand-button root-header__brand"/)
   assert.match(sources.rootHeader, /class="topbar-actions action-cluster root-header__actions"/)
   assert.equal((sources.rootHeader.match(/\broot-header__control\b/g) || []).length, 2)
@@ -277,22 +281,12 @@ test('所有目标 Header 保留 Lucide 图标、导航与动作处理器', () =
   )
 
   for (const source of [sources.login, sources.register]) {
-    assert.match(source, /class="auth-topbar"/)
-    assert.match(source, /class="icon-button"/)
-    assert.match(source, /<Languages :size="21" \/>/)
-    assert.match(source, /@click="openLanguage"/)
-    assert.match(source, /router\.push\(\{ name: 'language', query: \{ back \} \}\)/)
+    assert.match(source, /class="auth-brand-row"/)
+    assert.match(source, /data-pencil-source=/)
+    assert.doesNotMatch(source, /<X :size="22" \/>|<Languages|@click="openLanguage"|@click="handleBack"/)
   }
-  assert.match(sources.login, /@click="handleBack"/)
-  assert.match(
-    sources.login,
-    /function handleBack\(\): void \{[\s\S]*?if \(step\.value === 2\)[\s\S]*?goBackOr\(router, safeRedirect\.value\)/,
-  )
-  assert.match(sources.register, /@click="handleBack"/)
-  assert.match(
-    sources.register,
-    /function handleBack\(\): void \{[\s\S]*?if \(step\.value === 2\)[\s\S]*?goBackOr\(router, loginTarget\.value, \{ preferFallback: true \}\)/,
-  )
+  assert.match(sources.login, /function openAuthRoute\(name: 'register' \| 'forgot-password'\)/)
+  assert.match(sources.register, /function returnToLogin\(\): void \{\s*void replaceAuthStep\(router, loginTarget\.value\)\s*\}/)
 
   assert.match(sources.marketDetail, /class="market-detail__header"/)
   assert.match(sources.marketDetail, /@click="goBack"/)

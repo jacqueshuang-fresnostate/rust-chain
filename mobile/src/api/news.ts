@@ -28,6 +28,8 @@ export async function fetchNews(limit = 3): Promise<NewsItem[]> {
   return (response.data.news || []).map((item) => ({
     id: item.id,
     title: item.title,
+    category: item.category || undefined,
+    bannerUrl: item.banner_url || undefined,
     publishedAt: item.published_at || undefined,
   }))
 }

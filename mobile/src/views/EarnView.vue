@@ -3,16 +3,15 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   CheckCircle2,
   CircleAlert,
+  History,
   Landmark,
   LoaderCircle,
   PackageOpen,
   RefreshCw,
-  ShieldCheck,
   X,
 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
-import AssetMark from '@/components/AssetMark.vue'
-import LoginRequiredState from '@/components/LoginRequiredState.vue'
+import { useRouter } from 'vue-router'
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
 import { fetchEarnProducts, fetchEarnSubscriptions, redeemEarnSubscription, subscribeEarnProduct, type EarnProduct, type EarnSubscription } from '@/api/earn'
@@ -22,6 +21,7 @@ import { useSessionStore } from '@/stores/session'
 import type { WalletAccount } from '@/core/types'
 
 const session = useSessionStore()
+const router = useRouter()
 const { t } = useI18n()
 const products = ref<EarnProduct[]>([])
 const subscriptions = ref<EarnSubscription[]>([])
@@ -33,7 +33,9 @@ const submitting = ref(false)
 const actionId = ref(0)
 const error = ref('')
 const success = ref('')
+const activeCategory = ref('all')
 const subscribeDialog = ref<HTMLElement | null>(null)
+const holdingsSection = ref<HTMLElement | null>(null)
 let returnFocus: HTMLElement | null = null
 let previousBodyOverflow = ''
 
@@ -44,24 +46,58 @@ const canSubscribe = computed(() => {
   const product = selected.value
   return Boolean(product && Number.isFinite(amountNumber.value) && amountNumber.value >= product.minSubscribe && (!product.maxSubscribe || amountNumber.value <= product.maxSubscribe) && amountNumber.value <= available.value)
 })
+const categories = computed(() => [
+  { value: 'all', label: t('earn.all') },
+  ...[...new Set(products.value.map((product) => product.category).filter(Boolean))]
+    .slice(0, 4)
+    .map((value) => ({ value, label: value })),
+])
+const visibleProducts = computed(() => activeCategory.value === 'all'
+  ? products.value
+  : products.value.filter((product) => product.category === activeCategory.value))
 
 async function load(): Promise<void> {
-  if (!session.isAuthenticated) return
+  if (!session.isAuthenticated) {
+    products.value = []
+    subscriptions.value = []
+    accounts.value = []
+    activeCategory.value = 'all'
+    error.value = ''
+    loading.value = false
+    return
+  }
   loading.value = true
   error.value = ''
   try {
-    const [nextProducts, nextSubscriptions, nextAccounts] = await Promise.all([fetchEarnProducts(), fetchEarnSubscriptions(), fetchWalletAccounts()])
+    const productPromise = fetchEarnProducts()
+    const [nextProducts, nextSubscriptions, nextAccounts] = await Promise.all([productPromise, fetchEarnSubscriptions(), fetchWalletAccounts()])
     products.value = nextProducts
     subscriptions.value = nextSubscriptions
     accounts.value = nextAccounts
   } catch (reason) {
-    error.value = apiErrorMessage(reason, t('earn.loadFailed'))
+    session.sync()
+    if (!session.isAuthenticated) {
+      products.value = []
+      subscriptions.value = []
+      accounts.value = []
+      error.value = ''
+    } else {
+      error.value = apiErrorMessage(reason, t('earn.loadFailed'))
+    }
   } finally {
     loading.value = false
   }
 }
 
+function openLogin(): void {
+  void router.push({ name: 'login', query: { redirect: '/products/earn' } })
+}
+
 function openSubscribe(product: EarnProduct): void {
+  if (!session.isAuthenticated) {
+    openLogin()
+    return
+  }
   selected.value = product
   amount.value = String(product.minSubscribe)
   success.value = ''
@@ -70,6 +106,10 @@ function openSubscribe(product: EarnProduct): void {
 
 function useMaximum(): void {
   amount.value = String(available.value)
+}
+
+function openHoldings(): void {
+  holdingsSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
 function closeSubscribe(): void {
@@ -156,545 +196,407 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="page page--plain earn-page">
-    <PageHeader
-      :back="true"
-      :eyebrow="t('products.earn')"
-      :subtitle="t('earn.bannerDescription')"
-      :title="t('earn.title')"
-    >
+  <main class="page page--plain pencil-page earn-pencil" data-pencil-source="zIzOm tCHZ9">
+    <PageHeader :back="true" :pencil="true" :title="t('earn.title')">
       <template #actions>
-        <button
-          class="icon-button"
-          type="button"
-          :aria-label="t('earn.refresh')"
-          :disabled="loading"
-          @click="load"
-        >
-          <RefreshCw :size="20" :class="{ spin: loading }" />
-        </button>
+        <button class="icon-button" type="button" :aria-label="t('earn.myHoldings')" @click="openHoldings"><History :size="18" /></button>
       </template>
     </PageHeader>
-    <div class="page-content earn-content">
-      <LoginRequiredState v-if="!session.isAuthenticated" :description="t('earn.loginDescription')" />
+
+    <div class="pencil-content earn-pencil__content">
+      <section class="earn-hero-pencil">
+        <h1>{{ t('earn.heroTitle') }}</h1>
+        <p>{{ t('earn.heroDescription') }}</p>
+      </section>
+
+      <nav class="pencil-segmented earn-categories" :aria-label="t('earn.productCategories')">
+        <button v-for="category in categories" :key="category.value" type="button" :aria-pressed="activeCategory === category.value" @click="activeCategory = category.value">
+          {{ category.label }}
+        </button>
+      </nav>
+
+      <div v-if="!session.isAuthenticated" ref="holdingsSection" class="earn-guest-state">
+        <div class="pencil-state earn-guest-state__summary">
+          <span class="earn-followup-state__icon"><Landmark :size="22" /></span>
+          <strong>{{ t('common.loginRequiredTitle') }}</strong>
+          <span>{{ t('earn.loginDescription') }}</span>
+        </div>
+        <button class="pencil-primary pencil-primary--full" type="button" @click="openLogin">{{ t('auth.login') }}</button>
+      </div>
+      <div v-else-if="error && !dialogOpen" class="pencil-message pencil-message--error" role="alert">
+        <CircleAlert :size="18" /><span>{{ error }}</span>
+        <button type="button" :aria-label="t('earn.refresh')" @click="load"><RefreshCw :size="17" /></button>
+      </div>
+      <div v-else-if="loading" class="pencil-state earn-followup-state" aria-live="polite">
+        <LoaderCircle :size="24" class="spin" />
+        <strong>{{ t('earn.moreProductsLoading') }}</strong>
+        <span>{{ t('earn.moreProductsLoadingDescription') }}</span>
+      </div>
+
       <template v-else>
-        <div v-if="error && !dialogOpen" class="earn-message earn-message--error" role="alert">
-          <CircleAlert :size="18" />
-          <span>{{ error }}</span>
-          <button type="button" :aria-label="t('earn.refresh')" @click="load">
-            <RefreshCw :size="17" />
+        <div v-if="success" class="pencil-message pencil-message--success" role="status"><CheckCircle2 :size="18" /><span>{{ success }}</span></div>
+        <div v-if="visibleProducts.length" class="earn-list-pencil">
+          <button v-for="product in visibleProducts" :key="product.id" class="earn-product-pencil" type="button" @click="openSubscribe(product)">
+            <header>
+              <strong>{{ product.name || t('earn.defaultName', { asset: product.assetSymbol }) }}</strong>
+              <b class="pencil-pill">{{ product.termDays ? t('earn.termDays', { days: product.termDays }) : t('earn.flexible') }}</b>
+            </header>
+            <dl>
+              <div><dt>{{ t('earn.estimatedApr') }}</dt><dd class="up pencil-numeric">{{ (product.aprRate * 100).toFixed(2) }}%</dd></div>
+              <div><dt>{{ t('earn.minimumLabel') }}</dt><dd class="pencil-numeric">{{ formatAmount(product.minSubscribe) }} {{ product.assetSymbol }}</dd></div>
+              <div><dt>{{ t('earn.riskLabel') }}</dt><dd>{{ t('earn.platformRules') }}</dd></div>
+            </dl>
+            <p>{{ product.category }} · {{ t('earn.bannerDescription') }}</p>
+            <span class="earn-product-pencil__action">{{ t('earn.viewAvailableProducts') }}</span>
           </button>
         </div>
-        <div v-if="success" class="earn-message earn-message--success" role="status">
-          <CheckCircle2 :size="18" />
-          <span>{{ success }}</span>
+        <div v-else ref="holdingsSection" class="pencil-state earn-followup-state">
+          <PackageOpen :size="23" />
+          <strong>{{ t('earn.emptyProducts') }}</strong>
+          <span>{{ t('earn.moreProductsLoadingDescription') }}</span>
         </div>
-        <div v-if="loading" class="earn-state" aria-live="polite">
-          <LoaderCircle :size="24" class="spin" />
-          <span>{{ t('earn.loading') }}</span>
-        </div>
-        <template v-else>
-          <section class="earn-overview">
-            <div class="earn-overview__icon"><Landmark :size="23" /></div>
-            <div>
-              <strong>{{ t('earn.bannerTitle') }}</strong>
-              <p>{{ t('earn.bannerDescription') }}</p>
-            </div>
-            <ShieldCheck :size="20" />
-          </section>
 
-          <div v-if="products.length" class="earn-list">
-            <button
-              v-for="product in products"
-              :key="product.id"
-              class="earn-product"
-              type="button"
-              @click="openSubscribe(product)"
-            >
-              <AssetMark :symbol="product.assetSymbol" :size="40" />
-              <div>
-                <strong>{{ product.name || t('earn.defaultName', { asset: product.assetSymbol }) }}</strong>
-                <small>{{ t('earn.term', { category: product.category, days: product.termDays }) }}</small>
-              </div>
-              <span>
-                <b class="up numeric">{{ (product.aprRate * 100).toFixed(2) }}%</b>
-                <small>{{ t('earn.estimatedApr') }}</small>
-              </span>
-            </button>
-          </div>
-          <div v-else class="earn-state earn-state--empty">
-            <PackageOpen :size="23" />
-            <span>{{ t('earn.emptyProducts') }}</span>
-          </div>
-
-          <section class="subscriptions">
-            <div class="section-heading"><span>{{ t('earn.myHoldings') }}</span><b>{{ subscriptions.length }}</b></div>
-            <article v-for="subscription in subscriptions" :key="subscription.id" class="subscription-row">
-              <div>
+        <section v-if="session.isAuthenticated && subscriptions.length" ref="holdingsSection" class="pencil-section earn-holdings-pencil">
+          <div class="pencil-section__heading"><h2>{{ t('earn.myHoldings') }}</h2><span class="pencil-pill">{{ subscriptions.length }}</span></div>
+          <div class="pencil-list">
+            <article v-for="subscription in subscriptions" :key="subscription.id" class="pencil-row earn-holding-row">
+              <span class="pencil-row__icon"><Landmark :size="18" /></span>
+              <span class="pencil-row__copy">
                 <strong>{{ t('earn.holdingSummary', { amount: formatAmount(subscription.amount), days: subscription.termDays }) }}</strong>
                 <small>{{ t('earn.subscribedAt', { time: formatDateTime(subscription.subscribedAt) }) }}</small>
-              </div>
-              <span>
-                <b>{{ subscription.status }}</b>
-                <button
-                  v-if="subscription.status === 'subscribed'"
-                  class="button button--secondary"
-                  type="button"
-                  :disabled="actionId === subscription.id"
-                  @click="redeem(subscription)"
-                >
+              </span>
+              <span class="pencil-row__value">
+                <small>{{ subscription.status }}</small>
+                <button v-if="subscription.status === 'subscribed'" type="button" :disabled="actionId === subscription.id" @click="redeem(subscription)">
                   {{ actionId === subscription.id ? t('earn.redeeming') : t('earn.redeem') }}
                 </button>
               </span>
             </article>
-            <div v-if="!subscriptions.length" class="earn-state earn-state--empty">
-              <PackageOpen :size="22" />
-              <span>{{ t('earn.emptyHoldings') }}</span>
-            </div>
-          </section>
-        </template>
+          </div>
+        </section>
+        <div v-else-if="visibleProducts.length" ref="holdingsSection" class="pencil-state earn-followup-state">
+          <span class="earn-followup-state__icon"><Landmark :size="22" /></span>
+          <strong>{{ t('earn.moreProductsLoading') }}</strong>
+          <span>{{ t('earn.moreProductsLoadingDescription') }}</span>
+        </div>
       </template>
     </div>
 
     <div v-if="selected" class="earn-mask" @click.self="closeSubscribe">
-      <form
-        ref="subscribeDialog"
-        class="earn-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="earn-subscribe-title"
-        @keydown="trapDialogFocus"
-        @submit.prevent="subscribe"
-      >
+      <form ref="subscribeDialog" class="earn-dialog" role="dialog" aria-modal="true" aria-labelledby="earn-subscribe-title" @keydown="trapDialogFocus" @submit.prevent="subscribe">
         <header>
-          <div>
-            <strong id="earn-subscribe-title">{{ t('earn.subscribeTitle', { name: selected.name }) }}</strong>
-            <small>{{ t('earn.subscribeSummary', { days: selected.termDays, apr: (selected.aprRate * 100).toFixed(2) }) }}</small>
-          </div>
-          <button
-            class="icon-button"
-            type="button"
-            :aria-label="t('common.close')"
-            :disabled="submitting"
-            data-dialog-cancel
-            @click="closeSubscribe"
-          >
-            <X :size="21" />
-          </button>
+          <div><strong id="earn-subscribe-title">{{ t('earn.subscribeTitle', { name: selected.name }) }}</strong><small>{{ t('earn.subscribeSummary', { days: selected.termDays, apr: (selected.aprRate * 100).toFixed(2) }) }}</small></div>
+          <button class="icon-button" type="button" :aria-label="t('common.close')" :disabled="submitting" data-dialog-cancel @click="closeSubscribe"><X :size="21" /></button>
         </header>
-        <label class="earn-field">
+        <label class="pencil-field">
           <span>{{ t('earn.amount') }}</span>
-          <div>
-            <input v-model="amount" class="numeric" inputmode="decimal" />
+          <div class="pencil-field__shell">
+            <input v-model="amount" class="pencil-numeric" inputmode="decimal" />
             <b>{{ selected.assetSymbol }}</b>
             <button type="button" @click="useMaximum">{{ t('earn.all') }}</button>
           </div>
         </label>
         <p class="earn-availability">{{ t('earn.availability', { available: formatAmount(available), asset: selected.assetSymbol, minimum: formatAmount(selected.minSubscribe) }) }}</p>
         <p v-if="error" class="dialog-feedback" role="alert">{{ error }}</p>
-        <button
-          class="button button--primary button--full earn-submit"
-          type="submit"
-          :disabled="submitting"
-          :aria-busy="submitting"
-        >
-          {{ submitting ? t('common.submitting') : t('earn.confirm') }}
-        </button>
+        <button class="pencil-primary pencil-primary--full" type="submit" :disabled="submitting" :aria-busy="submitting">{{ submitting ? t('common.submitting') : t('earn.confirm') }}</button>
       </form>
     </div>
   </main>
 </template>
 
 <style scoped>
-.earn-page {
-  background: var(--surface);
-  min-width: 0;
+.earn-pencil__content {
+  min-height: 474px;
+  padding-top: 0;
 }
 
-.earn-content {
+.earn-hero-pencil {
+  height: 72px;
+  padding-top: 8px;
+}
+
+.earn-hero-pencil h1 {
+  font-size: 22px;
+  font-weight: 750;
+  letter-spacing: 0;
+  line-height: 32px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.earn-hero-pencil p {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 16px;
+  margin: 16px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.earn-categories {
+  height: 26px;
+  margin-top: 17px;
+  min-height: 26px;
+  overflow: visible;
+}
+
+.earn-categories button {
+  border-bottom: 0;
+  margin-top: -9px;
+  min-height: 44px;
+  padding: 0 0 9px;
+}
+
+.earn-categories button::after {
+  background: transparent;
+  bottom: 9px;
+  content: '';
+  height: 2px;
+  left: 2px;
+  position: absolute;
+  width: 18px;
+}
+
+.earn-categories button[aria-pressed='true']::after {
+  background: var(--accent);
+}
+
+.earn-list-pencil {
   display: grid;
   gap: 16px;
-  min-width: 0;
-  padding-bottom: calc(28px + env(safe-area-inset-bottom));
-  padding-top: 14px;
+  padding-top: 16px;
 }
 
-.earn-message {
-  align-items: center;
-  border: 1px solid currentColor;
-  display: grid;
-  font-size: 12px;
-  gap: 9px;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  line-height: 1.45;
-  min-height: 52px;
-  padding: 4px 5px 4px 11px;
-}
-
-.earn-message--error {
-  background: var(--negative-soft);
-  color: var(--negative);
-}
-
-.earn-message--success {
-  background: var(--positive-soft);
-  color: var(--positive);
-  grid-template-columns: auto minmax(0, 1fr);
-}
-
-.earn-message button {
+.earn-product-pencil {
   background: transparent;
-  color: inherit;
+  border: 0;
+  border-radius: 0;
+  color: var(--ink);
   display: grid;
-  min-height: 44px;
-  min-width: 44px;
-  place-items: center;
+  height: 172px;
+  padding: 0;
+  text-align: left;
+  width: 100%;
 }
 
-.earn-state {
-  align-content: center;
-  color: var(--muted);
-  display: grid;
-  font-size: 12px;
-  gap: 9px;
-  justify-items: center;
-  min-height: 148px;
-  text-align: center;
+.earn-product-pencil:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
 }
 
-.earn-state--empty {
-  min-height: 112px;
-}
-
-.earn-overview {
+.earn-product-pencil > header {
   align-items: center;
-  background:
-    linear-gradient(132deg, color-mix(in srgb, var(--accent) 9%, transparent), transparent 64%),
-    var(--surface);
-  border-block: 1px solid var(--line);
-  border-top: 3px solid var(--accent);
   display: grid;
-  gap: 11px;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
-  min-height: 92px;
-  padding: 12px 4px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  height: 24px;
 }
 
-.earn-overview__icon {
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
-  color: var(--accent);
-  display: grid;
-  height: 44px;
-  place-items: center;
-  width: 44px;
+.earn-product-pencil > header strong {
+  font-size: 14px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.earn-overview > div:nth-child(2) {
+.earn-product-pencil dl {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  height: 36px;
+  margin: 14px 0 0;
+}
+
+.earn-product-pencil dl > div {
   display: grid;
   gap: 4px;
   min-width: 0;
 }
 
-.earn-overview strong {
-  font-size: 17px;
-}
-
-.earn-overview p {
+.earn-product-pencil dt {
   color: var(--muted);
+  font-size: 9px;
+  line-height: 12px;
+}
+
+.earn-product-pencil dd {
   font-size: 11px;
-  line-height: 1.45;
+  line-height: 16px;
   margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.earn-overview > svg {
+.earn-product-pencil dl > div:first-child dd {
   color: var(--positive);
+  font-size: 14px;
+  font-weight: 700;
 }
 
-.earn-list {
-  border-block: 1px solid var(--line);
-  display: grid;
+.earn-product-pencil > p {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 16px;
+  margin: 18px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.earn-product {
+.earn-product-pencil__action {
   align-items: center;
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
-  color: var(--ink);
-  display: grid;
-  gap: 12px;
-  grid-template-columns: 40px minmax(0, 1fr) auto;
-  min-height: 76px;
-  padding: 10px 4px;
-  text-align: left;
+  background: var(--accent);
+  border-radius: 999px;
+  color: var(--on-accent);
+  display: flex;
+  font-size: 14px;
+  font-weight: 700;
+  height: 48px;
+  justify-content: center;
+  margin-top: 16px;
   width: 100%;
 }
 
-.earn-product:last-child {
-  border-bottom: 0;
+.earn-followup-state {
+  gap: 6px;
+  height: 135px;
+  min-height: 135px;
 }
 
-.earn-product:focus-visible,
-.earn-product:hover {
-  background: var(--surface-elevated);
-  box-shadow: inset 3px 0 0 var(--accent);
-}
-
-.earn-product > div,
-.earn-product > span {
+.earn-guest-state {
   display: grid;
+  gap: 16px;
+  grid-template-rows: 108px 48px;
+  height: 172px;
+  margin-top: 16px;
+}
+
+.earn-guest-state__summary {
   gap: 5px;
-  min-width: 0;
+  height: 108px;
+  min-height: 108px;
 }
 
-.earn-product strong {
-  font-size: 14px;
-  overflow-wrap: anywhere;
+.earn-guest-state__summary strong {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
 }
 
-.earn-product small {
+.earn-guest-state__summary > span:not(.earn-followup-state__icon) {
   color: var(--muted);
   font-size: 10px;
+  line-height: 15px;
 }
 
-.earn-product > span {
-  text-align: right;
+.earn-list-pencil + .earn-followup-state,
+.earn-categories + .pencil-message + .earn-followup-state,
+.earn-categories + .earn-followup-state,
+.earn-holdings-pencil {
+  margin-top: 16px;
 }
 
-.earn-product > span b {
-  font-size: 17px;
-}
-
-.subscriptions {
-  border-top: 8px solid var(--soft);
-  margin: 8px -20px 0;
-  padding: 0 20px;
-}
-
-.subscriptions .section-heading {
-  border-bottom: 1px solid var(--line);
-  font-size: 16px;
-  margin: 0;
-  min-height: 56px;
-}
-
-.subscriptions .section-heading b {
-  color: var(--accent);
-  font-size: 12px;
-}
-
-.subscription-row {
+.earn-followup-state__icon {
   align-items: center;
-  border-bottom: 1px solid var(--line);
+  background: var(--accent-soft);
+  border-radius: 50%;
+  color: var(--positive);
   display: flex;
-  gap: 14px;
-  justify-content: space-between;
-  min-height: 72px;
-  padding: 8px 0;
+  height: 52px;
+  justify-content: center;
+  width: 52px;
 }
 
-.subscription-row > div,
-.subscription-row > span {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-}
-
-.subscription-row strong,
-.subscription-row b {
+.earn-followup-state strong {
+  color: var(--ink);
   font-size: 12px;
-  overflow-wrap: anywhere;
+  font-weight: 600;
 }
 
-.subscription-row small {
+.earn-followup-state > span:not(.earn-followup-state__icon) {
   color: var(--muted);
   font-size: 10px;
+  line-height: 15px;
 }
 
-.subscription-row > span {
-  flex: 0 0 auto;
-  justify-items: end;
+.earn-holdings-pencil {
+  scroll-margin-top: 60px;
 }
 
-.subscription-row .button {
-  border-radius: 0;
-  font-size: 11px;
+.earn-holding-row {
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+}
+
+.earn-holding-row .pencil-row__value button {
+  background: transparent;
+  color: var(--positive);
+  font-size: 10px;
+  font-weight: 700;
   min-height: 44px;
-  min-width: 88px;
-  padding: 0 10px;
+  padding: 0;
 }
 
 .earn-mask {
-  align-items: flex-end;
+  align-items: end;
   background: var(--overlay);
-  display: flex;
+  display: grid;
   inset: 0;
-  justify-content: center;
-  padding:
-    max(16px, env(safe-area-inset-top))
-    16px
-    max(16px, env(safe-area-inset-bottom));
   position: fixed;
   z-index: var(--layer-overlay);
 }
 
 .earn-dialog {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-top: 3px solid var(--accent);
-  box-shadow: var(--shadow-soft);
+  background: var(--surface-elevated);
+  border-radius: 20px 20px 0 0;
+  box-shadow: none;
   display: grid;
-  gap: 14px;
-  max-height: calc(100dvh - max(32px, env(safe-area-inset-top)) - max(32px, env(safe-area-inset-bottom)));
-  max-width: 520px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 17px;
+  gap: 16px;
+  padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
   width: 100%;
 }
 
 .earn-dialog > header {
-  align-items: center;
+  align-items: start;
   display: flex;
-  gap: 12px;
   justify-content: space-between;
-  min-width: 0;
 }
 
-.earn-dialog > header > div {
+.earn-dialog > header div {
   display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.earn-dialog > header strong {
-  font-size: 18px;
-  overflow-wrap: anywhere;
+  gap: 5px;
 }
 
 .earn-dialog > header small,
 .earn-availability {
   color: var(--muted);
-  font-size: 11px;
-  line-height: 1.45;
-  margin: 0;
-}
-
-.earn-field {
-  background: var(--field-surface);
-  border: 1px solid var(--line);
-  display: grid;
-  min-width: 0;
-  padding: 7px 11px 6px;
-}
-
-.earn-field:focus-within {
-  background: var(--surface-elevated);
-  border-color: var(--focus);
-  box-shadow: 0 0 0 3px var(--focus-ring);
-}
-
-.earn-field > span {
-  color: var(--muted);
   font-size: 10px;
 }
 
-.earn-field > div {
-  align-items: center;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  min-height: 44px;
-}
-
-.earn-field input {
-  background: transparent;
-  border: 0;
-  color: var(--ink);
-  font-size: 20px;
-  font-weight: 750;
-  min-height: 44px;
-  min-width: 0;
-  outline: 0;
-  width: 100%;
-}
-
-.earn-field b {
-  font-size: 12px;
-  margin-right: 8px;
-}
-
-.earn-field button {
-  background: transparent;
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 800;
-  min-height: 44px;
-  padding: 0 2px 0 8px;
+.earn-availability,
+.dialog-feedback {
+  margin: 0;
 }
 
 .dialog-feedback {
-  background: var(--negative-soft);
-  border-left: 3px solid var(--negative);
   color: var(--negative);
   font-size: 11px;
-  line-height: 1.45;
-  margin: 0;
-  padding: 8px 10px;
-}
-
-.earn-submit {
-  border-radius: 0;
-  min-height: 52px;
-}
-
-.spin {
-  animation: spin .8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-@media (max-width: 390px) {
-  .earn-content {
-    padding-left: 14px;
-    padding-right: 14px;
-  }
-
-  .subscriptions {
-    margin-left: -14px;
-    margin-right: -14px;
-    padding-inline: 14px;
-  }
 }
 
 @media (max-width: 340px) {
-  .earn-overview {
-    grid-template-columns: 40px minmax(0, 1fr);
+  .earn-hero-pencil h1 {
+    font-size: 20px;
   }
 
-  .earn-overview__icon {
-    height: 40px;
-    width: 40px;
+  .earn-product-pencil dl {
+    gap: 6px;
   }
 
-  .earn-overview > svg {
-    display: none;
-  }
-
-  .earn-product {
-    gap: 9px;
-    grid-template-columns: 36px minmax(0, 1fr) auto;
-  }
-
-  .subscription-row {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .subscription-row > span {
-    align-items: center;
-    display: flex;
-    justify-content: space-between;
+  .earn-product-pencil dd {
+    font-size: 10px;
   }
 }
 </style>
