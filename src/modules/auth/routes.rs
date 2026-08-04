@@ -416,7 +416,14 @@ async fn verify_cf_turnstile_token(token: Option<&str>, headers: &HeaderMap) -> 
         _ => return Ok(()),
     };
 
-    if has_cf_clearance_cookie(headers) {
+    let enforce_token = std::env::var("CF_TURNSTILE_ENFORCE_TOKEN")
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+        })
+        .unwrap_or(false);
+
+    if !enforce_token && has_cf_clearance_cookie(headers) {
         return Ok(());
     }
 

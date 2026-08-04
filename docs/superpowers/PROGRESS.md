@@ -15,6 +15,17 @@
   - `npm --prefix mobile run test -- tests/access-identity-settings-views.test.ts tests/pencil-selected-unmapped-pages.test.ts` 通过（274/274）。
 - 后续事项：请在前端构建时配置 `VITE_CF_TURNSTILE_SITE_KEY`，生产环境配置 `CF_TURNSTILE_SECRET`（或 `CF_TURNSTILE_SECRET_KEY`）并验证登录。未配置 `CF_TURNSTILE_SECRET` 时后端保持兼容跳过校验。
 
+## 2026-08-04 22:31 - 增加 Turnstile 强制校验开关，避免 cf_clearance 直接放行
+
+- 完成内容：补充服务端登录校验策略，新增 `CF_TURNSTILE_ENFORCE_TOKEN` 开关：
+  - 默认保持原有兼容：存在 `cf_clearance` 时继续通过；
+  - 设置 `CF_TURNSTILE_ENFORCE_TOKEN=true` 后，不论是否有 `cf_clearance` 均要求 `cf_turnstile_token`，用于“每次登录都强制弹出/校验验证”场景；
+  - 同步补充 1Panel 与示例环境变量示例，增加 `CF_TURNSTILE_SECRET` / `CF_TURNSTILE_SECRET_KEY` / `CF_TURNSTILE_SITEVERIFY_URL` / `CF_TURNSTILE_ENFORCE_TOKEN`。
+- 修改文件：`src/modules/auth/routes.rs`、`docker-compose.1panel.env.example`、`docker-compose.1panel.yml`、`docker-compose.1panel.example.yml`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：
+  - `cargo fmt --all` 通过。
+  - `cargo check --manifest-path Cargo.toml --lib` 通过。
+
 ## 2026-08-04 05:50 - 后端功能完成度巡检（接口与未完成项）
 
 - 完成内容：对后端 Rust API 进行一次静态+测试巡检，确认核心路由与手机端接口契合度、未完成占位、关键流程测试状态与近期异常。结果显示：后端未见 `TODO`/`todo!`/`unimplemented!`/`FIXME` 未实现占位；主要路由与 `mobile/src/api` 的 `requestUrl(...)` 调用全量可映射（按动态参数归一化后 0 处缺失）。`quick_recharge` 用户端路径在后端以 `/wallet/quick-recharge/*` 提供、管理员侧以 `/quick-recharge/*` 提供，设计上是分离的。
