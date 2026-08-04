@@ -853,3 +853,37 @@ Ported the Sites v16 signal Canvas and route veil into the Vue mobile shell, cor
 ### Next Steps
 
 - None - task complete
+
+
+## Session 25: 用户钱包异步初始化与 1Panel Turnstile 修复
+
+**Date**: 2026-08-05
+**Task**: 用户钱包异步初始化与 1Panel Turnstile 修复
+**Branch**: `main`
+
+### Summary
+
+通过 outbox/inbox 异步预建全部用户钱包账户，并修复 1Panel 集成镜像中 Turnstile 运行时策略、Cloudflare 管理路径挑战兼容和后台登录组件生命周期。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2d96a69` | (see git log) |
+| `342739d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
