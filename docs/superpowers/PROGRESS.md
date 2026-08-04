@@ -2,6 +2,22 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-08-05 10:20 - 通过 outbox-inbox MQ 链路异步预创建用户钱包账户
+
+- 完成内容：
+  - 扩展 `user_created_outbox_event` 工厂：新增 `aggregate_type=user`、`event_type=created`、`routing_key=user.{user_id}.created` 的统一事件构造。
+  - 注册流程接入 outbox：`register_user_with_email_code` 在用户入库事务内写入 `user.created` outbox 事件（原子落库）。
+  - 后台建户流程接入 outbox：`create_admin_user` 同步生成 `user_created` 事件入库，后台与前台用户创建一致。
+  - MQ 解耦消费：`EventInboxProductionHandler` 增加可选 MySQL 依赖，`ProductionEventDispatch::UserCreated` 分支在独立事务内执行 `create_wallet_accounts_for_user_in_tx`，异步完成所有资产钱包的预建。
+  - 事件链路校验增强：`EventInboxDomainEnvelope` 新增 `user.created` 映射，校验 `routing_key`、`aggregate_id` 与 `payload.user_id` 一致性；新增字符串转数值严校验工具。
+  - 消费端改造：`EventInboxConsumerService::from_state` 注入 MySQL 给生产消费者，补齐 `insert_event_in_tx` 事务入库与 wallet 创建 helper；`tests/events_inbox.rs` 补齐 `user_created` 的通过与异常断言。
+- 修改文件：`src/modules/events/service.rs`、`src/modules/events/infrastructure.rs`、`src/modules/auth/application.rs`、`src/modules/admin/application/users.rs`、`tests/events_inbox.rs`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：
+  - `cargo fmt --all` 通过。
+  - `cargo check --manifest-path Cargo.toml --lib` 通过。
+  - `cargo test --manifest-path Cargo.toml --test events_inbox -- --nocapture` 通过（35/35）。
+- 后续事项：无。
+
 ## 2026-08-04 22:07 - 全端登录接入 Cloudflare Turnstile（含后台、PC、手机端）
 
 - 完成内容：补齐前端登录页与后端登录接口的 Cloudflare Turnstile 兼容：用户端登录页、PC 登录页与后台 Web 登录页都动态加载并渲染 Turnstile widget，获取 `cf_turnstile_token`，在提交前校验必填性；登录请求统一透传 `cf_turnstile_token` 到后端；服务端在 `/auth/login`、`/admin/auth/login`、`/agent/auth/login` 中新增可选前置校验并支持 `CF_TURNSTILE_SECRET`、`CF_TURNSTILE_SITEVERIFY_URL`；新增缺失 token 与加载失败的错误提示与 fallback 行为。
@@ -6787,3 +6803,10 @@
 - 修改文件：`mobile/src/components/PageHeader.vue`、`mobile/src/styles/pencil-selected-pages.css`、`mobile/src/views/{AssetsView,ProfileView,OrdersView,LoginView,RegisterView,NewsView,NewsDetailView,SwapView,EarnView,LoanView,NewCoinsView,NewCoinDetailView}.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、相关 UI 合同测试、`.trellis/spec/mobile/index.md`、`.trellis/tasks/07-31-mobile-market-detail-reference-layout/research/pencil-selected-unmapped-pages.md`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：`npm --prefix mobile run type-check` 通过；`npm --prefix mobile test` 245/245 通过；`npm --prefix mobile run build:pwa` 与 `npm --prefix mobile run build:tauri` 通过；`git diff --check` 通过。Ego Browser 对全部目标路由执行 390px 明暗主题与 320×720 窄屏审计，横向溢出均为 0；逐项核对 390px 区块坐标与高度，借贷真实数据稳定后空态 y=319/h=143、风险行 y=478/h=36；最终运行截图与 15 组 Pencil 导出完成目视复核。
 - 后续事项：无；本地预览保持在 `http://127.0.0.1:4178/#/assets`。
+
+## 2026-08-05 10:30 - 解决闪兑确认阶段钱包账户缺失导致的校验报错
+
+- 完成内容：在闪兑结算时补齐钱包账户初始化逻辑，确认流程会在 `FOR UPDATE` 锁定前，先 `INSERT ... ON DUPLICATE KEY` 创建 `wallet_accounts(user_id, asset_id)`，确保从未出现过该资产的用户也能完成闪兑结算；同时移除了依赖“现有账本行必须预先存在”的直接失败链路。
+- 修改文件：`src/modules/convert/infrastructure.rs`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --all -- src/modules/convert/infrastructure.rs` 通过；`cargo test --test convert_routes convert_confirm_rolls_back_order_when_settlement_fails_and_allows_retry -- --nocapture` 执行通过（当前环境未设置 `DATABASE_URL`，该用例按既定分支返回跳过主流程分支）；`git diff --check` 通过。
+- 后续事项：如需提升稳定性，可再补一条“缺失钱包行会自动初始化且可逆恢复”的单元化数据库集成回归。

@@ -12,6 +12,7 @@ use crate::time::unix_millis;
 use crate::{
     config::Settings,
     error::{AppError, AppResult},
+    modules::events::infrastructure::create_wallet_accounts_for_user_in_tx,
     modules::{
         auth::{TokenScope, claims_from_bearer_token, decode_claims},
         market::{KlineUpsertKey, ValidatedMarketSymbol, adapters::MarketFeedEvent},
@@ -33,6 +34,7 @@ use lapin::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sqlx::{MySql, Pool};
 use std::{
     collections::{HashSet, hash_map::DefaultHasher},
     hash::Hasher,
@@ -696,6 +698,19 @@ impl NewOutboxEvent {
     }
 }
 
+pub(crate) fn user_created_outbox_event(user_id: u64, created_at: DateTime<Utc>) -> NewOutboxEvent {
+    let aggregate_id = user_id.to_string();
+    NewOutboxEvent {
+        aggregate_type: "user".to_owned(),
+        aggregate_id: aggregate_id.clone(),
+        event_type: "created".to_owned(),
+        routing_key: format!("user.{user_id}.created"),
+        idempotency_key: EventIdempotency::new("user", &aggregate_id, "created").into_key(),
+        payload: serde_json::json!({ "user_id": user_id }),
+        created_at,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutboxInsertResult {
     Inserted { id: u64 },
@@ -1079,8 +1094,22 @@ impl EventInboxHandler for NoopEventInboxHandler {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct EventInboxProductionHandler;
+#[derive(Debug, Clone)]
+pub struct EventInboxProductionHandler {
+    mysql: Option<Pool<MySql>>,
+}
+
+impl Default for EventInboxProductionHandler {
+    fn default() -> Self {
+        Self { mysql: None }
+    }
+}
+
+impl EventInboxProductionHandler {
+    pub fn new(mysql: Option<Pool<MySql>>) -> Self {
+        Self { mysql }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProductionEventDispatch {
@@ -1100,6 +1129,7 @@ pub enum ProductionEventDispatch {
     MarketDepthUpdated,
     MarketKlineUpdated,
     MarketTradeCreated,
+    UserCreated(u64),
 }
 
 #[derive(Debug, Deserialize)]
@@ -1115,7 +1145,9 @@ struct EventInboxDomainEnvelope {
 #[async_trait]
 impl EventInboxHandler for EventInboxProductionHandler {
     async fn handle(&self, message: &InboundEventMessage) -> AppResult<()> {
-        ProductionEventDispatch::from_inbound(message)?.dispatch()
+        ProductionEventDispatch::from_inbound(message)?
+            .dispatch(self.mysql.as_ref())
+            .await
     }
 }
 
@@ -1144,10 +1176,11 @@ impl ProductionEventDispatch {
             Self::MarketDepthUpdated => "market_depth.depth_updated",
             Self::MarketKlineUpdated => "market_kline.kline_updated",
             Self::MarketTradeCreated => "market_trade.trade_created",
+            Self::UserCreated(_) => "user.created",
         }
     }
 
-    fn dispatch(&self) -> AppResult<()> {
+    async fn dispatch(&self, mysql: Option<&Pool<MySql>>) -> AppResult<()> {
         match self {
             Self::WalletAccountBalanceChanged
             | Self::WalletLedgerEntryCreated
@@ -1165,6 +1198,17 @@ impl ProductionEventDispatch {
             | Self::MarketDepthUpdated
             | Self::MarketKlineUpdated
             | Self::MarketTradeCreated => Ok(()),
+            Self::UserCreated(user_id) => {
+                let pool = mysql.ok_or_else(|| {
+                    AppError::Internal(
+                        "mysql pool is not configured for user-created event handling".to_owned(),
+                    )
+                })?;
+                let mut tx = pool.begin().await?;
+                create_wallet_accounts_for_user_in_tx(&mut tx, *user_id).await?;
+                tx.commit().await?;
+                Ok(())
+            }
         }
     }
 }
@@ -1203,6 +1247,28 @@ impl EventInboxDomainEnvelope {
         }
 
         let dispatch = self.to_dispatch()?;
+        if let ProductionEventDispatch::UserCreated(user_id) = dispatch {
+            if let Some(payload_user_id) = self.payload.get("user_id") {
+                let payload_user_id = payload_user_id
+                    .as_u64()
+                    .or_else(|| {
+                        payload_user_id
+                            .as_str()
+                            .and_then(|value| value.parse::<u64>().ok())
+                    })
+                    .ok_or_else(|| {
+                        AppError::Validation(
+                            "event envelope payload user_id must be a valid u64".to_owned(),
+                        )
+                    })?;
+
+                if payload_user_id != user_id {
+                    return Err(AppError::Validation(
+                        "event envelope payload user_id mismatch with aggregate id".to_owned(),
+                    ));
+                }
+            }
+        }
         if self.routing_key != self.expected_routing_key(&dispatch) {
             return Err(AppError::Validation(
                 "event envelope routing key mismatch".to_owned(),
@@ -1248,6 +1314,10 @@ impl EventInboxDomainEnvelope {
             ("market_depth", "depth_updated") => Ok(ProductionEventDispatch::MarketDepthUpdated),
             ("market_kline", "kline_updated") => Ok(ProductionEventDispatch::MarketKlineUpdated),
             ("market_trade", "trade_created") => Ok(ProductionEventDispatch::MarketTradeCreated),
+            ("user", "created") => Ok(ProductionEventDispatch::UserCreated(parse_u64_strict(
+                "user_id",
+                &self.aggregate_id,
+            )?)),
             _ => Err(AppError::Validation(format!(
                 "unsupported event type {}:{}",
                 self.aggregate_type, self.event_type
@@ -1314,8 +1384,17 @@ impl EventInboxDomainEnvelope {
                     .unwrap_or(&self.aggregate_id);
                 format!("market.{symbol}.trade")
             }
+            ProductionEventDispatch::UserCreated(user_id) => {
+                format!("user.{user_id}.created")
+            }
         }
     }
+}
+
+fn parse_u64_strict(field: &str, value: &str) -> AppResult<u64> {
+    value
+        .parse::<u64>()
+        .map_err(|_| AppError::Validation(format!("event envelope {field} must be a valid u64")))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1542,8 +1621,8 @@ impl EventInboxConsumerService<MySqlEventInboxRepository, EventInboxProductionHa
 
         Ok(Self::new(
             consumer_name,
-            MySqlEventInboxRepository::new(pool),
-            EventInboxProductionHandler,
+            MySqlEventInboxRepository::new(pool.clone()),
+            EventInboxProductionHandler::new(Some(pool)),
             retry_policy,
         ))
     }

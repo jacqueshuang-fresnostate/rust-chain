@@ -1,4 +1,6 @@
 use super::*;
+use crate::modules::events::{infrastructure::insert_event_in_tx, user_created_outbox_event};
+use chrono::Utc;
 
 pub(crate) async fn list_admin_users(
     pool: Option<Pool<MySql>>,
@@ -63,6 +65,7 @@ pub(crate) async fn create_admin_user(
     )
     .await?;
     create_user_invite_code_in_tx(&mut tx, user_id).await?;
+    insert_event_in_tx(&mut tx, &user_created_outbox_event(user_id, Utc::now())).await?;
     let user = load_admin_user_in_tx(&mut tx, user_id).await?;
     insert_admin_audit_log_entry_in_tx(
         &mut tx,

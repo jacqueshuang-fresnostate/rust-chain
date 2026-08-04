@@ -1003,7 +1003,7 @@ fn event_inbox_supervision_reconnects_after_each_failed_cycle() {
 
 #[tokio::test]
 async fn production_inbox_handler_accepts_known_domain_event_envelope() {
-    let handler = EventInboxProductionHandler;
+    let handler = EventInboxProductionHandler::default();
     let message = InboundEventMessage::new(
         "message-1",
         "convert_order:42:confirmed",
@@ -1029,7 +1029,7 @@ async fn production_inbox_handler_accepts_known_domain_event_envelope() {
 
 #[tokio::test]
 async fn production_inbox_handler_accepts_market_feed_event_envelope() {
-    let handler = EventInboxProductionHandler;
+    let handler = EventInboxProductionHandler::default();
     let message = InboundEventMessage::new(
         "market_feed:bitget:BTCUSDT:ticker:1710000000000",
         "market_feed:bitget:BTCUSDT:ticker:1710000000000",
@@ -1054,8 +1054,70 @@ async fn production_inbox_handler_accepts_market_feed_event_envelope() {
 }
 
 #[tokio::test]
+async fn production_inbox_handler_accepts_user_created_domain_event_envelope() {
+    let message = InboundEventMessage::new(
+        "user.created:1001",
+        "user:1001:created",
+        json!({
+            "aggregate_type": "user",
+            "aggregate_id": "1001",
+            "event_type": "created",
+            "routing_key": "user.1001.created",
+            "idempotency_key": "user:1001:created",
+            "payload": { "user_id": 1001 }
+        }),
+    )
+    .unwrap();
+
+    assert_eq!(
+        ProductionEventDispatch::from_inbound(&message)
+            .unwrap()
+            .dispatch_key(),
+        "user.created"
+    );
+}
+
+#[tokio::test]
+async fn production_inbox_handler_rejects_user_created_routing_mismatch() {
+    let message = InboundEventMessage::new(
+        "user.created:1001",
+        "user:1001:created",
+        json!({
+            "aggregate_type": "user",
+            "aggregate_id": "1001",
+            "event_type": "created",
+            "routing_key": "user.created.1001",
+            "idempotency_key": "user:1001:created",
+            "payload": { "user_id": 1001 }
+        }),
+    )
+    .unwrap();
+
+    assert!(ProductionEventDispatch::from_inbound(&message).is_err());
+}
+
+#[tokio::test]
+async fn production_inbox_handler_rejects_user_created_payload_user_id_mismatch() {
+    let message = InboundEventMessage::new(
+        "user.created:1001",
+        "user:1001:created",
+        json!({
+            "aggregate_type": "user",
+            "aggregate_id": "1001",
+            "event_type": "created",
+            "routing_key": "user.1001.created",
+            "idempotency_key": "user:1001:created",
+            "payload": { "user_id": 2002 }
+        }),
+    )
+    .unwrap();
+
+    assert!(ProductionEventDispatch::from_inbound(&message).is_err());
+}
+
+#[tokio::test]
 async fn production_inbox_handler_rejects_unknown_domain_event_envelope() {
-    let handler = EventInboxProductionHandler;
+    let handler = EventInboxProductionHandler::default();
     let message = InboundEventMessage::new(
         "message-1",
         "unknown:42:created",
@@ -1075,7 +1137,7 @@ async fn production_inbox_handler_rejects_unknown_domain_event_envelope() {
 
 #[tokio::test]
 async fn production_inbox_handler_rejects_malformed_domain_event_envelope() {
-    let handler = EventInboxProductionHandler;
+    let handler = EventInboxProductionHandler::default();
     let message = InboundEventMessage::new(
         "message-1",
         "convert_order:42:confirmed",
@@ -1092,7 +1154,7 @@ async fn production_inbox_handler_rejects_malformed_domain_event_envelope() {
 
 #[tokio::test]
 async fn production_inbox_handler_rejects_idempotency_mismatch() {
-    let handler = EventInboxProductionHandler;
+    let handler = EventInboxProductionHandler::default();
     let message = InboundEventMessage::new(
         "message-1",
         "convert_order:42:confirmed",
@@ -1112,7 +1174,7 @@ async fn production_inbox_handler_rejects_idempotency_mismatch() {
 
 #[tokio::test]
 async fn production_inbox_handler_rejects_routing_mismatch() {
-    let handler = EventInboxProductionHandler;
+    let handler = EventInboxProductionHandler::default();
     let message = InboundEventMessage::new(
         "message-1",
         "convert_order:42:confirmed",

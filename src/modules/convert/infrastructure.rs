@@ -486,6 +486,8 @@ async fn lock_wallet_row(
     user_id: u64,
     asset_id: u64,
 ) -> AppResult<ConvertSettlementWalletRecord> {
+    // 若用户首次接触某资产，先按缺省值创建账本行，避免确认时出现“wallet account is required”报错。
+    ensure_wallet_account_in_tx(tx, user_id, asset_id).await?;
     sqlx::query_as::<_, ConvertSettlementWalletRecord>(
         r#"SELECT available, frozen, locked
            FROM wallet_accounts
@@ -500,4 +502,23 @@ async fn lock_wallet_row(
     .ok_or_else(|| {
         AppError::Validation("wallet account is required for convert settlement".to_owned())
     })
+}
+
+async fn ensure_wallet_account_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    asset_id: u64,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"INSERT INTO wallet_accounts (user_id, asset_id)
+           VALUES (?, ?)
+           ON DUPLICATE KEY UPDATE updated_at = updated_at"#,
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| AppError::Internal(format!("failed to initialize wallet account: {error}")))?;
+
+    Ok(())
 }

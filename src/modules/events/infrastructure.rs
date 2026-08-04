@@ -6,7 +6,9 @@ use crate::error::{AppError, AppResult};
 use axum::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
 use serde_json::Value;
-use sqlx::{Error as SqlxError, MySql, Pool, error::DatabaseError, types::Json as SqlxJson};
+use sqlx::{
+    Error as SqlxError, MySql, Pool, Transaction, error::DatabaseError, types::Json as SqlxJson,
+};
 
 use crate::modules::events::domain::{
     INBOX_CONSUMED, INBOX_DEAD_LETTER, INBOX_PROCESSING, INBOX_PROCESSING_LEASE_SECONDS,
@@ -160,6 +162,60 @@ pub(crate) async fn insert_event(
     .0;
 
     Ok(OutboxInsertResult::Duplicate { id })
+}
+
+pub(crate) async fn insert_event_in_tx(
+    tx: &mut sqlx::Transaction<'_, MySql>,
+    event: &NewOutboxEvent,
+) -> AppResult<OutboxInsertResult> {
+    let result = sqlx::query(
+        r#"INSERT INTO event_outbox
+           (aggregate_type, aggregate_id, event_type, routing_key, idempotency_key, payload_json, status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE idempotency_key = idempotency_key"#,
+    )
+    .bind(&event.aggregate_type)
+    .bind(&event.aggregate_id)
+    .bind(&event.event_type)
+    .bind(&event.routing_key)
+    .bind(&event.idempotency_key)
+    .bind(SqlxJson(event.payload.clone()))
+    .bind(OUTBOX_PENDING)
+    .bind(event.created_at.naive_utc())
+    .execute(&mut **tx)
+    .await?;
+
+    if result.last_insert_id() != 0 {
+        return Ok(OutboxInsertResult::Inserted {
+            id: result.last_insert_id(),
+        });
+    }
+
+    let id = sqlx::query_as::<_, (u64,)>(
+        "SELECT id FROM event_outbox WHERE idempotency_key = ? LIMIT 1",
+    )
+    .bind(&event.idempotency_key)
+    .fetch_one(&mut **tx)
+    .await?
+    .0;
+
+    Ok(OutboxInsertResult::Duplicate { id })
+}
+
+pub(crate) async fn create_wallet_accounts_for_user_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"INSERT IGNORE INTO wallet_accounts (user_id, asset_id, available, frozen, locked)
+           SELECT ?, id, 0, 0, 0
+           FROM assets"#,
+    )
+    .bind(user_id)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
 }
 
 pub(crate) async fn fetch_publishable_batch(

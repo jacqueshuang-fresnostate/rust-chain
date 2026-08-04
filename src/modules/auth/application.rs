@@ -43,6 +43,7 @@ use crate::{
             revoke_actor_auth_sessions, verify_password,
         },
         countries::normalize_country_code,
+        events::{infrastructure::insert_event_in_tx, user_created_outbox_event},
         security::domain::login_challenge_expired,
         security::{
             LoginTwoFactorChallengeType, LoginTwoFactorMode, confirm_admin_totp, confirm_user_totp,
@@ -374,6 +375,7 @@ pub(crate) async fn register_user_with_email_code(
     if let Some(binding) = referral_binding {
         bind_registered_user_referral_in_tx(&mut tx, user_id, binding).await?;
     }
+    insert_event_in_tx(&mut tx, &user_created_outbox_event(user_id, now)).await?;
 
     tx.commit().await?;
 
