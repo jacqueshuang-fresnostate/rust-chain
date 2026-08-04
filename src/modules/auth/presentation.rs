@@ -18,6 +18,7 @@ pub(crate) struct UserAuthRequest {
     pub(crate) code: Option<String>,
     pub(crate) invite_code: Option<String>,
     pub(crate) promotion: Option<String>,
+    pub(crate) cf_turnstile_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -42,12 +43,14 @@ pub(crate) struct AdminAuthRequest {
     pub(crate) username: Option<String>,
     pub(crate) password: Option<String>,
     pub(crate) role_id: Option<u64>,
+    pub(crate) cf_turnstile_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct AgentAuthRequest {
     pub(crate) username: Option<String>,
     pub(crate) password: Option<String>,
+    pub(crate) cf_turnstile_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

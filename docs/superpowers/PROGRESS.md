@@ -2,6 +2,45 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-08-04 22:07 - 全端登录接入 Cloudflare Turnstile（含后台、PC、手机端）
+
+- 完成内容：补齐前端登录页与后端登录接口的 Cloudflare Turnstile 兼容：用户端登录页、PC 登录页与后台 Web 登录页都动态加载并渲染 Turnstile widget，获取 `cf_turnstile_token`，在提交前校验必填性；登录请求统一透传 `cf_turnstile_token` 到后端；服务端在 `/auth/login`、`/admin/auth/login`、`/agent/auth/login` 中新增可选前置校验并支持 `CF_TURNSTILE_SECRET`、`CF_TURNSTILE_SITEVERIFY_URL`；新增缺失 token 与加载失败的错误提示与 fallback 行为。
+- 修改文件：`src/modules/auth/presentation.rs`、`src/modules/auth/routes.rs`、`mobile/src/api/auth.ts`、`mobile/src/views/LoginView.vue`、`mobile/src/i18n/messages/en.ts`、`mobile/src/i18n/messages/zh-CN.ts`、`mobile/tests/access-identity-settings-views.test.ts`、`mobile/tests/pencil-selected-unmapped-pages.test.ts`、`pc/src/api/auth.ts`、`pc/src/i18n/index.ts`、`pc/src/style.css`、`pc/src/views/auth/Login.vue`、`web/src/api/types.ts`、`web/src/api/adminAuth.ts`、`web/src/api/agentAuth.ts`、`web/src/auth/LoginPage.tsx`、`web/src/styles.css`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：
+  - `cargo fmt --all` 通过。
+  - `cargo check --manifest-path Cargo.toml --lib` 通过。
+  - `npm --prefix mobile run type-check` 通过。
+  - `npm --prefix pc run type-check` 通过。
+  - `npm --prefix web run typecheck` 通过。
+  - `npm --prefix mobile run test -- tests/access-identity-settings-views.test.ts tests/pencil-selected-unmapped-pages.test.ts` 通过（274/274）。
+- 后续事项：请在前端构建时配置 `VITE_CF_TURNSTILE_SITE_KEY`，生产环境配置 `CF_TURNSTILE_SECRET`（或 `CF_TURNSTILE_SECRET_KEY`）并验证登录。未配置 `CF_TURNSTILE_SECRET` 时后端保持兼容跳过校验。
+
+## 2026-08-04 05:50 - 后端功能完成度巡检（接口与未完成项）
+
+- 完成内容：对后端 Rust API 进行一次静态+测试巡检，确认核心路由与手机端接口契合度、未完成占位、关键流程测试状态与近期异常。结果显示：后端未见 `TODO`/`todo!`/`unimplemented!`/`FIXME` 未实现占位；主要路由与 `mobile/src/api` 的 `requestUrl(...)` 调用全量可映射（按动态参数归一化后 0 处缺失）。`quick_recharge` 用户端路径在后端以 `/wallet/quick-recharge/*` 提供、管理员侧以 `/quick-recharge/*` 提供，设计上是分离的。
+- 修改文件：`docs/superpowers/PROGRESS.md`（本条巡检记录）。未改动代码逻辑文件。
+- 验证结果：
+  - `cargo fmt --check` 通过。
+  - `cargo check --all-targets --manifest-path Cargo.toml` 通过。
+  - `cargo test --manifest-path Cargo.toml --quiet` 结果：**178 passed**，2 failed（`modules::quick_recharge::tests::*`，报错为 **Operation not permitted / 无法绑定 mock server 端口**，为本地执行环境限制，不是功能未实现导致）。
+  - `cargo test --manifest-path Cargo.toml --test openapi_routes` 通过（8/8）。
+  - `cargo test --manifest-path Cargo.toml --test spot_routes`、`seconds_contract_routes`、`loan_routes` 均通过。
+  - `rg -n "TODO|todo!|unimplemented!|FIXME" src tests` 无输出。
+- 后续事项：1) 完整对接真实环境后，需继续补跑“admin/管理域”相关列表与工人路径；2) 处理 `quick_recharge` 测试环境端口绑定限制（若要让完整 test suite 在本机零失败，需要给 `wiremock` 放行端口或在 CI 路径执行）。
+
+## 2026-08-04 17:40 - 登录接口加入 Cloudflare Turnstile 可选校验
+
+- 完成内容：在登录 API 中新增可选的 Cloudflare 验证入口（Turnstile 服务端校验）：
+  - `UserAuthRequest`、`AdminAuthRequest`、`AgentAuthRequest` 增加 `cf_turnstile_token` 字段；
+  - `/auth/login`（用户、管理员、代理）调用前置校验 `CF_TURNSTILE_SECRET`，存在时强制验证 `cf_turnstile_token`；
+  - 通过 `challenges.cloudflare.com/turnstile/v0/siteverify` 做服务端 `POST` 校验，失败返回 `CF_TURNSTILE_*` 业务码；
+  - 支持 `CF_TURNSTILE_SITEVERIFY_URL` 覆盖和 `cf-connecting-ip` / `x-forwarded-for` 传给 Cloudflare 的 `remoteip`。
+- 修改文件：`src/modules/auth/presentation.rs`、`src/modules/auth/routes.rs`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：
+  - `cargo fmt --all` 通过。
+  - `cargo check --manifest-path Cargo.toml --lib` 通过。
+- 后续事项：前端/移动端登录需同步接入 Turnstile token；未接入前请保持不设置 `CF_TURNSTILE_SECRET` 以避免影响登录。
+
 ## 2026-08-04 04:25 - 消息中心按 Pencil 选中画板完成 1:1 重构
 
 - 完成内容：重新以 Pencil `FkZ6j/bRz9K` 为消息中心唯一视觉基准，去除画板原生状态栏后精确实现 56px sticky Header、20/12/40/40 返回键、22px 标题、49px“全部已读”、38px 四分类栏、`y=94` 列表起点及 64px 连续消息行；补回 Lucide ArrowLeft 并统一通过 `goBackOr` 返回，消息路由改为二级无 Dock 页面，不再挂载 Root Header 或底部导航。移除旧 `prototype-parity.css` 对分类按钮、78px 卡片行和 `.message-icon` 的高优先级覆盖，使浅色图标盘使用 `#ffffff/#ccd5d0`、深色使用 `#0c100e/#29342e`；继续只消费 `fetchNews(40)` 的真实公告并保留诚实加载、错误和空态，没有复制设计图中的演示登录、充值或成交消息。

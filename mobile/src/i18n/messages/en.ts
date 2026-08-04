@@ -349,6 +349,8 @@ export default {
     pencilRegisterTitle: 'Create a HIPPO account',
     invalidCredentialsInput: 'Enter your account and password.',
     loginFailed: 'Login failed. Check your account details.',
+    turnstileRequired: 'Please complete Cloudflare verification first.',
+    turnstileLoadFailed: 'Cloudflare verification failed to load. Please try again later.',
     resend: 'Resend',
     sendCode: 'Send code',
     sendResetCode: 'Send reset code',

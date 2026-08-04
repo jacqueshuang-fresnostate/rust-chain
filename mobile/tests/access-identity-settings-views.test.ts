@@ -20,7 +20,7 @@ const selectedCss = readFileSync(new URL('../src/styles/pencil-selected-pages.cs
 
 test('登录与注册保留配置、挑战、重定向和请求载荷合同', () => {
   assert.match(sources.login, /fetchLoginConfig\(\)/)
-  assert.match(sources.login, /loginWithPassword\(account\.value, password\.value\)/)
+  assert.match(sources.login, /loginWithPassword\(account\.value, password\.value(?:,\s*cfTurnstileToken\.value\s*\|\|\s*undefined)?\)/)
   assert.match(sources.login, /const safeRedirect = computed\(\(\) => sanitizeInternalRedirect\(route\.query\.redirect\)\)/)
   assert.match(sources.login, /name: 'login-two-factor', query: \{ challenge: result\.challengeId, redirect: safeRedirect\.value \}/)
   assert.match(sources.login, /name: 'login-two-factor', query: \{ setup: result\.setupChallengeId, redirect: safeRedirect\.value \}/)

@@ -927,6 +927,8 @@ const messages = {
       register_success: 'Registration successful',
       register_failed: 'Registration failed',
       register_error: 'Registration Error',
+      turnstileRequired: 'Please complete Cloudflare verification first',
+      turnstileLoadFailed: 'Cloudflare verification failed to load. Please try again later',
     },
     security: {
       title: 'Security Center',
@@ -2026,6 +2028,8 @@ const messages = {
       register_success: '注册成功',
       register_failed: '注册失败',
       register_error: '注册异常',
+      turnstileRequired: '请先完成 Cloudflare 人机校验',
+      turnstileLoadFailed: 'Cloudflare 人机校验加载失败，请稍后重试',
     },
     security: {
       title: '安全中心',

@@ -7,6 +7,7 @@ export interface LoginParams {
   password?: string
   code?: string
   type: 'password' | 'code'
+  cf_turnstile_token?: string
 }
 
 export interface RegisterParams {
@@ -28,13 +29,15 @@ export interface LoginConfig {
 }
 
 export async function login(data: LoginParams) {
-    const payload = data.username
-        ? { username: data.username, password: data.password }
-        : { email: data.email, password: data.password }
-    const res = await request.instance.post(backendApiUrl('/auth/login'), {
-        ...payload,
-    })
-    return normalizeAuthResponse(res.data)
+  const payload = {
+    ...(data.username ? { username: data.username, } : { email: data.email, }),
+    password: data.password,
+    ...(data.cf_turnstile_token?.trim() ? { cf_turnstile_token: data.cf_turnstile_token.trim() } : {}),
+  }
+  const res = await request.instance.post(backendApiUrl('/auth/login'), {
+    ...payload,
+  })
+  return normalizeAuthResponse(res.data)
 }
 
 export async function submitLoginTwoFactor(challengeId: string, totpCode: string) {

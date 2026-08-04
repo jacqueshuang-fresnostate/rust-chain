@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Eye, EyeOff, ShieldCheck } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
@@ -10,6 +10,18 @@ import { replaceAuthStep, sanitizeInternalRedirect } from '@/core/navigation'
 import logo from '@/assets/logo.png'
 
 type LoginMode = 'email' | 'username'
+
+type TurnstileWindow = {
+  turnstile?: {
+    render: (element: string | HTMLElement, options: Record<string, unknown>) => string | number
+    reset: (widgetId: string | number) => void
+    remove: (widgetId: string | number) => void
+  }
+}
+
+declare global {
+  interface Window extends TurnstileWindow {}
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -23,7 +35,15 @@ const submitting = ref(false)
 const showPassword = ref(false)
 const usernameLoginEnabled = ref(false)
 const accountInput = ref<HTMLInputElement | null>(null)
+const turnstileSiteKey = String(import.meta.env.VITE_CF_TURNSTILE_SITE_KEY ?? '').trim()
+const turnstileEnabled = ref(Boolean(turnstileSiteKey))
+const cfTurnstileToken = ref('')
+const turnstileContainer = ref<HTMLDivElement | null>(null)
+const turnstileWidgetId = ref<string | number | null>(null)
 const safeRedirect = computed(() => sanitizeInternalRedirect(route.query.redirect))
+let turnstileScriptPromise: Promise<void> | null = null
+
+const turnstileEnabledText = computed(() => t('auth.turnstileRequired'))
 
 function openAuthRoute(name: 'register' | 'forgot-password'): void {
   void replaceAuthStep(router, { name, query: { redirect: safeRedirect.value } })
@@ -47,9 +67,13 @@ async function submit(): Promise<void> {
     error.value = t('auth.invalidCredentialsInput')
     return
   }
+  if (turnstileEnabled.value && !cfTurnstileToken.value) {
+    error.value = turnstileEnabledText.value
+    return
+  }
   submitting.value = true
   try {
-    const result = await loginWithPassword(account.value, password.value)
+    const result = await loginWithPassword(account.value, password.value, cfTurnstileToken.value || undefined)
     if (result.type === 'two-factor') {
       await replaceAuthStep(router, { name: 'login-two-factor', query: { challenge: result.challengeId, redirect: safeRedirect.value } })
       return
@@ -64,6 +88,108 @@ async function submit(): Promise<void> {
     error.value = apiErrorMessage(reason, t('auth.loginFailed'))
   } finally {
     submitting.value = false
+    if (turnstileEnabled.value) {
+      resetCfTurnstileWidget()
+      void initializeTurnstile()
+    }
+  }
+}
+
+function getTurnstileWidgetWindow(): TurnstileWindow['turnstile'] | undefined {
+  return typeof window === 'undefined' ? undefined : window.turnstile
+}
+
+function resetCfTurnstileWidget(): void {
+  const turnstile = getTurnstileWidgetWindow()
+  if (!turnstileWidgetId.value || !turnstile) return
+
+  try {
+    turnstile.reset(turnstileWidgetId.value)
+  } catch {
+    // fallback: if reset is unavailable under some browsers, attempt hard remove + re-render later.
+    try {
+      turnstile.remove(turnstileWidgetId.value)
+    } catch {
+      // ignore
+    }
+  }
+  turnstileWidgetId.value = null
+  cfTurnstileToken.value = ''
+}
+
+function removeTurnstileWidget(): void {
+  const turnstile = getTurnstileWidgetWindow()
+  if (!turnstileWidgetId.value || !turnstile) return
+  try {
+    turnstile.remove(turnstileWidgetId.value)
+  } catch {
+    // ignore
+  }
+  turnstileWidgetId.value = null
+  cfTurnstileToken.value = ''
+}
+
+async function loadTurnstileScript(): Promise<void> {
+  if (turnstileScriptPromise) {
+    return turnstileScriptPromise
+  }
+
+  if (typeof window === 'undefined' || getTurnstileWidgetWindow()) {
+    return Promise.resolve()
+  }
+
+  turnstileScriptPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script')
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
+    script.async = true
+    script.defer = true
+    script.onload = () => {
+      resolve()
+    }
+    script.onerror = () => {
+      turnstileScriptPromise = null
+      reject(new Error('Failed to load Cloudflare Turnstile script'))
+    }
+    document.head.appendChild(script)
+  })
+
+  await turnstileScriptPromise
+}
+
+async function initializeTurnstile(): Promise<void> {
+  if (!turnstileEnabled.value) {
+    return
+  }
+
+  await nextTick()
+  if (!turnstileContainer.value) {
+    return
+  }
+
+  try {
+    await loadTurnstileScript()
+    const turnstile = getTurnstileWidgetWindow()
+    if (!turnstile || !turnstileContainer.value) {
+      return
+    }
+    removeTurnstileWidget()
+    turnstileWidgetId.value = turnstile.render(turnstileContainer.value, {
+      sitekey: turnstileSiteKey,
+      callback: (token: string) => {
+        cfTurnstileToken.value = token || ''
+      },
+      'expired-callback': () => {
+        cfTurnstileToken.value = ''
+      },
+      'error-callback': () => {
+        cfTurnstileToken.value = ''
+      },
+      'timeout-callback': () => {
+        cfTurnstileToken.value = ''
+      },
+    })
+  } catch {
+    error.value = t('auth.turnstileLoadFailed')
   }
 }
 
@@ -74,6 +200,14 @@ onMounted(async () => {
     usernameLoginEnabled.value = false
     if (loginMode.value === 'username') selectMode('email')
   }
+
+  if (turnstileEnabled.value) {
+    await initializeTurnstile()
+  }
+})
+
+onBeforeUnmount(() => {
+  removeTurnstileWidget()
 })
 </script>
 
@@ -126,6 +260,10 @@ onMounted(async () => {
         <div class="auth-form-meta">
           <span class="auth-remember"><i aria-hidden="true" />{{ t('auth.keepSignedIn') }}</span>
           <button type="button" @click="openAuthRoute('forgot-password')">{{ t('auth.forgotPassword') }}</button>
+        </div>
+
+        <div v-if="turnstileEnabled" class="auth-cf-turnstile-wrap">
+          <div ref="turnstileContainer" class="cf-turnstile-widget" />
         </div>
 
         <div class="login-submit-wrap">
@@ -386,6 +524,19 @@ onMounted(async () => {
   content: '';
   inset: -13px -10px;
   position: absolute;
+}
+
+.auth-cf-turnstile-wrap {
+  align-items: stretch;
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 12px;
+  min-height: 82px;
+}
+
+.cf-turnstile-widget {
+  transform: translateZ(0);
+  width: 100%;
 }
 
 .auth-security-note {

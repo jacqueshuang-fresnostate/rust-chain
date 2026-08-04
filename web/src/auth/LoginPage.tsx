@@ -1,7 +1,7 @@
 import { IconLock, IconShield } from '@douyinfe/semi-icons';
 import { Button, Card, Form, Radio, RadioGroup, Toast, Typography } from '@douyinfe/semi-ui';
 import { useMutation } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { adminLogin, adminLoginTwoFactor, isAdminLoginTwoFactorChallenge } from '../api/adminAuth';
@@ -12,6 +12,18 @@ import hippoLogoLandscape from '../assets/brand/hippo-logo-landscape.png';
 import { authStore, type AuthScope } from './authStore';
 
 const { Title, Text } = Typography;
+
+type TurnstileWindow = {
+  turnstile?: {
+    render: (element: string | HTMLElement, options: Record<string, unknown>) => string | number;
+    reset: (widgetId: string | number) => void;
+    remove: (widgetId: string | number) => void;
+  };
+};
+
+declare global {
+  interface Window extends TurnstileWindow {}
+}
 
 type LoginFormValues = {
   username?: string;
@@ -24,10 +36,120 @@ type TwoFactorFormValues = {
 
 type LoginScope = Extract<AuthScope, 'admin' | 'agent'>;
 
+const turnstileRequiredText = '请先完成 Cloudflare 人机校验。';
+
 export function LoginPage() {
   const navigate = useNavigate();
   const [loginScope, setLoginScope] = useState<LoginScope>('admin');
   const [challengeId, setChallengeId] = useState<string | null>(null);
+  const [cfTurnstileToken, setCfTurnstileToken] = useState('');
+  const turnstileSiteKey = String(import.meta.env.VITE_CF_TURNSTILE_SITE_KEY ?? '').trim();
+  const turnstileEnabled = Boolean(turnstileSiteKey);
+  const turnstileContainerRef = useRef<HTMLDivElement | null>(null);
+  const turnstileWidgetIdRef = useRef<string | number | null>(null);
+  const turnstileScriptPromiseRef = useRef<Promise<void> | null>(null);
+
+  const getTurnstile = (): TurnstileWindow['turnstile'] | undefined => {
+    return typeof window === 'undefined' ? undefined : window.turnstile;
+  };
+
+  const removeTurnstileWidget = () => {
+    const turnstile = getTurnstile();
+    if (!turnstileWidgetIdRef.current || !turnstile) {
+      return;
+    }
+
+    try {
+      turnstile.remove(turnstileWidgetIdRef.current);
+    } catch {
+      // ignore cleanup errors
+    }
+
+    turnstileWidgetIdRef.current = null;
+    setCfTurnstileToken('');
+  };
+
+  const resetTurnstileWidget = () => {
+    const turnstile = getTurnstile();
+    if (!turnstileWidgetIdRef.current || !turnstile) {
+      return;
+    }
+
+    try {
+      turnstile.reset(turnstileWidgetIdRef.current);
+    } catch {
+      try {
+        turnstile.remove(turnstileWidgetIdRef.current);
+      } catch {
+        // ignore
+      }
+    }
+
+    turnstileWidgetIdRef.current = null;
+    setCfTurnstileToken('');
+  };
+
+  const loadTurnstileScript = async () => {
+    if (turnstileScriptPromiseRef.current) {
+      return turnstileScriptPromiseRef.current;
+    }
+
+    if (typeof window === 'undefined' || getTurnstile()) {
+      return Promise.resolve();
+    }
+
+    turnstileScriptPromiseRef.current = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      script.async = true;
+      script.defer = true;
+      script.onload = () => {
+        resolve();
+      };
+      script.onerror = () => {
+        turnstileScriptPromiseRef.current = null;
+        reject(new Error('Failed to load Cloudflare Turnstile script'));
+      };
+      document.head.appendChild(script);
+    });
+
+    await turnstileScriptPromiseRef.current;
+  };
+
+  const initializeTurnstile = async () => {
+    if (!turnstileEnabled || !turnstileContainerRef.current) {
+      return;
+    }
+
+    try {
+      await loadTurnstileScript();
+      const turnstile = getTurnstile();
+      if (!turnstile || !turnstileContainerRef.current) {
+        return;
+      }
+
+      removeTurnstileWidget();
+      turnstileWidgetIdRef.current = turnstile.render(turnstileContainerRef.current, {
+        sitekey: turnstileSiteKey,
+        callback: (token: string) => {
+          setCfTurnstileToken(token || '');
+        },
+        'expired-callback': () => {
+          setCfTurnstileToken('');
+        },
+        'error-callback': () => {
+          setCfTurnstileToken('');
+        },
+        'timeout-callback': () => {
+          setCfTurnstileToken('');
+        },
+      });
+    } catch {
+      Toast.error('Cloudflare 人机校验加载失败，请稍后重试。');
+      setCfTurnstileToken('');
+    }
+  };
+
   const applySession = (response: AdminLoginResponse) => {
     if (response.scope !== loginScope) {
       Toast.error(loginScope === 'agent' ? '当前账号不是代理' : '当前账号不是管理员');
@@ -38,37 +160,68 @@ export function LoginPage() {
       accessToken: response.access_token,
       refreshToken: response.refresh_token,
       scope: response.scope,
-      subject: response.subject ?? loginScope
+      subject: response.subject ?? loginScope,
     });
     navigate(loginScope === 'agent' ? '/agent/dashboard' : '/admin/dashboard', { replace: true });
   };
+
   const notifyError = (error: unknown) => {
     Toast.error(error instanceof ApiError ? error.message : '登录失败，请稍后重试');
+    resetTurnstileWidget();
   };
+
   const loginMutation = useMutation({
-    mutationFn: (values: Required<LoginFormValues>) => (loginScope === 'agent' ? agentLogin(values) : adminLogin(values)),
+    mutationFn: (values: Required<LoginFormValues>) => {
+      const payload = {
+        username: values.username ?? '',
+        password: values.password ?? '',
+        ...(cfTurnstileToken?.trim() ? { cf_turnstile_token: cfTurnstileToken.trim() } : {}),
+      };
+
+      return loginScope === 'agent' ? agentLogin(payload) : adminLogin(payload);
+    },
     onSuccess: (response) => {
       // 密码正确但需要二次验证时，后端只返回挑战，不下发任何令牌。
       if (isAdminLoginTwoFactorChallenge(response)) {
         setChallengeId(response.challenge_id);
+        resetTurnstileWidget();
         return;
       }
 
       applySession(response);
     },
-    onError: notifyError
+    onError: notifyError,
   });
+
   const twoFactorMutation = useMutation({
     mutationFn: (totpCode: string) => adminLoginTwoFactor({ challenge_id: challengeId ?? '', totp_code: totpCode }),
     onSuccess: applySession,
-    onError: notifyError
+    onError: notifyError,
   });
+
   const isAgentLogin = loginScope === 'agent';
   const accountLabel = isAgentLogin ? '代理账号' : '管理员账号';
 
   useEffect(() => {
     document.title = '登录 · HIPPO Operations';
-  }, []);
+
+    if (turnstileEnabled && !challengeId) {
+      void initializeTurnstile();
+    }
+
+    return () => {
+      removeTurnstileWidget();
+    };
+  }, [challengeId, turnstileEnabled]);
+
+  useEffect(() => {
+    setChallengeId(null);
+    resetTurnstileWidget();
+    if (!turnstileEnabled) {
+      return;
+    }
+    void initializeTurnstile();
+  }, [loginScope, turnstileEnabled]);
 
   return (
     <main className="admin-login-page">
@@ -115,7 +268,13 @@ export function LoginPage() {
                 <Button htmlType="submit" theme="solid" type="primary" block loading={twoFactorMutation.isPending}>
                   验证并登录
                 </Button>
-                <Button theme="borderless" block onClick={() => setChallengeId(null)}>
+                <Button
+                  theme="borderless"
+                  block
+                  onClick={() => {
+                    setChallengeId(null);
+                  }}
+                >
                   返回重新登录
                 </Button>
               </Form>
@@ -126,9 +285,13 @@ export function LoginPage() {
               <Form<LoginFormValues>
                 className="admin-login-form"
                 onSubmit={(values) => {
+                  if (turnstileEnabled && !cfTurnstileToken) {
+                    Toast.error(turnstileRequiredText);
+                    return;
+                  }
                   loginMutation.mutate({
                     username: values.username ?? '',
-                    password: values.password ?? ''
+                    password: values.password ?? '',
                   });
                 }}
               >
@@ -153,6 +316,11 @@ export function LoginPage() {
                   placeholder="请输入密码"
                   rules={[{ required: true, message: '请输入密码' }]}
                 />
+                {turnstileEnabled ? (
+                  <div className="admin-login-turnstile-wrap">
+                    <div ref={turnstileContainerRef} className="admin-login-turnstile-widget" />
+                  </div>
+                ) : null}
                 <Button htmlType="submit" theme="solid" type="primary" block loading={loginMutation.isPending}>
                   登录
                 </Button>

@@ -56,6 +56,12 @@
               <input type="checkbox" id="remember" v-model="rememberMe" class="w-4 h-4 rounded border-gray-300 text-primary focus:ring-primary bg-background/50">
               <label for="remember" class="text-sm text-muted-foreground select-none cursor-pointer">{{ t('auth.remember_me') }}</label>
           </div>
+
+          <div v-if="turnstileEnabled" class="pt-1">
+            <div ref="turnstileContainer" class="pc-login-turnstile-wrap">
+              <div class="pc-turnstile-widget" />
+            </div>
+          </div>
         </template>
 
         <template v-else-if="loginStep === '2fa'">
@@ -125,13 +131,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { getLoginConfig, login, resetLoginTwoFactor, sendLoginTwoFactorResetCode, submitLoginTwoFactor } from '@/api/auth'
 import { useUserStore } from '@/stores/user'
 import { useToast } from 'vue-toastification'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import { useI18n } from 'vue-i18n'
+
+type TurnstileWindow = {
+  turnstile?: {
+    render: (element: string | HTMLElement, options: Record<string, unknown>) => string | number
+    reset: (widgetId: string | number) => void
+    remove: (widgetId: string | number) => void
+  }
+}
+
+declare global {
+  interface Window extends TurnstileWindow {}
+}
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -146,10 +164,17 @@ const challengeId = ref('')
 const twoFactorCode = ref('')
 const resetCode = ref('')
 const showReset = ref(false)
+const cfTurnstileToken = ref('')
+const turnstileContainer = ref<HTMLDivElement | null>(null)
+const turnstileWidgetId = ref<string | number | null>(null)
+const turnstileSiteKey = String(import.meta.env.VITE_CF_TURNSTILE_SITE_KEY ?? '').trim()
+const turnstileEnabled = ref(Boolean(turnstileSiteKey))
+const turnstileRequiredText = computed(() => t('auth.turnstileRequired'))
 const form = ref({
   email: '',
   password: ''
 })
+let turnstileScriptPromise: Promise<void> | null = null
 
 const primaryButtonLabel = computed(() => {
   if (loading.value) return loginStep.value === '2fa' ? t('auth.verifying') : t('auth.signing_in')
@@ -159,6 +184,97 @@ const primaryButtonLabel = computed(() => {
 const loginAccountLabel = computed(() => usernameLoginEnabled.value ? t('auth.email_or_username') : t('auth.email'))
 const loginAccountPlaceholder = computed(() => usernameLoginEnabled.value ? t('auth.email_or_username_placeholder') : t('auth.email_placeholder'))
 const loginAccountIcon = computed(() => usernameLoginEnabled.value ? 'i-lucide-user' : 'i-lucide-mail')
+
+function getTurnstileWindow(): TurnstileWindow['turnstile'] | undefined {
+  return typeof window === 'undefined' ? undefined : window.turnstile
+}
+
+function resetCfTurnstile(): void {
+  const turnstile = getTurnstileWindow()
+  if (!turnstileWidgetId.value || !turnstile) return
+  try {
+    turnstile.reset(turnstileWidgetId.value)
+  } catch {
+    try {
+      turnstile.remove(turnstileWidgetId.value)
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+  turnstileWidgetId.value = null
+  cfTurnstileToken.value = ''
+}
+
+function removeCfTurnstile(): void {
+  const turnstile = getTurnstileWindow()
+  if (!turnstileWidgetId.value || !turnstile) return
+  try {
+    turnstile.remove(turnstileWidgetId.value)
+  } catch {
+    // ignore
+  }
+  turnstileWidgetId.value = null
+  cfTurnstileToken.value = ''
+}
+
+async function loadTurnstileScript(): Promise<void> {
+  if (turnstileScriptPromise) {
+    return turnstileScriptPromise
+  }
+
+  if (typeof window === 'undefined' || getTurnstileWindow()) {
+    return Promise.resolve()
+  }
+
+  turnstileScriptPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script')
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
+    script.async = true
+    script.defer = true
+    script.onload = () => {
+      resolve()
+    }
+    script.onerror = () => {
+      turnstileScriptPromise = null
+      reject(new Error('Failed to load Cloudflare Turnstile script'))
+    }
+    document.head.appendChild(script)
+  })
+
+  await turnstileScriptPromise
+}
+
+async function initializeTurnstile(): Promise<void> {
+  if (!turnstileEnabled.value || !turnstileContainer.value) {
+    return
+  }
+  try {
+    await loadTurnstileScript()
+    const turnstile = getTurnstileWindow()
+    if (!turnstile || !turnstileContainer.value) {
+      return
+    }
+    removeCfTurnstile()
+    turnstileWidgetId.value = turnstile.render(turnstileContainer.value, {
+      sitekey: turnstileSiteKey,
+      callback: (token: string) => {
+        cfTurnstileToken.value = token || ''
+      },
+      'expired-callback': () => {
+        cfTurnstileToken.value = ''
+      },
+      'error-callback': () => {
+        cfTurnstileToken.value = ''
+      },
+      'timeout-callback': () => {
+        cfTurnstileToken.value = ''
+      },
+    })
+  } catch {
+    toast.error(t('auth.turnstileLoadFailed'))
+    cfTurnstileToken.value = ''
+  }
+}
 
 onMounted(async () => {
   const savedEmail = localStorage.getItem('remember_email')
@@ -173,9 +289,22 @@ onMounted(async () => {
   } catch (error) {
     console.error('Failed to load login config', error)
   }
+
+  if (turnstileEnabled.value) {
+    await initializeTurnstile()
+  }
+})
+
+onBeforeUnmount(() => {
+  removeCfTurnstile()
 })
 
 const handleLogin = async () => {
+  if (turnstileEnabled.value && !cfTurnstileToken.value) {
+    toast.error(turnstileRequiredText.value)
+    return
+  }
+
   loading.value = true
   try {
     const account = form.value.email.trim()
@@ -184,7 +313,8 @@ const handleLogin = async () => {
         email: isUsernameLogin ? undefined : account,
         username: isUsernameLogin ? account : undefined,
         password: form.value.password,
-        type: 'password'
+        type: 'password',
+        cf_turnstile_token: cfTurnstileToken.value || undefined
     })
 
     if (res.code === 0 || res.code === 200) {
@@ -199,6 +329,7 @@ const handleLogin = async () => {
          toast.error(error.message || t('auth.login_error'))
     }
   } finally {
+    resetCfTurnstile()
     loading.value = false
   }
 }
@@ -221,6 +352,7 @@ const submitTwoFactor = async () => {
 
 async function handleAuthResponse(res: any) {
   if (res.data?.requires2fa) {
+    resetCfTurnstile()
     challengeId.value = res.data.challengeId
     twoFactorCode.value = ''
     loginStep.value = '2fa'
@@ -229,6 +361,7 @@ async function handleAuthResponse(res: any) {
   }
 
   if (res.data?.requires2faSetup) {
+    resetCfTurnstile()
     challengeId.value = res.data.setupChallengeId
     loginStep.value = 'setup-required'
     return

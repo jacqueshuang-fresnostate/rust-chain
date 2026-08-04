@@ -8,6 +8,7 @@ export interface ApiErrorPayload {
 export interface AdminLoginRequest {
   username: string;
   password: string;
+  cf_turnstile_token?: string;
 }
 
 export interface AdminLoginResponse {

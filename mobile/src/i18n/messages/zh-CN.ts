@@ -349,6 +349,8 @@ export default {
     pencilRegisterTitle: '创建 HIPPO 账户',
     invalidCredentialsInput: '请输入账户和密码。',
     loginFailed: '登录失败，请检查账户信息。',
+    turnstileRequired: '请先完成 Cloudflare 人机校验。',
+    turnstileLoadFailed: 'Cloudflare 人机校验加载失败，请稍后重试。',
     resend: '重新发送',
     sendCode: '发送验证码',
     sendResetCode: '发送重置码',

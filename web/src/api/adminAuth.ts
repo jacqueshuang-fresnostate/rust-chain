@@ -19,9 +19,13 @@ export function isAdminLoginTwoFactorChallenge(result: AdminLoginResult): result
 }
 
 export function adminLogin(payload: AdminLoginRequest): Promise<AdminLoginResult> {
+  const body = {
+    ...payload,
+    ...(payload.cf_turnstile_token?.trim() ? { cf_turnstile_token: payload.cf_turnstile_token.trim() } : {}),
+  }
   return apiRequest<AdminLoginResult>('/admin/api/v1/auth/login', {
     method: 'POST',
-    body: JSON.stringify(payload)
+    body: JSON.stringify(body)
   });
 }
 

@@ -98,6 +98,18 @@
   box-shadow: 0 0 15px currentColor;
 }
 
+.pc-login-turnstile-wrap {
+  width: 100%;
+  display: flex;
+  justify-content: flex-start;
+  min-height: 82px;
+}
+
+.pc-turnstile-widget {
+  width: 100%;
+  transform: translateZ(0);
+}
+
 /* ===== Toast Customization ===== */
 
 /* Base container — position slightly lower for trading headers */

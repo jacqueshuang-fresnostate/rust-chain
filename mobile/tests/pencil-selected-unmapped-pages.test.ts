@@ -133,7 +133,7 @@ test('视觉重构没有移除真实接口、状态与危险操作复核', () =>
   assert.match(views.assets, /fetchWalletAccounts\(\)[\s\S]*?fetchMarginWallets\(\)/)
   assert.match(views.profile, /fetchUserProfile\(\)[\s\S]*?fetchKycStatus\(\)/)
   assert.match(views.orders, /fetchOpenSpotOrders\(\)[\s\S]*?fetchMarginPositions\('opened'\)/)
-  assert.match(views.login, /loginWithPassword\(account\.value, password\.value\)/)
+  assert.match(views.login, /loginWithPassword\(account\.value, password\.value(?:,\s*cfTurnstileToken\.value\s*\|\|\s*undefined)?\)/)
   assert.match(views.register, /registerWithEmail\(\{ email: email\.value, password: password\.value/)
   assert.match(views.news, /rows\.value = await fetchNews\(50\)/)
   assert.match(views.newsDetail, /<NewsRichText :blocks="detail\.content"/)

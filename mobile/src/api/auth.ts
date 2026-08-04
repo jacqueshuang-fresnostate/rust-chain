@@ -47,12 +47,18 @@ export async function fetchRegisterConfig(): Promise<RegisterConfig> {
   }
 }
 
-export async function loginWithPassword(account: string, password: string): Promise<LoginOutcome> {
+export async function loginWithPassword(
+  account: string,
+  password: string,
+  cfTurnstileToken?: string,
+): Promise<LoginOutcome> {
   const identifier = account.trim()
-  const response = await client.post<BackendLoginResponse>(requestUrl('/auth/login'), {
+  const payload = {
     ...(identifier.includes('@') ? { email: identifier } : { username: identifier }),
     password,
-  })
+    ...(cfTurnstileToken?.trim() ? { cf_turnstile_token: cfTurnstileToken.trim() } : {}),
+  }
+  const response = await client.post<BackendLoginResponse>(requestUrl('/auth/login'), payload)
   const result = response.data
 
   if (result.requires_2fa && result.challenge_id) return { type: 'two-factor', challengeId: result.challenge_id }
