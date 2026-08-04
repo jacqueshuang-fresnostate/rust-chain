@@ -1,0 +1,4 @@
+{"file":".trellis/spec/admin/ui-system.md","reason":"Preserve the admin login page UI, accessibility, and quality contracts."}
+{"file":".trellis/spec/backend/user-authentication.md","reason":"Preserve login configuration and authentication behavior across backend and clients."}
+{"file":".trellis/spec/backend/container-delivery.md","reason":"Keep runtime environment, integrated Nginx, and 1Panel image delivery contracts consistent."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify the environment-to-API-to-admin-SPA data flow end to end."}

@@ -27,7 +27,9 @@ type TurnstileWindow = {
 };
 
 declare global {
-  interface Window extends TurnstileWindow {}
+  interface Window {
+    turnstile?: TurnstileWindow['turnstile'];
+  }
 }
 
 type LoginFormValues = {
@@ -60,7 +62,7 @@ export function LoginPage() {
   const [cfTurnstileToken, setCfTurnstileToken] = useState('');
   const [turnstileSiteKey, setTurnstileSiteKey] = useState(String(import.meta.env.VITE_CF_TURNSTILE_SITE_KEY ?? '').trim());
   const [turnstileRequired, setTurnstileRequired] = useState<boolean | null>(null);
-  const turnstileEnabled = Boolean(turnstileSiteKey) && (turnstileRequired ?? true);
+  const turnstileEnabled = Boolean(turnstileSiteKey) && turnstileRequired === true;
   const turnstileContainerRef = useRef<HTMLDivElement | null>(null);
   const turnstileWidgetIdRef = useRef<string | number | null>(null);
   const turnstileScriptPromiseRef = useRef<Promise<void> | null>(null);
@@ -71,14 +73,14 @@ export function LoginPage() {
 
   const removeTurnstileWidget = () => {
     const turnstile = getTurnstile();
-    if (!turnstileWidgetIdRef.current || !turnstile) {
-      return;
-    }
+    const widgetId = turnstileWidgetIdRef.current;
 
-    try {
-      turnstile.remove(turnstileWidgetIdRef.current);
-    } catch {
-      // ignore cleanup errors
+    if (widgetId !== null && turnstile) {
+      try {
+        turnstile.remove(widgetId);
+      } catch {
+        // ignore cleanup errors
+      }
     }
 
     turnstileWidgetIdRef.current = null;
@@ -87,15 +89,19 @@ export function LoginPage() {
 
   const resetTurnstileWidget = () => {
     const turnstile = getTurnstile();
-    if (!turnstileWidgetIdRef.current || !turnstile) {
+    const widgetId = turnstileWidgetIdRef.current;
+    if (widgetId === null || !turnstile) {
+      setCfTurnstileToken('');
       return;
     }
 
     try {
-      turnstile.reset(turnstileWidgetIdRef.current);
+      turnstile.reset(widgetId);
+      setCfTurnstileToken('');
+      return;
     } catch {
       try {
-        turnstile.remove(turnstileWidgetIdRef.current);
+        turnstile.remove(widgetId);
       } catch {
         // ignore
       }
@@ -175,7 +181,7 @@ export function LoginPage() {
       const config = await getLoginConfig();
       setTurnstileRequired(config.cfTurnstileEnabled);
       const nextSiteKey = String(config.cfTurnstileSiteKey || '').trim() || String(turnstileSiteKey).trim();
-      setTurnstileSiteKey((current) => current || nextSiteKey);
+      setTurnstileSiteKey(nextSiteKey);
 
       if (config.cfTurnstileEnabled && nextSiteKey) {
         await initializeTurnstile({ siteKey: nextSiteKey, required: true });
@@ -251,28 +257,32 @@ export function LoginPage() {
       .then((config) => {
         if (!isMounted) return;
         setTurnstileRequired(config.cfTurnstileEnabled);
-        setTurnstileSiteKey((currentKey) => currentKey || config.cfTurnstileSiteKey);
+        setTurnstileSiteKey((currentKey) => config.cfTurnstileSiteKey || currentKey);
       })
-      .catch(() => {});
-
-    if (turnstileEnabled && !challengeId) {
-      void initializeTurnstile({ siteKey: turnstileSiteKey, required: turnstileRequired ?? true });
-    }
+      .catch(() => {
+        if (isMounted) {
+          setTurnstileRequired(Boolean(turnstileSiteKey));
+        }
+      });
 
     return () => {
       isMounted = false;
       removeTurnstileWidget();
     };
-  }, [challengeId, turnstileEnabled, turnstileRequired, turnstileSiteKey]);
+  }, []);
 
   useEffect(() => {
-    setChallengeId(null);
-    resetTurnstileWidget();
-    if (!turnstileEnabled) {
+    if (!turnstileEnabled || challengeId) {
+      removeTurnstileWidget();
       return;
     }
+
     void initializeTurnstile({ siteKey: turnstileSiteKey, required: turnstileRequired ?? true });
-  }, [loginScope, turnstileEnabled, turnstileSiteKey, turnstileRequired]);
+
+    return () => {
+      removeTurnstileWidget();
+    };
+  }, [challengeId, loginScope, turnstileEnabled, turnstileSiteKey, turnstileRequired]);
 
   return (
     <main className="admin-login-page">

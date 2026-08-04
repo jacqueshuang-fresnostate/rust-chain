@@ -2,6 +2,13 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-08-05 05:31 - 修复 1Panel 后台登录 Turnstile 不显示
+
+- 完成内容：线上核对 `https://hipoex.cllbmz.kdns.fr` 后确认 `/admin/api/v1/auth/login/config` 被 Cloudflare Managed Challenge 拦截，而公开 `/api/v1/auth/login/config` 返回 `cf_turnstile_enabled=false`、`cf_turnstile_site_key=null`；修正服务端策略，使非空 Secret 与 Site Key 决定组件启用，`CF_TURNSTILE_ENFORCE_TOKEN` 只决定已有 `cf_clearance` 时是否仍强制 token，避免 `false` 意外关闭整个功能；后台登录改为优先读取公开配置端点并以管理员端点兜底，运行时 Site Key 优先于构建期值；收敛 React 初始化/清理流程，修复重复初始化、widget id 为 `0` 时清理失败及 reset 后错误丢弃 id；1Panel 示例将 Site Key 设为必填并默认 `CF_TURNSTILE_ENFORCE_TOKEN=true`，本地忽略的实际 `docker-compose.1panel.yml` 同步加入当前 Site Key 默认值与中文说明。
+- 修改文件：`src/modules/auth/routes.rs`、`tests/unit_src/src_modules_auth_routes_tests.rs`、`web/src/api/{adminAuth,adminAuth.test}.ts`、`web/src/auth/{LoginPage,LoginPage.test}.tsx`、`docker-compose.1panel.{example.yml,env.example}`、本地忽略文件 `docker-compose.1panel.yml`、`.trellis/spec/backend/container-delivery.md`、`.trellis/tasks/08-05-fix-1panel-admin-turnstile-display/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：线上修复前探测确认管理员配置和页面路径返回 Cloudflare 403 Challenge，公开配置返回 HTTP 200 但策略关闭；`cargo fmt --all -- --check`、`cargo check --all-targets`、Auth 路由单元测试 4/4 通过；后台聚焦测试 6/6、完整测试（设置既有测试合同要求的 `VITE_API_BASE_URL=http://127.0.0.1:8080`）263/263、`npm --prefix web run typecheck`、`npm --prefix web run lint`、`npm --prefix web run build` 通过；两份 1Panel Compose 使用案例环境执行 `docker compose config --quiet` 通过；Trellis context 校验与 `git diff --check` 通过。未设置 `VITE_API_BASE_URL` 的首次完整 Web 测试仅有 4 项既有绝对 URL 断言失败，补齐该测试环境变量后全量通过。
+- 后续事项：推送新镜像并在 1Panel 重新创建 API 容器后，确认 `GET /api/v1/auth/login/config` 返回 `cf_turnstile_enabled=true` 和正确 Site Key；Cloudflare Dashboard 中的 Widget Hostname 需包含实际后台域名。
+
 ## 2026-08-05 10:20 - 通过 outbox-inbox MQ 链路异步预创建用户钱包账户
 
 - 完成内容：

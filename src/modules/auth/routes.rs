@@ -413,17 +413,21 @@ fn has_cf_clearance_cookie(headers: &HeaderMap) -> bool {
 }
 
 async fn verify_cf_turnstile_token(token: Option<&str>, headers: &HeaderMap) -> AppResult<()> {
-    let (require_token, _) = get_login_turnstile_policy();
+    let (enabled, _) = get_login_turnstile_policy();
+    if !enabled {
+        return Ok(());
+    }
+
     let secret = match env_cf_turnstile_secret() {
         Some(secret) => secret,
         None => return Ok(()),
     };
 
-    if !require_token {
-        if has_cf_clearance_cookie(headers) {
-            return Ok(());
-        }
-
+    if !should_require_turnstile_token(
+        enabled,
+        env_cf_turnstile_enforce_token(),
+        has_cf_clearance_cookie(headers),
+    ) {
         return Ok(());
     }
 
@@ -495,12 +499,24 @@ async fn verify_cf_turnstile_token(token: Option<&str>, headers: &HeaderMap) -> 
 }
 
 fn get_login_turnstile_policy() -> (bool, Option<String>) {
-    let site_key = env_cf_turnstile_site_key();
-    let enabled = env_cf_turnstile_secret().is_some()
-        && env_cf_turnstile_enforce_token()
-        && site_key.is_some();
+    login_turnstile_policy(env_cf_turnstile_secret(), env_cf_turnstile_site_key())
+}
+
+fn login_turnstile_policy(
+    secret: Option<String>,
+    site_key: Option<String>,
+) -> (bool, Option<String>) {
+    let enabled = secret.is_some() && site_key.is_some();
 
     (enabled, site_key)
+}
+
+fn should_require_turnstile_token(
+    enabled: bool,
+    enforce_token: bool,
+    has_cf_clearance: bool,
+) -> bool {
+    enabled && (enforce_token || !has_cf_clearance)
 }
 
 fn env_cf_turnstile_secret() -> Option<String> {

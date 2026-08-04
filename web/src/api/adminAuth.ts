@@ -51,10 +51,12 @@ function normalizeLoginConfig(response: LoginConfigApiResponse): LoginConfig {
 
 export async function getLoginConfig(): Promise<LoginConfig> {
   try {
-    const response = await apiRequest<LoginConfigApiResponse>('/admin/api/v1/auth/login/config');
+    // This public read-only endpoint carries the same policy and is less likely to be
+    // intercepted by an admin-path Cloudflare Managed Challenge rule.
+    const response = await apiRequest<LoginConfigApiResponse>('/api/v1/auth/login/config');
     return normalizeLoginConfig(response);
   } catch {
-    const response = await apiRequest<LoginConfigApiResponse>('/api/v1/auth/login/config');
+    const response = await apiRequest<LoginConfigApiResponse>('/admin/api/v1/auth/login/config');
     return normalizeLoginConfig(response);
   }
 }

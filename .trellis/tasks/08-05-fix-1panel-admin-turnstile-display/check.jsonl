@@ -1,0 +1,4 @@
+{"file":".trellis/spec/admin/ui-system.md","reason":"Check admin tests, typecheck, lint, build, and accessible feedback states."}
+{"file":".trellis/spec/backend/user-authentication.md","reason":"Check login config and Turnstile policy consistency."}
+{"file":".trellis/spec/backend/container-delivery.md","reason":"Check Compose examples and integrated image runtime behavior."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check cross-layer field mapping and production fallback behavior."}

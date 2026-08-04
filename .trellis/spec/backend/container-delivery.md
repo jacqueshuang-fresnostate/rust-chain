@@ -23,6 +23,8 @@
 - Health endpoint: `GET /health` returns HTTP 200 with `{"status":"ok"}`.
 - Published image: `ghcr.io/jacqueshuang-fresnostate/rust-chain:<tag>`.
 - Build workflow: native GitHub Actions matrix plus digest-based manifest finalization.
+- Runtime Turnstile policy endpoint:
+  `GET /api/v1/auth/login/config -> { cf_turnstile_enabled, cf_turnstile_site_key }`.
 
 ### 3. Contracts
 
@@ -47,6 +49,17 @@
   non-PID-1 warning or child-reaping gap.
 - Required API environment keys are `DATABASE_URL`, `MONGODB_URI`, `MONGODB_DATABASE`,
   `REDIS_URL`, `RABBITMQ_URL`, `JWT_SECRET`, and `CREDENTIAL_ENCRYPTION_KEY`.
+- Runtime login Turnstile uses `CF_TURNSTILE_SECRET` (or the legacy
+  `CF_TURNSTILE_SECRET_KEY`), `CF_TURNSTILE_SITE_KEY`,
+  `CF_TURNSTILE_SITEVERIFY_URL`, and `CF_TURNSTILE_ENFORCE_TOKEN`. The integrated admin SPA must
+  obtain the public Site Key from the login-config API; a Vite build-time key is fallback only.
+- Turnstile is enabled when both a non-blank Secret and Site Key exist. The enforce flag does not
+  control widget visibility. It only controls whether an existing `cf_clearance` cookie may skip
+  the login token: `true` always requires `cf_turnstile_token`; `false` skips only when
+  `cf_clearance` is present and otherwise still requires the token.
+- The admin SPA reads `/api/v1/auth/login/config` before the equivalent admin path because a
+  Cloudflare Managed Challenge may target `/admin/*`. The admin endpoint remains a fallback and
+  must return the same policy.
 - `CREDENTIAL_ENCRYPTION_KEY` must remain exactly 32 bytes and stable after encrypted data exists.
 - The migration service always requires `DATABASE_URL`. It may also receive
   `BOOTSTRAP_ADMIN_USERNAME`, `BOOTSTRAP_ADMIN_PASSWORD`, and
@@ -127,6 +140,11 @@
 | Exact pre-repair database state is required | Restore the verified full backup into an isolated target; do not reverse columns in place |
 | Full-stack MongoDB, Redis, or RabbitMQ is unhealthy | API remains blocked |
 | A 1Panel dependency URL or external network is invalid | Migration or API exits diagnostically; do not create a replacement dependency |
+| Turnstile Secret or Site Key is blank | Return `cf_turnstile_enabled=false`; do not require a token the client cannot render |
+| Secret and Site Key are present, `CF_TURNSTILE_ENFORCE_TOKEN=true` | Return enabled config and require a valid token on every login |
+| Secret and Site Key are present, enforce is false, no `cf_clearance` exists | Return enabled config and still require a valid token |
+| Secret and Site Key are present, enforce is false, valid `cf_clearance` exists | The login token may be skipped |
+| Cloudflare challenges `/admin/api/v1/auth/login/config` | Admin SPA uses the public login-config path and still renders the widget |
 | The `web/` lockfile cannot complete a clean `npm ci` | Fail the image build; do not use an unlocked install |
 | Rust is unavailable or API `/health` is non-200 | Nginx health route fails and the container becomes unhealthy |
 | A browser opens `/login`, `/admin/*`, or `/agent/*` | Return the built SPA `index.html` |
@@ -148,6 +166,9 @@
 - Good (1Panel): install dependencies separately, connect them to the selected external network,
   provide full connection URLs through the Compose environment, observe migration exit `0`, and
   proxy only the healthy API through HTTPS.
+- Good (Turnstile): configure matching Site Key and Secret values, recreate the API container,
+  confirm the public login-config response is enabled, and render the runtime Site Key in the admin
+  login page even when `/admin/*` has a Managed Challenge rule.
 - Base: run the local image with all four external dependencies and the required environment keys;
   access browser pages and API paths through the same origin.
 - Bad: start the API and migration in parallel, use `depends_on` without health/completion
@@ -158,6 +179,9 @@
 - Bad (1Panel): redefine MySQL or Redis in the application Compose, pass bootstrap credentials to
   the API, assume App Store container names, expose port `8080` publicly without intent, or treat a
   successfully exited migration container as a failure.
+- Bad (Turnstile): set only the Secret, use `CF_TURNSTILE_ENFORCE_TOKEN=false` as an enable/disable
+  switch, rely only on a Vite build-time key, or fetch the admin-scoped config first behind a
+  Cloudflare `/admin/*` challenge rule.
 
 ### 6. Tests Required
 
@@ -180,6 +204,11 @@
   values.
 - Assert expanded `migrate` contains all three bootstrap variables while expanded `api` contains
   none of them.
+- Assert the expanded 1Panel API environment contains matching Turnstile Secret/Site Key examples,
+  the default enforce value is `true`, and the login policy is disabled if either half is absent.
+- Unit-test the enforce/`cf_clearance` matrix. In the admin Web tests, assert the public config path
+  is requested first, the admin path is a fallback, the runtime Site Key reaches
+  `turnstile.render`, and the callback token reaches the login request.
 - Build the image and assert UID/GID, both Rust executable paths, Tini entrypoint, supervisor command,
   built `index.html`, Nginx config, health check, exposed port `8080`, and writable runtime paths.
 - Assert the image entrypoint is exactly `["/usr/bin/tini","-s","--"]` and a direct migration
@@ -236,4 +265,15 @@ services:
   migrate:
     environment:
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-Qaz123456@}
+```
+
+Turnstile enablement must not be coupled to the clearance override:
+
+```rust
+// Wrong: false hides the widget and disables all token verification.
+let enabled = secret.is_some() && site_key.is_some() && enforce_token;
+
+// Correct: credentials enable the widget; enforce only controls the clearance exception.
+let enabled = secret.is_some() && site_key.is_some();
+let require_token = enabled && (enforce_token || !has_cf_clearance);
 ```

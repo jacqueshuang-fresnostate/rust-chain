@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
@@ -47,6 +47,8 @@ function renderLoginPage() {
 describe('LoginPage', () => {
   beforeEach(() => {
     localStorage.clear();
+    delete window.turnstile;
+    document.querySelectorAll('script[src*="challenges.cloudflare.com/turnstile"]').forEach((script) => script.remove());
     adminLoginMock.mockReset();
     adminLoginTwoFactorMock.mockReset();
     agentLoginMock.mockReset();
@@ -54,6 +56,57 @@ describe('LoginPage', () => {
       usernameLoginEnabled: true,
       cfTurnstileEnabled: false,
       cfTurnstileSiteKey: '',
+    });
+  });
+
+  it('renders the runtime-configured Turnstile widget and submits its token', async () => {
+    const user = userEvent.setup();
+    let widgetOptions: Record<string, unknown> | undefined;
+    const renderWidget = vi.fn((_element: string | HTMLElement, options: Record<string, unknown>) => {
+      widgetOptions = options;
+      return 'widget-1';
+    });
+    window.turnstile = {
+      render: renderWidget,
+      reset: vi.fn(),
+      remove: vi.fn(),
+    };
+    getLoginConfigMock.mockResolvedValueOnce({
+      usernameLoginEnabled: true,
+      cfTurnstileEnabled: true,
+      cfTurnstileSiteKey: 'runtime-site-key',
+    });
+    adminLoginMock.mockResolvedValueOnce({
+      access_token: 'admin-access',
+      refresh_token: 'admin-refresh',
+      token_type: 'Bearer',
+      scope: 'admin',
+      subject: 'admin:7',
+    });
+
+    renderLoginPage();
+
+    await waitFor(() => {
+      expect(renderWidget).toHaveBeenCalledWith(
+        expect.objectContaining({ className: 'admin-login-turnstile-widget' }),
+        expect.objectContaining({ sitekey: 'runtime-site-key' }),
+      );
+    });
+    expect(getLoginConfigMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      (widgetOptions?.callback as ((token: string) => void) | undefined)?.('turnstile-token');
+    });
+    await user.type(screen.getByLabelText('管理员账号'), 'admin');
+    await user.type(screen.getByLabelText('密码'), 'password');
+    await user.click(screen.getByRole('button', { name: '登录' }));
+
+    await waitFor(() => {
+      expect(adminLoginMock).toHaveBeenCalledWith({
+        username: 'admin',
+        password: 'password',
+        cf_turnstile_token: 'turnstile-token',
+      });
     });
   });
 
