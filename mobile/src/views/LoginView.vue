@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Eye, EyeOff, ShieldCheck } from 'lucide-vue-next'
+import { Eye, EyeOff, LoaderCircle, ShieldCheck } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { fetchLoginConfig, loginWithPassword } from '@/api/auth'
 import { apiErrorMessage } from '@/api/client'
 import { useSessionStore } from '@/stores/session'
+import { useThemeStore } from '@/stores/theme'
 import { replaceAuthStep, sanitizeInternalRedirect } from '@/core/navigation'
 import logo from '@/assets/logo.png'
 
 type LoginMode = 'email' | 'username'
+type TurnstileStatus = 'idle' | 'loading' | 'ready' | 'verified' | 'expired' | 'error'
 
 type TurnstileWindow = {
   turnstile?: {
@@ -26,7 +28,8 @@ declare global {
 const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
-const { t } = useI18n()
+const theme = useThemeStore()
+const { locale, t } = useI18n()
 const loginMode = ref<LoginMode>('email')
 const account = ref('')
 const password = ref('')
@@ -47,10 +50,22 @@ const turnstileEnabled = computed(() => {
 const cfTurnstileToken = ref('')
 const turnstileContainer = ref<HTMLDivElement | null>(null)
 const turnstileWidgetId = ref<string | number | null>(null)
+const turnstileStatus = ref<TurnstileStatus>('idle')
 const safeRedirect = computed(() => sanitizeInternalRedirect(route.query.redirect))
 let turnstileScriptPromise: Promise<void> | null = null
 
 const turnstileEnabledText = computed(() => t('auth.turnstileRequired'))
+const turnstileTheme = computed(() => theme.theme === 'dark' ? 'dark' : 'light')
+const turnstileLanguage = computed(() => locale.value === 'en' ? 'en' : 'zh-CN')
+const turnstileStatusKey = computed(() => ({
+  idle: 'auth.turnstileLoading',
+  loading: 'auth.turnstileLoading',
+  ready: 'auth.turnstileReady',
+  verified: 'auth.turnstileVerified',
+  expired: 'auth.turnstileExpired',
+  error: 'auth.turnstileError',
+})[turnstileStatus.value])
+const turnstileStatusText = computed(() => t(turnstileStatusKey.value))
 const cfTurnstileTokenRequiredMessage = 'cf_turnstile_token is required'
 
 function isTurnstileTokenMissingError(error: unknown): boolean {
@@ -112,7 +127,9 @@ async function submit(): Promise<void> {
     submitting.value = false
     if (turnstileEnabled.value) {
       resetCfTurnstileWidget()
-      void initializeTurnstile()
+      if (turnstileWidgetId.value === null) {
+        void initializeTurnstile()
+      }
     }
   }
 }
@@ -123,32 +140,44 @@ function getTurnstileWidgetWindow(): TurnstileWindow['turnstile'] | undefined {
 
 function resetCfTurnstileWidget(): void {
   const turnstile = getTurnstileWidgetWindow()
-  if (!turnstileWidgetId.value || !turnstile) return
+  const widgetId = turnstileWidgetId.value
+  cfTurnstileToken.value = ''
+
+  if (widgetId === null || !turnstile) {
+    turnstileWidgetId.value = null
+    turnstileStatus.value = turnstileEnabled.value ? 'loading' : 'idle'
+    return
+  }
 
   try {
-    turnstile.reset(turnstileWidgetId.value)
+    turnstile.reset(widgetId)
+    turnstileStatus.value = 'ready'
+    return
   } catch {
     // fallback: if reset is unavailable under some browsers, attempt hard remove + re-render later.
     try {
-      turnstile.remove(turnstileWidgetId.value)
+      turnstile.remove(widgetId)
+    } catch {
+      // ignore
+    }
+  }
+  turnstileWidgetId.value = null
+  turnstileStatus.value = 'idle'
+}
+
+function removeTurnstileWidget(): void {
+  const turnstile = getTurnstileWidgetWindow()
+  const widgetId = turnstileWidgetId.value
+  if (widgetId !== null && turnstile) {
+    try {
+      turnstile.remove(widgetId)
     } catch {
       // ignore
     }
   }
   turnstileWidgetId.value = null
   cfTurnstileToken.value = ''
-}
-
-function removeTurnstileWidget(): void {
-  const turnstile = getTurnstileWidgetWindow()
-  if (!turnstileWidgetId.value || !turnstile) return
-  try {
-    turnstile.remove(turnstileWidgetId.value)
-  } catch {
-    // ignore
-  }
-  turnstileWidgetId.value = null
-  cfTurnstileToken.value = ''
+  turnstileStatus.value = 'idle'
 }
 
 async function loadTurnstileScript(): Promise<void> {
@@ -180,6 +209,7 @@ async function loadTurnstileScript(): Promise<void> {
 
 async function initializeTurnstile(): Promise<void> {
   if (!turnstileEnabled.value) {
+    removeTurnstileWidget()
     return
   }
 
@@ -189,28 +219,43 @@ async function initializeTurnstile(): Promise<void> {
   }
 
   try {
+    turnstileStatus.value = 'loading'
     await loadTurnstileScript()
     const turnstile = getTurnstileWidgetWindow()
     if (!turnstile || !turnstileContainer.value) {
+      turnstileStatus.value = 'error'
       return
     }
     removeTurnstileWidget()
+    turnstileStatus.value = 'loading'
     turnstileWidgetId.value = turnstile.render(turnstileContainer.value, {
       sitekey: turnstileSiteKey.value,
+      size: 'flexible',
+      theme: turnstileTheme.value,
+      appearance: 'always',
+      language: turnstileLanguage.value,
+      'before-interactive-callback': () => {
+        turnstileStatus.value = 'ready'
+      },
       callback: (token: string) => {
         cfTurnstileToken.value = token || ''
+        turnstileStatus.value = token ? 'verified' : 'ready'
       },
       'expired-callback': () => {
         cfTurnstileToken.value = ''
+        turnstileStatus.value = 'expired'
       },
       'error-callback': () => {
         cfTurnstileToken.value = ''
+        turnstileStatus.value = 'error'
       },
       'timeout-callback': () => {
         cfTurnstileToken.value = ''
+        turnstileStatus.value = 'expired'
       },
     })
   } catch {
+    turnstileStatus.value = 'error'
     error.value = t('auth.turnstileLoadFailed')
   }
 }
@@ -218,7 +263,7 @@ async function initializeTurnstile(): Promise<void> {
 async function refreshLoginConfig(): Promise<void> {
   const loginConfig = await fetchLoginConfig()
   usernameLoginEnabled.value = loginConfig.usernameLoginEnabled
-  if (!turnstileSiteKey.value && loginConfig.cfTurnstileSiteKey) {
+  if (loginConfig.cfTurnstileSiteKey) {
     turnstileSiteKey.value = loginConfig.cfTurnstileSiteKey
   }
   turnstileRequired.value = loginConfig.cfTurnstileEnabled
@@ -228,7 +273,7 @@ async function refreshLoginConfig(): Promise<void> {
     return
   }
 
-  resetCfTurnstileWidget()
+  removeTurnstileWidget()
 }
 
 onMounted(async () => {
@@ -237,10 +282,15 @@ onMounted(async () => {
   } catch {
     usernameLoginEnabled.value = false
     if (loginMode.value === 'username') selectMode('email')
+    if (turnstileEnabled.value) {
+      await initializeTurnstile()
+    }
   }
+})
 
+watch([turnstileTheme, turnstileLanguage], () => {
   if (turnstileEnabled.value) {
-    await initializeTurnstile()
+    void initializeTurnstile()
   }
 })
 
@@ -300,8 +350,19 @@ onBeforeUnmount(() => {
           <button type="button" @click="openAuthRoute('forgot-password')">{{ t('auth.forgotPassword') }}</button>
         </div>
 
-        <div v-if="turnstileEnabled" class="auth-cf-turnstile-wrap">
+        <div
+          v-if="turnstileEnabled"
+          class="auth-cf-turnstile"
+          :data-state="turnstileStatus"
+          role="group"
+          :aria-label="t('auth.turnstileTitle')"
+        >
+          <div v-if="turnstileWidgetId === null" class="auth-cf-turnstile-loading" aria-hidden="true">
+            <LoaderCircle class="auth-cf-turnstile-spinner" :size="17" />
+            <span>{{ t('auth.turnstileLoading') }}</span>
+          </div>
           <div ref="turnstileContainer" class="cf-turnstile-widget" />
+          <span id="auth-turnstile-status" class="sr-only" aria-live="polite">{{ turnstileStatusText }}</span>
         </div>
 
         <div class="login-submit-wrap">
@@ -564,17 +625,48 @@ onBeforeUnmount(() => {
   position: absolute;
 }
 
-.auth-cf-turnstile-wrap {
-  align-items: stretch;
+.auth-cf-turnstile {
+  align-items: center;
   display: flex;
-  justify-content: flex-start;
+  justify-content: center;
   margin-top: 12px;
-  min-height: 82px;
+  min-height: 70px;
+  min-width: 0;
+  overflow: visible;
+  position: relative;
+  width: 100%;
+}
+
+.auth-cf-turnstile-loading {
+  align-items: center;
+  color: var(--muted-strong);
+  display: flex;
+  font-size: 10px;
+  gap: 8px;
+  inset: 0;
+  justify-content: center;
+  line-height: 14px;
+  pointer-events: none;
+  position: absolute;
 }
 
 .cf-turnstile-widget {
-  transform: translateZ(0);
+  display: flex;
+  justify-content: center;
+  min-width: 0;
   width: 100%;
+}
+
+.cf-turnstile-widget :deep(iframe) {
+  max-width: 100% !important;
+}
+
+.auth-cf-turnstile-spinner {
+  animation: auth-turnstile-spin 0.9s linear infinite;
+}
+
+@keyframes auth-turnstile-spin {
+  to { rotate: 1turn; }
 }
 
 .auth-security-note {
@@ -596,5 +688,16 @@ onBeforeUnmount(() => {
 
 @media (max-width: 340px) {
   .auth-pencil-canvas { padding-inline: 16px; }
+
+  .auth-cf-turnstile {
+    margin-inline: -7px;
+    width: calc(100% + 14px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-cf-turnstile-spinner {
+    animation: none;
+  }
 }
 </style>

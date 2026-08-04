@@ -11,6 +11,10 @@ or destructive-action behavior.
 
 - Reuse tracked HIPPO assets from `web/src/assets/brand/`; do not restore the
   `RC / Rust Chain` placeholder brand.
+- User-facing admin decoration is Chinese-only. Keep the HIPPO brand name and
+  necessary business abbreviations such as KYC/API/PC, but do not render
+  `HIPPO OPERATIONS`, `OPERATIONS`, English environment/security badges, or
+  duplicate English section kickers above an existing Chinese heading.
 - `AdminLayout` owns the dark graphite navigation rail, sticky operations
   header, current navigation domain/page, production badge, administrator
   identity, and logout action.

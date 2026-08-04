@@ -88,10 +88,10 @@ describe('AdminLayout', () => {
     expect(container.querySelector('.semi-always-light')).toBeInTheDocument();
     expect(screen.getByAltText('HIPPO')).toBeInTheDocument();
     expect(screen.getByText('HIPPO')).toBeInTheDocument();
-    expect(screen.getByText('OPERATIONS')).toBeInTheDocument();
+    expect(screen.queryByText('OPERATIONS')).not.toBeInTheDocument();
     expect(screen.getByText('生产环境')).toBeInTheDocument();
     expect(container.querySelector('.admin-header-context')).toHaveTextContent('运营总览总览仪表盘');
-    expect(document.title).toBe('总览仪表盘 · HIPPO Operations');
+    expect(document.title).toBe('总览仪表盘 · HIPPO 管理后台');
     expect(container.querySelector('.admin-shell')).not.toBeInTheDocument();
     expect(container.querySelector('.admin-shell-nav')).not.toBeInTheDocument();
   });

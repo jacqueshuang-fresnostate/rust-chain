@@ -556,7 +556,6 @@ export function KycManagementPage() {
             <Space align="start" className="admin-kyc-panel" spacing={16} vertical style={{ width: '100%' }}>
               <div className="admin-section-heading">
                 <div>
-                  <Text className="admin-section-kicker">POLICY CONFIGURATION</Text>
                   <Title heading={4}>KYC 配置</Title>
                 </div>
                 <Text type="tertiary">修改配置后需填写操作原因并保留审计记录</Text>
@@ -648,7 +647,6 @@ export function KycManagementPage() {
             <Space align="start" className="admin-kyc-panel" spacing={16} vertical style={{ width: '100%' }}>
               <div className="admin-kyc-review-toolbar">
                 <div>
-                  <Text className="admin-section-kicker">REVIEW QUEUE</Text>
                   <Title heading={4}>人工审核</Title>
                   <Text type="tertiary">
                     {submissionTotal > submissions.length

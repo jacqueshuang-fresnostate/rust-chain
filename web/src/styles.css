@@ -5,7 +5,7 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  /* HIPPO Operations：石墨外壳、暖白工作区与橙色操作高光 */
+  /* HIPPO 管理后台：石墨外壳、暖白工作区与橙色操作高光 */
   --admin-space-xs: 4px;
   --admin-space-sm: 8px;
   --admin-space-md: 12px;
@@ -139,8 +139,7 @@ body {
 }
 
 .admin-brand-copy {
-  display: grid;
-  gap: 1px;
+  display: block;
   color: #fff;
   line-height: 1;
 }
@@ -148,13 +147,6 @@ body {
 .admin-brand-copy strong {
   font-size: 17px;
   letter-spacing: 0.04em;
-}
-
-.admin-brand-copy small {
-  color: rgba(255, 255, 255, 0.52);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.18em;
 }
 
 .admin-layout-nav .semi-navigation-list-wrapper {
@@ -376,19 +368,11 @@ body {
 
 .admin-login-copy h1 {
   max-width: 680px;
-  margin: 16px 0 22px;
+  margin: 0 0 22px;
   color: #fff;
   font-size: clamp(44px, 5vw, 72px);
   line-height: 1.02;
   letter-spacing: -0.055em;
-}
-
-.admin-login-eyebrow {
-  display: block;
-  color: #ff9a68 !important;
-  font-weight: 800;
-  letter-spacing: 0.22em;
-  font-size: 12px;
 }
 
 .admin-login-description {
@@ -571,14 +555,6 @@ body {
   border-top: 3px solid var(--admin-color-danger);
 }
 
-.admin-dashboard-section-kicker,
-.admin-section-kicker {
-  color: var(--admin-color-primary);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
-}
-
 .page-header {
   display: flex;
   align-items: center;
@@ -592,15 +568,6 @@ body {
 
 .page-header-copy {
   min-width: 0;
-}
-
-.page-header-kicker {
-  display: block;
-  margin-bottom: 6px;
-  color: var(--admin-color-primary);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.17em;
 }
 
 .page-header h2 {

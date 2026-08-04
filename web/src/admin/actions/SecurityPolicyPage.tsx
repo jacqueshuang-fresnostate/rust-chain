@@ -191,7 +191,6 @@ export function SecurityPolicyPage() {
             <Space align="start" spacing={20} vertical style={{ width: '100%' }}>
               <div className="admin-section-heading">
                 <div>
-                  <Text className="admin-section-kicker">ACCESS CONTROL</Text>
                   <Title heading={4}>登录策略</Title>
                 </div>
                 <Text type="tertiary">管理用户进入 PC 端时的身份验证强度</Text>
@@ -240,7 +239,6 @@ export function SecurityPolicyPage() {
             <Space align="start" spacing={20} vertical style={{ width: '100%' }}>
               <div className="admin-section-heading">
                 <div>
-                  <Text className="admin-section-kicker">PAYMENT VERIFICATION</Text>
                   <Title heading={4}>资金动作校验</Title>
                 </div>
                 <Text type="tertiary">按动作独立启用资金密码或双因素认证</Text>
@@ -278,7 +276,6 @@ export function SecurityPolicyPage() {
             <Space align="start" spacing={20} vertical style={{ width: '100%' }}>
               <div className="admin-section-heading">
                 <div>
-                  <Text className="admin-section-kicker">CONNECTED IDENTITIES</Text>
                   <Title heading={4}>第三方账号绑定</Title>
                 </div>
                 <Text type="tertiary">控制用户安全中心中可见的外部身份入口</Text>
@@ -307,7 +304,6 @@ export function SecurityPolicyPage() {
             <Space align="start" spacing={20} vertical style={{ width: '100%' }}>
               <div className="admin-section-heading">
                 <div>
-                  <Text className="admin-section-kicker">POLICY OVERVIEW</Text>
                   <Title heading={4}>策略摘要</Title>
                 </div>
                 <Text type="tertiary">提交前复核当前工作区内的完整策略状态</Text>

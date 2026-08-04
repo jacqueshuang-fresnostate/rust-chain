@@ -67,7 +67,7 @@ export function AdminLayout() {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   useEffect(() => {
-    document.title = `${navContext.page} · HIPPO Operations`;
+    document.title = `${navContext.page} · HIPPO 管理后台`;
   }, [navContext.page]);
 
   useEffect(() => {
@@ -105,7 +105,6 @@ export function AdminLayout() {
             ) : (
               <span className="admin-brand-copy">
                 <strong>HIPPO</strong>
-                <small>OPERATIONS</small>
               </span>
             )
           }}

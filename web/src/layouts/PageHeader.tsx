@@ -11,13 +11,12 @@ type PageHeaderProps = {
 
 export function PageHeader({ actions, description, title }: PageHeaderProps) {
   useEffect(() => {
-    document.title = `${title} · HIPPO Operations`;
+    document.title = `${title} · HIPPO 管理后台`;
   }, [title]);
 
   return (
     <header className="page-header">
       <div className="page-header-copy">
-        <Text className="page-header-kicker">HIPPO OPERATIONS</Text>
         <Title heading={2}>{title}</Title>
         {description ? (
           <Text className="page-header-description" type="tertiary">

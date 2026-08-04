@@ -1,0 +1,5 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/admin/ui-system.md", "reason": "Verify brand, header, responsive, and accessibility behavior."}
+{"file": ".trellis/spec/admin/index.md", "reason": "Run the complete admin quality gate."}
+{"file": "web/src/auth/LoginPage.test.tsx", "reason": "Assert Chinese login branding and absence of the English operations label."}
+{"file": "web/src/layouts/AdminLayout.test.tsx", "reason": "Assert the sidebar no longer shows OPERATIONS and document titles are Chinese."}

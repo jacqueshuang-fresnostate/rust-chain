@@ -250,7 +250,7 @@ export function LoginPage() {
   const accountLabel = isAgentLogin ? '代理账号' : '管理员账号';
 
   useEffect(() => {
-    document.title = '登录 · HIPPO Operations';
+    document.title = '登录 · HIPPO 管理后台';
 
     let isMounted = true;
     getLoginConfig()
@@ -291,9 +291,8 @@ export function LoginPage() {
           <img alt="HIPPO" className="admin-login-logo" src={hippoLogoLandscape} />
           <div className="admin-login-environment">
             <span aria-hidden="true" />
-            <Text>PRODUCTION OPERATIONS</Text>
+            <Text>生产环境</Text>
           </div>
-          <Text className="admin-login-eyebrow">HIPPO OPERATIONS</Text>
           <Title heading={1}>让每一次运营决策清晰可控</Title>
           <Text className="admin-login-description">
             统一管理用户身份、资产资金、交易市场与风险策略。所有关键操作保留权限校验和审计链路。
@@ -307,9 +306,9 @@ export function LoginPage() {
         <Card bordered={false} shadows="always" className="admin-login-card">
           <div className="admin-login-badge">
             <IconShield />
-            <span>SECURE ACCESS</span>
+            <span>安全访问</span>
           </div>
-          <Title heading={3}>登录 HIPPO Operations</Title>
+          <Title heading={3}>管理员登录</Title>
           {challengeId ? (
             <>
               <Text type="tertiary">请输入验证器应用中的 6 位动态码</Text>

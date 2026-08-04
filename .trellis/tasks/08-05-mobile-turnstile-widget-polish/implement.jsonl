@@ -1,0 +1,7 @@
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Preserve mobile theme, responsive shell, safe-area, motion, and WebView contracts."}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Preserve login configuration, token submission, and API error behavior."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check Cloudflare script, Vue state, API token, and UI status as one data flow."}
+{"file":".trellis/tasks/08-05-mobile-turnstile-widget-polish/research/cloudflare-widget-options.md","reason":"Use official responsive size and explicit-render options."}
+{"file": "mobile/src/views/LoginView.vue", "reason": "Implement responsive Turnstile shell, app theme/locale rendering, truthful status, and widget lifecycle."}
+{"file": "mobile/src/i18n/messages/zh-CN.ts", "reason": "Add Chinese Turnstile state copy."}
+{"file": "mobile/src/i18n/messages/en.ts", "reason": "Add English Turnstile state copy."}

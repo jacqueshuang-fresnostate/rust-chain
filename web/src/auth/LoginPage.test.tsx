@@ -122,9 +122,11 @@ describe('LoginPage', () => {
 
     renderLoginPage();
     expect(screen.getByAltText('HIPPO')).toBeInTheDocument();
-    expect(screen.getByText('HIPPO OPERATIONS')).toBeInTheDocument();
-    expect(screen.getByText('PRODUCTION OPERATIONS')).toBeInTheDocument();
-    expect(document.title).toBe('登录 · HIPPO Operations');
+    expect(screen.queryByText('HIPPO OPERATIONS')).not.toBeInTheDocument();
+    expect(screen.getByText('生产环境')).toBeInTheDocument();
+    expect(screen.getByText('安全访问')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '管理员登录' })).toBeInTheDocument();
+    expect(document.title).toBe('登录 · HIPPO 管理后台');
     await user.type(screen.getByLabelText('管理员账号'), 'admin');
     await user.type(screen.getByLabelText('密码'), 'password');
     await user.click(screen.getByRole('button', { name: '登录' }));

@@ -156,6 +156,16 @@ ProductHub header/body/first-row y at 390px: 0..60 / 60 / 68
   their full-page identity header. News, Swap, Earn, Loan, and New Coin flows
   remain secondary pages with their real APIs, loading/guest/error states, and
   back fallbacks intact.
+- The login Turnstile uses Cloudflare explicit rendering with `size: flexible`,
+  the current application light/dark theme, and the current mobile locale. Its
+  centered stage may widen to 302px inside a 320px viewport so the official
+  300px minimum challenge remains usable, but it must stay inside the viewport
+  and leave `documentElement.scrollWidth` unchanged. The application must not
+  wrap the widget in a decorative card or duplicate Cloudflare branding. Do
+  not scale, clip, cover, or disable pointer events on the Cloudflare iframe.
+  A lightweight loader may occupy the centered stage before `render` returns;
+  later states use Cloudflare's native surface plus an `aria-live` message. A
+  successful `reset` retains its widget ID, including numeric ID `0`.
 - Shared selected-page light/dark tokens and every selector rooted at
   `html[data-theme='dark']` belong in global `pencil-selected-pages.css`. Do not
   place `:global(html[data-theme='dark']) .local-class` in a scoped SFC: this
@@ -216,6 +226,9 @@ ProductHub header/body/first-row y at 390px: 0..60 / 60 / 68
 | Spot market stream has no rows yet | Show a truthful loading/unavailable state; never synthesize book or trade rows |
 | Nested spot input receives focus | Apply one ring to `.spot-field-shell`; child input keeps `box-shadow: none` |
 | Assistive live status is rendered | `.sr-only` remains absolute, clipped, 1x1px, and visually absent |
+| Turnstile renders at 320px | Keep a centered 302px stage and 300px challenge viewport within the device width; no decorative wrapper or horizontal scroll |
+| Turnstile theme or locale changes | Remove and explicitly re-render the widget with the new app theme/language, clearing the previous token |
+| Turnstile reset returns successfully | Keep the existing widget ID and expose the ready state; hard remove only when reset fails |
 | A selected-page dark rule needs `html[data-theme='dark']` | Define it in global `pencil-selected-pages.css`; do not rely on scoped `:global(...)` output |
 | Wallet/deposit page changes theme | Resolve the root canvas to `#ffffff`/`#000000` from the global layer |
 | Contract, Seconds, Product Hub, or Prediction changes theme | Resolve the root canvas to `#ffffff`/`#000000` with no background image |

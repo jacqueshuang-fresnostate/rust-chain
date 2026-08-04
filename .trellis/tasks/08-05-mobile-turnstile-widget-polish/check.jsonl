@@ -1,0 +1,6 @@
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Verify 320–448px, dual-theme, accessibility, safe-area, and no-overflow behavior."}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Verify auth config and token callback behavior did not regress."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify external widget lifecycle and status consistency."}
+{"file":".trellis/tasks/08-05-mobile-turnstile-widget-polish/research/cloudflare-widget-options.md","reason":"Check implementation against official Turnstile option semantics."}
+{"file": "mobile/tests/mobile-turnstile-widget.test.ts", "reason": "Verify render options, lifecycle, accessibility, responsive styles, and locale parity."}
+{"file": "mobile/src/views/LoginView.vue", "reason": "Review runtime callbacks and narrow-screen geometry."}

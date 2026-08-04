@@ -6817,3 +6817,17 @@
 - 修改文件：`src/modules/convert/infrastructure.rs`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：`cargo fmt --all -- src/modules/convert/infrastructure.rs` 通过；`cargo test --test convert_routes convert_confirm_rolls_back_order_when_settlement_fails_and_allows_retry -- --nocapture` 执行通过（当前环境未设置 `DATABASE_URL`，该用例按既定分支返回跳过主流程分支）；`git diff --check` 通过。
 - 后续事项：如需提升稳定性，可再补一条“缺失钱包行会自动初始化且可逆恢复”的单元化数据库集成回归。
+
+## 2026-08-05 06:10 - 优化手机端 Cloudflare Turnstile 居中体验
+
+- 完成内容：登录页 Turnstile 改为 Cloudflare 显式柔性渲染并跟随应用明暗主题和中英文语言；按最终反馈移除 `auth-cf-turnstile-wrap` 装饰卡片、重复品牌、背景、边框和阴影，仅保留原生组件居中及脚本加载占位；补齐加载、待验证、成功、过期和错误的真实回调与 `aria-live` 播报；修复 widget ID 为 `0` 时无法 reset/remove、reset 成功后错误丢弃现存 ID，以及运行时站点密钥不能覆盖构建值的问题。
+- 修改文件：`mobile/src/views/LoginView.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/mobile-turnstile-widget.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/08-05-mobile-turnstile-widget-polish/*`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Ego Browser 使用线上 Turnstile 配置实测 390px 浅色与 320px 深色；390px 原生组件舞台为 350px，320px 为 302px 且左右各留 9px，背景透明、无边框、无阴影、旧 `auth-cf-turnstile-wrap` 数量为 0，两种视口均满足 `documentElement.scrollWidth === innerWidth`；加载态到验证完成/交互态状态真实切换。`npm --prefix mobile run lint --if-present`、`npm --prefix mobile run type-check`、`npm --prefix mobile test`（279/279）、`npm --prefix mobile run build:pwa`、`npm --prefix mobile run build:tauri`、`git diff --check`、Trellis task validate 全部通过。
+- 后续事项：无。
+
+## 2026-08-05 06:21 - 移除后台装饰性英文标签
+
+- 完成内容：后台登录页移除 `HIPPO OPERATIONS`，并将环境、安全徽标、登录标题与浏览器标题统一改为中文；侧边栏只保留 HIPPO 品牌，不再显示 `OPERATIONS`；共享 PageHeader、总览仪表盘、KYC 工作台与安全策略页移除已有中文标题上方的重复英文 kicker；同步清理废弃样式并收紧登录页标题间距，保留 HIPPO 品牌名及 KYC/API/PC 等必要业务缩写。
+- 修改文件：`web/src/auth/{LoginPage.tsx,LoginPage.test.tsx}`、`web/src/layouts/{AdminLayout.tsx,AdminLayout.test.tsx,PageHeader.tsx}`、`web/src/admin/dashboard/DashboardPage.tsx`、`web/src/admin/actions/{KycManagementPage,SecurityPolicyPage}.tsx`、`web/src/styles.css`、`.trellis/spec/admin/ui-system.md`、`.trellis/tasks/08-05-admin-chinese-brand-copy/*`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Ego Browser 在 1440×900 实测登录页与总览仪表盘，页面正文 `OPERATIONS` 命中数为 0、英文 kicker 节点为 0、侧栏品牌文本仅为 `HIPPO`，登录页标题为“登录 · HIPPO 管理后台”，总览标题为“总览仪表盘 · HIPPO 管理后台”，两页均无横向溢出。`npm --prefix web run typecheck`、`npm --prefix web run lint`、定向测试 16/16、`VITE_API_BASE_URL=http://127.0.0.1:8080 npm --prefix web run test`（263/263）、`npm --prefix web run build`、静态英文扫描、`git diff --check` 与 Trellis task validate 全部通过；构建仅保留既有 lottie `eval` 和大 chunk 警告。
+- 后续事项：无。

@@ -1,0 +1,10 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/admin/ui-system.md", "reason": "Preserve admin shell structure while removing decorative English labels."}
+{"file": ".trellis/spec/admin/index.md", "reason": "Follow the admin quality gate and Chinese user-facing copy contract."}
+{"file": "web/src/auth/LoginPage.tsx", "reason": "Localize login environment, access, heading, and document title."}
+{"file": "web/src/layouts/AdminLayout.tsx", "reason": "Remove the OPERATIONS subtitle and localize shell titles."}
+{"file": "web/src/layouts/PageHeader.tsx", "reason": "Remove shared English kicker and localize document titles."}
+{"file": "web/src/admin/dashboard/DashboardPage.tsx", "reason": "Remove repeated English detail-card kickers."}
+{"file": "web/src/admin/actions/KycManagementPage.tsx", "reason": "Remove repeated English KYC kickers."}
+{"file": "web/src/admin/actions/SecurityPolicyPage.tsx", "reason": "Remove repeated English security kickers."}
+{"file": "web/src/styles.css", "reason": "Remove obsolete kicker styles and rebalance login heading spacing."}

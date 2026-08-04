@@ -156,7 +156,6 @@ export function DashboardPage() {
           <section className="admin-dashboard-detail-grid">
             <Card bordered={false} className="admin-dashboard-detail-card">
               <Space align="start" spacing={12} vertical>
-                <Text className="admin-dashboard-section-kicker">MARKET FEED</Text>
                 <Title heading={4}>行情订阅</Title>
                 <StatusTag value={dashboard.market.feed_runtime_status} />
                 <Text>当前启动 providers：{joinList(dashboard.market.feed_providers)}</Text>
@@ -166,7 +165,6 @@ export function DashboardPage() {
             </Card>
             <Card bordered={false} className="admin-dashboard-detail-card admin-dashboard-detail-card-warning">
               <Space align="start" spacing={12} vertical>
-                <Text className="admin-dashboard-section-kicker">CUSTODY</Text>
                 <Title heading={4}>资金与链上状态</Title>
                 <Banner type="warning" description={custodyText(dashboard.wallet.custody_status)} />
                 <Text>待解禁：{displayNumber(dashboard.wallet.pending_unlocks)}</Text>
@@ -176,7 +174,6 @@ export function DashboardPage() {
             </Card>
             <Card bordered={false} className="admin-dashboard-detail-card">
               <Space align="start" spacing={12} vertical>
-                <Text className="admin-dashboard-section-kicker">PRODUCTS</Text>
                 <Title heading={4}>产品运行</Title>
                 <Text>秒合约未结算订单：{displayNumber(dashboard.products.seconds_open_orders)}</Text>
                 <Text>杠杆持仓：{displayNumber(dashboard.products.margin_open_positions)}</Text>
@@ -187,7 +184,6 @@ export function DashboardPage() {
             </Card>
             <Card bordered={false} className="admin-dashboard-detail-card admin-dashboard-detail-card-risk">
               <Space align="start" spacing={12} vertical>
-                <Text className="admin-dashboard-section-kicker">RISK EVENTS</Text>
                 <Title heading={4}>风控 / 事件积压</Title>
                 <Text>24h 风控事件：{displayNumber(dashboard.risk.risk_events_24h)}</Text>
                 <Text>24h 阻断事件：{displayNumber(dashboard.risk.blocked_events_24h)}</Text>
