@@ -26,6 +26,8 @@ export interface RegisterConfig {
 
 export interface LoginConfig {
   usernameLoginEnabled: boolean
+  cfTurnstileEnabled: boolean
+  cfTurnstileSiteKey: string
 }
 
 export async function login(data: LoginParams) {
@@ -90,6 +92,8 @@ export async function getLoginConfig(): Promise<{ code: number; message: string;
         message: 'success',
         data: {
             usernameLoginEnabled: Boolean(res.data?.username_login_enabled),
+            cfTurnstileEnabled: Boolean(res.data?.cf_turnstile_enabled),
+            cfTurnstileSiteKey: String(res.data?.cf_turnstile_site_key || '').trim(),
         },
     }
 }

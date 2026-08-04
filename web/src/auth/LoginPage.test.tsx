@@ -5,7 +5,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 
-import { adminLogin, adminLoginTwoFactor } from '../api/adminAuth';
+import { adminLogin, adminLoginTwoFactor, getLoginConfig } from '../api/adminAuth';
 import { agentLogin } from '../api/agentAuth';
 import { authStore } from './authStore';
 import { LoginPage } from './LoginPage';
@@ -13,7 +13,8 @@ import { LoginPage } from './LoginPage';
 vi.mock('../api/adminAuth', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/adminAuth')>()),
   adminLogin: vi.fn(),
-  adminLoginTwoFactor: vi.fn()
+  adminLoginTwoFactor: vi.fn(),
+  getLoginConfig: vi.fn(),
 }));
 
 vi.mock('../api/agentAuth', () => ({
@@ -23,6 +24,7 @@ vi.mock('../api/agentAuth', () => ({
 const adminLoginMock = vi.mocked(adminLogin);
 const adminLoginTwoFactorMock = vi.mocked(adminLoginTwoFactor);
 const agentLoginMock = vi.mocked(agentLogin);
+const getLoginConfigMock = vi.mocked(getLoginConfig);
 
 function renderLoginPage() {
   const queryClient = new QueryClient({
@@ -48,6 +50,11 @@ describe('LoginPage', () => {
     adminLoginMock.mockReset();
     adminLoginTwoFactorMock.mockReset();
     agentLoginMock.mockReset();
+    getLoginConfigMock.mockResolvedValue({
+      usernameLoginEnabled: true,
+      cfTurnstileEnabled: false,
+      cfTurnstileSiteKey: '',
+    });
   });
 
   it('logs in as admin and stores the admin session', async () => {

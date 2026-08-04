@@ -157,6 +157,8 @@ pub(crate) struct RegisterConfigResponse {
 #[derive(Debug, Serialize)]
 pub(crate) struct LoginConfigResponse {
     pub(crate) username_login_enabled: bool,
+    pub(crate) cf_turnstile_enabled: bool,
+    pub(crate) cf_turnstile_site_key: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

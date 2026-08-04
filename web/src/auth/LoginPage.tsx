@@ -4,7 +4,12 @@ import { useMutation } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-import { adminLogin, adminLoginTwoFactor, isAdminLoginTwoFactorChallenge } from '../api/adminAuth';
+import {
+  adminLogin,
+  adminLoginTwoFactor,
+  getLoginConfig,
+  isAdminLoginTwoFactorChallenge,
+} from '../api/adminAuth';
 import { agentLogin } from '../api/agentAuth';
 import { ApiError } from '../api/client';
 import type { AdminLoginResponse } from '../api/types';
@@ -37,14 +42,25 @@ type TwoFactorFormValues = {
 type LoginScope = Extract<AuthScope, 'admin' | 'agent'>;
 
 const turnstileRequiredText = '请先完成 Cloudflare 人机校验。';
+const turnstileTokenRequiredError = 'cf_turnstile_token is required';
+
+function isTurnstileTokenMissingError(error: unknown): boolean {
+  if (error instanceof ApiError) {
+    return error.code === 'CF_TURNSTILE_TOKEN_MISSING' || error.message === turnstileTokenRequiredError;
+  }
+
+  const payload = error as { message?: string };
+  return payload?.message === turnstileTokenRequiredError;
+}
 
 export function LoginPage() {
   const navigate = useNavigate();
   const [loginScope, setLoginScope] = useState<LoginScope>('admin');
   const [challengeId, setChallengeId] = useState<string | null>(null);
   const [cfTurnstileToken, setCfTurnstileToken] = useState('');
-  const turnstileSiteKey = String(import.meta.env.VITE_CF_TURNSTILE_SITE_KEY ?? '').trim();
-  const turnstileEnabled = Boolean(turnstileSiteKey);
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState(String(import.meta.env.VITE_CF_TURNSTILE_SITE_KEY ?? '').trim());
+  const [turnstileRequired, setTurnstileRequired] = useState<boolean | null>(null);
+  const turnstileEnabled = Boolean(turnstileSiteKey) && (turnstileRequired ?? true);
   const turnstileContainerRef = useRef<HTMLDivElement | null>(null);
   const turnstileWidgetIdRef = useRef<string | number | null>(null);
   const turnstileScriptPromiseRef = useRef<Promise<void> | null>(null);
@@ -116,8 +132,12 @@ export function LoginPage() {
     await turnstileScriptPromiseRef.current;
   };
 
-  const initializeTurnstile = async () => {
-    if (!turnstileEnabled || !turnstileContainerRef.current) {
+  const initializeTurnstile = async (override?: { siteKey?: string; required?: boolean }) => {
+    const siteKey = String(override?.siteKey ?? turnstileSiteKey).trim();
+    const required = override?.required ?? turnstileRequired;
+    const enabled = Boolean(siteKey) && (required ?? true);
+
+    if (!enabled || !turnstileContainerRef.current) {
       return;
     }
 
@@ -130,7 +150,7 @@ export function LoginPage() {
 
       removeTurnstileWidget();
       turnstileWidgetIdRef.current = turnstile.render(turnstileContainerRef.current, {
-        sitekey: turnstileSiteKey,
+        sitekey: siteKey,
         callback: (token: string) => {
           setCfTurnstileToken(token || '');
         },
@@ -150,6 +170,21 @@ export function LoginPage() {
     }
   };
 
+  const refreshTurnstileConfig = async () => {
+    try {
+      const config = await getLoginConfig();
+      setTurnstileRequired(config.cfTurnstileEnabled);
+      const nextSiteKey = String(config.cfTurnstileSiteKey || '').trim() || String(turnstileSiteKey).trim();
+      setTurnstileSiteKey((current) => current || nextSiteKey);
+
+      if (config.cfTurnstileEnabled && nextSiteKey) {
+        await initializeTurnstile({ siteKey: nextSiteKey, required: true });
+      }
+    } catch {
+      Toast.error('Cloudflare 人机校验配置加载失败，请稍后重试。');
+    }
+  };
+
   const applySession = (response: AdminLoginResponse) => {
     if (response.scope !== loginScope) {
       Toast.error(loginScope === 'agent' ? '当前账号不是代理' : '当前账号不是管理员');
@@ -166,6 +201,12 @@ export function LoginPage() {
   };
 
   const notifyError = (error: unknown) => {
+    if (isTurnstileTokenMissingError(error)) {
+      Toast.error(turnstileRequiredText);
+      void refreshTurnstileConfig();
+      return;
+    }
+
     Toast.error(error instanceof ApiError ? error.message : '登录失败，请稍后重试');
     resetTurnstileWidget();
   };
@@ -205,14 +246,24 @@ export function LoginPage() {
   useEffect(() => {
     document.title = '登录 · HIPPO Operations';
 
+    let isMounted = true;
+    getLoginConfig()
+      .then((config) => {
+        if (!isMounted) return;
+        setTurnstileRequired(config.cfTurnstileEnabled);
+        setTurnstileSiteKey((currentKey) => currentKey || config.cfTurnstileSiteKey);
+      })
+      .catch(() => {});
+
     if (turnstileEnabled && !challengeId) {
-      void initializeTurnstile();
+      void initializeTurnstile({ siteKey: turnstileSiteKey, required: turnstileRequired ?? true });
     }
 
     return () => {
+      isMounted = false;
       removeTurnstileWidget();
     };
-  }, [challengeId, turnstileEnabled]);
+  }, [challengeId, turnstileEnabled, turnstileRequired, turnstileSiteKey]);
 
   useEffect(() => {
     setChallengeId(null);
@@ -220,8 +271,8 @@ export function LoginPage() {
     if (!turnstileEnabled) {
       return;
     }
-    void initializeTurnstile();
-  }, [loginScope, turnstileEnabled]);
+    void initializeTurnstile({ siteKey: turnstileSiteKey, required: turnstileRequired ?? true });
+  }, [loginScope, turnstileEnabled, turnstileSiteKey, turnstileRequired]);
 
   return (
     <main className="admin-login-page">

@@ -15,6 +15,54 @@
   - `npm --prefix mobile run test -- tests/access-identity-settings-views.test.ts tests/pencil-selected-unmapped-pages.test.ts` 通过（274/274）。
 - 后续事项：请在前端构建时配置 `VITE_CF_TURNSTILE_SITE_KEY`，生产环境配置 `CF_TURNSTILE_SECRET`（或 `CF_TURNSTILE_SECRET_KEY`）并验证登录。未配置 `CF_TURNSTILE_SECRET` 时后端保持兼容跳过校验。
 
+## 2026-08-04 22:52 - 修复登录页验证码显示缺失导致 token 必填冲突
+
+- 完成内容：补齐登录配置下发与前端回灌，解决“后端提示 `cf_turnstile_token is required` 但前端未出现验证码”的矛盾场景。
+  - 后端：`/auth/login/config` 增加 `cf_turnstile_enabled` 与 `cf_turnstile_site_key`；新增服务端 Turnstile 策略读取：新增 `CF_TURNSTILE_SITE_KEY`，当缺失 `secret`/`enforce`/`site key` 任一项时不再强制验证。
+  - 前端：`mobile` 与 `pc` 登录页在初始化时从 `/auth/login/config` 读取 `cf_turnstile_enabled` 与 `cf_turnstile_site_key`，若客户端未配置 `VITE_CF_TURNSTILE_SITE_KEY` 则自动回退使用服务端站点密钥；当 `cf_turnstile_enabled=false` 时不再强制展示/要求验证码。
+  - 运维：1Panel compose 与 `.env.example` 同步新增 `CF_TURNSTILE_SITE_KEY`，`mobile/.env.example` 增加 `VITE_CF_TURNSTILE_SITE_KEY` 示例。
+- 修改文件：`src/modules/auth/routes.rs`、`src/modules/auth/presentation.rs`、`mobile/src/api/auth.ts`、`mobile/src/views/LoginView.vue`、`pc/src/api/auth.ts`、`pc/src/views/auth/Login.vue`、`mobile/.env.example`、`docker-compose.1panel.env.example`、`docker-compose.1panel.example.yml`、`docker-compose.1panel.yml`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：
+  - `cargo fmt --all` 通过。
+  - `cargo check --manifest-path Cargo.toml --lib` 通过。
+  - `npm --prefix mobile run type-check` 通过。
+  - `npm --prefix pc run type-check` 通过。
+- 后续事项：同步后台登录页（web/admin）与手机端配置一致说明文档；如仍有  token 校验问题，请确认移动端实际注入 `VITE_CF_TURNSTILE_SITE_KEY`。
+
+## 2026-08-04 23:09 - 后台登录页同步 Turnstile 配置，修复 admin 端验证码不显示
+
+- 完成内容：
+  - 后端在 `/admin/api/v1/auth/login/config` 增加了与用户端一致的登录配置返回（含 `cf_turnstile_enabled`、`cf_turnstile_site_key`），后台登录路径可直接下发人机校验策略。
+  - 更新 OpenAPI 文档与路由注册，保证 `/admin/api/v1/auth/login/config` 可被文档与运行时路由识别（含 `get_admin_login_config`）。
+  - `web` 后台登录页改为在挂载时读取登录配置；当返回 `cf_turnstile_enabled` 为 true 且下发站点密钥存在时才显示 Turnstile，并在无站点密钥时自动回落到本地 `VITE_CF_TURNSTILE_SITE_KEY`，与移动端/PC 口径一致。
+  - 提供后台配置接口兼容回退：优先请求 `/admin/api/v1/auth/login/config`，失败则回退到 `/api/v1/auth/login/config`，避免环境差异导致加载中断；登录测试中同步 mock 新增 `getLoginConfig`。
+- 修改文件：
+  - `src/modules/auth/routes.rs`
+  - `src/openapi/auth.rs`
+  - `src/openapi.rs`
+  - `web/src/api/adminAuth.ts`
+  - `web/src/auth/LoginPage.tsx`
+  - `web/src/auth/LoginPage.test.tsx`
+- 验证结果：
+  - `cargo fmt --all` 通过。
+  - `cargo check --manifest-path Cargo.toml --lib` 通过。
+  - `npm --prefix web run typecheck` 通过。
+  - `npm --prefix web run test -- src/auth/LoginPage.test.tsx` 通过（3/3）。
+- 后续事项：请在后台域名实际上线后复测一次 `/admin/login` 的展示，确认 Cloudflare 站点 Key 与后台实例域名一致；若依旧出现 `cf_turnstile_token is required`，请优先核对 `CF_TURNSTILE_SITE_KEY` 是否完整注入该页面。
+
+## 2026-08-04 23:32 - 修复登录页缺失 Turnstile 校验时的后恢复链路
+
+- 完成内容：补充 `手机端` 与 `PC端` 登录页对 `CF_TURNSTILE_TOKEN_MISSING` 兜底处理：后端返回 `cf_turnstile_token is required` 时自动回刷新登录策略并重建 Turnstile 组件，避免前端仅报后端错误而不出现验证码入口。移动端/PC 已同步从 `/auth/login/config` 回刷 `cf_turnstile_enabled` 与 `cf_turnstile_site_key`，当策略开启时主动初始化 Widget；当策略关闭时移除/不渲染 Turnstile。
+- 修改文件：`mobile/src/views/LoginView.vue`、`pc/src/views/auth/Login.vue`。
+- 验证结果：
+  - `cargo fmt --all --check` 通过。
+  - `cargo check --manifest-path Cargo.toml --lib` 通过。
+  - `npm --prefix mobile run type-check` 通过。
+  - `npm --prefix pc run type-check` 通过。
+  - `npm --prefix web run typecheck` 通过。
+  - `npm --prefix web run test -- src/auth/LoginPage.test.tsx` 通过（3/3）。
+- 后续事项：无。
+
 ## 2026-08-04 22:31 - 增加 Turnstile 强制校验开关，避免 cf_clearance 直接放行
 
 - 完成内容：补充服务端登录校验策略，新增 `CF_TURNSTILE_ENFORCE_TOKEN` 开关：

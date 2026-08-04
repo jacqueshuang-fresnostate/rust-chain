@@ -167,14 +167,27 @@ const showReset = ref(false)
 const cfTurnstileToken = ref('')
 const turnstileContainer = ref<HTMLDivElement | null>(null)
 const turnstileWidgetId = ref<string | number | null>(null)
-const turnstileSiteKey = String(import.meta.env.VITE_CF_TURNSTILE_SITE_KEY ?? '').trim()
-const turnstileEnabled = ref(Boolean(turnstileSiteKey))
+const turnstileSiteKey = ref(String(import.meta.env.VITE_CF_TURNSTILE_SITE_KEY ?? '').trim())
+const turnstileRequired = ref<boolean | null>(null)
+const turnstileEnabled = computed(() => {
+  if (!turnstileSiteKey.value) {
+    return false
+  }
+
+  return turnstileRequired.value ?? true
+})
 const turnstileRequiredText = computed(() => t('auth.turnstileRequired'))
+const cfTurnstileTokenRequiredMessage = 'cf_turnstile_token is required'
 const form = ref({
   email: '',
   password: ''
 })
 let turnstileScriptPromise: Promise<void> | null = null
+
+function isTurnstileTokenMissingError(error: unknown): boolean {
+  const responseData = (error as { response?: { data?: { code?: string; message?: string } } }).response?.data
+  return responseData?.code === 'CF_TURNSTILE_TOKEN_MISSING' || responseData?.message === cfTurnstileTokenRequiredMessage
+}
 
 const primaryButtonLabel = computed(() => {
   if (loading.value) return loginStep.value === '2fa' ? t('auth.verifying') : t('auth.signing_in')
@@ -190,8 +203,8 @@ function getTurnstileWindow(): TurnstileWindow['turnstile'] | undefined {
 }
 
 function resetCfTurnstile(): void {
-  const turnstile = getTurnstileWindow()
-  if (!turnstileWidgetId.value || !turnstile) return
+    const turnstile = getTurnstileWindow()
+    if (!turnstileWidgetId.value || !turnstile) return
   try {
     turnstile.reset(turnstileWidgetId.value)
   } catch {
@@ -256,7 +269,7 @@ async function initializeTurnstile(): Promise<void> {
     }
     removeCfTurnstile()
     turnstileWidgetId.value = turnstile.render(turnstileContainer.value, {
-      sitekey: turnstileSiteKey,
+      sitekey: turnstileSiteKey.value,
       callback: (token: string) => {
         cfTurnstileToken.value = token || ''
       },
@@ -276,6 +289,22 @@ async function initializeTurnstile(): Promise<void> {
   }
 }
 
+async function refreshLoginConfig(): Promise<void> {
+  const config = await getLoginConfig()
+  usernameLoginEnabled.value = Boolean(config.data.usernameLoginEnabled)
+  if (!turnstileSiteKey.value && config.data.cfTurnstileSiteKey) {
+    turnstileSiteKey.value = config.data.cfTurnstileSiteKey
+  }
+  turnstileRequired.value = config.data.cfTurnstileEnabled
+
+  if (config.data.cfTurnstileEnabled && (turnstileSiteKey.value || config.data.cfTurnstileSiteKey)) {
+    await initializeTurnstile()
+    return
+  }
+
+  resetCfTurnstile()
+}
+
 onMounted(async () => {
   const savedEmail = localStorage.getItem('remember_email')
   localStorage.removeItem('remember_password')
@@ -284,8 +313,7 @@ onMounted(async () => {
     rememberMe.value = true
   }
   try {
-    const config = await getLoginConfig()
-    usernameLoginEnabled.value = Boolean(config.data.usernameLoginEnabled)
+    await refreshLoginConfig()
   } catch (error) {
     console.error('Failed to load login config', error)
   }
@@ -324,6 +352,17 @@ const handleLogin = async () => {
     }
   } catch (error: any) {
     console.error(error)
+    if (isTurnstileTokenMissingError(error)) {
+      toast.error(turnstileRequiredText.value)
+      try {
+        await refreshLoginConfig()
+      } catch {
+        toast.error(t('auth.turnstileLoadFailed'))
+      }
+      loading.value = false
+      return
+    }
+
      // Toast error is handled by request interceptor for 500s, but we might want to show generic error if not handled
     if (!error.response) { // Network errors etc
          toast.error(error.message || t('auth.login_error'))

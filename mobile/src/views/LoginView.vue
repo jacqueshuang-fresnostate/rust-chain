@@ -35,8 +35,15 @@ const submitting = ref(false)
 const showPassword = ref(false)
 const usernameLoginEnabled = ref(false)
 const accountInput = ref<HTMLInputElement | null>(null)
-const turnstileSiteKey = String(import.meta.env.VITE_CF_TURNSTILE_SITE_KEY ?? '').trim()
-const turnstileEnabled = ref(Boolean(turnstileSiteKey))
+const turnstileSiteKey = ref(String(import.meta.env.VITE_CF_TURNSTILE_SITE_KEY ?? '').trim())
+const turnstileRequired = ref<boolean | null>(null)
+const turnstileEnabled = computed(() => {
+  if (!turnstileSiteKey.value) {
+    return false
+  }
+
+  return turnstileRequired.value ?? true
+})
 const cfTurnstileToken = ref('')
 const turnstileContainer = ref<HTMLDivElement | null>(null)
 const turnstileWidgetId = ref<string | number | null>(null)
@@ -44,6 +51,12 @@ const safeRedirect = computed(() => sanitizeInternalRedirect(route.query.redirec
 let turnstileScriptPromise: Promise<void> | null = null
 
 const turnstileEnabledText = computed(() => t('auth.turnstileRequired'))
+const cfTurnstileTokenRequiredMessage = 'cf_turnstile_token is required'
+
+function isTurnstileTokenMissingError(error: unknown): boolean {
+  const responseData = (error as { response?: { data?: { code?: string; message?: string } } }).response?.data
+  return responseData?.code === 'CF_TURNSTILE_TOKEN_MISSING' || responseData?.message === cfTurnstileTokenRequiredMessage
+}
 
 function openAuthRoute(name: 'register' | 'forgot-password'): void {
   void replaceAuthStep(router, { name, query: { redirect: safeRedirect.value } })
@@ -85,6 +98,15 @@ async function submit(): Promise<void> {
     session.sync()
     await replaceAuthStep(router, safeRedirect.value)
   } catch (reason) {
+    if (isTurnstileTokenMissingError(reason)) {
+      error.value = turnstileEnabledText.value
+      try {
+        await refreshLoginConfig()
+      } catch {
+        error.value = t('auth.turnstileLoadFailed')
+      }
+      return
+    }
     error.value = apiErrorMessage(reason, t('auth.loginFailed'))
   } finally {
     submitting.value = false
@@ -174,7 +196,7 @@ async function initializeTurnstile(): Promise<void> {
     }
     removeTurnstileWidget()
     turnstileWidgetId.value = turnstile.render(turnstileContainer.value, {
-      sitekey: turnstileSiteKey,
+      sitekey: turnstileSiteKey.value,
       callback: (token: string) => {
         cfTurnstileToken.value = token || ''
       },
@@ -193,9 +215,25 @@ async function initializeTurnstile(): Promise<void> {
   }
 }
 
+async function refreshLoginConfig(): Promise<void> {
+  const loginConfig = await fetchLoginConfig()
+  usernameLoginEnabled.value = loginConfig.usernameLoginEnabled
+  if (!turnstileSiteKey.value && loginConfig.cfTurnstileSiteKey) {
+    turnstileSiteKey.value = loginConfig.cfTurnstileSiteKey
+  }
+  turnstileRequired.value = loginConfig.cfTurnstileEnabled
+
+  if (loginConfig.cfTurnstileEnabled && (turnstileSiteKey.value || loginConfig.cfTurnstileSiteKey)) {
+    await initializeTurnstile()
+    return
+  }
+
+  resetCfTurnstileWidget()
+}
+
 onMounted(async () => {
   try {
-    usernameLoginEnabled.value = (await fetchLoginConfig()).usernameLoginEnabled
+    await refreshLoginConfig()
   } catch {
     usernameLoginEnabled.value = false
     if (loginMode.value === 'username') selectMode('email')

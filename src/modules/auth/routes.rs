@@ -66,6 +66,7 @@ pub fn user_routes() -> Router<AppState> {
 pub fn admin_routes() -> Router<AppState> {
     Router::new()
         .route("/auth/register", post(admin_register))
+        .route("/auth/login/config", get(get_login_config))
         .route("/auth/login", post(admin_login))
         .route("/auth/login/2fa", post(admin_login_two_factor))
         .route("/auth/2fa", get(admin_two_factor_status))
@@ -95,9 +96,12 @@ async fn get_register_config(
 
 async fn get_login_config(State(state): State<AppState>) -> AppResult<Json<LoginConfigResponse>> {
     let config = load_login_config(&mysql_pool(&state)?).await?;
+    let (cf_turnstile_enabled, cf_turnstile_site_key) = get_login_turnstile_policy();
 
     Ok(Json(LoginConfigResponse {
         username_login_enabled: config.username_login_enabled,
+        cf_turnstile_enabled,
+        cf_turnstile_site_key,
     }))
 }
 
@@ -409,21 +413,17 @@ fn has_cf_clearance_cookie(headers: &HeaderMap) -> bool {
 }
 
 async fn verify_cf_turnstile_token(token: Option<&str>, headers: &HeaderMap) -> AppResult<()> {
-    let secret = match std::env::var("CF_TURNSTILE_SECRET")
-        .or_else(|_| std::env::var("CF_TURNSTILE_SECRET_KEY"))
-    {
-        Ok(secret) if !secret.trim().is_empty() => secret,
-        _ => return Ok(()),
+    let (require_token, _) = get_login_turnstile_policy();
+    let secret = match env_cf_turnstile_secret() {
+        Some(secret) => secret,
+        None => return Ok(()),
     };
 
-    let enforce_token = std::env::var("CF_TURNSTILE_ENFORCE_TOKEN")
-        .map(|value| {
-            let normalized = value.trim().to_ascii_lowercase();
-            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
-        })
-        .unwrap_or(false);
+    if !require_token {
+        if has_cf_clearance_cookie(headers) {
+            return Ok(());
+        }
 
-    if !enforce_token && has_cf_clearance_cookie(headers) {
         return Ok(());
     }
 
@@ -492,6 +492,55 @@ async fn verify_cf_turnstile_token(token: Option<&str>, headers: &HeaderMap) -> 
 
     let _ = body.hostname;
     Ok(())
+}
+
+fn get_login_turnstile_policy() -> (bool, Option<String>) {
+    let site_key = env_cf_turnstile_site_key();
+    let enabled = env_cf_turnstile_secret().is_some()
+        && env_cf_turnstile_enforce_token()
+        && site_key.is_some();
+
+    (enabled, site_key)
+}
+
+fn env_cf_turnstile_secret() -> Option<String> {
+    let secret = match std::env::var("CF_TURNSTILE_SECRET") {
+        Ok(secret) => secret,
+        Err(_) => match std::env::var("CF_TURNSTILE_SECRET_KEY") {
+            Ok(secret) => secret,
+            Err(_) => return None,
+        },
+    };
+
+    let secret = secret.trim();
+    if secret.is_empty() {
+        None
+    } else {
+        Some(secret.to_owned())
+    }
+}
+
+fn env_cf_turnstile_site_key() -> Option<String> {
+    let site_key = match std::env::var("CF_TURNSTILE_SITE_KEY") {
+        Ok(value) => value,
+        Err(_) => return None,
+    };
+
+    let site_key = site_key.trim();
+    if site_key.is_empty() {
+        None
+    } else {
+        Some(site_key.to_owned())
+    }
+}
+
+fn env_cf_turnstile_enforce_token() -> bool {
+    std::env::var("CF_TURNSTILE_ENFORCE_TOKEN")
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

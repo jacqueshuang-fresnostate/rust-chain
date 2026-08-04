@@ -1,6 +1,18 @@
 import { apiRequest } from './client';
 import type { AdminLoginRequest, AdminLoginResponse } from './types';
 
+export interface LoginConfigApiResponse {
+  username_login_enabled?: boolean;
+  cf_turnstile_enabled?: boolean;
+  cf_turnstile_site_key?: string;
+}
+
+export interface LoginConfig {
+  usernameLoginEnabled: boolean;
+  cfTurnstileEnabled: boolean;
+  cfTurnstileSiteKey: string;
+}
+
 export interface AdminLoginTwoFactorChallenge {
   requires_2fa: boolean;
   challenge_id: string;
@@ -27,6 +39,24 @@ export function adminLogin(payload: AdminLoginRequest): Promise<AdminLoginResult
     method: 'POST',
     body: JSON.stringify(body)
   });
+}
+
+function normalizeLoginConfig(response: LoginConfigApiResponse): LoginConfig {
+  return {
+    usernameLoginEnabled: Boolean(response.username_login_enabled),
+    cfTurnstileEnabled: Boolean(response.cf_turnstile_enabled),
+    cfTurnstileSiteKey: String(response.cf_turnstile_site_key || '').trim(),
+  };
+}
+
+export async function getLoginConfig(): Promise<LoginConfig> {
+  try {
+    const response = await apiRequest<LoginConfigApiResponse>('/admin/api/v1/auth/login/config');
+    return normalizeLoginConfig(response);
+  } catch {
+    const response = await apiRequest<LoginConfigApiResponse>('/api/v1/auth/login/config');
+    return normalizeLoginConfig(response);
+  }
 }
 
 export function adminLoginTwoFactor(payload: AdminLoginTwoFactorRequest): Promise<AdminLoginResponse> {

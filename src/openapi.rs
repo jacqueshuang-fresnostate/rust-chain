@@ -46,6 +46,7 @@ pub fn routes() -> Router<AppState> {
         health,
         get_register_config,
         get_login_config,
+        get_admin_login_config,
         send_register_email_code,
         user_register,
         user_login,

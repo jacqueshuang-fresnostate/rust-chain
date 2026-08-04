@@ -20,6 +20,8 @@ pub(super) struct RegisterConfigResponse {
 #[derive(ToSchema)]
 pub(super) struct LoginConfigResponse {
     username_login_enabled: bool,
+    cf_turnstile_enabled: bool,
+    cf_turnstile_site_key: Option<String>,
 }
 
 #[derive(ToSchema)]
@@ -159,6 +161,18 @@ fn get_register_config() {}
     )
 )]
 fn get_login_config() {}
+
+#[utoipa::path(
+    get,
+    path = "/admin/api/v1/auth/login/config",
+    tag = "auth",
+    summary = "查询后台登录配置",
+    responses(
+        (status = 200, description = "查询成功", body = LoginConfigResponse),
+        (status = 500, description = "服务内部错误", body = ErrorResponse)
+    )
+)]
+fn get_admin_login_config() {}
 
 #[utoipa::path(
     post,

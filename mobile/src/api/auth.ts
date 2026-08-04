@@ -17,6 +17,8 @@ export interface CountryOption {
 
 export interface LoginConfig {
   usernameLoginEnabled: boolean
+  cfTurnstileEnabled: boolean
+  cfTurnstileSiteKey: string
 }
 
 export interface RegisterConfig {
@@ -35,8 +37,17 @@ export type LoginOutcome =
   | { type: 'two-factor-setup'; setupChallengeId: string }
 
 export async function fetchLoginConfig(): Promise<LoginConfig> {
-  const response = await client.get<{ username_login_enabled?: boolean }>(requestUrl('/auth/login/config'))
-  return { usernameLoginEnabled: Boolean(response.data.username_login_enabled) }
+  const response = await client.get<{
+    username_login_enabled?: boolean
+    cf_turnstile_enabled?: boolean
+    cf_turnstile_site_key?: string
+  }>(requestUrl('/auth/login/config'))
+
+  return {
+    usernameLoginEnabled: Boolean(response.data.username_login_enabled),
+    cfTurnstileEnabled: Boolean(response.data.cf_turnstile_enabled),
+    cfTurnstileSiteKey: String(response.data.cf_turnstile_site_key || '').trim(),
+  }
 }
 
 export async function fetchRegisterConfig(): Promise<RegisterConfig> {
