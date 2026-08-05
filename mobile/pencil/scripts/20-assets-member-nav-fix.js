@@ -1,0 +1,8 @@
+function T(p,n,c,z,w,f,wd,ff){const o={type:"text",name:n,content:c,fontFamily:ff||"$font-sans",fontSize:z,fontWeight:w||"400",fill:f||"$text",lineHeight:1.25};if(wd){o.textGrowth="fixed-width";o.width=wd;}return Insert(p,o);}
+function I(p,n,k,f,z){return Insert(p,{type:"icon",name:n,library:"lucide",icon:k,width:z||20,height:z||20,fill:f||"$text"});}
+function entry(d,it,on){const c=Insert(d,{type:"frame",name:"Nav "+it[0],layout:"vertical",width:"fill_container",gap:4,justifyContent:"center",alignItems:"center"});I(c,it[0]+" Icon",it[1],on?"$mint-strong":"$muted",22);T(c,it[0]+" Label",it[0],10,on?"650":"500",on?"$text":"$muted");}
+function nav(p,active){const n=Insert(p,{type:"frame",name:"Bottom Navigation",width:"fill_container",height:84,padding:[6,16,10,16],fill:"#00000000",stroke:"#00000000"});const d=Insert(n,{type:"frame",name:"Nav Dock",layout:"horizontal",width:"fill_container",height:68,padding:[0,16],cornerRadius:24,fill:"$surface",stroke:"$border",strokeWidth:1,strokeAlignment:"inner",alignItems:"center"});entry(d,["首页","house"],false);entry(d,["行情","chart-line"],false);const fs=Insert(d,{type:"frame",name:"FAB Space",layout:"vertical",width:56,height:56,justifyContent:"end",alignItems:"center"});T(fs,"FAB Label","交易",10,"500","$muted");entry(d,["资产","wallet-cards"],active==="资产");entry(d,["我的","user-round"],false);const fab=Insert(n,{type:"frame",name:"Nav FAB",layout:"horizontal",width:56,height:56,cornerRadius:28,fill:"$mint",justifyContent:"center",alignItems:"center",layoutPosition:"absolute",x:151,y:-12});I(fab,"FAB Icon","arrow-left-right","#07110D",24);}
+Delete("A70f12");Delete("WIgzi");
+nav("p61z2Q","资产");
+nav("Q4JYj","资产");
+Print("NAV_RECREATED");
