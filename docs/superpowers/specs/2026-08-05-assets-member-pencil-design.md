@@ -15,17 +15,22 @@
 | 决策点 | 结论 |
 |---|---|
 | 交付物 | 仅补 Pencil 设计画板，线上代码后续另行 parity |
-| 变体覆盖 | 全量补齐 明暗 × Guest/Member（新增 3 块，CUK3y 已覆盖 Guest 浅色） |
-| 现有画板 | **只新增，不修改** `09 / Assets`（CUK3y） |
+| 变体覆盖 | 明暗 × Guest/Member 全量覆盖（Guest 对 CUK3y/i6YDBr 已存在，**实际新增 2 块 Member**） |
+| 现有画板 | **只新增，不修改** 现有任何画板（CUK3y、i6YDBr 等） |
 | Member 版式 | 重新设计：以"我的持仓"列表为一级区块 |
 
 ## 新增画板
 
+线上文档（VS Code Pencil 扩展实时核实，2026-08-05）：Guest 态已成对存在
+`CUK3y`（`09 / Assets · Light`）与 `i6YDBr`（`09 / Assets · Dark`）；
+Member 态全文档不存在（Home/Profile/Referrals 均有 Member 变体，Assets 没有）。
+
 | 画板名 | 状态 | 内容 |
 |---|---|---|
-| `09 / Assets · Dark · Guest` | 访客 · 暗色 | CUK3y 结构的暗色镜像（登录引导 hero + 四操作 + 分布占位 + 资金工具） |
 | `09 / Assets · Light · Member` | 登录 · 浅色 | 新版式（见下） |
 | `09 / Assets · Dark · Member` | 登录 · 暗色 | 新版式暗色主题 |
+
+命名对齐 Home 的 `03 / Home / Light · Member` 惯例。CUK3y / i6YDBr 不做任何修改。
 
 ## Member 新版式结构（自上而下）
 
@@ -51,15 +56,16 @@
 
 ## 实施方式
 
-- 新建 `mobile/pencil/scripts/15-assets-variants.js`，沿用现有脚本 helper 模式（`S()/status()/header()/nav()/T()/I()/eyebrow()/empty()/row()`，参照 `05-secondary.js`、`07-wallet.js`）。
-- 执行：`mobile/pencil/run-execute.sh mobile/pencil/hippo-mobile-uiux.pen mobile/pencil/scripts/15-assets-variants.js`。
-- 结构检查：无 placeholder、零尺寸、横向溢出节点后导出。
-- 导出 3 张 PNG 到 `mobile/pencil/exports/`（按画板 ID 命名）。
-- 更新 `mobile/pencil/artboards.json`（追加 3 条）与 `mobile/pencil/screen-inventory.md`（Assets 行拆分为 4 状态）。
+- 新建 `mobile/pencil/scripts/15-assets-member.js`，沿用现有脚本 helper 模式（`S()/status()/header()/nav()/T()/I()/eyebrow()/empty()/row()`，参照 `05-secondary.js`、`07-wallet.js`），脚本自包含重定义所需 helper。
+- 执行方式：**MCP 实时连接** VS Code Pencil 扩展（`pen interactive --app visual_studio_code`，socket `~/.pencil/socket/pencil-visual_studio_code.sock`），`execute(...)` + `save()`，用户可实时看到画布变化；该连接直接编辑并保存仓库内 `mobile/pencil/hippo-mobile-uiux.pen`。
+- 结构检查：无 placeholder、零尺寸、横向溢出节点。
+- PNG 导出：优先尝试交互 shell 的 `export_nodes`；不可用则由用户在 VS Code Pencil 面板手动导出（现有 `exports/*.png` 即为 GUI 导出产物），PNG 不阻塞交付。
+- 更新 `mobile/pencil/artboards.json`（追加 2 条 Member 条目）与 `mobile/pencil/screen-inventory.md`（Assets 行拆分为 4 状态，标注 CUK3y/i6YDBr/新 ID）。
 
 ## 测试影响
 
 - `mobile/tests/pencil-selected-unmapped-pages.test.ts` 断言 `AssetsView.vue` 的 `data-pencil-source="CUK3y i6YDBr"`。本次**不改线上代码**，测试不受影响；后续做代码 parity 时需同步更新该断言与 `data-pencil-source`。
+- 已知既有不一致（不在本次范围）：`artboards.json` 滞后于线上文档（缺 `i6YDBr` 等暗色变体条目）。
 
 ## 非目标（YAGNI）
 
