@@ -52,7 +52,11 @@ Member 态全文档不存在（Home/Profile/Referrals 均有 Member 变体，Ass
 
 - `WalletAccount { assetId, symbol, logoUrl, available, frozen, locked }`（`mobile/src/core/types.ts`），现货 `fetchWalletAccounts()`、杠杆 `fetchMarginWallets()`。
 - 估值：`marketStore.tickerFor(`${symbol}/USDT`)?.lastPrice` 折算；USDT/USDC/USD 按 1:1。
-- 设计稿数值沿用项目惯例（"由接口返回"/`—` 占位），画板结构承载真实数字形态。
+- **2026-08-06 修正**：Member 态数值对齐 Home Member 现行惯例使用示例数据（总资产 24,806.32 USDT、今日收益 +1,204.55/+4.85%，持仓 BTC 0.25 / ETH 1.5 / USDT 3,500 / HIPPO 5,000，合计与总估值一致）；占位 `—` 仅保留在 Guest 态。版式（字段槽位、排序、可用/冻结副行）即数据契约。
+
+## 2026-08-06 版式修正记录
+
+初版画板误用 `05-secondary.js` 旧语言（7 项底导航、Secondary Header、虚线占位），与现行 Member 页（Home/Profile/新版 CUK3y）不一致。经 `scripts/16-assets-member-fix.js` 重建为现行语言：大标题+eye、总资产估值+今日收益 hero、图标圆盘四操作、品牌色 coin 圆标持仓行（数量+≈$估值）、Profile 风格资金工具行、浮动 Nav Dock + mint FAB（5 项）。另修复：重建后框架坐标为负（y=-5121）导致导出任白，已移至 (5104,9)/(5594,9)。
 
 ## 实施方式
 
