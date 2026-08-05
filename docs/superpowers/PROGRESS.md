@@ -6868,3 +6868,10 @@
 - 修改文件：`mobile/pencil/scripts/{19-assets-member-header-nav,20-assets-member-nav-fix,21-assets-member-fab-align}.js`、`mobile/pencil/exports/{p61z2Q,Q4JYj}.png`、`docs/superpowers/PROGRESS.md`；`.pen` 待 VS Code 保存后提交。
 - 验证结果：导出目检 + 像素测量：FAB 圆心 X=389（画布中心 390），FAB 垂直嵌入 dock 上沿位置与 CUK3y 一致；header 无 eye、背景透明。
 - 后续事项：① `.pen` 需在 VS Code ⌘S 后补提交；② 线上 `AssetsView.vue` parity 独立任务。
+
+## 2026-08-06 03:05 - 资产 Member 画板背景/空态/图标/毛玻璃按钮
+
+- 完成内容：① 背景统一——去掉 Portfolio Member Overview 的 `$surface` 灰带，暗色页 fill 对齐 `#000000`；② 持仓标记去掉圆盘底色，纯 Lucide 图标；③ 浅色改为空态演示（0.00 + 暂无持仓 + 去充币），深色保留持仓列表；④ 浅色 hero 四操作改为毛玻璃（`#FFFFFF99` + `background_blur` radius 18）。
+- 修改文件：`mobile/pencil/scripts/{22,23,24}-assets-member-*.js`、`mobile/pencil/exports/{p61z2Q,Q4JYj}.png`、`docs/superpowers/PROGRESS.md`；`.pen` 待 ⌘S 后提交。
+- 验证结果：导出目检浅色空态/毛玻璃按钮、深色持仓+纯图标；充币页/Profile 抽检无连带破坏。
+- 后续事项：`.pen` 需 VS Code ⌘S 后补提交。
