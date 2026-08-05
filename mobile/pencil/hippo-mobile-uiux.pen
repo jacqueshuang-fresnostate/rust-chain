@@ -1771,7 +1771,7 @@
                   "fill": {
                     "type": "image",
                     "enabled": true,
-                    "url": "./images/generated-1785687557714.png",
+                    "url": "images/generated-1785687557714.png",
                     "mode": "fill"
                   },
                   "width": 358,
@@ -66768,6 +66768,3091 @@
               "fontFamily": "$font-sans",
               "fontSize": 13,
               "fontWeight": "650"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "p61z2Q",
+      "x": 7484,
+      "y": -5121,
+      "name": "09 / Assets · Light · Member",
+      "theme": {
+        "mode": "light"
+      },
+      "clip": true,
+      "width": 390,
+      "fill": "$canvas",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "N7Es4",
+          "name": "Status Bar",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [
+            0,
+            16
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "o0X06",
+              "name": "Time",
+              "fill": "$text",
+              "content": "09:41",
+              "lineHeight": 1.25,
+              "fontFamily": "$font-data",
+              "fontSize": 11,
+              "fontWeight": "650"
+            },
+            {
+              "type": "frame",
+              "id": "z52teb",
+              "name": "Status Signals",
+              "gap": 8,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "r5fL2v",
+                  "name": "Network",
+                  "fill": "$muted",
+                  "content": "4G+",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 10,
+                  "fontWeight": "550"
+                },
+                {
+                  "type": "icon",
+                  "id": "H1WUUM",
+                  "name": "Wifi",
+                  "width": 14,
+                  "height": 14,
+                  "icon": "wifi",
+                  "library": "lucide",
+                  "fill": "$text"
+                },
+                {
+                  "type": "text",
+                  "id": "UbF06",
+                  "name": "Battery",
+                  "fill": "$text",
+                  "content": "82%",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 10,
+                  "fontWeight": "550"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "y8ZuXG",
+          "name": "Secondary Header",
+          "width": "fill_container",
+          "height": 64,
+          "fill": "$surface",
+          "stroke": "$border",
+          "strokeWidth": {
+            "bottom": 1
+          },
+          "strokeAlignment": "inner",
+          "padding": [
+            0,
+            16
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "Op5Ap",
+              "name": "Back",
+              "width": 44,
+              "height": 44,
+              "fill": "$surface-2",
+              "cornerRadius": 22,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "tbqo0",
+                  "name": "Back Icon",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "arrow-left",
+                  "library": "lucide",
+                  "fill": "$text"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "VmHRz",
+              "name": "Header Center",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 2,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "u8Nifm",
+                  "name": "Header Context",
+                  "fill": "$muted",
+                  "content": "PORTFOLIO",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 10,
+                  "fontWeight": "550"
+                },
+                {
+                  "type": "text",
+                  "id": "e29vnS",
+                  "name": "Header Title",
+                  "fill": "$text",
+                  "content": "资产",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 18,
+                  "fontWeight": "700"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "kN1Ka",
+              "name": "Header Action",
+              "width": 44,
+              "height": 44,
+              "fill": "$surface-2",
+              "cornerRadius": 22,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "Qs3e9",
+                  "name": "Header Action Icon",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "eye",
+                  "library": "lucide",
+                  "fill": "$text"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "fV6QC",
+          "name": "Assets Member Hero",
+          "width": "fill_container",
+          "fill": "$surface-2",
+          "stroke": "$border",
+          "strokeWidth": {
+            "bottom": 1
+          },
+          "strokeAlignment": "inner",
+          "padding": [
+            16,
+            16,
+            14,
+            16
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "rUFTv",
+              "name": "Assets Member Value",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "I0OPT",
+                  "name": "Assets Member Kicker",
+                  "fill": "$mint-strong",
+                  "content": "TOTAL VALUE / LIVE",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 10,
+                  "fontWeight": "650"
+                },
+                {
+                  "type": "text",
+                  "id": "M6k2qh",
+                  "name": "Assets Member Total",
+                  "fill": "$text",
+                  "content": "$ —",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 30,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "f5cYJ",
+                  "name": "Assets Member Note",
+                  "fill": "$muted",
+                  "textGrowth": "fixed-width",
+                  "width": 230,
+                  "content": "现货与杠杆钱包合并估值，来自账户接口",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "450"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "BJRGu",
+              "name": "Assets Live",
+              "height": 28,
+              "fill": "$mint-soft",
+              "cornerRadius": 14,
+              "stroke": "$mint-strong",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "gap": 5,
+              "padding": [
+                0,
+                9
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "wSsY9",
+                  "name": "Assets Live Text",
+                  "fill": "$mint-strong",
+                  "content": "LIVE DATA",
+                  "fontFamily": "$font-data",
+                  "fontSize": 10,
+                  "fontWeight": "600"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "oZ0Cb",
+          "name": "Assets Quick Actions",
+          "width": "fill_container",
+          "fill": "$canvas",
+          "gap": 8,
+          "padding": [
+            14,
+            16
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "X91fE8",
+              "name": "充币",
+              "width": "fill_container",
+              "height": 62,
+              "fill": "$surface",
+              "cornerRadius": 4,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "layout": "vertical",
+              "gap": 6,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "c5TOK",
+                  "name": "充币 Icon",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "arrow-down-to-line",
+                  "library": "lucide",
+                  "fill": "$text"
+                },
+                {
+                  "type": "text",
+                  "id": "TQzWZ",
+                  "name": "充币 Label",
+                  "fill": "$muted",
+                  "content": "充币",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "WECXl",
+              "name": "提币",
+              "width": "fill_container",
+              "height": 62,
+              "fill": "$surface",
+              "cornerRadius": 4,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "layout": "vertical",
+              "gap": 6,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "I3unq",
+                  "name": "提币 Icon",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "arrow-up-from-line",
+                  "library": "lucide",
+                  "fill": "$text"
+                },
+                {
+                  "type": "text",
+                  "id": "INe4q",
+                  "name": "提币 Label",
+                  "fill": "$muted",
+                  "content": "提币",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Bi1kv",
+              "name": "划转",
+              "width": "fill_container",
+              "height": 62,
+              "fill": "$surface",
+              "cornerRadius": 4,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "layout": "vertical",
+              "gap": 6,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "EyPaP",
+                  "name": "划转 Icon",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "repeat-2",
+                  "library": "lucide",
+                  "fill": "$text"
+                },
+                {
+                  "type": "text",
+                  "id": "HgJiY",
+                  "name": "划转 Label",
+                  "fill": "$muted",
+                  "content": "划转",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Y80wt8",
+              "name": "账单",
+              "width": "fill_container",
+              "height": 62,
+              "fill": "$surface",
+              "cornerRadius": 4,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "layout": "vertical",
+              "gap": 6,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "t8IIuK",
+                  "name": "账单 Icon",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "file-text",
+                  "library": "lucide",
+                  "fill": "$text"
+                },
+                {
+                  "type": "text",
+                  "id": "Gr0k0",
+                  "name": "账单 Label",
+                  "fill": "$muted",
+                  "content": "账单",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "600"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "gyJkK",
+          "name": "Assets Holdings",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 8,
+          "padding": [
+            4,
+            16,
+            10,
+            16
+          ],
+          "children": [
+            {
+              "type": "text",
+              "id": "eC7fl",
+              "name": "Holdings Kicker",
+              "fill": "$mint-strong",
+              "content": "MY HOLDINGS / PRIVATE",
+              "lineHeight": 1.25,
+              "fontFamily": "$font-data",
+              "fontSize": 10,
+              "fontWeight": "650"
+            },
+            {
+              "type": "frame",
+              "id": "l2DLp",
+              "name": "Holdings Head",
+              "width": "fill_container",
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "Wn0Fa",
+                  "name": "Holdings Title",
+                  "fill": "$text",
+                  "content": "我的持仓",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 18,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "lsfr2",
+                  "name": "Holdings Meta",
+                  "fill": "$muted",
+                  "content": "按估值降序 · 共 — 个币种",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 10,
+                  "fontWeight": "500"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "gJ0BC",
+              "name": "Holding USDT",
+              "width": "fill_container",
+              "height": 78,
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": {
+                "bottom": 1
+              },
+              "strokeAlignment": "inner",
+              "gap": 11,
+              "padding": [
+                0,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "Zdypy",
+                  "name": "Holding USDT Mark",
+                  "width": 36,
+                  "height": 36,
+                  "fill": "$surface-2",
+                  "cornerRadius": 18,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "Vn1lP",
+                      "name": "Holding USDT Icon",
+                      "width": 17,
+                      "height": 17,
+                      "icon": "coins",
+                      "library": "lucide",
+                      "fill": "$mint-strong"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Dyg9Z",
+                  "name": "Holding USDT Copy",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "g4Pxj",
+                      "name": "Holding USDT Symbol",
+                      "fill": "$text",
+                      "content": "USDT",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 14,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "aMhdo",
+                      "name": "Holding USDT Sub",
+                      "fill": "$muted",
+                      "content": "稳定币 · Tether",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    },
+                    {
+                      "type": "text",
+                      "id": "hsfgm",
+                      "name": "Holding USDT Split",
+                      "fill": "$warning",
+                      "content": "可用 — · 冻结 —",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 10,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ETyhQ",
+                  "name": "Holding USDT Value",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "ObBqK",
+                      "name": "Holding USDT Amount",
+                      "fill": "$text",
+                      "content": "—",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 15,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "text",
+                      "id": "cIPEQ",
+                      "name": "Holding USDT Fiat",
+                      "fill": "$muted",
+                      "content": "≈ $—",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "FemPO",
+              "name": "Holding BTC",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": {
+                "bottom": 1
+              },
+              "strokeAlignment": "inner",
+              "gap": 11,
+              "padding": [
+                0,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "Mj2x3",
+                  "name": "Holding BTC Mark",
+                  "width": 36,
+                  "height": 36,
+                  "fill": "$surface-2",
+                  "cornerRadius": 18,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "RcG26",
+                      "name": "Holding BTC Icon",
+                      "width": 17,
+                      "height": 17,
+                      "icon": "circle-dollar-sign",
+                      "library": "lucide",
+                      "fill": "$mint-strong"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "cmWrb",
+                  "name": "Holding BTC Copy",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "GtyZ3",
+                      "name": "Holding BTC Symbol",
+                      "fill": "$text",
+                      "content": "BTC",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 14,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "t0Ktm",
+                      "name": "Holding BTC Sub",
+                      "fill": "$muted",
+                      "content": "比特币",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ZcXuz",
+                  "name": "Holding BTC Value",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "X5l30",
+                      "name": "Holding BTC Amount",
+                      "fill": "$text",
+                      "content": "—",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 15,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "text",
+                      "id": "cohnd",
+                      "name": "Holding BTC Fiat",
+                      "fill": "$muted",
+                      "content": "≈ $—",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "FSdKC",
+              "name": "Holding ETH",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": {
+                "bottom": 1
+              },
+              "strokeAlignment": "inner",
+              "gap": 11,
+              "padding": [
+                0,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "N3PH0",
+                  "name": "Holding ETH Mark",
+                  "width": 36,
+                  "height": 36,
+                  "fill": "$surface-2",
+                  "cornerRadius": 18,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "GSmtg",
+                      "name": "Holding ETH Icon",
+                      "width": 17,
+                      "height": 17,
+                      "icon": "hexagon",
+                      "library": "lucide",
+                      "fill": "$mint-strong"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "J3He3B",
+                  "name": "Holding ETH Copy",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "r2cC6x",
+                      "name": "Holding ETH Symbol",
+                      "fill": "$text",
+                      "content": "ETH",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 14,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "kis0z",
+                      "name": "Holding ETH Sub",
+                      "fill": "$muted",
+                      "content": "以太坊",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "v4ydQ",
+                  "name": "Holding ETH Value",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "PWaPB",
+                      "name": "Holding ETH Amount",
+                      "fill": "$text",
+                      "content": "—",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 15,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "text",
+                      "id": "ikAwA",
+                      "name": "Holding ETH Fiat",
+                      "fill": "$muted",
+                      "content": "≈ $—",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "NzjH5",
+              "name": "Holding HIPPO",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": {
+                "bottom": 1
+              },
+              "strokeAlignment": "inner",
+              "gap": 11,
+              "padding": [
+                0,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "piGQQ",
+                  "name": "Holding HIPPO Mark",
+                  "width": 36,
+                  "height": 36,
+                  "fill": "$surface-2",
+                  "cornerRadius": 18,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "BUbIy",
+                      "name": "Holding HIPPO Icon",
+                      "width": 17,
+                      "height": 17,
+                      "icon": "paw-print",
+                      "library": "lucide",
+                      "fill": "$mint-strong"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "JR5kW",
+                  "name": "Holding HIPPO Copy",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "P0zy4X",
+                      "name": "Holding HIPPO Symbol",
+                      "fill": "$text",
+                      "content": "HIPPO",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 14,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "rtgsJ",
+                      "name": "Holding HIPPO Sub",
+                      "fill": "$muted",
+                      "content": "平台币",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Ux6jt",
+                  "name": "Holding HIPPO Value",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "vAvUk",
+                      "name": "Holding HIPPO Amount",
+                      "fill": "$text",
+                      "content": "—",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 15,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "text",
+                      "id": "mqDBx",
+                      "name": "Holding HIPPO Fiat",
+                      "fill": "$muted",
+                      "content": "≈ $—",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "q2jPN",
+              "name": "Empty Kicker",
+              "fill": "$muted",
+              "content": "STATE / EMPTY",
+              "lineHeight": 1.25,
+              "fontFamily": "$font-data",
+              "fontSize": 10,
+              "fontWeight": "650"
+            },
+            {
+              "type": "frame",
+              "id": "WUpbe",
+              "name": "Holdings Empty",
+              "width": "fill_container",
+              "height": 132,
+              "fill": "$surface",
+              "cornerRadius": 4,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "layout": "vertical",
+              "gap": 7,
+              "padding": [
+                18,
+                16
+              ],
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "JkuQo",
+                  "name": "Holdings Empty Icon",
+                  "width": 23,
+                  "height": 23,
+                  "icon": "wallet-cards",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "text",
+                  "id": "yPagc",
+                  "name": "Holdings Empty Main",
+                  "fill": "$text",
+                  "content": "暂无持仓",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 13,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "DpzLr",
+                  "name": "Holdings Empty Sub",
+                  "fill": "$muted",
+                  "textGrowth": "fixed-width",
+                  "width": 330,
+                  "content": "充币后展示币种数量、估值与可用余额",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "450"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "GVvrS",
+              "name": "Empty Deposit",
+              "width": "fill_container",
+              "height": 48,
+              "fill": "$mint",
+              "cornerRadius": 4,
+              "stroke": "$mint",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "gap": 8,
+              "padding": [
+                0,
+                12
+              ],
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "y91vk",
+                  "name": "Empty Deposit Icon",
+                  "width": 17,
+                  "height": 17,
+                  "icon": "arrow-down-to-line",
+                  "library": "lucide",
+                  "fill": "#07110D"
+                },
+                {
+                  "type": "text",
+                  "id": "gTdqG",
+                  "name": "Empty Deposit Label",
+                  "fill": "#07110D",
+                  "content": "去充币",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 13,
+                  "fontWeight": "650"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "HRNcZ",
+          "name": "Assets Tools",
+          "width": "fill_container",
+          "layout": "vertical",
+          "padding": [
+            0,
+            16
+          ],
+          "children": [
+            {
+              "type": "text",
+              "id": "LeL1k",
+              "name": "Assets Tools Eyebrow",
+              "fill": "$mint-strong",
+              "content": "FUNDING TOOLS",
+              "lineHeight": 1.25,
+              "fontFamily": "$font-data",
+              "fontSize": 10,
+              "fontWeight": "650"
+            },
+            {
+              "type": "frame",
+              "id": "s0mgd",
+              "name": "Assets Ledger",
+              "width": "fill_container",
+              "height": 58,
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": {
+                "bottom": 1
+              },
+              "strokeAlignment": "inner",
+              "gap": 12,
+              "padding": [
+                0,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "iLmhF",
+                  "name": "Assets Ledger Icon",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "file-text",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "frame",
+                  "id": "rkDVc",
+                  "name": "Assets Ledger Copy",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "xBqIZ",
+                      "name": "Assets Ledger Label",
+                      "fill": "$text",
+                      "content": "资金账单",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "qeBMF",
+                      "name": "Assets Ledger Value",
+                      "fill": "$muted",
+                      "content": "按时间筛选钱包流水",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "tuBDn",
+                  "name": "Assets Ledger Action",
+                  "fill": "$muted",
+                  "content": ">",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 12,
+                  "fontWeight": "650"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "sFcN4",
+              "name": "Assets Withdrawals",
+              "width": "fill_container",
+              "height": 58,
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": {
+                "bottom": 1
+              },
+              "strokeAlignment": "inner",
+              "gap": 12,
+              "padding": [
+                0,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "ZaAWJ",
+                  "name": "Assets Withdrawals Icon",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "history",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "frame",
+                  "id": "vfTHd",
+                  "name": "Assets Withdrawals Copy",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "ck0Q6",
+                      "name": "Assets Withdrawals Label",
+                      "fill": "$text",
+                      "content": "提币记录",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "xk06y",
+                      "name": "Assets Withdrawals Value",
+                      "fill": "$muted",
+                      "content": "查看处理状态和链上哈希",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "B5Rfb",
+                  "name": "Assets Withdrawals Action",
+                  "fill": "$muted",
+                  "content": ">",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 12,
+                  "fontWeight": "650"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "rrbC1",
+              "name": "Assets Recharge",
+              "width": "fill_container",
+              "height": 58,
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": {
+                "bottom": 1
+              },
+              "strokeAlignment": "inner",
+              "gap": 12,
+              "padding": [
+                0,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "R9jCQj",
+                  "name": "Assets Recharge Icon",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "zap",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "frame",
+                  "id": "O5J56",
+                  "name": "Assets Recharge Copy",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "DRlKR",
+                      "name": "Assets Recharge Label",
+                      "fill": "$text",
+                      "content": "快捷充值",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "VpWI2",
+                      "name": "Assets Recharge Value",
+                      "fill": "$muted",
+                      "content": "使用已配置的充值渠道",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "y1afN1",
+                  "name": "Assets Recharge Action",
+                  "fill": "$muted",
+                  "content": ">",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 12,
+                  "fontWeight": "650"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "NBa7G",
+          "name": "Bottom Navigation",
+          "width": "fill_container",
+          "height": 84,
+          "fill": "$surface",
+          "stroke": "$border",
+          "strokeWidth": {
+            "top": 1
+          },
+          "strokeAlignment": "inner",
+          "gap": 2,
+          "padding": [
+            10,
+            8,
+            8,
+            8
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "P8CHtq",
+              "name": "Nav 首页",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$surface",
+              "cornerRadius": 4,
+              "layout": "vertical",
+              "gap": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "DMvvD",
+                  "name": "首页 Icon",
+                  "width": 20,
+                  "height": 20,
+                  "icon": "house",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "text",
+                  "id": "lRCHy",
+                  "name": "首页 Label",
+                  "fill": "$muted",
+                  "content": "首页",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "500"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Z2d40",
+              "name": "Nav 行情",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$surface",
+              "cornerRadius": 4,
+              "layout": "vertical",
+              "gap": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "SPYq0",
+                  "name": "行情 Icon",
+                  "width": 20,
+                  "height": 20,
+                  "icon": "chart-line",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "text",
+                  "id": "WTNbW",
+                  "name": "行情 Label",
+                  "fill": "$muted",
+                  "content": "行情",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "500"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "lWQnu",
+              "name": "Nav 现货",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$surface",
+              "cornerRadius": 4,
+              "layout": "vertical",
+              "gap": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "x3j6Fm",
+                  "name": "现货 Icon",
+                  "width": 20,
+                  "height": 20,
+                  "icon": "arrow-left-right",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "text",
+                  "id": "m5wDvL",
+                  "name": "现货 Label",
+                  "fill": "$muted",
+                  "content": "现货",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "500"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "JJeqS",
+              "name": "Nav 秒合约",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$surface",
+              "cornerRadius": 20,
+              "layout": "vertical",
+              "gap": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "jFEkN",
+                  "name": "秒合约 Icon",
+                  "width": 20,
+                  "height": 20,
+                  "icon": "zap",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "text",
+                  "id": "GF8N7",
+                  "name": "秒合约 Label",
+                  "fill": "$muted",
+                  "content": "秒合约",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "500"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "k16cq",
+              "name": "Nav 合约",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$surface",
+              "cornerRadius": 4,
+              "layout": "vertical",
+              "gap": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "J8CJJ",
+                  "name": "合约 Icon",
+                  "width": 20,
+                  "height": 20,
+                  "icon": "activity",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "text",
+                  "id": "zE1os",
+                  "name": "合约 Label",
+                  "fill": "$muted",
+                  "content": "合约",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "500"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Y8TXei",
+              "name": "Nav 资产",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$mint-soft",
+              "cornerRadius": 4,
+              "layout": "vertical",
+              "gap": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "v4MJBv",
+                  "name": "资产 Icon",
+                  "width": 20,
+                  "height": 20,
+                  "icon": "wallet-cards",
+                  "library": "lucide",
+                  "fill": "$mint-strong"
+                },
+                {
+                  "type": "text",
+                  "id": "Y6CZ1",
+                  "name": "资产 Label",
+                  "fill": "$text",
+                  "content": "资产",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "650"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "R6WOor",
+              "name": "Nav 我的",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$surface",
+              "cornerRadius": 4,
+              "layout": "vertical",
+              "gap": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "C56Kbe",
+                  "name": "我的 Icon",
+                  "width": 20,
+                  "height": 20,
+                  "icon": "user-round",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "text",
+                  "id": "pVF1e",
+                  "name": "我的 Label",
+                  "fill": "$muted",
+                  "content": "我的",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "500"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "Q4JYj",
+      "x": 7974,
+      "y": -5121,
+      "name": "09 / Assets · Dark · Member",
+      "theme": {
+        "mode": "dark"
+      },
+      "clip": true,
+      "width": 390,
+      "fill": "$canvas",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "UeHsY",
+          "name": "Status Bar",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [
+            0,
+            16
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "S2lTf",
+              "name": "Time",
+              "fill": "$text",
+              "content": "09:41",
+              "lineHeight": 1.25,
+              "fontFamily": "$font-data",
+              "fontSize": 11,
+              "fontWeight": "650"
+            },
+            {
+              "type": "frame",
+              "id": "lwOl8",
+              "name": "Status Signals",
+              "gap": 8,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "cbwX8",
+                  "name": "Network",
+                  "fill": "$muted",
+                  "content": "4G+",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 10,
+                  "fontWeight": "550"
+                },
+                {
+                  "type": "icon",
+                  "id": "hupMA",
+                  "name": "Wifi",
+                  "width": 14,
+                  "height": 14,
+                  "icon": "wifi",
+                  "library": "lucide",
+                  "fill": "$text"
+                },
+                {
+                  "type": "text",
+                  "id": "DyX4f",
+                  "name": "Battery",
+                  "fill": "$text",
+                  "content": "82%",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 10,
+                  "fontWeight": "550"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "dzwCA",
+          "name": "Secondary Header",
+          "width": "fill_container",
+          "height": 64,
+          "fill": "$surface",
+          "stroke": "$border",
+          "strokeWidth": {
+            "bottom": 1
+          },
+          "strokeAlignment": "inner",
+          "padding": [
+            0,
+            16
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "vXlwd",
+              "name": "Back",
+              "width": 44,
+              "height": 44,
+              "fill": "$surface-2",
+              "cornerRadius": 22,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "dSkD5",
+                  "name": "Back Icon",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "arrow-left",
+                  "library": "lucide",
+                  "fill": "$text"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "mQfzk",
+              "name": "Header Center",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 2,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "HrDM7",
+                  "name": "Header Context",
+                  "fill": "$muted",
+                  "content": "PORTFOLIO",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 10,
+                  "fontWeight": "550"
+                },
+                {
+                  "type": "text",
+                  "id": "Zv2j0",
+                  "name": "Header Title",
+                  "fill": "$text",
+                  "content": "资产",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 18,
+                  "fontWeight": "700"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "O5DIsi",
+              "name": "Header Action",
+              "width": 44,
+              "height": 44,
+              "fill": "$surface-2",
+              "cornerRadius": 22,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "wmqwI",
+                  "name": "Header Action Icon",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "eye",
+                  "library": "lucide",
+                  "fill": "$text"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "lLn5I",
+          "name": "Assets Member Hero",
+          "width": "fill_container",
+          "fill": "$surface-2",
+          "stroke": "$border",
+          "strokeWidth": {
+            "bottom": 1
+          },
+          "strokeAlignment": "inner",
+          "padding": [
+            16,
+            16,
+            14,
+            16
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "a3Eiym",
+              "name": "Assets Member Value",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "vziA4",
+                  "name": "Assets Member Kicker",
+                  "fill": "$mint-strong",
+                  "content": "TOTAL VALUE / LIVE",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 10,
+                  "fontWeight": "650"
+                },
+                {
+                  "type": "text",
+                  "id": "wrVRM",
+                  "name": "Assets Member Total",
+                  "fill": "$text",
+                  "content": "$ —",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 30,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "IzXKi",
+                  "name": "Assets Member Note",
+                  "fill": "$muted",
+                  "textGrowth": "fixed-width",
+                  "width": 230,
+                  "content": "现货与杠杆钱包合并估值，来自账户接口",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "450"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "u0NRcb",
+              "name": "Assets Live",
+              "height": 28,
+              "fill": "$mint-soft",
+              "cornerRadius": 14,
+              "stroke": "$mint-strong",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "gap": 5,
+              "padding": [
+                0,
+                9
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "B1JgDB",
+                  "name": "Assets Live Text",
+                  "fill": "$mint-strong",
+                  "content": "LIVE DATA",
+                  "fontFamily": "$font-data",
+                  "fontSize": 10,
+                  "fontWeight": "600"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "T21Gb",
+          "name": "Assets Quick Actions",
+          "width": "fill_container",
+          "fill": "$canvas",
+          "gap": 8,
+          "padding": [
+            14,
+            16
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "OhXj7",
+              "name": "充币",
+              "width": "fill_container",
+              "height": 62,
+              "fill": "$surface",
+              "cornerRadius": 4,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "layout": "vertical",
+              "gap": 6,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "OTxLV",
+                  "name": "充币 Icon",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "arrow-down-to-line",
+                  "library": "lucide",
+                  "fill": "$text"
+                },
+                {
+                  "type": "text",
+                  "id": "IcfwM",
+                  "name": "充币 Label",
+                  "fill": "$muted",
+                  "content": "充币",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "i16BB",
+              "name": "提币",
+              "width": "fill_container",
+              "height": 62,
+              "fill": "$surface",
+              "cornerRadius": 4,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "layout": "vertical",
+              "gap": 6,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "I3m9J7",
+                  "name": "提币 Icon",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "arrow-up-from-line",
+                  "library": "lucide",
+                  "fill": "$text"
+                },
+                {
+                  "type": "text",
+                  "id": "farsn",
+                  "name": "提币 Label",
+                  "fill": "$muted",
+                  "content": "提币",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "TYB4e",
+              "name": "划转",
+              "width": "fill_container",
+              "height": 62,
+              "fill": "$surface",
+              "cornerRadius": 4,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "layout": "vertical",
+              "gap": 6,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "QGKUp",
+                  "name": "划转 Icon",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "repeat-2",
+                  "library": "lucide",
+                  "fill": "$text"
+                },
+                {
+                  "type": "text",
+                  "id": "Y33vo7",
+                  "name": "划转 Label",
+                  "fill": "$muted",
+                  "content": "划转",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "GpJy4",
+              "name": "账单",
+              "width": "fill_container",
+              "height": 62,
+              "fill": "$surface",
+              "cornerRadius": 4,
+              "stroke": "$border",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "layout": "vertical",
+              "gap": 6,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "SHW61",
+                  "name": "账单 Icon",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "file-text",
+                  "library": "lucide",
+                  "fill": "$text"
+                },
+                {
+                  "type": "text",
+                  "id": "kZk3A",
+                  "name": "账单 Label",
+                  "fill": "$muted",
+                  "content": "账单",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "600"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "Jb9Wz",
+          "name": "Assets Holdings",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 8,
+          "padding": [
+            4,
+            16,
+            10,
+            16
+          ],
+          "children": [
+            {
+              "type": "text",
+              "id": "XH8Hv",
+              "name": "Holdings Kicker",
+              "fill": "$mint-strong",
+              "content": "MY HOLDINGS / PRIVATE",
+              "lineHeight": 1.25,
+              "fontFamily": "$font-data",
+              "fontSize": 10,
+              "fontWeight": "650"
+            },
+            {
+              "type": "frame",
+              "id": "eSJ19",
+              "name": "Holdings Head",
+              "width": "fill_container",
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "Dinm3",
+                  "name": "Holdings Title",
+                  "fill": "$text",
+                  "content": "我的持仓",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 18,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "qbA4f",
+                  "name": "Holdings Meta",
+                  "fill": "$muted",
+                  "content": "按估值降序 · 共 — 个币种",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 10,
+                  "fontWeight": "500"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "bKK3P",
+              "name": "Holding USDT",
+              "width": "fill_container",
+              "height": 78,
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": {
+                "bottom": 1
+              },
+              "strokeAlignment": "inner",
+              "gap": 11,
+              "padding": [
+                0,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "X8ECh8",
+                  "name": "Holding USDT Mark",
+                  "width": 36,
+                  "height": 36,
+                  "fill": "$surface-2",
+                  "cornerRadius": 18,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "tGFI8",
+                      "name": "Holding USDT Icon",
+                      "width": 17,
+                      "height": 17,
+                      "icon": "coins",
+                      "library": "lucide",
+                      "fill": "$mint-strong"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "HUtPR",
+                  "name": "Holding USDT Copy",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "XoVsO",
+                      "name": "Holding USDT Symbol",
+                      "fill": "$text",
+                      "content": "USDT",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 14,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "rm1wD",
+                      "name": "Holding USDT Sub",
+                      "fill": "$muted",
+                      "content": "稳定币 · Tether",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    },
+                    {
+                      "type": "text",
+                      "id": "SXAUd",
+                      "name": "Holding USDT Split",
+                      "fill": "$warning",
+                      "content": "可用 — · 冻结 —",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 10,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "dursc",
+                  "name": "Holding USDT Value",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "gZ5zQ",
+                      "name": "Holding USDT Amount",
+                      "fill": "$text",
+                      "content": "—",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 15,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "text",
+                      "id": "gjdbg",
+                      "name": "Holding USDT Fiat",
+                      "fill": "$muted",
+                      "content": "≈ $—",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "duTls",
+              "name": "Holding BTC",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": {
+                "bottom": 1
+              },
+              "strokeAlignment": "inner",
+              "gap": 11,
+              "padding": [
+                0,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "plerB",
+                  "name": "Holding BTC Mark",
+                  "width": 36,
+                  "height": 36,
+                  "fill": "$surface-2",
+                  "cornerRadius": 18,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "yzxug",
+                      "name": "Holding BTC Icon",
+                      "width": 17,
+                      "height": 17,
+                      "icon": "circle-dollar-sign",
+                      "library": "lucide",
+                      "fill": "$mint-strong"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "DILFm",
+                  "name": "Holding BTC Copy",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "AOk41",
+                      "name": "Holding BTC Symbol",
+                      "fill": "$text",
+                      "content": "BTC",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 14,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "X7vW6",
+                      "name": "Holding BTC Sub",
+                      "fill": "$muted",
+                      "content": "比特币",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "g6F4l",
+                  "name": "Holding BTC Value",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "oCPwI",
+                      "name": "Holding BTC Amount",
+                      "fill": "$text",
+                      "content": "—",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 15,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "text",
+                      "id": "Okc0y",
+                      "name": "Holding BTC Fiat",
+                      "fill": "$muted",
+                      "content": "≈ $—",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "SHdFX",
+              "name": "Holding ETH",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": {
+                "bottom": 1
+              },
+              "strokeAlignment": "inner",
+              "gap": 11,
+              "padding": [
+                0,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "gFuPS",
+                  "name": "Holding ETH Mark",
+                  "width": 36,
+                  "height": 36,
+                  "fill": "$surface-2",
+                  "cornerRadius": 18,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "B9qBc",
+                      "name": "Holding ETH Icon",
+                      "width": 17,
+                      "height": 17,
+                      "icon": "hexagon",
+                      "library": "lucide",
+                      "fill": "$mint-strong"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "B2xn5B",
+                  "name": "Holding ETH Copy",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "Z96gmV",
+                      "name": "Holding ETH Symbol",
+                      "fill": "$text",
+                      "content": "ETH",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 14,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "NWPvj",
+                      "name": "Holding ETH Sub",
+                      "fill": "$muted",
+                      "content": "以太坊",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "c04ssi",
+                  "name": "Holding ETH Value",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "TzsKZ",
+                      "name": "Holding ETH Amount",
+                      "fill": "$text",
+                      "content": "—",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 15,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "text",
+                      "id": "dkrXb",
+                      "name": "Holding ETH Fiat",
+                      "fill": "$muted",
+                      "content": "≈ $—",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "YclvF",
+              "name": "Holding HIPPO",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": {
+                "bottom": 1
+              },
+              "strokeAlignment": "inner",
+              "gap": 11,
+              "padding": [
+                0,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "d2TpbY",
+                  "name": "Holding HIPPO Mark",
+                  "width": 36,
+                  "height": 36,
+                  "fill": "$surface-2",
+                  "cornerRadius": 18,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "lcrzp",
+                      "name": "Holding HIPPO Icon",
+                      "width": 17,
+                      "height": 17,
+                      "icon": "paw-print",
+                      "library": "lucide",
+                      "fill": "$mint-strong"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "uLD6o",
+                  "name": "Holding HIPPO Copy",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "aWIHw",
+                      "name": "Holding HIPPO Symbol",
+                      "fill": "$text",
+                      "content": "HIPPO",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 14,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "baN3z",
+                      "name": "Holding HIPPO Sub",
+                      "fill": "$muted",
+                      "content": "平台币",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "NnKEW",
+                  "name": "Holding HIPPO Value",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "iA1Qu",
+                      "name": "Holding HIPPO Amount",
+                      "fill": "$text",
+                      "content": "—",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 15,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "text",
+                      "id": "UMRkA",
+                      "name": "Holding HIPPO Fiat",
+                      "fill": "$muted",
+                      "content": "≈ $—",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "h56V9",
+          "name": "Assets Tools",
+          "width": "fill_container",
+          "layout": "vertical",
+          "padding": [
+            0,
+            16
+          ],
+          "children": [
+            {
+              "type": "text",
+              "id": "zsKlL",
+              "name": "Assets Tools Eyebrow",
+              "fill": "$mint-strong",
+              "content": "FUNDING TOOLS",
+              "lineHeight": 1.25,
+              "fontFamily": "$font-data",
+              "fontSize": 10,
+              "fontWeight": "650"
+            },
+            {
+              "type": "frame",
+              "id": "AD4Rx",
+              "name": "Assets Ledger",
+              "width": "fill_container",
+              "height": 58,
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": {
+                "bottom": 1
+              },
+              "strokeAlignment": "inner",
+              "gap": 12,
+              "padding": [
+                0,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "DOlcb",
+                  "name": "Assets Ledger Icon",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "file-text",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "frame",
+                  "id": "H2I435",
+                  "name": "Assets Ledger Copy",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "ImkX5",
+                      "name": "Assets Ledger Label",
+                      "fill": "$text",
+                      "content": "资金账单",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "hkjnV",
+                      "name": "Assets Ledger Value",
+                      "fill": "$muted",
+                      "content": "按时间筛选钱包流水",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "Ie5CF",
+                  "name": "Assets Ledger Action",
+                  "fill": "$muted",
+                  "content": ">",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 12,
+                  "fontWeight": "650"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "NHfwO",
+              "name": "Assets Withdrawals",
+              "width": "fill_container",
+              "height": 58,
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": {
+                "bottom": 1
+              },
+              "strokeAlignment": "inner",
+              "gap": 12,
+              "padding": [
+                0,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "VLXn4",
+                  "name": "Assets Withdrawals Icon",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "history",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "frame",
+                  "id": "QngDD",
+                  "name": "Assets Withdrawals Copy",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "IzZse",
+                      "name": "Assets Withdrawals Label",
+                      "fill": "$text",
+                      "content": "提币记录",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "git07",
+                      "name": "Assets Withdrawals Value",
+                      "fill": "$muted",
+                      "content": "查看处理状态和链上哈希",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "y3yb6s",
+                  "name": "Assets Withdrawals Action",
+                  "fill": "$muted",
+                  "content": ">",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 12,
+                  "fontWeight": "650"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "PiS4e",
+              "name": "Assets Recharge",
+              "width": "fill_container",
+              "height": 58,
+              "fill": "$surface",
+              "stroke": "$border",
+              "strokeWidth": {
+                "bottom": 1
+              },
+              "strokeAlignment": "inner",
+              "gap": 12,
+              "padding": [
+                0,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "Qd8MM",
+                  "name": "Assets Recharge Icon",
+                  "width": 19,
+                  "height": 19,
+                  "icon": "zap",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "frame",
+                  "id": "DHOUu",
+                  "name": "Assets Recharge Copy",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 3,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "NxToX",
+                      "name": "Assets Recharge Label",
+                      "fill": "$text",
+                      "content": "快捷充值",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "TQiEY",
+                      "name": "Assets Recharge Value",
+                      "fill": "$muted",
+                      "content": "使用已配置的充值渠道",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 10,
+                      "fontWeight": "450"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "SABsg",
+                  "name": "Assets Recharge Action",
+                  "fill": "$muted",
+                  "content": ">",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 12,
+                  "fontWeight": "650"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "NgYmG",
+          "name": "Bottom Navigation",
+          "width": "fill_container",
+          "height": 84,
+          "fill": "$surface",
+          "stroke": "$border",
+          "strokeWidth": {
+            "top": 1
+          },
+          "strokeAlignment": "inner",
+          "gap": 2,
+          "padding": [
+            10,
+            8,
+            8,
+            8
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "kOtUl",
+              "name": "Nav 首页",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$surface",
+              "cornerRadius": 4,
+              "layout": "vertical",
+              "gap": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "w93mPU",
+                  "name": "首页 Icon",
+                  "width": 20,
+                  "height": 20,
+                  "icon": "house",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "text",
+                  "id": "imoCc",
+                  "name": "首页 Label",
+                  "fill": "$muted",
+                  "content": "首页",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "500"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "My8sR",
+              "name": "Nav 行情",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$surface",
+              "cornerRadius": 4,
+              "layout": "vertical",
+              "gap": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "JXAGS",
+                  "name": "行情 Icon",
+                  "width": 20,
+                  "height": 20,
+                  "icon": "chart-line",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "text",
+                  "id": "UFr5D",
+                  "name": "行情 Label",
+                  "fill": "$muted",
+                  "content": "行情",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "500"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "dwsqN",
+              "name": "Nav 现货",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$surface",
+              "cornerRadius": 4,
+              "layout": "vertical",
+              "gap": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "xFDjE",
+                  "name": "现货 Icon",
+                  "width": 20,
+                  "height": 20,
+                  "icon": "arrow-left-right",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "text",
+                  "id": "VyfrT",
+                  "name": "现货 Label",
+                  "fill": "$muted",
+                  "content": "现货",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "500"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "V5GSV",
+              "name": "Nav 秒合约",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$surface",
+              "cornerRadius": 20,
+              "layout": "vertical",
+              "gap": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "bcc9q",
+                  "name": "秒合约 Icon",
+                  "width": 20,
+                  "height": 20,
+                  "icon": "zap",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "text",
+                  "id": "pfYtD",
+                  "name": "秒合约 Label",
+                  "fill": "$muted",
+                  "content": "秒合约",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "500"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "fcaAS",
+              "name": "Nav 合约",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$surface",
+              "cornerRadius": 4,
+              "layout": "vertical",
+              "gap": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "S8dQP",
+                  "name": "合约 Icon",
+                  "width": 20,
+                  "height": 20,
+                  "icon": "activity",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "text",
+                  "id": "LmuLm",
+                  "name": "合约 Label",
+                  "fill": "$muted",
+                  "content": "合约",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "500"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "XjYod",
+              "name": "Nav 资产",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$mint-soft",
+              "cornerRadius": 4,
+              "layout": "vertical",
+              "gap": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "fy0Lq",
+                  "name": "资产 Icon",
+                  "width": 20,
+                  "height": 20,
+                  "icon": "wallet-cards",
+                  "library": "lucide",
+                  "fill": "$mint-strong"
+                },
+                {
+                  "type": "text",
+                  "id": "AV3fb",
+                  "name": "资产 Label",
+                  "fill": "$text",
+                  "content": "资产",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "650"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "b9Pdgc",
+              "name": "Nav 我的",
+              "width": "fill_container",
+              "height": 64,
+              "fill": "$surface",
+              "cornerRadius": 4,
+              "layout": "vertical",
+              "gap": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "i9b5X",
+                  "name": "我的 Icon",
+                  "width": 20,
+                  "height": 20,
+                  "icon": "user-round",
+                  "library": "lucide",
+                  "fill": "$muted"
+                },
+                {
+                  "type": "text",
+                  "id": "G9Bpe",
+                  "name": "我的 Label",
+                  "fill": "$muted",
+                  "content": "我的",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "500"
+                }
+              ]
             }
           ]
         }
