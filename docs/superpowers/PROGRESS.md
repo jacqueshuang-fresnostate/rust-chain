@@ -6840,3 +6840,10 @@
 - 修改文件：`web/src/auth/{LoginPage.tsx,LoginPage.test.tsx}`、`web/src/layouts/{AdminLayout.tsx,AdminLayout.test.tsx,PageHeader.tsx}`、`web/src/admin/dashboard/DashboardPage.tsx`、`web/src/admin/actions/{KycManagementPage,SecurityPolicyPage}.tsx`、`web/src/styles.css`、`.trellis/spec/admin/ui-system.md`、`.trellis/tasks/08-05-admin-chinese-brand-copy/*`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：Ego Browser 在 1440×900 实测登录页与总览仪表盘，页面正文 `OPERATIONS` 命中数为 0、英文 kicker 节点为 0、侧栏品牌文本仅为 `HIPPO`，登录页标题为“登录 · HIPPO 管理后台”，总览标题为“总览仪表盘 · HIPPO 管理后台”，两页均无横向溢出。`npm --prefix web run typecheck`、`npm --prefix web run lint`、定向测试 16/16、`VITE_API_BASE_URL=http://127.0.0.1:8080 npm --prefix web run test`（263/263）、`npm --prefix web run build`、静态英文扫描、`git diff --check` 与 Trellis task validate 全部通过；构建仅保留既有 lottie `eval` 和大 chunk 警告。
 - 后续事项：无。
+
+## 2026-08-05 23:35 - 补设计移动端资产页 Member 态 Pencil 画板
+
+- 完成内容：针对"资产页登录后看不到每币种持仓数量"的设计缺口，在 `hippo-mobile-uiux.pen` 新增 `09 / Assets · Light · Member`（p61z2Q）与 `09 / Assets · Dark · Member`（Q4JYj）两块画板：总资产 hero（收窄 + LIVE DATA chip）、四操作、一级区块"我的持仓"列表（USDT/BTC/ETH/HIPPO 行 = 图标 + 币种/名称 + 数量 + ≈$估值，USDT 行示范可用/冻结副行）、空持仓态（暂无持仓 + 去充币）、资金工具列表；只新增不修改现有画板（CUK3y/i6YDBr 为既有 Guest 明暗对）。经 VS Code Pencil 扩展实时 MCP 连接执行并导出 PNG；同步注册 artboards.json（CUK3y 名称对齐为 `09 / Assets · Light`）与 screen-inventory.md（Assets 拆分为 4 状态）。
+- 修改文件：`mobile/pencil/scripts/15-assets-member.js`、`mobile/pencil/artboards.json`、`mobile/pencil/screen-inventory.md`、`mobile/pencil/exports/{p61z2Q,Q4JYj}.png`、`docs/superpowers/specs/2026-08-05-assets-member-pencil-design.md`、`docs/superpowers/plans/2026-08-05-assets-member-pencil.md`、`docs/superpowers/PROGRESS.md`；`mobile/pencil/hippo-mobile-uiux.pen` 已在 VS Code 文档内更新（落盘待编辑器保存后提交）。
+- 验证结果：`node --check` 脚本语法通过；实时 MCP 执行返回全部节点创建成功并 `Saved`；复查确认恰好 2 块 Member 画板（p61z2Q/Q4JYj）、无 placeholder/零尺寸节点残留；`export_nodes` 导出两张 PNG 并人工目检确认版式正确（hero/持仓行/空态/工具/导航完整，明暗主题正确）。
+- 后续事项：① `.pen` 需在 VS Code 中 ⌘S 落盘后补提交；② 线上 `AssetsView.vue` 按新画板做 parity（持仓列表上屏）为独立任务，届时需同步 `pencil-selected-unmapped-pages.test.ts` 的 `data-pencil-source` 断言；③ artboards.json 与文档的既有偏差（缺 i6YDBr 等暗色条目）未在本次范围。
