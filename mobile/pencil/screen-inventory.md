@@ -28,7 +28,10 @@
 
 | Artboard | Production route | Primary intent |
 | --- | --- | --- |
-| `09 / Assets` | `/assets` | Understand total assets and reach funding operations |
+| `09 / Assets · Light` (`CUK3y`) | `/assets` | Guest：登录引导、资金操作入口与工具列表 |
+| `09 / Assets · Dark` (`i6YDBr`) | `/assets` | Guest 暗色镜像 |
+| `09 / Assets · Light · Member` (`p61z2Q`) | `/assets` | Member：总估值、我的持仓（每币种数量+估值）、空持仓态、资金工具 |
+| `09 / Assets · Dark · Member` (`Q4JYj`) | `/assets` | Member 暗色镜像 |
 | `10 / Profile` | `/profile` | Identity, verification, security and preferences |
 | `11 / Message Center` | `/messages` | Read account, funds, trading and announcement messages |
 | `12 / News` | `/news` | Browse market information |
