@@ -6854,3 +6854,10 @@
 - 修改文件：`mobile/pencil/scripts/16-assets-member-fix.js`、`mobile/pencil/exports/{p61z2Q,Q4JYj}.png`、`docs/superpowers/specs/2026-08-05-assets-member-pencil-design.md`、`docs/superpowers/PROGRESS.md`；`.pen` 待 VS Code 保存后提交。
 - 验证结果：`export_nodes` 重新导出两画板 PNG 并目检：版式与 Home/Profile Member 完全一致（hero/圆盘操作/持仓行/资金工具/浮动导航），明暗主题正确，持仓数量与估值槽位清晰。
 - 后续事项：① `.pen` 需在 VS Code ⌘S 后补提交；② 线上 `AssetsView.vue` parity（持仓列表上屏）为独立任务；③ 底导航 FAB 的 x=151/y=-12 为从现行导航提取的绝对定位值，后续若导航宽度调整需同步。
+
+## 2026-08-06 01:20 - 资产页 Member 画板沉浸式重做与图标合规
+
+- 完成内容：第三稿按首页 Guest 沉浸式模式重做 hero（`scripts/17-assets-member-immersive.js`）：大圆角卡（`$radius-l`）+ 满铺背景图 + 薄荷径向 Bloom + 卡内总资产估值/今日收益/四操作；持仓币种标记由字母（Ξ/T/H）改为全 Lucide 图标（bitcoin/hexagon/coins/gem，中性圆盘 + $mint-strong），满足 prd「Every interface icon comes from Lucide」要求。第四稿 polish（`scripts/18-assets-member-polish.js`）：浅色 hero 背景由过白的丝绸图换成 Guest 同款薄荷丝绸、深色 overlay 加深为 #00000040 提升今日收益可读性、卡高 264→236 收紧底部留白、恢复卡片 clip 圆角裁切、空态卡 padding 收紧。排障记录：export_nodes 依赖应用视口渲染缓存，未上屏节点导出空白，用户视口查看后导出正常；Get 遍历中执行 Update 会触发 InternalError: interrupted，必须先收集 ID 再更新。
+- 修改文件：`mobile/pencil/scripts/{17-assets-member-immersive,18-assets-member-polish}.js`、`mobile/pencil/exports/{p61z2Q,Q4JYj}.png`、`docs/superpowers/PROGRESS.md`；`.pen` 待 VS Code 保存后提交。
+- 验证结果：两画板重新导出目检——浅色 hero 薄荷丝绸质感与圆角正确、操作盘对比清晰；深色今日收益可读；持仓行 Lucide 图标盘一致；整体与首页沉浸式语言对齐。
+- 后续事项：① `.pen` 需在 VS Code ⌘S 后补提交；② 线上 `AssetsView.vue` parity 独立任务；③ `export_nodes` 视口缓存特性已记录，后续画板导出前需先上屏。
