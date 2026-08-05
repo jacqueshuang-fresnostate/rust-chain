@@ -6847,3 +6847,10 @@
 - 修改文件：`mobile/pencil/scripts/15-assets-member.js`、`mobile/pencil/artboards.json`、`mobile/pencil/screen-inventory.md`、`mobile/pencil/exports/{p61z2Q,Q4JYj}.png`、`docs/superpowers/specs/2026-08-05-assets-member-pencil-design.md`、`docs/superpowers/plans/2026-08-05-assets-member-pencil.md`、`docs/superpowers/PROGRESS.md`；`mobile/pencil/hippo-mobile-uiux.pen` 已在 VS Code 文档内更新（落盘待编辑器保存后提交）。
 - 验证结果：`node --check` 脚本语法通过；实时 MCP 执行返回全部节点创建成功并 `Saved`；复查确认恰好 2 块 Member 画板（p61z2Q/Q4JYj）、无 placeholder/零尺寸节点残留；`export_nodes` 导出两张 PNG 并人工目检确认版式正确（hero/持仓行/空态/工具/导航完整，明暗主题正确）。
 - 后续事项：① `.pen` 需在 VS Code 中 ⌘S 落盘后补提交；② 线上 `AssetsView.vue` 按新画板做 parity（持仓列表上屏）为独立任务，届时需同步 `pencil-selected-unmapped-pages.test.ts` 的 `data-pencil-source` 断言；③ artboards.json 与文档的既有偏差（缺 i6YDBr 等暗色条目）未在本次范围。
+
+## 2026-08-06 00:05 - 资产页 Member 画板重建为现行设计语言
+
+- 完成内容：发现初版 Member 画板误用 05-secondary 时代旧语言（7 项底导航、Secondary Header、占位破折号），与现行 Home/Profile Member 及已迁移的新版 CUK3y（访客资产页亦已是新语言）不一致。通过 `scripts/16-assets-member-fix.js` 删除两画板旧子树并按从线上文档提取的现行语言重建：大标题"资产"+eye、总资产估值 24,806.32 USDT + 今日收益 +1,204.55/+4.85%（与首页 Member 同源示例数据）、图标圆盘四操作、品牌色 coin 圆标持仓行（BTC/ETH/USDT/HIPPO，数量 + ≈$估值，USDT 含可用/冻结副行，合计与总估值一致）、浅色版空态卡片+去充币、Profile 风格资金工具行、浮动 Nav Dock + mint FAB 五项导航。排障：Insert 父引用必须为 id 字符串；重建后框架落在负坐标（y=-5121）导致导出全白，移至 CUK3y 旁 (5104,9)/(5594,9) 后导出正常；确认文档 h=undefined 即自适应高度，非问题。
+- 修改文件：`mobile/pencil/scripts/16-assets-member-fix.js`、`mobile/pencil/exports/{p61z2Q,Q4JYj}.png`、`docs/superpowers/specs/2026-08-05-assets-member-pencil-design.md`、`docs/superpowers/PROGRESS.md`；`.pen` 待 VS Code 保存后提交。
+- 验证结果：`export_nodes` 重新导出两画板 PNG 并目检：版式与 Home/Profile Member 完全一致（hero/圆盘操作/持仓行/资金工具/浮动导航），明暗主题正确，持仓数量与估值槽位清晰。
+- 后续事项：① `.pen` 需在 VS Code ⌘S 后补提交；② 线上 `AssetsView.vue` parity（持仓列表上屏）为独立任务；③ 底导航 FAB 的 x=151/y=-12 为从现行导航提取的绝对定位值，后续若导航宽度调整需同步。
