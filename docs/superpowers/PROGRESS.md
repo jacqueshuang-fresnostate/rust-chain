@@ -9,6 +9,15 @@
 - 验证结果：线上修复前探测确认管理员配置和页面路径返回 Cloudflare 403 Challenge，公开配置返回 HTTP 200 但策略关闭；`cargo fmt --all -- --check`、`cargo check --all-targets`、Auth 路由单元测试 4/4 通过；后台聚焦测试 6/6、完整测试（设置既有测试合同要求的 `VITE_API_BASE_URL=http://127.0.0.1:8080`）263/263、`npm --prefix web run typecheck`、`npm --prefix web run lint`、`npm --prefix web run build` 通过；两份 1Panel Compose 使用案例环境执行 `docker compose config --quiet` 通过；Trellis context 校验与 `git diff --check` 通过。未设置 `VITE_API_BASE_URL` 的首次完整 Web 测试仅有 4 项既有绝对 URL 断言失败，补齐该测试环境变量后全量通过。
 - 后续事项：推送新镜像并在 1Panel 重新创建 API 容器后，确认 `GET /api/v1/auth/login/config` 返回 `cf_turnstile_enabled=true` 和正确 Site Key；Cloudflare Dashboard 中的 Widget Hostname 需包含实际后台域名。
 
+## 2026-08-05 16:20 - 优化后台侧边栏高亮和表格数据展示
+
+- 完成内容：
+  - 增强后台侧边栏选中项可读性，选中状态背景与边缘高亮改为更强对比（更亮橙色渐变 + 白色文字），并兼容子标题选中态，悬停下保持可见。
+  - 调整 admin 表格展示样式：取消 compact 模式对单元内容的强制 `nowrap` 依赖，允许内容自然换行显示，减少由于长文本/长 ID 截断导致的“显示不全”；同时放开表格容器溢出裁剪，减少边缘裁切。
+- 修改文件：`web/src/styles.css`。
+- 验证结果：`npm --prefix web run lint`；`cd web && npm run test -- src/layouts/AdminLayout.test.tsx src/shared/DataTable.test.tsx`（2/2 文件通过）；`cd web && npm run typecheck`（通过）。
+- 后续事项：无。
+
 ## 2026-08-05 10:20 - 通过 outbox-inbox MQ 链路异步预创建用户钱包账户
 
 - 完成内容：

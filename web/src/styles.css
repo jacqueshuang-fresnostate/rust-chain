@@ -195,14 +195,29 @@ body {
 }
 
 .admin-layout-nav .semi-navigation-item-selected {
-  background: linear-gradient(90deg, rgba(237, 106, 44, 0.24), rgba(237, 106, 44, 0.1));
-  color: #ffb08a !important;
-  box-shadow: inset 3px 0 0 var(--admin-color-primary);
+  background: linear-gradient(90deg, rgba(237, 106, 44, 0.42), rgba(237, 106, 44, 0.22));
+  color: #fff !important;
+  border-left: 0;
+  box-shadow: inset 3px 0 0 #ffb48f, inset 0 0 0 1px rgba(255, 255, 255, 0.16);
 }
 
 .admin-layout-nav .semi-navigation-item-selected span,
 .admin-layout-nav .semi-navigation-item-selected svg {
-  color: #ffb08a !important;
+  color: #ffffff !important;
+}
+
+.admin-layout-nav .semi-navigation-item-selected:hover {
+  background: linear-gradient(90deg, rgba(255, 180, 126, 0.58), rgba(237, 106, 44, 0.28));
+}
+
+.admin-layout-nav .semi-navigation-sub-title.semi-navigation-sub-title-selected {
+  background: linear-gradient(90deg, rgba(237, 106, 44, 0.18), rgba(237, 106, 44, 0.06));
+  color: #fff !important;
+}
+
+.admin-layout-nav .semi-navigation-sub-title.semi-navigation-sub-title-selected span,
+.admin-layout-nav .semi-navigation-sub-title.semi-navigation-sub-title-selected svg {
+  color: #fff !important;
 }
 
 .admin-layout-nav .semi-navigation-footer {
@@ -1008,7 +1023,7 @@ body {
   --admin-table-header-text: #52555d;
   --admin-table-body-text: #282a30;
   --admin-table-muted-text: #777a82;
-  overflow: hidden;
+  overflow: visible;
   border-radius: 0;
   background: var(--admin-color-bg);
 }
@@ -1065,7 +1080,8 @@ body {
   letter-spacing: 0.02em;
   line-height: 20px;
   text-align: left;
-  white-space: nowrap;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .admin-business-table .semi-table-thead > .semi-table-row > .semi-table-row-head .semi-table-header-column {
@@ -1085,6 +1101,8 @@ body {
   color: var(--admin-table-body-text);
   font-weight: 500;
   line-height: 22px;
+  white-space: normal;
+  word-break: break-word;
   vertical-align: middle;
 }
 
@@ -1096,8 +1114,11 @@ body {
 
 .admin-business-table .semi-table-tbody > .semi-table-row > .semi-table-row-cell span,
 .admin-business-table .semi-table-tbody > .semi-table-row > .semi-table-row-cell time {
-  display: inline-block;
+  display: block;
+  width: 100%;
   max-width: 100%;
+  white-space: inherit;
+  word-break: inherit;
 }
 
 .admin-business-table .semi-table-tbody > .semi-table-row > .semi-table-row-cell time {
@@ -1197,7 +1218,7 @@ body {
 
 .admin-data-table-compact .semi-table-thead > .semi-table-row > .semi-table-row-head,
 .admin-data-table-compact .semi-table-tbody > .semi-table-row > .semi-table-row-cell {
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .admin-business-table .semi-table-body::-webkit-scrollbar,
