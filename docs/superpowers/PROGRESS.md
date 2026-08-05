@@ -6875,3 +6875,10 @@
 - 修改文件：`mobile/pencil/scripts/{22,23,24}-assets-member-*.js`、`mobile/pencil/exports/{p61z2Q,Q4JYj}.png`、`docs/superpowers/PROGRESS.md`；`.pen` 待 ⌘S 后提交。
 - 验证结果：导出目检浅色空态/毛玻璃按钮、深色持仓+纯图标；充币页/Profile 抽检无连带破坏。
 - 后续事项：`.pen` 需 VS Code ⌘S 后补提交。
+
+## 2026-08-06 03:40 - 未登录资产页重设计 + 画布整理
+
+- 完成内容：Guest 资产页（CUK3y / i6YDBr）按 Member 沉浸式卡片外壳重建（h=236、丝绸底、Bloom、圆角）；内容仅保留登录提示 + 毛玻璃「登录查看资产」按钮，不展示任何估值/遮罩金额/持仓列表。画布 87 块顶层画板按编号 6 列网格整齐排列。同步 artboards.json 与 screen-inventory.md 命名。
+- 修改文件：`mobile/pencil/scripts/{25-assets-guest-immersive,26-canvas-tidy}.js`、`mobile/pencil/artboards.json`、`mobile/pencil/screen-inventory.md`、`docs/superpowers/PROGRESS.md`；`.pen` 待 ⌘S。
+- 验证结果：结构 dump 确认 Guest Hero / Login 节点与文案正确；export_nodes 因视口缓存导出空白，需用户在画布点开后复核视觉。
+- 后续事项：用户视口确认 Guest 视觉；⌘S 后提交 `.pen`。
