@@ -6861,3 +6861,10 @@
 - 修改文件：`mobile/pencil/scripts/{17-assets-member-immersive,18-assets-member-polish}.js`、`mobile/pencil/exports/{p61z2Q,Q4JYj}.png`、`docs/superpowers/PROGRESS.md`；`.pen` 待 VS Code 保存后提交。
 - 验证结果：两画板重新导出目检——浅色 hero 薄荷丝绸质感与圆角正确、操作盘对比清晰；深色今日收益可读；持仓行 Lucide 图标盘一致；整体与首页沉浸式语言对齐。
 - 后续事项：① `.pen` 需在 VS Code ⌘S 后补提交；② 线上 `AssetsView.vue` parity 独立任务；③ `export_nodes` 视口缓存特性已记录，后续画板导出前需先上屏。
+
+## 2026-08-06 02:10 - 资产页 Member 画板头部与导航修正
+
+- 完成内容：按反馈三处修正：① 删除 Assets Header 右上角 eye 图标（两画板）；② Header fill 设为透明（#00000000）与画布融为一体；③ 底部导航 FAB 对齐——排障发现参考画板的绝对定位原点在 padding box 而我的在 border box，差值恰为 padding (16,6)，FAB 坐标补偿为 x=167/y=-6 后水平居中（780px 宽下圆心 389/390），并补齐参照系的 FAB 薄荷投影（#43EFA66 y6 b16）与 Nav Dock 投影（#07110D14 y8 b24）、nav strokeAlignment。另记录：Update 不允许 layout:null（合法值 none/vertical/horizontal），且 Update 会整体覆写 padding，误操作后已通过删除重建恢复与参照完全一致的结构（scripts/19-21）。
+- 修改文件：`mobile/pencil/scripts/{19-assets-member-header-nav,20-assets-member-nav-fix,21-assets-member-fab-align}.js`、`mobile/pencil/exports/{p61z2Q,Q4JYj}.png`、`docs/superpowers/PROGRESS.md`；`.pen` 待 VS Code 保存后提交。
+- 验证结果：导出目检 + 像素测量：FAB 圆心 X=389（画布中心 390），FAB 垂直嵌入 dock 上沿位置与 CUK3y 一致；header 无 eye、背景透明。
+- 后续事项：① `.pen` 需在 VS Code ⌘S 后补提交；② 线上 `AssetsView.vue` parity 独立任务。
