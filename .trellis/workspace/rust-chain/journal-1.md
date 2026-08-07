@@ -887,3 +887,36 @@ Ported the Sites v16 signal Canvas and route veil into the Vue mobile shell, cor
 ### Next Steps
 
 - None - task complete
+
+
+## Session 26: Mobile Pencil flows and market favorites
+
+**Date**: 2026-08-08
+**Task**: Mobile Pencil flows and market favorites
+**Branch**: `main`
+
+### Summary
+
+Completed and verified the accumulated mobile Pencil page parity, assets and swap Logo integration, market-feed restart fallbacks, authenticated market favorites, backend-owned market and wallet Logo metadata, and mobile PWA delivery.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d01ef80` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
