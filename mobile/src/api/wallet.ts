@@ -86,6 +86,25 @@ interface BackendWalletAccount {
   locked: string | number
 }
 
+interface BackendWalletTransferAccount {
+  asset_id: number
+  available: string | number
+  frozen: string | number
+  locked: string | number
+}
+
+interface BackendWalletTransferResponse {
+  transfer_id: string
+  spot_wallet: BackendWalletTransferAccount
+  margin_wallet: BackendWalletTransferAccount
+}
+
+export interface WalletTransferResult {
+  transferId: string
+  spotWallet: WalletAccount
+  marginWallet: WalletAccount
+}
+
 interface BackendLedgerEntry {
   id: number
   symbol: string
@@ -266,13 +285,36 @@ export async function fetchQuickRechargeOrders(limit = 20): Promise<QuickRecharg
   return (response.data.orders || []).map(mapQuickRechargeOrder)
 }
 
-export async function transferWalletFunds(assetSymbol: string, from: 'spot' | 'margin', to: 'spot' | 'margin', amount: number): Promise<void> {
-  await client.post(requestUrl('/margin/transfers'), {
-    asset_symbol: assetSymbol.toUpperCase(),
+export async function transferWalletFunds(assetSymbol: string, from: 'spot' | 'margin', to: 'spot' | 'margin', amount: number): Promise<WalletTransferResult> {
+  const symbol = assetSymbol.toUpperCase()
+  const response = await client.post<BackendWalletTransferResponse>(requestUrl('/margin/transfers'), {
+    asset_symbol: symbol,
     from,
     to,
     amount: String(amount),
+    idempotency_key: createWalletMutationIdempotencyKey('mobile-transfer'),
   })
+  return {
+    transferId: response.data.transfer_id,
+    spotWallet: mapTransferWallet(response.data.spot_wallet, symbol),
+    marginWallet: mapTransferWallet(response.data.margin_wallet, symbol),
+  }
+}
+
+function mapTransferWallet(wallet: BackendWalletTransferAccount, symbol: string): WalletAccount {
+  return {
+    assetId: asNumber(wallet.asset_id),
+    symbol,
+    available: asNumber(wallet.available),
+    frozen: asNumber(wallet.frozen),
+    locked: asNumber(wallet.locked),
+  }
+}
+
+function createWalletMutationIdempotencyKey(scope: string): string {
+  const randomPart = globalThis.crypto?.randomUUID?.()
+    ?? Math.random().toString(36).slice(2)
+  return `${scope}-${Date.now()}-${randomPart}`
 }
 
 function mapQuickRechargeOrder(order: BackendQuickRechargeOrder): QuickRechargeOrder {

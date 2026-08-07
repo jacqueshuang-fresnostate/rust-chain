@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/index.md","reason":"Verify backend layer boundaries and quality checks"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Verify migration safety, uniqueness and query correctness"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Verify authentication, validation and idempotent route behavior"}
+{"file":".trellis/spec/backend/market-favorites.md","reason":"Verify the implemented favorites and Logo behavior against the package contract"}
+{"file":".trellis/spec/mobile/index.md","reason":"Verify mobile quality, accessibility and no unrelated visual drift"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Verify API authority, session behavior, Logo metadata and no local fake state"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Verify root page and Pencil layout contracts remain intact"}
+{"file":".trellis/tasks/08-08-mobile-market-favorites-asset-logos/research/cross-layer-audit.md","reason":"Verify every audited backend/mobile gap is closed"}

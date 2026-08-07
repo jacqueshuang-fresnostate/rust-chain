@@ -5,6 +5,8 @@ export interface BackendMarketRecord {
   id?: string | number | null
   symbol: string
   logo_url?: string | null
+  base_logo_url?: string | null
+  quote_logo_url?: string | null
   base_asset?: string
   quote_asset?: string
 }
@@ -33,6 +35,8 @@ export function mapMarketTicker(market: BackendMarketRecord, ticker: BackendTick
     base: pair.base,
     quote: pair.quote,
     iconUrl: market.logo_url?.trim() || undefined,
+    baseIconUrl: market.base_logo_url?.trim() || undefined,
+    quoteIconUrl: market.quote_logo_url?.trim() || undefined,
     lastPrice,
     openPrice,
     highPrice: asNumber(ticker.high_24h, lastPrice),

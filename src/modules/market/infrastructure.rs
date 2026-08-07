@@ -11,8 +11,8 @@ use crate::{
         MarketTickerSnapshot, MarketTickerValues, MarketTradeSide, MarketTradeTick,
         ValidatedMarketSymbol,
         presentation::{
-            DepthCachePayload, DepthResponse, KlineResponse, MarketResponse, TickerResponse,
-            TradeResponse,
+            DepthCachePayload, DepthResponse, KlineResponse, MarketFavoriteResponse,
+            MarketResponse, TickerResponse, TradeResponse,
         },
         repository::{KlineDocumentRecord, SpotTradeRecord},
         sanitize_symbol,
@@ -358,6 +358,8 @@ pub(crate) async fn list_active_markets(pool: &Pool<MySql>) -> AppResult<Vec<Mar
         r#"SELECT pairs.id,
                   pairs.symbol,
                   pairs.logo_url,
+                  base.logo_url AS base_logo_url,
+                  quote.logo_url AS quote_logo_url,
                   base.symbol AS base_asset,
                   quote.symbol AS quote_asset,
                   pairs.price_precision,
@@ -375,6 +377,99 @@ pub(crate) async fn list_active_markets(pool: &Pool<MySql>) -> AppResult<Vec<Mar
     .await?;
 
     Ok(markets)
+}
+
+pub(crate) async fn list_user_market_favorites(
+    pool: &Pool<MySql>,
+    user_id: u64,
+) -> AppResult<Vec<MarketFavoriteResponse>> {
+    sqlx::query_as::<_, MarketFavoriteResponse>(
+        r#"SELECT pairs.id AS market_id,
+                  REPLACE(REPLACE(REPLACE(UPPER(pairs.symbol), '-', ''), '/', ''), '_', '') AS symbol,
+                  pairs.logo_url,
+                  base.logo_url AS base_logo_url,
+                  quote.logo_url AS quote_logo_url,
+                  base.symbol AS base_asset,
+                  quote.symbol AS quote_asset
+           FROM user_market_favorites favorites
+           INNER JOIN trading_pairs pairs ON pairs.id = favorites.trading_pair_id
+           INNER JOIN assets base ON base.id = pairs.base_asset
+           INNER JOIN assets quote ON quote.id = pairs.quote_asset
+           WHERE favorites.user_id = ?
+             AND pairs.status = 'active'
+           ORDER BY favorites.created_at ASC, favorites.id ASC"#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::from)
+}
+
+pub(crate) async fn add_user_market_favorite(
+    pool: &Pool<MySql>,
+    user_id: u64,
+    symbol: &str,
+) -> AppResult<MarketFavoriteResponse> {
+    let favorite = load_active_market_favorite(pool, symbol)
+        .await?
+        .ok_or_else(|| AppError::Validation("market symbol is not listed".to_owned()))?;
+
+    sqlx::query(
+        r#"INSERT INTO user_market_favorites (user_id, trading_pair_id)
+           VALUES (?, ?)
+           ON DUPLICATE KEY UPDATE trading_pair_id = VALUES(trading_pair_id)"#,
+    )
+    .bind(user_id)
+    .bind(favorite.market_id)
+    .execute(pool)
+    .await?;
+
+    Ok(favorite)
+}
+
+pub(crate) async fn remove_user_market_favorite(
+    pool: &Pool<MySql>,
+    user_id: u64,
+    symbol: &str,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"DELETE favorites
+           FROM user_market_favorites favorites
+           INNER JOIN trading_pairs pairs ON pairs.id = favorites.trading_pair_id
+           WHERE favorites.user_id = ?
+             AND REPLACE(REPLACE(REPLACE(UPPER(pairs.symbol), '-', ''), '/', ''), '_', '') = ?"#,
+    )
+    .bind(user_id)
+    .bind(symbol)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+async fn load_active_market_favorite(
+    pool: &Pool<MySql>,
+    symbol: &str,
+) -> AppResult<Option<MarketFavoriteResponse>> {
+    sqlx::query_as::<_, MarketFavoriteResponse>(
+        r#"SELECT pairs.id AS market_id,
+                  REPLACE(REPLACE(REPLACE(UPPER(pairs.symbol), '-', ''), '/', ''), '_', '') AS symbol,
+                  pairs.logo_url,
+                  base.logo_url AS base_logo_url,
+                  quote.logo_url AS quote_logo_url,
+                  base.symbol AS base_asset,
+                  quote.symbol AS quote_asset
+           FROM trading_pairs pairs
+           INNER JOIN assets base ON base.id = pairs.base_asset
+           INNER JOIN assets quote ON quote.id = pairs.quote_asset
+           WHERE pairs.status = 'active'
+             AND REPLACE(REPLACE(REPLACE(UPPER(pairs.symbol), '-', ''), '/', ''), '_', '') = ?
+           LIMIT 1"#,
+    )
+    .bind(symbol)
+    .fetch_optional(pool)
+    .await
+    .map_err(AppError::from)
 }
 
 pub(crate) async fn market_symbol_is_listed(pool: &Pool<MySql>, symbol: &str) -> AppResult<bool> {

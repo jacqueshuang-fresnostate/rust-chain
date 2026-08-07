@@ -166,10 +166,11 @@ test('根栏目保持既有首页行情，并让现货、合约、资产与我�
   assert.match(views.trade, /:class="mode === 'contract' \? 'contract-trade' : 'spot-trade'"/)
   assertOrdered(views.assets, [
     'class="page pencil-page pencil-root-page assets-pencil"',
-    'class="pencil-hero assets-summary"',
-    'class="pencil-action-grid assets-actions"',
-    'class="pencil-section assets-distribution"',
-    'class="assets-allocation"',
+    'class="pencil-hero assets-hero assets-hero--guest"',
+    'class="pencil-hero assets-hero assets-hero--member"',
+    'class="assets-hero-actions"',
+    'class="pencil-section assets-holdings"',
+    'class="assets-holdings__list"',
     'class="pencil-section assets-tools"',
   ])
   assertOrdered(views.profile, [
@@ -223,7 +224,8 @@ test('根视图继续调用真实 API/store，访客与加载错误状态不改�
 test('行情曲线、自选和加载失败状态保持真实语义与固定五行几何', () => {
   assert.match(views.markets, /import \{ fetchKlines \} from '@\/api\/market'/)
   assert.match(views.markets, /Promise\.allSettled\([\s\S]*?fetchKlines\(symbol, '15m', 24\)/)
-  assert.match(views.markets, /const favoriteSymbols = ref\(new Set<string>\(\)\)/)
+  assert.match(views.markets, /useMarketFavoritesStore\(\)/)
+  assert.match(views.markets, /marketFavorites\.isFavorite\(item\.symbol\)/)
   assert.doesNotMatch(views.markets, /prototypeSparkPoints|new Set\(\['BTC\/USDT'/)
   assert.match(views.markets, /const neutralSparklinePoints = '0,17 76,17'/)
   assert.match(views.markets, /const hasTemperatureSample = computed\(\(\) => !marketRowsUnavailable\.value && rows\.value\.length > 0\)/)
@@ -232,7 +234,7 @@ test('行情曲线、自选和加载失败状态保持真实语义与固定五�
   assert.match(views.markets, /hasTemperatureSample \? 'rootPrototype\.marketStrong' : 'rootPrototype\.marketNoSample'/)
   assert.match(views.markets, /:class="sparklineTone\(ticker\.symbol\)"/)
   assert.match(views.markets, /:points="sparklinePoints\(ticker\.symbol\)"/)
-  assert.match(views.home, /if \(activeTab\.value === 'favorites'\) return \[\]/)
+  assert.match(views.home, /marketStore\.tickers\.filter\(\(ticker\) => marketFavorites\.isFavorite\(ticker\.symbol\)\)/)
 
   for (const source of [views.home, views.markets]) {
     assert.match(source, /class="root-market-reserved-state" role="alert"/)

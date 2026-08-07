@@ -10,6 +10,10 @@ export interface EarnProduct {
   category: string
   termDays: number
   aprRate: number
+  redemptionFeeRate?: number
+  maturityProfitFeeRate?: number
+  earlyRedeemFeeBasis?: string
+  earlyRedeemFeeRate?: number
   minSubscribe: number
   maxSubscribe?: number
   status: string
@@ -37,6 +41,10 @@ export async function fetchEarnProducts(limit = 50): Promise<EarnProduct[]> {
     category: String(product.category_name || product.category || i18n.global.t('earn.defaultCategory')),
     termDays: asNumber(product.term_days),
     aprRate: asNumber(product.apr_rate),
+    redemptionFeeRate: optionalNumber(product.redemption_fee_rate),
+    maturityProfitFeeRate: optionalNumber(product.maturity_profit_fee_rate),
+    earlyRedeemFeeBasis: optionalText(product.early_redeem_fee_basis),
+    earlyRedeemFeeRate: optionalNumber(product.early_redeem_fee_rate),
     minSubscribe: asNumber(product.min_subscribe),
     maxSubscribe: product.max_subscribe === null || product.max_subscribe === undefined ? undefined : asNumber(product.max_subscribe),
     status: String(product.status || ''),
@@ -76,6 +84,17 @@ function mapSubscription(subscription: Record<string, unknown>): EarnSubscriptio
 
 function createIdempotencyKey(scope: string): string {
   return `${scope}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  if (value === null || value === undefined || value === '') return undefined
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : undefined
+}
+
+function optionalText(value: unknown): string | undefined {
+  const text = typeof value === 'string' ? value.trim() : ''
+  return text || undefined
 }
 
 function normalizeTimestamp(value: unknown): number {

@@ -13,6 +13,10 @@ x-api-environment: &api-environment
   BITGET_WS_URL: ${BITGET_WS_URL:-wss://ws.bitget.com/v2/ws/public}
   HTX_REST_BASE_URL: ${HTX_REST_BASE_URL:-https://api.huobi.pro}
   HTX_WS_URL: ${HTX_WS_URL:-wss://api.huobi.pro/ws}
+  # Bootstrap fallback used only when there is no enabled database market-feed config.
+  MARKET_FEED_SYMBOLS: "${MARKET_FEED_SYMBOLS:-BTCUSDT}"
+  MARKET_FEED_INTERVALS: "${MARKET_FEED_INTERVALS:-1m,5m,15m,1h,1d}"
+  MARKET_FEED_PROVIDERS: "${MARKET_FEED_PROVIDERS:-bitget}"
   RUST_LOG: ${RUST_LOG:-info}
 
 services:

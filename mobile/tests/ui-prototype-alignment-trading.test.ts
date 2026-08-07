@@ -148,7 +148,7 @@ test('订单中心展示 Pencil 双层分类、访客状态和紧凑真实数据
   const tabsAt = ordersSource.indexOf('<nav class="pencil-segmented orders-market-tabs"')
   const authAt = ordersSource.indexOf('v-if="!session.isAuthenticated"')
   assert.ok(tabsAt > 0 && authAt > tabsAt, 'tabs should remain visible before the guest state')
-  assert.match(ordersSource, /data-pencil-source="kcP5D A85if n6oGO t2GTW4"/)
+  assert.match(ordersSource, /data-pencil-source="kcP5D A85if n6oGO t2GTW4 e5Qs1 hxe8l"/)
   assert.match(ordersSource, /<PageHeader :back="false" :pencil="true"/)
   assert.match(ordersSource, /class="pencil-segmented orders-state-tabs"/)
   assert.match(ordersSource, /class="orders-row"/)

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import {
   CheckCircle2,
   CircleAlert,
@@ -17,6 +17,7 @@ import { apiErrorMessage } from '@/api/client'
 import { fetchEarnProducts, fetchEarnSubscriptions, redeemEarnSubscription, subscribeEarnProduct, type EarnProduct, type EarnSubscription } from '@/api/earn'
 import { fetchWalletAccounts } from '@/api/wallet'
 import { formatAmount, formatDateTime } from '@/core/format'
+import { useModalDialog } from '@/core/modalDialog'
 import { useSessionStore } from '@/stores/session'
 import type { WalletAccount } from '@/core/types'
 
@@ -36,16 +37,54 @@ const success = ref('')
 const activeCategory = ref('all')
 const subscribeDialog = ref<HTMLElement | null>(null)
 const holdingsSection = ref<HTMLElement | null>(null)
-let returnFocus: HTMLElement | null = null
-let previousBodyOverflow = ''
 
-const available = computed(() => accounts.value.find((account) => account.assetId === selected.value?.assetId)?.available || 0)
+const selectedAccount = computed(() => accounts.value.find((account) => account.assetId === selected.value?.assetId))
+const available = computed<number | null>(() => selectedAccount.value?.available ?? null)
+const availableLabel = computed(() => available.value === null ? '--' : formatAmount(available.value))
 const amountNumber = computed(() => Number(amount.value || 0))
 const dialogOpen = computed(() => Boolean(selected.value))
+const estimatedDailyYield = computed<number | null>(() => {
+  if (!selected.value || !Number.isFinite(amountNumber.value) || amountNumber.value <= 0 || selected.value.aprRate < 0) return null
+  return amountNumber.value * selected.value.aprRate / 365
+})
 const canSubscribe = computed(() => {
   const product = selected.value
-  return Boolean(product && Number.isFinite(amountNumber.value) && amountNumber.value >= product.minSubscribe && (!product.maxSubscribe || amountNumber.value <= product.maxSubscribe) && amountNumber.value <= available.value)
+  return Boolean(
+    product
+    && available.value !== null
+    && Number.isFinite(amountNumber.value)
+    && amountNumber.value >= product.minSubscribe
+    && (product.maxSubscribe === undefined || amountNumber.value <= product.maxSubscribe)
+    && amountNumber.value <= available.value,
+  )
 })
+const availabilityLabel = computed(() => {
+  const product = selected.value
+  if (!product) return ''
+  const values = {
+    available: availableLabel.value,
+    asset: product.assetSymbol,
+    minimum: formatAmount(product.minSubscribe),
+    maximum: product.maxSubscribe === undefined ? '--' : formatAmount(product.maxSubscribe),
+  }
+  return t(product.maxSubscribe === undefined ? 'earn.availability' : 'earn.availabilityWithMaximum', values)
+})
+const selectedRedemptionRule = computed(() => {
+  const product = selected.value
+  if (!product) return ''
+  if (
+    product.redemptionFeeRate === undefined
+    && product.maturityProfitFeeRate === undefined
+    && product.earlyRedeemFeeBasis === undefined
+    && product.earlyRedeemFeeRate === undefined
+  ) return t('earn.ruleUnavailable')
+  return t('earn.redemptionRuleConfigured', {
+    redemptionRate: configuredRate(product.redemptionFeeRate),
+    earlyRule: earlyRedeemRule(product),
+    maturityRate: configuredRate(product.maturityProfitFeeRate),
+  })
+})
+const { trapFocus: trapSubscribeFocus } = useModalDialog(dialogOpen, subscribeDialog, '[data-dialog-cancel]')
 const categories = computed(() => [
   { value: 'all', label: t('earn.all') },
   ...[...new Set(products.value.map((product) => product.category).filter(Boolean))]
@@ -105,7 +144,11 @@ function openSubscribe(product: EarnProduct): void {
 }
 
 function useMaximum(): void {
-  amount.value = String(available.value)
+  if (available.value === null) return
+  const productMaximum = selected.value?.maxSubscribe
+  amount.value = String(productMaximum === undefined
+    ? available.value
+    : Math.min(available.value, productMaximum))
 }
 
 function openHoldings(): void {
@@ -151,52 +194,33 @@ async function redeem(subscription: EarnSubscription): Promise<void> {
   }
 }
 
-function trapDialogFocus(event: KeyboardEvent): void {
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    closeSubscribe()
-    return
-  }
-  if (event.key !== 'Tab' || !subscribeDialog.value) return
-  const focusable = Array.from(subscribeDialog.value.querySelectorAll<HTMLElement>(
-    'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-  ))
-  if (!focusable.length) return
-  const first = focusable[0]
-  const last = focusable.at(-1) || first
-  if (event.shiftKey && document.activeElement === first) {
-    event.preventDefault()
-    last.focus()
-  } else if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault()
-    first.focus()
-  }
+function handleSubscribeDialogKeydown(event: KeyboardEvent): void {
+  trapSubscribeFocus(event, closeSubscribe)
 }
 
-watch(dialogOpen, async (open) => {
-  if (open) {
-    returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    previousBodyOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    await nextTick()
-    subscribeDialog.value?.querySelector<HTMLElement>('[data-dialog-cancel]')?.focus()
-    return
-  }
-  document.body.style.overflow = previousBodyOverflow
-  await nextTick()
-  returnFocus?.focus()
-  returnFocus = null
-})
+function configuredRate(value: number | undefined): string {
+  return value === undefined ? '--' : (value * 100).toFixed(2)
+}
+
+function earlyRedeemRule(product: EarnProduct): string {
+  const basis = product.earlyRedeemFeeBasis?.trim().toLowerCase()
+  if (basis === 'none') return t('earn.earlyRedeemNone')
+  const basisLabel = basis === 'principal'
+    ? t('earn.earlyRedeemBasisPrincipal')
+    : basis === 'profit'
+      ? t('earn.earlyRedeemBasisProfit')
+      : product.earlyRedeemFeeBasis || t('earn.ruleUnavailable')
+  return t('earn.earlyRedeemFee', {
+    rate: configuredRate(product.earlyRedeemFeeRate),
+    basis: basisLabel,
+  })
+}
 
 onMounted(() => { void load() })
-
-onBeforeUnmount(() => {
-  document.body.style.overflow = previousBodyOverflow
-})
 </script>
 
 <template>
-  <main class="page page--plain pencil-page earn-pencil" data-pencil-source="zIzOm tCHZ9">
+  <main class="page page--plain pencil-page earn-pencil" data-pencil-source="zIzOm tCHZ9 nqP6W aXxul">
     <PageHeader :back="true" :pencil="true" :title="t('earn.title')">
       <template #actions>
         <button class="icon-button" type="button" :aria-label="t('earn.myHoldings')" @click="openHoldings"><History :size="18" /></button>
@@ -283,22 +307,42 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="selected" class="earn-mask" @click.self="closeSubscribe">
-      <form ref="subscribeDialog" class="earn-dialog" role="dialog" aria-modal="true" aria-labelledby="earn-subscribe-title" @keydown="trapDialogFocus" @submit.prevent="subscribe">
-        <header>
-          <div><strong id="earn-subscribe-title">{{ t('earn.subscribeTitle', { name: selected.name }) }}</strong><small>{{ t('earn.subscribeSummary', { days: selected.termDays, apr: (selected.aprRate * 100).toFixed(2) }) }}</small></div>
+      <form ref="subscribeDialog" class="earn-dialog" role="dialog" aria-modal="true" aria-labelledby="earn-subscribe-title" @keydown="handleSubscribeDialogKeydown" @submit.prevent="subscribe">
+        <span class="earn-dialog__grab" aria-hidden="true" />
+        <header class="earn-dialog__header">
+          <strong id="earn-subscribe-title">{{ t('earn.subscribeConfirmationTitle') }}</strong>
           <button class="icon-button" type="button" :aria-label="t('common.close')" :disabled="submitting" data-dialog-cancel @click="closeSubscribe"><X :size="21" /></button>
         </header>
+
+        <section class="earn-dialog-product">
+          <small>{{ selected.category }} / {{ selected.assetSymbol }}</small>
+          <h2>{{ selected.name || t('earn.defaultName', { asset: selected.assetSymbol }) }}</h2>
+          <p>{{ t('earn.referenceApr', { apr: (selected.aprRate * 100).toFixed(2) }) }}</p>
+          <span>{{ selected.termDays ? t('earn.termDays', { days: selected.termDays }) : t('earn.flexible') }}</span>
+        </section>
+
         <label class="pencil-field">
           <span>{{ t('earn.amount') }}</span>
           <div class="pencil-field__shell">
-            <input v-model="amount" class="pencil-numeric" inputmode="decimal" />
+            <input v-model="amount" class="pencil-numeric" inputmode="decimal" :aria-invalid="amount !== '' && !canSubscribe" />
             <b>{{ selected.assetSymbol }}</b>
             <button type="button" @click="useMaximum">{{ t('earn.all') }}</button>
           </div>
         </label>
-        <p class="earn-availability">{{ t('earn.availability', { available: formatAmount(available), asset: selected.assetSymbol, minimum: formatAmount(selected.minSubscribe) }) }}</p>
+        <p class="earn-availability">{{ availabilityLabel }}</p>
+        <dl class="earn-dialog-summary">
+          <div>
+            <dt>{{ t('earn.estimatedDailyYield') }}</dt>
+            <dd>{{ estimatedDailyYield === null ? '--' : `${formatAmount(estimatedDailyYield)} ${selected.assetSymbol}` }}</dd>
+          </div>
+          <div><dt>{{ t('earn.interestStartRule') }}</dt><dd>{{ t('earn.ruleUnavailable') }}</dd></div>
+          <div><dt>{{ t('earn.redemptionRule') }}</dt><dd>{{ selectedRedemptionRule }}</dd></div>
+        </dl>
         <p v-if="error" class="dialog-feedback" role="alert">{{ error }}</p>
-        <button class="pencil-primary pencil-primary--full" type="submit" :disabled="submitting" :aria-busy="submitting">{{ submitting ? t('common.submitting') : t('earn.confirm') }}</button>
+        <p class="earn-dialog-note">{{ t('earn.confirmationNote') }}</p>
+        <button class="pencil-primary pencil-primary--full earn-dialog-submit" type="submit" :disabled="submitting || !canSubscribe" :aria-busy="submitting">
+          <Landmark :size="17" aria-hidden="true" />{{ submitting ? t('common.submitting') : t('earn.confirm') }}
+        </button>
       </form>
     </div>
   </main>
@@ -554,26 +598,74 @@ onBeforeUnmount(() => {
   border-radius: 20px 20px 0 0;
   box-shadow: none;
   display: grid;
-  gap: 16px;
-  padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
+  gap: 10px;
+  max-height: calc(100dvh - max(16px, env(safe-area-inset-top)));
+  max-width: 448px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 16px calc(14px + env(safe-area-inset-bottom));
   width: 100%;
 }
 
-.earn-dialog > header {
-  align-items: start;
+.earn-dialog__grab {
+  background: var(--line-strong);
+  border-radius: 2px;
+  height: 4px;
+  justify-self: center;
+  width: 40px;
+}
+
+.earn-dialog > .earn-dialog__header {
+  align-items: center;
   display: flex;
   justify-content: space-between;
 }
 
-.earn-dialog > header div {
-  display: grid;
-  gap: 5px;
+.earn-dialog__header > strong {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 24px;
 }
 
-.earn-dialog > header small,
 .earn-availability {
   color: var(--muted);
   font-size: 10px;
+}
+
+.earn-dialog-product {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 4px 4px 8px;
+}
+
+.earn-dialog-product small {
+  color: var(--positive);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+}
+
+.earn-dialog-product h2 {
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 750;
+  line-height: 27px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.earn-dialog-product p,
+.earn-dialog-product span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 16px;
+  margin: 0;
+}
+
+.earn-dialog-product span {
+  color: var(--ink);
+  font-weight: 600;
 }
 
 .earn-availability,
@@ -584,6 +676,61 @@ onBeforeUnmount(() => {
 .dialog-feedback {
   color: var(--negative);
   font-size: 11px;
+}
+
+.earn-dialog-summary {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  display: grid;
+  margin: 0;
+  padding: 0 12px;
+}
+
+.earn-dialog-summary > div {
+  align-items: center;
+  border-bottom: 1px solid var(--hairline);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 36px;
+}
+
+.earn-dialog-summary > div:last-child {
+  border-bottom: 0;
+}
+
+.earn-dialog-summary dt,
+.earn-dialog-summary dd {
+  font-size: 11px;
+  margin: 0;
+}
+
+.earn-dialog-summary dt {
+  color: var(--muted);
+}
+
+.earn-dialog-summary dd {
+  font-weight: 600;
+  max-width: 62%;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.earn-dialog-note {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 15px;
+  margin: 0;
+}
+
+.earn-dialog-submit {
+  align-items: center;
+  border-radius: 4px;
+  display: flex;
+  gap: 8px;
+  height: 50px;
+  justify-content: center;
+  min-height: 50px;
 }
 
 @media (max-width: 340px) {

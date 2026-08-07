@@ -1,0 +1,5 @@
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Preserve mobile DTO, asset metadata, and WebSocket integration contracts."}
+{"file":".trellis/spec/mobile/index.md","reason":"Follow mobile component, icon, and validation conventions."}
+{"file":".trellis/spec/backend/realtime-websockets.md","reason":"Keep the existing public market subscription and broadcast protocol unchanged."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Apply backend/deployment quality and verification requirements."}
+{"file":".trellis/tasks/08-06-swap-asset-logo-market-push-restart/research/runtime-findings.md","reason":"Use the observed missing image and restart failure evidence."}

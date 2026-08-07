@@ -3987,3 +3987,66 @@ async fn admin_margin_interest_summary_offset_paging_totals_count_groups_not_pos
         .await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn margin_wallets_return_the_backend_asset_logo() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let mut tx = pool.begin().await?;
+    let user_id = create_user(&mut tx).await;
+    let (asset_id, asset_symbol) = create_asset(&mut tx, "MWL").await;
+    let logo_url = format!("https://cdn.example.test/assets/{asset_symbol}.png");
+    sqlx::query("UPDATE assets SET logo_url = ? WHERE id = ?")
+        .bind(&logo_url)
+        .bind(asset_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        r#"INSERT INTO margin_wallet_accounts
+           (user_id, asset_id, available, frozen, locked)
+           VALUES (?, ?, ?, ?, ?)"#,
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .bind(decimal("12.500000000000000000"))
+    .bind(decimal("1.500000000000000000"))
+    .bind(decimal("3.000000000000000000"))
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900)?;
+    let response = user_routes()
+        .with_state(AppState::new(settings).with_mysql(pool.clone()))
+        .oneshot(
+            Request::builder()
+                .uri("/margin/wallets")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    let status = response.status();
+    let payload = body_json(response).await?;
+
+    assert_eq!(status, StatusCode::OK, "payload: {payload}");
+    assert_eq!(payload["wallets"][0]["asset_id"], asset_id);
+    assert_eq!(payload["wallets"][0]["asset_symbol"], asset_symbol);
+    assert_eq!(payload["wallets"][0]["logo_url"], logo_url);
+
+    sqlx::query("DELETE FROM margin_wallet_accounts WHERE user_id = ? AND asset_id = ?")
+        .bind(user_id)
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}

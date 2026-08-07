@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 const props = withDefaults(defineProps<{
   symbol: string
   src?: string
+  fallbackSrc?: string
   size?: number
 }>(), {
   size: 38,
@@ -13,15 +14,21 @@ const props = withDefaults(defineProps<{
 const { t } = useI18n()
 
 const initial = computed(() => props.symbol.trim().replace(/[^a-z0-9]/gi, '').slice(0, 1).toUpperCase() || '?')
-const imageFailed = ref(false)
+const imageIndex = ref(0)
+const imageSources = computed(() => [...new Set(
+  [props.src, props.fallbackSrc]
+    .map((source) => source?.trim())
+    .filter((source): source is string => Boolean(source)),
+)])
+const imageSource = computed(() => imageSources.value[imageIndex.value])
 const tone = computed(() => props.symbol.split('').reduce((total, char) => total + char.charCodeAt(0), 0) % 5)
 const markStyle = computed(() => ({
   height: `${props.size}px`,
   width: `${props.size}px`,
 }))
 
-watch(() => props.src, () => {
-  imageFailed.value = false
+watch([() => props.src, () => props.fallbackSrc], () => {
+  imageIndex.value = 0
 })
 </script>
 
@@ -34,11 +41,12 @@ watch(() => props.src, () => {
     :aria-label="t('common.assetIcon', { symbol })"
   >
     <img
-      v-if="src && !imageFailed"
-      :src="src"
+      v-if="imageSource"
+      :key="imageSource"
+      :src="imageSource"
       alt=""
       loading="lazy"
-      @error="imageFailed = true"
+      @error="imageIndex += 1"
     />
     <b v-else aria-hidden="true">{{ initial }}</b>
   </span>

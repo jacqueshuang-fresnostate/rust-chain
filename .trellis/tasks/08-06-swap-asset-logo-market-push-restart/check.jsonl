@@ -1,0 +1,5 @@
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Verify real logo metadata and market runtime behavior remain contract-compatible."}
+{"file":".trellis/spec/mobile/index.md","reason":"Verify mobile quality gates and fallback behavior."}
+{"file":".trellis/spec/backend/realtime-websockets.md","reason":"Verify no public WebSocket protocol regression."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verify focused tests and deployment configuration validation."}
+{"file":".trellis/tasks/08-06-swap-asset-logo-market-push-restart/research/runtime-findings.md","reason":"Check the implementation against the reproduced runtime symptoms."}

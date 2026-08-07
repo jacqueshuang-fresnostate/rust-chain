@@ -51,6 +51,10 @@ const { trapFocus: trapReviewFocus } = useModalDialog(reviewOpen, reviewDialog, 
 const { trapFocus: trapPickerFocus } = useModalDialog(pickerOpen, pickerDialog, '[data-picker-search]')
 
 const selectedPair = computed(() => pairs.value.find((pair) => pair.id === pairId.value) || pairs.value[0])
+const accountBySymbol = computed(() => new Map(
+  accounts.value.map((account) => [account.symbol.trim().toUpperCase(), account] as const),
+))
+const assetLogoUrl = (symbol: string): string | undefined => accountBySymbol.value.get(symbol.trim().toUpperCase())?.logoUrl
 const available = computed(() => accounts.value.find((account) => account.symbol === selectedPair.value?.fromAssetSymbol)?.available || 0)
 const amountNumber = computed(() => Number(amount.value || 0))
 const amountAllowed = computed(() => {
@@ -64,7 +68,8 @@ const pickerAssets = computed(() => {
   const needle = pickerQuery.value.trim().toLocaleUpperCase()
   const assets = symbols.map((symbol) => ({
     symbol,
-    balance: accounts.value.find((account) => account.symbol === symbol)?.available || 0,
+    balance: accountBySymbol.value.get(symbol)?.available || 0,
+    logoUrl: assetLogoUrl(symbol),
   })).filter((asset) => (
     (!needle || asset.symbol.includes(needle))
     && (pickerFilter.value !== 'holding' || asset.balance > 0)
@@ -234,7 +239,7 @@ onMounted(() => { void load() })
               <div class="swap-card__main">
                 <input v-model="amount" class="pencil-numeric" inputmode="decimal" placeholder="0.00" @input="quote = null" />
                 <button class="swap-asset-button" type="button" @click="openPicker('from')">
-                  <AssetMark :symbol="selectedPair.fromAssetSymbol" :size="28" />
+                  <AssetMark :symbol="selectedPair.fromAssetSymbol" :src="assetLogoUrl(selectedPair.fromAssetSymbol)" :size="28" />
                   <strong>{{ selectedPair.fromAssetSymbol }}</strong>
                   <ChevronDown :size="16" />
                 </button>
@@ -248,7 +253,7 @@ onMounted(() => { void load() })
               <div class="swap-card__main">
                 <strong class="pencil-numeric swap-receive-value">{{ quote ? formatAmount(quote.toAmount) : t('swap.awaitingQuote') }}</strong>
                 <button class="swap-asset-button" type="button" @click="openPicker('to')">
-                  <AssetMark :symbol="selectedPair.toAssetSymbol" :size="28" />
+                  <AssetMark :symbol="selectedPair.toAssetSymbol" :src="assetLogoUrl(selectedPair.toAssetSymbol)" :size="28" />
                   <strong>{{ selectedPair.toAssetSymbol }}</strong>
                   <ChevronDown :size="16" />
                 </button>
@@ -337,7 +342,7 @@ onMounted(() => { void load() })
             :aria-pressed="asset.symbol === (pickerSide === 'from' ? selectedPair.fromAssetSymbol : selectedPair.toAssetSymbol)"
             @click="selectPickerAsset(asset.symbol)"
           >
-            <AssetMark :symbol="asset.symbol" :size="38" />
+            <AssetMark :symbol="asset.symbol" :src="asset.logoUrl" :size="38" />
             <span class="pencil-row__copy"><strong>{{ asset.symbol }}</strong><small class="pencil-numeric">{{ t('swap.available', { amount: formatAmount(asset.balance), asset: asset.symbol }) }}</small></span>
             <span class="pencil-row__value">
               <Check v-if="asset.symbol === (pickerSide === 'from' ? selectedPair.fromAssetSymbol : selectedPair.toAssetSymbol)" :size="17" class="up" />

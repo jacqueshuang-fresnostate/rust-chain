@@ -82,3 +82,16 @@ Every implementation mapped from these artboards must cover loading, empty, fail
 guest, authenticated, focused, invalid, disabled, submitting and confirmed states where
 the underlying workflow supports them. Missing backend data must never be replaced with
 fabricated balances, returns, products, limits or market statistics.
+
+## Gaps filled 2026-08-06
+
+| Artboard | Production route | Primary intent |
+| --- | --- | --- |
+| `38 / New Coin Records · Light/Dark` (`A9It6g`/`h4gfd`) | `/products/new-coins/records` | 认购/分发/申购/解锁记录 |
+| `39 / Transfer Sheet · Light/Dark` (`v6phV`/`TuWXq`) | `/assets` modal | 现货↔杠杆资金划转弹层 |
+| `40 / Help & Support · Light/Dark` (`UouET`/`FM5tp`) | Proposed from `/profile` help entry | 常见问题与客服入口；生产路由尚未注册 |
+| `08c / Orders · Empty · Light/Dark` (`e5Qs1`/`hxe8l`) | `/orders` | 订单空态 |
+| `26b / Wallet Ledger · Empty · Light/Dark` (`Bcug6`/`IVMAO`) | `/assets/ledger` | 资金账单空态 |
+| `11b / Message Center · Empty · Light/Dark` (`t7j6n`/`eSMHf`) | `/messages` | 消息中心空态 |
+| `20b / Prediction · Bet · Light/Dark` (`CzpTv`/`ZvGMv`) | `/products/prediction` | 预测下单确认 |
+| `16b / Earn · Subscribe · Light/Dark` (`nqP6W`/`aXxul`) | `/products/earn` | 理财申购确认 |

@@ -13,6 +13,7 @@ const tradingApiSource = readFileSync(new URL('../src/api/trading.ts', import.me
 const newCoinsSource = readFileSync(new URL('../src/views/NewCoinsView.vue', import.meta.url), 'utf8')
 const newCoinDetailSource = readFileSync(new URL('../src/views/NewCoinDetailView.vue', import.meta.url), 'utf8')
 const newCoinRecordsSource = readFileSync(new URL('../src/views/NewCoinRecordsView.vue', import.meta.url), 'utf8')
+const modalDialogSource = readFileSync(new URL('../src/core/modalDialog.ts', import.meta.url), 'utf8')
 const selectedCss = readFileSync(new URL('../src/styles/pencil-selected-pages.css', import.meta.url), 'utf8')
 const sources = [
   ordersSource,
@@ -25,7 +26,7 @@ const sources = [
 ]
 
 test('订单页保留现货、杠杆查询与逐笔/批量撤单平仓合同', () => {
-  assert.match(ordersSource, /data-pencil-source="kcP5D A85if n6oGO t2GTW4"/)
+  assert.match(ordersSource, /data-pencil-source="kcP5D A85if n6oGO t2GTW4 e5Qs1 hxe8l"/)
   assert.match(ordersSource, /<PageHeader :back="false" :pencil="true"/)
   assert.match(ordersSource, /fetchOpenSpotOrders\(\)/)
   assert.match(ordersSource, /fetchSpotOrderHistory\(\)/)
@@ -114,13 +115,23 @@ test('资金弹层具备焦点闭环、Escape、滚动锁和主题化遮罩', ()
     assert.match(source, /role="dialog"/)
     assert.match(source, /aria-modal="true"/)
     assert.match(source, /aria-labelledby=/)
-    assert.match(source, /event\.key === 'Escape'/)
-    assert.match(source, /event\.key !== 'Tab'/)
-    assert.match(source, /document\.body\.style\.overflow = 'hidden'/)
     assert.match(source, /data-dialog-cancel/)
     assert.match(source, /background: var\(--overlay\)/)
     assert.match(`${source}\n${selectedCss}`, /:focus-within/)
   }
+
+  for (const source of [earnSource, predictionSource]) {
+    assert.match(source, /useModalDialog\(dialogOpen,/)
+    assert.match(source, /trap\w+Focus\(event, close\w+\)/)
+  }
+
+  assert.match(newCoinRecordsSource, /event\.key === 'Escape'/)
+  assert.match(newCoinRecordsSource, /event\.key !== 'Tab'/)
+  assert.match(newCoinRecordsSource, /document\.body\.style\.overflow = 'hidden'/)
+  assert.match(modalDialogSource, /event\.key === 'Escape'/)
+  assert.match(modalDialogSource, /event\.key !== 'Tab'/)
+  assert.match(modalDialogSource, /document\.body\.style\.overflow = 'hidden'/)
+  assert.match(modalDialogSource, /returnFocus\?\.focus\(\)/)
 })
 
 test('七个视图遵守主题、Lucide、44px 和窄屏合同', () => {

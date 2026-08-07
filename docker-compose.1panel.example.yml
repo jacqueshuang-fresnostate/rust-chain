@@ -25,6 +25,10 @@ x-api-environment: &api-environment
   BITGET_WS_URL: ${BITGET_WS_URL:-wss://ws.bitget.com/v2/ws/public}
   HTX_REST_BASE_URL: ${HTX_REST_BASE_URL:-https://api.huobi.pro}
   HTX_WS_URL: ${HTX_WS_URL:-wss://api.huobi.pro/ws}
+  # 数据库中没有已启用的行情配置时使用以下启动兜底，避免 API/容器重启后只接受订阅却没有行情帧。
+  MARKET_FEED_SYMBOLS: "${MARKET_FEED_SYMBOLS:-BTCUSDT}"
+  MARKET_FEED_INTERVALS: "${MARKET_FEED_INTERVALS:-1m,5m,15m,1h,1d}"
+  MARKET_FEED_PROVIDERS: "${MARKET_FEED_PROVIDERS:-bitget}"
 
 x-default-logging: &default-logging
   driver: json-file

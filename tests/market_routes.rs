@@ -6,9 +6,12 @@ use bigdecimal::BigDecimal;
 use chrono::{TimeZone, Utc};
 use exchange_api::{
     config::Settings,
-    modules::market::{
-        KlineQuery, MarketDepthCacheEntry, MarketDepthLevel, MarketTickerCacheEntry,
-        MarketTickerValues, routes,
+    modules::{
+        auth::{TokenScope, issue_token},
+        market::{
+            KlineQuery, MarketDepthCacheEntry, MarketDepthLevel, MarketTickerCacheEntry,
+            MarketTickerValues, routes,
+        },
     },
     state::AppState,
 };
@@ -46,6 +49,7 @@ async fn mysql_pool_or_skip() -> Result<Option<MySqlPool>, Box<dyn Error>> {
         .max_connections(5)
         .connect(&database_url)
         .await?;
+    sqlx::migrate!("./migrations").run(&pool).await?;
     Ok(Some(pool))
 }
 
@@ -58,6 +62,13 @@ async fn create_market_asset(pool: &MySqlPool, symbol: &str) -> Result<u64, Box<
     .execute(pool)
     .await?;
     Ok(result.last_insert_id())
+}
+
+async fn body_json(
+    response: axum::response::Response,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    let body = axum::body::to_bytes(response.into_body(), 1_048_576).await?;
+    Ok(serde_json::from_slice(&body)?)
 }
 
 fn test_settings() -> Settings {
@@ -138,6 +149,18 @@ async fn market_list_route_returns_active_pairs_from_mysql() -> Result<(), Box<d
     let active_pair_symbol = format!("{base_symbol}-{quote_symbol}");
     let disabled_pair_symbol = format!("{disabled_base_symbol}-{quote_symbol}");
     let active_pair_logo_url = format!("https://cdn.example.test/{active_pair_symbol}.png");
+    let base_logo_url = format!("https://cdn.example.test/assets/{base_symbol}.png");
+    let quote_logo_url = format!("https://cdn.example.test/assets/{quote_symbol}.png");
+    sqlx::query("UPDATE assets SET logo_url = ? WHERE id = ?")
+        .bind(&base_logo_url)
+        .bind(base_asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE assets SET logo_url = ? WHERE id = ?")
+        .bind(&quote_logo_url)
+        .bind(quote_asset_id)
+        .execute(&pool)
+        .await?;
     let active_pair_id = sqlx::query(
         r#"INSERT INTO trading_pairs
            (base_asset, quote_asset, symbol, logo_url, price_precision, qty_precision, min_order_value, status, market_type)
@@ -184,6 +207,8 @@ async fn market_list_route_returns_active_pairs_from_mysql() -> Result<(), Box<d
             && market["base_asset"] == base_symbol
             && market["quote_asset"] == quote_symbol
             && market["logo_url"] == active_pair_logo_url
+            && market["base_logo_url"] == base_logo_url
+            && market["quote_logo_url"] == quote_logo_url
             && market["status"] == "active"
             && market["market_type"] == "external"
     }));
@@ -204,6 +229,287 @@ async fn market_list_route_returns_active_pairs_from_mysql() -> Result<(), Box<d
         .bind(base_asset_id)
         .bind(quote_asset_id)
         .bind(disabled_base_asset_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn market_favorites_are_authenticated_idempotent_and_user_isolated()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool_or_skip().await? else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let mut base_symbol = unique_symbol("MFB");
+    base_symbol.truncate(10);
+    let mut quote_symbol = unique_symbol("MFQ");
+    quote_symbol.truncate(10);
+    let mut disabled_symbol = unique_symbol("MFD");
+    disabled_symbol.truncate(10);
+    let base_asset_id = create_market_asset(&pool, &base_symbol).await?;
+    let quote_asset_id = create_market_asset(&pool, &quote_symbol).await?;
+    let disabled_asset_id = create_market_asset(&pool, &disabled_symbol).await?;
+    let base_logo_url = format!("https://cdn.example.test/assets/{base_symbol}.png");
+    let quote_logo_url = format!("https://cdn.example.test/assets/{quote_symbol}.png");
+    sqlx::query("UPDATE assets SET logo_url = ? WHERE id = ?")
+        .bind(&base_logo_url)
+        .bind(base_asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE assets SET logo_url = ? WHERE id = ?")
+        .bind(&quote_logo_url)
+        .bind(quote_asset_id)
+        .execute(&pool)
+        .await?;
+
+    let pair_symbol = format!("{base_symbol}-{quote_symbol}");
+    let pair_logo_url = format!("https://cdn.example.test/pairs/{pair_symbol}.png");
+    let pair_id = sqlx::query(
+        r#"INSERT INTO trading_pairs
+           (base_asset, quote_asset, symbol, logo_url, price_precision, qty_precision, min_order_value, status, market_type)
+           VALUES (?, ?, ?, ?, 8, 8, 1, 'active', 'external')"#,
+    )
+    .bind(base_asset_id)
+    .bind(quote_asset_id)
+    .bind(&pair_symbol)
+    .bind(&pair_logo_url)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let disabled_pair_symbol = format!("{disabled_symbol}-{quote_symbol}");
+    let disabled_pair_id = sqlx::query(
+        r#"INSERT INTO trading_pairs
+           (base_asset, quote_asset, symbol, price_precision, qty_precision, min_order_value, status, market_type)
+           VALUES (?, ?, ?, 8, 8, 1, 'disabled', 'external')"#,
+    )
+    .bind(disabled_asset_id)
+    .bind(quote_asset_id)
+    .bind(&disabled_pair_symbol)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let first_user_id = sqlx::query(
+        "INSERT INTO users (email, password_hash, status) VALUES (?, 'hash', 'active')",
+    )
+    .bind(format!(
+        "market-favorite-{}@example.test",
+        Uuid::now_v7().simple()
+    ))
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let second_user_id = sqlx::query(
+        "INSERT INTO users (email, password_hash, status) VALUES (?, 'hash', 'active')",
+    )
+    .bind(format!(
+        "market-favorite-{}@example.test",
+        Uuid::now_v7().simple()
+    ))
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let first_token = issue_token(
+        &settings,
+        format!("user:{first_user_id}"),
+        TokenScope::User,
+        900,
+    )?;
+    let second_token = issue_token(
+        &settings,
+        format!("user:{second_user_id}"),
+        TokenScope::User,
+        900,
+    )?;
+    let app = routes::routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+
+    let unauthorized = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/user/market-favorites")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+    for _ in 0..2 {
+        let added = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!("/user/market-favorites/{pair_symbol}"))
+                    .header("authorization", format!("Bearer {first_token}"))
+                    .body(Body::empty())?,
+            )
+            .await?;
+        let status = added.status();
+        let payload = body_json(added).await?;
+        assert_eq!(status, StatusCode::OK, "payload: {payload}");
+        assert_eq!(payload["favorite"]["market_id"], pair_id);
+        assert_eq!(payload["favorite"]["symbol"], pair_symbol.replace('-', ""));
+        assert_eq!(payload["favorite"]["logo_url"], pair_logo_url);
+        assert_eq!(payload["favorite"]["base_logo_url"], base_logo_url);
+        assert_eq!(payload["favorite"]["quote_logo_url"], quote_logo_url);
+    }
+    let (favorite_count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM user_market_favorites WHERE user_id = ? AND trading_pair_id = ?",
+    )
+    .bind(first_user_id)
+    .bind(pair_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(favorite_count, 1);
+
+    let disabled_add = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/user/market-favorites/{disabled_pair_symbol}"))
+                .header("authorization", format!("Bearer {first_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(disabled_add.status(), StatusCode::BAD_REQUEST);
+
+    let first_list = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/user/market-favorites")
+                .header("authorization", format!("Bearer {first_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    let first_list_payload = body_json(first_list).await?;
+    assert_eq!(first_list_payload["favorites"].as_array().unwrap().len(), 1);
+
+    let second_list = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/user/market-favorites")
+                .header("authorization", format!("Bearer {second_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    let second_list_payload = body_json(second_list).await?;
+    assert!(
+        second_list_payload["favorites"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    let other_user_delete = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/user/market-favorites/{pair_symbol}"))
+                .header("authorization", format!("Bearer {second_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(other_user_delete.status(), StatusCode::NO_CONTENT);
+    let (favorite_count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM user_market_favorites WHERE user_id = ? AND trading_pair_id = ?",
+    )
+    .bind(first_user_id)
+    .bind(pair_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(favorite_count, 1);
+
+    sqlx::query("UPDATE trading_pairs SET status = 'disabled' WHERE id = ?")
+        .bind(pair_id)
+        .execute(&pool)
+        .await?;
+    let inactive_list = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/user/market-favorites")
+                .header("authorization", format!("Bearer {first_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert!(
+        body_json(inactive_list).await?["favorites"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    sqlx::query("UPDATE trading_pairs SET status = 'active' WHERE id = ?")
+        .bind(pair_id)
+        .execute(&pool)
+        .await?;
+
+    for _ in 0..2 {
+        let deleted = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/user/market-favorites/{pair_symbol}"))
+                    .header("authorization", format!("Bearer {first_token}"))
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    }
+
+    sqlx::query(
+        "INSERT INTO user_market_favorites (user_id, trading_pair_id) VALUES (?, ?), (?, ?)",
+    )
+    .bind(first_user_id)
+    .bind(pair_id)
+    .bind(second_user_id)
+    .bind(pair_id)
+    .execute(&pool)
+    .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(first_user_id)
+        .execute(&pool)
+        .await?;
+    let (pair_favorite_count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM user_market_favorites WHERE trading_pair_id = ?")
+            .bind(pair_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(
+        pair_favorite_count, 1,
+        "deleting one user must cascade only that user's favorite"
+    );
+
+    sqlx::query("DELETE FROM trading_pairs WHERE id = ?")
+        .bind(pair_id)
+        .execute(&pool)
+        .await?;
+    let (pair_favorite_count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM user_market_favorites WHERE trading_pair_id = ?")
+            .bind(pair_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(
+        pair_favorite_count, 0,
+        "deleting a trading pair must cascade its favorites"
+    );
+
+    sqlx::query("DELETE FROM trading_pairs WHERE id = ?")
+        .bind(disabled_pair_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(second_user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id IN (?, ?, ?)")
+        .bind(base_asset_id)
+        .bind(quote_asset_id)
+        .bind(disabled_asset_id)
         .execute(&pool)
         .await?;
     Ok(())

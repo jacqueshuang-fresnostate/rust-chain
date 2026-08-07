@@ -27,7 +27,7 @@ test('钱包流程声明当前选中浅色与深色 Pencil 画板', () => {
     depositDetail: 'w5htG TCN5A',
     withdrawAsset: 'NGBmq h0WWYC',
     withdraw: 'Qa9dW o8Wsh',
-    ledger: 'y6Y7TW m25xr0',
+    ledger: 'y6Y7TW m25xr0 Bcug6 IVMAO',
     withdrawalRecords: 'DxqMB G3HecO',
     quickRecharge: 'CyRqi cM0eg',
   }

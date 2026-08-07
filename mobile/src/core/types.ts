@@ -4,6 +4,8 @@ export interface MarketTicker {
   base: string
   quote: string
   iconUrl?: string
+  baseIconUrl?: string
+  quoteIconUrl?: string
   lastPrice: number
   openPrice: number
   highPrice: number
@@ -11,6 +13,14 @@ export interface MarketTicker {
   volume: number
   changePercent: number
   observedAt?: number
+}
+
+export interface MarketFavorite {
+  marketId: number
+  symbol: string
+  iconUrl?: string
+  baseIconUrl?: string
+  quoteIconUrl?: string
 }
 
 export interface MarketPair {

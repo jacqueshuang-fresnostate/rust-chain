@@ -29,12 +29,14 @@ import { fetchMarginWallets } from '@/api/trading'
 import { fetchWalletAccounts } from '@/api/wallet'
 import { formatAmount, formatPercent, formatPrice } from '@/core/format'
 import { useMarketStore } from '@/stores/market'
+import { useMarketFavoritesStore } from '@/stores/marketFavorites'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import type { NewsItem, WalletAccount } from '@/core/types'
 
 const router = useRouter()
 const marketStore = useMarketStore()
+const marketFavorites = useMarketFavoritesStore()
 const navigation = useNavigationStore()
 const session = useSessionStore()
 const { locale, t } = useI18n()
@@ -65,8 +67,9 @@ const portfolioPeriods = computed(() => [1, 7, 30, 180].map((days) => ({
 })))
 
 const visibleTickers = computed(() => {
-  const rows = [...marketStore.topTickers]
-  if (activeTab.value === 'favorites') return []
+  const rows = activeTab.value === 'favorites'
+    ? marketStore.tickers.filter((ticker) => marketFavorites.isFavorite(ticker.symbol))
+    : [...marketStore.topTickers]
   if (activeTab.value === 'gainers') return rows.sort((left, right) => right.changePercent - left.changePercent)
   if (activeTab.value === 'popular' || activeTab.value === 'mainstream') return rows.sort((left, right) => right.volume - left.volume)
   if (activeTab.value === 'newCoins') return rows.reverse()
@@ -427,7 +430,7 @@ watch(
           >
             <span class="home-market-name">
               <span class="coin-orbit">
-                <AssetMark :symbol="ticker.base" :src="ticker.iconUrl" :size="32" />
+                <AssetMark :symbol="ticker.base" :src="ticker.iconUrl" :fallback-src="ticker.baseIconUrl" :size="32" />
               </span>
               <span><strong>{{ ticker.base }}</strong><small>/{{ ticker.quote }}</small></span>
             </span>

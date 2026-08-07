@@ -8,18 +8,21 @@ import PageHeader from '@/components/PageHeader.vue'
 import { fetchKlines } from '@/api/market'
 import { formatCompact, formatPercent, formatPrice } from '@/core/format'
 import { useMarketStore } from '@/stores/market'
+import { useMarketFavoritesStore } from '@/stores/marketFavorites'
 import { useNavigationStore } from '@/stores/navigation'
+import { useSessionStore } from '@/stores/session'
 
 const route = useRoute()
 const router = useRouter()
 const marketStore = useMarketStore()
+const marketFavorites = useMarketFavoritesStore()
 const navigation = useNavigationStore()
+const session = useSessionStore()
 const { t } = useI18n()
 
 const query = ref('')
 type MarketCategory = 'popular' | 'favorites' | 'spot' | 'contract' | 'gainers'
 const category = ref<MarketCategory>('popular')
-const favoriteSymbols = ref(new Set<string>())
 const sparklineCloses = ref<Record<string, number[]>>({})
 const neutralSparklinePoints = '0,17 76,17'
 let sparklineRequestId = 0
@@ -44,7 +47,7 @@ const rows = computed(() => {
   const keyword = query.value.trim().toUpperCase()
   let filtered = keyword ? source.filter((item) => item.symbol.includes(keyword)) : source
   if (category.value === 'favorites') {
-    filtered = filtered.filter((item) => favoriteSymbols.value.has(item.symbol))
+    filtered = filtered.filter((item) => marketFavorites.isFavorite(item.symbol))
   }
   if (category.value === 'gainers') return filtered.sort((left, right) => right.changePercent - left.changePercent)
   if (category.value === 'popular') return filtered.sort((left, right) => right.volume - left.volume)
@@ -74,10 +77,11 @@ function openMarket(symbol: string): void {
 }
 
 function toggleFavorite(symbol: string): void {
-  const next = new Set(favoriteSymbols.value)
-  if (next.has(symbol)) next.delete(symbol)
-  else next.add(symbol)
-  favoriteSymbols.value = next
+  if (!session.isAuthenticated) {
+    void router.push({ name: 'login', query: { redirect: route.fullPath } })
+    return
+  }
+  void marketFavorites.toggle(symbol)
 }
 
 function cycleCategory(): void {
@@ -200,7 +204,7 @@ onUnmounted(() => {
             type="button"
             @click="openMarket(ticker.symbol)"
           >
-            <AssetMark :symbol="ticker.base" :src="ticker.iconUrl" :size="34" />
+            <AssetMark :symbol="ticker.base" :src="ticker.iconUrl" :fallback-src="ticker.baseIconUrl" :size="34" />
             <span><strong>{{ ticker.symbol }}</strong><small>{{ t('markets.volume', { value: formatCompact(ticker.volume) }) }}</small></span>
             <b>{{ formatPrice(ticker.lastPrice) }}</b>
           </button>
@@ -293,16 +297,19 @@ onUnmounted(() => {
         <article v-for="ticker in rows" :key="ticker.symbol" class="market-row">
           <button
             class="favorite-button"
-            :class="{ active: favoriteSymbols.has(ticker.symbol) }"
+            :class="{ active: marketFavorites.isFavorite(ticker.symbol) }"
             type="button"
-            :aria-label="t(favoriteSymbols.has(ticker.symbol) ? 'rootPrototype.removeFavorite' : 'rootPrototype.addFavorite', { symbol: ticker.symbol })"
+            :aria-label="t(marketFavorites.isFavorite(ticker.symbol) ? 'rootPrototype.removeFavorite' : 'rootPrototype.addFavorite', { symbol: ticker.symbol })"
+            :aria-pressed="marketFavorites.isFavorite(ticker.symbol)"
+            :aria-busy="marketFavorites.isPending(ticker.symbol)"
+            :disabled="marketFavorites.isPending(ticker.symbol)"
             @click="toggleFavorite(ticker.symbol)"
           >
-            <Star :size="14" :fill="favoriteSymbols.has(ticker.symbol) ? 'currentColor' : 'none'" />
+            <Star :size="14" :fill="marketFavorites.isFavorite(ticker.symbol) ? 'currentColor' : 'none'" />
           </button>
           <button class="market-main" type="button" @click="openMarket(ticker.symbol)">
             <span class="coin-orbit">
-              <AssetMark :symbol="ticker.base" :src="ticker.iconUrl" :size="32" />
+              <AssetMark :symbol="ticker.base" :src="ticker.iconUrl" :fallback-src="ticker.baseIconUrl" :size="32" />
             </span>
             <span class="market-name">
               <strong>{{ ticker.symbol }}</strong>

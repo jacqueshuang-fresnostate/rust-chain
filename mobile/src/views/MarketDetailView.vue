@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onUnmounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   ArrowLeft,
@@ -40,11 +40,16 @@ import {
 import { currentIntlLocale } from '@/i18n'
 import { goBackOr } from '@/core/navigation'
 import { useMarketStore } from '@/stores/market'
+import { useMarketFavoritesStore } from '@/stores/marketFavorites'
+import { useSessionStore } from '@/stores/session'
 import type { KlinePoint, OrderBookLevel, TradePrint } from '@/core/types'
 
 const props = defineProps<{ symbol: string }>()
+const route = useRoute()
 const router = useRouter()
 const marketStore = useMarketStore()
+const marketFavorites = useMarketFavoritesStore()
+const session = useSessionStore()
 const { t } = useI18n()
 const interval = ref<MarketKlineInterval>('15m')
 const loading = ref(true)
@@ -81,25 +86,13 @@ const tradesTabButton = ref<HTMLButtonElement | null>(null)
 const chartToggleButton = ref<HTMLButtonElement | null>(null)
 let chartScrollLock: ChartScrollLock | null = null
 let requestVersion = 0
-const FAVORITES_STORAGE_KEY = 'hippo-mobile-market-favorites'
-
-function loadFavoriteSymbols(): Set<string> {
-  if (typeof window === 'undefined') return new Set()
-  try {
-    const stored = JSON.parse(window.localStorage.getItem(FAVORITES_STORAGE_KEY) || '[]')
-    return new Set(Array.isArray(stored) ? stored.filter((item): item is string => typeof item === 'string') : [])
-  } catch {
-    return new Set()
-  }
-}
-
-const favoriteSymbols = ref(loadFavoriteSymbols())
 
 const pairSymbol = computed(() => props.symbol.replace(/[_-]/g, '/').toUpperCase())
 const ticker = computed(() => marketStore.tickerFor(pairSymbol.value))
 const baseAsset = computed(() => pairSymbol.value.split('/')[0] || '')
 const quoteAsset = computed(() => pairSymbol.value.split('/')[1] || 'USDT')
-const isFavorite = computed(() => favoriteSymbols.value.has(pairSymbol.value))
+const isFavorite = computed(() => marketFavorites.isFavorite(pairSymbol.value))
+const favoriteSaving = computed(() => marketFavorites.isPending(pairSymbol.value))
 const dataError = computed(() => klineError.value || depthError.value || tradesError.value)
 const normalizedChartPoints = computed(() => normalizeMarketChartPoints(points.value))
 const movingAverages = computed(() => calculateMarketMovingAverages(normalizedChartPoints.value))
@@ -294,15 +287,11 @@ function openPairPicker(): void {
 }
 
 function toggleFavorite(): void {
-  const next = new Set(favoriteSymbols.value)
-  if (next.has(pairSymbol.value)) next.delete(pairSymbol.value)
-  else next.add(pairSymbol.value)
-  favoriteSymbols.value = next
-  try {
-    window.localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify([...next]))
-  } catch {
-    // The visible state still works when storage is unavailable.
+  if (!session.isAuthenticated) {
+    void router.push({ name: 'login', query: { redirect: route.fullPath } })
+    return
   }
+  void marketFavorites.toggle(pairSymbol.value)
 }
 
 function prefersReducedMotion(): boolean {
@@ -494,7 +483,7 @@ onUnmounted(() => {
         :aria-label="t('marketDetail.selectPair')"
         @click="openPairPicker"
       >
-        <AssetMark :symbol="baseAsset" :src="ticker?.iconUrl" :size="24" />
+        <AssetMark :symbol="baseAsset" :src="ticker?.iconUrl" :fallback-src="ticker?.baseIconUrl" :size="24" />
         <strong>{{ baseAsset }}/{{ quoteAsset }}</strong>
         <ChevronDown :size="20" aria-hidden="true" />
       </button>
@@ -504,6 +493,8 @@ onUnmounted(() => {
         type="button"
         :aria-label="t(isFavorite ? 'rootPrototype.removeFavorite' : 'rootPrototype.addFavorite', { symbol: pairSymbol })"
         :aria-pressed="isFavorite"
+        :aria-busy="favoriteSaving"
+        :disabled="favoriteSaving"
         @click="toggleFavorite"
       >
         <Star :size="24" :fill="isFavorite ? 'currentColor' : 'none'" />
@@ -1396,12 +1387,12 @@ onUnmounted(() => {
 
 @media (max-width: 340px) {
   .market-detail__header {
-    grid-template-columns: 42px minmax(0, 1fr) 42px 42px;
+    grid-template-columns: 44px minmax(0, 1fr) 44px 44px;
     padding-inline: 4px;
   }
 
   .market-detail__icon-button {
-    width: 42px;
+    width: 44px;
   }
 
   .market-detail__instrument strong {

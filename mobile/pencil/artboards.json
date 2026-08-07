@@ -44,5 +44,21 @@
   { "id": "Raoes", "name": "34 / KYC", "route": "/profile/kyc" },
   { "id": "x84Cbv", "name": "35 / Account Bindings", "route": "/profile/bindings" },
   { "id": "c80gd", "name": "36 / Referrals", "route": "/profile/referrals" },
-  { "id": "kwFEy", "name": "37 / Language", "route": "/profile/language" }
+  { "id": "kwFEy", "name": "37 / Language", "route": "/profile/language" },
+  { "id": "A9It6g", "name": "38 / New Coin Records · Light", "route": "/products/new-coins/records" },
+  { "id": "h4gfd", "name": "38 / New Coin Records · Dark", "route": "/products/new-coins/records" },
+  { "id": "v6phV", "name": "39 / Transfer Sheet · Light", "route": "/assets" },
+  { "id": "TuWXq", "name": "39 / Transfer Sheet · Dark", "route": "/assets" },
+  { "id": "UouET", "name": "40 / Help & Support · Light" },
+  { "id": "FM5tp", "name": "40 / Help & Support · Dark" },
+  { "id": "e5Qs1", "name": "08c / Orders · Empty · Light", "route": "/orders" },
+  { "id": "hxe8l", "name": "08c / Orders · Empty · Dark", "route": "/orders" },
+  { "id": "Bcug6", "name": "26b / Wallet Ledger · Empty · Light", "route": "/assets/ledger" },
+  { "id": "IVMAO", "name": "26b / Wallet Ledger · Empty · Dark", "route": "/assets/ledger" },
+  { "id": "t7j6n", "name": "11b / Message Center · Empty · Light", "route": "/messages" },
+  { "id": "eSMHf", "name": "11b / Message Center · Empty · Dark", "route": "/messages" },
+  { "id": "CzpTv", "name": "20b / Prediction · Bet · Light", "route": "/products/prediction" },
+  { "id": "ZvGMv", "name": "20b / Prediction · Bet · Dark", "route": "/products/prediction" },
+  { "id": "nqP6W", "name": "16b / Earn · Subscribe · Light", "route": "/products/earn" },
+  { "id": "aXxul", "name": "16b / Earn · Subscribe · Dark", "route": "/products/earn" }
 ]

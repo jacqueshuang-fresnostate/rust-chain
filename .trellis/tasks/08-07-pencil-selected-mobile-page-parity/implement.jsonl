@@ -1,0 +1,6 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/mobile/index.md", "reason": "Mobile package quality, icon, header and selected-page contracts"}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "Selected Pencil source, theme, canvas, modal and production truthfulness contracts"}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "Route depth, safe back, trade destination and i18n contracts"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Preserve real financial adapters and API-derived values"}
+{"file": ".trellis/tasks/08-07-pencil-selected-mobile-page-parity/research/selected-production-gap-audit.md", "reason": "Selected artboard mapping, geometry and production gaps"}

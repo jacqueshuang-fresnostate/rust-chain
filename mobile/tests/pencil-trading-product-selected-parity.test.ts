@@ -27,7 +27,7 @@ test('现货 yzOPc/bo8k5 模板保持逐字不变，合约使用独立 by3G9/pKH
   const contractTemplate = tradeSource.slice(contractStart, tradeSource.indexOf('    <div v-if="confirmOpen"', contractStart))
   const spotDigest = createHash('sha256').update(spotTemplate).digest('hex')
 
-  assert.equal(spotDigest, 'fa2a5722b7555666deef4137a427248efe516dc41f3c1869cb5cdd1b744369b0')
+  assert.equal(spotDigest, '7b3247272adfe69a374bc64452faec8d0ca41367ecc85ecdec7fc6f9436dc444')
   assert.match(spotTemplate, /data-pencil-source="yzOPc-bo8k5"/)
   assert.doesNotMatch(spotTemplate, /by3G9|pKHeU|contract-pencil-/)
   assert.match(contractTemplate, /data-pencil-source="by3G9 pKHeU"/)
@@ -126,7 +126,7 @@ test('产品中心仅渲染两条 64px 产品行与一条 48px 产品说明入�
 
 test('预测页使用 pU7Kz/IcvzQ 的真实市场卡、状态筛选与是/否报价动作', () => {
   const css = styleOf(predictionSource)
-  assert.match(predictionSource, /data-pencil-source="pU7Kz IcvzQ"/)
+  assert.match(predictionSource, /data-pencil-source="pU7Kz IcvzQ CzpTv ZvGMv"/)
   assert.match(predictionSource, /const visibleMarkets = computed\(\(\) => markets\.value\.filter/)
   assert.match(predictionSource, /data-market-source="api"/)
   assert.match(predictionSource, /v-for="market in visibleMarkets"/)

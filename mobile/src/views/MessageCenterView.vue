@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, CircleAlert, Megaphone, RefreshCw } from 'lucide-vue-next'
+import { ArrowLeft, BellOff, CircleAlert, Megaphone, RefreshCw } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { apiErrorMessage } from '@/api/client'
 import { fetchNews, type NewsItem } from '@/api/news'
@@ -102,7 +102,7 @@ onMounted(() => { void loadMessages() })
   <main
     class="page page--plain pencil-page message-center-page"
     data-message-workspace="live"
-    data-pencil-source="FkZ6j bRz9K"
+    data-pencil-source="FkZ6j bRz9K t7j6n eSMHf"
   >
     <header class="message-root-header">
       <button
@@ -177,9 +177,10 @@ onMounted(() => { void loadMessages() })
         </time>
       </button>
 
-      <div v-if="!loading && !error && !visibleMessages.length" class="message-state" role="status">
-        <span class="message-icon"><Megaphone :size="17" /></span>
-        <span><strong>{{ emptyTitle }}</strong><small>{{ emptyDescription }}</small></span>
+      <div v-if="!loading && !error && !visibleMessages.length" class="message-empty-state" role="status">
+        <span class="message-empty-state__plate"><BellOff :size="24" aria-hidden="true" /></span>
+        <strong>{{ emptyTitle }}</strong>
+        <small>{{ emptyDescription }}</small>
       </div>
 
       <div v-if="error && messages.length" class="message-inline-error" role="alert">
@@ -301,7 +302,7 @@ onMounted(() => { void loadMessages() })
 
 .message-filter-bar button::before {
   content: '';
-  inset: -8px -4px;
+  inset: -9px -4px;
   position: absolute;
 }
 
@@ -351,6 +352,42 @@ onMounted(() => { void loadMessages() })
 
 .message-state {
   min-height: 64px;
+}
+
+.message-empty-state {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  justify-content: center;
+  min-height: 225px;
+  padding: 48px 20px;
+  text-align: center;
+}
+
+.message-empty-state__plate {
+  align-items: center;
+  background: var(--surface-elevated);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  display: flex;
+  height: 56px;
+  justify-content: center;
+  width: 56px;
+}
+
+.message-empty-state strong {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 20px;
+}
+
+.message-empty-state small {
+  font-size: 11px;
+  line-height: 17px;
+  max-width: 300px;
 }
 
 .message-icon {

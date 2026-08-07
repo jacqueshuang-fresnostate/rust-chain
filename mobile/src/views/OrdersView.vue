@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { CheckCircle2, CircleAlert, History, LoaderCircle, PackageOpen, RefreshCw, X } from 'lucide-vue-next'
+import { ArrowLeftRight, CheckCircle2, CircleAlert, ClipboardList, History, LoaderCircle, RefreshCw, X } from 'lucide-vue-next'
 import LoginRequiredState from '@/components/LoginRequiredState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
@@ -22,6 +22,7 @@ import {
   type SpotOrder,
 } from '@/api/trading'
 import { formatAmount, formatPrice } from '@/core/format'
+import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import type { MarginProduct, MarketPair } from '@/core/types'
 
@@ -35,6 +36,8 @@ type PendingAction =
   | { kind: 'margin-close-all' }
 
 const route = useRoute()
+const router = useRouter()
+const navigation = useNavigationStore()
 const session = useSessionStore()
 const { t } = useI18n()
 const marketTab = ref<MarketTab>('spot')
@@ -68,6 +71,11 @@ const cancelablePositions = computed(() => openedPositions.value.filter((positio
 const closablePositions = computed(() => openedPositions.value.filter((position) => position.entryPrice > 0))
 const sortedSpotOrders = computed(() => [...spotOrders.value].sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0)))
 const sortedHistoryOrders = computed(() => [...historyOrders.value].sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0)))
+const emptyTitle = computed(() => {
+  if (marketTab.value === 'spot') return t(stateTab.value === 'history' ? 'orders.noSpotHistory' : 'orders.noSpotOrders')
+  if (stateTab.value === 'history') return t('orders.noMarginHistory')
+  return t(stateTab.value === 'positions' ? 'orders.noPositions' : 'orders.noMarginOrders')
+})
 const pendingActionLabel = computed(() => {
   const action = pendingAction.value
   if (!action) return ''
@@ -129,6 +137,10 @@ function setStateTab(tab: StateTab): void {
 
 function openHistory(): void {
   setStateTab('history')
+}
+
+function openSpotTrade(): void {
+  void router.push({ name: 'trade', params: { symbol: navigation.lastTradeSymbol } })
 }
 
 function baseAsset(symbol: string): string {
@@ -405,7 +417,7 @@ function statusLabel(status: string): string {
   <main
     class="page pencil-page pencil-root-page orders-pencil"
     data-orders-workspace="live"
-    data-pencil-source="kcP5D A85if n6oGO t2GTW4"
+    data-pencil-source="kcP5D A85if n6oGO t2GTW4 e5Qs1 hxe8l"
   >
     <PageHeader :back="false" :pencil="true" :title="t('orders.titleShort')">
       <template #actions>
@@ -495,7 +507,16 @@ function statusLabel(status: string): string {
               </button>
             </div>
           </div>
-          <div v-else class="pencil-state"><PackageOpen :size="23" /><span>{{ t('orders.noSpotOrders') }}</span></div>
+          <div v-else-if="!error" class="orders-empty-branch">
+            <div class="orders-empty-state" role="status">
+              <span class="orders-empty-state__plate"><ClipboardList :size="24" aria-hidden="true" /></span>
+              <strong>{{ emptyTitle }}</strong>
+              <span>{{ t('orders.emptyDescription') }}</span>
+            </div>
+            <button class="orders-empty-action" type="button" @click="openSpotTrade">
+              <ArrowLeftRight :size="17" aria-hidden="true" />{{ t('orders.goTrade') }}
+            </button>
+          </div>
         </template>
 
         <template v-else-if="marketTab === 'spot' && stateTab === 'history'">
@@ -517,7 +538,16 @@ function statusLabel(status: string): string {
               </div>
             </article>
           </div>
-          <div v-else class="pencil-state"><PackageOpen :size="23" /><span>{{ t('orders.noSpotHistory') }}</span></div>
+          <div v-else-if="!error" class="orders-empty-branch">
+            <div class="orders-empty-state" role="status">
+              <span class="orders-empty-state__plate"><ClipboardList :size="24" aria-hidden="true" /></span>
+              <strong>{{ emptyTitle }}</strong>
+              <span>{{ t('orders.emptyDescription') }}</span>
+            </div>
+            <button class="orders-empty-action" type="button" @click="openSpotTrade">
+              <ArrowLeftRight :size="17" aria-hidden="true" />{{ t('orders.goTrade') }}
+            </button>
+          </div>
         </template>
 
         <template v-else-if="marketTab === 'margin' && stateTab !== 'history'">
@@ -576,7 +606,16 @@ function statusLabel(status: string): string {
               </button>
             </div>
           </div>
-          <div v-else class="pencil-state"><PackageOpen :size="23" /><span>{{ stateTab === 'positions' ? t('orders.noPositions') : t('orders.noMarginOrders') }}</span></div>
+          <div v-else-if="!error" class="orders-empty-branch">
+            <div class="orders-empty-state" role="status">
+              <span class="orders-empty-state__plate"><ClipboardList :size="24" aria-hidden="true" /></span>
+              <strong>{{ emptyTitle }}</strong>
+              <span>{{ t('orders.emptyDescription') }}</span>
+            </div>
+            <button class="orders-empty-action" type="button" @click="openSpotTrade">
+              <ArrowLeftRight :size="17" aria-hidden="true" />{{ t('orders.goTrade') }}
+            </button>
+          </div>
         </template>
 
         <template v-else-if="marketTab === 'margin' && stateTab === 'history'">
@@ -598,7 +637,16 @@ function statusLabel(status: string): string {
               </div>
             </article>
           </div>
-          <div v-else class="pencil-state"><PackageOpen :size="23" /><span>{{ t('orders.noMarginHistory') }}</span></div>
+          <div v-else-if="!error" class="orders-empty-branch">
+            <div class="orders-empty-state" role="status">
+              <span class="orders-empty-state__plate"><ClipboardList :size="24" aria-hidden="true" /></span>
+              <strong>{{ emptyTitle }}</strong>
+              <span>{{ t('orders.emptyDescription') }}</span>
+            </div>
+            <button class="orders-empty-action" type="button" @click="openSpotTrade">
+              <ArrowLeftRight :size="17" aria-hidden="true" />{{ t('orders.goTrade') }}
+            </button>
+          </div>
         </template>
       </template>
     </div>
@@ -756,8 +804,15 @@ function statusLabel(status: string): string {
   min-height: 20px;
   overflow: hidden;
   padding: 0;
+  position: relative;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+button.orders-row__state::before {
+  content: '';
+  inset: -12px -8px;
+  position: absolute;
 }
 
 .orders-row__state.is-info { color: var(--focus); }
@@ -822,6 +877,64 @@ function statusLabel(status: string): string {
 
 .orders-loading {
   min-height: 180px;
+}
+
+.orders-empty-branch {
+  display: grid;
+  gap: 0;
+  padding: 0 0 20px;
+}
+
+.orders-empty-state {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  justify-content: center;
+  min-height: 225px;
+  padding: 48px 20px;
+  text-align: center;
+}
+
+.orders-empty-state__plate {
+  align-items: center;
+  background: var(--surface-elevated);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  display: flex;
+  height: 56px;
+  justify-content: center;
+  width: 56px;
+}
+
+.orders-empty-state strong {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 20px;
+}
+
+.orders-empty-state > span:last-child {
+  font-size: 11px;
+  line-height: 17px;
+  max-width: 300px;
+}
+
+.orders-empty-action {
+  align-items: center;
+  background: var(--accent);
+  border: 0;
+  border-radius: 4px;
+  color: var(--on-accent);
+  display: flex;
+  font-size: 13px;
+  font-weight: 650;
+  gap: 8px;
+  height: 50px;
+  justify-content: center;
+  min-height: 50px;
+  width: 100%;
 }
 
 .orders-mask { align-items: end; background: var(--overlay); display: grid; inset: 0; position: fixed; z-index: var(--layer-overlay); }

@@ -4,7 +4,14 @@ import { mapMarketTicker } from '../src/core/marketMapper.ts'
 
 test('行情涨跌幅始终由开盘价和最新价计算', () => {
   const ticker = mapMarketTicker(
-    { symbol: 'RE_USDT', base_asset: 'RE', quote_asset: 'USDT' },
+    {
+      symbol: 'RE_USDT',
+      logo_url: 'https://cdn.example.test/pairs/re-usdt.png',
+      base_logo_url: 'https://cdn.example.test/assets/re.png',
+      quote_logo_url: 'https://cdn.example.test/assets/usdt.png',
+      base_asset: 'RE',
+      quote_asset: 'USDT',
+    },
     {
       last_price: '0.59379',
       open_24h: '0.57549',
@@ -19,4 +26,7 @@ test('行情涨跌幅始终由开盘价和最新价计算', () => {
   assert.equal(ticker.symbol, 'RE/USDT')
   assert.ok(Math.abs(ticker.changePercent - ((0.59379 - 0.57549) / 0.57549) * 100) < 0.000001)
   assert.equal(ticker.observedAt, 1_784_000_000_000)
+  assert.equal(ticker.iconUrl, 'https://cdn.example.test/pairs/re-usdt.png')
+  assert.equal(ticker.baseIconUrl, 'https://cdn.example.test/assets/re.png')
+  assert.equal(ticker.quoteIconUrl, 'https://cdn.example.test/assets/usdt.png')
 })

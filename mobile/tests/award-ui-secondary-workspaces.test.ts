@@ -83,7 +83,10 @@ test('消息空态、贷款空产品和访客安全状态只呈现一个诚实�
   assert.match(messageTemplate, /v-if="loading && !messages\.length" class="message-state"/)
   assert.match(messageTemplate, /v-else-if="error && !messages\.length" class="message-state message-state--error"/)
   assert.match(messageTemplate, /v-for="message in visibleMessages"/)
-  assert.match(messageTemplate, /v-if="!loading && !error && !visibleMessages\.length" class="message-state"/)
+  assert.match(messageTemplate, /v-if="!loading && !error && !visibleMessages\.length" class="message-empty-state"/)
+  assert.match(messageTemplate, /class="message-empty-state__plate"><BellOff :size="24"/)
+  assert.match(messageTemplate, /<strong>\{\{ emptyTitle \}\}<\/strong>/)
+  assert.match(messageTemplate, /<small>\{\{ emptyDescription \}\}<\/small>/)
   assert.doesNotMatch(messageTemplate, /inbox-summary|message-tools|inbox-state|message-timeline/)
 
   const loanTemplate = templateOf(sources.loan)
@@ -182,7 +185,7 @@ test('明暗主题的主标题、状态文案和主操作使用高对比语义�
 })
 
 test('消息、借贷和安全页使用当前 Pencil 画板而不恢复旧网格 PageShell', () => {
-  assert.match(sources.message, /data-pencil-source="FkZ6j bRz9K"/)
+  assert.match(sources.message, /data-pencil-source="FkZ6j bRz9K t7j6n eSMHf"/)
   assert.match(sources.message, /class="message-root-header"/)
   assert.match(sources.message, /class="message-list"/)
   assert.match(sources.loan, /data-pencil-source="kIOBX yrsRy"/)

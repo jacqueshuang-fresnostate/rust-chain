@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { LoaderCircle, RefreshCw } from 'lucide-vue-next'
+import { CircleAlert, FileSearch, LoaderCircle, RefreshCw } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import LoginRequiredState from '@/components/LoginRequiredState.vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -82,7 +82,7 @@ onMounted(() => { void load() })
 <template>
   <main
     class="page page--plain pencil-page wallet-pencil-page wallet-ledger-pencil"
-    data-pencil-source="y6Y7TW m25xr0"
+    data-pencil-source="y6Y7TW m25xr0 Bcug6 IVMAO"
   >
     <PageHeader
       :back="true"
@@ -118,8 +118,13 @@ onMounted(() => { void load() })
             {{ filterLabel(filter.key) }}
           </button>
         </nav>
-        <p v-if="error" class="error-message wallet-feedback" role="alert">{{ error }}</p>
-        <div v-if="loading" class="ledger-loading" role="status">
+        <div v-if="error && !entries.length" class="ledger-state ledger-state--error" role="alert">
+          <span class="ledger-state__plate"><CircleAlert :size="24" aria-hidden="true" /></span>
+          <strong>{{ t('common.serviceUnavailable') }}</strong>
+          <span>{{ error }}</span>
+          <button type="button" :disabled="loading" @click="load()">{{ t('common.retry') }}</button>
+        </div>
+        <div v-else-if="loading" class="ledger-loading" role="status">
           <LoaderCircle :size="23" class="spin" aria-hidden="true" />
           <span>{{ t('ledger.loading') }}</span>
         </div>
@@ -135,7 +140,18 @@ onMounted(() => { void load() })
             </div>
           </article>
         </div>
-        <p v-else class="empty-state">{{ t('ledger.empty') }}</p>
+        <div v-else class="ledger-state ledger-state--empty" role="status">
+          <span class="ledger-state__plate"><FileSearch :size="24" aria-hidden="true" /></span>
+          <strong>{{ t('ledger.empty') }}</strong>
+          <span>{{ t('ledger.emptyDescription') }}</span>
+        </div>
+        <div v-if="error && entries.length" class="ledger-inline-error" role="alert">
+          <CircleAlert :size="16" aria-hidden="true" />
+          <span>{{ error }}</span>
+          <button type="button" :aria-label="t('common.retry')" :disabled="loading" @click="load()">
+            <RefreshCw :size="16" aria-hidden="true" />
+          </button>
+        </div>
         <button v-if="!loading && !exhausted && entries.length" class="button button--secondary button--full" type="button" :disabled="loadingMore" @click="load(false)">{{ loadingMore ? t('common.loading') : t('common.loadMore') }}</button>
       </template>
     </div>
@@ -200,6 +216,79 @@ onMounted(() => { void load() })
   gap: 10px;
   justify-content: center;
   min-height: 180px;
+}
+
+.ledger-state {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  gap: 12px;
+  justify-content: center;
+  min-height: 225px;
+  padding: 48px 20px;
+  text-align: center;
+}
+
+.ledger-state__plate {
+  align-items: center;
+  background: var(--surface-elevated);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--muted);
+  display: flex;
+  height: 56px;
+  justify-content: center;
+  width: 56px;
+}
+
+.ledger-state strong {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 20px;
+}
+
+.ledger-state > span:last-child {
+  line-height: 17px;
+  max-width: 300px;
+}
+
+.ledger-state--error .ledger-state__plate,
+.ledger-state--error strong {
+  color: var(--negative);
+}
+
+.ledger-state--error button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--positive);
+  font-size: 11px;
+  min-height: 44px;
+  padding: 0 18px;
+}
+
+.ledger-inline-error {
+  align-items: center;
+  background: var(--negative-soft);
+  color: var(--negative);
+  display: grid;
+  font-size: 11px;
+  gap: 8px;
+  grid-template-columns: 18px minmax(0, 1fr) 44px;
+  min-height: 44px;
+  padding-left: 10px;
+}
+
+.ledger-inline-error button {
+  background: transparent;
+  color: inherit;
+  display: grid;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0;
+  place-items: center;
 }
 
 .ledger-list {

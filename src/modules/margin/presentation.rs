@@ -214,6 +214,7 @@ pub(crate) struct MarginCrossAccountResponse {
 pub(crate) struct MarginWalletAccountResponse {
     pub(crate) asset_id: u64,
     pub(crate) asset_symbol: String,
+    pub(crate) logo_url: Option<String>,
     #[serde(serialize_with = "serialize_decimal_amount")]
     pub(crate) available: BigDecimal,
     #[serde(serialize_with = "serialize_decimal_amount")]

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import AppBottomNav from '@/components/AppBottomNav.vue'
@@ -15,6 +15,7 @@ import {
   routeTransitionTier,
 } from '@/core/navigation'
 import { useSessionStore } from '@/stores/session'
+import { useMarketFavoritesStore } from '@/stores/marketFavorites'
 import { useThemeStore } from '@/stores/theme'
 import stageLogo from '@/assets/brand/hippo-logo-landscape.png'
 import stageImage from '@/assets/brand/signal-theatre.png'
@@ -22,6 +23,7 @@ import stageImage from '@/assets/brand/signal-theatre.png'
 const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
+const marketFavorites = useMarketFavoritesStore()
 const theme = useThemeStore()
 const { t } = useI18n()
 const shellVisibility = computed(() => resolveRouteShellVisibility(
@@ -45,6 +47,11 @@ const routeMotionClasses = computed(() => [
 ])
 
 theme.initializeTheme()
+
+watch(() => session.token, (token) => {
+  marketFavorites.reset()
+  if (token) void marketFavorites.load()
+}, { immediate: true })
 
 function handleAuthExpired() {
   session.logout()

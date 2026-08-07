@@ -69,7 +69,7 @@ test('账户所选页面使用组合选择器锁定白色与纯黑根画布且�
 
 test('消息中心映射 56px 返回 Header、四分类和 64px 连续真实公告列表', () => {
   const source = sources.message
-  assert.match(source, /data-pencil-source="FkZ6j bRz9K"/)
+  assert.match(source, /data-pencil-source="FkZ6j bRz9K t7j6n eSMHf"/)
   assert.match(source, /class="message-root-header"/)
   assert.match(source, /class="message-header-back"[\s\S]*?<ArrowLeft :size="22"/)
   assert.match(source, /void goBackOr\(router, route\.meta\.backFallback \|\| \{ name: 'home' \}\)/)

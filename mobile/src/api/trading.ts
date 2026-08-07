@@ -171,6 +171,7 @@ export async function fetchMarginWallets(): Promise<MarginWallets> {
     wallets: (response.data.wallets || []).map((wallet) => ({
       assetId: asNumber(wallet.asset_id),
       symbol: String(wallet.asset_symbol || '').toUpperCase(),
+      logoUrl: String(wallet.logo_url || '').trim() || undefined,
       available: asNumber(wallet.available),
       frozen: asNumber(wallet.frozen),
       locked: asNumber(wallet.locked),

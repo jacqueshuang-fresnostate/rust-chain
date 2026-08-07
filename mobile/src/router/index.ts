@@ -6,6 +6,7 @@ const DepositAssetView = () => import('@/views/DepositAssetView.vue')
 const DepositDetailView = () => import('@/views/DepositDetailView.vue')
 const DepositNetworkView = () => import('@/views/DepositNetworkView.vue')
 const ForgotPasswordView = () => import('@/views/ForgotPasswordView.vue')
+const HelpSupportView = () => import('@/views/HelpSupportView.vue')
 const HomeView = () => import('@/views/HomeView.vue')
 const LoginView = () => import('@/views/LoginView.vue')
 const LoginTwoFactorView = () => import('@/views/LoginTwoFactorView.vue')
@@ -57,6 +58,7 @@ const router = createRouter({
     { path: '/seconds', alias: '/products/seconds', name: 'seconds', component: SecondsView, meta: { showBottomNav: false, depth: 1, backFallback: '/' } },
     { path: '/orders', name: 'orders', component: OrdersView, meta: { depth: 1, backFallback: '/' } },
     { path: '/profile', name: 'profile', component: ProfileView, meta: { depth: 0 } },
+    { path: '/profile/help', name: 'help-support', component: HelpSupportView, meta: { showBottomNav: false, depth: 1, backFallback: '/profile' } },
     { path: '/profile/language', name: 'language', component: LanguageView, meta: { showBottomNav: false, depth: 1, backFallback: '/profile' } },
     { path: '/profile/kyc', name: 'kyc', component: KycView, meta: { showBottomNav: false, depth: 1, backFallback: '/profile' } },
     { path: '/profile/security', name: 'security', component: SecurityView, meta: { showBottomNav: false, depth: 1, backFallback: '/profile' } },

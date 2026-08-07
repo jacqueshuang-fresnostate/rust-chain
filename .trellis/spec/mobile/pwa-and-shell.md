@@ -156,6 +156,17 @@ ProductHub header/body/first-row y at 390px: 0..60 / 60 / 68
   their full-page identity header. News, Swap, Earn, Loan, and New Coin flows
   remain secondary pages with their real APIs, loading/guest/error states, and
   back fallbacks intact.
+- The saved selected-state additions are New Coin Records `A9It6g/h4gfd`,
+  Assets Transfer `v6phV/TuWXq`, Help `UouET/FM5tp`, Orders Empty
+  `e5Qs1/hxe8l`, Wallet Ledger Empty `Bcug6/IVMAO`, Message Empty
+  `t7j6n/eSMHf`, Prediction Bet `CzpTv/ZvGMv`, and Earn Subscribe
+  `nqP6W/aXxul`. Append these IDs to the owning production root rather than
+  replacing its existing base-state IDs.
+- A modal nested under a transformed route host must Teleport its fixed overlay
+  to `document.body`; otherwise `position: fixed` is trapped by the route's
+  containing block and the sheet cannot reach the visual viewport edge. The
+  Teleported node keeps a route-specific class for scoped theme/focus styling
+  and remains above the Dock and route transitions.
 - The login Turnstile uses Cloudflare explicit rendering with `size: flexible`,
   the current application light/dark theme, and the current mobile locale. Its
   centered stage may widen to 302px inside a 320px viewport so the official
@@ -221,6 +232,7 @@ ProductHub header/body/first-row y at 390px: 0..60 / 60 / 68
 | Message Center is opened directly | Back replaces with its Home fallback |
 | Message Center has no announcements | Render one truthful 64px empty row; keep Read-all disabled |
 | Message Center changes theme | Resolve the root to white/black and the dark icon plate to `#0c100e` with `#29342e` border |
+| Fixed sheet is mounted inside a transformed route | Teleport the overlay to `body`; its layer rect must equal the visual viewport |
 | Spot route has `showBottomNav` | Keep the five-entry dock, hide `RootHeader`, and render the spot-owned 64px header |
 | Trade is the active dock item | Keep one 56px mint circle with no inherited 28px active gradient |
 | Spot market stream has no rows yet | Show a truthful loading/unavailable state; never synthesize book or trade rows |

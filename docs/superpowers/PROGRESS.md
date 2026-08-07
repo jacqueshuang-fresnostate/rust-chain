@@ -6882,3 +6882,45 @@
 - 修改文件：`mobile/pencil/scripts/{25-assets-guest-immersive,26-canvas-tidy}.js`、`mobile/pencil/artboards.json`、`mobile/pencil/screen-inventory.md`、`docs/superpowers/PROGRESS.md`；`.pen` 待 ⌘S。
 - 验证结果：结构 dump 确认 Guest Hero / Login 节点与文案正确；export_nodes 因视口缓存导出空白，需用户在画布点开后复核视觉。
 - 后续事项：用户视口确认 Guest 视觉；⌘S 后提交 `.pen`。
+
+## 2026-08-06 03:33 - 资产页访客/会员生产实现与邀请入口
+
+- 完成内容：按四个 Pencil 画板参考 `CUK3y` / `i6YDBr` / `p61z2Q` / `Q4JYj` 实现访客、会员空持仓和会员有持仓状态；访客仅展示双主题丝绸登录 Hero，会员 Hero 合并真实总估值、收益缺省、内联余额可见性和四项资金操作，并按真实估值降序合并展示现货/杠杆持仓、可用/冻结摘要、加载/错误/空态及资金工具。估值只将报价资产 `USDT` 直接按 1 计，其余资产必须取得真实 `*/USDT` 行情，缺失时显示估值不可用；空态仅保留一个图标节点，资金工具补齐画板说明。在“我的”页增加 Lucide“邀请好友”入口并进入既有 `referrals` 命名路由。两张 Pencil JPEG 内容素材与当前画板资源哈希一致，已复制到受跟踪生产目录，运行时不依赖 `mobile/pencil/`。
+- 修改文件：`mobile/src/views/{AssetsView,ProfileView}.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/src/assets/assets/{assets-hero-light,assets-hero-dark}.jpg`、`mobile/tests/{account-message-views,android-ui-foundation-slice-a,award-ui-assets-profile,pencil-selected-unmapped-pages,root-prototype-parity}.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：定向源代码合同测试 46/46 通过；Ego Browser 本地夹具运行时检查覆盖 320/390/448px、明暗主题、访客/会员/空持仓/有持仓、余额显隐、转账弹窗与邀请路由，均无横向溢出，交互目标不少于 44px，主题切换不新增图片请求；`npm --prefix mobile run lint --if-present`、`npm --prefix mobile run type-check`、`npm --prefix mobile test`（280/280）及 `npm --prefix mobile run build:pwa`（2050 modules、127 条预缓存）通过；`git diff --check` 与 `python3 ./.trellis/scripts/task.py validate 08-06-mobile-assets-referral-entry` 通过。
+- 后续事项：无。
+
+## 2026-08-06 03:55 - 补充闪兑资产图片并恢复重启后的行情启动兜底
+
+- 完成内容：闪兑支付资产、获得资产与资产选择弹层统一按规范化 symbol 读取 `WalletAccount.logoUrl` 并传给 `AssetMark`，真实图片缺失或加载失败时继续使用既有字母回退；通过 Ego 复现远程公开 WebSocket 能返回订阅确认但 12 秒内没有 ticker、两次 REST ticker 的 `observed_at` 不变，定位为 API 重启后数据库无启用配置时部署环境缺少 `MARKET_FEED_*` 启动兜底；为 1Panel 当前配置、1Panel/标准 Compose 示例与 env 示例补齐 `BTCUSDT`、`1m,5m,15m,1h,1d`、`bitget` 默认值并保留环境覆盖，数据库已启用配置仍保持最高优先级。
+- 修改文件：`mobile/src/views/SwapView.vue`、`mobile/tests/swap-asset-logos.test.ts`、`docker-compose.1panel.yml`（本地忽略配置）、`docker-compose.1panel.example.yml`、`docker-compose.example.yml`、`docker-compose.1panel.env.example`、`docker-compose.env.example`、`tests/deployment_market_feed_config.rs`、`.trellis/tasks/08-06-swap-asset-logo-market-push-restart/*`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Ego Browser 在登录态 390×920 闪兑页确认 USDT/BTC 主卡片图片均加载成功，资产选择器 USDT 图片加载成功且横向溢出为 0；`npm --prefix mobile test` 281/281 通过，`npm --prefix mobile run type-check` 通过，`npm --prefix mobile run build:pwa` 通过并生成 127 项预缓存；`cargo fmt --manifest-path Cargo.toml -- --check`、`cargo test --manifest-path Cargo.toml --test deployment_market_feed_config -- --nocapture`、`cargo test --manifest-path Cargo.toml --lib config::tests::settings_from_env_parses_market_feed_lists -- --nocapture`、三份 `docker compose config` 解析、`git diff --check` 与 Trellis context validate 全部通过。
+- 后续事项：服务端更新 Compose 后需重新创建 API 容器，使新增的 `MARKET_FEED_*` 环境变量进入容器；随后可再次观察公开 WebSocket ticker 帧确认远程部署已恢复。
+
+## 2026-08-07 12:09 - Pencil 选中页面生产端补齐
+
+- 完成内容：依据 Pencil 当前选中的全部业务画板，将新增的 8 组明暗页面映射到手机端生产实现：新币记录、资产划转底部面板、帮助与支持、订单空态、资金流水空态、消息空态、预测下注及理财申购；帮助入口改为独立 `/profile/help` 页面并保留首页消息中心语义；划转面板使用 `Teleport` 挂载到 `body`，避免路由动画祖先导致固定层不能覆盖完整视口，同时保留 Escape、焦点闭环、滚动锁和焦点恢复；划转接口改为消费服务端权威钱包快照与幂等键，不再猜测本地余额；理财与预测页面移除伪造的 0 值费用/结算信息，仅在后端返回真实字段时展示；订单、消息、流水及新币记录补齐选中画板的空态、尺寸、触控目标与明暗主题合同。
+- 修改文件：`mobile/src/views/{NewCoinRecordsView,AssetsView,HelpSupportView,OrdersView,WalletLedgerView,MessageCenterView,PredictionView,EarnView,ProfileView}.vue`、`mobile/src/router/index.ts`、`mobile/src/api/{wallet,earn}.ts`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{pencil-selected-page-parity-20260807,account-message-views,award-ui-assets-profile,award-ui-secondary-workspaces,pencil-account-flow-parity,pencil-selected-unmapped-pages,pencil-trading-product-selected-parity,pencil-wallet-flow-parity,secondary-product-order-views,ui-prototype-alignment-secondary,ui-prototype-alignment-trading}.test.ts`、`.trellis/spec/mobile/{backend-integration,navigation-and-localization,pwa-and-shell}.md`、`.trellis/tasks/08-07-pencil-selected-mobile-page-parity/*`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Ego Browser 在 390×844 明暗主题实测 `/profile/help` 与登录态资产划转面板，页面横向溢出为 0，帮助页搜索框 44px、条目 64px且无底部导航，划转关闭/方向控件 44px、输入框 44px、提交按钮 50px；最终 Teleport 修复后固定层覆盖完整 390×844 视口。定向测试 17/17、`npm --prefix mobile run type-check`、完整 `npm --prefix mobile test`（291/291）、`npm --prefix mobile run build:pwa`（2053 modules、131 条预缓存）及 `git diff --check` 均通过。
+- 后续事项：真实登录账号下可继续验收划转、预测与理财的线上提交结果；本次代码尚未提交，等待统一提交指令。
+
+## 2026-08-08 03:11 - 市场自选与资产 Logo 后端切片
+
+- 完成内容：新增 `user_market_favorites` 迁移及受 `UserAuth` 保护的 GET/PUT/DELETE 接口，补齐 symbol 规范化、active 交易对校验、添加/删除幂等、用户隔离和 active 列表过滤；公共 market 响应新增 `base_logo_url` / `quote_logo_url`，杠杆钱包响应新增来自 `assets.logo_url` 的 `logo_url`；新增独立自选路由鉴权/输入边界测试。
+- 修改文件：`migrations/0100_user_market_favorites.sql`、`src/modules/market/{application,infrastructure,presentation,routes}.rs`、`src/modules/margin/{infrastructure,presentation}.rs`、`tests/{market_favorites_routes,market_routes,margin_routes,user_market_favorites_migration}.rs`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --manifest-path Cargo.toml --all` 通过；迁移合同测试 1/1、独立自选路由测试 3/3、`market_routes` 13/13、杠杆钱包 Logo 定向测试 1/1 通过；`cargo check --manifest-path Cargo.toml --all-targets`、`git diff --check` 与 Trellis context validate 通过。当前进程未注入 `DATABASE_URL` / `REDIS_URL` 时，对应真实依赖分支按既有契约 skip；尝试使用本地 `.env` 连接 MySQL 时账号被拒绝（MySQL 1045），未继续扩展环境验证。
+- 后续事项：在可用的 MySQL 测试环境中补跑自选 CRUD/隔离/级联与杠杆钱包 Logo 数据库分支；本次未修改 mobile，未提交。
+
+## 2026-08-08 03:12 - 手机端服务端自选与后台资产 Logo 接入
+
+- 完成内容：新增手机端用户自选 API、DTO 适配器与共享 Pinia store，按登录会话加载并在退出/失效时清空，增删使用同 symbol 并发去重、乐观更新、失败回滚和旧会话在途响应隔离；首页、行情、现货交易和行情详情统一消费服务端自选，访客点击星标携当前内部路径进入登录，不再读写旧自选 localStorage。公共 Market DTO 保留交易对/基础资产/报价资产三层后台 Logo，`AssetMark` 按交易对图片→基础资产图片→可访问字母顺序回退；杠杆钱包映射 `logo_url`，资产页继续使用现货优先、杠杆兜底的钱包真实 Logo。同步更新旧 AssetMark 与现货模板合同测试，并补充手机端 Trellis 合同。
+- 修改文件：`mobile/src/api/marketFavorites.ts`、`mobile/src/core/{marketFavoriteMapper,marketMapper,types}.ts`、`mobile/src/stores/marketFavorites.ts`、`mobile/src/{App.vue,api/trading.ts,components/AssetMark.vue}`、`mobile/src/views/{HomeView,MarketsView,TradeView,MarketDetailView}.vue`、`mobile/tests/{market-favorites,market-mapper,market-news-support-views,pencil-trading-product-selected-parity}.test.ts`、`.trellis/spec/mobile/backend-integration.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：手机端自选/行情/现货定向测试 32/32 通过；`npm --prefix mobile run type-check` 通过；`npm --prefix mobile test` 全量 295/295 通过；`npm --prefix mobile run build:pwa` 通过（2056 modules、130 条预缓存）；Trellis task context validate、旧自选 localStorage 源码扫描与 `git diff --check` 通过。
+- 后续事项：无。
+
+## 2026-08-08 03:43 - 市场自选与后台资产 Logo 跨层最终验收
+
+- 完成内容：补充后端 `Market Favorites and Asset Logo Contract` 可执行规范并登记索引；修正级联测试格式，复跑后端与手机端完整质量门；通过本地接口夹具和 Ego Browser 在 390×844 视口验证服务端自选写入、行情“自选”分类与首页自选同步、交易对专属图片 HTTP 500 后依次切换后台基础资产图片、现货与杠杆持仓均使用各自钱包响应的后台资产图片，同时确认星标 44×44px 且各验收页面横向溢出为 0。PRD 六项验收条件全部勾选。
+- 修改文件：`.trellis/spec/backend/{index,market-favorites}.md`、`.trellis/tasks/08-08-mobile-market-favorites-asset-logos/{prd,implement,check}.jsonl`、`tests/market_routes.rs`、`docs/superpowers/PROGRESS.md`；本任务其余实现文件见 03:11 与 03:12 两条进度记录。
+- 验证结果：`cargo fmt --manifest-path Cargo.toml --all -- --check`、自选迁移 1/1、自选鉴权路由 3/3、市场路由 13/13、杠杆钱包 Logo 定向测试 1/1、`cargo check --manifest-path Cargo.toml --all-targets` 通过；未注入 `DATABASE_URL` / `REDIS_URL` 的真实依赖分支按既有测试合同 skip。`npm --prefix mobile test` 298/298、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2057 modules、130 条预缓存）通过。Ego Browser 实测 BTC/ETH 交易对从 500 专属图片回退并成功解码 64px 后台基础资产 SVG，USDT/ETH/BTC 三条持仓图片均成功解码 64px；自选 PUT 后后端 GET 返回 BTCUSDT，行情自选与首页自选各仅显示 BTC/USDT。
+- 后续事项：部署时需执行 `0100_user_market_favorites.sql` 迁移并更新 API/手机端版本；线上现有交易对专属 Logo 存储地址仍需在对象存储侧修复 HTTP 500，本实现已提供后台基础资产 Logo 回退。当前工作树同时含前序页面与部署配置改动，本任务未单独提交，避免把并行改动混入提交。

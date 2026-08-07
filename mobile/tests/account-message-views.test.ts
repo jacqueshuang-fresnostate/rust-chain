@@ -17,11 +17,11 @@ test('资产页保留真实钱包、行情、资金划转与资金路由合同',
   assert.match(assetsSource, /Promise\.all\(\[marketStore\.refresh\(\), fetchWalletAccounts\(\), fetchMarginWallets\(\)\]\)/)
   assert.match(assetsSource, /await transferWalletFunds\(transferAsset\.value, transferFrom\.value, to, transferValue\)/)
   assert.match(assetsSource, /const accountsReady = ref\(false\)/)
-  assert.match(assetsSource, /const allocationRows = computed\(\(\) =>/)
-  assert.match(assetsSource, /const hasAllocation = computed\(\(\) => hasHoldings\.value && totalEstimate\.value > 0\)/)
-  assert.match(assetsSource, /:data-account-state="accountDataAvailable \? 'ready' : loading \? 'loading' : error \? 'error' : 'guest'"/)
-  assert.match(assetsSource, /v-else-if="error" class="pencil-secondary"/)
-  assert.match(assetsSource, /v-if="accountDataAvailable && hasAllocation"/)
+  assert.match(assetsSource, /const holdingRows = computed<AssetHoldingRow\[\]>/)
+  assert.match(assetsSource, /const memberState = computed<'loading' \| 'error' \| 'empty' \| 'holdings'>/)
+  assert.match(assetsSource, /:data-account-state="memberState"/)
+  assert.match(assetsSource, /v-else-if="memberState === 'error'"/)
+  assert.match(assetsSource, /v-else-if="hasHoldings" class="assets-holdings__list"/)
   assert.match(assetsSource, /name: 'deposit-asset'/)
   for (const routeName of ['withdraw-asset', 'wallet-ledger', 'quick-recharge']) {
     assert.match(assetsSource, new RegExp(`'${routeName}'`))
@@ -37,10 +37,11 @@ test('资料页保留资料、头像、认证状态与账户操作合同', () =>
   assert.match(profileSource, /const profileReady = ref\(false\)/)
   assert.match(profileSource, /class="pencil-message pencil-message--error" role="alert"/)
   assert.match(profileSource, /:disabled="updatingAvatar \|\| !profileReady"/)
-  for (const routeName of ['kyc', 'security', 'account-bindings', 'language', 'message-center']) {
+  for (const routeName of ['kyc', 'security', 'account-bindings', 'referrals', 'language', 'help-support']) {
     assert.match(profileSource, new RegExp(`name: '${routeName}'`))
   }
-  assert.doesNotMatch(profileSource, /name: 'referrals'/)
+  assert.match(profileSource, /profile\.referrals/)
+  assert.match(profileSource, /profile\.referralDescription/)
   assert.match(profileSource, /session\.logout\(\)/)
   assert.match(profileSource, /router\.replace\('\/'\)/)
   assert.match(profileSource, /role="dialog"/)

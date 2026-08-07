@@ -20,6 +20,8 @@ pub(crate) struct MarketResponse {
     pub(crate) id: u64,
     pub(crate) symbol: String,
     pub(crate) logo_url: Option<String>,
+    pub(crate) base_logo_url: Option<String>,
+    pub(crate) quote_logo_url: Option<String>,
     pub(crate) base_asset: String,
     pub(crate) quote_asset: String,
     pub(crate) price_precision: i32,
@@ -27,6 +29,27 @@ pub(crate) struct MarketResponse {
     pub(crate) min_order_value: String,
     pub(crate) status: String,
     pub(crate) market_type: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct MarketFavoritesResponse {
+    pub(crate) favorites: Vec<MarketFavoriteResponse>,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub(crate) struct MarketFavoriteResponse {
+    pub(crate) market_id: u64,
+    pub(crate) symbol: String,
+    pub(crate) logo_url: Option<String>,
+    pub(crate) base_logo_url: Option<String>,
+    pub(crate) quote_logo_url: Option<String>,
+    pub(crate) base_asset: String,
+    pub(crate) quote_asset: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct MarketFavoriteMutationResponse {
+    pub(crate) favorite: MarketFavoriteResponse,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -155,6 +178,8 @@ impl MarketResponse {
             id: 0,
             symbol: symbol.to_owned(),
             logo_url: None,
+            base_logo_url: None,
+            quote_logo_url: None,
             base_asset: base_asset.to_owned(),
             quote_asset: quote_asset.to_owned(),
             price_precision: 8,

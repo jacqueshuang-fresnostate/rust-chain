@@ -5,7 +5,6 @@ import { useI18n } from 'vue-i18n'
 import {
   ArrowLeft,
   ArrowLeftRight,
-  Bitcoin,
   BriefcaseBusiness,
   CheckCircle2,
   ChevronDown,
@@ -49,6 +48,7 @@ import { goBackOr } from '@/core/navigation'
 import { quantityForBalancePercentage } from '@/core/tradeForm'
 import { currentIntlLocale } from '@/i18n'
 import { useMarketStore } from '@/stores/market'
+import { useMarketFavoritesStore } from '@/stores/marketFavorites'
 import { useSessionStore } from '@/stores/session'
 import { useNavigationStore } from '@/stores/navigation'
 import type { KlinePoint, MarginProduct, OrderBookLevel, TradePrint, WalletAccount } from '@/core/types'
@@ -56,6 +56,7 @@ import type { KlinePoint, MarginProduct, OrderBookLevel, TradePrint, WalletAccou
 const route = useRoute()
 const router = useRouter()
 const marketStore = useMarketStore()
+const marketFavorites = useMarketFavoritesStore()
 const session = useSessionStore()
 const navigation = useNavigationStore()
 const { t } = useI18n()
@@ -96,26 +97,14 @@ const reviewButton = ref<HTMLButtonElement | null>(null)
 let returnFocus: HTMLElement | null = null
 let previousBodyOverflow = ''
 let marketRequestVersion = 0
-const FAVORITES_STORAGE_KEY = 'hippo-mobile-market-favorites'
-
-function loadFavoriteSymbols(): Set<string> {
-  if (typeof window === 'undefined') return new Set()
-  try {
-    const stored = JSON.parse(window.localStorage.getItem(FAVORITES_STORAGE_KEY) || '[]')
-    return new Set(Array.isArray(stored) ? stored.filter((item): item is string => typeof item === 'string') : [])
-  } catch {
-    return new Set()
-  }
-}
-
-const favoriteSymbols = ref(loadFavoriteSymbols())
 
 const pairSymbol = computed(() => String(route.params.symbol || 'BTC_USDT').replace(/[_-]/g, '/').toUpperCase())
 const isSpotMode = computed(() => mode.value === 'spot')
 const ticker = computed(() => marketStore.tickerFor(pairSymbol.value))
 const baseAsset = computed(() => pairSymbol.value.split('/')[0] || '')
 const quoteAsset = computed(() => pairSymbol.value.split('/')[1] || 'USDT')
-const isFavorite = computed(() => favoriteSymbols.value.has(pairSymbol.value))
+const isFavorite = computed(() => marketFavorites.isFavorite(pairSymbol.value))
+const favoriteSaving = computed(() => marketFavorites.isPending(pairSymbol.value))
 const spotVisibleBalances = computed(() => spotWallets.value.filter((wallet) => (
   [baseAsset.value, quoteAsset.value].includes(wallet.symbol)
   && wallet.available + wallet.frozen + wallet.locked > 0
@@ -373,15 +362,11 @@ function openPairPicker(): void {
 }
 
 function toggleFavorite(): void {
-  const next = new Set(favoriteSymbols.value)
-  if (next.has(pairSymbol.value)) next.delete(pairSymbol.value)
-  else next.add(pairSymbol.value)
-  favoriteSymbols.value = next
-  try {
-    window.localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify([...next]))
-  } catch {
-    // Keep the in-memory state when persistence is unavailable.
+  if (!session.isAuthenticated) {
+    openLogin()
+    return
   }
+  void marketFavorites.toggle(pairSymbol.value)
 }
 
 async function shareMarket(): Promise<void> {
@@ -624,10 +609,7 @@ onBeforeUnmount(() => {
           <ArrowLeft :size="24" aria-hidden="true" />
         </button>
         <button class="spot-pair-control" type="button" :aria-label="t('markets.pickerTitle')" @click="openPairPicker">
-          <span v-if="baseAsset === 'BTC'" class="spot-bitcoin-mark" role="img" :aria-label="t('common.assetIcon', { symbol: baseAsset })">
-            <Bitcoin :size="14" aria-hidden="true" />
-          </span>
-          <AssetMark v-else :symbol="baseAsset" :src="ticker?.iconUrl" :size="24" />
+          <AssetMark :symbol="baseAsset" :src="ticker?.iconUrl" :fallback-src="ticker?.baseIconUrl" :size="24" />
           <span>
             <strong>{{ pairSymbol }}</strong>
             <small
@@ -646,6 +628,8 @@ onBeforeUnmount(() => {
             type="button"
             :aria-label="t(isFavorite ? 'rootPrototype.removeFavorite' : 'rootPrototype.addFavorite', { symbol: pairSymbol })"
             :aria-pressed="isFavorite"
+            :aria-busy="favoriteSaving"
+            :disabled="favoriteSaving"
             @click="toggleFavorite"
           >
             <Star :size="23" :fill="isFavorite ? 'currentColor' : 'none'" aria-hidden="true" />
@@ -966,6 +950,8 @@ onBeforeUnmount(() => {
             type="button"
             :aria-label="t(isFavorite ? 'rootPrototype.removeFavorite' : 'rootPrototype.addFavorite', { symbol: pairSymbol })"
             :aria-pressed="isFavorite"
+            :aria-busy="favoriteSaving"
+            :disabled="favoriteSaving"
             @click="toggleFavorite"
           >
             <Star :size="19" :fill="isFavorite ? 'currentColor' : 'none'" aria-hidden="true" />
@@ -2559,9 +2545,9 @@ onBeforeUnmount(() => {
   align-items: center;
   background: var(--page);
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 40px;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
   height: 60px;
-  padding: 10px 20px;
+  padding: 8px 20px;
   position: sticky;
   top: 0;
   z-index: var(--layer-sticky-header);
@@ -2574,10 +2560,10 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   color: var(--text);
   display: inline-flex;
-  height: 40px;
+  height: 44px;
   justify-content: center;
   padding: 0;
-  width: 40px;
+  width: 44px;
 }
 
 .contract-header-control.active {

@@ -24,7 +24,7 @@ visual source of truth.
 - `scripts/*.js` — incremental Pencil `execute` inputs and audited corrections.
 - `exports/` — key PNG previews and the multi-page review PDF.
 
-The current source contains 43 top-level artboards. The selected production
+The design system is `FISId` (SYSTEM 03 immersive language). The current source tracks 100+ top-level artboards including light/dark and guest/member variants. The selected production
 baseline is `FwNBM` / `W1cWyh` / `miHnt` / `CvipW` for Home and `ftTny` /
 `VoZfE` for Market Detail; dedicated light/dark Markets and Spot workstations
 are also tracked in `artboards.json`.

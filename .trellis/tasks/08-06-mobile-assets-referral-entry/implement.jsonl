@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Mobile quality gate, icon-only controls, production snapshot and truthful-state contracts."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Selected Pencil page, local asset, theme, root shell and navigation contracts."}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Named route and bilingual localization requirements for the referral entry."}
+{"file":".trellis/tasks/08-06-mobile-assets-referral-entry/research/current-pencil-assets.md","reason":"Current Pencil IDs, geometry, state mapping and production constraints."}

@@ -74,6 +74,10 @@ lastTradePath: ComputedRef<string>
   `message-center` route; `/messages` declares depth 1, hides the Dock, and
   falls back to named Home. Its custom selected-frame ArrowLeft calls
   `goBackOr` exactly like `PageHeader` rather than calling `router.back()`.
+- Help & Support is a separate detail route. The Profile help row pushes named
+  route `help-support`; `/profile/help` declares depth 1, hides the Dock, and
+  falls back to `/profile`. Do not reuse Message Center for this row: Home Bell
+  remains the root announcement entry.
 - `PageHeader` calls `goBackOr`; it must not call `router.back()` directly.
 - `PageHeader` exposes an explicit `preferFallback` input. It bypasses a usable
   `history.state.back` only when the owning workflow requires a deterministic
@@ -145,6 +149,8 @@ lastTradePath: ComputedRef<string>
 | Home Bell opens Message Center | Push `/messages`, hide the Dock, and preserve Home in history |
 | Message Center Back has usable Home history | Use router Back and return Home |
 | Message Center Back has no usable history | Replace with named Home fallback |
+| Profile Help row is selected | Push `/profile/help`; do not open Message Center |
+| Help is opened directly | Back replaces with `/profile` |
 | Trade mode changes | Replace route and persist mode |
 | Stored locale is unknown | Use system locale, then `zh-CN` |
 | Locale persistence is unavailable | Keep the in-memory locale active |
@@ -177,6 +183,8 @@ lastTradePath: ComputedRef<string>
 - Browser: Home Bell opens Message Center without Root Header or Dock; its
   ArrowLeft returns Home, while a direct-open message route uses the same Home
   fallback.
+- Browser: Profile Help opens `/profile/help` without the Dock, while the Home
+  Bell still opens `/messages`; direct-open Help falls back to Profile.
 - Browser: all five dock destinations remain visible with at least 44px icon
   targets inside the 84px navigation, and no horizontal page overflow at
   320px, 390px, and 448px. Independently verify spot, contract, and seconds

@@ -14,6 +14,7 @@ import {
   LogOut,
   Settings,
   ShieldCheck,
+  UserPlus,
   UserRound,
   X,
 } from 'lucide-vue-next'
@@ -282,12 +283,17 @@ onMounted(() => { void load() })
       <section class="profile-group profile-group--support">
         <h2 class="profile-group__heading">{{ t('profile.preferencesSupportGroup') }}</h2>
         <div class="pencil-list">
+          <button class="pencil-row" type="button" @click="router.push({ name: 'referrals' })">
+            <span class="pencil-row__icon"><UserPlus :size="18" /></span>
+            <span class="pencil-row__copy"><strong>{{ t('profile.referrals') }}</strong><small>{{ t('profile.referralDescription') }}</small></span>
+            <span class="pencil-row__value"><ChevronRight :size="16" /></span>
+          </button>
           <button class="pencil-row" type="button" @click="router.push({ name: 'language' })">
             <span class="pencil-row__icon"><Languages :size="18" /></span>
             <span class="pencil-row__copy"><strong>{{ t('language.entry') }}</strong></span>
             <span class="pencil-row__value"><small v-if="session.isAuthenticated">{{ currentLanguageLabel }}</small><ChevronRight :size="16" /></span>
           </button>
-          <button class="pencil-row" type="button" @click="router.push({ name: 'message-center' })">
+          <button class="pencil-row" type="button" @click="router.push({ name: 'help-support' })">
             <span class="pencil-row__icon"><LifeBuoy :size="18" /></span>
             <span class="pencil-row__copy"><strong>{{ t('profile.helpSupport') }}</strong></span>
             <span class="pencil-row__value"><ChevronRight :size="16" /></span>
@@ -375,9 +381,9 @@ onMounted(() => { void load() })
 }
 
 .profile-group--support {
-  grid-template-rows: 23px 104px;
-  height: 143px;
-  min-height: 143px;
+  grid-template-rows: 23px 156px;
+  height: 195px;
+  min-height: 195px;
   padding: 10px 0 0;
 }
 
@@ -390,7 +396,7 @@ onMounted(() => { void load() })
 }
 
 .profile-group .pencil-list { grid-template-rows: repeat(3, 52px); }
-.profile-group--support .pencil-list { grid-template-rows: repeat(2, 52px); }
+.profile-group--support .pencil-list { grid-template-rows: repeat(3, 52px); }
 .profile-group .pencil-row { height: 52px; min-height: 52px; }
 .profile-group .pencil-row__value { align-items: center; display: flex; gap: 4px; max-width: 112px; }
 .profile-group .pencil-row__value small { max-width: 84px; }

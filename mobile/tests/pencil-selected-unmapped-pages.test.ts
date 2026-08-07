@@ -27,15 +27,15 @@ const selectedCss = read('../src/styles/pencil-selected-pages.css')
 
 test('此前未映射页面均声明当前 Pencil 选中画板来源', () => {
   const expected: Record<keyof typeof views, string> = {
-    assets: 'CUK3y i6YDBr',
+    assets: 'CUK3y i6YDBr p61z2Q Q4JYj v6phV TuWXq',
     profile: 'dUqOS duJTW S23rM S0Bj8',
-    orders: 'kcP5D A85if n6oGO t2GTW4',
+    orders: 'kcP5D A85if n6oGO t2GTW4 e5Qs1 hxe8l',
     login: 'u99Fpg WNbsc',
     register: 'MCuqb RGYGj',
     news: 'VGPW0 b6EGF',
     newsDetail: 'Q50Rgr ASvmq',
     swap: 'x9T4CL eXdnN sf288 xvVss',
-    earn: 'zIzOm tCHZ9',
+    earn: 'zIzOm tCHZ9 nqP6W aXxul',
     loan: 'kIOBX yrsRy',
     newCoins: 'oOJ0q ZTtvY',
     newCoinDetail: 'nFwYy B6Qh9J',
@@ -60,15 +60,17 @@ test('选中稿共享头部、字段、弹层和根壳职责保持一致', () =>
 })
 
 test('资产与我的页面锁定 390px 选中稿几何和 Lucide 图标', () => {
-  assert.match(views.assets, /grid-template-rows: 157px 80px 159px 207px/)
-  assert.match(views.assets, /\.assets-summary[\s\S]*?padding: 10px 20px 8px/)
-  assert.match(views.assets, /\.assets-summary__value > span[\s\S]*?font-size: 20px[\s\S]*?font-weight: 650[\s\S]*?line-height: 26px/)
-  assert.match(views.assets, /\.assets-summary__value > b[\s\S]*?font-size: 30px[\s\S]*?font-weight: 700/)
+  assert.match(views.assets, /\.assets-hero \{[\s\S]*?height: 236px;[\s\S]*?padding: 18px 20px 16px/)
+  assert.match(views.assets, /\.assets-hero--member[\s\S]*?align-content: center;[\s\S]*?grid-template-rows: auto 66px/)
+  assert.match(views.assets, /\.assets-member-summary__value strong[\s\S]*?font-size: 34px/)
+  assert.match(views.assets, /\.assets-hero-actions button[\s\S]*?height: 66px[\s\S]*?min-height: 66px/)
+  assert.match(views.assets, /\.assets-holding-row[\s\S]*?min-height: 52px/)
+  assert.match(views.assets, /class="assets-balance-toggle"[\s\S]*?<Eye v-if="balanceVisible" :size="14"/)
   assert.match(views.assets, /<ArrowDownToLine[\s\S]*?<ArrowUpFromLine[\s\S]*?<ArrowLeftRight[\s\S]*?<ReceiptText/)
   assert.match(views.assets, /openProtectedRoute\('wallet-ledger'\)[\s\S]*?<ReceiptText/)
   assert.match(views.assets, /openProtectedRoute\('withdrawal-records'\)[\s\S]*?<ArrowUpFromLine/)
-  assert.doesNotMatch(views.assets, /ArrowUpToLine|ArrowRightLeft|WalletCards/)
-  for (const key of ['assets.syncEstimateHint', 'assets.loginViewAssets', 'assets.distributionLoginHint', 'assets.quickLedger', 'assets.fundLedger', 'assets.quickRecharge']) {
+  assert.doesNotMatch(views.assets, /ArrowUpToLine|ArrowRightLeft/)
+  for (const key of ['assets.guestTitle', 'assets.loginViewAssets', 'assets.holdings', 'assets.sortedByEstimate', 'assets.availableFrozenSummary', 'assets.quickLedger', 'assets.fundLedger', 'assets.fundLedgerDescription', 'assets.withdrawalRecordsDescription', 'assets.quickRecharge', 'assets.quickRechargeDescription']) {
     assert.match(views.assets, new RegExp(key.replace('.', '\\.')))
   }
 
@@ -77,12 +79,13 @@ test('资产与我的页面锁定 390px 选中稿几何和 Lucide 图标', () =>
   assert.match(views.profile, /\.profile-auth-actions[\s\S]*?height: 58px/)
   assert.match(views.profile, /\.profile-status-row[\s\S]*?height: 44px/)
   assert.match(views.profile, /\.profile-group[\s\S]*?height: 201px/)
-  assert.match(views.profile, /\.profile-group--support[\s\S]*?height: 143px/)
+  assert.match(views.profile, /\.profile-group--support[\s\S]*?height: 195px/)
   assert.match(views.profile, /<Settings :size="20"/)
   assert.match(views.profile, /profile\.securityCenter/)
   assert.match(views.profile, /profile\.accountBindings/)
-  assert.doesNotMatch(views.profile, /profile\.referrals|<Settings2/)
-  assert.doesNotMatch(views.profile, /pencil-row__copy"><strong>[^<]*<\/strong><small>/)
+  assert.match(views.profile, /<UserPlus :size="18"/)
+  assert.match(views.profile, /profile\.referrals[\s\S]*?profile\.referralDescription/)
+  assert.doesNotMatch(views.profile, /<Settings2/)
 })
 
 test('订单页标签边界和 64px 数据行与选中稿一致', () => {

@@ -764,7 +764,7 @@ pub(crate) async fn list_margin_wallet_accounts(
     user_id: u64,
 ) -> AppResult<Vec<MarginWalletAccountResponse>> {
     sqlx::query_as::<_, MarginWalletAccountResponse>(
-        r#"SELECT wallets.asset_id, assets.symbol AS asset_symbol,
+        r#"SELECT wallets.asset_id, assets.symbol AS asset_symbol, assets.logo_url,
                   wallets.available, wallets.frozen, wallets.locked
            FROM margin_wallet_accounts wallets
            INNER JOIN assets ON assets.id = wallets.asset_id

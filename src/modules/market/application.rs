@@ -8,8 +8,9 @@ use crate::{
     modules::market::{
         KlineQuery, infrastructure,
         presentation::{
-            DepthResponse, KlineQueryParams, KlineResponse, MarketsResponse, TickerResponse,
-            TradesQueryParams, TradesResponse,
+            DepthResponse, KlineQueryParams, KlineResponse, MarketFavoriteMutationResponse,
+            MarketFavoritesResponse, MarketsResponse, TickerResponse, TradesQueryParams,
+            TradesResponse,
         },
         service::{
             fallback_market_symbol_is_listed, fallback_markets, route_limit, validate_market_symbol,
@@ -34,6 +35,37 @@ pub(crate) async fn list_markets(mysql: Option<Pool<MySql>>) -> AppResult<Market
 
     let markets = infrastructure::list_active_markets(&pool).await?;
     Ok(MarketsResponse { markets })
+}
+
+pub(crate) async fn list_user_market_favorites(
+    mysql: Option<Pool<MySql>>,
+    user_id: u64,
+) -> AppResult<MarketFavoritesResponse> {
+    let pool = required_mysql_pool(mysql)?;
+    let favorites = infrastructure::list_user_market_favorites(&pool, user_id).await?;
+    Ok(MarketFavoritesResponse { favorites })
+}
+
+pub(crate) async fn add_user_market_favorite(
+    mysql: Option<Pool<MySql>>,
+    user_id: u64,
+    raw_symbol: &str,
+) -> AppResult<MarketFavoriteMutationResponse> {
+    let symbol = validate_market_symbol(raw_symbol)?;
+    let pool = required_mysql_pool(mysql)?;
+    let favorite =
+        infrastructure::add_user_market_favorite(&pool, user_id, symbol.as_str()).await?;
+    Ok(MarketFavoriteMutationResponse { favorite })
+}
+
+pub(crate) async fn remove_user_market_favorite(
+    mysql: Option<Pool<MySql>>,
+    user_id: u64,
+    raw_symbol: &str,
+) -> AppResult<()> {
+    let symbol = validate_market_symbol(raw_symbol)?;
+    let pool = required_mysql_pool(mysql)?;
+    infrastructure::remove_user_market_favorite(&pool, user_id, symbol.as_str()).await
 }
 
 pub(crate) async fn get_market_ticker(
@@ -110,4 +142,10 @@ async fn ensure_listed_market_symbol(pool: Option<&Pool<MySql>>, symbol: &str) -
     }
 
     Ok(())
+}
+
+fn required_mysql_pool(mysql: Option<Pool<MySql>>) -> AppResult<Pool<MySql>> {
+    mysql.ok_or_else(|| {
+        AppError::Internal("mysql pool is not configured for market routes".to_owned())
+    })
 }

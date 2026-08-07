@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Verify mobile quality gate, touch target, truthful data, and local-asset contracts."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Verify selected Pencil parity, theme behavior, PWA snapshot, and shell ownership."}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Verify named referral navigation and bilingual copy."}
+{"file":".trellis/tasks/08-06-mobile-assets-referral-entry/research/current-pencil-assets.md","reason":"Compare the implementation to the current Pencil state and geometry."}

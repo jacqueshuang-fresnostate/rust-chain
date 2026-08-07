@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend package boundaries and required quality contracts"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Migration, SQLx query, FK and unique-key conventions"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Authenticated route validation and error mapping conventions"}
+{"file":".trellis/spec/backend/market-favorites.md","reason":"Executable favorites, isolation, idempotency and backend-owned Logo contract"}
+{"file":".trellis/spec/mobile/index.md","reason":"Mobile quality, touch, theme and icon contracts"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Authoritative API adapters, authenticated request and wallet metadata contracts"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Root page, truthful state and production UI contracts"}
+{"file":".trellis/tasks/08-08-mobile-market-favorites-asset-logos/research/cross-layer-audit.md","reason":"Exact current gaps, affected paths and minimal cross-layer design"}

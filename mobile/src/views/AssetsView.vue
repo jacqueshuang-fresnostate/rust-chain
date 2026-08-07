@@ -7,17 +7,18 @@ import {
   ArrowLeftRight,
   ArrowRight,
   ArrowUpFromLine,
-  CheckCircle2,
   ChevronRight,
   Eye,
   EyeOff,
-  PieChart,
   ReceiptText,
+  WalletCards,
   Zap,
   X,
 } from 'lucide-vue-next'
 import AssetMark from '@/components/AssetMark.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import assetsHeroDark from '@/assets/assets/assets-hero-dark.jpg'
+import assetsHeroLight from '@/assets/assets/assets-hero-light.jpg'
 import { apiErrorMessage } from '@/api/client'
 import { fetchMarginWallets } from '@/api/trading'
 import { fetchWalletAccounts, transferWalletFunds } from '@/api/wallet'
@@ -25,12 +26,27 @@ import { formatAmount, formatFiat } from '@/core/format'
 import { useModalDialog } from '@/core/modalDialog'
 import { useMarketStore } from '@/stores/market'
 import { useSessionStore } from '@/stores/session'
+import { useThemeStore } from '@/stores/theme'
 import type { WalletAccount } from '@/core/types'
+
+type AssetHoldingRow = {
+  symbol: string
+  spot?: WalletAccount
+  margin?: WalletAccount
+  logoUrl?: string
+  amount: number
+  available: number
+  frozen: number
+  estimatedValue: number | null
+}
+
+const QUOTE_ASSET_SYMBOL = 'USDT'
 
 const router = useRouter()
 const marketStore = useMarketStore()
 const session = useSessionStore()
-const { t } = useI18n()
+const theme = useThemeStore()
+const { locale, t } = useI18n()
 const accounts = ref<WalletAccount[]>([])
 const marginAccounts = ref<WalletAccount[]>([])
 const balanceVisible = ref(true)
@@ -51,38 +67,71 @@ const assetRows = computed(() => {
   const rows = new Map<string, { symbol: string; spot?: WalletAccount; margin?: WalletAccount }>()
   for (const account of accounts.value) rows.set(account.symbol, { ...rows.get(account.symbol), symbol: account.symbol, spot: account })
   for (const account of marginAccounts.value) rows.set(account.symbol, { ...rows.get(account.symbol), symbol: account.symbol, margin: account })
-  return [...rows.values()].sort((left, right) => left.symbol.localeCompare(right.symbol))
+  return [...rows.values()]
 })
 
-const totalEstimate = computed(() => estimateWallets(accounts.value) + estimateWallets(marginAccounts.value))
 const accountDataAvailable = computed(() => session.isAuthenticated && accountsReady.value && !error.value)
-const hasHoldings = computed(() => accountDataAvailable.value && assetRows.value.some((row) => walletTotal(row.spot) + walletTotal(row.margin) > 0))
-const hasAllocation = computed(() => hasHoldings.value && totalEstimate.value > 0)
-const accountStateLabel = computed(() => {
-  if (!session.isAuthenticated) return t('common.loginRequiredTitle')
-  if (loading.value) return t('common.loading')
-  if (error.value) return t('common.serviceUnavailable')
-  if (!hasHoldings.value) return t('assets.empty')
-  return t('common.liveData')
-})
-const allocationRows = computed(() => {
-  const rows = assetRows.value.map((row) => {
+const holdingRows = computed<AssetHoldingRow[]>(() => assetRows.value
+  .map((row) => {
     const amount = walletTotal(row.spot) + walletTotal(row.margin)
-    const value = ['USDT', 'USDC', 'USD'].includes(row.symbol)
-      ? amount
-      : amount * (marketStore.tickerFor(`${row.symbol}/USDT`)?.lastPrice || 0)
-    return { ...row, amount, value }
-  }).filter((row) => row.amount > 0 && row.value > 0)
-  const total = rows.reduce((sum, row) => sum + row.value, 0)
-  return rows
-    .map((row) => ({ ...row, percent: total > 0 ? Math.max(1, Math.round((row.value / total) * 100)) : 0 }))
-    .sort((left, right) => right.value - left.value)
-    .slice(0, 4)
+    const available = walletAvailable(row.spot) + walletAvailable(row.margin)
+    const frozen = walletFrozen(row.spot) + walletFrozen(row.margin)
+    return {
+      ...row,
+      logoUrl: row.spot?.logoUrl || row.margin?.logoUrl,
+      amount,
+      available,
+      frozen,
+      estimatedValue: estimateAssetValue(row.symbol, amount),
+    }
+  })
+  .filter((row) => row.amount > 0)
+  .sort((left, right) => {
+    if (left.estimatedValue === null && right.estimatedValue !== null) return 1
+    if (left.estimatedValue !== null && right.estimatedValue === null) return -1
+    if (left.estimatedValue !== null && right.estimatedValue !== null && left.estimatedValue !== right.estimatedValue) {
+      return right.estimatedValue - left.estimatedValue
+    }
+    return left.symbol.localeCompare(right.symbol)
+  }))
+const hasHoldings = computed(() => accountDataAvailable.value && holdingRows.value.length > 0)
+const valuedHoldingCount = computed(() => holdingRows.value.filter((row) => row.estimatedValue !== null).length)
+const totalEstimate = computed(() => holdingRows.value.reduce((total, row) => total + (row.estimatedValue ?? 0), 0))
+const memberState = computed<'loading' | 'error' | 'empty' | 'holdings'>(() => {
+  if (error.value) return 'error'
+  if (loading.value || !accountsReady.value) return 'loading'
+  return hasHoldings.value ? 'holdings' : 'empty'
+})
+const estimateCoverage = computed<'full' | 'partial' | 'unavailable' | 'empty'>(() => {
+  if (!hasHoldings.value) return 'empty'
+  if (valuedHoldingCount.value === 0) return 'unavailable'
+  return valuedHoldingCount.value === holdingRows.value.length ? 'full' : 'partial'
+})
+const totalEstimateLabel = computed(() => {
+  if (!balanceVisible.value) return '••••••'
+  if (!accountDataAvailable.value || estimateCoverage.value === 'unavailable') return '--'
+  return new Intl.NumberFormat(locale.value === 'en' ? 'en-US' : 'zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(totalEstimate.value)
 })
 
 const transferAccounts = computed(() => transferFrom.value === 'spot' ? accounts.value : marginAccounts.value)
 const transferAccount = computed(() => transferAccounts.value.find((account) => account.symbol === transferAsset.value))
-const transferAvailable = computed(() => transferAccount.value?.available || 0)
+const transferAvailable = computed<number | null>(() => transferAccount.value?.available ?? null)
+const transferAvailableLabel = computed(() => transferAvailable.value === null ? '--' : formatAmount(transferAvailable.value))
+const transferTarget = computed<'spot' | 'margin'>(() => transferFrom.value === 'spot' ? 'margin' : 'spot')
+const canSubmitTransfer = computed(() => {
+  const value = Number(transferAmount.value)
+  return Boolean(
+    transferAsset.value
+    && transferAvailable.value !== null
+    && Number.isFinite(value)
+    && value > 0
+    && value <= transferAvailable.value
+    && !transferring.value,
+  )
+})
 
 async function loadAccounts(): Promise<void> {
   if (!session.isAuthenticated) {
@@ -91,6 +140,7 @@ async function loadAccounts(): Promise<void> {
     accountsReady.value = false
     loading.value = false
     error.value = ''
+    transferOpen.value = false
     return
   }
   loading.value = true
@@ -139,6 +189,18 @@ function closeTransfer(): void {
   transferOpen.value = false
 }
 
+function swapTransferRoute(): void {
+  if (transferring.value) return
+  const nextFrom = transferTarget.value
+  transferFrom.value = nextFrom
+  const nextAccounts = nextFrom === 'spot' ? accounts.value : marginAccounts.value
+  if (!nextAccounts.some((account) => account.symbol === transferAsset.value)) {
+    transferAsset.value = nextAccounts[0]?.symbol || ''
+  }
+  transferAmount.value = ''
+  transferFeedback.value = ''
+}
+
 function handleTransferDialogKeydown(event: KeyboardEvent): void {
   trapTransferFocus(event, closeTransfer)
 }
@@ -153,7 +215,7 @@ function openProtectedRoute(name: 'withdraw-asset' | 'wallet-ledger' | 'withdraw
 
 async function submitTransfer(): Promise<void> {
   const transferValue = Number(transferAmount.value)
-  if (!transferAsset.value || !Number.isFinite(transferValue) || transferValue <= 0) {
+  if (!transferAsset.value || transferAvailable.value === null || !Number.isFinite(transferValue) || transferValue <= 0) {
     transferFeedback.value = t('assets.invalidTransfer')
     transferFeedbackTone.value = 'error'
     return
@@ -167,11 +229,15 @@ async function submitTransfer(): Promise<void> {
   transferFeedback.value = ''
   try {
     const to = transferFrom.value === 'spot' ? 'margin' : 'spot'
-    await transferWalletFunds(transferAsset.value, transferFrom.value, to, transferValue)
+    const sourceLogo = transferAccount.value?.logoUrl
+      || accounts.value.find((account) => account.symbol === transferAsset.value)?.logoUrl
+      || marginAccounts.value.find((account) => account.symbol === transferAsset.value)?.logoUrl
+    const result = await transferWalletFunds(transferAsset.value, transferFrom.value, to, transferValue)
+    accounts.value = upsertWalletAccount(accounts.value, { ...result.spotWallet, logoUrl: sourceLogo })
+    marginAccounts.value = upsertWalletAccount(marginAccounts.value, { ...result.marginWallet, logoUrl: sourceLogo })
     transferFeedback.value = t('assets.transferSuccess')
     transferFeedbackTone.value = 'success'
     transferAmount.value = ''
-    await loadAccounts()
   } catch (reason) {
     transferFeedback.value = apiErrorMessage(reason, t('assets.transferFailed'))
     transferFeedbackTone.value = 'error'
@@ -184,12 +250,26 @@ function walletTotal(account?: WalletAccount): number {
   return account ? account.available + account.frozen + account.locked : 0
 }
 
-function estimateWallets(wallets: WalletAccount[]): number {
-  return wallets.reduce((total, account) => {
-    const accountAmount = walletTotal(account)
-    if (account.symbol === 'USDT' || account.symbol === 'USDC' || account.symbol === 'USD') return total + accountAmount
-    return total + accountAmount * (marketStore.tickerFor(`${account.symbol}/USDT`)?.lastPrice || 0)
-  }, 0)
+function walletAvailable(account?: WalletAccount): number {
+  return account?.available || 0
+}
+
+function walletFrozen(account?: WalletAccount): number {
+  return account ? account.frozen + account.locked : 0
+}
+
+function upsertWalletAccount(wallets: WalletAccount[], next: WalletAccount): WalletAccount[] {
+  const current = wallets.find((account) => account.assetId === next.assetId || account.symbol === next.symbol)
+  const merged = { ...current, ...next, logoUrl: next.logoUrl || current?.logoUrl }
+  return current
+    ? wallets.map((account) => account === current ? merged : account)
+    : [...wallets, merged]
+}
+
+function estimateAssetValue(symbol: string, amount: number): number | null {
+  if (symbol === QUOTE_ASSET_SYMBOL) return amount
+  const lastPrice = marketStore.tickerFor(`${symbol}/USDT`)?.lastPrice
+  return Number.isFinite(lastPrice) && Number(lastPrice) > 0 ? amount * Number(lastPrice) : null
 }
 
 function syncTransferAsset(): void {
@@ -204,86 +284,125 @@ watch(() => session.isAuthenticated, () => { void loadAccounts() }, { immediate:
   <main
     class="page pencil-page pencil-root-page assets-pencil"
     data-assets-workspace="live"
-    data-pencil-source="CUK3y i6YDBr"
+    :data-assets-branch="session.isAuthenticated ? 'member' : 'guest'"
+    data-pencil-source="CUK3y i6YDBr p61z2Q Q4JYj v6phV TuWXq"
   >
-    <PageHeader :back="false" :pencil="true" :title="t('assets.title')">
-      <template #actions>
-        <button
-          class="icon-button"
-          type="button"
-          :aria-label="t('home.assetOverview')"
-          :aria-pressed="!balanceVisible"
-          @click="balanceVisible = !balanceVisible"
-        >
-          <Eye v-if="balanceVisible" :size="20" aria-hidden="true" />
-          <EyeOff v-else :size="20" aria-hidden="true" />
-        </button>
-      </template>
-    </PageHeader>
+    <PageHeader :back="false" :pencil="true" :title="t('assets.title')" />
 
-    <div class="pencil-content assets-pencil__content">
-      <section
-        class="pencil-hero assets-summary"
-        :aria-busy="loading"
-        :data-account-state="accountDataAvailable ? 'ready' : loading ? 'loading' : error ? 'error' : 'guest'"
-      >
-        <span class="pencil-eyebrow">{{ t('assets.totalValue') }}</span>
-        <strong class="pencil-numeric assets-summary__value">
-          <span>$</span>
-          <b>{{ !balanceVisible
-            ? '••••••'
-            : accountDataAvailable
-              ? formatFiat(totalEstimate).replace(/^\$/, '')
-              : session.isAuthenticated && loading
-                ? t('common.loading')
-                : session.isAuthenticated && error
-                  ? t('common.serviceUnavailable')
-                  : '••••••' }}</b>
-        </strong>
-        <p>
-          {{ !session.isAuthenticated
-            ? t('assets.syncEstimateHint')
-            : accountDataAvailable && !hasHoldings
-              ? t('assets.empty')
-              : t('assets.estimateNote') }}
-        </p>
-        <button v-if="!session.isAuthenticated" class="pencil-primary" type="button" @click="openAssetsLogin">
+    <div v-if="!session.isAuthenticated" class="pencil-content assets-pencil__guest-content" data-assets-state="guest">
+      <section class="pencil-hero assets-hero assets-hero--guest">
+        <img v-show="!theme.isDark" class="assets-hero__image" :src="assetsHeroLight" alt="">
+        <img v-show="theme.isDark" class="assets-hero__image" :src="assetsHeroDark" alt="">
+        <span class="assets-hero__overlay" :class="{ 'assets-hero__overlay--dark': theme.isDark }" aria-hidden="true" />
+        <span class="assets-hero__bloom" aria-hidden="true" />
+        <div class="assets-guest-copy">
+          <span class="assets-hero__eyebrow">{{ t('assets.guestKicker') }}</span>
+          <h1>{{ t('assets.guestTitle') }}</h1>
+          <p>{{ t('assets.guestDescription') }}</p>
+        </div>
+        <button class="assets-guest-login" type="button" @click="openAssetsLogin">
           {{ t('assets.loginViewAssets') }}
           <ArrowRight :size="17" aria-hidden="true" />
         </button>
-        <button v-else-if="error" class="pencil-secondary" type="button" :disabled="loading" @click="loadAccounts">
-          {{ t('common.retry') }}
-        </button>
+      </section>
+    </div>
+
+    <div
+      v-else
+      class="pencil-content assets-pencil__member-content"
+      :aria-busy="loading"
+      :data-assets-state="memberState"
+    >
+      <section
+        class="pencil-hero assets-hero assets-hero--member"
+        :data-account-state="memberState"
+        :data-estimate-coverage="estimateCoverage"
+      >
+        <img v-show="!theme.isDark" class="assets-hero__image" :src="assetsHeroLight" alt="">
+        <img v-show="theme.isDark" class="assets-hero__image" :src="assetsHeroDark" alt="">
+        <span class="assets-hero__overlay" :class="{ 'assets-hero__overlay--dark': theme.isDark }" aria-hidden="true" />
+        <span class="assets-hero__bloom" aria-hidden="true" />
+
+        <div class="assets-member-summary">
+          <div class="assets-member-summary__total">
+            <div class="assets-member-summary__label">
+              <span>{{ t('assets.totalValue') }}</span>
+              <button
+                class="assets-balance-toggle"
+                type="button"
+                :aria-label="balanceVisible ? t('assets.hideBalance') : t('assets.showBalance')"
+                :aria-pressed="!balanceVisible"
+                @click="balanceVisible = !balanceVisible"
+              >
+                <Eye v-if="balanceVisible" :size="14" aria-hidden="true" />
+                <EyeOff v-else :size="14" aria-hidden="true" />
+              </button>
+            </div>
+            <div class="assets-member-summary__value">
+              <strong class="pencil-numeric">{{ totalEstimateLabel }}</strong>
+              <small>{{ QUOTE_ASSET_SYMBOL }}</small>
+            </div>
+            <small v-if="estimateCoverage === 'partial'">{{ t('assets.partialEstimateNote') }}</small>
+          </div>
+          <div class="assets-member-summary__return">
+            <span>{{ t('rootPrototype.todayReturn') }}</span>
+            <strong class="pencil-numeric">--</strong>
+            <small>{{ t('assets.todayReturnUnavailable') }}</small>
+          </div>
+        </div>
+
+        <nav class="assets-hero-actions" :aria-label="t('assets.operations')">
+          <button type="button" @click="openDeposit"><ArrowDownToLine :size="19" aria-hidden="true" />{{ t('assets.deposit') }}</button>
+          <button type="button" @click="openProtectedRoute('withdraw-asset')"><ArrowUpFromLine :size="19" aria-hidden="true" />{{ t('assets.withdraw') }}</button>
+          <button type="button" @click="openTransfer"><ArrowLeftRight :size="19" aria-hidden="true" />{{ t('assets.transfer') }}</button>
+          <button type="button" @click="openProtectedRoute('wallet-ledger')"><ReceiptText :size="20" aria-hidden="true" />{{ t('assets.quickLedger') }}</button>
+        </nav>
       </section>
 
-      <nav class="pencil-action-grid assets-actions" :aria-label="t('assets.operations')">
-        <button type="button" @click="openDeposit"><span><ArrowDownToLine :size="19" /></span>{{ t('assets.deposit') }}</button>
-        <button type="button" @click="openProtectedRoute('withdraw-asset')"><span><ArrowUpFromLine :size="19" /></span>{{ t('assets.withdraw') }}</button>
-        <button type="button" @click="openTransfer"><span><ArrowLeftRight :size="19" /></span>{{ t('assets.transfer') }}</button>
-        <button type="button" @click="openProtectedRoute('wallet-ledger')"><span><ReceiptText :size="20" /></span>{{ t('assets.quickLedger') }}</button>
-      </nav>
-
-      <section class="pencil-section assets-distribution" :aria-busy="loading">
+      <section class="pencil-section assets-holdings" :aria-busy="loading">
         <div class="pencil-section__heading">
-          <h2>{{ t('rootPrototype.assetAllocation') }}</h2>
-          <span v-if="hasAllocation" class="pencil-pill">{{ t('common.liveData') }}</span>
+          <h2>{{ t('assets.holdings') }}</h2>
+          <span v-if="memberState === 'holdings'" class="assets-holdings__count">{{ t('assets.sortedByEstimate') }}</span>
+          <span v-else-if="memberState === 'empty'" class="assets-holdings__count">{{ t('assets.holdingCount', { count: 0 }) }}</span>
         </div>
-        <div v-if="accountDataAvailable && hasAllocation" class="assets-allocation">
+
+        <div v-if="memberState === 'loading'" class="assets-holdings__state" role="status">
+          <span>{{ t('common.loading') }}</span>
+        </div>
+        <div v-else-if="memberState === 'error'" class="assets-holdings__state assets-holdings__state--error" role="alert">
+          <strong>{{ t('common.serviceUnavailable') }}</strong>
+          <span>{{ error }}</span>
+          <button class="pencil-secondary" type="button" :disabled="loading" @click="loadAccounts">{{ t('common.retry') }}</button>
+        </div>
+        <div v-else-if="hasHoldings" class="assets-holdings__list">
           <button
-            v-for="row in allocationRows"
+            v-for="row in holdingRows"
             :key="row.symbol"
-            class="assets-allocation__row"
+            class="assets-holding-row"
             type="button"
             @click="openProtectedRoute('wallet-ledger')"
           >
-            <AssetMark :symbol="row.symbol" :size="32" />
-            <span><strong>{{ row.symbol }}</strong><i><b :style="{ width: `${row.percent}%` }" /></i></span>
-            <em class="pencil-numeric">{{ row.percent }}%</em>
+            <AssetMark :symbol="row.symbol" :src="row.logoUrl" :size="32" />
+            <span class="assets-holding-row__copy">
+              <strong>{{ row.symbol }}</strong>
+              <small>{{ t('assets.availableFrozenSummary', { available: formatAmount(row.available, 8), frozen: formatAmount(row.frozen, 8) }) }}</small>
+            </span>
+            <span class="assets-holding-row__amount">
+              <strong class="pencil-numeric">{{ formatAmount(row.amount, 8) }}</strong>
+              <small v-if="row.estimatedValue !== null">{{ t('assets.estimatedValue', { value: formatFiat(row.estimatedValue) }) }}</small>
+              <small v-else>{{ t('assets.estimateUnavailable') }}</small>
+            </span>
           </button>
         </div>
-        <div v-else class="pencil-state assets-distribution__state" role="status">
-          <PieChart :size="27" aria-hidden="true" />
-          <span>{{ loading ? t('common.loading') : session.isAuthenticated ? accountStateLabel : t('assets.distributionLoginHint') }}</span>
+        <div v-else class="assets-holdings__state assets-holdings__state--empty">
+          <span class="assets-holdings__empty-icon"><WalletCards :size="26" aria-hidden="true" /></span>
+          <div class="assets-holdings__empty-copy" role="status">
+            <strong>{{ t('assets.emptyHoldings') }}</strong>
+            <span>{{ t('assets.emptyHoldingsDescription') }}</span>
+          </div>
+          <button class="pencil-primary" type="button" @click="openDeposit">
+            <ArrowDownToLine :size="17" aria-hidden="true" />{{ t('assets.depositNow') }}
+          </button>
         </div>
       </section>
 
@@ -291,189 +410,467 @@ watch(() => session.isAuthenticated, () => { void loadAccounts() }, { immediate:
         <div class="pencil-section__heading"><h2>{{ t('assets.fundTools') }}</h2></div>
         <div class="pencil-list">
           <button class="pencil-row" type="button" @click="openProtectedRoute('wallet-ledger')">
-            <span class="pencil-row__icon"><ReceiptText :size="18" /></span>
+            <span class="pencil-row__icon"><ReceiptText :size="18" aria-hidden="true" /></span>
             <span class="pencil-row__copy"><strong>{{ t('assets.fundLedger') }}</strong></span>
-            <ChevronRight :size="17" />
+            <span class="pencil-row__value"><small>{{ t('assets.fundLedgerDescription') }}</small><ChevronRight :size="17" aria-hidden="true" /></span>
           </button>
           <button class="pencil-row" type="button" @click="openProtectedRoute('withdrawal-records')">
-            <span class="pencil-row__icon"><ArrowUpFromLine :size="19" /></span>
+            <span class="pencil-row__icon"><ArrowUpFromLine :size="19" aria-hidden="true" /></span>
             <span class="pencil-row__copy"><strong>{{ t('withdrawRecords.title') }}</strong></span>
-            <ChevronRight :size="17" />
+            <span class="pencil-row__value"><small>{{ t('assets.withdrawalRecordsDescription') }}</small><ChevronRight :size="17" aria-hidden="true" /></span>
           </button>
           <button class="pencil-row" type="button" @click="openProtectedRoute('quick-recharge')">
-            <span class="pencil-row__icon"><Zap :size="18" /></span>
+            <span class="pencil-row__icon"><Zap :size="18" aria-hidden="true" /></span>
             <span class="pencil-row__copy"><strong>{{ t('assets.quickRecharge') }}</strong></span>
-            <ChevronRight :size="17" />
+            <span class="pencil-row__value"><small>{{ t('assets.quickRechargeDescription') }}</small><ChevronRight :size="17" aria-hidden="true" /></span>
           </button>
         </div>
       </section>
     </div>
 
-    <div v-if="transferOpen" class="confirmation-layer">
-      <button class="confirmation-overlay-dismiss" type="button" :aria-label="t('common.close')" :disabled="transferring" tabindex="-1" @click="closeTransfer" />
-      <section
-        ref="transferDialog"
-        class="confirmation-sheet"
-        role="dialog"
-        aria-modal="true"
-        :aria-busy="transferring"
-        :aria-label="t('assets.transfer')"
-        tabindex="-1"
-        @keydown="handleTransferDialogKeydown"
-      >
-        <header>
-          <span class="confirmation-icon"><CheckCircle2 :size="20" /></span>
-          <div><span>{{ t('common.confirm') }}</span><h2>{{ t('assets.transfer') }}</h2></div>
+    <Teleport to="body">
+      <div v-if="session.isAuthenticated && transferOpen" class="confirmation-layer assets-transfer-layer">
+        <button class="confirmation-overlay-dismiss" type="button" :aria-label="t('common.close')" :disabled="transferring" tabindex="-1" @click="closeTransfer" />
+        <section
+          ref="transferDialog"
+          class="confirmation-sheet assets-transfer-sheet"
+          role="dialog"
+          aria-modal="true"
+          :aria-busy="transferring"
+          :aria-label="t('assets.transfer')"
+          tabindex="-1"
+          @keydown="handleTransferDialogKeydown"
+        >
+        <span class="assets-transfer-sheet__grab" aria-hidden="true" />
+        <header class="assets-transfer-sheet__header">
+          <h2>{{ t('assets.transferTitle') }}</h2>
+          <button
+            class="assets-transfer-sheet__close"
+            type="button"
+            :aria-label="t('common.close')"
+            :disabled="transferring"
+            data-dialog-cancel
+            @click="closeTransfer"
+          >
+            <X :size="16" aria-hidden="true" />
+          </button>
         </header>
-        <label class="field">
-          <span>{{ t('assets.transferFrom') }}</span>
-          <select v-model="transferFrom">
-            <option value="spot">{{ t('assets.fundingAccount') }}</option>
-            <option value="margin">{{ t('assets.marginAccount') }}</option>
+
+        <div class="assets-transfer-route">
+          <div class="assets-transfer-account">
+            <span>{{ t('assets.from') }}</span>
+            <strong>{{ transferFrom === 'spot' ? t('assets.fundingAccount') : t('assets.marginAccount') }}</strong>
+          </div>
+          <button type="button" :aria-label="t('assets.swapTransferDirection')" :disabled="transferring" @click="swapTransferRoute">
+            <ArrowLeftRight :size="18" aria-hidden="true" />
+          </button>
+          <div class="assets-transfer-account">
+            <span>{{ t('assets.to') }}</span>
+            <strong>{{ transferTarget === 'spot' ? t('assets.fundingAccount') : t('assets.marginAccount') }}</strong>
+          </div>
+        </div>
+
+        <label class="assets-transfer-field">
+          <span class="assets-transfer-field__heading">
+            <span>{{ t('assets.asset') }}</span>
+            <small>{{ t('assets.availableBalance', { amount: transferAvailableLabel, asset: transferAsset || '--' }) }}</small>
+          </span>
+          <select v-model="transferAsset">
+            <option v-for="account in transferAccounts" :key="account.assetId" :value="account.symbol">{{ account.symbol }}</option>
           </select>
         </label>
-        <label class="field">
-          <span>{{ t('common.amount') }}</span>
-          <div>
-            <input v-model="transferAmount" inputmode="decimal" />
-            <select v-model="transferAsset">
-              <option v-for="account in transferAccounts" :key="account.assetId" :value="account.symbol">{{ account.symbol }}</option>
-            </select>
-          </div>
+
+        <label class="assets-transfer-field">
+          <span class="assets-transfer-field__heading">
+            <span>{{ t('assets.transferAmount') }}</span>
+            <small>{{ transferAsset || '--' }}</small>
+          </span>
+          <input v-model="transferAmount" inputmode="decimal" :placeholder="t('assets.transferPlaceholder')" />
         </label>
-        <p class="field-hint">{{ t('common.available') }} {{ formatAmount(transferAvailable) }} {{ transferAsset }}</p>
+
+        <p class="assets-transfer-hint">{{ t('assets.transferHint') }}</p>
         <p v-if="transferFeedback" :class="transferFeedbackTone === 'success' ? 'positive' : 'field-error'" aria-live="polite">{{ transferFeedback }}</p>
-        <div class="confirmation-actions">
-          <button data-dialog-cancel type="button" :disabled="transferring" @click="closeTransfer"><X :size="16" />{{ t('common.cancel') }}</button>
-          <button class="confirmation-primary" type="button" :disabled="transferring" @click="submitTransfer">
-            {{ transferring ? t('common.submitting') : t('common.confirm') }}
-          </button>
-        </div>
-      </section>
-    </div>
+        <button class="assets-transfer-submit" type="button" :disabled="!canSubmitTransfer" :aria-busy="transferring" @click="submitTransfer">
+          <ArrowLeftRight :size="17" aria-hidden="true" />
+          {{ transferring ? t('assets.transferring') : t('assets.confirmTransfer') }}
+        </button>
+        </section>
+      </div>
+    </Teleport>
   </main>
 </template>
 
 <style scoped>
-.assets-pencil__content {
-  display: grid;
-  gap: 10px;
-  grid-template-rows: 157px 80px 159px 207px;
-  padding-bottom: 0;
-  padding-top: 10px;
+.assets-pencil {
+  overflow-x: clip;
 }
 
-.assets-summary {
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  height: 157px;
-  justify-content: flex-start;
-  margin-inline: -20px;
-  min-height: 157px;
-  padding: 10px 20px 8px;
-}
-
-.assets-summary > .pencil-eyebrow {
-  line-height: 16px;
-}
-
-.assets-summary__value {
-  align-items: center;
-  display: flex;
-  gap: 8px;
-  letter-spacing: 0;
-  height: 39px;
-  line-height: 39px;
-  min-height: 39px;
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.assets-summary__value > span {
-  color: var(--accent);
-  font-size: 20px;
-  font-weight: 650;
-  line-height: 26px;
-  transform: translateY(.5px);
-}
-
-.assets-summary__value > b {
-  color: var(--ink);
-  font-size: 30px;
-  font-weight: 700;
+.assets-pencil__guest-content,
+.assets-pencil__member-content {
   min-width: 0;
+  padding-inline: 16px;
+  padding-top: 8px;
+}
+
+.assets-pencil__guest-content {
+  min-height: calc(100dvh - 144px);
+}
+
+.assets-pencil__member-content {
+  display: grid;
+  gap: 0;
+  padding-bottom: calc(20px + env(safe-area-inset-bottom));
+}
+
+.assets-hero {
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  box-sizing: border-box;
+  height: 236px;
+  min-height: 236px;
   overflow: hidden;
-  text-overflow: ellipsis;
+  padding: 18px 20px 16px;
 }
 
-.assets-summary p {
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 14px;
-  margin: 0;
-  min-height: 14px;
+.assets-hero__image,
+.assets-hero__overlay,
+.assets-hero__bloom {
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
 }
 
-.assets-summary .pencil-primary,
-.assets-summary .pencil-secondary {
-  align-self: stretch;
-  flex: 0 0 46px;
-  height: 46px;
-  margin: 0;
-  min-height: 46px;
+.assets-hero__image {
+  height: 100%;
+  object-fit: cover;
   width: 100%;
 }
 
-.assets-actions {
-  align-items: start;
-  box-sizing: border-box;
-  height: 80px;
-  min-height: 80px;
-  padding: 6px 0 0;
+.assets-hero__overlay {
+  background: transparent;
 }
 
-.assets-actions button {
-  min-height: 68px;
+.assets-hero__overlay--dark {
+  background: color-mix(in srgb, var(--page) 25%, transparent);
 }
 
-.assets-distribution {
-  box-sizing: border-box;
+.assets-hero__bloom {
+  background: radial-gradient(circle at 88% 0%, rgb(67 239 169 / 18%), transparent 58%);
+}
+
+.assets-hero--guest {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.assets-guest-copy,
+.assets-guest-login,
+.assets-member-summary,
+.assets-hero-actions {
+  position: relative;
+  z-index: 1;
+}
+
+.assets-guest-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.assets-hero__eyebrow {
+  color: var(--muted-strong);
+  font-family: var(--font-geist-mono), var(--data-font);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.assets-guest-copy h1 {
+  color: var(--ink);
+  font-size: 26px;
+  font-weight: 750;
+  line-height: 34px;
+  margin: 0;
+}
+
+.assets-guest-copy p {
+  color: var(--muted-strong);
+  font-size: 12px;
+  line-height: 18px;
+  margin: 0;
+}
+
+.assets-guest-login {
+  align-items: center;
+  backdrop-filter: blur(18px);
+  background: color-mix(in srgb, var(--surface-elevated) 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--surface-elevated) 86%, var(--line));
+  border-radius: 12px;
+  color: var(--ink);
+  display: flex;
+  font-size: 14px;
+  font-weight: 650;
+  gap: 8px;
+  height: 50px;
+  justify-content: center;
+  min-height: 50px;
+  width: 100%;
+}
+
+.assets-hero--member {
+  display: grid;
+  gap: 14px;
+  align-content: center;
+  grid-template-rows: auto 66px;
+}
+
+.assets-member-summary {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(84px, auto);
+  min-width: 0;
+}
+
+.assets-member-summary__total,
+.assets-member-summary__return {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.assets-member-summary__label > span,
+.assets-member-summary__return > span {
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.assets-member-summary__return > span {
+  font-size: 11px;
+}
+
+.assets-member-summary__label {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  min-height: 16px;
+}
+
+.assets-balance-toggle {
+  background: transparent;
+  border: 0;
+  color: var(--muted-strong);
+  display: grid;
+  flex: 0 0 44px;
+  height: 44px;
+  margin: -14px;
+  min-height: 44px;
+  padding: 0;
+  place-items: center;
+  width: 44px;
+}
+
+.assets-member-summary__value {
+  align-items: end;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.assets-member-summary__value strong {
+  color: var(--ink);
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 38px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assets-member-summary__value small,
+.assets-member-summary__total > small,
+.assets-member-summary__return small {
+  color: var(--muted-strong);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.assets-member-summary__return {
+  justify-items: end;
+  text-align: right;
+}
+
+.assets-member-summary__return strong {
+  color: var(--muted-strong);
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 23px;
+}
+
+.assets-hero-actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  min-width: 0;
+}
+
+.assets-hero-actions button {
+  align-items: center;
+  backdrop-filter: blur(18px);
+  background: color-mix(in srgb, var(--surface-elevated) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--surface-elevated) 82%, var(--line));
+  border-radius: 12px;
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  font-weight: 500;
+  gap: 6px;
+  height: 66px;
+  justify-content: center;
+  min-height: 66px;
+  min-width: 0;
+  padding: 0;
+}
+
+.assets-holdings {
+  padding: 14px 4px 4px;
+}
+
+.assets-holdings__count {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.assets-holdings__list {
+  display: grid;
+  margin-top: 8px;
+}
+
+.assets-holding-row {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--ink);
   display: grid;
   gap: 10px;
-  grid-template-rows: 23px 110px;
-  height: 159px;
-  min-height: 159px;
-  padding: 12px 0 4px;
+  grid-template-columns: 32px minmax(0, 1fr) minmax(84px, auto);
+  min-height: 52px;
+  min-width: 0;
+  padding: 7px 0;
+  text-align: left;
+  width: 100%;
 }
 
-.assets-allocation {
-  align-content: center;
+.assets-holding-row:last-child {
+  border-bottom: 0;
+}
+
+.assets-holding-row__copy,
+.assets-holding-row__amount {
   display: grid;
-  gap: 1px;
-  height: 110px;
-  overflow: hidden;
+  gap: 3px;
+  min-width: 0;
 }
 
-.assets-allocation__row { align-items: center; background: transparent; display: grid; gap: 10px; grid-template-columns: 28px minmax(0, 1fr) 40px; height: 27px; min-height: 27px; padding: 0; text-align: left; width: 100%; }
-.assets-allocation__row :deep(.asset-mark) { height: 26px !important; width: 26px !important; }
-.assets-allocation__row > span { display: grid; gap: 6px; min-width: 0; }
-.assets-allocation__row strong { font-size: 12px; }
-.assets-allocation__row i { background: var(--surface-3); border-radius: 999px; display: block; height: 3px; overflow: hidden; }
-.assets-allocation__row i b { background: var(--accent); border-radius: inherit; display: block; height: 100%; }
-.assets-allocation__row em { color: var(--muted-strong); font-size: 11px; font-style: normal; text-align: right; }
-.assets-distribution__state { height: 110px; min-height: 110px; padding: 0; }
-.assets-distribution__state strong { color: var(--ink); font-size: 13px; }
-.assets-distribution__state span { font-size: 11px; }
+.assets-holding-row__copy strong,
+.assets-holding-row__amount strong {
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assets-holding-row__copy small,
+.assets-holding-row__amount small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assets-holding-row__amount {
+  justify-items: end;
+  max-width: 150px;
+  text-align: right;
+}
+
+.assets-holdings__state {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  gap: 10px;
+  justify-content: center;
+  min-height: 156px;
+  padding: 20px 0 8px;
+  text-align: center;
+}
+
+.assets-holdings__empty-copy > strong,
+.assets-holdings__state > strong {
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 21px;
+}
+
+.assets-holdings__empty-copy {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+}
+
+.assets-holdings__empty-copy > span,
+.assets-holdings__state > span:not(.assets-holdings__empty-icon) {
+  line-height: 16px;
+  max-width: 286px;
+}
+
+.assets-holdings__state .pencil-primary,
+.assets-holdings__state .pencil-secondary {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  min-height: 48px;
+  width: min(100%, 318px);
+}
+
+.assets-holdings__state--error {
+  min-height: 148px;
+}
+
+.assets-holdings__state--error .pencil-secondary {
+  min-height: 44px;
+}
+
+.assets-holdings__empty-icon {
+  align-items: center;
+  background: var(--surface-elevated);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--muted);
+  display: flex;
+  height: 56px;
+  justify-content: center;
+  width: 56px;
+}
+
 .assets-tools {
-  box-sizing: border-box;
   display: grid;
   gap: 6px;
   grid-template-rows: 23px 156px;
-  height: 207px;
-  min-height: 207px;
-  padding: 10px 0 12px;
+  padding: 12px 4px 0;
 }
 
 .assets-tools .pencil-list {
@@ -485,7 +882,234 @@ watch(() => session.isAuthenticated, () => { void loadAccounts() }, { immediate:
   min-height: 52px;
 }
 
+.assets-tools .pencil-row__value {
+  max-width: min(48vw, 176px);
+}
+
+.assets-tools .pencil-row__value small {
+  min-width: 0;
+}
+
+.assets-pencil button:focus-visible,
+.assets-transfer-layer button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.assets-transfer-layer {
+  inset: 0;
+  justify-items: center;
+  padding: 0;
+  position: fixed;
+  width: 100%;
+}
+
+.assets-transfer-sheet {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 20px 20px 0 0;
+  box-shadow: 0 -18px 48px var(--shadow);
+  box-sizing: border-box;
+  color: var(--ink);
+  gap: 12px;
+  height: min(460px, calc(100dvh - max(16px, env(safe-area-inset-top))));
+  max-height: none;
+  max-width: 448px;
+  padding: 8px 16px calc(14px + env(safe-area-inset-bottom));
+  width: 100%;
+}
+
+.assets-transfer-sheet__grab {
+  background: var(--line-strong);
+  border-radius: 2px;
+  display: block;
+  height: 4px;
+  justify-self: center;
+  width: 40px;
+}
+
+.assets-transfer-sheet > .assets-transfer-sheet__header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  grid-template-columns: none;
+  justify-content: space-between;
+  min-height: 32px;
+}
+
+.assets-transfer-sheet__header h2 {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.assets-transfer-sheet__close,
+.assets-transfer-route > button {
+  align-items: center;
+  background: var(--surface-2);
+  border: 0;
+  border-radius: 50%;
+  color: var(--muted);
+  display: flex;
+  flex: 0 0 44px;
+  height: 44px;
+  justify-content: center;
+  padding: 0;
+  width: 44px;
+}
+
+.assets-transfer-route {
+  align-items: center;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr);
+  min-width: 0;
+}
+
+.assets-transfer-route > button {
+  background: transparent;
+  color: var(--positive);
+}
+
+.assets-transfer-account {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.assets-transfer-account span,
+.assets-transfer-field__heading,
+.assets-transfer-hint {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.assets-transfer-account strong {
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assets-transfer-field {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  padding: 2px 12px;
+}
+
+.assets-transfer-field:focus-within {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.assets-transfer-field__heading {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.assets-transfer-field__heading small {
+  color: inherit;
+  font-size: inherit;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assets-transfer-field input,
+.assets-transfer-field select {
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+  height: 44px;
+  min-height: 44px;
+  min-width: 0;
+  outline: 0;
+  padding: 0;
+  width: 100%;
+}
+
+.assets-transfer-sheet > .assets-transfer-hint,
+.assets-transfer-sheet > .positive,
+.assets-transfer-sheet > .field-error {
+  border: 0;
+  font-size: 10px;
+  line-height: 14px;
+  margin: -4px 0;
+  padding: 0;
+}
+
+.assets-transfer-submit {
+  align-items: center;
+  background: var(--accent);
+  border: 0;
+  border-radius: 4px;
+  color: var(--on-accent);
+  display: flex;
+  font-size: 13px;
+  font-weight: 650;
+  gap: 8px;
+  height: 50px;
+  justify-content: center;
+  margin-top: auto;
+  min-height: 50px;
+  width: 100%;
+}
+
+.assets-transfer-submit:disabled {
+  background: var(--surface-3);
+  color: var(--muted);
+}
+
 @media (max-width: 340px) {
-  .assets-summary__value > b { font-size: 28px; }
+  .assets-pencil__guest-content,
+  .assets-pencil__member-content {
+    padding-inline: 16px;
+  }
+
+  .assets-hero {
+    padding-inline: 16px;
+  }
+
+  .assets-member-summary {
+    gap: 8px;
+    grid-template-columns: minmax(0, 1fr) 78px;
+  }
+
+  .assets-member-summary__value strong {
+    font-size: 27px;
+  }
+
+  .assets-hero-actions {
+    gap: 6px;
+  }
+
+  .assets-holding-row {
+    grid-template-columns: 30px minmax(0, 1fr) minmax(74px, auto);
+  }
+
+  .assets-holding-row :deep(.asset-mark) {
+    height: 30px !important;
+    width: 30px !important;
+  }
+
+  .assets-holding-row__amount {
+    max-width: 112px;
+  }
 }
 </style>

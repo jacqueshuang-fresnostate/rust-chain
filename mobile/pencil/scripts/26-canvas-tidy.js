@@ -20,7 +20,8 @@ let design=null;
 const rest=[];
 for(const t of tops){ if(t.name.indexOf("00 /")==0) design=t; else rest.push(t); }
 if(design) Update(design.id,{x:ORIGIN_X,y:ORIGIN_Y});
-const startY=design?1200:ORIGIN_Y;
+// Design System v03 is ~3366px tall; keep a 200px buffer before the artboard grid.
+const startY=design?3600:ORIGIN_Y;
 let i=0;
 for(const t of rest){
   const col=i%COLS, row=Math.floor(i/COLS);

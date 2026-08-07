@@ -87,7 +87,7 @@ test('二级页面使用场景 Header 或完整认证身份区', () => {
 })
 
 test('重点业务页保留各自的信息层级和完整状态表面', () => {
-  assert.match(sources.MessageCenterView, /data-pencil-source="FkZ6j bRz9K"/)
+  assert.match(sources.MessageCenterView, /data-pencil-source="FkZ6j bRz9K t7j6n eSMHf"/)
   assert.match(sources.MessageCenterView, /class="message-root-header"/)
   assert.match(sources.MessageCenterView, /class="message-list"/)
   assert.match(sources.MessageCenterView, /\.message-filter-bar\s*\{[\s\S]*?display: flex;[\s\S]*?height: 38px;/)

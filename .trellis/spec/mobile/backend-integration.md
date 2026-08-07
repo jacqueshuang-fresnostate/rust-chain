@@ -402,3 +402,183 @@ const points = detailSession.resolveKlineRequest(request, restKlines(initial))
   arrival-minute map or `|| 'USD'` / `|| 'USDT'` fallback.
 - Run `npm run type-check`, `npm test`, `npm run build:pwa`, and
   `npm run build:tauri` after changing this contract's runtime paths.
+
+## 8. Selected Financial Confirmation Handoff
+
+### 1. Scope / Trigger
+
+Apply this scenario when a selected Pencil confirmation surface submits a
+wallet transfer, renders earn fee rules, or derives immediate post-mutation UI
+state from a backend response. It prevents a successful mutation from being
+followed by guessed balances, zero-filled missing accounts, or a refresh race
+that overwrites the authoritative response.
+
+### 2. Signatures
+
+```ts
+interface WalletTransferResult {
+  transferId: string
+  spotWallet: WalletAccount
+  marginWallet: WalletAccount
+}
+
+transferWalletFunds(
+  assetSymbol: string,
+  from: 'spot' | 'margin',
+  to: 'spot' | 'margin',
+  amount: number,
+): Promise<WalletTransferResult>
+
+interface EarnProduct {
+  redemptionFeeRate?: number
+  maturityProfitFeeRate?: number
+  earlyRedeemFeeBasis?: string
+  earlyRedeemFeeRate?: number
+}
+```
+
+Backend transfer response fields:
+
+```text
+transfer_id
+spot_wallet.asset_id|available|frozen|locked
+margin_wallet.asset_id|available|frozen|locked
+```
+
+Earn product response fields:
+
+```text
+redemption_fee_rate
+maturity_profit_fee_rate
+early_redeem_fee_basis
+early_redeem_fee_rate
+```
+
+### 3. Contracts
+
+- Every `/margin/transfers` request sends a unique `idempotency_key` and keeps
+  `asset_symbol`, `from`, `to`, and decimal `amount` unchanged.
+- The returned spot and margin snapshots are authoritative. Upsert both into
+  their respective stores immediately; preserve an already-known asset logo as
+  presentation metadata only.
+- Do not issue an unconditional account refresh after a successful transfer.
+  A later user-driven refresh may replace the snapshots, but it must not erase
+  success feedback or reopen duplicate submission.
+- A missing source wallet is `null`/unavailable, not a zero balance. Disable
+  submission and display `--` until the wallet API returns that account.
+- Earn fee fields are optional. Render a localized unavailable value when a
+  field is absent; never default it to zero. Percentage-based "all" input is
+  `min(real wallet available, product maxSubscribe when present)`.
+- Prediction and earn confirmation dialogs use the shared modal helper. Their
+  API data remains in component state; the visual sheet never becomes a second
+  mutation or refresh owner.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Transfer source account is absent | Show `--`, disable confirm, and make no request |
+| Amount is non-finite, non-positive, or above real available | Show localized validation feedback; make no request |
+| Transfer succeeds | Upsert both returned wallets and retain success feedback |
+| Transfer response omits a wallet snapshot | Reject the response as a submission failure; do not synthesize a wallet |
+| Earn fee value is absent or invalid | Preserve `undefined` and show localized unavailable copy |
+| Earn "all" exceeds product maximum | Clamp to the real product maximum |
+| Follow-up read fails after another confirmation mutation | Keep the returned mutation object and expose refresh-specific feedback |
+
+### 5. Good / Base / Bad Cases
+
+- **Good**: transfer 25 USDT from spot to margin; one idempotent request
+  returns both wallets, both lists update immediately, and the success message
+  remains visible.
+- **Base**: the margin wallet for the selected asset does not exist; the sheet
+  shows no available value and keeps Confirm disabled.
+- **Bad**: treat a missing wallet as `0`, fire the request anyway, then call a
+  refresh that clears the success state or replaces the returned snapshots.
+
+### 6. Tests Required
+
+- Adapter/source tests assert the transfer idempotency key and exact mapping of
+  `transfer_id`, `spot_wallet`, and `margin_wallet`.
+- View-flow tests assert null account handling, positive finite amount checks,
+  both wallet upserts, retained success feedback, and no unconditional refresh.
+- Earn adapter tests assert all four optional fee fields and preserve absent
+  values as `undefined`.
+- Earn view tests assert the "all" clamp and localized unavailable fee copy.
+- Modal source/browser tests assert Teleport-owned viewport overlay, Escape,
+  focus trapping/restoration, body scroll restoration, and 44px controls.
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong: ignore the mutation result and guess that a missing wallet has zero.
+await transferWalletFunds(symbol, from, to, amount)
+await loadAccounts()
+const available = account?.available || 0
+
+// Correct: use the response snapshots and keep absence explicit.
+const result = await transferWalletFunds(symbol, from, to, amount)
+spotAccounts.value = upsertWalletAccount(spotAccounts.value, result.spotWallet)
+marginAccounts.value = upsertWalletAccount(marginAccounts.value, result.marginWallet)
+const available = account?.available ?? null
+```
+
+## 9. Market Favorites and Backend Logo Contract
+
+### Signatures
+
+```text
+GET    /user/market-favorites
+PUT    /user/market-favorites/:normalizedSymbol
+DELETE /user/market-favorites/:normalizedSymbol
+```
+
+```ts
+interface MarketFavoriteRecord {
+  market_id: number
+  symbol: string
+  logo_url?: string | null
+  base_logo_url?: string | null
+  quote_logo_url?: string | null
+}
+
+interface MarketFavoritesResponse {
+  favorites: MarketFavoriteRecord[]
+}
+```
+
+### Contracts
+
+- The mobile market mapper retains `logo_url`, `base_logo_url`, and
+  `quote_logo_url`. Market-pair marks try the pair image first, the backend
+  base-asset image second, and the existing accessible initial last. Do not
+  derive asset image paths from symbols or add an external coin-image service.
+- `fetchMarginWallets()` maps backend `logo_url` to `WalletAccount.logoUrl`.
+  Assets keeps the spot-wallet image first and the margin-wallet image second
+  when combining real wallet rows.
+- One Pinia store owns authenticated favorites for Home, Markets, Spot Trade,
+  and Market Detail. App startup loads it when the session is authenticated;
+  logout and session expiry reset favorites, pending symbols, and request
+  state. Late reads or mutations from an older session must not repopulate the
+  current session.
+- Favorite path symbols are normalized and URL encoded. GET requests and
+  same-symbol mutations are deduplicated. Add/remove may update optimistically,
+  but failures restore the previous state and clear the pending state so the
+  action can be retried.
+- The mobile client neither reads nor writes the retired
+  `hippo-mobile-market-favorites` local-storage key. A guest star action pushes
+  Login with the current internal `route.fullPath` as `redirect` and never
+  creates an anonymous favorite.
+- Star controls retain a 44px target, `aria-pressed`, pending `aria-busy`, and
+  disabled semantics while the same symbol is being saved.
+
+### Tests Required
+
+- Adapter tests cover normalized paths, the GET envelope, mutation response,
+  and pair/base/quote Logo mapping.
+- Store tests cover shared loading, same-symbol mutation deduplication,
+  optimistic rollback, session reset, and stale in-flight response isolation.
+- Source/view tests assert all four market surfaces use the shared store, guest
+  redirects remain internal, the retired local-storage path is absent, and
+  Assets still renders wallet-owned Logo metadata.
+- Run the focused market/favorites tests and `npm run type-check`; include the
+  full mobile suite and PWA build at the final task gate.

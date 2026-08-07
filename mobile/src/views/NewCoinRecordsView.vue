@@ -221,11 +221,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="page page--plain new-coin-records-page">
+  <main
+    class="page page--plain pencil-page new-coin-records-page"
+    data-pencil-source="A9It6g h4gfd"
+  >
     <PageHeader
       :back="true"
-      :eyebrow="t('products.newCoins')"
-      :subtitle="t('newCoin.recordLoginDescription')"
+      :pencil="true"
       :title="t('newCoin.recordTitle')"
     />
     <div class="page-content new-coin-records-content">
@@ -396,10 +398,10 @@ onBeforeUnmount(() => {
 
 .new-coin-records-content {
   display: grid;
-  gap: 16px;
+  gap: 0;
   min-width: 0;
   padding-bottom: calc(28px + env(safe-area-inset-bottom));
-  padding-top: 14px;
+  padding-top: 0;
 }
 
 .records-message {
@@ -412,6 +414,7 @@ onBeforeUnmount(() => {
   line-height: 1.45;
   min-height: 52px;
   padding: 4px 5px 4px 11px;
+  margin-top: 12px;
 }
 
 .records-message--error {
@@ -450,26 +453,25 @@ onBeforeUnmount(() => {
 }
 
 .record-tabs {
-  border: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  height: 44px;
+  min-height: 44px;
 }
 
 .record-tabs button {
   background: var(--field-surface);
-  border-bottom: 3px solid transparent;
+  border-bottom: 2px solid transparent;
   color: var(--muted);
   font-size: 11px;
   font-weight: 700;
   line-height: 1.15;
-  min-height: 48px;
+  height: 44px;
+  min-height: 44px;
   min-width: 0;
   overflow-wrap: anywhere;
   padding: 4px 3px 1px;
-}
-
-.record-tabs button + button {
-  border-left: 1px solid var(--line);
 }
 
 .record-tabs button.active {
@@ -489,17 +491,19 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--line);
   display: grid;
   gap: 10px;
-  grid-template-columns: 40px minmax(0, 1fr) minmax(88px, auto);
-  min-height: 78px;
+  grid-template-columns: 36px minmax(0, 1fr) minmax(88px, auto);
+  min-height: 72px;
   min-width: 0;
-  padding: 10px 0;
+  padding: 8px 0;
 }
 
 .record-icon {
   display: grid;
-  height: 40px;
+  height: 36px;
   place-items: center;
-  width: 40px;
+  width: 36px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
 }
 
 .record-icon--positive {
@@ -552,7 +556,7 @@ onBeforeUnmount(() => {
 }
 
 .unlock-list article {
-  grid-template-columns: 40px minmax(0, 1fr) minmax(88px, auto);
+  grid-template-columns: 36px minmax(0, 1fr) minmax(88px, auto);
 }
 
 .unlock-actions {
@@ -721,8 +725,8 @@ onBeforeUnmount(() => {
 
 @media (max-width: 390px) {
   .new-coin-records-content {
-    padding-left: 14px;
-    padding-right: 14px;
+    padding-left: 16px;
+    padding-right: 16px;
   }
 }
 

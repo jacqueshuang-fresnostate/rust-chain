@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import {
   CheckCircle2,
+  Check,
   CircleAlert,
   LoaderCircle,
   PackageOpen,
@@ -14,6 +15,7 @@ import { apiErrorMessage } from '@/api/client'
 import { confirmPredictionQuote, fetchPredictionConfig, fetchPredictionMarkets, fetchPredictionOrders, requestPredictionQuote, type PredictionAsset, type PredictionMarket, type PredictionOrder, type PredictionOutcome, type PredictionQuote } from '@/api/prediction'
 import { fetchWalletAccounts } from '@/api/wallet'
 import { formatAmount, formatDateTime, formatPercent } from '@/core/format'
+import { useModalDialog } from '@/core/modalDialog'
 import { localizePredictionMarketText, type PredictionTextKind } from '@/core/predictionLocale'
 import { useSessionStore } from '@/stores/session'
 import type { WalletAccount } from '@/core/types'
@@ -38,8 +40,6 @@ const error = ref('')
 const success = ref('')
 const marketTab = ref<'active' | 'settled'>('active')
 const orderDialog = ref<HTMLElement | null>(null)
-let returnFocus: HTMLElement | null = null
-let previousBodyOverflow = ''
 const TERMINAL_MARKET_STATUSES = new Set([
   'settled',
   'resolved',
@@ -54,11 +54,21 @@ const TERMINAL_MARKET_STATUSES = new Set([
 const selectedAsset = computed(() => assets.value.find((asset) => asset.assetId === assetId.value))
 const selectedAccount = computed(() => accounts.value.find((account) => account.assetId === assetId.value))
 const amountNumber = computed(() => Number(amount.value || 0))
-const valid = computed(() => Number.isFinite(amountNumber.value) && amountNumber.value > 0 && amountNumber.value <= (selectedAccount.value?.available || 0))
+const valid = computed(() => Boolean(
+  selectedAccount.value
+  && Number.isFinite(amountNumber.value)
+  && amountNumber.value > 0
+  && amountNumber.value <= selectedAccount.value.available,
+))
 const dialogOpen = computed(() => Boolean(selected.value))
+const selectedSettlementLabel = computed(() => {
+  const status = selected.value?.settlementStatus.trim()
+  return status ? statusLabel(status) : '--'
+})
 const visibleMarkets = computed(() => markets.value.filter((market) => (
   marketTab.value === 'settled' ? isSettledMarket(market) : !isSettledMarket(market)
 )))
+const { trapFocus: trapOrderFocus } = useModalDialog(dialogOpen, orderDialog, '[data-dialog-cancel]')
 
 async function load(): Promise<void> {
   loading.value = true
@@ -200,54 +210,22 @@ function marketStatus(market: PredictionMarket): string {
   return statusLabel(status || (settled ? 'settled' : 'active'))
 }
 
-function trapDialogFocus(event: KeyboardEvent): void {
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    closeOrder()
-    return
-  }
-  if (event.key !== 'Tab' || !orderDialog.value) return
-  const focusable = Array.from(orderDialog.value.querySelectorAll<HTMLElement>(
-    'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-  ))
-  if (!focusable.length) return
-  const first = focusable[0]
-  const last = focusable.at(-1) || first
-  if (event.shiftKey && document.activeElement === first) {
-    event.preventDefault()
-    last.focus()
-  } else if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault()
-    first.focus()
-  }
+function handleOrderDialogKeydown(event: KeyboardEvent): void {
+  trapOrderFocus(event, closeOrder)
 }
 
-watch(dialogOpen, async (open) => {
-  if (open) {
-    returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    previousBodyOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    await nextTick()
-    orderDialog.value?.querySelector<HTMLElement>('[data-dialog-cancel]')?.focus()
-    return
-  }
-  document.body.style.overflow = previousBodyOverflow
-  await nextTick()
-  returnFocus?.focus()
-  returnFocus = null
-})
+function accountAvailableLabel(accountAssetId: number): string {
+  const account = accounts.value.find((item) => item.assetId === accountAssetId)
+  return account ? formatAmount(account.available) : '--'
+}
 
 onMounted(() => { void load() })
-
-onBeforeUnmount(() => {
-  document.body.style.overflow = previousBodyOverflow
-})
 </script>
 
 <template>
   <main
     class="page page--plain prediction-page"
-    data-pencil-source="pU7Kz IcvzQ"
+    data-pencil-source="pU7Kz IcvzQ CzpTv ZvGMv"
     data-prediction-workspace="live"
   >
     <PageHeader
@@ -370,13 +348,11 @@ onBeforeUnmount(() => {
         role="dialog"
         aria-modal="true"
         aria-labelledby="prediction-order-title"
-        @keydown="trapDialogFocus"
+        @keydown="handleOrderDialogKeydown"
       >
-        <header>
-          <div>
-            <strong id="prediction-order-title">{{ marketText(selected.title, 'title') }}</strong>
-            <small>{{ t('prediction.chooseOutcome', { outcome: outcomeLabel(outcome === 'yes' ? selected.yesLabel : selected.noLabel) }) }}</small>
-          </div>
+        <span class="prediction-dialog__grab" aria-hidden="true" />
+        <header class="prediction-dialog__header">
+          <strong id="prediction-order-title">{{ t('prediction.confirmTitle') }}</strong>
           <button
             class="icon-button"
             type="button"
@@ -389,29 +365,50 @@ onBeforeUnmount(() => {
           </button>
         </header>
 
+        <section class="prediction-dialog-market">
+          <small>
+            {{ marketText(selected.category, 'category') || t('prediction.market') }}
+            ·
+            {{ selected.endAt ? formatDateTime(selected.endAt) : t('prediction.endTimeUnavailable') }}
+          </small>
+          <h2>{{ marketText(selected.title, 'title') }}</h2>
+          <div class="prediction-dialog-outcomes">
+            <button type="button" :aria-pressed="outcome === 'yes'" @click="outcome = 'yes'; quote = null">
+              <span>{{ outcomeLabel(selected.yesLabel) }}</span>
+              <strong class="numeric">{{ formatPercent(selected.yesPrice * 100) }}</strong>
+            </button>
+            <button type="button" :aria-pressed="outcome === 'no'" @click="outcome = 'no'; quote = null">
+              <span>{{ outcomeLabel(selected.noLabel) }}</span>
+              <strong class="numeric">{{ formatPercent(selected.noPrice * 100) }}</strong>
+            </button>
+          </div>
+        </section>
+
         <label class="prediction-field">
           <span>{{ t('prediction.paymentAsset') }}</span>
           <select v-model="assetId" @change="quote = null">
             <option v-for="asset in assets" :key="asset.assetId" :value="asset.assetId">
-              {{ t('prediction.assetAvailable', { asset: asset.assetSymbol, amount: formatAmount(accounts.find((item) => item.assetId === asset.assetId)?.available) }) }}
+              {{ t('prediction.assetAvailable', { asset: asset.assetSymbol, amount: accountAvailableLabel(asset.assetId) }) }}
             </option>
           </select>
         </label>
         <label class="prediction-field">
           <span>{{ t('prediction.stakeAmount') }}</span>
           <div>
-            <input v-model="amount" class="numeric" inputmode="decimal" placeholder="0.00" @input="quote = null" />
+            <input v-model="amount" class="numeric" inputmode="decimal" :placeholder="t('prediction.amountPlaceholder')" @input="quote = null" />
             <b>{{ selectedAsset?.assetSymbol || '' }}</b>
           </div>
         </label>
 
-        <dl v-if="quote" class="prediction-quote">
-          <div><dt>{{ t('prediction.estimatedShares') }}</dt><dd>{{ formatAmount(quote.shares) }}</dd></div>
-          <div><dt>{{ t('prediction.theoreticalPayout') }}</dt><dd>{{ formatAmount(quote.theoreticalPayout) }} {{ quote.assetSymbol }}</dd></div>
-          <div><dt>{{ t('common.fee') }}</dt><dd>{{ formatAmount(quote.feeAmount) }} {{ quote.assetSymbol }}</dd></div>
+        <dl class="prediction-quote">
+          <div><dt>{{ t('prediction.estimatedShares') }}</dt><dd>{{ quote ? formatAmount(quote.shares) : '--' }}</dd></div>
+          <div><dt>{{ t('prediction.potentialReturn') }}</dt><dd>{{ quote ? `${formatAmount(quote.theoreticalPayout)} ${quote.assetSymbol}` : '--' }}</dd></div>
+          <div><dt>{{ t('common.fee') }}</dt><dd>{{ quote ? `${formatAmount(quote.feeAmount)} ${quote.assetSymbol}` : '--' }}</dd></div>
+          <div><dt>{{ t('prediction.settlementStatus') }}</dt><dd>{{ selectedSettlementLabel }}</dd></div>
         </dl>
 
         <p v-if="error" class="dialog-feedback" role="alert">{{ error }}</p>
+        <p class="prediction-risk">{{ t('prediction.riskNotice') }}</p>
         <button
           v-if="quote"
           class="button button--primary button--full prediction-submit"
@@ -420,6 +417,7 @@ onBeforeUnmount(() => {
           :aria-busy="confirming"
           @click="confirm"
         >
+          <Check :size="17" aria-hidden="true" />
           {{ t(confirming ? 'prediction.confirming' : 'prediction.confirmOrder') }}
         </button>
         <button
@@ -494,6 +492,13 @@ onBeforeUnmount(() => {
   line-height: 18px;
   min-height: 27px;
   padding: 0;
+  position: relative;
+}
+
+.prediction-tabs button::before {
+  content: '';
+  inset: -9px 0 -8px;
+  position: absolute;
 }
 
 .prediction-tabs button::after {
@@ -602,6 +607,13 @@ onBeforeUnmount(() => {
   min-height: 38px;
   min-width: 0;
   padding: 0 12px;
+  position: relative;
+}
+
+.prediction-outcomes button::before {
+  content: '';
+  inset: -3px 0;
+  position: absolute;
 }
 
 .prediction-outcomes button:last-child {
@@ -757,10 +769,7 @@ onBeforeUnmount(() => {
   display: flex;
   inset: 0;
   justify-content: center;
-  padding:
-    max(16px, env(safe-area-inset-top))
-    16px
-    max(16px, env(safe-area-inset-bottom));
+  padding: 0;
   position: fixed;
   z-index: var(--layer-overlay);
 }
@@ -768,19 +777,28 @@ onBeforeUnmount(() => {
 .prediction-dialog {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-bottom: 0;
+  border-radius: 20px 20px 0 0;
   box-shadow: var(--shadow-soft);
   display: grid;
-  gap: 14px;
-  max-height: calc(100dvh - max(32px, env(safe-area-inset-top)) - max(32px, env(safe-area-inset-bottom)));
-  max-width: 520px;
+  gap: 10px;
+  max-height: calc(100dvh - max(16px, env(safe-area-inset-top)));
+  max-width: 448px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 17px;
+  padding: 8px 16px calc(14px + env(safe-area-inset-bottom));
   width: 100%;
 }
 
-.prediction-dialog > header {
+.prediction-dialog__grab {
+  background: var(--line-strong);
+  border-radius: 2px;
+  height: 4px;
+  justify-self: center;
+  width: 40px;
+}
+
+.prediction-dialog > .prediction-dialog__header {
   align-items: center;
   display: flex;
   gap: 12px;
@@ -788,27 +806,78 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-.prediction-dialog > header > div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.prediction-dialog > header strong {
-  font-size: 17px;
+.prediction-dialog__header > strong {
+  font-size: 18px;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
-.prediction-dialog > header small {
+.prediction-dialog-market > small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.prediction-dialog-market {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.prediction-dialog-market h2 {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 22px;
+  margin: 0;
+}
+
+.prediction-dialog-outcomes {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.prediction-dialog-outcomes button {
+  align-items: start;
+  background: var(--positive-soft);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--positive);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  justify-content: center;
+  min-height: 58px;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.prediction-dialog-outcomes button:last-child {
+  background: var(--negative-soft);
+  color: var(--negative);
+}
+
+.prediction-dialog-outcomes button[aria-pressed='true'] {
+  border-color: currentColor;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.prediction-dialog-outcomes span {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.prediction-dialog-outcomes strong {
+  font-size: 18px;
 }
 
 .prediction-field {
   background: var(--field-surface);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 4px;
   display: grid;
   min-width: 0;
   padding: 7px 11px 6px;
@@ -857,7 +926,8 @@ onBeforeUnmount(() => {
 }
 
 .prediction-quote {
-  border-block: 1px solid var(--line);
+  border: 1px solid var(--line);
+  border-radius: 4px;
   display: grid;
   margin: 0;
 }
@@ -868,7 +938,8 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 12px;
   justify-content: space-between;
-  min-height: 44px;
+  min-height: 36px;
+  padding: 0 12px;
 }
 
 .prediction-quote > div:last-child {
@@ -901,9 +972,21 @@ onBeforeUnmount(() => {
   padding: 8px 10px;
 }
 
+.prediction-risk {
+  color: var(--warning);
+  font-size: 10px;
+  line-height: 15px;
+  margin: 0;
+}
+
 .prediction-submit {
-  border-radius: 8px;
-  min-height: 52px;
+  align-items: center;
+  border-radius: 4px;
+  display: flex;
+  gap: 8px;
+  height: 50px;
+  justify-content: center;
+  min-height: 50px;
 }
 
 .spin {
