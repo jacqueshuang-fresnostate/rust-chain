@@ -1,16 +1,14 @@
-import { Empty, Spin, Table, Typography } from '@douyinfe/semi-ui';
+import { Empty, Spin, Typography } from '@douyinfe/semi-ui';
 import type { ColumnProps, RowSelectionProps } from '@douyinfe/semi-ui/lib/es/table';
 import { useEffect, useMemo, useState } from 'react';
 
-import { containedTableScrollForColumns, containedTableStyle } from './tableLayout';
+import { ResizableTable, RESIZABLE_TABLE_DEFAULT_COLUMN_WIDTH } from './ResizableTable';
+import { containedTableStyle } from './tableLayout';
 
 const { Text } = Typography;
 
-const DEFAULT_COLUMN_WIDTH = 160;
-const ROW_SELECTION_COLUMN_WIDTH = 48;
 export const DEFAULT_PAGE_SIZE = 10;
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
-const adaptiveTableScroll = { x: '100%' };
 
 export type DataTableDisplayMode = 'adaptive' | 'compact';
 
@@ -43,29 +41,30 @@ function resolveRowKey<T extends Record<string, unknown>>(rowKey: DataTableProps
 }
 
 export function normalizeTableColumns<T extends Record<string, unknown>>(columns: Array<ColumnProps<T>>, displayMode: DataTableDisplayMode = 'compact') {
-  return columns.map((column) => {
+  const normalize = (column: ColumnProps<T>): ColumnProps<T> => {
+    if (Array.isArray(column.children) && column.children.length > 0) {
+      return {
+        ...column,
+        children: column.children.map(normalize)
+      };
+    }
     if (displayMode === 'compact') {
       return {
         ...column,
-        width: typeof column.width === 'number' ? column.width : DEFAULT_COLUMN_WIDTH
+        width: typeof column.width === 'number' && Number.isFinite(column.width) ? column.width : RESIZABLE_TABLE_DEFAULT_COLUMN_WIDTH
       };
     }
 
     return { ...column };
-  });
+  };
+
+  return columns.map(normalize);
 }
 
 export function DataTable<T extends Record<string, unknown>>({ columns, data, displayMode = 'compact', error, loading, pagination, rowKey, rowSelection }: DataTableProps<T>) {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const tableColumns = useMemo(() => normalizeTableColumns(columns, displayMode), [columns, displayMode]);
-  const tableScroll = useMemo(
-    () =>
-      displayMode === 'compact'
-        ? containedTableScrollForColumns(tableColumns, rowSelection ? ROW_SELECTION_COLUMN_WIDTH : 0)
-        : adaptiveTableScroll,
-    [displayMode, rowSelection, tableColumns]
-  );
 
   useEffect(() => {
     setCurrentPage(1);
@@ -126,7 +125,7 @@ export function DataTable<T extends Record<string, unknown>>({ columns, data, di
   }
 
   return (
-    <Table
+    <ResizableTable
       bordered
       className={`admin-data-table admin-business-table admin-data-table-${displayMode}`}
       columns={tableColumns}
@@ -134,7 +133,6 @@ export function DataTable<T extends Record<string, unknown>>({ columns, data, di
       pagination={tablePagination}
       rowKey={resolveRowKey(rowKey)}
       rowSelection={rowSelection}
-      scroll={tableScroll}
       size={displayMode === 'compact' ? 'small' : 'default'}
       style={containedTableStyle}
     />

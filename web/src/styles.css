@@ -1014,6 +1014,80 @@ body {
   min-width: 0;
 }
 
+.admin-resizable-table {
+  --admin-table-resize-handle-offset-x: 16px;
+  --admin-table-resize-handle-offset-y: 8px;
+}
+
+.admin-resizable-table.admin-business-table {
+  --admin-table-resize-handle-offset-x: 14px;
+  --admin-table-resize-handle-offset-y: 11px;
+}
+
+.admin-resizable-table .semi-table-thead > .semi-table-row > .semi-table-row-head .semi-table-header-column,
+.admin-resizable-table .semi-table-operate-wrapper,
+.admin-resizable-table .semi-table-column-sorter-wrapper {
+  width: 100%;
+  min-width: 0;
+}
+
+.admin-resizable-table-header {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+}
+
+.admin-resizable-table-header-content {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.admin-table-column-resize-handle {
+  position: absolute;
+  z-index: 3;
+  top: calc(-1 * var(--admin-table-resize-handle-offset-y));
+  right: calc(-1 * var(--admin-table-resize-handle-offset-x));
+  bottom: calc(-1 * var(--admin-table-resize-handle-offset-y));
+  width: 14px;
+  cursor: col-resize;
+  outline: none;
+  touch-action: none;
+}
+
+.admin-table-column-resize-handle::before {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 6px;
+  width: 2px;
+  border-radius: var(--admin-radius-full);
+  background: var(--admin-color-primary);
+  content: '';
+  opacity: 0;
+  transform: scaleY(0.72);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.admin-table-column-resize-handle:hover::before,
+.admin-table-column-resize-handle:focus-visible::before,
+.admin-table-column-resize-handle.is-dragging::before {
+  opacity: 1;
+  transform: scaleY(1);
+}
+
+.admin-table-column-resize-handle:focus-visible {
+  border-radius: var(--admin-radius-sm);
+  box-shadow: inset 0 0 0 2px rgba(205, 74, 20, 0.35);
+}
+
+body.admin-table-column-resizing,
+body.admin-table-column-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
 .admin-data-table {
   margin-top: 0;
 }
@@ -1691,6 +1765,10 @@ body {
   .admin-layout-shell .semi-button,
   .admin-login-page .semi-button,
   .admin-business-table .semi-table-tbody > .semi-table-row {
+    transition: none;
+  }
+
+  .admin-table-column-resize-handle::before {
     transition: none;
   }
 }

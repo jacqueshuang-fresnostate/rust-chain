@@ -1,0 +1,4 @@
+{"file":".trellis/spec/admin/index.md","reason":"Verify complete admin quality gate and browser coverage"}
+{"file":".trellis/spec/admin/ui-system.md","reason":"Verify all table, fixed-column, scroll, responsive and accessibility contracts"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Verify raw Table usage is centralized and no page-local duplication remains"}
+{"file":".trellis/tasks/08-08-admin-resizable-table-columns/research/table-inventory-and-semi-constraints.md","reason":"Verify implementation closes every audited table path without using Semi native resizable"}

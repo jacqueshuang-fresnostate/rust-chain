@@ -1,15 +1,16 @@
 import { IconKey, IconList, IconPulse, IconRefresh } from '@douyinfe/semi-icons';
-import { Banner, Button, Card, Descriptions, Space, Table, Tabs, Tag, Toast, Typography } from '@douyinfe/semi-ui';
+import { Banner, Button, Card, Descriptions, Space, Tabs, Tag, Toast, Typography } from '@douyinfe/semi-ui';
 import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
 import { type ComponentPropsWithoutRef, useEffect, useMemo, useState } from 'react';
 
 import { ApiError, apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
+import { ResizableTable } from '../../shared/ResizableTable';
 import { AdminCheckbox, AdminPasswordInput, AdminSelect, AdminTextInput } from '../../shared/SemiFormControls';
 import { StatusTag } from '../../shared/StatusTag';
 import { TimestampText } from '../../shared/TimestampText';
-import { containedTableScroll, containedTableStyle } from '../../shared/tableLayout';
+import { containedTableStyle } from '../../shared/tableLayout';
 
 const { Text, Title } = Typography;
 
@@ -450,7 +451,7 @@ export function MarketFeedConfigPage() {
               </section>
               <section className="admin-action-panel">
                 <Title heading={4}>订阅列表</Title>
-                <Table
+                <ResizableTable
                   aria-label="行情订阅列表"
                   bordered
                   columns={subscriptionColumns}
@@ -459,7 +460,6 @@ export function MarketFeedConfigPage() {
                   loading={loading}
                   pagination={false}
                   rowKey="key"
-                  scroll={containedTableScroll}
                   style={containedTableStyle}
                 />
               </section>
@@ -546,7 +546,7 @@ export function MarketFeedConfigPage() {
               </section>
               <section className="admin-action-panel">
                 <Title heading={4}>已保存凭证</Title>
-                <Table
+                <ResizableTable
                   aria-label="行情源凭证列表"
                   bordered
                   columns={credentialColumns}
@@ -555,7 +555,6 @@ export function MarketFeedConfigPage() {
                   loading={loading}
                   pagination={false}
                   rowKey="provider"
-                  scroll={containedTableScroll}
                   style={containedTableStyle}
                 />
               </section>

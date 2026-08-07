@@ -163,8 +163,10 @@ describe('KycManagementPage', () => {
     const emailCell = await screen.findByText('kyc-user@example.test');
     const tableWrapper = emailCell.closest('.semi-table-wrapper');
     expect(tableWrapper).toHaveStyle({ maxWidth: '100%', width: '100%' });
-    expect(tableWrapper).toHaveClass('admin-business-table', 'admin-kyc-table');
+    expect(tableWrapper).toHaveClass('admin-business-table', 'admin-kyc-table', 'admin-resizable-table');
     expect(tableWrapper?.querySelector('.react-resizable-handle')).not.toBeInTheDocument();
+    expect(within(tableWrapper as HTMLElement).getByRole('separator', { name: '调整申请ID列宽' })).toBeInTheDocument();
+    expect(within(tableWrapper as HTMLElement).getByRole('separator', { name: '调整操作列宽' })).toHaveAttribute('aria-valuenow', '120');
     expect(within(tableWrapper as HTMLElement).getByText('kyc-user@example.test')).toBeInTheDocument();
     expect(within(tableWrapper as HTMLElement).getByText('Zhang San')).toBeInTheDocument();
     expect(within(tableWrapper as HTMLElement).getByText('CN12****7890')).toBeInTheDocument();
@@ -240,6 +242,9 @@ describe('KycManagementPage', () => {
 
     await user.click(await screen.findByRole('tab', { name: 'KYC 配置' }));
     expect(screen.getByRole('tabpanel', { name: 'KYC 配置' })).toBeInTheDocument();
+    const ruleTable = screen.getByRole('grid', { name: 'KYC 证件类型规则' });
+    expect(within(ruleTable).getByRole('separator', { name: '调整国家 / 地区列宽' })).toBeInTheDocument();
+    expect(within(ruleTable).getByRole('separator', { name: '调整操作列宽' })).toBeInTheDocument();
     expect(screen.getByText('身份证件正面')).toBeInTheDocument();
     expect(screen.getByText('身份证件反面')).toBeInTheDocument();
     expect(screen.getByText('本人手持证件照：1 个证件类型')).toBeInTheDocument();

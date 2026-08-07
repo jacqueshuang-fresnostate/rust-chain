@@ -6924,3 +6924,23 @@
 - 修改文件：`.trellis/spec/backend/{index,market-favorites}.md`、`.trellis/tasks/08-08-mobile-market-favorites-asset-logos/{prd,implement,check}.jsonl`、`tests/market_routes.rs`、`docs/superpowers/PROGRESS.md`；本任务其余实现文件见 03:11 与 03:12 两条进度记录。
 - 验证结果：`cargo fmt --manifest-path Cargo.toml --all -- --check`、自选迁移 1/1、自选鉴权路由 3/3、市场路由 13/13、杠杆钱包 Logo 定向测试 1/1、`cargo check --manifest-path Cargo.toml --all-targets` 通过；未注入 `DATABASE_URL` / `REDIS_URL` 的真实依赖分支按既有测试合同 skip。`npm --prefix mobile test` 298/298、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2057 modules、130 条预缓存）通过。Ego Browser 实测 BTC/ETH 交易对从 500 专属图片回退并成功解码 64px 后台基础资产 SVG，USDT/ETH/BTC 三条持仓图片均成功解码 64px；自选 PUT 后后端 GET 返回 BTCUSDT，行情自选与首页自选各仅显示 BTC/USDT。
 - 后续事项：部署时需执行 `0100_user_market_favorites.sql` 迁移并更新 API/手机端版本；线上现有交易对专属 Logo 存储地址仍需在对象存储侧修复 HTTP 500，本实现已提供后台基础资产 Logo 回退。当前工作树同时含前序页面与部署配置改动，本任务未单独提交，避免把并行改动混入提交。
+## 2026-08-08 05:40 - 后台全部表格支持拖动列宽
+
+- 完成内容：新增项目级 `ResizableTable`，让后台与代理后台所有应用声明的叶子列（含固定操作列、动态详情列和嵌套列）支持 Pointer 拖动及键盘调整；统一受控宽度、80–1200px 边界、数值 `scroll.x`、选择/展开工具列宽度、重复列身份和动态列清理；通用 `DataTable`、详情抽屉、KYC、行情、竞猜及 SMTP 九处独立表格全部接入，保留分页、选择、排序、筛选、自定义 body 与固定列；补齐拖拽视觉、焦点态、低动态样式、源码守卫、边界测试及 Admin UI 规范。
+- 修改文件：`web/src/shared/ResizableTable.tsx`、`web/src/shared/DataTable.tsx`、`web/src/shared/DetailDrawer.tsx`、`web/src/admin/actions/{KycManagementPage,MarketFeedConfigPage,PredictionConfigPage,SmtpConfigPage}.tsx`、`web/src/styles.css`、相关测试、`.trellis/spec/admin/ui-system.md`、`.trellis/tasks/08-08-admin-resizable-table-columns/`。
+- 验证结果：`VITE_API_BASE_URL=http://127.0.0.1:8080 npm --prefix web run test`（40 个测试文件、278/278）、`npm --prefix web run typecheck`、`npm --prefix web run lint`、`npm --prefix web run build`、`git diff --check`、Trellis context validate 全部通过；构建仅保留既有 `lottie-web` 直接 `eval` 与大 chunk 非阻断告警。Ego Browser 在 1728×1006 验证资产表 15 个项目手柄、0 个 Semi 原生手柄，Pointer 将资产 ID 列 160px 拖至 256px且表格宽度同步增加 96px；1280×800 横向滚动后键盘将固定操作列 216px 调至 200px，固定列始终单节点且右侧间距 0px，两档 document 横向溢出均为 0；行情订阅独立表格也显示 5 个项目手柄且无原生手柄。
+- 后续事项：无。
+
+## 2026-08-08 05:42 - 新币解禁费计费基准改为中文下拉框
+
+- 完成内容：将后台“添加新币项目”中的“解禁费计费基准”从可自由输入文本改为受控下拉框；管理员看到“按解禁市值计费”和“按解禁收益计费”，提交接口继续使用后端枚举 `market_value` / `profit`，避免录入不支持的值；补充启用解禁矿工费、切换中文选项并校验原始枚举请求载荷的回归测试。
+- 修改文件：`web/src/admin/resources/actions/newCoins.tsx`、`web/src/admin/resources/resourceConfigs.test.tsx`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：新币创建聚焦测试 1/1 通过（同文件其余 63 项跳过）；`npm --prefix web run typecheck`、`npm --prefix web run lint`、`git diff --check` 通过。
+- 后续事项：无。
+
+## 2026-08-08 05:58 - 后台新闻新增与编辑页面统一
+
+- 完成内容：将“添加新闻”和“编辑新闻”统一为同一个三段式表单组件，均使用“发布设置 / 视觉素材 / 内容编辑”结构；编辑页改用后台国家配置返回的中文下拉选项，选中国家后同步顶层 `country_code/default_locale` 与主内容项的国家、语言、标题，同时保留已有摘要、正文、Banner 和小 Logo；编辑页继续不显示初始状态，PATCH 请求不携带 `status`。移除旧编辑页的默认语言、翻译国家、翻译标题和新增语言内容自由输入控件，并将未展示的历史多语言内容及迁移元数据作为不透明数据原样保留，避免编辑时静默丢失。
+- 修改文件：`web/src/admin/resources/actions/news.tsx`、`web/src/admin/resources/resourceConfigs.test.tsx`、`.trellis/spec/admin/ui-system.md`、`.trellis/tasks/08-08-admin-news-create-edit-parity/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：新闻新增/编辑聚焦测试 1/1 通过（同文件其余 63 项跳过）；实现阶段后台全量测试 278/278 通过；`npm --prefix web run typecheck`、`npm --prefix web run lint`、`npm --prefix web run build`、`git diff --check` 和 Trellis 双代理审查通过。构建仅保留既有 `lottie-web` 直接 `eval` 与大 chunk 非阻断警告。
+- 后续事项：无。

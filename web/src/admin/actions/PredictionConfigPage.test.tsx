@@ -154,6 +154,10 @@ describe('PredictionConfigPage', () => {
     const assetTable = screen.getByRole('grid', { name: '竞猜下注资产配置表' });
     const tableWrapper = assetTable.closest('.semi-table-wrapper');
     expect(tableWrapper).toHaveStyle({ maxWidth: '100%', width: '100%' });
+    expect(tableWrapper).toHaveClass('admin-resizable-table');
+    expect(within(assetTable).getByRole('separator', { name: '调整资产列宽' })).toBeInTheDocument();
+    expect(within(assetTable).getByRole('separator', { name: '调整默认最大赔付列宽' })).toBeInTheDocument();
+    expect(assetTable.querySelector('.react-resizable-handle')).not.toBeInTheDocument();
     expect(within(assetTable).getByRole('columnheader', { name: '资产' })).toBeInTheDocument();
     expect(within(assetTable).getByRole('columnheader', { name: '状态' })).toBeInTheDocument();
     expect(within(assetTable).getByRole('columnheader', { name: '默认最大赔付' })).toBeInTheDocument();
@@ -165,6 +169,8 @@ describe('PredictionConfigPage', () => {
     expect(screen.getByText('同步日志')).toBeInTheDocument();
     const syncTable = screen.getByRole('grid', { name: '竞猜同步日志表' });
     expect(syncTable.closest('.semi-table-wrapper')).toHaveStyle({ maxWidth: '100%', width: '100%' });
+    expect(within(syncTable).getByRole('separator', { name: '调整触发方式列宽' })).toBeInTheDocument();
+    expect(within(syncTable).getByRole('separator', { name: '调整错误信息列宽' })).toBeInTheDocument();
     expect(within(syncTable).getByText('手动触发')).toBeInTheDocument();
     expect(within(syncTable).getByText('成功')).toBeInTheDocument();
   });

@@ -69,32 +69,57 @@ const scroll = containedTableScrollForColumns(
 
 - Use a numeric `scroll.x` equal to the sum of normalized column widths plus
   the optional row-selection column.
-- Do not combine Semi Table `resizable` with horizontal scrolling. This
-  combination causes fixed-column alignment and duplicate-column artifacts.
+- Raw Semi Table rendering is allowed only inside `shared/ResizableTable`.
+  Never enable Semi Table's native `resizable` prop: its combination with
+  horizontal scrolling causes fixed-column alignment and duplicate-column
+  artifacts.
+- Every application-declared leaf column uses the project-owned resize handle,
+  including fixed action columns and dynamic columns. Numeric declared widths
+  are the initial values; missing widths use the shared 160px default.
+- `ResizableTable` owns clamped width state for its mounted instance, provides
+  Pointer dragging plus separator keyboard controls, and recomputes numeric
+  `scroll.x` from all current leaf widths plus visible row-selection and
+  dedicated expand utility columns. Semi defaults `hideExpandedColumn` to
+  `true`; only `false` creates the extra 48px expand column.
+- Column identity prefers a unique `key`, then a unique `dataIndex`. Duplicate
+  identities and anonymous leaves use their tree path so one leaf can never
+  overwrite another leaf's width. Unchanged declarations keep mounted widths;
+  added/replaced declarations start from their own configured width.
+- The project handle must expose `role="separator"`, vertical orientation, a
+  Chinese accessible name, current/min/max values, and Left/Right/Home/End
+  behavior. It must stop header sorting/filtering activation and clean up
+  document listeners and the body drag state after pointer up, cancel, or
+  unmount.
 - Standard resource action columns are fixed right and 216px wide.
 - Keep the fixed-right separator and shadow visible so the action column does
   not appear inserted between business columns.
-- Adaptive mode may use fluid columns and `scroll.x: '100%'`.
+- Compact and adaptive `DataTable` modes both route through `ResizableTable`;
+  adaptive declarations may remain fluid, but the wrapper assigns their
+  controlled initial width and numeric horizontal scroll width.
 - Continue supplying a stable `rowKey`; pagination and row selection depend on
   it.
 
 ### Wrong vs Correct
 
 ```tsx
-// Wrong: fixed columns, horizontal scrolling, and column resizing conflict.
+// Wrong: Semi native resizing conflicts with fixed columns and scroll.x.
 <Table columns={columns} fixed resizable scroll={{ x: 'max-content' }} />
 
-// Correct: normalize widths, calculate scroll width, and omit resizable.
-<Table
-  columns={normalizedColumns}
-  scroll={containedTableScrollForColumns(normalizedColumns)}
-/>
+// Correct: the project wrapper owns widths, handles, and numeric scroll.x.
+<ResizableTable columns={columns} rowSelection={rowSelection} />
 ```
 
 ## Forms, SideSheets, and Confirmation
 
 - Shared admin forms use the global adaptive grid. A 720px medium SideSheet
   resolves to two columns; page-local three-column overrides are forbidden.
+- Create and edit actions for the same resource reuse one form component;
+  endpoint-only controls such as an initial status are explicit parameters,
+  not separate page implementations that can drift in layout or validation.
+- When a simplified edit form exposes only the primary item from an existing
+  structured payload, preserve every unexposed legacy item unchanged in the
+  update request. Never rebuild the payload from visible controls in a way
+  that silently deletes hidden translations or migration metadata.
 - Detail SideSheets use a bounded width rather than `80%` of a large desktop
   viewport.
 - Keep the SideSheet header stable and let the body own scrolling.
@@ -132,8 +157,11 @@ const scroll = containedTableScrollForColumns(
 
 ## Required Tests
 
-- `DataTable`: local pagination, compact/adaptive width normalization, no
-  resize handles, numeric scroll-width calculation.
+- `ResizableTable`: a custom handle for every declared leaf, no Semi native
+  `.react-resizable-handle`, Pointer and keyboard resizing, min/max bounds,
+  fixed-column coverage, row-selection width, prop forwarding, and cleanup.
+- `DataTable`: local/server pagination, compact/adaptive modes, selection,
+  stable row keys, project resize handles, and numeric scroll-width updates.
 - `FilterBar`: controlled-value synchronization, draft submit, blank pruning,
   reset, and loading disablement.
 - `ConfirmAction`: trimmed reason, draft reset, ordinary/danger semantics.
@@ -147,8 +175,11 @@ At 1728px:
 
 ```text
 document horizontal overflow = 0
-asset table resize handles = 0
+every named asset-table leaf column has one project resize handle
+Semi native .react-resizable-handle count = 0
+Pointer and keyboard resizing update the column and numeric scroll width
 resource fixed action column = 216px
+fixed action column remains aligned after resizing and horizontal scrolling
 medium asset SideSheet = 720px and two form columns
 Security Policy visible cards = active tab only
 ```
@@ -160,4 +191,5 @@ document horizontal overflow = 0
 expanded sidebar = 208px
 resource filters align as a stable labeled grid
 empty state remains deliberate and readable
+project resize handles remain keyboard focusable without clipping
 ```

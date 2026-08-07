@@ -127,10 +127,12 @@ describe('AdminResourcePage', () => {
     const grid = screen.getByRole('grid');
     const tableWrapper = grid.closest('.semi-table-wrapper');
     expect(grid.closest('.semi-table-bordered')).toBeInTheDocument();
-    expect(tableWrapper).toHaveClass('admin-data-table', 'admin-data-table-compact');
+    expect(tableWrapper).toHaveClass('admin-data-table', 'admin-data-table-compact', 'admin-resizable-table');
     expect(tableWrapper).toHaveStyle({ maxWidth: '100%', width: '100%' });
     expect(grid.closest('.semi-table-bordered')).toHaveClass('semi-table-small');
     expect(grid.querySelector('.react-resizable-handle')).not.toBeInTheDocument();
+    expect(screen.getByRole('separator', { name: '调整ID列宽' })).toBeInTheDocument();
+    expect(screen.getByRole('separator', { name: '调整操作列宽' })).toHaveAttribute('aria-valuenow', '216');
     expect(document.querySelector('.admin-data-table')).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: '操作' })).toHaveClass('semi-table-cell-fixed-right');
     expect(screen.getByRole('button', { name: '查看详情' }).closest('td')).toHaveClass('semi-table-cell-fixed-right');
@@ -159,6 +161,7 @@ describe('AdminResourcePage', () => {
 
     expect(modeButton).toHaveTextContent('切换到紧凑');
     expect(screen.getByRole('grid').closest('.semi-table-wrapper')).toHaveClass('admin-data-table-adaptive');
+    expect(screen.getByRole('separator', { name: '调整操作列宽' })).toBeInTheDocument();
   });
 
   it('reloads with non-empty filter values', async () => {

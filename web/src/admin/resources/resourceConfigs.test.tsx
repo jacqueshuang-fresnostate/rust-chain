@@ -715,6 +715,14 @@ describe('resourceConfigs create actions', () => {
           title: '平台公告',
           summary: '旧摘要',
           content: [{ type: 'p', children: [{ text: '旧内容' }] }]
+        },
+        {
+          locale: 'fr',
+          country_code: 'FR',
+          title: 'Annonce historique',
+          summary: 'Résumé historique',
+          content: [{ type: 'p', children: [{ text: 'Contenu historique' }] }],
+          legacy_metadata: { source: 'migration' }
         }
       ]
     };
@@ -725,6 +733,8 @@ describe('resourceConfigs create actions', () => {
           {
             id: 7,
             title: '平台公告',
+            banner_url: 'https://cdn.example.test/news-banner.png',
+            small_logo_url: 'https://cdn.example.test/news-logo.png',
             category: 'system',
             country_code: 'CN',
             default_locale: 'zh-CN',
@@ -740,7 +750,7 @@ describe('resourceConfigs create actions', () => {
           {
             id: 1,
             country_code: 'US',
-            country_name: 'United States',
+            country_name: '美国',
             remark: '美国',
             default_locale: 'en',
             supported_locales: ['en'],
@@ -818,7 +828,7 @@ describe('resourceConfigs create actions', () => {
     });
     await user.type(within(dialog).getByLabelText('新闻标题'), '平台新公告');
     await selectSemiOption(user, dialog, '分类', '市场资讯');
-    await selectSemiOption(user, dialog, '国家', 'United States (US)');
+    await selectSemiOption(user, dialog, '国家', '美国 (US)');
     await selectSemiOption(user, dialog, '初始状态', '已发布');
     fireEvent.input(createSummaryEditor, { target: { innerText: '公告摘要' } });
     expect(within(dialog).getByRole('button', { name: '提交添加新闻' })).toBeDisabled();
@@ -868,15 +878,36 @@ describe('resourceConfigs create actions', () => {
 
     await user.click(screen.getByRole('button', { name: '编辑' }));
     dialog = await findActionSheet('编辑新闻');
+    expectCreateModalSize(dialog, 'extra-wide');
+    expect(dialog.querySelector('.admin-news-create-layout')).toBeInTheDocument();
+    expect(within(dialog).getByText('发布设置')).toBeInTheDocument();
+    expect(within(dialog).getByText('视觉素材')).toBeInTheDocument();
+    expect(within(dialog).getByText('内容编辑')).toBeInTheDocument();
     semiInputByLabel(dialog, '新闻标题');
     semiSelectByLabel(dialog, '分类');
-    semiInputByLabel(dialog, '国家');
-    semiInputByLabel(dialog, '默认语言');
+    semiSelectByLabel(dialog, '国家');
+    expect(within(dialog).queryByLabelText('初始状态')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('默认语言')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('语言')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('翻译国家')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('翻译标题')).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: '新增语言内容' })).not.toBeInTheDocument();
+    expect(dialog.querySelector('img[src="https://cdn.example.test/news-banner.png"]')).toBeInTheDocument();
+    expect(dialog.querySelector('img[src="https://cdn.example.test/news-logo.png"]')).toBeInTheDocument();
+    const editSummaryEditor = within(dialog).getByLabelText('摘要');
+    const editContentEditor = within(dialog).getByLabelText('富文本内容');
+    expect(editSummaryEditor).toHaveTextContent('旧摘要');
+    expect(editContentEditor).toHaveTextContent('旧内容');
+    await waitFor(() => {
+      expect(semiSelectByLabel(dialog, '国家')).toHaveTextContent('中国 (CN)');
+      expect(semiSelectByLabel(dialog, '国家')).not.toHaveClass('semi-select-disabled');
+    });
     await user.clear(within(dialog).getByLabelText('新闻标题'));
     await user.type(within(dialog).getByLabelText('新闻标题'), '平台公告更新');
     await selectSemiOption(user, dialog, '分类', '产品资讯');
-    await user.clear(within(dialog).getByLabelText('国家'));
-    await user.type(within(dialog).getByLabelText('国家'), 'JP');
+    await selectSemiOption(user, dialog, '国家', '美国 (US)');
+    expect(within(dialog).getByLabelText('摘要')).toHaveTextContent('旧摘要');
+    expect(within(dialog).getByLabelText('富文本内容')).toHaveTextContent('旧内容');
     await user.click(within(dialog).getByRole('button', { name: '提交编辑新闻' }));
     await confirmWithReason('edit news');
 
@@ -888,12 +919,21 @@ describe('resourceConfigs create actions', () => {
     expect(body).toMatchObject({
       title: '平台公告更新',
       category: 'product',
-      country_code: 'JP',
-      default_locale: 'zh-CN',
+      banner_url: 'https://cdn.example.test/news-banner.png',
+      small_logo_url: 'https://cdn.example.test/news-logo.png',
+      country_code: 'US',
+      default_locale: 'en',
       reason: 'edit news'
     });
-    expect(body.content_json.items[0]).toMatchObject({ locale: 'zh-CN', country_code: 'CN', title: '平台公告' });
+    expect(body.content_json).toMatchObject({
+      version: 1,
+      default_locale: 'en'
+    });
+    expect(body.content_json.items[0]).toMatchObject({ locale: 'en', country_code: 'US', title: '平台公告更新' });
     expect(body.content_json.items[0].summary).toEqual([{ type: 'p', children: [{ text: '旧摘要' }] }]);
+    expect(body.content_json.items[0].content).toEqual([{ type: 'p', children: [{ text: '旧内容' }] }]);
+    expect(body.content_json.items).toHaveLength(2);
+    expect(body.content_json.items[1]).toEqual(newsContent.items[1]);
     expect(body).not.toHaveProperty('status');
 
     await user.click(screen.getByRole('button', { name: '发布' }));
@@ -1802,15 +1842,21 @@ describe('resourceConfigs create actions', () => {
     semiInputByLabel(dialog, '发行价');
     expect(semiSelectByLabel(dialog, '解禁类型')).toHaveTextContent('固定时间解禁');
     semiSelectByLabel(dialog, '启用解禁矿工费');
+    expect(within(dialog).queryByLabelText('解禁费计费基准')).not.toBeInTheDocument();
     await selectSemiOption(user, dialog, '生命周期', '申购中');
     await selectSemiOption(user, dialog, '生命周期', '预热');
     await selectSemiOption(user, dialog, '解禁类型', '上市即解禁');
     await selectSemiOption(user, dialog, '解禁类型', '固定时间解禁');
     await selectSemiOption(user, dialog, '项目资产', 'BTC - Bitcoin（ID: 11）');
     await selectSemiOption(user, dialog, '项目符号', 'BTC - Bitcoin（ID: 11）');
+    await selectSemiOption(user, dialog, '启用解禁矿工费', '启用');
+    expect(semiSelectByLabel(dialog, '解禁费计费基准')).toHaveTextContent('按解禁市值计费');
+    await selectSemiOption(user, dialog, '解禁费计费基准', '按解禁收益计费');
+    await selectSemiOption(user, dialog, '解禁费资产', 'USDT - Tether（ID: 12）');
     await user.type(within(dialog).getByLabelText('发行总量'), '1000000');
     await user.type(within(dialog).getByLabelText('发行价'), '1');
     await user.type(within(dialog).getByLabelText('固定解禁时间'), '1794309753000');
+    await user.type(within(dialog).getByLabelText('解禁费率'), '0.04');
     await user.click(within(dialog).getByRole('button', { name: '提交添加新币项目' }));
     await confirmWithReason('create new coin');
     await waitFor(() => {
@@ -1826,7 +1872,10 @@ describe('resourceConfigs create actions', () => {
       issue_price: '1',
       unlock_type: 'fixed_time',
       fixed_unlock_at: 1794309753000,
-      unlock_fee_enabled: false,
+      unlock_fee_enabled: true,
+      unlock_fee_rate: '0.04',
+      unlock_fee_basis: 'profit',
+      unlock_fee_asset: 12,
       reason: 'create new coin'
     });
     expect(newCoinBody).not.toHaveProperty('listed_at');
@@ -1897,7 +1946,7 @@ describe('resourceConfigs create actions', () => {
 
     expect(await screen.findByText('user@example.com')).toBeInTheDocument();
     await openFiltersTab(user);
-    await user.type(screen.getByLabelText('邮箱'), 'target@example.com');
+    await user.type(screen.getByRole('textbox', { name: '邮箱' }), 'target@example.com');
     await user.click(screen.getByRole('button', { name: '查询' }));
 
     await waitFor(() => {
@@ -4099,7 +4148,7 @@ describe('wallet review resources', () => {
     await user.click(within(approvedRow).getByRole('button', { name: '标记广播' }));
     const confirmBroadcast = await screen.findByRole('button', { name: '确认广播' });
     expect(confirmBroadcast).toBeDisabled();
-    await user.type(screen.getByLabelText('交易哈希'), '0xhash12');
+    await user.type(screen.getByRole('textbox', { name: '交易哈希' }), '0xhash12');
     await user.type(screen.getByLabelText('区块高度'), '100');
     await user.type(screen.getByLabelText('确认数'), '3');
     await user.click(screen.getByRole('button', { name: '确认广播' }));

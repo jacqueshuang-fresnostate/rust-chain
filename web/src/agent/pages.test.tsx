@@ -143,7 +143,7 @@ describe('Agent portal pages', () => {
     render(<AgentInviteCodesPage />);
 
     expect(await screen.findByText('AGT7')).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('使用上限'), { target: { value: '10' } });
+    fireEvent.change(screen.getByRole('textbox', { name: '使用上限' }), { target: { value: '10' } });
     fireEvent.click(screen.getByRole('button', { name: '创建邀请码' }));
     await waitFor(() => expect(createAgentInviteCodeMock).toHaveBeenCalledWith(10));
 

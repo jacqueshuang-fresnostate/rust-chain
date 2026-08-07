@@ -1,0 +1,4 @@
+{"file":".trellis/spec/admin/index.md","reason":"Admin package quality gate and browser verification requirements"}
+{"file":".trellis/spec/admin/ui-system.md","reason":"Existing table, fixed-column, scroll, responsive and accessibility contracts"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Requires one shared implementation instead of page-local resize logic"}
+{"file":".trellis/tasks/08-08-admin-resizable-table-columns/research/table-inventory-and-semi-constraints.md","reason":"Complete table inventory, Semi 2.99.2 constraints and selected implementation approach"}

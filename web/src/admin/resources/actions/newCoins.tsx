@@ -63,6 +63,11 @@ const newCoinUnlockTypeOptions: SemiSelectOption[] = [
   { value: 'relative_period', label: '相对周期解禁' }
 ];
 
+const newCoinUnlockFeeBasisOptions: SemiSelectOption[] = [
+  { value: 'market_value', label: '按解禁市值计费' },
+  { value: 'profit', label: '按解禁收益计费' }
+];
+
 function isNewCoinProjectCreatable(values: NewCoinProjectValues): boolean {
   return Boolean(values.assetId.trim() && values.symbol.trim() && values.lifecycleStatus.trim() && values.totalSupply.trim() && values.issuePrice.trim() && values.unlockType.trim());
 }
@@ -153,7 +158,15 @@ export function CreateNewCoinProjectAction({ onCreated }: CreateActionProps = {}
             {unlockFeeEnabled ? (
               <>
                 <label>解禁费率<AdminTextInput ariaLabel="解禁费率" value={project.unlockFeeRate} onChange={(unlockFeeRate) => setProject({ ...project, unlockFeeRate })} /></label>
-                <label>解禁费计费基准<AdminTextInput ariaLabel="解禁费计费基准" value={project.unlockFeeBasis} onChange={(unlockFeeBasis) => setProject({ ...project, unlockFeeBasis })} /></label>
+                <label>
+                  解禁费计费基准
+                  <AdminSelect
+                    ariaLabel="解禁费计费基准"
+                    onChange={(unlockFeeBasis) => setProject({ ...project, unlockFeeBasis })}
+                    optionList={newCoinUnlockFeeBasisOptions}
+                    value={project.unlockFeeBasis}
+                  />
+                </label>
                 <AssetSelect label="解禁费资产" loading={assetLoading} options={assetOptions} value={project.unlockFeeAsset} onChange={(unlockFeeAsset) => setProject({ ...project, unlockFeeAsset })} />
               </>
             ) : null}

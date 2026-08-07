@@ -150,6 +150,8 @@ describe('MarketFeedConfigPage', () => {
     expect(screen.getByLabelText('Passphrase').closest('.semi-input-wrapper')).toBeInTheDocument();
     semiSelectByLabel('凭证状态');
     const credentialList = screen.getByRole('grid', { name: '行情源凭证列表' });
+    expect(within(credentialList).getByRole('separator', { name: '调整行情源列宽' })).toBeInTheDocument();
+    expect(within(credentialList).getByRole('separator', { name: '调整Key 掩码列宽' })).toBeInTheDocument();
     expect(within(credentialList).getByRole('columnheader', { name: '行情源' })).toBeInTheDocument();
     expect(within(credentialList).getByRole('columnheader', { name: 'Key 掩码' })).toBeInTheDocument();
     expect(within(credentialList).getByText('Bitget 行情')).toBeInTheDocument();
@@ -165,8 +167,12 @@ describe('MarketFeedConfigPage', () => {
     const tableWrapper = list.closest('.semi-table-wrapper');
     expect(list.closest('.semi-table-bordered')).toBeInTheDocument();
     expect(tableWrapper).not.toHaveClass('admin-action-subscription-list');
+    expect(tableWrapper).toHaveClass('admin-resizable-table');
     expect(tableWrapper).toHaveStyle({ maxWidth: '100%', width: '100%' });
     expect(list.querySelector('.react-resizable-handle')).not.toBeInTheDocument();
+    expect(within(list).getByRole('separator', { name: '调整类型列宽' })).toBeInTheDocument();
+    expect(within(list).getByRole('separator', { name: '调整订阅项列宽' })).toBeInTheDocument();
+    expect(within(list).getByRole('separator', { name: '调整运行态列宽' })).toBeInTheDocument();
     expect(document.querySelector('.admin-action-subscription-list')).not.toBeInTheDocument();
     expect(within(list).getByRole('columnheader', { name: '类型' })).toBeInTheDocument();
     expect(within(list).getByRole('columnheader', { name: '订阅项' })).toBeInTheDocument();

@@ -1,10 +1,11 @@
-import { Button, Card, SideSheet, Space, Table, Tabs, Toast, Typography } from '@douyinfe/semi-ui';
+import { Button, Card, SideSheet, Space, Tabs, Toast, Typography } from '@douyinfe/semi-ui';
 import { useEffect, useState } from 'react';
 
 import { ApiError, apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
 import { QuillRichTextEditor, type RichTextLeaf, type RichTextTextBlock, type RichTextValue } from '../../shared/QuillRichTextEditor';
+import { ResizableTable } from '../../shared/ResizableTable';
 import { AdminCheckbox, AdminPasswordInput, AdminSelect, AdminTextInput } from '../../shared/SemiFormControls';
 import { StatusTag } from '../../shared/StatusTag';
 
@@ -661,7 +662,7 @@ export function SmtpConfigPage() {
                   新增配置
                 </Button>
               </div>
-              <Table columns={configColumns} dataSource={configs} loading={loading} pagination={false} rowKey="id" style={{ width: '100%' }} />
+              <ResizableTable aria-label="SMTP 发信配置列表" columns={configColumns} dataSource={configs} loading={loading} pagination={false} rowKey="id" style={{ width: '100%' }} />
             </section>
             <section className="admin-action-panel">
               <Title heading={4}>{selectedConfigTitle}</Title>

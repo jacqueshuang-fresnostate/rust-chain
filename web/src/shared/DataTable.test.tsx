@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -75,7 +75,47 @@ describe('DataTable', () => {
     const table = screen.getByRole('grid');
     expect(table.closest('.semi-table-wrapper')).toHaveClass('admin-data-table-compact');
     expect(table.closest('.semi-table-bordered')).toHaveClass('semi-table-small');
+    expect(screen.getByRole('separator', { name: '调整名称列宽' })).toHaveAttribute('aria-valuenow', '160');
     expect(table.querySelector('.react-resizable-handle')).not.toBeInTheDocument();
+  });
+
+  it('uses project-controlled widths and handles in adaptive mode as well', () => {
+    render(<DataTable<Row> columns={columns} data={rows} displayMode="adaptive" />);
+
+    const table = screen.getByRole('grid');
+    expect(table.closest('.semi-table-wrapper')).toHaveClass('admin-data-table-adaptive', 'admin-resizable-table');
+    expect(table.closest('.semi-table-bordered')).not.toHaveClass('semi-table-small');
+    expect(screen.getByRole('separator', { name: '调整名称列宽' })).toHaveAttribute('aria-valuenow', '160');
+    expect(table).toHaveStyle({ width: '160px' });
+  });
+
+  it('keeps server pagination controlled by the caller', async () => {
+    const onPageChange = vi.fn();
+    const onPageSizeChange = vi.fn();
+    render(
+      <DataTable<Row>
+        columns={columns}
+        data={rows.slice(0, 10)}
+        pagination={{ currentPage: 1, onPageChange, onPageSizeChange, pageSize: 10, total: 25 }}
+      />
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(onPageChange).toHaveBeenCalledWith(2);
+    expect(onPageSizeChange).not.toHaveBeenCalled();
+    expect(screen.getByText('记录 1')).toBeInTheDocument();
+  });
+
+  it('keeps the framework selection column unhandled while including its width in scroll.x', () => {
+    render(<DataTable<Row> columns={columns} data={rows} rowSelection={{}} />);
+
+    const table = screen.getByRole('grid');
+    expect(table).toHaveStyle({ width: '208px' });
+    expect(screen.getAllByRole('columnheader')).toHaveLength(2);
+    expect(screen.getAllByRole('separator')).toHaveLength(1);
+    expect(screen.queryByRole('separator', { name: /Select all rows/ })).not.toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole('separator', { name: '调整名称列宽' }), { key: 'ArrowRight' });
+    expect(table).toHaveStyle({ width: '224px' });
   });
 
   it('normalizes missing column widths without changing existing column props', () => {
@@ -99,5 +139,22 @@ describe('DataTable', () => {
 
     expect(normalized[0]).not.toHaveProperty('width');
     expect(normalized[1]).toMatchObject({ dataIndex: 'id', title: 'ID', width: 96 });
+  });
+
+  it('normalizes compact nested leaves without assigning a synthetic width to their group', () => {
+    const normalized = normalizeTableColumns<Row>([
+      {
+        key: 'identity',
+        title: '身份',
+        children: [
+          { dataIndex: 'name', title: '名称' },
+          { dataIndex: 'id', title: 'ID', width: 720 }
+        ]
+      }
+    ]);
+
+    expect(normalized[0]).not.toHaveProperty('width');
+    expect(normalized[0].children?.[0]).toMatchObject({ dataIndex: 'name', width: 160 });
+    expect(normalized[0].children?.[1]).toMatchObject({ dataIndex: 'id', width: 720 });
   });
 });

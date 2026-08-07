@@ -1,14 +1,15 @@
 import { IconList, IconPulse, IconRefresh, IconSave, IconSetting, IconSync } from '@douyinfe/semi-icons';
-import { Banner, Button, Card, Col, Descriptions, Input, Row, Space, Switch, Table, Tabs, Tag, Toast, Typography } from '@douyinfe/semi-ui';
+import { Banner, Button, Card, Col, Descriptions, Input, Row, Space, Switch, Tabs, Tag, Toast, Typography } from '@douyinfe/semi-ui';
 import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
 import { type ComponentPropsWithoutRef, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
+import { ResizableTable } from '../../shared/ResizableTable';
 import { TimestampText } from '../../shared/TimestampText';
 import { AdminMultiSelect, AdminSelect, AdminTextArea, AdminTextInput, type SemiSelectOption } from '../../shared/SemiFormControls';
 import { StatusTag } from '../../shared/StatusTag';
-import { containedTableScroll, containedTableStyle } from '../../shared/tableLayout';
+import { containedTableStyle } from '../../shared/tableLayout';
 
 const { Title, Text } = Typography;
 
@@ -561,7 +562,7 @@ export function PredictionConfigPage() {
                   <Tag color="grey">共 {assetConfigs.length}</Tag>
                 </Space>
               </Space>
-              <Table
+              <ResizableTable
                 aria-label="竞猜下注资产配置表"
                 bordered
                 columns={assetColumns}
@@ -570,7 +571,6 @@ export function PredictionConfigPage() {
                 loading={loading}
                 pagination={false}
                 rowKey="asset_id"
-                scroll={containedTableScroll}
                 style={containedTableStyle}
               />
             </section>
@@ -597,7 +597,7 @@ export function PredictionConfigPage() {
 
               <section className="admin-action-panel">
                 <Title heading={4}>同步日志</Title>
-                <Table
+                <ResizableTable
                   aria-label="竞猜同步日志表"
                   bordered
                   columns={syncLogColumns}
@@ -606,7 +606,6 @@ export function PredictionConfigPage() {
                   loading={loading}
                   pagination={false}
                   rowKey="id"
-                  scroll={containedTableScroll}
                   style={containedTableStyle}
                 />
               </section>

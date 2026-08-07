@@ -112,7 +112,12 @@ describe('SmtpConfigPage', () => {
     expect(screen.getByRole('tab', { name: '发信策略' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '测试发送' })).toBeInTheDocument();
     expect(screen.getByText('主发信配置')).toBeInTheDocument();
-    expect(screen.getByLabelText('SMTP host').closest('.semi-input-wrapper')).toBeInTheDocument();
+    const configTable = screen.getByRole('grid', { name: 'SMTP 发信配置列表' });
+    expect(configTable.closest('.semi-table-wrapper')).toHaveClass('admin-resizable-table');
+    expect(within(configTable).getByRole('separator', { name: '调整配置名称列宽' })).toBeInTheDocument();
+    expect(within(configTable).getByRole('separator', { name: '调整操作列宽' })).toBeInTheDocument();
+    expect(configTable.querySelector('.react-resizable-handle')).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'SMTP host' }).closest('.semi-input-wrapper')).toBeInTheDocument();
     semiSelectByLabel('加密方式');
     expect(screen.getByLabelText('SMTP 用户名').closest('.semi-input-wrapper')).toBeInTheDocument();
     expect(screen.getByLabelText('SMTP 密码').closest('.semi-input-wrapper')).toBeInTheDocument();

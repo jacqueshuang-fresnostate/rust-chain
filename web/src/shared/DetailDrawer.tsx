@@ -1,11 +1,12 @@
-import { SideSheet, Table, Typography } from '@douyinfe/semi-ui';
+import { SideSheet, Typography } from '@douyinfe/semi-ui';
 import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
 
 import type { ApiRecord } from '../api/types';
 import { formatAdminBetContent, isAdminBetContentField } from './betContentFormat';
 import { formatAdminDisplayValue, formatAdminNumber } from './numberFormat';
 import { formatBusinessOrderNo } from './orderNo';
-import { containedTableScroll, containedTableStyle } from './tableLayout';
+import { ResizableTable } from './ResizableTable';
+import { containedTableStyle } from './tableLayout';
 import { formatAdminTimestamp } from './TimestampText';
 
 const { Text } = Typography;
@@ -460,13 +461,12 @@ type DetailFieldTableProps = {
 
 export function DetailFieldTable({ fieldMeta, record }: DetailFieldTableProps) {
   return (
-    <Table
+    <ResizableTable
       bordered
       columns={fieldColumns(fieldMeta)}
       dataSource={record ? toRows(record) : []}
       pagination={false}
       rowKey="field"
-      scroll={containedTableScroll}
       style={containedTableStyle}
     />
   );
@@ -489,13 +489,12 @@ export function DetailDrawer({ detail, onClose }: DetailDrawerProps) {
       width={920}
     >
       {Array.isArray(data) ? (
-        <Table
+        <ResizableTable
           bordered
           columns={recordColumns(records, meta)}
           dataSource={records}
           pagination={false}
           rowKey={(record) => String(record?.id ?? displayValue(record))}
-          scroll={containedTableScroll}
           style={containedTableStyle}
         />
       ) : (

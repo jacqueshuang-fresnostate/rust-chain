@@ -1,15 +1,16 @@
 import { IconRefresh, IconSetting, IconShield } from '@douyinfe/semi-icons';
-import { Button, Card, Descriptions, Divider, Empty, Image, Select, SideSheet, Space, Table, Tabs, Toast, Typography } from '@douyinfe/semi-ui';
+import { Button, Card, Descriptions, Divider, Empty, Image, Select, SideSheet, Space, Tabs, Toast, Typography } from '@douyinfe/semi-ui';
 import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
 import { useEffect, useMemo, useState } from 'react';
 
 import { ApiError, apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
+import { ResizableTable } from '../../shared/ResizableTable';
 import { AdminSelect, AdminTextArea, AdminTextInput, type SemiSelectOption } from '../../shared/SemiFormControls';
 import { StatusTag } from '../../shared/StatusTag';
 import { TimestampText } from '../../shared/TimestampText';
-import { containedTableScroll, containedTableScrollForColumns, containedTableStyle } from '../../shared/tableLayout';
+import { containedTableStyle } from '../../shared/tableLayout';
 
 const { Text, Title } = Typography;
 
@@ -535,8 +536,6 @@ export function KycManagementPage() {
     ],
     [countryRuleOptions]
   );
-  const reviewTableScroll = useMemo(() => containedTableScrollForColumns(columns), [columns]);
-
   return (
     <main className="exchange-page admin-action-page">
       <PageHeader
@@ -598,7 +597,7 @@ export function KycManagementPage() {
                   添加国家规则
                 </Button>
               </Space>
-              <Table
+              <ResizableTable
                 aria-label="KYC 证件类型规则"
                 bordered
                 className="admin-business-table admin-kyc-rule-table"
@@ -606,7 +605,6 @@ export function KycManagementPage() {
                 dataSource={configForm.countryDocumentTypes.map((rule, index) => ({ ...rule, index }))}
                 pagination={false}
                 rowKey="index"
-                scroll={containedTableScroll}
                 style={containedTableStyle}
               />
               <div className="admin-action-summary">
@@ -677,7 +675,7 @@ export function KycManagementPage() {
                     <Text type="tertiary">审核队列已清空，可切换状态查看历史申请。</Text>
                   </div>
                 ) : (
-                  <Table
+                  <ResizableTable
                     aria-label="KYC 审核列表"
                     bordered
                     className="admin-business-table admin-kyc-table"
@@ -686,7 +684,6 @@ export function KycManagementPage() {
                     loading={loading}
                     pagination={{ pageSize: 20, showSizeChanger: true }}
                     rowKey="id"
-                    scroll={reviewTableScroll}
                     style={containedTableStyle}
                   />
                 )}
