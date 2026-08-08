@@ -1,0 +1,3 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Verify 44px target, SVG centering, focus behavior and mobile quality gates"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Verify theme, responsive viewport and reduced-motion behavior remain correct"}
+{"file":".trellis/tasks/08-08-mobile-market-chart-toggle-glass/prd.md","reason":"Verify square frosted-glass material and unchanged chart interactions"}

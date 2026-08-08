@@ -167,6 +167,11 @@ ProductHub header/body/first-row y at 390px: 0..60 / 60 / 68
   containing block and the sheet cannot reach the visual viewport edge. The
   Teleported node keeps a route-specific class for scoped theme/focus styling
   and remains above the Dock and route transitions.
+- A confirmation sheet whose content can exceed a handset viewport uses a
+  three-row `auto minmax(0, 1fr) auto` grid. The sheet itself has
+  `overflow: hidden`; only the middle detail region may scroll, while the
+  header and action row remain fully visible inside dynamic-viewport and safe
+  area bounds. Do not put submit/cancel actions inside the scrolling region.
 - The login Turnstile uses Cloudflare explicit rendering with `size: flexible`,
   the current application light/dark theme, and the current mobile locale. Its
   centered stage may widen to 302px inside a 320px viewport so the official
@@ -194,6 +199,14 @@ ProductHub header/body/first-row y at 390px: 0..60 / 60 / 68
   min-height distribute free space and stretch the two rows away from the
   selected geometry. At a 390px viewport, the final rendered body starts at
   `y=60` and its 8px top padding places the first product row at `y=68`.
+- Route-local visual controls must be checked against earlier global
+  `prototype-parity.css` selectors before relying on source order. If a scoped
+  base selector is strengthened to preserve material styles, every modifier
+  that changes geometry or interaction state (for example `.is-expanded`,
+  `:active`, or `:focus-visible`) must compile to specificity equal to or
+  greater than that base selector. Source-contract tests must compile the SFC
+  CSS, compare the competing selectors, and pair that check with runtime
+  computed geometry in both themes; isolated declaration checks are not enough.
 - The message center calls `fetchNews(40)` and may persist only local read IDs.
   It must not invent account, order, wallet, security, or transaction events.
 - The selected Message Center references are `FkZ6j` (light) and `bRz9K`
@@ -233,6 +246,7 @@ ProductHub header/body/first-row y at 390px: 0..60 / 60 / 68
 | Message Center has no announcements | Render one truthful 64px empty row; keep Read-all disabled |
 | Message Center changes theme | Resolve the root to white/black and the dark icon plate to `#0c100e` with `#29342e` border |
 | Fixed sheet is mounted inside a transformed route | Teleport the overlay to `body`; its layer rect must equal the visual viewport |
+| Confirmation details exceed a short viewport | Scroll only the middle detail region; keep header and every action button fully inside the safe viewport |
 | Spot route has `showBottomNav` | Keep the five-entry dock, hide `RootHeader`, and render the spot-owned 64px header |
 | Trade is the active dock item | Keep one 56px mint circle with no inherited 28px active gradient |
 | Spot market stream has no rows yet | Show a truthful loading/unavailable state; never synthesize book or trade rows |
@@ -246,6 +260,7 @@ ProductHub header/body/first-row y at 390px: 0..60 / 60 / 68
 | Contract, Seconds, Product Hub, or Prediction changes theme | Resolve the root canvas to `#ffffff`/`#000000` with no background image |
 | Spot changes theme | Preserve the spot-owned canvas; selected secondary selectors must not match it |
 | Legacy Product Hub grid rule is present | Later scoped composition must win with computed `display: block` and `gap: 0` |
+| A scoped visual base selector is strengthened above a global bridge | Compile the scoped CSS and prove each geometry/state modifier outranks the base and competing global selector |
 | Product Hub renders at 390px | Header ends/body starts at y=60; first row starts at y=68 |
 
 ## 5. Good / Base / Bad Cases
@@ -305,6 +320,12 @@ ProductHub header/body/first-row y at 390px: 0..60 / 60 / 68
   and 390px light/dark browser passes have zero document overflow, sticky
   headers remain at z-index 70, and visible enabled controls are at least 40px
   in each dimension (44px for primary/icon controls).
+- Viewport confirmation sheet: at 320x568, 320x720, 390x667, 390x844, and
+  448x900 assert the Teleported overlay is a direct `body` child with no
+  transformed route ancestor, every action button rect stays within the
+  viewport, and scrolling an overflowing detail region does not move the
+  action row. Also exercise Escape, Tab wrap, focus return, body scroll lock,
+  both themes, and zero horizontal overflow.
 - Message Center parity: at 390px assert header `0..56`, back button
   `20,12,40,40`, title `y=16,h=32`, Read-all `x=321,w=49`, filter `56..94`,
   list `y=94`, first row `x=20,y=100,w=350,h=64`, no row border, no Root

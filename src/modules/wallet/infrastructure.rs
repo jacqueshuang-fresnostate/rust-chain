@@ -8,27 +8,33 @@ use super::{
 };
 use crate::{
     error::{AppError, AppResult},
-    modules::wallet::{
-        presentation::{
-            DepositAddressResponse, DepositAssetResponse, DepositNetworkResponse,
-            ObserveDepositRequest, WalletAccountResponse, WalletDepositEventResponse,
-            WalletLedgerEntryResponse, WalletLedgerPageResponse, WalletLedgerResponse,
-            WalletWithdrawalResponse,
-        },
-        repository::{
-            WalletChainBroadcastCommand, WalletChainBroadcastResult, WalletChainGateway,
-            WalletChainPollPage,
+    modules::{
+        market::market_ticker_redis_key,
+        wallet::{
+            presentation::{
+                DepositAddressResponse, DepositAssetResponse, DepositNetworkResponse,
+                ObserveDepositRequest, WalletAccountResponse, WalletDepositEventResponse,
+                WalletLedgerEntryResponse, WalletLedgerPageResponse, WalletLedgerResponse,
+                WalletWithdrawalResponse,
+            },
+            repository::{
+                WalletChainBroadcastCommand, WalletChainBroadcastResult, WalletChainGateway,
+                WalletChainPollPage,
+            },
         },
     },
 };
 use axum::async_trait;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
+use redis::{AsyncCommands, aio::ConnectionManager};
+use serde::Deserialize;
 use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
-use std::time::Duration;
+use std::{collections::BTreeMap, time::Duration};
 
 /// 分页排序必须带唯一列 id，否则同一时间戳的行会在页间重复或丢失。
 const WALLET_WITHDRAWAL_ORDER_BY: &str = " ORDER BY requests.id DESC";
+const TODAY_RETURN_TICKER_MAX_AGE_SECONDS: i64 = 60;
 
 /// 行查询与 COUNT 查询必须由同一组过滤谓词构建，返回总数才能与当前筛选一致。
 async fn fetch_admin_page<T>(
@@ -343,6 +349,21 @@ pub(crate) struct WalletLedgerFilter {
     pub(crate) end_time: Option<String>,
     pub(crate) limit: u32,
     pub(crate) offset: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub(crate) struct TodayReturnAssetActivityRow {
+    pub(crate) asset_symbol: String,
+    pub(crate) amount: BigDecimal,
+    pub(crate) basis_amount: BigDecimal,
+}
+
+#[derive(Debug, Deserialize)]
+struct TodayReturnTickerPayload {
+    symbol: String,
+    last_price: BigDecimal,
+    #[serde(with = "crate::time::unix_millis")]
+    observed_at: DateTime<Utc>,
 }
 
 pub(crate) async fn list_deposit_assets(
@@ -1629,6 +1650,166 @@ pub(crate) async fn list_wallet_accounts(
     Ok(rows.into_iter().map(wallet_account_response).collect())
 }
 
+/// 只聚合能够由业务结算表直接审计的已实现收益，充值、提现和内部划转不会进入该查询。
+pub(crate) async fn load_today_return_asset_activity(
+    pool: &Pool<MySql>,
+    user_id: u64,
+    period_start_at: DateTime<Utc>,
+    calculated_at: DateTime<Utc>,
+) -> AppResult<Vec<TodayReturnAssetActivityRow>> {
+    let period_start_at = period_start_at.naive_utc();
+    let calculated_at = calculated_at.naive_utc();
+    let rows = sqlx::query_as::<_, TodayReturnAssetActivityRow>(
+        r#"SELECT activity.asset_symbol,
+                  SUM(activity.amount) AS amount,
+                  SUM(activity.basis_amount) AS basis_amount
+           FROM (
+               SELECT assets.symbol AS asset_symbol,
+                      SUM(CASE
+                              WHEN orders.result = 'win'
+                                  THEN orders.stake_amount * orders.payout_rate
+                              WHEN orders.result = 'loss'
+                                  THEN -orders.stake_amount
+                              ELSE 0
+                          END) AS amount,
+                      SUM(orders.stake_amount) AS basis_amount
+               FROM seconds_contract_orders orders
+               INNER JOIN assets ON assets.id = orders.stake_asset
+               WHERE orders.user_id = ?
+                 AND orders.status = 'settled'
+                 AND orders.settled_at >= ?
+                 AND orders.settled_at <= ?
+               GROUP BY assets.symbol
+
+               UNION ALL
+
+               SELECT assets.symbol AS asset_symbol,
+                      SUM(orders.payout_amount + orders.refund_amount
+                          + orders.fee_refund_amount - orders.stake_amount
+                          - orders.fee_amount) AS amount,
+                      SUM(orders.stake_amount + orders.fee_amount) AS basis_amount
+               FROM prediction_orders orders
+               INNER JOIN assets ON assets.id = orders.asset_id
+               WHERE orders.user_id = ?
+                 AND orders.status IN ('settled', 'refunded')
+                 AND orders.settled_at >= ?
+                 AND orders.settled_at <= ?
+               GROUP BY assets.symbol
+
+               UNION ALL
+
+               SELECT assets.symbol AS asset_symbol,
+                      SUM(COALESCE(positions.realized_pnl, 0) - positions.interest_amount) AS amount,
+                      SUM(positions.margin_amount) AS basis_amount
+               FROM margin_positions positions
+               INNER JOIN assets ON assets.id = positions.margin_asset
+               WHERE positions.user_id = ?
+                 AND positions.status IN ('closed', 'liquidated')
+                 AND positions.closed_at >= ?
+                 AND positions.closed_at <= ?
+               GROUP BY assets.symbol
+
+               UNION ALL
+
+               SELECT assets.symbol AS asset_symbol,
+                      SUM(ledger.amount - subscriptions.amount) AS amount,
+                      SUM(subscriptions.amount) AS basis_amount
+               FROM wallet_ledger ledger
+               INNER JOIN earn_subscriptions subscriptions
+                   ON subscriptions.user_id = ledger.user_id
+                  AND subscriptions.asset_id = ledger.asset_id
+                  AND ledger.ref_id = CAST(subscriptions.id AS CHAR)
+               INNER JOIN assets ON assets.id = ledger.asset_id
+               WHERE ledger.user_id = ?
+                 AND ledger.change_type = 'earn_redeem'
+                 AND ledger.ref_type = 'earn_subscription'
+                 AND subscriptions.status = 'redeemed'
+                 AND ledger.created_at >= ?
+                 AND ledger.created_at <= ?
+                 AND NOT EXISTS (
+                     SELECT 1
+                     FROM wallet_ledger earlier_ledger
+                     WHERE earlier_ledger.user_id = ledger.user_id
+                       AND earlier_ledger.asset_id = ledger.asset_id
+                       AND earlier_ledger.change_type = ledger.change_type
+                       AND earlier_ledger.ref_type = ledger.ref_type
+                       AND earlier_ledger.ref_id = ledger.ref_id
+                       AND earlier_ledger.id < ledger.id
+                 )
+               GROUP BY assets.symbol
+           ) activity
+           GROUP BY activity.asset_symbol
+           ORDER BY activity.asset_symbol ASC"#,
+    )
+    .bind(user_id)
+    .bind(period_start_at)
+    .bind(calculated_at)
+    .bind(user_id)
+    .bind(period_start_at)
+    .bind(calculated_at)
+    .bind(user_id)
+    .bind(period_start_at)
+    .bind(calculated_at)
+    .bind(user_id)
+    .bind(period_start_at)
+    .bind(calculated_at)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows)
+}
+
+/// Redis 中缺失、字段异常、交易对不匹配或时间过期的 ticker 都按缺价处理，由应用层标记 partial。
+pub(crate) async fn load_current_usdt_prices(
+    redis: &ConnectionManager,
+    asset_symbols: &[String],
+    calculated_at: DateTime<Utc>,
+) -> AppResult<BTreeMap<String, BigDecimal>> {
+    if asset_symbols.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+
+    let keys = asset_symbols
+        .iter()
+        .map(|asset_symbol| market_ticker_redis_key(&format!("{asset_symbol}USDT")))
+        .collect::<Vec<_>>();
+    let mut connection = redis.clone();
+    let payloads: Vec<Option<String>> = connection.mget(keys).await?;
+    let prices = asset_symbols
+        .iter()
+        .zip(payloads)
+        .filter_map(|(asset_symbol, payload)| {
+            let payload = payload?;
+            today_return_ticker_price_if_current(asset_symbol, &payload, calculated_at)
+                .map(|price| (asset_symbol.clone(), price))
+        })
+        .collect();
+
+    Ok(prices)
+}
+
+/// 今日收益只接受与 Redis key 对应、价格为正且时间新鲜的行情，异常缓存统一按缺价处理。
+pub(crate) fn today_return_ticker_price_if_current(
+    asset_symbol: &str,
+    payload: &str,
+    calculated_at: DateTime<Utc>,
+) -> Option<BigDecimal> {
+    let ticker = serde_json::from_str::<TodayReturnTickerPayload>(payload).ok()?;
+    let expected_symbol = format!("{}USDT", asset_symbol.trim().to_ascii_uppercase());
+    if ticker.symbol.trim().to_ascii_uppercase() != expected_symbol || ticker.last_price <= 0 {
+        return None;
+    }
+
+    let allowed_clock_distance = chrono::TimeDelta::seconds(TODAY_RETURN_TICKER_MAX_AGE_SECONDS);
+    if ticker.observed_at < calculated_at - allowed_clock_distance
+        || ticker.observed_at > calculated_at
+    {
+        return None;
+    }
+
+    Some(ticker.last_price)
+}
+
 pub(crate) async fn list_wallet_ledger(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -2117,3 +2298,7 @@ fn wallet_ledger_entry_response(row: WalletLedgerEntryRow) -> WalletLedgerEntryR
         created_at: row.created_at,
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit_src/src_modules_wallet_infrastructure_tests.rs"]
+mod tests;

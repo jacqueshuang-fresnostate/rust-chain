@@ -1,0 +1,8 @@
+{"file":".trellis/spec/mobile/index.md","reason":"核查 Header、手机宽度、共享组件与图表实现符合移动端总规范。"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"核查安全区、sticky 层级、滚动、PWA/Tauri 构建和设备体验。"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"核查 REST/WebSocket 生命周期、竞态隔离、实时 K 线权威和下单提交边界。"}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"核查历史页路由、右上角 push、直接打开返回兜底、底栏隐藏和 i18n 合同。"}
+{"file":".trellis/spec/backend/seconds-contracts.md","reason":"核查并行开仓未破坏钱包锁、幂等和结算合同。"}
+{"file":".trellis/tasks/08-08-mobile-seconds-header-live-multi-orders/research/mobile-header-live.md","reason":"据根因研究检查 Header、实时订阅和多订单实现完整性。"}
+{"file":".trellis/tasks/08-08-mobile-seconds-header-live-multi-orders/research/backend-multi-orders.md","reason":"据后端研究检查无多余 schema/API 改动并保留并发合同。"}
+{"file":".trellis/tasks/08-08-mobile-seconds-header-live-multi-orders/research/pc-seconds-reference.md","reason":"据参考实现检查逐单倒计时、到期去重和内部行情链路。"}

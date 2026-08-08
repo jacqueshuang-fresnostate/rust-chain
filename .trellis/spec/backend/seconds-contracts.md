@@ -159,6 +159,7 @@ validate_product_stake(&stake_amount, &product)?;
 - PC order requests must send `product_id` plus `duration_seconds` when choosing a cycle from `cycles`.
 - PC current-position filtering depends on `order.symbol`; do not return orders with only `pair_id`.
 - PC seconds pair selector must use `/api/v1/seconds-contracts/products` as the tradable-pair source. It may enrich those symbols through per-symbol market ticker endpoints, but must not load `/api/v1/markets` to build the seconds pair list.
+- `GET /api/v1/seconds-contracts/products` is a public active-product catalog so guest mobile/PC views can render truthful products and market data. User authentication remains mandatory for listing or opening orders; admin product and settlement routes retain admin scope.
 
 ### 4. Validation & Error Matrix
 
@@ -183,6 +184,7 @@ validate_product_stake(&stake_amount, &product)?;
 - Route test: admin order list/detail responses include `email`, `symbol`, and `settlement_price`.
 - Worker test: auto settlement stores and broadcasts `settlement_price`.
 - Route test: unsupported cycle duration is rejected.
+- Route test: the active-product catalog reaches the product use case without an Authorization header, while order routes still reject unauthenticated requests.
 - PC adapter test: product `cycles` flatten to selectable PC cycles with `productId` preserved.
 - PC adapter test: seconds products map to unique PC ticker rows; duplicate cycle products collapse to one symbol, disabled products are ignored, and product `logo_url` becomes ticker `icon`.
 - Admin UI test: create/edit submits one product request with a `cycles` array.

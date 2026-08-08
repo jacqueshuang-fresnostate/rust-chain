@@ -28,6 +28,7 @@ const QuickRechargeView = () => import('@/views/QuickRechargeView.vue')
 const RegisterView = () => import('@/views/RegisterView.vue')
 const ReferralsView = () => import('@/views/ReferralsView.vue')
 const SecurityView = () => import('@/views/SecurityView.vue')
+const SecondsHistoryView = () => import('@/views/SecondsHistoryView.vue')
 const SecondsView = () => import('@/views/SecondsView.vue')
 const SwapView = () => import('@/views/SwapView.vue')
 const EarnView = () => import('@/views/EarnView.vue')
@@ -56,6 +57,7 @@ const router = createRouter({
     { path: '/products/new-coins/:symbol', name: 'new-coin-detail', component: NewCoinDetailView, props: true, meta: { showBottomNav: false, depth: 3, backFallback: '/products/new-coins' } },
     { path: '/products/prediction', name: 'prediction', component: PredictionView, meta: { showBottomNav: false, depth: 2, backFallback: '/products' } },
     { path: '/seconds', alias: '/products/seconds', name: 'seconds', component: SecondsView, meta: { showBottomNav: false, depth: 1, backFallback: '/' } },
+    { path: '/seconds/history', name: 'seconds-history', component: SecondsHistoryView, meta: { showBottomNav: false, depth: 2, backFallback: '/seconds' } },
     { path: '/orders', name: 'orders', component: OrdersView, meta: { depth: 1, backFallback: '/' } },
     { path: '/profile', name: 'profile', component: ProfileView, meta: { depth: 0 } },
     { path: '/profile/help', name: 'help-support', component: HelpSupportView, meta: { showBottomNav: false, depth: 1, backFallback: '/profile' } },

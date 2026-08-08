@@ -45,7 +45,8 @@ test('访客主页使用 tracked 明暗 Hero，登录后才展示真实资产与
   assert.match(homeSource, /const portfolioSamples = ref<number\[\]>\(\[\]\)/)
   assert.match(homeSource, /if \(!ready \|\| !complete \|\| !Number\.isFinite\(value\)\) return/)
   assert.match(homeSource, /v-if="portfolioGeometry"[\s\S]*:d="portfolioGeometry\.path"/)
-  assert.match(homeSource, /rootPrototype\.todayReturn[\s\S]*<strong class="numeric">--<\/strong>/)
+  assert.match(homeSource, /rootPrototype\.todayReturn[\s\S]*displayedTodayReturnAmount/)
+  assert.match(homeSource, /data-today-return-status="todayReturnState"/)
   assert.doesNotMatch(homeSource, /M0 67 C28 62|fallbackReturn|mockPortfolio|demo(?:Data|Portfolio)/i)
 })
 

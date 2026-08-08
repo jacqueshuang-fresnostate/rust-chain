@@ -15,6 +15,9 @@ const SOCKET_OPEN = 1
 const RECONNECT_BASE_MS = 1_000
 const RECONNECT_MAX_MS = 30_000
 const HEARTBEAT_MS = 25_000
+const DEFAULT_DETAIL_CHANNELS = ['depth', 'trade', 'kline'] as const
+
+export type MarketDetailStreamChannel = (typeof DEFAULT_DETAIL_CHANNELS)[number]
 
 interface MarketDetailSocketEventMap {
   open: unknown
@@ -46,6 +49,7 @@ export interface MarketDetailStreamOptions {
   symbol: string
   interval: string
   url: string
+  channels?: readonly MarketDetailStreamChannel[]
   onDepth(snapshot: { bids: OrderBookLevel[]; asks: OrderBookLevel[] }): void
   onTrade(trade: TradePrint): void
   onKline(point: KlinePoint): void
@@ -73,6 +77,7 @@ export interface MarketDetailKlineRequest {
 
 export interface MarketDetailStreamSessionOptions {
   getUrl(): string
+  channels?: readonly MarketDetailStreamChannel[]
   onDepth(
     context: MarketDetailStreamContext,
     snapshot: { bids: OrderBookLevel[]; asks: OrderBookLevel[] },
@@ -129,7 +134,8 @@ function createBrowserSocket(url: string): MarketDetailSocket | null {
 export function startMarketDetailStream(options: MarketDetailStreamOptions): () => void {
   const symbol = normalizeMarketSocketSymbol(options.symbol)
   const interval = normalizeMarketKlineInterval(options.interval)
-  if (!symbol || !interval || !options.url.trim()) return () => undefined
+  const channels = normalizeDetailChannels(options.channels)
+  if (!symbol || !interval || !options.url.trim() || channels.size === 0) return () => undefined
 
   const scheduler = options.scheduler ?? defaultScheduler
   const createSocket = options.createSocket ?? createBrowserSocket
@@ -243,9 +249,9 @@ export function startMarketDetailStream(options: MarketDetailStreamOptions): () 
       reconnectAttempt = 0
       clearHeartbeat()
       try {
-        next.send(depthSubscriptionFrame(symbol))
-        next.send(tradeSubscriptionFrame(symbol))
-        next.send(klineSubscriptionFrame(symbol, interval))
+        if (channels.has('depth')) next.send(depthSubscriptionFrame(symbol))
+        if (channels.has('trade')) next.send(tradeSubscriptionFrame(symbol))
+        if (channels.has('kline')) next.send(klineSubscriptionFrame(symbol, interval))
       } catch {
         closeAfterFailure()
         return
@@ -264,7 +270,7 @@ export function startMarketDetailStream(options: MarketDetailStreamOptions): () 
       if (!active || socket !== next || disconnected) return
       const frame = parseMarketSocketFrame(event.data)
       if (!frame || normalizeFrameSymbol(frame) !== symbol) return
-      if (frame.type === 'depth') {
+      if (frame.type === 'depth' && channels.has('depth')) {
         pendingDepth = { bids: frame.bids, asks: frame.asks }
         if (depthFrameToken !== null) return
         const frameToken = {}
@@ -279,9 +285,9 @@ export function startMarketDetailStream(options: MarketDetailStreamOptions): () 
           options.onDepth(snapshot)
         })
         if (depthFrameToken === frameToken) depthFrame = scheduledFrame
-      } else if (frame.type === 'trade') {
+      } else if (frame.type === 'trade' && channels.has('trade')) {
         options.onTrade(frame.trade)
-      } else if (frame.type === 'kline' && frame.interval === interval) {
+      } else if (frame.type === 'kline' && channels.has('kline') && frame.interval === interval) {
         pendingKline = frame.point
         if (klineFrameToken !== null) return
         const frameToken = {}
@@ -391,6 +397,7 @@ export function createMarketDetailStreamSession(
         symbol: context.symbol,
         interval: context.interval,
         url: options.getUrl(),
+        channels: options.channels,
         onDepth: (snapshot) => {
           if (!isCurrent(context)) return
           context.depthReceived = true
@@ -470,4 +477,10 @@ function positiveDelay(value: number | undefined, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
     ? Math.floor(value)
     : fallback
+}
+
+function normalizeDetailChannels(
+  channels: readonly MarketDetailStreamChannel[] | undefined,
+): Set<MarketDetailStreamChannel> {
+  return new Set(channels ?? DEFAULT_DETAIL_CHANNELS)
 }

@@ -10,23 +10,30 @@ use crate::{
         security::{SecurityAction, SecurityVerificationInput, verify_user_security_action},
         wallet::{
             amount_fits_asset_precision, infrastructure,
-            infrastructure::WalletLedgerFilter,
+            infrastructure::{TodayReturnAssetActivityRow, WalletLedgerFilter},
             presentation::{
                 AdminWalletListQuery, AdminWalletWithdrawalsResponse, BroadcastWithdrawalRequest,
                 ConfirmWithdrawalRequest, CreateWithdrawalRequest, DepositAddressRequest,
                 DepositAddressResponse, DepositAssetResponse, DepositNetworkResponse,
                 DepositNetworksQuery, FailWithdrawalRequest, ObserveDepositRequest,
-                ReverseDepositRequest, ReviewWithdrawalRequest, WalletAccountResponse,
-                WalletDepositEventResponse, WalletDepositsResponse, WalletLedgerQuery,
-                WalletLedgerResponse, WalletWithdrawalQuery, WalletWithdrawalResponse,
-                WithdrawalRequestResponse,
+                ReverseDepositRequest, ReviewWithdrawalRequest, TodayReturnResponse,
+                TodayReturnStatus, WalletAccountResponse, WalletDepositEventResponse,
+                WalletDepositsResponse, WalletLedgerQuery, WalletLedgerResponse,
+                WalletWithdrawalQuery, WalletWithdrawalResponse, WithdrawalRequestResponse,
             },
+            truncate_amount_to_asset_precision,
         },
     },
     state::AppState,
 };
 use bigdecimal::BigDecimal;
+use chrono::{DateTime, Utc};
+use redis::aio::ConnectionManager;
 use sqlx::{MySql, Pool};
+use std::collections::{BTreeMap, BTreeSet};
+
+const TODAY_RETURN_REPORTING_ASSET: &str = "USDT";
+const TODAY_RETURN_REPORTING_SCALE: i32 = 18;
 
 pub(crate) async fn list_deposit_assets(
     pool: &Pool<MySql>,
@@ -124,6 +131,129 @@ pub(crate) async fn list_wallet_accounts(
     user_id: u64,
 ) -> AppResult<Vec<WalletAccountResponse>> {
     infrastructure::list_wallet_accounts(pool, user_id).await
+}
+
+pub(crate) async fn get_today_return(
+    pool: &Pool<MySql>,
+    redis: Option<&ConnectionManager>,
+    user_id: u64,
+) -> AppResult<TodayReturnResponse> {
+    get_today_return_at(pool, redis, user_id, Utc::now()).await
+}
+
+pub(crate) async fn get_today_return_at(
+    pool: &Pool<MySql>,
+    redis: Option<&ConnectionManager>,
+    user_id: u64,
+    calculated_at: DateTime<Utc>,
+) -> AppResult<TodayReturnResponse> {
+    let period_start_at = utc_day_start(&calculated_at);
+    let activity = infrastructure::load_today_return_asset_activity(
+        pool,
+        user_id,
+        period_start_at,
+        calculated_at,
+    )
+    .await?;
+    let priced_assets = activity
+        .iter()
+        .filter(|row| {
+            (row.amount != BigDecimal::from(0) || row.basis_amount != BigDecimal::from(0))
+                && !is_stablecoin(&row.asset_symbol)
+        })
+        .map(|row| row.asset_symbol.trim().to_ascii_uppercase())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let prices = match redis {
+        Some(redis) => {
+            infrastructure::load_current_usdt_prices(redis, &priced_assets, calculated_at).await?
+        }
+        None => BTreeMap::new(),
+    };
+
+    Ok(calculate_today_return(
+        activity,
+        &prices,
+        period_start_at,
+        calculated_at,
+    ))
+}
+
+pub(crate) fn calculate_today_return(
+    activity: Vec<TodayReturnAssetActivityRow>,
+    prices: &BTreeMap<String, BigDecimal>,
+    period_start_at: DateTime<Utc>,
+    calculated_at: DateTime<Utc>,
+) -> TodayReturnResponse {
+    let zero = BigDecimal::from(0);
+    let mut amount = zero.clone();
+    let mut basis_amount = zero.clone();
+    let mut missing_price_assets = BTreeSet::new();
+
+    for row in activity {
+        let asset_symbol = row.asset_symbol.trim().to_ascii_uppercase();
+        let has_value = row.amount != zero || row.basis_amount != zero;
+        if !has_value {
+            continue;
+        }
+        let price = if is_stablecoin(&asset_symbol) {
+            Some(BigDecimal::from(1))
+        } else {
+            prices.get(&asset_symbol).cloned()
+        };
+        let Some(price) = price else {
+            missing_price_assets.insert(asset_symbol);
+            continue;
+        };
+
+        amount += row.amount * price.clone();
+        basis_amount += row.basis_amount * price;
+    }
+
+    let amount = truncate_amount_to_asset_precision(&amount, TODAY_RETURN_REPORTING_SCALE);
+    let basis_amount =
+        truncate_amount_to_asset_precision(&basis_amount, TODAY_RETURN_REPORTING_SCALE);
+    let rate = if basis_amount > zero {
+        truncate_amount_to_asset_precision(
+            &(amount.clone() / basis_amount.clone()),
+            TODAY_RETURN_REPORTING_SCALE,
+        )
+    } else {
+        zero.with_scale(TODAY_RETURN_REPORTING_SCALE as i64)
+    };
+    let status = if missing_price_assets.is_empty() {
+        TodayReturnStatus::Complete
+    } else {
+        TodayReturnStatus::Partial
+    };
+
+    TodayReturnResponse {
+        scope: "realized",
+        reporting_asset: TODAY_RETURN_REPORTING_ASSET,
+        amount,
+        basis_amount,
+        rate,
+        period_start_at,
+        calculated_at,
+        status,
+        missing_price_assets: missing_price_assets.into_iter().collect(),
+    }
+}
+
+pub(crate) fn utc_day_start(calculated_at: &DateTime<Utc>) -> DateTime<Utc> {
+    calculated_at
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .expect("UTC calendar day start is always valid")
+        .and_utc()
+}
+
+fn is_stablecoin(asset_symbol: &str) -> bool {
+    matches!(
+        asset_symbol.trim().to_ascii_uppercase().as_str(),
+        "USDT" | "USDC" | "USD"
+    )
 }
 
 pub(crate) async fn list_wallet_ledger(

@@ -34,18 +34,18 @@ test('交易页保留现货、合约和 mode 路由合同', () => {
   assert.match(tradeSource, /class="chart-semantic-summary"/)
 })
 
-test('秒合约页保留真实产品、钱包、下单和历史合同', () => {
-  assert.match(secondsSource, /const productsRequest = fetchSecondsProducts\(\)/)
-  assert.match(secondsSource, /const \[nextProducts, nextOrders, nextAccounts\] = session\.isAuthenticated/)
-  assert.match(secondsSource, /await Promise\.all\(\[productsRequest, fetchSecondsOrders\(\), fetchWalletAccounts\(\)\]\)/)
-  assert.match(secondsSource, /\[await productsRequest, \[\], \[\]\] as \[SecondsProduct\[\], SecondsOrder\[\], WalletAccount\[\]\]/)
+test('秒合约页保留真实产品、钱包、下单和活动订单合同', () => {
+  assert.match(secondsSource, /const nextProducts = await fetchSecondsProducts\(\)/)
+  assert.match(secondsSource, /const privateStatePromise:[\s\S]*?session\.isAuthenticated[\s\S]*?Promise\.allSettled\(\[fetchSecondsOrders\(100\), fetchWalletAccounts\(\)\]\)/)
+  assert.match(secondsSource, /if \(!privateResults\) \{\s*orders\.value = \[\]\s*accounts\.value = \[\]/)
   assert.match(secondsSource, /await openSecondsOrder\(\{\s*productId: selected\.value\.id,\s*durationSeconds: cycle\.value\.durationSeconds,\s*direction: direction\.value,\s*stakeAmount: amountNumber\.value,/)
   assert.match(secondsSource, /class="seconds-direction-grid"/)
   assert.match(secondsSource, /class="seconds-duration-grid"/)
   assert.match(secondsSource, /class="[^"]*seconds-amount-field[^"]*"/)
-  assert.match(secondsSource, /class="[^"]*seconds-orders[^"]*"/)
+  assert.match(secondsSource, /data-active-order-list="all"/)
   assert.match(secondsSource, /selected && session\.isAuthenticated && account/)
-  assert.match(secondsSource, /session\.isAuthenticated \? orders\.length : '--'/)
+  assert.match(secondsSource, /router\.push\(\{ name: 'seconds-history' \}\)/)
+  assert.doesNotMatch(secondsSource, /seconds-session-records|seconds-orders|ordersSection|scrollToOrders/)
   assert.doesNotMatch(secondsSource, /cancelSecondsOrder|\/seconds-contracts\/orders\/\$\{[^}]+\}\/cancel/)
 })
 

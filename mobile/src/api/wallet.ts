@@ -1,6 +1,18 @@
 import { client, requestUrl } from './client'
 import { asNumber } from '@/core/format'
+import {
+  mapTodayReturn,
+  type BackendTodayReturn,
+  type TodayReturn,
+} from '@/core/todayReturn'
 import type { DepositAddress, DepositAsset, DepositNetwork, WalletAccount } from '@/core/types'
+
+export {
+  createTodayReturnRequestLifecycle,
+  isCompleteTodayReturn,
+  mapTodayReturn,
+} from '@/core/todayReturn'
+export type { TodayReturn, TodayReturnStatus } from '@/core/todayReturn'
 
 export interface WithdrawalAsset extends DepositAsset {
   withdrawEnabled: boolean
@@ -178,6 +190,11 @@ export async function fetchWalletAccounts(): Promise<WalletAccount[]> {
     frozen: asNumber(account.frozen),
     locked: asNumber(account.locked),
   }))
+}
+
+export async function fetchTodayReturn(): Promise<TodayReturn> {
+  const response = await client.get<BackendTodayReturn>(requestUrl('/wallet/today-return'))
+  return mapTodayReturn(response.data)
 }
 
 export async function submitWithdrawal(input: { assetSymbol: string; network?: string; address: string; amount: number; fee: number; fundPassword?: string; totpCode?: string }): Promise<void> {

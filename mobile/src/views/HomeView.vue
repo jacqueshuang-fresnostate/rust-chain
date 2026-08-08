@@ -26,7 +26,13 @@ import guestHeroDark from '@/assets/home/market-hero-dark.jpg'
 import guestHeroLight from '@/assets/home/market-hero-light.jpg'
 import { fetchNews } from '@/api/news'
 import { fetchMarginWallets } from '@/api/trading'
-import { fetchWalletAccounts } from '@/api/wallet'
+import {
+  createTodayReturnRequestLifecycle,
+  fetchTodayReturn,
+  fetchWalletAccounts,
+  isCompleteTodayReturn,
+  type TodayReturn,
+} from '@/api/wallet'
 import { formatAmount, formatPercent, formatPrice } from '@/core/format'
 import { useMarketStore } from '@/stores/market'
 import { useMarketFavoritesStore } from '@/stores/marketFavorites'
@@ -52,6 +58,12 @@ const spotAccounts = ref<WalletAccount[]>([])
 const marginAccounts = ref<WalletAccount[]>([])
 const assetEstimateReady = ref(false)
 const portfolioSamples = ref<number[]>([])
+const todayReturn = ref<TodayReturn | null>(null)
+const todayReturnState = ref<'idle' | 'loading' | 'complete' | 'partial' | 'error'>('idle')
+const todayReturnRequestLifecycle = createTodayReturnRequestLifecycle({
+  sessionKey: () => session.token,
+  fetchTodayReturn,
+})
 
 const tabs = computed(() => [
   { key: 'favorites' as const, label: t('home.favorites') },
@@ -108,6 +120,39 @@ const displayedAssetAmount = computed(() => (
     ? formatAmount(totalAssetEstimate.value)
     : '--'
 ))
+
+const displayedTodayReturnAmount = computed(() => {
+  if (!assetVisible.value) return '••••'
+  const value = todayReturn.value
+  if (todayReturnState.value !== 'complete' || !isCompleteTodayReturn(value)) return '--'
+  const sign = value.amount > 0 ? '+' : ''
+  return `${sign}${formatAmount(value.amount)} ${value.reportingAsset}`
+})
+
+const displayedTodayReturnDetail = computed(() => {
+  if (!assetVisible.value) return '••••'
+  const value = todayReturn.value
+  if (todayReturnState.value === 'complete' && isCompleteTodayReturn(value)) {
+    return formatPercent(value.rate * 100)
+  }
+  if (todayReturnState.value === 'loading') return t('home.todayReturnLoading')
+  if (todayReturnState.value === 'partial') {
+    const assets = value?.missingPriceAssets.join(', ')
+    return assets
+      ? t('home.todayReturnPartial', { assets })
+      : t('home.todayReturnPartialUnknown')
+  }
+  if (todayReturnState.value === 'error') return t('home.todayReturnUnavailable')
+  return '--'
+})
+
+const todayReturnTone = computed(() => {
+  const value = todayReturn.value
+  if (!assetVisible.value || todayReturnState.value !== 'complete' || !isCompleteTodayReturn(value)) return ''
+  if (value.amount > 0) return 'positive'
+  if (value.amount < 0) return 'negative'
+  return ''
+})
 
 const portfolioGeometry = computed(() => {
   const values = portfolioSamples.value
@@ -186,6 +231,31 @@ async function loadAssetEstimate(): Promise<void> {
   }
 }
 
+async function loadTodayReturn(): Promise<void> {
+  if (!session.token) {
+    todayReturn.value = null
+    todayReturnState.value = 'idle'
+    return
+  }
+
+  todayReturn.value = null
+  todayReturnState.value = 'loading'
+  const result = await todayReturnRequestLifecycle.load()
+  if (result.state === 'stale') return
+  if (result.state === 'guest') {
+    todayReturn.value = null
+    todayReturnState.value = 'idle'
+    return
+  }
+  if (result.state === 'loaded') {
+    todayReturn.value = result.value
+    todayReturnState.value = result.value.status
+    return
+  }
+  todayReturn.value = null
+  todayReturnState.value = 'error'
+}
+
 async function refreshMarkets(force = false): Promise<void> {
   await marketStore.refresh(force)
   marketStore.startLiveUpdates()
@@ -195,9 +265,16 @@ onMounted(async () => {
   void loadAnnouncements()
   await refreshMarkets()
 })
-onUnmounted(() => marketStore.stopLiveUpdates())
+onUnmounted(() => {
+  todayReturnRequestLifecycle.stop()
+  marketStore.stopLiveUpdates()
+})
 watch(locale, () => { void loadAnnouncements() })
 watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immediate: true })
+watch(() => session.token, () => {
+  todayReturnRequestLifecycle.invalidate()
+  void loadTodayReturn()
+}, { immediate: true })
 watch(
   [
     () => session.isAuthenticated,
@@ -285,10 +362,15 @@ watch(
               <small> USDT</small>
             </strong>
           </div>
-          <div class="portfolio-change">
+          <div
+            class="portfolio-change"
+            :data-today-return-status="todayReturnState"
+            :aria-busy="todayReturnState === 'loading'"
+            aria-live="polite"
+          >
             <span>{{ t('rootPrototype.todayReturn') }}</span>
-            <strong class="numeric">--</strong>
-            <small class="numeric">--</small>
+            <strong class="numeric" :class="todayReturnTone">{{ displayedTodayReturnAmount }}</strong>
+            <small class="numeric" :class="todayReturnTone">{{ displayedTodayReturnDetail }}</small>
           </div>
         </div>
         <div

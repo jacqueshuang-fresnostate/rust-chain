@@ -1,0 +1,6 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Mobile 44px controls, responsive layout, accessibility and quality-gate contracts"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Teleported fixed overlays, transformed route hosts, dynamic viewport, safe-area and modal contracts"}
+{"file":".trellis/tasks/08-08-mobile-seconds-confirm-dialog-viewport/prd.md","reason":"Exact viewport containment, fixed action and scrolling body acceptance criteria"}
+{"file":"mobile/tests/award-ui-trading-workspaces.test.ts","reason":"Keep workspace fixed-position guards while explicitly validating the Teleported seconds confirmation mask"}
+{"file": "mobile/src/views/SecondsView.vue", "reason": "Implement Teleported viewport shell and fixed action layout"}
+{"file": "mobile/tests/pencil-trading-product-selected-parity.test.ts", "reason": "Add source and compiled scoped CSS contracts for the seconds confirmation sheet"}

@@ -190,6 +190,28 @@ pub struct WalletAccountsResponse {
     pub accounts: Vec<WalletAccountResponse>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum TodayReturnStatus {
+    Complete,
+    Partial,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct TodayReturnResponse {
+    pub(crate) scope: &'static str,
+    pub(crate) reporting_asset: &'static str,
+    pub(crate) amount: BigDecimal,
+    pub(crate) basis_amount: BigDecimal,
+    pub(crate) rate: BigDecimal,
+    #[serde(with = "unix_millis")]
+    pub(crate) period_start_at: DateTime<Utc>,
+    #[serde(with = "unix_millis")]
+    pub(crate) calculated_at: DateTime<Utc>,
+    pub(crate) status: TodayReturnStatus,
+    pub(crate) missing_price_assets: Vec<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct WalletAccountResponse {
     pub user_id: u64,

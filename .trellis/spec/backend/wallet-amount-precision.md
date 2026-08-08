@@ -67,3 +67,41 @@ let to_amount = truncate_amount_to_asset_precision(&raw_to_amount, to_asset.prec
 - Unit-test range matching, boundary behavior, fallback behavior, and overlap rejection.
 - Route-test that a withdrawal request stores the server-calculated tiered fee, not the client-submitted `fee`.
 - Frontend tests should cover PC fee preview and admin asset payload round-trip.
+
+## Scenario: UTC Realized Today Return
+
+### Contracts
+
+- `GET /api/v1/wallet/today-return` requires `UserAuth` and derives the user ID
+  only from the token.
+- Aggregate UTC-day Seconds win/loss, Prediction payout/refund net of stake and
+  fee, Margin `closed` and `liquidated` rows as
+  `realized_pnl - interest_amount`, and Earn `earn_redeem` credit minus
+  principal. Exclude deposits, withdrawals, transfers, canceled/open margin
+  positions, spot cost basis, and unrealized PnL.
+- Basis is Seconds stake, Prediction stake plus fee, Margin margin amount, and
+  Earn subscribed principal. A refunded Prediction order keeps its original
+  stake-plus-fee basis; refund and fee-refund change return amount, not the
+  capital basis.
+- Report in USDT. USDT, USDC, and USD use parity; every other non-zero
+  amount/basis requires the current `{ASSET}USDT` Redis ticker.
+- A current ticker must have the expected `{ASSET}USDT` symbol, a positive
+  decimal `last_price`, and numeric `observed_at` within 60 seconds of the
+  calculation cut-off. Missing, malformed, mismatched, non-positive, stale, or
+  future tickers produce `status=partial` plus sorted
+  `missing_price_assets`.
+- Join Earn redemption ledger rows by user, asset, ref type, and subscription
+  id. If historical data contains duplicate `earn_redeem` rows for one
+  subscription, only the earliest authoritative row contributes so principal
+  and yield are not counted twice.
+- No realized activity is `status=complete` with true zero amount, basis, and
+  rate even when Redis is absent.
+- Reporting amounts and rate are truncated toward zero to 18 digits; rate is
+  `amount / basis_amount` for positive basis, otherwise zero.
+
+### Tests Required
+
+- Authentication/current-user scope for every union branch, UTC boundaries,
+  positive/negative/zero, Prediction refunds, manual close and liquidation
+  interest, Earn duplicate-ledger isolation, stablecoin parity, fresh/invalid/
+  stale Redis valuation, partial status, and excluded cash flows.

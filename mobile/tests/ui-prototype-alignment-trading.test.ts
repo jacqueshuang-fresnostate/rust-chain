@@ -57,10 +57,10 @@ test('现货和合约工作台保留真实数据链路并提供完整下单面',
 })
 
 test('秒合约保持独立真实产品工作台和市场参考价', () => {
-  assert.match(secondsSource, /const productsRequest = fetchSecondsProducts\(\)/)
-  assert.match(secondsSource, /session\.isAuthenticated\s*\?\s*await Promise\.all\(\[productsRequest, fetchSecondsOrders\(\), fetchWalletAccounts\(\)\]\)\s*:\s*\[await productsRequest, \[\], \[\]\]/)
+  assert.match(secondsSource, /const nextProducts = await fetchSecondsProducts\(\)/)
+  assert.match(secondsSource, /session\.isAuthenticated\s*\? Promise\.allSettled\(\[fetchSecondsOrders\(100\), fetchWalletAccounts\(\)\]\)\s*:\s*Promise\.resolve\(null\)/)
   assert.match(secondsSource, /marketStore\.tickerFor\(selected\.value\?\.symbol \|\| ''\)/)
-  assert.match(secondsSource, /selectedTicker \? formatPrice\(selectedTicker\.lastPrice\) : '--'/)
+  assert.match(secondsSource, /selectedLatestPrice > 0 \? formatPrice\(selectedLatestPrice\) : '--'/)
   assert.match(secondsSource, /class="seconds-market-board"/)
   assert.match(secondsSource, /class="seconds-direction-grid"/)
   assert.match(secondsSource, /class="seconds-duration-grid"/)

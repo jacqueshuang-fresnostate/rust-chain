@@ -855,8 +855,7 @@ onUnmounted(() => {
 .market-detail__rail button:focus-visible,
 .market-detail__intervals button:focus-visible,
 .market-detail__data-tabs button:focus-visible,
-.market-detail__actions button:focus-visible,
-.market-detail__chart-toggle:focus-visible {
+.market-detail__actions button:focus-visible {
   box-shadow: inset 0 0 0 2px var(--focus);
   outline: none;
 }
@@ -1078,22 +1077,50 @@ onUnmounted(() => {
   position: relative;
 }
 
-.market-detail__chart-toggle {
+/* Outrank the legacy dark-theme box-shadow bridge in prototype-parity.css. */
+.market-detail .market-detail__chart > button.market-detail__chart-toggle {
   align-items: center;
-  background: color-mix(in srgb, var(--detail-ink) 4%, var(--detail-surface));
-  border: 1px solid color-mix(in srgb, var(--detail-muted) 36%, var(--detail-line));
-  border-radius: 8px;
-  box-shadow: 0 5px 12px color-mix(in srgb, var(--detail-ink) 10%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(145%);
+  backdrop-filter: blur(14px) saturate(145%);
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--detail-surface) 82%, transparent) 0%,
+    color-mix(in srgb, var(--detail-background) 58%, transparent) 100%
+  );
+  border: 1px solid color-mix(in srgb, var(--detail-line) 72%, var(--detail-ink));
+  border-radius: 12px;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--detail-surface) 92%, var(--detail-ink)),
+    0 8px 18px color-mix(in srgb, var(--detail-background) 46%, transparent),
+    0 2px 6px color-mix(in srgb, var(--detail-ink) 10%, transparent);
   color: var(--detail-ink);
   display: flex;
-  height: 32px;
+  height: 44px;
   justify-content: center;
+  left: 16px;
   padding: 0;
   position: absolute;
-  right: 16px;
   top: 12px;
-  width: 32px;
+  transition: background 140ms ease, box-shadow 140ms ease, transform 100ms ease;
+  width: 44px;
   z-index: 4;
+}
+
+.market-detail .market-detail__chart > button.market-detail__chart-toggle:active {
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--detail-surface) 88%, var(--detail-ink)),
+    0 3px 9px color-mix(in srgb, var(--detail-background) 42%, transparent),
+    0 1px 3px color-mix(in srgb, var(--detail-ink) 10%, transparent);
+  transform: translateY(1px);
+}
+
+.market-detail .market-detail__chart > button.market-detail__chart-toggle:focus-visible {
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--detail-surface) 92%, var(--detail-ink)),
+    0 8px 18px color-mix(in srgb, var(--detail-background) 46%, transparent),
+    0 2px 6px color-mix(in srgb, var(--detail-ink) 10%, transparent);
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
 }
 
 .market-detail__indicator-legend {
@@ -1164,8 +1191,8 @@ onUnmounted(() => {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
-.market-detail__chart-panel.is-expanded .market-detail__chart-toggle {
-  right: 10px;
+.market-detail__chart-panel.is-expanded .market-detail__chart > button.market-detail__chart-toggle {
+  left: 10px;
   top: 8px;
 }
 
@@ -1457,6 +1484,14 @@ onUnmounted(() => {
   .market-detail *::after {
     scroll-behavior: auto;
     transition: none;
+  }
+
+  .market-detail .market-detail__chart > button.market-detail__chart-toggle {
+    transition: none;
+  }
+
+  .market-detail .market-detail__chart > button.market-detail__chart-toggle:active {
+    transform: none;
   }
 
   .spin {

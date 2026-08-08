@@ -43,8 +43,25 @@ export function marketSubscriptionFrame(
   symbol: string,
   interval?: string,
 ): string {
+  return marketSubscriptionCommandFrame('subscribe', channel, symbol, interval)
+}
+
+export function marketUnsubscriptionFrame(
+  channel: MarketSocketChannel,
+  symbol: string,
+  interval?: string,
+): string {
+  return marketSubscriptionCommandFrame('unsubscribe', channel, symbol, interval)
+}
+
+function marketSubscriptionCommandFrame(
+  operation: 'subscribe' | 'unsubscribe',
+  channel: MarketSocketChannel,
+  symbol: string,
+  interval?: string,
+): string {
   const payload: Record<string, string> = {
-    op: 'subscribe',
+    op: operation,
     channel,
     symbol: normalizeMarketSocketSymbol(symbol),
   }
@@ -58,6 +75,10 @@ export function marketSubscriptionFrame(
 
 export function tickerSubscriptionFrame(symbol: string): string {
   return marketSubscriptionFrame('ticker', symbol)
+}
+
+export function tickerUnsubscriptionFrame(symbol: string): string {
+  return marketUnsubscriptionFrame('ticker', symbol)
 }
 
 export function depthSubscriptionFrame(symbol: string): string {

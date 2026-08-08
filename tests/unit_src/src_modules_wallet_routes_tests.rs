@@ -90,6 +90,22 @@ async fn wallet_accounts_route_requires_user_auth() {
 }
 
 #[tokio::test]
+async fn wallet_today_return_route_requires_user_auth() {
+    let app = routes().with_state(test_state());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/wallet/today-return")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn wallet_withdrawal_route_requires_user_auth() {
     let app = routes().with_state(test_state());
     let response = app
@@ -148,6 +164,32 @@ async fn wallet_accounts_route_returns_clear_error_without_mysql() {
         .oneshot(
             Request::builder()
                 .uri("/wallet/accounts")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = to_bytes(response.into_body(), 4096).await.unwrap();
+    let payload: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["code"], "INTERNAL_ERROR");
+    assert_eq!(
+        payload["message"],
+        "internal error: mysql pool is not configured for wallet routes"
+    );
+}
+
+#[tokio::test]
+async fn wallet_today_return_route_returns_clear_error_without_mysql() {
+    let state = test_state();
+    let token = bearer_token(&state);
+    let app = routes().with_state(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/wallet/today-return")
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),

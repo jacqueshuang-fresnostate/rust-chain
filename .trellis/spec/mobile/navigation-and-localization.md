@@ -70,6 +70,11 @@ lastTradePath: ComputedRef<string>
   in the selected Home grid.
 - Drill-down pages and modals represented as routes use router `push`.
 - Every detail route defines `meta.depth`, `meta.showBottomNav: false`, and `meta.backFallback`.
+- Seconds order history is the named `seconds-history` detail route at
+  `/seconds/history`. It has depth 2, hides the Dock, falls back to `/seconds`
+  when opened directly, and is reached from the `/seconds` Header with
+  `router.push({ name: 'seconds-history' })`. The trading workspace keeps active
+  order cards but does not duplicate historical rows below the order form.
 - Message Center is one of those detail routes. The Home Bell pushes the named
   `message-center` route; `/messages` declares depth 1, hides the Dock, and
   falls back to named Home. Its custom selected-frame ArrowLeft calls
@@ -126,6 +131,8 @@ lastTradePath: ComputedRef<string>
 ### Localization
 
 - Fixed UI text must use `vue-i18n`; do not add Chinese or English literals to Vue templates or API fallback mapping.
+- A history-page title must name the business records it contains (for example,
+  Seconds order history), rather than using an ambiguous generic History label.
 - Supported app locales are `zh-CN` and `en`; the persisted key is `hippo_mobile_locale`.
 - Language changes update the Vue locale, `<html lang>`, runtime `Intl` locale, and persisted locale in one operation.
 - Locale-aware content APIs receive `currentApiLocale()` when the endpoint supports a locale parameter.
@@ -146,6 +153,8 @@ lastTradePath: ComputedRef<string>
 | Contract root selected | Open persisted symbol with `mode=contract` |
 | Seconds root selected | Open the independent named route `seconds` |
 | Home seventh product shortcut selected | Push the named `seconds` route; do not open Prediction |
+| Seconds Header history action selected | Push `/seconds/history`, hide the Dock, and preserve `/seconds` in history |
+| Seconds history is opened directly | Back replaces with `/seconds` |
 | Home Bell opens Message Center | Push `/messages`, hide the Dock, and preserve Home in history |
 | Message Center Back has usable Home history | Use router Back and return Home |
 | Message Center Back has no usable history | Replace with named Home fallback |
@@ -179,6 +188,9 @@ lastTradePath: ComputedRef<string>
 - Unit: locale normalization and app-locale to API-locale mapping.
 - Unit: dynamic prediction text preserves English and localizes supported Chinese patterns.
 - Browser: pair picker returns to the selected trade pair and preserves futures mode.
+- Router/behavior: prove Seconds -> Seconds history -> Back returns to Seconds,
+  direct-open history replaces with `/seconds`, and the Header action uses the
+  named route rather than scrolling the trading page.
 - Browser: main tabs do not remain in history; direct-open detail back uses its fallback.
 - Browser: Home Bell opens Message Center without Root Header or Dock; its
   ArrowLeft returns Home, while a direct-open message route uses the same Home

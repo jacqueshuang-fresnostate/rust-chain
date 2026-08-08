@@ -7687,8 +7687,7 @@ select:focus-visible {
   align-content: start;
 }
 
-.seconds-feedback > span,
-.seconds-session-records > p {
+.seconds-feedback > span {
   margin: 0;
   color: var(--muted);
   font-size: 10px;
@@ -7696,49 +7695,6 @@ select:focus-visible {
 
 .seconds-submit {
   width: 100%;
-}
-
-.seconds-session-records {
-  min-width: 0;
-  display: grid;
-}
-
-.seconds-session-records h2 {
-  font-size: 11px;
-}
-
-.seconds-session-records article {
-  min-width: 0;
-  display: grid;
-  gap: 6px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--line);
-}
-
-.seconds-session-records article > div {
-  min-width: 0;
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.seconds-session-records article strong,
-.seconds-session-records article span {
-  overflow-wrap: anywhere;
-  font-size: 10px;
-}
-
-.seconds-session-records article span {
-  color: var(--green);
-  text-align: right;
-}
-
-.seconds-session-records article p {
-  margin: 0;
-  overflow-wrap: anywhere;
-  color: var(--muted);
-  font-size: 9px;
-  line-height: 1.5;
 }
 
 .theme-light .seconds-direction-grid button,

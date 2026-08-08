@@ -20,6 +20,7 @@ use super::{
         create_withdrawal_request as create_withdrawal_request_use_case,
         fail_withdrawal as fail_withdrawal_use_case,
         get_or_assign_deposit_address as get_or_assign_deposit_address_use_case,
+        get_today_return as get_today_return_use_case,
         list_admin_deposits as list_admin_deposits_use_case,
         list_admin_withdrawals as list_admin_withdrawals_use_case,
         list_deposit_assets as list_deposit_assets_use_case,
@@ -37,9 +38,9 @@ use super::{
         ConfirmWithdrawalRequest, CreateWithdrawalRequest, DepositAddressRequest,
         DepositAddressResponse, DepositAssetsResponse, DepositNetworksQuery,
         DepositNetworksResponse, FailWithdrawalRequest, ObserveDepositRequest,
-        ReverseDepositRequest, ReviewWithdrawalRequest, WalletAccountsResponse,
-        WalletDepositEventResponse, WalletDepositsResponse, WalletLedgerQuery,
-        WalletLedgerResponse, WalletWithdrawalQuery, WalletWithdrawalResponse,
+        ReverseDepositRequest, ReviewWithdrawalRequest, TodayReturnResponse,
+        WalletAccountsResponse, WalletDepositEventResponse, WalletDepositsResponse,
+        WalletLedgerQuery, WalletLedgerResponse, WalletWithdrawalQuery, WalletWithdrawalResponse,
         WalletWithdrawalsResponse, WithdrawalRequestResponse,
     },
 };
@@ -47,6 +48,7 @@ use super::{
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/wallet/accounts", get(list_accounts))
+        .route("/wallet/today-return", get(get_today_return))
         .route("/wallet/ledger", get(list_ledger))
         .route("/wallet/deposit-assets", get(list_deposit_assets))
         .route("/wallet/deposit-networks", get(list_deposit_networks))
@@ -133,6 +135,17 @@ async fn list_accounts(
     let accounts = list_wallet_accounts_use_case(&pool, user_id).await?;
 
     Ok(Json(WalletAccountsResponse { accounts }))
+}
+
+async fn get_today_return(
+    UserAuth(claims): UserAuth,
+    State(state): State<AppState>,
+) -> AppResult<Json<TodayReturnResponse>> {
+    let user_id = user_id_from_subject(&claims.sub)?;
+    let pool = mysql_pool(&state)?;
+    let response = get_today_return_use_case(&pool, state.redis.as_ref(), user_id).await?;
+
+    Ok(Json(response))
 }
 
 async fn list_ledger(

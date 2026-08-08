@@ -6944,3 +6944,72 @@
 - 修改文件：`web/src/admin/resources/actions/news.tsx`、`web/src/admin/resources/resourceConfigs.test.tsx`、`.trellis/spec/admin/ui-system.md`、`.trellis/tasks/08-08-admin-news-create-edit-parity/`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：新闻新增/编辑聚焦测试 1/1 通过（同文件其余 63 项跳过）；实现阶段后台全量测试 278/278 通过；`npm --prefix web run typecheck`、`npm --prefix web run lint`、`npm --prefix web run build`、`git diff --check` 和 Trellis 双代理审查通过。构建仅保留既有 `lottie-web` 直接 `eval` 与大 chunk 非阻断警告。
 - 后续事项：无。
+
+## 2026-08-08 06:24 - 新闻新增与编辑按参考图重排
+
+- 完成内容：依据用户参考图将新闻新增/编辑共享表单改为 100vw 全屏 SideSheet；桌面上层左栏按“小 Logo 在左、Banner 在右”展示视觉素材，下面为国家/分类同排和新增页初始状态，右栏依次为新闻标题与摘要，正文富文本在下一行横跨全部内容宽度；Banner 上传区填满网格并维持 5:2，Logo 为 96×96，摘要与正文补足编辑高度。编辑页复用同一结构但不显示初始状态，既有国家/默认语言同步、历史隐藏内容保留和 PATCH 不提交 `status` 的行为保持不变；1100px 主网格与素材区转单列，840px 设置区继续转单列。
+- 修改文件：`web/src/admin/resources/actions/news.tsx`、`web/src/admin/resources/resourceConfigs.test.tsx`、`web/src/styles.css`、`.trellis/spec/admin/ui-system.md`、`.trellis/tasks/08-08-admin-news-create-edit-parity/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`VITE_API_BASE_URL=http://127.0.0.1:8080 npm --prefix web run test`（40 个测试文件、278/278）、`npm --prefix web run typecheck`、`npm --prefix web run lint`、`npm --prefix web run build`、`git diff --check` 与 Trellis context validate 全部通过；构建仅保留既有 `lottie-web` 直接 `eval` 与大 chunk 警告。Ego Browser 使用本地新闻 API 夹具在 1728×1006 实测新增页全屏宽 1728px、内容宽 1680px、正文与内容区同宽、Logo 在 Banner 左侧、无横向溢出；编辑页正确回填标题/摘要/正文且无初始状态。1024px 与 800px 分别验证主网格/素材区及设置区单列，document 与 SideSheet 横向溢出均为 0。
+- 后续事项：无。
+
+## 2026-08-08 18:39 - 行情详情图表切换控件移至左上角
+
+- 完成内容：将手机端行情详情页的 `market-detail__chart-toggle` 从右上角移动到左上角；内联状态使用 `left: 16px; top: 12px`，沉浸展开状态使用 `left: 10px; top: 8px`，两个规则均移除 `right`。保留原按钮 DOM、Lucide 图标、可访问名称、展开/收起、焦点恢复与滚动锁，并保持右侧图表引擎切换器不变；新增按精确 CSS 规则块校验定位的回归测试。
+- 修改文件：`mobile/src/views/MarketDetailView.vue`、`mobile/tests/market-detail-reference-layout.test.ts`、`.trellis/tasks/08-08-mobile-market-detail-chart-toggle-left/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦测试 11/11、`npm --prefix mobile test` 299/299、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`、`npm --prefix mobile run build:tauri` 与 `git diff --check` 全部通过；Trellis 独立复核无问题。Ego Browser 在 390×844 视口实测内联按钮相对图表为 16px/12px、展开后为 10px/8px，图表引擎切换器仍位于右侧 10px，两个状态的页面横向溢出均为 0，展开后可正常收起。
+- 后续事项：无。
+
+## 2026-08-08 19:02 - 行情图表切换按钮正方形毛玻璃优化
+
+- 完成内容：将手机端行情详情页左上角图表切换按钮升级为 44×44px、12px 圆角的正方形毛玻璃控件，使用双主题语义半透明渐变、14px 背景模糊、145% 饱和度、WebKit 兼容、细边框、内高光和分层投影；补齐按压、完整键盘聚焦外环和低动态状态。为抵御旧全局暗色投影规则提高局部材质选择器优先级，同时修复由此产生的展开定位级联回归，并新增编译后 CSS specificity 回归检查，确保普通 16px/12px 与展开 10px/8px 始终生效。
+- 修改文件：`mobile/src/views/MarketDetailView.vue`、`mobile/tests/market-detail-reference-layout.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/08-08-mobile-market-chart-toggle-glass/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦测试 11/11、`npm --prefix mobile test` 299/299、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`、`npm --prefix mobile run build:tauri`、`git diff --check` 与 Trellis 独立复核全部通过。Ego Browser 在 320×720、390×844、448×900 的明暗主题实测按钮均为 44×44px、12px 圆角，Lucide 图标中心偏差 x/y 均为 0，计算样式包含 `blur(14px) saturate(1.45)`、主题化渐变与完整投影，右侧引擎开关保持 10px，页面横向溢出均为 0；强制 `focus-visible` 显示 2px 外环和 3px 间距，展开后相对图表精确为 10px/8px。
+- 后续事项：无。
+
+## 2026-08-08 19:48 - 秒合约确认下单弹层矮屏裁切修复
+
+- 完成内容：将秒合约“确认下单”确认层通过 Vue Teleport 挂载到 `body`，脱离带 `transform` 的路由动画容器；遮罩按 `100dvh` 和四向安全区覆盖真实视口，弹层改为固定头部、`minmax(0, 1fr)` 明细区、固定操作区三行布局，只有明细区可纵向滚动，取消与确认按钮始终留在滚动区之外。保留遮罩关闭、Escape、Tab 焦点闭环、初始关闭焦点、焦点恢复、背景滚动锁、提交中关闭保护和原下单接口，并桥接全局明暗主题变量。同步修正旧“工作区禁止 fixed”合同，使其继续禁止主体固定遮挡但显式允许 Teleported 视口遮罩。
+- 修改文件：`mobile/src/views/SecondsView.vue`、`mobile/tests/{pencil-trading-product-selected-parity,award-ui-trading-workspaces}.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/08-08-mobile-seconds-confirm-dialog-viewport/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦测试分别 8/8、7/7 通过；`npm --prefix mobile run type-check`、`npm --prefix mobile test`（300/300）、`npm --prefix mobile run build:pwa`（2057 modules、130 条预缓存）、`npm --prefix mobile run build:tauri`、`git diff --check` 与 Trellis context validate 全部通过。Ego Browser 在 320×568、320×720、390×667、390×844、448×900 实测遮罩为 `body` 直接子节点且无 `.view-stack` 祖先，弹层与两个按钮均未越出视口，横向溢出为 0；320×568 注入长错误信息后明细区可滚动且操作区位置不变，亮暗主题、Tab 闭环、Escape 关闭与滚动锁恢复正常。
+- 后续事项：无。
+## 2026-08-08 20:12 - 手机端秒合约 Header、实时行情与并行订单
+
+- 完成内容：为共享 PageHeader 增加向后兼容的 center/copy 插槽并将秒合约交易对控件收进 Header；接入内部 ticker 与仅 K 线详情 WebSocket 会话，复用 REST/WS generation 竞态和清理合同；将单活动单改为全量活动订单、逐单实时价/倒计时/进度/预计收益和批量到期权威对账，同时保留并行下单、幂等请求、确认弹窗与安全区行为。
+- 修改文件：`.trellis/tasks/08-08-mobile-seconds-header-live-multi-orders/prd.md`、`mobile/src/api/marketDetailStream.ts`、`mobile/src/components/PageHeader.vue`、`mobile/src/core/secondsOrder.ts`、`mobile/src/i18n/messages/en.ts`、`mobile/src/i18n/messages/zh-CN.ts`、`mobile/src/views/SecondsView.vue`、`mobile/tests/android-ui-trading-prototype-v16.test.ts`、`mobile/tests/award-ui-trading-workspaces.test.ts`、`mobile/tests/market-detail-stream.test.ts`、`mobile/tests/pencil-trading-product-selected-parity.test.ts`、`mobile/tests/priority-secondary-page-parity.test.ts`、`mobile/tests/seconds-api-adapter.test.ts`、`mobile/tests/seconds-live-multi-orders.test.ts`、`mobile/tests/trading-lending-views.test.ts`、`mobile/tests/ui-prototype-alignment-trading.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm test` 305/305 通过；`npm run type-check`、`npm run build:pwa`、`npm run build:tauri`、`git diff --check` 通过；Ego 浏览器在 320/390/448px 验证单一 Header 交易对控件、无横向溢出、无返回/历史按钮重叠，并在 320px 验证 focus-within 边框与 inset 聚焦环限制在 204×44px 中间控件内。
+- 后续事项：真实后端未返回产品的访客环境只完成布局运行时验收；行情推送、并行订单与到期对账由协议单元测试和精确源码合同覆盖，仍可在具备真实产品与登录订单数据的集成环境补充端到端观测。
+
+## 2026-08-08 20:30 - 独立复核并修复秒合约实时订阅与并行订单竞态
+
+- 完成内容：独立复核 Seconds Header、ticker/K 线生命周期、多活动订单、到期对账和开仓提交边界；将共享 ticker 改为按页面租约维护精确 symbol 并集，补齐 unsubscribe、旧连接隔离、重连与最终清理；修复私有订单/钱包请求阻塞公共产品与 K 线、旧 reconciliation 覆盖较新余额/订单、开仓成功后刷新丢单以及 submitting 被后台刷新长时间占用；保留 create response 直到订单列表按 ID 确认并让后端行继续覆盖结算状态。运行时发现产品目录仍要求 UserAuth，与 PRD 的访客公共行情合同冲突，已将活动产品 GET 改为公开，同时保持订单和后台路由鉴权不变。新增 fake-socket 行为测试、create/list 合并测试和 kline-only 重连测试，并同步移动端/秒合约规格。
+- 修改文件：`src/modules/seconds_contract/routes.rs`、`tests/seconds_contract_routes.rs`、`mobile/src/api/{marketSocket,marketSocketProtocol,marketTickerStream}.ts`、`mobile/src/core/secondsOrder.ts`、`mobile/src/views/SecondsView.vue`、`mobile/tests/{market-ticker-stream,market-socket,market-detail-stream,seconds-api-adapter,seconds-live-multi-orders,android-ui-trading-prototype-v16,award-ui-trading-workspaces,pencil-trading-product-selected-parity,priority-secondary-page-parity,trading-lending-views,ui-prototype-alignment-trading}.test.ts`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/spec/backend/seconds-contracts.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦 Mobile 测试 72/72、Mobile 全量测试 309/309、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2058 modules、131 条预缓存）、`npm --prefix mobile run build:tauri`、`cargo fmt --all -- --check`、`cargo check --all-targets`、秒合约路由测试 24/24、Trellis context validate 与 `git diff --check` 通过；Mobile 无 lint 脚本，`npm run lint --if-present` 无错误。Ego Browser 在 320×720、390×844、448×900 实测 Header 高 60px，返回/历史均 44×44，中间交易对控件分别为 204/260/260×44px，单一控件、无标题 fallback、两侧零重叠、focus-within 为内描边且 document/body 横向溢出均为 0。
+- 后续事项：当前订单列表接口最大返回最近 100 条且混合 opened/settled；极端超过窗口时无法保证取回更早仍 opened 的订单，需另立后端状态筛选/分页任务。已部署远端在本次浏览器复核时仍返回旧版产品目录 401，需部署本次 Rust 路由变更后再做访客真实产品/实时行情端到端验证。
+
+## 2026-08-09 02:04 - 手机端秒合约独立历史记录页
+
+- 完成内容：新增深度 2、无底栏且直开返回 `/seconds` 的命名路由 `seconds-history`；秒合约 Header 历史按钮改为命名路由 push，交易工作台移除旧底部历史列表、滚动 ref/handler 与全部废弃样式，同时保留所有活动订单卡片。独立历史页仅调用 `fetchSecondsOrders(100)`，复用共享活动状态判定排除 opened/pending/active，按真实 API 字段展示交易对、方向、投入、期限、开仓价、结算价、结果状态与创建时间，缺失结算价固定显示不可用占位且不接入实时价；补齐紧凑登录引导、互斥加载/错误/列表/空态、重试、Lucide 图标、双主题语义样式、安全区、44px 操作和 320–448px 收缩结构，并抽取共享结果/状态翻译语义。
+- 修改文件：`.trellis/tasks/08-08-mobile-seconds-header-live-multi-orders/prd.md`、`mobile/src/router/index.ts`、`mobile/src/views/{SecondsView,SecondsHistoryView}.vue`、`mobile/src/core/secondsOrder.ts`、`mobile/src/i18n/messages/{en,zh-CN}.ts`、`mobile/src/styles/{prototype-base,prototype-parity}.css`、`mobile/tests/{seconds-history-view,seconds-api-adapter,seconds-live-multi-orders,priority-secondary-page-parity,award-ui-trading-workspaces,trading-lending-views}.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：新增/受影响聚焦测试 37/37、`npm --prefix mobile run type-check`、Mobile 全量测试 315/315、`npm --prefix mobile run build:pwa`（2061 modules、134 条预缓存）、`npm --prefix mobile run build:tauri` 与 `git diff --check` 通过。
+- 后续事项：本轮未连接带真实已结算订单的登录环境做浏览器视觉复核；路由返回、真实字段/状态/价格语义及 320/390/448 响应式结构由行为与源码合同测试覆盖。
+
+## 2026-08-09 02:31 - 独立复核并修复手机端秒合约历史记录页
+
+- 完成内容：独立复核 `/seconds/history` 命名路由、Header push/返回、交易页活动单保留、历史筛选、访客与鉴权请求状态、API 价格和结果状态语义、国际化、窄屏与主题。修复通用“历史记录”标题不明确、未知 result 被已知 status 隐藏、无结果的 settled 状态误用正向色、非法价格被适配为零价、退出登录/重试/卸载后的迟到请求可写回，以及长未知状态在 320px 下潜在横向溢出；新增 latest-request-wins 生命周期和延迟 Promise 行为测试，补充请求忙碌语义、导航与后端集成规格。
+- 修改文件：`mobile/src/core/secondsOrder.ts`、`mobile/src/views/SecondsHistoryView.vue`、`mobile/src/i18n/messages/{en,zh-CN}.ts`、`mobile/tests/{seconds-history-view,seconds-api-adapter}.test.ts`、`.trellis/spec/mobile/{navigation-and-localization,backend-integration}.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：历史页及受影响聚焦测试 36/36、Mobile 全量测试 317/317、`npm --prefix mobile run type-check`、`npm --prefix mobile run lint --if-present`（项目无 lint 脚本）、`npm --prefix mobile run build:pwa`（2061 modules、134 条预缓存）、`npm --prefix mobile run build:tauri`、Trellis task validate 与 `git diff --check` 通过。Ego Browser 使用本地 API 夹具在 320×720、390×844、448×900 明暗主题验证真实列表仅显示 2 条非活动订单，opened 订单被排除，缺失结算价显示 `--`，未知长状态原文可见并换行，document/body 横向溢出均为 0；Header 返回/刷新为 44×44、键盘焦点环完整，访客登录按钮为 44px，Header 命名路由 push 与返回均通过。
+- 后续事项：无。浏览器数据来自本地 API 夹具，未依赖真实登录账户或生产订单。
+
+## 2026-08-09 03:32 - 手机端首页 UTC 今日已实现收益
+
+- 完成内容：新增受 `UserAuth` 保护的 `GET /wallet/today-return`，仅按当前用户和 UTC 自然日聚合秒合约胜负、预测结算净额、已平仓杠杆扣息收益及理财赎回净收益；按 USDT/USDC/USD 1:1 与当前 Redis `{ASSET}USDT` ticker 估值，返回 `realized` 口径、成本基础、收益率、周期时间、`complete/partial` 和缺价资产，且无活动返回完整真实零值。手机端新增严格适配器与首页独立加载状态，只在 `complete` 时显示金额和比例，`partial`、失败、加载、访客及隐私状态均不展示部分数值，并保留总资产、行情、公告、导航和主题链路。
+- 修改文件：`src/modules/wallet/{routes,application,infrastructure,presentation}.rs`、`tests/unit_src/{src_modules_wallet_application_tests,src_modules_wallet_routes_tests}.rs`、`tests/wallet_routes.rs`、`mobile/src/{api/wallet.ts,core/todayReturn.ts,views/HomeView.vue}`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{today-return,pencil-selected-home-layout}.test.ts`、`.trellis/spec/backend/wallet-amount-precision.md`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/tasks/08-09-mobile-home-today-return/{prd.md,task.json}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --all -- --check`、`cargo check --manifest-path Cargo.toml --all-targets` 通过；钱包模块 Rust 测试 25/25 通过；今日收益 MySQL 路由测试命令 1/1 通过，但当前未注入 `DATABASE_URL`，真实数据库聚合分支按既有合同 skip。Mobile 聚焦测试 11/11、全量测试 322/322、`npm run type-check`、`npm run build:pwa`（2062 modules、134 条预缓存）和 `npm run build:tauri`（2062 modules）通过；Trellis task validate 与 `git diff --check` 通过。
+- 后续事项：在提供 `DATABASE_URL` 的隔离 MySQL 测试环境补跑四类收益聚合、排除充值及用户隔离的真实数据库分支；本任务未提交或推送，并保留工作树内其他并行改动。
+
+## 2026-08-09 04:03 - 独立复核并修复手机端首页今日收益
+
+- 完成内容：按 PRD、研究合同和代码语义独立复核今日收益全链路；补齐杠杆 `closed/liquidated` 状态并统一扣除利息，严格拒绝 Redis 缺失、格式非法、交易对错配、超过 60 秒或未来的 ticker，防止重复理财赎回流水重复计入；扩大 SQL 测试矩阵以覆盖用户/UTC 时间隔离、预测全额与仅本金退款口径、稳定币平价和充值排除，并补充 BigDecimal/收益率精确序列化。手机端适配器改为严格校验十进制定点字符串、UTC 时间和缺价资产，新增按 token 隔离的 latest-request-wins/退出登录/卸载生命周期；隐私关闭及 partial/loading/error 均不泄露部分金额或缺价币种，完整态正确区分正、负、零收益。
+- 修改文件：`src/modules/wallet/{application,infrastructure}.rs`、`tests/unit_src/{src_modules_wallet_application_tests,src_modules_wallet_infrastructure_tests}.rs`、`tests/wallet_routes.rs`、`mobile/src/{api/wallet.ts,core/todayReturn.ts,views/HomeView.vue}`、`mobile/tests/today-return.test.ts`、`.trellis/spec/backend/wallet-amount-precision.md`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/tasks/08-09-mobile-home-today-return/{prd.md,research/today-return-contract.md}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：钱包模块 Rust 测试 27/27、Mobile 全量测试 323/323、`cargo fmt --all -- --check`、`cargo check --all-targets`、`npm --prefix mobile run type-check`、`npm --prefix mobile run lint --if-present`（项目无 lint 脚本）、`npm --prefix mobile run build:pwa`（2062 modules、134 条预缓存）、`npm --prefix mobile run build:tauri`（2062 modules）、Trellis task validate 与 `git diff --check` 全部通过。今日收益 MySQL 路由测试命令 1/1 通过，但当前未设置 `DATABASE_URL`，真实数据库分支按测试合同 skip；Redis ticker 的缺失/非法/陈旧/未来/错配分支由纯单元测试覆盖。
+- 后续事项：在提供 `DATABASE_URL` 的隔离 MySQL 环境补跑真实 SQL 聚合分支；无代码遗留，未提交或推送，并保留工作树内其他并行改动。

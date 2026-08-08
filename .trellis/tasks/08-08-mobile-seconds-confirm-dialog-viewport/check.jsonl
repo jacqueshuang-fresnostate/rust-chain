@@ -1,0 +1,6 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Verify touch targets, focus behavior, responsive geometry and quality gates"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Verify Teleport escapes route transforms and preserves viewport/safe-area modal behavior"}
+{"file":".trellis/tasks/08-08-mobile-seconds-confirm-dialog-viewport/prd.md","reason":"Verify buttons remain visible while only the detail body scrolls"}
+{"file":"mobile/tests/award-ui-trading-workspaces.test.ts","reason":"Verify fixed positioning remains forbidden in the seconds workspace and required on the Teleported mask"}
+{"file": "mobile/src/views/SecondsView.vue", "reason": "Review Teleport, viewport containment, theme tokens and dialog interactions"}
+{"file": "mobile/tests/pencil-trading-product-selected-parity.test.ts", "reason": "Verify dialog structure, interactions and scoped CSS output"}

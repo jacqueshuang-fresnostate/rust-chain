@@ -68,7 +68,6 @@ pub fn admin_routes() -> Router<AppState> {
 }
 
 async fn list_active_products(
-    UserAuth(_claims): UserAuth,
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
 ) -> AppResult<Json<SecondsContractProductsResponse>> {

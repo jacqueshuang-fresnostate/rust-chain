@@ -759,15 +759,13 @@ async fn seconds_contract_routes_require_expected_scope() {
 }
 
 #[tokio::test]
-async fn seconds_contract_routes_return_clear_error_without_mysql() {
+async fn seconds_contract_products_are_public_and_return_clear_error_without_mysql() {
     let settings = test_settings();
-    let token = issue_token(&settings, "user:42", TokenScope::User, 900).unwrap();
     let response = user_routes()
         .with_state(AppState::new(settings))
         .oneshot(
             Request::builder()
                 .uri("/seconds-contracts/products")
-                .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
         )

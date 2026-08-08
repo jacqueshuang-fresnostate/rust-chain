@@ -1885,8 +1885,7 @@ body,
     var(--page);
 }
 
-.app-stage .mobile-canvas .seconds-page .seconds-order-console,
-.app-stage .mobile-canvas .seconds-page .seconds-session-records {
+.app-stage .mobile-canvas .seconds-page .seconds-order-console {
   border-radius: 0;
 }
 

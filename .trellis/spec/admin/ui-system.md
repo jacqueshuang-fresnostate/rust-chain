@@ -122,6 +122,11 @@ const scroll = containedTableScrollForColumns(
   that silently deletes hidden translations or migration metadata.
 - Detail SideSheets use a bounded width rather than `80%` of a large desktop
   viewport.
+- Reference-driven full-page editor SideSheets may use `100vw` when their
+  composition combines media, metadata, summary, and a full-width document
+  editor. Scope the width override to that resource, keep the header stable,
+  make media fill its grid cell, collapse the primary grid by 1100px and the
+  field grid by 840px, and verify zero horizontal overflow at each breakpoint.
 - Keep the SideSheet header stable and let the body own scrolling.
 - Ordinary save/submit actions use the primary HIPPO orange treatment.
   Destructive actions use danger styling.

@@ -209,6 +209,83 @@ test('detail stream subscribes depth, trade, and kline, filters symbols, reconne
   assert.equal(scheduler.timeouts.size, 0)
 })
 
+test('detail stream supports a kline-only channel set without opening unused depth or trade subscriptions', () => {
+  const sockets: FakeSocket[] = []
+  const scheduler = new FakeScheduler()
+  const depths: unknown[] = []
+  const trades: unknown[] = []
+  const klines: KlinePoint[] = []
+  const stop = startMarketDetailStream({
+    symbol: 'BTCUSDT',
+    interval: '1m',
+    url: 'wss://example.test/api/v1/ws/public',
+    channels: ['kline'],
+    createSocket: () => {
+      const socket = new FakeSocket()
+      sockets.push(socket)
+      return socket
+    },
+    scheduler,
+    onDepth: (snapshot) => depths.push(snapshot),
+    onTrade: (trade) => trades.push(trade),
+    onKline: (point) => klines.push(point),
+  })
+
+  sockets[0]?.emit('open')
+  assert.deepEqual(sockets[0]?.sent.map((frame) => JSON.parse(frame)), [
+    { op: 'subscribe', channel: 'kline', symbol: 'BTCUSDT', interval: '1m' },
+  ])
+
+  sockets[0]?.emit('message', JSON.stringify({
+    symbol: 'BTCUSDT',
+    bids: [{ price: '100', quantity: '1' }],
+    asks: [{ price: '101', quantity: '1' }],
+    observed_at: 1_720_000_000_000,
+    provider: 'internal',
+  }))
+  sockets[0]?.emit('message', JSON.stringify({
+    symbol: 'BTCUSDT',
+    trade_id: 'unused-trade',
+    side: 'buy',
+    price: '100',
+    quantity: '1',
+    traded_at: 1_720_000_000_000,
+    provider: 'internal',
+  }))
+  sockets[0]?.emit('message', JSON.stringify({
+    symbol: 'BTCUSDT',
+    interval: '1m',
+    open_time: 1_720_000_000_000,
+    open: '100',
+    high: '102',
+    low: '99',
+    close: '101',
+    volume: '2',
+    observed_at: 1_720_000_001_000,
+    provider: 'internal',
+  }))
+  assert.equal(scheduler.frames.size, 1)
+  scheduler.runFrames()
+  assert.deepEqual(depths, [])
+  assert.deepEqual(trades, [])
+  assert.deepEqual(klines.map(({ time, close }) => ({ time, close })), [{
+    time: 1_720_000_000_000,
+    close: 101,
+  }])
+
+  sockets[0]?.emit('close')
+  assert.equal(scheduler.timeouts.size, 1)
+  scheduler.runNextTimeout()
+  sockets[1]?.emit('open')
+  assert.deepEqual(sockets[1]?.sent.map((frame) => JSON.parse(frame)), [
+    { op: 'subscribe', channel: 'kline', symbol: 'BTCUSDT', interval: '1m' },
+  ])
+
+  stop()
+  assert.equal(sockets[1]?.closed, true)
+  assert.equal(scheduler.timeouts.size, 0)
+})
+
 test('detail stream reconnect delay grows exponentially and remains bounded', () => {
   const sockets: FakeSocket[] = []
   const scheduler = new FakeScheduler()

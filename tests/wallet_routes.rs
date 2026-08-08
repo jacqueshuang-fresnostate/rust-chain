@@ -3,6 +3,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use bigdecimal::BigDecimal;
+use chrono::Utc;
 use exchange_api::{
     config::Settings,
     modules::{
@@ -433,6 +434,482 @@ async fn wallet_routes_return_authenticated_user_accounts_and_ledger() -> Result
     assert_eq!(convert_ledger["entries"][0]["fee"], "0.250000000000000000");
 
     cleanup_wallet_route_fixture(&pool, user_id, asset_id).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn wallet_today_return_aggregates_realized_sources_and_marks_missing_ticker_partial()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_user(&pool).await;
+    let other_user_id = create_user(&pool).await;
+    sqlx::query(
+        r#"INSERT INTO assets (symbol, name, precision_scale, asset_type, status)
+           VALUES ('USDT', 'Tether', 18, 'coin', 'active')
+           ON DUPLICATE KEY UPDATE symbol = VALUES(symbol)"#,
+    )
+    .execute(&pool)
+    .await?;
+    let usdt_asset_id: u64 = sqlx::query_scalar("SELECT id FROM assets WHERE symbol = 'USDT'")
+        .fetch_one(&pool)
+        .await?;
+    let (base_asset_id, _) = create_asset(&pool).await;
+    let base_symbol: String = sqlx::query_scalar("SELECT symbol FROM assets WHERE id = ?")
+        .bind(base_asset_id)
+        .fetch_one(&pool)
+        .await?;
+    let suffix = Uuid::now_v7().simple().to_string();
+    let pair_symbol = format!("{base_symbol}USDT");
+    let pair_id = sqlx::query(
+        r#"INSERT INTO trading_pairs
+           (base_asset, quote_asset, symbol, price_precision, qty_precision,
+            min_order_value, status, market_type)
+           VALUES (?, ?, ?, 18, 18, 1, 'active', 'external')"#,
+    )
+    .bind(base_asset_id)
+    .bind(usdt_asset_id)
+    .bind(&pair_symbol)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let seconds_product_id = sqlx::query(
+        r#"INSERT INTO seconds_contract_products
+           (pair_id, stake_asset, duration_seconds, payout_rate, min_stake, max_stake, status)
+           VALUES (?, ?, 60, 0.80000000, 1, 1000, 'active')"#,
+    )
+    .bind(pair_id)
+    .bind(usdt_asset_id)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let margin_product_id = sqlx::query(
+        r#"INSERT INTO margin_products
+           (pair_id, margin_asset, margin_mode, margin_modes, leverage_levels,
+            max_leverage, min_margin, max_margin, maintenance_margin_rate, status)
+           VALUES (?, ?, 'isolated', JSON_ARRAY('isolated'), JSON_ARRAY('2'),
+                   2, 1, 1000, 0.05000000, 'active')"#,
+    )
+    .bind(pair_id)
+    .bind(usdt_asset_id)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let prediction_market_id = sqlx::query(
+        r#"INSERT INTO prediction_markets
+           (external_market_id, title, tags_json, yes_price, no_price)
+           VALUES (?, 'Today return fixture', JSON_ARRAY(), 0.5, 0.5)"#,
+    )
+    .bind(format!("today-return-{suffix}"))
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let earn_product_id = sqlx::query(
+        r#"INSERT INTO earn_products
+           (asset_id, name, category, introduction_json, term_days, apr_rate,
+            min_subscribe, max_subscribe, status)
+           VALUES (?, 'Today return earn', 'fixed_term',
+                   JSON_OBJECT('version', 1, 'default_locale', 'en', 'items', JSON_ARRAY()),
+                   30, 0.12000000, 1, 1000, 'active')"#,
+    )
+    .bind(usdt_asset_id)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let app = routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let zero_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/wallet/today-return")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(zero_response.status(), StatusCode::OK);
+    let zero_payload = body_json(zero_response).await?;
+    assert_eq!(zero_payload["amount"], "0.000000000000000000");
+    assert_eq!(zero_payload["basis_amount"], "0.000000000000000000");
+    assert_eq!(zero_payload["status"], "complete");
+
+    let period_start_at = Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap();
+    for (stake, result, key) in [("10", "win", "win"), ("4", "loss", "loss")] {
+        sqlx::query(
+            r#"INSERT INTO seconds_contract_orders
+               (user_id, product_id, pair_id, stake_asset, direction, stake_amount,
+                duration_seconds, payout_rate, status, result, idempotency_key,
+                opened_at, expires_at, settled_at, created_at)
+               VALUES (?, ?, ?, ?, 'up', ?, 60, 0.80000000, 'settled', ?, ?,
+                       ?, ?, ?, ?)"#,
+        )
+        .bind(user_id)
+        .bind(seconds_product_id)
+        .bind(pair_id)
+        .bind(usdt_asset_id)
+        .bind(decimal(stake))
+        .bind(result)
+        .bind(format!("today-return-seconds-{key}-{suffix}"))
+        .bind(period_start_at)
+        .bind(period_start_at)
+        .bind(period_start_at)
+        .bind(period_start_at)
+        .execute(&pool)
+        .await?;
+    }
+    sqlx::query(
+        r#"INSERT INTO seconds_contract_orders
+           (user_id, product_id, pair_id, stake_asset, direction, stake_amount,
+            duration_seconds, payout_rate, status, result, idempotency_key,
+            opened_at, expires_at, settled_at, created_at)
+           VALUES (?, ?, ?, ?, 'up', 100, 60, 0.80000000, 'settled', 'win', ?,
+                   ?, ?, ?, ?)"#,
+    )
+    .bind(user_id)
+    .bind(seconds_product_id)
+    .bind(pair_id)
+    .bind(usdt_asset_id)
+    .bind(format!("today-return-yesterday-{suffix}"))
+    .bind(period_start_at - chrono::TimeDelta::minutes(1))
+    .bind(period_start_at - chrono::TimeDelta::minutes(1))
+    .bind(period_start_at - chrono::TimeDelta::microseconds(1))
+    .bind(period_start_at - chrono::TimeDelta::minutes(1))
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        r#"INSERT INTO seconds_contract_orders
+           (user_id, product_id, pair_id, stake_asset, direction, stake_amount,
+            duration_seconds, payout_rate, status, result, idempotency_key,
+            opened_at, expires_at, settled_at, created_at)
+           VALUES (?, ?, ?, ?, 'up', 100, 60, 0.80000000, 'settled', 'win', ?,
+                   ?, ?, ?, ?)"#,
+    )
+    .bind(other_user_id)
+    .bind(seconds_product_id)
+    .bind(pair_id)
+    .bind(usdt_asset_id)
+    .bind(format!("today-return-other-user-{suffix}"))
+    .bind(period_start_at)
+    .bind(period_start_at)
+    .bind(period_start_at)
+    .bind(period_start_at)
+    .execute(&pool)
+    .await?;
+    for (stake, fee, refund, fee_refund, key) in [
+        ("7", "1", "7", "1", "full-refund"),
+        ("6", "2", "6", "0", "stake-only-refund"),
+    ] {
+        sqlx::query(
+            r#"INSERT INTO prediction_orders
+               (user_id, market_id, quote_id, idempotency_key, outcome, asset_id,
+                stake_amount, fee_amount, accepted_price, shares, theoretical_payout,
+                effective_payout_cap, status, result, payout_amount, refund_amount,
+                fee_refund_amount, settled_at)
+               VALUES (?, ?, ?, ?, 'yes', ?, ?, ?, 0.5, 20, 20, 20,
+                       'refunded', 'invalid', 0, ?, ?, ?)"#,
+        )
+        .bind(user_id)
+        .bind(prediction_market_id)
+        .bind(format!("today-return-refund-quote-{key}-{suffix}"))
+        .bind(format!("today-return-refund-{key}-{suffix}"))
+        .bind(usdt_asset_id)
+        .bind(decimal(stake))
+        .bind(decimal(fee))
+        .bind(decimal(refund))
+        .bind(decimal(fee_refund))
+        .bind(period_start_at)
+        .execute(&pool)
+        .await?;
+    }
+    sqlx::query(
+        r#"INSERT INTO prediction_orders
+           (user_id, market_id, quote_id, idempotency_key, outcome, asset_id,
+            stake_amount, fee_amount, accepted_price, shares, theoretical_payout,
+            effective_payout_cap, status, result, payout_amount, settled_at)
+           VALUES (?, ?, ?, ?, 'yes', ?, 10, 1, 0.5, 20, 20, 20,
+                   'settled', 'yes', 15, ?)"#,
+    )
+    .bind(user_id)
+    .bind(prediction_market_id)
+    .bind(format!("today-return-quote-{suffix}"))
+    .bind(format!("today-return-prediction-{suffix}"))
+    .bind(usdt_asset_id)
+    .bind(period_start_at)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        r#"INSERT INTO prediction_orders
+           (user_id, market_id, quote_id, idempotency_key, outcome, asset_id,
+            stake_amount, fee_amount, accepted_price, shares, theoretical_payout,
+            effective_payout_cap, status, result, payout_amount, settled_at)
+           VALUES (?, ?, ?, ?, 'yes', ?, 100, 0, 0.5, 200, 1000, 1000,
+                   'settled', 'yes', 1000, ?)"#,
+    )
+    .bind(other_user_id)
+    .bind(prediction_market_id)
+    .bind(format!("today-return-other-prediction-quote-{suffix}"))
+    .bind(format!("today-return-other-prediction-{suffix}"))
+    .bind(usdt_asset_id)
+    .bind(period_start_at)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        r#"INSERT INTO margin_positions
+           (user_id, product_id, pair_id, margin_asset, direction, margin_amount,
+            leverage, notional_amount, interest_amount, status, idempotency_key,
+            closed_at, liquidated_at, exit_price, realized_pnl)
+           VALUES (?, ?, ?, ?, 'long', 10, 2, 20, 1.5, 'liquidated', ?, ?, ?, 80, -5)"#,
+    )
+    .bind(user_id)
+    .bind(margin_product_id)
+    .bind(pair_id)
+    .bind(usdt_asset_id)
+    .bind(format!("today-return-liquidated-margin-{suffix}"))
+    .bind(period_start_at)
+    .bind(period_start_at)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        r#"INSERT INTO margin_positions
+           (user_id, product_id, pair_id, margin_asset, direction, margin_amount,
+            leverage, notional_amount, interest_amount, status, idempotency_key,
+            closed_at, exit_price, realized_pnl)
+           VALUES (?, ?, ?, ?, 'long', 20, 2, 40, 1, 'closed', ?, ?, 110, 3)"#,
+    )
+    .bind(user_id)
+    .bind(margin_product_id)
+    .bind(pair_id)
+    .bind(usdt_asset_id)
+    .bind(format!("today-return-margin-{suffix}"))
+    .bind(period_start_at)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        r#"INSERT INTO margin_positions
+           (user_id, product_id, pair_id, margin_asset, direction, margin_amount,
+            leverage, notional_amount, interest_amount, status, idempotency_key,
+            closed_at, exit_price, realized_pnl)
+           VALUES (?, ?, ?, ?, 'long', 100, 2, 200, 10, 'closed', ?, ?, 200, 1000)"#,
+    )
+    .bind(other_user_id)
+    .bind(margin_product_id)
+    .bind(pair_id)
+    .bind(usdt_asset_id)
+    .bind(format!("today-return-other-margin-{suffix}"))
+    .bind(period_start_at)
+    .execute(&pool)
+    .await?;
+    let earn_subscription_id = sqlx::query(
+        r#"INSERT INTO earn_subscriptions
+           (user_id, product_id, asset_id, amount, apr_rate, term_days, status,
+            idempotency_key, subscribed_at, matures_at, redeemed_at)
+           VALUES (?, ?, ?, 100, 0.12000000, 30, 'redeemed', ?, ?, ?, ?)"#,
+    )
+    .bind(user_id)
+    .bind(earn_product_id)
+    .bind(usdt_asset_id)
+    .bind(format!("today-return-earn-{suffix}"))
+    .bind(period_start_at)
+    .bind(period_start_at)
+    .bind(period_start_at)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    sqlx::query(
+        r#"INSERT INTO wallet_ledger
+           (user_id, asset_id, change_type, amount, balance_type, balance_after,
+            available_after, frozen_after, locked_after, ref_type, ref_id, created_at)
+           VALUES (?, ?, 'earn_redeem', 105, 'available', 105, 105, 0, 0,
+                   'earn_subscription', ?, ?)"#,
+    )
+    .bind(user_id)
+    .bind(usdt_asset_id)
+    .bind(earn_subscription_id.to_string())
+    .bind(period_start_at)
+    .execute(&pool)
+    .await?;
+    // 同一订阅的历史重复赎回流水不能把本金和收益重复计入首页聚合。
+    sqlx::query(
+        r#"INSERT INTO wallet_ledger
+           (user_id, asset_id, change_type, amount, balance_type, balance_after,
+            available_after, frozen_after, locked_after, ref_type, ref_id, created_at)
+           VALUES (?, ?, 'earn_redeem', 105, 'available', 210, 210, 0, 0,
+                   'earn_subscription', ?, ?)"#,
+    )
+    .bind(user_id)
+    .bind(usdt_asset_id)
+    .bind(earn_subscription_id.to_string())
+    .bind(period_start_at)
+    .execute(&pool)
+    .await?;
+    let other_earn_subscription_id = sqlx::query(
+        r#"INSERT INTO earn_subscriptions
+           (user_id, product_id, asset_id, amount, apr_rate, term_days, status,
+            idempotency_key, subscribed_at, matures_at, redeemed_at)
+           VALUES (?, ?, ?, 100, 0.12000000, 30, 'redeemed', ?, ?, ?, ?)"#,
+    )
+    .bind(other_user_id)
+    .bind(earn_product_id)
+    .bind(usdt_asset_id)
+    .bind(format!("today-return-other-earn-{suffix}"))
+    .bind(period_start_at)
+    .bind(period_start_at)
+    .bind(period_start_at)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    sqlx::query(
+        r#"INSERT INTO wallet_ledger
+           (user_id, asset_id, change_type, amount, balance_type, balance_after,
+            available_after, frozen_after, locked_after, ref_type, ref_id, created_at)
+           VALUES (?, ?, 'earn_redeem', 1000, 'available', 1000, 1000, 0, 0,
+                   'earn_subscription', ?, ?)"#,
+    )
+    .bind(other_user_id)
+    .bind(usdt_asset_id)
+    .bind(other_earn_subscription_id.to_string())
+    .bind(period_start_at)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        r#"INSERT INTO wallet_ledger
+           (user_id, asset_id, change_type, amount, balance_type, balance_after,
+            available_after, frozen_after, locked_after, ref_type, ref_id, created_at)
+           VALUES (?, ?, 'deposit_credit', 9999, 'available', 9999, 9999, 0, 0,
+                   'deposit_record', ?, ?)"#,
+    )
+    .bind(user_id)
+    .bind(usdt_asset_id)
+    .bind(format!("ignored-deposit-{suffix}"))
+    .bind(period_start_at)
+    .execute(&pool)
+    .await?;
+
+    let complete_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/wallet/today-return")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    let complete_payload = body_json(complete_response).await?;
+    assert_eq!(complete_payload["scope"], "realized");
+    assert_eq!(complete_payload["reporting_asset"], "USDT");
+    assert_eq!(complete_payload["amount"], "6.500000000000000000");
+    assert_eq!(complete_payload["basis_amount"], "171.000000000000000000");
+    assert_eq!(complete_payload["rate"], "0.038011695906432748");
+    assert_eq!(complete_payload["status"], "complete");
+    assert_eq!(complete_payload["missing_price_assets"], json!([]));
+
+    sqlx::query(
+        r#"INSERT INTO prediction_orders
+           (user_id, market_id, quote_id, idempotency_key, outcome, asset_id,
+            stake_amount, fee_amount, accepted_price, shares, theoretical_payout,
+            effective_payout_cap, status, result, payout_amount, settled_at)
+           VALUES (?, ?, ?, ?, 'yes', ?, 2, 0, 0.5, 4, 4, 4,
+                   'settled', 'yes', 3, ?)"#,
+    )
+    .bind(user_id)
+    .bind(prediction_market_id)
+    .bind(format!("today-return-missing-quote-{suffix}"))
+    .bind(format!("today-return-missing-{suffix}"))
+    .bind(base_asset_id)
+    .bind(period_start_at)
+    .execute(&pool)
+    .await?;
+    let partial_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/wallet/today-return")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    let partial_payload = body_json(partial_response).await?;
+    assert_eq!(partial_payload["status"], "partial");
+    assert_eq!(partial_payload["amount"], "6.500000000000000000");
+    assert_eq!(
+        partial_payload["missing_price_assets"],
+        json!([base_symbol])
+    );
+
+    sqlx::query("DELETE FROM wallet_ledger WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_ledger WHERE user_id = ?")
+        .bind(other_user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM seconds_contract_orders WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM seconds_contract_orders WHERE user_id = ?")
+        .bind(other_user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM prediction_orders WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM prediction_orders WHERE user_id = ?")
+        .bind(other_user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM margin_positions WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM margin_positions WHERE user_id = ?")
+        .bind(other_user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM earn_subscriptions WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM earn_subscriptions WHERE user_id = ?")
+        .bind(other_user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM seconds_contract_products WHERE id = ?")
+        .bind(seconds_product_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM margin_products WHERE id = ?")
+        .bind(margin_product_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM earn_products WHERE id = ?")
+        .bind(earn_product_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM prediction_markets WHERE id = ?")
+        .bind(prediction_market_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM trading_pairs WHERE id = ?")
+        .bind(pair_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id = ?")
+        .bind(base_asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(other_user_id)
+        .execute(&pool)
+        .await?;
     Ok(())
 }
 

@@ -10,12 +10,14 @@ import {
   mapMarketKline,
   mapMarketKlines,
   mapMarketTrades,
+  marketUnsubscriptionFrame,
   mergeMarketKlines,
   mergeMarketTradeHistory,
   mergeMarketTrades,
   normalizeMarketKlineInterval,
   parseMarketSocketFrame,
   tickerSubscriptionFrame,
+  tickerUnsubscriptionFrame,
   tradeSubscriptionFrame,
 } from '../src/api/marketSocketProtocol.ts'
 
@@ -27,6 +29,11 @@ test('market WebSocket subscription payloads match every backend public channel 
   assert.equal(normalizeMarketKlineInterval('4h'), '')
   assert.deepEqual(JSON.parse(tickerSubscriptionFrame('btc/usdt')), {
     op: 'subscribe',
+    channel: 'ticker',
+    symbol: 'BTCUSDT',
+  })
+  assert.deepEqual(JSON.parse(tickerUnsubscriptionFrame('btc/usdt')), {
+    op: 'unsubscribe',
     channel: 'ticker',
     symbol: 'BTCUSDT',
   })
@@ -53,6 +60,12 @@ test('market WebSocket subscription payloads match every backend public channel 
     interval: '5m',
   })
   assert.throws(() => klineSubscriptionFrame('BTCUSDT', '4h'), /supported kline interval/)
+  assert.deepEqual(JSON.parse(marketUnsubscriptionFrame('kline', 'BTCUSDT', '1M')), {
+    op: 'unsubscribe',
+    channel: 'kline',
+    symbol: 'BTCUSDT',
+    interval: '1m',
+  })
 })
 
 test('market WebSocket parser preserves confirmations, ticker, and text heartbeat frames', () => {

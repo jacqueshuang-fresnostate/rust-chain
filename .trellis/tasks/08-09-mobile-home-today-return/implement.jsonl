@@ -1,0 +1,10 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend layering and pre-development checklist"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Wallet route/application/infrastructure ownership boundaries"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "SQLx decimal, query and schema conventions"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "API error and incomplete-data behavior"}
+{"file": ".trellis/spec/backend/wallet-amount-precision.md", "reason": "Financial decimal and wallet response precision contract"}
+{"file": ".trellis/spec/mobile/index.md", "reason": "Mobile package checklist and UI contracts"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Protected wallet adapter and truthful financial state contract"}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "Homepage production snapshot, theme and responsive behavior"}
+{"file": ".trellis/tasks/08-09-mobile-home-today-return/research/today-return-contract.md", "reason": "Chosen realized-return definition and edge cases"}

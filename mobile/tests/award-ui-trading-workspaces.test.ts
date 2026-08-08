@@ -44,8 +44,8 @@ test('交易工作台保留行情、K 线、盘口、余额、委托与下单处
 })
 
 test('秒合约继续直用现货钱包、后台产品周期与真实下单接口且没有划转入口', () => {
-  assert.match(secondsSource, /const productsRequest = fetchSecondsProducts\(\)/)
-  assert.match(secondsSource, /await Promise\.all\(\[productsRequest, fetchSecondsOrders\(\), fetchWalletAccounts\(\)\]\)/)
+  assert.match(secondsSource, /const nextProducts = await fetchSecondsProducts\(\)/)
+  assert.match(secondsSource, /Promise\.allSettled\(\[fetchSecondsOrders\(100\), fetchWalletAccounts\(\)\]\)/)
   assert.match(secondsSource, /accounts\.value\.find\(\(item\) => item\.assetId === selected\.value\?\.stakeAssetId\)/)
   assert.match(secondsSource, /selected\.value\?\.cycles\.find\(\(item\) => item\.id === selectedCycleId\.value\)/)
   assert.match(secondsSource, /function setDirection\(nextDirection: 'up' \| 'down'\)/)
@@ -74,8 +74,8 @@ test('两类页面采用单一价格主角和连续 Instrument plate', () => {
     'class="seconds-duration-grid"',
     'class="field seconds-amount-field"',
     'class="seconds-order-summary"',
-    'class="seconds-session-records seconds-orders"',
   ])
+  assert.doesNotMatch(secondsSource, /seconds-session-records|seconds-orders|ordersSection|scrollToOrders/)
 
   assert.match(tradeSource, /<style\s+scoped\s*>/)
   assert.match(secondsSource, /<style\s+scoped\s*>/)
@@ -94,11 +94,11 @@ test('表单、切换、百分比与主按钮满足 44–52px 和完整聚焦环
   assert.match(tradeCss, /\.submit-order\s*\{\s*min-height: 52px;/)
   assert.match(tradeCss, /\.input-stack \.field-shell:focus-within\s*\{[\s\S]*?border-color: var\(--focus\);[\s\S]*?box-shadow: 0 0 0 3px var\(--focus-ring\);/)
 
-  assert.match(secondsCss, /\.seconds-select-shell\s*\{[\s\S]*?height: 52px;[\s\S]*?min-height: 52px;/)
+  assert.match(secondsCss, /\.seconds-select-shell\s*\{[\s\S]*?height: 44px;[\s\S]*?min-height: 44px;/)
   assert.match(secondsCss, /\.seconds-amount-field > div\s*\{[\s\S]*?height: 52px;[\s\S]*?min-height: 52px;/)
   assert.match(secondsCss, /\.seconds-direction-grid button\s*\{\s*min-height: 52px;/)
   assert.match(secondsCss, /\.seconds-submit\s*\{[\s\S]*?min-height: 52px;/)
-  assert.match(secondsCss, /\.seconds-select-shell:focus-within\s*\{[\s\S]*?border-color: var\(--focus\);[\s\S]*?box-shadow: 0 0 0 3px var\(--focus-ring\);/)
+  assert.match(secondsCss, /\.seconds-select-shell:focus-within\s*\{[\s\S]*?border-color: var\(--focus\);[\s\S]*?box-shadow: inset 0 0 0 1px var\(--focus\);/)
   assert.match(secondsCss, /\.seconds-amount-field:focus-within > div\s*\{[\s\S]*?border-color: var\(--focus\);[\s\S]*?box-shadow: 0 0 0 3px var\(--focus-ring\);/)
 
   assert.doesNotMatch(tradeCss, /box-shadow:\s*inset 3px 0/)
@@ -126,7 +126,11 @@ test('320–448px 响应式、安全区和低动态合同不产生工作区固�
   }
 
   assert.doesNotMatch(tradeCss.split('.confirmation-layer')[0] || '', /position:\s*fixed/)
-  assert.doesNotMatch(secondsCss.split('.seconds-page .seconds-mask')[0] || '', /position:\s*fixed/)
+  const secondsMaskIndex = secondsCss.indexOf('.seconds-mask {')
+  assert.notEqual(secondsMaskIndex, -1, 'seconds confirmation mask must own an independent style boundary')
+  assert.doesNotMatch(secondsCss.slice(0, secondsMaskIndex), /position:\s*fixed/)
+  assert.match(secondsSource, /<Teleport to="body">[\s\S]*?class="confirmation-layer seconds-mask"/)
+  assert.match(secondsCss.slice(secondsMaskIndex), /^\.seconds-mask\s*\{[^}]*inset:\s*0;[^}]*position:\s*fixed;[^}]*\}/)
   assert.doesNotMatch(`${tradeSource}\n${secondsSource}`, /<svg|\p{Extended_Pictographic}/u)
 })
 
@@ -134,7 +138,7 @@ test('交易与秒合约使用首页薄荷主动作和连续面板层级', () =>
   assert.match(parityCss, /\.trade-view \.trade-instrument-hero\s*\{[\s\S]*?var\(--signal-green\)/)
   assert.match(parityCss, /\.trade-view \.submit-order,[\s\S]*?\.seconds-page \.seconds-submit\s*\{[\s\S]*?background:\s*var\(--accent\)/)
   assert.match(parityCss, /\.seconds-page \.seconds-market-board\s*\{[\s\S]*?var\(--signal-green\)/)
-  assert.match(parityCss, /\.seconds-page \.seconds-order-console,[\s\S]*?border-radius:\s*0/)
+  assert.match(parityCss, /\.seconds-page \.seconds-order-console\s*\{[\s\S]*?border-radius:\s*0/)
 })
 
 function source(path: string): string {

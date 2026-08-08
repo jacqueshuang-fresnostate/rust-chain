@@ -68,6 +68,13 @@ const newsStatusOptions: SemiSelectOption[] = [
   { value: 'archived', label: '已归档' }
 ];
 
+const baseAdminNewsSideSheetProps = createModalProps('extra-wide');
+const adminNewsSideSheetProps = {
+  ...baseAdminNewsSideSheetProps,
+  className: `${baseAdminNewsSideSheetProps.className} admin-news-sidesheet`,
+  width: '100vw'
+};
+
 function richTextHasContent(value: RichTextValue): boolean {
   return value.some((block) => {
     if (block.type === 'image') {
@@ -258,14 +265,26 @@ function AdminNewsForm({
   };
 
   return (
-    <div className="admin-news-create-layout">
-      <div className="admin-news-create-side">
-        <section className="admin-earn-product-section" aria-labelledby={`${idPrefix}-publish-title`}>
+    <div aria-label="新闻表单布局" className="admin-news-create-layout" role="group">
+      <div aria-label="新闻素材与设置" className="admin-news-create-side" role="group">
+        <section className="admin-earn-product-section admin-news-create-media-panel" aria-labelledby={`${idPrefix}-media-title`}>
+          <Text strong id={`${idPrefix}-media-title`}>
+            视觉素材
+          </Text>
+          <div className="admin-news-create-media-grid">
+            <div className="admin-news-create-logo-upload">
+              <AdminImageUpload label="新闻小 Logo" value={values.smallLogoUrl} variant="avatar" onChange={(smallLogoUrl) => onChange(syncAdminNewsContent({ ...values, smallLogoUrl }))} />
+            </div>
+            <div className="admin-news-create-banner-upload">
+              <AdminImageUpload label="新闻 Banner" value={values.bannerUrl} variant="banner" onChange={(bannerUrl) => onChange(syncAdminNewsContent({ ...values, bannerUrl }))} />
+            </div>
+          </div>
+        </section>
+        <section className="admin-earn-product-section admin-news-create-settings-panel" aria-labelledby={`${idPrefix}-publish-title`}>
           <Text strong id={`${idPrefix}-publish-title`}>
             发布设置
           </Text>
           <div className="admin-action-form admin-news-create-settings-grid">
-            <label className="admin-news-create-title-field">新闻标题<AdminTextInput ariaLabel="新闻标题" value={values.title} onChange={(title) => onChange(syncAdminNewsContent({ ...values, title }))} /></label>
             <label>
               国家
               <AdminSelect
@@ -283,20 +302,11 @@ function AdminNewsForm({
               <AdminSelect ariaLabel="分类" onChange={(category) => onChange(syncAdminNewsContent({ ...values, category }))} optionList={newsCategoryOptions} value={values.category} />
             </label>
             {includeStatus ? (
-              <label>
+              <label className="admin-news-create-status-field">
                 初始状态
                 <AdminSelect ariaLabel="初始状态" onChange={(status) => onChange(syncAdminNewsContent({ ...values, status }))} optionList={newsStatusOptions} value={values.status} />
               </label>
             ) : null}
-          </div>
-        </section>
-        <section className="admin-earn-product-section" aria-labelledby={`${idPrefix}-media-title`}>
-          <Text strong id={`${idPrefix}-media-title`}>
-            视觉素材
-          </Text>
-          <div className="admin-news-create-media-grid">
-            <AdminImageUpload label="新闻 Banner" value={values.bannerUrl} variant="banner" onChange={(bannerUrl) => onChange(syncAdminNewsContent({ ...values, bannerUrl }))} />
-            <AdminImageUpload label="新闻小 Logo" value={values.smallLogoUrl} variant="avatar" onChange={(smallLogoUrl) => onChange(syncAdminNewsContent({ ...values, smallLogoUrl }))} />
           </div>
         </section>
       </div>
@@ -304,15 +314,24 @@ function AdminNewsForm({
         <Text strong id={`${idPrefix}-content-title`}>
           内容编辑
         </Text>
-        <Space align="start" spacing={14} vertical style={{ width: '100%' }}>
+        <div className="admin-news-create-copy-grid">
+          <label className="admin-news-create-title-field">
+            新闻标题
+            <AdminTextInput ariaLabel="新闻标题" value={values.title} onChange={(title) => onChange(syncAdminNewsContent({ ...values, title }))} />
+          </label>
           <div className="admin-news-create-summary-field admin-news-summary-field">
             <Text strong>摘要</Text>
             <QuillRichTextEditor ariaLabel="摘要" placeholder="请输入新闻摘要" value={translation.summary} onChange={(summary) => updatePrimaryContent({ summary })} />
           </div>
-          <div className="admin-news-create-editor">
-            <QuillRichTextEditor enableImageUpload placeholder="请输入新闻内容" value={translation.content} onChange={(content) => updatePrimaryContent({ content })} />
-          </div>
-        </Space>
+        </div>
+      </section>
+      <section className="admin-earn-product-section admin-news-create-body-panel" aria-labelledby={`${idPrefix}-body-title`}>
+        <Text strong id={`${idPrefix}-body-title`}>
+          新闻正文
+        </Text>
+        <div className="admin-news-create-editor">
+          <QuillRichTextEditor enableImageUpload placeholder="请输入新闻内容" value={translation.content} onChange={(content) => updatePrimaryContent({ content })} />
+        </div>
       </section>
     </div>
   );
@@ -326,7 +345,7 @@ export function CreateAdminNewsAction({ onCreated }: { onCreated?: () => void })
   return (
     <>
       <AdminModalTriggerButton onClick={() => setVisible(true)}>添加新闻</AdminModalTriggerButton>
-      <SideSheet onCancel={() => setVisible(false)} title="添加新闻" visible={visible} {...createModalProps('extra-wide')}>
+      <SideSheet onCancel={() => setVisible(false)} title="添加新闻" visible={visible} {...adminNewsSideSheetProps}>
         <div className="admin-news-create-shell">
           <Space align="end" spacing={16} vertical style={{ width: '100%' }}>
             <AdminNewsForm countries={countries} countriesLoading={countriesLoading} idPrefix="admin-news-create" includeStatus values={news} onChange={setNews} />
@@ -363,7 +382,7 @@ function AdminNewsEditAction({ helpers, newsId, record }: { helpers: RowActionHe
       <Button disabled={!newsId} onClick={() => setVisible(true)} size="small" theme="borderless">
         编辑
       </Button>
-      <SideSheet onCancel={() => setVisible(false)} title="编辑新闻" visible={visible} {...createModalProps('extra-wide')}>
+      <SideSheet onCancel={() => setVisible(false)} title="编辑新闻" visible={visible} {...adminNewsSideSheetProps}>
         <div className="admin-news-create-shell">
           <Space align="end" spacing={16} vertical style={{ width: '100%' }}>
             <AdminNewsForm

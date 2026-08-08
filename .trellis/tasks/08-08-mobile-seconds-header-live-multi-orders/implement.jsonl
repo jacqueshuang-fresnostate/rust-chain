@@ -1,0 +1,8 @@
+{"file":".trellis/spec/mobile/index.md","reason":"约束手机端 Header、响应式宽度、图表和共享组件的总体实现规则。"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"约束 PWA/Tauri Shell、sticky Header、安全区、滚动和移动端质量门。"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"约束内部 REST/WebSocket 竞态、实时 K 线权威性、Seconds mutation 提交边界和适配器保真。"}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"约束独立历史页命名路由、push/backFallback、路由深度、底栏可见性与固定文案国际化。"}
+{"file":".trellis/spec/backend/seconds-contracts.md","reason":"确认秒合约订单、时间戳、幂等、钱包锁和并行开仓的后端合同。"}
+{"file":".trellis/tasks/08-08-mobile-seconds-header-live-multi-orders/research/mobile-header-live.md","reason":"提供 Header 重叠、移动端实时行情链路和并行订单根因研究。"}
+{"file":".trellis/tasks/08-08-mobile-seconds-header-live-multi-orders/research/backend-multi-orders.md","reason":"提供后端已支持并行订单及需要保留的并发与幂等边界。"}
+{"file":".trellis/tasks/08-08-mobile-seconds-header-live-multi-orders/research/pc-seconds-reference.md","reason":"提供 PC 多活动订单、逐单倒计时和内部实时行情的可复用模式。"}

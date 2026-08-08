@@ -134,7 +134,6 @@ test('秒合约工作台保持原型顺序、真实接口与登录回跳', () =>
     'seconds-order-summary',
     'seconds-feedback',
     'seconds-submit',
-    'seconds-session-records',
   ])
   assertOrdered(template, [
     "t('seconds.currentRound')",
@@ -144,25 +143,24 @@ test('秒合约工作台保持原型顺序、真实接口与登录回跳', () =>
     "t('seconds.estimatedProfit')",
     "t('seconds.direction')",
     "t('seconds.term')",
-    "t('seconds.myOrders')",
+    "t('seconds.confirmOrder')",
   ])
   assert.equal(zhCN.seconds.estimatedProfit, '预计收益')
   assert.equal(en.seconds.estimatedProfit, 'Estimated profit')
   assert.match(sources.seconds, /amountNumber\.value \* payoutRate\.value/)
-  assert.match(
-    sources.seconds,
-    /const activeEstimatedProfit = computed\(\(\) => \{\s*const (\w+) = activeOrder\.value\s*return \1 \? \1\.stakeAmount \* \1\.payoutRate : 0\s*\}\)/,
-  )
-  assert.match(sources.seconds, /activeOrder\.entryPrice !== undefined \? formatPrice\(activeOrder\.entryPrice\) : '--'/)
-  assert.match(sources.seconds, /const openedOrder = await openSecondsOrder\(\{/)
-  assert.match(sources.seconds, /orders\.value = \[openedOrder, \.\.\.orders\.value\.filter/)
+  assert.match(sources.seconds, /function orderEstimatedProfit\(order: SecondsOrder\): number \{\s*return secondsOrderEstimatedProfit\(order\)\s*\}/)
+  assert.match(sources.seconds, /order\.entryPrice !== undefined \? formatPrice\(order\.entryPrice\) : '--'/)
+  assert.match(sources.seconds, /openedOrder = await openSecondsOrder\(\{/)
+  assert.match(sources.seconds, /orders\.value = upsertSecondsOrder\(orders\.value, openedOrder\)/)
   assert.match(sources.seconds, /fetchSecondsProducts\(\)/)
-  assert.match(sources.seconds, /fetchSecondsOrders\(\)/)
+  assert.match(sources.seconds, /fetchSecondsOrders\(100\)/)
   assert.match(sources.seconds, /fetchWalletAccounts\(\)/)
   assert.match(sources.seconds, /await openSecondsOrder\(\{[\s\S]*productId:[\s\S]*durationSeconds:[\s\S]*direction:[\s\S]*stakeAmount:/)
   assert.match(sources.seconds, /router\.push\(\{ name: 'login', query: \{ redirect: '\/seconds' \} \}\)/)
   assert.match(sources.seconds, /class="confirmation-layer seconds-mask"/)
   assert.match(sources.seconds, /role="dialog"/)
+  assert.match(sources.seconds, /router\.push\(\{ name: 'seconds-history' \}\)/)
+  assert.doesNotMatch(sources.seconds, /seconds-session-records|ordersSection|scrollToOrders/)
   assert.doesNotMatch(sources.seconds, /LoginRequiredState/)
 })
 

@@ -34,6 +34,66 @@ function expectCreateModalSize(dialog: HTMLElement, size: 'medium' | 'wide' | 'e
   expect(modal).toHaveClass(`admin-create-modal-${size}`);
 }
 
+function directChildWithClass(parent: Element, className: string): HTMLElement {
+  const child = [...parent.children].find((item) => item.classList.contains(className));
+  expect(child).toBeInTheDocument();
+  return child as HTMLElement;
+}
+
+function expectAdminNewsLayout(dialog: HTMLElement, includeStatus: boolean) {
+  const sideSheet = dialog.closest('.admin-news-sidesheet');
+  const layout = within(dialog).getByRole('group', { name: '新闻表单布局' });
+  const side = within(layout).getByRole('group', { name: '新闻素材与设置' });
+  const media = within(layout).getByRole('region', { name: '视觉素材' });
+  const settings = within(layout).getByRole('region', { name: '发布设置' });
+  const copy = within(layout).getByRole('region', { name: '内容编辑' });
+  const body = within(layout).getByRole('region', { name: '新闻正文' });
+
+  expect(sideSheet).toHaveClass('admin-create-modal', 'admin-create-modal-extra-wide');
+  expect(dialog).toHaveStyle({ width: '100vw' });
+  expect(layout).toHaveClass('admin-news-create-layout');
+  expect(layout.children).toHaveLength(3);
+  expect(layout.children[0]).toBe(side);
+  expect(layout.children[1]).toBe(copy);
+  expect(layout.children[2]).toBe(body);
+  expect(side.children).toHaveLength(2);
+  expect(side.children[0]).toBe(media);
+  expect(side.children[1]).toBe(settings);
+  expect(media).toHaveClass('admin-news-create-media-panel');
+  expect(settings).toHaveClass('admin-news-create-settings-panel');
+  expect(copy).toHaveClass('admin-news-create-content-panel');
+  expect(body).toHaveClass('admin-news-create-body-panel');
+
+  const mediaFields = [...directChildWithClass(media, 'admin-news-create-media-grid').children] as HTMLElement[];
+  expect(mediaFields).toHaveLength(2);
+  expect(mediaFields[0]).toHaveClass('admin-news-create-logo-upload');
+  expect(mediaFields[1]).toHaveClass('admin-news-create-banner-upload');
+  expect(mediaFields[0]).toHaveTextContent('新闻小 Logo');
+  expect(mediaFields[1]).toHaveTextContent('新闻 Banner');
+  expect(mediaFields[1].querySelector('.semi-upload-picture-add, .semi-upload-picture-file-card')).toBeInTheDocument();
+
+  const settingFields = [...directChildWithClass(settings, 'admin-news-create-settings-grid').children] as HTMLElement[];
+  expect(settingFields).toHaveLength(includeStatus ? 3 : 2);
+  expect(within(settings).getByText('国家')).toBe(settingFields[0]);
+  expect(settingFields[0].querySelector('.semi-select')).toBeInTheDocument();
+  expect(within(settings).getByText('分类')).toBe(settingFields[1]);
+  expect(settingFields[1].querySelector('.semi-select')).toBeInTheDocument();
+
+  const copyFields = [...directChildWithClass(copy, 'admin-news-create-copy-grid').children] as HTMLElement[];
+  expect(copyFields).toHaveLength(2);
+  expect(within(copyFields[0]).getByLabelText('新闻标题')).toBeInTheDocument();
+  expect(within(copyFields[1]).getByLabelText('摘要')).toBeInTheDocument();
+
+  if (includeStatus) {
+    const statusField = settingFields[2];
+    expect(statusField).toHaveClass('admin-news-create-status-field');
+    expect(within(settings).getByText('初始状态')).toBe(statusField);
+    expect(statusField.querySelector('.semi-select')).toBeInTheDocument();
+  } else {
+    expect(within(settings).queryByLabelText('初始状态')).not.toBeInTheDocument();
+  }
+}
+
 async function findActionSheet(title: string): Promise<HTMLElement> {
   let sheet: HTMLElement | null = null;
   await waitFor(() => {
@@ -803,10 +863,11 @@ describe('resourceConfigs create actions', () => {
     await user.click(screen.getByRole('button', { name: '添加新闻' }));
     let dialog = await findActionSheet('添加新闻');
     expectCreateModalSize(dialog, 'extra-wide');
-    expect(dialog.querySelector('.admin-news-create-layout')).toBeInTheDocument();
+    expectAdminNewsLayout(dialog, true);
     expect(within(dialog).getByText('发布设置')).toBeInTheDocument();
     expect(within(dialog).getByText('视觉素材')).toBeInTheDocument();
     expect(within(dialog).getByText('内容编辑')).toBeInTheDocument();
+    expect(within(dialog).getByText('新闻正文')).toBeInTheDocument();
     semiInputByLabel(dialog, '新闻标题');
     semiSelectByLabel(dialog, '分类');
     semiSelectByLabel(dialog, '国家');
@@ -879,10 +940,11 @@ describe('resourceConfigs create actions', () => {
     await user.click(screen.getByRole('button', { name: '编辑' }));
     dialog = await findActionSheet('编辑新闻');
     expectCreateModalSize(dialog, 'extra-wide');
-    expect(dialog.querySelector('.admin-news-create-layout')).toBeInTheDocument();
+    expectAdminNewsLayout(dialog, false);
     expect(within(dialog).getByText('发布设置')).toBeInTheDocument();
     expect(within(dialog).getByText('视觉素材')).toBeInTheDocument();
     expect(within(dialog).getByText('内容编辑')).toBeInTheDocument();
+    expect(within(dialog).getByText('新闻正文')).toBeInTheDocument();
     semiInputByLabel(dialog, '新闻标题');
     semiSelectByLabel(dialog, '分类');
     semiSelectByLabel(dialog, '国家');

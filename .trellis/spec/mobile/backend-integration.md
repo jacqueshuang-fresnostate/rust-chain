@@ -168,6 +168,13 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
 - One mobile connection may subscribe to multiple normalized symbols.
   Reconnect resubscribes all active symbols and uses bounded exponential
   backoff.
+- Shared ticker consumers own independent symbol leases. The wire subscription
+  set is the union of current leases: releasing one lease sends `unsubscribe`
+  only for symbols no remaining consumer needs, and releasing the final lease
+  closes the socket and clears heartbeat/reconnect work. Message/open/close
+  handlers must verify the current socket identity so a late event from a
+  released or failed connection cannot dispatch into a newer same-symbol
+  listener.
 - The client accepts subscription confirmations, direct ticker payloads, and
   text/JSON pong frames. Unknown or backend error frames must not be treated as
   ticker updates.
@@ -249,6 +256,21 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
   and show success before any reconciliation fetch. A later refresh failure is
   a refresh warning; it must retain the returned order, must not relabel the
   mutation as failed, and must not reopen a duplicate-submit path.
+- Seconds reconciliation requests are generation-isolated. An older list or
+  wallet response must not overwrite state produced by a newer open/reconcile
+  cycle. Keep locally committed create responses until an authoritative list
+  contains the same ID; when it does, the server row wins so settlement status
+  can advance. Public products, ticker fallback, and K-lines start independently
+  of private order/wallet refresh, so one protected endpoint failure does not
+  hide otherwise available public market data.
+- The dedicated Seconds history page reuses `fetchSecondsOrders(100)` and the
+  shared `isActiveSecondsOrder` boundary after DTO mapping. It renders only
+  non-active rows, preserves unknown result/status source values, and reads
+  entry and settlement prices only from their optional API fields; a missing or
+  invalid price stays unavailable and is never replaced with a live ticker.
+  History reads are latest-request-wins and are invalidated on logout or
+  unmount; guest, loading, error, list, and empty states remain mutually
+  exclusive, and a failed read remains retryable.
 - Prediction quote request and response outcomes are the closed union
   `yes | no`. Normalize case only at the adapter boundary and reject every
   other response value; never pass an arbitrary string into confirmation.
@@ -352,6 +374,9 @@ const points = detailSession.resolveKlineRequest(request, restKlines(initial))
 | Symbol/interval changes or repeats through an ABA sequence | Invalidate the old context, REST token, and pending animation-frame callback |
 | Seconds create response omits `order` or has an invalid direction | Reject the mutation response; preserve existing orders and surface submit failure |
 | Seconds create succeeds but order refresh fails | Keep/upsert the returned order and success state; surface only a refresh warning; keep duplicate submission locked |
+| Seconds history price is missing or malformed | Render the unavailable placeholder; do not coerce it to zero or substitute market data |
+| Seconds history result/status is unknown | Show the trimmed backend source value instead of an incorrect known translation |
+| Seconds history request settles after logout, retry, or unmount | Ignore the stale response and preserve the newer guest/request state |
 | Prediction quote response outcome is not `yes` or `no` | Reject the quote; do not expose confirmation |
 | Prediction confirm succeeds but wallet/history refresh fails | Keep/upsert the returned order, including `result`/`refundAmount`; retain success and show a refresh-specific warning |
 | Wallet asset name, network ETA, recharge currency, or token is absent | Keep it absent or show exact server identifiers/localized unavailable copy; never synthesize USD/USDT, a name, or minutes |
@@ -392,6 +417,10 @@ const points = detailSession.resolveKlineRequest(request, restKlines(initial))
   `stakeAmount * payoutRate`, immediate upsert of the returned create order,
   and a delayed refresh rejection that leaves success/order state intact and
   does not enable a second mutation.
+- Seconds history tests must execute delayed request promises to prove guest
+  isolation, latest-request-wins retry, logout/unmount invalidation, and error
+  recovery. They must also exercise shared active filtering, optional invalid
+  prices, known translations, and visible unknown result/status source values.
 - Prediction adapter tests must accept only `yes`/`no` quote outcomes, reject a
   third value before confirmation, and preserve `result` plus `refund_amount`.
   Confirm-flow tests must use a successful confirm followed by rejected wallet
@@ -582,3 +611,45 @@ interface MarketFavoritesResponse {
   Assets still renders wallet-owned Logo metadata.
 - Run the focused market/favorites tests and `npm run type-check`; include the
   full mobile suite and PWA build at the final task gate.
+
+## 10. Home Today Return Contract
+
+```ts
+interface TodayReturn {
+  scope: 'realized'
+  reportingAsset: 'USDT'
+  amount: number
+  basisAmount: number
+  rate: number
+  periodStartAt: number
+  calculatedAt: number
+  status: 'complete' | 'partial'
+  missingPriceAssets: string[]
+}
+
+fetchTodayReturn(): Promise<TodayReturn>
+```
+
+- Home consumes only protected `GET /wallet/today-return` for today return.
+  It renders amount and `rate * 100` only for `status=complete`.
+- `partial`, request error, loading, guest, and privacy-hidden states remain
+  non-numeric and distinct. Privacy hiding takes precedence over loading/error/
+  partial detail so missing-price asset symbols cannot reveal account activity.
+  Complete zero renders zero and `0.00%`, not `--`.
+- The adapter validates realized scope, USDT reporting, finite decimals,
+  supported status, an exact UTC-day period, and normalized missing-price
+  symbols. Decimal strings must use decimal notation, timestamps must be safe
+  integer seconds or milliseconds, and `complete` cannot carry missing assets.
+  It must not coerce malformed financial fields to zero.
+- Today-return reads are keyed by the exact authenticated session token, are
+  latest-request-wins, and are invalidated on token replacement, logout, and
+  component unmount. A late response from another login/session must not write
+  into the current Home state.
+- Today-return failure must not clear the independently loaded total-asset
+  estimate. Positive and negative values use existing semantic tones; zero is
+  neutral.
+
+Required tests cover complete/partial mapping, seconds/milliseconds timestamp
+normalization, malformed response rejection, true zero, privacy precedence,
+positive/negative/neutral tone guards, delayed latest-request/login/unmount
+isolation, and the Home complete-status display guard.

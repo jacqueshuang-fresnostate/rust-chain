@@ -63,18 +63,16 @@ test('余额百分比严格使用真实可用额并区分现货买卖与合约�
 })
 
 test('秒合约显示真实参考价、预计收益、确认与后端返回订单记录', () => {
-  assert.match(secondsSource, /const productsRequest = fetchSecondsProducts\(\)/)
-  assert.match(secondsSource, /session\.isAuthenticated\s*\?\s*await Promise\.all\(\[productsRequest, fetchSecondsOrders\(\), fetchWalletAccounts\(\)\]\)\s*:\s*\[await productsRequest, \[\], \[\]\]/)
+  assert.match(secondsSource, /const nextProducts = await fetchSecondsProducts\(\)/)
+  assert.match(secondsSource, /session\.isAuthenticated\s*\? Promise\.allSettled\(\[fetchSecondsOrders\(100\), fetchWalletAccounts\(\)\]\)\s*:\s*Promise\.resolve\(null\)/)
   assert.match(secondsSource, /function reviewOrder\(\): void \{\s*if \(!session\.isAuthenticated\)/)
   assert.match(secondsSource, /marketStore\.tickerFor\(selected\.value\?\.symbol \|\| ''\)/)
   assert.match(secondsSource, /amountNumber\.value \* payoutRate\.value/)
-  assert.match(secondsSource, /const openedOrder = await openSecondsOrder\(\{/)
-  assert.match(secondsSource, /orders\.value = \[openedOrder, \.\.\.orders\.value\.filter/)
-  assert.match(secondsSource, /activeOrder\.entryPrice !== undefined \? formatPrice\(activeOrder\.entryPrice\) : '--'/)
-  assert.match(
-    secondsSource,
-    /const activeEstimatedProfit = computed\(\(\) => \{\s*const (\w+) = activeOrder\.value\s*return \1 \? \1\.stakeAmount \* \1\.payoutRate : 0\s*\}\)/,
-  )
+  assert.match(secondsSource, /openedOrder = await openSecondsOrder\(\{/)
+  assert.match(secondsSource, /orders\.value = upsertSecondsOrder\(orders\.value, openedOrder\)/)
+  assert.match(secondsSource, /v-for="order in activeOrders"/)
+  assert.match(secondsSource, /order\.entryPrice !== undefined \? formatPrice\(order\.entryPrice\) : '--'/)
+  assert.match(secondsSource, /return secondsOrderEstimatedProfit\(order\)/)
   assert.match(secondsSource, /:data-seconds-market="selected \? 'live' : loading \? 'loading' : 'empty'"/)
   assert.match(secondsSource, /data-session-feedback="created"/)
   assert.match(secondsSource, /t\('marketDetail\.latestPrice'\)/)

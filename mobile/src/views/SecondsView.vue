@@ -15,6 +15,9 @@ import {
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
 import { fetchKlines } from '@/api/market'
+import { createMarketDetailStreamSession } from '@/api/marketDetailStream'
+import { subscribeTickers } from '@/api/marketSocket'
+import { normalizeMarketSocketSymbol } from '@/api/marketSocketProtocol'
 import {
   fetchSecondsOrders,
   fetchSecondsProducts,
@@ -24,11 +27,21 @@ import {
   type SecondsProduct,
 } from '@/api/seconds'
 import { fetchWalletAccounts } from '@/api/wallet'
-import { formatAmount, formatDateTime, formatPrice } from '@/core/format'
+import { publicMarketWebSocketUrl } from '@/config/app'
+import { formatAmount, formatPrice } from '@/core/format'
 import {
   createBottomNavSecondsFallbackTarget,
   isBottomNavigationSecondsEntry,
 } from '@/core/navigation'
+import {
+  activeSecondsOrders,
+  mergeSecondsOrderReconciliation,
+  secondsOrderEstimatedProfit,
+  secondsOrderProgress,
+  secondsOrderRemainingMs,
+  secondsOrderStatusPresentation,
+  upsertSecondsOrder,
+} from '@/core/secondsOrder'
 import { useMarketStore } from '@/stores/market'
 import { useSessionStore } from '@/stores/session'
 import type { KlinePoint, WalletAccount } from '@/core/types'
@@ -41,6 +54,7 @@ const products = ref<SecondsProduct[]>([])
 const orders = ref<SecondsOrder[]>([])
 const accounts = ref<WalletAccount[]>([])
 const sparklinePoints = ref<KlinePoint[]>([])
+const liveTickerPrices = ref<Record<string, number>>({})
 const selected = ref<SecondsProduct | null>(null)
 const selectedCycleId = ref(0)
 const direction = ref<'up' | 'down'>('up')
@@ -49,11 +63,11 @@ const loading = ref(false)
 const submitting = ref(false)
 const error = ref('')
 const success = ref('')
+const refreshWarning = ref('')
 const confirmOpen = ref(false)
 const confirmDialog = ref<HTMLElement | null>(null)
 const reviewButton = ref<HTMLButtonElement | null>(null)
 const sparklineCanvas = ref<HTMLCanvasElement | null>(null)
-const ordersSection = ref<HTMLElement | null>(null)
 const currentTime = ref(Date.now())
 let returnFocus: HTMLElement | null = null
 let previousBodyOverflow = ''
@@ -61,7 +75,18 @@ let clockTimer: ReturnType<typeof setInterval> | null = null
 let chartResizeObserver: ResizeObserver | null = null
 let chartThemeObserver: MutationObserver | null = null
 let chartRequestVersion = 0
-let expiredReloadedOrderId = 0
+let loadRequestVersion = 0
+let tickerSubscriptionGeneration = 0
+let tickerSubscriptionKey = ''
+let stopTickerSubscription: (() => void) | null = null
+let expiryReconciliationPromise: Promise<void> | null = null
+let privateReconciliationGeneration = 0
+let componentActive = true
+const committedOrdersById = new Map<number, SecondsOrder>()
+const expiryRetryAtByOrderId = new Map<number, number>()
+const queuedExpiryOrderIds = new Set<number>()
+const reconcilingExpiryOrderIds = new Set<number>()
+const EXPIRY_RECONCILIATION_RETRY_MS = 5_000
 
 const cycle = computed<SecondsCycle | undefined>(() => (
   selected.value?.cycles.find((item) => item.id === selectedCycleId.value)
@@ -69,17 +94,10 @@ const cycle = computed<SecondsCycle | undefined>(() => (
 ))
 const account = computed(() => accounts.value.find((item) => item.assetId === selected.value?.stakeAssetId))
 const selectedTicker = computed(() => marketStore.tickerFor(selected.value?.symbol || ''))
-const activeOrder = computed(() => orders.value.find((order) => ['opened', 'pending', 'active'].includes(order.status.toLowerCase())) || null)
-const activeTicker = computed(() => marketStore.tickerFor(activeOrder.value?.symbol || selected.value?.symbol || ''))
-const activeRemainingMs = computed(() => Math.max(0, (activeOrder.value?.expiresAt || 0) - currentTime.value))
-const activeProgress = computed(() => {
-  const order = activeOrder.value
-  if (!order || order.expiresAt <= order.createdAt) return 0
-  return Math.max(0, Math.min(100, ((currentTime.value - order.createdAt) / (order.expiresAt - order.createdAt)) * 100))
-})
-const activeEstimatedProfit = computed(() => {
-  const order = activeOrder.value
-  return order ? order.stakeAmount * order.payoutRate : 0
+const activeOrders = computed(() => activeSecondsOrders(orders.value))
+const selectedActiveOrders = computed(() => {
+  const symbol = normalizeProductSymbol(selected.value?.symbol || '')
+  return activeOrders.value.filter((order) => normalizeProductSymbol(order.symbol) === symbol)
 })
 const amountNumber = computed(() => Number(amount.value || 0))
 const payoutRate = computed(() => cycle.value?.payoutRate || 0)
@@ -121,7 +139,7 @@ const preferHomeFallback = computed(() => {
 })
 
 function normalizeProductSymbol(value: string): string {
-  return value.replace(/[^a-z0-9]/gi, '').toUpperCase()
+  return normalizeMarketSocketSymbol(value)
 }
 
 function countdownLabel(milliseconds: number): string {
@@ -131,18 +149,106 @@ function countdownLabel(milliseconds: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
-const activeCountdown = computed(() => countdownLabel(activeRemainingMs.value))
+function latestPriceForSymbol(symbol: string): number {
+  const normalized = normalizeProductSymbol(symbol)
+  const livePrice = liveTickerPrices.value[normalized]
+  if (Number.isFinite(livePrice) && livePrice > 0) return livePrice
+  if (normalized === normalizeProductSymbol(selected.value?.symbol || '')) {
+    const candlePrice = sparklinePoints.value.at(-1)?.close
+    if (Number.isFinite(candlePrice) && Number(candlePrice) > 0) return Number(candlePrice)
+  }
+  return marketStore.tickerFor(symbol)?.lastPrice || 0
+}
+
+const selectedLatestPrice = computed(() => latestPriceForSymbol(selected.value?.symbol || ''))
+
+function orderCountdown(order: SecondsOrder): string {
+  return countdownLabel(secondsOrderRemainingMs(order, currentTime.value))
+}
+
+function orderProgress(order: SecondsOrder): number {
+  return secondsOrderProgress(order, currentTime.value)
+}
+
+function orderEstimatedProfit(order: SecondsOrder): number {
+  return secondsOrderEstimatedProfit(order)
+}
+
+const secondsKlineSession = createMarketDetailStreamSession({
+  getUrl: publicMarketWebSocketUrl,
+  channels: ['kline'],
+  onDepth: () => undefined,
+  onTrade: () => undefined,
+  onKlines: (_context, nextPoints) => {
+    sparklinePoints.value = nextPoints.slice(-48)
+  },
+})
+
+function replaceTickerSubscription(): void {
+  const normalizedSymbols = [...new Set([
+    ...products.value.map((product) => normalizeProductSymbol(product.symbol)),
+    ...activeOrders.value.map((order) => normalizeProductSymbol(order.symbol)),
+  ].filter(Boolean))].sort()
+  const subscriptionKey = normalizedSymbols.join(',')
+  if (subscriptionKey === tickerSubscriptionKey && stopTickerSubscription) return
+
+  const generation = ++tickerSubscriptionGeneration
+  stopTickerSubscription?.()
+  stopTickerSubscription = null
+  tickerSubscriptionKey = subscriptionKey
+  const acceptedSymbols = new Set(normalizedSymbols)
+  liveTickerPrices.value = Object.fromEntries(
+    Object.entries(liveTickerPrices.value).filter(([symbol]) => acceptedSymbols.has(symbol)),
+  )
+  if (!normalizedSymbols.length) return
+
+  stopTickerSubscription = subscribeTickers(normalizedSymbols, (update) => {
+    if (
+      !componentActive
+      || generation !== tickerSubscriptionGeneration
+      || !acceptedSymbols.has(update.symbol)
+      || update.lastPrice <= 0
+    ) {
+      return
+    }
+    liveTickerPrices.value = {
+      ...liveTickerPrices.value,
+      [update.symbol]: update.lastPrice,
+    }
+  })
+}
 
 async function loadSparkline(symbol: string): Promise<void> {
   const requestVersion = ++chartRequestVersion
-  sparklinePoints.value = []
-  if (!symbol) return
+  if (!symbol) {
+    secondsKlineSession.stop()
+    sparklinePoints.value = []
+    return
+  }
+  const context = secondsKlineSession.replace(symbol, '1m', requestVersion)
+  const request = secondsKlineSession.beginKlineRequest(context)
+  sparklinePoints.value = secondsKlineSession.currentPoints().slice(-48)
+  if (!request) return
   try {
     const nextPoints = await fetchKlines(symbol, '1m')
-    if (requestVersion !== chartRequestVersion || normalizeProductSymbol(selected.value?.symbol || '') !== normalizeProductSymbol(symbol)) return
-    sparklinePoints.value = nextPoints.slice(-48)
+    if (
+      requestVersion !== chartRequestVersion
+      || !secondsKlineSession.isCurrent(context, symbol, '1m', requestVersion)
+      || !secondsKlineSession.isCurrentKlineRequest(request)
+    ) {
+      return
+    }
+    const mergedPoints = secondsKlineSession.resolveKlineRequest(request, nextPoints)
+    if (mergedPoints) sparklinePoints.value = mergedPoints.slice(-48)
   } catch {
-    if (requestVersion === chartRequestVersion) sparklinePoints.value = []
+    if (
+      requestVersion === chartRequestVersion
+      && secondsKlineSession.isCurrent(context, symbol, '1m', requestVersion)
+      && secondsKlineSession.isCurrentKlineRequest(request)
+      && !context.klineReceived
+    ) {
+      sparklinePoints.value = []
+    }
   }
 }
 
@@ -211,40 +317,144 @@ function initializeSparkline(): void {
   drawSparkline()
 }
 
-function scrollToOrders(): void {
-  ordersSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+function openHistory(): void {
+  void router.push({ name: 'seconds-history' })
 }
 
 async function load(): Promise<void> {
+  const requestVersion = ++loadRequestVersion
+  const privateGeneration = ++privateReconciliationGeneration
   loading.value = true
   error.value = ''
+  const privateStatePromise: Promise<[
+    PromiseSettledResult<SecondsOrder[]>,
+    PromiseSettledResult<WalletAccount[]>,
+  ] | null> = session.isAuthenticated
+    ? Promise.allSettled([fetchSecondsOrders(100), fetchWalletAccounts()])
+    : Promise.resolve(null)
   try {
     const currentProductId = selected.value?.id
-    const productsRequest = fetchSecondsProducts()
-    const [nextProducts, nextOrders, nextAccounts] = session.isAuthenticated
-      ? await Promise.all([productsRequest, fetchSecondsOrders(), fetchWalletAccounts()])
-      : [await productsRequest, [], []] as [SecondsProduct[], SecondsOrder[], WalletAccount[]]
+    const nextProducts = await fetchSecondsProducts()
+    if (!componentActive || requestVersion !== loadRequestVersion) return
     products.value = nextProducts
-    orders.value = nextOrders
-    accounts.value = nextAccounts
-    const nextActiveOrder = nextOrders.find((order) => ['opened', 'pending', 'active'].includes(order.status.toLowerCase()))
-    const nextActiveProduct = nextProducts.find((product) => normalizeProductSymbol(product.symbol) === normalizeProductSymbol(nextActiveOrder?.symbol || ''))
-    selected.value = nextActiveProduct || nextProducts.find((product) => product.id === currentProductId) || nextProducts[0] || null
+    selected.value = nextProducts.find((product) => product.id === currentProductId) || nextProducts[0] || null
     if (selected.value) {
-      const activeOrderCycle = nextActiveProduct?.id === selected.value.id
-        ? selected.value.cycles.find((item) => item.durationSeconds === nextActiveOrder?.durationSeconds)
-        : undefined
       const stillAvailable = selected.value.cycles.some((item) => item.id === selectedCycleId.value)
-      if (activeOrderCycle) selectedCycleId.value = activeOrderCycle.id
-      else if (!stillAvailable) selectedCycleId.value = selected.value.cycles[0]?.id || 0
+      if (!stillAvailable) selectedCycleId.value = selected.value.cycles[0]?.id || 0
       if (!amount.value) amount.value = String(cycle.value?.minStake || '')
       void loadSparkline(selected.value.symbol)
+    } else {
+      void loadSparkline('')
+    }
+    replaceTickerSubscription()
+
+    const privateResults = await privateStatePromise
+    if (
+      !componentActive
+      || requestVersion !== loadRequestVersion
+      || privateGeneration !== privateReconciliationGeneration
+    ) {
+      return
+    }
+    if (!privateResults) {
+      orders.value = []
+      accounts.value = []
+      committedOrdersById.clear()
+      expiryRetryAtByOrderId.clear()
+      queuedExpiryOrderIds.clear()
+      reconcilingExpiryOrderIds.clear()
+      replaceTickerSubscription()
+      return
+    }
+    const [ordersResult, accountsResult] = privateResults
+    if (ordersResult.status === 'fulfilled') applyReconciledOrders(ordersResult.value)
+    if (accountsResult.status === 'fulfilled') accounts.value = accountsResult.value
+    replaceTickerSubscription()
+    const failedResult = [ordersResult, accountsResult].find((result) => result.status === 'rejected')
+    if (failedResult?.status === 'rejected') {
+      error.value = apiErrorMessage(failedResult.reason, t('seconds.loadFailed'))
     }
   } catch (reason) {
-    error.value = apiErrorMessage(reason, t('seconds.loadFailed'))
+    if (componentActive && requestVersion === loadRequestVersion) {
+      error.value = apiErrorMessage(reason, t('seconds.loadFailed'))
+    }
   } finally {
-    loading.value = false
+    if (componentActive && requestVersion === loadRequestVersion) loading.value = false
   }
+}
+
+interface PrivateReconciliationResult {
+  ordersLoaded: boolean
+  accountsLoaded: boolean
+}
+
+async function reconcilePrivateState(): Promise<PrivateReconciliationResult> {
+  if (!session.isAuthenticated || !componentActive) {
+    return { ordersLoaded: true, accountsLoaded: true }
+  }
+  const generation = ++privateReconciliationGeneration
+  const [ordersResult, accountsResult] = await Promise.allSettled([
+    fetchSecondsOrders(100),
+    fetchWalletAccounts(),
+  ])
+  if (!componentActive) {
+    return { ordersLoaded: false, accountsLoaded: false }
+  }
+  if (generation !== privateReconciliationGeneration) {
+    // A newer reconciliation owns both resources; do not let the superseded
+    // request surface a false refresh failure after the newer one succeeds.
+    return { ordersLoaded: true, accountsLoaded: true }
+  }
+
+  if (ordersResult.status === 'fulfilled') applyReconciledOrders(ordersResult.value)
+  if (accountsResult.status === 'fulfilled') accounts.value = accountsResult.value
+  replaceTickerSubscription()
+  return {
+    ordersLoaded: ordersResult.status === 'fulfilled',
+    accountsLoaded: accountsResult.status === 'fulfilled',
+  }
+}
+
+function applyReconciledOrders(nextOrders: readonly SecondsOrder[]): void {
+  const committedOrders = [...committedOrdersById.values()]
+  orders.value = mergeSecondsOrderReconciliation(nextOrders, committedOrders)
+  nextOrders.forEach((order) => committedOrdersById.delete(order.id))
+}
+
+function queueExpiredOrderReconciliation(now = Date.now()): void {
+  if (!session.isAuthenticated || !componentActive) return
+  for (const order of activeOrders.value) {
+    if (secondsOrderRemainingMs(order, now) > 0) continue
+    if (!expiryRetryAtByOrderId.has(order.id)) expiryRetryAtByOrderId.set(order.id, 0)
+  }
+  for (const [orderId, retryAt] of expiryRetryAtByOrderId) {
+    if (retryAt <= now && !reconcilingExpiryOrderIds.has(orderId)) queuedExpiryOrderIds.add(orderId)
+  }
+  if (!queuedExpiryOrderIds.size || expiryReconciliationPromise) return
+
+  expiryReconciliationPromise = reconcileExpiredOrders()
+    .finally(() => {
+      expiryReconciliationPromise = null
+      if (queuedExpiryOrderIds.size) queueExpiredOrderReconciliation(Date.now())
+    })
+}
+
+async function reconcileExpiredOrders(): Promise<void> {
+  const batch = [...queuedExpiryOrderIds]
+  queuedExpiryOrderIds.clear()
+  batch.forEach((orderId) => reconcilingExpiryOrderIds.add(orderId))
+  const reconciliation = await reconcilePrivateState()
+  batch.forEach((orderId) => reconcilingExpiryOrderIds.delete(orderId))
+  if (!componentActive) return
+
+  const activeIds = new Set(activeOrders.value.map((order) => order.id))
+  const fullyLoaded = reconciliation.ordersLoaded && reconciliation.accountsLoaded
+  const retryAt = Date.now() + EXPIRY_RECONCILIATION_RETRY_MS
+  for (const orderId of batch) {
+    if (fullyLoaded && !activeIds.has(orderId)) expiryRetryAtByOrderId.delete(orderId)
+    else expiryRetryAtByOrderId.set(orderId, retryAt)
+  }
+  refreshWarning.value = fullyLoaded ? '' : t('seconds.refreshAfterOrderFailed')
 }
 
 function selectProduct(product: SecondsProduct): void {
@@ -301,6 +511,7 @@ function closeConfirm(): void {
 }
 
 async function submit(): Promise<void> {
+  if (submitting.value) return
   if (!session.isAuthenticated) {
     error.value = t('seconds.loginDescription')
     return
@@ -311,59 +522,43 @@ async function submit(): Promise<void> {
   }
   submitting.value = true
   error.value = ''
+  refreshWarning.value = ''
+  let openedOrder: SecondsOrder | null = null
   try {
-    const openedOrder = await openSecondsOrder({
+    openedOrder = await openSecondsOrder({
       productId: selected.value.id,
       durationSeconds: cycle.value.durationSeconds,
       direction: direction.value,
       stakeAmount: amountNumber.value,
     })
-    orders.value = [openedOrder, ...orders.value.filter((order) => order.id !== openedOrder.id)]
+    if (!componentActive) return
+    committedOrdersById.set(openedOrder.id, openedOrder)
+    orders.value = upsertSecondsOrder(orders.value, openedOrder)
     amount.value = ''
     success.value = t('seconds.created')
     confirmOpen.value = false
-    await load()
+    replaceTickerSubscription()
   } catch (reason) {
-    error.value = apiErrorMessage(reason, t('seconds.orderFailed'))
+    if (componentActive) error.value = apiErrorMessage(reason, t('seconds.orderFailed'))
   } finally {
-    submitting.value = false
+    if (componentActive) submitting.value = false
   }
+  if (openedOrder && componentActive) void reconcileOpenedOrder()
 }
 
-function statusLabel(status: string): string {
-  const keys: Record<string, string> = {
-    opened: 'seconds.statusActive',
-    pending: 'seconds.statusPending',
-    active: 'seconds.statusActive',
-    won: 'seconds.statusWon',
-    lost: 'seconds.statusLost',
-    settled: 'seconds.statusSettled',
-    cancelled: 'seconds.statusCancelled',
-    canceled: 'seconds.statusCancelled',
+async function reconcileOpenedOrder(): Promise<void> {
+  const reconciliation = await reconcilePrivateState()
+  if (
+    componentActive
+    && (!reconciliation.ordersLoaded || !reconciliation.accountsLoaded)
+  ) {
+    refreshWarning.value = t('seconds.refreshAfterOrderFailed')
   }
-  const key = keys[status.toLowerCase()]
-  return key ? t(key) : status
 }
 
 function orderStatusLabel(order: SecondsOrder): string {
-  const result = order.result?.toLowerCase()
-  if (result === 'win') return t('seconds.statusWon')
-  if (result === 'loss') return t('seconds.statusLost')
-  return statusLabel(order.status)
-}
-
-function orderStatusTone(order: SecondsOrder): string {
-  const result = order.result?.toLowerCase()
-  if (result === 'win') return 'is-positive'
-  if (result === 'loss') return 'is-negative'
-  return statusTone(order.status)
-}
-
-function statusTone(status: string): string {
-  const normalized = status.toLowerCase()
-  if (normalized === 'won' || normalized === 'settled') return 'is-positive'
-  if (normalized === 'lost' || normalized === 'cancelled' || normalized === 'canceled') return 'is-negative'
-  return 'is-pending'
+  const presentation = secondsOrderStatusPresentation(order)
+  return presentation.translationKey ? t(presentation.translationKey) : presentation.source
 }
 
 function highestRate(product: SecondsProduct): string {
@@ -418,17 +613,25 @@ onMounted(async () => {
   initializeSparkline()
   clockTimer = setInterval(() => {
     currentTime.value = Date.now()
-    const order = activeOrder.value
-    if (order && activeRemainingMs.value <= 0 && expiredReloadedOrderId !== order.id) {
-      expiredReloadedOrderId = order.id
-      void load()
-    }
+    queueExpiredOrderReconciliation(currentTime.value)
   }, 1000)
   void Promise.all([load(), marketStore.refresh()])
 })
 
 onBeforeUnmount(() => {
+  componentActive = false
+  loadRequestVersion += 1
   chartRequestVersion += 1
+  tickerSubscriptionGeneration += 1
+  privateReconciliationGeneration += 1
+  secondsKlineSession.stop()
+  stopTickerSubscription?.()
+  stopTickerSubscription = null
+  tickerSubscriptionKey = ''
+  queuedExpiryOrderIds.clear()
+  reconcilingExpiryOrderIds.clear()
+  expiryRetryAtByOrderId.clear()
+  committedOrdersById.clear()
   if (clockTimer) clearInterval(clockTimer)
   chartResizeObserver?.disconnect()
   chartThemeObserver?.disconnect()
@@ -451,36 +654,37 @@ onBeforeUnmount(() => {
       :title="selected?.symbol || t('seconds.title')"
       :subtitle="t('seconds.context')"
     >
+      <template #center>
+        <label class="field seconds-pair-field">
+          <span class="sr-only">{{ t('marketDetail.market') }}</span>
+          <span class="seconds-select-shell">
+            <select
+              :value="selected?.id || ''"
+              :disabled="loading || !products.length"
+              :aria-label="t('marketDetail.market')"
+              @change="selectProductFromEvent"
+            >
+              <option v-if="!products.length" value="">{{ loading ? t('seconds.loading') : t('seconds.noProducts') }}</option>
+              <option v-for="product in products" :key="product.id" :value="product.id">
+                {{ product.symbol }}
+              </option>
+            </select>
+            <small v-if="selected" :data-highest-rate="highestRate(selected)">{{ t('seconds.title') }}</small>
+          </span>
+        </label>
+      </template>
       <template #actions>
-        <button class="icon-button" type="button" :aria-label="t('seconds.myOrders')" @click="scrollToOrders">
+        <button class="icon-button" type="button" :aria-label="t('seconds.historyTitle')" @click="openHistory">
           <History :size="18" aria-hidden="true" />
         </button>
       </template>
     </PageHeader>
 
-    <label class="field seconds-pair-field">
-      <span class="sr-only">{{ t('marketDetail.market') }}</span>
-      <span class="seconds-select-shell">
-        <select
-          :value="selected?.id || ''"
-          :disabled="loading || !products.length"
-          :aria-label="t('marketDetail.market')"
-          @change="selectProductFromEvent"
-        >
-          <option v-if="!products.length" value="">{{ loading ? t('seconds.loading') : t('seconds.noProducts') }}</option>
-          <option v-for="product in products" :key="product.id" :value="product.id">
-            {{ product.symbol }}
-          </option>
-        </select>
-        <small v-if="selected" :data-highest-rate="highestRate(selected)">{{ t('seconds.title') }}</small>
-      </span>
-    </label>
-
     <div class="page-content seconds-content">
       <section
         class="seconds-workspace"
         data-seconds-workspace="live"
-        :data-seconds-state="activeOrder ? 'active' : 'default'"
+        :data-seconds-state="activeOrders.length ? 'active' : 'default'"
         :class="{ 'seconds-guest': !session.isAuthenticated }"
       >
         <section
@@ -492,15 +696,17 @@ onBeforeUnmount(() => {
             <i aria-hidden="true" />
             <span>
               {{ t('seconds.currentRound') }}
-              <b v-if="activeOrder" class="numeric">#{{ activeOrder.id }}</b>
+              <b v-if="selectedActiveOrders.length" class="numeric">
+                {{ selectedActiveOrders.length }} · #{{ selectedActiveOrders[0]?.id }}
+              </b>
               <b v-else>{{ selected?.status || (selectedTicker ? t('common.liveData') : t('common.marketUnavailable')) }}</b>
             </span>
           </div>
 
           <div class="seconds-price-row">
-            <strong class="numeric">{{ selectedTicker ? formatPrice(selectedTicker.lastPrice) : '--' }}</strong>
+            <strong class="numeric">{{ selectedLatestPrice > 0 ? formatPrice(selectedLatestPrice) : '--' }}</strong>
             <span class="numeric">
-              {{ activeOrder ? activeCountdown : cycle ? t('seconds.duration', { seconds: cycle.durationSeconds }) : '--' }}
+              {{ cycle ? t('seconds.duration', { seconds: cycle.durationSeconds }) : '--' }}
               · {{ cycle ? `${(payoutRate * 100).toFixed(2)}%` : '--' }}
             </span>
           </div>
@@ -513,39 +719,54 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section v-if="activeOrder" class="seconds-active-order" data-active-order="real">
-          <header>
-            <span :class="activeOrder.direction">
-              <ArrowUp v-if="activeOrder.direction === 'up'" :size="12" aria-hidden="true" />
-              <ArrowDown v-else :size="12" aria-hidden="true" />
-              {{ t(activeOrder.direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }}
-            </span>
-            <b class="numeric">{{ t('seconds.duration', { seconds: activeOrder.durationSeconds }) }}</b>
-            <strong class="numeric">{{ statusLabel(activeOrder.status) }} {{ activeCountdown }}</strong>
-          </header>
-          <div class="seconds-active-progress" aria-hidden="true">
-            <i :style="{ width: `${activeProgress}%` }" />
-          </div>
-          <dl>
-            <div>
-              <dt>{{ t('orders.entryPrice') }}</dt>
-              <dd class="numeric">{{ activeOrder.entryPrice !== undefined ? formatPrice(activeOrder.entryPrice) : '--' }}</dd>
+        <section
+          v-if="activeOrders.length"
+          class="seconds-active-orders"
+          data-active-order-list="all"
+          :aria-label="t('seconds.activeOrders')"
+        >
+          <article
+            v-for="order in activeOrders"
+            :key="order.id"
+            class="seconds-active-order"
+            data-active-order="real"
+            :data-active-order-id="order.id"
+          >
+            <header>
+              <span :class="order.direction">
+                <ArrowUp v-if="order.direction === 'up'" :size="12" aria-hidden="true" />
+                <ArrowDown v-else :size="12" aria-hidden="true" />
+                {{ order.symbol }} · {{ t(order.direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }}
+              </span>
+              <b class="numeric">{{ t('seconds.duration', { seconds: order.durationSeconds }) }}</b>
+              <strong class="numeric">{{ orderStatusLabel(order) }} {{ orderCountdown(order) }}</strong>
+            </header>
+            <div class="seconds-active-progress" aria-hidden="true">
+              <i :style="{ width: `${orderProgress(order)}%` }" />
             </div>
-            <div>
-              <dt>{{ t('marketDetail.latestPrice') }}</dt>
-              <dd class="positive numeric">{{ activeTicker ? formatPrice(activeTicker.lastPrice) : '--' }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('seconds.stakeAmount') }}</dt>
-              <dd class="numeric">{{ formatAmount(activeOrder.stakeAmount) }} {{ activeOrder.stakeAssetSymbol }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('seconds.estimatedProfit') }}</dt>
-              <dd class="positive numeric">
-                +{{ formatAmount(activeEstimatedProfit) }} {{ activeOrder.stakeAssetSymbol }}
-              </dd>
-            </div>
-          </dl>
+            <dl>
+              <div>
+                <dt>{{ t('orders.entryPrice') }}</dt>
+                <dd class="numeric">{{ order.entryPrice !== undefined ? formatPrice(order.entryPrice) : '--' }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('marketDetail.latestPrice') }}</dt>
+                <dd class="positive numeric">
+                  {{ latestPriceForSymbol(order.symbol) > 0 ? formatPrice(latestPriceForSymbol(order.symbol)) : '--' }}
+                </dd>
+              </div>
+              <div>
+                <dt>{{ t('seconds.stakeAmount') }}</dt>
+                <dd class="numeric">{{ formatAmount(order.stakeAmount) }} {{ order.stakeAssetSymbol }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('seconds.estimatedProfit') }}</dt>
+                <dd class="positive numeric">
+                  +{{ formatAmount(orderEstimatedProfit(order)) }} {{ order.stakeAssetSymbol }}
+                </dd>
+              </div>
+            </dl>
+          </article>
         </section>
 
         <section
@@ -562,7 +783,7 @@ onBeforeUnmount(() => {
                 class="up"
                 :class="{ active: direction === 'up' }"
                 :aria-pressed="direction === 'up'"
-                :disabled="loading || !selected || Boolean(activeOrder)"
+                :disabled="loading || !selected"
                 @click="setDirection('up')"
               >
                 <ArrowUp :size="16" aria-hidden="true" />
@@ -573,7 +794,7 @@ onBeforeUnmount(() => {
                 class="down"
                 :class="{ active: direction === 'down' }"
                 :aria-pressed="direction === 'down'"
-                :disabled="loading || !selected || Boolean(activeOrder)"
+                :disabled="loading || !selected"
                 @click="setDirection('down')"
               >
                 <ArrowDown :size="16" aria-hidden="true" />
@@ -594,7 +815,7 @@ onBeforeUnmount(() => {
                   type="button"
                   :class="{ active: cycle?.id === item.id }"
                   :aria-pressed="cycle?.id === item.id"
-                  :disabled="Boolean(activeOrder)"
+                  :disabled="loading || !selected"
                   @click="selectCycle(item.id)"
                 >
                   <span>{{ t('seconds.duration', { seconds: item.durationSeconds }) }}</span>
@@ -616,7 +837,7 @@ onBeforeUnmount(() => {
                 v-model="amount"
                 class="numeric"
                 inputmode="decimal"
-                :disabled="loading || !selected || Boolean(activeOrder)"
+                :disabled="loading || !selected"
                 :aria-invalid="Boolean(amount) && !valid"
                 @input="setAmount(amount)"
               />
@@ -630,7 +851,7 @@ onBeforeUnmount(() => {
               :key="`${value}-${index}`"
               type="button"
               :aria-pressed="value > 0 && amountNumber === value"
-              :disabled="loading || !selected || Boolean(activeOrder) || value <= 0"
+              :disabled="loading || !selected || value <= 0"
               @click="setAmount(value)"
             >
               {{ value > 0 ? formatAmount(value) : '--' }}
@@ -654,22 +875,26 @@ onBeforeUnmount(() => {
               <span>{{ error }}</span>
               <button type="button" :aria-label="t('common.retry')" @click="load"><RefreshCw :size="16" /></button>
             </div>
-            <div v-else-if="success" class="seconds-message seconds-message--success" data-session-feedback="created" role="status">
+            <div v-if="success" class="seconds-message seconds-message--success" data-session-feedback="created" role="status">
               <CheckCircle2 :size="16" aria-hidden="true" />
               <span>{{ success }}</span>
             </div>
-            <span v-else-if="loading"><LoaderCircle :size="15" class="spin" />{{ t('seconds.loading') }}</span>
-            <span v-else-if="!session.isAuthenticated">{{ t('seconds.loginDescription') }}</span>
+            <div v-if="refreshWarning" class="seconds-message seconds-message--warning" role="status">
+              <RefreshCw :size="16" aria-hidden="true" />
+              <span>{{ refreshWarning }}</span>
+            </div>
+            <span v-if="loading && !error && !success && !refreshWarning"><LoaderCircle :size="15" class="spin" />{{ t('seconds.loading') }}</span>
+            <span v-else-if="!session.isAuthenticated && !error && !success && !refreshWarning">{{ t('seconds.loginDescription') }}</span>
           </div>
 
           <button
             ref="reviewButton"
             class="button button--primary button--full seconds-submit"
             type="button"
-            :disabled="submitting || loading || !selected || Boolean(activeOrder)"
+            :disabled="submitting || loading || !selected"
             @click="reviewOrder"
           >
-            {{ activeOrder ? `${statusLabel(activeOrder.status)} ${activeCountdown}` : t('seconds.confirmOrder') }}
+            {{ submitting ? t('common.submitting') : t('seconds.confirmOrder') }}
           </button>
 
           <p class="seconds-risk-note">
@@ -678,89 +903,77 @@ onBeforeUnmount(() => {
           </p>
         </section>
 
-        <section ref="ordersSection" class="seconds-session-records seconds-orders" :aria-label="t('seconds.myOrders')">
-          <h2 class="group-title">{{ t('seconds.myOrders') }} · {{ session.isAuthenticated ? orders.length : '--' }}</h2>
-          <template v-if="orders.length">
-            <article v-for="order in orders.slice(0, 3)" :key="order.id">
+      </section>
+    </div>
+
+    <Teleport to="body">
+      <div v-if="confirmOpen && selected && cycle" class="confirmation-layer seconds-mask" @click.self="closeConfirm">
+        <section
+          ref="confirmDialog"
+          class="confirmation-sheet seconds-dialog"
+          role="dialog"
+          aria-modal="true"
+          :aria-busy="submitting"
+          aria-labelledby="seconds-confirm-title"
+          aria-describedby="seconds-confirm-summary"
+          tabindex="-1"
+          @keydown="trapDialogFocus"
+        >
+          <header>
+            <span class="confirmation-icon"><CheckCircle2 :size="20" /></span>
+            <div>
+              <strong id="seconds-confirm-title">{{ t('seconds.confirmOrder') }}</strong>
+              <small>{{ selected.symbol }} · {{ t('seconds.settledIn', { asset: selected.stakeAssetSymbol }) }}</small>
+            </div>
+            <button
+              class="icon-button"
+              type="button"
+              :aria-label="t('common.close')"
+              :disabled="submitting"
+              data-dialog-cancel
+              @click="closeConfirm"
+            >
+              <X :size="21" />
+            </button>
+          </header>
+
+          <div class="seconds-dialog__body">
+            <p id="seconds-confirm-summary">
+              {{ selected.symbol }} · {{ t(direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }} ·
+              {{ formatAmount(amountNumber) }} {{ selected.stakeAssetSymbol }}
+            </p>
+
+            <dl class="confirmation-detail">
+              <div><dt>{{ t('seconds.direction') }}</dt><dd>{{ t(direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }}</dd></div>
+              <div><dt>{{ t('seconds.term') }}</dt><dd>{{ t('seconds.duration', { seconds: cycle.durationSeconds }) }}</dd></div>
+              <div><dt>{{ t('seconds.stakeAmount') }}</dt><dd>{{ formatAmount(amountNumber) }} {{ selected.stakeAssetSymbol }}</dd></div>
               <div>
-                <strong>{{ order.symbol }} · {{ t(order.direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }}</strong>
-                <span :class="orderStatusTone(order)">{{ orderStatusLabel(order) }}</span>
+                <dt>{{ t('seconds.payoutRate') }}</dt>
+                <dd>{{ (cycle.payoutRate * 100).toFixed(2) }}% · +{{ formatAmount(estimatedProfit) }} {{ selected.stakeAssetSymbol }}</dd>
               </div>
-              <p>
-                {{ formatAmount(order.stakeAmount) }} {{ order.stakeAssetSymbol }} ·
-                {{ t('seconds.duration', { seconds: order.durationSeconds }) }} ·
-                {{ formatDateTime(order.createdAt) }}
-              </p>
-            </article>
-          </template>
-          <p v-else>{{ session.isAuthenticated ? t('seconds.noOrders') : t('seconds.loginDescription') }}</p>
+              <div><dt>{{ t('marketDetail.latestPrice') }}</dt><dd>{{ selectedLatestPrice > 0 ? formatPrice(selectedLatestPrice) : '--' }}</dd></div>
+            </dl>
+
+            <p v-if="error" class="dialog-feedback" role="alert">{{ error }}</p>
+          </div>
+
+          <div class="confirmation-actions dialog-actions">
+            <button type="button" class="button button--secondary" :disabled="submitting" @click="closeConfirm">
+              {{ t('common.cancel') }}
+            </button>
+            <button
+              type="button"
+              class="button button--primary confirmation-primary"
+              :disabled="submitting"
+              :aria-busy="submitting"
+              @click="submit"
+            >
+              {{ submitting ? t('common.submitting') : t('seconds.confirmOrder') }}
+            </button>
+          </div>
         </section>
-      </section>
-    </div>
-
-    <div v-if="confirmOpen && selected && cycle" class="confirmation-layer seconds-mask" @click.self="closeConfirm">
-      <section
-        ref="confirmDialog"
-        class="confirmation-sheet seconds-dialog"
-        role="dialog"
-        aria-modal="true"
-        :aria-busy="submitting"
-        aria-labelledby="seconds-confirm-title"
-        aria-describedby="seconds-confirm-summary"
-        tabindex="-1"
-        @keydown="trapDialogFocus"
-      >
-        <header>
-          <span class="confirmation-icon"><CheckCircle2 :size="20" /></span>
-          <div>
-            <strong id="seconds-confirm-title">{{ t('seconds.confirmOrder') }}</strong>
-            <small>{{ selected.symbol }} · {{ t('seconds.settledIn', { asset: selected.stakeAssetSymbol }) }}</small>
-          </div>
-          <button
-            class="icon-button"
-            type="button"
-            :aria-label="t('common.close')"
-            :disabled="submitting"
-            data-dialog-cancel
-            @click="closeConfirm"
-          >
-            <X :size="21" />
-          </button>
-        </header>
-
-        <p id="seconds-confirm-summary">
-          {{ selected.symbol }} · {{ t(direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }} ·
-          {{ formatAmount(amountNumber) }} {{ selected.stakeAssetSymbol }}
-        </p>
-
-        <dl class="confirmation-detail">
-          <div><dt>{{ t('seconds.direction') }}</dt><dd>{{ t(direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }}</dd></div>
-          <div><dt>{{ t('seconds.term') }}</dt><dd>{{ t('seconds.duration', { seconds: cycle.durationSeconds }) }}</dd></div>
-          <div><dt>{{ t('seconds.stakeAmount') }}</dt><dd>{{ formatAmount(amountNumber) }} {{ selected.stakeAssetSymbol }}</dd></div>
-          <div>
-            <dt>{{ t('seconds.payoutRate') }}</dt>
-            <dd>{{ (cycle.payoutRate * 100).toFixed(2) }}% · +{{ formatAmount(estimatedProfit) }} {{ selected.stakeAssetSymbol }}</dd>
-          </div>
-          <div><dt>{{ t('marketDetail.latestPrice') }}</dt><dd>{{ selectedTicker ? formatPrice(selectedTicker.lastPrice) : '--' }}</dd></div>
-        </dl>
-
-        <p v-if="error" class="dialog-feedback" role="alert">{{ error }}</p>
-        <div class="confirmation-actions dialog-actions">
-          <button type="button" class="button button--secondary" :disabled="submitting" @click="closeConfirm">
-            {{ t('common.cancel') }}
-          </button>
-          <button
-            type="button"
-            class="button button--primary confirmation-primary"
-            :disabled="submitting"
-            :aria-busy="submitting"
-            @click="submit"
-          >
-            {{ submitting ? t('common.submitting') : t('seconds.confirmOrder') }}
-          </button>
-        </div>
-      </section>
-    </div>
+      </div>
+    </Teleport>
   </main>
 </template>
 
@@ -780,8 +993,7 @@ onBeforeUnmount(() => {
 
 .seconds-workspace,
 .seconds-market-board,
-.seconds-order-console,
-.seconds-session-records {
+.seconds-order-console {
   min-width: 0;
 }
 
@@ -793,32 +1005,32 @@ onBeforeUnmount(() => {
 
 .seconds-pair-field {
   display: grid;
-  left: 72px;
+  justify-self: center;
+  max-width: 260px;
   min-width: 0;
-  position: absolute;
-  right: 72px;
-  top: 4px;
-  z-index: calc(var(--layer-sticky-header) + 1);
+  width: 100%;
 }
 
 .seconds-select-shell {
   align-items: center;
   background: var(--surface);
-  border: 0;
-  border-radius: 0;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  box-sizing: border-box;
   display: grid;
   gap: 6px;
-  grid-template-columns: minmax(0, auto) auto;
-  height: 52px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  height: 44px;
   justify-content: center;
-  min-height: 52px;
+  min-height: 44px;
   min-width: 0;
-  padding: 0;
+  padding: 0 6px;
+  width: 100%;
 }
 
 .seconds-select-shell:focus-within {
   border-color: var(--focus);
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  box-shadow: inset 0 0 0 1px var(--focus);
 }
 
 .seconds-select-shell select {
@@ -828,13 +1040,13 @@ onBeforeUnmount(() => {
   color: var(--text);
   font-size: 15px;
   font-weight: 750;
-  height: 52px;
-  min-height: 52px;
+  height: 42px;
+  min-height: 42px;
   min-width: 0;
   outline: 0;
-  padding: 0;
+  padding: 0 2px 0 0;
   text-align: right;
-  width: auto;
+  width: 100%;
 }
 
 .seconds-select-shell small {
@@ -940,13 +1152,20 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.seconds-active-orders {
+  display: grid;
+  gap: 10px;
+  margin: 12px 20px 0;
+  min-width: 0;
+}
+
 .seconds-active-order {
   background: var(--surface);
   border: 1px solid var(--positive);
   border-radius: 14px;
   display: grid;
   gap: 10px;
-  margin: 12px 20px 0;
+  margin: 0;
   min-width: 0;
   padding: 12px 14px;
 }
@@ -1229,6 +1448,7 @@ onBeforeUnmount(() => {
 
 .seconds-feedback {
   display: grid;
+  gap: 6px;
   min-height: 0;
   min-width: 0;
 }
@@ -1264,6 +1484,12 @@ onBeforeUnmount(() => {
 .seconds-message--success {
   background: var(--positive-soft);
   color: var(--positive);
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.seconds-message--warning {
+  background: var(--accent-soft);
+  color: var(--accent);
   grid-template-columns: auto minmax(0, 1fr);
 }
 
@@ -1307,71 +1533,6 @@ onBeforeUnmount(() => {
   margin-top: 1px;
 }
 
-.seconds-session-records {
-  border-top: 1px solid var(--line);
-  display: grid;
-  margin-top: 72px;
-  padding: 0 20px;
-}
-
-.seconds-session-records h2 {
-  align-items: center;
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  font-size: 13px;
-  margin: 0;
-  min-height: 52px;
-  overflow-wrap: anywhere;
-}
-
-.seconds-session-records article {
-  border-bottom: 1px solid var(--line);
-  display: grid;
-  gap: 7px;
-  min-width: 0;
-  padding: 13px 0;
-}
-
-.seconds-session-records article > div {
-  display: flex;
-  gap: 9px;
-  justify-content: space-between;
-  min-width: 0;
-}
-
-.seconds-session-records article strong,
-.seconds-session-records article span {
-  font-size: 10px;
-  overflow-wrap: anywhere;
-}
-
-.seconds-session-records article span {
-  color: var(--positive);
-  text-align: right;
-}
-
-.seconds-session-records article span.is-negative {
-  color: var(--negative);
-}
-
-.seconds-session-records article span.is-pending {
-  color: var(--accent);
-}
-
-.seconds-session-records article p,
-.seconds-session-records > p {
-  color: var(--muted);
-  font-size: 9px;
-  line-height: 15px;
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.seconds-session-records > p {
-  min-height: 72px;
-  padding: 16px 0;
-}
-
 .seconds-duration-grid button:focus-visible,
 .seconds-direction-grid button:focus-visible,
 .seconds-submit:focus-visible,
@@ -1381,17 +1542,27 @@ onBeforeUnmount(() => {
   outline: 0;
 }
 
-.seconds-page .seconds-mask {
+.seconds-mask {
+  --page: var(--background);
+  --surface-2: var(--soft);
+  --text: var(--ink);
+  --green: var(--accent);
+  --cyan: var(--focus);
+  --coral: var(--negative);
   align-items: flex-end;
   background: var(--overlay);
+  box-sizing: border-box;
+  color: var(--text);
   display: flex;
+  height: 100dvh;
   inset: 0;
   justify-content: center;
   max-width: 100%;
   padding:
     max(16px, env(safe-area-inset-top))
-    16px
-    max(16px, env(safe-area-inset-bottom));
+    max(16px, env(safe-area-inset-right))
+    max(16px, env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-left));
   position: fixed;
   width: 100%;
   z-index: 90;
@@ -1402,14 +1573,26 @@ onBeforeUnmount(() => {
   border: 1px solid var(--line-strong);
   border-radius: 16px;
   box-shadow: var(--shadow-soft);
+  box-sizing: border-box;
   display: grid;
   gap: 15px;
-  max-height: calc(100dvh - max(32px, env(safe-area-inset-top)) - max(32px, env(safe-area-inset-bottom)));
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  max-height: calc(100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom)));
   max-width: 520px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  overflow: hidden;
+  overscroll-behavior: auto;
   padding: 17px;
   width: 100%;
+}
+
+.seconds-dialog__body {
+  align-content: start;
+  display: grid;
+  gap: 15px;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .seconds-dialog header {
@@ -1443,7 +1626,7 @@ onBeforeUnmount(() => {
   width: 44px;
 }
 
-.seconds-dialog > p {
+.seconds-dialog__body > #seconds-confirm-summary {
   border-block: 1px solid var(--line);
   color: var(--muted);
   font-size: 11px;
@@ -1522,18 +1705,12 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 340px) {
-  .seconds-pair-field {
-    left: 64px;
-    right: 64px;
-  }
-
   .seconds-market-board,
-  .seconds-order-console,
-  .seconds-session-records {
+  .seconds-order-console {
     padding-inline: 16px;
   }
 
-  .seconds-active-order {
+  .seconds-active-orders {
     margin-inline: 16px;
   }
 
@@ -1557,15 +1734,19 @@ onBeforeUnmount(() => {
 
 @media (prefers-reduced-motion: reduce) {
   .seconds-page *,
+  .seconds-mask *,
   .seconds-page *::before,
-  .seconds-page *::after {
+  .seconds-mask *::before,
+  .seconds-page *::after,
+  .seconds-mask *::after {
     animation-duration: .01ms !important;
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: .01ms !important;
   }
 
-  .seconds-page button:active {
+  .seconds-page button:active,
+  .seconds-mask button:active {
     transform: none;
   }
 

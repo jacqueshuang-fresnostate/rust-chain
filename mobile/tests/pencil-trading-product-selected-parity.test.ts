@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { compileStyle } from 'vue/compiler-sfc'
 import en from '../src/i18n/messages/en.ts'
 import zhCN from '../src/i18n/messages/zh-CN.ts'
 
@@ -13,9 +14,27 @@ const predictionSource = read('../src/views/PredictionView.vue')
 const orderBookSource = read('../src/components/OrderBookPanel.vue')
 const selectedPageCss = read('../src/styles/pencil-selected-pages.css')
 const legacyPrototypeCss = read('../src/styles/prototype-base.css')
+const baseCss = read('../src/styles/base.css')
 
 function styleOf(source: string): string {
   return source.match(/<style\s+scoped\s*>([\s\S]*?)<\/style>/)?.[1] || ''
+}
+
+function blockOf(source: string, marker: string): string {
+  const markerIndex = source.indexOf(marker)
+  assert.notEqual(markerIndex, -1, `missing block marker: ${marker}`)
+  const openIndex = source.indexOf('{', markerIndex)
+  assert.notEqual(openIndex, -1, `missing opening brace: ${marker}`)
+
+  let depth = 0
+  for (let index = openIndex; index < source.length; index += 1) {
+    if (source[index] === '{') depth += 1
+    if (source[index] !== '}') continue
+    depth -= 1
+    if (depth === 0) return source.slice(openIndex + 1, index)
+  }
+
+  assert.fail(`missing closing brace: ${marker}`)
 }
 
 test('现货 yzOPc/bo8k5 模板保持逐字不变，合约使用独立 by3G9/pKHeU 分支', () => {
@@ -50,16 +69,16 @@ test('合约为独立二栏下单、五档真实盘口和真实持仓状态面',
 test('秒合约由真实订单切换 VL8er/g9agt 与 Lpt6q/WxeB8 几何并直用现货钱包', () => {
   const css = styleOf(secondsSource)
   assert.match(secondsSource, /data-pencil-source="VL8er g9agt Lpt6q WxeB8"/)
-  assert.match(secondsSource, /const activeOrder = computed\(\(\) => orders\.value\.find\(\(order\) => \['opened', 'pending', 'active'\]\.includes\(order\.status\.toLowerCase\(\)\)\) \|\| null\)/)
-  assert.match(secondsSource, /:data-seconds-state="activeOrder \? 'active' : 'default'"/)
+  assert.match(secondsSource, /const activeOrders = computed\(\(\) => activeSecondsOrders\(orders\.value\)\)/)
+  assert.match(secondsSource, /:data-seconds-state="activeOrders\.length \? 'active' : 'default'"/)
   assert.doesNotMatch(secondsSource, /secondary-view|secondary-content|page--prototype-grid/)
-  assert.match(secondsSource, /v-if="activeOrder" class="seconds-active-order" data-active-order="real"/)
+  assert.match(secondsSource, /v-if="activeOrders\.length"[\s\S]*?data-active-order-list="all"[\s\S]*?v-for="order in activeOrders"/)
   assert.match(secondsSource, /fetchSecondsProducts\(\)/)
-  assert.match(secondsSource, /fetchSecondsOrders\(\)/)
+  assert.match(secondsSource, /fetchSecondsOrders\(100\)/)
   assert.match(secondsSource, /fetchWalletAccounts\(\)/)
-  assert.match(secondsSource, /activeOrder\.entryPrice !== undefined \? formatPrice\(activeOrder\.entryPrice\) : '--'/)
-  assert.match(secondsSource, /order\.stakeAmount \* order\.payoutRate/)
-  assert.match(secondsSource, /orders\.value = \[openedOrder, \.\.\.orders\.value\.filter/)
+  assert.match(secondsSource, /order\.entryPrice !== undefined \? formatPrice\(order\.entryPrice\) : '--'/)
+  assert.match(secondsSource, /return secondsOrderEstimatedProfit\(order\)/)
+  assert.match(secondsSource, /orders\.value = upsertSecondsOrder\(orders\.value, openedOrder\)/)
   assert.match(secondsSource, /accounts\.value\.find\(\(item\) => item\.assetId === selected\.value\?\.stakeAssetId\)/)
   assert.match(secondsSource, /fetchKlines\(symbol, '1m'\)/)
   assert.match(secondsSource, /await openSecondsOrder\(\{[\s\S]*?productId:[\s\S]*?durationSeconds:[\s\S]*?direction:[\s\S]*?stakeAmount:/)
@@ -71,6 +90,86 @@ test('秒合约由真实订单切换 VL8er/g9agt 与 Lpt6q/WxeB8 几何并直用
   assert.match(css, /\.seconds-duration-grid button\s*\{[\s\S]*?height: 36px;[\s\S]*?min-height: 36px;/)
   assert.match(css, /\.seconds-amount-presets\s*\{\s*display: none;/)
   assert.match(css, /\.seconds-submit\s*\{[\s\S]*?border-radius: 26px;[\s\S]*?min-height: 52px;/)
+})
+
+test('秒合约确认层 Teleport 到 body 并将固定操作区与可滚动明细分离', () => {
+  const css = styleOf(secondsSource)
+  const teleportedLayer = secondsSource.match(/<Teleport to="body">([\s\S]*?)<\/Teleport>/)?.[1]
+  assert.ok(teleportedLayer)
+  assert.match(teleportedLayer, /<div v-if="confirmOpen && selected && cycle" class="confirmation-layer seconds-mask" @click\.self="closeConfirm">/)
+  assert.match(teleportedLayer, /ref="confirmDialog"[\s\S]*?role="dialog"[\s\S]*?aria-modal="true"[\s\S]*?@keydown="trapDialogFocus"/)
+
+  const bodyBoundary = teleportedLayer.match(
+    /<\/header>\s*<div class="seconds-dialog__body">([\s\S]*?)<\/div>\s*<div class="confirmation-actions dialog-actions">/,
+  )
+  assert.ok(bodyBoundary)
+  assert.match(bodyBoundary[1], /<p id="seconds-confirm-summary">/)
+  assert.match(bodyBoundary[1], /<dl class="confirmation-detail">/)
+  assert.match(bodyBoundary[1], /<p v-if="error" class="dialog-feedback" role="alert">/)
+  assert.doesNotMatch(bodyBoundary[1], /confirmation-actions|dialog-actions/)
+
+  assert.match(secondsSource, /function closeConfirm\(\): void \{\s*if \(submitting\.value\) return\s*confirmOpen\.value = false\s*\}/)
+  assert.match(secondsSource, /if \(event\.key === 'Escape'\) \{[\s\S]*?event\.preventDefault\(\)[\s\S]*?closeConfirm\(\)[\s\S]*?return\s*\}/)
+  assert.match(secondsSource, /if \(event\.key !== 'Tab' \|\| !confirmDialog\.value\) return/)
+  assert.match(secondsSource, /event\.shiftKey && document\.activeElement === first[\s\S]*?last\.focus\(\)[\s\S]*?document\.activeElement === last[\s\S]*?first\.focus\(\)/)
+  assert.match(secondsSource, /previousBodyOverflow = document\.body\.style\.overflow[\s\S]*?document\.body\.style\.overflow = 'hidden'[\s\S]*?\[data-dialog-cancel\][\s\S]*?\.focus\(\)/)
+  assert.match(secondsSource, /document\.body\.style\.overflow = previousBodyOverflow[\s\S]*?await nextTick\(\)[\s\S]*?returnFocus\?\.focus\(\)[\s\S]*?returnFocus = null/)
+  assert.match(secondsSource, /onBeforeUnmount\(\(\) => \{[\s\S]*?document\.body\.style\.overflow = previousBodyOverflow[\s\S]*?\}\)/)
+
+  assert.match(css, /(?:^|\n)\.seconds-mask\s*\{/)
+  assert.doesNotMatch(css, /\.seconds-page\s+\.seconds-mask\s*\{/)
+
+  const maskRule = blockOf(css, '.seconds-mask {')
+  assert.match(maskRule, /--page: var\(--background\);/)
+  assert.match(maskRule, /--surface-2: var\(--soft\);/)
+  assert.match(maskRule, /--text: var\(--ink\);/)
+  assert.match(maskRule, /\bbackground: var\(--overlay\);/)
+  assert.match(maskRule, /\bbox-sizing: border-box;/)
+  assert.match(maskRule, /\bheight: 100dvh;/)
+  assert.match(maskRule, /\binset: 0;/)
+  assert.match(maskRule, /\bposition: fixed;/)
+  assert.match(maskRule, /padding:[\s\S]*?env\(safe-area-inset-top\)[\s\S]*?env\(safe-area-inset-right\)[\s\S]*?env\(safe-area-inset-bottom\)[\s\S]*?env\(safe-area-inset-left\)/)
+
+  for (const themeMarker of [":root[data-theme='light'] {", ":root[data-theme='dark'] {"]) {
+    const themeRule = blockOf(baseCss, themeMarker)
+    for (const token of ['background', 'surface', 'soft', 'ink', 'accent', 'focus', 'negative', 'overlay']) {
+      assert.match(themeRule, new RegExp(`--${token}:`), `${themeMarker} must own --${token}`)
+    }
+  }
+
+  const dialogRule = blockOf(css, '.seconds-dialog {')
+  assert.match(dialogRule, /\bgrid-template-rows: auto minmax\(0, 1fr\) auto;/)
+  assert.match(dialogRule, /\bmax-height: calc\(100dvh - max\(16px, env\(safe-area-inset-top\)\) - max\(16px, env\(safe-area-inset-bottom\)\)\);/)
+  assert.match(dialogRule, /\boverflow: hidden;/)
+  assert.match(dialogRule, /\boverscroll-behavior: auto;/)
+  assert.doesNotMatch(dialogRule, /overflow-y:\s*auto|overscroll-behavior:\s*contain/)
+
+  const bodyRule = blockOf(css, '.seconds-dialog__body {')
+  assert.match(bodyRule, /\bgap: 15px;/)
+  assert.match(bodyRule, /\bmin-height: 0;/)
+  assert.match(bodyRule, /\boverflow-x: hidden;/)
+  assert.match(bodyRule, /\boverflow-y: auto;/)
+  assert.match(bodyRule, /\boverscroll-behavior: contain;/)
+
+  const actionsRule = blockOf(css, '.dialog-actions {')
+  assert.match(actionsRule, /\bgrid-template-columns: minmax\(0, \.8fr\) minmax\(0, 1\.2fr\);/)
+  const buttonRule = blockOf(css, '.dialog-actions .button {')
+  assert.match(buttonRule, /\bmin-height: 48px;/)
+  const narrowRule = blockOf(blockOf(css, '@media (max-width: 340px) {'), '.dialog-actions {')
+  assert.match(narrowRule, /\bgrid-template-columns: 1fr;/)
+
+  const compiled = compileStyle({
+    source: css,
+    filename: 'SecondsView.vue',
+    id: 'data-v-seconds-confirm',
+    scoped: true,
+  })
+  assert.deepEqual(compiled.errors, [])
+  assert.match(compiled.code, /\.seconds-mask\[data-v-seconds-confirm\]\s*\{/)
+  assert.match(compiled.code, /\.seconds-dialog\[data-v-seconds-confirm\]\s*\{[\s\S]*?overflow: hidden;[\s\S]*?overscroll-behavior: auto;/)
+  assert.match(compiled.code, /\.seconds-dialog__body\[data-v-seconds-confirm\]\s*\{[\s\S]*?overflow-y: auto;[\s\S]*?overscroll-behavior: contain;/)
+  assert.match(compiled.code, /\.seconds-dialog button\[data-v-seconds-confirm\]:focus-visible/)
+  assert.doesNotMatch(compiled.code, /\.seconds-page[^,{]*\.seconds-mask/)
 })
 
 test('产品中心仅渲染两条 64px 产品行与一条 48px 产品说明入口', () => {

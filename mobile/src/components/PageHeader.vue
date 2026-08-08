@@ -56,9 +56,13 @@ function back(): void {
       <ArrowLeft :size="pencil ? 22 : 20" />
     </button>
     <div class="page-header__copy">
-      <span class="secondary-scene page-header__eyebrow">{{ eyebrow || '' }}</span>
-      <strong class="page-header__title">{{ title }}</strong>
-      <small>{{ subtitle || '' }}</small>
+      <slot name="center">
+        <slot name="copy">
+          <span class="secondary-scene page-header__eyebrow">{{ eyebrow || '' }}</span>
+          <strong class="page-header__title">{{ title }}</strong>
+          <small>{{ subtitle || '' }}</small>
+        </slot>
+      </slot>
     </div>
     <span
       class="secondary-header-action page-header__actions"
