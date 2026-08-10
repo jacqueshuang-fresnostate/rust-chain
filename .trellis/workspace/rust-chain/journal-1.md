@@ -953,3 +953,36 @@ Completed and verified the accumulated mobile Pencil page parity, assets and swa
 ### Next Steps
 
 - None - task complete
+
+
+## Session 28: 修复闪兑交易对接口缺少 Logo
+
+**Date**: 2026-08-11
+**Task**: 修复闪兑交易对接口缺少 Logo
+**Branch**: `main`
+
+### Summary
+
+为公开闪兑交易对接口补充双方资产 Logo，保留数据库空值语义并新增序列化和路由回归测试。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `97cf710` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

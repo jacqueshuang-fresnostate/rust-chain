@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 27
-- **Last Active**: 2026-08-10
+- **Total Sessions**: 28
+- **Last Active**: 2026-08-11
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~955 | Active |
+| `journal-1.md` | ~988 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 28 | 2026-08-11 | 修复闪兑交易对接口缺少 Logo | `97cf710` | `main` |
 | 27 | 2026-08-10 | 完成手机端资产账单分类与国际化 | `76900e7` | `main` |
 | 26 | 2026-08-08 | Mobile Pencil flows and market favorites | `d01ef80` | `main` |
 | 25 | 2026-08-05 | 用户钱包异步初始化与 1Panel Turnstile 修复 | `2d96a69`, `342739d` | `main` |
