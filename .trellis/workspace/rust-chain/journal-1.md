@@ -920,3 +920,36 @@ Completed and verified the accumulated mobile Pencil page parity, assets and swa
 ### Next Steps
 
 - None - task complete
+
+
+## Session 27: 完成手机端资产账单分类与国际化
+
+**Date**: 2026-08-10
+**Task**: 完成手机端资产账单分类与国际化
+**Branch**: `main`
+
+### Summary
+
+完成 /assets/ledger 十类服务端筛选、日期分组、双语展示、精确账务格式与移动端多尺寸运行时验收。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `76900e7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
