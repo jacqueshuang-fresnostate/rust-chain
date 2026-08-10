@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 29
+- **Total Sessions**: 30
 - **Last Active**: 2026-08-11
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1021 | Active |
+| `journal-1.md` | ~1054 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 30 | 2026-08-11 | 手机现货订单类型选择弹窗 | `aa9c098` | `main` |
 | 29 | 2026-08-11 | 手机闪兑使用交易对 API Logo | `9a615af` | `main` |
 | 28 | 2026-08-11 | 修复闪兑交易对接口缺少 Logo | `97cf710` | `main` |
 | 27 | 2026-08-10 | 完成手机端资产账单分类与国际化 | `76900e7` | `main` |

@@ -1019,3 +1019,36 @@ Completed and verified the accumulated mobile Pencil page parity, assets and swa
 ### Next Steps
 
 - None - task complete
+
+
+## Session 30: 手机现货订单类型选择弹窗
+
+**Date**: 2026-08-11
+**Task**: 手机现货订单类型选择弹窗
+**Branch**: `main`
+
+### Summary
+
+将 spot-type-field 改为 Teleport 底部选择层，显式选择限价/市价；补齐焦点滚动合同、双弹层互斥、双语文案、回归测试与 Mobile 可执行规范。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `aa9c098` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
