@@ -1,0 +1,5 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Mobile shared UI quality gate and touch-target rules."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Selected Pencil spot account-state geometry, semantics and production parity contracts."}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Trade and Orders navigation plus localization contracts."}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Preserve wallet metadata, authenticated state and existing backend adapter behavior."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Keep OrdersView as the authoritative order-management surface instead of duplicating it in TradeView."}

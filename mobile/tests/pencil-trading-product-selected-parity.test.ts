@@ -37,7 +37,14 @@ function blockOf(source: string, marker: string): string {
   assert.fail(`missing closing brace: ${marker}`)
 }
 
-test('现货 yzOPc/bo8k5 模板只新增显式订单类型入口，合约使用独立 by3G9/pKHeU 分支', () => {
+function replaceExactlyOnce(source: string, current: string, prior: string, label: string): string {
+  const first = source.indexOf(current)
+  assert.notEqual(first, -1, `missing normalization source: ${label}`)
+  assert.equal(source.indexOf(current, first + current.length), -1, `duplicate normalization source: ${label}`)
+  return `${source.slice(0, first)}${prior}${source.slice(first + current.length)}`
+}
+
+test('现货 yzOPc/bo8k5 模板仅定向调整订单类型入口与持仓归属，合约仍使用独立分支', () => {
   const spotStart = tradeSource.indexOf('    <template v-if="isSpotMode">')
   const contractStart = tradeSource.indexOf('    <template v-else>', spotStart)
   const orderTypeTeleportStart = tradeSource.indexOf('    <Teleport to="body">', contractStart)
@@ -58,13 +65,97 @@ test('现货 yzOPc/bo8k5 模板只新增显式订单类型入口，合约使用�
             <strong>{{ orderType === 'limit' ? t('trade.limitOrderShort') : t('trade.marketOrderShort') }}</strong>
             <ChevronDown :size="15" aria-hidden="true" />
           </button>`
-  const spotTemplateWithPriorTrigger = spotTemplate.replace(currentTrigger, priorTrigger)
-  const priorSpotDigest = createHash('sha256').update(spotTemplateWithPriorTrigger).digest('hex')
+  const accountStart = spotTemplate.indexOf('      <div class="spot-account-workspace"')
+  const accountEnd = spotTemplate.indexOf('      <button\n        class="spot-chart-entry"', accountStart)
+  assert.ok(accountStart >= 0 && accountEnd > accountStart)
+  const currentAccountWorkspace = spotTemplate.slice(accountStart, accountEnd)
+  const currentHoldingsEntry = `          <span
+            id="spot-holdings-label"
+            class="spot-account-current active"
+            aria-current="true"
+          >
+            {{ t('orders.positions') }}
+          </span>`
+  const currentPanelOpening = `        <section
+          id="spot-holdings-panel"
+          class="spot-holdings-panel"
+          role="region"
+          aria-labelledby="spot-holdings-label"
+        >
+`
+  const currentContext = `          <div class="spot-holdings-context">
+            <span><i aria-hidden="true" />{{ t('trade.onlyCurrent') }}</span>
+            <button type="button" @click="openAssets">{{ t('common.viewAll') }}</button>
+          </div>`
+  const statesStart = currentAccountWorkspace.indexOf('          <div v-if="balancesLoading"')
+  const statesEnd = currentAccountWorkspace.lastIndexOf('        </section>\n      </div>\n\n')
+  assert.ok(statesStart >= 0 && statesEnd > statesStart)
+  const currentStateBranches = currentAccountWorkspace.slice(statesStart, statesEnd)
+  let normalizedAccountWorkspace = replaceExactlyOnce(
+    currentAccountWorkspace,
+    '      <div class="spot-account-workspace">',
+    `      <section class="spot-account-workspace" :aria-label="t('trade.positionsAndAssets')">`,
+    'account workspace element',
+  )
+  normalizedAccountWorkspace = replaceExactlyOnce(
+    normalizedAccountWorkspace,
+    `          <button type="button" @click="openOrders('spot')">`,
+    `          <button class="active" type="button" @click="openOrders('spot')">`,
+    'orders entry state',
+  )
+  normalizedAccountWorkspace = replaceExactlyOnce(
+    normalizedAccountWorkspace,
+    currentHoldingsEntry,
+    `          <button type="button" @click="openOrders('positions')">
+            {{ t('trade.positionsAndAssets') }} <ChevronDown :size="12" aria-hidden="true" />
+          </button>`,
+    'current holdings label',
+  )
+  normalizedAccountWorkspace = replaceExactlyOnce(
+    normalizedAccountWorkspace,
+    currentPanelOpening,
+    '',
+    'holdings panel opening',
+  )
+  normalizedAccountWorkspace = replaceExactlyOnce(
+    normalizedAccountWorkspace,
+    currentContext,
+    `        <div class="spot-order-filter">
+          <span><i aria-hidden="true" />{{ t('trade.onlyCurrent') }}</span>
+          <button type="button" @click="openOrders('spot')">{{ t('orders.cancelAll') }}</button>
+        </div>`,
+    'holdings context row',
+  )
+  normalizedAccountWorkspace = replaceExactlyOnce(
+    normalizedAccountWorkspace,
+    currentStateBranches,
+    currentStateBranches.replace(/^ {2}/gm, ''),
+    'wallet state indentation',
+  )
+  normalizedAccountWorkspace = replaceExactlyOnce(
+    normalizedAccountWorkspace,
+    '\n        </section>\n      </div>\n\n',
+    '\n      </section>\n\n',
+    'holdings panel closing',
+  )
+  let normalizedSpotTemplate = replaceExactlyOnce(spotTemplate, currentTrigger, priorTrigger, 'order type trigger')
+  normalizedSpotTemplate = replaceExactlyOnce(
+    normalizedSpotTemplate,
+    currentAccountWorkspace,
+    normalizedAccountWorkspace,
+    'account workspace',
+  )
+  const priorSpotDigest = createHash('sha256').update(normalizedSpotTemplate).digest('hex')
 
   assert.equal(priorSpotDigest, '7b3247272adfe69a374bc64452faec8d0ca41367ecc85ecdec7fc6f9436dc444')
   assert.match(spotTemplate, /data-pencil-source="yzOPc-bo8k5"/)
   assert.match(currentTrigger, /:aria-label="t\('trade\.orderTypeTrigger'/)
   assert.match(currentTrigger, /aria-haspopup="dialog"[\s\S]*?:aria-expanded="spotOrderTypeOpen"[\s\S]*?aria-controls="spot-order-type-dialog"[\s\S]*?@click="openSpotOrderTypeSheet"/)
+  assert.match(currentAccountWorkspace, /id="spot-holdings-label"[\s\S]*?aria-current="true"[\s\S]*?t\('orders\.positions'\)/)
+  assert.doesNotMatch(currentHoldingsEntry, /<button|aria-controls|role="tab"/)
+  assert.match(currentAccountWorkspace, /id="spot-holdings-panel"[\s\S]*?aria-labelledby="spot-holdings-label"/)
+  assert.match(currentAccountWorkspace, /t\('trade\.onlyCurrent'\)[\s\S]*?@click="openAssets"[^>]*>\{\{ t\('common\.viewAll'\) \}\}/)
+  assert.doesNotMatch(currentAccountWorkspace, /orders\.cancelAll|openOrders\('positions'\)/)
   assert.doesNotMatch(spotTemplate, /by3G9|pKHeU|contract-pencil-/)
   assert.match(contractTemplate, /data-pencil-source="by3G9 pKHeU"/)
   assert.doesNotMatch(contractTemplate, /yzOPc|bo8k5|spot-pencil-workspace/)

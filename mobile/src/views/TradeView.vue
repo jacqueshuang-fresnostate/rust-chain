@@ -790,54 +790,65 @@ onBeforeUnmount(() => {
         />
       </section>
 
-      <section class="spot-account-workspace" :aria-label="t('trade.positionsAndAssets')">
+      <div class="spot-account-workspace">
         <nav class="spot-account-tabs" :aria-label="t('orders.category')">
-          <button class="active" type="button" @click="openOrders('spot')">
+          <button type="button" @click="openOrders('spot')">
             {{ t('trade.orders') }} <ChevronDown :size="12" aria-hidden="true" />
           </button>
-          <button type="button" @click="openOrders('positions')">
-            {{ t('trade.positionsAndAssets') }} <ChevronDown :size="12" aria-hidden="true" />
-          </button>
+          <span
+            id="spot-holdings-label"
+            class="spot-account-current active"
+            aria-current="true"
+          >
+            {{ t('orders.positions') }}
+          </span>
           <button type="button" :aria-label="t('trade.orderHistory')" @click="openOrders('history')">
             <History :size="19" aria-hidden="true" />
           </button>
         </nav>
 
-        <div class="spot-order-filter">
-          <span><i aria-hidden="true" />{{ t('trade.onlyCurrent') }}</span>
-          <button type="button" @click="openOrders('spot')">{{ t('orders.cancelAll') }}</button>
-        </div>
-
-        <div v-if="balancesLoading" class="spot-account-state" role="status">
-          <RefreshCcw :size="22" class="spin" aria-hidden="true" />
-          <strong>{{ t('trade.loadBalance') }}</strong>
-        </div>
-        <div v-else-if="balancesError" class="spot-account-state" role="alert">
-          <strong>{{ t('assets.loadFailed') }}</strong>
-          <button type="button" @click="loadTradingBalances">{{ t('common.retry') }}</button>
-        </div>
-        <div v-else-if="session.isAuthenticated && spotVisibleBalances.length" class="spot-balance-preview">
-          <article v-for="wallet in spotVisibleBalances" :key="wallet.symbol">
-            <span>{{ wallet.symbol }}</span>
-            <strong class="numeric">{{ formatAmount(wallet.available) }}</strong>
-            <small>{{ t('assets.frozen', { amount: formatAmount(wallet.frozen + wallet.locked) }) }}</small>
-          </article>
-        </div>
-        <div v-else class="spot-account-state">
-          <strong>{{ t('trade.spotAssetEmpty') }}</strong>
-          <span>{{ t('trade.spotAssetEmptyHint') }}</span>
-          <div class="spot-account-actions">
-            <button type="button" @click="openDeposit">
-              <i><Download :size="21" aria-hidden="true" /></i>
-              {{ t('assets.deposit') }}
-            </button>
-            <button type="button" @click="openAssets">
-              <i><ArrowLeftRight :size="21" aria-hidden="true" /></i>
-              {{ t('assets.transfer') }}
-            </button>
+        <section
+          id="spot-holdings-panel"
+          class="spot-holdings-panel"
+          role="region"
+          aria-labelledby="spot-holdings-label"
+        >
+          <div class="spot-holdings-context">
+            <span><i aria-hidden="true" />{{ t('trade.onlyCurrent') }}</span>
+            <button type="button" @click="openAssets">{{ t('common.viewAll') }}</button>
           </div>
-        </div>
-      </section>
+
+          <div v-if="balancesLoading" class="spot-account-state" role="status">
+            <RefreshCcw :size="22" class="spin" aria-hidden="true" />
+            <strong>{{ t('trade.loadBalance') }}</strong>
+          </div>
+          <div v-else-if="balancesError" class="spot-account-state" role="alert">
+            <strong>{{ t('assets.loadFailed') }}</strong>
+            <button type="button" @click="loadTradingBalances">{{ t('common.retry') }}</button>
+          </div>
+          <div v-else-if="session.isAuthenticated && spotVisibleBalances.length" class="spot-balance-preview">
+            <article v-for="wallet in spotVisibleBalances" :key="wallet.symbol">
+              <span>{{ wallet.symbol }}</span>
+              <strong class="numeric">{{ formatAmount(wallet.available) }}</strong>
+              <small>{{ t('assets.frozen', { amount: formatAmount(wallet.frozen + wallet.locked) }) }}</small>
+            </article>
+          </div>
+          <div v-else class="spot-account-state">
+            <strong>{{ t('trade.spotAssetEmpty') }}</strong>
+            <span>{{ t('trade.spotAssetEmptyHint') }}</span>
+            <div class="spot-account-actions">
+              <button type="button" @click="openDeposit">
+                <i><Download :size="21" aria-hidden="true" /></i>
+                {{ t('assets.deposit') }}
+              </button>
+              <button type="button" @click="openAssets">
+                <i><ArrowLeftRight :size="21" aria-hidden="true" /></i>
+                {{ t('assets.transfer') }}
+              </button>
+            </div>
+          </div>
+        </section>
+      </div>
 
       <button
         class="spot-chart-entry"
@@ -1873,7 +1884,7 @@ onBeforeUnmount(() => {
   padding: 0 16px;
 }
 
-.spot-account-tabs button {
+.spot-account-tabs :is(button, .spot-account-current) {
   align-items: center;
   background: transparent;
   border: 0;
@@ -1888,17 +1899,17 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.spot-account-tabs button:nth-child(2) {
+.spot-account-tabs .spot-account-current {
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.spot-account-tabs button.active {
+.spot-account-tabs .active {
   color: var(--text);
   font-weight: 660;
 }
 
-.spot-account-tabs button.active::after {
+.spot-account-tabs .active::after {
   background: var(--accent);
   border-radius: 999px;
   bottom: 0;
@@ -1913,36 +1924,42 @@ onBeforeUnmount(() => {
   justify-content: center;
 }
 
-.spot-order-filter {
+.spot-holdings-panel {
+  min-height: 232px;
+}
+
+.spot-holdings-context {
   align-items: center;
   border-top: 1px solid color-mix(in srgb, var(--line) 66%, transparent);
   display: flex;
   font-size: 10px;
+  height: 34px;
   justify-content: space-between;
   min-height: 34px;
   padding: 0 16px;
 }
 
-.spot-order-filter > span {
+.spot-holdings-context > span {
   align-items: center;
   color: var(--muted);
   display: inline-flex;
   gap: 7px;
 }
 
-.spot-order-filter i {
+.spot-holdings-context i {
   border: 1px solid var(--border);
   border-radius: 999px;
   height: 12px;
   width: 12px;
 }
 
-.spot-order-filter button {
+.spot-holdings-context button {
   background: transparent;
   border: 0;
   color: var(--text);
   font-size: 10px;
-  min-height: 32px;
+  min-height: 44px;
+  min-width: 44px;
   padding: 0;
 }
 
@@ -1972,7 +1989,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--text);
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 16px;
 }
 
@@ -3433,11 +3450,11 @@ onBeforeUnmount(() => {
     padding-inline: 12px;
   }
 
-  .spot-account-tabs button {
+  .spot-account-tabs :is(button, .spot-account-current) {
     font-size: 10px;
   }
 
-  .spot-order-filter,
+  .spot-holdings-context,
   .spot-chart-entry {
     padding-inline: 12px;
   }

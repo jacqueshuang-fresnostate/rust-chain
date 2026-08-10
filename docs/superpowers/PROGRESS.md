@@ -2,6 +2,27 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-08-11 03:25 - 固化现货持仓与委托栏目边界
+
+- 完成内容：将 `/trade` 现货账户区的持仓事实源、非交互当前项、钱包状态区域关联、委托/历史权威路由、禁止现货持仓进入合约 positions、禁止无订单数据展示撤单操作，以及 `1+48+34+198=281px` 几何写入 Mobile PWA/Shell 可执行规范；补齐签名、验证矩阵、正反例、必测断言和错误/正确模板，并完成任务验收清单。
+- 修改文件：`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/08-11-mobile-trade-holdings-tab/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：最终重新执行聚焦测试 18/18、Mobile 全量测试 349/349、`npm --prefix mobile run lint --if-present`（项目无 lint 脚本）、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2070 modules、134 条预缓存）、`npm --prefix mobile run build:tauri`（2070 modules）、Trellis task validate 与 `git diff --check`，全部通过。
+- 后续事项：无；本次未进行真机手工视觉验收，准备提交归档。
+
+## 2026-08-11 03:19 - 独立复核并修正手机现货持仓栏目
+
+- 完成内容：按 PRD 与注入的 Mobile 规范复核现货钱包、订单权威页和路由实际链路；确认委托/历史分别仅导航到 `/orders?tab=spot|history`，现货模板无合约持仓入口，且未引入订单读取或撤单 API。修复了“持仓”当前项使用无动作可聚焦按钮且错用 `aria-current="page"`/`aria-controls` 的语义，改为导航内非交互 `aria-current="true"` 标记，由持仓 `region` 通过 `aria-labelledby` 引用唯一标签。补齐“查看全部”的 44×44 目标和错误重试的 44px 高度，中文上下文明确为“只看当前交易对”。测试现在计算验证 `1+48+34+198=281px`，覆盖完整现货模板无 positions 路径、权威 Orders 路由/API 边界与全部钱包状态分支；Pencil digest 归一化改为每个预期片段精确唯一替换，不再用宽泛正则整块吞掉当前项变化。保留原有订单类型选择层、钱包筛选/计算与所有加载/错误/空态/资产动作，不修改 `.trellis/spec/`。
+- 修改文件：`mobile/src/views/TradeView.vue`、`mobile/src/i18n/messages/zh-CN.ts`、`mobile/tests/spot-trading-ui-optimization.test.ts`、`mobile/tests/pencil-trading-product-selected-parity.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦测试 18/18 通过；Mobile 全量测试 349/349 通过；`npm --prefix mobile run lint --if-present` 成功退出（项目无 lint 脚本）；`npm --prefix mobile run type-check` 通过；`npm --prefix mobile run build:pwa` 通过（2070 modules、134 条预缓存，3828.01 KiB）；`git diff --check` 通过。
+- 后续事项：无；本次未修改 Trellis 规范，未提交。
+
+## 2026-08-11 03:13 - 修正手机现货持仓栏目归属
+
+- 完成内容：将 `/trade/:symbol` 现货账户区改为“持仓”当前项并增加 `aria-current`、`aria-controls` 与 `aria-labelledby` 关联面板；“委托”保留为 `/orders?tab=spot` 导航，历史保留 `/orders?tab=history`，本地持仓项不再进入合约仓位。将错误的“全部撤单”行替换为“只看当前交易对”与“查看全部”资产入口，钱包加载、错误、过滤后列表、空态和资产动作全部收进持仓面板；保持 1+48+34+198=281px、44px 控件、现有主题令牌和窄屏规则，不新增订单读取或撤单 API。聚焦测试补齐导航/可访问性、钱包过滤、状态归属、API 边界和几何断言，并通过仅归一化订单类型入口及本次持仓结构/缩进差异继续校验原 Pencil digest，未整体替换摘要。
+- 修改文件：`mobile/src/views/TradeView.vue`、`mobile/tests/spot-trading-ui-optimization.test.ts`、`mobile/tests/pencil-trading-product-selected-parity.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦测试 18/18 通过；Mobile 全量测试 349/349 通过；`npm --prefix mobile run type-check` 通过；`npm --prefix mobile run build:pwa` 通过（2070 modules、134 条预缓存）；`npm --prefix mobile run build:tauri` 通过（2070 modules）；Trellis task validate 通过。
+- 后续事项：无功能遗留；未进行真机手工视觉验收，未提交或推送。
+
 ## 2026-08-10 00:00 - 审查首页真实收益历史曲线
 
 - 完成内容：按 PRD、后端/Mobile 规范与研究矩阵复核 return-history 全链路；确认 UTC 半开区间、四类公式共享 SQL、历史 Mongo `1d` close/当前 Redis ticker、partial nullable 与累计传播、BigDecimal 18 位、UserAuth/周期白名单、结算索引，以及 Mobile 严格适配、1 日基线、零/正负几何、token/周期 ABA/logout/unmount、隐私和 Today/Assets 独立状态。修复 Mongo K 线 BSON 字段类型损坏时整条接口返回 5xx 的问题，改为把该文档视作缺价并按日传播 partial，补充损坏 BSON 回归测试。

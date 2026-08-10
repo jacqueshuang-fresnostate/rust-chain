@@ -64,6 +64,14 @@ closeSpotOrderTypeSheet(): void
 selectSpotOrderType(type: SpotOrderType): void
 ```
 
+Spot account-surface signatures:
+
+```ts
+spotVisibleBalances: ComputedRef<WalletAccount[]> // current base/quote, total > 0
+openOrders(tab: 'spot' | 'positions' | 'history' = 'spot'): void
+openAssets(): void
+```
+
 ## 3. Contracts
 
 ### Build and environment
@@ -172,6 +180,18 @@ selectSpotOrderType(type: SpotOrderType): void
   both submit through the existing `placeSpotOrder` type/price/quantity
   contract. Contract mode remains forced to market and closes any open spot
   order-type sheet.
+- The spot account workspace is a holdings summary, not an open-order list.
+  Its current navigation marker reads localized Positions/Holdings and is a
+  non-interactive `aria-current` label for the region that renders wallet
+  loading, error, base/quote holdings, and empty branches. The Orders action
+  navigates to `/orders?tab=spot`; History navigates to
+  `/orders?tab=history`. The spot template must not route this holdings marker
+  to `/orders?tab=positions` or import order-query/cancel APIs.
+- The 34px holdings context row may state that the wallet preview is limited to
+  the current pair and link to the authenticated Assets surface for the full
+  list. It must not expose Cancel all without loading authoritative current
+  orders. Preserve the selected Pencil account geometry as one border plus
+  48px navigation plus 34px context plus at least 198px content: 281px total.
 - Production routes mapped from the currently selected Pencil secondary
   screens declare their exact light/dark frame IDs on the page root through
   `data-pencil-source`. Reusable geometry lives in the single imported
@@ -281,6 +301,10 @@ selectSpotOrderType(type: SpotOrderType): void
 | Spot order-type option is selected | Set that exact value, close the sheet, and retain the existing price/submission contract |
 | Spot order-type sheet is dismissed or contract mode activates | Close without changing the spot selection; contract remains market-only |
 | Spot order-type and confirmation dialogs compete | Keep them mutually exclusive and restore the body overflow/focus owner exactly once |
+| Spot account wallet rows are visible | Mark Holdings/Positions current and associate all wallet states with that labelled region |
+| Spot user selects Orders or History | Navigate to `/orders?tab=spot|history`; keep OrdersView authoritative for order reads/actions |
+| Spot account context offers a secondary action | Open Assets/View all; never show Cancel all without current-order data |
+| Spot holdings marker is rendered | Keep it non-interactive and never route it to the futures `positions` tab |
 | Assistive live status is rendered | `.sr-only` remains absolute, clipped, 1x1px, and visually absent |
 | Turnstile renders at 320px | Keep a centered 302px stage and 300px challenge viewport within the device width; no decorative wrapper or horizontal scroll |
 | Turnstile theme or locale changes | Remove and explicitly re-render the widget with the new app theme/language, clearing the previous token |
@@ -313,6 +337,13 @@ selectSpotOrderType(type: SpotOrderType): void
   remains selected and focus returns to the order-type field.
 - Bad: clicking the order-type field directly flips Limit to Market, or closing
   the sheet changes the order type.
+- Good: BTC/USDT wallet balances render below the current Holdings marker;
+  tapping Orders opens the spot current-order page and View all opens Assets.
+- Base: a guest or zero-balance user sees the holdings empty state under the
+  same labelled region without any fabricated order state.
+- Bad: wallet balances appear while Orders is styled current, Cancel all is
+  shown without an order request, or the spot Holdings label opens futures
+  positions.
 - Bad: a Tauri bundle contains `sw.js` or `manifest.webmanifest`.
 - Bad: the first `OrderBookPanel` is assumed to be the split variant after the
   Pencil mini-book is added; tests must inspect all explicit layout instances.
@@ -390,6 +421,14 @@ selectSpotOrderType(type: SpotOrderType): void
   and `placeSpotOrder` wiring. Compile the scoped SFC CSS to prove Teleported
   nodes retain their scope selector; inspect 320px/390px light and dark layouts
   for 44px controls, safe-area padding, reduced motion, and zero overflow.
+- Spot account ownership: isolate the spot template and assert Orders and
+  History route only to `spot|history`, the current Holdings marker is
+  non-interactive and labels the wallet region, every wallet state branch is
+  inside that region, and no `positions` route or order-query/cancel import is
+  present. Assert current-pair/View-all copy, the exact base/quote positive-total
+  filter, 44px actions, and the `1 + 48 + 34 + 198 = 281` geometry. Preserve the
+  prior Pencil digest through exact, unique normalization of only the approved
+  account-workspace and order-type changes.
 - Canvas theme behavior: switch both the stage class and root `data-theme`,
   assert the renderer receives the new background/text/grid/series colors,
   and assert no theme callback runs after component unmount.
@@ -445,6 +484,24 @@ function selectSpotOrderType(type: 'limit' | 'market'): void {
   orderType.value = type
   spotOrderTypeOpen.value = false
 }
+```
+
+For the spot account workspace:
+
+```vue
+<!-- Wrong: wallet holdings are visually owned by Orders and expose a fake action. -->
+<button class="active">{{ t('trade.orders') }}</button>
+<button @click="openOrders('positions')">{{ t('orders.positions') }}</button>
+<button @click="cancelAllSpotOrders">{{ t('orders.cancelAll') }}</button>
+<WalletBalances />
+
+<!-- Correct: Orders delegates to its authoritative route; wallets own Holdings. -->
+<button @click="openOrders('spot')">{{ t('trade.orders') }}</button>
+<span id="spot-holdings-label" aria-current="true">{{ t('orders.positions') }}</span>
+<section aria-labelledby="spot-holdings-label">
+  <button @click="openAssets">{{ t('common.viewAll') }}</button>
+  <WalletBalances />
+</section>
 ```
 
 For imperative chart theming:

@@ -9,6 +9,7 @@ const tradeSource = source('../src/views/TradeView.vue')
 const tradeCss = styleOf(tradeSource)
 const orderBookSource = source('../src/components/OrderBookPanel.vue')
 const appSource = source('../src/App.vue')
+const routerSource = source('../src/router/index.ts')
 const baseCss = source('../src/styles/base.css')
 const modalDialogSource = source('../src/core/modalDialog.ts')
 
@@ -49,6 +50,58 @@ test('现货默认层级直接映射 Pencil 选中的左右工作台、账户区
   assert.doesNotMatch(tradeSource, /<svg|\p{Extended_Pictographic}/u)
 })
 
+test('现货钱包持有资产归属当前持仓面板，委托与历史仅导航到权威订单页', () => {
+  const spotStart = tradeSource.indexOf('    <template v-if="isSpotMode">')
+  const contractStart = tradeSource.indexOf('    <template v-else>', spotStart)
+  assert.ok(spotStart >= 0 && contractStart > spotStart)
+  const spotTemplate = tradeSource.slice(spotStart, contractStart)
+  const accountStart = spotTemplate.indexOf('      <div class="spot-account-workspace"')
+  const accountEnd = spotTemplate.indexOf('      <button\n        class="spot-chart-entry"', accountStart)
+  assert.ok(accountStart >= 0 && accountEnd > accountStart)
+  const accountWorkspace = spotTemplate.slice(accountStart, accountEnd)
+  const accountNav = accountWorkspace.match(/<nav class="spot-account-tabs"[\s\S]*?<\/nav>/)?.[0]
+  assert.ok(accountNav)
+
+  const ordersEntry = accountNav.match(/<button type="button" @click="openOrders\('spot'\)">[\s\S]*?<\/button>/)?.[0]
+  assert.ok(ordersEntry)
+  assert.match(ordersEntry, /t\('trade\.orders'\)/)
+  assert.doesNotMatch(ordersEntry, /class="active"|aria-current/)
+
+  const holdingsEntry = accountNav.match(/<span\s+id="spot-holdings-label"[\s\S]*?<\/span>/)?.[0]
+  assert.ok(holdingsEntry)
+  assert.match(holdingsEntry, /class="spot-account-current active"/)
+  assert.match(holdingsEntry, /aria-current="true"/)
+  assert.match(holdingsEntry, /t\('orders\.positions'\)/)
+  assert.doesNotMatch(holdingsEntry, /@click|openOrders|ChevronDown|aria-controls|role="tab"/)
+  assert.doesNotMatch(accountNav, /<button[^>]+id="spot-holdings-label"/)
+  assert.match(accountNav, /:aria-label="t\('trade\.orderHistory'\)" @click="openOrders\('history'\)"/)
+
+  assert.match(accountWorkspace, /id="spot-holdings-panel"[\s\S]*?role="region"[\s\S]*?aria-labelledby="spot-holdings-label"/)
+  assert.match(accountWorkspace, /class="spot-holdings-context"[\s\S]*?t\('trade\.onlyCurrent'\)[\s\S]*?@click="openAssets"[^>]*>\{\{ t\('common\.viewAll'\) \}\}/)
+  assert.match(accountWorkspace, /v-if="balancesLoading" class="spot-account-state" role="status"/)
+  assert.match(accountWorkspace, /v-else-if="balancesError" class="spot-account-state" role="alert"/)
+  assert.match(accountWorkspace, /v-else-if="session\.isAuthenticated && spotVisibleBalances\.length" class="spot-balance-preview"/)
+  assert.match(accountWorkspace, /v-for="wallet in spotVisibleBalances"/)
+  assert.match(accountWorkspace, /v-else class="spot-account-state"[\s\S]*?class="spot-account-actions"/)
+  assert.doesNotMatch(accountWorkspace, /orders\.cancelAll|openOrders\('positions'\)|trade\.positionsAndAssets/)
+  assert.doesNotMatch(spotTemplate, /openOrders\('positions'\)/)
+
+  assert.match(tradeSource, /const spotVisibleBalances = computed\(\(\) => spotWallets\.value\.filter\(\(wallet\) => \([\s\S]*?\[baseAsset\.value, quoteAsset\.value\]\.includes\(wallet\.symbol\)[\s\S]*?wallet\.available \+ wallet\.frozen \+ wallet\.locked > 0/)
+  assert.match(tradeSource, /else \{\s*spotWallets\.value = await fetchWalletAccounts\(\)\s*marginPositions\.value = \[\]/)
+  const tradingImport = tradeSource.match(/import \{[\s\S]*?\} from '@\/api\/trading'/)?.[0]
+  assert.ok(tradingImport)
+  assert.doesNotMatch(tradingImport, /\b(?:fetchSpotOrders|fetchOpenSpotOrders|fetchSpotOrderHistory|cancelSpotOrder|cancelAllSpotOrders|cancelAllMarginPositions)\b/)
+  assert.doesNotMatch(tradeSource, /from ['"]@\/api\/orders['"]/)
+
+  assert.match(functionBody('openOrders'), /router\.push\(\{ name: 'orders', query: \{ tab \} \}\)/)
+  assert.match(routerSource, /\{ path: '\/orders', name: 'orders', component: OrdersView/)
+  assert.match(tradeSource, /function openAssets\(\): void \{[\s\S]*?redirect: '\/assets'[\s\S]*?router\.push\(\{ name: 'assets' \}\)[\s\S]*?\n\}/)
+  assert.deepEqual({ zh: zhCN.trade.onlyCurrent, en: en.trade.onlyCurrent }, {
+    zh: '只看当前交易对',
+    en: 'Current pair only',
+  })
+})
+
 test('现货拥有 Pencil 二级 Header，根 Logo Header 不再叠加', () => {
   assert.match(appSource, /const showRootHeader = computed\(\(\) => \([\s\S]*?\['home', 'markets'\]/)
   assert.match(appSource, /<RootHeader v-if="showRootHeader" \/>/)
@@ -73,6 +126,23 @@ test('Pencil 390px 几何与 320px 紧凑盘口都不产生横向溢出', () => 
   assert.match(orderBookSource, /const miniAsks = computed\(\(\) => props\.asks\.slice\(0, 5\)\.reverse\(\)\)/)
   assert.match(orderBookSource, /const miniBids = computed\(\(\) => props\.bids\.slice\(0, 5\)\)/)
   assert.match(tradeCss, /\.spot-market-data__tabs button\s*\{[\s\S]*?min-height: 50px;[\s\S]*?min-width: 44px;/)
+  assert.match(cssRule('.spot-account-workspace'), /border-top: 1px solid var\(--line\);/)
+  assert.match(cssRule('.spot-account-tabs'), /min-height: 48px;/)
+  assert.match(cssRule('.spot-account-tabs :is(button, .spot-account-current)'), /min-height: 44px;/)
+  assert.match(cssRule('.spot-holdings-panel'), /min-height: 232px;/)
+  assert.match(cssRule('.spot-holdings-context'), /height: 34px;[\s\S]*?min-height: 34px;/)
+  assert.match(cssRule('.spot-holdings-context button'), /min-height: 44px;[\s\S]*?min-width: 44px;/)
+  assert.match(cssRule('.spot-account-state > button'), /min-height: 44px;/)
+  const accountBorder = cssRule('.spot-account-workspace').match(/border-top: (\d+)px/)?.[1]
+  const tabsHeight = cssRule('.spot-account-tabs').match(/min-height: (\d+)px/)?.[1]
+  const panelHeight = cssRule('.spot-holdings-panel').match(/min-height: (\d+)px/)?.[1]
+  const contextHeight = cssRule('.spot-holdings-context').match(/height: (\d+)px/)?.[1]
+  const stateHeight = cssRule('.spot-account-state').match(/min-height: (\d+)px/)?.[1]
+  const balancesHeight = cssRule('.spot-balance-preview').match(/min-height: (\d+)px/)?.[1]
+  assert.ok(accountBorder && tabsHeight && panelHeight && contextHeight && stateHeight && balancesHeight)
+  assert.equal(Number(panelHeight), Number(contextHeight) + Number(stateHeight))
+  assert.equal(Number(panelHeight), Number(contextHeight) + Number(balancesHeight))
+  assert.equal(Number(accountBorder) + Number(tabsHeight) + Number(panelHeight), 281)
   assert.match(tradeCss, /\.spot-field-shell:focus-within\s*\{[\s\S]*?border-color: var\(--focus\);[\s\S]*?box-shadow: 0 0 0 3px var\(--focus-ring\);/)
   assert.match(tradeCss, /\.spot-field-shell input:focus-visible\s*\{[\s\S]*?box-shadow: none;[\s\S]*?outline: 0;/)
   assert.doesNotMatch(tradeCss, /\.spot-pencil-workspace :is\(button, input\):focus-visible/)

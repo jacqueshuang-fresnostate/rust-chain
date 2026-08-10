@@ -277,7 +277,7 @@ export default {
     contractLoginDescription: '登录后才能加载合约产品、调整杠杆并提交合约委托。',
     viewPositions: '查看合约仓位',
     viewOpenOrders: '查看当前委托',
-    onlyCurrent: '只看当前',
+    onlyCurrent: '只看当前交易对',
     submittingOrder: '提交中...',
     orderSubmitted: '委托已提交，请在当前委托中查看状态。',
     marketUnavailable: '行情不可用，暂不能下单。',

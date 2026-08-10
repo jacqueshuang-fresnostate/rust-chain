@@ -1,0 +1,5 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Verify Mobile quality gates, touch targets and builds."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Verify spot account-state geometry, truthful semantics, themes and narrow layouts."}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Verify Orders/Assets routing and existing bilingual labels."}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Verify wallet holdings remain API-derived and order APIs are not duplicated."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Review authoritative surface reuse and absence of parallel order state."}
