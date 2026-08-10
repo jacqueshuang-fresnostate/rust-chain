@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/market-favorites.md", "reason": "Follow the database-owned nullable asset-logo response contract."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Keep route/application layers thin and SQL in infrastructure."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Trace DTO, SQL aliases, serialization, and HTTP response together."}

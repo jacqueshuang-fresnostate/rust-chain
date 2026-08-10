@@ -36,7 +36,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Realtime WebSocket Contracts](./realtime-websockets.md) | Business-scoped public websocket aliases and PC market subscription routing | Active |
 | [New Coin Mobile Contract](./new-coin-mobile-contract.md) | Public project purchase-pair exposure and authenticated mobile lifecycle actions | Active |
 | [Container Delivery Contract](./container-delivery.md) | Backend image entrypoints, GHCR publication, migration gating, and Compose runtime contracts | Active |
-| [Market Favorites and Asset Logo Contract](./market-favorites.md) | Authenticated favorites, idempotency, user isolation, and backend-owned market/wallet logo metadata | Active |
+| [Market Favorites and Asset Logo Contract](./market-favorites.md) | Authenticated favorites and backend-owned market/convert/wallet logo metadata | Active |
 
 ---
 

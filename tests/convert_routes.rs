@@ -238,6 +238,15 @@ async fn asset_symbol(pool: &MySqlPool, asset_id: u64) -> String {
     symbol
 }
 
+async fn set_asset_logo_url(pool: &MySqlPool, asset_id: u64, logo_url: &str) {
+    sqlx::query("UPDATE assets SET logo_url = ? WHERE id = ?")
+        .bind(logo_url)
+        .bind(asset_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 async fn seed_convert_pair(pool: &MySqlPool, from_asset: u64, to_asset: u64) -> u64 {
     seed_convert_pair_with_pricing(pool, from_asset, to_asset, "fixed").await
 }
@@ -456,7 +465,14 @@ async fn convert_routes_list_pairs_and_user_orders() -> Result<(), Box<dyn Error
     let to_asset = create_asset(&pool, "CT").await;
     let from_symbol = asset_symbol(&pool, from_asset).await;
     let to_symbol = asset_symbol(&pool, to_asset).await;
+    let from_logo_url = format!("https://cdn.example.test/assets/{from_symbol}.png");
+    let to_logo_url = format!("/uploads/assets/{to_symbol}.svg");
+    set_asset_logo_url(&pool, from_asset, &from_logo_url).await;
+    set_asset_logo_url(&pool, to_asset, &to_logo_url).await;
     let pair_id = seed_convert_pair(&pool, from_asset, to_asset).await;
+    let null_from_asset = create_asset(&pool, "CNF").await;
+    let null_to_asset = create_asset(&pool, "CNT").await;
+    let null_pair_id = seed_convert_pair(&pool, null_from_asset, null_to_asset).await;
     let quote_id = seed_convert_order(&pool, user_id, pair_id, from_asset, to_asset).await;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let app = user_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
@@ -478,11 +494,23 @@ async fn convert_routes_list_pairs_and_user_orders() -> Result<(), Box<dyn Error
         pair["id"] == pair_id
             && pair["from_asset_id"] == from_asset
             && pair["from_asset_symbol"] == from_symbol
+            && pair["from_asset_logo_url"] == from_logo_url
             && pair["to_asset_id"] == to_asset
             && pair["to_asset_symbol"] == to_symbol
+            && pair["to_asset_logo_url"] == to_logo_url
             && pair["target_min_amount"] == "0"
             && pair["target_max_amount"].is_null()
     }));
+    let null_logo_pair = pairs["pairs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|pair| pair["id"] == null_pair_id)
+        .expect("pair backed by assets without logos should be returned");
+    assert!(null_logo_pair.get("from_asset_logo_url").is_some());
+    assert!(null_logo_pair["from_asset_logo_url"].is_null());
+    assert!(null_logo_pair.get("to_asset_logo_url").is_some());
+    assert!(null_logo_pair["to_asset_logo_url"].is_null());
 
     let orders_response = app
         .oneshot(
@@ -511,6 +539,15 @@ async fn convert_routes_list_pairs_and_user_orders() -> Result<(), Box<dyn Error
             .any(|order| { order["quote_id"] == quote_id && order["status"] == "pending" })
     );
 
+    sqlx::query("DELETE FROM convert_pairs WHERE id = ?")
+        .bind(null_pair_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id IN (?, ?)")
+        .bind(null_from_asset)
+        .bind(null_to_asset)
+        .execute(&pool)
+        .await?;
     cleanup_fixture(&pool, &quote_id, pair_id, from_asset, to_asset, user_id).await?;
     Ok(())
 }

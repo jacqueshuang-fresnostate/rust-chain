@@ -1,6 +1,71 @@
 use super::*;
+use bigdecimal::BigDecimal;
 use chrono::{TimeDelta, TimeZone, Utc};
 use uuid::Uuid;
+
+#[test]
+fn convert_pair_response_serializes_configured_and_null_asset_logos() {
+    let response = presentation::ConvertPairsResponse {
+        pairs: vec![
+            presentation::ConvertPairResponse {
+                id: 7,
+                from_asset_id: 11,
+                from_asset_symbol: "BTC".to_owned(),
+                from_asset_logo_url: Some("https://cdn.example.test/assets/btc.png".to_owned()),
+                to_asset_id: 12,
+                to_asset_symbol: "USDT".to_owned(),
+                to_asset_logo_url: Some("/uploads/assets/usdt.svg".to_owned()),
+                pricing_mode: "fixed".to_owned(),
+                spread_rate: BigDecimal::from(0),
+                fee_rate: BigDecimal::from(0),
+                min_amount: BigDecimal::from(1),
+                max_amount: None,
+                target_min_amount: BigDecimal::from(1),
+                target_max_amount: None,
+                enabled: true,
+            },
+            presentation::ConvertPairResponse {
+                id: 8,
+                from_asset_id: 13,
+                from_asset_symbol: "ETH".to_owned(),
+                from_asset_logo_url: None,
+                to_asset_id: 14,
+                to_asset_symbol: "USDC".to_owned(),
+                to_asset_logo_url: None,
+                pricing_mode: "market".to_owned(),
+                spread_rate: BigDecimal::from(0),
+                fee_rate: BigDecimal::from(0),
+                min_amount: BigDecimal::from(1),
+                max_amount: None,
+                target_min_amount: BigDecimal::from(1),
+                target_max_amount: None,
+                enabled: true,
+            },
+        ],
+    };
+
+    let payload = serde_json::to_value(response).unwrap();
+    let configured_pair = &payload["pairs"][0];
+    let null_pair = &payload["pairs"][1];
+
+    assert_eq!(
+        configured_pair["from_asset_logo_url"],
+        "https://cdn.example.test/assets/btc.png"
+    );
+    assert_eq!(
+        configured_pair["to_asset_logo_url"],
+        "/uploads/assets/usdt.svg"
+    );
+    assert_eq!(configured_pair["from_asset_symbol"], "BTC");
+    assert_eq!(configured_pair["to_asset_symbol"], "USDT");
+
+    assert!(null_pair.get("from_asset_logo_url").is_some());
+    assert!(null_pair["from_asset_logo_url"].is_null());
+    assert!(null_pair.get("to_asset_logo_url").is_some());
+    assert!(null_pair["to_asset_logo_url"].is_null());
+    assert_eq!(null_pair["from_asset_symbol"], "ETH");
+    assert_eq!(null_pair["to_asset_symbol"], "USDC");
+}
 
 #[test]
 fn quote_ttl_accepts_before_expiry_and_rejects_at_expiry() {

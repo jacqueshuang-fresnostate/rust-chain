@@ -175,8 +175,10 @@ pub(crate) async fn list_convert_pairs(
         r#"SELECT pairs.id,
                   pairs.from_asset AS from_asset_id,
                   from_assets.symbol AS from_asset_symbol,
+                  from_assets.logo_url AS from_asset_logo_url,
                   pairs.to_asset AS to_asset_id,
                   to_assets.symbol AS to_asset_symbol,
+                  to_assets.logo_url AS to_asset_logo_url,
                   pairs.pricing_mode, pairs.spread_rate, pairs.fee_rate, pairs.min_amount,
                   pairs.max_amount, pairs.target_min_amount, pairs.target_max_amount,
                   pairs.enabled

@@ -7062,3 +7062,17 @@
 - 修改文件：`src/modules/wallet/{application,infrastructure,presentation,routes}.rs`、`tests/unit_src/src_modules_wallet_{application,infrastructure,routes}_tests.rs`、`tests/wallet_routes.rs`、`mobile/src/api/wallet.ts`、`mobile/src/core/walletLedger.ts`、`mobile/src/views/WalletLedgerView.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{wallet-ledger-classification,pencil-selected-page-parity-20260807,pencil-wallet-flow-parity,wallet-secondary-views}.test.ts`、`.trellis/spec/backend/wallet-amount-precision.md`、`.trellis/spec/mobile/{backend-integration,navigation-and-localization}.md`、`.trellis/tasks/08-10-mobile-assets-ledger-classification-i18n/`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：`cargo fmt --all -- --check`、`cargo check --all-targets`、Rust wallet 单测 47/47、`npm --prefix mobile run type-check`、Mobile 全量测试 340/340、`npm --prefix mobile run build:pwa`（2068 modules、134 条预缓存）、`npm --prefix mobile run build:tauri`（2068 modules）、Trellis task validate 与 `git diff --check` 全部通过；钱包路由集成命令可编译运行，因当前未设置 `DATABASE_URL`，真实 MySQL 分支按测试合同跳过。
 - 后续事项：在提供隔离 `DATABASE_URL` 的环境补跑钱包路由真实 MySQL 分类谓词与分页断言；无功能遗留。
+
+## 2026-08-11 01:03 - 为公开闪兑交易对响应增加资产 Logo
+
+- 完成内容：`GET /api/v1/convert/pairs` 的每条交易对新增可空 `from_asset_logo_url` 与 `to_asset_logo_url`，通过现有双资产 JOIN 直接传播 `assets.logo_url`，不推导默认图片。新增无数据库序列化合同测试，并增强 MySQL 路由测试以覆盖双方不同 Logo 原值及双方缺失时的 JSON `null`。
+- 修改文件：`src/modules/convert/presentation.rs`、`src/modules/convert/infrastructure.rs`、`tests/unit_src/src_modules_convert_mod_tests.rs`、`tests/convert_routes.rs`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --all -- --check`、`cargo check --manifest-path Cargo.toml --all-targets`、`cargo test --lib modules::convert -- --nocapture` （3/3）、`cargo test --test convert_routes -- --nocapture` （13/13）、Trellis task validate 和 `git diff --check` 通过。当前未设置 `DATABASE_URL`，路由测试按既有合同跳过真实 MySQL 分支；纯序列化合同已实际执行。
+- 后续事项：在提供隔离 `DATABASE_URL` 的环境补跑资产 Logo 的真实 MySQL 传播断言；本任务未提交。
+
+## 2026-08-11 01:07 - 独立复核公开闪兑交易对 Logo
+
+- 完成内容：按 PRD 和后端 Logo 合同复核 SQLx 字段别名/类型、JSON `null`、公开访问与原有排序/限额兼容性、外键清理顺序。发现无数据库序列化测试仅覆盖 from 有值/to 空值的交叉组合，补齐双字段同时配置和双字段同时为 `null` 的完整矩阵，并保留 symbol 旧字段断言；同步将 convert-pair Logo 的签名、空值矩阵、正反例和验证要求写入后端可执行契约，并完成任务验收勾选。
+- 修改文件：`tests/unit_src/src_modules_convert_mod_tests.rs`、`.trellis/spec/backend/{index,market-favorites}.md`、`.trellis/tasks/08-11-convert-pairs-logo/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --manifest-path Cargo.toml --all -- --check` 通过；`cargo check --manifest-path Cargo.toml --all-targets` 通过；`cargo test --manifest-path Cargo.toml --lib modules::convert -- --nocapture` 3/3 通过（序列化 Logo 完整矩阵已实际执行）；`cargo test --manifest-path Cargo.toml --test convert_routes -- --nocapture` 13/13 通过，但未设置 `DATABASE_URL`，所有真实 MySQL 分支均按测试合同跳过；Trellis task validate 和 `git diff --check` 通过。
+- 后续事项：在提供隔离 `DATABASE_URL` 的环境补跑配置 Logo/空 Logo 的真实 MySQL 查询和清理分支；本次未提交。
