@@ -986,3 +986,36 @@ Completed and verified the accumulated mobile Pencil page parity, assets and swa
 ### Next Steps
 
 - None - task complete
+
+
+## Session 29: 手机闪兑使用交易对 API Logo
+
+**Date**: 2026-08-11
+**Task**: 手机闪兑使用交易对 API Logo
+**Branch**: `main`
+
+### Summary
+
+手机闪兑主卡片和选择器改用 convert/pairs 双方资产 Logo，严格处理空值、方向切换与字母回退。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9a615af` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
