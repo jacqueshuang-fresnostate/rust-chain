@@ -44,6 +44,7 @@ import {
 import { fetchWalletAccounts } from '@/api/wallet'
 import { publicMarketWebSocketUrl } from '@/config/app'
 import { formatAmount, formatPrice, normalizeSymbol } from '@/core/format'
+import { useModalDialog } from '@/core/modalDialog'
 import { goBackOr } from '@/core/navigation'
 import { quantityForBalancePercentage } from '@/core/tradeForm'
 import { currentIntlLocale } from '@/i18n'
@@ -91,12 +92,19 @@ const chartLoading = ref(false)
 const productsLoading = ref(false)
 const balancesLoading = ref(false)
 const balancesError = ref(false)
+const spotOrderTypeOpen = ref(false)
+const spotOrderTypeDialog = ref<HTMLElement | null>(null)
 const confirmOpen = ref(false)
 const confirmDialog = ref<HTMLElement | null>(null)
 const reviewButton = ref<HTMLButtonElement | null>(null)
 let returnFocus: HTMLElement | null = null
 let previousBodyOverflow = ''
 let marketRequestVersion = 0
+const { trapFocus: trapSpotOrderTypeFocus } = useModalDialog(
+  spotOrderTypeOpen,
+  spotOrderTypeDialog,
+  '[data-order-type-current="true"]',
+)
 
 const pairSymbol = computed(() => String(route.params.symbol || 'BTC_USDT').replace(/[_-]/g, '/').toUpperCase())
 const isSpotMode = computed(() => mode.value === 'spot')
@@ -386,8 +394,22 @@ function toggleSpotChart(): void {
   spotChartOpen.value = !spotChartOpen.value
 }
 
-function toggleSpotOrderType(): void {
-  orderType.value = orderType.value === 'limit' ? 'market' : 'limit'
+function openSpotOrderTypeSheet(): void {
+  if (confirmOpen.value) return
+  spotOrderTypeOpen.value = true
+}
+
+function closeSpotOrderTypeSheet(): void {
+  spotOrderTypeOpen.value = false
+}
+
+function selectSpotOrderType(type: 'limit' | 'market'): void {
+  orderType.value = type
+  closeSpotOrderTypeSheet()
+}
+
+function handleSpotOrderTypeKeydown(event: KeyboardEvent): void {
+  trapSpotOrderTypeFocus(event, closeSpotOrderTypeSheet)
 }
 
 function openDeposit(): void {
@@ -447,6 +469,7 @@ async function changeLeverage(): Promise<void> {
 function reviewOrder(): void {
   feedback.value = ''
   const orderAmount = Number(quantity.value)
+  if (spotOrderTypeOpen.value) return
   if (!session.isAuthenticated) {
     openLogin()
     return
@@ -561,6 +584,7 @@ watch(pairSymbol, (symbol) => {
 
 watch(() => route.query.mode, (nextMode) => {
   mode.value = nextMode === 'contract' ? 'contract' : 'spot'
+  if (mode.value === 'contract') closeSpotOrderTypeSheet()
   navigation.rememberTradeMode(mode.value)
   percentage.value = 0
   quantity.value = ''
@@ -592,7 +616,7 @@ watch(confirmOpen, async (open) => {
 
 onBeforeUnmount(() => {
   detailStreamSession.stop()
-  document.body.style.overflow = previousBodyOverflow
+  if (confirmOpen.value) document.body.style.overflow = previousBodyOverflow
 })
 </script>
 
@@ -668,8 +692,11 @@ onBeforeUnmount(() => {
           <button
             class="spot-type-field"
             type="button"
-            :aria-label="t('trade.category')"
-            @click="toggleSpotOrderType"
+            :aria-label="t('trade.orderTypeTrigger', { type: orderType === 'limit' ? t('trade.limitOrderShort') : t('trade.marketOrderShort') })"
+            aria-haspopup="dialog"
+            :aria-expanded="spotOrderTypeOpen"
+            aria-controls="spot-order-type-dialog"
+            @click="openSpotOrderTypeSheet"
           >
             <Info :size="14" aria-hidden="true" />
             <strong>{{ orderType === 'limit' ? t('trade.limitOrderShort') : t('trade.marketOrderShort') }}</strong>
@@ -1153,6 +1180,75 @@ onBeforeUnmount(() => {
       </section>
     </template>
 
+    <Teleport to="body">
+      <div v-if="isSpotMode && spotOrderTypeOpen" class="spot-order-type-layer">
+        <button
+          class="spot-order-type-overlay"
+          type="button"
+          :aria-label="t('common.close')"
+          tabindex="-1"
+          @click="closeSpotOrderTypeSheet"
+        />
+        <section
+          id="spot-order-type-dialog"
+          ref="spotOrderTypeDialog"
+          class="spot-order-type-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="spot-order-type-title"
+          aria-describedby="spot-order-type-hint"
+          tabindex="-1"
+          @keydown="handleSpotOrderTypeKeydown"
+        >
+          <span class="spot-order-type-sheet__grab" aria-hidden="true" />
+          <header class="spot-order-type-sheet__header">
+            <div>
+              <h2 id="spot-order-type-title">{{ t('trade.orderTypeSheetTitle') }}</h2>
+              <p id="spot-order-type-hint">{{ t('trade.orderTypeSheetHint') }}</p>
+            </div>
+            <button
+              class="spot-order-type-sheet__close"
+              type="button"
+              :aria-label="t('common.close')"
+              @click="closeSpotOrderTypeSheet"
+            >
+              <X :size="20" aria-hidden="true" />
+            </button>
+          </header>
+          <div class="spot-order-type-options" role="group" :aria-label="t('trade.orderTypeSheetTitle')">
+            <button
+              type="button"
+              :class="{ active: orderType === 'limit' }"
+              :aria-pressed="orderType === 'limit'"
+              :data-order-type-current="orderType === 'limit'"
+              @click="selectSpotOrderType('limit')"
+            >
+              <span class="spot-order-type-option__icon" aria-hidden="true"><List :size="20" /></span>
+              <span class="spot-order-type-option__copy">
+                <strong>{{ t('trade.limitOrderShort') }}</strong>
+                <small>{{ t('trade.limitOrderDescription') }}</small>
+              </span>
+              <CheckCircle2 v-if="orderType === 'limit'" :size="20" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              :class="{ active: orderType === 'market' }"
+              :aria-pressed="orderType === 'market'"
+              :data-order-type-current="orderType === 'market'"
+              @click="selectSpotOrderType('market')"
+            >
+              <span class="spot-order-type-option__icon" aria-hidden="true"><ArrowLeftRight :size="20" /></span>
+              <span class="spot-order-type-option__copy">
+                <strong>{{ t('trade.marketOrderShort') }}</strong>
+                <small>{{ t('trade.marketOrderDescription') }}</small>
+              </span>
+              <CheckCircle2 v-if="orderType === 'market'" :size="20" aria-hidden="true" />
+            </button>
+          </div>
+        </section>
+      </div>
+    </Teleport>
+
     <div v-if="confirmOpen" class="confirmation-layer">
       <button
         class="confirmation-overlay-dismiss"
@@ -1368,12 +1464,18 @@ onBeforeUnmount(() => {
   display: grid;
   font-size: 13px;
   grid-template-columns: 16px minmax(0, 1fr) 16px;
-  height: 40px;
+  height: 44px;
+  min-width: 0;
   padding: 0 12px;
 }
 
 .spot-trade .spot-type-field {
-  min-height: 40px;
+  min-height: 44px;
+}
+
+.spot-type-field[aria-expanded='true'] {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .spot-type-field strong {
@@ -1386,6 +1488,177 @@ onBeforeUnmount(() => {
 
 .spot-type-field > svg {
   color: var(--muted);
+}
+
+.spot-order-type-layer {
+  align-items: end;
+  box-sizing: border-box;
+  color: var(--ink);
+  display: grid;
+  height: 100vh;
+  height: 100dvh;
+  inset: 0;
+  isolation: isolate;
+  min-width: 0;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  position: fixed;
+  width: 100%;
+  z-index: 90;
+}
+
+.spot-order-type-overlay {
+  background: var(--overlay);
+  border: 0;
+  height: 100%;
+  inset: 0;
+  padding: 0;
+  position: absolute;
+  width: 100%;
+  z-index: 0;
+}
+
+.spot-order-type-sheet {
+  background: var(--surface-elevated);
+  border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent);
+  border-bottom: 0;
+  border-radius: 20px 20px 0 0;
+  box-shadow: 0 -18px 48px color-mix(in srgb, var(--ink) 24%, transparent);
+  box-sizing: border-box;
+  display: grid;
+  gap: 12px;
+  justify-self: center;
+  max-height: calc(100dvh - max(16px, env(safe-area-inset-top)));
+  max-width: 448px;
+  min-width: 0;
+  overflow: hidden;
+  padding:
+    8px max(16px, env(safe-area-inset-right))
+    calc(16px + env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-left));
+  position: relative;
+  width: 100%;
+  z-index: 1;
+}
+
+.spot-order-type-sheet__grab {
+  background: color-mix(in srgb, var(--ink) 26%, transparent);
+  border-radius: 999px;
+  display: block;
+  height: 4px;
+  justify-self: center;
+  width: 40px;
+}
+
+.spot-order-type-sheet__header {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  min-width: 0;
+}
+
+.spot-order-type-sheet__header > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.spot-order-type-sheet__header h2,
+.spot-order-type-sheet__header p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.spot-order-type-sheet__header h2 {
+  font-size: 18px;
+  line-height: 24px;
+}
+
+.spot-order-type-sheet__header p {
+  color: var(--muted-strong);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.spot-order-type-sheet__close {
+  align-items: center;
+  background: color-mix(in srgb, var(--ink) 6%, var(--surface-elevated));
+  border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent);
+  border-radius: 999px;
+  color: var(--muted-strong);
+  display: flex;
+  height: 44px;
+  justify-content: center;
+  padding: 0;
+  width: 44px;
+}
+
+.spot-order-type-options {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.spot-order-type-options > button {
+  align-items: center;
+  background: var(--field-surface);
+  border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent);
+  border-radius: 12px;
+  color: var(--ink);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 36px minmax(0, 1fr) 20px;
+  min-height: 64px;
+  min-width: 0;
+  padding: 10px 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.spot-order-type-options > button.active {
+  background: var(--positive-soft);
+  border-color: var(--positive);
+}
+
+.spot-order-type-option__icon {
+  align-items: center;
+  background: var(--surface-elevated);
+  border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent);
+  border-radius: 10px;
+  color: var(--muted-strong);
+  display: flex;
+  height: 36px;
+  justify-content: center;
+  width: 36px;
+}
+
+.spot-order-type-options > button.active .spot-order-type-option__icon,
+.spot-order-type-options > button.active > svg {
+  color: var(--positive);
+}
+
+.spot-order-type-option__copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.spot-order-type-option__copy strong {
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.spot-order-type-option__copy small {
+  color: var(--muted-strong);
+  font-size: 11px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.spot-order-type-layer button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .spot-field-shell {
@@ -3248,14 +3521,19 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) {
   .trade-view *,
   .trade-view *::before,
-  .trade-view *::after {
+  .trade-view *::after,
+  .spot-order-type-layer,
+  .spot-order-type-layer *,
+  .spot-order-type-layer *::before,
+  .spot-order-type-layer *::after {
     animation-duration: .01ms !important;
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: .01ms !important;
   }
 
-  .trade-view button:active {
+  .trade-view button:active,
+  .spot-order-type-layer button:active {
     transform: none;
   }
 }

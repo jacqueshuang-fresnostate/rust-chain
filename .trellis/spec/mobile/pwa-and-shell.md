@@ -55,6 +55,15 @@ ProductHub final cascade: display:block; gap:0
 ProductHub header/body/first-row y at 390px: 0..60 / 60 / 68
 ```
 
+Spot order-type picker signatures in `TradeView.vue`:
+
+```ts
+type SpotOrderType = 'limit' | 'market'
+openSpotOrderTypeSheet(): void
+closeSpotOrderTypeSheet(): void
+selectSpotOrderType(type: SpotOrderType): void
+```
+
 ## 3. Contracts
 
 ### Build and environment
@@ -146,6 +155,23 @@ ProductHub header/body/first-row y at 390px: 0..60 / 60 / 68
   The nested input must have no border, outline, or inset focus shadow. Live
   market status text uses the global `.sr-only` utility and must remain clipped
   to 1x1px instead of entering the visual layout.
+- The spot order-type field is a dialog trigger, not a cyclic toggle. Opening
+  it must preserve the current `limit|market` value; only selecting an explicit
+  option may mutate `orderType`. The two choices expose `aria-pressed` and a
+  visible selected state, then close immediately after selection. Backdrop,
+  close-button, and Escape dismissal preserve the current value.
+- The spot order-type sheet reuses `useModalDialog` for body scroll lock, Tab
+  wrap, initial focus on the current choice, and trigger focus restoration. It
+  Teleports to `body`, includes viewport and safe-area bounds, suppresses the
+  scroll chain, and owns a reduced-motion rule that does not depend on the
+  non-Teleported `.trade-view` ancestor. It and the order confirmation dialog
+  are mutually exclusive; one dialog's cleanup must not overwrite the other's
+  saved `body.style.overflow`.
+- Changing the spot order type is presentation/form state only. Limit continues
+  to use the entered price; market continues to use the live current price;
+  both submit through the existing `placeSpotOrder` type/price/quantity
+  contract. Contract mode remains forced to market and closes any open spot
+  order-type sheet.
 - Production routes mapped from the currently selected Pencil secondary
   screens declare their exact light/dark frame IDs on the page root through
   `data-pencil-source`. Reusable geometry lives in the single imported
@@ -251,6 +277,10 @@ ProductHub header/body/first-row y at 390px: 0..60 / 60 / 68
 | Trade is the active dock item | Keep one 56px mint circle with no inherited 28px active gradient |
 | Spot market stream has no rows yet | Show a truthful loading/unavailable state; never synthesize book or trade rows |
 | Nested spot input receives focus | Apply one ring to `.spot-field-shell`; child input keeps `box-shadow: none` |
+| Spot order-type trigger is selected | Open the Teleported sheet without changing `orderType` |
+| Spot order-type option is selected | Set that exact value, close the sheet, and retain the existing price/submission contract |
+| Spot order-type sheet is dismissed or contract mode activates | Close without changing the spot selection; contract remains market-only |
+| Spot order-type and confirmation dialogs compete | Keep them mutually exclusive and restore the body overflow/focus owner exactly once |
 | Assistive live status is rendered | `.sr-only` remains absolute, clipped, 1x1px, and visually absent |
 | Turnstile renders at 320px | Keep a centered 302px stage and 300px challenge viewport within the device width; no decorative wrapper or horizontal scroll |
 | Turnstile theme or locale changes | Remove and explicitly re-render the widget with the new app theme/language, clearing the previous token |
@@ -276,6 +306,13 @@ ProductHub header/body/first-row y at 390px: 0..60 / 60 / 68
   because `beforeinstallprompt` is unavailable.
 - Base: the local chart and latest trades stay behind the collapsed chart entry
   until the user explicitly expands it.
+- Good: a user opens the order-type sheet while Limit is selected, sees Limit
+  marked, selects Market, and the price field becomes market-read-only while
+  `placeSpotOrder` still receives `type: 'market'` and the live effective price.
+- Base: a user opens the order-type sheet and dismisses it with Escape; Limit
+  remains selected and focus returns to the order-type field.
+- Bad: clicking the order-type field directly flips Limit to Market, or closing
+  the sheet changes the order type.
 - Bad: a Tauri bundle contains `sw.js` or `manifest.webmanifest`.
 - Bad: the first `OrderBookPanel` is assumed to be the split variant after the
   Pencil mini-book is added; tests must inspect all explicit layout instances.
@@ -345,6 +382,14 @@ ProductHub header/body/first-row y at 390px: 0..60 / 60 / 68
   exposes real order-book/latest-trade tabs without iframe, remote chart script,
   or external chart anchor. Focusing a price/quantity/amount input leaves its
   own border/outline/shadow clear while the parent shell carries the only ring.
+- Spot order type: prove the trigger only opens, both explicit options update
+  the exact `limit|market` value, and backdrop/close/Escape do not mutate it.
+  Assert `aria-haspopup`, `aria-expanded`, labelled dialog semantics,
+  `aria-pressed`, initial focus, Tab wrap, focus return, body scroll lock,
+  dialog mutual exclusion, contract-mode cleanup, and unchanged effective-price
+  and `placeSpotOrder` wiring. Compile the scoped SFC CSS to prove Teleported
+  nodes retain their scope selector; inspect 320px/390px light and dark layouts
+  for 44px controls, safe-area padding, reduced motion, and zero overflow.
 - Canvas theme behavior: switch both the stage class and root `data-theme`,
   assert the renderer receives the new background/text/grid/series colors,
   and assert no theme callback runs after component unmount.
@@ -381,6 +426,25 @@ For the spot shell boundary and field focus:
 <!-- Correct: the spot route owns its header; the complete shell owns focus. -->
 <RootHeader v-if="showRootHeader" />
 <label class="spot-field-shell"><input /></label>
+```
+
+For the spot order-type picker:
+
+```ts
+// Wrong: one trigger click silently mutates financial form state.
+function toggleSpotOrderType(): void {
+  orderType.value = orderType.value === 'limit' ? 'market' : 'limit'
+}
+
+// Correct: opening preserves state; an explicit option commits the choice.
+function openSpotOrderTypeSheet(): void {
+  if (confirmOpen.value) return
+  spotOrderTypeOpen.value = true
+}
+function selectSpotOrderType(type: 'limit' | 'market'): void {
+  orderType.value = type
+  spotOrderTypeOpen.value = false
+}
 ```
 
 For imperative chart theming:

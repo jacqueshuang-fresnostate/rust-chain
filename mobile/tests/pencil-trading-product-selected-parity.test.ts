@@ -37,17 +37,34 @@ function blockOf(source: string, marker: string): string {
   assert.fail(`missing closing brace: ${marker}`)
 }
 
-test('现货 yzOPc/bo8k5 模板保持逐字不变，合约使用独立 by3G9/pKHeU 分支', () => {
+test('现货 yzOPc/bo8k5 模板只新增显式订单类型入口，合约使用独立 by3G9/pKHeU 分支', () => {
   const spotStart = tradeSource.indexOf('    <template v-if="isSpotMode">')
   const contractStart = tradeSource.indexOf('    <template v-else>', spotStart)
+  const orderTypeTeleportStart = tradeSource.indexOf('    <Teleport to="body">', contractStart)
   assert.ok(spotStart >= 0 && contractStart > spotStart)
+  assert.ok(orderTypeTeleportStart > contractStart)
 
   const spotTemplate = tradeSource.slice(spotStart, contractStart)
-  const contractTemplate = tradeSource.slice(contractStart, tradeSource.indexOf('    <div v-if="confirmOpen"', contractStart))
-  const spotDigest = createHash('sha256').update(spotTemplate).digest('hex')
+  const contractTemplate = tradeSource.slice(contractStart, orderTypeTeleportStart)
+  const currentTrigger = spotTemplate.match(/          <button\n            class="spot-type-field"[\s\S]*?          <\/button>/)?.[0]
+  assert.ok(currentTrigger)
+  const priorTrigger = `          <button
+            class="spot-type-field"
+            type="button"
+            :aria-label="t('trade.category')"
+            @click="toggleSpotOrderType"
+          >
+            <Info :size="14" aria-hidden="true" />
+            <strong>{{ orderType === 'limit' ? t('trade.limitOrderShort') : t('trade.marketOrderShort') }}</strong>
+            <ChevronDown :size="15" aria-hidden="true" />
+          </button>`
+  const spotTemplateWithPriorTrigger = spotTemplate.replace(currentTrigger, priorTrigger)
+  const priorSpotDigest = createHash('sha256').update(spotTemplateWithPriorTrigger).digest('hex')
 
-  assert.equal(spotDigest, '7b3247272adfe69a374bc64452faec8d0ca41367ecc85ecdec7fc6f9436dc444')
+  assert.equal(priorSpotDigest, '7b3247272adfe69a374bc64452faec8d0ca41367ecc85ecdec7fc6f9436dc444')
   assert.match(spotTemplate, /data-pencil-source="yzOPc-bo8k5"/)
+  assert.match(currentTrigger, /:aria-label="t\('trade\.orderTypeTrigger'/)
+  assert.match(currentTrigger, /aria-haspopup="dialog"[\s\S]*?:aria-expanded="spotOrderTypeOpen"[\s\S]*?aria-controls="spot-order-type-dialog"[\s\S]*?@click="openSpotOrderTypeSheet"/)
   assert.doesNotMatch(spotTemplate, /by3G9|pKHeU|contract-pencil-/)
   assert.match(contractTemplate, /data-pencil-source="by3G9 pKHeU"/)
   assert.doesNotMatch(contractTemplate, /yzOPc|bo8k5|spot-pencil-workspace/)

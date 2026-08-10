@@ -125,7 +125,15 @@ test('320–448px 响应式、安全区和低动态合同不产生工作区固�
     assert.doesNotMatch(css, /#[0-9a-f]{3,8}|rgba?\(/i)
   }
 
-  assert.doesNotMatch(tradeCss.split('.confirmation-layer')[0] || '', /position:\s*fixed/)
+  const spotOrderTypeLayerIndex = tradeCss.indexOf('.spot-order-type-layer {')
+  assert.notEqual(spotOrderTypeLayerIndex, -1, 'spot order-type sheet must own an independent style boundary')
+  const tradeConfirmationIndex = tradeCss.indexOf('.confirmation-layer {')
+  assert.ok(tradeConfirmationIndex > spotOrderTypeLayerIndex, 'trade confirmation styles must remain after the order-type sheet')
+  const tradeBeforeConfirmation = tradeCss.slice(0, tradeConfirmationIndex)
+  const tradeWithoutOrderTypeLayer = tradeBeforeConfirmation.replace(/\.spot-order-type-layer\s*\{[^}]*\}/, '')
+  assert.doesNotMatch(tradeWithoutOrderTypeLayer, /position:\s*fixed/)
+  assert.match(tradeSource, /<Teleport to="body">[\s\S]*?class="spot-order-type-layer"/)
+  assert.match(tradeCss.slice(spotOrderTypeLayerIndex), /^\.spot-order-type-layer\s*\{[^}]*inset:\s*0;[^}]*position:\s*fixed;[^}]*\}/)
   const secondsMaskIndex = secondsCss.indexOf('.seconds-mask {')
   assert.notEqual(secondsMaskIndex, -1, 'seconds confirmation mask must own an independent style boundary')
   assert.doesNotMatch(secondsCss.slice(0, secondsMaskIndex), /position:\s*fixed/)

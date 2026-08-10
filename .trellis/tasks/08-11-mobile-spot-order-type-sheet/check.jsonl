@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Verify Mobile shared UI quality gate, touch targets and builds."}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Verify trade copy remains fully localized and route behavior is unchanged."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Verify modal semantics, Escape/backdrop behavior, focus loop/restoration, scroll lock, themes and safe areas."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Review that shared modal behavior is reused without parallel implementations."}

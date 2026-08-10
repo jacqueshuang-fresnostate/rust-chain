@@ -7090,3 +7090,24 @@
 - 修改文件：`mobile/src/api/swap.ts`、`mobile/src/components/AssetMark.vue`、`mobile/src/core/{assetMark,swapAssetLogos}.ts`、`mobile/src/views/SwapView.vue`、`mobile/tests/{swap-asset-logos,market-favorites,market-news-support-views}.test.ts`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/tasks/08-11-mobile-swap-convert-pair-logos/prd.md`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：Mobile 聚焦测试 24/24、全量测试 344/344、`npm --prefix mobile run lint --if-present`（项目无 lint 脚本）、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2070 modules、134 条预缓存）、Trellis task validate 与 `git diff --check` 全部通过。
 - 后续事项：无；本次未修改后端、未回退并行改动、未提交或推送。
+
+## 2026-08-11 02:26 - 手机现货订单类型改为底部选择弹层
+
+- 完成内容：将 `spot-type-field` 从单击直接切换改为显式的限价单/市价单底部选择层；选择层 Teleport 到 `body` 以避免被转换路由容器困住，复用 `useModalDialog` 实现 Escape、Tab 焦点环、背景滚动锁与触发器焦点恢复。遮罩、关闭按钮和 Escape 只关闭不改值，显式选择才更新原有 `orderType`；保留价格、有效价、现货 API 参数、合约市价模式及原订单确认弹窗链路。新增对话框标题/说明关联、`aria-pressed` 选中语义、Lucide 图标、44px 触发器/关闭按钮、64px 选项、底部安全区与根级明暗主题 token，并补齐中英文文案。
+- 修改文件：`mobile/src/views/TradeView.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{spot-trading-ui-optimization,award-ui-trading-workspaces,pencil-trading-product-selected-parity}.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Mobile 受影响聚焦测试 24/24 通过，全量测试 348/348 通过；`npm --prefix mobile run type-check` 通过；`npm --prefix mobile run lint --if-present` 通过（项目无 lint 脚本）；`npm --prefix mobile run build:pwa` 通过（2070 modules、134 条预缓存）；`npm --prefix mobile run build:tauri` 通过（2070 modules）；Trellis task validate 与 `git diff --check` 通过。
+- 后续事项：无功能遗留；本次未进行真机手工视觉验收，未提交或推送。
+
+## 2026-08-11 02:35 - 独立复核并修复现货订单类型选择层
+
+- 完成内容：按 PRD 与注入的 Mobile 规范逐项复核当前全部差异。修复新旧两个对话框的共存边界：两个入口现在显式互斥，组件卸载时只由实际打开的旧确认层恢复其滚动锁，避免无条件清空 `body.overflow` 覆盖 `useModalDialog` 保存的外部状态。为 Teleport 层补充 `vh` 回退、左右/底部安全区、滚动链抑制及不依赖 `.trade-view` 祖先的 reduced-motion 选择器；通过 Vue scoped CSS 真实编译断言确认 Teleport 节点获得可生效的 scope 选择器。收紧两项 parity 测试：保留新弹层之外“确认层前不得出现 fixed 工作区”的原回归保护，并将现货模板校验改为“仅归一化本次触发器变更后必须匹配原始 digest”，避免通过直接更换整体快照掩盖无关回归。
+- 修改文件：`mobile/src/views/TradeView.vue`、`mobile/tests/{spot-trading-ui-optimization,award-ui-trading-workspaces,pencil-trading-product-selected-parity}.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Mobile 聚焦测试 34/34、全量测试 348/348 通过；`npm --prefix mobile run type-check` 通过；`npm --prefix mobile run lint --if-present` 成功退出（项目无 lint 脚本）；`npm --prefix mobile run build:pwa` 通过（2070 modules、134 条预缓存）；Trellis task validate 通过。
+- 后续事项：无；未修改 `.trellis/spec/`，未提交。
+
+## 2026-08-11 02:43 - 固化现货订单类型选择层契约
+
+- 完成内容：将本次现货订单类型选择层的显式选择语义、三种无副作用关闭路径、`useModalDialog` 焦点/滚动合同、Teleport 与安全区边界、双弹层互斥、限价/市价有效价格及 `placeSpotOrder` 不变性写入 Mobile PWA/Shell 可执行规范；补齐验证矩阵、正反例、必测断言和错误/正确实现示例，并完成任务验收清单。
+- 修改文件：`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/08-11-mobile-spot-order-type-sheet/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：最终重新执行 Mobile 聚焦测试 24/24、全量测试 348/348、`npm --prefix mobile run lint --if-present`（项目无 lint 脚本）、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2070 modules、134 条预缓存）、`npm --prefix mobile run build:tauri`（2070 modules）、Trellis task validate 与 `git diff --check`，全部通过。
+- 后续事项：无；本次未进行真机手工视觉验收，准备提交归档。

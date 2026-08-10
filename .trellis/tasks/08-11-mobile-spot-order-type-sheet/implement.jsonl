@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Mobile shared UI quality gate, 44px control, icon and production surface rules."}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Trade surface localization and user-facing copy contract."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Production mobile modal accessibility, theme, focus and overlay behavior."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse the existing modal-dialog primitive rather than duplicating scroll/focus behavior."}
