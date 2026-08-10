@@ -9,7 +9,7 @@ use super::{
 use crate::{
     error::{AppError, AppResult},
     modules::{
-        market::market_ticker_redis_key,
+        market::{ValidatedMarketSymbol, kline_collection_name, market_ticker_redis_key},
         wallet::{
             presentation::{
                 DepositAddressResponse, DepositAssetResponse, DepositNetworkResponse,
@@ -26,11 +26,19 @@ use crate::{
 };
 use axum::async_trait;
 use bigdecimal::BigDecimal;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
+use mongodb::{
+    Database,
+    bson::{DateTime as BsonDateTime, Document, doc},
+};
 use redis::{AsyncCommands, aio::ConnectionManager};
 use serde::Deserialize;
 use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
-use std::{collections::BTreeMap, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    str::FromStr,
+    time::Duration,
+};
 
 /// 分页排序必须带唯一列 id，否则同一时间戳的行会在页间重复或丢失。
 const WALLET_WITHDRAWAL_ORDER_BY: &str = " ORDER BY requests.id DESC";
@@ -353,6 +361,14 @@ pub(crate) struct WalletLedgerFilter {
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub(crate) struct TodayReturnAssetActivityRow {
+    pub(crate) asset_symbol: String,
+    pub(crate) amount: BigDecimal,
+    pub(crate) basis_amount: BigDecimal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub(crate) struct ReturnHistoryAssetActivityRow {
+    pub(crate) activity_day: NaiveDate,
     pub(crate) asset_symbol: String,
     pub(crate) amount: BigDecimal,
     pub(crate) basis_amount: BigDecimal,
@@ -1657,14 +1673,35 @@ pub(crate) async fn load_today_return_asset_activity(
     period_start_at: DateTime<Utc>,
     calculated_at: DateTime<Utc>,
 ) -> AppResult<Vec<TodayReturnAssetActivityRow>> {
+    let rows =
+        load_return_history_asset_activity(pool, user_id, period_start_at, calculated_at).await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| TodayReturnAssetActivityRow {
+            asset_symbol: row.asset_symbol,
+            amount: row.amount,
+            basis_amount: row.basis_amount,
+        })
+        .collect())
+}
+
+/// 四类终态事实按 UTC 日和资产一次性聚合，所有收益公式与 today-return 共用此查询。
+pub(crate) async fn load_return_history_asset_activity(
+    pool: &Pool<MySql>,
+    user_id: u64,
+    period_start_at: DateTime<Utc>,
+    calculated_at: DateTime<Utc>,
+) -> AppResult<Vec<ReturnHistoryAssetActivityRow>> {
     let period_start_at = period_start_at.naive_utc();
     let calculated_at = calculated_at.naive_utc();
-    let rows = sqlx::query_as::<_, TodayReturnAssetActivityRow>(
-        r#"SELECT activity.asset_symbol,
+    let rows = sqlx::query_as::<_, ReturnHistoryAssetActivityRow>(
+        r#"SELECT activity.activity_day,
+                  activity.asset_symbol,
                   SUM(activity.amount) AS amount,
                   SUM(activity.basis_amount) AS basis_amount
            FROM (
-               SELECT assets.symbol AS asset_symbol,
+               SELECT DATE(orders.settled_at) AS activity_day,
+                      assets.symbol AS asset_symbol,
                       SUM(CASE
                               WHEN orders.result = 'win'
                                   THEN orders.stake_amount * orders.payout_rate
@@ -1678,12 +1715,13 @@ pub(crate) async fn load_today_return_asset_activity(
                WHERE orders.user_id = ?
                  AND orders.status = 'settled'
                  AND orders.settled_at >= ?
-                 AND orders.settled_at <= ?
-               GROUP BY assets.symbol
+                 AND orders.settled_at < ?
+               GROUP BY DATE(orders.settled_at), assets.symbol
 
                UNION ALL
 
-               SELECT assets.symbol AS asset_symbol,
+               SELECT DATE(orders.settled_at) AS activity_day,
+                      assets.symbol AS asset_symbol,
                       SUM(orders.payout_amount + orders.refund_amount
                           + orders.fee_refund_amount - orders.stake_amount
                           - orders.fee_amount) AS amount,
@@ -1693,12 +1731,13 @@ pub(crate) async fn load_today_return_asset_activity(
                WHERE orders.user_id = ?
                  AND orders.status IN ('settled', 'refunded')
                  AND orders.settled_at >= ?
-                 AND orders.settled_at <= ?
-               GROUP BY assets.symbol
+                 AND orders.settled_at < ?
+               GROUP BY DATE(orders.settled_at), assets.symbol
 
                UNION ALL
 
-               SELECT assets.symbol AS asset_symbol,
+               SELECT DATE(positions.closed_at) AS activity_day,
+                      assets.symbol AS asset_symbol,
                       SUM(COALESCE(positions.realized_pnl, 0) - positions.interest_amount) AS amount,
                       SUM(positions.margin_amount) AS basis_amount
                FROM margin_positions positions
@@ -1706,26 +1745,27 @@ pub(crate) async fn load_today_return_asset_activity(
                WHERE positions.user_id = ?
                  AND positions.status IN ('closed', 'liquidated')
                  AND positions.closed_at >= ?
-                 AND positions.closed_at <= ?
-               GROUP BY assets.symbol
+                 AND positions.closed_at < ?
+               GROUP BY DATE(positions.closed_at), assets.symbol
 
                UNION ALL
 
-               SELECT assets.symbol AS asset_symbol,
+               SELECT DATE(subscriptions.redeemed_at) AS activity_day,
+                      assets.symbol AS asset_symbol,
                       SUM(ledger.amount - subscriptions.amount) AS amount,
                       SUM(subscriptions.amount) AS basis_amount
-               FROM wallet_ledger ledger
-               INNER JOIN earn_subscriptions subscriptions
-                   ON subscriptions.user_id = ledger.user_id
-                  AND subscriptions.asset_id = ledger.asset_id
+               FROM earn_subscriptions subscriptions
+               INNER JOIN wallet_ledger ledger
+                   ON ledger.user_id = subscriptions.user_id
+                  AND ledger.asset_id = subscriptions.asset_id
+                  AND ledger.change_type = 'earn_redeem'
+                  AND ledger.ref_type = 'earn_subscription'
                   AND ledger.ref_id = CAST(subscriptions.id AS CHAR)
-               INNER JOIN assets ON assets.id = ledger.asset_id
-               WHERE ledger.user_id = ?
-                 AND ledger.change_type = 'earn_redeem'
-                 AND ledger.ref_type = 'earn_subscription'
+               INNER JOIN assets ON assets.id = subscriptions.asset_id
+               WHERE subscriptions.user_id = ?
                  AND subscriptions.status = 'redeemed'
-                 AND ledger.created_at >= ?
-                 AND ledger.created_at <= ?
+                 AND subscriptions.redeemed_at >= ?
+                 AND subscriptions.redeemed_at < ?
                  AND NOT EXISTS (
                      SELECT 1
                      FROM wallet_ledger earlier_ledger
@@ -1736,10 +1776,10 @@ pub(crate) async fn load_today_return_asset_activity(
                        AND earlier_ledger.ref_id = ledger.ref_id
                        AND earlier_ledger.id < ledger.id
                  )
-               GROUP BY assets.symbol
+               GROUP BY DATE(subscriptions.redeemed_at), assets.symbol
            ) activity
-           GROUP BY activity.asset_symbol
-           ORDER BY activity.asset_symbol ASC"#,
+           GROUP BY activity.activity_day, activity.asset_symbol
+           ORDER BY activity.activity_day ASC, activity.asset_symbol ASC"#,
     )
     .bind(user_id)
     .bind(period_start_at)
@@ -1757,6 +1797,84 @@ pub(crate) async fn load_today_return_asset_activity(
     .await?;
 
     Ok(rows)
+}
+
+/// 已结束 UTC 日只读取对应 `{ASSET}USDT` 集合中 exact open_time 的 1d close。
+pub(crate) async fn load_historical_usdt_daily_closes(
+    database: &Database,
+    requested_days: &BTreeMap<String, BTreeSet<NaiveDate>>,
+) -> AppResult<BTreeMap<(NaiveDate, String), BigDecimal>> {
+    let mut prices = BTreeMap::new();
+    for (asset_symbol, days) in requested_days {
+        let Some(first_day) = days.first().copied() else {
+            continue;
+        };
+        let Some(last_day) = days.last().copied() else {
+            continue;
+        };
+        let Ok(symbol) = ValidatedMarketSymbol::from_raw(&format!("{asset_symbol}USDT")) else {
+            continue;
+        };
+        let start_at = first_day
+            .and_hms_opt(0, 0, 0)
+            .expect("UTC calendar day start is always valid")
+            .and_utc();
+        let end_at = last_day
+            .succ_opt()
+            .expect("return-history dates are within chrono range")
+            .and_hms_opt(0, 0, 0)
+            .expect("UTC calendar day start is always valid")
+            .and_utc();
+        let collection = database.collection::<Document>(&kline_collection_name(&symbol));
+        let filter = doc! {
+            "interval": "1d",
+            "open_time": {
+                "$gte": BsonDateTime::from_millis(start_at.timestamp_millis()),
+                "$lt": BsonDateTime::from_millis(end_at.timestamp_millis()),
+            },
+        };
+        let options = mongodb::options::FindOptions::builder()
+            .sort(doc! { "open_time": 1 })
+            .build();
+        let mut cursor = collection.find(filter).with_options(options).await?;
+        while cursor.advance().await? {
+            let document = cursor.deserialize_current()?;
+            let Some((day, price)) = return_history_kline_document_close_if_valid(&document, days)
+            else {
+                continue;
+            };
+            prices.insert((day, asset_symbol.clone()), price);
+        }
+    }
+    Ok(prices)
+}
+
+/// 单条损坏 K 线只表现为该日缺价，不能把整个历史接口升级成反序列化 5xx。
+pub(crate) fn return_history_kline_document_close_if_valid(
+    document: &Document,
+    requested_days: &BTreeSet<NaiveDate>,
+) -> Option<(NaiveDate, BigDecimal)> {
+    let open_time = document.get_datetime("open_time").ok()?;
+    let close = document.get_str("close").ok()?;
+    return_history_historical_close_if_valid(open_time.timestamp_millis(), close, requested_days)
+}
+
+/// 历史估值拒绝错日、非日初、非法和非正 close，缺失由应用层统一传播为 partial。
+pub(crate) fn return_history_historical_close_if_valid(
+    open_time_millis: i64,
+    close: &str,
+    requested_days: &BTreeSet<NaiveDate>,
+) -> Option<(NaiveDate, BigDecimal)> {
+    if open_time_millis.rem_euclid(86_400_000) != 0 {
+        return None;
+    }
+    let open_time = DateTime::<Utc>::from_timestamp_millis(open_time_millis)?;
+    let day = open_time.date_naive();
+    if !requested_days.contains(&day) {
+        return None;
+    }
+    let price = BigDecimal::from_str(close.trim()).ok()?;
+    (price > BigDecimal::from(0)).then_some((day, price))
 }
 
 /// Redis 中缺失、字段异常、交易对不匹配或时间过期的 ticker 都按缺价处理，由应用层标记 partial。

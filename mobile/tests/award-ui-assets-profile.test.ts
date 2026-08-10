@@ -24,7 +24,7 @@ test('资产页映射四个 Pencil 画板并只使用真实资产生成持仓', 
   assert.match(assetsSource, /v-else-if="hasHoldings" class="assets-holdings__list"/)
   assert.match(assetsSource, /t\('assets\.availableFrozenSummary'/)
   assert.match(assetsSource, /t\('assets\.estimateUnavailable'\)/)
-  assert.match(assetsSource, /t\('rootPrototype\.todayReturn'\)[\s\S]*?<strong class="pencil-numeric">--<\/strong>/)
+  assert.match(assetsSource, /t\('rootPrototype\.todayReturn'\)[\s\S]*?<strong class="pencil-numeric" :class="todayReturnPresentation\.tone">\{\{ todayReturnPresentation\.amount \}\}<\/strong>/)
   assert.match(assetsSource, /const QUOTE_ASSET_SYMBOL = 'USDT'/)
   assert.match(assetsSource, /if \(symbol === QUOTE_ASSET_SYMBOL\) return amount/)
   assert.doesNotMatch(assetsSource, /STABLE_ASSET_SYMBOLS|\['USDT', 'USDC', 'USD'\]/)
@@ -55,7 +55,7 @@ test('资产 Hero 使用跟随主题的两张跟踪生产素材', () => {
 })
 
 test('资产页保留钱包、划转、资金路由与可访问确认层', () => {
-  assert.match(assetsSource, /Promise\.all\(\[marketStore\.refresh\(\), fetchWalletAccounts\(\), fetchMarginWallets\(\)\]\)/)
+  assert.match(assetsSource, /Promise\.all\(\[[\s\S]*marketStore\.refresh\(\),[\s\S]*fetchWalletAccounts\(\),[\s\S]*fetchMarginWallets\(\),[\s\S]*\]\)/)
   assert.match(assetsSource, /await transferWalletFunds\(transferAsset\.value, transferFrom\.value, to, transferValue\)/)
   assert.match(assetsSource, /transferValue > transferAvailable\.value/)
   assert.match(assetsSource, /useModalDialog\(transferOpen, transferDialog\)/)

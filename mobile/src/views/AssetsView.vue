@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
@@ -21,9 +21,20 @@ import assetsHeroDark from '@/assets/assets/assets-hero-dark.jpg'
 import assetsHeroLight from '@/assets/assets/assets-hero-light.jpg'
 import { apiErrorMessage } from '@/api/client'
 import { fetchMarginWallets } from '@/api/trading'
-import { fetchWalletAccounts, transferWalletFunds } from '@/api/wallet'
+import {
+  createTodayReturnRequestLifecycle,
+  fetchTodayReturn,
+  fetchWalletAccounts,
+  transferWalletFunds,
+  type TodayReturn,
+} from '@/api/wallet'
 import { formatAmount, formatFiat } from '@/core/format'
 import { useModalDialog } from '@/core/modalDialog'
+import { createSessionRequestLifecycle } from '@/core/sessionRequest'
+import {
+  resolveTodayReturnPresentation,
+  type TodayReturnViewState,
+} from '@/core/todayReturnPresentation'
 import { useMarketStore } from '@/stores/market'
 import { useSessionStore } from '@/stores/session'
 import { useThemeStore } from '@/stores/theme'
@@ -53,6 +64,23 @@ const balanceVisible = ref(true)
 const loading = ref(false)
 const error = ref('')
 const accountsReady = ref(false)
+const todayReturn = ref<TodayReturn | null>(null)
+const todayReturnState = ref<TodayReturnViewState>('idle')
+const accountRequestLifecycle = createSessionRequestLifecycle({
+  sessionKey: () => session.token,
+  request: async () => {
+    const [, nextAccounts, marginState] = await Promise.all([
+      marketStore.refresh(),
+      fetchWalletAccounts(),
+      fetchMarginWallets(),
+    ])
+    return { accounts: nextAccounts, marginAccounts: marginState.wallets }
+  },
+})
+const todayReturnRequestLifecycle = createTodayReturnRequestLifecycle({
+  sessionKey: () => session.token,
+  fetchTodayReturn,
+})
 const transferOpen = ref(false)
 const transferAsset = ref('')
 const transferAmount = ref('')
@@ -60,6 +88,7 @@ const transferFrom = ref<'spot' | 'margin'>('spot')
 const transferFeedback = ref('')
 const transferFeedbackTone = ref<'success' | 'error'>('error')
 const transferring = ref(false)
+let transferRequestVersion = 0
 const transferDialog = ref<HTMLElement | null>(null)
 const { trapFocus: trapTransferFocus } = useModalDialog(transferOpen, transferDialog)
 
@@ -115,6 +144,19 @@ const totalEstimateLabel = computed(() => {
     maximumFractionDigits: 2,
   }).format(totalEstimate.value)
 })
+const todayReturnPresentation = computed(() => resolveTodayReturnPresentation({
+  visible: balanceVisible.value,
+  state: todayReturnState.value,
+  value: todayReturn.value,
+  amountMask: '••••••',
+  detailMask: '••••',
+  messages: {
+    loading: t('home.todayReturnLoading'),
+    partial: (assets) => t('home.todayReturnPartial', { assets }),
+    partialUnknown: t('home.todayReturnPartialUnknown'),
+    error: t('home.todayReturnUnavailable'),
+  },
+}))
 
 const transferAccounts = computed(() => transferFrom.value === 'spot' ? accounts.value : marginAccounts.value)
 const transferAccount = computed(() => transferAccounts.value.find((account) => account.symbol === transferAsset.value))
@@ -134,31 +176,71 @@ const canSubmitTransfer = computed(() => {
 })
 
 async function loadAccounts(): Promise<void> {
-  if (!session.isAuthenticated) {
-    accounts.value = []
-    marginAccounts.value = []
-    accountsReady.value = false
+  if (!session.token) {
+    resetSessionAccountState()
     loading.value = false
     error.value = ''
-    transferOpen.value = false
     return
   }
   loading.value = true
   accountsReady.value = false
   error.value = ''
-  try {
-    const [, nextAccounts, marginState] = await Promise.all([marketStore.refresh(), fetchWalletAccounts(), fetchMarginWallets()])
-    accounts.value = nextAccounts
-    marginAccounts.value = marginState.wallets
-    accountsReady.value = true
-    if (!transferAccounts.value.some((account) => account.symbol === transferAsset.value)) transferAsset.value = transferAccounts.value[0]?.symbol || ''
-  } catch (reason) {
+  const result = await accountRequestLifecycle.load()
+  if (result.state === 'stale') return
+  if (result.state === 'guest') {
     accounts.value = []
     marginAccounts.value = []
-    error.value = apiErrorMessage(reason, t('assets.loadFailed'))
-  } finally {
     loading.value = false
+    return
   }
+  if (result.state === 'loaded') {
+    accounts.value = result.value.accounts
+    marginAccounts.value = result.value.marginAccounts
+    accountsReady.value = true
+    if (!transferAccounts.value.some((account) => account.symbol === transferAsset.value)) transferAsset.value = transferAccounts.value[0]?.symbol || ''
+  } else {
+    accounts.value = []
+    marginAccounts.value = []
+    error.value = apiErrorMessage(result.error, t('assets.loadFailed'))
+  }
+  loading.value = false
+}
+
+async function loadTodayReturn(): Promise<void> {
+  if (!session.token) {
+    todayReturn.value = null
+    todayReturnState.value = 'idle'
+    return
+  }
+
+  todayReturn.value = null
+  todayReturnState.value = 'loading'
+  const result = await todayReturnRequestLifecycle.load()
+  if (result.state === 'stale') return
+  if (result.state === 'guest') {
+    todayReturn.value = null
+    todayReturnState.value = 'idle'
+    return
+  }
+  if (result.state === 'loaded') {
+    todayReturn.value = result.value
+    todayReturnState.value = result.value.status
+    return
+  }
+  todayReturn.value = null
+  todayReturnState.value = 'error'
+}
+
+function resetSessionAccountState(): void {
+  accounts.value = []
+  marginAccounts.value = []
+  accountsReady.value = false
+  transferOpen.value = false
+  transferAsset.value = ''
+  transferAmount.value = ''
+  transferFeedback.value = ''
+  transferring.value = false
+  transferRequestVersion += 1
 }
 
 function openDeposit(): void {
@@ -225,6 +307,9 @@ async function submitTransfer(): Promise<void> {
     transferFeedbackTone.value = 'error'
     return
   }
+  const sessionKey = session.token
+  if (!sessionKey) return
+  const requestVersion = ++transferRequestVersion
   transferring.value = true
   transferFeedback.value = ''
   try {
@@ -233,16 +318,18 @@ async function submitTransfer(): Promise<void> {
       || accounts.value.find((account) => account.symbol === transferAsset.value)?.logoUrl
       || marginAccounts.value.find((account) => account.symbol === transferAsset.value)?.logoUrl
     const result = await transferWalletFunds(transferAsset.value, transferFrom.value, to, transferValue)
+    if (requestVersion !== transferRequestVersion || session.token !== sessionKey) return
     accounts.value = upsertWalletAccount(accounts.value, { ...result.spotWallet, logoUrl: sourceLogo })
     marginAccounts.value = upsertWalletAccount(marginAccounts.value, { ...result.marginWallet, logoUrl: sourceLogo })
     transferFeedback.value = t('assets.transferSuccess')
     transferFeedbackTone.value = 'success'
     transferAmount.value = ''
   } catch (reason) {
+    if (requestVersion !== transferRequestVersion || session.token !== sessionKey) return
     transferFeedback.value = apiErrorMessage(reason, t('assets.transferFailed'))
     transferFeedbackTone.value = 'error'
   } finally {
-    transferring.value = false
+    if (requestVersion === transferRequestVersion && session.token === sessionKey) transferring.value = false
   }
 }
 
@@ -277,7 +364,20 @@ function syncTransferAsset(): void {
 }
 
 watch(transferFrom, syncTransferAsset)
-watch(() => session.isAuthenticated, () => { void loadAccounts() }, { immediate: true })
+watch(() => session.token, () => {
+  accountRequestLifecycle.invalidate()
+  resetSessionAccountState()
+  void loadAccounts()
+}, { immediate: true })
+watch(() => session.token, () => {
+  todayReturnRequestLifecycle.invalidate()
+  void loadTodayReturn()
+}, { immediate: true })
+onUnmounted(() => {
+  accountRequestLifecycle.stop()
+  todayReturnRequestLifecycle.stop()
+  transferRequestVersion += 1
+})
 </script>
 
 <template>
@@ -344,10 +444,15 @@ watch(() => session.isAuthenticated, () => { void loadAccounts() }, { immediate:
             </div>
             <small v-if="estimateCoverage === 'partial'">{{ t('assets.partialEstimateNote') }}</small>
           </div>
-          <div class="assets-member-summary__return">
+          <div
+            class="assets-member-summary__return"
+            :data-today-return-status="balanceVisible ? todayReturnState : 'hidden'"
+            :aria-busy="balanceVisible && todayReturnState === 'loading'"
+            aria-live="polite"
+          >
             <span>{{ t('rootPrototype.todayReturn') }}</span>
-            <strong class="pencil-numeric">--</strong>
-            <small>{{ t('assets.todayReturnUnavailable') }}</small>
+            <strong class="pencil-numeric" :class="todayReturnPresentation.tone">{{ todayReturnPresentation.amount }}</strong>
+            <small class="pencil-numeric" :class="todayReturnPresentation.tone">{{ todayReturnPresentation.detail }}</small>
           </div>
         </div>
 
@@ -708,6 +813,14 @@ watch(() => session.isAuthenticated, () => { void loadAccounts() }, { immediate:
   font-size: 18px;
   font-weight: 650;
   line-height: 23px;
+}
+
+.assets-member-summary__return strong,
+.assets-member-summary__return small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .assets-hero-actions {

@@ -1,0 +1,9 @@
+{"file":".trellis/spec/backend/wallet-amount-precision.md","reason":"复核历史逐日公式与今日收益口径、精度和缺价语义一致。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"复核迁移不可变性、索引形状和真实数据库测试说明。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"执行 Rust 格式、编译、定向和跨层质量检查。"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"复核 DTO 严格性、ABA/token/卸载竞态和独立状态。"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"复核隐私、Pencil 几何、可访问周期按钮和双构建。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查后端到前端字段、时间、null 和状态完整传递。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查是否重复或分叉 Today/History 的共享边界。"}
+{"file":".trellis/tasks/08-09-mobile-home-return-history-chart/research/backend-return-history.md","reason":"按研究矩阵复核 SQL、行情估值、partial 和索引风险。"}
+{"file":".trellis/tasks/08-09-mobile-home-return-history-chart/research/mobile-return-chart.md","reason":"按研究矩阵复核 Mobile 适配、SVG 几何、隐私和可访问性。"}

@@ -7,20 +7,22 @@ import {
   mapTodayReturn,
   type TodayReturn,
 } from '../src/core/todayReturn.ts'
+import { resolveTodayReturnPresentation } from '../src/core/todayReturnPresentation.ts'
 import en from '../src/i18n/messages/en.ts'
 import zhCN from '../src/i18n/messages/zh-CN.ts'
 import { formatAmount, formatPercent } from '../src/core/format.ts'
 
 const walletSource = readFileSync(new URL('../src/api/wallet.ts', import.meta.url), 'utf8')
 const homeSource = readFileSync(new URL('../src/views/HomeView.vue', import.meta.url), 'utf8')
+const assetsSource = readFileSync(new URL('../src/views/AssetsView.vue', import.meta.url), 'utf8')
 
-test('今日收益适配器保留 realized 合同、UTC 周期和真实零收益', () => {
+test('今日收益适配器保留 realized 合同、UTC 周期并归一化负零', () => {
   const result = mapTodayReturn({
     scope: 'realized',
     reporting_asset: 'usdt',
-    amount: '0.000000000000000000',
-    basis_amount: '0.000000000000000000',
-    rate: '0.000000000000000000',
+    amount: '-0.000000000000000000',
+    basis_amount: '-0.000000000000000000',
+    rate: '-0.000000000000000000',
     period_start_at: 1_754_697_600_000,
     calculated_at: 1_754_733_645_000,
     status: 'complete',
@@ -39,6 +41,9 @@ test('今日收益适配器保留 realized 合同、UTC 周期和真实零收益
     missingPriceAssets: [],
   })
   assert.equal(isCompleteTodayReturn(result), true)
+  assert.equal(Object.is(result.amount, -0), false)
+  assert.equal(Object.is(result.basisAmount, -0), false)
+  assert.equal(Object.is(result.rate, -0), false)
   assert.equal(formatAmount(result.amount), '0')
   assert.equal(formatPercent(result.rate * 100), '0.00%')
 })
@@ -126,9 +131,16 @@ test('今日收益请求生命周期隔离访客、最新请求、换号登录�
   const failed = await afterAccountSwitch
   assert.equal(failed.state, 'error')
 
+  const beforeLogout = lifecycle.load()
+  sessionKey = ''
+  requests[4].resolve(todayReturn(4))
+  assert.deepEqual(await beforeLogout, { state: 'stale' })
+  assert.deepEqual(await lifecycle.load(), { state: 'guest' })
+
+  sessionKey = 'TOKEN_C'
   const beforeUnmount = lifecycle.load()
   lifecycle.stop()
-  requests[4].resolve(todayReturn(4))
+  requests[5].resolve(todayReturn(5))
   assert.deepEqual(await beforeUnmount, { state: 'stale' })
   assert.deepEqual(await lifecycle.load(), { state: 'stale' })
 })
@@ -148,6 +160,96 @@ test('首页独立请求受保护接口并仅在 complete 时格式化数值', (
   assert.match(homeSource, /watch\(\(\) => session\.token,[\s\S]*todayReturnRequestLifecycle\.invalidate\(\)/)
   assert.match(homeSource, /onUnmounted\(\(\) => \{[\s\S]*todayReturnRequestLifecycle\.stop\(\)/)
   assert.doesNotMatch(homeSource, /fallbackTodayReturn|mockTodayReturn|demoTodayReturn/)
+})
+
+test('资产页展示模型执行 complete/partial/error、隐私与正负零语义', () => {
+  const messages = {
+    loading: 'LOADING',
+    partial: (assets: string) => `PARTIAL:${assets}`,
+    partialUnknown: 'PARTIAL:UNKNOWN',
+    error: 'ERROR',
+  }
+  const present = (
+    state: 'idle' | 'loading' | 'complete' | 'partial' | 'error',
+    value: TodayReturn | null,
+    visible = true,
+  ) => resolveTodayReturnPresentation({
+    visible,
+    state,
+    value,
+    amountMask: 'AMOUNT_MASK',
+    detailMask: 'DETAIL_MASK',
+    messages,
+  })
+
+  assert.deepEqual(present('complete', todayReturn(2)), {
+    amount: '+2 USDT',
+    detail: '+20.00%',
+    tone: 'positive',
+  })
+  assert.deepEqual(present('complete', todayReturn(-2)), {
+    amount: '-2 USDT',
+    detail: '-20.00%',
+    tone: 'negative',
+  })
+  assert.deepEqual(present('complete', todayReturn(0)), {
+    amount: '0 USDT',
+    detail: '0.00%',
+    tone: '',
+  })
+
+  const partial = { ...todayReturn(99), status: 'partial' as const, missingPriceAssets: ['BTC'] }
+  assert.deepEqual(present('partial', partial), { amount: '--', detail: 'PARTIAL:BTC', tone: '' })
+  assert.deepEqual(present('partial', partial, false), {
+    amount: 'AMOUNT_MASK',
+    detail: 'DETAIL_MASK',
+    tone: '',
+  })
+  assert.deepEqual(present('loading', null), { amount: '--', detail: 'LOADING', tone: '' })
+  assert.deepEqual(present('error', null), { amount: '--', detail: 'ERROR', tone: '' })
+  assert.deepEqual(present('idle', null), { amount: '--', detail: '--', tone: '' })
+  assert.deepEqual(present('complete', partial), { amount: '--', detail: '--', tone: '' })
+
+  assert.match(assetsSource, /const todayReturnState = ref<TodayReturnViewState>\('idle'\)/)
+  assert.match(assetsSource, /createTodayReturnRequestLifecycle\(\{[\s\S]*sessionKey: \(\) => session\.token,[\s\S]*fetchTodayReturn/)
+  assert.match(assetsSource, /async function loadTodayReturn\(\): Promise<void> \{\s*if \(!session\.token\)[\s\S]*const result = await todayReturnRequestLifecycle\.load\(\)/)
+  assert.match(assetsSource, /todayReturnState\.value = result\.value\.status/)
+  assert.match(assetsSource, /resolveTodayReturnPresentation\(\{[\s\S]*visible: balanceVisible\.value,[\s\S]*state: todayReturnState\.value,[\s\S]*value: todayReturn\.value/)
+  assert.match(assetsSource, /amountMask: '••••••',[\s\S]*detailMask: '••••'/)
+  assert.match(assetsSource, /:data-today-return-status="balanceVisible \? todayReturnState : 'hidden'"/)
+  assert.match(assetsSource, /:aria-busy="balanceVisible && todayReturnState === 'loading'"/)
+  assert.match(assetsSource, /<strong class="pencil-numeric" :class="todayReturnPresentation\.tone">\{\{ todayReturnPresentation\.amount \}\}<\/strong>/)
+  assert.match(assetsSource, /<small class="pencil-numeric" :class="todayReturnPresentation\.tone">\{\{ todayReturnPresentation\.detail \}\}<\/small>/)
+  assert.doesNotMatch(assetsSource, /t\('rootPrototype\.todayReturn'\)[\s\S]{0,200}<strong class="pencil-numeric">--<\/strong>/)
+})
+
+test('资产页今日收益与钱包请求独立并隔离换号、退出和卸载迟到响应', () => {
+  const accountLifecycleSource = assetsSource.slice(
+    assetsSource.indexOf('const accountRequestLifecycle'),
+    assetsSource.indexOf('const todayReturnRequestLifecycle'),
+  )
+  const loadAccountsSource = assetsSource.slice(
+    assetsSource.indexOf('async function loadAccounts'),
+    assetsSource.indexOf('async function loadTodayReturn'),
+  )
+  const loadTodayReturnSource = assetsSource.slice(
+    assetsSource.indexOf('async function loadTodayReturn'),
+    assetsSource.indexOf('function resetSessionAccountState'),
+  )
+
+  assert.match(accountLifecycleSource, /createSessionRequestLifecycle\(\{[\s\S]*sessionKey: \(\) => session\.token/)
+  assert.match(accountLifecycleSource, /Promise\.all\(\[[\s\S]*marketStore\.refresh\(\)[\s\S]*fetchWalletAccounts\(\)[\s\S]*fetchMarginWallets\(\)/)
+  assert.doesNotMatch(accountLifecycleSource, /todayReturn|fetchTodayReturn/)
+  assert.doesNotMatch(loadAccountsSource, /todayReturn|fetchTodayReturn/)
+  assert.doesNotMatch(loadTodayReturnSource, /accounts\.value|marginAccounts\.value|accountsReady\.value|error\.value/)
+  assert.doesNotMatch(assetsSource, /Promise\.all\(\[[^\]]*fetchTodayReturn/)
+  assert.match(assetsSource, /watch\(\(\) => session\.token,[\s\S]*accountRequestLifecycle\.invalidate\(\)[\s\S]*loadAccounts\(\)/)
+  assert.match(assetsSource, /watch\(\(\) => session\.token,[\s\S]*todayReturnRequestLifecycle\.invalidate\(\)[\s\S]*loadTodayReturn\(\)/)
+  assert.match(assetsSource, /function resetSessionAccountState\(\): void \{[\s\S]*accounts\.value = \[\][\s\S]*marginAccounts\.value = \[\][\s\S]*transferOpen\.value = false[\s\S]*transferRequestVersion \+= 1/)
+  assert.match(assetsSource, /const sessionKey = session\.token[\s\S]*const requestVersion = \+\+transferRequestVersion[\s\S]*await transferWalletFunds[\s\S]*requestVersion !== transferRequestVersion \|\| session\.token !== sessionKey/)
+  assert.match(assetsSource, /onUnmounted\(\(\) => \{[\s\S]*accountRequestLifecycle\.stop\(\)[\s\S]*todayReturnRequestLifecycle\.stop\(\)[\s\S]*transferRequestVersion \+= 1/)
+  assert.doesNotMatch(assetsSource, /watch\(\(\) => session\.isAuthenticated,[\s\S]*loadAccounts\(\)/)
+  assert.match(assetsSource, /\.assets-member-summary__return strong,[\s\S]*\.assets-member-summary__return small \{[\s\S]*max-width: 100%;[\s\S]*text-overflow: ellipsis;/)
 })
 
 test('今日收益加载、失败和不完整文案中英文对称', () => {

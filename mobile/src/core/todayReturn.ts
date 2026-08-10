@@ -1,3 +1,14 @@
+import {
+  createSessionRequestLifecycle,
+  type SessionRequestLifecycle,
+  type SessionRequestLoadResult,
+} from './sessionRequest.ts'
+import {
+  normalizeRealizedReturnAssetSymbols,
+  normalizeRealizedReturnTimestamp,
+  requiredRealizedReturnNumber,
+} from './realizedReturn.ts'
+
 export type TodayReturnStatus = 'complete' | 'partial'
 
 export interface TodayReturn {
@@ -24,17 +35,8 @@ export interface BackendTodayReturn {
   missing_price_assets: unknown
 }
 
-export type TodayReturnLoadResult =
-  | { state: 'guest' }
-  | { state: 'loaded'; value: TodayReturn }
-  | { state: 'error'; error: unknown }
-  | { state: 'stale' }
-
-export interface TodayReturnRequestLifecycle {
-  load: () => Promise<TodayReturnLoadResult>
-  invalidate: () => void
-  stop: () => void
-}
+export type TodayReturnLoadResult = SessionRequestLoadResult<TodayReturn>
+export type TodayReturnRequestLifecycle = SessionRequestLifecycle<TodayReturn>
 
 export function mapTodayReturn(payload: BackendTodayReturn): TodayReturn {
   if (payload.scope !== 'realized') throw new Error('invalid today return scope')
@@ -45,26 +47,20 @@ export function mapTodayReturn(payload: BackendTodayReturn): TodayReturn {
   if (payload.status !== 'complete' && payload.status !== 'partial') {
     throw new Error('invalid today return status')
   }
-  if (!Array.isArray(payload.missing_price_assets)) {
-    throw new Error('invalid today return missing price assets')
-  }
-  const missingPriceAssets = [...new Set(payload.missing_price_assets.map((asset) => {
-    if (typeof asset !== 'string') throw new Error('invalid today return missing price asset')
-    const normalized = asset.trim().toUpperCase()
-    if (!/^[A-Z0-9]{1,32}$/.test(normalized)) {
-      throw new Error('invalid today return missing price asset')
-    }
-    return normalized
-  }))]
+  const missingPriceAssets = normalizeRealizedReturnAssetSymbols(
+    payload.missing_price_assets,
+    'missing price assets',
+    'today return',
+  )
   if (payload.status === 'complete' && missingPriceAssets.length) {
     throw new Error('invalid complete today return missing price assets')
   }
 
-  const amount = requiredFiniteTodayReturnNumber(payload.amount, 'amount')
-  const basisAmount = requiredFiniteTodayReturnNumber(payload.basis_amount, 'basis_amount')
-  const rate = requiredFiniteTodayReturnNumber(payload.rate, 'rate')
-  const periodStartAt = normalizeTodayReturnTimestamp(payload.period_start_at, 'period_start_at')
-  const calculatedAt = normalizeTodayReturnTimestamp(payload.calculated_at, 'calculated_at')
+  const amount = requiredRealizedReturnNumber(payload.amount, 'amount', 'today return')
+  const basisAmount = requiredRealizedReturnNumber(payload.basis_amount, 'basis_amount', 'today return')
+  const rate = requiredRealizedReturnNumber(payload.rate, 'rate', 'today return')
+  const periodStartAt = normalizeRealizedReturnTimestamp(payload.period_start_at, 'period_start_at', 'today return')
+  const calculatedAt = normalizeRealizedReturnTimestamp(payload.calculated_at, 'calculated_at', 'today return')
   if (basisAmount < 0) throw new Error('invalid today return basis_amount')
   if (periodStartAt % 86_400_000 !== 0
     || calculatedAt < periodStartAt
@@ -93,58 +89,8 @@ export function createTodayReturnRequestLifecycle(input: {
   sessionKey: () => string
   fetchTodayReturn: () => Promise<TodayReturn>
 }): TodayReturnRequestLifecycle {
-  let requestVersion = 0
-  let active = true
-
-  return {
-    async load(): Promise<TodayReturnLoadResult> {
-      const version = ++requestVersion
-      if (!active) return { state: 'stale' }
-      const sessionKey = input.sessionKey()
-      if (!sessionKey) return { state: 'guest' }
-
-      try {
-        const value = await input.fetchTodayReturn()
-        if (!active || version !== requestVersion || input.sessionKey() !== sessionKey) {
-          return { state: 'stale' }
-        }
-        return { state: 'loaded', value }
-      } catch (error) {
-        if (!active || version !== requestVersion || input.sessionKey() !== sessionKey) {
-          return { state: 'stale' }
-        }
-        return { state: 'error', error }
-      }
-    },
-    invalidate(): void {
-      requestVersion += 1
-    },
-    stop(): void {
-      active = false
-      requestVersion += 1
-    },
-  }
-}
-
-function requiredFiniteTodayReturnNumber(value: unknown, field: string): number {
-  if (typeof value !== 'number' && typeof value !== 'string') {
-    throw new Error(`invalid today return ${field}`)
-  }
-  if (typeof value === 'string' && !value.trim()) {
-    throw new Error(`invalid today return ${field}`)
-  }
-  if (typeof value === 'string' && !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value.trim())) {
-    throw new Error(`invalid today return ${field}`)
-  }
-  const parsed = typeof value === 'number' ? value : Number(value.trim())
-  if (!Number.isFinite(parsed)) throw new Error(`invalid today return ${field}`)
-  return parsed
-}
-
-function normalizeTodayReturnTimestamp(value: unknown, field: string): number {
-  const parsed = requiredFiniteTodayReturnNumber(value, field)
-  if (parsed <= 0 || !Number.isSafeInteger(parsed)) throw new Error(`invalid today return ${field}`)
-  const normalized = parsed < 1_000_000_000_000 ? parsed * 1000 : parsed
-  if (!Number.isSafeInteger(normalized)) throw new Error(`invalid today return ${field}`)
-  return normalized
+  return createSessionRequestLifecycle({
+    sessionKey: input.sessionKey,
+    request: input.fetchTodayReturn,
+  })
 }

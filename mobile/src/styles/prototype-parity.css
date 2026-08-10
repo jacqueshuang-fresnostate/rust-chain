@@ -2632,21 +2632,82 @@ body,
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   height: 43px;
-  padding: 4px 0 0;
+  padding: 0;
 }
 
-.app-stage .mobile-canvas .home-view .portfolio-periods span {
+.app-stage .mobile-canvas .home-view .portfolio-periods button {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  box-shadow: none;
   color: var(--pencil-muted);
   font-family: var(--font-geist-mono), var(--data-font);
   font-size: 11px;
   font-weight: 500;
+  height: 44px;
+  margin: -1px 0 0;
+  min-height: 44px;
+  padding: 0 4px;
   text-align: center;
   white-space: nowrap;
+  width: 100%;
 }
 
-.app-stage .mobile-canvas .home-view .portfolio-periods span.active {
+.app-stage .mobile-canvas .home-view .portfolio-periods button.active {
   color: var(--pencil-positive);
   font-weight: 700;
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-periods button:focus-visible {
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  outline: 2px solid var(--focus);
+  outline-offset: -3px;
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-return-line.positive,
+.app-stage .mobile-canvas .home-view .portfolio-return-dot.positive {
+  color: var(--signal-green);
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-return-line.negative,
+.app-stage .mobile-canvas .home-view .portfolio-return-dot.negative {
+  color: var(--negative);
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-return-line.neutral,
+.app-stage .mobile-canvas .home-view .portfolio-return-dot.neutral {
+  color: var(--muted-strong);
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-history-state {
+  align-content: center;
+  color: var(--pencil-muted);
+  display: grid;
+  font-size: 11px;
+  gap: 8px;
+  inset: 0;
+  justify-items: center;
+  padding: 12px;
+  position: absolute;
+  text-align: center;
+  z-index: 2;
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-history-state button {
+  background: var(--pencil-surface-strong);
+  border: 1px solid var(--pencil-border);
+  border-radius: 4px;
+  color: var(--pencil-text);
+  min-height: 44px;
+  min-width: 88px;
+  padding: 0 16px;
+}
+
+.app-stage .mobile-canvas .home-view .portfolio-history-state button:focus-visible {
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .app-stage .mobile-canvas .home-view .funding-actions {

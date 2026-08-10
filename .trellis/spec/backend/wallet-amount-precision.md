@@ -105,3 +105,30 @@ let to_amount = truncate_amount_to_asset_precision(&raw_to_amount, to_asset.prec
   positive/negative/zero, Prediction refunds, manual close and liquidation
   interest, Earn duplicate-ledger isolation, stablecoin parity, fresh/invalid/
   stale Redis valuation, partial status, and excluded cash flows.
+
+## Scenario: UTC Realized Return History
+
+### Contracts
+
+- `GET /api/v1/wallet/return-history?days=1|7|30|180` requires `UserAuth`;
+  missing, malformed, or non-whitelisted `days` is HTTP 400.
+- Reuse the Today formulas and exclusions, but aggregate the four terminal fact
+  sources by UTC day and asset. Return exactly N ascending UTC-day points and
+  fill inactive days with complete 18-place zero decimals.
+- USDT, USDC, and USD use parity. A past non-stable activity uses only the
+  exact `{ASSET}USDT` Mongo `1d` candle whose `open_time` is that UTC midnight;
+  current-day activity uses only the existing strict 60-second Redis ticker.
+  Inactive days do not read either price source.
+- A missing required price makes that point's amount, basis, and rate null.
+  Cumulative amount is null from the first partial point onward; any partial
+  point makes the top summary null and status partial.
+- Quantize every valued daily amount, daily basis, cumulative amount, summary,
+  and rate toward zero to 18 places. The complete summary amount must equal the
+  final cumulative amount exactly.
+
+### Tests Required
+
+- Whitelist/auth, exact N-day UTC continuity, all four fact formulas and
+  exclusions, historical close/current ticker separation, no-activity zero,
+  missing-price propagation, 18-place serialization, and first-partial
+  cumulative invalidation.

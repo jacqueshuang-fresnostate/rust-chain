@@ -806,6 +806,49 @@ async fn wallet_today_return_aggregates_realized_sources_and_marks_missing_ticke
     assert_eq!(complete_payload["status"], "complete");
     assert_eq!(complete_payload["missing_price_assets"], json!([]));
 
+    let history_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/wallet/return-history?days=7")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(history_response.status(), StatusCode::OK);
+    let history_payload = body_json(history_response).await?;
+    let history_points = history_payload["points"].as_array().unwrap();
+    assert_eq!(history_payload["scope"], "realized");
+    assert_eq!(history_payload["reporting_asset"], "USDT");
+    assert_eq!(history_payload["period_days"], 7);
+    assert_eq!(history_payload["status"], "complete");
+    assert_eq!(
+        history_payload["summary"]["amount"],
+        complete_payload["amount"]
+    );
+    assert_eq!(
+        history_payload["summary"]["basis_amount"],
+        complete_payload["basis_amount"]
+    );
+    assert_eq!(history_payload["summary"]["rate"], complete_payload["rate"]);
+    assert_eq!(history_points.len(), 7);
+    for points in history_points.windows(2) {
+        assert_eq!(
+            points[1]["day_start_at"].as_i64().unwrap()
+                - points[0]["day_start_at"].as_i64().unwrap(),
+            86_400_000
+        );
+    }
+    for point in &history_points[..6] {
+        assert_eq!(point["amount"], "0.000000000000000000");
+        assert_eq!(point["status"], "complete");
+    }
+    assert_eq!(history_points[6]["amount"], complete_payload["amount"]);
+    assert_eq!(
+        history_points[6]["cumulative_amount"],
+        complete_payload["amount"]
+    );
+
     sqlx::query(
         r#"INSERT INTO prediction_orders
            (user_id, market_id, quote_id, idempotency_key, outcome, asset_id,
@@ -823,6 +866,7 @@ async fn wallet_today_return_aggregates_realized_sources_and_marks_missing_ticke
     .execute(&pool)
     .await?;
     let partial_response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/wallet/today-return")
@@ -835,6 +879,33 @@ async fn wallet_today_return_aggregates_realized_sources_and_marks_missing_ticke
     assert_eq!(partial_payload["amount"], "6.500000000000000000");
     assert_eq!(
         partial_payload["missing_price_assets"],
+        json!([base_symbol.clone()])
+    );
+
+    let partial_history_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/wallet/return-history?days=1")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    let partial_history_payload = body_json(partial_history_response).await?;
+    assert_eq!(partial_history_payload["status"], "partial");
+    assert_eq!(partial_history_payload["summary"]["amount"], Value::Null);
+    assert_eq!(
+        partial_history_payload["summary"]["basis_amount"],
+        Value::Null
+    );
+    assert_eq!(partial_history_payload["summary"]["rate"], Value::Null);
+    assert_eq!(partial_history_payload["points"][0]["amount"], Value::Null);
+    assert_eq!(
+        partial_history_payload["points"][0]["cumulative_amount"],
+        Value::Null
+    );
+    assert_eq!(partial_history_payload["points"][0]["status"], "partial");
+    assert_eq!(
+        partial_history_payload["points"][0]["missing_price_assets"],
         json!([base_symbol])
     );
 

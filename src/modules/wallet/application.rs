@@ -10,16 +10,20 @@ use crate::{
         security::{SecurityAction, SecurityVerificationInput, verify_user_security_action},
         wallet::{
             amount_fits_asset_precision, infrastructure,
-            infrastructure::{TodayReturnAssetActivityRow, WalletLedgerFilter},
+            infrastructure::{
+                ReturnHistoryAssetActivityRow, TodayReturnAssetActivityRow, WalletLedgerFilter,
+            },
             presentation::{
                 AdminWalletListQuery, AdminWalletWithdrawalsResponse, BroadcastWithdrawalRequest,
                 ConfirmWithdrawalRequest, CreateWithdrawalRequest, DepositAddressRequest,
                 DepositAddressResponse, DepositAssetResponse, DepositNetworkResponse,
                 DepositNetworksQuery, FailWithdrawalRequest, ObserveDepositRequest,
-                ReverseDepositRequest, ReviewWithdrawalRequest, TodayReturnResponse,
-                TodayReturnStatus, WalletAccountResponse, WalletDepositEventResponse,
-                WalletDepositsResponse, WalletLedgerQuery, WalletLedgerResponse,
-                WalletWithdrawalQuery, WalletWithdrawalResponse, WithdrawalRequestResponse,
+                ReturnHistoryMissingPrice, ReturnHistoryPoint, ReturnHistoryResponse,
+                ReturnHistorySummary, ReverseDepositRequest, ReviewWithdrawalRequest,
+                TodayReturnResponse, TodayReturnStatus, WalletAccountResponse,
+                WalletDepositEventResponse, WalletDepositsResponse, WalletLedgerQuery,
+                WalletLedgerResponse, WalletWithdrawalQuery, WalletWithdrawalResponse,
+                WithdrawalRequestResponse,
             },
             truncate_amount_to_asset_precision,
         },
@@ -27,13 +31,18 @@ use crate::{
     state::AppState,
 };
 use bigdecimal::BigDecimal;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
+use mongodb::Database;
 use redis::aio::ConnectionManager;
 use sqlx::{MySql, Pool};
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    str::FromStr,
+};
 
 const TODAY_RETURN_REPORTING_ASSET: &str = "USDT";
 const TODAY_RETURN_REPORTING_SCALE: i32 = 18;
+const REALIZED_RETURN_ZERO: &str = "0.000000000000000000";
 
 pub(crate) async fn list_deposit_assets(
     pool: &Pool<MySql>,
@@ -180,6 +189,224 @@ pub(crate) async fn get_today_return_at(
     ))
 }
 
+pub(crate) fn validate_return_history_days(days: Option<u16>) -> AppResult<u16> {
+    match days {
+        Some(days @ (1 | 7 | 30 | 180)) => Ok(days),
+        _ => Err(AppError::Validation(
+            "days must be one of 1, 7, 30, or 180".to_owned(),
+        )),
+    }
+}
+
+pub(crate) async fn get_return_history(
+    pool: &Pool<MySql>,
+    mongo: Option<&Database>,
+    redis: Option<&ConnectionManager>,
+    user_id: u64,
+    period_days: u16,
+) -> AppResult<ReturnHistoryResponse> {
+    get_return_history_at(pool, mongo, redis, user_id, period_days, Utc::now()).await
+}
+
+pub(crate) async fn get_return_history_at(
+    pool: &Pool<MySql>,
+    mongo: Option<&Database>,
+    redis: Option<&ConnectionManager>,
+    user_id: u64,
+    period_days: u16,
+    calculated_at: DateTime<Utc>,
+) -> AppResult<ReturnHistoryResponse> {
+    let period_days = validate_return_history_days(Some(period_days))?;
+    let today_start_at = utc_day_start(&calculated_at);
+    let period_start_at =
+        today_start_at - TimeDelta::days(i64::from(period_days.saturating_sub(1)));
+    let activity = infrastructure::load_return_history_asset_activity(
+        pool,
+        user_id,
+        period_start_at,
+        calculated_at,
+    )
+    .await?;
+    let today = today_start_at.date_naive();
+    let mut historical_price_days = BTreeMap::<String, BTreeSet<NaiveDate>>::new();
+    let mut current_price_assets = BTreeSet::new();
+    for row in &activity {
+        let asset_symbol = row.asset_symbol.trim().to_ascii_uppercase();
+        let has_value =
+            row.amount != BigDecimal::from(0) || row.basis_amount != BigDecimal::from(0);
+        if !has_value || is_stablecoin(&asset_symbol) {
+            continue;
+        }
+        if row.activity_day == today {
+            current_price_assets.insert(asset_symbol);
+        } else if row.activity_day < today {
+            historical_price_days
+                .entry(asset_symbol)
+                .or_default()
+                .insert(row.activity_day);
+        }
+    }
+
+    let historical_prices = match mongo {
+        Some(database) if !historical_price_days.is_empty() => {
+            infrastructure::load_historical_usdt_daily_closes(database, &historical_price_days)
+                .await?
+        }
+        _ => BTreeMap::new(),
+    };
+    let current_price_assets = current_price_assets.into_iter().collect::<Vec<_>>();
+    let current_prices = match redis {
+        Some(redis) if !current_price_assets.is_empty() => {
+            infrastructure::load_current_usdt_prices(redis, &current_price_assets, calculated_at)
+                .await?
+        }
+        _ => BTreeMap::new(),
+    };
+
+    Ok(calculate_return_history(
+        activity,
+        &historical_prices,
+        &current_prices,
+        period_days,
+        period_start_at,
+        calculated_at,
+    ))
+}
+
+pub(crate) fn calculate_return_history(
+    activity: Vec<ReturnHistoryAssetActivityRow>,
+    historical_prices: &BTreeMap<(NaiveDate, String), BigDecimal>,
+    current_prices: &BTreeMap<String, BigDecimal>,
+    period_days: u16,
+    period_start_at: DateTime<Utc>,
+    calculated_at: DateTime<Utc>,
+) -> ReturnHistoryResponse {
+    let zero = BigDecimal::from(0);
+    let scaled_zero = realized_return_zero();
+    let today = utc_day_start(&calculated_at).date_naive();
+    let mut activity_by_day = BTreeMap::<NaiveDate, Vec<ReturnHistoryAssetActivityRow>>::new();
+    for row in activity {
+        activity_by_day
+            .entry(row.activity_day)
+            .or_default()
+            .push(row);
+    }
+
+    let mut points = Vec::with_capacity(usize::from(period_days));
+    let mut missing_prices = Vec::new();
+    let mut cumulative_amount = scaled_zero.clone();
+    let mut summary_basis_amount = scaled_zero.clone();
+    let mut cumulative_known = true;
+    let mut response_status = TodayReturnStatus::Complete;
+
+    for offset in 0..period_days {
+        let day_start_at = period_start_at + TimeDelta::days(i64::from(offset));
+        let day = day_start_at.date_naive();
+        let mut daily_amount = zero.clone();
+        let mut daily_basis_amount = zero.clone();
+        let mut missing_price_assets = BTreeSet::new();
+
+        for row in activity_by_day.remove(&day).unwrap_or_default() {
+            let asset_symbol = row.asset_symbol.trim().to_ascii_uppercase();
+            let has_value = row.amount != zero || row.basis_amount != zero;
+            if !has_value {
+                continue;
+            }
+            let price = if is_stablecoin(&asset_symbol) {
+                Some(BigDecimal::from(1))
+            } else if day == today {
+                current_prices.get(&asset_symbol).cloned()
+            } else {
+                historical_prices.get(&(day, asset_symbol.clone())).cloned()
+            };
+            let Some(price) = price else {
+                missing_price_assets.insert(asset_symbol);
+                continue;
+            };
+            daily_amount += row.amount * price.clone();
+            daily_basis_amount += row.basis_amount * price;
+        }
+
+        let valued_at = if day == today {
+            calculated_at
+        } else {
+            day_start_at + TimeDelta::days(1)
+        };
+        if missing_price_assets.is_empty() {
+            let daily_amount = quantize_realized_return(&daily_amount);
+            let daily_basis_amount = quantize_realized_return(&daily_basis_amount);
+            let daily_rate = realized_return_rate(&daily_amount, &daily_basis_amount);
+            let point_cumulative = if cumulative_known {
+                cumulative_amount =
+                    quantize_realized_return(&(cumulative_amount + daily_amount.clone()));
+                Some(cumulative_amount.clone())
+            } else {
+                None
+            };
+            summary_basis_amount =
+                quantize_realized_return(&(summary_basis_amount + daily_basis_amount.clone()));
+            points.push(ReturnHistoryPoint {
+                day_start_at,
+                valued_at,
+                amount: Some(daily_amount),
+                basis_amount: Some(daily_basis_amount),
+                rate: Some(daily_rate),
+                cumulative_amount: point_cumulative,
+                status: TodayReturnStatus::Complete,
+                missing_price_assets: Vec::new(),
+            });
+        } else {
+            response_status = TodayReturnStatus::Partial;
+            cumulative_known = false;
+            for asset_symbol in &missing_price_assets {
+                missing_prices.push(ReturnHistoryMissingPrice {
+                    day_start_at,
+                    asset_symbol: asset_symbol.clone(),
+                });
+            }
+            points.push(ReturnHistoryPoint {
+                day_start_at,
+                valued_at,
+                amount: None,
+                basis_amount: None,
+                rate: None,
+                cumulative_amount: None,
+                status: TodayReturnStatus::Partial,
+                missing_price_assets: missing_price_assets.into_iter().collect(),
+            });
+        }
+    }
+
+    let summary = if response_status == TodayReturnStatus::Complete {
+        ReturnHistorySummary {
+            amount: Some(cumulative_amount.clone()),
+            basis_amount: Some(summary_basis_amount.clone()),
+            rate: Some(realized_return_rate(
+                &cumulative_amount,
+                &summary_basis_amount,
+            )),
+        }
+    } else {
+        ReturnHistorySummary {
+            amount: None,
+            basis_amount: None,
+            rate: None,
+        }
+    };
+
+    ReturnHistoryResponse {
+        scope: "realized",
+        reporting_asset: TODAY_RETURN_REPORTING_ASSET,
+        period_days,
+        period_start_at,
+        calculated_at,
+        status: response_status,
+        summary,
+        missing_prices,
+        points,
+    }
+}
+
 pub(crate) fn calculate_today_return(
     activity: Vec<TodayReturnAssetActivityRow>,
     prices: &BTreeMap<String, BigDecimal>,
@@ -211,17 +438,9 @@ pub(crate) fn calculate_today_return(
         basis_amount += row.basis_amount * price;
     }
 
-    let amount = truncate_amount_to_asset_precision(&amount, TODAY_RETURN_REPORTING_SCALE);
-    let basis_amount =
-        truncate_amount_to_asset_precision(&basis_amount, TODAY_RETURN_REPORTING_SCALE);
-    let rate = if basis_amount > zero {
-        truncate_amount_to_asset_precision(
-            &(amount.clone() / basis_amount.clone()),
-            TODAY_RETURN_REPORTING_SCALE,
-        )
-    } else {
-        zero.with_scale(TODAY_RETURN_REPORTING_SCALE as i64)
-    };
+    let amount = quantize_realized_return(&amount);
+    let basis_amount = quantize_realized_return(&basis_amount);
+    let rate = realized_return_rate(&amount, &basis_amount);
     let status = if missing_price_assets.is_empty() {
         TodayReturnStatus::Complete
     } else {
@@ -239,6 +458,27 @@ pub(crate) fn calculate_today_return(
         status,
         missing_price_assets: missing_price_assets.into_iter().collect(),
     }
+}
+
+fn realized_return_rate(amount: &BigDecimal, basis_amount: &BigDecimal) -> BigDecimal {
+    if basis_amount > &BigDecimal::from(0) {
+        quantize_realized_return(&(amount.clone() / basis_amount.clone()))
+    } else {
+        realized_return_zero()
+    }
+}
+
+fn quantize_realized_return(value: &BigDecimal) -> BigDecimal {
+    let value = truncate_amount_to_asset_precision(value, TODAY_RETURN_REPORTING_SCALE);
+    if value == BigDecimal::from(0) {
+        realized_return_zero()
+    } else {
+        value
+    }
+}
+
+fn realized_return_zero() -> BigDecimal {
+    BigDecimal::from_str(REALIZED_RETURN_ZERO).expect("realized return zero is valid decimal")
 }
 
 pub(crate) fn utc_day_start(calculated_at: &DateTime<Utc>) -> DateTime<Utc> {

@@ -2,6 +2,13 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-08-10 00:00 - 审查首页真实收益历史曲线
+
+- 完成内容：按 PRD、后端/Mobile 规范与研究矩阵复核 return-history 全链路；确认 UTC 半开区间、四类公式共享 SQL、历史 Mongo `1d` close/当前 Redis ticker、partial nullable 与累计传播、BigDecimal 18 位、UserAuth/周期白名单、结算索引，以及 Mobile 严格适配、1 日基线、零/正负几何、token/周期 ABA/logout/unmount、隐私和 Today/Assets 独立状态。修复 Mongo K 线 BSON 字段类型损坏时整条接口返回 5xx 的问题，改为把该文档视作缺价并按日传播 partial，补充损坏 BSON 回归测试。
+- 修改文件：`src/modules/wallet/infrastructure.rs`、`tests/unit_src/src_modules_wallet_infrastructure_tests.rs`、`.trellis/tasks/08-09-mobile-home-return-history-chart/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：修复前 `cargo fmt --all -- --check`、`cargo test --lib modules::wallet -- --nocapture`（35/35）、Mobile 全量测试（332/332）和 `npm --prefix mobile run type-check` 通过。收到停止指令后未再运行命令，因此 Mongo 容错补丁未复跑，`cargo check --all-targets` 未执行；按要求未运行 PWA/Tauri 双构建。
+- 后续事项：后续补跑 `cargo fmt --all -- --check`、wallet 定向测试、`cargo check --all-targets`；有隔离依赖时补跑真实 MySQL/Mongo 历史估值分支。
+
 ## 2026-08-05 05:31 - 修复 1Panel 后台登录 Turnstile 不显示
 
 - 完成内容：线上核对 `https://hipoex.cllbmz.kdns.fr` 后确认 `/admin/api/v1/auth/login/config` 被 Cloudflare Managed Challenge 拦截，而公开 `/api/v1/auth/login/config` 返回 `cf_turnstile_enabled=false`、`cf_turnstile_site_key=null`；修正服务端策略，使非空 Secret 与 Site Key 决定组件启用，`CF_TURNSTILE_ENFORCE_TOKEN` 只决定已有 `cf_clearance` 时是否仍强制 token，避免 `false` 意外关闭整个功能；后台登录改为优先读取公开配置端点并以管理员端点兜底，运行时 Site Key 优先于构建期值；收敛 React 初始化/清理流程，修复重复初始化、widget id 为 `0` 时清理失败及 reset 后错误丢弃 id；1Panel 示例将 Site Key 设为必填并默认 `CF_TURNSTILE_ENFORCE_TOKEN=true`，本地忽略的实际 `docker-compose.1panel.yml` 同步加入当前 Site Key 默认值与中文说明。
@@ -7013,3 +7020,24 @@
 - 修改文件：`src/modules/wallet/{application,infrastructure}.rs`、`tests/unit_src/{src_modules_wallet_application_tests,src_modules_wallet_infrastructure_tests}.rs`、`tests/wallet_routes.rs`、`mobile/src/{api/wallet.ts,core/todayReturn.ts,views/HomeView.vue}`、`mobile/tests/today-return.test.ts`、`.trellis/spec/backend/wallet-amount-precision.md`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/tasks/08-09-mobile-home-today-return/{prd.md,research/today-return-contract.md}`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：钱包模块 Rust 测试 27/27、Mobile 全量测试 323/323、`cargo fmt --all -- --check`、`cargo check --all-targets`、`npm --prefix mobile run type-check`、`npm --prefix mobile run lint --if-present`（项目无 lint 脚本）、`npm --prefix mobile run build:pwa`（2062 modules、134 条预缓存）、`npm --prefix mobile run build:tauri`（2062 modules）、Trellis task validate 与 `git diff --check` 全部通过。今日收益 MySQL 路由测试命令 1/1 通过，但当前未设置 `DATABASE_URL`，真实数据库分支按测试合同 skip；Redis ticker 的缺失/非法/陈旧/未来/错配分支由纯单元测试覆盖。
 - 后续事项：在提供 `DATABASE_URL` 的隔离 MySQL 环境补跑真实 SQL 聚合分支；无代码遗留，未提交或推送，并保留工作树内其他并行改动。
+
+## 2026-08-09 23:05 - 手机端资产页接入今日收益
+
+- 完成内容：资产页会员 Hero 复用现有 `fetchTodayReturn`、`createTodayReturnRequestLifecycle`、`isCompleteTodayReturn` 与 `TodayReturn`，独立于钱包/行情请求加载 UTC 今日已实现收益；仅 `complete` 展示带符号金额、USDT 报告资产和真实收益率，加载、不完整、错误与访客状态保持非数值；余额隐藏时同步遮蔽金额、比例及缺价详情，并沿用正、负、零语义色。按精确 token 处理 latest-request-wins、换号、退出及卸载失效，迟到响应不会回写；未新增后端接口或改变收益口径。
+- 修改文件：`mobile/src/views/AssetsView.vue`、`mobile/tests/{today-return,award-ui-assets-profile}.test.ts`、`.trellis/tasks/08-09-mobile-assets-today-return/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦测试 13/13、Mobile 全量测试 325/325、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2062 modules、134 条预缓存）、`npm --prefix mobile run build:tauri`（2062 modules）、Trellis task validate 与 `git diff --check` 全部通过。
+- 后续事项：无；本任务未提交或推送，并保留工作树内其他代理改动。
+
+## 2026-08-09 23:17 - 独立复核并修复手机端资产页今日收益
+
+- 完成内容：仅复核资产页今日收益切片，未处理 Home portfolio-chart 历史收益需求。抽取通用精确会话请求生命周期和可执行今日收益展示模型；修复 Assets 在 truthy token 换号、退出、卸载时钱包/杠杆钱包及进行中划转迟到响应可能回写新会话的问题，保持钱包与今日收益请求和状态完全独立；严格覆盖 complete/partial/error/访客/隐私状态，隐私关闭时同时隐藏状态属性与 busy 信息；将十进制负零归一化为中性零，直接执行正、负、零、partial、loading、error、idle 展示断言；为 Pencil Hero 长金额和状态文案补充列内截断，避免窄屏横向溢出，并同步移动端后端集成规范。
+- 修改文件：`mobile/src/core/{sessionRequest,todayReturn,todayReturnPresentation}.ts`、`mobile/src/views/AssetsView.vue`、`mobile/tests/{account-message-views,award-ui-assets-profile,today-return}.test.ts`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/tasks/08-09-mobile-assets-today-return/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦测试 19/19、Mobile 全量测试 325/325、`npm --prefix mobile run lint --if-present`（项目无 lint 脚本）、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2064 modules、134 条预缓存）、`npm --prefix mobile run build:tauri`（2064 modules）、Trellis task validate 与 `git diff --check` 全部通过。
+- 后续事项：无；本任务未提交或推送，并保留工作树内其他代理改动。
+
+## 2026-08-09 23:57 - 首页接入真实 UTC 收益历史曲线
+
+- 完成内容：新增受 `UserAuth` 保护的 `GET /wallet/return-history?days=1|7|30|180`，四类已实现收益按 UTC 日动态聚合并补齐恰好 N 日；历史非稳定币读取 Mongo exact `1d` close，当前日复用严格 60 秒 Redis ticker，稳定币平价，无活动不读取行情；缺价日金额/成本/收益率为空并从首个 partial 起传播空累计，顶层 summary 为空，所有完整财务十进制固定 18 位。新增 0101 四类结算范围复合索引及 MySQL UTC session 初始化。Mobile 新增严格收益历史 DTO/mapper、累计/UTC/partial 校验、1 日零基线几何和 API；Home 删除 `portfolioSamples` 与总资产采样 watcher，改为 1/7/30/180 原生按钮、真实请求、token/周期 ABA/卸载隔离，并补齐 hidden/loading/partial/error 清曲线、隐私、重试、无障碍摘要/表格、双语状态及 302/153/43 Pencil 几何样式。保留并兼容工作区已有 Assets 今日收益改动。
+- 修改文件：`migrations/0101_wallet_return_history_settlement_indexes.sql`、`src/infra/mysql.rs`、`src/modules/wallet/{application,infrastructure,presentation,routes}.rs`、`tests/unit_src/src_modules_wallet_{application,infrastructure,routes}_tests.rs`、`tests/wallet_routes.rs`、`mobile/src/api/wallet.ts`、`mobile/src/core/{realizedReturn,returnHistory,returnHistoryGeometry,todayReturn}.ts`、`mobile/src/views/HomeView.vue`、`mobile/src/styles/prototype-parity.css`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{return-history,pencil-selected-home-layout,editorial-shell-home-markets,root-prototype-parity}.test.ts`、`.trellis/spec/backend/wallet-amount-precision.md`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/tasks/08-09-mobile-home-return-history-chart/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：最终 `cargo fmt --all` 通过；Rust wallet 定向单测 35/35 通过；钱包路由定向集成命令编译并通过，但未设置 `DATABASE_URL`，真实 MySQL 聚合分支明确 skip；Mobile 聚焦测试 51/51 与 `npm --prefix mobile run type-check` 通过。过程中曾发现零值未固定 18 位及路由测试 Router move 编译错误，均已修复并通过对应复测。根据用户停止指令，未继续执行最终 `cargo check`、Mobile 全量测试、PWA/Tauri 构建、task validate 或 `git diff --check`；未配置 Mongo，真实 Mongo 查询分支未执行，仅 exact UTC 日/正 close 纯单测通过。
+- 后续事项：补跑带隔离 MySQL/Mongo 的真实历史估值分支，以及最终 cargo check、Mobile 全量测试、PWA/Tauri build、task validate 和差异检查；无代码提交或推送。

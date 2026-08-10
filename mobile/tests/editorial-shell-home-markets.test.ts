@@ -79,11 +79,12 @@ test('五项导航保留真实路由、当前项与键盘焦点，中央交易�
   assert.ok(readLayer('overlay') < readLayer('launch'))
 })
 
-test('首页按选中访客 Hero，登录后使用真实资产观测曲线', () => {
+test('首页按选中访客 Hero，登录后使用真实资产与收益历史曲线', () => {
   assert.equal((homeSource.match(/class="portfolio-overview\s+home-portfolio\s+home-portfolio--member"/g) || []).length, 1)
   assert.match(homeSource, /const portfolioPeriods = computed/)
   assert.match(homeSource, /t\('home\.periodDays', \{ days \}\)/)
   assert.match(homeSource, /const assetEstimateReady = ref\(false\)/)
+  assert.match(homeSource, /const returnHistoryState = ref<ReturnHistoryViewState>\('idle'\)/)
   assert.match(homeSource, /home-portfolio--guest/)
   assert.match(homeSource, /guestHeroLight/)
   assert.match(homeSource, /guestHeroDark/)
@@ -91,6 +92,7 @@ test('首页按选中访客 Hero，登录后使用真实资产观测曲线', () 
   assert.match(homeSource, /<svg viewBox="0 0 358 153"[\s\S]*?v-if="portfolioGeometry"[\s\S]*?:d="portfolioGeometry\.path"/)
   assert.match(homeSource, /rootPrototype\.todayReturn/)
   assert.match(homeSource, /v-for="period in portfolioPeriods"/)
+  assert.match(homeSource, /:aria-pressed="period\.days === selectedReturnHistoryPeriod"/)
   assert.match(homeSource, /name: 'quick-recharge'/)
   assert.match(homeSource, /name: 'deposit-asset'/)
   assert.doesNotMatch(homeSource, /portfolio-kicker|home-auth-primary|portfolio-retry|assetEstimateState|hasAssetEstimate/)

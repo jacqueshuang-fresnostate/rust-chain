@@ -187,7 +187,7 @@ test('根栏目保持既有首页行情，并让现货、合约、资产与我�
   for (const source of Object.values(views)) assert.doesNotMatch(source, /\p{Extended_Pictographic}/u)
   for (const source of [views.assets, views.profile]) assert.match(source, /<style scoped>/)
   assert.match(views.home, /<svg viewBox="0 0 358 153"[\s\S]*?v-if="portfolioGeometry"[\s\S]*?:d="portfolioGeometry\.path"/)
-  assert.match(views.home, /v-for="period in portfolioPeriods"[\s\S]*?period\.days === 1/)
+  assert.match(views.home, /v-for="period in portfolioPeriods"[\s\S]*?period\.days === selectedReturnHistoryPeriod/)
   assert.doesNotMatch(views.home, /portfolio-kicker|home-auth-primary|assetEstimateState|hasAssetEstimate/)
   assert.match(views.markets, /<svg[\s\S]*?class="sparkline"[\s\S]*?<polyline/)
   for (const source of [views.trade, views.assets, views.profile]) assert.doesNotMatch(source, /<svg/)

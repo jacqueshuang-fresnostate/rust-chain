@@ -1,0 +1,9 @@
+{"file":".trellis/spec/backend/wallet-amount-precision.md","reason":"沿用 UTC 已实现收益公式、BigDecimal 精度、缺价和排除项合同。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"新增不可变迁移和结算时间复合索引，保持 SQLx 迁移纪律。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"跨 MySQL/Mongo/Redis 用例需要符合后端质量门禁和测试约定。"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"实现严格财务 DTO、精确 token 生命周期和 partial 不泄露合同。"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"保持 Home Pencil、隐私、真实数据、主题和双构建边界。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"对齐 SQL 聚合、估值、响应 DTO、Mobile mapper 与 SVG 展示边界。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复用 Today 严格解析、sessionRequest 和现有 SVG，不复制脆弱逻辑。"}
+{"file":".trellis/tasks/08-09-mobile-home-return-history-chart/research/backend-return-history.md","reason":"提供四类收益 SQL、历史行情能力、索引风险与推荐接口合同。"}
+{"file":".trellis/tasks/08-09-mobile-home-return-history-chart/research/mobile-return-chart.md","reason":"提供 Mobile 严格适配、生命周期、隐私、几何和测试方案。"}

@@ -612,7 +612,7 @@ interface MarketFavoritesResponse {
 - Run the focused market/favorites tests and `npm run type-check`; include the
   full mobile suite and PWA build at the final task gate.
 
-## 10. Home Today Return Contract
+## 10. Home and Assets Today Return Contract
 
 ```ts
 interface TodayReturn {
@@ -630,8 +630,9 @@ interface TodayReturn {
 fetchTodayReturn(): Promise<TodayReturn>
 ```
 
-- Home consumes only protected `GET /wallet/today-return` for today return.
-  It renders amount and `rate * 100` only for `status=complete`.
+- Home and the authenticated Assets member Hero consume only protected
+  `GET /wallet/today-return` for today return. Guests do not start that read;
+  both surfaces render amount and `rate * 100` only for `status=complete`.
 - `partial`, request error, loading, guest, and privacy-hidden states remain
   non-numeric and distinct. Privacy hiding takes precedence over loading/error/
   partial detail so missing-price asset symbols cannot reveal account activity.
@@ -640,16 +641,47 @@ fetchTodayReturn(): Promise<TodayReturn>
   supported status, an exact UTC-day period, and normalized missing-price
   symbols. Decimal strings must use decimal notation, timestamps must be safe
   integer seconds or milliseconds, and `complete` cannot carry missing assets.
-  It must not coerce malformed financial fields to zero.
+  It must not coerce malformed financial fields to zero. Signed decimal zero
+  is canonicalized to positive zero so a complete zero never renders `-0`.
 - Today-return reads are keyed by the exact authenticated session token, are
   latest-request-wins, and are invalidated on token replacement, logout, and
   component unmount. A late response from another login/session must not write
-  into the current Home state.
-- Today-return failure must not clear the independently loaded total-asset
-  estimate. Positive and negative values use existing semantic tones; zero is
-  neutral.
+  into the current Home or Assets state. Assets wallet/margin reads and pending
+  transfer mutations follow the same exact-token boundary so a truthy token
+  replacement cannot expose or commit the previous account's state.
+- Today-return and wallet/margin reads remain independent: failure in one does
+  not clear or relabel a successful result from the other. Positive and
+  negative values use existing semantic tones; zero is neutral. The Assets
+  Hero constrains long amount/status text inside its existing Pencil grid.
 
 Required tests cover complete/partial mapping, seconds/milliseconds timestamp
 normalization, malformed response rejection, true zero, privacy precedence,
 positive/negative/neutral tone guards, delayed latest-request/login/unmount
-isolation, and the Home complete-status display guard.
+isolation, the Home complete-status display guard, executable Assets
+presentation states, wallet/today-return request independence, exact-token
+account/transfer invalidation, and narrow-grid overflow guards.
+
+## 11. Home Return History Contract
+
+- Home fetches only protected `GET /wallet/return-history?days=1|7|30|180` for
+  its chart. The API adapter owns the period whitelist and strict mapping;
+  guests make no request.
+- The mapper validates realized/USDT, period echo, exactly N UTC-midnight
+  points, 86,400,000ms continuity, point/top complete-partial consistency,
+  nullable partial fields, sorted missing-price unions, rates, cumulative sums,
+  and complete summary equality. Malformed decimals are rejected rather than
+  coerced to zero.
+- Geometry consumes only complete mapped history and plots
+  `[0, ...daily cumulativeAmount]` in the existing 358x153 SVG. Its y-domain
+  includes zero; all-zero history is centered at y=76.5; the final x is 358.
+- Period changes, retries, exact-token changes, logout, and unmount reuse
+  `createSessionRequestLifecycle`. Clear the old DTO/path before every load so
+  period ABA and late responses cannot restore stale account data.
+- Hidden, loading, partial, and error states render no path, endpoint, or
+  accessible financial values. Complete visible history supplies a localized
+  summary and UTC-day table; partial/error remain retryable.
+
+Required tests cover all four periods, strict DTO failures, one-day baseline,
+zero/positive/negative/cross-zero geometry, partial cumulative propagation,
+guest/latest-request/ABA/token/unmount isolation, privacy, source contracts,
+44px period/retry controls, and symmetric locale keys.

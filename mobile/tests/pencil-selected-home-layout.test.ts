@@ -26,7 +26,7 @@ test('Root Header 使用 1000x250 横版品牌素材并精确渲染为 136x34', 
   assert.match(parityCss, /\.root-header__control\.root-header__control,[\s\S]*?background:\s*transparent;[\s\S]*?border:\s*0;/)
 })
 
-test('访客主页使用 tracked 明暗 Hero，登录后才展示真实资产与观测曲线', () => {
+test('访客主页使用 tracked 明暗 Hero，登录后才展示真实资产与收益历史曲线', () => {
   assert.match(homeSource, /import guestHeroDark from '@\/assets\/home\/market-hero-dark\.jpg'/)
   assert.match(homeSource, /import guestHeroLight from '@\/assets\/home\/market-hero-light\.jpg'/)
   assert.doesNotMatch(homeSource, /mobile\/pencil|@\/\.\.\/pencil|generated-178568/)
@@ -42,9 +42,11 @@ test('访客主页使用 tracked 明暗 Hero，登录后才展示真实资产与
 
   assert.match(homeSource, /fetchWalletAccounts\(\)/)
   assert.match(homeSource, /fetchMarginWallets\(\)/)
-  assert.match(homeSource, /const portfolioSamples = ref<number\[\]>\(\[\]\)/)
-  assert.match(homeSource, /if \(!ready \|\| !complete \|\| !Number\.isFinite\(value\)\) return/)
+  assert.match(homeSource, /fetchReturnHistory\(selectedReturnHistoryPeriod\.value\)/)
+  assert.match(homeSource, /data-portfolio-source="realized-return-history"/)
+  assert.doesNotMatch(homeSource, /portfolioSamples|totalAssetEstimate,[\s\S]*portfolioSamples/)
   assert.match(homeSource, /v-if="portfolioGeometry"[\s\S]*:d="portfolioGeometry\.path"/)
+  assert.match(homeSource, /:aria-pressed="period\.days === selectedReturnHistoryPeriod"/)
   assert.match(homeSource, /rootPrototype\.todayReturn[\s\S]*displayedTodayReturnAmount/)
   assert.match(homeSource, /data-today-return-status="todayReturnState"/)
   assert.doesNotMatch(homeSource, /M0 67 C28 62|fallbackReturn|mockPortfolio|demo(?:Data|Portfolio)/i)

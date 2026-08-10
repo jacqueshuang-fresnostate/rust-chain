@@ -5,6 +5,13 @@ import {
   type BackendTodayReturn,
   type TodayReturn,
 } from '@/core/todayReturn'
+import {
+  isReturnHistoryPeriod,
+  mapReturnHistory,
+  type BackendReturnHistory,
+  type ReturnHistory,
+  type ReturnHistoryPeriodDays,
+} from '@/core/returnHistory'
 import type { DepositAddress, DepositAsset, DepositNetwork, WalletAccount } from '@/core/types'
 
 export {
@@ -13,6 +20,18 @@ export {
   mapTodayReturn,
 } from '@/core/todayReturn'
 export type { TodayReturn, TodayReturnStatus } from '@/core/todayReturn'
+export {
+  createReturnHistoryRequestLifecycle,
+  isReturnHistoryPeriod,
+  mapReturnHistory,
+  RETURN_HISTORY_PERIODS,
+} from '@/core/returnHistory'
+export type {
+  ReturnHistory,
+  ReturnHistoryPeriodDays,
+  ReturnHistoryStatus,
+  ReturnHistoryViewState,
+} from '@/core/returnHistory'
 
 export interface WithdrawalAsset extends DepositAsset {
   withdrawEnabled: boolean
@@ -195,6 +214,16 @@ export async function fetchWalletAccounts(): Promise<WalletAccount[]> {
 export async function fetchTodayReturn(): Promise<TodayReturn> {
   const response = await client.get<BackendTodayReturn>(requestUrl('/wallet/today-return'))
   return mapTodayReturn(response.data)
+}
+
+export async function fetchReturnHistory(
+  periodDays: ReturnHistoryPeriodDays,
+): Promise<ReturnHistory> {
+  if (!isReturnHistoryPeriod(periodDays)) throw new Error('invalid return history period')
+  const response = await client.get<BackendReturnHistory>(requestUrl('/wallet/return-history'), {
+    params: { days: periodDays },
+  })
+  return mapReturnHistory(response.data, periodDays)
 }
 
 export async function submitWithdrawal(input: { assetSymbol: string; network?: string; address: string; amount: number; fee: number; fundPassword?: string; totpCode?: string }): Promise<void> {

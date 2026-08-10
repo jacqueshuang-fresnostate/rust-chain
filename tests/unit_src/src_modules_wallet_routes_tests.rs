@@ -106,6 +106,48 @@ async fn wallet_today_return_route_requires_user_auth() {
 }
 
 #[tokio::test]
+async fn wallet_return_history_route_requires_user_auth() {
+    let app = routes().with_state(test_state());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/wallet/return-history?days=7")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn wallet_return_history_route_rejects_missing_and_invalid_days_before_database_access() {
+    let state = test_state();
+    let token = bearer_token(&state);
+    for uri in [
+        "/wallet/return-history",
+        "/wallet/return-history?days=0",
+        "/wallet/return-history?days=2",
+        "/wallet/return-history?days=181",
+        "/wallet/return-history?days=invalid",
+    ] {
+        let response = routes()
+            .with_state(state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "uri: {uri}");
+    }
+}
+
+#[tokio::test]
 async fn wallet_withdrawal_route_requires_user_auth() {
     let app = routes().with_state(test_state());
     let response = app
@@ -205,6 +247,33 @@ async fn wallet_today_return_route_returns_clear_error_without_mysql() {
         payload["message"],
         "internal error: mysql pool is not configured for wallet routes"
     );
+}
+
+#[tokio::test]
+async fn wallet_return_history_route_accepts_whitelisted_days_before_mysql_error() {
+    let state = test_state();
+    let token = bearer_token(&state);
+    for days in [1, 7, 30, 180] {
+        let response = routes()
+            .with_state(state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/wallet/return-history?days={days}"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "days: {days}"
+        );
+        let body = to_bytes(response.into_body(), 4096).await.unwrap();
+        let payload: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["code"], "INTERNAL_ERROR");
+    }
 }
 
 #[tokio::test]

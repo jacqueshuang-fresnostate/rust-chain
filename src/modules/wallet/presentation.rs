@@ -7,7 +7,33 @@ use crate::modules::security::SecurityVerificationMethod;
 use crate::time::{option_unix_millis, unix_millis};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
+
+fn decimal_18_string(value: &BigDecimal) -> String {
+    let value = value.to_string();
+    let (whole, fraction) = value.split_once('.').unwrap_or((&value, ""));
+    format!("{whole}.{fraction:0<18}")
+}
+
+fn serialize_decimal_18<S>(value: &BigDecimal, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&decimal_18_string(value))
+}
+
+fn serialize_optional_decimal_18<S>(
+    value: &Option<BigDecimal>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match value {
+        Some(value) => serializer.serialize_some(&decimal_18_string(value)),
+        None => serializer.serialize_none(),
+    }
+}
 
 #[derive(Debug, Deserialize)]
 pub struct DepositAddressRequest {
@@ -201,8 +227,11 @@ pub(crate) enum TodayReturnStatus {
 pub(crate) struct TodayReturnResponse {
     pub(crate) scope: &'static str,
     pub(crate) reporting_asset: &'static str,
+    #[serde(serialize_with = "serialize_decimal_18")]
     pub(crate) amount: BigDecimal,
+    #[serde(serialize_with = "serialize_decimal_18")]
     pub(crate) basis_amount: BigDecimal,
+    #[serde(serialize_with = "serialize_decimal_18")]
     pub(crate) rate: BigDecimal,
     #[serde(with = "unix_millis")]
     pub(crate) period_start_at: DateTime<Utc>,
@@ -210,6 +239,61 @@ pub(crate) struct TodayReturnResponse {
     pub(crate) calculated_at: DateTime<Utc>,
     pub(crate) status: TodayReturnStatus,
     pub(crate) missing_price_assets: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ReturnHistoryQuery {
+    pub(crate) days: Option<u16>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct ReturnHistorySummary {
+    #[serde(serialize_with = "serialize_optional_decimal_18")]
+    pub(crate) amount: Option<BigDecimal>,
+    #[serde(serialize_with = "serialize_optional_decimal_18")]
+    pub(crate) basis_amount: Option<BigDecimal>,
+    #[serde(serialize_with = "serialize_optional_decimal_18")]
+    pub(crate) rate: Option<BigDecimal>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct ReturnHistoryMissingPrice {
+    #[serde(with = "unix_millis")]
+    pub(crate) day_start_at: DateTime<Utc>,
+    pub(crate) asset_symbol: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct ReturnHistoryPoint {
+    #[serde(with = "unix_millis")]
+    pub(crate) day_start_at: DateTime<Utc>,
+    #[serde(with = "unix_millis")]
+    pub(crate) valued_at: DateTime<Utc>,
+    #[serde(serialize_with = "serialize_optional_decimal_18")]
+    pub(crate) amount: Option<BigDecimal>,
+    #[serde(serialize_with = "serialize_optional_decimal_18")]
+    pub(crate) basis_amount: Option<BigDecimal>,
+    #[serde(serialize_with = "serialize_optional_decimal_18")]
+    pub(crate) rate: Option<BigDecimal>,
+    #[serde(serialize_with = "serialize_optional_decimal_18")]
+    pub(crate) cumulative_amount: Option<BigDecimal>,
+    pub(crate) status: TodayReturnStatus,
+    pub(crate) missing_price_assets: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct ReturnHistoryResponse {
+    pub(crate) scope: &'static str,
+    pub(crate) reporting_asset: &'static str,
+    pub(crate) period_days: u16,
+    #[serde(with = "unix_millis")]
+    pub(crate) period_start_at: DateTime<Utc>,
+    #[serde(with = "unix_millis")]
+    pub(crate) calculated_at: DateTime<Utc>,
+    pub(crate) status: TodayReturnStatus,
+    pub(crate) summary: ReturnHistorySummary,
+    pub(crate) missing_prices: Vec<ReturnHistoryMissingPrice>,
+    pub(crate) points: Vec<ReturnHistoryPoint>,
 }
 
 #[derive(Debug, Serialize)]

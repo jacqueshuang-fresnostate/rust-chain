@@ -20,6 +20,7 @@ use super::{
         create_withdrawal_request as create_withdrawal_request_use_case,
         fail_withdrawal as fail_withdrawal_use_case,
         get_or_assign_deposit_address as get_or_assign_deposit_address_use_case,
+        get_return_history as get_return_history_use_case,
         get_today_return as get_today_return_use_case,
         list_admin_deposits as list_admin_deposits_use_case,
         list_admin_withdrawals as list_admin_withdrawals_use_case,
@@ -31,14 +32,14 @@ use super::{
         list_withdraw_assets as list_withdraw_assets_use_case, mysql_pool,
         normalize_deposit_networks_query_asset, observe_deposit as observe_deposit_use_case,
         reject_withdrawal as reject_withdrawal_use_case,
-        reverse_deposit as reverse_deposit_use_case,
+        reverse_deposit as reverse_deposit_use_case, validate_return_history_days,
     },
     presentation::{
         AdminWalletListQuery, AdminWalletWithdrawalsResponse, BroadcastWithdrawalRequest,
         ConfirmWithdrawalRequest, CreateWithdrawalRequest, DepositAddressRequest,
         DepositAddressResponse, DepositAssetsResponse, DepositNetworksQuery,
-        DepositNetworksResponse, FailWithdrawalRequest, ObserveDepositRequest,
-        ReverseDepositRequest, ReviewWithdrawalRequest, TodayReturnResponse,
+        DepositNetworksResponse, FailWithdrawalRequest, ObserveDepositRequest, ReturnHistoryQuery,
+        ReturnHistoryResponse, ReverseDepositRequest, ReviewWithdrawalRequest, TodayReturnResponse,
         WalletAccountsResponse, WalletDepositEventResponse, WalletDepositsResponse,
         WalletLedgerQuery, WalletLedgerResponse, WalletWithdrawalQuery, WalletWithdrawalResponse,
         WalletWithdrawalsResponse, WithdrawalRequestResponse,
@@ -49,6 +50,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/wallet/accounts", get(list_accounts))
         .route("/wallet/today-return", get(get_today_return))
+        .route("/wallet/return-history", get(get_return_history))
         .route("/wallet/ledger", get(list_ledger))
         .route("/wallet/deposit-assets", get(list_deposit_assets))
         .route("/wallet/deposit-networks", get(list_deposit_networks))
@@ -144,6 +146,26 @@ async fn get_today_return(
     let user_id = user_id_from_subject(&claims.sub)?;
     let pool = mysql_pool(&state)?;
     let response = get_today_return_use_case(&pool, state.redis.as_ref(), user_id).await?;
+
+    Ok(Json(response))
+}
+
+async fn get_return_history(
+    UserAuth(claims): UserAuth,
+    State(state): State<AppState>,
+    Query(query): Query<ReturnHistoryQuery>,
+) -> AppResult<Json<ReturnHistoryResponse>> {
+    let user_id = user_id_from_subject(&claims.sub)?;
+    let period_days = validate_return_history_days(query.days)?;
+    let pool = mysql_pool(&state)?;
+    let response = get_return_history_use_case(
+        &pool,
+        state.mongo.as_ref(),
+        state.redis.as_ref(),
+        user_id,
+        period_days,
+    )
+    .await?;
 
     Ok(Json(response))
 }

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"复核资产页请求身份、严格 DTO 和 latest-request-wins 行为。"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"复核隐私遮蔽、真实空错状态、Pencil 结构和 PWA/Tauri 构建。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查是否重复实现了已有今日收益核心逻辑。"}
+{"file":".trellis/tasks/08-09-mobile-home-today-return/research/today-return-contract.md","reason":"校验资产页展示没有偏离已落地的收益业务口径。"}
