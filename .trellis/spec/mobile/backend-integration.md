@@ -551,7 +551,14 @@ marginAccounts.value = upsertWalletAccount(marginAccounts.value, result.marginWa
 const available = account?.available ?? null
 ```
 
-## 9. Market Favorites and Backend Logo Contract
+## 9. Market Favorites, Convert Pairs, and Backend Logo Contract
+
+### Scope / Trigger
+
+- Apply this contract when a mobile market, wallet, margin, or convert surface
+  consumes backend-owned image metadata.
+- For Swap, `GET /convert/pairs` owns from/to visual metadata while protected
+  wallet accounts own only authenticated balances and holding filters.
 
 ### Signatures
 
@@ -573,6 +580,16 @@ interface MarketFavoriteRecord {
 interface MarketFavoritesResponse {
   favorites: MarketFavoriteRecord[]
 }
+
+interface BackendConvertPair {
+  from_asset_logo_url?: string | null
+  to_asset_logo_url?: string | null
+}
+
+interface ConvertPair {
+  fromAssetLogoUrl?: string
+  toAssetLogoUrl?: string
+}
 ```
 
 ### Contracts
@@ -584,6 +601,20 @@ interface MarketFavoritesResponse {
 - `fetchMarginWallets()` maps backend `logo_url` to `WalletAccount.logoUrl`.
   Assets keeps the spot-wallet image first and the margin-wallet image second
   when combining real wallet rows.
+- `fetchConvertPairs()` trims `from_asset_logo_url` and `to_asset_logo_url` at
+  the adapter boundary. Missing, `null`, empty, and whitespace-only values map
+  to `undefined`; no default URL is derived. A present non-string Logo is a
+  contract error rather than another spelling of absence. Pair-side symbols
+  are trimmed and uppercased before they become selection or deduplication
+  keys.
+- Swap pay/receive marks read only the selected pair's direction-specific Logo.
+  Picker rows are built from the corresponding pair direction and retain the
+  first non-empty pair API Logo when a symbol repeats. Wallet accounts supply
+  only balances and the holding filter, never Swap Logo metadata; the Swap
+  wallet lookup stores normalized symbol-to-number entries rather than whole
+  wallet objects.
+- A missing or failed convert-pair image continues through `AssetMark`'s
+  accessible symbol-initial fallback.
 - One Pinia store owns authenticated favorites for Home, Markets, Spot Trade,
   and Market Detail. App startup loads it when the session is authenticated;
   logout and session expiry reset favorites, pending symbols, and request
@@ -600,17 +631,53 @@ interface MarketFavoritesResponse {
 - Star controls retain a 44px target, `aria-pressed`, pending `aria-busy`, and
   disabled semantics while the same symbol is being saved.
 
+### Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Convert Logo is a non-empty string | Trim once at the adapter and retain it |
+| Convert Logo is missing, `null`, empty, or whitespace | Map to `undefined`; let `AssetMark` use its local initial |
+| Convert Logo is another JSON type | Reject the pair response as a contract error |
+| Pair asset symbol contains outer whitespace or lowercase | Trim and normalize to uppercase before matching/deduplication |
+| Same directional symbol appears on multiple pairs | Keep one picker row and the first non-empty API Logo |
+| Wallet account has a different Logo | Ignore it for Swap visuals; consume only its available balance |
+| Selected/reversed pair changes | Read the new pair's direction-specific Logo reactively |
+
+### Good / Base / Bad Cases
+
+- Good: the selected BTC→USDT pair renders its exact from/to API images, then
+  switching to USDT→BTC renders the reverse pair's two distinct API images.
+- Base: a pair Logo is `null`; `AssetMark` receives `undefined` and renders the
+  accessible symbol initial without inventing an image URL.
+- Bad: the picker obtains images from `wallet_accounts.logo_url`, groups raw
+  `" btc "` separately from `BTC`, or silently accepts a numeric Logo value.
+
 ### Tests Required
 
 - Adapter tests cover normalized paths, the GET envelope, mutation response,
-  and pair/base/quote Logo mapping.
+  pair/base/quote Logo mapping, and nullable/blank convert-pair Logo mapping.
 - Store tests cover shared loading, same-symbol mutation deduplication,
   optimistic rollback, session reset, and stale in-flight response isolation.
 - Source/view tests assert all four market surfaces use the shared store, guest
   redirects remain internal, the retired local-storage path is absent, and
-  Assets still renders wallet-owned Logo metadata.
+  Assets still renders wallet-owned Logo metadata. Swap tests execute
+  direction-specific picker deduplication, assert selected pair Logo bindings,
+  and prove wallet metadata is limited to balances/holding filters. They also
+  execute reverse/picker pair reactivity and the `AssetMark` source-exhaustion
+  path instead of relying only on source-text guards.
 - Run the focused market/favorites tests and `npm run type-check`; include the
   full mobile suite and PWA build at the final task gate.
+
+### Wrong vs Correct
+
+```ts
+// Wrong: user wallet metadata substitutes for the trading product contract.
+const logoUrl = walletBySymbol.get(symbol)?.logoUrl
+
+// Correct: pair DTO owns visuals; wallet state owns only balance.
+const logoUrl = side === 'from' ? pair.fromAssetLogoUrl : pair.toAssetLogoUrl
+const balance = availableBySymbol.get(symbol) ?? 0
+```
 
 ## 10. Home and Assets Today Return Contract
 

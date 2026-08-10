@@ -57,7 +57,7 @@ test('公告列表和详情保留真实 API、语言映射与命名路由合同'
 
 test('共享行情与登录支撑组件使用真实数据、主题变量和安全回退', () => {
   assert.match(assetMarkSource, /fallbackSrc\?: string/)
-  assert.match(assetMarkSource, /\[props\.src, props\.fallbackSrc\]/)
+  assert.match(assetMarkSource, /buildAssetMarkImageSources\(props\.src, props\.fallbackSrc\)/)
   assert.match(assetMarkSource, /@error="imageIndex \+= 1"/)
   assert.match(assetMarkSource, /watch\(\[\(\) => props\.src, \(\) => props\.fallbackSrc\]/)
   assert.match(assetMarkSource, /var\(--positive\)/)

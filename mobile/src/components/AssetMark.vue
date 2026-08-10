@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { assetMarkImageSourceAt, buildAssetMarkImageSources } from '@/core/assetMark'
 
 const props = withDefaults(defineProps<{
   symbol: string
@@ -15,12 +16,8 @@ const { t } = useI18n()
 
 const initial = computed(() => props.symbol.trim().replace(/[^a-z0-9]/gi, '').slice(0, 1).toUpperCase() || '?')
 const imageIndex = ref(0)
-const imageSources = computed(() => [...new Set(
-  [props.src, props.fallbackSrc]
-    .map((source) => source?.trim())
-    .filter((source): source is string => Boolean(source)),
-)])
-const imageSource = computed(() => imageSources.value[imageIndex.value])
+const imageSources = computed(() => buildAssetMarkImageSources(props.src, props.fallbackSrc))
+const imageSource = computed(() => assetMarkImageSourceAt(imageSources.value, imageIndex.value))
 const tone = computed(() => props.symbol.split('').reduce((total, char) => total + char.charCodeAt(0), 0) % 5)
 const markStyle = computed(() => ({
   height: `${props.size}px`,

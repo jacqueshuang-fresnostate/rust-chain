@@ -1,17 +1,12 @@
 import { client, requestUrl } from './client'
 import { asNumber } from '@/core/format'
+import {
+  mapConvertPair,
+  type BackendConvertPair,
+  type ConvertPair,
+} from '@/core/swapAssetLogos'
 
-export interface ConvertPair {
-  id: number
-  fromAssetId: number
-  fromAssetSymbol: string
-  toAssetId: number
-  toAssetSymbol: string
-  minAmount: number
-  maxAmount?: number
-  feeRate: number
-  enabled: boolean
-}
+export type { ConvertPair } from '@/core/swapAssetLogos'
 
 export interface ConvertQuote {
   quoteId: string
@@ -37,31 +32,9 @@ export interface ConvertOrder {
   createdAt: number
 }
 
-interface BackendConvertPair {
-  id: number
-  from_asset_id: number
-  from_asset_symbol: string
-  to_asset_id: number
-  to_asset_symbol: string
-  min_amount: string | number
-  max_amount?: string | number | null
-  fee_rate?: string | number | null
-  enabled?: boolean | null
-}
-
 export async function fetchConvertPairs(): Promise<ConvertPair[]> {
   const response = await client.get<{ pairs?: BackendConvertPair[] }>(requestUrl('/convert/pairs'))
-  return (response.data.pairs || []).map((pair) => ({
-    id: pair.id,
-    fromAssetId: pair.from_asset_id,
-    fromAssetSymbol: pair.from_asset_symbol.toUpperCase(),
-    toAssetId: pair.to_asset_id,
-    toAssetSymbol: pair.to_asset_symbol.toUpperCase(),
-    minAmount: asNumber(pair.min_amount),
-    maxAmount: pair.max_amount === null || pair.max_amount === undefined ? undefined : asNumber(pair.max_amount),
-    feeRate: asNumber(pair.fee_rate),
-    enabled: pair.enabled !== false,
-  })).filter((pair) => pair.enabled)
+  return (response.data.pairs || []).map(mapConvertPair).filter((pair) => pair.enabled)
 }
 
 export async function requestConvertQuote(pair: ConvertPair, amount: number): Promise<ConvertQuote> {

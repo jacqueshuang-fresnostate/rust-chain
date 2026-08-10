@@ -210,7 +210,7 @@ test('会话生命周期和四个市场页面共享服务端自选且不再使�
 
 test('交易对图片按交易对、基础资产、字母顺序回退且杠杆持仓保留后台图片', () => {
   assert.match(assetMarkSource, /fallbackSrc\?: string/)
-  assert.match(assetMarkSource, /\[props\.src, props\.fallbackSrc\]/)
+  assert.match(assetMarkSource, /buildAssetMarkImageSources\(props\.src, props\.fallbackSrc\)/)
   assert.match(assetMarkSource, /@error="imageIndex \+= 1"/)
   assert.match(assetMarkSource, /v-else aria-hidden="true"/)
   for (const view of views) {

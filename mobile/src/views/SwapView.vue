@@ -21,6 +21,13 @@ import { confirmConvertQuote, fetchConvertOrders, fetchConvertPairs, requestConv
 import { fetchWalletAccounts } from '@/api/wallet'
 import { formatAmount, formatDateTime, formatPrice } from '@/core/format'
 import { useModalDialog } from '@/core/modalDialog'
+import {
+  buildSwapAvailableBalanceMap,
+  buildSwapPickerAssetLogos,
+  resolveReverseSwapPair,
+  resolveSelectedSwapPair,
+  resolveSwapPickerPair,
+} from '@/core/swapAssetLogos'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import type { WalletAccount } from '@/core/types'
@@ -50,12 +57,10 @@ const historySection = ref<HTMLElement | null>(null)
 const { trapFocus: trapReviewFocus } = useModalDialog(reviewOpen, reviewDialog, '[data-dialog-cancel]')
 const { trapFocus: trapPickerFocus } = useModalDialog(pickerOpen, pickerDialog, '[data-picker-search]')
 
-const selectedPair = computed(() => pairs.value.find((pair) => pair.id === pairId.value) || pairs.value[0])
-const accountBySymbol = computed(() => new Map(
-  accounts.value.map((account) => [account.symbol.trim().toUpperCase(), account] as const),
-))
-const assetLogoUrl = (symbol: string): string | undefined => accountBySymbol.value.get(symbol.trim().toUpperCase())?.logoUrl
-const available = computed(() => accounts.value.find((account) => account.symbol === selectedPair.value?.fromAssetSymbol)?.available || 0)
+const selectedPair = computed(() => resolveSelectedSwapPair(pairs.value, pairId.value))
+const availableBySymbol = computed(() => buildSwapAvailableBalanceMap(accounts.value))
+const availableBalance = (symbol: string): number => availableBySymbol.value.get(symbol.trim().toUpperCase()) || 0
+const available = computed(() => selectedPair.value ? availableBalance(selectedPair.value.fromAssetSymbol) : 0)
 const amountNumber = computed(() => Number(amount.value || 0))
 const amountAllowed = computed(() => {
   const pair = selectedPair.value
@@ -64,12 +69,10 @@ const amountAllowed = computed(() => {
 })
 const quoteExpired = computed(() => !quote.value || quote.value.expiresAt <= Date.now())
 const pickerAssets = computed(() => {
-  const symbols = [...new Set(pairs.value.map((pair) => pickerSide.value === 'from' ? pair.fromAssetSymbol : pair.toAssetSymbol))]
-  const needle = pickerQuery.value.trim().toLocaleUpperCase()
-  const assets = symbols.map((symbol) => ({
-    symbol,
-    balance: accountBySymbol.value.get(symbol)?.available || 0,
-    logoUrl: assetLogoUrl(symbol),
+  const needle = pickerQuery.value.trim().toUpperCase()
+  const assets = buildSwapPickerAssetLogos(pairs.value, pickerSide.value).map((asset) => ({
+    ...asset,
+    balance: availableBalance(asset.symbol),
   })).filter((asset) => (
     (!needle || asset.symbol.includes(needle))
     && (pickerFilter.value !== 'holding' || asset.balance > 0)
@@ -98,7 +101,7 @@ async function load(): Promise<void> {
 function swapDirection(): void {
   const pair = selectedPair.value
   if (!pair) return
-  const reversed = pairs.value.find((item) => item.fromAssetId === pair.toAssetId && item.toAssetId === pair.fromAssetId)
+  const reversed = resolveReverseSwapPair(pairs.value, pair)
   if (reversed) pairId.value = reversed.id
   quote.value = null
 }
@@ -120,12 +123,7 @@ function closePicker(): void {
 }
 
 function selectPickerAsset(symbol: string): void {
-  const current = selectedPair.value
-  const pair = pickerSide.value === 'from'
-    ? pairs.value.find((item) => item.fromAssetSymbol === symbol && item.toAssetSymbol === current?.toAssetSymbol)
-      || pairs.value.find((item) => item.fromAssetSymbol === symbol)
-    : pairs.value.find((item) => item.toAssetSymbol === symbol && item.fromAssetSymbol === current?.fromAssetSymbol)
-      || pairs.value.find((item) => item.toAssetSymbol === symbol)
+  const pair = resolveSwapPickerPair(pairs.value, pickerSide.value, symbol, selectedPair.value)
   if (!pair) return
   pairId.value = pair.id
   quote.value = null
@@ -239,7 +237,7 @@ onMounted(() => { void load() })
               <div class="swap-card__main">
                 <input v-model="amount" class="pencil-numeric" inputmode="decimal" placeholder="0.00" @input="quote = null" />
                 <button class="swap-asset-button" type="button" @click="openPicker('from')">
-                  <AssetMark :symbol="selectedPair.fromAssetSymbol" :src="assetLogoUrl(selectedPair.fromAssetSymbol)" :size="28" />
+                  <AssetMark :symbol="selectedPair.fromAssetSymbol" :src="selectedPair.fromAssetLogoUrl" :size="28" />
                   <strong>{{ selectedPair.fromAssetSymbol }}</strong>
                   <ChevronDown :size="16" />
                 </button>
@@ -253,7 +251,7 @@ onMounted(() => { void load() })
               <div class="swap-card__main">
                 <strong class="pencil-numeric swap-receive-value">{{ quote ? formatAmount(quote.toAmount) : t('swap.awaitingQuote') }}</strong>
                 <button class="swap-asset-button" type="button" @click="openPicker('to')">
-                  <AssetMark :symbol="selectedPair.toAssetSymbol" :src="assetLogoUrl(selectedPair.toAssetSymbol)" :size="28" />
+                  <AssetMark :symbol="selectedPair.toAssetSymbol" :src="selectedPair.toAssetLogoUrl" :size="28" />
                   <strong>{{ selectedPair.toAssetSymbol }}</strong>
                   <ChevronDown :size="16" />
                 </button>

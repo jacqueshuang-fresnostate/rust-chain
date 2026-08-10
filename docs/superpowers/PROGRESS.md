@@ -7076,3 +7076,17 @@
 - 修改文件：`tests/unit_src/src_modules_convert_mod_tests.rs`、`.trellis/spec/backend/{index,market-favorites}.md`、`.trellis/tasks/08-11-convert-pairs-logo/prd.md`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：`cargo fmt --manifest-path Cargo.toml --all -- --check` 通过；`cargo check --manifest-path Cargo.toml --all-targets` 通过；`cargo test --manifest-path Cargo.toml --lib modules::convert -- --nocapture` 3/3 通过（序列化 Logo 完整矩阵已实际执行）；`cargo test --manifest-path Cargo.toml --test convert_routes -- --nocapture` 13/13 通过，但未设置 `DATABASE_URL`，所有真实 MySQL 分支均按测试合同跳过；Trellis task validate 和 `git diff --check` 通过。
 - 后续事项：在提供隔离 `DATABASE_URL` 的环境补跑配置 Logo/空 Logo 的真实 MySQL 查询和清理分支；本次未提交。
+
+## 2026-08-11 01:17 - 手机闪兑改用交易对接口 Logo
+
+- 完成内容：手机端 `convert/pairs` 适配器新增双方可空 Logo 映射，统一 trim 并将缺失、`null`、空串和纯空白归一化为 `undefined`；闪兑支付/获得主卡片直接读取当前交易对方向 Logo，资产选择器按 from/to 方向构建去重列表并保留重复 symbol 的首个非空交易对 API Logo；钱包账户仅继续提供可用余额和“持有”筛选，Logo 缺失或加载失败仍由 `AssetMark` 降级为 symbol 字母。
+- 修改文件：`mobile/src/api/swap.ts`、`mobile/src/core/swapAssetLogos.ts`、`mobile/src/views/SwapView.vue`、`mobile/tests/swap-asset-logos.test.ts`、`.trellis/spec/mobile/backend-integration.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cd mobile && node --test --experimental-strip-types tests/swap-asset-logos.test.ts` 3/3 通过；`npm --prefix mobile test` 342/342 通过；`npm --prefix mobile run type-check` 通过；`npm --prefix mobile run build:pwa` 通过（2069 modules、134 条预缓存）；Trellis task validate 与 `git diff --check` 通过。
+- 后续事项：无；本次未修改后端、未提交或推送，并保留工作树内任务上下文文件。
+
+## 2026-08-11 01:24 - 独立复核并修复手机闪兑交易对 Logo
+
+- 完成内容：按 PRD 与注入规范复核 DTO→选择状态→视图完整链路；修复交易对 symbol 仅大写但未 trim、选择器按未归一化 symbol 去重的问题，并让非字符串 Logo 明确触发合同错误。钱包查询 Map 改为仅保存规范化 symbol→可用余额数值，不再保留可访问的整份钱包元数据；主卡、选择器、反向交易对和选择资产后的 pair 切换均持续读取当前交易对方向 Logo。抽取并执行测试交易对映射/选择逻辑及 `AssetMark` 图片源耗尽逻辑，覆盖 null/缺失/空白、重复 symbol 首个非空、正反向不同 Logo、响应式 pair/picker 切换、钱包 Logo 不参与和图片失败字母回退，避免只依赖正则源码守卫；同时补齐移动端可执行契约和任务验收清单。
+- 修改文件：`mobile/src/api/swap.ts`、`mobile/src/components/AssetMark.vue`、`mobile/src/core/{assetMark,swapAssetLogos}.ts`、`mobile/src/views/SwapView.vue`、`mobile/tests/{swap-asset-logos,market-favorites,market-news-support-views}.test.ts`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/tasks/08-11-mobile-swap-convert-pair-logos/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Mobile 聚焦测试 24/24、全量测试 344/344、`npm --prefix mobile run lint --if-present`（项目无 lint 脚本）、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2070 modules、134 条预缓存）、Trellis task validate 与 `git diff --check` 全部通过。
+- 后续事项：无；本次未修改后端、未回退并行改动、未提交或推送。
