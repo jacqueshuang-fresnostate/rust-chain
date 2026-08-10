@@ -1,0 +1,5 @@
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Verify all fixed copy and enum labels are localized and unknown values remain visible."}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Verify wallet ledger adapter, protected API behavior, and pagination mapping."}
+{"file":".trellis/spec/backend/wallet-amount-precision.md","reason":"Verify amount/fee/balance precision remains unchanged."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check query/count/response/adapter/view boundary consistency."}
+{"file":".trellis/tasks/08-10-mobile-assets-ledger-classification-i18n/research/ledger-taxonomy.md","reason":"Check every audited family maps to the intended category and unknown values map to other."}

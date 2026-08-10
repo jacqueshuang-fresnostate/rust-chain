@@ -167,8 +167,8 @@ test('prediction and earn confirmations render only API-derived quote and produc
 test('wallet ledger and message center keep error, loading, cached-data, and empty branches separate', () => {
   const ledgerBranches = [
     'v-if="error && !entries.length"',
-    'v-else-if="loading"',
-    'v-else-if="sortedEntries.length"',
+    'v-else-if="loading && !entries.length"',
+    'v-else-if="groupedEntries.length"',
     'v-else class="ledger-state ledger-state--empty"',
   ].map((branch) => sources.ledger.indexOf(branch))
   assert.ok(ledgerBranches.every((index) => index >= 0))
@@ -215,8 +215,9 @@ test('new coin, ledger, and messages preserve their authoritative APIs', () => {
   assert.match(sources.newCoinRecords, /\.record-list article[\s\S]*?min-height: 72px;/)
   assert.match(sources.newCoinRecords, /\.record-icon[\s\S]*?height: 36px;[\s\S]*?width: 36px;/)
 
-  assert.match(sources.ledger, /fetchWalletLedger\(30, offset, filters\.find/)
-  assert.match(sources.ledger, /entries\.value = reset \? rows : \[\.\.\.entries\.value, \.\.\.rows\]/)
+  assert.match(sources.ledger, /createWalletLedgerRequestLifecycle\(\{[\s\S]*?fetchPage: fetchWalletLedger/)
+  assert.match(sources.ledger, /requestLifecycle\.load\(offset, PAGE_SIZE\)/)
+  assert.match(sources.ledger, /advanceWalletLedgerPagination\(offset, result\.value\)/)
   assert.match(sources.messages, /messages\.value = await fetchNews\(40\)/)
   assert.match(sources.messages, /hippo_mobile_message_read_ids/)
   assert.doesNotMatch(sources.messages, /@\/api\/(?:wallet|trading|user)/)

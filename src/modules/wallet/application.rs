@@ -11,7 +11,8 @@ use crate::{
         wallet::{
             amount_fits_asset_precision, infrastructure,
             infrastructure::{
-                ReturnHistoryAssetActivityRow, TodayReturnAssetActivityRow, WalletLedgerFilter,
+                ReturnHistoryAssetActivityRow, TodayReturnAssetActivityRow, WalletLedgerCategory,
+                WalletLedgerFilter,
             },
             presentation::{
                 AdminWalletListQuery, AdminWalletWithdrawalsResponse, BroadcastWithdrawalRequest,
@@ -554,6 +555,22 @@ pub(crate) fn normalize_deposit_network(value: &str) -> AppResult<String> {
 pub(crate) fn build_wallet_ledger_filter(
     query: WalletLedgerQuery,
 ) -> AppResult<WalletLedgerFilter> {
+    let category = query
+        .category
+        .map(|value| {
+            WalletLedgerCategory::parse(value.trim()).ok_or_else(|| {
+                AppError::Validation(format!(
+                    "unsupported wallet ledger category; expected one of: {}",
+                    WalletLedgerCategory::ALL
+                        .iter()
+                        .map(|category| category.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            })
+        })
+        .transpose()?;
+
     Ok(WalletLedgerFilter {
         asset_id: query.asset_id,
         asset_symbol: query
@@ -561,6 +578,7 @@ pub(crate) fn build_wallet_ledger_filter(
             .map(|value| normalize_asset_symbol(&value))
             .transpose()?,
         change_type: normalize_optional_query_string(query.change_type),
+        category,
         ref_type: normalize_optional_query_string(query.ref_type),
         ref_id: normalize_optional_query_string(query.ref_id),
         start_time: normalize_optional_query_string(query.start_time),

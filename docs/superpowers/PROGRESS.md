@@ -7041,3 +7041,24 @@
 - 修改文件：`migrations/0101_wallet_return_history_settlement_indexes.sql`、`src/infra/mysql.rs`、`src/modules/wallet/{application,infrastructure,presentation,routes}.rs`、`tests/unit_src/src_modules_wallet_{application,infrastructure,routes}_tests.rs`、`tests/wallet_routes.rs`、`mobile/src/api/wallet.ts`、`mobile/src/core/{realizedReturn,returnHistory,returnHistoryGeometry,todayReturn}.ts`、`mobile/src/views/HomeView.vue`、`mobile/src/styles/prototype-parity.css`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{return-history,pencil-selected-home-layout,editorial-shell-home-markets,root-prototype-parity}.test.ts`、`.trellis/spec/backend/wallet-amount-precision.md`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/tasks/08-09-mobile-home-return-history-chart/prd.md`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：最终 `cargo fmt --all` 通过；Rust wallet 定向单测 35/35 通过；钱包路由定向集成命令编译并通过，但未设置 `DATABASE_URL`，真实 MySQL 聚合分支明确 skip；Mobile 聚焦测试 51/51 与 `npm --prefix mobile run type-check` 通过。过程中曾发现零值未固定 18 位及路由测试 Router move 编译错误，均已修复并通过对应复测。根据用户停止指令，未继续执行最终 `cargo check`、Mobile 全量测试、PWA/Tauri 构建、task validate 或 `git diff --check`；未配置 Mongo，真实 Mongo 查询分支未执行，仅 exact UTC 日/正 close 纯单测通过。
 - 后续事项：补跑带隔离 MySQL/Mongo 的真实历史估值分支，以及最终 cargo check、Mobile 全量测试、PWA/Tauri build、task validate 和差异检查；无代码提交或推送。
+
+## 2026-08-10 19:59 - 独立复核并修复手机端资产账单分类与国际化
+
+- 完成内容：按任务 PRD、钱包分类研究矩阵及后端/Mobile 规范复核 `wallet_ledger` 分类全链路；确认 Rust exact/prefix/other 分类共用单一规则表，列表与 COUNT 共用同一过滤构造器，非法 category 在获取 MySQL pool 前确定性校验，既有 `change_type` 可组合使用，响应分类与 TypeScript 十项联合类型完全一致。补强 exact/prefix/大小写边界/other 与分页总量测试；修复 Mobile 加载更多使用去重后可见条数作为 offset 导致重复页漂移的问题，改为按服务端实际消费行推进并让空页确定性耗尽；拒绝筛选分类与返回分类不一致的响应；将本地 DTO/分页诊断收敛为合同错误并在视图中显示本地化失败文案，避免英文内部错误泄漏。复核并覆盖本地日期分组、组内倒序、复数、正负零、真实手续费、44px 控件、320px 收缩、迟到分类/会话/卸载响应、未知类型原枚举可见及全部已知类型双语对称，同时同步 Trellis 规范。
+- 修改文件：`src/modules/wallet/{application,infrastructure,presentation,routes}.rs`、`tests/unit_src/src_modules_wallet_{application,infrastructure,routes}_tests.rs`、`tests/wallet_routes.rs`、`mobile/src/api/wallet.ts`、`mobile/src/core/walletLedger.ts`、`mobile/src/views/WalletLedgerView.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{wallet-ledger-classification,pencil-selected-page-parity-20260807,pencil-wallet-flow-parity,wallet-secondary-views}.test.ts`、`.trellis/spec/backend/wallet-amount-precision.md`、`.trellis/spec/mobile/{backend-integration,navigation-and-localization}.md`、`.trellis/tasks/08-10-mobile-assets-ledger-classification-i18n/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --all -- --check`、`cargo check --all-targets`、Rust wallet 单测 42/42 通过；钱包路由定向集成命令 1/1 通过，但当前未设置 `DATABASE_URL`，真实 MySQL exact/prefix/other SQL 分支按测试合同 skip。Mobile 账单聚焦测试 7/7、受影响聚焦测试 31/31、全量测试 339/339、`npm --prefix mobile run type-check`、`npm --prefix mobile run lint --if-present`（项目无 lint 脚本）及 `npm --prefix mobile run build:pwa`（2068 modules、134 条预缓存）通过；Trellis task validate 与 `git diff --check` 通过。
+- 后续事项：在提供隔离 `DATABASE_URL` 的环境补跑钱包路由真实 MySQL 分类谓词与分页断言；本任务未提交或推送。
+
+## 2026-08-10 20:06 - 修复手机端资产账单八位小数显示
+
+- 完成内容：根据运行时复核修复资金流水金额、变动后余额和正手续费沿用通用四位小数格式导致 BTC 小额被过度舍入、非零手续费显示为零的问题；新增账单专用本地化格式器，统一保留最多 8 位小数并归一化负零，确保 `0.00000001` 最小支持单位仍可见。补充 `0.00125`、`0.0000025`、八位边界、余额精度及页面三处接线回归断言，并同步移动端后端集成规范。
+- 修改文件：`mobile/src/core/walletLedger.ts`、`mobile/src/api/wallet.ts`、`mobile/src/views/WalletLedgerView.vue`、`mobile/tests/wallet-ledger-classification.test.ts`、`.trellis/spec/mobile/backend-integration.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Mobile 账单及受影响聚焦测试 32/32 通过；`npm --prefix mobile run type-check` 通过。
+- 后续事项：无；本次未提交或推送。
+
+## 2026-08-10 20:22 - 完成资产账单分类、国际化与运行时验收
+
+- 完成内容：完成 `/assets/ledger` 最终验收；后端提供十类权威分类、组合筛选和一致分页总量，手机端完成全部分类筛选、本地日期分组、双语文案、未知类型降级、八位小数账务展示及并发请求隔离。使用 Ego 浏览器在 320px 英文浅色、390px 中文浅色和 448px 中文深色下验证页面布局、分类交互、单复数、未知类型和小额手续费，均未出现页面级横向溢出。
+- 修改文件：`src/modules/wallet/{application,infrastructure,presentation,routes}.rs`、`tests/unit_src/src_modules_wallet_{application,infrastructure,routes}_tests.rs`、`tests/wallet_routes.rs`、`mobile/src/api/wallet.ts`、`mobile/src/core/walletLedger.ts`、`mobile/src/views/WalletLedgerView.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{wallet-ledger-classification,pencil-selected-page-parity-20260807,pencil-wallet-flow-parity,wallet-secondary-views}.test.ts`、`.trellis/spec/backend/wallet-amount-precision.md`、`.trellis/spec/mobile/{backend-integration,navigation-and-localization}.md`、`.trellis/tasks/08-10-mobile-assets-ledger-classification-i18n/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --all -- --check`、`cargo check --all-targets`、Rust wallet 单测 47/47、`npm --prefix mobile run type-check`、Mobile 全量测试 340/340、`npm --prefix mobile run build:pwa`（2068 modules、134 条预缓存）、`npm --prefix mobile run build:tauri`（2068 modules）、Trellis task validate 与 `git diff --check` 全部通过；钱包路由集成命令可编译运行，因当前未设置 `DATABASE_URL`，真实 MySQL 分支按测试合同跳过。
+- 后续事项：在提供隔离 `DATABASE_URL` 的环境补跑钱包路由真实 MySQL 分类谓词与分页断言；无功能遗留。

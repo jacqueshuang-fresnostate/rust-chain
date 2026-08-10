@@ -1,0 +1,5 @@
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Owns vue-i18n, unknown enum visibility, touch and route localization contracts."}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Owns mobile wallet DTO adapter and protected request contracts."}
+{"file":".trellis/spec/backend/wallet-amount-precision.md","reason":"Owns wallet ledger response precision and amount semantics."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The category contract crosses SQL, Rust DTO, TypeScript adapter and Vue rendering."}
+{"file":".trellis/tasks/08-10-mobile-assets-ledger-classification-i18n/research/ledger-taxonomy.md","reason":"Provides the audited change-type families and selected category boundary."}

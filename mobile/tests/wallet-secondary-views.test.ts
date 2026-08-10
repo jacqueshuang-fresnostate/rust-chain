@@ -47,8 +47,10 @@ test('提币流程保留真实资产路由、余额网络加载、校验和提�
 test('提币记录、资金流水和快捷买币保留真实读取与支付行为', () => {
   assert.match(sources.withdrawalRecords, /records\.value = await fetchWithdrawalRecords\(\)/)
   assert.match(sources.withdrawalRecords, /return statusKeys\[status\] \? t\(statusKeys\[status\]\) : status/)
-  assert.match(sources.walletLedger, /fetchWalletLedger\(30, offset, filters\.find\(\(filter\) => filter\.key === activeFilter\.value\)\?\.value\)/)
-  assert.match(sources.walletLedger, /entries\.value = reset \? rows : \[\.\.\.entries\.value, \.\.\.rows\]/)
+  assert.match(sources.walletLedger, /createWalletLedgerRequestLifecycle\(\{[\s\S]*?fetchPage: fetchWalletLedger/)
+  assert.match(sources.walletLedger, /requestLifecycle\.load\(offset, PAGE_SIZE\)/)
+  assert.match(sources.walletLedger, /advanceWalletLedgerPagination\(offset, result\.value\)/)
+  assert.match(sources.walletLedger, /exhausted\.value = pagination\.exhausted/)
   assert.match(sources.quickRecharge, /Promise\.all\(\[fetchQuickRechargeConfig\(\), fetchQuickRechargeOrders\(\)\]\)/)
   assert.match(sources.quickRecharge, /createQuickRechargeOrder\(numericAmount\.value, platformTarget\.value\)/)
   assert.match(sources.quickRecharge, /window\.location\.assign\(submittedOrder\.value\.paymentUrl\)/)

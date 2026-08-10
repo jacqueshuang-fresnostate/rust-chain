@@ -132,3 +132,32 @@ let to_amount = truncate_amount_to_asset_precision(&raw_to_amount, to_asset.prec
   exclusions, historical close/current ticker separation, no-activity zero,
   missing-price propagation, 18-place serialization, and first-partial
   cumulative invalidation.
+
+## Scenario: Categorized Wallet Ledger Query
+
+### Contracts
+
+- `GET /api/v1/wallet/ledger` accepts optional `category` values exactly:
+  `funding`, `spot`, `margin`, `seconds`, `convert`, `earn`, `new_coin`, `loan`,
+  `prediction`, and `other`. Omission preserves the existing all-row behavior;
+  existing exact `change_type` and the other filters remain compatible and may
+  be combined with category.
+- Parse and whitelist category before acquiring the MySQL pool so malformed
+  input deterministically returns HTTP 400 even when database state is absent.
+- Funding is exact `deposit`, `admin_recharge`, or `quick_recharge`, plus
+  `deposit_` and `withdrawal_` prefixes. The other named categories use their
+  audited case-sensitive prefixes; `other` is the exact negation of every
+  named rule.
+- List and COUNT queries call the same category/filter predicate builder. The
+  Rust response classifier uses the same exact/prefix rule table, and every
+  entry returns one authoritative category; future unknown values return
+  `other`.
+- Category filtering and response classification do not alter ledger
+  `amount`, `balance_after`, or `fee` decimal serialization.
+
+### Tests Required
+
+- Whitelist and before-database validation, exact `change_type` compatibility,
+  exact/prefix/other classification, shared row/COUNT predicate construction,
+  filtered total/page metadata, authoritative response category, and unchanged
+  18-place decimal serialization.

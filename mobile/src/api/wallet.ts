@@ -12,6 +12,14 @@ import {
   type ReturnHistory,
   type ReturnHistoryPeriodDays,
 } from '@/core/returnHistory'
+import {
+  isWalletLedgerCategory,
+  mapWalletLedgerResponse,
+  WalletLedgerContractError,
+  type BackendWalletLedgerResponse,
+  type WalletLedgerCategory,
+  type WalletLedgerPage,
+} from '@/core/walletLedger'
 import type { DepositAddress, DepositAsset, DepositNetwork, WalletAccount } from '@/core/types'
 
 export {
@@ -32,20 +40,39 @@ export type {
   ReturnHistoryStatus,
   ReturnHistoryViewState,
 } from '@/core/returnHistory'
+export {
+  advanceWalletLedgerPagination,
+  createWalletLedgerRequestLifecycle,
+  formatWalletLedgerDecimal,
+  formatWalletLedgerGroupHeading,
+  formatWalletLedgerTime,
+  groupWalletLedgerEntries,
+  isWalletLedgerContractError,
+  isWalletLedgerCategory,
+  mapWalletLedgerResponse,
+  WALLET_LEDGER_CATEGORIES,
+  WALLET_LEDGER_FILTERS,
+  WALLET_LEDGER_KNOWN_CHANGE_TYPES,
+  WALLET_LEDGER_MAX_FRACTION_DIGITS,
+  walletLedgerAmountSign,
+  walletLedgerCategoryTranslationKey,
+  walletLedgerTypePresentation,
+  WalletLedgerContractError,
+} from '@/core/walletLedger'
+export type {
+  WalletLedgerCategory,
+  WalletLedgerDateGroup,
+  WalletLedgerEntry,
+  WalletLedgerFilter,
+  WalletLedgerPage,
+  WalletLedgerPaginationState,
+  WalletLedgerRequestLifecycle,
+  WalletLedgerRequestResult,
+} from '@/core/walletLedger'
 
 export interface WithdrawalAsset extends DepositAsset {
   withdrawEnabled: boolean
   withdrawFee: number
-}
-
-export interface WalletLedgerEntry {
-  id: number
-  symbol: string
-  changeType: string
-  amount: number
-  fee: number
-  balanceAfter: number
-  createdAt: number
 }
 
 export interface WithdrawalRecord {
@@ -134,16 +161,6 @@ export interface WalletTransferResult {
   transferId: string
   spotWallet: WalletAccount
   marginWallet: WalletAccount
-}
-
-interface BackendLedgerEntry {
-  id: number
-  symbol: string
-  change_type: string
-  amount: string | number
-  fee?: string | number | null
-  balance_after?: string | number
-  created_at: number
 }
 
 export async function fetchDepositAssets(): Promise<DepositAsset[]> {
@@ -276,19 +293,33 @@ function createWithdrawalIdempotencyKey(): string {
   return `mobile-withdraw-${Date.now()}-${randomPart}`
 }
 
-export async function fetchWalletLedger(limit = 30, offset = 0, changeType?: string): Promise<WalletLedgerEntry[]> {
-  const response = await client.get<{ entries?: BackendLedgerEntry[] }>(requestUrl('/wallet/ledger'), {
-    params: { limit, offset, change_type: changeType || undefined },
+export async function fetchWalletLedger(options: {
+  limit?: number
+  offset?: number
+  category?: WalletLedgerCategory
+  changeType?: string
+} = {}): Promise<WalletLedgerPage> {
+  const limit = options.limit ?? 30
+  const offset = options.offset ?? 0
+  if (!Number.isSafeInteger(limit) || limit < 1) {
+    throw new WalletLedgerContractError('invalid wallet ledger limit')
+  }
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw new WalletLedgerContractError('invalid wallet ledger offset')
+  }
+  if (options.category !== undefined && !isWalletLedgerCategory(options.category)) {
+    throw new WalletLedgerContractError('invalid wallet ledger category')
+  }
+  const changeType = options.changeType?.trim()
+  const response = await client.get<BackendWalletLedgerResponse>(requestUrl('/wallet/ledger'), {
+    params: {
+      limit,
+      offset,
+      category: options.category,
+      change_type: changeType || undefined,
+    },
   })
-  return (response.data.entries || []).map((entry) => ({
-    id: entry.id,
-    symbol: entry.symbol.toUpperCase(),
-    changeType: entry.change_type,
-    amount: asNumber(entry.amount),
-    fee: asNumber(entry.fee),
-    balanceAfter: asNumber(entry.balance_after),
-    createdAt: entry.created_at > 0 && entry.created_at < 1_000_000_000_000 ? entry.created_at * 1000 : entry.created_at,
-  }))
+  return mapWalletLedgerResponse(response.data)
 }
 
 export async function fetchQuickRechargeConfig(): Promise<QuickRechargeConfig> {

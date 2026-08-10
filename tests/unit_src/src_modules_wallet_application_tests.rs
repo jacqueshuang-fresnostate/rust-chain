@@ -1,10 +1,12 @@
 use super::{
-    calculate_return_history, calculate_today_return, normalize_asset_symbol, utc_day_start,
-    validate_return_history_days,
+    build_wallet_ledger_filter, calculate_return_history, calculate_today_return,
+    normalize_asset_symbol, utc_day_start, validate_return_history_days,
 };
 use crate::modules::wallet::{
-    infrastructure::{ReturnHistoryAssetActivityRow, TodayReturnAssetActivityRow},
-    presentation::TodayReturnStatus,
+    infrastructure::{
+        ReturnHistoryAssetActivityRow, TodayReturnAssetActivityRow, WalletLedgerCategory,
+    },
+    presentation::{TodayReturnStatus, WalletLedgerQuery},
 };
 use bigdecimal::BigDecimal;
 use chrono::{NaiveDate, TimeDelta, TimeZone, Utc};
@@ -36,6 +38,21 @@ fn history_activity(
     }
 }
 
+fn wallet_ledger_query(category: Option<&str>) -> WalletLedgerQuery {
+    WalletLedgerQuery {
+        asset_id: None,
+        asset_symbol: None,
+        change_type: None,
+        category: category.map(str::to_owned),
+        ref_type: None,
+        ref_id: None,
+        start_time: None,
+        end_time: None,
+        limit: None,
+        offset: None,
+    }
+}
+
 #[test]
 fn normalize_asset_symbol_to_uppercase() {
     assert_eq!(normalize_asset_symbol(" usdt ").unwrap(), "USDT");
@@ -44,6 +61,50 @@ fn normalize_asset_symbol_to_uppercase() {
 #[test]
 fn normalize_asset_symbol_rejects_invalid_format() {
     assert!(normalize_asset_symbol("BTC-USDT").is_err());
+}
+
+#[test]
+fn wallet_ledger_category_accepts_only_the_supported_whitelist() {
+    for expected in WalletLedgerCategory::ALL {
+        let filter = build_wallet_ledger_filter(wallet_ledger_query(Some(expected.as_str())))
+            .expect("supported category must be accepted");
+        assert_eq!(filter.category, Some(expected));
+    }
+
+    for category in ["", "FUNDING", "trade", "staking", "other_extra"] {
+        assert!(
+            build_wallet_ledger_filter(wallet_ledger_query(Some(category))).is_err(),
+            "unsupported category must fail validation: {category}"
+        );
+    }
+}
+
+#[test]
+fn wallet_ledger_filter_keeps_existing_exact_filters_compatible() {
+    let filter = build_wallet_ledger_filter(WalletLedgerQuery {
+        asset_id: Some(42),
+        asset_symbol: Some(" usdt ".to_owned()),
+        change_type: Some(" spot_trade_settlement ".to_owned()),
+        category: Some(" spot ".to_owned()),
+        ref_type: Some(" spot_trade ".to_owned()),
+        ref_id: Some(" 100:200 ".to_owned()),
+        start_time: Some(" 2026-08-01T00:00:00Z ".to_owned()),
+        end_time: Some(" 2026-08-10T00:00:00Z ".to_owned()),
+        limit: Some(500),
+        offset: Some(500_000),
+    })
+    .unwrap();
+
+    assert_eq!(filter.asset_id, Some(42));
+    assert_eq!(filter.asset_symbol.as_deref(), Some("USDT"));
+    assert_eq!(filter.change_type.as_deref(), Some("spot_trade_settlement"));
+    assert_eq!(filter.category, Some(WalletLedgerCategory::Spot));
+    assert_eq!(filter.ref_type.as_deref(), Some("spot_trade"));
+    assert_eq!(filter.ref_id.as_deref(), Some("100:200"));
+    assert_eq!(filter.start_time.as_deref(), Some("2026-08-01T00:00:00Z"));
+    assert_eq!(filter.end_time.as_deref(), Some("2026-08-10T00:00:00Z"));
+    assert_eq!(filter.limit, 100);
+    assert_eq!(filter.offset, 100_000);
 }
 
 #[test]

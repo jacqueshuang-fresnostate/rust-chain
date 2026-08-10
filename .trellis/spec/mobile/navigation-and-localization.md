@@ -137,6 +137,13 @@ lastTradePath: ComputedRef<string>
 - Language changes update the Vue locale, `<html lang>`, runtime `Intl` locale, and persisted locale in one operation.
 - Locale-aware content APIs receive `currentApiLocale()` when the endpoint supports a locale parameter.
 - Backend enum/status values may be mapped when known, but unknown values must remain visible rather than being replaced with an incorrect translation.
+- Wallet ledger category labels and every known emitted `change_type` use
+  symmetric `ledger.*` keys in `zh-CN` and `en`. An unknown `change_type`
+  renders localized `ledger.typeOther` as its primary label and keeps the raw
+  enum visible as secondary technical information.
+- Wallet ledger dates group by the runtime's local calendar day. Group headings
+  use localized Today/Yesterday labels or `Intl.DateTimeFormat`, and record
+  counts use vue-i18n pluralization rather than assembled fixed copy.
 
 ## 4. Validation & Error Matrix
 

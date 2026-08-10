@@ -134,9 +134,11 @@ test('提币表单保留真实网络、余额、完整字段焦点、验证和�
 
 test('账单、提币记录和快捷充值按连续列表映射且只消费真实返回数据', () => {
   assert.match(sources.ledger, /\.ledger-filter \{[\s\S]*?min-height: 44px/)
-  assert.match(sources.ledger, /\.ledger-filter button \{[\s\S]*?height: 28px/)
-  assert.match(sources.ledger, /\.ledger-row \{[\s\S]*?height: 56px[\s\S]*?min-height: 56px/)
-  assert.match(sources.ledger, /fetchWalletLedger\(30, offset, filters\.find/)
+  assert.match(sources.ledger, /\.ledger-filter button \{[\s\S]*?height: 44px[\s\S]*?min-height: 44px/)
+  assert.match(sources.ledger, /\.ledger-row \{[\s\S]*?min-height: 84px/)
+  assert.match(sources.ledger, /createWalletLedgerRequestLifecycle\(\{[\s\S]*?fetchPage: fetchWalletLedger/)
+  assert.match(sources.ledger, /groupWalletLedgerEntries\(entries\.value\)/)
+  assert.match(sources.ledger, /v-if="entry\.fee > 0"/)
 
   assert.match(sources.withdrawalRecords, /const recordFilters: RecordFilter\[\] = \['all', 'processing', 'completed', 'failed'\]/)
   assert.match(sources.withdrawalRecords, /const filteredRecords = computed/)

@@ -298,6 +298,28 @@ async fn wallet_deposit_networks_route_rejects_invalid_asset_symbol() {
     assert_eq!(payload["code"], "VALIDATION_ERROR");
 }
 
+#[tokio::test]
+async fn wallet_ledger_route_rejects_unsupported_category_before_database_access() {
+    let state = test_state();
+    let token = bearer_token(&state);
+    let app = routes().with_state(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/wallet/ledger?category=trade")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), 4096).await.unwrap();
+    let payload: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["code"], "VALIDATION_ERROR");
+}
+
 #[test]
 fn wallet_ledger_limit_is_clamped() {
     assert_eq!(wallet_route_limit(None), 50);

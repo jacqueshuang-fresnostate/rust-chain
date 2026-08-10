@@ -289,6 +289,33 @@ async fn seed_convert_fee_ledger(pool: &MySqlPool, user_id: u64, asset_id: u64, 
     .unwrap();
 }
 
+async fn seed_wallet_ledger_entry(
+    pool: &MySqlPool,
+    user_id: u64,
+    asset_id: u64,
+    change_type: &str,
+    amount: &str,
+    ref_id: &str,
+) {
+    let amount = decimal(amount);
+    sqlx::query(
+        r#"INSERT INTO wallet_ledger
+           (user_id, asset_id, change_type, amount, balance_type, balance_after,
+            available_after, frozen_after, locked_after, ref_type, ref_id)
+           VALUES (?, ?, ?, ?, 'available', ?, ?, 0, 0, 'wallet_route_fixture', ?)"#,
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .bind(change_type)
+    .bind(&amount)
+    .bind(&amount)
+    .bind(&amount)
+    .bind(ref_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 async fn cleanup_wallet_route_fixture(
     pool: &MySqlPool,
     user_id: u64,
@@ -347,8 +374,58 @@ async fn wallet_routes_return_authenticated_user_accounts_and_ledger() -> Result
     let (asset_id, asset_logo_url) = create_asset(&pool).await;
     let ref_id = format!("wallet-route-{}", Uuid::now_v7().simple());
     let convert_quote_id = format!("wallet-convert-{}", Uuid::now_v7().simple());
+    let recharge_ref_id = format!("wallet-recharge-{}", Uuid::now_v7().simple());
+    let spot_ref_id = format!("wallet-spot-{}", Uuid::now_v7().simple());
+    let spot_boundary_ref_id = format!("wallet-spot-boundary-{}", Uuid::now_v7().simple());
+    let spot_case_ref_id = format!("wallet-spot-case-{}", Uuid::now_v7().simple());
+    let unknown_ref_id = format!("wallet-unknown-{}", Uuid::now_v7().simple());
     seed_wallet(&pool, user_id, asset_id, &ref_id).await;
     seed_convert_fee_ledger(&pool, user_id, asset_id, &convert_quote_id).await;
+    seed_wallet_ledger_entry(
+        &pool,
+        user_id,
+        asset_id,
+        "admin_recharge",
+        "1.250000000000000000",
+        &recharge_ref_id,
+    )
+    .await;
+    seed_wallet_ledger_entry(
+        &pool,
+        user_id,
+        asset_id,
+        "spot_trade_settlement",
+        "0.750000000000000000",
+        &spot_ref_id,
+    )
+    .await;
+    seed_wallet_ledger_entry(
+        &pool,
+        user_id,
+        asset_id,
+        "spot",
+        "0.500000000000000000",
+        &spot_boundary_ref_id,
+    )
+    .await;
+    seed_wallet_ledger_entry(
+        &pool,
+        user_id,
+        asset_id,
+        "SPOT_trade",
+        "0.250000000000000000",
+        &spot_case_ref_id,
+    )
+    .await;
+    seed_wallet_ledger_entry(
+        &pool,
+        user_id,
+        asset_id,
+        "future_wallet_adjustment",
+        "0.125000000000000000",
+        &unknown_ref_id,
+    )
+    .await;
 
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let app = routes().with_state(AppState::new(settings.clone()).with_mysql(pool.clone()));
@@ -401,6 +478,7 @@ async fn wallet_routes_return_authenticated_user_accounts_and_ledger() -> Result
     assert_eq!(ledger["entries"].as_array().unwrap().len(), 1);
     assert_eq!(ledger["entries"][0]["user_id"], user_id);
     assert_eq!(ledger["entries"][0]["ref_id"], ref_id);
+    assert_eq!(ledger["entries"][0]["category"], "funding");
     assert_eq!(ledger["entries"][0]["amount"], "12.500000000000000000");
     assert_eq!(
         decimal(ledger["entries"][0]["fee"].as_str().unwrap()),
@@ -408,6 +486,7 @@ async fn wallet_routes_return_authenticated_user_accounts_and_ledger() -> Result
     );
 
     let convert_ledger_response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri(format!(
@@ -431,7 +510,94 @@ async fn wallet_routes_return_authenticated_user_accounts_and_ledger() -> Result
     let convert_ledger: Value = serde_json::from_slice(&convert_ledger_body)?;
     assert_eq!(convert_ledger["entries"].as_array().unwrap().len(), 1);
     assert_eq!(convert_ledger["entries"][0]["ref_id"], convert_quote_id);
+    assert_eq!(convert_ledger["entries"][0]["category"], "convert");
     assert_eq!(convert_ledger["entries"][0]["fee"], "0.250000000000000000");
+
+    let funding = body_json(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/wallet/ledger?asset_id={asset_id}&category=funding&limit=1"
+                    ))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await?,
+    )
+    .await?;
+    assert_eq!(funding["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(funding["entries"][0]["category"], "funding");
+    assert_eq!(funding["page"]["total_elements"], 2);
+    assert_eq!(funding["page"]["total_pages"], 2);
+
+    let exact_change_type = body_json(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/wallet/ledger?asset_id={asset_id}&category=funding&change_type=deposit_credit&limit=10"
+                    ))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await?,
+    )
+    .await?;
+    assert_eq!(exact_change_type["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(exact_change_type["page"]["total_elements"], 1);
+    assert_eq!(exact_change_type["entries"][0]["ref_id"], ref_id);
+    assert_eq!(exact_change_type["entries"][0]["category"], "funding");
+
+    let spot = body_json(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/wallet/ledger?asset_id={asset_id}&category=spot&limit=10"
+                    ))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await?,
+    )
+    .await?;
+    assert_eq!(spot["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(spot["page"]["total_elements"], 1);
+    assert_eq!(spot["entries"][0]["ref_id"], spot_ref_id);
+    assert_eq!(spot["entries"][0]["category"], "spot");
+
+    let other = body_json(
+        app.oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/wallet/ledger?asset_id={asset_id}&category=other&limit=10"
+                ))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?,
+    )
+    .await?;
+    assert_eq!(other["entries"].as_array().unwrap().len(), 3);
+    assert_eq!(other["page"]["total_elements"], 3);
+    let other_types = other["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| {
+            assert_eq!(entry["category"], "other");
+            entry["change_type"].as_str().unwrap()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        other_types,
+        std::collections::BTreeSet::from(["SPOT_trade", "future_wallet_adjustment", "spot",])
+    );
 
     cleanup_wallet_route_fixture(&pool, user_id, asset_id).await?;
     Ok(())

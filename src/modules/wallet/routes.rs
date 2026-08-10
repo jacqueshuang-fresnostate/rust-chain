@@ -176,8 +176,8 @@ async fn list_ledger(
     Query(query): Query<WalletLedgerQuery>,
 ) -> AppResult<Json<WalletLedgerResponse>> {
     let user_id = user_id_from_subject(&claims.sub)?;
-    let pool = mysql_pool(&state)?;
     let filter = build_wallet_ledger_filter(query)?;
+    let pool = mysql_pool(&state)?;
     let ledger = list_wallet_ledger_use_case(&pool, user_id, filter).await?;
 
     Ok(Json(ledger))

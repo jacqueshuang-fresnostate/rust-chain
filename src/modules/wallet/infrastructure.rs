@@ -351,12 +351,131 @@ pub(crate) struct WalletLedgerFilter {
     pub(crate) asset_id: Option<u64>,
     pub(crate) asset_symbol: Option<String>,
     pub(crate) change_type: Option<String>,
+    pub(crate) category: Option<WalletLedgerCategory>,
     pub(crate) ref_type: Option<String>,
     pub(crate) ref_id: Option<String>,
     pub(crate) start_time: Option<String>,
     pub(crate) end_time: Option<String>,
     pub(crate) limit: u32,
     pub(crate) offset: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WalletLedgerCategory {
+    Funding,
+    Spot,
+    Margin,
+    Seconds,
+    Convert,
+    Earn,
+    NewCoin,
+    Loan,
+    Prediction,
+    Other,
+}
+
+impl WalletLedgerCategory {
+    pub(crate) const ALL: [Self; 10] = [
+        Self::Funding,
+        Self::Spot,
+        Self::Margin,
+        Self::Seconds,
+        Self::Convert,
+        Self::Earn,
+        Self::NewCoin,
+        Self::Loan,
+        Self::Prediction,
+        Self::Other,
+    ];
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Funding => "funding",
+            Self::Spot => "spot",
+            Self::Margin => "margin",
+            Self::Seconds => "seconds",
+            Self::Convert => "convert",
+            Self::Earn => "earn",
+            Self::NewCoin => "new_coin",
+            Self::Loan => "loan",
+            Self::Prediction => "prediction",
+            Self::Other => "other",
+        }
+    }
+
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|category| category.as_str() == value)
+    }
+}
+
+struct WalletLedgerCategoryRule {
+    category: WalletLedgerCategory,
+    exact_change_types: &'static [&'static str],
+    change_type_prefixes: &'static [&'static str],
+}
+
+const WALLET_LEDGER_CATEGORY_RULES: &[WalletLedgerCategoryRule] = &[
+    WalletLedgerCategoryRule {
+        category: WalletLedgerCategory::Funding,
+        exact_change_types: &["deposit", "admin_recharge", "quick_recharge"],
+        change_type_prefixes: &["deposit_", "withdrawal_"],
+    },
+    WalletLedgerCategoryRule {
+        category: WalletLedgerCategory::Spot,
+        exact_change_types: &[],
+        change_type_prefixes: &["spot_"],
+    },
+    WalletLedgerCategoryRule {
+        category: WalletLedgerCategory::Margin,
+        exact_change_types: &[],
+        change_type_prefixes: &["margin_"],
+    },
+    WalletLedgerCategoryRule {
+        category: WalletLedgerCategory::Seconds,
+        exact_change_types: &[],
+        change_type_prefixes: &["seconds_contract_"],
+    },
+    WalletLedgerCategoryRule {
+        category: WalletLedgerCategory::Convert,
+        exact_change_types: &[],
+        change_type_prefixes: &["convert_"],
+    },
+    WalletLedgerCategoryRule {
+        category: WalletLedgerCategory::Earn,
+        exact_change_types: &[],
+        change_type_prefixes: &["earn_"],
+    },
+    WalletLedgerCategoryRule {
+        category: WalletLedgerCategory::NewCoin,
+        exact_change_types: &[],
+        change_type_prefixes: &["new_coin_"],
+    },
+    WalletLedgerCategoryRule {
+        category: WalletLedgerCategory::Loan,
+        exact_change_types: &[],
+        change_type_prefixes: &["loan_"],
+    },
+    WalletLedgerCategoryRule {
+        category: WalletLedgerCategory::Prediction,
+        exact_change_types: &[],
+        change_type_prefixes: &["prediction_"],
+    },
+];
+
+pub(crate) fn classify_wallet_ledger_change_type(change_type: &str) -> WalletLedgerCategory {
+    WALLET_LEDGER_CATEGORY_RULES
+        .iter()
+        .find(|rule| {
+            rule.exact_change_types.contains(&change_type)
+                || rule
+                    .change_type_prefixes
+                    .iter()
+                    .any(|prefix| change_type.starts_with(prefix))
+        })
+        .map(|rule| rule.category)
+        .unwrap_or(WalletLedgerCategory::Other)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
@@ -2002,6 +2121,9 @@ fn push_wallet_ledger_filters<'args>(
         builder.push(" AND wl.change_type = ");
         builder.push_bind(change_type);
     }
+    if let Some(category) = filter.category {
+        push_wallet_ledger_category_filter(builder, category);
+    }
     if let Some(ref_type) = filter.ref_type.as_deref() {
         builder.push(" AND wl.ref_type = ");
         builder.push_bind(ref_type);
@@ -2018,6 +2140,63 @@ fn push_wallet_ledger_filters<'args>(
         builder.push(" AND wl.created_at <= ");
         builder.push_bind(end_time);
     }
+}
+
+fn push_wallet_ledger_category_filter<'args>(
+    builder: &mut QueryBuilder<'args, MySql>,
+    category: WalletLedgerCategory,
+) {
+    builder.push(" AND ");
+    if category == WalletLedgerCategory::Other {
+        builder.push("NOT (");
+        for (index, rule) in WALLET_LEDGER_CATEGORY_RULES.iter().enumerate() {
+            if index > 0 {
+                builder.push(" OR ");
+            }
+            builder.push("(");
+            push_wallet_ledger_category_rule(builder, rule);
+            builder.push(")");
+        }
+        builder.push(")");
+        return;
+    }
+
+    let rule = WALLET_LEDGER_CATEGORY_RULES
+        .iter()
+        .find(|rule| rule.category == category)
+        .expect("every non-other wallet ledger category has a SQL rule");
+    builder.push("(");
+    push_wallet_ledger_category_rule(builder, rule);
+    builder.push(")");
+}
+
+fn push_wallet_ledger_category_rule<'args>(
+    builder: &mut QueryBuilder<'args, MySql>,
+    rule: &'static WalletLedgerCategoryRule,
+) {
+    let mut has_predicate = false;
+    for change_type in rule.exact_change_types {
+        if has_predicate {
+            builder.push(" OR ");
+        }
+        builder.push("BINARY wl.change_type = ");
+        builder.push_bind(*change_type);
+        has_predicate = true;
+    }
+    for prefix in rule.change_type_prefixes {
+        if has_predicate {
+            builder.push(" OR ");
+        }
+        builder.push("LEFT(BINARY wl.change_type, ");
+        builder.push_bind(prefix.len() as i64);
+        builder.push(") = ");
+        builder.push_bind(*prefix);
+        has_predicate = true;
+    }
+    debug_assert!(
+        has_predicate,
+        "wallet ledger category rule must not be empty"
+    );
 }
 
 fn deposit_assets_sql(deposit_enabled: bool) -> String {
@@ -2398,12 +2577,16 @@ fn wallet_account_response(row: WalletAccountRow) -> WalletAccountResponse {
 }
 
 fn wallet_ledger_entry_response(row: WalletLedgerEntryRow) -> WalletLedgerEntryResponse {
+    let category = classify_wallet_ledger_change_type(&row.change_type)
+        .as_str()
+        .to_owned();
     WalletLedgerEntryResponse {
         id: row.id,
         user_id: row.user_id,
         asset_id: row.asset_id,
         symbol: row.symbol,
         change_type: row.change_type,
+        category,
         amount: row.amount,
         balance_type: row.balance_type,
         balance_after: row.balance_after,
