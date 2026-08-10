@@ -1052,3 +1052,37 @@ Completed and verified the accumulated mobile Pencil page parity, assets and swa
 ### Next Steps
 
 - None - task complete
+
+
+## Session 31: 手机现货持仓栏目归类
+
+**Date**: 2026-08-11
+**Task**: 手机现货持仓栏目归类
+**Branch**: `main`
+
+### Summary
+
+将 /trade 现货资产持有数据归入持仓栏目，委托与历史跳转到独立订单页，并补充可访问语义、回归测试和移动端规范。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cebe8b3` | (see git log) |
+| `6a66ef5` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
