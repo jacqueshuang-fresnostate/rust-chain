@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 37
+- **Total Sessions**: 38
 - **Last Active**: 2026-08-12
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1288 | Active |
+| `journal-1.md` | ~1321 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 38 | 2026-08-12 | 统一后台表格操作按钮尺寸与操作列宽 | `61980b8` | `main` |
 | 37 | 2026-08-12 | 回滚 Bitget 风格手机现货 K 线重构 | `b522ccd` | `main` |
 | 36 | 2026-08-12 | 统一手机端 Bitget 现货行情口径 | `b486d17` | `main` |
 | 35 | 2026-08-12 | 核对 Bitget 永续与手机端行情偏差 | `95186ab` | `main` |
