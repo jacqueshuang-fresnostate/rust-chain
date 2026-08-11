@@ -148,6 +148,22 @@ selectCollateralAsset(account: WalletAccount): void
   invalid or unavailable storage to KLineChart, expose a 44px keyboard/touch
   radio group, and mount exactly one engine. Switching is presentation-only and
   must not mutate or reconnect the parent market-data session.
+- The mobile market-detail route follows one chart-first hierarchy: instrument
+  header, compact Trade/Chart mode switch, real ticker summary, one four-item
+  Chart/Depth/Latest Trades/Coin Overview tablist, then the selected workspace.
+  Trade navigates to the same symbol's spot route; Chart is the current page and
+  must not issue a redundant navigation.
+- The four market-detail panels are presentation state over one already-running
+  detail session. Keep the chart's selected local renderer mounted while another
+  panel is selected, preserve renderer viewport state and both local engine
+  choices, and never restart REST or WebSocket work from a content-tab handler.
+  The inline chart canvas is at least
+  360px high; the selected 390px geometry uses a 48px interval row, 376px local
+  chart canvas, and 32px real-indicator legend inside one 456px panel.
+- Depth and Latest Trades continue to expose only the existing real snapshots
+  and empty/loading states. Coin Overview contains only the current pair and
+  available ticker-owned latest/high/low/volume fields; it does not invent a
+  project description, market statistic, or remote content source.
 - Shared text uses stable pixel sizes and `letter-spacing: 0`; do not scale
   font size with viewport width.
 - The selected visual bottom navigation has exactly five entries in this order:
@@ -326,6 +342,9 @@ selectCollateralAsset(account: WalletAccount): void
 | Spot route has `showBottomNav` | Keep the five-entry dock, hide `RootHeader`, and render the spot-owned 64px header |
 | Trade is the active dock item | Keep one 56px mint circle with no inherited 28px active gradient |
 | Spot market stream has no rows yet | Show a truthful loading/unavailable state; never synthesize book or trade rows |
+| Market-detail content tab changes | Change only the local selected panel; keep the detail session, chart renderer, points, depth, and trades intact |
+| Market-detail Chart tab is selected at 390px | Keep at least 360px of inline local-chart canvas, with MA5/MA10/MA20 and volume readable in the same workspace |
+| Market-detail renders at 320px | Keep all four tabs, five interval controls, and fixed actions inside the viewport with no document overflow |
 | Nested spot input receives focus | Apply one ring to `.spot-field-shell`; child input keeps `box-shadow: none` |
 | Spot order-type trigger is selected | Open the Teleported sheet without changing `orderType` |
 | Spot order-type option is selected | Set that exact value, close the sheet, and retain the existing price/submission contract |
@@ -464,6 +483,12 @@ selectCollateralAsset(account: WalletAccount): void
   exposes real order-book/latest-trade tabs without iframe, remote chart script,
   or external chart anchor. Focusing a price/quantity/amount input leaves its
   own border/outline/shadow clear while the parent shell carries the only ring.
+- Market-detail chart parity: assert the exact instrument/mode/summary/content-
+  tab/workspace order, two mode controls, four roving tab controls and matching
+  tabpanels, `v-show`-preserved chart renderer, and a content selection handler
+  that contains no API/session/point mutation. Compute the inline chart height
+  and panel-row sum, assert the canvas is at least 360px, and cover 320px/390px,
+  light/dark, safe-area, landscape, focus, and reduced-motion behavior.
 - Spot order type: prove the trigger only opens, both explicit options update
   the exact `limit|market` value, and backdrop/close/Escape do not mutate it.
   Assert `aria-haspopup`, `aria-expanded`, labelled dialog semantics,

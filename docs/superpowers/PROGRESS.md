@@ -2,6 +2,20 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-08-12 05:51 - 独立复核并修正手机现货图表工作台
+
+- 完成内容：按 PRD、Mobile PWA/Shell 与行情会话规范逐项复核全部差异；确认四页签仅更改本地展示状态，切换后图表面板、渲染器根节点、Canvas、`ready` 状态与 REST/WebSocket 连接数均保持，Lightweight Charts 仍为本地 `5.2.0` 且无 iframe/远程脚本/外链。修复底部“合约/订单”在 390px 仅 40px、320px 仅 38px 宽而违反 44px 触控合同的问题；为页面与固定操作区补齐左右安全区；将 320px 英文四页签收紧到 10px，可见文案不再省略。同步把这些几何边界改为可执行 CSS 回归断言。
+- 修改文件：`mobile/src/views/MarketDetailView.vue`、`mobile/tests/market-detail-reference-layout.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦行情详情测试 20/20、Mobile 全量测试 359/359、`npm run lint --if-present`（项目无 lint 脚本）、`npm run type-check`、`npm run build:pwa`（2071 modules、134 条预缓存）、`npm run build:tauri`（2071 modules）、Trellis task validate 与 `git diff --check` 全部通过。Ego 复验：390×844 深色和 320×720 浅色的 `scrollWidth` 分别为 390/320，图表/Panel 为 376/456px，底部两图标操作均为 44×52px 且贴合视口底边，320px 四页签均为 80×48px 且 `clientWidth === scrollWidth`；720×320 展开图表实测覆盖完整视口，Escape 后还原 body/root 滚动、原 scrollY 和展开按钮焦点。
+- 后续事项：无；本次未提交或推送。
+
+## 2026-08-12 05:38 - 参考 Bitget 重构手机现货 K 线工作台
+
+- 完成内容：将手机行情详情重构为“交易对 Header → 交易/图表模式 → 真实报价摘要 → 图表/深度/最新成交/币种概述四页签 → 当前工作区”的 Bitget 参考层级；图表内联画布由 204px 提升到 376px，48px 周期栏、376px 双本地引擎画布和 32px MA5/MA10/MA20/VOL 图例组成 456px 工作区。四页签使用 roving tab 语义和 `v-show` 保持选中图表渲染器、视口及同一 REST/WebSocket 会话，深度、成交与概述只消费既有真实状态；保留 ticker 最新价权威、五个后端周期、展开图表、安全区、固定交易动作与本地 KLineChart/Lightweight Charts 切换。同步新增中英文可访问文案、更新全局暗色兼容选择器、源码/会话回归测试、Mobile 执行规范与任务验收清单。
+- 修改文件：`mobile/src/views/MarketDetailView.vue`、`mobile/src/styles/prototype-parity.css`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{market-detail-reference-layout,market-detail-stream}.test.ts`、`.trellis/spec/mobile/{pwa-and-shell,backend-integration}.md`、`.trellis/tasks/08-12-mobile-bitget-spot-chart-parity/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦行情详情测试 20/20、Mobile 全量测试 359/359 通过；`npm --prefix mobile run lint --if-present`（项目无 lint 脚本）、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2071 modules、134 条预缓存）、`npm --prefix mobile run build:tauri`（2071 modules）、Trellis task validate 与 `git diff --check` 全部通过。Ego 在 390×844 深色与 320×720 浅色触控视口验收：页面 `scrollWidth` 分别等于 390/320，图表画布 376px、面板 456px、固定动作底边等于视口底边；四页签切换后相同 chart/canvas DOM 标记与 `ready` 状态保持，深度/成交/概述均显示真实数据；本地 Lightweight Charts 实测为 `lightweight-charts@5.2.0`、无 iframe/远程脚本/外链，之后恢复 KLineChart。
+- 后续事项：无；本次未提交或推送。
+
 ## 2026-08-12 04:29 - 核对 Bitget 永续与手机端行情偏差
 
 - 完成内容：使用 Ego 浏览器同时对比 Bitget BTCUSDT USDT 永续页、HIPPO 手机端合约页、HIPPO 公开 ticker、Bitget 现货 REST 和永续 REST；确认 HIPPO 合约页当前完整复用 Bitget 现货 ticker/深度/成交/K 线链路，与 Bitget 永续官网的偏差来自交易品种口径，不是 Redis 过期；记录了独立 USDT-FUTURES 行情链的正确修复边界。

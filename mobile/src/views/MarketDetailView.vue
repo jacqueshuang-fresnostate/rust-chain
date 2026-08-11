@@ -63,8 +63,7 @@ const asks = ref<OrderBookLevel[]>([])
 const trades = ref<TradePrint[]>([])
 const liveDetailActive = ref(false)
 const liveDetailUpdatedAt = ref(0)
-type MarketDataPanel = 'orderBook' | 'trades'
-type MarketSection = 'chart' | 'overview'
+type MarketContentPanel = 'chart' | 'depth' | 'trades' | 'overview'
 
 interface ChartScrollLock {
   bodyOverflow: string
@@ -76,14 +75,18 @@ interface ChartScrollLock {
   scrollY: number
 }
 
-const marketDataPanel = ref<MarketDataPanel>('orderBook')
-const activeSection = ref<MarketSection>('chart')
+const activeContentPanel = ref<MarketContentPanel>('chart')
 const chartExpanded = ref(false)
-const summarySection = ref<HTMLElement | null>(null)
 const chartSection = ref<HTMLElement | null>(null)
-const orderBookTabButton = ref<HTMLButtonElement | null>(null)
-const tradesTabButton = ref<HTMLButtonElement | null>(null)
+const contentTabList = ref<HTMLElement | null>(null)
 const chartToggleButton = ref<HTMLButtonElement | null>(null)
+const contentPanels: readonly MarketContentPanel[] = ['chart', 'depth', 'trades', 'overview']
+const contentPanelKeys: Record<MarketContentPanel, string> = {
+  chart: 'marketDetail.chart',
+  depth: 'marketDetail.depth',
+  trades: 'marketDetail.latestTrades',
+  overview: 'marketDetail.overview',
+}
 let chartScrollLock: ChartScrollLock | null = null
 let requestVersion = 0
 let viewActive = true
@@ -290,43 +293,29 @@ function toggleFavorite(): void {
   void marketFavorites.toggle(pairSymbol.value)
 }
 
-function prefersReducedMotion(): boolean {
-  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+function selectContentPanel(panel: MarketContentPanel): void {
+  activeContentPanel.value = panel
 }
 
-async function scrollToSection(section: MarketSection): Promise<void> {
-  activeSection.value = section
-  await nextTick()
-  const target = section === 'chart'
-    ? chartSection.value
-    : summarySection.value
-  target?.scrollIntoView({
-    behavior: prefersReducedMotion() ? 'auto' : 'smooth',
-    block: 'start',
-  })
-}
-
-function selectMarketDataPanel(panel: MarketDataPanel): void {
-  marketDataPanel.value = panel
-  activeSection.value = 'chart'
-}
-
-function handleMarketDataTabKeydown(event: KeyboardEvent, panel: MarketDataPanel): void {
-  let nextPanel: MarketDataPanel | null = null
+function handleContentTabKeydown(event: KeyboardEvent, panel: MarketContentPanel): void {
+  const currentIndex = contentPanels.indexOf(panel)
+  let nextIndex: number | null = null
   if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
-    nextPanel = panel === 'orderBook' ? 'trades' : 'orderBook'
+    nextIndex = (currentIndex - 1 + contentPanels.length) % contentPanels.length
   }
   if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
-    nextPanel = panel === 'orderBook' ? 'trades' : 'orderBook'
+    nextIndex = (currentIndex + 1) % contentPanels.length
   }
-  if (event.key === 'Home') nextPanel = 'orderBook'
-  if (event.key === 'End') nextPanel = 'trades'
-  if (!nextPanel) return
+  if (event.key === 'Home') nextIndex = 0
+  if (event.key === 'End') nextIndex = contentPanels.length - 1
+  if (nextIndex === null) return
   event.preventDefault()
-  selectMarketDataPanel(nextPanel)
+  const nextPanel = contentPanels[nextIndex]
+  selectContentPanel(nextPanel)
   void nextTick(() => {
-    const target = nextPanel === 'orderBook' ? orderBookTabButton.value : tradesTabButton.value
-    target?.focus()
+    contentTabList.value
+      ?.querySelector<HTMLButtonElement>(`[data-content-tab="${nextPanel}"]`)
+      ?.focus()
   })
 }
 
@@ -507,31 +496,27 @@ onUnmounted(() => {
       </button>
     </header>
 
-    <nav class="market-detail__rail" :aria-label="t('marketDetail.details')">
+    <nav class="market-detail__mode-tabs" :aria-label="t('marketDetail.modeSwitch')">
       <button
         type="button"
-        aria-controls="market-chart"
-        :class="{ 'is-active': activeSection === 'chart' }"
-        :aria-current="activeSection === 'chart' ? 'location' : undefined"
-        @click="scrollToSection('chart')"
+        :aria-pressed="false"
+        @click="openTrade('spot')"
       >
-        {{ t('marketDetail.market') }}
+        {{ t('marketDetail.trade') }}
       </button>
       <button
+        class="is-active"
         type="button"
-        aria-controls="market-overview"
-        :class="{ 'is-active': activeSection === 'overview' }"
-        :aria-current="activeSection === 'overview' ? 'location' : undefined"
-        @click="scrollToSection('overview')"
+        aria-current="page"
+        :aria-pressed="true"
       >
-        {{ t('marketDetail.overview') }}
+        {{ t('marketDetail.chart') }}
       </button>
     </nav>
 
     <section
-      id="market-overview"
-      ref="summarySection"
       class="market-detail__summary"
+      :aria-label="t('marketDetail.quoteSummary')"
       :aria-busy="marketStore.loading"
     >
       <div class="market-detail__quote">
@@ -590,15 +575,41 @@ onUnmounted(() => {
       </button>
     </div>
 
+    <nav
+      ref="contentTabList"
+      class="market-detail__content-tabs"
+      role="tablist"
+      :aria-label="t('marketDetail.contentTabs')"
+    >
+      <button
+        v-for="panel in contentPanels"
+        :id="`market-content-${panel}-tab`"
+        :key="panel"
+        type="button"
+        role="tab"
+        :data-content-tab="panel"
+        :aria-controls="`market-content-${panel}`"
+        :aria-selected="activeContentPanel === panel"
+        :tabindex="activeContentPanel === panel ? 0 : -1"
+        :class="{ 'is-active': activeContentPanel === panel }"
+        @click="selectContentPanel(panel)"
+        @keydown="handleContentTabKeydown($event, panel)"
+      >
+        {{ t(contentPanelKeys[panel]) }}
+      </button>
+    </nav>
+
     <section
-      id="market-chart"
+      v-show="activeContentPanel === 'chart'"
+      id="market-content-chart"
       ref="chartSection"
       class="market-detail__chart-panel"
       :class="{ 'is-expanded': chartExpanded }"
       :data-chart-mode="chartExpanded ? 'expanded' : 'inline'"
-      :role="chartExpanded ? 'dialog' : 'region'"
+      :role="chartExpanded ? 'dialog' : 'tabpanel'"
       :aria-modal="chartExpanded ? 'true' : undefined"
-      aria-labelledby="market-chart-heading"
+      :aria-labelledby="chartExpanded ? 'market-chart-heading' : 'market-content-chart-tab'"
+      :tabindex="chartExpanded ? undefined : 0"
     >
       <h1 id="market-chart-heading" class="sr-only">
         {{ t('marketDetail.chartWorkstation') }} · {{ pairSymbol }} · {{ interval }}
@@ -648,91 +659,91 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <section class="market-detail__microstructure" :aria-label="t('marketDetail.marketData')">
-      <nav class="market-detail__data-tabs" role="tablist" :aria-label="t('marketDetail.marketData')">
-        <button
-          id="market-order-book-tab"
-          ref="orderBookTabButton"
-          type="button"
-          role="tab"
-          aria-controls="market-order-book"
-          :aria-selected="marketDataPanel === 'orderBook'"
-          :aria-pressed="marketDataPanel === 'orderBook'"
-          :tabindex="marketDataPanel === 'orderBook' ? 0 : -1"
-          :class="{ 'is-active': marketDataPanel === 'orderBook' }"
-          @click="selectMarketDataPanel('orderBook')"
-          @keydown="handleMarketDataTabKeydown($event, 'orderBook')"
-        >
-          {{ t('orderBook.title') }}
-        </button>
-        <button
-          id="market-latest-trades-tab"
-          ref="tradesTabButton"
-          type="button"
-          role="tab"
-          aria-controls="market-latest-trades"
-          :aria-selected="marketDataPanel === 'trades'"
-          :aria-pressed="marketDataPanel === 'trades'"
-          :tabindex="marketDataPanel === 'trades' ? 0 : -1"
-          :class="{ 'is-active': marketDataPanel === 'trades' }"
-          @click="selectMarketDataPanel('trades')"
-          @keydown="handleMarketDataTabKeydown($event, 'trades')"
-        >
-          {{ t('marketDetail.latestTrades') }}
-        </button>
-      </nav>
+    <section
+      v-show="activeContentPanel === 'depth'"
+      id="market-content-depth"
+      class="market-detail__content-panel market-detail__depth"
+      role="tabpanel"
+      aria-labelledby="market-content-depth-tab"
+      tabindex="0"
+    >
+      <OrderBookPanel
+        layout="paired"
+        :bids="bids"
+        :asks="asks"
+        :current-price="latestPrice"
+        :base-asset="baseAsset"
+        :quote-asset="quoteAsset"
+        :loading="loading"
+      />
+    </section>
 
-      <div
-        v-show="marketDataPanel === 'orderBook'"
-        id="market-order-book"
-        class="market-detail__data-panel"
-        role="tabpanel"
-        aria-labelledby="market-order-book-tab"
-        tabindex="0"
-      >
-        <OrderBookPanel
-          layout="paired"
-          :bids="bids"
-          :asks="asks"
-          :current-price="latestPrice"
-          :base-asset="baseAsset"
-          :quote-asset="quoteAsset"
-          :loading="loading"
-        />
+    <section
+      v-show="activeContentPanel === 'trades'"
+      id="market-content-trades"
+      class="market-detail__content-panel market-detail__trades"
+      role="tabpanel"
+      aria-labelledby="market-content-trades-tab"
+      tabindex="0"
+      :aria-busy="loading"
+    >
+      <div class="market-detail__trade-head">
+        <span>{{ t('marketDetail.price') }} · {{ quoteAsset }}</span>
+        <span>{{ t('marketDetail.quantity') }} · {{ baseAsset }}</span>
+        <span>{{ t('common.time') }}</span>
       </div>
-
-      <div
-        v-show="marketDataPanel === 'trades'"
-        id="market-latest-trades"
-        class="market-detail__data-panel market-detail__trades"
-        role="tabpanel"
-        aria-labelledby="market-latest-trades-tab"
-        tabindex="0"
-        :aria-busy="loading"
-      >
-        <div class="market-detail__trade-head">
-          <span>{{ t('marketDetail.price') }} · {{ quoteAsset }}</span>
-          <span>{{ t('marketDetail.quantity') }} · {{ baseAsset }}</span>
-          <span>{{ t('common.time') }}</span>
-        </div>
-        <div v-if="loading && !trades.length" class="market-detail__trade-state">
-          {{ t('common.loading') }}
-        </div>
-        <div v-else-if="!trades.length" class="market-detail__trade-state">
-          {{ t('common.marketUnavailable') }}
-        </div>
-        <div v-else>
-          <div v-for="trade in trades.slice(0, 7)" :key="trade.id" class="market-detail__trade">
-            <span class="numeric" :class="trade.side === 'buy' ? 'up' : 'down'">
-              {{ formatPrice(trade.price) }}
-            </span>
-            <span class="numeric">{{ formatAmount(trade.quantity) }}</span>
-            <span class="numeric">
-              {{ new Date(trade.time).toLocaleTimeString(currentIntlLocale(), { hour: '2-digit', minute: '2-digit' }) }}
-            </span>
-          </div>
+      <div v-if="loading && !trades.length" class="market-detail__trade-state">
+        {{ t('common.loading') }}
+      </div>
+      <div v-else-if="!trades.length" class="market-detail__trade-state">
+        {{ t('common.marketUnavailable') }}
+      </div>
+      <div v-else>
+        <div v-for="trade in trades.slice(0, 7)" :key="trade.id" class="market-detail__trade">
+          <span class="numeric" :class="trade.side === 'buy' ? 'up' : 'down'">
+            {{ formatPrice(trade.price) }}
+          </span>
+          <span class="numeric">{{ formatAmount(trade.quantity) }}</span>
+          <span class="numeric">
+            {{ new Date(trade.time).toLocaleTimeString(currentIntlLocale(), { hour: '2-digit', minute: '2-digit' }) }}
+          </span>
         </div>
       </div>
+    </section>
+
+    <section
+      v-show="activeContentPanel === 'overview'"
+      id="market-content-overview"
+      class="market-detail__content-panel market-detail__overview"
+      role="tabpanel"
+      aria-labelledby="market-content-overview-tab"
+      tabindex="0"
+    >
+      <header>
+        <AssetMark :symbol="baseAsset" :src="ticker?.iconUrl" :fallback-src="ticker?.baseIconUrl" :size="36" />
+        <div>
+          <strong>{{ baseAsset }}/{{ quoteAsset }}</strong>
+          <span>{{ t('marketDetail.spotPair') }}</span>
+        </div>
+      </header>
+      <dl>
+        <div>
+          <dt>{{ t('marketDetail.latestPrice') }}</dt>
+          <dd class="numeric">{{ hasLatestPrice ? formatPrice(latestPrice) : '--' }}</dd>
+        </div>
+        <div>
+          <dt>{{ t('marketDetail.high24h') }}</dt>
+          <dd class="numeric">{{ ticker ? formatPrice(ticker.highPrice) : '--' }}</dd>
+        </div>
+        <div>
+          <dt>{{ t('marketDetail.low24h') }}</dt>
+          <dd class="numeric">{{ ticker ? formatPrice(ticker.lowPrice) : '--' }}</dd>
+        </div>
+        <div>
+          <dt>{{ t('marketDetail.volume24h') }}</dt>
+          <dd class="numeric">{{ ticker ? `${formatAmount(ticker.volume)} ${baseAsset}` : '--' }}</dd>
+        </div>
+      </dl>
     </section>
 
     <nav class="market-detail__actions" :aria-label="t('marketDetail.actions')">
@@ -775,7 +786,7 @@ onUnmounted(() => {
   min-height: 100dvh;
   min-width: 0;
   overflow-x: clip;
-  padding: 0 0 calc(67px + env(safe-area-inset-bottom));
+  padding: 0 env(safe-area-inset-right) calc(67px + env(safe-area-inset-bottom)) env(safe-area-inset-left);
 }
 
 .market-detail.view-stack {
@@ -855,53 +866,45 @@ onUnmounted(() => {
 
 .market-detail__icon-button:focus-visible,
 .market-detail__instrument:focus-visible,
-.market-detail__rail button:focus-visible,
+.market-detail__mode-tabs button:focus-visible,
+.market-detail__content-tabs button:focus-visible,
 .market-detail__intervals button:focus-visible,
-.market-detail__data-tabs button:focus-visible,
 .market-detail__actions button:focus-visible {
   box-shadow: inset 0 0 0 2px var(--focus);
   outline: none;
 }
 
-.market-detail__rail {
-  align-items: stretch;
+.market-detail__mode-tabs {
+  align-items: center;
   background: var(--detail-background);
   display: flex;
-  gap: 24px;
-  height: 42px;
+  gap: 4px;
+  height: 48px;
   min-width: 0;
-  padding: 0 16px;
+  padding: 2px 16px;
   position: sticky;
   top: calc(64px + env(safe-area-inset-top));
   z-index: calc(var(--layer-sticky-header) - 1);
 }
 
-.market-detail__rail button {
+.market-detail__mode-tabs button {
   background: transparent;
-  border: 0;
+  border: 1px solid transparent;
+  border-radius: 9px;
   color: var(--detail-muted);
-  font-size: 15px;
-  font-weight: 560;
-  min-height: 42px;
-  padding: 0;
-  position: relative;
+  font-size: 13px;
+  font-weight: 620;
+  height: 44px;
+  min-height: 44px;
+  min-width: 76px;
+  padding: 0 14px;
   white-space: nowrap;
 }
 
-.market-detail__rail button.is-active {
+.market-detail__mode-tabs button.is-active {
+  background: color-mix(in srgb, var(--detail-positive) 10%, var(--detail-surface));
+  border-color: color-mix(in srgb, var(--detail-positive) 36%, var(--detail-line));
   color: var(--detail-positive);
-}
-
-.market-detail__rail button.is-active::after {
-  background: var(--detail-positive);
-  border-radius: 2px;
-  bottom: 0;
-  content: '';
-  height: 2px;
-  left: 50%;
-  position: absolute;
-  transform: translateX(-50%);
-  width: 22px;
 }
 
 .market-detail__summary {
@@ -913,7 +916,6 @@ onUnmounted(() => {
   height: 112px;
   min-width: 0;
   padding: 9px 16px 11px;
-  scroll-margin-top: calc(106px + env(safe-area-inset-top));
 }
 
 .market-detail__quote {
@@ -1024,7 +1026,7 @@ onUnmounted(() => {
   padding-left: 10px;
   position: fixed;
   right: 12px;
-  top: calc(112px + env(safe-area-inset-top));
+  top: calc(120px + env(safe-area-inset-top));
   z-index: calc(var(--layer-sticky-header) + 2);
 }
 
@@ -1038,12 +1040,58 @@ onUnmounted(() => {
   padding: 0;
 }
 
+.market-detail__content-tabs {
+  background: var(--detail-surface);
+  border-bottom: 1px solid var(--detail-line);
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  height: 48px;
+  min-width: 0;
+}
+
+.market-detail__content-tabs button {
+  background: transparent;
+  border: 0;
+  color: var(--detail-muted);
+  font-size: 12px;
+  font-weight: 590;
+  height: 48px;
+  min-height: 44px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 5px;
+  position: relative;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.market-detail__content-tabs button.is-active {
+  color: var(--detail-positive);
+}
+
+.market-detail__content-tabs button.is-active::after {
+  background: var(--detail-positive);
+  border-radius: 2px;
+  bottom: 0;
+  content: '';
+  height: 2px;
+  left: 50%;
+  position: absolute;
+  transform: translateX(-50%);
+  width: 22px;
+}
+
 .market-detail__chart-panel {
   background: var(--detail-surface);
-  height: 280px;
+  height: 456px;
   min-width: 0;
   overflow: visible;
-  scroll-margin-top: calc(106px + env(safe-area-inset-top));
+}
+
+.market-detail__chart-panel:focus-visible,
+.market-detail__content-panel:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--focus);
+  outline: none;
 }
 
 .market-detail__intervals {
@@ -1074,7 +1122,7 @@ onUnmounted(() => {
 }
 
 .market-detail__chart {
-  height: 204px;
+  height: 376px;
   min-height: 0;
   min-width: 0;
   position: relative;
@@ -1132,7 +1180,7 @@ onUnmounted(() => {
   display: grid;
   gap: 6px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  height: 28px;
+  height: 32px;
   min-width: 0;
   padding: 0 16px;
 }
@@ -1199,62 +1247,74 @@ onUnmounted(() => {
   top: 8px;
 }
 
-.market-detail__microstructure {
+.market-detail__content-panel {
   background: var(--detail-surface);
-  height: 320px;
-  min-width: 0;
-}
-
-.market-detail__data-tabs {
-  background: var(--detail-surface);
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  height: 48px;
-}
-
-.market-detail__data-tabs button {
-  background: transparent;
-  border: 0;
-  color: var(--detail-muted);
-  font-size: 14px;
-  font-weight: 570;
-  height: 48px;
-  min-width: 0;
-  padding: 0;
-  position: relative;
-}
-
-.market-detail__data-tabs button.is-active {
-  color: var(--detail-positive);
-}
-
-.market-detail__data-tabs button.is-active::after {
-  background: var(--detail-positive);
-  border-radius: 2px;
-  bottom: 0;
-  content: '';
-  height: 2px;
-  left: 50%;
-  position: absolute;
-  transform: translateX(-50%);
-  width: 18px;
-}
-
-.market-detail__data-panel {
   height: 272px;
   min-width: 0;
   overflow: hidden;
-  scroll-margin-top: calc(106px + env(safe-area-inset-top));
-}
-
-.market-detail__data-panel:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--focus);
-  outline: none;
 }
 
 .market-detail__trades {
   background: var(--detail-surface);
   min-height: 272px;
+}
+
+.market-detail__overview {
+  padding: 20px 16px;
+}
+
+.market-detail__overview > header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+}
+
+.market-detail__overview > header > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.market-detail__overview > header strong {
+  font-family: var(--data-font);
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.market-detail__overview > header span,
+.market-detail__overview dt {
+  color: var(--detail-muted);
+  font-size: 11px;
+}
+
+.market-detail__overview dl {
+  display: grid;
+  gap: 0;
+  margin: 16px 0 0;
+}
+
+.market-detail__overview dl > div {
+  align-items: center;
+  border-top: 1px solid color-mix(in srgb, var(--detail-line) 64%, transparent);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 40px;
+}
+
+.market-detail__overview dd {
+  font-family: var(--data-font);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  margin: 0;
+  max-width: 190px;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .market-detail__trade-head,
@@ -1311,11 +1371,14 @@ onUnmounted(() => {
   bottom: 0;
   display: grid;
   gap: 18px;
-  grid-template-columns: 40px 40px minmax(0, 1fr);
+  grid-template-columns: 44px 44px minmax(0, 1fr);
   height: calc(67px + env(safe-area-inset-bottom));
   left: 50%;
   max-width: var(--app-max-width);
-  padding: 6px 16px calc(9px + env(safe-area-inset-bottom));
+  padding:
+    6px max(16px, env(safe-area-inset-right))
+    calc(9px + env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-left));
   position: fixed;
   transform: translateX(-50%);
   width: 100%;
@@ -1411,7 +1474,8 @@ onUnmounted(() => {
 
   .market-detail__actions {
     gap: 14px;
-    padding-inline: 12px;
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
   }
 }
 
@@ -1453,6 +1517,10 @@ onUnmounted(() => {
     padding-left: 0;
   }
 
+  .market-detail__content-tabs button {
+    font-size: 10px;
+  }
+
   .market-detail__trade-head,
   .market-detail__trade {
     gap: 5px;
@@ -1462,8 +1530,9 @@ onUnmounted(() => {
 
   .market-detail__actions {
     gap: 10px;
-    grid-template-columns: 38px 38px minmax(0, 1fr);
-    padding-inline: 9px;
+    grid-template-columns: 44px 44px minmax(0, 1fr);
+    padding-left: max(9px, env(safe-area-inset-left));
+    padding-right: max(9px, env(safe-area-inset-right));
   }
 }
 
