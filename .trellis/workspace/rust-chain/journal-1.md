@@ -1253,3 +1253,36 @@ Enabled the shared /news back action, added Product Hub direct-open fallback, re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 37: 参考 Bitget 重构手机现货 K 线
+
+**Date**: 2026-08-12
+**Task**: 参考 Bitget 重构手机现货 K 线
+**Branch**: `main`
+
+### Summary
+
+重构手机行情详情为图表优先工作台，保留本地双图表引擎与实时行情会话，完成四页签、移动端几何、无障碍、双主题及回归验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f27032a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
