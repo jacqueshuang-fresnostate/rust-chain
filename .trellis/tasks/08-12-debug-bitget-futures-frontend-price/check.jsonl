@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Verify page price source priority, live frame mapping, symbol isolation and stale-response behavior."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Verify spot and contract surfaces retain separate instruments and truthful market data."}
+{"file":".trellis/spec/backend/realtime-websockets.md","reason":"Verify public live ticker messages and subscriptions remain protocol-correct."}
+{"file":".trellis/spec/backend/spot-orders.md","reason":"Verify cached ticker freshness and spot instrument semantics are not weakened."}

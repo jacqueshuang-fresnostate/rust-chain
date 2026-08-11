@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Defines authoritative mobile REST/WebSocket ticker, detail-stream and freshest-price presentation contracts."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Defines spot/contract/seconds separation and real market chart behavior."}
+{"file":".trellis/spec/backend/realtime-websockets.md","reason":"Defines public ticker/depth/trade/kline subscription and broadcast contracts."}
+{"file":".trellis/spec/backend/spot-orders.md","reason":"Defines Redis ticker symbol, freshness and execution-price boundaries for spot markets."}

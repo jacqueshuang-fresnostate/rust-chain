@@ -2,6 +2,13 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-08-12 04:29 - 核对 Bitget 永续与手机端行情偏差
+
+- 完成内容：使用 Ego 浏览器同时对比 Bitget BTCUSDT USDT 永续页、HIPPO 手机端合约页、HIPPO 公开 ticker、Bitget 现货 REST 和永续 REST；确认 HIPPO 合约页当前完整复用 Bitget 现货 ticker/深度/成交/K 线链路，与 Bitget 永续官网的偏差来自交易品种口径，不是 Redis 过期；记录了独立 USDT-FUTURES 行情链的正确修复边界。
+- 修改文件：`.trellis/tasks/08-12-debug-bitget-futures-frontend-price/prd.md`、`.trellis/tasks/08-12-debug-bitget-futures-frontend-price/research/ego-comparison.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Ego 在 2026-08-12 04:26 HKT 读取 HIPPO 合约页中间价 `63,635.51`，与 Bitget 现货买一价 `63,635.51` 完全一致；HIPPO ticker `63,635.00`、24h 高低 `64,493.51 / 63,235.29` 与 Bitget 现货 REST 完全一致；同时 Bitget USDT 永续 REST 为 `63,615.60`、官网数秒后为 `63,602.60`，24h 高低为 `64,467.50 / 63,218.40`。HIPPO `observed_at` 与 Bitget 现货 `ts` 仅相差约 302 ms。本次为诊断任务，未改动生产代码，因此不执行构建。
+- 后续事项：新建后端 Bitget `USDT-FUTURES` 独立订阅、Redis/Mongo 命名空间、REST/WS 频道，并让手机端 `mode=contract` 单独接入；切换结算/强平价前需明确使用最新价、标记价还是指数价。
+
 ## 2026-08-11 08:21 - 移除手机借贷账户摘要
 
 - 完成内容：从 `LoanView` 删除 `loan-access-pencil__summary`、状态图标和已登录/未登录说明文案；已登录用户由 Hero 直接进入借贷产品分类，访客仅保留一枚 48px `loan-login-cta` 登录按钮和原有 `/products/loan` 回跳。清理摘要专用 CSS 与四个中英文废弃键，同步更新页面顺序、对比度回归断言和 Mobile 执行规范；借贷 API、抵押资产弹窗、申请与订单流程未改动。
