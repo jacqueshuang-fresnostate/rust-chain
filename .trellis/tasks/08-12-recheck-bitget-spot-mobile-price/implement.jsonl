@@ -1,0 +1,5 @@
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Defines authoritative mobile ticker, depth, trade, kline REST/WebSocket mapping and freshest-price rules."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Defines the mobile spot trading surface and real-market presentation boundaries."}
+{"file":".trellis/spec/backend/realtime-websockets.md","reason":"Defines public ticker/depth/trade/kline channel and broadcast contracts."}
+{"file":".trellis/spec/backend/spot-orders.md","reason":"Defines Bitget spot ticker, Redis freshness, and spot execution-price boundaries."}
+{"file":".trellis/tasks/archive/2026-08/08-12-debug-bitget-futures-frontend-price/research/ego-comparison.md","reason":"Documents the prior wrong-target comparison so the new run explicitly avoids futures and contract routes."}

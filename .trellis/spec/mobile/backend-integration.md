@@ -178,6 +178,22 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
 - The client accepts subscription confirmations, direct ticker payloads, and
   text/JSON pong frames. Unknown or backend error frames must not be treated as
   ticker updates.
+- Home market rows, spot trade summary/price inputs, and market-detail summary
+  use the normalized ticker `last_price` as their single visible-price
+  authority. Recent internal trades, K-line closes, and order-book bid/ask
+  remain valid data for their own panels but must not replace that ticker price.
+- Ticker reconciliation is newest-observation-wins. A live frame with a newer
+  `observed_at` replaces the matching REST snapshot, while a delayed REST
+  response or an older WebSocket frame must not move the visible price
+  backwards. Every Home/Markets/Trade/Market Detail instance registers a
+  stable consumer lease after its initial refresh and releases that exact
+  lease on unmount. Repeated refreshes deduplicate the lease, and an outgoing
+  route cannot close the shared ticker stream while an entering route still
+  owns another lease.
+- When `price_change_percent_24h` is present it is the authoritative Bitget spot
+  percentage, including the valid value zero. Derive a compatible open price
+  from that percentage only when `open_24h` is absent. Do not derive the visible
+  percentage from `price_change_24h` while the percentage field is available.
 - The market-detail page owns a separate single-symbol public connection. It
   subscribes to `depth`, `trade`, and the selected `kline` interval alongside
   the initial REST requests, closes the old connection before a symbol or
@@ -203,11 +219,11 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
   newer `open_time` appends a candle. Normalize, deduplicate, sort ascending,
   and retain the newest 160 points. Coalesce high-frequency updates so only
   the latest valid pending K-line is committed per animation frame.
-- The market-detail visible price follows the freshest real source in this
-  order: latest validated live trade, latest normalized forming candle, then
-  ticker snapshot. MA5/MA10/MA20 are simple moving averages of those normalized
-  real candle closes; never populate indicators or summary fields with demo
-  values.
+- The market-detail visible price follows the shared ticker authority above.
+  Live trades remain the latest-trades feed and normalized forming candles
+  remain the chart feed; neither can overwrite the summary ticker. MA5/MA10/MA20
+  are simple moving averages of those normalized real candle closes; never
+  populate indicators or summary fields with demo values.
 - The chart may call `fitContent()` for its initial non-empty dataset and after
   the replacement array for a real interval change arrives. A same-candle live
   update must update candles, volume, and MA series without consuming the
@@ -401,9 +417,11 @@ const points = detailSession.resolveKlineRequest(request, restKlines(initial))
   resubscription and backoff, duplicate close/error idempotency, cancelled RAF
   callbacks, and stop-before-open cleanup. Race tests must execute fake sockets
   and delayed promises rather than assert source text alone.
-- Market-detail presentation tests for live-trade/candle/ticker price priority,
-  MA5/MA10/MA20 calculations, same-candle updates that preserve pan/zoom,
-  interval replacement fitting, and order-book/trades tab switches that leave
+- Market presentation tests for ticker authority on Home, spot trade, and
+  market detail; newer-frame acceptance; older-frame rejection; delayed REST
+  reconciliation; authoritative percentage mapping (including zero);
+  MA5/MA10/MA20 calculations; same-candle updates that preserve pan/zoom;
+  interval replacement fitting; and order-book/trades tab switches that leave
   the active stream untouched.
 - Chart-engine tests for exact local package versions, KLineChart's in-memory
   loader, disabled TradingView attribution/external anchors, one active renderer, persisted selection,

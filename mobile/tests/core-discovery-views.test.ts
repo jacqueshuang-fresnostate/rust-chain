@@ -17,7 +17,7 @@ test('首页保留真实数据链路并提供独立现货与合约入口', () =>
   assert.match(homeSource, /openTrade\('contract'\)/)
   assert.match(homeSource, /navigation\.rememberTradeMode\(mode\)/)
   assert.match(homeSource, /query: mode === 'contract' \? \{ mode \} : undefined/)
-  assert.match(homeSource, /marketStore\.startLiveUpdates\(\)/)
+  assert.match(homeSource, /marketStore\.startLiveUpdates\('home'\)/)
   assert.match(homeSource, /fetchNews\(\)/)
 })
 

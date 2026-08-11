@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import { fetchMarketTickers } from '@/api/market'
 import { subscribeTickers } from '@/api/marketSocket'
 import { normalizeSymbol } from '@/core/format'
+import { applyLiveMarketTickerUpdate, mergeMarketTickerSnapshots } from '@/core/marketTickerFreshness'
 import type { MarketTicker } from '@/core/types'
 
 export const useMarketStore = defineStore('mobile-market', () => {
@@ -19,7 +20,7 @@ export const useMarketStore = defineStore('mobile-market', () => {
     try {
       const next = await fetchMarketTickers()
       if (!next.length) throw new Error('market list is empty')
-      tickers.value = next
+      tickers.value = mergeMarketTickerSnapshots(tickers.value, next)
       error.value = false
       updatedAt.value = Date.now()
     } catch {
@@ -29,26 +30,32 @@ export const useMarketStore = defineStore('mobile-market', () => {
     }
   }
 
+  const liveConsumers = new Set<string>()
   let stopLive: (() => void) | null = null
 
   // 实时推送只覆盖最新价，列表结构仍以 REST 快照为准。
-  function startLiveUpdates(): void {
+  function startLiveUpdates(consumerId: string): void {
+    const consumer = consumerId.trim()
+    if (!consumer) return
+    liveConsumers.add(consumer)
     if (stopLive || !tickers.value.length) return
     stopLive = subscribeTickers(
       tickers.value.map((item) => item.symbol),
       (update) => {
-        const target = tickers.value.find((item) => normalizeSymbol(item.symbol) === update.symbol)
-        if (!target || update.lastPrice <= 0) return
-        target.lastPrice = update.lastPrice
-        if (target.openPrice > 0) {
-          target.changePercent = ((update.lastPrice - target.openPrice) / target.openPrice) * 100
-        }
+        const targetIndex = tickers.value.findIndex((item) => normalizeSymbol(item.symbol) === update.symbol)
+        if (targetIndex < 0) return
+        const target = tickers.value[targetIndex]
+        const next = applyLiveMarketTickerUpdate(target, update)
+        if (next === target) return
+        tickers.value[targetIndex] = next
         updatedAt.value = Date.now()
       },
     )
   }
 
-  function stopLiveUpdates(): void {
+  function stopLiveUpdates(consumerId: string): void {
+    liveConsumers.delete(consumerId.trim())
+    if (liveConsumers.size) return
     stopLive?.()
     stopLive = null
   }

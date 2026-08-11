@@ -77,6 +77,7 @@ const returnHistoryRequestLifecycle = createReturnHistoryRequestLifecycle({
   sessionKey: () => session.token,
   fetchReturnHistory: () => fetchReturnHistory(selectedReturnHistoryPeriod.value),
 })
+let viewActive = true
 
 const tabs = computed(() => [
   { key: 'favorites' as const, label: t('home.favorites') },
@@ -339,7 +340,7 @@ function retryReturnHistory(): void {
 
 async function refreshMarkets(force = false): Promise<void> {
   await marketStore.refresh(force)
-  marketStore.startLiveUpdates()
+  if (viewActive) marketStore.startLiveUpdates('home')
 }
 
 onMounted(async () => {
@@ -347,9 +348,10 @@ onMounted(async () => {
   await refreshMarkets()
 })
 onUnmounted(() => {
+  viewActive = false
   todayReturnRequestLifecycle.stop()
   returnHistoryRequestLifecycle.stop()
-  marketStore.stopLiveUpdates()
+  marketStore.stopLiveUpdates('home')
 })
 watch(locale, () => { void loadAnnouncements() })
 watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immediate: true })

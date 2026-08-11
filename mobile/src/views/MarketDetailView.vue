@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
@@ -86,6 +86,7 @@ const tradesTabButton = ref<HTMLButtonElement | null>(null)
 const chartToggleButton = ref<HTMLButtonElement | null>(null)
 let chartScrollLock: ChartScrollLock | null = null
 let requestVersion = 0
+let viewActive = true
 
 const pairSymbol = computed(() => props.symbol.replace(/[_-]/g, '/').toUpperCase())
 const ticker = computed(() => marketStore.tickerFor(pairSymbol.value))
@@ -98,12 +99,7 @@ const normalizedChartPoints = computed(() => normalizeMarketChartPoints(points.v
 const movingAverages = computed(() => calculateMarketMovingAverages(normalizedChartPoints.value))
 const latestAverages = computed(() => latestMarketMovingAverages(movingAverages.value))
 const latestCandle = computed(() => normalizedChartPoints.value.at(-1))
-const latestPrice = computed(() => (
-  trades.value[0]?.price
-  ?? latestCandle.value?.close
-  ?? ticker.value?.lastPrice
-  ?? 0
-))
+const latestPrice = computed(() => ticker.value?.lastPrice ?? 0)
 const hasLatestPrice = computed(() => Number.isFinite(latestPrice.value) && latestPrice.value > 0)
 const latestChangePercent = computed(() => {
   const market = ticker.value
@@ -456,12 +452,19 @@ function goBack(): void {
 
 watch(() => props.symbol, () => { void load() }, { immediate: true })
 
+onMounted(async () => {
+  await marketStore.refresh()
+  if (viewActive) marketStore.startLiveUpdates('market-detail')
+})
+
 onBeforeUnmount(() => {
   const lock = releaseChartScroll()
   if (lock) restoreChartScroll(lock)
 })
 
 onUnmounted(() => {
+  viewActive = false
+  marketStore.stopLiveUpdates('market-detail')
   requestVersion += 1
   stopLiveDetail()
 })

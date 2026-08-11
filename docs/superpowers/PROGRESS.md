@@ -7160,3 +7160,10 @@
 - 修改文件：`mobile/src/views/NewsView.vue`、`mobile/src/router/index.ts`、`mobile/tests/{router-history,ui-prototype-alignment-secondary}.test.ts`、`.trellis/spec/mobile/navigation-and-localization.md`、`.trellis/tasks/08-11-mobile-news-back-button/`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：Mobile 聚焦测试 28/28、全量测试 352/352、`npm --prefix mobile run lint --if-present`（项目无 lint 脚本）、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2070 modules、134 条预缓存）、`npm --prefix mobile run build:tauri`（2070 modules）及 `git diff --check` 全部通过。
 - 后续事项：无；本次未修改新闻后端 API 或其他页面返回策略。
+
+## 2026-08-12 04:53 - 统一手机首页与现货页 Bitget 最新价口径
+
+- 完成内容：纠正调试对象为 Bitget `BTCUSDT` 现货页与 HIPPO 现货路由；将首页行情、现货交易页和行情详情页的可见主价格统一为 Bitget 现货 ticker `last_price`，不再被内部历史成交、旧 K 线或订单簿价格覆盖；为首页、行情、现货交和详情页建立去重的 consumer lease，避免 Vue 路由转场中离场页面关闭新页面仍在使用的 ticker WebSocket；新增基于 `observed_at` 的 REST/WS 新者优先合并，防止迟到 REST 快照或旧实时帧让首页价格倒退；手机映射器正式消费后端 `price_change_percent_24h`，包括有效的零值，修复首页涨跌方向与 Bitget 不一致。Ego 实测首页 `63,699.06 / -0.70%` 与同时 Bitget 现货 `lastPr=63699.06 / change24h=-0.00703` 一致，另一组 ticker 和买一/卖一实测为 `63698.46 / 63698.46 / 63698.47`，两端对应。
+- 修改文件：`mobile/src/core/{marketMapper,marketTickerFreshness}.ts`、`mobile/src/stores/market.ts`、`mobile/src/views/{HomeView,MarketsView,TradeView,MarketDetailView}.vue`、`mobile/tests/{android-ui-foundation-slice-a,core-discovery-views,root-prototype-parity,market-mapper,market-price-authority,market-detail-reference-layout,pwa}.test.ts`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/tasks/08-12-recheck-bitget-spot-mobile-price/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Mobile 全量测试 359/359 通过；`npm --prefix mobile run lint --if-present`（项目无 lint 脚本）、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2071 modules、134 条预缓存）和 `npm --prefix mobile run build:tauri`（2071 modules）通过；Ego 仅使用 Bitget 现货页/REST 与 HIPPO 现货页/REST 完成价格、涨跌幅、24h 高低、成交量、买一/卖一和时间戳对比，实测数据已写入任务 research；Trellis task validate 与 `git diff --check` 通过。
+- 后续事项：无。

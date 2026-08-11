@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { mapMarketTicker } from '../src/core/marketMapper.ts'
 
-test('行情涨跌幅始终由开盘价和最新价计算', () => {
+test('后端未返回涨跌幅时由开盘价和最新价计算', () => {
   const ticker = mapMarketTicker(
     {
       symbol: 'RE_USDT',
@@ -29,4 +29,32 @@ test('行情涨跌幅始终由开盘价和最新价计算', () => {
   assert.equal(ticker.iconUrl, 'https://cdn.example.test/pairs/re-usdt.png')
   assert.equal(ticker.baseIconUrl, 'https://cdn.example.test/assets/re.png')
   assert.equal(ticker.quoteIconUrl, 'https://cdn.example.test/assets/usdt.png')
+})
+
+test('后端返回 Bitget 现货涨跌幅时优先使用该字段', () => {
+  const ticker = mapMarketTicker(
+    { symbol: 'BTC_USDT' },
+    {
+      last_price: '63670',
+      price_change_24h: '59.99',
+      price_change_percent_24h: '-0.79700',
+    },
+  )
+
+  assert.equal(ticker.changePercent, -0.797)
+  assert.ok(Math.abs(ticker.openPrice - 63670 / (1 - 0.797 / 100)) < 0.000001)
+})
+
+test('后端返回零涨跌幅时不回退到绝对差值推导', () => {
+  const ticker = mapMarketTicker(
+    { symbol: 'BTC_USDT' },
+    {
+      last_price: '63670',
+      price_change_24h: '59.99',
+      price_change_percent_24h: '0',
+    },
+  )
+
+  assert.equal(ticker.changePercent, 0)
+  assert.equal(ticker.openPrice, 63670)
 })

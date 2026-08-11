@@ -100,6 +100,7 @@ const reviewButton = ref<HTMLButtonElement | null>(null)
 let returnFocus: HTMLElement | null = null
 let previousBodyOverflow = ''
 let marketRequestVersion = 0
+let viewActive = true
 const { trapFocus: trapSpotOrderTypeFocus } = useModalDialog(
   spotOrderTypeOpen,
   spotOrderTypeDialog,
@@ -128,7 +129,7 @@ const visibleMarginPositions = computed(() => {
     ))
     .slice(0, 3)
 })
-const currentPrice = computed(() => trades.value[0]?.price ?? points.value.at(-1)?.close ?? ticker.value?.lastPrice ?? 0)
+const currentPrice = computed(() => ticker.value?.lastPrice ?? 0)
 const isLive = computed(() => currentPrice.value > 0 && (!marketStore.error || liveDetailActive.value))
 const selectedOrderType = computed(() => mode.value === 'contract' ? 'market' : orderType.value)
 const effectivePrice = computed(() => selectedOrderType.value === 'limit' ? Number(price.value) : currentPrice.value)
@@ -573,6 +574,7 @@ function trapDialogFocus(event: KeyboardEvent): void {
 
 onMounted(async () => {
   await marketStore.refresh()
+  if (viewActive) marketStore.startLiveUpdates('trade')
 })
 
 watch(pairSymbol, (symbol) => {
@@ -615,6 +617,8 @@ watch(confirmOpen, async (open) => {
 })
 
 onBeforeUnmount(() => {
+  viewActive = false
+  marketStore.stopLiveUpdates('trade')
   detailStreamSession.stop()
   if (confirmOpen.value) document.body.style.overflow = previousBodyOverflow
 })

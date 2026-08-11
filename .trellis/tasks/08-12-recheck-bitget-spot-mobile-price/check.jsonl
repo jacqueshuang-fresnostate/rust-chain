@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Verify price-source priority, WS frame mapping, request freshness, and symbol isolation."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Verify the inspected route is the spot surface and no contract-mode assumptions leak in."}
+{"file":".trellis/spec/backend/realtime-websockets.md","reason":"Verify live ticker/depth/trade/kline subscriptions and broadcasts correspond to Bitget SPOT."}
+{"file":".trellis/spec/backend/spot-orders.md","reason":"Verify Redis ticker freshness and displayed spot prices do not change execution semantics."}

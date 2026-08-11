@@ -65,7 +65,7 @@ test('首页保留真实数据链路并呈现日报与三行行情', () => {
   for (const contract of [
     /fetchWalletAccounts\(\)/,
     /fetchMarginWallets\(\)/,
-    /marketStore\.startLiveUpdates\(\)/,
+    /marketStore\.startLiveUpdates\('home'\)/,
     /fetchNews\(\)/,
     /visibleTickers\.slice\(0,\s*3\)/,
     /name: 'news-detail'/,

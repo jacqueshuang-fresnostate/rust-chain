@@ -75,7 +75,7 @@ test('PWA config keeps native builds disabled and financial traffic out of runti
     assert.doesNotMatch(pwaStatusSource, new RegExp(`['"]${sensitiveRoute}['"]`))
   }
   assert.match(pwaStatusSource, /promptSafeRoute\.value && pwaState\.needRefresh/)
-  assert.match(marketStoreSource, /tickers\.value = next[\s\S]*updatedAt\.value = Date\.now\(\)[\s\S]*catch/)
+  assert.match(marketStoreSource, /tickers\.value = mergeMarketTickerSnapshots\(tickers\.value, next\)[\s\S]*updatedAt\.value = Date\.now\(\)[\s\S]*catch/)
   assert.doesNotMatch(marketStoreSource, /finally\s*\{[^}]*updatedAt\.value/)
 })
 

@@ -26,6 +26,7 @@ const category = ref<MarketCategory>('popular')
 const sparklineCloses = ref<Record<string, number[]>>({})
 const neutralSparklinePoints = '0,17 76,17'
 let sparklineRequestId = 0
+let viewActive = true
 
 const categories = computed(() => [
   { key: 'popular' as const, label: t('markets.popular') },
@@ -138,7 +139,7 @@ async function loadSparklines(): Promise<void> {
 
 async function refreshMarkets(force = false): Promise<void> {
   await marketStore.refresh(force)
-  marketStore.startLiveUpdates()
+  if (viewActive) marketStore.startLiveUpdates('markets')
   await loadSparklines()
 }
 
@@ -146,8 +147,9 @@ onMounted(async () => {
   await refreshMarkets()
 })
 onUnmounted(() => {
+  viewActive = false
   sparklineRequestId += 1
-  marketStore.stopLiveUpdates()
+  marketStore.stopLiveUpdates('markets')
 })
 </script>
 

@@ -19,13 +19,19 @@ export interface BackendTickerRecord {
   low_24h?: string | number | null
   volume_24h?: string | number | null
   price_change_24h?: string | number | null
+  price_change_percent_24h?: string | number | null
   observed_at?: number | null
 }
 
 export function mapMarketTicker(market: BackendMarketRecord, ticker: BackendTickerRecord): MarketTicker {
   const lastPrice = asNumber(ticker.last_price)
+  const explicitOpenPrice = optionalFiniteNumber(ticker.open_24h)
+  const explicitChangePercent = optionalFiniteNumber(ticker.price_change_percent_24h)
   const priceChange = asNumber(ticker.price_change_24h)
-  const openPrice = asNumber(ticker.open_24h, lastPrice - priceChange)
+  const percentDenominator = explicitChangePercent === null ? 0 : 1 + explicitChangePercent / 100
+  const openPriceFromPercent =
+    lastPrice > 0 && percentDenominator > 0 ? lastPrice / percentDenominator : null
+  const openPrice = explicitOpenPrice ?? openPriceFromPercent ?? lastPrice - priceChange
   const pair = splitSymbol(market.symbol || ticker.symbol || '', market.base_asset, market.quote_asset)
   const observedAt = normalizeTimestamp(ticker.observed_at)
 
@@ -42,9 +48,22 @@ export function mapMarketTicker(market: BackendMarketRecord, ticker: BackendTick
     highPrice: asNumber(ticker.high_24h, lastPrice),
     lowPrice: asNumber(ticker.low_24h, lastPrice),
     volume: asNumber(ticker.volume_24h),
-    changePercent: openPrice ? ((lastPrice - openPrice) / openPrice) * 100 : 0,
+    changePercent:
+      explicitChangePercent ?? (openPrice ? ((lastPrice - openPrice) / openPrice) * 100 : 0),
     observedAt,
   }
+}
+
+function optionalFiniteNumber(value: unknown): number | null {
+  if (
+    (typeof value !== 'number' && typeof value !== 'string')
+    || (typeof value === 'string' && value.trim() === '')
+  ) {
+    return null
+  }
+
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
 }
 
 function normalizeTimestamp(value: unknown): number {

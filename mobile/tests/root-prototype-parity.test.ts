@@ -197,11 +197,11 @@ test('根视图继续调用真实 API/store，访客与加载错误状态不改�
   for (const contract of [
     /fetchWalletAccounts\(\)/,
     /fetchMarginWallets\(\)/,
-    /marketStore\.startLiveUpdates\(\)/,
+    /marketStore\.startLiveUpdates\('home'\)/,
     /fetchNews\(\)/,
   ]) assert.match(views.home, contract)
 
-  assert.match(views.markets, /marketStore\.startLiveUpdates\(\)/)
+  assert.match(views.markets, /marketStore\.startLiveUpdates\('markets'\)/)
   assert.match(views.markets, /router\.push\(\{ name: 'market-detail'/)
   assert.match(views.trade, /fetchKlines\(symbol, selectedInterval\)/)
   assert.match(views.trade, /fetchOrderBook\(symbol\)/)
