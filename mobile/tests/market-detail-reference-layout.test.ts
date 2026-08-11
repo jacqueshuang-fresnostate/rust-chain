@@ -123,16 +123,13 @@ function compareSpecificity(
   return 0
 }
 
-test('行情详情按 Bitget 参考层级组成真实移动图表工作台', () => {
+test('行情详情按参考层级组成真实紧凑工作台', () => {
   const hierarchy = [
     'class="market-detail__header"',
-    'class="market-detail__mode-tabs"',
+    'class="market-detail__rail"',
     'class="market-detail__summary"',
-    'class="market-detail__content-tabs"',
     'class="market-detail__chart-panel"',
-    'class="market-detail__content-panel market-detail__depth"',
-    'class="market-detail__content-panel market-detail__trades"',
-    'class="market-detail__content-panel market-detail__overview"',
+    'class="market-detail__microstructure"',
     'class="market-detail__actions"',
   ].map((value) => marketTemplate.indexOf(value))
 
@@ -158,37 +155,27 @@ test('行情详情按 Bitget 参考层级组成真实移动图表工作台', () 
   assert.match(marketTemplate, /liveDetailActive[\s\S]*t\('common\.liveData'\)[\s\S]*t\('marketDetail\.snapshotData'\)/)
 })
 
-test('交易/图表模式、四内容页签和底部 action deck 连接真实状态或命名路由', () => {
-  const modeTabs = marketTemplate.match(/<nav class="market-detail__mode-tabs"[\s\S]*?<\/nav>/)?.[0] ?? ''
-  const contentTabs = marketTemplate.match(/<nav[\s\S]*?class="market-detail__content-tabs"[\s\S]*?<\/nav>/)?.[0] ?? ''
-  const selectContentPanel = marketDetailSource.match(/function selectContentPanel[\s\S]*?\n}/)?.[0] ?? ''
-
-  assert.equal((modeTabs.match(/<button/g) || []).length, 2)
-  assert.match(modeTabs, /openTrade\('spot'\)[\s\S]*t\('marketDetail\.trade'\)/)
-  assert.match(modeTabs, /class="is-active"[\s\S]*aria-current="page"[\s\S]*:aria-pressed="true"[\s\S]*t\('marketDetail\.chart'\)/)
+test('导航 rail、底部 action deck 和面板切换全部连接真实锚点或命名路由', () => {
+  assert.match(marketTemplate, /aria-controls="market-chart"[\s\S]*scrollToSection\('chart'\)/)
+  assert.match(marketTemplate, /aria-controls="market-overview"[\s\S]*scrollToSection\('overview'\)/)
+  assert.equal((marketTemplate.match(/<nav class="market-detail__rail"[\s\S]*?<\/nav>/)?.[0].match(/<button/g) || []).length, 2)
+  assert.doesNotMatch(marketTemplate, /href="#market-(?:chart|order-book|latest-trades)"/)
+  assert.match(marketDetailSource, /target\?\.scrollIntoView\(\{[\s\S]*block: 'start'/)
   assert.match(marketDetailSource, /function openPairPicker\(\)[\s\S]*name: 'markets'/)
   assert.match(marketDetailSource, /name: 'trade',[\s\S]*params: \{ symbol: pairSymbol\.value\.replace\('\/', '_'\) \}/)
   assert.match(marketDetailSource, /query: mode === 'contract' \? \{ mode: 'contract' \} : undefined/)
   assert.match(marketDetailSource, /name: 'orders',[\s\S]*query: \{ symbol: pairSymbol\.value\.replace\('\/', '_'\) \}/)
   assert.match(marketTemplate, /market-detail__actions[\s\S]*openTrade\('contract'\)[\s\S]*@click="openOrders"[\s\S]*openTrade\('spot'\)/)
 
-  assert.match(contentTabs, /role="tablist"/)
-  assert.match(contentTabs, /v-for="panel in contentPanels"/)
-  assert.match(contentTabs, /:aria-selected="activeContentPanel === panel"/)
-  assert.match(contentTabs, /:tabindex="activeContentPanel === panel \? 0 : -1"/)
-  assert.match(contentTabs, /@keydown="handleContentTabKeydown\(\$event, panel\)"/)
-  assert.deepEqual([...marketDetailSource.matchAll(/v-show="activeContentPanel === '([^']+)'"/g)].map((match) => match[1]), [
-    'chart',
-    'depth',
-    'trades',
-    'overview',
-  ])
-  assert.equal((marketTemplate.match(/role="tabpanel"/g) || []).length, 3)
-  assert.match(marketTemplate, /:role="chartExpanded \? 'dialog' : 'tabpanel'"/)
-  assert.match(marketDetailSource, /event\.key === 'ArrowRight'[\s\S]*event\.key === 'Home'[\s\S]*querySelector<HTMLButtonElement>/)
-  assert.match(selectContentPanel, /activeContentPanel\.value = panel/)
-  assert.doesNotMatch(selectContentPanel, /load\(|startLiveDetail|stopLiveDetail|refreshKlines|marketStore|points\.value/)
-  assert.doesNotMatch(marketDetailSource, /scrollToSection|activeSection|marketDataPanel/)
+  assert.match(marketTemplate, /role="tablist"/)
+  assert.match(marketTemplate, /:aria-pressed="marketDataPanel === 'orderBook'"/)
+  assert.match(marketTemplate, /:aria-pressed="marketDataPanel === 'trades'"/)
+  assert.match(marketTemplate, /:tabindex="marketDataPanel === 'orderBook' \? 0 : -1"/)
+  assert.match(marketTemplate, /@keydown="handleMarketDataTabKeydown\(\$event, 'trades'\)"/)
+  assert.match(marketDetailSource, /event\.key === 'ArrowRight'[\s\S]*event\.key === 'Home'[\s\S]*target\?\.focus\(\)/)
+  assert.match(marketTemplate, /role="tabpanel"/)
+  assert.match(marketTemplate, /v-show="marketDataPanel === 'orderBook'"/)
+  assert.match(marketTemplate, /v-show="marketDataPanel === 'trades'"/)
 })
 
 test('MA5、MA10、MA20 由真实收盘价计算并随形成中蜡烛更新', () => {
@@ -402,7 +389,7 @@ test('图表沉浸展开使用 CSS fixed、安全区、Escape 和可还原滚动
   assert.match(marketDetailSource, /Maximize2/)
   assert.match(marketDetailSource, /Minimize2/)
   assert.match(marketTemplate, /:data-chart-mode="chartExpanded \? 'expanded' : 'inline'"/)
-  assert.match(marketTemplate, /:role="chartExpanded \? 'dialog' : 'tabpanel'"/)
+  assert.match(marketTemplate, /:role="chartExpanded \? 'dialog' : 'region'"/)
   assert.match(marketTemplate, /:aria-modal="chartExpanded \? 'true' : undefined"/)
   assert.match(marketTemplate, /:aria-label="chartExpanded \? t\('marketDetail\.collapseChart'\) : t\('marketDetail\.expandChart'\)"/)
   assert.match(marketDetailSource, /event\.key === 'Escape'/)
@@ -560,30 +547,6 @@ test('订单簿保持 stacked/split 兼容并为选中详情提供七行 paired 
 })
 
 test('页面不暴露伪造控件，并具备 320px、横屏、触控和减弱动效合同', () => {
-  const intervalHeight = Number.parseFloat(cssDeclarationValue(
-    cssRuleBody(marketScopedCss, '.market-detail__intervals'),
-    'height',
-  ))
-  const chartHeight = Number.parseFloat(cssDeclarationValue(
-    cssRuleBody(marketScopedCss, '.market-detail__chart'),
-    'height',
-  ))
-  const legendHeight = Number.parseFloat(cssDeclarationValue(
-    cssRuleBody(marketScopedCss, '.market-detail__indicator-legend'),
-    'height',
-  ))
-  const panelHeight = Number.parseFloat(cssDeclarationValue(
-    cssRuleBody(marketScopedCss, '.market-detail__chart-panel'),
-    'height',
-  ))
-  const rootRule = cssRuleBody(marketScopedCss, '.market-detail')
-  const actionsRule = cssRuleBody(marketScopedCss, '.market-detail__actions')
-  const narrowRule = cssBlockBody(marketScopedCss, '@media (max-width: 340px)')
-  const narrowTabsRule = cssRuleBody(narrowRule, '.market-detail__content-tabs button')
-  const narrowActionsRule = cssRuleBody(narrowRule, '.market-detail__actions')
-
-  assert.ok(chartHeight >= 360)
-  assert.equal(intervalHeight + chartHeight + legendHeight, panelHeight)
   assert.doesNotMatch(marketTemplate, /marketDetail\.(?:grid|alert|updates)/)
   assert.doesNotMatch(marketTemplate, /markPrice|ranking|leverage|strategy/i)
   assert.doesNotMatch(marketDetailSource, /ticker\.value\.volume\s*\*|volume\s*\*\s*latestPrice/)
@@ -592,26 +555,18 @@ test('页面不暴露伪造控件，并具备 320px、横屏、触控和减弱�
   assert.match(marketStyle, /@media \(max-width: 340px\)/)
   assert.match(marketStyle, /@media \(orientation: landscape\) and \(max-height: 600px\)/)
   assert.match(marketStyle, /@media \(prefers-reduced-motion: reduce\)/)
-  assert.equal(
-    cssDeclarationValue(rootRule, 'padding'),
-    '0 env(safe-area-inset-right) calc(67px + env(safe-area-inset-bottom)) env(safe-area-inset-left)',
-  )
+  assert.match(marketStyle, /padding: 0 0 calc\(67px \+ env\(safe-area-inset-bottom\)\)/)
   assert.match(marketStyle, /\.market-detail__header\s*\{[\s\S]*height: calc\(64px \+ env\(safe-area-inset-top\)\)/)
-  assert.match(marketStyle, /\.market-detail__mode-tabs\s*\{[\s\S]*height: 48px/)
+  assert.match(marketStyle, /\.market-detail__rail\s*\{[\s\S]*height: 42px/)
   assert.match(marketStyle, /\.market-detail__summary\s*\{[\s\S]*height: 112px/)
-  assert.match(marketStyle, /\.market-detail__content-tabs\s*\{[\s\S]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)[\s\S]*height: 48px/)
   assert.match(marketStyle, /\.market-detail__intervals\s*\{[\s\S]*height: 48px/)
-  assert.match(marketStyle, /\.market-detail__chart-panel\s*\{[\s\S]*height: 456px/)
-  assert.match(marketStyle, /\.market-detail__chart\s*\{[\s\S]*height: 376px/)
+  assert.match(marketStyle, /\.market-detail__chart\s*\{[\s\S]*height: 204px/)
   assert.match(marketStyle, /\.market-detail__chart-panel\.is-expanded\s*\{[\s\S]*grid-template-rows: calc\(48px \+ env\(safe-area-inset-top\)\) minmax\(0, 1fr\)/)
   assert.match(marketStyle, /\.market-detail__chart-panel\.is-expanded \.market-detail__chart\s*\{[\s\S]*height: auto;[\s\S]*min-height: 0;/)
-  assert.match(marketStyle, /\.market-detail__indicator-legend\s*\{[\s\S]*height: 32px/)
-  assert.match(marketStyle, /\.market-detail__content-panel\s*\{[\s\S]*height: 272px/)
-  assert.equal(cssDeclarationValue(actionsRule, 'grid-template-columns'), '44px 44px minmax(0, 1fr)')
-  assert.match(cssDeclarationValue(actionsRule, 'padding'), /env\(safe-area-inset-(?:left|right)\)/)
-  assert.equal(cssDeclarationValue(narrowActionsRule, 'grid-template-columns'), '44px 44px minmax(0, 1fr)')
-  assert.equal(cssDeclarationValue(narrowTabsRule, 'font-size'), '10px')
-  assert.match(marketStyle, /\.market-detail__actions\s*\{[\s\S]*height: calc\(67px \+ env\(safe-area-inset-bottom\)\)/)
+  assert.match(marketStyle, /\.market-detail__indicator-legend\s*\{[\s\S]*height: 28px/)
+  assert.match(marketStyle, /\.market-detail__data-tabs\s*\{[\s\S]*height: 48px/)
+  assert.match(marketStyle, /\.market-detail__data-panel\s*\{[\s\S]*height: 272px/)
+  assert.match(marketStyle, /\.market-detail__actions\s*\{[\s\S]*grid-template-columns: 40px 40px minmax\(0, 1fr\)[\s\S]*height: calc\(67px \+ env\(safe-area-inset-bottom\)\)/)
   assert.match(marketStyle, /\.market-detail__actions \.is-primary\s*\{[\s\S]*background: var\(--detail-action\)[\s\S]*height: 52px/)
   assert.match(marketStyle, /\.is-ma5\s*\{[\s\S]*color: var\(--detail-positive\)/)
   assert.match(marketStyle, /\.is-ma10\s*\{[\s\S]*color: var\(--detail-negative\)/)
@@ -621,10 +576,6 @@ test('页面不暴露伪造控件，并具备 320px、横屏、触控和减弱�
     'orderBook.buySide',
     'orderBook.sellSide',
     'marketDetail.chart',
-    'marketDetail.modeSwitch',
-    'marketDetail.quoteSummary',
-    'marketDetail.contentTabs',
-    'marketDetail.spotPair',
     'marketDetail.chartWorkstation',
     'marketDetail.chartEngine',
     'marketDetail.klineChartEngine',

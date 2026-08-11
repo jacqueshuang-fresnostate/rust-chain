@@ -1,5 +1,0 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
-{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "Follow mobile shell, theme, local chart engine, touch and safe-area contracts."}
-{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Preserve ticker authority, REST/WebSocket session ownership, interval and live K-line contracts."}
-{"file": ".trellis/spec/guides/index.md", "reason": "Apply shared implementation and verification thinking guides."}
-{"file": ".trellis/tasks/08-12-mobile-bitget-spot-chart-parity/research/bitget-mobile-chart-reference.md", "reason": "Use measured Bitget mobile reference structure without copying remote runtime integrations."}

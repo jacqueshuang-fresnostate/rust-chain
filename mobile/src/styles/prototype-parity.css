@@ -2194,7 +2194,7 @@ body,
 
 .app-stage.theme-dark .mobile-canvas :is(
   .order-book--split header,
-  .market-detail__mode-tabs,
+  .market-detail__rail,
   .market-detail__summary,
   .market-detail__chart-panel
 ) {
@@ -3234,7 +3234,7 @@ html[lang='en'] .app-stage .mobile-canvas .home-view .home-guest-hero__copy h1 {
 
 /* Pencil selected market detail source: ftTny / VoZfE. */
 .app-stage.theme-dark .mobile-canvas :is(
-  .market-detail__mode-tabs,
+  .market-detail__rail,
   .market-detail__summary,
   .market-detail__chart-panel,
   .market-detail__actions,

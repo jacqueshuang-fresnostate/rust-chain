@@ -688,11 +688,10 @@ test('detail session executes live/REST races and isolates interval, request, an
   assert.equal(session.isCurrent(secondContext), false)
 })
 
-test('MarketDetailView wires the shared interval source and keeps content-tab changes presentation-only', () => {
+test('MarketDetailView wires the shared interval source and executable detail session without clearing book/trades', () => {
   const source = readFileSync(new URL('../src/views/MarketDetailView.vue', import.meta.url), 'utf8')
   const load = source.match(/async function load[\s\S]*?\n}/)?.[0] ?? ''
   const chooseInterval = source.match(/function chooseInterval[\s\S]*?\n}/)?.[0] ?? ''
-  const selectContentPanel = source.match(/function selectContentPanel[\s\S]*?\n}/)?.[0] ?? ''
 
   assert.ok(load.indexOf('startLiveDetail(symbol, selectedInterval, version)') < load.indexOf('await Promise.allSettled'))
   assert.match(load, /if \(version !== requestVersion \|\| symbol !== pairSymbol\.value\) return/)
@@ -704,10 +703,6 @@ test('MarketDetailView wires the shared interval source and keeps content-tab ch
   assert.match(source, /v-for="item in MARKET_KLINE_INTERVALS"/)
   assert.doesNotMatch(source, /['"]4h['"]/)
   assert.match(chooseInterval, /normalizeMarketKlineInterval\(value\)/)
-  assert.match(source, /const contentPanels: readonly MarketContentPanel\[\] = \['chart', 'depth', 'trades', 'overview'\]/)
-  assert.match(selectContentPanel, /activeContentPanel\.value = panel/)
-  assert.doesNotMatch(selectContentPanel, /detailStreamSession|fetchKlines|fetchOrderBook|fetchRecentTrades|marketStore|points\.value/)
-  assert.equal(source.match(/createMarketDetailStreamSession\(\{/g)?.length, 1)
   assert.ok(chooseInterval.indexOf('startLiveDetail(') < chooseInterval.indexOf('void refreshKlines(liveState)'))
   assert.doesNotMatch(chooseInterval, /bids\.value|asks\.value|trades\.value/)
   assert.doesNotMatch(chooseInterval, /void load\(/)

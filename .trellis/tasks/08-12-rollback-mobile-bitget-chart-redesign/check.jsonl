@@ -1,0 +1,3 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "Verify the rejected chart-first layout is absent and the prior mobile layout is restored."}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Verify the earlier Bitget spot price and WebSocket behavior remains intact."}

@@ -232,12 +232,6 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
   session. Chart engines are render-only consumers of the same normalized
   `KlinePoint[]`; changing the local renderer must not call a market API,
   reconnect, resubscribe, clear points, or replace the active detail session.
-- `MarketDetailView` content selection is likewise render-only. Its closed
-  panel union is `chart | depth | trades | overview`; selecting any member may
-  update only the active-panel ref. It must not call `load`, replace/stop the
-  detail stream, refresh K-lines, clear points, or overwrite ticker authority.
-  Keep all four tabpanels bound to the same points/depth/trades state so moving
-  between them never creates a second market-data owner.
 - The default renderer is the locally bundled `klinecharts@10.0.0` base package.
   The selectable TradingView renderer is the locally bundled
   `lightweight-charts@5.2.0` package. Both render real OHLCV, MA5/MA10/MA20, and
@@ -429,9 +423,6 @@ const points = detailSession.resolveKlineRequest(request, restKlines(initial))
   MA5/MA10/MA20 calculations; same-candle updates that preserve pan/zoom;
   interval replacement fitting; and order-book/trades tab switches that leave
   the active stream untouched.
-- Market-detail hierarchy tests must also assert the four-item content union,
-  matching accessible tabpanels, and that the content-selection function has no
-  REST, WebSocket, store, session, K-line, point, depth, or trade mutation.
 - Chart-engine tests for exact local package versions, KLineChart's in-memory
   loader, disabled TradingView attribution/external anchors, one active renderer, persisted selection,
   real OHLCV/MA/volume wiring, lifecycle cleanup, and absence of remote chart
