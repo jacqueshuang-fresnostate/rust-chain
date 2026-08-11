@@ -384,17 +384,7 @@ onBeforeUnmount(() => {
         <p>{{ t('loan.heroDescription') }}</p>
       </section>
 
-      <section class="loan-access-pencil" :class="{ 'loan-access-pencil--ready': session.isAuthenticated }">
-        <div class="loan-access-pencil__summary">
-          <span class="loan-access-pencil__icon"><ShieldCheck :size="20" /></span>
-          <div>
-            <strong>{{ session.isAuthenticated ? t('loan.accountReady') : t('loan.loginLimitTitle') }}</strong>
-            <span>{{ session.isAuthenticated ? t('loan.accountReadyDescription') : t('loan.loginLimitDescription') }}</span>
-          </div>
-          <CheckCircle2 v-if="session.isAuthenticated" :size="18" />
-        </div>
-        <button v-if="!session.isAuthenticated" type="button" @click="openLogin">{{ t('loan.loginViewLimit') }}</button>
-      </section>
+      <button v-if="!session.isAuthenticated" class="loan-login-cta" type="button" @click="openLogin">{{ t('loan.loginViewLimit') }}</button>
 
       <nav class="pencil-segmented pencil-segmented--soft loan-categories" :aria-label="t('loan.productCategories')">
         <button type="button" :aria-pressed="productFilter === 'all'" @click="productFilter = 'all'">{{ t('common.all') }}</button>
@@ -624,64 +614,23 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.loan-access-pencil {
-  margin-top: 17px;
-}
-
-.loan-access-pencil__summary {
-  align-items: center;
-  display: grid;
-  gap: 12px;
-  grid-template-columns: 44px minmax(0, 1fr) 18px;
-  height: 44px;
-}
-
-.loan-access-pencil__summary > div {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.loan-access-pencil__icon {
-  align-items: center;
-  background: var(--accent-soft);
-  border-radius: 50%;
-  color: var(--positive);
-  display: flex;
-  height: 44px;
-  justify-content: center;
-  width: 44px;
-}
-
-.loan-access-pencil strong {
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 17px;
-}
-
-.loan-access-pencil__summary > div > span {
-  color: var(--muted);
-  font-size: 9px;
-  line-height: 14px;
-}
-
-.loan-access-pencil button {
-  background: var(--ink);
+.loan-login-cta {
+  background: var(--accent);
   border-radius: 999px;
-  color: var(--surface);
+  color: var(--on-accent);
   font-size: 14px;
   font-weight: 700;
   height: 48px;
-  margin-top: 16px;
+  margin-top: 17px;
   min-height: 48px;
   padding: 0 16px;
   width: 100%;
 }
 
-.loan-access-pencil:not(.loan-access-pencil--ready) > button {
-  background: var(--accent);
-  color: var(--on-accent);
+.loan-login-cta:focus-visible {
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .loan-categories {

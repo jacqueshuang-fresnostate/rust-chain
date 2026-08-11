@@ -190,7 +190,7 @@ test('消息中心使用公告真实源并保持 FkZ6j 四分类连续列表结�
 test('借贷页保持原型申请与生命周期结构且沿用真实订单接口', () => {
   assertOrdered(templateOf(sources.loan), [
     'loan-hero-pencil',
-    'loan-access-pencil',
+    'loan-login-cta',
     'loan-categories',
     'loan-products-pencil',
     'loan-application-pencil',
@@ -211,6 +211,7 @@ test('借贷页保持原型申请与生命周期结构且沿用真实订单接�
   assert.match(sources.loan, /return amountNumber\.value \* product\.interestRate/)
   assert.doesNotMatch(sources.loan, /product\.interestRate \* product\.termDays \/ 365/)
   assert.match(sources.loan, /function statusLabel\(status: string\)/)
+  assert.doesNotMatch(sources.loan, /loan-access-pencil/)
 })
 
 test('安全页保持原型防护任务结构并只暴露后端支持的真实动作', () => {

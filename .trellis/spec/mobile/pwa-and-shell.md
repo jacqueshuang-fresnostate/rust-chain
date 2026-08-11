@@ -298,6 +298,11 @@ selectCollateralAsset(account: WalletAccount): void
   exclusive, trap Tab, close on Escape/backdrop/close-button, and keep every
   control at least 44px with bottom safe-area padding. Guests cannot open the
   picker; an authenticated empty wallet opens a truthful localized empty state.
+- Loan does not render an authenticated-account readiness summary between its
+  Hero and product categories. Authenticated users proceed directly to product
+  categories; guests receive only one 48px localized login CTA that preserves
+  the `/products/loan` redirect. Do not restore `loan-access-pencil__summary`,
+  its decorative status icon, or its retired ready/login explanation copy.
 
 ## 4. Validation & Error Matrix
 
@@ -336,6 +341,8 @@ selectCollateralAsset(account: WalletAccount): void
 | Wallet account has no usable image | Keep the exact symbol fallback; do not guess or import another logo |
 | Authenticated wallet list is empty | Open a localized empty sheet; keep submission disabled through existing collateral validation |
 | Loan collateral sheet is dismissed | Preserve `collateralAssetId` and amount; restore body overflow and trigger focus exactly once |
+| Loan user is authenticated | Skip the account-access summary and continue from Hero directly to product categories |
+| Loan user is a guest | Render one login-limit CTA with the existing `/products/loan` redirect; do not render a duplicate summary |
 | Assistive live status is rendered | `.sr-only` remains absolute, clipped, 1x1px, and visually absent |
 | Turnstile renders at 320px | Keep a centered 302px stage and 300px challenge viewport within the device width; no decorative wrapper or horizontal scroll |
 | Turnstile theme or locale changes | Remove and explicitly re-render the widget with the new app theme/language, clearing the previous token |
@@ -384,6 +391,10 @@ selectCollateralAsset(account: WalletAccount): void
 - Bad: Loan uses a native `select`, derives a logo from the symbol, changes the
   selected asset when the sheet merely opens, or lets the sheet and order-action
   dialog own `body.style.overflow` independently.
+- Good: an authenticated Loan page transitions from its risk Hero directly to
+  product categories; a guest sees one login-limit CTA in that position.
+- Bad: Loan restores a signed-in/readiness summary, decorative ready icon, or
+  explanatory account card above the product categories.
 - Bad: a Tauri bundle contains `sw.js` or `manifest.webmanifest`.
 - Bad: the first `OrderBookPanel` is assumed to be the split variant after the
   Pencil mini-book is added; tests must inspect all explicit layout instances.
@@ -476,6 +487,10 @@ selectCollateralAsset(account: WalletAccount): void
   restoration, localized empty state, 44px targets, safe-area padding, and no
   horizontal overflow in both themes. Preserve the exact `assetId`, collateral
   amount validation, and `applyLoan` payload assertions.
+- Loan access hierarchy: assert production source contains no
+  `loan-access-pencil` summary/icon selectors or retired readiness locale keys;
+  the guest-only login CTA remains at least 48px and retains `openLogin()` with
+  the `/products/loan` redirect.
 - Canvas theme behavior: switch both the stage class and root `data-theme`,
   assert the renderer receives the new background/text/grid/series colors,
   and assert no theme callback runs after component unmount.

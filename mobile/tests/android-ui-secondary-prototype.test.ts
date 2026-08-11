@@ -80,7 +80,8 @@ test('消息、借贷与安全工作台使用选中稿连续画布和真实业�
   assert.match(sources.messageCenter, /\.message-row,[\s\S]*?min-height: 64px;/)
 
   assert.match(sources.loan, /const loanAssetFilters = computed/)
-  assert.match(sources.loan, /class="loan-access-pencil__summary"/)
+  assert.doesNotMatch(sources.loan, /loan-access-pencil/)
+  assert.match(sources.loan, /v-if="!session\.isAuthenticated" class="loan-login-cta"/)
   assert.match(sources.loan, /class="pencil-segmented pencil-segmented--soft loan-categories"/)
   assert.match(sources.loan, /class="pencil-note loan-risk-note"/)
   assert.match(sources.loan, /class="loan-hero-pencil"/)

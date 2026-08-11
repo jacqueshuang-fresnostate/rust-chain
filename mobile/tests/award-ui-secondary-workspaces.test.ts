@@ -171,9 +171,8 @@ test('明暗主题的主标题、状态文案和主操作使用高对比语义�
   assert.match(messageCss, /\.message-row-copy small,[\s\S]*?\.message-state small\s*\{[\s\S]*?color: var\(--muted\)/)
   assert.match(messageCss, /\.message-state > button\s*\{[\s\S]*?color: var\(--positive\)/)
 
-  assert.match(loanCss, /\.loan-access-pencil__summary > div > span\s*\{[\s\S]*?color: var\(--muted\)/)
-  assert.match(loanCss, /\.loan-access-pencil__icon\s*\{[\s\S]*?color: var\(--positive\)/)
-  assert.match(loanCss, /\.loan-access-pencil button\s*\{[\s\S]*?background: var\(--ink\);[\s\S]*?color: var\(--surface\)/)
+  assert.doesNotMatch(loanCss, /loan-access-pencil/)
+  assert.match(loanCss, /\.loan-login-cta\s*\{[\s\S]*?background: var\(--accent\);[\s\S]*?color: var\(--on-accent\)/)
   assert.match(selectedCss, /\.pencil-primary\s*\{[\s\S]*?background: var\(--accent\);[\s\S]*?color: var\(--on-accent\)/)
 
   assert.match(securityCss, /\.security-feedback p\s*\{[\s\S]*?color: var\(--positive\)/)

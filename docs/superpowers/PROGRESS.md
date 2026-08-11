@@ -2,6 +2,13 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-08-11 08:21 - 移除手机借贷账户摘要
+
+- 完成内容：从 `LoanView` 删除 `loan-access-pencil__summary`、状态图标和已登录/未登录说明文案；已登录用户由 Hero 直接进入借贷产品分类，访客仅保留一枚 48px `loan-login-cta` 登录按钮和原有 `/products/loan` 回跳。清理摘要专用 CSS 与四个中英文废弃键，同步更新页面顺序、对比度回归断言和 Mobile 执行规范；借贷 API、抵押资产弹窗、申请与订单流程未改动。
+- 修改文件：`mobile/src/views/LoanView.vue`、`mobile/src/i18n/messages/zh-CN.ts`、`mobile/src/i18n/messages/en.ts`、`mobile/tests/android-ui-secondary-prototype.test.ts`、`mobile/tests/award-ui-secondary-workspaces.test.ts`、`mobile/tests/priority-secondary-page-parity.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/08-11-mobile-loan-remove-access-summary/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦回归测试 24/24 通过；Mobile 全量测试 350/350 通过；`npm --prefix mobile run lint --if-present`、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2070 modules、134 条预缓存）、`npm --prefix mobile run build:tauri`（2070 modules）、Trellis context 校验和 `git diff --check` 全部通过。
+- 后续事项：无；本次未进行登录后真机手工视觉验收。
+
 ## 2026-08-11 08:08 - 将手机借贷抵押资产改为带 Logo 弹窗
 
 - 完成内容：将 `LoanView` 抵押资产原生下拉框替换为 Pencil 底部资产选择弹窗；触发器与资产列表均通过 `AssetMark` 显示 `/wallet/accounts` 返回的 `logoUrl`、币种和可用余额，图片失败仍使用币种文字兜底。弹窗支持当前选中态、遮罩/Escape/关闭按钮、Tab 焦点循环、背景滚动锁定、焦点恢复、安全区与空资产态；抵押 `assetId`、数量校验和 `applyLoan` 载荷保持不变。补齐中英文文案与源码合同回归测试。
