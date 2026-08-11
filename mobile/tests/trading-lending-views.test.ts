@@ -7,6 +7,7 @@ import zhCN from '../src/i18n/messages/zh-CN.ts'
 const tradeSource = readFileSync(new URL('../src/views/TradeView.vue', import.meta.url), 'utf8')
 const secondsSource = readFileSync(new URL('../src/views/SecondsView.vue', import.meta.url), 'utf8')
 const loanSource = readFileSync(new URL('../src/views/LoanView.vue', import.meta.url), 'utf8')
+const walletSource = readFileSync(new URL('../src/api/wallet.ts', import.meta.url), 'utf8')
 const prototypeCss = readFileSync(new URL('../src/styles/prototype-base.css', import.meta.url), 'utf8')
 const selectedCss = readFileSync(new URL('../src/styles/pencil-selected-pages.css', import.meta.url), 'utf8')
 
@@ -62,6 +63,26 @@ test('借贷页保留真实申请、撤销、还款并开放逾期还款', () =>
   assert.match(loanSource, /const productsReady = ref\(false\)/)
   assert.match(loanSource, /v-else-if="loading && !hasProducts"[\s\S]*?t\('loan\.loading'\)/)
   assert.match(loanSource, /v-if="!visibleProducts\.length"[\s\S]*?t\('loan\.noProducts'\)/)
+})
+
+test('借贷抵押资产使用带后端 Logo 的可访问底部弹窗', () => {
+  assert.doesNotMatch(loanSource, /<select\b/)
+  assert.match(loanSource, /class="loan-collateral-trigger"[\s\S]*?aria-haspopup="dialog"[\s\S]*?:aria-expanded="collateralPickerOpen"/)
+  assert.match(loanSource, /<AssetMark v-if="selectedCollateral" :symbol="selectedCollateral\.symbol" :src="selectedCollateral\.logoUrl"/)
+  assert.match(loanSource, /<Teleport to="body">[\s\S]*?class="pencil-sheet-mask loan-collateral-mask"/)
+  assert.match(loanSource, /id="loan-collateral-picker"[\s\S]*?role="dialog"[\s\S]*?aria-modal="true"[\s\S]*?aria-labelledby="loan-collateral-picker-title"/)
+  assert.match(loanSource, /v-for="account in accounts"[\s\S]*?<AssetMark :symbol="account\.symbol" :src="account\.logoUrl"/)
+  assert.match(loanSource, /:aria-pressed="account\.assetId === collateralAssetId"/)
+  assert.match(loanSource, /function selectCollateralAsset\(account: WalletAccount\): void \{[\s\S]*?collateralAssetId\.value = account\.assetId[\s\S]*?closeCollateralPicker\(\)/)
+  assert.match(loanSource, /const modalOpen = computed\(\(\) => dialogOpen\.value \|\| collateralPickerOpen\.value\)/)
+  assert.match(loanSource, /watch\(modalOpen,[\s\S]*?document\.body\.style\.overflow = 'hidden'[\s\S]*?returnFocus\?\.focus\(\)/)
+  assert.match(loanSource, /trapDialogFocus\(event, closeCollateralPicker\)/)
+  assert.match(loanSource, /@click\.self="closeCollateralPicker"/)
+  assert.match(walletSource, /logoUrl: account\.logo_url\?\.trim\(\) \|\| undefined/)
+  assert.equal(zhCN.loan.selectCollateralAsset, '选择抵押资产')
+  assert.equal(en.loan.selectCollateralAsset, 'Select collateral asset')
+  assert.equal(zhCN.loan.availableBalance, '可用 {amount}')
+  assert.equal(en.loan.availableBalance, 'Available {amount}')
 })
 
 test('三页满足聚焦、确认层、触控和窄屏合同', () => {

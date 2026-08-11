@@ -6,7 +6,8 @@ Apply this contract when changing `mobile/` build modes, Vite public base,
 manifest metadata, service-worker behavior, install/update prompts, theme
 tokens, the root application shell, bottom navigation, or the announcement
 message center. It also applies when a selected Pencil secondary page needs a
-theme selector or canvas override that crosses a Vue SFC scoped-style boundary.
+theme selector or canvas override that crosses a Vue SFC scoped-style boundary,
+or when Loan changes its collateral-asset selection surface.
 
 This cross-layer contract prevents financial responses from entering browser
 caches, PWA code from leaking into Tauri bundles, root navigation drift, and
@@ -70,6 +71,16 @@ Spot account-surface signatures:
 spotVisibleBalances: ComputedRef<WalletAccount[]> // current base/quote, total > 0
 openOrders(tab: 'spot' | 'positions' | 'history' = 'spot'): void
 openAssets(): void
+```
+
+Loan collateral-picker signatures in `LoanView.vue`:
+
+```ts
+selectedCollateral: ComputedRef<WalletAccount | undefined>
+modalOpen: ComputedRef<boolean> // order-action dialog OR collateral picker
+openCollateralPicker(): void
+closeCollateralPicker(): void
+selectCollateralAsset(account: WalletAccount): void
 ```
 
 ## 3. Contracts
@@ -273,6 +284,20 @@ openAssets(): void
   and its custom ArrowLeft delegates to `goBackOr` with the Home fallback.
   Loading, empty, and error rows reuse the same geometry but remain truthful to
   the live announcement response.
+- A collateralized Loan application uses a button-triggered, body-Teleported
+  bottom sheet instead of a native `select`. The trigger and every option pass
+  the authoritative `WalletAccount.logoUrl` to `AssetMark`, show the exact
+  wallet symbol and available balance, and retain the symbol fallback when the
+  image is absent or fails.
+- Selecting a collateral option changes only `collateralAssetId`, clears stale
+  page feedback, and closes the sheet. `selectedCollateral`, available-balance
+  validation, `collateralAmount`, and the existing `applyLoan` payload remain
+  authoritative; the picker never invents an account, logo, or balance.
+- The Loan collateral sheet and order-action dialog share one modal-open owner
+  for body scroll locking and trigger focus restoration. They are mutually
+  exclusive, trap Tab, close on Escape/backdrop/close-button, and keep every
+  control at least 44px with bottom safe-area padding. Guests cannot open the
+  picker; an authenticated empty wallet opens a truthful localized empty state.
 
 ## 4. Validation & Error Matrix
 
@@ -305,6 +330,12 @@ openAssets(): void
 | Spot user selects Orders or History | Navigate to `/orders?tab=spot|history`; keep OrdersView authoritative for order reads/actions |
 | Spot account context offers a secondary action | Open Assets/View all; never show Cancel all without current-order data |
 | Spot holdings marker is rendered | Keep it non-interactive and never route it to the futures `positions` tab |
+| Loan is a credit product | Do not render collateral controls or change the existing application payload |
+| Loan is collateralized and user is authenticated | Open the asset sheet without mutating the current asset until an explicit option is selected |
+| Wallet account has `logoUrl` | Pass that URL to `AssetMark` in both the trigger and option row |
+| Wallet account has no usable image | Keep the exact symbol fallback; do not guess or import another logo |
+| Authenticated wallet list is empty | Open a localized empty sheet; keep submission disabled through existing collateral validation |
+| Loan collateral sheet is dismissed | Preserve `collateralAssetId` and amount; restore body overflow and trigger focus exactly once |
 | Assistive live status is rendered | `.sr-only` remains absolute, clipped, 1x1px, and visually absent |
 | Turnstile renders at 320px | Keep a centered 302px stage and 300px challenge viewport within the device width; no decorative wrapper or horizontal scroll |
 | Turnstile theme or locale changes | Remove and explicitly re-render the widget with the new app theme/language, clearing the previous token |
@@ -344,6 +375,15 @@ openAssets(): void
 - Bad: wallet balances appear while Orders is styled current, Cancel all is
   shown without an order request, or the spot Holdings label opens futures
   positions.
+- Good: a collateralized Loan shows the backend wallet logo in its trigger;
+  opening the sheet shows every real wallet account and selecting one submits
+  that account's numeric `assetId` through the unchanged application request.
+- Base: the authenticated wallet has no accounts or an image fails; the picker
+  shows a localized empty state or `AssetMark` symbol fallback and creates no
+  placeholder financial data.
+- Bad: Loan uses a native `select`, derives a logo from the symbol, changes the
+  selected asset when the sheet merely opens, or lets the sheet and order-action
+  dialog own `body.style.overflow` independently.
 - Bad: a Tauri bundle contains `sw.js` or `manifest.webmanifest`.
 - Bad: the first `OrderBookPanel` is assumed to be the split variant after the
   Pencil mini-book is added; tests must inspect all explicit layout instances.
@@ -429,6 +469,13 @@ openAssets(): void
   filter, 44px actions, and the `1 + 48 + 34 + 198 = 281` geometry. Preserve the
   prior Pencil digest through exact, unique normalization of only the approved
   account-workspace and order-type changes.
+- Loan collateral picker: assert the collateral application contains no native
+  `select`; trigger and rows bind `WalletAccount.logoUrl`; the Teleported sheet
+  exposes labelled dialog semantics, `aria-pressed`, current-option initial
+  focus, Escape/backdrop/close dismissal, Tab wrap, shared body lock, focus
+  restoration, localized empty state, 44px targets, safe-area padding, and no
+  horizontal overflow in both themes. Preserve the exact `assetId`, collateral
+  amount validation, and `applyLoan` payload assertions.
 - Canvas theme behavior: switch both the stage class and root `data-theme`,
   assert the renderer receives the new background/text/grid/series colors,
   and assert no theme callback runs after component unmount.
@@ -502,6 +549,27 @@ For the spot account workspace:
   <button @click="openAssets">{{ t('common.viewAll') }}</button>
   <WalletBalances />
 </section>
+```
+
+For Loan collateral selection:
+
+```vue
+<!-- Wrong: native selection cannot show the server-owned image and may tempt
+     callers to derive presentation metadata from a symbol. -->
+<select v-model="collateralAssetId">
+  <option v-for="account in accounts" :value="account.assetId">
+    {{ account.symbol }}
+  </option>
+</select>
+
+<!-- Correct: opening is presentation-only; explicit option selection commits
+     the real wallet asset ID and the server-owned logo stays optional. -->
+<button type="button" aria-haspopup="dialog" @click="openCollateralPicker">
+  <AssetMark v-if="selectedCollateral" :symbol="selectedCollateral.symbol" :src="selectedCollateral.logoUrl" />
+</button>
+<button v-for="account in accounts" @click="selectCollateralAsset(account)">
+  <AssetMark :symbol="account.symbol" :src="account.logoUrl" />
+</button>
 ```
 
 For imperative chart theming:

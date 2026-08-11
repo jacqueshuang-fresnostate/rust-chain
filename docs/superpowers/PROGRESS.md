@@ -2,6 +2,13 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-08-11 08:08 - 将手机借贷抵押资产改为带 Logo 弹窗
+
+- 完成内容：将 `LoanView` 抵押资产原生下拉框替换为 Pencil 底部资产选择弹窗；触发器与资产列表均通过 `AssetMark` 显示 `/wallet/accounts` 返回的 `logoUrl`、币种和可用余额，图片失败仍使用币种文字兜底。弹窗支持当前选中态、遮罩/Escape/关闭按钮、Tab 焦点循环、背景滚动锁定、焦点恢复、安全区与空资产态；抵押 `assetId`、数量校验和 `applyLoan` 载荷保持不变。补齐中英文文案与源码合同回归测试。
+- 修改文件：`mobile/src/views/LoanView.vue`、`mobile/src/i18n/messages/zh-CN.ts`、`mobile/src/i18n/messages/en.ts`、`mobile/tests/trading-lending-views.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/08-11-mobile-loan-collateral-asset-picker/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：借贷/秒合约及二级工作台聚焦测试 24/24 通过；Mobile 全量测试 350/350 通过；`npm --prefix mobile run lint --if-present`、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2070 modules、134 条预缓存）、`npm --prefix mobile run build:tauri`（2070 modules）、Trellis context 校验与 `git diff --check` 全部通过。
+- 后续事项：无；本次未进行登录后真机手工视觉验收。
+
 ## 2026-08-11 03:25 - 固化现货持仓与委托栏目边界
 
 - 完成内容：将 `/trade` 现货账户区的持仓事实源、非交互当前项、钱包状态区域关联、委托/历史权威路由、禁止现货持仓进入合约 positions、禁止无订单数据展示撤单操作，以及 `1+48+34+198=281px` 几何写入 Mobile PWA/Shell 可执行规范；补齐签名、验证矩阵、正反例、必测断言和错误/正确模板，并完成任务验收清单。

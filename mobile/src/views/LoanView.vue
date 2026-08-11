@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
+  Check,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   CircleAlert,
   Landmark,
@@ -49,6 +51,8 @@ const success = ref('')
 const productFilter = ref('all')
 const productsReady = ref(false)
 const actionDialog = ref<HTMLElement | null>(null)
+const collateralPickerOpen = ref(false)
+const collateralPickerDialog = ref<HTMLElement | null>(null)
 const riskNote = ref<HTMLElement | null>(null)
 let returnFocus: HTMLElement | null = null
 let previousBodyOverflow = ''
@@ -57,6 +61,7 @@ const amountNumber = computed(() => Number(amount.value || 0))
 const collateralAmountNumber = computed(() => Number(collateralAmount.value || 0))
 const selectedCollateral = computed(() => accounts.value.find((account) => account.assetId === collateralAssetId.value))
 const dialogOpen = computed(() => Boolean(pendingAction.value))
+const modalOpen = computed(() => dialogOpen.value || collateralPickerOpen.value)
 const hasProducts = computed(() => products.value.length > 0)
 const loanWorkspaceState = computed(() => {
   if (error.value && !hasProducts.value) return 'error'
@@ -156,6 +161,7 @@ async function load(): Promise<void> {
 }
 
 function openApply(product: LoanProduct, reset = true): void {
+  collateralPickerOpen.value = false
   selected.value = product
   if (reset || !amount.value) amount.value = String(product.minAmount)
   collateralAssetId.value = accounts.value[0]?.assetId || 0
@@ -170,6 +176,24 @@ function openLogin(): void {
 
 function openRiskNote(): void {
   riskNote.value?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
+
+function openCollateralPicker(): void {
+  if (!session.isAuthenticated || pendingAction.value) return
+  collateralPickerOpen.value = true
+  error.value = ''
+  success.value = ''
+}
+
+function closeCollateralPicker(): void {
+  collateralPickerOpen.value = false
+}
+
+function selectCollateralAsset(account: WalletAccount): void {
+  collateralAssetId.value = account.assetId
+  error.value = ''
+  success.value = ''
+  closeCollateralPicker()
 }
 
 async function submitApplication(): Promise<void> {
@@ -214,6 +238,7 @@ function canActOnOrder(order: LoanOrder): boolean {
 }
 
 function requestOrderAction(order: LoanOrder): void {
+  if (collateralPickerOpen.value) return
   pendingAction.value = order
   error.value = ''
   success.value = ''
@@ -285,10 +310,10 @@ function statusTone(status: string): string {
   return 'is-pending'
 }
 
-function trapDialogFocus(event: KeyboardEvent): void {
+function trapDialogFocus(event: KeyboardEvent, close: () => void): void {
   if (event.key === 'Escape') {
     event.preventDefault()
-    closeOrderAction()
+    close()
     return
   }
   if (event.key !== 'Tab') return
@@ -309,15 +334,29 @@ function trapDialogFocus(event: KeyboardEvent): void {
   }
 }
 
-watch(dialogOpen, async (open) => {
+function handleActionDialogKeydown(event: KeyboardEvent): void {
+  trapDialogFocus(event, closeOrderAction)
+}
+
+function handleCollateralPickerKeydown(event: KeyboardEvent): void {
+  trapDialogFocus(event, closeCollateralPicker)
+}
+
+watch(modalOpen, async (open) => {
   if (open) {
     returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
     previousBodyOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     await nextTick()
-    actionDialog.value?.querySelector<HTMLElement>('[data-dialog-cancel]')?.focus()
+    if (!modalOpen.value) return
+    const initialFocus = collateralPickerOpen.value
+      ? collateralPickerDialog.value?.querySelector<HTMLElement>('[data-collateral-current="true"]')
+        || collateralPickerDialog.value?.querySelector<HTMLElement>('[data-dialog-cancel]')
+      : actionDialog.value?.querySelector<HTMLElement>('[data-dialog-cancel]')
+    initialFocus?.focus()
     return
   }
+  if (modalOpen.value) return
   document.body.style.overflow = previousBodyOverflow
   await nextTick()
   returnFocus?.focus()
@@ -327,7 +366,7 @@ watch(dialogOpen, async (open) => {
 onMounted(() => { void load() })
 
 onBeforeUnmount(() => {
-  document.body.style.overflow = previousBodyOverflow
+  if (modalOpen.value) document.body.style.overflow = previousBodyOverflow
 })
 </script>
 
@@ -363,7 +402,7 @@ onBeforeUnmount(() => {
       </nav>
 
       <div v-if="success" class="pencil-message pencil-message--success" role="status"><CheckCircle2 :size="18" /><span>{{ success }}</span></div>
-      <div v-if="error && !dialogOpen" class="pencil-message pencil-message--error" role="alert">
+      <div v-if="error && !modalOpen" class="pencil-message pencil-message--error" role="alert">
         <CircleAlert :size="18" /><span>{{ error }}</span>
         <button type="button" :aria-label="t('common.retry')" @click="load"><RefreshCw :size="17" /></button>
       </div>
@@ -409,15 +448,27 @@ onBeforeUnmount(() => {
           </div>
 
           <template v-if="selected.loanType === 'collateralized'">
-            <label class="pencil-field">
+            <div class="pencil-field">
               <span>{{ t('loan.collateralAsset') }}</span>
-              <div class="pencil-field__shell">
-                <select v-model="collateralAssetId" :disabled="!session.isAuthenticated">
-                  <option v-if="!accounts.length" :value="0">{{ t('loan.loginDescription') }}</option>
-                  <option v-for="account in accounts" :key="account.assetId" :value="account.assetId">{{ t('loan.assetAvailable', { asset: account.symbol, amount: formatAmount(account.available) }) }}</option>
-                </select>
-              </div>
-            </label>
+              <button
+                class="loan-collateral-trigger"
+                type="button"
+                :disabled="!session.isAuthenticated"
+                aria-haspopup="dialog"
+                :aria-expanded="collateralPickerOpen"
+                aria-controls="loan-collateral-picker"
+                @click="openCollateralPicker"
+              >
+                <AssetMark v-if="selectedCollateral" :symbol="selectedCollateral.symbol" :src="selectedCollateral.logoUrl" :size="34" />
+                <span v-else class="loan-collateral-trigger__empty"><Landmark :size="18" /></span>
+                <span class="loan-collateral-trigger__copy">
+                  <strong>{{ selectedCollateral?.symbol || t('loan.noCollateralAssets') }}</strong>
+                  <small v-if="selectedCollateral" class="pencil-numeric">{{ t('loan.availableBalance', { amount: formatAmount(selectedCollateral.available) }) }}</small>
+                  <small v-else>{{ session.isAuthenticated ? t('loan.noCollateralAssets') : t('loan.loginDescription') }}</small>
+                </span>
+                <ChevronDown :size="18" />
+              </button>
+            </div>
             <label class="pencil-field">
               <span>{{ t('loan.collateralAmount') }}</span>
               <div class="pencil-field__shell" :class="{ 'is-invalid': collateralInvalid }">
@@ -462,6 +513,50 @@ onBeforeUnmount(() => {
       <div ref="riskNote" class="pencil-note loan-risk-note"><TriangleAlert :size="17" /><span>{{ t('loan.pencilRiskNote') }}</span></div>
     </div>
 
+    <Teleport to="body">
+      <div v-if="collateralPickerOpen" class="pencil-sheet-mask loan-collateral-mask" @click.self="closeCollateralPicker">
+        <section
+          id="loan-collateral-picker"
+          ref="collateralPickerDialog"
+          class="pencil-sheet loan-collateral-picker"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="loan-collateral-picker-title"
+          @keydown="handleCollateralPickerKeydown"
+        >
+          <div class="pencil-sheet__handle" />
+          <header>
+            <h2 id="loan-collateral-picker-title">{{ t('loan.selectCollateralAsset') }}</h2>
+            <button class="icon-button" type="button" :aria-label="t('common.close')" data-dialog-cancel @click="closeCollateralPicker"><X :size="20" /></button>
+          </header>
+          <div v-if="accounts.length" class="pencil-list loan-collateral-picker__list">
+            <button
+              v-for="account in accounts"
+              :key="account.assetId"
+              class="pencil-row loan-collateral-option"
+              :class="{ 'is-selected': account.assetId === collateralAssetId }"
+              type="button"
+              :aria-pressed="account.assetId === collateralAssetId"
+              :data-collateral-current="account.assetId === collateralAssetId"
+              @click="selectCollateralAsset(account)"
+            >
+              <AssetMark :symbol="account.symbol" :src="account.logoUrl" :size="40" />
+              <span class="pencil-row__copy">
+                <strong>{{ account.symbol }}</strong>
+                <small class="pencil-numeric">{{ t('loan.availableBalance', { amount: formatAmount(account.available) }) }}</small>
+              </span>
+              <span class="pencil-row__value"><Check v-if="account.assetId === collateralAssetId" :size="18" /></span>
+            </button>
+          </div>
+          <div v-else class="pencil-state loan-collateral-picker__empty">
+            <Landmark :size="24" />
+            <strong>{{ t('loan.noCollateralAssets') }}</strong>
+            <span>{{ t('loan.noCollateralAssetsDescription') }}</span>
+          </div>
+        </section>
+      </div>
+    </Teleport>
+
     <div v-if="pendingAction" class="confirmation-layer loan-mask" @click.self="closeOrderAction">
       <section
         ref="actionDialog"
@@ -473,7 +568,7 @@ onBeforeUnmount(() => {
         aria-labelledby="loan-action-title"
         aria-describedby="loan-action-summary"
         tabindex="-1"
-        @keydown="trapDialogFocus"
+        @keydown="handleActionDialogKeydown"
       >
         <header>
           <span class="confirmation-icon"><CircleAlert v-if="pendingAction.status.toLowerCase() === 'pending'" :size="20" /><CheckCircle2 v-else :size="20" /></span>
@@ -747,6 +842,69 @@ onBeforeUnmount(() => {
   margin-top: 12px;
 }
 
+.loan-collateral-trigger {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid transparent;
+  border-radius: 12px;
+  color: var(--ink);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 34px minmax(0, 1fr) 18px;
+  min-height: 58px;
+  padding: 8px 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.loan-collateral-trigger:hover:not(:disabled) {
+  background: var(--surface-3);
+}
+
+.loan-collateral-trigger:focus-visible {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  outline: 0;
+}
+
+.loan-collateral-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.loan-collateral-trigger__empty {
+  align-items: center;
+  background: var(--surface-3);
+  border-radius: 50%;
+  color: var(--muted);
+  display: flex;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+
+.loan-collateral-trigger__copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.loan-collateral-trigger__copy strong,
+.loan-collateral-trigger__copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loan-collateral-trigger__copy strong {
+  font-size: 13px;
+}
+
+.loan-collateral-trigger__copy small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
 .loan-presets {
   display: grid;
   gap: 6px;
@@ -839,6 +997,78 @@ onBeforeUnmount(() => {
   box-shadow: none;
 }
 
+.loan-collateral-mask {
+  overscroll-behavior: contain;
+}
+
+.loan-collateral-picker {
+  overflow-x: hidden;
+}
+
+.loan-collateral-picker .pencil-sheet__handle {
+  margin-bottom: 12px;
+}
+
+.loan-collateral-picker > header {
+  min-height: 52px;
+}
+
+.loan-collateral-picker :deep(.icon-button) {
+  background: var(--surface-2);
+  border: 0;
+  border-radius: 50%;
+  box-shadow: none;
+  color: var(--ink);
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  width: 44px;
+}
+
+.loan-collateral-picker__list {
+  margin: 0 -8px;
+}
+
+.loan-collateral-option {
+  border-radius: 12px;
+  grid-template-columns: 40px minmax(0, 1fr) 24px;
+  min-height: 68px;
+  padding: 0 8px;
+}
+
+.loan-collateral-option.is-selected {
+  background: var(--accent-soft);
+}
+
+.loan-collateral-option:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.loan-collateral-option .pencil-row__value {
+  color: var(--positive);
+  min-width: 24px;
+}
+
+.loan-collateral-picker__empty {
+  gap: 8px;
+  min-height: 180px;
+}
+
+.loan-collateral-picker__empty > svg {
+  color: var(--muted);
+}
+
+.loan-collateral-picker__empty strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.loan-collateral-picker__empty span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .loan-pencil :deep(.asset-mark) {
   border: 0;
   box-shadow: none;
@@ -860,6 +1090,16 @@ onBeforeUnmount(() => {
 
   .loan-presets {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .loan-collateral-trigger {
+    padding-inline: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loan-collateral-trigger {
+    transition: none;
   }
 }
 </style>
