@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 34
-- **Last Active**: 2026-08-11
+- **Total Sessions**: 35
+- **Last Active**: 2026-08-12
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1189 | Active |
+| `journal-1.md` | ~1222 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 35 | 2026-08-12 | 核对 Bitget 永续与手机端行情偏差 | `95186ab` | `main` |
 | 34 | 2026-08-11 | Mobile News Back Navigation | `b7dd650` | `main` |
 | 33 | 2026-08-11 | 移除手机借贷账户摘要 | `7b00d30`, `b57b439` | `main` |
 | 32 | 2026-08-11 | 手机借贷抵押资产弹窗与 Logo | `fbce300`, `e409f64` | `main` |

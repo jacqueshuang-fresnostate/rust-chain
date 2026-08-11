@@ -1187,3 +1187,36 @@ Enabled the shared /news back action, added Product Hub direct-open fallback, re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 35: 核对 Bitget 永续与手机端行情偏差
+
+**Date**: 2026-08-12
+**Task**: 核对 Bitget 永续与手机端行情偏差
+**Branch**: `main`
+
+### Summary
+
+使用 Ego 在同一时间窗口对比 Bitget 永续官网、Bitget 现货/永续 REST、HIPPO 合约页与公开 ticker，确认合约页当前复用现货行情链且 Redis 数据新鲜，固化证据和独立 USDT-FUTURES 接入边界。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `95186ab` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
