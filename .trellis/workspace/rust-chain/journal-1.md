@@ -1253,3 +1253,36 @@ Enabled the shared /news back action, added Product Hub direct-open fallback, re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 37: 回滚 Bitget 风格手机现货 K 线重构
+
+**Date**: 2026-08-12
+**Task**: 回滚 Bitget 风格手机现货 K 线重构
+**Branch**: `main`
+
+### Summary
+
+按用户反馈撤销被否决的图表优先 UI，恢复此前手机行情详情布局，同时保留 Bitget 现货价格权威与实时行情修复。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b522ccd` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
