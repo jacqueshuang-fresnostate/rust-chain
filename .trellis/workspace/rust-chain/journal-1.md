@@ -1220,3 +1220,36 @@ Enabled the shared /news back action, added Product Hub direct-open fallback, re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 36: 统一手机端 Bitget 现货行情口径
+
+**Date**: 2026-08-12
+**Task**: 统一手机端 Bitget 现货行情口径
+**Branch**: `main`
+
+### Summary
+
+首页、现货交易与行情详情统一使用 Bitget SPOT ticker；新增 observed_at 新者优先合并、权威涨跌幅映射和跨路由 consumer lease，并完成 359 项测试、PWA/Tauri 构建及 Ego 实页对比。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b486d17` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
