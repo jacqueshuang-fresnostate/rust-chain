@@ -1154,3 +1154,36 @@ Completed and verified the accumulated mobile Pencil page parity, assets and swa
 ### Next Steps
 
 - None - task complete
+
+
+## Session 34: Mobile News Back Navigation
+
+**Date**: 2026-08-11
+**Task**: Mobile News Back Navigation
+**Branch**: `main`
+
+### Summary
+
+Enabled the shared /news back action, added Product Hub direct-open fallback, regression coverage, navigation spec and progress records.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b7dd650` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

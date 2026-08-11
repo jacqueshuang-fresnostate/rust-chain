@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 33
+- **Total Sessions**: 34
 - **Last Active**: 2026-08-11
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1156 | Active |
+| `journal-1.md` | ~1189 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 34 | 2026-08-11 | Mobile News Back Navigation | `b7dd650` | `main` |
 | 33 | 2026-08-11 | 移除手机借贷账户摘要 | `7b00d30`, `b57b439` | `main` |
 | 32 | 2026-08-11 | 手机借贷抵押资产弹窗与 Logo | `fbce300`, `e409f64` | `main` |
 | 31 | 2026-08-11 | 手机现货持仓栏目归类 | `cebe8b3`, `6a66ef5` | `main` |
