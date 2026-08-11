@@ -1086,3 +1086,37 @@ Completed and verified the accumulated mobile Pencil page parity, assets and swa
 ### Next Steps
 
 - None - task complete
+
+
+## Session 32: 手机借贷抵押资产弹窗与 Logo
+
+**Date**: 2026-08-11
+**Task**: 手机借贷抵押资产弹窗与 Logo
+**Branch**: `main`
+
+### Summary
+
+将借贷抵押资产原生下拉框改为带后端钱包 Logo 的可访问底部弹窗，保留原有抵押校验与申请载荷，并补齐中英双语、测试和规范。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fbce300` | (see git log) |
+| `e409f64` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
