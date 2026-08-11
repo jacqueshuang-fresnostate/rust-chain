@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -139,6 +139,14 @@ describe('AgentManagementPage', () => {
     expect((await screen.findAllByText('AGT-001')).length).toBeGreaterThan(0);
     expect(screen.getByRole('heading', { name: '代理列表' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '创建代理' })).not.toBeInTheDocument();
+    const agentTable = screen.getByRole('grid');
+    expect(within(agentTable).getByRole('separator', { name: '调整操作列宽' })).toHaveAttribute('aria-valuemin', '120');
+    expect(within(agentTable).getByRole('columnheader', { name: '操作' })).toHaveClass('admin-table-action-column');
+    const detailButton = within(agentTable).getAllByRole('button', { name: '详情' })[0];
+    expect(detailButton.closest('td')).toHaveClass('admin-table-action-column');
+    const wrappedActionButtons = detailButton.closest('.semi-space') as HTMLElement;
+    expect(wrappedActionButtons).toHaveClass('semi-space-wrap');
+    expect(getComputedStyle(wrappedActionButtons).flexWrap).toBe('nowrap');
 
     fireEvent.click(screen.getByRole('tab', { name: '创建代理' }));
 

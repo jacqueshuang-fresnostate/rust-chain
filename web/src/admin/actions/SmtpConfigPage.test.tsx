@@ -115,7 +115,9 @@ describe('SmtpConfigPage', () => {
     const configTable = screen.getByRole('grid', { name: 'SMTP 发信配置列表' });
     expect(configTable.closest('.semi-table-wrapper')).toHaveClass('admin-resizable-table');
     expect(within(configTable).getByRole('separator', { name: '调整配置名称列宽' })).toBeInTheDocument();
-    expect(within(configTable).getByRole('separator', { name: '调整操作列宽' })).toBeInTheDocument();
+    expect(within(configTable).getByRole('separator', { name: '调整操作列宽' })).toHaveAttribute('aria-valuemin', '120');
+    expect(within(configTable).getByRole('columnheader', { name: '操作' })).toHaveClass('admin-table-action-column');
+    expect(within(configTable).getByRole('button', { name: '编辑' }).closest('td')).toHaveClass('admin-table-action-column');
     expect(configTable.querySelector('.react-resizable-handle')).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'SMTP host' }).closest('.semi-input-wrapper')).toBeInTheDocument();
     semiSelectByLabel('加密方式');

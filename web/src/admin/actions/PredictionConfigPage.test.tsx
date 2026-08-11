@@ -157,10 +157,13 @@ describe('PredictionConfigPage', () => {
     expect(tableWrapper).toHaveClass('admin-resizable-table');
     expect(within(assetTable).getByRole('separator', { name: '调整资产列宽' })).toBeInTheDocument();
     expect(within(assetTable).getByRole('separator', { name: '调整默认最大赔付列宽' })).toBeInTheDocument();
+    expect(within(assetTable).getByRole('separator', { name: '调整操作列宽' })).toHaveAttribute('aria-valuemin', '120');
     expect(assetTable.querySelector('.react-resizable-handle')).not.toBeInTheDocument();
     expect(within(assetTable).getByRole('columnheader', { name: '资产' })).toBeInTheDocument();
     expect(within(assetTable).getByRole('columnheader', { name: '状态' })).toBeInTheDocument();
     expect(within(assetTable).getByRole('columnheader', { name: '默认最大赔付' })).toBeInTheDocument();
+    expect(within(assetTable).getByRole('columnheader', { name: '操作' })).toHaveClass('admin-table-action-column');
+    expect(within(assetTable).getAllByRole('button', { name: '保存' })[0].closest('td')).toHaveClass('admin-table-action-column');
     expect(screen.getByRole('switch', { name: 'BTC 允许下注' })).not.toBeChecked();
     expect(screen.getByLabelText('USDT 默认最大赔付')).toHaveValue(1000);
 

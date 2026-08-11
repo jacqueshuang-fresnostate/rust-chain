@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   ResizableTable,
+  RESIZABLE_TABLE_ACTION_COLUMN_MIN_WIDTH,
   RESIZABLE_TABLE_DEFAULT_COLUMN_WIDTH,
   RESIZABLE_TABLE_MAX_COLUMN_WIDTH,
   RESIZABLE_TABLE_MIN_COLUMN_WIDTH
@@ -56,7 +57,52 @@ describe('ResizableTable', () => {
     expect(screen.queryByRole('separator', { name: '调整身份列宽' })).not.toBeInTheDocument();
     expect(document.querySelector('.react-resizable-handle')).not.toBeInTheDocument();
     expect(screen.getAllByRole('columnheader', { name: '操作' })).toHaveLength(1);
-    expect(screen.getByRole('columnheader', { name: '操作' })).toHaveClass('semi-table-cell-fixed-right');
+    expect(screen.getByRole('columnheader', { name: '操作' })).toHaveClass('admin-table-action-column', 'semi-table-cell-fixed-right');
+    expect(document.querySelector('.semi-table-row-cell.admin-table-action-column')).toBeInTheDocument();
+    expect(screen.getByRole('separator', { name: '调整操作列宽' })).toHaveAttribute('aria-valuemin', String(RESIZABLE_TABLE_ACTION_COLUMN_MIN_WIDTH));
+  });
+
+  it('recognizes only key actions as an action column and enforces its pointer and keyboard minimum', async () => {
+    render(
+      <ResizableTable<Row>
+        columns={[
+          { dataIndex: 'name', key: 'action', title: '操作', width: 96 },
+          {
+            className: 'existing-action-class',
+            dataIndex: 'id',
+            key: 'actions',
+            render: () => <button type="button">管理</button>,
+            title: '管理动作',
+            width: 96
+          }
+        ]}
+        dataSource={data}
+        pagination={false}
+        rowKey="id"
+      />
+    );
+
+    const businessHandle = screen.getByRole('separator', { name: '调整操作列宽' });
+    const actionHandle = screen.getByRole('separator', { name: '调整管理动作列宽' });
+    expect(businessHandle).toHaveAttribute('aria-valuemin', String(RESIZABLE_TABLE_MIN_COLUMN_WIDTH));
+    expect(actionHandle).toHaveAttribute('aria-valuemin', String(RESIZABLE_TABLE_ACTION_COLUMN_MIN_WIDTH));
+    expect(columnWidth('调整操作列宽')).toBe(96);
+    expect(columnWidth('调整管理动作列宽')).toBe(RESIZABLE_TABLE_ACTION_COLUMN_MIN_WIDTH);
+    expect(screen.getByRole('columnheader', { name: '操作' })).not.toHaveClass('admin-table-action-column');
+    expect(screen.getByRole('columnheader', { name: '管理动作' })).toHaveClass('admin-table-action-column', 'existing-action-class');
+    expect(screen.getByText('管理').closest('td')).toHaveClass('admin-table-action-column', 'existing-action-class');
+
+    fireEvent.keyDown(actionHandle, { key: 'ArrowLeft' });
+    expect(columnWidth('调整管理动作列宽')).toBe(RESIZABLE_TABLE_ACTION_COLUMN_MIN_WIDTH);
+    fireEvent.keyDown(businessHandle, { key: 'Home' });
+    expect(columnWidth('调整操作列宽')).toBe(RESIZABLE_TABLE_MIN_COLUMN_WIDTH);
+
+    fireEvent.pointerDown(actionHandle, { button: 0, clientX: 120, pointerId: 21, pointerType: 'mouse' });
+    fireEvent.pointerMove(document, { clientX: 0, pointerId: 21, pointerType: 'mouse' });
+    await waitFor(() => {
+      expect(columnWidth('调整管理动作列宽')).toBe(RESIZABLE_TABLE_ACTION_COLUMN_MIN_WIDTH);
+    });
+    fireEvent.pointerUp(document, { clientX: 0, pointerId: 21, pointerType: 'mouse' });
   });
 
   it('updates a controlled width and numeric scroll width during pointer dragging, then cleans document state', async () => {

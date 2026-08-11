@@ -39,6 +39,7 @@ function pagerItem(text: string): HTMLElement {
 }
 
 type TestRecord = {
+  action?: string;
   id: number;
   name: string;
   enabled: boolean;
@@ -132,10 +133,49 @@ describe('AdminResourcePage', () => {
     expect(grid.closest('.semi-table-bordered')).toHaveClass('semi-table-small');
     expect(grid.querySelector('.react-resizable-handle')).not.toBeInTheDocument();
     expect(screen.getByRole('separator', { name: '调整ID列宽' })).toBeInTheDocument();
-    expect(screen.getByRole('separator', { name: '调整操作列宽' })).toHaveAttribute('aria-valuenow', '216');
+    expect(screen.getByRole('separator', { name: '调整操作列宽' })).toHaveAttribute('aria-valuemin', '120');
+    expect(screen.getByRole('separator', { name: '调整操作列宽' })).toHaveAttribute('aria-valuenow', '288');
     expect(document.querySelector('.admin-data-table')).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: '操作' })).toHaveClass('semi-table-cell-fixed-right');
-    expect(screen.getByRole('button', { name: '查看详情' }).closest('td')).toHaveClass('semi-table-cell-fixed-right');
+    expect(screen.getByRole('columnheader', { name: '操作' })).toHaveClass('admin-table-action-column', 'semi-table-cell-fixed-right');
+    const actionButton = screen.getByRole('button', { name: '查看详情' });
+    expect(actionButton.closest('td')).toHaveClass('admin-table-action-column', 'semi-table-cell-fixed-right');
+    const actionButtons = actionButton.closest('.admin-table-action-buttons') as HTMLElement;
+    expect(actionButtons).toHaveClass('semi-space-horizontal');
+    expect(actionButtons).not.toHaveClass('semi-space-wrap');
+    expect(getComputedStyle(actionButtons).flexWrap).toBe('nowrap');
+    const actionButtonStyle = getComputedStyle(actionButton);
+    expect(actionButtonStyle.height).toBe('24px');
+    expect(actionButtonStyle.minHeight).toBe('24px');
+    expect(actionButtonStyle.paddingLeft).toBe('var(--admin-space-sm)');
+    expect(actionButtonStyle.paddingRight).toBe('var(--admin-space-sm)');
+    expect(getComputedStyle(document.documentElement).getPropertyValue('--admin-space-sm').trim()).toBe('8px');
+    expect(actionButtonStyle.whiteSpace).toBe('nowrap');
+  });
+
+  it('does not classify an audit business field titled operation as the action-button column', async () => {
+    listAdminResourceMock.mockResolvedValueOnce({
+      rows: [{ id: 11, action: 'login' }],
+      raw: { items: [] }
+    });
+
+    render(
+      <AdminResourcePage<TestRecord>
+        title="审计日志"
+        endpoint="/admin/api/v1/audit-logs"
+        responseKey="logs"
+        columns={[
+          { key: 'id', title: '日志ID' },
+          { key: 'action', title: '操作' }
+        ]}
+      />
+    );
+
+    expect(await screen.findByText('login')).toBeInTheDocument();
+    const operationHeaders = screen.getAllByRole('columnheader', { name: '操作' });
+    expect(operationHeaders).toHaveLength(2);
+    expect(operationHeaders.filter((header) => header.classList.contains('admin-table-action-column'))).toHaveLength(1);
+    expect(screen.getByText('login').closest('td')).not.toHaveClass('admin-table-action-column');
+    expect(screen.getByRole('button', { name: '查看详情' }).closest('td')).toHaveClass('admin-table-action-column');
   });
 
   it('switches the shared table between adaptive and compact modes', async () => {

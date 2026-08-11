@@ -2,6 +2,13 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-08-12 07:14 - 统一后台表格操作列与紧凑按钮
+
+- 完成内容：`ResizableTable` 仅通过 `key: 'actions'` 识别操作列，为表头/单元格注入专用 class，将操作列指针拖拽和键盘调整下限设为 120px，普通列仍为 80px；标准资源页右侧操作列改为 288px 且按钮组不换行，行内 Semi 按钮统一为 24px 高和 8px 水平内边距；补齐行情订阅和竞猜资产操作列 key，SMTP、KYC、行情订阅、竞猜、代理管理均纳入同一识别与样式逻辑，审计日志 `key: 'action'` 业务列保持不受影响。
+- 修改文件：`web/src/shared/ResizableTable{,.test}.tsx`、`web/src/admin/resources/AdminResourcePage{,.test}.tsx`、`web/src/admin/actions/{SmtpConfigPage,KycManagementPage,MarketFeedConfigPage,PredictionConfigPage,AgentManagementPage}.test.tsx`、`web/src/admin/actions/{MarketFeedConfigPage,PredictionConfigPage}.tsx`、`web/src/styles.css`、`.trellis/spec/admin/ui-system.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：复核后的受影响聚焦测试 58/58 通过；`VITE_API_BASE_URL=http://127.0.0.1:8080 npm --prefix web run test -- --maxWorkers=2` 在既有富文本理财产品用例上出现 1 个 10 秒超时（279/280），使用 `--testTimeout=30000` 完整重跑后 40 个文件、280/280 通过；`npm --prefix web run typecheck`、`npm --prefix web run lint`、`VITE_API_BASE_URL=http://127.0.0.1:8080 npm --prefix web run build`、Trellis task validate 与 `git diff --check` 通过。构建仅保留既有 lottie `eval` 与大 chunk 警告。
+- 后续事项：Ego Browser 已打开本地后台并到达管理员登录页，但 Cloudflare Turnstile 要求人工验证，未进入带真实业务数据的表格页；组件渲染测试已覆盖操作列 class、24px 最终高度、8px 内边距、单行组、固定列与宽度边界。
+
 ## 2026-08-12 05:57 - 回滚 Bitget 风格手机现货 K 线重构
 
 - 完成内容：按用户反馈通过 `git revert --no-commit` 撤销功能提交 `f27032a`、对应任务归档 `04997c7` 和会话记录 `1547158`，恢复重构前的手机行情详情布局、i18n、样式、测试与 Mobile 规范；保留此前 `b486d17` 的 Bitget 现货价格权威、WebSocket 实时行情和本地双图表引擎功能。

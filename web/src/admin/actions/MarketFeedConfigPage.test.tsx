@@ -173,11 +173,13 @@ describe('MarketFeedConfigPage', () => {
     expect(within(list).getByRole('separator', { name: '调整类型列宽' })).toBeInTheDocument();
     expect(within(list).getByRole('separator', { name: '调整订阅项列宽' })).toBeInTheDocument();
     expect(within(list).getByRole('separator', { name: '调整运行态列宽' })).toBeInTheDocument();
+    expect(within(list).getByRole('separator', { name: '调整操作列宽' })).toHaveAttribute('aria-valuemin', '120');
     expect(document.querySelector('.admin-action-subscription-list')).not.toBeInTheDocument();
     expect(within(list).getByRole('columnheader', { name: '类型' })).toBeInTheDocument();
     expect(within(list).getByRole('columnheader', { name: '订阅项' })).toBeInTheDocument();
     expect(within(list).getByRole('columnheader', { name: '配置态' })).toBeInTheDocument();
     expect(within(list).getByRole('columnheader', { name: '运行态' })).toBeInTheDocument();
+    expect(within(list).getByRole('columnheader', { name: '操作' })).toHaveClass('admin-table-action-column');
     expect(within(list).getAllByRole('gridcell', { name: '行情源' })).toHaveLength(3);
     expect(within(list).getAllByRole('gridcell', { name: '交易对' })).toHaveLength(2);
     expect(within(list).getAllByRole('gridcell', { name: 'K线周期' })).toHaveLength(5);
@@ -187,6 +189,7 @@ describe('MarketFeedConfigPage', () => {
     expect(within(list).getByText('Coinbase 行情')).toBeInTheDocument();
     expect(within(list).getByRole('gridcell', { name: 'BTCUSDT' })).toBeInTheDocument();
     expect(within(list).getByRole('gridcell', { name: '1m' })).toBeInTheDocument();
+    expect(within(list).getByRole('button', { name: '启用 行情源 coinbase' }).closest('td')).toHaveClass('admin-table-action-column');
 
     await user.click(within(list).getByRole('button', { name: '启用 行情源 coinbase' }));
 

@@ -90,7 +90,15 @@ const scroll = containedTableScrollForColumns(
   behavior. It must stop header sorting/filtering activation and clean up
   document listeners and the body drag state after pointer up, cancel, or
   unmount.
-- Standard resource action columns are fixed right and 216px wide.
+- Columns with `key: 'actions'` are action-button columns. They receive the
+  shared action-column class and a 120px resize minimum; ordinary data columns
+  retain the 80px minimum. A business field titled `操作` is not an action-button
+  column unless it uses that key.
+- Action-column Semi buttons set both `height` and `min-height` to 24px so the
+  shell-wide 36px minimum cannot win, use 8px horizontal padding, and keep
+  nested button groups and text on one line even when a caller requests wrap.
+- Standard resource action columns are fixed right and 288px wide, and their
+  button groups stay on one line.
 - Keep the fixed-right separator and shadow visible so the action column does
   not appear inserted between business columns.
 - Compact and adaptive `DataTable` modes both route through `ResizableTable`;
@@ -164,7 +172,11 @@ const scroll = containedTableScrollForColumns(
 
 - `ResizableTable`: a custom handle for every declared leaf, no Semi native
   `.react-resizable-handle`, Pointer and keyboard resizing, min/max bounds,
-  fixed-column coverage, row-selection width, prop forwarding, and cleanup.
+  fixed-column coverage, `key: 'actions'` classification, row-selection width,
+  prop forwarding, and cleanup.
+- Standard resource and custom action tables: 24px button height/min-height,
+  8px horizontal padding, and computed no-wrap behavior including callers that
+  still render a wrapping `Space`.
 - `DataTable`: local/server pagination, compact/adaptive modes, selection,
   stable row keys, project resize handles, and numeric scroll-width updates.
 - `FilterBar`: controlled-value synchronization, draft submit, blank pruning,
@@ -183,7 +195,7 @@ document horizontal overflow = 0
 every named asset-table leaf column has one project resize handle
 Semi native .react-resizable-handle count = 0
 Pointer and keyboard resizing update the column and numeric scroll width
-resource fixed action column = 216px
+resource fixed action column = 288px
 fixed action column remains aligned after resizing and horizontal scrolling
 medium asset SideSheet = 720px and two form columns
 Security Policy visible cards = active tab only

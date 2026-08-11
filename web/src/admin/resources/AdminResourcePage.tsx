@@ -367,8 +367,9 @@ export function AdminResourcePage<T extends ApiRecord>({
       ...resourceColumns,
       {
         fixed: 'right',
+        key: 'actions',
         render: (_value: unknown, record: T) => (
-          <Space spacing={6} wrap>
+          <Space className="admin-table-action-buttons" spacing={6}>
             {rowActions?.(record, { reload, openDetail })}
             {showJsonAction && !rowActions ? (
               <Button icon={<IconEyeOpened aria-hidden="true" />} onClick={() => openDetail({ title: '详情', data: record })} size="small" theme="borderless">
@@ -378,7 +379,7 @@ export function AdminResourcePage<T extends ApiRecord>({
           </Space>
         ),
         title: '操作',
-        width: 216
+        width: 288
       }
     ];
   }, [columns, openDetail, reload, rowActions, showJsonAction]);

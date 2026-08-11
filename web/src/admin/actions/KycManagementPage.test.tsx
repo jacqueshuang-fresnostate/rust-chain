@@ -167,6 +167,9 @@ describe('KycManagementPage', () => {
     expect(tableWrapper?.querySelector('.react-resizable-handle')).not.toBeInTheDocument();
     expect(within(tableWrapper as HTMLElement).getByRole('separator', { name: '调整申请ID列宽' })).toBeInTheDocument();
     expect(within(tableWrapper as HTMLElement).getByRole('separator', { name: '调整操作列宽' })).toHaveAttribute('aria-valuenow', '120');
+    expect(within(tableWrapper as HTMLElement).getByRole('separator', { name: '调整操作列宽' })).toHaveAttribute('aria-valuemin', '120');
+    expect(within(tableWrapper as HTMLElement).getByRole('columnheader', { name: '操作' })).toHaveClass('admin-table-action-column');
+    expect(within(tableWrapper as HTMLElement).getByRole('button', { name: '查看 KYC 申请 501' }).closest('td')).toHaveClass('admin-table-action-column');
     expect(within(tableWrapper as HTMLElement).getByText('kyc-user@example.test')).toBeInTheDocument();
     expect(within(tableWrapper as HTMLElement).getByText('Zhang San')).toBeInTheDocument();
     expect(within(tableWrapper as HTMLElement).getByText('CN12****7890')).toBeInTheDocument();
@@ -244,7 +247,10 @@ describe('KycManagementPage', () => {
     expect(screen.getByRole('tabpanel', { name: 'KYC 配置' })).toBeInTheDocument();
     const ruleTable = screen.getByRole('grid', { name: 'KYC 证件类型规则' });
     expect(within(ruleTable).getByRole('separator', { name: '调整国家 / 地区列宽' })).toBeInTheDocument();
-    expect(within(ruleTable).getByRole('separator', { name: '调整操作列宽' })).toBeInTheDocument();
+    expect(within(ruleTable).getByRole('separator', { name: '调整操作列宽' })).toHaveAttribute('aria-valuemin', '120');
+    expect(within(ruleTable).getByRole('separator', { name: '调整操作列宽' })).toHaveAttribute('aria-valuenow', '120');
+    expect(within(ruleTable).getByRole('columnheader', { name: '操作' })).toHaveClass('admin-table-action-column');
+    expect(within(ruleTable).getByRole('button', { name: '删除国家规则 1' }).closest('td')).toHaveClass('admin-table-action-column');
     expect(screen.getByText('身份证件正面')).toBeInTheDocument();
     expect(screen.getByText('身份证件反面')).toBeInTheDocument();
     expect(screen.getByText('本人手持证件照：1 个证件类型')).toBeInTheDocument();

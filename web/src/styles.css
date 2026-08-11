@@ -1234,6 +1234,37 @@ body.admin-table-column-resizing * {
   font-weight: 700;
 }
 
+.admin-resizable-table .semi-table-thead > .semi-table-row > .semi-table-row-head.admin-table-action-column,
+.admin-resizable-table .semi-table-tbody > .semi-table-row > .semi-table-row-cell.admin-table-action-column {
+  white-space: nowrap;
+  word-break: keep-all;
+}
+
+.admin-resizable-table .semi-table-row-cell.admin-table-action-column .semi-space {
+  width: max-content;
+  max-width: none;
+  flex-wrap: nowrap;
+}
+
+.admin-resizable-table .semi-table-tbody > .semi-table-row > .semi-table-row-cell.admin-table-action-column span {
+  display: inline-flex;
+  width: auto;
+  max-width: none;
+  white-space: nowrap;
+  word-break: keep-all;
+}
+
+.admin-resizable-table .semi-table-row-cell.admin-table-action-column .semi-button {
+  min-width: auto;
+  min-height: 24px;
+  height: 24px;
+  padding-top: 0;
+  padding-right: var(--admin-space-sm);
+  padding-bottom: 0;
+  padding-left: var(--admin-space-sm);
+  white-space: nowrap;
+}
+
 .admin-business-table .semi-table-row-cell .semi-button-primary {
   background: #fff0e7;
   color: var(--admin-color-primary);

@@ -19,10 +19,13 @@ import {
 
 export const RESIZABLE_TABLE_DEFAULT_COLUMN_WIDTH = 160;
 export const RESIZABLE_TABLE_MIN_COLUMN_WIDTH = 80;
+export const RESIZABLE_TABLE_ACTION_COLUMN_MIN_WIDTH = 120;
 export const RESIZABLE_TABLE_MAX_COLUMN_WIDTH = 1200;
 export const RESIZABLE_TABLE_KEYBOARD_STEP = 16;
 
 const SEMI_UTILITY_COLUMN_WIDTH = 48;
+const ACTION_COLUMN_KEY = 'actions';
+const ACTION_COLUMN_CLASS_NAME = 'admin-table-action-column';
 
 type AccessibleBodyContextValue = {
   ariaProps: Record<string, unknown>;
@@ -49,6 +52,7 @@ type LeafColumnModel<RecordType extends Record<string, unknown>> = {
   column: ColumnProps<RecordType>;
   id: string;
   initialWidth: number;
+  minWidth: number;
   safeKey?: string;
 };
 
@@ -61,18 +65,27 @@ type ColumnModel<RecordType extends Record<string, unknown>> = {
 type PointerResizeState = {
   captureTarget: HTMLSpanElement;
   columnId: string;
+  minWidth: number;
   pointerId: number;
   startWidth: number;
   startX: number;
 };
 
-function clampColumnWidth(width: number) {
-  return Math.min(RESIZABLE_TABLE_MAX_COLUMN_WIDTH, Math.max(RESIZABLE_TABLE_MIN_COLUMN_WIDTH, Math.round(width)));
+function isActionColumn<RecordType extends Record<string, unknown>>(column: ColumnProps<RecordType>) {
+  return column.key === ACTION_COLUMN_KEY;
 }
 
-function declaredColumnWidth<RecordType extends Record<string, unknown>>(column: ColumnProps<RecordType>) {
+function minimumColumnWidth<RecordType extends Record<string, unknown>>(column: ColumnProps<RecordType>) {
+  return isActionColumn(column) ? RESIZABLE_TABLE_ACTION_COLUMN_MIN_WIDTH : RESIZABLE_TABLE_MIN_COLUMN_WIDTH;
+}
+
+function clampColumnWidth(width: number, minWidth = RESIZABLE_TABLE_MIN_COLUMN_WIDTH) {
+  return Math.min(RESIZABLE_TABLE_MAX_COLUMN_WIDTH, Math.max(minWidth, Math.round(width)));
+}
+
+function declaredColumnWidth<RecordType extends Record<string, unknown>>(column: ColumnProps<RecordType>, minWidth: number) {
   const width = typeof column.width === 'number' && Number.isFinite(column.width) ? column.width : RESIZABLE_TABLE_DEFAULT_COLUMN_WIDTH;
-  return clampColumnWidth(width);
+  return clampColumnWidth(width, minWidth);
 }
 
 type BaseColumnIdentity = {
@@ -143,11 +156,13 @@ function createColumnModel<RecordType extends Record<string, unknown>>(columns: 
       const identityKey = baseColumnIdentityKey(identity);
       const duplicateIdentity = (identityCounts.get(identityKey) ?? 0) > 1;
       const id = columnId(identity, path, duplicateIdentity);
+      const minWidth = minimumColumnWidth(column);
       const leaf: LeafColumnModel<RecordType> = {
         accessibleLabel: accessibleColumnLabel(column, path),
         column,
         id,
-        initialWidth: declaredColumnWidth(column),
+        initialWidth: declaredColumnWidth(column, minWidth),
+        minWidth,
         safeKey: duplicateIdentity ? id : undefined
       };
       leaves.push(leaf);
@@ -205,13 +220,14 @@ type ColumnResizeHandleProps = {
   columnId: string;
   dragging: boolean;
   label: string;
+  minWidth: number;
   onKeyResize: (columnId: string, width: number) => void;
-  onPointerResizeStart: (columnId: string, width: number, event: ReactPointerEvent<HTMLSpanElement>) => void;
+  onPointerResizeStart: (columnId: string, width: number, minWidth: number, event: ReactPointerEvent<HTMLSpanElement>) => void;
   titleContent: ReactNode;
   width: number;
 };
 
-function ColumnResizeHandle({ columnId, dragging, label, onKeyResize, onPointerResizeStart, titleContent, width }: ColumnResizeHandleProps) {
+function ColumnResizeHandle({ columnId, dragging, label, minWidth, onKeyResize, onPointerResizeStart, titleContent, width }: ColumnResizeHandleProps) {
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLSpanElement>) => {
     let nextWidth: number | null = null;
     if (event.key === 'ArrowLeft') {
@@ -219,7 +235,7 @@ function ColumnResizeHandle({ columnId, dragging, label, onKeyResize, onPointerR
     } else if (event.key === 'ArrowRight') {
       nextWidth = width + RESIZABLE_TABLE_KEYBOARD_STEP;
     } else if (event.key === 'Home') {
-      nextWidth = RESIZABLE_TABLE_MIN_COLUMN_WIDTH;
+      nextWidth = minWidth;
     } else if (event.key === 'End') {
       nextWidth = RESIZABLE_TABLE_MAX_COLUMN_WIDTH;
     }
@@ -243,13 +259,13 @@ function ColumnResizeHandle({ columnId, dragging, label, onKeyResize, onPointerR
         aria-label={`调整${label}列宽`}
         aria-orientation="vertical"
         aria-valuemax={RESIZABLE_TABLE_MAX_COLUMN_WIDTH}
-        aria-valuemin={RESIZABLE_TABLE_MIN_COLUMN_WIDTH}
+        aria-valuemin={minWidth}
         aria-valuenow={width}
         className={`admin-table-column-resize-handle${dragging ? ' is-dragging' : ''}`}
         data-column-key={columnId}
         onClick={stopHeaderAction}
         onKeyDown={handleKeyDown}
-        onPointerDown={(event) => onPointerResizeStart(columnId, width, event)}
+        onPointerDown={(event) => onPointerResizeStart(columnId, width, minWidth, event)}
         role="separator"
         tabIndex={0}
       />
@@ -346,9 +362,9 @@ export function ResizableTable<RecordType extends Record<string, unknown>>(props
     }
   }, [columnModel, draggingColumnId]);
 
-  const updateColumnWidth = useCallback((columnId: string, width: number) => {
+  const updateColumnWidth = useCallback((columnId: string, width: number, minWidth = RESIZABLE_TABLE_MIN_COLUMN_WIDTH) => {
     setColumnWidths((current) => {
-      const nextWidth = clampColumnWidth(width);
+      const nextWidth = clampColumnWidth(width, minWidth);
       return current[columnId] === nextWidth ? current : { ...current, [columnId]: nextWidth };
     });
   }, []);
@@ -365,7 +381,7 @@ export function ResizableTable<RecordType extends Record<string, unknown>>(props
         return;
       }
       event.preventDefault();
-      updateColumnWidth(pointerResize.columnId, pointerResize.startWidth + event.clientX - pointerResize.startX);
+      updateColumnWidth(pointerResize.columnId, pointerResize.startWidth + event.clientX - pointerResize.startX, pointerResize.minWidth);
     };
     const finishPointerResize = (event: PointerEvent) => {
       const pointerResize = pointerResizeRef.current;
@@ -396,7 +412,7 @@ export function ResizableTable<RecordType extends Record<string, unknown>>(props
   }, [draggingColumnId, updateColumnWidth]);
 
   const startPointerResize = useCallback(
-    (columnId: string, width: number, event: ReactPointerEvent<HTMLSpanElement>) => {
+    (columnId: string, width: number, minWidth: number, event: ReactPointerEvent<HTMLSpanElement>) => {
       if (event.button !== 0 || pointerResizeRef.current) {
         return;
       }
@@ -408,6 +424,7 @@ export function ResizableTable<RecordType extends Record<string, unknown>>(props
       pointerResizeRef.current = {
         captureTarget: event.currentTarget,
         columnId,
+        minWidth,
         pointerId: event.pointerId,
         startWidth: width,
         startX: event.clientX
@@ -429,6 +446,9 @@ export function ResizableTable<RecordType extends Record<string, unknown>>(props
         const originalOnHeaderCell = leaf.column.onHeaderCell;
         return {
           ...leaf.column,
+          className: isActionColumn(leaf.column)
+            ? [leaf.column.className, ACTION_COLUMN_CLASS_NAME].filter(Boolean).join(' ')
+            : leaf.column.className,
           key: leaf.safeKey ?? leaf.column.key,
           onHeaderCell: (record, columnIndex, index) => {
             const headerCellProps = originalOnHeaderCell?.(record, columnIndex, index) ?? {};
@@ -442,7 +462,8 @@ export function ResizableTable<RecordType extends Record<string, unknown>>(props
               columnId={leaf.id}
               dragging={draggingColumnId === leaf.id}
               label={leaf.accessibleLabel}
-              onKeyResize={updateColumnWidth}
+              minWidth={leaf.minWidth}
+              onKeyResize={(columnId, nextWidth) => updateColumnWidth(columnId, nextWidth, leaf.minWidth)}
               onPointerResizeStart={startPointerResize}
               titleContent={renderColumnTitle(leaf.column.title, titleProps)}
               width={width}

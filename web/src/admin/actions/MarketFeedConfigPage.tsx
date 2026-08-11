@@ -294,6 +294,7 @@ export function MarketFeedConfigPage() {
       },
       {
         dataIndex: 'key',
+        key: 'actions',
         title: '操作',
         width: 140,
         render: (_value: string, row: SubscriptionRow) => (

@@ -367,6 +367,7 @@ export function PredictionConfigPage() {
       { dataIndex: 'updated_at', title: '更新时间', width: 180, render: (value) => <TimestampText value={typeof value === 'number' ? value : null} /> },
       {
         dataIndex: 'asset_id',
+        key: 'actions',
         title: '操作',
         width: 120,
         render: (_value, record) => (
