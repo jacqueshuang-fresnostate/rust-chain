@@ -1120,3 +1120,37 @@ Completed and verified the accumulated mobile Pencil page parity, assets and swa
 ### Next Steps
 
 - None - task complete
+
+
+## Session 33: 移除手机借贷账户摘要
+
+**Date**: 2026-08-11
+**Task**: 移除手机借贷账户摘要
+**Branch**: `main`
+
+### Summary
+
+移除 LoanView 冗余 loan-access-pencil__summary 和对应样式/双语文案，登录用户直达产品分类，访客仅保留紧凑登录 CTA。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7b00d30` | (see git log) |
+| `b57b439` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
