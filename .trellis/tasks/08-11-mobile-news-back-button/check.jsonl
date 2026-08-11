@@ -1,0 +1,2 @@
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Verify /news history Back, direct-open fallback and detail-route metadata against the navigation contract."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Verify the Pencil News Header remains accessible, correctly sized and compatible with the selected shell."}

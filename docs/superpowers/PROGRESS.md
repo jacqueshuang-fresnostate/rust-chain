@@ -7146,3 +7146,10 @@
 - 修改文件：`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/08-11-mobile-spot-order-type-sheet/prd.md`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：最终重新执行 Mobile 聚焦测试 24/24、全量测试 348/348、`npm --prefix mobile run lint --if-present`（项目无 lint 脚本）、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2070 modules、134 条预缓存）、`npm --prefix mobile run build:tauri`（2070 modules）、Trellis task validate 与 `git diff --check`，全部通过。
 - 后续事项：无；本次未进行真机手工视觉验收，准备提交归档。
+
+## 2026-08-11 08:33 - 手机新闻页增加返回按钮
+
+- 完成内容：将手机端 `/news` 从无返回入口的根页式 Header 修正为标准 Pencil 二级页 Header，复用共享 `PageHeader`、Lucide `ArrowLeft`、本地化返回标签和 `goBackOr`；从产品中心进入时按内部历史返回，直接打开或刷新新闻页时通过路由元数据安全替换到 `/products`。保留搜索按钮、分类查询、新闻接口与详情跳转原有行为，并补齐 44px 触控、无障碍、历史返回和直开兜底回归合同。
+- 修改文件：`mobile/src/views/NewsView.vue`、`mobile/src/router/index.ts`、`mobile/tests/{router-history,ui-prototype-alignment-secondary}.test.ts`、`.trellis/spec/mobile/navigation-and-localization.md`、`.trellis/tasks/08-11-mobile-news-back-button/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Mobile 聚焦测试 28/28、全量测试 352/352、`npm --prefix mobile run lint --if-present`（项目无 lint 脚本）、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2070 modules、134 条预缓存）、`npm --prefix mobile run build:tauri`（2070 modules）及 `git diff --check` 全部通过。
+- 后续事项：无；本次未修改新闻后端 API 或其他页面返回策略。

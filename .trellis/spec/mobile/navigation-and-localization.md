@@ -79,6 +79,12 @@ lastTradePath: ComputedRef<string>
   `message-center` route; `/messages` declares depth 1, hides the Dock, and
   falls back to named Home. Its custom selected-frame ArrowLeft calls
   `goBackOr` exactly like `PageHeader` rather than calling `router.back()`.
+- News is also a Product Hub detail route. Product Hub pushes the named `news`
+  route; `/news` declares depth 1, hides the Dock, and falls back to
+  `/products`. Its selected Pencil `PageHeader` must set `back` to `true` so
+  the shared 44px localized ArrowLeft is rendered. With usable internal
+  history it returns to the actual source; when `/news` is opened or refreshed
+  directly, `goBackOr` replaces it with `/products` instead of leaving the app.
 - Help & Support is a separate detail route. The Profile help row pushes named
   route `help-support`; `/profile/help` declares depth 1, hides the Dock, and
   falls back to `/profile`. Do not reuse Message Center for this row: Home Bell
@@ -165,6 +171,9 @@ lastTradePath: ComputedRef<string>
 | Home Bell opens Message Center | Push `/messages`, hide the Dock, and preserve Home in history |
 | Message Center Back has usable Home history | Use router Back and return Home |
 | Message Center Back has no usable history | Replace with named Home fallback |
+| Product Hub opens News | Push `/news`, hide the Dock, and preserve Product Hub in history |
+| News Back has usable Product Hub history | Use router Back and return `/products` |
+| News is opened directly | Replace with `/products` through the shared `PageHeader` fallback |
 | Profile Help row is selected | Push `/profile/help`; do not open Message Center |
 | Help is opened directly | Back replaces with `/profile` |
 | Trade mode changes | Replace route and persist mode |
@@ -180,7 +189,9 @@ lastTradePath: ComputedRef<string>
 
 - Good: Open futures for `DOGE_USDT`, visit Assets, then tap Trade; the app returns to `/trade/DOGE_USDT?mode=contract`.
 - Base: Open `/profile/language` directly and tap Back; the app replaces the route with `/profile`.
+- Base: Open `/news` directly and tap Back; the app replaces the route with `/products`.
 - Bad: Tap Home, Markets, and Assets, then browser Back returns to Markets. This means a main tab used `push`.
+- Bad: Render `/news` with `PageHeader :back="false"`; users have no visible route back to Product Hub.
 - Bad: Switch to English and still see fixed Chinese labels on product pages.
 
 ## 6. Tests Required
@@ -202,6 +213,9 @@ lastTradePath: ComputedRef<string>
 - Browser: Home Bell opens Message Center without Root Header or Dock; its
   ArrowLeft returns Home, while a direct-open message route uses the same Home
   fallback.
+- Source/router: `/news` renders the shared Pencil `PageHeader` with
+  `:back="true"`, declares `backFallback: '/products'`, preserves Product Hub
+  history when pushed, and uses `replace('/products')` when opened directly.
 - Browser: Profile Help opens `/profile/help` without the Dock, while the Home
   Bell still opens `/messages`; direct-open Help falls back to Profile.
 - Browser: all five dock destinations remain visible with at least 44px icon
@@ -230,6 +244,7 @@ const label = '确认订单'
 ```ts
 router.replace('/assets')
 await goBackOr(router, route.meta.backFallback || '/')
+// /news route meta.backFallback is '/products'; PageHeader owns this call.
 selectTradeMode('contract') // persists mode and replaces the route
 const label = t('prediction.confirmOrder')
 ```

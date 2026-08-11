@@ -20,6 +20,7 @@ import {
 const routes = [
   { path: '/', name: 'home', component: {} },
   { path: '/markets', name: 'markets', component: {} },
+  { path: '/news', name: 'news', component: {} },
   { path: '/products', name: 'products', component: {} },
   { path: '/seconds', name: 'seconds', component: {} },
   { path: '/assets', name: 'assets', component: {} },
@@ -243,6 +244,37 @@ test('底部入口 replace 到 Seconds 后强制回首页，产品中心 push �
     isBottomNavigationSecondsEntry(memoryRouter.options.history.state),
   )
   assert.equal(memoryRouter.currentRoute.value.fullPath, '/products')
+})
+
+test('新闻页优先返回产品中心历史，直开时 replace 到产品中心', async () => {
+  const historyFixture = createBrowserHistoryRouter()
+  try {
+    const router = historyFixture.router
+    await router.push('/')
+    await router.push('/products')
+    await router.push('/news')
+
+    assert.equal(router.options.history.state.back, '/products')
+    await goBackOrAndWait(router, '/products', false)
+    assert.equal(router.currentRoute.value.fullPath, '/products')
+  } finally {
+    historyFixture.restore()
+  }
+
+  const directRouter = createHistoryRouter()
+  await directRouter.replace('/news')
+  assert.equal(directRouter.options.history.state.back, undefined)
+
+  const replacements: RouteLocationRaw[] = []
+  const originalReplace = directRouter.replace.bind(directRouter)
+  directRouter.replace = ((target: RouteLocationRaw) => {
+    replacements.push(target)
+    return originalReplace(target)
+  }) as Router['replace']
+
+  await goBackOrAndWait(directRouter, '/products', false)
+  assert.deepEqual(replacements, ['/products'])
+  assert.equal(directRouter.currentRoute.value.fullPath, '/products')
 })
 
 test('登录 replace 到注册、忘记密码和 2FA 后，完成流程不会把登录页留在历史栈', async () => {

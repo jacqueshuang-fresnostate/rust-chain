@@ -72,7 +72,7 @@ onMounted(() => { void load() })
 
 <template>
   <main class="page page--plain pencil-page news-pencil" data-pencil-source="VGPW0 b6EGF">
-    <PageHeader class="news-pencil__header" :back="false" :pencil="true" :title="t('news.title')">
+    <PageHeader class="news-pencil__header" :back="true" :pencil="true" :title="t('news.title')">
       <template #actions>
         <button class="icon-button" type="button" :aria-label="t('news.search')" :aria-pressed="searchOpen" @click="searchOpen = !searchOpen">
           <X v-if="searchOpen" :size="20" /><Search v-else :size="20" />

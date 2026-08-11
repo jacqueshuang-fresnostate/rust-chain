@@ -38,6 +38,8 @@ const sources = Object.fromEntries(viewNames.map((name) => [
   name,
   readFileSync(new URL(`../src/views/${name}.vue`, import.meta.url), 'utf8'),
 ])) as Record<(typeof viewNames)[number], string>
+const pageHeaderSource = readFileSync(new URL('../src/components/PageHeader.vue', import.meta.url), 'utf8')
+const routerSource = readFileSync(new URL('../src/router/index.ts', import.meta.url), 'utf8')
 const prototypeCss = readFileSync(new URL('../src/styles/prototype-base.css', import.meta.url), 'utf8')
 const prototypeManagedContent = new Set(['LoanView', 'MessageCenterView', 'SecurityView'])
 const selectedCss = readFileSync(new URL('../src/styles/pencil-selected-pages.css', import.meta.url), 'utf8')
@@ -66,11 +68,6 @@ test('二级页面使用场景 Header 或完整认证身份区', () => {
       assert.match(source, /data-pencil-source="MCuqb RGYGj"/)
       continue
     }
-    if (name === 'NewsView') {
-      assert.match(source, /<PageHeader[\s\S]*?:back="false"/)
-      assert.match(source, /<PageHeader[\s\S]*?:pencil="true"/)
-      continue
-    }
     if (name === 'MessageCenterView') {
       assert.match(source, /<header class="message-root-header">/)
       assert.doesNotMatch(source, /<PageHeader/)
@@ -84,6 +81,29 @@ test('二级页面使用场景 Header 或完整认证身份区', () => {
       assert.match(source, /<PageHeader[\s\S]*?:subtitle=/, `${name} missing header subtitle`)
     }
   }
+})
+
+test('新闻页复用共享 44px 返回入口并以产品中心作为直开兜底', () => {
+  const source = sources.NewsView
+
+  assert.match(source, /<PageHeader class="news-pencil__header" :back="true" :pencil="true"/)
+  assert.doesNotMatch(source, /\bArrowLeft\b|\bgoBackOr\b/)
+  assert.match(pageHeaderSource, /import \{ ArrowLeft \} from 'lucide-vue-next'/)
+  assert.match(pageHeaderSource, /import \{ goBackOr \} from '@\/core\/navigation'/)
+  assert.match(pageHeaderSource, /class="icon-button page-header__back"/)
+  assert.match(pageHeaderSource, /:aria-label="showBack \? t\('common\.back'\) : undefined"/)
+  assert.match(
+    pageHeaderSource,
+    /\.pencil-page-header :deep\(\.icon-button\)\s*\{[\s\S]*?height: 44px !important;[\s\S]*?width: 44px !important;/,
+  )
+  assert.match(
+    routerSource,
+    /path: '\/news', name: 'news', component: NewsView, meta: \{ showBottomNav: false, depth: 1, backFallback: '\/products' \}/,
+  )
+
+  assert.match(source, /normalizeNewsCategory\(route\.query\.category\)/)
+  assert.match(source, /@click="searchOpen = !searchOpen"/)
+  assert.match(source, /@click="activeCategory = category\.value"/)
 })
 
 test('重点业务页保留各自的信息层级和完整状态表面', () => {

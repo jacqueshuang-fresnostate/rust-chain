@@ -44,7 +44,7 @@ const router = createRouter({
     { path: '/', name: 'home', component: HomeView, meta: { depth: 0 } },
     { path: '/markets', name: 'markets', component: MarketsView, meta: { depth: 0 } },
     { path: '/markets/:symbol', name: 'market-detail', component: MarketDetailView, props: true, meta: { showBottomNav: false, depth: 1, backFallback: '/markets' } },
-    { path: '/news', name: 'news', component: NewsView, meta: { showBottomNav: false, depth: 1, backFallback: '/' } },
+    { path: '/news', name: 'news', component: NewsView, meta: { showBottomNav: false, depth: 1, backFallback: '/products' } },
     { path: '/news/:id', name: 'news-detail', component: NewsDetailView, props: true, meta: { showBottomNav: false, depth: 2, backFallback: '/news' } },
     { path: '/messages', name: 'message-center', component: () => import('@/views/MessageCenterView.vue'), meta: { depth: 1, showBottomNav: false, backFallback: { name: 'home' } } },
     { path: '/trade/:symbol?', name: 'trade', component: TradeView, meta: { depth: 0, showBottomNav: true } },
