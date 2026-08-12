@@ -46,6 +46,8 @@ pub struct MarketIngestionService {
 }
 
 impl MarketIngestionService {
+    /// 以 Redis 实时缓存和 Mongo 历史库构造行情摄取器，默认不触发现货订单，也不持有广播中心。
+    /// 构造阶段不探测连接；缓存、索引或写入错误会在对应 `ingest_*` 调用时返回。
     pub fn new(cache: RedisMarketCache, database: mongodb::Database) -> Self {
         Self {
             cache,
@@ -55,6 +57,8 @@ impl MarketIngestionService {
         }
     }
 
+    /// 从应用状态取得必需的 Redis、Mongo 以及可选 MySQL、广播中心；缺少前两者立即返回配置错误。
+    /// 构造过程不发送 Redis/Mongo/WS 命令，也不探测连接可用性。
     pub fn from_state(state: &AppState) -> AppResult<Self> {
         let redis = state.redis.clone().ok_or_else(|| {
             AppError::Internal("redis connection is not configured for market ingestion".to_owned())
@@ -67,11 +71,13 @@ impl MarketIngestionService {
             .with_broadcast_hub(state.event_broadcast_hub.clone()))
     }
 
+    /// 注入可选 MySQL 池，供 ticker/depth 缓存成功后触发现货限价单；不测试连接或立即执行 SQL。
     pub fn with_mysql(mut self, mysql: Option<Pool<MySql>>) -> Self {
         self.mysql = mysql;
         self
     }
 
+    /// 注入进程内广播中心，供现货触发链发布订单事件；本方法本身不订阅或发布 WS 消息。
     pub fn with_broadcast_hub(mut self, broadcast_hub: Option<EventBroadcastHub>) -> Self {
         self.broadcast_hub = broadcast_hub;
         self
@@ -107,8 +113,8 @@ impl MarketIngestionService {
         Ok(())
     }
 
-    /// 将 K 线同时写入 Redis 最新快照与 Mongo 历史集合；交易对、周期和开盘时间必须先通过领域校验。
-    /// Mongo 以 interval+open_time 唯一索引 upsert，重放只覆盖同一根蜡烛；任一持久化错误原样上抛，不广播成功事件。
+    /// 将 K 线依次写入 Redis 最新快照与 Mongo 历史集合；交易对、周期和开盘时间必须先通过领域校验。
+    /// Mongo 以 interval+open_time 唯一索引 upsert，重放只覆盖同一根蜡烛；两次写入不在同一事务中，Mongo 失败时 Redis 快照不会回滚。
     pub async fn ingest_kline(&self, snapshot: &MarketKlineSnapshot) -> AppResult<()> {
         let entry = MarketKlineCacheEntry::from_snapshot(snapshot)
             .map_err(|error| AppError::Validation(error.to_string()))?;
@@ -186,6 +192,8 @@ pub struct MarketKlineMongoWrite {
 }
 
 impl MarketKlineMongoWrite {
+    /// 把领域 K 线转换为 Mongo 写模型：数值存十进制字符串，`source` 存 provider 名，`updated_at` 取观察时间。
+    /// 交易对和周期会重新校验；此步骤不访问 Mongo。
     pub fn from_snapshot(snapshot: &MarketKlineSnapshot) -> AppResult<Self> {
         let symbol = ValidatedMarketSymbol::from_raw(snapshot.symbol())
             .map_err(|error| AppError::Validation(error.to_string()))?;
@@ -205,14 +213,17 @@ impl MarketKlineMongoWrite {
         })
     }
 
+    /// 返回 K 线集合名称。
     pub fn collection_name(&self) -> String {
         kline_collection_name(&self.symbol)
     }
 
+    /// 返回交易对符号。
     pub fn symbol(&self) -> &ValidatedMarketSymbol {
         &self.symbol
     }
 
+    /// 生成 Mongo K 线 upsert 条件，仅以 `interval + open_time` 命中交易对专属集合中的同一根蜡烛。
     pub fn upsert_filter(&self) -> Document {
         doc! {
             "interval": &self.interval,
@@ -220,6 +231,7 @@ impl MarketKlineMongoWrite {
         }
     }
 
+    /// 生成 Mongo `$set` 文档，覆盖同一周期和开盘时间的 OHLC、成交量、provider 与观察时间。
     pub fn upsert_update(&self) -> Document {
         doc! {
             "$set": {

@@ -28,6 +28,17 @@ use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
 /// 分页排序必须带唯一列 id，否则同一排序值的行会在页间重复或丢失。
 const SECONDS_CONTRACT_PRODUCT_ORDER_BY: &str = " ORDER BY products.id DESC";
 
+/// 识别 MySQL 唯一键冲突，供秒合约开仓幂等恢复分支使用。
+///
+/// 同时兼容驱动错误码与旧版本消息文本；其他数据库故障保持原错误向上传递。
+pub(crate) fn is_duplicate_key_error(error: &sqlx::Error) -> bool {
+    let Some(database_error) = error.as_database_error() else {
+        return false;
+    };
+    matches!(database_error.code().as_deref(), Some("1062"))
+        || database_error.message().contains("Duplicate entry")
+}
+
 /// 行查询与 COUNT 查询必须由同一组过滤谓词构建，返回总数才能与当前筛选一致。
 async fn fetch_admin_page<T>(
     pool: &Pool<MySql>,
@@ -52,6 +63,7 @@ where
     Ok((items, total))
 }
 
+/// 按状态与上限读取秒合约产品及周期；公共目录只由应用层请求 active 状态。
 pub(crate) async fn list_products(
     pool: &Pool<MySql>,
     status: Option<&str>,
@@ -71,6 +83,7 @@ pub(crate) async fn list_products(
 }
 
 /// 后台产品列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
+/// 按后台筛选分页查询产品及总数，周期加载失败时不返回半完整产品。
 pub(crate) async fn list_admin_products(
     pool: &Pool<MySql>,
     status: Option<&str>,
@@ -136,6 +149,8 @@ fn push_seconds_contract_product_filters(
     }
 }
 
+/// 从连接池读取秒合约产品、交易对/结算资产展示字段及全部可选周期，产品缺失返回 NotFound。
+/// 两次查询不持有事务或行锁，因此只用于读模型；下单仍须在写事务中重新锁定并验证 active 产品快照。
 pub(crate) async fn load_product_by_id_from_pool(
     pool: &Pool<MySql>,
     product_id: u64,
@@ -160,6 +175,7 @@ pub(crate) async fn load_product_by_id_from_pool(
     Ok(product_response_from_row(product, cycles))
 }
 
+/// 交易对不存在时返回校验错误，应用层须回滚产品与审计事务。
 pub(crate) async fn ensure_pair_exists(
     tx: &mut Transaction<'_, MySql>,
     pair_id: u64,
@@ -174,6 +190,7 @@ pub(crate) async fn ensure_pair_exists(
     Ok(())
 }
 
+/// 投注资产不存在时返回校验错误，不创建产品或订单。
 pub(crate) async fn ensure_asset_exists(
     tx: &mut Transaction<'_, MySql>,
     asset_id: u64,
@@ -188,6 +205,7 @@ pub(crate) async fn ensure_asset_exists(
     Ok(())
 }
 
+/// 检测到任何历史订单即拒绝物理删除产品，保护订单外键与审计可追溯性。
 pub(crate) async fn ensure_product_has_no_orders(
     tx: &mut Transaction<'_, MySql>,
     product_id: u64,
@@ -206,6 +224,8 @@ pub(crate) async fn ensure_product_has_no_orders(
     Ok(())
 }
 
+/// 在管理事务内创建秒合约产品主记录，周期配置和审计由调用方同事务追加。
+/// 本函数不提交事务，也不移动用户资金；SQL 失败由调用方回滚后续周期和审计。
 pub(crate) async fn insert_product(
     tx: &mut Transaction<'_, MySql>,
     write: &SecondsContractProductWrite,
@@ -229,6 +249,8 @@ pub(crate) async fn insert_product(
     Ok(product_id)
 }
 
+/// 在管理事务内更新秒合约产品主字段，调用方随后替换周期并写 before/after 审计。
+/// 本函数不提交事务，也不改既有订单快照；SQL 失败由调用方整体回滚。
 pub(crate) async fn update_product(
     tx: &mut Transaction<'_, MySql>,
     product_id: u64,
@@ -254,6 +276,8 @@ pub(crate) async fn update_product(
     Ok(())
 }
 
+/// 在管理事务内更新秒合约产品启停状态，受影响记录不存在时沿用既有错误语义。
+/// 状态变更不处理既有订单；调用方负责同事务写管理审计并提交。
 pub(crate) async fn update_product_status(
     tx: &mut Transaction<'_, MySql>,
     product_id: u64,
@@ -267,6 +291,8 @@ pub(crate) async fn update_product_status(
     Ok(())
 }
 
+/// 删除已禁用且无历史订单的秒合约产品；前置约束由应用事务锁定后保证。
+/// 本函数只删除产品记录，不结算订单或修改钱包；调用方负责审计和提交。
 pub(crate) async fn delete_product_by_id(
     tx: &mut Transaction<'_, MySql>,
     product_id: u64,
@@ -278,6 +304,7 @@ pub(crate) async fn delete_product_by_id(
     Ok(())
 }
 
+/// 在调用方事务内回读产品及周期快照，不自行提交或获取额外锁。
 pub(crate) async fn load_product_by_id(
     tx: &mut Transaction<'_, MySql>,
     product_id: u64,
@@ -302,6 +329,8 @@ pub(crate) async fn load_product_by_id(
     Ok(product_response_from_row(product, cycles))
 }
 
+/// 在调用方事务内锁定待修改秒合约产品，固定秒合约后续校验与写入所依据的并发快照。
+/// 调用方负责稳定锁序及提交回滚；记录缺失或锁失败时不得继续资金和状态写入。
 pub(crate) async fn lock_product_by_id(
     tx: &mut Transaction<'_, MySql>,
     product_id: u64,
@@ -327,6 +356,8 @@ pub(crate) async fn lock_product_by_id(
     Ok(product_response_from_row(product, cycles))
 }
 
+/// 批量写入已规范化产品周期，持续时间唯一且默认周期顺序由应用层确定。
+/// 本函数不提交事务；任一周期写入失败由调用方回滚产品和审计。
 pub(crate) async fn insert_product_cycles(
     tx: &mut Transaction<'_, MySql>,
     product_id: u64,
@@ -350,6 +381,7 @@ pub(crate) async fn insert_product_cycles(
     Ok(())
 }
 
+/// 先删除旧周期再写入新集合，全部操作依赖调用方事务保证原子替换。
 pub(crate) async fn replace_product_cycles(
     tx: &mut Transaction<'_, MySql>,
     product_id: u64,
@@ -362,6 +394,7 @@ pub(crate) async fn replace_product_cycles(
     insert_product_cycles(tx, product_id, cycles).await
 }
 
+/// 按认证用户和上限读取秒合约订单，查询绝不跨用户返回记录。
 pub(crate) async fn list_user_orders(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -388,6 +421,7 @@ pub(crate) async fn list_user_orders(
 }
 
 /// 后台订单列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
+/// 按后台筛选查询秒合约订单及总数，行查询和 COUNT 条件保持一致。
 pub(crate) async fn list_admin_orders(
     pool: &Pool<MySql>,
     filter: SecondsContractAdminOrderFilter,
@@ -437,6 +471,7 @@ pub(crate) async fn list_admin_orders(
     .await
 }
 
+/// 读取秒合约订单详情及展示字段；不存在返回 NotFound，不触发结算。
 pub(crate) async fn load_order_by_id_from_pool(
     pool: &Pool<MySql>,
     order_id: u64,
@@ -448,6 +483,7 @@ pub(crate) async fn load_order_by_id_from_pool(
         .ok_or(AppError::NotFound)
 }
 
+/// 在开仓事务内锁定同键订单；命中后由应用层逐字段核对并阻止二次扣款。
 pub(crate) async fn existing_order_for_idempotency_key(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -473,6 +509,7 @@ pub(crate) async fn existing_order_for_idempotency_key(
     .map_err(AppError::from)
 }
 
+/// 事务前只读查询同键订单，使合法重放无需当前行情也不会再次扣款。
 pub(crate) async fn existing_order_for_idempotency_key_readonly(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -497,6 +534,8 @@ pub(crate) async fn existing_order_for_idempotency_key_readonly(
     .map_err(AppError::from)
 }
 
+/// 从 `market:ticker:{symbol}` Redis JSON 读取正 `last_price`，作为秒合约服务端入场价。
+/// `observed_at` 早于当前时间 60 秒、缓存缺失/损坏或价格非正均返回错误；本函数不用于到期或输赢判断。
 pub(crate) async fn cached_entry_price(
     redis: Option<&ConnectionManager>,
     pair_id: u64,
@@ -521,6 +560,8 @@ pub(crate) async fn cached_entry_price(
     Ok(ticker.last_price)
 }
 
+/// 在调用方事务内锁定启用秒合约产品及交易规则，固定秒合约后续校验与写入所依据的并发快照。
+/// 调用方负责稳定锁序及提交回滚；记录缺失或锁失败时不得继续资金和状态写入。
 pub(crate) async fn lock_active_product(
     tx: &mut Transaction<'_, MySql>,
     product_id: u64,
@@ -596,6 +637,7 @@ pub(crate) async fn lock_active_product(
     })
 }
 
+/// 读取启用资产精度，缺失时阻止资金计算而非使用默认小数位。
 pub(crate) async fn load_asset_precision_scale(
     tx: &mut Transaction<'_, MySql>,
     asset_id: u64,
@@ -607,6 +649,8 @@ pub(crate) async fn load_asset_precision_scale(
         .ok_or(AppError::NotFound)
 }
 
+/// 在开仓事务内写入服务端入场价、周期、赔付率和幂等键快照。
+/// 用户与幂等键唯一约束先于钱包扣款占位；冲突由应用层回读原单，本函数不提交事务。
 pub(crate) async fn insert_open_order(
     tx: &mut Transaction<'_, MySql>,
     order: &SecondsContractOrderInsert,
@@ -633,6 +677,8 @@ pub(crate) async fn insert_open_order(
     .map(|result| result.last_insert_id())
 }
 
+/// 在调用方事务内以行锁读取用户投注资产钱包，固定秒合约扣款或赔付期间的余额快照。
+/// 账户不存在或锁失败即终止事务；本函数本身不改余额，也不写资金流水。
 pub(crate) async fn lock_wallet_row(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -654,6 +700,8 @@ pub(crate) async fn lock_wallet_row(
     })
 }
 
+/// 在已持有钱包行锁的事务内更新可用余额，调用方负责同时写流水及订单状态。
+/// 受影响行数异常或数据库失败必须回滚，禁止将余额更新与结算记录分离提交。
 pub(crate) async fn update_wallet_available(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -669,6 +717,8 @@ pub(crate) async fn update_wallet_available(
     Ok(())
 }
 
+/// 在秒合约开仓或结算事务内写入资金流水，金额与 balance_after 必须对应同次钱包变更。
+/// 调用方事务失败时流水与余额一起回滚；同一订单重放不得追加第二笔同类流水。
 pub(crate) async fn insert_wallet_ledger(
     tx: &mut Transaction<'_, MySql>,
     entry: SecondsContractWalletLedgerWrite,
@@ -693,6 +743,7 @@ pub(crate) async fn insert_wallet_ledger(
     Ok(())
 }
 
+/// 在事务内回读秒合约订单快照，供提交前响应或审计使用。
 pub(crate) async fn load_order_by_id(
     tx: &mut Transaction<'_, MySql>,
     order_id: u64,
@@ -704,6 +755,8 @@ pub(crate) async fn load_order_by_id(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务内锁定待结算秒合约订单，固定秒合约后续校验与写入所依据的并发快照。
+/// 调用方负责稳定锁序及提交回滚；记录缺失或锁失败时不得继续资金和状态写入。
 pub(crate) async fn lock_order_by_id(
     tx: &mut Transaction<'_, MySql>,
     order_id: u64,
@@ -728,6 +781,8 @@ pub(crate) async fn lock_order_by_id(
     .ok_or(AppError::NotFound)
 }
 
+/// 把已由调用方持锁并确认 opened 的订单更新为 settled，写入结果与数据库当前结算时间。
+/// 本函数不写结算价格或赔付字段，也不自行附加 opened 条件；调用方事务负责钱包、流水和审计的一致提交。
 pub(crate) async fn mark_order_settled(
     tx: &mut Transaction<'_, MySql>,
     order_id: u64,
@@ -744,6 +799,8 @@ pub(crate) async fn mark_order_settled(
 }
 
 #[allow(clippy::too_many_arguments)] // 审计字段与数据库列稳定对应，调用方事务负责原子提交。
+/// 在产品或人工结算事务内写后台审计快照，确保状态变更与原因原子可追溯。
+/// 审计写入失败由调用方回滚对应配置或结算资金变更，不允许业务成功而缺失审计。
 pub(crate) async fn insert_admin_audit_log_in_tx(
     tx: &mut Transaction<'_, MySql>,
     admin_id: u64,

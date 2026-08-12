@@ -13,7 +13,7 @@ use axum::{
     routing::{get, patch, post},
 };
 
-use super::service::{admin_id_from_subject, mysql_pool, user_id_from_subject};
+use super::service::{admin_id_from_subject, user_id_from_subject};
 
 use super::presentation::{
     AdminLoanOrdersQuery, AdminLoanOrdersResponse, AdminLoanProductsQuery,
@@ -30,6 +30,15 @@ use super::application::{
     list_admin_products_use_case, list_user_orders_use_case, reject_loan_order_use_case,
     repay_loan_order_use_case, update_loan_product_status_use_case, update_loan_product_use_case,
 };
+
+/// 从 HTTP 运行时状态提取借贷用例所需的 MySQL 连接池。
+///
+/// 该适配只处理依赖装配，数据库未配置时返回稳定内部错误，不承载借贷业务规则。
+fn mysql_pool(state: &AppState) -> AppResult<crate::state::MySqlPool> {
+    state.mysql.clone().ok_or_else(|| {
+        crate::error::AppError::Internal("mysql pool is not configured for loan routes".to_owned())
+    })
+}
 
 /// 用户端借贷路由。
 pub fn user_routes() -> Router<AppState> {

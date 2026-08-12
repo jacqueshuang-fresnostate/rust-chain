@@ -34,6 +34,8 @@ pub(crate) fn publish_spot_cancel_private_event_by_order(
     Ok(())
 }
 
+/// 在现货业务状态成功提交后发布现货撤单私有事件，事件内容只使用已确认的持久化结果。
+/// 前置业务失败时不得发布；未配置广播目标沿用既有降级语义，且不会补做资金写入。
 pub(crate) fn publish_spot_cancel_private_event(
     hub: &EventBroadcastHub,
     user_id: u64,
@@ -52,6 +54,7 @@ pub(crate) fn publish_spot_cancel_private_event(
 }
 
 /// 推送现货订单创建事件到用户私有频道。
+/// 前置业务失败时不得发布；未配置广播目标沿用既有降级语义，且不会补做资金写入。
 pub(crate) fn publish_spot_created_private_event(
     hub: &EventBroadcastHub,
     user_id: u64,
@@ -72,6 +75,7 @@ pub(crate) fn publish_spot_created_private_event(
 }
 
 /// 在有新订单且已开启事件广播时推送创建与撮合事件。
+/// 前置业务失败时不得发布；未配置广播目标沿用既有降级语义，且不会补做资金写入。
 pub(crate) fn publish_spot_created_private_events_if_needed(
     hub: Option<&EventBroadcastHub>,
     user_id: u64,
@@ -139,6 +143,7 @@ pub(crate) fn publish_spot_fill_private_events(
 }
 
 /// 在有新成交且广播可用时推送成交事件。
+/// 前置业务失败时不得发布；未配置广播目标沿用既有降级语义，且不会补做资金写入。
 pub(crate) fn publish_spot_fill_private_events_if_needed(
     hub: Option<&EventBroadcastHub>,
     response: &SpotFillResponse,
@@ -228,6 +233,8 @@ pub struct SpotService<S, W> {
 }
 
 impl<S, W> SpotService<S, W> {
+    /// 注入现货订单仓储和钱包仓储，并构造共享的钱包服务供冻结、成交和撤单规则使用。
+    /// 构造本身不开始事务或锁余额；具体用例必须通过仓储原子边界保持订单、钱包与流水一致。
     pub fn new(spot_repository: S, wallet_repository: W) -> Self {
         Self {
             spot_repository,
@@ -235,6 +242,8 @@ impl<S, W> SpotService<S, W> {
         }
     }
 
+    /// 取出订单与成交仓储所有权的可复用现货业务规则，不直接拥有 HTTP 传输或数据库事务。
+    /// 消费现货服务并返还订单与成交仓储，不执行撤单、成交或资金操作。
     pub fn into_repositories(self) -> (S, W) {
         (self.spot_repository, self.wallet_service.into_repository())
     }
@@ -318,6 +327,8 @@ impl<S: SpotRepository, W: WalletRepository> SpotService<S, W> {
             .insert_order(new_order, command.idempotency_key.as_deref())
     }
 
+    /// 处理现货订单取消状态迁移的可复用现货业务规则，不直接拥有 HTTP 传输或数据库事务。
+    /// 仓储错误或状态冲突直接返回；调用方决定事务提交，失败后不得继续资金写入或事件发布。
     pub fn cancel_order(
         &mut self,
         command: CancelSpotOrderCommand,
@@ -347,6 +358,8 @@ impl<S: SpotRepository, W: WalletRepository> SpotService<S, W> {
         Ok(true)
     }
 
+    /// 处理现货订单成交的可复用现货业务规则，不直接拥有 HTTP 传输或数据库事务。
+    /// 仓储错误或状态冲突直接返回；调用方决定事务提交，失败后不得继续资金写入或事件发布。
     pub fn fill_order(
         &mut self,
         command: FillSpotOrderCommand,
@@ -403,10 +416,14 @@ pub(crate) struct SpotOrderReservation {
     pub(crate) amount: BigDecimal,
 }
 
+/// 按现货合同规范化幂等键，集中复用输入边界、状态机或金额精度规则。
+/// 裁剪并校验幂等键长度；空值或超长键不得占用唯一约束或触发资金写入。
 pub(crate) fn normalize_idempotency_key(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
+/// 处理现货订单幂等请求的可复用现货业务规则，不直接拥有 HTTP 传输或数据库事务。
+/// 归一化可选幂等键并返回建单前检查结果；空键表示不启用请求重放。
 pub(crate) fn spot_order_idempotency_check_for_insert(
     new_order: &NewOrder,
     request_price: Option<&BigDecimal>,
@@ -429,6 +446,8 @@ pub(crate) fn spot_order_idempotency_check_for_insert(
     }
 }
 
+/// 按现货合同校验现货订单幂等请求，集中复用输入边界、状态机或金额精度规则。
+/// 同键重放必须与用户、交易对、方向、类型、价格、数量及参考价完全一致。
 pub(crate) fn ensure_spot_order_idempotency_matches(
     existing: &SpotIdempotentOrderRecord,
     expected: &SpotOrderIdempotencyCheck,
@@ -461,6 +480,8 @@ pub(crate) fn ensure_spot_order_idempotency_matches(
     }
 }
 
+/// 按现货合同校验现货订单幂等请求，集中复用输入边界、状态机或金额精度规则。
+/// 插入竞态后的既有订单必须与新建请求和预留额一致，否则返回冲突。
 pub(crate) fn ensure_spot_order_idempotency_matches_insert(
     existing: &SpotIdempotentOrderRecord,
     new_order: &NewOrder,
@@ -477,6 +498,8 @@ pub(crate) fn ensure_spot_order_idempotency_matches_insert(
     ensure_spot_order_idempotency_matches(existing, &expected)
 }
 
+/// 处理现货成交订单锁序的可复用现货业务规则，不直接拥有 HTTP 传输或数据库事务。
+/// 生成买卖订单稳定锁序，按数据库主键排序以避免反向成交死锁。
 pub(crate) fn spot_fill_order_lock_keys(
     buy_order_id: &str,
     sell_order_id: &str,
@@ -500,6 +523,7 @@ pub(crate) fn admin_id_from_subject(subject: &str) -> AppResult<u64> {
 }
 
 /// 将底层 spot 服务错误统一转换为对外错误码与提示文案。
+/// 把现货领域错误映射为稳定参数、冲突或内部错误，保留失败语义。
 pub(crate) fn map_spot_error(error: crate::modules::spot::SpotServiceError) -> AppError {
     match error {
         crate::modules::spot::SpotServiceError::Repository(message)
@@ -526,6 +550,8 @@ pub(crate) fn map_spot_error(error: crate::modules::spot::SpotServiceError) -> A
     }
 }
 
+/// 处理现货成交钱包锁序的可复用现货业务规则，不直接拥有 HTTP 传输或数据库事务。
+/// 生成成交双方钱包稳定锁序，按用户与资产排序并去重相同账户。
 pub(crate) fn spot_fill_wallet_lock_keys(
     buyer_id: u64,
     seller_id: u64,
@@ -544,12 +570,16 @@ pub(crate) fn spot_fill_wallet_lock_keys(
     keys
 }
 
+/// 按现货合同解析现货订单请求标识，集中复用输入边界、状态机或金额精度规则。
+/// 解析现货请求订单标识，非法值在订单或钱包锁定前返回参数错误。
 pub(crate) fn parse_spot_order_request_id(order_id: &str) -> AppResult<u64> {
     order_id
         .parse::<u64>()
         .map_err(|_| AppError::Validation("invalid spot order id".to_owned()))
 }
 
+/// 按现货合同校验买卖订单成交匹配关系，集中复用输入边界、状态机或金额精度规则。
+/// 买卖单必须属于同一交易对且方向相反，错误组合不得进入成交事务。
 pub(crate) fn ensure_fill_orders_match(
     buy_order: &SpotOrder,
     sell_order: &SpotOrder,
@@ -567,6 +597,8 @@ pub(crate) fn ensure_fill_orders_match(
     Ok(())
 }
 
+/// 按现货合同校验价格，集中复用输入边界、状态机或金额精度规则。
+/// 成交价必须同时满足买单上限与卖单下限，防止越过用户委托价格。
 pub(crate) fn ensure_fill_price_matches_limits(
     buy_order: &SpotOrder,
     sell_order: &SpotOrder,
@@ -589,6 +621,8 @@ pub(crate) fn ensure_fill_price_matches_limits(
     Ok(())
 }
 
+/// 按现货合同校验逐笔成交，集中复用输入边界、状态机或金额精度规则。
+/// 成交幂等重放必须匹配买卖单、价格和数量，异参请求返回冲突。
 pub(crate) fn ensure_existing_spot_trade_matches_request(
     trade: &SpotTrade,
     buy_order_id: &str,
@@ -608,6 +642,8 @@ pub(crate) fn ensure_existing_spot_trade_matches_request(
     Ok(())
 }
 
+/// 按现货合同校验现货成交，集中复用输入边界、状态机或金额精度规则。
+/// 成交量与金额不得超过两侧剩余预留，避免 frozen 余额被透支。
 pub(crate) fn ensure_spot_fill_within_order_reservation(
     reservation: &SpotOrderReservation,
     requested_amount: &BigDecimal,
@@ -626,12 +662,16 @@ pub(crate) fn ensure_spot_fill_within_order_reservation(
     Ok(())
 }
 
+/// 处理现货订单的可复用现货业务规则，不直接拥有 HTTP 传输或数据库事务。
+/// 仓储错误或状态冲突直接返回；调用方决定事务提交，失败后不得继续资金写入或事件发布。
 pub(crate) fn cancel_spot_order_state(mut order: SpotOrder) -> AppResult<(SpotOrder, bool)> {
     let cancelled = crate::modules::spot::cancel_order(&mut order)
         .map_err(|error| AppError::Validation(format!("invalid spot cancel: {error:?}")))?;
     Ok((order, cancelled))
 }
 
+/// 组装现货订单的可复用现货业务规则，不直接拥有 HTTP 传输或数据库事务。
+/// 生成现货订单审计快照，金额保持字符串精度且不修改订单状态。
 pub(crate) fn spot_order_audit_json(order: &SpotOrder) -> Value {
     json!({
         "id": order.id,
@@ -646,6 +686,8 @@ pub(crate) fn spot_order_audit_json(order: &SpotOrder) -> Value {
     })
 }
 
+/// 按现货合同校验服务端市场价格，集中复用输入边界、状态机或金额精度规则。
+/// 服务端执行价与客户端参考价偏离不得超过固定基点，仅参考价参与滑点保护。
 pub(crate) fn ensure_market_price_within_reference(
     side: OrderSide,
     execution_price: &BigDecimal,
@@ -676,6 +718,8 @@ pub(crate) fn ensure_market_price_within_reference(
     }
 }
 
+/// 处理价格的可复用现货业务规则，不直接拥有 HTTP 传输或数据库事务。
+/// 计算仅返回领域结果且不修改余额；调用方须在事务内按资产精度落账并同步写流水。
 pub(crate) fn limit_order_reaches_execution_price(
     side: OrderSide,
     execution_price: &BigDecimal,
@@ -687,6 +731,8 @@ pub(crate) fn limit_order_reaches_execution_price(
     }
 }
 
+/// 处理价格的可复用现货业务规则，不直接拥有 HTTP 传输或数据库事务。
+/// 计算仅返回领域结果且不修改余额；调用方须在事务内按资产精度落账并同步写流水。
 pub(crate) fn stop_limit_order_reaches_execution_price(
     side: OrderSide,
     execution_price: &BigDecimal,
@@ -702,6 +748,7 @@ pub(crate) fn stop_limit_order_reaches_execution_price(
     trigger_reached && limit_reached
 }
 
+/// 返回限价买单触发条件，该只读访问不会触发外部查询或业务状态变更。
 pub(crate) fn is_triggerable_limit_buy_order(order: &SpotOrder, market_price: &BigDecimal) -> bool {
     order.side == OrderSide::Buy
         && order.order_type == OrderType::Limit
@@ -713,6 +760,7 @@ pub(crate) fn is_triggerable_limit_buy_order(order: &SpotOrder, market_price: &B
         && order.quantity > order.filled_quantity
 }
 
+/// 返回限价卖单触发条件，该只读访问不会触发外部查询或业务状态变更。
 pub(crate) fn is_triggerable_limit_sell_order(
     order: &SpotOrder,
     market_price: &BigDecimal,
@@ -727,6 +775,7 @@ pub(crate) fn is_triggerable_limit_sell_order(
         && order.quantity > order.filled_quantity
 }
 
+/// 返回止限价买单触发条件，该只读访问不会触发外部查询或业务状态变更。
 pub(crate) fn is_triggerable_stop_limit_buy_order(
     order: &SpotOrder,
     market_price: &BigDecimal,
@@ -745,6 +794,7 @@ pub(crate) fn is_triggerable_stop_limit_buy_order(
         && order.quantity > order.filled_quantity
 }
 
+/// 返回止限价卖单触发条件，该只读访问不会触发外部查询或业务状态变更。
 pub(crate) fn is_triggerable_stop_limit_sell_order(
     order: &SpotOrder,
     market_price: &BigDecimal,
@@ -763,6 +813,8 @@ pub(crate) fn is_triggerable_stop_limit_sell_order(
         && order.quantity > order.filled_quantity
 }
 
+/// 处理价格的可复用现货业务规则，不直接拥有 HTTP 传输或数据库事务。
+/// 计算仅返回领域结果且不修改余额；调用方须在事务内按资产精度落账并同步写流水。
 pub(crate) fn market_buy_reservation_price<'a>(
     request_reference_price: Option<&'a BigDecimal>,
     execution_price: &'a BigDecimal,
@@ -777,6 +829,8 @@ pub(crate) fn market_buy_reservation_price<'a>(
     })
 }
 
+/// 处理现货订单预留资金的可复用现货业务规则，不直接拥有 HTTP 传输或数据库事务。
+/// 计算仅返回领域结果且不修改余额；调用方须在事务内按资产精度落账并同步写流水。
 pub(crate) fn spot_order_reservation(
     order: &NewOrder,
     reference_price: Option<&BigDecimal>,

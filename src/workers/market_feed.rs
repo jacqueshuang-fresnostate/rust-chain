@@ -31,7 +31,8 @@ pub struct MarketFeedRuntimeConfig {
 }
 
 impl MarketFeedRuntimeConfig {
-    /// 从已规范化的交易对、周期和供应商码构造运行配置；仍会去重并校验供应商集合。
+    /// 从调用方已规范化的交易对/周期构造配置，仅解析并去重供应商码；连接重试秒数最小收敛为 1。
+    /// 本入口不重新验证 symbol/interval，也不创建供应商连接、缓存写入或广播任务。
     pub fn from_normalized(
         symbols: Vec<String>,
         intervals: Vec<String>,
@@ -47,7 +48,8 @@ impl MarketFeedRuntimeConfig {
         })
     }
 
-    /// 依据系统设置校验并规范化完整行情运行配置；空交易对表示显式禁用，非空配置必须至少生成一个供应商订阅。
+    /// 依据系统设置通过 provider adapter 规范化交易对、周期及供应商订阅矩阵；空交易对形成显式禁用配置。
+    /// 非空配置必须至少生成一个 provider config，否则启动失败；构造不连接外网、不写 Redis/Mongo，也不广播行情。
     pub fn new(
         settings: &Settings,
         symbols: Vec<String>,
@@ -152,8 +154,8 @@ impl MarketFeedSupervisorHandle {
         self.state.read().await.status.clone()
     }
 
-    /// 原子切换运行中的行情订阅配置：先校验并启动新任务，再替换监督器句柄和可观察状态。
-    /// 未启用配置会停止旧任务；旧任务仅在新配置可接受后中止，失败状态保留错误供管理端读取。
+    /// 应用一个版本化行情配置：先用 adapter 校验新订阅矩阵并启动新监督任务，再在写锁内中止旧任务、替换句柄并发布成功状态。
+    /// 禁用配置直接停止旧任务并记 skipped；校验失败发生在替换前，旧任务继续运行，调用方可另行用 `record_failure` 暴露错误。
     pub async fn reload(
         &self,
         state: AppState,
@@ -449,7 +451,8 @@ fn field_as_string(value: &Value, key: &str) -> Option<String> {
     }
 }
 
-/// 按运行时配置执行一次多供应商行情周期；禁用配置直接返回，不创建连接或写缓存。
+/// 对配置中的每个供应商各启动一个 WebSocket 周期并等待全部结束；任一任务失败会使本次调用失败。
+/// 禁用配置立即成功且无网络/持久化副作用；有效帧的 Redis/Mongo 写入、outbox 和实时广播由 ingestion sink 在处理时执行。
 pub async fn run_config_once(state: &AppState, config: &MarketFeedRuntimeConfig) -> AppResult<()> {
     if !config.enabled() {
         return Ok(());
@@ -459,8 +462,9 @@ pub async fn run_config_once(state: &AppState, config: &MarketFeedRuntimeConfig)
     run_once_with_providers(state, config.providers(), &symbol_refs, &interval_refs).await
 }
 
-/// 为每个启用供应商启动独立重连监督循环，并在任一任务异常退出时向监督器报告失败。
-/// 每个供应商周期优先 WebSocket，失败后才执行对应 REST 兜底；配置交易对与周期在任务启动后保持快照一致。
+/// 为配置中的每个供应商启动独立无限重连任务；每轮优先 WebSocket，失败且配置存在请求时才执行该供应商 REST 兜底。
+/// 单供应商失败按配置基准做有上限退避并继续，不影响其他供应商；若任一监督任务异常结束则本入口返回错误，交由上层配置 supervisor 标记失败。
+/// 每个有效帧在 ingestion 时写 Redis/Mongo、outbox 并广播，任务间没有跨供应商事务，前序持久化不会因后续连接故障回滚。
 pub async fn run_config_loop(state: AppState, config: MarketFeedRuntimeConfig) -> AppResult<()> {
     if !config.enabled() {
         return Ok(());
@@ -559,7 +563,8 @@ where
     }
 }
 
-/// 使用默认供应商集合执行一次行情订阅周期；任一供应商任务失败会使本次调用失败，不掩盖价格源异常。
+/// 为默认供应商集合并行执行一次 WebSocket 行情周期，使用调用方交易对/周期生成各自订阅范围。
+/// 任一供应商任务失败会使本次调用失败；其他任务已完成的 Redis/Mongo、outbox 与广播副作用不回滚。
 pub async fn run_once(state: &AppState, symbols: &[&str], intervals: &[&str]) -> AppResult<()> {
     run_once_with_providers(
         state,
@@ -857,7 +862,8 @@ pub fn ensure_market_feed_cycle_has_valid_frames(summary: &MarketFeedSummary) ->
     Ok(())
 }
 
-/// 从字符串配置构造行情运行时并持续监督多供应商订阅；未配置交易对时显式停用，不生成假行情。
+/// 从字符串配置完成交易对/周期/供应商校验后进入多供应商持续监督；连接失败按至少 1 秒基准退避并优先尝试 WebSocket。
+/// 未配置交易对时显式停用且不连接外网、不写缓存或生成假行情；运行中的持久化与广播时机由 ingestion 合同决定。
 pub async fn run_loop(
     state: AppState,
     symbols: Vec<String>,

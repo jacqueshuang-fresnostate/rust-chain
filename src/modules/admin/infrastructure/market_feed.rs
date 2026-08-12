@@ -1,4 +1,19 @@
 use super::*;
+use crate::{
+    modules::admin::service::MarketFeedRuntimeStatusSource, state::AppState,
+    workers::market_feed::MarketFeedRuntimeStatus,
+};
+
+impl MarketFeedRuntimeStatusSource for AppState {
+    /// 从应用状态中的行情监督器读取只读快照；读取过程不会改变后台任务生命周期。
+    /// 未安装监督器表示当前部署未启用该运行组件，此时保持历史行为并返回空状态。
+    async fn market_feed_runtime_status(&self) -> MarketFeedRuntimeStatus {
+        match &self.market_feed_supervisor {
+            Some(supervisor) => supervisor.status().await,
+            None => MarketFeedRuntimeStatus::default(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct AdminMarketFeedConfigRow {
@@ -26,6 +41,8 @@ struct AdminMarketSourceCredentialRow {
     enabled: bool,
 }
 
+/// 按传入主键或筛选条件从连接池读取行情订阅配置并映射为应用层所需的可选记录。
+/// 行情订阅配置不追加行锁，查询不创建事务；记录缺失时返回空值，SQL 或字段解码失败直接返回错误，不产生审计副作用。
 pub(crate) async fn load_admin_market_feed_config(
     pool: &Pool<MySql>,
 ) -> AppResult<Option<AdminMarketFeedConfigRecord>> {
@@ -37,6 +54,8 @@ pub(crate) async fn load_admin_market_feed_config(
     Ok(row.map(admin_market_feed_config_record))
 }
 
+/// 仅限启用记录、供启动装载从连接池读取行情订阅配置并映射为应用层所需的可选记录。
+/// 行情订阅配置不追加行锁，查询不创建事务；记录缺失时按查询本身语义处理，SQL 或字段解码失败直接返回错误，不产生审计副作用。
 pub(crate) async fn load_enabled_admin_market_feed_config_for_bootstrap(
     pool: &Pool<MySql>,
 ) -> AppResult<Option<AdminMarketFeedConfigRecord>> {
@@ -45,6 +64,8 @@ pub(crate) async fn load_enabled_admin_market_feed_config_for_bootstrap(
         .filter(|record| record.enabled))
 }
 
+/// 在调用方事务中按固定 default 名称锁定行情订阅配置，并以 Option 返回保存前快照。
+/// 命中记录以 `FOR UPDATE` 持锁至保存事务结束；首次配置返回 None，函数不创建默认行、提交或触发监督器。
 pub(crate) async fn lock_admin_market_feed_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
 ) -> AppResult<Option<AdminMarketFeedConfigRecord>> {
@@ -56,6 +77,8 @@ pub(crate) async fn lock_admin_market_feed_config_in_tx(
         .map_err(AppError::Database)
 }
 
+/// 在调用方事务中按固定 default 名称回读行情订阅配置，返回版本、应用版本和最近重载信息。
+/// 查询不追加锁且要求记录存在；无记录或 JSON/SQL 映射失败使保存用例回滚，函数不提交或执行重载。
 pub(crate) async fn load_admin_market_feed_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
 ) -> AppResult<AdminMarketFeedConfigRecord> {
@@ -67,6 +90,8 @@ pub(crate) async fn load_admin_market_feed_config_in_tx(
         .map_err(AppError::Database)
 }
 
+/// 在调用方事务中按固定 default 名称新增或覆盖订阅符号、周期、提供商、启用开关和保存版本。
+/// 唯一键命中时不改 applied_version/重载状态；调用方须先锁旧配置并与版本审计原子提交，函数不通知监督器。
 pub(crate) async fn upsert_admin_market_feed_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: AdminMarketFeedConfigWrite,
@@ -94,6 +119,8 @@ pub(crate) async fn upsert_admin_market_feed_config_in_tx(
     Ok(())
 }
 
+/// 读取全部行情源凭据的脱敏元数据，按提供方升序返回是否配置 API key/secret/passphrase。
+/// 查询不分页、不返回密文也不加锁；并发 upsert 可能改变下一次结果，SQL 或行映射失败直接返回错误。
 pub(crate) async fn list_admin_market_source_credentials(
     pool: &Pool<MySql>,
 ) -> AppResult<Vec<AdminMarketSourceCredentialRecord>> {
@@ -111,6 +138,8 @@ pub(crate) async fn list_admin_market_source_credentials(
         .collect())
 }
 
+/// 在调用方事务中按 provider 锁定行情源凭据，并返回含密文的可选旧记录。
+/// 首次写入返回 None；命中行锁持有至凭据事务结束，函数不解密、提交或重载行情源。
 pub(crate) async fn lock_admin_market_source_credential_in_tx(
     tx: &mut Transaction<'_, MySql>,
     provider: &str,
@@ -128,6 +157,8 @@ pub(crate) async fn lock_admin_market_source_credential_in_tx(
     Ok(row.map(admin_market_source_credential_record))
 }
 
+/// 在调用方事务中按 provider 回读已保存行情源凭据，供脱敏响应和审计组装。
+/// 查询不追加锁且要求记录存在；无记录或 SQL 映射失败由上层回滚，函数不解密或暴露密文到接口响应。
 pub(crate) async fn load_admin_market_source_credential_in_tx(
     tx: &mut Transaction<'_, MySql>,
     provider: &str,
@@ -145,6 +176,8 @@ pub(crate) async fn load_admin_market_source_credential_in_tx(
     .map_err(AppError::Database)
 }
 
+/// 在调用方事务中按 provider 新增或覆盖认证类型、三类凭据密文、掩码和启用状态。
+/// upsert 使相同 provider 重放覆盖当前值；调用方负责先锁记录、完成加密并与脱敏审计统一提交，函数不重载运行时。
 pub(crate) async fn upsert_admin_market_source_credential_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: AdminMarketSourceCredentialWrite,
@@ -175,6 +208,8 @@ pub(crate) async fn upsert_admin_market_source_credential_in_tx(
     Ok(())
 }
 
+/// 从全部 enabled 凭据中选择运行配置要求的 provider，解密并返回监督器使用的认证材料。
+/// 查询不加锁，结果按 providers 输入筛选；缺少必需密钥、密文解密或数据库失败返回错误，函数不修改凭据或启动连接。
 pub(crate) async fn load_enabled_admin_market_source_credential_secrets(
     pool: &Pool<MySql>,
     providers: &[String],
@@ -227,6 +262,8 @@ pub(crate) async fn load_enabled_admin_market_source_credential_secrets(
     Ok(selected)
 }
 
+/// 将指定保存版本标记为已成功应用，清空错误并记录成功时间，供后台判断无需再次重载。
+/// 该更新通过连接池独立提交且不操作监督器；SQL 失败返回错误，调用方随后决定是否写审计。
 pub(crate) async fn mark_admin_market_feed_reload_success(
     pool: &Pool<MySql>,
     version: u64,
@@ -246,6 +283,8 @@ pub(crate) async fn mark_admin_market_feed_reload_success(
         .ok_or(AppError::NotFound)
 }
 
+/// 将禁用配置的重载标记为已跳过，并把当前版本视为已处理以清除待重载提示。
+/// 该更新通过连接池独立提交且不停止监督器；运行时停止由应用层负责，SQL 失败直接返回错误。
 pub(crate) async fn mark_admin_market_feed_reload_skipped(
     pool: &Pool<MySql>,
     version: u64,
@@ -265,6 +304,8 @@ pub(crate) async fn mark_admin_market_feed_reload_skipped(
         .ok_or(AppError::NotFound)
 }
 
+/// 记录行情重载失败状态和清理后的错误摘要，同时保留未应用版本供后台继续提示重试。
+/// 该更新通过连接池独立提交且不恢复监督器；SQL 失败返回错误，重复记录仅覆盖最近失败信息。
 pub(crate) async fn mark_admin_market_feed_reload_failed(
     pool: &Pool<MySql>,
     error: &str,

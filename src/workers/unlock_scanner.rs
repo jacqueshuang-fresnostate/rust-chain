@@ -13,7 +13,8 @@ use tracing::{error, info, warn};
 pub struct UnlockScannerWorker;
 
 impl UnlockScannerWorker {
-    /// 执行一轮到期解禁扫描；只有已满足费用条件的 active 锁仓才进入资金释放事务。
+    /// 执行一轮到期解禁；候选查询上限收敛到 1..=100，只有费用条件满足且仍 active 的锁仓进入逐项资金事务。
+    /// 终态重扫幂等跳过，单项数据库错误会终止本批；释放事件只在对应事务提交后广播。
     pub async fn run_once(
         &self,
         state: &AppState,
@@ -111,7 +112,8 @@ pub fn due_unlock_positions(
         .collect()
 }
 
-/// 从应用状态取得 MySQL 与可选事件总线后执行一轮解禁；缺少数据库时立即失败。
+/// 从应用状态取得 MySQL 与可选进程内事件 hub 后释放至多 1..=100 条到期记录；缺少数据库时在扫描前失败。
+/// 资金和账本由逐项事务提交，私有事件仅在提交后尽力广播，hub 缺失不影响解禁结果。
 pub async fn run_once(
     state: &AppState,
     now: DateTime<Utc>,
@@ -129,7 +131,7 @@ pub async fn run_once(
     .await
 }
 
-/// 无事件广播地释放一批到期锁仓，供测试或显式批处理调用；资金和幂等规则与生产入口相同。
+/// 在显式 MySQL 依赖上释放同一有限批次但禁用进程内广播；解禁/锁仓/钱包锁序、资金守恒与终态幂等规则不变。
 pub async fn release_due_unlock_positions(
     pool: &Pool<MySql>,
     now: DateTime<Utc>,
@@ -138,8 +140,9 @@ pub async fn release_due_unlock_positions(
     release_due_unlock_positions_with_broadcast(pool, None, now, limit).await
 }
 
-/// 扫描有限数量的到期解禁记录并逐笔释放；每笔事务锁定解禁记录、锁仓和钱包，locked→available 与账本同事务提交。
-/// 未支付费用、状态变化或余额条件不符时不会释放；重复扫描终态记录会跳过，事件仅在提交成功后广播。
+/// 按到期时间扫描至多 `limit` 收敛后的 100 条可释放记录，并逐项锁定解禁记录、锁仓和钱包，将 locked→available 与账本原子提交。
+/// 未支付费用另行计数，状态变化或余额条件不符幂等跳过；本函数遇到单项数据库错误立即返回，已提交前项不回滚。
+/// 私有解禁事件只在对应事务提交后尽力广播；广播不持久化、无订阅者时丢弃，断线客户端不会重放。
 pub async fn release_due_unlock_positions_with_broadcast(
     pool: &Pool<MySql>,
     hub: Option<&EventBroadcastHub>,
@@ -165,7 +168,8 @@ pub async fn release_due_unlock_positions_with_broadcast(
     Ok(summary)
 }
 
-/// 按固定间隔持续解禁；周期错误记录后继续，解禁记录终态和账本引用保证重启后不会重复释放。
+/// 以至少 1 秒间隔持续解禁；周期或单项导致的批次错误只记录并进入下一轮。
+/// 解禁终态、剩余锁仓量和账本引用承担跨重启幂等；提交后进程内事件不会因循环重启补发。
 pub async fn run_loop(state: AppState, interval_seconds: u64, limit: u32) -> AppResult<()> {
     let mut ticker = interval(Duration::from_secs(interval_seconds.max(1)));
 

@@ -16,7 +16,7 @@ pub struct LoanOverdueWorkerConfig {
 }
 
 impl LoanOverdueWorkerConfig {
-    /// 从环境变量读取贷款逾期扫描配置；默认关闭，避免未显式启用时推进订单状态。
+    /// 读取贷款逾期开关、周期与批量环境配置；默认关闭、周期 300 秒、批量 100，缺失或不可解析值回落到这些默认值。
     pub fn from_env() -> Self {
         Self {
             enabled: env_bool("LOAN_OVERDUE_ENABLED", false),
@@ -52,9 +52,9 @@ enum LoanOverdueOutcome {
     Skipped,
 }
 
-/// 单轮扫描已放款且到期的贷款订单，并逐笔锁行推进为逾期状态。
-/// 扫描数高于成功上限以越过并发失效候选；单笔失败只计数并继续，状态已变化的订单幂等跳过。
-/// 当前入口不计提罚息、不修改钱包，也不发送消息，避免从未配置的费率生成资金结果。
+/// 单轮按到期时间和 ID 扫描已放款订单：成功上限为 `limit` 收敛到 1..=200，候选最多放大十倍且不超过 1,000。
+/// 每个订单在独立事务内 `FOR UPDATE` 后由 `disbursed` 推进为 `overdue`；状态/到期时间已变化时幂等跳过，单项 SQL 失败计数后继续，已提交项不回滚。
+/// 本 worker 不计提罚息、不改钱包、不写账本或发布事件，避免在产品未配置费率时制造资金副作用。
 pub async fn run_once_with_dependencies(
     pool: &Pool<MySql>,
     now: DateTime<Utc>,
@@ -81,7 +81,8 @@ pub async fn run_once_with_dependencies(
     Ok(summary)
 }
 
-/// 按固定间隔持续扫描贷款逾期；周期级错误记录后继续下一轮，数据库订单状态是重启后的恢复点。
+/// 以至少 1 秒间隔持续扫描贷款逾期；候选查询等周期级错误只记录并继续，单项失败已由单轮隔离。
+/// `loan_orders.status/overdue_at` 是跨重启恢复点，循环不维护额外游标，也不补发提交后事件。
 pub async fn run_loop(pool: Pool<MySql>, interval_seconds: u64, limit: u32) -> AppResult<()> {
     let mut ticker = interval(Duration::from_secs(interval_seconds.max(1)));
 

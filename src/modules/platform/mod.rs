@@ -6,7 +6,6 @@ pub mod domain;
 pub mod infrastructure;
 pub mod presentation;
 pub mod routes;
-pub mod service;
 
 pub use application::{PlatformBrandChange, load_platform_brand, save_platform_brand_in_tx};
 pub use presentation::{

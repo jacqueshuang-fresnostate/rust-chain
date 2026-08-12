@@ -28,6 +28,8 @@ pub fn kline_collection_name(symbol: &ValidatedMarketSymbol) -> String {
     format!("market_klines_{}", symbol.as_str())
 }
 
+/// 从 MySQL 返回全部 active 交易对及 base/quote 资产 Logo、精度和最小下单额，按 symbol 升序排列。
+/// 查询失败原样返回数据库错误，不把故障伪装为空市场列表。
 pub(crate) async fn list_active_markets(pool: &Pool<MySql>) -> AppResult<Vec<MarketResponse>> {
     let markets = sqlx::query_as::<_, MarketResponse>(
         r#"SELECT pairs.id,
@@ -54,6 +56,8 @@ pub(crate) async fn list_active_markets(pool: &Pool<MySql>) -> AppResult<Vec<Mar
     Ok(markets)
 }
 
+/// 查询用户仍处于 active 状态的自选交易对，按收藏创建时间和记录 ID 稳定排序。
+/// 已下架交易对不会出现在结果中；查询只读且不修复历史收藏记录。
 pub(crate) async fn list_user_market_favorites(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -80,6 +84,8 @@ pub(crate) async fn list_user_market_favorites(
     .map_err(AppError::from)
 }
 
+/// 将 active 现货交易对加入用户自选，并返回后台资产 Logo 等权威展示字段。
+/// `(user_id, trading_pair_id)` 唯一键通过 upsert 保证重复收藏幂等；未上架 symbol 在写入前返回校验错误。
 pub(crate) async fn add_user_market_favorite(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -102,6 +108,8 @@ pub(crate) async fn add_user_market_favorite(
     Ok(favorite)
 }
 
+/// 按用户和规范化交易对删除自选记录；不存在时仍成功，因此重试不会产生冲突。
+/// 只删除当前用户匹配记录，不修改交易对配置或其他用户收藏。
 pub(crate) async fn remove_user_market_favorite(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -147,6 +155,7 @@ async fn load_active_market_favorite(
     .map_err(AppError::from)
 }
 
+/// 判断规范化交易对是否对应至少一条 active MySQL 交易对记录，供自选与公共行情入口做上架校验。
 pub(crate) async fn market_symbol_is_listed(pool: &Pool<MySql>, symbol: &str) -> AppResult<bool> {
     let listed = sqlx::query_as::<_, (i64,)>(
         r#"SELECT COUNT(*)
@@ -162,6 +171,8 @@ pub(crate) async fn market_symbol_is_listed(pool: &Pool<MySql>, symbol: &str) ->
     Ok(listed)
 }
 
+/// 从统一 Redis ticker key 读取最新 JSON 快照；key 缺失返回 NotFound，损坏载荷返回内部错误。
+/// 本函数只反序列化，不判断价格正数或 `observed_at` 新鲜度，资金用例必须另行校验。
 pub(crate) async fn load_cached_ticker(
     redis: redis::aio::ConnectionManager,
     symbol: &str,
@@ -175,6 +186,8 @@ pub(crate) async fn load_cached_ticker(
     Ok(ticker)
 }
 
+/// 从统一 Redis depth key 读取盘口 JSON 并映射为公开响应；缺失与损坏缓存使用不同错误语义。
+/// 读取不回源 provider，也不重排买卖盘，调用方看到的是摄取器最后一次成功写入的快照。
 pub(crate) async fn load_cached_depth(
     redis: redis::aio::ConnectionManager,
     symbol: &str,
@@ -188,6 +201,8 @@ pub(crate) async fn load_cached_depth(
     Ok(DepthResponse::from_cache(depth))
 }
 
+/// 查询指定交易对最近的现货成交，按创建时间和成交 ID 倒序并使用调用方已限制的条数。
+/// 数据来自平台成交表而非 provider 逐笔流；查询失败不返回伪造行情。
 pub(crate) async fn list_recent_trades(
     pool: &Pool<MySql>,
     symbol: &str,
@@ -213,6 +228,8 @@ pub(crate) async fn list_recent_trades(
     Ok(rows.into_iter().map(TradeResponse::from_record).collect())
 }
 
+/// 从交易对独立 Mongo 集合查询指定周期与可选时间窗的历史 K 线，按开盘时间升序返回。
+/// `KlineQuery` 已限制周期和条数；Mongo 游标或文档解码失败立即返回，不跳过损坏蜡烛。
 pub(crate) async fn list_klines(
     database: Database,
     symbol: &ValidatedMarketSymbol,

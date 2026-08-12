@@ -28,6 +28,7 @@ pub(crate) struct ConvertQuoteAmounts {
     pub(crate) fee_amount: BigDecimal,
 }
 
+/// 只接受 `user:{u64}` 形式的鉴权 subject；格式错误返回未授权。
 pub(crate) fn user_id_from_subject(subject: &str) -> AppResult<u64> {
     subject
         .strip_prefix("user:")
@@ -35,22 +36,27 @@ pub(crate) fn user_id_from_subject(subject: &str) -> AppResult<u64> {
         .ok_or(AppError::Unauthorized)
 }
 
+/// 严格把客户端 quote_id 解析为 UUID；非法值在读取 Redis 或 MySQL 前返回参数错误。
 pub(crate) fn parse_quote_id(value: &str) -> AppResult<QuoteId> {
     Uuid::parse_str(value)
         .map(QuoteId)
         .map_err(|_| AppError::Validation("invalid quote_id".to_owned()))
 }
 
+/// 将闪兑列表数量规范为默认 50、最小 1、最大 100。
 pub(crate) fn route_limit(limit: Option<u32>) -> u32 {
     limit.unwrap_or(50).clamp(1, 100)
 }
 
+/// 裁剪可选查询文本并把空白值归一为 `None`；不校验订单状态枚举。
 pub(crate) fn optional_query_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
 }
 
+/// 把数据库交易对转换为请求方向的报价规则：正向沿用源侧限额，反向改用目标侧限额。
+/// 反向固定计价使用 `1 / fixed_rate`；固定汇率非正时在报价计算前拒绝，不读取钱包或行情。
 pub(crate) fn convert_pair_rule_from_record(
     row: ConvertPairRuleDbRecord,
     from_asset_id: u64,
@@ -90,6 +96,8 @@ pub(crate) fn convert_pair_rule_from_record(
     })
 }
 
+/// 校验源金额为正、fee_rate 位于 `[0,1)`、金额落在请求方向限额内且计价模式为 fixed/market。
+/// 该纯校验不处理小数位、不冻结 available，失败时不生成报价行或缓存。
 pub(crate) fn validate_quote_amount(amount: &BigDecimal, pair: &ConvertPairRule) -> AppResult<()> {
     if amount <= &BigDecimal::from(0) {
         return Err(AppError::Validation(
@@ -124,6 +132,7 @@ pub(crate) fn validate_quote_amount(amount: &BigDecimal, pair: &ConvertPairRule)
     Ok(())
 }
 
+/// 校验资产 precision_scale 位于钱包支持的 0..=18；损坏配置按内部错误处理。
 pub(crate) fn ensure_asset_precision_scale(precision_scale: i32) -> AppResult<()> {
     if !(0..=MAX_ASSET_PRECISION_SCALE).contains(&precision_scale) {
         return Err(AppError::Internal(format!(
@@ -133,6 +142,8 @@ pub(crate) fn ensure_asset_precision_scale(precision_scale: i32) -> AppResult<()
     Ok(())
 }
 
+/// 要求提交金额有效小数位不超过源资产 precision_scale，尾随零不计为额外精度。
+/// 本函数拒绝超精度输入而不隐式截断，确保报价、订单和源资产流水金额一致。
 pub(crate) fn ensure_convert_amount_precision(
     amount: &BigDecimal,
     precision_scale: i32,
@@ -148,6 +159,8 @@ pub(crate) fn ensure_convert_amount_precision(
     }
 }
 
+/// 报价阶段要求源资产 available 覆盖完整 from_amount；locked 只用于错误上下文，不能参与消费。
+/// 该快照校验不加钱包锁、不预留资金，确认事务仍会按最新 available 再次判定。
 pub(crate) fn ensure_sufficient_convert_balance(
     amount: &BigDecimal,
     balance: &WalletBalanceRecord,
@@ -162,6 +175,9 @@ pub(crate) fn ensure_sufficient_convert_balance(
     Ok(())
 }
 
+/// 按报价汇率、价差和费用计算目标到账额：`fee=from*fee_rate`，`to=(from-fee)*rate*(1-spread)`。
+/// fee 按源资产精度向零截断，to_amount 按目标资产精度向零截断；净源额或目标额非正时拒绝报价。
+/// 计算只返回快照，不扣 available；确认时源钱包仍扣完整 from_amount，费用不另生成钱包流水。
 pub(crate) fn convert_quote_amounts(
     from_amount: &BigDecimal,
     pair: &ConvertPairRule,
@@ -192,12 +208,15 @@ pub(crate) fn convert_quote_amounts(
     })
 }
 
+/// 返回交易对的固定汇率；缺失时拒绝报价，不以行情或客户端值兜底。
 pub(crate) fn resolve_fixed_convert_rate(pair: &ConvertPairRule) -> AppResult<BigDecimal> {
     pair.fixed_rate.clone().ok_or_else(|| {
         AppError::Validation("convert quote requires active fixed pricing rule".to_owned())
     })
 }
 
+/// 读取市场计价所需的交易对符号、base 资产和 quote 资产标识。
+/// 任一配置缺失即拒绝市场报价，不查询 Redis，也不猜测资产方向。
 pub(crate) fn convert_market_pricing_source(pair: &ConvertPairRule) -> AppResult<(&str, u64, u64)> {
     let symbol = pair.market_pair_symbol.as_deref().ok_or_else(|| {
         AppError::Validation("convert market pricing requires active trading pair".to_owned())
@@ -212,6 +231,8 @@ pub(crate) fn convert_market_pricing_source(pair: &ConvertPairRule) -> AppResult
     Ok((symbol, market_base_asset_id, market_quote_asset_id))
 }
 
+/// 请求方向与市场 base→quote 一致时使用原价，反向时使用 `1 / market_price`。
+/// 两侧资产不匹配即拒绝；正价格校验由行情适配器负责，本函数不读取或更新行情缓存。
 pub(crate) fn resolve_market_convert_rate(
     pair: &ConvertPairRule,
     market_price: BigDecimal,
@@ -230,6 +251,7 @@ pub(crate) fn resolve_market_convert_rate(
     ))
 }
 
+/// 将 Redis/MySQL 仓储错误统一映射为内部错误；不吞掉失败，也不改变已发生的存储副作用。
 pub(crate) fn map_convert_repository_error(error: ConvertRepositoryError) -> AppError {
     AppError::Internal(format!("{error:?}"))
 }
@@ -243,23 +265,29 @@ impl<R> ConvertService<R>
 where
     R: ConvertQuoteRepository,
 {
+    /// 注入闪兑仓储端口供报价与结算规则协调使用；构造时不读报价、不锁钱包，也不创建订单。
     pub fn new(repository: R) -> Self {
         Self { repository }
     }
 
-    /// 测试与复用场景需要能直接访问底层仓储快照（如检查幂等写入结果）。
+    /// 只读借用底层报价仓储，常用于检查内存适配器状态；本方法本身不读缓存。
     pub fn repository(&self) -> &R {
         &self.repository
     }
 
+    /// 可变借用底层仓储；借用本身无副作用，后续操作语义由具体适配器决定。
     pub fn repository_mut(&mut self) -> &mut R {
         &mut self.repository
     }
 
+    /// 消费服务并返还底层仓储所有权，不创建、确认报价或移动钱包余额。
     pub fn into_repository(self) -> R {
         self.repository
     }
 
+    /// 依据调用方提供的余额快照校验 available，再构造报价 TTL 并写入报价仓储。
+    /// 该通用服务不读取实时钱包、不冻结资金，且把 fee_rate/fee_amount 固定写为零；真实路由报价使用应用层费用计算。
+    /// 仓储写入失败直接返回；是否具备事务或覆盖语义完全取决于注入的 `ConvertQuoteRepository`。
     pub fn create_quote(
         &mut self,
         command: ConvertQuoteCommand,
@@ -309,6 +337,9 @@ impl<R> ConvertService<R>
 where
     R: ConvertQuoteRepository + ConvertOrderRepository,
 {
+    /// 从报价仓储读取缓存快照，校验确认时刻早于 expires_at，再写入一次确认记录。
+    /// 缓存缺失、过期或仓储失败均不产生新确认；仓储返回 Duplicate 时显式报告重复确认。
+    /// 该通用服务不校验报价归属、不锁钱包也不结算资金；真实路由确认由应用层 MySQL 事务完成。
     pub fn confirm_quote(
         &mut self,
         command: ConfirmConvertQuoteCommand,

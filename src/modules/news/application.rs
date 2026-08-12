@@ -26,6 +26,8 @@ pub(crate) fn mysql_pool(state: &AppState) -> AppResult<Pool<MySql>> {
     })
 }
 
+/// 返回已发布新闻列表，应用已校验的分类、地区、语言族、关键词和分页条件。
+/// 查询只读且不缓存；数据库失败不回退到草稿或静态新闻。
 pub async fn list_public_news_items(
     pool: &Pool<MySql>,
     filter: PublicNewsFilter,
@@ -35,6 +37,7 @@ pub async fn list_public_news_items(
     Ok(PublicNewsItemsResponse { news })
 }
 
+/// 仅返回指定已发布新闻；草稿、下架或不存在统一映射为 NotFound。
 pub async fn get_public_news_item(
     pool: &Pool<MySql>,
     news_id: u64,

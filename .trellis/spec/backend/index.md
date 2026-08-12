@@ -19,7 +19,7 @@ the feature contract for the business context being modified.
 | [Directory Structure](./directory-structure.md) | Optional DDD layers, dependency direction, module/test layout | Active |
 | [Database Guidelines](./database-guidelines.md) | Immutable migrations and MySQL text-metadata repair; general query guidance remains incomplete | Partial |
 | [Error Handling](./error-handling.md) | External-provider error mapping; general error taxonomy remains incomplete | Partial |
-| [Quality Guidelines](./quality-guidelines.md) | Executable architecture guards, exceptions, and validation | Active |
+| [Quality Guidelines](./quality-guidelines.md) | Executable architecture/documentation guards, adapter-independent services, hotspot limits, and validation | Active |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging and log-level guidance | Draft |
 | [Public News Contract](./public-news-contract.md) | Public news API locale, response, and rich-text rendering contract | Active |
 | [Spot Order Contracts](./spot-orders.md) | Spot market order reference-price protection, Redis ticker execution, and wallet reservation contract | Active |

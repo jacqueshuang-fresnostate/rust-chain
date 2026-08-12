@@ -66,6 +66,8 @@ pub(crate) struct AdminMarketStrategyUpdate {
     pub(crate) volume_max: BigDecimal,
 }
 
+/// 分页查询交易对，返回符合调用方筛选条件的记录及相同谓词下的总数。
+/// 交易对列表与计数通过连接池分别执行且均不加锁；并发写入可能造成页数据与总数快照不同，SQL 或字段映射失败直接返回错误。
 pub(crate) async fn list_admin_trading_pairs(
     pool: &Pool<MySql>,
     filter: AdminTradingPairListFilter,
@@ -104,6 +106,8 @@ pub(crate) async fn list_admin_trading_pairs(
     .await
 }
 
+/// 按传入主键或筛选条件从连接池读取交易对并映射为应用层所需的完整记录。
+/// 交易对不追加行锁，查询不创建事务；记录缺失时返回未找到，SQL 或字段解码失败直接返回错误，不产生审计副作用。
 pub(crate) async fn load_admin_trading_pair(
     pool: &Pool<MySql>,
     pair_id: u64,
@@ -118,6 +122,8 @@ pub(crate) async fn load_admin_trading_pair(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中插入交易对并返回或保留数据库写入结果。
+/// 交易对数据库唯一键冲突会映射为业务冲突；调用方持有提交边界并负责同事务审计，任一 SQL 失败使所属用例回滚。
 pub(crate) async fn insert_admin_trading_pair_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: AdminTradingPairInsert,
@@ -142,6 +148,8 @@ pub(crate) async fn insert_admin_trading_pair_in_tx(
     Ok(result.last_insert_id())
 }
 
+/// 在调用方事务中按传入主键或筛选条件更新交易对，写入应用层已决定的目标字段。
+/// 覆盖 Logo、价格/数量精度、最小下单额、状态和市场类型且不检查受影响行数；调用方须先锁交易对，并与审计统一提交。
 pub(crate) async fn update_admin_trading_pair_in_tx(
     tx: &mut Transaction<'_, MySql>,
     pair_id: u64,
@@ -164,6 +172,8 @@ pub(crate) async fn update_admin_trading_pair_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中针对状态字段更新交易对，写入应用层已决定的目标字段。
+/// 仅覆盖 status 且不检查受影响行数；调用方须先锁定交易对并验证启停迁移，函数不启动或停止行情 worker。
 pub(crate) async fn update_admin_trading_pair_status_in_tx(
     tx: &mut Transaction<'_, MySql>,
     pair_id: u64,
@@ -177,6 +187,8 @@ pub(crate) async fn update_admin_trading_pair_status_in_tx(
     Ok(())
 }
 
+/// 按传入主键或筛选条件从调用方事务快照读取交易对并映射为应用层所需的完整记录。
+/// 交易对不追加行锁，由调用方持有事务且本读取不提交；记录缺失时返回未找到，SQL 或字段解码失败直接返回错误，不产生审计副作用。
 pub(crate) async fn load_admin_trading_pair_in_tx(
     tx: &mut Transaction<'_, MySql>,
     pair_id: u64,
@@ -191,6 +203,8 @@ pub(crate) async fn load_admin_trading_pair_in_tx(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中按传入主键或筛选条件以 `FOR UPDATE` 锁定交易对并返回一致的修改前快照。
+/// 交易对锁由调用方事务持有至结束；函数不自行提交，记录缺失返回未找到，SQL 或解码失败交由外层回滚。
 pub(crate) async fn lock_admin_trading_pair_in_tx(
     tx: &mut Transaction<'_, MySql>,
     pair_id: u64,
@@ -203,6 +217,8 @@ pub(crate) async fn lock_admin_trading_pair_in_tx(
     load_admin_trading_pair_in_tx(tx, pair_id).await
 }
 
+/// 在调用方事务中按资产 ID 锁定 active 资产，确认其可作为新交易对的一端。
+/// `FOR UPDATE` 锁由交易对写事务持有；资产缺失或非 active 均返回未找到，函数不比较 base/quote，也不提交或写审计。
 pub(crate) async fn ensure_trading_pair_asset_in_tx(
     tx: &mut Transaction<'_, MySql>,
     asset_id: u64,
@@ -217,6 +233,8 @@ pub(crate) async fn ensure_trading_pair_asset_in_tx(
     Ok(())
 }
 
+/// 分页查询行情策略，返回符合调用方筛选条件的记录及相同谓词下的总数。
+/// 行情策略列表与计数通过连接池分别执行且均不加锁；并发写入可能造成页数据与总数快照不同，SQL 或字段映射失败直接返回错误。
 pub(crate) async fn list_admin_market_strategies(
     pool: &Pool<MySql>,
     filter: AdminMarketStrategyListFilter,
@@ -250,6 +268,8 @@ pub(crate) async fn list_admin_market_strategies(
     .await
 }
 
+/// 在调用方事务中锁定 active 交易对并返回其 market_type，确认其可绑定行情策略。
+/// 交易对不存在或非 active 返回未找到，类型不是 internal/strategy 返回校验错误；锁持有至策略事务结束，函数不修改交易对。
 pub(crate) async fn ensure_market_strategy_pair_in_tx(
     tx: &mut Transaction<'_, MySql>,
     pair_id: u64,
@@ -269,6 +289,8 @@ pub(crate) async fn ensure_market_strategy_pair_in_tx(
     Ok(row.0)
 }
 
+/// 在调用方事务中为新策略插入运行检查点，初始化当前价格、生成时间、K 线时间和 idle 恢复状态。
+/// strategy_id 是否唯一由数据库约束决定，函数不更新已存在检查点；调用方须将本写入与策略、版本、事件及审计统一提交，SQL 失败整体回滚。
 pub(crate) async fn insert_admin_market_strategy_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: AdminMarketStrategyInsert,
@@ -294,6 +316,8 @@ pub(crate) async fn insert_admin_market_strategy_in_tx(
     Ok(result.last_insert_id())
 }
 
+/// 在调用方事务中插入行情策略并返回或保留数据库写入结果。
+/// 行情策略函数不提供独立幂等保证，约束冲突沿用数据库错误；调用方持有提交边界并负责同事务审计，任一 SQL 失败使所属用例回滚。
 pub(crate) async fn insert_market_strategy_run_in_tx(
     tx: &mut Transaction<'_, MySql>,
     strategy_id: u64,
@@ -316,6 +340,8 @@ pub(crate) async fn insert_market_strategy_run_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中插入行情策略版本快照并返回或保留数据库写入结果。
+/// 行情策略版本快照函数不提供独立幂等保证，约束冲突沿用数据库错误；调用方持有提交边界并负责同事务审计，任一 SQL 失败使所属用例回滚。
 pub(crate) async fn insert_market_strategy_version_in_tx(
     tx: &mut Transaction<'_, MySql>,
     strategy_id: u64,
@@ -340,6 +366,8 @@ pub(crate) async fn insert_market_strategy_version_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中按传入主键或筛选条件更新行情策略，写入应用层已决定的目标字段。
+/// 行情策略更新不检查受影响行数；调用方须先完成所需锁定和状态校验，并负责提交、回滚及同事务审计。
 pub(crate) async fn update_admin_market_strategy_in_tx(
     tx: &mut Transaction<'_, MySql>,
     strategy_id: u64,
@@ -365,6 +393,8 @@ pub(crate) async fn update_admin_market_strategy_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中针对运行检查点更新行情策略运行检查点，写入应用层已决定的目标字段。
+/// 行情策略运行检查点更新会校验受影响行数；调用方须先完成所需锁定和状态校验，并负责提交、回滚及同事务审计。
 pub(crate) async fn update_market_strategy_run_checkpoint_in_tx(
     tx: &mut Transaction<'_, MySql>,
     strategy_id: u64,
@@ -387,6 +417,8 @@ pub(crate) async fn update_market_strategy_run_checkpoint_in_tx(
     ensure_market_strategy_run_updated(result.rows_affected())
 }
 
+/// 在调用方事务快照中计算指定策略的下一个版本号，即当前最大版本加一。
+/// 聚合查询不锁版本范围，单独并发调用可能得到同一版本号；调用方须先锁策略并立即插入版本，唯一键或 SQL 失败由整个策略事务回滚。
 pub(crate) async fn next_market_strategy_version_in_tx(
     tx: &mut Transaction<'_, MySql>,
     strategy_id: u64,
@@ -399,6 +431,8 @@ pub(crate) async fn next_market_strategy_version_in_tx(
     .await?)
 }
 
+/// 在调用方事务中按策略 ID 覆盖领域策略状态。
+/// 更新不检查受影响行数；调用方须先锁策略、校验状态迁移，并与运行状态、策略事件及后台审计统一提交。
 pub(crate) async fn update_market_strategy_status_in_tx(
     tx: &mut Transaction<'_, MySql>,
     strategy_id: u64,
@@ -412,6 +446,8 @@ pub(crate) async fn update_market_strategy_status_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中针对状态字段更新行情策略运行状态，写入应用层已决定的目标字段。
+/// 行情策略运行状态更新会校验受影响行数；调用方须先完成所需锁定和状态校验，并负责提交、回滚及同事务审计。
 pub(crate) async fn update_market_strategy_run_status_in_tx(
     tx: &mut Transaction<'_, MySql>,
     strategy_id: u64,
@@ -427,6 +463,8 @@ pub(crate) async fn update_market_strategy_run_status_in_tx(
     ensure_market_strategy_run_updated(result.rows_affected())
 }
 
+/// 按传入主键或筛选条件从调用方事务快照读取行情策略并映射为应用层所需的完整记录。
+/// 行情策略不追加行锁，由调用方持有事务且本读取不提交；记录缺失时返回未找到，SQL 或字段解码失败直接返回错误，不产生审计副作用。
 pub(crate) async fn load_admin_market_strategy_in_tx(
     tx: &mut Transaction<'_, MySql>,
     strategy_id: u64,
@@ -441,6 +479,8 @@ pub(crate) async fn load_admin_market_strategy_in_tx(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中按传入主键或筛选条件以 `FOR UPDATE` 锁定行情策略并返回一致的修改前快照。
+/// 行情策略锁由调用方事务持有至结束；函数不自行提交，记录缺失返回未找到，SQL 或解码失败交由外层回滚。
 pub(crate) async fn lock_admin_market_strategy_in_tx(
     tx: &mut Transaction<'_, MySql>,
     strategy_id: u64,
@@ -456,6 +496,8 @@ pub(crate) async fn lock_admin_market_strategy_in_tx(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中追加策略动作及 JSON 载荷，形成策略生命周期事件记录。
+/// 事件插入不按 action 去重且不会向外部消息系统发布；调用方负责与策略状态和后台审计原子提交，JSON 绑定或 SQL 失败时整体回滚。
 pub(crate) async fn insert_market_strategy_event_in_tx(
     tx: &mut Transaction<'_, MySql>,
     strategy_id: u64,

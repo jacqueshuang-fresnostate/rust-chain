@@ -72,6 +72,8 @@ pub struct RiskScope {
 }
 
 impl RiskScope {
+    /// 构造风控匹配维度和值，例如 user、asset 或 operation；值原样保留供策略比较。
+    /// 本值对象不加载规则或执行限额判断，维度名称的合法性由调用方的策略合同保证。
     pub fn new(dimension: &'static str, value: impl Into<String>) -> Self {
         Self {
             dimension,
@@ -119,7 +121,8 @@ impl RateLimitCandidate {
     }
 }
 
-/// 合并同时命中当前操作和作用域的规则；没有命中规则时返回全放行策略。
+/// 合并同时命中当前操作和作用域的规则；数值阈值取最严，黑名单取并集。
+/// 结果与存储行顺序无关且不执行 I/O；无匹配时返回全放行策略。
 pub fn resolve_risk_policy(
     stored: &[StoredRiskRule],
     operation: &str,

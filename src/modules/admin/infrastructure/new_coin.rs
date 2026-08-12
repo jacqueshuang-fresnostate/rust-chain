@@ -74,6 +74,8 @@ pub(crate) struct AdminNewCoinConvertRuleWrite {
     pub(crate) admin_id: u64,
 }
 
+/// 分页查询新币项目，返回符合调用方筛选条件的记录及相同谓词下的总数。
+/// 新币项目列表与计数通过连接池分别执行且均不加锁；并发写入可能造成页数据与总数快照不同，SQL 或字段映射失败直接返回错误。
 pub(crate) async fn list_admin_new_coin_projects(
     pool: &Pool<MySql>,
     limit: u32,
@@ -91,6 +93,8 @@ pub(crate) async fn list_admin_new_coin_projects(
     .await
 }
 
+/// 按项目、用户、邮箱和状态筛选新币认购记录，分页返回认购、已派发数量及总数。
+/// 列表与 COUNT 分别通过连接池执行且不锁认购行；并发认购或派发可能造成页数据与总数快照不同，SQL/映射失败返回错误。
 pub(crate) async fn list_admin_new_coin_subscriptions(
     pool: &Pool<MySql>,
     filter: AdminNewCoinFlatListFilter,
@@ -126,6 +130,8 @@ pub(crate) async fn list_admin_new_coin_subscriptions(
     .await
 }
 
+/// 按项目、用户、邮箱和状态筛选新币派发记录，分页返回数量、业务幂等键、锁仓编号及总数。
+/// 两条连接池查询共用谓词并按记录 ID 倒序但不加锁；并发派发可能导致本页与总数不处于同一快照。
 pub(crate) async fn list_admin_new_coin_distributions(
     pool: &Pool<MySql>,
     filter: AdminNewCoinFlatListFilter,
@@ -161,6 +167,8 @@ pub(crate) async fn list_admin_new_coin_distributions(
     .await
 }
 
+/// 按项目、用户、邮箱和状态筛选新币购买记录，分页返回支付/购得数量、锁仓编号和总数。
+/// 列表及计数读取不锁购买、项目或钱包记录；并发购买可能改变计数口径，数据库或十进制字段解码失败直接返回错误。
 pub(crate) async fn list_admin_new_coin_purchases(
     pool: &Pool<MySql>,
     filter: AdminNewCoinFlatListFilter,
@@ -196,6 +204,8 @@ pub(crate) async fn list_admin_new_coin_purchases(
     .await
 }
 
+/// 按项目、用户、邮箱和状态筛选新币锁仓头寸，分页返回总量、已解锁量、规则快照及总数。
+/// 查询不锁锁仓或钱包，列表与 COUNT 可能受并发解锁影响而来自不同快照；JSON/数值映射或 SQL 失败返回错误。
 pub(crate) async fn list_admin_new_coin_lock_positions(
     pool: &Pool<MySql>,
     filter: AdminNewCoinLockPositionListFilter,
@@ -233,6 +243,8 @@ pub(crate) async fn list_admin_new_coin_lock_positions(
     .await
 }
 
+/// 按项目、用户、邮箱和锁仓编号筛选新币解锁流水，分页返回净额、手续费、业务键及总数。
+/// 列表和 COUNT 使用同一谓词、按解锁记录 ID 倒序且不锁资金行；并发解锁可能造成快照差异，SQL/金额映射失败返回错误。
 pub(crate) async fn list_admin_new_coin_unlocks(
     pool: &Pool<MySql>,
     filter: AdminNewCoinUnlockListFilter,
@@ -275,6 +287,8 @@ pub(crate) async fn list_admin_new_coin_unlocks(
     .await
 }
 
+/// 在调用方事务中插入新币项目并返回或保留数据库写入结果。
+/// 新币项目函数不提供独立幂等保证，约束冲突沿用数据库错误；调用方持有提交边界并负责同事务审计，任一 SQL 失败使所属用例回滚。
 pub(crate) async fn insert_admin_new_coin_project_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: AdminNewCoinProjectInsert,
@@ -304,6 +318,8 @@ pub(crate) async fn insert_admin_new_coin_project_in_tx(
     Ok(result.last_insert_id())
 }
 
+/// 在调用方事务中更新新币项目生命周期状态及上市时间，字段值由应用层迁移规则预先决定。
+/// 函数不提交事务或写审计；SQL 失败由上层连同生命周期事件和其他变更整体回滚。
 pub(crate) async fn update_admin_new_coin_project_lifecycle_in_tx(
     tx: &mut Transaction<'_, MySql>,
     project_id: u64,
@@ -319,6 +335,8 @@ pub(crate) async fn update_admin_new_coin_project_lifecycle_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中更新新币项目的解锁类型、上市时间及固定或相对解锁时点。
+/// 函数不验证规则形状、不提交或写审计；SQL 失败由应用层连同项目变更整体回滚。
 pub(crate) async fn update_admin_new_coin_project_unlock_rule_in_tx(
     tx: &mut Transaction<'_, MySql>,
     project_id: u64,
@@ -339,6 +357,8 @@ pub(crate) async fn update_admin_new_coin_project_unlock_rule_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中更新新币解锁手续费开关、费率、计费基数和收费资产。
+/// 函数不校验费率组合、不提交或写审计；SQL 失败由应用层连同项目变更整体回滚。
 pub(crate) async fn update_admin_new_coin_project_unlock_fee_rule_in_tx(
     tx: &mut Transaction<'_, MySql>,
     project_id: u64,
@@ -359,6 +379,8 @@ pub(crate) async fn update_admin_new_coin_project_unlock_fee_rule_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中把指定上市后交易对状态直接设为 active。
+/// 更新不检查受影响行数；调用方须先确认交易对 base_asset 匹配项目资产并持有其行锁，函数不修改项目购买开关。
 pub(crate) async fn activate_admin_new_coin_post_listing_pair_in_tx(
     tx: &mut Transaction<'_, MySql>,
     pair_id: u64,
@@ -370,6 +392,8 @@ pub(crate) async fn activate_admin_new_coin_post_listing_pair_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中启用项目上市后购买并保存其交易对 ID。
+/// 更新不检查受影响行数；调用方须先锁定 listed 项目和匹配交易对，并把交易对激活、项目回读及审计统一提交。
 pub(crate) async fn enable_admin_new_coin_post_listing_purchase_in_tx(
     tx: &mut Transaction<'_, MySql>,
     project_id: u64,
@@ -385,6 +409,8 @@ pub(crate) async fn enable_admin_new_coin_post_listing_purchase_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中关闭项目上市后购买并清空 post_listing_pair_id。
+/// 更新不检查受影响行数，也不会停用此前交易对；调用方须先锁定 listed 项目并负责回读、审计和提交。
 pub(crate) async fn disable_admin_new_coin_post_listing_purchase_in_tx(
     tx: &mut Transaction<'_, MySql>,
     project_id: u64,
@@ -399,6 +425,8 @@ pub(crate) async fn disable_admin_new_coin_post_listing_purchase_in_tx(
 }
 
 #[allow(clippy::too_many_arguments)] // SQL 行写入字段与表结构一一对应，聚合会掩盖审计列语义。
+/// 在调用方事务中插入新币派发记录并返回或保留数据库写入结果。
+/// 新币派发记录数据库唯一键冲突会映射为业务冲突；调用方持有提交边界并负责同事务审计，任一 SQL 失败使所属用例回滚。
 pub(crate) async fn insert_admin_new_coin_distribution_in_tx(
     tx: &mut Transaction<'_, MySql>,
     project_id: u64,
@@ -430,6 +458,8 @@ pub(crate) async fn insert_admin_new_coin_distribution_in_tx(
     Ok(result.last_insert_id())
 }
 
+/// 在调用方事务中插入新币闪兑规则并返回或保留数据库写入结果。
+/// 新币闪兑规则函数不提供独立幂等保证，约束冲突沿用数据库错误；调用方持有提交边界并负责同事务审计，任一 SQL 失败使所属用例回滚。
 pub(crate) async fn insert_admin_new_coin_convert_rule_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: &AdminNewCoinConvertRuleWrite,
@@ -450,6 +480,8 @@ pub(crate) async fn insert_admin_new_coin_convert_rule_in_tx(
     Ok(result.last_insert_id())
 }
 
+/// 在调用方事务中按传入主键或筛选条件更新新币闪兑规则，写入应用层已决定的目标字段。
+/// 新币闪兑规则更新不检查受影响行数；调用方须先完成所需锁定和状态校验，并负责提交、回滚及同事务审计。
 pub(crate) async fn update_admin_new_coin_convert_rule_in_tx(
     tx: &mut Transaction<'_, MySql>,
     rule_id: u64,
@@ -471,6 +503,8 @@ pub(crate) async fn update_admin_new_coin_convert_rule_in_tx(
     Ok(())
 }
 
+/// 按传入主键或筛选条件从调用方事务快照读取新币项目并映射为应用层所需的完整记录。
+/// 新币项目不追加行锁，由调用方持有事务且本读取不提交；记录缺失时返回未找到，SQL 或字段解码失败直接返回错误，不产生审计副作用。
 pub(crate) async fn load_admin_new_coin_project_in_tx(
     tx: &mut Transaction<'_, MySql>,
     project_id: u64,
@@ -486,6 +520,8 @@ pub(crate) async fn load_admin_new_coin_project_in_tx(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中按传入主键或筛选条件以 `FOR UPDATE` 锁定新币项目并返回一致的修改前快照。
+/// 新币项目锁由调用方事务持有至结束；函数不自行提交，记录缺失返回未找到，SQL 或解码失败交由外层回滚。
 pub(crate) async fn lock_admin_new_coin_project_in_tx(
     tx: &mut Transaction<'_, MySql>,
     project_id: u64,
@@ -501,6 +537,8 @@ pub(crate) async fn lock_admin_new_coin_project_in_tx(
         .ok_or(AppError::NotFound)
 }
 
+/// 按传入主键或筛选条件从调用方事务快照读取新币派发记录并映射为应用层所需的完整记录。
+/// 新币派发记录不追加行锁，由调用方持有事务且本读取不提交；记录缺失时返回未找到，SQL 或字段解码失败直接返回错误，不产生审计副作用。
 pub(crate) async fn load_admin_new_coin_distribution_in_tx(
     tx: &mut Transaction<'_, MySql>,
     distribution_id: u64,
@@ -518,6 +556,8 @@ pub(crate) async fn load_admin_new_coin_distribution_in_tx(
     .ok_or(AppError::NotFound)
 }
 
+/// 按传入主键或筛选条件从调用方事务快照读取新币闪兑规则并映射为应用层所需的完整记录。
+/// 新币闪兑规则不追加行锁，由调用方持有事务且本读取不提交；记录缺失时返回未找到，SQL 或字段解码失败直接返回错误，不产生审计副作用。
 pub(crate) async fn load_admin_new_coin_convert_rule_in_tx(
     tx: &mut Transaction<'_, MySql>,
     rule_id: u64,
@@ -534,6 +574,8 @@ pub(crate) async fn load_admin_new_coin_convert_rule_in_tx(
     .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中按传入主键或筛选条件以 `FOR UPDATE` 锁定新币闪兑规则并返回一致的修改前快照。
+/// 新币闪兑规则锁由调用方事务持有至结束；函数不自行提交，记录缺失按可选结果返回，SQL 或解码失败交由外层回滚。
 pub(crate) async fn lock_admin_new_coin_convert_rule_in_tx(
     tx: &mut Transaction<'_, MySql>,
     convert_pair_id: u64,
@@ -550,6 +592,8 @@ pub(crate) async fn lock_admin_new_coin_convert_rule_in_tx(
     .await?)
 }
 
+/// 在调用方事务中锁定指定交易对并确认其 base_asset 正是新币项目资产。
+/// `FOR UPDATE` 只锁满足 ID 与 base_asset 条件的交易对；不匹配返回未找到，函数不要求交易对 active，调用方负责后续启用和审计。
 pub(crate) async fn ensure_admin_new_coin_post_listing_pair_in_tx(
     tx: &mut Transaction<'_, MySql>,
     pair_id: u64,
@@ -570,6 +614,8 @@ pub(crate) async fn ensure_admin_new_coin_post_listing_pair_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中锁定查询指定业务表的幂等键，判断派发或规则写入是否已经执行。
+/// 表名仅由内部受控调用方传入，幂等键使用绑定参数；函数不提交事务，SQL 失败由上层回滚。
 pub(crate) async fn admin_new_coin_idempotency_key_exists_in_tx(
     tx: &mut Transaction<'_, MySql>,
     table_name: &str,
@@ -585,6 +631,8 @@ pub(crate) async fn admin_new_coin_idempotency_key_exists_in_tx(
     Ok(exists.is_some())
 }
 
+/// 在调用方事务中插入新币生命周期事件并返回或保留数据库写入结果。
+/// 新币生命周期事件函数不提供独立幂等保证，约束冲突沿用数据库错误；调用方持有提交边界并负责同事务审计，任一 SQL 失败使所属用例回滚。
 pub(crate) async fn insert_admin_new_coin_lifecycle_event_in_tx(
     tx: &mut Transaction<'_, MySql>,
     project_id: u64,
@@ -605,6 +653,8 @@ pub(crate) async fn insert_admin_new_coin_lifecycle_event_in_tx(
     Ok(())
 }
 
+/// 锁定指定新币认购记录，累加本次分配量并按是否足额更新为部分派发或已派发状态。
+/// 分配后数量不得超过认购数量；函数不提交事务，记录缺失、超额或 SQL 失败由派发用例整体回滚。
 pub(crate) async fn apply_admin_new_coin_subscription_distribution_in_tx(
     tx: &mut Transaction<'_, MySql>,
     subscription_id: u64,

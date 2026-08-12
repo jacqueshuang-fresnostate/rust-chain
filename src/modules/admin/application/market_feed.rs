@@ -1,5 +1,7 @@
 use super::*;
 
+/// 读取启动阶段可用的已启用行情订阅配置，并转换为监督器消费的后台响应。
+/// 查询使用必选连接池、不加行锁也不触发重载；没有启用配置返回 None，SQL 或配置映射失败返回错误。
 pub async fn load_enabled_admin_market_feed_config(
     pool: &Pool<MySql>,
 ) -> AppResult<Option<MarketFeedConfigResponse>> {
@@ -10,6 +12,8 @@ pub async fn load_enabled_admin_market_feed_config(
     )
 }
 
+/// 读取唯一行情订阅配置并转换为后台编辑响应，无配置时返回 None。
+/// 可选连接池须能解析为后台 MySQL 池；读取不锁配置、不访问监督器，连接池或 SQL 失败直接返回错误。
 pub(crate) async fn get_admin_market_feed_config(
     pool: Option<Pool<MySql>>,
 ) -> AppResult<Option<MarketFeedConfigResponse>> {
@@ -19,6 +23,10 @@ pub(crate) async fn get_admin_market_feed_config(
         .map(market_feed_config_response))
 }
 
+/// 保存唯一行情订阅配置，推进保存版本并返回是否需要重载的配置响应。
+/// 请求须含审计原因、合法交易对/周期和恰好一个去重后的提供商；启用时交易对不能为空，管理员权限由调用方保证。
+/// 事务先按固定配置行加锁，不存在时以版本 1 新建，否则在锁后版本上加一，再 upsert、回读并写审计；失败整体回滚。
+/// 保存不触发监督器重载；相同配置重放仍推进版本并新增审计，因此不是幂等操作。
 pub(crate) async fn save_admin_market_feed_config(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -67,6 +75,8 @@ pub(crate) async fn save_admin_market_feed_config(
     Ok(market_feed_config_response(after))
 }
 
+/// 聚合数据库中保存的行情配置和监督器运行快照，返回版本差异、订阅及最近重载状态。
+/// 数据库配置以无锁连接池查询取得，调用方提供的运行快照原样嵌入；本函数不触发、跳过或记录重载，连接池/SQL 失败返回错误。
 pub(crate) async fn get_admin_market_feed_status(
     pool: Option<Pool<MySql>>,
     runtime: MarketFeedRuntimeStatus,
@@ -81,6 +91,8 @@ pub(crate) async fn get_admin_market_feed_status(
     })
 }
 
+/// 读取全部行情源凭据并映射为仅含认证类型、密钥掩码和启用状态的后台列表。
+/// 查询不加锁且不解密 API Secret 或 passphrase；连接池缺失或 SQL 失败返回错误，读取行为不写审计。
 pub(crate) async fn list_admin_market_feed_credentials(
     pool: Option<Pool<MySql>>,
 ) -> AppResult<MarketSourceCredentialsResponse> {
@@ -93,6 +105,10 @@ pub(crate) async fn list_admin_market_feed_credentials(
     Ok(MarketSourceCredentialsResponse { credentials })
 }
 
+/// 校验行情提供商和认证类型，加密本次提供的新密钥并保留未修改密文后写入行情源凭据。
+/// 请求须提供审计原因和受支持 provider/auth_type；新增或目标改变所需的密钥必须可用，密钥加密依赖调用方传入的 key。
+/// 事务先按 provider 锁凭据，准备“新值加密/空值沿用”字段，再 upsert、回读并以掩码写审计；密钥或数据库失败整体回滚。
+/// 响应不暴露密文，保存后也不自动重载行情监督器；相同请求重放会再次写审计。
 pub(crate) async fn upsert_admin_market_feed_credential(
     pool: Option<Pool<MySql>>,
     admin_id: u64,

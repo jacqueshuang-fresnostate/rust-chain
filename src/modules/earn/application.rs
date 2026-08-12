@@ -38,6 +38,7 @@ use chrono::Utc;
 use serde_json::json;
 use sqlx::{MySql, Pool};
 
+/// 按编号倒序列出当前 active 理财产品，数量默认 50、最多 100；不读取订阅或钱包资金状态。
 pub(crate) async fn list_active_earn_products(
     pool: Option<Pool<MySql>>,
     query: ListQuery,
@@ -46,6 +47,8 @@ pub(crate) async fn list_active_earn_products(
     infrastructure::list_products(&pool, Some("active"), route_limit(query.limit)).await
 }
 
+/// 读取后台理财产品分页，并把同一筛选下的行与总数组装为响应。
+/// 该只读用例不锁产品或分类，也不改写任何已有订阅的费用快照。
 pub(crate) async fn list_admin_earn_products(
     pool: Option<Pool<MySql>>,
     query: AdminProductsQuery,
@@ -61,6 +64,8 @@ pub(crate) async fn list_admin_earn_products(
     Ok(AdminEarnProductsResponse { products, total })
 }
 
+/// 在短只读事务中加载指定理财产品，缺失时返回未找到且不产生审计副作用。
+/// 返回当前管理配置，不会重算历史订阅收益或触发钱包资金变化。
 pub(crate) async fn get_admin_earn_product(
     pool: Option<Pool<MySql>>,
     product_id: u64,
@@ -72,6 +77,8 @@ pub(crate) async fn get_admin_earn_product(
     Ok(product)
 }
 
+/// 从鉴权 subject 提取用户后列出其理财订阅，结果不包含其他用户记录。
+/// 订阅费用字段按持久化快照返回，查询不锁钱包或执行赎回。
 pub(crate) async fn list_earn_subscriptions(
     pool: Option<Pool<MySql>>,
     subject: &str,
@@ -82,6 +89,8 @@ pub(crate) async fn list_earn_subscriptions(
     infrastructure::list_user_subscriptions(&pool, user_id, route_limit(query.limit)).await
 }
 
+/// 归一化用户、邮箱和状态筛选后查询后台订阅分页。
+/// 该只读用例不锁订阅或钱包，也不触发赎回与收益计算。
 pub(crate) async fn list_admin_earn_subscriptions(
     pool: Option<Pool<MySql>>,
     query: AdminSubscriptionsQuery,
@@ -102,6 +111,7 @@ pub(crate) async fn list_admin_earn_subscriptions(
     })
 }
 
+/// 在短只读事务中加载后台订阅详情，找不到时不修改任何状态。
 pub(crate) async fn get_admin_earn_subscription(
     pool: Option<Pool<MySql>>,
     subscription_id: u64,
@@ -113,6 +123,8 @@ pub(crate) async fn get_admin_earn_subscription(
     Ok(subscription)
 }
 
+/// 按状态与统一分页边界读取后台理财分类及总数。
+/// 查询不锁分类或产品，也不改变分类代码、排序或启停状态。
 pub(crate) async fn list_admin_earn_categories(
     pool: Option<Pool<MySql>>,
     query: AdminCategoriesQuery,
@@ -128,6 +140,8 @@ pub(crate) async fn list_admin_earn_categories(
     Ok(EarnCategoriesResponse { categories, total })
 }
 
+/// 在短只读事务中加载理财分类详情，不锁定分类供后续写入。
+/// 该读取不触发管理员审计，缺失时直接返回未找到且无副作用。
 pub(crate) async fn get_admin_earn_category(
     pool: Option<Pool<MySql>>,
     category_id: u64,
@@ -139,6 +153,8 @@ pub(crate) async fn get_admin_earn_category(
     Ok(category)
 }
 
+/// 校验稳定分类代码、多语言名称、状态和审计原因后创建理财分类。
+/// 应用层拥有事务，分类写入与管理员审计原子提交；任一步失败均不保留分类。
 pub(crate) async fn create_earn_category(
     pool: Option<Pool<MySql>>,
     subject: &str,
@@ -178,6 +194,8 @@ pub(crate) async fn create_earn_category(
     Ok(category)
 }
 
+/// 锁定既有分类后更新名称、排序和状态，分类代码保持不可变。
+/// 应用层事务同时保存前后快照审计，失败时配置和审计全部回滚。
 pub(crate) async fn update_earn_category(
     pool: Option<Pool<MySql>>,
     subject: &str,
@@ -218,6 +236,8 @@ pub(crate) async fn update_earn_category(
     Ok(after)
 }
 
+/// 锁定分类并更新启停状态，同时记录管理员、原因及前后快照。
+/// 状态变更与审计共用应用层事务，提交失败不会出现未审计的启停结果。
 pub(crate) async fn update_earn_category_status(
     pool: Option<Pool<MySql>>,
     subject: &str,
@@ -247,6 +267,8 @@ pub(crate) async fn update_earn_category_status(
     Ok(after)
 }
 
+/// 校验资产、活动分类、期限、额度和费用规则后创建理财产品。
+/// 应用层拥有事务，产品写入与管理员审计原子提交；本操作不修改用户钱包。
 pub(crate) async fn create_earn_product(
     pool: Option<Pool<MySql>>,
     subject: &str,
@@ -300,6 +322,8 @@ pub(crate) async fn create_earn_product(
     Ok(product)
 }
 
+/// 锁定产品后校验资产、活动分类及完整费用配置，再覆盖产品快照。
+/// 应用层事务同时写入前后审计；既有订阅仍使用订阅时快照，不受本次修改影响。
 pub(crate) async fn update_earn_product(
     pool: Option<Pool<MySql>>,
     subject: &str,
@@ -355,6 +379,8 @@ pub(crate) async fn update_earn_product(
     Ok(after)
 }
 
+/// 锁定理财产品并切换启停状态，同时记录管理员审计快照。
+/// 状态更新与审计同事务提交；不会改写已有订阅条款或用户余额。
 pub(crate) async fn update_earn_product_status(
     pool: Option<Pool<MySql>>,
     subject: &str,
@@ -384,6 +410,11 @@ pub(crate) async fn update_earn_product_status(
     Ok(after)
 }
 
+/// 创建理财订阅时先快速查询用户幂等键；未命中后由内部事务锁 active 产品、插订阅，再锁钱包。
+/// 申购从 available 扣除本金，frozen/locked 不变，只写一条 `earn_subscribe` available 负流水并引用 subscription id。
+/// 订阅保存产品 APR、期限和全部费用快照；金额按数据库 18 位规则校验，不按资产 precision_scale 另行截断。
+/// 用户幂等键重放须匹配产品和金额，匹配时返回旧订阅且不二次扣款；唯一键并发冲突回滚当前事务后回读旧记录。
+/// 私有事件仅在资金事务提交且确为新订阅后发布；未配置或无人接收广播不回滚已提交申购。
 pub(crate) async fn subscribe_earn_product_with_events(
     pool: Option<Pool<MySql>>,
     event_broadcast_hub: Option<&EventBroadcastHub>,
@@ -431,6 +462,10 @@ async fn subscribe_earn_product_with_internal(
     Ok((SubscribeEarnResponse { subscription }, is_new_subscription))
 }
 
+/// 赎回只使用订阅时 APR、期限和费用快照计算本金、毛收益、赎回费、到期收益费及提前赎回费。
+/// 内部事务锁序为订阅→钱包；净赎回额增加 available，frozen/locked 不变，只写一条 `earn_redeem` 正流水。
+/// 订阅状态、余额与流水同事务提交；已 redeemed 重放从最早申购/赎回流水恢复本金与净到账，不再次计息或入账。
+/// 私有事件只对首次赎回在提交后发布；广播缺失或无人接收不回滚已提交余额和订阅状态。
 pub(crate) async fn redeem_earn_subscription_with_events(
     pool: Option<Pool<MySql>>,
     event_broadcast_hub: Option<&EventBroadcastHub>,

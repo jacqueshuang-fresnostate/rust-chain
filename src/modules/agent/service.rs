@@ -1,7 +1,7 @@
 //! agent bounded context service layer.
 //!
 //! 服务层：封装可复用业务服务和跨实体业务规则。
-//! 当前文件先作为 DDD 迁移锚点，后续把对应职责的业务服务逐步迁入。
+//! 当前集中处理代理分页、口令、邀请码、返佣产品归一化及响应聚合规则。
 
 use crate::{
     error::{AppError, AppResult},
@@ -25,6 +25,8 @@ pub(crate) const AGENT_COMMISSION_PRODUCT_PREDICTION: &str = "prediction";
 pub(crate) const AGENT_COMMISSION_PRODUCT_SECONDS_CONTRACT: &str = "seconds_contract";
 pub(crate) const AGENT_COMMISSION_PRODUCT_SPOT: &str = "spot";
 
+/// 将返佣产品类型归一化为已实现的五类稳定存储值，未知类型直接拒绝。
+/// 输入会去除空白并转小写；函数无持久化副作用，不得把未支持类型透传到规则 SQL。
 pub(crate) fn normalize_agent_commission_product_type(value: &str) -> AppResult<String> {
     match value.trim().to_ascii_lowercase().as_str() {
         AGENT_COMMISSION_PRODUCT_CONVERT => Ok(AGENT_COMMISSION_PRODUCT_CONVERT.to_owned()),
@@ -40,6 +42,7 @@ pub(crate) fn normalize_agent_commission_product_type(value: &str) -> AppResult<
     }
 }
 
+/// 构造代理查询分页：未传页大小时使用调用方上限，显式值限制在 `1..=default_limit`，偏移默认零。
 pub(crate) fn agent_list_page(
     limit: Option<u32>,
     offset: Option<u32>,
@@ -51,6 +54,7 @@ pub(crate) fn agent_list_page(
     }
 }
 
+/// 仅从 `agent:<id>` 主体提取代理管理员 ID，类型或数值非法时返回未授权。
 pub(crate) fn agent_admin_id_from_subject(subject: &str) -> AppResult<u64> {
     subject
         .strip_prefix("agent:")
@@ -73,6 +77,7 @@ pub(crate) fn validate_agent_password_change(
     Ok((current_password, new_password))
 }
 
+/// 校验代理邀请码可选使用上限；一旦提供必须为正数，无值表示不限次数。
 pub(crate) fn validate_agent_invite_code_usage_limit(limit: Option<i32>) -> AppResult<()> {
     if limit.is_some_and(|limit| limit <= 0) {
         return Err(AppError::Validation(
@@ -83,6 +88,7 @@ pub(crate) fn validate_agent_invite_code_usage_limit(limit: Option<i32>) -> AppR
     Ok(())
 }
 
+/// 将邀请码状态限制为 `active` 或 `disabled`，避免写入不可识别的过渡值。
 pub(crate) fn validate_agent_invite_code_status(status: &str) -> AppResult<&'static str> {
     match status.trim() {
         "active" => Ok("active"),
@@ -93,11 +99,14 @@ pub(crate) fn validate_agent_invite_code_status(status: &str) -> AppResult<&'sta
     }
 }
 
+/// 基于 UUIDv7 生成带 `AGT` 前缀的代理邀请码，唯一性最终由数据库约束确认。
 pub(crate) fn generated_agent_invite_code() -> String {
     // 代理邀请码统一使用 AGT 前缀，便于和普通用户邀请码在运营侧快速区分。
     format!("AGT{}", Uuid::now_v7().simple())
 }
 
+/// 将 SQL 聚合记录映射为代理兑换统计，计数字段无法转为整数时返回内部错误。
+/// 金额保持数据库精度原样返回；转换不修改记录，也不触发佣金或订单副作用。
 pub(crate) fn agent_convert_stats_response(
     row: AgentConvertStatsRecord,
 ) -> AppResult<AgentConvertStatsResponse> {
@@ -115,6 +124,8 @@ pub(crate) fn agent_convert_stats_response(
     })
 }
 
+/// 组装代理看板汇总；仅单一发放资产时才在顶层展示可相加的佣金金额。
+/// 多资产时顶层金额置零并保留分资产明细，本转换不读写数据库且不发布事件。
 pub(crate) fn agent_dashboard_response(
     agent_id: u64,
     counts: AgentDashboardCountsRecord,
@@ -150,6 +161,8 @@ pub(crate) fn agent_dashboard_response(
     }
 }
 
+/// 组装当前代理的佣金列表，总额仅对查询已返回的记录求和。
+/// 调用方须保证记录已按代理权限过滤；函数无持久化、钱包或结算副作用。
 pub(crate) fn agent_commissions_response(
     agent_id: u64,
     commissions: Vec<AgentCommissionResponse>,

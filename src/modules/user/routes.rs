@@ -1,6 +1,6 @@
 use crate::{
     error::AppResult,
-    modules::user::service::{mysql_pool, user_id_from_subject},
+    modules::user::service::user_id_from_subject,
     modules::user::{
         application::{
             bind_user_email, bind_user_referral_code, bind_user_third_party_account,
@@ -35,6 +35,15 @@ use axum::{
     extract::{DefaultBodyLimit, Multipart, State},
     routing::{get, patch, post},
 };
+
+/// 从 HTTP 状态中取得用户资料与安全用例使用的数据库连接池。
+///
+/// 本函数仅完成传输层依赖装配，不包含用户业务规则；缺失连接池时返回稳定内部错误。
+fn mysql_pool(state: &AppState) -> AppResult<crate::state::MySqlPool> {
+    state.mysql.clone().ok_or_else(|| {
+        crate::error::AppError::Internal("mysql pool is not configured for user routes".to_owned())
+    })
+}
 
 pub fn routes() -> Router<AppState> {
     Router::new()

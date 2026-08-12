@@ -143,6 +143,8 @@ impl From<WalletServiceError> for SpotServiceError {
     }
 }
 
+/// 创建限价订单实体的纯领域规则，不访问数据库、缓存或外部行情，也不持有事务锁。
+/// 输入违反现货状态机或数值不变量时返回既有领域错误，调用方不得据此产生资金副作用。
 pub fn create_limit_order(
     user_id: impl Into<String>,
     side: OrderSide,
@@ -167,6 +169,8 @@ pub fn create_limit_order(
     })
 }
 
+/// 创建市价订单实体的纯领域规则，不访问数据库、缓存或外部行情，也不持有事务锁。
+/// 输入违反现货状态机或数值不变量时返回既有领域错误，调用方不得据此产生资金副作用。
 pub fn create_market_order(
     user_id: impl Into<String>,
     side: OrderSide,
@@ -191,6 +195,8 @@ pub fn create_market_order(
     })
 }
 
+/// 创建止限价订单实体的纯领域规则，不访问数据库、缓存或外部行情，也不持有事务锁。
+/// 输入违反现货状态机或数值不变量时返回既有领域错误，调用方不得据此产生资金副作用。
 pub fn create_stop_limit_order(
     user_id: impl Into<String>,
     side: OrderSide,
@@ -217,6 +223,8 @@ pub fn create_stop_limit_order(
     })
 }
 
+/// 处理现货订单预留资金的纯领域规则，不访问数据库、缓存或外部行情，也不持有事务锁。
+/// 输入违反现货状态机或数值不变量时返回既有领域错误，调用方不得据此产生资金副作用。
 pub fn spot_reservation_amount(
     side: OrderSide,
     price: &BigDecimal,
@@ -225,6 +233,8 @@ pub fn spot_reservation_amount(
     reservation_amount(side, price, quantity)
 }
 
+/// 处理现货预留资产的纯领域规则，不访问数据库、缓存或外部行情，也不持有事务锁。
+/// 输入违反现货状态机或数值不变量时返回既有领域错误，调用方不得据此产生资金副作用。
 pub fn spot_reserve_asset_id<'a>(
     side: OrderSide,
     base_asset_id: &'a str,
@@ -233,6 +243,8 @@ pub fn spot_reserve_asset_id<'a>(
     reserve_asset_id(side, base_asset_id, quote_asset_id)
 }
 
+/// 处理金额的纯领域规则，不访问数据库、缓存或外部行情，也不持有事务锁。
+/// 输入违反现货状态机或数值不变量时返回既有领域错误，调用方不得据此产生资金副作用。
 pub fn spot_remaining_reserved_amount(
     order: &SpotOrder,
     base_asset_id: &str,
@@ -242,6 +254,8 @@ pub fn spot_remaining_reserved_amount(
         .map(|reserved| (reserved.asset_id, reserved.amount))
 }
 
+/// 校验现货下单请求的纯领域规则，不访问数据库、缓存或外部行情，也不持有事务锁。
+/// 输入违反现货状态机或数值不变量时返回既有领域错误，调用方不得据此产生资金副作用。
 pub fn validate_order_request(
     order_type: OrderType,
     price: Option<BigDecimal>,
@@ -260,6 +274,8 @@ pub fn validate_order_request(
     }
 }
 
+/// 迁移状态的纯领域规则，不访问数据库、缓存或外部行情，也不持有事务锁。
+/// 输入违反现货状态机或数值不变量时返回既有领域错误，调用方不得据此产生资金副作用。
 pub fn transition_status(
     current: OrderStatus,
     next: OrderStatus,
@@ -274,6 +290,8 @@ pub fn transition_status(
     }
 }
 
+/// 处理现货订单取消状态迁移的纯领域规则，不访问数据库、缓存或外部行情，也不持有事务锁。
+/// 输入违反现货状态机或数值不变量时返回既有领域错误，调用方不得据此产生资金副作用。
 pub fn cancel_order(order: &mut SpotOrder) -> Result<bool, SpotDomainError> {
     match order.status {
         OrderStatus::Cancelled => Ok(false),
@@ -288,6 +306,8 @@ pub fn cancel_order(order: &mut SpotOrder) -> Result<bool, SpotDomainError> {
     }
 }
 
+/// 应用现货订单成交状态迁移的纯领域规则，不访问数据库、缓存或外部行情，也不持有事务锁。
+/// 输入违反现货状态机或数值不变量时返回既有领域错误，调用方不得据此产生资金副作用。
 pub fn apply_fill(order: &mut SpotOrder, fill_quantity: BigDecimal) -> Result<(), SpotDomainError> {
     if fill_quantity <= 0 {
         return Err(SpotDomainError::NonPositiveQuantity);

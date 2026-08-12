@@ -53,22 +53,28 @@ const HIGH_RISK_ENTRY_POINTS: &[(&str, &str)] = &[
         "src/modules/wallet/infrastructure/deposits.rs",
         "reverse_deposit_event",
     ),
-    ("src/modules/spot/application.rs", "settle_spot_fill"),
+    (
+        "src/modules/spot/application/settlement.rs",
+        "settle_spot_fill",
+    ),
     (
         "src/modules/spot/infrastructure/wallet_accounts.rs",
         "apply_spot_wallet_freeze",
     ),
     (
-        "src/modules/spot/infrastructure.rs",
+        "src/modules/spot/infrastructure/wallet_accounts.rs",
         "apply_spot_wallet_settlement_leg",
     ),
-    ("src/modules/margin/application.rs", "open_margin_position"),
     (
-        "src/modules/margin/infrastructure.rs",
+        "src/modules/margin/application/open_position.rs",
+        "open_margin_position",
+    ),
+    (
+        "src/modules/margin/infrastructure/settlement.rs",
         "debit_margin_position_open_collateral",
     ),
     (
-        "src/modules/margin/infrastructure.rs",
+        "src/modules/margin/infrastructure/settlement.rs",
         "credit_margin_position_amount",
     ),
     (
@@ -96,6 +102,8 @@ struct FunctionAudit {
     is_visible: bool,
     is_trait_method: bool,
     has_chinese_doc: bool,
+    chinese_doc_chars: usize,
+    documentation: String,
 }
 
 impl FunctionAudit {
@@ -123,6 +131,7 @@ impl FunctionCollector {
         span: Span,
         is_trait_method: bool,
     ) {
+        let doc_lines = documentation_lines(attrs);
         self.functions.push(FunctionAudit {
             path: self.path.clone(),
             name: name.to_string(),
@@ -130,7 +139,13 @@ impl FunctionCollector {
             end_line: span.end().line,
             is_visible: !matches!(visibility, Visibility::Inherited),
             is_trait_method,
-            has_chinese_doc: has_chinese_doc(attrs),
+            has_chinese_doc: doc_lines.iter().any(|line| contains_chinese(line)),
+            chinese_doc_chars: doc_lines
+                .iter()
+                .flat_map(|line| line.chars())
+                .filter(|character| matches!(*character as u32, 0x3400..=0x9fff))
+                .count(),
+            documentation: doc_lines.join("\n"),
         });
     }
 }
@@ -162,6 +177,13 @@ impl<'ast> Visit<'ast> for FunctionCollector {
 /// 风险方法、worker 和跨上下文基础设施入口必须携带自身中文职责文档。
 fn backend_methods_have_executable_chinese_documentation_gate() {
     let functions = collect_source_functions(Path::new("src"));
+    let visible_responsibilities = functions
+        .iter()
+        .filter(|function| {
+            is_bounded_context_responsibility_layer(&function.path)
+                && function.is_public_responsibility()
+        })
+        .collect::<Vec<_>>();
     let risk_name = Regex::new(concat!(
         "(?i)(wallet|balance|ledger|withdraw|deposit|settle|settlement|liquidat|",
         "margin|collateral|interest|loan|repay|order|trade|fill|price|fee|commission|",
@@ -177,7 +199,27 @@ fn backend_methods_have_executable_chinese_documentation_gate() {
     let mut seen_high_risk = BTreeMap::<(&str, &str), Vec<&FunctionAudit>>::new();
     let mut violations = BTreeMap::<(String, usize, String), BTreeSet<&str>>::new();
 
+    collect_repeated_documentation_violations(&visible_responsibilities, &mut violations);
+
     for function in &functions {
+        if is_bounded_context_responsibility_layer(&function.path)
+            && function.is_public_responsibility()
+        {
+            if !function.has_chinese_doc {
+                add_violation(
+                    &mut violations,
+                    function,
+                    "bounded context 的公开职责方法或 trait 方法缺少自身中文 doc",
+                );
+            } else if function.line_count() >= 15 && function.chinese_doc_chars < 24 {
+                add_violation(
+                    &mut violations,
+                    function,
+                    "长度至少 15 行的公开职责方法需要至少 24 个中文字符的详细合同说明",
+                );
+            }
+        }
+
         if function.is_public_responsibility()
             && function.line_count() >= 50
             && risk_name.is_match(&function.name)
@@ -242,6 +284,34 @@ fn backend_methods_have_executable_chinese_documentation_gate() {
     );
 }
 
+/// 重复的整段 doc 会让“每个职责都有注释”退化为批量粘贴；同一文件内的非平凡入口必须拥有可区分合同。
+/// 短 getter 可共享精确说明，跨文件的共同并发/事务约束也不在此门禁内误报。
+fn collect_repeated_documentation_violations(
+    functions: &[&FunctionAudit],
+    violations: &mut BTreeMap<(String, usize, String), BTreeSet<&'static str>>,
+) {
+    let mut repeated = BTreeMap::<(&str, &str), Vec<&FunctionAudit>>::new();
+    for function in functions {
+        if function.line_count() < 6 || function.documentation.trim().is_empty() {
+            continue;
+        }
+        repeated
+            .entry((&function.path, function.documentation.trim()))
+            .or_default()
+            .push(function);
+    }
+
+    for matches in repeated.values().filter(|matches| matches.len() >= 4) {
+        for function in matches {
+            add_violation(
+                violations,
+                function,
+                "同一文件至少 4 个非平凡公开职责复用完全相同 doc，需按真实输入、失败或副作用区分合同",
+            );
+        }
+    }
+}
+
 fn collect_source_functions(root: &Path) -> Vec<FunctionAudit> {
     let mut paths = WalkDir::new(root)
         .into_iter()
@@ -277,22 +347,25 @@ fn collect_source_functions(root: &Path) -> Vec<FunctionAudit> {
     functions
 }
 
-fn has_chinese_doc(attrs: &[Attribute]) -> bool {
-    attrs.iter().any(|attr| {
-        if !attr.path().is_ident("doc") {
-            return false;
-        }
-        match &attr.meta {
-            Meta::NameValue(value) => match &value.value {
-                Expr::Lit(expr) => match &expr.lit {
-                    Lit::Str(doc) => contains_chinese(&doc.value()),
-                    _ => false,
+fn documentation_lines(attrs: &[Attribute]) -> Vec<String> {
+    attrs
+        .iter()
+        .filter_map(|attr| {
+            if !attr.path().is_ident("doc") {
+                return None;
+            }
+            match &attr.meta {
+                Meta::NameValue(value) => match &value.value {
+                    Expr::Lit(expr) => match &expr.lit {
+                        Lit::Str(doc) => Some(doc.value()),
+                        _ => None,
+                    },
+                    _ => None,
                 },
-                _ => false,
-            },
-            _ => false,
-        }
-    })
+                _ => None,
+            }
+        })
+        .collect()
 }
 
 fn contains_chinese(value: &str) -> bool {
@@ -303,6 +376,27 @@ fn contains_chinese(value: &str) -> bool {
 
 fn is_worker_or_cross_context_infra(path: &str) -> bool {
     path.starts_with("src/workers/") || path.starts_with("src/infra/")
+}
+
+fn is_bounded_context_responsibility_layer(path: &str) -> bool {
+    if !path.starts_with("src/modules/") {
+        return false;
+    }
+
+    [
+        "/domain.rs",
+        "/domain/",
+        "/application.rs",
+        "/application/",
+        "/service.rs",
+        "/service/",
+        "/infrastructure.rs",
+        "/infrastructure/",
+        "/repository.rs",
+        "/repository/",
+    ]
+    .iter()
+    .any(|segment| path.contains(segment))
 }
 
 fn normalized_path(path: &Path) -> String {

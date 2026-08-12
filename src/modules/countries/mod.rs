@@ -6,7 +6,6 @@ pub mod domain;
 pub mod infrastructure;
 pub mod presentation;
 pub mod routes;
-pub mod service;
 
 pub use domain::{
     ensure_default_locale_supported, normalize_country_code, normalize_locale,

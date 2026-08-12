@@ -1,5 +1,7 @@
 use super::*;
 
+/// 校验新建闪兑交易对的资产编号、汇率、费率、最小/最大兑换量及状态组合约束。
+/// 这里只验证请求值；资产存在性和交易对唯一性由创建事务负责，失败前不产生资金或审计副作用。
 pub(crate) fn validate_create_convert_pair(request: &CreateConvertPairRequest) -> AppResult<()> {
     let zero = BigDecimal::from(0);
     let fee_rate = request.fee_rate.as_ref().unwrap_or(&zero);
@@ -88,6 +90,8 @@ pub(crate) fn validate_convert_pair_values(
     Ok(())
 }
 
+/// 将闪兑交易对的资产、汇率、费率、限额和状态映射为稳定审计 JSON。
+/// 快照保留资产符号和完整源/目标金额边界，不执行汇率计算；应用层在交易对写事务中持久化前后值。
 pub(crate) fn convert_pair_audit_json(pair: &ConvertPairResponse) -> Value {
     json!({
         "id": pair.id,

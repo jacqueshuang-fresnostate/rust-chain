@@ -11,18 +11,36 @@ use crate::modules::events::{
 use axum::async_trait;
 use chrono::{DateTime, Utc};
 
+/// 用户创建事件触发的钱包初始化端口；service 只依赖该抽象，不感知 MySQL 或事务实现。
+///
+/// 实现必须保证相同 user_id 重放不会重复产生余额或流水；具体事务、锁和 SQL 副作用由适配器拥有。
+#[async_trait]
+pub trait UserWalletInitializer: Send + Sync + 'static {
+    /// 为已持久化用户补齐全部资产钱包账户；user_id 必须来自通过 envelope 一致性校验的事件。
+    /// 重放应幂等，失败不得留下部分账户；错误返回后 inbox 会按既有策略重试或进入死信。
+    async fn initialize_user_wallets(&self, user_id: u64) -> AppResult<()>;
+}
+
 #[async_trait]
 pub trait EventOutboxRepository: Clone + Send + Sync + 'static {
+    /// 原子插入一条 outbox 事件；idempotency_key 重复时返回既有 ID，不重复创建消息。
+    /// 实现拥有数据库事务/唯一约束，失败不得伪造 Inserted 或发布外部消息。
     async fn insert_event(&self, event: NewOutboxEvent) -> AppResult<OutboxInsertResult>;
 
+    /// 读取当前可发布的 pending/retry 批次；limit 约束规模，now 决定到期边界。
+    /// 只读操作不改变状态；重复读取允许返回尚未被成功标记的同一消息。
     async fn fetch_publishable_batch(
         &self,
         limit: u32,
         now: DateTime<Utc>,
     ) -> AppResult<Vec<OutboxMessage>>;
 
+    /// 在 publisher 返回成功后把指定消息标记为 published，并记录状态推进时间；仓储不判断该成功是否为 broker confirm。
+    /// 重放必须保持终态幂等；数据库失败返回错误，调用方下轮可能再次发布同一 message_id。
     async fn mark_published(&self, id: u64, published_at: DateTime<Utc>) -> AppResult<()>;
 
+    /// 记录一次可重试发布失败及下次到期时间；retry_count 必须来自策略计算结果。
+    /// 仅推进 outbox 状态，不重新发布；更新失败原样返回，不吞掉待处理消息。
     async fn mark_retry(
         &self,
         id: u64,
@@ -30,6 +48,8 @@ pub trait EventOutboxRepository: Clone + Send + Sync + 'static {
         next_retry_at: DateTime<Utc>,
     ) -> AppResult<()>;
 
+    /// 达到阈值后把消息标记为 dead_letter；终态不得被普通发布扫描再次领取。
+    /// 仅记录持久状态，不发送告警或外部消息；人工重排由独立应用用例负责。
     async fn mark_dead_letter(
         &self,
         id: u64,
@@ -40,6 +60,8 @@ pub trait EventOutboxRepository: Clone + Send + Sync + 'static {
 
 #[async_trait]
 pub trait EventInboxRepository: Clone + Send + Sync + 'static {
+    /// 读取指定 consumer 当前到期的 retry 行；limit 限制批次，now 定义到期边界。
+    /// 只读不获取最终处理所有权，调用方仍须通过 claim_message 竞争处理租约。
     async fn fetch_due_retries(
         &self,
         consumer_name: &str,
@@ -47,8 +69,12 @@ pub trait EventInboxRepository: Clone + Send + Sync + 'static {
         now: DateTime<Utc>,
     ) -> AppResult<Vec<PendingInboxRetry>>;
 
+    /// 以 consumer/message_id 原子领取 inbox 消息并校验幂等键与 payload hash。
+    /// 重复终态返回 Duplicate；成功返回 processing_token，后续状态更新必须携带该租约令牌。
     async fn claim_message(&self, message: NewInboxMessage) -> AppResult<InboxClaim>;
 
+    /// 使用 processing_token 把已成功处理的消息推进为 consumed。
+    /// 令牌过期/不匹配必须失败，避免旧 worker 覆盖新租约；不负责业务事务或 broker ACK。
     async fn mark_consumed(
         &self,
         consumer_name: &str,
@@ -56,6 +82,8 @@ pub trait EventInboxRepository: Clone + Send + Sync + 'static {
         processing_token: &str,
     ) -> AppResult<()>;
 
+    /// 使用处理租约记录业务失败，并按策略推进 retry 或 dead_letter 与错误摘要。
+    /// 状态更新失败原样返回，broker delivery 不应被误 ACK；本方法不重执业务 handler。
     async fn mark_failure(
         &self,
         consumer_name: &str,

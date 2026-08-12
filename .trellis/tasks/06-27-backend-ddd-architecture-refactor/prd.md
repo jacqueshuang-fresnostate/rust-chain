@@ -191,6 +191,53 @@ slice.
   architecture tests, closest context tests, Clippy, full tests, and
   `cargo check --manifest-path Cargo.toml --all-targets` pass.
 
+## Added Scope (2026-08-12: P1 Structural And Detailed Chinese Documentation Pass)
+
+The first completion pass established executable DDD and documentation baselines.
+This continuation addresses the remaining large responsibility clusters and upgrades
+Chinese documentation from sparse high-risk coverage to complete public business
+entry contracts across domain/application/service/infrastructure.
+
+### Requirements
+
+* Split `events/service.rs`, `margin/application.rs`, `margin/infrastructure.rs`,
+  `admin/routes.rs`, and `spot/application.rs` into responsibility-focused child
+  modules while preserving every existing public path, route, payload, SQL, lock
+  order, ledger field, idempotency rule, and event timing contract.
+* Reduce each listed compatibility façade to declarations/re-exports or thin
+  orchestration forwarding; no new child implementation file may exceed 1,200
+  lines.
+* Remove direct SQLx, Redis, MongoDB, Reqwest, and context-infrastructure imports
+  from service layers. Pure service rules may inspect adapter-neutral error facts,
+  while I/O and concrete error translation belong to infrastructure/application.
+* Add detailed Chinese `///` contracts to every visible function and trait method
+  in domain, application, service, and infrastructure responsibility modules.
+  Each contract must explain the real responsibility plus relevant preconditions,
+  transaction/lock ownership, idempotency/replay semantics, failure behavior, and
+  side effects; trivial syntax restatements are invalid.
+* Keep worker and cross-context infrastructure public documentation coverage at
+  100%, and retain the existing P0 risk-entry checks.
+* Extend executable architecture/documentation guards so the service SDK boundary,
+  1,200-line child-module limit for the five split hotspots, and visible-entry
+  Chinese documentation coverage cannot regress.
+
+### Acceptance Criteria
+
+* [x] The five targeted hotspot roots are stable compatibility façades or focused
+  modules, and every newly split child implementation file is at most 1,200 lines.
+* [x] `service.rs` files contain no SQLx/Redis/MongoDB/Reqwest imports or direct
+  context infrastructure dependency.
+* [x] Visible functions and trait methods in domain/application/service/
+  infrastructure responsibility modules have their own meaningful Chinese docs.
+* [x] Existing routes, JSON/OpenAPI contracts, SQL statements, transaction/lock
+  ordering, wallet/ledger semantics, provider payloads, and event publication timing
+  remain unchanged.
+* [x] Architecture and documentation guards fail with file, line, symbol, and rule
+  evidence for every new regression.
+* [x] Closest context tests, `cargo fmt --all -- --check`,
+  `cargo check --all-targets`, `cargo clippy --all-targets -- -D warnings`, and
+  `cargo test --all-targets` pass after the final edit.
+
 ### Mobile Navigation And Localization Acceptance Criteria
 
 * Switching `home -> markets -> assets` through the bottom bar does not leave the previous main tabs in browser history.

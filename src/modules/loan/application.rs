@@ -42,6 +42,7 @@ use chrono::{TimeDelta, Utc};
 use serde_json::Value;
 use sqlx::{MySql, Pool};
 
+/// 按产品编号倒序列出 active 借贷产品，数量默认 50、最多 200；不读取用户 KYC、订单或钱包。
 pub(crate) async fn list_active_products_use_case(
     pool: &Pool<MySql>,
     query: ListQuery,
@@ -51,6 +52,8 @@ pub(crate) async fn list_active_products_use_case(
     Ok(LoanProductsResponse { products })
 }
 
+/// 先规范并校验借贷类型与状态，再查询后台产品分页及匹配总数。
+/// 非法枚举在 SQL 执行前返回，行数据与 total 始终使用同一组筛选条件。
 pub(crate) async fn list_admin_products_use_case(
     pool: &Pool<MySql>,
     query: AdminLoanProductsQuery,
@@ -73,6 +76,7 @@ pub(crate) async fn list_admin_products_use_case(
     Ok(AdminLoanProductsResponse { products, total })
 }
 
+/// 读取指定后台借贷产品的当前配置与资产信息；不锁产品，不能作为并发下单的条款快照。
 pub(crate) async fn get_admin_product_use_case(
     pool: &Pool<MySql>,
     product_id: u64,
@@ -81,6 +85,7 @@ pub(crate) async fn get_admin_product_use_case(
     load_loan_product_response(pool, product_id).await
 }
 
+/// 按当前用户、可选状态和数量上限读取借贷订单快照；不锁订单或钱包，不计算新的利息。
 pub(crate) async fn list_user_orders_use_case(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -92,6 +97,7 @@ pub(crate) async fn list_user_orders_use_case(
     Ok(LoanOrdersResponse { orders })
 }
 
+/// 按用户和订单编号读取详情，在 SQL 条件中隔离其他用户订单；查询不触发取消、还款或抵押释放。
 pub(crate) async fn get_user_order_use_case(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -101,6 +107,8 @@ pub(crate) async fn get_user_order_use_case(
     load_user_loan_order_response(pool, user_id, order_id).await
 }
 
+/// 组装后台用户、邮箱、产品、类型和状态筛选并查询订单分页。
+/// 该只读用例不获取订单或钱包行锁，也不触发审核、还款或抵押释放。
 pub(crate) async fn list_admin_orders_use_case(
     pool: &Pool<MySql>,
     query: AdminLoanOrdersQuery,
@@ -122,6 +130,7 @@ pub(crate) async fn list_admin_orders_use_case(
     Ok(AdminLoanOrdersResponse { orders, total })
 }
 
+/// 读取后台借贷订单详情，不锁订单或触发状态迁移。
 pub(crate) async fn get_admin_order_use_case(
     pool: &Pool<MySql>,
     order_id: u64,
@@ -130,6 +139,8 @@ pub(crate) async fn get_admin_order_use_case(
     load_loan_order_response(pool, order_id).await
 }
 
+/// 校验活动资产、金额精度、额度、计息模式与多语言名称后以单条写入创建借贷产品。
+/// 产品写入和随后回读不是同一事务：写入成功但回读失败时产品仍已存在；本用例不修改用户钱包或订单。
 pub(crate) async fn create_loan_product_use_case(
     pool: &Pool<MySql>,
     request: CreateLoanProductRequest,
@@ -139,6 +150,8 @@ pub(crate) async fn create_loan_product_use_case(
     load_loan_product_response(pool, product_id).await
 }
 
+/// 校验完整产品配置与活动资产精度后覆盖指定借贷产品，再以独立查询回读响应。
+/// 更新成功后的回读失败不会撤销配置；既有订单已保存的利率、期限、额度和抵押资金状态不被改写。
 pub(crate) async fn update_loan_product_use_case(
     pool: &Pool<MySql>,
     product_id: u64,
@@ -149,6 +162,8 @@ pub(crate) async fn update_loan_product_use_case(
     load_loan_product_response(pool, product_id).await
 }
 
+/// 校验 active/disabled 后自动提交产品状态更新，再独立回读完整响应。
+/// 状态只影响后续创建订单；回读失败不回滚已提交状态，也不处理已有订单或钱包。
 pub(crate) async fn update_loan_product_status_use_case(
     pool: &Pool<MySql>,
     product_id: u64,
@@ -163,7 +178,8 @@ pub(crate) async fn update_loan_product_status_use_case(
 /// 用户须满足 KYC、金额及资产精度要求；抵押贷必须提供正数且精度合法的抵押资产数量。
 /// 事务先锁定启用产品，再校验条款、插入订单，随后锁定钱包并完成可用额到冻结额的双流水迁移。
 /// 订单、抵押余额和账本必须原子提交，任何失败都不得留下未足额抵押的有效订单。
-/// 用户级幂等键唯一；重复插入会回滚当前事务并返回已有订单，`created=false` 表示安全重放。
+/// 用户级幂等键唯一；重复插入会回滚当前事务并返回该键既有订单，`created=false` 且不再次冻结抵押。
+/// 当前实现不会核对重放请求的产品、金额或抵押参数是否与旧订单一致，调用方必须保证同一键只表示同一请求。
 pub(crate) async fn create_loan_order_use_case(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -389,6 +405,9 @@ async fn normalize_product_request(
     })
 }
 
+/// 锁定当前用户 pending 订单，抵押贷先把 collateral frozen 等额退回 available，再标记 cancelled。
+/// 锁序为订单→抵押钱包；释放写 available 正额与 frozen 负额两条 `loan_collateral_release` 流水，locked 不变。
+/// 应用层拥有事务；已取消重放返回 `changed=false`，余额、双流水、释放时间或状态任一步失败都回滚。
 pub(crate) async fn cancel_loan_order_use_case(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -415,6 +434,9 @@ pub(crate) async fn cancel_loan_order_use_case(
     Ok((load_loan_order_response(pool, order_id).await?, true))
 }
 
+/// 锁定 pending 订单后把订单本金增加到贷款资产 available，并以审核时刻加 term_days 记录到期时间。
+/// 锁序为订单→贷款资产钱包；只写一条正向 `loan_disbursement` available 流水，frozen/locked 保持原值。
+/// 余额、流水与 disbursed 状态同事务提交；已放款或已还款重放返回 `changed=false`，不二次入账。
 pub(crate) async fn approve_loan_order_use_case(
     pool: &Pool<MySql>,
     admin_id: u64,
@@ -451,6 +473,9 @@ pub(crate) async fn approve_loan_order_use_case(
     Ok((load_loan_order_response(pool, order_id).await?, true))
 }
 
+/// 锁定 pending 订单，抵押贷把 collateral frozen 退回 available 后记录拒绝管理员与可选原因。
+/// 锁序为订单→抵押钱包，释放写 available 正额与 frozen 负额两条流水；无抵押或已释放时不移动资金。
+/// 应用层事务原子提交余额、流水、释放时间和 rejected 状态；已拒绝重放返回 `changed=false`。
 pub(crate) async fn reject_loan_order_use_case(
     pool: &Pool<MySql>,
     admin_id: u64,
@@ -478,8 +503,10 @@ pub(crate) async fn reject_loan_order_use_case(
 
 /// 为当前用户结清已放款或逾期借贷订单，计算应计利息并释放抵押资产。
 /// 订单须归属当前用户且具有放款时间；已还款订单直接返回原结果，其他状态拒绝操作。
-/// 事务锁定订单后，按资产精度截断本金加利息，再依次扣款、解冻抵押并写入结清金额。
-/// 钱包余额、双向流水、抵押释放标记和订单状态必须原子提交，避免资产或债务单边变化。
+/// 事务锁定订单后，按贷款资产精度向零截断利息及本金加利息，再从贷款资产 available 扣除总还款额。
+/// 随后抵押贷把 collateral frozen 退回 available；实际锁序为订单→贷款钱包→抵押钱包，代码不按资产编号重排。
+/// 还款写一条 `loan_repayment` available 负流水；抵押释放另写 available 正/frozen 负两条流水，locked 始终不变。
+/// 钱包、流水、抵押释放时间与 repaid 状态同事务提交，任一步失败回滚本次扣款和释放。
 /// 已还款状态构成幂等边界并返回 `changed=false`；余额不足或任一步失败均整体回滚。
 pub(crate) async fn repay_loan_order_use_case(
     pool: &Pool<MySql>,

@@ -21,9 +21,9 @@ use super::{
     },
     service::{
         NormalizedSecondsContractProductCycle, ensure_existing_order_matches_request,
-        ensure_existing_settlement_matches, is_duplicate_key_error, normalize_direction,
-        normalize_idempotency_key, normalize_settlement_result, normalized_product_status,
-        optional_image_url, optional_string, order_audit_json, product_audit_json,
+        ensure_existing_settlement_matches, normalize_direction, normalize_idempotency_key,
+        normalize_settlement_result, normalized_product_status, optional_image_url,
+        optional_string, order_audit_json, product_audit_json,
         publish_seconds_contract_order_opened_event_if_needed,
         publish_seconds_contract_order_settled_event_if_needed, required_reason, route_limit,
         route_offset, settlement_payout_amount, validate_create_product_request,
@@ -51,6 +51,7 @@ pub(crate) fn mysql_pool(state: &AppState) -> AppResult<Pool<MySql>> {
     })
 }
 
+/// 只返回 active 秒合约产品及周期，供公开目录选择真实可交易标的。
 pub(crate) async fn list_active_products(
     pool: &Pool<MySql>,
     limit: u32,
@@ -59,6 +60,7 @@ pub(crate) async fn list_active_products(
     Ok(SecondsContractProductsResponse { products })
 }
 
+/// 返回后台秒合约产品、周期与一致总数，读取不锁定或更新配置。
 pub(crate) async fn list_admin_products(
     pool: &Pool<MySql>,
     query: AdminProductsQuery,
@@ -73,6 +75,7 @@ pub(crate) async fn list_admin_products(
     Ok(AdminSecondsContractProductsResponse { products, total })
 }
 
+/// 读取指定秒合约产品及周期，记录缺失返回 NotFound。
 pub(crate) async fn get_admin_product(
     pool: &Pool<MySql>,
     product_id: u64,
@@ -80,6 +83,8 @@ pub(crate) async fn get_admin_product(
     infrastructure::load_product_by_id_from_pool(pool, product_id).await
 }
 
+/// 校验交易对、投注资产、周期、赔率、限额、状态和原因后，在同一管理事务写产品、周期及创建审计。
+/// 任一步失败回滚全部配置；该用例不创建订单或移动用户资金。
 pub(crate) async fn create_product(
     pool: Option<&Pool<MySql>>,
     admin_id: u64,
@@ -124,6 +129,8 @@ pub(crate) async fn create_product(
     Ok(product)
 }
 
+/// 事务内先锁产品旧快照，再校验交易对/资产并原子替换主记录、完整周期集合和 before/after 审计。
+/// 更新失败保留原配置，不影响既有订单已快照的周期、赔率和限额。
 pub(crate) async fn update_product(
     pool: Option<&Pool<MySql>>,
     admin_id: u64,
@@ -170,6 +177,7 @@ pub(crate) async fn update_product(
     Ok(after)
 }
 
+/// 锁定产品后原子更新 active/disabled 状态并写 before/after 管理审计；不结算或修改既有订单。
 pub(crate) async fn update_product_status(
     pool: Option<&Pool<MySql>>,
     admin_id: u64,
@@ -199,6 +207,7 @@ pub(crate) async fn update_product_status(
     Ok(after)
 }
 
+/// 仅允许物理删除已禁用且从未产生订单的产品；产品锁、约束检查、删除和后台审计同事务提交。
 pub(crate) async fn delete_product(
     pool: Option<&Pool<MySql>>,
     admin_id: u64,
@@ -310,7 +319,7 @@ pub(crate) async fn open_order(
     // 先占用用户幂等键，再锁钱包扣款；并发同 key 请求只会有一个进入扣款路径。
     let order_id = match infrastructure::insert_open_order(&mut tx, &order).await {
         Ok(order_id) => order_id,
-        Err(error) if is_duplicate_key_error(&error) => {
+        Err(error) if infrastructure::is_duplicate_key_error(&error) => {
             tx.rollback().await?;
             return replay_existing_order(
                 pool,
@@ -377,6 +386,7 @@ pub(crate) async fn open_order(
     Ok((OpenSecondsContractOrderResponse { order }, true))
 }
 
+/// 执行幂等开仓，并只在新订单资金事务提交后发布用户私有开仓事件；重放和失败均不广播。
 pub(crate) async fn open_order_with_events(
     pool: Option<&Pool<MySql>>,
     redis: Option<&ConnectionManager>,
@@ -390,7 +400,7 @@ pub(crate) async fn open_order_with_events(
     Ok(response)
 }
 
-/// 管理员结算秒合约订单；结算结果和原因必须有效，订单资产精度用于统一截断胜单派奖金额。
+/// 管理员按请求给出的 win/loss 结果结算秒合约订单；本用例不校验到期时间，也不根据市场价推导输赢。
 /// 事务先锁订单再读取资产精度；胜单随后锁共享现货钱包，入账与流水、订单终态及管理员审计原子提交。
 /// 负单不入账；已 settled 且结果一致时返回原结算并不重复派奖，结果冲突或非 opened 状态拒绝处理。
 /// 成功提交后仅事件包装层对首次结算发布通知，重放与失败路径均不得产生外部副作用。
@@ -479,6 +489,7 @@ pub(crate) async fn settle_order(
     ))
 }
 
+/// 执行人工结算，并只在首次结算资金事务提交后发布用户私有结算事件；同结果重放不重复广播。
 pub(crate) async fn settle_order_with_events(
     pool: Option<&Pool<MySql>>,
     admin_id: u64,
@@ -497,6 +508,7 @@ pub(crate) async fn settle_order_with_events(
     Ok(response)
 }
 
+/// 按认证用户读取秒合约订单，绝不通过订单标识跨用户返回记录。
 pub(crate) async fn list_user_orders(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -506,6 +518,7 @@ pub(crate) async fn list_user_orders(
     Ok(SecondsContractOrdersResponse { orders })
 }
 
+/// 按后台用户、产品和状态筛选订单及总数，查询不触发自动结算。
 pub(crate) async fn list_admin_orders(
     pool: &Pool<MySql>,
     query: AdminOrdersQuery,
@@ -521,6 +534,7 @@ pub(crate) async fn list_admin_orders(
     Ok(AdminSecondsContractOrdersResponse { orders, total })
 }
 
+/// 读取后台秒合约订单详情，记录缺失返回 NotFound 且不修改赔付。
 pub(crate) async fn get_admin_order(
     pool: &Pool<MySql>,
     order_id: u64,

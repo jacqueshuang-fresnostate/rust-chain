@@ -35,6 +35,8 @@ use serde_json::{Value, json};
 use sqlx::{MySql, Pool};
 use uuid::Uuid;
 
+/// 读取用户可见的快充启停、币种、网络和金额范围，不暴露商户密钥。
+/// 该用例只读单例配置，不调用支付方，也不创建订单或修改钱包余额。
 pub(crate) async fn get_user_quick_recharge_config(
     pool: Option<Pool<MySql>>,
 ) -> AppResult<UserQuickRechargeConfigResponse> {
@@ -51,6 +53,8 @@ pub(crate) async fn get_user_quick_recharge_config(
     })
 }
 
+/// 按鉴权用户和可选状态读取其快充订单，限制单次返回数量。
+/// 状态在查询前按本地状态机校验，结果不包含其他用户订单或资金流水。
 pub(crate) async fn list_user_quick_recharge_orders(
     pool: Option<Pool<MySql>>,
     subject: &str,
@@ -72,6 +76,7 @@ pub(crate) async fn list_user_quick_recharge_orders(
     })
 }
 
+/// 读取后台快充完整配置响应，密钥仅以掩码形式展示。
 pub(crate) async fn get_admin_quick_recharge_config(
     pool: Option<Pool<MySql>>,
 ) -> AppResult<QuickRechargeConfigResponse> {
@@ -80,6 +85,8 @@ pub(crate) async fn get_admin_quick_recharge_config(
     ))
 }
 
+/// 规范用户、邮箱、状态和支付方编号筛选后查询后台订单分页及总数。
+/// 该只读用例不锁订单，不触发支付方请求，也不改变钱包或支付状态。
 pub(crate) async fn list_admin_quick_recharge_orders(
     pool: Option<Pool<MySql>>,
     query: QuickRechargeOrdersQuery,
@@ -106,7 +113,8 @@ pub(crate) async fn list_admin_quick_recharge_orders(
 /// 为当前用户创建 GMPay 快充订单；需有可用配置和密钥，充值金额合规且配置币种对应活动资产。
 /// 本地先持久化 created 订单，再调用支付方；响应订单号和金额必须匹配，成功转 pending，失败标记 failed。
 /// 此阶段不修改钱包或流水，真正入账仅由已验签回调完成；支付方 HTTP 调用是数据库事务外副作用。
-/// 每次请求生成新订单号，不提供请求级幂等重放；调用方不得把重试视为同一支付订单。
+/// 每次请求生成新订单号，不提供请求级幂等重放；重试会创建另一条本地记录和另一笔外部支付请求。
+/// 外部订单成功后，本地 pending 更新失败不会撤销支付方订单；外部结果异常时标记 failed 若再失败，本地记录可能保留 created。
 pub(crate) async fn create_user_quick_recharge_order(
     pool: Option<Pool<MySql>>,
     key: Option<&str>,
@@ -337,6 +345,8 @@ pub(crate) async fn test_admin_quick_recharge_config(
     Ok(response)
 }
 
+/// 锁定未支付快充订单并确认不存在钱包流水后，写管理员审计再删除订单。
+/// 应用层拥有事务；paid 或已有入账流水的订单禁止删除，审计与删除失败时整体回滚。
 pub(crate) async fn delete_admin_quick_recharge_order(
     pool: Option<Pool<MySql>>,
     subject: &str,
@@ -374,9 +384,10 @@ pub(crate) async fn delete_admin_quick_recharge_order(
     Ok(())
 }
 
-/// 处理 GMPay 已支付异步通知；只有在使用当前商户密钥完成签名校验，并确认 PID、支付状态、订单号、交易号、法币金额和到账币种均与本地订单一致后才允许入账。
+/// 处理 GMPay 已支付异步通知；首次入账须验签并确认 PID、状态、订单号、交易号、法币金额和到账币种与本地订单一致。
 /// 事务先锁定快充订单：已为 `paid` 时按幂等重放直接成功，未支付时将订单状态、支付方原始回调、钱包可用余额及对应 `quick_recharge` 流水在同一事务内提交，任何一步失败都不得留下半入账状态。
-/// 实际到账数量必须为正；余额与流水金额以支付方已验签的 `actual_amount` 为准，并由钱包写入原语保持账户快照和流水 `balance_after` 一致，重复通知不得产生第二次余额变更或第二笔流水。
+/// `paid` 重放在验签、PID/status 和字段解析后短路，不再核对本次 trade_id、法币金额或 token；它不产生第二次余额变化或流水。
+/// 首次实际到账数量只校验为正，当前路径不按资产 precision_scale 截断；available 与流水直接使用已验签 `actual_amount`，frozen/locked 不变。
 /// 日志边界为：收到原始回调、配置/验签失败、关键字段不匹配、幂等命中及事务提交后的入账成功；成功日志只能在提交完成后发出，本用例不调用支付方 HTTP，也不在日志之外发布不可回滚事件。
 pub(crate) async fn handle_gmpay_notify(
     pool: Option<Pool<MySql>>,

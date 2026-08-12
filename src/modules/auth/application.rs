@@ -26,8 +26,9 @@ use crate::{
             },
             hash_password,
             infrastructure::{
-                CF_TURNSTILE_SITEVERIFY_URL, bind_registered_user_referral_in_tx,
-                create_user_invite_code_in_tx, ensure_email_purpose_not_cooling_down_in_tx,
+                CF_TURNSTILE_SITEVERIFY_URL, RedisProjectRefreshTokenRepository,
+                bind_registered_user_referral_in_tx, create_user_invite_code_in_tx,
+                ensure_email_purpose_not_cooling_down_in_tx,
                 ensure_registration_email_available_in_tx,
                 ensure_registration_email_not_cooling_down_in_tx,
                 increment_email_verification_attempt_in_tx,
@@ -66,6 +67,7 @@ use axum::http::{HeaderMap, header::AUTHORIZATION};
 use chrono::{DateTime, Duration, Utc};
 use ring::rand::{SecureRandom, SystemRandom};
 use sqlx::{MySql, Pool};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 struct TurnstileRuntimeConfig {
@@ -105,17 +107,24 @@ impl TurnstileRuntimeConfig {
     }
 }
 
+/// 从应用状态组装 MySQL 认证仓储、可选 Sa-Token 管理器与 Redis 刷新令牌端口。
+/// 缺少 MySQL 配置立即失败；构造过程不访问数据库或 Redis，连接错误在具体用例中上抛。
 pub(crate) fn auth_service(state: &AppState) -> AppResult<AuthService<MySqlAuthRepository>> {
     let pool = mysql_pool(state)?;
+    let project_refresh_tokens = state.redis.clone().map(|manager| {
+        Arc::new(RedisProjectRefreshTokenRepository::new(manager))
+            as Arc<dyn crate::modules::auth::ProjectRefreshTokenRepository>
+    });
 
     Ok(AuthService::new(
         MySqlAuthRepository::new(pool),
         state.settings.clone(),
         state.auth_manager.clone(),
-        state.redis.clone(),
+        project_refresh_tokens,
     ))
 }
 
+/// 取得认证持久化的 MySQL 连接池，未配置时返回明确内部错误。
 pub(crate) fn mysql_pool(state: &AppState) -> AppResult<Pool<MySql>> {
     state.mysql.clone().ok_or_else(|| {
         AppError::Internal("mysql pool is not configured for auth persistence".to_owned())
@@ -161,6 +170,9 @@ pub(crate) enum UserLoginOutcome {
     },
 }
 
+/// 编排管理员注册：有 Bearer 令牌时先验证管理员作用域，空令牌仅留给首管理员引导。
+/// 凭证解析或账号写入失败不签发令牌；首次注册的“查空表—插入”及插入后的令牌签发
+/// 均不是同一事务，并发冲突与已建账号后的会话失败分别由数据库约束和调用方处理。
 pub(crate) async fn register_admin_actor(
     state: &AppState,
     headers: &HeaderMap,
@@ -188,6 +200,9 @@ fn admin_bearer_token(headers: &HeaderMap) -> Option<&str> {
         .filter(|token| !token.is_empty())
 }
 
+/// 验证管理员密码后读取二次验证状态；未绑定直接签发令牌，已绑定只创建挑战。
+/// 凭证验证会清除失败计数并记录适配器支持的登录时间，这些写入不因后续 2FA 查询、
+/// 挑战创建或令牌后端失败而回滚；重复密码登录会新增五分钟挑战且不撤销旧挑战。
 pub(crate) async fn login_admin_actor(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -216,7 +231,8 @@ pub(crate) async fn login_admin_actor(
     ))
 }
 
-/// 在管理员密码与 2FA 流程前先执行 Turnstile；挑战失败时不查账号、不累加登录失败计数。
+/// 在管理员密码与 2FA 流程前按运行时策略调用 Turnstile；校验时会把服务端 secret、
+/// 客户端 token 与可选远端 IP 发往配置 URL，失败时不查账号也不累计账号登录失败次数。
 pub(crate) async fn login_admin_with_turnstile(
     state: &AppState,
     credentials: AdminCredentials,
@@ -228,6 +244,9 @@ pub(crate) async fn login_admin_with_turnstile(
     login_admin_actor(state, &pool, credentials).await
 }
 
+/// 读取管理员挑战后检查过期、消费状态和试码上限，再校验 TOTP、写消费时间并签发令牌。
+/// 错码会另发 SQL 累加次数；检查与消费不是带行数判定的同一原子操作，并发请求可能都越过
+/// 前置检查。消费写入后令牌后端失败不会恢复挑战，调用方需重新完成密码登录。
 pub(crate) async fn verify_admin_login_two_factor(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -257,6 +276,7 @@ pub(crate) async fn verify_admin_login_two_factor(
     Ok(tokens.into())
 }
 
+/// 从 `admin:<id>` 主体读取管理员 TOTP 启用状态，不返回或解密密钥。
 pub(crate) async fn get_admin_two_factor_status(
     pool: &Pool<MySql>,
     subject: &str,
@@ -268,6 +288,9 @@ pub(crate) async fn get_admin_two_factor_status(
     })
 }
 
+/// 读取未绑定状态后生成 TOTP 密钥，加密保存为待确认值，并返回含明文 secret 的导入信息。
+/// 状态检查与 upsert 分离，并发启用可能被后写待确认值关闭；调用方须把响应限定给当前管理员，
+/// 不得记录 URI/secret。本步骤不签发或撤销会话。
 pub(crate) async fn setup_admin_two_factor(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -291,6 +314,9 @@ pub(crate) async fn setup_admin_two_factor(
     })
 }
 
+/// 解密当前读取到的管理员待确认密钥并校验 TOTP，随后以该密文启用绑定。
+/// 已绑定、未生成密钥或动态码错误不改状态；确认写采用 upsert，不比较读取后的并发替换，
+/// 也不签发或撤销管理员会话。
 pub(crate) async fn confirm_admin_two_factor(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -323,6 +349,8 @@ pub(crate) async fn confirm_admin_two_factor(
     Ok(AdminTwoFactorStatusResponse { totp_enabled: true })
 }
 
+/// 要求管理员先通过当前 TOTP 再清除绑定，防止会话被劫持后直接关闭二次验证。
+/// 动态码错误时不改状态；清除采用幂等 upsert，不在此处撤销已有管理员会话。
 pub(crate) async fn disable_admin_two_factor(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -339,6 +367,8 @@ pub(crate) async fn disable_admin_two_factor(
     })
 }
 
+/// 验证代理管理员凭证、账号和整条祖先状态，成功后签发独立代理作用域会话。
+/// 错误密码累计统一锁定计数；成功后的登录记录与令牌存储不是同一事务，后者失败不回滚前者。
 pub(crate) async fn login_agent_actor(
     state: &AppState,
     credentials: AgentCredentials,
@@ -346,7 +376,8 @@ pub(crate) async fn login_agent_actor(
     auth_service(state)?.login_agent(credentials).await
 }
 
-/// 在代理账号认证前统一执行 Turnstile，保持与用户/管理员登录相同的 clearance 兼容和错误合同。
+/// 在代理账号认证前按 clearance/强制策略执行 Turnstile；需校验时把服务端 secret、客户端 token
+/// 与可选远端 IP 发往配置 URL。失败不查代理凭据，服务方或网络错误直接上抛。
 pub(crate) async fn login_agent_with_turnstile(
     state: &AppState,
     credentials: AgentCredentials,
@@ -357,6 +388,8 @@ pub(crate) async fn login_agent_with_turnstile(
     login_agent_actor(state, credentials).await
 }
 
+/// 校验刷新令牌、预期作用域与主体活跃状态后另签一组会话。
+/// 当前实现不消费传入令牌，故同一有效刷新令牌可重复调用；主体级撤销或到期后才失效。
 pub(crate) async fn refresh_actor_tokens(
     state: &AppState,
     refresh_token: Option<String>,
@@ -367,11 +400,13 @@ pub(crate) async fn refresh_actor_tokens(
         .await
 }
 
+/// 明确拒绝公开代理注册入口，避免绕过后台代理审核与层级派生规则。
 pub(crate) fn reject_agent_registration() -> AppResult<IssuedTokens> {
     // 代理账号由后台业务流程创建，公开认证入口只允许登录和刷新，避免用户绕过代理审核。
     Err(AppError::Forbidden)
 }
 
+/// 从安全策略组装注册配置：邮件码固定必需，邀请码按管理策略开关。
 pub(crate) async fn load_register_config(pool: &Pool<MySql>) -> AppResult<RegisterConfig> {
     let policy = load_security_policy(pool).await?;
 
@@ -381,7 +416,8 @@ pub(crate) async fn load_register_config(pool: &Pool<MySql>) -> AppResult<Regist
     })
 }
 
-/// 合并数据库登录策略与 Turnstile 运行时配置，对外继续只暴露 enabled 和 site_key。
+/// 查询数据库登录策略并读取 Turnstile 环境变量，对外只返回用户名开关、enabled 和公开 site_key。
+/// 服务端 secret 与 Siteverify URL 不进入响应；MySQL 查询失败会上抛。
 pub(crate) async fn load_login_config(state: &AppState) -> AppResult<LoginConfig> {
     let policy = load_security_policy(&mysql_pool(state)?).await?;
     let runtime = TurnstileRuntimeConfig::from_env();
@@ -394,6 +430,9 @@ pub(crate) async fn load_login_config(state: &AppState) -> AppResult<LoginConfig
     })
 }
 
+/// 编排邮件码注册：同事务锁国家配置、消费验证码、写用户、邀请关系与 outbox。
+/// 错码仅提交试错计数；其他事务内失败整体回滚。提交后才签发令牌，令牌后端失败时
+/// 已注册用户、邀请关系和 outbox 仍然保留；重放注册受邮箱唯一约束阻断。
 pub(crate) async fn register_user_with_email_code(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -453,6 +492,8 @@ pub(crate) async fn register_user_with_email_code(
         .await
 }
 
+/// 将传输请求字段映射为邮件码注册用例，成功后保持历史令牌响应结构。
+/// 所有事务、邀请幂等与 outbox 副作用均由内层用例负责，映射失败不会额外签发令牌。
 pub(crate) async fn register_user_with_email_code_response(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -477,8 +518,8 @@ pub(crate) async fn register_user_with_email_code_response(
 }
 
 /// 验证用户口令后统一执行登录 2FA 策略；调用方须先完成 Turnstile，并传入当前 MySQL 连接池。
-/// 未命中 2FA 时只签发一组用户会话；命中时只创建一次可消费挑战，不提前签发 token。
-/// 错误路径不得绕过用户名登录开关、强制绑定策略或产生登录会话副作用。
+/// 未命中 2FA 时签发会话；命中时新增五分钟挑战且不提前签发 token。重复登录会新增挑战，
+/// 本函数不撤销旧挑战；口令成功已清除失败计数并记录登录，后续 SQL/令牌失败不回滚这些写入。
 pub(crate) async fn login_user_with_optional_two_factor(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -531,7 +572,9 @@ pub(crate) async fn login_user_with_optional_two_factor(
     }
 }
 
-/// 用户登录入口用例：先执行 Turnstile，再进入口令/2FA 编排，并统一映射历史响应 DTO。
+/// 用户登录入口：按运行时策略先调用 Turnstile Siteverify，再进入口令与 2FA 编排。
+/// 需校验时，挑战 token、服务端 secret 与可选远端 IP 会发送至配置 URL；失败不查账号。
+/// 成功返回一组令牌或一个新挑战，响应中不暴露 TOTP 密钥、密码哈希或 Turnstile secret。
 pub(crate) async fn login_user_with_optional_two_factor_response(
     state: &AppState,
     request: UserAuthRequest,
@@ -634,6 +677,8 @@ fn normalized_env_value(value: String) -> Option<String> {
     (!value.is_empty()).then(|| value.to_owned())
 }
 
+/// 为未注册邮箱生成十分钟验证码，同事务校验占用与冷却并取代旧码。
+/// 先提交哈希记录后调用 SMTP；发送失败时记录仍存在且受冷却约束，明文不入库。
 pub(crate) async fn send_registration_email_code(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -675,6 +720,8 @@ pub(crate) async fn send_registration_email_code(
     Ok(expires_at)
 }
 
+/// 为活跃用户的已验证邮箱发送指定用途验证码，用途同时隔离冷却和消费。
+/// 事务中锁邮箱、取代旧码并存哈希；提交后发信，SMTP 失败不回滚已保存记录。
 pub(crate) async fn send_email_code_for_purpose(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -719,6 +766,7 @@ pub(crate) async fn send_email_code_for_purpose(
     Ok(expires_at)
 }
 
+/// 校验邮箱后仅为活跃、已验证邮箱用户发送密码重置码，未注册地址不创建记录。
 pub(crate) async fn send_password_reset_email_code(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -730,6 +778,9 @@ pub(crate) async fn send_password_reset_email_code(
     send_email_code_for_purpose(state, pool, user_id, "password_reset", "重置登录密码验证码").await
 }
 
+/// 读取并校验用户登录挑战及 TOTP，记录 TOTP 验证时间、写消费时间后再签发令牌。
+/// 动态码错误不消费挑战；检查与消费是独立 SQL，且消费更新不检查受影响行数，
+/// 因而本函数不提供并发请求的原子防重放保证。消费后令牌失败不会恢复挑战。
 pub(crate) async fn verify_login_two_factor_and_issue_tokens(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -750,6 +801,8 @@ pub(crate) async fn verify_login_two_factor_and_issue_tokens(
         .await
 }
 
+/// 验证首次绑定挑战后生成 TOTP 密钥，加密保存待确认值并返回剩余有效期。
+/// 已绑定用户不覆盖密钥；本步骤不消费挑战、不签发令牌，可在挑战期内重新生成。
 pub(crate) async fn setup_login_two_factor_challenge(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -781,6 +834,9 @@ pub(crate) async fn setup_login_two_factor_challenge(
     })
 }
 
+/// 校验首次绑定挑战与当前待确认 TOTP，先启用密钥，再以条件更新消费挑战并签发令牌。
+/// 启用、消费和令牌签发不在同一事务：消费竞争失败时 TOTP 可能已经启用；
+/// 消费成功后的令牌后端失败不会恢复挑战，调用方需重新登录。
 pub(crate) async fn confirm_login_two_factor_setup_and_issue_tokens(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -846,6 +902,8 @@ async fn consume_setup_login_two_factor_challenge(
     Ok(())
 }
 
+/// 校验登录挑战后向挑战用户已验证邮箱发送二次验证重置码。
+/// 挑战过期或类型不符时不创建邮件码；发送冷却、事务与 SMTP 失败语义复用通用发送用例。
 pub(crate) async fn send_login_two_factor_reset_email_code(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -864,6 +922,9 @@ pub(crate) async fn send_login_two_factor_reset_email_code(
     .await
 }
 
+/// 在有效登录挑战下消费专用邮件码，成功后清除用户 TOTP 并消费挑战。
+/// 邮件码在自己的事务中提交消费，重置 TOTP 与挑战消费随后分别执行；任一后续 SQL 失败
+/// 不回滚先前步骤。错码只在邮件码事务中累计次数，不清除 TOTP。
 pub(crate) async fn reset_login_two_factor_with_email_code(
     pool: &Pool<MySql>,
     challenge_id: String,
@@ -876,6 +937,8 @@ pub(crate) async fn reset_login_two_factor_with_email_code(
     consume_login_two_factor_challenge(pool, &challenge.challenge_id).await
 }
 
+/// 在事务中锁定已验证邮箱与指定用途最新待验证码，成功时标记已验证。
+/// 错码只累加尝试次数并提交；过期、超限或缺失不消费其他用途验证码。
 pub(crate) async fn verify_email_code_for_purpose(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -908,6 +971,9 @@ pub(crate) async fn verify_email_code_for_purpose(
     Ok(())
 }
 
+/// 先在独立事务消费密码重置码，再锁定用户并于第二个事务更新哈希、撤销 MySQL 刷新令牌。
+/// 提交后尝试撤销 Sa-Token/Redis 会话但不签发新令牌；外部会话撤销失败会上抛，
+/// 此时新密码与数据库撤销已生效，验证码也已消费，调用方应重新登录。
 pub(crate) async fn reset_password_with_email_code(
     state: &AppState,
     pool: &Pool<MySql>,

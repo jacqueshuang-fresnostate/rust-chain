@@ -63,6 +63,7 @@ pub(crate) struct ParsedPolymarketMarket {
     pub(crate) payload: Value,
 }
 
+/// 将预测市场分页条数默认设为 50，并限制在 1～100。
 pub(crate) fn route_limit(limit: Option<u32>) -> u32 {
     limit.unwrap_or(50).clamp(1, 200)
 }
@@ -72,12 +73,14 @@ pub(crate) fn route_offset(offset: Option<u32>) -> u32 {
     offset.unwrap_or(0).min(100_000)
 }
 
+/// 裁剪可选筛选文本，空字符串转为 `None`。
 pub(crate) fn optional_text(value: Option<String>) -> Option<String> {
     value
         .map(|item| item.trim().to_owned())
         .filter(|item| !item.is_empty())
 }
 
+/// 裁剪必填文本并校验长度；空值或超限在构建 SQL 和上游请求前返回参数错误。
 pub(crate) fn required_text(value: String, field: &str, max_len: usize) -> AppResult<String> {
     let normalized = value.trim().to_owned();
     if normalized.is_empty() {
@@ -89,6 +92,7 @@ pub(crate) fn required_text(value: String, field: &str, max_len: usize) -> AppRe
     Ok(normalized)
 }
 
+/// 从 `user:{id}` 会话 subject 解析用户编号，格式不符返回 Unauthorized。
 pub(crate) fn user_id_from_subject(subject: &str) -> AppResult<u64> {
     subject
         .strip_prefix("user:")
@@ -96,6 +100,7 @@ pub(crate) fn user_id_from_subject(subject: &str) -> AppResult<u64> {
         .ok_or(AppError::Unauthorized)
 }
 
+/// 金额必须严格为正，失败时不得创建报价、订单、钱包变更或流水。
 pub(crate) fn ensure_positive_amount(amount: &BigDecimal, field: &str) -> AppResult<()> {
     if amount <= &BigDecimal::from(0) {
         return Err(AppError::Validation(format!("{field} must be positive")));
@@ -103,6 +108,7 @@ pub(crate) fn ensure_positive_amount(amount: &BigDecimal, field: &str) -> AppRes
     Ok(())
 }
 
+/// 后台费率等字段不得为负，非法值在保存设置前返回参数错误。
 pub(crate) fn ensure_non_negative_decimal(value: &BigDecimal, field: &str) -> AppResult<()> {
     if value < &BigDecimal::from(0) {
         return Err(AppError::Validation(format!(
@@ -112,6 +118,7 @@ pub(crate) fn ensure_non_negative_decimal(value: &BigDecimal, field: &str) -> Ap
     Ok(())
 }
 
+/// 按资产 precision_scale 校验金额小数位，超限金额不得进入钱包和账本。
 pub(crate) fn ensure_amount_precision(
     amount: &BigDecimal,
     precision_scale: i32,
@@ -127,6 +134,7 @@ pub(crate) fn ensure_amount_precision(
     Ok(())
 }
 
+/// 概率价格必须严格位于零与一之间，端点和越界值不得进入报价与赔付计算。
 pub(crate) fn ensure_probability_price(price: &BigDecimal) -> AppResult<()> {
     if price <= &BigDecimal::from(0) || price >= &BigDecimal::from(1) {
         return Err(AppError::Validation(
@@ -136,6 +144,7 @@ pub(crate) fn ensure_probability_price(price: &BigDecimal) -> AppResult<()> {
     Ok(())
 }
 
+/// 只接受 yes 或 no 二元结果，未知结果不得用于预测订单结算。
 pub(crate) fn normalize_binary_outcome(value: &str) -> AppResult<String> {
     match value.trim().to_ascii_lowercase().as_str() {
         "yes" => Ok(OUTCOME_YES.to_owned()),
@@ -146,6 +155,7 @@ pub(crate) fn normalize_binary_outcome(value: &str) -> AppResult<String> {
     }
 }
 
+/// 将 yes/no 规范为小写，并把 invalid、cancelled、canceled 统一为 invalid；其他输入返回参数错误。
 pub(crate) fn normalize_settlement_result(value: &str) -> AppResult<String> {
     match value.trim().to_ascii_lowercase().as_str() {
         "yes" => Ok(OUTCOME_YES.to_owned()),
@@ -157,6 +167,7 @@ pub(crate) fn normalize_settlement_result(value: &str) -> AppResult<String> {
     }
 }
 
+/// 只接受人工确认或自动结算模式，非法后台配置不会生效。
 pub(crate) fn normalize_settlement_mode(value: &str) -> AppResult<String> {
     match value.trim().to_ascii_lowercase().as_str() {
         SETTLEMENT_MODE_MANUAL => Ok(SETTLEMENT_MODE_MANUAL.to_owned()),
@@ -167,6 +178,7 @@ pub(crate) fn normalize_settlement_mode(value: &str) -> AppResult<String> {
     }
 }
 
+/// 只接受退款本金含费、本金或人工处理策略，未知值不得触发资金返还。
 pub(crate) fn normalize_invalid_refund_policy(value: &str) -> AppResult<String> {
     match value.trim().to_ascii_lowercase().as_str() {
         REFUND_STAKE_AND_FEE => Ok(REFUND_STAKE_AND_FEE.to_owned()),
@@ -178,6 +190,7 @@ pub(crate) fn normalize_invalid_refund_policy(value: &str) -> AppResult<String> 
     }
 }
 
+/// 只接受 active 或 hidden 展示状态，避免后台配置产生未定义可见性。
 pub(crate) fn normalize_display_status(value: &str) -> AppResult<String> {
     match value.trim().to_ascii_lowercase().as_str() {
         STATUS_ACTIVE => Ok(STATUS_ACTIVE.to_owned()),
@@ -188,6 +201,7 @@ pub(crate) fn normalize_display_status(value: &str) -> AppResult<String> {
     }
 }
 
+/// 把上游终局结果规范为 yes、no 或 invalid，其他值保持未决而不自动结算。
 pub(crate) fn normalize_external_resolution(value: &str) -> Option<String> {
     match value.trim().to_ascii_lowercase().as_str() {
         "yes" => Some(OUTCOME_YES.to_owned()),
@@ -197,6 +211,7 @@ pub(crate) fn normalize_external_resolution(value: &str) -> Option<String> {
     }
 }
 
+/// 按首次出现顺序去重无符号标识，保持后台资产范围输入的确定性。
 pub(crate) fn unique_u64_list(values: Vec<u64>) -> Vec<u64> {
     let mut seen = HashSet::new();
     values
@@ -205,6 +220,7 @@ pub(crate) fn unique_u64_list(values: Vec<u64>) -> Vec<u64> {
         .collect()
 }
 
+/// 裁剪、去空并去重文本集合，保持首次出现顺序供同步配置稳定使用。
 pub(crate) fn normalize_string_list(values: Vec<String>) -> Vec<String> {
     let mut seen = HashSet::new();
     values
@@ -214,6 +230,7 @@ pub(crate) fn normalize_string_list(values: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+/// 从持久化 JSON 读取无符号标识数组，非法项被忽略且不触发任何写入。
 pub(crate) fn json_u64_array(value: &Value) -> Vec<u64> {
     value
         .as_array()
@@ -226,6 +243,7 @@ pub(crate) fn json_u64_array(value: &Value) -> Vec<u64> {
         .unwrap_or_default()
 }
 
+/// 从持久化 JSON 提取非空文本数组，保留元素顺序供同步配置使用。
 pub(crate) fn json_string_array(value: &Value) -> Vec<String> {
     let parsed = match value {
         Value::String(text) => {
@@ -253,6 +271,7 @@ pub(crate) fn json_string_array(value: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// 从上游 JSON 提取十进制数组，无法解析的元素不会被伪造为零。
 pub(crate) fn json_decimal_array(value: &Value) -> Vec<BigDecimal> {
     let parsed = match value {
         Value::String(text) => serde_json::from_str::<Value>(text).unwrap_or(Value::Null),
@@ -264,6 +283,7 @@ pub(crate) fn json_decimal_array(value: &Value) -> Vec<BigDecimal> {
         .unwrap_or_default()
 }
 
+/// 将 JSON 字符串或数字精确解析为十进制值，其他类型返回空。
 pub(crate) fn decimal_from_json(value: &Value) -> Option<BigDecimal> {
     match value {
         Value::Number(number) => BigDecimal::from_str(&number.to_string()).ok(),
@@ -272,6 +292,7 @@ pub(crate) fn decimal_from_json(value: &Value) -> Option<BigDecimal> {
     }
 }
 
+/// 按候选字段顺序返回首个存在值，统一兼容 Polymarket 多版本字段名。
 pub(crate) fn first_jsonish_value(value: &Value, keys: &[&str]) -> Option<Value> {
     for key in keys {
         let Some(candidate) = value.get(*key) else {
@@ -287,6 +308,7 @@ pub(crate) fn first_jsonish_value(value: &Value, keys: &[&str]) -> Option<Value>
     None
 }
 
+/// 从候选字段中读取首个非空文本，不修改上游载荷。
 pub(crate) fn first_string(value: &Value, keys: &[&str]) -> Option<String> {
     for key in keys {
         let Some(candidate) = value.get(*key) else {
@@ -302,15 +324,18 @@ pub(crate) fn first_string(value: &Value, keys: &[&str]) -> Option<String> {
     None
 }
 
+/// 从候选字段中读取首个可精确解析的十进制值，非法值不回退为零。
 pub(crate) fn first_decimal(value: &Value, keys: &[&str]) -> Option<BigDecimal> {
     keys.iter()
         .find_map(|key| value.get(*key).and_then(decimal_from_json))
 }
 
+/// 从上游 JSON 读取布尔字段，非布尔类型按缺失处理。
 pub(crate) fn bool_field(value: &Value, key: &str) -> bool {
     value.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
 
+/// 从 Polymarket 市场或其首个子项提取统一字段集合，供解析器兼容两种载荷结构。
 pub(crate) fn extract_market_values(payload: Value) -> Vec<Value> {
     if let Some(items) = payload.as_array() {
         return items
@@ -335,6 +360,7 @@ pub(crate) fn extract_market_values(payload: Value) -> Vec<Value> {
     Vec::new()
 }
 
+/// 按 Polymarket 字段别名提取标识、标签、概率和结算信息，不执行网络或持久化。
 pub(crate) fn extract_market_values_from_item(item: &Value) -> Vec<Value> {
     if let Some(markets) = item.get("markets").and_then(Value::as_array) {
         return markets
@@ -345,6 +371,7 @@ pub(crate) fn extract_market_values_from_item(item: &Value) -> Vec<Value> {
     vec![item.clone()]
 }
 
+/// 把事件级标题、分类和标签补入市场级载荷，市场自身字段优先且输入原值不变。
 pub(crate) fn merge_event_context(event: &Value, market: &Value) -> Value {
     let mut merged = market.clone();
     let Some(object) = merged.as_object_mut() else {
@@ -370,6 +397,8 @@ pub(crate) fn merge_event_context(event: &Value, market: &Value) -> Value {
     merged
 }
 
+/// 解析 Polymarket 事件与市场载荷，校验标识、标题、概率及可选终局结果。
+/// 标识或标题缺失返回错误；价格缺失时使用 0.5/互补值，越界价格收敛到 0.01～0.99 后参与同步。
 pub(crate) fn parse_polymarket_market(value: &Value) -> AppResult<ParsedPolymarketMarket> {
     let external_market_id = first_string(value, &["id", "conditionId", "questionID"])
         .ok_or_else(|| AppError::Validation("polymarket market id is missing".to_owned()))?;
@@ -454,6 +483,7 @@ fn closed_binary_price_resolution(is_closed: bool, prices: &[BigDecimal]) -> Opt
     }
 }
 
+/// 取理论赔付与正赔付上限的较小值；上限不为正时不截断，函数不修改余额。
 pub(crate) fn capped_payout(theoretical_payout: &BigDecimal, cap: &BigDecimal) -> BigDecimal {
     if cap > &BigDecimal::from(0) && theoretical_payout > cap {
         cap.clone()
@@ -462,29 +492,30 @@ pub(crate) fn capped_payout(theoretical_payout: &BigDecimal, cap: &BigDecimal) -
     }
 }
 
+/// 生成用户可见的预测订单号；仅格式化主键，不改变内部数据库标识。
 pub(crate) fn prediction_order_no(order_id: u64) -> String {
     format!("PM{}{:08}", Utc::now().format("%Y%m%d"), order_id)
 }
 
+/// 解析 RFC3339 上游时间并转换为 UTC；其他格式（包括纯时间戳）返回空。
 pub(crate) fn parse_datetime(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .ok()
         .map(|datetime| datetime.with_timezone(&Utc))
 }
 
+/// 压缩同步错误中的连续空白并限制长度，防止日志字段无界增长。
 pub(crate) fn compact_error_message(value: &str) -> String {
     let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
     compact.chars().take(512).collect()
 }
 
-pub(crate) fn is_duplicate_key_error(error: &sqlx::Error) -> bool {
-    matches!(error, sqlx::Error::Database(database_error) if database_error.is_unique_violation())
-}
-
+/// 解析十进制字符串；解析失败按同步兼容合同返回零值。
 pub(crate) fn decimal_str(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).unwrap_or_else(|_| BigDecimal::from(0))
 }
 
+/// 将概率限制在零到一之间，保护上游异常值不突破预测定价边界。
 pub(crate) fn clamp_probability(value: BigDecimal) -> BigDecimal {
     if value <= 0 {
         decimal_str("0.01")

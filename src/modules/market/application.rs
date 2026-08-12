@@ -20,6 +20,8 @@ use mongodb::Database;
 use redis::aio::ConnectionManager;
 use sqlx::{MySql, Pool};
 
+/// 返回 MySQL 中启用的交易对元数据；未配置 MySQL 时返回内置公开交易对目录。
+/// 本用例不读取或合并 Redis 行情，也不创建资金事务或改变市场状态。
 pub(crate) async fn list_markets(mysql: Option<Pool<MySql>>) -> AppResult<MarketsResponse> {
     let Some(pool) = mysql else {
         return Ok(MarketsResponse {
@@ -31,6 +33,7 @@ pub(crate) async fn list_markets(mysql: Option<Pool<MySql>>) -> AppResult<Market
     Ok(MarketsResponse { markets })
 }
 
+/// 按认证用户读取仍启用的收藏交易对，禁止暴露其他用户或下架记录。
 pub(crate) async fn list_user_market_favorites(
     mysql: Option<Pool<MySql>>,
     user_id: u64,
@@ -40,6 +43,8 @@ pub(crate) async fn list_user_market_favorites(
     Ok(MarketFavoritesResponse { favorites })
 }
 
+/// 规范交易对并为认证用户新增自选；MySQL 唯一键使重复添加保持单条记录，未知或下架交易对返回校验错误。
+/// 本用例不改钱包或行情缓存，数据库写入失败直接返回。
 pub(crate) async fn add_user_market_favorite(
     mysql: Option<Pool<MySql>>,
     user_id: u64,
@@ -52,6 +57,7 @@ pub(crate) async fn add_user_market_favorite(
     Ok(MarketFavoriteMutationResponse { favorite })
 }
 
+/// 规范交易对并删除认证用户自己的自选；记录不存在时仍成功，不会影响其他用户的同一交易对收藏。
 pub(crate) async fn remove_user_market_favorite(
     mysql: Option<Pool<MySql>>,
     user_id: u64,
@@ -64,7 +70,7 @@ pub(crate) async fn remove_user_market_favorite(
 
 /// 返回公开市场的权威 ticker：先验证交易对已上架，再读取行情 ingestion 写入的 Redis 快照。
 /// Redis 未配置或缓存缺失/损坏必须返回错误，不使用客户端价格或静态市场信息伪造最新价。
-/// 该快照同时可能被下单、结算和强平链路读取，因此应用层不在此修改价格或时间戳。
+/// 响应原样保留快照的 `observed_at`；本路由不按时间戳判断新鲜度，资金链路需自行执行陈旧价格检查。
 pub(crate) async fn get_market_ticker(
     mysql: Option<Pool<MySql>>,
     redis: Option<ConnectionManager>,
@@ -78,6 +84,8 @@ pub(crate) async fn get_market_ticker(
     infrastructure::load_cached_ticker(redis, symbol.as_str()).await
 }
 
+/// 校验交易对已上架后读取 ingestion 写入的 Redis 盘口 JSON；缓存缺失返回 NotFound，损坏或 Redis 故障返回错误。
+/// 本接口不排序、补档或执行新鲜度判断，也不回退到第三方 HTTP。
 pub(crate) async fn get_market_depth(
     mysql: Option<Pool<MySql>>,
     redis: Option<ConnectionManager>,
@@ -91,6 +99,7 @@ pub(crate) async fn get_market_depth(
     infrastructure::load_cached_depth(redis, symbol.as_str()).await
 }
 
+/// 校验交易对已上架后从 MySQL 读取现货成交，按成交时间与主键倒序返回 1～100 条。
 pub(crate) async fn list_market_trades(
     mysql: Option<Pool<MySql>>,
     raw_symbol: &str,
@@ -108,6 +117,8 @@ pub(crate) async fn list_market_trades(
     Ok(TradesResponse { trades })
 }
 
+/// 校验交易对及周期后，从该交易对的 Mongo 集合按开盘时间升序读取最多 100 根 K 线。
+/// `start`/`end` 使用闭区间过滤；Mongo 未配置、查询或反序列化失败时返回错误，不合成蜡烛。
 pub(crate) async fn list_market_klines(
     mysql: Option<Pool<MySql>>,
     mongo: Option<Database>,

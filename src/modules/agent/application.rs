@@ -28,6 +28,7 @@ use crate::{
 };
 use sqlx::{MySql, Pool};
 
+/// 按认证主体读取代理管理员及其代理节点，任一未启用祖先都按未授权处理。
 pub(crate) async fn get_agent_me(
     mysql: Option<Pool<MySql>>,
     subject: &str,
@@ -40,6 +41,8 @@ pub(crate) async fn get_agent_me(
         .ok_or(AppError::Unauthorized)
 }
 
+/// 在当前代理子树内汇总团队用户、有效邀请码和分资产佣金。
+/// scope、计数和资产汇总分别查询且不开事务，并发归属/结算时各块数据可能来自不同快照。
 pub(crate) async fn get_agent_dashboard(
     mysql: Option<Pool<MySql>>,
     subject: &str,
@@ -50,6 +53,8 @@ pub(crate) async fn get_agent_dashboard(
     Ok(agent_dashboard_response(scope.agent_id, counts, assets))
 }
 
+/// 先验证代理账号及祖先状态，再按物化路径统计整个子树的兑换订单数与金额。
+/// scope 与聚合是两个无事务查询；两者之间发生代理停用时，本次调用不会再次校验权限快照。
 pub(crate) async fn get_agent_convert_stats(
     mysql: Option<Pool<MySql>>,
     subject: &str,
@@ -59,6 +64,7 @@ pub(crate) async fn get_agent_convert_stats(
     agent_convert_stats_response(row)
 }
 
+/// 分页列出归属当前代理或后代节点的用户，页大小限制为一百且不泄露父级或兄弟树。
 pub(crate) async fn list_agent_users(
     mysql: Option<Pool<MySql>>,
     subject: &str,
@@ -70,6 +76,7 @@ pub(crate) async fn list_agent_users(
     Ok(AgentUsersResponse { users })
 }
 
+/// 分页列出当前节点之下的代理，排除自身并以物化路径限定最大五百条。
 pub(crate) async fn list_agent_sub_agents(
     mysql: Option<Pool<MySql>>,
     subject: &str,
@@ -81,6 +88,8 @@ pub(crate) async fn list_agent_sub_agents(
     Ok(AgentSubAgentsResponse { agents })
 }
 
+/// 先读取服务端代理 scope，再分别读取子代理和用户邀请节点，组装团队树而不修改归属。
+/// 三次查询不开事务，不保证同一数据库快照；任一失败则整体失败，根 ID 不接受客户端覆盖。
 pub(crate) async fn list_agent_team_tree(
     mysql: Option<Pool<MySql>>,
     subject: &str,
@@ -98,6 +107,7 @@ pub(crate) async fn list_agent_team_tree(
     })
 }
 
+/// 仅列出当前代理拥有的佣金记录，同时用子树归属约束业务用户范围。
 pub(crate) async fn list_agent_commissions(
     mysql: Option<Pool<MySql>>,
     subject: &str,
@@ -109,6 +119,7 @@ pub(crate) async fn list_agent_commissions(
     Ok(agent_commissions_response(scope.agent_id, commissions))
 }
 
+/// 分页读取当前代理直接拥有的邀请码，不合并子代理邀请码且无写入副作用。
 pub(crate) async fn list_agent_invite_codes(
     mysql: Option<Pool<MySql>>,
     subject: &str,
@@ -120,6 +131,8 @@ pub(crate) async fn list_agent_invite_codes(
     Ok(AgentInviteCodesResponse { invite_codes })
 }
 
+/// 校验使用上限后为当前代理生成新邀请码，插入成功后再按所有权回读完整快照。
+/// 冲突或数据库错误直接失败；本用例未开显式事务，回读缺失按未找到处理。
 pub(crate) async fn create_agent_invite_code(
     mysql: Option<Pool<MySql>>,
     subject: &str,
@@ -140,6 +153,9 @@ pub(crate) async fn create_agent_invite_code(
         .ok_or(AppError::NotFound)
 }
 
+/// 仅允许邀请码所属代理在启用与停用之间切换，不匹配所有权时返回未找到。
+/// 单语句更新后另行回读权威快照；重复设置不改使用次数或邀请关系，但数据库若对同值更新
+/// 报告零受影响行，本用例会返回未找到，因此不承诺同值请求幂等成功。
 pub(crate) async fn update_agent_invite_code_status(
     mysql: Option<Pool<MySql>>,
     subject: &str,
@@ -165,6 +181,9 @@ pub(crate) async fn update_agent_invite_code_status(
         .ok_or(AppError::NotFound)
 }
 
+/// 校验新旧口令后锁定代理管理员凭证，同事务更新哈希并撤销 MySQL 刷新令牌。
+/// 旧口令或账号状态不符时不写入；提交后尝试撤销 Sa-Token/Redis 会话且不签发新令牌。
+/// 外部失败时新密码已生效；令牌枚举若被会话助手降级为空集合，也不能证明全部旧访问令牌已删除。
 pub(crate) async fn change_agent_password(
     state: AppState,
     subject: &str,

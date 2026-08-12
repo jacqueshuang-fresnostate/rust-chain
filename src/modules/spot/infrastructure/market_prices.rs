@@ -13,6 +13,8 @@ use serde_json::Value;
 use sqlx::{MySql, Pool};
 use std::str::FromStr;
 
+/// 读取行情接入链写入 Redis 的新鲜最新价，作为现货市价执行和触发判断的服务端权威价格。
+/// 缺失、过期、非正或损坏载荷均返回错误，不得回退使用客户端参考价完成成交。
 pub(crate) async fn latest_spot_market_price(
     redis: Option<&ConnectionManager>,
     pair_symbol: &str,
@@ -52,6 +54,8 @@ pub(crate) async fn latest_spot_market_price(
     Ok(Some(price))
 }
 
+/// 处理已触发限价买单标识的现货基础设施适配逻辑，保持存储或外部协议的既有边界。
+/// 按服务端行情筛选可触发限价买单主键并稳定排序，查询本身不锁钱包。
 pub(crate) async fn triggered_limit_buy_order_ids(
     pool: &Pool<MySql>,
     pair_symbol: &str,
@@ -79,6 +83,8 @@ pub(crate) async fn triggered_limit_buy_order_ids(
     Ok(rows.into_iter().map(|row| row.0).collect())
 }
 
+/// 处理已触发限价卖单标识的现货基础设施适配逻辑，保持存储或外部协议的既有边界。
+/// 按服务端行情筛选可触发限价卖单主键并稳定排序，查询本身不锁钱包。
 pub(crate) async fn triggered_limit_sell_order_ids(
     pool: &Pool<MySql>,
     pair_symbol: &str,
@@ -106,6 +112,8 @@ pub(crate) async fn triggered_limit_sell_order_ids(
     Ok(rows.into_iter().map(|row| row.0).collect())
 }
 
+/// 处理已触发限价买单标识的现货基础设施适配逻辑，保持存储或外部协议的既有边界。
+/// 筛选同时满足触发价和限价的止限价买单主键，执行事务会再次复核。
 pub(crate) async fn triggered_stop_limit_buy_order_ids(
     pool: &Pool<MySql>,
     pair_symbol: &str,
@@ -135,6 +143,8 @@ pub(crate) async fn triggered_stop_limit_buy_order_ids(
     Ok(rows.into_iter().map(|row| row.0).collect())
 }
 
+/// 处理已触发限价卖单标识的现货基础设施适配逻辑，保持存储或外部协议的既有边界。
+/// 筛选同时满足触发价和限价的止限价卖单主键，执行事务会再次复核。
 pub(crate) async fn triggered_stop_limit_sell_order_ids(
     pool: &Pool<MySql>,
     pair_symbol: &str,

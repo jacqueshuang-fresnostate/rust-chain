@@ -25,6 +25,8 @@ pub(crate) struct AdminUserInsert {
     pub(crate) kyc_level: i32,
 }
 
+/// 分页查询后台用户，返回符合调用方筛选条件的记录及相同谓词下的总数。
+/// 后台用户列表与计数通过连接池分别执行且均不加锁；并发写入可能造成页数据与总数快照不同，SQL 或字段映射失败直接返回错误。
 pub(crate) async fn list_admin_users(
     pool: &Pool<MySql>,
     filter: AdminUserListFilter,
@@ -61,6 +63,8 @@ pub(crate) async fn list_admin_users(
     .await
 }
 
+/// 按传入主键或筛选条件从连接池读取后台用户并映射为应用层所需的完整记录。
+/// 后台用户不追加行锁，查询不创建事务；记录缺失时返回未找到，SQL 或字段解码失败直接返回错误，不产生审计副作用。
 pub(crate) async fn load_admin_user(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -75,6 +79,8 @@ pub(crate) async fn load_admin_user(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中插入邮箱/手机、密码散列、初始状态和 KYC 等级，并返回用户 ID。
+/// 邮箱或手机等唯一键冲突映射为“用户已存在”；函数不保存明文密码，调用方负责同事务创建邀请码和后台审计。
 pub(crate) async fn insert_admin_user_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: AdminUserInsert,
@@ -94,6 +100,8 @@ pub(crate) async fn insert_admin_user_in_tx(
     Ok(result.last_insert_id())
 }
 
+/// 在调用方事务快照中按用户 ID 回读联系方式、首枚 active 邀请码、状态和 KYC 等级。
+/// 查询不追加锁；用户缺失返回未找到，读取失败由创建/更新用例回滚，函数不暴露密码散列。
 pub(crate) async fn load_admin_user_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -108,6 +116,8 @@ pub(crate) async fn load_admin_user_in_tx(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中按用户 ID 锁定用户主记录，确认后续状态或安全设置写入具有有效目标。
+/// `FOR UPDATE` 锁持有至调用方事务结束；用户缺失返回未找到，函数不检查用户状态，也不自行提交或写审计。
 pub(crate) async fn ensure_admin_user_exists_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -120,6 +130,8 @@ pub(crate) async fn ensure_admin_user_exists_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中按用户 ID 仅覆盖账户状态。
+/// 更新不检查受影响行数或撤销会话；调用方须先锁定用户、校验目标状态，并与后台审计统一提交。
 pub(crate) async fn update_admin_user_status_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -133,6 +145,8 @@ pub(crate) async fn update_admin_user_status_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中锁定用户的双因素设置并返回当前值；尚未建档时返回该用户的空设置。
+/// `FOR UPDATE` 只在记录存在时取得行锁，调用方应先锁用户主记录；函数不解密 TOTP secret 或提交事务。
 pub(crate) async fn load_admin_user_two_factor_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -151,6 +165,8 @@ pub(crate) async fn load_admin_user_two_factor_in_tx(
     Ok(settings.unwrap_or_else(|| UserTwoFactorSettings::empty(user_id)))
 }
 
+/// 在调用方事务中新增或覆盖用户双因素设置，清空 TOTP 密文和验证时间并关闭两个 2FA 开关。
+/// user_id 唯一键使重复重置保持相同空状态；函数不撤销会话，调用方负责先锁用户/设置并与审计原子提交。
 pub(crate) async fn reset_admin_user_two_factor_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -172,6 +188,8 @@ pub(crate) async fn reset_admin_user_two_factor_in_tx(
     Ok(UserTwoFactorSettings::empty(user_id))
 }
 
+/// 在调用方事务中为指定用户生成并插入一枚 active 邀请码。
+/// 随机码唯一键冲突时最多重试十二次，其他 SQL 错误立即返回，耗尽后返回内部错误；函数不锁用户、不提交事务，调用方负责与用户创建和审计原子提交。
 pub(crate) async fn create_user_invite_code_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -224,6 +242,8 @@ fn map_duplicate_user_error(error: sqlx::Error) -> AppError {
     }
 }
 
+/// 向现有 QueryBuilder 追加用户编号筛选谓词及绑定参数，确保列表和计数查询复用相同过滤语义。
+/// user_id 为必填值，函数始终追加 `列 = ?` 并绑定参数；列名由内部调用方提供，不执行查询或校验用户存在性。
 pub(super) fn push_user_id_filter(
     builder: &mut QueryBuilder<'_, MySql>,
     user_id_column: &'static str,
@@ -235,6 +255,8 @@ pub(super) fn push_user_id_filter(
     builder.push_bind(user_id);
 }
 
+/// 向现有 QueryBuilder 追加用户邮箱筛选谓词及绑定参数，确保列表和计数查询复用相同过滤语义。
+/// 邮箱去空后才追加关联 users 表的 EXISTS 精确匹配；空值不改变 builder，函数不执行 SQL 或规范化邮箱大小写。
 pub(super) fn push_user_email_filter(
     builder: &mut QueryBuilder<'_, MySql>,
     user_id_column: &'static str,
@@ -249,6 +271,8 @@ pub(super) fn push_user_email_filter(
     }
 }
 
+/// 向列表和计数 QueryBuilder 同步追加可选用户编号与状态谓词，保持分页总数口径一致。
+/// 用户 ID、邮箱和去空后的状态分别按精确值追加，缺失条件保持原查询；函数只修改 builder，不检查状态枚举或访问数据库。
 pub(super) fn push_optional_user_and_status_filters(
     builder: &mut QueryBuilder<'_, MySql>,
     user_id: Option<u64>,
@@ -265,6 +289,8 @@ pub(super) fn push_optional_user_and_status_filters(
     }
 }
 
+/// 向现有 QueryBuilder 追加内部用户邮箱谓词及绑定参数，确保列表和计数查询复用相同过滤语义。
+/// 追加“邮箱为空或不匹配 `%@internal.local`”谓词，用于默认排除内部账号；函数不执行查询，LIKE 匹配语义由数据库排序规则决定。
 pub(super) fn push_exclude_internal_user_email(
     builder: &mut QueryBuilder<'_, MySql>,
     email_column: &'static str,
@@ -279,6 +305,8 @@ pub(super) fn push_exclude_internal_user_email(
     builder.push(")");
 }
 
+/// 根据显式用户编号或邮箱查询并解析唯一用户编号，供后台用户相关列表统一筛选。
+/// 该步骤只读且不加锁；邮箱无匹配时按现有查询语义返回空筛选结果，数据库失败向上返回。
 pub(super) async fn resolve_user_id_filter(
     pool: &Pool<MySql>,
     user_id: Option<u64>,
@@ -301,6 +329,8 @@ pub(super) async fn resolve_user_id_filter(
     })
 }
 
+/// 判断邮箱是否属于平台内部保留账号，用于后台列表排除系统用户而不泄露实现细节。
+/// 该检查是无 I/O 的确定性字符串规则，不修改输入，也不产生错误或副作用。
 pub(super) fn is_internal_user_email(email: &str) -> bool {
     email
         .trim()

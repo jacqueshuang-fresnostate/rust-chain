@@ -53,6 +53,8 @@ pub struct WalletAccount {
 }
 
 impl WalletAccount {
+    /// 按变更量同时计算可用、冻结与锁定三桶的新余额。
+    /// 任一余额变成负数即拒绝整次领域变更，账户快照保持原值。
     pub fn apply_balance_change(&mut self, change: BalanceChange) -> Result<(), WalletDomainError> {
         let next_available = self.available.clone() + change.available;
         let next_frozen = self.frozen.clone() + change.frozen;
@@ -78,6 +80,7 @@ pub struct BalanceChange {
 }
 
 impl BalanceChange {
+    /// 构造包含可用、冻结与锁定三桶增量的余额变更值对象。
     pub fn new(available: BigDecimal, frozen: BigDecimal, locked: BigDecimal) -> Self {
         Self {
             available,
@@ -97,12 +100,14 @@ pub enum WalletServiceError {
 }
 
 impl From<WalletDomainError> for WalletServiceError {
+    /// 保留原领域错误类型并包装为服务错误，不改变余额快照或补写流水。
     fn from(error: WalletDomainError) -> Self {
         Self::Domain(error)
     }
 }
 
-/// 计算金额的小数位数。
+/// 判断金额的有效小数位是否不超过资产 precision_scale；尾随零不计入精度。
+/// precision_scale 超出 0..=18 时直接返回 false，本函数不截断或修改金额。
 pub fn amount_fits_asset_precision(amount: &BigDecimal, precision_scale: i32) -> bool {
     if !(0..=MAX_ASSET_PRECISION_SCALE).contains(&precision_scale) {
         return false;
@@ -110,19 +115,22 @@ pub fn amount_fits_asset_precision(amount: &BigDecimal, precision_scale: i32) ->
     asset_amount_fractional_scale(amount) <= precision_scale as u32
 }
 
-/// 资产金额的小数位裁剪。
+/// 将金额向零截断到资产 precision_scale；配置越界时钳制到 0..=18。
+/// 该纯函数不校验正负，也不写余额；调用方须让订单金额、钱包增量和流水使用同一结果。
 pub fn truncate_amount_to_asset_precision(amount: &BigDecimal, precision_scale: i32) -> BigDecimal {
     let bounded_scale = precision_scale.clamp(0, MAX_ASSET_PRECISION_SCALE);
     amount.with_scale(i64::from(bounded_scale))
 }
 
-/// BigDecimal 标准化后的有效小数位数。
+/// 返回 BigDecimal 去除尾随零后的有效小数位数，整数和负指数结果均按零位处理。
 pub fn asset_amount_fractional_scale(amount: &BigDecimal) -> u32 {
     let (_, scale) = amount.normalized().as_bigint_and_exponent();
     scale.max(0) as u32
 }
 
 /// 检查并规范提现阶梯。
+/// 校验提现费率阶梯的数量、非负边界与开闭区间，并按起始金额排序。
+/// 区间重叠或开放区间不在末尾时整体报错，避免同一提现金额命中多条规则。
 pub fn normalize_withdraw_fee_tiers(
     mut tiers: Vec<WithdrawFeeTier>,
 ) -> Result<Vec<WithdrawFeeTier>, String> {
@@ -174,7 +182,9 @@ pub fn normalize_withdraw_fee_tiers(
     Ok(tiers)
 }
 
-/// 计算提现手续费。
+/// 按首个满足 `min <= amount < max` 的阶梯计算百分比费用，开放上界表示无最大值。
+/// 无匹配阶梯时使用固定费用；百分比值 1 表示 1%，最终费用按资产精度向零截断。
+/// 本函数只计算服务端费用，不冻结余额，也不校验提现本金是否符合资产精度。
 pub fn calculate_withdraw_fee(
     amount: &BigDecimal,
     fixed_fee: &BigDecimal,
@@ -208,6 +218,8 @@ pub struct LedgerMetadata {
 }
 
 impl LedgerMetadata {
+    /// 构造账本业务引用元数据，并拒绝空的变更类型、引用类型或引用编号。
+    /// 三个字段共同构成流水审计身份，上层应使用稳定引用实现业务幂等重放。
     pub fn new(
         change_type: impl Into<String>,
         ref_type: impl Into<String>,
@@ -252,6 +264,9 @@ pub struct LedgerBatch {
 }
 
 impl LedgerBatch {
+    /// 根据“已应用变更”的账户快照生成流水：available、frozen、locked 按固定顺序各写至多一条。
+    /// 零增量不写流水；每条记录的 amount 是对应桶增量，balance_after 与三桶 after 均取同一账后快照。
+    /// 本函数不验证账户是否真的持久化，也不提供 ref_type/ref_id 唯一性；原子写入由仓储负责。
     pub fn from_account_change(
         account: &WalletAccount,
         change: BalanceChange,
@@ -286,10 +301,12 @@ impl LedgerBatch {
         Self { entries }
     }
 
+    /// 借用本批次按三桶变更顺序生成的账本条目。
     pub fn entries(&self) -> &[WalletLedgerEntry] {
         &self.entries
     }
 
+    /// 消费账本批次并返回待持久化的全部条目。
     pub fn into_entries(self) -> Vec<WalletLedgerEntry> {
         self.entries
     }
@@ -326,7 +343,7 @@ pub enum LockSchedule {
     RelativePeriod,
 }
 
-/// 固定时间解锁键。
+/// 以用户、资产和 UTC 秒级解锁时刻生成固定时间锁仓合并键；相同键由仓储合并来源。
 pub fn fixed_time_merge_key(
     user_id: &str,
     asset_id: &str,
@@ -335,7 +352,7 @@ pub fn fixed_time_merge_key(
     format!("fixed_time:{user_id}:{asset_id}:{}", unlock_at.timestamp())
 }
 
-/// 上市后立即解锁键。
+/// 以上市 UTC 秒级时刻生成立即解锁合并键；键只标识锁仓聚合，不直接增加 locked。
 pub fn immediate_on_listing_merge_key(
     user_id: &str,
     asset_id: &str,
@@ -348,6 +365,8 @@ pub fn immediate_on_listing_merge_key(
 }
 
 /// 按规则批量创建锁仓记录。
+/// 依据解锁计划生成锁仓明细：同一固定时点合并，相对周期保留来源粒度。
+/// 每个来源金额必须为正；校验失败时不返回部分锁仓记录，也不触发持久化副作用。
 pub fn create_lock_positions(
     user_id: &str,
     asset_id: &str,
@@ -390,6 +409,8 @@ pub fn create_lock_positions(
 }
 
 /// 复核账户锁仓剩余量与活动锁仓明细的一致性。
+/// 汇总指定用户资产的活动锁仓剩余量并与账户 locked 桶核对。
+/// 不一致时返回两侧金额供审计，调用方不得在校验失败后继续结算或解锁。
 pub fn verify_locked_balance_invariant(
     account: &WalletAccount,
     active_positions: &[LockPosition],

@@ -101,6 +101,8 @@ pub(crate) struct LoanOrderCreate {
     pub(crate) idempotency_key: String,
 }
 
+/// 插入完整借贷产品配置并返回新编号；该入口不触达用户钱包。
+/// 数据库写入失败时不返回编号，调用方不得据此构造未持久化的产品响应。
 pub(crate) async fn insert_loan_product(
     pool: &Pool<MySql>,
     product: LoanProductWrite,
@@ -127,6 +129,8 @@ pub(crate) async fn insert_loan_product(
     Ok(result.last_insert_id())
 }
 
+/// 覆盖指定借贷产品配置，找不到时返回未找到且不创建新产品。
+/// 更新不会级联改写已创建订单的利率、期限、抵押或资金快照。
 pub(crate) async fn update_loan_product(
     pool: &Pool<MySql>,
     product_id: u64,
@@ -159,6 +163,8 @@ pub(crate) async fn update_loan_product(
     Ok(())
 }
 
+/// 更新借贷产品启停状态，未命中编号时返回未找到。
+/// 状态变化只影响后续下单资格，不迁移已有订单或钱包余额。
 pub(crate) async fn update_loan_product_status(
     pool: &Pool<MySql>,
     product_id: u64,
@@ -175,6 +181,8 @@ pub(crate) async fn update_loan_product_status(
     Ok(())
 }
 
+/// 按可选状态和数量上限读取借贷产品及资产符号。
+/// 该查询只读产品配置，不锁定产品，也不读取用户借贷或资金状态。
 pub(crate) async fn list_loan_products(
     pool: &Pool<MySql>,
     status: Option<&str>,
@@ -192,6 +200,8 @@ pub(crate) async fn list_loan_products(
 }
 
 /// 后台产品列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
+/// 使用同一借贷类型与状态谓词查询后台产品行和总数。
+/// 该只读入口不锁产品，也不修改已有订单条款或钱包余额。
 pub(crate) async fn list_admin_loan_products(
     pool: &Pool<MySql>,
     loan_type: Option<&str>,
@@ -240,6 +250,8 @@ fn push_loan_product_filters(
     }
 }
 
+/// 按编号读取借贷产品及资产信息，缺失时返回未找到。
+/// 返回当前管理配置，不会覆盖任何订单中已经快照的贷款条款。
 pub(crate) async fn load_loan_product_response(
     pool: &Pool<MySql>,
     product_id: u64,
@@ -261,6 +273,8 @@ pub(crate) async fn load_loan_product_response(
     .ok_or(AppError::NotFound)
 }
 
+/// 按用户、可选状态和数量上限读取借贷订单快照。
+/// 用户编号作为 SQL 条件固定隔离数据，查询不锁订单或触发资金状态变化。
 pub(crate) async fn list_user_loan_orders(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -284,6 +298,8 @@ pub(crate) async fn list_user_loan_orders(
 }
 
 /// 后台订单列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
+/// 用一致的后台筛选谓词查询借贷订单分页及总数。
+/// 该只读查询不获取订单或钱包行锁，不触发审核、还款或抵押释放。
 pub(crate) async fn list_admin_loan_orders(
     pool: &Pool<MySql>,
     filter: AdminLoanOrdersFilter,
@@ -328,6 +344,7 @@ pub(crate) async fn list_admin_loan_orders(
     .await
 }
 
+/// 按内部编号读取完整借贷订单及产品、资产、抵押和状态时间快照；不加行锁、不计算当前应计利息。
 pub(crate) async fn load_loan_order_response(
     pool: &Pool<MySql>,
     order_id: u64,
@@ -342,6 +359,8 @@ pub(crate) async fn load_loan_order_response(
         .ok_or(AppError::NotFound)
 }
 
+/// 按用户与编号读取订单，借此强制订单归属隔离。
+/// 查询只读订单快照，不获取行锁，也不触发还款、取消或抵押释放。
 pub(crate) async fn load_user_loan_order_response(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -359,6 +378,8 @@ pub(crate) async fn load_user_loan_order_response(
         .ok_or(AppError::NotFound)
 }
 
+/// 按用户与幂等键读取既有借贷订单，用于唯一键冲突后的重放返回。
+/// 回读不锁订单也不再次冻结抵押；当前路径不核对本次产品、金额和抵押参数，调用方不得复用键表达不同请求。
 pub(crate) async fn load_loan_order_by_idempotency(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -376,6 +397,8 @@ pub(crate) async fn load_loan_order_by_idempotency(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中锁定启用产品及订单需快照的利率、期限和额度条款。
+/// 创建流程先锁产品再插入订单和锁钱包，保证条款一致并维持稳定锁序。
 pub(crate) async fn lock_active_loan_product_terms(
     tx: &mut Transaction<'_, MySql>,
     product_id: u64,
@@ -400,6 +423,8 @@ pub(crate) async fn lock_active_loan_product_terms(
     Ok(product)
 }
 
+/// 按编号锁定借贷订单，串行执行后台审核或资金状态迁移。
+/// 调用方持锁期间再访问钱包，避免并发审核、还款或取消重复移动余额。
 pub(crate) async fn lock_loan_order(
     tx: &mut Transaction<'_, MySql>,
     order_id: u64,
@@ -419,6 +444,8 @@ pub(crate) async fn lock_loan_order(
     .ok_or(AppError::NotFound)
 }
 
+/// 按用户与编号锁定借贷订单，不泄露其他用户订单是否存在。
+/// 用户取消或还款流程先持有订单锁，再按需要锁钱包并原子写入流水。
 pub(crate) async fn lock_user_loan_order(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -440,6 +467,8 @@ pub(crate) async fn lock_user_loan_order(
     .map_err(AppError::Database)
 }
 
+/// 在调用方事务中插入产品利率、计息模式、期限、KYC、抵押及用户幂等键快照，返回订单编号。
+/// 插入发生在产品锁之后、钱包锁之前；唯一键冲突由应用层回滚并回读旧订单，本函数本身不冻结抵押。
 pub(crate) async fn insert_loan_order_in_tx(
     tx: &mut Transaction<'_, MySql>,
     order: LoanOrderCreate,
@@ -468,6 +497,7 @@ pub(crate) async fn insert_loan_order_in_tx(
     Ok(result.last_insert_id())
 }
 
+/// 在调用方事务中标记订单取消；抵押释放须在同一事务先完成。
 pub(crate) async fn mark_loan_order_cancelled_in_tx(
     tx: &mut Transaction<'_, MySql>,
     order_id: u64,
@@ -481,6 +511,8 @@ pub(crate) async fn mark_loan_order_cancelled_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中记录审核人、放款时间和到期时间。
+/// 本金入账流水必须在同一事务先写成功，失败时订单仍保持待审核。
 pub(crate) async fn mark_loan_order_disbursed_in_tx(
     tx: &mut Transaction<'_, MySql>,
     order_id: u64,
@@ -504,6 +536,8 @@ pub(crate) async fn mark_loan_order_disbursed_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中记录拒绝状态、管理员和原因，抵押释放须同步提交。
+/// 状态写入失败必须回滚此前的 frozen 释放和双桶流水，防止单边退款。
 pub(crate) async fn mark_loan_order_rejected_in_tx(
     tx: &mut Transaction<'_, MySql>,
     order_id: u64,
@@ -526,6 +560,8 @@ pub(crate) async fn mark_loan_order_rejected_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中保存利息、总还款额和还清时间。
+/// 本金利息扣款及抵押释放须已在同一事务完成，任一步失败整体回滚。
 pub(crate) async fn mark_loan_order_repaid_in_tx(
     tx: &mut Transaction<'_, MySql>,
     order_id: u64,
@@ -548,6 +584,8 @@ pub(crate) async fn mark_loan_order_repaid_in_tx(
     Ok(())
 }
 
+/// 在当前事务读取启用资产精度，供贷款金额校验和结算截断。
+/// 资产禁用或缺失会中止资金流程，调用方事务不得保留部分订单变化。
 pub(crate) async fn load_active_asset_meta_in_tx(
     tx: &mut Transaction<'_, MySql>,
     asset_id: u64,
@@ -565,6 +603,8 @@ pub(crate) async fn load_active_asset_meta_in_tx(
     Ok(asset)
 }
 
+/// 读取启用资产的精度元数据，禁用或缺失资产拒绝产品配置。
+/// 此只读入口不创建钱包账户，也不对提交金额进行隐式舍入。
 pub(crate) async fn load_active_asset_meta(
     pool: &Pool<MySql>,
     asset_id: u64,
@@ -582,6 +622,8 @@ pub(crate) async fn load_active_asset_meta(
     Ok(asset)
 }
 
+/// 在订单事务中确认用户存在且 KYC 等级满足产品最低要求。
+/// 校验发生在订单与抵押写入前，失败时不得冻结钱包或生成贷款流水。
 pub(crate) async fn ensure_loan_user_kyc_level(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -600,6 +642,9 @@ pub(crate) async fn ensure_loan_user_kyc_level(
     Ok(())
 }
 
+/// 若订单含未释放抵押，则在调用方事务把 collateral frozen 等额退回 available 并记录释放时间。
+/// 调用方须已锁订单，随后锁抵押钱包；释放写 available 正额与 frozen 负额两条同 ref_id 流水，locked 不变。
+/// 已释放、无抵押资产或无抵押金额时直接返回；余额不足、流水或状态写入失败由外层事务回滚。
 pub(crate) async fn release_loan_collateral_if_needed(
     tx: &mut Transaction<'_, MySql>,
     order: &LoanOrderLockRow,
@@ -692,6 +737,9 @@ pub(crate) async fn apply_loan_wallet_freeze(
     .await
 }
 
+/// 在调用方事务锁定或创建贷款资产钱包后，把本金增加到 available 并写一条正向借贷流水。
+/// 调用方须先锁订单并传入正数、已按资产精度确定的金额；frozen/locked 原样进入账后快照。
+/// 本函数没有独立幂等键，放款状态负责阻止重放；余额或流水失败由外层事务连同订单状态回滚。
 pub(crate) async fn apply_loan_wallet_credit(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -724,6 +772,9 @@ pub(crate) async fn apply_loan_wallet_credit(
     .await
 }
 
+/// 在调用方事务锁定或创建贷款资产钱包后，从 available 扣除已量化的本金加利息并写一条负向流水。
+/// frozen/locked 不变；available 不足立即失败且不写流水。本函数无独立幂等键，由已还款状态拦截重放。
+/// 扣款、后续抵押释放和订单还清状态是否原子由调用方持有的同一事务保证。
 pub(crate) async fn apply_loan_wallet_debit(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -948,6 +999,7 @@ fn optional_string(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+/// 识别 MySQL 唯一键冲突，供借贷幂等创建分支回读旧订单。
 pub(crate) fn is_duplicate_key_error(error: &sqlx::Error) -> bool {
     error
         .as_database_error()

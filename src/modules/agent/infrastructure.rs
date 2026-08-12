@@ -105,6 +105,8 @@ pub(crate) async fn insert_agent_business_commission_in_tx(
     Ok(())
 }
 
+/// 按代理管理员 ID 读取账号与代理节点，本节点或任一祖先停用时不返回记录。
+/// 查询不锁行且无写入副作用；未命中由应用层统一映射为未授权。
 pub(crate) async fn load_agent_me(
     pool: &Pool<MySql>,
     agent_admin_id: u64,
@@ -142,6 +144,7 @@ pub(crate) async fn load_agent_me(
     Ok(agent)
 }
 
+/// 在调用方事务内锁定代理管理员密码哈希与状态，供改密时防止并发覆盖。
 pub(crate) async fn lock_agent_admin_credential_in_tx(
     tx: &mut Transaction<'_, MySql>,
     agent_admin_id: u64,
@@ -156,6 +159,7 @@ pub(crate) async fn lock_agent_admin_credential_in_tx(
     Ok(credential)
 }
 
+/// 在已锁定凭证的事务中更新代理管理员密码哈希，不自行提交或撤销会话。
 pub(crate) async fn update_agent_admin_password_in_tx(
     tx: &mut Transaction<'_, MySql>,
     agent_admin_id: u64,
@@ -169,6 +173,7 @@ pub(crate) async fn update_agent_admin_password_in_tx(
     Ok(())
 }
 
+/// 在改密事务中撤销该代理主体全部未撤销 MySQL 刷新令牌，重复调用保持幂等。
 pub(crate) async fn revoke_agent_admin_refresh_tokens_in_tx(
     tx: &mut Transaction<'_, MySql>,
     agent_admin_id: u64,
@@ -184,6 +189,8 @@ pub(crate) async fn revoke_agent_admin_refresh_tokens_in_tx(
     Ok(())
 }
 
+/// 为已认证代理管理员加载服务端权威子树范围，同时校验账号与全部祖先状态。
+/// 返回的路径用于后续 SQL 边界，未命中不接受客户端提供的根 ID 替代。
 pub(crate) async fn load_agent_access_scope_for_admin(
     pool: &Pool<MySql>,
     agent_admin_id: u64,
@@ -213,6 +220,8 @@ pub(crate) async fn load_agent_access_scope_for_admin(
     Ok(scope)
 }
 
+/// 按 scope 路径统计子树用户，并仅计数当前代理自有的启用邀请码。
+/// 查询只读且不加锁，子树范围只接受服务端已验证路径，SQL 失败不返回部分计数。
 pub(crate) async fn load_agent_dashboard_counts(
     pool: &Pool<MySql>,
     scope: &AgentAccessScope,
@@ -238,6 +247,8 @@ pub(crate) async fn load_agent_dashboard_counts(
     Ok(counts)
 }
 
+/// 仅汇总当前代理在授权子树内的佣金，并按发放资产分组避免跨资产相加。
+/// 统计包含待结算、已结算与总额，查询只读且不修改佣金或钱包状态。
 pub(crate) async fn load_agent_dashboard_asset_summaries(
     pool: &Pool<MySql>,
     scope: &AgentAccessScope,
@@ -271,6 +282,8 @@ pub(crate) async fn load_agent_dashboard_asset_summaries(
     Ok(summaries)
 }
 
+/// 聚合授权代理子树的兑换订单数、状态数和原目标金额，无订单时返回零值记录。
+/// 本查询无行锁和写入副作用，路径必须来自已验证的代理 scope。
 pub(crate) async fn load_agent_convert_stats(
     pool: &Pool<MySql>,
     scope: &AgentAccessScope,
@@ -299,6 +312,8 @@ pub(crate) async fn load_agent_convert_stats(
     Ok(row)
 }
 
+/// 按代理物化路径分页读取子树用户，同时返回直属邀请人与归属代理两维关系。
+/// 查询仅使用服务端 scope 和已限制分页，无锁、无写入，不包含父级或兄弟树。
 pub(crate) async fn list_agent_team_users(
     pool: &Pool<MySql>,
     scope: &AgentAccessScope,
@@ -329,6 +344,8 @@ pub(crate) async fn list_agent_team_users(
     Ok(users)
 }
 
+/// 按子树路径与邀请深度读取团队树用户节点，保留直属邀请人和公司归属。
+/// 分页结果只读且无事务副作用，排序稳定为代理层级、邀请深度和用户 ID。
 pub(crate) async fn list_agent_team_tree_nodes(
     pool: &Pool<MySql>,
     scope: &AgentAccessScope,
@@ -360,6 +377,8 @@ pub(crate) async fn list_agent_team_tree_nodes(
     Ok(nodes)
 }
 
+/// 列出当前 scope 真正后代代理，同时统计直属和整个子树用户数。
+/// 当前节点不在结果中，路径前缀带分隔符以避免文本前缀越权，查询无写入。
 pub(crate) async fn list_agent_sub_agents(
     pool: &Pool<MySql>,
     scope: &AgentAccessScope,
@@ -392,6 +411,8 @@ pub(crate) async fn list_agent_sub_agents(
     Ok(agents)
 }
 
+/// 仅读取当前代理拥有且业务用户仍属授权子树的佣金记录。
+/// 已结算记录左连对应钱包流水，缺失时保留空值；查询不补发佣金也不改状态。
 pub(crate) async fn list_agent_commissions(
     pool: &Pool<MySql>,
     scope: &AgentAccessScope,
@@ -436,6 +457,8 @@ pub(crate) async fn list_agent_commissions(
     Ok(commissions)
 }
 
+/// 按所有者类型和代理 ID 分页读取自有邀请码，不混入用户或子代理记录。
+/// 结果按主键稳定升序，查询不锁行、不修改邀请码状态或已用次数。
 pub(crate) async fn list_agent_invite_codes(
     pool: &Pool<MySql>,
     agent_id: u64,
@@ -457,6 +480,8 @@ pub(crate) async fn list_agent_invite_codes(
     Ok(invite_codes)
 }
 
+/// 为指定代理插入新邀请码和可选使用上限，返回数据库生成主键。
+/// 唯一键或其他 SQL 失败直接上抛；本操作使用连接池单语句提交，不重试生成码。
 pub(crate) async fn insert_agent_invite_code(
     pool: &Pool<MySql>,
     write: AgentInviteCodeWrite,
@@ -474,6 +499,9 @@ pub(crate) async fn insert_agent_invite_code(
     Ok(insert.last_insert_id())
 }
 
+/// 按主键、代理所有者和固定 owner 类型更新邀请码状态，防止跨代理修改。
+/// 返回值来自 MySQL 受影响行数；同值更新可能返回 `false`，不能区分记录缺失与数据库视为未变更。
+/// 本语句不修改使用次数或既有邀请关系。
 pub(crate) async fn update_agent_invite_code_status(
     pool: &Pool<MySql>,
     agent_id: u64,
@@ -494,6 +522,8 @@ pub(crate) async fn update_agent_invite_code_status(
     Ok(result.rows_affected() > 0)
 }
 
+/// 按主键与代理所有权回读邀请码，不属于当前代理的记录按未命中处理。
+/// 查询只读且无行锁，用于写入后返回权威快照，SQL 错误直接上抛。
 pub(crate) async fn load_agent_invite_code_by_id(
     pool: &Pool<MySql>,
     agent_id: u64,

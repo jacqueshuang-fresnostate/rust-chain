@@ -7,6 +7,8 @@ use bigdecimal::BigDecimal;
 use sqlx::{MySql, Pool, QueryBuilder, Transaction};
 
 /// 行查询与 COUNT 查询必须由同一组过滤谓词构建，返回总数才能与当前筛选一致。
+/// 用同一组既定谓词分别执行后台行查询和计数查询。
+/// 函数只追加排序与分页，确保 total 描述当前过滤结果而非全表。
 pub(super) async fn fetch_admin_page<T>(
     pool: &Pool<MySql>,
     mut rows: QueryBuilder<'_, MySql>,
@@ -35,6 +37,8 @@ pub(super) struct WalletBalanceRow {
     pub(super) frozen: BigDecimal,
     pub(super) locked: BigDecimal,
 }
+/// 在调用方事务中按用户和资产锁定钱包三桶余额。
+/// 资金流程应先锁业务单据再锁钱包；账户缺失时终止，避免隐式创建改变锁序。
 pub(super) async fn lock_wallet_balance(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -63,6 +67,8 @@ pub(super) async fn lock_wallet_balance(
     .map_err(AppError::from)
 }
 
+/// 在调用方事务中一次写回 available、frozen、locked 三桶余额。
+/// 调用方须先持有账户行锁并完成非负校验；写入与对应流水必须同事务提交。
 pub(super) async fn update_wallet_balance(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -95,6 +101,8 @@ pub(super) async fn update_wallet_balance(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// 在当前资金事务中追加一条含三桶后快照的账本记录。
+/// 调用方负责保证余额更新先后顺序和业务引用幂等，插入失败必须回滚账户变更。
 pub(super) async fn insert_wallet_ledger_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,

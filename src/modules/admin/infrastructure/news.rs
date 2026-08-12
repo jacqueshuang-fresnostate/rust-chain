@@ -44,6 +44,8 @@ pub(crate) struct AdminNewsStatusUpdate {
     pub(crate) admin_id: u64,
 }
 
+/// 按状态、分类、国家、内容 locale 和标题/正文关键字筛选后台新闻，分页返回完整内容及总数。
+/// locale 通过 JSON_SEARCH 匹配、关键字通过 LIKE 匹配；列表与 COUNT 分别无锁执行，并发编辑可能导致两者快照不同。
 pub(crate) async fn list_admin_news_items(
     pool: &Pool<MySql>,
     filter: AdminNewsListFilter,
@@ -89,6 +91,8 @@ pub(crate) async fn list_admin_news_items(
     .await
 }
 
+/// 按新闻 ID 读取标题、图片、适用区域、多语言内容、发布信息和管理员字段。
+/// 连接池查询不加锁；记录缺失返回未找到，内容 JSON 或时间字段映射失败返回错误，不改变发布状态。
 pub(crate) async fn load_admin_news_item(
     pool: &Pool<MySql>,
     news_id: u64,
@@ -103,6 +107,8 @@ pub(crate) async fn load_admin_news_item(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中插入新闻内容、初始状态、可选发布时间及创建/更新管理员，并返回新闻 ID。
+/// 函数不按内容去重且不发布通知；调用方负责校验文档并与创建审计原子提交，SQL 失败整体回滚。
 pub(crate) async fn insert_admin_news_item_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: AdminNewsInsert,
@@ -129,6 +135,8 @@ pub(crate) async fn insert_admin_news_item_in_tx(
     Ok(result.last_insert_id())
 }
 
+/// 在调用方事务中按 ID 覆盖新闻标题、图片、分类、适用区域、locale 内容及更新管理员。
+/// 不修改状态和发布时间，也不检查受影响行数；调用方须先锁新闻，并与前后快照审计统一提交。
 pub(crate) async fn update_admin_news_item_in_tx(
     tx: &mut Transaction<'_, MySql>,
     news_id: u64,
@@ -153,6 +161,8 @@ pub(crate) async fn update_admin_news_item_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中按新闻 ID 同时覆盖状态、发布时间和更新管理员。
+/// 函数不推导 published_at 或检查状态迁移/受影响行数；调用方锁定旧新闻后决定目标值，并负责审计，不触发消息推送。
 pub(crate) async fn update_admin_news_status_in_tx(
     tx: &mut Transaction<'_, MySql>,
     news_id: u64,
@@ -172,6 +182,8 @@ pub(crate) async fn update_admin_news_status_in_tx(
     Ok(())
 }
 
+/// 在调用方事务快照中按 ID 回读新闻完整内容，供写后响应和审计使用。
+/// 查询不追加锁；记录缺失返回未找到，SQL/JSON 映射失败由外层回滚，函数不提交或发送通知。
 pub(crate) async fn load_admin_news_item_in_tx(
     tx: &mut Transaction<'_, MySql>,
     news_id: u64,
@@ -186,6 +198,8 @@ pub(crate) async fn load_admin_news_item_in_tx(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中按新闻 ID 以 `FOR UPDATE` 锁定记录并返回修改前完整快照。
+/// 锁持有至编辑/状态事务结束；记录缺失返回未找到，函数不判断状态迁移，也不提交、审计或发布内容。
 pub(crate) async fn lock_admin_news_item_in_tx(
     tx: &mut Transaction<'_, MySql>,
     news_id: u64,

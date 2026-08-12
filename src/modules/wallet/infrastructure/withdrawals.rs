@@ -30,6 +30,7 @@ pub struct HttpWalletChainGateway {
 }
 
 impl Default for HttpWalletChainGateway {
+    /// 使用 Reqwest 默认客户端构造链网关；此时不建立连接或发送请求。
     fn default() -> Self {
         Self {
             client: reqwest::Client::new(),
@@ -39,6 +40,8 @@ impl Default for HttpWalletChainGateway {
 
 #[async_trait]
 impl WalletChainGateway for HttpWalletChainGateway {
+    /// 以 15 秒超时向 endpoint POST 提现广播 JSON，并按需添加 Bearer token。
+    /// HTTP/传输/响应 JSON 失败均返回错误；远端可能已受理，调用方不得据超时释放 frozen，应以 request_id 重试或查询。
     async fn broadcast_withdrawal(
         &self,
         endpoint: &str,
@@ -68,6 +71,8 @@ impl WalletChainGateway for HttpWalletChainGateway {
         })
     }
 
+    /// 以 15 秒超时向 endpoint GET 游标页，发送 cursor 与 limit 并解析充提事件集合。
+    /// 本适配器不保存本地游标、不处理钱包；请求或解析失败时由 worker 保持旧游标重试。
     async fn poll_chain_events(
         &self,
         endpoint: &str,
@@ -103,6 +108,8 @@ pub(crate) struct WithdrawalAssetRule {
     pub(crate) precision_scale: i32,
     pub(crate) fee: BigDecimal,
 }
+/// 加载启用提现资产的精度、固定费用、阶梯费率和限额规则。
+/// 服务端规则是费用事实源，客户端金额不得覆盖费用或资产精度合同。
 pub(crate) async fn load_withdrawal_asset_rule(
     pool: &Pool<MySql>,
     asset_symbol: &str,
@@ -134,6 +141,8 @@ pub(crate) async fn load_withdrawal_asset_rule(
     }
 }
 
+/// 按用户与幂等键读取既有提现请求，用于重复请求安全重放。
+/// 该查询不锁钱包；重放仍须核对资产、地址、金额和服务端费用完全一致。
 pub(crate) async fn load_withdrawal_by_user_key(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -153,7 +162,9 @@ pub(crate) async fn load_withdrawal_by_user_key(
 #[allow(clippy::too_many_arguments)]
 /// 创建提现申请并把金额与手续费从 available 等额冻结到 frozen。
 /// 资产规则、安全校验和幂等重放由应用层先行处理；本函数以钱包行锁复核余额并写入冻结流水。
-/// 提现记录、钱包三桶和账本共用同一事务，任一步失败都不会保留部分冻结结果。
+/// 实际顺序为先插入 pending_review 请求、再锁钱包；total_reserved=本金+服务端费用，按 18 位写入。
+/// available 减 total_reserved、frozen 加同额、locked 不变；仅写一条 `withdrawal_reserve` available 负流水，frozen 变化由三桶 after 快照体现。
+/// 提现记录、钱包与流水由该函数自有事务提交；余额不足、唯一键冲突或任一步失败都回滚本次申请和冻结。
 pub(crate) async fn reserve_withdrawal_request(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -233,6 +244,8 @@ pub(crate) async fn reserve_withdrawal_request(
     Ok(withdrawal)
 }
 
+/// 按用户和状态读取提现请求快照，限制单次返回数量且不锁定资金。
+/// 返回的 available 或 frozen 相关字段仅为申请快照，不作为新的扣款依据。
 pub(crate) async fn list_wallet_withdrawals(
     pool: &Pool<MySql>,
     user_id: Option<u64>,
@@ -252,6 +265,8 @@ pub(crate) async fn list_wallet_withdrawals(
 }
 
 /// 后台提现列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
+/// 使用同一用户与状态谓词查询后台提现行和总数。
+/// 该入口只读请求与链进度，不变更冻结余额、流水或提现状态。
 pub(crate) async fn list_admin_wallet_withdrawals_page(
     pool: &Pool<MySql>,
     user_id: Option<u64>,
@@ -293,6 +308,8 @@ fn push_wallet_withdrawal_filters(
     }
 }
 
+/// 锁定待审核提现并推进为 approved，重复审核已批准记录时幂等返回。
+/// 调用方拥有事务；审批不移动 frozen 预留额，状态写入失败则不产生部分审核结果。
 pub(crate) async fn approve_withdrawal_in_tx(
     tx: &mut Transaction<'_, MySql>,
     withdrawal_id: u64,
@@ -325,7 +342,8 @@ pub(crate) async fn approve_withdrawal_in_tx(
 
 /// 在拒绝或可安全失败的提现状态下释放 frozen，并把完整预留额退回 available。
 /// 已产生链上交易哈希的请求不得通过该路径自动解冻；调用方持有事务并负责同时提交审核状态。
-/// 钱包更新与释放流水必须保持三桶总额守恒，目标状态重放直接返回且不重复退款。
+/// available 增 total_reserved、frozen 减同额、locked 不变；只写一条 `withdrawal_release` available 正流水，frozen 变化记录在三桶 after。
+/// 钱包更新与状态同事务提交并保持三桶总额守恒，目标状态重放直接返回且不重复退款。
 pub(crate) async fn release_withdrawal_in_tx(
     tx: &mut Transaction<'_, MySql>,
     withdrawal_id: u64,
@@ -407,6 +425,8 @@ pub(crate) async fn release_withdrawal_in_tx(
     load_withdrawal_by_id_in_tx(tx, withdrawal_id).await
 }
 
+/// 锁定已批准或广播中的提现并记录链交易哈希及确认进度。
+/// 同哈希重放仅更新进度；该状态转换不核销 frozen，失败时由调用方事务整体回滚。
 pub(crate) async fn mark_withdrawal_broadcasted_in_tx(
     tx: &mut Transaction<'_, MySql>,
     withdrawal_id: u64,
@@ -452,6 +472,7 @@ pub(crate) async fn mark_withdrawal_broadcasted_in_tx(
 
 /// 在链上广播已确认后核销提现 frozen 预留额，并写入最终确认流水。
 /// 仅接受 broadcasted 或人工审核状态；冻结额不足会中止事务，防止账本确认超过真实预留。
+/// available/locked 不变、frozen 减 total_reserved；写一条 `withdrawal_confirm` frozen 负流水，金额包含本金和服务端费用。
 /// 已确认请求幂等返回，钱包扣减、确认流水及提现状态由调用方事务原子提交。
 pub(crate) async fn confirm_withdrawal_in_tx(
     tx: &mut Transaction<'_, MySql>,
@@ -518,6 +539,8 @@ pub(crate) async fn confirm_withdrawal_in_tx(
     load_withdrawal_by_id_in_tx(tx, withdrawal_id).await
 }
 
+/// 按链网关 request_id 锁定提现请求，供回调状态机串行处理。
+/// 请求锁必须先于钱包锁获取，避免并发链回调重复核销或释放 frozen 预留额。
 pub(crate) async fn load_withdrawal_by_gateway_request_for_update(
     tx: &mut Transaction<'_, MySql>,
     gateway_request_id: &str,
@@ -533,6 +556,8 @@ pub(crate) async fn load_withdrawal_by_gateway_request_for_update(
     .ok_or(AppError::NotFound)
 }
 
+/// 锁定提现并在交易哈希一致时单调增加区块高度与确认数。
+/// 仅允许广播后、人工审核或已确认状态；不移动余额，也不追加资金流水。
 pub(crate) async fn update_withdrawal_chain_progress_in_tx(
     tx: &mut Transaction<'_, MySql>,
     withdrawal_id: u64,
@@ -570,6 +595,8 @@ pub(crate) async fn update_withdrawal_chain_progress_in_tx(
     load_withdrawal_by_id_in_tx(tx, withdrawal_id).await
 }
 
+/// 把已广播提现转入人工审核并截断保存失败原因。
+/// 目标状态重放直接返回；冻结预留额继续保留，禁止在链结果不明时自动退款。
 pub(crate) async fn mark_withdrawal_manual_review_in_tx(
     tx: &mut Transaction<'_, MySql>,
     withdrawal_id: u64,

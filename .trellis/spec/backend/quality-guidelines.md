@@ -25,8 +25,11 @@ responsibility and dependency guards are.
   transaction orchestration.
 - Put SQLx, Redis, MongoDB, and provider clients in `infrastructure`.
 - Put transport DTOs and header/multipart normalization in `presentation`.
-- Use Chinese `///` contracts for risk-sensitive public functions and Chinese
-  responsibility docs for public worker/cross-context infrastructure entries.
+- Use Chinese `///` contracts for every visible bounded-context responsibility
+  in domain, repository, service, application, and infrastructure. Non-trivial
+  entries document applicable input, transaction, lock, replay, side-effect,
+  and failure semantics; public worker/cross-context infrastructure entries use
+  the same standard.
 - Preserve externally observable behavior unless the task explicitly changes
   a contract.
 
@@ -42,10 +45,19 @@ responsibility and dependency guards are.
   direct context `infrastructure`, or Reqwest/provider HTTP workflows.
 - Domain importing Axum, SQLx, Redis, MongoDB, Reqwest, or `presentation`.
 - Repository executing concrete SQL or owning a `QueryBuilder`.
-- Service depending on `application` or `routes`.
+- Service depending on `application`, `routes`, `AppState`, context
+  `infrastructure`, SQLx, Redis, MongoDB, or Reqwest. Inject adapter-neutral
+  ports and assemble concrete adapters in application/runtime boundaries.
 - Wallet/ledger mutation without the required transaction and audit record.
 - Mechanical comments that repeat syntax instead of explaining policy,
   invariants, lock order, replay, and side effects.
+- Bulk template documentation reused across unrelated non-trivial entries.
+  Within one responsibility file, four or more visible functions of at least
+  six lines must not share an identical full doc block; write contracts that
+  distinguish the actual input, state transition, failure, and side effects.
+- `allow(unused_imports)` or `expect(unused_imports)` in production Rust.
+  Remove stale compatibility re-exports; if an import exists only for an
+  adjacent standalone test module, gate that exact import with `cfg(test)`.
 - Editing an applied migration; add a new immutable migration instead.
 
 `events/routes.rs` and `auth/routes.rs` must not receive exceptions for the
@@ -74,7 +86,13 @@ I/O to its owning layer instead of weakening the guard.
 - every `*LayerMarker` definition, import, use, or re-export is rejected;
 - source test bodies live under `tests/unit_src`;
 - route, domain, repository, and service dependencies follow the rules above;
-- no production Rust file under `src/` exceeds 2,000 lines.
+- production code contains no unused-import warning suppression;
+- P1 hotspot compatibility façades and their responsibility-focused child
+  implementation files remain below 1,200 lines;
+- no production Rust file under `src/` exceeds 2,000 lines;
+- bounded-context responsibility docs satisfy the executable Chinese contract
+  gate, including the same-file repeated-template check for non-trivial visible
+  entries.
 
 When extending the guard, inspect current violations first. Never make a new
 failure green with a broad substring or directory whitelist.

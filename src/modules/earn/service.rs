@@ -22,6 +22,7 @@ use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 
+/// 从管理员 subject 提取可信编号，格式不符时返回未授权。
 pub(crate) fn admin_id_from_subject(subject: &str) -> AppResult<u64> {
     subject
         .strip_prefix("admin:")
@@ -29,6 +30,7 @@ pub(crate) fn admin_id_from_subject(subject: &str) -> AppResult<u64> {
         .ok_or(AppError::Unauthorized)
 }
 
+/// 从用户 subject 提取可信编号，格式不符时返回未授权。
 pub(crate) fn user_id_from_subject(subject: &str) -> AppResult<u64> {
     subject
         .strip_prefix("user:")
@@ -36,6 +38,7 @@ pub(crate) fn user_id_from_subject(subject: &str) -> AppResult<u64> {
         .ok_or(AppError::Unauthorized)
 }
 
+/// 把理财列表数量限制在一到一百条。
 pub(crate) fn route_limit(limit: Option<u32>) -> u32 {
     limit.unwrap_or(50).clamp(1, 100)
 }
@@ -45,12 +48,15 @@ pub(crate) fn route_offset(offset: Option<u32>) -> u32 {
     offset.unwrap_or(0).min(100_000)
 }
 
+/// 裁剪可选字符串，并把空白内容归一为空值。
 pub(crate) fn optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
 }
 
+/// 把产品当前 APR、期限、额度、分类及全部费用配置映射为管理员审计快照。
+/// 该快照只记录配置变更；既有订阅仍使用申购时复制的费用字段，不会被审计映射改写。
 pub(crate) fn product_audit_json(product: &EarnProductResponse) -> Value {
     json!({
         "id": product.id,
@@ -75,6 +81,7 @@ pub(crate) fn product_audit_json(product: &EarnProductResponse) -> Value {
     })
 }
 
+/// 把分类代码、多语言名称、排序和状态映射为审计快照。
 pub(crate) fn category_audit_json(category: &EarnCategoryResponse) -> Value {
     json!({
         "id": category.id,
@@ -133,6 +140,8 @@ fn validate_product_request_fields(
     Ok(())
 }
 
+/// 校验新产品的资产、名称、期限、收益率、额度、分类、介绍及审计原因。
+/// 该纯规则不访问数据库；失败时应用层不得创建产品或写入审计。
 pub(crate) fn validate_create_product_request(request: &CreateEarnProductRequest) -> AppResult<()> {
     validate_product_request_fields(
         request.asset_id,
@@ -148,6 +157,8 @@ pub(crate) fn validate_create_product_request(request: &CreateEarnProductRequest
     )
 }
 
+/// 按完整快照校验更新产品字段，防止局部更新绕过额度或内容规则。
+/// 校验不修改既有产品、订阅费用快照或用户钱包。
 pub(crate) fn validate_update_product_request(request: &UpdateEarnProductRequest) -> AppResult<()> {
     validate_product_request_fields(
         request.asset_id,
@@ -164,6 +175,8 @@ pub(crate) fn validate_update_product_request(request: &UpdateEarnProductRequest
     Ok(())
 }
 
+/// 为新产品补齐赎回费、到期收益费和提前赎回费规则，并校验各费率位于 0..=1、最多 8 位小数。
+/// early basis 为 none 时强制提前赎回费率归零；该纯规则不写产品或历史订阅。
 pub(crate) fn product_fee_config_from_create_request(
     request: &CreateEarnProductRequest,
 ) -> AppResult<EarnProductFeeConfig> {
@@ -175,6 +188,8 @@ pub(crate) fn product_fee_config_from_create_request(
     )
 }
 
+/// 规范更新产品的全部费用字段；费率位于 0..=1 且最多 8 位小数，none 基准强制提前赎回费率归零。
+/// 返回值供新配置和未来订阅快照使用，不重算既有订阅费用。
 pub(crate) fn product_fee_config_from_update_request(
     request: &UpdateEarnProductRequest,
 ) -> AppResult<EarnProductFeeConfig> {
@@ -248,6 +263,7 @@ fn validate_optional_reason(reason: Option<&str>) -> AppResult<()> {
     Ok(())
 }
 
+/// 裁剪并校验管理员操作原因，空值或超长内容返回验证错误。
 pub(crate) fn required_reason(reason: Option<String>) -> AppResult<String> {
     let Some(reason) = optional_string(reason) else {
         return Err(AppError::Validation(
@@ -258,6 +274,7 @@ pub(crate) fn required_reason(reason: Option<String>) -> AppResult<String> {
     Ok(reason)
 }
 
+/// 将产品状态规范为 active 或 disabled，拒绝其他值。
 pub(crate) fn normalized_product_status(value: &str) -> AppResult<String> {
     let Some(status) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation(
@@ -272,6 +289,7 @@ pub(crate) fn normalized_product_status(value: &str) -> AppResult<String> {
     }
 }
 
+/// 将理财分类状态规范为 active 或 disabled。
 pub(crate) fn normalized_category_status(value: &str) -> AppResult<String> {
     let Some(status) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation(
@@ -286,6 +304,7 @@ pub(crate) fn normalized_category_status(value: &str) -> AppResult<String> {
     }
 }
 
+/// 裁剪并校验必填分类代码，仅允许受控字符和长度。
 pub(crate) fn normalized_required_category_code(value: &str) -> AppResult<String> {
     let Some(code) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation(
@@ -296,6 +315,7 @@ pub(crate) fn normalized_required_category_code(value: &str) -> AppResult<String
     Ok(code)
 }
 
+/// 规范产品分类代码，未填写时兼容回退到 fixed_term。
 pub(crate) fn normalized_product_category(value: Option<&str>) -> AppResult<String> {
     let Some(category) = value
         .map(|value| value.trim().to_owned())
@@ -337,6 +357,7 @@ fn default_category_name_json(code: &str) -> Value {
     })
 }
 
+/// 补充默认分类多语言结构，并校验版本、默认语言和标题。
 pub(crate) fn normalized_category_name_json(value: Option<Value>, code: &str) -> AppResult<Value> {
     let name_json = value.unwrap_or_else(|| default_category_name_json(code));
     validate_category_name_json(&name_json)?;
@@ -425,6 +446,8 @@ fn default_introduction_json(product_name: &str) -> Value {
     })
 }
 
+/// 补充默认产品介绍结构，并校验受控富文本节点与多语言条目。
+/// 无效节点整体拒绝，避免未支持结构进入存储和前台渲染。
 pub(crate) fn normalized_introduction_json(
     value: Option<Value>,
     product_name: &str,
@@ -559,6 +582,8 @@ fn required_intro_string<'a>(value: Option<&'a Value>, field: &str) -> AppResult
         })
 }
 
+/// 校验申购金额处于已锁产品的最小值和可选最大值范围。
+/// 该规则在订阅插入和 available 扣款前执行；不做资产 precision_scale 截断。
 pub(crate) fn validate_product_amount(
     amount: &BigDecimal,
     product: &EarnProductRuleRow,
@@ -591,6 +616,7 @@ const EARN_FEE_RATE_MAX_INTEGER_DIGITS: usize = 1;
 const EARN_AMOUNT_MAX_SCALE: i64 = 18;
 const EARN_AMOUNT_MAX_INTEGER_DIGITS: usize = 20;
 
+/// 以调用时 UTC 当前时间加 term_days 计算订阅到期时刻；日期溢出时拒绝创建订阅。
 pub(crate) fn earn_matures_at(term_days: u32) -> AppResult<DateTime<Utc>> {
     Utc::now()
         .checked_add_signed(chrono::TimeDelta::days(term_days as i64))
@@ -646,6 +672,8 @@ fn validate_fee_rate(fee_rate: &BigDecimal, label: &str) -> AppResult<()> {
     )
 }
 
+/// 校验理财申购金额为正、最多 18 位小数且整数部分不超过 20 位。
+/// 这是数据库存储口径，不读取资产 precision_scale，也不对输入金额隐式截断。
 pub(crate) fn validate_amount(amount: &BigDecimal) -> AppResult<()> {
     if amount <= &BigDecimal::from(0) {
         return Err(AppError::Validation(
@@ -693,6 +721,8 @@ fn validate_decimal_storage(
     Ok(())
 }
 
+/// 裁剪并校验理财申购幂等键，空值或超过存储长度时拒绝请求。
+/// 规范后的键用于用户级唯一约束，重放时必须继续核对产品和申购金额。
 pub(crate) fn normalize_idempotency_key(value: &str) -> AppResult<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -708,6 +738,7 @@ pub(crate) fn normalize_idempotency_key(value: &str) -> AppResult<String> {
     Ok(trimmed.to_owned())
 }
 
+/// 裁剪可选图片地址并限制长度，空白地址归一为空值。
 pub(crate) fn optional_image_url(value: Option<String>, field: &str) -> AppResult<Option<String>> {
     let Some(url) = optional_string(value) else {
         return Ok(None);
@@ -718,6 +749,9 @@ pub(crate) fn optional_image_url(value: Option<String>, field: &str) -> AppResul
     Ok(Some(url))
 }
 
+/// 仅使用订阅快照计算赎回：到期按 `本金*APR*term_days/365`，提前赎回按实际秒数计毛收益。
+/// 通用赎回费按本金+毛收益计；到期收益费只在到期后按毛收益计；提前费按配置对本金或毛收益计。
+/// 各中间费用与收益统一保留 18 位，净到账最低为零；产品后续修改不影响结果，本函数不写钱包。
 pub(crate) fn redemption_amounts_for_subscription(
     subscription: &EarnSubscriptionResponse,
     now: DateTime<Utc>,
@@ -738,6 +772,8 @@ pub(crate) fn redemption_amounts_for_subscription(
     )
 }
 
+/// 验证幂等键对应订阅的产品和金额与本次请求完全一致。
+/// 不一致时返回冲突，防止复用同一键绕过申购资金语义。
 pub(crate) fn ensure_existing_subscription_matches_request(
     existing: &EarnSubscriptionResponse,
     product_id: u64,

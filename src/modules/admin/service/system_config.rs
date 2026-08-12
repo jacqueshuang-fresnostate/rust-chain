@@ -40,6 +40,8 @@ pub(crate) struct SmtpValidatedConfig {
     pub(crate) priority: u32,
 }
 
+/// 校验 SMTP 名称、主机、端口、安全模式、发件人、优先级及验证码模板组合约束。
+/// 更新时可用旧名称和优先级作为回退；该函数不测试网络或凭据，实际连通性由测试发送用例确认。
 pub(crate) fn validate_smtp_save_request(
     request: &SaveSmtpConfigRequest,
     fallback_name: Option<&str>,
@@ -94,6 +96,8 @@ pub(crate) fn validate_smtp_save_request(
     })
 }
 
+/// 规范化 SMTP 发信策略，仅接受优先级或轮询模式并返回稳定代码。
+/// 该值只决定配置选择算法，不启动发信任务，也不变更现有轮询游标。
 pub(crate) fn validate_smtp_delivery_strategy(value: &str) -> AppResult<String> {
     match value.trim() {
         "priority" => Ok("priority".to_owned()),
@@ -104,6 +108,8 @@ pub(crate) fn validate_smtp_delivery_strategy(value: &str) -> AppResult<String> 
     }
 }
 
+/// 对 SMTP 发件人或测试收件地址做轻量邮箱格式校验，要求单个 `@` 且本地部分与域名均非空。
+/// 该检查不验证 DNS/MX 或邮箱可投递性；发送失败由 SMTP 适配器返回。
 pub(crate) fn validate_smtp_email(value: &str, field: &str) -> AppResult<String> {
     let email = optional_string(Some(value.to_owned()))
         .ok_or_else(|| AppError::Validation(format!("smtp {field} is required")))?;
@@ -121,6 +127,8 @@ pub(crate) fn validate_smtp_email(value: &str, field: &str) -> AppResult<String>
     Ok(email)
 }
 
+/// 提取并规范化SMTP 操作审计原因，拒绝空白值及超过审计字段上限的内容。
+/// 返回去空后的必填原因，供 SMTP 配置/策略或测试邮件审计使用；缺失或超长返回校验错误，函数不落审计表。
 pub(crate) fn required_smtp_audit_reason(value: Option<String>) -> AppResult<String> {
     let Some(reason) = optional_string(value) else {
         return Err(AppError::Validation("reason is required".to_owned()));
@@ -131,11 +139,15 @@ pub(crate) fn required_smtp_audit_reason(value: Option<String>) -> AppResult<Str
     Ok(reason)
 }
 
+/// 判断 SMTP 保存请求是否明确携带新用户名或密码，用于决定加密替换还是保留已有密文。
+/// 仅当 username 或 password 去空后非空才返回 true；不比较主机等目标字段，也不解密已有凭据。
 pub(crate) fn smtp_request_has_new_secret(request: &SaveSmtpConfigRequest) -> bool {
     request.username.as_deref().and_then(optional_str).is_some()
         || request.password.as_deref().and_then(optional_str).is_some()
 }
 
+/// 构造默认 SMTP 发信策略记录，在数据库尚无配置时提供确定的优先级选择和空轮询游标。
+/// 构造过程无 I/O；返回值仅供应用层初始化或响应，不会自行持久化。
 pub(crate) fn default_smtp_delivery_settings_record() -> AdminSmtpDeliverySettingsRecord {
     AdminSmtpDeliverySettingsRecord {
         strategy: SMTP_DELIVERY_STRATEGY_PRIORITY.to_owned(),
@@ -143,6 +155,8 @@ pub(crate) fn default_smtp_delivery_settings_record() -> AdminSmtpDeliverySettin
     }
 }
 
+/// 将SMTP 发信策略仓储记录映射为后台响应，统一时间、掩码和可选字段的对外表示。
+/// 当前响应只暴露 strategy，明确丢弃内部 round_robin_cursor；转换不访问数据库或推进轮询。
 pub(crate) fn smtp_delivery_settings_response(
     record: AdminSmtpDeliverySettingsRecord,
 ) -> SmtpDeliverySettingsResponse {
@@ -151,6 +165,8 @@ pub(crate) fn smtp_delivery_settings_response(
     }
 }
 
+/// 将 SMTP 发信策略和当前轮询游标映射为审计 JSON，供策略保存前后值比对。
+/// 本函数不推进游标或写审计；调用方负责在发信策略事务中持久化结果。
 pub(crate) fn smtp_delivery_settings_audit_json(record: &AdminSmtpDeliverySettingsRecord) -> Value {
     json!({
         "strategy": record.strategy,
@@ -158,6 +174,8 @@ pub(crate) fn smtp_delivery_settings_audit_json(record: &AdminSmtpDeliverySettin
     })
 }
 
+/// 将SMTP 配置仓储记录映射为后台响应，统一时间、掩码和可选字段的对外表示。
+/// 输出包含用户名掩码、密码是否设置和验证码模板，不暴露 password_ciphertext；转换仅消费传入记录且无发信副作用。
 pub(crate) fn smtp_config_response(record: AdminSmtpConfigRecord) -> SmtpConfigResponse {
     let verification_code_templates = smtp_templates_from_record(&record);
     SmtpConfigResponse {
@@ -177,6 +195,8 @@ pub(crate) fn smtp_config_response(record: AdminSmtpConfigRecord) -> SmtpConfigR
     }
 }
 
+/// 将 SMTP 连接、发件人、模板、优先级和启用状态映射为配置审计快照。
+/// 密钥仅以用户名掩码和密码是否存在表示；应用层在配置写事务中保存前后值。
 pub(crate) fn smtp_config_audit_json(record: &AdminSmtpConfigRecord) -> Value {
     json!({
         "id": record.id,
@@ -195,6 +215,8 @@ pub(crate) fn smtp_config_audit_json(record: &AdminSmtpConfigRecord) -> Value {
     })
 }
 
+/// 从 SMTP 记录合并新版多语言模板与旧版单模板字段，生成邮件发送端可直接使用的模板集合。
+/// 转换不读取密钥、不发送邮件；无有效模板时保留默认回退语义，不产生数据库副作用。
 pub(crate) fn smtp_templates_from_record(
     record: &AdminSmtpConfigRecord,
 ) -> Vec<VerificationCodeTemplate> {
@@ -217,6 +239,8 @@ pub(crate) fn smtp_templates_from_record(
         .collect()
 }
 
+/// 从已按优先级排序的 SMTP 配置快照中选择本次发送项；轮询策略从当前游标的后一项继续。
+/// 该纯内存选择不发送邮件或写数据库；空快照返回 `None`，非轮询策略（含未知值）回退到首项，游标推进由基础设施层负责。
 pub(crate) fn select_smtp_delivery_config(
     settings: &AdminSmtpDeliverySettingsRecord,
     records: &[AdminSmtpConfigRecord],
@@ -245,6 +269,8 @@ pub(crate) enum UploadProvider {
 }
 
 impl UploadProvider {
+    /// 解析上传提供商代码及兼容别名，仅接受图床、OSS、S3 或本地存储。
+    /// 解析为纯内存操作；未知值返回校验或内部数据错误，不访问数据库也不产生副作用。
     pub(crate) fn parse(value: &str) -> AppResult<Self> {
         match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
             "image_bed" | "imagebed" => Ok(Self::ImageBed),
@@ -257,6 +283,7 @@ impl UploadProvider {
         }
     }
 
+    /// 返回上传提供商用于持久化和协议分派的稳定代码。
     pub(crate) const fn code(self) -> &'static str {
         match self {
             Self::ImageBed => "image_bed",
@@ -266,10 +293,12 @@ impl UploadProvider {
         }
     }
 
+    /// 判断该上传提供商是否需要 Bearer 凭据。
     pub(crate) const fn uses_bearer(self) -> bool {
         matches!(self, Self::ImageBed)
     }
 
+    /// 判断该上传提供商是否需要访问密钥与密钥对。
     pub(crate) const fn uses_access_secret(self) -> bool {
         matches!(self, Self::Oss | Self::S3)
     }
@@ -290,6 +319,8 @@ pub(crate) struct ValidatedUploadConfig {
     pub(crate) enabled: bool,
 }
 
+/// 解析上传 provider，并校验 endpoint、bucket、凭据、文件上限和 MIME 白名单的组合要求。
+/// 仅生成规范化配置，不连接对象存储；密钥加密与旧密文保留由应用事务负责。
 pub(crate) fn validate_upload_config(
     request: &SaveUploadConfigRequest,
 ) -> AppResult<ValidatedUploadConfig> {
@@ -361,6 +392,8 @@ pub(crate) fn validate_upload_config(
     })
 }
 
+/// 在发送对象存储请求前校验文件非空、大小不超过配置上限，且 MIME 命中允许列表。
+/// 该函数不检查文件内容与声明 MIME 是否一致，也不写临时文件或远端对象。
 pub(crate) fn validate_upload_file(
     max_file_size_bytes: u64,
     allowed_mime_types: &[String],
@@ -385,6 +418,8 @@ pub(crate) fn validate_upload_file(
     Ok(())
 }
 
+/// 提取并规范化上传操作审计原因，拒绝空白值及超过审计字段上限的内容。
+/// 返回去空后的上传配置必填审计原因；缺失或超过后台审计上限返回校验错误，成功值仍须由应用事务写入审计表。
 pub(crate) fn required_upload_audit_reason(value: Option<String>) -> AppResult<String> {
     let Some(reason) = optional_string(value) else {
         return Err(AppError::Validation("reason is required".to_owned()));
@@ -395,6 +430,8 @@ pub(crate) fn required_upload_audit_reason(value: Option<String>) -> AppResult<S
     Ok(reason)
 }
 
+/// 比较上传密钥目标位置相关输入，判断本次更新能否沿用现有加密凭据或必须提供新密钥。
+/// 仅比较 endpoint、bucket 和 region 是否完全相同；provider 等其他字段不参与，函数不解密旧密钥或判断新密钥是否为空。
 pub(crate) fn upload_config_secret_destination_unchanged(
     record: &AdminUploadConfigRecord,
     config: &ValidatedUploadConfig,
@@ -404,6 +441,8 @@ pub(crate) fn upload_config_secret_destination_unchanged(
         && record.region == config.region
 }
 
+/// 将上传提供商、目标位置、公开地址、对象规则、大小/MIME 限制和启用状态映射为审计快照。
+/// Bearer、访问密钥和 Secret 只记录掩码或是否已设置；结果不会暴露密文。
 pub(crate) fn upload_config_audit_json(record: &AdminUploadConfigRecord) -> Value {
     json!({
         "id": record.id,
@@ -427,6 +466,8 @@ pub(crate) fn upload_config_audit_json(record: &AdminUploadConfigRecord) -> Valu
     })
 }
 
+/// 按日期、UUID、受支持 MIME 扩展名及可选前缀生成不可预测的上传对象键。
+/// 每次调用都会产生新键且不具幂等性；函数不创建文件或远端对象，前缀应先通过配置校验。
 pub(crate) fn generated_upload_object_key(prefix: Option<&str>, mime_type: &str) -> String {
     let date = Utc::now().format("%Y/%m/%d");
     let suffix = upload_extension_for_mime(mime_type);
@@ -437,6 +478,8 @@ pub(crate) fn generated_upload_object_key(prefix: Option<&str>, mime_type: &str)
     }
 }
 
+/// 从原始文件名提取安全 basename、修正扩展名并限制长度，避免目录穿越和异常响应头。
+/// 转换不访问文件系统；空值使用 MIME 对应默认名，不合法字符按既有清洗规则处理。
 pub(crate) fn safe_upload_filename(original: Option<&str>, mime_type: &str) -> String {
     let extension = upload_extension_for_mime(mime_type);
     let Some(original) = original.and_then(optional_str) else {
@@ -453,6 +496,8 @@ pub(crate) fn safe_upload_filename(original: Option<&str>, mime_type: &str) -> S
     truncate_upload_filename(name, extension, 255)
 }
 
+/// 过滤上传路径片段，仅保留 ASCII 字母数字及点、横线、下划线，避免注入目录分隔符。
+/// 该纯函数不访问存储；调用方仍需检查过滤后是否为空并决定是否接受。
 pub(crate) fn safe_upload_key_segment(value: &str) -> String {
     value
         .chars()
@@ -460,6 +505,8 @@ pub(crate) fn safe_upload_key_segment(value: &str) -> String {
         .collect()
 }
 
+/// 校验上传提供商返回的公开、分享或删除地址，按必填语义规范空白值并限制协议与主机。
+/// 该检查不发起网络请求；缺少必填地址或地址不安全时返回校验错误，避免污染对象记录。
 pub(crate) fn safe_upload_response_url(
     value: Option<&str>,
     field: &str,
@@ -475,6 +522,8 @@ pub(crate) fn safe_upload_response_url(
     validate_upload_safe_url(value, field, false).map(Some)
 }
 
+/// 规范拼接公开基础地址和对象键，确保边界只保留一个斜杠且不改写对象键内容。
+/// 函数不验证网络可达性也不执行上传；基础地址和对象键须已分别通过前置校验。
 pub(crate) fn join_upload_public_url(base: &str, object_key: &str) -> String {
     format!(
         "{}/{}",
@@ -483,6 +532,8 @@ pub(crate) fn join_upload_public_url(base: &str, object_key: &str) -> String {
     )
 }
 
+/// 将上传端点与路径组件规范拼接并解析为 URL，避免重复斜杠破坏签名请求路径。
+/// 仅接受可解析端点；解析失败返回校验错误，不发起网络请求或存储写入。
 pub(crate) fn join_upload_endpoint_path(endpoint: &str, parts: &[&str]) -> AppResult<String> {
     let base = endpoint.trim_end_matches('/');
     let path = parts
@@ -492,12 +543,14 @@ pub(crate) fn join_upload_endpoint_path(endpoint: &str, parts: &[&str]) -> AppRe
         .collect::<Vec<_>>()
         .join("/");
     let url = format!("{base}/{path}");
-    reqwest::Url::parse(&url)
+    url::Url::parse(&url)
         .map_err(|_| AppError::Validation("upload endpoint is invalid".to_owned()))?;
     Ok(url)
 }
 
-pub(crate) fn upload_url_host(url: &reqwest::Url) -> AppResult<String> {
+/// 从已解析上传 URL 生成包含可选端口的 Host 头值，供对象存储签名与请求保持一致。
+/// URL 缺少主机时返回校验错误；该函数不解析 DNS、不建立网络连接。
+pub(crate) fn upload_url_host(url: &url::Url) -> AppResult<String> {
     let host = url
         .host_str()
         .ok_or_else(|| AppError::Validation("upload endpoint host is invalid".to_owned()))?;
@@ -507,16 +560,22 @@ pub(crate) fn upload_url_host(url: &reqwest::Url) -> AppResult<String> {
     })
 }
 
+/// 计算上传请求体的 SHA-256 十六进制摘要，供对象存储内容完整性和签名串使用。
+/// 摘要计算是确定性纯函数，不保存原文或密钥，也不执行网络和数据库操作。
 pub(crate) fn sha256_hex(data: &[u8]) -> String {
     hex::encode(sha2::Sha256::digest(data))
 }
 
+/// 按 OSS 兼容协议计算 HMAC-SHA1 并输出 Base64，用于请求授权头签名。
+/// 输入密钥仅在内存中参与计算；函数不记录密钥、不发起请求，调用方负责保护签名材料。
 pub(crate) fn hmac_sha1_base64(key: &[u8], data: &str) -> String {
     let mut mac = HmacSha1::new_from_slice(key).expect("HMAC accepts any key length");
     mac.update(data.as_bytes());
     general_purpose::STANDARD.encode(mac.finalize().into_bytes())
 }
 
+/// 按日期、区域和服务名逐级派生 AWS V4 签名密钥，并对规范签名串计算最终十六进制签名。
+/// 计算为确定性纯函数；不会校验时钟或发送请求，调用方必须保证规范请求与签名参数完全一致。
 pub(crate) fn s3_upload_signature(
     secret: &str,
     date: &str,
@@ -647,8 +706,8 @@ fn validate_upload_credential_url(value: Option<&str>, field: &str) -> AppResult
 }
 
 fn validate_upload_safe_url(value: &str, field: &str, require_https: bool) -> AppResult<String> {
-    let url = reqwest::Url::parse(value)
-        .map_err(|_| AppError::Validation(format!("{field} is invalid")))?;
+    let url =
+        url::Url::parse(value).map_err(|_| AppError::Validation(format!("{field} is invalid")))?;
     let valid_scheme = if require_https {
         url.scheme() == "https" || (url.scheme() == "http" && is_loopback_upload_url(&url))
     } else {
@@ -666,7 +725,7 @@ fn validate_upload_safe_url(value: &str, field: &str, require_https: bool) -> Ap
     Ok(value.to_owned())
 }
 
-fn is_loopback_upload_url(url: &reqwest::Url) -> bool {
+fn is_loopback_upload_url(url: &url::Url) -> bool {
     matches!(
         url.host_str(),
         Some("localhost") | Some("127.0.0.1") | Some("::1")
@@ -711,10 +770,12 @@ fn hmac_sha256(key: &[u8], data: &str) -> Vec<u8> {
     mac.finalize().into_bytes().to_vec()
 }
 
+/// 复用国家域规则，将国家代码规范化为后台与注册接口共用的稳定格式。
 pub(crate) fn validate_country_code(value: &str) -> AppResult<String> {
     normalize_country_code(value)
 }
 
+/// 去除国家名称首尾空白并限制 128 个字符；多语言显示名由 locale 配置另行维护。
 pub(crate) fn validate_country_name(value: &str) -> AppResult<String> {
     let Some(country_name) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation("country_name is required".to_owned()));
@@ -725,6 +786,7 @@ pub(crate) fn validate_country_name(value: &str) -> AppResult<String> {
     Ok(country_name)
 }
 
+/// 去除国家备注首尾空白并限制 128 个字符，空备注按当前后台合同拒绝。
 pub(crate) fn validate_country_remark(value: &str) -> AppResult<String> {
     let Some(remark) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation("remark is required".to_owned()));
@@ -735,6 +797,7 @@ pub(crate) fn validate_country_remark(value: &str) -> AppResult<String> {
     Ok(remark)
 }
 
+/// 规范化国家启停状态；这里只校验目标代码，不判断已有用户或注册流程是否受影响。
 pub(crate) fn validate_country_status(value: &str) -> AppResult<String> {
     let Some(status) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation("status is required".to_owned()));
@@ -747,6 +810,8 @@ pub(crate) fn validate_country_status(value: &str) -> AppResult<String> {
     }
 }
 
+/// 规范化默认 locale 与支持列表，去重后要求默认语言仍包含在列表中。
+/// 该纯规则不加载翻译资源；应用事务只持久化经过验证的语言代码集合。
 pub(crate) fn validate_country_locale_config(
     default_locale: &str,
     supported_locales: Vec<String>,
@@ -757,6 +822,8 @@ pub(crate) fn validate_country_locale_config(
     Ok((default_locale, supported_locales))
 }
 
+/// 将国家代码、名称、备注、语言集合、注册开关、状态和排序映射为配置审计快照。
+/// 时间统一为毫秒值；应用层在国家配置写事务中保存前后值，本函数不修改注册策略。
 pub(crate) fn country_config_audit_json(country: &AdminCountryResponse) -> Value {
     json!({
         "id": country.id,

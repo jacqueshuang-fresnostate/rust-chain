@@ -19,6 +19,8 @@ pub(crate) struct AdminRiskEventListFilter {
     pub(crate) offset: u32,
 }
 
+/// 在调用方事务中按固定策略键新增或覆盖用户支付安全策略 JSON，并记录本次管理员 ID。
+/// 唯一键冲突走 upsert 覆盖且不显式锁旧配置；调用方负责校验策略、保存前后审计并提交，JSON 绑定或 SQL 失败时整体回滚。
 pub(crate) async fn save_admin_security_policy_in_tx(
     tx: &mut Transaction<'_, MySql>,
     policy: &UserSecurityPolicy,
@@ -39,6 +41,8 @@ pub(crate) async fn save_admin_security_policy_in_tx(
     Ok(())
 }
 
+/// 分页查询风控规则，返回符合调用方筛选条件的记录及相同谓词下的总数。
+/// 风控规则列表与计数通过连接池分别执行且均不加锁；并发写入可能造成页数据与总数快照不同，SQL 或字段映射失败直接返回错误。
 pub(crate) async fn list_admin_risk_rules(
     pool: &Pool<MySql>,
     filter: AdminRiskRuleListFilter,
@@ -76,6 +80,8 @@ pub(crate) async fn list_admin_risk_rules(
     .await
 }
 
+/// 在调用方事务中插入风控规则类型、目标、JSON 配置、开关和创建管理员，并返回规则 ID。
+/// 函数不按规则内容去重或解释 JSON；调用方负责校验并与后台审计统一提交，约束或 SQL 失败回滚整个创建用例。
 pub(crate) async fn insert_risk_rule_in_tx(
     tx: &mut Transaction<'_, MySql>,
     rule: RiskRuleWrite,
@@ -95,6 +101,8 @@ pub(crate) async fn insert_risk_rule_in_tx(
     Ok(result.last_insert_id())
 }
 
+/// 在调用方事务快照中按规则 ID 回读类型、目标、JSON 配置、开关和创建信息。
+/// 查询不加锁；记录缺失返回未找到，JSON 解码或 SQL 失败由外层事务处理，函数不执行风险决策。
 pub(crate) async fn load_risk_rule_in_tx(
     tx: &mut Transaction<'_, MySql>,
     rule_id: u64,
@@ -112,6 +120,8 @@ pub(crate) async fn load_risk_rule_in_tx(
     .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中按规则 ID 以 `FOR UPDATE` 锁定风控规则并返回状态修改前快照。
+/// 锁持有至事务结束；记录缺失返回未找到，函数不锁已产生的风险事件，也不提交或写审计。
 pub(crate) async fn lock_risk_rule_in_tx(
     tx: &mut Transaction<'_, MySql>,
     rule_id: u64,
@@ -130,6 +140,8 @@ pub(crate) async fn lock_risk_rule_in_tx(
     .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中按规则 ID 仅覆盖 enabled 开关。
+/// 更新不检查受影响行数或触发规则缓存重载；调用方须先锁定规则，并与状态审计统一提交。
 pub(crate) async fn update_risk_rule_status_in_tx(
     tx: &mut Transaction<'_, MySql>,
     rule_id: u64,
@@ -143,6 +155,8 @@ pub(crate) async fn update_risk_rule_status_in_tx(
     Ok(())
 }
 
+/// 分页查询风控事件，返回符合调用方筛选条件的记录及相同谓词下的总数。
+/// 风控事件列表与计数通过连接池分别执行且均不加锁；并发写入可能造成页数据与总数快照不同，SQL 或字段映射失败直接返回错误。
 pub(crate) async fn list_admin_risk_events(
     pool: &Pool<MySql>,
     filter: AdminRiskEventListFilter,

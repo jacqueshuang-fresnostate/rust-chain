@@ -19,6 +19,8 @@ pub struct PublicCountry {
 
 impl DomainLayer for PublicCountry {}
 
+/// 规范化国家代码为大写 ASCII 字母，并限制为 2～8 个字符。
+/// 空值或包含数字、符号的代码返回参数错误，不执行任何外部查询。
 pub fn normalize_country_code(value: &str) -> AppResult<String> {
     let country_code = value.trim().to_ascii_uppercase();
     if country_code.is_empty() {
@@ -37,6 +39,7 @@ pub fn normalize_country_code(value: &str) -> AppResult<String> {
     Ok(country_code)
 }
 
+/// 规范化语言代码为小写，并只接受平台明确支持的语言集合。
 pub fn normalize_locale(value: &str) -> AppResult<String> {
     let locale = value.trim().to_ascii_lowercase();
     if !ALLOWED_LOCALES.contains(&locale.as_str()) {
@@ -45,6 +48,8 @@ pub fn normalize_locale(value: &str) -> AppResult<String> {
     Ok(locale)
 }
 
+/// 逐项规范化并按首次出现顺序去重支持语言列表。
+/// 任一语言非法或去重后为空时整体失败，避免保存部分有效的配置。
 pub fn normalize_supported_locales(values: Vec<String>) -> AppResult<Vec<String>> {
     let mut locales = Vec::new();
     for value in values {
@@ -61,6 +66,8 @@ pub fn normalize_supported_locales(values: Vec<String>) -> AppResult<Vec<String>
     Ok(locales)
 }
 
+/// 确认默认语言包含在已规范化的支持语言列表中。
+/// 本函数只校验成员关系，不修改列表顺序或自动补入默认值。
 pub fn ensure_default_locale_supported(
     default_locale: &str,
     supported_locales: &[String],

@@ -8,10 +8,12 @@ use chrono::{DateTime, Utc};
 
 pub(crate) const EMAIL_VERIFICATION_CODE_MAX_ATTEMPTS: i32 = 5;
 
+/// 规范化必填字符串并拒绝空白值，错误消息保留调用方传入的字段名。
 pub(crate) fn required_string(value: Option<String>, field: &str) -> AppResult<String> {
     optional_string(value).ok_or_else(|| AppError::Validation(format!("{field} is required")))
 }
 
+/// 去除字符串首尾空白，并把空结果统一转换为 `None`。
 pub(crate) fn optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())

@@ -17,6 +17,7 @@ pub struct QuoteTtl {
 }
 
 impl QuoteTtl {
+    /// 当检查时刻达到或超过 expires_at 时返回 true；只比较内存中的 UTC 时刻。
     pub(crate) fn is_expired(&self, now: DateTime<Utc>) -> bool {
         now >= self.expires_at
     }
@@ -29,7 +30,8 @@ pub struct ConvertQuote {
 }
 
 impl ConvertQuote {
-    /// 从报价信息构建幂等 key 和过期时间，避免重复提交重复落库。
+    /// 用报价 UUID 构造 `convert:quote:{uuid}` 缓存键，并从创建时间计算严格为正的有效期。
+    /// 该值对象不检查用户、交易对或余额，也不冻结 available；TTL 非正时不生成任何报价状态。
     pub fn new(
         quote_id: QuoteId,
         created_at: DateTime<Utc>,
@@ -49,19 +51,23 @@ impl ConvertQuote {
         })
     }
 
+    /// 借用报价 UUID，不读取缓存或数据库。
     pub fn quote_id(&self) -> &QuoteId {
         &self.ttl.quote_id
     }
 
+    /// 返回报价 UUID 与到期时刻组成的只读有效期快照。
     pub fn ttl(&self) -> &QuoteTtl {
         &self.ttl
     }
 
+    /// 返回由报价 UUID 唯一派生的 Redis 键；它标识报价缓存，不是用户请求幂等键。
     pub fn idempotency_key(&self) -> &str {
         &self.idempotency_key
     }
 
-    /// 任何时间点都只允许在未过期前继续确认报价。
+    /// 按调用方提供的时刻校验报价未过期；等于到期时刻即视为失效。
+    /// 校验只读领域快照，不删除 Redis、不更新数据库状态，也不触碰钱包。
     pub fn ensure_not_expired(&self, now: DateTime<Utc>) -> Result<(), ConvertQuoteError> {
         if self.ttl.is_expired(now) {
             Err(ConvertQuoteError::Expired)
@@ -101,12 +107,14 @@ pub enum ConvertServiceError {
 }
 
 impl From<ConvertQuoteError> for ConvertServiceError {
+    /// 保留报价过期或 TTL 非法事实并包装为服务错误，不执行仓储或资金操作。
     fn from(error: ConvertQuoteError) -> Self {
         Self::Quote(error)
     }
 }
 
 impl From<ConvertRepositoryError> for ConvertServiceError {
+    /// 保留仓储错误类别并包装为服务错误，不把失败转换为报价未命中。
     fn from(error: ConvertRepositoryError) -> Self {
         Self::Repository(error)
     }

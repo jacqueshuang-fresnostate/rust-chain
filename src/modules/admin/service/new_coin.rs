@@ -1,5 +1,7 @@
 use super::*;
 
+/// 校验新币派发请求的审计原因以及可选幂等键长度，拒绝空白或超长标识。
+/// 同时要求派发数量为正；项目、用户和可派额度由应用事务锁行后确认，失败前不修改钱包。
 pub(crate) fn validate_distribute_new_coin(request: &DistributeNewCoinRequest) -> AppResult<()> {
     if request.quantity <= 0 {
         return Err(AppError::Validation("quantity must be positive".to_owned()));
@@ -12,6 +14,8 @@ pub(crate) fn validate_distribute_new_coin(request: &DistributeNewCoinRequest) -
     Ok(())
 }
 
+/// 校验新币解锁类型、起始时间、周期和比例组合，防止生成无法执行的锁仓计划。
+/// 这里只验证规则形状；已分配仓位如何迁移由更新事务根据项目状态决定。
 pub(crate) fn validate_update_new_coin_unlock_rule(
     request: &UpdateNewCoinUnlockRuleRequest,
 ) -> AppResult<()> {
@@ -23,6 +27,8 @@ pub(crate) fn validate_update_new_coin_unlock_rule(
     )
 }
 
+/// 校验解锁费启用状态、计费基准、费率与固定金额组合，保证启用规则可确定唯一收费口径。
+/// 不在此处计算用户费用或修改锁仓；实际收费按项目规则快照在解锁事务中执行。
 pub(crate) fn validate_update_new_coin_unlock_fee_rule(
     request: &UpdateNewCoinUnlockFeeRuleRequest,
 ) -> AppResult<()> {
@@ -34,6 +40,8 @@ pub(crate) fn validate_update_new_coin_unlock_fee_rule(
     )
 }
 
+/// 校验上市后购买开关与交易对绑定关系：启用时必须提供有效的正数 pair_id。
+/// 交易对是否 active 以及是否属于该项目由应用事务查询确认。
 pub(crate) fn validate_update_new_coin_post_listing_purchase(
     request: &UpdateNewCoinPostListingPurchaseRequest,
 ) -> AppResult<()> {
@@ -45,6 +53,8 @@ pub(crate) fn validate_update_new_coin_post_listing_purchase(
     Ok(())
 }
 
+/// 校验新币项目初始生命周期、资产、认购窗口、价格、额度及解锁规则的完整组合。
+/// 资产唯一性和并发创建冲突由数据库约束处理；本函数不写项目、钱包或审计。
 pub(crate) fn validate_create_new_coin_project(
     request: &CreateNewCoinProjectRequest,
 ) -> AppResult<()> {
@@ -83,6 +93,8 @@ pub(crate) fn validate_create_new_coin_project(
     Ok(())
 }
 
+/// 校验新币闪兑规则的汇率来源、固定汇率、费率、限额和启停状态组合。
+/// 这里只确定配置是否自洽；目标资产与项目关联、报价和钱包结算由应用/闪兑上下文负责。
 pub(crate) fn validate_new_coin_convert_rule(
     request: &UpsertNewCoinConvertRuleRequest,
 ) -> AppResult<()> {
@@ -113,6 +125,8 @@ pub(crate) fn validate_new_coin_convert_rule(
     Ok(())
 }
 
+/// 确认新币项目已完成派发并进入可上市阶段，才允许启停上市后购买功能。
+/// 仅接受持久化生命周期为 listed 的项目快照；其他合法状态返回校验错误，未知数据库状态转换为内部错误，调用方负责在持锁后调用。
 pub(crate) fn ensure_post_listing_purchase_lifecycle(
     project: &NewCoinProjectResponse,
 ) -> AppResult<()> {
@@ -124,6 +138,8 @@ pub(crate) fn ensure_post_listing_purchase_lifecycle(
     Ok(())
 }
 
+/// 确认新币项目处于待派发状态，阻止对尚未结束认购或已经派发的项目重复分配资产。
+/// 仅接受持久化生命周期为 distribution 的项目快照；其他合法状态返回校验错误，未知存储值返回内部错误，本函数本身不加锁或标记已派发。
 pub(crate) fn ensure_distribution_lifecycle(project: &NewCoinProjectResponse) -> AppResult<()> {
     if parse_lifecycle_status_from_db(&project.lifecycle_status)? != LifecycleStatus::Distribution {
         return Err(AppError::Validation(
@@ -133,6 +149,8 @@ pub(crate) fn ensure_distribution_lifecycle(project: &NewCoinProjectResponse) ->
     Ok(())
 }
 
+/// 解析请求中的新币生命周期代码，空白或未支持值返回面向调用方的校验错误。
+/// 结果只包含领域枚举，不检查当前项目状态或迁移方向，也不读取数据库。
 pub(crate) fn parse_lifecycle_status_from_request(value: &str) -> AppResult<LifecycleStatus> {
     let Some(value) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation(
@@ -142,6 +160,8 @@ pub(crate) fn parse_lifecycle_status_from_request(value: &str) -> AppResult<Life
     parse_lifecycle_status(&value)
 }
 
+/// 解析数据库中的新币生命周期代码并返回领域枚举。
+/// 已存未知值被视为内部数据错误并在消息中保留原代码；函数不修复记录或触发状态迁移。
 pub(crate) fn parse_lifecycle_status_from_db(value: &str) -> AppResult<LifecycleStatus> {
     parse_lifecycle_status(value).map_err(|_| {
         AppError::Internal(format!(
@@ -150,6 +170,8 @@ pub(crate) fn parse_lifecycle_status_from_db(value: &str) -> AppResult<Lifecycle
     })
 }
 
+/// 将新币生命周期领域枚举转换为数据库和接口共用的稳定状态代码。
+/// 映射为穷尽纯函数，不访问持久化或执行状态迁移，调用方负责校验迁移是否合法。
 pub(crate) fn lifecycle_status_value(status: LifecycleStatus) -> &'static str {
     match status {
         LifecycleStatus::Preheat => "preheat",
@@ -159,6 +181,8 @@ pub(crate) fn lifecycle_status_value(status: LifecycleStatus) -> &'static str {
     }
 }
 
+/// 依据新币派发的数量、解锁规则和来源时间计算锁仓头寸，保持各期金额之和等于待锁总额。
+/// 计算不写钱包或锁仓表；非法规则或金额返回错误，实际幂等合并与事务提交由应用层负责。
 pub(crate) fn lock_positions_for_distribution(
     project: &NewCoinProjectResponse,
     user_id: u64,
@@ -197,6 +221,8 @@ pub(crate) fn lock_positions_for_distribution(
         .collect())
 }
 
+/// 将新币项目的发行、生命周期、解锁、手续费和上市后购买配置映射为审计快照。
+/// 快照不包含认购或钱包明细；应用层在项目配置事务中保存前后值，时间统一为毫秒值。
 pub(crate) fn new_coin_project_audit_json(project: &NewCoinProjectResponse) -> Value {
     json!({
         "id": project.id,
@@ -220,6 +246,8 @@ pub(crate) fn new_coin_project_audit_json(project: &NewCoinProjectResponse) -> V
     })
 }
 
+/// 将单笔新币派发的项目、用户、认购、资产、数量、锁仓和幂等键映射为资金审计快照。
+/// 结果不读取钱包流水；派发事务须把快照与余额或锁仓写入一并提交。
 pub(crate) fn new_coin_distribution_audit_json(
     distribution: &NewCoinDistributionResponse,
 ) -> Value {
@@ -237,6 +265,8 @@ pub(crate) fn new_coin_distribution_audit_json(
     })
 }
 
+/// 将新币闪兑规则的交易对、汇率来源、固定/浮动配置、状态和创建人映射为审计快照。
+/// JSON 保留浮动配置原值但不执行定价；调用方在规则插入或更新事务中保存前后值。
 pub(crate) fn new_coin_convert_rule_audit_json(rule: &NewCoinConvertRuleResponse) -> Value {
     json!({
         "id": rule.id,

@@ -14,7 +14,8 @@ use crate::{
         },
         auth::{
             ActorType, AuthActor, AuthService, MySqlAuthRepository, hash_password,
-            normalize_username, revoke_actor_auth_sessions, verify_password,
+            infrastructure::RedisProjectRefreshTokenRepository, normalize_username,
+            revoke_actor_auth_sessions, verify_password,
         },
         kyc::{
             KycStatusResponse, KycSubmissionResponse, SubmitKycRequest,
@@ -71,7 +72,10 @@ use crate::{
 use chrono::{Duration, Utc};
 use serde_json::json;
 use sqlx::{MySql, Pool};
+use std::sync::Arc;
 
+/// 按认证用户 ID 查询个人资料、国家信息与资金密码设置状态，未命中返回未授权。
+/// 响应含邮箱、手机号等本人资料，只可返回当前认证用户，不得跨账号缓存或写普通日志。
 pub(crate) async fn get_user_profile(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -79,6 +83,8 @@ pub(crate) async fn get_user_profile(
     load_user_profile(pool, user_id).await
 }
 
+/// 规范化登录用户名后锁定活跃用户，同事务更新唯一值并记录审计。
+/// 重复用户名映射为冲突；任一写入失败整体回滚，成功后返回已转小写的权威值。
 pub(crate) async fn update_user_username(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -105,6 +111,8 @@ pub(crate) async fn update_user_username(
     Ok(UpdateUsernameResponse { username })
 }
 
+/// 先经上传服务写入文件/对象元数据，再将返回 URL 更新到用户资料；本函数未预查用户是否存在。
+/// 用户无效或资料更新失败时，外部对象及上传记录可能已经存在且不会补偿删除；重试可能再次上传。
 pub(crate) async fn upload_user_avatar(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -124,6 +132,9 @@ pub(crate) async fn upload_user_avatar(
     Ok(UserAvatarResponse { avatar_url, upload })
 }
 
+/// 确认用户存在后读取当前 KYC 配置与最新申请，无申请时返回未提交状态。
+/// 最新申请包含本人未掩码证件号和材料地址，仅可返回给当前认证用户；调用方不得写日志或跨用户复用。
+/// 配置缺失时读取流程会先写入默认配置，因此该状态用例并非严格只读。
 pub(crate) async fn get_user_kyc_status(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -137,6 +148,9 @@ pub(crate) async fn get_user_kyc_status(
     })
 }
 
+/// 在单一事务中校验并创建用户 KYC 申请，同时写入不含证件原文的审计事件。
+/// 用户状态、既有待审申请或材料校验失败不提交；用户行与查得的待审行会锁至提交，
+/// 但申请表未由本函数声明“每用户唯一待审”约束，防重依赖当前事务隔离和锁查询。
 pub(crate) async fn submit_user_kyc_submission(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -159,6 +173,9 @@ pub(crate) async fn submit_user_kyc_submission(
     Ok(submission)
 }
 
+/// 读取用户最早的自有邀请码；缺失或格式失效时在限定次数内生成全局唯一 code 并回读。
+/// 写入与回读不是事务，数据库只以 code 冲突触发重试；并发首次调用可能各自插入记录，
+/// 本函数最终仍返回排序最早的一条。随机冲突重试用尽返回内部错误。
 pub(crate) async fn get_user_referral_code(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -280,6 +297,7 @@ pub(crate) async fn bind_user_referral_code(
     Ok(binding)
 }
 
+/// 列出由当前用户直接邀请的用户，不包含间接下级或代理公司其他成员。
 pub(crate) async fn list_user_invites(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -288,6 +306,8 @@ pub(crate) async fn list_user_invites(
     Ok(MyInvitesResponse { users })
 }
 
+/// 为待绑定邮箱生成验证码，同事务检查唯一占用、冷却并取代旧码。
+/// 哈希记录提交后才发信；SMTP 失败不回滚已存记录，明文验证码始终不入库。
 pub(crate) async fn send_user_email_bind_code(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -351,6 +371,8 @@ pub(crate) async fn send_user_email_bind_code(
     })
 }
 
+/// 锁定最新邮箱绑定码，成功时同事务更新用户邮箱、消费码并写审计。
+/// 错码只累加尝试次数并提交；邮箱冲突、过期或 SQL 失败不留半绑定。
 pub(crate) async fn bind_user_email(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -409,7 +431,8 @@ pub(crate) async fn bind_user_email(
 /// 用户须处于启用状态、旧口令正确，且新口令满足策略并与旧口令不同。
 /// 事务锁定凭证行，原子写入口令哈希、撤销刷新令牌并记录用户审计，任何数据库失败均回滚。
 /// 提交后再撤销外部访问会话和签发令牌；该阶段失败时新密码已生效，调用方应重新登录而非重放改密。
-/// 成功后旧访问令牌和刷新令牌都不应再获得资产接口权限，返回值只包含新会话凭据。
+/// 会话撤销依赖 Sa-Token/Redis 外部后端；令牌枚举失败可能被会话助手按空集合处理，
+/// 因而本用例不能单凭成功响应证明所有旧访问令牌已删除。返回值只包含新会话凭据。
 pub(crate) async fn change_user_password(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -449,11 +472,15 @@ pub(crate) async fn change_user_password(
     // 密码变更后必须撤销旧会话并签发新 token，避免旧凭证继续访问用户资产相关接口。
     let actor = AuthActor::new(ActorType::User, user.id, Some(user.id));
     revoke_actor_auth_sessions(state, &actor).await?;
+    let project_refresh_tokens = state.redis.clone().map(|manager| {
+        Arc::new(RedisProjectRefreshTokenRepository::new(manager))
+            as Arc<dyn crate::modules::auth::ProjectRefreshTokenRepository>
+    });
     let tokens = AuthService::new(
         MySqlAuthRepository::new(pool.clone()),
         state.settings.clone(),
         state.auth_manager.clone(),
-        state.redis.clone(),
+        project_refresh_tokens,
     )
     .issue_tokens_for_actor(actor)
     .await?;
@@ -466,6 +493,8 @@ pub(crate) async fn change_user_password(
     })
 }
 
+/// 为尚未设置资金密码的活跃用户创建六位数字密码哈希并写审计。
+/// 凭证行在事务中锁定；已存在时拒绝覆盖，任一写入失败整体回滚。
 pub(crate) async fn create_user_fund_password(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -514,6 +543,8 @@ pub(crate) async fn create_user_fund_password(
     })
 }
 
+/// 锁定资金密码哈希并校验旧值，同事务更新新哈希与审计事件。
+/// 旧密码错误、新旧相同或未设置均不修改状态，密码明文不进入审计。
 pub(crate) async fn change_user_fund_password(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -555,6 +586,7 @@ pub(crate) async fn change_user_fund_password(
     })
 }
 
+/// 向用户已验证邮箱发送二次验证重置专用码，与其他用途的冷却和消费隔离。
 pub(crate) async fn send_user_two_factor_reset_code(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -571,6 +603,8 @@ pub(crate) async fn send_user_two_factor_reset_code(
     .await
 }
 
+/// 在独立事务消费二次验证重置邮件码后，依次清除 TOTP、写审计并回读状态。
+/// 后三步不与验证码事务原子提交；重置或审计失败时验证码已消费，审计失败时 TOTP 也可能已清除。
 pub(crate) async fn reset_user_two_factor_with_email_code(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -591,6 +625,8 @@ pub(crate) async fn reset_user_two_factor_with_email_code(
     get_user_two_factor_status(pool, user_id).await
 }
 
+/// 向用户已验证邮箱发送资金密码重置专用码，不与登录密码码混用。
+/// 未设置资金密码时不发送；验证码哈希先提交再发信，SMTP 失败不回滚冷却记录。
 pub(crate) async fn send_user_fund_password_reset_code(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -665,6 +701,7 @@ pub(crate) async fn reset_user_fund_password(
     })
 }
 
+/// 按用户读取当前第三方账号绑定列表，返回前同时附带安全策略的入口开关。
 pub(crate) async fn get_user_third_party_bindings(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -678,6 +715,9 @@ pub(crate) async fn get_user_third_party_bindings(
     })
 }
 
+/// 校验第三方类型、策略开关、账号标识与显示名后，同事务 upsert 绑定并写审计。
+/// 重复绑定同一 provider 更新快照而不新增多条；策略关闭或事务写入失败无部分数据库副作用。
+/// 本用例只保存调用方提交的本地标识，不联系 Coinbase、Telegram 或验证远端账号所有权。
 pub(crate) async fn bind_user_third_party_account(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -730,6 +770,7 @@ pub(crate) async fn bind_user_third_party_account(
     })
 }
 
+/// 组装用户 TOTP 绑定、登录开关与平台强制策略状态，不返回加密密钥。
 pub(crate) async fn get_user_two_factor_status(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -746,6 +787,8 @@ pub(crate) async fn get_user_two_factor_status(
     })
 }
 
+/// 读取用户与未绑定状态后生成 TOTP 密钥，加密保存待确认快照，并返回明文 secret/导入 URI。
+/// 状态检查与 upsert 分离，并发启用可能被后写待确认值关闭；响应只可交付当前用户且不得记录。
 pub(crate) async fn setup_user_two_factor(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -778,6 +821,8 @@ pub(crate) async fn setup_user_two_factor(
     })
 }
 
+/// 解密读取到的待确认 TOTP 密钥并校验动态码，随后以该密文启用绑定并另写审计。
+/// 确认 SQL 不比较读取后的并发替换；确认与审计也不是同一事务，审计失败时绑定可能已启用。
 pub(crate) async fn confirm_user_two_factor(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -822,6 +867,9 @@ pub(crate) async fn confirm_user_two_factor(
     get_user_two_factor_status(pool, user_id).await
 }
 
+/// 切换用户自选登录二次验证开关，启用前必须已完成 TOTP 绑定。
+/// 平台非自选模式拒绝修改；状态读取、开关更新和审计为独立 SQL，确认后的并发解绑可使更新零行
+/// 但仍继续审计。审计失败不会回滚已修改的开关，本函数不替换密钥或撤销会话。
 pub(crate) async fn update_user_login_two_factor(
     pool: &Pool<MySql>,
     user_id: u64,

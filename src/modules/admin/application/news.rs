@@ -1,5 +1,7 @@
 use super::*;
 
+/// 按状态、分类、国家、locale 和关键字筛选后台新闻，并返回分页摘要和匹配总数。
+/// 枚举与地域筛选沿用写入校验，关键字仅去空白；查询不锁新闻且不返回富文本写事务快照。
 pub(crate) async fn list_admin_news_items(
     pool: Option<Pool<MySql>>,
     query: AdminNewsQuery,
@@ -42,6 +44,8 @@ pub(crate) async fn list_admin_news_items(
     Ok(AdminNewsItemsResponse { news, total })
 }
 
+/// 按新闻 ID 读取标题、图片、分类、状态、地域、locale、富文本和发布时间的后台详情。
+/// 查询不加锁；记录缺失返回未找到，JSON/SQL 解码失败返回错误，也不改变阅读量或发布状态。
 pub(crate) async fn get_admin_news_item(
     pool: Option<Pool<MySql>>,
     news_id: u64,
@@ -50,6 +54,10 @@ pub(crate) async fn get_admin_news_item(
     load_admin_news_item_from_store(&pool, news_id).await
 }
 
+/// 创建后台新闻并返回包含状态、地域、默认语言和发布时间的完整新闻响应。
+/// 标题、图片长度、分类、locale 与版本 1 富文本文档须合法；状态缺省 draft，直接创建为 published 时设置当前发布时间。
+/// 事务不锁其他业务行，依次插入新闻、回读和写 after 审计；数据库或审计失败整体回滚。
+/// 创建无幂等键，也不发送站内信或发布事件；重复请求会创建另一条新闻。
 pub(crate) async fn create_admin_news_item(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -108,6 +116,10 @@ pub(crate) async fn create_admin_news_item(
     Ok(news)
 }
 
+/// 更新新闻正文、标题、图片、分类、地域和默认语言，并返回锁后最终快照。
+/// 请求须提供审计原因且完整富文本文档通过校验；该用例不修改状态或 published_at。
+/// 事务先锁新闻，再覆盖可编辑字段、回读并写 before/after 审计；记录缺失或任一步失败整体回滚。
+/// 相同内容重放仍新增审计，不发送发布通知或清理图片对象。
 pub(crate) async fn update_admin_news_item(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -161,6 +173,10 @@ pub(crate) async fn update_admin_news_item(
     Ok(after)
 }
 
+/// 切换新闻 draft/published/archived 状态，并返回保留首发时间的最终新闻快照。
+/// 请求须提供审计原因；事务锁新闻后仅在首次进入 published 且旧值无时间时写入当前时间，重复发布或归档保留原值。
+/// 状态更新、管理员更新人、回读和 before/after 审计同事务提交；记录缺失或数据库失败整体回滚。
+/// 相同状态重放仍写审计，且不发送通知、事件或外部缓存失效请求。
 pub(crate) async fn update_admin_news_status(
     pool: Option<Pool<MySql>>,
     admin_id: u64,

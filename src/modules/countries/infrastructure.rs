@@ -31,6 +31,8 @@ impl From<PublicCountryRow> for PublicCountry {
     }
 }
 
+/// 按后台配置顺序读取启用且允许注册的国家记录。
+/// 查询为只读操作，不开启事务；JSON 语言字段解码失败按数据库错误返回。
 pub async fn fetch_public_countries(pool: &Pool<MySql>) -> AppResult<Vec<PublicCountry>> {
     let rows = sqlx::query_as::<_, PublicCountryRow>(
         r#"SELECT country_code, country_name, default_locale, supported_locales

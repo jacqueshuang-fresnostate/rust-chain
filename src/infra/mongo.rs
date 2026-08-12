@@ -7,7 +7,8 @@ use mongodb::{Client, Database, IndexModel, bson::doc, options::IndexOptions};
 
 pub const KLINE_UNIQUE_INDEX_NAME: &str = "interval_open_time_unique";
 
-/// 连接 MongoDB 并返回配置指定的业务数据库句柄；连接或 URI 错误直接上抛，不创建替代数据库。
+/// 使用暴露后的 MongoDB URI 创建客户端并返回配置命名的数据库句柄；本入口不执行 ping、鉴权降级、建集合或建索引。
+/// URI/客户端初始化错误直接上抛；返回成功只表示句柄已构造，首次网络 I/O 的错误仍由具体读写或索引操作返回。
 pub async fn connect(settings: &Settings) -> AppResult<Database> {
     let client = Client::with_uri_str(settings.exposed_mongodb_uri()).await?;
     Ok(client.database(&settings.mongodb_database))
@@ -23,8 +24,8 @@ pub fn normalize_symbol(symbol: &str) -> String {
     sanitize_symbol(symbol)
 }
 
-/// 为指定交易对的 K 线集合建立 interval+open_time 唯一索引，使行情重放和恢复任务只能覆盖同一根蜡烛而不能重复插入。
-/// 索引创建失败应阻止依赖该集合的写入启动，避免幂等约束缺失。
+/// 在已验证交易对对应集合上创建唯一索引 `interval_open_time_unique`，把周期与开盘时间固定为 K 线重放/upsert 幂等键。
+/// 创建请求是外部持久化副作用；Mongo 错误原样返回，调用方应阻止依赖该约束的写入启动，不使用无索引降级。
 pub async fn ensure_kline_indexes(db: &Database, symbol: &ValidatedMarketSymbol) -> AppResult<()> {
     let collection = db.collection::<mongodb::bson::Document>(&kline_collection_name(symbol));
     collection.create_index(kline_unique_index_model()).await?;

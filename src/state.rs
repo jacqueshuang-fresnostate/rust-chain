@@ -8,10 +8,13 @@ use sa_token_core::SaTokenManager;
 use sqlx::{MySql, Pool};
 use std::sync::Arc;
 
+/// 应用运行时共享的 MySQL 连接池类型别名，供传输层装配依赖而不直接引用 SQLx SDK。
+pub type MySqlPool = Pool<MySql>;
+
 #[derive(Clone)]
 pub struct AppState {
     pub settings: Arc<Settings>,
-    pub mysql: Option<Pool<MySql>>,
+    pub mysql: Option<MySqlPool>,
     pub mongo: Option<Database>,
     pub redis: Option<ConnectionManager>,
     pub auth_manager: Option<Arc<SaTokenManager>>,
@@ -36,7 +39,7 @@ impl AppState {
         }
     }
 
-    pub fn with_mysql(mut self, mysql: Pool<MySql>) -> Self {
+    pub fn with_mysql(mut self, mysql: MySqlPool) -> Self {
         self.mysql = Some(mysql);
         self
     }

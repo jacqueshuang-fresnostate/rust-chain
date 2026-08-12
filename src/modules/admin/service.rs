@@ -42,7 +42,6 @@ use crate::{
         security::{PaymentPolicies, SecurityAction, UserSecurityPolicy, UserTwoFactorSettings},
         wallet::{WithdrawFeeTier, normalize_withdraw_fee_tiers},
     },
-    state::AppState,
     workers::market_feed::{MarketFeedRuntimeConfig, MarketFeedRuntimeStatus},
 };
 use base64::{Engine as _, engine::general_purpose};
@@ -52,7 +51,6 @@ use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
 use sha2::Digest;
 use std::collections::HashSet;
-use std::default::Default;
 use uuid::Uuid;
 
 mod agents;
@@ -79,6 +77,8 @@ pub(crate) use self::wallet_assets::*;
 
 const ADMIN_AUDIT_REASON_MAX_LEN: usize = 512;
 
+/// 规范化管理操作审计原因，拒绝空白或超过 512 个字符的文本。
+/// 该纯规则不写审计日志；成功结果由应用层在业务事务中与变更记录一并持久化。
 pub(crate) fn required_admin_audit_reason(value: Option<String>) -> AppResult<String> {
     let Some(reason) = optional_string(value) else {
         return Err(AppError::Validation("reason is required".to_owned()));
@@ -100,7 +100,8 @@ fn optional_string(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-/// 从 admin 认证 subject 中提取管理员 ID。
+/// 从认证 subject 中提取 `admin:` 前缀后的管理员数字 ID。
+/// 前缀或数字格式不合法统一返回未授权，避免把其他 actor 的 subject 误用为管理员身份。
 pub(crate) fn admin_id_from_subject(subject: &str) -> AppResult<u64> {
     subject
         .strip_prefix("admin:")

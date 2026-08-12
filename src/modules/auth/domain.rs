@@ -28,6 +28,7 @@ pub(crate) struct LoginTurnstilePolicy {
 }
 
 impl LoginTurnstilePolicy {
+    /// 仅在密钥和站点公钥齐备时启用 Turnstile，强制标志不单独开启校验。
     pub(crate) fn new(has_secret: bool, has_site_key: bool, enforce_token: bool) -> Self {
         Self {
             enabled: has_secret && has_site_key,
@@ -35,10 +36,12 @@ impl LoginTurnstilePolicy {
         }
     }
 
+    /// 返回运行时配置是否完整开启 Turnstile。
     pub(crate) fn enabled(&self) -> bool {
         self.enabled
     }
 
+    /// 根据强制策略和 `cf_clearance` 决定本次登录是否必须调用站点校验。
     pub(crate) fn requires_verification(&self, has_cf_clearance: bool) -> bool {
         self.enabled && (self.enforce_token || !has_cf_clearance)
     }
@@ -63,6 +66,7 @@ pub(crate) fn login_locked_error(retry_after_seconds: i64) -> AppError {
     )
 }
 
+/// 校验邮件码为六位 ASCII 数字并返回去除空白后的值，格式错误不进入仓储。
 pub(crate) fn validate_email_code(value: &str) -> AppResult<String> {
     let code = value.trim();
     if code.len() != 6 || !code.chars().all(|char| char.is_ascii_digit()) {
@@ -71,6 +75,7 @@ pub(crate) fn validate_email_code(value: &str) -> AppResult<String> {
     Ok(code.to_owned())
 }
 
+/// 校验注册邮箱非空、长度不超过 255 且包含 `@`，存储前统一转小写。
 pub(crate) fn validate_registration_email(value: Option<String>) -> AppResult<String> {
     let email = required_string(value, "email")?;
     if email.len() > 255 || !email.contains('@') {
@@ -79,6 +84,7 @@ pub(crate) fn validate_registration_email(value: Option<String>) -> AppResult<St
     Ok(email.to_ascii_lowercase())
 }
 
+/// 校验重置口令去除首尾空白后为 6–20 个字符，返回值仅供后续安全散列。
 pub(crate) fn validate_reset_password(value: &str) -> AppResult<String> {
     let password = required_string(Some(value.to_owned()), "password")?;
     if !(6..=20).contains(&password.chars().count()) {
@@ -89,6 +95,7 @@ pub(crate) fn validate_reset_password(value: &str) -> AppResult<String> {
     Ok(password)
 }
 
+/// 去除邀请码首尾空白并拒绝空值，具体存在性和可用次数留给事务仓储校验。
 pub(crate) fn normalize_invite_code(code: &str) -> AppResult<String> {
     let code = code.trim();
     if code.is_empty() {
@@ -97,10 +104,12 @@ pub(crate) fn normalize_invite_code(code: &str) -> AppResult<String> {
     Ok(code.to_owned())
 }
 
+/// 规范化必填字符串并在缺失时保留调用方的字段名用于错误语义。
 pub(crate) fn required_string(value: Option<String>, field: &str) -> AppResult<String> {
     optional_string(value).ok_or_else(|| AppError::Validation(format!("{field} is required")))
 }
 
+/// 去除可选字符串首尾空白，并将空结果统一折叠为 `None`。
 pub(crate) fn optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())

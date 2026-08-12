@@ -30,6 +30,8 @@ pub async fn load_enabled_risk_rules(pool: &Pool<MySql>) -> AppResult<Vec<Stored
         .collect())
 }
 
+/// 追加被拒绝请求的风控审计事件，保存用户、操作、规则快照和拒绝原因。
+/// 该留痕不参与业务资金事务；应用层会记录写入故障但保留原风控拒绝结果。
 pub async fn insert_risk_event(pool: &Pool<MySql>, event: RiskEventWrite) -> AppResult<()> {
     sqlx::query(
         r#"INSERT INTO risk_events
@@ -64,7 +66,8 @@ pub fn user_request_count_key(operation: &str, scope: &str, user_id: u64) -> Str
     format!("risk:rate:{operation}:{scope}:{user_id}")
 }
 
-/// 固定窗口计数：窗口内首次请求设置过期时间，窗口滚动后计数自动归零。
+/// 通过 Redis Lua 原子递增固定窗口计数并仅在缺失时设置 TTL，避免并发续期窗口。
+/// Redis 故障返回错误，由应用层按既有放行策略处理；本函数不访问数据库或资金账户。
 pub async fn bump_user_request_count(
     redis: &ConnectionManager,
     user_id: u64,

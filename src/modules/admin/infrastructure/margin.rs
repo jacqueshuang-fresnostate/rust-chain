@@ -10,6 +10,8 @@ pub(crate) struct AdminMarginLiquidationListFilter {
     pub(crate) offset: u32,
 }
 
+/// 按用户、邮箱、交易对和持仓筛选保证金强平记录，分页返回风险与结算字段及匹配总数。
+/// 列表与 COUNT 共用谓词并按强平记录 ID 倒序；两次连接池查询不加锁，并发新增可能使页数据和总数不在同一快照。
 pub(crate) async fn list_admin_margin_liquidations(
     pool: &Pool<MySql>,
     filter: AdminMarginLiquidationListFilter,
@@ -43,6 +45,8 @@ pub(crate) async fn list_admin_margin_liquidations(
     .await
 }
 
+/// 按强平记录 ID 读取持仓、方向、保证金、价格、权益、盈亏和结算原因等完整快照。
+/// 查询不锁持仓或强平记录，也不重新执行清算；记录缺失返回未找到，SQL 或十进制映射失败返回错误。
 pub(crate) async fn load_admin_margin_liquidation(
     pool: &Pool<MySql>,
     liquidation_id: u64,

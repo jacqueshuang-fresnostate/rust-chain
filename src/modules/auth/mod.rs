@@ -18,7 +18,7 @@ use axum::{
     extract::FromRequestParts,
     http::{header::AUTHORIZATION, request::Parts},
 };
-use chrono::{NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use sa_token_core::{SaTokenError, SaTokenManager, TokenInfo, TokenValue};
 use secrecy::ExposeSecret;
@@ -28,9 +28,8 @@ use uuid::Uuid;
 pub mod routes;
 
 pub use infrastructure::MySqlAuthRepository;
-pub use repository::AuthRepository;
+pub use repository::{AuthRepository, ProjectRefreshTokenRepository};
 pub use service::AuthService;
-use service::revoke_project_refresh_tokens;
 
 pub(crate) const ACTIVE_STATUS: &str = "active";
 const REFRESH_TOKEN_HASH_SALT: &[u8] = b"exchange-refresh-token-v1";
@@ -223,6 +222,20 @@ pub struct StoredRefreshToken {
     pub expires_at: NaiveDateTime,
 }
 
+/// Sa-Token 模式写入项目刷新令牌存储的领域无关数据快照。
+///
+/// `refresh_token` 只在基础设施适配器生成摘要键时短暂使用，持久化值不得包含原始令牌；
+/// `expires_at` 同时用于读取校验和存储 TTL 计算。
+#[derive(Debug, Clone)]
+pub struct StoredProjectRefreshToken {
+    pub refresh_token: String,
+    pub actor_type: ActorType,
+    pub actor_id: u64,
+    pub user_id: Option<u64>,
+    pub scope: TokenScope,
+    pub expires_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone)]
 pub struct RefreshTokenRecord {
     pub actor_type: ActorType,
@@ -277,7 +290,9 @@ pub async fn revoke_actor_auth_sessions(state: &AppState, actor: &AuthActor) -> 
     }
 
     if let Some(redis) = &state.redis {
-        revoke_project_refresh_tokens(redis.clone(), actor).await?;
+        infrastructure::RedisProjectRefreshTokenRepository::new(redis.clone())
+            .revoke_actor_refresh_tokens(actor)
+            .await?;
     }
 
     Ok(())

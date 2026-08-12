@@ -19,6 +19,7 @@ pub enum RiskReject {
 }
 
 impl RiskReject {
+    /// 返回稳定风控错误码，供 HTTP 和审计层保持拒绝原因一致。
     pub fn code(&self) -> &'static str {
         match self {
             Self::RateLimit => "risk_rate_limit",
@@ -28,6 +29,7 @@ impl RiskReject {
         }
     }
 
+    /// 返回与风控拒绝类型对应的中文用户提示，不泄露内部规则配置。
     pub fn message(&self) -> &'static str {
         match self {
             Self::RateLimit => "操作过于频繁，请稍后再试",
@@ -45,6 +47,7 @@ pub enum RiskDecision {
 }
 
 impl RiskDecision {
+    /// 判断评估结果是否放行；该只读检查不改变限频计数或审计状态。
     pub fn is_approved(&self) -> bool {
         matches!(self, Self::Approved)
     }
@@ -64,6 +67,7 @@ pub struct RiskRules {
 impl DomainLayer for RiskRules {}
 
 impl RiskRules {
+    /// 判断所有阈值和黑名单均为空，用于在应用层跳过计数及审计 I/O。
     pub fn is_unrestricted(&self) -> bool {
         self.max_requests.is_none()
             && self.max_amount.is_none()
@@ -84,6 +88,8 @@ pub struct RiskRequest {
 
 impl DomainLayer for RiskRequest {}
 
+/// 按操作黑名单、限频、金额上限和价格偏离的稳定优先级评估请求。
+/// 评估仅消费已取得的事实；缺少某维度时跳过该规则，不执行 I/O 或资金副作用。
 pub fn evaluate_risk(request: &RiskRequest, rules: &RiskRules) -> RiskDecision {
     // 被禁用的操作优先拒绝，拒绝原因才不会被限频等次要维度盖掉。
     if let Some(blocked_operations) = rules.blocked_operations.as_ref()

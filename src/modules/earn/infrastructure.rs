@@ -43,6 +43,8 @@ where
     Ok((items, total))
 }
 
+/// 按可选状态和数量上限读取理财产品，并保留历史分类代码的显示回退。
+/// 查询只读产品和分类元数据，不锁定产品，也不触发订阅或资金变化。
 pub(crate) async fn list_products(
     pool: &Pool<MySql>,
     status: Option<&str>,
@@ -61,7 +63,8 @@ pub(crate) async fn list_products(
     Ok(EarnProductsResponse { products })
 }
 
-/// 后台理财产品列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
+/// 使用同一状态谓词查询后台理财产品分页行与 COUNT，保证 total 对应当前筛选。
+/// 该只读入口不锁产品，返回当前配置与费用规则，不修改分类、历史订阅快照或钱包。
 pub(crate) async fn list_admin_products(
     pool: &Pool<MySql>,
     status: Option<&str>,
@@ -108,6 +111,8 @@ fn push_earn_product_filters(builder: &mut QueryBuilder<'_, MySql>, status: Opti
     }
 }
 
+/// 按用户读取理财订阅快照，费用字段来自订阅时持久化条款。
+/// 查询不读取当前产品费率，避免后台修改影响历史订阅展示。
 pub(crate) async fn list_user_subscriptions(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -130,7 +135,8 @@ pub(crate) async fn list_user_subscriptions(
     Ok(EarnSubscriptionsResponse { subscriptions })
 }
 
-/// 后台申购列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
+/// 使用一致的用户、邮箱和状态谓词读取后台订阅分页及 COUNT；费用字段取订阅时快照。
+/// 查询不获取订阅或钱包行锁，也不计算新收益、执行赎回或迁移状态。
 pub(crate) async fn list_admin_subscriptions(
     pool: &Pool<MySql>,
     limit: u32,
@@ -177,7 +183,8 @@ pub(crate) async fn list_admin_subscriptions(
     .await
 }
 
-/// 后台分类列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
+/// 按状态筛选理财分类，并以同一谓词返回分页行与 COUNT。
+/// 查询保持稳定分类代码和多语言名称原样，不因缺少关联产品而改写状态。
 pub(crate) async fn list_admin_categories(
     pool: &Pool<MySql>,
     limit: u32,
@@ -210,6 +217,8 @@ pub(crate) async fn list_admin_categories(
     .await
 }
 
+/// 在调用方事务中插入稳定分类代码及多语言名称，返回新分类编号。
+/// 唯一代码冲突或写入失败时由应用层回滚，并且不得留下缺少审计的分类。
 pub(crate) async fn insert_category_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: &EarnCategoryWrite,
@@ -234,6 +243,8 @@ pub(crate) async fn insert_category_in_tx(
     }
 }
 
+/// 在调用方事务中更新分类名称、排序和状态，不修改不可变代码。
+/// 更新结果须与前后快照审计一并提交，失败时继续保留原分类配置。
 pub(crate) async fn update_category_in_tx(
     tx: &mut Transaction<'_, MySql>,
     category_id: u64,
@@ -253,6 +264,8 @@ pub(crate) async fn update_category_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中只更新分类启停状态，审计由应用层同事务追加。
+/// 状态更新不改写分类代码，也不级联修改已有产品或订阅快照。
 pub(crate) async fn update_category_status_in_tx(
     tx: &mut Transaction<'_, MySql>,
     category_id: u64,
@@ -266,6 +279,8 @@ pub(crate) async fn update_category_status_in_tx(
     Ok(())
 }
 
+/// 在当前事务快照中加载分类响应，缺失时返回未找到。
+/// 该读取用于写入后的审计快照，不自行提交或释放调用方事务。
 pub(crate) async fn load_category_by_id(
     tx: &mut Transaction<'_, MySql>,
     category_id: u64,
@@ -284,6 +299,8 @@ pub(crate) async fn load_category_by_id(
     .ok_or(AppError::NotFound)
 }
 
+/// 按编号锁定理财分类，供配置更新与前后快照审计串行执行。
+/// 行锁由调用方事务持有至提交，避免并发更新产生错配的审计快照。
 pub(crate) async fn lock_category_by_id(
     tx: &mut Transaction<'_, MySql>,
     category_id: u64,
@@ -303,6 +320,8 @@ pub(crate) async fn lock_category_by_id(
     .ok_or(AppError::NotFound)
 }
 
+/// 确认产品资产存在；校验失败会阻止调用方事务写入理财产品。
+/// 本入口只验证引用完整性，不创建钱包账户或修改任何资产配置。
 pub(crate) async fn ensure_asset_exists(
     tx: &mut Transaction<'_, MySql>,
     asset_id: u64,
@@ -317,6 +336,8 @@ pub(crate) async fn ensure_asset_exists(
     Ok(())
 }
 
+/// 确认分类代码存在且启用，避免新产品引用未知或禁用分类。
+/// 校验与产品写入共用调用方事务，失败时不得持久化产品或管理员审计。
 pub(crate) async fn ensure_active_category_exists(
     tx: &mut Transaction<'_, MySql>,
     code: &str,
@@ -335,6 +356,8 @@ pub(crate) async fn ensure_active_category_exists(
     Ok(())
 }
 
+/// 在调用方事务中持久化完整产品和费用配置，返回新产品编号。
+/// 产品与管理员审计必须原子提交，本入口不会创建订阅或移动用户余额。
 pub(crate) async fn insert_product_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: &EarnProductWrite,
@@ -367,6 +390,8 @@ pub(crate) async fn insert_product_in_tx(
     Ok(product_id)
 }
 
+/// 在调用方事务中覆盖产品及费用配置，既有订阅快照不会被级联修改。
+/// 调用方将更新与管理员审计置于同一事务，任一步失败时保留原产品配置。
 pub(crate) async fn update_product_in_tx(
     tx: &mut Transaction<'_, MySql>,
     product_id: u64,
@@ -401,6 +426,8 @@ pub(crate) async fn update_product_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中切换产品状态，订阅和钱包不发生变化。
+/// 状态更新必须与管理员审计一起提交，既有订阅仍按原快照结算。
 pub(crate) async fn update_product_status_in_tx(
     tx: &mut Transaction<'_, MySql>,
     product_id: u64,
@@ -414,6 +441,8 @@ pub(crate) async fn update_product_status_in_tx(
     Ok(())
 }
 
+/// 加载产品、资产及分类显示信息，分类缺失时回退到原始代码。
+/// 该查询只读当前配置，不锁产品，也不重算任何既有订阅条款。
 pub(crate) async fn load_product_by_id(
     tx: &mut Transaction<'_, MySql>,
     product_id: u64,
@@ -441,6 +470,8 @@ pub(crate) async fn load_product_by_id(
     .ok_or(AppError::NotFound)
 }
 
+/// 锁定产品配置行，保证更新期间前后审计快照来自同一事务。
+/// 调用方负责保持锁至更新和审计完成，失败时整体回滚并释放行锁。
 pub(crate) async fn lock_product_by_id(
     tx: &mut Transaction<'_, MySql>,
     product_id: u64,
@@ -469,6 +500,8 @@ pub(crate) async fn lock_product_by_id(
     .ok_or(AppError::NotFound)
 }
 
+/// 在当前事务中读取包含费用快照的理财订阅，缺失时返回未找到。
+/// 返回值保持订阅时条款，不使用当前产品费率替换历史费用字段。
 pub(crate) async fn load_subscription_by_id(
     tx: &mut Transaction<'_, MySql>,
     subscription_id: u64,
@@ -488,6 +521,8 @@ pub(crate) async fn load_subscription_by_id(
     .ok_or(AppError::NotFound)
 }
 
+/// 按用户与幂等键锁定既有订阅，串行处理并发重放。
+/// 该入口只读取订阅；请求内容匹配与是否提交由应用层决定。
 pub(crate) async fn existing_subscription_for_idempotency_key(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -510,6 +545,8 @@ pub(crate) async fn existing_subscription_for_idempotency_key(
     .map_err(AppError::from)
 }
 
+/// 在开启资金事务前只读查找用户幂等订阅，用于快速重放。
+/// 该查询不锁钱包；未命中后仍由事务内唯一键处理并发创建竞争。
 pub(crate) async fn existing_subscription_for_idempotency_key_readonly(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -531,6 +568,8 @@ pub(crate) async fn existing_subscription_for_idempotency_key_readonly(
     .map_err(AppError::from)
 }
 
+/// 按产品编号锁定启用产品及其费用、额度条款。
+/// 调用方随后插入订阅再锁钱包，固定锁序避免与配置更新交错读取。
 pub(crate) async fn lock_active_product(
     tx: &mut Transaction<'_, MySql>,
     product_id: u64,
@@ -554,6 +593,8 @@ pub(crate) async fn lock_active_product(
     Ok(product)
 }
 
+/// 在已锁产品的调用方事务中插入本金、APR、期限、到期时刻及四项费用快照。
+/// 用户幂等键唯一冲突返回 `None`；插入发生在钱包锁之前，冲突分支不扣 available，应用层回滚后核对旧订阅。
 pub(crate) async fn insert_subscription_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -590,6 +631,8 @@ pub(crate) async fn insert_subscription_in_tx(
     }
 }
 
+/// 在调用方事务中锁定用户资产钱包三桶，账户缺失时禁止理财资金操作。
+/// 申购先锁产品再锁钱包，赎回先锁订阅再锁钱包，固定顺序降低死锁风险。
 pub(crate) async fn lock_wallet_row(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -609,6 +652,9 @@ pub(crate) async fn lock_wallet_row(
     .ok_or_else(|| AppError::Validation("wallet account is required for earn".to_owned()))
 }
 
+/// 按已锁钱包快照从 available 扣除申购本金，frozen/locked 保持不变。
+/// 只追加一条 `earn_subscribe` available 负流水，ref_type 为 earn_subscription、ref_id 为订阅编号，三桶 after 对应同一账后快照。
+/// 余额充足性由应用层锁行后先判定；订阅、余额和流水由调用方事务提交，SQL 失败回滚本次申购。
 pub(crate) async fn debit_wallet_for_subscription_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -643,6 +689,8 @@ pub(crate) async fn debit_wallet_for_subscription_in_tx(
     Ok(())
 }
 
+/// 按用户与订阅编号锁定订阅，串行判定首次赎回或幂等重放。
+/// 行锁由调用方持有至余额、流水和状态提交，阻止并发产生双重赎回。
 pub(crate) async fn lock_subscription_by_id(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -665,6 +713,9 @@ pub(crate) async fn lock_subscription_by_id(
     .ok_or(AppError::NotFound)
 }
 
+/// 按已锁钱包快照把已计算的净赎回额增加到 available，frozen/locked 保持不变。
+/// 只写一条 `earn_redeem` available 正流水并引用订阅编号；本金、收益和费用拆分不另写钱包流水。
+/// 金额来自订阅快照的 18 位计算；订阅状态、余额和流水由调用方事务提交，失败回滚本次赎回。
 pub(crate) async fn credit_wallet_for_redemption_in_tx(
     tx: &mut Transaction<'_, MySql>,
     subscription: &EarnSubscriptionResponse,
@@ -697,6 +748,8 @@ pub(crate) async fn credit_wallet_for_redemption_in_tx(
     Ok(())
 }
 
+/// 在调用方赎回事务中标记订阅已赎回并记录完成时间。
+/// 钱包入账流水须在同一事务完成，更新失败时余额和流水必须一起回滚。
 pub(crate) async fn mark_subscription_redeemed_in_tx(
     tx: &mut Transaction<'_, MySql>,
     subscription_id: u64,
@@ -710,6 +763,8 @@ pub(crate) async fn mark_subscription_redeemed_in_tx(
     Ok(())
 }
 
+/// 从最早 `earn_subscribe` 负流水和最早 `earn_redeem` 正流水恢复本金、净收益与实际到账额。
+/// 该只读恢复用于已赎回重放；缺少任一流水视为账务异常，不用当前产品配置重算，也不追加第二笔赎回。
 pub(crate) async fn load_redeemed_amounts_from_ledger(
     tx: &mut Transaction<'_, MySql>,
     subscription: &EarnSubscriptionResponse,
@@ -756,6 +811,8 @@ pub(crate) async fn load_redeemed_amounts_from_ledger(
 }
 
 #[allow(clippy::too_many_arguments)] // 审计记录字段与数据库列稳定对应，调用方事务负责原子提交。
+/// 在调用方配置事务中写入管理员、目标、前后快照及原因。
+/// 审计插入失败必须阻止分类或产品配置提交，避免无记录的后台变更。
 pub(crate) async fn insert_admin_audit_log_in_tx(
     tx: &mut Transaction<'_, MySql>,
     admin_id: u64,

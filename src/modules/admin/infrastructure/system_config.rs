@@ -79,6 +79,8 @@ struct AdminUploadConfigRow {
     enabled: bool,
 }
 
+/// 分页查询国家配置，返回符合调用方筛选条件的记录及相同谓词下的总数。
+/// 国家配置列表与计数通过连接池分别执行且均不加锁；并发写入可能造成页数据与总数快照不同，SQL 或字段映射失败直接返回错误。
 pub(crate) async fn list_admin_countries(
     pool: &Pool<MySql>,
     filter: AdminCountryListFilter,
@@ -112,6 +114,8 @@ pub(crate) async fn list_admin_countries(
     .await
 }
 
+/// 在调用方事务中插入国家配置并返回或保留数据库写入结果。
+/// 国家配置数据库唯一键冲突会映射为业务冲突；调用方持有提交边界并负责同事务审计，任一 SQL 失败使所属用例回滚。
 pub(crate) async fn insert_admin_country_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: AdminCountryInsert,
@@ -135,6 +139,8 @@ pub(crate) async fn insert_admin_country_in_tx(
     Ok(result.last_insert_id())
 }
 
+/// 在调用方事务中按国家配置 ID 覆盖名称、备注、locale 集合、注册开关和排序值。
+/// 不修改 country_code/status 且不检查受影响行数；调用方须先锁定记录，并与前后快照审计统一提交。
 pub(crate) async fn update_admin_country_in_tx(
     tx: &mut Transaction<'_, MySql>,
     country_id: u64,
@@ -157,6 +163,8 @@ pub(crate) async fn update_admin_country_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中按国家配置 ID 仅覆盖生命周期状态。
+/// 更新不检查受影响行数或状态迁移；调用方须先锁定配置、校验目标状态，并负责提交及审计。
 pub(crate) async fn update_admin_country_status_in_tx(
     tx: &mut Transaction<'_, MySql>,
     country_id: u64,
@@ -170,6 +178,8 @@ pub(crate) async fn update_admin_country_status_in_tx(
     Ok(())
 }
 
+/// 按传入主键或筛选条件从调用方事务快照读取国家配置并映射为应用层所需的完整记录。
+/// 国家配置不追加行锁，由调用方持有事务且本读取不提交；记录缺失时返回未找到，SQL 或字段解码失败直接返回错误，不产生审计副作用。
 pub(crate) async fn load_admin_country_in_tx(
     tx: &mut Transaction<'_, MySql>,
     country_id: u64,
@@ -184,6 +194,8 @@ pub(crate) async fn load_admin_country_in_tx(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中按传入主键或筛选条件以 `FOR UPDATE` 锁定国家配置并返回一致的修改前快照。
+/// 国家配置锁由调用方事务持有至结束；函数不自行提交，记录缺失返回未找到，SQL 或解码失败交由外层回滚。
 pub(crate) async fn lock_admin_country_in_tx(
     tx: &mut Transaction<'_, MySql>,
     country_id: u64,
@@ -199,6 +211,8 @@ pub(crate) async fn lock_admin_country_in_tx(
         .ok_or(AppError::NotFound)
 }
 
+/// 通过连接池读取兼容的默认 SMTP 配置，供旧版单配置后台接口展示和保存前取值。
+/// 查询不加锁也不修改轮询游标；默认配置不存在返回空，SQL 或行映射失败返回错误。
 pub(crate) async fn load_admin_smtp_config(
     pool: &Pool<MySql>,
 ) -> AppResult<Option<AdminSmtpConfigRecord>> {
@@ -212,6 +226,8 @@ pub(crate) async fn load_admin_smtp_config(
     Ok(row.map(admin_smtp_config_record))
 }
 
+/// 列出全部 SMTP 配置的脱敏后台响应，按默认项优先、优先级和 ID 排序。
+/// 查询不分页、不返回密码明文且不加锁；并发配置更新可能改变排序或掩码，SQL/行映射失败直接返回错误。
 pub(crate) async fn list_admin_smtp_configs(
     pool: &Pool<MySql>,
 ) -> AppResult<Vec<AdminSmtpConfigRecord>> {
@@ -224,6 +240,8 @@ pub(crate) async fn list_admin_smtp_configs(
     Ok(rows.into_iter().map(admin_smtp_config_record).collect())
 }
 
+/// 按传入主键或筛选条件从连接池读取SMTP 发信策略并映射为应用层所需的完整记录。
+/// SMTP 发信策略不追加行锁，查询不创建事务；记录缺失时返回空值，SQL 或字段解码失败直接返回错误，不产生审计副作用。
 pub(crate) async fn load_admin_smtp_delivery_settings(
     pool: &Pool<MySql>,
 ) -> AppResult<AdminSmtpDeliverySettingsRecord> {
@@ -238,6 +256,8 @@ pub(crate) async fn load_admin_smtp_delivery_settings(
         .unwrap_or_else(default_smtp_delivery_settings_record))
 }
 
+/// 在调用方事务中按传入主键或筛选条件以 `FOR UPDATE` 锁定SMTP 发信策略并返回一致的修改前快照。
+/// SMTP 发信策略锁由调用方事务持有至结束；函数不自行提交，记录缺失按可选结果返回，SQL 或解码失败交由外层回滚。
 pub(crate) async fn lock_admin_smtp_delivery_settings_in_tx(
     tx: &mut Transaction<'_, MySql>,
 ) -> AppResult<AdminSmtpDeliverySettingsRecord> {
@@ -252,6 +272,8 @@ pub(crate) async fn lock_admin_smtp_delivery_settings_in_tx(
         .unwrap_or_else(default_smtp_delivery_settings_record))
 }
 
+/// 在调用方事务中按传入主键或筛选条件更新SMTP 发信策略，写入应用层已决定的目标字段。
+/// SMTP 发信策略更新不检查受影响行数；调用方须先完成所需锁定和状态校验，并负责提交、回滚及同事务审计。
 pub(crate) async fn upsert_admin_smtp_delivery_settings_in_tx(
     tx: &mut Transaction<'_, MySql>,
     strategy: &str,
@@ -270,6 +292,8 @@ pub(crate) async fn upsert_admin_smtp_delivery_settings_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中按名称以 `FOR UPDATE` 锁定SMTP 配置并返回一致的修改前快照。
+/// 精确名称无匹配时返回 None；命中行锁由调用方持有至事务结束，函数不解密凭据、不提交或发送邮件。
 pub(crate) async fn lock_admin_smtp_config_by_name_in_tx(
     tx: &mut Transaction<'_, MySql>,
     name: &str,
@@ -282,6 +306,8 @@ pub(crate) async fn lock_admin_smtp_config_by_name_in_tx(
         .map_err(AppError::Database)
 }
 
+/// 在调用方事务中按编号以 `FOR UPDATE` 锁定SMTP 配置并返回一致的修改前快照。
+/// 指定 ID 无记录时返回 None；命中行锁保护更新前快照，SQL/密文列映射失败交由配置用例回滚。
 pub(crate) async fn lock_admin_smtp_config_by_id_in_tx(
     tx: &mut Transaction<'_, MySql>,
     config_id: u64,
@@ -294,6 +320,8 @@ pub(crate) async fn lock_admin_smtp_config_by_id_in_tx(
         .map_err(AppError::Database)
 }
 
+/// 按名称从调用方事务快照读取SMTP 配置并映射为应用层所需的可选记录。
+/// 查询不追加行锁，名称无匹配返回 None；结果保留加密字段供写后响应组装，函数不解密、提交或补写审计。
 pub(crate) async fn load_admin_smtp_config_by_name_in_tx(
     tx: &mut Transaction<'_, MySql>,
     name: &str,
@@ -306,6 +334,8 @@ pub(crate) async fn load_admin_smtp_config_by_name_in_tx(
         .map_err(AppError::Database)
 }
 
+/// 按编号从调用方事务快照读取SMTP 配置并映射为应用层所需的可选记录。
+/// ID 无匹配返回 None且不加锁；调用方持有事务边界，SQL/字段映射失败使同事务配置变更回滚。
 pub(crate) async fn load_admin_smtp_config_by_id_in_tx(
     tx: &mut Transaction<'_, MySql>,
     config_id: u64,
@@ -318,6 +348,8 @@ pub(crate) async fn load_admin_smtp_config_by_id_in_tx(
         .map_err(AppError::Database)
 }
 
+/// 通过连接池按配置编号读取 SMTP 记录，供测试发送等无需行锁的流程使用。
+/// 查询不改变配置或发信游标；记录不存在返回空，SQL 或密文列映射失败返回错误。
 pub(crate) async fn load_admin_smtp_config_by_id(
     pool: &Pool<MySql>,
     config_id: u64,
@@ -332,6 +364,8 @@ pub(crate) async fn load_admin_smtp_config_by_id(
     Ok(row.map(admin_smtp_config_record))
 }
 
+/// 在调用方事务快照中判断是否存在同名但不同 ID 的 SMTP 配置。
+/// 查询不加锁且只返回布尔值，供更新前唯一性提示使用；最终并发冲突仍由数据库唯一约束裁决，SQL 失败交由配置用例回滚。
 pub(crate) async fn admin_smtp_config_name_exists_except(
     tx: &mut Transaction<'_, MySql>,
     name: &str,
@@ -347,6 +381,8 @@ pub(crate) async fn admin_smtp_config_name_exists_except(
     Ok(id.is_some())
 }
 
+/// 在调用方事务中插入SMTP 配置并返回或保留数据库写入结果。
+/// SMTP 配置函数不提供独立幂等保证，约束冲突沿用数据库错误；调用方持有提交边界并负责同事务审计，任一 SQL 失败使所属用例回滚。
 pub(crate) async fn insert_admin_smtp_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: AdminSmtpConfigWrite,
@@ -377,6 +413,8 @@ pub(crate) async fn insert_admin_smtp_config_in_tx(
     Ok(result.last_insert_id())
 }
 
+/// 在调用方事务中按默认名称新增或覆盖 SMTP 主机、加密凭据、发件人、模板、开关和优先级。
+/// 唯一键命中时保留原 ID 并覆盖列值；调用方负责先锁同名配置、准备密文，并与脱敏审计统一提交。
 pub(crate) async fn upsert_default_admin_smtp_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: AdminSmtpConfigWrite,
@@ -420,6 +458,8 @@ pub(crate) async fn upsert_default_admin_smtp_config_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中按 ID 覆盖 SMTP 名称、连接参数、加密凭据、发件模板、开关和优先级。
+/// 更新不检查受影响行数；调用方须先锁定目标并检查名称冲突，随后回读脱敏结果、写审计并提交。
 pub(crate) async fn update_admin_smtp_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
     config_id: u64,
@@ -465,6 +505,8 @@ async fn load_enabled_admin_smtp_config_records_in_tx(
     Ok(rows.into_iter().map(admin_smtp_config_record).collect())
 }
 
+/// 锁定 SMTP 发信策略，按优先级或轮询规则选择启用配置，并在轮询模式下推进游标。
+/// 配置选择与游标更新共用内部事务；无启用配置返回空，SQL 失败回滚且不会发送邮件。
 pub(crate) async fn load_admin_smtp_config_for_delivery(
     pool: &Pool<MySql>,
 ) -> AppResult<Option<AdminSmtpConfigRecord>> {
@@ -491,6 +533,8 @@ pub(crate) async fn load_admin_smtp_config_for_delivery(
     Ok(Some(record))
 }
 
+/// 将 SMTP 数据库记录解密并转换为邮件基础设施配置，组合安全模式、凭据与模板。
+/// 函数不发送邮件或写数据库；缺少密钥、密文损坏或安全模式非法会返回配置错误。
 pub(crate) fn admin_smtp_email_config(
     record: &AdminSmtpConfigRecord,
     key: Option<&str>,
@@ -523,6 +567,8 @@ pub(crate) fn admin_smtp_email_config(
     })
 }
 
+/// 按发信策略选择一条启用 SMTP 记录，解密为邮件基础设施配置并以 Option 返回。
+/// 优先级模式只读，轮询模式可能由内部事务推进游标；无可用配置返回 None，解密或数据库失败返回错误，本函数不发送邮件。
 pub(crate) async fn load_enabled_admin_smtp_email_config(
     pool: &Pool<MySql>,
     key: Option<&str>,
@@ -533,6 +579,8 @@ pub(crate) async fn load_enabled_admin_smtp_email_config(
         .transpose()
 }
 
+/// 通过连接池读取固定默认名称的上传存储配置，并返回包含密文和掩码的内部可选记录。
+/// 查询不锁配置或解密凭据；无记录返回 None，SQL/JSON MIME 列映射失败返回错误。
 pub(crate) async fn load_admin_upload_config(
     pool: &Pool<MySql>,
 ) -> AppResult<Option<AdminUploadConfigRecord>> {
@@ -543,6 +591,8 @@ pub(crate) async fn load_admin_upload_config(
     Ok(row.map(admin_upload_config_record))
 }
 
+/// 在调用方事务中按传入主键或筛选条件以 `FOR UPDATE` 锁定上传配置并返回一致的修改前快照。
+/// 上传配置锁由调用方事务持有至结束；函数不自行提交，记录缺失按可选结果返回，SQL 或解码失败交由外层回滚。
 pub(crate) async fn lock_admin_upload_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
 ) -> AppResult<Option<AdminUploadConfigRecord>> {
@@ -554,6 +604,8 @@ pub(crate) async fn lock_admin_upload_config_in_tx(
         .map_err(AppError::Database)
 }
 
+/// 按传入主键或筛选条件从调用方事务快照读取上传配置并映射为应用层所需的完整记录。
+/// 上传配置不追加行锁，由调用方持有事务且本读取不提交；记录缺失时按查询本身语义处理，SQL 或字段解码失败直接返回错误，不产生审计副作用。
 pub(crate) async fn load_admin_upload_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
 ) -> AppResult<AdminUploadConfigRecord> {
@@ -621,6 +673,8 @@ pub(crate) async fn upsert_admin_upload_config_in_tx(
     Ok(())
 }
 
+/// 读取固定默认名称且 enabled=true 的上传配置，供实际文件上传选择提供商和凭据。
+/// 连接池查询不加锁或解密；未配置/已禁用返回 None，SQL 或 MIME JSON 映射失败直接返回错误。
 pub(crate) async fn load_enabled_admin_upload_config(
     pool: &Pool<MySql>,
 ) -> AppResult<Option<AdminUploadConfigRecord>> {
@@ -638,6 +692,8 @@ pub(crate) async fn load_enabled_admin_upload_config(
     Ok(row.map(admin_upload_config_record))
 }
 
+/// 把上传配置持久化记录映射为后台响应，只暴露密钥掩码和是否已配置等安全信息。
+/// 转换过程无 I/O、无事务且不解密密文；字段异常沿用记录值，不产生存储副作用。
 pub(crate) fn admin_upload_config_response(
     record: AdminUploadConfigRecord,
 ) -> UploadConfigResponse {
@@ -663,6 +719,8 @@ pub(crate) fn admin_upload_config_response(
     }
 }
 
+/// 依据已校验提供商配置把文件上传到图床、本地目录、S3 或 OSS，并统一返回对象地址元数据。
+/// 上传是事务外且非幂等的外部副作用；凭据解密、网络、文件系统或响应校验失败直接返回错误。
 pub(crate) async fn upload_admin_file_to_storage(
     record: &AdminUploadConfigRecord,
     key: Option<&str>,
@@ -682,6 +740,8 @@ pub(crate) async fn upload_admin_file_to_storage(
     }
 }
 
+/// 在调用方事务中插入上传对象记录并返回或保留数据库写入结果。
+/// 上传对象记录函数不提供独立幂等保证，约束冲突沿用数据库错误；调用方持有提交边界并负责同事务审计，任一 SQL 失败使所属用例回滚。
 pub(crate) async fn insert_admin_upload_object(
     pool: &Pool<MySql>,
     input: AdminUploadObjectWrite,

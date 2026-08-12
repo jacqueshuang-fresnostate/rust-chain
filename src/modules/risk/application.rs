@@ -31,7 +31,8 @@ pub struct RiskGuardInput {
 
 impl ApplicationLayer for RiskGuardInput {}
 
-/// 命中风控时返回 403 业务错误并尽力留痕；规则读取与主流程共用数据库，故障直接上抛。
+/// 实时读取启用规则，按操作和作用域合并后依次评估黑名单、限频、金额及价格偏离；命中返回 403。
+/// Redis 计数故障按放行处理，拒绝事件落库故障仅告警；调用方必须在任何钱包冻结、扣款和订单写入前调用本闸门。
 pub async fn enforce_risk_control(
     pool: &Pool<MySql>,
     redis: Option<&ConnectionManager>,

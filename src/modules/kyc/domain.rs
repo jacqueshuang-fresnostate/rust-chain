@@ -83,6 +83,8 @@ pub(crate) struct ValidatedKycSubmission {
     pub(crate) document_handheld_image: Option<String>,
 }
 
+/// 校验并规范化 KYC 目标等级、材料清单、国家与证件类型规则。
+/// 文件上限须在一千字节与系统上限之间；失败不产生持久化或审计副作用。
 pub(crate) fn validate_kyc_config(
     input: KycConfigValidationInput,
 ) -> AppResult<ValidatedKycConfig> {
@@ -383,6 +385,7 @@ fn normalize_unique_values(
     Ok(result)
 }
 
+/// 规范化 KYC 必填文本并按字符数限长，缺失或超长时保留字段名语义。
 pub(crate) fn required_string(
     value: Option<String>,
     field: &str,
@@ -397,6 +400,7 @@ pub(crate) fn required_string(
     Ok(value)
 }
 
+/// 去除 KYC 可选文本首尾空白，并将空结果归一化为 `None`。
 pub(crate) fn optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())
@@ -410,6 +414,7 @@ fn encoded_payload_limit(size_bytes: u64) -> u64 {
         .saturating_add(DOCUMENT_PAYLOAD_PADDING_BYTES)
 }
 
+/// 将 KYC 状态归一化为小写，仅允许待审、通过和拒绝三种持久化值。
 pub(crate) fn validate_kyc_status(value: &str) -> AppResult<String> {
     let status = value.trim().to_ascii_lowercase();
     if matches!(status.as_str(), "pending" | "approved" | "rejected") {
@@ -419,6 +424,7 @@ pub(crate) fn validate_kyc_status(value: &str) -> AppResult<String> {
     }
 }
 
+/// 校验管理端审核结果只能为通过或拒绝，禁止把待审状态作为审核动作写回。
 pub(crate) fn validate_review_status(value: &str) -> AppResult<String> {
     let status = validate_kyc_status(value)?;
     if status == "pending" {

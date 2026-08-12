@@ -27,6 +27,8 @@ struct AgentHierarchyNodeRow {
 impl TryFrom<AgentHierarchyNodeRow> for AgentHierarchyNode {
     type Error = AppError;
 
+    /// 将代理层级数据库行转换为领域节点，要求根代理 ID 已回填且 path 非空。
+    /// 缺失层级字段返回冲突而不是构造半初始化节点；转换不查询数据库或修改原行。
     fn try_from(row: AgentHierarchyNodeRow) -> Result<Self, Self::Error> {
         let root_agent_id = row.root_agent_id.ok_or_else(|| {
             AppError::Conflict("agent root hierarchy is not initialized".to_owned())
@@ -74,6 +76,8 @@ pub(crate) struct AdminAgentCommissionRuleWrite {
     pub(crate) status: String,
 }
 
+/// 按代理、用户、层级、代理码、邮箱和状态分页查询代理，并返回团队计数及首个门户账号信息。
+/// 列表与 COUNT 复用同组谓词、按代理 ID 倒序；连接池查询不加锁，SQL 或聚合映射失败直接返回错误。
 pub(crate) async fn list_admin_agents(
     pool: &Pool<MySql>,
     filter: AdminAgentListFilter,
@@ -127,6 +131,8 @@ fn push_admin_agent_filters(builder: &mut QueryBuilder<'_, MySql>, filter: &Admi
     }
 }
 
+/// 按代理 ID 读取层级、团队计数及最早创建的门户账号，返回单个后台代理响应。
+/// 查询通过连接池执行且不加锁；无记录返回未找到，任一聚合或行映射失败返回数据库错误。
 pub(crate) async fn load_admin_agent(
     pool: &Pool<MySql>,
     agent_id: u64,
@@ -142,6 +148,8 @@ pub(crate) async fn load_admin_agent(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中插入 active 代理主记录，初始 path 为空并返回自增代理 ID。
+/// user/父级/根级/代码/层级来自已校验写契约；重复代理映射为冲突，层级回填和审计须由调用方继续完成。
 pub(crate) async fn insert_admin_agent_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: AdminAgentWrite,
@@ -162,6 +170,8 @@ pub(crate) async fn insert_admin_agent_in_tx(
     Ok(result.last_insert_id())
 }
 
+/// 在调用方事务中回填新代理的根代理 ID 和完整层级路径。
+/// SQL 必须恰好更新一行，否则返回并发冲突；函数不提交事务，也不创建门户账号或审计记录。
 pub(crate) async fn finalize_admin_agent_hierarchy_in_tx(
     tx: &mut Transaction<'_, MySql>,
     agent_id: u64,
@@ -182,6 +192,8 @@ pub(crate) async fn finalize_admin_agent_hierarchy_in_tx(
     Ok(())
 }
 
+/// 锁定目标父代理及其整条祖先链，并返回已初始化的 active 层级节点。
+/// 先按目标 ID `FOR UPDATE`，再按 level、ID 升序锁定 path 上的祖先；任一节点非 active、层级未初始化或记录缺失即失败。
 pub(crate) async fn lock_active_agent_hierarchy_node_in_tx(
     tx: &mut Transaction<'_, MySql>,
     agent_id: u64,
@@ -219,6 +231,8 @@ pub(crate) async fn lock_active_agent_hierarchy_node_in_tx(
     Ok(node)
 }
 
+/// 在调用方事务中为代理插入 active 门户账号，并返回账号自增 ID。
+/// 用户名和密码散列必须已由应用层校验；唯一键冲突映射为代理已存在，函数不提交或记录明文密码。
 pub(crate) async fn insert_agent_admin_user_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: AdminAgentAdminUserWrite,
@@ -236,6 +250,8 @@ pub(crate) async fn insert_agent_admin_user_in_tx(
     Ok(result.last_insert_id())
 }
 
+/// 在调用方事务快照中按代理 ID 回读层级、团队计数和首个门户账号响应，但不追加 `FOR UPDATE`。
+/// 无记录返回未找到；该读取供写后响应和审计使用，不提交事务或改变账号状态。
 pub(crate) async fn load_admin_agent_in_tx(
     tx: &mut Transaction<'_, MySql>,
     agent_id: u64,
@@ -251,6 +267,8 @@ pub(crate) async fn load_admin_agent_in_tx(
         .ok_or(AppError::NotFound)
 }
 
+/// 以代理详情查询附加 `FOR UPDATE` 锁定指定代理的当前响应快照。
+/// 无记录返回未找到；查询包含门户账号和统计关联，调用方应先锁代理再执行后续账号更新并负责提交。
 pub(crate) async fn lock_admin_agent_in_tx(
     tx: &mut Transaction<'_, MySql>,
     agent_id: u64,
@@ -266,6 +284,8 @@ pub(crate) async fn lock_admin_agent_in_tx(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中按代理 ID 覆盖主表状态。
+/// 本函数不校验状态枚举也不检查受影响行数；调用方须先锁定代理，并继续同步门户账号和写审计。
 pub(crate) async fn update_admin_agent_status_in_tx(
     tx: &mut Transaction<'_, MySql>,
     agent_id: u64,
@@ -279,6 +299,8 @@ pub(crate) async fn update_admin_agent_status_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中把指定代理的全部门户账号状态批量覆盖为目标值。
+/// SQL 允许更新零行或多行且不校验数量；调用方负责先更新代理主状态、统一提交并记录审计。
 pub(crate) async fn update_agent_admin_users_status_in_tx(
     tx: &mut Transaction<'_, MySql>,
     agent_id: u64,
@@ -292,6 +314,8 @@ pub(crate) async fn update_agent_admin_users_status_in_tx(
     Ok(())
 }
 
+/// 按代理 path 分页读取该代理及所有下级代理归属的团队用户，并返回同范围总数。
+/// 列表按代理层级、邀请深度和用户 ID 升序；两条连接池查询不加锁，期间并发改派可能使列表与总数处于不同快照。
 pub(crate) async fn list_admin_agent_users(
     pool: &Pool<MySql>,
     agent_id: u64,
@@ -335,6 +359,8 @@ pub(crate) async fn list_admin_agent_users(
     Ok((users, total))
 }
 
+/// 按用户 ID `FOR UPDATE` 锁定其邀请归属，并以 Option 返回旧关系。
+/// 从未归属的用户返回 None 而不是未找到；调用方负责随后 upsert、迁移后代和统一提交。
 pub(crate) async fn lock_user_referral_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -352,6 +378,8 @@ pub(crate) async fn lock_user_referral_in_tx(
     .await?)
 }
 
+/// 在调用方事务中按 user_id 新增或覆盖直接代理归属，将邀请类型固定为 agent、深度固定为 1。
+/// 根代理与 path 使用应用层计算值；唯一键重放走 UPDATE，函数不迁移后代、不提交事务或写后台审计。
 pub(crate) async fn upsert_user_agent_referral_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: UserAgentReferralWrite,
@@ -375,6 +403,8 @@ pub(crate) async fn upsert_user_agent_referral_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中按用户 ID 回读直接邀请人、根代理、深度和 path，供改派后响应与审计使用。
+/// 查询不追加行锁；无归属返回未找到，SQL 失败由外层事务回滚。
 pub(crate) async fn load_user_referral_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -392,6 +422,8 @@ pub(crate) async fn load_user_referral_in_tx(
     .ok_or(AppError::NotFound)
 }
 
+/// 把旧邀请 path 下且旧根代理匹配的后代批量迁到新根代理，并按深度差重写 path。
+/// 更新排除被改派用户本身，使用旧 root 的 null-safe 比较避免误迁其他团队；允许无后代时更新零行，调用方负责审计。
 pub(crate) async fn migrate_user_referral_descendants_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -423,6 +455,8 @@ pub(crate) async fn migrate_user_referral_descendants_in_tx(
     Ok(())
 }
 
+/// 按代理、产品类型和状态分页读取佣金规则，并返回完全相同谓词的总数。
+/// 结果按规则 ID 倒序，查询不加锁或解析费率业务含义；SQL/十进制映射失败直接返回错误。
 pub(crate) async fn list_admin_agent_commission_rules(
     pool: &Pool<MySql>,
     filter: AdminAgentCommissionRuleListFilter,
@@ -459,6 +493,8 @@ pub(crate) async fn list_admin_agent_commission_rules(
     .await
 }
 
+/// 在调用方事务中插入代理、产品、费率和状态组成的佣金规则，并返回新规则 ID。
+/// 函数不再次校验费率或代理存在性，也不映射唯一键错误；调用方负责同事务回读和写审计。
 pub(crate) async fn insert_agent_commission_rule_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: AdminAgentCommissionRuleWrite,
@@ -477,6 +513,8 @@ pub(crate) async fn insert_agent_commission_rule_in_tx(
     Ok(rule_id)
 }
 
+/// 在调用方事务中用 COALESCE 局部覆盖佣金规则费率和状态，None 表示保留原字段。
+/// SQL 不检查受影响行数；调用方须先锁规则，随后回读并把前后值写入审计。
 pub(crate) async fn update_agent_commission_rule_in_tx(
     tx: &mut Transaction<'_, MySql>,
     rule_id: u64,
@@ -497,6 +535,8 @@ pub(crate) async fn update_agent_commission_rule_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中按规则 ID 回读代理、产品、费率、状态和时间戳，不追加行锁。
+/// 无记录返回未找到；该函数不修改规则或计算佣金，读取失败交由外层回滚。
 pub(crate) async fn load_agent_commission_rule_in_tx(
     tx: &mut Transaction<'_, MySql>,
     rule_id: u64,
@@ -513,6 +553,8 @@ pub(crate) async fn load_agent_commission_rule_in_tx(
     .ok_or(AppError::NotFound)
 }
 
+/// 按规则 ID `FOR UPDATE` 锁定代理佣金规则并返回更新前快照。
+/// 无记录返回未找到；锁由调用方事务持有至提交，函数不校验目标费率或状态。
 pub(crate) async fn lock_agent_commission_rule_in_tx(
     tx: &mut Transaction<'_, MySql>,
     rule_id: u64,
@@ -530,6 +572,8 @@ pub(crate) async fn lock_agent_commission_rule_in_tx(
     .ok_or(AppError::NotFound)
 }
 
+/// 按代理、用户、邮箱和状态分页读取佣金来源、计费金额及待入账资产，并返回匹配总数。
+/// 结果按记录 ID 倒序，列表与 COUNT 共享过滤谓词；查询不锁 pending 佣金或钱包。
 pub(crate) async fn list_admin_agent_commissions(
     pool: &Pool<MySql>,
     filter: AdminAgentCommissionListFilter,
@@ -567,6 +611,8 @@ pub(crate) async fn list_admin_agent_commissions(
     .await
 }
 
+/// 在调用方事务中按佣金 ID 回读来源、费率、金额、入账资产和状态，不追加行锁。
+/// 无记录返回未找到；读取仅供结算后响应或审计，SQL 失败由调用方回滚。
 pub(crate) async fn load_agent_commission_in_tx(
     tx: &mut Transaction<'_, MySql>,
     commission_id: u64,
@@ -584,6 +630,8 @@ pub(crate) async fn load_agent_commission_in_tx(
     .ok_or(AppError::NotFound)
 }
 
+/// 按佣金 ID `FOR UPDATE` 锁定佣金记录并返回结算前快照。
+/// 调用方据此限制 pending 状态并在需要时继续锁钱包；记录缺失返回未找到，锁随外层事务释放。
 pub(crate) async fn lock_agent_commission_in_tx(
     tx: &mut Transaction<'_, MySql>,
     commission_id: u64,
@@ -602,6 +650,8 @@ pub(crate) async fn lock_agent_commission_in_tx(
     .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中按佣金 ID 覆盖结算状态。
+/// 函数不校验 pending 前置状态或受影响行数；调用方须先锁佣金并把钱包入账、流水和审计一起提交。
 pub(crate) async fn update_agent_commission_status_in_tx(
     tx: &mut Transaction<'_, MySql>,
     commission_id: u64,
@@ -615,6 +665,8 @@ pub(crate) async fn update_agent_commission_status_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中确认指定代理记录存在，阻止佣金规则关联到不存在的代理。
+/// 查询使用 `FOR UPDATE` 持有代理行锁至事务结束；记录缺失返回未找到，但不会检查代理是否 active。
 pub(crate) async fn ensure_agent_exists_in_tx(
     tx: &mut Transaction<'_, MySql>,
     agent_id: u64,
@@ -627,6 +679,8 @@ pub(crate) async fn ensure_agent_exists_in_tx(
     Ok(())
 }
 
+/// 连接佣金记录与代理主表，解析结算应入账的代理用户 ID 和 payout_asset_id。
+/// 查询不加锁且要求佣金已设置入账资产；无匹配返回未找到，函数不创建钱包或写入余额。
 pub(crate) async fn load_agent_commission_payout_target_in_tx(
     tx: &mut Transaction<'_, MySql>,
     commission_id: u64,

@@ -14,18 +14,22 @@ pub struct WalletService<R> {
 }
 
 impl<R> WalletService<R> {
+    /// 使用指定钱包仓储构造领域服务，事务能力由仓储实现提供。
     pub fn new(repository: R) -> Self {
         Self { repository }
     }
 
+    /// 借用当前钱包仓储以读取适配器状态。
     pub fn repository(&self) -> &R {
         &self.repository
     }
 
+    /// 可变借用当前钱包仓储以执行同一工作单元内的操作。
     pub fn repository_mut(&mut self) -> &mut R {
         &mut self.repository
     }
 
+    /// 消费钱包服务并取回其仓储实例。
     pub fn into_repository(self) -> R {
         self.repository
     }
@@ -75,6 +79,8 @@ pub struct LockPositionCreationCommand {
 }
 
 impl<R: WalletRepository> WalletService<R> {
+    /// 加载账户后应用三桶增量，并由变更后快照生成镜像账本批次。
+    /// 仓储必须将账户与流水原子保存；负余额或持久化失败均不得留下部分资金变化。
     pub fn apply_balance_update(
         &mut self,
         command: BalanceUpdateCommand,
@@ -89,6 +95,8 @@ impl<R: WalletRepository> WalletService<R> {
         Ok(account)
     }
 
+    /// 把正数金额从 available 桶迁移到 frozen 桶，并写入调用方提供的业务引用流水。
+    /// 三桶总额保持不变；仓储事务失败或余额不足时账户与流水一并回滚。
     pub fn freeze(
         &mut self,
         command: FreezeBalanceCommand,
@@ -106,6 +114,8 @@ impl<R: WalletRepository> WalletService<R> {
         })
     }
 
+    /// 把正数金额从 frozen 桶退回 available 桶，并沿用业务引用生成双桶流水。
+    /// 冻结余额不足会在领域校验阶段失败，重放策略由上层稳定引用和仓储唯一性共同保证。
     pub fn unfreeze(
         &mut self,
         command: UnfreezeBalanceCommand,
@@ -123,6 +133,9 @@ impl<R: WalletRepository> WalletService<R> {
         })
     }
 
+    /// 结算时扣减 frozen 并增加目标资产 available；同资产时合并为一次账户与流水原子保存。
+    /// 跨资产时先保存扣款资产、再保存收款资产，当前仓储接口没有跨调用事务；第二腿失败不会自动撤销已提交的 frozen 扣减。
+    /// 因此该通用服务只适用于能在外层提供同一工作单元的仓储，真实跨资产结算不得把这里误当作全成全败保证。
     pub fn settle(&mut self, command: SettleBalanceCommand) -> Result<(), WalletServiceError> {
         ensure_positive_amount(&command.debit_frozen_amount)?;
         ensure_positive_amount(&command.credit_available_amount)?;
@@ -164,6 +177,9 @@ impl<R: WalletRepository> WalletService<R> {
         Ok(())
     }
 
+    /// 先按解锁计划汇总正数来源，再把总额从 available 迁入 locked 并写三桶流水，最后持久化锁仓明细。
+    /// 当前接口先提交账户/流水、后单独插入锁仓；锁仓写入失败不会自动回滚已增加的 locked。
+    /// 调用方若要求账户 locked 与活动锁仓明细原子一致，必须提供外层事务或使用专用基础设施用例。
     pub fn create_lock_positions(
         &mut self,
         command: LockPositionCreationCommand,

@@ -24,7 +24,7 @@ pub struct EarnAutoRedemptionWorkerConfig {
 }
 
 impl EarnAutoRedemptionWorkerConfig {
-    /// 从环境变量读取理财自动赎回开关、周期与批量上限；非法值回退到显式默认值。
+    /// 读取理财自动赎回开关、周期与批量环境配置；默认启用、周期 60 秒、批量 100，缺失或不可解析值回落到默认值。
     pub fn from_env() -> Self {
         Self {
             enabled: env_bool("EARN_AUTO_REDEMPTION_ENABLED", true),
@@ -35,7 +35,7 @@ impl EarnAutoRedemptionWorkerConfig {
 }
 
 impl EarnAutoRedemptionWorker {
-    /// 执行一轮到期理财自动赎回，委托公共单轮入口并返回扫描、成功、跳过和失败统计。
+    /// 通过应用状态执行一轮到期赎回；扫描上限、逐项事务、单项失败继续和提交后私有广播均与公共 `run_once` 一致。
     pub async fn run_once(
         &self,
         state: &AppState,
@@ -106,8 +106,8 @@ enum EarnRedemptionOutcome {
     Skipped,
 }
 
-/// 从应用状态取得 MySQL 与事件总线后执行一轮到期理财赎回；缺少数据库时立即失败，不做内存降级。
-/// 每笔订阅由独立事务锁定订阅和钱包，重复扫描已赎回记录只会跳过；事件仅在该笔事务提交后发布。
+/// 从应用状态取得 MySQL 与可选进程内事件 hub 后执行到期赎回；缺少数据库在扫描前失败，不做内存降级。
+/// 单轮成功上限为 `limit` 收敛到 1..=100，候选扫描最多放大十倍且不超过 500；逐项事务提交后才广播私有事件。
 pub async fn run_once(
     state: &AppState,
     now: DateTime<Utc>,
@@ -119,7 +119,7 @@ pub async fn run_once(
     run_once_with_broadcast(pool, state.event_broadcast_hub.as_ref(), now, limit).await
 }
 
-/// 无事件总线地执行一轮赎回，供测试和显式批处理调用；资金事务与幂等规则与生产入口完全一致。
+/// 在显式 MySQL 依赖上执行同一赎回批次，但不创建进程内私有广播；资金、账本、锁序、扫描上限及单项失败继续语义与生产入口一致。
 pub async fn run_once_with_dependencies(
     pool: &Pool<MySql>,
     now: DateTime<Utc>,
@@ -128,8 +128,9 @@ pub async fn run_once_with_dependencies(
     run_once_with_broadcast(pool, None, now, limit).await
 }
 
-/// 扫描有限数量的到期订阅并逐笔赎回；成功数达到上限即停止，单笔失败记录后继续处理后续候选。
-/// 每笔赎回独立提交本金、收益、费用、钱包和账本，已提交记录不受后续失败影响；私有事件只在提交成功后广播。
+/// 按到期时间扫描候选，成功赎回最多 1..=100 项、候选最多 500；跳过或失败不会耗尽成功配额，单项失败记录后继续。
+/// 每项在独立事务中锁订阅与钱包，原子提交本金、收益、费用、available/locked、账本和订阅终态；终态重扫幂等跳过，前项提交不因后项失败回滚。
+/// `earn_redemption` 私有 WebSocket 事件仅在对应事务提交后尽力广播；hub 缺失或无订阅者不影响已提交赎回，广播本身不持久化、不重试。
 pub async fn run_once_with_broadcast(
     pool: &Pool<MySql>,
     hub: Option<&EventBroadcastHub>,
@@ -162,7 +163,8 @@ pub async fn run_once_with_broadcast(
     Ok(summary)
 }
 
-/// 按间隔持续执行理财自动赎回；周期错误只记录并等待下一轮，数据库状态保证重扫不会重复兑付。
+/// 以至少 1 秒间隔持续执行自动赎回；周期级查询错误只记录并进入下一轮，单项失败已由批次继续处理。
+/// 订阅终态与账本引用承担崩溃恢复和幂等；提交后进程内广播不会因重启补发。
 pub async fn run_loop(state: AppState, interval_seconds: u64, limit: u32) -> AppResult<()> {
     let mut ticker = interval(Duration::from_secs(interval_seconds.max(1)));
 

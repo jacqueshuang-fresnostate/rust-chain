@@ -38,6 +38,8 @@ pub(super) struct SpotOrderReservation {
     pub(super) amount: BigDecimal,
 }
 
+/// 从 MySQL 持久化数据读取逐笔成交，保持现货既有归属过滤、可见性及排序条件。
+/// 在成交重放路径按幂等键读取既有交易，命中后必须逐字段核对订单、价格与数量。
 pub(crate) async fn load_existing_spot_trade_by_idempotency_key(
     tx: &mut Transaction<'_, MySql>,
     idempotency_key: &str,
@@ -116,6 +118,8 @@ pub(crate) async fn insert_spot_trade(
     })
 }
 
+/// 在成交事务内保存订单累计成交、平均价和终态，钱包结算失败时一并回滚。
+/// 数据库失败由调用方回滚；涉及资金时余额、流水与业务状态必须同事务且幂等重放不重复入账。
 pub(crate) async fn save_spot_order_fill_state(
     tx: &mut Transaction<'_, MySql>,
     order: &SpotOrder,
@@ -133,6 +137,8 @@ pub(crate) async fn save_spot_order_fill_state(
     Ok(())
 }
 
+/// 从 MySQL 持久化数据读取数据库订单标识，保持现货既有归属过滤、可见性及排序条件。
+/// 读取交易对数据库主键，缺失时停止成交事务且不触碰钱包。
 pub(crate) async fn load_spot_pair_db_id(pool: &Pool<MySql>, pair_symbol: &str) -> AppResult<u64> {
     let (pair_db_id,): (u64,) = sqlx::query_as(
         r#"SELECT id
@@ -148,6 +154,8 @@ pub(crate) async fn load_spot_pair_db_id(pool: &Pool<MySql>, pair_symbol: &str) 
     Ok(pair_db_id)
 }
 
+/// 处理现货订单预留资金的现货基础设施适配逻辑，保持存储或外部协议的既有边界。
+/// 按订单方向与已成交量计算事务内剩余预留，负值或异常状态返回错误。
 pub(super) async fn remaining_spot_order_reservation_in_tx(
     tx: &mut Transaction<'_, MySql>,
     order: &SpotOrder,
@@ -420,6 +428,8 @@ async fn filled_spot_order_reservation_excluding_trade_in_tx(
     Ok(filled_amount.unwrap_or_else(|| BigDecimal::from(0)))
 }
 
+/// 处理事务内交易对基础与计价资产的现货基础设施适配逻辑，保持存储或外部协议的既有边界。
+/// 读取成交事务使用的基础与计价资产，交易对不存在时终止资金结算。
 pub(crate) async fn pair_assets_in_tx(
     tx: &mut Transaction<'_, MySql>,
     pair_symbol: &str,
@@ -436,6 +446,8 @@ pub(crate) async fn pair_assets_in_tx(
     .ok_or(AppError::NotFound)
 }
 
+/// 处理现货订单预留资金的现货基础设施适配逻辑，保持存储或外部协议的既有边界。
+/// 从锁定订单快照重建预留资产与金额，供撤单和成交校验资金守恒。
 pub(crate) async fn spot_order_reservation_in_tx(
     tx: &mut Transaction<'_, MySql>,
     order: &NewOrder,
@@ -450,6 +462,8 @@ pub(crate) async fn spot_order_reservation_in_tx(
     )
 }
 
+/// 处理数据库订单标识的现货基础设施适配逻辑，保持存储或外部协议的既有边界。
+/// 解析并读取现货交易对数据库主键，未找到时不创建成交或钱包流水。
 pub(crate) async fn spot_pair_db_id_in_tx(
     tx: &mut Transaction<'_, MySql>,
     pair_symbol: &str,

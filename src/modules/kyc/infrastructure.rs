@@ -83,6 +83,7 @@ pub(crate) struct UserKycStateRecord {
     pub(crate) kyc_level: i32,
 }
 
+/// 幂等补齐默认 KYC 配置后读取当前快照，适用于非事务查询。
 pub(crate) async fn load_kyc_config(pool: &Pool<MySql>) -> AppResult<KycConfigResponse> {
     ensure_default_config(pool).await?;
     let row = sqlx::query_as::<_, KycConfigRow>(&select_kyc_config_sql(false))
@@ -93,6 +94,7 @@ pub(crate) async fn load_kyc_config(pool: &Pool<MySql>) -> AppResult<KycConfigRe
     Ok(config_response(row))
 }
 
+/// 在调用方事务中读取 KYC 配置快照，不加锁且不自行提交。
 pub(crate) async fn load_kyc_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
 ) -> AppResult<KycConfigResponse> {
@@ -105,6 +107,7 @@ pub(crate) async fn load_kyc_config_in_tx(
     Ok(config_response(row))
 }
 
+/// 以 `FOR UPDATE` 锁定唯一 KYC 配置行，供配置与审计快照原子更新。
 pub(crate) async fn lock_kyc_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
 ) -> AppResult<KycConfigResponse> {
@@ -117,6 +120,8 @@ pub(crate) async fn lock_kyc_config_in_tx(
 }
 
 #[allow(clippy::too_many_arguments)] // KYC 配置字段按单行原子写入，保持参数与持久化列可审计对应。
+/// 在已锁定的事务中按列显式写入 KYC 配置，JSON 字段保留校验后顺序。
+/// 同名配置走更新分支并记录管理员；序列化或 SQL 失败由调用方回滚。
 pub(crate) async fn upsert_kyc_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
     admin_id: u64,
@@ -152,6 +157,8 @@ pub(crate) async fn upsert_kyc_config_in_tx(
     Ok(())
 }
 
+/// 按用户和递减主键读取最新 KYC 申请且不加行锁。
+/// 完整响应含未掩码身份号、联系方式与材料地址，调用方须执行本人/管理员授权并避免日志扩散。
 pub(crate) async fn latest_kyc_submission(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -166,6 +173,9 @@ pub(crate) async fn latest_kyc_submission(
     Ok(row.map(submission_response))
 }
 
+/// 使用同一过滤条件构建 KYC 列表与总数查询，支持用户、邮箱和状态组合。
+/// 两个查询只读且不开事务，并发变更时列表与总数不保证同一快照；身份号会掩码，
+/// 但摘要仍含姓名等个人数据。任一 SQL 失败时本函数不返回部分分页。
 pub(crate) async fn list_kyc_submissions(
     pool: &Pool<MySql>,
     filter: ListKycSubmissionsFilter,
@@ -201,6 +211,8 @@ pub(crate) async fn list_kyc_submissions(
     Ok((rows.into_iter().map(submission_summary).collect(), total))
 }
 
+/// 按主键读取 KYC 申请及用户联络信息，未命中返回未找到。
+/// 结果保留原始身份号和材料地址，不是脱敏 DTO，必须由上层限制到本人或受权管理员。
 pub(crate) async fn load_kyc_submission(
     pool: &Pool<MySql>,
     submission_id: u64,
@@ -216,6 +228,7 @@ pub(crate) async fn load_kyc_submission(
     Ok(submission_response(row))
 }
 
+/// 在调用方事务中回读含原始身份材料的 KYC 快照，不额外加锁也不自行提交。
 pub(crate) async fn load_kyc_submission_in_tx(
     tx: &mut Transaction<'_, MySql>,
     submission_id: u64,
@@ -231,6 +244,7 @@ pub(crate) async fn load_kyc_submission_in_tx(
     Ok(submission_response(row))
 }
 
+/// 以 `FOR UPDATE` 锁定指定 KYC 申请，供审核状态判断与更新共用同一快照。
 pub(crate) async fn lock_kyc_submission_in_tx(
     tx: &mut Transaction<'_, MySql>,
     submission_id: u64,
@@ -246,6 +260,8 @@ pub(crate) async fn lock_kyc_submission_in_tx(
     Ok(submission_response(row))
 }
 
+/// 以 `FOR UPDATE` 锁定用户状态和 KYC 等级，用户不存在时按未授权处理。
+/// 调用方必须在锁定后完成等级与待审判断，任一失败不应提交当前事务。
 pub(crate) async fn lock_user_kyc_state_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -264,6 +280,9 @@ pub(crate) async fn lock_user_kyc_state_in_tx(
     .ok_or(AppError::Unauthorized)
 }
 
+/// 锁定用户最新待审申请主键，作为并发提交前的重复申请边界。
+/// 未命中返回 `None`；命中行保持到事务结束。无命中时是否形成范围锁取决于索引和隔离级别，
+/// 本函数不创建申请，也不单独提供“每用户唯一待审”的数据库约束。
 pub(crate) async fn lock_pending_kyc_submission_id_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -282,6 +301,8 @@ pub(crate) async fn lock_pending_kyc_submission_id_in_tx(
 }
 
 #[allow(clippy::too_many_arguments)] // 身份材料字段需显式绑定 SQL 列，避免结构化调试输出泄露敏感数据。
+/// 在调用方事务中插入已校验 KYC 主体与材料，审核状态固定初始为待审。
+/// 敏感字段逐列绑定且不输出日志；唯一约束或 SQL 失败不提交半成品。
 pub(crate) async fn insert_user_kyc_submission_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -319,6 +340,8 @@ pub(crate) async fn insert_user_kyc_submission_in_tx(
     Ok(result.last_insert_id())
 }
 
+/// 在审核事务内写入 KYC 结果、管理员、理由和审核时间，不单独提交。
+/// 调用方须先锁定并确认记录仍待审；更新失败必须与用户等级变更一起回滚。
 pub(crate) async fn update_kyc_submission_review_in_tx(
     tx: &mut Transaction<'_, MySql>,
     submission_id: u64,
@@ -340,6 +363,8 @@ pub(crate) async fn update_kyc_submission_review_in_tx(
     Ok(())
 }
 
+/// 在调用方审核事务中用 `GREATEST` 提升或保持用户 KYC 等级，不会降低现有等级。
+/// SQL 不检查受影响行数，用户缺失也返回成功；审核状态和目标等级合法性须由锁定后的应用层保证。
 pub(crate) async fn update_user_kyc_level_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -357,6 +382,7 @@ pub(crate) async fn update_user_kyc_level_in_tx(
     Ok(())
 }
 
+/// 通过唯一名称和空更新幂等补齐 KYC 默认配置，已存在时不改业务值。
 pub(crate) async fn ensure_default_config(pool: &Pool<MySql>) -> AppResult<()> {
     sqlx::query(default_config_insert_sql())
         .execute(pool)
@@ -364,6 +390,7 @@ pub(crate) async fn ensure_default_config(pool: &Pool<MySql>) -> AppResult<()> {
     Ok(())
 }
 
+/// 在调用方事务中幂等补齐 KYC 默认配置，不自行提交或覆盖现有值。
 pub(crate) async fn ensure_default_config_in_tx(tx: &mut Transaction<'_, MySql>) -> AppResult<()> {
     sqlx::query(default_config_insert_sql())
         .execute(&mut **tx)

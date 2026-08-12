@@ -35,7 +35,7 @@ pub struct MarginLiquidationWorkerConfig {
 }
 
 impl MarginLiquidationWorkerConfig {
-    /// 从环境变量读取强平开关、扫描周期与批量上限；无效值使用受控默认值。
+    /// 读取强平开关、周期与批量环境配置；默认启用、周期 5 秒、批量 100，缺失或不可解析值回落到默认值。
     pub fn from_env() -> Self {
         Self {
             enabled: env_bool("MARGIN_LIQUIDATION_ENABLED", true),
@@ -46,7 +46,8 @@ impl MarginLiquidationWorkerConfig {
 }
 
 impl MarginLiquidationWorker {
-    /// 执行一轮杠杆风险扫描与强平，权威标记价来自新鲜 Redis ticker，缺价或过期时不得估算清算。
+    /// 执行一轮全仓优先、逐仓随后强平；成功上限收敛到 1..=100，逐仓候选最多 500，全仓账户最多 100。
+    /// 仅接受新鲜 Redis 标记价，逐账户/逐仓独立资金事务，单项失败继续，私有事件在对应事务提交后广播。
     pub async fn run_once(
         &self,
         state: &AppState,
@@ -212,8 +213,8 @@ fn margin_realized_pnl(
     Ok((notional_amount.clone() * price_delta / entry_price.clone()).with_scale(18))
 }
 
-/// 从应用状态取得 MySQL、Redis 与可选事件总线后执行一轮强平；任一权威依赖缺失时立即失败。
-/// 资金和仓位在逐账户/逐仓事务内提交，私有强平事件仅在提交成功后发布。
+/// 从应用状态取得 MySQL 仓位/钱包、Redis 权威 ticker 与可选事件 hub 后执行单轮强平；MySQL 或 Redis 缺失时在扫描前失败。
+/// 单轮成功上限为 1..=100，逐账户/逐仓独立提交资金与终态；私有强平事件仅在对应事务提交后尽力广播。
 pub async fn run_once(
     state: &AppState,
     now: DateTime<Utc>,
@@ -235,7 +236,7 @@ pub async fn run_once(
     .await
 }
 
-/// 无事件总线执行一轮强平，供测试与显式批处理复用；价格新鲜度、锁顺序和资金结算规则不变。
+/// 在显式 MySQL/Redis 依赖上执行同一全仓优先、逐仓随后批次，但禁用进程内广播；扫描上限、价格新鲜度、锁序、资金守恒与幂等不变。
 pub async fn run_once_with_dependencies(
     pool: &Pool<MySql>,
     redis: &ConnectionManager,
@@ -355,7 +356,8 @@ async fn run_once_with_dependencies_and_events(
     Ok(summary)
 }
 
-/// 按间隔持续执行杠杆强平；周期错误记录后进入下一轮，next-attempt 时间和最终仓位状态提供恢复语义。
+/// 以至少 1 秒间隔持续强平；周期级候选查询错误只记录并进入下一轮，单项缺价/失败由核心批次延期后继续。
+/// next-attempt、仓位终态、强平记录与账本承担跨重启恢复；提交后进程内私有事件不会补发。
 pub async fn run_loop(state: AppState, interval_seconds: u64, limit: u32) -> AppResult<()> {
     let mut ticker = interval(Duration::from_secs(interval_seconds.max(1)));
 

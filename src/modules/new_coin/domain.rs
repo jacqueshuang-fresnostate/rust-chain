@@ -19,6 +19,7 @@ pub enum LifecycleStatus {
 }
 
 impl LifecycleStatus {
+    /// 只允许 `preheat → subscription → distribution → listed` 单向推进；跳级、回退和同状态重放均返回迁移错误。
     pub fn transition_to(self, to: LifecycleStatus) -> Result<LifecycleStatus, NewCoinDomainError> {
         match (self, to) {
             (LifecycleStatus::Preheat, LifecycleStatus::Subscription)
@@ -77,6 +78,7 @@ pub enum NewCoinOrderKind {
 }
 
 impl NewCoinOrderKind {
+    /// 返回订单种类对应的中文展示名。
     pub fn chinese_name(self) -> &'static str {
         match self {
             NewCoinOrderKind::Subscription => "申购",
@@ -84,6 +86,7 @@ impl NewCoinOrderKind {
         }
     }
 
+    /// 返回订单种类对应的稳定 API 动作代码。
     pub fn api_action(self) -> &'static str {
         match self {
             NewCoinOrderKind::Subscription => "subscription",
@@ -151,6 +154,7 @@ pub struct UnlockFeeQuote {
     pub payment_asset: Option<String>,
 }
 
+/// 仅在项目处于 `subscription` 生命周期时允许申购；本规则不读取项目或修改钱包。
 pub fn ensure_subscription_allowed(status: LifecycleStatus) -> Result<(), NewCoinDomainError> {
     if status == LifecycleStatus::Subscription {
         Ok(())
@@ -159,6 +163,8 @@ pub fn ensure_subscription_allowed(status: LifecycleStatus) -> Result<(), NewCoi
     }
 }
 
+/// 要求项目已上市且开启上市后购买，再按解锁规则把购买数量拆成可用额和锁仓额。
+/// 返回值只是资金计划；订单、余额、锁仓和流水仍须由仓储在同一事务中落地。
 pub fn plan_post_listing_purchase(
     status: LifecycleStatus,
     enabled: bool,
@@ -344,6 +350,7 @@ pub fn calculate_unlock_fee(
     })
 }
 
+/// 当报价要求收费时必须已有支付记录；免手续费报价可直接放行，函数本身不释放锁仓或入账。
 pub fn ensure_unlock_release_allowed(
     fee: &UnlockFeeQuote,
     fee_paid: bool,

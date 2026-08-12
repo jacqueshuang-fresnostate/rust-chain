@@ -11,22 +11,30 @@ use axum::async_trait;
 use bigdecimal::BigDecimal;
 
 pub trait SpotRepository {
+    /// 定义交易对规则的领域持久化端口，使上层不依赖具体数据库、缓存或网络客户端。
+    /// 实现方必须保持现货既有事务与幂等语义，失败应返回错误而非伪造成功结果。
     fn load_pair_rule(
         &mut self,
         pair_id: &str,
     ) -> Result<crate::modules::spot::TradingPairRule, crate::modules::spot::SpotServiceError>;
 
+    /// 定义现货订单写入的领域持久化端口，使上层不依赖具体数据库、缓存或网络客户端。
+    /// 实现方必须保持现货既有事务与幂等语义，失败应返回错误而非伪造成功结果。
     fn insert_order(
         &mut self,
         new_order: crate::modules::spot::NewOrder,
         idempotency_key: Option<&str>,
     ) -> Result<crate::modules::spot::SpotOrder, crate::modules::spot::SpotServiceError>;
 
+    /// 定义现货订单读取的领域持久化端口，使上层不依赖具体数据库、缓存或网络客户端。
+    /// 实现方必须保持现货既有事务与幂等语义，失败应返回错误而非伪造成功结果。
     fn load_order(
         &mut self,
         order_id: &str,
     ) -> Result<crate::modules::spot::SpotOrder, crate::modules::spot::SpotServiceError>;
 
+    /// 定义现货订单状态保存的领域持久化端口，使上层不依赖具体数据库、缓存或网络客户端。
+    /// 实现方必须保持现货既有事务与幂等语义，失败应返回错误而非伪造成功结果。
     fn save_order(
         &mut self,
         order: crate::modules::spot::SpotOrder,
@@ -73,11 +81,15 @@ pub(crate) struct SpotIdempotentOrderRecord {
 
 #[async_trait]
 pub(crate) trait SpotOrderCancelRepository: Clone + Send + Sync + 'static {
+    /// 定义用户现货撤单的领域持久化端口，使上层不依赖具体数据库、缓存或网络客户端。
+    /// 实现方必须保持现货既有事务与幂等语义，失败应返回错误而非伪造成功结果。
     async fn cancel_user_order(
         &self,
         command: SpotUserCancelCommand,
     ) -> AppResult<SpotCancelRepositoryResult>;
 
+    /// 定义后台订单详情的领域持久化端口，使上层不依赖具体数据库、缓存或网络客户端。
+    /// 实现方必须保持现货既有事务与幂等语义，失败应返回错误而非伪造成功结果。
     async fn cancel_admin_order(
         &self,
         command: SpotAdminCancelCommand,

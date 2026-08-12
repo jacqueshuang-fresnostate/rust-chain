@@ -44,14 +44,18 @@ pub struct MySqlWalletRepository {
 }
 
 impl MySqlWalletRepository {
+    /// 用 MySQL 连接池构造钱包仓储适配器。
     pub fn new(pool: Pool<MySql>) -> Self {
         Self { pool }
     }
 
+    /// 返回该钱包仓储适配器持有的 MySQL 连接池。
     pub fn pool(&self) -> &Pool<MySql> {
         &self.pool
     }
 
+    /// 幂等确保用户资产账户存在并加载三桶快照。
+    /// 创建冲突不会覆盖余额；查询失败或创建后仍不可见时返回仓储错误。
     pub async fn get_or_create_account_async(
         &self,
         user_id: u64,
@@ -61,6 +65,7 @@ impl MySqlWalletRepository {
         get_or_create_account_async(&self.pool, user_id, asset_id).await
     }
 
+    /// 按用户与资产读取钱包账户三桶快照，不创建缺失账户。
     pub async fn load_account_async(
         &self,
         user_id: u64,
@@ -69,6 +74,8 @@ impl MySqlWalletRepository {
         load_account_async(&self.pool, user_id, asset_id).await
     }
 
+    /// 在基础设施自有事务中保存传入的三桶绝对快照，并逐条写入同批镜像流水。
+    /// 该入口不先锁账户，也不校验业务引用唯一性；并发覆盖与重放控制由调用方负责，SQL 失败回滚本批账户和流水。
     pub async fn save_account_with_ledger_async(
         &self,
         account: WalletAccount,
@@ -78,6 +85,7 @@ impl MySqlWalletRepository {
         save_account_with_ledger_async(&self.pool, account, ledger).await
     }
 
+    /// 按业务引用类型与编号顺序读取账本条目，用于幂等核验和审计。
     pub async fn list_ledger_by_ref_async(
         &self,
         ref_type: &str,
@@ -87,6 +95,8 @@ impl MySqlWalletRepository {
         list_ledger_by_ref_async(&self.pool, ref_type, ref_id).await
     }
 
+    /// 批量写入锁仓及来源明细，并在该批自有事务提交后返回全部锁仓编号。
+    /// merge_key 和来源唯一约束让重放只累计新来源；任一 SQL 失败回滚本批锁仓，但不会撤销调用前已提交的账户 locked 变化。
     pub async fn insert_asset_lock_positions_async(
         &self,
         positions: Vec<NewAssetLockPosition>,
@@ -95,6 +105,7 @@ impl MySqlWalletRepository {
         insert_asset_lock_positions_async(&self.pool, positions).await
     }
 
+    /// 统计指定锁仓记录关联的来源明细数量。
     pub async fn count_lock_position_sources_async(
         &self,
         lock_position_id: u64,
@@ -106,6 +117,8 @@ impl MySqlWalletRepository {
 
 #[async_trait]
 impl WalletRepository for MySqlWalletRepository {
+    /// 同步仓储端口不执行异步 SQL，固定返回“需使用 async SQLx 方法”的仓储错误。
+    /// 不读取账户、不加锁，也不把缺失账户伪装成零余额。
     fn load_account(
         &mut self,
         _user_id: &str,
@@ -116,6 +129,7 @@ impl WalletRepository for MySqlWalletRepository {
         ))
     }
 
+    /// 同步仓储端口不执行异步账户/流水事务，固定返回仓储错误且不产生资金写入。
     fn save_account_with_ledger(
         &mut self,
         _account: WalletAccount,
@@ -126,6 +140,7 @@ impl WalletRepository for MySqlWalletRepository {
         ))
     }
 
+    /// 同步仓储端口不写锁仓明细，固定返回仓储错误；调用方应使用异步适配器方法。
     fn insert_lock_positions(
         &mut self,
         _positions: Vec<LockPosition>,
@@ -207,6 +222,7 @@ impl WalletLedgerCategory {
         Self::Other,
     ];
 
+    /// 返回钱包流水分类的稳定 API 字符串。
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Funding => "funding",
@@ -222,6 +238,7 @@ impl WalletLedgerCategory {
         }
     }
 
+    /// 将精确分类字符串解析为钱包流水分类，未知值返回空。
     pub(crate) fn parse(value: &str) -> Option<Self> {
         Self::ALL
             .into_iter()
@@ -283,6 +300,8 @@ const WALLET_LEDGER_CATEGORY_RULES: &[WalletLedgerCategoryRule] = &[
     },
 ];
 
+/// 按精确 change_type 或受控前缀归类钱包流水，未命中时归入 other。
+/// 分类只影响查询与展示，不改变原始 change_type、业务引用或任何账本金额。
 pub(crate) fn classify_wallet_ledger_change_type(change_type: &str) -> WalletLedgerCategory {
     WALLET_LEDGER_CATEGORY_RULES
         .iter()
@@ -296,6 +315,8 @@ pub(crate) fn classify_wallet_ledger_change_type(change_type: &str) -> WalletLed
         .map(|rule| rule.category)
         .unwrap_or(WalletLedgerCategory::Other)
 }
+/// 通过幂等插入确保钱包账户存在，再回读三桶快照。
+/// 该入口不锁定账户供资金更新使用，资金写入仍须在调用方事务中执行行锁。
 pub(crate) async fn get_or_create_account_async(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -318,6 +339,8 @@ pub(crate) async fn get_or_create_account_async(
         .ok_or_else(|| WalletServiceError::Repository("wallet account was not created".to_owned()))
 }
 
+/// 读取指定用户资产的钱包三桶余额，不存在时返回空值。
+/// 该普通查询不持有行锁，资金更新必须改用调用方事务内的锁定原语。
 pub(crate) async fn load_account_async(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -392,6 +415,8 @@ pub(crate) async fn save_account_with_ledger_async(
     tx.commit().await.map_err(map_wallet_sqlx_error)
 }
 
+/// 按业务引用读取账本并保留写入顺序，便于重放判断和资金审计。
+/// 查询只读流水快照，不据此修改账户；缺失条目由上层按账务异常处理。
 pub(crate) async fn list_ledger_by_ref_async(
     pool: &Pool<MySql>,
     ref_type: &str,
@@ -428,6 +453,8 @@ pub(crate) async fn list_ledger_by_ref_async(
     rows.into_iter().map(wallet_ledger_from_row).collect()
 }
 
+/// 在自有事务中逐项插入锁仓及来源映射，全部成功后统一提交。
+/// 任一写入失败都会回滚，调用方不得假设返回前已有部分锁仓生效。
 pub(crate) async fn insert_asset_lock_positions_async(
     pool: &Pool<MySql>,
     positions: Vec<NewAssetLockPosition>,
@@ -444,6 +471,8 @@ pub(crate) async fn insert_asset_lock_positions_async(
     Ok(ids)
 }
 
+/// 读取锁仓记录当前持久化的来源数量。
+/// 该统计用于核对来源完整性，不调整账户 locked 桶或锁仓剩余额。
 pub(crate) async fn count_lock_position_sources_async(
     pool: &Pool<MySql>,
     lock_position_id: u64,
@@ -611,6 +640,8 @@ fn map_wallet_sqlx_error(error: sqlx::Error) -> WalletServiceError {
     WalletServiceError::Repository(error.to_string())
 }
 
+/// 按资产代码排序读取用户全部钱包账户及三桶余额快照。
+/// 查询不获取资金行锁，返回值仅用于展示，不可作为后续扣款依据。
 pub(crate) async fn list_wallet_accounts(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -628,7 +659,9 @@ pub(crate) async fn list_wallet_accounts(
     Ok(rows.into_iter().map(wallet_account_response).collect())
 }
 
-/// 只聚合能够由业务结算表直接审计的已实现收益，充值、提现和内部划转不会进入该查询。
+/// 按同一过滤条件查询用户钱包流水和总数，并补充关联业务手续费。
+/// fee 仅从闪兑订单、现货成交、提现申请/记录关联补充；流水 amount 和三桶 after 直接取 wallet_ledger，不重算资金。
+/// 该入口只读账本快照，不锁余额；分页总数、分类规则与返回行使用一致谓词。
 pub(crate) async fn list_wallet_ledger(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -687,6 +720,8 @@ async fn count_wallet_ledger(
         .max(0) as u64)
 }
 
+/// 把资产、分类、引用和时间条件同时追加到流水行查询或计数查询。
+/// 调用方必须对行与总数复用该构造器，确保分页统计与返回数据一致。
 pub(super) fn push_wallet_ledger_filters<'args>(
     builder: &mut QueryBuilder<'args, MySql>,
     filter: &'args WalletLedgerFilter,
@@ -843,6 +878,8 @@ fn wallet_account_response(row: WalletAccountRow) -> WalletAccountResponse {
     }
 }
 
+/// 将数据库流水行映射为 API 条目，并按 change_type 补充稳定业务分类。
+/// 映射保留三桶账后快照和业务引用，不重新计算或改变任何资金金额。
 pub(super) fn wallet_ledger_entry_response(row: WalletLedgerEntryRow) -> WalletLedgerEntryResponse {
     let category = classify_wallet_ledger_change_type(&row.change_type)
         .as_str()

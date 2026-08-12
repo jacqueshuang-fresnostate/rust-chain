@@ -51,6 +51,8 @@ impl Default for ReqwestMarketFeedRestFallbackHttpClient {
 }
 
 impl ReqwestMarketFeedRestFallbackHttpClient {
+    /// 注入共享 Reqwest client，并使用平台默认的三秒 REST 兜底超时。
+    /// 构造阶段不发送请求；DNS、TLS、HTTP 状态和正文读取错误由 `get_text` 在实际调用时返回。
     pub fn new(client: reqwest::Client) -> Self {
         Self {
             client,
@@ -58,6 +60,8 @@ impl ReqwestMarketFeedRestFallbackHttpClient {
         }
     }
 
+    /// 新建默认 Reqwest client，并把调用方给定时长用于每次 REST 兜底请求。
+    /// 本函数不校验零时长，也不建立连接；超时只在后续 `get_text` 请求中生效。
     pub fn with_timeout(timeout: std::time::Duration) -> Self {
         Self {
             client: reqwest::Client::new(),
@@ -65,12 +69,15 @@ impl ReqwestMarketFeedRestFallbackHttpClient {
         }
     }
 
+    /// 从运行配置读取 REST 兜底超时秒数，并使用默认 Reqwest client 构造适配器。
+    /// 这里只转换时长，不解析 provider 响应，也不验证外部地址可达性。
     pub fn from_settings(settings: &Settings) -> Self {
         Self::with_timeout(std::time::Duration::from_secs(
             settings.market_feed_rest_fallback_timeout_seconds,
         ))
     }
 
+    /// 返回 REST 兜底请求超时。
     pub fn timeout(&self) -> std::time::Duration {
         self.timeout
     }
@@ -115,6 +122,8 @@ pub struct MarketFeedFrame {
 }
 
 impl MarketFeedFrame {
+    /// 标记原始行情载荷的 provider 与频道，供统一解析器选择正确适配器。
+    /// payload 原样保留且不在构造时解析；非法 JSON 会在 [`MarketFeedEvent::from_frame`] 返回错误。
     pub fn new(
         provider: MarketFeedProvider,
         channel: MarketFeedChannel,
@@ -127,6 +136,7 @@ impl MarketFeedFrame {
         }
     }
 
+    /// 将 Bitget 原始载荷标记为 ticker 频道；不解析、不持久化，也不广播。
     pub fn bitget_ticker(payload: impl Into<String>) -> Self {
         Self::new(
             MarketFeedProvider::Bitget,
@@ -135,6 +145,7 @@ impl MarketFeedFrame {
         )
     }
 
+    /// 将 Bitget 原始载荷标记为 depth 频道；盘口格式校验留给 provider 适配器。
     pub fn bitget_depth(payload: impl Into<String>) -> Self {
         Self::new(
             MarketFeedProvider::Bitget,
@@ -143,6 +154,7 @@ impl MarketFeedFrame {
         )
     }
 
+    /// 将 Bitget 原始载荷标记为 kline 频道；周期与 OHLC 校验在后续解析阶段执行。
     pub fn bitget_kline(payload: impl Into<String>) -> Self {
         Self::new(
             MarketFeedProvider::Bitget,
@@ -151,6 +163,7 @@ impl MarketFeedFrame {
         )
     }
 
+    /// 将 Bitget 原始载荷标记为 trade 频道；成交字段在后续解析阶段转换。
     pub fn bitget_trade(payload: impl Into<String>) -> Self {
         Self::new(
             MarketFeedProvider::Bitget,
@@ -159,22 +172,27 @@ impl MarketFeedFrame {
         )
     }
 
+    /// 将 HTX 原始载荷标记为 ticker 频道；不解析、不持久化，也不广播。
     pub fn htx_ticker(payload: impl Into<String>) -> Self {
         Self::new(MarketFeedProvider::Htx, MarketFeedChannel::Ticker, payload)
     }
 
+    /// 将 HTX 原始载荷标记为 depth 频道；盘口格式校验留给 provider 适配器。
     pub fn htx_depth(payload: impl Into<String>) -> Self {
         Self::new(MarketFeedProvider::Htx, MarketFeedChannel::Depth, payload)
     }
 
+    /// 将 HTX 原始载荷标记为 kline 频道；周期与 OHLC 校验在后续解析阶段执行。
     pub fn htx_kline(payload: impl Into<String>) -> Self {
         Self::new(MarketFeedProvider::Htx, MarketFeedChannel::Kline, payload)
     }
 
+    /// 将 HTX 原始载荷标记为 trade 频道；成交字段在后续解析阶段转换。
     pub fn htx_trade(payload: impl Into<String>) -> Self {
         Self::new(MarketFeedProvider::Htx, MarketFeedChannel::Trade, payload)
     }
 
+    /// 将 Coinbase 原始载荷标记为 ticker 频道；不解析、不持久化，也不广播。
     pub fn coinbase_ticker(payload: impl Into<String>) -> Self {
         Self::new(
             MarketFeedProvider::Coinbase,
@@ -183,6 +201,7 @@ impl MarketFeedFrame {
         )
     }
 
+    /// 将 Coinbase 原始载荷标记为 depth 频道；盘口格式校验留给 provider 适配器。
     pub fn coinbase_depth(payload: impl Into<String>) -> Self {
         Self::new(
             MarketFeedProvider::Coinbase,
@@ -191,6 +210,7 @@ impl MarketFeedFrame {
         )
     }
 
+    /// 将 Coinbase 原始载荷标记为 kline 频道；周期与 OHLC 校验在后续解析阶段执行。
     pub fn coinbase_kline(payload: impl Into<String>) -> Self {
         Self::new(
             MarketFeedProvider::Coinbase,
@@ -199,6 +219,7 @@ impl MarketFeedFrame {
         )
     }
 
+    /// 将 Coinbase 原始载荷标记为 trade 频道；成交字段在后续解析阶段转换。
     pub fn coinbase_trade(payload: impl Into<String>) -> Self {
         Self::new(
             MarketFeedProvider::Coinbase,
@@ -207,14 +228,17 @@ impl MarketFeedFrame {
         )
     }
 
+    /// 返回行情提供方。
     pub fn provider(&self) -> MarketFeedProvider {
         self.provider
     }
 
+    /// 返回行情频道。
     pub fn channel(&self) -> MarketFeedChannel {
         self.channel
     }
 
+    /// 返回行情载荷。
     pub fn payload(&self) -> &str {
         &self.payload
     }
@@ -250,6 +274,7 @@ pub struct MarketFeedRestFallbackConfig {
 }
 
 impl MarketFeedRestFallbackTickerRequest {
+    /// 记录单个交易对的 ticker REST 兜底地址；请求对象本身不发送 HTTP，也不规范化 URL。
     pub fn new(symbol: impl Into<String>, url: impl Into<String>) -> Self {
         Self {
             symbol: symbol.into(),
@@ -257,16 +282,19 @@ impl MarketFeedRestFallbackTickerRequest {
         }
     }
 
+    /// 返回交易对符号。
     pub fn symbol(&self) -> &str {
         &self.symbol
     }
 
+    /// 返回连接地址。
     pub fn url(&self) -> &str {
         &self.url
     }
 }
 
 impl MarketFeedRestFallbackKlineRequest {
+    /// 记录单个交易对、周期及其 K 线 REST 兜底地址；实际请求与解析由 worker 执行。
     pub fn new(
         symbol: impl Into<String>,
         interval: impl Into<String>,
@@ -279,20 +307,25 @@ impl MarketFeedRestFallbackKlineRequest {
         }
     }
 
+    /// 返回交易对符号。
     pub fn symbol(&self) -> &str {
         &self.symbol
     }
 
+    /// 返回 K 线周期。
     pub fn interval(&self) -> &str {
         &self.interval
     }
 
+    /// 返回连接地址。
     pub fn url(&self) -> &str {
         &self.url
     }
 }
 
 impl MarketFeedRestFallbackConfig {
+    /// 聚合一个 provider 的 ticker 与 K 线兜底请求清单，保持生成顺序供 worker 逐项处理。
+    /// 构造时不去重、不请求网络；空清单表示该频道没有可执行的兜底请求。
     pub fn new(
         provider: MarketFeedProvider,
         ticker_requests: Vec<MarketFeedRestFallbackTickerRequest>,
@@ -305,14 +338,17 @@ impl MarketFeedRestFallbackConfig {
         }
     }
 
+    /// 返回行情提供方。
     pub fn provider(&self) -> MarketFeedProvider {
         self.provider
     }
 
+    /// 返回该 provider 的 ticker 兜底请求清单，顺序与配置展开结果一致。
     pub fn ticker_requests(&self) -> &[MarketFeedRestFallbackTickerRequest] {
         &self.ticker_requests
     }
 
+    /// 返回首个 ticker 兜底地址以兼容旧调用路径；清单为空时返回空字符串。
     pub fn ticker_url(&self) -> &str {
         self.ticker_requests
             .first()
@@ -320,6 +356,7 @@ impl MarketFeedRestFallbackConfig {
             .unwrap_or_default()
     }
 
+    /// 克隆并返回全部 ticker 兜底地址，不发送请求，也不保证 URL 可达。
     pub fn ticker_urls(&self) -> Vec<String> {
         self.ticker_requests
             .iter()
@@ -327,10 +364,12 @@ impl MarketFeedRestFallbackConfig {
             .collect()
     }
 
+    /// 返回 symbol×interval 展开的 K 线兜底请求清单。
     pub fn kline_requests(&self) -> &[MarketFeedRestFallbackKlineRequest] {
         &self.kline_requests
     }
 
+    /// 克隆并返回全部 K 线兜底地址，不发送请求，也不保证 URL 可达。
     pub fn kline_urls(&self) -> Vec<String> {
         self.kline_requests
             .iter()
@@ -385,6 +424,8 @@ impl MarketFeedRestFallbackFrameResult {
 }
 
 impl MarketFeedConfig {
+    /// 组装单个 provider 的 WebSocket 地址、订阅消息和对应交易对/周期元数据。
+    /// 输入原样保存；连接建立、订阅发送和断线重连由运行时 worker 负责。
     pub fn new(
         provider: MarketFeedProvider,
         url: impl Into<String>,
@@ -401,22 +442,27 @@ impl MarketFeedConfig {
         }
     }
 
+    /// 返回行情提供方。
     pub fn provider(&self) -> MarketFeedProvider {
         self.provider
     }
 
+    /// 返回连接地址。
     pub fn url(&self) -> &str {
         &self.url
     }
 
+    /// 返回按 provider 协议预生成的 WebSocket 订阅消息，调用方需在连接建立后按序发送。
     pub fn subscription_messages(&self) -> &[String] {
         &self.subscription_messages
     }
 
+    /// 返回交易对集合。
     pub fn symbols(&self) -> &[String] {
         &self.symbols
     }
 
+    /// 返回 K 线周期集合。
     pub fn intervals(&self) -> &[String] {
         &self.intervals
     }
@@ -448,26 +494,32 @@ impl MarketFeedFailureContext {
         }
     }
 
+    /// 返回行情提供方。
     pub fn provider(&self) -> MarketFeedProvider {
         self.provider
     }
 
+    /// 返回行情频道。
     pub fn channel(&self) -> MarketFeedChannel {
         self.channel
     }
 
+    /// 返回交易对符号。
     pub fn symbol(&self) -> &str {
         &self.symbol
     }
 
+    /// 返回 K 线周期。
     pub fn interval(&self) -> Option<&str> {
         self.interval.as_deref()
     }
 
+    /// 返回连接地址。
     pub fn url(&self) -> &str {
         &self.url
     }
 
+    /// 返回错误。
     pub fn error(&self) -> &str {
         &self.error
     }
@@ -482,6 +534,7 @@ pub struct MarketFeedSummary {
 }
 
 impl MarketFeedSummary {
+    /// 用调用方提供的计数创建行情处理汇总；失败上下文初始为空，后续按请求失败顺序追加。
     pub fn new(received: u32, ingested: u32, failed: u32) -> Self {
         Self {
             received,
@@ -500,6 +553,7 @@ impl MarketFeedSummary {
         self.failure_contexts.push(context);
     }
 
+    /// 返回 REST 兜底失败明细，包含 provider、频道、symbol、URL 与错误文本，供日志和监控诊断。
     pub fn failure_contexts(&self) -> &[MarketFeedFailureContext] {
         &self.failure_contexts
     }
@@ -512,6 +566,8 @@ pub struct MarketFeedWorker<S> {
 }
 
 impl<S> MarketFeedWorker<S> {
+    /// 以指定 ingestion sink 构造行情 worker，默认不向 WebSocket 广播公开行情。
+    /// sink 的 Redis/Mongo 连接可用性在实际摄取帧时检查，构造阶段无外部 I/O。
     pub fn new(sink: S) -> Self {
         Self {
             sink,
@@ -519,15 +575,20 @@ impl<S> MarketFeedWorker<S> {
         }
     }
 
+    /// 注入公开 WebSocket 广播中心；只有 sink 成功持久化的帧才会经该 hub 广播。
     pub fn with_broadcast_hub(mut self, hub: EventBroadcastHub) -> Self {
         self.broadcast_hub = Some(hub);
         self
     }
 
+    /// 保留旧版 outbox builder 调用的兼容入口；当前实时行情不写业务 outbox，因此参数不会被保存。
+    /// 调用此方法不会新增持久化或投递保证，可靠行情来源仍是 Redis/Mongo 与重连恢复链。
     pub fn with_outbox_writer<N>(self, _outbox_writer: EventOutboxWriter<N>) -> Self {
         self
     }
 
+    /// 校验 symbol/interval 后，为默认 Bitget、HTX 生成 WebSocket 地址与订阅消息。
+    /// 配置为空或字段非法时在连接前返回校验错误，不产生网络或缓存副作用。
     pub fn provider_configs(
         settings: &Settings,
         symbols: &[&str],
@@ -541,6 +602,8 @@ impl<S> MarketFeedWorker<S> {
         )
     }
 
+    /// 为显式 provider 集合生成 WebSocket 配置；provider 为空直接拒绝，symbol/interval 统一校验一次。
+    /// 保持 provider 输入顺序并逐个展开，函数本身不建立连接或发送订阅消息。
     pub fn provider_configs_for(
         settings: &Settings,
         providers: &[MarketFeedProvider],
@@ -560,6 +623,8 @@ impl<S> MarketFeedWorker<S> {
             .collect()
     }
 
+    /// 校验 symbol/interval 后，为默认 Bitget、HTX 生成 ticker 与 K 线 REST 兜底清单。
+    /// 这里只组装 URL；请求失败隔离、解析和持久化由 `run_rest_fallback_config` 负责。
     pub fn provider_rest_fallback_configs(
         settings: &Settings,
         symbols: &[&str],
@@ -573,6 +638,8 @@ impl<S> MarketFeedWorker<S> {
         )
     }
 
+    /// 为显式 provider 集合生成 REST 兜底清单；空 provider、非法 symbol 或周期在发请求前失败。
+    /// 每个 provider 保持独立配置，后续 worker 可按提供方隔离错误和统计有效写入。
     pub fn provider_rest_fallback_configs_for(
         settings: &Settings,
         providers: &[MarketFeedProvider],
@@ -608,7 +675,8 @@ impl<S> MarketFeedWorker<S>
 where
     S: MarketIngestionSink,
 {
-    /// 消费有限行情帧流并逐帧解析、持久化和广播；单帧失败只计数，调用方依据汇总决定周期是否有效。
+    /// 消费有限行情帧流并逐帧解析、持久化和广播；输入流或摄取失败只增加 `failed`，不会终止后续帧。
+    /// 本入口不保留逐帧错误文本，调用方只能依据计数判断本轮是否有有效写入。
     pub async fn run_stream<E, St>(&self, frames: St) -> AppResult<MarketFeedSummary>
     where
         E: ToString,
@@ -631,7 +699,8 @@ where
         Ok(summary)
     }
 
-    /// 执行一个供应商 REST 兜底配置并逐请求归一化、持久化行情；请求或帧错误记录上下文但继续其他请求。
+    /// 依次 GET 一个 provider 的 ticker 与 K 线 URL，并把成功正文包装、解析和持久化；单项失败不阻断其他请求。
+    /// HTTP/状态码/正文错误会保存 provider、频道、symbol、URL 与错误文本；解析或 sink 错误只增加失败计数。
     /// 返回汇总不代表价格源可用，调用方必须再执行“至少一个有效写入”校验。
     pub async fn run_rest_fallback_config<C>(
         &self,
@@ -661,7 +730,8 @@ where
     }
 
     /// 将供应商原始帧解析为领域快照，交给对应 sink 持久化，成功后才发布实时市场事件。
-    /// trade 帧目前只发布而不写行情存储；解析或 sink 失败时不得广播，避免消费者看到未持久化价格。
+    /// trade 帧目前只发布而不写行情存储；解析、事件转换或 sink 失败时不广播。
+    /// WS 消息转换发生在持久化之后；转换失败会返回错误，但不会回滚已经完成的 Redis/Mongo 写入。
     pub async fn ingest_frame(&self, frame: &MarketFeedFrame) -> AppResult<()> {
         let parsed = parse_feed_frame(frame)?;
         let event = MarketFeedEvent::from_parsed(&parsed)?;
@@ -691,6 +761,8 @@ pub struct MarketFeedEvent {
 }
 
 impl MarketFeedEvent {
+    /// 解析 provider 原始帧并生成统一事件元数据、幂等键、公开 WebSocket 主题与 JSON 载荷。
+    /// 字段或频道不合法时返回校验错误；该函数不持久化快照，也不实际发布事件。
     pub fn from_frame(frame: &MarketFeedFrame) -> AppResult<Self> {
         let parsed = parse_feed_frame(frame)?;
         Self::from_parsed(&parsed)
@@ -805,34 +877,42 @@ impl MarketFeedEvent {
         }
     }
 
+    /// 返回 outbox/指标使用的行情聚合类型，如 ticker、depth、kline 或 trade。
     pub fn aggregate_type(&self) -> &str {
         &self.aggregate_type
     }
 
+    /// 返回规范化交易对作为事件聚合标识，使同一市场事件归入稳定聚合根。
     pub fn aggregate_id(&self) -> &str {
         &self.aggregate_id
     }
 
+    /// 返回行情事件类型，区分 ticker/depth/kline/trade 更新。
     pub fn event_type(&self) -> &str {
         &self.event_type
     }
 
+    /// 返回包含交易对与频道的事件路由键，供内部事件消费者精确订阅。
     pub fn routing_key(&self) -> &str {
         &self.routing_key
     }
 
+    /// 返回幂等键。
     pub fn idempotency_key(&self) -> &str {
         &self.idempotency_key
     }
 
+    /// 返回公开 WebSocket 命名空间；客户端需与 topic 一起使用，不能据此推导内部路由键。
     pub fn public_ws_namespace(&self) -> &str {
         &self.public_ws_namespace
     }
 
+    /// 返回公开 WebSocket 主题，保持移动端与 PC 端现有订阅合同不变。
     pub fn public_ws_topic(&self) -> &str {
         &self.public_ws_topic
     }
 
+    /// 返回行情载荷。
     pub fn payload(&self) -> &Value {
         &self.payload
     }

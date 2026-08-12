@@ -1,5 +1,7 @@
 use super::*;
 
+/// 读取兼容默认 SMTP 配置并映射为不含密文的可选后台响应。
+/// 无配置返回 None 而非未找到；查询不加锁或解密凭据，连接池、模板 JSON 或 SQL 失败返回错误。
 pub(crate) async fn get_admin_smtp_config(
     pool: Option<Pool<MySql>>,
 ) -> AppResult<Option<SmtpConfigResponse>> {
@@ -9,6 +11,8 @@ pub(crate) async fn get_admin_smtp_config(
         .map(smtp_config_response))
 }
 
+/// 读取全部 SMTP 配置及当前投递策略，映射为掩码化配置列表和策略响应。
+/// 配置与策略通过独立只读查询获取，不共享事务快照；不会解密凭据或发送测试邮件。
 pub(crate) async fn list_admin_smtp_configs(
     pool: Option<Pool<MySql>>,
 ) -> AppResult<SmtpConfigListResponse> {
@@ -26,6 +30,8 @@ pub(crate) async fn list_admin_smtp_configs(
     })
 }
 
+/// 校验新的命名 SMTP 配置并加密凭据，在确认名称未占用后创建配置及管理员审计。
+/// 配置与审计共用事务；名称冲突、密钥缺失或加密/数据库失败会回滚且不发送邮件。
 pub(crate) async fn create_admin_smtp_config(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -77,6 +83,8 @@ pub(crate) async fn create_admin_smtp_config(
     Ok(smtp_config_response(after))
 }
 
+/// 锁定指定 SMTP 配置，校验名称与字段并替换新凭据或保留空缺字段对应的已有密文。
+/// 配置和审计共用事务；记录缺失、名称冲突、加密或 SQL 失败整体回滚且不发送邮件。
 pub(crate) async fn update_admin_smtp_config(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -132,6 +140,8 @@ pub(crate) async fn update_admin_smtp_config(
     Ok(smtp_config_response(after))
 }
 
+/// 创建或更新兼容的默认 SMTP 配置，空凭据字段保留已有密文并返回脱敏配置响应。
+/// 默认配置写入和审计共用事务；密钥缺失、加密或 SQL 失败整体回滚且不发送邮件。
 pub(crate) async fn save_admin_smtp_config(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -183,6 +193,8 @@ pub(crate) async fn save_admin_smtp_config(
     Ok(smtp_config_response(after))
 }
 
+/// 校验并保存 SMTP 发信选择策略，在锁定策略行后保留或重置轮询游标并记录审计。
+/// 策略与审计在同一事务提交；非法策略或数据库失败整体回滚，不会在此入口发送邮件。
 pub(crate) async fn save_admin_smtp_delivery_settings(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -212,6 +224,8 @@ pub(crate) async fn save_admin_smtp_delivery_settings(
     Ok(smtp_delivery_settings_response(after))
 }
 
+/// 校验测试收件人，并按可选配置编号选择 SMTP 配置后发送一封真实测试邮件。
+/// 可选连接池和邮件发送器必须已配置；本包装函数不持有数据库事务，重复调用会重复投递，具体配置选择、审计和失败结果由内部发送流程返回。
 pub(crate) async fn send_admin_smtp_test(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -225,6 +239,8 @@ pub(crate) async fn send_admin_smtp_test(
     send_admin_smtp_test_with_sender(&pool, admin_id, key, sender.as_ref(), request).await
 }
 
+/// 使用调用方提供的邮件发送器校验收件人、加载指定或当前 SMTP 配置并发送真实测试邮件。
+/// 指定 config_id 时读取该配置，否则按发信策略选择并可能在内部事务推进轮询游标；随后解密凭据并执行不可幂等的外部投递，配置缺失、解密或发送失败返回错误。
 pub(crate) async fn send_admin_smtp_test_with_sender(
     pool: &Pool<MySql>,
     admin_id: u64,
@@ -283,6 +299,8 @@ pub(crate) async fn send_admin_smtp_test_with_sender(
     })
 }
 
+/// 选择并解密一个已启用 SMTP 配置，返回邮件基础设施可直接使用的可选发信参数。
+/// 无可用配置返回 None；读取不加锁，但可能使用密钥解密敏感字段，失败不发送邮件也不推进轮询游标。
 pub(crate) async fn load_enabled_admin_smtp_config(
     pool: &Pool<MySql>,
     key: Option<&str>,
@@ -290,6 +308,8 @@ pub(crate) async fn load_enabled_admin_smtp_config(
     load_enabled_admin_smtp_email_config(pool, key).await
 }
 
+/// 读取默认上传配置并映射为仅含凭据掩码和“是否已设置”标记的可选后台响应。
+/// 无配置返回 None；查询不加锁、不解密密钥或访问存储端，SQL/JSON 解码失败返回错误。
 pub(crate) async fn get_admin_upload_config(
     pool: Option<Pool<MySql>>,
 ) -> AppResult<Option<UploadConfigResponse>> {
@@ -299,6 +319,8 @@ pub(crate) async fn get_admin_upload_config(
         .map(admin_upload_config_response))
 }
 
+/// 校验上传提供商、容量、MIME 和端点约束，并加密或按目标不变规则保留已有访问凭据。
+/// 锁定配置后将新配置与审计同事务提交；目标变化却未提供新密钥、校验或加密失败均会回滚。
 pub(crate) async fn save_admin_upload_config(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -417,6 +439,8 @@ pub(crate) async fn save_admin_upload_config(
     Ok(admin_upload_config_response(after))
 }
 
+/// 使用当前启用上传配置保存后台管理员图片，并记录管理员归属、大小、MIME 和对象地址。
+/// 包装函数解析后台连接池后把 owner 固定为管理员；对象存储写入先于元数据落库，重复调用会生成新对象，失败语义沿用通用上传流程。
 pub(crate) async fn upload_admin_image(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -427,6 +451,8 @@ pub(crate) async fn upload_admin_image(
     upload_image_for_owner(&pool, UploadObjectOwner::Admin(admin_id), key, input).await
 }
 
+/// 校验文件后按指定管理员或用户归属上传图片，并将返回地址与对象元数据持久化。
+/// 先无锁读取启用配置并执行事务外、非幂等的存储上传，再独立插入 upload_objects；配置/校验/上传失败不落库，元数据插入失败时已上传对象不会在此补偿删除。
 pub(crate) async fn upload_image_for_owner(
     pool: &Pool<MySql>,
     owner: UploadObjectOwner,
@@ -457,6 +483,8 @@ pub(crate) async fn upload_image_for_owner(
     Ok(response)
 }
 
+/// 按规范化国家代码、状态和注册开关筛选国家配置，并返回语言集合的分页结果与总数。
+/// 非空代码和状态使用写入同款校验，分页统一裁剪；查询不锁配置或改变注册策略。
 pub(crate) async fn list_admin_countries(
     pool: &Pool<MySql>,
     query: AdminCountriesQuery,
@@ -485,6 +513,10 @@ pub(crate) async fn list_admin_countries(
     Ok(AdminCountriesResponse { countries, total })
 }
 
+/// 创建国家注册与语言配置，并返回数据库生成 ID 和时间戳后的完整国家响应。
+/// 国家代码、名称、备注、默认/支持语言及可选状态须合法；状态和排序分别缺省为 active 与 0，权限由调用方保证。
+/// 事务不锁其他业务行，依次插入国家、回读和写 after 审计；国家代码唯一冲突或任一步失败整体回滚。
+/// 创建无幂等键，且不会迁移既有用户或刷新外部地域服务。
 pub(crate) async fn create_admin_country(
     pool: &Pool<MySql>,
     admin_id: u64,
@@ -537,6 +569,10 @@ pub(crate) async fn create_admin_country(
     Ok(country)
 }
 
+/// 更新国家名称、备注、语言集合、注册开关和排序，并返回最终国家配置。
+/// 请求须提供审计原因；国家代码和状态不在此用例修改，缺省排序沿用锁定旧值。
+/// 事务先锁国家，再覆盖配置、回读并写 before/after 审计；记录缺失或 SQL 失败整体回滚。
+/// 相同配置重放仍新增审计，不修改已注册用户的语言选择。
 pub(crate) async fn update_admin_country(
     pool: &Pool<MySql>,
     admin_id: u64,
@@ -584,6 +620,10 @@ pub(crate) async fn update_admin_country(
     Ok(after)
 }
 
+/// 单独切换国家 active/disabled 状态，并返回更新后的完整国家配置。
+/// 请求须含支持的状态和审计原因；本函数不检查该国家已有用户或进行迁移。
+/// 事务先锁国家，再更新状态、回读并写 before/after 审计；缺失或数据库失败整体回滚。
+/// 相同状态重放仍产生审计，注册读取端会在后续请求中观察新状态。
 pub(crate) async fn update_admin_country_status(
     pool: &Pool<MySql>,
     admin_id: u64,
@@ -615,6 +655,8 @@ pub(crate) async fn update_admin_country_status(
     Ok(after)
 }
 
+/// 通过平台上下文读取后台品牌名称、Logo 等权威配置并返回平台响应。
+/// 本用例只委托跨上下文只读查询，不加锁或写后台审计；底层缺省/失败语义原样返回。
 pub(crate) async fn get_admin_platform_brand(
     pool: Option<Pool<MySql>>,
 ) -> AppResult<PlatformBrandResponse> {
@@ -622,6 +664,8 @@ pub(crate) async fn get_admin_platform_brand(
     load_platform_brand_from_platform(&pool).await
 }
 
+/// 校验并保存平台品牌名称、Logo 与主题配置，返回公开品牌配置所使用的同一份规范化结果。
+/// 持久化和审计边界由平台配置用例负责；输入或数据库失败不产生部分更新，本入口无外部 I/O。
 pub(crate) async fn save_admin_platform_brand(
     pool: Option<Pool<MySql>>,
     admin_id: u64,

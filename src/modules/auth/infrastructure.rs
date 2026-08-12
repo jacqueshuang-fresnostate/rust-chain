@@ -8,7 +8,8 @@ use crate::{
     modules::{
         auth::{
             ActiveCountryConfig, ActorType, AuthActor, NewAdminActor, NewAgentActor, NewUserActor,
-            RefreshTokenRecord, StoredActorCredential, StoredRefreshToken,
+            ProjectRefreshTokenRepository, RefreshTokenRecord, StoredActorCredential,
+            StoredProjectRefreshToken, StoredRefreshToken, TokenScope,
             domain::{
                 LOGIN_FAILURE_LIMIT, LOGIN_FAILURE_WINDOW_SECONDS, LOGIN_LOCKOUT_SECONDS,
                 normalize_invite_code, validate_email_code,
@@ -21,13 +22,17 @@ use crate::{
 };
 use axum::async_trait;
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
-use serde::Deserialize;
+use redis::AsyncCommands;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::{MySql, Pool, Transaction};
 use std::time::Duration as StdDuration;
 
 pub(crate) const CF_TURNSTILE_SITEVERIFY_URL: &str =
     "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 pub(crate) const TURNSTILE_VERIFY_TIMEOUT: StdDuration = StdDuration::from_secs(5);
+const REDIS_REFRESH_PREFIX: &str = "exchange:auth:refresh:";
+const REDIS_REFRESH_ACTOR_PREFIX: &str = "exchange:auth:refresh_actor:";
 
 #[derive(Debug, Deserialize)]
 struct CfTurnstileVerifyResponse {
@@ -37,7 +42,133 @@ struct CfTurnstileVerifyResponse {
     hostname: Option<String>,
 }
 
-/// 调用 Cloudflare Siteverify 适配器：保持 5 秒超时、`remoteip` 表单字段及原有错误 code/message 合同。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RedisRefreshTokenRecord {
+    actor_type: String,
+    actor_id: u64,
+    user_id: Option<u64>,
+    scope: TokenScope,
+    expires_at: i64,
+}
+
+#[derive(Clone)]
+/// Redis 项目刷新令牌适配器，维护令牌摘要键、主体索引集合与各自 TTL。
+///
+/// 适配器永不持久化原始刷新令牌；主体索引用于密码修改或人工登出时批量撤销会话，
+/// 所有网络及序列化错误均向上转换为统一 `AppResult`。
+pub struct RedisProjectRefreshTokenRepository {
+    manager: redis::aio::ConnectionManager,
+}
+
+impl InfrastructureLayer for RedisProjectRefreshTokenRepository {}
+
+impl RedisProjectRefreshTokenRepository {
+    /// 使用已经建立的 Redis 连接管理器创建适配器，不在构造期间发起网络请求。
+    pub fn new(manager: redis::aio::ConnectionManager) -> Self {
+        Self { manager }
+    }
+}
+
+#[async_trait]
+impl ProjectRefreshTokenRepository for RedisProjectRefreshTokenRepository {
+    /// 依次写入令牌摘要记录、主体索引集合及两者 TTL，原始刷新令牌不入库。
+    ///
+    /// 三条 Redis 命令未使用事务或 Lua；中途失败会上抛，但先前已写的令牌键或索引可能保留至 TTL 到期。
+    /// 调用方不得在该方法返回错误时向客户端交付刷新令牌。
+    async fn store_project_refresh_token(&self, token: StoredProjectRefreshToken) -> AppResult<()> {
+        let key = refresh_token_key(&token.refresh_token);
+        let actor_key = refresh_actor_key(token.actor_type, token.actor_id);
+        let record = RedisRefreshTokenRecord {
+            actor_type: token.actor_type.as_str().to_owned(),
+            actor_id: token.actor_id,
+            user_id: token.user_id,
+            scope: token.scope,
+            expires_at: token.expires_at.timestamp(),
+        };
+        let value = serde_json::to_string(&record).map_err(|error| {
+            AppError::Internal(format!("failed to encode refresh token: {error}"))
+        })?;
+        let ttl = (token.expires_at - Utc::now()).num_seconds().max(1) as u64;
+        let mut redis = self.manager.clone();
+
+        redis.set_ex::<_, _, ()>(&key, value, ttl).await?;
+        redis.sadd::<_, _, ()>(&actor_key, &key).await?;
+        redis.expire::<_, ()>(&actor_key, ttl as i64).await?;
+        Ok(())
+    }
+
+    /// 根据原始令牌计算不可逆摘要键并读取主体快照，过期记录按未命中处理。
+    ///
+    /// 内容损坏会返回未授权而非内部结构细节，防止异常缓存数据扩大为信息泄露。
+    async fn find_project_refresh_token(
+        &self,
+        refresh_token: &str,
+        now: DateTime<Utc>,
+    ) -> AppResult<Option<RefreshTokenRecord>> {
+        let mut redis = self.manager.clone();
+        let Some(value) = redis
+            .get::<_, Option<String>>(refresh_token_key(refresh_token))
+            .await?
+        else {
+            return Ok(None);
+        };
+        let record: RedisRefreshTokenRecord =
+            serde_json::from_str(&value).map_err(|_| AppError::Unauthorized)?;
+        if record.expires_at <= now.timestamp() {
+            return Ok(None);
+        }
+        let actor_type = ActorType::from_storage(&record.actor_type)?;
+
+        Ok(Some(RefreshTokenRecord {
+            actor_type,
+            actor_id: record.actor_id,
+            user_id: record.user_id,
+            scope: record.scope,
+        }))
+    }
+
+    /// 查询主体索引集合，删除其当前枚举到的令牌键，再删除索引本身。
+    ///
+    /// 操作未使用 Redis 事务，中途失败可留下部分键并上抛；只覆盖成功登记到该索引的刷新令牌，
+    /// 索引缺失时不会扫描全库补偿。空索引的重复撤销返回成功。
+    async fn revoke_actor_refresh_tokens(&self, actor: &AuthActor) -> AppResult<()> {
+        let mut redis = self.manager.clone();
+        let actor_key = refresh_actor_key(actor.actor_type, actor.actor_id);
+        let keys = redis.smembers::<_, Vec<String>>(&actor_key).await?;
+        if !keys.is_empty() {
+            redis.del::<_, ()>(&keys).await?;
+        }
+        redis.del::<_, ()>(actor_key).await?;
+        Ok(())
+    }
+}
+
+fn refresh_token_digest(refresh_token: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(refresh_token.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+fn refresh_token_key(refresh_token: &str) -> String {
+    format!(
+        "{}{}",
+        REDIS_REFRESH_PREFIX,
+        refresh_token_digest(refresh_token)
+    )
+}
+
+fn refresh_actor_key(actor_type: ActorType, actor_id: u64) -> String {
+    format!(
+        "{}{}:{}",
+        REDIS_REFRESH_ACTOR_PREFIX,
+        actor_type.as_str(),
+        actor_id
+    )
+}
+
+/// 向配置的 Siteverify URL 发起表单 POST，发送服务端密钥、客户端令牌与可选 `remoteip`。
+/// 请求固定五秒超时；网络、非成功状态、响应解码及服务方拒绝分别映射安全错误，拒绝信息
+/// 会包含服务方错误码。函数不记录表单值，也不校验返回的 hostname；调用方须保护 URL 与 secret。
 pub(crate) async fn verify_turnstile_site_response(
     siteverify_url: &str,
     secret: &str,
@@ -109,6 +240,7 @@ pub struct MySqlAuthRepository {
 impl InfrastructureLayer for MySqlAuthRepository {}
 
 impl MySqlAuthRepository {
+    /// 用已配置 MySQL 连接池创建认证仓储适配器，构造时不访问数据库。
     pub fn new(pool: Pool<MySql>) -> Self {
         Self { pool }
     }
@@ -519,6 +651,7 @@ impl AuthRepository for MySqlAuthRepository {
     }
 }
 
+/// 按管理员 ID 读取 TOTP 导入链接的账号标签，记录缺失时按未授权处理。
 pub(crate) async fn load_admin_username(pool: &Pool<MySql>, admin_id: u64) -> AppResult<String> {
     sqlx::query_scalar::<_, String>("SELECT username FROM admin_users WHERE id = ? LIMIT 1")
         .bind(admin_id)
@@ -580,6 +713,7 @@ struct ReferralLinkRow {
     path: String,
 }
 
+/// 在注册事务中锁定已启用且允许注册的国家配置，防止创建用户期间配置漂移。
 pub(crate) async fn lock_registration_country_in_tx(
     tx: &mut Transaction<'_, MySql>,
     country_code: &str,
@@ -599,6 +733,7 @@ pub(crate) async fn lock_registration_country_in_tx(
     })
 }
 
+/// 在注册事务中检查邮箱尚未被用户占用，命中时返回冲突而不泄露其他账号字段。
 pub(crate) async fn ensure_registration_email_available_in_tx(
     tx: &mut Transaction<'_, MySql>,
     email: &str,
@@ -614,6 +749,7 @@ pub(crate) async fn ensure_registration_email_available_in_tx(
     Ok(())
 }
 
+/// 检查同一注册邮箱最新待验证码的六十秒发送冷却，冷却内不插入新记录。
 pub(crate) async fn ensure_registration_email_not_cooling_down_in_tx(
     tx: &mut Transaction<'_, MySql>,
     email: &str,
@@ -637,6 +773,7 @@ pub(crate) async fn ensure_registration_email_not_cooling_down_in_tx(
     Ok(())
 }
 
+/// 在发送新注册码前将同邮箱旧待验证记录标记为已取代，重复执行保持幂等。
 pub(crate) async fn supersede_pending_registration_email_codes_in_tx(
     tx: &mut Transaction<'_, MySql>,
     email: &str,
@@ -652,6 +789,7 @@ pub(crate) async fn supersede_pending_registration_email_codes_in_tx(
     Ok(())
 }
 
+/// 在发送事务中插入注册邮件码哈希、过期与发送时间，不持久化明文验证码。
 pub(crate) async fn insert_registration_email_verification_in_tx(
     tx: &mut Transaction<'_, MySql>,
     email: &str,
@@ -787,6 +925,8 @@ pub(crate) async fn prepare_referral_binding_in_tx(
     })
 }
 
+/// 在新用户注册事务中写入已准备的邀请关系，随后原子累加邀请码使用次数。
+/// 路径追加新用户 ID；任一插入或计数失败由注册事务整体回滚，不留半绑定。
 pub(crate) async fn bind_registered_user_referral_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -814,6 +954,8 @@ pub(crate) async fn bind_registered_user_referral_in_tx(
     Ok(())
 }
 
+/// 在注册事务中为新用户生成并插入启用邀请码，唯一冲突最多重试十二次。
+/// 非唯一键 SQL 错误立即上抛；重试用尽返回内部错误，不自行提交用户记录。
 pub(crate) async fn create_user_invite_code_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -841,6 +983,7 @@ pub(crate) async fn create_user_invite_code_in_tx(
     ))
 }
 
+/// 在调用方事务中按用户、邮箱和用途插入待验证码哈希，不保存明文。
 pub(crate) async fn insert_user_email_verification_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -866,6 +1009,7 @@ pub(crate) async fn insert_user_email_verification_in_tx(
     Ok(())
 }
 
+/// 锁定活跃用户已验证邮箱，供验证码发送与后续消费共用一致地址。
 pub(crate) async fn lock_verified_user_email_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -884,6 +1028,7 @@ pub(crate) async fn lock_verified_user_email_in_tx(
     email.ok_or_else(|| AppError::Validation("verified email is required".to_owned()))
 }
 
+/// 检查指定用户、邮箱和用途的六十秒发送冷却，冷却内拒绝新验证码。
 pub(crate) async fn ensure_email_purpose_not_cooling_down_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -911,6 +1056,7 @@ pub(crate) async fn ensure_email_purpose_not_cooling_down_in_tx(
     Ok(())
 }
 
+/// 在发送新码前将同用户同用途旧待验证记录标记已取代，防止旧码重放。
 pub(crate) async fn supersede_pending_email_verifications_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -928,6 +1074,7 @@ pub(crate) async fn supersede_pending_email_verifications_in_tx(
     Ok(())
 }
 
+/// 以 `FOR UPDATE` 锁定用户、邮箱和用途下最新待验证记录，供试码计数与消费原子更新。
 pub(crate) async fn lock_latest_pending_email_verification_by_purpose_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -950,6 +1097,7 @@ pub(crate) async fn lock_latest_pending_email_verification_by_purpose_in_tx(
     .map_err(AppError::from)
 }
 
+/// 按已验证邮箱读取活跃用户 ID 供发送重置码，未命中以统一未注册错误处理。
 pub(crate) async fn load_password_reset_user_id(pool: &Pool<MySql>, email: &str) -> AppResult<u64> {
     sqlx::query_scalar(
         r#"SELECT id
@@ -963,6 +1111,8 @@ pub(crate) async fn load_password_reset_user_id(pool: &Pool<MySql>, email: &str)
     .ok_or_else(|| AppError::Validation("email is not registered".to_owned()))
 }
 
+/// 在注册事务中插入已验证邮箱用户，同时保存国家、语言与密码哈希。
+/// 唯一冲突映射为用户已存在；不自行提交，便于邀请关系和 outbox 同步回滚。
 pub(crate) async fn insert_verified_user_in_tx(
     tx: &mut Transaction<'_, MySql>,
     email: &str,
@@ -988,6 +1138,7 @@ pub(crate) async fn insert_verified_user_in_tx(
     Ok(result.last_insert_id())
 }
 
+/// 在验证事务中累加指定邮件码试错次数，调用方对校验错误仍需提交该计数。
 pub(crate) async fn increment_email_verification_attempt_in_tx(
     tx: &mut Transaction<'_, MySql>,
     verification_id: u64,
@@ -1003,6 +1154,7 @@ pub(crate) async fn increment_email_verification_attempt_in_tx(
     Ok(())
 }
 
+/// 将指定邮件码记录标记为已验证并写入时间，供同事务内后续凭证变更。
 pub(crate) async fn mark_email_verification_verified_in_tx(
     tx: &mut Transaction<'_, MySql>,
     verification_id: u64,
@@ -1020,6 +1172,7 @@ pub(crate) async fn mark_email_verification_verified_in_tx(
     Ok(())
 }
 
+/// 锁定与验证记录一致的活跃已验证邮箱用户，防止重置期间账号状态漂移。
 pub(crate) async fn lock_password_reset_user_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1040,6 +1193,7 @@ pub(crate) async fn lock_password_reset_user_in_tx(
     .ok_or(AppError::Unauthorized)
 }
 
+/// 在已锁定的重置事务中更新用户密码哈希，不自行消费验证码或提交。
 pub(crate) async fn update_user_password_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1053,6 +1207,7 @@ pub(crate) async fn update_user_password_in_tx(
     Ok(())
 }
 
+/// 在重置密码事务中撤销用户全部未撤销 MySQL 刷新令牌，重复执行保持幂等。
 pub(crate) async fn revoke_user_refresh_tokens_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1076,6 +1231,7 @@ fn map_duplicate_key(error: sqlx::Error, actor: &str) -> AppError {
     }
 }
 
+/// 将 MySQL 唯一键冲突映射为用户已存在，其他 SQL 错误保留数据库语义。
 pub(crate) fn map_duplicate_user(error: sqlx::Error) -> AppError {
     if is_duplicate_key(&error) {
         AppError::Conflict("user already exists".to_owned())

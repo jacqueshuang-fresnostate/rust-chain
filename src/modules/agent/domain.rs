@@ -28,7 +28,8 @@ pub(crate) struct AgentHierarchyPlacement {
     pub(crate) path_prefix: Option<String>,
 }
 
-/// 根据父代理推导新代理层级。超级管理员是虚拟 0 级，不写入 agents 表。
+/// 根据可选父代理推导层级、根节点与路径前缀；超级管理员仅是虚拟零级。
+/// 父节点须启用且层级合法，调用方声明层级必须与服务端推导结果一致，本规则不查询代理表。
 pub(crate) fn derive_agent_placement(
     parent: Option<&AgentHierarchyNode>,
     requested_level: Option<i32>,
@@ -73,6 +74,7 @@ pub(crate) fn derive_agent_placement(
     Ok(placement)
 }
 
+/// 将代理主键追加到物化路径，无父节点时生成根路径。
 pub(crate) fn agent_path(path_prefix: Option<&str>, agent_id: u64) -> String {
     match path_prefix {
         Some(prefix) => format!("{prefix}/agent:{agent_id}"),
@@ -80,6 +82,7 @@ pub(crate) fn agent_path(path_prefix: Option<&str>, agent_id: u64) -> String {
     }
 }
 
+/// 判断候选路径是当前节点或真正子路径，避免相同文本前缀造成越权。
 pub(crate) fn is_same_or_descendant_path(scope_path: &str, candidate_path: &str) -> bool {
     candidate_path == scope_path
         || candidate_path
@@ -101,6 +104,8 @@ pub(crate) struct AgentCommissionAllocation {
     pub(crate) commission_amount: BigDecimal,
 }
 
+/// 按直属代理到根代理的累计比例，计算每层实际可分配的差额返佣。
+/// 非正业务基数、倒挂或超过一的比例被跳过；金额先按发放资产精度量化，无持久化副作用。
 pub(crate) fn allocate_differential_agent_commissions(
     tiers_from_owner_to_root: &[AgentCommissionRateTier],
     source_amount: &BigDecimal,

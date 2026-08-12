@@ -34,6 +34,8 @@ pub(crate) struct SpotLedgerMetadata<'a> {
     pub(crate) ref_id: &'a str,
 }
 
+/// 在调用方事务内锁定钱包账户行，固定现货后续校验与写入所依据的并发快照。
+/// 调用方负责稳定锁序及提交回滚；记录缺失或锁失败时不得继续资金和状态写入。
 pub(super) async fn lock_wallet_row(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -115,6 +117,8 @@ pub(crate) async fn apply_spot_wallet_freeze(
     .await
 }
 
+/// 在订单创建事务内将预留金额从可用余额转入冻结余额，并写入对应冻结流水。
+/// 余额不足或流水写入失败会回滚订单与钱包；幂等重放不得再次冻结资金。
 pub(crate) async fn freeze_wallet_for_inserted_order_in_tx(
     tx: &mut Transaction<'_, MySql>,
     order: &SpotOrder,
@@ -136,6 +140,8 @@ pub(crate) async fn freeze_wallet_for_inserted_order_in_tx(
     .await
 }
 
+/// 在成交事务内按用户与资产稳定顺序锁定双方钱包，固定结算前余额并防止并发透支。
+/// 锁取失败即回滚；调用方须在同一事务写余额、流水、成交与订单状态。
 pub(crate) async fn lock_spot_fill_wallet_rows_in_order(
     tx: &mut Transaction<'_, MySql>,
     buyer_id: u64,
@@ -216,6 +222,8 @@ pub(crate) async fn apply_spot_wallet_settlement_leg(
     .await
 }
 
+/// 校验做市账户的现货基础设施适配逻辑，保持存储或外部协议的既有边界。
+/// 在成交事务内幂等补齐内部做市用户，唯一约束阻止并发重复账户。
 pub(crate) async fn ensure_spot_liquidity_user_in_tx(
     tx: &mut Transaction<'_, MySql>,
 ) -> AppResult<u64> {
@@ -241,6 +249,8 @@ pub(crate) async fn ensure_spot_liquidity_user_in_tx(
     Ok(user_id)
 }
 
+/// 校验钱包账户的现货基础设施适配逻辑，保持存储或外部协议的既有边界。
+/// 在成交事务内幂等补齐零余额钱包，实际库存变更仍须锁行并写流水。
 pub(crate) async fn ensure_wallet_account_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -258,6 +268,7 @@ pub(crate) async fn ensure_wallet_account_in_tx(
 }
 
 /// 系统做市成交只能消费后台预充值库存，禁止在成交路径自动增加资产。
+/// 调用方已按稳定顺序持有钱包锁；补齐与成交同事务提交，失败不留下孤立资金变更。
 pub(crate) async fn ensure_spot_liquidity_inventory_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -275,6 +286,8 @@ pub(crate) async fn ensure_spot_liquidity_inventory_in_tx(
     Ok(())
 }
 
+/// 成交后释放买单因参考价高于实际成交价形成的剩余预留，并同步追加解冻流水。
+/// 仅处理正的剩余金额；调用方事务失败时余额、流水与成交状态全部回滚。
 pub(crate) async fn release_buy_order_surplus_reservation_after_fill(
     tx: &mut Transaction<'_, MySql>,
     buyer_id: u64,

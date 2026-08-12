@@ -1,5 +1,7 @@
 use super::*;
 
+/// 按规范化符号、资产类型和状态筛选资产，并返回 Logo、精度、充提规则和阶梯费的分页结果与总数。
+/// 非空筛选执行写入同款校验，分页统一裁剪；查询不锁资产或聚合钱包余额。
 pub(crate) async fn list_admin_assets(
     pool: Option<Pool<MySql>>,
     query: AdminAssetQuery,
@@ -34,6 +36,8 @@ pub(crate) async fn list_admin_assets(
     Ok(AdminAssetsResponse { assets, total })
 }
 
+/// 按资产 ID 读取符号、精度、类型、状态、充提开关、费用和阶梯费完整配置。
+/// 查询不加资产锁；记录缺失返回未找到，SQL/JSON 解码失败返回错误，不读取任何用户余额。
 pub(crate) async fn get_admin_asset(
     pool: Option<Pool<MySql>>,
     asset_id: u64,
@@ -42,6 +46,10 @@ pub(crate) async fn get_admin_asset(
     load_admin_asset_from_store(&pool, asset_id).await
 }
 
+/// 创建资产并为所有现有用户初始化该资产的钱包账户，返回最终资产配置。
+/// 请求须提供合法符号、名称、0～18 精度和非负费用；类型/状态/充提开关缺省为 coin/active/true，权限由调用方保证。
+/// 事务依次插入资产、回读、批量创建缺失钱包账户和写 after 审计；唯一键或任一步失败整体回滚。
+/// 本用例无幂等键，重复请求依赖资产唯一约束失败；不会生成余额流水或外部链上资产。
 pub(crate) async fn create_admin_asset(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -114,6 +122,10 @@ pub(crate) async fn create_admin_asset(
     Ok(asset)
 }
 
+/// 更新资产展示、精度、类型、状态、充提开关和费用规则，并返回最终配置。
+/// 请求须提供审计原因；未给出的充提开关、金额和阶梯费沿用锁定旧值，符号不可修改。
+/// 事务先锁资产，再合并可选字段、校验最终费用、更新、回读并写 before/after 审计；失败整体回滚。
+/// 相同配置重放仍写审计；变更精度不会重算钱包余额，禁用也不会撤销在途充提请求。
 pub(crate) async fn update_admin_asset(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -183,6 +195,10 @@ pub(crate) async fn update_admin_asset(
     Ok(after)
 }
 
+/// 删除已停用且无业务引用的资产，并清理该资产所有零余额钱包账户。
+/// 请求须提供审计原因；事务先锁资产并要求 status=disabled，再删除零余额账户、检查剩余引用、删除资产并写 before 审计。
+/// 非零钱包或其他引用会阻止删除；检查、清理、资产删除和审计任一步失败均整体回滚，不会留下部分账户清理。
+/// 删除不具幂等性，成功后重放返回未找到；本函数不删除链上数据或上传的 Logo 对象。
 pub(crate) async fn delete_admin_asset(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -220,6 +236,8 @@ pub(crate) async fn delete_admin_asset(
     Ok(())
 }
 
+/// 按用户、邮箱和资产筛选钱包账户，并可选择包含空余额账户和内部用户，返回分页余额与总数。
+/// 两个 include 开关缺省 false，查询不锁钱包或计算跨页合计；读取期间余额可被并发交易更新。
 pub(crate) async fn list_admin_wallet_accounts(
     pool: Option<Pool<MySql>>,
     query: AdminWalletAccountQuery,
@@ -241,6 +259,8 @@ pub(crate) async fn list_admin_wallet_accounts(
     Ok(AdminWalletAccountsResponse { accounts, total })
 }
 
+/// 按用户、邮箱、资产、变更类型和引用类型筛选钱包流水，并可包含内部用户记录。
+/// 返回当前页和同组谓词总数；查询不锁钱包、补写流水或重算余额，分页统一裁剪。
 pub(crate) async fn list_admin_wallet_ledger(
     pool: Option<Pool<MySql>>,
     query: AdminWalletLedgerQuery,
@@ -263,6 +283,8 @@ pub(crate) async fn list_admin_wallet_ledger(
     Ok(AdminWalletLedgerResponseList { ledger, total })
 }
 
+/// 按规范化网络、地址组、状态和资产符号筛选充值网络配置，并返回分页结果与总数。
+/// 非空筛选执行写入同款格式校验；查询不锁配置或地址池，也不探测链上网络状态。
 pub(crate) async fn list_admin_deposit_network_configs(
     pool: Option<Pool<MySql>>,
     query: AdminDepositNetworkConfigQuery,
@@ -418,6 +440,8 @@ pub(crate) async fn update_admin_deposit_network_config(
     Ok(after)
 }
 
+/// 按网络、地址组、状态、资产、分配用户、邮箱和地址文本筛选充值地址池，并返回分页结果与总数。
+/// 网络/组/状态/资产筛选先规范化，地址和邮箱仅作为查询条件；读取不锁地址，分配状态可能并发变化。
 pub(crate) async fn list_admin_deposit_address_pool(
     pool: Option<Pool<MySql>>,
     query: AdminDepositAddressPoolQuery,
@@ -462,6 +486,8 @@ pub(crate) async fn list_admin_deposit_address_pool(
     Ok(AdminDepositAddressPoolResponseList { addresses, total })
 }
 
+/// 按地址池 ID 读取网络、地址组、允许资产、当前分配用户、状态和备注详情。
+/// 查询不加 `FOR UPDATE`；记录缺失返回未找到，数据库失败不分配、回收或验证链上地址。
 pub(crate) async fn get_admin_deposit_address_pool(
     pool: Option<Pool<MySql>>,
     address_id: u64,
@@ -659,6 +685,8 @@ pub(crate) async fn update_admin_deposit_address_pool(
     Ok(after)
 }
 
+/// 校验回收原因并锁定充值地址池记录，仅将符合占用状态的地址恢复为可分配状态。
+/// 状态变更与审计在同一事务提交；状态不允许、记录缺失或数据库失败会回滚且不迁移链上资产。
 pub(crate) async fn reclaim_admin_deposit_address_pool(
     pool: Option<Pool<MySql>>,
     admin_id: u64,

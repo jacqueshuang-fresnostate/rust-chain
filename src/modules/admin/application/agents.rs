@@ -1,6 +1,8 @@
 use super::*;
 use crate::modules::auth::domain::login_failure_key;
 
+/// 按代理/用户/父级/根代理/层级、代理码、邮箱和状态筛选代理，并返回当前页与匹配总数。
+/// 代理码和状态会去除空白，limit 裁剪到 1～100、offset 上限 100000；查询不加锁也不写审计。
 pub(crate) async fn list_admin_agents(
     pool: Option<Pool<MySql>>,
     query: AdminAgentQuery,
@@ -25,6 +27,8 @@ pub(crate) async fn list_admin_agents(
     Ok(AdminAgentsResponse { agents, total })
 }
 
+/// 按代理 ID 读取层级、团队统计和门户账号信息组成的后台代理详情。
+/// 查询使用连接池且不加锁；代理不存在返回未找到，SQL 或聚合映射失败直接返回错误，不改变登录状态。
 pub(crate) async fn get_admin_agent(
     pool: Option<Pool<MySql>>,
     agent_id: u64,
@@ -33,6 +37,10 @@ pub(crate) async fn get_admin_agent(
     load_admin_agent_from_store(&pool, agent_id).await
 }
 
+/// 创建代理主记录和门户账号，完成层级放置后返回包含路径及账号状态的代理快照。
+/// 调用方提供已鉴权管理员 ID；请求须含用户、代理码、门户用户名及密码，父代理存在时按其 ID 加锁并要求 active。
+/// 事务依次确认用户、锁父代理、插入代理、回填根节点/路径、插入门户账号、回读并写审计；唯一键或任一步失败整体回滚。
+/// 本用例没有请求幂等键，重复创建依赖数据库唯一约束报错；提交后不发布事件或操作外部会话。
 pub(crate) async fn create_admin_agent(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -104,6 +112,10 @@ pub(crate) async fn create_admin_agent(
     Ok(after)
 }
 
+/// 更新代理及其全部门户账号的目标状态，并返回同步后的代理快照。
+/// 调用方提供管理员 ID；状态只接受 active、suspended 或 disabled，本函数不执行权限判断。
+/// 事务先锁代理行，再更新代理主表、批量同步门户账号、回读并写 before/after 审计；记录缺失或 SQL 失败整体回滚。
+/// 相同状态重放仍会执行更新并新增审计，不撤销现有登录会话。
 pub(crate) async fn update_admin_agent_status(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -195,6 +207,8 @@ pub(crate) async fn reset_admin_agent_password(
     })
 }
 
+/// 确认代理存在后分页读取其路径覆盖的团队用户，并返回用户列表与匹配总数。
+/// 两次查询不共享事务快照，分页限制为 1～100、offset 最大 100000；代理缺失或任一查询失败返回错误。
 pub(crate) async fn list_admin_agent_users(
     pool: Option<Pool<MySql>>,
     agent_id: u64,
@@ -212,6 +226,8 @@ pub(crate) async fn list_admin_agent_users(
     Ok(AdminAgentUsersResponse { users, total })
 }
 
+/// 把用户改派到指定启用代理，并重算该用户及其后代邀请路径、深度和根代理归属。
+/// 用户、目标代理、原邀请关系与审计同事务锁定和写入；任一步失败整体回滚，重复改派仍会产生审计。
 pub(crate) async fn assign_admin_user_agent(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -281,6 +297,8 @@ pub(crate) async fn assign_admin_user_agent(
     Ok(after)
 }
 
+/// 按代理、产品类型和状态筛选佣金规则，并返回费率规则当前页与匹配总数。
+/// 产品类型和状态只去空白而不在此枚举校验，分页执行统一裁剪；查询不锁规则，也不触发佣金计算。
 pub(crate) async fn list_admin_agent_commission_rules(
     pool: Option<Pool<MySql>>,
     query: AdminAgentCommissionRuleQuery,
@@ -302,6 +320,10 @@ pub(crate) async fn list_admin_agent_commission_rules(
     Ok(AdminAgentCommissionRulesResponse { rules, total })
 }
 
+/// 为指定代理创建产品佣金规则，并返回数据库保存的费率、状态和时间戳。
+/// 请求须含有效代理 ID、受支持产品、0～1 费率和审计原因；缺省状态为 active，管理员权限由调用方保证。
+/// 应用事务先确认代理存在，再插入规则、回读和写审计；唯一规则冲突或数据库失败整体回滚。
+/// 本用例无幂等键，重复请求不会复用旧规则，也不立即结算历史佣金。
 pub(crate) async fn create_admin_agent_commission_rule(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -352,6 +374,10 @@ pub(crate) async fn create_admin_agent_commission_rule(
     Ok(after)
 }
 
+/// 局部更新代理佣金规则的费率或启停状态，并返回锁后写入的最终快照。
+/// 请求必须提供审计原因；费率若出现须位于 0～1，状态若出现仅接受 active/disabled，空更新仍按底层 SQL 语义执行。
+/// 事务先锁规则，再更新可选字段、回读并写 before/after 审计；记录缺失或任一步失败整体回滚。
+/// 成功重放会再次产生审计，不追溯重算已经生成的佣金。
 pub(crate) async fn update_admin_agent_commission_rule(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -400,6 +426,8 @@ pub(crate) async fn update_admin_agent_commission_rule(
     Ok(after)
 }
 
+/// 按代理、用户、邮箱和状态筛选已生成佣金，并返回来源金额与佣金金额的分页结果和总数。
+/// 状态仅去除空白，分页限制为 1～100 且 offset 最大 100000；查询不锁定待结算佣金或修改钱包。
 pub(crate) async fn list_admin_agent_commissions(
     pool: Option<Pool<MySql>>,
     query: AdminAgentCommissionQuery,
@@ -421,6 +449,8 @@ pub(crate) async fn list_admin_agent_commissions(
     Ok(AdminAgentCommissionsResponse { commissions, total })
 }
 
+/// 校验单笔代理佣金目标状态并委托状态迁移用例，管理员身份与原因用于生成后台审计。
+/// 底层事务会锁定佣金并在结算时同步余额和流水；非 pending、记录缺失或数据库失败会返回错误。
 pub(crate) async fn update_admin_agent_commission_status(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -439,6 +469,8 @@ pub(crate) async fn update_admin_agent_commission_status(
     .await
 }
 
+/// 批量校验佣金编号和目标状态，并逐条调用单笔代理佣金状态用例汇总成功与失败结果。
+/// 每条记录使用独立事务，单条失败不回滚其他结果；重放已处理佣金会得到冲突而不会重复入账。
 pub(crate) async fn update_admin_agent_commission_statuses(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -475,6 +507,8 @@ pub(crate) async fn update_admin_agent_commission_statuses(
     Ok(AdminAgentCommissionBatchStatusResponse { results })
 }
 
+/// 锁定待处理代理佣金并执行结算或拒绝；结算时把佣金金额记入代理用户钱包并更新状态。
+/// 钱包余额、流水、状态与可选审计共用同一事务；仅允许从 pending 转移，重放不会二次入账。
 pub(crate) async fn apply_admin_agent_commission_status(
     pool: &Pool<MySql>,
     admin_id: Option<u64>,

@@ -76,6 +76,7 @@ impl From<AdminTwoFactorSettingsRow> for AdminTwoFactorSettings {
     }
 }
 
+/// 读取用户安全策略 JSON，通过领域解码兼容历史布尔值，缺失时返回安全默认。
 pub async fn load_security_policy(pool: &Pool<MySql>) -> AppResult<UserSecurityPolicy> {
     let policy = sqlx::query_scalar::<_, SqlxJson<Value>>(
         r#"SELECT policy_value
@@ -93,6 +94,8 @@ pub async fn load_security_policy(pool: &Pool<MySql>) -> AppResult<UserSecurityP
         .map(|policy| policy.unwrap_or_default())
 }
 
+/// 将规范安全策略序列化为 JSON 并按固定键幂等写入，不保留历史非布尔表示。
+/// 本函数使用单语句提交；序列化或 SQL 失败时不返回虚假成功。
 pub async fn save_security_policy(
     pool: &Pool<MySql>,
     policy: &UserSecurityPolicy,
@@ -114,6 +117,8 @@ pub async fn save_security_policy(
     Ok(())
 }
 
+/// 读取用户二次验证设置，未建立记录时返回未绑定默认快照。
+/// 命中记录会包含加密 TOTP 密钥，只可交给安全应用层解密，禁止直接序列化到响应或日志。
 pub async fn load_user_two_factor(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -134,6 +139,8 @@ pub async fn load_user_two_factor(
         .unwrap_or_else(|| UserTwoFactorSettings::empty(user_id)))
 }
 
+/// 以 upsert 保存用户待确认的加密 TOTP 密钥，并清除启用标志、登录 2FA 开关及时间快照。
+/// 输入必须已由应用层加密；若对已绑定用户直接调用也会关闭原绑定，故调用方须先执行未绑定策略检查。
 pub async fn save_pending_totp_secret(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -158,6 +165,8 @@ pub async fn save_pending_totp_secret(
     Ok(())
 }
 
+/// 在动态码已由应用层验证后，以 upsert 写入所给密文并启用用户 TOTP。
+/// SQL 不比较数据库中的待确认密钥，也不检查受影响行数；读取后发生并发替换时，后写请求可覆盖新密钥。
 pub async fn confirm_user_totp(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -181,6 +190,8 @@ pub async fn confirm_user_totp(
     Ok(())
 }
 
+/// 仅对当前 `totp_enabled = TRUE` 的用户切换登录二次验证开关。
+/// SQL 不检查受影响行数；用户不存在或未绑定时返回成功但不修改记录，调用方须先做状态校验。
 pub async fn set_user_login_two_factor(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -199,6 +210,7 @@ pub async fn set_user_login_two_factor(
     Ok(())
 }
 
+/// 幂等清除用户 TOTP 密钥、启用标志与时间快照，同时关闭登录二次验证。
 pub async fn reset_user_two_factor(pool: &Pool<MySql>, user_id: u64) -> AppResult<()> {
     sqlx::query(
         r#"INSERT INTO user_two_factor_settings
@@ -218,6 +230,8 @@ pub async fn reset_user_two_factor(pool: &Pool<MySql>, user_id: u64) -> AppResul
     Ok(())
 }
 
+/// 为用户创建 UUIDv7 登录或首次绑定挑战，固定五分钟有效且初始未消费。
+/// 每次调用会新增记录；唯一键或 SQL 失败直接上抛，不签发任何会话。
 pub async fn create_login_two_factor_challenge(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -244,6 +258,7 @@ pub async fn create_login_two_factor_challenge(
     })
 }
 
+/// 按挑战 ID 读取用户、类型、过期与消费状态，未命中按挑战过期处理。
 pub async fn load_login_two_factor_challenge(
     pool: &Pool<MySql>,
     challenge_id: &str,
@@ -268,6 +283,8 @@ pub async fn load_login_two_factor_challenge(
     })
 }
 
+/// 条件更新用户登录挑战的消费时间，仅匹配尚未消费的记录。
+/// 本函数不检查受影响行数，挑战不存在或重复消费也返回成功；需要严格防重放的调用方须自行判定。
 pub async fn consume_login_two_factor_challenge(
     pool: &Pool<MySql>,
     challenge_id: &str,
@@ -284,6 +301,8 @@ pub async fn consume_login_two_factor_challenge(
     Ok(())
 }
 
+/// 读取管理员二次验证设置，无记录时返回未绑定默认快照。
+/// 命中记录含加密 TOTP 密钥，仅供当前管理员安全用例使用，不得透传到管理端 DTO。
 pub async fn load_admin_two_factor(
     pool: &Pool<MySql>,
     admin_id: u64,
@@ -303,6 +322,8 @@ pub async fn load_admin_two_factor(
         .unwrap_or_else(|| AdminTwoFactorSettings::empty(admin_id)))
 }
 
+/// 以 upsert 保存管理员待确认的加密 TOTP 密钥，并清除原启用标志及时间快照。
+/// 若绕过应用层未绑定检查直接调用，会关闭已有绑定；输入密文不得写入日志或响应。
 pub async fn save_pending_admin_totp_secret(
     pool: &Pool<MySql>,
     admin_id: u64,
@@ -326,6 +347,8 @@ pub async fn save_pending_admin_totp_secret(
     Ok(())
 }
 
+/// 在验证码已由应用层验证后，以 upsert 写入所给密文并启用管理员 TOTP。
+/// SQL 不比较当前待确认密钥且不检查受影响行数，不能单独防止读取后的并发覆盖；本函数不签发令牌。
 pub async fn confirm_admin_totp(
     pool: &Pool<MySql>,
     admin_id: u64,
@@ -349,6 +372,7 @@ pub async fn confirm_admin_totp(
     Ok(())
 }
 
+/// 幂等清除管理员 TOTP 密钥、启用标志及验证时间，已清除时重复调用不报错。
 pub async fn reset_admin_two_factor(pool: &Pool<MySql>, admin_id: u64) -> AppResult<()> {
     sqlx::query(
         r#"INSERT INTO admin_two_factor_settings
@@ -367,6 +391,8 @@ pub async fn reset_admin_two_factor(pool: &Pool<MySql>, admin_id: u64) -> AppRes
     Ok(())
 }
 
+/// 记录管理员最后一次 TOTP 校验通过时间，不更改密钥或启用状态。
+/// SQL 不检查受影响行数；记录缺失或被并发清除时也返回成功且不补建设置。
 pub async fn record_admin_totp_verified(pool: &Pool<MySql>, admin_id: u64) -> AppResult<()> {
     sqlx::query(
         r#"UPDATE admin_two_factor_settings
@@ -380,6 +406,7 @@ pub async fn record_admin_totp_verified(pool: &Pool<MySql>, admin_id: u64) -> Ap
     Ok(())
 }
 
+/// 为管理员密码验证后创建五分钟 TOTP 挑战，尝试次数初始为零且每次调用新增记录。
 pub async fn create_admin_login_two_factor_challenge(
     pool: &Pool<MySql>,
     admin_id: u64,
@@ -403,6 +430,7 @@ pub async fn create_admin_login_two_factor_challenge(
     })
 }
 
+/// 按 ID 读取管理员登录挑战及尝试次数，未命中使用统一挑战过期语义。
 pub async fn load_admin_login_two_factor_challenge(
     pool: &Pool<MySql>,
     challenge_id: &str,
@@ -427,6 +455,8 @@ pub async fn load_admin_login_two_factor_challenge(
     })
 }
 
+/// 对指定管理员挑战累加一次错误试码；SQL 未限制消费或过期状态且不检查受影响行数。
+/// 调用方须先校验挑战快照，缺失记录也会以未修改任何行的成功结果返回。
 pub async fn increment_admin_login_two_factor_attempt(
     pool: &Pool<MySql>,
     challenge_id: &str,
@@ -443,6 +473,8 @@ pub async fn increment_admin_login_two_factor_attempt(
     Ok(())
 }
 
+/// 条件更新管理员挑战的消费时间，只修改尚未消费的记录。
+/// 本函数不检查受影响行数，重复或不存在的挑战也返回成功，不能单独保证只有一个并发请求继续签发。
 pub async fn consume_admin_login_two_factor_challenge(
     pool: &Pool<MySql>,
     challenge_id: &str,
@@ -459,6 +491,8 @@ pub async fn consume_admin_login_two_factor_challenge(
     Ok(())
 }
 
+/// 读取用户资金密码哈希，未设置时返回 `None`，不在基础设施层比对明文。
+/// 哈希仍属敏感凭据，只可用于内存校验，不得进入响应、审计或普通日志。
 pub async fn load_user_fund_password_hash(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -477,6 +511,8 @@ pub async fn load_user_fund_password_hash(
     Ok(hash)
 }
 
+/// 记录用户最后一次 TOTP 通过时间，不改变登录开关或密钥内容。
+/// SQL 不检查受影响行数；设置行缺失时以零行更新的成功结果返回。
 pub async fn record_user_totp_verified(pool: &Pool<MySql>, user_id: u64) -> AppResult<()> {
     sqlx::query(
         r#"UPDATE user_two_factor_settings

@@ -12,6 +12,8 @@ use thiserror::Error;
 pub struct ValidatedMarketSymbol(String);
 
 impl ValidatedMarketSymbol {
+    /// 将用户或 provider 输入的交易对去除 `/`、`-`、`_` 后转为大写统一格式。
+    /// 空值、超过 32 字符或含非 ASCII 交易对字符时拒绝；本值对象不查询允许列表，也不访问行情源。
     pub fn from_raw(symbol: &str) -> Result<Self, MarketSymbolError> {
         let symbol = symbol.trim();
         let normalized = sanitize_symbol(symbol);
@@ -24,6 +26,8 @@ impl ValidatedMarketSymbol {
         Ok(Self(normalized))
     }
 
+    /// 先按 [`Self::from_raw`] 规范化交易对，再与同样规范化的允许列表逐项比较。
+    /// 未命中白名单返回 `NotAllowed`；该判断是纯内存规则，不替调用方加载后台交易对配置。
     pub fn from_allowed<'a>(
         symbol: &str,
         allowed_symbols: impl IntoIterator<Item = &'a str>,
@@ -39,6 +43,7 @@ impl ValidatedMarketSymbol {
         }
     }
 
+    /// 返回规范化字符串。
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -54,6 +59,8 @@ pub enum MarketSymbolError {
     NotAllowed,
 }
 
+/// 生成 Redis key、provider 订阅和数据库查询共用的交易对格式：仅保留 ASCII 字母数字并转大写。
+/// 本函数有意忽略分隔符和其他字符；需要拒绝非法输入时应改用 [`ValidatedMarketSymbol::from_raw`]。
 pub fn sanitize_symbol(symbol: &str) -> String {
     symbol
         .trim()
@@ -75,6 +82,8 @@ pub struct KlineUpsertKey {
 }
 
 impl KlineUpsertKey {
+    /// 以周期和开盘时间组成 K 线幂等写入键，仅接受平台支持的 `1m/5m/15m/1h/1d` 周期。
+    /// 不校验时间是否对齐周期边界；采集或恢复任务仍需负责生成正确的 `open_time`。
     pub fn new(
         interval: impl Into<String>,
         open_time: DateTime<Utc>,
@@ -90,10 +99,12 @@ impl KlineUpsertKey {
         }
     }
 
+    /// 返回 K 线周期。
     pub fn interval(&self) -> &str {
         &self.interval
     }
 
+    /// 返回 K 线开盘时间。
     pub fn open_time(&self) -> DateTime<Utc> {
         self.open_time
     }
@@ -114,6 +125,8 @@ pub struct KlineQuery {
 }
 
 impl KlineQuery {
+    /// 构造历史 K 线查询条件，复用 K 线键规则校验周期，并把条数限制收敛到 1..=100。
+    /// 起止时间原样保留，具体范围关系、排序和数据源选择由查询应用层与 Mongo 适配器负责。
     pub fn new(
         interval: impl Into<String>,
         start: Option<DateTime<Utc>>,
@@ -182,6 +195,8 @@ pub struct MarketTickerValues {
 }
 
 impl MarketTickerValues {
+    /// 汇集 provider 已解析出的最新价、24 小时高低价、成交量和涨跌指标。
+    /// 此构造器不修正负数或字段间关系，数据合法性应由具体 provider 解析器保证。
     pub fn new(
         last_price: BigDecimal,
         high_24h: BigDecimal,
@@ -200,6 +215,7 @@ impl MarketTickerValues {
         }
     }
 
+    /// 在 provider 只给出最新价与成交量时生成平盘统计：高低价等于最新价，涨跌额与涨跌幅为零。
     pub fn flat(last_price: BigDecimal, volume_24h: BigDecimal) -> Self {
         Self {
             high_24h: last_price.clone(),
@@ -213,6 +229,8 @@ impl MarketTickerValues {
 }
 
 impl MarketTickerSnapshot {
+    /// 用最新价与成交量构造平盘 ticker 快照，并规范化交易对符号。
+    /// provider、价格和观察时间原样保留；该函数不检查价格正数或行情新鲜度。
     pub fn new(
         provider: MarketDataProvider,
         symbol: &str,
@@ -228,6 +246,8 @@ impl MarketTickerSnapshot {
         )
     }
 
+    /// 用完整 24 小时统计构造 ticker 快照，仅负责交易对规范化和字段封装。
+    /// 价格、成交量及涨跌字段的业务一致性由 provider 适配器负责，消费者仍须检查正数与新鲜度。
     pub fn with_24h(
         provider: MarketDataProvider,
         symbol: &str,
@@ -248,38 +268,47 @@ impl MarketTickerSnapshot {
         })
     }
 
+    /// 返回行情提供方。
     pub fn provider(&self) -> MarketDataProvider {
         self.provider
     }
 
+    /// 返回交易对符号。
     pub fn symbol(&self) -> &str {
         &self.symbol
     }
 
+    /// 返回最新成交价。
     pub fn last_price(&self) -> &BigDecimal {
         &self.last_price
     }
 
+    /// 返回二十四小时最高价。
     pub fn high_24h(&self) -> &BigDecimal {
         &self.high_24h
     }
 
+    /// 返回二十四小时最低价。
     pub fn low_24h(&self) -> &BigDecimal {
         &self.low_24h
     }
 
+    /// 返回二十四小时成交量。
     pub fn volume_24h(&self) -> &BigDecimal {
         &self.volume_24h
     }
 
+    /// 返回二十四小时涨跌额。
     pub fn price_change_24h(&self) -> &BigDecimal {
         &self.price_change_24h
     }
 
+    /// 返回二十四小时涨跌幅。
     pub fn price_change_percent_24h(&self) -> &BigDecimal {
         &self.price_change_percent_24h
     }
 
+    /// 返回行情观测时间。
     pub fn observed_at(&self) -> DateTime<Utc> {
         self.observed_at
     }
@@ -292,6 +321,7 @@ pub struct MarketDepthLevel {
 }
 
 impl MarketDepthLevel {
+    /// 封装一档盘口价格与数量；不在此处排序，也不自动过滤零值或负值。
     pub fn new(price: BigDecimal, quantity: BigDecimal) -> Self {
         Self { price, quantity }
     }
@@ -308,6 +338,8 @@ pub struct MarketDepthSnapshot {
 }
 
 impl MarketDepthSnapshot {
+    /// 构造指定 provider 的盘口快照并规范化交易对，买卖盘顺序保持 provider 解析后的结果。
+    /// 本函数不重排档位或合并同价数量，观察时间与档位有效性由上游适配器负责。
     pub fn new(
         provider: MarketDataProvider,
         symbol: &str,
@@ -325,22 +357,27 @@ impl MarketDepthSnapshot {
         })
     }
 
+    /// 返回行情提供方。
     pub fn provider(&self) -> MarketDataProvider {
         self.provider
     }
 
+    /// 返回交易对符号。
     pub fn symbol(&self) -> &str {
         &self.symbol
     }
 
+    /// 返回 provider 解析器保留顺序的买盘档位。
     pub fn bids(&self) -> &[MarketDepthLevel] {
         &self.bids
     }
 
+    /// 返回 provider 解析器保留顺序的卖盘档位。
     pub fn asks(&self) -> &[MarketDepthLevel] {
         &self.asks
     }
 
+    /// 返回行情观测时间。
     pub fn observed_at(&self) -> DateTime<Utc> {
         self.observed_at
     }
@@ -372,6 +409,8 @@ pub struct MarketKlineSnapshot {
 }
 
 impl MarketKlineSnapshot {
+    /// 构造标准 K 线快照：规范化交易对，并用 [`KlineUpsertKey`] 校验周期。
+    /// OHLC、成交量和时间戳原样保留；该函数不校验高低价关系或开盘时间对齐。
     pub fn new(
         provider: MarketDataProvider,
         symbol: &str,
@@ -396,42 +435,52 @@ impl MarketKlineSnapshot {
         })
     }
 
+    /// 返回行情提供方。
     pub fn provider(&self) -> MarketDataProvider {
         self.provider
     }
 
+    /// 返回交易对符号。
     pub fn symbol(&self) -> &str {
         &self.symbol
     }
 
+    /// 返回 K 线周期。
     pub fn interval(&self) -> &str {
         &self.interval
     }
 
+    /// 返回 K 线开盘时间。
     pub fn open_time(&self) -> DateTime<Utc> {
         self.open_time
     }
 
+    /// 返回 K 线开盘价。
     pub fn open(&self) -> &BigDecimal {
         &self.open
     }
 
+    /// 返回 K 线最高价。
     pub fn high(&self) -> &BigDecimal {
         &self.high
     }
 
+    /// 返回 K 线最低价。
     pub fn low(&self) -> &BigDecimal {
         &self.low
     }
 
+    /// 返回 K 线收盘价。
     pub fn close(&self) -> &BigDecimal {
         &self.close
     }
 
+    /// 返回 K 线成交量。
     pub fn volume(&self) -> &BigDecimal {
         &self.volume
     }
 
+    /// 返回行情观测时间。
     pub fn observed_at(&self) -> DateTime<Utc> {
         self.observed_at
     }
@@ -450,6 +499,8 @@ pub struct MarketTradeTick {
 }
 
 impl MarketTradeTick {
+    /// 构造标准逐笔成交并规范化交易对，保留 provider 成交编号、方向、价格、数量与成交时间。
+    /// 本函数不推导买卖方向或校验数值正数，具体 provider 适配器必须先完成字段语义转换。
     pub fn new(
         provider: MarketDataProvider,
         symbol: &str,
@@ -471,30 +522,37 @@ impl MarketTradeTick {
         })
     }
 
+    /// 返回行情提供方。
     pub fn provider(&self) -> MarketDataProvider {
         self.provider
     }
 
+    /// 返回交易对符号。
     pub fn symbol(&self) -> &str {
         &self.symbol
     }
 
+    /// 返回 provider 成交编号。
     pub fn trade_id(&self) -> &str {
         &self.trade_id
     }
 
+    /// 返回方向。
     pub fn side(&self) -> MarketTradeSide {
         self.side
     }
 
+    /// 返回价格。
     pub fn price(&self) -> &BigDecimal {
         &self.price
     }
 
+    /// 返回成交数量。
     pub fn quantity(&self) -> &BigDecimal {
         &self.quantity
     }
 
+    /// 返回 provider 成交时间。
     pub fn traded_at(&self) -> DateTime<Utc> {
         self.traded_at
     }

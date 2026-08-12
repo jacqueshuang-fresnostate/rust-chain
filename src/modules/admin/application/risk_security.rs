@@ -1,5 +1,7 @@
 use super::*;
 
+/// 读取登录二次验证、注册邀请、用户名登录、支付动作和第三方绑定组成的全局用户安全策略。
+/// 查询不加配置锁；底层可按既有缺省语义返回策略，连接池或 JSON 解码失败返回错误，不读取单个用户设置。
 pub(crate) async fn get_admin_security_policy(
     pool: Option<Pool<MySql>>,
 ) -> AppResult<UserSecurityPolicy> {
@@ -7,6 +9,10 @@ pub(crate) async fn get_admin_security_policy(
     load_security_policy(&pool).await
 }
 
+/// 替换全局用户安全策略，并返回本次请求构造的登录、注册、支付和第三方绑定配置。
+/// 请求须提供审计原因；调用方负责管理员权限，当前支付策略结构校验不会读取任何用户安全状态。
+/// 旧策略在事务外读取，随后事务写入新策略和 before/after 审计但不锁配置行；数据库或序列化失败会回滚写入。
+/// 并发更新可能以较早读取值作为审计 before；提交后不主动撤销会话，也不重算既有用户设置。
 pub(crate) async fn update_admin_security_policy(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -44,6 +50,8 @@ pub(crate) async fn update_admin_security_policy(
     Ok(after)
 }
 
+/// 按规则类型、目标类型和 enabled 标记筛选风控规则，并返回原始配置 JSON 的分页结果与总数。
+/// 文本筛选只去空白，分页统一裁剪；查询不解析规则配置或锁定规则，也不执行风险评估。
 pub(crate) async fn list_admin_risk_rules(
     pool: Option<Pool<MySql>>,
     query: AdminRiskRuleQuery,
@@ -118,6 +126,10 @@ pub(crate) async fn create_admin_risk_rule(
     Ok(rule)
 }
 
+/// 切换单条风控规则的 enabled 标记，并返回包含原始配置的最终规则快照。
+/// 调用方提供管理员 ID；实现不校验显式审计原因，也不解析规则 config_json 或检查目标资源。
+/// 事务先锁规则，再更新启用位、回读并写 before/after 审计；记录缺失或 SQL 失败整体回滚。
+/// 相同值重放仍新增审计，提交后不主动刷新独立风控缓存或重放历史事件。
 pub(crate) async fn update_admin_risk_rule_status(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -148,6 +160,8 @@ pub(crate) async fn update_admin_risk_rule_status(
     Ok(after)
 }
 
+/// 按用户、邮箱、决策和风险等级筛选风控事件，并返回命中规则与详情的分页记录和总数。
+/// 决策和等级仅去空白，查询不锁事件或重新评分；读取审计型事件不会产生新的事件或后台审计。
 pub(crate) async fn list_admin_risk_events(
     pool: Option<Pool<MySql>>,
     query: AdminRiskEventQuery,

@@ -28,6 +28,8 @@ pub(crate) struct AdminDashboardMarketCounts {
     pub(crate) strategy_pairs: i64,
 }
 
+/// 在调用方事务中写入一条后台管理员操作审计，保存目标、前后 JSON 快照和规范化原因。
+/// target_id 以字符串落库，空白原因转为空值；函数本身就是审计副作用但不提交事务，序列化绑定或 SQL 失败使所属业务写入一并回滚。
 pub(crate) async fn insert_admin_audit_log_entry_in_tx(
     tx: &mut Transaction<'_, MySql>,
     admin_id: u64,
@@ -51,6 +53,8 @@ pub(crate) async fn insert_admin_audit_log_entry_in_tx(
     Ok(())
 }
 
+/// 聚合全部用户的总数、active 数量和最近二十四小时新增数，返回仪表盘用户摘要。
+/// 单条连接池聚合以数据库 UTC 时间为窗口且不锁用户；SQL 或计数映射失败返回错误，不产生审计或业务写入。
 pub(crate) async fn load_admin_dashboard_users_summary(
     pool: &Pool<MySql>,
 ) -> AppResult<AdminDashboardUsersSummary> {
@@ -65,6 +69,8 @@ pub(crate) async fn load_admin_dashboard_users_summary(
     .await?)
 }
 
+/// 汇总活跃资产、钱包账户、非零账户、待解锁/待充值/待提现数量及托管配置状态。
+/// 各子查询在同一只读语句中执行且不加业务锁，托管状态仅表示存在 active 网关；数据库失败返回错误，不触发链上或审计副作用。
 pub(crate) async fn load_admin_dashboard_wallet_summary(
     pool: &Pool<MySql>,
 ) -> AppResult<AdminDashboardWalletSummary> {
@@ -87,6 +93,8 @@ pub(crate) async fn load_admin_dashboard_wallet_summary(
     .await?)
 }
 
+/// 统计交易对中的 active、disabled、external 和 strategy 数量，返回仪表盘市场计数。
+/// 各分类按独立条件计数而非互斥分组；查询不锁交易对，SQL 或整数映射失败直接返回错误。
 pub(crate) async fn load_admin_dashboard_market_counts(
     pool: &Pool<MySql>,
 ) -> AppResult<AdminDashboardMarketCounts> {
@@ -101,6 +109,8 @@ pub(crate) async fn load_admin_dashboard_market_counts(
     .await?)
 }
 
+/// 汇总现货未终结订单、二十四小时现货成交、待处理闪兑和二十四小时已完成闪兑数量。
+/// 时间窗口使用数据库 UTC 时间，各子查询不锁订单或成交记录；任一 SQL 失败返回错误且不改变交易状态。
 pub(crate) async fn load_admin_dashboard_trading_summary(
     pool: &Pool<MySql>,
 ) -> AppResult<AdminDashboardTradingSummary> {
@@ -118,6 +128,8 @@ pub(crate) async fn load_admin_dashboard_trading_summary(
     .await?)
 }
 
+/// 汇总秒合约开仓、保证金持仓/强平及理财有效/即将到期数量，返回产品仪表盘摘要。
+/// 二十四小时时间条件由数据库 UTC 时间计算，聚合不锁产品记录或推进结算；查询失败直接返回数据库错误。
 pub(crate) async fn load_admin_dashboard_products_summary(
     pool: &Pool<MySql>,
 ) -> AppResult<AdminDashboardProductsSummary> {
@@ -135,6 +147,8 @@ pub(crate) async fn load_admin_dashboard_products_summary(
     .await?)
 }
 
+/// 汇总二十四小时风险事件/拦截数以及 outbox、重试 inbox、死信 inbox 积压数。
+/// 拦截数只匹配四种既有 decision 字符串，读取不锁事件队列也不重试消息；SQL 失败返回错误。
 pub(crate) async fn load_admin_dashboard_risk_summary(
     pool: &Pool<MySql>,
 ) -> AppResult<AdminDashboardRiskSummary> {
@@ -152,6 +166,8 @@ pub(crate) async fn load_admin_dashboard_risk_summary(
     .await?)
 }
 
+/// 按固定时间窗口统计后台二十四小时操作数，供仪表盘展示聚合结果而不加载明细行。
+/// 该 SQL 只读且不加锁；数据库失败返回错误，不写业务表或审计记录。
 pub(crate) async fn count_admin_dashboard_actions_24h(pool: &Pool<MySql>) -> AppResult<i64> {
     Ok(sqlx::query_as::<_, (i64,)>(
         r#"SELECT COUNT(*) FROM admin_audit_logs
@@ -162,6 +178,8 @@ pub(crate) async fn count_admin_dashboard_actions_24h(pool: &Pool<MySql>) -> App
     .0)
 }
 
+/// 读取按创建时间和 ID 倒序排列的最近五条后台审计动作，供仪表盘展示。
+/// 连接池查询没有筛选、总数查询或行锁；并发新增可能改变下一次结果，SQL/映射失败直接返回错误。
 pub(crate) async fn list_admin_dashboard_latest_actions(
     pool: &Pool<MySql>,
 ) -> AppResult<Vec<AdminDashboardAuditAction>> {
@@ -175,6 +193,8 @@ pub(crate) async fn list_admin_dashboard_latest_actions(
     .await?)
 }
 
+/// 按管理员、动作、目标类型和目标 ID 筛选后台审计日志，分页返回完整前后快照及总数。
+/// 列表与 COUNT 共用精确匹配谓词并按时间、ID 倒序；两次无锁读取可能受并发写入影响，JSON 解码或 SQL 失败返回错误。
 pub(crate) async fn list_admin_audit_logs(
     pool: &Pool<MySql>,
     filter: AdminAuditLogListFilter,

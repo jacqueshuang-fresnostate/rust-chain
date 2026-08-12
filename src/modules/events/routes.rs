@@ -3,10 +3,9 @@ use crate::{
     modules::{
         auth::AdminAuth,
         events::{
-            EventOutboxService, PublishedOutboxBatch,
             application::{
                 authorize_private_ws, list_inbox_records as list_inbox_records_use_case,
-                list_outbox_records as list_outbox_records_use_case,
+                list_outbox_records as list_outbox_records_use_case, publish_outbox_once,
                 requeue_outbox_dead_letter as requeue_outbox_dead_letter_use_case,
             },
             presentation::{
@@ -15,8 +14,8 @@ use crate::{
             },
             public_channel,
             service::{
-                public_ws_confirmation_text, run_private_socket, run_public_multi_socket,
-                run_public_socket,
+                PublishedOutboxBatch, public_ws_confirmation_text, run_private_socket,
+                run_public_multi_socket, run_public_socket,
             },
         },
     },
@@ -30,7 +29,8 @@ use axum::{
 };
 use chrono::Utc;
 
-/// 注册事件运维与 WebSocket 传输端点；运维端点由 `AdminAuth` 限制，业务编排委托应用层。
+/// 注册管理员 outbox 发布/查询/死信重排、inbox 查询，以及公共兼容别名、公共单频道和私有 WebSocket 端点。
+/// 运维请求必须先通过 `AdminAuth`；公共别名共享同一多频道订阅规则，私有连接在升级前校验 user token，路由层不直接持久化事件或广播。
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/events/outbox/publish-once", post(publish_once))
@@ -52,8 +52,7 @@ async fn publish_once(
     _auth: AdminAuth,
     State(state): State<AppState>,
 ) -> AppResult<Json<PublishedOutboxBatch>> {
-    let service = EventOutboxService::from_state(&state)?;
-    let summary = service.publish_once(Utc::now()).await?;
+    let summary = publish_outbox_once(&state, Utc::now()).await?;
 
     Ok(Json(summary))
 }

@@ -56,6 +56,7 @@ struct QuickRechargeConfigSqlRow {
 }
 
 impl From<QuickRechargeConfigSqlRow> for QuickRechargeConfigRow {
+    /// 将配置 SQL 行逐字段转换为领域侧持久化快照，不解密商户密钥。
     fn from(row: QuickRechargeConfigSqlRow) -> Self {
         Self {
             id: row.id,
@@ -113,6 +114,7 @@ struct QuickRechargeOrderSqlRow {
 }
 
 impl From<QuickRechargeOrderSqlRow> for QuickRechargeOrderRow {
+    /// 将订单联表 SQL 行映射为本地订单快照，不触发支付方查询或钱包入账。
     fn from(row: QuickRechargeOrderSqlRow) -> Self {
         Self {
             id: row.id,
@@ -148,6 +150,7 @@ struct QuickRechargeAssetSqlRow {
 }
 
 impl From<QuickRechargeAssetSqlRow> for QuickRechargeAssetRow {
+    /// 将活动资产查询行映射为快充资产标识，不创建钱包账户。
     fn from(row: QuickRechargeAssetSqlRow) -> Self {
         Self {
             id: row.id,
@@ -164,6 +167,7 @@ struct QuickRechargeWalletSqlRow {
 }
 
 impl From<QuickRechargeWalletSqlRow> for QuickRechargeWalletRow {
+    /// 将已锁钱包 SQL 行映射为 available/frozen/locked 快照，不修改任一余额桶。
     fn from(row: QuickRechargeWalletSqlRow) -> Self {
         Self {
             available: row.available,
@@ -193,6 +197,8 @@ pub(crate) struct GmpayCreateOrderData {
     pub(crate) payment_url: String,
 }
 
+/// 按运行时配置向 GMPay 创建支付订单，并复用默认商品名称。
+/// 该外部调用不持有数据库事务；超时或响应异常由应用层尝试把本地订单标记 failed，远端可能已受理且不会被撤销。
 pub(crate) async fn create_gmpay_order(
     config: &QuickRechargeRuntimeConfig,
     order_id: &str,
@@ -288,6 +294,8 @@ pub(crate) async fn create_gmpay_order_with_name(
         .ok_or_else(|| AppError::Internal("gmpay response data is missing".to_owned()))
 }
 
+/// 按用户、可选状态和数量上限读取快充订单快照。
+/// 查询只读本地状态，不锁订单，也不触发支付方调用或钱包入账。
 pub(crate) async fn list_user_orders(
     pool: &Pool<MySql>,
     filter: QuickRechargeUserOrderFilter,
@@ -310,6 +318,8 @@ pub(crate) async fn list_user_orders(
 }
 
 /// 后台快充订单列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
+/// 使用同一后台筛选谓词查询快充订单行和总数。
+/// 该只读入口不锁订单，也不修改支付状态、钱包余额或流水。
 pub(crate) async fn list_admin_orders(
     pool: &Pool<MySql>,
     filter: QuickRechargeAdminOrderFilter,
@@ -376,6 +386,8 @@ where
     Ok((items, total))
 }
 
+/// 按公开订单号读取快充订单及关联用户邮箱，缺失时返回未找到。
+/// 查询不加行锁，仅用于展示或提交后的回读，不可作为资金回调的并发判定依据。
 pub(crate) async fn load_order_by_order_id(
     pool: &Pool<MySql>,
     order_id: &str,
@@ -391,6 +403,9 @@ pub(crate) async fn load_order_by_order_id(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用支付方前持久化 created 快充订单，记录币种、资产和回跳地址快照。
+/// 每次调用写入新的业务订单号且无请求幂等键；外部调用失败后应用层另行推进 failed。
+/// 本入口不修改 available/frozen/locked、不创建资金流水，后续支付请求也不与该写入共享事务。
 pub(crate) async fn insert_created_order(
     pool: &Pool<MySql>,
     write: &QuickRechargeOrderCreateWrite,
@@ -417,6 +432,9 @@ pub(crate) async fn insert_created_order(
     Ok(())
 }
 
+/// 把支付方订单号、到账数量、地址和支付链接写回本地并推进为 pending。
+/// 该自动提交更新发生在外部订单已创建之后；失败不会撤销远端订单，本地记录可能继续停在 created。
+/// pending 仅表示支付准备完成，不代表到账，也不增加钱包 available 或写流水。
 pub(crate) async fn mark_order_pending_with_provider(
     pool: &Pool<MySql>,
     update: &QuickRechargeOrderProviderUpdate,
@@ -446,6 +464,8 @@ pub(crate) async fn mark_order_pending_with_provider(
     Ok(())
 }
 
+/// 在调用方事务中按公开订单号锁定快充订单，串行处理回调或后台删除。
+/// 资金回调保持订单先锁、钱包后锁；事务结束前其他处理不得越过状态判断。
 pub(crate) async fn lock_order_by_order_id(
     tx: &mut Transaction<'_, MySql>,
     order_id: &str,
@@ -462,6 +482,8 @@ pub(crate) async fn lock_order_by_order_id(
         .ok_or(AppError::NotFound)
 }
 
+/// 尝试把指定本地订单标记为 failed；不检查当前状态或受影响行数，也不取消可能已创建的 GMPay 订单。
+/// 本函数不触碰钱包；SQL 失败时调用方会收到错误，本地订单可能继续保持 created/pending。
 pub(crate) async fn mark_order_failed(pool: &Pool<MySql>, order_id: &str) -> AppResult<()> {
     sqlx::query("UPDATE quick_recharge_orders SET status = 'failed' WHERE order_id = ?")
         .bind(order_id)
@@ -470,6 +492,8 @@ pub(crate) async fn mark_order_failed(pool: &Pool<MySql>, order_id: &str) -> App
     Ok(())
 }
 
+/// 在当前事务按稳定引用检查快充订单是否已有入账流水，作为删除与重放护栏。
+/// 只要存在流水就视为资金已发生，调用方不得删除订单或再次增加 available。
 pub(crate) async fn has_wallet_ledger_for_order(
     tx: &mut Transaction<'_, MySql>,
     order_id: &str,
@@ -485,6 +509,7 @@ pub(crate) async fn has_wallet_ledger_for_order(
     Ok(ledger_count > 0)
 }
 
+/// 在调用方事务删除已确认未支付且无资金流水的快充订单。
 pub(crate) async fn delete_order_by_id(
     tx: &mut Transaction<'_, MySql>,
     order_id: u64,
@@ -496,6 +521,8 @@ pub(crate) async fn delete_order_by_id(
     Ok(())
 }
 
+/// 在调用方已锁订单的回调事务中保存 paid、交易信息、actual_amount 与已验签原始载荷。
+/// 本函数本身不检查前置状态、不修改钱包；应用层随后在同一事务增加 available 并写流水，失败时 paid 更新一起回滚。
 pub(crate) async fn mark_order_paid_from_notify(
     tx: &mut Transaction<'_, MySql>,
     update: &QuickRechargeOrderPaidUpdate,
@@ -522,6 +549,8 @@ pub(crate) async fn mark_order_paid_from_notify(
     Ok(())
 }
 
+/// 读取默认快充单例配置，缺失时返回未找到。
+/// 返回密钥密文仅供受控解密，用户响应和日志不得暴露密钥明文。
 pub(crate) async fn load_config_row(pool: &Pool<MySql>) -> AppResult<QuickRechargeConfigRow> {
     sqlx::query_as::<_, QuickRechargeConfigSqlRow>(
         r#"SELECT id, name, provider, enabled, api_base_url, merchant_pid,
@@ -539,6 +568,8 @@ pub(crate) async fn load_config_row(pool: &Pool<MySql>) -> AppResult<QuickRechar
     .ok_or(AppError::NotFound)
 }
 
+/// 在当前事务快照中回读默认快充配置，供保存后审计。
+/// 读取沿用调用方事务，不自行提交，确保审计对应同一配置版本。
 pub(crate) async fn load_config_row_in_tx(
     tx: &mut Transaction<'_, MySql>,
 ) -> AppResult<QuickRechargeConfigRow> {
@@ -558,6 +589,8 @@ pub(crate) async fn load_config_row_in_tx(
     .ok_or(AppError::NotFound)
 }
 
+/// 锁定默认快充配置行，串行执行密钥沿用、更新和前后审计。
+/// 行锁持续到配置和审计共同提交，失败时旧密钥与配置继续保持有效。
 pub(crate) async fn lock_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
 ) -> AppResult<Option<QuickRechargeConfigRow>> {
@@ -578,6 +611,8 @@ pub(crate) async fn lock_config_in_tx(
     Ok(row.map(Into::into))
 }
 
+/// 在调用方事务插入或覆盖快充单例配置及加密密钥字段。
+/// 配置写入必须与管理员审计原子提交，失败时旧配置继续生效。
 pub(crate) async fn upsert_config(
     tx: &mut Transaction<'_, MySql>,
     write: &QuickRechargeConfigWrite,
@@ -637,6 +672,8 @@ pub(crate) async fn upsert_config(
     Ok(())
 }
 
+/// 按配置 token 的大写代码加载活动资产，供创建本地快充订单时快照 asset_id/symbol。
+/// 该读取发生在请求支付方之前，不创建钱包账户，也不检查 actual_amount 是否符合资产 precision_scale。
 pub(crate) async fn load_active_asset_by_symbol(
     pool: &Pool<MySql>,
     symbol: &str,
@@ -651,6 +688,7 @@ pub(crate) async fn load_active_asset_by_symbol(
     .ok_or_else(|| AppError::Validation("quick recharge asset is not active".to_owned()))
 }
 
+/// 读取快充订单所需用户邮箱，用户缺失时返回未找到。
 pub(crate) async fn load_user_email(pool: &Pool<MySql>, user_id: u64) -> AppResult<Option<String>> {
     sqlx::query_scalar::<_, Option<String>>("SELECT email FROM users WHERE id = ? LIMIT 1")
         .bind(user_id)
@@ -659,6 +697,10 @@ pub(crate) async fn load_user_email(pool: &Pool<MySql>, user_id: u64) -> AppResu
         .ok_or(AppError::NotFound)
 }
 
+/// 在已锁快充订单的回调事务中创建/锁定钱包，再把已验签 actual_amount 原值增加到 available。
+/// frozen/locked 保持原值；写一条 `quick_recharge` available 正流水，ref_type/ref_id 关联业务订单号并保存同一三桶账后快照。
+/// 当前函数只要求上层传入金额，内部不校验正数或资产 precision_scale，也不查重流水；订单 paid 状态短路负责回调幂等。
+/// 锁序为订单→钱包，订单状态、余额和流水由调用方事务提交；SQL 失败回滚本次全部本地变化。
 pub(crate) async fn credit_wallet_available(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -697,6 +739,8 @@ pub(crate) async fn credit_wallet_available(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// 在调用方事务写入快充配置或订单操作的前后快照与原因。
+/// 审计失败必须阻止对应配置保存或订单删除，避免后台副作用缺少追踪。
 pub(crate) async fn insert_admin_audit_log_in_tx(
     tx: &mut Transaction<'_, MySql>,
     admin_id: u64,

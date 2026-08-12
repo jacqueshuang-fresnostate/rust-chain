@@ -35,6 +35,7 @@ use chrono::Utc;
 use serde_json::json;
 use sqlx::{MySql, Pool};
 
+/// 只返回启用新币项目，列表上限由服务规则约束且不推断购买交易对。
 pub(crate) async fn list_new_coin_projects(
     pool: Option<Pool<MySql>>,
     query: ListQuery,
@@ -49,6 +50,7 @@ pub(crate) async fn list_new_coin_projects(
     Ok(NewCoinProjectsResponse { projects })
 }
 
+/// 按符号读取启用项目；不存在或停用返回 NotFound，不回退到后台草稿。
 pub(crate) async fn get_new_coin_project(
     pool: Option<Pool<MySql>>,
     symbol: &str,
@@ -61,6 +63,7 @@ pub(crate) async fn get_new_coin_project(
         .ok_or(AppError::NotFound)
 }
 
+/// 按认证用户读取新币认购记录，查询条件不允许跨账户结果。
 pub(crate) async fn list_new_coin_subscriptions(
     pool: Option<Pool<MySql>>,
     subject: &str,
@@ -77,6 +80,7 @@ pub(crate) async fn list_new_coin_subscriptions(
     Ok(NewCoinSubscriptionsResponse { subscriptions })
 }
 
+/// 按认证用户读取新币分发记录，不重新计算分配数量或推进状态。
 pub(crate) async fn list_new_coin_distributions(
     pool: Option<Pool<MySql>>,
     subject: &str,
@@ -93,6 +97,7 @@ pub(crate) async fn list_new_coin_distributions(
     Ok(NewCoinDistributionsResponse { distributions })
 }
 
+/// 按认证用户读取上市后购买记录，不以公开项目列表替代历史订单。
 pub(crate) async fn list_new_coin_purchases(
     pool: Option<Pool<MySql>>,
     subject: &str,
@@ -109,6 +114,8 @@ pub(crate) async fn list_new_coin_purchases(
     Ok(NewCoinPurchasesResponse { purchases })
 }
 
+/// 按认证用户读取最近的锁仓解锁记录并映射到账数量、到期时间和解锁费状态，条数按公共列表上限裁剪。
+/// 查询只使用用户范围且不加行锁，不执行缴费、释放锁仓或钱包入账；存储失败直接返回而不伪造空历史。
 pub(crate) async fn list_new_coin_unlocks(
     pool: Option<Pool<MySql>>,
     subject: &str,
@@ -125,6 +132,8 @@ pub(crate) async fn list_new_coin_unlocks(
     Ok(NewCoinUnlocksResponse { unlocks })
 }
 
+/// 校验解锁记录归属及配置的手续费资产与金额，再把费用状态从非 paid 更新为 paid。
+/// 当前实现只更新解锁记录，不扣钱包也不写资金流水；重复调用返回 `paid=false`，记录不存在或参数不符返回错误。
 pub(crate) async fn pay_new_coin_unlock_fee(
     pool: Option<Pool<MySql>>,
     subject: &str,
@@ -153,6 +162,8 @@ pub(crate) async fn pay_new_coin_unlock_fee(
     })
 }
 
+/// 释放已缴费且到期的新币锁仓，并仅在钱包到账事务提交后发布用户私有解锁事件。
+/// 已释放记录重放时不二次入账、不广播事件，但兼容响应仍返回 `released=true`；未到期、未缴费或持久化失败返回错误。
 pub(crate) async fn release_new_coin_unlock_with_events(
     pool: Option<Pool<MySql>>,
     event_broadcast_hub: Option<&EventBroadcastHub>,
@@ -207,6 +218,8 @@ async fn release_new_coin_unlock_with_internal(
     ))
 }
 
+/// 创建新币申购：先校验用户、subscription 生命周期、正金额与幂等键，再生成锁仓计划并交由仓储原子扣减计价钱包。
+/// 仓储提交订单、余额、流水和锁仓后才广播 `new_coin.subscription.created` 私有事件；重复幂等键返回 Conflict，不扣款也不广播。
 pub(crate) async fn create_new_coin_subscription_with_events(
     pool: Option<Pool<MySql>>,
     event_broadcast_hub: Option<&EventBroadcastHub>,
@@ -322,6 +335,8 @@ async fn create_new_coin_subscription_with_internal(
     Ok((response, Some(event_payload)))
 }
 
+/// 创建上市后购买：要求 listed、后台开关开启且 `pair_id` 精确匹配批准交易对，再按 `price × quantity` 原子扣款并分配新币。
+/// 仓储提交订单、余额、流水和锁仓后才广播 `new_coin.purchase.created` 私有事件；重复幂等键返回 Conflict，不产生第二笔资金变更或事件。
 pub(crate) async fn create_new_coin_purchase_with_events(
     pool: Option<Pool<MySql>>,
     event_broadcast_hub: Option<&EventBroadcastHub>,

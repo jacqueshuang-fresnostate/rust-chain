@@ -27,6 +27,8 @@ pub struct SensitiveOperationConfirmation {
 }
 
 impl SensitiveOperationConfirmation {
+    /// 创建敏感管理操作确认，固化管理员、操作目标、原因以及请求和过期时间。
+    /// 有效期必须为正；该领域构造不访问外部资源，校验失败不会产生任何持久化副作用。
     pub fn new(
         admin_id: impl Into<String>,
         operation: impl Into<String>,
@@ -51,38 +53,48 @@ impl SensitiveOperationConfirmation {
         })
     }
 
+    /// 返回发起该敏感操作确认的管理员标识。
     pub fn admin_id(&self) -> &str {
         &self.admin_id
     }
 
+    /// 返回本次确认所绑定的敏感操作代码。
     pub fn operation(&self) -> &str {
         &self.operation
     }
 
+    /// 返回敏感操作目标的资源类型。
     pub fn target_type(&self) -> &str {
         &self.target_type
     }
 
+    /// 返回敏感操作目标的业务标识。
     pub fn target_id(&self) -> &str {
         &self.target_id
     }
 
+    /// 返回管理员提交且已固化的操作原因。
     pub fn reason(&self) -> &str {
         &self.reason
     }
 
+    /// 返回确认请求创建时刻，用于审计与元数据键生成。
     pub fn requested_at(&self) -> DateTime<Utc> {
         self.requested_at
     }
 
+    /// 返回由请求时刻和正有效期推导出的失效时刻。
     pub fn expires_at(&self) -> DateTime<Utc> {
         self.expires_at
     }
 
+    /// 判断给定时刻是否已到达确认失效边界；等于失效时刻也视为过期。
     pub fn is_expired(&self, now: DateTime<Utc>) -> bool {
         now >= self.expires_at
     }
 
+    /// 根据管理员、操作、目标和请求秒级时间生成稳定审计元数据键。
+    /// 键不包含操作原因或过期时间，调用方不得把它当作授权凭证或全局唯一数据库约束。
     pub fn audit_metadata_key(&self) -> String {
         format!(
             "admin-sensitive:{}:{}:{}:{}:{}",

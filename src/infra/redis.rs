@@ -1,8 +1,8 @@
 use crate::{config::Settings, error::AppResult};
 use redis::{Client, aio::ConnectionManager};
 
-/// 建立可克隆的 Redis 连接管理器，供缓存、会话、风控与 worker 共享；URL 或握手错误直接阻止依赖方启动。
-/// 本入口不选择 key 命名空间，也不把 Redis 故障转换为本地缓存命中。
+/// 使用暴露后的 Redis URL 建立带自动连接管理的可克隆句柄，供会话、缓存、行情和 worker 跨上下文共享。
+/// URL、认证或初次连接错误直接上抛；本入口不选择 key 命名空间、不预读写数据，也不把 Redis 故障降级为本地缓存命中。
 pub async fn connect(settings: &Settings) -> AppResult<ConnectionManager> {
     let client = Client::open(settings.exposed_redis_url())?;
     Ok(ConnectionManager::new(client).await?)

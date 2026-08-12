@@ -111,11 +111,35 @@ fn repository_layers_do_not_own_concrete_sql() {
 }
 
 #[test]
-/// service 不得反向依赖 application 或 routes。
-fn service_layers_do_not_depend_on_orchestration_or_routes() {
+/// service 只允许依赖端口与纯规则，禁止编排层、运行时状态和具体存储/provider SDK。
+fn service_layers_are_adapter_independent() {
     let mut offenders = Vec::new();
     collect_service_dependency_offenders(Path::new("src/modules"), &mut offenders);
     assert_dependency_rule("service.", offenders);
+}
+
+#[test]
+/// 生产源码不得用 unused 导入抑制掩盖 façade 拆分后的失效兼容面；测试专用导入应使用 `cfg(test)`。
+fn production_sources_do_not_suppress_unused_imports() {
+    let mut offenders = Vec::new();
+    visit_rust_files(Path::new("src"), &mut |path, source| {
+        for (line_number, line) in source.lines().enumerate() {
+            let code = code_line(line);
+            if code.contains("allow(unused_imports)") || code.contains("expect(unused_imports)") {
+                offenders.push(format!(
+                    "{}:{} -> {}",
+                    path.display(),
+                    line_number + 1,
+                    code
+                ));
+            }
+        }
+    });
+
+    assert!(
+        offenders.is_empty(),
+        "unused-import warning suppressions are forbidden in production source; remove stale façade re-exports or gate test-only compatibility imports with cfg(test): {offenders:?}"
+    );
 }
 
 #[test]
@@ -133,6 +157,54 @@ fn production_rust_files_stay_below_2000_lines() {
         offenders.is_empty(),
         "production Rust files must not exceed 2,000 lines; split by real responsibilities and retain a compatibility façade when required: {offenders:?}"
     );
+}
+
+#[test]
+/// P1 核心职责文件控制在 1,200 行内，避免聚合根编排和适配器再次膨胀成巨型模块。
+fn p1_core_responsibility_files_stay_below_1200_lines() {
+    let guarded_roots = [
+        (
+            "src/modules/events/service.rs",
+            "src/modules/events/service",
+        ),
+        (
+            "src/modules/margin/application.rs",
+            "src/modules/margin/application",
+        ),
+        (
+            "src/modules/margin/infrastructure.rs",
+            "src/modules/margin/infrastructure",
+        ),
+        ("src/modules/admin/routes.rs", "src/modules/admin/routes"),
+        (
+            "src/modules/spot/application.rs",
+            "src/modules/spot/application",
+        ),
+    ];
+    let mut offenders = Vec::new();
+    for (facade, child_dir) in guarded_roots {
+        for path in std::iter::once(Path::new(facade).to_path_buf()).chain(rust_files(child_dir)) {
+            let source = fs::read_to_string(&path).expect("read P1 responsibility file");
+            let line_count = source.lines().count();
+            if line_count > 1_200 {
+                offenders.push(format!("{} -> {line_count} lines", path.display()));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "P1 core files must stay below 1,200 lines and delegate to cohesive child modules: {offenders:?}"
+    );
+}
+
+fn rust_files(dir: &str) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    visit_rust_files(Path::new(dir), &mut |path, _| {
+        files.push(path.to_path_buf())
+    });
+    files.sort();
+    files
 }
 
 fn backend_module_contexts() -> Vec<String> {
@@ -274,7 +346,7 @@ fn collect_unit_test_references(dir: &Path, offenders: &mut Vec<String>) {
 }
 
 fn collect_route_dependency_offenders(dir: &Path, offenders: &mut Vec<DependencyOffender>) {
-    visit_named_rust_files(dir, "routes.rs", &mut |path, source| {
+    visit_layer_rust_files(dir, "routes", &mut |path, source| {
         for (line_number, line) in source.lines().enumerate() {
             let code = code_line(line);
             let checks = [
@@ -307,7 +379,7 @@ fn collect_route_dependency_offenders(dir: &Path, offenders: &mut Vec<Dependency
 }
 
 fn collect_domain_dependency_offenders(dir: &Path, offenders: &mut Vec<DependencyOffender>) {
-    visit_named_rust_files(dir, "domain.rs", &mut |path, source| {
+    visit_layer_rust_files(dir, "domain", &mut |path, source| {
         for (line_number, line) in source.lines().enumerate() {
             let code = code_line(line);
             let mut checks = Vec::new();
@@ -329,7 +401,7 @@ fn collect_domain_dependency_offenders(dir: &Path, offenders: &mut Vec<Dependenc
 }
 
 fn collect_repository_dependency_offenders(dir: &Path, offenders: &mut Vec<DependencyOffender>) {
-    visit_named_rust_files(dir, "repository.rs", &mut |path, source| {
+    visit_layer_rust_files(dir, "repository", &mut |path, source| {
         for (line_number, line) in source.lines().enumerate() {
             let code = code_line(line);
             let checks = [
@@ -350,7 +422,7 @@ fn collect_repository_dependency_offenders(dir: &Path, offenders: &mut Vec<Depen
 }
 
 fn collect_service_dependency_offenders(dir: &Path, offenders: &mut Vec<DependencyOffender>) {
-    visit_named_rust_files(dir, "service.rs", &mut |path, source| {
+    visit_layer_rust_files(dir, "service", &mut |path, source| {
         for (line_number, line) in source.lines().enumerate() {
             let code = code_line(line);
             let checks = [
@@ -363,6 +435,36 @@ fn collect_service_dependency_offenders(dir: &Path, offenders: &mut Vec<Dependen
                     "service.routes",
                     "routes",
                     contains_path_segment(code, "routes"),
+                ),
+                (
+                    "service.runtime_state",
+                    "AppState",
+                    contains_identifier(code, "AppState"),
+                ),
+                (
+                    "service.infrastructure",
+                    "infrastructure",
+                    contains_path_segment(code, "infrastructure"),
+                ),
+                (
+                    "service.storage_sdk",
+                    "sqlx",
+                    contains_identifier(code, "sqlx"),
+                ),
+                (
+                    "service.storage_sdk",
+                    "redis",
+                    contains_identifier(code, "redis"),
+                ),
+                (
+                    "service.storage_sdk",
+                    "mongodb",
+                    contains_identifier(code, "mongodb"),
+                ),
+                (
+                    "service.provider_sdk",
+                    "reqwest",
+                    contains_identifier(code, "reqwest"),
                 ),
             ];
             push_dependency_matches(path, line_number, code, &checks, offenders);
@@ -437,9 +539,14 @@ fn code_line(line: &str) -> &str {
     line.split_once("//").map_or(line, |(code, _)| code).trim()
 }
 
-fn visit_named_rust_files(dir: &Path, file_name: &str, visitor: &mut impl FnMut(&Path, &str)) {
+fn visit_layer_rust_files(dir: &Path, layer: &str, visitor: &mut impl FnMut(&Path, &str)) {
     visit_rust_files(dir, &mut |path, source| {
-        if path.file_name().and_then(|name| name.to_str()) == Some(file_name) {
+        let is_facade =
+            path.file_name().and_then(|name| name.to_str()) == Some(&format!("{layer}.rs"));
+        let is_child = path
+            .components()
+            .any(|component| component.as_os_str() == layer);
+        if is_facade || is_child {
             visitor(path, source);
         }
     });

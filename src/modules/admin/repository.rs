@@ -157,6 +157,7 @@ pub(crate) enum UploadObjectOwner {
 }
 
 impl UploadObjectOwner {
+    /// 仅当上传对象归属于后台管理员时返回其 ID；用户对象返回空值。
     pub(crate) const fn admin_id(self) -> Option<u64> {
         match self {
             Self::Admin(id) => Some(id),
@@ -164,6 +165,7 @@ impl UploadObjectOwner {
         }
     }
 
+    /// 仅当上传对象归属于前台用户时返回其 ID；管理员对象返回空值。
     pub(crate) const fn user_id(self) -> Option<u64> {
         match self {
             Self::Admin(_) => None,

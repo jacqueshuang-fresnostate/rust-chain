@@ -1,5 +1,7 @@
 use super::*;
 
+/// 分页读取新币项目的发行、生命周期、解锁、手续费和上市后购买配置，并返回总数。
+/// 当前查询不提供业务筛选，只裁剪 limit/offset；读取不锁项目，也不聚合认购或派发金额。
 pub(crate) async fn list_admin_new_coin_projects(
     pool: Option<Pool<MySql>>,
     query: AdminNewCoinProjectQuery,
@@ -14,6 +16,8 @@ pub(crate) async fn list_admin_new_coin_projects(
     Ok(NewCoinProjectsResponse { projects, total })
 }
 
+/// 按项目、用户、邮箱和状态筛选新币认购记录，并返回分页明细和匹配总数。
+/// 状态只去除空白，分页统一裁剪；读取不锁认购记录或钱包，也不计算可派发数量。
 pub(crate) async fn list_admin_new_coin_subscriptions(
     pool: Option<Pool<MySql>>,
     query: AdminNewCoinFlatListQuery,
@@ -62,6 +66,8 @@ pub(crate) async fn list_admin_new_coin_subscriptions_for_project(
     list_admin_new_coin_subscriptions(pool, query).await
 }
 
+/// 按项目、用户、邮箱和状态筛选新币派发记录，并返回数量、锁仓和幂等键信息及总数。
+/// 查询不锁派发、钱包或锁仓行；分页边界统一裁剪，读取失败不会重试派发。
 pub(crate) async fn list_admin_new_coin_distributions(
     pool: Option<Pool<MySql>>,
     query: AdminNewCoinFlatListQuery,
@@ -95,6 +101,8 @@ pub(crate) async fn list_admin_new_coin_distributions_for_project(
     list_admin_new_coin_distributions(pool, query).await
 }
 
+/// 按项目、用户、邮箱和状态筛选上市后购买记录，并返回分页结果与匹配总数。
+/// 状态仅去空白，分页统一裁剪；读取不锁交易对或订单，也不触发兑换结算。
 pub(crate) async fn list_admin_new_coin_purchases(
     pool: Option<Pool<MySql>>,
     query: AdminNewCoinPurchaseQuery,
@@ -115,6 +123,8 @@ pub(crate) async fn list_admin_new_coin_purchases(
     Ok(NewCoinPurchasesResponse { purchases, total })
 }
 
+/// 按用户、邮箱、资产和状态筛选新币锁仓头寸，并返回解锁时间、剩余金额和来源信息及总数。
+/// 查询不锁头寸或推进解锁；分页边界统一裁剪，数据库解码失败直接返回错误。
 pub(crate) async fn list_admin_new_coin_lock_positions(
     pool: Option<Pool<MySql>>,
     query: AdminNewCoinLockPositionQuery,
@@ -138,6 +148,8 @@ pub(crate) async fn list_admin_new_coin_lock_positions(
     })
 }
 
+/// 按用户、邮箱、资产、解锁状态和费用支付状态筛选新币解锁记录，并返回分页结果与总数。
+/// 两个状态筛选只去空白，查询不锁钱包或费用记录，也不执行解锁或补扣费用。
 pub(crate) async fn list_admin_new_coin_unlocks(
     pool: Option<Pool<MySql>>,
     query: AdminNewCoinUnlockQuery,
@@ -159,6 +171,10 @@ pub(crate) async fn list_admin_new_coin_unlocks(
     Ok(NewCoinUnlocksResponse { unlocks, total })
 }
 
+/// 创建新币项目，并返回含发行、生命周期、解锁和手续费配置的数据库快照。
+/// 请求须含合法生命周期、正总量、非负发行价、非空符号及互斥解锁配置；调用方负责管理员权限和资产 ID 来源。
+/// 事务插入项目、回读后依次写生命周期事件和后台审计；实现未预先锁资产，唯一键或任一步失败整体回滚。
+/// 本用例无幂等键，提交后不自动开放认购、派发资产或发布外部事件。
 pub(crate) async fn create_admin_new_coin_project(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -219,6 +235,10 @@ pub(crate) async fn create_admin_new_coin_project(
     Ok(project)
 }
 
+/// 按领域迁移图推进新币项目生命周期，并返回更新后的项目快照。
+/// 请求目标只接受预热、认购、派发或上市；管理员权限由调用方保证，进入上市时缺省使用当前时间作为 listed_at。
+/// 事务先锁项目，基于锁后旧状态校验迁移，再更新生命周期、回读并写生命周期事件和后台审计；非法迁移或数据库失败整体回滚。
+/// 相同目标重放通常因迁移图返回错误，不会重复推进；本用例不触发自动派发或交易对上线。
 pub(crate) async fn update_admin_new_coin_lifecycle(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -262,6 +282,10 @@ pub(crate) async fn update_admin_new_coin_lifecycle(
     Ok(after)
 }
 
+/// 替换新币项目的解锁模式与对应时间参数，并返回最终项目配置。
+/// 请求须满足上市即解锁、固定时间、相对周期三种字段形状；切换到非上市即解锁时保留项目原 listed_at。
+/// 事务先锁项目，再更新规则、回读并写生命周期事件和后台审计；记录缺失或任一步失败整体回滚。
+/// 已生成的锁仓头寸不会被重算；相同配置重放仍新增事件和审计。
 pub(crate) async fn update_admin_new_coin_unlock_rule(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -362,6 +386,10 @@ pub(crate) async fn update_admin_new_coin_unlock_fee_rule(
     Ok(after)
 }
 
+/// 为已上市新币启用指定购买交易对或关闭上市后购买，并返回项目最终配置。
+/// 启用时须提供交易对 ID；事务锁项目并确认生命周期为 listed，再校验交易对关联项目资产，随后激活交易对和项目开关。
+/// 关闭路径只清除项目购买开关；项目写入、可选交易对激活、生命周期事件和后台审计同事务提交，失败整体回滚。
+/// 重放启用/关闭仍会产生审计，关闭不会恢复此前被激活交易对的状态，也不发布外部行情事件。
 pub(crate) async fn update_admin_new_coin_post_listing_purchase(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -402,6 +430,8 @@ pub(crate) async fn update_admin_new_coin_post_listing_purchase(
     Ok(after)
 }
 
+/// 锁定新币项目与派发记录，按认购结果计算直接入账或锁仓分配，并推进项目派发状态。
+/// 派发、钱包余额流水、锁仓、生命周期事件及审计共用事务；幂等键或状态冲突阻止重复发币。
 pub(crate) async fn distribute_admin_new_coin(
     pool: Option<Pool<MySql>>,
     admin_id: u64,

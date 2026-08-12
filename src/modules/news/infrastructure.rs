@@ -20,6 +20,8 @@ pub struct PublicNewsRepository;
 
 impl InfrastructureLayer for PublicNewsRepository {}
 
+/// 从 `admin_news_items` 查询 published 新闻；分类精确匹配，地区包含 GLOBAL/空值，语言按 JSON locale 族匹配。
+/// 关键词同时搜索标题和 `content_json` 文本，结果按发布时间/更新时间/主键倒序分页；数据库失败直接返回。
 pub async fn fetch_public_news_items(
     pool: &Pool<MySql>,
     filter: &PublicNewsFilter,
@@ -39,6 +41,7 @@ pub async fn fetch_public_news_items(
         .map_err(AppError::from)
 }
 
+/// 记录不存在或未发布返回 NotFound，禁止公共接口回退到后台草稿。
 pub async fn fetch_public_news_item(
     pool: &Pool<MySql>,
     news_id: u64,

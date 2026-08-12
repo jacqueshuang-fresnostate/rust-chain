@@ -1,5 +1,7 @@
 use super::*;
 
+/// 分页读取全部闪兑交易对及其源/目标资产展示信息，并返回匹配总数。
+/// 当前查询对象不提供业务筛选，只裁剪 limit/offset；读取不加锁，连接池缺失或 SQL 映射失败返回错误。
 pub(crate) async fn list_admin_convert_pairs(
     pool: Option<Pool<MySql>>,
     query: AdminConvertPairQuery,
@@ -14,6 +16,8 @@ pub(crate) async fn list_admin_convert_pairs(
     Ok(ConvertPairsResponse { pairs, total })
 }
 
+/// 按交易对 ID 读取闪兑资产、定价、费率、源/目标限额和启用状态。
+/// 查询不锁交易对；记录缺失返回未找到，数据库错误直接上抛，也不会计算即时兑换报价。
 pub(crate) async fn get_admin_convert_pair(
     pool: Option<Pool<MySql>>,
     pair_id: u64,
@@ -22,6 +26,8 @@ pub(crate) async fn get_admin_convert_pair(
     load_admin_convert_pair_from_store(&pool, pair_id).await
 }
 
+/// 按用户、邮箱和状态筛选闪兑订单，并返回资产、金额、汇率、手续费和时间的分页结果。
+/// 状态只去除空白，分页限制执行统一裁剪；读取不锁订单或钱包，匹配总数来自同组 SQL 谓词。
 pub(crate) async fn list_admin_convert_orders(
     pool: Option<Pool<MySql>>,
     query: AdminConvertOrdersQuery,
@@ -41,6 +47,8 @@ pub(crate) async fn list_admin_convert_orders(
     Ok(ConvertOrdersResponse { orders, total })
 }
 
+/// 按订单 ID 读取单笔闪兑订单及关联用户、资产和定价结果。
+/// 查询不加订单或钱包锁；不存在返回未找到，SQL/行映射失败返回错误，不重试或改变订单状态。
 pub(crate) async fn get_admin_convert_order(
     pool: Option<Pool<MySql>>,
     order_id: u64,
@@ -221,6 +229,10 @@ pub(crate) async fn update_admin_convert_pair(
     Ok(after)
 }
 
+/// 删除已停用且无业务引用的闪兑交易对，成功返回空结果。
+/// 调用方提供已鉴权管理员 ID和必填审计原因；仍启用的交易对直接返回参数错误。
+/// 事务先锁交易对，再检查报价、订单及新币兑换规则引用，随后删除并写 before 审计；任一引用、缺失或 SQL 失败整体回滚。
+/// 删除不具幂等性，成功后重放会得到未找到；本函数不清理外部行情缓存。
 pub(crate) async fn delete_admin_convert_pair(
     pool: Option<Pool<MySql>>,
     admin_id: u64,

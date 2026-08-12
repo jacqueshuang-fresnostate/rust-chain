@@ -44,6 +44,8 @@ struct TodayReturnTickerPayload {
     observed_at: DateTime<Utc>,
 }
 
+/// 聚合指定 UTC 时段内已实现收益与对应本金基数，按资产返回活动快照。
+/// 查询只读取可审计结算来源，不把充值、提现或内部划转误计为收益。
 pub(crate) async fn load_today_return_asset_activity(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -62,7 +64,8 @@ pub(crate) async fn load_today_return_asset_activity(
         .collect())
 }
 
-/// 四类终态事实按 UTC 日和资产一次性聚合，所有收益公式与 today-return 共用此查询。
+/// 按 UTC 自然日和资产聚合 Seconds、Prediction、Margin 与 Earn 终态事实的已实现收益及本金基数。
+/// 公式与 today-return 口径一致；查询不包含充值、提现、内部划转、未结算订单或未实现盈亏，也不锁钱包。
 pub(crate) async fn load_return_history_asset_activity(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -176,7 +179,8 @@ pub(crate) async fn load_return_history_asset_activity(
     Ok(rows)
 }
 
-/// 已结束 UTC 日只读取对应 `{ASSET}USDT` 集合中 exact open_time 的 1d close。
+/// 为每个非稳定币和活动日期读取 `{ASSET}USDT` 集合中 open_time 精确等于 UTC 零点的 1d close。
+/// 本函数不为稳定币造价，也不回退相邻 K 线；缺失或非法价格留空，由应用层标记对应日期为 partial。
 pub(crate) async fn load_historical_usdt_daily_closes(
     database: &Database,
     requested_days: &BTreeMap<String, BTreeSet<NaiveDate>>,
@@ -237,6 +241,8 @@ pub(crate) fn return_history_kline_document_close_if_valid(
 }
 
 /// 历史估值拒绝错日、非日初、非法和非正 close，缺失由应用层统一传播为 partial。
+/// 从历史 K 线文档提取严格为正的收盘价及其业务日期。
+/// 时间、价格或交易对不合法时返回空，防止错误行情进入收益估值。
 pub(crate) fn return_history_historical_close_if_valid(
     open_time_millis: i64,
     close: &str,
@@ -254,7 +260,8 @@ pub(crate) fn return_history_historical_close_if_valid(
     (price > 0).then_some((day, price))
 }
 
-/// Redis 中缺失、字段异常、交易对不匹配或时间过期的 ticker 都按缺价处理，由应用层标记 partial。
+/// 批量读取非稳定币 `{ASSET}USDT` Redis ticker，仅收集交易对匹配、正数且相对计算时刻 60 秒内的价格。
+/// 缺失、字段异常、过期或未来时间快照均按缺价留空；函数不改写缓存，由应用层传播 partial。
 pub(crate) async fn load_current_usdt_prices(
     redis: &ConnectionManager,
     asset_symbols: &[String],
@@ -284,6 +291,8 @@ pub(crate) async fn load_current_usdt_prices(
 }
 
 /// 今日收益只接受与 Redis key 对应、价格为正且时间新鲜的行情，异常缓存统一按缺价处理。
+/// 校验行情快照的交易对、时间戳和正价格后返回当前估值价。
+/// 超过允许陈旧窗口或字段异常时返回空，避免旧行情进入当日收益。
 pub(crate) fn today_return_ticker_price_if_current(
     asset_symbol: &str,
     payload: &str,

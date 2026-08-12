@@ -5,6 +5,8 @@
 use crate::modules::kyc::presentation::{KycConfigResponse, KycSubmissionResponse};
 use serde_json::{Value, json};
 
+/// 将 KYC 配置快照转为稳定审计 JSON，时间统一使用毫秒且不暴露额外存储字段。
+/// 函数仅构造快照而不写审计表，持久化失败和事务回滚语义由调用方负责。
 pub fn kyc_config_audit_json(config: &KycConfigResponse) -> Value {
     json!({
         "id": config.id,
@@ -21,6 +23,9 @@ pub fn kyc_config_audit_json(config: &KycConfigResponse) -> Value {
     })
 }
 
+/// 将 KYC 申请转为审计 JSON，身份号仅保留首尾四位，材料仅记录是否已设置。
+/// 输出仍含姓名、邮箱、电话、企业登记号和审核理由等个人数据，仅适合受控审计存储；
+/// 函数本身不写库，调用方须随业务事务持久化，并避免把该 JSON 复制到普通日志或公开响应。
 pub fn kyc_submission_audit_json(submission: &KycSubmissionResponse) -> Value {
     json!({
         "id": submission.id,

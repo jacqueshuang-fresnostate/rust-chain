@@ -11,11 +11,14 @@ use crate::modules::convert::domain::{
 };
 
 pub trait ConvertQuoteRepository {
+    /// 保存限时报价缓存快照，TTL 与 expires_at 必须表达同一过期边界。
+    /// 实现失败返回仓储错误；不得把缺少缓存的报价伪装成可确认状态。
     fn save_quote_ttl(
         &mut self,
         entry: ConvertQuoteCacheEntry,
     ) -> Result<(), ConvertRepositoryError>;
 
+    /// 按报价标识读取限时缓存；未命中返回空，存储或反序列化失败必须区分为错误。
     fn get_quote_ttl(
         &self,
         quote_id: &QuoteId,
@@ -23,6 +26,8 @@ pub trait ConvertQuoteRepository {
 }
 
 pub trait ConvertOrderRepository {
+    /// 写入报价确认记录并以唯一键区分首次确认和重复确认。
+    /// 实现必须让重放返回 Duplicate，禁止同一报价生成第二份订单或资金副作用。
     fn insert_quote_confirmation(
         &mut self,
         record: ConvertQuoteConfirmationRecord,

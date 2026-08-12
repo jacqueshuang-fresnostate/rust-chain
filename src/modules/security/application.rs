@@ -31,6 +31,8 @@ pub struct SecurityVerificationUseCase;
 
 impl ApplicationLayer for SecurityVerificationUseCase {}
 
+/// 检查用户挑战快照类型匹配、未消费且尚未过期，失效时返回统一重新登录语义。
+/// 本函数不锁行或消费挑战；后续写入前存在并发竞争，调用方须另行完成防重放消费。
 pub fn ensure_login_challenge_usable(
     challenge: &LoginTwoFactorChallenge,
     expected_type: LoginTwoFactorChallengeType,
@@ -44,7 +46,8 @@ pub fn ensure_login_challenge_usable(
     Ok(())
 }
 
-/// 管理员登录挑战与用户侧一致：一次性消费、限时有效，并额外限制单挑战试码次数。
+/// 检查管理员挑战快照尚未消费、未过期且未达到单挑战试码上限。
+/// 该纯检查不锁行也不消费记录；调用方仍须持久化消费，并自行承担检查后的并发竞争。
 pub fn ensure_admin_login_challenge_usable(
     challenge: &AdminLoginTwoFactorChallenge,
 ) -> AppResult<()> {
@@ -57,6 +60,9 @@ pub fn ensure_admin_login_challenge_usable(
     Ok(())
 }
 
+/// 读取管理员已启用的加密 TOTP 密钥，解密后校验当前时间窗口。
+/// 加密密钥与解密明文仅在当前调用内使用，不得记录；校验成功另发 SQL 更新最后验证时间。
+/// 未绑定、密钥配置或动态码错误均不降级放行，时间写入不与调用方后续动作共用事务。
 pub async fn verify_admin_totp(
     pool: &Pool<MySql>,
     settings: &Settings,
@@ -81,13 +87,16 @@ pub async fn verify_admin_totp(
     Ok(())
 }
 
-/// 凭证加密密钥缺失时不降级校验，直接判为服务端配置错误。
+/// 返回进程配置中的凭证加密密钥引用；缺失时返回服务端配置错误，调用方不得记录或响应该值。
 pub fn credential_encryption_key(settings: &Settings) -> AppResult<&str> {
     settings
         .exposed_credential_encryption_key()
         .ok_or_else(|| AppError::Internal("credential encryption key is not configured".to_owned()))
 }
 
+/// 按安全策略编排资金密码与 TOTP 校验，策略关闭时返回配置方式且不读凭证。
+/// 策略读取会访问 MySQL；凭证缺失、未绑定或验证失败立即拒绝，TOTP 成功另写验证时间。
+/// 结果不是可携带或一次性消费的授权证明，也不与后续资金事务绑定，调用方须对每次动作现场调用。
 pub async fn verify_user_security_action(
     pool: &Pool<MySql>,
     settings: &Settings,
@@ -121,6 +130,9 @@ pub async fn verify_user_security_action(
     Ok(action_policy.method)
 }
 
+/// 读取用户已启用的加密 TOTP 密钥，解密并校验六位动态码。
+/// 成功后另发 SQL 更新最后验证时间；缺少绑定、密钥或动态码错误不更新该时间。
+/// 解密明文不出当前调用，时间写入不与后续资金或登录动作共用事务。
 pub async fn verify_user_totp(
     pool: &Pool<MySql>,
     settings: &Settings,

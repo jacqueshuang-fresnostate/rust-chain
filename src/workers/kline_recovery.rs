@@ -22,7 +22,8 @@ const MAX_CANDLES_PER_STRATEGY_RUN: usize = 500;
 pub struct KlineRecoveryWorker;
 
 impl KlineRecoveryWorker {
-    /// 执行一轮 K 线缺口恢复；MySQL 策略检查点与 Mongo K 线写入共同决定重放范围。
+    /// 执行一轮 K 线缺口恢复；策略扫描上限收敛到 1..=100，每个策略最多生成 500 根已闭合 K 线。
+    /// Mongo 以 interval+open_time 幂等 upsert，成功写入后才以旧值乐观推进 MySQL 检查点；单策略失败继续后项。
     pub async fn run_once(
         &self,
         state: &AppState,
@@ -375,7 +376,8 @@ impl KlineRecoveryCandle {
     }
 }
 
-/// 从应用状态取得 MySQL 与 MongoDB 后执行一轮恢复；任一权威存储缺失时立即失败。
+/// 从应用状态取得 MySQL 策略检查点与 Mongo K 线存储后执行单轮恢复；任一权威存储缺失时在扫描前失败。
+/// 单轮最多处理 1..=100 个策略、每个策略最多 500 根 K 线；本入口不广播实时行情或写 outbox。
 pub async fn run_once(
     state: &AppState,
     now: DateTime<Utc>,
@@ -390,9 +392,9 @@ pub async fn run_once(
     run_once_with_dependencies(pool, mongo, now, limit).await
 }
 
-/// 扫描到期恢复策略并逐个生成、upsert K 线，再以旧检查点作乐观条件推进策略检查点。
-/// Mongo upsert 以 interval+open_time 唯一键幂等；检查点已被其他 worker 推进时跳过，不覆盖更新。
-/// 单个策略失败会记录失败原因并继续后续策略，已成功写入的 K 线可在下轮安全重放。
+/// 按策略 ID 扫描至多 `limit` 收敛后的 100 个到期策略，每项最多生成 500 根截至最近闭合周期的 K 线。
+/// 先逐根以 interval+open_time 唯一键 upsert Mongo，再以旧检查点作乐观条件推进 MySQL；并发已推进时跳过覆盖，崩溃在两步之间会于下轮安全重写同键。
+/// 单策略校验、Mongo 或检查点失败记录后继续后项，已完成策略不回滚；本 worker 不发布 WebSocket 或 outbox 事件。
 pub async fn run_once_with_dependencies(
     pool: &Pool<MySql>,
     mongo: &Database,
@@ -432,7 +434,8 @@ pub async fn run_once_with_dependencies(
     Ok(summarize_recovery_plans(&outcomes))
 }
 
-/// 按间隔持续执行 K 线恢复；周期错误记录后继续，MySQL 检查点和 Mongo 唯一索引提供崩溃恢复。
+/// 以至少 1 秒间隔持续恢复 K 线；周期级候选查询错误只记录并进入下一轮，单策略失败由单轮继续语义吸收。
+/// MySQL 乐观检查点与 Mongo 唯一索引提供跨重启恢复；循环不维护额外游标，也不把恢复蜡烛广播为实时帧。
 pub async fn run_loop(state: AppState, interval_seconds: u64, limit: u32) -> AppResult<()> {
     let mut ticker = interval(Duration::from_secs(interval_seconds.max(1)));
 

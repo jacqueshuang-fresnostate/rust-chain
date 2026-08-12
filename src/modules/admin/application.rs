@@ -353,13 +353,16 @@ fn optional_str(value: &str) -> Option<&str> {
     (!value.is_empty()).then_some(value)
 }
 
+/// 从可选应用状态中取得后台用例所需的 MySQL 连接池句柄。
+/// 连接池未配置时返回内部错误；本函数不执行查询、不加锁，也不创建事务。
 pub(crate) fn admin_mysql_pool(pool: Option<Pool<MySql>>) -> AppResult<Pool<MySql>> {
     pool.ok_or_else(|| {
         AppError::Internal("mysql pool is not configured for admin convert routes".to_owned())
     })
 }
 
-/// 从应用状态中获取 admin 路由使用的 MySQL 连接池。
+/// 从应用状态中取得 Admin 用例使用的 MySQL 连接池。
+/// 缺少连接池时返回内部配置错误；本函数只提取句柄，不开启事务或执行查询。
 pub(crate) fn mysql_pool(state: &AppState) -> AppResult<Pool<MySql>> {
     admin_mysql_pool(state.mysql.clone())
 }

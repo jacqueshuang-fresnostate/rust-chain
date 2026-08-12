@@ -127,6 +127,8 @@ struct AdminWalletEmptyAssetRow {
     asset_symbol: String,
 }
 
+/// 在调用方事务中读取资产符号并确认其状态为 active，供人工充值等资金写入建立资产前置条件。
+/// 查询不加行锁也不提交事务；资产缺失返回未找到，非启用资产返回校验错误，SQL 失败由上层回滚。
 pub(crate) async fn load_active_asset_symbol_in_tx(
     tx: &mut Transaction<'_, MySql>,
     asset_id: u64,
@@ -144,6 +146,8 @@ pub(crate) async fn load_active_asset_symbol_in_tx(
     Ok(asset)
 }
 
+/// 分页查询资产，返回符合调用方筛选条件的记录及相同谓词下的总数。
+/// 资产列表与计数通过连接池分别执行且均不加锁；并发写入可能造成页数据与总数快照不同，SQL 或字段映射失败直接返回错误。
 pub(crate) async fn list_admin_assets(
     pool: &Pool<MySql>,
     filter: AdminAssetListFilter,
@@ -177,6 +181,8 @@ pub(crate) async fn list_admin_assets(
     .await
 }
 
+/// 按传入主键或筛选条件从连接池读取资产并映射为应用层所需的完整记录。
+/// 资产不追加行锁，查询不创建事务；记录缺失时返回未找到，SQL 或字段解码失败直接返回错误，不产生审计副作用。
 pub(crate) async fn load_admin_asset(
     pool: &Pool<MySql>,
     asset_id: u64,
@@ -191,6 +197,8 @@ pub(crate) async fn load_admin_asset(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中插入资产并返回或保留数据库写入结果。
+/// 资产数据库唯一键冲突会映射为业务冲突；调用方持有提交边界并负责同事务审计，任一 SQL 失败使所属用例回滚。
 pub(crate) async fn insert_admin_asset_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: AdminAssetInsert,
@@ -219,6 +227,8 @@ pub(crate) async fn insert_admin_asset_in_tx(
     Ok(result.last_insert_id())
 }
 
+/// 在调用方事务中按传入主键或筛选条件更新资产，写入应用层已决定的目标字段。
+/// 资产更新不检查受影响行数；调用方须先完成所需锁定和状态校验，并负责提交、回滚及同事务审计。
 pub(crate) async fn update_admin_asset_in_tx(
     tx: &mut Transaction<'_, MySql>,
     asset_id: u64,
@@ -256,6 +266,8 @@ pub(crate) async fn update_admin_asset_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中删除资产，调用前应已锁定资源并完成引用与余额等业务约束检查。
+/// 本函数不提交事务或级联补偿；受影响行为空或 SQL 失败返回错误，审计由应用层同事务追加。
 pub(crate) async fn delete_admin_asset_in_tx(
     tx: &mut Transaction<'_, MySql>,
     asset_id: u64,
@@ -267,6 +279,8 @@ pub(crate) async fn delete_admin_asset_in_tx(
     Ok(())
 }
 
+/// 按传入主键或筛选条件从调用方事务快照读取资产并映射为应用层所需的完整记录。
+/// 资产不追加行锁，由调用方持有事务且本读取不提交；记录缺失时返回未找到，SQL 或字段解码失败直接返回错误，不产生审计副作用。
 pub(crate) async fn load_admin_asset_in_tx(
     tx: &mut Transaction<'_, MySql>,
     asset_id: u64,
@@ -281,6 +295,8 @@ pub(crate) async fn load_admin_asset_in_tx(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中按传入主键或筛选条件以 `FOR UPDATE` 锁定资产并返回一致的修改前快照。
+/// 资产锁由调用方事务持有至结束；函数不自行提交，记录缺失返回未找到，SQL 或解码失败交由外层回滚。
 pub(crate) async fn lock_admin_asset_in_tx(
     tx: &mut Transaction<'_, MySql>,
     asset_id: u64,
@@ -296,6 +312,8 @@ pub(crate) async fn lock_admin_asset_in_tx(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中为当前 users 表内每个用户补建指定资产的零余额钱包账户。
+/// `INSERT IGNORE ... SELECT` 使已存在的用户资产账户保持不变，并发唯一键冲突被忽略；函数不检查插入数量，调用方负责与资产创建及审计统一提交。
 pub(crate) async fn create_wallet_accounts_for_asset_in_tx(
     tx: &mut Transaction<'_, MySql>,
     asset_id: u64,
@@ -311,6 +329,8 @@ pub(crate) async fn create_wallet_accounts_for_asset_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中删除指定资产下可用、冻结和锁定余额均为零的钱包账户。
+/// 删除允许影响零行或多行且不级联账本；调用方须先锁定并禁用资产，随后检查剩余引用并与资产删除、审计统一提交。
 pub(crate) async fn delete_zero_balance_wallet_accounts_for_asset_in_tx(
     tx: &mut Transaction<'_, MySql>,
     asset_id: u64,
@@ -515,6 +535,8 @@ pub(crate) async fn list_admin_wallet_ledger(
     .await
 }
 
+/// 分页查询充值网络配置，返回符合调用方筛选条件的记录及相同谓词下的总数。
+/// 充值网络配置列表与计数通过连接池分别执行且均不加锁；并发写入可能造成页数据与总数快照不同，SQL 或字段映射失败直接返回错误。
 pub(crate) async fn list_admin_deposit_network_configs(
     pool: &Pool<MySql>,
     filter: AdminDepositNetworkConfigListFilter,
@@ -555,6 +577,8 @@ pub(crate) async fn list_admin_deposit_network_configs(
     .await
 }
 
+/// 按网络代码从连接池读取充值网络配置并映射为应用层所需的完整记录。
+/// 充值网络配置不追加行锁，查询不创建事务；记录缺失时返回空值，SQL 或字段解码失败直接返回错误，不产生审计副作用。
 pub(crate) async fn load_deposit_network_config_by_network(
     pool: &Pool<MySql>,
     network: &str,
@@ -569,6 +593,8 @@ pub(crate) async fn load_deposit_network_config_by_network(
         .ok_or_else(|| AppError::Validation("deposit network config is missing".to_owned()))
 }
 
+/// 在调用方事务中插入充值网络配置并返回或保留数据库写入结果。
+/// 充值网络配置数据库唯一键冲突会映射为业务冲突；调用方持有提交边界并负责同事务审计，任一 SQL 失败使所属用例回滚。
 pub(crate) async fn insert_admin_deposit_network_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: AdminDepositNetworkConfigWrite,
@@ -591,6 +617,8 @@ pub(crate) async fn insert_admin_deposit_network_config_in_tx(
     Ok(result.last_insert_id())
 }
 
+/// 在调用方事务中按传入主键或筛选条件更新充值网络配置，写入应用层已决定的目标字段。
+/// 充值网络配置更新不检查受影响行数，唯一键冲突映射为业务冲突；调用方须先完成所需锁定和状态校验，并负责提交、回滚及同事务审计。
 pub(crate) async fn update_admin_deposit_network_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
     config_id: u64,
@@ -621,6 +649,8 @@ pub(crate) async fn update_admin_deposit_network_config_in_tx(
     Ok(())
 }
 
+/// 按传入主键或筛选条件从调用方事务快照读取充值网络配置并映射为应用层所需的完整记录。
+/// 充值网络配置不追加行锁，由调用方持有事务且本读取不提交；记录缺失时返回未找到，SQL 或字段解码失败直接返回错误，不产生审计副作用。
 pub(crate) async fn load_deposit_network_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
     config_id: u64,
@@ -635,6 +665,8 @@ pub(crate) async fn load_deposit_network_config_in_tx(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中按传入主键或筛选条件以 `FOR UPDATE` 锁定充值网络配置并返回一致的修改前快照。
+/// 充值网络配置锁由调用方事务持有至结束；函数不自行提交，记录缺失返回未找到，SQL 或解码失败交由外层回滚。
 pub(crate) async fn lock_deposit_network_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
     config_id: u64,
@@ -650,6 +682,8 @@ pub(crate) async fn lock_deposit_network_config_in_tx(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中检查资产符号的实际 SQL 前置条件，阻止不符合约束的后续写入。
+/// 校验只读取当前事务快照而不加行锁且不自行提交；条件不满足按实现返回校验/冲突/未找到，SQL 失败由调用方连同后续写入一起回滚。
 pub(crate) async fn ensure_asset_symbols_exist(
     pool: &Pool<MySql>,
     symbols: &[String],
@@ -719,6 +753,8 @@ pub(crate) async fn list_admin_deposit_address_pool(
     .await
 }
 
+/// 按传入主键或筛选条件从连接池读取充值地址池并映射为应用层所需的完整记录。
+/// 充值地址池不追加行锁，查询不创建事务；记录缺失时返回未找到，SQL 或字段解码失败直接返回错误，不产生审计副作用。
 pub(crate) async fn load_deposit_address_pool(
     pool: &Pool<MySql>,
     address_id: u64,
@@ -733,6 +769,8 @@ pub(crate) async fn load_deposit_address_pool(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中插入充值地址池并返回或保留数据库写入结果。
+/// 充值地址池数据库唯一键冲突会映射为业务冲突；调用方持有提交边界并负责同事务审计，任一 SQL 失败使所属用例回滚。
 pub(crate) async fn insert_deposit_address_pool_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: AdminDepositAddressPoolWrite,
@@ -756,6 +794,8 @@ pub(crate) async fn insert_deposit_address_pool_in_tx(
     load_deposit_address_pool_in_tx(tx, result.last_insert_id()).await
 }
 
+/// 在调用方事务中按传入主键或筛选条件更新充值地址池，写入应用层已决定的目标字段。
+/// 充值地址池更新不检查受影响行数，唯一键冲突映射为业务冲突；调用方须先完成所需锁定和状态校验，并负责提交、回滚及同事务审计。
 pub(crate) async fn update_deposit_address_pool_in_tx(
     tx: &mut Transaction<'_, MySql>,
     address_id: u64,
@@ -781,6 +821,8 @@ pub(crate) async fn update_deposit_address_pool_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中针对地址回收更新充值地址池，写入应用层已决定的目标字段。
+/// 充值地址池更新不检查受影响行数；调用方须先完成所需锁定和状态校验，并负责提交、回滚及同事务审计。
 pub(crate) async fn reclaim_deposit_address_pool_in_tx(
     tx: &mut Transaction<'_, MySql>,
     address_id: u64,
@@ -800,6 +842,8 @@ pub(crate) async fn reclaim_deposit_address_pool_in_tx(
     Ok(())
 }
 
+/// 按传入主键或筛选条件从调用方事务快照读取充值地址池并映射为应用层所需的完整记录。
+/// 充值地址池不追加行锁，由调用方持有事务且本读取不提交；记录缺失时返回未找到，SQL 或字段解码失败直接返回错误，不产生审计副作用。
 pub(crate) async fn load_deposit_address_pool_in_tx(
     tx: &mut Transaction<'_, MySql>,
     address_id: u64,
@@ -814,6 +858,8 @@ pub(crate) async fn load_deposit_address_pool_in_tx(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中按传入主键或筛选条件以 `FOR UPDATE` 锁定充值地址池并返回一致的修改前快照。
+/// 充值地址池锁由调用方事务持有至结束；函数不自行提交，记录缺失返回未找到，SQL 或解码失败交由外层回滚。
 pub(crate) async fn lock_deposit_address_pool_in_tx(
     tx: &mut Transaction<'_, MySql>,
     address_id: u64,
@@ -829,6 +875,8 @@ pub(crate) async fn lock_deposit_address_pool_in_tx(
         .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务中锁定或创建代理钱包账户，增加可用余额并追加对应后台钱包流水。
+/// 余额与流水必须同事务提交且金额须为正；同一引用由上层保证幂等，SQL 失败会使整笔入账回滚。
 pub(crate) async fn credit_admin_wallet_available_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -863,6 +911,8 @@ pub(crate) async fn credit_admin_wallet_available_in_tx(
     .await
 }
 
+/// 在调用方事务中确保用户资产钱包存在，并以 `FOR UPDATE` 返回账户余额快照供后续入账。
+/// 创建零余额行和加锁读取不提交事务；调用方须继续在同一事务写余额及流水，SQL 失败整体回滚。
 pub(crate) async fn lock_or_create_admin_wallet_row_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -880,6 +930,8 @@ pub(crate) async fn lock_or_create_admin_wallet_row_in_tx(
     load_admin_wallet_row_in_tx(tx, user_id, asset_id).await
 }
 
+/// 在调用方事务中追加后台钱包流水，固化变更金额、余额桶及 available/frozen/locked 账后快照。
+/// 流水必须与对应余额更新同事务提交；函数不自行去重或写后台审计，SQL 失败由用例整体回滚。
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn insert_admin_wallet_ledger_in_tx(
     tx: &mut Transaction<'_, MySql>,

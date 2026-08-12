@@ -50,7 +50,8 @@ impl MySqlNewCoinRepository {
         &self.pool
     }
 
-    /// 按幂等键插入购买单；重复键返回原订单编号且不产生第二条记录。
+    /// 按幂等键插入购买单；唯一键冲突时读取并返回原订单编号，不产生第二条记录。
+    /// 此兼容入口只写订单表，不扣钱包或创建锁仓；其他 SQL 错误转换为仓储错误。
     pub async fn insert_purchase_order(
         &self,
         order: NewCoinPurchaseOrderInsert,
@@ -87,7 +88,7 @@ impl MySqlNewCoinRepository {
         })
     }
 
-    /// 查询指定用户解锁记录的付费状态；未知存储状态按原错误合同返回。
+    /// 查询指定用户解锁记录的付费状态；记录不存在返回 `None`，未知存储值返回 `InvalidStatus`。
     pub async fn unlock_fee_paid_status(
         &self,
         unlock_idempotency_key: &str,
@@ -108,7 +109,8 @@ impl MySqlNewCoinRepository {
             .transpose()
     }
 
-    /// 将尚未支付的解锁记录原子标记为已支付，并保留既有资产、金额与幂等条件。
+    /// 按解锁键与用户把尚未支付的记录标记为 paid，并用传入资产、金额覆盖费用字段；零行受影响返回 `false`。
+    /// 此兼容入口不核对费用配置、不扣钱包也不写资金流水，调用方须先完成参数校验。
     pub async fn mark_unlock_fee_paid(
         &self,
         payment: UnlockFeePaymentUpdate,
@@ -163,6 +165,7 @@ pub(crate) struct MySqlNewCoinReadRepository {
 }
 
 impl MySqlNewCoinReadRepository {
+    /// 保存 MySQL 池供新币读写仓储方法复用；构造时不连接、查询或验证 schema。
     pub(crate) fn new(pool: Pool<MySql>) -> Self {
         Self { pool }
     }

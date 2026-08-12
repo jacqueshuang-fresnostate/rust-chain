@@ -1,5 +1,7 @@
 use super::*;
 
+/// 去除可选新闻图片 URL 的首尾空白，空串转为 None，并限制字段长度防止超出存储列。
+/// 只校验文本形状，不下载图片或验证远端资源可达性。
 pub(crate) fn validate_optional_image_url(
     value: Option<String>,
     field: &str,
@@ -13,6 +15,7 @@ pub(crate) fn validate_optional_image_url(
     Ok(Some(url))
 }
 
+/// 去除新闻标题首尾空白并限制为数据库允许的最大字符数；空标题直接拒绝。
 pub(crate) fn validate_news_title(value: &str) -> AppResult<String> {
     let Some(title) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation("news title is required".to_owned()));
@@ -23,6 +26,7 @@ pub(crate) fn validate_news_title(value: &str) -> AppResult<String> {
     Ok(title)
 }
 
+/// 规范化新闻分类为后台合同支持的稳定代码，空白或未支持分类返回校验错误。
 pub(crate) fn validate_news_category(value: &str) -> AppResult<String> {
     let Some(category) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation("news category is required".to_owned()));
@@ -33,6 +37,7 @@ pub(crate) fn validate_news_category(value: &str) -> AppResult<String> {
     }
 }
 
+/// 规范化新闻草稿/发布等生命周期状态；这里只校验目标值，不判断当前状态迁移或发布时间。
 pub(crate) fn validate_news_status(value: &str) -> AppResult<String> {
     let Some(status) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation("news status is required".to_owned()));
@@ -43,6 +48,8 @@ pub(crate) fn validate_news_status(value: &str) -> AppResult<String> {
     }
 }
 
+/// 规范化可选新闻国家代码：None 或空白保持无筛选，其余委托严格国家代码规则。
+/// 返回值只表示单个适用区域，不执行集合去重或国家配置查询；非法代码沿用内部校验错误。
 pub(crate) fn normalize_optional_news_country_code(
     value: Option<String>,
 ) -> AppResult<Option<String>> {
@@ -51,6 +58,8 @@ pub(crate) fn normalize_optional_news_country_code(
         .transpose()
 }
 
+/// 将新闻国家代码去除空白并转为大写，接受 GLOBAL 或长度 2..=16 的 ASCII 字母数字及 `-_`。
+/// 空白、超长或非法字符返回校验错误；函数不验证代码是否存在于国家配置表。
 pub(crate) fn normalize_news_country_code(value: &str) -> AppResult<String> {
     let Some(country_code) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation(
@@ -74,6 +83,7 @@ pub(crate) fn normalize_news_country_code(value: &str) -> AppResult<String> {
     Ok(country_code)
 }
 
+/// 规范化新闻 locale 并限制语言标签长度与字符格式，供标题、摘要和正文多语言文档使用。
 pub(crate) fn validate_news_locale(value: &str) -> AppResult<String> {
     let Some(locale) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation("news locale is required".to_owned()));
@@ -91,6 +101,8 @@ pub(crate) fn validate_news_locale(value: &str) -> AppResult<String> {
     Ok(locale)
 }
 
+/// 校验新闻富文本多语言对象，并保证默认 locale 对应内容存在且可用于公开详情页。
+/// 函数只规范化 JSON 文档；HTML 安全渲染策略仍由前端合同和内容录入权限共同保证。
 pub(crate) fn validate_news_content_document(
     value: Value,
     default_locale: &str,
@@ -186,6 +198,8 @@ pub(crate) fn validate_news_content_document(
     Ok(value)
 }
 
+/// 将后台新闻标题、图片、分类、状态、地域、默认语言、发布时间和管理员归属映射为审计快照。
+/// 快照刻意不复制富文本正文，避免审计记录膨胀；应用层在新闻写事务中保存前后值。
 pub(crate) fn admin_news_item_audit_json(news: &AdminNewsItemResponse) -> Value {
     json!({
         "id": news.id,

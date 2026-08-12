@@ -40,6 +40,7 @@ pub enum SecurityVerificationMethod {
 }
 
 impl SecurityVerificationMethod {
+    /// 返回安全校验方式的稳定存储值，供策略序列化与响应展示复用。
     pub fn as_str(self) -> &'static str {
         match self {
             Self::FundPassword => "fund_password",
@@ -48,10 +49,12 @@ impl SecurityVerificationMethod {
         }
     }
 
+    /// 判断当前策略是否包含资金密码校验。
     pub(crate) fn requires_fund_password(self) -> bool {
         matches!(self, Self::FundPassword | Self::FundPasswordAndTwoFactor)
     }
 
+    /// 判断当前策略是否包含 TOTP 二次验证。
     pub(crate) fn requires_two_factor(self) -> bool {
         matches!(self, Self::TwoFactor | Self::FundPasswordAndTwoFactor)
     }
@@ -99,6 +102,7 @@ pub struct PaymentPolicies {
 }
 
 impl PaymentPolicies {
+    /// 按资金动作选取权威支付校验策略，返回值不产生状态变更。
     pub fn policy_for(&self, action: SecurityAction) -> &PaymentPolicy {
         match action {
             SecurityAction::Withdraw => &self.withdraw,
@@ -161,6 +165,7 @@ pub struct UserTwoFactorSettings {
 }
 
 impl UserTwoFactorSettings {
+    /// 构造未绑定二次验证的用户默认快照，不保存任何密钥。
     pub(crate) fn empty(user_id: u64) -> Self {
         Self {
             user_id,
@@ -185,6 +190,7 @@ pub struct AdminTwoFactorSettings {
 }
 
 impl AdminTwoFactorSettings {
+    /// 构造未绑定二次验证的管理员默认快照，不保存任何密钥。
     pub(crate) fn empty(admin_id: u64) -> Self {
         Self {
             admin_id,
@@ -215,6 +221,7 @@ pub enum LoginTwoFactorChallengeType {
 }
 
 impl LoginTwoFactorChallengeType {
+    /// 返回登录或首次绑定挑战的稳定存储值。
     pub fn as_str(self) -> &'static str {
         match self {
             Self::LoginTwoFactor => "login_2fa",
@@ -222,6 +229,7 @@ impl LoginTwoFactorChallengeType {
         }
     }
 
+    /// 从数据库值恢复挑战类型，未知值以校验错误拒绝而不降级。
     pub(crate) fn from_storage(value: &str) -> AppResult<Self> {
         match value {
             "login_2fa" => Ok(Self::LoginTwoFactor),
@@ -252,6 +260,8 @@ pub struct SecurityVerificationInput<'a> {
     pub totp_code: Option<&'a str>,
 }
 
+/// 使用系统安全随机源生成 20 字节 TOTP 密钥并输出无填充 Base32；返回值等同第二因子凭证，
+/// 只可进入加密存储和一次性绑定响应，不得写入普通日志、指标或审计字段。
 pub fn generate_totp_secret() -> AppResult<String> {
     let rng = SystemRandom::new();
     let mut bytes = [0_u8; DEFAULT_TOTP_SECRET_BYTES];
@@ -260,6 +270,8 @@ pub fn generate_totp_secret() -> AppResult<String> {
     Ok(base32_encode_no_padding(&bytes))
 }
 
+/// 对发行方和账号做 URI 编码，构造 SHA1、六位、三十秒周期的 TOTP 导入链接。
+/// 返回 URI 内含原始 TOTP secret，调用方须按敏感凭证处理并仅交付当前已认证主体。
 pub fn totp_otpauth_uri(issuer: &str, account: &str, secret: &str) -> String {
     let label = format!("{}:{}", issuer.trim(), account.trim());
     format!(
@@ -272,6 +284,8 @@ pub fn totp_otpauth_uri(issuer: &str, account: &str, secret: &str) -> String {
     )
 }
 
+/// 校验六位数字 TOTP，允许当前时间步前后各一个窗口以容忍时钟偏差。
+/// Base32 密钥损坏返回校验错误；格式或动态码不匹配只返回 `false`，无持久化副作用。
 pub fn verify_totp_code(secret_base32: &str, code: &str, now: DateTime<Utc>) -> AppResult<bool> {
     let code = code.trim();
     if code.len() != TOTP_DIGITS as usize || !code.chars().all(|value| value.is_ascii_digit()) {
@@ -295,11 +309,15 @@ pub fn verify_totp_code(secret_base32: &str, code: &str, now: DateTime<Utc>) -> 
     Ok(false)
 }
 
+/// 将时间戳按步长换算为计数器并生成指定位数 HOTP。
+/// 调用方必须传入非零 `step_seconds`，否则整数除法会 panic；`digits` 也须位于 `u32` 十次幂范围内。
 pub fn totp_code_for_time(secret: &[u8], timestamp: u64, step_seconds: u64, digits: u32) -> String {
     let counter = timestamp / step_seconds;
     hotp_code(secret, counter, digits)
 }
 
+/// 将二进制密钥编码为 RFC 4648 大写 Base32，省略填充字符供验证器导入。
+/// 空输入返回空字符串；转换只分配输出内存，不持久化、记录或修改原始密钥。
 pub fn base32_encode_no_padding(bytes: &[u8]) -> String {
     let mut output = String::new();
     let mut buffer = 0_u32;
@@ -323,6 +341,8 @@ pub fn base32_encode_no_padding(bytes: &[u8]) -> String {
     output
 }
 
+/// 解码无填充 Base32 密钥，容忍大小写并忽略输入中任意位置的 `=`，其他字符立即拒绝。
+/// 成功仅返回密钥字节，不校验业务长度，也不记录或泄露原始密钥。
 pub fn base32_decode_no_padding(value: &str) -> AppResult<Vec<u8>> {
     let mut output = Vec::new();
     let mut buffer = 0_u32;
@@ -346,6 +366,8 @@ pub fn base32_decode_no_padding(value: &str) -> AppResult<Vec<u8>> {
     Ok(output)
 }
 
+/// 解码安全策略 JSON，兼容字符串包装对象及历史 `0/1` 布尔形式。
+/// 空值使用安全默认策略，结构损坏返回内部错误；过程不回写数据库。
 pub fn decode_security_policy_value(value: Value) -> AppResult<UserSecurityPolicy> {
     let mut value = match value {
         Value::Null => return Ok(UserSecurityPolicy::default()),
@@ -364,6 +386,7 @@ pub fn decode_security_policy_value(value: Value) -> AppResult<UserSecurityPolic
     })
 }
 
+/// 提取非空安全校验字段，缺失时统一返回需完成安全验证的业务错误。
 pub(crate) fn required_security_field(value: Option<&str>) -> AppResult<&str> {
     value
         .map(str::trim)
@@ -373,6 +396,7 @@ pub(crate) fn required_security_field(value: Option<&str>) -> AppResult<&str> {
         })
 }
 
+/// 构造登录二次验证失效的稳定错误码与中文提示。
 pub(crate) fn login_challenge_expired() -> AppError {
     AppError::security_validation("login_2fa_challenge_expired", "登录验证已过期，请重新登录")
 }

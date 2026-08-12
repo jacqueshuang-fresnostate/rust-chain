@@ -1,5 +1,7 @@
 use super::*;
 
+/// 校验新交易对的 base/quote 资产不可相同，并复核符号、精度、最小下单额、状态和市场类型。
+/// 资产是否存在、symbol 是否重复由创建事务查询确认；本纯规则不访问数据库。
 pub(crate) fn validate_create_trading_pair_request(
     request: &CreateTradingPairRequest,
 ) -> AppResult<()> {
@@ -23,6 +25,8 @@ pub(crate) fn validate_create_trading_pair_request(
     Ok(())
 }
 
+/// 校验交易对更新后的完整配置快照，包括符号、精度、最小下单额、状态和市场类型。
+/// 不判断当前状态是否允许迁移；应用层锁定交易对后负责并发与生命周期检查。
 pub(crate) fn validate_update_trading_pair_request(
     request: &UpdateTradingPairRequest,
 ) -> AppResult<()> {
@@ -36,6 +40,8 @@ pub(crate) fn validate_update_trading_pair_request(
     Ok(())
 }
 
+/// 将交易对符号去除空白、转为大写并把下划线或斜杠统一为连字符。
+/// 仅接受不超过 64 字节的 ASCII 字母数字及 `-_/`；空值或非法字符返回校验错误，不查询符号唯一性。
 pub(crate) fn normalize_trading_pair_symbol(value: &str) -> AppResult<String> {
     let Some(value) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation("symbol is required".to_owned()));
@@ -52,6 +58,7 @@ pub(crate) fn normalize_trading_pair_symbol(value: &str) -> AppResult<String> {
     Ok(value.to_ascii_uppercase().replace(['_', '/'], "-"))
 }
 
+/// 规范化交易对状态，仅接受后台合同支持的 active、disabled 或 maintenance 代码。
 pub(crate) fn validate_trading_pair_status(value: &str) -> AppResult<String> {
     let Some(status) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation("status is required".to_owned()));
@@ -64,6 +71,7 @@ pub(crate) fn validate_trading_pair_status(value: &str) -> AppResult<String> {
     }
 }
 
+/// 规范化交易对市场类型，仅允许现货或合约等实现中明确列出的稳定代码。
 pub(crate) fn validate_trading_pair_market_type(value: &str) -> AppResult<String> {
     let Some(market_type) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation("market_type is required".to_owned()));
@@ -76,6 +84,8 @@ pub(crate) fn validate_trading_pair_market_type(value: &str) -> AppResult<String
     }
 }
 
+/// 将交易对资产、符号、精度、最小订单额、状态和市场类型映射为后台审计快照。
+/// 快照包含展示用资产名和创建时间但不含订单或行情状态；应用层负责随配置写入一并保存。
 pub(crate) fn trading_pair_audit_json(pair: &AdminTradingPairResponse) -> Value {
     json!({
         "id": pair.id,
@@ -94,6 +104,8 @@ pub(crate) fn trading_pair_audit_json(pair: &AdminTradingPairResponse) -> Value 
     })
 }
 
+/// 校验新建行情策略的交易对、类型、正数价格、有效时段、波动率及成交量上下界。
+/// 该纯规则不访问数据库；可选初始状态非法或任一数值组合不成立时返回校验错误。
 pub(crate) fn validate_create_market_strategy(
     request: &CreateMarketStrategyRequest,
 ) -> AppResult<()> {
@@ -116,6 +128,8 @@ pub(crate) fn validate_create_market_strategy(
     Ok(())
 }
 
+/// 校验行情策略更新中的类型、正数价格、有效时段、非负波动率和成交量上下界。
+/// 该纯规则不读取策略状态或访问数据库；活跃策略禁止更新的并发约束由应用层锁行后判断。
 pub(crate) fn validate_update_market_strategy(
     request: &UpdateMarketStrategyRequest,
 ) -> AppResult<()> {
@@ -172,6 +186,8 @@ fn validate_market_strategy_config(config: MarketStrategyConfigValidation<'_>) -
     Ok(())
 }
 
+/// 规范化行情策略目标状态，仅允许草稿、启用、暂停或禁用四种稳定代码。
+/// 该纯规则不判断状态迁移合法性、不访问数据库；空白或未知状态直接返回校验错误。
 pub(crate) fn validate_market_strategy_status(value: &str) -> AppResult<String> {
     let Some(status) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation("status is required".to_owned()));
@@ -184,6 +200,8 @@ pub(crate) fn validate_market_strategy_status(value: &str) -> AppResult<String> 
     }
 }
 
+/// 将领域策略状态映射为运行检查点状态：active/running、paused/paused、disabled/stopped，其余为 draft。
+/// 该总映射不校验未知输入，也不启动或停止 worker；应用用例负责先规范化状态并持久化结果。
 pub(crate) fn market_strategy_run_status(status: &str) -> &'static str {
     match status {
         "active" => "running",
@@ -193,6 +211,8 @@ pub(crate) fn market_strategy_run_status(status: &str) -> &'static str {
     }
 }
 
+/// 把新建策略请求连同 pair_id、market_type 和目标状态组装为首个版本的 JSON 配置。
+/// strategy_type 会去除首尾空白，时间转为毫秒时间戳；函数不再校验数值、不推进版本或触发运行器。
 pub(crate) fn market_strategy_config_json(
     request: &CreateMarketStrategyRequest,
     status: &str,
@@ -213,6 +233,8 @@ pub(crate) fn market_strategy_config_json(
     })
 }
 
+/// 把策略更新请求、market_type 和当前状态组装为不含 pair_id 的后续版本 JSON 配置。
+/// 输出保留价格、时段、波动率和量级快照并规范化 strategy_type；持久化版本、事件和审计由更新事务完成。
 pub(crate) fn market_strategy_update_config_json(
     request: &UpdateMarketStrategyRequest,
     status: &str,
@@ -266,6 +288,8 @@ fn market_strategy_config_value(config: MarketStrategyConfigValue<'_>) -> Value 
     value
 }
 
+/// 将行情策略配置、运行进度、恢复状态和最近生成时间映射为完整审计快照。
+/// 映射不读取版本表或运行事件；调用方在策略配置事务中保存锁后快照。
 pub(crate) fn market_strategy_audit_json(strategy: &AdminMarketStrategyResponse) -> Value {
     json!({
         "id": strategy.id,

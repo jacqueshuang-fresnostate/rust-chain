@@ -15,7 +15,9 @@ use crate::modules::events::domain::{
     INBOX_PROCESSING_TOKEN_FORMAT, INBOX_RETRY, OUTBOX_DEAD_LETTER, OUTBOX_PENDING,
     OUTBOX_PUBLISHED, OUTBOX_RETRY,
 };
-use crate::modules::events::repository::{EventInboxRepository, EventOutboxRepository};
+use crate::modules::events::repository::{
+    EventInboxRepository, EventOutboxRepository, UserWalletInitializer,
+};
 use crate::modules::events::{
     InboxClaim, InboxRetryDecision, NewInboxMessage, NewOutboxEvent, OutboxInsertResult,
     OutboxMessage, PendingInboxRetry,
@@ -27,6 +29,7 @@ pub struct MySqlEventOutboxRepository {
 }
 
 impl MySqlEventOutboxRepository {
+    /// 绑定承载 `event_outbox` 的 MySQL 连接池；不立即获取连接、扫描消息或开启发布事务。
     pub fn new(pool: Pool<MySql>) -> Self {
         Self { pool }
     }
@@ -75,6 +78,7 @@ pub struct MySqlEventInboxRepository {
 }
 
 impl MySqlEventInboxRepository {
+    /// 绑定承载 `event_inbox` 的 MySQL 连接池；不立即领取消息、创建处理租约或执行消费副作用。
     pub fn new(pool: Pool<MySql>) -> Self {
         Self { pool }
     }
@@ -126,6 +130,8 @@ impl EventInboxRepository for MySqlEventInboxRepository {
     }
 }
 
+/// 将领域事件写入 outbox；幂等键冲突时返回既有记录而不创建重复待发布消息。
+/// 独立连接写入由本函数完成，数据库错误直接返回且不会发布外部消息。
 pub(crate) async fn insert_event(
     pool: &Pool<MySql>,
     event: &NewOutboxEvent,
@@ -164,6 +170,8 @@ pub(crate) async fn insert_event(
     Ok(OutboxInsertResult::Duplicate { id })
 }
 
+/// 把领域事件追加到调用方事务中的 outbox，使业务写入与待发布记录保持原子提交。
+/// 幂等键冲突沿用既有去重语义；事务回滚时事件记录一并消失，提交前不产生外部发布。
 pub(crate) async fn insert_event_in_tx(
     tx: &mut sqlx::Transaction<'_, MySql>,
     event: &NewOutboxEvent,
@@ -202,6 +210,8 @@ pub(crate) async fn insert_event_in_tx(
     Ok(OutboxInsertResult::Duplicate { id })
 }
 
+/// 在用户创建事务内按启用资产补齐钱包账户，依赖唯一键保证并发或重放不产生重复账户。
+/// 任何插入错误交由调用方回滚；该步骤只建零余额账户，不生成资金流水或余额变动。
 pub(crate) async fn create_wallet_accounts_for_user_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -218,6 +228,33 @@ pub(crate) async fn create_wallet_accounts_for_user_in_tx(
     Ok(())
 }
 
+/// 生产环境用户钱包初始化适配器；持有 MySQL 池并为每次事件建立独立原子事务。
+#[derive(Debug, Clone)]
+pub(crate) struct MySqlUserWalletInitializer {
+    pool: Pool<MySql>,
+}
+
+impl MySqlUserWalletInitializer {
+    /// 绑定 MySQL 池；构造不访问数据库，也不预创建任何账户。
+    pub(crate) fn new(pool: Pool<MySql>) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl UserWalletInitializer for MySqlUserWalletInitializer {
+    /// 在单事务内执行 `INSERT IGNORE ... SELECT assets`，确保用户事件重放不会重复创建钱包。
+    /// 任一 SQL 或 commit 失败均返回错误并回滚；成功只产生缺失账户，不写余额流水或发布事件。
+    async fn initialize_user_wallets(&self, user_id: u64) -> AppResult<()> {
+        let mut tx = self.pool.begin().await?;
+        create_wallet_accounts_for_user_in_tx(&mut tx, user_id).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+}
+
+/// 按 ID 升序读取至多 `limit` 条 `pending` 或 `next_retry_at <= now` 的 `retry` outbox，作为本轮可发布快照。
+/// 查询不加领取锁也不预改状态，多实例可能读到同一行；broker message_id 与下游 inbox 幂等负责吸收重复发布。
 pub(crate) async fn fetch_publishable_batch(
     pool: &Pool<MySql>,
     limit: u32,
@@ -272,6 +309,8 @@ pub(crate) async fn fetch_publishable_batch(
         .collect())
 }
 
+/// 在 publisher 报告 `basic_publish` 完成后把指定 outbox 行标记为 `published`，同时记录该时间与更新时间。
+/// 本更新不校验前态也不清空既有重试字段；当前 publisher 未启用 broker confirm，调用方不得把该终态解释为 broker 已持久确认。
 pub(crate) async fn mark_published(
     pool: &Pool<MySql>,
     id: u64,
@@ -289,6 +328,8 @@ pub(crate) async fn mark_published(
     Ok(())
 }
 
+/// 把一次未获 broker confirm 的 outbox 发布持久化为 `retry`，写入饱和到 `i32::MAX` 的失败次数及下次到期时间。
+/// 本函数不重新发送消息；数据库更新失败时原行保持原态，由上层中止本轮并在后续扫描重新判断。
 pub(crate) async fn mark_retry(
     pool: &Pool<MySql>,
     id: u64,
@@ -308,6 +349,8 @@ pub(crate) async fn mark_retry(
     Ok(())
 }
 
+/// 把达到策略阈值的 outbox 行标记为 `dead_letter` 并保存最终失败次数与时间，使普通发布扫描不再选中。
+/// 不发送死信到另一 exchange，也不自动告警或重排；恢复只能经带管理员审计的显式重排用例完成。
 pub(crate) async fn mark_dead_letter(
     pool: &Pool<MySql>,
     id: u64,
@@ -324,6 +367,8 @@ pub(crate) async fn mark_dead_letter(
     Ok(())
 }
 
+/// 按 `consumer_name` 读取至多 `limit` 条到期 retry，或超过 300 秒租约的 processing 行，并携带持久化 payload 供 RabbitMQ ACK 后补偿重放。
+/// 结果按到期/更新时间和 ID 排序；该查询不取得处理权，多实例仍须通过 `claim_message` 的行锁重新竞争。
 pub(crate) async fn fetch_due_retries(
     pool: &Pool<MySql>,
     consumer_name: &str,
@@ -365,6 +410,8 @@ pub(crate) async fn fetch_due_retries(
         .collect())
 }
 
+/// 在事务内领取收件箱消息并生成处理令牌，使用行锁协调重复投递与并发消费者。
+/// 已消费消息保持幂等成功，未到重试时间或仍被有效租约占用时不转移处理权。
 pub(crate) async fn claim_message(
     pool: &Pool<MySql>,
     message: NewInboxMessage,
@@ -482,6 +529,8 @@ pub(crate) async fn claim_message(
     Ok(claim)
 }
 
+/// 仅当 consumer、message_id、`processing` 状态和微秒级处理令牌全部匹配时，把 inbox 原子推进为 `consumed`。
+/// 零行更新表示租约已被接管或状态已变化并返回陈旧令牌错误；成功只提交 inbox 终态，不负责 RabbitMQ ACK。
 pub(crate) async fn mark_consumed(
     pool: &Pool<MySql>,
     consumer_name: &str,
@@ -509,6 +558,8 @@ pub(crate) async fn mark_consumed(
     Ok(())
 }
 
+/// 以处理令牌为条件，把 handler 失败原子落为带到期时间的 `retry` 或无下次时间的 `dead_letter`，并保存错误摘要与失败次数。
+/// 零行更新返回陈旧令牌错误，避免旧 worker 覆盖新租约；本入口只持久化消费状态，不执行重放或 broker ACK。
 pub(crate) async fn mark_failure(
     pool: &Pool<MySql>,
     consumer_name: &str,
@@ -550,6 +601,7 @@ pub(crate) async fn mark_failure(
     Ok(())
 }
 
+/// 判断 SQLx 数据库错误是否为 MySQL 1062 唯一键冲突，供并发插入 inbox 时转入已存在行的锁定判定。
 pub(crate) fn is_unique_violation(error: &SqlxError) -> bool {
     error
         .as_database_error()
@@ -558,23 +610,28 @@ pub(crate) fn is_unique_violation(error: &SqlxError) -> bool {
         == Some("1062")
 }
 
+/// 判断持久化的 `next_retry_at` 是否晚于当前 UTC；`None` 视为已经到期，供领取逻辑阻止提前重放。
 pub(crate) fn retry_is_not_due(next_retry_at: Option<chrono::NaiveDateTime>) -> bool {
     next_retry_at.is_some_and(|value| value.and_utc() > Utc::now())
 }
 
+/// 判断 processing 行的 `updated_at + 300 秒` 是否已到期；到期仅代表允许重新竞争，不在此处修改租约所有权。
 pub(crate) fn processing_is_stale(updated_at: chrono::NaiveDateTime) -> bool {
     updated_at.and_utc() + TimeDelta::seconds(INBOX_PROCESSING_LEASE_SECONDS) <= Utc::now()
 }
 
+/// 把领取时的 MySQL 微秒时间戳编码为稳定处理令牌，后续 consumed/retry/dead-letter 更新以该值做乐观租约条件。
 pub(crate) fn processing_token(value: chrono::NaiveDateTime) -> String {
     value.format(INBOX_PROCESSING_TOKEN_FORMAT).to_string()
 }
 
+/// 严格按 MySQL 微秒时间格式解析处理令牌；格式损坏统一视为陈旧租约，调用方不得据此更新 inbox。
 pub(crate) fn parse_processing_token(value: &str) -> AppResult<chrono::NaiveDateTime> {
     chrono::NaiveDateTime::parse_from_str(value, INBOX_PROCESSING_TOKEN_FORMAT)
         .map_err(|_| processing_token_is_stale_error())
 }
 
+/// 构造统一的 inbox 陈旧处理令牌错误，供解析失败或条件更新零行时保持同一并发失败语义。
 pub(crate) fn processing_token_is_stale_error() -> AppError {
     AppError::Internal("event inbox processing token is stale".to_owned())
 }
@@ -616,6 +673,8 @@ impl
     }
 }
 
+/// 对已锁定 inbox 行决定是否重新领取：到期 retry 与超过 300 秒的同 message processing 可取得新令牌，其余终态或不同 message 视为重复。
+/// 同一 message 尚持有效 processing 租约时返回明确错误，避免并发 handler；本纯决策不更新行，实际所有权由外层事务提交。
 pub(crate) fn decide_existing_inbox_claim(
     message: &NewInboxMessage,
     existing: ExistingInboxMessage,
@@ -685,6 +744,7 @@ pub(crate) struct InboxRecordRow {
 }
 
 /// 死信与积压事件的运维查询：计数与行查询使用同一筛选条件。
+/// 行查询与总数共享运维筛选；数据库失败不返回不完整死信或积压页。
 pub(crate) async fn list_outbox_records(
     pool: &Pool<MySql>,
     filter: EventRecordListFilter<'_>,
@@ -714,6 +774,7 @@ pub(crate) async fn list_outbox_records(
 }
 
 /// inbox 运维查询仅提供持久化记录，权限控制和响应映射由应用层负责。
+/// 按消费者和状态返回 inbox 运维页及一致总数，不领取消息或推进重试。
 pub(crate) async fn list_inbox_records(
     pool: &Pool<MySql>,
     filter: EventRecordListFilter<'_>,

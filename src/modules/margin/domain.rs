@@ -5,6 +5,7 @@
 use bigdecimal::BigDecimal;
 
 /// 计算逐仓仓位的非负返还额；没有已实现盈亏的非终态仓位返回零。
+/// 输入违反保证金状态机或数值不变量时返回既有领域错误，调用方不得据此产生资金副作用。
 pub(crate) fn margin_position_payout_amount(
     margin_amount: &BigDecimal,
     realized_pnl: Option<&BigDecimal>,
@@ -43,6 +44,7 @@ pub(crate) struct CrossMarginRiskState {
 }
 
 /// 计算同一用户、同一保证金资产下的共享权益和组合风险。
+/// 输入违反保证金状态机或数值不变量时返回既有领域错误，调用方不得据此产生资金副作用。
 pub(crate) fn evaluate_cross_margin(
     wallet_equity: &BigDecimal,
     position_margin: &BigDecimal,

@@ -43,7 +43,7 @@ pub struct EventInboxWorkerConfig {
 }
 
 impl EventInboxWorkerConfig {
-    /// 从环境变量读取 inbox 队列与 consumer tag；未配置队列代表显式禁用，非 Unicode 配置必须报错。
+    /// 读取 `EVENT_INBOX_QUEUE_NAME` 与可选 `EVENT_INBOX_CONSUMER_TAG`；队列缺失/空白表示同时禁用实时消费和补偿扫描，非 Unicode 值直接报错。
     pub fn from_env() -> AppResult<Self> {
         Self::from_env_values(
             optional_env("EVENT_INBOX_QUEUE_NAME")?.as_deref(),
@@ -51,7 +51,8 @@ impl EventInboxWorkerConfig {
         )
     }
 
-    /// 由显式配置值构造启动配置；队列名为空时禁用，否则队列和 consumer tag 必须满足安全字符集与长度限制。
+    /// 由显式值构造启动配置；非空队列和 consumer tag 都必须是最长 128 字节的 ASCII 字母数字、点、冒号、下划线或连字符。
+    /// 未提供 tag 时使用稳定默认值 `exchange-api-inbox`；队列为空返回 Disabled，不连接 RabbitMQ，也不启动 MySQL retry scanner。
     pub fn from_env_values(
         queue_name: Option<&str>,
         consumer_tag: Option<&str>,
@@ -152,8 +153,9 @@ impl EventInboxReconnectBackoff {
     }
 }
 
-/// 单轮重放 MySQL 中已到期的 inbox retry 记录，作为 RabbitMQ 消息已确认后的持久化补偿路径。
-/// 消费服务负责按事件幂等键去重、推进重试或死信；本入口固定批量上限并在处理后发出统一告警。
+/// 单轮按到期时间重放指定 consumer 最多 100 条 retry 或租约超过 300 秒的 processing 行，作为 RabbitMQ 已 ACK 后的持久化补偿路径。
+/// 每条重新竞争处理租约；其他实例已领取时按重复跳过，handler 失败推进 5 次/30 秒 retry 或 dead-letter，基础设施错误终止本批，已完成前项不回滚。
+/// 批次完成后只发结构化积压/死信告警，不执行 broker ACK，也不跨 consumer 重放持久化 payload。
 pub async fn run_retry_scanner_once(state: &AppState, consumer_name: &str) -> AppResult<()> {
     let service = EventInboxConsumerService::from_state(state, consumer_name.to_owned())?;
     let batch = service.replay_due_retries(Utc::now(), 100).await?;
@@ -174,7 +176,8 @@ pub async fn run_retry_scanner_once(state: &AppState, consumer_name: &str) -> Ap
     Ok(())
 }
 
-/// 按固定间隔运行 inbox 数据库补偿扫描；单周期失败只记录并继续，未到期记录留待后续重放。
+/// 以调用方间隔持续运行指定 consumer 的 MySQL 补偿扫描，零值在本入口收敛为 1 秒；启动流程应先用 `retry_scan_seconds` 将配置限制到最多 60 秒。
+/// 单周期错误只记录并继续；未到期、有效租约或死信记录保留在数据库，循环不依赖 RabbitMQ delivery 重新出现。
 pub async fn run_retry_scanner_loop(
     state: AppState,
     consumer_name: String,
@@ -191,9 +194,9 @@ pub async fn run_retry_scanner_loop(
     }
 }
 
-/// 持续连接 RabbitMQ 并消费指定 inbox 队列；消息去重、重试和死信状态由持久化消费服务负责。
-/// 连接或消费循环结束后采用有上限的指数退避重连，不切换到无确认消费，也不丢弃数据库中的重放状态。
-/// RabbitMQ 未配置时立即失败；队列名和 consumer tag 必须已由启动配置校验。
+/// 持续消费一个已校验 RabbitMQ 队列，并把该队列名同时作为 inbox consumer 去重/重放范围；不跨队列路由消息。
+/// 每条 delivery 在持久化处理结果后 ACK，坏消息和已落 retry/dead-letter 也 ACK，尚未持久化的处理错误 reject+requeue；单条错误记录后继续。
+/// RabbitMQ 缺失时启动失败；连接或流结束按 1..=60 秒指数退避重建，数据库 inbox 保存幂等、租约与补偿 payload，循环自身不保存消费游标。
 pub async fn run_loop(
     state: AppState,
     queue_name: impl Into<String>,

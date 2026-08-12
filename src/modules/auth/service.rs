@@ -10,8 +10,9 @@ use crate::{
         auth::{
             ACTIVE_STATUS, ActorType, AdminCredentials, AdminRegistration, AgentCredentials,
             AgentRegistration, AuthActor, IssuedTokens, NewAdminActor, NewAgentActor, NewUserActor,
-            RefreshTokenRecord, StoredActorCredential, StoredRefreshToken, TokenScope,
-            UserCredentials, decode_claims,
+            ProjectRefreshTokenRepository, RefreshTokenRecord, StoredActorCredential,
+            StoredProjectRefreshToken, StoredRefreshToken, TokenScope, UserCredentials,
+            decode_claims,
             domain::{login_failure_key, login_locked_error},
             hash_password, hash_refresh_token, issue_token, map_sa_token_error, normalize_username,
             repository::AuthRepository,
@@ -21,51 +22,46 @@ use crate::{
     },
 };
 use chrono::{DateTime, Duration, Utc};
-use redis::AsyncCommands;
 use sa_token_core::SaTokenManager;
-use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use uuid::Uuid;
 
-const REDIS_REFRESH_PREFIX: &str = "exchange:auth:refresh:";
-const REDIS_REFRESH_ACTOR_PREFIX: &str = "exchange:auth:refresh_actor:";
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RedisRefreshTokenRecord {
-    actor_type: String,
-    actor_id: u64,
-    user_id: Option<u64>,
-    scope: TokenScope,
-    expires_at: i64,
-}
-
 #[derive(Clone)]
+/// 认证领域服务，统一编排三类主体的凭据验证、锁定策略和令牌签发。
+///
+/// 服务通过注入的认证仓储、Sa-Token 管理器和项目刷新令牌端口执行外部 I/O；
+/// 不直接依赖 SQLx 或 Redis SDK，但登录、锁定、会话签发仍可因仓储或会话后端失败。
 pub struct AuthService<R> {
     repository: R,
     settings: Arc<Settings>,
     auth_manager: Option<Arc<SaTokenManager>>,
-    redis: Option<redis::aio::ConnectionManager>,
+    project_refresh_tokens: Option<Arc<dyn ProjectRefreshTokenRepository>>,
 }
 
 impl<R> ServiceLayer for AuthService<R> {}
 
 impl<R: AuthRepository> AuthService<R> {
+    /// 组装认证服务依赖；未提供项目刷新令牌端口时，Sa-Token 刷新记录回落到主仓储。
+    ///
+    /// 调用方负责保证 `auth_manager` 与刷新令牌端口配置一致；本构造函数不连接外部服务。
     pub fn new(
         repository: R,
         settings: Arc<Settings>,
         auth_manager: Option<Arc<SaTokenManager>>,
-        redis: Option<redis::aio::ConnectionManager>,
+        project_refresh_tokens: Option<Arc<dyn ProjectRefreshTokenRepository>>,
     ) -> Self {
         Self {
             repository,
             settings,
             auth_manager,
-            redis,
+            project_refresh_tokens,
         }
     }
 
+    /// 校验国家与登录标识后先持久化用户，再签发首组访问与刷新令牌。
+    ///
+    /// 用户写入与会话签发不在同一事务；令牌后端失败时账号可能已创建，本方法不回滚或删除该账号。
     pub async fn register_user(&self, credentials: UserCredentials) -> AppResult<IssuedTokens> {
         let password = required_string(credentials.password, "password")?;
         let country_code = required_string(credentials.country_code, "country_code")?;
@@ -92,11 +88,18 @@ impl<R: AuthRepository> AuthService<R> {
         self.issue_tokens(actor).await
     }
 
+    /// 校验普通用户凭据、更新失败锁定/最近登录状态后签发新会话。
+    ///
+    /// 账号不存在、密码错误和停用状态统一返回未授权；令牌持久化失败时，
+    /// 前面已清除的失败计数和已记录的登录信息不会回滚。
     pub async fn login_user(&self, credentials: UserCredentials) -> AppResult<IssuedTokens> {
         let actor = self.verify_user_credentials(credentials).await?;
         self.issue_tokens(actor).await
     }
 
+    /// 只验证普通用户凭据并返回活跃主体，不创建任何访问令牌。
+    ///
+    /// 该入口供二次验证流程复用，仍会执行失败计数、临时锁定和成功登录记录副作用。
     pub async fn verify_user_credentials(
         &self,
         credentials: UserCredentials,
@@ -127,6 +130,10 @@ impl<R: AuthRepository> AuthService<R> {
             .await
     }
 
+    /// 管理员表非空时先验证请求主体仍为活跃管理员，表为空时走首管理员引导。
+    ///
+    /// “查空表—插入”未被同一事务或表锁包围，并发引导由唯一/外键约束决定结果；
+    /// 管理员插入后令牌签发失败不会删除已创建账号。
     pub async fn register_admin(
         &self,
         requester_subject: Option<&str>,
@@ -161,6 +168,9 @@ impl<R: AuthRepository> AuthService<R> {
         self.issue_tokens(actor).await
     }
 
+    /// 验证管理员用户名和密码，并执行统一登录失败锁定策略。
+    ///
+    /// 本方法不签发令牌，便于后台二次验证在确认 TOTP 后再完成会话创建。
     pub async fn verify_admin_credentials(
         &self,
         credentials: AdminCredentials,
@@ -173,6 +183,9 @@ impl<R: AuthRepository> AuthService<R> {
             .await
     }
 
+    /// 先将代理后台凭据绑定到已有 `agent_id`，再签发独立 `agent` 作用域会话。
+    ///
+    /// 凭据插入与会话签发分开提交；令牌后端失败时代理管理员记录仍可已存在。
     pub async fn register_agent(&self, registration: AgentRegistration) -> AppResult<IssuedTokens> {
         let username = required_string(registration.username, "username")?;
         let password = required_string(registration.password, "password")?;
@@ -191,6 +204,9 @@ impl<R: AuthRepository> AuthService<R> {
         self.issue_tokens(actor).await
     }
 
+    /// 校验代理后台凭据并签发代理作用域令牌。
+    ///
+    /// 停用账号与错误密码走同一未授权分支，并统一累计登录失败次数。
     pub async fn login_agent(&self, credentials: AgentCredentials) -> AppResult<IssuedTokens> {
         let username = required_string(credentials.username, "username")?;
         let password = required_string(credentials.password, "password")?;
@@ -202,6 +218,10 @@ impl<R: AuthRepository> AuthService<R> {
         self.issue_tokens(actor).await
     }
 
+    /// 使用刷新令牌校验作用域与主体活跃状态，成功后另外签发一组访问/刷新令牌。
+    ///
+    /// 当前实现不消费、不撤销传入的刷新令牌；在其过期或被主体级撤销前，重复提交可再签发会话。
+    /// 过期、已撤销、作用域不匹配或主体停用统一按未授权处理，存储失败上抛。
     pub async fn refresh(
         &self,
         refresh_token: Option<String>,
@@ -299,6 +319,10 @@ impl<R: AuthRepository> AuthService<R> {
         Ok(actor)
     }
 
+    /// 为已完成口令/2FA 等额外校验的主体按当前运行模式签发会话。
+    ///
+    /// 本方法不重新查询主体状态；调用方须传入刚验证的权威主体。Sa-Token 模式先创建访问会话、
+    /// 后写刷新令牌记录；后一步失败时访问会话可已存在，本方法不做补偿登出。
     pub async fn issue_tokens_for_actor(&self, actor: AuthActor) -> AppResult<IssuedTokens> {
         self.issue_tokens(actor).await
     }
@@ -366,23 +390,21 @@ impl<R: AuthRepository> AuthService<R> {
             .await
             .map_err(map_sa_token_error)?;
         let refresh_token = generate_refresh_token();
-        let expires_at = Utc::now().timestamp() + self.settings.jwt_refresh_ttl_seconds as i64;
-        let record = RedisRefreshTokenRecord {
-            actor_type: actor.actor_type.as_str().to_owned(),
+        let expires_at =
+            Utc::now() + Duration::seconds(self.settings.jwt_refresh_ttl_seconds as i64);
+        let record = StoredProjectRefreshToken {
+            refresh_token: refresh_token.clone(),
+            actor_type: actor.actor_type,
             actor_id: actor.actor_id,
             user_id: actor.user_id,
             scope,
             expires_at,
         };
 
-        if let Some(redis) = &self.redis {
-            store_project_refresh_token(
-                redis.clone(),
-                &refresh_token,
-                &record,
-                self.settings.jwt_refresh_ttl_seconds,
-            )
-            .await?;
+        if let Some(project_refresh_tokens) = &self.project_refresh_tokens {
+            project_refresh_tokens
+                .store_project_refresh_token(record)
+                .await?;
         } else {
             self.repository
                 .store_refresh_token(StoredRefreshToken {
@@ -408,8 +430,10 @@ impl<R: AuthRepository> AuthService<R> {
         &self,
         refresh_token: &str,
     ) -> AppResult<Option<RefreshTokenRecord>> {
-        if let Some(redis) = &self.redis {
-            return load_project_refresh_token(redis.clone(), refresh_token).await;
+        if let Some(project_refresh_tokens) = &self.project_refresh_tokens {
+            return project_refresh_tokens
+                .find_project_refresh_token(refresh_token, Utc::now())
+                .await;
         }
 
         self.repository
@@ -418,92 +442,12 @@ impl<R: AuthRepository> AuthService<R> {
     }
 }
 
-pub(crate) async fn revoke_project_refresh_tokens(
-    mut redis: redis::aio::ConnectionManager,
-    actor: &AuthActor,
-) -> AppResult<()> {
-    let actor_key = refresh_actor_key(actor.actor_type, actor.actor_id);
-    let keys = redis.smembers::<_, Vec<String>>(&actor_key).await?;
-    if !keys.is_empty() {
-        redis.del::<_, ()>(&keys).await?;
-    }
-    redis.del::<_, ()>(actor_key).await?;
-
-    Ok(())
-}
-
 fn login_locked(locked_until: DateTime<Utc>) -> AppError {
     login_locked_error((locked_until - Utc::now()).num_seconds())
 }
 
 fn generate_refresh_token() -> String {
     format!("refresh_{}", Uuid::now_v7().simple())
-}
-
-fn refresh_token_digest(refresh_token: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(refresh_token.as_bytes());
-    hex::encode(hasher.finalize())
-}
-
-fn refresh_token_key(refresh_token: &str) -> String {
-    format!(
-        "{}{}",
-        REDIS_REFRESH_PREFIX,
-        refresh_token_digest(refresh_token)
-    )
-}
-
-fn refresh_actor_key(actor_type: ActorType, actor_id: u64) -> String {
-    format!(
-        "{}{}:{}",
-        REDIS_REFRESH_ACTOR_PREFIX,
-        actor_type.as_str(),
-        actor_id
-    )
-}
-
-async fn store_project_refresh_token(
-    mut redis: redis::aio::ConnectionManager,
-    refresh_token: &str,
-    record: &RedisRefreshTokenRecord,
-    ttl_seconds: u64,
-) -> AppResult<()> {
-    let key = refresh_token_key(refresh_token);
-    let actor_type = ActorType::from_storage(&record.actor_type)?;
-    let actor_key = refresh_actor_key(actor_type, record.actor_id);
-    let value = serde_json::to_string(record)
-        .map_err(|error| AppError::Internal(format!("failed to encode refresh token: {error}")))?;
-    let ttl = ttl_seconds.max(1);
-
-    redis.set_ex::<_, _, ()>(&key, value, ttl).await?;
-    redis.sadd::<_, _, ()>(&actor_key, &key).await?;
-    redis.expire::<_, ()>(&actor_key, ttl as i64).await?;
-
-    Ok(())
-}
-
-async fn load_project_refresh_token(
-    mut redis: redis::aio::ConnectionManager,
-    refresh_token: &str,
-) -> AppResult<Option<RefreshTokenRecord>> {
-    let key = refresh_token_key(refresh_token);
-    let Some(value) = redis.get::<_, Option<String>>(key).await? else {
-        return Ok(None);
-    };
-    let record: RedisRefreshTokenRecord =
-        serde_json::from_str(&value).map_err(|_| AppError::Unauthorized)?;
-    if record.expires_at <= Utc::now().timestamp() {
-        return Ok(None);
-    }
-    let actor_type = ActorType::from_storage(&record.actor_type)?;
-
-    Ok(Some(RefreshTokenRecord {
-        actor_type,
-        actor_id: record.actor_id,
-        user_id: record.user_id,
-        scope: record.scope,
-    }))
 }
 
 fn user_identifier(

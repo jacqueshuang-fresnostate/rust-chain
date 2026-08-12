@@ -45,18 +45,21 @@ const TODAY_RETURN_REPORTING_ASSET: &str = "USDT";
 const TODAY_RETURN_REPORTING_SCALE: i32 = 18;
 const REALIZED_RETURN_ZERO: &str = "0.000000000000000000";
 
+/// 列出当前启用且允许充值的资产配置，供充值入口选择。
 pub(crate) async fn list_deposit_assets(
     pool: &Pool<MySql>,
 ) -> AppResult<Vec<DepositAssetResponse>> {
     infrastructure::list_deposit_assets(pool).await
 }
 
+/// 列出当前启用且允许提现的资产费用、限额和精度配置。
 pub(crate) async fn list_withdraw_assets(
     pool: &Pool<MySql>,
 ) -> AppResult<Vec<DepositAssetResponse>> {
     infrastructure::list_withdraw_assets(pool).await
 }
 
+/// 按可选资产代码列出启用网络及地址组配置。
 pub(crate) async fn list_deposit_networks(
     pool: &Pool<MySql>,
     asset_symbol: Option<&str>,
@@ -140,6 +143,7 @@ pub(crate) async fn get_or_assign_deposit_address(
     Ok(address)
 }
 
+/// 读取用户全部资产账户的 available/frozen/locked 当前快照；查询不加资金行锁，不作为后续扣款依据。
 pub(crate) async fn list_wallet_accounts(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -147,6 +151,8 @@ pub(crate) async fn list_wallet_accounts(
     infrastructure::list_wallet_accounts(pool, user_id).await
 }
 
+/// 以当前 UTC 时间计算用户当日已实现收益，缺价时返回部分状态而非估算值。
+/// 该用例只读结算活动和行情，不锁钱包三桶，也不追加任何资金流水。
 pub(crate) async fn get_today_return(
     pool: &Pool<MySql>,
     redis: Option<&ConnectionManager>,
@@ -155,6 +161,8 @@ pub(crate) async fn get_today_return(
     get_today_return_at(pool, redis, user_id, Utc::now()).await
 }
 
+/// 聚合指定 UTC 日内可审计收益并加载时效内行情后完成 USDT 估值。
+/// 该只读用例不锁钱包或写流水；缺失、过期价格保持 partial，避免错误价格影响资产展示。
 pub(crate) async fn get_today_return_at(
     pool: &Pool<MySql>,
     redis: Option<&ConnectionManager>,
@@ -193,6 +201,7 @@ pub(crate) async fn get_today_return_at(
     ))
 }
 
+/// 只接受一、七、三十或一百八十天的收益历史窗口。
 pub(crate) fn validate_return_history_days(days: Option<u16>) -> AppResult<u16> {
     match days {
         Some(days @ (1 | 7 | 30 | 180)) => Ok(days),
@@ -202,6 +211,8 @@ pub(crate) fn validate_return_history_days(days: Option<u16>) -> AppResult<u16> 
     }
 }
 
+/// 以当前 UTC 时间读取并计算用户指定天数的已实现收益历史。
+/// 历史估值只读 Mongo、Redis 与结算数据，不改变账户余额或行情缓存。
 pub(crate) async fn get_return_history(
     pool: &Pool<MySql>,
     mongo: Option<&Database>,
@@ -212,6 +223,8 @@ pub(crate) async fn get_return_history(
     get_return_history_at(pool, mongo, redis, user_id, period_days, Utc::now()).await
 }
 
+/// 按 UTC 日聚合收益活动，历史日使用 Mongo 收盘价，今日使用 Redis 当前价。
+/// 该只读用例不改变钱包；任一所需报价缺失时保留对应日期并明确标记 partial。
 pub(crate) async fn get_return_history_at(
     pool: &Pool<MySql>,
     mongo: Option<&Database>,
@@ -276,6 +289,9 @@ pub(crate) async fn get_return_history_at(
     ))
 }
 
+/// 逐日将可审计终态业务的已实现收益与本金基数换算为 USDT，并生成固定天数的累计曲线。
+/// USDT/USDC/USD 按一比一；历史日取精确 UTC 日线，今日取时效内 Redis 价，已知金额向零截断至 18 位。
+/// 任一活动资产缺价时该日金额/基数/收益率为空，且后续累计及总摘要保持未知；纯计算不修改钱包或行情。
 pub(crate) fn calculate_return_history(
     activity: Vec<ReturnHistoryAssetActivityRow>,
     historical_prices: &BTreeMap<(NaiveDate, String), BigDecimal>,
@@ -410,6 +426,9 @@ pub(crate) fn calculate_return_history(
     }
 }
 
+/// 将当日各资产已实现收益与本金基数按服务端价格换算为 USDT，并以 amount/basis 计算收益率。
+/// 稳定币按一比一，已知值向零截断到 18 位；缺少非稳定币价格时保留已知合计并返回 partial 与缺价资产。
+/// 该纯计算不读取或修改 available/frozen/locked，也不追加钱包流水。
 pub(crate) fn calculate_today_return(
     activity: Vec<TodayReturnAssetActivityRow>,
     prices: &BTreeMap<String, BigDecimal>,
@@ -484,6 +503,7 @@ fn realized_return_zero() -> BigDecimal {
     BigDecimal::from_str(REALIZED_RETURN_ZERO).expect("realized return zero is valid decimal")
 }
 
+/// 返回给定 UTC 时间所属自然日的零点。
 pub(crate) fn utc_day_start(calculated_at: &DateTime<Utc>) -> DateTime<Utc> {
     calculated_at
         .date_naive()
@@ -499,6 +519,8 @@ fn is_stablecoin(asset_symbol: &str) -> bool {
     )
 }
 
+/// 按已构建过滤器读取用户钱包流水和三桶后快照，不修改余额。
+/// 过滤行与总数由基础设施统一构造，查询结果仅用于审计和展示。
 pub(crate) async fn list_wallet_ledger(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -507,24 +529,24 @@ pub(crate) async fn list_wallet_ledger(
     infrastructure::list_wallet_ledger(pool, user_id, filter).await
 }
 
-/// 标准化查询分页参数，避免路由层重复实现同样边界规则。
+/// 将钱包列表页大小规范为默认 50、最小 1、最大 100。
 pub(crate) fn route_limit(limit: Option<u32>) -> u32 {
     limit.unwrap_or(50).clamp(1, 100)
 }
 
-/// 标准化查询偏移参数，路由层不再承担边界裁剪职责。
+/// 将钱包列表偏移默认为 0，并限制最大 100000。
 pub(crate) fn route_offset(offset: Option<u32>) -> u32 {
     offset.unwrap_or(0).min(100_000)
 }
 
-/// 标准化可选字符串查询参数，保留 `trim` 与空值过滤规则。
+/// 裁剪可选查询字符串并把空白值归一为 `None`。
 pub(crate) fn normalize_optional_query_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
 }
 
-/// 校验并规范化资产符号输入。
+/// 裁剪并转为大写资产符号，只接受长度 2..16 的 ASCII 字母数字；不查询资产是否存在。
 pub(crate) fn normalize_asset_symbol(value: &str) -> AppResult<String> {
     let symbol = value.trim();
     if symbol.is_empty() {
@@ -538,7 +560,7 @@ pub(crate) fn normalize_asset_symbol(value: &str) -> AppResult<String> {
     Ok(symbol.to_ascii_uppercase())
 }
 
-/// 校验并规范化网络标识输入。
+/// 裁剪网络标识，只接受长度 1..32 的 ASCII 字母数字、短横线和下划线；不查询网络配置。
 pub(crate) fn normalize_deposit_network(value: &str) -> AppResult<String> {
     let network = value.trim().to_ascii_lowercase();
     match network.as_str() {
@@ -553,7 +575,8 @@ pub(crate) fn normalize_deposit_network(value: &str) -> AppResult<String> {
     }
 }
 
-/// 将外层路由层传入的账本查询 DTO 转换为基础设施可执行的过滤器。
+/// 把账本查询 DTO 规范为资产、分类、引用、时间及分页过滤器。
+/// 未知分类、非法资产代码或倒置时间范围在执行 SQL 前拒绝；行查询与计数随后复用同一过滤器。
 pub(crate) fn build_wallet_ledger_filter(
     query: WalletLedgerQuery,
 ) -> AppResult<WalletLedgerFilter> {
@@ -593,6 +616,7 @@ pub(crate) fn build_wallet_ledger_filter(
 /// 创建提现申请并冻结“申请金额 + 服务端费用”；调用方必须提供已认证用户、稳定幂等键及安全验证凭据。
 /// 用例依次执行资产精度/费用规则、幂等重放、风控和资金安全校验，命中拒绝时不得消耗资金或生成申请。
 /// 申请记录、available→frozen 变更及账本由基础设施在同一事务提交；费用以资产精度截断后的服务端规则为准。
+/// 冻结只写一条 available 负流水，金额为本金加费用；frozen 增量体现在同条流水的三桶账后快照。
 /// 相同幂等键只接受资产、网络、地址、金额和费用一致的重放；并发唯一键冲突会回读旧申请，绝不二次冻结。
 /// 本函数不广播链上交易，后续审核与网关 worker 只能消费已提交的申请状态。
 pub(crate) async fn create_withdrawal_request(
@@ -680,6 +704,8 @@ pub(crate) async fn create_withdrawal_request(
     withdrawal_request_response(withdrawal)
 }
 
+/// 按当前用户和可选状态读取提现请求，不暴露其他用户记录。
+/// 查询只读申请和链进度，不锁钱包，也不移动 available 或 frozen。
 pub(crate) async fn list_user_withdrawals(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -695,6 +721,8 @@ pub(crate) async fn list_user_withdrawals(
     .await
 }
 
+/// 规范后台状态与分页后读取提现请求及匹配总数。
+/// 行数据和 total 使用相同筛选，查询不改变冻结预留额或提现状态。
 pub(crate) async fn list_admin_withdrawals(
     pool: &Pool<MySql>,
     query: AdminWalletListQuery,
@@ -711,6 +739,8 @@ pub(crate) async fn list_admin_withdrawals(
     Ok(AdminWalletWithdrawalsResponse { withdrawals, total })
 }
 
+/// 由应用层事务推进待审核提现为 approved，保留原 frozen 预留额等待广播。
+/// 重复已批准请求幂等返回；状态冲突或写入失败不改变余额和流水。
 pub(crate) async fn approve_withdrawal(
     pool: &Pool<MySql>,
     admin_id: u64,
@@ -730,6 +760,8 @@ pub(crate) async fn approve_withdrawal(
     Ok(withdrawal)
 }
 
+/// 由应用层事务拒绝提现，并把完整 frozen 预留额退回 available 后写释放流水。
+/// 订单先锁、钱包后锁；已拒绝重放不二次退款，状态、余额与流水失败整体回滚。
 pub(crate) async fn reject_withdrawal(
     pool: &Pool<MySql>,
     admin_id: u64,
@@ -750,6 +782,8 @@ pub(crate) async fn reject_withdrawal(
     Ok(withdrawal)
 }
 
+/// 在应用层事务记录已由外部流程取得的交易哈希和确认进度，不发起链网关 HTTP，也不核销 frozen 预留额。
+/// 同哈希重放仅推进确认数；状态冲突或写入失败时链进度不部分提交。
 pub(crate) async fn broadcast_withdrawal(
     pool: &Pool<MySql>,
     admin_id: u64,
@@ -771,6 +805,8 @@ pub(crate) async fn broadcast_withdrawal(
     Ok(withdrawal)
 }
 
+/// 在应用层事务核销提现 frozen 预留额、写确认流水并推进 confirmed。
+/// 已确认重放不二次扣减；冻结不足或任一步失败时余额、流水和状态整体回滚。
 pub(crate) async fn confirm_withdrawal(
     pool: &Pool<MySql>,
     admin_id: u64,
@@ -790,6 +826,8 @@ pub(crate) async fn confirm_withdrawal(
     Ok(withdrawal)
 }
 
+/// 在尚可安全退款的状态下把提现标记失败，并将 frozen 全额退回 available。
+/// 已有链上交易的不确定请求不会自动释放；目标状态重放不生成第二笔退款流水。
 pub(crate) async fn fail_withdrawal(
     pool: &Pool<MySql>,
     admin_id: u64,
@@ -810,6 +848,9 @@ pub(crate) async fn fail_withdrawal(
     Ok(withdrawal)
 }
 
+/// 规范链充值事件后按 network/tx_hash/event_index 幂等观察；仅达到服务端确认数时增加 available。
+/// 首次入账写正向 deposit 流水，frozen/locked 不变；重复事件只推进确认数且不二次入账。
+/// 基础设施拥有事件、钱包和流水事务，字段冲突、精度/最小额不符或 SQL 失败均不留下本次部分资金结果。
 pub(crate) async fn observe_deposit(
     pool: &Pool<MySql>,
     request: ObserveDepositRequest,
@@ -818,6 +859,9 @@ pub(crate) async fn observe_deposit(
     infrastructure::observe_deposit_event(pool, &request).await
 }
 
+/// 按充值编号执行幂等链重组冲正：available 足额时扣回原到账金额并写负向流水。
+/// 已冲正重放直接返回；状态不允许时冲突，available 不足则提交 manual_review 而不扣款、不写冲正流水。
+/// 事件、余额和流水事务由基础设施拥有，本应用入口只规范必填原因并转交处理。
 pub(crate) async fn reverse_deposit(
     pool: &Pool<MySql>,
     deposit_id: u64,
@@ -827,6 +871,8 @@ pub(crate) async fn reverse_deposit(
     infrastructure::reverse_deposit_event(pool, deposit_id, &reason).await
 }
 
+/// 按后台用户和分页条件读取充值链事件及匹配总数，不触发入账或冲正。
+/// 该只读用例不锁钱包、不写流水，也不推进链网关游标或确认状态。
 pub(crate) async fn list_admin_deposits(
     pool: &Pool<MySql>,
     query: AdminWalletListQuery,

@@ -33,6 +33,8 @@ pub enum MarketFeedProvider {
 }
 
 impl MarketFeedProvider {
+    /// 将后台配置的 provider 代码或兼容别名规范化为已支持的行情源枚举。
+    /// 比较忽略大小写和首尾空白；未知代码返回校验错误，不会静默回退到默认 provider。
     pub fn from_code(code: &str) -> AppResult<Self> {
         let normalized = code.trim().to_ascii_lowercase();
         for provider in Self::available_providers() {
@@ -45,6 +47,7 @@ impl MarketFeedProvider {
         )))
     }
 
+    /// 返回代码。
     pub const fn code(&self) -> &'static str {
         match self {
             Self::Bitget => "bitget",
@@ -53,6 +56,7 @@ impl MarketFeedProvider {
         }
     }
 
+    /// 返回该 provider 可接受的后台配置别名，用于兼容 HTX/Huobi 与 Coinbase 历史代码。
     pub const fn aliases(&self) -> &'static [&'static str] {
         match self {
             Self::Bitget => &["bitget"],
@@ -65,16 +69,20 @@ impl MarketFeedProvider {
         }
     }
 
+    /// 返回未显式配置时启用的 provider 顺序：Bitget 后 HTX；Coinbase 需明确选择。
     pub const fn default_providers() -> [Self; 2] {
         [Self::Bitget, Self::Htx]
     }
 
+    /// 返回当前构建支持的全部 provider，供后台校验与运行时配置展开。
     pub const fn available_providers() -> &'static [Self] {
         &[Self::Bitget, Self::Htx, Self::Coinbase]
     }
 }
 
 impl MarketFeedProvider {
+    /// 根据 provider 选择 WebSocket 地址并为每个 symbol/interval 生成订阅消息。
+    /// 本函数只组装配置，不连接远端；输入集合按调用方顺序保留，重复项不会在此去重。
     pub(super) fn feed_config(
         &self,
         settings: &Settings,
@@ -90,6 +98,8 @@ impl MarketFeedProvider {
         ))
     }
 
+    /// 为每个交易对生成 ticker 兜底请求，并为 symbol×interval 笛卡尔积生成 K 线兜底请求。
+    /// 只拼接 provider REST URL，不发送 HTTP；交易对和周期须由上游配置校验。
     pub(super) fn rest_fallback_config(
         &self,
         settings: &Settings,
@@ -302,6 +312,7 @@ fn coinbase_rest_granularity(interval: &str) -> (&'static str, i64) {
 
 impl BitgetMarketAdapter {
     /// 解析 Bitget ticker 帧为标准快照；last、24h 指标、交易对与观察时间缺失或非法时拒绝进入权威缓存。
+    /// 字段缺失、精度非法或载荷损坏时返回解析错误，不生成可进入交易缓存的虚假行情。
     pub fn ticker_from_ws(payload: &str) -> AppResult<MarketTickerSnapshot> {
         let value = parse_json(payload)?;
         let item = first_data_object(&value)?;
@@ -324,6 +335,8 @@ impl BitgetMarketAdapter {
         .map_err(validation_error)
     }
 
+    /// 解析 Bitget `books50` 的首个 `data` 对象；`bids`、`asks` 及毫秒时间戳缺失或非法时返回校验错误。
+    /// 档位顺序按 provider 载荷保留，函数不执行 Redis 写入或 WebSocket 广播。
     pub fn depth_from_ws(payload: &str) -> AppResult<MarketDepthSnapshot> {
         let value = parse_json(payload)?;
         let item = first_data_object(&value)?;
@@ -338,6 +351,8 @@ impl BitgetMarketAdapter {
         .map_err(validation_error)
     }
 
+    /// 解析 Bitget `candle*` 首行数组，将索引 0～5 映射为开盘毫秒与 OHLCV；频道仅接受平台支持周期。
+    /// 顶层 `ts` 缺失时以开盘时间作为观察时间，其他必填字段非法则拒绝该帧。
     pub fn kline_from_ws(payload: &str) -> AppResult<MarketKlineSnapshot> {
         let value = parse_json(payload)?;
         let row = value
@@ -373,6 +388,7 @@ impl BitgetMarketAdapter {
         .map_err(validation_error)
     }
 
+    /// 解析 Bitget `trade` 首条成交，读取成交号、买卖方向、价格、数量和毫秒时间；缺字段即返回校验错误。
     pub fn trade_from_ws(payload: &str) -> AppResult<MarketTradeTick> {
         let value = parse_json(payload)?;
         let item = first_data_object(&value)?;
@@ -392,6 +408,7 @@ impl BitgetMarketAdapter {
 
 impl HtxMarketAdapter {
     /// 解析 HTX ticker 帧为标准快照；使用 tick 时间和 24h OHLC/成交量，非法字段不得降级成零价格。
+    /// 字段缺失、精度非法或载荷损坏时返回解析错误，不生成可进入交易缓存的虚假行情。
     pub fn ticker_from_ws(payload: &str) -> AppResult<MarketTickerSnapshot> {
         let value = parse_json(payload)?;
         let tick = required_object(value.get("tick"), "htx tick")?;
@@ -413,6 +430,8 @@ impl HtxMarketAdapter {
         .map_err(validation_error)
     }
 
+    /// 解析 HTX `market.{symbol}.depth.step0` 的 `tick.bids/asks`，优先使用 tick 毫秒时间，缺失再取顶层 `ts`。
+    /// 频道交易对、盘口数组或时间戳非法时返回校验错误，不生成缓存写入。
     pub fn depth_from_ws(payload: &str) -> AppResult<MarketDepthSnapshot> {
         let value = parse_json(payload)?;
         let tick = required_object(value.get("tick"), "htx tick")?;
@@ -426,6 +445,8 @@ impl HtxMarketAdapter {
         .map_err(validation_error)
     }
 
+    /// 解析 HTX `market.{symbol}.kline.{period}`，以 `tick.id` 秒时间作为开盘时间并读取 OHLCV。
+    /// 顶层 `ts` 缺失时观察时间回退到开盘时间；未知周期或非法数值返回校验错误。
     pub fn kline_from_ws(payload: &str) -> AppResult<MarketKlineSnapshot> {
         let value = parse_json(payload)?;
         let tick = required_object(value.get("tick"), "htx tick")?;
@@ -453,6 +474,8 @@ impl HtxMarketAdapter {
         .map_err(validation_error)
     }
 
+    /// 解析 HTX `trade.detail` 的首条成交，方向仅接受 buy/sell（及兼容 bid/ask），时间优先取成交项 `ts`。
+    /// 数据数组缺失、成交字段非法或 item 时间不可用时回退帧时间；仍无法形成快照则返回校验错误。
     pub fn trade_from_ws(payload: &str) -> AppResult<MarketTradeTick> {
         let value = parse_json(payload)?;
         let tick = required_object(value.get("tick"), "htx tick")?;
@@ -477,6 +500,7 @@ impl HtxMarketAdapter {
 
 impl CoinbaseMarketAdapter {
     /// 解析 Coinbase ticker 帧为标准快照；交易对、最新价、成交量和观察时间是权威价格写入的前置条件。
+    /// 字段缺失、精度非法或载荷损坏时返回解析错误，不生成可进入交易缓存的虚假行情。
     pub fn ticker_from_ws(payload: &str) -> AppResult<MarketTickerSnapshot> {
         let value = parse_json(payload)?;
         let item = coinbase_first_collection_object(&value, "tickers", "coinbase ticker")?;
@@ -506,6 +530,8 @@ impl CoinbaseMarketAdapter {
         .map_err(validation_error)
     }
 
+    /// 解析 Coinbase `level2` 首个事件的 updates，按 side 拆分买卖档；没有 provider 时间时才使用本机当前时间。
+    /// 函数保留增量载荷语义，不补全完整订单簿；产品、档位或数值非法时返回校验错误。
     pub fn depth_from_ws(payload: &str) -> AppResult<MarketDepthSnapshot> {
         let value = parse_json(payload)?;
         let event = coinbase_first_event_object(&value)?;
@@ -535,6 +561,8 @@ impl CoinbaseMarketAdapter {
         .map_err(validation_error)
     }
 
+    /// 解析 Coinbase `candles` 首条记录，以 `start` 秒时间为开盘并读取 OHLCV。
+    /// 未识别粒度按现有兼容合同映射为 `5m`，观察时间缺失时回退到开盘时间。
     pub fn kline_from_ws(payload: &str) -> AppResult<MarketKlineSnapshot> {
         let value = parse_json(payload)?;
         let candle = coinbase_first_collection_object(&value, "candles", "coinbase candle")?;
@@ -557,6 +585,8 @@ impl CoinbaseMarketAdapter {
         .map_err(validation_error)
     }
 
+    /// 解析 Coinbase `market_trades` 首条成交并保留 product_id、trade_id、side、price、size 与 provider 时间。
+    /// 集合为空、方向未知、数值或时间非法时返回校验错误，不生成供缓存或 WebSocket 发布的成交事件。
     pub fn trade_from_ws(payload: &str) -> AppResult<MarketTradeTick> {
         let value = parse_json(payload)?;
         let trade = coinbase_first_collection_object(&value, "trades", "coinbase trade")?;
@@ -574,6 +604,8 @@ impl CoinbaseMarketAdapter {
     }
 }
 
+/// 将 Bitget REST ticker 包装为与 WS `ticker` 相同的 `arg/data/ts` 形状；无上游 `ts` 时使用本机毫秒时间。
+/// 本函数只验证外层 JSON，`data` 必填字段由后续 Bitget ticker 解析器检查。
 pub(super) fn bitget_rest_ticker_payload(payload: &str, symbol: &str) -> AppResult<String> {
     let value = parse_json(payload)?;
     Ok(json!({
@@ -584,6 +616,8 @@ pub(super) fn bitget_rest_ticker_payload(payload: &str, symbol: &str) -> AppResu
     .to_string())
 }
 
+/// 将 Bitget REST candle 数组逐行包装为 WS `candle*` 帧；symbol、interval 来自已校验请求上下文。
+/// 缺少 `data` 数组返回校验错误，观察时间取上游 `ts` 或包装时本机时间。
 pub(super) fn bitget_rest_kline_payloads(
     payload: &str,
     symbol: &str,
@@ -604,6 +638,7 @@ pub(super) fn bitget_rest_kline_payloads(
         .collect())
 }
 
+/// 将 HTX REST merged ticker 包装为 `market.{symbol}.detail` WS 形状；无 `tick` 时保留 null 供后续解析器报错。
 pub(super) fn htx_rest_ticker_payload(payload: &str, symbol: &str) -> AppResult<String> {
     let value = parse_json(payload)?;
     let tick = value.get("tick").cloned().unwrap_or(Value::Null);
@@ -615,6 +650,8 @@ pub(super) fn htx_rest_ticker_payload(payload: &str, symbol: &str) -> AppResult<
     .to_string())
 }
 
+/// 将 HTX REST K 线数组逐条包装为 `market.{symbol}.kline.{period}` 帧；缺少数组时立即返回校验错误。
+/// 保持 REST 返回顺序与每行数值不变，并统一补入 provider 时间，字段细节由后续 HTX K 线解析器校验。
 pub(super) fn htx_rest_kline_payloads(
     payload: &str,
     symbol: &str,
@@ -635,6 +672,8 @@ pub(super) fn htx_rest_kline_payloads(
         .collect())
 }
 
+/// 将 Coinbase REST product 对象包装为 Advanced Trade `ticker` snapshot 事件。
+/// `product_id` 缺失时从请求 symbol 推导，事件时间取包装时本机时间；非对象 JSON 返回校验错误。
 pub(super) fn coinbase_rest_ticker_payload(payload: &str, symbol: &str) -> AppResult<String> {
     let value = parse_json(payload)?;
     let product_id = value
@@ -658,6 +697,8 @@ pub(super) fn coinbase_rest_ticker_payload(payload: &str, symbol: &str) -> AppRe
     .to_string())
 }
 
+/// 将 Coinbase REST candles 逐条包装为 `candles` snapshot，并补入请求 product_id 与平台周期。
+/// 事件观察时间取包装时本机时间；缺少 candles 数组返回校验错误。
 pub(super) fn coinbase_rest_kline_payloads(
     payload: &str,
     symbol: &str,
@@ -908,6 +949,7 @@ fn htx_interval(channel: &str) -> AppResult<&str> {
     }
 }
 
+/// 将领域行情提供方映射为日志、指标和事件载荷使用的稳定小写代码。
 pub(super) fn provider_name(provider: MarketDataProvider) -> &'static str {
     match provider {
         MarketDataProvider::Bitget => "bitget",
@@ -917,6 +959,8 @@ pub(super) fn provider_name(provider: MarketDataProvider) -> &'static str {
     }
 }
 
+/// 对规范化 JSON 文本计算稳定 FNV-1a 摘要，用于失败上下文和去重标识而非密码学签名。
+/// 字段顺序由 `serde_json::Value` 序列化结果决定；不得把该 64 位摘要当作安全认证凭据。
 pub(super) fn market_feed_payload_hash(payload: &Value) -> String {
     let mut hash = 0xcbf29ce484222325_u64;
     for byte in payload.to_string().as_bytes() {
@@ -1081,6 +1125,7 @@ fn trade_side(value: &str) -> AppResult<MarketTradeSide> {
     }
 }
 
+/// 将领域/解析错误统一映射为对外行情校验错误，保留原错误文本供调用链定位具体字段。
 pub(super) fn validation_error(error: impl ToString) -> AppError {
     AppError::Validation(error.to_string())
 }

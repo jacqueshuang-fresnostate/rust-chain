@@ -21,6 +21,8 @@ use chrono::Utc;
 use std::collections::HashSet;
 use tokio::time::sleep;
 
+/// 每 30 秒检查后台同步开关与间隔，到期时以 Polymarket 响应更新预测标的和上游结果。
+/// 单轮失败只记录告警并等待下次轮询；自动结算模式遇到明确终局时会进入本地钱包结算事务。
 pub async fn run_sync_loop(state: AppState) -> AppResult<()> {
     loop {
         if let Err(error) = run_due_sync_once(&state).await {
@@ -47,6 +49,7 @@ async fn run_due_sync_once(state: &AppState) -> AppResult<()> {
     Ok(())
 }
 
+/// 读取预测市场后台同步、费率与结算设置；数据库缺失或失败不使用进程默认值伪造响应。
 pub(crate) async fn get_admin_settings(
     _auth: AdminAuth,
     State(state): State<AppState>,
@@ -56,6 +59,8 @@ pub(crate) async fn get_admin_settings(
     )))
 }
 
+/// 校验结算模式、退款策略、非负费率、同步周期、报价 TTL 及资产存在性后保存后台设置。
+/// 保存只改变配置和同步参数，不结算市场或移动用户资金；任一校验/SQL 失败不返回部分配置。
 pub(crate) async fn save_admin_settings(
     _auth: AdminAuth,
     State(state): State<AppState>,
@@ -98,6 +103,7 @@ pub(crate) async fn save_admin_settings(
     )))
 }
 
+/// 返回后台预测资产配置及一致总数，查询失败不拼接部分配置。
 pub(crate) async fn list_admin_asset_configs(
     _auth: AdminAuth,
     State(state): State<AppState>,
@@ -119,6 +125,7 @@ pub(crate) async fn list_admin_asset_configs(
     }))
 }
 
+/// 按后台允许资产集合过滤启用资产，集合为空时明确返回空目录而非全部资产。
 pub(crate) async fn get_user_config(
     State(state): State<AppState>,
 ) -> AppResult<Json<presentation::PredictionUserConfigResponse>> {
@@ -146,6 +153,7 @@ pub(crate) async fn get_user_config(
     }))
 }
 
+/// 新增或覆盖投注资产启用状态与赔付上限；资产必须存在，上限不得为负，写入不移动用户资金。
 pub(crate) async fn upsert_admin_asset_config(
     _auth: AdminAuth,
     State(state): State<AppState>,
@@ -161,6 +169,7 @@ pub(crate) async fn upsert_admin_asset_config(
     .map(Json)
 }
 
+/// 按路径资产编号新增或覆盖投注资产启用状态与赔付上限；校验失败不保存部分字段。
 pub(crate) async fn update_admin_asset_config(
     _auth: AdminAuth,
     State(state): State<AppState>,
@@ -177,6 +186,7 @@ pub(crate) async fn update_admin_asset_config(
     .map(Json)
 }
 
+/// 只返回 active 且仍开放或待确认的预测市场，SQL 始终施加公共可见性条件。
 pub(crate) async fn list_user_markets(
     State(state): State<AppState>,
     Query(query): Query<presentation::ListQuery>,
@@ -198,6 +208,7 @@ pub(crate) async fn list_user_markets(
     Ok(Json(presentation::PredictionMarketsResponse { markets }))
 }
 
+/// 市场隐藏时按 NotFound 处理，避免公共详情泄露后台下架标的。
 pub(crate) async fn get_user_market(
     State(state): State<AppState>,
     Path(market_id): Path<u64>,
@@ -211,6 +222,7 @@ pub(crate) async fn get_user_market(
     Ok(Json(market))
 }
 
+/// 按后台展示、结算和关键字条件返回市场及一致总数，不修改同步状态。
 pub(crate) async fn list_admin_markets(
     _auth: AdminAuth,
     State(state): State<AppState>,
@@ -257,6 +269,7 @@ pub(crate) async fn list_admin_markets(
     }))
 }
 
+/// 读取后台市场完整详情与覆盖配置，记录缺失返回 NotFound。
 pub(crate) async fn get_admin_market(
     _auth: AdminAuth,
     State(state): State<AppState>,
@@ -268,6 +281,8 @@ pub(crate) async fn get_admin_market(
     ))
 }
 
+/// 更新单个市场的展示状态及可选结算/资产/赔付/费率覆盖；资产不存在或费率非法时在写入前拒绝。
+/// 该配置更新不结算既有订单、不冻结或释放钱包资金，市场不存在返回 NotFound。
 pub(crate) async fn update_admin_market(
     _auth: AdminAuth,
     State(state): State<AppState>,
@@ -310,6 +325,8 @@ pub(crate) async fn update_admin_market(
     ))
 }
 
+/// 为认证用户创建预测报价：依次读取设置、市场与资产配置，校验开放状态、结果、正本金与精度后持久化短期报价。
+/// 报价只快照概率、费率、理论赔付和过期时间，不冻结或扣减钱包；失败不留下可下单报价。
 pub(crate) async fn create_quote(
     UserAuth(claims): UserAuth,
     State(state): State<AppState>,
@@ -322,6 +339,8 @@ pub(crate) async fn create_quote(
     Ok(Json(quote))
 }
 
+/// 以报价和幂等键创建预测订单；事务内锁定报价、市场与钱包，校验归属/未过期后冻结本金并扣费、写流水和订单。
+/// 相同用户幂等键命中时直接返回原订单且 `changed=false`，当前实现不比较本次 `quote_id`；新订单任一步失败整体回滚且不发布提交外事件。
 pub(crate) async fn create_order(
     UserAuth(claims): UserAuth,
     State(state): State<AppState>,
@@ -337,6 +356,7 @@ pub(crate) async fn create_order(
     }))
 }
 
+/// 按认证用户读取预测订单，用户标识固定进入 SQL 条件以阻止跨账户泄露。
 pub(crate) async fn list_user_orders(
     UserAuth(claims): UserAuth,
     State(state): State<AppState>,
@@ -367,6 +387,7 @@ pub(crate) async fn list_user_orders(
     Ok(Json(presentation::PredictionOrdersResponse { orders }))
 }
 
+/// 按后台筛选返回预测订单与总数，读取不触发结算或退款。
 pub(crate) async fn list_admin_orders(
     _auth: AdminAuth,
     State(state): State<AppState>,
@@ -411,6 +432,7 @@ pub(crate) async fn list_admin_orders(
     }))
 }
 
+/// 读取后台预测订单详情，记录缺失返回 NotFound 且不修改钱包。
 pub(crate) async fn get_admin_order(
     _auth: AdminAuth,
     State(state): State<AppState>,
@@ -421,6 +443,8 @@ pub(crate) async fn get_admin_order(
     ))
 }
 
+/// 人工结算市场：事务内锁定市场及全部 open 订单，再按 yes/no 派奖或按 invalid 策略退款本金/手续费。
+/// 每单钱包余额、冻结额、流水与订单终态同事务提交；市场已终态时直接返回 `changed=false`，当前实现不比较重放结果或退款策略。
 pub(crate) async fn settle_admin_market(
     _auth: AdminAuth,
     State(state): State<AppState>,
@@ -448,6 +472,8 @@ pub(crate) async fn settle_admin_market(
     }))
 }
 
+/// 立即执行一次 Polymarket 同步并记录 `manual` 触发来源，更新标的、价格、状态和上游结果快照。
+/// 自动结算模式遇到明确终局时会调用本地结算事务移动钱包资金；人工模式只转为待确认。
 pub(crate) async fn trigger_admin_sync(
     _auth: AdminAuth,
     State(state): State<AppState>,
@@ -458,6 +484,7 @@ pub(crate) async fn trigger_admin_sync(
     Ok(Json(response))
 }
 
+/// 按时间倒序返回预测同步日志及总数，不重新执行上游同步。
 pub(crate) async fn list_admin_sync_logs(
     _auth: AdminAuth,
     State(state): State<AppState>,

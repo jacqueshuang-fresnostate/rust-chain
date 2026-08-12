@@ -58,7 +58,8 @@ pub enum SmtpSecurity {
 
 #[async_trait]
 pub trait EmailSender: Send + Sync {
-    /// 通过给定配置发送一封邮件；实现必须在返回成功前完成 SMTP 交付请求，失败不得记录密码或正文中的验证码。
+    /// 使用调用方快照配置构建并提交一封 SMTP 邮件；返回成功表示服务器接受本次发送请求，不代表收件箱最终投递。
+    /// 实现不得持久化或记录密码、正文和验证码；地址、连接、认证或发送错误必须返回，由上层决定业务幂等与重试。
     async fn send(&self, config: SmtpEmailConfig, message: EmailMessage) -> AppResult<()>;
 }
 

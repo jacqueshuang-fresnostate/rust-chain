@@ -59,6 +59,7 @@ struct DepositTargetRow {
     min_deposit_amount: BigDecimal,
     required_confirmations: u32,
 }
+/// 列出状态启用且开放充值的资产及其精度、最小额和确认数配置。
 pub(crate) async fn list_deposit_assets(
     pool: &Pool<MySql>,
 ) -> AppResult<Vec<DepositAssetResponse>> {
@@ -68,6 +69,7 @@ pub(crate) async fn list_deposit_assets(
     Ok(rows.into_iter().map(deposit_asset_response).collect())
 }
 
+/// 列出状态启用且开放提现的资产及手续费、限额和精度配置。
 pub(crate) async fn list_withdraw_assets(
     pool: &Pool<MySql>,
 ) -> AppResult<Vec<DepositAssetResponse>> {
@@ -77,6 +79,8 @@ pub(crate) async fn list_withdraw_assets(
     Ok(rows.into_iter().map(deposit_asset_response).collect())
 }
 
+/// 按可选资产过滤启用的充值网络，并保留地址组共享配置。
+/// 查询只读网络元数据，不分配地址，也不预留或修改地址池库存。
 pub(crate) async fn list_active_deposit_networks(
     pool: &Pool<MySql>,
     asset_symbol: Option<&str>,
@@ -97,6 +101,8 @@ pub(crate) async fn list_active_deposit_networks(
     Ok(rows.into_iter().map(deposit_network_response).collect())
 }
 
+/// 确认资产存在、启用且允许充值；不满足时在分配地址前终止请求。
+/// 校验不创建钱包或地址记录，失败时地址池库存保持不变。
 pub(crate) async fn ensure_deposit_enabled_asset(
     pool: &Pool<MySql>,
     asset_symbol: &str,
@@ -116,6 +122,8 @@ pub(crate) async fn ensure_deposit_enabled_asset(
     }
 }
 
+/// 加载启用网络并校验资产在其允许列表中，返回地址组分配键。
+/// 地址分配必须使用配置的组代码，不得在应用层硬编码跨网络回退。
 pub(crate) async fn load_active_deposit_network_config(
     pool: &Pool<MySql>,
     network: &str,
@@ -145,6 +153,8 @@ pub(crate) async fn load_active_deposit_network_config(
     Ok(deposit_network_response(row))
 }
 
+/// 按用户、资产和地址组读取既有分配，响应仍展示本次请求网络。
+/// 已分配地址直接复用且不轮换，查询不会锁定或占用新的地址池行。
 pub(crate) async fn load_user_deposit_address(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -171,6 +181,8 @@ pub(crate) async fn load_user_deposit_address(
     Ok(row.map(deposit_address_response))
 }
 
+/// 在调用方事务内锁定地址组的一条可用库存，防止并发重复分配。
+/// 锁定顺序由地址编号排序确定；库存为空或后续失败时事务回滚并释放行锁。
 pub(crate) async fn lock_available_deposit_address(
     tx: &mut Transaction<'_, MySql>,
     asset_symbol: &str,
@@ -206,6 +218,7 @@ pub(crate) async fn lock_available_deposit_address(
     .ok_or(AppError::NotFound)
 }
 
+/// 在地址分配事务中读取用户邮箱，用户不存在时终止整次分配。
 pub(crate) async fn load_user_email_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -217,6 +230,8 @@ pub(crate) async fn load_user_email_in_tx(
         .ok_or(AppError::NotFound)
 }
 
+/// 把已锁定地址绑定给用户和资产，并将库存状态改为已分配。
+/// 调用方拥有事务；条件更新未命中视为并发冲突，分配与回读必须一起回滚。
 pub(crate) async fn assign_deposit_address_in_tx(
     tx: &mut Transaction<'_, MySql>,
     address_id: u64,
@@ -242,6 +257,8 @@ pub(crate) async fn assign_deposit_address_in_tx(
     Ok(())
 }
 
+/// 在当前事务中回读刚分配的充值地址及备注信息。
+/// 回读失败会使调用方回滚绑定更新，避免地址已占用却无法返回给用户。
 pub(crate) async fn load_deposit_address_in_tx(
     tx: &mut Transaction<'_, MySql>,
     address_id: u64,
@@ -272,6 +289,8 @@ pub struct NewWalletChainEventDeadLetter<'a> {
     pub failure_reason: String,
 }
 
+/// 记录无法处理的链事件及重试次数，保留载荷和最后错误供人工追查。
+/// 死信写入不代表资金成功入账，也不得替代原链事件的幂等身份判断。
 pub async fn insert_wallet_chain_event_dead_letter(
     pool: &Pool<MySql>,
     record: &NewWalletChainEventDeadLetter<'_>,
@@ -313,6 +332,8 @@ pub struct WalletChainEventDeadLetterRecord {
     pub created_at: DateTime<Utc>,
 }
 
+/// 按处理状态分页读取链事件死信，不修改重试或处理标记。
+/// 查询只供运维审计，不能据返回结果直接补写钱包余额或充值流水。
 pub async fn list_wallet_chain_event_dead_letters(
     pool: &Pool<MySql>,
     network: Option<&str>,
@@ -336,9 +357,11 @@ pub async fn list_wallet_chain_event_dead_letters(
         .map_err(AppError::from)
 }
 
-/// 以 network、tx_hash、event_index 作为链事件唯一身份，记录确认数并在达到阈值时原子入账。
-/// 地址池、资产、精度和最小充币额均以服务端配置为准；重复事件只推进确认数，身份字段不一致会拒绝。
-/// 事件状态、钱包 available 余额和充币流水共用同一事务，重放不得产生第二次入账。
+/// 以 network、tx_hash、event_index 作为链事件唯一身份，记录确认数并在达到阈值时入账。
+/// 事务先锁已分配地址/配置目标，再插入或更新事件并锁事件；事件达到确认阈值时才锁钱包。
+/// 地址、资产、金额、memo 与既有事件不一致会冲突；金额必须符合资产精度和最小充值额。
+/// 首次确认入账只增加 available，frozen/locked 不变，并写一条引用 deposit event 的正向 available 流水；事件、余额和流水同事务提交。
+/// 重放只单调更新确认数，credited 状态不再增加余额；任一步失败回滚本次事件进度及资金写入。
 pub(crate) async fn observe_deposit_event(
     pool: &Pool<MySql>,
     request: &ObserveDepositRequest,
@@ -432,9 +455,10 @@ pub(crate) async fn observe_deposit_event(
     Ok(event)
 }
 
-/// 回滚已入账的充币事件，并在余额充足时原子扣回 available 及写入冲正流水。
-/// 已冲正事件直接返回；未处于 credited 状态时拒绝，余额不足则转人工审核且不制造负余额。
-/// 事件状态、钱包三桶快照与账本变更在同一事务提交，重复调用不得重复扣款。
+/// 锁定已入账事件后处理链重组冲正；已 reversed 时直接返回，其他非 credited 状态冲突。
+/// available 足额时扣回原充值额，frozen/locked 不变，并写一条 `deposit_reorg_reverse` 负向 available 流水后标记 reversed。
+/// available 不足时不扣任何余额、不写冲正流水，而是提交 manual_review 与失败原因，保留人工处置事实。
+/// 事件、余额和流水由该函数自有事务提交；重复调用不会二次扣款，SQL 失败回滚本次状态变化。
 pub(crate) async fn reverse_deposit_event(
     pool: &Pool<MySql>,
     deposit_id: u64,
@@ -507,6 +531,8 @@ pub(crate) async fn reverse_deposit_event(
 }
 
 /// 后台充值事件列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
+/// 按后台筛选条件查询充值链事件并使用同一谓词计算总数。
+/// 该只读入口不触发入账、冲正或游标推进，分页结果应与总数保持一致。
 pub(crate) async fn list_deposit_events(
     pool: &Pool<MySql>,
     user_id: Option<u64>,

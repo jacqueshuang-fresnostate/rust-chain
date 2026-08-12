@@ -27,6 +27,8 @@ struct PlatformBrandRow {
     updated_at: DateTime<Utc>,
 }
 
+/// 幂等补齐默认平台品牌记录，已存在配置时不覆盖管理员保存的字段。
+/// 该入口使用连接池独立执行，供公开读取前保证基础记录存在。
 pub async fn ensure_default_platform_brand(pool: &Pool<MySql>) -> AppResult<()> {
     sqlx::query(default_platform_brand_insert_sql())
         .execute(pool)
@@ -34,6 +36,8 @@ pub async fn ensure_default_platform_brand(pool: &Pool<MySql>) -> AppResult<()> 
     Ok(())
 }
 
+/// 在调用方事务中幂等补齐默认品牌记录，不自行提交或回滚。
+/// 供配置变更用例与后续行锁共享同一事务，避免初始化和更新之间出现竞态。
 pub async fn ensure_default_platform_brand_in_tx(tx: &mut Transaction<'_, MySql>) -> AppResult<()> {
     sqlx::query(default_platform_brand_insert_sql())
         .execute(&mut **tx)
@@ -41,6 +45,7 @@ pub async fn ensure_default_platform_brand_in_tx(tx: &mut Transaction<'_, MySql>
     Ok(())
 }
 
+/// 从连接池读取默认品牌配置；记录不存在时返回 `NotFound` 而非伪造数据。
 pub async fn load_platform_brand_row(pool: &Pool<MySql>) -> AppResult<PlatformBrand> {
     let row = sqlx::query_as::<_, PlatformBrandRow>(&select_platform_brand_sql(false))
         .bind(DEFAULT_CONFIG_NAME)
@@ -50,6 +55,7 @@ pub async fn load_platform_brand_row(pool: &Pool<MySql>) -> AppResult<PlatformBr
     Ok(platform_brand(row))
 }
 
+/// 在调用方事务中读取默认品牌快照但不加行锁，用于保存后的结果回读。
 pub async fn load_platform_brand_in_tx(
     tx: &mut Transaction<'_, MySql>,
 ) -> AppResult<PlatformBrand> {
@@ -61,6 +67,8 @@ pub async fn load_platform_brand_in_tx(
     Ok(platform_brand(row))
 }
 
+/// 以 `FOR UPDATE` 锁定默认品牌记录并返回变更前快照。
+/// 锁持续到调用方提交或回滚，用于串行化并发管理端配置修改。
 pub async fn lock_platform_brand_in_tx(
     tx: &mut Transaction<'_, MySql>,
 ) -> AppResult<PlatformBrand> {
@@ -72,6 +80,8 @@ pub async fn lock_platform_brand_in_tx(
     Ok(platform_brand(row))
 }
 
+/// 在调用方事务中新增或更新默认品牌配置，并记录最后操作管理员。
+/// 本函数不提交事务；任一 SQL 错误由上层回滚，避免品牌配置与审计记录分离。
 pub async fn upsert_platform_brand_in_tx(
     tx: &mut Transaction<'_, MySql>,
     admin_id: u64,

@@ -55,6 +55,7 @@ pub struct UnlockReleaseRecord {
 
 // 兼容旧同步服务测试的仓储契约；新路由侧事务仓储继续使用下面的异步 trait。
 pub trait NewCoinPurchaseRepository {
+    /// 保存上市后购买记录及其钱包可用/锁仓增量；实现方须原子落地并按订单标识幂等去重。
     fn save_post_listing_purchase(
         &mut self,
         record: PostListingPurchaseRecord,
@@ -62,17 +63,20 @@ pub trait NewCoinPurchaseRepository {
 }
 
 pub trait UnlockFeeRepository {
+    /// 保存解锁费支付；实现方须把钱包扣款、流水与 paid 状态置位放在同一事务并阻止重复收费。
     fn save_unlock_fee_payment(
         &mut self,
         record: UnlockFeePaymentRecord,
     ) -> Result<(), NewCoinRepositoryError>;
 
+    /// 查询指定用户解锁记录是否已有费用支付；结果只用于领域放行，不得跨用户读取。
     fn unlock_fee_paid(
         &self,
         unlock_id: &str,
         user_id: &str,
     ) -> Result<bool, NewCoinRepositoryError>;
 
+    /// 标记解锁释放；实现方须锁定解锁和钱包，在同一事务扣减锁仓、增加可用额并写资金流水。
     fn mark_unlock_released(
         &mut self,
         record: UnlockReleaseRecord,
@@ -296,31 +300,37 @@ pub(crate) struct NewCoinPurchaseOrderWrite {
 
 #[async_trait]
 pub(crate) trait NewCoinReadRepository: Clone + Send + Sync + 'static {
+    /// 按上限读取公开启用项目，返回后台配置的生命周期、解锁规则及上市后购买交易对。
     async fn list_active_projects(&self, limit: u32) -> AppResult<Vec<NewCoinProjectRead>>;
 
+    /// 按符号读取公开启用项目；停用或不存在返回 `None`，不得回退到后台草稿。
     async fn find_active_project_by_symbol(
         &self,
         symbol: &str,
     ) -> AppResult<Option<NewCoinProjectRead>>;
 
+    /// 读取指定用户的申购订单，必须以 `user_id` 隔离并应用条数上限。
     async fn list_user_subscriptions(
         &self,
         user_id: u64,
         limit: u32,
     ) -> AppResult<Vec<NewCoinSubscriptionRead>>;
 
+    /// 读取指定用户的分发记录，不在查询时重新计算或推进分发状态。
     async fn list_user_distributions(
         &self,
         user_id: u64,
         limit: u32,
     ) -> AppResult<Vec<NewCoinDistributionRead>>;
 
+    /// 读取指定用户的上市后购买记录，结果必须保留订单时价格、数量与计价金额快照。
     async fn list_user_purchases(
         &self,
         user_id: u64,
         limit: u32,
     ) -> AppResult<Vec<NewCoinPurchaseRead>>;
 
+    /// 读取指定用户的锁仓解锁记录及费用状态，不执行缴费或释放。
     async fn list_user_unlocks(
         &self,
         user_id: u64,
@@ -330,17 +340,21 @@ pub(crate) trait NewCoinReadRepository: Clone + Send + Sync + 'static {
 
 #[async_trait]
 pub(crate) trait NewCoinUnlockFeeRepository: Clone + Send + Sync + 'static {
+    /// 按解锁幂等键与用户读取是否收费及配置的支付资产、金额；结果不包含当前 paid 状态。
     async fn find_unlock_fee_expectation(
         &self,
         unlock_idempotency_key: &str,
         user_id: u64,
     ) -> AppResult<Option<UnlockFeeExpectation>>;
 
+    /// 把匹配用户的解锁记录从非 paid 更新为 paid；返回值表示本次是否改变一行。
+    /// 当前 MySQL 实现不扣钱包、不写资金流水，调用方必须把它视为状态置位而非资金支付。
     async fn mark_unlock_fee_paid(&self, payment: UnlockFeePaymentWrite) -> AppResult<bool>;
 }
 
 #[async_trait]
 pub(crate) trait NewCoinUnlockReleaseRepository: Clone + Send + Sync + 'static {
+    /// 锁定并释放指定用户已到期且满足缴费要求的解锁记录；钱包入账、流水和状态须原子提交。
     async fn release_due_paid_unlock(
         &self,
         unlock_idempotency_key: &str,
@@ -350,22 +364,28 @@ pub(crate) trait NewCoinUnlockReleaseRepository: Clone + Send + Sync + 'static {
 
 #[async_trait]
 pub(crate) trait NewCoinOrderRepository: Clone + Send + Sync + 'static {
+    /// 按项目符号读取完整下单规则，包括生命周期、购买开关、批准交易对和解锁费配置。
     async fn find_project_rule_by_symbol(
         &self,
         symbol: &str,
     ) -> AppResult<Option<NewCoinProjectRuleRead>>;
 
+    /// 读取指定交易对并确认其基础资产等于项目资产；不匹配时返回 `None`。
     async fn find_pair_for_purchase(
         &self,
         pair_id: u64,
         project_asset_id: u64,
     ) -> AppResult<Option<NewCoinPairRead>>;
 
+    /// 创建申购订单；当前 MySQL 实现在事务中锁定计价钱包，原子扣款、写流水、分配资产并 upsert 锁仓。
+    /// 项目规则在事务前读取且不会重新锁定；重复幂等键返回 Conflict，返回值是首个锁仓位置编号或 `None`（直接到账）。
     async fn create_subscription_order(
         &self,
         order: NewCoinSubscriptionOrderWrite,
     ) -> AppResult<Option<u64>>;
 
+    /// 创建上市后购买订单；当前 MySQL 实现锁定项目、交易对和钱包并原子落地扣款、流水、分配与锁仓。
+    /// 任意重复幂等键均返回 Conflict，不比较重放参数；返回值是首个锁仓位置编号或 `None`（直接到账）。
     async fn create_purchase_order(
         &self,
         order: NewCoinPurchaseOrderWrite,

@@ -29,10 +29,13 @@ use crate::{
 };
 use sqlx::{MySql, Pool, Transaction};
 
+/// 读取当前 KYC 配置；若缺失，基础设施会先以单独写语句补齐默认配置，因此该读用例可能写库。
 pub(crate) async fn load_kyc_config(pool: &Pool<MySql>) -> AppResult<KycConfigResponse> {
     load_kyc_config_from_infra(pool).await
 }
 
+/// 在管理端事务内锁定当前 KYC 配置，校验后整行更新并返回前后快照。
+/// 默认配置、锁行和写入共用调用方事务；校验或 SQL 失败不自行提交，便于审计同步回滚。
 pub(crate) async fn save_kyc_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
     admin_id: u64,
@@ -67,6 +70,8 @@ pub(crate) async fn save_kyc_config_in_tx(
     Ok(KycConfigChange { before, after })
 }
 
+/// 按用户读取最新一笔 KYC 申请，无历史时返回 `None` 且不创建默认申请。
+/// 命中结果含未掩码身份号、联系方式与材料地址，仅可用于本人状态或受权审核流程。
 pub(crate) async fn latest_kyc_submission(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -78,7 +83,8 @@ pub(crate) async fn latest_kyc_submission(
 /// 用户须处于启用状态、KYC 等级低于当前目标，且系统启用 KYC 并不存在待审申请。
 /// 先锁定用户 KYC 状态和待审记录，再按当前配置校验身份主体、国家、证件类型及材料。
 /// 申请插入不自行提交或写用户审计；调用方必须将申请和审计放在同一事务中完成。
-/// 待审锁充当重复提交边界；冲突或校验失败不写入，数据库失败由调用方整体回滚。
+/// 已存在待审行时会锁行并拒绝；不存在时的并发防重依赖当前事务隔离/范围锁，
+/// 本函数未声明唯一待审约束。冲突、校验或 SQL 失败由调用方整体回滚。
 pub(crate) async fn create_user_kyc_submission_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -147,6 +153,9 @@ pub(crate) async fn create_user_kyc_submission_in_tx(
     load_kyc_submission_in_tx(tx, submission_id).await
 }
 
+/// 规范化状态与邮箱过滤后分页列出 KYC 申请，列表与总数使用同一组条件。
+/// 非法状态在访问数据库前失败；行列表与总数是两个无事务查询，并发写入时二者可能漂移。
+/// 摘要会掩码证件号，但仍含姓名、邮箱及企业登记号等个人数据，只可用于受权管理界面。
 pub(crate) async fn list_kyc_submissions(
     pool: &Pool<MySql>,
     filter: ListKycSubmissionsFilter,
@@ -170,6 +179,8 @@ pub(crate) async fn list_kyc_submissions(
     .await
 }
 
+/// 按主键读取 KYC 申请完整快照，未命中返回未找到。
+/// 返回值含未掩码证件号、材料地址及联系方式，只可进入受权审核流程，严禁直接记录或公开。
 pub(crate) async fn load_kyc_submission(
     pool: &Pool<MySql>,
     submission_id: u64,
@@ -177,6 +188,9 @@ pub(crate) async fn load_kyc_submission(
     load_kyc_submission_from_infra(pool, submission_id).await
 }
 
+/// 在调用方事务内锁定待审 KYC 申请，写入审核结果并在通过时同步用户等级。
+/// 状态机仅允许 `pending -> approved|rejected`，已审记录禁止重放；理由必填。
+/// 通过时以正数目标提升（不降低）用户等级，拒绝时等级不变；申请、等级与上层审计须同事务回滚。
 pub(crate) async fn review_kyc_submission_in_tx(
     tx: &mut Transaction<'_, MySql>,
     submission_id: u64,

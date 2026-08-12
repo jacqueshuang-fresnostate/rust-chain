@@ -100,14 +100,18 @@ pub struct MySqlSpotRepository {
 }
 
 impl MySqlSpotRepository {
+    /// 保存 MySQL 池供现货读模型、幂等查询与订单仓储方法复用；构造时不获取连接或锁订单。
     pub fn new(pool: Pool<MySql>) -> Self {
         Self { pool }
     }
 
+    /// 返回MySQL 连接池引用，该只读访问不会触发外部查询或业务状态变更。
     pub fn pool(&self) -> &Pool<MySql> {
         &self.pool
     }
 
+    /// 从 MySQL 持久化数据读取交易对规则，保持现货既有归属过滤、可见性及排序条件。
+    /// 通过仓储适配器读取现货交易对规则；不存在返回领域仓储错误。
     pub async fn load_pair_rule_async(
         &self,
         pair_id: &str,
@@ -139,6 +143,8 @@ impl MySqlSpotRepository {
         })
     }
 
+    /// 通过仓储接口写入现货订单实体；唯一请求标识冲突必须返回错误供上层幂等处理。
+    /// 数据库失败由调用方回滚；涉及资金时余额、流水与业务状态必须同事务且幂等重放不重复入账。
     pub async fn insert_order_async(
         &self,
         new_order: NewOrder,
@@ -169,6 +175,8 @@ impl MySqlSpotRepository {
             .await
     }
 
+    /// 从 MySQL 持久化数据读取仓储订单实体，保持现货既有归属过滤、可见性及排序条件。
+    /// 通过仓储适配器读取现货订单实体，未知枚举或损坏金额返回错误而不伪造状态。
     pub async fn load_order_async(
         &self,
         order_id: &str,
@@ -217,6 +225,8 @@ impl MySqlSpotRepository {
         })
     }
 
+    /// 保存现货订单当前成交量、均价和状态，仓储更新失败不得伪造已完成状态。
+    /// 数据库失败由调用方回滚；涉及资金时余额、流水与业务状态必须同事务且幂等重放不重复入账。
     pub async fn save_order_async(
         &self,
         order: SpotOrder,
@@ -246,6 +256,8 @@ impl MySqlSpotRepository {
         Ok(())
     }
 
+    /// 写入现货逐笔成交记录；幂等键确保同一撮合结果不会重复落库。
+    /// 数据库失败由调用方回滚；涉及资金时余额、流水与业务状态必须同事务且幂等重放不重复入账。
     pub async fn insert_trade_async(
         &self,
         trade: NewSpotTrade,
@@ -270,6 +282,8 @@ impl MySqlSpotRepository {
         load_trade_by_id_async(&self.pool, result.last_insert_id()).await
     }
 
+    /// 从 MySQL 持久化数据查询逐笔成交，保持现货既有归属过滤、可见性及排序条件。
+    /// 按交易对读取逐笔成交并保持时间顺序；该仓储路径不修改订单。
     pub async fn list_trades_by_pair_async(
         &self,
         pair_id: &str,
@@ -321,6 +335,8 @@ impl MySqlSpotRepository {
     }
 }
 
+/// 从 MySQL 持久化数据查询现货订单，保持现货既有归属过滤、可见性及排序条件。
+/// 按用户与筛选读取现货订单，用户条件始终由调用方显式传入。
 pub(crate) async fn list_spot_orders(
     pool: &Pool<MySql>,
     filter: SpotOrderListFilter,
@@ -339,6 +355,7 @@ pub(crate) async fn list_spot_orders(
 }
 
 /// 后台订单列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
+/// 后台订单行与总数使用同一筛选条件，分页失败不返回部分结果。
 pub(crate) async fn list_admin_spot_orders_page(
     pool: &Pool<MySql>,
     filter: SpotOrderListFilter,
@@ -364,6 +381,8 @@ pub(crate) async fn list_admin_spot_orders_page(
     ))
 }
 
+/// 从 MySQL 持久化数据读取现货订单，保持现货既有归属过滤、可见性及排序条件。
+/// 按数据库主键读取订单详情，不存在返回 NotFound 且不锁钱包。
 pub(crate) async fn load_spot_order_by_id(
     pool: &Pool<MySql>,
     order_id: u64,
@@ -379,6 +398,8 @@ pub(crate) async fn load_spot_order_by_id(
         .ok_or(AppError::NotFound)
 }
 
+/// 从 MySQL 持久化数据查询现货订单，保持现货既有归属过滤、可见性及排序条件。
+/// 只返回本人 pending/open/partially_filled 订单主键，供批撤逐笔事务处理。
 pub(crate) async fn list_user_cancellable_spot_order_ids(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -408,6 +429,8 @@ pub(crate) async fn list_user_cancellable_spot_order_ids(
         .map_err(AppError::from)
 }
 
+/// 从 MySQL 持久化数据查询逐笔成交，保持现货既有归属过滤、可见性及排序条件。
+/// 按用户作为买方或卖方过滤成交，避免泄露无关账户交易。
 pub(crate) async fn list_spot_trades(
     pool: &Pool<MySql>,
     filter: SpotTradeListFilter,
@@ -426,6 +449,7 @@ pub(crate) async fn list_spot_trades(
 }
 
 /// 后台成交列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
+/// 后台成交行与总数共享过滤条件；查询不重放成交或资金流水。
 pub(crate) async fn list_admin_spot_trades_page(
     pool: &Pool<MySql>,
     filter: SpotTradeListFilter,
@@ -451,6 +475,8 @@ pub(crate) async fn list_admin_spot_trades_page(
     ))
 }
 
+/// 处理现货订单的现货基础设施适配逻辑，保持存储或外部协议的既有边界。
+/// 构造统一现货订单读模型基础 SQL，用户和后台过滤由调用方参数化追加。
 pub(super) fn base_spot_orders_query(
     include_internal_trades: bool,
 ) -> QueryBuilder<'static, MySql> {

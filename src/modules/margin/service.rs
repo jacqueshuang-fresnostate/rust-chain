@@ -19,6 +19,7 @@ fn decimal_amount_string(amount: &BigDecimal) -> String {
 }
 
 /// 推送保证金仓位开仓成功事件到用户私有频道。
+/// 前置业务失败时不得发布；未配置广播目标沿用既有降级语义，且不会补做资金写入。
 pub(crate) fn publish_margin_position_opened_event(
     hub: &EventBroadcastHub,
     user_id: u64,
@@ -59,6 +60,7 @@ pub(crate) fn publish_margin_position_opened_event_if_needed(
 }
 
 /// 推送保证金仓位平仓成功事件到用户私有频道。
+/// 前置业务失败时不得发布；未配置广播目标沿用既有降级语义，且不会补做资金写入。
 pub(crate) fn publish_margin_position_closed_event(
     hub: &EventBroadcastHub,
     user_id: u64,
@@ -102,6 +104,7 @@ pub(crate) fn publish_margin_position_closed_event_if_needed(
 }
 
 /// 推送保证金仓位取消成功事件到用户私有频道。
+/// 前置业务失败时不得发布；未配置广播目标沿用既有降级语义，且不会补做资金写入。
 pub(crate) fn publish_margin_position_canceled_event(
     hub: &EventBroadcastHub,
     user_id: u64,
@@ -144,6 +147,8 @@ pub(crate) fn admin_id_from_subject(subject: &str) -> AppResult<u64> {
         .ok_or(AppError::Unauthorized)
 }
 
+/// 组装产品审计快照的可复用保证金业务规则，不直接拥有 HTTP 传输或数据库事务。
+/// 生成保证金产品审计快照，数值保持字符串精度且不访问存储或改动配置。
 pub(crate) fn margin_product_audit_json(product: &MarginProductResponse) -> Value {
     json!({
         "id": product.id,

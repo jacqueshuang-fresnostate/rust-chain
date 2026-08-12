@@ -7244,3 +7244,10 @@
 - 修改文件：`mobile/pencil/scripts/36-seconds-picker-sub-remove.js`、`mobile/pencil/exports/{vONcc,kLXCs}.png`、`docs/superpowers/PROGRESS.md`；`.pen` 待 ⌘S。
 - 验证结果：导出目检通过（副标已移除，布局紧凑）。
 - 后续事项：`.pen` 需 ⌘S 后补提交。
+
+## 2026-08-12 15:54 - P1 后端结构拆分与详细中文职责合同
+
+- 完成内容：将 `events/service.rs`、`margin/application.rs`、`margin/infrastructure.rs`、`admin/routes.rs`、`spot/application.rs` 拆为稳定兼容外观与按职责聚合的子模块，最大子文件为 681 行；将认证刷新令牌、用户钱包初始化、行情运行状态等具体依赖改为端口与基础设施适配器，清除 service/application 对 `AppState`、SQLx、Redis、MongoDB、Reqwest 及本上下文 infrastructure 的直接耦合；全面审阅 modules、workers 与跨上下文 infra 的公开函数、可见方法和 trait 方法，为事务/锁顺序、幂等与重放、精度、外部 I/O、副作用、失败提交/回滚、事件时机等补充可执行的详细中文 `///` 合同；新增 P1 子模块 1200 行上限、禁止未使用导入抑制、service 适配器独立性、中文文档完整性与同文件模板重复检测门禁，并同步后端 Trellis 规范。
+- 修改文件：`src/modules/{admin,auth,countries,convert,earn,events,kyc,loan,margin,market,new_coin,news,platform,prediction,quick_recharge,risk,seconds_contract,security,spot,user,wallet}/`、`src/{infra,workers,state.rs}`、`tests/{backend_architecture.rs,backend_documentation.rs,unit_src/src_modules_spot_application_tests.rs}`、`.trellis/spec/backend/`、`.trellis/tasks/06-27-backend-ddd-architecture-refactor/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --all -- --check` 通过；中文文档门禁 1/1、后端架构门禁 11/11 通过；`cargo check --all-targets` 通过；`cargo clippy --all-targets -- -D warnings` 通过；`cargo test --all-targets` 全量通过；Trellis task validate 与 `git diff --check` 通过。全域现有中文 `///` 共计 modules 3822 行、workers 192 行、infra 38 行；缺少 `DATABASE_URL` 的真实数据库集成分支按既有测试合同跳过。
+- 后续事项：无；本次未提交或推送。

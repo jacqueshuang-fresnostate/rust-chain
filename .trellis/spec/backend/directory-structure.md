@@ -76,11 +76,20 @@ split into responsibility-focused child modules. A façade must only declare and
 re-export real implementation; it must not duplicate SQL, transactions, or
 business policy from its children.
 
+Do not preserve a crate-private re-export solely by suppressing an
+`unused_imports` warning. Keep only paths with real production callers, or use
+`#[cfg(test)]` on the exact re-export when an adjacent standalone unit test is
+the sole caller.
+
 No production Rust file under `src/` may exceed 2,000 lines. Split before the
 limit is reached, preferably keeping a focused implementation module near or
-below 1,200 lines. File size is not the architecture goal by itself: boundaries
-must follow real responsibilities such as cache, persistence, provider adapter,
-order repository, settlement, account ledger, deposit, or withdrawal.
+below 1,200 lines. The P1 core compatibility façades for events service,
+margin application/infrastructure, admin routes, and spot application are
+guarded at 1,200 lines, as is every child implementation created by those
+splits, so these hotspots cannot regress into nested monoliths. File
+size is not the architecture goal by itself: boundaries must follow real
+responsibilities such as cache, persistence, provider adapter, order
+repository, settlement, account ledger, deposit, or withdrawal.
 
 Architecture dependency exceptions have been eliminated. New broad or
 file-specific allowlists are forbidden; fix the boundary instead. In
@@ -122,9 +131,19 @@ If `repository` has no contract, omit it instead of adding
 Use Chinese comments for non-obvious business rules and risk-sensitive
 invariants, especially wallets, ledgers, settlement, liquidation, idempotency,
 authorization boundaries, external side effects, and transaction/lock order.
-Public risk-sensitive functions should use Chinese `///` contracts that state
-responsibility, preconditions, replay behavior, financial invariants, and side
-effects where applicable.
+Every visible bounded-context responsibility in `domain`, `repository`,
+`service`, `application`, and `infrastructure` should carry its own Chinese
+`///` contract. Non-trivial methods should explain responsibility and the
+relevant preconditions, transaction owner, lock/replay behavior, financial
+invariants, side effects, and failure semantics; a short getter may use one
+precise line. Worker and cross-context infrastructure public entries follow the
+same rule. Mechanical comments that merely restate the function name are not
+accepted.
+Bulk reuse is also not a detailed contract: within one responsibility file,
+four or more visible functions of at least six lines may not carry an identical
+full doc block. Short getters may share a precise one-line description, and a
+shared invariant may be repeated only when the surrounding contract still
+identifies the entry's real input, failure, and side effects.
 
 Correct:
 

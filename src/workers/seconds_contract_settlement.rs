@@ -28,7 +28,7 @@ pub struct SecondsContractSettlementWorkerConfig {
 }
 
 impl SecondsContractSettlementWorkerConfig {
-    /// 从环境变量读取秒合约结算开关、周期与批量上限；无效值使用受控默认值。
+    /// 读取秒合约结算开关、周期与批量环境配置；默认启用、周期 5 秒、批量 100，缺失或不可解析值回落到默认值。
     pub fn from_env() -> Self {
         Self {
             enabled: env_bool("SECONDS_CONTRACT_SETTLEMENT_ENABLED", true),
@@ -39,7 +39,8 @@ impl SecondsContractSettlementWorkerConfig {
 }
 
 impl SecondsContractSettlementWorker {
-    /// 执行一轮秒合约到期结算；结算价只接受新鲜 Redis ticker，缺失或过期行情会延后重试。
+    /// 执行一轮秒合约到期结算；成功和候选扫描都收敛到 1..=100，结算价只接受新鲜 Redis ticker。
+    /// 每单独立锁定订单和钱包，失败/缺价安排下次尝试并继续，私有事件只在资金与订单事务提交后广播。
     pub async fn run_once(
         &self,
         state: &AppState,
@@ -134,7 +135,8 @@ pub fn seconds_contract_settlement_result(
     }
 }
 
-/// 从应用状态取得 MySQL、Redis 与可选事件总线后执行一轮到期结算；权威依赖缺失时立即失败。
+/// 从应用状态取得 MySQL 订单/钱包、Redis 权威 ticker 与可选事件 hub 后执行单轮结算；MySQL 或 Redis 缺失时在扫描前失败。
+/// 单轮成功与候选扫描上限均为 1..=100；进程内事件仅在对应结算事务提交后尽力广播。
 pub async fn run_once(
     state: &AppState,
     now: DateTime<Utc>,
@@ -151,7 +153,7 @@ pub async fn run_once(
     run_once_with_broadcast(pool, redis, state.event_broadcast_hub.as_ref(), now, limit).await
 }
 
-/// 无事件总线执行秒合约单轮结算，供测试与批处理复用；行情新鲜度和资金事务规则不变。
+/// 在显式 MySQL/Redis 依赖上执行同一批次但禁用进程内广播；扫描上限、行情新鲜度、订单→钱包锁序、幂等及单项失败继续规则不变。
 pub async fn run_once_with_dependencies(
     pool: &Pool<MySql>,
     redis: &ConnectionManager,
@@ -161,9 +163,9 @@ pub async fn run_once_with_dependencies(
     run_once_with_broadcast(pool, redis, None, now, limit).await
 }
 
-/// 扫描已到期 opened 订单并逐笔使用新鲜行情结算，成功数达到上限后停止。
-/// 每笔事务按订单→钱包锁序，冻结本金扣减、赢家派奖、账本和订单终态原子提交；状态已变化时幂等跳过。
-/// 缺价或单笔失败只安排下次尝试并继续；私有结算事件仅在对应事务提交成功后发布。
+/// 扫描到期 opened 订单，成功结算和候选查询都以 `limit` 收敛到 1..=100，不额外放大扫描量。
+/// 每笔事务按订单→钱包锁序原子提交冻结本金扣减、赢家派奖、账本与订单终态；状态已变化幂等跳过，前项提交不因后项失败回滚。
+/// 缺失开仓价、行情缺失/过期、计算或结算错误都会安排下次尝试并继续；私有 WebSocket 事件仅在对应事务提交后尽力广播，不持久化或补发。
 pub async fn run_once_with_broadcast(
     pool: &Pool<MySql>,
     redis: &ConnectionManager,
@@ -228,7 +230,8 @@ pub async fn run_once_with_broadcast(
     Ok(summary)
 }
 
-/// 按间隔持续执行秒合约结算；周期错误记录后继续，订单终态与 next-attempt 时间保证恢复时不重复派奖。
+/// 以至少 1 秒间隔持续结算；周期级查询错误只记录并进入下一轮，单项错误由批次安排重试后继续。
+/// 订单终态、账本引用与 next-attempt 时间承担跨重启恢复和防重复派奖；提交后进程内广播不会补发。
 pub async fn run_loop(state: AppState, interval_seconds: u64, limit: u32) -> AppResult<()> {
     let mut ticker = interval(Duration::from_secs(interval_seconds.max(1)));
 

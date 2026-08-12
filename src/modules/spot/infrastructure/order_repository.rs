@@ -84,6 +84,8 @@ pub(crate) struct SqlxSpotOrderCancelRepository {
 }
 
 impl SqlxSpotOrderCancelRepository {
+    /// 保存 MySQL 池供现货撤单仓储开启独立事务并锁定订单、钱包和预留流水。
+    /// 构造时不获取连接；撤单幂等与解冻一致性由仓储方法的事务实现保证。
     pub(crate) fn new(pool: Pool<MySql>) -> Self {
         Self { pool }
     }
@@ -139,6 +141,8 @@ impl SpotOrderCancelRepository for SqlxSpotOrderCancelRepository {
     }
 }
 
+/// 从 MySQL 持久化数据读取现货订单，保持现货既有归属过滤、可见性及排序条件。
+/// 按用户和幂等键读取订单快照，供建单前重放核对而不再次冻结余额。
 pub(crate) async fn load_spot_order_by_idempotency_key<'e, E>(
     executor: E,
     idempotency_key: &str,
@@ -244,6 +248,8 @@ pub(crate) async fn insert_spot_order_in_tx(
     Ok((SpotOrderResponse::from(row).into(), is_new_order))
 }
 
+/// 在成交事务内创建做市卖单快照，数量和价格与用户买单成交腿严格对应。
+/// 数据库失败由调用方回滚；涉及资金时余额、流水与业务状态必须同事务且幂等重放不重复入账。
 pub(crate) async fn insert_spot_liquidity_sell_order_in_tx(
     tx: &mut Transaction<'_, MySql>,
     liquidity_user_id: u64,
@@ -283,6 +289,8 @@ pub(crate) async fn insert_spot_liquidity_sell_order_in_tx(
     Ok(order)
 }
 
+/// 在成交事务内创建做市买单快照，数量和价格与用户卖单成交腿严格对应。
+/// 数据库失败由调用方回滚；涉及资金时余额、流水与业务状态必须同事务且幂等重放不重复入账。
 pub(crate) async fn insert_spot_liquidity_buy_order_in_tx(
     tx: &mut Transaction<'_, MySql>,
     liquidity_user_id: u64,
@@ -323,6 +331,8 @@ pub(crate) async fn insert_spot_liquidity_buy_order_in_tx(
     Ok(order)
 }
 
+/// 在成交事务内按稳定订单主键顺序锁定买卖单，避免并发撮合形成反向锁等待。
+/// 任一订单不存在或状态不允许成交时终止事务，尚未产生钱包或成交记录副作用。
 pub(crate) async fn lock_spot_fill_orders_in_order(
     tx: &mut Transaction<'_, MySql>,
     buy_order_id: &str,
@@ -347,6 +357,8 @@ pub(crate) async fn lock_spot_fill_orders_in_order(
     ))
 }
 
+/// 在调用方事务内锁定现货订单，固定现货后续校验与写入所依据的并发快照。
+/// 调用方负责稳定锁序及提交回滚；记录缺失或锁失败时不得继续资金和状态写入。
 pub(crate) async fn lock_spot_order_by_db_id(
     tx: &mut Transaction<'_, MySql>,
     order_id: u64,

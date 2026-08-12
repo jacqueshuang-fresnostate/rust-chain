@@ -51,6 +51,7 @@ const ADMIN_ASSET_CONFIGS_COUNT_SQL: &str = r#"SELECT COUNT(*)
            WHERE assets.status = 'active'"#;
 
 /// 行查询与 COUNT 查询必须由同一组过滤谓词构建，返回总数才能与当前筛选一致。
+/// 行查询与 COUNT 查询复用同一筛选构建器；任一失败整体返回，避免列表与总数口径分裂。
 pub(crate) async fn fetch_admin_page<T>(
     pool: &Pool<MySql>,
     mut rows: QueryBuilder<'_, MySql>,
@@ -77,6 +78,8 @@ where
 type SyncCounts = service::SyncCounts;
 type EffectiveMarketConfig = service::EffectiveMarketConfig;
 
+/// 分别读取设置、市场和资产配置后写入预测报价快照；这些读取与插入不在同一事务，也不加行锁。
+/// 报价固化本金、概率、费率、赔付上限和过期时间，不冻结钱包或写资金流水；插入失败不返回可用报价编号。
 pub(crate) async fn create_quote_in_db(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -167,6 +170,7 @@ pub(crate) async fn create_quote_in_db(
 }
 
 #[allow(clippy::too_many_arguments)] // 单例设置按完整快照保存，显式字段避免部分配置产生不一致。
+/// 原子保存预测市场同步、资产范围、费率、结算和退款策略配置；写入不结算市场或移动用户资金。
 pub(crate) async fn save_admin_settings(
     pool: &Pool<MySql>,
     sync_enabled: bool,
@@ -200,6 +204,7 @@ pub(crate) async fn save_admin_settings(
     Ok(())
 }
 
+/// 按稳定顺序返回预测资产配置与总数，数据库失败不使用默认配置替代。
 pub(crate) async fn list_admin_asset_configs(
     pool: &Pool<MySql>,
     limit: u32,
@@ -218,6 +223,7 @@ pub(crate) async fn list_admin_asset_configs(
     .await
 }
 
+/// 仅返回启用资产的标识、符号与精度，供预测下单校验使用。
 pub(crate) async fn list_stake_assets(
     pool: &Pool<MySql>,
 ) -> AppResult<Vec<PredictionStakeAssetRow>> {
@@ -237,7 +243,7 @@ pub(crate) async fn list_stake_assets(
 /// 消费后端报价创建竞猜订单；报价必须属于用户、未过期未消费，市场开放且金额符合资产精度。
 /// 新请求在单事务中依次锁报价和市场、插入订单占用幂等键，再消费报价并锁钱包完成冻结、扣费和佣金记录。
 /// 可用余额减少本金与手续费、冻结余额增加本金，订单、报价、钱包及全部流水必须原子提交。
-/// 同用户同键重放返回原订单且 `changed=false`；并发重复键回滚后重读，提交后仅加载响应，无外部副作用。
+/// 同用户同键命中时直接返回原订单且 `changed=false`，不比较本次 `quote_id`；并发重复键回滚后重读，提交后仅加载响应，无外部副作用。
 pub(crate) async fn create_order_in_tx(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -303,7 +309,7 @@ pub(crate) async fn create_order_in_tx(
 
     let order_id = match insert {
         Ok(result) => result.last_insert_id(),
-        Err(error) if service::is_duplicate_key_error(&error) => {
+        Err(error) if is_duplicate_key_error(&error) => {
             tx.rollback().await?;
             let order = load_order_by_idempotency(pool, user_id, &idempotency_key)
                 .await?
@@ -352,10 +358,17 @@ pub(crate) async fn create_order_in_tx(
     Ok((load_order_response(pool, order_id).await?, true))
 }
 
+/// 识别数据库唯一约束冲突，供预测订单幂等重放分支使用。
+///
+/// 本判断仅解释 SQLx 适配器错误；调用方随后按用户和幂等键读取原订单，不比较重放的 `quote_id`。
+fn is_duplicate_key_error(error: &sqlx::Error) -> bool {
+    matches!(error, sqlx::Error::Database(database_error) if database_error.is_unique_violation())
+}
+
 /// 批量结算指定竞猜市场；结果与具体无效退款策略须已由应用层规范化，manual 策略不得直接执行。
 /// 事务先锁市场，再按订单 ID 顺序锁全部 open 订单；每单随后锁钱包，派奖或退款并更新订单终态。
 /// 本金解冻、可用余额、派奖/退款流水、订单结果及市场结算状态必须在同一事务内保持一致。
-/// 已 settled/refunded 的市场重放返回零处理且不再动账；提交后只重读市场响应，不发布外部事件。
+/// 已 settled/refunded 的市场重放返回零处理且不再动账，不比较传入结果或退款策略；提交后只重读市场响应，不发布外部事件。
 pub(crate) async fn settle_market_in_tx(
     pool: &Pool<MySql>,
     market_id: u64,
@@ -491,6 +504,8 @@ pub(crate) async fn settle_market_in_tx(
     ))
 }
 
+/// 创建 running 日志并更新全局同步状态，再以 Polymarket 响应同步市场，最后记录 success 或 failed。
+/// 市场更新并非整轮单事务：中途失败会保留此前已提交的市场更新或自动结算，并把本轮日志与设置标为失败。
 pub(crate) async fn sync_polymarket_markets(
     pool: &Pool<MySql>,
     trigger_type: &str,
@@ -579,6 +594,8 @@ pub(crate) async fn sync_polymarket_markets(
     }
 }
 
+/// 拉取并解析 Polymarket 市场，按外部市场编号去重后逐条 upsert 当前快照。
+/// 每条 upsert 独立提交；明确终局随后按配置自动结算或标记待确认，后续条目失败不会回滚前序写入。
 pub(crate) async fn sync_polymarket_markets_inner(pool: &Pool<MySql>) -> AppResult<SyncCounts> {
     let settings = load_settings(pool).await?;
     let tags = service::json_string_array(&settings.sync_tags_json);
@@ -659,6 +676,8 @@ pub(crate) async fn sync_polymarket_markets_inner(pool: &Pool<MySql>) -> AppResu
     Ok(counts)
 }
 
+/// 根据已保存的上游终局协调本地状态：自动模式调用完整结算事务，人工模式或手工退款策略只标记待确认。
+/// 无明确结果的关闭市场也转为待确认；协调失败返回错误，但不会回滚调用前已经提交的市场快照。
 pub(crate) async fn reconcile_synced_resolution(
     pool: &Pool<MySql>,
     settings: &PredictionSettingsRow,
@@ -715,6 +734,8 @@ pub(crate) async fn reconcile_synced_resolution(
     Ok(())
 }
 
+/// 从 Polymarket 接口拉取市场分页并保留上游标识、概率与结算字段作为同步权威输入。
+/// 网络、状态码或载荷解析失败均返回同步错误，不以空列表覆盖已持久化市场。
 pub(crate) async fn fetch_polymarket_markets(tags: &[String]) -> AppResult<Vec<Value>> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
@@ -771,6 +792,7 @@ pub(crate) async fn fetch_polymarket_markets(tags: &[String]) -> AppResult<Vec<V
     Ok(values)
 }
 
+/// 仅构造预测市场基础查询，筛选参数由调用方绑定，不执行数据库访问。
 pub(crate) fn prediction_market_query_builder() -> QueryBuilder<'static, MySql> {
     QueryBuilder::<MySql>::new(
         r#"SELECT markets.id, markets.source, markets.external_event_id, markets.external_market_id,
@@ -787,6 +809,7 @@ pub(crate) fn prediction_market_query_builder() -> QueryBuilder<'static, MySql> 
     )
 }
 
+/// 构造与市场行查询同源的计数语句，调用方必须追加相同过滤条件。
 pub(crate) fn prediction_market_count_query_builder() -> QueryBuilder<'static, MySql> {
     QueryBuilder::<MySql>::new(
         r#"SELECT COUNT(*)
@@ -794,6 +817,7 @@ pub(crate) fn prediction_market_count_query_builder() -> QueryBuilder<'static, M
     )
 }
 
+/// 构造预测订单计数基础语句，避免分页总数与行筛选条件漂移。
 pub(crate) fn prediction_order_count_query_builder() -> QueryBuilder<'static, MySql> {
     QueryBuilder::<MySql>::new(
         r#"SELECT COUNT(*)
@@ -804,6 +828,7 @@ pub(crate) fn prediction_order_count_query_builder() -> QueryBuilder<'static, My
     )
 }
 
+/// 构造预测订单读模型基础语句，不执行查询或修改订单状态。
 pub(crate) fn prediction_order_query_builder() -> QueryBuilder<'static, MySql> {
     QueryBuilder::<MySql>::new(
         r#"SELECT orders.id, orders.order_no, orders.user_id, users.email AS user_email,
@@ -821,6 +846,7 @@ pub(crate) fn prediction_order_query_builder() -> QueryBuilder<'static, MySql> {
     )
 }
 
+/// 读取唯一预测市场设置记录；缺失时沿用数据库默认初始化语义而不伪造请求级配置。
 pub(crate) async fn load_settings(pool: &Pool<MySql>) -> AppResult<PredictionSettingsRow> {
     sqlx::query_as::<_, PredictionSettingsRow>(
         r#"SELECT sync_enabled, sync_interval_seconds, sync_tags_json, allowed_asset_ids_json,
@@ -836,6 +862,7 @@ pub(crate) async fn load_settings(pool: &Pool<MySql>) -> AppResult<PredictionSet
     .ok_or_else(|| AppError::Internal("prediction settings are missing".to_owned()))
 }
 
+/// 在调用方事务内读取预测市场设置，保证结算或同步使用同一配置快照。
 pub(crate) async fn load_settings_in_tx(
     tx: &mut Transaction<'_, MySql>,
 ) -> AppResult<PredictionSettingsRow> {
@@ -854,6 +881,7 @@ pub(crate) async fn load_settings_in_tx(
     .ok_or_else(|| AppError::Internal("prediction settings are missing".to_owned()))
 }
 
+/// 按资产唯一键保存预测市场启用状态和赔付上限，重复管理请求更新同一配置；不修改既有订单资金。
 pub(crate) async fn upsert_asset_config(
     pool: &Pool<MySql>,
     asset_id: u64,
@@ -886,6 +914,7 @@ pub(crate) async fn upsert_asset_config(
     .ok_or(AppError::NotFound)
 }
 
+/// 更新后台预测市场展示及覆盖配置；上游标识与历史订单快照保持不变，也不触发结算。
 pub(crate) async fn update_admin_market(
     pool: &Pool<MySql>,
     market_id: u64,
@@ -914,6 +943,8 @@ pub(crate) async fn update_admin_market(
     Ok(result.rows_affected() > 0)
 }
 
+/// 按日志 ID 倒序分页读取触发类型、状态、导入/更新计数、错误和起止时间，并返回全表总数。
+/// 该查询不访问 Polymarket、不重试同步，也不修改市场或资金状态。
 pub(crate) async fn list_admin_sync_logs(
     pool: &Pool<MySql>,
     limit: u32,
@@ -935,6 +966,7 @@ pub(crate) async fn list_admin_sync_logs(
     .await
 }
 
+/// 读取完整预测市场响应；记录缺失返回 NotFound，不暴露部分选项或配置。
 pub(crate) async fn load_market_response(
     pool: &Pool<MySql>,
     market_id: u64,
@@ -949,6 +981,7 @@ pub(crate) async fn load_market_response(
         .ok_or(AppError::NotFound)
 }
 
+/// 按上游类型与外部标识定位预测市场，用于同步幂等更新而非重复插入。
 pub(crate) async fn load_market_by_source_external(
     pool: &Pool<MySql>,
     source: &str,
@@ -966,6 +999,7 @@ pub(crate) async fn load_market_by_source_external(
         .ok_or(AppError::NotFound)
 }
 
+/// 读取预测订单及市场、资产展示字段；不存在返回 NotFound，不触发结算。
 pub(crate) async fn load_order_response(
     pool: &Pool<MySql>,
     order_id: u64,
@@ -980,6 +1014,7 @@ pub(crate) async fn load_order_response(
         .ok_or(AppError::NotFound)
 }
 
+/// 按用户和幂等键读取既有预测订单；命中后调用方直接重放该响应，不再次扣款，也不核对本次报价编号。
 pub(crate) async fn load_order_by_idempotency(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -996,6 +1031,8 @@ pub(crate) async fn load_order_by_idempotency(
         .await?)
 }
 
+/// 在调用方事务内锁定待确认预测报价，固定预测市场后续校验与写入所依据的并发快照。
+/// 调用方负责稳定锁序及提交回滚；记录缺失或锁失败时不得继续资金和状态写入。
 pub(crate) async fn lock_quote(
     tx: &mut Transaction<'_, MySql>,
     quote_id: &str,
@@ -1015,6 +1052,8 @@ pub(crate) async fn lock_quote(
     .ok_or(AppError::NotFound)
 }
 
+/// 在调用方事务内锁定待结算预测市场，固定预测市场后续校验与写入所依据的并发快照。
+/// 调用方负责稳定锁序及提交回滚；记录缺失或锁失败时不得继续资金和状态写入。
 pub(crate) async fn lock_market(
     tx: &mut Transaction<'_, MySql>,
     market_id: u64,
@@ -1039,6 +1078,7 @@ pub(crate) async fn lock_market(
     Ok(market)
 }
 
+/// 读取启用资产及精度；停用或不存在返回 NotFound，阻止新预测资金操作。
 pub(crate) async fn load_active_asset(
     pool: &Pool<MySql>,
     asset_id: u64,
@@ -1056,6 +1096,7 @@ pub(crate) async fn load_active_asset(
     Ok(asset)
 }
 
+/// 在订单事务内读取启用资产及精度，使钱包变更使用同一资产配置快照。
 pub(crate) async fn load_active_asset_in_tx(
     tx: &mut Transaction<'_, MySql>,
     asset_id: u64,
@@ -1073,6 +1114,7 @@ pub(crate) async fn load_active_asset_in_tx(
     Ok(asset)
 }
 
+/// 配置缺失或停用时返回校验错误，必须发生在报价、下单和钱包事务之前。
 pub(crate) async fn ensure_prediction_asset_enabled(
     pool: &Pool<MySql>,
     asset_id: u64,
@@ -1093,6 +1135,7 @@ pub(crate) async fn ensure_prediction_asset_enabled(
     Ok(())
 }
 
+/// 只合并后台默认与市场覆盖配置，不读取钱包或执行结算。
 pub(crate) fn effective_market_config(
     settings: &PredictionSettingsRow,
     market: &PredictionMarketResponse,
@@ -1118,6 +1161,7 @@ pub(crate) fn effective_market_config(
     }
 }
 
+/// 按资产覆盖与市场配置解析赔付上限，非法值返回错误而不放大赔付。
 pub(crate) async fn effective_payout_cap(
     pool: &Pool<MySql>,
     asset_id: u64,
@@ -1142,6 +1186,7 @@ pub(crate) async fn effective_payout_cap(
     Ok(cap)
 }
 
+/// 任一资产不存在时整体报错，禁止保存部分有效的后台资产范围。
 pub(crate) async fn validate_asset_ids_exist(pool: &Pool<MySql>, ids: &[u64]) -> AppResult<()> {
     for id in service::unique_u64_list(ids.to_vec()) {
         load_active_asset(pool, id).await?;
@@ -1375,6 +1420,8 @@ pub(crate) async fn apply_wallet_prediction_refund(
     Ok(())
 }
 
+/// 在调用方事务内锁定钱包账户行，固定预测市场后续校验与写入所依据的并发快照。
+/// 调用方负责稳定锁序及提交回滚；记录缺失或锁失败时不得继续资金和状态写入。
 pub(crate) async fn lock_or_create_wallet_row(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1404,6 +1451,8 @@ pub(crate) async fn lock_or_create_wallet_row(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// 在预测订单事务内写钱包流水，金额和 balance_after 必须与同次余额更新一致。
+/// 订单幂等与市场终态阻止重复入账，流水失败时调用方回滚全部结算。
 pub(crate) async fn insert_wallet_ledger(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1439,6 +1488,7 @@ pub(crate) async fn insert_wallet_ledger(
     Ok(())
 }
 
+/// 连接池未配置时返回内部错误，不尝试同步、下单或资金写入。
 pub(crate) fn mysql_pool(state: &AppState) -> AppResult<Pool<MySql>> {
     state
         .mysql
@@ -1446,6 +1496,7 @@ pub(crate) fn mysql_pool(state: &AppState) -> AppResult<Pool<MySql>> {
         .ok_or_else(|| AppError::Internal("mysql pool is not configured".to_owned()))
 }
 
+/// 将 Polymarket HTTP、解析或持久化错误压缩为同步失败文本，保留旧市场快照并交由调度器重试。
 pub(crate) fn upstream_sync_error(message: String) -> AppError {
     AppError::Api {
         status: StatusCode::BAD_GATEWAY,

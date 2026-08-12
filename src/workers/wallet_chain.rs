@@ -32,7 +32,8 @@ pub struct WalletChainWorkerConfig {
 }
 
 impl WalletChainWorkerConfig {
-    /// 从环境变量读取钱包链 worker 配置，并对批量与最大尝试次数设定硬上限，防止异常配置放大链网关压力。
+    /// 读取钱包链 worker 环境配置；默认启用、周期 5 秒、批量 50、最多 5 次，批量硬限 1..=200、尝试次数 1..=20。
+    /// 缺失或不可解析值使用默认值，防止异常配置关闭重试边界或放大链网关压力。
     pub fn from_env() -> Self {
         Self {
             enabled: env_bool("WALLET_CHAIN_WORKER_ENABLED", true),
@@ -79,7 +80,8 @@ struct ChainGatewayConfig {
     last_deposit_cursor: Option<String>,
 }
 
-/// 使用生产 HTTP 链网关执行一轮提现广播、回执轮询与充值观察；密钥只从应用配置读取并在调用时解密。
+/// 使用生产 HTTP 链网关执行一轮：先处理有限提现广播，再按每个启用网关的持久游标轮询提现回执与充值事件。
+/// 网关 token 仅在调用前用配置密钥解密，密钥/明文不落日志；数据库或加密配置缺失在外部请求前失败，状态与事件副作用委托核心入口。
 pub async fn run_once(
     state: &AppState,
     config: WalletChainWorkerConfig,
@@ -254,7 +256,8 @@ pub async fn run_once_with_gateway(
     Ok(summary)
 }
 
-/// 按配置间隔持续运行钱包链任务；周期错误记录后继续，申请状态、重试时间、死信和网关游标提供恢复点。
+/// 以配置周期至少 1 秒持续运行钱包链任务；周期级数据库、解密或网关错误只记录并进入下一轮，单个链事件按核心入口的可重试/死信规则隔离。
+/// 提现状态、next-attempt、链事件死信与网关游标承担跨重启恢复；循环不缓存密钥，也不越过未完整处理的页面推进游标。
 pub async fn run_loop(state: AppState, config: WalletChainWorkerConfig) -> AppResult<()> {
     let mut ticker = interval(Duration::from_secs(config.interval_seconds.max(1)));
     loop {

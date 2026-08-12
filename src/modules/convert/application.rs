@@ -31,6 +31,8 @@ use serde_json::json;
 use sqlx::{MySql, Pool};
 use uuid::Uuid;
 
+/// 编排闪兑交易对读取与响应组装；该只读用例不创建资金事务，也不改变闪兑业务状态。
+/// 返回启用闪兑对、限额与数据库资产 Logo，不从符号推导图片或汇率。
 pub(crate) async fn list_convert_pairs(
     mysql: Option<Pool<MySql>>,
     query: ListQuery,
@@ -40,6 +42,8 @@ pub(crate) async fn list_convert_pairs(
     Ok(ConvertPairsResponse { pairs })
 }
 
+/// 编排闪兑订单读取与响应组装；该只读用例不创建资金事务，也不改变闪兑业务状态。
+/// 按认证用户和可选状态读取闪兑订单，失败不返回其他用户数据。
 pub(crate) async fn list_convert_orders(
     mysql: Option<Pool<MySql>>,
     subject: &str,
@@ -145,6 +149,10 @@ pub(crate) async fn create_convert_quote(
     })
 }
 
+/// 确认闪兑报价的归属与有效期，并在单一数据库事务内完成双资产余额及流水结算。
+/// Redis 快照须存在、归属当前用户且未到期，MySQL 也须存在同一用户报价；报价阶段没有预冻结资金。
+/// 结算事务从源 available 扣完整 from_amount、向目标 available 加 to_amount，frozen/locked 不变，并写两条 quote_id 流水。
+/// 相同报价重放由订单唯一键拒绝二次入账；缓存缺失/过期发生在事务前，确认期余额不足则回滚 pending 订单及全部资金写入。
 pub(crate) async fn confirm_convert_quote(
     mysql: Option<Pool<MySql>>,
     redis: Option<ConnectionManager>,
@@ -178,6 +186,8 @@ pub(crate) async fn confirm_convert_quote(
     })
 }
 
+/// 编排闪兑确认并在数据库结算成功后发布用户私有完成事件，广播内容只引用已提交的报价结果。
+/// 结算失败时不广播；广播发生在事务提交后，未配置或内存广播无人接收都不回滚已完成交易。
 pub(crate) async fn confirm_convert_quote_with_events(
     mysql: Option<Pool<MySql>>,
     redis: Option<ConnectionManager>,

@@ -59,6 +59,8 @@ pub(crate) struct ValidatedQuickRechargeConfig {
     pub(crate) max_amount: Option<BigDecimal>,
 }
 
+/// 把持久化配置解密并转换为支付方运行时配置，按需要求配置启用。
+/// 密钥缺失、解密失败或启用字段不完整时在任何外部请求前返回错误。
 pub(crate) fn runtime_config_from_row(
     row: QuickRechargeConfigRow,
     key: Option<&str>,
@@ -104,6 +106,9 @@ pub(crate) fn runtime_config_from_row(
     })
 }
 
+/// 规范并校验快充地址、币种、网络和金额上下限，生成可保存配置。
+/// min_amount 必须为正、max_amount 不得小于 min；当前规则不限制法币金额小数位或整数位。
+/// 该纯校验不加密密钥、不访问支付方，也不修改当前配置。
 pub(crate) fn validate_save_config_request(
     request: &SaveQuickRechargeConfigRequest,
 ) -> AppResult<ValidatedQuickRechargeConfig> {
@@ -178,6 +183,7 @@ pub(crate) fn validate_save_config_request(
     Ok(config)
 }
 
+/// 启用配置必须已持有商户密钥密文；这里只检查存在性，不解密或验证密钥能被支付方接受。
 pub(crate) fn validate_enabled_config_secrets(
     config: &ValidatedQuickRechargeConfig,
     secret_ciphertext: &Option<String>,
@@ -190,6 +196,9 @@ pub(crate) fn validate_enabled_config_secrets(
     Ok(())
 }
 
+/// 校验快充金额为正且处于配置的最小值和可选最大值之间。
+/// 由于配置 min_amount 必须为正，低于最小值即涵盖非正输入；当前规则不按法币或到账资产精度截断。
+/// 校验在创建本地订单和支付方请求前完成，失败时不产生本地订单或外部副作用。
 pub(crate) fn validate_recharge_amount(
     amount: &BigDecimal,
     config: &QuickRechargeRuntimeConfig,
@@ -209,6 +218,8 @@ pub(crate) fn validate_recharge_amount(
     Ok(())
 }
 
+/// 按客户端目标选择专用回跳地址，缺失时回退到默认地址。
+/// 选择只基于已验证配置，不拼接用户输入，也不修改订单或支付方状态。
 pub(crate) fn redirect_url_for_target(
     config: &QuickRechargeRuntimeConfig,
     target: Option<QuickRechargeReturnTarget>,
@@ -224,6 +235,8 @@ pub(crate) fn redirect_url_for_target(
     target_url.or_else(|| config.redirect_url.clone())
 }
 
+/// 新密钥非空时加密保存，空白时沿用旧密文；缺少加密键时返回配置错误。
+/// 函数只返回待保存密文，不写数据库；配置事务失败时旧密钥仍保持生效。
 pub(crate) fn prepare_secret_field(
     new_value: Option<&str>,
     existing_ciphertext: Option<String>,
@@ -238,6 +251,8 @@ pub(crate) fn prepare_secret_field(
     Ok(existing_ciphertext)
 }
 
+/// 生成不含密钥明文的快充配置审计快照，仅保留掩码。
+/// 前后快照用于配置事务审计，密文和解密值均不得进入审计 JSON。
 pub(crate) fn config_audit_json(row: &QuickRechargeConfigRow) -> Value {
     json!({
         "id": row.id,
@@ -265,6 +280,8 @@ pub(crate) fn config_audit_json(row: &QuickRechargeConfigRow) -> Value {
     })
 }
 
+/// 生成支付方连通性测试结果的管理员审计快照。
+/// 快照只记录订单标识、币种和支付地址，不包含商户密钥或签名材料。
 pub(crate) fn test_config_audit_json(response: &TestQuickRechargeConfigResponse) -> Value {
     json!({
         "order_id": response.order_id,
@@ -281,6 +298,8 @@ pub(crate) fn test_config_audit_json(response: &TestQuickRechargeConfigResponse)
     })
 }
 
+/// 排除 `signature` 字段后按 GMPay 规则重算 MD5，并使用不区分 ASCII 大小写的普通字符串比较。
+/// 该比较不是常量时间比较；验签失败发生在锁订单之前，不修改钱包、流水或支付状态。
 pub(crate) fn verify_gmpay_notify_signature(
     object: &Map<String, Value>,
     secret: &str,
@@ -295,6 +314,8 @@ pub(crate) fn verify_gmpay_notify_signature(
     Ok(())
 }
 
+/// 按键名排序拼接非空字段与商户密钥，计算 GMPay MD5 签名。
+/// 字段过滤和文本表示必须与通知验签共用，避免请求与回调规则漂移。
 pub fn gmpay_signature(params: &BTreeMap<String, String>, secret: &str) -> String {
     let sign_source = params
         .iter()
@@ -305,6 +326,7 @@ pub fn gmpay_signature(params: &BTreeMap<String, String>, secret: &str) -> Strin
     md5_lower_hex(&format!("{sign_source}{secret}"))
 }
 
+/// 从回调对象读取并裁剪必填字符串，缺失或空白时返回验证错误。
 pub(crate) fn required_json_string(object: &Map<String, Value>, field: &str) -> AppResult<String> {
     object
         .get(field)
@@ -312,10 +334,12 @@ pub(crate) fn required_json_string(object: &Map<String, Value>, field: &str) -> 
         .ok_or_else(|| AppError::Validation(format!("gmpay notify {field} is required")))
 }
 
+/// 从回调对象读取可选字符串，并把空白内容归一为空值。
 pub(crate) fn optional_json_string(object: &Map<String, Value>, field: &str) -> Option<String> {
     object.get(field).and_then(json_value_to_sign_string)
 }
 
+/// 从回调对象解析必填十进制金额，拒绝缺失或非法格式。
 pub(crate) fn required_json_decimal(
     object: &Map<String, Value>,
     field: &str,
@@ -325,6 +349,8 @@ pub(crate) fn required_json_decimal(
         .map_err(|_| AppError::Validation(format!("gmpay notify {field} is invalid")))
 }
 
+/// 把十进制金额标准化为 GMPay 签名和请求使用的无多余零字符串。
+/// 请求与验签必须复用该表示，避免相同金额因文本差异产生签名不一致。
 pub(crate) fn decimal_to_gmpay_string(value: &BigDecimal) -> String {
     let mut text = format!("{value:.18}");
     if text.contains('.') {
@@ -341,6 +367,8 @@ pub(crate) fn decimal_to_gmpay_string(value: &BigDecimal) -> String {
     text
 }
 
+/// 规范快充订单状态，只接受本地状态机定义的值。
+/// 非法状态在查询执行前拒绝，不会被当作空结果或触发任何订单变更。
 pub(crate) fn validate_order_status(value: &str) -> AppResult<String> {
     let status = value.trim();
     match status {
@@ -351,15 +379,18 @@ pub(crate) fn validate_order_status(value: &str) -> AppResult<String> {
     }
 }
 
+/// 裁剪拥有所有权的可选字符串，并过滤空白值。
 pub(crate) fn optional_string(value: Option<String>) -> Option<String> {
     value.and_then(|value| optional_str(&value).map(str::to_owned))
 }
 
+/// 裁剪借用字符串，并把空白内容归一为空值。
 pub(crate) fn optional_str(value: &str) -> Option<&str> {
     let value = value.trim();
     (!value.is_empty()).then_some(value)
 }
 
+/// 裁剪管理员操作原因，空值时拒绝配置或删除操作。
 pub(crate) fn required_reason(value: Option<String>) -> AppResult<String> {
     let Some(reason) = optional_string(value) else {
         return Err(AppError::Validation("reason is required".to_owned()));
@@ -370,6 +401,7 @@ pub(crate) fn required_reason(value: Option<String>) -> AppResult<String> {
     Ok(reason)
 }
 
+/// 从用户 subject 提取可信编号，格式不符时返回未授权。
 pub(crate) fn user_id_from_subject(subject: &str) -> AppResult<u64> {
     subject
         .strip_prefix("user:")
@@ -377,6 +409,7 @@ pub(crate) fn user_id_from_subject(subject: &str) -> AppResult<u64> {
         .ok_or(AppError::Unauthorized)
 }
 
+/// 从管理员 subject 提取可信编号，格式不符时返回未授权。
 pub(crate) fn admin_id_from_subject(subject: &str) -> AppResult<u64> {
     subject
         .strip_prefix("admin:")
@@ -384,6 +417,7 @@ pub(crate) fn admin_id_from_subject(subject: &str) -> AppResult<u64> {
         .ok_or(AppError::Unauthorized)
 }
 
+/// 把快充列表数量限制在一到一百条。
 pub(crate) fn route_limit(limit: Option<u32>) -> u32 {
     limit.unwrap_or(50).clamp(1, 200)
 }
@@ -393,6 +427,8 @@ pub(crate) fn route_offset(offset: Option<u32>) -> u32 {
     offset.unwrap_or(0).min(100_000)
 }
 
+/// 校验可选回跳地址必须是 HTTP 或 HTTPS，空白值归一为空。
+/// 非法地址在配置保存前拒绝，避免支付方把用户重定向到非预期协议。
 pub(crate) fn validate_optional_return_url(
     value: Option<String>,
     field: &str,

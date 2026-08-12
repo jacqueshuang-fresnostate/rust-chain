@@ -22,6 +22,7 @@ impl PlatformBrandValidationError {
         }
     }
 
+    /// 消费领域校验错误并提取稳定消息，供应用层映射为统一参数错误。
     pub(crate) fn into_message(self) -> String {
         self.message
     }
@@ -57,6 +58,8 @@ pub struct ValidatedPlatformBrand {
 
 impl DomainLayer for ValidatedPlatformBrand {}
 
+/// 校验并规范化平台名称、Logo 地址和图表提供方配置。
+/// 所有规则均为纯计算；任一字段非法时整体失败，不产生部分配置或持久化副作用。
 pub fn validate_platform_brand(
     command: PlatformBrandCommand,
 ) -> Result<ValidatedPlatformBrand, PlatformBrandValidationError> {

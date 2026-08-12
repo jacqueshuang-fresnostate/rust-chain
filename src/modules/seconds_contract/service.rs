@@ -31,6 +31,7 @@ pub(crate) struct NormalizedSecondsContractProductCycle {
     pub(crate) max_stake: Option<BigDecimal>,
 }
 
+/// 生成秒合约产品及周期审计快照，金额以字符串保精度且无持久化副作用。
 pub(crate) fn product_audit_json(product: &SecondsContractProductResponse) -> Value {
     json!({
         "id": product.id,
@@ -48,6 +49,7 @@ pub(crate) fn product_audit_json(product: &SecondsContractProductResponse) -> Va
     })
 }
 
+/// 生成秒合约订单结算审计快照，使用既有价格与赔付结果而不重新计算资金。
 pub(crate) fn order_audit_json(
     order: &SecondsContractOrderResponse,
     payout_amount: BigDecimal,
@@ -71,7 +73,8 @@ pub(crate) fn order_audit_json(
     })
 }
 
-/// 发布秒合约订单开仓事件：由路由层调用，避免重复拼装事件 payload。
+/// 发布秒合约订单开仓事件：由应用层在资金事务提交后调用，避免重复拼装事件 payload。
+/// 前置业务失败时不得发布；未配置广播目标沿用既有降级语义，且不会补做资金写入。
 pub(crate) fn publish_seconds_contract_order_opened_event(
     hub: &EventBroadcastHub,
     user_id: u64,
@@ -111,7 +114,8 @@ pub(crate) fn publish_seconds_contract_order_opened_event_if_needed(
     }
 }
 
-/// 发布秒合约订单结算事件：路由层仅负责触发，事件构建集中在服务层。
+/// 发布秒合约订单结算事件：由应用层在结算事务提交后调用，事件构建集中在服务层。
+/// 前置业务失败时不得发布；未配置广播目标沿用既有降级语义，且不会补做资金写入。
 pub(crate) fn publish_seconds_contract_order_settled_event(
     hub: &EventBroadcastHub,
     user_id: u64,
@@ -151,6 +155,7 @@ pub(crate) fn publish_seconds_contract_order_settled_event_if_needed(
     }
 }
 
+/// 秒合约同键重放必须与产品、方向和投注金额一致；请求指定周期时还必须匹配原单周期。
 pub(crate) fn ensure_existing_order_matches_request(
     existing: &SecondsContractOrderResponse,
     product_id: u64,
@@ -171,6 +176,7 @@ pub(crate) fn ensure_existing_order_matches_request(
     Ok(())
 }
 
+/// 已结算订单仅允许相同结果重放，异结果返回冲突且不重复赔付。
 pub(crate) fn ensure_existing_settlement_matches(
     existing: &SecondsContractOrderResponse,
     result: &str,
@@ -183,6 +189,7 @@ pub(crate) fn ensure_existing_settlement_matches(
     Ok(())
 }
 
+/// 从订单本金、赔率和结果计算结算入账额；输单为零，赢单按资产精度向零截断。
 pub(crate) fn settlement_payout_amount(
     order: &SecondsContractOrderResponse,
     result: &str,
@@ -196,6 +203,7 @@ pub(crate) fn settlement_payout_amount(
     )
 }
 
+/// 赢单返回 `本金 × (1 + 赔率)` 并按资产精度向零截断，其他结果返回零；函数不修改钱包。
 pub(crate) fn seconds_contract_payout_amount(
     stake_amount: &BigDecimal,
     payout_rate: &BigDecimal,
@@ -213,6 +221,7 @@ pub(crate) fn seconds_contract_payout_amount(
     }
 }
 
+/// 校验非零交易对/投注资产、周期集合、费率、限额、可选状态及原因长度，并按周期升序返回完整配置。
 pub(crate) fn validate_create_product_request(
     request: &CreateSecondsContractProductRequest,
 ) -> AppResult<Vec<NormalizedSecondsContractProductCycle>> {
@@ -232,6 +241,7 @@ pub(crate) fn validate_create_product_request(
     Ok(cycles)
 }
 
+/// 校验更新请求的非零交易对/投注资产、完整周期集合、状态、金额边界和原因长度，失败不进入管理事务。
 pub(crate) fn validate_update_product_request(
     request: &UpdateSecondsContractProductRequest,
 ) -> AppResult<Vec<NormalizedSecondsContractProductCycle>> {
@@ -339,6 +349,7 @@ fn validate_product_cycle_fields(cycle: &NormalizedSecondsContractProductCycle) 
     Ok(())
 }
 
+/// 要求产品启用且投注金额符合资产精度及所选周期上下限。
 pub(crate) fn validate_product_stake(
     stake_amount: &BigDecimal,
     product: &SecondsContractProductRuleRow,
@@ -367,6 +378,7 @@ pub(crate) fn validate_product_stake(
     Ok(())
 }
 
+/// 只接受 up 或 down 方向并转为稳定小写值，未知输入不创建订单。
 pub(crate) fn normalize_direction(value: &str) -> AppResult<String> {
     match value.trim().to_ascii_lowercase().as_str() {
         "up" => Ok("up".to_owned()),
@@ -377,6 +389,7 @@ pub(crate) fn normalize_direction(value: &str) -> AppResult<String> {
     }
 }
 
+/// 只接受 win 或 loss 并转为稳定小写值；该函数不根据入场价、到期价或方向推导结果。
 pub(crate) fn normalize_settlement_result(value: &str) -> AppResult<String> {
     match value.trim().to_ascii_lowercase().as_str() {
         "win" => Ok("win".to_owned()),
@@ -387,6 +400,7 @@ pub(crate) fn normalize_settlement_result(value: &str) -> AppResult<String> {
     }
 }
 
+/// 只接受 active 或 disabled 产品状态，空值与未知状态返回参数错误。
 pub(crate) fn normalized_product_status(value: &str) -> AppResult<String> {
     let Some(status) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation(
@@ -401,6 +415,7 @@ pub(crate) fn normalized_product_status(value: &str) -> AppResult<String> {
     }
 }
 
+/// 裁剪并校验后台操作原因，空值或超长时在开启管理事务前失败。
 pub(crate) fn required_reason(reason: Option<String>) -> AppResult<String> {
     let Some(reason) = optional_string(reason) else {
         return Err(AppError::Validation(
@@ -436,6 +451,7 @@ fn validate_payout_rate(payout_rate: &BigDecimal) -> AppResult<()> {
     )
 }
 
+/// 投注金额必须为正且符合数据库小数及整数位容量，防止落账截断。
 pub(crate) fn validate_stake_amount(amount: &BigDecimal) -> AppResult<()> {
     if amount <= &BigDecimal::from(0) {
         return Err(AppError::Validation(
@@ -481,6 +497,7 @@ fn validate_decimal_storage(
     Ok(())
 }
 
+/// 裁剪并校验幂等键长度；空值或超长键不得占用唯一约束或触发资金写入。
 pub(crate) fn normalize_idempotency_key(value: &str) -> AppResult<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -496,12 +513,14 @@ pub(crate) fn normalize_idempotency_key(value: &str) -> AppResult<String> {
     Ok(trimmed.to_owned())
 }
 
+/// 裁剪可选筛选文本，空字符串转为 `None`。
 pub(crate) fn optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
 }
 
+/// 裁剪可选图片 URL，空值转 `None`，超出字段长度时返回参数错误。
 pub(crate) fn optional_image_url(value: Option<String>, field: &str) -> AppResult<Option<String>> {
     let Some(url) = optional_string(value) else {
         return Ok(None);
@@ -512,6 +531,7 @@ pub(crate) fn optional_image_url(value: Option<String>, field: &str) -> AppResul
     Ok(Some(url))
 }
 
+/// 从 `user:{id}` subject 解析用户编号，格式不符返回 Unauthorized。
 pub(crate) fn user_id_from_subject(subject: &str) -> AppResult<u64> {
     subject
         .strip_prefix("user:")
@@ -519,6 +539,7 @@ pub(crate) fn user_id_from_subject(subject: &str) -> AppResult<u64> {
         .ok_or(AppError::Unauthorized)
 }
 
+/// 从 `admin:{id}` subject 解析管理员编号，格式不符返回 Unauthorized。
 pub(crate) fn admin_id_from_subject(subject: &str) -> AppResult<u64> {
     subject
         .strip_prefix("admin:")
@@ -526,6 +547,7 @@ pub(crate) fn admin_id_from_subject(subject: &str) -> AppResult<u64> {
         .ok_or(AppError::Unauthorized)
 }
 
+/// 将秒合约列表条数默认设为 50，并限制在 1～100。
 pub(crate) fn route_limit(limit: Option<u32>) -> u32 {
     limit.unwrap_or(50).clamp(1, 100)
 }
@@ -533,14 +555,6 @@ pub(crate) fn route_limit(limit: Option<u32>) -> u32 {
 /// 偏移同样设上限：超大 offset 会让日志类大表退化为全表扫描加文件排序。
 pub(crate) fn route_offset(offset: Option<u32>) -> u32 {
     offset.unwrap_or(0).min(100_000)
-}
-
-pub(crate) fn is_duplicate_key_error(error: &sqlx::Error) -> bool {
-    let Some(database_error) = error.as_database_error() else {
-        return false;
-    };
-    matches!(database_error.code().as_deref(), Some("1062"))
-        || database_error.message().contains("Duplicate entry")
 }
 
 const SECONDS_AUDIT_REASON_MAX_LEN: usize = 512;

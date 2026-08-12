@@ -1,5 +1,7 @@
 use super::*;
 
+/// 汇总用户、钱包、行情、交易、产品、风险和后台审计指标，并合并行情监督器运行快照。
+/// 各摘要查询不共享事务或快照锁，因此数据是近实时视图；任一 SQL 失败时整份仪表盘返回错误。
 pub(crate) async fn get_admin_dashboard(
     pool: Option<Pool<MySql>>,
     runtime: MarketFeedRuntimeStatus,
@@ -50,6 +52,8 @@ pub(crate) async fn get_admin_dashboard(
     })
 }
 
+/// 按管理员、动作、目标类型和目标 ID 筛选后台审计日志，并返回倒序分页记录与总数。
+/// 文本筛选去除空白，limit 裁剪到 1～100、offset 最大 100000；读取审计日志本身不会再生成审计。
 pub(crate) async fn list_admin_audit_logs(
     pool: Option<Pool<MySql>>,
     query: AdminAuditLogsQuery,
