@@ -103,9 +103,20 @@ async fn create_strategy_fixture(
     .await?
     .last_insert_id();
     sqlx::query(
+        r#"INSERT INTO strategy_versions
+           (strategy_id, version, effective_time, config_json, seed, created_by)
+           VALUES (?, 1, ?, JSON_OBJECT(), ?, NULL)"#,
+    )
+    .bind(strategy_id)
+    .bind(checkpoint.naive_utc())
+    .bind(format!("kline-recovery-{strategy_id}-version-1"))
+    .execute(pool)
+    .await?;
+    sqlx::query(
         r#"INSERT INTO strategy_runs
-           (strategy_id, run_status, current_price, last_generated_at, last_kline_open_time, recovery_status)
-           VALUES (?, 'running', ?, ?, ?, 'idle')"#,
+           (strategy_id, active_version, run_status, current_price, last_generated_at,
+            last_kline_open_time, recovery_status)
+           VALUES (?, 1, 'running', ?, ?, ?, 'idle')"#,
     )
     .bind(strategy_id)
     .bind(decimal("1.000000000000000000"))

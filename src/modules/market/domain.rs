@@ -82,14 +82,14 @@ pub struct KlineUpsertKey {
 }
 
 impl KlineUpsertKey {
-    /// 以周期和开盘时间组成 K 线幂等写入键，仅接受平台支持的 `1m/5m/15m/1h/1d` 周期。
+    /// 以周期和开盘时间组成 K 线幂等写入键，仅接受平台支持的 `1m/5m/15m/1h/4h/1d` 周期。
     /// 不校验时间是否对齐周期边界；采集或恢复任务仍需负责生成正确的 `open_time`。
     pub fn new(
         interval: impl Into<String>,
         open_time: DateTime<Utc>,
     ) -> Result<Self, KlineKeyError> {
         let interval = interval.into();
-        if matches!(interval.as_str(), "1m" | "5m" | "15m" | "1h" | "1d") {
+        if matches!(interval.as_str(), "1m" | "5m" | "15m" | "1h" | "4h" | "1d") {
             Ok(Self {
                 interval,
                 open_time,

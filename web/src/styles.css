@@ -790,6 +790,70 @@ body {
   max-width: 760px;
 }
 
+.admin-market-strategy-form,
+.admin-market-strategy-node-editor,
+.admin-market-strategy-node-list {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 16px;
+}
+
+.admin-market-strategy-node-editor {
+  padding-top: 18px;
+  border-top: 1px solid var(--admin-color-border);
+}
+
+.admin-market-strategy-node-editor-heading,
+.admin-market-strategy-node-card-heading,
+.admin-market-recovery-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.admin-market-strategy-node-editor-heading > div,
+.admin-market-recovery-toolbar > div {
+  min-width: 0;
+}
+
+.admin-market-strategy-node-editor-heading .semi-typography,
+.admin-market-recovery-toolbar .semi-typography {
+  margin: 0;
+}
+
+.admin-market-strategy-node-card .semi-card-body {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.admin-market-strategy-node-empty,
+.admin-market-recovery-state {
+  min-height: 84px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--admin-color-border);
+  border-radius: var(--admin-radius-md);
+  color: var(--admin-color-text-secondary);
+  background: var(--admin-color-fill);
+}
+
+.admin-market-recovery-reason {
+  display: grid;
+  gap: 8px;
+  color: var(--admin-color-text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.admin-market-recovery-sheet .semi-table-wrapper {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 .admin-action-form label {
   display: grid;
   gap: 6px;
@@ -1815,6 +1879,12 @@ body.admin-table-column-resizing * {
   .admin-action-form-wide,
   .admin-policy-action-grid {
     grid-template-columns: 1fr;
+  }
+
+  .admin-market-strategy-node-editor-heading,
+  .admin-market-recovery-toolbar {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .admin-filter-actions {

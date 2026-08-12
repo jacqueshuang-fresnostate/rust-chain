@@ -36,6 +36,7 @@ the feature contract for the business context being modified.
 | [PC Display and Chart Contracts](./platform-display-and-chart.md) | PC brand configuration, global K-line renderer selection, and TradingView Lightweight Charts data-source boundaries | Active |
 | [Prediction Market Contracts](./prediction-markets.md) | Polymarket-sourced prediction market sync, quote, wallet, settlement, and PC/admin display contracts | Active |
 | [Realtime WebSocket Contracts](./realtime-websockets.md) | Business-scoped public websocket aliases and PC market subscription routing | Active |
+| [Synthetic Market and K-line Recovery Contracts](./synthetic-market-kline.md) | Deterministic strategy ticker/K-line generation, active-version leases, authoritative 1m aggregation, and admin-only historical recovery | Active |
 | [New Coin Mobile Contract](./new-coin-mobile-contract.md) | Public project purchase-pair exposure and authenticated mobile lifecycle actions | Active |
 | [Container Delivery Contract](./container-delivery.md) | Backend image entrypoints, GHCR publication, migration gating, and Compose runtime contracts | Active |
 | [Market Favorites and Asset Logo Contract](./market-favorites.md) | Authenticated favorites and backend-owned market/convert/wallet logo metadata | Active |

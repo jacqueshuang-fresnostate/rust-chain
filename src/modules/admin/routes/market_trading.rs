@@ -1,4 +1,5 @@
 use super::*;
+use secrecy::ExposeSecret;
 
 /// 构建交易对、行情源和市场策略的后台传输路由。
 ///
@@ -37,10 +38,29 @@ pub(super) fn routes() -> Router<AppState> {
             "/market-strategies",
             get(list_market_strategies).post(create_market_strategy),
         )
-        .route("/market-strategies/:id", patch(update_market_strategy))
+        .route(
+            "/market-strategies/:id",
+            get(get_market_strategy).patch(update_market_strategy),
+        )
         .route(
             "/market-strategies/:id/status",
             patch(update_market_strategy_status),
+        )
+        .route(
+            "/market-strategies/:id/kline-gaps",
+            get(detect_market_strategy_gaps),
+        )
+        .route(
+            "/market-strategies/:id/kline-recovery/preview",
+            post(preview_market_strategy_recovery),
+        )
+        .route(
+            "/market-strategies/:id/kline-recovery/execute",
+            post(execute_market_strategy_recovery),
+        )
+        .route(
+            "/market-strategies/:id/kline-recovery/jobs",
+            get(list_market_strategy_recovery_jobs),
         )
 }
 
@@ -180,11 +200,100 @@ async fn list_market_strategies(
     ))
 }
 
+/// 读取策略主配置、运行快照和有序节点；路由只解析策略 ID 并转发读用例。
+async fn get_market_strategy(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+    Path(strategy_id): Path<u64>,
+) -> AppResult<Json<AdminMarketStrategyDetailResponse>> {
+    Ok(Json(
+        get_market_strategy_use_case(state.mysql.clone(), strategy_id).await?,
+    ))
+}
+
+/// 转发策略时间窗口的 1m K 线缺口检测；传输层不读 Mongo 文档也不计算缺口。
+async fn detect_market_strategy_gaps(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+    Path(strategy_id): Path<u64>,
+    Query(query): Query<MarketStrategyGapQuery>,
+) -> AppResult<Json<MarketStrategyGapsResponse>> {
+    Ok(Json(
+        detect_market_strategy_gaps_use_case(
+            state.mysql.clone(),
+            state.mongo.clone(),
+            strategy_id,
+            query,
+            chrono::Utc::now(),
+        )
+        .await?,
+    ))
+}
+
+/// 转发无写入的补偿预览，并使用运行时 JWT 密钥对短时确认令牌签名。
+/// 路由不生成 OHLCV、不暴露密钥，所有版本/缺口校验由应用层完成。
+async fn preview_market_strategy_recovery(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+    Path(strategy_id): Path<u64>,
+    Json(request): Json<PreviewMarketStrategyRecoveryRequest>,
+) -> AppResult<Json<MarketStrategyRecoveryPreviewResponse>> {
+    let token_key = state.settings.jwt_secret.expose_secret().as_bytes();
+    Ok(Json(
+        preview_market_strategy_recovery_use_case(
+            state.mysql.clone(),
+            state.mongo.clone(),
+            strategy_id,
+            request,
+            token_key,
+            chrono::Utc::now(),
+        )
+        .await?,
+    ))
+}
+
+/// 将已认证管理员、预览令牌和审计原因转发给执行用例，返回新建 pending 任务。
+/// 路由不写 MySQL/Mongo/Redis；令牌验签、唯一性和审计事务都在应用/基础设施层收敛。
+async fn execute_market_strategy_recovery(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Path(strategy_id): Path<u64>,
+    Json(request): Json<ExecuteMarketStrategyRecoveryRequest>,
+) -> AppResult<Json<MarketStrategyRecoveryJobResponse>> {
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    let token_key = state.settings.jwt_secret.expose_secret().as_bytes();
+    Ok(Json(
+        execute_market_strategy_recovery_use_case(
+            state.mysql.clone(),
+            state.mongo.clone(),
+            admin_id,
+            strategy_id,
+            request,
+            token_key,
+            chrono::Utc::now(),
+        )
+        .await?,
+    ))
+}
+
+/// 按路径策略和查询状态转发补偿任务历史分页，不返回预览令牌哈希。
+async fn list_market_strategy_recovery_jobs(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+    Path(strategy_id): Path<u64>,
+    Query(query): Query<MarketStrategyRecoveryJobsQuery>,
+) -> AppResult<Json<MarketStrategyRecoveryJobsResponse>> {
+    Ok(Json(
+        list_market_strategy_recovery_jobs_use_case(state.mysql.clone(), strategy_id, query)
+            .await?,
+    ))
+}
+
 async fn create_market_strategy(
     AdminAuth(claims): AdminAuth,
     State(state): State<AppState>,
     Json(request): Json<CreateMarketStrategyRequest>,
-) -> AppResult<Json<AdminMarketStrategyResponse>> {
+) -> AppResult<Json<AdminMarketStrategyDetailResponse>> {
     let admin_id = admin_id_from_subject(&claims.sub)?;
     Ok(Json(
         create_market_strategy_use_case(state.mysql.clone(), admin_id, request).await?,
@@ -196,7 +305,7 @@ async fn update_market_strategy(
     State(state): State<AppState>,
     Path(strategy_id): Path<u64>,
     Json(request): Json<UpdateMarketStrategyRequest>,
-) -> AppResult<Json<AdminMarketStrategyResponse>> {
+) -> AppResult<Json<AdminMarketStrategyDetailResponse>> {
     let admin_id = admin_id_from_subject(&claims.sub)?;
     Ok(Json(
         update_market_strategy_use_case(state.mysql.clone(), admin_id, strategy_id, request)

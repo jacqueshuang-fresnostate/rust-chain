@@ -761,6 +761,18 @@ pub struct MarketFeedEvent {
 }
 
 impl MarketFeedEvent {
+    /// 从已通过领域构造器校验的 ticker 快照创建统一行情事件，供第三方 feed 与内部策略行情共用同一 WebSocket 合同。
+    /// 本函数只构造事件元数据和 JSON，不写 Redis/Mongo、不触发现货订单，也不直接广播。
+    pub fn from_ticker_snapshot(snapshot: &MarketTickerSnapshot) -> AppResult<Self> {
+        Self::from_parsed(&ParsedMarketFeed::Ticker(snapshot.clone()))
+    }
+
+    /// 从已通过领域构造器校验的 K 线快照创建统一行情事件，幂等键继续包含槽位和 OHLCV 载荷摘要。
+    /// 本函数无存储或网络副作用；调用方必须在 ingestion 成功后再发布，避免客户端看到未落地数据。
+    pub fn from_kline_snapshot(snapshot: &MarketKlineSnapshot) -> AppResult<Self> {
+        Self::from_parsed(&ParsedMarketFeed::Kline(snapshot.clone()))
+    }
+
     /// 解析 provider 原始帧并生成统一事件元数据、幂等键、公开 WebSocket 主题与 JSON 载荷。
     /// 字段或频道不合法时返回校验错误；该函数不持久化快照，也不实际发布事件。
     pub fn from_frame(frame: &MarketFeedFrame) -> AppResult<Self> {

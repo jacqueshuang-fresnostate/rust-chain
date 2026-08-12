@@ -1034,6 +1034,19 @@ describe('resourceConfigs create actions', () => {
   beforeEach(() => {
     stubResizeObserver();
     stubMatchMedia();
+    if (typeof Range !== 'undefined' && !Range.prototype.getBoundingClientRect) {
+      Range.prototype.getBoundingClientRect = () => ({
+        bottom: 0,
+        height: 0,
+        left: 0,
+        right: 0,
+        top: 0,
+        width: 0,
+        x: 0,
+        y: 0,
+        toJSON: () => ({})
+      });
+    }
     vi.stubGlobal('WebSocket', undefined);
     Object.defineProperty(window, 'WebSocket', { configurable: true, value: undefined });
     listAdminResourceMock.mockReset();
@@ -3936,6 +3949,20 @@ describe('resourceConfigs create actions', () => {
             volatility: '0.01000000',
             volume_min: '10.000000000000000000',
             volume_max: '20.000000000000000000',
+            nodes: [
+              {
+                id: 301,
+                sequence_no: 0,
+                target_time: 1_775_029_400_000,
+                target_type: 'percent_from_start',
+                target_value: '5.000000000000000000',
+                execution_mode: 'soft',
+                tolerance: '0.50000000',
+                volatility: '0.02000000',
+                volume_min: '11.000000000000000000',
+                volume_max: '19.000000000000000000'
+              }
+            ],
             status: 'paused',
             run_status: 'paused',
             created_at: 1_775_027_600_000
@@ -3948,7 +3975,36 @@ describe('resourceConfigs create actions', () => {
     });
     apiRequestMock.mockImplementation(async (path) => {
       if (path === '/admin/api/v1/market-strategies/91') {
-        return { id: 91, detail: 'market-strategy-detail' };
+        return {
+          id: 91,
+          detail: 'market-strategy-detail',
+          pair_id: 21,
+          symbol: 'BTC-USDT',
+          market_type: 'strategy',
+          strategy_type: 'price_path',
+          start_price: '1.000000000000000000',
+          target_price: '2.000000000000000000',
+          start_time: 1_775_027_600_000,
+          end_time: 1_775_031_200_000,
+          volatility: '0.01000000',
+          volume_min: '10.000000000000000000',
+          volume_max: '20.000000000000000000',
+          status: 'paused',
+          nodes: [
+            {
+              id: 301,
+              sequence_no: 0,
+              target_time: 1_775_029_400_000,
+              target_type: 'percent_from_start',
+              target_value: '5.000000000000000000',
+              execution_mode: 'soft',
+              tolerance: '0.50000000',
+              volatility: '0.02000000',
+              volume_min: '11.000000000000000000',
+              volume_max: '19.000000000000000000'
+            }
+          ]
+        };
       }
 
       return {};
@@ -3988,10 +4044,14 @@ describe('resourceConfigs create actions', () => {
     await user.type(within(editDialog).getByLabelText('起始价'), '1.100000000000000000');
     await user.clear(within(editDialog).getByLabelText('目标价'));
     await user.type(within(editDialog).getByLabelText('目标价'), '2.200000000000000000');
-    await user.clear(within(editDialog).getByLabelText('开始时间戳'));
-    await user.type(within(editDialog).getByLabelText('开始时间戳'), '1775031200000');
-    await user.clear(within(editDialog).getByLabelText('结束时间戳'));
-    await user.type(within(editDialog).getByLabelText('结束时间戳'), '1775034800000');
+    expect(within(editDialog).getByLabelText('开始时间')).toHaveAttribute('type', 'datetime-local');
+    expect(within(editDialog).getByLabelText('结束时间')).toHaveAttribute('type', 'datetime-local');
+    expect(within(editDialog).getByLabelText('节点1目标时间')).toHaveAttribute('type', 'datetime-local');
+    expect(semiSelectByLabel(editDialog, '目标类型')).toHaveTextContent('相对起始价百分比');
+    expect(semiSelectByLabel(editDialog, '执行模式')).toHaveTextContent('软命中');
+    fireEvent.change(within(editDialog).getByLabelText('开始时间'), { target: { value: '2026-04-01T10:00' } });
+    fireEvent.change(within(editDialog).getByLabelText('结束时间'), { target: { value: '2026-04-01T12:00' } });
+    fireEvent.change(within(editDialog).getByLabelText('节点1目标时间'), { target: { value: '2026-04-01T11:00' } });
     await user.clear(within(editDialog).getByLabelText('波动率'));
     await user.type(within(editDialog).getByLabelText('波动率'), '0.02000000');
     await user.clear(within(editDialog).getByLabelText('最小成交量'));
@@ -4010,11 +4070,23 @@ describe('resourceConfigs create actions', () => {
       strategy_type: 'price_path_v2',
       start_price: '1.100000000000000000',
       target_price: '2.200000000000000000',
-      start_time: 1775031200000,
-      end_time: 1775034800000,
+      start_time: new Date('2026-04-01T10:00').getTime(),
+      end_time: new Date('2026-04-01T12:00').getTime(),
       volatility: '0.02000000',
       volume_min: '12.000000000000000000',
       volume_max: '24.000000000000000000',
+      nodes: [
+        {
+          target_time: new Date('2026-04-01T11:00').getTime(),
+          target_type: 'percent_from_start',
+          target_value: '5.000000000000000000',
+          execution_mode: 'soft',
+          tolerance: '0.50000000',
+          volatility: '0.02000000',
+          volume_min: '11.000000000000000000',
+          volume_max: '19.000000000000000000'
+        }
+      ],
       reason: 'update strategy config'
     });
     expect(JSON.parse(String(editRequest?.body))).not.toHaveProperty('pair_id');
@@ -4022,6 +4094,81 @@ describe('resourceConfigs create actions', () => {
 
     await waitFor(() => {
       expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/market-strategies')).toHaveLength(initialMarketStrategyLoadCount + 1);
+    });
+  });
+
+  it('detects, previews, and executes manual market strategy kline recovery', async () => {
+    const user = userEvent.setup();
+    listAdminResourceMock.mockResolvedValue({
+      rows: [
+        {
+          id: 91,
+          pair_id: 21,
+          symbol: 'BTC-USDT',
+          strategy_type: 'price_path',
+          start_price: '1',
+          target_price: '2',
+          start_time: 1_775_027_600_000,
+          end_time: 1_775_031_200_000,
+          volatility: '0.01',
+          volume_min: '10',
+          volume_max: '20',
+          status: 'paused'
+        }
+      ],
+      raw: { strategies: [] }
+    });
+    apiRequestMock.mockImplementation(async (path, init) => {
+      if (path === '/admin/api/v1/market-strategies/91/kline-gaps') {
+        return {
+          strategy_id: 91,
+          config_version: 3,
+          total_1m_count: 2,
+          gaps: [{ range_start: 1_775_029_400_000, range_end: 1_775_029_460_000, one_minute_count: 2 }]
+        };
+      }
+      if (path === '/admin/api/v1/market-strategies/91/kline-recovery/jobs?limit=20&offset=0') {
+        return { jobs: [], total: 0 };
+      }
+      if (path === '/admin/api/v1/market-strategies/91/kline-recovery/preview' && init?.method === 'POST') {
+        return {
+          strategy_id: 91,
+          config_version: 3,
+          range_start: 1_775_029_400_000,
+          range_end: 1_775_029_460_000,
+          one_minute_count: 2,
+          aggregate_intervals: ['5m', '15m'],
+          first_price: '1.1',
+          last_price: '1.2',
+          samples: [{ open_time: 1_775_029_400_000, open: '1.1', high: '1.3', low: '1', close: '1.2', volume: '12' }],
+          preview_token: 'preview-token',
+          expires_at: 1_775_030_000_000
+        };
+      }
+      return {};
+    });
+
+    render(<ResourcePage config={resourceConfigs.marketStrategyActions} />);
+    expect(await screen.findByText('BTC-USDT')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '检测缺口/补偿K线（策略91）' }));
+    const sheet = await findActionSheet('检测缺口与补偿K线');
+    await user.click(within(sheet).getByRole('button', { name: '重新检测K线缺口' }));
+    expect(await within(sheet).findByText('缺口范围（共 2 根 1m）')).toBeInTheDocument();
+    await user.click(within(sheet).getByRole('button', { name: /预览缺口/ }));
+    expect(await within(sheet).findByText('补偿预览')).toBeInTheDocument();
+    expect(within(sheet).getByText('1.1 → 1.2')).toBeInTheDocument();
+    await user.type(within(sheet).getByLabelText('补偿原因'), '修复停机缺口');
+    await user.click(within(sheet).getByRole('button', { name: '确认执行K线补偿' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/market-strategies/91/kline-recovery/preview', {
+        method: 'POST',
+        body: JSON.stringify({ range_start: 1_775_029_400_000, range_end: 1_775_029_460_000 })
+      });
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/market-strategies/91/kline-recovery/execute', {
+        method: 'POST',
+        body: JSON.stringify({ preview_token: 'preview-token', reason: '修复停机缺口' })
+      });
     });
   });
 

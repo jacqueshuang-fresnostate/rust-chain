@@ -172,3 +172,86 @@ fn kline_recovery_summary_counts_scanned_recovered_and_skipped_runs() {
     assert_eq!(summary.skipped, 1);
     assert_eq!(summary.failed, 1);
 }
+
+#[tokio::test]
+async fn manual_recovery_rejects_unbounded_duplicate_and_live_slots_before_io() {
+    use crate::modules::market::synthetic::SyntheticMarketConfig;
+    use bigdecimal::BigDecimal;
+
+    let start = Utc.with_ymd_and_hms(2026, 8, 12, 10, 0, 0).unwrap();
+    let config = SyntheticMarketConfig::new(SyntheticMarketConfig {
+        symbol: "NEW-USDT".to_owned(),
+        seed: "manual-recovery-validation".to_owned(),
+        version: 1,
+        price_precision: 6,
+        start_time: start,
+        end_time: start + TimeDelta::hours(1),
+        start_price: BigDecimal::from(1),
+        target_price: BigDecimal::from(2),
+        volatility: BigDecimal::from(0),
+        volume_min: BigDecimal::from(1),
+        volume_max: BigDecimal::from(2),
+        nodes: Vec::new(),
+    })
+    .unwrap();
+    let observed_at = start + TimeDelta::minutes(10);
+    let invalid_cases = [
+        Vec::new(),
+        vec![start + TimeDelta::minutes(1), start + TimeDelta::minutes(1)],
+        vec![observed_at],
+    ];
+
+    // 这些输入必须在访问 Mongo 前拒绝，因此使用未连接的 lazy client 即可验证边界。
+    let client = mongodb::Client::with_uri_str("mongodb://127.0.0.1:1")
+        .await
+        .unwrap();
+    let database = client.database("manual_recovery_validation");
+    for open_times in invalid_cases {
+        let error = execute_manual_synthetic_recovery(&database, &config, &open_times, observed_at)
+            .await
+            .unwrap_err();
+        assert_eq!(error.counts(), ManualKlineRecoveryCounts::default());
+        assert!(error.to_string().contains("manual recovery"));
+    }
+}
+
+#[test]
+fn affected_aggregate_windows_are_aligned_deduplicated_and_complete() {
+    let start = Utc.with_ymd_and_hms(2026, 8, 12, 10, 0, 0).unwrap();
+    let missing = vec![
+        start + TimeDelta::minutes(4),
+        start + TimeDelta::minutes(5),
+        start + TimeDelta::minutes(9),
+    ];
+
+    assert_eq!(
+        affected_aggregate_window_starts(&missing, SyntheticKlineInterval::FiveMinutes),
+        vec![start, start + TimeDelta::minutes(5)]
+    );
+    assert_eq!(
+        affected_aggregate_window_starts(&missing, SyntheticKlineInterval::FifteenMinutes),
+        vec![start]
+    );
+    assert_eq!(
+        affected_aggregate_window_starts(&missing, SyntheticKlineInterval::OneHour),
+        vec![start]
+    );
+}
+
+#[test]
+fn incomplete_aggregate_windows_are_skipped_instead_of_emitted() {
+    use bigdecimal::BigDecimal;
+
+    let incomplete = vec![SyntheticCandle {
+        open_time: Utc.with_ymd_and_hms(2026, 8, 12, 10, 0, 0).unwrap(),
+        values: crate::modules::market::MarketKlineValues {
+            open: BigDecimal::from(1),
+            high: BigDecimal::from(1),
+            low: BigDecimal::from(1),
+            close: BigDecimal::from(1),
+            volume: BigDecimal::from(1),
+        },
+    }];
+
+    assert!(complete_one_minute_window(incomplete, SyntheticKlineInterval::FiveMinutes).is_none());
+}

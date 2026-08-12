@@ -8,5 +8,6 @@ pub mod margin_interest;
 pub mod margin_liquidation;
 pub mod market_feed;
 pub mod seconds_contract_settlement;
+pub mod synthetic_market;
 pub mod unlock_scanner;
 pub mod wallet_chain;

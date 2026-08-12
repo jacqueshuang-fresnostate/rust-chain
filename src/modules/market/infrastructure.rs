@@ -9,8 +9,9 @@ mod persistence;
 pub mod adapters;
 
 pub use cache::{
-    MarketCacheError, MarketDepthCacheEntry, MarketKlineCacheEntry, MarketTickerCacheEntry,
-    RedisMarketCache, market_depth_redis_key, market_kline_redis_key, market_ticker_redis_key,
+    MarketCacheError, MarketCacheWriteOutcome, MarketDepthCacheEntry, MarketKlineCacheEntry,
+    MarketTickerCacheEntry, RedisMarketCache, market_depth_redis_key, market_kline_redis_key,
+    market_ticker_redis_key,
 };
 pub use persistence::kline_collection_name;
 pub(crate) use persistence::{

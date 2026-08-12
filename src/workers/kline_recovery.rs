@@ -1,25 +1,65 @@
 use crate::{
     error::{AppError, AppResult},
     infra::mongo::{ensure_kline_indexes, kline_collection_name},
-    modules::market::{KlineUpsertKey, ValidatedMarketSymbol},
+    modules::market::{
+        KlineUpsertKey, SyntheticCandle, SyntheticKlineInterval, SyntheticMarketConfig,
+        ValidatedMarketSymbol, aggregate_1m_candles,
+    },
     state::AppState,
 };
 use bigdecimal::{BigDecimal, ToPrimitive};
-use chrono::{DateTime, TimeDelta, Timelike, Utc};
+use chrono::{DateTime, Duration, TimeDelta, Timelike, Utc};
 use mongodb::{
     Database,
     bson::{DateTime as BsonDateTime, Document, doc},
-    options::UpdateOptions,
+    options::{FindOptions, UpdateOptions},
 };
 use sqlx::{MySql, Pool};
 use std::str::FromStr;
 use thiserror::Error;
-use tokio::time::{Duration, interval};
-use tracing::{error, info, warn};
+use tracing::warn;
 
 const MAX_CANDLES_PER_STRATEGY_RUN: usize = 500;
+pub const MAX_MANUAL_RECOVERY_1M_CANDLES: usize = 10_080;
+const MANUAL_RECOVERY_INTERVALS: [SyntheticKlineInterval; 5] = [
+    SyntheticKlineInterval::FiveMinutes,
+    SyntheticKlineInterval::FifteenMinutes,
+    SyntheticKlineInterval::OneHour,
+    SyntheticKlineInterval::FourHours,
+    SyntheticKlineInterval::OneDay,
+];
 
 pub struct KlineRecoveryWorker;
+
+/// 手动补偿返回的实际 Mongo 写入进度；根数按已成功执行的幂等 upsert 次数计算。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ManualKlineRecoveryCounts {
+    pub actual_1m_count: u32,
+    pub actual_aggregate_count: u32,
+    pub skipped_aggregate_count: u32,
+}
+
+/// 手动补偿执行错误同时携带失败前已落地的实际进度，供任务终态审计。
+#[derive(Debug)]
+pub struct ManualKlineRecoveryError {
+    counts: ManualKlineRecoveryCounts,
+    source: AppError,
+}
+
+impl ManualKlineRecoveryError {
+    /// 返回错误发生前已成功写入的 1m 与聚合根数，不把未确认的写入算入进度。
+    pub fn counts(&self) -> ManualKlineRecoveryCounts {
+        self.counts
+    }
+}
+
+impl std::fmt::Display for ManualKlineRecoveryError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.source.fmt(formatter)
+    }
+}
+
+impl std::error::Error for ManualKlineRecoveryError {}
 
 impl KlineRecoveryWorker {
     /// 执行一轮 K 线缺口恢复；策略扫描上限收敛到 1..=100，每个策略最多生成 500 根已闭合 K 线。
@@ -434,26 +474,6 @@ pub async fn run_once_with_dependencies(
     Ok(summarize_recovery_plans(&outcomes))
 }
 
-/// 以至少 1 秒间隔持续恢复 K 线；周期级候选查询错误只记录并进入下一轮，单策略失败由单轮继续语义吸收。
-/// MySQL 乐观检查点与 Mongo 唯一索引提供跨重启恢复；循环不维护额外游标，也不把恢复蜡烛广播为实时帧。
-pub async fn run_loop(state: AppState, interval_seconds: u64, limit: u32) -> AppResult<()> {
-    let mut ticker = interval(Duration::from_secs(interval_seconds.max(1)));
-
-    loop {
-        ticker.tick().await;
-        match run_once(&state, Utc::now(), limit).await {
-            Ok(summary) => info!(
-                scanned = summary.scanned,
-                recovered_candles = summary.recovered_candles,
-                skipped = summary.skipped,
-                failed = summary.failed,
-                "K 线恢复周期完成"
-            ),
-            Err(error) => error!(%error, "K 线恢复周期失败"),
-        }
-    }
-}
-
 /// 以交易对集合及 interval+open_time 唯一键 upsert 一根恢复 K 线，重放只覆盖同一根蜡烛而不新增重复记录。
 pub async fn upsert_recovered_kline(db: &Database, candle: &KlineRecoveryCandle) -> AppResult<()> {
     db.collection::<Document>(&candle.collection_name())
@@ -461,6 +481,231 @@ pub async fn upsert_recovered_kline(db: &Database, candle: &KlineRecoveryCandle)
         .with_options(UpdateOptions::builder().upsert(true).build())
         .await?;
     Ok(())
+}
+
+/// 使用与实时/预览相同的 [`SyntheticMarketConfig`] 生成任务原始范围的 1m，并重建所有受影响完整聚合窗口。
+/// 本入口只读写 Mongo K 线集合：每根以 `interval + open_time` 幂等 upsert，不接触 Redis ticker/Kline、WebSocket 或 MySQL 检查点。
+/// 聚合前会从 Mongo 重读完整 1m 窗口；窗口仅因缺根不完整时跳过该高周期，已存根的非法数值或不连续仍使任务失败。
+pub async fn execute_manual_synthetic_recovery(
+    db: &Database,
+    config: &SyntheticMarketConfig,
+    missing_open_times: &[DateTime<Utc>],
+    observed_at: DateTime<Utc>,
+) -> Result<ManualKlineRecoveryCounts, ManualKlineRecoveryError> {
+    let mut counts = ManualKlineRecoveryCounts::default();
+    if missing_open_times.is_empty() {
+        return Err(manual_recovery_error(
+            counts,
+            AppError::Validation(
+                "manual recovery requires at least one missing 1m candle".to_owned(),
+            ),
+        ));
+    }
+    if missing_open_times.len() > MAX_MANUAL_RECOVERY_1M_CANDLES {
+        return Err(manual_recovery_error(
+            counts,
+            AppError::Validation(format!(
+                "manual recovery is limited to {MAX_MANUAL_RECOVERY_1M_CANDLES} 1m candles per execution"
+            )),
+        ));
+    }
+    if missing_open_times
+        .windows(2)
+        .any(|times| times[1] <= times[0])
+    {
+        return Err(manual_recovery_error(
+            counts,
+            AppError::Validation(
+                "manual recovery open times must be strictly increasing".to_owned(),
+            ),
+        ));
+    }
+    if missing_open_times.iter().any(|open_time| {
+        open_time.timestamp_subsec_nanos() != 0
+            || open_time
+                .timestamp()
+                .rem_euclid(TimeDelta::minutes(1).num_seconds())
+                != 0
+            || *open_time < config.start_time
+            || *open_time >= config.end_time
+            || *open_time >= observed_at
+    }) {
+        return Err(manual_recovery_error(
+            counts,
+            AppError::Validation(
+                "manual recovery open times must be closed UTC-minute slots inside the strategy range"
+                    .to_owned(),
+            ),
+        ));
+    }
+
+    let symbol = ValidatedMarketSymbol::from_raw(&config.symbol)
+        .map_err(|error| manual_recovery_error(counts, AppError::Validation(error.to_string())))?;
+    ensure_kline_indexes(db, &symbol)
+        .await
+        .map_err(|error| manual_recovery_error(counts, error))?;
+    let collection = db.collection::<Document>(&kline_collection_name(&symbol));
+
+    for open_time in missing_open_times {
+        let candle = config.generate_1m(*open_time).map_err(|error| {
+            manual_recovery_error(counts, AppError::Validation(error.to_string()))
+        })?;
+        upsert_manual_candle(&collection, "1m", candle.open_time, &candle, observed_at)
+            .await
+            .map_err(|error| manual_recovery_error(counts, error))?;
+        counts.actual_1m_count = counts.actual_1m_count.saturating_add(1);
+    }
+
+    for interval in MANUAL_RECOVERY_INTERVALS {
+        for window_start in affected_aggregate_window_starts(missing_open_times, interval) {
+            let Some(candles) =
+                load_complete_one_minute_window(&collection, window_start, interval)
+                    .await
+                    .map_err(|error| manual_recovery_error(counts, error))?
+            else {
+                counts.skipped_aggregate_count = counts.skipped_aggregate_count.saturating_add(1);
+                continue;
+            };
+            let aggregate = aggregate_1m_candles(&candles, interval).map_err(|error| {
+                manual_recovery_error(counts, AppError::Validation(error.to_string()))
+            })?;
+            let candle = SyntheticCandle {
+                open_time: aggregate.open_time,
+                values: aggregate.values,
+            };
+            upsert_manual_candle(
+                &collection,
+                interval.as_str(),
+                candle.open_time,
+                &candle,
+                observed_at,
+            )
+            .await
+            .map_err(|error| manual_recovery_error(counts, error))?;
+            counts.actual_aggregate_count = counts.actual_aggregate_count.saturating_add(1);
+        }
+    }
+
+    Ok(counts)
+}
+
+fn manual_recovery_error(
+    counts: ManualKlineRecoveryCounts,
+    source: AppError,
+) -> ManualKlineRecoveryError {
+    ManualKlineRecoveryError { counts, source }
+}
+
+async fn upsert_manual_candle(
+    collection: &mongodb::Collection<Document>,
+    interval: &str,
+    open_time: DateTime<Utc>,
+    candle: &SyntheticCandle,
+    observed_at: DateTime<Utc>,
+) -> AppResult<()> {
+    KlineUpsertKey::new(interval, open_time)
+        .map_err(|error| AppError::Validation(error.to_string()))?;
+    collection
+        .update_one(
+            doc! {
+                "interval": interval,
+                "open_time": BsonDateTime::from_millis(open_time.timestamp_millis()),
+            },
+            doc! { "$set": {
+                "interval": interval,
+                "open_time": BsonDateTime::from_millis(open_time.timestamp_millis()),
+                "open": candle.values.open.to_string(),
+                "high": candle.values.high.to_string(),
+                "low": candle.values.low.to_string(),
+                "close": candle.values.close.to_string(),
+                "volume": candle.values.volume.to_string(),
+                "source": "strategy",
+                "updated_at": BsonDateTime::from_millis(observed_at.timestamp_millis()),
+            }},
+        )
+        .with_options(UpdateOptions::builder().upsert(true).build())
+        .await?;
+    Ok(())
+}
+
+fn affected_aggregate_window_starts(
+    missing_open_times: &[DateTime<Utc>],
+    interval: SyntheticKlineInterval,
+) -> Vec<DateTime<Utc>> {
+    let window_seconds = interval.minute_count() as i64 * 60;
+    let mut starts = missing_open_times
+        .iter()
+        .filter_map(|open_time| {
+            DateTime::from_timestamp(
+                open_time.timestamp().div_euclid(window_seconds) * window_seconds,
+                0,
+            )
+        })
+        .collect::<Vec<_>>();
+    starts.sort_unstable();
+    starts.dedup();
+    starts
+}
+
+async fn load_complete_one_minute_window(
+    collection: &mongodb::Collection<Document>,
+    window_start: DateTime<Utc>,
+    interval: SyntheticKlineInterval,
+) -> AppResult<Option<Vec<SyntheticCandle>>> {
+    let window_end = window_start + Duration::minutes(interval.minute_count() as i64);
+    let options = FindOptions::builder()
+        .sort(doc! { "open_time": 1 })
+        .projection(doc! {
+            "_id": 0, "open_time": 1, "open": 1, "high": 1,
+            "low": 1, "close": 1, "volume": 1,
+        })
+        .build();
+    let mut cursor = collection
+        .find(doc! {
+            "interval": "1m",
+            "open_time": {
+                "$gte": BsonDateTime::from_millis(window_start.timestamp_millis()),
+                "$lt": BsonDateTime::from_millis(window_end.timestamp_millis()),
+            },
+        })
+        .with_options(options)
+        .await?;
+    let mut candles = Vec::with_capacity(interval.minute_count());
+    while cursor.advance().await? {
+        let document = cursor.deserialize_current()?;
+        let bson_time = document.get_datetime("open_time").map_err(|_| {
+            AppError::Validation("stored 1m candle open_time is invalid".to_owned())
+        })?;
+        let open_time =
+            DateTime::from_timestamp_millis(bson_time.timestamp_millis()).ok_or_else(|| {
+                AppError::Validation("stored 1m candle open_time is out of range".to_owned())
+            })?;
+        candles.push(SyntheticCandle {
+            open_time,
+            values: crate::modules::market::MarketKlineValues {
+                open: manual_document_decimal(&document, "open")?,
+                high: manual_document_decimal(&document, "high")?,
+                low: manual_document_decimal(&document, "low")?,
+                close: manual_document_decimal(&document, "close")?,
+                volume: manual_document_decimal(&document, "volume")?,
+            },
+        });
+    }
+    Ok(complete_one_minute_window(candles, interval))
+}
+
+fn complete_one_minute_window(
+    candles: Vec<SyntheticCandle>,
+    interval: SyntheticKlineInterval,
+) -> Option<Vec<SyntheticCandle>> {
+    (candles.len() == interval.minute_count()).then_some(candles)
+}
+
+fn manual_document_decimal(document: &Document, field: &str) -> AppResult<BigDecimal> {
+    let value = document.get_str(field).map_err(|_| {
+        AppError::Validation(format!("stored 1m candle {field} must be a decimal string"))
+    })?;
+    parse_decimal(value)
 }
 
 /// 计算检查点之后、恢复终点之前按固定周期缺失的开盘时间；周期必须为正且结果受单计划最大根数限制。

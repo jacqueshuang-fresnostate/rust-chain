@@ -1,0 +1,10 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend checklist and relevant feature-contract index."}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"DDD dependency direction and module placement for new market generator/recovery services."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Architecture, documentation and validation gates for backend changes."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Immutable migration and MySQL metadata requirements."}
+{"file":".trellis/spec/backend/spot-orders.md","reason":"Synthetic ticker ingestion can trigger spot orders and must preserve price/settlement contracts."}
+{"file":".trellis/spec/backend/realtime-websockets.md","reason":"Ticker and kline events must preserve public websocket routing contracts."}
+{"file":".trellis/spec/admin/ui-system.md","reason":"Admin SideSheet, form, table action, accessibility and test conventions."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Feature spans DB, Rust domain/application/infrastructure/routes and React admin UI."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Must reuse existing ingestion, event and form patterns rather than duplicate them."}
+{"file":".trellis/tasks/08-12-synthetic-new-coin-market/research/reference-evaluation.md","reason":"Chosen deterministic OHLCV model and event architecture references."}

@@ -3,18 +3,19 @@
 //! 仅接收已由 provider 适配器归一化且通过领域校验的快照，按原顺序写 Redis 与 Mongo；
 //! ticker/depth 缓存成功后才尝试触发现货订单，撮合失败不回滚已落地行情。
 
+use super::feed::MarketFeedEvent;
 use super::provider::provider_name;
 use crate::{
     error::{AppError, AppResult},
     infra::mongo::{ensure_kline_indexes, kline_collection_name},
     modules::{
-        events::EventBroadcastHub,
+        events::{EventBroadcastHub, EventBroadcastMessage},
         market::{
             KlineUpsertKey, MarketDepthSnapshot, MarketKlineSnapshot, MarketTickerSnapshot,
             ValidatedMarketSymbol,
             infrastructure::{
-                MarketCacheError, MarketDepthCacheEntry, MarketKlineCacheEntry,
-                MarketTickerCacheEntry, RedisMarketCache,
+                MarketCacheError, MarketCacheWriteOutcome, MarketDepthCacheEntry,
+                MarketKlineCacheEntry, MarketTickerCacheEntry, RedisMarketCache,
             },
         },
         spot::application::execute_triggered_spot_limit_orders_with_hub as execute_triggered_spot_limit_orders,
@@ -35,6 +36,29 @@ pub trait MarketIngestionSink: Clone + Send + Sync + 'static {
     async fn ingest_depth(&self, snapshot: &MarketDepthSnapshot) -> AppResult<()>;
     /// 持久化标准 K 线快照；实现必须保持交易对+周期+开盘时间的幂等写入。
     async fn ingest_kline(&self, snapshot: &MarketKlineSnapshot) -> AppResult<()>;
+}
+
+/// synthetic 行情摄取的时序结果；拒绝表示 Redis 已有更新快照，调用方不得继续任何派生副作用。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyntheticIngestionOutcome {
+    Accepted,
+    RejectedStale,
+}
+
+impl SyntheticIngestionOutcome {
+    /// 返回本次快照是否成为 Redis 权威值；worker 仅可在 true 时广播并推进检查点。
+    pub fn is_accepted(self) -> bool {
+        matches!(self, Self::Accepted)
+    }
+}
+
+impl From<MarketCacheWriteOutcome> for SyntheticIngestionOutcome {
+    fn from(value: MarketCacheWriteOutcome) -> Self {
+        match value {
+            MarketCacheWriteOutcome::Accepted => Self::Accepted,
+            MarketCacheWriteOutcome::RejectedStale => Self::RejectedStale,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -88,13 +112,47 @@ impl MarketIngestionService {
     pub async fn ingest_ticker(&self, snapshot: &MarketTickerSnapshot) -> AppResult<()> {
         let entry = MarketTickerCacheEntry::from_snapshot(snapshot)
             .map_err(|error| AppError::Validation(error.to_string()))?;
-        self.cache
-            .save_ticker(entry)
+        let outcome = self
+            .cache
+            .save_ticker_if_fresh(entry)
             .await
             .map_err(market_cache_error)?;
+        if outcome.is_accepted() {
+            self.trigger_spot_limit_orders(snapshot.symbol(), snapshot.last_price(), "ticker")
+                .await;
+        }
+        Ok(())
+    }
+
+    /// 为 synthetic ticker 执行 Redis `observed_at` 原子 CAS；只有 accepted 才触发现货订单并按统一事件合同广播。
+    /// stale/rejected 作为正常结果返回，Redis 保持更新值且本调用不广播，worker 也必须据此停止检查点推进。
+    pub async fn ingest_and_publish_synthetic_ticker(
+        &self,
+        snapshot: &MarketTickerSnapshot,
+    ) -> AppResult<SyntheticIngestionOutcome> {
+        let entry = MarketTickerCacheEntry::from_snapshot(snapshot)
+            .map_err(|error| AppError::Validation(error.to_string()))?;
+        let outcome = self
+            .cache
+            .save_ticker_if_fresh(entry)
+            .await
+            .map_err(market_cache_error)?;
+        if !outcome.is_accepted() {
+            return Ok(SyntheticIngestionOutcome::RejectedStale);
+        }
         self.trigger_spot_limit_orders(snapshot.symbol(), snapshot.last_price(), "ticker")
             .await;
-        Ok(())
+        self.publish(MarketFeedEvent::from_ticker_snapshot(snapshot)?)?;
+        Ok(SyntheticIngestionOutcome::Accepted)
+    }
+
+    /// 兼容现有内部调用名并委托 synthetic 时序摄取；返回值显式要求调用方处理拒写。
+    /// 新代码应优先使用 [`Self::ingest_and_publish_synthetic_ticker`] 表达仅供策略行情的副作用门禁。
+    pub async fn ingest_and_publish_ticker(
+        &self,
+        snapshot: &MarketTickerSnapshot,
+    ) -> AppResult<SyntheticIngestionOutcome> {
+        self.ingest_and_publish_synthetic_ticker(snapshot).await
     }
 
     /// 写入深度快照，并在存在卖一价时把它作为现货触发价候选；深度解析或缓存失败时不触发订单。
@@ -118,21 +176,86 @@ impl MarketIngestionService {
     pub async fn ingest_kline(&self, snapshot: &MarketKlineSnapshot) -> AppResult<()> {
         let entry = MarketKlineCacheEntry::from_snapshot(snapshot)
             .map_err(|error| AppError::Validation(error.to_string()))?;
-        let mongo_write = MarketKlineMongoWrite::from_snapshot(snapshot)?;
-        ensure_kline_indexes(&self.database, mongo_write.symbol()).await?;
-        self.cache
-            .save_kline(entry)
+        let outcome = self
+            .cache
+            .save_kline_if_fresh(entry)
             .await
             .map_err(market_cache_error)?;
-        self.database
-            .collection::<Document>(&mongo_write.collection_name())
-            .update_one(mongo_write.upsert_filter(), mongo_write.upsert_update())
-            .with_options(
-                mongodb::options::UpdateOptions::builder()
-                    .upsert(true)
-                    .build(),
-            )
-            .await?;
+        if outcome.is_accepted() {
+            self.upsert_kline_mongo(snapshot).await?;
+        }
+        Ok(())
+    }
+
+    /// 为 synthetic K 线执行 `(open_time, observed_at)` 原子时序门禁，accepted 后才 upsert Mongo 并广播。
+    /// 同分钟旧 owner 或旧分钟快照被拒后不会覆盖 Mongo、不会发布陈旧 forming candle，也不会允许 worker 推进检查点。
+    pub async fn ingest_and_publish_synthetic_kline(
+        &self,
+        snapshot: &MarketKlineSnapshot,
+    ) -> AppResult<SyntheticIngestionOutcome> {
+        let entry = MarketKlineCacheEntry::from_snapshot(snapshot)
+            .map_err(|error| AppError::Validation(error.to_string()))?;
+        let outcome = self
+            .cache
+            .save_kline_if_fresh(entry)
+            .await
+            .map_err(market_cache_error)?;
+        if !outcome.is_accepted() {
+            return Ok(SyntheticIngestionOutcome::RejectedStale);
+        }
+        self.upsert_kline_mongo(snapshot).await?;
+        self.publish(MarketFeedEvent::from_kline_snapshot(snapshot)?)?;
+        Ok(SyntheticIngestionOutcome::Accepted)
+    }
+
+    /// 兼容现有内部调用名并返回 synthetic 时序结果；调用方必须处理 `RejectedStale`，不得默认推进检查点。
+    pub async fn ingest_and_publish_kline(
+        &self,
+        snapshot: &MarketKlineSnapshot,
+    ) -> AppResult<SyntheticIngestionOutcome> {
+        self.ingest_and_publish_synthetic_kline(snapshot).await
+    }
+
+    async fn upsert_kline_mongo(&self, snapshot: &MarketKlineSnapshot) -> AppResult<()> {
+        let mongo_write = MarketKlineMongoWrite::from_snapshot(snapshot)?;
+        ensure_kline_indexes(&self.database, mongo_write.symbol()).await?;
+        let collection = self
+            .database
+            .collection::<Document>(&mongo_write.collection_name());
+        match collection.find_one(mongo_write.upsert_filter()).await? {
+            Some(existing) if mongo_write.existing_is_newer(&existing) => {
+                return Err(AppError::Conflict(
+                    "market kline rejected because a newer Mongo snapshot already exists"
+                        .to_owned(),
+                ));
+            }
+            Some(_) => {
+                let result = collection
+                    .update_one(
+                        mongo_write.fresh_existing_filter(),
+                        mongo_write.upsert_update(),
+                    )
+                    .await?;
+                if result.matched_count == 0 {
+                    return Err(AppError::Conflict(
+                        "market kline lost a concurrent freshness race".to_owned(),
+                    ));
+                }
+            }
+            None if !collection.insert_if_absent(&mongo_write).await? => {
+                return Err(AppError::Conflict(
+                    "market kline lost a concurrent first-write race".to_owned(),
+                ));
+            }
+            None => {}
+        }
+        Ok(())
+    }
+
+    fn publish(&self, event: MarketFeedEvent) -> AppResult<()> {
+        if let Some(hub) = &self.broadcast_hub {
+            hub.publish(EventBroadcastMessage::from_market_feed_event(&event)?);
+        }
         Ok(())
     }
 
@@ -231,6 +354,42 @@ impl MarketKlineMongoWrite {
         }
     }
 
+    /// 生成仅更新既有且观察时间不晚于传入值的 Mongo 条件；同槽旧 owner 不能在 Redis CAS 之后倒退历史值。
+    /// 首次插入由独立唯一键 insert 完成，避免带时序条件的 upsert 在竞争失败时触发重复键错误。
+    pub fn fresh_existing_filter(&self) -> Document {
+        doc! {
+            "interval": &self.interval,
+            "open_time": BsonDateTime::from_millis(self.open_time.timestamp_millis()),
+            "$or": [
+                { "updated_at": { "$exists": false } },
+                { "updated_at": { "$lte": BsonDateTime::from_millis(self.updated_at.timestamp_millis()) } },
+            ],
+        }
+    }
+
+    /// 判断已存在同槽文档的 `updated_at` 是否严格晚于本次快照；缺失或非法时间按旧数据处理并允许修复。
+    pub fn existing_is_newer(&self, document: &Document) -> bool {
+        document
+            .get_datetime("updated_at")
+            .ok()
+            .is_some_and(|value| value.timestamp_millis() > self.updated_at.timestamp_millis())
+    }
+
+    /// 构造首次插入文档；字段与 `$set` 合同一致，唯一索引冲突表示已有并发写者而非第二条历史记录。
+    pub fn insert_document(&self) -> Document {
+        doc! {
+            "interval": &self.interval,
+            "open_time": BsonDateTime::from_millis(self.open_time.timestamp_millis()),
+            "open": &self.open,
+            "high": &self.high,
+            "low": &self.low,
+            "close": &self.close,
+            "volume": &self.volume,
+            "source": &self.source,
+            "updated_at": BsonDateTime::from_millis(self.updated_at.timestamp_millis()),
+        }
+    }
+
     /// 生成 Mongo `$set` 文档，覆盖同一周期和开盘时间的 OHLC、成交量、provider 与观察时间。
     pub fn upsert_update(&self) -> Document {
         doc! {
@@ -245,6 +404,21 @@ impl MarketKlineMongoWrite {
                 "source": &self.source,
                 "updated_at": BsonDateTime::from_millis(self.updated_at.timestamp_millis()),
             }
+        }
+    }
+}
+
+trait KlineCollectionFreshInsert {
+    /// 仅在当前周期尚无行情时插入，并将并发唯一键冲突视为未接受。
+    async fn insert_if_absent(&self, write: &MarketKlineMongoWrite) -> AppResult<bool>;
+}
+
+impl KlineCollectionFreshInsert for mongodb::Collection<Document> {
+    async fn insert_if_absent(&self, write: &MarketKlineMongoWrite) -> AppResult<bool> {
+        match self.insert_one(write.insert_document()).await {
+            Ok(_) => Ok(true),
+            Err(error) if error.to_string().contains("E11000") => Ok(false),
+            Err(error) => Err(AppError::Mongo(error)),
         }
     }
 }

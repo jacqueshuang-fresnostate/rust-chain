@@ -1,4 +1,4 @@
-import { Button, Card, SideSheet, Space } from '@douyinfe/semi-ui';
+import { Button, Card, SideSheet, Space, Toast } from '@douyinfe/semi-ui';
 import { useState } from 'react';
 
 import { apiRequest } from '../../../api/client';
@@ -7,6 +7,12 @@ import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminImageUpload } from '../../../shared/AdminImageUpload';
 import { AdminModalTriggerButton, AdminSelect, AdminTextInput, type SemiSelectOption } from '../../../shared/SemiFormControls';
 import {
+  MarketStrategyNodeEditor,
+  createMarketStrategyNodeDraft,
+  type MarketStrategyNodeDraft
+} from '../../components/MarketStrategyNodeEditor';
+import { MarketStrategyRecoverySheet } from '../../components/MarketStrategyRecoverySheet';
+import {
   AssetSelect,
   type CreateActionProps,
   FormModal,
@@ -14,6 +20,7 @@ import {
   activeStatusOptions,
   completeCreate,
   createModalProps,
+  errorMessage,
   isNonNegativeIntegerInput,
   openRecordDetail,
   optionalString,
@@ -59,6 +66,7 @@ type MarketStrategyValues = {
   volatility: string;
   volumeMax: string;
   volumeMin: string;
+  nodes: MarketStrategyNodeDraft[];
 };
 
 const initialSpotPair: SpotPairValues = {
@@ -83,15 +91,100 @@ const initialMarketStrategy: MarketStrategyValues = {
   volatility: '0',
   volumeMin: '0',
   volumeMax: '0',
+  nodes: [],
   status: 'draft'
 };
 
-function requiredTimestamp(value: string, label: string): number {
-  const parsed = requiredNonNegativeInteger(value, label);
-  if (parsed <= 0) {
-    throw new Error(`${label}必须为 Unix 毫秒时间戳`);
+type MarketStrategyNodeRecord = {
+  id?: unknown;
+  sequence_no?: unknown;
+  target_time?: unknown;
+  target_type?: unknown;
+  target_value?: unknown;
+  execution_mode?: unknown;
+  tolerance?: unknown;
+  volatility?: unknown;
+  volume_min?: unknown;
+  volume_max?: unknown;
+};
+
+function inputDateTimeFromUnixMillis(value: unknown): string {
+  const timestamp = Number(value);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return '';
+  const date = new Date(timestamp);
+  const offsetMillis = date.getTimezoneOffset() * 60_000;
+  return new Date(timestamp - offsetMillis).toISOString().slice(0, 16);
+}
+
+function inputDateTimeFromUnknown(value: unknown): string {
+  if (typeof value === 'string' && value.includes('T') && Number.isFinite(Date.parse(value))) {
+    return value.slice(0, 16);
   }
-  return parsed;
+  return inputDateTimeFromUnixMillis(value);
+}
+
+function unixMillisFromInputDateTime(value: string, label: string): number {
+  const timestamp = new Date(value).getTime();
+  if (!value.trim() || !Number.isFinite(timestamp) || timestamp <= 0) {
+    throw new Error(`${label}必须为有效日期时间`);
+  }
+  return timestamp;
+}
+
+function marketStrategyNodesFromRecord(record: ApiRecord): MarketStrategyNodeDraft[] {
+  if (!Array.isArray(record.nodes)) return [];
+  return (record.nodes as MarketStrategyNodeRecord[])
+    .slice()
+    .sort((left, right) => Number(left.sequence_no ?? 0) - Number(right.sequence_no ?? 0))
+    .map((node) => ({
+      ...createMarketStrategyNodeDraft(),
+      targetTime: inputDateTimeFromUnknown(node.target_time),
+      targetType: String(node.target_type ?? 'absolute_price') as MarketStrategyNodeDraft['targetType'],
+      targetValue: String(node.target_value ?? ''),
+      executionMode: String(node.execution_mode ?? 'hard') as MarketStrategyNodeDraft['executionMode'],
+      tolerance: String(node.tolerance ?? '0'),
+      volatility: String(node.volatility ?? '0'),
+      volumeMin: node.volume_min == null ? '' : String(node.volume_min),
+      volumeMax: node.volume_max == null ? '' : String(node.volume_max)
+    }));
+}
+
+function isNonNegativeDecimalInput(value: string): boolean {
+  const parsed = Number(value);
+  return value.trim().length > 0 && Number.isFinite(parsed) && parsed >= 0;
+}
+
+function parseInputDateTime(value: string): number | null {
+  if (!value.trim()) return null;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null;
+}
+
+function isMarketStrategyNodeSubmittable(node: MarketStrategyNodeDraft, targetTime: number): boolean {
+  const volumeMin = node.volumeMin.trim();
+  const volumeMax = node.volumeMax.trim();
+  return Boolean(
+    Number.isFinite(targetTime) &&
+      node.targetType &&
+      node.targetValue.trim() &&
+      node.executionMode &&
+      isNonNegativeDecimalInput(node.tolerance) &&
+      isNonNegativeDecimalInput(node.volatility) &&
+      ((!volumeMin && !volumeMax) || (isNonNegativeDecimalInput(volumeMin) && isNonNegativeDecimalInput(volumeMax) && Number(volumeMax) >= Number(volumeMin)))
+  );
+}
+
+function marketStrategyNodePayload(node: MarketStrategyNodeDraft, index: number) {
+  return {
+    target_time: unixMillisFromInputDateTime(node.targetTime, `节点${index + 1}目标时间`),
+    target_type: requiredString(node.targetType, `节点${index + 1}目标类型`),
+    target_value: requiredString(node.targetValue, `节点${index + 1}目标值`),
+    execution_mode: requiredString(node.executionMode, `节点${index + 1}执行模式`),
+    tolerance: requiredString(node.tolerance, `节点${index + 1}容差`),
+    volatility: requiredString(node.volatility, `节点${index + 1}局部波动率`),
+    volume_min: optionalString(node.volumeMin) ?? null,
+    volume_max: optionalString(node.volumeMax) ?? null
+  };
 }
 
 function isSpotPairCreatable(values: SpotPairValues): boolean {
@@ -110,13 +203,32 @@ function isMarketPairConfigUpdatable(values: MarketPairConfigValues): boolean {
 }
 
 function isMarketStrategySubmittable(values: MarketStrategyValues, includePairId: boolean): boolean {
+  const startTime = parseInputDateTime(values.startTime);
+  const endTime = parseInputDateTime(values.endTime);
+  if (startTime === null || endTime === null || endTime <= startTime) {
+    return false;
+  }
+
+  let previousNodeTime = startTime;
+  for (const node of values.nodes) {
+    const targetTime = parseInputDateTime(node.targetTime);
+    if (
+      targetTime === null ||
+      targetTime <= startTime ||
+      targetTime >= endTime ||
+      targetTime <= previousNodeTime ||
+      !isMarketStrategyNodeSubmittable(node, targetTime)
+    ) {
+      return false;
+    }
+    previousNodeTime = targetTime;
+  }
+
   return Boolean(
     (!includePairId || values.pairId.trim()) &&
       values.strategyType.trim() &&
       values.startPrice.trim() &&
       values.targetPrice.trim() &&
-      isNonNegativeIntegerInput(values.startTime) &&
-      isNonNegativeIntegerInput(values.endTime) &&
       values.volatility.trim() &&
       values.volumeMin.trim() &&
       values.volumeMax.trim()
@@ -265,46 +377,50 @@ function marketStrategyFromRecord(record: ApiRecord): MarketStrategyValues {
     strategyType: recordString(record, 'strategy_type') || 'price_path',
     startPrice: recordString(record, 'start_price'),
     targetPrice: recordString(record, 'target_price'),
-    startTime: recordString(record, 'start_time'),
-    endTime: recordString(record, 'end_time'),
+    startTime: inputDateTimeFromUnknown(record.start_time),
+    endTime: inputDateTimeFromUnknown(record.end_time),
     volatility: recordString(record, 'volatility') || '0',
     volumeMin: recordString(record, 'volume_min') || '0',
     volumeMax: recordString(record, 'volume_max') || '0',
+    nodes: marketStrategyNodesFromRecord(record),
     status: recordString(record, 'status') || 'draft'
   };
 }
 
 function MarketStrategyForm({ includePairId, onChange, values }: { includePairId: boolean; onChange: (values: MarketStrategyValues) => void; values: MarketStrategyValues }) {
   return (
-    <div className="admin-action-form">
-      {includePairId ? <label>交易对ID<AdminTextInput ariaLabel="交易对ID" value={values.pairId} onChange={(pairId) => onChange({ ...values, pairId })} /></label> : null}
-      {!includePairId ? <label>交易对ID<AdminTextInput ariaLabel="交易对ID" readOnly value={values.pairId} onChange={() => undefined} /></label> : null}
-      <label>策略类型<AdminTextInput ariaLabel="策略类型" value={values.strategyType} onChange={(strategyType) => onChange({ ...values, strategyType })} /></label>
-      <label>起始价<AdminTextInput ariaLabel="起始价" value={values.startPrice} onChange={(startPrice) => onChange({ ...values, startPrice })} /></label>
-      <label>目标价<AdminTextInput ariaLabel="目标价" value={values.targetPrice} onChange={(targetPrice) => onChange({ ...values, targetPrice })} /></label>
-      <label>开始时间戳<AdminTextInput ariaLabel="开始时间戳" value={values.startTime} onChange={(startTime) => onChange({ ...values, startTime })} /></label>
-      <label>结束时间戳<AdminTextInput ariaLabel="结束时间戳" value={values.endTime} onChange={(endTime) => onChange({ ...values, endTime })} /></label>
-      <label>波动率<AdminTextInput ariaLabel="波动率" value={values.volatility} onChange={(volatility) => onChange({ ...values, volatility })} /></label>
-      <label>最小成交量<AdminTextInput ariaLabel="最小成交量" value={values.volumeMin} onChange={(volumeMin) => onChange({ ...values, volumeMin })} /></label>
-      <label>最大成交量<AdminTextInput ariaLabel="最大成交量" value={values.volumeMax} onChange={(volumeMax) => onChange({ ...values, volumeMax })} /></label>
-      {includePairId ? (
-        <label>
-          初始状态
-          <AdminSelect
-            ariaLabel="初始状态"
-            onChange={(status) => onChange({ ...values, status })}
-            optionList={[
-              { value: 'draft', label: '草稿' },
-              { value: 'active', label: '启用' },
-              { value: 'paused', label: '暂停' },
-              { value: 'disabled', label: '禁用' }
-            ]}
-            value={values.status}
-          />
-        </label>
-      ) : (
-        <label>当前状态<AdminTextInput ariaLabel="当前状态" readOnly value={values.status} onChange={() => undefined} /></label>
-      )}
+    <div className="admin-market-strategy-form">
+      <div className="admin-action-form">
+        {includePairId ? <label>交易对ID<AdminTextInput ariaLabel="交易对ID" value={values.pairId} onChange={(pairId) => onChange({ ...values, pairId })} /></label> : null}
+        {!includePairId ? <label>交易对ID<AdminTextInput ariaLabel="交易对ID" readOnly value={values.pairId} onChange={() => undefined} /></label> : null}
+        <label>策略类型<AdminTextInput ariaLabel="策略类型" value={values.strategyType} onChange={(strategyType) => onChange({ ...values, strategyType })} /></label>
+        <label>起始价<AdminTextInput ariaLabel="起始价" value={values.startPrice} onChange={(startPrice) => onChange({ ...values, startPrice })} /></label>
+        <label>目标价<AdminTextInput ariaLabel="目标价" value={values.targetPrice} onChange={(targetPrice) => onChange({ ...values, targetPrice })} /></label>
+        <label>开始时间<AdminTextInput ariaLabel="开始时间" type="datetime-local" value={values.startTime} onChange={(startTime) => onChange({ ...values, startTime })} /></label>
+        <label>结束时间<AdminTextInput ariaLabel="结束时间" type="datetime-local" value={values.endTime} onChange={(endTime) => onChange({ ...values, endTime })} /></label>
+        <label>波动率<AdminTextInput ariaLabel="波动率" value={values.volatility} onChange={(volatility) => onChange({ ...values, volatility })} /></label>
+        <label>最小成交量<AdminTextInput ariaLabel="最小成交量" value={values.volumeMin} onChange={(volumeMin) => onChange({ ...values, volumeMin })} /></label>
+        <label>最大成交量<AdminTextInput ariaLabel="最大成交量" value={values.volumeMax} onChange={(volumeMax) => onChange({ ...values, volumeMax })} /></label>
+        {includePairId ? (
+          <label>
+            初始状态
+            <AdminSelect
+              ariaLabel="初始状态"
+              onChange={(status) => onChange({ ...values, status })}
+              optionList={[
+                { value: 'draft', label: '草稿' },
+                { value: 'active', label: '启用' },
+                { value: 'paused', label: '暂停' },
+                { value: 'disabled', label: '禁用' }
+              ]}
+              value={values.status}
+            />
+          </label>
+        ) : (
+          <label>当前状态<AdminTextInput ariaLabel="当前状态" readOnly value={values.status} onChange={() => undefined} /></label>
+        )}
+      </div>
+      <MarketStrategyNodeEditor value={values.nodes} onChange={(nodes) => onChange({ ...values, nodes })} />
     </div>
   );
 }
@@ -314,14 +430,30 @@ export function MarketStrategyRowActions({ helpers, record }: { helpers: RowActi
   const nextStatus = nextMarketStrategyStatus(recordString(record, 'status'));
   const actionText = toggleActionText(nextStatus);
   const [config, setConfig] = useState(() => marketStrategyFromRecord(record));
+  const [loading, setLoading] = useState(false);
   const [visible, setVisible] = useState(false);
+
+  const openEditor = async () => {
+    setLoading(true);
+    try {
+      // 列表接口刻意不携带节点集合；编辑前读取详情，避免用空数组覆盖既有路径节点。
+      const detail = await apiRequest<ApiRecord>(`/admin/api/v1/market-strategies/${strategyId}`);
+      setConfig(marketStrategyFromRecord(detail));
+      setVisible(true);
+    } catch (error) {
+      Toast.error(errorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <>
       <Button disabled={!strategyId} onClick={() => openRecordDetail('/admin/api/v1/market-strategies', strategyId, helpers)} size="small" theme="borderless">
         查看详情
       </Button>
-      <Button disabled={!strategyId} onClick={() => setVisible(true)} size="small" theme="borderless">
+      <MarketStrategyRecoverySheet strategyId={strategyId} />
+      <Button disabled={!strategyId} loading={loading} onClick={() => void openEditor()} size="small" theme="borderless">
         修改
       </Button>
       <SideSheet onCancel={() => setVisible(false)} title="修改行情策略" visible={visible} {...createModalProps('medium')}>
@@ -340,11 +472,12 @@ export function MarketStrategyRowActions({ helpers, record }: { helpers: RowActi
                       strategy_type: requiredString(config.strategyType, '策略类型'),
                       start_price: requiredString(config.startPrice, '起始价'),
                       target_price: requiredString(config.targetPrice, '目标价'),
-                      start_time: requiredTimestamp(config.startTime, '开始时间'),
-                      end_time: requiredTimestamp(config.endTime, '结束时间'),
+                      start_time: unixMillisFromInputDateTime(config.startTime, '开始时间'),
+                      end_time: unixMillisFromInputDateTime(config.endTime, '结束时间'),
                       volatility: requiredString(config.volatility, '波动率'),
                       volume_min: requiredString(config.volumeMin, '最小成交量'),
                       volume_max: requiredString(config.volumeMax, '最大成交量'),
+                      nodes: config.nodes.map(marketStrategyNodePayload),
                       reason
                     })
                   })
@@ -398,11 +531,12 @@ export function CreateMarketStrategyAction({ onCreated }: { onCreated?: () => vo
                       strategy_type: requiredString(strategy.strategyType, '策略类型'),
                       start_price: requiredString(strategy.startPrice, '起始价'),
                       target_price: requiredString(strategy.targetPrice, '目标价'),
-                      start_time: requiredTimestamp(strategy.startTime, '开始时间'),
-                      end_time: requiredTimestamp(strategy.endTime, '结束时间'),
+                      start_time: unixMillisFromInputDateTime(strategy.startTime, '开始时间'),
+                      end_time: unixMillisFromInputDateTime(strategy.endTime, '结束时间'),
                       volatility: requiredString(strategy.volatility, '波动率'),
                       volume_min: requiredString(strategy.volumeMin, '最小成交量'),
                       volume_max: requiredString(strategy.volumeMax, '最大成交量'),
+                      nodes: strategy.nodes.map(marketStrategyNodePayload),
                       status: strategy.status,
                       reason
                     })

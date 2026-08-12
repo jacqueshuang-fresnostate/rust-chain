@@ -156,6 +156,50 @@ const scroll = containedTableScrollForColumns(
   exposing the active panel semantically.
 - Repeated row controls need record-specific accessible names.
 
+## Market Strategy Nodes and Recovery SideSheet
+
+- Create and edit reuse one market-strategy form and one ordered node editor.
+  Each node exposes Chinese labels for target time/type/value, execution mode,
+  tolerance, local volatility, and optional paired volume bounds. Use
+  `datetime-local` inputs, convert to Unix milliseconds at the API boundary,
+  and preserve array order. Add/delete buttons and every repeated field need a
+  record-specific Chinese accessible name such as `节点1目标时间` or `删除节点1`.
+- The strategy list response does not contain nodes. Opening edit must first
+  load `GET /admin/api/v1/market-strategies/:id`, sort by `sequence_no`, and
+  populate the shared form. Never submit the list row's implicit empty array,
+  because that would delete configured nodes. The empty editor must explicitly
+  explain that the legacy compatibility endpoint remains in use.
+- Keep the row action `检测缺口/补偿K线` small, single-line, and named independently of
+  nearby view/edit/status actions. It opens one bounded, body-scrolling
+  SideSheet headed `检测缺口与补偿K线`; the sheet must not automatically execute a
+  recovery when opened.
+- The SideSheet interaction is strictly `detect -> select one gap -> preview ->
+  enter reason -> execute`. Show half-open range times, missing 1m count,
+  config version, affected aggregate intervals, first/last price, token expiry,
+  bounded OHLCV samples, and task history with status, actual/expected 1m
+  progress, aggregate count, reason/error, and creation time. A no-gap result
+  remains a successful explicit empty state.
+- Clear any prior preview when gaps are re-detected or the sheet closes.
+  Execute sends only the returned `preview_token` and a trimmed, non-blank
+  reason. Disable confirmation without both, lock reason/action controls while
+  submitting, set `maskClosable={false}`, and prevent Escape/cancel from
+  closing during submission. After success, clear the reason and preview, then
+  refresh gaps and history.
+- Detect/preview/execute failures remain in the sheet context via the shared
+  error/Toast treatment; loading and empty states use `aria-live`, and an
+  inline persistent failure state, when present, uses `role="alert"`. Every gap
+  preview button includes the range identity in its accessible name. Status
+  must not be conveyed by Tag color alone; render the Chinese text label for
+  `pending`, `running`, `completed`, or `failed`.
+- The wide recovery sheet must fit within the viewport, keep its header stable,
+  allow its tables to scroll inside the body, and introduce no document-level
+  horizontal overflow. On narrow screens, toolbar and node-editor headings
+  stack without hiding focus indicators or reducing action target semantics.
+- This UI contract does not duplicate backend recovery semantics: API fields,
+  preview-token validity, version/gap conflicts, and the no-Redis/no-WebSocket/
+  no-checkpoint boundary are owned by
+  [Synthetic Market and K-line Recovery Contracts](../backend/synthetic-market-kline.md).
+
 ## Visual Tokens and Accessibility
 
 - Use the shared warm-white, graphite, HIPPO orange, information blue, success,
@@ -185,6 +229,10 @@ const scroll = containedTableScrollForColumns(
 - `AdminLayout`: active child group, collapse and restore, navigation.
 - KYC / Market Feed / Security Policy: tabpanel semantics and existing API
   payload behavior.
+- Market strategy actions: node add/edit/delete and repeated-field names,
+  detail-before-edit preservation, exact millisecond payloads, recovery
+  detect/preview/execute order, trimmed reason, submit lock, no-gap/error/live
+  states, and status/progress task history.
 
 ## Browser Assertions
 

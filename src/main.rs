@@ -9,9 +9,9 @@ use exchange_api::{
     modules::{events::EventBroadcastHub, prediction},
     state::AppState,
     workers::{
-        agent_commission_settlement, earn_auto_redemption, event_inbox, event_outbox,
-        kline_recovery, loan_overdue, margin_interest, margin_liquidation, market_feed,
-        seconds_contract_settlement, unlock_scanner, wallet_chain,
+        agent_commission_settlement, earn_auto_redemption, event_inbox, event_outbox, loan_overdue,
+        margin_interest, margin_liquidation, market_feed, seconds_contract_settlement,
+        synthetic_market, unlock_scanner, wallet_chain,
     },
 };
 use std::sync::Arc;
@@ -108,17 +108,40 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    if state.settings.kline_recovery_enabled && state.mysql.is_some() && state.mongo.is_some() {
-        let kline_recovery_state = state.clone();
-        let interval_seconds = state.settings.kline_recovery_interval_seconds;
-        let batch_limit = state.settings.kline_recovery_batch_limit;
+    // KLINE_RECOVERY_ENABLED/BATCH_LIMIT 兼容为实时模拟行情开关与扫描上限；
+    // INTERVAL_SECONDS 仍仅解析旧部署配置，历史缺口只能由后台预览确认后手动执行。
+    if state.settings.kline_recovery_enabled
+        && state.mysql.is_some()
+        && state.mongo.is_some()
+        && state.redis.is_some()
+    {
+        let synthetic_market_state = state.clone();
+        let max_strategies_per_round = state.settings.kline_recovery_batch_limit;
         tokio::spawn(async move {
+            tracing::info!(
+                interval_seconds = 1_u64,
+                max_strategies_per_round,
+                legacy_interval_seconds = synthetic_market_state
+                    .settings
+                    .kline_recovery_interval_seconds,
+                "模拟行情实时循环已启动；仅生成当前分钟，停机缺口不会自动补写"
+            );
             if let Err(error) =
-                kline_recovery::run_loop(kline_recovery_state, interval_seconds, batch_limit).await
+                synthetic_market::run_loop(synthetic_market_state, 1, max_strategies_per_round)
+                    .await
             {
-                tracing::error!(%error, "K 线恢复循环已停止");
+                tracing::error!(%error, "模拟行情实时循环已停止");
             }
         });
+    } else if state.settings.kline_recovery_enabled {
+        tracing::warn!(
+            mysql = state.mysql.is_some(),
+            mongo = state.mongo.is_some(),
+            redis = state.redis.is_some(),
+            "模拟行情实时循环未启动：缺少 MySQL、Mongo 或 Redis"
+        );
+    } else {
+        tracing::info!("模拟行情实时循环已由 KLINE_RECOVERY_ENABLED 兼容开关关闭");
     }
 
     if state.settings.seconds_contract_settlement_enabled

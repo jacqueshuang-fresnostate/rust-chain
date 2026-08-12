@@ -4,6 +4,7 @@ pub mod infrastructure;
 pub mod presentation;
 pub mod repository;
 pub mod service;
+pub mod synthetic;
 
 pub mod routes;
 
@@ -14,9 +15,14 @@ pub use domain::{
     MarketTradeSide, MarketTradeTick, ValidatedMarketSymbol, sanitize_symbol,
 };
 pub use infrastructure::{
-    MarketCacheError, MarketDepthCacheEntry, MarketKlineCacheEntry, MarketTickerCacheEntry,
-    RedisMarketCache, kline_collection_name, market_depth_redis_key, market_kline_redis_key,
-    market_ticker_redis_key,
+    MarketCacheError, MarketCacheWriteOutcome, MarketDepthCacheEntry, MarketKlineCacheEntry,
+    MarketTickerCacheEntry, RedisMarketCache, kline_collection_name, market_depth_redis_key,
+    market_kline_redis_key, market_ticker_redis_key,
+};
+pub use synthetic::{
+    SyntheticAggregateCandle, SyntheticCandle, SyntheticExecutionMode, SyntheticKlineInterval,
+    SyntheticMarketConfig, SyntheticMarketError, SyntheticMarketNode, SyntheticTargetType,
+    aggregate_1m_candles,
 };
 
 pub use infrastructure::adapters;

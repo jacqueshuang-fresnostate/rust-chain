@@ -13,7 +13,9 @@ use crate::{
 };
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
+use redis::Script;
 use serde::Serialize;
+use std::sync::LazyLock;
 use thiserror::Error;
 
 // Redis 缓存 DTO 保持和现有前端/撮合读取格式兼容，key 生成集中在基础设施层。
@@ -210,6 +212,8 @@ pub struct MarketKlineCacheEntry {
     close: BigDecimal,
     volume: BigDecimal,
     redis_key: String,
+    #[serde(skip)]
+    observed_at: DateTime<Utc>,
 }
 
 impl MarketKlineCacheEntry {
@@ -220,6 +224,18 @@ impl MarketKlineCacheEntry {
         interval: &str,
         open_time: DateTime<Utc>,
         values: MarketKlineValues,
+    ) -> Result<Self, MarketCacheEntryError> {
+        Self::with_observed_at(symbol, interval, open_time, values, open_time)
+    }
+
+    /// 构造携带内部观察时序的最新 K 线缓存 DTO；`observed_at` 只用于 Redis 原子防倒退，不进入既有消费者 JSON。
+    /// 该时间必须取领域快照的真实观察时间；同槽相等或更旧时间都会拒绝，避免重复广播与 forming 值倒退。
+    pub fn with_observed_at(
+        symbol: &str,
+        interval: &str,
+        open_time: DateTime<Utc>,
+        values: MarketKlineValues,
+        observed_at: DateTime<Utc>,
     ) -> Result<Self, MarketCacheEntryError> {
         let symbol = ValidatedMarketSymbol::from_raw(symbol)?.as_str().to_owned();
         KlineUpsertKey::new(interval, open_time)?;
@@ -235,6 +251,7 @@ impl MarketKlineCacheEntry {
             close: values.close,
             volume: values.volume,
             redis_key,
+            observed_at,
         })
     }
 
@@ -283,10 +300,15 @@ impl MarketKlineCacheEntry {
         &self.redis_key
     }
 
+    /// 返回仅供 Redis CAS 比较的观察时间；该字段跳过 JSON 序列化以保持现有消费者合同。
+    pub fn observed_at(&self) -> DateTime<Utc> {
+        self.observed_at
+    }
+
     /// 将领域 K 线快照映射为缓存 DTO，保留周期、开盘时间、OHLC 和成交量精度。
     /// 映射会重新执行交易对与周期校验，实际写入由 [`RedisMarketCache::save_kline`] 完成。
     pub fn from_snapshot(snapshot: &MarketKlineSnapshot) -> Result<Self, MarketCacheEntryError> {
-        Self::new(
+        Self::with_observed_at(
             snapshot.symbol(),
             snapshot.interval(),
             snapshot.open_time(),
@@ -297,6 +319,7 @@ impl MarketKlineCacheEntry {
                 close: snapshot.close().clone(),
                 volume: snapshot.volume().clone(),
             },
+            snapshot.observed_at(),
         )
     }
 }
@@ -316,6 +339,73 @@ pub fn market_kline_redis_key(symbol: &str, interval: &str) -> String {
     format!("market:kline:{}:{}", sanitize_symbol(symbol), interval)
 }
 
+/// Redis 权威快照写入结果；`RejectedStale` 表示缓存保持了时间更新的值，调用方必须停止派生副作用。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarketCacheWriteOutcome {
+    Accepted,
+    RejectedStale,
+}
+
+impl MarketCacheWriteOutcome {
+    /// 只有原子脚本实际接受本次快照时返回 true；被拒写者不得触发订单、广播或推进 worker 检查点。
+    pub fn is_accepted(self) -> bool {
+        matches!(self, Self::Accepted)
+    }
+}
+
+/// ticker 的时间戳保存在既有 JSON 中；Lua 在单条 Redis 命令内比较并覆盖，消除租约检查到 `SET` 之间的竞态。
+static SAVE_TICKER_IF_FRESH_SCRIPT: LazyLock<Script> = LazyLock::new(|| {
+    Script::new(
+        r#"local current = redis.call('GET', KEYS[1])
+if current then
+    local ok, decoded = pcall(cjson.decode, current)
+    if not ok or type(decoded.observed_at) ~= 'number' then
+        return redis.error_reply('invalid cached ticker observed_at')
+    end
+    if decoded.observed_at >= tonumber(ARGV[1]) then
+        return 0
+    end
+end
+redis.call('SET', KEYS[1], ARGV[2])
+return 1"#,
+    )
+});
+
+/// K 线对外 JSON 保持原合同，另用伴随时序 key 保存 `(open_time, observed_at)`；单机 Redis Lua 原子更新两者。
+static SAVE_KLINE_IF_FRESH_SCRIPT: LazyLock<Script> = LazyLock::new(|| {
+    Script::new(
+        r#"local current_open = nil
+local current_observed = nil
+local current = redis.call('GET', KEYS[1])
+if current then
+    local ok, decoded = pcall(cjson.decode, current)
+    if not ok or type(decoded.open_time) ~= 'number' then
+        return redis.error_reply('invalid cached kline open_time')
+    end
+    current_open = tonumber(decoded.open_time)
+end
+local sequence = redis.call('GET', KEYS[2])
+if sequence then
+    local separator = string.find(sequence, ':', 1, true)
+    if not separator then
+        return redis.error_reply('invalid cached kline sequence')
+    end
+    current_open = tonumber(string.sub(sequence, 1, separator - 1))
+    current_observed = tonumber(string.sub(sequence, separator + 1))
+end
+local incoming_open = tonumber(ARGV[1])
+local incoming_observed = tonumber(ARGV[2])
+if current_open and
+   (current_open > incoming_open or
+    (current_open == incoming_open and current_observed and current_observed >= incoming_observed)) then
+    return 0
+end
+redis.call('SET', KEYS[1], ARGV[3])
+redis.call('SET', KEYS[2], ARGV[1] .. ':' .. ARGV[2])
+return 1"#,
+    )
+});
+
 #[derive(Clone)]
 pub struct RedisMarketCache {
     manager: redis::aio::ConnectionManager,
@@ -328,13 +418,30 @@ impl RedisMarketCache {
         Self { manager }
     }
 
-    /// 写入经验证的权威 ticker 快照；key 从快照交易对重新生成，避免外部携带任意缓存位置。
-    /// 该写入不设置假 TTL，消费者必须依据 observed_at 自行执行价格新鲜度政策。
-    pub async fn save_ticker(&self, entry: MarketTickerCacheEntry) -> Result<(), MarketCacheError> {
+    /// 以 Redis Lua 原子比较 `observed_at` 后写入 ticker；相等或较旧实例返回 `RejectedStale`，不会重复派生副作用。
+    /// key 由规范化交易对重建且不设 TTL；拒写不会改变 JSON，调用方必须同步停止订单、广播和检查点副作用。
+    pub async fn save_ticker_if_fresh(
+        &self,
+        entry: MarketTickerCacheEntry,
+    ) -> Result<MarketCacheWriteOutcome, MarketCacheError> {
         let symbol =
             ValidatedMarketSymbol::from_raw(entry.symbol()).map_err(MarketCacheEntryError::from)?;
         let key = market_ticker_redis_key(symbol.as_str());
-        self.save_json(&key, &entry).await
+        let payload = serde_json::to_string(&entry)?;
+        let mut connection = self.manager.clone();
+        let accepted: i64 = SAVE_TICKER_IF_FRESH_SCRIPT
+            .key(key)
+            .arg(entry.observed_at().timestamp_millis())
+            .arg(payload)
+            .invoke_async(&mut connection)
+            .await?;
+        Ok(cache_write_outcome(accepted))
+    }
+
+    /// 兼容既有调用者的无返回值 API，但底层仍执行原子防倒退；stale 写入视为成功且保留当前缓存。
+    /// 需要控制后续副作用的 synthetic/统一摄取路径必须调用 [`Self::save_ticker_if_fresh`] 读取明确结果。
+    pub async fn save_ticker(&self, entry: MarketTickerCacheEntry) -> Result<(), MarketCacheError> {
+        self.save_ticker_if_fresh(entry).await.map(|_| ())
     }
 
     /// 覆盖写入指定交易对的最新盘口 JSON；key 重新由规范化 symbol 生成，不能由外部载荷指定。
@@ -346,15 +453,35 @@ impl RedisMarketCache {
         self.save_json(&key, &entry).await
     }
 
-    /// 覆盖写入交易对与周期对应的最新 K 线 JSON，并在发送 Redis 命令前复核 symbol 与周期。
-    /// 写入不设置 TTL；失败保留原缓存，由摄取任务的重试与消费者新鲜度检查处理。
-    pub async fn save_kline(&self, entry: MarketKlineCacheEntry) -> Result<(), MarketCacheError> {
+    /// 以 `(open_time, observed_at)` 严格递增顺序原子更新最新 K 线 JSON；跨分钟与同分钟形成中快照都不会倒退或重复广播。
+    /// 外部 JSON 字段保持不变，内部时序保存在伴随 Redis hash；拒写者必须停止 Mongo、广播及检查点副作用。
+    pub async fn save_kline_if_fresh(
+        &self,
+        entry: MarketKlineCacheEntry,
+    ) -> Result<MarketCacheWriteOutcome, MarketCacheError> {
         let symbol =
             ValidatedMarketSymbol::from_raw(entry.symbol()).map_err(MarketCacheEntryError::from)?;
         KlineUpsertKey::new(entry.interval(), entry.open_time())
             .map_err(MarketCacheEntryError::from)?;
         let key = market_kline_redis_key(symbol.as_str(), entry.interval());
-        self.save_json(&key, &entry).await
+        let sequence_key = market_kline_sequence_redis_key(symbol.as_str(), entry.interval());
+        let payload = serde_json::to_string(&entry)?;
+        let mut connection = self.manager.clone();
+        let accepted: i64 = SAVE_KLINE_IF_FRESH_SCRIPT
+            .key(key)
+            .key(sequence_key)
+            .arg(entry.open_time().timestamp_millis())
+            .arg(entry.observed_at().timestamp_millis())
+            .arg(payload)
+            .invoke_async(&mut connection)
+            .await?;
+        Ok(cache_write_outcome(accepted))
+    }
+
+    /// 保留既有无返回值 K 线 API，内部使用原子时序门禁；较旧快照被忽略而不是覆盖最新缓存。
+    /// synthetic ingestion 使用 [`Self::save_kline_if_fresh`] 取得拒写结果，以阻断同分钟旧 owner 的后续广播。
+    pub async fn save_kline(&self, entry: MarketKlineCacheEntry) -> Result<(), MarketCacheError> {
+        self.save_kline_if_fresh(entry).await.map(|_| ())
     }
 
     async fn save_json<T: Serialize>(&self, key: &str, entry: &T) -> Result<(), MarketCacheError> {
@@ -364,6 +491,22 @@ impl RedisMarketCache {
         let mut connection = self.manager.clone();
         let _: () = connection.set(key, payload).await?;
         Ok(())
+    }
+}
+
+fn market_kline_sequence_redis_key(symbol: &str, interval: &str) -> String {
+    format!(
+        "market:kline-sequence:{}:{}",
+        sanitize_symbol(symbol),
+        interval
+    )
+}
+
+fn cache_write_outcome(accepted: i64) -> MarketCacheWriteOutcome {
+    if accepted == 1 {
+        MarketCacheWriteOutcome::Accepted
+    } else {
+        MarketCacheWriteOutcome::RejectedStale
     }
 }
 

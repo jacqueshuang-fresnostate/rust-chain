@@ -285,6 +285,17 @@ fn adapter_snapshots_build_cache_entries_and_mongo_kline_upsert() {
         doc! { "interval": "5m", "open_time": BsonDateTime::from_millis(kline.open_time().timestamp_millis()) }
     );
     assert_eq!(
+        mongo_write.fresh_existing_filter(),
+        doc! {
+            "interval": "5m",
+            "open_time": BsonDateTime::from_millis(kline.open_time().timestamp_millis()),
+            "$or": [
+                { "updated_at": { "$exists": false } },
+                { "updated_at": { "$lte": BsonDateTime::from_millis(kline.observed_at().timestamp_millis()) } },
+            ],
+        }
+    );
+    assert_eq!(
         mongo_write.upsert_update(),
         doc! { "$set": {
             "interval": "5m",

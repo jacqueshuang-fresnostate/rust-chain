@@ -18,10 +18,11 @@ use crate::{
             CreateConvertPairRequest, CreateDepositAddressPoolEntryRequest,
             CreateMarketStrategyRequest, CreateNewCoinProjectRequest, CreateRiskRuleRequest,
             CreateTradingPairRequest, DistributeNewCoinRequest, MarketFeedConfigResponse,
-            MarketSourceCredentialResponse, NewCoinConvertRuleResponse,
-            NewCoinDistributionResponse, NewCoinProjectResponse, RiskRuleResponse,
-            SaveSmtpConfigRequest, SaveUploadConfigRequest, SmtpConfigResponse,
-            SmtpDeliverySettingsResponse, UpdateAssetRequest, UpdateMarketStrategyRequest,
+            MarketSourceCredentialResponse, MarketStrategyGapRangeResponse,
+            MarketStrategyNodeRequest, NewCoinConvertRuleResponse, NewCoinDistributionResponse,
+            NewCoinProjectResponse, RiskRuleResponse, SaveSmtpConfigRequest,
+            SaveUploadConfigRequest, SmtpConfigResponse, SmtpDeliverySettingsResponse,
+            UpdateAssetRequest, UpdateMarketStrategyRequest,
             UpdateNewCoinPostListingPurchaseRequest, UpdateNewCoinUnlockFeeRuleRequest,
             UpdateNewCoinUnlockRuleRequest, UpdateTradingPairRequest, UploadFileInput,
             UpsertNewCoinConvertRuleRequest,
@@ -108,3 +109,7 @@ pub(crate) fn admin_id_from_subject(subject: &str) -> AppResult<u64> {
         .and_then(|value| value.parse::<u64>().ok())
         .ok_or(AppError::Unauthorized)
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit_src/src_modules_admin_service_tests.rs"]
+mod tests;
