@@ -1385,3 +1385,36 @@ Enabled the shared /news back action, added Product Hub direct-open fallback, re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 41: 手机 K 线统一切换 Lightweight Charts
+
+**Date**: 2026-08-13
+**Task**: 手机 K 线统一切换 Lightweight Charts
+**Branch**: `main`
+
+### Summary
+
+手机现货与行情详情统一使用本地 lightweight-charts 5.2.0，删除双引擎及切换层，保留实时K线、均线、成交量、主题语言和移动手势，并通过360项测试及PWA/Tauri构建。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ecc1d06` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
