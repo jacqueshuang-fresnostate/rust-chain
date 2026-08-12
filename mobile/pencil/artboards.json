@@ -60,5 +60,7 @@
   { "id": "CzpTv", "name": "20b / Prediction · Bet · Light", "route": "/products/prediction" },
   { "id": "ZvGMv", "name": "20b / Prediction · Bet · Dark", "route": "/products/prediction" },
   { "id": "nqP6W", "name": "16b / Earn · Subscribe · Light", "route": "/products/earn" },
-  { "id": "aXxul", "name": "16b / Earn · Subscribe · Dark", "route": "/products/earn" }
+  { "id": "aXxul", "name": "16b / Earn · Subscribe · Dark", "route": "/products/earn" },
+  { "id": "vONcc", "name": "07c / Seconds · Pair Picker · Light", "route": "/seconds" },
+  { "id": "kLXCs", "name": "07c / Seconds · Pair Picker · Dark", "route": "/seconds" }
 ]

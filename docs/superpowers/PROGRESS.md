@@ -7181,3 +7181,10 @@
 - 修改文件：`mobile/src/core/{marketMapper,marketTickerFreshness}.ts`、`mobile/src/stores/market.ts`、`mobile/src/views/{HomeView,MarketsView,TradeView,MarketDetailView}.vue`、`mobile/tests/{android-ui-foundation-slice-a,core-discovery-views,root-prototype-parity,market-mapper,market-price-authority,market-detail-reference-layout,pwa}.test.ts`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/tasks/08-12-recheck-bitget-spot-mobile-price/`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：Mobile 全量测试 359/359 通过；`npm --prefix mobile run lint --if-present`（项目无 lint 脚本）、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2071 modules、134 条预缓存）和 `npm --prefix mobile run build:tauri`（2071 modules）通过；Ego 仅使用 Bitget 现货页/REST 与 HIPPO 现货页/REST 完成价格、涨跌幅、24h 高低、成交量、买一/卖一和时间戳对比，实测数据已写入任务 research；Trellis task validate 与 `git diff --check` 通过。
 - 后续事项：无。
+
+## 2026-08-08 19:10 - 秒合约「点击 header 选择交易对」Pencil 设计 + 文档恢复事故处理
+
+- 完成内容：① 事故恢复——无头模式执行脚本失败回滚时把 `hippo-mobile-uiux.pen` 覆写为空文档（children: []），已从 git HEAD 完整恢复（103 块顶层画板），并备份空文件至 /tmp；后续只走 VS Code 实时连接，禁用无头写盘。② 秒合约 4 块画板（VL8er/g9agt/Lpt6q/WxeB8）header 的 Pair 区新增 chevron-down，表达可点击；③ 新增 `07c / Seconds · Pair Picker · Light/Dark`（vONcc/kLXCs）：蒙层秒合约页 + 底部弹层（选择交易对标题、搜索框、BTC/ETH/HIPPO 行含最新价与收益率、选中行 mint 高亮 + check、真实数据说明）。④ 画布重排（105 块），artboards.json 与 screen-inventory.md 已注册。
+- 修改文件：`mobile/pencil/scripts/33-seconds-pair-picker.js`、`mobile/pencil/scripts/26-canvas-tidy.js`（Design System 起始 Y 修正 3600）、`mobile/pencil/artboards.json`、`mobile/pencil/screen-inventory.md`、`mobile/pencil/exports/{vONcc,kLXCs}.png`、`docs/superpowers/PROGRESS.md`；`.pen` 待 VS Code ⌘S 后提交。
+- 验证结果：实时连接执行成功（tops=105）；导出 picker 浅色版目检通过（蒙层、弹层、选中态、收益率行完整）。
+- 后续事项：① `.pen` 需 ⌘S 后补提交；② 生产 `SecondsView.vue` 原生 select 改为底部弹层选择器为独立 parity 任务；③ 无头 `--out` 写盘路径已判定危险，禁用。

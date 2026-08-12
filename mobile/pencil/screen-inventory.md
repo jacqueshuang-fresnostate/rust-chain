@@ -90,6 +90,7 @@ fabricated balances, returns, products, limits or market statistics.
 | `38 / New Coin Records · Light/Dark` (`A9It6g`/`h4gfd`) | `/products/new-coins/records` | 认购/分发/申购/解锁记录 |
 | `39 / Transfer Sheet · Light/Dark` (`v6phV`/`TuWXq`) | `/assets` modal | 现货↔杠杆资金划转弹层 |
 | `40 / Help & Support · Light/Dark` (`UouET`/`FM5tp`) | Proposed from `/profile` help entry | 常见问题与客服入口；生产路由尚未注册 |
+| `07c / Seconds · Pair Picker · Light/Dark` (`vONcc`/`kLXCs`) | `/seconds` | 点击 header 交易对弹出底部选择器（搜索 + 收益/最新价列表） |
 | `08c / Orders · Empty · Light/Dark` (`e5Qs1`/`hxe8l`) | `/orders` | 订单空态 |
 | `26b / Wallet Ledger · Empty · Light/Dark` (`Bcug6`/`IVMAO`) | `/assets/ledger` | 资金账单空态 |
 | `11b / Message Center · Empty · Light/Dark` (`t7j6n`/`eSMHf`) | `/messages` | 消息中心空态 |
