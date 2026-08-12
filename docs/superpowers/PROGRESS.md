@@ -7202,3 +7202,10 @@
 - 修改文件：`mobile/pencil/scripts/33-seconds-pair-picker.js`、`mobile/pencil/scripts/26-canvas-tidy.js`（Design System 起始 Y 修正 3600）、`mobile/pencil/artboards.json`、`mobile/pencil/screen-inventory.md`、`mobile/pencil/exports/{vONcc,kLXCs}.png`、`docs/superpowers/PROGRESS.md`；`.pen` 待 VS Code ⌘S 后提交。
 - 验证结果：实时连接执行成功（tops=105）；导出 picker 浅色版目检通过（蒙层、弹层、选中态、收益率行完整）。
 - 后续事项：① `.pen` 需 ⌘S 后补提交；② 生产 `SecondsView.vue` 原生 select 改为底部弹层选择器为独立 parity 任务；③ 无头 `--out` 写盘路径已判定危险，禁用。
+
+## 2026-08-08 19:35 - 秒合约选择器背景改为真实页面复刻
+
+- 完成内容：针对"弹层背景与画布秒合约样式不契合"，`07c / Seconds · Pair Picker` 两画板重建（`scripts/34-seconds-picker-replica.js`）：背景层由手写简化版改为对 `07 / Seconds · Light`（VL8er）/ `Dark`（g9agt）的整页深拷贝（含状态栏、带 chevron 的 Pair header、轮次行、大价格、走势图、方向/期限/金额区），再压蒙层 + 交易对选择弹层；旧简化背景节点已清除无残留。
+- 修改文件：`mobile/pencil/scripts/34-seconds-picker-replica.js`、`mobile/pencil/exports/{vONcc,kLXCs}.png`、`docs/superpowers/PROGRESS.md`；`.pen` 待 ⌘S。
+- 验证结果：两画板导出目检——背景与真实秒合约页 1:1 一致（header 的 BTC/USDT 秒合约 ⌄ 即为点击目标），弹层列表/选中态/收益率完整，明暗主题正确。
+- 后续事项：① `.pen` 需 ⌘S 后补提交（本次含 33/34 两批改动 + 画布重排）；② 生产 SecondsView 底部弹层 parity 独立任务。
