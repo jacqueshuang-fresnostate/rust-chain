@@ -7209,3 +7209,10 @@
 - 修改文件：`mobile/pencil/scripts/34-seconds-picker-replica.js`、`mobile/pencil/exports/{vONcc,kLXCs}.png`、`docs/superpowers/PROGRESS.md`；`.pen` 待 ⌘S。
 - 验证结果：两画板导出目检——背景与真实秒合约页 1:1 一致（header 的 BTC/USDT 秒合约 ⌄ 即为点击目标），弹层列表/选中态/收益率完整，明暗主题正确。
 - 后续事项：① `.pen` 需 ⌘S 后补提交（本次含 33/34 两批改动 + 画布重排）；② 生产 SecondsView 底部弹层 parity 独立任务。
+
+## 2026-08-08 19:50 - 秒合约选择器行精简
+
+- 完成内容：`scripts/35-seconds-picker-row-simplify.js` 删除选择器行内「秒合约·现货钱包结算」副标与右侧「收益 xx%」（两画板 ×3 行 ×2 文本，共 12 节点），说明文案改为「最新价来自行情接口」；删除严格限定在 Pair Sheet 子树内，画板 header 与背景复刻的 Pair Tag 完好（全文档剩 6 处 = 4 秒合约画板 header + 2 复刻背景）。
+- 修改文件：`mobile/pencil/scripts/35-seconds-picker-row-simplify.js`、`mobile/pencil/exports/{vONcc,kLXCs}.png`、`docs/superpowers/PROGRESS.md`；`.pen` 待 ⌘S。
+- 验证结果：导出目检——行内仅 图标 + 交易对 + 最新价 + 选中✓；header 秒合约标签未受影响。
+- 后续事项：`.pen` 需 ⌘S 后补提交。
