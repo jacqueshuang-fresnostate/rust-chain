@@ -7216,3 +7216,10 @@
 - 修改文件：`mobile/pencil/scripts/35-seconds-picker-row-simplify.js`、`mobile/pencil/exports/{vONcc,kLXCs}.png`、`docs/superpowers/PROGRESS.md`；`.pen` 待 ⌘S。
 - 验证结果：导出目检——行内仅 图标 + 交易对 + 最新价 + 选中✓；header 秒合约标签未受影响。
 - 后续事项：`.pen` 需 ⌘S 后补提交。
+
+## 2026-08-08 19:58 - 秒合约选择器去除副标题
+
+- 完成内容：删除两块 Pair Picker 画板弹层标题下「秒合约产品由接口返回」副标（`scripts/36-seconds-picker-sub-remove.js`），弹层头部仅剩「选择交易对」+ 关闭钮。
+- 修改文件：`mobile/pencil/scripts/36-seconds-picker-sub-remove.js`、`mobile/pencil/exports/{vONcc,kLXCs}.png`、`docs/superpowers/PROGRESS.md`；`.pen` 待 ⌘S。
+- 验证结果：导出目检通过（副标已移除，布局紧凑）。
+- 后续事项：`.pen` 需 ⌘S 后补提交。
