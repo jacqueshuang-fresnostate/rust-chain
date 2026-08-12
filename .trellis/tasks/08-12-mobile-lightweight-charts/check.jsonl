@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "约束本地打包、主题/语言、视口与移动端图表运行时"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "约束 K 线 REST/WS 数据所有权、实时合并与渲染器边界"}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "确认移除行情详情设置入口不会破坏导航与本地化合同"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用现有归一化、均线、主题和视口工具并清除双引擎重复"}

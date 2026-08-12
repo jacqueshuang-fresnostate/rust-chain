@@ -1352,3 +1352,36 @@ Enabled the shared /news back action, added Product Hub direct-open fallback, re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 40: 完成新币确定性模拟行情与手动K线补偿
+
+**Date**: 2026-08-13
+**Task**: 完成新币确定性模拟行情与手动K线补偿
+**Branch**: `main`
+
+### Summary
+
+完成可配置未来价格节点的确定性OHLCV生成、实时行情发布、后台手动缺口预览与补偿、管理端节点编辑，并通过后端、Web及真实MySQL/Mongo/Redis验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `50c50ce` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
