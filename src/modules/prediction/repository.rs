@@ -3,15 +3,9 @@
 //! 仓储层仅定义持久化边界对象和业务层需要的契约。
 //! SQLx QueryBuilder/具体 SQL 语句应放在 infrastructure.rs 中。
 
-use crate::architecture::RepositoryLayer;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-
-#[derive(Debug)]
-pub struct RepositoryLayerMarker;
-
-impl RepositoryLayer for RepositoryLayerMarker {}
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub(crate) struct PredictionSettingsRow {

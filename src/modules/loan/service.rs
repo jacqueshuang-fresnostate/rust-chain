@@ -3,7 +3,6 @@
 //! 服务层：封装可复用业务服务和跨实体业务规则。
 
 use crate::{
-    architecture::ServiceLayer,
     error::{AppError, AppResult},
     modules::{
         loan::domain::{
@@ -18,11 +17,6 @@ use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use sqlx::{MySql, Pool};
-
-#[derive(Debug)]
-pub struct ServiceLayerMarker;
-
-impl ServiceLayer for ServiceLayerMarker {}
 
 /// 贷款业务中用于金额比较的零值基准，固定使用 18 位精度，避免尾差带来的边界歧义。
 fn zero_amount() -> BigDecimal {
@@ -71,12 +65,12 @@ pub(crate) fn ensure_amount_within_product_limits(
             "amount is below product minimum".to_owned(),
         ));
     }
-    if let Some(max_amount) = max_amount.as_ref() {
-        if amount > max_amount {
-            return Err(AppError::Validation(
-                "amount exceeds product maximum".to_owned(),
-            ));
-        }
+    if let Some(max_amount) = max_amount.as_ref()
+        && amount > max_amount
+    {
+        return Err(AppError::Validation(
+            "amount exceeds product maximum".to_owned(),
+        ));
     }
     Ok(())
 }

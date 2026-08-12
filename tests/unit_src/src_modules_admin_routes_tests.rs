@@ -5,10 +5,11 @@ use crate::{
     state::AppState,
 };
 use axum::{
-    body::Body,
+    body::{Body, to_bytes},
     http::{Request, StatusCode, header::AUTHORIZATION},
 };
 use secrecy::SecretString;
+use serde_json::{Value, json};
 use tower::ServiceExt;
 
 fn test_state() -> AppState {
@@ -108,5 +109,49 @@ async fn admin_routes_require_admin_scope() {
     assert_eq!(
         post_agents(app, Some(&admin_token)).await,
         StatusCode::UNSUPPORTED_MEDIA_TYPE
+    );
+}
+
+#[tokio::test]
+async fn admin_image_upload_requires_exact_file_field() {
+    let state = test_state();
+    let admin_token = issue_token(
+        &state.settings,
+        "admin:1",
+        TokenScope::Admin,
+        state.settings.jwt_access_ttl_seconds,
+    )
+    .unwrap();
+    let boundary = "admin-avatar-field-boundary";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"avatar\"; filename=\"avatar.gif\"\r\nContent-Type: image/gif\r\n\r\nGIF89a\r\n--{boundary}--\r\n"
+    );
+
+    let response = routes()
+        .with_state(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/uploads/images")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), 4096).await.unwrap();
+    let payload: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        payload,
+        json!({
+            "code": "VALIDATION_ERROR",
+            "message": "validation error: upload file is required",
+        })
     );
 }

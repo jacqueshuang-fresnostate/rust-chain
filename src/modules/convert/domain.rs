@@ -2,15 +2,9 @@
 //!
 //! 领域层：放置业务实体、值对象和不依赖 I/O 的业务规则。
 
-use crate::architecture::DomainLayer;
 use chrono::{DateTime, TimeDelta, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-
-#[derive(Debug)]
-pub struct DomainLayerMarker;
-
-impl DomainLayer for DomainLayerMarker {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuoteId(pub Uuid);
@@ -197,22 +191,4 @@ pub enum ConvertRepositoryError {
     Storage(String),
     #[error("convert repository serialization error: {0}")]
     Serialization(String),
-}
-
-impl From<sqlx::Error> for ConvertRepositoryError {
-    fn from(error: sqlx::Error) -> Self {
-        Self::Storage(error.to_string())
-    }
-}
-
-impl From<redis::RedisError> for ConvertRepositoryError {
-    fn from(error: redis::RedisError) -> Self {
-        Self::Storage(error.to_string())
-    }
-}
-
-impl From<serde_json::Error> for ConvertRepositoryError {
-    fn from(error: serde_json::Error) -> Self {
-        Self::Serialization(error.to_string())
-    }
 }

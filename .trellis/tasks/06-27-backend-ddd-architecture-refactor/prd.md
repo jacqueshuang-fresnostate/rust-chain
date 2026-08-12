@@ -131,6 +131,66 @@ Refactor the backend toward a clearer DDD-style architecture so business rules a
 * The mobile client must support persisted runtime language switching, initially aligned with the PC client locales: Simplified Chinese (`zh-CN`) and English (`en`). Fixed mobile UI copy, accessibility labels, validation feedback, and global navigation must react immediately; localized public-content requests must send the active locale when the backend contract supports it.
 * Correct the mobile visual defects found during route QA: browser-default focused-link outlines, clipped overview metrics, safe-area/header offsets, modal keyboard bounds, and narrow/wide H5 layout consistency.
 
+## Added Scope (2026-08-12: Backend Comment And Architecture Completion)
+
+The backend-wide audit in
+`research/backend-comment-and-architecture-audit-2026-08-12.md` supersedes the
+earlier assumption that layer-file existence meant the refactor was complete.
+The current continuation is backend-only; the historical mobile additions in
+this task remain completed context and are not part of this implementation
+slice.
+
+### Requirements
+
+* Restore the architecture guard to green by moving the remaining inline
+  OpenAPI test body into `tests/unit_src`.
+* Replace the current “every context must own six files” guard with a semantic
+  rule: DDD layers are optional, but any declared layer must contain real
+  responsibilities and obey the dependency direction.
+* Remove pure marker/empty layer modules instead of using empty files to claim
+  DDD completion. Keep compatibility re-exports only where real callers need
+  them.
+* Routes must not call context infrastructure directly, execute provider HTTP
+  requests, or own policy orchestration. Migrate the confirmed events and auth
+  violations behind application/presentation/infrastructure boundaries.
+* Add Chinese `///` contracts to all audited public risk-sensitive functions
+  of at least 50 lines and to high-risk private settlement/liquidation worker
+  entry points. Comments must explain responsibilities, preconditions,
+  transaction/lock order, financial invariants, replay behavior, and external
+  side effects where applicable.
+* Add Chinese responsibility documentation for public infrastructure and
+  worker entry points that form cross-context operational boundaries.
+* Preserve API routes, request/response JSON, SQL semantics, ledger metadata,
+  provider payloads, and transaction behavior.
+* Record comment-coverage and structural baselines in executable architecture
+  tests so future changes cannot regress silently.
+
+### Acceptance Criteria
+
+* [x] `tests/backend_architecture.rs` passes and `src/**/*.rs` contains no
+  inline test body.
+* [x] Pure marker/empty layer baseline decreases from 15 to 0; no empty layer
+  is required merely to satisfy a filename checklist.
+* [x] Routes contain no raw SQL, transaction ownership, direct context
+  infrastructure dependency, or Reqwest provider workflow.
+* [x] The events admin listing/requeue routes call application use cases and
+  return presentation response types.
+* [x] Turnstile provider I/O and enable/enforcement policy no longer live in
+  `auth/routes.rs`.
+* [x] All 71 audited public risk functions of at least 50 lines have meaningful
+  Chinese `///` contracts; the P0 table in the audit is fully covered.
+* [x] Public worker and cross-context infrastructure entry points have Chinese
+  responsibility contracts.
+* [x] The four production Rust files above 2,000 lines are split behind stable
+  compatibility façades; no `src/**/*.rs` production file exceeds 2,000 lines.
+* [x] An executable architecture guard prevents production Rust files from
+  growing past 2,000 lines again.
+* [x] Existing API and business behavior tests pass without payload or route
+  changes.
+* [x] `cargo fmt --manifest-path Cargo.toml --all -- --check`, backend
+  architecture tests, closest context tests, Clippy, full tests, and
+  `cargo check --manifest-path Cargo.toml --all-targets` pass.
+
 ### Mobile Navigation And Localization Acceptance Criteria
 
 * Switching `home -> markets -> assets` through the bottom bar does not leave the previous main tabs in browser history.

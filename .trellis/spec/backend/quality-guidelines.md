@@ -1,68 +1,120 @@
 # Quality Guidelines
 
-> Code quality standards for backend development.
+> Code quality and executable architecture standards for backend development.
 
 ---
 
 ## Overview
 
-Backend changes must keep financial behavior explicit, testable, and
-recoverable. Prefer small, stable migrations over broad rewrites that change API
-behavior and structure at the same time.
-
----
-
-## Forbidden Patterns
-
-- Full test bodies inside production modules. Use `tests/*.rs` or
-  `tests/unit_src/*.rs` instead.
-- New route handlers that contain raw SQL plus business decisions plus response
-  mapping in one long function.
-- New SQLx/Redis code in `domain`, `repository`, `service`, `presentation`, or
-  route handlers when a context has already migrated that concern into
-  `infrastructure`.
-- Wallet/ledger mutations outside a transaction when the operation must be
-  auditable.
-- Mechanical comments that repeat the code instead of explaining business
-  intent.
-- Editing applied migrations. Add a new migration instead.
+Backend changes must keep financial and authentication behavior explicit,
+testable, and recoverable. Prefer focused migrations that preserve routes,
+JSON, SQL semantics, ledger metadata, provider payloads, and transaction
+behavior. Directory shape is not evidence of architecture quality; executable
+responsibility and dependency guards are.
 
 ---
 
 ## Required Patterns
 
-- Keep HTTP handlers thin: auth/extract input, call an application use case,
-  map the result.
-- Put pure business rules in `domain` where they can be tested without I/O.
-- Put repository traits and domain-facing persistence contracts in
-  `repository`.
-- Put reusable business services in `service`, then let `application`
-  orchestrate them into use cases and transaction boundaries.
-- Put SQLx/Redis/provider code in `infrastructure`.
-- Use Chinese comments for non-obvious domain invariants and transaction
-  ordering.
-- Preserve public API payloads unless the task explicitly changes the contract.
+- Keep handlers thin: authenticate/extract input, create a transport context,
+  call an application use case, and return its presentation response.
+- Put pure business rules in `domain` so they run without I/O SDKs.
+- Create `repository` only when a real domain-facing persistence contract
+  exists. Concrete SQL belongs in `infrastructure`.
+- Put reusable business rules in `service`; application owns use-case and
+  transaction orchestration.
+- Put SQLx, Redis, MongoDB, and provider clients in `infrastructure`.
+- Put transport DTOs and header/multipart normalization in `presentation`.
+- Use Chinese `///` contracts for risk-sensitive public functions and Chinese
+  responsibility docs for public worker/cross-context infrastructure entries.
+- Preserve externally observable behavior unless the task explicitly changes
+  a contract.
+
+---
+
+## Forbidden Patterns
+
+- Full test bodies inside `src/**/*.rs`.
+- A DDD layer file containing only comments, imports, or a `*LayerMarker`.
+- Any identifier ending in `LayerMarker`; architecture traits are implemented
+  only by real responsibility-bearing types.
+- Routes containing raw SQL/query builders, `.begin()` transaction ownership,
+  direct context `infrastructure`, or Reqwest/provider HTTP workflows.
+- Domain importing Axum, SQLx, Redis, MongoDB, Reqwest, or `presentation`.
+- Repository executing concrete SQL or owning a `QueryBuilder`.
+- Service depending on `application` or `routes`.
+- Wallet/ledger mutation without the required transaction and audit record.
+- Mechanical comments that repeat syntax instead of explaining policy,
+  invariants, lock order, replay, and side effects.
+- Editing an applied migration; add a new immutable migration instead.
+
+`events/routes.rs` and `auth/routes.rs` must not receive exceptions for the
+route boundary. Events list/requeue handlers call application use cases and
+return presentation DTOs. Turnstile provider I/O belongs in auth
+infrastructure; enable/enforcement policy belongs in domain/application.
+
+---
+
+## Architecture Exception Policy
+
+The dependency guard has no legacy allowlist. Broad wildcards, context-wide
+exceptions, and file-specific exceptions are forbidden. When a violation is
+found, move transport, orchestration, domain policy, persistence, or provider
+I/O to its owning layer instead of weakening the guard.
+
+---
+
+## Architecture Guard Contract
+
+`tests/backend_architecture.rs` enforces:
+
+- standard DDD layers are optional;
+- every declared layer contains a real function/type/trait/constant/static;
+- pure shell/marker layers remain at zero;
+- every `*LayerMarker` definition, import, use, or re-export is rejected;
+- source test bodies live under `tests/unit_src`;
+- route, domain, repository, and service dependencies follow the rules above;
+- no production Rust file under `src/` exceeds 2,000 lines.
+
+When extending the guard, inspect current violations first. Never make a new
+failure green with a broad substring or directory whitelist.
 
 ---
 
 ## Testing Requirements
 
-- Run `cargo fmt --manifest-path Cargo.toml --check` before reporting backend
-  completion.
-- Run `cargo check --manifest-path Cargo.toml --all-targets` for architecture
-  refactors.
-- Run the closest context-specific tests for changed modules.
-- If moving test code from production files, prove no `#[cfg(test)] mod tests {`
-  blocks remain in `src/`.
+For backend architecture changes, run at minimum:
+
+```bash
+cargo fmt --manifest-path Cargo.toml --all -- --check
+cargo test --manifest-path Cargo.toml --test backend_architecture
+```
+
+Also run the closest changed context tests. Run
+`cargo check --manifest-path Cargo.toml --all-targets` when production module
+declarations, imports, or public compatibility re-exports move. If a command is
+blocked by a concurrent build lock or an unavailable external service, record
+the exact limitation and run the strongest independent check available.
+
+When moving tests, prove both conditions:
+
+```text
+src/**/*.rs contains no `mod tests {`
+every `#[cfg(test)] mod tests;` in src points to an existing tests/unit_src file
+```
 
 ---
 
 ## Code Review Checklist
 
-- Does each changed module follow the DDD layer responsibility table?
-- Did route handlers become thinner rather than more complex?
-- Are repository interfaces/contracts separated from concrete infrastructure
-  implementations where the context has migrated that boundary?
-- Are Chinese comments placed on business rules, not syntax?
-- Are tests in standalone files?
-- Did the change avoid unrelated API/schema behavior changes?
+- Is every declared layer needed and non-empty?
+- Did the change avoid introducing a marker?
+- Did routes become thinner, with no SQL/transaction/infrastructure/Reqwest?
+- Are domain and repository independent from concrete SDK/persistence work?
+- Does service avoid reverse orchestration dependencies?
+- Is the architecture guard still free of dependency exceptions?
+- Are production files below 2,000 lines and split by real responsibility?
+- Do Chinese contracts explain risk rather than syntax?
+- Are test bodies standalone?
+- Are API, SQL, ledger, provider, and transaction contracts unchanged?
+- Were format and architecture tests run after the final edit?

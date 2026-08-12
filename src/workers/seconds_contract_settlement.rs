@@ -28,6 +28,7 @@ pub struct SecondsContractSettlementWorkerConfig {
 }
 
 impl SecondsContractSettlementWorkerConfig {
+    /// 从环境变量读取秒合约结算开关、周期与批量上限；无效值使用受控默认值。
     pub fn from_env() -> Self {
         Self {
             enabled: env_bool("SECONDS_CONTRACT_SETTLEMENT_ENABLED", true),
@@ -38,6 +39,7 @@ impl SecondsContractSettlementWorkerConfig {
 }
 
 impl SecondsContractSettlementWorker {
+    /// 执行一轮秒合约到期结算；结算价只接受新鲜 Redis ticker，缺失或过期行情会延后重试。
     pub async fn run_once(
         &self,
         state: &AppState,
@@ -110,10 +112,12 @@ pub struct SecondsContractSettlementEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SettlementOutcome {
-    Settled(SecondsContractSettlementEvent),
+    Settled(Box<SecondsContractSettlementEvent>),
     Skipped,
 }
 
+/// 比较入场价与结算价得出秒合约胜负；相等按未命中方向处理，未知方向必须拒绝。
+/// 本函数只计算结果，不处理赔率、钱包或订单状态。
 pub fn seconds_contract_settlement_result(
     direction: &str,
     entry_price: &BigDecimal,
@@ -130,6 +134,7 @@ pub fn seconds_contract_settlement_result(
     }
 }
 
+/// 从应用状态取得 MySQL、Redis 与可选事件总线后执行一轮到期结算；权威依赖缺失时立即失败。
 pub async fn run_once(
     state: &AppState,
     now: DateTime<Utc>,
@@ -146,6 +151,7 @@ pub async fn run_once(
     run_once_with_broadcast(pool, redis, state.event_broadcast_hub.as_ref(), now, limit).await
 }
 
+/// 无事件总线执行秒合约单轮结算，供测试与批处理复用；行情新鲜度和资金事务规则不变。
 pub async fn run_once_with_dependencies(
     pool: &Pool<MySql>,
     redis: &ConnectionManager,
@@ -155,6 +161,9 @@ pub async fn run_once_with_dependencies(
     run_once_with_broadcast(pool, redis, None, now, limit).await
 }
 
+/// 扫描已到期 opened 订单并逐笔使用新鲜行情结算，成功数达到上限后停止。
+/// 每笔事务按订单→钱包锁序，冻结本金扣减、赢家派奖、账本和订单终态原子提交；状态已变化时幂等跳过。
+/// 缺价或单笔失败只安排下次尝试并继续；私有结算事件仅在对应事务提交成功后发布。
 pub async fn run_once_with_broadcast(
     pool: &Pool<MySql>,
     redis: &ConnectionManager,
@@ -219,6 +228,7 @@ pub async fn run_once_with_broadcast(
     Ok(summary)
 }
 
+/// 按间隔持续执行秒合约结算；周期错误记录后继续，订单终态与 next-attempt 时间保证恢复时不重复派奖。
 pub async fn run_loop(state: AppState, interval_seconds: u64, limit: u32) -> AppResult<()> {
     let mut ticker = interval(Duration::from_secs(interval_seconds.max(1)));
 
@@ -306,6 +316,9 @@ async fn cached_ticker_price(
     Ok(Some(ticker.last_price))
 }
 
+/// 在独立事务中锁定一笔到期订单和用户钱包，扣除 frozen 本金并按快照赔率计算、量化赢家 payout。
+/// 非 opened 订单幂等跳过；钱包、账本、结算价/结果与订单终态必须原子提交，余额不足则整笔回滚。
+/// 只在提交后返回事件载荷，不直接广播，调用方据此区分新结算与跳过。
 async fn settle_order_by_id(
     pool: &Pool<MySql>,
     order_id: u64,
@@ -401,7 +414,7 @@ async fn settle_order_by_id(
         result: result.to_owned(),
     };
     tx.commit().await?;
-    Ok(SettlementOutcome::Settled(event))
+    Ok(SettlementOutcome::Settled(Box::new(event)))
 }
 
 fn publish_settlement_event(

@@ -159,6 +159,11 @@ pub(crate) async fn update_loan_product_status_use_case(
     load_loan_product_response(pool, product_id).await
 }
 
+/// 按当前产品条款创建用户借贷订单，并在抵押贷场景同步冻结抵押资产。
+/// 用户须满足 KYC、金额及资产精度要求；抵押贷必须提供正数且精度合法的抵押资产数量。
+/// 事务先锁定启用产品，再校验条款、插入订单，随后锁定钱包并完成可用额到冻结额的双流水迁移。
+/// 订单、抵押余额和账本必须原子提交，任何失败都不得留下未足额抵押的有效订单。
+/// 用户级幂等键唯一；重复插入会回滚当前事务并返回已有订单，`created=false` 表示安全重放。
 pub(crate) async fn create_loan_order_use_case(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -471,6 +476,11 @@ pub(crate) async fn reject_loan_order_use_case(
     Ok((load_loan_order_response(pool, order_id).await?, true))
 }
 
+/// 为当前用户结清已放款或逾期借贷订单，计算应计利息并释放抵押资产。
+/// 订单须归属当前用户且具有放款时间；已还款订单直接返回原结果，其他状态拒绝操作。
+/// 事务锁定订单后，按资产精度截断本金加利息，再依次扣款、解冻抵押并写入结清金额。
+/// 钱包余额、双向流水、抵押释放标记和订单状态必须原子提交，避免资产或债务单边变化。
+/// 已还款状态构成幂等边界并返回 `changed=false`；余额不足或任一步失败均整体回滚。
 pub(crate) async fn repay_loan_order_use_case(
     pool: &Pool<MySql>,
     user_id: u64,

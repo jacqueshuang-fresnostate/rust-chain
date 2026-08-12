@@ -25,6 +25,11 @@ pub(crate) fn validate_create_convert_pair(request: &CreateConvertPairRequest) -
     )
 }
 
+/// 校验换币交易对完整配置，防止同资产兑换、空计价模式及非法费率或金额区间入库。
+/// 调用方须传入创建默认值或更新合并后的最终值，而不是仅校验局部请求字段。
+/// 费率保持在 `[0, 1)`，源/目标最小额不得为负，最大额存在时不得小于对应最小额。
+/// 这是无 I/O 的纯校验，不涉及事务、资金或审计；失败返回首个校验错误且不产生副作用。
+#[allow(clippy::too_many_arguments)] // 校验最终配置快照；字段保持显式可避免创建/更新路径遗漏约束。
 pub(crate) fn validate_convert_pair_values(
     from_asset_id: u64,
     to_asset_id: u64,

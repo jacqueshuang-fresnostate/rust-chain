@@ -303,6 +303,10 @@ pub(crate) async fn list_admin_deposit_network_configs(
     Ok(AdminDepositNetworkConfigResponseList { configs, total })
 }
 
+/// 创建充值网络及其可接收资产范围，供后续地址池准入与分配使用。
+/// 调用方须已完成管理员鉴权并提供审计原因；网络、地址组、状态及资产符号会先规范化校验。
+/// 事务内完成配置插入、回读和后台审计，资产存在性在事务前确认，任一步失败均不提交配置。
+/// 本用例没有请求幂等键；重复创建由数据库唯一约束报错，不会复用已有配置。
 pub(crate) async fn create_admin_deposit_network_config(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -358,6 +362,10 @@ pub(crate) async fn create_admin_deposit_network_config(
     Ok(created)
 }
 
+/// 更新充值网络的地址组、资产白名单、状态和排序，并返回最终快照。
+/// 调用方须已完成管理员鉴权并提供审计原因；所有输入和资产符号须先通过准入校验。
+/// 事务按“锁定旧配置、更新、回读、写审计”执行，确保地址池读取的配置与审计一致。
+/// 每次成功调用都会新增审计；失败整体回滚，不提供跨请求幂等复用。
 pub(crate) async fn update_admin_deposit_network_config(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -462,6 +470,10 @@ pub(crate) async fn get_admin_deposit_address_pool(
     load_deposit_address_pool(&pool, address_id).await
 }
 
+/// 将单个充值地址加入指定网络和地址组的可分配地址池。
+/// 调用方须已完成管理员鉴权并提供审计原因；地址、状态、资产白名单及网络准入须先校验。
+/// 地址写入和后台审计在同一事务提交，保证每个可分配地址都有来源可追溯。
+/// 本用例没有请求幂等键；重复地址由数据库约束失败，不会覆盖或接管已有分配。
 pub(crate) async fn create_admin_deposit_address_pool(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -519,6 +531,10 @@ pub(crate) async fn create_admin_deposit_address_pool(
     Ok(created)
 }
 
+/// 将规范化后的多条充值地址批量加入同一网络、地址组和资产范围。
+/// 调用方须已完成管理员鉴权并提供审计原因；批次条目、网络准入和资产白名单须全部先校验。
+/// 全批次共用一个事务，每个地址分别写审计；任一插入或审计失败都会回滚整个批次。
+/// 本用例没有批次幂等键；重复提交会因已有地址冲突而失败，不产生部分成功结果。
 pub(crate) async fn create_admin_deposit_address_pool_batch(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -578,6 +594,10 @@ pub(crate) async fn create_admin_deposit_address_pool_batch(
     Ok(AdminDepositAddressPoolBatchResponse { addresses })
 }
 
+/// 修改尚未分配的充值地址及其网络、地址组、资产范围和管理备注。
+/// 调用方须已完成管理员鉴权并提供审计原因；目标网络准入和全部字段须先完成校验。
+/// 事务先锁定地址；已分配地址必须先回收，随后更新、回读和后台审计原子提交。
+/// 每次成功调用都会新增审计；冲突或数据库错误整体回滚，不改变用户已持有的充值地址。
 pub(crate) async fn update_admin_deposit_address_pool(
     pool: Option<Pool<MySql>>,
     admin_id: u64,

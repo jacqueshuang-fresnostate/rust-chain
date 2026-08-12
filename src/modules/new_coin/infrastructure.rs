@@ -3,17 +3,18 @@
 //! 基础设施层：封装 SQLx、Redis、第三方接口和仓储实现。
 
 use crate::{
-    architecture::InfrastructureLayer,
     error::{AppError, AppResult},
     modules::new_coin::{
         LifecycleStatus,
         repository::{
             NewCoinDistributionRead, NewCoinLedgerMetadata, NewCoinLockPositionWrite,
             NewCoinOrderRepository, NewCoinPairRead, NewCoinProjectRead, NewCoinProjectRuleRead,
+            NewCoinPurchaseOrderInsert, NewCoinPurchaseOrderInsertResult,
             NewCoinPurchaseOrderWrite, NewCoinPurchaseRead, NewCoinReadRepository,
-            NewCoinSubscriptionOrderWrite, NewCoinSubscriptionRead, NewCoinUnlockFeeRepository,
-            NewCoinUnlockRead, NewCoinUnlockReleaseRepository, NewCoinWalletRead,
-            ReleaseUnlockOutcome, UnlockFeeExpectation, UnlockFeePaymentWrite,
+            NewCoinRepositoryError, NewCoinSubscriptionOrderWrite, NewCoinSubscriptionRead,
+            NewCoinUnlockFeeRepository, NewCoinUnlockRead, NewCoinUnlockReleaseRepository,
+            NewCoinWalletRead, ReleaseUnlockOutcome, UnlockFeeExpectation, UnlockFeePaidStatus,
+            UnlockFeePaymentUpdate, UnlockFeePaymentWrite,
         },
         service::{
             ensure_post_listing_purchase_enabled, lifecycle_status, lock_positions_for_project,
@@ -26,10 +27,135 @@ use bigdecimal::BigDecimal;
 use chrono::Utc;
 use sqlx::{MySql, Pool, QueryBuilder, Transaction};
 
-#[derive(Debug)]
-pub struct InfrastructureLayerMarker;
+impl From<sqlx::Error> for NewCoinRepositoryError {
+    fn from(error: sqlx::Error) -> Self {
+        Self::Storage(error.to_string())
+    }
+}
 
-impl InfrastructureLayer for InfrastructureLayerMarker {}
+/// 兼容既有公共导入的新币 MySQL 适配器，负责购买单幂等写入与解锁费状态持久化。
+#[derive(Debug, Clone)]
+pub struct MySqlNewCoinRepository {
+    pool: Pool<MySql>,
+}
+
+impl MySqlNewCoinRepository {
+    /// 绑定现有 MySQL 连接池，不主动建立连接或执行查询。
+    pub fn new(pool: Pool<MySql>) -> Self {
+        Self { pool }
+    }
+
+    /// 返回适配器持有的连接池，供既有集成调用复用同一数据库边界。
+    pub fn pool(&self) -> &Pool<MySql> {
+        &self.pool
+    }
+
+    /// 按幂等键插入购买单；重复键返回原订单编号且不产生第二条记录。
+    pub async fn insert_purchase_order(
+        &self,
+        order: NewCoinPurchaseOrderInsert,
+    ) -> Result<NewCoinPurchaseOrderInsertResult, NewCoinRepositoryError> {
+        let insert_result = sqlx::query(
+            r#"INSERT INTO new_coin_purchase_orders
+               (project_id, user_id, pair_id, base_asset, quote_asset, price, quantity,
+                quote_amount, lock_position_id, status, idempotency_key)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE idempotency_key = idempotency_key"#,
+        )
+        .bind(order.project_id)
+        .bind(order.user_id)
+        .bind(order.pair_id)
+        .bind(order.base_asset_id)
+        .bind(order.quote_asset_id)
+        .bind(order.price)
+        .bind(order.quantity)
+        .bind(order.quote_amount)
+        .bind(order.lock_position_id)
+        .bind(order.status)
+        .bind(&order.idempotency_key)
+        .execute(&self.pool)
+        .await?;
+
+        let order_id = insert_result.last_insert_id();
+        Ok(NewCoinPurchaseOrderInsertResult {
+            order_id: if order_id == 0 {
+                self.purchase_order_id(&order.idempotency_key).await?
+            } else {
+                order_id
+            },
+            inserted: order_id != 0,
+        })
+    }
+
+    /// 查询指定用户解锁记录的付费状态；未知存储状态按原错误合同返回。
+    pub async fn unlock_fee_paid_status(
+        &self,
+        unlock_idempotency_key: &str,
+        user_id: u64,
+    ) -> Result<Option<UnlockFeePaidStatus>, NewCoinRepositoryError> {
+        let row = sqlx::query_as::<_, (String,)>(
+            r#"SELECT fee_paid_status
+               FROM asset_unlock_records
+               WHERE idempotency_key = ? AND user_id = ?
+               LIMIT 1"#,
+        )
+        .bind(unlock_idempotency_key)
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        row.map(|(status,)| unlock_fee_paid_status_from_storage(&status))
+            .transpose()
+    }
+
+    /// 将尚未支付的解锁记录原子标记为已支付，并保留既有资产、金额与幂等条件。
+    pub async fn mark_unlock_fee_paid(
+        &self,
+        payment: UnlockFeePaymentUpdate,
+    ) -> Result<bool, NewCoinRepositoryError> {
+        let result = sqlx::query(
+            r#"UPDATE asset_unlock_records
+               SET fee_paid_status = 'paid',
+                   unlock_fee_asset = ?,
+                   unlock_fee_amount = ?
+               WHERE idempotency_key = ?
+                 AND user_id = ?
+                 AND fee_paid_status <> 'paid'"#,
+        )
+        .bind(payment.payment_asset_id)
+        .bind(payment.amount)
+        .bind(payment.unlock_idempotency_key)
+        .bind(payment.user_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() == 1)
+    }
+
+    async fn purchase_order_id(
+        &self,
+        idempotency_key: &str,
+    ) -> Result<u64, NewCoinRepositoryError> {
+        let row = sqlx::query_as::<_, (u64,)>(
+            "SELECT id FROM new_coin_purchase_orders WHERE idempotency_key = ? LIMIT 1",
+        )
+        .bind(idempotency_key)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.0)
+    }
+}
+
+fn unlock_fee_paid_status_from_storage(
+    value: &str,
+) -> Result<UnlockFeePaidStatus, NewCoinRepositoryError> {
+    match value {
+        "not_required" => Ok(UnlockFeePaidStatus::NotRequired),
+        "pending" => Ok(UnlockFeePaidStatus::Pending),
+        "paid" => Ok(UnlockFeePaidStatus::Paid),
+        _ => Err(NewCoinRepositoryError::InvalidStatus(value.to_owned())),
+    }
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct MySqlNewCoinReadRepository {

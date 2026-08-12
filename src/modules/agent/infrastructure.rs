@@ -3,7 +3,6 @@
 //! 基础设施层：封装 SQLx、Redis、第三方接口和仓储实现。
 
 use crate::{
-    architecture::InfrastructureLayer,
     error::{AppError, AppResult},
     modules::agent::{
         domain::{AgentCommissionRateTier, allocate_differential_agent_commissions},
@@ -22,11 +21,11 @@ use crate::{
 use bigdecimal::BigDecimal;
 use sqlx::{MySql, Pool, Transaction};
 
-#[derive(Debug)]
-pub struct InfrastructureLayerMarker;
-
-impl InfrastructureLayer for InfrastructureLayerMarker {}
-
+/// 在业务结算事务中，按用户所属代理链生成各层级的差额返佣待结算记录。
+/// 调用方须传入正数业务基数、权威来源标识和发放资产；零或负数基数直接忽略。
+/// 仅采用启用代理及其最新启用规则，并按发放资产精度量化累计返佣后再计算层级差额。
+/// 记录写入复用调用方事务，不直接变更代理钱包；失败须随原业务结算一起回滚。
+/// 同一代理、业务来源依靠唯一键忽略重放，保证结算重试不会重复生成待发返佣。
 pub(crate) async fn insert_agent_business_commission_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: AgentBusinessCommissionWrite<'_>,

@@ -4,7 +4,6 @@
 //! 当前文件先作为 DDD 迁移锚点，后续把对应职责的业务服务逐步迁入。
 
 use crate::{
-    architecture::ServiceLayer,
     error::{AppError, AppResult},
     modules::{
         agent::{
@@ -19,11 +18,6 @@ use crate::{
 };
 use bigdecimal::BigDecimal;
 use uuid::Uuid;
-
-#[derive(Debug)]
-pub struct ServiceLayerMarker;
-
-impl ServiceLayer for ServiceLayerMarker {}
 
 pub(crate) const AGENT_COMMISSION_PRODUCT_CONVERT: &str = "convert";
 pub(crate) const AGENT_COMMISSION_PRODUCT_MARGIN: &str = "margin";

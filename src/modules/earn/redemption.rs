@@ -57,7 +57,7 @@ pub(crate) fn calculate_earn_redemption_amounts(
         + maturity_profit_fee_amount.clone()
         + early_redeem_fee_amount.clone();
     let raw_redeem_amount = gross_redeem_amount - fee_amount.clone();
-    let redeem_amount = if raw_redeem_amount < BigDecimal::from(0) {
+    let redeem_amount = if raw_redeem_amount < 0 {
         zero_amount()
     } else {
         scaled_amount(raw_redeem_amount)

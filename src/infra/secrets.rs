@@ -7,6 +7,8 @@ use ring::{
 
 const NONCE_LEN: usize = 12;
 
+/// 生成仅供展示的密钥掩码；短值全部隐藏，长值只保留首尾各四个字符。
+/// 掩码不可用于鉴权、比较或恢复原文，调用方仍不得把未掩码值写入日志。
 pub fn mask_secret(value: &str) -> String {
     let value = value.trim();
     let chars: Vec<char> = value.chars().collect();
@@ -18,6 +20,8 @@ pub fn mask_secret(value: &str) -> String {
     format!("{prefix}****{suffix}")
 }
 
+/// 使用 32 字节密钥和每次随机 nonce 进行 AES-256-GCM 加密，输出为 `base64(nonce || ciphertext || tag)`。
+/// 相同明文重复加密应产生不同密文；密钥长度、随机数生成或封装失败均必须报错，禁止明文回退。
 pub fn encrypt_secret(plaintext: &str, key: &str) -> AppResult<String> {
     let key_bytes = encryption_key_bytes(key)?;
     let unbound_key = aead::UnboundKey::new(&aead::AES_256_GCM, key_bytes)
@@ -36,6 +40,8 @@ pub fn encrypt_secret(plaintext: &str, key: &str) -> AppResult<String> {
     Ok(STANDARD.encode(output))
 }
 
+/// 解码并认证 `encrypt_secret` 生成的密文；密钥错误、格式损坏、标签校验失败或非 UTF-8 明文统一拒绝。
+/// 只有认证成功的字节才会返回，调用方不得在错误日志中附带密文、密钥或解密中间值。
 pub fn decrypt_secret(ciphertext: &str, key: &str) -> AppResult<String> {
     let key_bytes = encryption_key_bytes(key)?;
     let mut payload = STANDARD
@@ -63,6 +69,8 @@ pub fn decrypt_secret(ciphertext: &str, key: &str) -> AppResult<String> {
         .map_err(|_| AppError::Validation("credential plaintext is invalid utf8".to_owned()))
 }
 
+/// 更新可选密钥字段：非空新值会重新随机加密，空白或缺失输入则保留既有密文。
+/// 该语义用于“留空表示不修改”的管理端表单，不代表清空密钥；显式删除应由独立业务操作处理。
 pub fn encrypt_secret_field(
     key: &str,
     new_value: Option<&str>,
@@ -77,6 +85,7 @@ pub fn encrypt_secret_field(
     }
 }
 
+/// 解密可选密文字段；`None` 保持缺失，存在但无效的密文必须报错而非降级为缺失配置。
 pub fn decrypt_optional_secret(ciphertext: Option<&str>, key: &str) -> AppResult<Option<String>> {
     ciphertext
         .map(|value| decrypt_secret(value, key))

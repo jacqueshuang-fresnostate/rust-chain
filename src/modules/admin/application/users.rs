@@ -129,6 +129,11 @@ pub(crate) async fn update_admin_user_status(
     Ok(after)
 }
 
+/// 执行后台人工充值，把指定资产计入用户可用余额并返回最新钱包快照。
+/// 调用方须已完成管理员鉴权、提供审计原因，且金额、用户和启用资产必须有效。
+/// 事务内完成余额加账、同额钱包流水、账户锁定回读和后台审计，账后余额必须与流水一致。
+/// 每次调用生成新的充值编号且没有请求幂等键；提交结果不确定时重试可能再次入账。
+/// 任一数据库步骤失败都会回滚，不允许出现有余额变化而无流水或审计的状态。
 pub(crate) async fn recharge_admin_user_wallet(
     pool: Option<Pool<MySql>>,
     admin_id: u64,

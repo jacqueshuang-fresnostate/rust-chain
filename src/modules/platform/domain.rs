@@ -2,15 +2,51 @@
 //!
 //! 领域层：放置业务实体、值对象和不依赖 I/O 的业务规则。
 
-use crate::{
-    architecture::DomainLayer,
-    error::{AppError, AppResult},
-    modules::platform::presentation::SavePlatformBrandRequest,
-};
+use crate::architecture::DomainLayer;
+use chrono::{DateTime, Utc};
 
 pub const DEFAULT_CONFIG_NAME: &str = "default";
 pub const DEFAULT_CHART_PROVIDER: &str = "klinecharts";
 pub const TRADINGVIEW_CHART_PROVIDER: &str = "tradingview";
+
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[error("validation error: {message}")]
+pub struct PlatformBrandValidationError {
+    message: String,
+}
+
+impl PlatformBrandValidationError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn into_message(self) -> String {
+        self.message
+    }
+}
+
+#[derive(Debug)]
+pub struct PlatformBrandCommand {
+    pub platform_name: String,
+    pub logo_url: Option<String>,
+    pub chart_provider: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlatformBrand {
+    pub id: u64,
+    pub name: String,
+    pub platform_name: String,
+    pub logo_url: Option<String>,
+    pub chart_provider: String,
+    pub updated_by: Option<u64>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl DomainLayer for PlatformBrand {}
 
 #[derive(Debug)]
 pub struct ValidatedPlatformBrand {
@@ -22,16 +58,18 @@ pub struct ValidatedPlatformBrand {
 impl DomainLayer for ValidatedPlatformBrand {}
 
 pub fn validate_platform_brand(
-    request: &SavePlatformBrandRequest,
-) -> AppResult<ValidatedPlatformBrand> {
+    command: PlatformBrandCommand,
+) -> Result<ValidatedPlatformBrand, PlatformBrandValidationError> {
     Ok(ValidatedPlatformBrand {
-        platform_name: required_string(Some(request.platform_name.clone()), "platform_name", 128)?,
-        logo_url: validate_logo_url(request.logo_url.clone())?,
-        chart_provider: validate_chart_provider(request.chart_provider.clone())?,
+        platform_name: required_string(Some(command.platform_name), "platform_name", 128)?,
+        logo_url: validate_logo_url(command.logo_url)?,
+        chart_provider: validate_chart_provider(command.chart_provider)?,
     })
 }
 
-fn validate_chart_provider(value: Option<String>) -> AppResult<Option<String>> {
+fn validate_chart_provider(
+    value: Option<String>,
+) -> Result<Option<String>, PlatformBrandValidationError> {
     let Some(provider) = optional_string(value) else {
         return Ok(None);
     };
@@ -42,22 +80,24 @@ fn validate_chart_provider(value: Option<String>) -> AppResult<Option<String>> {
     ) {
         Ok(Some(provider))
     } else {
-        Err(AppError::Validation(
-            "chart_provider must be klinecharts or tradingview".to_owned(),
+        Err(PlatformBrandValidationError::new(
+            "chart_provider must be klinecharts or tradingview",
         ))
     }
 }
 
-fn validate_logo_url(value: Option<String>) -> AppResult<Option<String>> {
+fn validate_logo_url(
+    value: Option<String>,
+) -> Result<Option<String>, PlatformBrandValidationError> {
     let Some(logo_url) = optional_string(value) else {
         return Ok(None);
     };
     if logo_url.chars().count() > 2048 {
-        return Err(AppError::Validation("logo_url is too long".to_owned()));
+        return Err(PlatformBrandValidationError::new("logo_url is too long"));
     }
     if logo_url.chars().any(char::is_control) || logo_url.chars().any(char::is_whitespace) {
-        return Err(AppError::Validation(
-            "logo_url format is invalid".to_owned(),
+        return Err(PlatformBrandValidationError::new(
+            "logo_url format is invalid",
         ));
     }
     let lower = logo_url.to_ascii_lowercase();
@@ -68,18 +108,26 @@ fn validate_logo_url(value: Option<String>) -> AppResult<Option<String>> {
     {
         Ok(Some(logo_url))
     } else {
-        Err(AppError::Validation(
-            "logo_url must be http(s), root-relative, or data:image".to_owned(),
+        Err(PlatformBrandValidationError::new(
+            "logo_url must be http(s), root-relative, or data:image",
         ))
     }
 }
 
-fn required_string(value: Option<String>, field: &str, max_chars: usize) -> AppResult<String> {
+fn required_string(
+    value: Option<String>,
+    field: &str,
+    max_chars: usize,
+) -> Result<String, PlatformBrandValidationError> {
     let Some(value) = optional_string(value) else {
-        return Err(AppError::Validation(format!("{field} is required")));
+        return Err(PlatformBrandValidationError::new(format!(
+            "{field} is required"
+        )));
     };
     if value.chars().count() > max_chars {
-        return Err(AppError::Validation(format!("{field} is too long")));
+        return Err(PlatformBrandValidationError::new(format!(
+            "{field} is too long"
+        )));
     }
     Ok(value)
 }

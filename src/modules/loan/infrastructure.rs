@@ -631,6 +631,11 @@ pub(crate) async fn release_loan_collateral_if_needed(
     Ok(())
 }
 
+/// 在借贷订单事务中把抵押数量从用户可用余额等额迁移到冻结余额。
+/// 调用方须传入正数、已按资产精度校验的金额，并保证订单创建和本操作共用事务。
+/// 先锁定或创建钱包账户并检查可用余额，再更新两个余额桶并各写一条账后快照流水。
+/// 可用额与冻结额一减一增，资产总额必须保持不变，流水引用同一借贷订单。
+/// 本函数不独立幂等；余额不足或 SQL 失败向上返回，调用方必须回滚订单及全部资金变更。
 pub(crate) async fn apply_loan_wallet_freeze(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,

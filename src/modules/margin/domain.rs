@@ -4,6 +4,24 @@
 
 use bigdecimal::BigDecimal;
 
+/// 计算逐仓仓位的非负返还额；没有已实现盈亏的非终态仓位返回零。
+pub(crate) fn margin_position_payout_amount(
+    margin_amount: &BigDecimal,
+    realized_pnl: Option<&BigDecimal>,
+    interest_amount: &BigDecimal,
+) -> BigDecimal {
+    realized_pnl
+        .map(|pnl| {
+            let payout_amount = margin_amount + pnl - interest_amount;
+            if payout_amount > 0 {
+                payout_amount.with_scale(18)
+            } else {
+                BigDecimal::from(0).with_scale(18)
+            }
+        })
+        .unwrap_or_else(|| BigDecimal::from(0).with_scale(18))
+}
+
 /// 一个全仓账户中的仓位风险输入。
 #[derive(Debug, Clone)]
 pub(crate) struct CrossMarginPositionRisk {

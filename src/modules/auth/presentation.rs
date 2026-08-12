@@ -6,7 +6,45 @@ use crate::{
     architecture::PresentationLayer,
     modules::auth::{IssuedTokens, TokenScope},
 };
+use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LoginTransportContext {
+    pub(crate) remote_ip: Option<String>,
+    pub(crate) has_cf_clearance: bool,
+}
+
+impl LoginTransportContext {
+    /// 只将 HTTP 头中的 Cloudflare/代理信息归一化为登录上下文；是否强制校验由应用与领域层决定。
+    pub(crate) fn from_headers(headers: &HeaderMap) -> Self {
+        Self {
+            remote_ip: extract_client_ip(headers),
+            has_cf_clearance: has_cf_clearance_cookie(headers),
+        }
+    }
+}
+
+fn extract_client_ip(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("cf-connecting-ip")
+        .or_else(|| headers.get("x-forwarded-for"))
+        .and_then(|header| header.to_str().ok())
+        .map(|value| value.split(',').next().unwrap_or(value).trim().to_owned())
+}
+
+fn has_cf_clearance_cookie(headers: &HeaderMap) -> bool {
+    headers
+        .get("cookie")
+        .and_then(|value| value.to_str().ok())
+        .map(|cookie| {
+            cookie
+                .split(';')
+                .map(str::trim)
+                .any(|entry| entry.starts_with("cf_clearance="))
+        })
+        .unwrap_or(false)
+}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct UserAuthRequest {
@@ -203,3 +241,7 @@ impl From<IssuedTokens> for TokenResponse {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit_src/src_modules_auth_presentation_tests.rs"]
+mod tests;

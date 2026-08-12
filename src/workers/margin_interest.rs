@@ -16,6 +16,7 @@ pub struct MarginInterestWorkerConfig {
 }
 
 impl MarginInterestWorkerConfig {
+    /// 从环境变量读取杠杆计息开关、周期与批量上限；无效值使用受控默认值。
     pub fn from_env() -> Self {
         Self {
             enabled: env_bool("MARGIN_INTEREST_ENABLED", true),
@@ -26,6 +27,7 @@ impl MarginInterestWorkerConfig {
 }
 
 impl MarginInterestWorker {
+    /// 执行一轮杠杆利息计提；每个仓位独立锁定并按完整经过小时推进计息时间，重复轮询不会重复计提同一时段。
     pub async fn run_once(
         &self,
         pool: &Pool<MySql>,
@@ -69,6 +71,9 @@ enum MarginInterestOutcome {
     Skipped,
 }
 
+/// 扫描开放仓位并逐笔计提截至 `now` 的完整小时利息，成功数达到上限后停止。
+/// 单笔事务锁定仓位，利息增量与 `interest_accrued_at` 同时提交；状态变化或不足一小时幂等跳过，失败不影响其他仓位。
+/// 本 worker 只累加仓位债务，不直接扣钱包或发布事件，后续平仓/强平使用已持久化利息。
 pub async fn run_once_with_dependencies(
     pool: &Pool<MySql>,
     now: DateTime<Utc>,
@@ -95,6 +100,7 @@ pub async fn run_once_with_dependencies(
     Ok(summary)
 }
 
+/// 按间隔持续计提杠杆利息；周期故障仅记录并重试，仓位计息时间戳防止恢复后重复收费。
 pub async fn run_loop(pool: Pool<MySql>, interval_seconds: u64, limit: u32) -> AppResult<()> {
     let mut ticker = interval(Duration::from_secs(interval_seconds.max(1)));
 
@@ -133,6 +139,8 @@ async fn fetch_interest_candidates(
     .map_err(AppError::from)
 }
 
+/// 在独立事务中锁定一个 opened 仓位，按上次计息点到 `now` 的完整小时数累加借款利息。
+/// 不足完整小时、状态变化或无借款仓位幂等跳过；利息余额与计息时间戳同事务提交，避免崩溃重放重复收费。
 async fn accrue_position_interest(
     pool: &Pool<MySql>,
     position_id: u64,

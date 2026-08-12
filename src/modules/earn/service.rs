@@ -4,7 +4,6 @@
 //! 当前文件先作为 DDD 迁移锚点，后续把对应职责的业务服务逐步迁入。
 
 use crate::{
-    architecture::ServiceLayer,
     error::{AppError, AppResult},
     modules::earn::{
         presentation::{
@@ -22,11 +21,6 @@ use crate::{
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
-
-#[derive(Debug)]
-pub struct ServiceLayerMarker;
-
-impl ServiceLayer for ServiceLayerMarker {}
 
 pub(crate) fn admin_id_from_subject(subject: &str) -> AppResult<u64> {
     subject
@@ -92,6 +86,7 @@ pub(crate) fn category_audit_json(category: &EarnCategoryResponse) -> Value {
     })
 }
 
+#[allow(clippy::too_many_arguments)] // 纯函数校验完整产品快照，显式参数防止局部更新绕过字段约束。
 fn validate_product_request_fields(
     asset_id: u64,
     name: &str,

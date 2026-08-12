@@ -565,6 +565,10 @@ pub(crate) async fn load_admin_upload_config_in_tx(
         .map_err(AppError::Database)
 }
 
+/// 在调用方事务中写入唯一的默认上传存储配置，覆盖其完整运行参数和加密凭证字段。
+/// 调用方须先完成管理员权限、字段合法性及启用所需凭证校验，并只传入已加密的敏感值。
+/// 该函数不自行提交也不写审计；配置写入必须与调用方的前后快照审计共用事务。
+/// 默认名称唯一键使相同输入可重复覆盖；SQL 失败向上返回并由调用方回滚，不暴露明文凭证。
 pub(crate) async fn upsert_admin_upload_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
     input: AdminUploadConfigWrite,
@@ -1047,34 +1051,6 @@ async fn upload_to_oss(
         mime_type: input.mime_type.clone(),
         size_bytes: input.bytes.len() as u64,
     })
-}
-
-pub(crate) async fn multipart_file_input(mut multipart: Multipart) -> AppResult<UploadFileInput> {
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|_| AppError::Validation("upload multipart body is invalid".to_owned()))?
-    {
-        if field.name() != Some(DEFAULT_UPLOAD_FILE_FIELD) {
-            continue;
-        }
-        let original_filename = field.file_name().map(str::to_owned);
-        let mime_type = field.content_type().map(str::to_owned).ok_or_else(|| {
-            AppError::Validation("upload file content type is required".to_owned())
-        })?;
-        let bytes = field
-            .bytes()
-            .await
-            .map_err(|_| AppError::Validation("upload file body is invalid".to_owned()))?
-            .to_vec();
-        return Ok(UploadFileInput {
-            original_filename,
-            mime_type,
-            bytes,
-        });
-    }
-
-    Err(AppError::Validation("upload file is required".to_owned()))
 }
 
 fn decrypt_required_upload_secret(

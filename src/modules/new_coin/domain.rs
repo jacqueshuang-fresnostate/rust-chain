@@ -2,20 +2,12 @@
 //!
 //! 领域层：放置业务实体、值对象和不依赖 I/O 的业务规则。
 
-use crate::{
-    architecture::DomainLayer,
-    modules::wallet::{
-        LockPosition, LockPositionSource, LockSchedule, WalletDomainError, create_lock_positions,
-    },
+use crate::modules::wallet::{
+    LockPosition, LockPositionSource, LockSchedule, WalletDomainError, create_lock_positions,
 };
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug)]
-pub struct DomainLayerMarker;
-
-impl DomainLayer for DomainLayerMarker {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -187,6 +179,11 @@ pub fn plan_post_listing_purchase(
     })
 }
 
+/// 将一组新币分配来源按项目解禁规则拆分为立即可用量和待解禁锁仓计划。
+/// 调用方须传入同一用户、同一资产且金额均为正数的来源；相对周期必须大于零。
+/// 上市前来源可合并到上市时解锁仓位，固定时点统一合并，相对周期按来源分别计算解锁时点。
+/// 返回的可用量与各锁仓剩余量之和必须等于输入总量；本函数不写钱包、不启事务或审计。
+/// 合并键和来源编号保持确定性，便于持久化层去重；非法规则或锁仓构造失败时无副作用。
 pub fn apply_unlock_rule(
     unlock_rule: &UnlockRule,
     sources: Vec<UnlockSource>,
@@ -290,6 +287,11 @@ pub fn apply_unlock_rule(
     }
 }
 
+/// 根据解禁数量、价格和购买成本计算应付解禁费用，不执行实际扣款。
+/// 解禁数量须为正，价格、成本和费率不得为负；启用收费时必须配置非空支付资产。
+/// 市值口径按数量乘价格计费，利润口径只对不低于零的收益计费，亏损不会产生负费用。
+/// 该纯函数不处理资产精度、事务或审计，调用方须在扣款前按支付资产精度量化结果。
+/// 相同规则和输入可安全重放；关闭规则返回零费用，校验失败不产生任何资金副作用。
 pub fn calculate_unlock_fee(
     rule: &UnlockFeeRule,
     input: UnlockFeeInput,

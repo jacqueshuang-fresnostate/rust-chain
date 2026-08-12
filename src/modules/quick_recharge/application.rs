@@ -27,20 +27,13 @@ use super::{
     },
 };
 use crate::{
-    architecture::ApplicationLayer,
     error::{AppError, AppResult},
     infra::secrets::mask_secret,
 };
-use bigdecimal::BigDecimal;
 use chrono::Utc;
 use serde_json::{Value, json};
 use sqlx::{MySql, Pool};
 use uuid::Uuid;
-
-#[derive(Debug)]
-pub struct ApplicationLayerMarker;
-
-impl ApplicationLayer for ApplicationLayerMarker {}
 
 pub(crate) async fn get_user_quick_recharge_config(
     pool: Option<Pool<MySql>>,
@@ -110,6 +103,10 @@ pub(crate) async fn list_admin_quick_recharge_orders(
     })
 }
 
+/// 为当前用户创建 GMPay 快充订单；需有可用配置和密钥，充值金额合规且配置币种对应活动资产。
+/// 本地先持久化 created 订单，再调用支付方；响应订单号和金额必须匹配，成功转 pending，失败标记 failed。
+/// 此阶段不修改钱包或流水，真正入账仅由已验签回调完成；支付方 HTTP 调用是数据库事务外副作用。
+/// 每次请求生成新订单号，不提供请求级幂等重放；调用方不得把重试视为同一支付订单。
 pub(crate) async fn create_user_quick_recharge_order(
     pool: Option<Pool<MySql>>,
     key: Option<&str>,
@@ -194,6 +191,10 @@ pub(crate) async fn create_user_quick_recharge_order(
         .into())
 }
 
+/// 保存管理员快充配置；管理员身份、修改原因、字段格式以及启用时必需密钥必须全部有效。
+/// 事务先锁定单例配置，空白密钥沿用既有密文与掩码，再更新配置并写入前后快照审计。
+/// 配置与审计日志必须原子提交，任何校验、加密或持久化失败都不得留下半生效配置。
+/// 本操作无幂等键，重复保存会形成新的审计记录；提交后不发起支付方请求或其他外部副作用。
 pub(crate) async fn save_admin_quick_recharge_config(
     pool: Option<Pool<MySql>>,
     key: Option<&str>,
@@ -268,6 +269,10 @@ pub(crate) async fn save_admin_quick_recharge_config(
     Ok(quick_recharge_config_response(after))
 }
 
+/// 使用当前保存配置发起管理员 GMPay 连通性测试；需验证管理员身份、原因、密钥和测试金额。
+/// 支付方调用发生在审计事务之前，返回订单号和金额必须与本次随机测试单一致，且不创建本地充值订单。
+/// 测试结果与配置快照仅写管理员审计，不修改用户钱包或流水；审计提交失败也不会撤销支付方测试单。
+/// 每次调用都会生成新订单号并产生新的外部请求，不具备幂等重放语义。
 pub(crate) async fn test_admin_quick_recharge_config(
     pool: Option<Pool<MySql>>,
     key: Option<&str>,
@@ -369,6 +374,10 @@ pub(crate) async fn delete_admin_quick_recharge_order(
     Ok(())
 }
 
+/// 处理 GMPay 已支付异步通知；只有在使用当前商户密钥完成签名校验，并确认 PID、支付状态、订单号、交易号、法币金额和到账币种均与本地订单一致后才允许入账。
+/// 事务先锁定快充订单：已为 `paid` 时按幂等重放直接成功，未支付时将订单状态、支付方原始回调、钱包可用余额及对应 `quick_recharge` 流水在同一事务内提交，任何一步失败都不得留下半入账状态。
+/// 实际到账数量必须为正；余额与流水金额以支付方已验签的 `actual_amount` 为准，并由钱包写入原语保持账户快照和流水 `balance_after` 一致，重复通知不得产生第二次余额变更或第二笔流水。
+/// 日志边界为：收到原始回调、配置/验签失败、关键字段不匹配、幂等命中及事务提交后的入账成功；成功日志只能在提交完成后发出，本用例不调用支付方 HTTP，也不在日志之外发布不可回滚事件。
 pub(crate) async fn handle_gmpay_notify(
     pool: Option<Pool<MySql>>,
     key: Option<&str>,
@@ -419,7 +428,7 @@ pub(crate) async fn handle_gmpay_notify(
     let trade_id = required_json_string(object, "trade_id")?;
     let amount = required_json_decimal(object, "amount")?;
     let actual_amount = required_json_decimal(object, "actual_amount")?;
-    if actual_amount <= BigDecimal::from(0) {
+    if actual_amount <= 0 {
         return Err(AppError::Validation(
             "gmpay notify actual_amount must be positive".to_owned(),
         ));
@@ -453,18 +462,18 @@ pub(crate) async fn handle_gmpay_notify(
         tx.commit().await?;
         return Ok(());
     }
-    if let Some(existing_trade_id) = order.provider_trade_id.as_deref() {
-        if existing_trade_id != trade_id {
-            tracing::warn!(
-                order_id = %order_id,
-                trade_id = %trade_id,
-                existing_trade_id = %existing_trade_id,
-                "GMPay 快速充值回调交易号不匹配"
-            );
-            return Err(AppError::Validation(
-                "gmpay notify trade_id does not match order".to_owned(),
-            ));
-        }
+    if let Some(existing_trade_id) = order.provider_trade_id.as_deref()
+        && existing_trade_id != trade_id
+    {
+        tracing::warn!(
+            order_id = %order_id,
+            trade_id = %trade_id,
+            existing_trade_id = %existing_trade_id,
+            "GMPay 快速充值回调交易号不匹配"
+        );
+        return Err(AppError::Validation(
+            "gmpay notify trade_id does not match order".to_owned(),
+        ));
     }
     if order.fiat_amount != amount {
         tracing::warn!(

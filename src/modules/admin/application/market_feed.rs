@@ -108,17 +108,17 @@ pub(crate) async fn upsert_admin_market_feed_credential(
     let pool = admin_mysql_pool(pool)?;
     let mut tx = pool.begin().await?;
     let before = lock_admin_market_source_credential_in_tx(&mut tx, &provider).await?;
-    let (api_key_ciphertext, api_secret_ciphertext, passphrase_ciphertext, api_key_mask) =
+    let secret_fields =
         prepare_market_source_credential_secret_fields(&request, before.as_ref(), &auth_type, key)?;
     upsert_admin_market_source_credential_in_tx(
         &mut tx,
         AdminMarketSourceCredentialWrite {
             provider: provider.clone(),
             auth_type,
-            api_key_ciphertext,
-            api_secret_ciphertext,
-            passphrase_ciphertext,
-            api_key_mask,
+            api_key_ciphertext: secret_fields.api_key_ciphertext,
+            api_secret_ciphertext: secret_fields.api_secret_ciphertext,
+            passphrase_ciphertext: secret_fields.passphrase_ciphertext,
+            api_key_mask: secret_fields.api_key_mask,
             enabled: request.enabled,
             updated_by: admin_id,
         },
@@ -142,6 +142,11 @@ pub(crate) async fn upsert_admin_market_feed_credential(
     Ok(market_source_credential_response(after))
 }
 
+/// 将已保存的行情源配置加载到运行时监督器，并记录本次重载结果。
+/// 调用方须已完成管理员鉴权、提供操作原因，且运行时必须配置行情监督器和所需凭证。
+/// 禁用配置会停止监督器并标记跳过；启用配置在解密校验凭证后才执行实际重载。
+/// 运行时切换与数据库状态并非同一事务；构建或重载失败会持久化失败状态、记录审计后返回原错误。
+/// 重复调用会再次触发运行时重载和审计，不提供请求级幂等保证。
 pub(crate) async fn reload_admin_market_feed_config(
     state: AppState,
     admin_id: u64,
@@ -211,19 +216,26 @@ pub(crate) async fn reload_admin_market_feed_config(
     Ok(ReloadMarketFeedResponse { config, runtime })
 }
 
+struct MarketSourceCredentialSecretFields {
+    api_key_ciphertext: Option<String>,
+    api_secret_ciphertext: Option<String>,
+    passphrase_ciphertext: Option<String>,
+    api_key_mask: Option<String>,
+}
+
 fn prepare_market_source_credential_secret_fields(
     request: &UpsertMarketSourceCredentialRequest,
     before: Option<&AdminMarketSourceCredentialRecord>,
     auth_type: &str,
     key: Option<&str>,
-) -> AppResult<(
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-)> {
+) -> AppResult<MarketSourceCredentialSecretFields> {
     if auth_type != MARKET_SOURCE_AUTH_TYPE_API_KEY {
-        return Ok((None, None, None, None));
+        return Ok(MarketSourceCredentialSecretFields {
+            api_key_ciphertext: None,
+            api_secret_ciphertext: None,
+            passphrase_ciphertext: None,
+            api_key_mask: None,
+        });
     }
 
     let key = key.ok_or_else(|| {
@@ -250,12 +262,12 @@ fn prepare_market_source_credential_secret_fields(
         .map(mask_secret)
         .or_else(|| before.and_then(|record| record.api_key_mask.clone()));
 
-    Ok((
+    Ok(MarketSourceCredentialSecretFields {
         api_key_ciphertext,
         api_secret_ciphertext,
         passphrase_ciphertext,
         api_key_mask,
-    ))
+    })
 }
 
 async fn insert_admin_market_feed_reload_audit(

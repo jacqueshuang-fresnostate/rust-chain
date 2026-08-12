@@ -3,7 +3,6 @@
 //! 仓储层：定义事件出站/入站持久化边界与仓储接口。
 //! 出站/入站仓储的实现放在 infrastructure 层，避免 `mod.rs` 夹带 SQL 细节。
 
-use crate::architecture::RepositoryLayer;
 use crate::error::AppResult;
 use crate::modules::events::{
     InboxClaim, InboxRetryDecision, NewInboxMessage, NewOutboxEvent, OutboxInsertResult,
@@ -11,11 +10,6 @@ use crate::modules::events::{
 };
 use axum::async_trait;
 use chrono::{DateTime, Utc};
-
-#[derive(Debug)]
-pub struct RepositoryLayerMarker;
-
-impl RepositoryLayer for RepositoryLayerMarker {}
 
 #[async_trait]
 pub trait EventOutboxRepository: Clone + Send + Sync + 'static {

@@ -1094,15 +1094,9 @@ impl EventInboxHandler for NoopEventInboxHandler {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct EventInboxProductionHandler {
     mysql: Option<Pool<MySql>>,
-}
-
-impl Default for EventInboxProductionHandler {
-    fn default() -> Self {
-        Self { mysql: None }
-    }
 }
 
 impl EventInboxProductionHandler {
@@ -1247,26 +1241,26 @@ impl EventInboxDomainEnvelope {
         }
 
         let dispatch = self.to_dispatch()?;
-        if let ProductionEventDispatch::UserCreated(user_id) = dispatch {
-            if let Some(payload_user_id) = self.payload.get("user_id") {
-                let payload_user_id = payload_user_id
-                    .as_u64()
-                    .or_else(|| {
-                        payload_user_id
-                            .as_str()
-                            .and_then(|value| value.parse::<u64>().ok())
-                    })
-                    .ok_or_else(|| {
-                        AppError::Validation(
-                            "event envelope payload user_id must be a valid u64".to_owned(),
-                        )
-                    })?;
+        if let ProductionEventDispatch::UserCreated(user_id) = dispatch
+            && let Some(payload_user_id) = self.payload.get("user_id")
+        {
+            let payload_user_id = payload_user_id
+                .as_u64()
+                .or_else(|| {
+                    payload_user_id
+                        .as_str()
+                        .and_then(|value| value.parse::<u64>().ok())
+                })
+                .ok_or_else(|| {
+                    AppError::Validation(
+                        "event envelope payload user_id must be a valid u64".to_owned(),
+                    )
+                })?;
 
-                if payload_user_id != user_id {
-                    return Err(AppError::Validation(
-                        "event envelope payload user_id mismatch with aggregate id".to_owned(),
-                    ));
-                }
+            if payload_user_id != user_id {
+                return Err(AppError::Validation(
+                    "event envelope payload user_id mismatch with aggregate id".to_owned(),
+                ));
             }
         }
         if self.routing_key != self.expected_routing_key(&dispatch) {

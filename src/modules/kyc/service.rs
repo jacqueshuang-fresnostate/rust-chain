@@ -2,14 +2,8 @@
 //!
 //! 服务层：封装可复用业务服务和跨实体业务规则。
 
-use crate::architecture::ServiceLayer;
 use crate::modules::kyc::presentation::{KycConfigResponse, KycSubmissionResponse};
 use serde_json::{Value, json};
-
-#[derive(Debug)]
-pub struct ServiceLayerMarker;
-
-impl ServiceLayer for ServiceLayerMarker {}
 
 pub fn kyc_config_audit_json(config: &KycConfigResponse) -> Value {
     json!({

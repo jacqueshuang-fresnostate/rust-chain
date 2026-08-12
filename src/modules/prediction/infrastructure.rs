@@ -16,7 +16,6 @@ use super::{
     service,
 };
 use crate::{
-    architecture::InfrastructureLayer,
     error::{AppError, AppResult},
     modules::{
         agent::{
@@ -35,11 +34,6 @@ use serde_json::{Value, json};
 use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
 use std::{collections::HashSet, time::Duration};
 use uuid::Uuid;
-
-#[derive(Debug)]
-pub struct InfrastructureLayerMarker;
-
-impl InfrastructureLayer for InfrastructureLayerMarker {}
 
 // 预测模块通用 SQL 片段，供管理端资产配置列表复用。
 pub(crate) const ADMIN_ASSET_CONFIGS_SQL: &str = r#"SELECT assets.id AS asset_id, assets.symbol AS asset_symbol,
@@ -124,7 +118,7 @@ pub(crate) async fn create_quote_in_db(
     );
     let effective_payout_cap =
         effective_payout_cap(pool, request.asset_id, &effective.payout_cap_overrides).await?;
-    if effective_payout_cap > BigDecimal::from(0) && theoretical_payout > effective_payout_cap {
+    if effective_payout_cap > 0 && theoretical_payout > effective_payout_cap {
         return Err(AppError::Validation(
             "prediction quote exceeds configured payout cap".to_owned(),
         ));
@@ -172,6 +166,7 @@ pub(crate) async fn create_quote_in_db(
     })
 }
 
+#[allow(clippy::too_many_arguments)] // 单例设置按完整快照保存，显式字段避免部分配置产生不一致。
 pub(crate) async fn save_admin_settings(
     pool: &Pool<MySql>,
     sync_enabled: bool,
@@ -239,6 +234,10 @@ pub(crate) async fn list_stake_assets(
     Ok(rows)
 }
 
+/// 消费后端报价创建竞猜订单；报价必须属于用户、未过期未消费，市场开放且金额符合资产精度。
+/// 新请求在单事务中依次锁报价和市场、插入订单占用幂等键，再消费报价并锁钱包完成冻结、扣费和佣金记录。
+/// 可用余额减少本金与手续费、冻结余额增加本金，订单、报价、钱包及全部流水必须原子提交。
+/// 同用户同键重放返回原订单且 `changed=false`；并发重复键回滚后重读，提交后仅加载响应，无外部副作用。
 pub(crate) async fn create_order_in_tx(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -353,6 +352,10 @@ pub(crate) async fn create_order_in_tx(
     Ok((load_order_response(pool, order_id).await?, true))
 }
 
+/// 批量结算指定竞猜市场；结果与具体无效退款策略须已由应用层规范化，manual 策略不得直接执行。
+/// 事务先锁市场，再按订单 ID 顺序锁全部 open 订单；每单随后锁钱包，派奖或退款并更新订单终态。
+/// 本金解冻、可用余额、派奖/退款流水、订单结果及市场结算状态必须在同一事务内保持一致。
+/// 已 settled/refunded 的市场重放返回零处理且不再动账；提交后只重读市场响应，不发布外部事件。
 pub(crate) async fn settle_market_in_tx(
     pool: &Pool<MySql>,
     market_id: u64,
@@ -1146,6 +1149,10 @@ pub(crate) async fn validate_asset_ids_exist(pool: &Pool<MySql>, ids: &[u64]) ->
     Ok(())
 }
 
+/// 在竞猜下单事务内冻结本金并扣除手续费；调用前订单、报价归属及资产精度均应已验证。
+/// 锁定或初始化钱包后校验可用余额足以覆盖本金与手续费，再一次性更新 available 与 frozen。
+/// 本金必须成对写入 available 扣减和 frozen 增加流水，正手续费另写 available 扣减流水，快照须与余额一致。
+/// 本函数不提交也不独立去重；调用方以已插入的订单幂等键保证只执行一次，且无提交后副作用。
 pub(crate) async fn apply_wallet_prediction_open(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1222,6 +1229,10 @@ pub(crate) async fn apply_wallet_prediction_open(
     Ok(())
 }
 
+/// 在竞猜结算事务内释放订单冻结本金并按胜负写结算流水；调用前订单必须已锁定且仍为 open。
+/// 锁定或初始化钱包后要求 frozen 足以覆盖本金，再同步扣减 frozen 并把已计算派奖加入 available。
+/// 每单必写一条胜/负本金结算流水，正派奖另写 available 流水；余额、快照和金额必须一致。
+/// 本函数不提交也不独立防重；调用方依靠订单终态锁与市场结算幂等性阻止重复派奖。
 pub(crate) async fn apply_wallet_prediction_settlement(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1286,6 +1297,10 @@ pub(crate) async fn apply_wallet_prediction_settlement(
     Ok(())
 }
 
+/// 在无效竞猜退款事务内解冻并退回本金，可按已选退款策略额外退还正手续费。
+/// 调用前订单必须已锁定且 frozen 足以覆盖本金；本函数锁钱包后同步更新 available 与 frozen。
+/// 本金退款必须写 available 增加和 frozen 减少两条流水，手续费退款另写流水，所有余额快照保持一致。
+/// 本函数不提交也不独立防重；调用方以订单终态和市场锁保证退款仅执行一次，且无提交后副作用。
 pub(crate) async fn apply_wallet_prediction_refund(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,

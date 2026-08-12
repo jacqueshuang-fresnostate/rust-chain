@@ -15,13 +15,13 @@ pub use domain::{
     ConfirmConvertQuoteCommand, ConvertBalanceSnapshot, ConvertConfirmationInsert,
     ConvertConfirmationResult, ConvertQuote, ConvertQuoteCacheEntry, ConvertQuoteCommand,
     ConvertQuoteConfirmationRecord, ConvertQuoteCreated, ConvertQuoteError, ConvertRepositoryError,
-    ConvertServiceError, DomainLayerMarker, QuoteId, QuoteTtl,
+    ConvertServiceError, QuoteId, QuoteTtl,
 };
 pub use infrastructure::{MySqlConvertRepository, RedisConvertQuoteCache};
 pub use repository::{
     ConvertOrderRepository, ConvertQuoteInsert, ConvertQuoteInsertResult, ConvertQuoteRepository,
 };
-pub use service::{ConvertService, ServiceLayerMarker};
+pub use service::ConvertService;
 
 #[cfg(test)]
 #[path = "../../../tests/unit_src/src_modules_convert_mod_tests.rs"]

@@ -35,6 +35,7 @@ pub struct MarginLiquidationWorkerConfig {
 }
 
 impl MarginLiquidationWorkerConfig {
+    /// 从环境变量读取强平开关、扫描周期与批量上限；无效值使用受控默认值。
     pub fn from_env() -> Self {
         Self {
             enabled: env_bool("MARGIN_LIQUIDATION_ENABLED", true),
@@ -45,6 +46,7 @@ impl MarginLiquidationWorkerConfig {
 }
 
 impl MarginLiquidationWorker {
+    /// 执行一轮杠杆风险扫描与强平，权威标记价来自新鲜 Redis ticker，缺价或过期时不得估算清算。
     pub async fn run_once(
         &self,
         state: &AppState,
@@ -154,6 +156,9 @@ enum LiquidationOutcome {
     Skipped,
 }
 
+/// 按方向、名义本金、保证金、累计利息和维持保证金率计算逐仓强平状态。
+/// 入场价与标记价必须为正；权益等于保证金加已实现口径盈亏减利息，权益不高于维持保证金即触发。
+/// 本函数不读写存储，返回值必须由持锁事务重新核对仓位状态后才能用于资金结算。
 pub fn margin_liquidation_risk_state(
     direction: &str,
     margin_amount: &BigDecimal,
@@ -207,6 +212,8 @@ fn margin_realized_pnl(
     Ok((notional_amount.clone() * price_delta / entry_price.clone()).with_scale(18))
 }
 
+/// 从应用状态取得 MySQL、Redis 与可选事件总线后执行一轮强平；任一权威依赖缺失时立即失败。
+/// 资金和仓位在逐账户/逐仓事务内提交，私有强平事件仅在提交成功后发布。
 pub async fn run_once(
     state: &AppState,
     now: DateTime<Utc>,
@@ -228,6 +235,7 @@ pub async fn run_once(
     .await
 }
 
+/// 无事件总线执行一轮强平，供测试与显式批处理复用；价格新鲜度、锁顺序和资金结算规则不变。
 pub async fn run_once_with_dependencies(
     pool: &Pool<MySql>,
     redis: &ConnectionManager,
@@ -237,6 +245,9 @@ pub async fn run_once_with_dependencies(
     run_once_with_dependencies_and_events(pool, redis, None, now, limit).await
 }
 
+/// 强平单轮核心：先按账户处理全仓，再处理逐仓；每个账户或仓位独立事务，单项失败不会回滚已提交强平。
+/// 缺失/过期行情只推迟下一次检查，不以入场价或客户端价格兜底；成功达到上限后停止扫描。
+/// 只有新强平事务提交后才广播事件，安全仓位与状态已变化仓位均幂等跳过。
 async fn run_once_with_dependencies_and_events(
     pool: &Pool<MySql>,
     redis: &ConnectionManager,
@@ -344,6 +355,7 @@ async fn run_once_with_dependencies_and_events(
     Ok(summary)
 }
 
+/// 按间隔持续执行杠杆强平；周期错误记录后进入下一轮，next-attempt 时间和最终仓位状态提供恢复语义。
 pub async fn run_loop(state: AppState, interval_seconds: u64, limit: u32) -> AppResult<()> {
     let mut ticker = interval(Duration::from_secs(interval_seconds.max(1)));
 
@@ -444,6 +456,9 @@ async fn cached_ticker_price(
     Ok(Some(ticker.last_price))
 }
 
+/// 在独立事务中强平一个逐仓仓位：先锁仓位并重算风险，再结算非负剩余权益、写清算记录并关闭仓位。
+/// 非 opened 或风险恢复的仓位回滚后跳过；钱包资金、清算审计与仓位状态必须同事务提交。
+/// 本函数只在提交后返回事件载荷，不直接广播；重复扫描最终状态不会产生第二笔结算。
 async fn liquidate_position_by_id(
     pool: &Pool<MySql>,
     position_id: u64,
@@ -540,7 +555,10 @@ async fn liquidate_position_by_id(
     Ok(LiquidationOutcome::Liquidated(vec![event]))
 }
 
-/// 统一处理一个全仓账户：先锁定账户内全部仓位，再用组合权益决定是否清算。
+/// 统一处理一个全仓账户：按仓位 ID 锁定全部 opened 仓位，再锁保证金钱包并用组合权益决定是否清算。
+/// 调用方必须为每个仓位提供同一扫描时点的新鲜标记价；缺价、非 margin 钱包或缺入场价均中止整笔账户事务。
+/// 触发时按组合权益分配各仓位 payout，账户钱包结算、坏账、清算记录、仓位终态和风险快照必须原子提交。
+/// 未触发只提交最新风险快照；成功事件在事务提交后由上层发布，重复扫描已关闭仓位会跳过。
 async fn liquidate_cross_account(
     pool: &Pool<MySql>,
     user_id: u64,

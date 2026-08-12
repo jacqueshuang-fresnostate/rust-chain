@@ -6,7 +6,9 @@
 
 ## Overview
 
-This directory contains guidelines for backend development. Fill in each file with your project's specific conventions.
+This directory contains the active, project-specific backend contracts. Read
+the structure and quality guides before changing module boundaries, then read
+the feature contract for the business context being modified.
 
 ---
 
@@ -14,11 +16,11 @@ This directory contains guidelines for backend development. Fill in each file wi
 
 | Guide | Description | Status |
 |-------|-------------|--------|
-| [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
-| [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | To fill |
-| [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
-| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
-| [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
+| [Directory Structure](./directory-structure.md) | Optional DDD layers, dependency direction, module/test layout | Active |
+| [Database Guidelines](./database-guidelines.md) | Immutable migrations and MySQL text-metadata repair; general query guidance remains incomplete | Partial |
+| [Error Handling](./error-handling.md) | External-provider error mapping; general error taxonomy remains incomplete | Partial |
+| [Quality Guidelines](./quality-guidelines.md) | Executable architecture guards, exceptions, and validation | Active |
+| [Logging Guidelines](./logging-guidelines.md) | Structured logging and log-level guidance | Draft |
 | [Public News Contract](./public-news-contract.md) | Public news API locale, response, and rich-text rendering contract | Active |
 | [Spot Order Contracts](./spot-orders.md) | Spot market order reference-price protection, Redis ticker execution, and wallet reservation contract | Active |
 | [Margin Trading Actions](./margin-trading-actions.md) | Margin ticker, wallet-scope settlement, transfer idempotency, bulk actions, and supported-mode contracts | Active |
@@ -40,16 +42,18 @@ This directory contains guidelines for backend development. Fill in each file wi
 
 ---
 
-## How to Fill These Guidelines
+## Pre-Development Checklist
 
-For each guideline file:
-
-1. Document your project's **actual conventions** (not ideals)
-2. Include **code examples** from your codebase
-3. List **forbidden patterns** and why
-4. Add **common mistakes** your team has made
-
-The goal is to help AI assistants and new team members understand how YOUR project works.
+1. Read [Directory Structure](./directory-structure.md) before adding, deleting,
+   or moving a DDD layer or compatibility re-export.
+2. Read [Quality Guidelines](./quality-guidelines.md) before changing routes,
+   tests, architecture guards, or legacy exceptions.
+3. Read the relevant feature contract for authentication, wallet, trading,
+   settlement, or public API work.
+4. Search all callers and mirrored declarations before deleting a layer or
+   moving a public symbol.
+5. Run the closest tests plus the validation commands required by the quality
+   guide after the final edit.
 
 ---
 

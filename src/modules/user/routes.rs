@@ -24,7 +24,7 @@ use crate::{
         },
     },
     modules::{
-        admin::{infrastructure::multipart_file_input, service::MAX_UPLOAD_BODY_SIZE_BYTES},
+        admin::{presentation::multipart_file_input, service::MAX_UPLOAD_BODY_SIZE_BYTES},
         auth::UserAuth,
         kyc::{KycStatusResponse, KycSubmissionResponse, SubmitKycRequest},
     },

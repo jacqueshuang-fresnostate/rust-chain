@@ -38,6 +38,8 @@ pub struct VerificationCodeTemplate {
 }
 
 impl SmtpEmailConfig {
+    /// 按业务 purpose 选择启用且非空的验证码模板；优先精确用途，其次无用途默认项，最后兼容历史单模板。
+    /// 该选择只返回模板原文，不渲染验证码，也不触发 SMTP 外发。
     pub fn verification_code_template_html_for_purpose(&self, purpose: &str) -> Option<&str> {
         verification_code_template_html_for_purpose(
             &self.verification_code_templates,
@@ -56,6 +58,7 @@ pub enum SmtpSecurity {
 
 #[async_trait]
 pub trait EmailSender: Send + Sync {
+    /// 通过给定配置发送一封邮件；实现必须在返回成功前完成 SMTP 交付请求，失败不得记录密码或正文中的验证码。
     async fn send(&self, config: SmtpEmailConfig, message: EmailMessage) -> AppResult<()>;
 }
 
@@ -64,6 +67,8 @@ pub struct SmtpEmailSender;
 
 #[async_trait]
 impl EmailSender for SmtpEmailSender {
+    /// 构建纯文本或 multipart 邮件并调用 SMTP；收发地址在建连前校验，传输错误统一映射为内部错误。
+    /// 凭据只用于本次 transport 构造，不写入日志或持久化；调用方负责业务级限频、幂等与重试策略。
     async fn send(&self, config: SmtpEmailConfig, message: EmailMessage) -> AppResult<()> {
         let from = mailbox(
             config.from_email.as_str(),
@@ -94,6 +99,7 @@ impl EmailSender for SmtpEmailSender {
     }
 }
 
+/// 将持久化的 SMTP 安全模式解析为封闭枚举，未知值必须拒绝，避免配置错误意外降级到明文连接。
 pub fn parse_smtp_security(value: &str) -> AppResult<SmtpSecurity> {
     match value.trim().to_ascii_lowercase().as_str() {
         "none" => Ok(SmtpSecurity::None),
@@ -103,6 +109,7 @@ pub fn parse_smtp_security(value: &str) -> AppResult<SmtpSecurity> {
     }
 }
 
+/// 将 SMTP 安全枚举映射回稳定存储码，保证管理端读写配置时不改变既有字符串契约。
 pub fn smtp_security_code(security: SmtpSecurity) -> &'static str {
     match security {
         SmtpSecurity::None => "none",
@@ -145,6 +152,8 @@ fn mailbox(email: &str, name: Option<&str>, error: &'static str) -> AppResult<Ma
     Ok(Mailbox::new(name, address))
 }
 
+/// 生成验证码邮件载荷；纯文本始终存在，HTML 仅在模板非空时渲染并对动态字段做转义。
+/// 本函数不发送邮件、不持久化验证码，调用方仍负责用途、有效期、频率与敏感信息日志边界。
 pub fn verification_code_email_message(
     to: String,
     subject: &str,
@@ -165,6 +174,8 @@ pub fn verification_code_email_message(
     }
 }
 
+/// 从模板集合中按“精确用途→默认模板→历史模板”选择 HTML，禁用或空模板不得参与回退。
+/// 返回值借用原配置且未经渲染，调用方必须在插值时保持 HTML 转义。
 pub fn verification_code_template_html_for_purpose<'a>(
     templates: &'a [VerificationCodeTemplate],
     legacy_template_html: Option<&'a str>,

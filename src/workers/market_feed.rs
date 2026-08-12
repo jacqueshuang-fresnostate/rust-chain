@@ -31,6 +31,7 @@ pub struct MarketFeedRuntimeConfig {
 }
 
 impl MarketFeedRuntimeConfig {
+    /// 从已规范化的交易对、周期和供应商码构造运行配置；仍会去重并校验供应商集合。
     pub fn from_normalized(
         symbols: Vec<String>,
         intervals: Vec<String>,
@@ -46,6 +47,7 @@ impl MarketFeedRuntimeConfig {
         })
     }
 
+    /// 依据系统设置校验并规范化完整行情运行配置；空交易对表示显式禁用，非空配置必须至少生成一个供应商订阅。
     pub fn new(
         settings: &Settings,
         symbols: Vec<String>,
@@ -83,22 +85,27 @@ impl MarketFeedRuntimeConfig {
         })
     }
 
+    /// 判断该配置是否应维持行情任务；空交易对是显式停机信号，即使仍带周期或供应商也不得继续订阅。
     pub fn enabled(&self) -> bool {
         !self.symbols.is_empty()
     }
 
+    /// 提供本次 reload 的权威交易对集合，用于生成供应商订阅矩阵并同步可观察运行状态。
     pub fn symbols(&self) -> &[String] {
         &self.symbols
     }
 
+    /// 提供各交易对需要维持的 K 线周期集合；监督器重启任务时必须整组应用，避免新旧周期混跑。
     pub fn intervals(&self) -> &[String] {
         &self.intervals
     }
 
+    /// 提供本轮启用的行情供应商优先集合；它决定并行连接与 REST 补偿来源，也是失败监控的归属维度。
     pub fn providers(&self) -> &[MarketFeedProvider] {
         &self.providers
     }
 
+    /// 提供供应商连接失败后的重试基准秒数；构造阶段已保证至少一秒，避免网络故障触发无间隔重连。
     pub fn reconnect_seconds(&self) -> u64 {
         self.reconnect_seconds
     }
@@ -125,6 +132,7 @@ struct MarketFeedSupervisorState {
 }
 
 impl MarketFeedSupervisorHandle {
+    /// 创建尚未应用任何版本且没有后台任务的行情监督器；首个有效配置必须经 reload 校验后才进入运行状态。
     pub fn new() -> Self {
         Self {
             state: Arc::new(RwLock::new(MarketFeedSupervisorState {
@@ -134,14 +142,18 @@ impl MarketFeedSupervisorHandle {
         }
     }
 
+    /// 为测试建立与生产相同的空监督状态，但不隐式启动连接，便于验证配置版本、失败和停机状态迁移。
     pub fn new_for_tests() -> Self {
         Self::new()
     }
 
+    /// 取得当前已应用配置版本及最近 reload 结果的一致快照，供管理端扫描状态；读取不会启动、停止或重试任务。
     pub async fn status(&self) -> MarketFeedRuntimeStatus {
         self.state.read().await.status.clone()
     }
 
+    /// 原子切换运行中的行情订阅配置：先校验并启动新任务，再替换监督器句柄和可观察状态。
+    /// 未启用配置会停止旧任务；旧任务仅在新配置可接受后中止，失败状态保留错误供管理端读取。
     pub async fn reload(
         &self,
         state: AppState,
@@ -185,6 +197,7 @@ impl MarketFeedSupervisorHandle {
         Ok(guard.status.clone())
     }
 
+    /// 中止当前行情任务并把最近 reload 状态记为跳过；保留已应用版本和配置快照、清除旧错误，表达受控停机而非供应商故障。
     pub async fn stop(&self) {
         let mut guard = self.state.write().await;
         if let Some(task) = guard.task.take() {
@@ -194,6 +207,7 @@ impl MarketFeedSupervisorHandle {
         guard.status.last_reload_error = None;
     }
 
+    /// 记录配置扫描或 reload 失败供管理端诊断；保留上一次已应用版本和任务句柄，不把一次扫描错误误当成已成功切换。
     pub async fn record_failure(&self, error: String) -> MarketFeedRuntimeStatus {
         let mut guard = self.state.write().await;
         guard.status.last_reload_status = Some("failed".to_owned());
@@ -201,6 +215,7 @@ impl MarketFeedSupervisorHandle {
         guard.status.clone()
     }
 
+    /// 在不创建供应商连接的情况下模拟配置已接受，仅用于验证版本和状态发布；不会中止或替换监督器中的任务。
     pub async fn accept_config_for_tests(
         &self,
         config: MarketFeedRuntimeConfig,
@@ -269,6 +284,8 @@ pub enum MarketFeedSupervisorEvent {
     },
 }
 
+/// 将供应商 WebSocket 消息归一化为行情帧、协议回复、忽略或关闭动作。
+/// HTX gzip 二进制在此解压，ping 必须回应；无法识别或错误确认帧不得进入价格缓存。
 pub fn market_feed_socket_action(
     provider: MarketFeedProvider,
     message: Message,
@@ -324,6 +341,8 @@ fn market_feed_binary_payload_text(
     Ok(text)
 }
 
+/// 解析供应商文本帧并区分心跳/订阅确认与真实行情数据；错误确认直接失败，未知频道只忽略。
+/// 返回的行情帧仍需经过 provider adapter 严格解析后才能成为权威价格输入。
 pub fn market_feed_text_action(
     provider: MarketFeedProvider,
     payload: &str,
@@ -430,6 +449,7 @@ fn field_as_string(value: &Value, key: &str) -> Option<String> {
     }
 }
 
+/// 按运行时配置执行一次多供应商行情周期；禁用配置直接返回，不创建连接或写缓存。
 pub async fn run_config_once(state: &AppState, config: &MarketFeedRuntimeConfig) -> AppResult<()> {
     if !config.enabled() {
         return Ok(());
@@ -439,6 +459,8 @@ pub async fn run_config_once(state: &AppState, config: &MarketFeedRuntimeConfig)
     run_once_with_providers(state, config.providers(), &symbol_refs, &interval_refs).await
 }
 
+/// 为每个启用供应商启动独立重连监督循环，并在任一任务异常退出时向监督器报告失败。
+/// 每个供应商周期优先 WebSocket，失败后才执行对应 REST 兜底；配置交易对与周期在任务启动后保持快照一致。
 pub async fn run_config_loop(state: AppState, config: MarketFeedRuntimeConfig) -> AppResult<()> {
     if !config.enabled() {
         return Ok(());
@@ -537,6 +559,7 @@ where
     }
 }
 
+/// 使用默认供应商集合执行一次行情订阅周期；任一供应商任务失败会使本次调用失败，不掩盖价格源异常。
 pub async fn run_once(state: &AppState, symbols: &[&str], intervals: &[&str]) -> AppResult<()> {
     run_once_with_providers(
         state,
@@ -700,6 +723,9 @@ where
     }
 }
 
+/// 执行单供应商周期：WebSocket 成功时不请求 REST，失败时仅在配置了兜底请求后抓取并写入有效帧。
+/// REST 汇总至少必须含一个成功写入帧，全部无效时仍返回失败，禁止把空响应视为价格源恢复。
+/// 该入口不自行重试；外层监督循环负责退避，写入端负责 Redis/Mongo 持久化与实时事件副作用。
 pub async fn run_provider_cycle_with_rest_fallback<S, F, Fut, B, BuildFut, C>(
     state: AppState,
     config: MarketFeedConfig,
@@ -821,6 +847,7 @@ async fn run_provider_once(state: AppState, config: MarketFeedConfig) -> AppResu
     Ok(())
 }
 
+/// 校验行情周期不能“只收到失败帧且零写入”；纯心跳或正常空周期允许由连接生命周期决定后续处理。
 pub fn ensure_market_feed_cycle_has_valid_frames(summary: &MarketFeedSummary) -> AppResult<()> {
     if summary.failed > 0 && summary.ingested == 0 {
         return Err(crate::error::AppError::Validation(
@@ -830,6 +857,7 @@ pub fn ensure_market_feed_cycle_has_valid_frames(summary: &MarketFeedSummary) ->
     Ok(())
 }
 
+/// 从字符串配置构造行情运行时并持续监督多供应商订阅；未配置交易对时显式停用，不生成假行情。
 pub async fn run_loop(
     state: AppState,
     symbols: Vec<String>,

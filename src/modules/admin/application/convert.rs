@@ -49,6 +49,10 @@ pub(crate) async fn get_admin_convert_order(
     load_admin_convert_order_from_store(&pool, order_id).await
 }
 
+/// 创建后台换币交易对，并返回数据库最终保存的完整配置。
+/// 调用方须已完成管理员鉴权并提供审计原因；资产、计价模式、费率及限额须先通过领域校验。
+/// 交易对写入、回读和后台审计共用一个事务，任一步失败都会回滚，避免配置与审计分离。
+/// 本用例没有幂等键；提交结果不确定时直接重试可能触发唯一约束，而不会静默复用旧记录。
 pub(crate) async fn create_admin_convert_pair(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -107,6 +111,10 @@ pub(crate) async fn create_admin_convert_pair(
     Ok(pair)
 }
 
+/// 在锁定的旧快照上合并换币交易对的局部更新，并保留准确的前后审计值。
+/// 调用方须已完成管理员鉴权并提供审计原因；合并后的资产、费率和限额整体重新校验。
+/// 事务按“锁定交易对、更新、回读、写审计”执行，配置和审计必须同时提交或同时回滚。
+/// 本用例没有幂等键；每次成功调用都会新增审计记录，失败不会留下部分配置。
 pub(crate) async fn update_admin_convert_pair(
     pool: Option<Pool<MySql>>,
     admin_id: u64,

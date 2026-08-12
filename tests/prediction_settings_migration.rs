@@ -180,7 +180,8 @@ async fn exercise_migration_contract(pool: &MySqlPool) -> Result<()> {
 }
 
 async fn assert_binary_values(pool: &MySqlPool, expected: (&str, &str, &str, &str)) -> Result<()> {
-    let actual: (Vec<u8>, Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>) = sqlx::query_as(
+    type BinaryPredictionSettings = (Vec<u8>, Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>);
+    let actual: BinaryPredictionSettings = sqlx::query_as(
         r#"SELECT default_settlement_mode,
                   default_invalid_refund_policy,
                   last_sync_status,

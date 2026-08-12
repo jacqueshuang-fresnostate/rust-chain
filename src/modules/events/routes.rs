@@ -4,13 +4,15 @@ use crate::{
         auth::AdminAuth,
         events::{
             EventOutboxService, PublishedOutboxBatch,
-            application::authorize_private_ws,
-            infrastructure::{
-                OutboxRecordRow, list_inbox_records, list_outbox_records,
-                requeue_outbox_dead_letter,
+            application::{
+                authorize_private_ws, list_inbox_records as list_inbox_records_use_case,
+                list_outbox_records as list_outbox_records_use_case,
+                requeue_outbox_dead_letter as requeue_outbox_dead_letter_use_case,
             },
-            presentation::PrivateWsQuery,
-            presentation::{EventRecordsQuery, RequeueOutboxRequest},
+            presentation::{
+                EventRecordsQuery, EventRecordsResponse, InboxRecordResponse, OutboxRecordResponse,
+                PrivateWsQuery, RequeueOutboxRequest,
+            },
             public_channel,
             service::{
                 public_ws_confirmation_text, run_private_socket, run_public_multi_socket,
@@ -28,6 +30,7 @@ use axum::{
 };
 use chrono::Utc;
 
+/// 注册事件运维与 WebSocket 传输端点；运维端点由 `AdminAuth` 限制，业务编排委托应用层。
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/events/outbox/publish-once", post(publish_once))
@@ -59,43 +62,27 @@ async fn outbox_records(
     _auth: AdminAuth,
     State(state): State<AppState>,
     Query(query): Query<EventRecordsQuery>,
-) -> AppResult<Json<serde_json::Value>> {
-    let (records, total) = list_outbox_records(events_pool(&state)?, query.as_filter()).await?;
-
-    Ok(Json(
-        serde_json::json!({ "records": records, "total": total }),
-    ))
+) -> AppResult<Json<EventRecordsResponse<OutboxRecordResponse>>> {
+    Ok(Json(list_outbox_records_use_case(&state, query).await?))
 }
 
 async fn inbox_records(
     _auth: AdminAuth,
     State(state): State<AppState>,
     Query(query): Query<EventRecordsQuery>,
-) -> AppResult<Json<serde_json::Value>> {
-    let (records, total) = list_inbox_records(events_pool(&state)?, query.as_filter()).await?;
-
-    Ok(Json(
-        serde_json::json!({ "records": records, "total": total }),
-    ))
+) -> AppResult<Json<EventRecordsResponse<InboxRecordResponse>>> {
+    Ok(Json(list_inbox_records_use_case(&state, query).await?))
 }
 
 async fn requeue_outbox(
-    AdminAuth(claims): AdminAuth,
+    auth: AdminAuth,
     State(state): State<AppState>,
     Path(id): Path<u64>,
     Json(request): Json<RequeueOutboxRequest>,
-) -> AppResult<Json<OutboxRecordRow>> {
-    let reason = request.require_reason()?;
-    let admin_id = crate::modules::admin::service::admin_id_from_subject(&claims.sub)?;
-    let record = requeue_outbox_dead_letter(events_pool(&state)?, admin_id, id, &reason).await?;
-
-    Ok(Json(record))
-}
-
-fn events_pool(state: &AppState) -> AppResult<&sqlx::Pool<sqlx::MySql>> {
-    state.mysql.as_ref().ok_or_else(|| {
-        crate::error::AppError::Internal("mysql pool is not configured for event routes".to_owned())
-    })
+) -> AppResult<Json<OutboxRecordResponse>> {
+    Ok(Json(
+        requeue_outbox_dead_letter_use_case(&state, auth, id, request).await?,
+    ))
 }
 
 async fn public_multi_ws(

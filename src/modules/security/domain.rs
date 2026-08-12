@@ -150,7 +150,7 @@ impl Default for UserSecurityPolicy {
     }
 }
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize)]
 pub struct UserTwoFactorSettings {
     pub user_id: u64,
     pub totp_secret_encrypted: Option<String>,
@@ -175,7 +175,7 @@ impl UserTwoFactorSettings {
 
 impl DomainLayer for UserTwoFactorSettings {}
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AdminTwoFactorSettings {
     pub admin_id: u64,
     pub totp_secret_encrypted: Option<String>,

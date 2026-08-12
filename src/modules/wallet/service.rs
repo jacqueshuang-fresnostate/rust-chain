@@ -6,13 +6,7 @@ use super::{
     BalanceChange, LedgerBatch, LockPosition, LockSchedule, WalletAccount, WalletRepository,
     WalletServiceError,
 };
-use crate::architecture::ServiceLayer;
 use bigdecimal::BigDecimal;
-
-#[derive(Debug)]
-pub struct ServiceLayerMarker;
-
-impl ServiceLayer for ServiceLayerMarker {}
 
 #[derive(Debug, Clone)]
 pub struct WalletService<R> {

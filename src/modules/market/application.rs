@@ -3,7 +3,6 @@
 //! 应用层：编排用例、事务边界和跨仓储协作。
 
 use crate::{
-    architecture::ApplicationLayer,
     error::{AppError, AppResult},
     modules::market::{
         KlineQuery, infrastructure,
@@ -20,11 +19,6 @@ use crate::{
 use mongodb::Database;
 use redis::aio::ConnectionManager;
 use sqlx::{MySql, Pool};
-
-#[derive(Debug)]
-pub struct ApplicationLayerMarker;
-
-impl ApplicationLayer for ApplicationLayerMarker {}
 
 pub(crate) async fn list_markets(mysql: Option<Pool<MySql>>) -> AppResult<MarketsResponse> {
     let Some(pool) = mysql else {
@@ -68,6 +62,9 @@ pub(crate) async fn remove_user_market_favorite(
     infrastructure::remove_user_market_favorite(&pool, user_id, symbol.as_str()).await
 }
 
+/// 返回公开市场的权威 ticker：先验证交易对已上架，再读取行情 ingestion 写入的 Redis 快照。
+/// Redis 未配置或缓存缺失/损坏必须返回错误，不使用客户端价格或静态市场信息伪造最新价。
+/// 该快照同时可能被下单、结算和强平链路读取，因此应用层不在此修改价格或时间戳。
 pub(crate) async fn get_market_ticker(
     mysql: Option<Pool<MySql>>,
     redis: Option<ConnectionManager>,

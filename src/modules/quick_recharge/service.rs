@@ -10,7 +10,6 @@ use super::{
     repository::QuickRechargeConfigRow,
 };
 use crate::{
-    architecture::ServiceLayer,
     error::{AppError, AppResult},
     infra::secrets::{decrypt_secret, encrypt_secret_field},
 };
@@ -19,11 +18,6 @@ use md5::{Digest, Md5};
 use serde_json::{Map, Value, json};
 use std::{collections::BTreeMap, str::FromStr};
 use url::Url;
-
-#[derive(Debug)]
-pub struct ServiceLayerMarker;
-
-impl ServiceLayer for ServiceLayerMarker {}
 
 #[derive(Debug, Clone)]
 pub(crate) struct QuickRechargeRuntimeConfig {
@@ -145,18 +139,18 @@ pub(crate) fn validate_save_config_request(
     let token = validate_symbol_like(&request.token, "token", 32, false)?;
     let network = validate_symbol_like(&request.network, "network", 32, true)?;
     let min_amount = request.min_amount.clone();
-    if min_amount <= BigDecimal::from(0) {
+    if min_amount <= 0 {
         return Err(AppError::Validation(
             "quick recharge min_amount must be positive".to_owned(),
         ));
     }
     let max_amount = request.max_amount.clone();
-    if let Some(max_amount) = max_amount.as_ref() {
-        if max_amount < &min_amount {
-            return Err(AppError::Validation(
-                "quick recharge max_amount must be greater than or equal to min_amount".to_owned(),
-            ));
-        }
+    if let Some(max_amount) = max_amount.as_ref()
+        && max_amount < &min_amount
+    {
+        return Err(AppError::Validation(
+            "quick recharge max_amount must be greater than or equal to min_amount".to_owned(),
+        ));
     }
     let config = ValidatedQuickRechargeConfig {
         enabled: request.enabled,
@@ -205,12 +199,12 @@ pub(crate) fn validate_recharge_amount(
             "quick recharge amount is below min_amount".to_owned(),
         ));
     }
-    if let Some(max_amount) = config.max_amount.as_ref() {
-        if amount > max_amount {
-            return Err(AppError::Validation(
-                "quick recharge amount is above max_amount".to_owned(),
-            ));
-        }
+    if let Some(max_amount) = config.max_amount.as_ref()
+        && amount > max_amount
+    {
+        return Err(AppError::Validation(
+            "quick recharge amount is above max_amount".to_owned(),
+        ));
     }
     Ok(())
 }

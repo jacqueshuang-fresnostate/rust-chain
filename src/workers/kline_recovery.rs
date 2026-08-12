@@ -22,6 +22,7 @@ const MAX_CANDLES_PER_STRATEGY_RUN: usize = 500;
 pub struct KlineRecoveryWorker;
 
 impl KlineRecoveryWorker {
+    /// 执行一轮 K 线缺口恢复；MySQL 策略检查点与 Mongo K 线写入共同决定重放范围。
     pub async fn run_once(
         &self,
         state: &AppState,
@@ -55,6 +56,7 @@ enum KlineRecoveryCheckpointError {
     App(#[from] AppError),
 }
 
+/// 汇总一轮恢复计划结果；只聚合计数，不改变检查点或持久化 K 线。
 pub fn summarize_recovery_plans(plans: &[KlineRecoveryPlanSummary]) -> KlineRecoverySummary {
     let mut summary = KlineRecoverySummary {
         scanned: plans.len() as u32,
@@ -80,10 +82,12 @@ pub struct KlineRecoveryGap {
 }
 
 impl KlineRecoveryGap {
+    /// 暴露检查点之后至最近完整周期之间按时间升序排列的缺失开盘时间，恢复器据此生成确定顺序的蜡烛并推进检查点。
     pub fn missing_open_times(&self) -> &[DateTime<Utc>] {
         &self.missing_open_times
     }
 
+    /// 判断当前策略是否存在需要恢复的完整周期；空缺口应跳过 Mongo 写入和 MySQL 检查点竞争，而不是记作失败。
     pub fn has_gap(&self) -> bool {
         !self.missing_open_times.is_empty()
     }
@@ -102,6 +106,8 @@ pub struct KlineRecoveryStrategyRun {
 }
 
 impl KlineRecoveryStrategyRun {
+    /// 构造一次可执行的恢复策略快照；交易对和小数参数在扫描后、写入前完成校验，拒绝非正价格、负波动/成交量及倒置的成交量区间。
+    /// 检查点定义恢复起点，当前价与目标价定义缺口区间的价格轨迹；本步骤不访问存储，也不推进策略状态。
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         strategy_id: u64,
@@ -191,6 +197,8 @@ pub struct KlineRecoveryPlan {
 }
 
 impl KlineRecoveryPlan {
+    /// 从策略检查点生成截至最近完整周期的缺失 K 线，最多生成受控数量并保证末根收盘价命中目标价。
+    /// 输入价格必须为正、波动和成交量非负；仅构造恢复计划，不写 Mongo 或推进 MySQL 检查点。
     pub fn from_strategy(
         strategy: &KlineRecoveryStrategyRun,
         now: DateTime<Utc>,
@@ -255,18 +263,22 @@ impl KlineRecoveryPlan {
         })
     }
 
+    /// 标识本恢复计划所属的策略行，用于乐观推进同一策略检查点并归属单策略失败记录。
     pub fn strategy_id(&self) -> u64 {
         self.strategy_id
     }
 
+    /// 标识整批恢复蜡烛的规范化交易对，决定 Mongo 集合分区并用于恢复日志关联。
     pub fn symbol(&self) -> &str {
         &self.symbol
     }
 
+    /// 标识本计划所有蜡烛共享的周期；它与开盘时间共同构成 Mongo 幂等 upsert 键。
     pub fn interval(&self) -> &str {
         &self.interval
     }
 
+    /// 提供按开盘时间排序的完整恢复批次；空批次表示检查点后没有已闭合缺口，worker 应跳过写入和检查点推进。
     pub fn candles(&self) -> &[KlineRecoveryCandle] {
         &self.candles
     }
@@ -289,6 +301,8 @@ pub struct KlineRecoveryCandle {
 }
 
 impl KlineRecoveryCandle {
+    /// 构造一根待恢复 K 线并校验交易对及 interval+open_time 幂等键；价格与成交量文本保持策略计算结果，供 Mongo 原样写入。
+    /// 此阶段只形成持久化命令，不访问 Mongo；同键重放由后续 upsert 覆盖而不新增重复蜡烛。
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         symbol: &str,
@@ -317,22 +331,27 @@ impl KlineRecoveryCandle {
         })
     }
 
+    /// 提供已校验的交易对分区标识，确保恢复写入只落到该市场对应的 K 线集合。
     pub fn symbol(&self) -> &ValidatedMarketSymbol {
         &self.symbol
     }
 
+    /// 依据规范化交易对生成 Mongo 集合名，使恢复写入与实时行情使用相同的市场分区规则。
     pub fn collection_name(&self) -> String {
         kline_collection_name(&self.symbol)
     }
 
+    /// 标识这根蜡烛所属的 UTC 开盘槽位；恢复完成后最后一个槽位用于乐观推进策略检查点。
     pub fn open_time(&self) -> DateTime<Utc> {
         self.open_time
     }
 
+    /// 提供恢复后的收盘价，作为策略检查点推进后的最新价格，保证下一轮从本轮末价继续而非重新插值。
     pub fn close(&self) -> &str {
         &self.close
     }
 
+    /// 构造 Mongo 幂等选择条件；周期与 UTC 开盘时间共同锁定同一根逻辑蜡烛，重放不得插入第二条记录。
     pub fn upsert_filter(&self) -> Document {
         doc! {
             "interval": &self.interval,
@@ -340,6 +359,7 @@ impl KlineRecoveryCandle {
         }
     }
 
+    /// 构造恢复蜡烛的完整 `$set` 更新；同键重试会用同一计划数据收敛覆盖，且不会提前推进 MySQL 策略检查点。
     pub fn upsert_update(&self) -> Document {
         doc! {
             "$set": {
@@ -355,6 +375,7 @@ impl KlineRecoveryCandle {
     }
 }
 
+/// 从应用状态取得 MySQL 与 MongoDB 后执行一轮恢复；任一权威存储缺失时立即失败。
 pub async fn run_once(
     state: &AppState,
     now: DateTime<Utc>,
@@ -369,6 +390,9 @@ pub async fn run_once(
     run_once_with_dependencies(pool, mongo, now, limit).await
 }
 
+/// 扫描到期恢复策略并逐个生成、upsert K 线，再以旧检查点作乐观条件推进策略检查点。
+/// Mongo upsert 以 interval+open_time 唯一键幂等；检查点已被其他 worker 推进时跳过，不覆盖更新。
+/// 单个策略失败会记录失败原因并继续后续策略，已成功写入的 K 线可在下轮安全重放。
 pub async fn run_once_with_dependencies(
     pool: &Pool<MySql>,
     mongo: &Database,
@@ -408,6 +432,7 @@ pub async fn run_once_with_dependencies(
     Ok(summarize_recovery_plans(&outcomes))
 }
 
+/// 按间隔持续执行 K 线恢复；周期错误记录后继续，MySQL 检查点和 Mongo 唯一索引提供崩溃恢复。
 pub async fn run_loop(state: AppState, interval_seconds: u64, limit: u32) -> AppResult<()> {
     let mut ticker = interval(Duration::from_secs(interval_seconds.max(1)));
 
@@ -426,6 +451,7 @@ pub async fn run_loop(state: AppState, interval_seconds: u64, limit: u32) -> App
     }
 }
 
+/// 以交易对集合及 interval+open_time 唯一键 upsert 一根恢复 K 线，重放只覆盖同一根蜡烛而不新增重复记录。
 pub async fn upsert_recovered_kline(db: &Database, candle: &KlineRecoveryCandle) -> AppResult<()> {
     db.collection::<Document>(&candle.collection_name())
         .update_one(candle.upsert_filter(), candle.upsert_update())
@@ -434,6 +460,7 @@ pub async fn upsert_recovered_kline(db: &Database, candle: &KlineRecoveryCandle)
     Ok(())
 }
 
+/// 计算检查点之后、恢复终点之前按固定周期缺失的开盘时间；周期必须为正且结果受单计划最大根数限制。
 pub fn kline_recovery_gap(
     checkpoint_open_time: DateTime<Utc>,
     now: DateTime<Utc>,

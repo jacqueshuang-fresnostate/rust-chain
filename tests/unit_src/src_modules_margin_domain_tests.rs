@@ -1,9 +1,28 @@
-use super::{CrossMarginPositionRisk, allocate_cross_margin_payouts, evaluate_cross_margin};
+use super::{
+    CrossMarginPositionRisk, allocate_cross_margin_payouts, evaluate_cross_margin,
+    margin_position_payout_amount,
+};
 use bigdecimal::BigDecimal;
 use std::str::FromStr;
 
 fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).expect("valid decimal")
+}
+
+#[test]
+fn position_payout_deducts_interest_and_never_returns_a_negative_amount() {
+    assert_eq!(
+        margin_position_payout_amount(&decimal("100"), Some(&decimal("25")), &decimal("3")),
+        decimal("122.000000000000000000")
+    );
+    assert_eq!(
+        margin_position_payout_amount(&decimal("100"), Some(&decimal("-105")), &decimal("3")),
+        decimal("0.000000000000000000")
+    );
+    assert_eq!(
+        margin_position_payout_amount(&decimal("100"), None, &decimal("3")),
+        decimal("0.000000000000000000")
+    );
 }
 
 #[test]

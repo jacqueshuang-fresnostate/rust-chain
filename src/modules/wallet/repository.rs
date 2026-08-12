@@ -4,17 +4,11 @@
 //! 具体持久化实现由 infrastructure 层承载，仓储层仅定义边界和行为。
 
 use crate::{
-    architecture::RepositoryLayer,
     error::AppResult,
     modules::wallet::{LedgerBatch, LockPosition, WalletAccount, WalletServiceError},
 };
 use axum::async_trait;
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug)]
-pub struct RepositoryLayerMarker;
-
-impl RepositoryLayer for RepositoryLayerMarker {}
 
 pub trait WalletRepository: Send {
     fn load_account(

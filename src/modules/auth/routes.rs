@@ -1,11 +1,11 @@
 use crate::{
-    error::{AppError, AppResult},
+    error::AppResult,
     modules::auth::{
         AdminAuth, AdminCredentials, AdminRegistration, AgentCredentials, TokenScope,
         application::{
             confirm_admin_two_factor, confirm_login_two_factor_setup_and_issue_tokens,
             disable_admin_two_factor, get_admin_two_factor_status, load_login_config,
-            load_register_config, login_admin_actor, login_agent_actor,
+            load_register_config, login_admin_with_turnstile, login_agent_with_turnstile,
             login_user_with_optional_two_factor_response, mysql_pool, refresh_actor_tokens,
             register_admin_actor, register_user_with_email_code_response,
             reject_agent_registration, reset_login_two_factor_with_email_code,
@@ -17,8 +17,8 @@ use crate::{
         presentation::{
             AdminAuthRequest, AdminLoginResponse, AdminTwoFactorCodeRequest,
             AdminTwoFactorSetupResponse, AdminTwoFactorStatusResponse, AgentAuthRequest,
-            LoginConfigResponse, LoginTwoFactorCodeResponse, LoginTwoFactorRequest,
-            LoginTwoFactorResetCodeRequest, LoginTwoFactorResetRequest,
+            LoginConfigResponse, LoginTransportContext, LoginTwoFactorCodeResponse,
+            LoginTwoFactorRequest, LoginTwoFactorResetCodeRequest, LoginTwoFactorResetRequest,
             LoginTwoFactorResetResponse, LoginTwoFactorSetupConfirmRequest,
             LoginTwoFactorSetupRequest, LoginTwoFactorSetupResponse, PasswordResetCodeRequest,
             PasswordResetCodeResponse, PasswordResetRequest, PasswordResetResponse, RefreshRequest,
@@ -35,10 +35,6 @@ use axum::{
     routing::{get, post},
 };
 use chrono::Utc;
-use serde::Deserialize;
-use std::time::Duration;
-
-const CF_TURNSTILE_SITEVERIFY: &str = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
 pub fn user_routes() -> Router<AppState> {
     Router::new()
@@ -95,13 +91,12 @@ async fn get_register_config(
 }
 
 async fn get_login_config(State(state): State<AppState>) -> AppResult<Json<LoginConfigResponse>> {
-    let config = load_login_config(&mysql_pool(&state)?).await?;
-    let (cf_turnstile_enabled, cf_turnstile_site_key) = get_login_turnstile_policy();
+    let config = load_login_config(&state).await?;
 
     Ok(Json(LoginConfigResponse {
         username_login_enabled: config.username_login_enabled,
-        cf_turnstile_enabled,
-        cf_turnstile_site_key,
+        cf_turnstile_enabled: config.cf_turnstile_enabled,
+        cf_turnstile_site_key: config.cf_turnstile_site_key,
     }))
 }
 
@@ -160,10 +155,9 @@ async fn user_login(
     headers: HeaderMap,
     Json(request): Json<UserAuthRequest>,
 ) -> AppResult<Json<UserLoginResponse>> {
-    verify_cf_turnstile_token(request.cf_turnstile_token.as_deref(), &headers).await?;
-    let pool = mysql_pool(&state)?;
+    let transport = LoginTransportContext::from_headers(&headers);
     Ok(Json(
-        login_user_with_optional_two_factor_response(&state, &pool, request).await?,
+        login_user_with_optional_two_factor_response(&state, request, transport).await?,
     ))
 }
 
@@ -269,15 +263,15 @@ async fn admin_login(
     headers: HeaderMap,
     Json(request): Json<AdminAuthRequest>,
 ) -> AppResult<Json<AdminLoginResponse>> {
-    verify_cf_turnstile_token(request.cf_turnstile_token.as_deref(), &headers).await?;
-    let pool = mysql_pool(&state)?;
-    let response = login_admin_actor(
+    let transport = LoginTransportContext::from_headers(&headers);
+    let response = login_admin_with_turnstile(
         &state,
-        &pool,
         AdminCredentials {
             username: request.username,
             password: request.password,
         },
+        request.cf_turnstile_token,
+        transport,
     )
     .await?;
 
@@ -361,13 +355,15 @@ async fn agent_login(
     headers: HeaderMap,
     Json(request): Json<AgentAuthRequest>,
 ) -> AppResult<Json<TokenResponse>> {
-    verify_cf_turnstile_token(request.cf_turnstile_token.as_deref(), &headers).await?;
-    let tokens = login_agent_actor(
+    let transport = LoginTransportContext::from_headers(&headers);
+    let tokens = login_agent_with_turnstile(
         &state,
         AgentCredentials {
             username: request.username,
             password: request.password,
         },
+        request.cf_turnstile_token,
+        transport,
     )
     .await?;
 
@@ -381,182 +377,6 @@ async fn agent_refresh(
     let tokens = refresh_actor_tokens(&state, request.refresh_token, TokenScope::Agent).await?;
 
     Ok(Json(tokens.into()))
-}
-
-#[derive(Debug, Deserialize)]
-struct CfTurnstileVerifyResponse {
-    success: bool,
-    #[serde(rename = "error-codes", default)]
-    error_codes: Vec<String>,
-    hostname: Option<String>,
-}
-
-fn extract_client_ip(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get("cf-connecting-ip")
-        .or_else(|| headers.get("x-forwarded-for"))
-        .and_then(|header| header.to_str().ok())
-        .map(|value: &str| value.split(',').next().unwrap_or(value).trim().to_owned())
-}
-
-fn has_cf_clearance_cookie(headers: &HeaderMap) -> bool {
-    headers
-        .get("cookie")
-        .and_then(|value| value.to_str().ok())
-        .map(|cookie| {
-            cookie
-                .split(';')
-                .map(|entry| entry.trim())
-                .any(|entry| entry.starts_with("cf_clearance="))
-        })
-        .unwrap_or(false)
-}
-
-async fn verify_cf_turnstile_token(token: Option<&str>, headers: &HeaderMap) -> AppResult<()> {
-    let (enabled, _) = get_login_turnstile_policy();
-    if !enabled {
-        return Ok(());
-    }
-
-    let secret = match env_cf_turnstile_secret() {
-        Some(secret) => secret,
-        None => return Ok(()),
-    };
-
-    if !should_require_turnstile_token(
-        enabled,
-        env_cf_turnstile_enforce_token(),
-        has_cf_clearance_cookie(headers),
-    ) {
-        return Ok(());
-    }
-
-    let token = match token {
-        Some(token) if !token.trim().is_empty() => token.trim(),
-        _ => {
-            return Err(AppError::security_validation(
-                "CF_TURNSTILE_TOKEN_MISSING",
-                "cf_turnstile_token is required",
-            ));
-        }
-    };
-
-    let siteverify_url = std::env::var("CF_TURNSTILE_SITEVERIFY_URL")
-        .unwrap_or_else(|_| CF_TURNSTILE_SITEVERIFY.to_owned());
-    let mut payload = vec![("secret", secret), ("response", token.to_owned())];
-
-    if let Some(ip) = extract_client_ip(headers) {
-        payload.push(("remoteip", ip));
-    }
-
-    let response = reqwest::Client::new()
-        .post(siteverify_url)
-        .form(&payload)
-        .timeout(Duration::from_secs(5))
-        .send()
-        .await
-        .map_err(|error| {
-            AppError::security_forbidden(
-                "CF_TURNSTILE_REQUEST_FAILED",
-                format!("failed to verify Cloudflare challenge: {error}"),
-            )
-        })?;
-
-    if !response.status().is_success() {
-        return Err(AppError::security_forbidden(
-            "CF_TURNSTILE_BAD_RESPONSE",
-            format!(
-                "Cloudflare challenge verification returned {}",
-                response.status()
-            ),
-        ));
-    }
-
-    let body = response
-        .json::<CfTurnstileVerifyResponse>()
-        .await
-        .map_err(|error| {
-            AppError::security_forbidden(
-                "CF_TURNSTILE_PARSE_FAILED",
-                format!("invalid Cloudflare verification response: {error}"),
-            )
-        })?;
-
-    if !body.success {
-        let error_text = if body.error_codes.is_empty() {
-            "verification failed".to_owned()
-        } else {
-            body.error_codes.join(", ")
-        };
-        return Err(AppError::security_forbidden(
-            "CF_TURNSTILE_INVALID",
-            format!("Cloudflare verification failed: {error_text}"),
-        ));
-    }
-
-    let _ = body.hostname;
-    Ok(())
-}
-
-fn get_login_turnstile_policy() -> (bool, Option<String>) {
-    login_turnstile_policy(env_cf_turnstile_secret(), env_cf_turnstile_site_key())
-}
-
-fn login_turnstile_policy(
-    secret: Option<String>,
-    site_key: Option<String>,
-) -> (bool, Option<String>) {
-    let enabled = secret.is_some() && site_key.is_some();
-
-    (enabled, site_key)
-}
-
-fn should_require_turnstile_token(
-    enabled: bool,
-    enforce_token: bool,
-    has_cf_clearance: bool,
-) -> bool {
-    enabled && (enforce_token || !has_cf_clearance)
-}
-
-fn env_cf_turnstile_secret() -> Option<String> {
-    let secret = match std::env::var("CF_TURNSTILE_SECRET") {
-        Ok(secret) => secret,
-        Err(_) => match std::env::var("CF_TURNSTILE_SECRET_KEY") {
-            Ok(secret) => secret,
-            Err(_) => return None,
-        },
-    };
-
-    let secret = secret.trim();
-    if secret.is_empty() {
-        None
-    } else {
-        Some(secret.to_owned())
-    }
-}
-
-fn env_cf_turnstile_site_key() -> Option<String> {
-    let site_key = match std::env::var("CF_TURNSTILE_SITE_KEY") {
-        Ok(value) => value,
-        Err(_) => return None,
-    };
-
-    let site_key = site_key.trim();
-    if site_key.is_empty() {
-        None
-    } else {
-        Some(site_key.to_owned())
-    }
-}
-
-fn env_cf_turnstile_enforce_token() -> bool {
-    std::env::var("CF_TURNSTILE_ENFORCE_TOKEN")
-        .map(|value| {
-            let normalized = value.trim().to_ascii_lowercase();
-            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
-        })
-        .unwrap_or(false)
 }
 
 #[cfg(test)]

@@ -232,6 +232,10 @@ pub(crate) async fn delete_product(
     Ok(())
 }
 
+/// 开立秒合约订单；方向、本金精度、产品周期/限额及活动资产必须有效，并取得服务端新鲜正入场价。
+/// 新请求在事务中先锁产品并插入订单占用幂等键，再锁共享现货钱包扣本金、写流水及代理佣金。
+/// 订单快照、可用余额扣减和 `seconds_contract_open` 流水必须同事务提交，禁止独立秒合约余额。
+/// 同用户同键同请求重放原订单且不再取行情或扣款；提交后仅事件包装层对新订单发布通知。
 pub(crate) async fn open_order(
     pool: Option<&Pool<MySql>>,
     redis: Option<&ConnectionManager>,
@@ -386,6 +390,10 @@ pub(crate) async fn open_order_with_events(
     Ok(response)
 }
 
+/// 管理员结算秒合约订单；结算结果和原因必须有效，订单资产精度用于统一截断胜单派奖金额。
+/// 事务先锁订单再读取资产精度；胜单随后锁共享现货钱包，入账与流水、订单终态及管理员审计原子提交。
+/// 负单不入账；已 settled 且结果一致时返回原结算并不重复派奖，结果冲突或非 opened 状态拒绝处理。
+/// 成功提交后仅事件包装层对首次结算发布通知，重放与失败路径均不得产生外部副作用。
 pub(crate) async fn settle_order(
     pool: Option<&Pool<MySql>>,
     admin_id: u64,

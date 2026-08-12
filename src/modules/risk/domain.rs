@@ -111,7 +111,7 @@ pub fn evaluate_risk(request: &RiskRequest, rules: &RiskRules) -> RiskDecision {
         rules.max_price_deviation_bps,
         request.price.as_ref(),
         request.reference_price.as_ref(),
-    ) && price_deviation_bps(price, reference_price) > BigDecimal::from(max_deviation_bps)
+    ) && price_deviation_bps(price, reference_price) > max_deviation_bps
     {
         return RiskDecision::Rejected(RiskReject::PriceDeviation);
     }

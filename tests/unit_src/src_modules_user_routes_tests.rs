@@ -14,6 +14,7 @@ use axum::{
 };
 use secrecy::SecretString;
 use serde_json::Value;
+use sqlx::mysql::MySqlPoolOptions;
 use tower::ServiceExt;
 
 #[test]
@@ -99,6 +100,51 @@ async fn avatar_requires_mysql_after_user_auth() {
         "multipart/form-data; boundary=avatar",
     )
     .await;
+}
+
+#[tokio::test]
+async fn avatar_upload_keeps_existing_missing_content_type_error() {
+    let state = test_state();
+    let token = crate::modules::auth::issue_token(
+        &state.settings,
+        "user:42",
+        TokenScope::User,
+        state.settings.jwt_access_ttl_seconds,
+    )
+    .unwrap();
+    let pool = MySqlPoolOptions::new()
+        .connect_lazy("mysql://test:test@localhost/test")
+        .unwrap();
+    let boundary = "user-avatar-content-type-boundary";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"avatar.gif\"\r\n\r\nGIF89a\r\n--{boundary}--\r\n"
+    );
+
+    let response = routes()
+        .with_state(state.with_mysql(pool))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/user/avatar")
+                .header("authorization", format!("Bearer {token}"))
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), 4096).await.unwrap();
+    let payload: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["code"], "VALIDATION_ERROR");
+    assert_eq!(
+        payload["message"],
+        "validation error: upload file content type is required"
+    );
 }
 
 #[tokio::test]

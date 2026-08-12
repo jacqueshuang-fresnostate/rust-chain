@@ -13,7 +13,7 @@ use crate::{
 };
 use chrono::{DateTime, Duration, Utc};
 use serde_json::Value;
-use sqlx::{MySql, Pool, types::Json as SqlxJson};
+use sqlx::{FromRow, MySql, Pool, mysql::MySqlRow, types::Json as SqlxJson};
 use uuid::Uuid;
 
 pub const USER_SECURITY_POLICY_KEY: &str = "user_security_policy";
@@ -23,6 +23,58 @@ pub const LOGIN_CHALLENGE_TTL_SECONDS: i64 = 300;
 pub struct SecurityRepository;
 
 impl InfrastructureLayer for SecurityRepository {}
+
+#[derive(Debug, sqlx::FromRow)]
+struct UserTwoFactorSettingsRow {
+    user_id: u64,
+    totp_secret_encrypted: Option<String>,
+    totp_enabled: bool,
+    login_2fa_enabled: bool,
+    confirmed_at: Option<DateTime<Utc>>,
+    last_verified_at: Option<DateTime<Utc>>,
+}
+
+impl From<UserTwoFactorSettingsRow> for UserTwoFactorSettings {
+    fn from(row: UserTwoFactorSettingsRow) -> Self {
+        Self {
+            user_id: row.user_id,
+            totp_secret_encrypted: row.totp_secret_encrypted,
+            totp_enabled: row.totp_enabled,
+            login_2fa_enabled: row.login_2fa_enabled,
+            confirmed_at: row.confirmed_at,
+            last_verified_at: row.last_verified_at,
+        }
+    }
+}
+
+// 管理后台的锁行查询仍以领域值作为返回类型；SQLx 适配实现留在基础设施层，
+// 并统一经过持久化 row 到领域值的显式映射，避免领域模块导入 SQLx。
+impl<'r> FromRow<'r, MySqlRow> for UserTwoFactorSettings {
+    fn from_row(row: &'r MySqlRow) -> Result<Self, sqlx::Error> {
+        UserTwoFactorSettingsRow::from_row(row).map(Into::into)
+    }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct AdminTwoFactorSettingsRow {
+    admin_id: u64,
+    totp_secret_encrypted: Option<String>,
+    totp_enabled: bool,
+    confirmed_at: Option<DateTime<Utc>>,
+    last_verified_at: Option<DateTime<Utc>>,
+}
+
+impl From<AdminTwoFactorSettingsRow> for AdminTwoFactorSettings {
+    fn from(row: AdminTwoFactorSettingsRow) -> Self {
+        Self {
+            admin_id: row.admin_id,
+            totp_secret_encrypted: row.totp_secret_encrypted,
+            totp_enabled: row.totp_enabled,
+            confirmed_at: row.confirmed_at,
+            last_verified_at: row.last_verified_at,
+        }
+    }
+}
 
 pub async fn load_security_policy(pool: &Pool<MySql>) -> AppResult<UserSecurityPolicy> {
     let policy = sqlx::query_scalar::<_, SqlxJson<Value>>(
@@ -66,7 +118,7 @@ pub async fn load_user_two_factor(
     pool: &Pool<MySql>,
     user_id: u64,
 ) -> AppResult<UserTwoFactorSettings> {
-    let settings = sqlx::query_as::<_, UserTwoFactorSettings>(
+    let settings = sqlx::query_as::<_, UserTwoFactorSettingsRow>(
         r#"SELECT user_id, totp_secret_encrypted, totp_enabled, login_2fa_enabled,
                   confirmed_at, last_verified_at
            FROM user_two_factor_settings
@@ -77,7 +129,9 @@ pub async fn load_user_two_factor(
     .fetch_optional(pool)
     .await?;
 
-    Ok(settings.unwrap_or_else(|| UserTwoFactorSettings::empty(user_id)))
+    Ok(settings
+        .map(Into::into)
+        .unwrap_or_else(|| UserTwoFactorSettings::empty(user_id)))
 }
 
 pub async fn save_pending_totp_secret(
@@ -234,7 +288,7 @@ pub async fn load_admin_two_factor(
     pool: &Pool<MySql>,
     admin_id: u64,
 ) -> AppResult<AdminTwoFactorSettings> {
-    let settings = sqlx::query_as::<_, AdminTwoFactorSettings>(
+    let settings = sqlx::query_as::<_, AdminTwoFactorSettingsRow>(
         r#"SELECT admin_id, totp_secret_encrypted, totp_enabled, confirmed_at, last_verified_at
            FROM admin_two_factor_settings
            WHERE admin_id = ?
@@ -244,7 +298,9 @@ pub async fn load_admin_two_factor(
     .fetch_optional(pool)
     .await?;
 
-    Ok(settings.unwrap_or_else(|| AdminTwoFactorSettings::empty(admin_id)))
+    Ok(settings
+        .map(Into::into)
+        .unwrap_or_else(|| AdminTwoFactorSettings::empty(admin_id)))
 }
 
 pub async fn save_pending_admin_totp_secret(

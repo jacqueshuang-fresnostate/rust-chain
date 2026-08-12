@@ -3,16 +3,10 @@
 //! 领域层：放置业务实体、值对象和不依赖 I/O 的纯业务规则。
 
 use crate::{
-    architecture::DomainLayer,
     error::{AppError, AppResult},
     modules::wallet::truncate_amount_to_asset_precision,
 };
 use bigdecimal::BigDecimal;
-
-#[derive(Debug)]
-pub struct DomainLayerMarker;
-
-impl DomainLayer for DomainLayerMarker {}
 
 pub const MAX_AGENT_LEVEL: i32 = 3;
 

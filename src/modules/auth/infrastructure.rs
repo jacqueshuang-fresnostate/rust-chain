@@ -21,7 +21,85 @@ use crate::{
 };
 use axum::async_trait;
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use serde::Deserialize;
 use sqlx::{MySql, Pool, Transaction};
+use std::time::Duration as StdDuration;
+
+pub(crate) const CF_TURNSTILE_SITEVERIFY_URL: &str =
+    "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+pub(crate) const TURNSTILE_VERIFY_TIMEOUT: StdDuration = StdDuration::from_secs(5);
+
+#[derive(Debug, Deserialize)]
+struct CfTurnstileVerifyResponse {
+    success: bool,
+    #[serde(rename = "error-codes", default)]
+    error_codes: Vec<String>,
+    hostname: Option<String>,
+}
+
+/// 调用 Cloudflare Siteverify 适配器：保持 5 秒超时、`remoteip` 表单字段及原有错误 code/message 合同。
+pub(crate) async fn verify_turnstile_site_response(
+    siteverify_url: &str,
+    secret: &str,
+    token: &str,
+    remote_ip: Option<&str>,
+) -> AppResult<()> {
+    let mut payload = vec![
+        ("secret", secret.to_owned()),
+        ("response", token.to_owned()),
+    ];
+    if let Some(remote_ip) = remote_ip {
+        payload.push(("remoteip", remote_ip.to_owned()));
+    }
+
+    let response = reqwest::Client::new()
+        .post(siteverify_url)
+        .form(&payload)
+        .timeout(TURNSTILE_VERIFY_TIMEOUT)
+        .send()
+        .await
+        .map_err(|error| {
+            AppError::security_forbidden(
+                "CF_TURNSTILE_REQUEST_FAILED",
+                format!("failed to verify Cloudflare challenge: {error}"),
+            )
+        })?;
+
+    if !response.status().is_success() {
+        return Err(AppError::security_forbidden(
+            "CF_TURNSTILE_BAD_RESPONSE",
+            format!(
+                "Cloudflare challenge verification returned {}",
+                response.status()
+            ),
+        ));
+    }
+
+    let body = response
+        .json::<CfTurnstileVerifyResponse>()
+        .await
+        .map_err(|error| {
+            AppError::security_forbidden(
+                "CF_TURNSTILE_PARSE_FAILED",
+                format!("invalid Cloudflare verification response: {error}"),
+            )
+        })?;
+
+    if !body.success {
+        let error_text = if body.error_codes.is_empty() {
+            "verification failed".to_owned()
+        } else {
+            body.error_codes.join(", ")
+        };
+        return Err(AppError::security_forbidden(
+            "CF_TURNSTILE_INVALID",
+            format!("Cloudflare verification failed: {error_text}"),
+        ));
+    }
+
+    let _ = body.hostname;
+    Ok(())
+}
 
 #[derive(Clone)]
 pub struct MySqlAuthRepository {
@@ -595,6 +673,9 @@ pub(crate) async fn insert_registration_email_verification_in_tx(
     Ok(())
 }
 
+/// 在调用方已开启的注册事务中锁定最新待验证邮件码，拒绝过期或达到五次尝试上限的记录。
+/// 错码只递增一次尝试次数，正确码只把同一行标记为 verified；本函数不自行提交事务。
+/// 调用方对校验型错误提交当前事务以保留试码计数，其他数据库错误必须回滚，重放不得重复消费旧验证码。
 pub(crate) async fn verify_registration_email_code_in_tx(
     tx: &mut Transaction<'_, MySql>,
     email: &str,
@@ -646,6 +727,9 @@ pub(crate) async fn verify_registration_email_code_in_tx(
     Ok(())
 }
 
+/// 在调用方已开启的注册事务中按“邀请码→所有者→上级推荐链”顺序加锁并组装绑定快照。
+/// 已耗尽邀请码、停用代理或停用用户必须在创建用户前失败，避免并发注册超用量或写入失效归属。
+/// 本函数不写推荐关系、不递增 used_count；这些副作用须与用户创建共用同一事务，失败或重放不得留下半成品。
 pub(crate) async fn prepare_referral_binding_in_tx(
     tx: &mut Transaction<'_, MySql>,
     code: &str,
@@ -1088,3 +1172,7 @@ async fn load_referral_link_in_tx(
 fn is_duplicate_key(error: &sqlx::Error) -> bool {
     matches!(error, sqlx::Error::Database(database_error) if database_error.code().as_deref() == Some("1062"))
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit_src/src_modules_auth_infrastructure_tests.rs"]
+mod tests;

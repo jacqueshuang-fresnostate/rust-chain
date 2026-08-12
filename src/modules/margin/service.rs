@@ -4,23 +4,15 @@
 //! 当前文件先作为 DDD 迁移锚点，后续把对应职责的业务服务逐步迁入。
 
 use crate::error::{AppError, AppResult};
-use crate::{
-    architecture::ServiceLayer,
-    modules::{
-        events::{EventBroadcastHub, EventBroadcastMessage},
-        margin::{
-            application::margin_position_payout_amount,
-            presentation::{MarginPositionResponse, MarginProductResponse},
-        },
+use crate::modules::{
+    events::{EventBroadcastHub, EventBroadcastMessage},
+    margin::{
+        domain::margin_position_payout_amount,
+        presentation::{MarginPositionResponse, MarginProductResponse},
     },
 };
 use bigdecimal::BigDecimal;
 use serde_json::{Value, json};
-
-#[derive(Debug)]
-pub struct ServiceLayerMarker;
-
-impl ServiceLayer for ServiceLayerMarker {}
 
 fn decimal_amount_string(amount: &BigDecimal) -> String {
     format!("{amount:.18}")
@@ -61,10 +53,8 @@ pub(crate) fn publish_margin_position_opened_event_if_needed(
     position: &MarginPositionResponse,
     is_new_position: bool,
 ) {
-    if is_new_position {
-        if let Some(hub) = hub {
-            publish_margin_position_opened_event(hub, user_id, position);
-        }
+    if is_new_position && let Some(hub) = hub {
+        publish_margin_position_opened_event(hub, user_id, position);
     }
 }
 
@@ -106,10 +96,8 @@ pub(crate) fn publish_margin_position_closed_event_if_needed(
     position: &MarginPositionResponse,
     is_new_close: bool,
 ) {
-    if is_new_close {
-        if let Some(hub) = hub {
-            publish_margin_position_closed_event(hub, user_id, position);
-        }
+    if is_new_close && let Some(hub) = hub {
+        publish_margin_position_closed_event(hub, user_id, position);
     }
 }
 
@@ -143,10 +131,8 @@ pub(crate) fn publish_margin_position_canceled_event_if_needed(
     position: &MarginPositionResponse,
     is_new_cancel: bool,
 ) {
-    if is_new_cancel {
-        if let Some(hub) = hub {
-            publish_margin_position_canceled_event(hub, user_id, position);
-        }
+    if is_new_cancel && let Some(hub) = hub {
+        publish_margin_position_canceled_event(hub, user_id, position);
     }
 }
 
@@ -177,3 +163,7 @@ pub(crate) fn margin_product_audit_json(product: &MarginProductResponse) -> Valu
         "status": product.status,
     })
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit_src/src_modules_margin_service_tests.rs"]
+mod tests;

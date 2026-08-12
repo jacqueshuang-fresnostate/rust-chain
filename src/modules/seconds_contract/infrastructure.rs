@@ -16,7 +16,6 @@ use super::{
     service::{NormalizedSecondsContractProductCycle, optional_string},
 };
 use crate::{
-    architecture::InfrastructureLayer,
     error::{AppError, AppResult},
     modules::market::market_ticker_redis_key,
 };
@@ -25,11 +24,6 @@ use chrono::Utc;
 use redis::{AsyncCommands, aio::ConnectionManager};
 use serde_json::Value;
 use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
-
-#[derive(Debug)]
-pub struct InfrastructureLayerMarker;
-
-impl InfrastructureLayer for InfrastructureLayerMarker {}
 
 /// 分页排序必须带唯一列 id，否则同一排序值的行会在页间重复或丢失。
 const SECONDS_CONTRACT_PRODUCT_ORDER_BY: &str = " ORDER BY products.id DESC";
@@ -749,6 +743,7 @@ pub(crate) async fn mark_order_settled(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // 审计字段与数据库列稳定对应，调用方事务负责原子提交。
 pub(crate) async fn insert_admin_audit_log_in_tx(
     tx: &mut Transaction<'_, MySql>,
     admin_id: u64,

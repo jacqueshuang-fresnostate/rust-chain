@@ -306,6 +306,10 @@ pub(crate) async fn update_admin_new_coin_unlock_rule(
     Ok(after)
 }
 
+/// 更新新币项目的解禁费用规则，并返回事务内回读的项目快照。
+/// 调用方须已完成管理员鉴权；费率、计费依据和费用资产组合必须先通过规则校验。
+/// 事务先锁定项目，再更新规则并写生命周期及后台审计；关闭费用时必须清空全部旧计费字段。
+/// 每次成功调用都会产生审计记录；任一步失败均回滚，不留下半启用的收费配置。
 pub(crate) async fn update_admin_new_coin_unlock_fee_rule(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -500,6 +504,10 @@ pub(crate) async fn distribute_admin_new_coin(
     Ok(distribution)
 }
 
+/// 按换币交易对创建或更新唯一的新币兑换规则，并返回最终规则快照。
+/// 调用方须已完成管理员鉴权；费率来源、固定/浮动配置和状态必须先通过业务校验。
+/// 事务先按交易对锁定现有规则，再选择插入或更新，并将前后值写入后台审计后提交。
+/// 数据库唯一关系防止同一交易对出现多条规则；重试会走更新分支，但仍新增一次审计。
 pub(crate) async fn upsert_admin_new_coin_convert_rule(
     pool: Option<Pool<MySql>>,
     admin_id: u64,

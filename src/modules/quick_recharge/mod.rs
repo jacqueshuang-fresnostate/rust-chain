@@ -2,7 +2,6 @@
 //!
 //! 将快速充值功能的领域、服务与路由汇聚到统一入口，遵循 DDD 边界约束。
 pub mod application;
-pub mod domain;
 pub mod infrastructure;
 pub mod presentation;
 pub mod repository;

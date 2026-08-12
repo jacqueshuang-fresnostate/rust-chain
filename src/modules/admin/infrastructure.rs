@@ -4,7 +4,6 @@
 //! 当前文件先作为 DDD 迁移锚点，后续把对应职责的业务逻辑逐步迁入。
 
 use crate::{
-    architecture::InfrastructureLayer,
     error::{AppError, AppResult},
     infra::{
         email::{SmtpEmailConfig, VerificationCodeTemplate, parse_smtp_security},
@@ -53,7 +52,6 @@ use crate::{
     modules::user::service::generate_user_invite_code,
     modules::wallet::WithdrawFeeTier,
 };
-use axum::extract::Multipart;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use reqwest::multipart::{Form, Part};
@@ -88,11 +86,6 @@ pub(crate) use self::risk_security::*;
 pub(crate) use self::system_config::*;
 pub(crate) use self::users::*;
 pub(crate) use self::wallet_assets::*;
-
-#[derive(Debug)]
-pub struct InfrastructureLayerMarker;
-
-impl InfrastructureLayer for InfrastructureLayerMarker {}
 
 fn optional_string(value: Option<String>) -> Option<String> {
     value

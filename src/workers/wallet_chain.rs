@@ -32,6 +32,7 @@ pub struct WalletChainWorkerConfig {
 }
 
 impl WalletChainWorkerConfig {
+    /// 从环境变量读取钱包链 worker 配置，并对批量与最大尝试次数设定硬上限，防止异常配置放大链网关压力。
     pub fn from_env() -> Self {
         Self {
             enabled: env_bool("WALLET_CHAIN_WORKER_ENABLED", true),
@@ -78,6 +79,7 @@ struct ChainGatewayConfig {
     last_deposit_cursor: Option<String>,
 }
 
+/// 使用生产 HTTP 链网关执行一轮提现广播、回执轮询与充值观察；密钥只从应用配置读取并在调用时解密。
 pub async fn run_once(
     state: &AppState,
     config: WalletChainWorkerConfig,
@@ -95,6 +97,10 @@ pub async fn run_once(
     .await
 }
 
+/// 钱包链 worker 单轮核心：先认领并广播待处理提现，再按网关游标轮询提现回执和充值事件。
+/// 提现状态、冻结释放/确认和充值入账均由独立数据库事务保护；重复回执依赖请求 ID 或链事件唯一键幂等。
+/// 可重试基础设施错误会保留当前页游标并等待下轮；确定性坏事件写入死信后越过，整页成功后才推进游标。
+/// 广播达到最大尝试次数才释放未上链请求；已有链上哈希的请求不得自动解冻，需确认或人工复核。
 pub async fn run_once_with_gateway(
     pool: &Pool<MySql>,
     encryption_key: Option<&str>,
@@ -248,6 +254,7 @@ pub async fn run_once_with_gateway(
     Ok(summary)
 }
 
+/// 按配置间隔持续运行钱包链任务；周期错误记录后继续，申请状态、重试时间、死信和网关游标提供恢复点。
 pub async fn run_loop(state: AppState, config: WalletChainWorkerConfig) -> AppResult<()> {
     let mut ticker = interval(Duration::from_secs(config.interval_seconds.max(1)));
     loop {
@@ -270,6 +277,8 @@ pub async fn run_loop(state: AppState, config: WalletChainWorkerConfig) -> AppRe
     }
 }
 
+/// 在事务中核对网关网络、请求 ID、交易哈希与回执状态，再推进提现链上进度、确认扣款或人工复核。
+/// 重复回执只提高确认数，不重复扣 frozen；失败回执若已有链上不确定性不得自动释放资金。
 async fn process_withdrawal_observation(
     pool: &Pool<MySql>,
     expected_network: &str,
@@ -371,6 +380,7 @@ async fn process_withdrawal_observation(
     Ok(())
 }
 
+/// 规范化链网关充值回执并调用钱包充值观察用例；链事件唯一键负责重放去重，入账事务由钱包上下文持有。
 async fn process_deposit_observation(
     pool: &Pool<MySql>,
     expected_network: &str,

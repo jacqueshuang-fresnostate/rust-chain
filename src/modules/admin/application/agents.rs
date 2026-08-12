@@ -136,6 +136,10 @@ pub(crate) async fn update_admin_agent_status(
     Ok(after)
 }
 
+/// 为已有门户账号的代理重置登录口令，并强制其重新登录。
+/// 调用方须已完成管理员鉴权，且必须提供审计原因；未绑定门户账号的代理会冲突失败。
+/// 事务内先锁定代理，再原子更新口令、撤销刷新令牌、清理失败计数并写入后台审计。
+/// 提交后再撤销在线访问会话；该外部会话操作失败时数据库改密仍已生效，重试撤销是安全的。
 pub(crate) async fn reset_admin_agent_password(
     state: AppState,
     admin_id: u64,

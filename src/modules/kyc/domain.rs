@@ -2,7 +2,6 @@
 //!
 //! 领域层：放置业务实体、值对象和不依赖 I/O 的业务规则。
 
-use crate::architecture::DomainLayer;
 use crate::error::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 
@@ -19,11 +18,6 @@ const SUPPORTED_DOCUMENT_TYPES: &[&str] = &[
     "driver_license",
     "residence_permit",
 ];
-
-#[derive(Debug)]
-pub struct DomainLayerMarker;
-
-impl DomainLayer for DomainLayerMarker {}
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct KycCountryDocumentTypeRule {
@@ -133,6 +127,11 @@ pub(crate) fn validate_kyc_config(
     })
 }
 
+/// 按当前 KYC 配置规范化并校验个人或企业申请，生成可安全持久化的领域输入。
+/// 调用方须先确认用户权限、配置启用状态和无待审申请；本函数不读取数据库或判断审核资格。
+/// 企业申请必须具备主体信息，国家与证件类型须命中白名单，材料长度不得超过编码后上限。
+/// 该纯函数不启事务、不记录审计，也不改变原申请；失败返回具体校验错误且无副作用。
+/// 相同输入与配置可安全重放并得到相同结果，但持久化幂等由应用层的待审锁负责。
 pub(crate) fn validate_kyc_submission(
     input: KycSubmissionValidationInput,
     config: &KycSubmissionConfigRules,

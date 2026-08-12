@@ -1370,7 +1370,9 @@ dependencies = [
  "lettre",
  "md-5",
  "mongodb",
+ "proc-macro2",
  "redis 0.27.6",
+ "regex",
  "reqwest",
  "ring",
  "rstest",
@@ -1384,6 +1386,7 @@ dependencies = [
  "sha1",
  "sha2 0.10.9",
  "sqlx",
+ "syn 2.0.117",
  "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite",
@@ -1396,6 +1399,7 @@ dependencies = [
  "utoipa-swagger-ui",
  "uuid",
  "validator",
+ "walkdir",
  "wiremock",
 ]
 

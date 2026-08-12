@@ -24,6 +24,7 @@ pub struct EarnAutoRedemptionWorkerConfig {
 }
 
 impl EarnAutoRedemptionWorkerConfig {
+    /// 从环境变量读取理财自动赎回开关、周期与批量上限；非法值回退到显式默认值。
     pub fn from_env() -> Self {
         Self {
             enabled: env_bool("EARN_AUTO_REDEMPTION_ENABLED", true),
@@ -34,6 +35,7 @@ impl EarnAutoRedemptionWorkerConfig {
 }
 
 impl EarnAutoRedemptionWorker {
+    /// 执行一轮到期理财自动赎回，委托公共单轮入口并返回扫描、成功、跳过和失败统计。
     pub async fn run_once(
         &self,
         state: &AppState,
@@ -100,10 +102,12 @@ pub struct EarnRedemptionEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum EarnRedemptionOutcome {
-    Redeemed(EarnRedemptionEvent),
+    Redeemed(Box<EarnRedemptionEvent>),
     Skipped,
 }
 
+/// 从应用状态取得 MySQL 与事件总线后执行一轮到期理财赎回；缺少数据库时立即失败，不做内存降级。
+/// 每笔订阅由独立事务锁定订阅和钱包，重复扫描已赎回记录只会跳过；事件仅在该笔事务提交后发布。
 pub async fn run_once(
     state: &AppState,
     now: DateTime<Utc>,
@@ -115,6 +119,7 @@ pub async fn run_once(
     run_once_with_broadcast(pool, state.event_broadcast_hub.as_ref(), now, limit).await
 }
 
+/// 无事件总线地执行一轮赎回，供测试和显式批处理调用；资金事务与幂等规则与生产入口完全一致。
 pub async fn run_once_with_dependencies(
     pool: &Pool<MySql>,
     now: DateTime<Utc>,
@@ -123,6 +128,8 @@ pub async fn run_once_with_dependencies(
     run_once_with_broadcast(pool, None, now, limit).await
 }
 
+/// 扫描有限数量的到期订阅并逐笔赎回；成功数达到上限即停止，单笔失败记录后继续处理后续候选。
+/// 每笔赎回独立提交本金、收益、费用、钱包和账本，已提交记录不受后续失败影响；私有事件只在提交成功后广播。
 pub async fn run_once_with_broadcast(
     pool: &Pool<MySql>,
     hub: Option<&EventBroadcastHub>,
@@ -155,6 +162,7 @@ pub async fn run_once_with_broadcast(
     Ok(summary)
 }
 
+/// 按间隔持续执行理财自动赎回；周期错误只记录并等待下一轮，数据库状态保证重扫不会重复兑付。
 pub async fn run_loop(state: AppState, interval_seconds: u64, limit: u32) -> AppResult<()> {
     let mut ticker = interval(Duration::from_secs(interval_seconds.max(1)));
 
@@ -193,6 +201,9 @@ async fn fetch_due_subscriptions(
     .map_err(AppError::from)
 }
 
+/// 在独立事务中锁定到期订阅与钱包，按产品快照计算本金、收益及各类费用并释放 locked 余额。
+/// 非 active 或尚未到期的订阅幂等跳过；available/locked、账本和订阅终态必须原子提交，金额计算沿用订阅时费率快照。
+/// 本函数只在提交后返回事件载荷，不直接广播，避免失败事务产生赎回通知。
 async fn redeem_subscription_by_id(
     pool: &Pool<MySql>,
     subscription_id: u64,
@@ -284,7 +295,7 @@ async fn redeem_subscription_by_id(
         redeem_amount: amounts.redeem_amount,
     };
     tx.commit().await?;
-    Ok(EarnRedemptionOutcome::Redeemed(event))
+    Ok(EarnRedemptionOutcome::Redeemed(Box::new(event)))
 }
 
 fn publish_redemption_event(hub: Option<&EventBroadcastHub>, event: &EarnRedemptionEvent) {

@@ -14,11 +14,11 @@ pub use domain::{
     ensure_unlock_release_allowed, plan_post_listing_purchase,
 };
 
+pub use infrastructure::MySqlNewCoinRepository;
 pub use repository::{
-    MySqlNewCoinRepository, NewCoinPurchaseOrderInsert, NewCoinPurchaseOrderInsertResult,
-    NewCoinPurchaseRepository, NewCoinRepositoryError, PostListingPurchaseRecord,
-    UnlockFeePaidStatus, UnlockFeePaymentRecord, UnlockFeePaymentUpdate, UnlockFeeRepository,
-    UnlockReleaseRecord, WalletLockCommandOutput,
+    NewCoinPurchaseOrderInsert, NewCoinPurchaseOrderInsertResult, NewCoinPurchaseRepository,
+    NewCoinRepositoryError, PostListingPurchaseRecord, UnlockFeePaidStatus, UnlockFeePaymentRecord,
+    UnlockFeePaymentUpdate, UnlockFeeRepository, UnlockReleaseRecord, WalletLockCommandOutput,
 };
 
 pub use service::{

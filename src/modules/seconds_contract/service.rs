@@ -4,7 +4,6 @@
 //! 当前文件先作为 DDD 迁移锚点，后续把对应职责的业务服务逐步迁入。
 
 use crate::{
-    architecture::ServiceLayer,
     error::{AppError, AppResult},
     modules::seconds_contract::{
         presentation::{
@@ -23,11 +22,6 @@ use crate::{
 use bigdecimal::BigDecimal;
 use serde_json::{Value, json};
 use std::collections::HashSet;
-
-#[derive(Debug)]
-pub struct ServiceLayerMarker;
-
-impl ServiceLayer for ServiceLayerMarker {}
 
 #[derive(Debug, Clone)]
 pub(crate) struct NormalizedSecondsContractProductCycle {
@@ -112,10 +106,8 @@ pub(crate) fn publish_seconds_contract_order_opened_event_if_needed(
     response: &OpenSecondsContractOrderResponse,
     is_new_order: bool,
 ) {
-    if is_new_order {
-        if let Some(hub) = hub {
-            publish_seconds_contract_order_opened_event(hub, user_id, response);
-        }
+    if is_new_order && let Some(hub) = hub {
+        publish_seconds_contract_order_opened_event(hub, user_id, response);
     }
 }
 
@@ -154,10 +146,8 @@ pub(crate) fn publish_seconds_contract_order_settled_event_if_needed(
     response: &SettleSecondsContractOrderResponse,
     is_new_settlement: bool,
 ) {
-    if is_new_settlement {
-        if let Some(hub) = hub {
-            publish_seconds_contract_order_settled_event(hub, user_id, response);
-        }
+    if is_new_settlement && let Some(hub) = hub {
+        publish_seconds_contract_order_settled_event(hub, user_id, response);
     }
 }
 

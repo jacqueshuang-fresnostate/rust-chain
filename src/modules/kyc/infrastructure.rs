@@ -116,6 +116,7 @@ pub(crate) async fn lock_kyc_config_in_tx(
     Ok(config_response(row))
 }
 
+#[allow(clippy::too_many_arguments)] // KYC 配置字段按单行原子写入，保持参数与持久化列可审计对应。
 pub(crate) async fn upsert_kyc_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
     admin_id: u64,
@@ -280,6 +281,7 @@ pub(crate) async fn lock_pending_kyc_submission_id_in_tx(
     .map_err(AppError::from)
 }
 
+#[allow(clippy::too_many_arguments)] // 身份材料字段需显式绑定 SQL 列，避免结构化调试输出泄露敏感数据。
 pub(crate) async fn insert_user_kyc_submission_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,

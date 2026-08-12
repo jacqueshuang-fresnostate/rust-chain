@@ -12,6 +12,7 @@ use crate::{
     },
     modules::events::EventBroadcastHub,
     modules::margin::{
+        domain::margin_position_payout_amount,
         infrastructure::{
             LockedMarginPositionRow, MarginOpenProductRule, MarginProductSettingRule,
             MarginProductUpsertValues, apply_cross_margin_position_settlement,
@@ -83,16 +84,10 @@ pub(crate) fn route_limit(limit: Option<u32>) -> u32 {
     limit.unwrap_or(50).clamp(1, 100)
 }
 
-pub(crate) fn margin_position_payout_amount(
-    margin_amount: &BigDecimal,
-    realized_pnl: Option<&BigDecimal>,
-    interest_amount: &BigDecimal,
-) -> BigDecimal {
-    realized_pnl
-        .map(|pnl| non_negative_amount(&(margin_amount + pnl - interest_amount)))
-        .unwrap_or_else(|| BigDecimal::from(0).with_scale(18))
-}
-
+/// 开立市价保证金仓位；调用前必须满足方向、模式、金额、杠杆和服务端新鲜行情约束。
+/// 新请求在事务中先锁产品并插入仓位占用幂等键，再按资金模式锁钱包、扣抵押金并记录流水与佣金。
+/// 全仓只使用杠杆钱包；逐仓优先余额充足的杠杆钱包，否则使用现货钱包，资金来源写入 `wallet_scope`。
+/// 同用户同键同请求重放返回原仓位且不重复扣款；提交后仅事件包装层对新仓位发布通知。
 pub(crate) async fn open_margin_position(
     pool: &Pool<MySql>,
     redis: Option<&ConnectionManager>,
@@ -479,6 +474,10 @@ pub(crate) async fn list_admin_margin_interest_summary(
     Ok(AdminInterestSummaryResponse { summaries, total })
 }
 
+/// 读取用户已开仓仓位的即时风险快照；仓位必须存在、状态为 opened 且保留有效入场价。
+/// 使用服务端新鲜行情计算盈亏、权益、维持保证金和强平条件，不开启事务也不锁定持久化行。
+/// 本函数只读，不修改余额、流水或仓位状态；重复调用按当次行情重新计算，因此不承诺相同结果。
+/// 返回后没有事件发布或其他外部副作用，行情缺失、过期或非法时直接失败。
 pub(crate) async fn get_margin_position_risk_snapshot(
     pool: &Pool<MySql>,
     redis: Option<&ConnectionManager>,
@@ -530,6 +529,10 @@ pub(crate) async fn get_margin_position_risk_snapshot(
     })
 }
 
+/// 在现货与杠杆账户间划转同一资产；账户方向、正金额和资产精度必须先通过校验。
+/// 事务先插入划转记录占用用户幂等键，再由资金层统一按“现货钱包→杠杆钱包”顺序加锁。
+/// 两侧余额一减一增并各写对应流水，必须与划转记录原子提交，禁止出现单边到账或审计缺口。
+/// 同键同请求重放原划转编号及余额快照且不再动账；同键异参冲突，提交后无外部副作用。
 pub(crate) async fn transfer_margin_funds(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -715,6 +718,10 @@ pub(crate) async fn update_user_margin_mode(
     Ok(setting)
 }
 
+/// 主动平掉用户仓位；事务先锁定仓位，已非 opened 时重放当前终态且不再次结算。
+/// opened 仓位必须有入场价并取得服务端新鲜标记价，再计算已实现盈亏、利息后权益和返还额。
+/// 全仓仅以有符号权益更新原杠杆钱包，逐仓按 `wallet_scope` 返还非负金额；余额、流水和仓位终态同事务提交。
+/// 成功提交后仅事件包装层对首次平仓发布通知；失败或终态重放均不得重复入账。
 pub(crate) async fn close_margin_position(
     pool: &Pool<MySql>,
     redis: Option<&ConnectionManager>,
@@ -745,9 +752,9 @@ pub(crate) async fn close_margin_position(
     let position_equity = (position.margin_amount.clone() + realized_pnl.clone()
         - position.interest_amount.clone())
     .with_scale(18);
-    let payout_amount = margin_payout_amount(
+    let payout_amount = margin_position_payout_amount(
         &position.margin_amount,
-        &realized_pnl,
+        Some(&realized_pnl),
         &position.interest_amount,
     );
     if position.margin_mode == "cross" {
@@ -957,14 +964,6 @@ fn margin_realized_pnl(
     Ok((notional_amount.clone() * price_delta / entry_price.clone()).with_scale(18))
 }
 
-fn margin_payout_amount(
-    margin_amount: &BigDecimal,
-    realized_pnl: &BigDecimal,
-    interest_amount: &BigDecimal,
-) -> BigDecimal {
-    non_negative_amount(&(margin_amount.clone() + realized_pnl.clone() - interest_amount.clone()))
-}
-
 fn non_negative_amount(amount: &BigDecimal) -> BigDecimal {
     if amount > &BigDecimal::from(0) {
         amount.clone().with_scale(18)
@@ -973,6 +972,7 @@ fn non_negative_amount(amount: &BigDecimal) -> BigDecimal {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // 幂等核对必须逐字段比对原始下单语义，保持参数显式。
 async fn replay_existing_position(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -997,6 +997,7 @@ async fn replay_existing_position(
     .ok_or_else(|| AppError::Conflict("margin idempotency key is being committed".to_owned()))
 }
 
+#[allow(clippy::too_many_arguments)] // 幂等核对必须逐字段比对原始下单语义，保持参数显式。
 async fn replay_existing_position_if_present(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -1173,6 +1174,7 @@ fn validate_update_product_request(request: &UpdateMarginProductRequest) -> AppR
     )
 }
 
+#[allow(clippy::too_many_arguments)] // 将完整请求快照映射为持久化值，避免更新路径遗漏字段。
 fn margin_product_upsert_values<'a>(
     pair_id: u64,
     margin_asset: u64,
@@ -1209,6 +1211,7 @@ fn margin_product_upsert_values<'a>(
     })
 }
 
+#[allow(clippy::too_many_arguments)] // 纯函数校验完整保证金产品快照，显式字段便于审计约束。
 fn validate_product_fields(
     pair_id: u64,
     margin_asset: u64,
@@ -1544,12 +1547,12 @@ pub(crate) fn margin_trading_capabilities() -> MarginTradingCapabilitiesResponse
 }
 
 fn validate_market_open_order_semantics(request: &OpenMarginPositionRequest) -> AppResult<()> {
-    if let Some(order_type) = request.order_type.as_deref() {
-        if !order_type.trim().eq_ignore_ascii_case("market") {
-            return Err(AppError::Validation(
-                "margin only supports market orders".to_owned(),
-            ));
-        }
+    if let Some(order_type) = request.order_type.as_deref()
+        && !order_type.trim().eq_ignore_ascii_case("market")
+    {
+        return Err(AppError::Validation(
+            "margin only supports market orders".to_owned(),
+        ));
     }
     if request.price.is_some() || request.trigger_price.is_some() {
         return Err(AppError::Validation(

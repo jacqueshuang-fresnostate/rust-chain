@@ -63,6 +63,10 @@ pub(crate) async fn list_admin_risk_rules(
     Ok(RiskRulesResponse { rules, total })
 }
 
+/// 创建一条可立即生效的后台风控规则，并返回持久化后的规则内容。
+/// 调用方须已完成管理员鉴权；规则类型、目标范围和 JSON 配置必须先通过结构校验。
+/// 规则插入、事务内回读与管理员审计原子提交，避免风控已生效但操作来源不可追溯。
+/// 本用例没有业务幂等键；失败全部回滚，重复成功请求可能创建语义相同的多条规则。
 pub(crate) async fn create_admin_risk_rule(
     pool: Option<Pool<MySql>>,
     admin_id: u64,

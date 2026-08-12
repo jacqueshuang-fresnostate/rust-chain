@@ -85,6 +85,10 @@ pub(crate) fn normalize_deposit_networks_query_asset(
         .transpose()
 }
 
+/// 获取用户在指定资产、网络与地址组中的充值地址；已有分配直接复用，不轮换地址。
+/// 请求先完成资产/网络规范化并确认充值已启用；新分配会在单事务内锁定一条可用地址、读取用户邮箱并绑定用户。
+/// 地址池行锁保证并发请求不会把同一地址分配给多个用户；事务失败不改变库存，调用方可安全重试并读取既有分配。
+/// 本函数只更新本地地址池，不调用链网关，也不产生充值入账或外部消息。
 pub(crate) async fn get_or_assign_deposit_address(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -168,8 +172,7 @@ pub(crate) async fn get_today_return_at(
     let priced_assets = activity
         .iter()
         .filter(|row| {
-            (row.amount != BigDecimal::from(0) || row.basis_amount != BigDecimal::from(0))
-                && !is_stablecoin(&row.asset_symbol)
+            (row.amount != 0 || row.basis_amount != 0) && !is_stablecoin(&row.asset_symbol)
         })
         .map(|row| row.asset_symbol.trim().to_ascii_uppercase())
         .collect::<BTreeSet<_>>()
@@ -233,8 +236,7 @@ pub(crate) async fn get_return_history_at(
     let mut current_price_assets = BTreeSet::new();
     for row in &activity {
         let asset_symbol = row.asset_symbol.trim().to_ascii_uppercase();
-        let has_value =
-            row.amount != BigDecimal::from(0) || row.basis_amount != BigDecimal::from(0);
+        let has_value = row.amount != 0 || row.basis_amount != 0;
         if !has_value || is_stablecoin(&asset_symbol) {
             continue;
         }
@@ -471,7 +473,7 @@ fn realized_return_rate(amount: &BigDecimal, basis_amount: &BigDecimal) -> BigDe
 
 fn quantize_realized_return(value: &BigDecimal) -> BigDecimal {
     let value = truncate_amount_to_asset_precision(value, TODAY_RETURN_REPORTING_SCALE);
-    if value == BigDecimal::from(0) {
+    if value == 0 {
         realized_return_zero()
     } else {
         value
@@ -588,6 +590,11 @@ pub(crate) fn build_wallet_ledger_filter(
     })
 }
 
+/// 创建提现申请并冻结“申请金额 + 服务端费用”；调用方必须提供已认证用户、稳定幂等键及安全验证凭据。
+/// 用例依次执行资产精度/费用规则、幂等重放、风控和资金安全校验，命中拒绝时不得消耗资金或生成申请。
+/// 申请记录、available→frozen 变更及账本由基础设施在同一事务提交；费用以资产精度截断后的服务端规则为准。
+/// 相同幂等键只接受资产、网络、地址、金额和费用一致的重放；并发唯一键冲突会回读旧申请，绝不二次冻结。
+/// 本函数不广播链上交易，后续审核与网关 worker 只能消费已提交的申请状态。
 pub(crate) async fn create_withdrawal_request(
     pool: &Pool<MySql>,
     settings: &Settings,
@@ -858,10 +865,10 @@ fn validate_withdrawal_request(
     if request.address.trim().is_empty() {
         return Err(AppError::Validation("address is required".to_owned()));
     }
-    if request.amount <= BigDecimal::from(0) {
+    if request.amount <= 0 {
         return Err(AppError::Validation("amount must be positive".to_owned()));
     }
-    if request.fee < BigDecimal::from(0) {
+    if request.fee < 0 {
         return Err(AppError::Validation("fee must be non-negative".to_owned()));
     }
     let idempotency_key = request.idempotency_key.trim();
@@ -976,7 +983,7 @@ fn normalize_chain_identifier(value: String, label: &str) -> AppResult<String> {
 fn normalize_observe_deposit_request(
     request: ObserveDepositRequest,
 ) -> AppResult<ObserveDepositRequest> {
-    if request.amount <= BigDecimal::from(0) {
+    if request.amount <= 0 {
         return Err(AppError::Validation(
             "deposit amount must be positive".to_owned(),
         ));

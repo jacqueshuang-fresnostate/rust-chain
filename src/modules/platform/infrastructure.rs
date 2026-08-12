@@ -5,7 +5,7 @@
 use crate::{
     architecture::InfrastructureLayer,
     error::{AppError, AppResult},
-    modules::platform::{domain::DEFAULT_CONFIG_NAME, presentation::PlatformBrandResponse},
+    modules::platform::domain::{DEFAULT_CONFIG_NAME, PlatformBrand},
 };
 use chrono::{DateTime, Utc};
 use sqlx::{MySql, Pool, Transaction};
@@ -41,35 +41,35 @@ pub async fn ensure_default_platform_brand_in_tx(tx: &mut Transaction<'_, MySql>
     Ok(())
 }
 
-pub async fn load_platform_brand_row(pool: &Pool<MySql>) -> AppResult<PlatformBrandResponse> {
+pub async fn load_platform_brand_row(pool: &Pool<MySql>) -> AppResult<PlatformBrand> {
     let row = sqlx::query_as::<_, PlatformBrandRow>(&select_platform_brand_sql(false))
         .bind(DEFAULT_CONFIG_NAME)
         .fetch_optional(pool)
         .await?
         .ok_or(AppError::NotFound)?;
-    Ok(platform_brand_response(row))
+    Ok(platform_brand(row))
 }
 
 pub async fn load_platform_brand_in_tx(
     tx: &mut Transaction<'_, MySql>,
-) -> AppResult<PlatformBrandResponse> {
+) -> AppResult<PlatformBrand> {
     let row = sqlx::query_as::<_, PlatformBrandRow>(&select_platform_brand_sql(false))
         .bind(DEFAULT_CONFIG_NAME)
         .fetch_optional(&mut **tx)
         .await?
         .ok_or(AppError::NotFound)?;
-    Ok(platform_brand_response(row))
+    Ok(platform_brand(row))
 }
 
 pub async fn lock_platform_brand_in_tx(
     tx: &mut Transaction<'_, MySql>,
-) -> AppResult<PlatformBrandResponse> {
+) -> AppResult<PlatformBrand> {
     let row = sqlx::query_as::<_, PlatformBrandRow>(&select_platform_brand_sql(true))
         .bind(DEFAULT_CONFIG_NAME)
         .fetch_optional(&mut **tx)
         .await?
         .ok_or(AppError::NotFound)?;
-    Ok(platform_brand_response(row))
+    Ok(platform_brand(row))
 }
 
 pub async fn upsert_platform_brand_in_tx(
@@ -117,8 +117,8 @@ fn select_platform_brand_sql(for_update: bool) -> String {
     sql
 }
 
-fn platform_brand_response(row: PlatformBrandRow) -> PlatformBrandResponse {
-    PlatformBrandResponse {
+fn platform_brand(row: PlatformBrandRow) -> PlatformBrand {
+    PlatformBrand {
         id: row.id,
         name: row.name,
         platform_name: row.platform_name,

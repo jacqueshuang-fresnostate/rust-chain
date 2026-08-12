@@ -2,19 +2,11 @@
 //!
 //! 服务层：封装可复用业务规则、数据格式化与纯计算逻辑。
 
-use crate::{
-    architecture::ServiceLayer,
-    error::{AppError, AppResult},
-};
+use crate::error::{AppError, AppResult};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::{collections::HashSet, str::FromStr};
-
-#[derive(Debug)]
-pub struct ServiceLayerMarker;
-
-impl ServiceLayer for ServiceLayerMarker {}
 
 pub(crate) const STATUS_ACTIVE: &str = "active";
 pub(crate) const STATUS_HIDDEN: &str = "hidden";
@@ -494,9 +486,9 @@ pub(crate) fn decimal_str(value: &str) -> BigDecimal {
 }
 
 pub(crate) fn clamp_probability(value: BigDecimal) -> BigDecimal {
-    if value <= BigDecimal::from(0) {
+    if value <= 0 {
         decimal_str("0.01")
-    } else if value >= BigDecimal::from(1) {
+    } else if value >= 1 {
         decimal_str("0.99")
     } else {
         value.with_scale(8)

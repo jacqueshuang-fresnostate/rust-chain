@@ -16,6 +16,7 @@ pub struct LoanOverdueWorkerConfig {
 }
 
 impl LoanOverdueWorkerConfig {
+    /// 从环境变量读取贷款逾期扫描配置；默认关闭，避免未显式启用时推进订单状态。
     pub fn from_env() -> Self {
         Self {
             enabled: env_bool("LOAN_OVERDUE_ENABLED", false),
@@ -51,6 +52,9 @@ enum LoanOverdueOutcome {
     Skipped,
 }
 
+/// 单轮扫描已放款且到期的贷款订单，并逐笔锁行推进为逾期状态。
+/// 扫描数高于成功上限以越过并发失效候选；单笔失败只计数并继续，状态已变化的订单幂等跳过。
+/// 当前入口不计提罚息、不修改钱包，也不发送消息，避免从未配置的费率生成资金结果。
 pub async fn run_once_with_dependencies(
     pool: &Pool<MySql>,
     now: DateTime<Utc>,
@@ -77,6 +81,7 @@ pub async fn run_once_with_dependencies(
     Ok(summary)
 }
 
+/// 按固定间隔持续扫描贷款逾期；周期级错误记录后继续下一轮，数据库订单状态是重启后的恢复点。
 pub async fn run_loop(pool: Pool<MySql>, interval_seconds: u64, limit: u32) -> AppResult<()> {
     let mut ticker = interval(Duration::from_secs(interval_seconds.max(1)));
 

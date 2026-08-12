@@ -3,7 +3,6 @@
 //! 基础设施层：封装 SQLx、Redis、第三方接口和仓储实现。
 
 use crate::{
-    architecture::InfrastructureLayer,
     error::{AppError, AppResult},
     modules::earn::{
         presentation::{
@@ -16,11 +15,6 @@ use crate::{
 use bigdecimal::BigDecimal;
 use serde_json::Value;
 use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
-
-#[derive(Debug)]
-pub struct InfrastructureLayerMarker;
-
-impl InfrastructureLayer for InfrastructureLayerMarker {}
 
 /// 分页排序必须带唯一列 id，否则同一排序值的行会在页间重复或丢失。
 const EARN_PRODUCT_ORDER_BY: &str = " ORDER BY products.id DESC";
@@ -761,6 +755,7 @@ pub(crate) async fn load_redeemed_amounts_from_ledger(
     Ok((principal_amount, yield_amount, redeem_amount))
 }
 
+#[allow(clippy::too_many_arguments)] // 审计记录字段与数据库列稳定对应，调用方事务负责原子提交。
 pub(crate) async fn insert_admin_audit_log_in_tx(
     tx: &mut Transaction<'_, MySql>,
     admin_id: u64,

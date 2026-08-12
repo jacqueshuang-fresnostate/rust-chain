@@ -5,7 +5,6 @@
 
 use crate::modules::spot::repository::SpotRepository;
 use crate::{
-    architecture::ServiceLayer,
     error::{AppError, AppResult},
     modules::events::{EventBroadcastHub, EventBroadcastMessage},
     modules::spot::{
@@ -21,11 +20,6 @@ use serde_json::{Value, json};
 
 const MARKET_REFERENCE_PRICE_TOLERANCE_BPS: i64 = 10;
 const BASIS_POINTS_DENOMINATOR: i64 = 10_000;
-
-#[derive(Debug)]
-pub struct ServiceLayerMarker;
-
-impl ServiceLayer for ServiceLayerMarker {}
 
 /// 推送现货订单取消事件到用户私有频道（订单侧只做结构化通知）。
 pub(crate) fn publish_spot_cancel_private_event_by_order(
@@ -112,10 +106,8 @@ pub(crate) fn publish_spot_cancel_private_event_if_needed(
     order: &SpotOrderResponse,
     is_cancelled: bool,
 ) {
-    if is_cancelled {
-        if let Some(hub) = hub {
-            publish_spot_cancel_private_event(hub, user_id, order);
-        }
+    if is_cancelled && let Some(hub) = hub {
+        publish_spot_cancel_private_event(hub, user_id, order);
     }
 }
 
@@ -249,6 +241,10 @@ impl<S, W> SpotService<S, W> {
 }
 
 impl<S: SpotRepository, W: WalletRepository> SpotService<S, W> {
+    /// 依据交易对规则构造订单并同步冻结对应钱包保留额，随后交给仓储持久化订单。
+    /// 调用方必须提供与订单类型匹配的价格/参考价、有效数量和稳定幂等键；买单冻结报价资产，卖单冻结基础资产。
+    /// 钱包冻结与订单插入必须由具体仓储组合在同一外层事务或等价原子边界内执行，失败不得留下无订单冻结。
+    /// 本服务只返回仓储的幂等结果，不发布成交或订单事件。
     pub fn create_order(
         &mut self,
         command: CreateSpotOrderCommand,
@@ -337,7 +333,7 @@ impl<S: SpotRepository, W: WalletRepository> SpotService<S, W> {
             &command.base_asset_id,
             &command.quote_asset_id,
         )?;
-        if remaining_reservation.1 > BigDecimal::from(0) {
+        if remaining_reservation.1 > 0 {
             self.wallet_service
                 .unfreeze(crate::modules::wallet::UnfreezeBalanceCommand {
                     user_id: order.user_id.clone(),

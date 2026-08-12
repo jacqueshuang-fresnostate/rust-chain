@@ -2,3 +2,7 @@
 {"file": ".trellis/spec/backend/directory-structure.md", "reason": "Target backend directory structure to update and follow"}
 {"file": ".trellis/spec/backend/index.md", "reason": "Backend baseline guidelines for DDD refactor"}
 {"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer reasoning for backend architecture changes"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量、注释与架构门禁"}
+{"file": ".trellis/spec/backend/wallet-amount-precision.md", "reason": "资金余额与流水不变量"}
+{"file": ".trellis/spec/backend/auth-sessions.md", "reason": "鉴权会话与 Turnstile 边界"}
+{"file": ".trellis/tasks/06-27-backend-ddd-architecture-refactor/research/backend-comment-and-architecture-audit-2026-08-12.md", "reason": "全量注释与架构审计证据"}

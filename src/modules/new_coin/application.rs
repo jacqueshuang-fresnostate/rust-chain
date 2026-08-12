@@ -3,7 +3,6 @@
 //! 应用层：编排用例、事务边界和跨仓储协作。
 
 use crate::{
-    architecture::ApplicationLayer,
     error::{AppError, AppResult},
     modules::{
         events::{EventBroadcastHub, EventBroadcastMessage},
@@ -35,11 +34,6 @@ use bigdecimal::BigDecimal;
 use chrono::Utc;
 use serde_json::json;
 use sqlx::{MySql, Pool};
-
-#[derive(Debug)]
-pub struct ApplicationLayerMarker;
-
-impl ApplicationLayer for ApplicationLayerMarker {}
 
 pub(crate) async fn list_new_coin_projects(
     pool: Option<Pool<MySql>>,
@@ -170,20 +164,20 @@ pub(crate) async fn release_new_coin_unlock_with_events(
     let (response, released_outcome) =
         release_new_coin_unlock_with_internal(pool, subject, unlock_idempotency_key.clone())
             .await?;
-    if let Some((asset_id, unlock_quantity)) = released_outcome {
-        if let Some(hub) = event_broadcast_hub {
-            hub.publish(EventBroadcastMessage::private_user(
-                user_id,
-                json!({
-                    "type": "new_coin.unlock.released",
-                    "unlock_idempotency_key": unlock_idempotency_key,
-                    "asset_id": asset_id,
-                    "unlock_quantity": unlock_quantity,
-                    "released": true,
-                })
-                .to_string(),
-            ));
-        }
+    if let Some((asset_id, unlock_quantity)) = released_outcome
+        && let Some(hub) = event_broadcast_hub
+    {
+        hub.publish(EventBroadcastMessage::private_user(
+            user_id,
+            json!({
+                "type": "new_coin.unlock.released",
+                "unlock_idempotency_key": unlock_idempotency_key,
+                "asset_id": asset_id,
+                "unlock_quantity": unlock_quantity,
+                "released": true,
+            })
+            .to_string(),
+        ));
     }
     Ok(response)
 }

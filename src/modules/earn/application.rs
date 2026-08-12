@@ -3,7 +3,6 @@
 //! 应用层：编排用例、事务边界和跨仓储协作。
 
 use crate::{
-    architecture::ApplicationLayer,
     error::{AppError, AppResult},
     modules::{
         earn::{
@@ -38,11 +37,6 @@ use bigdecimal::BigDecimal;
 use chrono::Utc;
 use serde_json::json;
 use sqlx::{MySql, Pool};
-
-#[derive(Debug)]
-pub struct ApplicationLayerMarker;
-
-impl ApplicationLayer for ApplicationLayerMarker {}
 
 pub(crate) async fn list_active_earn_products(
     pool: Option<Pool<MySql>>,

@@ -325,6 +325,10 @@ pub(crate) async fn delete_zero_balance_wallet_accounts_for_asset_in_tx(
     Ok(())
 }
 
+/// 在删除资产的调用方事务中，检查钱包、账本及各交易业务是否仍引用该资产。
+/// 调用方须先锁定并禁用目标资产，且先清理允许删除的零余额空钱包账户。
+/// 检查复用当前事务快照但不自行加业务表锁；发现任一资金或订单引用即拒绝删除。
+/// 本函数只读且可重复调用；查询失败或存在引用均由调用方回滚，绝不级联删除历史账务。
 pub(crate) async fn ensure_asset_has_no_references_in_tx(
     tx: &mut Transaction<'_, MySql>,
     asset_id: u64,
@@ -397,6 +401,10 @@ pub(crate) async fn ensure_asset_has_no_references_in_tx(
     Ok(())
 }
 
+/// 按管理员筛选条件分页读取钱包账户及三类余额快照，并同步计算持久化总数。
+/// 调用方负责管理员权限；默认排除内部用户，可按用户、邮箱和资产收窄范围。
+/// 该查询不启事务、不锁账户且不修改资金；主键排序避免余额更新时间变化造成分页漂移。
+/// `include_empty` 仅为当前页补齐未建账的零余额资产并修正返回总数；查询失败无副作用。
 pub(crate) async fn list_admin_wallet_accounts(
     pool: &Pool<MySql>,
     filter: AdminWalletAccountListFilter,
@@ -449,6 +457,10 @@ pub(crate) async fn list_admin_wallet_accounts(
     Ok((accounts, total))
 }
 
+/// 按管理员筛选条件分页读取不可变钱包流水及每笔变动后的完整余额快照。
+/// 调用方负责管理员权限；用户、邮箱、资产、变动类型和业务引用条件同时作用于列表与计数。
+/// 该只读查询不启事务、不加资金锁，按时间和主键倒序稳定返回，且不得重新计算账务金额。
+/// 数据库错误直接返回且无副作用；空结果保留真实总数和分页语义。
 pub(crate) async fn list_admin_wallet_ledger(
     pool: &Pool<MySql>,
     filter: AdminWalletLedgerListFilter,
@@ -648,6 +660,10 @@ pub(crate) async fn ensure_asset_symbols_exist(
     Ok(())
 }
 
+/// 按网络、地址组、状态、资产、用户和地址片段分页检索充值地址池。
+/// 调用方负责管理员权限；资产筛选同时覆盖地址默认资产、已分配资产及 JSON 白名单。
+/// 列表和计数复用同一组谓词，不启事务、不锁定或回收地址，也不改变任何分配关系。
+/// 查询失败无副作用；结果按更新时间和主键稳定倒序，供后台审计与运维查看。
 pub(crate) async fn list_admin_deposit_address_pool(
     pool: &Pool<MySql>,
     filter: AdminDepositAddressPoolListFilter,

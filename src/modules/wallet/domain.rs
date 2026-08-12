@@ -133,18 +133,16 @@ pub fn normalize_withdraw_fee_tiers(
     }
 
     for tier in &tiers {
-        if tier.min_amount < BigDecimal::from(0) {
+        if tier.min_amount < 0 {
             return Err("withdraw_fee_tiers min_amount must be non-negative".to_owned());
         }
-        if tier.fee_rate_percent < BigDecimal::from(0) {
+        if tier.fee_rate_percent < 0 {
             return Err("withdraw_fee_tiers fee_rate_percent must be non-negative".to_owned());
         }
-        if let Some(max_amount) = tier.max_amount.as_ref() {
-            if max_amount <= &tier.min_amount {
-                return Err(
-                    "withdraw_fee_tiers max_amount must be greater than min_amount".to_owned(),
-                );
-            }
+        if let Some(max_amount) = tier.max_amount.as_ref()
+            && max_amount <= &tier.min_amount
+        {
+            return Err("withdraw_fee_tiers max_amount must be greater than min_amount".to_owned());
         }
     }
 
@@ -156,10 +154,10 @@ pub fn normalize_withdraw_fee_tiers(
         if previous_unbounded {
             return Err("withdraw_fee_tiers open-ended tier must be last".to_owned());
         }
-        if let Some(max_amount) = previous_max.as_ref() {
-            if tier.min_amount < *max_amount {
-                return Err("withdraw_fee_tiers ranges must not overlap".to_owned());
-            }
+        if let Some(max_amount) = previous_max.as_ref()
+            && tier.min_amount < *max_amount
+        {
+            return Err("withdraw_fee_tiers ranges must not overlap".to_owned());
         }
 
         match tier.max_amount.as_ref() {

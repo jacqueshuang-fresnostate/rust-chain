@@ -3,7 +3,6 @@
 //! 服务层：封装可复用业务服务和跨实体业务规则。
 
 use crate::{
-    architecture::ServiceLayer,
     error::{AppError, AppResult},
     modules::new_coin::{
         LifecycleStatus, NewCoinDomainError, NewCoinOrderKind, UnlockFeeInput, UnlockFeeQuote,
@@ -20,11 +19,6 @@ use super::repository::{
     NewCoinPurchaseRepository, NewCoinRepositoryError, PostListingPurchaseRecord,
     UnlockFeePaymentRecord, UnlockFeeRepository, UnlockReleaseRecord, WalletLockCommandOutput,
 };
-
-#[derive(Debug)]
-pub struct ServiceLayerMarker;
-
-impl ServiceLayer for ServiceLayerMarker {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NewCoinServiceError {

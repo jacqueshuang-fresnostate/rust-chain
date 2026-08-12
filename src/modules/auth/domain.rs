@@ -21,6 +21,29 @@ pub struct AuthValidationRules;
 
 impl DomainLayer for AuthValidationRules {}
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LoginTurnstilePolicy {
+    enabled: bool,
+    enforce_token: bool,
+}
+
+impl LoginTurnstilePolicy {
+    pub(crate) fn new(has_secret: bool, has_site_key: bool, enforce_token: bool) -> Self {
+        Self {
+            enabled: has_secret && has_site_key,
+            enforce_token,
+        }
+    }
+
+    pub(crate) fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub(crate) fn requires_verification(&self, has_cf_clearance: bool) -> bool {
+        self.enabled && (self.enforce_token || !has_cf_clearance)
+    }
+}
+
 /// 失败计数键统一小写并截断，避免通过大小写或超长输入绕过锁定。
 pub fn login_failure_key(identifier: &str) -> String {
     identifier
@@ -83,3 +106,7 @@ pub(crate) fn optional_string(value: Option<String>) -> Option<String> {
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit_src/src_modules_auth_domain_tests.rs"]
+mod tests;

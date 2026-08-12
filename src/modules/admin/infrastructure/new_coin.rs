@@ -398,6 +398,7 @@ pub(crate) async fn disable_admin_new_coin_post_listing_purchase_in_tx(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // SQL 行写入字段与表结构一一对应，聚合会掩盖审计列语义。
 pub(crate) async fn insert_admin_new_coin_distribution_in_tx(
     tx: &mut Transaction<'_, MySql>,
     project_id: u64,
@@ -651,6 +652,11 @@ pub(crate) async fn apply_admin_new_coin_subscription_distribution_in_tx(
     Ok(())
 }
 
+/// 在调用方事务中把新币分配量记入可用余额，或记入锁定余额并建立锁仓来源。
+/// 调用方须先校验正数数量、锁仓计划总量与分配量一致，并拦截已处理的业务幂等键。
+/// 账户行先锁定后更新，钱包余额、账后快照和锁仓明细必须由同一事务一起提交。
+/// 无锁仓计划时返回空值并直接加可用余额；有计划时返回首个锁仓仓位编号。
+/// 锁仓来源依靠唯一键防重复，但钱包加账不独立幂等；失败须由调用方回滚整个分配事务。
 pub(crate) async fn apply_admin_new_coin_distribution_allocation_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,

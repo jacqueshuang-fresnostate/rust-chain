@@ -112,7 +112,6 @@ use crate::{
                 upsert_admin_market_feed_credential as upsert_market_feed_credential_use_case,
                 upsert_admin_new_coin_convert_rule as upsert_new_coin_convert_rule_use_case,
             },
-            infrastructure::multipart_file_input,
             presentation::{
                 AdminAgentCommissionBatchStatusResponse, AdminAgentCommissionQuery,
                 AdminAgentCommissionResponse, AdminAgentCommissionRuleQuery,
@@ -169,7 +168,7 @@ use crate::{
                 UpdateSecurityPolicyRequest, UpdateTradingPairRequest,
                 UpdateTradingPairStatusRequest, UpdateUserStatusRequest, UploadConfigResponse,
                 UploadImageResponse, UpsertMarketSourceCredentialRequest,
-                UpsertNewCoinConvertRuleRequest,
+                UpsertNewCoinConvertRuleRequest, multipart_file_input,
             },
             service::MAX_UPLOAD_BODY_SIZE_BYTES,
         },

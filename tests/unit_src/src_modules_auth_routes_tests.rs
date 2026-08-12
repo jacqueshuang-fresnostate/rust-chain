@@ -241,25 +241,3 @@ async fn agent_auth_routes_return_clear_error_without_mysql() {
     )
     .await;
 }
-
-#[test]
-fn turnstile_policy_requires_both_server_secret_and_public_site_key() {
-    assert_eq!(login_turnstile_policy(None, None), (false, None));
-    assert_eq!(
-        login_turnstile_policy(Some("secret".to_owned()), None),
-        (false, None)
-    );
-    assert_eq!(
-        login_turnstile_policy(None, Some("site-key".to_owned())),
-        (false, Some("site-key".to_owned()))
-    );
-    assert_eq!(
-        login_turnstile_policy(Some("secret".to_owned()), Some("site-key".to_owned())),
-        (true, Some("site-key".to_owned()))
-    );
-
-    assert!(!should_require_turnstile_token(false, true, false));
-    assert!(should_require_turnstile_token(true, true, true));
-    assert!(should_require_turnstile_token(true, false, false));
-    assert!(!should_require_turnstile_token(true, false, true));
-}

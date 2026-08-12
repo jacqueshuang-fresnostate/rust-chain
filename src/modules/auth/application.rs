@@ -12,21 +12,22 @@ use crate::{
         admin::{application::load_enabled_admin_smtp_config, service::admin_id_from_subject},
         auth::presentation::{
             AdminLoginResponse, AdminTwoFactorSetupResponse, AdminTwoFactorStatusResponse,
-            LoginTwoFactorChallengeResponse, LoginTwoFactorSetupChallengeResponse,
-            LoginTwoFactorSetupResponse, TokenResponse, UserAuthRequest, UserLoginResponse,
+            LoginTransportContext, LoginTwoFactorChallengeResponse,
+            LoginTwoFactorSetupChallengeResponse, LoginTwoFactorSetupResponse, TokenResponse,
+            UserAuthRequest, UserLoginResponse,
         },
         auth::{
             ActorType, AdminCredentials, AdminRegistration, AgentCredentials, AuthActor,
             AuthService, IssuedTokens, MySqlAuthRepository, TokenScope, UserCredentials,
             claims_from_bearer_token,
             domain::{
-                optional_string, required_string, validate_email_code, validate_registration_email,
-                validate_reset_password,
+                LoginTurnstilePolicy, optional_string, required_string, validate_email_code,
+                validate_registration_email, validate_reset_password,
             },
             hash_password,
             infrastructure::{
-                bind_registered_user_referral_in_tx, create_user_invite_code_in_tx,
-                ensure_email_purpose_not_cooling_down_in_tx,
+                CF_TURNSTILE_SITEVERIFY_URL, bind_registered_user_referral_in_tx,
+                create_user_invite_code_in_tx, ensure_email_purpose_not_cooling_down_in_tx,
                 ensure_registration_email_available_in_tx,
                 ensure_registration_email_not_cooling_down_in_tx,
                 increment_email_verification_attempt_in_tx,
@@ -38,7 +39,7 @@ use crate::{
                 prepare_referral_binding_in_tx, revoke_user_refresh_tokens_in_tx,
                 supersede_pending_email_verifications_in_tx,
                 supersede_pending_registration_email_codes_in_tx, update_user_password_in_tx,
-                verify_registration_email_code_in_tx,
+                verify_registration_email_code_in_tx, verify_turnstile_site_response,
             },
             revoke_actor_auth_sessions, verify_password,
         },
@@ -66,6 +67,44 @@ use chrono::{DateTime, Duration, Utc};
 use ring::rand::{SecureRandom, SystemRandom};
 use sqlx::{MySql, Pool};
 
+#[derive(Debug, Clone)]
+struct TurnstileRuntimeConfig {
+    secret: Option<String>,
+    site_key: Option<String>,
+    enforce_token: bool,
+    siteverify_url: String,
+}
+
+impl TurnstileRuntimeConfig {
+    /// 从运行时环境读取登录前校验配置，同时兼容旧的 `CF_TURNSTILE_SECRET_KEY` 秘钥名。
+    fn from_env() -> Self {
+        let secret = std::env::var("CF_TURNSTILE_SECRET")
+            .ok()
+            .or_else(|| std::env::var("CF_TURNSTILE_SECRET_KEY").ok())
+            .and_then(normalized_env_value);
+        let site_key = std::env::var("CF_TURNSTILE_SITE_KEY")
+            .ok()
+            .and_then(normalized_env_value);
+        let enforce_token = std::env::var("CF_TURNSTILE_ENFORCE_TOKEN")
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+            .unwrap_or(false);
+        let siteverify_url = std::env::var("CF_TURNSTILE_SITEVERIFY_URL")
+            .unwrap_or_else(|_| CF_TURNSTILE_SITEVERIFY_URL.to_owned());
+
+        Self {
+            secret,
+            site_key,
+            enforce_token,
+            siteverify_url,
+        }
+    }
+}
+
 pub(crate) fn auth_service(state: &AppState) -> AppResult<AuthService<MySqlAuthRepository>> {
     let pool = mysql_pool(state)?;
 
@@ -90,6 +129,8 @@ pub(crate) struct RegisterConfig {
 
 pub(crate) struct LoginConfig {
     pub(crate) username_login_enabled: bool,
+    pub(crate) cf_turnstile_enabled: bool,
+    pub(crate) cf_turnstile_site_key: Option<String>,
 }
 
 pub(crate) struct RegisterUserWithEmailCodeInput {
@@ -173,6 +214,18 @@ pub(crate) async fn login_admin_actor(
             expires_in_seconds: challenge.expires_in_seconds,
         },
     ))
+}
+
+/// 在管理员密码与 2FA 流程前先执行 Turnstile；挑战失败时不查账号、不累加登录失败计数。
+pub(crate) async fn login_admin_with_turnstile(
+    state: &AppState,
+    credentials: AdminCredentials,
+    turnstile_token: Option<String>,
+    transport: LoginTransportContext,
+) -> AppResult<AdminLoginResponse> {
+    verify_login_turnstile(turnstile_token, transport).await?;
+    let pool = mysql_pool(state)?;
+    login_admin_actor(state, &pool, credentials).await
 }
 
 pub(crate) async fn verify_admin_login_two_factor(
@@ -293,6 +346,17 @@ pub(crate) async fn login_agent_actor(
     auth_service(state)?.login_agent(credentials).await
 }
 
+/// 在代理账号认证前统一执行 Turnstile，保持与用户/管理员登录相同的 clearance 兼容和错误合同。
+pub(crate) async fn login_agent_with_turnstile(
+    state: &AppState,
+    credentials: AgentCredentials,
+    turnstile_token: Option<String>,
+    transport: LoginTransportContext,
+) -> AppResult<IssuedTokens> {
+    verify_login_turnstile(turnstile_token, transport).await?;
+    login_agent_actor(state, credentials).await
+}
+
 pub(crate) async fn refresh_actor_tokens(
     state: &AppState,
     refresh_token: Option<String>,
@@ -317,11 +381,16 @@ pub(crate) async fn load_register_config(pool: &Pool<MySql>) -> AppResult<Regist
     })
 }
 
-pub(crate) async fn load_login_config(pool: &Pool<MySql>) -> AppResult<LoginConfig> {
-    let policy = load_security_policy(pool).await?;
+/// 合并数据库登录策略与 Turnstile 运行时配置，对外继续只暴露 enabled 和 site_key。
+pub(crate) async fn load_login_config(state: &AppState) -> AppResult<LoginConfig> {
+    let policy = load_security_policy(&mysql_pool(state)?).await?;
+    let runtime = TurnstileRuntimeConfig::from_env();
+    let (cf_turnstile_enabled, cf_turnstile_site_key) = turnstile_login_config(&runtime);
 
     Ok(LoginConfig {
         username_login_enabled: policy.username_login_enabled,
+        cf_turnstile_enabled,
+        cf_turnstile_site_key,
     })
 }
 
@@ -407,6 +476,9 @@ pub(crate) async fn register_user_with_email_code_response(
     Ok(tokens.into())
 }
 
+/// 验证用户口令后统一执行登录 2FA 策略；调用方须先完成 Turnstile，并传入当前 MySQL 连接池。
+/// 未命中 2FA 时只签发一组用户会话；命中时只创建一次可消费挑战，不提前签发 token。
+/// 错误路径不得绕过用户名登录开关、强制绑定策略或产生登录会话副作用。
 pub(crate) async fn login_user_with_optional_two_factor(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -459,15 +531,18 @@ pub(crate) async fn login_user_with_optional_two_factor(
     }
 }
 
+/// 用户登录入口用例：先执行 Turnstile，再进入口令/2FA 编排，并统一映射历史响应 DTO。
 pub(crate) async fn login_user_with_optional_two_factor_response(
     state: &AppState,
-    pool: &Pool<MySql>,
     request: UserAuthRequest,
+    transport: LoginTransportContext,
 ) -> AppResult<UserLoginResponse> {
+    verify_login_turnstile(request.cf_turnstile_token, transport).await?;
+    let pool = mysql_pool(state)?;
     // 登录返回值在应用层统一映射，路由层不承担 outcome 分支。
     let outcome = login_user_with_optional_two_factor(
         state,
-        pool,
+        &pool,
         UserLoginInput {
             email: request.email,
             phone: request.phone,
@@ -496,6 +571,67 @@ pub(crate) async fn login_user_with_optional_two_factor_response(
             expires_in_seconds,
         }),
     })
+}
+
+/// 根据运行时启用/强制策略和 transport clearance 决定是否调用 Siteverify。
+async fn verify_login_turnstile(
+    turnstile_token: Option<String>,
+    transport: LoginTransportContext,
+) -> AppResult<()> {
+    let runtime = TurnstileRuntimeConfig::from_env();
+    verify_login_turnstile_with_runtime(turnstile_token, transport, &runtime).await
+}
+
+async fn verify_login_turnstile_with_runtime(
+    turnstile_token: Option<String>,
+    transport: LoginTransportContext,
+    runtime: &TurnstileRuntimeConfig,
+) -> AppResult<()> {
+    let policy = login_turnstile_policy(runtime);
+    if !policy.requires_verification(transport.has_cf_clearance) {
+        return Ok(());
+    }
+    let Some(secret) = runtime.secret.as_deref() else {
+        return Ok(());
+    };
+    let token = turnstile_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .ok_or_else(|| {
+            AppError::security_validation(
+                "CF_TURNSTILE_TOKEN_MISSING",
+                "cf_turnstile_token is required",
+            )
+        })?;
+
+    verify_turnstile_site_response(
+        &runtime.siteverify_url,
+        secret,
+        token,
+        transport.remote_ip.as_deref(),
+    )
+    .await
+}
+
+fn login_turnstile_policy(runtime: &TurnstileRuntimeConfig) -> LoginTurnstilePolicy {
+    LoginTurnstilePolicy::new(
+        runtime.secret.is_some(),
+        runtime.site_key.is_some(),
+        runtime.enforce_token,
+    )
+}
+
+fn turnstile_login_config(runtime: &TurnstileRuntimeConfig) -> (bool, Option<String>) {
+    (
+        login_turnstile_policy(runtime).enabled(),
+        runtime.site_key.clone(),
+    )
+}
+
+fn normalized_env_value(value: String) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_owned())
 }
 
 pub(crate) async fn send_registration_email_code(
@@ -815,3 +951,7 @@ fn generate_email_code() -> AppResult<String> {
     let value = u32::from_be_bytes(bytes) % 1_000_000;
     Ok(format!("{value:06}"))
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit_src/src_modules_auth_application_tests.rs"]
+mod tests;

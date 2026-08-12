@@ -25,10 +25,12 @@ pub struct AgentCommissionSettlementGuard {
 }
 
 impl AgentCommissionSettlementGuard {
+    /// 判断佣金 ID 是否未在当前进程生命周期内失败过；只影响扫描节流，不替代数据库幂等状态。
     pub fn should_attempt(&self, commission_id: u64) -> bool {
         !self.failed_ids.contains(&commission_id)
     }
 
+    /// 记录本进程失败 ID；容量达到上限时清空以限制内存，后续重试仍由数据库状态决定。
     pub fn record_failure(&mut self, commission_id: u64) {
         if self.failed_ids.len() >= GUARD_CAPACITY {
             self.failed_ids.clear();
@@ -42,6 +44,9 @@ struct PendingCommissionCandidate {
     id: u64,
 }
 
+/// 单轮扫描达到最小账龄的 pending 代理佣金，并逐笔调用权威结算用例推进状态。
+/// 扫描量与成功结算量分别受上限约束；单笔冲突或失败只记入汇总并继续，不回滚已完成记录。
+/// 进程内 guard 会跳过本轮生命周期中已失败的 ID，数据库状态仍是跨重启权威来源，结算用例负责幂等。
 pub async fn run_once_with_dependencies(
     pool: &Pool<MySql>,
     now: DateTime<Utc>,
@@ -85,6 +90,8 @@ pub async fn run_once_with_dependencies(
     Ok(summary)
 }
 
+/// 按固定间隔持续运行代理佣金结算；周期级错误只记录并进入下一轮，避免 worker 因单次数据库故障退出。
+/// 同一进程复用失败 guard，重启后会重新尝试数据库中仍为 pending 的记录。
 pub async fn run_loop(
     pool: Pool<MySql>,
     interval_seconds: u64,

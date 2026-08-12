@@ -3,15 +3,10 @@
 //! 领域层：放置领域实体、值对象、错误和纯业务规则。
 //! 这部分代码不依赖数据库/网络/HTTP，便于被应用层直接复用和独立测试。
 
-use crate::{architecture::DomainLayer, modules::wallet::WalletServiceError};
+use crate::modules::wallet::WalletServiceError;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug)]
-pub struct DomainLayerMarker;
-
-impl DomainLayer for DomainLayerMarker {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -294,7 +289,7 @@ pub fn cancel_order(order: &mut SpotOrder) -> Result<bool, SpotDomainError> {
 }
 
 pub fn apply_fill(order: &mut SpotOrder, fill_quantity: BigDecimal) -> Result<(), SpotDomainError> {
-    if fill_quantity <= BigDecimal::from(0) {
+    if fill_quantity <= 0 {
         return Err(SpotDomainError::NonPositiveQuantity);
     }
 

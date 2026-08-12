@@ -3,7 +3,6 @@
 //! 应用层：编排用例、事务边界和跨仓储协作。
 
 use crate::{
-    architecture::ApplicationLayer,
     error::{AppError, AppResult},
     modules::{
         convert::{
@@ -32,11 +31,6 @@ use serde_json::json;
 use sqlx::{MySql, Pool};
 use uuid::Uuid;
 
-#[derive(Debug)]
-pub struct ApplicationLayerMarker;
-
-impl ApplicationLayer for ApplicationLayerMarker {}
-
 pub(crate) async fn list_convert_pairs(
     mysql: Option<Pool<MySql>>,
     query: ListQuery,
@@ -64,6 +58,11 @@ pub(crate) async fn list_convert_orders(
     Ok(ConvertOrdersResponse { orders })
 }
 
+/// 为当前用户按启用换币规则生成限时报价，并同时落库及写入 Redis 缓存。
+/// 调用方须提供用户身份、可用 MySQL/Redis；金额、资产精度、交易对限额及源钱包余额会先校验。
+/// 汇率取固定配置或当前市场源，目标额和费用按各资产精度截断，返回值必须与持久化快照一致。
+/// MySQL 写入与 Redis 缓存不在同一事务；数据库成功后缓存失败会报错并可能留下不可确认的报价行。
+/// 每次调用生成新的报价编号，不提供请求幂等；确认环节仍以归属、缓存存在性和过期时间为准。
 pub(crate) async fn create_convert_quote(
     mysql: Option<Pool<MySql>>,
     redis: Option<ConnectionManager>,

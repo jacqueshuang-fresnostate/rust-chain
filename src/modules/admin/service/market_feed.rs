@@ -41,10 +41,11 @@ pub(crate) fn validate_market_feed_intervals(intervals: &[String]) -> AppResult<
     }
     intervals
         .iter()
-        .map(|interval| match interval.trim() {
-            value => KlineUpsertKey::new(value, Utc::now())
+        .map(|interval| {
+            let value = interval.trim();
+            KlineUpsertKey::new(value, Utc::now())
                 .map(|key| key.interval().to_owned())
-                .map_err(|error| AppError::Validation(error.to_string())),
+                .map_err(|error| AppError::Validation(error.to_string()))
         })
         .collect()
 }

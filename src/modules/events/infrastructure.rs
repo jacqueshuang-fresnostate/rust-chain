@@ -649,45 +649,43 @@ pub(crate) fn decide_existing_inbox_claim(
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct EventRecordListFilter<'a> {
-    pub status: Option<&'a str>,
-    pub limit: u32,
-    pub offset: u32,
+/// 持久化层的事件记录筛选参数，值已由表现层完成边界归一化。
+pub(crate) struct EventRecordListFilter<'a> {
+    pub(crate) status: Option<&'a str>,
+    pub(crate) limit: u32,
+    pub(crate) offset: u32,
 }
 
-#[derive(Debug, serde::Serialize, sqlx::FromRow)]
-pub struct OutboxRecordRow {
-    pub id: u64,
-    pub aggregate_type: String,
-    pub aggregate_id: String,
-    pub event_type: String,
-    pub routing_key: String,
-    pub status: String,
-    pub retry_count: i32,
-    #[serde(with = "crate::time::option_unix_millis")]
-    pub next_retry_at: Option<DateTime<Utc>>,
-    #[serde(with = "crate::time::option_unix_millis")]
-    pub published_at: Option<DateTime<Utc>>,
-    #[serde(with = "crate::time::unix_millis")]
-    pub created_at: DateTime<Utc>,
+#[derive(Debug, sqlx::FromRow)]
+/// outbox SQL 行模型，只在 infrastructure/application 边界内流转。
+pub(crate) struct OutboxRecordRow {
+    pub(crate) id: u64,
+    pub(crate) aggregate_type: String,
+    pub(crate) aggregate_id: String,
+    pub(crate) event_type: String,
+    pub(crate) routing_key: String,
+    pub(crate) status: String,
+    pub(crate) retry_count: i32,
+    pub(crate) next_retry_at: Option<DateTime<Utc>>,
+    pub(crate) published_at: Option<DateTime<Utc>>,
+    pub(crate) created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, serde::Serialize, sqlx::FromRow)]
-pub struct InboxRecordRow {
-    pub id: u64,
-    pub consumer_name: String,
-    pub message_id: String,
-    pub status: String,
-    pub retry_count: i32,
-    pub error_message: Option<String>,
-    #[serde(with = "crate::time::option_unix_millis")]
-    pub consumed_at: Option<DateTime<Utc>>,
-    #[serde(with = "crate::time::unix_millis")]
-    pub created_at: DateTime<Utc>,
+#[derive(Debug, sqlx::FromRow)]
+/// inbox SQL 行模型，只在 infrastructure/application 边界内流转。
+pub(crate) struct InboxRecordRow {
+    pub(crate) id: u64,
+    pub(crate) consumer_name: String,
+    pub(crate) message_id: String,
+    pub(crate) status: String,
+    pub(crate) retry_count: i32,
+    pub(crate) error_message: Option<String>,
+    pub(crate) consumed_at: Option<DateTime<Utc>>,
+    pub(crate) created_at: DateTime<Utc>,
 }
 
 /// 死信与积压事件的运维查询：计数与行查询使用同一筛选条件。
-pub async fn list_outbox_records(
+pub(crate) async fn list_outbox_records(
     pool: &Pool<MySql>,
     filter: EventRecordListFilter<'_>,
 ) -> AppResult<(Vec<OutboxRecordRow>, i64)> {
@@ -715,7 +713,8 @@ pub async fn list_outbox_records(
     Ok((rows, total))
 }
 
-pub async fn list_inbox_records(
+/// inbox 运维查询仅提供持久化记录，权限控制和响应映射由应用层负责。
+pub(crate) async fn list_inbox_records(
     pool: &Pool<MySql>,
     filter: EventRecordListFilter<'_>,
 ) -> AppResult<(Vec<InboxRecordRow>, i64)> {
@@ -743,21 +742,22 @@ pub async fn list_inbox_records(
     Ok((rows, total))
 }
 
-/// 只有死信可以重排；重置重试计数并立即到期，交由既有发布循环重发。
-pub async fn requeue_outbox_dead_letter(
-    pool: &Pool<MySql>,
+/// 在调用方事务中锁定并重排死信，同时写入管理员审计；调用方负责提交或回滚。
+///
+/// 只有 `dead_letter` 可转为 `pending`，重复重排会返回冲突且不会新增审计记录。
+pub(crate) async fn requeue_outbox_dead_letter_in_tx(
+    tx: &mut Transaction<'_, MySql>,
     admin_id: u64,
     id: u64,
     reason: &str,
 ) -> AppResult<OutboxRecordRow> {
-    let mut tx = pool.begin().await?;
     let before = sqlx::query_as::<_, OutboxRecordRow>(
         r#"SELECT id, aggregate_type, aggregate_id, event_type, routing_key, status,
                   retry_count, next_retry_at, published_at, created_at
            FROM event_outbox WHERE id = ? FOR UPDATE"#,
     )
     .bind(id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?
     .ok_or(AppError::NotFound)?;
     if before.status != OUTBOX_DEAD_LETTER {
@@ -771,10 +771,10 @@ pub async fn requeue_outbox_dead_letter(
     )
     .bind(OUTBOX_PENDING)
     .bind(id)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
     insert_event_admin_audit_log_in_tx(
-        &mut tx,
+        tx,
         admin_id,
         "event_outbox.requeue",
         "event_outbox",
@@ -783,8 +783,6 @@ pub async fn requeue_outbox_dead_letter(
         reason,
     )
     .await?;
-    tx.commit().await?;
-
     let after = OutboxRecordRow {
         status: OUTBOX_PENDING.to_owned(),
         retry_count: 0,

@@ -2,7 +2,6 @@
 //!
 //! 仓储层：定义持久化边界、仓储接口和面向领域的读写契约。
 
-use crate::architecture::RepositoryLayer;
 use bigdecimal::BigDecimal;
 use chrono::Utc;
 
@@ -10,11 +9,6 @@ use crate::modules::convert::domain::{
     ConvertConfirmationInsert, ConvertQuoteCacheEntry, ConvertQuoteConfirmationRecord,
     ConvertRepositoryError, QuoteId,
 };
-
-#[derive(Debug)]
-pub struct RepositoryLayerMarker;
-
-impl RepositoryLayer for RepositoryLayerMarker {}
 
 pub trait ConvertQuoteRepository {
     fn save_quote_ttl(

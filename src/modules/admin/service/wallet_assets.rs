@@ -207,12 +207,12 @@ pub(crate) fn normalize_deposit_asset_symbols(
         }
     }
 
-    if symbols.is_empty() {
-        if let Some(raw_symbol) = optional_string(asset_symbol) {
-            let symbol = normalize_asset_symbol(&raw_symbol)?;
-            if seen.insert(symbol.clone()) {
-                symbols.push(symbol);
-            }
+    if symbols.is_empty()
+        && let Some(raw_symbol) = optional_string(asset_symbol)
+    {
+        let symbol = normalize_asset_symbol(&raw_symbol)?;
+        if seen.insert(symbol.clone()) {
+            symbols.push(symbol);
         }
     }
 

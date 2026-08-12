@@ -12,10 +12,7 @@ use super::{
     },
     service::{QuickRechargeRuntimeConfig, decimal_to_gmpay_string, gmpay_signature, optional_str},
 };
-use crate::{
-    architecture::InfrastructureLayer,
-    error::{AppError, AppResult},
-};
+use crate::error::{AppError, AppResult};
 use axum::http::StatusCode;
 use bigdecimal::BigDecimal;
 use serde::Deserialize;
@@ -29,11 +26,6 @@ pub(crate) const GMPAY_REQUEST_FAILED_CODE: &str = "GMPAY_REQUEST_FAILED";
 const GMPAY_USER_AGENT: &str = "RustChain/1.0 quick-recharge";
 const QUICK_RECHARGE_CHANGE_TYPE: &str = "quick_recharge";
 const QUICK_RECHARGE_REF_TYPE: &str = "quick_recharge";
-
-#[derive(Debug)]
-pub struct InfrastructureLayerMarker;
-
-impl InfrastructureLayer for InfrastructureLayerMarker {}
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct QuickRechargeConfigSqlRow {
@@ -210,6 +202,10 @@ pub(crate) async fn create_gmpay_order(
     create_gmpay_order_with_name(config, order_id, amount, "Quick Recharge", redirect_url).await
 }
 
+/// 按运行时配置组装并签名 GMPay 创建订单表单；调用方须提供唯一订单号、合法金额和已解密商户密钥。
+/// 参数使用稳定键序参与签名，可选跳转地址优先采用本次调用值，否则回退配置默认值。
+/// 本函数只执行支付方 HTTP 请求并校验 HTTP、JSON 与业务状态，不开启数据库事务，也不触碰钱包或流水。
+/// 外部订单可能在响应失败前已创建；本函数不提供本地重放，调用方须以固定订单号核对响应并决定重试。
 pub(crate) async fn create_gmpay_order_with_name(
     config: &QuickRechargeRuntimeConfig,
     order_id: &str,

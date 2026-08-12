@@ -56,6 +56,10 @@ url = "2.5"
 validator = { version = "0.18", features = ["derive"] }
 
 [dev-dependencies]
+proc-macro2 = { version = "1", features = ["span-locations"] }
+regex = "1"
 rstest = "0.23"
+syn = { version = "2", features = ["full", "visit"] }
 tower = { version = "0.5", features = ["util"] }
+walkdir = "2"
 wiremock = "0.6"

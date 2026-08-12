@@ -167,6 +167,10 @@ pub(crate) async fn replay_spot_order_for_idempotency_key(
     }
 }
 
+/// 创建现货订单并收口提交后的私有事件；调用前必须具备已认证用户、有效交易对及完整幂等参数。
+/// 应用层先复核幂等重放，再取得服务端行情并执行风控，最后选择“仅冻结挂单”或“冻结后立即成交”的事务路径。
+/// 订单、钱包冻结及可能发生的成交结算由下层事务原子提交；重复键只返回参数一致的原订单，绝不重复冻结。
+/// 事件仅在数据库操作成功后发布，事件发布失败不会伪造第二笔订单，调用方可用同一幂等键重放查询既有结果。
 pub(crate) async fn create_spot_order_with_events(
     pool: &Pool<MySql>,
     redis: Option<&ConnectionManager>,
@@ -436,6 +440,9 @@ pub(crate) fn build_create_spot_order(
     .map_err(|error| AppError::Validation(format!("invalid spot order: {error:?}")))
 }
 
+/// 解析现货订单的权威执行价：市价单必须使用新鲜 Redis 行情，客户端参考价只参与滑点保护。
+/// 限价/止盈止损限价仅在服务端最新价触发价格条件时返回执行价；行情缺失时保持挂单而不使用客户端价格兜底。
+/// 本函数只读取行情并执行纯价格校验，不建单、不冻结资金，也不产生事件，调用方必须在后续事务前再次承担状态一致性。
 pub(crate) async fn resolve_spot_order_execution_price(
     redis: Option<&ConnectionManager>,
     request: &CreateSpotOrderRequest,
@@ -616,6 +623,11 @@ pub async fn execute_triggered_spot_limit_orders_with_hub(
     Ok(filled_count)
 }
 
+/// 在单个 MySQL 事务中结算一笔现货成交，调用方必须传入同交易对、方向相反且满足限价约束的买卖订单。
+/// 事务先按固定顺序锁订单，再以成交幂等键占位，随后按用户/资产稳定顺序锁钱包，避免双向撮合形成死锁。
+/// 买方报价资产与卖方基础资产只能从 frozen 扣减，对手资产等额进入 available；每条资金腿、佣金及订单状态均同步写账本。
+/// 同一幂等键重放只接受完全一致的订单、价格和数量并返回既有成交；唯一键竞态会回滚后走只读重放，不重复结算。
+/// 本函数不发布外部事件；调用者只能在事务提交成功且 `is_new_trade` 为真时广播成交结果。
 pub(crate) async fn settle_spot_fill(
     pool: &Pool<MySql>,
     buy_order_id: &str,
@@ -1068,7 +1080,7 @@ async fn execute_triggered_buy_order_in_tx(
         ));
     }
     let fill_quantity = buy_order.quantity.clone() - buy_order.filled_quantity.clone();
-    if fill_quantity <= BigDecimal::from(0) {
+    if fill_quantity <= 0 {
         return Err(AppError::Validation(
             "spot buy order has no remaining quantity".to_owned(),
         ));
@@ -1228,7 +1240,7 @@ async fn execute_triggered_sell_order_in_tx(
         ));
     }
     let fill_quantity = sell_order.quantity.clone() - sell_order.filled_quantity.clone();
-    if fill_quantity <= BigDecimal::from(0) {
+    if fill_quantity <= 0 {
         return Err(AppError::Validation(
             "spot sell order has no remaining quantity".to_owned(),
         ));

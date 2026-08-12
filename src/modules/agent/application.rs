@@ -3,7 +3,6 @@
 //! 应用层：编排用例、事务边界和跨仓储协作。
 
 use crate::{
-    architecture::ApplicationLayer,
     error::{AppError, AppResult},
     modules::{
         agent::{
@@ -28,11 +27,6 @@ use crate::{
     state::AppState,
 };
 use sqlx::{MySql, Pool};
-
-#[derive(Debug)]
-pub struct ApplicationLayerMarker;
-
-impl ApplicationLayer for ApplicationLayerMarker {}
 
 pub(crate) async fn get_agent_me(
     mysql: Option<Pool<MySql>>,

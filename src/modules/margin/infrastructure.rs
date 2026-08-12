@@ -108,6 +108,10 @@ pub(crate) struct MarginRiskTicker {
     pub(crate) observed_at: DateTime<Utc>,
 }
 
+/// 在调用方事务内完成现货到杠杆划转；金额精度和资产有效性应已由应用层校验。
+/// 固定先锁现货钱包、校验可用余额，再锁杠杆钱包，与反向划转保持相同锁序以降低死锁风险。
+/// 现货可用余额扣减、杠杆可用余额增加及两条方向相反的流水必须使用同一金额并原子提交。
+/// 本函数不提交事务也不独立处理重放；调用方以已占用的划转幂等记录保证只执行一次。
 pub(crate) async fn transfer_spot_to_margin_wallets(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -184,6 +188,10 @@ pub(crate) async fn transfer_spot_to_margin_wallets(
     ))
 }
 
+/// 在调用方事务内完成杠杆到现货划转；金额精度和资产有效性应已由应用层校验。
+/// 即使资金方向相反也固定先锁现货钱包、再锁杠杆钱包，随后校验杠杆侧可用余额。
+/// 杠杆可用余额扣减、现货可用余额增加及两条配对流水必须同事务提交，余额快照与流水一致。
+/// 本函数不提交事务也不独立处理重放；调用方以划转幂等记录阻止重复动账。
 pub(crate) async fn transfer_margin_to_spot_wallets(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1145,6 +1153,7 @@ pub(crate) async fn lock_active_open_product(
     Ok(product)
 }
 
+#[allow(clippy::too_many_arguments)] // 仓位快照字段与 SQL 列一一对应，事务边界由应用层持有。
 pub(crate) async fn insert_margin_position(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1236,6 +1245,10 @@ pub(crate) async fn lock_user_position_by_id(
     .map_err(AppError::from)
 }
 
+/// 在开仓事务内扣除抵押金并返回实际资金域；调用前仓位已插入且金额、模式已校验。
+/// 全仓只锁并扣杠杆钱包；逐仓先尝试现有且余额充足的杠杆钱包，否则再锁现货钱包。
+/// 选定钱包的可用余额扣减与 `margin_position_open` 流水必须同事务写入，返回值须持久化为 `wallet_scope`。
+/// 本函数不提交且不具备独立幂等性，调用方依靠先占用的仓位幂等键避免重复扣款；无提交后副作用。
 pub(crate) async fn debit_margin_position_open_collateral(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1356,6 +1369,10 @@ pub(crate) async fn load_position_by_id(
     .ok_or(AppError::NotFound)
 }
 
+/// 在仓位结算事务内按已记录的 `wallet_scope` 返还正金额；零或负金额不产生余额与流水变更。
+/// `margin` 锁杠杆钱包，`spot` 锁现货钱包，未知资金域直接报错，禁止静默回退到任一账户。
+/// 可用余额增量、余额快照与指定结算流水必须保持同额并由调用方连同仓位终态一起提交。
+/// 本函数不独立去重或提交；调用方必须先锁仓位并确认首次结算，提交后没有外部副作用。
 pub(crate) async fn credit_margin_position_amount(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1666,6 +1683,7 @@ pub(crate) async fn ensure_asset_exists(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // 账本必须显式记录三桶快照和业务引用，聚合会降低资金审计可读性。
 async fn insert_spot_wallet_ledger(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1700,6 +1718,7 @@ async fn insert_spot_wallet_ledger(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // 账本必须显式记录三桶快照和业务引用，聚合会降低资金审计可读性。
 async fn insert_margin_wallet_ledger(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,

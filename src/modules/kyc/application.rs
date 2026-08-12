@@ -74,6 +74,11 @@ pub(crate) async fn latest_kyc_submission(
     latest_kyc_submission_from_infra(pool, user_id).await
 }
 
+/// 在调用方事务中创建用户 KYC 申请，并返回刚写入的完整申请快照。
+/// 用户须处于启用状态、KYC 等级低于当前目标，且系统启用 KYC 并不存在待审申请。
+/// 先锁定用户 KYC 状态和待审记录，再按当前配置校验身份主体、国家、证件类型及材料。
+/// 申请插入不自行提交或写用户审计；调用方必须将申请和审计放在同一事务中完成。
+/// 待审锁充当重复提交边界；冲突或校验失败不写入，数据库失败由调用方整体回滚。
 pub(crate) async fn create_user_kyc_submission_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,

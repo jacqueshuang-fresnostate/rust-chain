@@ -4,15 +4,9 @@
 //! 当前文件先作为 DDD 迁移锚点，后续把对应职责的业务服务逐步迁入。
 
 use crate::{
-    architecture::ServiceLayer,
     error::{AppError, AppResult},
     modules::market::{ValidatedMarketSymbol, presentation::MarketResponse},
 };
-
-#[derive(Debug)]
-pub struct ServiceLayerMarker;
-
-impl ServiceLayer for ServiceLayerMarker {}
 
 pub(crate) fn validate_market_symbol(raw: &str) -> AppResult<ValidatedMarketSymbol> {
     ValidatedMarketSymbol::from_raw(raw).map_err(|error| AppError::Validation(error.to_string()))

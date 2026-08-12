@@ -4,9 +4,6 @@
 pub mod application;
 pub mod domain;
 pub mod infrastructure;
-pub mod presentation;
-pub mod repository;
-pub mod service;
 
 pub use application::{
     credential_encryption_key, ensure_admin_login_challenge_usable, ensure_login_challenge_usable,

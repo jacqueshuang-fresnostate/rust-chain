@@ -4,7 +4,6 @@
 //! 当前文件先作为 DDD 迁移锚点，后续把对应职责的业务服务逐步迁入。
 
 use crate::{
-    architecture::ServiceLayer,
     config::Settings,
     error::{AppError, AppResult},
     infra::email::{VerificationCodeTemplate, parse_smtp_security, smtp_security_code},
@@ -79,11 +78,6 @@ pub(crate) use self::users::*;
 pub(crate) use self::wallet_assets::*;
 
 const ADMIN_AUDIT_REASON_MAX_LEN: usize = 512;
-
-#[derive(Debug)]
-pub struct ServiceLayerMarker;
-
-impl ServiceLayer for ServiceLayerMarker {}
 
 pub(crate) fn required_admin_audit_reason(value: Option<String>) -> AppResult<String> {
     let Some(reason) = optional_string(value) else {

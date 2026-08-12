@@ -1,9 +1,10 @@
-//! Backend architecture markers.
+//! Backend DDD layer contracts.
 //!
 //! The backend is moving toward a DDD-style layout per bounded context:
 //! domain, repository, service, application, infrastructure, presentation,
 //! and thin routes.
-//! These marker traits document intent without forcing a framework.
+//! These traits document responsibilities without forcing a framework. They
+//! are implemented only by real business types, never by marker-only types.
 
 /// 领域层：保存业务实体、值对象和纯规则。
 ///

@@ -17,14 +17,17 @@ pub struct EventInboxStartupConfig {
 }
 
 impl EventInboxStartupConfig {
+    /// 标识 RabbitMQ 实时消费队列，同时作为 inbox 持久化去重与重试扫描的消费边界；该值已通过启动配置的安全字符校验。
     pub fn queue_name(&self) -> &str {
         &self.queue_name
     }
 
+    /// 标识当前 RabbitMQ consumer 实例，供 broker 区分投递所有权和排障；它不替代数据库事件幂等键。
     pub fn consumer_tag(&self) -> &str {
         &self.consumer_tag
     }
 
+    /// 约束 RabbitMQ 已确认后数据库补偿扫描的节奏：零值回落到 10 秒，过大配置收敛到 60 秒，避免关闭补偿或让到期重试长期滞留。
     pub fn retry_scan_seconds(&self, configured_seconds: u64) -> u64 {
         if configured_seconds == 0 {
             10
@@ -40,6 +43,7 @@ pub struct EventInboxWorkerConfig {
 }
 
 impl EventInboxWorkerConfig {
+    /// 从环境变量读取 inbox 队列与 consumer tag；未配置队列代表显式禁用，非 Unicode 配置必须报错。
     pub fn from_env() -> AppResult<Self> {
         Self::from_env_values(
             optional_env("EVENT_INBOX_QUEUE_NAME")?.as_deref(),
@@ -47,6 +51,7 @@ impl EventInboxWorkerConfig {
         )
     }
 
+    /// 由显式配置值构造启动配置；队列名为空时禁用，否则队列和 consumer tag 必须满足安全字符集与长度限制。
     pub fn from_env_values(
         queue_name: Option<&str>,
         consumer_tag: Option<&str>,
@@ -68,10 +73,12 @@ impl EventInboxWorkerConfig {
         })
     }
 
+    /// 指示启动阶段是否显式跳过 inbox consumer 与补偿扫描；缺少队列配置属于停机选择，不应被记录为运行故障并反复重连。
     pub fn is_disabled(&self) -> bool {
         self.startup.is_none()
     }
 
+    /// 提供已完成队列名和 consumer tag 校验的启动参数；调用方仅在存在该配置时才应创建实时消费及数据库重试任务。
     pub fn startup(&self) -> Option<&EventInboxStartupConfig> {
         self.startup.as_ref()
     }
@@ -113,6 +120,7 @@ pub struct EventInboxReconnectBackoff {
 }
 
 impl EventInboxReconnectBackoff {
+    /// 建立 consumer 重连退避状态；初始等待被限制在 1 到 60 秒，并作为后续稳定成功后的恢复基线。
     pub fn new(initial_delay_seconds: u64) -> Self {
         let initial_delay_seconds = initial_delay_seconds.clamp(1, 60);
         Self {
@@ -121,25 +129,31 @@ impl EventInboxReconnectBackoff {
         }
     }
 
+    /// 读取下一次消费循环结束后应等待的秒数；观察状态本身不会推进退避，便于调度与监控使用同一时钟口径。
     pub fn next_delay_seconds(&self) -> u64 {
         self.next_delay_seconds
     }
 
+    /// 记录一次连接或消费失败，并取得本轮实际等待时间；下一轮按指数增长且最多等待 60 秒，防止 broker 故障时形成热重连。
     pub fn record_failure(&mut self) -> u64 {
         self.record_cycle_outcome(EventInboxConsumerCycleOutcome::Failed)
     }
 
+    /// 统一处理异常退出和意外正常结束：先采用当前等待值，再为下一轮翻倍；两类结束都必须延迟，避免已结束 consumer 被无间隔拉起。
     pub fn record_cycle_outcome(&mut self, _outcome: EventInboxConsumerCycleOutcome) -> u64 {
         let current = self.next_delay_seconds;
         self.next_delay_seconds = (self.next_delay_seconds.saturating_mul(2)).min(60);
         current
     }
 
+    /// 在确认消费链路已经稳定成功后把后续重连等待恢复到启动基线，避免历史故障让恢复后的停机切换仍承受最大延迟。
     pub fn record_success(&mut self) {
         self.next_delay_seconds = self.initial_delay_seconds;
     }
 }
 
+/// 单轮重放 MySQL 中已到期的 inbox retry 记录，作为 RabbitMQ 消息已确认后的持久化补偿路径。
+/// 消费服务负责按事件幂等键去重、推进重试或死信；本入口固定批量上限并在处理后发出统一告警。
 pub async fn run_retry_scanner_once(state: &AppState, consumer_name: &str) -> AppResult<()> {
     let service = EventInboxConsumerService::from_state(state, consumer_name.to_owned())?;
     let batch = service.replay_due_retries(Utc::now(), 100).await?;
@@ -160,6 +174,7 @@ pub async fn run_retry_scanner_once(state: &AppState, consumer_name: &str) -> Ap
     Ok(())
 }
 
+/// 按固定间隔运行 inbox 数据库补偿扫描；单周期失败只记录并继续，未到期记录留待后续重放。
 pub async fn run_retry_scanner_loop(
     state: AppState,
     consumer_name: String,
@@ -176,6 +191,9 @@ pub async fn run_retry_scanner_loop(
     }
 }
 
+/// 持续连接 RabbitMQ 并消费指定 inbox 队列；消息去重、重试和死信状态由持久化消费服务负责。
+/// 连接或消费循环结束后采用有上限的指数退避重连，不切换到无确认消费，也不丢弃数据库中的重放状态。
+/// RabbitMQ 未配置时立即失败；队列名和 consumer tag 必须已由启动配置校验。
 pub async fn run_loop(
     state: AppState,
     queue_name: impl Into<String>,

@@ -3,7 +3,6 @@
 //! 服务层：封装可复用业务服务和跨实体业务规则。
 //! 当前文件先作为 DDD 迁移锚点，后续把对应职责的业务服务逐步迁入。
 
-use crate::architecture::ServiceLayer;
 use crate::{
     error::{AppError, AppResult},
     modules::{
@@ -14,11 +13,6 @@ use crate::{
 };
 use ring::rand::{SecureRandom, SystemRandom};
 use sqlx::{MySql, Pool};
-
-#[derive(Debug)]
-pub struct ServiceLayerMarker;
-
-impl ServiceLayer for ServiceLayerMarker {}
 
 pub(crate) const EMAIL_BIND_PURPOSE: &str = "bind";
 pub(crate) const TWO_FACTOR_RESET_PURPOSE: &str = "two_factor_reset";

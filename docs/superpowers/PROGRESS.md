@@ -2,6 +2,27 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-08-12 13:09 - 完成后端中文注释与 DDD 结构收口
+
+- 完成内容：全量审计 251 个 Rust 文件、81,811 行和 3,468 个方法，形成可追溯报告；为审计出的 71/71 个高风险长方法、全部 worker 与跨上下文 infrastructure 公开入口补充中文职责、事务锁序、资金守恒、幂等及副作用合同，并新增 AST 中文文档门禁。删除 15 个纯空壳层和全部 `*LayerMarker`，清零 8 条遗留依赖例外；将 Auth Turnstile 与 Events 管理用例按 presentation/domain/application/infrastructure 职责下沉。按真实职责拆分 Market、Spot、Wallet infrastructure 和 Admin presentation 四个超大文件并保留兼容 façade，生产 Rust 最大文件降为 1,935 行；新增 2,000 行上限、无内嵌测试体及依赖方向门禁。同步完成严格 Clippy 清理、后端规范和任务验收更新。
+- 修改文件：`src/modules/{admin,auth,convert,events,market,new_coin,platform,security,spot,wallet}/**`、`src/{infra,workers}/**`、相关高风险业务模块、`tests/backend_{architecture,documentation}.rs`、`tests/unit_src/**`、`Cargo.toml`、`Cargo.lock`、`.trellis/spec/backend/**`、`.trellis/tasks/06-27-backend-ddd-architecture-refactor/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --all -- --check`、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings` 均通过；架构门禁 9/9、中文文档门禁 1/1 通过；`cargo test --all-targets` 全量通过（含 lib 231 项及全部 integration targets）；Auth 26/26、Events inbox 35/35、outbox 12/12、WebSocket 14/14、OpenAPI 8/8 的定向验证亦通过；独立 Trellis 质量审查未发现剩余结构问题。
+- 后续事项：无。
+
+## 2026-08-12 10:35 - 下沉 Auth Turnstile 登录前验证责任
+
+- 完成内容：将 Auth 路由内的 Turnstile provider DTO、环境配置、Reqwest Siteverify 请求及启用/强制/clearance 策略完整下沉：`presentation` 只归一化 HeaderMap 中的 IP/cookie，`domain` 保持纯策略，`application` 编排用户/管理员/代理登录前验证与登录配置，`infrastructure` 负责 Cloudflare HTTP 适配器；保持 enabled/site_key、5 秒 timeout、remoteip、cf_clearance 兼容及原错误 code/message。同时为用户 2FA 登录、注册邮件码事务校验、邀请关系预备补充中文风险合同。
+- 修改文件：`src/modules/auth/{routes,application,infrastructure,presentation,domain}.rs`、`tests/unit_src/src_modules_auth_{routes,application,infrastructure,presentation,domain}_tests.rs`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --all -- --check`、`git diff --check`、`cargo check --manifest-path Cargo.toml --all-targets` 通过；`cargo test --lib modules::auth -- --nocapture` 26/26 通过（WireMock 需绑定回环端口，已在获批准的沙箱外复跑）。
+- 后续事项：无；本次未修改架构 guard/spec，未提交，未回滚并行工作树改动。
+
+## 2026-08-12 10:32 - 建立后端可选 DDD 分层基线并清理空壳
+
+- 完成内容：将 OpenAPI auth 内嵌测试体外移到 `tests/unit_src`；删除审计确认的 15 个纯空壳 domain/repository/service/presentation 文件及对应 `mod.rs` 声明。将架构门禁从“六层文件必须齐全”改为“分层按职责可选、声明即必须有真实符号”，新增 routes/domain/repository/service 依赖方向、新 marker 禁止、精确带原因且过期自失败的遗留例外检查；`events/routes.rs` 与 `auth/routes.rs` 不放行越层。同步更新后端目录、质量和索引规范。
+- 修改文件：`src/openapi/auth.rs`、`tests/unit_src/src_openapi_auth_tests.rs`、`tests/backend_architecture.rs`、`src/modules/{earn,prediction,quick_recharge,seconds_contract,risk,security,countries,kyc,loan,margin,news,platform}/mod.rs`、审计列出的 15 个已删除空壳层文件、`.trellis/spec/backend/{directory-structure,quality-guidelines,index}.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --manifest-path Cargo.toml --all -- --check` 通过；`cargo test --manifest-path Cargo.toml --test backend_architecture -- --nocapture` 在独立 `CARGO_TARGET_DIR` 与本地 Swagger UI 缓存下 8/8 通过（默认 target 当时被其他 Cargo 任务占锁）；OpenAPI auth 定向单测 1/1 通过；`cargo check --manifest-path Cargo.toml --all-targets` 通过；`git diff --check` 通过；`src` 无 `mod tests {` 内嵌测试体。
+- 后续事项：本切片记录中的 8 条遗留依赖例外与 50 个历史 marker 已在 13:09 的最终结构收口中全部清零；以最终架构门禁结果为准。
+
 ## 2026-08-12 08:53 - 独立复核秒合约行情面板精简
 
 - 完成内容：按任务 PRD 与 Mobile 规范逐项复核当前未提交差异；确认生产构建中的 `.seconds-market-board::after` 在基础快照声明之后被 parity 层 `content: none` 覆盖，深浅主题均不会生成装饰伪元素，`SecondsView` 模板、scoped CSS 和最终 CSS 均无 `seconds-round-row`。逐字比较确认 `prototype-base.css` 与 `SecondsView` 的完整 `script setup` 区块未变，实时价格、1m K 线会话、全量活动订单和 `openSecondsOrder` 下单链路保持原合同；回归断言限定于样式覆盖、页面结构顺序和既有接口标记，未发现需自修复的功能问题。

@@ -3,7 +3,6 @@
 //! 基础设施层：封装 SQLx、Redis、第三方接口和仓储实现。
 
 use crate::{
-    architecture::InfrastructureLayer,
     error::{AppError, AppResult},
     modules::{
         agent::{
@@ -30,10 +29,23 @@ use serde_json::Value;
 use sqlx::{MySql, Pool, QueryBuilder, Transaction};
 use std::str::FromStr;
 
-#[derive(Debug)]
-pub struct InfrastructureLayerMarker;
+impl From<sqlx::Error> for ConvertRepositoryError {
+    fn from(error: sqlx::Error) -> Self {
+        Self::Storage(error.to_string())
+    }
+}
 
-impl InfrastructureLayer for InfrastructureLayerMarker {}
+impl From<redis::RedisError> for ConvertRepositoryError {
+    fn from(error: redis::RedisError) -> Self {
+        Self::Storage(error.to_string())
+    }
+}
+
+impl From<serde_json::Error> for ConvertRepositoryError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Serialization(error.to_string())
+    }
+}
 
 #[derive(Clone)]
 pub struct RedisConvertQuoteCache {
@@ -309,7 +321,7 @@ pub(crate) async fn latest_market_price(
         .ok_or_else(|| AppError::Internal("cached ticker is missing last_price".to_owned()))?;
     let price = BigDecimal::from_str(last_price)
         .map_err(|_| AppError::Internal("cached ticker last_price is invalid".to_owned()))?;
-    if price <= BigDecimal::from(0) {
+    if price <= 0 {
         return Err(AppError::Validation(
             "convert market price must be positive".to_owned(),
         ));

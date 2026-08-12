@@ -12,7 +12,6 @@ use super::{
     ConvertQuoteCreated, ConvertRepositoryError, ConvertServiceError, QuoteId,
 };
 use crate::{
-    architecture::ServiceLayer,
     error::{AppError, AppResult},
     modules::wallet::{
         MAX_ASSET_PRECISION_SCALE, amount_fits_asset_precision, truncate_amount_to_asset_precision,
@@ -20,11 +19,6 @@ use crate::{
 };
 use bigdecimal::BigDecimal;
 use uuid::Uuid;
-
-#[derive(Debug)]
-pub struct ServiceLayerMarker;
-
-impl ServiceLayer for ServiceLayerMarker {}
 
 pub(crate) const QUOTE_TTL_SECONDS: i64 = 30;
 
@@ -65,7 +59,7 @@ pub(crate) fn convert_pair_rule_from_record(
     let is_reverse = row.from_asset_id == to_asset_id && row.to_asset_id == from_asset_id;
     let fixed_rate = match (row.fixed_rate, is_reverse) {
         (Some(rate), true) => {
-            if rate <= BigDecimal::from(0) {
+            if rate <= 0 {
                 return Err(AppError::Validation(
                     "convert reverse quote requires positive fixed pricing rule".to_owned(),
                 ));
@@ -179,14 +173,14 @@ pub(crate) fn convert_quote_amounts(
     let raw_fee_amount = from_amount.clone() * pair.fee_rate.clone();
     let fee_amount = truncate_amount_to_asset_precision(&raw_fee_amount, from_precision_scale);
     let net_from_amount = from_amount.clone() - fee_amount.clone();
-    if net_from_amount <= BigDecimal::from(0) {
+    if net_from_amount <= 0 {
         return Err(AppError::Validation(
             "convert amount must be greater than fee amount".to_owned(),
         ));
     }
     let raw_to_amount = net_from_amount * effective_rate;
     let to_amount = truncate_amount_to_asset_precision(&raw_to_amount, to_precision_scale);
-    if to_amount <= BigDecimal::from(0) {
+    if to_amount <= 0 {
         return Err(AppError::Validation(
             "convert quote amount must be positive".to_owned(),
         ));
