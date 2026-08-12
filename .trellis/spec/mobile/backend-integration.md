@@ -225,26 +225,24 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
   are simple moving averages of those normalized real candle closes; never
   populate indicators or summary fields with demo values.
 - The chart may call `fitContent()` for its initial non-empty dataset and after
-  the replacement array for a real interval change arrives. A same-candle live
-  update must update candles, volume, and MA series without consuming the
-  pending interval fit or resetting the user's pan/zoom viewport.
+  the replacement array for a real symbol or interval change arrives. The
+  normalized symbol plus interval is the renderer dataset key; changing that
+  key alone only marks a pending fit and must wait for a new `points` value.
+  A same-candle live update must update candles, volume, and MA series without
+  consuming the pending dataset fit or resetting the user's pan/zoom viewport.
 - `MarketDetailView` remains the sole owner of the HIPPO REST/WebSocket detail
   session. Chart engines are render-only consumers of the same normalized
   `KlinePoint[]`; changing the local renderer must not call a market API,
   reconnect, resubscribe, clear points, or replace the active detail session.
-- The default renderer is the locally bundled `klinecharts@10.0.0` base package.
-  The selectable TradingView renderer is the locally bundled
-  `lightweight-charts@5.2.0` package. Both render real OHLCV, MA5/MA10/MA20, and
-  volume. Only the selected engine is mounted, and the TradingView renderer
-  disables its optional attribution logo so it does not create an external
-  anchor.
-- KLineChart v10 receives HIPPO rows through an in-memory `DataLoader`; it must
-  not use a Pro/default/remote loader. Same-candle and simple append changes use
-  the subscribed local bar callback. Replacement history preserves an existing
-  viewport unless it is the initial or interval-replacement fit. Preserve that
-  viewport with a timestamp anchor plus its logical right-edge offset; retaining
-  raw logical indexes alone shifts the user's window when history is prepended
-  or trimmed.
+- The sole renderer is the locally bundled `lightweight-charts@5.2.0` package.
+  It renders real OHLCV, MA5/MA10/MA20, and volume from the parent-owned points,
+  enables the official attribution logo/link, and performs no market request.
+  Same-candle and simple append changes call `update` on candles, volume, and
+  the latest available MA rows. Replacement history preserves an existing
+  viewport unless it is the initial or symbol/interval-replacement fit. Preserve
+  that viewport with a timestamp anchor plus its logical right-edge offset;
+  retaining raw logical indexes alone shifts the user's window when history is
+  prepended or trimmed.
 - Each direct depth broadcast is a complete snapshot. Normalize numeric
   strings, reject the whole malformed frame, sort bids descending and asks
   ascending, retain at most 12 levels per side, and coalesce high-frequency
@@ -423,10 +421,12 @@ const points = detailSession.resolveKlineRequest(request, restKlines(initial))
   MA5/MA10/MA20 calculations; same-candle updates that preserve pan/zoom;
   interval replacement fitting; and order-book/trades tab switches that leave
   the active stream untouched.
-- Chart-engine tests for exact local package versions, KLineChart's in-memory
-  loader, disabled TradingView attribution/external anchors, one active renderer, persisted selection,
-  real OHLCV/MA/volume wiring, lifecycle cleanup, and absence of remote chart
-  code or data sources.
+- Chart-runtime tests for exact `lightweight-charts@5.2.0`, absence of
+  `klinecharts`, one active renderer, official attribution enabled, accessible
+  non-image container semantics, real OHLCV/MA/volume wiring, same-candle and
+  append `update`, timestamp-anchored replacement restore, symbol/interval
+  dataset fitting only after new points, mobile gestures, lifecycle cleanup,
+  and absence of remote chart code or data sources.
 - Adapter tests for new-coin quote quantity, safe news rich text, prediction
   order number, and stable margin pair labels.
 - Seconds adapter tests must assert exact raw-to-camel mapping for

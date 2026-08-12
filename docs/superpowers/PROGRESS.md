@@ -7252,6 +7252,13 @@
 - 验证结果：`cargo fmt --all -- --check` 通过；中文文档门禁 1/1、后端架构门禁 11/11 通过；`cargo check --all-targets` 通过；`cargo clippy --all-targets -- -D warnings` 通过；`cargo test --all-targets` 全量通过；Trellis task validate 与 `git diff --check` 通过。全域现有中文 `///` 共计 modules 3822 行、workers 192 行、infra 38 行；缺少 `DATABASE_URL` 的真实数据库集成分支按既有测试合同跳过。
 - 后续事项：无；本次未提交或推送。
 
+## 2026-08-12 20:30 - 手机 K 线统一切换 Lightweight Charts
+
+- 完成内容：将手机现货交易页与行情详情页共用 K 线统一为 npm/Vite 本地打包的 `lightweight-charts@5.2.0` 单一渲染器，删除 `klinecharts`、双引擎组件、图表引擎偏好存储、切换控件和失效 i18n 文案；保留真实 OHLCV、MA5/MA10/MA20、成交量、形成中蜡烛与新蜡烛 `series.update`、symbol+interval 数据集切换、时间戳锚定视口恢复、明暗主题与语言原地更新、ResizeObserver、横向触摸拖动、双指缩放和触摸惯性；启用 Lightweight Charts 官方 attribution logo/link，并继续仅消费现有 HIPPO REST/WebSocket 行情。Ego 在 390×844 手机视口实测行情详情与现货图表均生成 7 个 Canvas、数据集为 `BTC/USDT::15m`、官方署名链接可见、旧引擎与切换控件数量为 0，页面横向宽度保持 390px。
+- 修改文件：`mobile/package{,-lock}.json`、`mobile/src/components/{MobileMarketChart,LightweightMarketChart}.vue`、删除 `mobile/src/components/{KLineChartMarketChart,TradingViewMarketChart}.vue`、`mobile/src/core/marketChartRuntime.ts`、删除 `mobile/src/core/marketChartEngine.ts`、`mobile/src/views/MarketDetailView.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{market-detail-reference-layout,android-ui-trading-prototype-v16,market-news-support-views,ui-prototype-alignment-trading}.test.ts`、`.trellis/spec/mobile/{pwa-and-shell,backend-integration}.md`、`.trellis/tasks/08-12-mobile-lightweight-charts/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Mobile 聚焦测试 59/59、全量测试 360/360 通过；`npm --prefix mobile run type-check` 通过；`npm --prefix mobile run build:pwa` 通过（2067 modules、134 条预缓存）；`npm --prefix mobile run build:tauri` 通过（2067 modules）；`npm --prefix mobile ls lightweight-charts klinecharts --depth=0` 仅返回 `lightweight-charts@5.2.0`；Trellis task validate 与 `git diff --check` 通过；Ego 完成 390×844 行情详情横向拖动和现货图表实际 Canvas/署名/无溢出核验。
+- 后续事项：无；本次未修改后端行情接口或秒合约微型折线图。
+
 ## 2026-08-13 00:29 - 完成新币确定性模拟行情与后台手动 K 线补偿
 
 - 完成内容：为 `strategy/internal` 新币交易对完成 Rust 原生确定性 OHLCV 生成器，支持绝对价格、相对起点涨跌幅和相对前节点涨跌幅的多节点路径，以 hard/soft/range 命中模式、局部波动率和成交量区间生成权威 1m，再由完整连续 1m 聚合 5m/15m/1h/4h/1d。新增一秒实时 worker、`active_version` 绑定、60 秒租约、Redis Lua 时序 CAS、Mongo 同槽防倒退及现有 ticker/Kline WebSocket 和现货订单触发复用；重启仅恢复当前分钟，明确取消历史缺口自动补写。后台新增节点创建/编辑、缺口检测、无副作用预览、HMAC 版本/范围令牌、审计原因确认、任务历史及 pending 续跑/超时 running 重新认领；手动补偿只幂等写 Mongo 历史与完整聚合窗口，不访问 Redis、WebSocket、现货触发或实时 checkpoint。

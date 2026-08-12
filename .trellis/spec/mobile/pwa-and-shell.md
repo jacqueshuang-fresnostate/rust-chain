@@ -137,17 +137,19 @@ selectCollateralAsset(account: WalletAccount): void
   must not remount it or reset its viewport. Full-history refreshes preserve a
   timestamp-anchored window rather than raw logical indexes so prepended or
   trimmed rows keep the same visible candles.
-- Market charts use two npm/Vite-bundled renderers: `klinecharts@10.0.0` is the
-  default and `lightweight-charts@5.2.0` is the selectable TradingView mode.
-  PWA, Tauri, and Android artifacts must contain both local packages and must
-  not load chart scripts, frames, widgets, Pro modules, or market data from a
-  remote runtime. Disable the optional Lightweight Charts attribution logo in
-  both create and theme-apply options so the rendered local chart contains no
-  external anchor.
-- Persist the chart choice under `hippo_mobile_market_chart_engine`, default
-  invalid or unavailable storage to KLineChart, expose a 44px keyboard/touch
-  radio group, and mount exactly one engine. Switching is presentation-only and
-  must not mutate or reconnect the parent market-data session.
+- Market charts use one npm/Vite-bundled renderer: `lightweight-charts@5.2.0`.
+  PWA, Tauri, and Android artifacts contain that local package and must not load
+  chart scripts, frames, widgets, Pro modules, or market data from a remote
+  runtime. Keep the official `attributionLogo` enabled at chart creation so its
+  built-in TradingView link satisfies the library attribution requirement.
+- `MobileMarketChart` mounts exactly one `LightweightMarketChart`; do not expose
+  an engine selector or persist an engine preference. The renderer accepts the
+  normalized symbol plus interval as its dataset key. A key change marks the
+  next dataset for fitting but waits for a new `points` value before rendering
+  or fitting, so changing symbol at the same interval cannot reuse the old
+  viewport or fit stale candles.
+- The chart container is an accessible `region` or `group`, not an image. The
+  built-in attribution link must retain its own interactive semantics.
 - Shared text uses stable pixel sizes and `letter-spacing: 0`; do not scale
   font size with viewport width.
 - The selected visual bottom navigation has exactly five entries in this order:
@@ -461,8 +463,9 @@ selectCollateralAsset(account: WalletAccount): void
   and first row `y === 68`; a source-only check for both declarations is not
   sufficient.
 - Spot interaction: expanding the chart mounts exactly one local renderer and
-  exposes real order-book/latest-trade tabs without iframe, remote chart script,
-  or external chart anchor. Focusing a price/quantity/amount input leaves its
+  exposes real order-book/latest-trade tabs without iframe or remote chart
+  script. The only chart-owned external link is the official Lightweight Charts
+  attribution logo. Focusing a price/quantity/amount input leaves its
   own border/outline/shadow clear while the parent shell carries the only ring.
 - Spot order type: prove the trigger only opens, both explicit options update
   the exact `limit|market` value, and backdrop/close/Escape do not mutate it.
@@ -494,6 +497,13 @@ selectCollateralAsset(account: WalletAccount): void
 - Canvas theme behavior: switch both the stage class and root `data-theme`,
   assert the renderer receives the new background/text/grid/series colors,
   and assert no theme callback runs after component unmount.
+- Market chart runtime: assert the exact `lightweight-charts@5.2.0` package and
+  absence of `klinecharts`, one mounted renderer, official attribution enabled,
+  `region`/`group` semantics, OHLCV plus MA5/MA10/MA20, series `update` for the
+  forming/latest candle, timestamp-anchored replacement restore, symbol/interval
+  dataset fitting only after new points, zero-size resize guards, locale/theme
+  in-place updates, horizontal touch drag, pinch zoom, touch kinetic scroll,
+  and complete observer/chart/animation-frame cleanup.
 - Offline: load the production preview once, stop the server, and reload the
   current route successfully from the service worker.
 - Native: Android Debug APK after build-contract changes; iOS simulator or

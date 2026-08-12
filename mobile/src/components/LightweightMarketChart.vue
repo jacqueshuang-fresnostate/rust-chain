@@ -20,7 +20,7 @@ import {
   classifyMarketChartDataUpdate,
   resolveMarketChartLogicalRange,
   type MarketChartLogicalViewport,
-} from '@/core/marketChartEngine'
+} from '@/core/marketChartRuntime'
 import {
   marketChartColorWithAlpha,
   observeMarketChartTheme,
@@ -35,6 +35,7 @@ import type {
 const props = withDefaults(defineProps<{
   points: NormalizedMarketChartPoint[]
   movingAverages: MarketMovingAverages
+  symbol: string
   interval?: string
   locale: string
   label: string
@@ -162,7 +163,6 @@ function applyTheme(): void {
   currentTheme = theme
   chart.applyOptions({
     layout: {
-      attributionLogo: false,
       background: { type: ColorType.Solid, color: theme.background },
       textColor: theme.muted,
     },
@@ -193,6 +193,10 @@ function resize(): void {
   chart.resize(width, height)
 }
 
+function datasetKey(symbol: string, interval: string): string {
+  return `${symbol.trim().toUpperCase()}::${interval}`
+}
+
 onMounted(() => {
   if (!container.value) return
   const theme = readMarketChartTheme(container.value)
@@ -200,7 +204,7 @@ onMounted(() => {
   chart = createChart(container.value, {
     height: container.value.clientHeight || 300,
     layout: {
-      attributionLogo: false,
+      attributionLogo: true,
       background: { type: ColorType.Solid, color: theme.background },
       textColor: theme.muted,
       fontFamily: getComputedStyle(document.documentElement).fontFamily,
@@ -219,6 +223,7 @@ onMounted(() => {
       vertTouchDrag: false,
     },
     handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
+    kineticScroll: { mouse: false, touch: true },
   })
   candles = chart.addSeries(CandlestickSeries, {
     upColor: theme.positive,
@@ -267,11 +272,14 @@ onMounted(() => {
 })
 
 watch(
-  () => ({ interval: props.interval, points: props.points }),
+  () => ({ key: datasetKey(props.symbol, props.interval), points: props.points }),
   (next, previous) => {
-    const fitKeyChanged = next.interval !== previous.interval
+    const fitKeyChanged = next.key !== previous.key
     const pointsChanged = next.points !== previous.points
-    if (fitKeyChanged) fitNextDataset = true
+    if (fitKeyChanged) {
+      scheduleViewportRestore(null)
+      fitNextDataset = true
+    }
     if (fitKeyChanged && !pointsChanged) return
 
     const update = classifyMarketChartDataUpdate(renderedPoints, next.points)
@@ -316,9 +324,10 @@ onUnmounted(() => {
   <div
     ref="container"
     class="market-chart-engine"
-    data-kline-provider="tradingview"
+    data-kline-provider="lightweight-charts"
     data-chart-package="lightweight-charts@5.2.0"
-    role="img"
+    :data-chart-dataset="datasetKey(symbol, interval)"
+    role="region"
     :aria-label="label"
   />
 </template>

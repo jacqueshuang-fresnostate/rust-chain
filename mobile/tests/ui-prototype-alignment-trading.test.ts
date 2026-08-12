@@ -7,8 +7,7 @@ import { normalizeMarketChartPoints } from '../src/core/marketChart.ts'
 import { quantityForBalancePercentage } from '../src/core/tradeForm.ts'
 
 const chartSource = source('../src/components/MobileMarketChart.vue')
-const klineChartSource = source('../src/components/KLineChartMarketChart.vue')
-const tradingViewChartSource = source('../src/components/TradingViewMarketChart.vue')
+const lightweightChartSource = source('../src/components/LightweightMarketChart.vue')
 const chartUtilitySource = source('../src/core/marketChart.ts')
 const bookSource = source('../src/components/OrderBookPanel.vue')
 const tradeSource = source('../src/views/TradeView.vue')
@@ -19,8 +18,7 @@ const marketDetailSource = source('../src/views/MarketDetailView.vue')
 const ordersSource = source('../src/views/OrdersView.vue')
 const productionSources = [
   chartSource,
-  klineChartSource,
-  tradingViewChartSource,
+  lightweightChartSource,
   bookSource,
   tradeSource,
   secondsSource,
@@ -81,16 +79,15 @@ test('行情详情使用真实 K 线、深度、成交和双交易入口', () =>
 })
 
 test('图表和盘口在空数据与重复时间点下仍保留稳定画布', () => {
-  assert.match(klineChartSource, /init\(container\.value/)
-  assert.match(klineChartSource, /data-kline-provider="klinecharts"/)
-  assert.match(tradingViewChartSource, /createChart\(container\.value/)
-  assert.match(tradingViewChartSource, /data-kline-provider="tradingview"/)
-  assert.match(chartSource, /v-if="engine === 'klinecharts'"/)
-  assert.match(chartSource, /<TradingViewMarketChart[\s\S]*v-else/)
+  assert.match(lightweightChartSource, /createChart\(container\.value/)
+  assert.match(lightweightChartSource, /data-kline-provider="lightweight-charts"/)
+  assert.equal(chartSource.match(/<LightweightMarketChart/g)?.length, 1)
+  assert.doesNotMatch(chartSource, /KLineChart|TradingViewMarketChart|engine-switch/)
   assert.match(chartSource, /data-chart-state=/)
   assert.match(chartSource, /normalizeMarketChartPoints\(props\.points\)/)
-  assert.match(klineChartSource, /if \(width <= 0 \|\| height <= 0\) return/)
-  assert.match(tradingViewChartSource, /if \(width <= 0 \|\| height <= 0\) return/)
+  assert.match(lightweightChartSource, /if \(width <= 0 \|\| height <= 0\) return/)
+  assert.match(lightweightChartSource, /datasetKey\(props\.symbol, props\.interval\)/)
+  assert.match(lightweightChartSource, /role="region"/)
   assert.match(chartUtilitySource, /const unique = new Map<number, NormalizedMarketChartPoint>\(\)/)
   assert.match(chartUtilitySource, /sort\(\(left, right\) => left\.time - right\.time\)/)
   assert.match(chartSource, /min-width: 0/)

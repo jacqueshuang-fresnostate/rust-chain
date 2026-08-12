@@ -633,8 +633,6 @@ onUnmounted(() => {
           :loading="chartLoading"
           :interval="interval"
           :symbol="pairSymbol"
-          show-engine-switch
-          compact-engine-switch
         />
       </div>
       <div class="market-detail__indicator-legend" :aria-label="t('marketDetail.realIndicators')">

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import test from 'node:test'
 import { compileStyle } from 'vue/compiler-sfc'
 import en from '../src/i18n/messages/en.ts'
@@ -11,24 +11,13 @@ import {
 } from '../src/core/marketIndicators.ts'
 import {
   captureMarketChartLogicalViewport,
-  captureMarketChartViewport,
   classifyMarketChartDataUpdate,
-  DEFAULT_MARKET_CHART_ENGINE,
-  loadMarketChartEngine,
-  MARKET_CHART_ENGINE_STORAGE_KEY,
-  marketChartPeriod,
-  normalizeMarketChartTicker,
-  persistMarketChartEngine,
-  resolveMarketChartSymbolInfo,
   resolveMarketChartLogicalRange,
-  resolveMarketChartViewportRealTo,
-  type MarketChartEngineStorage,
-} from '../src/core/marketChartEngine.ts'
+} from '../src/core/marketChartRuntime.ts'
 
 const marketDetailSource = source('../src/views/MarketDetailView.vue')
 const chartSource = source('../src/components/MobileMarketChart.vue')
-const klineChartSource = source('../src/components/KLineChartMarketChart.vue')
-const tradingViewChartSource = source('../src/components/TradingViewMarketChart.vue')
+const lightweightChartSource = source('../src/components/LightweightMarketChart.vue')
 const orderBookSource = source('../src/components/OrderBookPanel.vue')
 const tradeSource = source('../src/views/TradeView.vue')
 const prototypeParityCss = source('../src/styles/prototype-parity.css')
@@ -203,133 +192,72 @@ test('MA5、MA10、MA20 由真实收盘价计算并随形成中蜡烛更新', ()
   assert.deepEqual(calculateSimpleMovingAverage(points, 0), [])
 })
 
-test('本地双引擎共享真实数据、指标、成交量与稳定视口', () => {
-  assert.equal(packageJson.dependencies.klinecharts, '10.0.0')
+test('本地 Lightweight Charts 单引擎保留真实数据、指标、成交量与稳定视口', () => {
+  assert.equal(packageJson.dependencies.klinecharts, undefined)
   assert.equal(packageJson.dependencies['lightweight-charts'], '5.2.0')
-  assert.equal(packageLock.packages['node_modules/klinecharts']?.version, '10.0.0')
+  assert.equal(packageLock.packages['node_modules/klinecharts'], undefined)
   assert.equal(packageLock.packages['node_modules/lightweight-charts']?.version, '5.2.0')
+  assert.equal(existsSync(new URL('../src/components/KLineChartMarketChart.vue', import.meta.url)), false)
+  assert.equal(existsSync(new URL('../src/components/TradingViewMarketChart.vue', import.meta.url)), false)
+  assert.equal(existsSync(new URL('../src/core/marketChartEngine.ts', import.meta.url)), false)
 
-  assert.match(chartSource, /const engine = ref<MarketChartEngine>\(loadMarketChartEngine\(\)\)/)
-  assert.match(chartSource, /\['klinecharts', 'tradingview'\]/)
-  assert.match(chartSource, /v-if="engine === 'klinecharts'"/)
-  assert.match(chartSource, /<TradingViewMarketChart[\s\S]*v-else/)
+  assert.match(chartSource, /import LightweightMarketChart from '@\/components\/LightweightMarketChart\.vue'/)
+  assert.equal(chartSource.match(/<LightweightMarketChart/g)?.length, 1)
   assert.match(chartSource, /:points="normalizedPoints"/)
   assert.match(chartSource, /:moving-averages="movingAverages"/)
-  assert.match(chartSource, /<KLineChartMarketChart[\s\S]*:symbol="symbol"/)
+  assert.match(chartSource, /:symbol="symbol"/)
   assert.match(chartSource, /const chartLocale = computed\(\(\) => locale\.value === 'en' \? 'en-US' : 'zh-CN'\)/)
-  assert.equal(chartSource.match(/:locale="chartLocale"/g)?.length, 2)
-  assert.match(chartSource, /role="radiogroup"/)
-  assert.match(chartSource, /aria-orientation="horizontal"/)
-  assert.match(chartSource, /role="radio"/)
-  assert.match(chartSource, /:aria-checked="engine === option"/)
-  assert.match(chartSource, /event\.key === 'ArrowLeft'[\s\S]*event\.key === 'Home'/)
-  assert.match(chartSource, /event\.key === 'ArrowRight'[\s\S]*event\.key === 'End'/)
-  assert.match(chartSource, /persistMarketChartEngine\(value\)/)
-  assert.match(chartSource, /if \(props\.compactEngineSwitch && closeCompactMenu\) \{[\s\S]*compactEngineMenuOpen\.value = false[\s\S]*compactEngineTrigger\.value\?\.focus\(\)/)
-  assert.match(chartSource, /data-fit-policy="initial-or-interval"/)
-  assert.match(chartSource, /mobile-market-chart__engine-switch button[\s\S]*min-height: 44px/)
-  assert.match(chartSource, /:aria-expanded="compactEngineMenuOpen"[\s\S]*<Settings2/)
-  assert.match(chartSource, /compactEngineMenuOpen\.value = false[\s\S]*compactEngineTrigger\.value\?\.focus\(\)/)
-  assert.match(marketTemplate, /<MobileMarketChart[\s\S]*:interval="interval"[\s\S]*show-engine-switch[\s\S]*compact-engine-switch/)
+  assert.equal(chartSource.match(/:locale="chartLocale"/g)?.length, 1)
+  assert.match(chartSource, /data-fit-policy="initial-or-dataset"/)
+  assert.match(chartSource, /data-chart-engine="lightweight-charts"/)
+  assert.doesNotMatch(chartSource, /engine-switch|radiogroup|Settings2|localStorage/)
+  assert.match(marketTemplate, /<MobileMarketChart[\s\S]*:interval="interval"[\s\S]*\/>/)
+  assert.doesNotMatch(marketTemplate, /show-engine-switch|compact-engine-switch/)
 
-  assert.match(klineChartSource, /from 'klinecharts'/)
-  assert.match(klineChartSource, /data-kline-provider="klinecharts"/)
-  assert.match(klineChartSource, /data-chart-package="klinecharts@10\.0\.0"/)
-  assert.match(klineChartSource, /setDataLoader\(localDataLoader\)/)
-  assert.match(klineChartSource, /callback\(currentRows, \{ backward: false, forward: false \}\)/)
-  assert.match(klineChartSource, /name: 'MA'[\s\S]*calcParams: \[5, 10, 20\]/)
-  assert.match(klineChartSource, /name: 'VOL'[\s\S]*calcParams: \[\]/)
-  assert.match(klineChartSource, /volume: point\.volume/)
-  assert.match(klineChartSource, /updateBar\(latest\)/)
-  assert.match(klineChartSource, /captureViewport\(\)[\s\S]*restoreViewport\(viewport\)/)
-  assert.match(klineChartSource, /captureMarketChartViewport\([\s\S]*resolveMarketChartViewportRealTo\(/)
-  assert.match(klineChartSource, /scrollByDistance\(distance, 0\)/)
-  assert.match(klineChartSource, /pendingPeriod = marketChartPeriod\(next\.interval\)/)
-  assert.match(klineChartSource, /if \(\(intervalChanged \|\| symbolChanged\) && !pointsChanged\)/)
-  assert.match(klineChartSource, /observeMarketChartTheme\(/)
-  assert.match(klineChartSource, /watch\(\(\) => props\.locale[\s\S]*chart\?\.setLocale\(locale\)/)
-  assert.match(klineChartSource, /if \(chart\) dispose\(chart\)/)
-
-  const symbolIndex = klineChartSource.indexOf('synchronizeSymbolMetadata(props.symbol, props.points, true)')
-  const periodIndex = klineChartSource.indexOf('chart.setPeriod(marketChartPeriod(props.interval))')
-  const loaderIndex = klineChartSource.indexOf('chart.setDataLoader(localDataLoader)')
-  assert.ok(symbolIndex > 0 && periodIndex > symbolIndex && loaderIndex > periodIndex)
-
-  assert.equal(tradingViewChartSource.match(/chart\.addSeries\(LineSeries/g)?.length, 3)
-  assert.match(tradingViewChartSource, /chart\.addSeries\(HistogramSeries/)
-  assert.match(tradingViewChartSource, /value: point\.volume/)
-  assert.equal(tradingViewChartSource.match(/attributionLogo: false/g)?.length, 2)
-  assert.doesNotMatch(tradingViewChartSource, /attributionLogo: true|tv-attr-logo/)
-  assert.match(tradingViewChartSource, /data-kline-provider="tradingview"/)
-  assert.match(tradingViewChartSource, /data-chart-package="lightweight-charts@5\.2\.0"/)
-  assert.match(tradingViewChartSource, /candles\?\.update\(candleRow\(point\)\)/)
-  assert.match(tradingViewChartSource, /volume\?\.update\(volumeRow\(point, theme\)\)/)
-  assert.equal(tradingViewChartSource.match(/timeScale\(\)\.fitContent\(\)/g)?.length, 1)
-  assert.match(tradingViewChartSource, /if \(fitKeyChanged && !pointsChanged\) return/)
-  assert.match(tradingViewChartSource, /renderAllData\(false, viewport\)/)
-  assert.match(tradingViewChartSource, /captureMarketChartLogicalViewport\([\s\S]*resolveMarketChartLogicalRange\(/)
-  assert.match(tradingViewChartSource, /requestAnimationFrame\(\(\) => \{[\s\S]*restoreViewport\(viewport\)/)
-  assert.match(tradingViewChartSource, /watch\(\(\) => props\.locale[\s\S]*localization: \{ locale \}/)
-  assert.match(tradingViewChartSource, /pinch: true/)
-  for (const engineSource of [klineChartSource, tradingViewChartSource]) {
-    assert.match(engineSource, /\.market-chart-engine\s*\{[\s\S]*height: 100%;[\s\S]*min-height: 0;/)
-    assert.doesNotMatch(engineSource, /\.market-chart-engine\s*\{[\s\S]*min-height: 220px;/)
-  }
+  assert.equal(lightweightChartSource.match(/chart\.addSeries\(LineSeries/g)?.length, 3)
+  assert.match(lightweightChartSource, /chart\.addSeries\(HistogramSeries/)
+  assert.match(lightweightChartSource, /value: point\.volume/)
+  assert.equal(lightweightChartSource.match(/attributionLogo: true/g)?.length, 1)
+  assert.doesNotMatch(lightweightChartSource, /attributionLogo: false/)
+  assert.match(lightweightChartSource, /data-kline-provider="lightweight-charts"/)
+  assert.match(lightweightChartSource, /data-chart-package="lightweight-charts@5\.2\.0"/)
+  assert.match(lightweightChartSource, /candles\?\.update\(candleRow\(point\)\)/)
+  assert.match(lightweightChartSource, /volume\?\.update\(volumeRow\(point, theme\)\)/)
+  assert.equal(lightweightChartSource.match(/timeScale\(\)\.fitContent\(\)/g)?.length, 1)
+  assert.match(lightweightChartSource, /datasetKey\(props\.symbol, props\.interval\)/)
+  assert.match(lightweightChartSource, /const fitKeyChanged = next\.key !== previous\.key/)
+  assert.match(lightweightChartSource, /if \(fitKeyChanged\) \{[\s\S]*scheduleViewportRestore\(null\)[\s\S]*fitNextDataset = true[\s\S]*\}/)
+  assert.match(lightweightChartSource, /if \(fitKeyChanged && !pointsChanged\) return/)
+  assert.match(lightweightChartSource, /renderAllData\(false, viewport\)/)
+  assert.match(lightweightChartSource, /captureMarketChartLogicalViewport\([\s\S]*resolveMarketChartLogicalRange\(/)
+  assert.match(lightweightChartSource, /requestAnimationFrame\(\(\) => \{[\s\S]*restoreViewport\(viewport\)/)
+  assert.match(lightweightChartSource, /watch\(\(\) => props\.locale[\s\S]*localization: \{ locale \}/)
+  assert.match(lightweightChartSource, /horzTouchDrag: true[\s\S]*vertTouchDrag: false/)
+  assert.match(lightweightChartSource, /pinch: true/)
+  assert.match(lightweightChartSource, /kineticScroll: \{ mouse: false, touch: true \}/)
+  assert.match(lightweightChartSource, /if \(width <= 0 \|\| height <= 0\) return/)
+  assert.match(lightweightChartSource, /resizeObserver\?\.disconnect\(\)/)
+  assert.match(lightweightChartSource, /chart\?\.remove\(\)/)
+  assert.match(lightweightChartSource, /role="region"/)
+  assert.doesNotMatch(lightweightChartSource, /role="img"/)
+  assert.match(lightweightChartSource, /\.market-chart-engine\s*\{[\s\S]*height: 100%;[\s\S]*min-height: 0;/)
   assert.match(tradeSource, /<MobileMarketChart :points="points" :loading="chartLoading" :interval="interval" :symbol="pairSymbol" \/>/)
 
-  const chartRuntimeSources = [chartSource, klineChartSource, tradingViewChartSource]
+  const chartRuntimeSources = [chartSource, lightweightChartSource]
   for (const runtimeSource of chartRuntimeSources) {
-    assert.doesNotMatch(runtimeSource, /<iframe|<script[^>]+src=|<a\b|href=|https?:\/\/|cdn\.|TradingView\.widget|KLineChartPro|datafeed/i)
+    assert.doesNotMatch(runtimeSource, /<iframe|<script[^>]+src=|https?:\/\/|cdn\.|TradingView\.widget|KLineChartPro|datafeed/i)
     assert.doesNotMatch(runtimeSource, /marketDetailStream|fetchKlines|WebSocket/)
   }
 })
 
-test('KLineChart 使用实际交易对与行情量级精度，并隐藏重复内置图例', () => {
-  assert.equal(normalizeMarketChartTicker(' btc_usdt '), 'BTC/USDT')
-  assert.deepEqual(resolveMarketChartSymbolInfo('btc_usdt', [{
-    close: 67_432.12345678,
-    volume: 12.345678,
-  }]), {
-    ticker: 'BTC/USDT',
-    pricePrecision: 2,
-    volumePrecision: 2,
-  })
-  assert.deepEqual(resolveMarketChartSymbolInfo('pepe-usdt', [{
-    close: .000012345678,
-    volume: 12_345.678,
-  }]), {
-    ticker: 'PEPE/USDT',
-    pricePrecision: 8,
-    volumePrecision: 0,
-  })
-
-  assert.doesNotMatch(klineChartSource, /ticker:\s*['"]HIPPO['"]|pricePrecision:\s*8,\s*volumePrecision:\s*8/)
-  assert.equal(klineChartSource.match(/showRule: 'none'/g)?.length, 2)
-  assert.match(klineChartSource, /candle:[\s\S]*tooltip:[\s\S]*showRule: 'none'/)
-  assert.match(klineChartSource, /indicator:[\s\S]*tooltip:[\s\S]*showRule: 'none'/)
-  assert.match(klineChartSource, /crosshair:\s*\{[\s\S]*show: true[\s\S]*horizontal:[\s\S]*vertical:/)
-  assert.match(klineChartSource, /synchronizeSymbolMetadata\(props\.symbol, props\.points, true\)/)
-  assert.match(klineChartSource, /update === 'update-last' \|\| update === 'append'[\s\S]*applyIncrementalUpdate\(\)/)
+test('行情详情继续展示真实均线与成交量并传递交易对数据集键', () => {
   assert.match(marketTemplate, /market-detail__indicator-legend[\s\S]*MA5[\s\S]*MA10[\s\S]*MA20[\s\S]*candleVolume/)
-  assert.match(marketTemplate, /<MobileMarketChart[\s\S]*:symbol="pairSymbol"[\s\S]*show-engine-switch/)
+  assert.match(marketTemplate, /<MobileMarketChart[\s\S]*:points="points"[\s\S]*:interval="interval"[\s\S]*\/>/)
+  assert.match(marketTemplate, /:symbol="pairSymbol"/)
+  assert.doesNotMatch(marketTemplate, /show-engine-switch|compact-engine-switch/)
 })
 
-test('图表引擎偏好默认、本地持久化和形成中蜡烛分类可独立验证', () => {
-  const values = new Map<string, string>()
-  const storage: MarketChartEngineStorage = {
-    getItem: (key) => values.get(key) ?? null,
-    setItem: (key, value) => { values.set(key, value) },
-  }
-  assert.equal(DEFAULT_MARKET_CHART_ENGINE, 'klinecharts')
-  assert.equal(loadMarketChartEngine(storage), 'klinecharts')
-  persistMarketChartEngine('tradingview', storage)
-  assert.equal(values.get(MARKET_CHART_ENGINE_STORAGE_KEY), 'tradingview')
-  assert.equal(loadMarketChartEngine(storage), 'tradingview')
-  values.set(MARKET_CHART_ENGINE_STORAGE_KEY, 'unknown')
-  assert.equal(loadMarketChartEngine(storage), 'klinecharts')
-  assert.deepEqual(marketChartPeriod('4h'), { type: 'hour', span: 4 })
-  assert.deepEqual(marketChartPeriod('bad'), { type: 'minute', span: 15 })
-
+test('形成中蜡烛分类和 timestamp 锚定视口可独立验证', () => {
   const first = { time: 1, open: 1, high: 2, low: .5, close: 1.5, volume: 3 }
   const forming = { time: 2, open: 2, high: 3, low: 1, close: 2.5, volume: 4 }
   assert.equal(classifyMarketChartDataUpdate([], [first]), 'replace')
@@ -347,21 +275,7 @@ test('图表引擎偏好默认、本地持久化和形成中蜡烛分类可独�
     [{ ...first, close: 1.25 }, forming],
   ), 'replace')
 
-  const rows = Array.from({ length: 100 }, (_, index) => ({ timestamp: 1_000 + index * 60 }))
-  const viewport = captureMarketChartViewport(rows, { to: 72, realTo: 72 }, 6)
-  assert.deepEqual(viewport, {
-    barSpace: 6,
-    anchorTimestamp: rows[71]?.timestamp,
-    anchorOffset: 1,
-  })
-  assert.equal(resolveMarketChartViewportRealTo(rows, viewport!), 72)
-  assert.equal(resolveMarketChartViewportRealTo(
-    [{ timestamp: 940 }, ...rows],
-    viewport!,
-  ), 73)
-  assert.equal(captureMarketChartViewport([], { to: 0, realTo: 0 }, 6), null)
-
-  const logicalRows = rows.map((row) => ({ time: row.timestamp }))
+  const logicalRows = Array.from({ length: 100 }, (_, index) => ({ time: 1_000 + index * 60 }))
   const logicalViewport = captureMarketChartLogicalViewport(
     logicalRows,
     { from: 24, to: 72 },
@@ -577,9 +491,6 @@ test('页面不暴露伪造控件，并具备 320px、横屏、触控和减弱�
     'orderBook.sellSide',
     'marketDetail.chart',
     'marketDetail.chartWorkstation',
-    'marketDetail.chartEngine',
-    'marketDetail.klineChartEngine',
-    'marketDetail.tradingViewEngine',
     'marketDetail.snapshotData',
     'marketDetail.expandChart',
     'marketDetail.collapseChart',
