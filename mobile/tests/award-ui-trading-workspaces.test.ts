@@ -146,6 +146,8 @@ test('交易与秒合约使用首页薄荷主动作和连续面板层级', () =>
   assert.match(parityCss, /\.trade-view \.trade-instrument-hero\s*\{[\s\S]*?var\(--signal-green\)/)
   assert.match(parityCss, /\.trade-view \.submit-order,[\s\S]*?\.seconds-page \.seconds-submit\s*\{[\s\S]*?background:\s*var\(--accent\)/)
   assert.match(parityCss, /\.seconds-page \.seconds-market-board\s*\{[\s\S]*?var\(--signal-green\)/)
+  assert.match(parityCss, /\.seconds-page \.seconds-market-board::after\s*\{\s*content:\s*none;\s*\}/)
+  assert.doesNotMatch(secondsSource, /seconds-round-row|t\('seconds\.currentRound'\)/)
   assert.match(parityCss, /\.seconds-page \.seconds-order-console\s*\{[\s\S]*?border-radius:\s*0/)
 })
 

@@ -692,17 +692,6 @@ onBeforeUnmount(() => {
           :data-seconds-market="selected ? 'live' : loading ? 'loading' : 'empty'"
           :aria-busy="loading || marketStore.loading"
         >
-          <div class="seconds-round-row">
-            <i aria-hidden="true" />
-            <span>
-              {{ t('seconds.currentRound') }}
-              <b v-if="selectedActiveOrders.length" class="numeric">
-                {{ selectedActiveOrders.length }} · #{{ selectedActiveOrders[0]?.id }}
-              </b>
-              <b v-else>{{ selected?.status || (selectedTicker ? t('common.liveData') : t('common.marketUnavailable')) }}</b>
-            </span>
-          </div>
-
           <div class="seconds-price-row">
             <strong class="numeric">{{ selectedLatestPrice > 0 ? formatPrice(selectedLatestPrice) : '--' }}</strong>
             <span class="numeric">
@@ -1078,29 +1067,6 @@ onBeforeUnmount(() => {
   gap: 6px;
   overflow: hidden;
   padding: 4px 20px 0;
-}
-
-.seconds-round-row {
-  align-items: center;
-  color: var(--muted);
-  display: flex;
-  font-size: 11px;
-  gap: 6px;
-  line-height: 16px;
-  min-height: 16px;
-}
-
-.seconds-round-row i {
-  background: var(--positive);
-  border-radius: 50%;
-  flex: 0 0 6px;
-  height: 6px;
-  width: 6px;
-}
-
-.seconds-round-row b {
-  color: var(--text);
-  font-weight: 650;
 }
 
 .seconds-price-row {

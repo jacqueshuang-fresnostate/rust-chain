@@ -124,9 +124,12 @@ test('秒合约工作台保持原型顺序、真实接口与登录回跳', () =>
     'seconds-pair-field',
     'seconds-content',
     'seconds-workspace',
-    'seconds-market-board',
-    'seconds-active-order',
-    'seconds-order-console',
+    'class="seconds-market-board"',
+    'class="seconds-price-row"',
+    'class="seconds-micro-chart"',
+    'class="seconds-active-orders"',
+    'class="seconds-active-order"',
+    'class="instrument-plate seconds-order-console"',
     'seconds-direction-grid',
     'seconds-duration-grid',
     'seconds-amount-field',
@@ -136,7 +139,6 @@ test('秒合约工作台保持原型顺序、真实接口与登录回跳', () =>
     'seconds-submit',
   ])
   assertOrdered(template, [
-    "t('seconds.currentRound')",
     "t('orders.entryPrice')",
     "t('marketDetail.latestPrice')",
     "t('seconds.stakeAmount')",
@@ -162,6 +164,20 @@ test('秒合约工作台保持原型顺序、真实接口与登录回跳', () =>
   assert.match(sources.seconds, /router\.push\(\{ name: 'seconds-history' \}\)/)
   assert.doesNotMatch(sources.seconds, /seconds-session-records|ordersSection|scrollToOrders/)
   assert.doesNotMatch(sources.seconds, /LoginRequiredState/)
+})
+
+test('秒合约行情面板移除装饰标识与轮次摘要且保留国际化合同', () => {
+  assert.match(
+    prototypeCss,
+    /\.seconds-market-board::after\s*\{[\s\S]*?content:\s*"LOCAL \/ SHORT CYCLE";/,
+  )
+  assert.match(
+    parityCss,
+    /\.seconds-page \.seconds-market-board::after\s*\{\s*content:\s*none;\s*\}/,
+  )
+  assert.doesNotMatch(sources.seconds, /seconds-round-row|t\('seconds\.currentRound'\)/)
+  assert.equal(zhCN.seconds.currentRound, '当前轮次')
+  assert.equal(en.seconds.currentRound, 'Current round')
 })
 
 test('消息中心使用公告真实源并保持 FkZ6j 四分类连续列表结构', () => {

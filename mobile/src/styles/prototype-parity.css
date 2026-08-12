@@ -1885,6 +1885,10 @@ body,
     var(--page);
 }
 
+.app-stage .mobile-canvas .seconds-page .seconds-market-board::after {
+  content: none;
+}
+
 .app-stage .mobile-canvas .seconds-page .seconds-order-console {
   border-radius: 0;
 }

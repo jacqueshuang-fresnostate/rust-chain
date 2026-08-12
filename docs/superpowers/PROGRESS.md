@@ -2,6 +2,20 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-08-12 08:53 - 独立复核秒合约行情面板精简
+
+- 完成内容：按任务 PRD 与 Mobile 规范逐项复核当前未提交差异；确认生产构建中的 `.seconds-market-board::after` 在基础快照声明之后被 parity 层 `content: none` 覆盖，深浅主题均不会生成装饰伪元素，`SecondsView` 模板、scoped CSS 和最终 CSS 均无 `seconds-round-row`。逐字比较确认 `prototype-base.css` 与 `SecondsView` 的完整 `script setup` 区块未变，实时价格、1m K 线会话、全量活动订单和 `openSecondsOrder` 下单链路保持原合同；回归断言限定于样式覆盖、页面结构顺序和既有接口标记，未发现需自修复的功能问题。
+- 修改文件：`.trellis/tasks/08-12-mobile-seconds-remove-local-short-cycle/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦测试 16/16、Mobile 全量测试 360/360、`npm --prefix mobile run lint --if-present`（项目无 lint 脚本）、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2071 modules、134 条预缓存）、`npm --prefix mobile run build:tauri`（2071 modules）、Trellis task validate 与 `git diff --check` 全部通过；PWA/Tauri 最终 CSS 均确认基础声明和 parity 覆盖各 1 处、覆盖顺序正确且 `seconds-round-row` 为 0 处。
+- 后续事项：无；本次未进行真机手工视觉验收，未提交或推送。
+
+## 2026-08-12 08:47 - 精简秒合约行情面板装饰信息
+
+- 完成内容：在后置 `prototype-parity.css` 层以 `content: none` 禁用秒合约行情板的 `LOCAL / SHORT CYCLE` 伪元素，并从 `SecondsView` 模板与 scoped CSS 完整移除 `seconds-round-row` 轮次摘要；保持基础原型快照、`currentRound` 中英文键及 Seconds 脚本业务区块不变，价格行自然上移，实时价格、图表、全部活动订单和下单链路维持原顺序。聚焦回归新增伪元素覆盖、轮次行缺失、i18n 保留和核心工作区顺序断言。
+- 修改文件：`mobile/src/views/SecondsView.vue`、`mobile/src/styles/prototype-parity.css`、`mobile/tests/award-ui-trading-workspaces.test.ts`、`mobile/tests/priority-secondary-page-parity.test.ts`、`.trellis/tasks/08-12-mobile-seconds-remove-local-short-cycle/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦测试 16/16、Mobile 全量测试 360/360、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2071 modules、134 条预缓存）、Trellis task validate 与 `git diff --check` 全部通过；额外逐字比较确认 `SecondsView` 的完整 script setup 区块和 `prototype-base.css` 均未改动。
+- 后续事项：无功能遗留；本次未进行真机手工视觉验收，未提交或推送。
+
 ## 2026-08-12 07:14 - 统一后台表格操作列与紧凑按钮
 
 - 完成内容：`ResizableTable` 仅通过 `key: 'actions'` 识别操作列，为表头/单元格注入专用 class，将操作列指针拖拽和键盘调整下限设为 120px，普通列仍为 80px；标准资源页右侧操作列改为 288px 且按钮组不换行，行内 Semi 按钮统一为 24px 高和 8px 水平内边距；补齐行情订阅和竞猜资产操作列 key，SMTP、KYC、行情订阅、竞猜、代理管理均纳入同一识别与样式逻辑，审计日志 `key: 'action'` 业务列保持不受影响。
