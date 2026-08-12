@@ -1319,3 +1319,36 @@ Enabled the shared /news back action, added Product Hub direct-open fallback, re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 39: 精简秒合约行情面板
+
+**Date**: 2026-08-12
+**Task**: 精简秒合约行情面板
+**Branch**: `main`
+
+### Summary
+
+移除秒合约 LOCAL / SHORT CYCLE 装饰文案与 seconds-round-row，补齐回归测试并通过 PWA/Tauri 构建。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d1c43d3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
