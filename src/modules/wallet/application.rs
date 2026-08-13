@@ -1,6 +1,10 @@
 //! wallet bounded context application layer.
 //!
 //! 应用层：编排用例、事务边界和跨仓储协作。
+//! 覆盖充值地址分配、链上充值观测与冲正、提现申请与审核放行、钱包账户与流水查询、已实现收益与历史收益六条用例。
+//! 入参归一化、状态取值校验和分页边界统一在本层完成，SQL 与事务细节全部下沉到基础设施子模块。
+//! 收益口径固定为 UTC 自然日、USDT 计价、18 位定点向零截断；缺价时如实返回 partial，绝不用旧价或零价补足。
+//! 本层不直接广播链上交易，也不发布领域事件；提现只落申请与冻结，实际上链由链网关 worker 消费已提交状态推进。
 
 use crate::{
     config::Settings,
@@ -45,21 +49,27 @@ const TODAY_RETURN_REPORTING_ASSET: &str = "USDT";
 const TODAY_RETURN_REPORTING_SCALE: i32 = 18;
 const REALIZED_RETURN_ZERO: &str = "0.000000000000000000";
 
-/// 列出当前启用且允许充值的资产配置，供充值入口选择。
+/// 列出当前启用且允许充值的资产配置，供充值入口的币种选择列表使用。
+/// 该用例无入参可校验，直接透传基础设施查询；返回的精度与最小充值额是后续链上入账的判定依据。
+/// 资产可充值不代表一定有网络和地址库存，真正能否拿到地址要到分配用例才能确定。
 pub(crate) async fn list_deposit_assets(
     pool: &Pool<MySql>,
 ) -> AppResult<Vec<DepositAssetResponse>> {
     infrastructure::list_deposit_assets(pool).await
 }
 
-/// 列出当前启用且允许提现的资产费用、限额和精度配置。
+/// 列出当前启用且允许提现的资产及其固定费用、阶梯费率与精度配置，供提现表单预估费用。
+/// 这里返回的费率仅供前端展示，真实扣费在创建申请时由服务端按同一套规则重新计算并以服务端结果为准。
+/// 因此前端据此估算的费用与最终冻结额可能因配置变更或阶梯边界而不同，不得据此校验用户输入。
 pub(crate) async fn list_withdraw_assets(
     pool: &Pool<MySql>,
 ) -> AppResult<Vec<DepositAssetResponse>> {
     infrastructure::list_withdraw_assets(pool).await
 }
 
-/// 按可选资产代码列出启用网络及地址组配置。
+/// 按可选资产代码列出启用网络及地址组配置，资产为空时返回全部启用网络。
+/// 入参必须是调用方已归一化的大写资产代码，本函数不再做格式校验，直接进入基础设施查询。
+/// 返回的地址组代码决定后续分配从哪个库存池取地址，同组网络之间地址可复用。
 pub(crate) async fn list_deposit_networks(
     pool: &Pool<MySql>,
     asset_symbol: Option<&str>,
@@ -67,7 +77,9 @@ pub(crate) async fn list_deposit_networks(
     infrastructure::list_active_deposit_networks(pool, asset_symbol).await
 }
 
-/// 路由层只传 DTO，本函数在应用层统一完成 `asset_symbol` 的规范化与校验。
+/// 面向查询 DTO 的充值网络列表入口，路由层只传原始参数，规范化与校验统一收敛到应用层。
+/// 资产代码缺省时按不过滤处理；格式非法则在触达数据库前返回校验错误，不会退化成全量网络列表。
+/// 归一化后转交无 DTO 依赖的列表函数执行，本函数自身不访问数据库，也不改变任何地址池状态。
 pub(crate) async fn list_deposit_networks_by_query(
     pool: &Pool<MySql>,
     query: &DepositNetworksQuery,
@@ -77,7 +89,9 @@ pub(crate) async fn list_deposit_networks_by_query(
     list_deposit_networks(pool, asset_symbol.as_deref()).await
 }
 
-/// 仅做查询参数归一化与校验，不触达数据库，用于路由前置校验。
+/// 把充值网络查询里的可选资产代码规范为大写形式，缺省时保持缺省，非法格式返回校验错误。
+/// 该函数供路由在进入用例前先行拦截坏参数，使参数错误以校验错误呈现而不是变成数据库空结果。
+/// 只做纯字符串处理，不触达数据库，也不判断该资产是否真实存在或是否开放充值。
 pub(crate) fn normalize_deposit_networks_query_asset(
     query: &DepositNetworksQuery,
 ) -> AppResult<Option<String>> {
@@ -143,7 +157,9 @@ pub(crate) async fn get_or_assign_deposit_address(
     Ok(address)
 }
 
-/// 读取用户全部资产账户的 available/frozen/locked 当前快照；查询不加资金行锁，不作为后续扣款依据。
+/// 读取用户全部资产账户的 available/frozen/locked 当前快照，按资产代码升序返回并带出符号与图标。
+/// 结果包含余额为零的已开通资产，也会遗漏尚未初始化账户行的资产，因此不能据此判断某资产是否受支持。
+/// 查询不加资金行锁，返回值只用于展示，扣款前必须在事务内重新锁行读取最新余额。
 pub(crate) async fn list_wallet_accounts(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -162,6 +178,9 @@ pub(crate) async fn get_today_return(
 }
 
 /// 聚合指定 UTC 日内可审计收益并加载时效内行情后完成 USDT 估值。
+/// 统计区间为计算时刻所在 UTC 自然日的零点到该时刻，跨时区用户看到的当日口径因此统一为 UTC。
+/// 只为收益或本金非零且非稳定币的资产请求报价，去重后按资产代码有序请求，避免为零活动资产浪费行情查询。
+/// Redis 句柄缺省时报价集合为空，除稳定币外的资产都会缺价，结果整体退化为 partial 而非报错。
 /// 该只读用例不锁钱包或写流水；缺失、过期价格保持 partial，避免错误价格影响资产展示。
 pub(crate) async fn get_today_return_at(
     pool: &Pool<MySql>,
@@ -201,7 +220,9 @@ pub(crate) async fn get_today_return_at(
     ))
 }
 
-/// 只接受一、七、三十或一百八十天的收益历史窗口。
+/// 只接受一、七、三十或一百八十天这四个收益历史窗口，其余取值和缺省一律返回校验错误。
+/// 窗口固定成枚举而非任意区间，是为了限制历史行情回查的规模并让前端切换项与后端口径完全对齐。
+/// 缺省不会退化成默认天数，调用方必须显式指定窗口，避免前端漏传时静默返回非预期区间。
 pub(crate) fn validate_return_history_days(days: Option<u16>) -> AppResult<u16> {
     match days {
         Some(days @ (1 | 7 | 30 | 180)) => Ok(days),
@@ -224,7 +245,11 @@ pub(crate) async fn get_return_history(
 }
 
 /// 按 UTC 日聚合收益活动，历史日使用 Mongo 收盘价，今日使用 Redis 当前价。
-/// 该只读用例不改变钱包；任一所需报价缺失时保留对应日期并明确标记 partial。
+/// 窗口含当日在内向前推算，因此一天窗口等价于今日收益，一百八十天窗口的起点是当日零点减一百七十九天。
+/// 先扫描活动行把待估值需求拆成两份：历史日按资产收集所需日期集合，当日资产另收一份，稳定币和零活动资产都不参与。
+/// 历史价与当前价分别只在对应需求非空且依赖可用时才发起查询，Mongo 或 Redis 缺省时该侧价格集合为空。
+/// 两份报价与活动行一起交给纯计算函数产出逐日曲线，本函数自身不做任何金额换算。
+/// 该只读用例不改变钱包、不写流水；任一所需报价缺失时保留对应日期并明确标记 partial。
 pub(crate) async fn get_return_history_at(
     pool: &Pool<MySql>,
     mongo: Option<&Database>,
@@ -290,8 +315,13 @@ pub(crate) async fn get_return_history_at(
 }
 
 /// 逐日将可审计终态业务的已实现收益与本金基数换算为 USDT，并生成固定天数的累计曲线。
+/// 输出点数恒等于窗口天数，无活动的日期同样补出金额与基数为零的完整点位，前端无需自行补齐日历。
 /// USDT/USDC/USD 按一比一；历史日取精确 UTC 日线，今日取时效内 Redis 价，已知金额向零截断至 18 位。
-/// 任一活动资产缺价时该日金额/基数/收益率为空，且后续累计及总摘要保持未知；纯计算不修改钱包或行情。
+/// 每个点的估值时刻区分对待：历史日记为次日零点表示该日已收敛，当日记为本次计算时刻表示仍在变动。
+/// 日收益率以当日金额除以当日基数得出，基数不为正时直接取零而非报错，避免无本金日出现除零。
+/// 任一活动资产缺价时该日金额、基数与收益率整体置空，并从该日起停止累计，其后所有点的累计值都保持未知。
+/// 只要出现过一次缺价，整体状态即为 partial 且总摘要三项全部置空，绝不返回只算了一半的合计。
+/// 纯计算函数不读取数据库或行情缓存，也不修改钱包余额与流水。
 pub(crate) fn calculate_return_history(
     activity: Vec<ReturnHistoryAssetActivityRow>,
     historical_prices: &BTreeMap<(NaiveDate, String), BigDecimal>,
@@ -427,8 +457,11 @@ pub(crate) fn calculate_return_history(
 }
 
 /// 将当日各资产已实现收益与本金基数按服务端价格换算为 USDT，并以 amount/basis 计算收益率。
-/// 稳定币按一比一，已知值向零截断到 18 位；缺少非稳定币价格时保留已知合计并返回 partial 与缺价资产。
-/// 该纯计算不读取或修改 available/frozen/locked，也不追加钱包流水。
+/// 资产代码在比对前统一裁剪并转大写，收益与基数同时为零的活动行直接跳过，不会因此触发缺价判定。
+/// 稳定币按一比一，已知值向零截断到 18 位；截断后为零的结果会归一成带 18 位小数的正零，避免输出负零。
+/// 与历史曲线不同，这里对缺价资产采取继续累加其余资产的策略：合计保留已知部分，同时标记 partial 并列出缺价资产。
+/// 因此 partial 状态下的金额是不完整的下界而非最终值，调用方不得把它当作确定收益展示。
+/// 收益率取合计金额除以合计基数，基数不为正时直接返回零；该纯计算不读取或修改 available/frozen/locked，也不追加钱包流水。
 pub(crate) fn calculate_today_return(
     activity: Vec<TodayReturnAssetActivityRow>,
     prices: &BTreeMap<String, BigDecimal>,
@@ -482,6 +515,8 @@ pub(crate) fn calculate_today_return(
     }
 }
 
+/// 以收益金额除以本金基数得出收益率，基数不为正时返回规范化零而非报错或无穷大。
+/// 结果是小数倍率而非百分比，展示层需自行乘一百；商同样按 18 位向零截断，因此极小收益率可能被截成零。
 fn realized_return_rate(amount: &BigDecimal, basis_amount: &BigDecimal) -> BigDecimal {
     if basis_amount > &BigDecimal::from(0) {
         quantize_realized_return(&(amount.clone() / basis_amount.clone()))
@@ -490,6 +525,9 @@ fn realized_return_rate(amount: &BigDecimal, basis_amount: &BigDecimal) -> BigDe
     }
 }
 
+/// 把收益中间结果统一收敛到 18 位定点：先向零截断，再把任意形式的零归一成固定标度的正零。
+/// 向零截断意味着正收益少算、负收益也少算，绝对值只会变小，不会因舍入放大用户收益。
+/// 零归一保证负数被截断后不会输出负零，也让累计过程中的零值拥有一致的标度与序列化形态。
 fn quantize_realized_return(value: &BigDecimal) -> BigDecimal {
     let value = truncate_amount_to_asset_precision(value, TODAY_RETURN_REPORTING_SCALE);
     if value == 0 {
@@ -499,11 +537,15 @@ fn quantize_realized_return(value: &BigDecimal) -> BigDecimal {
     }
 }
 
+/// 返回收益口径下的规范零值，即标度固定为 18 位的正零，作为累计初值与缺省收益率。
+/// 常量文本在编译期已确定合法，解析失败属于不可能分支，因此直接断言而非向上传播错误。
 fn realized_return_zero() -> BigDecimal {
     BigDecimal::from_str(REALIZED_RETURN_ZERO).expect("realized return zero is valid decimal")
 }
 
-/// 返回给定 UTC 时间所属自然日的零点。
+/// 返回给定时刻所属 UTC 自然日的零点，是当日收益与历史曲线共用的唯一分日基准。
+/// 一律按 UTC 而非用户本地时区切日，保证同一笔结算在任何客户端都归属同一天。
+/// 零点在 UTC 下恒定存在，因此内部断言不会触发，不存在夏令时导致的缺失时刻问题。
 pub(crate) fn utc_day_start(calculated_at: &DateTime<Utc>) -> DateTime<Utc> {
     calculated_at
         .date_naive()
@@ -512,6 +554,9 @@ pub(crate) fn utc_day_start(calculated_at: &DateTime<Utc>) -> DateTime<Utc> {
         .and_utc()
 }
 
+/// 判定资产是否按美元平价计价，命中的资产在收益估值中直接取价格一而不查询任何行情。
+/// 名单固定为三种美元稳定币，比对前裁剪空白并转大写；名单外的稳定币仍需真实报价，缺价即标记 partial。
+/// 平价假设意味着脱锚行情不会反映在收益里，这是为避免稳定币报价缺失拖垮整体估值而做的取舍。
 fn is_stablecoin(asset_symbol: &str) -> bool {
     matches!(
         asset_symbol.trim().to_ascii_uppercase().as_str(),
@@ -529,24 +574,30 @@ pub(crate) async fn list_wallet_ledger(
     infrastructure::list_wallet_ledger(pool, user_id, filter).await
 }
 
-/// 将钱包列表页大小规范为默认 50、最小 1、最大 100。
+/// 将钱包列表页大小规范为默认 50、最小 1、最大 100，钳制而非报错以免前端传界外值直接失败。
+/// 零会被抬到一，避免除以页大小计算总页数时出现除零；后台入口可在此结果上再放宽到二百。
 pub(crate) fn route_limit(limit: Option<u32>) -> u32 {
     limit.unwrap_or(50).clamp(1, 100)
 }
 
-/// 将钱包列表偏移默认为 0，并限制最大 100000。
+/// 将钱包列表偏移默认为 0，并封顶到十万，防止深翻页把数据库拖入大量无效扫描。
+/// 超限同样只钳制不报错，因此请求极深页码会稳定返回封顶位置的数据而不是空错误响应。
 pub(crate) fn route_offset(offset: Option<u32>) -> u32 {
     offset.unwrap_or(0).min(100_000)
 }
 
-/// 裁剪可选查询字符串并把空白值归一为 `None`。
+/// 裁剪可选查询字符串的首尾空白，并把裁剪后为空的取值归一成缺省。
+/// 归一避免空串被当作有效筛选条件写进 SQL，从而把本应全量的查询意外收窄成零结果。
 pub(crate) fn normalize_optional_query_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
 }
 
-/// 裁剪并转为大写资产符号，只接受长度 2..16 的 ASCII 字母数字；不查询资产是否存在。
+/// 裁剪资产代码首尾空白并转为大写，空值与格式非法分别返回不同的校验错误消息。
+/// 只接受纯 ASCII 字母数字且裁剪后长度不超过三十二字节，短横线、下划线和中文等字符一律拒绝。
+/// 长度按字节比较，因此多字节字符在字符集校验阶段就已被拦下，不会绕过长度限制。
+/// 归一只保证格式合法，不查询资产是否存在、是否启用，也不判断其充提开关。
 pub(crate) fn normalize_asset_symbol(value: &str) -> AppResult<String> {
     let symbol = value.trim();
     if symbol.is_empty() {
@@ -560,7 +611,11 @@ pub(crate) fn normalize_asset_symbol(value: &str) -> AppResult<String> {
     Ok(symbol.to_ascii_uppercase())
 }
 
-/// 裁剪网络标识，只接受长度 1..32 的 ASCII 字母数字、短横线和下划线；不查询网络配置。
+/// 把网络标识收敛到受支持的规范名，采用固定别名表而非通用格式校验，杜绝任意字符串流入地址池查询。
+/// 以太坊系的三种写法统一成 eth，波场系三种写法统一成 tron，比特币与 Solana 各自合并两种写法，Base 单独保留。
+/// 比对前裁剪空白并转小写，因此大小写混写可以通过；别名表之外的取值一律返回不支持该充值网络的校验错误。
+/// 归一结果同时用于地址分配和链事件网络比对，两侧共用本函数才能保证网关回执与本地记录能对上。
+/// 本函数只做名称映射，不查询网络配置是否启用，也不判断该资产是否被该网络接受。
 pub(crate) fn normalize_deposit_network(value: &str) -> AppResult<String> {
     let network = value.trim().to_ascii_lowercase();
     match network.as_str() {
@@ -576,7 +631,10 @@ pub(crate) fn normalize_deposit_network(value: &str) -> AppResult<String> {
 }
 
 /// 把账本查询 DTO 规范为资产、分类、引用、时间及分页过滤器。
-/// 未知分类、非法资产代码或倒置时间范围在执行 SQL 前拒绝；行查询与计数随后复用同一过滤器。
+/// 分类必须精确匹配十类之一，未知取值返回带完整候选清单的校验错误，而不是静默忽略该筛选条件。
+/// 资产代码走统一归一并可能报错，其余文本条件只做裁剪与空值归一，起止时间原样保留交由 SQL 比较。
+/// 分页在此完成钳制，页大小落在一到一百之间，偏移封顶十万，因此过滤器交给基础设施时已是安全边界。
+/// 未知分类、非法资产代码在执行 SQL 前拒绝；行查询与计数随后复用同一过滤器以保证总数与数据一致。
 pub(crate) fn build_wallet_ledger_filter(
     query: WalletLedgerQuery,
 ) -> AppResult<WalletLedgerFilter> {
@@ -721,8 +779,10 @@ pub(crate) async fn list_user_withdrawals(
     .await
 }
 
-/// 规范后台状态与分页后读取提现请求及匹配总数。
-/// 行数据和 total 使用相同筛选，查询不改变冻结预留额或提现状态。
+/// 规范后台状态与分页后读取提现请求及匹配总数，供运营侧翻页审阅。
+/// 状态取值必须属于八个已登记状态之一，非法取值在查库前返回校验错误；用户编号缺省时跨用户返回全量申请。
+/// 页大小先按通用规则钳到一到一百，再取与二百的较小值，因此后台单页上限实际仍是一百，偏移沿用十万封顶。
+/// 行数据和 total 使用相同筛选，查询不改变冻结预留额或提现状态，也不推进任何链上进度。
 pub(crate) async fn list_admin_withdrawals(
     pool: &Pool<MySql>,
     query: AdminWalletListQuery,
@@ -739,8 +799,10 @@ pub(crate) async fn list_admin_withdrawals(
     Ok(AdminWalletWithdrawalsResponse { withdrawals, total })
 }
 
-/// 由应用层事务推进待审核提现为 approved，保留原 frozen 预留额等待广播。
-/// 重复已批准请求幂等返回；状态冲突或写入失败不改变余额和流水。
+/// 由应用层开启事务推进待审核提现为 approved，保留原 frozen 预留额等待链上广播。
+/// 审核意见可选，仅做裁剪与空值归一，不强制填写也不限制长度；管理员编号由调用方从后台令牌解析后传入。
+/// 批准会把下次尝试时刻置为当前时间，使链网关 worker 在下一轮即可认领该申请，因此本调用是自动广播的触发点。
+/// 重复已批准请求幂等返回；状态冲突或写入失败时事务回滚，余额与流水完全不变。
 pub(crate) async fn approve_withdrawal(
     pool: &Pool<MySql>,
     admin_id: u64,
@@ -760,8 +822,10 @@ pub(crate) async fn approve_withdrawal(
     Ok(withdrawal)
 }
 
-/// 由应用层事务拒绝提现，并把完整 frozen 预留额退回 available 后写释放流水。
-/// 订单先锁、钱包后锁；已拒绝重放不二次退款，状态、余额与流水失败整体回滚。
+/// 由应用层开启事务拒绝提现，并把完整 frozen 预留额连本带费退回 available 后写释放流水。
+/// 拒绝原因是必填项，缺失或全空白返回校验错误，超过五百一十二字符同样拒绝，避免超长文本写入审核字段。
+/// 仅允许从待审核或已批准状态拒绝，已经进入广播的申请必须改走失败或人工审核路径。
+/// 订单先锁、钱包后锁；已拒绝重放不二次退款，状态、余额与流水任一步失败都整体回滚。
 pub(crate) async fn reject_withdrawal(
     pool: &Pool<MySql>,
     admin_id: u64,
@@ -783,7 +847,9 @@ pub(crate) async fn reject_withdrawal(
 }
 
 /// 在应用层事务记录已由外部流程取得的交易哈希和确认进度，不发起链网关 HTTP，也不核销 frozen 预留额。
-/// 同哈希重放仅推进确认数；状态冲突或写入失败时链进度不部分提交。
+/// 交易哈希必填并先做格式归一，空串、超长或含空白字符直接返回校验错误；确认数缺省按零处理。
+/// 该入口用于人工补录已在链上发出的交易，与 worker 自动广播共用同一状态迁移，因此两条路径不会重复推进。
+/// 同哈希重放仅推进确认数；状态冲突或写入失败时事务回滚，链进度不会部分提交。
 pub(crate) async fn broadcast_withdrawal(
     pool: &Pool<MySql>,
     admin_id: u64,
@@ -805,7 +871,9 @@ pub(crate) async fn broadcast_withdrawal(
     Ok(withdrawal)
 }
 
-/// 在应用层事务核销提现 frozen 预留额、写确认流水并推进 confirmed。
+/// 在应用层事务核销提现 frozen 预留额、写确认流水并推进 confirmed，这是资金真正离开钱包的一步。
+/// 确认数缺省按一处理，区块高度可缺省，两者最终都以取较大值或择非空的方式写入，不会让链上进度倒退。
+/// 只接受已广播或人工审核状态；本入口供后台在链回执缺失时手工确认，与 worker 自动确认互为幂等。
 /// 已确认重放不二次扣减；冻结不足或任一步失败时余额、流水和状态整体回滚。
 pub(crate) async fn confirm_withdrawal(
     pool: &Pool<MySql>,
@@ -826,8 +894,10 @@ pub(crate) async fn confirm_withdrawal(
     Ok(withdrawal)
 }
 
-/// 在尚可安全退款的状态下把提现标记失败，并将 frozen 全额退回 available。
-/// 已有链上交易的不确定请求不会自动释放；目标状态重放不生成第二笔退款流水。
+/// 在尚可安全退款的状态下把提现标记失败，并将 frozen 全额连本带费退回 available。
+/// 失败原因由请求体必填字段提供，仍需经过非空与五百一十二字符上限校验，空白原因视为缺失。
+/// 与拒绝共用同一释放实现但允许的来源状态不同：失败只接受已批准或广播中，覆盖上链前确认失败的场景。
+/// 已有链上交易哈希的不确定请求不会经此自动释放，只能走人工审核；目标状态重放不生成第二笔退款流水。
 pub(crate) async fn fail_withdrawal(
     pool: &Pool<MySql>,
     admin_id: u64,
@@ -887,14 +957,18 @@ pub(crate) async fn list_admin_deposits(
     Ok(WalletDepositsResponse { deposits, total })
 }
 
-/// 统一从应用状态中获取数据库连接池。
+/// 从应用状态取出 MySQL 连接池的克隆句柄，池未配置时返回内部错误而非让调用方拿到空依赖。
+/// 克隆只增加引用计数、不新建连接，因此每个请求各自取用不会造成额外开销。
+/// 钱包全部用例都必须经此获取连接，从而把依赖缺失统一表达为可观测的服务端错误。
 pub(crate) fn mysql_pool(state: &AppState) -> AppResult<Pool<MySql>> {
     state.mysql.clone().ok_or_else(|| {
         AppError::Internal("mysql pool is not configured for wallet routes".to_owned())
     })
 }
 
-/// 解析后台 JWT subject，避免管理路由信任请求体中的管理员标识。
+/// 从后台令牌主体解析管理员编号，要求带固定前缀且其余部分能解析为无符号整数。
+/// 前缀不符或解析失败一律返回未授权而非校验错误，避免把令牌结构异常暴露成参数问题。
+/// 审核、拒绝、广播、确认和失败五类操作的操作人都取自这里，管理路由因此不会信任请求体传来的管理员标识。
 pub(crate) fn admin_id_from_subject(subject: &str) -> AppResult<u64> {
     subject
         .strip_prefix("admin:")
@@ -902,6 +976,11 @@ pub(crate) fn admin_id_from_subject(subject: &str) -> AppResult<u64> {
         .ok_or(AppError::Unauthorized)
 }
 
+/// 校验并归一提现请求体，返回可直接进入资产规则与冻结流程的规范化副本。
+/// 资产代码与地址不得为空白，金额必须严格为正，客户端传入的费用只要求非负且不参与实际计费。
+/// 幂等键裁剪后不得为空、不超过一百二十八字符，且只允许 ASCII 字母数字与短横线、下划线、冒号、点号。
+/// 资产代码在此直接转大写而不走通用归一，因此长度与字符集不受资产代码规则约束；网络字段按别名表收敛，非法网络在此报错。
+/// 资金密码与两步验证码原样透传给后续安全校验，本函数不做脱敏、不校验其正确性，也不触达数据库。
 fn validate_withdrawal_request(
     request: CreateWithdrawalRequest,
 ) -> AppResult<CreateWithdrawalRequest> {
@@ -944,6 +1023,10 @@ fn validate_withdrawal_request(
     })
 }
 
+/// 核对幂等重放是否与既有申请完全一致，任一关键字段不同即返回冲突而不是返回旧申请。
+/// 比对资产代码、网络、地址、金额四项请求参数，并额外比对既有申请的费用与当前服务端算出的费用。
+/// 把费用纳入比对意味着费率配置变更后同一幂等键会被判为冲突，这是刻意为之，避免按旧费率重放新意图。
+/// 校验通过不代表申请已完成，只说明可以安全返回既有结果；该函数不修改任何状态也不加锁。
 fn ensure_withdrawal_replay_matches(
     existing: &WalletWithdrawalResponse,
     request: &CreateWithdrawalRequest,
@@ -962,6 +1045,10 @@ fn ensure_withdrawal_replay_matches(
     Ok(())
 }
 
+/// 把完整提现申请裁剪为创建接口的精简响应，只回传编号、状态、冻结总额与实际使用的安全校验方式。
+/// 安全方式字符串需反解为枚举，仅接受资金密码、两步验证及两者兼备三种取值，未知取值返回内部错误。
+/// 这里刻意报错而非兜底，因为无法识别的安全方式意味着申请记录已损坏，不应继续对外展示。
+/// 响应不包含地址、幂等键和链上进度，避免创建接口回显敏感或尚未生效的字段。
 fn withdrawal_request_response(
     withdrawal: WalletWithdrawalResponse,
 ) -> AppResult<WithdrawalRequestResponse> {
@@ -985,6 +1072,9 @@ fn withdrawal_request_response(
     })
 }
 
+/// 校验提现状态筛选值，先做裁剪与空值归一，再要求命中八个已登记状态之一。
+/// 允许集合覆盖待审核、已批准、广播中、已广播、已确认、人工审核、已拒绝和已失败，缺省表示不按状态筛选。
+/// 比对区分大小写且不做别名映射，非法取值返回校验错误，避免拼错状态时静默返回空列表让运营误判。
 fn normalize_withdrawal_status(status: Option<String>) -> AppResult<Option<String>> {
     let status = normalize_optional_query_string(status);
     if let Some(status) = status.as_deref()
@@ -1007,6 +1097,8 @@ fn normalize_withdrawal_status(status: Option<String>) -> AppResult<Option<Strin
     Ok(status)
 }
 
+/// 校验拒绝、失败、冲正等操作的必填原因，缺失或全空白返回带业务标签的校验错误。
+/// 长度上限五百一十二字符按字节计，超限直接报错而非截断，确保存档原因与运营填写内容完全一致。
 fn required_reason(reason: Option<String>, label: &str) -> AppResult<String> {
     let reason = normalize_optional_query_string(reason)
         .ok_or_else(|| AppError::Validation(format!("{label} is required")))?;
@@ -1018,6 +1110,8 @@ fn required_reason(reason: Option<String>, label: &str) -> AppResult<String> {
     Ok(reason)
 }
 
+/// 校验链上地址或交易哈希等标识，裁剪首尾空白后拒绝空串、超过二百五十五字节以及任何内嵌空白字符。
+/// 标识保持原始大小写，因为部分链的地址校验和依赖大小写，归一会破坏其可校验性。
 fn normalize_chain_identifier(value: String, label: &str) -> AppResult<String> {
     let value = value.trim();
     if value.is_empty() || value.len() > 255 || value.chars().any(char::is_whitespace) {
@@ -1026,6 +1120,11 @@ fn normalize_chain_identifier(value: String, label: &str) -> AppResult<String> {
     Ok(value.to_owned())
 }
 
+/// 校验并归一链上充值观测请求，使外部观测在进入幂等入账前具备可比对的稳定形态。
+/// 金额必须严格为正，地址与交易哈希按链上标识规则校验，资产代码转大写，网络按别名表收敛到规范名。
+/// 备注做裁剪并把空白归一为缺省，因为备注参与事件身份一致性比对，空串与缺省必须视为同一含义。
+/// 事件序号、区块高度与确认数原样透传，本函数不判断确认是否达标，也不校验地址是否已分配给某个用户。
+/// 归一只保证形态，入账与否完全由基础设施在事务中按幂等键与确认阈值决定。
 fn normalize_observe_deposit_request(
     request: ObserveDepositRequest,
 ) -> AppResult<ObserveDepositRequest> {
@@ -1049,12 +1148,18 @@ fn normalize_observe_deposit_request(
     })
 }
 
+/// 判定数据库错误是否为唯一键冲突，用于把并发重放识别成可回读旧申请而非直接失败。
+/// 通过错误码判断，同时接受重复键专用码与完整性约束通用码；非数据库错误一律返回否。
+/// 仅在提现创建路径使用：命中后回读同幂等键的既有申请并重新核对参数，绝不重复冻结资金。
 fn is_duplicate_key_error(error: &sqlx::Error) -> bool {
     error.as_database_error().is_some_and(|database_error| {
         matches!(database_error.code().as_deref(), Some("1062" | "23000"))
     })
 }
 
+/// 归一充值地址申请的资产代码与网络，两者都是必填项，任一格式非法即在查库前终止。
+/// 资产走大写与字符集校验，网络按别名表收敛，从而保证后续地址组匹配与既有分配复用使用同一口径。
+/// 该函数不判断资产是否开放充值、网络是否启用，也不检查两者组合是否被允许。
 fn normalize_deposit_address_request(
     request: DepositAddressRequest,
 ) -> AppResult<DepositAddressRequest> {
@@ -1066,6 +1171,8 @@ fn normalize_deposit_address_request(
     })
 }
 
+/// 裁剪可空文本字段并把纯空白归一为缺省，专供充值备注这类参与身份比对的可选字段使用。
+/// 与查询参数归一实现相同但语义不同：这里的目的是让空备注与无备注在幂等比对中被视作同一取值。
 fn optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())

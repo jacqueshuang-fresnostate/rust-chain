@@ -1,3 +1,12 @@
+//! 现货钱包与杠杆钱包之间的资金划转适配器。
+//!
+//! 承载双向搬运资金、解析划转资产、写入划转幂等记录，以及从历史流水重建重放响应。
+//! 核心不变量是锁序：无论资金流向哪边，都固定先锁现货钱包再锁杠杆钱包，
+//! 靠这个稳定顺序而不是加锁时机来防止两个方向的并发划转交叉等待形成死锁。
+//! 资金只在 available 桶之间搬运，frozen 与 locked 原样带进流水快照，划转不涉及冻结。
+//! 每次划转写两条配对流水，共用同一个 `transfer_id` 作为引用，幂等重放正是靠回读这两条流水的
+//! after 快照来还原首次响应，因此返回的是当时余额而非当前余额。
+
 use super::ledger::{
     insert_margin_wallet_ledger, insert_spot_wallet_ledger, lock_margin_wallet_row,
     lock_spot_wallet_row,
@@ -12,21 +21,34 @@ use sqlx::{MySql, Pool, Transaction};
 #[derive(Debug, sqlx::FromRow)]
 /// 保证金划转使用的启用资产标识、符号与金额精度规则。
 pub(crate) struct MarginTransferAssetRule {
+    /// 解析后的资产主键，无论调用方按 id 还是 symbol 指定都归一到这里。
     pub(crate) id: u64,
+    /// 该资产允许的最大小数位，划转金额超出这个精度会在动账前被拒绝。
     pub(crate) precision_scale: i32,
 }
 
 #[derive(Debug, sqlx::FromRow)]
 /// 已持久化划转请求快照，用于同键同参重放及异参冲突判断。
 pub(crate) struct MarginTransferRecord {
+    /// 首次划转生成的 UUIDv7 业务编号，同时是两条配对流水的引用值。
     pub(crate) transfer_id: String,
+    /// 首次划转实际使用的资产主键，重放时与本次请求解析结果比对。
     pub(crate) asset_id: u64,
+    /// 归一化后的来源账户，只会是 spot 或 margin。
     pub(crate) from_account: String,
+    /// 归一化后的目标账户，与来源账户不同。
     pub(crate) to_account: String,
+    /// 首次划转的金额，重放时必须完全相等才认定为同一笔请求。
     pub(crate) amount: BigDecimal,
 }
 /// 按现货后保证金的稳定顺序锁定两侧钱包，将同额资金从现货转入保证金并各写流水。
 /// 两侧余额、两笔流水与划转记录同事务提交；余额不足或任一步失败整体回滚。
+///
+/// 余额检查紧跟在锁现货之后、锁杠杆之前，因此资金不足时可以少持有一把锁就提前退出。
+/// 杠杆侧用 `lock_margin_wallet_row`，账户不存在会先补一行零余额再加锁，首次转入无需预建账户。
+/// 现货流水记为 `margin_transfer_out` 且金额取负，杠杆流水记为 `margin_transfer_in` 金额取正，
+/// 两条共用同一个 `transfer_id`，构成可对账的配对记录。
+/// 返回值固定是「现货快照在前、杠杆快照在后」，与资金流向无关，调用方按位置解构即可。
 pub(crate) async fn transfer_spot_to_margin_wallets(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -183,7 +205,11 @@ pub(crate) async fn transfer_margin_to_spot_wallets(
     ))
 }
 
-/// 在划转事务内解析并锁定启用资产，显式 id 与 symbol 不一致时拒绝请求。
+/// 在划转事务内解析出要搬运的资产，并取回它的精度规则供后续金额校验。
+/// `asset_id` 优先：给了主键就只按主键查，此时完全不看 `asset_symbol`，两者不一致不会被察觉。
+/// 只有主键缺省时才回退到符号查询，符号比较忽略大小写，空白符号视同未提供并报必填。
+/// 两条分支都要求资产处于 active，停用资产查不到即返回 NotFound，禁止对已下架币种发起新划转。
+/// 虽然在事务内执行，但查询不带 FOR UPDATE，只是读取配置，不锁定资产行。
 pub(crate) async fn resolve_active_transfer_asset(
     tx: &mut Transaction<'_, MySql>,
     asset_id: Option<u64>,
@@ -218,7 +244,11 @@ pub(crate) async fn resolve_active_transfer_asset(
     .ok_or(AppError::NotFound)
 }
 
-/// 为幂等重放解析资产标识，即使资产后来停用也允许核对原请求但不新增划转。
+/// 为幂等重放解析资产主键，与新划转路径的关键差别是这里不要求资产仍处于 active。
+/// 因为首次划转成功后资产可能被下架，此时用户重试同一个幂等键仍应拿回原结果而不是报 NotFound。
+/// 优先级规则与新划转一致：给了主键只查主键，缺省才按符号忽略大小写查找，空白符号报必填。
+/// 只返回主键供逐字段比对，不取精度规则，因为重放不会重新校验金额也不会真正动账。
+/// 走连接池而非事务，重放核对是纯只读操作，无需与后续写入共享事务视图。
 pub(crate) async fn resolve_transfer_asset_id_for_replay(
     pool: &Pool<MySql>,
     asset_id: Option<u64>,
@@ -248,6 +278,10 @@ pub(crate) async fn resolve_transfer_asset_id_for_replay(
 
 #[allow(clippy::too_many_arguments)]
 /// 在资金变更前写入划转请求快照并占用用户幂等键，唯一键阻止并发重复动账。
+/// 返回类型刻意保留原始 `sqlx::Error` 而不包装成 `AppError`，因为调用方必须据错误码区分
+/// 「唯一键冲突要转入重放」和「真实数据库故障要上抛」，包装后会丢掉这个判定依据。
+/// 落库内容就是这笔请求的完整语义：资产、双向账户和金额，重放核对全部依赖这几列。
+/// 必须先于任何余额更新执行，先占键后动钱是整条划转链路防重复扣款的前提。
 pub(crate) async fn insert_margin_transfer(
     tx: &mut Transaction<'_, MySql>,
     transfer_id: &str,
@@ -275,7 +309,11 @@ pub(crate) async fn insert_margin_transfer(
     Ok(())
 }
 
-/// 按用户和幂等键读取既有划转请求，供同参重放与异参冲突判断。
+/// 按用户和幂等键读取既有划转请求快照，返回资产、双向账户和金额供逐字段比对。
+/// 幂等键的作用域是单个用户，不同用户可以使用相同的键而互不干扰。
+/// 未命中返回 None 表示这是一次全新请求，调用方继续走正常划转流程。
+/// 走连接池只读且不加锁，因此并发的首次划转若尚未提交，这里会读不到从而放行到插入分支，
+/// 真正的并发保护由插入时的唯一键冲突兜底。
 pub(crate) async fn load_margin_transfer_by_idempotency_key(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -294,7 +332,12 @@ pub(crate) async fn load_margin_transfer_by_idempotency_key(
     .map_err(AppError::from)
 }
 
-/// 读取既有划转两侧流水的余额后快照，重建原响应而不再次移动资金。
+/// 从原划转写下的两条配对流水中回读余额 after 快照，据此重建首次响应而不再次移动资金。
+/// 分别查现货流水表和杠杆流水表，都以用户、资产、引用类型 `margin_transfer` 和 `transfer_id` 定位，
+/// 按流水主键升序取第一条，确保同一笔划转即使被误写多条也稳定取到最早那条。
+/// 两条流水缺任意一条都返回内部错误，因为划转成功时必然成对写入，缺失说明数据已不一致。
+/// 之所以不直接读钱包当前余额，是为了不把后续交易造成的变化泄漏进这次重放响应，
+/// 保证同一个幂等键无论重试多少次，返回的余额都与首次完全一致。
 pub(crate) async fn load_margin_transfer_wallet_snapshots(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,

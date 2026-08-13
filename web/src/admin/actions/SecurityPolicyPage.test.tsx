@@ -130,8 +130,8 @@ describe('SecurityPolicyPage', () => {
     expect(screen.getByText('用户名登录已开启')).toBeInTheDocument();
     expect(screen.getByText('Coinbase 钱包：已开启，TG 账号：已开启')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '保存安全策略' }));
-    await user.type(screen.getByLabelText('操作原因'), 'tighten policy');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'tighten policy');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/security-policy', expect.objectContaining({ method: 'PATCH' }));

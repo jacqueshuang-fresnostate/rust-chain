@@ -1,6 +1,13 @@
 //! convert bounded context infrastructure layer.
 //!
 //! 基础设施层：封装 SQLx、Redis、第三方接口和仓储实现。
+//!
+//! 闪兑的持久化被切成两条互不重叠的链路。报价链路写 `convert_quotes` 并把同一份快照
+//! 以 `convert:quote:{uuid}` 为键缓存进 Redis，二者不共享事务，缓存靠键 TTL 自然淘汰。
+//! 结算链路在单个 MySQL 事务内完成：先按 quote_id 幂等插入 pending 订单，再锁定订单行，
+//! 依「源资产、目标资产」顺序锁钱包，从源资产 available 扣款、向目标资产 available 入账，
+//! 同步落两条 `convert_settlement` 流水与一条代理佣金记录，最后把订单置为 completed。
+//! frozen 与 locked 在整个闪兑流程中都不参与，手续费已折进 to_amount 不再单独扣钱包。
 
 use crate::{
     error::{AppError, AppResult},
@@ -50,6 +57,8 @@ impl From<serde_json::Error> for ConvertRepositoryError {
     }
 }
 
+/// 报价快照的 Redis 适配器，所有报价以 `convert:quote:{uuid}` 为键并依赖键 TTL 自然过期。
+/// 它只负责缓存读写，不做归属校验和资金操作；缓存不可用会以错误暴露，不会伪装成报价不存在。
 #[derive(Clone)]
 pub struct RedisConvertQuoteCache {
     manager: redis::aio::ConnectionManager,
@@ -96,10 +105,15 @@ impl RedisConvertQuoteCache {
     }
 }
 
+/// 由报价 UUID 拼出唯一的 Redis 缓存键，格式必须与写入时 `ConvertQuoteCacheEntry.redis_key`
+/// 及领域层 `ConvertQuote::idempotency_key` 完全一致，否则写得进去却读不出来。
+/// 键名只含报价标识不含用户，归属校验依赖快照里的 user_id 字段而非键空间隔离。
 fn quote_redis_key(quote_id: &QuoteId) -> String {
     format!("convert:quote:{}", quote_id.0)
 }
 
+/// 报价与订单的 MySQL 适配器，持有连接池并按需开启短事务。
+/// 其上的方法各自独立提交，跨报价与结算的原子性由自由函数 `confirm_and_settle_convert_quote` 保证。
 #[derive(Debug, Clone)]
 pub struct MySqlConvertRepository {
     pool: Pool<MySql>,
@@ -158,8 +172,11 @@ impl MySqlConvertRepository {
         })
     }
 
-    /// 直接以连接池把报价快照复制为 pending 订单；quote_id 唯一约束把重复调用映射为 `Duplicate`。
-    /// 此兼容入口自成一条自动提交语句，不锁钱包、不完成双资产结算，也不保证与后续资金写入原子。
+    /// 直接以连接池把报价快照原样复制为 pending 订单，金额、汇率、费率全部取自 `convert_quotes` 行。
+    /// 报价行不存在时 INSERT ... SELECT 命中零行，`last_insert_id` 为零因而同样返回 `Duplicate`，
+    /// 调用方无法据此区分「已确认过」和「报价根本不存在」两种情况。
+    /// quote_id 唯一约束把并发重复调用收敛为一次插入，是闪兑资金幂等的实际依据。
+    /// 此兼容入口自成一条自动提交语句，不锁钱包、不完成双资产结算，也不与后续资金写入同事务。
     pub async fn insert_order_for_quote(
         &self,
         quote_id: &QuoteId,
@@ -186,6 +203,9 @@ impl MySqlConvertRepository {
         }
     }
 
+    /// 在 `insert_quote` 命中唯一键冲突、拿不到自增主键时回读既有报价行的编号。
+    /// 用 `fetch_one` 而非 `fetch_optional`，因为能走到这里说明冲突分支已确认该行存在，
+    /// 查不到只可能是并发删除等异常状态，直接以存储错误上报而不是静默返回零。
     async fn quote_row_id(&self, quote_id: &QuoteId) -> Result<u64, ConvertRepositoryError> {
         let row =
             sqlx::query_as::<_, (u64,)>("SELECT id FROM convert_quotes WHERE quote_id = ? LIMIT 1")
@@ -196,8 +216,11 @@ impl MySqlConvertRepository {
     }
 }
 
-/// 按编号倒序读取启用闪兑对、双侧资产 Logo、费率及正反向限额。
-/// 该查询不读取行情或钱包，不生成报价，也不把后台配置费率换算为资金金额。
+/// 按配置行编号倒序读取所有 enabled 为真的闪兑对，供前端渲染可兑换列表。
+/// 两次 INNER JOIN assets 分别取源侧与目标侧的符号和 logo_url，因此资产被删除时该对整行消失。
+/// 同时返回正向 min/max 与反向 target_min/target_max 两套限额，前端切换方向时无需再次请求。
+/// 该查询不读取行情或钱包余额，不生成报价，也不把配置费率换算成任何具体资金金额。
+/// 分页量由调用方经 `route_limit` 夹紧后传入，本函数不再二次校验。
 pub(crate) async fn list_convert_pairs(
     pool: &Pool<MySql>,
     limit: u32,
@@ -227,8 +250,11 @@ pub(crate) async fn list_convert_pairs(
     Ok(pairs)
 }
 
-/// 按认证用户和可选状态倒序读取已落库闪兑订单及费用快照。
-/// 查询不锁订单或钱包；返回的是提交时快照，不重新计算汇率、费用或 available。
+/// 按认证用户倒序读取其闪兑订单，`status` 非空时追加等值过滤，为空则返回全部状态。
+/// user_id 条件恒定拼入且以绑定参数下推，动态部分只有状态和分页量，不存在跨用户越权读取。
+/// 用 QueryBuilder 拼装是为了让状态过滤可选，所有变量仍走 push_bind 而非字符串插值。
+/// 查询不加任何行锁，也不触碰钱包表；返回的汇率与费用是确认时固化的快照，不重新计算。
+/// 结果按订单自增编号倒序，因此翻页语义等价于按创建时间从新到旧。
 pub(crate) async fn list_convert_orders(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -260,8 +286,12 @@ pub(crate) async fn list_convert_orders(
     Ok(orders)
 }
 
-/// 读取启用的正向或反向闪兑规则，并关联固定汇率或活动市场交易对作为服务端计价来源。
-/// 仅返回配置快照；反向限额和固定汇率倒数由服务层转换，未命中时不创建报价或资金副作用。
+/// 为一次报价请求定位唯一可用的闪兑规则，同时接受配置中正向与反向两种资产排列。
+/// ORDER BY 里的 CASE 让与请求方向完全一致的配置排在前面，方向相反的作为兜底，最后取一行。
+/// LEFT JOIN 只关联 status 为 active 且 rate_source 为 fixed 的新币规则来取固定汇率，
+/// 另一侧 LEFT JOIN 取 status 为 active 的现货交易对作为市场计价来源，两者都可能为空。
+/// 未匹配到任何启用配置时返回 NotFound；本函数只读配置，不创建报价行也不产生资金副作用。
+/// 返回前交由服务层按请求方向归一化限额并在反向时对固定汇率取倒数。
 pub(crate) async fn load_pair_rule(
     pool: &Pool<MySql>,
     from_asset_id: u64,
@@ -303,8 +333,11 @@ pub(crate) async fn load_pair_rule(
     convert_pair_rule_from_record(row, from_asset_id, to_asset_id)
 }
 
-/// 非锁定读取用户源资产 available 与 locked，供报价阶段做提示性余额校验。
-/// 账户缺失返回双零；该快照不冻结资金且可能在确认前变化，最终扣款必须在结算事务内重新锁行校验。
+/// 非锁定读取用户在源资产上的 available 与 locked，供报价阶段做一次提示性余额校验。
+/// 钱包账户尚未开通时不报错而是返回双零，让余额不足的提示语义统一，不额外创建账户行。
+/// 刻意不加 FOR UPDATE：报价是高频只读操作，锁住钱包会与结算事务争锁并拖慢下单。
+/// 因此该快照可能在用户确认前失效，真正的扣款判定发生在结算事务内重新锁行之后。
+/// 返回值只用于生成友好错误提示，不冻结资金，也不为后续确认预留任何额度。
 pub(crate) async fn load_wallet_balance(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -324,8 +357,11 @@ pub(crate) async fn load_wallet_balance(
     }))
 }
 
-/// 读取行情接入链写入 Redis 的最新成交价，作为市场计价闪兑的服务端权威汇率来源。
-/// 缓存缺失返回空值，载荷损坏或价格非法返回错误；本函数不回退到客户端报价。
+/// 从行情接入链写入的 ticker 缓存里取出指定交易对的最新成交价，作为市场计价的权威汇率来源。
+/// Redis 未配置或键不存在都返回空值，由调用方决定是拒绝报价还是走其他分支，本函数不自行兜底。
+/// 载荷必须是含字符串 last_price 字段的 JSON，解析失败或字段缺失一律按内部错误上报。
+/// 价格解析成功后还要求严格为正，非正价格返回参数错误，避免下游取倒数时出现除零或负汇率。
+/// 只读缓存，不回源现货撮合、不刷新 TTL，也绝不接受客户端提交的价格作为替代。
 pub(crate) async fn latest_market_price(
     redis: Option<redis::aio::ConnectionManager>,
     pair_symbol: &str,
@@ -372,8 +408,11 @@ where
     Ok(precision_scale)
 }
 
-/// 只核对 MySQL 报价行是否同时匹配报价 UUID 与用户，不检查状态、有效期或 Redis 缓存。
-/// 未命中返回 false 且不泄露其他用户报价；查询不加锁，资金幂等仍由确认事务的订单唯一键负责。
+/// 在进入结算事务前核对该报价行确实存在且属于当前用户，避免拿别人的 quote_id 触发结算。
+/// 条件同时约束 quote_id 与 user_id，命中失败一律返回 false 由调用方转成 NotFound，
+/// 不区分「报价不存在」和「报价属于他人」，防止通过错误码探测他人报价是否存在。
+/// 刻意不检查订单状态和 expires_at：有效期以 Redis 快照为准，已确认与否交给订单唯一键裁决。
+/// 查询不加行锁，本次通过不代表结算一定成功，真正的幂等保障在确认事务内的订单插入语句。
 pub(crate) async fn quote_exists_for_user(
     pool: &Pool<MySql>,
     quote_id: &QuoteId,
@@ -413,6 +452,11 @@ pub(crate) async fn confirm_and_settle_convert_quote(
     Ok(())
 }
 
+/// 在结算事务内把报价快照复制成一条 pending 订单，并以返回值告知调用方是否为首次插入。
+/// 订单字段全部由 `convert_quotes` 行 SELECT 而来，调用方无法覆写金额、汇率或费率。
+/// quote_id 上的唯一约束是本次结算的幂等键：重放时 ON DUPLICATE 走空更新，
+/// `last_insert_id` 为零因而返回 false，调用方据此回滚并报冲突，绝不重复扣款。
+/// 报价行不存在时 SELECT 命中零行，同样返回 false，语义上与重复确认合并处理。
 async fn insert_order_for_quote_in_tx(
     tx: &mut Transaction<'_, MySql>,
     quote_id: &str,
@@ -436,6 +480,16 @@ async fn insert_order_for_quote_in_tx(
     Ok(result.last_insert_id() != 0)
 }
 
+/// 在调用方已开启的事务内完成一笔闪兑的全部资金移动，调用前订单必须已插入且状态为 pending。
+/// 加锁顺序固定为：先 FOR UPDATE 锁定该用户的 pending 订单行，再锁源资产钱包，最后锁目标资产钱包。
+/// 顺序按订单记录的「源、目标」而非资产编号大小排列，因此同一用户反向对敲存在理论上的锁序交叉。
+/// 源资产从 available 全额扣除 from_amount，扣前先比对余额，不足则整个事务回滚且不留 pending 订单。
+/// 目标资产 available 加上 to_amount 后按目标资产 precision_scale 向零截断再写回，
+/// 截断作用于加总后的余额而非增量，因此极端情况下入账可能比 to_amount 少一个最小单位。
+/// frozen 与 locked 全程不变，手续费已折进 to_amount，不产生独立的手续费流水。
+/// 随后把订单置为 completed，写入一条代理业务佣金记录，并落两条 convert_settlement 钱包流水：
+/// 源资产记负额、目标资产记正额，二者均以 quote_id 作为 convert_order 引用。
+/// 任一步失败都由调用方回滚，不会留下只扣款未入账或只入账未记流水的中间状态。
 async fn settle_convert_order_in_tx(
     tx: &mut Transaction<'_, MySql>,
     quote_id: &str,
@@ -531,6 +585,11 @@ async fn settle_convert_order_in_tx(
     Ok(())
 }
 
+/// 在结算事务内取得某个用户资产维度钱包行的排他锁，并返回锁定瞬间的三段余额。
+/// 先做一次幂等的账户初始化再 SELECT ... FOR UPDATE，保证首次接触该资产的用户也能入账。
+/// 返回的 frozen 与 locked 不参与闪兑计算，只用于写流水时记录当时的完整余额切片。
+/// 初始化后仍查不到行属于异常状态，按参数错误上报并让整个结算事务回滚。
+/// 锁在事务提交或回滚时释放，调用顺序由 `settle_convert_order_in_tx` 统一决定。
 async fn lock_wallet_row(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -554,6 +613,10 @@ async fn lock_wallet_row(
     })
 }
 
+/// 幂等地确保用户在该资产上存在钱包账户行，余额字段一律沿用表默认值不做任何赋值。
+/// 已存在时通过 `updated_at = updated_at` 走空更新，既不重置余额也不刷新时间戳。
+/// 该写入与结算共用同一事务，若后续步骤失败，新建的空账户行会随事务一并回滚。
+/// SQLx 错误在此包装为内部错误，因为账户初始化失败属于存储故障而非用户输入问题。
 async fn ensure_wallet_account_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,

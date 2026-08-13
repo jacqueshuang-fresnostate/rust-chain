@@ -1,82 +1,103 @@
-import { isValidElement } from 'react';
+import type { ComponentType } from 'react';
+import type { RouteObject } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 
 import { adminRoutes } from './routes';
 
-function routeElementName(path: string) {
-  const route = adminRoutes.find((candidate) => candidate.path === path);
-  const element = route?.element;
-  return isValidElement(element) && typeof element.type !== 'string' ? String(element.type.name ?? '') : '';
+function findRoute(path: string): RouteObject | undefined {
+  return adminRoutes.find((candidate) => candidate.path === path);
+}
+
+// 资源路由把绑定的配置键静态暴露在 handle 上，因此不必触发动态导入即可断言绑定关系。
+function routeResourceKey(path: string) {
+  const handle = findRoute(path)?.handle as { resourceKey?: string } | undefined;
+  return handle?.resourceKey ?? '';
+}
+
+// 独立配置页只有解析 lazy 才能拿到组件，解析结果同时验证目标模块确实导出了该组件。
+async function lazyComponentName(path: string) {
+  const route = findRoute(path);
+  if (typeof route?.lazy !== 'function') {
+    return '';
+  }
+
+  const resolved = (await route.lazy()) as { Component?: ComponentType };
+  return resolved.Component?.name ?? '';
 }
 
 describe('adminRoutes', () => {
   it.each([
-    'news',
-    'system/countries',
-    'new-coins/subscriptions',
-    'new-coins/distributions',
-    'users',
-    'agent-commission-rules',
-    'assets',
-    'wallet/accounts',
-    'wallet/deposit-network-configs',
-    'wallet/deposit-address-pool',
-    'wallet/quick-recharge-orders',
-    'wallet/ledger',
-    'loan/products',
-    'loan/orders',
-    'earn/categories',
-    'risk',
-    'risk/events'
-  ])('uses resource page for %s', (path) => {
-    expect(routeElementName(path)).toBe('ResourcePage');
+    ['news', 'news'],
+    ['system/countries', 'countries'],
+    ['new-coins/subscriptions', 'newCoinSubscriptions'],
+    ['new-coins/distributions', 'newCoinDistributions'],
+    ['users', 'users'],
+    ['agent-commission-rules', 'agentCommissionRules'],
+    ['assets', 'assets'],
+    ['wallet/accounts', 'walletAccounts'],
+    ['wallet/deposit-network-configs', 'depositNetworkConfigs'],
+    ['wallet/deposit-address-pool', 'depositAddressPool'],
+    ['wallet/quick-recharge-orders', 'quickRechargeOrders'],
+    ['wallet/ledger', 'walletLedger'],
+    ['loan/products', 'loanProducts'],
+    ['loan/orders', 'loanOrders'],
+    ['earn/categories', 'earnCategories'],
+    ['risk', 'riskRules'],
+    ['risk/events', 'riskEvents']
+  ])('binds resource page %s to config %s', (path, expectedKey) => {
+    expect(routeResourceKey(path)).toBe(expectedKey);
   });
 
-  it('registers the market feed configuration action page', () => {
-    expect(routeElementName('market/feed-config')).toBe('MarketFeedConfigPage');
+  // 解析 lazy 会真实转换体量很大的 resourceConfigs 模块，首次导入在并行负载下远超默认超时。
+  it(
+    'lazily loads every resource route through the shared resource page',
+    async () => {
+      const resourceRoutes = adminRoutes.filter((route) => Boolean((route.handle as { resourceKey?: string } | undefined)?.resourceKey));
+      expect(resourceRoutes.length).toBeGreaterThan(40);
+      resourceRoutes.forEach((route) => {
+        expect(typeof route.lazy).toBe('function');
+        expect(route.element).toBeUndefined();
+      });
+
+      expect(await lazyComponentName('users')).toBe('AdminResourceRoute');
+    },
+    120_000
+  );
+
+  it.each([
+    ['market/feed-config', 'MarketFeedConfigPage'],
+    ['users/kyc', 'KycManagementPage'],
+    ['system/smtp', 'SmtpConfigPage'],
+    ['system/uploads', 'UploadConfigPage'],
+    ['system/brand', 'PlatformBrandPage'],
+    ['wallet/quick-recharge', 'QuickRechargeConfigPage'],
+    ['system/security-policy', 'SecurityPolicyPage'],
+    ['system/two-factor', 'AdminTwoFactorPage'],
+    ['agents', 'AgentManagementPage'],
+    ['dashboard', 'DashboardPage'],
+    ['new-coins/actions', 'NewCoinActions'],
+    ['market/strategies/actions', 'MarketStrategyActions'],
+    ['prediction/settings', 'PredictionConfigPage']
+  ])(
+    'registers the %s action page',
+    async (path, expectedName) => {
+      expect(await lazyComponentName(path)).toBe(expectedName);
+    },
+    120_000
+  );
+
+  it('keeps every admin route out of the initial bundle', () => {
+    const eagerRoutes = adminRoutes.filter((route) => route.path && route.element);
+    expect(eagerRoutes).toEqual([]);
   });
 
-  it('registers the KYC management action page', () => {
-    expect(routeElementName('users/kyc')).toBe('KycManagementPage');
-  });
-
-  it('registers the SMTP configuration action page', () => {
-    expect(routeElementName('system/smtp')).toBe('SmtpConfigPage');
-  });
-
-  it('registers the upload configuration action page', () => {
-    expect(routeElementName('system/uploads')).toBe('UploadConfigPage');
-  });
-
-  it('registers the PC brand configuration action page', () => {
-    expect(routeElementName('system/brand')).toBe('PlatformBrandPage');
-  });
-
-  it('registers the quick recharge configuration action page', () => {
-    expect(routeElementName('wallet/quick-recharge')).toBe('QuickRechargeConfigPage');
-  });
-
-  it('registers the security policy action page', () => {
-    expect(routeElementName('system/security-policy')).toBe('SecurityPolicyPage');
-  });
-
-  it('does not register the removed margin product action route', () => {
-    expect(routeElementName('margin/actions')).toBe('');
-  });
-
-  it('does not register the removed spot product action route', () => {
-    expect(routeElementName('spot/actions')).toBe('');
-  });
-
-  it('does not register a duplicate seconds contract action route', () => {
-    expect(routeElementName('seconds-contract/actions')).toBe('');
-  });
-
-  it('does not register the removed Earn product action route', () => {
-    expect(routeElementName('earn/actions')).toBe('');
-  });
-
-  it('does not register the removed new coin convert rule page', () => {
-    expect(routeElementName('convert/rules')).toBe('');
+  it.each([
+    'margin/actions',
+    'spot/actions',
+    'seconds-contract/actions',
+    'earn/actions',
+    'convert/rules'
+  ])('does not register the removed %s route', (path) => {
+    expect(findRoute(path)).toBeUndefined();
   });
 });

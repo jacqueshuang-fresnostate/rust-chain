@@ -85,8 +85,8 @@ describe('ProductStatusActions', () => {
     semiSelectByLabel('目标状态');
     await selectSemiOption(user, '目标状态', '禁用');
     await user.click(screen.getByRole('button', { name: '更新理财产品状态' }));
-    await user.type(screen.getByLabelText('操作原因'), 'disable earn product');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'disable earn product');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/products/88/status', {

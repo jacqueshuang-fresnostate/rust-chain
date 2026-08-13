@@ -1,3 +1,7 @@
+//! RabbitMQ 连接装配：为事件 outbox 发布与 inbox 消费提供一条共享的 AMQP 连接。
+//! 本文件只负责建连，队列、交换机、绑定关系与消费者确认策略全部由 events 上下文的适配器声明和拥有。
+//! 连接使用库默认参数，没有额外的心跳、重连或 publisher confirm 设置，这些行为由各使用方在自己的信道上决定。
+
 use crate::{config::Settings, error::AppResult};
 use lapin::{Connection, ConnectionProperties};
 

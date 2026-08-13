@@ -1,3 +1,7 @@
+//! 新闻中心的 OpenAPI 契约：同时覆盖后台的内容管理接口与用户端的公开阅读接口。
+//! 正文以结构化富文本块表达而非 HTML 字符串，并按语言分组存放，便于同一篇新闻多语言共存。
+//! 后台接口需要后台作用域令牌且能看到草稿与归档，用户端接口无需登录且只返回已发布内容。
+
 use super::*;
 
 #[derive(ToSchema)]
@@ -115,6 +119,8 @@ pub(super) struct UpdateAdminNewsStatusRequest {
     reason: Option<String>,
 }
 
+/// 后台分页查询新闻列表，可按状态、分类、国家与语言过滤，也支持标题或正文关键词检索。
+/// 与用户端不同，草稿和已归档的新闻在这里同样可见，便于编辑继续处理尚未发布的内容。
 #[utoipa::path(
     get,
     path = "/admin/api/v1/news",
@@ -140,6 +146,8 @@ pub(super) struct UpdateAdminNewsStatusRequest {
 )]
 fn list_admin_news() {}
 
+/// 创建一条多语言新闻，正文以结构化富文本块数组提交而不是整段 HTML 字符串。
+/// 状态可在创建时直接指定，未指定按草稿处理；可附审计原因说明本次新增的缘由。
 #[utoipa::path(
     post,
     path = "/admin/api/v1/news",
@@ -157,6 +165,8 @@ fn list_admin_news() {}
 )]
 fn create_admin_news() {}
 
+/// 按主键查询后台新闻详情，返回完整的多语言内容文档以及创建人与最后修改人。
+/// 这里不做状态过滤，草稿与归档同样可读，主要供编辑页回填表单使用。
 #[utoipa::path(
     get,
     path = "/admin/api/v1/news/{id}",
@@ -174,6 +184,8 @@ fn create_admin_news() {}
 )]
 fn get_admin_news() {}
 
+/// 整体覆盖新闻的标题、分类、归属国家、默认语言与多语言正文，不做字段级增量合并。
+/// 状态不在本接口修改，发布与归档需要走单独的状态变更接口。
 #[utoipa::path(
     patch,
     path = "/admin/api/v1/news/{id}",
@@ -193,6 +205,8 @@ fn get_admin_news() {}
 )]
 fn update_admin_news() {}
 
+/// 在草稿、已发布与已归档之间切换新闻状态，这是内容对用户端是否可见的唯一开关。
+/// 可附审计原因，便于事后追溯某篇新闻为何被下架或者重新发布。
 #[utoipa::path(
     patch,
     path = "/admin/api/v1/news/{id}/status",
@@ -212,6 +226,8 @@ fn update_admin_news() {}
 )]
 fn update_admin_news_status() {}
 
+/// 用户端公开查询新闻列表，无需登录，只返回已发布内容，草稿与归档不会出现。
+/// 支持按分类、国家与语言过滤，响应中附带横幅与小图标地址供列表页直接渲染。
 #[utoipa::path(
     get,
     path = "/api/v1/news",
@@ -233,6 +249,8 @@ fn update_admin_news_status() {}
 )]
 fn list_public_news() {}
 
+/// 用户端公开查询单篇新闻详情，未发布的内容一律按不存在处理，不泄露其是否真的存在。
+/// 返回结构与列表项一致并包含完整多语言正文，可直接用于详情页渲染。
 #[utoipa::path(
     get,
     path = "/api/v1/news/{id}",

@@ -55,6 +55,13 @@ uuid = { version = "1", features = ["serde", "v7"] }
 url = "2.5"
 validator = { version = "0.18", features = ["derive"] }
 
+# 生产镜像由 Dockerfile 的 `cargo build --release` 产出，这里统一收敛体积与运行性能。
+# 不启用 panic = "abort"：交易链路依赖 tokio task 级 panic 隔离，整进程中止会放大单请求故障。
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"
+
 [dev-dependencies]
 proc-macro2 = { version = "1", features = ["span-locations"] }
 regex = "1"

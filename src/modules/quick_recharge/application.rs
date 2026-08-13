@@ -1,7 +1,20 @@
 //! quick_recharge bounded context application layer.
 //!
-//! 应用层：编排用例、事务边界和跨仓储协作。
-//! 当前文件先作为 DDD 迁移锚点，后续把对应职责的业务逻辑逐步迁入。
+//! 应用层：第三方支付快速充值的全部用例编排与事务边界，涵盖渠道配置维护、用户下单和回调入账三条链路。
+//!
+//! 资金只在一处真正到账：只有验签通过的 `handle_gmpay_notify` 才会增加用户余额。
+//! 下单链路刻意不碰钱包，它先落一条 `created` 本地订单，再调用支付方，成功转 `pending`、失败转 `failed`，
+//! 全程只改订单状态。这样即使支付方返回异常或本地更新失败，也不会出现未收款先入账。
+//!
+//! 本地订单号由服务端生成的 UUIDv7 充当，同时作为发给支付方的商户订单号，因此渠道订单号与本地订单号
+//! 通过 `order_id` 一一对应，支付方另行返回的 `trade_id` 则记在订单行上作为第二重比对依据。
+//!
+//! 下单链路没有请求级幂等键，重复提交会生成新订单号并产生另一笔外部支付请求；
+//! 回调链路的幂等则由订单终态承担：订单已是 `paid` 时短路返回成功，不会二次入账。
+//!
+//! 事务与外部调用严格分离：支付方 HTTP 调用一律发生在数据库事务之外，避免长事务持锁；
+//! 相应地，外部调用成功后本地更新失败无法回滚支付方那一侧，这类不一致由订单状态与人工对账兜底。
+//! 商户密钥只在 `load_runtime_config` 内被解密使用，不进入响应体、审计快照或日志。
 
 use super::{
     infrastructure,
@@ -35,8 +48,11 @@ use serde_json::{Value, json};
 use sqlx::{MySql, Pool};
 use uuid::Uuid;
 
-/// 读取用户可见的快充启停、币种、网络和金额范围，不暴露商户密钥。
-/// 该用例只读单例配置，不调用支付方，也不创建订单或修改钱包余额。
+/// 读取用户侧可见的充值渠道信息，只回传开关、法币币种、收款币种、链网络与单笔金额区间。
+/// 返回体是后台配置的严格子集：API 地址、商户号、回调与回跳地址一概不外泄，商户密钥更不参与构造，
+/// 因此普通用户无法据此推断渠道接入细节。
+/// 收款币种在这里转成大写以匹配前端展示与资产符号习惯，其余字段沿用存储时的小写形态。
+/// 该用例只读单例配置，不调用支付方，也不创建订单或改动钱包余额。
 pub(crate) async fn get_user_quick_recharge_config(
     pool: Option<Pool<MySql>>,
 ) -> AppResult<UserQuickRechargeConfigResponse> {
@@ -53,8 +69,11 @@ pub(crate) async fn get_user_quick_recharge_config(
     })
 }
 
-/// 按鉴权用户和可选状态读取其快充订单，限制单次返回数量。
-/// 状态在查询前按本地状态机校验，结果不包含其他用户订单或资金流水。
+/// 读取当前用户的充值订单列表，用户编号由令牌 subject 解析，查询条件中强制带上该编号，绝不跨用户返回。
+/// 状态筛选在查询前按本地状态机校验，只接受 `created`、`pending`、`paid`、`failed`、`expired` 五种取值，
+/// 非法状态返回参数错误而不是当成空结果，避免前端拼错状态时误以为没有订单。
+/// 空白状态串会被裁剪为不筛选。条数经 `route_limit` 归一，本接口不支持偏移分页。
+/// 返回的是订单视图，不含商户密钥、回调原文与钱包流水。
 pub(crate) async fn list_user_quick_recharge_orders(
     pool: Option<Pool<MySql>>,
     subject: &str,
@@ -76,7 +95,9 @@ pub(crate) async fn list_user_quick_recharge_orders(
     })
 }
 
-/// 读取后台快充完整配置响应，密钥仅以掩码形式展示。
+/// 读取后台可见的渠道完整配置，含 API 地址、商户号、各端回跳地址与金额区间。
+/// 商户密钥只以入库时算好的掩码形式出现，密文与明文都不会进入响应体，因此该接口不构成密钥泄露面。
+/// 走连接池只读查询，不加锁也不调用支付方。
 pub(crate) async fn get_admin_quick_recharge_config(
     pool: Option<Pool<MySql>>,
 ) -> AppResult<QuickRechargeConfigResponse> {
@@ -85,8 +106,11 @@ pub(crate) async fn get_admin_quick_recharge_config(
     ))
 }
 
-/// 规范用户、邮箱、状态和支付方编号筛选后查询后台订单分页及总数。
-/// 该只读用例不锁订单，不触发支付方请求，也不改变钱包或支付状态。
+/// 为后台财务与客服查询充值订单，支持按用户编号、邮箱、状态、本地订单号和支付方交易号五个维度筛选。
+/// 后两个维度是掉单排查的主要入口：既能用本地订单号反查，也能拿支付方给出的交易号反查本地记录。
+/// 文本类筛选经裁剪，空白降级为不筛选；状态同样按本地状态机校验，非法值直接返回参数错误。
+/// 条数与偏移经统一归一后传入，返回与筛选条件一致的总数。
+/// 该用例只读，不锁订单、不触发支付方请求、不改变钱包余额或订单状态。
 pub(crate) async fn list_admin_quick_recharge_orders(
     pool: Option<Pool<MySql>>,
     query: QuickRechargeOrdersQuery,
@@ -345,8 +369,12 @@ pub(crate) async fn test_admin_quick_recharge_config(
     Ok(response)
 }
 
-/// 锁定未支付快充订单并确认不存在钱包流水后，写管理员审计再删除订单。
-/// 应用层拥有事务；paid 或已有入账流水的订单禁止删除，审计与删除失败时整体回滚。
+/// 后台清理一笔未支付的充值订单，用于处理长期滞留的废单，成功时不返回实体。
+/// 删除前设两道独立闸门：订单状态不得为 `paid`，且不得存在关联该订单的钱包流水。
+/// 两者都查是必要的，因为状态与流水由不同环节写入，只看其一可能漏判已入账订单，
+/// 一旦删除会让资金流水失去对应的订单凭证，命中任一条件返回 `AppError::Conflict`。
+/// 订单先加行锁再判断，避免与并发到达的支付回调竞争；审计写在删除之前但同事务提交，
+/// 任一步失败整体回滚，不会出现订单已删而审计缺失的情况。
 pub(crate) async fn delete_admin_quick_recharge_order(
     pool: Option<Pool<MySql>>,
     subject: &str,
@@ -389,6 +417,14 @@ pub(crate) async fn delete_admin_quick_recharge_order(
 /// `paid` 重放在验签、PID/status 和字段解析后短路，不再核对本次 trade_id、法币金额或 token；它不产生第二次余额变化或流水。
 /// 首次实际到账数量只校验为正，当前路径不按资产 precision_scale 截断；available 与流水直接使用已验签 `actual_amount`，frozen/locked 不变。
 /// 日志边界为：收到原始回调、配置/验签失败、关键字段不匹配、幂等命中及事务提交后的入账成功；成功日志只能在提交完成后发出，本用例不调用支付方 HTTP，也不在日志之外发布不可回滚事件。
+/// 防重放不依赖时间戳或 nonce，本回调协议未提供这两项；重复投递的防线是三层叠加：
+/// 验签保证报文来自持有商户密钥的一方，订单行锁保证并发的同单回调被串行化，
+/// 订单终态 `paid` 保证第二次及以后的投递只走幂等短路，因此重复回调不会造成多次入账。
+/// 校验顺序刻意先验签再取业务字段：签名不通过时不做任何数据库查询，也不暴露订单是否存在。
+/// 锁单之后的任一项不匹配都直接返回错误，事务随函数返回被丢弃而回滚，订单保持未支付且余额不变，
+/// 即失败时绝不入账，也不会留下半截的已支付状态。
+/// 入参 `payload` 会被原样记入日志并落库为回调原文，其中包含支付方给出的 `signature` 字段，
+/// 但不含商户密钥；调整日志时须保持这一边界，禁止把 `runtime.merchant_secret` 打进日志。
 pub(crate) async fn handle_gmpay_notify(
     pool: Option<Pool<MySql>>,
     key: Option<&str>,
@@ -544,12 +580,19 @@ pub(crate) async fn handle_gmpay_notify(
     Ok(())
 }
 
+/// 把可选连接池收敛为必备值，是本层每个用例的第一步前置断言。
+/// 缺失时返回 `AppError::Internal`，因为连接池未配置属于部署问题而不是调用方的请求问题。
+/// 接收并返回所有权形态的池句柄，克隆的是内部共享引用，不会新建物理连接。
 fn quick_recharge_mysql_pool(pool: Option<Pool<MySql>>) -> AppResult<Pool<MySql>> {
     pool.ok_or_else(|| {
         AppError::Internal("mysql pool is not configured for quick recharge routes".to_owned())
     })
 }
 
+/// 读取单例渠道配置行并解密成可用的运行时配置，是本层唯一会解开商户密钥的入口。
+/// `require_enabled` 为真用于用户下单路径，渠道未启用即拒绝；回调处理传假，
+/// 因为运营临时关闭渠道后，此前已发起的支付仍会回调，此时必须照常入账而不能因开关关闭把钱丢掉。
+/// 返回值含密钥明文，调用方只应在发起请求或验签的局部使用，不得写入日志、响应或审计。
 async fn load_runtime_config(
     pool: &Pool<MySql>,
     key: Option<&str>,
@@ -559,12 +602,16 @@ async fn load_runtime_config(
     runtime_config_from_row(row, key, require_enabled)
 }
 
+/// 把配置存储行转成对外响应，转换规则集中在 `From` 实现里，其中商户密钥密文被丢弃只保留掩码。
+/// 这里单独包一层是为了让各用例统一走同一条脱敏路径，避免某处直接返回存储行而漏掉密钥剥离。
 fn quick_recharge_config_response(
     row: super::repository::QuickRechargeConfigRow,
 ) -> QuickRechargeConfigResponse {
     row.into()
 }
 
+/// 批量把订单存储行转成对外视图，用户列表与后台列表共用同一转换，保证两侧字段口径一致。
+/// 转换只做字段投影与格式化，不做过滤，跨用户隔离由查询阶段的 WHERE 条件负责。
 fn quick_recharge_order_responses(
     rows: Vec<QuickRechargeOrderRow>,
 ) -> Vec<QuickRechargeOrderResponse> {

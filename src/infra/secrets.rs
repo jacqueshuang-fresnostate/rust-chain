@@ -1,3 +1,9 @@
+//! 凭据加解密与脱敏工具：后台配置里的第三方密钥、SMTP 口令等敏感值以密文入库，读写都要经过本模块。
+//! 加密使用 AES-256-GCM 带认证标签，密钥固定为 32 字节，由全局配置中的凭据加密主密钥提供。
+//! 密文对外形态是 base64 编码的随机数与密文标签拼接，格式自解释，因此换库或迁移时不需要额外元数据。
+//! 所有失败路径都不回落明文：密钥错误、密文损坏或标签校验不过一律报错，宁可功能不可用也不降级。
+//! 掩码函数只用于把密钥回显给管理端界面，产生的结果不可逆也不可比较，不能拿来做任何校验。
+
 use crate::error::{AppError, AppResult};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use ring::{
@@ -85,13 +91,18 @@ pub fn encrypt_secret_field(
     }
 }
 
-/// 解密可选密文字段；`None` 保持缺失，存在但无效的密文必须报错而非降级为缺失配置。
+/// 解密可选密文字段，未配置的 `None` 原样保持缺失，不会被当成解密失败。
+/// 存在但无效的密文必须报错而不是降级成缺失配置，否则密钥轮换出错时会被误读为「该项从未配置」，
+/// 进而让上层按未配置分支继续运行，掩盖掉真正的密钥问题。
 pub fn decrypt_optional_secret(ciphertext: Option<&str>, key: &str) -> AppResult<Option<String>> {
     ciphertext
         .map(|value| decrypt_secret(value, key))
         .transpose()
 }
 
+/// 校验主密钥长度并借出其字节切片，是加密与解密共用的前置检查，保证两侧口径完全一致。
+/// 长度按字节而非字符计算，必须正好 32 字节以匹配 AES-256；不足或超出都返回校验错误，不做补齐或截断。
+/// 错误信息只说明长度要求，不带入密钥内容本身，避免出错时把密钥写进日志或响应。
 fn encryption_key_bytes(key: &str) -> AppResult<&[u8]> {
     let key = key.as_bytes();
     if key.len() != 32 {

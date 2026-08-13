@@ -1,11 +1,11 @@
 {
-  "version": "2.15",
+  "version": "2.17",
   "children": [
     {
       "type": "frame",
       "id": "FISId",
-      "x": 18,
-      "y": -758,
+      "x": 0,
+      "y": 0,
       "name": "00 / Design System",
       "theme": {
         "mode": "light"
@@ -3029,7 +3029,7 @@
       "type": "frame",
       "id": "FwNBM",
       "x": 0,
-      "y": 1200,
+      "y": 3600,
       "name": "01 / Home / Light · Guest",
       "theme": {
         "mode": "light"
@@ -5058,7 +5058,7 @@
       "type": "frame",
       "id": "W1cWyh",
       "x": 470,
-      "y": 1200,
+      "y": 3600,
       "name": "02 / Home / Dark · Guest",
       "theme": {
         "mode": "dark"
@@ -7088,7 +7088,7 @@
       "type": "frame",
       "id": "ftTny",
       "x": 1880,
-      "y": 1200,
+      "y": 3600,
       "name": "04 / Market Detail · Light",
       "theme": {
         "mode": "light"
@@ -8913,7 +8913,7 @@
       "type": "frame",
       "id": "by3G9",
       "x": 470,
-      "y": 2280,
+      "y": 4680,
       "name": "06 / Contract · Light",
       "theme": {
         "mode": "light"
@@ -10481,7 +10481,7 @@
       "type": "frame",
       "id": "VL8er",
       "x": 1880,
-      "y": 2280,
+      "y": 4680,
       "name": "07 / Seconds · Light",
       "theme": {
         "mode": "light"
@@ -10618,6 +10618,16 @@
                   "fontFamily": "$font-sans",
                   "fontSize": 10,
                   "fontWeight": "500"
+                },
+                {
+                  "type": "icon",
+                  "id": "ZcNHi",
+                  "name": "Pair Chevron",
+                  "width": 15,
+                  "height": 15,
+                  "icon": "chevron-down",
+                  "library": "lucide",
+                  "fill": "$muted"
                 }
               ]
             },
@@ -11170,8 +11180,8 @@
     {
       "type": "frame",
       "id": "kcP5D",
-      "x": 1410,
-      "y": 3360,
+      "x": 2350,
+      "y": 5760,
       "name": "08 / Orders · Light",
       "theme": {
         "mode": "light"
@@ -12082,8 +12092,8 @@
     {
       "type": "frame",
       "id": "CUK3y",
-      "x": 1880,
-      "y": 4440,
+      "x": 0,
+      "y": 7920,
       "name": "09 / Assets · Light · Guest",
       "theme": {
         "mode": "light"
@@ -12625,8 +12635,8 @@
     {
       "type": "frame",
       "id": "dUqOS",
-      "x": 940,
-      "y": 5520,
+      "x": 1880,
+      "y": 7920,
       "name": "10 / Profile · Light",
       "theme": {
         "mode": "light"
@@ -13408,8 +13418,8 @@
     {
       "type": "frame",
       "id": "FkZ6j",
-      "x": 1880,
-      "y": 5520,
+      "x": 0,
+      "y": 9000,
       "name": "11 / Message Center · Light",
       "theme": {
         "mode": "light"
@@ -14075,8 +14085,8 @@
     {
       "type": "frame",
       "id": "VGPW0",
-      "x": 1410,
-      "y": 6600,
+      "x": 2350,
+      "y": 9000,
       "name": "12 / News · Light",
       "theme": {
         "mode": "light"
@@ -14682,8 +14692,8 @@
     {
       "type": "frame",
       "id": "Q50Rgr",
-      "x": 0,
-      "y": 7680,
+      "x": 940,
+      "y": 10080,
       "name": "13 / News Detail · Light",
       "theme": {
         "mode": "light"
@@ -15020,8 +15030,8 @@
     {
       "type": "frame",
       "id": "Z0B0N6",
-      "x": 940,
-      "y": 7680,
+      "x": 1880,
+      "y": 10080,
       "name": "14 / Product Hub · Light",
       "theme": {
         "mode": "light"
@@ -15397,8 +15407,8 @@
     {
       "type": "frame",
       "id": "x9T4CL",
-      "x": 1880,
-      "y": 7680,
+      "x": 0,
+      "y": 11160,
       "name": "15 / Swap · Light",
       "theme": {
         "mode": "light"
@@ -16219,8 +16229,8 @@
     {
       "type": "frame",
       "id": "zIzOm",
-      "x": 940,
-      "y": 8760,
+      "x": 1880,
+      "y": 11160,
       "name": "16 / Earn · Light",
       "theme": {
         "mode": "light"
@@ -16680,8 +16690,8 @@
     {
       "type": "frame",
       "id": "kIOBX",
-      "x": 0,
-      "y": 9840,
+      "x": 940,
+      "y": 12240,
       "name": "17 / Loan · Light",
       "theme": {
         "mode": "light"
@@ -17079,8 +17089,8 @@
     {
       "type": "frame",
       "id": "oOJ0q",
-      "x": 940,
-      "y": 9840,
+      "x": 1880,
+      "y": 12240,
       "name": "18 / New Coins · Light",
       "theme": {
         "mode": "light"
@@ -17712,8 +17722,8 @@
     {
       "type": "frame",
       "id": "nFwYy",
-      "x": 1880,
-      "y": 9840,
+      "x": 0,
+      "y": 13320,
       "name": "19 / New Coin Detail · Light",
       "theme": {
         "mode": "light"
@@ -18293,8 +18303,8 @@
     {
       "type": "frame",
       "id": "pU7Kz",
-      "x": 0,
-      "y": 10920,
+      "x": 940,
+      "y": 13320,
       "name": "20 / Prediction · Light",
       "theme": {
         "mode": "light"
@@ -18818,8 +18828,8 @@
     {
       "type": "frame",
       "id": "fNXT7",
-      "x": 1880,
-      "y": 10920,
+      "x": 0,
+      "y": 14400,
       "name": "21 / Deposit Asset · Light",
       "theme": {
         "mode": "light"
@@ -19232,8 +19242,8 @@
     {
       "type": "frame",
       "id": "y4ifR",
-      "x": 0,
-      "y": 12000,
+      "x": 940,
+      "y": 14400,
       "name": "22 / Deposit Network · Light",
       "theme": {
         "mode": "light"
@@ -19692,8 +19702,8 @@
     {
       "type": "frame",
       "id": "w5htG",
-      "x": 940,
-      "y": 12000,
+      "x": 1880,
+      "y": 14400,
       "name": "23 / Deposit Detail · Light",
       "theme": {
         "mode": "light"
@@ -20008,8 +20018,8 @@
     {
       "type": "frame",
       "id": "NGBmq",
-      "x": 1880,
-      "y": 12000,
+      "x": 0,
+      "y": 15480,
       "name": "24 / Withdraw Asset · Light",
       "theme": {
         "mode": "light"
@@ -20434,8 +20444,8 @@
     {
       "type": "frame",
       "id": "Qa9dW",
-      "x": 0,
-      "y": 13080,
+      "x": 940,
+      "y": 15480,
       "name": "25 / Withdraw Form · Light",
       "theme": {
         "mode": "light"
@@ -20925,8 +20935,8 @@
     {
       "type": "frame",
       "id": "y6Y7TW",
-      "x": 940,
-      "y": 13080,
+      "x": 1880,
+      "y": 15480,
       "name": "26 / Wallet Ledger · Light",
       "theme": {
         "mode": "light"
@@ -21410,8 +21420,8 @@
     {
       "type": "frame",
       "id": "DxqMB",
-      "x": 0,
-      "y": 14160,
+      "x": 940,
+      "y": 16560,
       "name": "27 / Withdrawal Records · Light",
       "theme": {
         "mode": "light"
@@ -21861,8 +21871,8 @@
     {
       "type": "frame",
       "id": "CyRqi",
-      "x": 940,
-      "y": 14160,
+      "x": 1880,
+      "y": 16560,
       "name": "28 / Quick Recharge · Light",
       "theme": {
         "mode": "light"
@@ -22405,8 +22415,8 @@
     {
       "type": "frame",
       "id": "u99Fpg",
-      "x": 1880,
-      "y": 14160,
+      "x": 0,
+      "y": 17640,
       "name": "29 / Login · Light",
       "theme": {
         "mode": "light"
@@ -22916,8 +22926,8 @@
     {
       "type": "frame",
       "id": "MCuqb",
-      "x": 0,
-      "y": 15240,
+      "x": 940,
+      "y": 17640,
       "name": "30 / Register · Light",
       "theme": {
         "mode": "light"
@@ -23563,8 +23573,8 @@
     {
       "type": "frame",
       "id": "qmNDA",
-      "x": 940,
-      "y": 15240,
+      "x": 1880,
+      "y": 17640,
       "name": "31 / Two-Factor · Light",
       "theme": {
         "mode": "light"
@@ -23981,8 +23991,8 @@
     {
       "type": "frame",
       "id": "mgAF7",
-      "x": 1880,
-      "y": 15240,
+      "x": 0,
+      "y": 18720,
       "name": "32 / Forgot Password · Light",
       "theme": {
         "mode": "light"
@@ -24409,8 +24419,8 @@
     {
       "type": "frame",
       "id": "WZ42z",
-      "x": 0,
-      "y": 16320,
+      "x": 940,
+      "y": 18720,
       "name": "33 / Security · Light",
       "theme": {
         "mode": "light"
@@ -24900,8 +24910,8 @@
     {
       "type": "frame",
       "id": "Raoes",
-      "x": 940,
-      "y": 16320,
+      "x": 1880,
+      "y": 18720,
       "name": "34 / KYC · Light",
       "theme": {
         "mode": "light"
@@ -25424,8 +25434,8 @@
     {
       "type": "frame",
       "id": "x84Cbv",
-      "x": 1880,
-      "y": 16320,
+      "x": 0,
+      "y": 19800,
       "name": "35 / Account Bindings · Light",
       "theme": {
         "mode": "light"
@@ -25823,8 +25833,8 @@
     {
       "type": "frame",
       "id": "c80gd",
-      "x": 0,
-      "y": 17400,
+      "x": 940,
+      "y": 19800,
       "name": "36 / Referrals · Light",
       "theme": {
         "mode": "light"
@@ -26201,8 +26211,8 @@
     {
       "type": "frame",
       "id": "kwFEy",
-      "x": 1880,
-      "y": 17400,
+      "x": 0,
+      "y": 20880,
       "name": "37 / Language · Light",
       "theme": {
         "mode": "light"
@@ -26458,7 +26468,7 @@
       "type": "frame",
       "id": "KB7ag",
       "x": 940,
-      "y": 1200,
+      "y": 3600,
       "name": "03 / Markets · Light",
       "theme": {
         "mode": "light"
@@ -28221,7 +28231,7 @@
       "type": "frame",
       "id": "miHnt",
       "x": 1410,
-      "y": 1200,
+      "y": 3600,
       "name": "03 / Home / Light · Member",
       "theme": {
         "mode": "light"
@@ -30412,7 +30422,7 @@
       "type": "frame",
       "id": "CvipW",
       "x": 2350,
-      "y": 1200,
+      "y": 3600,
       "name": "04 / Home / Dark · Member",
       "theme": {
         "mode": "dark"
@@ -32604,7 +32614,7 @@
       "type": "frame",
       "id": "VoZfE",
       "x": 0,
-      "y": 2280,
+      "y": 4680,
       "name": "05 / Market Detail · Dark",
       "theme": {
         "mode": "dark"
@@ -34421,7 +34431,7 @@
       "type": "frame",
       "id": "yzOPc",
       "x": 940,
-      "y": 2280,
+      "y": 4680,
       "name": "06 / Spot Trading · Light",
       "theme": {
         "mode": "light"
@@ -36306,7 +36316,7 @@
       "type": "frame",
       "id": "bo8k5",
       "x": 0,
-      "y": 3360,
+      "y": 5760,
       "name": "07 / Spot Trading · Dark",
       "theme": {
         "mode": "dark"
@@ -38190,8 +38200,8 @@
     {
       "type": "frame",
       "id": "hlr9Y",
-      "x": 1880,
-      "y": 3360,
+      "x": 0,
+      "y": 6840,
       "name": "08 / Markets · Dark",
       "theme": {
         "mode": "dark"
@@ -39953,8 +39963,8 @@
     {
       "type": "frame",
       "id": "WNbsc",
-      "x": 2350,
-      "y": 14160,
+      "x": 470,
+      "y": 17640,
       "name": "29 / Login · Dark",
       "theme": {
         "mode": "dark"
@@ -40464,8 +40474,8 @@
     {
       "type": "frame",
       "id": "RGYGj",
-      "x": 470,
-      "y": 15240,
+      "x": 1410,
+      "y": 17640,
       "name": "30 / Register · Dark",
       "theme": {
         "mode": "dark"
@@ -41111,8 +41121,8 @@
     {
       "type": "frame",
       "id": "i6YDBr",
-      "x": 0,
-      "y": 5520,
+      "x": 940,
+      "y": 7920,
       "name": "09 / Assets · Dark · Guest",
       "theme": {
         "mode": "dark"
@@ -41650,8 +41660,8 @@
     {
       "type": "frame",
       "id": "duJTW",
-      "x": 1410,
-      "y": 5520,
+      "x": 2350,
+      "y": 7920,
       "name": "10 / Profile · Dark",
       "theme": {
         "mode": "dark"
@@ -42433,8 +42443,8 @@
     {
       "type": "frame",
       "id": "S23rM",
-      "x": 2350,
-      "y": 5520,
+      "x": 470,
+      "y": 9000,
       "name": "11 / Profile Member · Light",
       "theme": {
         "mode": "light"
@@ -43321,8 +43331,8 @@
     {
       "type": "frame",
       "id": "S0Bj8",
-      "x": 2350,
-      "y": 6600,
+      "x": 470,
+      "y": 10080,
       "name": "12 / Profile Member · Dark",
       "theme": {
         "mode": "dark"
@@ -44209,8 +44219,8 @@
     {
       "type": "frame",
       "id": "A85if",
-      "x": 2350,
-      "y": 3360,
+      "x": 470,
+      "y": 6840,
       "name": "08 / Orders · Dark",
       "theme": {
         "mode": "dark"
@@ -45121,8 +45131,8 @@
     {
       "type": "frame",
       "id": "n6oGO",
-      "x": 0,
-      "y": 4440,
+      "x": 940,
+      "y": 6840,
       "name": "08b / Orders · Leverage · Light",
       "theme": {
         "mode": "light"
@@ -46033,8 +46043,8 @@
     {
       "type": "frame",
       "id": "t2GTW4",
-      "x": 470,
-      "y": 4440,
+      "x": 1410,
+      "y": 6840,
       "name": "08b / Orders · Leverage · Dark",
       "theme": {
         "mode": "dark"
@@ -46945,8 +46955,8 @@
     {
       "type": "frame",
       "id": "b6EGF",
-      "x": 1880,
-      "y": 6600,
+      "x": 0,
+      "y": 10080,
       "name": "12 / News · Dark",
       "theme": {
         "mode": "dark"
@@ -47552,8 +47562,8 @@
     {
       "type": "frame",
       "id": "ASvmq",
-      "x": 470,
-      "y": 7680,
+      "x": 1410,
+      "y": 10080,
       "name": "13 / News Detail · Dark",
       "theme": {
         "mode": "dark"
@@ -47890,8 +47900,8 @@
     {
       "type": "frame",
       "id": "eXdnN",
-      "x": 2350,
-      "y": 7680,
+      "x": 470,
+      "y": 11160,
       "name": "15 / Swap · Dark",
       "theme": {
         "mode": "dark"
@@ -48712,8 +48722,8 @@
     {
       "type": "frame",
       "id": "sf288",
-      "x": 0,
-      "y": 8760,
+      "x": 940,
+      "y": 11160,
       "name": "15b / Swap · Asset Picker · Light",
       "theme": {
         "mode": "light"
@@ -50244,8 +50254,8 @@
     {
       "type": "frame",
       "id": "xvVss",
-      "x": 470,
-      "y": 8760,
+      "x": 1410,
+      "y": 11160,
       "name": "15b / Swap · Asset Picker · Dark",
       "theme": {
         "mode": "dark"
@@ -51776,8 +51786,8 @@
     {
       "type": "frame",
       "id": "tCHZ9",
-      "x": 1410,
-      "y": 8760,
+      "x": 2350,
+      "y": 11160,
       "name": "16 / Earn · Dark",
       "theme": {
         "mode": "dark"
@@ -52237,8 +52247,8 @@
     {
       "type": "frame",
       "id": "yrsRy",
-      "x": 470,
-      "y": 9840,
+      "x": 1410,
+      "y": 12240,
       "name": "17 / Loan · Dark",
       "theme": {
         "mode": "dark"
@@ -52636,8 +52646,8 @@
     {
       "type": "frame",
       "id": "ZTtvY",
-      "x": 1410,
-      "y": 9840,
+      "x": 2350,
+      "y": 12240,
       "name": "18 / New Coins · Dark",
       "theme": {
         "mode": "dark"
@@ -53269,8 +53279,8 @@
     {
       "type": "frame",
       "id": "B6Qh9J",
-      "x": 2350,
-      "y": 9840,
+      "x": 470,
+      "y": 13320,
       "name": "19 / New Coin Detail · Dark",
       "theme": {
         "mode": "dark"
@@ -53850,8 +53860,8 @@
     {
       "type": "frame",
       "id": "zMsKE",
-      "x": 1410,
-      "y": 7680,
+      "x": 2350,
+      "y": 10080,
       "name": "14 / Product Hub · Dark",
       "theme": {
         "mode": "dark"
@@ -54227,8 +54237,8 @@
     {
       "type": "frame",
       "id": "bRz9K",
-      "x": 0,
-      "y": 6600,
+      "x": 940,
+      "y": 9000,
       "name": "11 / Message Center · Dark",
       "theme": {
         "mode": "dark"
@@ -54894,8 +54904,8 @@
     {
       "type": "frame",
       "id": "IcvzQ",
-      "x": 470,
-      "y": 10920,
+      "x": 1410,
+      "y": 13320,
       "name": "20 / Prediction · Dark",
       "theme": {
         "mode": "dark"
@@ -55419,8 +55429,8 @@
     {
       "type": "frame",
       "id": "n5jiPN",
-      "x": 2350,
-      "y": 10920,
+      "x": 470,
+      "y": 14400,
       "name": "21 / Deposit Asset · Dark",
       "theme": {
         "mode": "dark"
@@ -55833,8 +55843,8 @@
     {
       "type": "frame",
       "id": "qKfsZ",
-      "x": 470,
-      "y": 12000,
+      "x": 1410,
+      "y": 14400,
       "name": "22 / Deposit Network · Dark",
       "theme": {
         "mode": "dark"
@@ -56293,8 +56303,8 @@
     {
       "type": "frame",
       "id": "TCN5A",
-      "x": 1410,
-      "y": 12000,
+      "x": 2350,
+      "y": 14400,
       "name": "23 / Deposit Detail · Dark",
       "theme": {
         "mode": "dark"
@@ -56609,8 +56619,8 @@
     {
       "type": "frame",
       "id": "h0WWYC",
-      "x": 2350,
-      "y": 12000,
+      "x": 470,
+      "y": 15480,
       "name": "24 / Withdraw Asset · Dark",
       "theme": {
         "mode": "dark"
@@ -57035,8 +57045,8 @@
     {
       "type": "frame",
       "id": "o8Wsh",
-      "x": 470,
-      "y": 13080,
+      "x": 1410,
+      "y": 15480,
       "name": "25 / Withdraw Form · Dark",
       "theme": {
         "mode": "dark"
@@ -57526,8 +57536,8 @@
     {
       "type": "frame",
       "id": "m25xr0",
-      "x": 1410,
-      "y": 13080,
+      "x": 2350,
+      "y": 15480,
       "name": "26 / Wallet Ledger · Dark",
       "theme": {
         "mode": "dark"
@@ -58011,8 +58021,8 @@
     {
       "type": "frame",
       "id": "G3HecO",
-      "x": 470,
-      "y": 14160,
+      "x": 1410,
+      "y": 16560,
       "name": "27 / Withdrawal Records · Dark",
       "theme": {
         "mode": "dark"
@@ -58462,8 +58472,8 @@
     {
       "type": "frame",
       "id": "cM0eg",
-      "x": 1410,
-      "y": 14160,
+      "x": 2350,
+      "y": 16560,
       "name": "28 / Quick Recharge · Dark",
       "theme": {
         "mode": "dark"
@@ -59006,8 +59016,8 @@
     {
       "type": "frame",
       "id": "kp9wV",
-      "x": 1410,
-      "y": 15240,
+      "x": 2350,
+      "y": 17640,
       "name": "31 / Two-Factor · Dark",
       "theme": {
         "mode": "dark"
@@ -59424,8 +59434,8 @@
     {
       "type": "frame",
       "id": "HrPy2",
-      "x": 2350,
-      "y": 15240,
+      "x": 470,
+      "y": 18720,
       "name": "32 / Forgot Password · Dark",
       "theme": {
         "mode": "dark"
@@ -59852,8 +59862,8 @@
     {
       "type": "frame",
       "id": "sDl6T",
-      "x": 470,
-      "y": 16320,
+      "x": 1410,
+      "y": 18720,
       "name": "33 / Security · Dark",
       "theme": {
         "mode": "dark"
@@ -60343,8 +60353,8 @@
     {
       "type": "frame",
       "id": "wJT9Y",
-      "x": 1410,
-      "y": 16320,
+      "x": 2350,
+      "y": 18720,
       "name": "34 / KYC · Dark",
       "theme": {
         "mode": "dark"
@@ -60867,8 +60877,8 @@
     {
       "type": "frame",
       "id": "Z0ging",
-      "x": 2350,
-      "y": 16320,
+      "x": 470,
+      "y": 19800,
       "name": "35 / Account Bindings · Dark",
       "theme": {
         "mode": "dark"
@@ -61266,8 +61276,8 @@
     {
       "type": "frame",
       "id": "Bmt4u",
-      "x": 470,
-      "y": 17400,
+      "x": 1410,
+      "y": 19800,
       "name": "36 / Referrals · Dark",
       "theme": {
         "mode": "dark"
@@ -61644,8 +61654,8 @@
     {
       "type": "frame",
       "id": "yPf6O",
-      "x": 2350,
-      "y": 17400,
+      "x": 470,
+      "y": 20880,
       "name": "37 / Language · Dark",
       "theme": {
         "mode": "dark"
@@ -61900,8 +61910,8 @@
     {
       "type": "frame",
       "id": "e4bPj",
-      "x": 940,
-      "y": 17400,
+      "x": 1880,
+      "y": 19800,
       "name": "36b / Referrals Member · Light",
       "theme": {
         "mode": "light"
@@ -62501,8 +62511,8 @@
     {
       "type": "frame",
       "id": "Qy31s",
-      "x": 1410,
-      "y": 17400,
+      "x": 2350,
+      "y": 19800,
       "name": "36b / Referrals Member · Dark",
       "theme": {
         "mode": "dark"
@@ -63103,7 +63113,7 @@
       "type": "frame",
       "id": "g9agt",
       "x": 2350,
-      "y": 2280,
+      "y": 4680,
       "name": "07 / Seconds · Dark",
       "theme": {
         "mode": "dark"
@@ -63240,6 +63250,16 @@
                   "fontFamily": "$font-sans",
                   "fontSize": 10,
                   "fontWeight": "500"
+                },
+                {
+                  "type": "icon",
+                  "id": "uyWV2",
+                  "name": "Pair Chevron",
+                  "width": 15,
+                  "height": 15,
+                  "icon": "chevron-down",
+                  "library": "lucide",
+                  "fill": "$muted"
                 }
               ]
             },
@@ -63793,7 +63813,7 @@
       "type": "frame",
       "id": "Lpt6q",
       "x": 470,
-      "y": 3360,
+      "y": 5760,
       "name": "07b / Seconds Active · Light",
       "theme": {
         "mode": "light"
@@ -63930,6 +63950,16 @@
                   "fontFamily": "$font-sans",
                   "fontSize": 10,
                   "fontWeight": "500"
+                },
+                {
+                  "type": "icon",
+                  "id": "FuDhj",
+                  "name": "Pair Chevron",
+                  "width": 15,
+                  "height": 15,
+                  "icon": "chevron-down",
+                  "library": "lucide",
+                  "fill": "$muted"
                 }
               ]
             },
@@ -64729,7 +64759,7 @@
       "type": "frame",
       "id": "WxeB8",
       "x": 940,
-      "y": 3360,
+      "y": 5760,
       "name": "07b / Seconds Active · Dark",
       "theme": {
         "mode": "dark"
@@ -64866,6 +64896,16 @@
                   "fontFamily": "$font-sans",
                   "fontSize": 10,
                   "fontWeight": "500"
+                },
+                {
+                  "type": "icon",
+                  "id": "lLlb2",
+                  "name": "Pair Chevron",
+                  "width": 15,
+                  "height": 15,
+                  "icon": "chevron-down",
+                  "library": "lucide",
+                  "fill": "$muted"
                 }
               ]
             },
@@ -65665,7 +65705,7 @@
       "type": "frame",
       "id": "pKHeU",
       "x": 1410,
-      "y": 2280,
+      "y": 4680,
       "name": "06 / Contract · Dark",
       "theme": {
         "mode": "dark"
@@ -67232,8 +67272,8 @@
     {
       "type": "frame",
       "id": "p61z2Q",
-      "x": 2350,
-      "y": 4440,
+      "x": 470,
+      "y": 7920,
       "name": "09 / Assets · Light · Member",
       "theme": {
         "mode": "light"
@@ -68342,8 +68382,8 @@
     {
       "type": "frame",
       "id": "Q4JYj",
-      "x": 470,
-      "y": 5520,
+      "x": 1410,
+      "y": 7920,
       "name": "09 / Assets · Dark · Member",
       "theme": {
         "mode": "dark"
@@ -69752,8 +69792,8 @@
     {
       "type": "frame",
       "id": "A9It6g",
-      "x": 0,
-      "y": 18480,
+      "x": 940,
+      "y": 20880,
       "name": "38 / New Coin Records · Light",
       "theme": {
         "mode": "light"
@@ -70356,8 +70396,8 @@
     {
       "type": "frame",
       "id": "h4gfd",
-      "x": 470,
-      "y": 18480,
+      "x": 1410,
+      "y": 20880,
       "name": "38 / New Coin Records · Dark",
       "theme": {
         "mode": "dark"
@@ -70960,8 +71000,8 @@
     {
       "type": "frame",
       "id": "v6phV",
-      "x": 940,
-      "y": 18480,
+      "x": 1880,
+      "y": 20880,
       "name": "39 / Transfer Sheet · Light",
       "theme": {
         "mode": "light"
@@ -71538,8 +71578,8 @@
     {
       "type": "frame",
       "id": "TuWXq",
-      "x": 1410,
-      "y": 18480,
+      "x": 2350,
+      "y": 20880,
       "name": "39 / Transfer Sheet · Dark",
       "theme": {
         "mode": "dark"
@@ -72116,8 +72156,8 @@
     {
       "type": "frame",
       "id": "UouET",
-      "x": 1880,
-      "y": 18480,
+      "x": 0,
+      "y": 21960,
       "name": "40 / Help & Support · Light",
       "theme": {
         "mode": "light"
@@ -72773,8 +72813,8 @@
     {
       "type": "frame",
       "id": "FM5tp",
-      "x": 2350,
-      "y": 18480,
+      "x": 470,
+      "y": 21960,
       "name": "40 / Help & Support · Dark",
       "theme": {
         "mode": "dark"
@@ -73430,8 +73470,8 @@
     {
       "type": "frame",
       "id": "e5Qs1",
-      "x": 940,
-      "y": 4440,
+      "x": 1880,
+      "y": 6840,
       "name": "08c / Orders · Empty · Light",
       "theme": {
         "mode": "light"
@@ -73886,8 +73926,8 @@
     {
       "type": "frame",
       "id": "hxe8l",
-      "x": 1410,
-      "y": 4440,
+      "x": 2350,
+      "y": 6840,
       "name": "08c / Orders · Empty · Dark",
       "theme": {
         "mode": "dark"
@@ -74342,8 +74382,8 @@
     {
       "type": "frame",
       "id": "Bcug6",
-      "x": 1880,
-      "y": 13080,
+      "x": 0,
+      "y": 16560,
       "name": "26b / Wallet Ledger · Empty · Light",
       "theme": {
         "mode": "light"
@@ -74724,8 +74764,8 @@
     {
       "type": "frame",
       "id": "IVMAO",
-      "x": 2350,
-      "y": 13080,
+      "x": 470,
+      "y": 16560,
       "name": "26b / Wallet Ledger · Empty · Dark",
       "theme": {
         "mode": "dark"
@@ -75106,8 +75146,8 @@
     {
       "type": "frame",
       "id": "t7j6n",
-      "x": 470,
-      "y": 6600,
+      "x": 1410,
+      "y": 9000,
       "name": "11b / Message Center · Empty · Light",
       "theme": {
         "mode": "light"
@@ -75466,8 +75506,8 @@
     {
       "type": "frame",
       "id": "eSMHf",
-      "x": 940,
-      "y": 6600,
+      "x": 1880,
+      "y": 9000,
       "name": "11b / Message Center · Empty · Dark",
       "theme": {
         "mode": "dark"
@@ -75826,8 +75866,8 @@
     {
       "type": "frame",
       "id": "CzpTv",
-      "x": 940,
-      "y": 10920,
+      "x": 1880,
+      "y": 13320,
       "name": "20b / Prediction · Bet · Light",
       "theme": {
         "mode": "light"
@@ -76319,8 +76359,8 @@
     {
       "type": "frame",
       "id": "ZvGMv",
-      "x": 1410,
-      "y": 10920,
+      "x": 2350,
+      "y": 13320,
       "name": "20b / Prediction · Bet · Dark",
       "theme": {
         "mode": "dark"
@@ -76812,8 +76852,8 @@
     {
       "type": "frame",
       "id": "nqP6W",
-      "x": 1880,
-      "y": 8760,
+      "x": 0,
+      "y": 12240,
       "name": "16b / Earn · Subscribe · Light",
       "theme": {
         "mode": "light"
@@ -77273,8 +77313,8 @@
     {
       "type": "frame",
       "id": "aXxul",
-      "x": 2350,
-      "y": 8760,
+      "x": 470,
+      "y": 12240,
       "name": "16b / Earn · Subscribe · Dark",
       "theme": {
         "mode": "dark"
@@ -77728,6 +77768,2290 @@
           "name": "Bottom Spacer",
           "width": "fill_container",
           "height": "fill_container"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "vONcc",
+      "x": 1410,
+      "y": 5772,
+      "name": "07c / Seconds · Pair Picker · Light",
+      "theme": {
+        "mode": "light"
+      },
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "$canvas",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "v8bfQb",
+          "name": "Picker Stage",
+          "width": "fill_container",
+          "height": 816,
+          "fill": "$canvas",
+          "layout": "none",
+          "children": [
+            {
+              "type": "frame",
+              "id": "a8IhpM",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 0,
+              "name": "Seconds Replica",
+              "clip": true,
+              "width": 390,
+              "height": 816,
+              "fill": "$canvas",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "U00S45",
+                  "name": "Status Bar",
+                  "width": "fill_container",
+                  "height": 28,
+                  "padding": [
+                    0,
+                    16
+                  ],
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "l9OkS",
+                      "name": "Time",
+                      "fill": "$text",
+                      "content": "09:41",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 11,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "IvV6O",
+                      "name": "Status Signals",
+                      "gap": 8,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ENn5V",
+                          "name": "Network",
+                          "fill": "$muted",
+                          "content": "4G+",
+                          "lineHeight": 1.25,
+                          "fontFamily": "$font-data",
+                          "fontSize": 10,
+                          "fontWeight": "550"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "bw7BF",
+                          "name": "Wifi",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "wifi",
+                          "library": "lucide",
+                          "fill": "$text"
+                        },
+                        {
+                          "type": "text",
+                          "id": "IcCbw",
+                          "name": "Battery",
+                          "fill": "$text",
+                          "content": "82%",
+                          "lineHeight": 1.25,
+                          "fontFamily": "$font-data",
+                          "fontSize": 10,
+                          "fontWeight": "550"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "dP7Jj",
+                  "name": "Header",
+                  "width": "fill_container",
+                  "padding": [
+                    10,
+                    20
+                  ],
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "IbTTP",
+                      "name": "Back",
+                      "width": 40,
+                      "height": 40,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "MjNT4",
+                          "name": "Back Icon",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "arrow-left",
+                          "library": "lucide",
+                          "fill": "$text"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "XQYmG",
+                      "name": "Pair",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "q6rqt",
+                          "name": "Pair Text",
+                          "fill": "$text",
+                          "content": "BTC/USDT",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 17,
+                          "fontWeight": "750"
+                        },
+                        {
+                          "type": "text",
+                          "id": "UbUzt",
+                          "name": "Pair Tag",
+                          "fill": "#7A8B80",
+                          "content": "秒合约",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 10,
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "o3fwm9",
+                          "name": "Pair Chevron",
+                          "width": 15,
+                          "height": 15,
+                          "icon": "chevron-down",
+                          "library": "lucide",
+                          "fill": "$muted"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Q3bpnF",
+                      "name": "History",
+                      "width": 40,
+                      "height": 40,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "oYHRj",
+                          "name": "History Icon",
+                          "width": 18,
+                          "height": 18,
+                          "icon": "history",
+                          "library": "lucide",
+                          "fill": "$text"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "j8mFH",
+                  "name": "Body",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 12,
+                  "padding": [
+                    4,
+                    20,
+                    20,
+                    20
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "iJYkt",
+                      "name": "Round Row",
+                      "width": "fill_container",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "ellipse",
+                          "id": "lQw2W",
+                          "name": "Live Dot",
+                          "fill": "$mint",
+                          "width": 6,
+                          "height": 6
+                        },
+                        {
+                          "type": "text",
+                          "id": "iIq5j",
+                          "name": "Round",
+                          "fill": "#7A8B80",
+                          "content": "第 01842 轮",
+                          "fontFamily": "$font-data",
+                          "fontSize": 10,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "meAGZ",
+                      "name": "Price Row",
+                      "width": "fill_container",
+                      "gap": 10,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "rkOKN",
+                          "name": "Price",
+                          "fill": "$mint-strong",
+                          "content": "63,085.00",
+                          "fontFamily": "$font-data",
+                          "fontSize": 34,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "Q1WyRY",
+                          "name": "Timer",
+                          "fill": "#7A8B80",
+                          "content": "00:08 · 92.4% payout",
+                          "fontFamily": "$font-data",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "tVehz",
+                      "name": "Micro Chart",
+                      "clip": true,
+                      "width": "fill_container",
+                      "height": 170,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "rectangle",
+                          "id": "p9rdK",
+                          "x": 0,
+                          "y": 34,
+                          "name": "H34",
+                          "fill": "$hairline",
+                          "width": 350,
+                          "height": 1
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "LBBYj",
+                          "x": 0,
+                          "y": 68,
+                          "name": "H68",
+                          "fill": "$hairline",
+                          "width": 350,
+                          "height": 1
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "IZTsZ",
+                          "x": 0,
+                          "y": 102,
+                          "name": "H102",
+                          "fill": "$hairline",
+                          "width": 350,
+                          "height": 1
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "QUG5C",
+                          "x": 0,
+                          "y": 136,
+                          "name": "H136",
+                          "fill": "$hairline",
+                          "width": 350,
+                          "height": 1
+                        },
+                        {
+                          "type": "path",
+                          "id": "sEaL6",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Stroke",
+                          "geometry": "",
+                          "viewBox": [
+                            0,
+                            0,
+                            350,
+                            170
+                          ],
+                          "width": 350,
+                          "height": 170,
+                          "stroke": "$mint",
+                          "strokeWidth": 2,
+                          "strokeLinecap": "round"
+                        },
+                        {
+                          "type": "ellipse",
+                          "id": "yjHfF",
+                          "x": 333,
+                          "y": 36,
+                          "name": "Glow",
+                          "fill": {
+                            "type": "gradient",
+                            "gradientType": "radial",
+                            "enabled": true,
+                            "rotation": 0,
+                            "size": {
+                              "width": 1,
+                              "height": 1
+                            },
+                            "colors": [
+                              {
+                                "color": "#43EFA973",
+                                "position": 0
+                              },
+                              {
+                                "color": "#43EFA900",
+                                "position": 1
+                              }
+                            ]
+                          },
+                          "width": 30,
+                          "height": 30
+                        },
+                        {
+                          "type": "ellipse",
+                          "id": "xZ1lR",
+                          "x": 345,
+                          "y": 45,
+                          "name": "Dot",
+                          "fill": "$mint",
+                          "width": 9,
+                          "height": 9,
+                          "stroke": "#FFFFFF",
+                          "strokeWidth": 2
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "kPN6s",
+                      "name": "Dir Label",
+                      "fill": "#7A8B80",
+                      "content": "选择方向",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "dldcG",
+                      "name": "Direction",
+                      "width": "fill_container",
+                      "gap": 10,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "aF4Az",
+                          "name": "Up",
+                          "width": "fill_container",
+                          "height": 52,
+                          "fill": "$mint",
+                          "cornerRadius": 12,
+                          "gap": 6,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "L11qE",
+                              "name": "Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "trending-up",
+                              "library": "lucide",
+                              "fill": "#07110D"
+                            },
+                            {
+                              "type": "text",
+                              "id": "wdnyz",
+                              "name": "Label",
+                              "fill": "#07110D",
+                              "content": "看涨",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "nRf5n",
+                          "name": "Down",
+                          "width": "fill_container",
+                          "height": 52,
+                          "fill": "$coral-soft",
+                          "cornerRadius": 12,
+                          "gap": 6,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "zz20c",
+                              "name": "Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "trending-down",
+                              "library": "lucide",
+                              "fill": "$coral"
+                            },
+                            {
+                              "type": "text",
+                              "id": "boWEl",
+                              "name": "Label",
+                              "fill": "$coral",
+                              "content": "看跌",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "OqRzH",
+                      "name": "Dur Label",
+                      "fill": "#7A8B80",
+                      "content": "期限",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "jdOHQ",
+                      "name": "Durations",
+                      "width": "fill_container",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "xIHI9",
+                          "name": "Dur 15s",
+                          "width": "fill_container",
+                          "height": 36,
+                          "fill": "$surface",
+                          "cornerRadius": 18,
+                          "stroke": "$border",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "LNzeN",
+                              "name": "Label",
+                              "fill": "#7A8B80",
+                              "content": "15s",
+                              "fontFamily": "$font-data",
+                              "fontSize": 12,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "aV02f",
+                          "name": "Dur 30s",
+                          "width": "fill_container",
+                          "height": 36,
+                          "fill": "$mint-soft",
+                          "cornerRadius": 18,
+                          "stroke": "#00000000",
+                          "strokeAlignment": "inner",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "kamgx",
+                              "name": "Label",
+                              "fill": "$mint-strong",
+                              "content": "30s",
+                              "fontFamily": "$font-data",
+                              "fontSize": 12,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "IEZhN",
+                          "name": "Dur 60s",
+                          "width": "fill_container",
+                          "height": 36,
+                          "fill": "$surface",
+                          "cornerRadius": 18,
+                          "stroke": "$border",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "A2Cu1",
+                              "name": "Label",
+                              "fill": "#7A8B80",
+                              "content": "60s",
+                              "fontFamily": "$font-data",
+                              "fontSize": 12,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "vhltR",
+                          "name": "Dur 120s",
+                          "width": "fill_container",
+                          "height": 36,
+                          "fill": "$surface",
+                          "cornerRadius": 18,
+                          "stroke": "$border",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "HSZ7O",
+                              "name": "Label",
+                              "fill": "#7A8B80",
+                              "content": "120s",
+                              "fontFamily": "$font-data",
+                              "fontSize": 12,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "oRbIk",
+                      "name": "Amount",
+                      "width": "fill_container",
+                      "padding": [
+                        4,
+                        0,
+                        0,
+                        0
+                      ],
+                      "justifyContent": "space_between",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "mqGW5",
+                          "name": "Amount Left",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "mVKMf",
+                              "name": "Amount Label",
+                              "fill": "#7A8B80",
+                              "content": "投入金额",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 11,
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "text",
+                              "id": "MoErU",
+                              "name": "Amount Value",
+                              "fill": "$text",
+                              "content": "100.00",
+                              "fontFamily": "$font-data",
+                              "fontSize": 20,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "afnCr",
+                          "name": "Amount Unit",
+                          "fill": "#7A8B80",
+                          "content": "USDT",
+                          "fontFamily": "$font-data",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "S1YjHU",
+                      "name": "Wallet",
+                      "fill": "#7A8B80",
+                      "content": "资金来源：现货钱包 · 可用 1,284.00 USDT",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "450"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "bZuE1",
+                      "name": "Confirm",
+                      "width": "fill_container",
+                      "height": 52,
+                      "fill": "$mint",
+                      "cornerRadius": 26,
+                      "gap": 8,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "eseT4",
+                          "name": "Confirm Label",
+                          "fill": "#07110D",
+                          "content": "确认看涨",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 15,
+                          "fontWeight": "700"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "hgnF0",
+                      "name": "Risk",
+                      "width": "fill_container",
+                      "fill": "$coral-soft",
+                      "cornerRadius": 10,
+                      "gap": 8,
+                      "padding": [
+                        10,
+                        12
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "wRaug",
+                          "name": "Risk Icon",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "triangle-alert",
+                          "library": "lucide",
+                          "fill": "$coral"
+                        },
+                        {
+                          "type": "text",
+                          "id": "DwXWe",
+                          "name": "Risk Text",
+                          "fill": "$coral",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "秒合约具有高波动风险，请确认金额和方向。",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 11,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "rectangle",
+              "id": "X48O3",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 0,
+              "name": "Dim",
+              "fill": "#07110D99",
+              "width": 390,
+              "height": 816
+            },
+            {
+              "type": "frame",
+              "id": "KIh7x",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 344,
+              "name": "Pair Sheet",
+              "width": 390,
+              "height": 472,
+              "fill": "$surface",
+              "cornerRadius": [
+                20,
+                20,
+                0,
+                0
+              ],
+              "stroke": "$border",
+              "strokeWidth": {
+                "top": 1
+              },
+              "strokeAlignment": "inner",
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#07110D33",
+                "offset": {
+                  "x": 0,
+                  "y": -8
+                },
+                "blur": 24
+              },
+              "layout": "vertical",
+              "gap": 10,
+              "padding": [
+                14,
+                16,
+                22,
+                16
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "P0yMxU",
+                  "name": "Grab",
+                  "width": "fill_container",
+                  "height": 14,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 2,
+                      "id": "zmT1z",
+                      "name": "Grab Bar",
+                      "fill": "$border",
+                      "width": 40,
+                      "height": 4
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "dS3bI",
+                  "name": "Sheet Head",
+                  "width": "fill_container",
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "P5lyfn",
+                      "name": "Head Copy",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "g4Y3gx",
+                          "name": "Sheet Title",
+                          "fill": "$text",
+                          "content": "选择交易对",
+                          "lineHeight": 1.25,
+                          "fontFamily": "$font-sans",
+                          "fontSize": 18,
+                          "fontWeight": "700"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "K0Vxm",
+                      "name": "Close",
+                      "width": 32,
+                      "height": 32,
+                      "fill": "$surface-2",
+                      "cornerRadius": 16,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "d7V48N",
+                          "name": "Close Icon",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "x",
+                          "library": "lucide",
+                          "fill": "$muted"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "VaZS8",
+                  "name": "Pair Search",
+                  "width": "fill_container",
+                  "height": 40,
+                  "fill": "$canvas",
+                  "cornerRadius": 4,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "gap": 8,
+                  "padding": [
+                    0,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "ecgLM",
+                      "name": "Search Icon",
+                      "width": 15,
+                      "height": 15,
+                      "icon": "search",
+                      "library": "lucide",
+                      "fill": "$muted"
+                    },
+                    {
+                      "type": "text",
+                      "id": "qNTKy",
+                      "name": "Search Ph",
+                      "fill": "$muted",
+                      "content": "搜索交易对",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "450"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "B03eFV",
+                  "name": "Pair List",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 2,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "kykEp",
+                      "name": "Pair BTC/USDT",
+                      "width": "fill_container",
+                      "height": 64,
+                      "fill": "$mint-soft",
+                      "cornerRadius": 8,
+                      "stroke": "$mint",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "gap": 11,
+                      "padding": [
+                        0,
+                        12
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "XQlai",
+                          "name": "Pair Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "bitcoin",
+                          "library": "lucide",
+                          "fill": "$mint-strong"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "A4uG24",
+                          "name": "Pair Copy",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 3,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "sefw8",
+                              "name": "Pair Symbol",
+                              "fill": "$text",
+                              "content": "BTC/USDT",
+                              "lineHeight": 1.25,
+                              "fontFamily": "$font-data",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "YQcpC",
+                          "name": "Pair Value",
+                          "layout": "vertical",
+                          "gap": 3,
+                          "alignItems": "end",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "UwLbH",
+                              "name": "Pair Price",
+                              "fill": "$text",
+                              "content": "63,085.00",
+                              "lineHeight": 1.25,
+                              "fontFamily": "$font-data",
+                              "fontSize": 13,
+                              "fontWeight": "650"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "icon",
+                          "id": "K0a66b",
+                          "name": "Pair Check",
+                          "width": 17,
+                          "height": 17,
+                          "icon": "check",
+                          "library": "lucide",
+                          "fill": "$mint-strong"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "KRIvP",
+                      "name": "Pair ETH/USDT",
+                      "width": "fill_container",
+                      "height": 64,
+                      "fill": "$surface",
+                      "cornerRadius": 8,
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "gap": 11,
+                      "padding": [
+                        0,
+                        12
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "WJiPO",
+                          "name": "Pair Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "hexagon",
+                          "library": "lucide",
+                          "fill": "$mint-strong"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "Y50aSK",
+                          "name": "Pair Copy",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 3,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "uQ4Mn",
+                              "name": "Pair Symbol",
+                              "fill": "$text",
+                              "content": "ETH/USDT",
+                              "lineHeight": 1.25,
+                              "fontFamily": "$font-data",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "QFM8v",
+                          "name": "Pair Value",
+                          "layout": "vertical",
+                          "gap": 3,
+                          "alignItems": "end",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "XLMsr",
+                              "name": "Pair Price",
+                              "fill": "$text",
+                              "content": "3,412.88",
+                              "lineHeight": 1.25,
+                              "fontFamily": "$font-data",
+                              "fontSize": 13,
+                              "fontWeight": "650"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "rxj7T",
+                      "name": "Pair HIPPO/USDT",
+                      "width": "fill_container",
+                      "height": 64,
+                      "fill": "$surface",
+                      "cornerRadius": 8,
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "gap": 11,
+                      "padding": [
+                        0,
+                        12
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "v1uNGP",
+                          "name": "Pair Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "gem",
+                          "library": "lucide",
+                          "fill": "$mint-strong"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "TUNLd",
+                          "name": "Pair Copy",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 3,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "kzUxy",
+                              "name": "Pair Symbol",
+                              "fill": "$text",
+                              "content": "HIPPO/USDT",
+                              "lineHeight": 1.25,
+                              "fontFamily": "$font-data",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "LJ1RN",
+                          "name": "Pair Value",
+                          "layout": "vertical",
+                          "gap": 3,
+                          "alignItems": "end",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "b2WPQ",
+                              "name": "Pair Price",
+                              "fill": "$text",
+                              "content": "0.0824",
+                              "lineHeight": 1.25,
+                              "fontFamily": "$font-data",
+                              "fontSize": 13,
+                              "fontWeight": "650"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "gYbQO",
+                  "name": "Sheet Note",
+                  "fill": "$muted",
+                  "textGrowth": "fixed-width",
+                  "width": 320,
+                  "content": "最新价来自行情接口，不做占位虚构。",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "450"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "kLXCs",
+      "x": 1880,
+      "y": 5772,
+      "name": "07c / Seconds · Pair Picker · Dark",
+      "theme": {
+        "mode": "dark"
+      },
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "#000000",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "jAlFK",
+          "name": "Picker Stage",
+          "width": "fill_container",
+          "height": 816,
+          "fill": "#000000",
+          "layout": "none",
+          "children": [
+            {
+              "type": "frame",
+              "id": "LufuO",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 0,
+              "name": "Seconds Replica",
+              "clip": true,
+              "width": 390,
+              "height": 816,
+              "fill": "#000000",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "Y5uCdr",
+                  "name": "Status Bar",
+                  "width": "fill_container",
+                  "height": 28,
+                  "padding": [
+                    0,
+                    16
+                  ],
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "uXhLi",
+                      "name": "Time",
+                      "fill": "$text",
+                      "content": "09:41",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 11,
+                      "fontWeight": "650"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "CyJAz",
+                      "name": "Status Signals",
+                      "gap": 8,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Q22jlw",
+                          "name": "Network",
+                          "fill": "$muted",
+                          "content": "4G+",
+                          "lineHeight": 1.25,
+                          "fontFamily": "$font-data",
+                          "fontSize": 10,
+                          "fontWeight": "550"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "l18yI",
+                          "name": "Wifi",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "wifi",
+                          "library": "lucide",
+                          "fill": "$text"
+                        },
+                        {
+                          "type": "text",
+                          "id": "hL50k",
+                          "name": "Battery",
+                          "fill": "$text",
+                          "content": "82%",
+                          "lineHeight": 1.25,
+                          "fontFamily": "$font-data",
+                          "fontSize": 10,
+                          "fontWeight": "550"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "j1zRZ",
+                  "name": "Header",
+                  "width": "fill_container",
+                  "padding": [
+                    10,
+                    20
+                  ],
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "J5mR8",
+                      "name": "Back",
+                      "width": 40,
+                      "height": 40,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "r0zkT",
+                          "name": "Back Icon",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "arrow-left",
+                          "library": "lucide",
+                          "fill": "$text"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "wGeYs",
+                      "name": "Pair",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "D4BGCt",
+                          "name": "Pair Text",
+                          "fill": "$text",
+                          "content": "BTC/USDT",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 17,
+                          "fontWeight": "750"
+                        },
+                        {
+                          "type": "text",
+                          "id": "tfG9M",
+                          "name": "Pair Tag",
+                          "fill": "#7A8B80",
+                          "content": "秒合约",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 10,
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "r3RqdC",
+                          "name": "Pair Chevron",
+                          "width": 15,
+                          "height": 15,
+                          "icon": "chevron-down",
+                          "library": "lucide",
+                          "fill": "$muted"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Tbqvj",
+                      "name": "History",
+                      "width": 40,
+                      "height": 40,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "a6tUH",
+                          "name": "History Icon",
+                          "width": 18,
+                          "height": 18,
+                          "icon": "history",
+                          "library": "lucide",
+                          "fill": "$text"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "r88XOz",
+                  "name": "Body",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 12,
+                  "padding": [
+                    4,
+                    20,
+                    20,
+                    20
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "w1HkuL",
+                      "name": "Round Row",
+                      "width": "fill_container",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "ellipse",
+                          "id": "BTYUV",
+                          "name": "Live Dot",
+                          "fill": "$mint",
+                          "width": 6,
+                          "height": 6
+                        },
+                        {
+                          "type": "text",
+                          "id": "kRqMX",
+                          "name": "Round",
+                          "fill": "#7A8B80",
+                          "content": "第 01842 轮",
+                          "fontFamily": "$font-data",
+                          "fontSize": 10,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "SQtPa",
+                      "name": "Price Row",
+                      "width": "fill_container",
+                      "gap": 10,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Kvsua",
+                          "name": "Price",
+                          "fill": "$mint-strong",
+                          "content": "63,085.00",
+                          "fontFamily": "$font-data",
+                          "fontSize": 34,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "q7aI3",
+                          "name": "Timer",
+                          "fill": "#7A8B80",
+                          "content": "00:08 · 92.4% payout",
+                          "fontFamily": "$font-data",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "KgkKO",
+                      "name": "Micro Chart",
+                      "clip": true,
+                      "width": "fill_container",
+                      "height": 170,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "rectangle",
+                          "id": "NCErk",
+                          "x": 0,
+                          "y": 34,
+                          "name": "H34",
+                          "fill": "$hairline",
+                          "width": 350,
+                          "height": 1
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "JHYJL",
+                          "x": 0,
+                          "y": 68,
+                          "name": "H68",
+                          "fill": "$hairline",
+                          "width": 350,
+                          "height": 1
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "lxqHn",
+                          "x": 0,
+                          "y": 102,
+                          "name": "H102",
+                          "fill": "$hairline",
+                          "width": 350,
+                          "height": 1
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "bt4Tx",
+                          "x": 0,
+                          "y": 136,
+                          "name": "H136",
+                          "fill": "$hairline",
+                          "width": 350,
+                          "height": 1
+                        },
+                        {
+                          "type": "path",
+                          "id": "QT8HH",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Stroke",
+                          "geometry": "",
+                          "viewBox": [
+                            0,
+                            0,
+                            350,
+                            170
+                          ],
+                          "width": 350,
+                          "height": 170,
+                          "stroke": "$mint",
+                          "strokeWidth": 2,
+                          "strokeLinecap": "round"
+                        },
+                        {
+                          "type": "ellipse",
+                          "id": "D0eqS4",
+                          "x": 333,
+                          "y": 36,
+                          "name": "Glow",
+                          "fill": {
+                            "type": "gradient",
+                            "gradientType": "radial",
+                            "enabled": true,
+                            "rotation": 0,
+                            "size": {
+                              "width": 1,
+                              "height": 1
+                            },
+                            "colors": [
+                              {
+                                "color": "#43EFA973",
+                                "position": 0
+                              },
+                              {
+                                "color": "#43EFA900",
+                                "position": 1
+                              }
+                            ]
+                          },
+                          "width": 30,
+                          "height": 30
+                        },
+                        {
+                          "type": "ellipse",
+                          "id": "UlEHG",
+                          "x": 345,
+                          "y": 45,
+                          "name": "Dot",
+                          "fill": "$mint",
+                          "width": 9,
+                          "height": 9,
+                          "stroke": "#FFFFFF",
+                          "strokeWidth": 2
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "A19Ws0",
+                      "name": "Dir Label",
+                      "fill": "#7A8B80",
+                      "content": "选择方向",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "xSnRP",
+                      "name": "Direction",
+                      "width": "fill_container",
+                      "gap": 10,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "n8p5ru",
+                          "name": "Up",
+                          "width": "fill_container",
+                          "height": 52,
+                          "fill": "$mint",
+                          "cornerRadius": 12,
+                          "gap": 6,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "kKp5C",
+                              "name": "Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "trending-up",
+                              "library": "lucide",
+                              "fill": "#07110D"
+                            },
+                            {
+                              "type": "text",
+                              "id": "KMOmA",
+                              "name": "Label",
+                              "fill": "#07110D",
+                              "content": "看涨",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "whOgN",
+                          "name": "Down",
+                          "width": "fill_container",
+                          "height": 52,
+                          "fill": "$coral-soft",
+                          "cornerRadius": 12,
+                          "gap": 6,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "McxhB",
+                              "name": "Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "trending-down",
+                              "library": "lucide",
+                              "fill": "$coral"
+                            },
+                            {
+                              "type": "text",
+                              "id": "aaVzq",
+                              "name": "Label",
+                              "fill": "$coral",
+                              "content": "看跌",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "W1obd1",
+                      "name": "Dur Label",
+                      "fill": "#7A8B80",
+                      "content": "期限",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n7EPV",
+                      "name": "Durations",
+                      "width": "fill_container",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "m15cNF",
+                          "name": "Dur 15s",
+                          "width": "fill_container",
+                          "height": 36,
+                          "fill": "$surface",
+                          "cornerRadius": 18,
+                          "stroke": "$border",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "j7jrv",
+                              "name": "Label",
+                              "fill": "#7A8B80",
+                              "content": "15s",
+                              "fontFamily": "$font-data",
+                              "fontSize": 12,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "Wqs4S",
+                          "name": "Dur 30s",
+                          "width": "fill_container",
+                          "height": 36,
+                          "fill": "$mint-soft",
+                          "cornerRadius": 18,
+                          "stroke": "#00000000",
+                          "strokeAlignment": "inner",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "U2Pn2A",
+                              "name": "Label",
+                              "fill": "$mint-strong",
+                              "content": "30s",
+                              "fontFamily": "$font-data",
+                              "fontSize": 12,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "qlC9o",
+                          "name": "Dur 60s",
+                          "width": "fill_container",
+                          "height": 36,
+                          "fill": "$surface",
+                          "cornerRadius": 18,
+                          "stroke": "$border",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "VTzC2",
+                              "name": "Label",
+                              "fill": "#7A8B80",
+                              "content": "60s",
+                              "fontFamily": "$font-data",
+                              "fontSize": 12,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "QsNgf",
+                          "name": "Dur 120s",
+                          "width": "fill_container",
+                          "height": 36,
+                          "fill": "$surface",
+                          "cornerRadius": 18,
+                          "stroke": "$border",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "q6PClm",
+                              "name": "Label",
+                              "fill": "#7A8B80",
+                              "content": "120s",
+                              "fontFamily": "$font-data",
+                              "fontSize": 12,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "eOxm4",
+                      "name": "Amount",
+                      "width": "fill_container",
+                      "padding": [
+                        4,
+                        0,
+                        0,
+                        0
+                      ],
+                      "justifyContent": "space_between",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "bQ8bl",
+                          "name": "Amount Left",
+                          "layout": "vertical",
+                          "gap": 4,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "eeO2s",
+                              "name": "Amount Label",
+                              "fill": "#7A8B80",
+                              "content": "投入金额",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 11,
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "text",
+                              "id": "oDBtq",
+                              "name": "Amount Value",
+                              "fill": "$text",
+                              "content": "100.00",
+                              "fontFamily": "$font-data",
+                              "fontSize": 20,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "HAwUp",
+                          "name": "Amount Unit",
+                          "fill": "#7A8B80",
+                          "content": "USDT",
+                          "fontFamily": "$font-data",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "RnR4J",
+                      "name": "Wallet",
+                      "fill": "#7A8B80",
+                      "content": "资金来源：现货钱包 · 可用 1,284.00 USDT",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "450"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "cI49Z",
+                      "name": "Confirm",
+                      "width": "fill_container",
+                      "height": 52,
+                      "fill": "$mint",
+                      "cornerRadius": 26,
+                      "gap": 8,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ONJ7m",
+                          "name": "Confirm Label",
+                          "fill": "#07110D",
+                          "content": "确认看涨",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 15,
+                          "fontWeight": "700"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "n5OTv",
+                      "name": "Risk",
+                      "width": "fill_container",
+                      "fill": "$coral-soft",
+                      "cornerRadius": 10,
+                      "gap": 8,
+                      "padding": [
+                        10,
+                        12
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "u15vs",
+                          "name": "Risk Icon",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "triangle-alert",
+                          "library": "lucide",
+                          "fill": "$coral"
+                        },
+                        {
+                          "type": "text",
+                          "id": "e77oV",
+                          "name": "Risk Text",
+                          "fill": "$coral",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "秒合约具有高波动风险，请确认金额和方向。",
+                          "fontFamily": "$font-sans",
+                          "fontSize": 11,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "rectangle",
+              "id": "NxNBT",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 0,
+              "name": "Dim",
+              "fill": "#000000B3",
+              "width": 390,
+              "height": 816
+            },
+            {
+              "type": "frame",
+              "id": "kA8eg",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 344,
+              "name": "Pair Sheet",
+              "width": 390,
+              "height": 472,
+              "fill": "$surface",
+              "cornerRadius": [
+                20,
+                20,
+                0,
+                0
+              ],
+              "stroke": "$border",
+              "strokeWidth": {
+                "top": 1
+              },
+              "strokeAlignment": "inner",
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#07110D33",
+                "offset": {
+                  "x": 0,
+                  "y": -8
+                },
+                "blur": 24
+              },
+              "layout": "vertical",
+              "gap": 10,
+              "padding": [
+                14,
+                16,
+                22,
+                16
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "FzC8y",
+                  "name": "Grab",
+                  "width": "fill_container",
+                  "height": 14,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 2,
+                      "id": "DP1zM",
+                      "name": "Grab Bar",
+                      "fill": "$border",
+                      "width": 40,
+                      "height": 4
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "SoSk8",
+                  "name": "Sheet Head",
+                  "width": "fill_container",
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "r9GwkT",
+                      "name": "Head Copy",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "qbMXP",
+                          "name": "Sheet Title",
+                          "fill": "$text",
+                          "content": "选择交易对",
+                          "lineHeight": 1.25,
+                          "fontFamily": "$font-sans",
+                          "fontSize": 18,
+                          "fontWeight": "700"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pdWk5",
+                      "name": "Close",
+                      "width": 32,
+                      "height": 32,
+                      "fill": "$surface-2",
+                      "cornerRadius": 16,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "ZKeMI",
+                          "name": "Close Icon",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "x",
+                          "library": "lucide",
+                          "fill": "$muted"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "j7GZIs",
+                  "name": "Pair Search",
+                  "width": "fill_container",
+                  "height": 40,
+                  "fill": "$surface-2",
+                  "cornerRadius": 4,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "gap": 8,
+                  "padding": [
+                    0,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "c01z6n",
+                      "name": "Search Icon",
+                      "width": 15,
+                      "height": 15,
+                      "icon": "search",
+                      "library": "lucide",
+                      "fill": "$muted"
+                    },
+                    {
+                      "type": "text",
+                      "id": "KVj5q",
+                      "name": "Search Ph",
+                      "fill": "$muted",
+                      "content": "搜索交易对",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "450"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ZAKGI",
+                  "name": "Pair List",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 2,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "gAvVD",
+                      "name": "Pair BTC/USDT",
+                      "width": "fill_container",
+                      "height": 64,
+                      "fill": "$mint-soft",
+                      "cornerRadius": 8,
+                      "stroke": "$mint",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "gap": 11,
+                      "padding": [
+                        0,
+                        12
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "IawGR",
+                          "name": "Pair Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "bitcoin",
+                          "library": "lucide",
+                          "fill": "$mint-strong"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "AfAKj",
+                          "name": "Pair Copy",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 3,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "P6PYzw",
+                              "name": "Pair Symbol",
+                              "fill": "$text",
+                              "content": "BTC/USDT",
+                              "lineHeight": 1.25,
+                              "fontFamily": "$font-data",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "k1Rdc",
+                          "name": "Pair Value",
+                          "layout": "vertical",
+                          "gap": 3,
+                          "alignItems": "end",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "CoXzD",
+                              "name": "Pair Price",
+                              "fill": "$text",
+                              "content": "63,085.00",
+                              "lineHeight": 1.25,
+                              "fontFamily": "$font-data",
+                              "fontSize": 13,
+                              "fontWeight": "650"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "icon",
+                          "id": "UZ1vq",
+                          "name": "Pair Check",
+                          "width": 17,
+                          "height": 17,
+                          "icon": "check",
+                          "library": "lucide",
+                          "fill": "$mint-strong"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Xk5TZ",
+                      "name": "Pair ETH/USDT",
+                      "width": "fill_container",
+                      "height": 64,
+                      "fill": "$surface",
+                      "cornerRadius": 8,
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "gap": 11,
+                      "padding": [
+                        0,
+                        12
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "RA1zw",
+                          "name": "Pair Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "hexagon",
+                          "library": "lucide",
+                          "fill": "$mint-strong"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "qneFH",
+                          "name": "Pair Copy",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 3,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "CEUh9",
+                              "name": "Pair Symbol",
+                              "fill": "$text",
+                              "content": "ETH/USDT",
+                              "lineHeight": 1.25,
+                              "fontFamily": "$font-data",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "mIArz",
+                          "name": "Pair Value",
+                          "layout": "vertical",
+                          "gap": 3,
+                          "alignItems": "end",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "ApcCk",
+                              "name": "Pair Price",
+                              "fill": "$text",
+                              "content": "3,412.88",
+                              "lineHeight": 1.25,
+                              "fontFamily": "$font-data",
+                              "fontSize": 13,
+                              "fontWeight": "650"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "OONdT",
+                      "name": "Pair HIPPO/USDT",
+                      "width": "fill_container",
+                      "height": 64,
+                      "fill": "$surface",
+                      "cornerRadius": 8,
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "gap": 11,
+                      "padding": [
+                        0,
+                        12
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "P2y7Wj",
+                          "name": "Pair Icon",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "gem",
+                          "library": "lucide",
+                          "fill": "$mint-strong"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ntT2I",
+                          "name": "Pair Copy",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 3,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "epTTq",
+                              "name": "Pair Symbol",
+                              "fill": "$text",
+                              "content": "HIPPO/USDT",
+                              "lineHeight": 1.25,
+                              "fontFamily": "$font-data",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "TZJ4E",
+                          "name": "Pair Value",
+                          "layout": "vertical",
+                          "gap": 3,
+                          "alignItems": "end",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "g0xYe",
+                              "name": "Pair Price",
+                              "fill": "$text",
+                              "content": "0.0824",
+                              "lineHeight": 1.25,
+                              "fontFamily": "$font-data",
+                              "fontSize": 13,
+                              "fontWeight": "650"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "o1L4H",
+                  "name": "Sheet Note",
+                  "fill": "$muted",
+                  "textGrowth": "fixed-width",
+                  "width": 320,
+                  "content": "最新价来自行情接口，不做占位虚构。",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "450"
+                }
+              ]
+            }
+          ]
         }
       ]
     }

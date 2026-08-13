@@ -2,6 +2,9 @@
 //!
 //! 应用层：编排用例、事务边界和跨仓储协作。
 //! 风控闸门必须在任何冻结、账本写入之前调用，规则缺失时保持放行。
+//! 一次闸门调用的完整链路是：实时读取启用规则，按操作与作用域合并出策略，必要时在 Redis 累加限频计数，
+//! 交由领域层评估，命中则写风控事件并返回带错误码的 403。
+//! 闸门自身不开事务、不碰钱包，也不回滚已发生的计数，因此调用方只应在真正要执行业务动作前调用一次。
 
 use crate::{
     architecture::ApplicationLayer,
@@ -19,13 +22,18 @@ use serde_json::json;
 use sqlx::{MySql, Pool};
 use tracing::warn;
 
+/// 一次风控闸门调用的全部输入事实，可选字段为空表示该路径拿不到对应数据，相应维度将被跳过。
 #[derive(Debug)]
 pub struct RiskGuardInput {
     pub user_id: u64,
+    /// 业务操作标识，同时用作规则匹配依据与限频计数键的一段。
     pub operation: &'static str,
+    /// 本次请求归属的作用域维度集合，规则只有目标落在其中才会命中。
     pub scopes: Vec<RiskScope>,
+    /// 参与限额比较的金额，单位口径必须与操作登记的口径一致。
     pub amount: Option<BigDecimal>,
     pub price: Option<BigDecimal>,
+    /// 价格偏离判定的基准价，与委托价同时具备才会执行该项校验。
     pub reference_price: Option<BigDecimal>,
 }
 
@@ -66,7 +74,10 @@ pub async fn enforce_risk_control(
     ))
 }
 
-/// 只有配置了限频规则且 Redis 可用时才计数；计数失败按放行处理，不因缓存故障阻断交易。
+/// 取得本次请求在限频窗口内的累计次数，仅当策略确实含请求数上限且 Redis 可用时才真正自增。
+/// 计数键按操作、限频作用域和用户三段隔离，因此不同作用域的规则各用各的配额互不干扰。
+/// 注意本函数一旦执行就已经把计数加一，即便后续因其他维度拒绝也不会回退，这是固定窗口计数的既定语义。
+/// Redis 报错时只告警并返回空值，让限频维度在评估阶段被跳过，缓存故障不阻断正常交易。
 async fn resolve_request_count(
     redis: Option<&ConnectionManager>,
     input: &RiskGuardInput,
@@ -92,7 +103,10 @@ async fn resolve_request_count(
     }
 }
 
-/// 风控事件只做审计留痕，落库失败不能覆盖调用方已经得到的拒绝原因。
+/// 为一次被拒请求写下风控事件留痕，固定以高风险等级和 reject 决策入库。
+/// payload 内同时快照三部分现场：触发操作与全部作用域维度、参与判定的请求事实、以及合并后生效的阈值集合，
+/// 金额与价格转成字符串保留原始精度，便于事后复盘当时为何被拦而无需重建规则版本。
+/// 本函数不返回结果也不上抛错误，落库失败只告警，绝不能因为留痕失败把已成立的拒绝改写成放行。
 async fn record_rejected_risk_event(
     pool: &Pool<MySql>,
     input: &RiskGuardInput,

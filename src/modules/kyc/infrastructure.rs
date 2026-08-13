@@ -1,6 +1,18 @@
 //! kyc bounded context infrastructure layer.
 //!
 //! 基础设施层：封装 SQLx、Redis、第三方接口和仓储实现。
+//! 本文件负责 `kyc_configs` 与 `user_kyc_submissions` 两张表的读写，
+//! 并在读取申请时左连 `users` 补齐邮箱与手机号，同时按审核结论回写用户主表的 KYC 等级。
+//! 配置以固定名称 `default` 作为单例存储，读取路径会先幂等补齐默认行，
+//! 因此配置类查询即便签名看起来只读也可能产生写入。
+//! 命名约定与 user 上下文一致：带 `_in_tx` 后缀的函数使用调用方事务且从不自行提交。
+//! 加锁约定：配置更新与申请审核都先 `FOR UPDATE` 锁行再判断状态，
+//! 保证「读出当前状态」与「写入新状态」之间不会被并发插入；
+//! 但每用户唯一待审申请没有对应的数据库唯一约束，仅靠待审行锁与事务隔离级别兜底。
+//! 隐私边界特别提醒：本层返回的申请对象与摘要都携带未脱敏的证件号原文、姓名与联系方式，
+//! 完整对象还含证件图片内容，这些都不是可直接对外的脱敏 DTO。
+//! 掩码只发生在 service 层构造审计 JSON 时，读取路径不做任何脱敏，
+//! 调用方必须自行限制受众为本人或已授权的审核管理员，并避免写入日志。
 
 use crate::{
     error::{AppError, AppResult},
@@ -83,7 +95,11 @@ pub(crate) struct UserKycStateRecord {
     pub(crate) kyc_level: i32,
 }
 
-/// 幂等补齐默认 KYC 配置后读取当前快照，适用于非事务查询。
+/// 读取单例 KYC 配置，读之前先幂等补齐默认行，因此首次调用会真实写入一条配置。
+/// 这一「先补后读」的设计让上层无需区分「系统刚部署尚未配置」与「已配置」，任何时候都能拿到可用规则。
+/// 补写与读取是两条独立语句且不在事务内，理论上存在补写成功后被并发删除导致读不到的窗口，
+/// 此时返回 `AppError::NotFound`。
+/// 不加锁，适用于展示与提交校验这类只需快照的场景；需要改配置的路径应改用锁定版本。
 pub(crate) async fn load_kyc_config(pool: &Pool<MySql>) -> AppResult<KycConfigResponse> {
     ensure_default_config(pool).await?;
     let row = sqlx::query_as::<_, KycConfigRow>(&select_kyc_config_sql(false))
@@ -94,7 +110,11 @@ pub(crate) async fn load_kyc_config(pool: &Pool<MySql>) -> AppResult<KycConfigRe
     Ok(config_response(row))
 }
 
-/// 在调用方事务中读取 KYC 配置快照，不加锁且不自行提交。
+/// 在调用方事务内读取 KYC 配置，同样先幂等补齐默认行，但补写与读取共用该事务。
+/// 相对连接池版本的收益正在于此：补写与读取原子，不存在补完被并发删除而读空的窗口。
+/// 主要用途是配置保存流程的最后一步，回读刚写入的值作为审计的「改后快照」；
+/// 因为在同一事务内，能读到本事务尚未提交的修改。
+/// 不加 `FOR UPDATE`，取快照即可，行锁由更早的锁定步骤持有；不自行提交。
 pub(crate) async fn load_kyc_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
 ) -> AppResult<KycConfigResponse> {
@@ -107,7 +127,11 @@ pub(crate) async fn load_kyc_config_in_tx(
     Ok(config_response(row))
 }
 
-/// 以 `FOR UPDATE` 锁定唯一 KYC 配置行，供配置与审计快照原子更新。
+/// 锁定单例 KYC 配置行并返回改前快照，是配置更新流程的第一道串行化关卡。
+/// 行锁一直持有到调用方事务结束，因此从读出旧值、校验新值到写入的整个区间内，
+/// 其他管理员无法并发修改同一行，返回的前后快照必然首尾相接而不会错配。
+/// 与另外两个读取函数的关键差异是这里不补默认行：调用方必须先确保配置存在，
+/// 否则会因无行可锁而返回 `AppError::NotFound`。
 pub(crate) async fn lock_kyc_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
 ) -> AppResult<KycConfigResponse> {
@@ -120,8 +144,12 @@ pub(crate) async fn lock_kyc_config_in_tx(
 }
 
 #[allow(clippy::too_many_arguments)] // KYC 配置字段按单行原子写入，保持参数与持久化列可审计对应。
-/// 在已锁定的事务中按列显式写入 KYC 配置，JSON 字段保留校验后顺序。
-/// 同名配置走更新分支并记录管理员；序列化或 SQL 失败由调用方回滚。
+/// 写入 KYC 配置：按固定名称 upsert，不存在则建行，已存在则整行覆盖业务列。
+/// 三个清单类字段以 JSON 列存储，写入时保留领域校验后的既定顺序与去重结果，本层不再重排。
+/// 冲突分支逐列显式列出而非依赖默认行为，使参数与持久化列一一对应，便于审计核对哪些列会被改写。
+/// `updated_by` 每次覆盖为本次操作的管理员 ID，只作追溯，本层不校验其权限。
+/// 参数较多是有意为之：逐个传值而非传结构体，可确保新增配置项时编译器强制在此补齐绑定。
+/// 前置条件是调用方已锁定配置行并完成领域校验；本函数不校验取值合法性，也不自行提交。
 pub(crate) async fn upsert_kyc_config_in_tx(
     tx: &mut Transaction<'_, MySql>,
     admin_id: u64,
@@ -173,9 +201,17 @@ pub(crate) async fn latest_kyc_submission(
     Ok(row.map(submission_response))
 }
 
-/// 使用同一过滤条件构建 KYC 列表与总数查询，支持用户、邮箱和状态组合。
-/// 两个查询只读且不开事务，并发变更时列表与总数不保证同一快照；身份号会掩码，
-/// 但摘要仍含姓名等个人数据。任一 SQL 失败时本函数不返回部分分页。
+/// 管理端分页检索 KYC 申请，返回当页摘要与匹配总数。
+/// 用 `QueryBuilder` 把同一组谓词分别压入行查询与计数查询，二者共用一次构造循环，
+/// 从结构上避免筛选条件只改了一边而导致总数与列表口径不符。
+/// 三个过滤维度可任意组合，均为可选：用户 ID、精确邮箱、申请状态；`WHERE 1 = 1` 只是拼接起点。
+/// 分页参数经硬性夹取：每页条数收敛到 1 到 100，偏移量上限十万，
+/// 防止调用方传入极端值造成全表扫描或深分页拖垮数据库。
+/// 排序按提交时间倒序、主键倒序，主键作次级键保证同一时刻提交的记录顺序稳定，翻页不会重复或漏项。
+/// 两个查询各自独立执行且不在事务内，因此并发写入时列表与总数可能来自不同快照，
+/// 总数仅供分页控件参考，不应作为精确统计。
+/// 隐私提醒：摘要不含证件图片内容，但证件号是未脱敏原文，姓名、邮箱、手机号也原样返回，
+/// 掩码只在写审计时另行施加，本查询结果只能提供给已授权的审核管理员。
 pub(crate) async fn list_kyc_submissions(
     pool: &Pool<MySql>,
     filter: ListKycSubmissionsFilter,
@@ -228,7 +264,11 @@ pub(crate) async fn load_kyc_submission(
     Ok(submission_response(row))
 }
 
-/// 在调用方事务中回读含原始身份材料的 KYC 快照，不额外加锁也不自行提交。
+/// 在调用方事务内按主键回读申请完整快照，主要用于审核写入后取「改后状态」供审计记录。
+/// 因为在同一事务内执行，能看到本事务刚写入但尚未提交的状态变更，无需等提交后再查一次。
+/// 与锁定版本的区别是这里不加 `FOR UPDATE`：行锁应在审核流程更早的判定阶段获取，
+/// 此处只取值，重复加锁没有额外收益。
+/// 记录不存在返回 `AppError::NotFound`；结果含证件号与图片原文，不自行提交事务。
 pub(crate) async fn load_kyc_submission_in_tx(
     tx: &mut Transaction<'_, MySql>,
     submission_id: u64,
@@ -244,7 +284,11 @@ pub(crate) async fn load_kyc_submission_in_tx(
     Ok(submission_response(row))
 }
 
-/// 以 `FOR UPDATE` 锁定指定 KYC 申请，供审核状态判断与更新共用同一快照。
+/// 锁定指定申请行并返回其当前快照，是审核动作的串行化入口。
+/// 行锁让「确认这笔申请仍处于待审」与「写入审核结论」成为不可分割的序列，
+/// 从而杜绝两个管理员同时审同一笔申请、后者覆盖前者结论的情况。
+/// 返回的是完整快照而非仅状态字段，调用方可据此校验状态机迁移是否合法并取得改前值用于审计。
+/// 记录不存在返回 `AppError::NotFound`；锁持有至调用方事务结束。
 pub(crate) async fn lock_kyc_submission_in_tx(
     tx: &mut Transaction<'_, MySql>,
     submission_id: u64,
@@ -260,8 +304,13 @@ pub(crate) async fn lock_kyc_submission_in_tx(
     Ok(submission_response(row))
 }
 
-/// 以 `FOR UPDATE` 锁定用户状态和 KYC 等级，用户不存在时按未授权处理。
-/// 调用方必须在锁定后完成等级与待审判断，任一失败不应提交当前事务。
+/// 锁定用户主表行并取出账号状态与当前 KYC 等级，供提交申请前的资格判定。
+/// 两个字段各有用途：状态用于确认账号处于启用态，等级用于判断用户是否已达或超过本次目标等级，
+/// 已达标者无需重复提交申请。
+/// 行锁把这两项判定与后续的申请插入绑成一个原子单元，避免判定通过后等级被并发抬升而产生冗余申请。
+/// 用户不存在返回 `AppError::Unauthorized` 而非 `NotFound`，与用户上下文的口径保持一致，
+/// 不让错误类型泄露某个 ID 是否注册过。
+/// 本函数只取值不判定，具体规则由 application 层施加；判定失败时调用方须回滚整个事务。
 pub(crate) async fn lock_user_kyc_state_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -301,8 +350,14 @@ pub(crate) async fn lock_pending_kyc_submission_id_in_tx(
 }
 
 #[allow(clippy::too_many_arguments)] // 身份材料字段需显式绑定 SQL 列，避免结构化调试输出泄露敏感数据。
-/// 在调用方事务中插入已校验 KYC 主体与材料，审核状态固定初始为待审。
-/// 敏感字段逐列绑定且不输出日志；唯一约束或 SQL 失败不提交半成品。
+/// 插入一笔新的实名认证申请，状态在 SQL 中硬编码为 `pending`，不接受调用方指定。
+/// 这样从数据库层就保证任何新申请都从待审开始，无法伪造一笔直接为通过状态的记录。
+/// `target_kyc_level` 在插入时固化为当时配置的目标等级，因此后续运营调高目标等级不会影响在途申请，
+/// 审核通过时抬升的仍是提交那一刻承诺的等级。
+/// 敏感字段逐个绑定为 SQL 参数而非拼接字符串，既杜绝注入，也避免把结构体整体格式化输出而泄露证件内容。
+/// 企业名称、注册号与手持照三项可为空，分别对应个人申请与不要求手持照的国家证件组合。
+/// 返回自增主键供调用方回读或写审计；不校验是否已有待审申请，防重由调用方先行锁定待审行完成。
+/// 不自行提交，失败时由调用方回滚，不会留下半成品记录。
 pub(crate) async fn insert_user_kyc_submission_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -340,8 +395,13 @@ pub(crate) async fn insert_user_kyc_submission_in_tx(
     Ok(result.last_insert_id())
 }
 
-/// 在审核事务内写入 KYC 结果、管理员、理由和审核时间，不单独提交。
-/// 调用方须先锁定并确认记录仍待审；更新失败必须与用户等级变更一起回滚。
+/// 把审核结论写入申请记录，一次性落下状态、审核人、审核理由与审核时间四项。
+/// 四者必须同时写入：只改状态而缺审核人或理由会让这笔终态记录失去可追溯性。
+/// 审核时间取数据库当前时间，避免多个应用节点时钟不一致导致审核先后顺序错乱。
+/// WHERE 只按主键匹配而不带状态条件，因此本语句本身不阻止把已审结的申请再改一次；
+/// 「只有待审申请可被审核」这条状态机约束由调用方在锁行后判定，本层不重复施加。
+/// 传入状态应已通过领域校验，只能是通过或驳回，`pending` 不是合法的审核结论。
+/// 不自行提交：审核通过时还需同事务抬升用户 KYC 等级，两者必须一起成功或一起回滚。
 pub(crate) async fn update_kyc_submission_review_in_tx(
     tx: &mut Transaction<'_, MySql>,
     submission_id: u64,
@@ -363,8 +423,14 @@ pub(crate) async fn update_kyc_submission_review_in_tx(
     Ok(())
 }
 
-/// 在调用方审核事务中用 `GREATEST` 提升或保持用户 KYC 等级，不会降低现有等级。
-/// SQL 不检查受影响行数，用户缺失也返回成功；审核状态和目标等级合法性须由锁定后的应用层保证。
+/// 在审核通过时抬升用户主表的 KYC 等级，用 `GREATEST` 取现值与目标值中的较大者。
+/// 这个取大而非直接赋值的写法是一道防降级保险：
+/// 若用户已通过更高等级的认证，一笔目标等级较低的旧申请获批也不会把等级拉低，
+/// 因此本函数天然幂等，重复执行不会改变结果。
+/// 只在通过分支调用，驳回不应触碰用户等级。
+/// 不检查受影响行数，用户不存在时同样返回成功且实际未改动任何数据；
+/// 用户存在性由审核流程更早的锁定步骤保证。
+/// 必须与审核结论写入处于同一事务，否则可能出现等级已升而申请仍显示待审。
 pub(crate) async fn update_user_kyc_level_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -382,7 +448,10 @@ pub(crate) async fn update_user_kyc_level_in_tx(
     Ok(())
 }
 
-/// 通过唯一名称和空更新幂等补齐 KYC 默认配置，已存在时不改业务值。
+/// 幂等补齐名为 `default` 的 KYC 配置行，使系统在从未配置过时也有一份可用规则。
+/// 幂等性依靠名称唯一键加上冲突分支的空更新实现：行已存在时只把名称赋值给自己，
+/// 任何业务列都不会被这次调用改写，因此对已有运营配置绝对安全。
+/// 以连接池自治执行单条语句，不参与任何事务；需要与后续读写原子的场景应改用事务版本。
 pub(crate) async fn ensure_default_config(pool: &Pool<MySql>) -> AppResult<()> {
     sqlx::query(default_config_insert_sql())
         .execute(pool)
@@ -390,7 +459,10 @@ pub(crate) async fn ensure_default_config(pool: &Pool<MySql>) -> AppResult<()> {
     Ok(())
 }
 
-/// 在调用方事务中幂等补齐 KYC 默认配置，不自行提交或覆盖现有值。
+/// 在调用方事务内幂等补齐默认 KYC 配置，与连接池版本共用同一条 SQL，语义完全一致。
+/// 使用事务版本的收益是补写与随后的锁行或读取原子完成，
+/// 配置保存流程正是靠它保证首次保存时也一定有行可供 `FOR UPDATE` 锁定。
+/// 同样不覆盖任何已有业务列，不自行提交事务。
 pub(crate) async fn ensure_default_config_in_tx(tx: &mut Transaction<'_, MySql>) -> AppResult<()> {
     sqlx::query(default_config_insert_sql())
         .execute(&mut **tx)
@@ -398,6 +470,11 @@ pub(crate) async fn ensure_default_config_in_tx(tx: &mut Transaction<'_, MySql>)
     Ok(())
 }
 
+/// 返回补齐默认 KYC 配置的 SQL，两个 `ensure_default_config` 变体共用同一份语句常量。
+/// 默认口径写死在此：认证功能开启、目标等级为 1、必填材料为证件正反面、
+/// 允许国家与按国家证件规则均为空数组（即不限制），单份材料上限五兆。
+/// 冲突分支 `name = name` 是刻意的空更新，MySQL 借此在行已存在时不改动任何业务列，
+/// 从而让插入语句退化为无副作用操作。
 fn default_config_insert_sql() -> &'static str {
     r#"INSERT INTO kyc_configs
        (name, enabled, target_kyc_level, required_documents_json, allowed_countries_json, country_document_types_json, max_document_size_bytes)
@@ -405,6 +482,10 @@ fn default_config_insert_sql() -> &'static str {
        ON DUPLICATE KEY UPDATE name = name"#
 }
 
+/// 拼装读取 KYC 配置的 SQL，`for_update` 决定是否追加 `FOR UPDATE` 加锁子句。
+/// 三个读取入口共用这一处列清单，避免加锁版与非加锁版在字段上出现偏差。
+/// 配置名以占位符绑定而非拼入字符串，拼接部分只有固定的锁子句，不存在注入面。
+/// 返回 `String` 而非静态串正是因为锁子句需要运行时决定。
 fn select_kyc_config_sql(for_update: bool) -> String {
     let mut sql = String::from(
         r#"SELECT id, name, enabled, target_kyc_level, required_documents_json,
@@ -418,6 +499,11 @@ fn select_kyc_config_sql(for_update: bool) -> String {
     sql
 }
 
+/// 返回申请总数查询的 SQL 前缀，供分页检索统计匹配条数。
+/// 表别名与连接方式必须与行查询完全一致：同样左连 `users` 且按主键关联。
+/// 保持一致有两个原因——过滤条件里可能引用 `users.email`，缺了连接会直接报错；
+/// 而左连按主键不会放大基数，因此计数结果与行查询口径严格对应。
+/// 只返回不含 WHERE 的前缀，谓词由调用方与行查询共用同一段逻辑压入。
 fn count_kyc_submission_sql() -> &'static str {
     // JOIN 与行查询保持一致：users 按主键连接，不改变基数。
     r#"SELECT COUNT(*)
@@ -425,6 +511,11 @@ fn count_kyc_submission_sql() -> &'static str {
        LEFT JOIN users ON users.id = submissions.user_id"#
 }
 
+/// 返回申请摘要列表查询的 SQL 前缀，用于管理端分页浏览。
+/// 与完整查询的关键差异是列清单刻意排除三个证件图片字段与 `created_at`：
+/// 图片是 Base64 长文本，逐行带出会让列表响应急剧膨胀，而列表场景并不需要看图。
+/// 其余字段保持一致，包括未脱敏的证件号，因此摘要同样属于敏感数据。
+/// 左连 `users` 补齐邮箱与手机号，用左连而非内连以确保用户记录异常缺失时申请仍可被检索到。
 fn select_kyc_submission_summary_sql() -> &'static str {
     r#"SELECT submissions.id, submissions.user_id, users.email, users.phone,
               submissions.real_name, submissions.country, submissions.id_number, submissions.submission_type,
@@ -436,6 +527,11 @@ fn select_kyc_submission_summary_sql() -> &'static str {
        LEFT JOIN users ON users.id = submissions.user_id"#
 }
 
+/// 返回单笔申请完整查询的 SQL 前缀，被最新申请、按主键读取、事务内回读与锁定四处复用。
+/// 相对摘要版本额外带出三张证件图片与 `created_at`，因此结果是全量而非列表投影。
+/// 四个调用点各自追加不同的 WHERE、排序与锁子句，共用前缀确保它们的字段口径不会漂移。
+/// 同样左连 `users` 补齐联系方式。
+/// 输出含证件图片原文与未脱敏证件号，是本模块敏感度最高的查询，受众必须严格限定。
 fn select_kyc_submission_sql() -> &'static str {
     r#"SELECT submissions.id, submissions.user_id, users.email, users.phone,
               submissions.real_name, submissions.country, submissions.id_number, submissions.submission_type,
@@ -449,6 +545,10 @@ fn select_kyc_submission_sql() -> &'static str {
        LEFT JOIN users ON users.id = submissions.user_id"#
 }
 
+/// 把配置数据库行转换为对外响应对象，逐字段平移不做业务判断。
+/// 唯一的形态调整是把三个清单字段从 SQLx 的 JSON 包装解开为裸向量，
+/// 使响应结构不必依赖 SQLx 类型，也让上层无需感知这些字段在库中以 JSON 列存储。
+/// 配置不含个人数据，因此无需脱敏。
 fn config_response(row: KycConfigRow) -> KycConfigResponse {
     KycConfigResponse {
         id: row.id,
@@ -465,6 +565,10 @@ fn config_response(row: KycConfigRow) -> KycConfigResponse {
     }
 }
 
+/// 把申请完整行转换为响应对象，全部字段原样搬运。
+/// 明确不做的事：不掩码证件号、不裁剪证件图片、不按调用者身份筛选字段。
+/// 这是一次纯粹的类型转换而非脱敏边界，输出与数据库中的原文完全一致，
+/// 受众限制必须由更上层根据请求者是本人还是审核管理员来施加。
 fn submission_response(row: KycSubmissionRow) -> KycSubmissionResponse {
     KycSubmissionResponse {
         id: row.id,
@@ -492,6 +596,10 @@ fn submission_response(row: KycSubmissionRow) -> KycSubmissionResponse {
     }
 }
 
+/// 把申请摘要行转换为列表项对象，与完整版本同为原样搬运。
+/// 二者的字段差异完全来自 SQL 的列清单而非这里的取舍：摘要行本就不含证件图片与创建时间，
+/// 所以本函数没有任何丢弃字段的逻辑。
+/// 同样不掩码证件号，摘要列表仍属敏感数据，只可提供给已授权的审核管理员。
 fn submission_summary(row: KycSubmissionSummaryRow) -> KycSubmissionSummary {
     KycSubmissionSummary {
         id: row.id,

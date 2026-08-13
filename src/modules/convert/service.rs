@@ -1,6 +1,11 @@
 //! convert bounded context service layer.
 //!
 //! 服务层：封装可复用业务服务和跨实体业务规则。
+//!
+//! 本文件分为两部分。前半部分是一组无 I/O 的纯函数，承担闪兑的全部判定口径：
+//! 请求方向归一化、金额与精度校验、汇率解析、目标额与手续费的计算与截断方向。
+//! 后半部分的 `ConvertService` 是围绕仓储端口的通用编排壳，供内存适配器和单测使用，
+//! 它不读实时钱包、不锁行、不结算资金；线上真实资金路径走应用层的 MySQL 事务。
 
 use super::repository::{
     ConvertOrderRepository, ConvertPairRule, ConvertPairRuleDbRecord, ConvertQuoteRepository,
@@ -22,13 +27,18 @@ use uuid::Uuid;
 
 pub(crate) const QUOTE_TTL_SECONDS: i64 = 30;
 
+/// 报价金额计算的输出对，两项都已按各自资产精度向零截断，可直接落库。
 #[derive(Debug, Clone)]
 pub(crate) struct ConvertQuoteAmounts {
+    /// 目标资产到账数量，已扣手续费并叠加价差。
     pub(crate) to_amount: BigDecimal,
+    /// 以源资产计价的手续费，已从净额中扣除，不再单独生成钱包流水。
     pub(crate) fee_amount: BigDecimal,
 }
 
-/// 只接受 `user:{u64}` 形式的鉴权 subject；格式错误返回未授权。
+/// 只接受 `user:{u64}` 形式的鉴权 subject，其余任何写法都视为未授权而非参数错误。
+/// 前缀缺失或数字段溢出 u64 都走同一失败分支，避免向调用方泄露主体格式细节。
+/// 闪兑所有涉及用户资金的入口都必须先过这一步，用户维度只能来自 JWT，不能来自请求体。
 pub(crate) fn user_id_from_subject(subject: &str) -> AppResult<u64> {
     subject
         .strip_prefix("user:")
@@ -37,26 +47,35 @@ pub(crate) fn user_id_from_subject(subject: &str) -> AppResult<u64> {
 }
 
 /// 严格把客户端 quote_id 解析为 UUID；非法值在读取 Redis 或 MySQL 前返回参数错误。
+/// 提前拦截可以避免用任意字符串拼出缓存键去探测 Redis，也省掉一次无谓的数据库往返。
+/// 解析成功不代表报价存在或归属调用者，归属与有效期在确认流程中另行判定。
 pub(crate) fn parse_quote_id(value: &str) -> AppResult<QuoteId> {
     Uuid::parse_str(value)
         .map(QuoteId)
         .map_err(|_| AppError::Validation("invalid quote_id".to_owned()))
 }
 
-/// 将闪兑列表数量规范为默认 50、最小 1、最大 100。
+/// 将闪兑列表数量规范为默认 50、最小 1、最大 100，交易对与订单两个列表接口共用该口径。
+/// 越界值被夹紧而不是报错，因此客户端传 0 或超大值都能拿到结果，不会因分页参数失败。
+/// 上限用于防止单次查询拉走整表，调用方不能绕过本函数直接把原始 limit 拼进 SQL。
 pub(crate) fn route_limit(limit: Option<u32>) -> u32 {
     limit.unwrap_or(50).clamp(1, 100)
 }
 
-/// 裁剪可选查询文本并把空白值归一为 `None`；不校验订单状态枚举。
+/// 裁剪可选查询文本并把纯空白归一为 `None`，使 `status=` 与不传该参数得到相同的不过滤语义。
+/// 不校验订单状态枚举，未知状态词会照常拼进 SQL 条件并自然查不到数据。
+/// 裁剪后的值仍以绑定参数方式下推，本函数不承担任何注入防护职责。
 pub(crate) fn optional_query_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
 }
 
-/// 把数据库交易对转换为请求方向的报价规则：正向沿用源侧限额，反向改用目标侧限额。
-/// 反向固定计价使用 `1 / fixed_rate`；固定汇率非正时在报价计算前拒绝，不读取钱包或行情。
+/// 把数据库交易对行归一化为「按用户请求方向」的报价规则，屏蔽配置中资产的原始排列顺序。
+/// 反向判定条件是配置的 from/to 与请求的 to/from 恰好互换；只要不满足就按正向处理。
+/// 正向沿用 min_amount/max_amount，反向改用 target_min_amount/target_max_amount 作为限额。
+/// 反向固定计价取 `1 / fixed_rate`，因此固定汇率必须为正，非正时在报价计算前直接拒绝。
+/// 价差、费率与市场计价线索原样透传，本函数不读取钱包和行情，也不产生任何持久化副作用。
 pub(crate) fn convert_pair_rule_from_record(
     row: ConvertPairRuleDbRecord,
     from_asset_id: u64,
@@ -96,8 +115,11 @@ pub(crate) fn convert_pair_rule_from_record(
     })
 }
 
-/// 校验源金额为正、fee_rate 位于 `[0,1)`、金额落在请求方向限额内且计价模式为 fixed/market。
-/// 该纯校验不处理小数位、不冻结 available，失败时不生成报价行或缓存。
+/// 在真正计价前逐项否决非法报价请求，四项检查按固定次序执行且任一不通过即返回参数错误。
+/// 依次校验源金额严格为正、费率落在 `[0,1)`、金额不低于该方向最小额、不超过可为空的最大额，
+/// 最后要求计价模式是 fixed 或 market 之一，未知模式在此拦下而不是留到汇率解析阶段。
+/// 费率上界取开区间是因为费率达到 1 会把净额吃光，后续目标额必然非正。
+/// 该纯校验不处理小数位、不读钱包、不冻结 available，失败时不生成报价行也不写缓存。
 pub(crate) fn validate_quote_amount(amount: &BigDecimal, pair: &ConvertPairRule) -> AppResult<()> {
     if amount <= &BigDecimal::from(0) {
         return Err(AppError::Validation(
@@ -132,7 +154,9 @@ pub(crate) fn validate_quote_amount(amount: &BigDecimal, pair: &ConvertPairRule)
     Ok(())
 }
 
-/// 校验资产 precision_scale 位于钱包支持的 0..=18；损坏配置按内部错误处理。
+/// 校验资产 precision_scale 落在钱包统一支持的 0..=18 区间，上界与账本列的小数位一致。
+/// 越界只可能来自资产表被写坏，属于配置故障而非用户输入问题，因此归为内部错误而不是参数错误。
+/// 校验通过只说明精度值可用于截断计算，不代表该资产已开通钱包账户或已配置闪兑规则。
 pub(crate) fn ensure_asset_precision_scale(precision_scale: i32) -> AppResult<()> {
     if !(0..=MAX_ASSET_PRECISION_SCALE).contains(&precision_scale) {
         return Err(AppError::Internal(format!(
@@ -208,15 +232,19 @@ pub(crate) fn convert_quote_amounts(
     })
 }
 
-/// 返回交易对的固定汇率；缺失时拒绝报价，不以行情或客户端值兜底。
+/// 取出 fixed 计价模式所需的固定汇率，该值来自状态为 active 的新币兑换规则联表结果。
+/// 规则下线或未配置时字段为空，此处直接拒绝报价，不退化到市场行情也不接受客户端传入汇率。
+/// 若请求方向与配置相反，取到的已是服务层换算过的倒数值，本函数不再做方向判断。
 pub(crate) fn resolve_fixed_convert_rate(pair: &ConvertPairRule) -> AppResult<BigDecimal> {
     pair.fixed_rate.clone().ok_or_else(|| {
         AppError::Validation("convert quote requires active fixed pricing rule".to_owned())
     })
 }
 
-/// 读取市场计价所需的交易对符号、base 资产和 quote 资产标识。
-/// 任一配置缺失即拒绝市场报价，不查询 Redis，也不猜测资产方向。
+/// 一次性取齐市场计价所需的三项配置：现货交易对符号、base 资产编号和 quote 资产编号。
+/// 三者要么同时存在要么同时缺失，缺失说明该闪兑对没有关联到状态为 active 的现货交易对。
+/// 任一项为空即拒绝市场报价并返回相同的参数错误，不查询 Redis，也不猜测资产方向。
+/// 返回的符号只是行情缓存键的来源，方向匹配由 `resolve_market_convert_rate` 负责判定。
 pub(crate) fn convert_market_pricing_source(pair: &ConvertPairRule) -> AppResult<(&str, u64, u64)> {
     let symbol = pair.market_pair_symbol.as_deref().ok_or_else(|| {
         AppError::Validation("convert market pricing requires active trading pair".to_owned())
@@ -231,8 +259,11 @@ pub(crate) fn convert_market_pricing_source(pair: &ConvertPairRule) -> AppResult
     Ok((symbol, market_base_asset_id, market_quote_asset_id))
 }
 
-/// 请求方向与市场 base→quote 一致时使用原价，反向时使用 `1 / market_price`。
-/// 两侧资产不匹配即拒绝；正价格校验由行情适配器负责，本函数不读取或更新行情缓存。
+/// 把现货行情价换算成闪兑请求方向上的汇率，只承认两种精确匹配，不做任何跨对路由。
+/// 请求方向与市场 base 到 quote 完全一致时直接使用原价，恰好相反时使用 `1 / market_price`。
+/// 两侧资产与行情交易对对不上就拒绝，避免把无关交易对的价格误用为兑换比例。
+/// 价格为正由行情适配器在读取缓存时保证，本函数据此直接取倒数而不再复核除零风险。
+/// 返回值尚未叠加价差与手续费，两者在目标额计算环节统一折算。
 pub(crate) fn resolve_market_convert_rate(
     pair: &ConvertPairRule,
     market_price: BigDecimal,
@@ -251,11 +282,15 @@ pub(crate) fn resolve_market_convert_rate(
     ))
 }
 
-/// 将 Redis/MySQL 仓储错误统一映射为内部错误；不吞掉失败，也不改变已发生的存储副作用。
+/// 把仓储层的存储与序列化故障统一收敛为内部错误，对客户端不区分是 Redis 还是 MySQL 出问题。
+/// 刻意不映射成参数错误或未找到，避免把缓存不可用伪装成报价不存在而诱导客户端重复下单。
+/// 原始错误以调试格式保留在消息里供日志排查；本函数不重试，也不撤销已经发生的存储副作用。
 pub(crate) fn map_convert_repository_error(error: ConvertRepositoryError) -> AppError {
     AppError::Internal(format!("{error:?}"))
 }
 
+/// 围绕报价仓储端口的通用闪兑编排壳，泛型参数决定实际存储行为。
+/// 它只覆盖有效期与确认幂等两条规则，不涉及实时钱包读写，线上资金路径不经过这里。
 #[derive(Debug, Clone)]
 pub struct ConvertService<R> {
     repository: R,
@@ -265,7 +300,8 @@ impl<R> ConvertService<R>
 where
     R: ConvertQuoteRepository,
 {
-    /// 注入闪兑仓储端口供报价与结算规则协调使用；构造时不读报价、不锁钱包，也不创建订单。
+    /// 注入闪兑仓储端口供报价与确认规则复用，所有权由服务持有直到显式取回。
+    /// 构造阶段不发起任何读写：不读报价、不锁钱包、不创建订单，也不校验仓储是否可用。
     pub fn new(repository: R) -> Self {
         Self { repository }
     }
@@ -280,7 +316,8 @@ where
         &mut self.repository
     }
 
-    /// 消费服务并返还底层仓储所有权，不创建、确认报价或移动钱包余额。
+    /// 消费服务并把仓储所有权交还调用方，常用于测试收尾时直接断言内存适配器的最终状态。
+    /// 移交过程不创建报价、不确认订单、不移动钱包余额，也不清理已经写入的缓存条目。
     pub fn into_repository(self) -> R {
         self.repository
     }

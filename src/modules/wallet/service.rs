@@ -1,6 +1,9 @@
 //! wallet bounded context service layer.
 //!
 //! 服务层：封装钱包相关业务动作与不依赖持久化细节的规则编排。
+//! 冻结、解冻、结算和锁仓四类动作统一走「加载账户、应用三桶增量、由账后快照生成镜像流水、交仓储保存」的编排路径。
+//! 本层只认识 `WalletRepository` 端口，不持有 SQLx、Redis 或事务对象；真正的行锁、幂等键与提交时机由仓储实现决定。
+//! 因此跨资产结算与锁仓明细写入无法在此获得全成全败保证，需要原子性的资金链路应改用基础设施层的专用事务用例。
 
 use super::{
     BalanceChange, LedgerBatch, LockPosition, LockSchedule, WalletAccount, WalletRepository,
@@ -14,22 +17,26 @@ pub struct WalletService<R> {
 }
 
 impl<R> WalletService<R> {
-    /// 使用指定钱包仓储构造领域服务，事务能力由仓储实现提供。
+    /// 使用指定钱包仓储构造领域服务，事务能力、行锁与提交时机全部由仓储实现提供。
+    /// 构造过程不加载账户、不校验资产存在，也不产生任何数据库连接或资金副作用。
     pub fn new(repository: R) -> Self {
         Self { repository }
     }
 
-    /// 借用当前钱包仓储以读取适配器状态。
+    /// 只读借用内部仓储，用于读取适配器自身状态而非发起资金变更。
+    /// 借用期间无法调用需要可变仓储的余额动作，因此不存在并发写入同一工作单元的风险。
     pub fn repository(&self) -> &R {
         &self.repository
     }
 
-    /// 可变借用当前钱包仓储以执行同一工作单元内的操作。
+    /// 可变借用内部仓储，便于调用方在同一工作单元内追加本服务未覆盖的持久化步骤。
+    /// 绕过服务编排意味着领域非负校验和镜像流水不会自动执行，调用方须自行保证账务一致。
     pub fn repository_mut(&mut self) -> &mut R {
         &mut self.repository
     }
 
-    /// 消费钱包服务并取回其仓储实例。
+    /// 消费钱包服务并交还仓储所有权，通常用于把工作单元移交给外层事务收尾。
+    /// 归还后本服务不再可用，尚未提交的资金变更是否生效完全取决于仓储实现的事务状态。
     pub fn into_repository(self) -> R {
         self.repository
     }
@@ -96,7 +103,9 @@ impl<R: WalletRepository> WalletService<R> {
     }
 
     /// 把正数金额从 available 桶迁移到 frozen 桶，并写入调用方提供的业务引用流水。
-    /// 三桶总额保持不变；仓储事务失败或余额不足时账户与流水一并回滚。
+    /// 金额必须严格大于零，零或负数在触碰仓储前就以 `NonPositiveAmount` 拒绝，不会加载账户。
+    /// available 减该额、frozen 加同额、locked 不变，三桶总额保持守恒；账本因此产生两条镜像条目。
+    /// available 不足会在领域非负校验阶段失败；仓储事务失败时账户与流水一并回滚，不留部分冻结。
     pub fn freeze(
         &mut self,
         command: FreezeBalanceCommand,
@@ -114,8 +123,10 @@ impl<R: WalletRepository> WalletService<R> {
         })
     }
 
-    /// 把正数金额从 frozen 桶退回 available 桶，并沿用业务引用生成双桶流水。
-    /// 冻结余额不足会在领域校验阶段失败，重放策略由上层稳定引用和仓储唯一性共同保证。
+    /// 把正数金额从 frozen 桶退回 available 桶，是 `freeze` 的反向动作且同样保持三桶总额守恒。
+    /// 金额需严格为正，非正数直接返回 `NonPositiveAmount`；locked 桶在解冻路径上始终不参与。
+    /// 冻结余额不足会在领域非负校验阶段失败，不会出现把 frozen 扣成负数的部分退款。
+    /// 本方法自身没有幂等键，重复解冻会真实执行第二次，重放安全依赖上层稳定引用和仓储唯一约束。
     pub fn unfreeze(
         &mut self,
         command: UnfreezeBalanceCommand,
@@ -206,6 +217,8 @@ impl<R: WalletRepository> WalletService<R> {
     }
 }
 
+/// 在触碰仓储之前拦截零和负数金额，防止反向资金动作被伪装成正常冻结或解冻。
+/// 零金额同样视为非法，因为它只会产生无意义的空流水；边界判断使用定点比较，不做精度截断。
 fn ensure_positive_amount(amount: &BigDecimal) -> Result<(), WalletServiceError> {
     if amount <= &BigDecimal::from(0) {
         Err(WalletServiceError::NonPositiveAmount)

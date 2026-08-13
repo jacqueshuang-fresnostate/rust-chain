@@ -1,3 +1,11 @@
+//! 新币项目生命周期、解锁规则与派发锁仓计算的纯业务规则层。
+//!
+//! 三条主线：一是生命周期代码在请求、数据库与领域枚举之间的双向解析，其中请求侧未知值算校验错误、
+//! 数据库侧未知值算内部数据错误；二是解锁规则与解锁手续费规则的字段形状校验，
+//! 两者都采用「按类型确定必填项并禁止其他类型专属字段」的互斥策略；三是把项目解锁规则翻译成领域规则后，
+//! 借新币领域的解锁计算得出待写入的锁仓头寸。全部函数不触库、不写钱包、不加锁，
+//! 项目当前状态与可派额度等依赖持久化的判定一律由 application 层在持锁后完成。
+
 use super::*;
 
 /// 校验新币派发请求的审计原因以及可选幂等键长度，拒绝空白或超长标识。
@@ -55,6 +63,9 @@ pub(crate) fn validate_update_new_coin_post_listing_purchase(
 
 /// 校验新币项目初始生命周期、资产、认购窗口、价格、额度及解锁规则的完整组合。
 /// 资产唯一性和并发创建冲突由数据库约束处理；本函数不写项目、钱包或审计。
+/// 初始生命周期可以是四态中的任意一个而不强制从预热开始，因此允许直接创建已上市的历史项目。
+/// 总量要求严格为正而发行价只要求非负，故零价免费发行是合法配置；符号去空后不得为空。
+/// 解锁规则必填，解锁手续费规则在未显式启用时按关闭处理，两者都按各自的互斥字段形状校验。
 pub(crate) fn validate_create_new_coin_project(
     request: &CreateNewCoinProjectRequest,
 ) -> AppResult<()> {
@@ -95,6 +106,8 @@ pub(crate) fn validate_create_new_coin_project(
 
 /// 校验新币闪兑规则的汇率来源、固定汇率、费率、限额和启停状态组合。
 /// 这里只确定配置是否自洽；目标资产与项目关联、报价和钱包结算由应用/闪兑上下文负责。
+/// 当前只支持 fixed 一种汇率来源，浮动配置虽在数据结构中保留但会被本校验拒绝，因此固定汇率必填且必须为正。
+/// 状态为可选项：完全不传表示沿用默认启用，但传了却是纯空白会被判为非法，以区分「未指定」与「填错」。
 pub(crate) fn validate_new_coin_convert_rule(
     request: &UpsertNewCoinConvertRuleRequest,
 ) -> AppResult<()> {
@@ -183,6 +196,9 @@ pub(crate) fn lifecycle_status_value(status: LifecycleStatus) -> &'static str {
 
 /// 依据新币派发的数量、解锁规则和来源时间计算锁仓头寸，保持各期金额之和等于待锁总额。
 /// 计算不写钱包或锁仓表；非法规则或金额返回错误，实际幂等合并与事务提交由应用层负责。
+/// 项目上的解锁字段会先被翻译成领域解锁规则，再交由新币领域统一计算，从而与用户侧解锁口径一致。
+/// 派发的幂等键被当作解锁来源标识透传，领域据此生成合并键，使同一笔派发重放时能落到同一条锁仓上。
+/// 返回空列表是合法结果，表示该规则下资产可立即到账而无需锁仓，调用方据此决定派发状态记为已完成还是锁定中。
 pub(crate) fn lock_positions_for_distribution(
     project: &NewCoinProjectResponse,
     user_id: u64,
@@ -223,6 +239,9 @@ pub(crate) fn lock_positions_for_distribution(
 
 /// 将新币项目的发行、生命周期、解锁、手续费和上市后购买配置映射为审计快照。
 /// 快照不包含认购或钱包明细；应用层在项目配置事务中保存前后值，时间统一为毫秒值。
+/// 生命周期推进、解锁规则替换、手续费规则调整和上市后购买开关四类操作共用这一份结构，
+/// 因此单看快照即可判断本次改动落在哪一组字段上。
+/// 上市后购买同时记录交易对编号与其状态，可据此看出关闭开关时交易对是否仍处于启用。
 pub(crate) fn new_coin_project_audit_json(project: &NewCoinProjectResponse) -> Value {
     json!({
         "id": project.id,
@@ -248,6 +267,8 @@ pub(crate) fn new_coin_project_audit_json(project: &NewCoinProjectResponse) -> V
 
 /// 将单笔新币派发的项目、用户、认购、资产、数量、锁仓和幂等键映射为资金审计快照。
 /// 结果不读取钱包流水；派发事务须把快照与余额或锁仓写入一并提交。
+/// 幂等键进入快照是关键设计：排查是否重复发币时可直接按该键在审计中检索。
+/// 锁仓头寸编号为空表示本次派发已直接入账可用余额，非空则表示资产先进入锁仓等待解禁。
 pub(crate) fn new_coin_distribution_audit_json(
     distribution: &NewCoinDistributionResponse,
 ) -> Value {
@@ -279,6 +300,12 @@ pub(crate) fn new_coin_convert_rule_audit_json(rule: &NewCoinConvertRuleResponse
     })
 }
 
+/// 按解锁类型校验三组时间字段的互斥形状，确保配置能唯一确定解锁时刻。
+/// 上市即解锁必须给出上市时间且不得携带固定解锁时刻或相对周期；
+/// 固定时间解锁必须给出解锁时刻且不得携带上市时间或相对周期；
+/// 相对周期解锁必须给出正数秒数且不得携带任何绝对时间，秒数为 0 与缺失同等看待。
+/// 未知类型和空白类型分别报不支持与必填错误。
+/// 采用「必填 + 禁止他类字段」的双向约束，是为了避免残留的旧字段在类型切换后被误用。
 fn validate_unlock_rule_shape(
     unlock_type: &str,
     listed_at: Option<DateTime<Utc>>,
@@ -335,6 +362,10 @@ fn validate_unlock_rule_shape(
     Ok(())
 }
 
+/// 校验解禁手续费规则：关闭时直接放行且不检查任何其他字段，开启时三项配置缺一不可。
+/// 开启后要求费率严格为正、计费依据是 market_value 或 profit 之一、且必须指定收费资产。
+/// 与解锁规则不同，这里不禁止关闭状态下残留旧字段，因为写入前应用层会主动把它们清空。
+/// 费率为正意味着无法通过开启收费再配零费率来表达免费，免费应直接关闭该开关。
 fn validate_unlock_fee_rule_shape(
     unlock_fee_enabled: bool,
     unlock_fee_rate: Option<&BigDecimal>,
@@ -371,6 +402,9 @@ fn validate_unlock_fee_rule_shape(
     Ok(())
 }
 
+/// 把生命周期字符串代码映射为领域枚举，是请求侧与数据库侧两个解析入口共用的底层实现。
+/// 严格按字面量匹配 preheat、subscription、distribution、listed 四值，不去空白也不做大小写归一，
+/// 因此调用方需自行完成预处理；未知值统一返回校验错误，由上层决定是否改判为内部数据错误。
 fn parse_lifecycle_status(value: &str) -> AppResult<LifecycleStatus> {
     match value {
         "preheat" => Ok(LifecycleStatus::Preheat),
@@ -383,6 +417,10 @@ fn parse_lifecycle_status(value: &str) -> AppResult<LifecycleStatus> {
     }
 }
 
+/// 把项目上扁平存放的解锁类型与时间字段还原成新币领域的解锁规则枚举。
+/// 三种类型分别取上市时间、固定解锁时刻和相对秒数，缺失对应字段一律返回校验错误，
+/// 因此历史脏数据会在派发时被拦下而不是产生错误的锁仓计划。
+/// 相对秒数需从无符号整数转换为领域所需的有符号类型，超范围时报周期过大而非静默溢出。
 fn unlock_rule_from_project(project: &NewCoinProjectResponse) -> AppResult<UnlockRule> {
     match project.unlock_type.as_str() {
         "immediate_on_listing" => Ok(UnlockRule::ImmediateOnListing {

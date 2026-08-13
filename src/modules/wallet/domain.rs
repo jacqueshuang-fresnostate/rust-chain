@@ -1,6 +1,10 @@
 //! wallet bounded context domain layer.
 //!
 //! 领域层：放置钱包领域实体、值对象和不依赖 I/O 的业务规则。
+//! 核心不变量是 available、frozen、locked 三桶各自非负，任一桶变负即整次领域变更作废，账户快照保持原值。
+//! 资金精度统一按资产 precision_scale 向零截断，最大 18 位；提现手续费阶梯必须无重叠且开放区间只能收尾。
+//! 账本条目由已应用变更的账户快照反向生成，因此每条流水的三桶 after 描述的都是同一时刻的账后状态。
+//! 本层为纯函数与纯值对象，不访问数据库、不加锁、不保证任何幂等，持久化与并发控制全部由仓储和基础设施承担。
 
 use bigdecimal::BigDecimal;
 use serde::{Deserialize, Serialize};
@@ -80,7 +84,8 @@ pub struct BalanceChange {
 }
 
 impl BalanceChange {
-    /// 构造包含可用、冻结与锁定三桶增量的余额变更值对象。
+    /// 构造包含可用、冻结与锁定三桶增量的余额变更值对象，三个分量都是有符号增量而非目标余额。
+    /// 构造阶段不校验正负、不做精度截断、也不要求三桶增量之和为零，合法性完全交给账户应用变更时判定。
     pub fn new(available: BigDecimal, frozen: BigDecimal, locked: BigDecimal) -> Self {
         Self {
             available,
@@ -100,7 +105,8 @@ pub enum WalletServiceError {
 }
 
 impl From<WalletDomainError> for WalletServiceError {
-    /// 保留原领域错误类型并包装为服务错误，不改变余额快照或补写流水。
+    /// 把领域规则错误原样提升为服务层错误，保留负余额桶或锁仓不变量等原始判定信息。
+    /// 该转换只改变错误类型，不吞掉错误、不改变余额快照，也不会补写任何流水。
     fn from(error: WalletDomainError) -> Self {
         Self::Domain(error)
     }
@@ -123,6 +129,8 @@ pub fn truncate_amount_to_asset_precision(amount: &BigDecimal, precision_scale: 
 }
 
 /// 返回 BigDecimal 去除尾随零后的有效小数位数，整数和负指数结果均按零位处理。
+/// 先做规范化再取指数，因此形如一点一零零的金额只计一位，避免因存储标度不同而误判精度越界。
+/// 该纯函数仅用于精度判定，不修改入参，也不承担金额是否为正或是否符合业务限额的检查。
 pub fn asset_amount_fractional_scale(amount: &BigDecimal) -> u32 {
     let (_, scale) = amount.normalized().as_bigint_and_exponent();
     scale.max(0) as u32
@@ -130,7 +138,10 @@ pub fn asset_amount_fractional_scale(amount: &BigDecimal) -> u32 {
 
 /// 检查并规范提现阶梯。
 /// 校验提现费率阶梯的数量、非负边界与开闭区间，并按起始金额排序。
+/// 阶梯数量上限为五十条，起始金额与费率均不得为负，显式上界必须严格大于同条的起始金额。
+/// 排序后逐条比对：后一条起始金额小于前一条上界即判定区间重叠，无上界的开放阶梯之后不允许再出现任何阶梯。
 /// 区间重叠或开放区间不在末尾时整体报错，避免同一提现金额命中多条规则。
+/// 校验失败返回可直接透传给调用方的英文原因串，且不返回部分规范化结果；本函数不计算费用，也不读取资产配置。
 pub fn normalize_withdraw_fee_tiers(
     mut tiers: Vec<WithdrawFeeTier>,
 ) -> Result<Vec<WithdrawFeeTier>, String> {
@@ -199,6 +210,8 @@ pub fn calculate_withdraw_fee(
     truncate_amount_to_asset_precision(&raw_fee, precision_scale)
 }
 
+/// 判定提现金额是否落在单条阶梯的左闭右开区间内，起始金额取等命中、上界取等不命中。
+/// 上界缺省表示开放阶梯，此时只要金额不低于起始金额即命中，保证最大额提现始终有规则可用。
 fn withdraw_fee_tier_matches_amount(tier: &WithdrawFeeTier, amount: &BigDecimal) -> bool {
     if amount < &tier.min_amount {
         return false;
@@ -220,6 +233,8 @@ pub struct LedgerMetadata {
 impl LedgerMetadata {
     /// 构造账本业务引用元数据，并拒绝空的变更类型、引用类型或引用编号。
     /// 三个字段共同构成流水审计身份，上层应使用稳定引用实现业务幂等重放。
+    /// 判空按去除首尾空白后是否为空串处理，纯空格视为缺失并返回携带字段名的元数据缺失错误。
+    /// 本构造只做存在性校验，不校验变更类型是否属于已登记分类，也不检查引用编号在业务表中真实存在。
     pub fn new(
         change_type: impl Into<String>,
         ref_type: impl Into<String>,
@@ -301,12 +316,14 @@ impl LedgerBatch {
         Self { entries }
     }
 
-    /// 借用本批次按三桶变更顺序生成的账本条目。
+    /// 只读借用本批次条目，顺序固定为可用、冻结、锁定，零增量的桶不会出现在结果中。
+    /// 借用用于断言与审计核对，不代表这些条目已经落库。
     pub fn entries(&self) -> &[WalletLedgerEntry] {
         &self.entries
     }
 
-    /// 消费账本批次并返回待持久化的全部条目。
+    /// 消费账本批次并交出全部条目所有权，供仓储在同一事务中逐条插入。
+    /// 取走后批次不再可用，条目顺序与借用视图一致，调用方不应重排以免账后快照语义错位。
     pub fn into_entries(self) -> Vec<WalletLedgerEntry> {
         self.entries
     }
@@ -344,6 +361,8 @@ pub enum LockSchedule {
 }
 
 /// 以用户、资产和 UTC 秒级解锁时刻生成固定时间锁仓合并键；相同键由仓储合并来源。
+/// 时间戳按秒取整，因此同一秒内的多个来源会落到同一把锁仓聚合，秒级以下差异不会拆分记录。
+/// 该键只提供合并身份，不校验用户或资产是否存在，也不直接改变账户的 locked 余额。
 pub fn fixed_time_merge_key(
     user_id: &str,
     asset_id: &str,
@@ -353,6 +372,8 @@ pub fn fixed_time_merge_key(
 }
 
 /// 以上市 UTC 秒级时刻生成立即解锁合并键；键只标识锁仓聚合，不直接增加 locked。
+/// 键前缀与固定时间锁仓不同，因此同一用户同一资产在同一秒的两类计划不会互相合并。
+/// 该场景下上市时刻同时充当解锁时刻，函数本身不判断上市是否已经发生，也不触发解锁。
 pub fn immediate_on_listing_merge_key(
     user_id: &str,
     asset_id: &str,
@@ -366,6 +387,8 @@ pub fn immediate_on_listing_merge_key(
 
 /// 按规则批量创建锁仓记录。
 /// 依据解锁计划生成锁仓明细：同一固定时点合并，相对周期保留来源粒度。
+/// 上市即解锁与固定时间两类计划把全部来源金额累加成单条记录，解锁时刻取计划给定值而非来源自带时刻。
+/// 相对周期计划按来源逐条生成，各自沿用来源的解锁时刻并以来源编号构成合并键，因此不会互相合并。
 /// 每个来源金额必须为正；校验失败时不返回部分锁仓记录，也不触发持久化副作用。
 pub fn create_lock_positions(
     user_id: &str,
@@ -410,6 +433,8 @@ pub fn create_lock_positions(
 
 /// 复核账户锁仓剩余量与活动锁仓明细的一致性。
 /// 汇总指定用户资产的活动锁仓剩余量并与账户 locked 桶核对。
+/// 只累计用户与资产同时匹配账户快照的明细，传入其他用户或其他资产的记录会被直接忽略而非报错。
+/// 明细集合是否只含活动状态由调用方保证，本函数不过滤已解锁记录，也不会去重同一合并键的重复条目。
 /// 不一致时返回两侧金额供审计，调用方不得在校验失败后继续结算或解锁。
 pub fn verify_locked_balance_invariant(
     account: &WalletAccount,
@@ -434,6 +459,9 @@ pub fn verify_locked_balance_invariant(
     }
 }
 
+/// 把多个锁仓来源折叠成共享同一解锁时刻和合并键的单条锁仓记录。
+/// 累加过程逐个来源校验金额为正，遇到非正金额立刻中断并返回错误，不会输出已累加的部分结果。
+/// 合并后来源编号置空，来源粒度信息在此层丢失，需要逐来源追溯的调用方应改用相对周期计划。
 fn merged_lock_position(
     user_id: &str,
     asset_id: &str,
@@ -460,6 +488,8 @@ fn merged_lock_position(
     }])
 }
 
+/// 守卫单个余额桶的非负不变量，负值时携带出错的桶标识返回负余额错误。
+/// 零余额视为合法，只有严格小于零才拒绝；调用方须在写回账户之前对三桶逐一执行本检查。
 fn ensure_non_negative(
     amount: &BigDecimal,
     bucket: BalanceBucket,
@@ -471,6 +501,8 @@ fn ensure_non_negative(
     }
 }
 
+/// 校验单个账本元数据字段非空，把静态字段名回填进错误以便定位缺失的是哪一项引用信息。
+/// 判空前先去除首尾空白，因此只含空格的取值同样按缺失处理，避免空引用流入流水审计身份。
 fn ensure_required_metadata_field(
     field: &'static str,
     value: &str,
@@ -482,6 +514,9 @@ fn ensure_required_metadata_field(
     }
 }
 
+/// 为单个余额桶追加一条账本条目，增量为零时直接跳过，避免生成没有资金含义的空流水。
+/// 条目 amount 记录本桶有符号增量，balance_after 取该桶账后余额，三桶 after 一律取自同一账户快照。
+/// 变更类型与业务引用整体复制自元数据，因此同一次余额变更产生的多条流水共享同一审计身份。
 fn push_ledger_entry(
     entries: &mut Vec<WalletLedgerEntry>,
     account: &WalletAccount,
@@ -509,6 +544,8 @@ fn push_ledger_entry(
     });
 }
 
+/// 拒绝零和负数的锁仓来源金额，防止空锁仓或反向解锁被当作正常锁仓写入。
+/// 与余额桶的非负校验不同，这里零同样不合法，因为零金额来源既不改变 locked 也无审计价值。
 fn ensure_positive_lock_amount(amount: &BigDecimal) -> Result<(), WalletDomainError> {
     if amount <= &BigDecimal::from(0) {
         Err(WalletDomainError::NonPositiveLockAmount)
@@ -517,10 +554,14 @@ fn ensure_positive_lock_amount(amount: &BigDecimal) -> Result<(), WalletDomainEr
     }
 }
 
+/// 用来源编号而非解锁时刻构成相对周期锁仓的合并键，使每个来源保留独立的锁仓聚合。
+/// 因此同一用户同一资产的多笔相对周期锁仓不会互相合并，重复投递同一来源编号才会命中同一条记录。
 fn relative_period_merge_key(user_id: &str, asset_id: &str, source_id: &str) -> String {
     format!("relative_period:{user_id}:{asset_id}:{source_id}")
 }
 
+/// 为提现阶梯排序提供全序比较，定点数不可比时退化为相等以保证排序过程不会中途崩溃。
+/// 退化只影响两条阶梯的相对次序，区间重叠与开放阶梯位置仍由后续逐条校验兜底。
 fn decimal_order(left: &BigDecimal, right: &BigDecimal) -> Ordering {
     left.partial_cmp(right).unwrap_or(Ordering::Equal)
 }

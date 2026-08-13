@@ -1,3 +1,11 @@
+//! 杠杆仓位、钱包与全仓账户的只读 MySQL 适配器。
+//!
+//! 集中承载用户侧仓位列表与详情、杠杆钱包三桶余额、全仓账户风险快照，
+//! 以及后台的仓位历史分页和按币种状态分组的利息汇总。
+//! 全部查询走连接池且不加任何行锁，因此不会阻塞开仓、平仓、划转和强平的写事务。
+//! 用户侧查询一律把 `user_id` 写进 WHERE 与主键联合过滤，杜绝凭仓位主键越权读取他人持仓。
+//! 后台分页统一让行查询与 COUNT 复用同一组谓词构建函数，保证明细与总数口径不会分裂。
+
 use super::query_support::{fetch_admin_page, push_user_email_filter};
 use crate::{
     error::{AppError, AppResult},
@@ -12,19 +20,33 @@ use sqlx::{MySql, Pool, QueryBuilder};
 #[derive(Debug, sqlx::FromRow)]
 /// 风险快照所需的用户仓位、产品费率和行情交易对字段集合。
 pub(crate) struct MarginRiskPositionRow {
+    /// 仓位主键，回填到风险快照响应中供前端定位。
     pub(crate) id: u64,
+    /// 交易对主键，与 symbol 一起用于取 Redis 行情缓存。
     pub(crate) pair_id: u64,
+    /// 交易对符号，来自联表的 `trading_pairs`，是行情缓存键的组成部分。
     pub(crate) symbol: String,
+    /// 保证金计价币种，浮盈、利息和权益都以该币种表示。
     pub(crate) margin_asset: u64,
+    /// 持仓方向 long 或 short，决定价差的取号方式。
     pub(crate) direction: String,
+    /// 开仓时投入的自有保证金，是权益计算的基数。
     pub(crate) margin_amount: BigDecimal,
+    /// 名义价值，等于保证金乘杠杆，浮盈和维持保证金都按它折算。
     pub(crate) notional_amount: BigDecimal,
+    /// 截至当前已由利息 worker 计提的累计利息，直接抵减权益。
     pub(crate) interest_amount: BigDecimal,
+    /// 入场价，未成交仓位为 NULL，此时无法计算风险，应用层会拒绝出快照。
     pub(crate) entry_price: Option<BigDecimal>,
+    /// 维持保证金率，取自联表的产品当前配置，改配后立即影响强平线。
     pub(crate) maintenance_margin_rate: BigDecimal,
+    /// 仓位状态，只有 opened 才允许计算实时风险。
     pub(crate) status: String,
 }
-/// 按用户和仓位标识读取风险计算所需快照，防止跨账户读取；该查询不加资金锁。
+/// 按用户和仓位主键联合读取风险计算所需的字段，三表内联同时取出交易对符号和产品维持保证金率。
+/// 维持保证金率从产品表实时联出而非用仓位上的历史值，所以后台调整强平线会立刻反映到风险快照。
+/// 未命中返回 None，由应用层统一映射为 NotFound，不区分记录不存在与归属他人。
+/// 不加任何行锁，因此不会阻塞该仓位并发的平仓或强平事务，读到的是提交后的最新状态。
 pub(crate) async fn load_user_risk_position_by_id(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -48,7 +70,10 @@ pub(crate) async fn load_user_risk_position_by_id(
     .map_err(AppError::from)
 }
 
-/// 按用户、状态和上限查询保证金仓位读模型；只读失败不返回部分结果。
+/// 查询单个用户的杠杆仓位列表，用户标识以 `push_bind` 参数化绑定后作为第一个 WHERE 条件。
+/// 状态为可选筛选，不传则四种状态混合返回；排序固定按仓位主键倒序，主键唯一因此分页稳定。
+/// 只查仓位表不联产品或交易对，返回的是落库快照，不含实时浮盈也不含交易对符号。
+/// 钱包汇总接口复用它并固定传 opened，因此这里的默认上限行为对两个入口一致。
 pub(crate) async fn list_user_margin_positions(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -79,7 +104,10 @@ pub(crate) async fn list_user_margin_positions(
         .map_err(AppError::from)
 }
 
-/// 读取用户保证金钱包及资产标识；该查询不修改余额，也不生成流水。
+/// 读取用户全部杠杆钱包的 available、frozen、locked 三桶余额，并联表补上资产符号与图标。
+/// 只返回 `margin_wallet_accounts` 中已存在的行，从未参与过杠杆业务的币种不会出现，
+/// 因为该表的行是在划转或开仓时按需惰性创建的，不做全资产预建。
+/// 按资产主键升序排列以保证前端展示顺序稳定；不加锁、不改余额、不生成任何流水。
 pub(crate) async fn list_margin_wallet_accounts(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -98,8 +126,11 @@ pub(crate) async fn list_margin_wallet_accounts(
     .map_err(AppError::from)
 }
 
-/// 读取用户全仓账户最近一次组合风险快照；风险 worker 会持续刷新这些字段。
-/// 读取用户全仓账户风险快照并按保证金币种排序，不执行重新估值或强平。
+/// 读取用户各保证金币种下的全仓账户风险快照，按保证金币种升序返回。
+/// 五个数值列在表里都以 `last_` 前缀存储，查询时改名为业务字段，语义是「强平 worker 上次评估的结果」，
+/// 因此可能滞后于最新行情，展示层不应把它当作实时权益，实时值需走单仓风险快照接口。
+/// 保证金率在维持保证金为零时落库为 NULL，映射成 Option 表示该比率无意义而非零。
+/// 纯读取，不重新估值、不触发强平，也不写回任何字段。
 pub(crate) async fn list_user_cross_margin_accounts(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -120,7 +151,10 @@ pub(crate) async fn list_user_cross_margin_accounts(
     .map_err(AppError::from)
 }
 
-/// 按用户和仓位标识读取详情，记录缺失返回空以便应用层映射 NotFound。
+/// 按仓位主键与用户标识联合读取单条仓位详情，两个条件同时命中才返回结果。
+/// 返回列与用户仓位列表完全一致，因此详情页和列表页的字段解析可以共用一套逻辑。
+/// 未命中返回 None 而不是错误，由应用层统一映射为 NotFound，避免在这一层决定 HTTP 语义。
+/// 走连接池只读，不加锁也不联表，取到的是仓位行的落库快照，不含强平时间和强平原因。
 pub(crate) async fn load_user_position_by_id(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -143,6 +177,10 @@ pub(crate) async fn load_user_position_by_id(
 
 /// 后台仓位列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
 /// 后台仓位行与总数共享用户、邮箱、交易对及状态筛选，不修改仓位。
+///
+/// 相比用户侧列表多取 `liquidated_at` 与 `liquidation_reason` 两列，用于复盘风控处置过程。
+/// 邮箱条件因为需要访问用户表，所以要在两个 builder 上各克隆一份，共享谓词函数保证写法一致。
+/// 排序按仓位主键倒序，主键唯一，深翻页时不会出现同一条记录跨页重复或被跳过。
 pub(crate) async fn list_admin_margin_positions(
     pool: &Pool<MySql>,
     user_id: Option<u64>,
@@ -167,6 +205,10 @@ pub(crate) async fn list_admin_margin_positions(
     fetch_admin_page(pool, rows, total, " ORDER BY id DESC", limit, offset).await
 }
 
+/// 向后台仓位查询追加四个可选筛选条件，是明细分页与利息汇总共用的唯一谓词来源。
+/// 先落一个恒真的 `WHERE 1 = 1`，后续条件无需判断是不是第一个即可统一用 AND 拼接。
+/// 用户标识、交易对和状态都走参数化绑定；邮箱条件交由共享助手拼成 EXISTS 子查询。
+/// 因为行查询和 COUNT 查询都调用它，新增筛选维度时不可能只改一侧而造成总数口径偏差。
 fn push_admin_margin_position_filters(
     builder: &mut QueryBuilder<'_, MySql>,
     user_id: Option<u64>,
@@ -190,7 +232,9 @@ fn push_admin_margin_position_filters(
     }
 }
 
-/// 读取后台仓位详情及用户、产品信息；该只读查询不触发利息计提或结算。
+/// 后台按仓位主键读取单条详情，不带用户维度约束，可查看任意账户的持仓。
+/// 返回列与后台列表一致，含强平时间与强平原因，便于详情页和列表页共用同一套解析。
+/// 未命中返回 None，由应用层映射为 NotFound；不加行锁，也不会顺带触发计提或结算。
 pub(crate) async fn load_admin_margin_position_by_id(
     pool: &Pool<MySql>,
     position_id: u64,
@@ -212,6 +256,11 @@ pub(crate) async fn load_admin_margin_position_by_id(
 
 /// 后台资金费汇总：分组行与分组总数共用同一组谓词，总数按分组键去重统计。
 /// 按同一筛选聚合仓位利息与分页总数，该查询不执行计提。
+///
+/// 按保证金币种与仓位状态两列分组，输出仓位笔数、借款额合计和已计提利息合计。
+/// 两个合计用 COALESCE 兜底为零，避免筛选后没有匹配行时返回 NULL 而反序列化失败。
+/// 总数写成 `COUNT(DISTINCT margin_asset, status)`，统计的是分组个数而非仓位条数，与分页语义对齐。
+/// 数值全部取自仓位行上由利息 worker 写入的既有列，本查询只做聚合，不执行任何计提或结算。
 pub(crate) async fn list_admin_interest_summary(
     pool: &Pool<MySql>,
     user_id: Option<u64>,

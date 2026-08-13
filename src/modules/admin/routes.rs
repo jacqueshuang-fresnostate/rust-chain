@@ -1,3 +1,10 @@
+//! Admin API 的传输层聚合入口，按资源域把后台路由拆到子模块后再合并成单个 Router。
+//!
+//! 本文件只承担三件事：声明各资源域子模块、把子模块共享的用例别名与 DTO 一次性导入供 `use super::*` 复用、
+//! 以及用 merge 组装出对外唯一的 `routes()`。子模块之间不存在路径前缀差异，全部平铺在同一层级下，
+//! 因此新增路由时必须自行确认路径不与既有资源冲突。
+//! 应用层用例在此统一改名为 `*_use_case` 后缀，目的是避免与各 handler 的同名函数在 `use super::*` 展开后互相遮蔽。
+
 mod content;
 mod market_trading;
 mod new_coin_convert;

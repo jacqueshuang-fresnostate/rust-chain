@@ -45,7 +45,9 @@ struct TodayReturnTickerPayload {
 }
 
 /// 聚合指定 UTC 时段内已实现收益与对应本金基数，按资产返回活动快照。
-/// 查询只读取可审计结算来源，不把充值、提现或内部划转误计为收益。
+/// 内部直接复用历史聚合查询并丢弃其日期维度，因此当传入的时段跨越多个自然日时，同一资产会返回多条同名行。
+/// 调用方通常只传入当日零点到计算时刻的区间，从而让每个资产恰好对应一行，本函数自身不做跨日合并。
+/// 查询只读取可审计结算来源，不把充值、提现或内部划转误计为收益，也不锁定钱包或写入任何流水。
 pub(crate) async fn load_today_return_asset_activity(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -65,6 +67,10 @@ pub(crate) async fn load_today_return_asset_activity(
 }
 
 /// 按 UTC 自然日和资产聚合 Seconds、Prediction、Margin 与 Earn 终态事实的已实现收益及本金基数。
+/// 四路子查询各自定义收益：秒合约赢按本金乘赔率、输按本金取负；预测按赔付加退款加费用退回减本金减手续费。
+/// 杠杆取已实现盈亏减利息，本金基数取保证金；理财取赎回流水金额减申购本金，并只认同一申购的首条赎回流水以防重复计收益。
+/// 日期维度分别取各业务的结算、平仓或赎回时刻，时间过滤为左闭右开，因此边界时刻只会归入一个自然日。
+/// 时间戳按 UTC 朴素时刻绑定，日期由数据库直接截取，与应用层的 UTC 自然日口径保持一致。
 /// 公式与 today-return 口径一致；查询不包含充值、提现、内部划转、未结算订单或未实现盈亏，也不锁钱包。
 pub(crate) async fn load_return_history_asset_activity(
     pool: &Pool<MySql>,
@@ -180,6 +186,9 @@ pub(crate) async fn load_return_history_asset_activity(
 }
 
 /// 为每个非稳定币和活动日期读取 `{ASSET}USDT` 集合中 open_time 精确等于 UTC 零点的 1d close。
+/// 逐资产按其请求日期的最早与最晚构造一次左闭右开范围查询，再在游标中逐条筛出真正被请求的日期，避免为每天单独往返。
+/// 交易对拼接后需通过行情符号校验，校验不过的资产直接跳过，不会让整批历史估值失败。
+/// 单条 K 线文档损坏或价格非法时只跳过该条，对应日期表现为缺价而非抛出反序列化错误。
 /// 本函数不为稳定币造价，也不回退相邻 K 线；缺失或非法价格留空，由应用层标记对应日期为 partial。
 pub(crate) async fn load_historical_usdt_daily_closes(
     database: &Database,
@@ -230,7 +239,8 @@ pub(crate) async fn load_historical_usdt_daily_closes(
     Ok(prices)
 }
 
-/// 单条损坏 K 线只表现为该日缺价，不能把整个历史接口升级成反序列化 5xx。
+/// 从 Mongo 的 K 线文档中取出开盘时刻与收盘价字段，再交由日期与价格校验决定是否可用。
+/// 字段缺失或类型不符时返回空值而非报错，因此单条损坏 K 线只表现为该日缺价，不能把整个历史接口升级成反序列化 5xx。
 pub(crate) fn return_history_kline_document_close_if_valid(
     document: &Document,
     requested_days: &BTreeSet<NaiveDate>,
@@ -241,8 +251,10 @@ pub(crate) fn return_history_kline_document_close_if_valid(
 }
 
 /// 历史估值拒绝错日、非日初、非法和非正 close，缺失由应用层统一传播为 partial。
-/// 从历史 K 线文档提取严格为正的收盘价及其业务日期。
-/// 时间、价格或交易对不合法时返回空，防止错误行情进入收益估值。
+/// 先要求开盘毫秒时刻能被一整天整除，从而排除非日初的分钟或小时级 K 线被误当作日线收盘价。
+/// 再要求换算出的 UTC 日期确实在请求集合中，避免范围查询带回的相邻日期污染估值结果。
+/// 收盘价按去空白后的十进制解析，解析失败或结果不大于零一律返回空值，绝不用零价或负价参与收益换算。
+/// 从历史 K 线文档提取严格为正的收盘价及其业务日期，返回空时由应用层统一标记该日为 partial。
 pub(crate) fn return_history_historical_close_if_valid(
     open_time_millis: i64,
     close: &str,
@@ -261,6 +273,8 @@ pub(crate) fn return_history_historical_close_if_valid(
 }
 
 /// 批量读取非稳定币 `{ASSET}USDT` Redis ticker，仅收集交易对匹配、正数且相对计算时刻 60 秒内的价格。
+/// 资产列表为空时直接返回空表，不与 Redis 交互；否则按列表顺序拼出行情键并用一次批量读取取回全部快照。
+/// 返回结果与入参逐项对齐后逐个校验，未通过校验的资产在结果中直接缺席，而不是以零价或旧价占位。
 /// 缺失、字段异常、过期或未来时间快照均按缺价留空；函数不改写缓存，由应用层传播 partial。
 pub(crate) async fn load_current_usdt_prices(
     redis: &ConnectionManager,

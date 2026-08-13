@@ -1,3 +1,10 @@
+//! 行情订阅配置与行情源凭据的纯业务规则层，同时定义服务层读取运行态所需的抽象端口。
+//!
+//! 校验部分把订阅符号、K 线周期和提供商三类集合收敛成 worker 可直接消费的标准代码，
+//! 其中提供商被硬性限制为最多一个，以免多个数据源同时写入同一根 K 线。
+//! 映射部分负责把配置与凭据记录转成响应或审计快照，凭据一律只输出认证类型与掩码，密文和明文都不外泄。
+//! 运行态通过 `MarketFeedRuntimeStatusSource` 端口注入，因此本层不依赖 `AppState`，也不会真正启动或重载监督器。
+
 use super::*;
 
 pub(crate) const DEFAULT_MARKET_FEED_CONFIG_NAME: &str = "default";
@@ -25,6 +32,8 @@ pub(crate) async fn load_market_feed_runtime(
 
 /// 校验行情订阅交易对并转换为标准市场符号；启用配置时至少需要一个合法符号。
 /// 保持输入顺序并拒绝非法符号；不查询交易对是否已上架，配置存在性由应用层负责。
+/// 配置处于停用状态时允许符号为空，这样可以先保存一份空配置再逐步补齐，而不必为了保存凑数据。
+/// 与周期和提供商不同，符号在此不做去重，重复项会原样落库并可能造成重复订阅。
 pub(crate) fn validate_market_feed_symbols(
     symbols: &[String],
     enabled: bool,
@@ -46,6 +55,8 @@ pub(crate) fn validate_market_feed_symbols(
 
 /// 校验行情 K 线周期集合，拒绝空集合或 worker 不支持的周期并返回标准周期代码。
 /// 该纯规则不连接 provider；成功结果可直接用于订阅消息和 REST 兜底 URL 展开。
+/// 与符号不同，周期无论配置是否启用都必须非空。校验方式是借 K 线写入键的构造顺带完成周期解析，
+/// 因此这里接受的周期集合与实际能落库的 K 线周期严格同源，构造用的时间戳只是占位并不产生任何写入。
 pub(crate) fn validate_market_feed_intervals(intervals: &[String]) -> AppResult<Vec<String>> {
     if intervals.is_empty() {
         return Err(AppError::Validation(
@@ -65,6 +76,8 @@ pub(crate) fn validate_market_feed_intervals(intervals: &[String]) -> AppResult<
 
 /// 解析、去重行情提供商代码，并限制当前运行配置最多启用一个数据源。
 /// 未知别名、空集合或多 provider 配置直接返回校验错误，避免运行时同时写入不同权威价格源。
+/// 去重发生在别名归一之后，因此同一提供商的不同写法会被折叠为一项而不会误判为多源。
+/// 单源限制是当前运行模型的硬约束而非配置偏好：多个源同时写入会让同一根 K 线出现互相覆盖的权威值。
 pub(crate) fn validate_market_feed_providers(providers: &[String]) -> AppResult<Vec<String>> {
     if providers.is_empty() {
         return Err(AppError::Validation(
@@ -116,6 +129,8 @@ pub(crate) fn validate_market_source_auth_type(auth_type: &str) -> AppResult<Str
 
 /// 将行情订阅配置记录映射为后台响应，并以保存版本和已应用版本差异计算是否需要重载。
 /// 转换不访问数据库或监督器，保留最近重载结果且不会暴露任何行情源凭据。
+/// needs_reload 的判定口径是保存版本与已应用版本不相等，因此从未重载过的新配置也会被标记为待重载。
+/// 该标记只反映数据库中两个版本号的关系，不查询监督器实际是否存活，运行态需另看状态接口。
 pub(crate) fn market_feed_config_response(
     record: AdminMarketFeedConfigRecord,
 ) -> MarketFeedConfigResponse {
@@ -152,6 +167,8 @@ pub(crate) fn market_source_credential_response(
 
 /// 将行情订阅集合、版本和最近重载结果映射为稳定审计 JSON，供配置变更追踪。
 /// 快照同时保留保存版本、应用版本及重载错误；应用层在配置事务或重载结果记录中持久化它。
+/// 与对外响应的差别是这里不计算待重载标记，只留下两个原始版本号供事后自行判断。
+/// 由于保存操作必然推进版本号，即便订阅内容完全没变，审计前后值也会因版本递增而呈现差异。
 pub(crate) fn market_feed_config_audit_json(record: &AdminMarketFeedConfigRecord) -> Value {
     json!({
         "id": record.id,

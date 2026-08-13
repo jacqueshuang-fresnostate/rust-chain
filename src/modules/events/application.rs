@@ -1,6 +1,17 @@
 //! events bounded context application layer.
 //!
 //! 应用层：编排用例、事务边界和跨仓储协作。
+//!
+//! 本层承担三件事：把 `AppState` 中的 MySQL 与 RabbitMQ 句柄装配成 outbox 发布服务和 inbox 消费服务、
+//! 为私有 WebSocket 做连接前鉴权、以及提供事件记录的运维查询与死信重排用例。
+//!
+//! 装配函数集中定义了全局一致的投递参数：发布目标固定为 `exchange.events`，
+//! outbox 与 inbox 共用最多 5 次、固定 30 秒的退避策略，即退避曲线是常量间隔而非指数增长，
+//! 单轮扫描默认上限 100 条。任何一处调整都应在此统一修改，避免两侧策略漂移。
+//!
+//! 所有装配函数都只绑定依赖，不建立连接、不查询数据库、不领取租约、不推进任何状态；
+//! 真正的 I/O 只发生在发布轮次与消费循环中。缺少 MySQL 或 RabbitMQ 时在装配阶段即返回配置错误，
+//! 从而把部署缺失暴露在启动或首次调用时，而不是在投递中途。
 
 use crate::{
     error::{AppError, AppResult},
@@ -80,7 +91,11 @@ pub(crate) fn outbox_service_from_state(
 }
 
 /// 以调用方给定的单轮扫描上限装配生产 outbox：读取 MySQL，向 durable topic exchange `exchange.events` 发布，并采用最多 5 次、固定 30 秒退避。
-/// `batch_size` 原样交给仓储，零值产生空批；构造阶段不查询数据库、不创建 RabbitMQ channel，也不推进发布、重试或死信状态。
+/// 交换机名与重试参数在此写死，是全局唯一的定义处，其余装配入口都经由本函数取得同一份配置。
+/// 退避为固定 30 秒的等距间隔而非指数增长，最多 5 次后转入死信。
+/// MySQL 或 RabbitMQ 任一缺失都返回内部错误，把部署缺失暴露在装配阶段而不是投递中途；
+/// 重试参数非法同样在此失败，不会带着坏策略进入运行期。
+/// `batch_size` 原样交给仓储，零值会得到空批次；构造阶段不查询数据库、不建立 channel，也不推进任何状态。
 pub(crate) fn outbox_service_from_state_with_batch_size(
     state: &AppState,
     batch_size: u32,
@@ -106,7 +121,11 @@ pub(crate) fn outbox_service_from_state_with_batch_size(
 }
 
 /// 为一个稳定 `consumer_name` 装配 MySQL inbox 仓储、生产 dispatch 与用户钱包初始化适配器，并采用最多 5 次、固定 30 秒退避。
-/// consumer 名称决定去重和补偿重放范围；构造不领取租约、不执行 handler，缺少 MySQL 或策略非法时在启动消费前失败。
+/// 消费者名同时界定去重范围与补偿扫描范围，改名等同于换一个消费者身份，历史去重记录随之失效，因此必须保持稳定。
+/// 退避参数与 outbox 侧完全一致，两端由此保持同一条重试曲线。
+/// 钱包初始化适配器与 inbox 仓储共用同一个连接池，但各自开事务，二者不共享事务边界。
+/// 不需要 RabbitMQ，因为本服务只负责消费编排，传输适配由调用方另行提供。
+/// 构造不领取租约、不执行任何业务处理；缺少 MySQL 或策略非法时在开始消费前就失败。
 pub(crate) fn inbox_service_from_state(
     state: &AppState,
     consumer_name: impl Into<String>,
@@ -159,8 +178,10 @@ pub(crate) async fn publish_outbox_once(
     outbox_service_from_state(state)?.publish_once(now).await
 }
 
-/// 查询 outbox 运维记录；调用者必须先通过管理员鉴权，应用层统一获取数据库并保留分页合同。
-/// 应用层校验运维筛选和分页后读取 outbox，不发布、重试或修改消息。
+/// 查询 outbox 运维记录，调用方必须先通过管理员鉴权，本层不重复校验身份。
+/// 查询串先经表现层归一：状态裁剪空白后空串降级为不筛选，条数夹到 1 至 100，偏移截断到 100000。
+/// 归一结果转成持久化层筛选结构后查询，再把 SQLx 行映射成稳定的响应类型，使运维接口不受行结构变动影响。
+/// 返回体固定为记录数组加总数两个字段；纯读取，不发布消息、不推进重试、不修改任何事件状态。
 pub(crate) async fn list_outbox_records(
     state: &AppState,
     query: EventRecordsQuery,
@@ -182,8 +203,10 @@ pub(crate) async fn list_outbox_records(
     ))
 }
 
-/// 查询 inbox 运维记录；调用者必须先通过管理员鉴权，应用层统一获取数据库并保留分页合同。
-/// 应用层校验消费者、状态与分页后读取 inbox，不领取租约或执行 handler。
+/// 查询 inbox 运维记录，与 outbox 查询共用同一份查询串结构和归一规则。
+/// 实际可用的筛选维度只有状态一项，消费者名虽然出现在返回记录里但不参与过滤。
+/// 返回项带错误摘要与失败次数，便于直接判断某条消息是偶发失败还是已进入死信。
+/// 纯读取：不领取处理租约、不执行任何消费 handler、不改动消费状态。
 pub(crate) async fn list_inbox_records(
     state: &AppState,
     query: EventRecordsQuery,
@@ -208,7 +231,11 @@ pub(crate) async fn list_inbox_records(
 /// 管理员重排 outbox 死信并写入同事务审计。
 ///
 /// 仅接受 `admin:<id>` 身份和非空原因；只有 `dead_letter` 状态可转回 `pending`。
+/// 校验顺序为先查原因非空、再解析管理员编号，两者都在开启事务之前完成，非法请求不占用事务。
+/// 状态变更与审计写入在同一事务提交，不会出现事件已重排却没有操作记录的情况。
+/// 重排把失败次数清零并清空下次重试时间，等于给该事件重新发放一整轮重试预算。
 /// 已重排记录再次调用会返回冲突，因此不会重复清零重试次数或追加第二条审计记录。
+/// 本用例只改数据库状态，不直接向 broker 投递，实际发送由后续发布轮次完成。
 pub(crate) async fn requeue_outbox_dead_letter(
     state: &AppState,
     auth: AdminAuth,
@@ -225,14 +252,18 @@ pub(crate) async fn requeue_outbox_dead_letter(
     Ok(outbox_response(record))
 }
 
-/// 从应用状态取得 events 数据库连接池，统一保持未配置 MySQL 时的错误语义。
+/// 从应用状态取出 MySQL 连接池的克隆句柄，统一未配置时的错误语义。
+/// 归为 `AppError::Internal` 而非校验错误，因为连接池缺失属于部署配置问题而非请求问题。
+/// 克隆的是内部共享引用，不会新建物理连接。
 fn events_pool(state: &AppState) -> AppResult<Pool<MySql>> {
     state.mysql.clone().ok_or_else(|| {
         AppError::Internal("mysql pool is not configured for event routes".to_owned())
     })
 }
 
-/// 将 outbox 持久化行映射为稳定的运维接口响应，不暴露 SQLx 行类型。
+/// 把 outbox 持久化行映射为对外响应，隔离 SQLx 行类型使数据库结构变动不外溢到接口合同。
+/// 列表查询与死信重排共用本转换，因此两个接口返回的记录形状完全一致。
+/// 纯字段搬运，时间字段的毫秒序列化由响应类型上的属性负责，此处不做格式转换。
 fn outbox_response(row: OutboxRecordRow) -> OutboxRecordResponse {
     OutboxRecordResponse {
         id: row.id,
@@ -248,7 +279,9 @@ fn outbox_response(row: OutboxRecordRow) -> OutboxRecordResponse {
     }
 }
 
-/// 将 inbox 持久化行映射为稳定的运维接口响应，保留时间字段的毫秒序列化合同。
+/// 把 inbox 持久化行映射为对外响应，同样隔离 SQLx 行类型。
+/// 逐字段搬运且不做脱敏，因为该行本身不含消息载荷与处理令牌，前者体量大、后者是并发控制凭据，
+/// 两者在查询阶段就未被选出。时间字段的毫秒序列化由响应类型上的属性负责。
 fn inbox_response(row: InboxRecordRow) -> InboxRecordResponse {
     InboxRecordResponse {
         id: row.id,

@@ -265,8 +265,8 @@ describe('KycManagementPage', () => {
     expect(screen.getByRole('combobox', { name: '需手持证件照 1' })).toBeInTheDocument();
     await selectSemiOptionByAccessibleName(user, '规则国家 1', 'Singapore (SG)');
     await user.click(screen.getByRole('button', { name: '保存配置' }));
-    await user.type(screen.getByLabelText('操作原因'), 'update kyc config');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'update kyc config');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith(

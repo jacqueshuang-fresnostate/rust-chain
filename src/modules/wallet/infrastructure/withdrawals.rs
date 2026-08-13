@@ -30,7 +30,8 @@ pub struct HttpWalletChainGateway {
 }
 
 impl Default for HttpWalletChainGateway {
-    /// 使用 Reqwest 默认客户端构造链网关；此时不建立连接或发送请求。
+    /// 使用 Reqwest 默认客户端构造链网关适配器，此时不建立连接、不解析端点，也不发送任何请求。
+    /// 客户端内部维护连接池，因此该适配器应长期复用；每次调用重新构造会退化成短连接并放大握手开销。
     fn default() -> Self {
         Self {
             client: reqwest::Client::new(),
@@ -41,6 +42,8 @@ impl Default for HttpWalletChainGateway {
 #[async_trait]
 impl WalletChainGateway for HttpWalletChainGateway {
     /// 以 15 秒超时向 endpoint POST 提现广播 JSON，并按需添加 Bearer token。
+    /// 请求体包含请求编号、网络、资产、地址以及以字符串承载的金额和费用，定点数转字符串以避免 JSON 浮点精度损失。
+    /// 传输失败、非二百响应和响应体反序列化失败被折叠为三类内部错误，原始错误文本随消息透出便于定位。
     /// HTTP/传输/响应 JSON 失败均返回错误；远端可能已受理，调用方不得据超时释放 frozen，应以 request_id 重试或查询。
     async fn broadcast_withdrawal(
         &self,
@@ -72,6 +75,8 @@ impl WalletChainGateway for HttpWalletChainGateway {
     }
 
     /// 以 15 秒超时向 endpoint GET 游标页，发送 cursor 与 limit 并解析充提事件集合。
+    /// 游标缺省时按空串发送，表示请求首页；数量上限原样透传，是否被远端裁剪由网关自行决定。
+    /// 响应页包含下一游标以及充值与提现两组观测，任一组缺省时按空集合解析，不会因字段缺失整页失败。
     /// 本适配器不保存本地游标、不处理钱包；请求或解析失败时由 worker 保持旧游标重试。
     async fn poll_chain_events(
         &self,
@@ -108,8 +113,11 @@ pub(crate) struct WithdrawalAssetRule {
     pub(crate) precision_scale: i32,
     pub(crate) fee: BigDecimal,
 }
-/// 加载启用提现资产的精度、固定费用、阶梯费率和限额规则。
-/// 服务端规则是费用事实源，客户端金额不得覆盖费用或资产精度合同。
+/// 加载启用提现资产的精度与费率配置，并就地按本次提现金额算出服务端费用。
+/// 阶梯费率读出后先做规范化，重叠区间或开放阶梯位置不合法时直接返回校验错误，不退化成固定费用。
+/// 规范化通过后按金额命中的阶梯计百分比费用，无命中阶梯时取资产固定费用，结果按资产精度向零截断。
+/// 资产关闭提现返回校验错误，资产缺失或已停用返回未找到，两者区分开以便前端给出不同提示。
+/// 服务端规则是费用事实源，客户端传入的费用字段不得覆盖此处结果或资产精度合同。
 pub(crate) async fn load_withdrawal_asset_rule(
     pool: &Pool<MySql>,
     asset_symbol: &str,
@@ -142,7 +150,9 @@ pub(crate) async fn load_withdrawal_asset_rule(
 }
 
 /// 按用户与幂等键读取既有提现请求，用于重复请求安全重放。
-/// 该查询不锁钱包；重放仍须核对资产、地址、金额和服务端费用完全一致。
+/// 查询同时限定用户编号，因此不同用户使用相同幂等键互不干扰，也不会跨用户读到他人申请。
+/// 返回空值表示该键尚未使用，调用方可继续走创建流程；返回记录时无论其处于哪个状态都原样给出，本函数不过滤终态。
+/// 该查询不锁钱包也不锁申请行；重放仍须核对资产、地址、金额和服务端费用完全一致。
 pub(crate) async fn load_withdrawal_by_user_key(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -163,8 +173,12 @@ pub(crate) async fn load_withdrawal_by_user_key(
 /// 创建提现申请并把金额与手续费从 available 等额冻结到 frozen。
 /// 资产规则、安全校验和幂等重放由应用层先行处理；本函数以钱包行锁复核余额并写入冻结流水。
 /// 实际顺序为先插入 pending_review 请求、再锁钱包；total_reserved=本金+服务端费用，按 18 位写入。
-/// available 减 total_reserved、frozen 加同额、locked 不变；仅写一条 `withdrawal_reserve` available 负流水，frozen 变化由三桶 after 快照体现。
-/// 提现记录、钱包与流水由该函数自有事务提交；余额不足、唯一键冲突或任一步失败都回滚本次申请和冻结。
+/// 先单据后钱包的锁序与审核、释放、确认三条路径完全一致，是本上下文避免钱包与提现单交叉死锁的统一约定。
+/// 申请落库时生成时间有序的网关请求编号，作为后续链上回执定位本申请的外部幂等身份，一经写入不再变更。
+/// available 减 total_reserved、frozen 加同额、locked 不变；扣减与增加均按 18 位定点计算，三桶总额守恒。
+/// 仅写一条 `withdrawal_reserve` available 负流水，业务引用指向新申请编号，frozen 变化由三桶 after 快照体现。
+/// 提现记录、钱包与流水由该函数自有事务提交；插入阶段失败显式回滚并原样抛出数据库错误，供上层识别幂等键冲突。
+/// 余额不足时提前返回校验错误，事务随作用域结束隐式回滚，因此申请记录不会以无冻结的状态残留。
 pub(crate) async fn reserve_withdrawal_request(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -245,7 +259,9 @@ pub(crate) async fn reserve_withdrawal_request(
 }
 
 /// 按用户和状态读取提现请求快照，限制单次返回数量且不锁定资金。
-/// 返回的 available 或 frozen 相关字段仅为申请快照，不作为新的扣款依据。
+/// 用户与状态均为可选条件，两者缺省时返回全量最新申请，因此调用方必须自行限定用户以免越权读取。
+/// 返回条数被钳制在一到二百之间，排序固定按申请编号倒序，该入口只取单页且不返回总数。
+/// 返回的金额与预留额字段仅为申请当时的快照，不作为新的扣款依据，也不反映钱包三桶的当前值。
 pub(crate) async fn list_wallet_withdrawals(
     pool: &Pool<MySql>,
     user_id: Option<u64>,
@@ -266,6 +282,8 @@ pub(crate) async fn list_wallet_withdrawals(
 
 /// 后台提现列表：行查询与 COUNT 共用同一组谓词，总数才会跟随当前筛选。
 /// 使用同一用户与状态谓词查询后台提现行和总数。
+/// 与用户侧清单相比多返回匹配总数并支持偏移翻页，排序同样固定按申请编号倒序以保证翻页不重不漏。
+/// 每页条数被钳制在一到二百之间；行与总数分两次查询执行，并发写入下可能出现总数与当页内容的短暂不一致。
 /// 该入口只读请求与链进度，不变更冻结余额、流水或提现状态。
 pub(crate) async fn list_admin_wallet_withdrawals_page(
     pool: &Pool<MySql>,
@@ -292,6 +310,9 @@ pub(crate) async fn list_admin_wallet_withdrawals_page(
     .await
 }
 
+/// 为提现行查询与计数查询追加相同的用户和状态谓词，使两者始终描述同一筛选集合。
+/// 以恒真条件起头再逐项以并且关系追加，因此两个可选条件都缺省时退化为无过滤的全量查询。
+/// 状态按精确值比较且在此拷贝为持有型字符串以延长生命周期，取值合法性由上层在进入本函数前校验。
 fn push_wallet_withdrawal_filters(
     builder: &mut QueryBuilder<'_, MySql>,
     user_id: Option<u64>,
@@ -309,7 +330,10 @@ fn push_wallet_withdrawal_filters(
 }
 
 /// 锁定待审核提现并推进为 approved，重复审核已批准记录时幂等返回。
-/// 调用方拥有事务；审批不移动 frozen 预留额，状态写入失败则不产生部分审核结果。
+/// 只允许从待审核迁移，其他状态一律返回带原状态的冲突错误，避免把已广播或已失败的申请重新放行。
+/// 同时记录审核人、审核时间与审核意见，清空既有失败原因，并把下次尝试时刻置为当前时间让广播 worker 立即可认领。
+/// 调用方拥有事务；审批只改状态，不移动 available 或 frozen，也不追加任何资金流水。
+/// 状态写入失败由调用方事务整体回滚，不会产生只写审核人却未改状态的部分结果。
 pub(crate) async fn approve_withdrawal_in_tx(
     tx: &mut Transaction<'_, MySql>,
     withdrawal_id: u64,
@@ -341,8 +365,12 @@ pub(crate) async fn approve_withdrawal_in_tx(
 }
 
 /// 在拒绝或可安全失败的提现状态下释放 frozen，并把完整预留额退回 available。
+/// 目标状态只接受拒绝与失败两种：拒绝允许从待审核或已批准迁移，失败允许从已批准或广播中迁移，其余组合一律冲突。
 /// 已产生链上交易哈希的请求不得通过该路径自动解冻；调用方持有事务并负责同时提交审核状态。
-/// available 增 total_reserved、frozen 减同额、locked 不变；只写一条 `withdrawal_release` available 正流水，frozen 变化记录在三桶 after。
+/// 锁序固定为先按主键锁提现单、再锁钱包账户行，与创建和确认路径同向，杜绝审核与链回执并发时的死锁。
+/// 释放前复核 frozen 不小于预留额，不足即返回冲突并由调用方回滚，防止把冻结桶退成负数。
+/// available 增 total_reserved、frozen 减同额、locked 不变，两侧均按 18 位定点计算；只写一条 `withdrawal_release` available 正流水，业务引用指向该申请，frozen 变化记录在三桶 after。
+/// 状态更新同时按目标状态分别落审核意见、失败原因、失败时间与操作人，并把下次尝试时刻清空以退出广播重试队列。
 /// 钱包更新与状态同事务提交并保持三桶总额守恒，目标状态重放直接返回且不重复退款。
 pub(crate) async fn release_withdrawal_in_tx(
     tx: &mut Transaction<'_, MySql>,
@@ -426,7 +454,10 @@ pub(crate) async fn release_withdrawal_in_tx(
 }
 
 /// 锁定已批准或广播中的提现并记录链交易哈希及确认进度。
-/// 同哈希重放仅更新进度；该状态转换不核销 frozen，失败时由调用方事务整体回滚。
+/// 交易哈希先做格式规范：裁剪首尾空白后不得为空、不得超长、不得含空白字符，不合法直接返回校验错误。
+/// 若申请已处于已广播且哈希完全相同，则转交进度更新入口只做单调推进，不重复改写广播时间与操作人。
+/// 只允许从已批准或广播中迁移；写入哈希、区块高度、确认数与广播时刻，同时清空下次尝试时刻以退出重试队列。
+/// 同哈希重放仅更新进度；该状态转换不核销 frozen，也不写任何资金流水，失败时由调用方事务整体回滚。
 pub(crate) async fn mark_withdrawal_broadcasted_in_tx(
     tx: &mut Transaction<'_, MySql>,
     withdrawal_id: u64,
@@ -471,9 +502,12 @@ pub(crate) async fn mark_withdrawal_broadcasted_in_tx(
 }
 
 /// 在链上广播已确认后核销提现 frozen 预留额，并写入最终确认流水。
+/// 这是提现路径上唯一让资金真正离开钱包的步骤：预留额从 frozen 永久扣除，不回流 available，因此三桶总额在此减少。
 /// 仅接受 broadcasted 或人工审核状态；冻结额不足会中止事务，防止账本确认超过真实预留。
-/// available/locked 不变、frozen 减 total_reserved；写一条 `withdrawal_confirm` frozen 负流水，金额包含本金和服务端费用。
-/// 已确认请求幂等返回，钱包扣减、确认流水及提现状态由调用方事务原子提交。
+/// 锁序沿用先锁提现单再锁钱包账户行，与创建和释放路径同向，保证链回执与后台操作并发时不会互相等待成环。
+/// available/locked 原值回写、frozen 减 total_reserved 且按 18 位定点计算；写一条 `withdrawal_confirm` frozen 负流水，金额包含本金和服务端费用，业务引用指向该申请。
+/// 状态更新按原状态为已广播或人工审核作为条件，区块高度择非空保留、确认数取历史与本次的较大值，避免链回执乱序回退进度。
+/// 已确认请求幂等返回且不二次扣减，钱包扣减、确认流水及提现状态由调用方事务原子提交，任一步失败整体回滚。
 pub(crate) async fn confirm_withdrawal_in_tx(
     tx: &mut Transaction<'_, MySql>,
     withdrawal_id: u64,
@@ -557,7 +591,9 @@ pub(crate) async fn load_withdrawal_by_gateway_request_for_update(
 }
 
 /// 锁定提现并在交易哈希一致时单调增加区块高度与确认数。
-/// 仅允许广播后、人工审核或已确认状态；不移动余额，也不追加资金流水。
+/// 入参哈希先经格式规范，随后必须与申请上已记录的哈希完全相同，不同即返回冲突，防止把另一笔链上交易的进度写进本申请。
+/// 仅允许广播后、人工审核或已确认状态；区块高度择非空保留、确认数取较大值，因此乱序到达的旧回执不会让进度倒退。
+/// 该入口纯粹推进链上观测进度，不移动 available 或 frozen，也不追加资金流水或改变申请状态。
 pub(crate) async fn update_withdrawal_chain_progress_in_tx(
     tx: &mut Transaction<'_, MySql>,
     withdrawal_id: u64,
@@ -595,8 +631,10 @@ pub(crate) async fn update_withdrawal_chain_progress_in_tx(
     load_withdrawal_by_id_in_tx(tx, withdrawal_id).await
 }
 
-/// 把已广播提现转入人工审核并截断保存失败原因。
-/// 目标状态重放直接返回；冻结预留额继续保留，禁止在链结果不明时自动退款。
+/// 把已广播提现转入人工审核并截断保存失败原因，原因按字符截断到五百个以内以适配存储列宽。
+/// 只允许从已广播迁移，因为这正是资金已上链但结果不确定的区间；其他状态返回带原状态的冲突错误。
+/// 转入后清空下次尝试时刻，使该申请退出自动广播重试，改由人工决定继续确认还是判定失败。
+/// 目标状态重放直接返回；冻结预留额继续保留在 frozen，禁止在链结果不明时自动退款或核销。
 pub(crate) async fn mark_withdrawal_manual_review_in_tx(
     tx: &mut Transaction<'_, MySql>,
     withdrawal_id: u64,
@@ -625,6 +663,8 @@ pub(crate) async fn mark_withdrawal_manual_review_in_tx(
     load_withdrawal_by_id_in_tx(tx, withdrawal_id).await
 }
 
+/// 返回提现申请的统一选择列与来源表，供用户清单、后台分页、幂等键查询与各类加锁回读复用同一投影。
+/// 投影同时覆盖金额三元组、状态机字段、链上进度、四类操作人和各阶段时间戳，使任一入口都能还原完整申请轨迹。
 fn wallet_withdrawal_select_sql() -> &'static str {
     r#"SELECT requests.id, requests.user_id, requests.asset_id, requests.asset_symbol,
               requests.network, requests.address, requests.amount, requests.fee,
@@ -638,6 +678,8 @@ fn wallet_withdrawal_select_sql() -> &'static str {
        FROM wallet_withdrawal_requests requests"#
 }
 
+/// 校验并裁剪链上标识，拒绝空串、超长值以及任何含空白字符的取值，错误消息带上字段名便于定位。
+/// 长度按字节数而非字符数比较，与数据库列宽口径一致；标识为大小写敏感原文，函数不做大小写归一。
 fn normalize_chain_value(value: &str, label: &str, max_length: usize) -> AppResult<String> {
     let value = value.trim();
     if value.is_empty() || value.len() > max_length || value.chars().any(char::is_whitespace) {
@@ -646,6 +688,8 @@ fn normalize_chain_value(value: &str, label: &str, max_length: usize) -> AppResu
     Ok(value.to_owned())
 }
 
+/// 在事务内按主键回读提现申请的最新快照，供各状态迁移函数把结果返回给调用方。
+/// 该读取刻意不加锁，因为调用方在本次迁移开始时已持有同一行的排他锁，重复加锁只增加等待。
 async fn load_withdrawal_by_id_in_tx(
     tx: &mut Transaction<'_, MySql>,
     withdrawal_id: u64,
@@ -660,6 +704,8 @@ async fn load_withdrawal_by_id_in_tx(
     .ok_or(AppError::NotFound)
 }
 
+/// 按主键对提现申请加排他锁并读出当前状态，是所有状态迁移的统一入口和串行化起点。
+/// 该锁必须先于钱包账户锁获取，本文件全部资金路径据此维持先单据后钱包的同向锁序；申请不存在返回未找到。
 async fn load_withdrawal_by_id_for_update(
     tx: &mut Transaction<'_, MySql>,
     withdrawal_id: u64,

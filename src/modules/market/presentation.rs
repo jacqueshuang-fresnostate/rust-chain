@@ -1,6 +1,9 @@
 //! market bounded context presentation layer.
 //!
 //! 表现层：负责请求/响应 DTO 与传输层格式转换。
+//! 对外数值一律以十进制字符串输出，时间统一序列化为毫秒时间戳，避免 JSON 浮点丢失精度。
+//! `DepthCachePayload` 一类结构是 Redis 缓存的反序列化形态，`*Response` 才是对外契约，
+//! 两者只能通过本文件的转换函数衔接。本层不访问数据库或缓存，也不做上架、新鲜度与精度校验。
 
 use crate::{
     modules::market::{ValidatedMarketSymbol, repository::KlineDocumentRecord},
@@ -140,6 +143,9 @@ pub(crate) struct TradeResponse {
 }
 
 impl DepthResponse {
+    /// 把 Redis 中反序列化出的盘口载荷转为公开响应，买卖两侧逐档转换为字符串价量。
+    /// 档位顺序原样保留，不排序、不合并同价档、不截断档数，`observed_at` 沿用缓存里的观察时间。
+    /// 本转换不判断数据有效性，空档位、零数量或买卖倒挂都会照原样透出，新鲜度由调用方自行判断。
     pub(crate) fn from_cache(depth: DepthCachePayload) -> Self {
         Self {
             symbol: depth.symbol,
@@ -159,6 +165,8 @@ impl DepthResponse {
 }
 
 impl From<DepthCacheLevel> for DepthLevelResponse {
+    /// 把缓存中的单档盘口转为公开档位，缓存字段 `quantity` 在响应契约里对应 `amount`。
+    /// 两个数值都按十进制原样转成字符串，不做四舍五入或单位换算，精度取决于摄取时写入缓存的值。
     fn from(level: DepthCacheLevel) -> Self {
         Self {
             price: level.price.to_string(),
@@ -168,6 +176,9 @@ impl From<DepthCacheLevel> for DepthLevelResponse {
 }
 
 impl MarketResponse {
+    /// 构造无数据库部署下的占位交易对条目：`id` 固定为 0，三个 Logo 字段全为空，状态恒为 active。
+    /// 价格与数量精度都写死 8 位、最小下单额写死 1，只有交易对、基础资产、计价资产和市场类型由调用方给出。
+    /// 这些字段不来自后台交易对配置，仅供公开列表展示，不能作为下单精度、最小金额或风控参数的依据。
     pub(crate) fn fallback(
         symbol: &str,
         base_asset: &str,
@@ -192,6 +203,8 @@ impl MarketResponse {
 }
 
 impl KlineResponse {
+    /// 把一条 Mongo K 线文档映射为公开响应，交易对由调用方传入而不从文档字段读取。
+    /// 开盘时间由 BSON 时间转成 UTC，OHLCV 沿用文档中的十进制字符串，不做精度归一或高低价关系校验。
     pub(crate) fn from_document(symbol: &str, document: KlineDocumentRecord) -> Self {
         Self {
             symbol: symbol.to_owned(),
@@ -207,6 +220,9 @@ impl KlineResponse {
 }
 
 impl TradeResponse {
+    /// 把一条平台现货成交记录映射为公开成交项，成交 ID 转为字符串，价格与数量按十进制原样输出。
+    /// 交易对先尝试规范化为大写无分隔符形式，规范化失败时退回数据库原值，不让单条脏数据拖垮整个响应。
+    /// 方向字段恒为 BUY，说明该来源尚未区分主动买卖方向，前端不能据此展示真实的成交方向。
     pub(crate) fn from_record(row: crate::modules::market::repository::SpotTradeRecord) -> Self {
         Self {
             id: row.id.to_string(),

@@ -1,6 +1,13 @@
 //! auth bounded context application layer.
 //!
 //! 应用层：编排用例、事务边界和跨仓储协作。
+//!
+//! 本文件把认证限界上下文的对外用例串成完整流程：注册、登录、二次验证、邮件验证码与密码重置，
+//! 并在此界定事务边界，逐个说明哪些步骤必须同事务提交、哪些只能分步执行、失败后会残留哪些已生效的写入。
+//! 人机校验统一排在所有口令校验之前，Turnstile 的服务端密钥与校验地址只从运行时环境读取，不入库也不外发。
+//! 这里也是 TOTP 密钥唯一被解密并以明文外发的位置，明文只回给已通过前置校验的本人，任何一层都不得记录。
+//! 需要特别注意的是，二次验证挑战的可用性检查与消费大多不是同一个原子操作，
+//! 各函数注释分别写明了自己的并发与重放边界，调用方不得默认这些用例具备严格的一次性语义。
 
 use crate::{
     error::{AppError, AppResult},
@@ -78,7 +85,10 @@ struct TurnstileRuntimeConfig {
 }
 
 impl TurnstileRuntimeConfig {
-    /// 从运行时环境读取登录前校验配置，同时兼容旧的 `CF_TURNSTILE_SECRET_KEY` 秘钥名。
+    /// 从进程环境读取登录前置人机校验配置，密钥变量名兼容旧的 `CF_TURNSTILE_SECRET_KEY` 写法。
+    /// 密钥与站点公钥都会先去首尾空白，整形后为空按未配置处理，避免部署时遗留的空变量被当成已启用。
+    /// 强制标志只认几个明确的真值写法，其余取值以及读取失败一律视为关闭，保持默认宽松不误伤登录。
+    /// 校验接口地址缺省回落到内置常量。本函数每次调用都重新读取环境，既不缓存也不检查密钥是否真的可用。
     fn from_env() -> Self {
         let secret = std::env::var("CF_TURNSTILE_SECRET")
             .ok()
@@ -124,7 +134,9 @@ pub(crate) fn auth_service(state: &AppState) -> AppResult<AuthService<MySqlAuthR
     ))
 }
 
-/// 取得认证持久化的 MySQL 连接池，未配置时返回明确内部错误。
+/// 从应用状态取出认证持久化所用的 MySQL 连接池副本，未配置时返回语义明确的内部错误。
+/// 克隆的是连接池句柄而不是新建连接，开销很低，各用例按需现取即可，无须在上层缓存或长期持有。
+/// 返回错误代表服务缺少必需的数据库配置，属于部署问题而非业务失败，不应被折算成面向用户的校验错误。
 pub(crate) fn mysql_pool(state: &AppState) -> AppResult<Pool<MySql>> {
     state.mysql.clone().ok_or_else(|| {
         AppError::Internal("mysql pool is not configured for auth persistence".to_owned())
@@ -192,6 +204,9 @@ pub(crate) async fn register_admin_actor(
         .await
 }
 
+/// 从请求头中取出管理员注册请求可能携带的 Bearer 令牌，缺失、前缀不符或令牌为空串都返回未提供。
+/// 与受保护接口的提取器不同，这里的缺失并不算错误：注册用例正是靠有无令牌来区分首次引导与常规创建。
+/// 本函数只做前缀剥离，不验证签名、不检查作用域，返回值必须再经过完整的令牌校验才能当作身份使用。
 fn admin_bearer_token(headers: &HeaderMap) -> Option<&str> {
     headers
         .get(AUTHORIZATION)
@@ -276,7 +291,9 @@ pub(crate) async fn verify_admin_login_two_factor(
     Ok(tokens.into())
 }
 
-/// 从 `admin:<id>` 主体读取管理员 TOTP 启用状态，不返回或解密密钥。
+/// 按 `admin:<id>` 形式的主体标识读取该管理员的二次验证启用状态，主体格式非法时按未授权处理。
+/// 只返回是否启用的布尔值，既不返回也不解密已保存的密钥或待确认密钥，避免状态查询变成密钥泄露通道。
+/// 主体标识取自令牌声明而非请求参数，因此调用方无法借这个接口窥探其他管理员的绑定情况。
 pub(crate) async fn get_admin_two_factor_status(
     pool: &Pool<MySql>,
     subject: &str,
@@ -400,13 +417,18 @@ pub(crate) async fn refresh_actor_tokens(
         .await
 }
 
-/// 明确拒绝公开代理注册入口，避免绕过后台代理审核与层级派生规则。
+/// 直接返回禁止访问，把公开的代理注册入口彻底封死，既不解析参数也不访问任何存储。
+/// 代理账号只能经后台审核流程创建，其层级路径与归属关系由业务侧派生，自助注册会整体绕过这些约束。
+/// 由于不查询任何存储，本函数不会泄露用户名是否已被占用，也不产生失败计数或审计记录。
 pub(crate) fn reject_agent_registration() -> AppResult<IssuedTokens> {
     // 代理账号由后台业务流程创建，公开认证入口只允许登录和刷新，避免用户绕过代理审核。
     Err(AppError::Forbidden)
 }
 
-/// 从安全策略组装注册配置：邮件码固定必需，邀请码按管理策略开关。
+/// 组装注册页所需的开关：邮件验证码在当前实现中恒为必填，邀请码则取自可后台调整的安全策略。
+/// 邮件验证码写死为必填，是因为注册用例本身无条件消费验证码，这个标志只服务于前端展示，
+/// 不能被理解成一个可以反向关闭后端校验的开关。
+/// 读取策略失败会直接上抛，此时前端拿不到配置，不应退化成放开其中任何一项要求。
 pub(crate) async fn load_register_config(pool: &Pool<MySql>) -> AppResult<RegisterConfig> {
     let policy = load_security_policy(pool).await?;
 
@@ -616,7 +638,9 @@ pub(crate) async fn login_user_with_optional_two_factor_response(
     })
 }
 
-/// 根据运行时启用/强制策略和 transport clearance 决定是否调用 Siteverify。
+/// 登录前置人机校验的统一入口，每次调用都重新读取一遍运行时配置再执行判定。
+/// 每次重读意味着运维改动环境变量后无需重启即可生效，代价是每次登录都要访问一次进程环境。
+/// 未启用或本次无需校验时直接放行；需要校验而令牌缺失则返回安全校验错误，此时完全不会去查账号。
 async fn verify_login_turnstile(
     turnstile_token: Option<String>,
     transport: LoginTransportContext,
@@ -625,6 +649,11 @@ async fn verify_login_turnstile(
     verify_login_turnstile_with_runtime(turnstile_token, transport, &runtime).await
 }
 
+/// 用显式传入的运行时配置执行人机校验判定，把环境读取与判定逻辑分离，便于覆盖各种配置组合的测试。
+/// 先由领域策略判断本次是否需要校验，不需要就直接放行；即便需要校验，缺少服务端密钥时同样放行，
+/// 因为此时根本无法完成核验，拒绝全部登录的代价远大于放行。
+/// 确定要校验后，纯空白令牌等同于缺失并返回专门的错误码，随后携带密钥、令牌和可选来源 IP 请求站点校验。
+/// 本函数不接触任何账号数据，校验失败也不会累计该账号的登录失败次数，因此不能替代口令侧的爆破防护。
 async fn verify_login_turnstile_with_runtime(
     turnstile_token: Option<String>,
     transport: LoginTransportContext,
@@ -657,6 +686,8 @@ async fn verify_login_turnstile_with_runtime(
     .await
 }
 
+/// 把运行时配置压缩成领域策略对象，只传递密钥与站点公钥是否存在，不把密钥内容带进领域层。
+/// 这样领域层可以在完全不接触敏感值的前提下判定是否需要校验，密钥始终只停留在应用层和请求发送处。
 fn login_turnstile_policy(runtime: &TurnstileRuntimeConfig) -> LoginTurnstilePolicy {
     LoginTurnstilePolicy::new(
         runtime.secret.is_some(),
@@ -665,6 +696,9 @@ fn login_turnstile_policy(runtime: &TurnstileRuntimeConfig) -> LoginTurnstilePol
     )
 }
 
+/// 从运行时配置中挑出登录配置接口可以公开的两项：是否启用人机校验，以及供前端渲染组件的站点公钥。
+/// 站点公钥本就要嵌入页面，公开无妨；服务端密钥与站点校验接口地址刻意不出现在返回值里，
+/// 使调用方即便直接把结果序列化进响应，也不会顺手把敏感配置一起带出去。
 fn turnstile_login_config(runtime: &TurnstileRuntimeConfig) -> (bool, Option<String>) {
     (
         login_turnstile_policy(runtime).enabled(),
@@ -672,6 +706,8 @@ fn turnstile_login_config(runtime: &TurnstileRuntimeConfig) -> (bool, Option<Str
     )
 }
 
+/// 把环境变量取值整形成有意义的配置项：去掉首尾空白，整形后为空则判定为未配置。
+/// 部署中常见的空赋值和多余空格会因此被当成缺失，而不是变成一把空密钥去调用站点校验并必然失败。
 fn normalized_env_value(value: String) -> Option<String> {
     let value = value.trim();
     (!value.is_empty()).then(|| value.to_owned())
@@ -766,7 +802,10 @@ pub(crate) async fn send_email_code_for_purpose(
     Ok(expires_at)
 }
 
-/// 校验邮箱后仅为活跃、已验证邮箱用户发送密码重置码，未注册地址不创建记录。
+/// 校验邮箱格式后定位对应的活跃且已完成邮箱验证的用户，再走通用发送流程下发密码重置验证码。
+/// 未注册、已停用或邮箱未验证的地址会返回校验错误而不是静默成功，因此该入口可被用来判断邮箱是否已注册。
+/// 用途固定为密码重置，与注册和二次验证重置的验证码彼此隔离，发送冷却与消费也各自独立计算。
+/// 本函数不校验调用方身份，任何人都能为他人邮箱触发一封重置邮件，真正的授权发生在提交验证码那一步。
 pub(crate) async fn send_password_reset_email_code(
     state: &AppState,
     pool: &Pool<MySql>,
@@ -878,6 +917,10 @@ pub(crate) async fn confirm_login_two_factor_setup_and_issue_tokens(
         .await
 }
 
+/// 以带条件的单条更新消费首次绑定挑战，只有仍未被消费且尚未过期的挑战才会被打上消费时间。
+/// 通过检查受影响行数判定是否真的抢到了这次消费，因此并发提交同一挑战时只有一个请求成功，
+/// 其余会得到挑战失效错误，这是本文件中少数具备原子防重放能力的消费路径。
+/// 判定完全交给数据库条件完成，本函数不预读挑战状态，也不区分挑战是已被消费还是已经过期。
 async fn consume_setup_login_two_factor_challenge(
     pool: &Pool<MySql>,
     challenge_id: &str,
@@ -1002,6 +1045,9 @@ pub(crate) async fn reset_password_with_email_code(
     .await
 }
 
+/// 从认证主体中取出用户 ID，同时要求该主体的类型必须是普通用户。
+/// 管理员与代理主体不携带用户 ID，若放行它们，后续二次验证和邮件码流程会误用另一张表的自增 ID，
+/// 从而落到一个毫不相干的用户身上，因此这里把类型不符与 ID 缺失都判为未授权。
 fn user_id_from_actor(actor: &AuthActor) -> AppResult<u64> {
     if actor.actor_type != ActorType::User {
         return Err(AppError::Unauthorized);
@@ -1009,6 +1055,11 @@ fn user_id_from_actor(actor: &AuthActor) -> AppResult<u64> {
     actor.user_id.ok_or(AppError::Unauthorized)
 }
 
+/// 用系统密码学安全随机源生成六位数字邮件验证码，不足六位时左侧补零。
+/// 取四字节随机数对一百万取模会让偏小的数值概率略高，但偏差相对六位空间可以忽略，
+/// 配合十分钟有效期、五次试错上限与发送冷却后不构成可利用的偏置。
+/// 随机源失败按内部错误上抛，绝不退化成时间戳一类可预测的取值。
+/// 返回的明文只用于组装邮件正文，落库的始终是它的哈希，因此明文不得写入日志或事件。
 fn generate_email_code() -> AppResult<String> {
     let rng = SystemRandom::new();
     let mut bytes = [0_u8; 4];

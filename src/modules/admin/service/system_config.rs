@@ -1,3 +1,10 @@
+//! 系统配置域的纯业务规则层，集中 SMTP 发信、对象存储上传与国家配置三类设置的校验、映射与签名计算。
+//!
+//! 本文件不持有连接池、不开事务、不发起网络请求，所有函数都是可单独测试的纯函数或纯内存转换：
+//! 校验函数负责把请求 DTO 收敛成已规范化的中间结构，响应映射函数负责剥离密文只输出掩码，
+//! 审计 JSON 函数负责生成写入审计表的前后值快照，签名与摘要函数则为对象存储协议提供确定性计算。
+//! 凭据在这一层只被读取形状而不会被解密或加密，密钥落库与旧密文保留策略统一由 application 层的事务决定。
+
 use super::*;
 
 pub(crate) const DEFAULT_SMTP_CONFIG_NAME: &str = "default";
@@ -42,6 +49,9 @@ pub(crate) struct SmtpValidatedConfig {
 
 /// 校验 SMTP 名称、主机、端口、安全模式、发件人、优先级及验证码模板组合约束。
 /// 更新时可用旧名称和优先级作为回退；该函数不测试网络或凭据，实际连通性由测试发送用例确认。
+/// 长度上限分别是主机 255 字节、发件人显示名 128 字节、单模板 HTML 两万字节，端口为 0 直接判非法。
+/// 优先级取请求值、回退值、常量 100 三级兜底并要求不超过 9999，数值越小越优先由发信选择算法解释。
+/// 注意本函数完全不读取 username 与 password 字段，凭据是否替换由 `smtp_request_has_new_secret` 单独判断。
 pub(crate) fn validate_smtp_save_request(
     request: &SaveSmtpConfigRequest,
     fallback_name: Option<&str>,
@@ -110,6 +120,8 @@ pub(crate) fn validate_smtp_delivery_strategy(value: &str) -> AppResult<String> 
 
 /// 对 SMTP 发件人或测试收件地址做轻量邮箱格式校验，要求单个 `@` 且本地部分与域名均非空。
 /// 该检查不验证 DNS/MX 或邮箱可投递性；发送失败由 SMTP 适配器返回。
+/// 具体拒绝条件是总长超过 255 字节、出现第二个 `@`、本地部分或域名为空、以及含任意空白字符。
+/// field 参数只用于拼接错误文案以区分是发件人还是收件人出错，不影响判定规则本身。
 pub(crate) fn validate_smtp_email(value: &str, field: &str) -> AppResult<String> {
     let email = optional_string(Some(value.to_owned()))
         .ok_or_else(|| AppError::Validation(format!("smtp {field} is required")))?;
@@ -176,6 +188,8 @@ pub(crate) fn smtp_delivery_settings_audit_json(record: &AdminSmtpDeliverySettin
 
 /// 将SMTP 配置仓储记录映射为后台响应，统一时间、掩码和可选字段的对外表示。
 /// 输出包含用户名掩码、密码是否设置和验证码模板，不暴露 password_ciphertext；转换仅消费传入记录且无发信副作用。
+/// 密码字段被压缩成 password_set 布尔量，只表明是否存在密文，因此前端无法据此区分口令内容是否变化。
+/// 验证码模板走 `smtp_templates_from_record` 做新旧字段合并，所以响应里看到的模板集合可能来自旧版单模板字段。
 pub(crate) fn smtp_config_response(record: AdminSmtpConfigRecord) -> SmtpConfigResponse {
     let verification_code_templates = smtp_templates_from_record(&record);
     SmtpConfigResponse {
@@ -197,6 +211,8 @@ pub(crate) fn smtp_config_response(record: AdminSmtpConfigRecord) -> SmtpConfigR
 
 /// 将 SMTP 连接、发件人、模板、优先级和启用状态映射为配置审计快照。
 /// 密钥仅以用户名掩码和密码是否存在表示；应用层在配置写事务中保存前后值。
+/// 与对外响应的差别在于这里额外保留了旧版单模板 HTML 原文，便于回溯模板迁移过程中的实际内容。
+/// 由于密码只记 password_set 布尔量，仅换口令而不改其他字段的操作在审计前后值上看不出差异，需结合操作原因判断。
 pub(crate) fn smtp_config_audit_json(record: &AdminSmtpConfigRecord) -> Value {
     json!({
         "id": record.id,
@@ -217,6 +233,8 @@ pub(crate) fn smtp_config_audit_json(record: &AdminSmtpConfigRecord) -> Value {
 
 /// 从 SMTP 记录合并新版多语言模板与旧版单模板字段，生成邮件发送端可直接使用的模板集合。
 /// 转换不读取密钥、不发送邮件；无有效模板时保留默认回退语义，不产生数据库副作用。
+/// 合并规则是新版模板数组只要非空就完全胜出，旧版单模板字段被忽略而不做追加，避免同一用途出现两份模板。
+/// 只有新版数组为空且旧版 HTML 去空后非空时，才把它包装成 key 与 name 固定、purpose 为空且启用的兼容模板。
 pub(crate) fn smtp_templates_from_record(
     record: &AdminSmtpConfigRecord,
 ) -> Vec<VerificationCodeTemplate> {
@@ -284,6 +302,7 @@ impl UploadProvider {
     }
 
     /// 返回上传提供商用于持久化和协议分派的稳定代码。
+    /// 该代码同时是落库值和分派键，因此必须与 `parse` 接受的主名称保持一致，改动会让历史配置无法解析。
     pub(crate) const fn code(self) -> &'static str {
         match self {
             Self::ImageBed => "image_bed",
@@ -294,11 +313,13 @@ impl UploadProvider {
     }
 
     /// 判断该上传提供商是否需要 Bearer 凭据。
+    /// 当前只有图床走 Bearer 令牌，本地存储不需要凭据，对象存储走访问密钥对，因此三者互不重叠。
     pub(crate) const fn uses_bearer(self) -> bool {
         matches!(self, Self::ImageBed)
     }
 
     /// 判断该上传提供商是否需要访问密钥与密钥对。
+    /// 仅 OSS 与 S3 两类对象存储成立，应用层据此决定保存配置时是否必须校验访问密钥与私钥同时存在。
     pub(crate) const fn uses_access_secret(self) -> bool {
         matches!(self, Self::Oss | Self::S3)
     }
@@ -321,6 +342,9 @@ pub(crate) struct ValidatedUploadConfig {
 
 /// 解析上传 provider，并校验 endpoint、bucket、凭据、文件上限和 MIME 白名单的组合要求。
 /// 仅生成规范化配置，不连接对象存储；密钥加密与旧密文保留由应用事务负责。
+/// 四种提供商的必填组合各不相同：图床只要求可用的凭据类端点；本地存储要求根目录与公开基础地址；
+/// S3 要求桶名与区域而端点可选；OSS 要求端点与桶名但不要求区域。凭据类端点强制 HTTPS，仅回环地址放行 HTTP。
+/// 文件上限缺省 10 MiB 且必须落在 1 字节到 100 MiB 之间，MIME 白名单缺省为四种图片类型且去重后不得为空。
 pub(crate) fn validate_upload_config(
     request: &SaveUploadConfigRequest,
 ) -> AppResult<ValidatedUploadConfig> {
@@ -394,6 +418,8 @@ pub(crate) fn validate_upload_config(
 
 /// 在发送对象存储请求前校验文件非空、大小不超过配置上限，且 MIME 命中允许列表。
 /// 该函数不检查文件内容与声明 MIME 是否一致，也不写临时文件或远端对象。
+/// 校验顺序是先判空、再核对魔数与声明 MIME 是否匹配、然后比大小、最后比白名单，
+/// 因此伪造扩展名或 MIME 的非图片内容会在魔数环节被拒；白名单比对区分大小写，取值由配置校验时统一转小写保证。
 pub(crate) fn validate_upload_file(
     max_file_size_bytes: u64,
     allowed_mime_types: &[String],
@@ -443,6 +469,8 @@ pub(crate) fn upload_config_secret_destination_unchanged(
 
 /// 将上传提供商、目标位置、公开地址、对象规则、大小/MIME 限制和启用状态映射为审计快照。
 /// Bearer、访问密钥和 Secret 只记录掩码或是否已设置；结果不会暴露密文。
+/// 三类凭据的记录粒度并不一致：Bearer 与访问密钥同时给出掩码和存在标记，私钥只给出存在标记，
+/// 因此仅轮换私钥的操作在审计前后值上不可见，需要结合本次操作原因来还原意图。
 pub(crate) fn upload_config_audit_json(record: &AdminUploadConfigRecord) -> Value {
     json!({
         "id": record.id,
@@ -480,6 +508,8 @@ pub(crate) fn generated_upload_object_key(prefix: Option<&str>, mime_type: &str)
 
 /// 从原始文件名提取安全 basename、修正扩展名并限制长度，避免目录穿越和异常响应头。
 /// 转换不访问文件系统；空值使用 MIME 对应默认名，不合法字符按既有清洗规则处理。
+/// 处理链是先把反斜杠统一成正斜杠再取最后一段，从而同时挡住 Windows 与 POSIX 两种路径穿越写法；
+/// 清洗后若结果为空则退回按 MIME 推导的默认名，最终再按 255 字节截断并尽量保住扩展名后缀。
 pub(crate) fn safe_upload_filename(original: Option<&str>, mime_type: &str) -> String {
     let extension = upload_extension_for_mime(mime_type);
     let Some(original) = original.and_then(optional_str) else {
@@ -589,6 +619,10 @@ pub(crate) fn s3_upload_signature(
     hex::encode(hmac_sha256(&k_signing, string_to_sign))
 }
 
+/// 按声明的 MIME 逐一比对文件头魔数，确认上传内容确实是对应格式的图片。
+/// PNG 比对八字节签名，JPEG 比对起始三字节，GIF 接受 87a 与 89a 两种版本，WebP 需要 RIFF 头且第 8 到 12 字节为 WEBP。
+/// 声明为白名单以外的 MIME 一律判为非法，因此该函数同时充当「只允许图片」的兜底闸门；
+/// 它只看文件头而不解码整幅图像，所以能挡住改扩展名的可执行文件，但不保证图片本身没有损坏。
 fn validate_upload_image_bytes(bytes: &[u8], mime_type: &str) -> AppResult<()> {
     let valid = match mime_type {
         "image/png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
@@ -606,6 +640,9 @@ fn validate_upload_image_bytes(bytes: &[u8], mime_type: &str) -> AppResult<()> {
     }
 }
 
+/// 规范化允许上传的 MIME 白名单：缺省填入四种内置图片类型，显式提供时逐项去空、转小写并去重。
+/// 任何一项在去空后为空或不属于内置图片类型集合都会整体判为校验错误，避免通过配置绕开图片限制。
+/// 去重保留首次出现的顺序，结果为空同样报错，因此调用方拿到的一定是非空且各项均受支持的列表。
 fn normalize_upload_mime_types(value: Option<Vec<String>>) -> AppResult<Vec<String>> {
     let values = value.unwrap_or_else(|| {
         UPLOAD_IMAGE_MIME_TYPES
@@ -635,6 +672,9 @@ fn normalize_upload_mime_types(value: Option<Vec<String>>) -> AppResult<Vec<Stri
     Ok(normalized)
 }
 
+/// 把对象键前缀规范成安全的多段路径：统一分隔符后逐段清洗，丢弃空段并用单斜杠重新拼接。
+/// 出现 `.` 或 `..` 段直接判非法以阻断目录穿越，其余字符按 ASCII 字母数字与点、横线、下划线过滤。
+/// 清洗后总长超过 128 字节报错；输入为空或清洗后无有效段时返回 None，表示对象键不加任何前缀。
 fn normalize_upload_key_prefix(value: Option<String>) -> AppResult<Option<String>> {
     let Some(value) = optional_string(value) else {
         return Ok(None);
@@ -656,6 +696,9 @@ fn normalize_upload_key_prefix(value: Option<String>) -> AppResult<Option<String
     Ok((!prefix.is_empty()).then_some(prefix))
 }
 
+/// 把文件名截断到字节上限，并在原名本就以该扩展名结尾时优先保住后缀而只裁剪主干部分。
+/// 长度未超限时原样返回；无法保住后缀的情况直接硬截断，因此结果可能不再带扩展名。
+/// 按字节而非字符切分，调用前的清洗已把内容限制为 ASCII，故不会在此切出非法 UTF-8。
 fn truncate_upload_filename(name: String, extension: &str, max_len: usize) -> String {
     if name.len() <= max_len {
         return name;
@@ -669,6 +712,8 @@ fn truncate_upload_filename(name: String, extension: &str, max_len: usize) -> St
     }
 }
 
+/// 把受支持的图片 MIME 映射成生成对象键和文件名时使用的扩展名，JPEG 统一取 jpg 而非 jpeg。
+/// 其余取值一律回落到 bin；由于上传前已做过白名单与魔数校验，实际不应出现该兜底分支。
 fn upload_extension_for_mime(mime_type: &str) -> &'static str {
     match mime_type {
         "image/png" => "png",
@@ -679,6 +724,8 @@ fn upload_extension_for_mime(mime_type: &str) -> &'static str {
     }
 }
 
+/// 校验必填上传配置字段的字节长度并原样返回值，超限时用字段名拼出统一的校验错误文案。
+/// 按字节而非字符计数，因此含中文的值会更早触顶；本函数只管长度，不做去空白或格式判断。
 fn validate_upload_len(value: String, field: &str, max_len: usize) -> AppResult<String> {
     if value.len() > max_len {
         Err(AppError::Validation(format!("{field} is invalid")))
@@ -687,6 +734,8 @@ fn validate_upload_len(value: String, field: &str, max_len: usize) -> AppResult<
     }
 }
 
+/// 校验可选上传配置字段的字节长度：值缺省时视为通过，存在且超限时返回带字段名的校验错误。
+/// 与必填版本的区别只在于 None 被接受且不回传值，因此适用于 endpoint、公开地址这类允许留空的项。
 fn validate_upload_optional_len(value: Option<&str>, field: &str, max_len: usize) -> AppResult<()> {
     if value.is_some_and(|value| value.len() > max_len) {
         Err(AppError::Validation(format!("{field} is invalid")))
@@ -695,16 +744,24 @@ fn validate_upload_optional_len(value: Option<&str>, field: &str, max_len: usize
     }
 }
 
+/// 校验面向终端用户展示的公开地址：必须提供，且 HTTP 与 HTTPS 均可接受。
+/// 用于 public_base_url 这类只用来拼接下载链接、不承载凭据的地址，因此不强制加密传输。
 fn validate_upload_url(value: Option<&str>, field: &str) -> AppResult<()> {
     let value = require_upload_value(value, field)?;
     validate_upload_safe_url(value, field, false).map(|_| ())
 }
 
+/// 校验会携带凭据发起请求的端点地址：必须提供，且原则上只接受 HTTPS。
+/// 与公开地址校验的唯一差别是这里开启了强制加密开关，仅回环主机被特别放行以便本地联调。
 fn validate_upload_credential_url(value: Option<&str>, field: &str) -> AppResult<()> {
     let value = require_upload_value(value, field)?;
     validate_upload_safe_url(value, field, true).map(|_| ())
 }
 
+/// 解析并收紧上传相关地址的形状，是公开地址与凭据端点两个入口共用的底层判定。
+/// 除协议限制外还统一拒绝超过 2048 字节、内嵌用户名或口令、带查询串或片段的地址，
+/// 目的是避免把凭据写进地址、也避免签名时因多余组件导致规范化请求与服务端不一致。
+/// require_https 为真时只放行 HTTPS 及回环主机上的 HTTP，为假时 HTTP 与 HTTPS 同等接受。
 fn validate_upload_safe_url(value: &str, field: &str, require_https: bool) -> AppResult<String> {
     let url =
         url::Url::parse(value).map_err(|_| AppError::Validation(format!("{field} is invalid")))?;
@@ -725,6 +782,9 @@ fn validate_upload_safe_url(value: &str, field: &str, require_https: bool) -> Ap
     Ok(value.to_owned())
 }
 
+/// 判断地址主机是否为本机回环，用于放行本地联调时的明文 HTTP 端点。
+/// 仅按字面匹配 localhost 与 IPv4、IPv6 两种回环字面量，不做 DNS 解析，
+/// 因此解析到 127.0.0.1 的自定义域名不会被视为回环，仍需使用 HTTPS。
 fn is_loopback_upload_url(url: &url::Url) -> bool {
     matches!(
         url.host_str(),
@@ -732,6 +792,9 @@ fn is_loopback_upload_url(url: &url::Url) -> bool {
     )
 }
 
+/// 校验对象存储桶名必填且长度在 3 到 255 字节之间，字符仅限 ASCII 字母数字与点、横线、下划线。
+/// 这是一套同时兼容 S3 与 OSS 的宽松规则，不校验各家更细的首尾字符或点号连用限制，
+/// 因此通过校验的桶名仍可能被具体服务商拒绝，最终以对象存储返回的错误为准。
 fn validate_upload_bucket_name(value: Option<&str>) -> AppResult<()> {
     let value = require_upload_value(value, "bucket")?;
     let valid = (3..=255).contains(&value.len())
@@ -745,6 +808,8 @@ fn validate_upload_bucket_name(value: Option<&str>) -> AppResult<()> {
     }
 }
 
+/// 校验对象存储区域必填、长度不超过 128 字节，且只含 ASCII 字母数字与横线。
+/// 该值会直接参与 AWS V4 签名密钥派生，含空格或其他字符会导致签名与服务端计算结果不符，故在此提前收紧。
 fn validate_upload_region(value: Option<&str>) -> AppResult<()> {
     let value = require_upload_value(value, "region")?;
     let valid = value.len() <= 128
@@ -758,12 +823,17 @@ fn validate_upload_region(value: Option<&str>) -> AppResult<()> {
     }
 }
 
+/// 断言某个上传配置字段已提供且去空后非空，返回去空后的借用值供后续格式校验复用。
+/// 纯空白与 None 被同等视为缺失并报出带字段名的必填错误，因此下游拿到的一定是非空片段。
 fn require_upload_value<'a>(value: Option<&'a str>, field: &str) -> AppResult<&'a str> {
     value
         .and_then(optional_str)
         .ok_or_else(|| AppError::Validation(format!("{field} is required")))
 }
 
+/// 计算 HMAC-SHA256 原始字节，是 AWS V4 签名逐级派生密钥时反复调用的底层原语。
+/// 输出保持二进制而非十六进制，以便直接作为下一级派生的密钥输入；只有最终一级才转成十六进制。
+/// 由于 HMAC 接受任意长度密钥，构造失败在此被断言为不可能，密钥本身不会被记录或复制到日志。
 fn hmac_sha256(key: &[u8], data: &str) -> Vec<u8> {
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
     mac.update(data.as_bytes());
@@ -771,11 +841,13 @@ fn hmac_sha256(key: &[u8], data: &str) -> Vec<u8> {
 }
 
 /// 复用国家域规则，将国家代码规范化为后台与注册接口共用的稳定格式。
+/// 后台不另立一套代码规则，直接委托国家上下文的规范化实现，以保证配置写入值与注册时的匹配值完全同源。
 pub(crate) fn validate_country_code(value: &str) -> AppResult<String> {
     normalize_country_code(value)
 }
 
 /// 去除国家名称首尾空白并限制 128 个字符；多语言显示名由 locale 配置另行维护。
+/// 纯空白等同于缺失并报必填错误，长度按字符数而非字节数统计，因此中文名称的可用字数与英文一致。
 pub(crate) fn validate_country_name(value: &str) -> AppResult<String> {
     let Some(country_name) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation("country_name is required".to_owned()));
@@ -787,6 +859,7 @@ pub(crate) fn validate_country_name(value: &str) -> AppResult<String> {
 }
 
 /// 去除国家备注首尾空白并限制 128 个字符，空备注按当前后台合同拒绝。
+/// 与国家名称的规则完全一致但字段独立：备注面向运营说明用途，不参与注册判定，也不会展示给终端用户。
 pub(crate) fn validate_country_remark(value: &str) -> AppResult<String> {
     let Some(remark) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation("remark is required".to_owned()));
@@ -798,6 +871,7 @@ pub(crate) fn validate_country_remark(value: &str) -> AppResult<String> {
 }
 
 /// 规范化国家启停状态；这里只校验目标代码，不判断已有用户或注册流程是否受影响。
+/// 仅接受 active 与 disabled 两个取值，比对在去空之后进行且区分大小写，其余输入一律返回不支持的状态错误。
 pub(crate) fn validate_country_status(value: &str) -> AppResult<String> {
     let Some(status) = optional_string(Some(value.to_owned())) else {
         return Err(AppError::Validation("status is required".to_owned()));
@@ -824,6 +898,8 @@ pub(crate) fn validate_country_locale_config(
 
 /// 将国家代码、名称、备注、语言集合、注册开关、状态和排序映射为配置审计快照。
 /// 时间统一为毫秒值；应用层在国家配置写事务中保存前后值，本函数不修改注册策略。
+/// 快照同时覆盖内容修改与状态切换两个入口所能改动的全部字段，因此两类操作可以用同一份结构做前后对比。
+/// 支持语言以数组原样展开而非拼接字符串，便于在审计中直接看出增删了哪些语言。
 pub(crate) fn country_config_audit_json(country: &AdminCountryResponse) -> Value {
     json!({
         "id": country.id,
@@ -840,6 +916,10 @@ pub(crate) fn country_config_audit_json(country: &AdminCountryResponse) -> Value
     })
 }
 
+/// 解析 SMTP 配置名称：优先取请求值，请求为空时回退到调用方给出的旧名称。
+/// 更新场景正是靠这个回退实现「不提交名称即保持原名」，创建场景没有回退值因而名称成为必填。
+/// 请求值与回退值都会先做去空白判定，纯空白视为未提供；最终名称超过 64 字节返回校验错误。
+/// 该函数只管形状，不查询是否与其他配置重名，唯一性由数据库约束和应用层冲突处理负责。
 fn validate_smtp_config_name(value: Option<String>, fallback: Option<&str>) -> AppResult<String> {
     let name =
         optional_string(value).or_else(|| fallback.and_then(optional_str).map(str::to_owned));
@@ -856,6 +936,12 @@ fn validate_smtp_config_name(value: Option<String>, fallback: Option<&str>) -> A
     Ok(name)
 }
 
+/// 逐条校验并规范化验证码邮件模板集合，返回可直接落库的模板数组。
+/// 请求未提供模板字段时返回空数组，代表本次不配置新版模板而由旧版单模板字段兜底，这与「显式提交空数组」等价。
+/// 单次最多 20 条模板；每条要求 key、name、html 去空后非空，长度上限依次为 64、128 与两万字节。
+/// key 在集合内必须唯一，重复即整体报错；purpose 为可选且字面量 default 会被归一成空，
+/// 以免默认用途同时以两种写法存在，其余 purpose 取值限长 64 字节。
+/// 任何一条不合法都会让整批校验失败，不存在部分模板被接受的情况。
 fn validate_smtp_verification_code_templates(
     templates: Option<Vec<VerificationCodeTemplate>>,
 ) -> AppResult<Vec<VerificationCodeTemplate>> {

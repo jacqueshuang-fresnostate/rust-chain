@@ -1,8 +1,17 @@
+//! 代理层级、门户账号与代理佣金的应用用例层。
+//!
+//! 写用例统一采用「开事务、按固定顺序加锁、写入、回读、写审计、提交」的编排，因此审计前后值必然同源。
+//! 需要特别注意三处副作用边界：代理改密与用户封禁在事务提交后才撤销在线会话，属于不可回滚的后置动作；
+//! 用户改派代理会连带重算全部后代的邀请路径与根代理归属；佣金结算会真实向代理所属用户的钱包入账。
+//! 批量佣金处理刻意为每条记录开独立事务，以失败隔离换取整体原子性，因此可能出现部分成功。
+
 use super::*;
 use crate::modules::auth::domain::login_failure_key;
 
 /// 按代理/用户/父级/根代理/层级、代理码、邮箱和状态筛选代理，并返回当前页与匹配总数。
 /// 代理码和状态会去除空白，limit 裁剪到 1～100、offset 上限 100000；查询不加锁也不写审计。
+/// 邮箱按原值下推而不做去空白，与代理码和状态的处理方式不同，因此带空格的邮箱会匹配不到记录。
+/// 响应中的团队人数等聚合值由查询即时统计，不同页之间可能因并发变动而略有出入。
 pub(crate) async fn list_admin_agents(
     pool: Option<Pool<MySql>>,
     query: AdminAgentQuery,
@@ -209,6 +218,8 @@ pub(crate) async fn reset_admin_agent_password(
 
 /// 确认代理存在后分页读取其路径覆盖的团队用户，并返回用户列表与匹配总数。
 /// 两次查询不共享事务快照，分页限制为 1～100、offset 最大 100000；代理缺失或任一查询失败返回错误。
+/// 先做存在性检查是为了把「代理不存在」与「代理存在但暂无下级」区分开，前者返回未找到而后者返回空列表。
+/// 团队范围按邀请路径前缀匹配，因此包含全部层级的下级而不只是直属用户。
 pub(crate) async fn list_admin_agent_users(
     pool: Option<Pool<MySql>>,
     agent_id: u64,
@@ -228,6 +239,10 @@ pub(crate) async fn list_admin_agent_users(
 
 /// 把用户改派到指定启用代理，并重算该用户及其后代邀请路径、深度和根代理归属。
 /// 用户、目标代理、原邀请关系与审计同事务锁定和写入；任一步失败整体回滚，重复改派仍会产生审计。
+/// 加锁顺序固定为先用户、再目标代理层级节点与代理主行、最后原邀请关系，以避免并发改派互相形成环等待。
+/// 目标代理编号为 0 直接判为校验错误，代理存在但状态不是 active 则返回冲突，因此停用代理无法接收新用户。
+/// 后代迁移只在该用户原本已有邀请关系时触发，首次建立归属的用户不存在需要重挂的下级。
+/// 本用例不校验目标代理是否处于该用户自身的下级链路中，因此环形改派需由调用方自行避免。
 pub(crate) async fn assign_admin_user_agent(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -299,6 +314,8 @@ pub(crate) async fn assign_admin_user_agent(
 
 /// 按代理、产品类型和状态筛选佣金规则，并返回费率规则当前页与匹配总数。
 /// 产品类型和状态只去空白而不在此枚举校验，分页执行统一裁剪；查询不锁规则，也不触发佣金计算。
+/// 不做枚举校验意味着传入未知产品类型会得到空结果而非报错，排查配置缺失时需注意区分这两种情况。
+/// 返回的是当前生效的费率配置，不反映历史佣金实际使用过的费率，后者需查佣金记录本身。
 pub(crate) async fn list_admin_agent_commission_rules(
     pool: Option<Pool<MySql>>,
     query: AdminAgentCommissionRuleQuery,
@@ -428,6 +445,8 @@ pub(crate) async fn update_admin_agent_commission_rule(
 
 /// 按代理、用户、邮箱和状态筛选已生成佣金，并返回来源金额与佣金金额的分页结果和总数。
 /// 状态仅去除空白，分页限制为 1～100 且 offset 最大 100000；查询不锁定待结算佣金或修改钱包。
+/// 每条记录保留生成时的来源类型、来源单号和当时使用的费率，因此后续调整规则不会改变历史记录的口径。
+/// 由于不加锁，列出的待处理佣金可能在响应送达前已被并发结算，批量操作时应以逐条返回的结果为准。
 pub(crate) async fn list_admin_agent_commissions(
     pool: Option<Pool<MySql>>,
     query: AdminAgentCommissionQuery,
@@ -451,6 +470,8 @@ pub(crate) async fn list_admin_agent_commissions(
 
 /// 校验单笔代理佣金目标状态并委托状态迁移用例，管理员身份与原因用于生成后台审计。
 /// 底层事务会锁定佣金并在结算时同步余额和流水；非 pending、记录缺失或数据库失败会返回错误。
+/// 本函数自身只做目标状态的枚举校验和连接池解析，真正的加锁、入账与审计都在被委托的共享实现里完成。
+/// 审计原因在此为可选，与代理创建等入口强制要求原因的做法不同，因此结算记录可能没有文字说明。
 pub(crate) async fn update_admin_agent_commission_status(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -471,6 +492,9 @@ pub(crate) async fn update_admin_agent_commission_status(
 
 /// 批量校验佣金编号和目标状态，并逐条调用单笔代理佣金状态用例汇总成功与失败结果。
 /// 每条记录使用独立事务，单条失败不回滚其他结果；重放已处理佣金会得到冲突而不会重复入账。
+/// 编号列表先整体校验非空、不超过 200 条且无重复，任一条不合法则整批拒绝，尚未开始处理。
+/// 进入循环后按列表原顺序串行处理，失败项把错误文本原样收进结果条目，因此响应必然与请求条数一一对应。
+/// 整体返回成功不代表全部处理成功，调用方必须逐条检查结果状态后再决定是否重试失败项。
 pub(crate) async fn update_admin_agent_commission_statuses(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -509,6 +533,10 @@ pub(crate) async fn update_admin_agent_commission_statuses(
 
 /// 锁定待处理代理佣金并执行结算或拒绝；结算时把佣金金额记入代理用户钱包并更新状态。
 /// 钱包余额、流水、状态与可选审计共用同一事务；仅允许从 pending 转移，重放不会二次入账。
+/// 这是单笔与批量两条入口共用的实现，行锁与状态前置判断构成防重复入账的唯一屏障：
+/// 并发请求中只有一个能拿到锁并看到 pending，另一个在锁释放后读到终态并返回冲突。
+/// 管理员编号为可选，缺省时跳过审计写入，供无人工主体的内部调用路径复用。
+/// 拒绝分支不触碰任何钱包，只推进状态，因此被拒佣金不会产生资金流水。
 pub(crate) async fn apply_admin_agent_commission_status(
     pool: &Pool<MySql>,
     admin_id: Option<u64>,
@@ -548,6 +576,11 @@ pub(crate) async fn apply_admin_agent_commission_status(
     Ok(after)
 }
 
+/// 在调用方事务内把一笔佣金真正打给代理所属用户的钱包可用余额，并写出同额流水。
+/// 先按佣金来源解析出收款用户与结算资产，来源不支持返佣时把未找到改判为冲突，
+/// 给出的信息是「该来源无法结算」而不是「佣金不存在」，避免误导排查方向。
+/// 入账以佣金编号作为流水引用键，因此同一笔佣金重复入账会在流水层面留下可识别痕迹；
+/// 但真正防重复的仍是调用方的行锁与 pending 状态判断，本函数自身不做幂等检查。
 async fn settle_agent_commission_payout_in_tx(
     tx: &mut sqlx::Transaction<'_, MySql>,
     commission: &AdminAgentCommissionResponse,

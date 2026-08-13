@@ -1,6 +1,9 @@
 //! wallet bounded context presentation layer.
 //!
 //! 表现层：负责请求/响应 DTO 与传输层格式转换。
+//! 充值地址、提现申请、链事件、钱包账户、流水分页与已实现收益的入参出参结构集中在本文件定义。
+//! 金额字段沿用后端 18 位小数定点口径：收益类响应统一序列化为补零字符串，避免前端浮点解析丢精度。
+//! 本层只做结构声明与格式转换，不校验业务规则、不访问数据库，也不参与任何余额或状态变更。
 
 use super::WithdrawFeeTier;
 use crate::modules::security::SecurityVerificationMethod;
@@ -9,12 +12,17 @@ use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize, Serializer};
 
+/// 把定点金额渲染为固定带小数点的字符串，小数位右侧补零至至少 18 位。
+/// 整数值补出完整 18 位零尾；原始小数位超过 18 位时按原样保留，本函数不做截断或四舍五入。
+/// 符号沿用 BigDecimal 自身文本，因此负零会输出前导负号，收益计算须在调用前完成零值归一化。
 fn decimal_18_string(value: &BigDecimal) -> String {
     let value = value.to_string();
     let (whole, fraction) = value.split_once('.').unwrap_or((&value, ""));
     format!("{whole}.{fraction:0<18}")
 }
 
+/// 将必填定点金额以 18 位补零字符串写入 JSON，供收益类响应保持稳定精度契约。
+/// 输出始终是字符串而非数字，前端不得按浮点解析；本函数不改变数值本身。
 fn serialize_decimal_18<S>(value: &BigDecimal, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
@@ -22,6 +30,8 @@ where
     serializer.serialize_str(&decimal_18_string(value))
 }
 
+/// 将可空定点金额序列化为 18 位补零字符串，缺价场景写出 JSON null。
+/// 收益历史用 null 表达该日或该汇总因缺少报价而未知，调用方不得把 null 视作零收益。
 fn serialize_optional_decimal_18<S>(
     value: &Option<BigDecimal>,
     serializer: S,

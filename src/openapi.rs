@@ -1,4 +1,8 @@
-//! Public OpenAPI contract only; internal rows, ciphertexts, and test helpers stay out of schemas.
+//! OpenAPI 文档聚合层：集中声明对外契约，只描述公开接口，内部数据行、密文字段与测试辅助类型一律不进 schema。
+//! 本文件里的类型和函数都不参与真实请求处理，路径条目仅作为文档骨架存在，具体逻辑由各业务模块的处理器实现。
+//! 因此路径、请求体与响应体必须与实际路由手工保持一致，改接口时若漏改这里，文档会与线上行为悄悄脱节。
+//! 子模块按业务域拆分：认证、用户安全、钱包、快捷充值、代理、代理门户、新闻与系统配置，各自持有对应的 DTO 与路径。
+//! 需要登录的接口统一声明 bearer 令牌安全要求，未声明的即为公开接口，可以不带令牌直接访问。
 
 #![allow(dead_code)]
 
@@ -29,6 +33,10 @@ use self::system_config::*;
 use self::user_security::*;
 use self::wallet::*;
 
+/// 构建 Swagger UI 与 OpenAPI JSON 的只读文档路由，供联调和前端生成客户端时直接访问。
+/// 同一份文档被挂载在两处：根路径下的 `/docs` 与 `/openapi.json`，以及带 API 前缀的 `/api/docs` 与 `/api/openapi.json`。
+/// 保留两套地址是为了兼容只把 `/api` 前缀转发给本服务的网关配置，两者内容完全相同，不存在版本差异。
+/// 文档在每次请求时由派生实现生成，不做鉴权也不读取共享状态，因此生产环境需要在网关侧决定是否对外开放。
 pub fn routes() -> Router<AppState> {
     let docs: Router<AppState> = SwaggerUi::new("/docs")
         .url("/openapi.json", ApiDoc::openapi())
@@ -325,6 +333,9 @@ struct ApiDoc;
 struct SecurityAddon;
 
 impl Modify for SecurityAddon {
+    /// 在生成的文档中补写名为 `bearerAuth` 的 HTTP Bearer 安全方案，让各路径的安全声明能够解析到具体定义。
+    /// 组件区缺失时先补一个空的再写入，避免只声明了引用却没有对应方案而使 Swagger UI 无法弹出授权输入框。
+    /// 这里只登记认证方式，不设置默认全局要求，因此接口是否需要令牌仍由各自路径上的安全声明决定。
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         let components = openapi.components.get_or_insert_with(Default::default);
         components.add_security_scheme(

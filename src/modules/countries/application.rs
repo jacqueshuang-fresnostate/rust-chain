@@ -1,6 +1,8 @@
 //! countries bounded context application layer.
 //!
 //! 应用层：编排用例、事务边界和跨仓储协作。
+//! 国家配置上下文对外只有一个免登录只读用例，即取出开放注册的国家清单并转成响应结构。
+//! 不开事务、不写库、不缓存，过滤与排序全部由基础设施层的 SQL 决定。
 
 use crate::{
     architecture::ApplicationLayer,

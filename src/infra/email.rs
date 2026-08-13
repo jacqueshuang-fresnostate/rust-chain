@@ -1,3 +1,9 @@
+//! 邮件发送基础设施：向各业务上下文提供统一的 SMTP 外发能力和验证码邮件的模板渲染。
+//! 发送不使用长连接，每封邮件都按调用方传入的配置快照临时建立传输，因此后台改完 SMTP 配置可立即生效。
+//! 配置来自数据库中的后台设置而非环境变量，凭据只在本次传输构造期间存在，不缓存也不写日志。
+//! 验证码模板按业务用途选择，渲染时对主题与验证码做 HTML 转义，避免后台录入的模板变成注入点。
+//! 本模块只关心「这一封怎么发出去」，验证码的生成、有效期、发送频率与幂等控制全部由调用方负责。
+
 use crate::error::{AppError, AppResult};
 use axum::async_trait;
 use lettre::{
@@ -100,7 +106,8 @@ impl EmailSender for SmtpEmailSender {
     }
 }
 
-/// 将持久化的 SMTP 安全模式解析为封闭枚举，未知值必须拒绝，避免配置错误意外降级到明文连接。
+/// 把持久化的 SMTP 安全模式文本解析成封闭枚举，比较前先去空白并转小写，因此大小写写法都能接受。
+/// 未知取值必须拒绝而不是回落到任一默认模式，避免配置录错时悄悄降级成明文连接把账号口令暴露在链路上。
 pub fn parse_smtp_security(value: &str) -> AppResult<SmtpSecurity> {
     match value.trim().to_ascii_lowercase().as_str() {
         "none" => Ok(SmtpSecurity::None),
@@ -110,7 +117,8 @@ pub fn parse_smtp_security(value: &str) -> AppResult<SmtpSecurity> {
     }
 }
 
-/// 将 SMTP 安全枚举映射回稳定存储码，保证管理端读写配置时不改变既有字符串契约。
+/// 把 SMTP 安全模式枚举映射回入库用的稳定字符串码，与解析函数构成一对可往返的转换。
+/// 这些字面量属于持久化契约，管理端读写配置时依赖它们保持不变，改名会让历史配置无法再被解析。
 pub fn smtp_security_code(security: SmtpSecurity) -> &'static str {
     match security {
         SmtpSecurity::None => "none",
@@ -119,6 +127,10 @@ pub fn smtp_security_code(security: SmtpSecurity) -> &'static str {
     }
 }
 
+/// 依据安全模式构造异步 SMTP 传输：明文走不校验证书的裸连接，另外两种分别按 STARTTLS 升级和直接 TLS 建连。
+/// 端口始终采用配置值而不用协议默认端口；明文模式还会显式关闭 TLS，防止底层实现自行尝试加密协商。
+/// 只有用户名和口令同时存在时才附加认证信息，缺任一项就按匿名投递处理，适配内网免认证的中继服务器。
+/// 传输对象在这里只是构建出来，尚未发起任何网络连接，域名解析与握手错误要到实际发送时才会暴露。
 fn smtp_transport(config: &SmtpEmailConfig) -> AppResult<AsyncSmtpTransport<Tokio1Executor>> {
     let mut builder = match config.security {
         SmtpSecurity::None => AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&config.host),
@@ -141,6 +153,9 @@ fn smtp_transport(config: &SmtpEmailConfig) -> AppResult<AsyncSmtpTransport<Toki
     Ok(builder.build())
 }
 
+/// 把地址文本与可选显示名组装成邮箱对象，地址先去首尾空白再解析，解析失败返回调用方指定的校验错误。
+/// 之所以由调用方传入错误文案，是为了让发件人和收件人两种非法情况能给出可区分的提示。
+/// 显示名同样去空白，裁剪后为空则视作未提供，避免生成带空名字的邮件头。
 fn mailbox(email: &str, name: Option<&str>, error: &'static str) -> AppResult<Mailbox> {
     let address = email
         .trim()
@@ -202,6 +217,9 @@ pub fn verification_code_template_html_for_purpose<'a>(
         .or(legacy_template_html)
 }
 
+/// 用简单的字面量替换渲染验证码 HTML 模板，只认主题、验证码和有效分钟数三个占位符，不支持条件或循环。
+/// 主题与验证码在插入前会做 HTML 转义，分钟数按整数格式化，因此动态内容不会破坏模板本身的标签结构。
+/// 模板中未出现的占位符会被忽略，多余的占位符也会原样保留，渲染不会因为模板不匹配而失败。
 fn render_verification_code_html_template(
     template: &str,
     subject: &str,
@@ -214,6 +232,9 @@ fn render_verification_code_html_template(
         .replace("{{expires_minutes}}", &expires_minutes.to_string())
 }
 
+/// 逐字符转义 HTML 中具有语法含义的五个符号，覆盖尖括号、和号以及双引号与单引号两种属性定界符。
+/// 单引号也一并转义，是为了让渲染结果放进用单引号包裹的属性值里同样安全，而不只适用于标签正文。
+/// 其余字符原样保留，因此中文与空白不受影响；本函数不做 URL 或 JavaScript 上下文的转义。
 fn escape_html(value: &str) -> String {
     value.chars().fold(String::new(), |mut escaped, character| {
         match character {

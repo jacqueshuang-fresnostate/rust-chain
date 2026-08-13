@@ -1,3 +1,12 @@
+//! 杠杆仓位的平仓与撤销生命周期用例。
+//!
+//! 平仓针对已成交仓位，按服务端标记价结算盈亏后把权益写回钱包；撤销只针对入场价为空的未成交仓位，
+//! 把保证金原额退回，两条路径都以「先锁仓位再锁钱包」的固定顺序取锁，避免与开仓路径交叉等待。
+//! 逐仓与全仓在平仓时资金口径不同：逐仓按非负返还额入账，亏损截零；
+//! 全仓以有符号组合权益更新共享钱包，亏损真实扣减，扣穿则拒绝并交由账户级强平处理。
+//! 所有用例都返回「是否为首次状态迁移」的布尔值，终态重放返回既有快照且不重复入账。
+//! 批量版本逐笔独立开事务并即时发事件，单笔失败只进入 failures 列表，不回滚已成功的结算。
+
 use super::support::validate_positive_decimal;
 use crate::{
     error::{AppError, AppResult},
@@ -227,6 +236,9 @@ pub(crate) async fn cancel_all_margin_positions_with_events(
     })
 }
 
+/// 把单笔批量操作的失败折叠成结构化条目，附上稳定错误码和人类可读消息供前端逐条展示。
+/// 错误码从 `AppError` 变体映射成固定字符串常量，`AppError::Api` 直接沿用其自带的业务码。
+/// 该映射确保批量接口即便部分失败也能返回 200，调用方据 failures 判断哪些仓位没被处理。
 fn margin_batch_action_failure(id: u64, error: AppError) -> MarginBatchActionFailure {
     let code = match &error {
         AppError::Config(_) => "CONFIG_ERROR",
@@ -249,6 +261,9 @@ fn margin_batch_action_failure(id: u64, error: AppError) -> MarginBatchActionFai
     }
 }
 
+/// 判定一笔已加锁的仓位能否被撤销，必须同时满足状态为 opened 且入场价为空两个条件。
+/// 入场价非空意味着仓位已按行情成交，只能走平仓结算，此时返回带指引的参数错误而非静默转平仓。
+/// 该判定在锁定仓位之后执行，因此不会被并发成交或并发平仓插到中间造成误判。
 fn validate_cancelable_position(position: &LockedMarginPositionRow) -> AppResult<()> {
     if position.status != "opened" {
         return Err(AppError::Validation(
@@ -263,6 +278,11 @@ fn validate_cancelable_position(position: &LockedMarginPositionRow) -> AppResult
     Ok(())
 }
 
+/// 按名义价值和价格变动比例计算平仓已实现盈亏，公式为名义价值乘以价差再除以入场价。
+/// 做多取标记价减入场价，做空取入场价减标记价，因此返回值可正可负，亏损直接体现为负数。
+/// 入场价和标记价都必须严格为正，任一非正立即报参数错误，避免除零或用脏价格结算资金。
+/// 结果统一归一到十八位小数，与仓位表的 `realized_pnl` 列精度一致；未在这里扣减利息，
+/// 利息由调用方在计算权益和返还额时另行减去。方向非法时返回参数错误而不是按做多兜底。
 fn margin_realized_pnl(
     direction: &str,
     notional_amount: &BigDecimal,

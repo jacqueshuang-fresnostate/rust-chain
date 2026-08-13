@@ -1,6 +1,9 @@
 //! 账户、三桶余额、锁仓与流水持久化。
 //!
 //! 资金不变量：available/frozen/locked 不得为负；账户快照与每笔流水必须描述同一事务后的余额，失败整体回滚。
+//! 本文件同时承载三类职责：钱包仓储适配器、锁仓与来源明细落库、以及面向用户和后台的账本查询。
+//! 账本分类由 change_type 的精确值或受控前缀推导，共十类，分类只影响筛选与展示，绝不参与金额计算。
+//! 查询入口一律不持有资金行锁，返回值仅供审计与展示；真正的扣款必须走持有行锁的调用方事务。
 
 use crate::{
     error::AppResult,
@@ -44,12 +47,14 @@ pub struct MySqlWalletRepository {
 }
 
 impl MySqlWalletRepository {
-    /// 用 MySQL 连接池构造钱包仓储适配器。
+    /// 用 MySQL 连接池构造钱包仓储适配器，池按引用计数克隆，不额外建立连接。
+    /// 构造不校验表结构、不预热连接，也不代表数据库当前可用，首次查询才会暴露连接故障。
     pub fn new(pool: Pool<MySql>) -> Self {
         Self { pool }
     }
 
-    /// 返回该钱包仓储适配器持有的 MySQL 连接池。
+    /// 借出内部 MySQL 连接池，供调用方自行开启事务以串联本适配器之外的资金步骤。
+    /// 通过该池发起的写入不受适配器的账务编排约束，非负校验与镜像流水需要调用方自己保证。
     pub fn pool(&self) -> &Pool<MySql> {
         &self.pool
     }
@@ -65,7 +70,8 @@ impl MySqlWalletRepository {
         get_or_create_account_async(&self.pool, user_id, asset_id).await
     }
 
-    /// 按用户与资产读取钱包账户三桶快照，不创建缺失账户。
+    /// 按用户与资产读取钱包账户三桶快照，账户不存在时返回空值而非零余额或错误。
+    /// 该读取走连接池普通查询、不加行锁，返回值只能用于展示或前置判断，不得作为扣款依据。
     pub async fn load_account_async(
         &self,
         user_id: u64,
@@ -85,7 +91,8 @@ impl MySqlWalletRepository {
         save_account_with_ledger_async(&self.pool, account, ledger).await
     }
 
-    /// 按业务引用类型与编号顺序读取账本条目，用于幂等核验和审计。
+    /// 按业务引用类型与编号读取账本条目并保持自增写入顺序，用于幂等核验和资金审计。
+    /// 空结果表示该业务引用尚无流水，调用方据此判断是首次执行还是重放，但本方法不加锁防并发写入。
     pub async fn list_ledger_by_ref_async(
         &self,
         ref_type: &str,
@@ -105,7 +112,8 @@ impl MySqlWalletRepository {
         insert_asset_lock_positions_async(&self.pool, positions).await
     }
 
-    /// 统计指定锁仓记录关联的来源明细数量。
+    /// 统计指定锁仓记录已落库的来源明细条数，用于核对合并写入后的来源完整性。
+    /// 计数不区分来源类型和金额，也不校验锁仓剩余额是否与来源之和相符，更不会修改任何余额。
     pub async fn count_lock_position_sources_async(
         &self,
         lock_position_id: u64,
@@ -130,6 +138,7 @@ impl WalletRepository for MySqlWalletRepository {
     }
 
     /// 同步仓储端口不执行异步账户/流水事务，固定返回仓储错误且不产生资金写入。
+    /// 账户三桶与账本批次原样丢弃，既不落库也不缓存，调用方必须改用异步适配器方法完成保存。
     fn save_account_with_ledger(
         &mut self,
         _account: WalletAccount,
@@ -141,6 +150,7 @@ impl WalletRepository for MySqlWalletRepository {
     }
 
     /// 同步仓储端口不写锁仓明细，固定返回仓储错误；调用方应使用异步适配器方法。
+    /// 传入的锁仓集合不会被部分写入，因此该失败路径不会让账户 locked 与锁仓明细产生偏差。
     fn insert_lock_positions(
         &mut self,
         _positions: Vec<LockPosition>,
@@ -222,7 +232,8 @@ impl WalletLedgerCategory {
         Self::Other,
     ];
 
-    /// 返回钱包流水分类的稳定 API 字符串。
+    /// 返回钱包流水分类对外暴露的稳定字符串，同时用作查询入参取值和响应字段取值。
+    /// 该映射是 API 契约的一部分，改动会同时破坏前端筛选与历史数据的分类含义，不得随实现调整。
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Funding => "funding",
@@ -238,7 +249,8 @@ impl WalletLedgerCategory {
         }
     }
 
-    /// 将精确分类字符串解析为钱包流水分类，未知值返回空。
+    /// 将外部传入的分类字符串反解为枚举，只接受与对外契约完全一致的取值。
+    /// 匹配区分大小写且不裁剪空白，未知取值返回空，由调用方转换成校验错误而非静默忽略筛选条件。
     pub(crate) fn parse(value: &str) -> Option<Self> {
         Self::ALL
             .into_iter()
@@ -316,6 +328,9 @@ pub(crate) fn classify_wallet_ledger_change_type(change_type: &str) -> WalletLed
         .unwrap_or(WalletLedgerCategory::Other)
 }
 /// 通过幂等插入确保钱包账户存在，再回读三桶快照。
+/// 插入命中唯一键时只空转更新时间戳，既不覆盖已有余额，也不把已有账户重置为零。
+/// 插入与回读是两次独立语句、不共享事务，因此并发调用可能读到对方刚建好的账户，这在语义上是允许的。
+/// 回读为空说明账户在插入后又被删除或复制延迟，此时返回仓储错误而不是伪造零余额账户。
 /// 该入口不锁定账户供资金更新使用，资金写入仍须在调用方事务中执行行锁。
 pub(crate) async fn get_or_create_account_async(
     pool: &Pool<MySql>,
@@ -340,6 +355,8 @@ pub(crate) async fn get_or_create_account_async(
 }
 
 /// 读取指定用户资产的钱包三桶余额，不存在时返回空值。
+/// 与创建入口不同，本函数绝不隐式建账，缺失账户如实表达为空，交由调用方决定报错还是按未开通处理。
+/// 数值列以定点类型原样读出，不做精度截断或负零归一化，返回值与数据库当前存储完全一致。
 /// 该普通查询不持有行锁，资金更新必须改用调用方事务内的锁定原语。
 pub(crate) async fn load_account_async(
     pool: &Pool<MySql>,
@@ -363,6 +380,9 @@ pub(crate) async fn load_account_async(
 
 /// 将钱包三桶余额快照与同批账本条目放入同一 MySQL 事务持久化。
 /// 调用方必须提供已通过领域规则校验的账户与镜像流水；任一账户更新或流水插入失败都会回滚整批数据。
+/// 账户与账本中的用户和资产标识都以字符串传入，解析为整数失败时在事务内立即报错并回滚，不做部分写入。
+/// 账户更新写的是三桶绝对值而非增量，且执行前不锁行，因此并发调用会形成后写覆盖，调用方必须自行串行化。
+/// 流水按批次给定顺序逐条插入，balance_after 与三桶 after 原样落库，不在此重新计算任何金额。
 /// 此入口不负责生成业务幂等键，调用方需确保同一业务引用不会被重复保存。
 pub(crate) async fn save_account_with_ledger_async(
     pool: &Pool<MySql>,
@@ -416,6 +436,8 @@ pub(crate) async fn save_account_with_ledger_async(
 }
 
 /// 按业务引用读取账本并保留写入顺序，便于重放判断和资金审计。
+/// 结果按自增主键升序返回，因此同一次余额变更产生的多条桶级流水次序与写入时一致，可直接还原变更过程。
+/// 行内 balance_type 会被反解为余额桶枚举，出现未登记的桶名时整次查询失败，避免把损坏流水当作有效审计依据。
 /// 查询只读流水快照，不据此修改账户；缺失条目由上层按账务异常处理。
 pub(crate) async fn list_ledger_by_ref_async(
     pool: &Pool<MySql>,
@@ -454,7 +476,9 @@ pub(crate) async fn list_ledger_by_ref_async(
 }
 
 /// 在自有事务中逐项插入锁仓及来源映射，全部成功后统一提交。
+/// 返回的编号与入参锁仓一一对应且顺序一致，合并键命中既有记录时返回的是既有锁仓编号而非新编号。
 /// 任一写入失败都会回滚，调用方不得假设返回前已有部分锁仓生效。
+/// 本函数只维护锁仓侧数据，不触碰账户 locked 桶，账户与锁仓明细的一致性需由调用链另行保证。
 pub(crate) async fn insert_asset_lock_positions_async(
     pool: &Pool<MySql>,
     positions: Vec<NewAssetLockPosition>,
@@ -488,6 +512,11 @@ pub(crate) async fn count_lock_position_sources_async(
     Ok(count as u64)
 }
 
+/// 在调用方事务中按合并键落地一条锁仓聚合，并把新增来源逐笔累加到锁定额与剩余额。
+/// 锁仓行以合并键幂等插入，初始锁定额与剩余额都写零；命中既有记录时回查其编号，金额一律由来源累加得出。
+/// 来源插入使用忽略重复语义，只有真正新增的来源才触发锁仓金额自增，因此同一来源重复投递不会重复放大 locked。
+/// 累加使用数据库端的自增表达式而非先读后写，配合调用方事务避免并发投递互相覆盖。
+/// 任一步失败向上抛出并由调用方回滚，不会留下锁仓已建但来源缺失或金额少算的中间状态。
 async fn insert_asset_lock_position_in_tx(
     tx: &mut Transaction<'_, MySql>,
     position: NewAssetLockPosition,
@@ -556,6 +585,8 @@ async fn insert_asset_lock_position_in_tx(
     Ok(position_id)
 }
 
+/// 把账户查询行装配为领域账户实体，用户与资产的数字标识在此转成领域侧使用的字符串形式。
+/// 三桶金额原样搬运，不做精度截断、符号归一或缺省补零，转换过程不会改变任何余额。
 fn wallet_account_from_row(row: (u64, u64, BigDecimal, BigDecimal, BigDecimal)) -> WalletAccount {
     let (user_id, asset_id, available, frozen, locked) = row;
     WalletAccount {
@@ -567,6 +598,9 @@ fn wallet_account_from_row(row: (u64, u64, BigDecimal, BigDecimal, BigDecimal)) 
     }
 }
 
+/// 把账本查询行装配为领域流水实体，其中余额桶名需反解成枚举，未登记的桶名直接返回仓储错误。
+/// 变更金额、本桶账后余额与三桶 after 全部原样搬运，本函数不重算差额也不校验它们是否自洽。
+/// 用户与资产标识转为字符串以对齐领域模型，业务引用类型和编号保持数据库原值，供上层判定重放。
 fn wallet_ledger_from_row(
     row: (
         u64,
@@ -611,6 +645,8 @@ fn wallet_ledger_from_row(
     })
 }
 
+/// 把余额桶枚举编码为账本表 balance_type 列存储的字面量，是流水落库时的唯一取值来源。
+/// 该编码与历史数据强绑定，改动会让既有流水无法反解，因此必须与解析函数保持严格互逆。
 fn balance_bucket_as_str(bucket: BalanceBucket) -> &'static str {
     match bucket {
         BalanceBucket::Available => "available",
@@ -619,6 +655,8 @@ fn balance_bucket_as_str(bucket: BalanceBucket) -> &'static str {
     }
 }
 
+/// 把账本表存储的 balance_type 字面量反解为余额桶枚举，未知取值返回携带原值的仓储错误。
+/// 这里刻意不做兜底归类，因为把无法识别的桶静默当成可用余额会让审计结论出现方向性错误。
 fn balance_bucket_from_str(value: &str) -> Result<BalanceBucket, WalletServiceError> {
     match value {
         "available" => Ok(BalanceBucket::Available),
@@ -630,17 +668,23 @@ fn balance_bucket_from_str(value: &str) -> Result<BalanceBucket, WalletServiceEr
     }
 }
 
+/// 把领域侧字符串形式的用户或资产标识解析为数据库整数主键，失败时回填字段名与原值便于定位。
+/// 解析失败一律视为仓储错误并中断当前资金事务，绝不退化成零值继续写库。
 fn parse_u64_identifier(field: &str, value: &str) -> Result<u64, WalletServiceError> {
     value.parse::<u64>().map_err(|error| {
         WalletServiceError::Repository(format!("invalid numeric {field} `{value}`: {error}"))
     })
 }
 
+/// 把 SQLx 底层错误折叠成仓储错误字符串，使领域与服务层不必依赖具体数据库驱动类型。
+/// 折叠会丢失唯一键冲突等结构化错误码，需要区分冲突与其他失败的调用方应改用保留原始错误的路径。
 fn map_wallet_sqlx_error(error: sqlx::Error) -> WalletServiceError {
     WalletServiceError::Repository(error.to_string())
 }
 
-/// 按资产代码排序读取用户全部钱包账户及三桶余额快照。
+/// 按资产代码排序读取用户全部钱包账户及三桶余额快照，并联出资产符号与图标供前端直接渲染。
+/// 使用内连接资产表，因此资产记录缺失的历史账户不会出现在结果中，返回集合可能少于账户表实际行数。
+/// 结果不做零余额过滤，用户开通过但已清空的资产仍会返回，前端需要自行决定是否隐藏。
 /// 查询不获取资金行锁，返回值仅用于展示，不可作为后续扣款依据。
 pub(crate) async fn list_wallet_accounts(
     pool: &Pool<MySql>,
@@ -700,6 +744,10 @@ pub(crate) async fn list_wallet_ledger(
     })
 }
 
+/// 统计当前筛选下用户账本的总行数，供分页计算总页数。
+/// 计数查询复用与行查询完全相同的用户条件和过滤谓词构造器，两者结果因此描述同一筛选集合。
+/// 计数只关联资产表以支持按资产符号筛选，不关联补充手续费用的业务表，避免多值连接放大行数。
+/// 数据库返回的有符号计数会被下限钳到零再转为无符号，防止异常值让分页出现负数页码。
 async fn count_wallet_ledger(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -721,6 +769,9 @@ async fn count_wallet_ledger(
 }
 
 /// 把资产、分类、引用和时间条件同时追加到流水行查询或计数查询。
+/// 所有可选条件都以并且关系叠加，未提供的条件不追加谓词，因此空过滤器等价于只按用户筛选。
+/// 资产符号按大写比较，调用方需先完成归一化；变更类型、引用类型和引用编号一律按精确值匹配，不支持模糊查询。
+/// 起止时间直接以字符串绑定并与创建时间做闭区间比较，时区与格式由调用方保证，本函数不做解析或校验。
 /// 调用方必须对行与总数复用该构造器，确保分页统计与返回数据一致。
 pub(super) fn push_wallet_ledger_filters<'args>(
     builder: &mut QueryBuilder<'args, MySql>,
@@ -759,6 +810,9 @@ pub(super) fn push_wallet_ledger_filters<'args>(
     }
 }
 
+/// 把分类筛选翻译成 SQL 谓词，使分类查询与内存分类函数得到完全一致的归类结果。
+/// 其他分类是补集语义：对全部已登记规则做析取后整体取反，因此新增规则会自动从其他分类中移除对应流水。
+/// 具名分类直接命中其唯一规则，找不到规则时立即中止，避免静默退化成不带条件的全量查询。
 fn push_wallet_ledger_category_filter<'args>(
     builder: &mut QueryBuilder<'args, MySql>,
     category: WalletLedgerCategory,
@@ -787,6 +841,9 @@ fn push_wallet_ledger_category_filter<'args>(
     builder.push(")");
 }
 
+/// 把单条分类规则展开成若干或关系谓词：精确变更类型逐个等值比较，前缀规则按长度截取后比较。
+/// 比较统一加二进制修饰以走区分大小写的字节匹配，防止排序规则差异让相近变更类型被误归到同一分类。
+/// 规则至少要有一个谓词，空规则会在调试断言中暴露，因为它展开后是空条件，会让整条分类筛选失效。
 fn push_wallet_ledger_category_rule<'args>(
     builder: &mut QueryBuilder<'args, MySql>,
     rule: &'static WalletLedgerCategoryRule,
@@ -816,6 +873,10 @@ fn push_wallet_ledger_category_rule<'args>(
     );
 }
 
+/// 返回用户账本行查询的固定前缀，末尾停在用户条件的绑定位，供调用方继续追加过滤、排序与分页。
+/// 手续费列由多个左连接按引用类型择一取值：闪兑取订单费、现货取成交费、提现按新旧两张表分别取费，都取不到时归零。
+/// 现货连接需要把引用编号按冒号拆成买卖单编号再匹配，提现连接额外比对用户与资产，避免跨用户串账。
+/// 补充手续费只影响展示字段，流水金额与三桶 after 仍原样取自账本表，本查询不重算任何资金数值。
 fn wallet_ledger_select_sql() -> &'static str {
     r#"SELECT wl.id, wl.user_id, wl.asset_id, a.symbol, wl.change_type, wl.amount,
               wl.balance_type, wl.balance_after, wl.available_after, wl.frozen_after,
@@ -866,6 +927,8 @@ fn wallet_ledger_select_sql() -> &'static str {
        WHERE wl.user_id = "#
 }
 
+/// 把账户查询行整体搬运为账户列表响应项，保留资产符号与图标地址供前端直接展示。
+/// 三桶余额按定点原值输出，不合并成总额也不做单位换算，前端需要总资产时须自行相加。
 fn wallet_account_response(row: WalletAccountRow) -> WalletAccountResponse {
     WalletAccountResponse {
         user_id: row.user_id,
@@ -879,6 +942,8 @@ fn wallet_account_response(row: WalletAccountRow) -> WalletAccountResponse {
 }
 
 /// 将数据库流水行映射为 API 条目，并按 change_type 补充稳定业务分类。
+/// 分类在此按内存规则现算而非读取存量列，与 SQL 侧分类筛选共用同一套规则，保证筛选结果与展示标签一致。
+/// 手续费取自查询阶段左连接的择一结果，未匹配业务单据时为零，该字段是展示补充而非账本自身的资金腿。
 /// 映射保留三桶账后快照和业务引用，不重新计算或改变任何资金金额。
 pub(super) fn wallet_ledger_entry_response(row: WalletLedgerEntryRow) -> WalletLedgerEntryResponse {
     let category = classify_wallet_ledger_change_type(&row.change_type)

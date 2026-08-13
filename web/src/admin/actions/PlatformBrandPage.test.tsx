@@ -115,8 +115,8 @@ describe('PlatformBrandPage', () => {
     await user.type(screen.getByLabelText('PC Logo'), 'https://cdn.example.test/new-logo.png');
     await selectSemiOption(user, 'K线图引擎', 'TradingView Lightweight Charts');
     await user.click(screen.getByRole('button', { name: '保存品牌配置' }));
-    await user.type(screen.getByLabelText('操作原因'), 'update pc brand');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'update pc brand');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith(

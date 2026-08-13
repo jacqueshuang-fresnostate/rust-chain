@@ -1,6 +1,14 @@
 //! earn bounded context infrastructure layer.
 //!
 //! 基础设施层：封装 SQLx、Redis、第三方接口和仓储实现。
+//!
+//! 本文件几乎所有写入函数都接收 `Transaction` 而不自行提交，事务边界一律由应用层掌握，
+//! 因此它们各自都不具备独立幂等性，重复调用会产生重复副作用。
+//! 命名上区分两组语义：`load_*` 不加锁，只用于展示与审计后快照；
+//! `lock_*` 带 FOR UPDATE，用于需要串行化的配置更新与资金流程。
+//! 资金侧只有两个原语：申购从 available 扣本金写一条 earn_subscribe 负流水，
+//! 赎回向 available 加净额写一条 earn_redeem 正流水，frozen 与 locked 全程不变，
+//! 两条流水都以 earn_subscription 加订阅编号作为引用，也是已赎回重放时恢复金额的依据。
 
 use crate::{
     error::{AppError, AppResult},
@@ -19,7 +27,11 @@ use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
 /// 分页排序必须带唯一列 id，否则同一排序值的行会在页间重复或丢失。
 const EARN_PRODUCT_ORDER_BY: &str = " ORDER BY products.id DESC";
 
-/// 行查询与 COUNT 查询必须由同一组过滤谓词构建，返回总数才能与当前筛选一致。
+/// 统一收口后台分页：向行查询追加排序与 LIMIT OFFSET，再执行计数查询，一并返回。
+/// 调用方必须已用同一组谓词构建好两个构建器，本函数只负责分页与执行，不再补充筛选条件。
+/// 排序子句由调用方传入而非写死，因为产品按编号倒序而分类按排序权重升序。
+/// 两条查询各自独立执行且不在事务内，高并发写入时总数与当前页内容可能存在瞬时不一致。
+/// 泛型行类型只要求可从 MySQL 行反序列化，产品、订阅、分类三种响应共用这一条路径。
 async fn fetch_admin_page<T>(
     pool: &Pool<MySql>,
     mut rows: QueryBuilder<'_, MySql>,
@@ -43,8 +55,11 @@ where
     Ok((items, total))
 }
 
-/// 按可选状态和数量上限读取理财产品，并保留历史分类代码的显示回退。
-/// 查询只读产品和分类元数据，不锁定产品，也不触发订阅或资金变化。
+/// 读取理财产品列表并联表补上资产符号与分类展示名，状态为空时返回全部产品。
+/// 用户端由调用方传入 active 实现只看在售产品，管理端传 None 因而上下架一并可见。
+/// 分类用 LEFT JOIN 关联，分类行被删除时展示名回退为产品自身保存的分类代码，产品不会因此消失。
+/// 按产品编号倒序，编号唯一因而不会出现同排序值行在页间重复或丢失。
+/// 只支持限制条数不支持偏移，查询不加行锁，也不触发任何订阅或资金变化。
 pub(crate) async fn list_products(
     pool: &Pool<MySql>,
     status: Option<&str>,
@@ -63,8 +78,11 @@ pub(crate) async fn list_products(
     Ok(EarnProductsResponse { products })
 }
 
-/// 使用同一状态谓词查询后台理财产品分页行与 COUNT，保证 total 对应当前筛选。
-/// 该只读入口不锁产品，返回当前配置与费用规则，不修改分类、历史订阅快照或钱包。
+/// 后台产品分页查询，同时返回当前页数据与命中筛选的总行数。
+/// 计数查询手工复现了行查询的 JOIN 结构，两处必须一起维护，否则总数会与列表口径不符。
+/// 状态谓词由同一个循环推入两个构建器，避免总数跟随全表而非当前筛选。
+/// 分类的 LEFT JOIN 在计数查询中同样保留，它不影响行数但保证两条 SQL 结构一致。
+/// 该只读入口不锁产品，返回的是产品当前配置，不修改分类、历史订阅快照或任何钱包余额。
 pub(crate) async fn list_admin_products(
     pool: &Pool<MySql>,
     status: Option<&str>,
@@ -85,6 +103,11 @@ pub(crate) async fn list_admin_products(
     fetch_admin_page(pool, rows, total, EARN_PRODUCT_ORDER_BY, limit, offset).await
 }
 
+/// 构造产品查询的 SELECT 与 JOIN 前缀，列顺序和别名必须与 `EarnProductResponse` 严格对应。
+/// 资产用 INNER JOIN，资产行缺失会让产品整行从结果中消失；分类用 LEFT JOIN 因而分类可缺失。
+/// category_name 由 JSON_EXTRACT 取多语言结构第一个条目的标题，
+/// 取不到时用 COALESCE 回退为产品自身的分类代码，因此该列永不为空。
+/// 只返回未附加 WHERE 的构建器，筛选、排序与分页由调用方推入。
 fn earn_product_query() -> QueryBuilder<'static, MySql> {
     QueryBuilder::<MySql>::new(
         r#"SELECT products.id, products.asset_id, assets.symbol AS asset_symbol,
@@ -103,6 +126,10 @@ fn earn_product_query() -> QueryBuilder<'static, MySql> {
     )
 }
 
+/// 向构建器追加产品状态筛选，先写入恒真的 `WHERE 1 = 1` 以便后续条件一律用 AND 拼接。
+/// 这样无论有无可选条件都不必判断是否为首个谓词，代价是多一个被优化器忽略的恒真式。
+/// 状态值经 push_bind 作为绑定参数下推，不做字符串插值。
+/// 行查询与计数查询必须各调用一次，才能保证总数与列表口径一致。
 fn push_earn_product_filters(builder: &mut QueryBuilder<'_, MySql>, status: Option<&str>) {
     builder.push(" WHERE 1 = 1");
     if let Some(status) = status {

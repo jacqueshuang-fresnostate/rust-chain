@@ -1,6 +1,13 @@
 //! auth bounded context service layer.
 //!
 //! 服务层：封装可复用业务服务和跨实体业务规则。
+//!
+//! 本文件是认证限界上下文的核心编排层，把口令校验、失败锁定和令牌签发收敛成三类主体共用的一套流程。
+//! 服务只依赖注入的仓储端口、会话管理器与项目刷新令牌端口，不直接触碰 SQLx 或 Redis。
+//! 运行时按是否配置会话管理器分成两条签发路径：本地 JWT 模式把刷新令牌摘要写入主仓储，
+//! Sa-Token 模式则创建服务端会话并把随机刷新令牌登记到项目端口，两条路径对上层返回同一种令牌结构。
+//! 安全上有三条贯穿全文件的约定：账号不存在、状态非活跃与口令错误共用同一条失败分支并一律计入锁定；
+//! 原始刷新令牌绝不落库；本层各步骤各自独立提交，账号创建、失败计数与令牌签发之间没有事务保护。
 
 use crate::{
     architecture::ServiceLayer,
@@ -258,6 +265,11 @@ impl<R: AuthRepository> AuthService<R> {
         self.issue_tokens(actor).await
     }
 
+    /// Sa-Token 模式下的刷新实现：按原始令牌取回主体快照，双重校验作用域后重新签发一整套会话。
+    /// 既比对快照中记录的作用域，也比对由主体类型推导出的作用域，两者都必须等于调用方期望值，
+    /// 从而在存储被写坏或被篡改时，仍然拦得住用低权限令牌换取高权限会话的尝试。
+    /// 随后回查主体是否依旧活跃，使被停用的账号无法靠旧刷新令牌续期。
+    /// 本方法不消费也不撤销传入的刷新令牌，在其过期或该主体会话被整体撤销前可以反复兑换。
     async fn refresh_sa_token(
         &self,
         refresh_token: &str,
@@ -282,7 +294,12 @@ impl<R: AuthRepository> AuthService<R> {
         self.issue_tokens(actor).await
     }
 
-    /// 用户、管理员、代理共用同一条密码校验入口，统一执行失败计数与临时锁定。
+    /// 用户、管理员和代理共用的唯一一条口令校验入口，统一执行锁定检查、失败计数与成功后的清理。
+    /// 先用规范化标识查询当前锁定，处于锁定期时立即返回可重试提示，连口令都不再比对，
+    /// 因此爆破者无法借助锁定期继续试探口令。
+    /// 只有账号存在、状态为活跃且口令匹配三者同时成立才算通过；任一不成立都落到同一条失败分支，
+    /// 既累加计数又返回统一的未授权，调用方无从区分账号不存在与口令错误。
+    /// 通过后先清零失败计数再记录登录信息，这两次写入各自独立提交，后续令牌签发失败不会回滚它们。
     async fn verify_with_lockout(
         &self,
         actor_type: ActorType,
@@ -327,6 +344,11 @@ impl<R: AuthRepository> AuthService<R> {
         self.issue_tokens(actor).await
     }
 
+    /// 按运行时是否配置会话管理器分派签发方式，是本服务所有登录与刷新路径的共同出口。
+    /// 未配置时走本地 JWT：用访问和刷新两种 TTL 分别签发令牌，再把刷新令牌的摘要连同到期时间入库，
+    /// 落库的只有摘要，原始刷新令牌仅出现在返回值里。
+    /// 令牌签发成功但摘要写库失败会直接上抛，此时一个令牌都不返回，客户端不会拿到无法刷新的半套会话。
+    /// 本方法不校验主体状态，调用方必须传入刚刚验证过的权威主体。
     async fn issue_tokens(&self, actor: AuthActor) -> AppResult<IssuedTokens> {
         if let Some(manager) = &self.auth_manager {
             return self.issue_sa_tokens(manager, actor).await;
@@ -368,6 +390,11 @@ impl<R: AuthRepository> AuthService<R> {
         })
     }
 
+    /// Sa-Token 模式的签发实现：先在会话管理器中创建服务端登录态，再单独登记一枚随机刷新令牌。
+    /// 创建登录态时按作用域写入登录类型，并把主体类型、主体 ID 与用户 ID 放进会话附加数据，
+    /// 使后续令牌校验无需回表就能还原完整身份。
+    /// 刷新令牌优先写入项目刷新令牌端口；未配置该端口时回落到主仓储，并改为存储 Argon2 摘要。
+    /// 两步不在同一事务内：访问会话已创建而刷新令牌写入失败时，该会话依然有效，本方法不做补偿登出。
     async fn issue_sa_tokens(
         &self,
         manager: &SaTokenManager,
@@ -426,6 +453,10 @@ impl<R: AuthRepository> AuthService<R> {
         })
     }
 
+    /// 按当前配置选择刷新令牌的查询后端，屏蔽项目端口与主仓储两种存储形态的差异。
+    /// 配置了项目刷新令牌端口时直接把原始令牌交给端口，由其自行派生存储键；
+    /// 否则回落到主仓储，此时要先算出 Argon2 摘要再按摘要做等值查找。
+    /// 两条路径都以当前时刻过滤过期记录，都只做只读查询，不消费令牌，也不区分未命中与已过期。
     async fn find_project_refresh_token(
         &self,
         refresh_token: &str,
@@ -442,14 +473,24 @@ impl<R: AuthRepository> AuthService<R> {
     }
 }
 
+/// 把锁定截止时刻换算成距当前时间的剩余秒数，再包装成统一的锁定错误。
+/// 换算集中在这里而不是散落到各调用点，保证三类主体对外给出的等待时长口径完全一致；
+/// 截止时刻早于当前时间时会算出负数，由错误构造函数负责夹取，因此不会出现倒挂的提示文案。
 fn login_locked(locked_until: DateTime<Utc>) -> AppError {
     login_locked_error((locked_until - Utc::now()).num_seconds())
 }
 
+/// 生成 Sa-Token 模式使用的刷新令牌串，由固定前缀与 v7 UUID 的紧凑写法拼接而成。
+/// 令牌值本身不携带主体、作用域和过期信息，只是一个不可猜测的查找键，全部语义都保存在服务端记录里，
+/// 因此客户端无法通过篡改令牌串伪造身份或自行延长有效期。
+/// 时间有序的 UUID 使新令牌天然唯一，本函数不再另行检查是否与既有记录冲突。
 fn generate_refresh_token() -> String {
     format!("refresh_{}", Uuid::now_v7().simple())
 }
 
+/// 整形注册用的邮箱与手机号，两者至少要提供一个，都缺失时返回校验错误。
+/// 纯空白输入会被折叠成缺失，避免前端传空串时被当作已填写的联系方式写进新账号。
+/// 本函数只保证至少存在一条可用联系方式，不校验格式、不做占用检查，也不决定优先使用哪一个。
 fn user_identifier(
     email: Option<String>,
     phone: Option<String>,
@@ -472,6 +513,11 @@ enum UserLoginIdentifier {
     Username(String),
 }
 
+/// 从三种可能的登录标识中挑出本次实际使用的那一个，优先级依次是邮箱、手机号、用户名。
+/// 优先级固定，客户端同时传多个字段时只有最高优先级的生效，不会退化成多次查库或产生多条失败计数。
+/// 用户名分支受安全策略开关约束，开关关闭时即便提供了用户名也直接返回校验错误，
+/// 这是用户名登录唯一的开关校验点，绕开它就等于绕开了整个开关。
+/// 用户名还会先做规范化与格式校验，邮箱和手机号则按调用方传入的值原样使用。
 fn user_login_identifier(
     email: Option<String>,
     phone: Option<String>,
@@ -500,12 +546,18 @@ fn user_login_identifier(
     ))
 }
 
+/// 服务层内部的字符串整形：去掉首尾空白，并把整形后为空的结果视为未提供。
+/// 凭据字段大量依赖这条规则，它保证用户名和口令在参与比较或查询之前不会夹带不可见的首尾空白，
+/// 也让「字段缺失」与「字段为空串」在后续所有判断中收敛成同一种情况。
 fn optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
 }
 
+/// 取出凭据类必填字段，缺失或整形后为空时返回带字段名的校验错误。
+/// 口令、用户名、国家码等入参都先经过这里，从而在访问仓储之前就挡下明显不完整的请求，
+/// 避免拿空口令去做一次代价高昂的 Argon2 比对。错误信息只嵌入字段名，不回显调用方提交的内容。
 fn required_string(value: Option<String>, field: &str) -> AppResult<String> {
     optional_string(value).ok_or_else(|| AppError::Validation(format!("{field} is required")))
 }

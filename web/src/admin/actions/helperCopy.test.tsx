@@ -131,8 +131,8 @@ describe('Admin action helper copy', () => {
     await user.type(screen.getByLabelText('代理后台账号'), 'agent-new');
     await user.type(screen.getByLabelText('初始密码'), 'Password123!');
     await user.click(screen.getByRole('button', { name: '创建代理' }));
-    await user.type(screen.getByLabelText('操作原因'), 'create agent');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'create agent');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/agents', expect.objectContaining({ method: 'POST' }));
@@ -150,8 +150,8 @@ describe('Admin action helper copy', () => {
     await user.click(screen.getByRole('tab', { name: '代理列表' }));
     expect(await screen.findByText('AGT-42')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '暂停' }));
-    await user.type(screen.getByLabelText('操作原因'), 'suspend agent');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'suspend agent');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/agents/42/status', {

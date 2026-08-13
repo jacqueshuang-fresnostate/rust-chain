@@ -35,5 +35,7 @@
 /pc/.idea/
 /.codegraph/
 /.claude/settings*.json
+/logs/
+/knowledge/
 
 *.log

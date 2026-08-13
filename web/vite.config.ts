@@ -26,6 +26,7 @@ export default defineConfig({
     },
     globals: true,
     setupFiles: './vitest.setup.ts',
-    testTimeout: 10000
+    // 单个用例要渲染完整 Semi 组件树，10s 在并行负载下会误杀正常用例。
+    testTimeout: 20000
   }
 });

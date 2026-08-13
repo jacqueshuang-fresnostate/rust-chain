@@ -1,3 +1,16 @@
+//! 事件 inbox 消费 worker：把 RabbitMQ 实时投递与数据库补偿扫描两条路径拉起并维持运行。
+//!
+//! 两条路径互补而非重复。实时路径从队列取消息，处理完再确认；
+//! 补偿路径定时扫描 inbox 中到期待重试和租约超时的行，从数据库存档的载荷重放。
+//! 补偿之所以必要，是因为业务失败后消息已被确认，broker 侧不会再投，重放只能靠本地存档。
+//!
+//! 队列名同时充当 inbox 的消费者名，因此它决定了去重范围与补偿扫描范围，
+//! 改队列名等同于换一个消费者身份，历史去重记录不再适用。
+//!
+//! 未配置队列名视为显式停用而非故障，此时两条路径都不启动，也不会反复尝试连接。
+//! 实时路径的连接与消费循环一旦结束就按 1 到 60 秒的指数退避重建，
+//! 这里的指数退避与消息级重试的固定退避是两套机制，前者防止 broker 故障时形成热重连。
+
 use crate::{
     error::{AppError, AppResult},
     infra,
@@ -8,11 +21,15 @@ use chrono::Utc;
 use std::{env, time::Duration};
 use tracing::{error, info, warn};
 
+/// 未显式配置消费者标签时使用的稳定默认值，保持它稳定可使 broker 侧的消费者视图不随重启变化。
 const DEFAULT_CONSUMER_TAG: &str = "exchange-api-inbox";
 
+/// 已通过字符校验的 inbox 启动参数，只有存在该结构时才应拉起消费与补偿两条路径。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventInboxStartupConfig {
+    /// 目标队列名，同时充当 inbox 的消费者名，因而决定去重与补偿扫描的范围。
     queue_name: String,
+    /// broker 侧的消费者标签，仅用于运维观察，不参与业务去重。
     consumer_tag: String,
 }
 
@@ -22,7 +39,8 @@ impl EventInboxStartupConfig {
         &self.queue_name
     }
 
-    /// 标识当前 RabbitMQ consumer 实例，供 broker 区分投递所有权和排障；它不替代数据库事件幂等键。
+    /// 返回 broker 侧的消费者标签，仅用于在管理界面区分实例与排障。
+    /// 它不参与数据库层的去重与租约判定，改标签不会影响任何幂等语义。
     pub fn consumer_tag(&self) -> &str {
         &self.consumer_tag
     }
@@ -37,13 +55,18 @@ impl EventInboxStartupConfig {
     }
 }
 
+/// inbox worker 的顶层配置，用是否持有启动参数来表达启用与停用两种状态。
+/// 停用是显式选择而非异常，因此不应被记录成故障或触发重连。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventInboxWorkerConfig {
+    /// 启动参数；为空表示本进程不承担事件消费职责。
     startup: Option<EventInboxStartupConfig>,
 }
 
 impl EventInboxWorkerConfig {
-    /// 读取 `EVENT_INBOX_QUEUE_NAME` 与可选 `EVENT_INBOX_CONSUMER_TAG`；队列缺失/空白表示同时禁用实时消费和补偿扫描，非 Unicode 值直接报错。
+    /// 从环境变量读取队列名与可选的消费者标签，得到本进程的 inbox 配置。
+    /// 队列名缺失或为空白表示显式停用，此时实时消费与补偿扫描都不会启动，且不视为故障。
+    /// 变量含非 Unicode 字节时直接报错而不是当作未设置，避免部署脚本写错导致消费者悄无声息地不工作。
     pub fn from_env() -> AppResult<Self> {
         Self::from_env_values(
             optional_env("EVENT_INBOX_QUEUE_NAME")?.as_deref(),
@@ -52,7 +75,11 @@ impl EventInboxWorkerConfig {
     }
 
     /// 由显式值构造启动配置；非空队列和 consumer tag 都必须是最长 128 字节的 ASCII 字母数字、点、冒号、下划线或连字符。
-    /// 未提供 tag 时使用稳定默认值 `exchange-api-inbox`；队列为空返回 Disabled，不连接 RabbitMQ，也不启动 MySQL retry scanner。
+    /// 队列名先裁剪空白再判空，因此只填空格等同于未配置，直接返回停用状态并短路后续校验。
+    /// 消费者标签同样先裁剪，为空时回落到稳定默认值而不是报错，因为它只影响运维观察不影响正确性。
+    /// 两个值都必须通过字符校验，任一非法即返回错误而不是降级使用默认值，
+    /// 因为队列名同时充当数据库中的消费者名，取值错误会造成去重范围错乱。
+    /// 停用时不连接 broker，也不启动补偿扫描任务。
     pub fn from_env_values(
         queue_name: Option<&str>,
         consumer_tag: Option<&str>,
@@ -85,6 +112,9 @@ impl EventInboxWorkerConfig {
     }
 }
 
+/// 读取可选环境变量，把「未设置」与「值非法」区分开。
+/// 变量缺失返回 `Ok(None)` 由调用方按停用处理；含非 Unicode 字节则返回校验错误而不是静默忽略，
+/// 因为那通常意味着部署脚本写错了值，静默跳过会让消费者莫名不启动。
 fn optional_env(key: &str) -> AppResult<Option<String>> {
     match env::var(key) {
         Ok(value) => Ok(Some(value)),
@@ -95,6 +125,10 @@ fn optional_env(key: &str) -> AppResult<Option<String>> {
     }
 }
 
+/// 校验队列名或消费者标签：非空、不超过 128 字节，且只含 ASCII 字母数字与点、短横线、下划线、冒号。
+/// 字符集收紧是因为这两个值会直接进入 AMQP 协议字段，含空格或控制字符会导致连接层报错难以定位。
+/// 队列名还兼作数据库中的消费者名，稳定的字符集也避免了不同写法被当成两个消费者。
+/// 校验通过后原样返回，不做大小写折叠。
 fn validate_segment(value: &str, field: &str) -> AppResult<String> {
     if value.is_empty()
         || value.len() > 128
@@ -108,20 +142,30 @@ fn validate_segment(value: &str, field: &str) -> AppResult<String> {
     Ok(value.to_owned())
 }
 
+/// 一轮消费循环的结束方式，两者都会触发退避等待。
+/// 正常结束同样需要延迟：消费循环本不该自行退出，无间隔重启只会形成空转。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventInboxConsumerCycleOutcome {
+    /// 消费流正常结束，通常意味着 broker 侧关闭了 channel 或队列。
     Ended,
+    /// 连接建立或消费过程中出错。
     Failed,
 }
 
+/// 消费循环的重连退避状态，按指数增长并封顶在 60 秒。
+/// 与消息级重试的固定间隔退避不同，这里针对的是连接层故障，指数增长可避免 broker 长时间不可用时反复热重连。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EventInboxReconnectBackoff {
+    /// 启动基线等待秒数，稳定成功后会恢复到该值。
     initial_delay_seconds: u64,
+    /// 下一轮结束后应等待的秒数，每次结束翻倍直到封顶。
     next_delay_seconds: u64,
 }
 
 impl EventInboxReconnectBackoff {
-    /// 建立 consumer 重连退避状态；初始等待被限制在 1 到 60 秒，并作为后续稳定成功后的恢复基线。
+    /// 建立消费循环的重连退避状态，初始等待被夹到 1 至 60 秒。
+    /// 下限 1 秒防止配置为零导致无间隔热重连，上限 60 秒与后续翻倍的封顶值保持一致。
+    /// 夹取后的值同时成为下一次等待值与恢复基线，稳定成功后退避会回落到它。
     pub fn new(initial_delay_seconds: u64) -> Self {
         let initial_delay_seconds = initial_delay_seconds.clamp(1, 60);
         Self {

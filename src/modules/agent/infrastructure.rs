@@ -1,6 +1,9 @@
 //! agent bounded context infrastructure layer.
 //!
 //! 基础设施层：封装 SQLx、Redis、第三方接口和仓储实现。
+//! 本文件集中代理分销的全部 SQL：一类是各业务结算时向上生成分层返佣记录的写入口，
+//! 另一类是代理自助后台的子树只读查询。所有子树查询都以服务端解析出的物化路径为边界，
+//! 前缀匹配统一带斜杠分隔符防止同名前缀越权；带 in_tx 后缀的函数复用调用方事务，既不提交也不回滚。
 
 use crate::{
     error::{AppError, AppResult},
@@ -107,6 +110,7 @@ pub(crate) async fn insert_agent_business_commission_in_tx(
 
 /// 按代理管理员 ID 读取账号与代理节点，本节点或任一祖先停用时不返回记录。
 /// 查询不锁行且无写入副作用；未命中由应用层统一映射为未授权。
+/// 祖先状态用路径前缀子查询整体核验，只要链路上任一级停用整条线即失效，下级不会退化成孤立可用节点。
 pub(crate) async fn load_agent_me(
     pool: &Pool<MySql>,
     agent_admin_id: u64,
@@ -144,7 +148,9 @@ pub(crate) async fn load_agent_me(
     Ok(agent)
 }
 
-/// 在调用方事务内锁定代理管理员密码哈希与状态，供改密时防止并发覆盖。
+/// 在调用方事务内用排他行锁读取代理管理员的密码哈希与账号状态，作为改密流程的第一步。
+/// 加锁是为了让旧口令校验、新哈希写入与刷新令牌吊销串行化，防止两个并发改密请求互相覆盖出中间态。
+/// 本函数只取锁不做任何判定，账号缺失返回空值、状态是否可用由应用层裁决；不自行提交或回滚事务。
 pub(crate) async fn lock_agent_admin_credential_in_tx(
     tx: &mut Transaction<'_, MySql>,
     agent_admin_id: u64,
@@ -159,7 +165,9 @@ pub(crate) async fn lock_agent_admin_credential_in_tx(
     Ok(credential)
 }
 
-/// 在已锁定凭证的事务中更新代理管理员密码哈希，不自行提交或撤销会话。
+/// 在已持有凭证行锁的同一事务中覆盖代理管理员的密码哈希，调用前必须完成旧口令比对。
+/// 只改哈希列，不改账号状态、不写改密审计、不清理任何会话，令牌吊销由后续独立语句在同事务内完成。
+/// 目标行不存在时语句静默成功，因此该函数不能用于判断账号是否存在。
 pub(crate) async fn update_agent_admin_password_in_tx(
     tx: &mut Transaction<'_, MySql>,
     agent_admin_id: u64,
@@ -173,7 +181,10 @@ pub(crate) async fn update_agent_admin_password_in_tx(
     Ok(())
 }
 
-/// 在改密事务中撤销该代理主体全部未撤销 MySQL 刷新令牌，重复调用保持幂等。
+/// 在改密事务中把该代理主体名下所有尚未撤销的刷新令牌打上撤销时间戳，阻断旧凭证继续续期。
+/// 过滤条件限定 actor 类型为 agent 且撤销时间为空，因此重复执行不会覆盖首次撤销时间，天然幂等。
+/// 与密码更新同事务提交，保证不会出现新密码已生效而旧刷新令牌仍可用的窗口；不影响短期访问令牌，
+/// 那部分需由应用层在事务提交后另行清理 Redis 侧会话。
 pub(crate) async fn revoke_agent_admin_refresh_tokens_in_tx(
     tx: &mut Transaction<'_, MySql>,
     agent_admin_id: u64,
@@ -191,6 +202,7 @@ pub(crate) async fn revoke_agent_admin_refresh_tokens_in_tx(
 
 /// 为已认证代理管理员加载服务端权威子树范围，同时校验账号与全部祖先状态。
 /// 返回的路径用于后续 SQL 边界，未命中不接受客户端提供的根 ID 替代。
+/// 与身份档案查询共用同一套状态校验，但只取代理主键、根节点与物化路径三列，供子树查询直接绑定使用。
 pub(crate) async fn load_agent_access_scope_for_admin(
     pool: &Pool<MySql>,
     agent_admin_id: u64,
@@ -222,6 +234,7 @@ pub(crate) async fn load_agent_access_scope_for_admin(
 
 /// 按 scope 路径统计子树用户，并仅计数当前代理自有的启用邀请码。
 /// 查询只读且不加锁，子树范围只接受服务端已验证路径，SQL 失败不返回部分计数。
+/// 两项计数由两个独立子查询在同一条语句内完成，人数覆盖整棵子树，邀请码数只算本级且状态启用的。
 pub(crate) async fn load_agent_dashboard_counts(
     pool: &Pool<MySql>,
     scope: &AgentAccessScope,
@@ -249,6 +262,7 @@ pub(crate) async fn load_agent_dashboard_counts(
 
 /// 仅汇总当前代理在授权子树内的佣金，并按发放资产分组避免跨资产相加。
 /// 统计包含待结算、已结算与总额，查询只读且不修改佣金或钱包状态。
+/// 三项金额由条件求和在同一次分组中得出，没有任何佣金记录时返回空列表而不是一行零值。
 pub(crate) async fn load_agent_dashboard_asset_summaries(
     pool: &Pool<MySql>,
     scope: &AgentAccessScope,
@@ -284,6 +298,7 @@ pub(crate) async fn load_agent_dashboard_asset_summaries(
 
 /// 聚合授权代理子树的兑换订单数、状态数和原目标金额，无订单时返回零值记录。
 /// 本查询无行锁和写入副作用，路径必须来自已验证的代理 scope。
+/// 状态计数由条件求和得出因而是十进制类型，需由服务层转回整数；两项金额跨币种直接相加，仅供量级观察。
 pub(crate) async fn load_agent_convert_stats(
     pool: &Pool<MySql>,
     scope: &AgentAccessScope,
@@ -314,6 +329,7 @@ pub(crate) async fn load_agent_convert_stats(
 
 /// 按代理物化路径分页读取子树用户，同时返回直属邀请人与归属代理两维关系。
 /// 查询仅使用服务端 scope 和已限制分页，无锁、无写入，不包含父级或兄弟树。
+/// 同时返回账号状态与 KYC 等级，排序固定为归属代理层级在前、用户主键在后，保证翻页结果不重不漏。
 pub(crate) async fn list_agent_team_users(
     pool: &Pool<MySql>,
     scope: &AgentAccessScope,
@@ -346,6 +362,7 @@ pub(crate) async fn list_agent_team_users(
 
 /// 按子树路径与邀请深度读取团队树用户节点，保留直属邀请人和公司归属。
 /// 分页结果只读且无事务副作用，排序稳定为代理层级、邀请深度和用户 ID。
+/// 与团队用户查询相比额外返回邀请关系的物化路径，客户端据此还原多级邀请链而无需再次请求。
 pub(crate) async fn list_agent_team_tree_nodes(
     pool: &Pool<MySql>,
     scope: &AgentAccessScope,
@@ -379,6 +396,7 @@ pub(crate) async fn list_agent_team_tree_nodes(
 
 /// 列出当前 scope 真正后代代理，同时统计直属和整个子树用户数。
 /// 当前节点不在结果中，路径前缀带分隔符以避免文本前缀越权，查询无写入。
+/// 两项用户数由两个相关子查询逐行实时聚合而非读取冗余计数列，团队规模越大单次查询开销越高。
 pub(crate) async fn list_agent_sub_agents(
     pool: &Pool<MySql>,
     scope: &AgentAccessScope,
@@ -413,6 +431,8 @@ pub(crate) async fn list_agent_sub_agents(
 
 /// 仅读取当前代理拥有且业务用户仍属授权子树的佣金记录。
 /// 已结算记录左连对应钱包流水，缺失时保留空值；查询不补发佣金也不改状态。
+/// 佣金归属与业务用户归属两个条件同时生效，缺任一都可能把他人佣金或子树外用户的数据带出。
+/// 结果按佣金主键倒序分页，最新计提的返佣排在最前。
 pub(crate) async fn list_agent_commissions(
     pool: &Pool<MySql>,
     scope: &AgentAccessScope,
@@ -459,6 +479,7 @@ pub(crate) async fn list_agent_commissions(
 
 /// 按所有者类型和代理 ID 分页读取自有邀请码，不混入用户或子代理记录。
 /// 结果按主键稳定升序，查询不锁行、不修改邀请码状态或已用次数。
+/// 返回使用上限、已用次数与启用状态三项运营关注的字段，下级代理自建的邀请码不会混入本结果。
 pub(crate) async fn list_agent_invite_codes(
     pool: &Pool<MySql>,
     agent_id: u64,
@@ -482,6 +503,7 @@ pub(crate) async fn list_agent_invite_codes(
 
 /// 为指定代理插入新邀请码和可选使用上限，返回数据库生成主键。
 /// 唯一键或其他 SQL 失败直接上抛；本操作使用连接池单语句提交，不重试生成码。
+/// 使用上限为空即写入不限次数，状态与已用次数交由数据库默认值填充，因此需另行回读才能拿到完整快照。
 pub(crate) async fn insert_agent_invite_code(
     pool: &Pool<MySql>,
     write: AgentInviteCodeWrite,
@@ -501,7 +523,7 @@ pub(crate) async fn insert_agent_invite_code(
 
 /// 按主键、代理所有者和固定 owner 类型更新邀请码状态，防止跨代理修改。
 /// 返回值来自 MySQL 受影响行数；同值更新可能返回 `false`，不能区分记录缺失与数据库视为未变更。
-/// 本语句不修改使用次数或既有邀请关系。
+/// 本语句不修改使用次数或既有邀请关系，状态取值已由服务层收敛为启用或停用两种。
 pub(crate) async fn update_agent_invite_code_status(
     pool: &Pool<MySql>,
     agent_id: u64,
@@ -524,6 +546,7 @@ pub(crate) async fn update_agent_invite_code_status(
 
 /// 按主键与代理所有权回读邀请码，不属于当前代理的记录按未命中处理。
 /// 查询只读且无行锁，用于写入后返回权威快照，SQL 错误直接上抛。
+/// 所有权条件与主键同时参与匹配，因此跨代理读取会被当成记录不存在，而不是暴露出存在但无权访问。
 pub(crate) async fn load_agent_invite_code_by_id(
     pool: &Pool<MySql>,
     agent_id: u64,

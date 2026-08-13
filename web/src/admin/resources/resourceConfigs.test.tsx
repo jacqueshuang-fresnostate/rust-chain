@@ -567,7 +567,7 @@ describe('resourceConfigs create actions', () => {
     const confirmWithReason = async (reason: string) => {
       const reasonInputs = await screen.findAllByLabelText('操作原因');
       await user.type(reasonInputs.at(-1)!, reason);
-      const confirmButtons = screen.getAllByRole('button', { name: '确认' });
+      const confirmButtons = await screen.findAllByRole('button', { name: '确认' });
       await user.click(confirmButtons.at(-1)!);
     };
 
@@ -762,7 +762,7 @@ describe('resourceConfigs create actions', () => {
     const confirmWithReason = async (reason: string) => {
       const reasonInputs = await screen.findAllByLabelText('操作原因');
       await user.type(reasonInputs.at(-1)!, reason);
-      const confirmButtons = screen.getAllByRole('button', { name: '确认' });
+      const confirmButtons = await screen.findAllByRole('button', { name: '确认' });
       await user.click(confirmButtons.at(-1)!);
     };
     const newsContent = {
@@ -1089,8 +1089,8 @@ describe('resourceConfigs create actions', () => {
     expect(await screen.findByText('QRDELETE001')).toBeInTheDocument();
     expect(resourceConfigs.quickRechargeOrders.showJsonAction).toBe(false);
     await user.click(screen.getByRole('button', { name: '删除' }));
-    await user.type(screen.getByLabelText('操作原因'), 'delete quick recharge order');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'delete quick recharge order');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/quick-recharge/orders/QRDELETE001', {
@@ -1163,8 +1163,8 @@ describe('resourceConfigs create actions', () => {
     await user.type(within(dialog).getAllByLabelText('Memo / Tag')[1], 'memo-2');
     await user.type(within(dialog).getAllByLabelText('备注')[1], 'backup pool address');
     await user.click(within(dialog).getByRole('button', { name: '提交添加' }));
-    await user.type(screen.getByLabelText('操作原因'), 'create deposit address');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'create deposit address');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/deposit-address-pool/batch', expect.objectContaining({ method: 'POST' }));
@@ -1222,8 +1222,8 @@ describe('resourceConfigs create actions', () => {
     expect(within(dialog).getAllByLabelText('备注')[1]).toHaveValue('备用地址');
 
     await user.click(within(dialog).getByRole('button', { name: '提交添加' }));
-    await user.type(screen.getByLabelText('操作原因'), 'import deposit addresses');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'import deposit addresses');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/deposit-address-pool/batch', expect.objectContaining({ method: 'POST' }));
@@ -1292,8 +1292,8 @@ describe('resourceConfigs create actions', () => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/deposit-address-pool/101');
     });
     await user.click(screen.getByRole('button', { name: '回收' }));
-    await user.type(screen.getByLabelText('操作原因'), 'reclaim address');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'reclaim address');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/deposit-address-pool/101/reclaim', {
@@ -1408,8 +1408,8 @@ describe('resourceConfigs create actions', () => {
     expect(submitAssetEdit).toHaveClass('semi-button-primary', 'semi-button-solid');
     expect(submitAssetEdit).not.toHaveClass('semi-button-danger');
     await user.click(submitAssetEdit);
-    await user.type(screen.getByLabelText('操作原因'), 'update asset config');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'update asset config');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/assets/11', expect.objectContaining({ method: 'PATCH' }));
@@ -1434,8 +1434,8 @@ describe('resourceConfigs create actions', () => {
     expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/assets')).toHaveLength(3);
 
     await user.click(screen.getByRole('button', { name: '删除' }));
-    await user.type(screen.getByLabelText('操作原因'), 'delete disabled asset');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'delete disabled asset');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/assets/12', {
@@ -1473,8 +1473,8 @@ describe('resourceConfigs create actions', () => {
     await user.type(within(dialog).getByLabelText('资产精度'), '8');
     await selectSemiOption(user, dialog, '资产类型', '稳定币');
     await user.click(within(dialog).getByRole('button', { name: '提交添加资产' }));
-    await user.type(screen.getByLabelText('操作原因'), 'add asset');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'add asset');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/assets', expect.objectContaining({ method: 'POST' }));
@@ -1516,8 +1516,8 @@ describe('resourceConfigs create actions', () => {
     await user.type(within(dialog).getByLabelText('数量精度'), '6');
     await user.type(within(dialog).getByLabelText('最小下单额'), '10.000000000000000000');
     await user.click(within(dialog).getByRole('button', { name: '提交添加交易对' }));
-    await user.type(screen.getByLabelText('操作原因'), 'add spot pair');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'add spot pair');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith(
@@ -1631,8 +1631,8 @@ describe('resourceConfigs create actions', () => {
     await user.type(within(dialog).getByLabelText('维持保证金率'), '0.1');
     await user.type(within(dialog).getByLabelText('小时利率'), '0.0001');
     await user.click(within(dialog).getByRole('button', { name: '提交添加杠杆交易对' }));
-    await user.type(screen.getByLabelText('操作原因'), 'add margin pair');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'add margin pair');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/margin/products', expect.objectContaining({ method: 'POST' }));
@@ -1706,8 +1706,8 @@ describe('resourceConfigs create actions', () => {
     await user.type(maxStakeInputs[1], '2000');
     expect(within(dialog).getByRole('button', { name: '提交添加秒合约交易对' })).not.toBeDisabled();
     await user.click(within(dialog).getByRole('button', { name: '提交添加秒合约交易对' }));
-    await user.type(screen.getByLabelText('操作原因'), 'add seconds pair');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'add seconds pair');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock.mock.calls.filter(([path]) => path === '/admin/api/v1/seconds-contracts/products')).toHaveLength(1);
@@ -1739,7 +1739,7 @@ describe('resourceConfigs create actions', () => {
     const confirmWithReason = async (reason: string) => {
       const reasonInputs = await screen.findAllByLabelText('操作原因');
       await user.type(reasonInputs.at(-1)!, reason);
-      const confirmButtons = screen.getAllByRole('button', { name: '确认' });
+      const confirmButtons = await screen.findAllByRole('button', { name: '确认' });
       await user.click(confirmButtons.at(-1)!);
     };
 
@@ -2038,7 +2038,7 @@ describe('resourceConfigs create actions', () => {
     const confirmWithReason = async (reason: string) => {
       const reasonInputs = await screen.findAllByLabelText('操作原因');
       await user.type(reasonInputs.at(-1)!, reason);
-      const confirmButtons = screen.getAllByRole('button', { name: '确认' });
+      const confirmButtons = await screen.findAllByRole('button', { name: '确认' });
       await user.click(confirmButtons.at(-1)!);
     };
 
@@ -2106,8 +2106,8 @@ describe('resourceConfigs create actions', () => {
     semiInputByLabel(dialog, '代理ID');
     await user.type(within(dialog).getByLabelText('代理ID'), '42');
     await user.click(within(dialog).getByRole('button', { name: '提交分配代理' }));
-    await user.type(screen.getByLabelText('操作原因'), 'assign user agent');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'assign user agent');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/users/123/agent', {
@@ -2133,8 +2133,8 @@ describe('resourceConfigs create actions', () => {
 
     expect(await screen.findByText('user@example.com')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '重置2FA' }));
-    await user.type(screen.getByLabelText('操作原因'), 'reset user 2fa');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'reset user 2fa');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/users/123/2fa/reset', {
@@ -2224,8 +2224,8 @@ describe('resourceConfigs create actions', () => {
     await user.type(within(createDialog).getByLabelText('代理ID'), '42');
     await user.type(within(createDialog).getByLabelText('佣金比例'), '0.05');
     await user.click(within(createDialog).getByRole('button', { name: '提交添加佣金规则' }));
-    await user.type(screen.getByLabelText('操作原因'), 'create commission rule');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'create commission rule');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/agent-commission-rules', expect.objectContaining({ method: 'POST' }));
     });
@@ -2252,8 +2252,8 @@ describe('resourceConfigs create actions', () => {
     await user.type(within(editDialog).getByLabelText('佣金比例'), '0.08');
     await selectSemiOption(user, editDialog, '状态', '禁用');
     await user.click(within(editDialog).getByRole('button', { name: '提交修改' }));
-    await user.type(screen.getByLabelText('操作原因'), 'update commission rule');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'update commission rule');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/agent-commission-rules/77', expect.objectContaining({ method: 'PATCH' }));
     });
@@ -2305,8 +2305,8 @@ describe('resourceConfigs create actions', () => {
       expect(within(createDialog).getByRole('button', { name: '提交添加佣金规则' })).toBeEnabled();
     }
     await user.click(within(createDialog).getByRole('button', { name: '提交添加佣金规则' }));
-    await user.type(screen.getByLabelText('操作原因'), 'create seconds contract rule');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'create seconds contract rule');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/agent-commission-rules', expect.objectContaining({ method: 'POST' }));
     });
@@ -2330,8 +2330,8 @@ describe('resourceConfigs create actions', () => {
     await user.type(within(editDialog).getByLabelText('佣金比例'), '0.09');
     expect(within(editDialog).getByRole('button', { name: '提交修改' })).toBeEnabled();
     await user.click(within(editDialog).getByRole('button', { name: '提交修改' }));
-    await user.type(screen.getByLabelText('操作原因'), 'update prediction rule');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'update prediction rule');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/agent-commission-rules/78', expect.objectContaining({ method: 'PATCH' }));
     });
@@ -2389,8 +2389,8 @@ describe('resourceConfigs create actions', () => {
     });
 
     await user.click(screen.getByRole('button', { name: '结算' }));
-    await user.type(screen.getByLabelText('操作原因'), 'settle commission');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'settle commission');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/agent-commissions/88/status', {
         method: 'PATCH',
@@ -2399,8 +2399,8 @@ describe('resourceConfigs create actions', () => {
     });
 
     await user.click(screen.getByRole('button', { name: '拒绝' }));
-    await user.type(screen.getByLabelText('操作原因'), 'reject commission');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'reject commission');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/agent-commissions/88/status', {
         method: 'PATCH',
@@ -2517,8 +2517,8 @@ describe('resourceConfigs create actions', () => {
 
     expect(await screen.findByText('BTC-USDT', { selector: 'span' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '禁用' }));
-    await user.type(screen.getByLabelText('操作原因'), 'disable risky pair');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'disable risky pair');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/market-pairs/1/status', {
@@ -2722,8 +2722,8 @@ describe('resourceConfigs create actions', () => {
     await user.type(within(dialog).getByLabelText('最小下单额'), '25.000000000000000000');
     await selectSemiOption(user, dialog, '市场类型', '策略行情');
     await user.click(within(dialog).getByRole('button', { name: '提交修改' }));
-    await user.type(screen.getByLabelText('操作原因'), 'adjust pair config');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'adjust pair config');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/market-pairs/1', expect.objectContaining({ method: 'PATCH' }));
@@ -2825,8 +2825,8 @@ describe('resourceConfigs create actions', () => {
     await expectFormattedDetail('spot-order-detail', /"detail": "spot-order-detail"/);
 
     await user.click(screen.getByRole('button', { name: '管理员撤单' }));
-    await user.type(screen.getByLabelText('操作原因'), 'risk cancel');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'risk cancel');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/spot/orders/7/cancel', {
@@ -2914,8 +2914,8 @@ describe('resourceConfigs create actions', () => {
     await user.clear(within(editSheet).getByLabelText('小时利率'));
     await user.type(within(editSheet).getByLabelText('小时利率'), '0.0002');
     await user.click(within(editSheet).getByRole('button', { name: '提交修改' }));
-    await user.type(screen.getByLabelText('操作原因'), 'update margin product');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'update margin product');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/margin/products/14', expect.objectContaining({ method: 'PATCH' }));
@@ -2937,8 +2937,8 @@ describe('resourceConfigs create actions', () => {
     });
 
     await user.click(screen.getByRole('button', { name: '禁用' }));
-    await user.type(screen.getByLabelText('操作原因'), 'disable margin product');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'disable margin product');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/margin/products/14/status', {
@@ -3137,8 +3137,8 @@ describe('resourceConfigs create actions', () => {
     await user.type(editMinStakeInputs[0], '30');
     await user.clear(editMaxStakeInputs[0]);
     await user.click(within(editDialog).getByRole('button', { name: '提交修改' }));
-    await user.type(screen.getByLabelText('操作原因'), 'edit seconds product');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'edit seconds product');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/seconds-contracts/products/41', expect.objectContaining({ method: 'PATCH' }));
@@ -3167,8 +3167,8 @@ describe('resourceConfigs create actions', () => {
     });
 
     await user.click(screen.getByRole('button', { name: '启用' }));
-    await user.type(screen.getByLabelText('操作原因'), 'enable seconds product');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'enable seconds product');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/seconds-contracts/products/41/status', {
@@ -3179,8 +3179,8 @@ describe('resourceConfigs create actions', () => {
     });
 
     await user.click(screen.getByRole('button', { name: '删除' }));
-    await user.type(screen.getByLabelText('操作原因'), 'delete disabled seconds product');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'delete disabled seconds product');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/seconds-contracts/products/41', {
@@ -3242,8 +3242,8 @@ describe('resourceConfigs create actions', () => {
     await expectFormattedDetail('seconds-order-detail', /"detail": "seconds-order-detail"/);
 
     await user.click(screen.getByRole('button', { name: '结算赢' }));
-    await user.type(screen.getByLabelText('操作原因'), 'manual settle win');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'manual settle win');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/seconds-contracts/orders/51/settle', {
@@ -3360,8 +3360,8 @@ describe('resourceConfigs create actions', () => {
       expect(submitCategoryButton).not.toBeDisabled();
     });
     await user.click(submitCategoryButton);
-    await user.type(screen.getByLabelText('操作原因'), 'add earn category');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'add earn category');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/categories', expect.objectContaining({ method: 'POST' }));
@@ -3397,8 +3397,8 @@ describe('resourceConfigs create actions', () => {
     await user.clear(within(editDialog).getAllByLabelText('栏目名称')[0]);
     await user.type(within(editDialog).getAllByLabelText('栏目名称')[0], '稳健精选');
     await user.click(within(editDialog).getByRole('button', { name: '提交修改' }));
-    await user.type(screen.getByLabelText('操作原因'), 'update earn category');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'update earn category');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/categories/501', expect.objectContaining({ method: 'PATCH' }));
@@ -3413,8 +3413,8 @@ describe('resourceConfigs create actions', () => {
     expect(updateBody.name_json.items[0]).toMatchObject({ locale: 'zh-CN', country: 'CN', title: '稳健精选' });
 
     await user.click(screen.getByRole('button', { name: '禁用' }));
-    await user.type(screen.getByLabelText('操作原因'), 'disable earn category');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'disable earn category');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/categories/501/status', {
@@ -3614,8 +3614,8 @@ describe('resourceConfigs create actions', () => {
       expect(submitEarnProductButton).not.toBeDisabled();
     });
     await user.click(submitEarnProductButton);
-    await user.type(screen.getByLabelText('操作原因'), 'add earn product');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'add earn product');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/products', expect.objectContaining({ method: 'POST' }));
@@ -3678,8 +3678,8 @@ describe('resourceConfigs create actions', () => {
     await user.clear(within(editDialog).getByLabelText('介绍标题'));
     await user.type(within(editDialog).getByLabelText('介绍标题'), 'USDT Earn Updated');
     await user.click(within(editDialog).getByRole('button', { name: '提交修改' }));
-    await user.type(screen.getByLabelText('操作原因'), 'update earn product');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'update earn product');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/products/61', expect.objectContaining({ method: 'PATCH' }));
@@ -3709,8 +3709,8 @@ describe('resourceConfigs create actions', () => {
     expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/earn/products')).toHaveLength(initialEarnProductLoadCount + 2);
 
     await user.click(screen.getByRole('button', { name: '禁用' }));
-    await user.type(screen.getByLabelText('操作原因'), 'disable earn product');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'disable earn product');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/earn/products/61/status', {
@@ -3815,8 +3815,8 @@ describe('resourceConfigs create actions', () => {
     await expectFormattedDetail('convert-pair-detail', /"detail": "convert-pair-detail"/);
 
     await user.click(screen.getByRole('button', { name: '禁用' }));
-    await user.type(screen.getByLabelText('操作原因'), 'disable convert pair');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'disable convert pair');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/convert/pairs/71', {
@@ -3827,8 +3827,8 @@ describe('resourceConfigs create actions', () => {
     });
 
     await user.click(screen.getByRole('button', { name: '删除' }));
-    await user.type(screen.getByLabelText('操作原因'), 'delete convert pair');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'delete convert pair');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/convert/pairs/71', {
@@ -3844,7 +3844,7 @@ describe('resourceConfigs create actions', () => {
     const confirmWithReason = async (reason: string) => {
       const reasonInputs = await screen.findAllByLabelText('操作原因');
       await user.type(reasonInputs.at(-1)!, reason);
-      const confirmButtons = screen.getAllByRole('button', { name: '确认' });
+      const confirmButtons = await screen.findAllByRole('button', { name: '确认' });
       await user.click(confirmButtons.at(-1)!);
     };
 
@@ -4059,8 +4059,8 @@ describe('resourceConfigs create actions', () => {
     await user.clear(within(editDialog).getByLabelText('最大成交量'));
     await user.type(within(editDialog).getByLabelText('最大成交量'), '24.000000000000000000');
     await user.click(within(editDialog).getByRole('button', { name: '提交修改' }));
-    await user.type(screen.getByLabelText('操作原因'), 'update strategy config');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'update strategy config');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/market-strategies/91', expect.objectContaining({ method: 'PATCH' }));
@@ -4344,8 +4344,8 @@ describe('wallet review resources', () => {
 
     const pendingRow = screen.getByText('0xabc11').closest('tr') as HTMLElement;
     await user.click(within(pendingRow).getByRole('button', { name: '通过' }));
-    await user.type(screen.getByLabelText('操作原因'), 'approve withdrawal');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'approve withdrawal');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/wallet/withdrawals/11/approve', {
         method: 'POST',
@@ -4408,8 +4408,8 @@ describe('wallet review resources', () => {
 
     const creditedRow = screen.getByText('0xdep21').closest('tr') as HTMLElement;
     await user.click(within(creditedRow).getByRole('button', { name: '冲正' }));
-    await user.type(screen.getByLabelText('操作原因'), 'chain reorg');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'chain reorg');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/wallet/deposits/21/reverse', {

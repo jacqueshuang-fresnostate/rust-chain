@@ -2,6 +2,8 @@
 //!
 //! MySQL 保存已上架交易对、用户自选和成交记录等权威业务数据，Mongo 保存历史 K 线；
 //! Redis 查询仅返回 ingestion 已写入的实时快照。本模块不做 provider 协议解析或业务编排。
+//! 模块内所有按交易对过滤的 SQL 都在库内先去掉 `-`、`/`、`_` 再转大写后比较，
+//! 与 `ValidatedMarketSymbol` 的规范化口径保持一致，因此后台配置带分隔符也能命中。
 
 use super::cache::{market_depth_redis_key, market_ticker_redis_key};
 use crate::{
@@ -24,12 +26,15 @@ use redis::AsyncCommands;
 use sqlx::{MySql, Pool};
 
 /// 为已验证交易对生成稳定 Mongo K 线集合名，恢复与实时 ingestion 必须使用同一命名入口。
+/// 集合名固定为 `market_klines_` 拼接规范化后的大写交易对，因此每个市场独占一个集合。
+/// 交易对已在类型层完成规范化，这里不再裁剪或转换大小写；改动命名规则会让既有历史蜡烛失联。
 pub fn kline_collection_name(symbol: &ValidatedMarketSymbol) -> String {
     format!("market_klines_{}", symbol.as_str())
 }
 
 /// 从 MySQL 返回全部 active 交易对及 base/quote 资产 Logo、精度和最小下单额，按 symbol 升序排列。
 /// 查询失败原样返回数据库错误，不把故障伪装为空市场列表。
+/// 资产表使用内连接，因此基础或计价资产缺失的交易对不会出现在结果中；最小下单额转成字符串输出以保留精度。
 pub(crate) async fn list_active_markets(pool: &Pool<MySql>) -> AppResult<Vec<MarketResponse>> {
     let markets = sqlx::query_as::<_, MarketResponse>(
         r#"SELECT pairs.id,
@@ -58,6 +63,7 @@ pub(crate) async fn list_active_markets(pool: &Pool<MySql>) -> AppResult<Vec<Mar
 
 /// 查询用户仍处于 active 状态的自选交易对，按收藏创建时间和记录 ID 稳定排序。
 /// 已下架交易对不会出现在结果中；查询只读且不修复历史收藏记录。
+/// 返回的交易对已在 SQL 内去掉分隔符并转为大写，与公开行情接口的写法一致，前端无需再做二次转换。
 pub(crate) async fn list_user_market_favorites(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -86,6 +92,7 @@ pub(crate) async fn list_user_market_favorites(
 
 /// 将 active 现货交易对加入用户自选，并返回后台资产 Logo 等权威展示字段。
 /// `(user_id, trading_pair_id)` 唯一键通过 upsert 保证重复收藏幂等；未上架 symbol 在写入前返回校验错误。
+/// 先查出 active 交易对再插入，因此写库的始终是交易对主键而不是用户传来的文本，重复调用返回同一条详情。
 pub(crate) async fn add_user_market_favorite(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -110,6 +117,7 @@ pub(crate) async fn add_user_market_favorite(
 
 /// 按用户和规范化交易对删除自选记录；不存在时仍成功，因此重试不会产生冲突。
 /// 只删除当前用户匹配记录，不修改交易对配置或其他用户收藏。
+/// 删除经内连接交易对表并按规范化 symbol 定位，因此指向已被删除交易对的历史收藏无法由本入口清理。
 pub(crate) async fn remove_user_market_favorite(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -130,6 +138,9 @@ pub(crate) async fn remove_user_market_favorite(
     Ok(())
 }
 
+/// 按规范化交易对取出唯一一条 active 交易对，并组装自选响应所需的市场 ID、Logo 与基础/计价资产。
+/// SQL 内先对配置中的 symbol 去分隔符并转大写再比较，命中多条时用 LIMIT 1 取首条而非报错。
+/// 交易对不存在或已下架返回 `None`，由调用方转成校验错误；本查询只读，不写入任何自选记录。
 async fn load_active_market_favorite(
     pool: &Pool<MySql>,
     symbol: &str,
@@ -156,6 +167,8 @@ async fn load_active_market_favorite(
 }
 
 /// 判断规范化交易对是否对应至少一条 active MySQL 交易对记录，供自选与公共行情入口做上架校验。
+/// 以计数是否大于零判断而不取行，因此重复配置同一交易对也只得到一个布尔结果。
+/// 查询失败按数据库错误上抛而不会被当成未上架；结果不区分交易对不存在与已下架两种情况。
 pub(crate) async fn market_symbol_is_listed(pool: &Pool<MySql>, symbol: &str) -> AppResult<bool> {
     let listed = sqlx::query_as::<_, (i64,)>(
         r#"SELECT COUNT(*)
@@ -203,6 +216,7 @@ pub(crate) async fn load_cached_depth(
 
 /// 查询指定交易对最近的现货成交，按创建时间和成交 ID 倒序并使用调用方已限制的条数。
 /// 数据来自平台成交表而非 provider 逐笔流；查询失败不返回伪造行情。
+/// 条数已由应用层夹紧后传入，这里不再二次限制；倒序同时按成交时间与主键，保证同一毫秒的成交顺序稳定。
 pub(crate) async fn list_recent_trades(
     pool: &Pool<MySql>,
     symbol: &str,
@@ -230,6 +244,7 @@ pub(crate) async fn list_recent_trades(
 
 /// 从交易对独立 Mongo 集合查询指定周期与可选时间窗的历史 K 线，按开盘时间升序返回。
 /// `KlineQuery` 已限制周期和条数；Mongo 游标或文档解码失败立即返回，不跳过损坏蜡烛。
+/// 集合名由规范化交易对推导，因此每个市场只查自己的集合；响应中的交易对由调用方补齐而非取自文档。
 pub(crate) async fn list_klines(
     database: Database,
     symbol: &ValidatedMarketSymbol,
@@ -255,6 +270,9 @@ pub(crate) async fn list_klines(
     Ok(rows)
 }
 
+/// 依据可选起止时间构造 Mongo `open_time` 过滤条件，两端都按闭区间生成 `$gte` 与 `$lte`。
+/// 起止都缺省时返回空文档，调用方据此完全省略时间条件，而不是写入一个空的比较对象。
+/// 时间统一按毫秒转成 BSON 时间；本函数不校验起点早于终点，倒置区间只会自然查不到蜡烛。
 fn kline_time_filter(start: Option<DateTime<Utc>>, end: Option<DateTime<Utc>>) -> Document {
     let mut filter = Document::new();
     if let Some(start) = start {

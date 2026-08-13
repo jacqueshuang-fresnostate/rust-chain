@@ -1,6 +1,9 @@
 //! market bounded context application layer.
 //!
 //! 应用层：编排用例、事务边界和跨仓储协作。
+//! 行情用例遵循同一条链路：先规范化交易对，再确认已上架，最后按数据种类分派到 MySQL、Redis 或 Mongo。
+//! 最新价与盘口只读行情摄取写入的 Redis 快照，历史 K 线只读 Mongo，成交与用户自选只读写 MySQL。
+//! 本层不发布 WebSocket 事件，也不做跨存储事务；依赖缺失时按内部错误失败，绝不伪造价格。
 
 use crate::{
     error::{AppError, AppResult},
@@ -34,6 +37,8 @@ pub(crate) async fn list_markets(mysql: Option<Pool<MySql>>) -> AppResult<Market
 }
 
 /// 按认证用户读取仍启用的收藏交易对，禁止暴露其他用户或下架记录。
+/// 未配置 MySQL 时直接按内部错误失败，自选没有兜底目录可用；结果按收藏创建时间稳定排序。
+/// 纯只读操作，不会清理指向已下架交易对的历史收藏，也不读取任何行情缓存。
 pub(crate) async fn list_user_market_favorites(
     mysql: Option<Pool<MySql>>,
     user_id: u64,
@@ -100,6 +105,8 @@ pub(crate) async fn get_market_depth(
 }
 
 /// 校验交易对已上架后从 MySQL 读取现货成交，按成交时间与主键倒序返回 1～100 条。
+/// 上架校验优先查 `trading_pairs`，MySQL 缺席时退回内置兜底目录，但真正取成交仍要求连接池存在，否则返回内部错误。
+/// 条数缺省 50 并夹紧到 1 至 100；返回的是本平台撮合成交，不含供应商逐笔流，也不读取行情缓存。
 pub(crate) async fn list_market_trades(
     mysql: Option<Pool<MySql>>,
     raw_symbol: &str,
@@ -119,6 +126,7 @@ pub(crate) async fn list_market_trades(
 
 /// 校验交易对及周期后，从该交易对的 Mongo 集合按开盘时间升序读取最多 100 根 K 线。
 /// `start`/`end` 使用闭区间过滤；Mongo 未配置、查询或反序列化失败时返回错误，不合成蜡烛。
+/// 条数缺省 100 并夹紧到 1 至 100；周期不在支持白名单内返回校验错误，起止时间可同时省略表示不限范围。
 pub(crate) async fn list_market_klines(
     mysql: Option<Pool<MySql>>,
     mongo: Option<Database>,
@@ -136,6 +144,9 @@ pub(crate) async fn list_market_klines(
     infrastructure::list_klines(database, &symbol, query).await
 }
 
+/// 在读取任何行情之前确认交易对已上架：有 MySQL 时查 active 交易对，否则退回内置兜底目录判断。
+/// 未命中一律返回 `AppError::Validation`，因此未知或已下架交易对不会继续走到 Redis、Mongo 查询。
+/// 数据库查询错误按原错误上抛，不会被误判成“未上架”；本函数只读，也不缓存判定结果。
 async fn ensure_listed_market_symbol(pool: Option<&Pool<MySql>>, symbol: &str) -> AppResult<()> {
     let listed = if let Some(pool) = pool {
         infrastructure::market_symbol_is_listed(pool, symbol).await?
@@ -152,6 +163,8 @@ async fn ensure_listed_market_symbol(pool: Option<&Pool<MySql>>, symbol: &str) -
     Ok(())
 }
 
+/// 取出用例必需的 MySQL 连接池，缺失时返回内部错误而不是静默降级到兜底数据。
+/// 供自选读写这类必须落库的用例使用；公开只读列表另有兜底路径，不应调用本函数。
 fn required_mysql_pool(mysql: Option<Pool<MySql>>) -> AppResult<Pool<MySql>> {
     mysql.ok_or_else(|| {
         AppError::Internal("mysql pool is not configured for market routes".to_owned())

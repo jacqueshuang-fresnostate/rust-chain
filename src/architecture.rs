@@ -1,10 +1,7 @@
-//! Backend DDD layer contracts.
-//!
-//! The backend is moving toward a DDD-style layout per bounded context:
-//! domain, repository, service, application, infrastructure, presentation,
-//! and thin routes.
-//! These traits document responsibilities without forcing a framework. They
-//! are implemented only by real business types, never by marker-only types.
+//! 后端分层契约：用一组空 trait 把领域驱动设计的七个层次固定下来，作为各限界上下文共同遵守的目录与职责约定。
+//! 每个上下文都按领域、仓储、服务、应用、基础设施、表现和薄路由展开，本文件只声明各层边界，不绑定任何具体框架。
+//! 这些 trait 没有方法，也不产生运行时开销，只允许由真实业务类型实现，禁止为了标记而新建空类型来实现它们。
+//! 判断代码该放哪一层时以此处描述为准，尤其要守住领域层不依赖传输与存储、表现层不承载业务决策这两条边界。
 
 /// 领域层：保存业务实体、值对象和纯规则。
 ///

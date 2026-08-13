@@ -1,7 +1,15 @@
 //! seconds_contract bounded context application layer.
 //!
-//! 应用层：编排用例、事务边界和跨仓储协作。
-//! 当前文件先作为 DDD 迁移锚点，后续把对应职责的业务逻辑逐步迁入。
+//! 应用层：秒合约全部用例的事务边界所在，路由层只做鉴权与参数搬运，真正的编排都收敛在本文件。
+//! 用例分两类。管理类用例（产品增删改查、启停、人工结算）统一按「锁定旧快照、校验、写入、
+//! 写 before/after 审计、提交」的顺序编排，保证配置或资金变更与审计留痕原子生效。
+//! 交易类用例中，`open_order` 先做无事务的幂等只读探测，命中即回放原单；未命中才开启事务，
+//! 按锁产品规则、插订单占用幂等键、锁钱包扣本金、写流水、记代理佣金的固定顺序推进，
+//! 幂等键的占位刻意排在钱包扣款之前，使并发同键请求最多只有一路能进入扣款；
+//! `settle_order` 则按锁订单、读资产精度、按需锁钱包入账、置终态、写审计的顺序推进。
+//! 事件发布一律不在事务内进行：`open_order` 与 `settle_order` 各自返回一个是否为首次执行的布尔量，
+//! 由 `*_with_events` 包装层在提交成功之后才广播，重放与失败路径都不产生任何外部副作用。
+//! 秒合约不使用独立余额账户，本金扣减与派奖入账都直接作用于共享现货钱包的可用余额。
 
 use super::{
     infrastructure,
@@ -44,14 +52,18 @@ use chrono::Utc;
 use redis::aio::ConnectionManager;
 use sqlx::{MySql, Pool};
 
-/// 统一从应用状态中获取数据库连接池。
+/// 从应用状态取出 MySQL 连接池的克隆句柄，供只读路由直接使用。
+/// 连接池未配置时返回 `AppError::Internal` 而非校验错误，因为那属于部署配置缺失而不是请求问题。
+/// 克隆的是内部共享句柄，不会新建连接，成本可忽略。
 pub(crate) fn mysql_pool(state: &AppState) -> AppResult<Pool<MySql>> {
     state.mysql.clone().ok_or_else(|| {
         AppError::Internal("mysql pool is not configured for seconds contract routes".to_owned())
     })
 }
 
-/// 只返回 active 秒合约产品及周期，供公开目录选择真实可交易标的。
+/// 组装面向用户的秒合约产品目录，状态在用例内硬编码为 `active`，客户端无法通过参数放宽过滤。
+/// 底层查询会连带要求交易对与相关资产同为启用状态，因此返回的都是当下真实可下单的标的。
+/// 只读不加锁，返回的赔率与限额仅供展示，实际下单时会在事务内重新锁定核对。
 pub(crate) async fn list_active_products(
     pool: &Pool<MySql>,
     limit: u32,
@@ -60,7 +72,9 @@ pub(crate) async fn list_active_products(
     Ok(SecondsContractProductsResponse { products })
 }
 
-/// 返回后台秒合约产品、周期与一致总数，读取不锁定或更新配置。
+/// 组装后台产品分页列表，状态参数固定传 `None`，因此结果包含启用与已禁用的全部产品。
+/// 条数与偏移分别经 `route_limit` 与 `route_offset` 归一，防止超大分页拖垮查询。
+/// 返回的总数与行集来自同一组过滤条件，读取过程不加锁也不改动任何配置。
 pub(crate) async fn list_admin_products(
     pool: &Pool<MySql>,
     query: AdminProductsQuery,
@@ -75,7 +89,9 @@ pub(crate) async fn list_admin_products(
     Ok(AdminSecondsContractProductsResponse { products, total })
 }
 
-/// 读取指定秒合约产品及周期，记录缺失返回 NotFound。
+/// 读取后台单个产品详情，含全部周期档位，供管理页展示与编辑表单回填。
+/// 不限定产品状态，已禁用产品同样可查；记录缺失时透传底层的 `AppError::NotFound`。
+/// 走连接池只读查询，不开启事务也不加行锁。
 pub(crate) async fn get_admin_product(
     pool: &Pool<MySql>,
     product_id: u64,
@@ -84,7 +100,12 @@ pub(crate) async fn get_admin_product(
 }
 
 /// 校验交易对、投注资产、周期、赔率、限额、状态和原因后，在同一管理事务写产品、周期及创建审计。
-/// 任一步失败回滚全部配置；该用例不创建订单或移动用户资金。
+/// 所有纯参数校验都排在开启事务之前完成，非法请求连数据库连接都不会占用。
+/// 未显式给出状态时默认按 `active` 建产品，即创建后立即可下单；周期集合的第一条会被写进产品主记录，
+/// 作为不带周期参数的旧版客户端的默认档位。
+/// 事务内按交易对存在性、资产存在性、插产品、插周期、回读快照、写审计的顺序推进，
+/// 任一步失败回滚全部配置，不会留下缺周期的孤立产品或无审计的配置。
+/// 该用例不创建订单也不移动任何用户资金。
 pub(crate) async fn create_product(
     pool: Option<&Pool<MySql>>,
     admin_id: u64,
@@ -130,7 +151,9 @@ pub(crate) async fn create_product(
 }
 
 /// 事务内先锁产品旧快照，再校验交易对/资产并原子替换主记录、完整周期集合和 before/after 审计。
-/// 更新失败保留原配置，不影响既有订单已快照的周期、赔率和限额。
+/// 与创建不同，这里的状态是必填项，且周期集合按整体覆盖处理：请求中未出现的旧周期会被删除。
+/// 先加锁再读 before 快照，使审计的前后镜像必定对应同一次变更，不会被并发管理操作插入其他改动。
+/// 更新失败保留原配置；已开仓订单在下单时已固化自己的周期、赔率和限额，因此改配置不影响存量订单结算。
 pub(crate) async fn update_product(
     pool: Option<&Pool<MySql>>,
     admin_id: u64,
@@ -177,7 +200,10 @@ pub(crate) async fn update_product(
     Ok(after)
 }
 
-/// 锁定产品后原子更新 active/disabled 状态并写 before/after 管理审计；不结算或修改既有订单。
+/// 锁定产品后原子更新 active/disabled 状态并写 before/after 管理审计，供运营快速上下架。
+/// 只改状态字段，交易对、质押资产、周期集合和赔率一概保持原样，因此无需回填完整配置。
+/// 下架仅阻止新订单开仓，既有持仓订单仍按各自快照到期结算；本用例不结算、不派奖、不动任何钱包。
+/// 状态与原因校验在开事务前完成，写入失败整体回滚，产品状态保持变更前取值。
 pub(crate) async fn update_product_status(
     pool: Option<&Pool<MySql>>,
     admin_id: u64,
@@ -207,7 +233,11 @@ pub(crate) async fn update_product_status(
     Ok(after)
 }
 
-/// 仅允许物理删除已禁用且从未产生订单的产品；产品锁、约束检查、删除和后台审计同事务提交。
+/// 物理删除秒合约产品，成功时不返回实体，前置条件是产品已禁用且从未产生过任何订单。
+/// 两道前置检查都在持有产品行锁之后进行：状态非 `disabled` 返回校验错误，提示必须先下架；
+/// 存在历史订单同样拒绝，保护订单外键与资金对账的可追溯性，此类产品只能长期保持禁用。
+/// 产品锁、约束检查、删除与仅含 before 镜像的审计在同一事务提交，任一步失败产品原样保留。
+/// 本用例不处理订单，也不退还任何资金。
 pub(crate) async fn delete_product(
     pool: Option<&Pool<MySql>>,
     admin_id: u64,
@@ -387,6 +417,8 @@ pub(crate) async fn open_order(
 }
 
 /// 执行幂等开仓，并只在新订单资金事务提交后发布用户私有开仓事件；重放和失败均不广播。
+/// 事件发布刻意放在 `open_order` 返回之后，此时资金事务已提交，不存在推送了事件却回滚扣款的窗口。
+/// 是否首次开仓由 `open_order` 返回的布尔量决定，包装层不重新判断，避免两处口径不一致。
 pub(crate) async fn open_order_with_events(
     pool: Option<&Pool<MySql>>,
     redis: Option<&ConnectionManager>,
@@ -490,6 +522,8 @@ pub(crate) async fn settle_order(
 }
 
 /// 执行人工结算，并只在首次结算资金事务提交后发布用户私有结算事件；同结果重放不重复广播。
+/// 事件的收件人取自订单归属用户而非发起结算的管理员，因此后台代操作也能正确推给持仓用户。
+/// 派奖入账已在 `settle_order` 的事务中完成，这里只做投递，广播失败不会回滚已入账资金。
 pub(crate) async fn settle_order_with_events(
     pool: Option<&Pool<MySql>>,
     admin_id: u64,
@@ -508,7 +542,9 @@ pub(crate) async fn settle_order_with_events(
     Ok(response)
 }
 
-/// 按认证用户读取秒合约订单，绝不通过订单标识跨用户返回记录。
+/// 按认证用户读取秒合约订单历史，用户编号来自令牌解析，绝不通过订单标识跨用户返回记录。
+/// 返回结果同时包含持仓中与已结算订单，按创建时间倒序，条数由调用方归一后传入。
+/// 纯读取，不触发到期结算，也不改动任何订单状态。
 pub(crate) async fn list_user_orders(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -518,7 +554,10 @@ pub(crate) async fn list_user_orders(
     Ok(SecondsContractOrdersResponse { orders })
 }
 
-/// 按后台用户、产品和状态筛选订单及总数，查询不触发自动结算。
+/// 组装后台订单分页查询条件并返回订单列表与匹配总数，供客服核单与风控排查。
+/// 邮箱与状态经 `optional_string` 裁剪，空白串会降级为不筛选而不是当作空值精确匹配；
+/// 用户编号为可选数值，三个筛选项同时给出时按 AND 叠加。
+/// 条数与偏移经统一归一后传入，查询过程不加锁，也不触发任何自动结算。
 pub(crate) async fn list_admin_orders(
     pool: &Pool<MySql>,
     query: AdminOrdersQuery,
@@ -534,7 +573,9 @@ pub(crate) async fn list_admin_orders(
     Ok(AdminSecondsContractOrdersResponse { orders, total })
 }
 
-/// 读取后台秒合约订单详情，记录缺失返回 NotFound 且不修改赔付。
+/// 读取后台单笔订单详情，返回开仓价、结算价、结果与状态，供人工结算前核对价格与胜负判定。
+/// 按订单主键定位而不限定归属用户，越权控制依赖路由层的管理员鉴权。
+/// 记录缺失返回 `AppError::NotFound`；纯读取，不改动订单状态也不产生任何赔付。
 pub(crate) async fn get_admin_order(
     pool: &Pool<MySql>,
     order_id: u64,
@@ -542,6 +583,10 @@ pub(crate) async fn get_admin_order(
     infrastructure::load_order_by_id_from_pool(pool, order_id).await
 }
 
+/// 在插入订单撞上唯一键冲突后强制回读原单，把「键已存在」这一事实转成可返回给客户端的既有订单。
+/// 与可空版本的差别在于此处必须读到记录：读不到说明并发的同键事务尚未提交，
+/// 此时返回 `AppError::Conflict` 提示稍后重试，而不是误判为无冲突继续走扣款路径造成重复下单。
+/// 读到记录仍要逐字段核对产品、方向和金额，不一致同样返回冲突。本函数不扣款也不新建订单。
 async fn replay_existing_order(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -566,6 +611,12 @@ async fn replay_existing_order(
     })
 }
 
+/// 在独立事务中加锁查找同一幂等键的既有订单，命中且请求一致时回放原单，未命中返回 `None`。
+/// 之所以另开事务而不是复用调用方事务，是因为两个调用点都发生在原事务已回滚之后：
+/// 一是锁定产品得到 NotFound、二是插入订单撞唯一键，回滚后必须用新事务重新读取。
+/// 加锁读取可等待并发同键事务落定，避免在对方提交前误判为不存在。
+/// 一致性校验失败时直接向上返回冲突，此时事务未提交而是随函数返回被丢弃回滚，
+/// 由于全程只有读取，回滚不会撤销任何业务数据。本函数不扣款、不建单、不发事件。
 async fn replay_existing_order_if_present(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -593,6 +644,8 @@ async fn replay_existing_order_if_present(
     Ok(Some(existing))
 }
 
+/// 取周期集合的首条作为产品默认档位，其取值会被写进产品主记录供旧版单周期客户端使用。
+/// 集合已由服务层按时长升序排好，因此默认档位就是最短周期；集合为空返回校验错误而非静默兜底。
 fn default_product_cycle(
     cycles: &[NormalizedSecondsContractProductCycle],
 ) -> AppResult<&NormalizedSecondsContractProductCycle> {
@@ -601,6 +654,10 @@ fn default_product_cycle(
         .ok_or_else(|| AppError::Validation("seconds contract cycles must not be empty".to_owned()))
 }
 
+/// 把产品级字段与选定的默认周期合成产品主表写入结构，创建与更新共用同一套拼装逻辑。
+/// 主记录上的时长、赔率、投注上下限全部取自传入的默认周期，因此主记录始终是周期集合首条的冗余副本，
+/// 二者由同一次写入保持同步，不会出现主记录与周期子表互相矛盾的配置。
+/// 本函数只做字段搬运与克隆，不做任何校验，取值合法性由服务层在更早的阶段保证。
 fn product_write_from_cycle(
     pair_id: u64,
     stake_asset: u64,
@@ -620,6 +677,9 @@ fn product_write_from_cycle(
     }
 }
 
+/// 把可选连接池收敛为必备引用，供需要自行开启事务的写用例在最前面做一次前置断言。
+/// 缺失时返回 `AppError::Internal`，因为连接池未配置属于部署问题而非调用方参数问题。
+/// 与 `mysql_pool` 的区别是这里借用而不克隆，用于已持有句柄引用的用例入口。
 fn require_mysql_pool(pool: Option<&Pool<MySql>>) -> AppResult<&Pool<MySql>> {
     pool.ok_or_else(|| {
         AppError::Internal("mysql pool is not configured for seconds contract routes".to_owned())

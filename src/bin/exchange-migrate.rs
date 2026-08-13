@@ -1,3 +1,8 @@
+//! 数据库迁移与首个管理员引导的独立可执行程序，部署流水线应在启动 API 服务之前先运行它。
+//! 它把 `migrations` 目录在编译期嵌入二进制，因此运行时不依赖源码目录，可以直接在镜像里执行。
+//! 迁移与引导都具备幂等性：已应用的 migration 会被跳过，库中已存在管理员时引导也只跳过而不覆盖。
+//! 与 API 服务不同，这里只连接 MySQL，不接触 Mongo、Redis 或消息队列。
+
 use anyhow::Context;
 use exchange_api::bootstrap::{
     BootstrapAdminConfig, BootstrapAdminOutcome, bootstrap_default_admin,
@@ -7,6 +12,11 @@ use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitEx
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
+/// 依次执行数据库结构迁移与默认管理员引导，任一步失败都带中文上下文向上返回并让进程以非零码退出。
+/// 连接串只从 `DATABASE_URL` 读取，先尝试加载 `.env` 但忽略其缺失；连接池限制为单连接，避免迁移期间并发改表。
+/// 引导所需的用户名、口令与角色名来自 `BOOTSTRAP_ADMIN_*` 环境变量，未配置时使用内置默认值。
+/// 无论引导成功与否都会先关闭连接池再判断结果，确保命名锁所在会话及时释放而不是等到进程退出。
+/// 最终按新建还是跳过打印不同日志，两种情况都算执行成功，只有真正的错误才会中断流水线。
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()

@@ -1,3 +1,10 @@
+//! 行情订阅配置、行情源凭据与运行时重载的应用用例层。
+//!
+//! 配置与凭据的写用例都在事务内完成锁定、写入与审计，凭据留空表示沿用旧密文而不是清空。
+//! 保存配置只推进数据库中的版本号，真正把配置加载进监督器必须另行调用重载用例，
+//! 这条分离是刻意的：保存可回滚，而重载会切换运行时状态且与数据库不在同一事务内。
+//! 重载因此采用「先切换运行时、再持久化结果、最后写审计」的顺序，失败路径同样落库并留痕后再上抛原错误。
+
 use super::*;
 
 /// 读取启动阶段可用的已启用行情订阅配置，并转换为监督器消费的后台响应。
@@ -239,6 +246,10 @@ struct MarketSourceCredentialSecretFields {
     api_key_mask: Option<String>,
 }
 
+/// 计算行情源凭据三项密文与 API Key 掩码，实现「只加密本次提交的字段、其余沿用旧密文」的轮换语义。
+/// 认证类型不是 API Key 时直接把四项全部置空，因此从需要凭据切换到免认证会清掉历史密文。
+/// 走 API Key 分支时加密密钥必须已配置，缺失归为内部错误；三项密钥各自独立处理，可以只轮换其中一项。
+/// 掩码优先按新提交的 API Key 重算，未提交时沿用旧掩码，保证掩码与实际生效的密文始终对应。
 fn prepare_market_source_credential_secret_fields(
     request: &UpsertMarketSourceCredentialRequest,
     before: Option<&AdminMarketSourceCredentialRecord>,
@@ -286,6 +297,10 @@ fn prepare_market_source_credential_secret_fields(
     })
 }
 
+/// 用一个独立短事务记录一次行情重载的结果审计，供成功、跳过与失败三条路径共用。
+/// 之所以自带事务而不复用调用方事务，是因为重载时运行时已经切换完毕，审计必须立即独立落库，
+/// 不能因为后续步骤失败而被回滚掉。快照只写 after，把配置版本与运行状态一并留痕，没有 before 值。
+/// 失败路径同样会先调用本函数写完审计，再把原始错误上抛给调用方。
 async fn insert_admin_market_feed_reload_audit(
     pool: &Pool<MySql>,
     admin_id: u64,
@@ -311,6 +326,10 @@ async fn insert_admin_market_feed_reload_audit(
     Ok(())
 }
 
+/// 在真正重载之前确认每个待启用提供商的凭据可用，避免拉起后才因缺密钥而反复失败。
+/// 只对认证类型为 API Key 的凭据检查其解密后的 API Key 非空；免认证提供商天然通过。
+/// 完全查不到凭据记录的提供商同样被放行，因为该情形由后续构造运行配置时按各自适配器的要求处理。
+/// 校验只看凭据是否存在而不验证其在交易所侧是否有效，真实可用性要到实际连接时才能确认。
 fn validate_loaded_market_feed_credentials(
     providers: &[String],
     credentials: &[MarketSourceCredentialSecret],

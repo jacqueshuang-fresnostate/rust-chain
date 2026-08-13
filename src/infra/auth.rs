@@ -1,3 +1,8 @@
+//! 认证会话基础设施：构造全局唯一的令牌管理器，统一承载用户、管理员与代理三端的登录态。
+//! 生产入口以 Redis 为权威存储，键带固定前缀便于与其他业务键区分，也保证多实例看到同一份会话。
+//! 令牌采用随机串而非自包含格式，因此服务端可以真正吊销会话，代价是每次校验都要回存储查询。
+//! 会话超时复用配置里的访问令牌有效期，且不自动续期，客户端必须显式走刷新流程来延长登录态。
+
 use crate::{
     config::Settings,
     error::{AppError, AppResult},
@@ -27,6 +32,8 @@ pub fn memory_manager(settings: &Settings) -> Arc<SaTokenManager> {
     auth_manager(settings, Arc::new(MemoryStorage::new()))
 }
 
+/// 把任意会话存储实现与同一份令牌策略组合成管理器，是 Redis 版与内存版共用的最后一步。
+/// 抽掉存储差异后两条路径的行为完全一致，避免测试环境与生产环境在超时、令牌格式上出现偏差。
 fn auth_manager(settings: &Settings, storage: Arc<dyn SaStorage>) -> Arc<SaTokenManager> {
     Arc::new(SaTokenManager::new(
         storage,
@@ -34,6 +41,9 @@ fn auth_manager(settings: &Settings, storage: Arc<dyn SaStorage>) -> Arc<SaToken
     ))
 }
 
+/// 固定全局令牌策略：会话超时取配置里的访问令牌有效期，令牌为六十四位随机串而非自包含格式。
+/// 允许同一账号并发在线且不复用同一枚令牌，因此多设备登录会各自签发独立令牌而非共享一份。
+/// 自动续期被关闭，会话到点即失效，续期只能由客户端显式走刷新接口完成，避免长期在线绕过有效期约束。
 fn sa_token_config(settings: &Settings) -> sa_token_core::config::SaTokenConfigBuilder {
     SaTokenConfig::builder()
         .timeout(settings.jwt_access_ttl_seconds as i64)

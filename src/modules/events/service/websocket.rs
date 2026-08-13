@@ -1,4 +1,15 @@
 //! WebSocket 频道规范化、鉴权、连接循环与进程内广播。
+//!
+//! 这里的广播是纯进程内的尽力投递，与 outbox/inbox 那条持久化链路完全独立：
+//! 消息不落库、不重试、不补发，进程重启即全部丢失，订阅也只覆盖建立之后产生的消息，
+//! 因此断线重连不会拿到期间错过的内容，客户端必须靠查询接口补齐状态。
+//! 慢消费者会因缓冲区溢出被跳过若干条而不是阻塞发送方，这是为了保证一个卡住的连接不拖垮整个广播。
+//!
+//! 由此引出一条全局约束：任何业务事件都必须在数据库事务提交成功之后才广播。
+//! 广播无法回滚，若在提交前推送，事务一旦回滚客户端就会看到实际不存在的数据。
+//!
+//! 频道命名分公共与私有两类，私有频道由已鉴权的用户编号唯一确定，客户端无法通过订阅命令切换收听对象，
+//! 公共频道则要求命名空间与主题都通过安全字符校验后才能构造。
 
 use crate::{
     config::Settings,
@@ -15,9 +26,14 @@ use futures_util::{SinkExt, StreamExt};
 use std::collections::HashSet;
 use tokio::sync::broadcast::{self, error::RecvError};
 
+/// 一个广播频道的标识，由命名空间与主题两段构成，是订阅匹配与消息路由的键。
+/// 实现了哈希与相等，因此可直接放进集合表示某条连接当前的订阅集。
+/// 公共频道的两段都经过安全字符校验；私有频道的命名空间固定，主题由用户编号生成。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WebSocketChannel {
+    /// 命名空间，公共频道为行情类别，私有频道固定为 `private`。
     pub namespace: String,
+    /// 主题，公共频道为交易对或交易对加周期，私有频道为 `user:<编号>`。
     pub topic: String,
 }
 
@@ -49,14 +65,21 @@ impl WebSocketChannel {
     }
 }
 
+/// 私有 WebSocket 的鉴权结论，只保留一个用户编号。
+/// 收敛成单一编号是刻意的：连接建立后不再持有令牌，也无从获得除该用户以外任何频道的访问能力。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrivateWsAuth {
+    /// 已通过校验的用户编号，直接决定本连接绑定的私有频道。
     pub user_id: u64,
 }
 
 impl PrivateWsAuth {
     /// 兼容旧 JWT 测试路径，从原始查询串提取 token 并仅接受 user scope。
-    /// 缺失/非法 token 返回未授权，非用户 scope 返回禁止；无数据库事务与外部副作用。
+    /// 与生产路径的关键差别是这里只做本地 JWT 签名校验，不查询会话存储，
+    /// 因此无法感知已被服务端撤销的令牌，生产连接必须走带会话校验的那条路径。
+    /// 查询串按 `&` 与 `=` 手工切分并取首个非空 token 参数，不做 URL 解码。
+    /// 令牌缺失或签名非法返回未授权，签名有效但作用域不是用户则返回禁止，两者刻意区分以便排障。
+    /// subject 必须严格形如 `user:{数字}`，解析失败同样按未授权处理。
     pub fn from_query(query: Option<&str>, settings: &Settings) -> AppResult<Self> {
         let token = query
             .and_then(|query| {
@@ -89,7 +112,11 @@ impl PrivateWsAuth {
 }
 
 /// 把兼容路径参数映射为 `public:<namespace>:<topic>`：ticker/depth/trade 规范化交易对，kline 同时规范化交易对与周期。
-/// 未识别 namespace 仍走安全段校验以保留旧单频道路由；非法参数在升级 socket 前失败，本函数不创建订阅或广播。
+/// 规范化的意义在于让同一交易对的不同书写形式落到同一频道，否则订阅方与广播方会因大小写或分隔符差异而错过消息。
+/// K 线主题按最后一个下划线切分成交易对与周期两段，两段各自规范化后再用下划线重新拼回；
+/// 主题中不含下划线时不做切分，直接按普通频道走安全字符校验，以兼容历史路径。
+/// 未识别的命名空间同样只走安全字符校验而不报错，保留旧单频道路由继续可用。
+/// 任何非法参数都在 socket 升级之前失败，本函数不创建订阅、不注册连接、不广播任何消息。
 pub(crate) fn public_channel(namespace: String, topic: String) -> AppResult<WebSocketChannel> {
     match namespace.as_str() {
         "ticker" | "depth" | "trade" => Ok(WebSocketChannel::public(
@@ -115,7 +142,11 @@ pub(crate) fn public_channel(namespace: String, topic: String) -> AppResult<WebS
 }
 
 /// 把连接内命令限制到 ticker/depth/trade/kline 四类公共频道，并复用路径入口的交易对和周期规范化规则。
-/// 所有频道都要求 symbol，kline 额外要求 interval；解析失败不改变当前连接的订阅集合，也不触及其他 WebSocket 会话。
+/// 与路径入口共用同一套规范化，保证经命令订阅与经路径订阅得到的频道名逐字相同，不会出现只差写法的两个频道。
+/// 四类频道都必须给出交易对，K 线额外要求周期，缺任一项返回校验错误；
+/// 命令里的频道名不在白名单内也直接拒绝，这与路径入口放行未知命名空间的宽松策略不同，
+/// 因为连接内命令是新接口无需兼容历史路径。
+/// 解析失败不改变当前连接的订阅集合，也不影响其他连接。
 pub(crate) fn public_command_channel(command: &PublicWsCommand) -> AppResult<WebSocketChannel> {
     let symbol = command
         .symbol
@@ -136,6 +167,9 @@ pub(crate) fn public_command_channel(command: &PublicWsCommand) -> AppResult<Web
     }
 }
 
+/// 从令牌 subject 解析用户编号，要求严格形如 `user:{数字}`。
+/// 前缀不符或数字解析失败一律返回未授权而非参数错误，避免向调用方泄露 subject 的具体格式问题。
+/// 解析结果直接决定该连接能收到谁的私有事件，因此不接受任何宽松匹配。
 fn user_id_from_subject(subject: &str) -> AppResult<u64> {
     subject
         .strip_prefix("user:")
@@ -143,7 +177,9 @@ fn user_id_from_subject(subject: &str) -> AppResult<u64> {
         .ok_or(AppError::Unauthorized)
 }
 
-/// 将已校验频道编码为稳定 `{"type":"subscribed","channel":"..."}` 确认帧；只构造文本，不代表 hub 已持久化订阅或存在历史消息。
+/// 将已校验频道编码为稳定 `{"type":"subscribed","channel":"..."}` 确认帧。
+/// 单频道公共连接与私有连接都在握手后立即发送它，作为客户端可以开始收数据的信号。
+/// 只构造文本：既不代表 hub 已注册订阅，也不代表该频道存在可补发的历史消息。
 pub(crate) fn public_ws_confirmation_text(channel: &WebSocketChannel) -> String {
     serde_json::json!({
         "type": "subscribed",
@@ -152,6 +188,10 @@ pub(crate) fn public_ws_confirmation_text(channel: &WebSocketChannel) -> String 
     .to_string()
 }
 
+/// 校验频道名的单个片段：非空、长度不超过 64 字节，且只含 ASCII 字母数字与短横线下划线。
+/// 字符集收紧是必要的，频道名会被拼进冒号分隔的频道文本并参与匹配，
+/// 放行冒号或空白会让不同片段拼出相同的频道文本，从而造成订阅串台。
+/// 校验通过后原样返回，不做大小写折叠也不裁剪空白。
 fn validate_ws_segment(value: String, field: &str) -> AppResult<String> {
     if value.is_empty()
         || value.len() > 64
@@ -218,7 +258,11 @@ pub(crate) async fn run_private_socket(
 }
 
 /// 运行单频道 socket 生命周期；先发送确认，再在客户端帧与广播之间并发转发。
-/// 断连、发送失败或广播关闭都会结束循环；无持久化事务，重连与消息重放由客户端负责。
+/// 确认帧发送失败即直接返回，不进入循环，因为连接已不可用。
+/// 有订阅时用二选一等待同时照看客户端输入与广播输出，两侧任一出错即结束会话；
+/// 未配置广播 hub 时退化为只处理保活帧的循环，连接仍能维持但永远收不到数据。
+/// 该实现被公共单频道与私有连接共用，两者仅在订阅目标与确认文案上不同。
+/// 全程无持久化，断线期间的消息不会缓存，重连后的状态补齐由客户端自行完成。
 async fn run_subscription_socket(
     socket: WebSocket,
     confirmation: String,
@@ -255,8 +299,11 @@ async fn run_subscription_socket(
     }
 }
 
-/// 处理多频道连接的一帧输入；保活帧直接响应，文本命令只更新当前连接内订阅集合。
-/// 坏帧或断连返回 false 结束连接，不修改全局状态或持久化数据。
+/// 处理多频道连接的一帧输入，返回值表示会话是否继续。
+/// 纯文本 `ping` 与协议层 Ping 分别回以文本 pong 和协议 Pong，两种保活形式都支持是为了兼容不同客户端库。
+/// 其余文本帧一律当作订阅命令解析，命令只影响当前连接的订阅集合，不触及其他连接。
+/// 收到关闭帧、读取出错或流结束都返回假以终止会话；二进制等其他帧型被忽略但保持连接。
+/// 本函数不写数据库、不改全局状态。
 async fn handle_public_multi_client_message(
     message: Option<Result<Message, axum::Error>>,
     sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
@@ -273,8 +320,12 @@ async fn handle_public_multi_client_message(
     }
 }
 
-/// 解析 subscribe/unsubscribe JSON 命令；错误转换为既有 `invalid_request` 文本响应。
-/// 更新仅作用于当前连接集合，重复订阅/取消天然幂等，不进行数据库或消息发布。
+/// 解析订阅或退订命令并更新当前连接的订阅集合，返回值表示会话是否继续。
+/// JSON 非法、频道参数不合规或操作名不在白名单，都会被折叠成同一种 `invalid_request` 错误响应发回客户端，
+/// 而不是断开连接，这样客户端拼错一条命令不会导致整个会话中断。
+/// 由于订阅集合是哈希集合，重复订阅与重复退订天然幂等，客户端无需自行去重。
+/// 只有发送响应失败才返回假终止会话。
+/// 命令只作用于本连接的内存集合，不写数据库、不发布任何消息、不影响其他连接。
 async fn handle_public_ws_command(
     text: String,
     sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
@@ -315,6 +366,8 @@ async fn handle_public_ws_command(
     sender.send(Message::Text(response)).await.is_ok()
 }
 
+/// 构造订阅或退订的应答文本，两种操作共用同一形状只是类型字段不同。
+/// 应答只表示服务端已更新本连接的订阅集合，不代表该频道当前有数据，也不代表存在可补发的历史消息。
 fn public_ws_subscription_response(message_type: &str, channel: &str) -> String {
     serde_json::json!({
         "type": message_type,
@@ -352,9 +405,14 @@ async fn recv_multi_broadcast(
     subscription.recv().await
 }
 
+/// 一条待广播的消息，由目标频道与已序列化的载荷文本组成。
+/// 载荷以字符串形态携带而非结构化值，因为 hub 不解释内容，只按频道转发给匹配的订阅者。
+/// 构造出实例并不等于已发送，必须显式交给 hub 发布。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventBroadcastMessage {
+    /// 目标频道，订阅者据此决定是否接收本条消息。
     channel: WebSocketChannel,
+    /// 待发送的载荷原文，通常是 JSON 文本，hub 原样转发不做校验。
     payload: String,
 }
 
@@ -386,19 +444,25 @@ impl EventBroadcastMessage {
         ))
     }
 
-    /// 返回消息的只读频道引用；不重新校验、不分配，也不改变广播状态。
+    /// 返回消息目标频道的只读引用，供订阅端判断是否应接收本条消息。
+    /// 不重新校验频道合法性、不分配内存，也不改变任何广播状态。
     pub fn channel(&self) -> &WebSocketChannel {
         &self.channel
     }
 
-    /// 返回待广播 payload 原文；调用方不得据此假定 JSON 已解析或事件已持久化。
+    /// 返回待广播的载荷原文，将被原样作为文本帧发给客户端。
+    /// hub 不解析该内容，因此调用方不得据此假定它是合法 JSON，也不代表对应事件已持久化。
     pub fn payload(&self) -> &str {
         &self.payload
     }
 }
 
+/// 进程内广播中枢，所有 WebSocket 连接都从它派生订阅。
+/// 基于容量有限的广播通道实现，因此消息只在内存中存在：不落库、不重试、不补发，进程重启即清空。
+/// 可自由克隆，克隆出的句柄共享同一条通道，业务各处因此可以各持一份用于发布。
 #[derive(Clone)]
 pub struct EventBroadcastHub {
+    /// 广播发送端，容量满时最慢的订阅者会丢失若干条而非阻塞发送方。
     sender: broadcast::Sender<EventBroadcastMessage>,
 }
 
@@ -434,7 +498,11 @@ impl EventBroadcastHub {
     }
 }
 
+/// 不做频道过滤的订阅，收取 hub 上的全部消息。
+/// 供多频道连接使用：该连接的订阅集合在运行期动态变化，因此过滤放在连接循环里按当前集合判断，
+/// 而不是固化在订阅上。
 pub struct EventBroadcastMultiSubscription {
+    /// 广播接收端，只能收到订阅创建之后产生的消息。
     receiver: broadcast::Receiver<EventBroadcastMessage>,
 }
 
@@ -456,8 +524,13 @@ impl EventBroadcastMultiSubscription {
     }
 }
 
+/// 绑定单一频道的订阅，接收时自动丢弃其他频道的消息。
+/// 供单频道公共连接与私有连接使用，二者的订阅目标在握手时就已固定，运行期不可更改。
+/// 注意过滤发生在接收端而非发送端，因此其他频道的高频消息仍会占用本订阅的缓冲区容量。
 pub struct EventBroadcastSubscription {
+    /// 本订阅关心的唯一频道。
     channel: WebSocketChannel,
+    /// 广播接收端，只能收到订阅创建之后产生的消息。
     receiver: broadcast::Receiver<EventBroadcastMessage>,
 }
 

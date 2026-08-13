@@ -213,6 +213,10 @@ pub(crate) async fn confirm_convert_quote_with_events(
     Ok(response)
 }
 
+/// 按交易对的 pricing_mode 选择服务端权威汇率来源：fixed 读配置固定汇率，market 读 Redis 缓存行情。
+/// market 分支要求交易对已关联活动 trading_pair，且缓存里存在最新成交价，缺任一项即拒绝报价而非退回固定汇率。
+/// 返回的是尚未叠加价差的原始汇率，价差与手续费在 `convert_quote_amounts` 中统一折算。
+/// 未识别的 pricing_mode 返回参数错误；本函数只读配置和缓存，不写库、不冻结资金。
 async fn resolve_convert_quote_rate(
     redis: Option<ConnectionManager>,
     pair: &ConvertPairRule,
@@ -242,12 +246,16 @@ async fn resolve_convert_quote_rate(
     }
 }
 
+/// 把可选的 MySQL 池解包为必需依赖，缺失时按内部错误处理而不是静默返回空结果。
+/// 闪兑的报价落库与结算事务都不能降级运行，因此未配置数据库属于部署故障而非业务校验失败。
 fn mysql_pool(pool: Option<Pool<MySql>>) -> AppResult<Pool<MySql>> {
     pool.ok_or_else(|| {
         AppError::Internal("mysql pool is not configured for convert routes".to_owned())
     })
 }
 
+/// 把可选的 Redis 连接管理器解包为必需依赖；报价的 TTL 快照只存在于 Redis，缺失即无法确认。
+/// 与 MySQL 同理按内部错误上报，避免在没有缓存的情况下生成永远无法兑现的报价。
 fn redis_manager(redis: Option<ConnectionManager>) -> AppResult<ConnectionManager> {
     redis.ok_or_else(|| {
         AppError::Internal("redis connection is not configured for convert routes".to_owned())

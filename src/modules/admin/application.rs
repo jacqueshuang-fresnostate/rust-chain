@@ -354,20 +354,29 @@ impl ApplicationLayer for AdminCountryUseCases {}
 
 const MAX_ROUTE_OFFSET: u32 = 100_000;
 
+/// 裁剪后台列表的每页条数：缺省 50，并强制收敛到 1 到 100 之间。
+/// 采用夹取而非报错，因此前端传 0 或超大值都能拿到结果而不是校验失败，代价是分页参数写错时不会被察觉。
+/// 该上限是所有后台列表共用的口径，避免单次查询拉走过多行。
 fn route_limit(limit: Option<u32>) -> u32 {
     limit.unwrap_or(50).clamp(1, 100)
 }
 
 /// 偏移同样设上限：超大 offset 会让日志类大表退化为全表扫描加文件排序。
+/// 缺省为 0，超过十万的偏移被截到十万，因此深翻页会停在同一页而不是继续后移。
+/// 与条数一样采用夹取而非报错，需要访问更靠后的数据时应改用筛选条件而非加大偏移。
 fn route_offset(offset: Option<u32>) -> u32 {
     offset.unwrap_or(0).min(MAX_ROUTE_OFFSET)
 }
 
+/// 把字符串去空白后归一为可选值，纯空白折叠成 None 表示该筛选条件未提供。
+/// 与服务层同名工具的差别是这里接收的是必有值的字符串而非 Option，供已解包的查询字段直接使用。
 fn optional_string(value: String) -> Option<String> {
     let value = value.trim().to_owned();
     (!value.is_empty()).then_some(value)
 }
 
+/// 借用版的空白归一工具，去空白后为空则返回 None，避免为判空而额外分配字符串。
+/// 用于只需读取而不需要持有结果的场景，语义与持有版完全一致。
 fn optional_str(value: &str) -> Option<&str> {
     let value = value.trim();
     (!value.is_empty()).then_some(value)

@@ -188,8 +188,8 @@ describe('QuickRechargeConfigPage', () => {
     await user.click(await screen.findByRole('switch'));
     expect(screen.getByText('将启用，保存后生效')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '保存并启用GMPay' }));
-    await user.type(screen.getByLabelText('操作原因'), 'enable quick recharge');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'enable quick recharge');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith(
@@ -221,8 +221,8 @@ describe('QuickRechargeConfigPage', () => {
     await user.click(screen.getByRole('switch'));
     expect(screen.getByText('将停用，保存后生效')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '保存并停用GMPay' }));
-    await user.type(screen.getByLabelText('操作原因'), 'disable quick recharge');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'disable quick recharge');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith(
@@ -245,8 +245,8 @@ describe('QuickRechargeConfigPage', () => {
     await user.clear(await screen.findByLabelText('API 基础地址'));
     await user.type(screen.getByLabelText('API 基础地址'), 'https://pay.new.test');
     await user.click(screen.getByRole('button', { name: '保存快速充值配置' }));
-    await user.type(screen.getByLabelText('操作原因'), 'spread out quick recharge settings');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'spread out quick recharge settings');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith(
@@ -284,8 +284,8 @@ describe('QuickRechargeConfigPage', () => {
     await user.clear(await screen.findByLabelText('测试金额'));
     await user.type(screen.getByLabelText('测试金额'), '12.50');
     await user.click(screen.getByRole('button', { name: '测试快速充值' }));
-    await user.type(screen.getByLabelText('操作原因'), 'verify quick recharge provider');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'verify quick recharge provider');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith(

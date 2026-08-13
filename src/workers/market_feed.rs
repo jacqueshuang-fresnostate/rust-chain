@@ -1,3 +1,12 @@
+//! 外部行情源订阅 worker：维护多供应商 WebSocket 连接、协议应答与 REST 兜底。
+//!
+//! 运行时配置由后台版本化下发，监督器句柄负责校验新配置、切换后台任务并对外暴露最近一次 reload 结果。
+//! 每个供应商各跑一个独立的重连循环，每轮先尝试 WebSocket，失败且配置了兜底请求时才退到该供应商的 REST 抓取；
+//! 失败按倍数退避并封顶 60 秒，单个供应商故障不会影响其他供应商继续订阅。
+//!
+//! 本文件只负责连接、帧归一化与调度：真正的解析、Redis 与 Mongo 落库、outbox 以及实时广播都发生在 ingestion 侧，
+//! 因此这里的重连与退避不会回滚任何已经写入并广播出去的行情。
+
 use crate::{
     config::Settings,
     error::AppResult,
@@ -50,6 +59,7 @@ impl MarketFeedRuntimeConfig {
 
     /// 依据系统设置通过 provider adapter 规范化交易对、周期及供应商订阅矩阵；空交易对形成显式禁用配置。
     /// 非空配置必须至少生成一个 provider config，否则启动失败；构造不连接外网、不写 Redis/Mongo，也不广播行情。
+    /// 规范化后的交易对与周期取自首个 provider 配置，因此各供应商共用同一份订阅范围；重连秒数最小收敛为 1 秒。
     pub fn new(
         settings: &Settings,
         symbols: Vec<String>,
@@ -93,16 +103,19 @@ impl MarketFeedRuntimeConfig {
     }
 
     /// 提供本次 reload 的权威交易对集合，用于生成供应商订阅矩阵并同步可观察运行状态。
+    /// 集合为空即表示这份配置处于停用状态，监督器据此停止任务，而不是去订阅一个空列表。
     pub fn symbols(&self) -> &[String] {
         &self.symbols
     }
 
     /// 提供各交易对需要维持的 K 线周期集合；监督器重启任务时必须整组应用，避免新旧周期混跑。
+    /// 周期与交易对在订阅矩阵里按乘积展开，因此多加一个周期会让每个供应商的订阅消息同步增加。
     pub fn intervals(&self) -> &[String] {
         &self.intervals
     }
 
     /// 提供本轮启用的行情供应商优先集合；它决定并行连接与 REST 补偿来源，也是失败监控的归属维度。
+    /// 顺序保持配置解析后的先后并已去重，运行期每个供应商各自独占一个重连任务。
     pub fn providers(&self) -> &[MarketFeedProvider] {
         &self.providers
     }
@@ -230,11 +243,16 @@ impl MarketFeedSupervisorHandle {
 }
 
 impl Default for MarketFeedSupervisorHandle {
+    /// 委托构造函数得到同样的空监督状态，因此默认值不会隐式建立任何供应商连接。
+    /// 只有经过一次成功的 reload 才会产生后台任务，默认实例的已应用版本保持为空。
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// 把配置快照与本次 reload 结果折叠成对外可观察的运行状态，供应商枚举在此转成稳定代码字符串。
+/// `applied_version` 一律记录本次传入的版本，即使结果是跳过，因此停用同样算一次已应用的配置变更。
+/// 错误文本由调用方决定是否传入，成功与跳过场景传空，从而清除上一次遗留的失败信息。
 fn runtime_status_from_config(
     config: &MarketFeedRuntimeConfig,
     version: u64,
@@ -288,6 +306,8 @@ pub enum MarketFeedSupervisorEvent {
 
 /// 将供应商 WebSocket 消息归一化为行情帧、协议回复、忽略或关闭动作。
 /// HTX gzip 二进制在此解压，ping 必须回应；无法识别或错误确认帧不得进入价格缓存。
+/// 协议层 Ping 一律回 Pong 并带回原载荷，Pong 直接忽略，Close 转为关闭动作让调用方结束本轮读循环。
+/// 文本帧与解压后的二进制帧走同一套文本判定，因此两条路径对同一段 JSON 得到完全一致的动作。
 pub fn market_feed_socket_action(
     provider: MarketFeedProvider,
     message: Message,
@@ -317,6 +337,9 @@ pub fn market_feed_socket_action(
     }
 }
 
+/// 把二进制 WebSocket 帧还原为文本，目前只有 HTX 会推送 gzip 压缩帧。
+/// 非 HTX 供应商的二进制帧，以及缺少 gzip 魔数的载荷，都直接返回校验错误，不做任何猜测性解码。
+/// 解压失败同样按校验错误处理，因此损坏的压缩帧不会被继续当作行情解析。
 fn market_feed_binary_payload_text(
     provider: MarketFeedProvider,
     payload: &[u8],
@@ -345,6 +368,8 @@ fn market_feed_binary_payload_text(
 
 /// 解析供应商文本帧并区分心跳/订阅确认与真实行情数据；错误确认直接失败，未知频道只忽略。
 /// 返回的行情帧仍需经过 provider adapter 严格解析后才能成为权威价格输入。
+/// JSON 无法解析直接返回校验错误；带 `ping` 字段的应用层心跳在此原值回 `pong`，不再进入频道判定。
+/// 只带 `event` 或 `op` 而没有 `data` 的控制帧一律忽略，避免把订阅回执当成行情写进缓存。
 pub fn market_feed_text_action(
     provider: MarketFeedProvider,
     payload: &str,
@@ -372,6 +397,8 @@ pub fn market_feed_text_action(
     )))
 }
 
+/// 按供应商分派协议应答处理，把订阅确认、错误应答与真实行情三类载荷区分开。
+/// 返回 `None` 表示这不是应答帧，应继续走行情解析；三家供应商的状态与错误字段各不相同，无法共用一套判断。
 fn market_feed_acknowledgement_action(
     provider: MarketFeedProvider,
     value: &Value,
@@ -383,6 +410,9 @@ fn market_feed_acknowledgement_action(
     }
 }
 
+/// 识别 Bitget 的应答帧：既没有 `event` 也没有 `op` 时直接放行给行情解析。
+/// `event` 为 error 或 `code` 不等于 0 一律按错误应答返回校验错误，避免把失败的订阅当成连接正常。
+/// 成功应答且不带 `data` 时忽略该帧；带 `data` 的消息返回 `None`，继续按行情处理。
 fn bitget_acknowledgement_action(value: &Value) -> AppResult<Option<MarketFeedTextAction>> {
     if value.get("event").is_none() && value.get("op").is_none() {
         return Ok(None);
@@ -397,6 +427,9 @@ fn bitget_acknowledgement_action(value: &Value) -> AppResult<Option<MarketFeedTe
     }
 }
 
+/// 识别 HTX 的应答帧，只有存在 `status` 字段时才介入判断。
+/// `status` 为 ok 且带 `subbed`、不带 `data` 说明是订阅确认，忽略即可；为 error 时按错误码与错误消息报错。
+/// 其余取值返回 `None`，交回给行情解析继续处理。
 fn htx_acknowledgement_action(value: &Value) -> AppResult<Option<MarketFeedTextAction>> {
     let Some(status) = field_as_string(value, "status") else {
         return Ok(None);
@@ -410,6 +443,9 @@ fn htx_acknowledgement_action(value: &Value) -> AppResult<Option<MarketFeedTextA
     }
 }
 
+/// 识别 Coinbase 的应答帧：`type` 或 `channel` 命中 error 时按错误应答返回校验错误。
+/// 两个字段都忽略大小写比较，以兼容网关不同版本对事件名的大小写写法。
+/// `channel` 为 heartbeats 的心跳帧直接忽略，其余情况返回 `None`，交回给后续频道判定继续按行情解析。
 fn coinbase_acknowledgement_action(value: &Value) -> AppResult<Option<MarketFeedTextAction>> {
     if field_as_string(value, "type")
         .as_deref()
@@ -429,6 +465,8 @@ fn coinbase_acknowledgement_action(value: &Value) -> AppResult<Option<MarketFeed
     Ok(None)
 }
 
+/// 用供应商名、错误码与错误消息组装统一的订阅失败错误，取哪两个键由各供应商协议决定。
+/// 错误码缺失时记为 unknown，消息缺失时退回整条 JSON 原文，保证排查时不会丢失现场上下文。
 fn acknowledgement_error(
     provider: &str,
     value: &Value,
@@ -442,6 +480,8 @@ fn acknowledgement_error(
     ))
 }
 
+/// 从 JSON 对象取出一个标量字段并统一转成字符串，兼容字符串、数字与布尔三种写法。
+/// 供应商的错误码时而用数字时而用字符串，这里先统一形态再按文本比较；对象与数组一律返回 `None`。
 fn field_as_string(value: &Value, key: &str) -> Option<String> {
     match value.get(key)? {
         Value::String(value) => Some(value.clone()),
@@ -511,6 +551,8 @@ struct MarketFeedProviderTask {
 }
 
 impl MarketFeedProviderTask {
+    /// 把某个供应商的重连循环交给 tokio 执行，并把供应商标识与任务句柄绑定在一起。
+    /// 绑定后即使任务异常终止也能定位到具体供应商；句柄固定在堆上，便于后续轮询它的完成状态。
     fn spawn<F>(provider: MarketFeedProvider, future: F) -> Self
     where
         F: Future<Output = AppResult<()>> + Send + 'static,
@@ -522,6 +564,9 @@ impl MarketFeedProviderTask {
     }
 }
 
+/// 轮询等待多个供应商任务，只要有一个结束就取出它的结果，并把该结果作为整个等待的结果返回。
+/// 轮询间隔固定 10 毫秒，用 swap_remove 摘出已完成项，因此剩余任务的相对顺序不保证稳定。
+/// 正常运行时重连循环不会自行退出，任何一个结束都说明该供应商出了问题；本函数只等待，不主动中止其余任务。
 async fn await_market_feed_provider_tasks<F>(
     mut tasks: Vec<MarketFeedProviderTask>,
     mut emit_event: F,
@@ -541,6 +586,9 @@ where
     Ok(())
 }
 
+/// 取回已结束供应商任务的结果，并区分业务错误与 tokio 侧任务失败两种情况。
+/// 任务自身返回的错误原样上抛；join 失败说明任务 panic 或被中止，此时先发出监督事件再包装成内部错误。
+/// 事件里带上供应商标识，使日志能够直接定位是哪一家的连接任务异常终止。
 async fn await_finished_market_feed_provider_task<F>(
     task: MarketFeedProviderTask,
     emit_event: &mut F,
@@ -575,6 +623,9 @@ pub async fn run_once(state: &AppState, symbols: &[&str], intervals: &[&str]) ->
     .await
 }
 
+/// 为给定供应商集合各启动一次 WebSocket 周期并等待全部结束，交易对与周期在展开配置时统一校验。
+/// 任一任务 join 失败或返回错误都会让本次调用失败，且该错误不会被其余任务的成功结果改写。
+/// 各任务的 Redis、Mongo 写入与广播彼此独立，先完成的副作用不会因为后来的失败而回滚。
 async fn run_once_with_providers(
     state: &AppState,
     providers: &[MarketFeedProvider],
@@ -603,6 +654,9 @@ async fn run_once_with_providers(
     Ok(())
 }
 
+/// 为单个供应商装配重连循环所需的运行时：按系统设置创建 REST 兜底 HTTP 客户端，
+/// 并注入真正执行 WebSocket 周期的函数、ingestion worker 构造器与监督事件回调。
+/// 本函数只做装配，退避节奏、兜底触发条件和事件上报都由被调用的通用循环负责。
 async fn run_provider_reconnect_loop(
     state: AppState,
     config: MarketFeedConfig,
@@ -625,6 +679,8 @@ async fn run_provider_reconnect_loop(
     .await
 }
 
+/// 按系统设置创建 REST 兜底使用的 HTTP 客户端，超时与代理等参数全部来自配置而非硬编码。
+/// 每个供应商的重连循环各自创建一个实例，不共享同一个客户端对象。
 fn rest_fallback_http_client(settings: &Settings) -> ReqwestMarketFeedRestFallbackHttpClient {
     ReqwestMarketFeedRestFallbackHttpClient::from_settings(settings)
 }
@@ -637,6 +693,8 @@ struct MarketFeedReconnectBackoff {
 }
 
 impl MarketFeedReconnectBackoff {
+    /// 用配置给出的基准延迟初始化退避状态，当前延迟从基准起步，上限固定为 60 秒。
+    /// 上限写死在类型内部而不来自配置，因此再大的基准值也不会让重连间隔无限增长。
     fn new(initial_delay: Duration) -> Self {
         Self {
             initial_delay,
@@ -645,14 +703,20 @@ impl MarketFeedReconnectBackoff {
         }
     }
 
+    /// 返回本轮结束后应等待的延迟，读取不改变状态，因此同一轮多次读取结果一致。
+    /// 调用方在执行周期之前先取值，使成功与失败两条分支共用同一个已经确定的等待时长。
     fn next_delay(&self) -> Duration {
         self.current_delay
     }
 
+    /// 记录一次周期失败并把等待时长翻倍，最长封顶在 60 秒。
+    /// 只改变下一轮的延迟，既不触发睡眠也不上报事件，日志与监督事件由调用方另行处理。
     fn record_failure(&mut self) {
         self.current_delay = (self.current_delay * 2).min(self.max_delay);
     }
 
+    /// 周期成功后把等待时长复位到配置基准，使连接恢复后不再背负之前累积的长延迟。
+    /// 同样只改状态不做睡眠；由于循环成功后仍要等待一轮，复位保证这段等待回到最短值。
     fn record_success(&mut self) {
         self.current_delay = self.initial_delay;
     }
@@ -665,6 +729,8 @@ struct MarketFeedRestFallbackRuntime<B, C> {
 }
 
 impl<B, C> MarketFeedRestFallbackRuntime<B, C> {
+    /// 打包 REST 兜底所需的三件套：请求清单配置、ingestion worker 构造器和 HTTP 客户端。
+    /// 构造只是聚合依赖，既不发起请求也不判断清单是否为空，真正的触发条件由周期执行函数判断。
     fn new(config: MarketFeedRestFallbackConfig, build_worker: B, http_client: C) -> Self {
         Self {
             config,
@@ -674,6 +740,11 @@ impl<B, C> MarketFeedRestFallbackRuntime<B, C> {
     }
 }
 
+/// 单个供应商的无限重连主体：每轮先取当前退避延迟，再执行一次带 REST 兜底的行情周期。
+/// 成功则上报周期成功事件并把延迟复位到基准；失败则上报失败事件、打印带供应商与延迟秒数的错误日志，
+/// 并把下一轮延迟翻倍直到封顶 60 秒。无论成败都会在轮末等待该延迟，因此成功也不会形成忙循环。
+/// 循环没有正常退出分支，只会随任务被中止而结束；本函数不判断兜底是否可用，也不改写行情写入结果。
+/// 执行函数、worker 构造器、HTTP 客户端与事件回调都由调用方注入，便于在测试中替换而不接触真实网络。
 async fn run_provider_reconnect_loop_with<F, Fut, B, BuildFut, C, E>(
     state: AppState,
     config: MarketFeedConfig,
@@ -766,6 +837,9 @@ where
     }
 }
 
+/// 把监督事件落成分级日志：周期成功记 info，周期失败记 warn 并带上供应商与下一轮等待秒数，
+/// 任务失败记 error，因为那意味着该供应商的重连循环已经彻底退出而不只是本轮出错。
+/// 本函数只写日志，不改变退避状态、不重启任务，也不影响调用方对错误本身的处理方式。
 fn emit_market_feed_supervisor_event(event: MarketFeedSupervisorEvent) {
     match event {
         MarketFeedSupervisorEvent::ProviderCycleSucceeded { provider } => {
@@ -793,6 +867,11 @@ fn emit_market_feed_supervisor_event(event: MarketFeedSupervisorEvent) {
     }
 }
 
+/// 执行一次完整的供应商 WebSocket 周期：建立连接、逐条发送订阅消息，然后持续读取并归一化消息。
+/// 行情帧交给 ingestion 落库并广播，单帧写入失败只累加失败计数并告警，不中断本次连接。
+/// 协议要求的回复原样写回连接，回写失败按内部错误终止周期；收到关闭帧或读到流末尾则退出读循环。
+/// 周期结束前校验不能只收到失败帧且零写入，纯失败的周期按校验错误返回，交由外层退避后重连。
+/// 连接、订阅与读取失败一律包成内部错误；已经完成的 Redis、Mongo 写入和广播不会因此回滚。
 async fn run_provider_once(state: AppState, config: MarketFeedConfig) -> AppResult<()> {
     let worker = MarketFeedWorker::<MarketIngestionService>::from_state(&state)?;
     let (socket, _) = connect_async(config.url()).await.map_err(|error| {
@@ -885,6 +964,8 @@ pub async fn run_loop(
     run_config_loop(state, config).await
 }
 
+/// 把配置里的供应商代码解析为枚举并按首次出现顺序去重，配置为空时回退到默认供应商集合。
+/// 未知代码直接返回校验错误而不是静默丢弃，避免配置写错后系统只订阅了部分供应商却看起来一切正常。
 fn market_feed_providers(providers: Vec<String>) -> AppResult<Vec<MarketFeedProvider>> {
     if providers.is_empty() {
         return Ok(MarketFeedProvider::default_providers().to_vec());
@@ -900,6 +981,9 @@ fn market_feed_providers(providers: Vec<String>) -> AppResult<Vec<MarketFeedProv
     Ok(selected)
 }
 
+/// 用载荷子串匹配判断帧属于哪个频道，按 K 线、深度、逐笔成交、ticker 的顺序依次尝试。
+/// 顺序即优先级：同时含有多个关键字的载荷会归入先匹配到的频道，因此调整判断顺序会改变分发结果。
+/// 判断只看文本而不解析结构，无法归类时返回 `None` 频道，调用方据此忽略该消息而不是报错。
 fn channel_from_payload(payload: &str) -> MarketFeedChannel {
     if payload.contains("kline") || payload.contains("candle") {
         // info!("进入Kline:\npayload--->{}", payload);

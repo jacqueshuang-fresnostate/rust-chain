@@ -1,6 +1,13 @@
 //! auth bounded context infrastructure layer.
 //!
 //! 基础设施层：封装 SQLx、Redis、第三方接口和仓储实现。
+//!
+//! 本文件是认证限界上下文全部外部 I/O 的落地点：MySQL 认证仓储、Redis 刷新令牌适配器，
+//! 以及向 Cloudflare 站点校验接口发起的出站请求。
+//! 文件内函数分为两类，后缀带 `_in_tx` 的都运行在调用方开启的事务中，自身既不开启也不提交事务，
+//! 其加锁顺序与提交时机全部由上层用例决定；其余函数直接使用连接池，各自独立提交。
+//! 安全上这里只接收已经散列的口令与验证码，绝不写入任何明文凭据；刷新令牌在 MySQL 侧存 Argon2 摘要、
+//! 在 Redis 侧存 SHA-256 派生键；查询未命中一律返回 `None` 或统一的校验错误，不靠错误差异暴露账号是否存在。
 
 use crate::{
     architecture::InfrastructureLayer,
@@ -63,7 +70,9 @@ pub struct RedisProjectRefreshTokenRepository {
 impl InfrastructureLayer for RedisProjectRefreshTokenRepository {}
 
 impl RedisProjectRefreshTokenRepository {
-    /// 使用已经建立的 Redis 连接管理器创建适配器，不在构造期间发起网络请求。
+    /// 用已建立的 Redis 连接管理器包出刷新令牌适配器，构造期间不发起任何网络请求。
+    /// 连接管理器自带重连并可廉价克隆，因此适配器能在多个请求间共享，无需额外加锁或做连接池管理。
+    /// 构造成功不代表 Redis 可达，真正的连接故障要到首次执行读写命令时才会暴露。
     pub fn new(manager: redis::aio::ConnectionManager) -> Self {
         Self { manager }
     }
@@ -143,12 +152,19 @@ impl ProjectRefreshTokenRepository for RedisProjectRefreshTokenRepository {
     }
 }
 
+/// 对原始刷新令牌做一次 SHA-256 并输出十六进制字符串，作为构造存储键的中间结果。
+/// 这里用快速摘要而不是口令散列：令牌本身是高熵随机串，不存在被字典穷举的风险，
+/// 而每次刷新都要按令牌定位记录，慢哈希会把成本叠加到每一个请求上。
+/// 摘要不可逆，因此即便 Redis 键空间被完整列举，也无法从键名反推出可用的刷新令牌。
 fn refresh_token_digest(refresh_token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(refresh_token.as_bytes());
     hex::encode(hasher.finalize())
 }
 
+/// 把原始刷新令牌拼成 Redis 中的记录键，形式是固定业务前缀加上令牌摘要。
+/// 前缀让认证相关的键落在独立命名空间内，便于按前缀排查和批量清理，也避免与其他业务的键相互覆盖。
+/// 键名中只出现摘要，原始令牌不会进入 Redis 的键空间、慢查询日志或监控采样。
 fn refresh_token_key(refresh_token: &str) -> String {
     format!(
         "{}{}",
@@ -157,6 +173,9 @@ fn refresh_token_key(refresh_token: &str) -> String {
     )
 }
 
+/// 拼出主体索引键，形式是固定前缀加主体类型与主体 ID，用来收拢该主体名下的全部刷新令牌键。
+/// 有了这个索引，改密或强制下线时无需扫描整个键空间即可批量撤销，代价是写入端必须同步维护索引。
+/// 键中带上主体类型，可避免三张账号表里相同的自增 ID 碰撞进同一个索引集合。
 fn refresh_actor_key(actor_type: ActorType, actor_id: u64) -> String {
     format!(
         "{}{}:{}",
@@ -240,11 +259,17 @@ pub struct MySqlAuthRepository {
 impl InfrastructureLayer for MySqlAuthRepository {}
 
 impl MySqlAuthRepository {
-    /// 用已配置 MySQL 连接池创建认证仓储适配器，构造时不访问数据库。
+    /// 用已配置好的 MySQL 连接池包出认证仓储适配器，构造过程不建立连接也不执行任何语句。
+    /// 连接池句柄可以廉价克隆并在任务间共享，因此适配器本身无额外状态，能随应用状态一起复制。
+    /// 数据库不可达或表结构缺失都要等到具体查询执行时才会以数据库错误的形式暴露。
     pub fn new(pool: Pool<MySql>) -> Self {
         Self { pool }
     }
 
+    /// 确认普通用户记录存在且状态为活跃，命中时用数据库返回的 ID 重建主体。
+    /// 用户主体的 `user_id` 与账号 ID 相同，这里一并回填，使下游资产相关流程可以直接使用。
+    /// 账号被停用与记录不存在都返回 `None`，调用方须把两者折叠成未授权，不得据此判断账号是否存在。
+    /// 这是不加锁的普通读取，返回之后账号仍可能被并发停用。
     async fn find_active_user(&self, actor: &AuthActor) -> AppResult<Option<AuthActor>> {
         let actor_id = sqlx::query_scalar::<_, u64>(
             "SELECT id FROM users WHERE id = ? AND status = 'active' LIMIT 1",
@@ -256,6 +281,9 @@ impl MySqlAuthRepository {
         Ok(actor_id.map(|actor_id| AuthActor::new(ActorType::User, actor_id, Some(actor_id))))
     }
 
+    /// 确认平台管理员记录存在且状态为活跃，命中时重建管理员主体，`user_id` 固定留空。
+    /// 留空是刻意为之：管理员不对应任何交易账户，一旦回填就可能被下游误当成用户身份去操作资产。
+    /// 停用与不存在同样都返回 `None`。本查询不涉及角色与权限，功能级授权由业务侧另行判定。
     async fn find_active_admin(&self, actor: &AuthActor) -> AppResult<Option<AuthActor>> {
         let actor_id = sqlx::query_scalar::<_, u64>(
             "SELECT id FROM admin_users WHERE id = ? AND status = 'active' LIMIT 1",
@@ -267,6 +295,10 @@ impl MySqlAuthRepository {
         Ok(actor_id.map(|actor_id| AuthActor::new(ActorType::Admin, actor_id, None)))
     }
 
+    /// 确认代理后台账号活跃，并要求其所属代理及整条祖先链路上没有任何一级被停用。
+    /// 祖先判定用路径前缀匹配完成：凡路径等于自身或为自身前缀的代理，只要有一个状态不是活跃就整体判否。
+    /// 这样冻结上级代理即可立刻切断其全部下级后台的会话续期，而不必逐个改写下级账号状态。
+    /// 任何一项不满足都返回 `None`，调用方无法区分究竟是账号本身被停用还是某一级上级被冻结。
     async fn find_active_agent(&self, actor: &AuthActor) -> AppResult<Option<AuthActor>> {
         let actor_id = sqlx::query_scalar::<_, u64>(
             r#"SELECT agent_admin_users.id
@@ -294,6 +326,10 @@ impl MySqlAuthRepository {
 
 #[async_trait]
 impl AuthRepository for MySqlAuthRepository {
+    /// 插入一条新用户记录，写入邮箱、手机号、国家码、默认语言和调用方已经散列好的口令。
+    /// 邮箱或手机号命中唯一索引时映射为用户已存在的冲突错误，其余数据库错误按原语义上抛。
+    /// 主体 ID 取自自增主键，用户主体的 `user_id` 与之相同。
+    /// 本方法直接使用连接池独立提交，不参与注册用例的事务，也不写推荐关系、邀请码和注册事件。
     async fn create_user(&self, actor: NewUserActor) -> AppResult<AuthActor> {
         let result = sqlx::query(
             r#"INSERT INTO users (email, phone, country_code, preferred_locale, password_hash)
@@ -312,6 +348,9 @@ impl AuthRepository for MySqlAuthRepository {
         Ok(AuthActor::new(ActorType::User, actor_id, Some(actor_id)))
     }
 
+    /// 插入一条平台管理员记录，写入用户名、口令哈希与角色 ID，并返回管理员作用域主体。
+    /// 角色是否存在完全交给外键约束把关，这里不做预查，从而避免检查与插入之间出现竞态窗口。
+    /// 用户名唯一冲突映射为管理员已存在；调用者是否有权创建管理员由服务层在调用之前判定。
     async fn create_admin(&self, actor: NewAdminActor) -> AppResult<AuthActor> {
         let result = sqlx::query(
             "INSERT INTO admin_users (username, password_hash, role_id) VALUES (?, ?, ?)",
@@ -330,6 +369,9 @@ impl AuthRepository for MySqlAuthRepository {
         ))
     }
 
+    /// 插入一条代理后台账号记录，把用户名与口令哈希挂到入参指定的代理节点上。
+    /// 只创建可登录的后台账号，不创建代理公司本身，也不生成或调整代理层级路径。
+    /// 代理节点是否存在由外键约束保证，用户名冲突映射为代理已存在；该节点当前是否活跃要到登录时才校验。
     async fn create_agent(&self, actor: NewAgentActor) -> AppResult<AuthActor> {
         let result = sqlx::query(
             "INSERT INTO agent_admin_users (agent_id, username, password_hash) VALUES (?, ?, ?)",
@@ -348,6 +390,9 @@ impl AuthRepository for MySqlAuthRepository {
         ))
     }
 
+    /// 读取国家配置中同时满足开放注册且状态活跃的那一条，返回规范化国家码与默认语言。
+    /// 注册开关关闭或配置被停用一律按未命中返回，不把「配置存在但被禁用」这一差别透给调用方。
+    /// 这是无锁读取，返回后配置仍可能被后台改动，需要与创建用户保持一致时应改用事务内的加锁版本。
     async fn find_registration_country(
         &self,
         country_code: &str,
@@ -370,6 +415,9 @@ impl AuthRepository for MySqlAuthRepository {
         )
     }
 
+    /// 按邮箱取出用户 ID、口令哈希与账号状态，邮箱须由调用方预先转成小写后传入。
+    /// 状态随记录一并返回而不是写进查询条件，使停用账号照样走完口令比对，与密码错误保持一致的响应特征。
+    /// 未命中只返回 `None`，不附带任何可用来区分邮箱是否已注册的额外信息。
     async fn find_user_by_email(&self, email: &str) -> AppResult<Option<StoredActorCredential>> {
         let row = sqlx::query_as::<_, (u64, String, String)>(
             "SELECT id, password_hash, status FROM users WHERE email = ? LIMIT 1",
@@ -387,6 +435,9 @@ impl AuthRepository for MySqlAuthRepository {
         )
     }
 
+    /// 按手机号取出同一组用户凭据快照，这是邮箱之外的第二条登录标识入口。
+    /// 号码按存储中的原样精确匹配，SQL 里不做去分隔符或模糊处理，格式整形必须在调用之前完成。
+    /// 与邮箱查询命中的是同一张用户表的同一批字段，未命中同样只返回 `None`。
     async fn find_user_by_phone(&self, phone: &str) -> AppResult<Option<StoredActorCredential>> {
         let row = sqlx::query_as::<_, (u64, String, String)>(
             "SELECT id, password_hash, status FROM users WHERE phone = ? LIMIT 1",
@@ -404,6 +455,10 @@ impl AuthRepository for MySqlAuthRepository {
         )
     }
 
+    /// 按用户名取出用户凭据快照，用户名须已完成小写与字符集规范化。
+    /// 用户名登录开关的判定在服务层完成，本方法不重复检查，因此绝不能把它接到开关关闭时的登录路径上，
+    /// 否则用户名登录会绕过开关被重新启用。
+    /// 取的是与邮箱、手机号查询相同的表和字段，未命中返回 `None`。
     async fn find_user_by_username(
         &self,
         username: &str,
@@ -424,6 +479,9 @@ impl AuthRepository for MySqlAuthRepository {
         )
     }
 
+    /// 按用户名取出平台管理员的 ID、口令哈希与状态，构造出的主体不带 `user_id`。
+    /// 查询只按用户名过滤而不过滤状态，把停用判定留给服务层，从而与用户端共用一致的失败与锁定语义。
+    /// 未命中返回 `None`；口令比对不在仓储内执行，避免同一判断在多处实现出现分歧。
     async fn find_admin_by_username(
         &self,
         username: &str,
@@ -444,6 +502,9 @@ impl AuthRepository for MySqlAuthRepository {
         )
     }
 
+    /// 用存在性子查询判断管理员表是否至少有一行，供首次引导注册决定是否还允许匿名创建。
+    /// 选择 EXISTS 而非计数，是因为只关心有无，数据库命中第一行即可返回，表变大也不会退化。
+    /// 本查询不加锁，与随后的插入之间存在竞态窗口，并发引导的最终结果由用户名唯一约束裁定。
     async fn has_any_admin(&self) -> AppResult<bool> {
         let (exists,): (bool,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM admin_users)")
             .fetch_one(&self.pool)
@@ -452,6 +513,10 @@ impl AuthRepository for MySqlAuthRepository {
         Ok(exists)
     }
 
+    /// 按用户名取出代理后台账号凭据，同时要求所属代理及其整条祖先链路都处于活跃状态。
+    /// 祖先判定用路径前缀匹配，任一上级被停用即按未命中处理，因此冻结上级代理会立即阻断其下级后台登录，
+    /// 无需逐条改写下级账号。账号自身的状态随记录返回交由服务层判断，保持与其他主体一致的锁定语义。
+    /// 未命中不区分是用户名不存在还是代理层级失效。
     async fn find_agent_by_username(
         &self,
         username: &str,
@@ -484,6 +549,9 @@ impl AuthRepository for MySqlAuthRepository {
         )
     }
 
+    /// 按主体类型把活跃状态回查分派到用户、管理员或代理各自的私有实现上。
+    /// 三条分支查询的是不同的表，活跃判定口径也不同，其中代理分支还要额外校验整条祖先链路。
+    /// 令牌刷新与管理员授权都经由这里回查，使账号停用和代理冻结不必等访问令牌自然过期就能生效。
     async fn find_active_actor(&self, actor: &AuthActor) -> AppResult<Option<AuthActor>> {
         match actor.actor_type {
             ActorType::User => self.find_active_user(actor).await,
@@ -492,6 +560,10 @@ impl AuthRepository for MySqlAuthRepository {
         }
     }
 
+    /// 在口令校验通过后记录本次登录，当前实现只更新代理后台账号的最近登录时间。
+    /// 用户与平台管理员两类主体没有对应字段，直接返回成功，这是有意为之的空操作而不是遗漏。
+    /// 更新语句真的失败时会上抛，进而让整次登录失败，因此它不能被当成可有可无的旁路埋点。
+    /// 本方法不写审计流水，也不记录来源 IP 与设备信息。
     async fn record_login(&self, actor: &AuthActor) -> AppResult<()> {
         if actor.actor_type == ActorType::Agent {
             sqlx::query(
@@ -505,6 +577,10 @@ impl AuthRepository for MySqlAuthRepository {
         Ok(())
     }
 
+    /// 插入一条刷新令牌记录，保存主体信息、令牌摘要与到期时间，原始令牌不落库。
+    /// 摘要唯一冲突时借 ON DUPLICATE KEY UPDATE 把 token_hash 写回自身，实际不改动任何列，
+    /// 使重复登记同一摘要成为幂等操作而不是报错中断登录。
+    /// 本方法不清理该主体的历史令牌，同一主体可以同时持有多枚有效刷新令牌。
     async fn store_refresh_token(&self, token: StoredRefreshToken) -> AppResult<()> {
         sqlx::query(
             r#"INSERT INTO refresh_tokens (user_id, actor_type, actor_id, token_hash, expires_at)
@@ -522,6 +598,11 @@ impl AuthRepository for MySqlAuthRepository {
         Ok(())
     }
 
+    /// 按摘要回查刷新令牌绑定的主体，只接受未被撤销且到期时间晚于传入时刻的记录。
+    /// 时间由调用方传入，使同一次刷新流程中的多处判断共用一致的时间基准，也便于测试固定时钟。
+    /// 存储中的主体类型字符串无法识别时返回未授权而不是内部错误，避免被污染的行被当成某个默认身份放行。
+    /// 作用域由主体类型推导而来，并不单独存列，因此不存在两者互相矛盾的可能。
+    /// 本方法只读，既不消费也不轮换令牌，重放边界由服务层决定。
     async fn find_refresh_token(
         &self,
         token_hash: &str,
@@ -550,6 +631,9 @@ impl AuthRepository for MySqlAuthRepository {
         .transpose()
     }
 
+    /// 查询该主体类型与标识组合当前是否处于锁定期，只返回仍晚于当前时刻的锁定截止时间。
+    /// 过期条件直接写在 SQL 里，已到期的锁定天然被排除，因此解锁靠时间自然完成，无需清理任务或人工介入。
+    /// 标识必须是领域层规范化后的失败计数键，直接传原始输入会因大小写或空白差异漏掉既有锁定。
     async fn find_login_lockout(
         &self,
         actor_type: ActorType,
@@ -571,6 +655,13 @@ impl AuthRepository for MySqlAuthRepository {
         Ok(locked_until)
     }
 
+    /// 在单条 upsert 中推进失败计数，越过阈值时写入锁定截止时间，最后回读判断当前是否真的处于锁定。
+    /// 计数刻意不采用先读后写：那样会在尚不存在的行上取间隙锁，与并发插入的意向锁互相死锁，
+    /// 使并发失败请求报错并漏计，等于放过一整轮爆破。窗口未过期则累加，已过期则重置为一次。
+    /// 实现依赖 ON DUPLICATE KEY UPDATE 赋值自左向右求值这一特性，让后续表达式读到已经更新的新计数。
+    /// upsert 只影响一行说明本次新增了标识符，借这一时机顺带删除一批已过期的计数行；
+    /// 否则针对随机账号的撞库会留下永不回收的记录，因为常规清理只发生在登录成功时。
+    /// 回读结果还会按当前时间再过滤一次，返回 `None` 表示本次失败尚未触发锁定。
     async fn record_login_failure(
         &self,
         actor_type: ActorType,
@@ -640,6 +731,10 @@ impl AuthRepository for MySqlAuthRepository {
         Ok(locked_until)
     }
 
+    /// 删除该主体类型与标识组合的失败计数行，一并清掉累计次数、时间窗口和锁定状态。
+    /// 这是计数行在正常流程中唯一的删除时机，因此只能在口令校验确实通过后调用，任何失败分支都不得触发，
+    /// 否则攻击者可以靠制造特定失败来抹掉自己的尝试记录。
+    /// 目标行不存在时删除零行并返回成功，重复调用幂等。
     async fn clear_login_failures(&self, actor_type: ActorType, identifier: &str) -> AppResult<()> {
         sqlx::query("DELETE FROM login_failure_counters WHERE actor_type = ? AND identifier = ?")
             .bind(actor_type.as_str())
@@ -651,7 +746,9 @@ impl AuthRepository for MySqlAuthRepository {
     }
 }
 
-/// 按管理员 ID 读取 TOTP 导入链接的账号标签，记录缺失时按未授权处理。
+/// 读取管理员用户名，只用于拼装 TOTP 导入链接中展示给认证器 App 的账号标签。
+/// 记录不存在时返回未授权而不是内部错误：能走到这一步说明令牌里的管理员已被删除，会话本就不该继续。
+/// 只取用户名一列，不触碰口令哈希、角色和二次验证密钥，避免绑定流程顺带把敏感字段读进内存。
 pub(crate) async fn load_admin_username(pool: &Pool<MySql>, admin_id: u64) -> AppResult<String> {
     sqlx::query_scalar::<_, String>("SELECT username FROM admin_users WHERE id = ? LIMIT 1")
         .bind(admin_id)
@@ -713,7 +810,10 @@ struct ReferralLinkRow {
     path: String,
 }
 
-/// 在注册事务中锁定已启用且允许注册的国家配置，防止创建用户期间配置漂移。
+/// 在调用方已开启的注册事务中以 `FOR UPDATE` 锁定目标国家配置，要求其开放注册且状态活跃。
+/// 加锁是为了让配置在整个注册事务期间保持稳定，避免刚校验完就被后台关闭注册，
+/// 结果用户带着一个已失效的国家码落库，后续本地化和合规判断全部错位。
+/// 锁一直持有到调用方提交或回滚。未命中返回校验错误，不区分国家不存在与国家已关闭注册。
 pub(crate) async fn lock_registration_country_in_tx(
     tx: &mut Transaction<'_, MySql>,
     country_code: &str,
@@ -733,7 +833,10 @@ pub(crate) async fn lock_registration_country_in_tx(
     })
 }
 
-/// 在注册事务中检查邮箱尚未被用户占用，命中时返回冲突而不泄露其他账号字段。
+/// 在注册事务中确认邮箱尚未被任何用户占用，命中即返回冲突错误。
+/// 只取主键做存在性判断，不读出占用方账号的其他任何字段，冲突信息里也不包含对方账号的信息。
+/// 这是不加锁的读取，真正的并发防线仍然是邮箱唯一索引；本检查的作用是把常见冲突提前转成清晰的业务错误，
+/// 而不是让调用方看到底层的唯一键报错。
 pub(crate) async fn ensure_registration_email_available_in_tx(
     tx: &mut Transaction<'_, MySql>,
     email: &str,
@@ -749,7 +852,11 @@ pub(crate) async fn ensure_registration_email_available_in_tx(
     Ok(())
 }
 
-/// 检查同一注册邮箱最新待验证码的六十秒发送冷却，冷却内不插入新记录。
+/// 在事务中取该邮箱最近一条待验证的注册验证码，若其发送时间距今不足六十秒则拒绝再次发送。
+/// 冷却按邮箱与用途维度计算，防止匿名调用方靠反复请求把验证码邮件当成骚扰或轰炸手段，
+/// 也顺带限制了攻击者刷新验证码以扩大猜测面的速率。
+/// 只看最新一条待验证记录，已被取代或已验证的历史记录不参与判断。
+/// 时间基准由调用方传入，保证同一次发送流程中多处判断使用同一个时刻。
 pub(crate) async fn ensure_registration_email_not_cooling_down_in_tx(
     tx: &mut Transaction<'_, MySql>,
     email: &str,
@@ -773,7 +880,10 @@ pub(crate) async fn ensure_registration_email_not_cooling_down_in_tx(
     Ok(())
 }
 
-/// 在发送新注册码前将同邮箱旧待验证记录标记为已取代，重复执行保持幂等。
+/// 在插入新注册验证码之前，把该邮箱下所有仍处于待验证状态的旧码统一标记为已取代。
+/// 这一步保证任意时刻每个邮箱最多只有一枚可用的注册验证码，旧码在新码发出后立即失效，
+/// 从而堵住先攒下多枚验证码、再逐个尝试以绕过单枚试错上限的重放路径。
+/// 没有待验证记录时更新零行并返回成功，重复执行幂等。
 pub(crate) async fn supersede_pending_registration_email_codes_in_tx(
     tx: &mut Transaction<'_, MySql>,
     email: &str,
@@ -789,7 +899,10 @@ pub(crate) async fn supersede_pending_registration_email_codes_in_tx(
     Ok(())
 }
 
-/// 在发送事务中插入注册邮件码哈希、过期与发送时间，不持久化明文验证码。
+/// 在发送事务中插入一条注册验证码记录，保存邮箱、用途、验证码哈希、到期时间与发送时间。
+/// 入库的始终是哈希，明文验证码只出现在随后发出的邮件正文里，数据库与日志中都不留存。
+/// 记录初始为待验证状态，试错次数从零开始累积；发送时间同时充当下一次发送的冷却基准。
+/// 本函数不提交事务，若调用方在提交前失败，这条记录不会存在，冷却也不会被占用。
 pub(crate) async fn insert_registration_email_verification_in_tx(
     tx: &mut Transaction<'_, MySql>,
     email: &str,
@@ -983,7 +1096,10 @@ pub(crate) async fn create_user_invite_code_in_tx(
     ))
 }
 
-/// 在调用方事务中按用户、邮箱和用途插入待验证码哈希，不保存明文。
+/// 在调用方事务中插入一条面向已注册用户的验证码记录，按用户、邮箱和用途三元组归档。
+/// 用途字段把密码重置、二次验证重置等场景彼此隔离，使各流程的验证码无法互相顶用，
+/// 攻击者也不能用一个低风险场景领到的码去完成高风险操作。
+/// 保存的是验证码哈希，明文只随邮件发出；记录初始为待验证，发送时间用于计算该用途独立的冷却。
 pub(crate) async fn insert_user_email_verification_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1009,7 +1125,10 @@ pub(crate) async fn insert_user_email_verification_in_tx(
     Ok(())
 }
 
-/// 锁定活跃用户已验证邮箱，供验证码发送与后续消费共用一致地址。
+/// 在事务中以 `FOR UPDATE` 锁定活跃且已完成邮箱验证的用户，并取出其当前邮箱。
+/// 加锁让同一事务内后续的验证码写入或消费与这个邮箱严格对应，避免中途邮箱被改导致验证码发往旧地址，
+/// 或者反过来用旧地址领到的验证码去操作新地址的账号。
+/// 用户不活跃、邮箱未验证或邮箱为空都返回同一条校验错误，调用方无法区分具体是哪一种情况。
 pub(crate) async fn lock_verified_user_email_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1028,7 +1147,9 @@ pub(crate) async fn lock_verified_user_email_in_tx(
     email.ok_or_else(|| AppError::Validation("verified email is required".to_owned()))
 }
 
-/// 检查指定用户、邮箱和用途的六十秒发送冷却，冷却内拒绝新验证码。
+/// 在事务中检查该用户、邮箱与用途组合最近一条待验证码的发送时间，不足六十秒则拒绝重复发送。
+/// 冷却按用途独立计算，因此密码重置的发送不会挡住二次验证重置的发送，两条流程互不牵连。
+/// 只看最新一条待验证记录，已取代和已验证的历史记录不计入冷却判断。
 pub(crate) async fn ensure_email_purpose_not_cooling_down_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1056,7 +1177,9 @@ pub(crate) async fn ensure_email_purpose_not_cooling_down_in_tx(
     Ok(())
 }
 
-/// 在发送新码前将同用户同用途旧待验证记录标记已取代，防止旧码重放。
+/// 在发出新验证码之前，把该用户在同一用途下所有待验证的旧码标记为已取代。
+/// 与注册验证码的取代不同，这里按用户和用途过滤而不按邮箱，因此换过邮箱后遗留的旧码同样会被作废。
+/// 由此保证每个用户在每种用途下最多只有一枚可用验证码，杜绝攒码之后逐个重放。
 pub(crate) async fn supersede_pending_email_verifications_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1074,7 +1197,11 @@ pub(crate) async fn supersede_pending_email_verifications_in_tx(
     Ok(())
 }
 
-/// 以 `FOR UPDATE` 锁定用户、邮箱和用途下最新待验证记录，供试码计数与消费原子更新。
+/// 在事务中以 `FOR UPDATE` 锁定该用户、邮箱与用途下最新的待验证码记录，并返回校验所需字段。
+/// 加锁使随后的试错计数递增或消费标记与本次读取构成原子操作，并发提交同一验证码不会各自读到旧计数，
+/// 从而把五次试错上限真正卡死，而不是被并发请求稀释成远多于五次的实际尝试。
+/// 只取最新一条，历史记录即便仍是待验证状态也不参与比对。
+/// 未命中返回 `None`，由调用方统一转换成与验证码错误一致的校验错误。
 pub(crate) async fn lock_latest_pending_email_verification_by_purpose_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1097,7 +1224,10 @@ pub(crate) async fn lock_latest_pending_email_verification_by_purpose_in_tx(
     .map_err(AppError::from)
 }
 
-/// 按已验证邮箱读取活跃用户 ID 供发送重置码，未命中以统一未注册错误处理。
+/// 按邮箱定位活跃且已完成邮箱验证的用户 ID，供密码重置流程确定验证码的接收方。
+/// 未注册、已停用与邮箱未验证都返回同一条邮箱未注册的校验错误，三者在响应上无法区分，
+/// 但这仍意味着该入口整体会暴露某个邮箱是否可用于重置，抗枚举须依赖上游限流。
+/// 使用连接池直接查询，不加锁；真正的一致性由后续重置事务内的加锁读取保证。
 pub(crate) async fn load_password_reset_user_id(pool: &Pool<MySql>, email: &str) -> AppResult<u64> {
     sqlx::query_scalar(
         r#"SELECT id
@@ -1138,7 +1268,10 @@ pub(crate) async fn insert_verified_user_in_tx(
     Ok(result.last_insert_id())
 }
 
-/// 在验证事务中累加指定邮件码试错次数，调用方对校验错误仍需提交该计数。
+/// 在验证事务中把指定验证码记录的试错次数加一，用于逼近五次上限后让该验证码作废。
+/// 递增在数据库内完成而非先读后写，配合调用方持有的行锁，保证并发试码不会互相覆盖计数。
+/// 关键约束是：调用方即便最终要返回验证码错误，也必须提交这次递增，
+/// 否则回滚会把计数一并抹掉，试错上限形同虚设，单枚验证码可被无限次猜测。
 pub(crate) async fn increment_email_verification_attempt_in_tx(
     tx: &mut Transaction<'_, MySql>,
     verification_id: u64,
@@ -1154,7 +1287,10 @@ pub(crate) async fn increment_email_verification_attempt_in_tx(
     Ok(())
 }
 
-/// 将指定邮件码记录标记为已验证并写入时间，供同事务内后续凭证变更。
+/// 把指定验证码记录标记为已验证并写入验证时间，使其无法再被第二次消费。
+/// 消费与随后的口令更新等凭证变更处在同一事务内，因此要么一起生效，要么一起回滚，
+/// 不会出现验证码已作废但密码没改、用户还得重新领码的中间状态。
+/// 本函数按主键更新，不重复校验记录是否仍处于待验证状态，该前提由调用方先前的加锁读取保证。
 pub(crate) async fn mark_email_verification_verified_in_tx(
     tx: &mut Transaction<'_, MySql>,
     verification_id: u64,
@@ -1172,7 +1308,10 @@ pub(crate) async fn mark_email_verification_verified_in_tx(
     Ok(())
 }
 
-/// 锁定与验证记录一致的活跃已验证邮箱用户，防止重置期间账号状态漂移。
+/// 在重置事务中以 `FOR UPDATE` 按用户 ID 和邮箱同时锁定活跃且已验证邮箱的用户。
+/// 两个条件一起匹配，是为了确认此刻的账号仍与先前消费掉的那枚验证码指向同一邮箱，
+/// 避免在领码与提交之间邮箱被改动，出现拿旧邮箱的验证码改掉新邮箱账号口令的越权路径。
+/// 任一条件不满足都返回未授权而不是校验错误，不透露究竟是账号状态变了还是邮箱对不上。
 pub(crate) async fn lock_password_reset_user_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1193,7 +1332,10 @@ pub(crate) async fn lock_password_reset_user_in_tx(
     .ok_or(AppError::Unauthorized)
 }
 
-/// 在已锁定的重置事务中更新用户密码哈希，不自行消费验证码或提交。
+/// 在已加锁的重置事务中写入新的口令哈希，入参必须是调用方散列之后的结果，本函数不接受明文。
+/// 这里不做长度或复杂度校验，也不消费验证码、不撤销会话、不自行提交，
+/// 这些步骤由重置用例在同一事务或后续步骤中显式完成，顺序排错就会留下可被利用的窗口。
+/// 只更新口令一列，不改动账号状态与邮箱。
 pub(crate) async fn update_user_password_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1207,7 +1349,10 @@ pub(crate) async fn update_user_password_in_tx(
     Ok(())
 }
 
-/// 在重置密码事务中撤销用户全部未撤销 MySQL 刷新令牌，重复执行保持幂等。
+/// 在重置事务中把该用户名下所有尚未撤销的刷新令牌一次性打上撤销时间。
+/// 与口令更新同事务提交，保证新口令生效的同一刻旧刷新令牌全部失效，不给攻击者留下继续续期的缝隙。
+/// 只覆盖 MySQL 中登记的刷新令牌，Sa-Token 会话与 Redis 侧的令牌必须在事务提交后另行撤销。
+/// 已撤销的记录被查询条件排除，因此重复执行幂等，也不会刷掉既有的撤销时间。
 pub(crate) async fn revoke_user_refresh_tokens_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1223,6 +1368,10 @@ pub(crate) async fn revoke_user_refresh_tokens_in_tx(
     Ok(())
 }
 
+/// 把 MySQL 的唯一键冲突翻译成按主体命名的冲突错误，其余数据库错误保持原样上抛。
+/// 主体名由调用方传入，使用户、管理员和代理三条创建路径各自给出可读且不混淆的提示。
+/// 只识别唯一键冲突这一种情况，外键失败、超时等错误不会被误判成业务冲突而掩盖真实故障。
+/// 错误文案不含冲突的具体字段值，避免把已存在的用户名或邮箱原样回显出去。
 fn map_duplicate_key(error: sqlx::Error, actor: &str) -> AppError {
     if is_duplicate_key(&error) {
         AppError::Conflict(format!("{actor} already exists"))
@@ -1231,7 +1380,10 @@ fn map_duplicate_key(error: sqlx::Error, actor: &str) -> AppError {
     }
 }
 
-/// 将 MySQL 唯一键冲突映射为用户已存在，其他 SQL 错误保留数据库语义。
+/// 把用户插入时的唯一键冲突固定翻译成用户已存在，其余 SQL 错误保留数据库原本语义。
+/// 邮箱与手机号共用同一条提示，因此响应不会指明究竟是哪一列冲突，
+/// 减少注册接口被用来逐项探测已有账号联系方式的价值。
+/// 与按主体命名的通用映射不同，本函数专供用户注册路径使用，主体名固定且不可配置。
 pub(crate) fn map_duplicate_user(error: sqlx::Error) -> AppError {
     if is_duplicate_key(&error) {
         AppError::Conflict("user already exists".to_owned())
@@ -1240,6 +1392,10 @@ pub(crate) fn map_duplicate_user(error: sqlx::Error) -> AppError {
     }
 }
 
+/// 在注册事务中以 `FOR UPDATE` 锁定处于启用状态的邀请码，并取出归属方与用量字段。
+/// 加锁是超发防护的关键：额度检查与随后的使用次数累加必须落在同一把行锁下，
+/// 否则并发注册会同时读到尚未超额的旧值，各自通过检查后一起把用量顶破上限。
+/// 邀请码不存在与已停用返回同一条校验错误，不透露该码是否曾经存在过。
 async fn lock_active_invite_code_in_tx(
     tx: &mut Transaction<'_, MySql>,
     code: &str,
@@ -1257,6 +1413,11 @@ async fn lock_active_invite_code_in_tx(
     .ok_or_else(|| AppError::Validation("invite code is inactive or not found".to_owned()))
 }
 
+/// 在注册事务中锁定目标代理并逐级锁定其祖先，要求整条链路上每一级都处于活跃状态。
+/// 先按 ID 锁定代理本体并取出层级路径，再用路径前缀匹配把所有祖先一并加锁，
+/// 且按层级与 ID 的固定顺序读取，使并发注册以相同顺序获取行锁，避免交叉加锁形成死锁。
+/// 祖先集合为空或其中任意一级不是活跃状态都判为失败，因为上级被停用时下级不应继续发展新用户。
+/// 这些锁一直持有到调用方提交，从而保证代理状态在整个注册事务期间不被并发改动。
 async fn ensure_active_agent_in_tx(
     tx: &mut Transaction<'_, MySql>,
     agent_id: u64,
@@ -1293,6 +1454,9 @@ async fn ensure_active_agent_in_tx(
     Ok(())
 }
 
+/// 在注册事务中以 `FOR UPDATE` 锁定作为邀请人的用户，并要求其状态为活跃。
+/// 加锁防止邀请人在推荐关系写入之前被并发停用，避免新用户被挂到一个已经失效的邀请人名下。
+/// 只做存在性与状态校验，不读取邀请人的任何业务字段；未命中返回邀请人不可用的校验错误。
 async fn ensure_active_user_in_tx(tx: &mut Transaction<'_, MySql>, user_id: u64) -> AppResult<()> {
     sqlx::query_as::<_, (u64,)>(
         r#"SELECT id
@@ -1308,6 +1472,10 @@ async fn ensure_active_user_in_tx(tx: &mut Transaction<'_, MySql>, user_id: u64)
     Ok(())
 }
 
+/// 在注册事务中以 `FOR UPDATE` 锁定邀请人的推荐关系记录，取出其归属代理、层级深度和路径。
+/// 新用户的深度在邀请人基础上加一、路径以邀请人路径为前缀，因此这条记录必须在整个事务内保持稳定，
+/// 否则并发改动会让推荐树出现深度与路径互相矛盾的分叉，后续分佣按树遍历时会算错归属。
+/// 邀请人没有推荐关系记录时返回校验错误，即用户邀请码要求邀请人自己已经归属于某条推荐链路。
 async fn load_referral_link_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
@@ -1325,6 +1493,10 @@ async fn load_referral_link_in_tx(
     .ok_or_else(|| AppError::Validation("inviter has not bound an agent".to_owned()))
 }
 
+/// 判断数据库错误是否为 MySQL 的唯一键冲突，依据是错误码 1062。
+/// 直接匹配错误码而不是解析错误文本，从而不受数据库语言设置与版本间措辞变化的影响。
+/// 邀请码生成的重试循环和各创建路径的冲突映射都依赖它来区分「可重试的撞码」与「真正的故障」，
+/// 判断放宽会把真实故障吞成静默重试，收紧则会把正常冲突暴露成内部错误。
 fn is_duplicate_key(error: &sqlx::Error) -> bool {
     matches!(error, sqlx::Error::Database(database_error) if database_error.code().as_deref() == Some("1062"))
 }

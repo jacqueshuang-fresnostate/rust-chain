@@ -1,9 +1,19 @@
+//! 后台用户管理、人工充值与 KYC 审核转发的应用用例层。
+//!
+//! 写用例统一在事务内完成锁定、写入、回读与审计。有三处副作用值得单独留意：
+//! 创建用户会投递用户创建 outbox 事件，事件只有在事务提交后才可能被投递；
+//! 封禁用户在事务内吊销刷新令牌、并在提交后撤销在线访问会话，后者不可回滚；
+//! 人工充值会真实增加用户可用余额且没有请求幂等键，超时重试存在重复入账风险。
+//! KYC 相关用例只做跨上下文转发，审核规则与状态机由 kyc 上下文负责，后台仅补写自己的审计。
+
 use super::*;
 use crate::modules::events::{infrastructure::insert_event_in_tx, user_created_outbox_event};
 use chrono::Utc;
 
 /// 按用户 ID、邮箱和状态筛选后台用户，并返回可选包含内部账号的分页结果与总数。
 /// include_internal 缺省为 false，邮箱和状态仅去空白，分页统一裁剪；查询不锁用户或读取密码散列。
+/// 默认隐藏内部账号是为了让运营视图只看到真实用户，排查系统账号时需显式打开该开关。
+/// 响应不含口令散列与双因素密钥，因此该入口无法用于任何凭据核对。
 pub(crate) async fn list_admin_users(
     pool: Option<Pool<MySql>>,
     query: AdminUserQuery,

@@ -1,6 +1,16 @@
 //! kyc bounded context domain layer.
 //!
 //! 领域层：放置业务实体、值对象和不依赖 I/O 的业务规则。
+//! 本文件定义实名认证的两套校验口径：运营侧配置的合法性，以及用户提交材料对该配置的符合性。
+//! 支持个人与企业两种申请主体，企业申请额外要求企业名称与工商注册号。
+//! 证件类型限定在身份证、护照、驾照、居留许可四种，并可按国家进一步收窄，
+//! 部分国家与证件类型组合还会强制要求手持证件照。
+//! 状态机取值在此收敛为 `pending`、`approved`、`rejected` 三种，
+//! 且审核动作只允许写入后两者，`pending` 是提交时的初始态而非可选的审核结论。
+//! 证件图片以 Base64 文本随请求体传入，长度上限由配置的原始字节上限换算得出，
+//! 换算已计入编码膨胀与信封开销，详见 `encoded_payload_limit`。
+//! 隐私边界：本层会处理姓名、证件号与证件图片原文，但全部为纯函数式的内存校验，
+//! 不落库、不写日志、不产生审计，任何错误消息都只含字段名而不回显字段值。
 
 use crate::error::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
@@ -83,8 +93,15 @@ pub(crate) struct ValidatedKycSubmission {
     pub(crate) document_handheld_image: Option<String>,
 }
 
-/// 校验并规范化 KYC 目标等级、材料清单、国家与证件类型规则。
-/// 文件上限须在一千字节与系统上限之间；失败不产生持久化或审计副作用。
+/// 校验并规范化运营侧提交的实名认证配置，返回可安全落库的形态。
+/// 目标 KYC 等级必须为正数，等级零或负数没有业务含义。
+/// 单份材料的原始字节上限被夹在一千字节到十兆之间：下限挡住把上限配到近乎为零而使所有提交失败，
+/// 上限则是系统硬边界，防止运营配出会撑爆请求体的数值。
+/// 必填材料清单去重后不得为空，且目前只接受 `identity_front` 与 `identity_back` 两项，
+/// 手持照不通过这里配置，而是由按国家的证件类型规则决定。
+/// 允许国家清单去重后可以为空，空表示不限制国家。
+/// 按国家的证件类型规则交由专门函数校验国家唯一性与手持类型的包含关系。
+/// 纯函数，任何一步失败都直接返回校验错误，不产生持久化或审计副作用。
 pub(crate) fn validate_kyc_config(
     input: KycConfigValidationInput,
 ) -> AppResult<ValidatedKycConfig> {
@@ -237,6 +254,13 @@ pub(crate) fn validate_kyc_submission(
     })
 }
 
+/// 校验并规范化「按国家限定证件类型」的规则列表，输出顺序与输入保持一致。
+/// 国家名做非空与长度校验，并按忽略大小写比较拒绝重复条目：
+/// 同一国家配两条规则会让后续按国家查找的结果取决于顺序，属于必须在配置阶段拦下的歧义。
+/// 每条规则的可用证件类型去重后不得为空，空清单等于禁止该国家提交任何证件，应通过移除条目表达。
+/// 关键约束是手持照类型必须是可用类型的子集：
+/// 若某类型只出现在手持清单而不在可用清单，它永远不会被选中，这条规则将成为无法触发的死配置。
+/// 任一条目不合法即整体失败，不做部分接受。
 fn validate_country_document_types(
     rules: &[KycCountryDocumentTypeRule],
 ) -> AppResult<Vec<KycCountryDocumentTypeRule>> {
@@ -286,6 +310,10 @@ fn validate_country_document_types(
     Ok(result)
 }
 
+/// 逐项校验一组证件类型并去重，保留首次出现的顺序，供国家规则的两个清单共用。
+/// 去重发生在规范化之后，因此大小写不同但含义相同的写法会被折叠为一项。
+/// `field` 只用于拼装错误消息，让调用方能分辨出错的是可用类型清单还是手持类型清单。
+/// 空输入返回空向量而非报错，是否允许为空由各调用点按语义自行判断。
 fn normalize_document_types(values: &[String], field: &str) -> AppResult<Vec<String>> {
     let mut result = Vec::new();
     for value in values {
@@ -297,6 +325,12 @@ fn normalize_document_types(values: &[String], field: &str) -> AppResult<Vec<Str
     Ok(result)
 }
 
+/// 规范化并校验单个证件类型，输出统一转为小写以消除大小写写法差异。
+/// 三道检查依次施加：非空且不超过 64 字符、字符集限于 ASCII 字母数字与下划线连字符、
+/// 最终取值必须命中平台支持的四种类型之一。
+/// 字符集检查看似被白名单覆盖而多余，但它让格式错误与类型不支持返回不同消息，
+/// 便于运营区分「填错格式」和「填了平台尚未支持的证件」。
+/// `field` 参与错误消息拼装，使同一函数可服务申请提交与配置校验两个场景。
 fn validate_document_type(value: String, field: &str) -> AppResult<String> {
     let document_type = required_string(Some(value), field, 64)?.to_ascii_lowercase();
     if !document_type
@@ -311,6 +345,10 @@ fn validate_document_type(value: String, field: &str) -> AppResult<String> {
     Ok(document_type)
 }
 
+/// 规范化申请主体类型，只接受个人与企业两种，输出统一小写。
+/// 长度上限设为 16 字符，远大于两个合法取值，仅用于挡住超长垃圾输入而非表达业务约束。
+/// 该取值决定后续是否强制要求企业名称与工商注册号，因此不能容错降级：
+/// 未知取值一律返回校验错误，若默默回落到个人类型会让企业申请绕过主体信息校验。
 fn validate_submission_type(value: String) -> AppResult<String> {
     let submission_type = required_string(Some(value), "submission_type", 16)?.to_ascii_lowercase();
     if !matches!(
@@ -324,6 +362,13 @@ fn validate_submission_type(value: String) -> AppResult<String> {
     Ok(submission_type)
 }
 
+/// 判断某国家是否允许使用指定证件类型，规则来自运营配置的按国家清单。
+/// 三段语义需要分清：整个按国家清单为空表示该机制未启用，直接放行；
+/// 清单非空但找不到该国家条目，返回「该国家未配置证件类型」而非放行，
+/// 这是有意从严——机制一旦启用，未显式配置的国家就不该被接受；
+/// 找到条目则要求证件类型精确命中其可用清单，否则拒绝。
+/// 国家匹配忽略大小写，证件类型此时已被规范化为小写故用精确比较。
+/// 只读判定，不修改任何输入。
 fn validate_document_type_allowed_for_country(
     country: &str,
     document_type: &str,
@@ -354,6 +399,12 @@ fn validate_document_type_allowed_for_country(
     }
 }
 
+/// 判断当前国家与证件类型的组合是否强制要求上传手持证件照。
+/// 要求粒度是「国家加证件类型」而非仅按国家：同一国家可以只对护照要求手持照而对身份证不要求。
+/// 采取默认不要求的口径：找不到国家条目，或该条目的手持清单里没有这个证件类型，都返回 `false`。
+/// 与允许性校验的从严取向不同，这里从宽是因为漏配手持要求只是少收一张照片，
+/// 而误判为必填会直接阻断用户提交。
+/// 国家匹配忽略大小写；返回布尔值不报错，是否必填由调用方结合实际图片内容判定。
 fn requires_handheld_document_image(
     country: &str,
     document_type: &str,
@@ -370,6 +421,11 @@ fn requires_handheld_document_image(
         })
 }
 
+/// 规范化一组自由文本并按原顺序去重，用于必填材料清单与允许国家清单两处配置。
+/// 每项都要求非空且不超过 `max_chars` 个字符，任一项不合法即整体失败。
+/// 去重使用精确相等比较而不忽略大小写，因此大小写不同的国家写法会被保留为两项；
+/// 这与按国家查找时忽略大小写的口径不同，配置侧应保持书写一致以免产生冗余条目。
+/// 空输入返回空向量，是否允许为空由调用方按各自语义判断。
 fn normalize_unique_values(
     values: &[String],
     field: &str,
@@ -385,7 +441,11 @@ fn normalize_unique_values(
     Ok(result)
 }
 
-/// 规范化 KYC 必填文本并按字符数限长，缺失或超长时保留字段名语义。
+/// 规范化一个 KYC 必填文本字段：裁剪首尾空白、要求非空、并限制最大字符数。
+/// 与 user 上下文的同名函数的差别在于这里多带长度上限，因为 KYC 字段既包含姓名、证件号这类短文本，
+/// 也包含 Base64 证件图片这类超长载荷，二者共用同一入口而只在上限取值上区分。
+/// 长度按 Unicode 字符数而非字节数统计，中文姓名不会因多字节被误判超长。
+/// 缺失与超长返回不同消息但都只含字段名，绝不回显字段内容，避免证件号进入错误响应或日志。
 pub(crate) fn required_string(
     value: Option<String>,
     field: &str,
@@ -400,13 +460,22 @@ pub(crate) fn required_string(
     Ok(value)
 }
 
-/// 去除 KYC 可选文本首尾空白，并将空结果归一化为 `None`。
+/// 规范化 KYC 可选文本：裁剪首尾空白，把缺省与纯空白统一折叠为 `None`。
+/// 在本模块中它还承担默认值判定的职责：申请类型与证件类型都靠它判断用户是否真的填了值，
+/// 折叠为 `None` 时调用方才会套用个人认证与身份证这两个默认取值。
+/// 不做长度校验，需要限长的字段应在其后再过一次 `required_string`。
 pub(crate) fn optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
 }
 
+/// 把配置中的证件原始字节上限换算为 Base64 编码后的文本长度上限。
+/// 系数 4/3 对应 Base64 每三字节膨胀为四字符的固定比率；
+/// 再加 `DOCUMENT_PAYLOAD_PADDING_BYTES` 的余量用于覆盖填充字符和 data URI 前缀等信封开销，
+/// 避免恰好等于上限的图片因为多出几十字节的头部而被拒绝。
+/// 全程使用饱和运算，配置被填成极大值时结果封顶而不会溢出回绕成一个极小的上限。
+/// 换算结果用作字符数上限，对纯 ASCII 的 Base64 文本而言与字节数等价。
 fn encoded_payload_limit(size_bytes: u64) -> u64 {
     size_bytes
         .saturating_mul(4)
@@ -414,7 +483,10 @@ fn encoded_payload_limit(size_bytes: u64) -> u64 {
         .saturating_add(DOCUMENT_PAYLOAD_PADDING_BYTES)
 }
 
-/// 将 KYC 状态归一化为小写，仅允许待审、通过和拒绝三种持久化值。
+/// 规范化并校验 KYC 状态字符串，是状态机取值集合的唯一定义处。
+/// 合法值只有三种：`pending` 表示已提交待人工审核，`approved` 表示审核通过，`rejected` 表示驳回。
+/// 输出统一小写，输入前后空白被裁剪，其余任何取值返回 `AppError::Validation`。
+/// 本函数只判定单个取值是否合法，不涉及状态之间能否迁移；迁移方向的限制见 `validate_review_status`。
 pub(crate) fn validate_kyc_status(value: &str) -> AppResult<String> {
     let status = value.trim().to_ascii_lowercase();
     if matches!(status.as_str(), "pending" | "approved" | "rejected") {
@@ -424,7 +496,11 @@ pub(crate) fn validate_kyc_status(value: &str) -> AppResult<String> {
     }
 }
 
-/// 校验管理端审核结果只能为通过或拒绝，禁止把待审状态作为审核动作写回。
+/// 校验管理端审核动作要写入的目标状态，在合法取值之上再收窄一层。
+/// 先复用通用状态校验保证取值本身合法，再显式排除 `pending`：
+/// 待审是提交时的初始状态，不是审核结论，允许写回会让已审结的申请退回待审队列，
+/// 也会破坏「审核是终态迁移」这一前提，因此这里只放行通过与驳回两个方向。
+/// 本函数不检查申请当前处于什么状态，`pending` 到终态的前置条件由 application 层在事务内锁行确认。
 pub(crate) fn validate_review_status(value: &str) -> AppResult<String> {
     let status = validate_kyc_status(value)?;
     if status == "pending" {

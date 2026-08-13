@@ -1,3 +1,8 @@
+//! 第三方快速充值的 OpenAPI 契约：覆盖用户端下单与订单查询、支付回调，以及后台的通道配置与订单管理。
+//! 下单成功返回上游收银台链接，用户在第三方页面付款后由异步回调推进订单状态并完成入账。
+//! 回调端点不要求登录令牌，其安全性完全依赖签名校验，是本组唯一无需鉴权的写接口。
+//! 上游返回的失败以 502 表达，用于和本服务自身的参数、配置类错误区分开。
+
 use super::*;
 
 #[derive(ToSchema)]
@@ -160,6 +165,8 @@ pub(super) struct GmpayNotifyRequest {
     signature: String,
 }
 
+/// 返回用户端快速充值的可用配置，包括通道是否启用、可选金额区间与支持的支付方式。
+/// 前端据此决定充值页是否展示快捷通道，返回内容中不含任何商户密钥。
 #[utoipa::path(
     get,
     path = "/api/v1/wallet/quick-recharge/config",
@@ -175,6 +182,8 @@ pub(super) struct GmpayNotifyRequest {
 )]
 fn get_user_quick_recharge_config() {}
 
+/// 创建第三方支付的快速充值订单，成功后返回可直接跳转的收银台链接。
+/// 通道未启用或金额超出限额返回参数错误；上游创建订单失败以 502 区分于本服务自身故障。
 #[utoipa::path(
     post,
     path = "/api/v1/wallet/quick-recharge/orders",
@@ -193,6 +202,8 @@ fn get_user_quick_recharge_config() {}
 )]
 fn create_user_quick_recharge_order() {}
 
+/// 查询当前用户的快速充值订单，可按状态过滤并限制返回条数，用于充值记录页。
+/// 只返回令牌对应用户的订单，平台订单号与上游交易号一并给出，便于用户自助对账。
 #[utoipa::path(
     get,
     path = "/api/v1/wallet/quick-recharge/orders",
@@ -213,6 +224,8 @@ fn create_user_quick_recharge_order() {}
 )]
 fn list_user_quick_recharge_orders() {}
 
+/// 接收第三方支付的异步回调并按签名校验来源，验签通过后推进订单状态并完成入账。
+/// 该接口不要求登录令牌，安全性完全依赖验签；验签失败按参数错误拒绝，成功仅回一个约定字符串。
 #[utoipa::path(
     post,
     path = "/api/v1/payments/gmpay/notify",
@@ -228,6 +241,8 @@ fn list_user_quick_recharge_orders() {}
 )]
 fn gmpay_notify() {}
 
+/// 后台查询快速充值通道配置，其中的密钥类字段以掩码形式展示，不会回显明文。
+/// 主要用于配置页回填，读取本身不影响线上通道的启用状态。
 #[utoipa::path(
     get,
     path = "/admin/api/v1/quick-recharge/config",
@@ -243,6 +258,8 @@ fn gmpay_notify() {}
 )]
 fn get_admin_quick_recharge_config() {}
 
+/// 保存快速充值通道配置，含商户凭据与金额限制，必须填写审计原因才能提交。
+/// 凭据字段留空表示保持原值不变，因此调整其他项时不需要重新输入密钥。
 #[utoipa::path(
     patch,
     path = "/admin/api/v1/quick-recharge/config",
@@ -260,6 +277,8 @@ fn get_admin_quick_recharge_config() {}
 )]
 fn save_admin_quick_recharge_config() {}
 
+/// 用当前或本次提交的配置向上游发起一笔测试下单，验证商户凭据与网络连通性是否正常。
+/// 上游失败以 502 呈现，便于与配置缺失、审计原因未填这类本地校验错误区分开。
 #[utoipa::path(
     post,
     path = "/admin/api/v1/quick-recharge/config/test",
@@ -278,6 +297,8 @@ fn save_admin_quick_recharge_config() {}
 )]
 fn test_admin_quick_recharge_config() {}
 
+/// 后台分页查询快速充值订单，支持按用户、邮箱、状态、平台订单号与上游交易号检索。
+/// 这是核对到账情况与处理用户申诉的主要入口，返回内容比用户端多出运营所需字段。
 #[utoipa::path(
     get,
     path = "/admin/api/v1/quick-recharge/orders",
@@ -303,6 +324,8 @@ fn test_admin_quick_recharge_config() {}
 )]
 fn list_admin_quick_recharge_orders() {}
 
+/// 删除一条尚未入账的快速充值订单，用于清理无效或测试产生的脏数据。
+/// 已入账或已产生钱包流水的订单一律拒绝删除并返回冲突，保证资金记录不被破坏。
 #[utoipa::path(
     delete,
     path = "/admin/api/v1/quick-recharge/orders/{order_id}",

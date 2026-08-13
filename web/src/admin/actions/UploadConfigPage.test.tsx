@@ -134,8 +134,8 @@ describe('UploadConfigPage', () => {
     await user.clear(screen.getByLabelText('最大文件大小'));
     await user.type(screen.getByLabelText('最大文件大小'), '5242880');
     await user.click(screen.getByRole('button', { name: '保存配置' }));
-    await user.type(screen.getByLabelText('操作原因'), 'configure uploads');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'configure uploads');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith(
@@ -161,8 +161,8 @@ describe('UploadConfigPage', () => {
 
     await user.type(await screen.findByLabelText('图床 Bearer Token'), 'new-token-value');
     await user.click(screen.getByRole('button', { name: '保存配置' }));
-    await user.type(screen.getByLabelText('操作原因'), 'rotate upload token');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'rotate upload token');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith(

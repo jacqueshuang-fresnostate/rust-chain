@@ -1,6 +1,14 @@
 //! prediction 模块表现层。
 //!
 //! 负责 HTTP 请求/响应 DTO 与查询模型。
+//! 本文件定义预测模块的查询参数、请求体、响应体，以及从仓储行模型到响应体的转换。
+//! 转换基本是逐字段平移，唯一的例外是设置响应会把两个 JSON 列解析成数组，
+//! 让前端拿到的是标签与资产编号的真实列表而不是原始 JSON 文本。
+//! 时间字段统一经 `unix_millis` 与 `option_unix_millis` 序列化为毫秒时间戳，
+//! 空值保持为 null，因此「未结束」「未结算」与「纪元起始」不会被混淆。
+//! 金额与概率以 `BigDecimal` 承载并按字符串形式输出，不转浮点也不截断小数位。
+//! 用户端与管理端共用同一批响应结构，管理端专有的覆盖配置字段对用户端同样可见，
+//! 可见性差异由 application 层的查询条件控制，而不是靠这里裁剪字段。
 
 use crate::time::{option_unix_millis, unix_millis};
 use bigdecimal::BigDecimal;
@@ -308,6 +316,12 @@ pub(crate) struct PredictionSyncLogsResponse {
 }
 
 impl From<PredictionSettingsRow> for PredictionSettingsResponse {
+    /// 把设置单例行转成后台响应，是本文件唯一做解析而非纯平移的转换。
+    /// 同步标签与允许资产两列在库中是 JSON，这里解析成字符串数组与数字数组再输出，
+    /// 解析失败或结构不符时退化为空数组，不会让整个设置接口报错。
+    /// 需要注意空数组在两处含义不同：标签为空表示不按标签过滤即全量拉取，
+    /// 而允许资产为空表示任何资产都不可下注，前端不应把两者作同样处理。
+    /// 其余字段包括费率、结算模式、退款策略、报价有效期和最近一次同步的状态与计数均原样透传。
     fn from(row: PredictionSettingsRow) -> Self {
         Self {
             sync_enabled: row.sync_enabled,
@@ -330,6 +344,9 @@ impl From<PredictionSettingsRow> for PredictionSettingsResponse {
 }
 
 impl From<PredictionStakeAssetRow> for PredictionStakeAssetResponse {
+    /// 平移可下注资产条目，输出资产编号、符号与该资产的赔付上限三项。
+    /// 上限为零表示不设封顶而非禁止赔付，前端不应据零值提示用户无法下注。
+    /// 不含启用标记，因为能出现在这份清单里本身就意味着已启用。
     fn from(row: PredictionStakeAssetRow) -> Self {
         Self {
             asset_id: row.asset_id,
@@ -340,6 +357,12 @@ impl From<PredictionStakeAssetRow> for PredictionStakeAssetResponse {
 }
 
 impl From<PredictionMarketRow> for PredictionMarketResponse {
+    /// 平移市场行到响应体，三个 JSON 列以原始结构重新包装后输出而不解析成具体类型。
+    /// 标签恒为非空 JSON，两项覆盖配置则保留其可空性：为空表示该市场未设覆盖，走全局默认。
+    /// 上游结果与本地结果分列两个字段，前者只是同步来的参考值，
+    /// 只有后者才是真正决定派奖的权威口径，前端展示结论时应以本地结果为准。
+    /// 上游状态与展示状态同理并存，前者反映 Polymarket 侧是否关闭，后者才决定用户能否看到。
+    /// 成交量与流动性可空，为空表示上游未提供而非确为零，转换不把它们折成零。
     fn from(row: PredictionMarketRow) -> Self {
         Self {
             id: row.id,
@@ -376,6 +399,10 @@ impl From<PredictionMarketRow> for PredictionMarketResponse {
 }
 
 impl From<PredictionAssetConfigRow> for PredictionAssetConfigResponse {
+    /// 平移后台资产配置条目，含启用标记、赔付上限与两个时间戳。
+    /// 由于列表查询以资产表左连配置表，尚未配置过的资产也会走到这里，
+    /// 其启用标记为假、上限为零，时间戳回退为资产自身的创建时间而非配置创建时间。
+    /// 因此不能凭时间戳判断该资产是否被配置过，只能依据启用标记与上限是否被显式设置过。
     fn from(row: PredictionAssetConfigRow) -> Self {
         Self {
             asset_id: row.asset_id,
@@ -389,6 +416,12 @@ impl From<PredictionAssetConfigRow> for PredictionAssetConfigResponse {
 }
 
 impl From<PredictionOrderRow> for PredictionOrderResponse {
+    /// 平移订单行到响应体，同时带出用户邮箱、市场标题与资产符号三个连表展示字段。
+    /// 下单侧字段全部是建单时固化的快照：本金、手续费、接受价格、份额、理论赔付与赔付上限，
+    /// 它们不随行情或后台改配置而变化，可直接用于对账。
+    /// 结算侧字段在订单终结前均为空，包括结果、派奖额、退款额、手续费退款额、
+    /// 实际使用的无效退款策略与结算时间，因此判断是否已结算应看状态而非金额是否为零。
+    /// 理论赔付与派奖额可能不等，差额来自赔付上限封顶；两者并存正是为了让这一截断可被审计。
     fn from(row: PredictionOrderRow) -> Self {
         Self {
             id: row.id,
@@ -419,6 +452,11 @@ impl From<PredictionOrderRow> for PredictionOrderResponse {
 }
 
 impl From<PredictionSyncLogRow> for PredictionSyncLogResponse {
+    /// 平移同步日志条目，输出触发来源、状态、导入与更新计数、错误文本及起止时间。
+    /// 触发来源区分定时轮询与后台手动触发；导入计数对应本轮新建的市场，更新计数对应命中既有市场。
+    /// 结束时间为空且状态仍是 running，既可能表示同步正在进行，
+    /// 也可能表示进程在同步途中退出而未能回填，转换不区分这两种情况。
+    /// 错误文本在写入时已压缩为单行并截断，此处原样输出不再处理。
     fn from(row: PredictionSyncLogRow) -> Self {
         Self {
             id: row.id,

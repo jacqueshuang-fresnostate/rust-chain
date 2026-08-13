@@ -1,3 +1,7 @@
+//! 系统配置的 OpenAPI 契约：汇集健康检查、国家与语言配置、平台品牌配置和邮件服务配置四类接口。
+//! 国家与品牌两组各有一个无需登录的公开读接口，返回内容仅限前端渲染所需，管理端读写另走后台路径。
+//! 邮件服务支持多套配置并存，发信策略与具体服务器配置分开保存，口令类字段一律掩码返回、留空即沿用原值。
+
 use super::*;
 
 #[derive(ToSchema)]
@@ -170,6 +174,8 @@ pub(super) struct SendSmtpTestResponse {
     config_name: String,
 }
 
+/// 在文档中登记根路径上的存活探针，说明它无需任何鉴权即可访问。
+/// 真实实现只返回固定的正常状态，不探测数据库与缓存，因此不能用来判断依赖是否可用。
 #[utoipa::path(
     get,
     path = "/health",
@@ -179,6 +185,8 @@ pub(super) struct SendSmtpTestResponse {
 )]
 fn health() {}
 
+/// 公开返回可注册国家及其默认语言，注册页据此渲染国家下拉与默认语言选项。
+/// 只包含后台已启用的条目，无需登录即可访问，也不含任何后台专用字段。
 #[utoipa::path(
     get,
     path = "/api/v1/countries",
@@ -191,6 +199,8 @@ fn health() {}
 )]
 fn list_public_countries() {}
 
+/// 公开返回桌面端品牌与行情图表相关配置，供前端在未登录状态下完成首屏渲染。
+/// 内容来自后台品牌配置，只暴露展示所需字段，不含任何管理端设置项。
 #[utoipa::path(
     get,
     path = "/api/v1/platform/brand",
@@ -203,6 +213,8 @@ fn list_public_countries() {}
 )]
 fn get_public_platform_brand() {}
 
+/// 后台分页查询国家配置，可按代码、名称与状态等条件筛选，结果包含未启用条目。
+/// 与用户端接口的差别在于这里能看到停用记录，便于重新启用或继续修改。
 #[utoipa::path(
     get,
     path = "/admin/api/v1/countries",
@@ -226,6 +238,8 @@ fn get_public_platform_brand() {}
 )]
 fn list_admin_countries() {}
 
+/// 新增一条国家配置，包含国家代码、名称与默认语言等信息。
+/// 国家代码在全局唯一，重复提交返回冲突而不是覆盖既有配置。
 #[utoipa::path(
     post,
     path = "/admin/api/v1/countries",
@@ -244,6 +258,8 @@ fn list_admin_countries() {}
 )]
 fn create_admin_country() {}
 
+/// 更新指定国家配置的名称、区号或默认语言等字段。
+/// 启停状态不在此处调整，需要走单独的状态接口；记录不存在返回资源不存在。
 #[utoipa::path(
     patch,
     path = "/admin/api/v1/countries/{id}",
@@ -263,6 +279,8 @@ fn create_admin_country() {}
 )]
 fn update_admin_country() {}
 
+/// 启用或停用某个国家配置，直接决定它是否出现在用户端的可注册国家列表里。
+/// 停用不会影响已注册用户，只影响后续注册与前端展示。
 #[utoipa::path(
     patch,
     path = "/admin/api/v1/countries/{id}/status",
@@ -282,6 +300,8 @@ fn update_admin_country() {}
 )]
 fn update_admin_country_status() {}
 
+/// 查询当前生效的单条邮件服务器配置，口令字段以掩码返回，不回显明文。
+/// 尚未配置过任何邮件服务器时返回资源不存在，前端应引导先完成新增。
 #[utoipa::path(
     get,
     path = "/admin/api/v1/smtp/config",
@@ -298,6 +318,8 @@ fn update_admin_country_status() {}
 )]
 fn get_smtp_config() {}
 
+/// 查询全部邮件服务器配置及发信策略，支持多套配置并存以便按用途或轮换发信。
+/// 与单条查询的区别在于这里一次给出全量列表和策略，用于配置管理页整体展示。
 #[utoipa::path(
     get,
     path = "/admin/api/v1/smtp/configs",
@@ -313,6 +335,8 @@ fn get_smtp_config() {}
 )]
 fn list_smtp_configs() {}
 
+/// 新增一套邮件服务器配置，包含主机、端口、安全模式、发件人与可选认证凭据。
+/// 安全模式取值限于明文、STARTTLS 与 TLS 三种，未知取值会被直接拒绝。
 #[utoipa::path(
     post,
     path = "/admin/api/v1/smtp/configs",
@@ -330,6 +354,8 @@ fn list_smtp_configs() {}
 )]
 fn create_smtp_config() {}
 
+/// 按主键更新某一套邮件服务器配置，口令留空表示沿用原值，不必每次重填。
+/// 配置不存在返回资源不存在，参数不合法则返回参数错误。
 #[utoipa::path(
     patch,
     path = "/admin/api/v1/smtp/configs/{id}",
@@ -349,6 +375,8 @@ fn create_smtp_config() {}
 )]
 fn update_smtp_config() {}
 
+/// 保存单套邮件服务器配置的兼容入口，供只维护一套服务器的旧版后台使用。
+/// 与按主键更新的区别在于这里不指定标识，直接落到当前那一套配置上。
 #[utoipa::path(
     patch,
     path = "/admin/api/v1/smtp/config",
@@ -366,6 +394,8 @@ fn update_smtp_config() {}
 )]
 fn save_smtp_config() {}
 
+/// 保存发信策略，例如多套配置之间如何选择与分配，不改动任何一套服务器凭据。
+/// 策略与配置分开保存，可以在完全不触碰口令的前提下调整发信行为。
 #[utoipa::path(
     patch,
     path = "/admin/api/v1/smtp/delivery-settings",
@@ -383,6 +413,8 @@ fn save_smtp_config() {}
 )]
 fn save_smtp_delivery_settings() {}
 
+/// 用当前启用的配置向指定地址发一封测试邮件，验证邮件服务器是否真的可用。
+/// 没有启用中的配置时返回资源不存在；发送成功只代表服务器已接收，不保证最终进入收件箱。
 #[utoipa::path(
     post,
     path = "/admin/api/v1/smtp/test",
@@ -401,6 +433,8 @@ fn save_smtp_delivery_settings() {}
 )]
 fn send_smtp_test() {}
 
+/// 后台查询桌面端品牌与行情图表配置，返回内容与公开接口同源但需要后台令牌。
+/// 主要用于配置页回填，读取过程不会产生任何变更。
 #[utoipa::path(
     get,
     path = "/admin/api/v1/platform/brand",
@@ -416,6 +450,8 @@ fn send_smtp_test() {}
 )]
 fn get_admin_platform_brand() {}
 
+/// 保存桌面端品牌与行情图表配置，保存后用户端公开接口会立即读到新值。
+/// 参数不合法返回参数错误；本接口不做灰度，变更对所有访客同时生效。
 #[utoipa::path(
     patch,
     path = "/admin/api/v1/platform/brand",

@@ -160,8 +160,8 @@ describe('SmtpConfigPage', () => {
     await user.click(within(sheet).getByRole('button', { name: '新增模板' }));
     fireEvent.input(within(sheet).getByLabelText('新增验证码 HTML 模板 2'), { target: { innerText: '资金密码 {{code}}' } });
     await user.click(within(sheet).getByRole('button', { name: '新增配置' }));
-    await user.type(screen.getByLabelText('操作原因'), 'configure smtp');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'configure smtp');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith(
@@ -219,8 +219,8 @@ describe('SmtpConfigPage', () => {
     await user.click(screen.getByRole('tab', { name: '发信策略' }));
     await selectSemiOption(user, '发送策略', '轮询发送');
     await user.click(screen.getByRole('button', { name: '保存策略' }));
-    await user.type(screen.getByLabelText('操作原因'), 'switch smtp strategy');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'switch smtp strategy');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith(
@@ -251,8 +251,8 @@ describe('SmtpConfigPage', () => {
     await user.type(screen.getByLabelText('测试收件邮箱'), 'ops@example.test');
     await selectSemiOption(user, '发信方式', '主发信配置');
     await user.click(screen.getByRole('button', { name: '测试发送' }));
-    await user.type(screen.getByLabelText('操作原因'), 'verify smtp');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'verify smtp');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith(

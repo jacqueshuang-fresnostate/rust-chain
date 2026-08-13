@@ -226,8 +226,8 @@ describe('MarketFeedConfigPage', () => {
     await user.click(screen.getByRole('checkbox', { name: '15m' }));
     await user.click(screen.getByRole('checkbox', { name: 'coinbase' }));
     await user.click(screen.getByRole('button', { name: '保存配置' }));
-    await user.type(screen.getByLabelText('操作原因'), 'update feed');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'update feed');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith(
@@ -265,8 +265,8 @@ describe('MarketFeedConfigPage', () => {
     await user.type(await screen.findByLabelText('API Key'), 'abcd1234wxyz');
     await user.type(screen.getByLabelText('API Secret'), 'secret-value');
     await user.click(screen.getByRole('button', { name: '保存凭证' }));
-    await user.type(screen.getByLabelText('操作原因'), 'store credential');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'store credential');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith(
@@ -302,8 +302,8 @@ describe('MarketFeedConfigPage', () => {
     expect(await screen.findByText('待重载')).toBeInTheDocument();
     await user.click(screen.getByRole('tab', { name: '订阅配置' }));
     await user.click(screen.getByRole('button', { name: '重载行情订阅' }));
-    await user.type(screen.getByLabelText('操作原因'), 'apply feed');
-    await user.click(screen.getByRole('button', { name: '确认' }));
+    await user.type(await screen.findByLabelText('操作原因'), 'apply feed');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith(

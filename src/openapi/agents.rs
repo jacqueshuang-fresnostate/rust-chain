@@ -1,3 +1,8 @@
+//! 后台代理管理的 OpenAPI 契约：覆盖代理账号、用户归属、佣金记录与佣金规则四组管理端接口。
+//! 代理体系是最多三层的树形结构，查询接口普遍支持按层级、直属上级与总代理定位节点。
+//! 佣金状态变更中的结算动作会真正向代理账户打款，因此批量接口按条返回结果而非整体成败。
+//! 全部端点都要求后台作用域令牌，代理本人只能经代理门户查看，不能从这里修改数据。
+
 use super::*;
 
 #[derive(ToSchema)]
@@ -169,6 +174,8 @@ pub(super) struct UpdateAdminAgentCommissionRuleRequest {
     reason: Option<String>,
 }
 
+/// 后台分页查询代理列表，支持按代理编号、层级、直属上级、总代理、绑定用户与状态组合筛选。
+/// 代理体系最多三层，层级参数可用来快速定位某一层的全部节点。
 #[utoipa::path(
     get,
     path = "/admin/api/v1/agents",
@@ -196,6 +203,8 @@ pub(super) struct UpdateAdminAgentCommissionRuleRequest {
 )]
 fn list_admin_agents() {}
 
+/// 创建代理账号并绑定到既有用户，同时确定它的上级归属与所处层级。
+/// 代理编号、绑定用户或后台账号重复都返回冲突，目标用户不存在则返回资源不存在。
 #[utoipa::path(
     post,
     path = "/admin/api/v1/agents",
@@ -215,6 +224,8 @@ fn list_admin_agents() {}
 )]
 fn create_admin_agent() {}
 
+/// 按主键查询单个代理的详情，包含所处层级、上级链路与绑定用户信息。
+/// 供代理详情页回填使用，代理不存在时返回资源不存在。
 #[utoipa::path(
     get,
     path = "/admin/api/v1/agents/{id}",
@@ -232,6 +243,8 @@ fn create_admin_agent() {}
 )]
 fn get_admin_agent() {}
 
+/// 启用或停用指定代理，停用之后该代理及其门户登录都将不再可用。
+/// 状态变更会牵动其下级归属与佣金计算，操作前需要先确认整棵子树的影响面。
 #[utoipa::path(
     patch,
     path = "/admin/api/v1/agents/{id}/status",
@@ -251,6 +264,8 @@ fn get_admin_agent() {}
 )]
 fn update_admin_agent_status() {}
 
+/// 查询某个代理节点及其所有下级代理名下归属的用户，按分页返回。
+/// 口径包含整棵子树而非仅直属用户，因此可以用来核对该代理的实际团队规模。
 #[utoipa::path(
     get,
     path = "/admin/api/v1/agents/{id}/users",
@@ -272,6 +287,8 @@ fn update_admin_agent_status() {}
 )]
 fn list_admin_agent_users() {}
 
+/// 调整某个用户的代理归属，把该用户挂到指定代理名下。
+/// 目标代理必须处于启用状态否则返回冲突，用户或代理不存在则返回资源不存在。
 #[utoipa::path(
     patch,
     path = "/admin/api/v1/users/{id}/agent",
@@ -292,6 +309,8 @@ fn list_admin_agent_users() {}
 )]
 fn assign_user_agent() {}
 
+/// 后台分页查询代理佣金记录，支持按代理、用户、邮箱与佣金状态筛选。
+/// 这是佣金发放前的复核入口，本接口只读取数据，不触发任何结算动作。
 #[utoipa::path(
     get,
     path = "/admin/api/v1/agent-commissions",
@@ -315,6 +334,8 @@ fn assign_user_agent() {}
 )]
 fn list_admin_agent_commissions() {}
 
+/// 变更单条佣金记录的状态，其中结算类变更会真正向代理账户打款。
+/// 部分佣金来源不支持结算打款，此时返回冲突；记录不存在返回资源不存在。
 #[utoipa::path(
     patch,
     path = "/admin/api/v1/agent-commissions/{id}/status",
@@ -335,6 +356,8 @@ fn list_admin_agent_commissions() {}
 )]
 fn update_admin_agent_commission_status() {}
 
+/// 批量变更多条佣金记录的状态，响应逐条给出处理结果而不是整体成败。
+/// 逐条汇报是因为个别记录可能因来源限制或状态冲突失败，不应让其余条目跟着一起回退。
 #[utoipa::path(
     post,
     path = "/admin/api/v1/agent-commissions/batch-status",
@@ -352,6 +375,8 @@ fn update_admin_agent_commission_status() {}
 )]
 fn update_admin_agent_commission_statuses() {}
 
+/// 分页查询佣金规则，可按代理、产品类型与规则状态筛选。
+/// 产品类型覆盖闪兑、竞猜、现货、杠杆与秒合约，不同产品可以各自配置分成比例。
 #[utoipa::path(
     get,
     path = "/admin/api/v1/agent-commission-rules",
@@ -374,6 +399,8 @@ fn update_admin_agent_commission_statuses() {}
 )]
 fn list_admin_agent_commission_rules() {}
 
+/// 为指定代理与产品类型新建一条佣金规则，决定之后该产品成交如何计提分成。
+/// 规则只对创建之后产生的佣金生效，不会回溯重算历史记录。
 #[utoipa::path(
     post,
     path = "/admin/api/v1/agent-commission-rules",
@@ -391,6 +418,8 @@ fn list_admin_agent_commission_rules() {}
 )]
 fn create_admin_agent_commission_rule() {}
 
+/// 修改既有佣金规则的比例或状态，同样只对之后新产生的佣金生效。
+/// 规则不存在返回资源不存在；停用规则也不会撤回已计提但尚未结算的佣金。
 #[utoipa::path(
     patch,
     path = "/admin/api/v1/agent-commission-rules/{id}",

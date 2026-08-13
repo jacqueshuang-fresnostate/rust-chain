@@ -1,76 +1,129 @@
 import { Navigate, type RouteObject } from 'react-router-dom';
 
-import { AgentManagementPage } from './actions/AgentManagementPage';
-import { KycManagementPage } from './actions/KycManagementPage';
-import { MarketFeedConfigPage } from './actions/MarketFeedConfigPage';
-import { MarketStrategyActions } from './actions/MarketStrategyActions';
-import { NewCoinActions } from './actions/NewCoinActions';
-import { PlatformBrandPage } from './actions/PlatformBrandPage';
-import { PredictionConfigPage } from './actions/PredictionConfigPage';
-import { QuickRechargeConfigPage } from './actions/QuickRechargeConfigPage';
-import { AdminTwoFactorPage } from './actions/AdminTwoFactorPage';
-import { SecurityPolicyPage } from './actions/SecurityPolicyPage';
-import { SmtpConfigPage } from './actions/SmtpConfigPage';
-import { UploadConfigPage } from './actions/UploadConfigPage';
-import { DashboardPage } from './dashboard/DashboardPage';
-import { ResourcePage, resourceConfigs } from './resources/resourceConfigs';
+type ResourceConfigsModule = typeof import('./resources/resourceConfigs');
+type ResourceConfigKey = keyof ResourceConfigsModule['resourceConfigs'];
+
+// 后台页面全部走路由级按需加载：登录页与代理端不再打包管理端代码，
+// 43 个资源页共享同一份 resourceConfigs chunk，独立配置页各自成块。
+// handle.resourceKey 让路由与资源配置的绑定关系保持静态可读，测试无需触发动态导入即可校验。
+function resourceRoute(path: string, resourceKey: ResourceConfigKey): RouteObject {
+  return {
+    path,
+    handle: { resourceKey },
+    lazy: async () => {
+      const { ResourcePage, resourceConfigs } = await import('./resources/resourceConfigs');
+      return {
+        Component: function AdminResourceRoute() {
+          return <ResourcePage config={resourceConfigs[resourceKey]} />;
+        }
+      };
+    }
+  };
+}
 
 export const adminRoutes: RouteObject[] = [
   { index: true, element: <Navigate to="dashboard" replace /> },
-  { path: 'dashboard', element: <DashboardPage /> },
-  { path: 'users', element: <ResourcePage config={resourceConfigs.users} /> },
-  { path: 'users/kyc', element: <KycManagementPage /> },
-  { path: 'agents', element: <AgentManagementPage /> },
-  { path: 'agent-commissions', element: <ResourcePage config={resourceConfigs.agentCommissions} /> },
-  { path: 'agent-commission-rules', element: <ResourcePage config={resourceConfigs.agentCommissionRules} /> },
-  { path: 'news', element: <ResourcePage config={resourceConfigs.news} /> },
-  { path: 'assets', element: <ResourcePage config={resourceConfigs.assets} /> },
-  { path: 'wallet/accounts', element: <ResourcePage config={resourceConfigs.walletAccounts} /> },
-  { path: 'wallet/deposit-network-configs', element: <ResourcePage config={resourceConfigs.depositNetworkConfigs} /> },
-  { path: 'wallet/deposit-address-pool', element: <ResourcePage config={resourceConfigs.depositAddressPool} /> },
-  { path: 'wallet/quick-recharge', element: <QuickRechargeConfigPage /> },
-  { path: 'wallet/quick-recharge-orders', element: <ResourcePage config={resourceConfigs.quickRechargeOrders} /> },
-  { path: 'wallet/deposits', element: <ResourcePage config={resourceConfigs.walletDeposits} /> },
-  { path: 'wallet/withdrawals', element: <ResourcePage config={resourceConfigs.walletWithdrawals} /> },
-  { path: 'wallet/ledger', element: <ResourcePage config={resourceConfigs.walletLedger} /> },
-  { path: 'loan/products', element: <ResourcePage config={resourceConfigs.loanProducts} /> },
-  { path: 'loan/orders', element: <ResourcePage config={resourceConfigs.loanOrders} /> },
-  { path: 'prediction/settings', element: <PredictionConfigPage /> },
-  { path: 'prediction/assets', element: <ResourcePage config={resourceConfigs.predictionAssetConfigs} /> },
-  { path: 'prediction/markets', element: <ResourcePage config={resourceConfigs.predictionMarkets} /> },
-  { path: 'prediction/orders', element: <ResourcePage config={resourceConfigs.predictionOrders} /> },
-  { path: 'prediction/sync-logs', element: <ResourcePage config={resourceConfigs.predictionSyncLogs} /> },
-  { path: 'spot/orders', element: <ResourcePage config={resourceConfigs.spotOrders} /> },
-  { path: 'spot/trades', element: <ResourcePage config={resourceConfigs.spotTrades} /> },
-  { path: 'new-coins/projects', element: <ResourcePage config={resourceConfigs.newCoinProjects} /> },
-  { path: 'new-coins/actions', element: <NewCoinActions /> },
-  { path: 'new-coins/subscriptions', element: <ResourcePage config={resourceConfigs.newCoinSubscriptions} /> },
-  { path: 'new-coins/distributions', element: <ResourcePage config={resourceConfigs.newCoinDistributions} /> },
-  { path: 'new-coins/purchases', element: <ResourcePage config={resourceConfigs.newCoinPurchases} /> },
-  { path: 'new-coins/lock-positions', element: <ResourcePage config={resourceConfigs.newCoinLockPositions} /> },
-  { path: 'new-coins/unlocks', element: <ResourcePage config={resourceConfigs.newCoinUnlocks} /> },
-  { path: 'market/pairs', element: <ResourcePage config={resourceConfigs.marketPairs} /> },
-  { path: 'market/strategies', element: <ResourcePage config={resourceConfigs.marketStrategies} /> },
-  { path: 'market/strategies/actions', element: <MarketStrategyActions /> },
-  { path: 'market/feed-config', element: <MarketFeedConfigPage /> },
-  { path: 'convert/pairs', element: <ResourcePage config={resourceConfigs.convertPairs} /> },
-  { path: 'convert/orders', element: <ResourcePage config={resourceConfigs.convertOrders} /> },
-  { path: 'seconds-contract/products', element: <ResourcePage config={resourceConfigs.secondsProducts} /> },
-  { path: 'seconds-contract/orders', element: <ResourcePage config={resourceConfigs.secondsOrders} /> },
-  { path: 'margin/products', element: <ResourcePage config={resourceConfigs.marginProducts} /> },
-  { path: 'margin/positions', element: <ResourcePage config={resourceConfigs.marginPositions} /> },
-  { path: 'margin/liquidations', element: <ResourcePage config={resourceConfigs.marginLiquidations} /> },
-  { path: 'margin/interest', element: <ResourcePage config={resourceConfigs.marginInterest} /> },
-  { path: 'earn/categories', element: <ResourcePage config={resourceConfigs.earnCategories} /> },
-  { path: 'earn/products', element: <ResourcePage config={resourceConfigs.earnProducts} /> },
-  { path: 'earn/subscriptions', element: <ResourcePage config={resourceConfigs.earnSubscriptions} /> },
-  { path: 'risk', element: <ResourcePage config={resourceConfigs.riskRules} /> },
-  { path: 'risk/events', element: <ResourcePage config={resourceConfigs.riskEvents} /> },
-  { path: 'system/countries', element: <ResourcePage config={resourceConfigs.countries} /> },
-  { path: 'system/security-policy', element: <SecurityPolicyPage /> },
-  { path: 'system/two-factor', element: <AdminTwoFactorPage /> },
-  { path: 'system/brand', element: <PlatformBrandPage /> },
-  { path: 'system/smtp', element: <SmtpConfigPage /> },
-  { path: 'system/uploads', element: <UploadConfigPage /> },
-  { path: 'audit-logs', element: <ResourcePage config={resourceConfigs.auditLogs} /> }
+  {
+    path: 'dashboard',
+    lazy: async () => ({ Component: (await import('./dashboard/DashboardPage')).DashboardPage })
+  },
+  resourceRoute('users', 'users'),
+  {
+    path: 'users/kyc',
+    lazy: async () => ({ Component: (await import('./actions/KycManagementPage')).KycManagementPage })
+  },
+  {
+    path: 'agents',
+    lazy: async () => ({ Component: (await import('./actions/AgentManagementPage')).AgentManagementPage })
+  },
+  resourceRoute('agent-commissions', 'agentCommissions'),
+  resourceRoute('agent-commission-rules', 'agentCommissionRules'),
+  resourceRoute('news', 'news'),
+  resourceRoute('assets', 'assets'),
+  resourceRoute('wallet/accounts', 'walletAccounts'),
+  resourceRoute('wallet/deposit-network-configs', 'depositNetworkConfigs'),
+  resourceRoute('wallet/deposit-address-pool', 'depositAddressPool'),
+  {
+    path: 'wallet/quick-recharge',
+    lazy: async () => ({
+      Component: (await import('./actions/QuickRechargeConfigPage')).QuickRechargeConfigPage
+    })
+  },
+  resourceRoute('wallet/quick-recharge-orders', 'quickRechargeOrders'),
+  resourceRoute('wallet/deposits', 'walletDeposits'),
+  resourceRoute('wallet/withdrawals', 'walletWithdrawals'),
+  resourceRoute('wallet/ledger', 'walletLedger'),
+  resourceRoute('loan/products', 'loanProducts'),
+  resourceRoute('loan/orders', 'loanOrders'),
+  {
+    path: 'prediction/settings',
+    lazy: async () => ({
+      Component: (await import('./actions/PredictionConfigPage')).PredictionConfigPage
+    })
+  },
+  resourceRoute('prediction/assets', 'predictionAssetConfigs'),
+  resourceRoute('prediction/markets', 'predictionMarkets'),
+  resourceRoute('prediction/orders', 'predictionOrders'),
+  resourceRoute('prediction/sync-logs', 'predictionSyncLogs'),
+  resourceRoute('spot/orders', 'spotOrders'),
+  resourceRoute('spot/trades', 'spotTrades'),
+  resourceRoute('new-coins/projects', 'newCoinProjects'),
+  {
+    path: 'new-coins/actions',
+    lazy: async () => ({ Component: (await import('./actions/NewCoinActions')).NewCoinActions })
+  },
+  resourceRoute('new-coins/subscriptions', 'newCoinSubscriptions'),
+  resourceRoute('new-coins/distributions', 'newCoinDistributions'),
+  resourceRoute('new-coins/purchases', 'newCoinPurchases'),
+  resourceRoute('new-coins/lock-positions', 'newCoinLockPositions'),
+  resourceRoute('new-coins/unlocks', 'newCoinUnlocks'),
+  resourceRoute('market/pairs', 'marketPairs'),
+  resourceRoute('market/strategies', 'marketStrategies'),
+  {
+    path: 'market/strategies/actions',
+    lazy: async () => ({
+      Component: (await import('./actions/MarketStrategyActions')).MarketStrategyActions
+    })
+  },
+  {
+    path: 'market/feed-config',
+    lazy: async () => ({
+      Component: (await import('./actions/MarketFeedConfigPage')).MarketFeedConfigPage
+    })
+  },
+  resourceRoute('convert/pairs', 'convertPairs'),
+  resourceRoute('convert/orders', 'convertOrders'),
+  resourceRoute('seconds-contract/products', 'secondsProducts'),
+  resourceRoute('seconds-contract/orders', 'secondsOrders'),
+  resourceRoute('margin/products', 'marginProducts'),
+  resourceRoute('margin/positions', 'marginPositions'),
+  resourceRoute('margin/liquidations', 'marginLiquidations'),
+  resourceRoute('margin/interest', 'marginInterest'),
+  resourceRoute('earn/categories', 'earnCategories'),
+  resourceRoute('earn/products', 'earnProducts'),
+  resourceRoute('earn/subscriptions', 'earnSubscriptions'),
+  resourceRoute('risk', 'riskRules'),
+  resourceRoute('risk/events', 'riskEvents'),
+  resourceRoute('system/countries', 'countries'),
+  {
+    path: 'system/security-policy',
+    lazy: async () => ({ Component: (await import('./actions/SecurityPolicyPage')).SecurityPolicyPage })
+  },
+  {
+    path: 'system/two-factor',
+    lazy: async () => ({ Component: (await import('./actions/AdminTwoFactorPage')).AdminTwoFactorPage })
+  },
+  {
+    path: 'system/brand',
+    lazy: async () => ({ Component: (await import('./actions/PlatformBrandPage')).PlatformBrandPage })
+  },
+  {
+    path: 'system/smtp',
+    lazy: async () => ({ Component: (await import('./actions/SmtpConfigPage')).SmtpConfigPage })
+  },
+  {
+    path: 'system/uploads',
+    lazy: async () => ({ Component: (await import('./actions/UploadConfigPage')).UploadConfigPage })
+  },
+  resourceRoute('audit-logs', 'auditLogs')
 ];

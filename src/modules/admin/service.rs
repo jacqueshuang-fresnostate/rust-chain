@@ -90,11 +90,15 @@ pub(crate) fn required_admin_audit_reason(value: Option<String>) -> AppResult<St
     Ok(reason)
 }
 
+/// 把字符串按「去空白后是否还有内容」归一为可选借用值，纯空白与空串同样返回 None。
+/// 这是本层区分「未填写」与「填了空白」的统一口径，被各子模块的必填与可选字段校验反复复用。
 fn optional_str(value: &str) -> Option<&str> {
     let value = value.trim();
     (!value.is_empty()).then_some(value)
 }
 
+/// 与借用版同义的持有版本：对 Option<String> 去空白，空白结果折叠为 None 并返回新分配的字符串。
+/// 用于需要把归一结果继续向下传递或落库的场景，调用方拿到 Some 时可确信其内容非空且无首尾空白。
 fn optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())

@@ -1,6 +1,14 @@
 //! loan bounded context application layer.
 //!
 //! 应用层：编排用例、事务边界和跨仓储协作。
+//!
+//! 借贷订单状态机在此收敛：pending 可迁移到 cancelled、rejected 或 disbursed，
+//! disbursed 与 overdue 可迁移到 repaid，终态之间不再互相迁移。
+//! 四个状态迁移用例都遵循同一套骨架：开启事务、FOR UPDATE 锁订单、
+//! 命中终态则提交并以 `changed=false` 返回实现幂等、状态不符则返回冲突、
+//! 其余情况在同一事务内完成资金移动与状态写入，最后提交并回读响应。
+//! 锁序固定为订单在前、钱包在后；还款场景再按贷款资产、抵押资产的顺序依次锁钱包。
+//! 产品配置类用例不使用事务，写入与回读分两次自动提交，回读失败不会撤销已生效的配置。
 
 use super::{
     LOAN_TYPE_COLLATERALIZED, STATUS_ACTIVE, STATUS_CANCELLED, STATUS_DISBURSED, STATUS_OVERDUE,
@@ -42,7 +50,9 @@ use chrono::{TimeDelta, Utc};
 use serde_json::Value;
 use sqlx::{MySql, Pool};
 
-/// 按产品编号倒序列出 active 借贷产品，数量默认 50、最多 200；不读取用户 KYC、订单或钱包。
+/// 按产品编号倒序列出可申请的借贷产品，状态过滤硬编码为 active，调用方无法查看已下架配置。
+/// 数量默认 50、夹紧到 1..=200，不支持偏移翻页，因此产品较多时只能看到最新的一批。
+/// 不读取调用者的 KYC 等级、既有订单或钱包余额，返回的额度区间是否可用需下单时才知道。
 pub(crate) async fn list_active_products_use_case(
     pool: &Pool<MySql>,
     query: ListQuery,
@@ -52,8 +62,11 @@ pub(crate) async fn list_active_products_use_case(
     Ok(LoanProductsResponse { products })
 }
 
-/// 先规范并校验借贷类型与状态，再查询后台产品分页及匹配总数。
-/// 非法枚举在 SQL 执行前返回，行数据与 total 始终使用同一组筛选条件。
+/// 先把可选的借贷类型与状态裁剪归一再做枚举校验，然后查询后台产品分页及匹配总数。
+/// 空白筛选值被归一为不过滤，非空值必须是合法枚举，非法取值在执行 SQL 前就返回参数错误。
+/// 与用户端列表不同，这里不强制只看 active，已下架产品同样可见以便运营核对历史配置。
+/// 行数据与 total 由同一组谓词构建，因此总数始终跟随当前筛选而非全表行数。
+/// 该只读用例不锁产品，也不改写任何订单条款或钱包余额。
 pub(crate) async fn list_admin_products_use_case(
     pool: &Pool<MySql>,
     query: AdminLoanProductsQuery,
@@ -76,7 +89,9 @@ pub(crate) async fn list_admin_products_use_case(
     Ok(AdminLoanProductsResponse { products, total })
 }
 
-/// 读取指定后台借贷产品的当前配置与资产信息；不锁产品，不能作为并发下单的条款快照。
+/// 读取单个借贷产品的当前配置与关联资产符号，编号不存在时返回 NotFound。
+/// 不加行锁，返回值只是即时快照，不能当作并发下单时的条款依据。
+/// 下单流程会在事务内用 FOR UPDATE 重新锁定产品，并以彼时的利率、期限和额度写入订单。
 pub(crate) async fn get_admin_product_use_case(
     pool: &Pool<MySql>,
     product_id: u64,
@@ -85,7 +100,10 @@ pub(crate) async fn get_admin_product_use_case(
     load_loan_product_response(pool, product_id).await
 }
 
-/// 按当前用户、可选状态和数量上限读取借贷订单快照；不锁订单或钱包，不计算新的利息。
+/// 按当前用户读取借贷订单列表，可选状态过滤，按订单编号倒序等价于按创建时间从新到旧。
+/// user_id 由调用方从 JWT 解析后传入并固定拼进 SQL 条件，请求参数无法覆盖，不存在跨用户读取。
+/// 不锁订单也不锁钱包，返回的 interest_amount 与 repayment_amount 只在还款成功后才有值，
+/// 未结清订单的这两项不代表当前应计利息，本用例不做任何实时计息。
 pub(crate) async fn list_user_orders_use_case(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -97,7 +115,9 @@ pub(crate) async fn list_user_orders_use_case(
     Ok(LoanOrdersResponse { orders })
 }
 
-/// 按用户和订单编号读取详情，在 SQL 条件中隔离其他用户订单；查询不触发取消、还款或抵押释放。
+/// 按用户与订单编号读取详情，归属隔离落在 SQL 的 user_id 条件而非应用层判断。
+/// 他人订单与不存在的订单都返回 NotFound，调用方无法据错误码探测订单是否真实存在。
+/// 只读且不加行锁，不触发取消、还款或抵押释放中的任何一种状态迁移。
 pub(crate) async fn get_user_order_use_case(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -107,7 +127,10 @@ pub(crate) async fn get_user_order_use_case(
     load_user_loan_order_response(pool, user_id, order_id).await
 }
 
-/// 组装后台用户、邮箱、产品、类型和状态筛选并查询订单分页。
+/// 把后台的用户编号、邮箱、产品、借贷类型和状态五项筛选打包成过滤器并查询订单分页与总数。
+/// 与产品列表不同，这里的筛选值不做枚举校验，只在基础设施层裁剪空白，未知状态自然查不到数据。
+/// 邮箱走前后通配的 LIKE 匹配，因此支持按域名或片段检索，其余条件均为等值匹配。
+/// 分页量与偏移分别夹紧到 1..=200 和不超过十万，防止深分页把订单大表拖成全表扫描。
 /// 该只读用例不获取订单或钱包行锁，也不触发审核、还款或抵押释放。
 pub(crate) async fn list_admin_orders_use_case(
     pool: &Pool<MySql>,
@@ -130,7 +153,10 @@ pub(crate) async fn list_admin_orders_use_case(
     Ok(AdminLoanOrdersResponse { orders, total })
 }
 
-/// 读取后台借贷订单详情，不锁订单或触发状态迁移。
+/// 按编号读取任意用户的借贷订单详情，供后台审核与客服排查，不施加归属限制。
+/// 相比用户端详情少了 user_id 条件，因此无需区分订单不存在与无权访问。
+/// 响应含审批人、拒绝人、拒绝原因等审计字段与各阶段时间戳，缺失阶段对应字段为空。
+/// 不加行锁，返回值不能作为并发审批的判断依据，审批用例会在事务内重新锁行复核状态。
 pub(crate) async fn get_admin_order_use_case(
     pool: &Pool<MySql>,
     order_id: u64,
@@ -266,6 +292,9 @@ pub(crate) async fn create_loan_order_use_case(
     Ok((load_loan_order_response(pool, order_id).await?, true))
 }
 
+/// 把创建产品请求转交统一校验流程，唯一的差异是 status 可选并默认取 active。
+/// 其余字段的校验口径与更新请求完全一致，避免同一份配置在两条入口上出现宽严不一。
+/// 校验期间会按 asset_id 读取启用资产的精度，因此本函数需要连接池而非纯内存运算。
 async fn validate_create_product_request(
     pool: &Pool<MySql>,
     request: CreateLoanProductRequest,
@@ -289,6 +318,9 @@ async fn validate_create_product_request(
     .await
 }
 
+/// 把更新产品请求转交统一校验流程，status 在此为必填而非可选，其余口径与创建一致。
+/// 更新是整体覆盖语义，请求体缺字段等同于置空，本函数不会从数据库读回旧值做合并。
+/// 同样需要连接池以读取目标资产的精度并据此校验最小额与最大额的小数位。
 async fn validate_update_product_request(
     pool: &Pool<MySql>,
     request: UpdateLoanProductRequest,
@@ -310,21 +342,28 @@ async fn validate_update_product_request(
     .await
 }
 
+/// 已通过全部校验与归一化的产品配置，创建与更新两条入口在此汇合成同一形态。
+/// 其中 name 可能已被多语言结构里的默认标题覆盖，name_json 则必定是合法结构。
 struct NormalizedLoanProductRequest {
     loan_type: String,
     asset_id: u64,
+    /// 用于列表展示的纯文本名称，优先取自多语言结构的默认语言标题。
     name: String,
+    /// 已校验的多语言名称结构，缺省时由回退名称生成中文兜底条目。
     name_json: Value,
     term_days: u32,
     interest_rate: BigDecimal,
     interest_calculation_mode: String,
     min_kyc_level: i32,
     min_amount: BigDecimal,
+    /// 可为空表示该产品不设借款上限。
     max_amount: Option<BigDecimal>,
     status: String,
 }
 
 impl NormalizedLoanProductRequest {
+    /// 移交所有权并原样转成基础设施层的写入载荷，字段一一对应不做二次加工。
+    /// 类型区分的意义在于让「已校验」这一事实体现在类型上，未经校验的请求无法构造出写入载荷。
     fn into_write(self) -> LoanProductWrite {
         LoanProductWrite {
             loan_type: self.loan_type,
@@ -342,6 +381,13 @@ impl NormalizedLoanProductRequest {
     }
 }
 
+/// 集中执行借贷产品配置的全部准入校验，创建与更新共用这一条路径以保证口径一致。
+/// 先归一三个枚举字段，再要求 name 裁剪后非空，随后补齐并校验多语言名称结构；
+/// 若多语言结构中能取到默认语言标题，就用它覆盖纯文本 name，使两者展示一致。
+/// 数值约束依次是：term_days 必须为正，interest_rate 允许为零但不得为负，
+/// min_kyc_level 不得为负，min_amount 必须为正，max_amount 若存在须为正且不小于 min_amount。
+/// 最后按 asset_id 读取资产元数据，资产必须处于 active，并用其 precision_scale 校验两个额度的小数位。
+/// 全程只读数据库，不写产品表也不触碰订单与钱包；任一校验失败都在写入前返回参数错误。
 #[allow(clippy::too_many_arguments)]
 async fn normalize_product_request(
     pool: &Pool<MySql>,

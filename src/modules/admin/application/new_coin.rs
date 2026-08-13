@@ -1,3 +1,10 @@
+//! 新币项目治理、认购派发查询与新币兑换规则的应用用例层。
+//!
+//! 只读用例分「按项目维度」和「全站扁平维度」两套，前者从路径补齐项目编号后复用同一批实现。
+//! 项目配置类写用例共享一套编排：锁定项目、改配置、回读、同时写生命周期事件与后台审计、提交，
+//! 因此每次改动都会在项目自身时间线和管理员操作留痕两处各留一条记录。
+//! 派发是本文件唯一动用户资产的用例，它以请求幂等键防重复发币，并按项目解锁规则决定直接入账还是转锁仓。
+
 use super::*;
 
 /// 分页读取新币项目的发行、生命周期、解锁、手续费和上市后购买配置，并返回总数。
@@ -18,6 +25,8 @@ pub(crate) async fn list_admin_new_coin_projects(
 
 /// 按项目、用户、邮箱和状态筛选新币认购记录，并返回分页明细和匹配总数。
 /// 状态只去除空白，分页统一裁剪；读取不锁认购记录或钱包，也不计算可派发数量。
+/// 项目编号在此为可选条件，因此同一实现既服务全站检索也服务按项目检索，后者由上层先行补齐该字段。
+/// 认购记录反映用户申购意向与冻结结果，是否已发币要另查派发记录，二者不在此关联。
 pub(crate) async fn list_admin_new_coin_subscriptions(
     pool: Option<Pool<MySql>>,
     query: AdminNewCoinFlatListQuery,
@@ -41,7 +50,9 @@ pub(crate) async fn list_admin_new_coin_subscriptions(
     })
 }
 
-/// 组装项目过滤列表参数：由路由层传入的子查询参数统一补齐项目ID。
+/// 把按项目维度的查询参数升格为扁平查询参数，用路径中的项目编号覆盖项目筛选项。
+/// 项目编号来自路径而非请求体，因此调用方无法借查询串越权访问其他项目的子资源。
+/// 其余用户、邮箱、状态与分页字段原样透传，两套入口据此复用同一批列表实现。
 pub(super) fn build_new_coin_scoped_list_query(
     project_id: u64,
     query: AdminNewCoinScopedListQuery,
@@ -56,7 +67,8 @@ pub(super) fn build_new_coin_scoped_list_query(
     }
 }
 
-/// 查询某个项目的认购列表。
+/// 按项目维度检索认购记录：先用路径项目编号覆盖筛选条件，再委托全站认购列表实现。
+/// 该入口不校验项目是否存在，项目编号无效时得到的是空列表而不是未找到错误。
 pub(crate) async fn list_admin_new_coin_subscriptions_for_project(
     pool: Option<Pool<MySql>>,
     project_id: u64,
@@ -68,6 +80,8 @@ pub(crate) async fn list_admin_new_coin_subscriptions_for_project(
 
 /// 按项目、用户、邮箱和状态筛选新币派发记录，并返回数量、锁仓和幂等键信息及总数。
 /// 查询不锁派发、钱包或锁仓行；分页边界统一裁剪，读取失败不会重试派发。
+/// 响应里的幂等键是排查重复发币的关键线索，同一键至多对应一条记录，可据此确认某次派发是否已执行。
+/// 锁仓头寸编号为空表示该笔已直接入账可用余额，非空则表示资产仍处于锁仓待解禁状态。
 pub(crate) async fn list_admin_new_coin_distributions(
     pool: Option<Pool<MySql>>,
     query: AdminNewCoinFlatListQuery,
@@ -91,7 +105,8 @@ pub(crate) async fn list_admin_new_coin_distributions(
     })
 }
 
-/// 查询某个项目的分配列表。
+/// 按项目维度检索派发记录：路径项目编号覆盖筛选条件后委托全站派发列表实现。
+/// 与认购的按项目入口同构，同样不校验项目存在性，编号无效时返回空列表而非未找到。
 pub(crate) async fn list_admin_new_coin_distributions_for_project(
     pool: Option<Pool<MySql>>,
     project_id: u64,
@@ -103,6 +118,8 @@ pub(crate) async fn list_admin_new_coin_distributions_for_project(
 
 /// 按项目、用户、邮箱和状态筛选上市后购买记录，并返回分页结果与匹配总数。
 /// 状态仅去空白，分页统一裁剪；读取不锁交易对或订单，也不触发兑换结算。
+/// 与认购记录属于新币生命周期的不同阶段：认购发生在上市之前，本入口统计的是开放二级购买之后的成交。
+/// 只有开启了上市后购买的项目才会产生这类记录，因此未开放的项目查询结果恒为空。
 pub(crate) async fn list_admin_new_coin_purchases(
     pool: Option<Pool<MySql>>,
     query: AdminNewCoinPurchaseQuery,
@@ -125,6 +142,8 @@ pub(crate) async fn list_admin_new_coin_purchases(
 
 /// 按用户、邮箱、资产和状态筛选新币锁仓头寸，并返回解锁时间、剩余金额和来源信息及总数。
 /// 查询不锁头寸或推进解锁；分页边界统一裁剪，数据库解码失败直接返回错误。
+/// 与派发和解锁两类记录的区别在于这里是当前状态视图：剩余金额随解禁推进而减少，而非逐笔流水。
+/// 筛选维度按用户与资产而不含项目编号，因为同一资产的锁仓可能来自多次派发并已按合并键归并。
 pub(crate) async fn list_admin_new_coin_lock_positions(
     pool: Option<Pool<MySql>>,
     query: AdminNewCoinLockPositionQuery,
@@ -150,6 +169,8 @@ pub(crate) async fn list_admin_new_coin_lock_positions(
 
 /// 按用户、邮箱、资产、解锁状态和费用支付状态筛选新币解锁记录，并返回分页结果与总数。
 /// 两个状态筛选只去空白，查询不锁钱包或费用记录，也不执行解锁或补扣费用。
+/// 比锁仓头寸多出的费用支付状态维度，正是用来定位「已解禁但解禁手续费尚未扣成功」这类需要人工跟进的记录。
+/// 两个状态是彼此独立的筛选项，可单独或组合使用；未提供的项不参与过滤。
 pub(crate) async fn list_admin_new_coin_unlocks(
     pool: Option<Pool<MySql>>,
     query: AdminNewCoinUnlockQuery,
@@ -432,6 +453,12 @@ pub(crate) async fn update_admin_new_coin_post_listing_purchase(
 
 /// 锁定新币项目与派发记录，按认购结果计算直接入账或锁仓分配，并推进项目派发状态。
 /// 派发、钱包余额流水、锁仓、生命周期事件及审计共用事务；幂等键或状态冲突阻止重复发币。
+/// 事务顺序为：锁项目行、确认生命周期处于派发阶段、按幂等键查重、可选核销认购额度、
+/// 按解锁规则算出锁仓计划并完成入账或锁仓、写派发记录、写生命周期事件与后台审计。
+/// 幂等键已存在时直接返回冲突而不是回读既有结果，因此调用方需自行查派发记录确认上次是否成功。
+/// 认购编号为可选：提供时会核销对应认购的可派额度，不提供则视为不基于认购的直接空投。
+/// 派发状态由是否产生锁仓头寸决定，有锁仓记为锁定中，无锁仓记为已完成。
+/// 本用例不发布任何外部事件，资产可用性完全由事务内的余额与锁仓写入体现。
 pub(crate) async fn distribute_admin_new_coin(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -590,6 +617,11 @@ pub(crate) async fn upsert_admin_new_coin_convert_rule(
     Ok(after)
 }
 
+/// 在调用方事务内把一次项目配置变更同时写进生命周期事件流和后台审计日志。
+/// 生命周期推进、解锁规则替换、解禁费规则调整与上市后购买开关四条路径共用本函数，仅传入的动作名不同。
+/// 事件载荷把前后值包进一个对象，审计则分列 before 与 after 两字段，内容同源但结构不同，
+/// 前者服务于按项目回溯时间线，后者服务于按管理员追溯操作。
+/// 本函数不提交也不回滚，失败直接上抛，由调用方统一回滚整笔变更。
 async fn record_admin_new_coin_project_change_in_tx(
     tx: &mut Transaction<'_, MySql>,
     admin_id: u64,

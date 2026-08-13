@@ -1,3 +1,11 @@
+//! 事件发件箱投递后台任务。
+//!
+//! 业务事务只把待发事件写进发件箱表，与业务数据同事务提交，因此事件不会因消息中间件不可用而丢失。
+//! 本 worker 定时把这些记录取出投递到 RabbitMQ，并按结果推进为已发布、待重试或死信。
+//! 真正的扫描、发送与状态推进都在事件上下文的发件箱服务中实现，这里只负责按周期驱动并记录汇总日志。
+//! 投递语义是至少一次：发送与状态标记之间存在崩溃窗口，多实例同时扫描也可能重复发送，
+//! 因此下游必须按消息幂等键去重。
+
 use crate::{error::AppResult, modules::events::EventOutboxService, state::AppState};
 use chrono::Utc;
 use tokio::time::{Duration, interval};
