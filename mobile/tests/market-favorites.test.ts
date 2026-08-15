@@ -217,6 +217,6 @@ test('交易对图片按交易对、基础资产、字母顺序回退且杠杆�
     assert.match(view, /:fallback-src="ticker(?:\.|\?\.)baseIconUrl"/)
   }
   assert.match(tradingApiSource, /logoUrl: String\(wallet\.logo_url \|\| ''\)\.trim\(\) \|\| undefined/)
-  assert.match(assetsSource, /logoUrl: row\.spot\?\.logoUrl \|\| row\.margin\?\.logoUrl/)
+  assert.match(assetsSource, /logoUrl: spot\?\.logoUrl \|\| margin\?\.logoUrl/)
   assert.match(assetsSource, /<AssetMark :symbol="row\.symbol" :src="row\.logoUrl"/)
 })

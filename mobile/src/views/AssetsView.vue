@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
@@ -7,10 +7,12 @@ import {
   ArrowLeftRight,
   ArrowRight,
   ArrowUpFromLine,
+  Check,
   ChevronRight,
   Eye,
   EyeOff,
   ReceiptText,
+  Search,
   WalletCards,
   Zap,
   X,
@@ -51,6 +53,8 @@ type AssetHoldingRow = {
   estimatedValue: number | null
 }
 
+type AssetAccountScope = 'all' | 'spot' | 'margin'
+
 const QUOTE_ASSET_SYMBOL = 'USDT'
 
 const router = useRouter()
@@ -60,6 +64,7 @@ const theme = useThemeStore()
 const { locale, t } = useI18n()
 const accounts = ref<WalletAccount[]>([])
 const marginAccounts = ref<WalletAccount[]>([])
+const assetAccountScope = ref<AssetAccountScope>('all')
 const balanceVisible = ref(true)
 const loading = ref(false)
 const error = ref('')
@@ -88,8 +93,12 @@ const transferFrom = ref<'spot' | 'margin'>('spot')
 const transferFeedback = ref('')
 const transferFeedbackTone = ref<'success' | 'error'>('error')
 const transferring = ref(false)
+const transferAssetPickerOpen = ref(false)
+const transferAssetSearch = ref('')
 let transferRequestVersion = 0
 const transferDialog = ref<HTMLElement | null>(null)
+const transferAssetTrigger = ref<HTMLButtonElement | null>(null)
+const transferAssetSearchInput = ref<HTMLInputElement | null>(null)
 const { trapFocus: trapTransferFocus } = useModalDialog(transferOpen, transferDialog)
 
 const assetRows = computed(() => {
@@ -100,32 +109,37 @@ const assetRows = computed(() => {
 })
 
 const accountDataAvailable = computed(() => session.isAuthenticated && accountsReady.value && !error.value)
-const holdingRows = computed<AssetHoldingRow[]>(() => assetRows.value
-  .map((row) => {
-    const amount = walletTotal(row.spot) + walletTotal(row.margin)
-    const available = walletAvailable(row.spot) + walletAvailable(row.margin)
-    const frozen = walletFrozen(row.spot) + walletFrozen(row.margin)
-    return {
-      ...row,
-      logoUrl: row.spot?.logoUrl || row.margin?.logoUrl,
-      amount,
-      available,
-      frozen,
-      estimatedValue: estimateAssetValue(row.symbol, amount),
-    }
-  })
-  .filter((row) => row.amount > 0)
-  .sort((left, right) => {
-    if (left.estimatedValue === null && right.estimatedValue !== null) return 1
-    if (left.estimatedValue !== null && right.estimatedValue === null) return -1
-    if (left.estimatedValue !== null && right.estimatedValue !== null && left.estimatedValue !== right.estimatedValue) {
-      return right.estimatedValue - left.estimatedValue
-    }
-    return left.symbol.localeCompare(right.symbol)
-  }))
-const hasHoldings = computed(() => accountDataAvailable.value && holdingRows.value.length > 0)
-const valuedHoldingCount = computed(() => holdingRows.value.filter((row) => row.estimatedValue !== null).length)
-const totalEstimate = computed(() => holdingRows.value.reduce((total, row) => total + (row.estimatedValue ?? 0), 0))
+const allHoldingRows = computed<AssetHoldingRow[]>(() => buildHoldingRows('all'))
+const spotHoldingRows = computed<AssetHoldingRow[]>(() => buildHoldingRows('spot'))
+const marginHoldingRows = computed<AssetHoldingRow[]>(() => buildHoldingRows('margin'))
+const holdingRows = computed<AssetHoldingRow[]>(() => {
+  if (assetAccountScope.value === 'spot') return spotHoldingRows.value
+  if (assetAccountScope.value === 'margin') return marginHoldingRows.value
+  return allHoldingRows.value
+})
+const hasHoldings = computed(() => accountDataAvailable.value && allHoldingRows.value.length > 0)
+const selectedHasHoldings = computed(() => accountDataAvailable.value && holdingRows.value.length > 0)
+const valuedHoldingCount = computed(() => allHoldingRows.value.filter((row) => row.estimatedValue !== null).length)
+const totalEstimate = computed(() => holdingEstimate(allHoldingRows.value))
+const accountCards = computed(() => [
+  {
+    scope: 'spot' as const,
+    label: t('assets.spotAccount'),
+    balance: accountEstimateLabel(spotHoldingRows.value),
+    count: spotHoldingRows.value.length,
+  },
+  {
+    scope: 'margin' as const,
+    label: t('assets.marginAccount'),
+    balance: accountEstimateLabel(marginHoldingRows.value),
+    count: marginHoldingRows.value.length,
+  },
+])
+const selectedHoldingsTitle = computed(() => {
+  if (assetAccountScope.value === 'spot') return t('assets.spotHoldings')
+  if (assetAccountScope.value === 'margin') return t('assets.marginHoldings')
+  return t('assets.holdings')
+})
 const memberState = computed<'loading' | 'error' | 'empty' | 'holdings'>(() => {
   if (error.value) return 'error'
   if (loading.value || !accountsReady.value) return 'loading'
@@ -134,7 +148,7 @@ const memberState = computed<'loading' | 'error' | 'empty' | 'holdings'>(() => {
 const estimateCoverage = computed<'full' | 'partial' | 'unavailable' | 'empty'>(() => {
   if (!hasHoldings.value) return 'empty'
   if (valuedHoldingCount.value === 0) return 'unavailable'
-  return valuedHoldingCount.value === holdingRows.value.length ? 'full' : 'partial'
+  return valuedHoldingCount.value === allHoldingRows.value.length ? 'full' : 'partial'
 })
 const totalEstimateLabel = computed(() => {
   if (!balanceVisible.value) return '••••••'
@@ -158,10 +172,29 @@ const todayReturnPresentation = computed(() => resolveTodayReturnPresentation({
   },
 }))
 
-const transferAccounts = computed(() => transferFrom.value === 'spot' ? accounts.value : marginAccounts.value)
+const marginTransferAssetIds = computed(() => new Set(
+  marginAccounts.value
+    .filter((account) => account.marginTransferEnabled !== false)
+    .map((account) => account.assetId),
+))
+const spotTransferAccounts = computed(() => accounts.value.filter((account) => marginTransferAssetIds.value.has(account.assetId)))
+const transferAccounts = computed(() => transferFrom.value === 'spot' ? spotTransferAccounts.value : marginAccounts.value)
 const transferAccount = computed(() => transferAccounts.value.find((account) => account.symbol === transferAsset.value))
 const transferAvailable = computed<number | null>(() => transferAccount.value?.available ?? null)
 const transferAvailableLabel = computed(() => transferAvailable.value === null ? '--' : formatAmount(transferAvailable.value))
+const transferAssetLogo = computed(() => transferAccount.value?.logoUrl
+  || accounts.value.find((account) => account.symbol === transferAsset.value)?.logoUrl
+  || marginAccounts.value.find((account) => account.symbol === transferAsset.value)?.logoUrl)
+const filteredTransferAccounts = computed(() => {
+  const query = transferAssetSearch.value.trim().toUpperCase()
+  return transferAccounts.value
+    .filter((account) => !query || account.symbol.toUpperCase().includes(query))
+    .sort((left, right) => {
+      if (left.symbol === QUOTE_ASSET_SYMBOL) return -1
+      if (right.symbol === QUOTE_ASSET_SYMBOL) return 1
+      return left.symbol.localeCompare(right.symbol)
+    })
+})
 const transferTarget = computed<'spot' | 'margin'>(() => transferFrom.value === 'spot' ? 'margin' : 'spot')
 const canSubmitTransfer = computed(() => {
   const value = Number(transferAmount.value)
@@ -197,7 +230,9 @@ async function loadAccounts(): Promise<void> {
     accounts.value = result.value.accounts
     marginAccounts.value = result.value.marginAccounts
     accountsReady.value = true
-    if (!transferAccounts.value.some((account) => account.symbol === transferAsset.value)) transferAsset.value = transferAccounts.value[0]?.symbol || ''
+    if (!transferAccounts.value.some((account) => account.symbol === transferAsset.value)) {
+      transferAsset.value = preferredTransferAsset(transferAccounts.value)
+    }
   } else {
     accounts.value = []
     marginAccounts.value = []
@@ -234,11 +269,14 @@ async function loadTodayReturn(): Promise<void> {
 function resetSessionAccountState(): void {
   accounts.value = []
   marginAccounts.value = []
+  assetAccountScope.value = 'all'
   accountsReady.value = false
   transferOpen.value = false
   transferAsset.value = ''
   transferAmount.value = ''
   transferFeedback.value = ''
+  transferAssetPickerOpen.value = false
+  transferAssetSearch.value = ''
   transferring.value = false
   transferRequestVersion += 1
 }
@@ -261,29 +299,70 @@ function openTransfer(): void {
     return
   }
   transferFrom.value = 'spot'
-  if (!accounts.value.some((account) => account.symbol === transferAsset.value)) transferAsset.value = accounts.value[0]?.symbol || ''
+  if (!transferAccounts.value.some((account) => account.symbol === transferAsset.value)) {
+    transferAsset.value = preferredTransferAsset(transferAccounts.value)
+  }
+  transferAmount.value = ''
   transferFeedback.value = ''
+  transferAssetPickerOpen.value = false
+  transferAssetSearch.value = ''
   transferOpen.value = true
 }
 
 function closeTransfer(): void {
   if (transferring.value) return
+  transferAssetPickerOpen.value = false
+  transferAssetSearch.value = ''
   transferOpen.value = false
+}
+
+function openTransferAssetPicker(): void {
+  if (transferring.value || transferAccounts.value.length === 0) return
+  transferAssetSearch.value = ''
+  transferAssetPickerOpen.value = true
+  void nextTick(() => transferAssetSearchInput.value?.focus())
+}
+
+function closeTransferAssetPicker(): void {
+  transferAssetPickerOpen.value = false
+  transferAssetSearch.value = ''
+  void nextTick(() => transferAssetTrigger.value?.focus())
+}
+
+function selectTransferAsset(account: WalletAccount): void {
+  if (transferring.value) return
+  transferAsset.value = account.symbol
+  transferAmount.value = ''
+  transferFeedback.value = ''
+  closeTransferAssetPicker()
+}
+
+function fillTransferAvailable(): void {
+  if (transferring.value || transferAvailable.value === null || transferAvailable.value <= 0) return
+  transferAmount.value = String(transferAvailable.value)
+  transferFeedback.value = ''
 }
 
 function swapTransferRoute(): void {
   if (transferring.value) return
   const nextFrom = transferTarget.value
   transferFrom.value = nextFrom
-  const nextAccounts = nextFrom === 'spot' ? accounts.value : marginAccounts.value
+  const nextAccounts = transferAccounts.value
   if (!nextAccounts.some((account) => account.symbol === transferAsset.value)) {
-    transferAsset.value = nextAccounts[0]?.symbol || ''
+    transferAsset.value = preferredTransferAsset(nextAccounts)
   }
   transferAmount.value = ''
   transferFeedback.value = ''
+  transferAssetPickerOpen.value = false
+  transferAssetSearch.value = ''
 }
 
 function handleTransferDialogKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && transferAssetPickerOpen.value) {
+    event.preventDefault()
+    closeTransferAssetPicker()
+    return
+  }
   trapTransferFocus(event, closeTransfer)
 }
 
@@ -333,6 +412,55 @@ async function submitTransfer(): Promise<void> {
   }
 }
 
+function selectAssetAccountScope(scope: AssetAccountScope): void {
+  assetAccountScope.value = scope
+}
+
+function buildHoldingRows(scope: AssetAccountScope): AssetHoldingRow[] {
+  return assetRows.value
+    .map((row) => {
+      const spot = scope === 'margin' ? undefined : row.spot
+      const margin = scope === 'spot' ? undefined : row.margin
+      const amount = walletTotal(spot) + walletTotal(margin)
+      const available = walletAvailable(spot) + walletAvailable(margin)
+      const frozen = walletFrozen(spot) + walletFrozen(margin)
+      return {
+        ...row,
+        spot,
+        margin,
+        logoUrl: spot?.logoUrl || margin?.logoUrl,
+        amount,
+        available,
+        frozen,
+        estimatedValue: estimateAssetValue(row.symbol, amount),
+      }
+    })
+    .filter((row) => row.amount > 0)
+    .sort((left, right) => {
+      if (left.estimatedValue === null && right.estimatedValue !== null) return 1
+      if (left.estimatedValue !== null && right.estimatedValue === null) return -1
+      if (left.estimatedValue !== null && right.estimatedValue !== null && left.estimatedValue !== right.estimatedValue) {
+        return right.estimatedValue - left.estimatedValue
+      }
+      return left.symbol.localeCompare(right.symbol)
+    })
+}
+
+function holdingEstimate(rows: AssetHoldingRow[]): number {
+  return rows.reduce((total, row) => total + (row.estimatedValue ?? 0), 0)
+}
+
+function accountEstimateLabel(rows: AssetHoldingRow[]): string {
+  if (!balanceVisible.value) return '••••••'
+  if (!accountDataAvailable.value) return '--'
+  if (rows.length === 0) return '0.00'
+  if (!rows.some((row) => row.estimatedValue !== null)) return '--'
+  return new Intl.NumberFormat(locale.value === 'en' ? 'en-US' : 'zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(holdingEstimate(rows))
+}
+
 function walletTotal(account?: WalletAccount): number {
   return account ? account.available + account.frozen + account.locked : 0
 }
@@ -359,8 +487,16 @@ function estimateAssetValue(symbol: string, amount: number): number | null {
   return Number.isFinite(lastPrice) && Number(lastPrice) > 0 ? amount * Number(lastPrice) : null
 }
 
+function preferredTransferAsset(wallets: WalletAccount[]): string {
+  return wallets.find((account) => account.symbol === QUOTE_ASSET_SYMBOL)?.symbol
+    || wallets[0]?.symbol
+    || ''
+}
+
 function syncTransferAsset(): void {
-  if (!transferAccounts.value.some((account) => account.symbol === transferAsset.value)) transferAsset.value = transferAccounts.value[0]?.symbol || ''
+  if (!transferAccounts.value.some((account) => account.symbol === transferAsset.value)) {
+    transferAsset.value = preferredTransferAsset(transferAccounts.value)
+  }
 }
 
 watch(transferFrom, syncTransferAsset)
@@ -385,7 +521,7 @@ onUnmounted(() => {
     class="page pencil-page pencil-root-page assets-pencil"
     data-assets-workspace="live"
     :data-assets-branch="session.isAuthenticated ? 'member' : 'guest'"
-    data-pencil-source="CUK3y i6YDBr p61z2Q Q4JYj v6phV TuWXq"
+    data-pencil-source="CUK3y i6YDBr p61z2Q Q4JYj v6phV TuWXq tPkL1 tPkD1"
   >
     <PageHeader :back="false" :pencil="true" :title="t('assets.title')" />
 
@@ -464,10 +600,49 @@ onUnmounted(() => {
         </nav>
       </section>
 
+      <section class="pencil-section assets-account-overview" :aria-busy="loading">
+        <div class="pencil-section__heading">
+          <h2>{{ t('assets.accountBalances') }}</h2>
+          <button
+            class="assets-account-overview__all"
+            :class="{ 'is-active': assetAccountScope === 'all' }"
+            type="button"
+            :aria-pressed="assetAccountScope === 'all'"
+            :disabled="loading || Boolean(error)"
+            @click="selectAssetAccountScope('all')"
+          >
+            {{ t('assets.allAccounts') }}
+          </button>
+        </div>
+        <nav class="assets-account-cards" :aria-label="t('assets.accountBalances')">
+          <button
+            v-for="card in accountCards"
+            :key="card.scope"
+            class="assets-account-card"
+            :class="{ 'is-active': assetAccountScope === card.scope }"
+            type="button"
+            :aria-pressed="assetAccountScope === card.scope"
+            :disabled="loading || Boolean(error)"
+            @click="selectAssetAccountScope(card.scope)"
+          >
+            <span class="assets-account-card__top">
+              <span class="assets-account-card__icon"><WalletCards :size="16" aria-hidden="true" /></span>
+              <strong>{{ card.label }}</strong>
+              <ChevronRight :size="15" aria-hidden="true" />
+            </span>
+            <span class="assets-account-card__balance">
+              <strong class="pencil-numeric">{{ card.balance }}</strong>
+              <small>{{ QUOTE_ASSET_SYMBOL }}</small>
+            </span>
+            <small>{{ t('assets.accountAssetCount', { count: card.count }) }}</small>
+          </button>
+        </nav>
+      </section>
+
       <section class="pencil-section assets-holdings" :aria-busy="loading">
         <div class="pencil-section__heading">
-          <h2>{{ t('assets.holdings') }}</h2>
-          <span v-if="memberState === 'holdings'" class="assets-holdings__count">{{ t('assets.sortedByEstimate') }}</span>
+          <h2>{{ selectedHoldingsTitle }}</h2>
+          <span v-if="memberState === 'holdings'" class="assets-holdings__count">{{ t('assets.holdingCount', { count: holdingRows.length }) }}</span>
           <span v-else-if="memberState === 'empty'" class="assets-holdings__count">{{ t('assets.holdingCount', { count: 0 }) }}</span>
         </div>
 
@@ -479,7 +654,7 @@ onUnmounted(() => {
           <span>{{ error }}</span>
           <button class="pencil-secondary" type="button" :disabled="loading" @click="loadAccounts">{{ t('common.retry') }}</button>
         </div>
-        <div v-else-if="hasHoldings" class="assets-holdings__list">
+        <div v-else-if="selectedHasHoldings" class="assets-holdings__list">
           <button
             v-for="row in holdingRows"
             :key="row.symbol"
@@ -502,11 +677,13 @@ onUnmounted(() => {
         <div v-else class="assets-holdings__state assets-holdings__state--empty">
           <span class="assets-holdings__empty-icon"><WalletCards :size="26" aria-hidden="true" /></span>
           <div class="assets-holdings__empty-copy" role="status">
-            <strong>{{ t('assets.emptyHoldings') }}</strong>
-            <span>{{ t('assets.emptyHoldingsDescription') }}</span>
+            <strong>{{ assetAccountScope === 'margin' ? t('assets.emptyMarginHoldings') : t('assets.emptyHoldings') }}</strong>
+            <span>{{ assetAccountScope === 'margin' ? t('assets.emptyMarginHoldingsDescription') : t('assets.emptyHoldingsDescription') }}</span>
           </div>
-          <button class="pencil-primary" type="button" @click="openDeposit">
-            <ArrowDownToLine :size="17" aria-hidden="true" />{{ t('assets.depositNow') }}
+          <button class="pencil-primary" type="button" @click="assetAccountScope === 'margin' ? openTransfer() : openDeposit()">
+            <ArrowLeftRight v-if="assetAccountScope === 'margin'" :size="17" aria-hidden="true" />
+            <ArrowDownToLine v-else :size="17" aria-hidden="true" />
+            {{ assetAccountScope === 'margin' ? t('assets.transferToMargin') : t('assets.depositNow') }}
           </button>
         </div>
       </section>
@@ -539,66 +716,144 @@ onUnmounted(() => {
         <section
           ref="transferDialog"
           class="confirmation-sheet assets-transfer-sheet"
+          :class="{ 'assets-transfer-sheet--picker': transferAssetPickerOpen }"
           role="dialog"
           aria-modal="true"
           :aria-busy="transferring"
-          :aria-label="t('assets.transfer')"
+          :aria-label="transferAssetPickerOpen ? t('assets.selectTransferAsset') : t('assets.transfer')"
           tabindex="-1"
           @keydown="handleTransferDialogKeydown"
         >
-        <span class="assets-transfer-sheet__grab" aria-hidden="true" />
-        <header class="assets-transfer-sheet__header">
-          <h2>{{ t('assets.transferTitle') }}</h2>
+          <div class="assets-transfer-sheet__top">
+            <span class="assets-transfer-sheet__grab" aria-hidden="true" />
+            <header class="assets-transfer-sheet__header">
+              <h2>{{ transferAssetPickerOpen ? t('assets.selectTransferAsset') : t('assets.transferTitle') }}</h2>
+              <button
+                class="assets-transfer-sheet__close"
+                type="button"
+                :aria-label="t('common.close')"
+                :disabled="transferring"
+                data-dialog-cancel
+                @click="transferAssetPickerOpen ? closeTransferAssetPicker() : closeTransfer()"
+              >
+                <X :size="16" aria-hidden="true" />
+              </button>
+            </header>
+          </div>
+
+          <div v-if="transferAssetPickerOpen" class="assets-transfer-picker" data-transfer-surface="asset-picker">
+            <label class="assets-transfer-search">
+              <Search :size="17" aria-hidden="true" />
+              <input
+                ref="transferAssetSearchInput"
+                v-model="transferAssetSearch"
+                type="search"
+                autocomplete="off"
+                :placeholder="t('assets.searchTransferAsset')"
+                :aria-label="t('assets.searchTransferAsset')"
+              />
+            </label>
+
+            <div v-if="filteredTransferAccounts.length" class="assets-transfer-picker__list" role="list">
+              <button
+                v-for="account in filteredTransferAccounts"
+                :key="account.assetId"
+                class="assets-transfer-picker__row"
+                :class="{ 'is-selected': account.symbol === transferAsset }"
+                type="button"
+                :aria-pressed="account.symbol === transferAsset"
+                :disabled="transferring"
+                @click="selectTransferAsset(account)"
+              >
+                <AssetMark :symbol="account.symbol" :src="account.logoUrl" :size="32" />
+                <span class="assets-transfer-picker__copy">
+                  <strong>{{ account.symbol }}</strong>
+                  <small>{{ t('assets.transferAssetSource', { account: transferFrom === 'spot' ? t('assets.spotAccount') : t('assets.marginAccount') }) }}</small>
+                </span>
+                <span class="assets-transfer-picker__value">
+                  <strong class="pencil-numeric">{{ formatAmount(account.available) }}</strong>
+                  <small>{{ t('assets.transferAvailable') }}</small>
+                </span>
+                <Check v-if="account.symbol === transferAsset" :size="17" aria-hidden="true" />
+              </button>
+            </div>
+            <p v-else class="assets-transfer-picker__empty" role="status">{{ t('assets.noTransferAssets') }}</p>
+          </div>
+
+          <p v-if="transferAssetPickerOpen" class="assets-transfer-picker__hint">{{ t('assets.transferPickerHint') }}</p>
+
+          <div v-else class="assets-transfer-sheet__body" data-transfer-surface="main">
+            <label class="assets-transfer-amount">
+              <span class="assets-transfer-amount__bloom" aria-hidden="true" />
+              <span class="assets-transfer-amount__label">{{ t('assets.transferQuantityWithAsset', { asset: transferAsset || '--' }) }}</span>
+              <input
+                v-model="transferAmount"
+                inputmode="decimal"
+                autocomplete="off"
+                placeholder="0.00"
+                :aria-label="t('assets.transferAmount')"
+                @input="transferFeedback = ''"
+              />
+              <span class="assets-transfer-amount__meta">
+                <span>{{ t('assets.transferAvailableAmount', { amount: transferAvailableLabel }) }}</span>
+                <button
+                  type="button"
+                  :disabled="transferring || transferAvailable === null || transferAvailable <= 0"
+                  @click.prevent="fillTransferAvailable"
+                >
+                  <span>{{ t('common.all') }}</span>
+                </button>
+              </span>
+            </label>
+
+            <div class="assets-transfer-route">
+              <div class="assets-transfer-account">
+                <span>{{ t('assets.from') }}</span>
+                <strong>{{ transferFrom === 'spot' ? t('assets.spotAccount') : t('assets.marginAccount') }}</strong>
+              </div>
+              <button type="button" :aria-label="t('assets.swapTransferDirection')" :disabled="transferring" @click="swapTransferRoute">
+                <ArrowLeftRight :size="16" aria-hidden="true" />
+              </button>
+              <div class="assets-transfer-account assets-transfer-account--target">
+                <span>{{ t('assets.to') }}</span>
+                <strong>{{ transferTarget === 'spot' ? t('assets.spotAccount') : t('assets.marginAccount') }}</strong>
+              </div>
+            </div>
+
+            <button
+              ref="transferAssetTrigger"
+              class="assets-transfer-asset"
+              type="button"
+              :disabled="transferring || transferAccounts.length === 0"
+              @click="openTransferAssetPicker"
+            >
+              <AssetMark :symbol="transferAsset || '--'" :src="transferAssetLogo" :size="32" />
+              <span class="assets-transfer-asset__copy">
+                <strong>{{ transferAsset || '--' }}</strong>
+                <small>{{ t('assets.selectTransferAsset') }}</small>
+              </span>
+              <span class="assets-transfer-asset__value">
+                <strong class="pencil-numeric">{{ transferAvailableLabel }}</strong>
+                <small>{{ t('assets.transferAvailable') }}</small>
+              </span>
+              <ChevronRight :size="17" aria-hidden="true" />
+            </button>
+
+            <p class="assets-transfer-hint">{{ t('assets.transferHint') }}</p>
+            <p v-if="transferFeedback" :class="transferFeedbackTone === 'success' ? 'positive' : 'field-error'" aria-live="polite">{{ transferFeedback }}</p>
+          </div>
+
           <button
-            class="assets-transfer-sheet__close"
+            v-if="!transferAssetPickerOpen"
+            class="assets-transfer-submit"
             type="button"
-            :aria-label="t('common.close')"
-            :disabled="transferring"
-            data-dialog-cancel
-            @click="closeTransfer"
+            :disabled="!canSubmitTransfer"
+            :aria-busy="transferring"
+            @click="submitTransfer"
           >
-            <X :size="16" aria-hidden="true" />
+            <ArrowLeftRight :size="17" aria-hidden="true" />
+            {{ transferring ? t('assets.transferring') : t('assets.confirmTransfer') }}
           </button>
-        </header>
-
-        <div class="assets-transfer-route">
-          <div class="assets-transfer-account">
-            <span>{{ t('assets.from') }}</span>
-            <strong>{{ transferFrom === 'spot' ? t('assets.fundingAccount') : t('assets.marginAccount') }}</strong>
-          </div>
-          <button type="button" :aria-label="t('assets.swapTransferDirection')" :disabled="transferring" @click="swapTransferRoute">
-            <ArrowLeftRight :size="18" aria-hidden="true" />
-          </button>
-          <div class="assets-transfer-account">
-            <span>{{ t('assets.to') }}</span>
-            <strong>{{ transferTarget === 'spot' ? t('assets.fundingAccount') : t('assets.marginAccount') }}</strong>
-          </div>
-        </div>
-
-        <label class="assets-transfer-field">
-          <span class="assets-transfer-field__heading">
-            <span>{{ t('assets.asset') }}</span>
-            <small>{{ t('assets.availableBalance', { amount: transferAvailableLabel, asset: transferAsset || '--' }) }}</small>
-          </span>
-          <select v-model="transferAsset">
-            <option v-for="account in transferAccounts" :key="account.assetId" :value="account.symbol">{{ account.symbol }}</option>
-          </select>
-        </label>
-
-        <label class="assets-transfer-field">
-          <span class="assets-transfer-field__heading">
-            <span>{{ t('assets.transferAmount') }}</span>
-            <small>{{ transferAsset || '--' }}</small>
-          </span>
-          <input v-model="transferAmount" inputmode="decimal" :placeholder="t('assets.transferPlaceholder')" />
-        </label>
-
-        <p class="assets-transfer-hint">{{ t('assets.transferHint') }}</p>
-        <p v-if="transferFeedback" :class="transferFeedbackTone === 'success' ? 'positive' : 'field-error'" aria-live="polite">{{ transferFeedback }}</p>
-        <button class="assets-transfer-submit" type="button" :disabled="!canSubmitTransfer" :aria-busy="transferring" @click="submitTransfer">
-          <ArrowLeftRight :size="17" aria-hidden="true" />
-          {{ transferring ? t('assets.transferring') : t('assets.confirmTransfer') }}
-        </button>
         </section>
       </div>
     </Teleport>
@@ -849,6 +1104,135 @@ onUnmounted(() => {
   padding: 0;
 }
 
+.assets-account-overview {
+  display: grid;
+  gap: 10px;
+  padding: 16px 4px 2px;
+}
+
+.assets-account-overview__all {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 600;
+  justify-content: center;
+  margin: -12px;
+  min-height: 44px;
+  min-width: 56px;
+  padding: 12px;
+}
+
+.assets-account-overview__all.is-active {
+  color: var(--positive);
+}
+
+.assets-account-cards {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+}
+
+.assets-account-card {
+  backdrop-filter: blur(18px);
+  background:
+    radial-gradient(circle at 90% 0%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 52%),
+    color-mix(in srgb, var(--surface-elevated) 76%, transparent);
+  border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  border-radius: 16px;
+  color: var(--ink);
+  display: grid;
+  gap: 4px 12px;
+  grid-template-areas:
+    "top balance"
+    "meta balance";
+  grid-template-columns: minmax(0, 1fr) minmax(116px, auto);
+  min-height: 82px;
+  min-width: 0;
+  padding: 13px 14px;
+  text-align: left;
+  transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.assets-account-card.is-active {
+  background:
+    radial-gradient(circle at 90% 0%, color-mix(in srgb, var(--accent) 19%, transparent), transparent 58%),
+    color-mix(in srgb, var(--surface-elevated) 86%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--line));
+}
+
+.assets-account-card:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+.assets-account-card__top {
+  align-items: center;
+  display: grid;
+  gap: 7px;
+  grid-area: top;
+  grid-template-columns: 28px minmax(0, 1fr) 15px;
+  min-width: 0;
+}
+
+.assets-account-card__top > strong {
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 17px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assets-account-card__top > svg {
+  color: var(--muted);
+}
+
+.assets-account-card__icon {
+  align-items: center;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-elevated));
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
+  border-radius: 9px;
+  color: var(--positive);
+  display: flex;
+  height: 28px;
+  justify-content: center;
+  width: 28px;
+}
+
+.assets-account-card__balance {
+  align-items: baseline;
+  display: flex;
+  gap: 5px;
+  grid-area: balance;
+  justify-self: end;
+  min-width: 0;
+}
+
+.assets-account-card__balance strong {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 22px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assets-account-card__balance small,
+.assets-account-card > small {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 13px;
+}
+
+.assets-account-card > small {
+  grid-area: meta;
+  padding-left: 35px;
+}
+
 .assets-holdings {
   padding: 14px 4px 4px;
 }
@@ -1003,34 +1387,99 @@ onUnmounted(() => {
   min-width: 0;
 }
 
-.assets-pencil button:focus-visible,
-.assets-transfer-layer button:focus-visible {
+.assets-pencil button:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 
+.assets-transfer-layer button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .assets-transfer-layer {
-  inset: 0;
+  bottom: 0;
   justify-items: center;
+  left: auto;
   padding: 0;
   position: fixed;
-  width: 100%;
+  right: 5.5vw;
+  top: 0;
+  width: min(100%, 448px);
 }
 
 .assets-transfer-sheet {
-  background: var(--surface);
+  --surface: rgb(247 249 248);
+  --surface-elevated: rgb(255 255 255);
+  --surface-2: rgb(238 242 240);
+  --surface-3: rgb(228 234 231);
+  --line: rgb(204 213 208);
+  --line-strong: rgb(174 187 180);
+  --hairline: rgb(221 228 224);
+  --ink: rgb(17 23 20);
+  --muted: rgb(104 115 109);
+  --accent: rgb(67 239 169);
+  --positive: rgb(8 123 82);
+  --on-accent: rgb(7 17 13);
+  --shadow: rgb(18 32 24 / 14%);
+  --font-data: var(--data-font, ui-monospace, SFMono-Regular, Menlo, monospace);
+  --transfer-glass: rgb(255 255 255 / 60%);
+  --transfer-glass-border: rgb(255 255 255 / 80%);
+  --transfer-glint-soft: rgb(255 255 255 / 30%);
+  --transfer-glint-strong: rgb(255 255 255 / 42%);
+  --transfer-control-shadow: rgb(67 239 169 / 26%);
+  --transfer-focus-ring: rgb(67 239 169 / 20%);
+  --transfer-close-shadow: rgb(18 32 24 / 14%);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface) 94%, var(--surface-elevated)) 0%, var(--surface) 38%),
+    var(--surface);
   border: 1px solid var(--line);
   border-bottom: 0;
   border-radius: 20px 20px 0 0;
   box-shadow: 0 -18px 48px var(--shadow);
   box-sizing: border-box;
   color: var(--ink);
-  gap: 12px;
-  height: min(460px, calc(100dvh - max(16px, env(safe-area-inset-top))));
+  gap: 10px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: min(520px, calc(100dvh - max(16px, env(safe-area-inset-top))));
   max-height: none;
   max-width: 448px;
-  padding: 8px 16px calc(14px + env(safe-area-inset-bottom));
+  overflow: hidden;
+  overscroll-behavior: contain;
+  padding: 8px 16px calc(22px + env(safe-area-inset-bottom));
   width: 100%;
+}
+
+html[data-theme='dark'] .assets-transfer-sheet {
+  --surface: rgb(0 0 0);
+  --surface-elevated: rgb(12 16 14);
+  --surface-2: rgb(18 23 20);
+  --surface-3: rgb(25 33 29);
+  --line: rgb(41 52 46);
+  --line-strong: rgb(58 74 66);
+  --hairline: rgb(32 41 35);
+  --ink: rgb(242 247 244);
+  --muted: rgb(149 161 154);
+  --accent: rgb(67 239 169);
+  --positive: rgb(97 241 182);
+  --on-accent: rgb(7 17 13);
+  --shadow: rgb(0 0 0 / 48%);
+  --transfer-glass: rgb(255 255 255 / 8%);
+  --transfer-glass-border: rgb(255 255 255 / 15%);
+  --transfer-focus-ring: rgb(67 239 169 / 28%);
+  --transfer-close-shadow: rgb(0 0 0 / 48%);
+}
+
+.assets-transfer-sheet--picker {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface) 97%, var(--surface-elevated)) 0%, var(--surface) 100%),
+    var(--surface);
+}
+
+.assets-transfer-sheet__top {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 
 .assets-transfer-sheet__grab {
@@ -1042,61 +1491,251 @@ onUnmounted(() => {
   width: 40px;
 }
 
-.assets-transfer-sheet > .assets-transfer-sheet__header {
+.assets-transfer-sheet__header {
   align-items: center;
   display: flex;
   gap: 12px;
-  grid-template-columns: none;
   justify-content: space-between;
-  min-height: 32px;
+  min-height: 40px;
 }
 
 .assets-transfer-sheet__header h2 {
   font-size: 18px;
   font-weight: 700;
+  line-height: 24px;
   margin: 0;
 }
 
 .assets-transfer-sheet__close,
 .assets-transfer-route > button {
   align-items: center;
-  background: var(--surface-2);
   border: 0;
   border-radius: 50%;
-  color: var(--muted);
   display: flex;
   flex: 0 0 44px;
   height: 44px;
   justify-content: center;
+  min-height: 44px;
   padding: 0;
+  position: relative;
   width: 44px;
+}
+
+.assets-transfer-sheet__close {
+  background: transparent;
+  color: var(--muted);
+}
+
+.assets-transfer-sheet__close::before,
+.assets-transfer-route > button::before {
+  border-radius: 50%;
+  content: '';
+  height: 32px;
+  inset: 6px;
+  pointer-events: none;
+  position: absolute;
+  width: 32px;
+}
+
+.assets-transfer-sheet__close::before {
+  background:
+    radial-gradient(circle at 36% 28%, color-mix(in srgb, rgb(255 255 255) 32%, transparent) 0 12%, transparent 42%),
+    var(--surface-2);
+  box-shadow:
+    inset 0 1px 0 var(--transfer-glint-soft),
+    0 5px 14px var(--transfer-close-shadow);
+}
+
+.assets-transfer-sheet__close > svg,
+.assets-transfer-route > button > svg {
+  position: relative;
+  z-index: 1;
+}
+
+.assets-transfer-sheet__body,
+.assets-transfer-picker {
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.assets-transfer-sheet__body::-webkit-scrollbar,
+.assets-transfer-picker::-webkit-scrollbar,
+.assets-transfer-picker__list::-webkit-scrollbar {
+  display: none;
+}
+
+.assets-transfer-sheet__body {
+  align-content: start;
+  display: grid;
+  gap: 10px;
+}
+
+.assets-transfer-amount {
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--surface-elevated) 92%, transparent), color-mix(in srgb, var(--surface-2) 86%, transparent));
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l, 16px);
+  box-sizing: border-box;
+  display: grid;
+  gap: 7px;
+  min-height: 140px;
+  overflow: hidden;
+  padding: 16px 18px;
+  position: relative;
+}
+
+.assets-transfer-amount::after {
+  background: linear-gradient(100deg, transparent 0 35%, color-mix(in srgb, rgb(255 255 255) 12%, transparent) 48%, transparent 62%);
+  content: '';
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.assets-transfer-amount__bloom {
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 24%, transparent) 0, transparent 68%);
+  height: 220px;
+  pointer-events: none;
+  position: absolute;
+  right: -46px;
+  top: -82px;
+  width: 220px;
+}
+
+.assets-transfer-amount__label,
+.assets-transfer-amount__meta {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 15px;
+  position: relative;
+  z-index: 1;
+}
+
+.assets-transfer-amount input {
+  appearance: textfield;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font-family: var(--font-data, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 30px;
+  font-weight: 700;
+  height: 42px;
+  letter-spacing: -.04em;
+  line-height: 42px;
+  min-width: 0;
+  outline: 0;
+  padding: 0;
+  position: relative;
+  width: 100%;
+  z-index: 1;
+}
+
+.assets-transfer-amount input::placeholder {
+  color: color-mix(in srgb, var(--ink) 36%, transparent);
+  opacity: 1;
+}
+
+.assets-transfer-amount:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--line));
+  box-shadow: 0 0 0 2px var(--transfer-focus-ring);
+}
+
+.assets-transfer-amount__meta {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-top: auto;
+}
+
+.assets-transfer-amount__meta > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assets-transfer-amount__meta button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 650;
+  height: 44px;
+  justify-content: center;
+  margin-block: -8px;
+  min-height: 44px;
+  min-width: 52px;
+  padding: 0 10px;
+  position: relative;
+}
+
+.assets-transfer-amount__meta button::before {
+  backdrop-filter: blur(18px);
+  background: var(--transfer-glass);
+  border: 1px solid var(--transfer-glass-border);
+  border-radius: 14px;
+  content: '';
+  height: 28px;
+  inset: 8px 2px;
+  pointer-events: none;
+  position: absolute;
+}
+
+.assets-transfer-amount__meta button > span {
+  position: relative;
+  z-index: 1;
 }
 
 .assets-transfer-route {
   align-items: center;
+  backdrop-filter: blur(18px);
+  background: var(--transfer-glass);
+  border: 1px solid var(--transfer-glass-border);
+  border-radius: var(--radius-m, 12px);
+  box-sizing: border-box;
   display: grid;
-  gap: 6px;
+  gap: 8px;
   grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr);
+  height: 52px;
   min-width: 0;
+  padding: 4px 8px 4px 12px;
 }
 
 .assets-transfer-route > button {
   background: transparent;
-  color: var(--positive);
+  box-shadow: none;
+  color: var(--on-accent);
+}
+
+.assets-transfer-route > button::before {
+  background:
+    radial-gradient(circle at 34% 26%, color-mix(in srgb, rgb(255 255 255) 52%, transparent) 0 10%, transparent 40%),
+    var(--accent);
+  box-shadow:
+    inset 0 1px 0 var(--transfer-glint-strong),
+    0 5px 14px var(--transfer-control-shadow);
 }
 
 .assets-transfer-account {
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 4px;
   display: grid;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
-  padding: 10px 12px;
+}
+
+.assets-transfer-account--target {
+  justify-items: end;
+  text-align: right;
 }
 
 .assets-transfer-account span,
-.assets-transfer-field__heading,
 .assets-transfer-hint {
   color: var(--muted);
   font-size: 10px;
@@ -1112,59 +1751,170 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
-.assets-transfer-field {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  display: grid;
-  gap: 0;
-  min-width: 0;
-  padding: 2px 12px;
-}
-
-.assets-transfer-field:focus-within {
-  border-color: var(--focus);
-  box-shadow: 0 0 0 2px var(--focus-ring);
-}
-
-.assets-transfer-field__heading {
+.assets-transfer-asset,
+.assets-transfer-picker__row {
   align-items: center;
-  display: flex;
-  justify-content: space-between;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  display: grid;
+  gap: 10px;
+  min-height: 52px;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+  width: 100%;
 }
 
-.assets-transfer-field__heading small {
-  color: inherit;
-  font-size: inherit;
+.assets-transfer-asset {
+  border-bottom: 1px solid var(--hairline);
+  grid-template-columns: 32px minmax(0, 1fr) minmax(64px, auto) 18px;
+}
+
+.assets-transfer-asset__copy,
+.assets-transfer-asset__value,
+.assets-transfer-picker__copy,
+.assets-transfer-picker__value {
+  display: grid;
+  gap: 2px;
   min-width: 0;
+}
+
+.assets-transfer-asset__copy strong,
+.assets-transfer-picker__copy strong {
+  font-family: var(--font-data, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 19px;
+}
+
+.assets-transfer-asset__copy small,
+.assets-transfer-asset__value small,
+.assets-transfer-picker__copy small,
+.assets-transfer-picker__value small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.assets-transfer-asset__value,
+.assets-transfer-picker__value {
+  justify-items: end;
+  text-align: right;
+}
+
+.assets-transfer-asset__value strong,
+.assets-transfer-picker__value strong {
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 19px;
+  max-width: 118px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.assets-transfer-field input,
-.assets-transfer-field select {
+.assets-transfer-asset > svg {
+  color: var(--muted);
+}
+
+.assets-transfer-hint,
+.assets-transfer-sheet__body > .positive,
+.assets-transfer-sheet__body > .field-error,
+.assets-transfer-picker__hint {
+  border: 0;
+  font-size: 10px;
+  line-height: 14px;
+  margin: 0;
+  padding: 0;
+}
+
+.assets-transfer-hint,
+.assets-transfer-picker__hint {
+  color: var(--muted);
+}
+
+.assets-transfer-search {
+  align-items: center;
+  backdrop-filter: blur(18px);
+  background: var(--transfer-glass);
+  border: 1px solid var(--transfer-glass-border);
+  border-radius: var(--radius-m, 12px);
+  box-sizing: border-box;
+  color: var(--muted);
+  display: grid;
+  gap: 9px;
+  grid-template-columns: 20px minmax(0, 1fr);
+  height: 46px;
+  padding: 0 13px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.assets-transfer-search:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--line));
+  box-shadow: 0 0 0 2px var(--transfer-focus-ring);
+}
+
+.assets-transfer-search input {
+  appearance: none;
   background: transparent;
   border: 0;
   color: var(--ink);
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 13px;
   height: 44px;
-  min-height: 44px;
   min-width: 0;
   outline: 0;
   padding: 0;
   width: 100%;
 }
 
-.assets-transfer-sheet > .assets-transfer-hint,
-.assets-transfer-sheet > .positive,
-.assets-transfer-sheet > .field-error {
-  border: 0;
-  font-size: 10px;
-  line-height: 14px;
-  margin: -4px 0;
-  padding: 0;
+.assets-transfer-search input::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+.assets-transfer-picker {
+  align-content: start;
+  display: grid;
+  gap: 8px;
+}
+
+.assets-transfer-picker__list {
+  display: grid;
+  min-height: 0;
+}
+
+.assets-transfer-picker__row {
+  border-bottom: 1px solid var(--hairline);
+  grid-template-columns: 32px minmax(0, 1fr) minmax(64px, auto) 18px;
+  padding: 6px 8px;
+}
+
+.assets-transfer-picker__row.is-selected {
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  border-radius: var(--radius-m, 12px);
+}
+
+.assets-transfer-picker__row > svg {
+  color: var(--accent);
+}
+
+.assets-transfer-picker__empty {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 11px;
+  justify-content: center;
+  margin: 0;
+  min-height: 180px;
+  text-align: center;
+}
+
+.assets-transfer-picker__hint {
+  align-self: center;
+  text-align: center;
 }
 
 .assets-transfer-submit {
@@ -1179,17 +1929,65 @@ onUnmounted(() => {
   gap: 8px;
   height: 50px;
   justify-content: center;
-  margin-top: auto;
   min-height: 50px;
+  transition: filter 160ms ease, opacity 160ms ease, transform 160ms ease;
   width: 100%;
 }
 
+.assets-transfer-submit:not(:disabled):active {
+  transform: translateY(1px) scale(.995);
+}
+
 .assets-transfer-submit:disabled {
-  background: var(--surface-3);
-  color: var(--muted);
+  background: var(--accent);
+  color: var(--on-accent);
+  filter: saturate(.72);
+  opacity: .56;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assets-account-card,
+  .assets-transfer-sheet,
+  .assets-transfer-submit {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
 @media (max-width: 340px) {
+  .assets-transfer-sheet {
+    padding-inline: 12px;
+  }
+
+  .assets-transfer-amount {
+    min-height: 136px;
+    padding-inline: 15px;
+  }
+
+  .assets-transfer-amount input {
+    font-size: 28px;
+  }
+
+  .assets-transfer-route {
+    gap: 3px;
+    padding-inline: 9px 5px;
+  }
+
+  .assets-transfer-account strong {
+    font-size: 13px;
+  }
+
+  .assets-transfer-asset,
+  .assets-transfer-picker__row {
+    gap: 8px;
+    grid-template-columns: 30px minmax(0, 1fr) minmax(58px, auto) 17px;
+  }
+
+  .assets-transfer-asset__value strong,
+  .assets-transfer-picker__value strong {
+    max-width: 88px;
+  }
+
   .assets-pencil__guest-content,
   .assets-pencil__member-content {
     padding-inline: 16px;
@@ -1212,6 +2010,19 @@ onUnmounted(() => {
     gap: 6px;
   }
 
+  .assets-account-cards {
+    gap: 8px;
+  }
+
+  .assets-account-card {
+    grid-template-columns: minmax(0, 1fr) minmax(104px, auto);
+    padding-inline: 12px;
+  }
+
+  .assets-account-card__balance strong {
+    font-size: 16px;
+  }
+
   .assets-holding-row {
     grid-template-columns: 30px minmax(0, 1fr) minmax(74px, auto);
   }
@@ -1223,6 +2034,13 @@ onUnmounted(() => {
 
   .assets-holding-row__amount {
     max-width: 112px;
+  }
+}
+
+@media (max-width: 820px) {
+  .assets-transfer-layer {
+    right: 0;
+    width: 100%;
   }
 }
 </style>

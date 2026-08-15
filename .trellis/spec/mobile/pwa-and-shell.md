@@ -7,7 +7,8 @@ manifest metadata, service-worker behavior, install/update prompts, theme
 tokens, the root application shell, bottom navigation, or the announcement
 message center. It also applies when a selected Pencil secondary page needs a
 theme selector or canvas override that crosses a Vue SFC scoped-style boundary,
-or when Loan changes its collateral-asset selection surface.
+or when Loan changes its collateral-asset selection surface, or when Assets
+changes the Pencil-mapped transfer and transfer-asset-picker sheets.
 
 This cross-layer contract prevents financial responses from entering browser
 caches, PWA code from leaking into Tauri bundles, root navigation drift, and
@@ -81,6 +82,23 @@ modalOpen: ComputedRef<boolean> // order-action dialog OR collateral picker
 openCollateralPicker(): void
 closeCollateralPicker(): void
 selectCollateralAsset(account: WalletAccount): void
+```
+
+Assets transfer-picker signatures in `AssetsView.vue`:
+
+```ts
+transferAssetPickerOpen: Ref<boolean>
+filteredTransferAccounts: ComputedRef<WalletAccount[]>
+openTransferAssetPicker(): void
+closeTransferAssetPicker(): void
+selectTransferAsset(account: WalletAccount): void
+fillTransferAvailable(): void
+
+type AssetAccountScope = 'all' | 'spot' | 'margin'
+assetAccountScope: Ref<AssetAccountScope>
+spotHoldingRows: ComputedRef<AssetHoldingRow[]>
+marginHoldingRows: ComputedRef<AssetHoldingRow[]>
+selectAssetAccountScope(scope: AssetAccountScope): void
 ```
 
 ## 3. Contracts
@@ -221,6 +239,37 @@ selectCollateralAsset(account: WalletAccount): void
   `t7j6n/eSMHf`, Prediction Bet `CzpTv/ZvGMv`, and Earn Subscribe
   `nqP6W/aXxul`. Append these IDs to the owning production root rather than
   replacing its existing base-state IDs.
+- Assets Transfer also owns the saved asset-picker pair `tPkL1/tPkD1`. The
+  production root declares both the transfer and picker pairs. The main sheet
+  is a 520px, three-row bottom sheet with a 30px numeric amount hero, one 52px
+  glass route bar, one flat 52px asset row, a truthful wallet hint, and a 50px
+  mint action. The asset row opens the picker inside the same dialog owner;
+  the picker contains a glass search field, real wallet rows, current-option
+  state, and a bottom wallet-source hint. Do not restore the native asset
+  `select` or the old outlined From/To/Asset/Amount field stack.
+- The Transfer overlay Teleports to `body`, so it no longer inherits selected
+  Pencil variables declared on `.pencil-page`. Redeclare the exact light/dark
+  structural, text, mint, line, and shadow roles on the Teleported sheet before
+  consuming `--surface-2`, `--accent`, or related tokens. Relying on ambient
+  body/prototype variables can render a dark hero and close face in light mode.
+  The desktop stage positions the layer on the 448px mobile canvas; viewports
+  at 820px or below use the full viewport width.
+- Transfer logos and balances remain wallet-owned API values. `AssetMark`
+  receives each `WalletAccount.logoUrl`; missing accounts and balances render
+  `--`, not fabricated values. USDT is preferred only when it exists in the
+  current source-account response. Search filters the current source list and
+  never creates an asset row.
+- The authenticated Assets canvas stacks two full-width account cards for
+  `现货账户` and `杠杆账户`, plus an explicit `全部账户` reset. Each card shows its
+  own API-derived USDT estimate and positive-holding count; selecting it filters
+  the holdings list without changing the hero's all-account estimate or making
+  another request. A zero margin balance uses the dedicated transfer empty
+  state and never disappears merely because no lazy wallet row exists yet.
+- Opening the asset picker focuses search. Selecting or dismissing it restores
+  focus to the asset trigger; Escape closes the picker before it can close the
+  parent transfer dialog. The close, route-swap, and All controls retain 44px
+  pointer targets even when their Pencil visual faces are 28–32px. Main and
+  picker bodies contain overscroll while the action/hint remains visible.
 - A modal nested under a transformed route host must Teleport its fixed overlay
   to `document.body`; otherwise `position: fixed` is trapped by the route's
   containing block and the sheet cannot reach the visual viewport edge. The
@@ -447,6 +496,21 @@ selectCollateralAsset(account: WalletAccount): void
   viewport, and scrolling an overflowing detail region does not move the
   action row. Also exercise Escape, Tab wrap, focus return, body scroll lock,
   both themes, and zero horizontal overflow.
+- Assets Transfer parity: assert `v6phV/TuWXq/tPkL1/tPkD1`, a 520px sheet,
+  140px amount hero with a 30px data input, 52px glass route, 52px API-logo
+  asset row, 50px action, and absence of a native asset `select`. Exercise API
+  balance rendering, USDT preference, All, swap, search/filter, explicit
+  selection, picker-first Escape, trigger focus return, shared body lock,
+  reduced motion, and zero horizontal overflow at 320px, 390px, and 448px in
+  both themes. Runtime-computed light tokens must not resolve the hero or close
+  face to a dark surface, and the desktop overlay rect must match the mobile
+  canvas rect.
+- Assets account-scope parity: assert vertically stacked full-width account
+  cards, separate spot/margin derived rows,
+  backend Logo reuse, all/spot/margin switching, a truthful zero-margin state,
+  balance hiding, and no additional wallet fetch on scope changes. Browser QA
+  at 390x844 in both themes must keep both cards inside the canvas with no
+  horizontal overflow and keep the Dock clear of the scrollable holdings area.
 - Message Center parity: at 390px assert header `0..56`, back button
   `20,12,40,40`, title `y=16,h=32`, Read-all `x=321,w=49`, filter `56..94`,
   list `y=94`, first row `x=20,y=100,w=350,h=64`, no row border, no Root

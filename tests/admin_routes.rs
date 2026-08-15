@@ -7402,6 +7402,7 @@ async fn admin_asset_create_list_and_audit() -> Result<(), Box<dyn Error>> {
                         "status": "active",
                         "deposit_enabled": false,
                         "withdraw_enabled": false,
+                        "margin_transfer_enabled": true,
                         "min_deposit_amount": "1.500000000000000000",
                         "deposit_fee": "0.010000000000000000",
                         "withdraw_fee": "0.250000000000000000",
@@ -7426,6 +7427,7 @@ async fn admin_asset_create_list_and_audit() -> Result<(), Box<dyn Error>> {
     assert_eq!(created["status"], "active");
     assert_eq!(created["deposit_enabled"], false);
     assert_eq!(created["withdraw_enabled"], false);
+    assert_eq!(created["margin_transfer_enabled"], true);
     assert_eq!(created["min_deposit_amount"], "1.500000000000000000");
     assert_eq!(created["deposit_fee"], "0.010000000000000000");
     assert_eq!(created["withdraw_fee"], "0.250000000000000000");
@@ -7548,6 +7550,7 @@ async fn admin_asset_create_list_and_audit() -> Result<(), Box<dyn Error>> {
     assert_eq!(assets[0]["id"], asset_id);
     assert_eq!(assets[0]["deposit_enabled"], false);
     assert_eq!(assets[0]["withdraw_enabled"], false);
+    assert_eq!(assets[0]["margin_transfer_enabled"], true);
     assert_eq!(assets[0]["min_deposit_amount"], "1.500000000000000000");
     assert_eq!(assets[0]["deposit_fee"], "0.010000000000000000");
     assert_eq!(assets[0]["withdraw_fee"], "0.250000000000000000");
@@ -7606,6 +7609,7 @@ async fn admin_asset_create_list_and_audit() -> Result<(), Box<dyn Error>> {
                         "status": "disabled",
                         "deposit_enabled": true,
                         "withdraw_enabled": true,
+                        "margin_transfer_enabled": false,
                         "min_deposit_amount": "2.000000000000000000",
                         "deposit_fee": "0.020000000000000000",
                         "withdraw_fee": "0.300000000000000000",
@@ -7630,6 +7634,7 @@ async fn admin_asset_create_list_and_audit() -> Result<(), Box<dyn Error>> {
     assert_eq!(updated["status"], "disabled");
     assert_eq!(updated["deposit_enabled"], true);
     assert_eq!(updated["withdraw_enabled"], true);
+    assert_eq!(updated["margin_transfer_enabled"], false);
     assert_eq!(updated["min_deposit_amount"], "2.000000000000000000");
     assert_eq!(updated["deposit_fee"], "0.020000000000000000");
     assert_eq!(updated["withdraw_fee"], "0.300000000000000000");
@@ -7647,6 +7652,7 @@ async fn admin_asset_create_list_and_audit() -> Result<(), Box<dyn Error>> {
             String,
             bool,
             bool,
+            bool,
             BigDecimal,
             BigDecimal,
             BigDecimal,
@@ -7659,6 +7665,7 @@ async fn admin_asset_create_list_and_audit() -> Result<(), Box<dyn Error>> {
                       status,
                       deposit_enabled,
                       withdraw_enabled,
+                      margin_transfer_enabled,
                       min_deposit_amount,
                       deposit_fee,
                       withdraw_fee
@@ -7675,9 +7682,10 @@ async fn admin_asset_create_list_and_audit() -> Result<(), Box<dyn Error>> {
     assert_eq!(persisted.4, "disabled");
     assert!(persisted.5);
     assert!(persisted.6);
-    assert_eq!(persisted.7, decimal("2.000000000000000000"));
-    assert_eq!(persisted.8, decimal("0.020000000000000000"));
-    assert_eq!(persisted.9, decimal("0.300000000000000000"));
+    assert!(!persisted.7);
+    assert_eq!(persisted.8, decimal("2.000000000000000000"));
+    assert_eq!(persisted.9, decimal("0.020000000000000000"));
+    assert_eq!(persisted.10, decimal("0.300000000000000000"));
 
     let audits = sqlx::query_as::<_, AdminAuditRow>(
         r#"SELECT action, target_type, target_id, before_json, after_json, reason
@@ -7719,6 +7727,14 @@ async fn admin_asset_create_list_and_audit() -> Result<(), Box<dyn Error>> {
     assert_eq!(
         audits[1].after_json.as_ref().unwrap()["withdraw_enabled"],
         true
+    );
+    assert_eq!(
+        audits[1].before_json.as_ref().unwrap()["margin_transfer_enabled"],
+        true
+    );
+    assert_eq!(
+        audits[1].after_json.as_ref().unwrap()["margin_transfer_enabled"],
+        false
     );
     assert_eq!(
         audits[1].before_json.as_ref().unwrap()["min_deposit_amount"],

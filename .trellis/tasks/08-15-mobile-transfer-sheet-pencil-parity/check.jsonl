@@ -1,0 +1,8 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Verify required Mobile tests, builds, icons and target sizes."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Verify selected Pencil parity, Teleport, safe-area and modal accessibility."}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Verify no regression in wallet transfer truthfulness or mutation handoff."}
+{"file":"docs/superpowers/specs/2026-08-13-transfer-sheet-immersive-design.md","reason":"Compare production hierarchy and visual values against Pencil source."}
+{"file":".trellis/spec/backend/margin-trading-actions.md","reason":"Verify inbound eligibility without regressing outbound funds or replay behavior."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Verify immutable migration, backfill and schema behavior."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Run backend architecture, lint and test gates."}
+{"file":".trellis/spec/admin/ui-system.md","reason":"Verify the admin field uses established table and form controls."}

@@ -25,6 +25,8 @@ pub(crate) struct MarginTransferAssetRule {
     pub(crate) id: u64,
     /// 该资产允许的最大小数位，划转金额超出这个精度会在动账前被拒绝。
     pub(crate) precision_scale: i32,
+    /// 是否允许从现货账户发起新的转入；关闭后既有杠杆余额仍可转回现货。
+    pub(crate) margin_transfer_enabled: bool,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -217,7 +219,7 @@ pub(crate) async fn resolve_active_transfer_asset(
 ) -> AppResult<MarginTransferAssetRule> {
     if let Some(asset_id) = asset_id {
         return sqlx::query_as::<_, MarginTransferAssetRule>(
-            "SELECT id, precision_scale FROM assets WHERE id = ? AND status = 'active' LIMIT 1",
+            "SELECT id, precision_scale, margin_transfer_enabled FROM assets WHERE id = ? AND status = 'active' LIMIT 1",
         )
         .bind(asset_id)
         .fetch_optional(&mut **tx)
@@ -233,7 +235,7 @@ pub(crate) async fn resolve_active_transfer_asset(
         ));
     };
     sqlx::query_as::<_, MarginTransferAssetRule>(
-        r#"SELECT id, precision_scale
+        r#"SELECT id, precision_scale, margin_transfer_enabled
            FROM assets
            WHERE UPPER(symbol) = UPPER(?) AND status = 'active'
            LIMIT 1"#,

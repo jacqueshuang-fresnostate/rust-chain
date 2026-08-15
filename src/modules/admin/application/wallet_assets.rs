@@ -73,6 +73,7 @@ pub(crate) async fn create_admin_asset(
         .unwrap_or_else(|| "active".to_owned());
     let deposit_enabled = request.deposit_enabled.unwrap_or(true);
     let withdraw_enabled = request.withdraw_enabled.unwrap_or(true);
+    let margin_transfer_enabled = request.margin_transfer_enabled.unwrap_or(false);
     let min_deposit_amount = request
         .min_deposit_amount
         .unwrap_or_else(|| BigDecimal::from(0));
@@ -96,6 +97,7 @@ pub(crate) async fn create_admin_asset(
             status,
             deposit_enabled,
             withdraw_enabled,
+            margin_transfer_enabled,
             min_deposit_amount,
             deposit_fee,
             withdraw_fee,
@@ -145,6 +147,9 @@ pub(crate) async fn update_admin_asset(
     let before = lock_admin_asset_in_tx(&mut tx, asset_id).await?;
     let deposit_enabled = request.deposit_enabled.unwrap_or(before.deposit_enabled);
     let withdraw_enabled = request.withdraw_enabled.unwrap_or(before.withdraw_enabled);
+    let margin_transfer_enabled = request
+        .margin_transfer_enabled
+        .unwrap_or(before.margin_transfer_enabled);
     let min_deposit_amount = request
         .min_deposit_amount
         .unwrap_or_else(|| before.min_deposit_amount.clone());
@@ -170,6 +175,7 @@ pub(crate) async fn update_admin_asset(
             status,
             deposit_enabled,
             withdraw_enabled,
+            margin_transfer_enabled,
             min_deposit_amount,
             deposit_fee,
             withdraw_fee,

@@ -585,6 +585,7 @@ export const resourceConfigs = {
       { key: 'status', title: '状态', type: 'status' },
       { key: 'deposit_enabled', title: '支持充值', type: 'status' },
       { key: 'withdraw_enabled', title: '支持提现', type: 'status' },
+      { key: 'margin_transfer_enabled', title: '允许转入杠杆', type: 'status' },
       { key: 'min_deposit_amount', title: '最小充值数量', type: 'amount' },
       { key: 'deposit_fee', title: '充值手续费', type: 'amount' },
       { key: 'withdraw_fee', title: '提现手续费', type: 'amount' },

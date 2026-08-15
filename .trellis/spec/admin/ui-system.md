@@ -124,6 +124,11 @@ const scroll = containedTableScrollForColumns(
 - Create and edit actions for the same resource reuse one form component;
   endpoint-only controls such as an initial status are explicit parameters,
   not separate page implementations that can drift in layout or validation.
+- Asset create/edit forms expose `margin_transfer_enabled` as the Chinese switch
+  `允许转入杠杆账户`; create defaults it off and edit initializes it from the
+  returned record. The assets table shows the same boolean as `允许转入杠杆`,
+  and every create/update payload sends the explicit value so an unchecked
+  control can never be confused with an omitted legacy field.
 - When a simplified edit form exposes only the primary item from an existing
   structured payload, preserve every unexposed legacy item unchanged in the
   update request. Never rebuild the payload from visible controls in a way

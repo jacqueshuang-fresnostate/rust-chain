@@ -128,7 +128,7 @@ pub(crate) fn validate_asset_status(value: &str) -> AppResult<String> {
     }
 }
 
-/// 将资产符号、精度、充提规则、Logo、阶梯费和状态映射为稳定审计 JSON。
+/// 将资产符号、精度、充提与杠杆转入规则、Logo、阶梯费和状态映射为稳定审计 JSON。
 /// 快照还包含资产类型和创建时间，但不含钱包余额；应用层在资产配置事务中保存前后值。
 /// 阶梯提现费以数组原样展开而非摘要，便于在审计里直接看清各档区间与费率的增删改。
 /// 创建、更新与删除三类操作共用这份结构，删除时只写 before 而 after 为空。
@@ -143,6 +143,7 @@ pub(crate) fn asset_audit_json(asset: &AdminAssetResponse) -> Value {
         "status": asset.status,
         "deposit_enabled": asset.deposit_enabled,
         "withdraw_enabled": asset.withdraw_enabled,
+        "margin_transfer_enabled": asset.margin_transfer_enabled,
         "min_deposit_amount": asset.min_deposit_amount,
         "deposit_fee": asset.deposit_fee,
         "withdraw_fee": asset.withdraw_fee,

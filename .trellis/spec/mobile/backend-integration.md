@@ -469,6 +469,16 @@ interface WalletTransferResult {
   marginWallet: WalletAccount
 }
 
+interface WalletAccount {
+  assetId: number
+  symbol: string
+  logoUrl?: string
+  marginTransferEnabled?: boolean
+  available: number
+  frozen: number
+  locked: number
+}
+
 transferWalletFunds(
   assetSymbol: string,
   from: 'spot' | 'margin',
@@ -490,6 +500,7 @@ Backend transfer response fields:
 transfer_id
 spot_wallet.asset_id|available|frozen|locked
 margin_wallet.asset_id|available|frozen|locked
+GET /margin/wallets -> wallets[].asset_id|asset_symbol|logo_url|margin_transfer_enabled|available|frozen|locked
 ```
 
 Earn product response fields:
@@ -505,6 +516,9 @@ early_redeem_fee_rate
 
 - Every `/margin/transfers` request sends a unique `idempotency_key` and keeps
   `asset_symbol`, `from`, `to`, and decimal `amount` unchanged.
+- Treat `/margin/wallets` as both the margin balance response and the backend-owned inbound asset catalog. A spot-to-margin picker intersects spot wallets with rows whose `marginTransferEnabled !== false`; a margin-to-spot picker keeps all returned margin rows so disabling inbound eligibility cannot hide withdrawable balances.
+- Assets renders separate spot and margin scopes from the same wallet read cycle. The all-account total may aggregate them, but selecting Margin must display only the real margin `available`, `frozen`, `locked`, Logo, asset count, and USDT estimate. Scope changes are presentation-only and never trigger an extra financial request.
+- An enabled margin asset may arrive with three zero buckets before lazy account creation. Keep it available in the inbound picker but omit it from positive-holding rows; do not synthesize a wallet mutation or a non-zero balance.
 - The returned spot and margin snapshots are authoritative. Upsert both into
   their respective stores immediately; preserve an already-known asset logo as
   presentation metadata only.
@@ -525,6 +539,8 @@ early_redeem_fee_rate
 | Condition | Required behavior |
 | --- | --- |
 | Transfer source account is absent | Show `--`, disable confirm, and make no request |
+| Spot asset is absent from the enabled margin catalog | Omit it from spot-to-margin choices and make no request |
+| Margin asset eligibility is later disabled | Keep an existing margin wallet visible and available for margin-to-spot transfer |
 | Amount is non-finite, non-positive, or above real available | Show localized validation feedback; make no request |
 | Transfer succeeds | Upsert both returned wallets and retain success feedback |
 | Transfer response omits a wallet snapshot | Reject the response as a submission failure; do not synthesize a wallet |
@@ -548,6 +564,7 @@ early_redeem_fee_rate
   `transfer_id`, `spot_wallet`, and `margin_wallet`.
 - View-flow tests assert null account handling, positive finite amount checks,
   both wallet upserts, retained success feedback, and no unconditional refresh.
+- Assets adapter/view tests assert `margin_transfer_enabled` mapping, inbound picker intersection, outbound visibility after disable, separate spot/margin estimates and holdings, zero-balance catalog rows, and account-scope changes without refetching.
 - Earn adapter tests assert all four optional fee fields and preserve absent
   values as `undefined`.
 - Earn view tests assert the "all" clamp and localized unavailable fee copy.

@@ -215,6 +215,7 @@ pub(crate) struct MarginWalletAccountResponse {
     pub(crate) asset_id: u64,
     pub(crate) asset_symbol: String,
     pub(crate) logo_url: Option<String>,
+    pub(crate) margin_transfer_enabled: bool,
     #[serde(serialize_with = "serialize_decimal_amount")]
     pub(crate) available: BigDecimal,
     #[serde(serialize_with = "serialize_decimal_amount")]

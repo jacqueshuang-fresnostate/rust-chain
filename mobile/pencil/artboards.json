@@ -49,6 +49,8 @@
   { "id": "h4gfd", "name": "38 / New Coin Records · Dark", "route": "/products/new-coins/records" },
   { "id": "v6phV", "name": "39 / Transfer Sheet · Light", "route": "/assets" },
   { "id": "TuWXq", "name": "39 / Transfer Sheet · Dark", "route": "/assets" },
+  { "id": "tPkL1", "name": "39b / Transfer · Asset Picker · Light", "route": "/assets" },
+  { "id": "tPkD1", "name": "39b / Transfer · Asset Picker · Dark", "route": "/assets" },
   { "id": "UouET", "name": "40 / Help & Support · Light" },
   { "id": "FM5tp", "name": "40 / Help & Support · Dark" },
   { "id": "e5Qs1", "name": "08c / Orders · Empty · Light", "route": "/orders" },

@@ -104,21 +104,28 @@ pub(crate) async fn list_user_margin_positions(
         .map_err(AppError::from)
 }
 
-/// 读取用户全部杠杆钱包的 available、frozen、locked 三桶余额，并联表补上资产符号与图标。
-/// 只返回 `margin_wallet_accounts` 中已存在的行，从未参与过杠杆业务的币种不会出现，
-/// 因为该表的行是在划转或开仓时按需惰性创建的，不做全资产预建。
-/// 按资产主键升序排列以保证前端展示顺序稳定；不加锁、不改余额、不生成任何流水。
+/// 读取用户可用的杠杆资产目录与 available、frozen、locked 三桶余额，并补上资产符号与图标。
+/// 已开启杠杆转入的 active 资产即使尚未建账也用零余额返回，方便客户端展示可转入目录；
+/// 已经存在杠杆钱包的资产即使后来关闭转入开关也继续返回，避免隐藏用户存量余额。
+/// 按资产主键升序排列以保证前端展示顺序稳定；左连接只读，不创建空账户、不改余额、不生成流水。
 pub(crate) async fn list_margin_wallet_accounts(
     pool: &Pool<MySql>,
     user_id: u64,
 ) -> AppResult<Vec<MarginWalletAccountResponse>> {
     sqlx::query_as::<_, MarginWalletAccountResponse>(
-        r#"SELECT wallets.asset_id, assets.symbol AS asset_symbol, assets.logo_url,
-                  wallets.available, wallets.frozen, wallets.locked
-           FROM margin_wallet_accounts wallets
-           INNER JOIN assets ON assets.id = wallets.asset_id
-           WHERE wallets.user_id = ?
-           ORDER BY wallets.asset_id ASC"#,
+        r#"SELECT assets.id AS asset_id,
+                  assets.symbol AS asset_symbol,
+                  assets.logo_url,
+                  assets.margin_transfer_enabled,
+                  COALESCE(wallets.available, 0) AS available,
+                  COALESCE(wallets.frozen, 0) AS frozen,
+                  COALESCE(wallets.locked, 0) AS locked
+           FROM assets
+           LEFT JOIN margin_wallet_accounts wallets
+             ON wallets.asset_id = assets.id AND wallets.user_id = ?
+           WHERE (assets.status = 'active' AND assets.margin_transfer_enabled = TRUE)
+              OR wallets.id IS NOT NULL
+           ORDER BY assets.id ASC"#,
     )
     .bind(user_id)
     .fetch_all(pool)

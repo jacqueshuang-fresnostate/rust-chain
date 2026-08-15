@@ -88,7 +88,8 @@ fabricated balances, returns, products, limits or market statistics.
 | Artboard | Production route | Primary intent |
 | --- | --- | --- |
 | `38 / New Coin Records · Light/Dark` (`A9It6g`/`h4gfd`) | `/products/new-coins/records` | 认购/分发/申购/解锁记录 |
-| `39 / Transfer Sheet · Light/Dark` (`v6phV`/`TuWXq`) | `/assets` modal | 现货↔杠杆资金划转弹层 |
+| `39 / Transfer Sheet · Light/Dark` (`v6phV`/`TuWXq`) | `/assets` modal | 现货↔杠杆划转：数量英雄 + 玻璃路径 + 持仓行资产 |
+| `39b / Transfer · Asset Picker · Light/Dark` (`tPkL1`/`tPkD1`) | `/assets` transfer modal | 划转「选择资产」二级 Sheet：搜索 + 持仓行列表 |
 | `40 / Help & Support · Light/Dark` (`UouET`/`FM5tp`) | Proposed from `/profile` help entry | 常见问题与客服入口；生产路由尚未注册 |
 | `07c / Seconds · Pair Picker · Light/Dark` (`vONcc`/`kLXCs`) | `/seconds` | 点击 header 交易对弹出底部选择器（搜索 + 收益/最新价列表） |
 | `08c / Orders · Empty · Light/Dark` (`e5Qs1`/`hxe8l`) | `/orders` | 订单空态 |

@@ -1,0 +1,8 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Mobile quality gate, icon controls and touch-target contracts."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Selected Pencil sheet, Teleport, safe-area, focus and viewport contracts."}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Wallet transfer null-balance, idempotency and authoritative response contracts."}
+{"file":"docs/superpowers/specs/2026-08-13-transfer-sheet-immersive-design.md","reason":"Exact Pencil v6phV/TuWXq/tPkL1/tPkD1 visual structure and dimensions."}
+{"file":".trellis/spec/backend/margin-trading-actions.md","reason":"Margin transfer idempotency, wallet lock order, settlement and read-model contracts."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Immutable migration and real MySQL validation requirements."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Backend architecture, documentation and test quality gates."}
+{"file":".trellis/spec/admin/ui-system.md","reason":"Admin asset table, switch controls and action form conventions."}

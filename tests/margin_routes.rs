@@ -378,10 +378,12 @@ async fn margin_transfer_and_user_settings_round_trip_with_user_isolation()
     let other_user_id = create_user(&mut tx).await;
     let (base_asset, base_symbol) = create_asset(&mut tx, "STB").await;
     let (quote_asset, quote_symbol) = create_asset(&mut tx, "STQ").await;
-    sqlx::query("UPDATE assets SET precision_scale = 2 WHERE id = ?")
-        .bind(quote_asset)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "UPDATE assets SET precision_scale = 2, margin_transfer_enabled = TRUE WHERE id = ?",
+    )
+    .bind(quote_asset)
+    .execute(&mut *tx)
+    .await?;
     let symbol = format!("{base_symbol}-{quote_symbol}");
     let pair_id = create_pair(&mut tx, base_asset, quote_asset, &symbol).await;
     let product_id = seed_margin_product(&mut tx, pair_id, quote_asset).await;
@@ -438,6 +440,34 @@ async fn margin_transfer_and_user_settings_round_trip_with_user_isolation()
         .unwrap()
         .to_owned();
     Uuid::parse_str(&original_transfer_id)?;
+
+    sqlx::query("UPDATE assets SET margin_transfer_enabled = FALSE WHERE id = ?")
+        .bind(quote_asset)
+        .execute(&pool)
+        .await?;
+    let disabled_inbound = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/margin/transfers")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"asset_id":{quote_asset},"from":"spot","to":"margin","amount":"1.000000000000000000","idempotency_key":"disabled-inbound-{}"}}"#,
+                    Uuid::now_v7().simple()
+                )))
+                .unwrap(),
+        )
+        .await?;
+    let disabled_inbound_status = disabled_inbound.status();
+    let disabled_inbound_payload = body_json(disabled_inbound).await?;
+    assert_eq!(
+        disabled_inbound_status,
+        StatusCode::BAD_REQUEST,
+        "payload: {disabled_inbound_payload}"
+    );
+    assert_eq!(disabled_inbound_payload["code"], "VALIDATION_ERROR");
 
     let to_spot = app
         .clone()
@@ -512,7 +542,7 @@ async fn margin_transfer_and_user_settings_round_trip_with_user_isolation()
         )
         .await?;
     assert_eq!(conflict.status(), StatusCode::CONFLICT);
-    sqlx::query("UPDATE assets SET status = 'active' WHERE id = ?")
+    sqlx::query("UPDATE assets SET status = 'active', margin_transfer_enabled = TRUE WHERE id = ?")
         .bind(quote_asset)
         .execute(&pool)
         .await?;
@@ -3997,10 +4027,15 @@ async fn margin_wallets_return_the_backend_asset_logo() -> Result<(), Box<dyn Er
     let mut tx = pool.begin().await?;
     let user_id = create_user(&mut tx).await;
     let (asset_id, asset_symbol) = create_asset(&mut tx, "MWL").await;
+    let (configured_asset_id, configured_asset_symbol) = create_asset(&mut tx, "MWC").await;
     let logo_url = format!("https://cdn.example.test/assets/{asset_symbol}.png");
     sqlx::query("UPDATE assets SET logo_url = ? WHERE id = ?")
         .bind(&logo_url)
         .bind(asset_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE assets SET margin_transfer_enabled = TRUE WHERE id = ?")
+        .bind(configured_asset_id)
         .execute(&mut *tx)
         .await?;
     sqlx::query(
@@ -4031,9 +4066,34 @@ async fn margin_wallets_return_the_backend_asset_logo() -> Result<(), Box<dyn Er
     let payload = body_json(response).await?;
 
     assert_eq!(status, StatusCode::OK, "payload: {payload}");
-    assert_eq!(payload["wallets"][0]["asset_id"], asset_id);
-    assert_eq!(payload["wallets"][0]["asset_symbol"], asset_symbol);
-    assert_eq!(payload["wallets"][0]["logo_url"], logo_url);
+    let wallets = payload["wallets"].as_array().unwrap();
+    let existing_wallet = wallets
+        .iter()
+        .find(|wallet| wallet["asset_id"].as_u64() == Some(asset_id))
+        .expect("existing margin wallet must stay visible");
+    assert_eq!(existing_wallet["asset_symbol"], asset_symbol);
+    assert_eq!(existing_wallet["logo_url"], logo_url);
+    assert_eq!(existing_wallet["margin_transfer_enabled"], false);
+    assert_eq!(existing_wallet["available"], "12.500000000000000000");
+
+    let configured_wallet = wallets
+        .iter()
+        .find(|wallet| wallet["asset_id"].as_u64() == Some(configured_asset_id))
+        .expect("configured transfer asset must be returned before lazy wallet creation");
+    assert_eq!(configured_wallet["asset_symbol"], configured_asset_symbol);
+    assert_eq!(configured_wallet["margin_transfer_enabled"], true);
+    assert_eq!(
+        decimal(configured_wallet["available"].as_str().unwrap()),
+        decimal("0")
+    );
+    assert_eq!(
+        decimal(configured_wallet["frozen"].as_str().unwrap()),
+        decimal("0")
+    );
+    assert_eq!(
+        decimal(configured_wallet["locked"].as_str().unwrap()),
+        decimal("0")
+    );
 
     sqlx::query("DELETE FROM margin_wallet_accounts WHERE user_id = ? AND asset_id = ?")
         .bind(user_id)
@@ -4044,8 +4104,9 @@ async fn margin_wallets_return_the_backend_asset_logo() -> Result<(), Box<dyn Er
         .bind(user_id)
         .execute(&pool)
         .await?;
-    sqlx::query("DELETE FROM assets WHERE id = ?")
+    sqlx::query("DELETE FROM assets WHERE id IN (?, ?)")
         .bind(asset_id)
+        .bind(configured_asset_id)
         .execute(&pool)
         .await?;
     Ok(())

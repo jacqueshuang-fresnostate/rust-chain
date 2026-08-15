@@ -11,6 +11,8 @@
 
 - Open/position routes: `/api/v1/margin/positions`, `/close`, `/close-all`, `/cancel`, `/cancel-all`.
 - Transfer: `POST /api/v1/margin/transfers` with asset, `from`, `to`, `amount`, and optional `idempotency_key`.
+- Transfer eligibility: `assets.margin_transfer_enabled`; new assets default to `FALSE` and the admin asset API owns this flag.
+- Margin wallet catalog: `GET /api/v1/margin/wallets` returns `asset_id`, `asset_symbol`, optional `logo_url`, `margin_transfer_enabled`, and the three balance buckets.
 - Settings: `GET /api/v1/margin/settings/{product_id}` plus leverage/mode PATCH routes.
 - Persistence: `margin_positions.wallet_scope` and `margin_transfers(user_id, idempotency_key, transfer_id, request fields)`.
 - Cross account persistence: `margin_cross_accounts(user_id, margin_asset)` stores the latest account-level equity, PnL, interest, maintenance margin, ratio, status, and version.
@@ -23,6 +25,8 @@
 - `wallet_scope` snapshots whether collateral came from spot or margin. Close, cancel, and liquidation return funds to that same scope.
 - Position state, wallet balance, and ledger entry commit in one transaction.
 - Transfers lock spot then margin wallet in both directions, update both balances and ledgers atomically, and validate asset precision.
+- A new `spot -> margin` transfer requires an active asset with `margin_transfer_enabled = TRUE`. Disabling the flag blocks only new inbound transfers; an existing margin balance remains visible and may still move `margin -> spot`.
+- Margin-wallet reads include every active asset whose transfer flag is enabled, using zero balance buckets when the user has no lazy-created wallet row. They also retain every existing user margin-wallet row after the flag is disabled so configuration changes never hide stored funds.
 - Same user/key/request replay returns the original `transfer_id` and original post-transfer ledger snapshots without moving funds again, even if the asset later becomes inactive.
 - Same key with different asset, direction, or amount returns conflict.
 - User leverage must be a configured product level. Persisted settings are readable through the GET route.
@@ -42,6 +46,7 @@
 - Unknown margin mode -> `VALIDATION_ERROR`; `cross` is accepted only when the product includes it in `margin_modes`.
 - Transfer source equals target or account name is unsupported -> `VALIDATION_ERROR`.
 - Transfer amount non-positive or exceeds asset precision -> `VALIDATION_ERROR`.
+- Active asset has `margin_transfer_enabled = FALSE` on a new spot-to-margin request -> `VALIDATION_ERROR`, with no transfer record, balance mutation, or ledger entry.
 - Insufficient source available balance -> `VALIDATION_ERROR`, no opposite-side credit.
 - Same idempotency key with different request -> `CONFLICT`.
 - Unknown `wallet_scope` on close/cancel/liquidation -> `VALIDATION_ERROR`; never default to spot.
@@ -51,6 +56,8 @@
 
 - Good: margin-funded position closes back into `margin_wallet_accounts` with a margin ledger row.
 - Good: reverse transfer replay after asset disable returns original snapshots and creates no extra ledgers.
+- Good: disabling margin transfer rejects a new inbound request while the user's existing wallet row stays visible and can transfer back to spot.
+- Base: an enabled asset without a user margin-wallet row appears in `/margin/wallets` with three zero buckets; the read does not create a database row.
 - Base: a second close/cancel sees the terminal position and does not credit twice.
 - Bad: opposite transfer directions lock wallets in different orders; this creates a deadlock window.
 - Bad: evaluating a cross position independently can liquidate one position while leaving the shared account under-collateralized.
@@ -58,7 +65,8 @@
 ### 6. Tests Required
 
 - Fresh/stale/missing ticker open tests assert zero position, wallet, and ledger mutations on failure.
-- Transfer tests cover both directions, precision, insufficient balance, same-key replay, changed-request conflict, asset-disable replay, and ledger counts.
+- Transfer tests cover both directions, precision, insufficient balance, same-key replay, changed-request conflict, asset-disable replay, inbound eligibility rejection, outbound-after-disable, and ledger counts.
+- Wallet-list tests cover an enabled asset before lazy account creation, an existing wallet after the flag is disabled, backend Logo passthrough, and `margin_transfer_enabled` serialization.
 - Close/cancel tests assert balance, ledger, status, and idempotent retry for both wallet scopes.
 - Liquidation worker test asserts payout uses recorded `wallet_scope`.
 - Bulk tests process more than 100 rows, retain prior successes/events, report a failed row, and continue to later rows.

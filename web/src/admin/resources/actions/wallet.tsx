@@ -42,6 +42,7 @@ type AssetValues = {
   status: string;
   depositEnabled: boolean;
   withdrawEnabled: boolean;
+  marginTransferEnabled: boolean;
   minDepositAmount: string;
   depositFee: string;
   withdrawFee: string;
@@ -56,6 +57,7 @@ type AssetConfigValues = {
   status: string;
   depositEnabled: boolean;
   withdrawEnabled: boolean;
+  marginTransferEnabled: boolean;
   minDepositAmount: string;
   depositFee: string;
   withdrawFee: string;
@@ -146,6 +148,7 @@ const initialAsset: AssetValues = {
   status: 'active',
   depositEnabled: true,
   withdrawEnabled: true,
+  marginTransferEnabled: false,
   minDepositAmount: '0',
   depositFee: '0',
   withdrawFee: '0',
@@ -640,6 +643,7 @@ function AssetEditAction({ assetId, helpers, record }: { assetId: string; helper
     status: recordString(record, 'status') || 'active',
     depositEnabled: record.deposit_enabled !== false,
     withdrawEnabled: record.withdraw_enabled !== false,
+    marginTransferEnabled: record.margin_transfer_enabled === true,
     minDepositAmount: recordString(record, 'min_deposit_amount') || '0',
     depositFee: recordString(record, 'deposit_fee') || '0',
     withdrawFee: recordString(record, 'withdraw_fee') || '0',
@@ -664,6 +668,7 @@ function AssetEditAction({ assetId, helpers, record }: { assetId: string; helper
               <label>状态<AssetStatusSelect value={config.status} onChange={(status) => setConfig({ ...config, status })} /></label>
               <AdminSwitch checked={config.depositEnabled} label="支持充值" onChange={(depositEnabled) => setConfig({ ...config, depositEnabled })} />
               <AdminSwitch checked={config.withdrawEnabled} label="支持提现" onChange={(withdrawEnabled) => setConfig({ ...config, withdrawEnabled })} />
+              <AdminSwitch checked={config.marginTransferEnabled} label="允许转入杠杆账户" onChange={(marginTransferEnabled) => setConfig({ ...config, marginTransferEnabled })} />
               <label>最小充值数量<AdminTextInput ariaLabel="最小充值数量" value={config.minDepositAmount} onChange={(minDepositAmount) => setConfig({ ...config, minDepositAmount })} /></label>
               <label>充值手续费<AdminTextInput ariaLabel="充值手续费" value={config.depositFee} onChange={(depositFee) => setConfig({ ...config, depositFee })} /></label>
               <label>提现手续费<AdminTextInput ariaLabel="提现手续费" value={config.withdrawFee} onChange={(withdrawFee) => setConfig({ ...config, withdrawFee })} /></label>
@@ -686,6 +691,7 @@ function AssetEditAction({ assetId, helpers, record }: { assetId: string; helper
                         status: requiredString(config.status, '状态'),
                         deposit_enabled: config.depositEnabled,
                         withdraw_enabled: config.withdrawEnabled,
+                        margin_transfer_enabled: config.marginTransferEnabled,
                         min_deposit_amount: requiredNonNegativeDecimal(config.minDepositAmount, '最小充值数量'),
                         deposit_fee: requiredNonNegativeDecimal(config.depositFee, '充值手续费'),
                         withdraw_fee: requiredNonNegativeDecimal(config.withdrawFee, '提现手续费'),
@@ -1367,6 +1373,7 @@ export function CreateAssetAction({ onCreated }: CreateActionProps = {}) {
             <label>初始状态<AssetStatusSelect value={asset.status} onChange={(status) => setAsset({ ...asset, status })} /></label>
             <AdminSwitch checked={asset.depositEnabled} label="支持充值" onChange={(depositEnabled) => setAsset({ ...asset, depositEnabled })} />
             <AdminSwitch checked={asset.withdrawEnabled} label="支持提现" onChange={(withdrawEnabled) => setAsset({ ...asset, withdrawEnabled })} />
+            <AdminSwitch checked={asset.marginTransferEnabled} label="允许转入杠杆账户" onChange={(marginTransferEnabled) => setAsset({ ...asset, marginTransferEnabled })} />
             <label>最小充值数量<AdminTextInput ariaLabel="最小充值数量" value={asset.minDepositAmount} onChange={(minDepositAmount) => setAsset({ ...asset, minDepositAmount })} /></label>
             <label>充值手续费<AdminTextInput ariaLabel="充值手续费" value={asset.depositFee} onChange={(depositFee) => setAsset({ ...asset, depositFee })} /></label>
             <label>提现手续费<AdminTextInput ariaLabel="提现手续费" value={asset.withdrawFee} onChange={(withdrawFee) => setAsset({ ...asset, withdrawFee })} /></label>
@@ -1389,6 +1396,7 @@ export function CreateAssetAction({ onCreated }: CreateActionProps = {}) {
                     status: asset.status,
                     deposit_enabled: asset.depositEnabled,
                     withdraw_enabled: asset.withdrawEnabled,
+                    margin_transfer_enabled: asset.marginTransferEnabled,
                     min_deposit_amount: requiredNonNegativeDecimal(asset.minDepositAmount, '最小充值数量'),
                     deposit_fee: requiredNonNegativeDecimal(asset.depositFee, '充值手续费'),
                     withdraw_fee: requiredNonNegativeDecimal(asset.withdrawFee, '提现手续费'),

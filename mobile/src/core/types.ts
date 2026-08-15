@@ -78,6 +78,7 @@ export interface WalletAccount {
   assetId: number
   symbol: string
   logoUrl?: string
+  marginTransferEnabled?: boolean
   available: number
   frozen: number
   locked: number

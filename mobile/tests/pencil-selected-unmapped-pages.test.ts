@@ -27,7 +27,7 @@ const selectedCss = read('../src/styles/pencil-selected-pages.css')
 
 test('此前未映射页面均声明当前 Pencil 选中画板来源', () => {
   const expected: Record<keyof typeof views, string> = {
-    assets: 'CUK3y i6YDBr p61z2Q Q4JYj v6phV TuWXq',
+    assets: 'CUK3y i6YDBr p61z2Q Q4JYj v6phV TuWXq tPkL1 tPkD1',
     profile: 'dUqOS duJTW S23rM S0Bj8',
     orders: 'kcP5D A85if n6oGO t2GTW4 e5Qs1 hxe8l',
     login: 'u99Fpg WNbsc',
@@ -70,7 +70,7 @@ test('资产与我的页面锁定 390px 选中稿几何和 Lucide 图标', () =>
   assert.match(views.assets, /openProtectedRoute\('wallet-ledger'\)[\s\S]*?<ReceiptText/)
   assert.match(views.assets, /openProtectedRoute\('withdrawal-records'\)[\s\S]*?<ArrowUpFromLine/)
   assert.doesNotMatch(views.assets, /ArrowUpToLine|ArrowRightLeft/)
-  for (const key of ['assets.guestTitle', 'assets.loginViewAssets', 'assets.holdings', 'assets.sortedByEstimate', 'assets.availableFrozenSummary', 'assets.quickLedger', 'assets.fundLedger', 'assets.fundLedgerDescription', 'assets.withdrawalRecordsDescription', 'assets.quickRecharge', 'assets.quickRechargeDescription']) {
+  for (const key of ['assets.guestTitle', 'assets.loginViewAssets', 'assets.accountBalances', 'assets.allAccounts', 'assets.holdings', 'assets.spotHoldings', 'assets.marginHoldings', 'assets.holdingCount', 'assets.availableFrozenSummary', 'assets.quickLedger', 'assets.fundLedger', 'assets.fundLedgerDescription', 'assets.withdrawalRecordsDescription', 'assets.quickRecharge', 'assets.quickRechargeDescription']) {
     assert.match(views.assets, new RegExp(key.replace('.', '\\.')))
   }
 

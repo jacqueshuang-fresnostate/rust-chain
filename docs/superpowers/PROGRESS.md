@@ -2,6 +2,27 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-08-15 02:42 - 设计划转「选择资产」二级弹窗
+
+- 完成内容：新增 Pencil 画板 `39b / Transfer · Asset Picker` Light/Dark（`tPkL1`/`tPkD1`）：划转页简化背景 + 遮罩 + 底部「选择资产」Sheet（毛玻璃搜索、USDT 选中 / BTC / ETH 持仓行，可划转 `—`）。39 划转 Sheet 资产行补 chevron。未改生产 Vue。
+- 修改文件：`mobile/pencil/hippo-mobile-uiux.pen`、`mobile/pencil/artboards.json`、`mobile/pencil/screen-inventory.md`、`mobile/pencil/scripts/38-transfer-asset-picker.js`、`docs/superpowers/specs/2026-08-13-transfer-sheet-immersive-design.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：读回 `tPkL1` 标题为「选择资产」，Dark 含 `Pick USDT` / `Icon USDT`；`UouET` 帮助页仍接在后面。未跑 `pencil` CLI，未做 Pencil 内目视。
+- 后续事项：在 Pencil 重新打开 `.pen`，看 39b 两张板。
+
+## 2026-08-14 05:00 - 把 39 划转沉浸方案写入 Pencil 画布
+
+- 完成内容：直接改 `hippo-mobile-uiux.pen` 里 `v6phV` / `TuWXq` 的 `Transfer Sheet`：y=296、高 520；内部换成数量英雄（`0.00` / `可划转 —` /「全部」）、毛玻璃路径条、持仓行资产；Grab / 标题 / 提示 / 确认钮保留。背景 Faux Assets 与 Dim 未动。
+- 修改文件：`mobile/pencil/hippo-mobile-uiux.pen`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：逐段读回两张 Sheet，Light 含 `Amount Hero`/`Route Bar`/`Asset Row`/`Hero Amount=0.00`，Dark 含同名节点 + `Hero Wash`，旧描边 `Amount`/`Asset` 表单盒已不在这两棵子树；文件 80322→80567 行。未跑 `pencil` CLI（分类器仍拦截），未做 Pencil 内目视。
+- 后续事项：在 Pencil 里重新打开 `.pen`，看 39 Light/Dark。
+
+## 2026-08-13 20:54 - 沉浸化 Pencil 39 划转 Sheet 内部组件
+
+- 完成内容：按方案 A 为 `v6phV` / `TuWXq` 编写划转 Sheet 内部重建脚本：数量丝绸 Bloom 英雄（`0.00` / `可划转 —` /「全部」chip）、毛玻璃从/到路径条、持仓行资产、原 mint 确认钮；不改背景资产页、遮罩与生产 `AssetsView`。
+- 修改文件：`mobile/pencil/scripts/37-transfer-sheet-immersive.js`、`mobile/pencil/screen-inventory.md`、`docs/superpowers/specs/2026-08-13-transfer-sheet-immersive-design.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：脚本已落盘；本会话 Bash 安全分类器对 `pencil` / `run-execute.sh` 持续报 `kimi-k3[1M] is temporarily unavailable`，**未写入** `hippo-mobile-uiux.pen`。需在本地执行：`mobile/pencil/run-execute.sh mobile/pencil/hippo-mobile-uiux.pen mobile/pencil/scripts/37-transfer-sheet-immersive.js`，期望 `TRANSFER_IMMERSIVE light=v6phV dark=TuWXq`。
+- 后续事项：在 Pencil 中执行上述命令并目视 Light/Dark 两张 Sheet。
+
 ## 2026-08-12 13:09 - 完成后端中文注释与 DDD 结构收口
 
 - 完成内容：全量审计 251 个 Rust 文件、81,811 行和 3,468 个方法，形成可追溯报告；为审计出的 71/71 个高风险长方法、全部 worker 与跨上下文 infrastructure 公开入口补充中文职责、事务锁序、资金守恒、幂等及副作用合同，并新增 AST 中文文档门禁。删除 15 个纯空壳层和全部 `*LayerMarker`，清零 8 条遗留依赖例外；将 Auth Turnstile 与 Events 管理用例按 presentation/domain/application/infrastructure 职责下沉。按真实职责拆分 Market、Spot、Wallet infrastructure 和 Admin presentation 四个超大文件并保留兼容 façade，生产 Rust 最大文件降为 1,935 行；新增 2,000 行上限、无内嵌测试体及依赖方向门禁。同步完成严格 Clippy 清理、后端规范和任务验收更新。
@@ -7307,3 +7328,17 @@
 - 修改文件：`src/modules/new_coin/{application,domain,infrastructure,presentation,repository,routes,service}.rs`、`src/modules/prediction/{application,infrastructure,presentation,routes,service}.rs`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：`cargo fmt --all -- --check` 与 `rustfmt --edition 2024 --check` 单独复核本任务 12 个文件均退出码 0、无差异。`git diff --shortstat` 限定本任务文件为 1202 行新增、108 行删除（删除均为被改写的旧注释行）；剥离全部 `///`、`//!` 与空行后逐文件 diff 确认 15 个文件的可执行代码与 HEAD 逐字节一致，非注释增删仅 1 行（`new_coin/routes.rs` 新增模块注释后与 `use` 之间的必需空行）。按分档口径复核 229 个函数 100% 达标、剩余不达标 0；整块 doc 重复 0 处、单行重复三次以上 0 处；新增注释行最宽 111 显示列，超 120 列 0 行。按要求未执行 `cargo check`/`cargo test`，由主控统一验证。
 - 后续事项：任务清单中的 `src/modules/prediction/domain.rs` 在仓库中不存在；`src/modules/prediction/repository.rs` 只含行模型结构体、无函数定义，已确认无需补齐。
+
+## 2026-08-15 03:15 - 手机资金划转弹窗对齐 Pencil 主稿与资产选择稿
+
+- 完成内容：将 `AssetsView` 资金划转重构为 Pencil `v6phV/TuWXq` 的 520px 沉浸式底部 Sheet，落地 30px 数量英雄区、真实可划转余额与“全部”、52px 毛玻璃现货/杠杆路径仪器条、后端 Logo 资产行和 50px mint 主按钮；新增 `tPkL1/tPkD1` 同一对话框内资产选择面，提供毛玻璃搜索、当前来源钱包真实资产/余额、后端 Logo、USDT 优先与选中态，不再使用原生资产 `select`。保留 `/margin/transfers` 参数、幂等键、真实返回钱包快照、无额外刷新和缺失钱包显示 `--` 的资金合同；补齐搜索聚焦、选择/关闭后的触发器焦点恢复、二级面优先 Escape、滚动锁、44px 触控、安全区、短屏滚动、低动态及中英文文案。修复 Teleport 脱离 `.pencil-page` 后浅色主题错误继承深色 `--surface-2` 的问题，并让桌面预览覆盖层精确贴合 448px 手机画布、真实手机视口使用全宽。
+- 修改文件：`mobile/src/views/AssetsView.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{award-ui-assets-profile,pencil-selected-page-parity-20260807,pencil-selected-unmapped-pages}.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/08-15-mobile-transfer-sheet-pencil-parity/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Mobile 全量测试 360/360、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2067 modules、134 条预缓存）、`npm --prefix mobile run build:tauri`（2067 modules）及 `git diff --check` 全部通过。Ego 在真实接口登录态下验证搜索过滤、BTC 选择、方向交换、二级 Escape、焦点恢复和 body 滚动恢复；390×844 明暗主题 Sheet 均为 390×520、无横向溢出，桌面覆盖层与 448px 手机画布的 rect 完全一致。
+- 后续事项：无；本次未修改 Pencil 画板文件、后端划转接口或其他资产业务页面。
+
+## 2026-08-15 04:02 - 杠杆转入资产配置与手机端分账户余额
+
+- 完成内容：为资产新增 `margin_transfer_enabled` 配置及安全迁移，新资产默认关闭，仅对既有杠杆产品引用资产或已有杠杆钱包资产回填开启；后台资产列表、新增、修改和审计快照均接入“允许转入杠杆”字段。后端在幂等重放之后、动账之前拦截未开放资产的新现货转杠杆请求，关闭开关后仍允许已有杠杆余额转回现货；`/margin/wallets` 现在同时返回已开放资产的零余额目录行和用户既有杠杆钱包，并透传后端 Logo 与开关状态。手机端按后端目录过滤现货转入资产，保留全部已有杠杆转出资产；资产页新增现货/杠杆独立估值、币种数和持仓范围，按最新要求将两个账户卡片改为上下排列的 350×82 全宽卡片，并提供真实杠杆空余额转入入口、中英文文案、余额隐藏和无额外请求的本地范围切换。
+- 修改文件：`migrations/0103_margin_transfer_asset_config.sql`、`src/modules/admin/{application,infrastructure,presentation,service}/wallet_assets.rs`、`src/modules/margin/{application/account_settings,infrastructure/position_queries,infrastructure/transfers,presentation}.rs`、`tests/{admin_routes,margin_routes,margin_transfer_asset_migration}.rs`、`web/src/admin/resources/{actions/wallet,resourceConfigs,resourceConfigs.test}.tsx`、`mobile/src/{api/trading,core/types,views/AssetsView}.ts*`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{account-message-views,award-ui-assets-profile,market-favorites,pencil-selected-unmapped-pages}.test.ts`、`.trellis/spec/{backend/margin-trading-actions,admin/ui-system,mobile/backend-integration,mobile/pwa-and-shell}.md`、`.trellis/tasks/08-15-mobile-transfer-sheet-pencil-parity/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --all -- --check`、`cargo check --all-targets` 通过；迁移测试 2/2、两项杠杆路由聚焦测试和后台资产路由聚焦测试均编译并通过，当前环境未配置 `DATABASE_URL`，其中真实 MySQL 分支按测试约定跳过。后台 Web 全量 Vitest 294/294、ESLint、生产构建通过；手机端全量测试 361/361、`vue-tsc`、PWA build（2067 modules、134 条预缓存）和 Tauri build（2067 modules）通过；`task.py validate` 与 `git diff --check` 通过。Ego 在真实接口登录态下以 390×844 验证浅色和深色资产页：两张账户卡片均为 350×82、上下间隔 10px、文档无横向溢出，切换杠杆账户能显示独立零余额、专属空状态与划转入口。
+- 后续事项：部署时必须先执行 `0103_margin_transfer_asset_config.sql`；上线后由管理员在资产管理中按业务需要开启“允许转入杠杆账户”。

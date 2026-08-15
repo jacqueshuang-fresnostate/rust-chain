@@ -172,6 +172,7 @@ export async function fetchMarginWallets(): Promise<MarginWallets> {
       assetId: asNumber(wallet.asset_id),
       symbol: String(wallet.asset_symbol || '').toUpperCase(),
       logoUrl: String(wallet.logo_url || '').trim() || undefined,
+      marginTransferEnabled: wallet.margin_transfer_enabled !== false,
       available: asNumber(wallet.available),
       frozen: asNumber(wallet.frozen),
       locked: asNumber(wallet.locked),

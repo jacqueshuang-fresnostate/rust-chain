@@ -71206,10 +71206,10 @@
               "id": "AR8tX",
               "layoutPosition": "absolute",
               "x": 0,
-              "y": 356,
+              "y": 296,
               "name": "Transfer Sheet",
               "width": 390,
-              "height": 460,
+              "height": 520,
               "fill": "$surface",
               "cornerRadius": [
                 20,
@@ -71233,7 +71233,7 @@
                 "blur": 24
               },
               "layout": "vertical",
-              "gap": 12,
+              "gap": 10,
               "padding": [
                 14,
                 16,
@@ -71307,29 +71307,163 @@
                 },
                 {
                   "type": "frame",
-                  "id": "ve8dW",
-                  "name": "Route",
+                  "id": "tLah1",
+                  "name": "Amount Hero",
+                  "clip": true,
                   "width": "fill_container",
+                  "fill": "$surface",
+                  "cornerRadius": "$radius-l",
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "layout": "vertical",
                   "gap": 8,
+                  "padding": [
+                    16,
+                    18
+                  ],
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "tLhb1",
+                      "layoutPosition": "absolute",
+                      "x": 186,
+                      "y": -64,
+                      "name": "Hero Bloom",
+                      "width": 220,
+                      "height": 220,
+                      "fill": {
+                        "type": "gradient",
+                        "enabled": true,
+                        "gradientType": "radial",
+                        "rotation": 0,
+                        "size": {
+                          "width": 1,
+                          "height": 1
+                        },
+                        "colors": [
+                          {
+                            "color": "#43EFA92E",
+                            "position": 0
+                          },
+                          {
+                            "color": "#43EFA900",
+                            "position": 1
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "type": "text",
+                      "id": "tLhl1",
+                      "name": "Hero Label",
+                      "fill": "$muted",
+                      "content": "划转数量 · USDT",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "text",
+                      "id": "tLam1",
+                      "name": "Hero Amount",
+                      "fill": "$text",
+                      "content": "0.00",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 30,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "tLhm1",
+                      "name": "Hero Meta",
+                      "width": "fill_container",
+                      "justifyContent": "space_between",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "tLav1",
+                          "name": "Hero Avail",
+                          "fill": "$muted",
+                          "content": "可划转 —",
+                          "lineHeight": 1.25,
+                          "fontFamily": "$font-data",
+                          "fontSize": 10,
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "tLac1",
+                          "name": "All Chip",
+                          "height": 28,
+                          "fill": "#FFFFFF99",
+                          "cornerRadius": 14,
+                          "stroke": "#FFFFFFCC",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner",
+                          "effect": {
+                            "type": "background_blur",
+                            "radius": 18
+                          },
+                          "padding": [
+                            0,
+                            10
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "tLal1",
+                              "name": "All Chip L",
+                              "fill": "$text",
+                              "content": "全部",
+                              "lineHeight": 1.25,
+                              "fontFamily": "$font-sans",
+                              "fontSize": 10,
+                              "fontWeight": "650"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "tLrb1",
+                  "name": "Route Bar",
+                  "width": "fill_container",
+                  "height": 52,
+                  "fill": "#FFFFFF99",
+                  "cornerRadius": "$radius-m",
+                  "stroke": "#FFFFFFCC",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": {
+                    "type": "background_blur",
+                    "radius": 18
+                  },
+                  "gap": 8,
+                  "padding": [
+                    8,
+                    12
+                  ],
                   "alignItems": "center",
                   "children": [
                     {
                       "type": "frame",
-                      "id": "B4hnrG",
+                      "id": "tLfr1",
                       "name": "From",
                       "width": "fill_container",
-                      "fill": "$surface-2",
-                      "cornerRadius": 4,
-                      "stroke": "$border",
-                      "strokeWidth": 1,
-                      "strokeAlignment": "inner",
                       "layout": "vertical",
-                      "gap": 4,
-                      "padding": 12,
+                      "gap": 2,
                       "children": [
                         {
                           "type": "text",
-                          "id": "fDgD0",
+                          "id": "tLfl1",
                           "name": "From L",
                           "fill": "$muted",
                           "content": "从",
@@ -71340,7 +71474,7 @@
                         },
                         {
                           "type": "text",
-                          "id": "n7l1j",
+                          "id": "tLfv1",
                           "name": "From V",
                           "fill": "$text",
                           "content": "现货账户",
@@ -71352,32 +71486,40 @@
                       ]
                     },
                     {
-                      "type": "icon",
-                      "id": "T2e5m5",
-                      "name": "Swap Icon",
-                      "width": 18,
-                      "height": 18,
-                      "icon": "arrow-left-right",
-                      "library": "lucide",
-                      "fill": "$mint-strong"
+                      "type": "frame",
+                      "id": "tLsw1",
+                      "name": "Swap",
+                      "width": 32,
+                      "height": 32,
+                      "fill": "$mint",
+                      "cornerRadius": 16,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "tLsi1",
+                          "name": "Swap Icon",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "arrow-left-right",
+                          "library": "lucide",
+                          "fill": "#07110D"
+                        }
+                      ]
                     },
                     {
                       "type": "frame",
-                      "id": "Nwvnk",
+                      "id": "tLto1",
                       "name": "To",
                       "width": "fill_container",
-                      "fill": "$surface-2",
-                      "cornerRadius": 4,
-                      "stroke": "$border",
-                      "strokeWidth": 1,
-                      "strokeAlignment": "inner",
                       "layout": "vertical",
-                      "gap": 4,
-                      "padding": 12,
+                      "gap": 2,
+                      "alignItems": "end",
                       "children": [
                         {
                           "type": "text",
-                          "id": "IyiXv",
+                          "id": "tLtl1",
                           "name": "To L",
                           "fill": "$muted",
                           "content": "到",
@@ -71388,7 +71530,7 @@
                         },
                         {
                           "type": "text",
-                          "id": "lgRP2",
+                          "id": "tLtv1",
                           "name": "To V",
                           "fill": "$text",
                           "content": "杠杆账户",
@@ -71403,123 +71545,112 @@
                 },
                 {
                   "type": "frame",
-                  "id": "k4RQJ",
-                  "name": "Asset",
+                  "id": "tLar1",
+                  "name": "Asset Row",
                   "width": "fill_container",
-                  "fill": "$surface",
-                  "cornerRadius": 4,
-                  "stroke": "$border",
-                  "strokeWidth": 1,
-                  "strokeAlignment": "inner",
-                  "layout": "vertical",
-                  "gap": 4,
-                  "padding": [
-                    10,
-                    12
-                  ],
+                  "height": 52,
+                  "gap": 10,
+                  "alignItems": "center",
                   "children": [
                     {
                       "type": "frame",
-                      "id": "w7KpBz",
-                      "name": "Asset H",
-                      "width": "fill_container",
-                      "justifyContent": "space_between",
+                      "id": "tLmk1",
+                      "name": "Asset Mark",
+                      "width": 32,
+                      "height": 32,
+                      "fill": "$surface-2",
+                      "cornerRadius": 16,
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "justifyContent": "center",
+                      "alignItems": "center",
                       "children": [
                         {
-                          "type": "text",
-                          "id": "Rq8HF",
-                          "name": "Asset L",
-                          "fill": "$muted",
-                          "content": "资产",
-                          "lineHeight": 1.25,
-                          "fontFamily": "$font-sans",
-                          "fontSize": 10,
-                          "fontWeight": "550"
-                        },
-                        {
-                          "type": "text",
-                          "id": "wnVX9",
-                          "name": "Asset U",
-                          "fill": "$muted",
-                          "content": "可划转 —",
-                          "lineHeight": 1.25,
-                          "fontFamily": "$font-data",
-                          "fontSize": 10,
-                          "fontWeight": "550"
+                          "type": "icon",
+                          "id": "tLai1",
+                          "name": "Asset Icon",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "coins",
+                          "library": "lucide",
+                          "fill": "$mint-strong"
                         }
                       ]
                     },
                     {
-                      "type": "text",
-                      "id": "nUZe8",
-                      "name": "Asset V",
-                      "fill": "$text",
-                      "content": "USDT",
-                      "lineHeight": 1.25,
-                      "fontFamily": "$font-data",
-                      "fontSize": 16,
-                      "fontWeight": "600"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "Ph4n1",
-                  "name": "Amount",
-                  "width": "fill_container",
-                  "fill": "$surface",
-                  "cornerRadius": 4,
-                  "stroke": "$blue",
-                  "strokeWidth": 2,
-                  "strokeAlignment": "inner",
-                  "layout": "vertical",
-                  "gap": 4,
-                  "padding": [
-                    10,
-                    12
-                  ],
-                  "children": [
-                    {
                       "type": "frame",
-                      "id": "zzjMK",
-                      "name": "Amount H",
+                      "id": "tLcp1",
+                      "name": "Asset Copy",
                       "width": "fill_container",
-                      "justifyContent": "space_between",
+                      "layout": "vertical",
+                      "gap": 2,
                       "children": [
                         {
                           "type": "text",
-                          "id": "CU9zD",
-                          "name": "Amount L",
-                          "fill": "$blue",
-                          "content": "数量",
-                          "lineHeight": 1.25,
-                          "fontFamily": "$font-sans",
-                          "fontSize": 10,
-                          "fontWeight": "550"
-                        },
-                        {
-                          "type": "text",
-                          "id": "Zrvb8",
-                          "name": "Amount U",
-                          "fill": "$muted",
+                          "id": "tLsy1",
+                          "name": "Asset Symbol",
+                          "fill": "$text",
                           "content": "USDT",
                           "lineHeight": 1.25,
                           "fontFamily": "$font-data",
+                          "fontSize": 14,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "tLsu1",
+                          "name": "Asset Sub",
+                          "fill": "$muted",
+                          "content": "选择资产",
+                          "lineHeight": 1.25,
+                          "fontFamily": "$font-sans",
                           "fontSize": 10,
-                          "fontWeight": "550"
+                          "fontWeight": "500"
                         }
                       ]
                     },
                     {
-                      "type": "text",
-                      "id": "WMFlQ",
-                      "name": "Amount V",
-                      "fill": "$text",
-                      "content": "0.00",
-                      "lineHeight": 1.25,
-                      "fontFamily": "$font-data",
-                      "fontSize": 16,
-                      "fontWeight": "600"
+                      "type": "frame",
+                      "id": "tLva1",
+                      "name": "Asset Value",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "tLaa1",
+                          "name": "Asset Avail",
+                          "fill": "$text",
+                          "content": "—",
+                          "lineHeight": 1.25,
+                          "fontFamily": "$font-data",
+                          "fontSize": 15,
+                          "fontWeight": "650"
+                        },
+                        {
+                          "type": "text",
+                          "id": "tLal2",
+                          "name": "Asset Avail L",
+                          "fill": "$muted",
+                          "content": "可划转",
+                          "lineHeight": 1.25,
+                          "fontFamily": "$font-sans",
+                          "fontSize": 10,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "icon",
+                      "id": "tLch1",
+                      "name": "Asset Chevron",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "chevron-down",
+                      "library": "lucide",
+                      "fill": "$muted"
                     }
                   ]
                 },
@@ -71784,10 +71915,10 @@
               "id": "oqhCd",
               "layoutPosition": "absolute",
               "x": 0,
-              "y": 356,
+              "y": 296,
               "name": "Transfer Sheet",
               "width": 390,
-              "height": 460,
+              "height": 520,
               "fill": "$surface",
               "cornerRadius": [
                 20,
@@ -71811,7 +71942,7 @@
                 "blur": 24
               },
               "layout": "vertical",
-              "gap": 12,
+              "gap": 10,
               "padding": [
                 14,
                 16,
@@ -71885,31 +72016,168 @@
                 },
                 {
                   "type": "frame",
-                  "id": "BOGul",
-                  "name": "Route",
+                  "id": "tDah1",
+                  "name": "Amount Hero",
+                  "clip": true,
                   "width": "fill_container",
+                  "fill": "$surface-2",
+                  "cornerRadius": "$radius-l",
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "layout": "vertical",
                   "gap": 8,
+                  "padding": [
+                    16,
+                    18
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "tDhw1",
+                      "layoutPosition": "absolute",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Hero Wash",
+                      "fill": "#FFFFFF14",
+                      "width": 358,
+                      "height": 140
+                    },
+                    {
+                      "type": "ellipse",
+                      "id": "tDhb1",
+                      "layoutPosition": "absolute",
+                      "x": 186,
+                      "y": -64,
+                      "name": "Hero Bloom",
+                      "width": 220,
+                      "height": 220,
+                      "fill": {
+                        "type": "gradient",
+                        "enabled": true,
+                        "gradientType": "radial",
+                        "rotation": 0,
+                        "size": {
+                          "width": 1,
+                          "height": 1
+                        },
+                        "colors": [
+                          {
+                            "color": "#43EFA92E",
+                            "position": 0
+                          },
+                          {
+                            "color": "#43EFA900",
+                            "position": 1
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "type": "text",
+                      "id": "tDhl1",
+                      "name": "Hero Label",
+                      "fill": "#9BA8A1",
+                      "content": "划转数量 · USDT",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "text",
+                      "id": "tDam1",
+                      "name": "Hero Amount",
+                      "fill": "#FFFFFF",
+                      "content": "0.00",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-data",
+                      "fontSize": 30,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "tDhm1",
+                      "name": "Hero Meta",
+                      "width": "fill_container",
+                      "justifyContent": "space_between",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "tDav1",
+                          "name": "Hero Avail",
+                          "fill": "#9BA8A1",
+                          "content": "可划转 —",
+                          "lineHeight": 1.25,
+                          "fontFamily": "$font-data",
+                          "fontSize": 10,
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "tDac1",
+                          "name": "All Chip",
+                          "height": 28,
+                          "fill": "#FFFFFF14",
+                          "cornerRadius": 14,
+                          "stroke": "#FFFFFF26",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner",
+                          "padding": [
+                            0,
+                            10
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "tDal1",
+                              "name": "All Chip L",
+                              "fill": "#FFFFFF",
+                              "content": "全部",
+                              "lineHeight": 1.25,
+                              "fontFamily": "$font-sans",
+                              "fontSize": 10,
+                              "fontWeight": "650"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "tDrb1",
+                  "name": "Route Bar",
+                  "width": "fill_container",
+                  "height": 52,
+                  "fill": "#FFFFFF14",
+                  "cornerRadius": "$radius-m",
+                  "stroke": "#FFFFFF26",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "gap": 8,
+                  "padding": [
+                    8,
+                    12
+                  ],
                   "alignItems": "center",
                   "children": [
                     {
                       "type": "frame",
-                      "id": "Hf5ha",
+                      "id": "tDfr1",
                       "name": "From",
                       "width": "fill_container",
-                      "fill": "$surface-2",
-                      "cornerRadius": 4,
-                      "stroke": "$border",
-                      "strokeWidth": 1,
-                      "strokeAlignment": "inner",
                       "layout": "vertical",
-                      "gap": 4,
-                      "padding": 12,
+                      "gap": 2,
                       "children": [
                         {
                           "type": "text",
-                          "id": "nAUO0",
+                          "id": "tDfl1",
                           "name": "From L",
-                          "fill": "$muted",
+                          "fill": "#9BA8A1",
                           "content": "从",
                           "lineHeight": 1.25,
                           "fontFamily": "$font-sans",
@@ -71918,9 +72186,9 @@
                         },
                         {
                           "type": "text",
-                          "id": "ymPA0",
+                          "id": "tDfv1",
                           "name": "From V",
-                          "fill": "$text",
+                          "fill": "#FFFFFF",
                           "content": "现货账户",
                           "lineHeight": 1.25,
                           "fontFamily": "$font-sans",
@@ -71930,34 +72198,42 @@
                       ]
                     },
                     {
-                      "type": "icon",
-                      "id": "d5lxW",
-                      "name": "Swap Icon",
-                      "width": 18,
-                      "height": 18,
-                      "icon": "arrow-left-right",
-                      "library": "lucide",
-                      "fill": "$mint-strong"
+                      "type": "frame",
+                      "id": "tDsw1",
+                      "name": "Swap",
+                      "width": 32,
+                      "height": 32,
+                      "fill": "$mint",
+                      "cornerRadius": 16,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "tDsi1",
+                          "name": "Swap Icon",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "arrow-left-right",
+                          "library": "lucide",
+                          "fill": "#07110D"
+                        }
+                      ]
                     },
                     {
                       "type": "frame",
-                      "id": "VGlb2",
+                      "id": "tDto1",
                       "name": "To",
                       "width": "fill_container",
-                      "fill": "$surface-2",
-                      "cornerRadius": 4,
-                      "stroke": "$border",
-                      "strokeWidth": 1,
-                      "strokeAlignment": "inner",
                       "layout": "vertical",
-                      "gap": 4,
-                      "padding": 12,
+                      "gap": 2,
+                      "alignItems": "end",
                       "children": [
                         {
                           "type": "text",
-                          "id": "qVF4F",
+                          "id": "tDtl1",
                           "name": "To L",
-                          "fill": "$muted",
+                          "fill": "#9BA8A1",
                           "content": "到",
                           "lineHeight": 1.25,
                           "fontFamily": "$font-sans",
@@ -71966,9 +72242,9 @@
                         },
                         {
                           "type": "text",
-                          "id": "ikVe9",
+                          "id": "tDtv1",
                           "name": "To V",
-                          "fill": "$text",
+                          "fill": "#FFFFFF",
                           "content": "杠杆账户",
                           "lineHeight": 1.25,
                           "fontFamily": "$font-sans",
@@ -71981,123 +72257,112 @@
                 },
                 {
                   "type": "frame",
-                  "id": "v6t75",
-                  "name": "Asset",
+                  "id": "tDar1",
+                  "name": "Asset Row",
                   "width": "fill_container",
-                  "fill": "$surface",
-                  "cornerRadius": 4,
-                  "stroke": "$border",
-                  "strokeWidth": 1,
-                  "strokeAlignment": "inner",
-                  "layout": "vertical",
-                  "gap": 4,
-                  "padding": [
-                    10,
-                    12
-                  ],
+                  "height": 52,
+                  "gap": 10,
+                  "alignItems": "center",
                   "children": [
                     {
                       "type": "frame",
-                      "id": "PwuIG",
-                      "name": "Asset H",
-                      "width": "fill_container",
-                      "justifyContent": "space_between",
+                      "id": "tDmk1",
+                      "name": "Asset Mark",
+                      "width": 32,
+                      "height": 32,
+                      "fill": "$surface-2",
+                      "cornerRadius": 16,
+                      "stroke": "$border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "justifyContent": "center",
+                      "alignItems": "center",
                       "children": [
                         {
-                          "type": "text",
-                          "id": "V0Rk81",
-                          "name": "Asset L",
-                          "fill": "$muted",
-                          "content": "资产",
-                          "lineHeight": 1.25,
-                          "fontFamily": "$font-sans",
-                          "fontSize": 10,
-                          "fontWeight": "550"
-                        },
-                        {
-                          "type": "text",
-                          "id": "T3hTx",
-                          "name": "Asset U",
-                          "fill": "$muted",
-                          "content": "可划转 —",
-                          "lineHeight": 1.25,
-                          "fontFamily": "$font-data",
-                          "fontSize": 10,
-                          "fontWeight": "550"
+                          "type": "icon",
+                          "id": "tDai1",
+                          "name": "Asset Icon",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "coins",
+                          "library": "lucide",
+                          "fill": "$mint-strong"
                         }
                       ]
                     },
                     {
-                      "type": "text",
-                      "id": "I4sHsA",
-                      "name": "Asset V",
-                      "fill": "$text",
-                      "content": "USDT",
-                      "lineHeight": 1.25,
-                      "fontFamily": "$font-data",
-                      "fontSize": 16,
-                      "fontWeight": "600"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "r8ZaT",
-                  "name": "Amount",
-                  "width": "fill_container",
-                  "fill": "$surface",
-                  "cornerRadius": 4,
-                  "stroke": "$blue",
-                  "strokeWidth": 2,
-                  "strokeAlignment": "inner",
-                  "layout": "vertical",
-                  "gap": 4,
-                  "padding": [
-                    10,
-                    12
-                  ],
-                  "children": [
-                    {
                       "type": "frame",
-                      "id": "O51wdv",
-                      "name": "Amount H",
+                      "id": "tDcp1",
+                      "name": "Asset Copy",
                       "width": "fill_container",
-                      "justifyContent": "space_between",
+                      "layout": "vertical",
+                      "gap": 2,
                       "children": [
                         {
                           "type": "text",
-                          "id": "pJAGD",
-                          "name": "Amount L",
-                          "fill": "$blue",
-                          "content": "数量",
-                          "lineHeight": 1.25,
-                          "fontFamily": "$font-sans",
-                          "fontSize": 10,
-                          "fontWeight": "550"
-                        },
-                        {
-                          "type": "text",
-                          "id": "Wh5Jo",
-                          "name": "Amount U",
-                          "fill": "$muted",
+                          "id": "tDsy1",
+                          "name": "Asset Symbol",
+                          "fill": "$text",
                           "content": "USDT",
                           "lineHeight": 1.25,
                           "fontFamily": "$font-data",
+                          "fontSize": 14,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "tDsu1",
+                          "name": "Asset Sub",
+                          "fill": "$muted",
+                          "content": "选择资产",
+                          "lineHeight": 1.25,
+                          "fontFamily": "$font-sans",
                           "fontSize": 10,
-                          "fontWeight": "550"
+                          "fontWeight": "500"
                         }
                       ]
                     },
                     {
-                      "type": "text",
-                      "id": "IXxjy",
-                      "name": "Amount V",
-                      "fill": "$text",
-                      "content": "0.00",
-                      "lineHeight": 1.25,
-                      "fontFamily": "$font-data",
-                      "fontSize": 16,
-                      "fontWeight": "600"
+                      "type": "frame",
+                      "id": "tDva1",
+                      "name": "Asset Value",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "tDaa1",
+                          "name": "Asset Avail",
+                          "fill": "$text",
+                          "content": "—",
+                          "lineHeight": 1.25,
+                          "fontFamily": "$font-data",
+                          "fontSize": 15,
+                          "fontWeight": "650"
+                        },
+                        {
+                          "type": "text",
+                          "id": "tDal2",
+                          "name": "Asset Avail L",
+                          "fill": "$muted",
+                          "content": "可划转",
+                          "lineHeight": 1.25,
+                          "fontFamily": "$font-sans",
+                          "fontSize": 10,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "icon",
+                      "id": "tDch1",
+                      "name": "Asset Chevron",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "chevron-down",
+                      "library": "lucide",
+                      "fill": "$muted"
                     }
                   ]
                 },
@@ -72146,6 +72411,1269 @@
                       "fontWeight": "650"
                     }
                   ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "tPkL1",
+      "x": 2820,
+      "y": 20880,
+      "name": "39b / Transfer · Asset Picker · Light",
+      "theme": {
+        "mode": "light"
+      },
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "$canvas",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "pLsb1",
+          "name": "Status Bar",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [0, 16],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "pLtm1",
+              "name": "Time",
+              "fill": "$text",
+              "content": "09:41",
+              "lineHeight": 1.25,
+              "fontFamily": "$font-data",
+              "fontSize": 11,
+              "fontWeight": "650"
+            },
+            {
+              "type": "frame",
+              "id": "pLsg1",
+              "name": "Status Signals",
+              "gap": 8,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "pLnw1",
+                  "name": "Network",
+                  "fill": "$muted",
+                  "content": "4G+",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 10,
+                  "fontWeight": "550"
+                },
+                {
+                  "type": "icon",
+                  "id": "pLwf1",
+                  "name": "Wifi",
+                  "width": 14,
+                  "height": 14,
+                  "icon": "wifi",
+                  "library": "lucide",
+                  "fill": "$text"
+                },
+                {
+                  "type": "text",
+                  "id": "pLbt1",
+                  "name": "Battery",
+                  "fill": "$text",
+                  "content": "82%",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 10,
+                  "fontWeight": "550"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pLst1",
+          "name": "Picker Stage",
+          "width": "fill_container",
+          "height": 816,
+          "fill": "$canvas",
+          "layout": "none",
+          "children": [
+            {
+              "type": "frame",
+              "id": "pLfx1",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 0,
+              "name": "Faux Transfer",
+              "width": 390,
+              "height": 816,
+              "fill": "$canvas",
+              "layout": "vertical",
+              "gap": 10,
+              "padding": [16, 16],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "pLft1",
+                  "name": "Faux Title",
+                  "fill": "$text",
+                  "content": "资金划转",
+                  "fontFamily": "$font-sans",
+                  "fontSize": 18,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "frame",
+                  "id": "pLfh1",
+                  "name": "Faux Hero",
+                  "width": "fill_container",
+                  "cornerRadius": "$radius-l",
+                  "fill": "$surface",
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "padding": [14, 16],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "pLfl1",
+                      "name": "Faux Label",
+                      "fill": "$muted",
+                      "content": "划转数量 · USDT",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "text",
+                      "id": "pLfa1",
+                      "name": "Faux Amount",
+                      "fill": "$text",
+                      "content": "0.00",
+                      "fontFamily": "$font-data",
+                      "fontSize": 28,
+                      "fontWeight": "700"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "pLfr1",
+                  "name": "Faux Route",
+                  "fill": "$muted",
+                  "content": "现货账户  →  杠杆账户",
+                  "fontFamily": "$font-sans",
+                  "fontSize": 12,
+                  "fontWeight": "500"
+                }
+              ]
+            },
+            {
+              "type": "rectangle",
+              "id": "pLdm1",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 0,
+              "name": "Dim",
+              "fill": "#07110D99",
+              "width": 390,
+              "height": 816
+            },
+            {
+              "type": "frame",
+              "id": "pLsh1",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 316,
+              "name": "Asset Sheet",
+              "width": 390,
+              "height": 500,
+              "fill": "$surface",
+              "cornerRadius": [20, 20, 0, 0],
+              "stroke": "$border",
+              "strokeWidth": { "top": 1 },
+              "strokeAlignment": "inner",
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#07110D33",
+                "offset": { "x": 0, "y": -8 },
+                "blur": 24
+              },
+              "layout": "vertical",
+              "gap": 10,
+              "padding": [14, 16, 22, 16],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "pLgb1",
+                  "name": "Grab",
+                  "width": "fill_container",
+                  "height": 14,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "pLgr1",
+                      "name": "Grab Bar",
+                      "width": 40,
+                      "height": 4,
+                      "cornerRadius": 2,
+                      "fill": "$border"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "pLhd1",
+                  "name": "Sheet Head",
+                  "width": "fill_container",
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "pLtt1",
+                      "name": "Sheet Title",
+                      "fill": "$text",
+                      "content": "选择资产",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 18,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pLcl1",
+                      "name": "Close",
+                      "width": 32,
+                      "height": 32,
+                      "fill": "$surface-2",
+                      "cornerRadius": 16,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "pLci1",
+                          "name": "Close Icon",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "x",
+                          "library": "lucide",
+                          "fill": "$muted"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "pLsr1",
+                  "name": "Asset Search",
+                  "width": "fill_container",
+                  "height": 40,
+                  "fill": "#FFFFFF99",
+                  "cornerRadius": "$radius-m",
+                  "stroke": "#FFFFFFCC",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": { "type": "background_blur", "radius": 18 },
+                  "gap": 8,
+                  "padding": [0, 12],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "pLsi1",
+                      "name": "Search Icon",
+                      "width": 15,
+                      "height": 15,
+                      "icon": "search",
+                      "library": "lucide",
+                      "fill": "$muted"
+                    },
+                    {
+                      "type": "text",
+                      "id": "pLsp1",
+                      "name": "Search Ph",
+                      "fill": "$muted",
+                      "content": "搜索资产",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "450"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "pLls1",
+                  "name": "Asset List",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 2,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "pLu1",
+                      "name": "Pick USDT",
+                      "width": "fill_container",
+                      "height": 56,
+                      "fill": "$mint-soft",
+                      "cornerRadius": 8,
+                      "stroke": "$mint",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "gap": 10,
+                      "padding": [0, 10],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "pLum1",
+                          "name": "Mark USDT",
+                          "width": 32,
+                          "height": 32,
+                          "fill": "$surface-2",
+                          "cornerRadius": 16,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "pLui1",
+                              "name": "Icon USDT",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "coins",
+                              "library": "lucide",
+                              "fill": "$mint-strong"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pLuc1",
+                          "name": "Copy USDT",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 2,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pLus1",
+                              "name": "Sym USDT",
+                              "fill": "$text",
+                              "content": "USDT",
+                              "fontFamily": "$font-data",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "pLub1",
+                              "name": "Sub USDT",
+                              "fill": "$muted",
+                              "content": "选择后用于划转",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 10,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pLuv1",
+                          "name": "Val USDT",
+                          "layout": "vertical",
+                          "gap": 2,
+                          "alignItems": "end",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pLua1",
+                              "name": "Avail USDT",
+                              "fill": "$text",
+                              "content": "—",
+                              "fontFamily": "$font-data",
+                              "fontSize": 14,
+                              "fontWeight": "650"
+                            },
+                            {
+                              "type": "text",
+                              "id": "pLul1",
+                              "name": "AvailL USDT",
+                              "fill": "$muted",
+                              "content": "可划转",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 10,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "icon",
+                          "id": "pLuk1",
+                          "name": "Check USDT",
+                          "width": 17,
+                          "height": 17,
+                          "icon": "check",
+                          "library": "lucide",
+                          "fill": "$mint-strong"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pLb1",
+                      "name": "Pick BTC",
+                      "width": "fill_container",
+                      "height": 56,
+                      "gap": 10,
+                      "padding": [0, 10],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "pLbm1",
+                          "name": "Mark BTC",
+                          "width": 32,
+                          "height": 32,
+                          "fill": "$surface-2",
+                          "cornerRadius": 16,
+                          "stroke": "$border",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "pLbi1",
+                              "name": "Icon BTC",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "bitcoin",
+                              "library": "lucide",
+                              "fill": "$mint-strong"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pLbc1",
+                          "name": "Copy BTC",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 2,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pLbs1",
+                              "name": "Sym BTC",
+                              "fill": "$text",
+                              "content": "BTC",
+                              "fontFamily": "$font-data",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "pLbb1",
+                              "name": "Sub BTC",
+                              "fill": "$muted",
+                              "content": "选择后用于划转",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 10,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pLbv1",
+                          "name": "Val BTC",
+                          "layout": "vertical",
+                          "gap": 2,
+                          "alignItems": "end",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pLba1",
+                              "name": "Avail BTC",
+                              "fill": "$text",
+                              "content": "—",
+                              "fontFamily": "$font-data",
+                              "fontSize": 14,
+                              "fontWeight": "650"
+                            },
+                            {
+                              "type": "text",
+                              "id": "pLbl1",
+                              "name": "AvailL BTC",
+                              "fill": "$muted",
+                              "content": "可划转",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 10,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pLe1",
+                      "name": "Pick ETH",
+                      "width": "fill_container",
+                      "height": 56,
+                      "gap": 10,
+                      "padding": [0, 10],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "pLem1",
+                          "name": "Mark ETH",
+                          "width": 32,
+                          "height": 32,
+                          "fill": "$surface-2",
+                          "cornerRadius": 16,
+                          "stroke": "$border",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "pLei1",
+                              "name": "Icon ETH",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "hexagon",
+                              "library": "lucide",
+                              "fill": "$mint-strong"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pLec1",
+                          "name": "Copy ETH",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 2,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pLes1",
+                              "name": "Sym ETH",
+                              "fill": "$text",
+                              "content": "ETH",
+                              "fontFamily": "$font-data",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "pLeb1",
+                              "name": "Sub ETH",
+                              "fill": "$muted",
+                              "content": "选择后用于划转",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 10,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pLev1",
+                          "name": "Val ETH",
+                          "layout": "vertical",
+                          "gap": 2,
+                          "alignItems": "end",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pLea1",
+                              "name": "Avail ETH",
+                              "fill": "$text",
+                              "content": "—",
+                              "fontFamily": "$font-data",
+                              "fontSize": 14,
+                              "fontWeight": "650"
+                            },
+                            {
+                              "type": "text",
+                              "id": "pLel1",
+                              "name": "AvailL ETH",
+                              "fill": "$muted",
+                              "content": "可划转",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 10,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "pLnt1",
+                  "name": "Sheet Note",
+                  "fill": "$muted",
+                  "content": "可划转余额由钱包接口返回，不做占位虚构。",
+                  "textGrowth": "fixed-width",
+                  "width": 320,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "450"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "tPkD1",
+      "x": 3290,
+      "y": 20880,
+      "name": "39b / Transfer · Asset Picker · Dark",
+      "theme": {
+        "mode": "dark"
+      },
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "#000000",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "pDsb1",
+          "name": "Status Bar",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [0, 16],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "pDtm1",
+              "name": "Time",
+              "fill": "$text",
+              "content": "09:41",
+              "lineHeight": 1.25,
+              "fontFamily": "$font-data",
+              "fontSize": 11,
+              "fontWeight": "650"
+            },
+            {
+              "type": "frame",
+              "id": "pDsg1",
+              "name": "Status Signals",
+              "gap": 8,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "pDnw1",
+                  "name": "Network",
+                  "fill": "$muted",
+                  "content": "4G+",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 10,
+                  "fontWeight": "550"
+                },
+                {
+                  "type": "icon",
+                  "id": "pDwf1",
+                  "name": "Wifi",
+                  "width": 14,
+                  "height": 14,
+                  "icon": "wifi",
+                  "library": "lucide",
+                  "fill": "$text"
+                },
+                {
+                  "type": "text",
+                  "id": "pDbt1",
+                  "name": "Battery",
+                  "fill": "$text",
+                  "content": "82%",
+                  "lineHeight": 1.25,
+                  "fontFamily": "$font-data",
+                  "fontSize": 10,
+                  "fontWeight": "550"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pDst1",
+          "name": "Picker Stage",
+          "width": "fill_container",
+          "height": 816,
+          "fill": "#000000",
+          "layout": "none",
+          "children": [
+            {
+              "type": "frame",
+              "id": "pDfx1",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 0,
+              "name": "Faux Transfer",
+              "width": 390,
+              "height": 816,
+              "fill": "#000000",
+              "layout": "vertical",
+              "gap": 10,
+              "padding": [16, 16],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "pDft1",
+                  "name": "Faux Title",
+                  "fill": "#FFFFFF",
+                  "content": "资金划转",
+                  "fontFamily": "$font-sans",
+                  "fontSize": 18,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "frame",
+                  "id": "pDfh1",
+                  "name": "Faux Hero",
+                  "width": "fill_container",
+                  "cornerRadius": "$radius-l",
+                  "fill": "$surface-2",
+                  "stroke": "$border",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "padding": [14, 16],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "pDfl1",
+                      "name": "Faux Label",
+                      "fill": "#9BA8A1",
+                      "content": "划转数量 · USDT",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "text",
+                      "id": "pDfa1",
+                      "name": "Faux Amount",
+                      "fill": "#FFFFFF",
+                      "content": "0.00",
+                      "fontFamily": "$font-data",
+                      "fontSize": 28,
+                      "fontWeight": "700"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "pDfr1",
+                  "name": "Faux Route",
+                  "fill": "#9BA8A1",
+                  "content": "现货账户  →  杠杆账户",
+                  "fontFamily": "$font-sans",
+                  "fontSize": 12,
+                  "fontWeight": "500"
+                }
+              ]
+            },
+            {
+              "type": "rectangle",
+              "id": "pDdm1",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 0,
+              "name": "Dim",
+              "fill": "#000000B3",
+              "width": 390,
+              "height": 816
+            },
+            {
+              "type": "frame",
+              "id": "pDsh1",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 316,
+              "name": "Asset Sheet",
+              "width": 390,
+              "height": 500,
+              "fill": "$surface",
+              "cornerRadius": [20, 20, 0, 0],
+              "stroke": "$border",
+              "strokeWidth": { "top": 1 },
+              "strokeAlignment": "inner",
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#07110D33",
+                "offset": { "x": 0, "y": -8 },
+                "blur": 24
+              },
+              "layout": "vertical",
+              "gap": 10,
+              "padding": [14, 16, 22, 16],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "pDgb1",
+                  "name": "Grab",
+                  "width": "fill_container",
+                  "height": 14,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "pDgr1",
+                      "name": "Grab Bar",
+                      "width": 40,
+                      "height": 4,
+                      "cornerRadius": 2,
+                      "fill": "$border"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "pDhd1",
+                  "name": "Sheet Head",
+                  "width": "fill_container",
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "pDtt1",
+                      "name": "Sheet Title",
+                      "fill": "$text",
+                      "content": "选择资产",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font-sans",
+                      "fontSize": 18,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pDcl1",
+                      "name": "Close",
+                      "width": 32,
+                      "height": 32,
+                      "fill": "$surface-2",
+                      "cornerRadius": 16,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "pDci1",
+                          "name": "Close Icon",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "x",
+                          "library": "lucide",
+                          "fill": "$muted"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "pDsr1",
+                  "name": "Asset Search",
+                  "width": "fill_container",
+                  "height": 40,
+                  "fill": "#FFFFFF14",
+                  "cornerRadius": "$radius-m",
+                  "stroke": "#FFFFFF26",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "gap": 8,
+                  "padding": [0, 12],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "pDsi1",
+                      "name": "Search Icon",
+                      "width": 15,
+                      "height": 15,
+                      "icon": "search",
+                      "library": "lucide",
+                      "fill": "$muted"
+                    },
+                    {
+                      "type": "text",
+                      "id": "pDsp1",
+                      "name": "Search Ph",
+                      "fill": "$muted",
+                      "content": "搜索资产",
+                      "fontFamily": "$font-sans",
+                      "fontSize": 11,
+                      "fontWeight": "450"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "pDls1",
+                  "name": "Asset List",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 2,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "pDu1",
+                      "name": "Pick USDT",
+                      "width": "fill_container",
+                      "height": 56,
+                      "fill": "$mint-soft",
+                      "cornerRadius": 8,
+                      "stroke": "$mint",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "gap": 10,
+                      "padding": [0, 10],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "pDum1",
+                          "name": "Mark USDT",
+                          "width": 32,
+                          "height": 32,
+                          "fill": "$surface-2",
+                          "cornerRadius": 16,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "pDui1",
+                              "name": "Icon USDT",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "coins",
+                              "library": "lucide",
+                              "fill": "$mint-strong"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pDuc1",
+                          "name": "Copy USDT",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 2,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pDus1",
+                              "name": "Sym USDT",
+                              "fill": "$text",
+                              "content": "USDT",
+                              "fontFamily": "$font-data",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "pDub1",
+                              "name": "Sub USDT",
+                              "fill": "$muted",
+                              "content": "选择后用于划转",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 10,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pDuv1",
+                          "name": "Val USDT",
+                          "layout": "vertical",
+                          "gap": 2,
+                          "alignItems": "end",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pDua1",
+                              "name": "Avail USDT",
+                              "fill": "$text",
+                              "content": "—",
+                              "fontFamily": "$font-data",
+                              "fontSize": 14,
+                              "fontWeight": "650"
+                            },
+                            {
+                              "type": "text",
+                              "id": "pDul1",
+                              "name": "AvailL USDT",
+                              "fill": "$muted",
+                              "content": "可划转",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 10,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "icon",
+                          "id": "pDuk1",
+                          "name": "Check USDT",
+                          "width": 17,
+                          "height": 17,
+                          "icon": "check",
+                          "library": "lucide",
+                          "fill": "$mint-strong"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pDb1",
+                      "name": "Pick BTC",
+                      "width": "fill_container",
+                      "height": 56,
+                      "gap": 10,
+                      "padding": [0, 10],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "pDbm1",
+                          "name": "Mark BTC",
+                          "width": 32,
+                          "height": 32,
+                          "fill": "$surface-2",
+                          "cornerRadius": 16,
+                          "stroke": "$border",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "pDbi1",
+                              "name": "Icon BTC",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "bitcoin",
+                              "library": "lucide",
+                              "fill": "$mint-strong"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pDbc1",
+                          "name": "Copy BTC",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 2,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pDbs1",
+                              "name": "Sym BTC",
+                              "fill": "$text",
+                              "content": "BTC",
+                              "fontFamily": "$font-data",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "pDbb1",
+                              "name": "Sub BTC",
+                              "fill": "$muted",
+                              "content": "选择后用于划转",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 10,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pDbv1",
+                          "name": "Val BTC",
+                          "layout": "vertical",
+                          "gap": 2,
+                          "alignItems": "end",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pDba1",
+                              "name": "Avail BTC",
+                              "fill": "$text",
+                              "content": "—",
+                              "fontFamily": "$font-data",
+                              "fontSize": 14,
+                              "fontWeight": "650"
+                            },
+                            {
+                              "type": "text",
+                              "id": "pDbl1",
+                              "name": "AvailL BTC",
+                              "fill": "$muted",
+                              "content": "可划转",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 10,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pDe1",
+                      "name": "Pick ETH",
+                      "width": "fill_container",
+                      "height": 56,
+                      "gap": 10,
+                      "padding": [0, 10],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "pDem1",
+                          "name": "Mark ETH",
+                          "width": 32,
+                          "height": 32,
+                          "fill": "$surface-2",
+                          "cornerRadius": 16,
+                          "stroke": "$border",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "pDei1",
+                              "name": "Icon ETH",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "hexagon",
+                              "library": "lucide",
+                              "fill": "$mint-strong"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pDec1",
+                          "name": "Copy ETH",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 2,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pDes1",
+                              "name": "Sym ETH",
+                              "fill": "$text",
+                              "content": "ETH",
+                              "fontFamily": "$font-data",
+                              "fontSize": 14,
+                              "fontWeight": "700"
+                            },
+                            {
+                              "type": "text",
+                              "id": "pDeb1",
+                              "name": "Sub ETH",
+                              "fill": "$muted",
+                              "content": "选择后用于划转",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 10,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pDev1",
+                          "name": "Val ETH",
+                          "layout": "vertical",
+                          "gap": 2,
+                          "alignItems": "end",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pDea1",
+                              "name": "Avail ETH",
+                              "fill": "$text",
+                              "content": "—",
+                              "fontFamily": "$font-data",
+                              "fontSize": 14,
+                              "fontWeight": "650"
+                            },
+                            {
+                              "type": "text",
+                              "id": "pDel1",
+                              "name": "AvailL ETH",
+                              "fill": "$muted",
+                              "content": "可划转",
+                              "fontFamily": "$font-sans",
+                              "fontSize": 10,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "pDnt1",
+                  "name": "Sheet Note",
+                  "fill": "$muted",
+                  "content": "可划转余额由钱包接口返回，不做占位虚构。",
+                  "textGrowth": "fixed-width",
+                  "width": 320,
+                  "fontFamily": "$font-sans",
+                  "fontSize": 10,
+                  "fontWeight": "450"
                 }
               ]
             }

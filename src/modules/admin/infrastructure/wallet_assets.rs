@@ -25,6 +25,7 @@ pub(crate) struct AdminAssetInsert {
     pub(crate) status: String,
     pub(crate) deposit_enabled: bool,
     pub(crate) withdraw_enabled: bool,
+    pub(crate) margin_transfer_enabled: bool,
     pub(crate) min_deposit_amount: BigDecimal,
     pub(crate) deposit_fee: BigDecimal,
     pub(crate) withdraw_fee: BigDecimal,
@@ -40,6 +41,7 @@ pub(crate) struct AdminAssetUpdate {
     pub(crate) status: String,
     pub(crate) deposit_enabled: bool,
     pub(crate) withdraw_enabled: bool,
+    pub(crate) margin_transfer_enabled: bool,
     pub(crate) min_deposit_amount: BigDecimal,
     pub(crate) deposit_fee: BigDecimal,
     pub(crate) withdraw_fee: BigDecimal,
@@ -206,8 +208,8 @@ pub(crate) async fn insert_admin_asset_in_tx(
     let result = sqlx::query(
         r#"INSERT INTO assets
               (symbol, name, logo_url, precision_scale, asset_type, status, deposit_enabled, withdraw_enabled,
-               min_deposit_amount, deposit_fee, withdraw_fee, withdraw_fee_tiers_json)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+               margin_transfer_enabled, min_deposit_amount, deposit_fee, withdraw_fee, withdraw_fee_tiers_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(&input.symbol)
     .bind(&input.name)
@@ -217,6 +219,7 @@ pub(crate) async fn insert_admin_asset_in_tx(
     .bind(&input.status)
     .bind(input.deposit_enabled)
     .bind(input.withdraw_enabled)
+    .bind(input.margin_transfer_enabled)
     .bind(&input.min_deposit_amount)
     .bind(&input.deposit_fee)
     .bind(&input.withdraw_fee)
@@ -243,6 +246,7 @@ pub(crate) async fn update_admin_asset_in_tx(
                status = ?,
                deposit_enabled = ?,
                withdraw_enabled = ?,
+               margin_transfer_enabled = ?,
                min_deposit_amount = ?,
                deposit_fee = ?,
                withdraw_fee = ?,
@@ -256,6 +260,7 @@ pub(crate) async fn update_admin_asset_in_tx(
     .bind(&input.status)
     .bind(input.deposit_enabled)
     .bind(input.withdraw_enabled)
+    .bind(input.margin_transfer_enabled)
     .bind(&input.min_deposit_amount)
     .bind(&input.deposit_fee)
     .bind(&input.withdraw_fee)
@@ -999,6 +1004,7 @@ fn admin_asset_query() -> QueryBuilder<'static, MySql> {
                   status,
                   deposit_enabled,
                   withdraw_enabled,
+                  margin_transfer_enabled,
                   min_deposit_amount,
                   deposit_fee,
                   withdraw_fee,

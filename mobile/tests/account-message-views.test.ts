@@ -21,7 +21,7 @@ test('资产页保留真实钱包、行情、资金划转与资金路由合同',
   assert.match(assetsSource, /const memberState = computed<'loading' \| 'error' \| 'empty' \| 'holdings'>/)
   assert.match(assetsSource, /:data-account-state="memberState"/)
   assert.match(assetsSource, /v-else-if="memberState === 'error'"/)
-  assert.match(assetsSource, /v-else-if="hasHoldings" class="assets-holdings__list"/)
+  assert.match(assetsSource, /v-else-if="selectedHasHoldings" class="assets-holdings__list"/)
   assert.match(assetsSource, /name: 'deposit-asset'/)
   for (const routeName of ['withdraw-asset', 'wallet-ledger', 'quick-recharge']) {
     assert.match(assetsSource, new RegExp(`'${routeName}'`))

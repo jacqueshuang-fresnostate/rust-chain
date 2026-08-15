@@ -345,6 +345,10 @@ describe('resourceConfigs create actions', () => {
       title: '支持提现',
       type: 'status'
     });
+    expect(resourceConfigs.assets.columns.find((column) => column.key === 'margin_transfer_enabled')).toMatchObject({
+      title: '允许转入杠杆',
+      type: 'status'
+    });
     expect(resourceConfigs.assets.columns.find((column) => column.key === 'min_deposit_amount')).toMatchObject({
       title: '最小充值数量',
       type: 'amount'
@@ -1317,6 +1321,7 @@ describe('resourceConfigs create actions', () => {
             status: 'active',
             deposit_enabled: true,
             withdraw_enabled: true,
+            margin_transfer_enabled: true,
             min_deposit_amount: '1.000000000000000000',
             deposit_fee: '0.010000000000000000',
             withdraw_fee: '0.100000000000000000',
@@ -1331,6 +1336,7 @@ describe('resourceConfigs create actions', () => {
             status: 'disabled',
             deposit_enabled: false,
             withdraw_enabled: false,
+            margin_transfer_enabled: false,
             min_deposit_amount: '2.000000000000000000',
             deposit_fee: '0.020000000000000000',
             withdraw_fee: '0.200000000000000000',
@@ -1404,6 +1410,7 @@ describe('resourceConfigs create actions', () => {
     await selectSemiOption(user, editDialog, '状态', '禁用');
     await user.click(within(editDialog).getByLabelText('支持充值'));
     await user.click(within(editDialog).getByLabelText('支持提现'));
+    await user.click(within(editDialog).getByLabelText('允许转入杠杆账户'));
     const submitAssetEdit = within(editDialog).getByRole('button', { name: '提交修改' });
     expect(submitAssetEdit).toHaveClass('semi-button-primary', 'semi-button-solid');
     expect(submitAssetEdit).not.toHaveClass('semi-button-danger');
@@ -1424,6 +1431,7 @@ describe('resourceConfigs create actions', () => {
       status: 'disabled',
       deposit_enabled: false,
       withdraw_enabled: false,
+      margin_transfer_enabled: false,
       min_deposit_amount: '3',
       deposit_fee: '0.03',
       withdraw_fee: '0.3',
@@ -1468,6 +1476,7 @@ describe('resourceConfigs create actions', () => {
     semiSelectByLabel(dialog, '初始状态');
     expect(within(dialog).getByLabelText('支持充值')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('支持提现')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('允许转入杠杆账户')).not.toBeChecked();
     await user.type(within(dialog).getByLabelText('资产符号'), 'btc');
     await user.type(within(dialog).getByLabelText('资产名称'), 'Bitcoin');
     await user.type(within(dialog).getByLabelText('资产精度'), '8');
@@ -1484,6 +1493,7 @@ describe('resourceConfigs create actions', () => {
       symbol: 'btc',
       deposit_enabled: true,
       withdraw_enabled: true,
+      margin_transfer_enabled: false,
       min_deposit_amount: '0',
       deposit_fee: '0',
       withdraw_fee: '0',

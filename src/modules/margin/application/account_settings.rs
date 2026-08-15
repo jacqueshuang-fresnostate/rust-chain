@@ -41,6 +41,8 @@ use uuid::Uuid;
 /// 账户名做了兼容处理：`swap` 与 `margin` 都归一为杠杆账户，同名互转直接判为参数非法。
 /// 幂等键可以省略，省略时服务端用 UUIDv7 生成一个，这种请求天然不具备重放能力。
 /// 资产可用 `asset_id` 或 `asset_symbol` 任一方式指定，解析时要求资产处于 active，
+/// 新的现货转杠杆还要求资产开启 `margin_transfer_enabled`；关闭开关只阻止新增转入，
+/// 不影响已有杠杆余额转回现货，也不影响在开关变化前已经成功请求的幂等重放。
 /// 金额还必须满足该资产自身的精度上限，超出小数位在开始动账之前就被拒绝。
 /// 幂等重放走独立的只读核对路径，从原划转两侧流水的 after 快照重建响应，
 /// 因此返回的是当时的余额而不是当前余额，不会泄漏后续交易造成的变化。
@@ -83,6 +85,11 @@ pub(crate) async fn transfer_margin_funds(
     let transfer_id = Uuid::now_v7().to_string();
     let mut tx = pool.begin().await?;
     let asset = resolve_active_transfer_asset(&mut tx, asset_id, asset_symbol.as_deref()).await?;
+    if from == "spot" && to == "margin" && !asset.margin_transfer_enabled {
+        return Err(AppError::Validation(
+            "asset is not enabled for transfer into margin account".to_owned(),
+        ));
+    }
     if !amount_fits_asset_precision(&amount, asset.precision_scale) {
         return Err(AppError::Validation(format!(
             "margin transfer amount supports at most {} decimal places for asset {}",

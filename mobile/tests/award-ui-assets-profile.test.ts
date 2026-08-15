@@ -5,14 +5,16 @@ import test from 'node:test'
 
 const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8')
 const assetsSource = read('../src/views/AssetsView.vue')
+const tradingApiSource = read('../src/api/trading.ts')
+const typesSource = read('../src/core/types.ts')
 const profileSource = read('../src/views/ProfileView.vue')
 const selectedCss = read('../src/styles/pencil-selected-pages.css')
 const sha256 = (path: string): string => createHash('sha256')
   .update(readFileSync(new URL(path, import.meta.url)))
   .digest('hex')
 
-test('资产页映射四个 Pencil 画板并只使用真实资产生成持仓', () => {
-  assert.match(assetsSource, /data-pencil-source="CUK3y i6YDBr p61z2Q Q4JYj v6phV TuWXq"/)
+test('资产页映射八个 Pencil 画板并只使用真实资产生成持仓', () => {
+  assert.match(assetsSource, /data-pencil-source="CUK3y i6YDBr p61z2Q Q4JYj v6phV TuWXq tPkL1 tPkD1"/)
   assert.match(assetsSource, /class="page pencil-page pencil-root-page assets-pencil"/)
   assert.match(assetsSource, /const holdingRows = computed<AssetHoldingRow\[\]>/)
   assert.match(assetsSource, /\.filter\(\(row\) => row\.amount > 0\)/)
@@ -21,7 +23,7 @@ test('资产页映射四个 Pencil 画板并只使用真实资产生成持仓', 
   assert.match(assetsSource, /Number\.isFinite\(lastPrice\)[\s\S]*?: null/)
   assert.match(assetsSource, /v-if="!session\.isAuthenticated" class="pencil-content assets-pencil__guest-content"/)
   assert.match(assetsSource, /v-else[\s\S]*?class="pencil-content assets-pencil__member-content"/)
-  assert.match(assetsSource, /v-else-if="hasHoldings" class="assets-holdings__list"/)
+  assert.match(assetsSource, /v-else-if="selectedHasHoldings" class="assets-holdings__list"/)
   assert.match(assetsSource, /t\('assets\.availableFrozenSummary'/)
   assert.match(assetsSource, /t\('assets\.estimateUnavailable'\)/)
   assert.match(assetsSource, /t\('rootPrototype\.todayReturn'\)[\s\S]*?<strong class="pencil-numeric" :class="todayReturnPresentation\.tone">\{\{ todayReturnPresentation\.amount \}\}<\/strong>/)
@@ -39,6 +41,23 @@ test('资产页映射四个 Pencil 画板并只使用真实资产生成持仓', 
   assert.doesNotMatch(guestBranch, /assets-hero-actions|assets-holdings|assets-tools|openTransfer/)
   assert.match(assetsSource, /v-if="session\.isAuthenticated && transferOpen" class="confirmation-layer assets-transfer-layer"/)
   assert.equal(assetsSource.match(/class="assets-holdings__empty-icon"/g)?.length, 1)
+})
+
+test('资产页独立展示现货与杠杆余额，并只允许后端开放资产转入杠杆账户', () => {
+  assert.match(typesSource, /marginTransferEnabled\?: boolean/)
+  assert.match(tradingApiSource, /marginTransferEnabled: wallet\.margin_transfer_enabled !== false/)
+  assert.match(assetsSource, /type AssetAccountScope = 'all' \| 'spot' \| 'margin'/)
+  assert.match(assetsSource, /const spotHoldingRows = computed<AssetHoldingRow\[\]>\(\(\) => buildHoldingRows\('spot'\)\)/)
+  assert.match(assetsSource, /const marginHoldingRows = computed<AssetHoldingRow\[\]>\(\(\) => buildHoldingRows\('margin'\)\)/)
+  assert.match(assetsSource, /class="pencil-section assets-account-overview"/)
+  assert.match(assetsSource, /\.assets-account-cards \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\)/)
+  assert.match(assetsSource, /t\('assets\.accountBalances'\)/)
+  assert.match(assetsSource, /t\('assets\.marginAccount'\)/)
+  assert.match(assetsSource, /t\('assets\.marginHoldings'\)/)
+  assert.match(assetsSource, /const marginTransferAssetIds = computed\(\(\) => new Set\(/)
+  assert.match(assetsSource, /\.filter\(\(account\) => account\.marginTransferEnabled !== false\)/)
+  assert.match(assetsSource, /const spotTransferAccounts = computed\(\(\) => accounts\.value\.filter\(\(account\) => marginTransferAssetIds\.value\.has\(account\.assetId\)\)\)/)
+  assert.match(assetsSource, /const transferAccounts = computed\(\(\) => transferFrom\.value === 'spot' \? spotTransferAccounts\.value : marginAccounts\.value\)/)
 })
 
 test('资产 Hero 使用跟随主题的两张跟踪生产素材', () => {
@@ -63,6 +82,11 @@ test('资产页保留钱包、划转、资金路由与可访问确认层', () =>
   assert.match(assetsSource, /role="dialog"/)
   assert.match(assetsSource, /aria-modal="true"/)
   assert.match(assetsSource, /data-dialog-cancel/)
+  assert.match(assetsSource, /data-transfer-surface="main"/)
+  assert.match(assetsSource, /data-transfer-surface="asset-picker"/)
+  assert.match(assetsSource, /:src="transferAssetLogo"/)
+  assert.match(assetsSource, /:src="account\.logoUrl"/)
+  assert.doesNotMatch(assetsSource, /<select v-model="transferAsset"/)
   for (const routeName of ['deposit-asset', 'withdraw-asset', 'wallet-ledger', 'withdrawal-records', 'quick-recharge']) {
     assert.match(assetsSource, new RegExp(`'${routeName}'`))
   }
