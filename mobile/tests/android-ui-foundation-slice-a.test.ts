@@ -61,19 +61,20 @@ test('根头部与首页对齐选中品牌 Hero、成员资产图、双资金动
   assert.doesNotMatch(shortcutSection, /name: 'prediction'/)
 })
 
-test('首页保留真实数据链路并呈现日报与三行行情', () => {
+test('首页保留真实数据链路并呈现实时市场简报与三行行情', () => {
   for (const contract of [
     /fetchWalletAccounts\(\)/,
     /fetchMarginWallets\(\)/,
     /marketStore\.startLiveUpdates\('home'\)/,
-    /fetchNews\(\)/,
+    /buildHomeMarketBrief\(marketStore\.tickers\)/,
     /visibleTickers\.slice\(0,\s*3\)/,
-    /name: 'news-detail'/,
+    /marketBrief\.focusTicker\.lastPrice/,
   ]) assert.match(homeSource, contract)
 
   assert.match(homeSource, /type HomeTab = 'favorites' \| 'mainstream' \| 'popular' \| 'gainers' \| 'newCoins'/)
   assert.match(homeSource, /class="market-brief"/)
   assert.match(homeSource, /class="home-market-section"/)
+  assert.doesNotMatch(homeSource, /fetchNews|briefNotice|name: 'news-detail'/)
   assert.doesNotMatch(homeSource, /\b128(?:,\d{3})?\b/)
 })
 

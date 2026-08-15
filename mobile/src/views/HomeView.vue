@@ -3,8 +3,10 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
+  Activity,
   ArrowDownLeft,
   ArrowRight,
+  ArrowUpRight,
   CandlestickChart,
   ChevronRight,
   CircleDollarSign,
@@ -14,7 +16,6 @@ import {
   Grid2X2,
   Landmark,
   Layers3,
-  Newspaper,
   Repeat2,
   Rocket,
   ScanQrCode,
@@ -24,7 +25,6 @@ import {
 import AssetMark from '@/components/AssetMark.vue'
 import guestHeroDark from '@/assets/home/market-hero-dark.jpg'
 import guestHeroLight from '@/assets/home/market-hero-light.jpg'
-import { fetchNews } from '@/api/news'
 import { fetchMarginWallets } from '@/api/trading'
 import {
   createReturnHistoryRequestLifecycle,
@@ -40,12 +40,13 @@ import {
   type TodayReturn,
 } from '@/api/wallet'
 import { formatAmount, formatPercent, formatPrice } from '@/core/format'
+import { buildHomeMarketBrief } from '@/core/homeMarketBrief'
 import { buildReturnHistoryGeometry } from '@/core/returnHistoryGeometry'
 import { useMarketStore } from '@/stores/market'
 import { useMarketFavoritesStore } from '@/stores/marketFavorites'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
-import type { NewsItem, WalletAccount } from '@/core/types'
+import type { WalletAccount } from '@/core/types'
 
 const router = useRouter()
 const marketStore = useMarketStore()
@@ -59,8 +60,6 @@ type TradeMode = 'spot' | 'contract'
 
 const activeTab = ref<HomeTab>('popular')
 const assetVisible = ref(true)
-const announcements = ref<NewsItem[]>([])
-const announcementState = ref<'loading' | 'ready' | 'empty' | 'error'>('loading')
 const spotAccounts = ref<WalletAccount[]>([])
 const marginAccounts = ref<WalletAccount[]>([])
 const assetEstimateReady = ref(false)
@@ -101,18 +100,17 @@ const visibleTickers = computed(() => {
   if (activeTab.value === 'newCoins') return rows.reverse()
   return rows
 })
-const marketRowsUnavailable = computed(() => (
-  marketStore.error
-  || (!marketStore.updatedAt && !marketStore.tickers.length)
-))
-
-const briefNotice = computed<NewsItem | null>(() => announcements.value[0] || null)
-const briefMessage = computed(() => {
-  if (briefNotice.value) return briefNotice.value.title
-  if (announcementState.value === 'loading') return t('home.announcementLoading')
-  if (announcementState.value === 'error') return t('home.announcementUnavailable')
-  return t('home.announcementEmpty')
+const marketRowsUnavailable = computed(() => marketStore.tickers.length === 0)
+const marketBrief = computed(() => buildHomeMarketBrief(marketStore.tickers))
+const marketBriefToneLabel = computed(() => {
+  const tone = marketBrief.value?.tone
+  if (tone === 'positive') return t('home.marketBriefPositive')
+  if (tone === 'negative') return t('home.marketBriefNegative')
+  return t('home.marketBriefNeutral')
 })
+const marketBriefActionLabel = computed(() => marketBrief.value
+  ? t('home.openMarketBrief')
+  : t(marketStore.error ? 'home.retryMarketBrief' : 'home.marketBriefLoading'))
 
 const totalAssetEstimate = computed(() => [...spotAccounts.value, ...marginAccounts.value].reduce((total, account) => {
   const accountAmount = account.available + account.frozen + account.locked
@@ -232,21 +230,18 @@ function openTrade(mode: TradeMode = 'spot', symbol = 'BTC/USDT'): void {
   })
 }
 
-async function loadAnnouncements(): Promise<void> {
-  announcementState.value = 'loading'
-  try {
-    const items = await fetchNews()
-    announcements.value = items
-    announcementState.value = items.length ? 'ready' : 'empty'
-  } catch {
-    announcements.value = []
-    announcementState.value = 'error'
+function openMarketBrief(): void {
+  if (!marketBrief.value) {
+    void refreshMarkets(true)
+    return
   }
+  void router.replace({ name: 'markets' })
 }
 
-function openBriefNotice(): void {
-  if (!briefNotice.value) return
-  void router.push({ name: 'news-detail', params: { id: String(briefNotice.value.id) } })
+function marketChangeClass(value: number): 'positive' | 'negative' | '' {
+  if (value > 0) return 'positive'
+  if (value < 0) return 'negative'
+  return ''
 }
 
 function openLogin(): void {
@@ -344,7 +339,6 @@ async function refreshMarkets(force = false): Promise<void> {
 }
 
 onMounted(async () => {
-  void loadAnnouncements()
   await refreshMarkets()
 })
 onUnmounted(() => {
@@ -353,7 +347,6 @@ onUnmounted(() => {
   returnHistoryRequestLifecycle.stop()
   marketStore.stopLiveUpdates('home')
 })
-watch(locale, () => { void loadAnnouncements() })
 watch(() => session.isAuthenticated, () => { void loadAssetEstimate() }, { immediate: true })
 watch(() => session.token, () => {
   todayReturnRequestLifecycle.invalidate()
@@ -558,17 +551,78 @@ watch(() => session.token, () => {
     <button
       class="market-brief"
       type="button"
-      :aria-busy="announcementState === 'loading'"
-      :disabled="!briefNotice"
-      @click="openBriefNotice"
+      :data-tone="marketBrief?.tone || (marketStore.error ? 'negative' : 'loading')"
+      :aria-busy="!marketBrief && !marketStore.error"
+      :aria-label="marketBriefActionLabel"
+      @click="openMarketBrief"
     >
-      <span class="brief-icon"><Newspaper :size="20" aria-hidden="true" /></span>
-      <span>
-        <small>{{ t('rootPrototype.aiMarketBrief') }}</small>
-        <strong>{{ t('rootPrototype.aiMarketBriefTitle') }}</strong>
-        <em>{{ briefMessage }}</em>
+      <span class="market-brief__wash" aria-hidden="true" />
+      <span class="market-brief__topline">
+        <span class="market-brief__identity">
+          <Activity :size="15" aria-hidden="true" />
+          <small>{{ t('home.marketBriefTitle') }}</small>
+          <i aria-hidden="true" />
+          <em>{{ t('home.marketBriefLive') }}</em>
+        </span>
+        <span v-if="marketBrief" class="market-brief__count">
+          {{ t('home.marketBriefMarketCount', { count: marketBrief.total }) }}
+        </span>
+        <span class="market-brief__open" aria-hidden="true">
+          <ArrowUpRight :size="16" />
+        </span>
       </span>
-      <ChevronRight :size="17" aria-hidden="true" />
+
+      <template v-if="marketBrief">
+        <span class="market-brief__hero">
+          <span class="market-brief__signal">
+            <strong>{{ marketBriefToneLabel }}</strong>
+            <small>
+              {{ t('home.marketBriefBreadthDetail', {
+                rising: marketBrief.rising,
+                falling: marketBrief.falling,
+                unchanged: marketBrief.unchanged,
+              }) }}
+            </small>
+          </span>
+          <span class="market-brief__breadth">
+            <small>{{ t('home.marketBriefAdvancing') }}</small>
+            <strong class="numeric">{{ marketBrief.advancingPercent }}<em>%</em></strong>
+          </span>
+        </span>
+
+        <span class="market-brief__meter" aria-hidden="true">
+          <i :style="{ width: `${marketBrief.advancingPercent}%` }" />
+        </span>
+
+        <span class="market-brief__quotes">
+          <span class="market-brief__quote">
+            <small>{{ marketBrief.focusTicker.symbol }}</small>
+            <span>
+              <strong class="numeric">{{ formatPrice(marketBrief.focusTicker.lastPrice) }}</strong>
+              <em class="numeric" :class="marketChangeClass(marketBrief.focusTicker.changePercent)">
+                {{ formatPercent(marketBrief.focusTicker.changePercent) }}
+              </em>
+            </span>
+          </span>
+          <span class="market-brief__quote market-brief__quote--mover">
+            <small>{{ t('home.marketBriefTopMover') }}</small>
+            <span>
+              <strong>{{ marketBrief.topMover.base }}</strong>
+              <em class="numeric" :class="marketChangeClass(marketBrief.topMover.changePercent)">
+                {{ formatPercent(marketBrief.topMover.changePercent) }}
+              </em>
+            </span>
+          </span>
+        </span>
+      </template>
+
+      <span v-else class="market-brief__state" :role="marketStore.error ? 'alert' : 'status'">
+        <i aria-hidden="true" />
+        <span>
+          <strong>{{ t(marketStore.error ? 'home.marketBriefUnavailable' : 'home.marketBriefLoading') }}</strong>
+          <small>{{ t(marketStore.error ? 'home.marketBriefTapToRetry' : 'home.marketBriefWaiting') }}</small>
+        </span>
+      </span>
     </button>
 
     <section class="home-market-section">
@@ -659,9 +713,3 @@ watch(() => session.token, () => {
 
   </main>
 </template>
-
-<style>
-.home-view .market-brief:disabled {
-  opacity: 1;
-}
-</style>

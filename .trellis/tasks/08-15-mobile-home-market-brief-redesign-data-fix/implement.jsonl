@@ -1,1 +1,4 @@
 {"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/mobile/index.md", "reason": "手机端共享 UI 与质量门禁"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "首页 ticker 单一价格权威、实时订阅与新鲜度合同"}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "首页根页面主题、背景与响应式壳层合同"}

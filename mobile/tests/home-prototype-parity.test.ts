@@ -32,20 +32,24 @@ test('首页搜索与快捷入口使用原型短文案且不缩短产品页标�
   assert.doesNotMatch(shortcutSection, /t\('products\.(?:newCoins|prediction)'\)/)
 })
 
-test('首页行情日报固定文案精确对齐原型并仅展示真实公告或诚实状态', () => {
-  assert.equal(zhCN.rootPrototype.aiMarketBrief, 'AI 行情日报')
-  assert.equal(zhCN.rootPrototype.aiMarketBriefTitle, '三分钟读懂今日市场')
-  assert.match(homeSource, /<small>\{\{ t\('rootPrototype\.aiMarketBrief'\) \}\}<\/small>/)
-  assert.match(homeSource, /<strong>\{\{ t\('rootPrototype\.aiMarketBriefTitle'\) \}\}<\/strong>/)
-  assert.match(homeSource, /<em>\{\{ briefMessage \}\}<\/em>/)
-  assert.match(homeSource, /const briefNotice = computed<NewsItem \| null>\(\(\) => announcements\.value\[0\] \|\| null\)/)
-  assert.match(homeSource, /if \(briefNotice\.value\) return briefNotice\.value\.title/)
-  assert.match(homeSource, /announcementState\.value === 'loading'[\s\S]*?announcementState\.value === 'error'/)
-  assert.doesNotMatch(homeSource, /BTC 资金回流，主流币波动率正在抬升|fallbackNews|usingFallbackNews/)
+test('首页市场简报只使用实时 ticker 生成市场广度和真实价格', () => {
+  assert.equal(zhCN.home.marketBriefTitle, '市场脉搏')
+  assert.equal(zhCN.home.marketBriefAdvancing, '上涨占比')
+  assert.equal(en.home.marketBriefTitle, 'Market pulse')
+  assert.equal(en.home.marketBriefAdvancing, 'Advancing')
+  assert.match(homeSource, /import \{ buildHomeMarketBrief \} from '@\/core\/homeMarketBrief'/)
+  assert.match(homeSource, /const marketBrief = computed\(\(\) => buildHomeMarketBrief\(marketStore\.tickers\)\)/)
+  assert.match(homeSource, /marketBrief\.advancingPercent/)
+  assert.match(homeSource, /marketBrief\.focusTicker\.lastPrice/)
+  assert.match(homeSource, /marketBrief\.topMover\.changePercent/)
+  assert.match(homeSource, /marketBrief\.rising,[\s\S]*?marketBrief\.falling,[\s\S]*?marketBrief\.unchanged/)
+  assert.doesNotMatch(homeSource, /fetchNews|briefNotice|briefMessage|announcementState|NewsItem/)
 })
 
-test('无真实公告时日报保持原色禁用且不会产生详情导航', () => {
-  assert.match(homeSource, /:disabled="!briefNotice"/)
-  assert.match(homeSource, /function openBriefNotice\(\): void \{\s*if \(!briefNotice\.value\) return/)
-  assert.match(homeSource, /\.home-view \.market-brief:disabled\s*\{\s*opacity:\s*1;\s*\}/)
+test('市场简报加载失败可原位重试，加载成功进入完整行情而不是新闻详情', () => {
+  assert.match(homeSource, /function openMarketBrief\(\): void \{\s*if \(!marketBrief\.value\) \{\s*void refreshMarkets\(true\)/)
+  assert.match(homeSource, /router\.replace\(\{ name: 'markets' \}\)/)
+  assert.match(homeSource, /:role="marketStore\.error \? 'alert' : 'status'"/)
+  assert.match(homeSource, /home\.marketBriefUnavailable[\s\S]*?home\.marketBriefTapToRetry/)
+  assert.doesNotMatch(homeSource, /name: 'news-detail'|:disabled="!briefNotice"/)
 })

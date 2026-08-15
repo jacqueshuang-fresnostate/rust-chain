@@ -14,6 +14,10 @@ const HEARTBEAT_MS = 25_000
 export interface TickerUpdate {
   symbol: string
   lastPrice: number
+  highPrice?: number
+  lowPrice?: number
+  volume?: number
+  changePercent?: number
   observedAt?: number
 }
 
@@ -222,6 +226,10 @@ export function createMarketTickerStream(options: MarketTickerStreamOptions): Ma
       const update: TickerUpdate = {
         symbol: normalizeMarketSocketSymbol(frame.symbol),
         lastPrice: frame.lastPrice,
+        ...(frame.highPrice === undefined ? {} : { highPrice: frame.highPrice }),
+        ...(frame.lowPrice === undefined ? {} : { lowPrice: frame.lowPrice }),
+        ...(frame.volume === undefined ? {} : { volume: frame.volume }),
+        ...(frame.changePercent === undefined ? {} : { changePercent: frame.changePercent }),
         observedAt: frame.observedAt,
       }
       for (const subscription of [...subscriptions]) {

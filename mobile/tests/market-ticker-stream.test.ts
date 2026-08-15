@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   createMarketTickerStream,
+  type TickerUpdate,
   type TickerSocket,
   type TickerStreamScheduler,
 } from '../src/api/marketTickerStream.ts'
@@ -186,6 +187,44 @@ test('a released lease cannot deliver through its old socket into a new same-sym
   assert.deepEqual(updates, [222])
 
   stopNew()
+})
+
+test('ticker stream forwards the complete backend 24h snapshot without recomputing fields', () => {
+  const sockets: FakeSocket[] = []
+  const scheduler = new FakeScheduler()
+  const updates: TickerUpdate[] = []
+  const stream = createMarketTickerStream({
+    getUrl: () => 'wss://example.test/api/v1/ws/public',
+    createSocket: () => {
+      const socket = new FakeSocket()
+      sockets.push(socket)
+      return socket
+    },
+    scheduler,
+  })
+
+  const stop = stream.subscribe(['BTCUSDT'], (update) => updates.push(update))
+  sockets[0]?.emit('open')
+  sockets[0]?.emit('message', JSON.stringify({
+    symbol: 'BTC-USDT',
+    last_price: '63700',
+    high_24h: '64700',
+    low_24h: '62900',
+    volume_24h: '125.75',
+    price_change_percent_24h: '-0.46875',
+    observed_at: 1_786_480_001_000,
+  }))
+
+  assert.deepEqual(updates, [{
+    symbol: 'BTCUSDT',
+    lastPrice: 63_700,
+    highPrice: 64_700,
+    lowPrice: 62_900,
+    volume: 125.75,
+    changePercent: -0.46875,
+    observedAt: 1_786_480_001_000,
+  }])
+  stop()
 })
 
 function emitTicker(socket: FakeSocket | undefined, symbol: string, lastPrice: number): void {

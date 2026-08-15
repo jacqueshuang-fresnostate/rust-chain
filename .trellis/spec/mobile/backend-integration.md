@@ -194,6 +194,14 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
   percentage, including the valid value zero. Derive a compatible open price
   from that percentage only when `open_24h` is absent. Do not derive the visible
   percentage from `price_change_24h` while the percentage field is available.
+- Direct ticker WebSocket payloads propagate `high_24h`, `low_24h`,
+  `volume_24h`, and `price_change_percent_24h` together with `last_price` and
+  `observed_at`. A newer frame replaces those dynamic fields as one coherent
+  snapshot; a delayed REST response may refresh market metadata but must not
+  mix its older 24-hour fields into that newer snapshot. The explicit
+  percentage, including zero, wins. A compatibility frame containing only
+  `last_price` preserves the last authoritative percentage instead of deriving
+  one from a stale open price.
 - The market-detail page owns a separate single-symbol public connection. It
   subscribes to `depth`, `trade`, and the selected `kline` interval alongside
   the initial REST requests, closes the old connection before a symbol or

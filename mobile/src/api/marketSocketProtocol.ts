@@ -9,7 +9,16 @@ export type MarketSocketChannel = 'ticker' | 'depth' | 'trade' | 'kline'
 
 export type MarketSocketFrame =
   | { type: 'subscribed'; channel: string }
-  | { type: 'ticker'; symbol: string; lastPrice: number; observedAt?: number }
+  | {
+      type: 'ticker'
+      symbol: string
+      lastPrice: number
+      highPrice?: number
+      lowPrice?: number
+      volume?: number
+      changePercent?: number
+      observedAt?: number
+    }
   | {
       type: 'depth'
       symbol: string
@@ -286,12 +295,26 @@ export function parseMarketSocketFrame(data: unknown): MarketSocketFrame | null 
 
     const lastPrice = positiveNumber(payload.last_price)
     if (lastPrice === null) return null
+    const highPrice = optionalPositiveNumber(payload.high_24h)
+    const lowPrice = optionalPositiveNumber(payload.low_24h)
+    const volume = optionalNonNegativeNumber(payload.volume_24h)
+    const changePercent = optionalFiniteNumber(payload.price_change_percent_24h)
     const observedAt = optionalTimestamp(payload.observed_at)
-    if (observedAt === null) return null
+    if (
+      highPrice === null
+      || lowPrice === null
+      || volume === null
+      || changePercent === null
+      || observedAt === null
+    ) return null
     return {
       type: 'ticker',
       symbol,
       lastPrice,
+      ...(highPrice === undefined ? {} : { highPrice }),
+      ...(lowPrice === undefined ? {} : { lowPrice }),
+      ...(volume === undefined ? {} : { volume }),
+      ...(changePercent === undefined ? {} : { changePercent }),
       ...(observedAt === undefined ? {} : { observedAt }),
     }
   } catch {
@@ -375,6 +398,26 @@ function nonNegativeNumber(value: unknown): number | null {
   }
   const numberValue = Number(value)
   return Number.isFinite(numberValue) && numberValue >= 0 ? numberValue : null
+}
+
+function optionalPositiveNumber(value: unknown): number | null | undefined {
+  return value === undefined ? undefined : positiveNumber(value)
+}
+
+function optionalNonNegativeNumber(value: unknown): number | null | undefined {
+  return value === undefined ? undefined : nonNegativeNumber(value)
+}
+
+function optionalFiniteNumber(value: unknown): number | null | undefined {
+  if (value === undefined) return undefined
+  if (
+    (typeof value !== 'number' && typeof value !== 'string')
+    || (typeof value === 'string' && !value.trim())
+  ) {
+    return null
+  }
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : null
 }
 
 function isPositiveDecimalString(value: unknown): boolean {

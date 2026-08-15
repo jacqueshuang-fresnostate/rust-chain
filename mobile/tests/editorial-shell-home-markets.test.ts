@@ -107,7 +107,7 @@ test('首页按选中访客 Hero，登录后使用真实资产与收益历史曲
   ])
   assert.match(parityCss, /\.home-portfolio--member\.portfolio-overview\s*\{[\s\S]*?min-height:\s*302px/)
   assert.match(parityCss, /\.home-view \.home-guest-hero\s*\{[\s\S]*?height:\s*270px/)
-  assert.match(parityCss, /\.home-view \.market-brief\s*\{[\s\S]*?height:\s*64px/)
+  assert.match(parityCss, /\.home-view \.market-brief\s*\{[\s\S]*?min-height:\s*166px/)
 })
 
 test('行情页压缩 Hero 并把搜索、五分类、真实广度和连续列表组成单一层级', () => {

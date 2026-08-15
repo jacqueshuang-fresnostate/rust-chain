@@ -33,7 +33,8 @@ export const useMarketStore = defineStore('mobile-market', () => {
   const liveConsumers = new Set<string>()
   let stopLive: (() => void) | null = null
 
-  // 实时推送只覆盖最新价，列表结构仍以 REST 快照为准。
+  // REST 负责交易对与图标等静态结构；实时推送整体覆盖同一观察时刻的价格、
+  // 24 小时高低价、成交量和涨跌幅，避免首页把新价格与旧涨跌数据混合展示。
   function startLiveUpdates(consumerId: string): void {
     const consumer = consumerId.trim()
     if (!consumer) return

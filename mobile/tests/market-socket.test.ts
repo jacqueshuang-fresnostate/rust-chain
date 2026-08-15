@@ -68,7 +68,7 @@ test('market WebSocket subscription payloads match every backend public channel 
   })
 })
 
-test('market WebSocket parser preserves confirmations, ticker, and text heartbeat frames', () => {
+test('market WebSocket parser preserves confirmations, complete ticker snapshots, and text heartbeat frames', () => {
   assert.deepEqual(
     parseMarketSocketFrame('{"type":"subscribed","channel":"public:depth:BTCUSDT"}'),
     { type: 'subscribed', channel: 'public:depth:BTCUSDT' },
@@ -78,14 +78,39 @@ test('market WebSocket parser preserves confirmations, ticker, and text heartbea
     { type: 'subscribed', channel: 'public:trade:BTCUSDT' },
   )
   assert.deepEqual(
-    parseMarketSocketFrame('{"symbol":"BTC-USDT","last_price":"61234.5","observed_at":1720000000000}'),
-    { type: 'ticker', symbol: 'BTC-USDT', lastPrice: 61234.5, observedAt: 1720000000000 },
+    parseMarketSocketFrame(JSON.stringify({
+      symbol: 'BTC-USDT',
+      last_price: '61234.5',
+      high_24h: '62000.25',
+      low_24h: '60100.75',
+      volume_24h: '1234.567',
+      price_change_percent_24h: '-0.79700',
+      observed_at: 1_720_000_000_000,
+    })),
+    {
+      type: 'ticker',
+      symbol: 'BTC-USDT',
+      lastPrice: 61234.5,
+      highPrice: 62000.25,
+      lowPrice: 60100.75,
+      volume: 1234.567,
+      changePercent: -0.797,
+      observedAt: 1_720_000_000_000,
+    },
+  )
+  assert.deepEqual(
+    parseMarketSocketFrame('{"symbol":"BTC-USDT","last_price":"61234.5"}'),
+    { type: 'ticker', symbol: 'BTC-USDT', lastPrice: 61234.5 },
   )
   assert.deepEqual(parseMarketSocketFrame('pong'), { type: 'pong' })
   assert.equal(parseMarketSocketFrame('{"type":"error","code":"invalid_request"}'), null)
   assert.equal(parseMarketSocketFrame('{"symbol":"BTCUSDT","last_price":null}'), null)
   assert.equal(parseMarketSocketFrame('{"symbol":"BTCUSDT","last_price":true}'), null)
   assert.equal(parseMarketSocketFrame('{"symbol":"BTCUSDT","last_price":"0"}'), null)
+  assert.equal(parseMarketSocketFrame('{"symbol":"BTCUSDT","last_price":"1","high_24h":true}'), null)
+  assert.equal(parseMarketSocketFrame('{"symbol":"BTCUSDT","last_price":"1","low_24h":"0"}'), null)
+  assert.equal(parseMarketSocketFrame('{"symbol":"BTCUSDT","last_price":"1","volume_24h":"-1"}'), null)
+  assert.equal(parseMarketSocketFrame('{"symbol":"BTCUSDT","last_price":"1","price_change_percent_24h":""}'), null)
   assert.equal(parseMarketSocketFrame('not-json'), null)
 })
 

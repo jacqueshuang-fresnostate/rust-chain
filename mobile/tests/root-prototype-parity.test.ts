@@ -198,7 +198,7 @@ test('根视图继续调用真实 API/store，访客与加载错误状态不改�
     /fetchWalletAccounts\(\)/,
     /fetchMarginWallets\(\)/,
     /marketStore\.startLiveUpdates\('home'\)/,
-    /fetchNews\(\)/,
+    /buildHomeMarketBrief\(marketStore\.tickers\)/,
   ]) assert.match(views.home, contract)
 
   assert.match(views.markets, /marketStore\.startLiveUpdates\('markets'\)/)
@@ -217,8 +217,9 @@ test('根视图继续调用真实 API/store，访客与加载错误状态不改�
   assert.match(views.profile, /await updateUsername\(nameDraft\.value\)/)
   assert.match(views.profile, /v-if="!session\.isAuthenticated" class="profile-auth-actions"/)
   assert.match(views.profile, /v-else class="profile-status-row"/)
-  assert.doesNotMatch(views.home, /fallbackNews|usingFallbackNews/)
-  assert.match(views.home, /:disabled="!briefNotice"/)
+  assert.doesNotMatch(views.home, /fetchNews|fallbackNews|usingFallbackNews|briefNotice/)
+  assert.match(views.home, /marketBrief\.focusTicker\.lastPrice/)
+  assert.match(views.home, /marketBrief\.topMover\.changePercent/)
 })
 
 test('行情曲线、自选和加载失败状态保持真实语义与固定五行几何', () => {

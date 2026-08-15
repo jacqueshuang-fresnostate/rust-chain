@@ -29,7 +29,29 @@ function ticker(overrides: Partial<MarketTicker> = {}): MarketTicker {
   }
 }
 
-test('newer Bitget ticker frame replaces price and timestamp', () => {
+test('newer Bitget ticker frame atomically replaces all dynamic 24h fields', () => {
+  const current = ticker()
+  const next = applyLiveMarketTickerUpdate(current, {
+    symbol: 'BTCUSDT',
+    lastPrice: 63_700,
+    highPrice: 64_700,
+    lowPrice: 62_900,
+    volume: 125.75,
+    changePercent: -0.46875,
+    observedAt: 1_786_480_001_000,
+  })
+
+  assert.notEqual(next, current)
+  assert.equal(next.lastPrice, 63_700)
+  assert.equal(next.highPrice, 64_700)
+  assert.equal(next.lowPrice, 62_900)
+  assert.equal(next.volume, 125.75)
+  assert.equal(next.changePercent, -0.46875)
+  assert.ok(Math.abs(next.openPrice - (63_700 / (1 - 0.46875 / 100))) < 1e-9)
+  assert.equal(next.observedAt, 1_786_480_001_000)
+})
+
+test('last-price-only compatibility frame preserves the last authoritative 24h percentage', () => {
   const current = ticker()
   const next = applyLiveMarketTickerUpdate(current, {
     symbol: 'BTCUSDT',
@@ -37,10 +59,9 @@ test('newer Bitget ticker frame replaces price and timestamp', () => {
     observedAt: 1_786_480_001_000,
   })
 
-  assert.notEqual(next, current)
   assert.equal(next.lastPrice, 63_700)
-  assert.equal(next.observedAt, 1_786_480_001_000)
-  assert.equal(next.changePercent, ((63_700 - 64_000) / 64_000) * 100)
+  assert.equal(next.openPrice, 64_000)
+  assert.equal(next.changePercent, -0.78125)
 })
 
 test('older ticker frame cannot move the home market price backwards', () => {
@@ -54,14 +75,35 @@ test('older ticker frame cannot move the home market price backwards', () => {
   assert.equal(next, current)
 })
 
-test('late REST refresh keeps the newer WebSocket price', () => {
-  const current = ticker({ lastPrice: 63_700, observedAt: 1_786_480_002_000 })
-  const incoming = ticker({ lastPrice: 63_600, observedAt: 1_786_480_001_000, volume: 120 })
+test('late REST refresh keeps the newer WebSocket ticker snapshot as one coherent unit', () => {
+  const current = ticker({
+    lastPrice: 63_700,
+    openPrice: 64_100,
+    highPrice: 64_700,
+    lowPrice: 62_900,
+    volume: 110,
+    changePercent: -0.62402496099844,
+    observedAt: 1_786_480_002_000,
+  })
+  const incoming = ticker({
+    lastPrice: 63_600,
+    highPrice: 64_500,
+    lowPrice: 63_000,
+    volume: 120,
+    changePercent: -0.625,
+    observedAt: 1_786_480_001_000,
+    iconUrl: '/uploads/markets/btc.png',
+  })
   const [merged] = mergeMarketTickerSnapshots([current], [incoming])
 
   assert.equal(merged.lastPrice, 63_700)
+  assert.equal(merged.openPrice, 64_100)
+  assert.equal(merged.highPrice, 64_700)
+  assert.equal(merged.lowPrice, 62_900)
   assert.equal(merged.observedAt, 1_786_480_002_000)
-  assert.equal(merged.volume, 120)
+  assert.equal(merged.volume, 110)
+  assert.equal(merged.changePercent, -0.62402496099844)
+  assert.equal(merged.iconUrl, '/uploads/markets/btc.png')
 })
 
 test('trade, market detail, and home use the Bitget ticker as visible-price authority', () => {
