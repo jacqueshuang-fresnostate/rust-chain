@@ -144,6 +144,7 @@ export default {
     enDescription: '英语',
   },
   pwa: {
+    statusLabel: '设备体验',
     installTitle: '安装 Hippo',
     installDescription: '安装到设备后可从主屏幕快速打开 Hippo。',
     installAction: '安装应用',

@@ -7356,3 +7356,10 @@
 - 修改文件：`mobile/src/core/turnstile.ts`、`mobile/src/views/LoginView.vue`、`mobile/tests/{mobile-turnstile-lifecycle,mobile-turnstile-widget}.test.ts`、`web/src/auth/{turnstile,turnstile.test,LoginPage,LoginPage.test}.ts*`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/spec/admin/{index,auth-turnstile}.md`、`.trellis/tasks/08-17-turnstile-origin-lifecycle/`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：手机端全量测试 373/373、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`、`npm --prefix mobile run build:tauri` 全部通过；后台全量测试 300/300、`npm --prefix web run typecheck`、`npm --prefix web run lint`、`npm --prefix web run build` 全部通过；首次与多个构建并行执行的后台全量测试有 1 个既有新闻用例超时，资源释放后串行复跑 42 个文件、300 项全部通过；`git diff --check` 通过。Ego Browser 在两个线上登录域名确认均只有一份 API 脚本且可生成 token，并在本地测试 key 下验证后台身份切换不新增 widget、手机离开登录页会移除 iframe且返回可重新生成 token；Cloudflare iframe 初始切换来源时仍可能出现一次第三方脚本内部的短暂 origin 告警，但应用端不再因旧 widget 或重复挂载持续累积。
 - 后续事项：部署新前端镜像/PWA 后清理旧缓存验证；若出现 Cloudflare `110200` 或始终无 token，需在对应 widget 的 Hostname Management 中确认 `hipoex.cllbmz.kdns.fr` 与 `hippo.cllbmz.kdns.fr`（或父域）已授权。
+
+## 2026-08-18 02:46 - 手机端 PWA 状态弹窗沉浸式重构
+
+- 完成内容：将原贴边扁平的 `PwaStatus` 状态带重构为 Header 下方的非模态系统浮岛，采用双层 Bezel、22px 毛玻璃、内侧折射高光、状态环境光和微网格材质；安装/更新、离线就绪、离线/错误分别使用 accent、positive、negative 语义色与 Lucide 图标。保留安全路由白名单、离线可与一个主状态并存、`update > install > offline-ready > error` 优先级及原安装/更新/重试/关闭函数；根层继续穿透指针，只有卡片与操作可交互，不加遮罩或滚动锁。补齐 44px 控件、忙碌语义、完整焦点、320px 操作折行、自定义入离场与 reduced-motion 关闭动画，并为 Safari 增加毛玻璃和网格遮罩前缀。
+- 修改文件：`mobile/src/components/PwaStatus.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{pwa,pwa-status-immersive,ui-prototype-alignment-foundation}.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/08-18-mobile-pwa-status-immersive-redesign/`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：PWA 状态聚焦测试 16/16、手机端全量测试 377/377、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2068 modules、133 条预缓存）、`npm --prefix mobile run build:tauri`（2068 modules）、Trellis task validate 与 `git diff --check` 全部通过。Ego Browser 在 320×720、390×844、448×900 的明暗主题下完成安装浮岛视觉核验，均无横向溢出；320px 离线+安装双状态堆叠完整，浮岛外 `elementFromPoint` 命中底层页面，确认非阻塞交互成立。
+- 后续事项：无。

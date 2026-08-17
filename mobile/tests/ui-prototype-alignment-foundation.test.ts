@@ -80,12 +80,16 @@ test('五栏根导航保留 44px 焦点与抬升交易入口', () => {
   assert.doesNotMatch(bottomNavSource, /<style scoped/)
 })
 
-test('登录与 PWA 状态保留原有真实状态带', () => {
+test('登录状态带保持真实，PWA 状态升级为非阻塞沉浸式系统浮岛', () => {
   assert.match(loginStateSource, /grid-template-columns:\s*44px minmax\(0,\s*1fr\) auto/)
   assert.match(loginStateSource, /border-left:\s*3px solid var\(--positive\)/)
   assert.match(pwaStatusSource, /max-width:\s*var\(--app-max-width,\s*448px\)/)
-  assert.match(pwaStatusSource, /border-radius:\s*0/)
-  assert.match(pwaStatusSource, /box-shadow:\s*none/)
+  assert.match(pwaStatusSource, /<Transition name="pwa-status-reveal">/)
+  assert.match(pwaStatusSource, /class="pwa-status__panel"/)
+  assert.match(pwaStatusSource, /backdrop-filter:\s*blur\(22px\) saturate\(145%\)/)
+  assert.match(pwaStatusSource, /border-radius:\s*var\(--pwa-card-radius\)/)
+  assert.match(pwaStatusSource, /0 18px 48px color-mix/)
+  assert.doesNotMatch(pwaStatusSource, /\.pwa-status__card\s*\{[^}]*border-radius:\s*0/)
 })
 
 test('根页面使用共享窄屏合同，Pencil 资产与我的允许局部几何且不引入表情', () => {

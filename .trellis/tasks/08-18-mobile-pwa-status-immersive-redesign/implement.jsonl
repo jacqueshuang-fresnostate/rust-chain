@@ -1,0 +1,4 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/mobile/index.md", "reason": "Mobile quality gate, icon, layout, and production surface contracts"}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "PwaStatus route, runtime, theme, accessibility, and PWA behavior contract"}
+{"file": ".trellis/tasks/08-18-mobile-pwa-status-immersive-redesign/research/current-surface-audit.md", "reason": "Current visual audit, selected immersive pattern, and verification implications"}

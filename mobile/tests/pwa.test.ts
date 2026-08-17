@@ -118,6 +118,7 @@ test('copied prototype CSS resolves production-owned font and image paths', asyn
 
 test('PWA and message-center locale contracts stay complete in Chinese and English', () => {
   const pwaKeys = [
+    'statusLabel',
     'installTitle',
     'installDescription',
     'installAction',

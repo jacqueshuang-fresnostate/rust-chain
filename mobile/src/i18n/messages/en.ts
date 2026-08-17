@@ -144,6 +144,7 @@ export default {
     enDescription: 'English',
   },
   pwa: {
+    statusLabel: 'Device experience',
     installTitle: 'Install Hippo',
     installDescription: 'Install Hippo for quick access from your device home screen.',
     installAction: 'Install app',

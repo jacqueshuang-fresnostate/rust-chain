@@ -153,6 +153,28 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
 - `PwaStatus` is mounted exactly once in `App.vue`. Install and update prompts
   appear only on explicitly allowed safe routes; offline and registration
   errors may remain global.
+- `PwaStatus` is a non-modal system island, not a viewport backdrop or bottom
+  sheet. Its fixed root starts below the 64px application Header plus the top
+  safe area, stays within the 448px application canvas, leaves detached side
+  margins, and keeps `pointer-events: none`. Only each visible status card and
+  its controls restore pointer events; the component must not lock body scroll
+  or prevent the page outside a card from receiving pointer input.
+- Each PWA state uses the same double-bezel structure: an outer
+  `.pwa-status__card` supplies semantic ambient light and an inner
+  `.pwa-status__panel` supplies the translucent, blurred surface and inset
+  highlight. Use existing theme tokens with `color-mix`, Lucide icons, and the
+  state mapping accent=install/update, positive=offline-ready, and
+  negative=offline/error. Do not reintroduce the retired `#0b1811` family,
+  remote art, emoji, or a second icon library.
+- The live region remains polite and non-atomic. Offline may render together
+  with exactly one primary card; the primary priority remains update, install,
+  offline-ready, then error. Busy update/install/retry states expose
+  `aria-busy`, disable duplicate actions, and every button/dismiss target is at
+  least 44x44px with a visible focus ring.
+- `pwa-status-reveal` may animate only opacity, transform, and presentation
+  blur through the project motion curve. At 320px its actions may wrap but the
+  document must not overflow horizontally. Under `prefers-reduced-motion`, all
+  entry, spinner, and decorative breathing motion is disabled.
 - Updates stay user-controlled: a waiting worker receives `SKIP_WAITING`, then
   the page reloads on `controllerchange`.
 - The root theme is `data-theme="light|dark"` on `<html>`, persists through
@@ -397,6 +419,10 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
 | Install prompt was dismissed | Suppress it for seven days |
 | Worker update is waiting | Offer update on a safe route; reload only after user accepts |
 | Browser is offline | Render cached shell and truthful unavailable/error states |
+| Offline and one primary PWA state are both active | Stack the offline island with update > install > offline-ready > error; do not collapse or reorder the truth states |
+| Pointer is outside a visible PWA card | Let the underlying application receive the pointer; do not add a backdrop, body scroll lock, or full-root hit target |
+| PWA action is running | Set `aria-busy`, disable its action, and preserve a 44px target without layout shift |
+| Viewport is 320px or reduced motion is requested | Wrap actions without horizontal overflow; remove entry, spinner, and decorative breathing animations |
 | Stored theme is invalid or inaccessible | Use system preference, then light |
 | Announcement API fails | Show retry and empty/error state; do not synthesize messages |
 | Message Center opens from Home | Hide Root Header and Dock; Back returns through history to Home |
@@ -447,6 +473,15 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
 - Good: `build:pwa` produces manifest, service worker, brand icons, and an
   offline-reloadable shell while cache inspection contains no API or WebSocket
   endpoint.
+- Good: an install prompt appears as a detached double-bezel glass island below
+  the Header; the user can still scroll and operate the visible page outside
+  the island, while the install and dismiss controls remain 44px targets.
+- Base: the browser is offline while an update is waiting, so the negative
+  offline island and accent update island stack in that order without hiding
+  either truthful state or overflowing a 320px viewport.
+- Bad: `PwaStatus` becomes a modal backdrop, intercepts the full viewport,
+  locks body scrolling, renders a flat full-width band, or animates after the
+  user requests reduced motion.
 - Good: selecting Contract opens the persisted pair with
   `?mode=contract`; selecting Seconds opens `/seconds`.
 - Good: direct-open Spot renders the `yzOPc`/`bo8k5` split default with live
@@ -513,6 +548,15 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
 - Unit/source contract: build modes, Tauri double guard, manifest fields,
   `runtimeCaching: []`, denied fallback routes, single `PwaStatus`, safe prompt
   routes, theme normalization, and complete `zh-CN`/English keys.
+- PWA status island contract: assert the existing route allowlist and state
+  priority, the five double-bezel panels, semantic tone/role/`aria-busy`
+  mapping, pointer-transparent root and pointer-active cards, 44px controls,
+  focus ring, no retired colors/emoji/remote assets, narrow-screen wrapping,
+  custom reveal transition, and complete reduced-motion overrides.
+- PWA status browser pass: force install, offline, and stacked states at
+  320x720, 390x844, and 448x900 in both themes; assert document width equals
+  viewport width, card edges stay detached, actions are fully visible, and
+  `elementFromPoint` outside the card reaches the underlying page.
 - Build: `npm run build:pwa` and inspect generated manifest/service worker;
   `npm run build:tauri` and assert no PWA artifacts remain.
 - Browser: theme switch survives reload; all five dock entries and the
@@ -641,6 +685,33 @@ messages.value.push({ title: 'Your withdrawal succeeded' })
 VitePWA({ runtimeCaching: [], strategies: 'generateSW' })
 if (__PWA_ENABLED__ && !isTauriRuntime()) void initializePwa()
 messages.value = await fetchNews(40)
+```
+
+For the non-modal PWA status island:
+
+```vue
+<!-- Wrong: a full-screen modal blocks the application for an auxiliary state. -->
+<aside class="pwa-status" style="inset: 0; pointer-events: auto">
+  <div class="backdrop" />
+  <StatusCard />
+</aside>
+
+<!-- Correct: the root is transparent to input and only the island is active. -->
+<Transition name="pwa-status-reveal">
+  <aside class="pwa-status" aria-live="polite" aria-atomic="false">
+    <section class="pwa-status__card" role="status">
+      <div class="pwa-status__panel"><StatusContent /></div>
+    </section>
+  </aside>
+</Transition>
+```
+
+```css
+.pwa-status { pointer-events: none; }
+.pwa-status__card { pointer-events: auto; }
+@media (prefers-reduced-motion: reduce) {
+  .pwa-status *, .pwa-status-reveal-enter-active { animation: none; transition: none; }
+}
 ```
 
 For a Turnstile SPA lifecycle:
