@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 43
+- **Total Sessions**: 44
 - **Last Active**: 2026-08-18
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1486 | Active |
+| `journal-1.md` | ~1519 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 44 | 2026-08-18 | 后台行情策略与杠杆产品配置优化 | `2b36903` | `main` |
 | 43 | 2026-08-18 | 手机端 PWA 状态浮岛沉浸式重构 | `1f95db3` | `main` |
 | 42 | 2026-08-18 | 修复双端 Turnstile SPA 生命周期 | `d7f5d6f` | `main` |
 | 41 | 2026-08-13 | 手机 K 线统一切换 Lightweight Charts | `ecc1d06` | `main` |
