@@ -19,6 +19,8 @@ import {
 import { MarketStrategyRecoverySheet } from '../../components/MarketStrategyRecoverySheet';
 import { MarketStrategyVersionSheet } from '../../components/MarketStrategyVersionSheet';
 import {
+  MarketPairSelect,
+  type MarketPairOption,
   type RowActionHelpers,
   createModalProps,
   errorMessage,
@@ -28,7 +30,8 @@ import {
   requiredPositiveInteger,
   requiredString,
   submitAction,
-  toggleActionText
+  toggleActionText,
+  useMarketPairOptions
 } from './shared';
 
 type MarketStrategyValues = {
@@ -137,6 +140,24 @@ const volumeShapeOptions: SemiSelectOption[] = [
   { value: 'bell', label: '中段放量' },
   { value: 'end_spike', label: '尾段放量' }
 ];
+
+const strategyTypeOptions: SemiSelectOption[] = [
+  { value: 'price_path', label: '价格路径（OHLCV）' }
+];
+
+const marketStrategyPairTypes = new Set(['internal', 'strategy']);
+
+function strategyTypeOptionsWithCurrent(value: string): SemiSelectOption[] {
+  const current = value.trim();
+  if (!current || strategyTypeOptions.some((option) => option.value === current)) {
+    return strategyTypeOptions;
+  }
+  return [{ value: current, label: `历史策略类型（${current}）` }, ...strategyTypeOptions];
+}
+
+function eligibleMarketStrategyPairs(options: MarketPairOption[]): MarketPairOption[] {
+  return options.filter((option) => marketStrategyPairTypes.has(option.marketType));
+}
 
 const initialMarketStrategy: MarketStrategyValues = {
   pairId: '',
@@ -536,6 +557,7 @@ function MarketStrategyForm({
   const [presetsLoading, setPresetsLoading] = useState(false);
   const [presetsError, setPresetsError] = useState('');
   const [presetsRequested, setPresetsRequested] = useState(false);
+  const { pairLoading, pairOptions } = useMarketPairOptions(active && includePairId);
 
   useEffect(() => {
     if (!active || presetsRequested) return;
@@ -556,6 +578,8 @@ function MarketStrategyForm({
 
   const selectedPreset = presets.find((preset) => preset.code === values.scenario);
   const canPreview = isMarketStrategySubmittable(values, true);
+  const selectablePairs = eligibleMarketStrategyPairs(pairOptions);
+  const selectableStrategyTypes = strategyTypeOptionsWithCurrent(values.strategyType);
 
   return (
     <div className="admin-market-strategy-form">
@@ -564,9 +588,25 @@ function MarketStrategyForm({
           <div><h3>策略基础配置</h3><p>定义权威 1m 行情的交易对、时间范围、起止价格和全局量价边界。</p></div>
         </div>
         <div className="admin-action-form">
-          {includePairId ? <label>交易对ID<AdminTextInput ariaLabel="交易对ID" value={values.pairId} onChange={(pairId) => onChange({ ...values, pairId })} /></label> : null}
+          {includePairId ? (
+            <MarketPairSelect
+              label="交易对ID"
+              loading={pairLoading}
+              onChange={(pairId) => onChange({ ...values, pairId })}
+              options={selectablePairs}
+              value={values.pairId}
+            />
+          ) : null}
           {!includePairId ? <label>交易对ID<AdminTextInput ariaLabel="交易对ID" readOnly value={values.pairId} onChange={() => undefined} /></label> : null}
-          <label>策略类型<AdminTextInput ariaLabel="策略类型" value={values.strategyType} onChange={(strategyType) => onChange({ ...values, strategyType })} /></label>
+          <label>
+            策略类型
+            <AdminSelect
+              ariaLabel="策略类型"
+              onChange={(strategyType) => onChange({ ...values, strategyType })}
+              optionList={selectableStrategyTypes}
+              value={values.strategyType}
+            />
+          </label>
           <label>起始价<AdminTextInput ariaLabel="起始价" value={values.startPrice} onChange={(startPrice) => onChange({ ...values, startPrice })} /></label>
           <label>目标价<AdminTextInput ariaLabel="目标价" value={values.targetPrice} onChange={(targetPrice) => onChange({ ...values, targetPrice })} /></label>
           <label>开始时间<AdminTextInput ariaLabel="开始时间" type="datetime-local" value={values.startTime} onChange={(startTime) => onChange({ ...values, startTime })} /></label>

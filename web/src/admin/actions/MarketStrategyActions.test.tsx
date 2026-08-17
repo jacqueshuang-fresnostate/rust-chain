@@ -52,12 +52,16 @@ async function selectSemiOption(
   user: ReturnType<typeof userEvent.setup>,
   root: HTMLElement,
   label: string,
-  optionLabel: string
+  optionLabel: string,
+  excludedOptionLabel?: string
 ) {
   await user.click(semiSelectByLabel(root, label));
   await waitFor(() => {
     expect([...document.querySelectorAll('.semi-select-option')].some((item) => item.textContent === optionLabel)).toBe(true);
   });
+  if (excludedOptionLabel) {
+    expect([...document.querySelectorAll('.semi-select-option')].some((item) => item.textContent === excludedOptionLabel)).toBe(false);
+  }
   const option = [...document.querySelectorAll('.semi-select-option')]
     .filter((item) => item.textContent === optionLabel)
     .at(-1) as HTMLElement;
@@ -74,8 +78,17 @@ describe('MarketStrategyActions', () => {
     listAdminResourceMock.mockReset();
     apiRequestMock.mockReset();
     apiRequestMock.mockResolvedValue({});
-    listAdminResourceMock.mockResolvedValue({
-      rows: [
+    listAdminResourceMock.mockImplementation(async (endpoint, responseKey) => {
+      if (endpoint === '/admin/api/v1/market-pairs') {
+        const pairs = [
+          { id: 21, symbol: 'BTC-USDT', status: 'active', market_type: 'internal' },
+          { id: 22, symbol: 'NEW-USDT', status: 'active', market_type: 'strategy' },
+          { id: 23, symbol: 'ETH-USDT', status: 'active', market_type: 'external' }
+        ];
+        return { rows: pairs, raw: { pairs } };
+      }
+
+      const strategies = [
         {
           id: 91,
           pair_id: 21,
@@ -87,8 +100,8 @@ describe('MarketStrategyActions', () => {
           run_status: 'paused',
           created_at: 1_775_027_600_000
         }
-      ],
-      raw: { strategies: [] }
+      ];
+      return { rows: strategies, raw: { [responseKey]: strategies } };
     });
   });
 
@@ -248,7 +261,11 @@ describe('MarketStrategyActions', () => {
     render(<MarketStrategyActions />);
     await user.click(await screen.findByRole('button', { name: '创建策略' }));
     const sheet = (await screen.findByText('创建策略', { selector: '.semi-sidesheet-title' })).closest('.semi-sidesheet-inner') as HTMLElement;
-    fireEvent.change(within(sheet).getByLabelText('交易对ID'), { target: { value: '21' } });
+    await waitFor(() => {
+      expect(listAdminResourceMock).toHaveBeenCalledWith('/admin/api/v1/market-pairs', 'pairs', { status: 'active', limit: 100 });
+    });
+    expect(semiSelectByLabel(sheet, '策略类型')).toHaveTextContent('价格路径（OHLCV）');
+    await selectSemiOption(user, sheet, '交易对ID', 'BTC-USDT（ID: 21）', 'ETH-USDT（ID: 23）');
     fireEvent.change(within(sheet).getByLabelText('起始价'), { target: { value: '100' } });
     fireEvent.change(within(sheet).getByLabelText('目标价'), { target: { value: '100' } });
     fireEvent.change(within(sheet).getByLabelText('开始时间'), { target: { value: '2026-08-12T10:00' } });
@@ -274,6 +291,7 @@ describe('MarketStrategyActions', () => {
     const previewCall = apiRequestMock.mock.calls.find(([path]) => path === '/admin/api/v1/market-strategies/preview');
     expect(JSON.parse(String(previewCall?.[1]?.body))).toMatchObject({
       pair_id: 21,
+      strategy_type: 'price_path',
       target_price: '125',
       sample_count: 120,
       generator: {
@@ -345,7 +363,7 @@ describe('MarketStrategyActions', () => {
     await user.click(await screen.findByRole('button', { name: '创建策略' }));
 
     const sheet = (await screen.findByText('创建策略', { selector: '.semi-sidesheet-title' })).closest('.semi-sidesheet-inner') as HTMLElement;
-    fireEvent.change(within(sheet).getByLabelText('交易对ID'), { target: { value: '21' } });
+    await selectSemiOption(user, sheet, '交易对ID', 'NEW-USDT（ID: 22）');
     fireEvent.change(within(sheet).getByLabelText('起始价'), { target: { value: '1' } });
     fireEvent.change(within(sheet).getByLabelText('目标价'), { target: { value: '2' } });
     fireEvent.change(within(sheet).getByLabelText('开始时间'), { target: { value: '2026-08-12T10:00' } });

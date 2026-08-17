@@ -17,6 +17,7 @@ export type AssetOption = {
 export type MarketPairOption = {
   id: string;
   label: string;
+  marketType: string;
 };
 
 export type AdminNewsCountryOption = {
@@ -157,7 +158,13 @@ function marketPairOptionLabel(pair: ApiRecord): string {
 
 function toMarketPairOption(pair: ApiRecord): MarketPairOption | null {
   const id = assetFieldToString(pair, 'id');
-  return id ? { id, label: marketPairOptionLabel(pair) } : null;
+  return id
+    ? {
+        id,
+        label: marketPairOptionLabel(pair),
+        marketType: assetFieldToString(pair, 'market_type')
+      }
+    : null;
 }
 
 export function includeCurrentOption<T extends { id: string; label: string }>(options: T[], id: string, label: string): T[] {

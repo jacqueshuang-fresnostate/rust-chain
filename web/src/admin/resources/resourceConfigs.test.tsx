@@ -1597,7 +1597,8 @@ describe('resourceConfigs create actions', () => {
     });
     render(<ResourcePage config={resourceConfigs.marginProducts} />);
 
-    expect(await screen.findAllByText('逐仓', { selector: 'span' })).toHaveLength(2);
+    expect(await screen.findByRole('columnheader', { name: '默认保证金模式' })).toBeInTheDocument();
+    expect(await screen.findAllByText('逐仓', { selector: 'span' })).toHaveLength(4);
     expect(screen.queryByText('逐仓 / 全仓', { selector: 'span' })).not.toBeInTheDocument();
     expect(screen.getByText('2.00x / 5.00x / 10.00x', { selector: 'span' })).toBeInTheDocument();
     expect(screen.getByText('3.00x / 7.00x', { selector: 'span' })).toBeInTheDocument();
@@ -1605,21 +1606,70 @@ describe('resourceConfigs create actions', () => {
     await user.click(await screen.findByRole('button', { name: '添加杠杆交易对' }));
     const dialog = await findActionSheet('添加杠杆交易对');
     expectCreateModalSize(dialog, 'extra-wide');
-    expect(within(dialog).getByRole('tab', { name: '基础配置' })).toBeInTheDocument();
+    expect(within(dialog).getAllByRole('tab')).toHaveLength(4);
+    const basicTab = within(dialog).getByRole('tab', { name: '基础配置' });
+    const reviewTab = within(dialog).getByRole('tab', { name: '发布确认' });
+    expect(basicTab).toHaveAttribute('id', 'semiTabbasic');
+    expect(basicTab).toHaveAttribute('aria-controls', 'semiTabPanelbasic');
     expect(within(dialog).getByRole('tab', { name: '杠杆档位' })).toBeInTheDocument();
-    expect(within(dialog).getByRole('tab', { name: '风控参数' })).toBeInTheDocument();
-    expect(within(dialog).getByRole('button', { name: '提交添加杠杆交易对' })).toBeDisabled();
+    expect(within(dialog).getByRole('tab', { name: '风控与计费' })).toBeInTheDocument();
+    expect(reviewTab).toBeInTheDocument();
+    const basicPanel = within(dialog).getByRole('tabpanel', { name: '基础配置' });
+    expect(basicPanel).toHaveAttribute('id', 'semiTabPanelbasic');
+    expect(basicPanel).toHaveAttribute('aria-labelledby', 'semiTabbasic');
+    expect(within(dialog).getAllByRole('tabpanel')).toHaveLength(1);
+    expect(within(dialog).queryByRole('button', { name: '提交添加杠杆交易对' })).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText('杠杆交易对ID')).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText('最大杠杆')).not.toBeInTheDocument();
-    semiSelectByLabel(dialog, '杠杆交易对');
-    semiSelectByLabel(dialog, '保证金资产');
-    expect(within(dialog).getByLabelText('支持保证金模式')).toHaveValue('逐仓');
+    expect(semiSelectByLabel(dialog, '杠杆交易对')).toHaveClass('semi-select-filterable');
+    expect(semiSelectByLabel(dialog, '保证金资产')).toHaveClass('semi-select-filterable');
+    expect(semiSelectByLabel(dialog, '支持保证金模式')).toHaveTextContent('逐仓');
+    expect(semiSelectByLabel(dialog, '默认保证金模式')).toHaveTextContent('逐仓');
     semiSelectByLabel(dialog, '初始状态');
     expect(within(dialog).queryByLabelText('自定义杠杆档位')).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText('最小保证金')).not.toBeInTheDocument();
+    await user.click(reviewTab);
+    const blockedReview = within(dialog).getByRole('tabpanel', { name: '发布确认' });
+    expect(blockedReview).toHaveAttribute('id', 'semiTabPanelreview');
+    expect(blockedReview).toHaveAttribute('aria-labelledby', 'semiTabreview');
+    expect(reviewTab).toHaveAttribute('aria-controls', 'semiTabPanelreview');
+    expect(within(dialog).getAllByRole('tabpanel')).toHaveLength(1);
+    expect(within(dialog).getByRole('button', { name: '提交添加杠杆交易对' })).toBeDisabled();
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('请选择杠杆交易对');
+    await user.click(basicTab);
     await selectSemiOption(user, dialog, '杠杆交易对', 'BTC-USDT（ID: 21）');
     await selectSemiOption(user, dialog, '保证金资产', 'ETH - Ethereum（ID: 22）');
-    await user.click(within(dialog).getByRole('tab', { name: '杠杆档位' }));
+    await selectSemiOption(user, dialog, '支持保证金模式', '全仓');
+    expect(semiSelectByLabel(dialog, '支持保证金模式')).toHaveTextContent('逐仓');
+    expect(semiSelectByLabel(dialog, '支持保证金模式')).toHaveTextContent('全仓');
+    await selectSemiOption(user, dialog, '默认保证金模式', '全仓');
+    expect(semiSelectByLabel(dialog, '默认保证金模式')).toHaveTextContent('全仓');
+
+    const removeSupportedMode = async (modeLabel: string) => {
+      const supportedModeSelect = semiSelectByLabel(dialog, '支持保证金模式');
+      const selectedTag = [...supportedModeSelect.querySelectorAll('.semi-tag')].find((tag) => tag.textContent?.trim() === modeLabel);
+      const closeButton = selectedTag?.querySelector('.semi-tag-close');
+      expect(closeButton).toBeInTheDocument();
+      fireEvent.click(closeButton as HTMLElement);
+      await waitFor(() => {
+        expect(supportedModeSelect).not.toHaveTextContent(modeLabel);
+      });
+    };
+
+    await removeSupportedMode('全仓');
+    expect(semiSelectByLabel(dialog, '默认保证金模式')).toHaveTextContent('逐仓');
+    await removeSupportedMode('逐仓');
+    expect(semiSelectByLabel(dialog, '默认保证金模式')).toHaveAttribute('aria-disabled', 'true');
+    expect(within(dialog).getByRole('button', { name: '下一步' })).toBeDisabled();
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('请至少选择一种支持的保证金模式');
+    await selectSemiOption(user, dialog, '支持保证金模式', '逐仓');
+    await user.keyboard('{Escape}');
+    await selectSemiOption(user, dialog, '支持保证金模式', '全仓');
+    await user.keyboard('{Escape}');
+    await selectSemiOption(user, dialog, '默认保证金模式', '全仓');
+    expect(within(dialog).getByRole('button', { name: '下一步' })).toBeEnabled();
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }));
+    expect(within(dialog).getByRole('tab', { name: '杠杆档位' })).toHaveAttribute('aria-selected', 'true');
     expect(within(dialog).getByText('杠杆档位', { selector: 'legend' })).toBeInTheDocument();
     expect(within(dialog).getByLabelText('2x')).not.toBeChecked();
     await user.click(within(dialog).getByLabelText('2x'));
@@ -1629,17 +1679,53 @@ describe('resourceConfigs create actions', () => {
     await user.click(within(dialog).getByLabelText('10x'));
     expect(within(dialog).getByLabelText('10x')).toBeChecked();
     semiInputByLabel(dialog, '自定义杠杆档位');
+    await user.type(within(dialog).getByLabelText('自定义杠杆档位'), '2e1');
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('自定义杠杆档位“2e1”必须为大于 1 的十进制数');
+    await user.clear(within(dialog).getByLabelText('自定义杠杆档位'));
+    await user.type(within(dialog).getByLabelText('自定义杠杆档位'), '2,');
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('自定义杠杆档位“空项”必须为大于 1 的十进制数');
+    await user.clear(within(dialog).getByLabelText('自定义杠杆档位'));
+    await user.type(within(dialog).getByLabelText('自定义杠杆档位'), '1');
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('自定义杠杆档位“1”必须为大于 1 的十进制数');
+    expect(within(dialog).getByRole('button', { name: '下一步' })).toBeDisabled();
+    await user.clear(within(dialog).getByLabelText('自定义杠杆档位'));
     await user.type(within(dialog).getByLabelText('自定义杠杆档位'), '25');
     expect(within(dialog).getByText('已选杠杆：2x / 5x / 10x / 25x')).toBeInTheDocument();
-    await user.click(within(dialog).getByRole('tab', { name: '风控参数' }));
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }));
+    expect(within(dialog).getByRole('tab', { name: '风控与计费' })).toHaveAttribute('aria-selected', 'true');
     semiInputByLabel(dialog, '最小保证金');
     semiInputByLabel(dialog, '最大保证金');
     semiInputByLabel(dialog, '维持保证金率');
     semiInputByLabel(dialog, '小时利率');
+    await user.type(within(dialog).getByLabelText('最小保证金'), '0');
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('最小保证金必须为大于 0 的十进制数');
+    await user.clear(within(dialog).getByLabelText('最小保证金'));
     await user.type(within(dialog).getByLabelText('最小保证金'), '100');
+    await user.type(within(dialog).getByLabelText('最大保证金'), '99');
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('最大保证金不能小于最小保证金');
+    await user.clear(within(dialog).getByLabelText('最大保证金'));
     await user.type(within(dialog).getByLabelText('最大保证金'), '10000');
+    await user.type(within(dialog).getByLabelText('维持保证金率'), '-0.1');
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('维持保证金率必须为非负十进制数');
+    await user.clear(within(dialog).getByLabelText('维持保证金率'));
     await user.type(within(dialog).getByLabelText('维持保证金率'), '0.1');
+    await user.type(within(dialog).getByLabelText('小时利率'), '1e-4');
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('小时利率必须为非负十进制数，或留空');
+    expect(within(dialog).getByRole('button', { name: '下一步' })).toBeDisabled();
+    await user.clear(within(dialog).getByLabelText('小时利率'));
     await user.type(within(dialog).getByLabelText('小时利率'), '0.0001');
+    expect(within(dialog).getByRole('button', { name: '下一步' })).toBeEnabled();
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }));
+    expect(within(dialog).getByRole('tab', { name: '发布确认' })).toHaveAttribute('aria-selected', 'true');
+    const review = within(dialog).getByRole('tabpanel', { name: '发布确认' });
+    expect(review).toHaveAttribute('aria-labelledby', 'semiTabreview');
+    expect(within(review).getByText('BTC-USDT（ID: 21）')).toBeInTheDocument();
+    expect(within(review).getByText('ETH - Ethereum（ID: 22）')).toBeInTheDocument();
+    expect(within(review).getByText('逐仓 / 全仓')).toBeInTheDocument();
+    expect(within(review).getByText('全仓')).toBeInTheDocument();
+    expect(within(review).getByText('2x / 5x / 10x / 25x')).toBeInTheDocument();
+    expect(within(review).getByText('100 ～ 10000')).toBeInTheDocument();
+    expect(within(review).getByRole('note')).toHaveTextContent('启用后将立即开放新开仓。配置变更仅影响后续开仓，不改写既有仓位。');
     await user.click(within(dialog).getByRole('button', { name: '提交添加杠杆交易对' }));
     await user.type(await screen.findByLabelText('操作原因'), 'add margin pair');
     await user.click(await screen.findByRole('button', { name: '确认' }));
@@ -1651,7 +1737,8 @@ describe('resourceConfigs create actions', () => {
     expect(JSON.parse(String(request?.body))).toEqual({
       pair_id: 21,
       margin_asset: 22,
-      margin_modes: ['isolated'],
+      margin_mode: 'cross',
+      margin_modes: ['cross', 'isolated'],
       leverage_levels: ['2', '5', '10', '25'],
       max_leverage: '25',
       min_margin: '100',
@@ -2863,8 +2950,8 @@ describe('resourceConfigs create actions', () => {
             margin_asset: 12,
             margin_asset_symbol: 'USDT',
             logo_url: 'https://cdn.example.test/margin/btc-usdt.png',
-            margin_mode: 'isolated',
-            margin_modes: ['isolated'],
+            margin_mode: 'cross',
+            margin_modes: ['cross', 'isolated'],
             leverage_levels: ['2', '5'],
             max_leverage: '5.00000000',
             min_margin: '10.0000',
@@ -2902,19 +2989,24 @@ describe('resourceConfigs create actions', () => {
     await user.click(screen.getByRole('button', { name: '修改' }));
     const editSheet = await findActionSheet('修改杠杆产品');
     expectCreateModalSize(editSheet, 'extra-wide');
-    expect(within(editSheet).getByRole('tab', { name: '基础配置' })).toBeInTheDocument();
-    semiSelectByLabel(editSheet, '杠杆交易对');
-    semiSelectByLabel(editSheet, '保证金资产');
-    expect(within(editSheet).getByLabelText('支持保证金模式')).toHaveValue('逐仓');
+    const editBasicTab = within(editSheet).getByRole('tab', { name: '基础配置' });
+    const editBasicPanel = within(editSheet).getByRole('tabpanel', { name: '基础配置' });
+    expect(editBasicTab).toHaveAttribute('aria-controls', 'semiTabPanelbasic');
+    expect(editBasicPanel).toHaveAttribute('aria-labelledby', 'semiTabbasic');
+    expect(semiSelectByLabel(editSheet, '杠杆交易对')).toHaveClass('semi-select-filterable');
+    expect(semiSelectByLabel(editSheet, '保证金资产')).toHaveClass('semi-select-filterable');
+    expect(semiSelectByLabel(editSheet, '支持保证金模式')).toHaveTextContent('全仓');
+    expect(semiSelectByLabel(editSheet, '支持保证金模式')).toHaveTextContent('逐仓');
+    expect(semiSelectByLabel(editSheet, '默认保证金模式')).toHaveTextContent('全仓');
     semiSelectByLabel(editSheet, '状态');
     await selectSemiOption(user, editSheet, '状态', '禁用');
-    await user.click(within(editSheet).getByRole('tab', { name: '杠杆档位' }));
+    await user.click(within(editSheet).getByRole('button', { name: '下一步' }));
     expect(within(editSheet).getByLabelText('2x')).toBeChecked();
     expect(within(editSheet).getByLabelText('5x')).toBeChecked();
     await user.click(within(editSheet).getByLabelText('10x'));
     await user.type(within(editSheet).getByLabelText('自定义杠杆档位'), '25');
     expect(within(editSheet).getByText('已选杠杆：2x / 5x / 10x / 25x')).toBeInTheDocument();
-    await user.click(within(editSheet).getByRole('tab', { name: '风控参数' }));
+    await user.click(within(editSheet).getByRole('button', { name: '下一步' }));
     await user.clear(within(editSheet).getByLabelText('最小保证金'));
     await user.type(within(editSheet).getByLabelText('最小保证金'), '20');
     await user.clear(within(editSheet).getByLabelText('最大保证金'));
@@ -2923,6 +3015,14 @@ describe('resourceConfigs create actions', () => {
     await user.type(within(editSheet).getByLabelText('维持保证金率'), '0.04');
     await user.clear(within(editSheet).getByLabelText('小时利率'));
     await user.type(within(editSheet).getByLabelText('小时利率'), '0.0002');
+    await user.click(within(editSheet).getByRole('button', { name: '下一步' }));
+    const editReview = within(editSheet).getByRole('tabpanel', { name: '发布确认' });
+    expect(editReview).toHaveAttribute('id', 'semiTabPanelreview');
+    expect(editReview).toHaveAttribute('aria-labelledby', 'semiTabreview');
+    expect(within(editReview).getByText('BTC-USDT（ID: 1）')).toBeInTheDocument();
+    expect(within(editReview).getByText('USDT - Tether（ID: 12）')).toBeInTheDocument();
+    expect(within(editReview).getByText('全仓 / 逐仓')).toBeInTheDocument();
+    expect(within(editReview).getByText('全仓')).toBeInTheDocument();
     await user.click(within(editSheet).getByRole('button', { name: '提交修改' }));
     await user.type(await screen.findByLabelText('操作原因'), 'update margin product');
     await user.click(await screen.findByRole('button', { name: '确认' }));
@@ -2935,7 +3035,8 @@ describe('resourceConfigs create actions', () => {
       pair_id: 1,
       margin_asset: 12,
       logo_url: 'https://cdn.example.test/margin/btc-usdt.png',
-      margin_modes: ['isolated'],
+      margin_mode: 'cross',
+      margin_modes: ['cross', 'isolated'],
       leverage_levels: ['2', '5', '10', '25'],
       max_leverage: '25',
       min_margin: '20',
@@ -4048,8 +4149,7 @@ describe('resourceConfigs create actions', () => {
 
     await user.click(screen.getByRole('button', { name: '修改' }));
     const editDialog = await findActionSheet('修改行情策略');
-    await user.clear(within(editDialog).getByLabelText('策略类型'));
-    await user.type(within(editDialog).getByLabelText('策略类型'), 'price_path_v2');
+    expect(semiSelectByLabel(editDialog, '策略类型')).toHaveTextContent('价格路径（OHLCV）');
     await user.clear(within(editDialog).getByLabelText('起始价'));
     await user.type(within(editDialog).getByLabelText('起始价'), '1.100000000000000000');
     await user.clear(within(editDialog).getByLabelText('目标价'));
@@ -4077,7 +4177,7 @@ describe('resourceConfigs create actions', () => {
     });
     const editRequest = apiRequestMock.mock.calls.find(([path, init]) => path === '/admin/api/v1/market-strategies/91' && init && 'method' in init)?.[1];
     expect(JSON.parse(String(editRequest?.body))).toEqual({
-      strategy_type: 'price_path_v2',
+      strategy_type: 'price_path',
       start_price: '1.100000000000000000',
       target_price: '2.200000000000000000',
       start_time: new Date('2026-04-01T10:00').getTime(),

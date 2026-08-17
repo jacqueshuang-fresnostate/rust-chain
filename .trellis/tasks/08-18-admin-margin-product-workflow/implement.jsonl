@@ -1,0 +1,5 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/admin/ui-system.md", "reason": "Follow shared admin form, tabs, SideSheet, accessibility, and validation conventions."}
+{"file": ".trellis/spec/backend/margin-trading-actions.md", "reason": "Preserve backend margin mode, leverage, risk, and lifecycle contracts."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Keep UI request mapping aligned with backend product defaults and supported modes."}
+{"file": ".trellis/tasks/08-18-admin-margin-product-workflow/research/current-margin-workflow.md", "reason": "Use audited current behavior, chosen mode-selection approach, and edge cases."}

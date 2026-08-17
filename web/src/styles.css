@@ -1164,6 +1164,129 @@ body {
   line-height: 1.55;
 }
 
+.admin-margin-workflow {
+  display: grid;
+  gap: var(--admin-space-lg);
+  width: 100%;
+  min-width: 0;
+}
+
+.admin-margin-workflow__tabs {
+  width: 100%;
+  min-width: 0;
+}
+
+.admin-margin-workflow__tabs .semi-tabs-bar {
+  max-width: 100%;
+  padding: var(--admin-space-sm);
+  overflow-x: auto;
+  border: 1px solid var(--admin-color-border);
+  border-radius: var(--admin-radius-md);
+  background: var(--admin-color-fill);
+}
+
+.admin-margin-workflow__panel {
+  width: 100%;
+  min-width: 0;
+  min-height: 260px;
+  padding: var(--admin-space-xl);
+  border: 1px solid var(--admin-color-border);
+  border-radius: var(--admin-radius-md);
+  background: var(--admin-color-bg);
+}
+
+.admin-margin-workflow__rate-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: var(--admin-space-md) var(--admin-space-lg);
+  border: 1px solid var(--admin-color-border);
+  border-radius: var(--admin-radius-sm);
+  background: var(--admin-color-fill);
+  line-height: 1.55;
+}
+
+.admin-margin-workflow__review {
+  display: grid;
+  align-content: start;
+  gap: var(--admin-space-lg);
+}
+
+.admin-margin-workflow__review-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--admin-space-md);
+  min-width: 0;
+}
+
+.admin-margin-workflow__review-grid > section {
+  min-width: 0;
+  padding: var(--admin-space-lg);
+  border: 1px solid var(--admin-color-border);
+  border-radius: var(--admin-radius-md);
+  background: var(--admin-color-fill);
+}
+
+.admin-margin-workflow__review-grid > section > strong {
+  color: var(--admin-color-text);
+  font-size: 14px;
+}
+
+.admin-margin-workflow__review-grid dl {
+  display: grid;
+  grid-template-columns: minmax(86px, auto) minmax(0, 1fr);
+  gap: var(--admin-space-sm) var(--admin-space-md);
+  margin: var(--admin-space-lg) 0 0;
+  line-height: 1.5;
+}
+
+.admin-margin-workflow__review-grid dt {
+  color: var(--admin-color-text-secondary);
+}
+
+.admin-margin-workflow__review-grid dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--admin-color-text);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.admin-margin-workflow__impact {
+  padding: var(--admin-space-md) var(--admin-space-lg);
+  border: 1px solid var(--admin-color-border);
+  border-left: 3px solid var(--admin-color-primary);
+  border-radius: var(--admin-radius-sm);
+  background: var(--admin-color-fill);
+  color: var(--admin-color-text-secondary);
+  line-height: 1.6;
+}
+
+.admin-margin-workflow__footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--admin-space-lg);
+  width: 100%;
+  min-width: 0;
+  padding: var(--admin-space-lg);
+  border: 1px solid var(--admin-color-border);
+  border-radius: var(--admin-radius-md);
+  background: var(--admin-color-fill);
+}
+
+.admin-margin-workflow__validation {
+  min-width: 0;
+  color: var(--admin-color-success);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.admin-margin-workflow__validation[role='alert'] {
+  color: var(--admin-color-danger);
+}
+
 .admin-section-heading {
   display: flex;
   align-items: flex-end;
@@ -2127,6 +2250,32 @@ body.admin-table-column-resizing * {
     grid-template-columns: 1fr;
   }
 
+  .admin-margin-workflow__review-grid,
+  .admin-margin-workflow__footer {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-margin-workflow__panel {
+    min-height: 0;
+    padding: var(--admin-space-lg);
+  }
+
+  .admin-margin-workflow__footer {
+    align-items: stretch;
+  }
+
+  .admin-margin-workflow__footer > .semi-space {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .admin-margin-workflow__footer > .semi-space > .semi-button {
+    width: 100%;
+    min-width: 0;
+    white-space: normal;
+  }
+
   .admin-market-strategy-node-editor-heading,
   .admin-market-recovery-toolbar,
   .admin-market-strategy-section__heading,
@@ -2190,6 +2339,12 @@ body.admin-table-column-resizing * {
 
   .admin-news-create-status-field {
     grid-column: auto;
+  }
+}
+
+@media (max-width: 480px) {
+  .admin-margin-workflow__footer > .semi-space {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

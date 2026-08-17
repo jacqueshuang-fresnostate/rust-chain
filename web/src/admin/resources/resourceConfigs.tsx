@@ -1268,6 +1268,7 @@ export const resourceConfigs = {
       { key: 'symbol', title: '交易对' },
       { key: 'logo_url', title: 'Logo', render: (record) => <AdminImageCell alt="杠杆交易对 Logo" value={record.logo_url} /> },
       { key: 'margin_asset_symbol', title: '保证金资产' },
+      { key: 'margin_mode', title: '默认保证金模式', valueMap: marginModeLabels },
       { key: 'margin_modes', title: '支持保证金模式', valueMap: marginModeLabels, render: (record) => <MarginModeList modes={record.margin_modes ?? record.margin_mode} /> },
       { key: 'leverage_levels', title: '杠杆档位', render: (record) => <MarginLeverageLevels levels={record.leverage_levels} /> },
       { key: 'max_leverage', title: '最大杠杆', type: 'amount' },

@@ -161,6 +161,106 @@ const scroll = containedTableScrollForColumns(
   exposing the active panel semantically.
 - Repeated row controls need record-specific accessible names.
 
+## Margin Product Configuration Workflow
+
+### 1. Scope / Trigger
+
+- Applies to create and edit SideSheets for the `marginProducts` resource.
+- The workflow follows the operational order `basic -> leverage -> risk -> review`.
+  Create and edit reuse one state model and one field component so a product
+  cannot be validated or serialized differently between the two actions.
+
+### 2. Signatures
+
+- `支持保证金模式` is an `AdminMultiSelect` over `isolated` (`逐仓`) and
+  `cross` (`全仓`).
+- `默认保证金模式` is an `AdminSelect` whose options are restricted to the
+  currently supported modes.
+- Create and update requests send both `margin_mode` and `margin_modes`.
+  `margin_mode` is the visible default, and the same value must be the first
+  item in the ordered `margin_modes` array.
+- The resource table displays separate `默认保证金模式` and
+  `支持保证金模式` columns; neither column may substitute for the other.
+
+### 3. Contracts
+
+- Removing the selected default mode immediately falls back to the first
+  remaining supported mode. Removing every mode clears the default and blocks
+  publication.
+- Edit hydration preserves both implemented modes from `margin_modes` and
+  reads the default from `margin_mode`. A legacy row without `margin_modes`
+  falls back to its `margin_mode`, then to `isolated` only when both fields are
+  absent.
+- The leverage step combines preset and comma-separated custom levels,
+  normalizes equivalent numeric values, removes duplicates, sorts ascending,
+  and derives `max_leverage` from the last level.
+- The review step summarizes the selected pair and asset labels, supported and
+  default modes, leverage levels, risk values, and initial/updated status. It
+  states that active publication opens new positions immediately and product
+  changes do not rewrite existing positions.
+- Tabs remain directly navigable for review, but only one matching
+  `role="tabpanel"` is visible. Every panel uses Semi's `semiTab*` /
+  `semiTabPanel*` ID relationship. Direct navigation never bypasses final
+  validation; the review submit action remains disabled until all prior steps
+  pass.
+
+### 4. Validation & Error Matrix
+
+- Missing pair or margin asset -> block next/review submit with a Chinese
+  inline workflow error.
+- Empty supported modes, or a default outside the supported set -> block.
+- Empty leverage set, an empty custom CSV item, a non-decimal level, or a
+  level less than or equal to one -> block; never silently discard it.
+- `min_margin` missing, non-decimal, or non-positive -> block.
+- Non-empty `max_margin` missing decimal syntax, non-positive, or less than
+  `min_margin` -> block; an empty value means no upper limit.
+- `maintenance_margin_rate` must be a non-negative decimal.
+- A non-empty `hourly_interest_rate` must be a non-negative decimal; empty
+  means the backend default.
+
+### 5. Good / Base / Bad Cases
+
+- Good: a product supports `[isolated, cross]`, defaults to `cross`, and sends
+  `margin_mode: "cross"` plus `margin_modes: ["cross", "isolated"]`.
+- Base: a legacy isolated-only product hydrates as supported/default isolated
+  and round-trips without introducing cross.
+- Bad: filtering edit hydration to isolated or hard-coding
+  `margin_modes: ["isolated"]`; editing a cross-capable row would silently
+  remove a live business capability.
+
+### 6. Tests Required
+
+- Create coverage selects both modes, changes the default, exercises previous
+  and next navigation, reaches the review summary, and asserts the exact
+  default-first request body.
+- Edit coverage starts with default cross and both supported modes, then
+  asserts the same ordered values survive the update request.
+- Validation coverage removes the current/default modes, enters invalid custom
+  leverage CSV values, inverted margin bounds, and invalid rates; assert the
+  Chinese error and disabled navigation/submit state.
+- Accessibility coverage asserts one visible tabpanel and matching
+  `aria-controls` / `aria-labelledby` IDs. Responsive browser QA asserts no
+  document overflow and usable footer controls at desktop and narrow widths.
+
+### 7. Wrong vs Correct
+
+```tsx
+// Wrong: hides backend capability and silently downgrades an edited product.
+<AdminTextInput readOnly value="逐仓" />
+const body = { margin_modes: ['isolated'] };
+
+// Correct: default mode is explicit and owns the first ordered array slot.
+<AdminMultiSelect value={values.marginModes} optionList={marginModeOptions} />
+<AdminSelect value={values.defaultMarginMode} optionList={supportedOptions} />
+const body = {
+  margin_mode: values.defaultMarginMode,
+  margin_modes: [
+    values.defaultMarginMode,
+    ...values.marginModes.filter((mode) => mode !== values.defaultMarginMode)
+  ]
+};
+```
+
 ## Market Strategy Settings, Versions, Nodes, and Recovery
 
 - Create and edit reuse one market-strategy form and one ordered node editor.
@@ -169,6 +269,14 @@ const scroll = containedTableScrollForColumns(
   `datetime-local` inputs, convert to Unix milliseconds at the API boundary,
   and preserve array order. Add/delete buttons and every repeated field need a
   record-specific Chinese accessible name such as `节点1目标时间` or `删除节点1`.
+- The create form loads active trading pairs from the shared admin pair option
+  source and renders `交易对ID` as a searchable select whose labels include
+  symbol and ID. Only `internal` and `strategy` market types are eligible for a
+  synthetic strategy. Render `策略类型` as a select backed by implemented
+  strategy types; the current implementation exposes `price_path` as
+  `价格路径（OHLCV）`. Do not restore free-text inputs that can submit an
+  unsupported pair or inert strategy type. Existing edit records with a legacy
+  type may retain that value as an explicitly labelled historical option.
 - `/admin/market/strategies` is the single settings entry. It owns list,
   create/edit, presets, OHLCV preview, version history/rollback, node editing,
   status actions, and manual recovery. Do not restore a duplicate navigation
