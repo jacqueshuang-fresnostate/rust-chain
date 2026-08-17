@@ -101,6 +101,19 @@ marginHoldingRows: ComputedRef<AssetHoldingRow[]>
 selectAssetAccountScope(scope: AssetAccountScope): void
 ```
 
+Turnstile SPA lifecycle signatures in `src/core/turnstile.ts`:
+
+```ts
+type TurnstileWidgetId = string | number
+loadTurnstileApi(): Promise<TurnstileApi>
+createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
+  render(request: TurnstileRenderRequest): Promise<TurnstileWidgetId | null>
+  reset(): boolean
+  remove(): void
+  getWidgetId(): TurnstileWidgetId | null
+}
+```
+
 ## 3. Contracts
 
 ### Build and environment
@@ -290,6 +303,24 @@ selectAssetAccountScope(scope: AssetAccountScope): void
   A lightweight loader may occupy the centered stage before `render` returns;
   later states use Cloudflare's native surface plus an `aria-live` message. A
   successful `reset` retains its widget ID, including numeric ID `0`.
+- Turnstile API loading is module-scoped and reuses the exact explicit-render
+  script URL. A dynamically created classic script must set `async = false`
+  and `defer = false` before insertion, then wait for `turnstile.ready()` before
+  rendering. If a host page already supplied an async/defer script and the API
+  is available, reuse the API directly instead of calling `ready()` through an
+  unsupported loading pattern. A failed loader clears its cached Promise and
+  removes the failed script so a later login attempt can retry.
+- Every explicit render owns a monotonically increasing generation. Validate
+  the generation, `container.isConnected`, and the caller's current-container
+  predicate after resolving the container, after loading the API, and after
+  `render()` returns. `remove()` invalidates the generation before removing the
+  current widget; every token, expiry, error, timeout, and interactive callback
+  must carry the same current-generation guard.
+- Unmounting, disabling Turnstile, entering the two-factor route, or rebuilding
+  for theme/language changes removes the old widget before another render. The
+  script remains singleton and reusable. Mobile widget language values use
+  Cloudflare-supported casing: `en` or `zh-cn`; application locale IDs remain
+  unchanged.
 - Shared selected-page light/dark tokens and every selector rooted at
   `html[data-theme='dark']` belong in global `pencil-selected-pages.css`. Do not
   place `:global(html[data-theme='dark']) .local-class` in a scoped SFC: this
@@ -398,6 +429,11 @@ selectAssetAccountScope(scope: AssetAccountScope): void
 | Turnstile renders at 320px | Keep a centered 302px stage and 300px challenge viewport within the device width; no decorative wrapper or horizontal scroll |
 | Turnstile theme or locale changes | Remove and explicitly re-render the widget with the new app theme/language, clearing the previous token |
 | Turnstile reset returns successfully | Keep the existing widget ID and expose the ready state; hard remove only when reset fails |
+| Turnstile script is dynamically inserted | Set `async=false` and `defer=false`, wait for API readiness, and keep exactly one explicit-render script |
+| An existing async/defer Turnstile script already exposed the API | Reuse that API directly; do not invoke the incompatible `ready()` loading pattern |
+| A render resolves after its container was replaced or disconnected | Return `null`, remove any synchronously created stale widget, and ignore every stale callback |
+| Login leaves for two-factor or unmounts | Invalidate the generation, remove the widget, and clear the token before navigation or teardown |
+| Browser logs one origin mismatch while a successful challenge iframe initializes | Treat it as provider-internal iframe navigation; do not intercept `postMessage`; investigate only repeated/persistent warnings, missing token, or Cloudflare error codes |
 | A selected-page dark rule needs `html[data-theme='dark']` | Define it in global `pencil-selected-pages.css`; do not rely on scoped `:global(...)` output |
 | Wallet/deposit page changes theme | Resolve the root canvas to `#ffffff`/`#000000` from the global layer |
 | Contract, Seconds, Product Hub, or Prediction changes theme | Resolve the root canvas to `#ffffff`/`#000000` with no background image |
@@ -463,6 +499,14 @@ selectAssetAccountScope(scope: AssetAccountScope): void
   followed by body y=60 and first row y=68 without min-height stretching.
 - Bad: dark canvas rules live in scoped `:global(...)`, Spot is included in the
   allowlist, or the legacy Product Hub grid remains the computed winner.
+- Good: a slow Turnstile load finishes after Login unmounts; no widget renders,
+  no token callback mutates state, and returning to Login reuses one script.
+- Base: Cloudflare emits one transient target-origin warning while its iframe
+  changes from the application origin to the challenge origin, but the current
+  widget still returns a valid token and no warning accumulates across routes.
+- Bad: each mount appends another API script, an old callback restores a stale
+  token, or application code patches `window.postMessage`/`console` to hide a
+  persistent lifecycle defect.
 
 ## 6. Tests Required
 
@@ -558,6 +602,14 @@ selectAssetAccountScope(scope: AssetAccountScope): void
   `loan-access-pencil` summary/icon selectors or retired readiness locale keys;
   the guest-only login CTA remains at least 48px and retains `openLogin()` with
   the `/products/loan` redirect.
+- Turnstile lifecycle: assert one module-level loader Promise, one exact script,
+  retry after load failure, ready-before-render for the owned synchronous
+  script, direct API reuse for a pre-existing async/defer script, generation
+  cancellation before and after each await, detached-container cancellation,
+  synchronous stale-render removal, stale callback rejection, widget ID `0`,
+  successful reset retention, unmount/two-factor cleanup, and supported
+  `zh-cn` language casing. Browser QA must navigate away and back, switch both
+  themes/locales, and confirm at most one API script and one current iframe.
 - Canvas theme behavior: switch both the stage class and root `data-theme`,
   assert the renderer receives the new background/text/grid/series colors,
   and assert no theme callback runs after component unmount.
@@ -589,6 +641,26 @@ messages.value.push({ title: 'Your withdrawal succeeded' })
 VitePWA({ runtimeCaching: [], strategies: 'generateSW' })
 if (__PWA_ENABLED__ && !isTauriRuntime()) void initializePwa()
 messages.value = await fetchNews(40)
+```
+
+For a Turnstile SPA lifecycle:
+
+```ts
+// Wrong: component-local script injection and an unguarded post-await render.
+script.async = true
+await scriptLoaded
+window.turnstile?.render(container, callbacks)
+
+// Correct: one module loader plus generation- and container-owned rendering.
+const lifecycle = createTurnstileLifecycle()
+await lifecycle.render({
+  resolveContainer: () => currentContainer,
+  isContainerCurrent: (node) => mounted && currentContainer === node,
+  options: { sitekey, language: locale === 'en' ? 'en' : 'zh-cn' },
+  callbacks,
+})
+// Before route teardown, two-factor transition, or replacement:
+lifecycle.remove()
 ```
 
 For the spot shell boundary and field focus:

@@ -5,6 +5,7 @@ import en from '../src/i18n/messages/en.ts'
 import zhCN from '../src/i18n/messages/zh-CN.ts'
 
 const source = readFileSync(new URL('../src/views/LoginView.vue', import.meta.url), 'utf8')
+const lifecycleSource = readFileSync(new URL('../src/core/turnstile.ts', import.meta.url), 'utf8')
 
 function functionSource(name: string, nextName: string): string {
   const start = source.indexOf(`function ${name}`)
@@ -15,28 +16,40 @@ function functionSource(name: string, nextName: string): string {
 }
 
 test('Turnstile uses explicit responsive rendering with the current app theme and language', () => {
-  assert.match(source, /api\.js\?render=explicit/)
+  assert.match(lifecycleSource, /api\.js\?render=explicit/)
+  assert.match(lifecycleSource, /api\.ready\(\(\) => resolve\(api\)\)/)
   assert.match(source, /size: 'flexible'/)
-  assert.match(source, /theme: turnstileTheme\.value/)
+  assert.match(source, /theme: widgetTheme/)
   assert.match(source, /appearance: 'always'/)
-  assert.match(source, /language: turnstileLanguage\.value/)
-  assert.match(source, /'before-interactive-callback': \(\) => \{[\s\S]*turnstileStatus\.value = 'ready'/)
+  assert.match(source, /language: widgetLanguage/)
+  assert.match(source, /beforeInteractive: \(\) => \{[\s\S]*turnstileStatus\.value = 'ready'/)
+  assert.match(lifecycleSource, /'before-interactive-callback': runIfCurrent/)
   assert.match(source, /theme\.theme === 'dark' \? 'dark' : 'light'/)
-  assert.match(source, /locale\.value === 'en' \? 'en' : 'zh-CN'/)
+  assert.match(source, /locale\.value === 'en' \? 'en' : 'zh-cn'/)
   assert.match(source, /watch\(\[turnstileTheme, turnstileLanguage\]/)
 })
 
 test('Turnstile lifecycle accepts widget id zero and keeps an existing widget after reset', () => {
   const resetSource = functionSource('resetCfTurnstileWidget', 'removeTurnstileWidget')
-  const removeSource = functionSource('removeTurnstileWidget', 'loadTurnstileScript')
-  const successfulReset = resetSource.slice(resetSource.indexOf('try {'), resetSource.indexOf('} catch'))
+  const removeSource = functionSource('removeTurnstileWidget', 'initializeTurnstile')
 
-  assert.match(resetSource, /widgetId === null \|\| !turnstile/)
-  assert.match(removeSource, /widgetId !== null && turnstile/)
+  assert.match(resetSource, /if \(!turnstileLifecycle\.reset\(\)\)/)
+  assert.match(resetSource, /turnstileStatus\.value = 'ready'[\s\S]*return true/)
+  assert.match(removeSource, /turnstileLifecycle\.remove\(\)/)
+  assert.match(lifecycleSource, /currentWidgetId !== null && currentApi/)
+  assert.match(lifecycleSource, /currentApi\.reset\(currentWidgetId\)[\s\S]*return true/)
   assert.doesNotMatch(resetSource, /!turnstileWidgetId\.value/)
-  assert.doesNotMatch(removeSource, /!turnstileWidgetId\.value/)
-  assert.match(successfulReset, /turnstile\.reset\(widgetId\)[\s\S]*turnstileStatus\.value = 'ready'[\s\S]*return/)
-  assert.doesNotMatch(successfulReset, /turnstileWidgetId\.value = null/)
+})
+
+test('Turnstile loader and lifecycle are module scoped and generation guarded', () => {
+  assert.match(source, /createTurnstileLifecycle\(/)
+  assert.doesNotMatch(source, /turnstileScriptPromise/)
+  assert.match(lifecycleSource, /let turnstileLoadPromise: Promise<TurnstileApi> \| null = null/)
+  assert.match(lifecycleSource, /document\.querySelector<HTMLScriptElement>\(TURNSTILE_SCRIPT_SELECTOR\)/)
+  assert.match(lifecycleSource, /turnstileLoadPromise = null/)
+  assert.match(lifecycleSource, /generation \+= 1[\s\S]*removeRenderedWidget\(\)/)
+  assert.match(lifecycleSource, /container\.isConnected && isContainerCurrent\(container\)/)
+  assert.match(lifecycleSource, /if \(!isCurrent\(renderGeneration, currentContainer/)
 })
 
 test('Turnstile presents truthful accessible loading, ready, verified, expired, and error states', () => {

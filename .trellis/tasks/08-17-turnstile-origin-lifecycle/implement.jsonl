@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Mobile Vue/Vite quality gates and production client conventions."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Mobile SPA lifecycle, PWA, theme, and route cleanup constraints."}
+{"file":".trellis/spec/admin/index.md","reason":"Admin React quality gate and UI package conventions."}
+{"file":".trellis/tasks/08-17-turnstile-origin-lifecycle/research/turnstile-lifecycle.md","reason":"Live reproduction, official Cloudflare lifecycle contract, and selected implementation approach."}

@@ -8,22 +8,11 @@ import { apiErrorMessage } from '@/api/client'
 import { useSessionStore } from '@/stores/session'
 import { useThemeStore } from '@/stores/theme'
 import { replaceAuthStep, sanitizeInternalRedirect } from '@/core/navigation'
+import { createTurnstileLifecycle } from '@/core/turnstile'
 import logo from '@/assets/logo.png'
 
 type LoginMode = 'email' | 'username'
 type TurnstileStatus = 'idle' | 'loading' | 'ready' | 'verified' | 'expired' | 'error'
-
-type TurnstileWindow = {
-  turnstile?: {
-    render: (element: string | HTMLElement, options: Record<string, unknown>) => string | number
-    reset: (widgetId: string | number) => void
-    remove: (widgetId: string | number) => void
-  }
-}
-
-declare global {
-  interface Window extends TurnstileWindow {}
-}
 
 const route = useRoute()
 const router = useRouter()
@@ -52,11 +41,18 @@ const turnstileContainer = ref<HTMLDivElement | null>(null)
 const turnstileWidgetId = ref<string | number | null>(null)
 const turnstileStatus = ref<TurnstileStatus>('idle')
 const safeRedirect = computed(() => sanitizeInternalRedirect(route.query.redirect))
-let turnstileScriptPromise: Promise<void> | null = null
+let turnstileLifecycleActive = false
+const turnstileLifecycle = createTurnstileLifecycle({
+  onWidgetIdChange: (widgetId) => {
+    if (turnstileLifecycleActive) {
+      turnstileWidgetId.value = widgetId
+    }
+  },
+})
 
 const turnstileEnabledText = computed(() => t('auth.turnstileRequired'))
 const turnstileTheme = computed(() => theme.theme === 'dark' ? 'dark' : 'light')
-const turnstileLanguage = computed(() => locale.value === 'en' ? 'en' : 'zh-CN')
+const turnstileLanguage = computed(() => locale.value === 'en' ? 'en' : 'zh-cn')
 const turnstileStatusKey = computed(() => ({
   idle: 'auth.turnstileLoading',
   loading: 'auth.turnstileLoading',
@@ -103,10 +99,12 @@ async function submit(): Promise<void> {
   try {
     const result = await loginWithPassword(account.value, password.value, cfTurnstileToken.value || undefined)
     if (result.type === 'two-factor') {
+      removeTurnstileWidget()
       await replaceAuthStep(router, { name: 'login-two-factor', query: { challenge: result.challengeId, redirect: safeRedirect.value } })
       return
     }
     if (result.type === 'two-factor-setup') {
+      removeTurnstileWidget()
       await replaceAuthStep(router, { name: 'login-two-factor', query: { setup: result.setupChallengeId, redirect: safeRedirect.value } })
       return
     }
@@ -125,86 +123,31 @@ async function submit(): Promise<void> {
     error.value = apiErrorMessage(reason, t('auth.loginFailed'))
   } finally {
     submitting.value = false
-    if (turnstileEnabled.value) {
-      resetCfTurnstileWidget()
-      if (turnstileWidgetId.value === null) {
+    if (turnstileLifecycleActive && turnstileEnabled.value) {
+      if (!resetCfTurnstileWidget()) {
         void initializeTurnstile()
       }
     }
   }
 }
 
-function getTurnstileWidgetWindow(): TurnstileWindow['turnstile'] | undefined {
-  return typeof window === 'undefined' ? undefined : window.turnstile
-}
-
-function resetCfTurnstileWidget(): void {
-  const turnstile = getTurnstileWidgetWindow()
-  const widgetId = turnstileWidgetId.value
+function resetCfTurnstileWidget(): boolean {
   cfTurnstileToken.value = ''
 
-  if (widgetId === null || !turnstile) {
-    turnstileWidgetId.value = null
+  if (!turnstileLifecycle.reset()) {
     turnstileStatus.value = turnstileEnabled.value ? 'loading' : 'idle'
-    return
+    return false
   }
 
-  try {
-    turnstile.reset(widgetId)
-    turnstileStatus.value = 'ready'
-    return
-  } catch {
-    // fallback: if reset is unavailable under some browsers, attempt hard remove + re-render later.
-    try {
-      turnstile.remove(widgetId)
-    } catch {
-      // ignore
-    }
-  }
-  turnstileWidgetId.value = null
-  turnstileStatus.value = 'idle'
+  turnstileStatus.value = 'ready'
+  return true
 }
 
 function removeTurnstileWidget(): void {
-  const turnstile = getTurnstileWidgetWindow()
-  const widgetId = turnstileWidgetId.value
-  if (widgetId !== null && turnstile) {
-    try {
-      turnstile.remove(widgetId)
-    } catch {
-      // ignore
-    }
-  }
+  turnstileLifecycle.remove()
   turnstileWidgetId.value = null
   cfTurnstileToken.value = ''
   turnstileStatus.value = 'idle'
-}
-
-async function loadTurnstileScript(): Promise<void> {
-  if (turnstileScriptPromise) {
-    return turnstileScriptPromise
-  }
-
-  if (typeof window === 'undefined' || getTurnstileWidgetWindow()) {
-    return Promise.resolve()
-  }
-
-  turnstileScriptPromise = new Promise((resolve, reject) => {
-    const script = document.createElement('script')
-    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
-    script.async = true
-    script.defer = true
-    script.onload = () => {
-      resolve()
-    }
-    script.onerror = () => {
-      turnstileScriptPromise = null
-      reject(new Error('Failed to load Cloudflare Turnstile script'))
-    }
-    document.head.appendChild(script)
-  })
-
-  await turnstileScriptPromise
 }
 
 async function initializeTurnstile(): Promise<void> {
@@ -213,55 +156,58 @@ async function initializeTurnstile(): Promise<void> {
     return
   }
 
-  await nextTick()
-  if (!turnstileContainer.value) {
-    return
-  }
+  const siteKey = turnstileSiteKey.value
+  const widgetTheme = turnstileTheme.value
+  const widgetLanguage = turnstileLanguage.value
+  cfTurnstileToken.value = ''
+  turnstileStatus.value = 'loading'
 
-  try {
-    turnstileStatus.value = 'loading'
-    await loadTurnstileScript()
-    const turnstile = getTurnstileWidgetWindow()
-    if (!turnstile || !turnstileContainer.value) {
-      turnstileStatus.value = 'error'
-      return
-    }
-    removeTurnstileWidget()
-    turnstileStatus.value = 'loading'
-    turnstileWidgetId.value = turnstile.render(turnstileContainer.value, {
-      sitekey: turnstileSiteKey.value,
+  await turnstileLifecycle.render({
+    resolveContainer: async () => {
+      await nextTick()
+      return turnstileContainer.value
+    },
+    isContainerCurrent: (container) => turnstileLifecycleActive && turnstileContainer.value === container,
+    options: {
+      sitekey: siteKey,
       size: 'flexible',
-      theme: turnstileTheme.value,
+      theme: widgetTheme,
       appearance: 'always',
-      language: turnstileLanguage.value,
-      'before-interactive-callback': () => {
+      language: widgetLanguage,
+    },
+    callbacks: {
+      beforeInteractive: () => {
         turnstileStatus.value = 'ready'
       },
       callback: (token: string) => {
         cfTurnstileToken.value = token || ''
         turnstileStatus.value = token ? 'verified' : 'ready'
       },
-      'expired-callback': () => {
+      expired: () => {
         cfTurnstileToken.value = ''
         turnstileStatus.value = 'expired'
       },
-      'error-callback': () => {
+      error: () => {
         cfTurnstileToken.value = ''
         turnstileStatus.value = 'error'
       },
-      'timeout-callback': () => {
+      timeout: () => {
         cfTurnstileToken.value = ''
         turnstileStatus.value = 'expired'
       },
-    })
-  } catch {
-    turnstileStatus.value = 'error'
-    error.value = t('auth.turnstileLoadFailed')
-  }
+    },
+    onError: () => {
+      turnstileStatus.value = 'error'
+      error.value = t('auth.turnstileLoadFailed')
+    },
+  })
 }
 
 async function refreshLoginConfig(): Promise<void> {
   const loginConfig = await fetchLoginConfig()
+  if (!turnstileLifecycleActive) {
+    return
+  }
   usernameLoginEnabled.value = loginConfig.usernameLoginEnabled
   if (loginConfig.cfTurnstileSiteKey) {
     turnstileSiteKey.value = loginConfig.cfTurnstileSiteKey
@@ -277,9 +223,13 @@ async function refreshLoginConfig(): Promise<void> {
 }
 
 onMounted(async () => {
+  turnstileLifecycleActive = true
   try {
     await refreshLoginConfig()
   } catch {
+    if (!turnstileLifecycleActive) {
+      return
+    }
     usernameLoginEnabled.value = false
     if (loginMode.value === 'username') selectMode('email')
     if (turnstileEnabled.value) {
@@ -295,6 +245,7 @@ watch([turnstileTheme, turnstileLanguage], () => {
 })
 
 onBeforeUnmount(() => {
+  turnstileLifecycleActive = false
   removeTurnstileWidget()
 })
 </script>

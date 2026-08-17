@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Verify required mobile type-check, tests, and builds."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Review lifecycle cleanup and PWA behavior for regressions."}
+{"file":".trellis/spec/admin/index.md","reason":"Verify required admin typecheck, lint, tests, and build."}
+{"file":".trellis/tasks/08-17-turnstile-origin-lifecycle/research/turnstile-lifecycle.md","reason":"Check implementation against reproduced failure mode and chosen lifecycle safeguards."}

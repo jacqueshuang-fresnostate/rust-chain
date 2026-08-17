@@ -9,6 +9,7 @@ import { adminLogin, adminLoginTwoFactor, getLoginConfig } from '../api/adminAut
 import { agentLogin } from '../api/agentAuth';
 import { authStore } from './authStore';
 import { LoginPage } from './LoginPage';
+import type { TurnstileApi } from './turnstile';
 
 vi.mock('../api/adminAuth', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/adminAuth')>()),
@@ -25,6 +26,17 @@ const adminLoginMock = vi.mocked(adminLogin);
 const adminLoginTwoFactorMock = vi.mocked(adminLoginTwoFactor);
 const agentLoginMock = vi.mocked(agentLogin);
 const getLoginConfigMock = vi.mocked(getLoginConfig);
+const turnstileReadyMock = vi.fn((callback: () => void) => callback());
+const turnstileRenderMock = vi.fn<TurnstileApi['render']>(() => 'widget-1');
+const turnstileResetMock = vi.fn();
+const turnstileRemoveMock = vi.fn();
+const turnstileApi: TurnstileApi = {
+  ready: turnstileReadyMock,
+  render: turnstileRenderMock,
+  reset: turnstileResetMock,
+  remove: turnstileRemoveMock,
+};
+let renderedWidgetOptions: Record<string, unknown>[] = [];
 
 function renderLoginPage() {
   const queryClient = new QueryClient({
@@ -39,7 +51,7 @@ function renderLoginPage() {
     { initialEntries: ['/login'] }
   );
 
-  render(
+  return render(
     <QueryClientProvider client={queryClient}>{<RouterProvider router={router} /> as ReactNode}</QueryClientProvider>
   );
 }
@@ -47,11 +59,22 @@ function renderLoginPage() {
 describe('LoginPage', () => {
   beforeEach(() => {
     localStorage.clear();
-    delete window.turnstile;
+    window.turnstile = turnstileApi;
     document.querySelectorAll('script[src*="challenges.cloudflare.com/turnstile"]').forEach((script) => script.remove());
     adminLoginMock.mockReset();
     adminLoginTwoFactorMock.mockReset();
     agentLoginMock.mockReset();
+    turnstileReadyMock.mockReset();
+    turnstileReadyMock.mockImplementation((callback) => callback());
+    turnstileRenderMock.mockReset();
+    renderedWidgetOptions = [];
+    turnstileRenderMock.mockImplementation((element, options) => {
+      void element;
+      renderedWidgetOptions.push(options);
+      return `widget-${renderedWidgetOptions.length}`;
+    });
+    turnstileResetMock.mockReset();
+    turnstileRemoveMock.mockReset();
     getLoginConfigMock.mockResolvedValue({
       usernameLoginEnabled: true,
       cfTurnstileEnabled: false,
@@ -61,16 +84,6 @@ describe('LoginPage', () => {
 
   it('renders the runtime-configured Turnstile widget and submits its token', async () => {
     const user = userEvent.setup();
-    let widgetOptions: Record<string, unknown> | undefined;
-    const renderWidget = vi.fn((_element: string | HTMLElement, options: Record<string, unknown>) => {
-      widgetOptions = options;
-      return 'widget-1';
-    });
-    window.turnstile = {
-      render: renderWidget,
-      reset: vi.fn(),
-      remove: vi.fn(),
-    };
     getLoginConfigMock.mockResolvedValueOnce({
       usernameLoginEnabled: true,
       cfTurnstileEnabled: true,
@@ -87,15 +100,17 @@ describe('LoginPage', () => {
     renderLoginPage();
 
     await waitFor(() => {
-      expect(renderWidget).toHaveBeenCalledWith(
+      expect(turnstileRenderMock).toHaveBeenCalledWith(
         expect.objectContaining({ className: 'admin-login-turnstile-widget' }),
         expect.objectContaining({ sitekey: 'runtime-site-key' }),
       );
     });
+    expect(turnstileReadyMock).toHaveBeenCalledTimes(1);
+    expect(turnstileReadyMock.mock.invocationCallOrder[0]).toBeLessThan(turnstileRenderMock.mock.invocationCallOrder[0] ?? 0);
     expect(getLoginConfigMock).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      (widgetOptions?.callback as ((token: string) => void) | undefined)?.('turnstile-token');
+      (renderedWidgetOptions[0]?.callback as ((token: string) => void) | undefined)?.('turnstile-token');
     });
     await user.type(screen.getByLabelText('管理员账号'), 'admin');
     await user.type(screen.getByLabelText('密码'), 'password');
@@ -108,6 +123,71 @@ describe('LoginPage', () => {
         cf_turnstile_token: 'turnstile-token',
       });
     });
+  });
+
+  it('keeps the current Turnstile widget when switching between admin and agent scope', async () => {
+    const user = userEvent.setup();
+    getLoginConfigMock.mockResolvedValueOnce({
+      usernameLoginEnabled: true,
+      cfTurnstileEnabled: true,
+      cfTurnstileSiteKey: 'runtime-site-key',
+    });
+
+    renderLoginPage();
+    await waitFor(() => expect(turnstileRenderMock).toHaveBeenCalledTimes(1));
+
+    await user.click(screen.getByLabelText('代理'));
+    expect(await screen.findByLabelText('代理账号')).toBeInTheDocument();
+    expect(turnstileRenderMock).toHaveBeenCalledTimes(1);
+    expect(turnstileRemoveMock).not.toHaveBeenCalled();
+  });
+
+  it('removes the password widget before two-factor mode and ignores its stale callback', async () => {
+    const user = userEvent.setup();
+    getLoginConfigMock.mockResolvedValueOnce({
+      usernameLoginEnabled: true,
+      cfTurnstileEnabled: true,
+      cfTurnstileSiteKey: 'runtime-site-key',
+    });
+    adminLoginMock.mockResolvedValueOnce({
+      requires_2fa: true,
+      challenge_id: 'challenge-stale',
+      expires_in_seconds: 300,
+    });
+
+    renderLoginPage();
+    await waitFor(() => expect(turnstileRenderMock).toHaveBeenCalledTimes(1));
+    const staleCallback = renderedWidgetOptions[0]?.callback as (token: string) => void;
+    await act(async () => staleCallback('first-token'));
+    await user.type(screen.getByLabelText('管理员账号'), 'admin');
+    await user.type(screen.getByLabelText('密码'), 'password');
+    await user.click(screen.getByRole('button', { name: '登录' }));
+
+    expect(await screen.findByLabelText('两步验证码')).toBeInTheDocument();
+    expect(turnstileRemoveMock).toHaveBeenCalledWith('widget-1');
+    await user.click(screen.getByRole('button', { name: '返回重新登录' }));
+    await waitFor(() => expect(turnstileRenderMock).toHaveBeenCalledTimes(2));
+
+    await act(async () => staleCallback('stale-token'));
+    await user.type(screen.getByLabelText('管理员账号'), 'admin');
+    await user.type(screen.getByLabelText('密码'), 'password');
+    await user.click(screen.getByRole('button', { name: '登录' }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(adminLoginMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes the active widget when the login page unmounts', async () => {
+    getLoginConfigMock.mockResolvedValueOnce({
+      usernameLoginEnabled: true,
+      cfTurnstileEnabled: true,
+      cfTurnstileSiteKey: 'runtime-site-key',
+    });
+
+    const view = renderLoginPage();
+    await waitFor(() => expect(turnstileRenderMock).toHaveBeenCalledTimes(1));
+    view.unmount();
+
+    expect(turnstileRemoveMock).toHaveBeenCalledWith('widget-1');
   });
 
   it('logs in as admin and stores the admin session', async () => {

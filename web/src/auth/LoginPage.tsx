@@ -15,22 +15,9 @@ import { ApiError } from '../api/client';
 import type { AdminLoginResponse } from '../api/types';
 import hippoLogoLandscape from '../assets/brand/hippo-logo-landscape.png';
 import { authStore, type AuthScope } from './authStore';
+import { createTurnstileLifecycle, type TurnstileLifecycle } from './turnstile';
 
 const { Title, Text } = Typography;
-
-type TurnstileWindow = {
-  turnstile?: {
-    render: (element: string | HTMLElement, options: Record<string, unknown>) => string | number;
-    reset: (widgetId: string | number) => void;
-    remove: (widgetId: string | number) => void;
-  };
-};
-
-declare global {
-  interface Window {
-    turnstile?: TurnstileWindow['turnstile'];
-  }
-}
 
 type LoginFormValues = {
   username?: string;
@@ -62,132 +49,80 @@ export function LoginPage() {
   const [cfTurnstileToken, setCfTurnstileToken] = useState('');
   const [turnstileSiteKey, setTurnstileSiteKey] = useState(String(import.meta.env.VITE_CF_TURNSTILE_SITE_KEY ?? '').trim());
   const [turnstileRequired, setTurnstileRequired] = useState<boolean | null>(null);
+  const [turnstileRefreshRevision, setTurnstileRefreshRevision] = useState(0);
   const turnstileEnabled = Boolean(turnstileSiteKey) && turnstileRequired === true;
   const turnstileContainerRef = useRef<HTMLDivElement | null>(null);
-  const turnstileWidgetIdRef = useRef<string | number | null>(null);
-  const turnstileScriptPromiseRef = useRef<Promise<void> | null>(null);
-
-  const getTurnstile = (): TurnstileWindow['turnstile'] | undefined => {
-    return typeof window === 'undefined' ? undefined : window.turnstile;
-  };
+  const turnstileMountedRef = useRef(false);
+  const turnstileLifecycleRef = useRef<TurnstileLifecycle | null>(null);
+  if (!turnstileLifecycleRef.current) {
+    turnstileLifecycleRef.current = createTurnstileLifecycle();
+  }
+  const turnstileLifecycle = turnstileLifecycleRef.current;
 
   const removeTurnstileWidget = () => {
-    const turnstile = getTurnstile();
-    const widgetId = turnstileWidgetIdRef.current;
-
-    if (widgetId !== null && turnstile) {
-      try {
-        turnstile.remove(widgetId);
-      } catch {
-        // ignore cleanup errors
-      }
-    }
-
-    turnstileWidgetIdRef.current = null;
-    setCfTurnstileToken('');
-  };
-
-  const resetTurnstileWidget = () => {
-    const turnstile = getTurnstile();
-    const widgetId = turnstileWidgetIdRef.current;
-    if (widgetId === null || !turnstile) {
+    turnstileLifecycle.remove();
+    if (turnstileMountedRef.current) {
       setCfTurnstileToken('');
+    }
+  };
+
+  const initializeTurnstile = async (siteKey: string) => {
+    const normalizedSiteKey = String(siteKey).trim();
+    if (!normalizedSiteKey || !turnstileMountedRef.current) {
       return;
     }
 
-    try {
-      turnstile.reset(widgetId);
-      setCfTurnstileToken('');
-      return;
-    } catch {
-      try {
-        turnstile.remove(widgetId);
-      } catch {
-        // ignore
-      }
-    }
-
-    turnstileWidgetIdRef.current = null;
     setCfTurnstileToken('');
-  };
-
-  const loadTurnstileScript = async () => {
-    if (turnstileScriptPromiseRef.current) {
-      return turnstileScriptPromiseRef.current;
-    }
-
-    if (typeof window === 'undefined' || getTurnstile()) {
-      return Promise.resolve();
-    }
-
-    turnstileScriptPromiseRef.current = new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-      script.async = true;
-      script.defer = true;
-      script.onload = () => {
-        resolve();
-      };
-      script.onerror = () => {
-        turnstileScriptPromiseRef.current = null;
-        reject(new Error('Failed to load Cloudflare Turnstile script'));
-      };
-      document.head.appendChild(script);
-    });
-
-    await turnstileScriptPromiseRef.current;
-  };
-
-  const initializeTurnstile = async (override?: { siteKey?: string; required?: boolean }) => {
-    const siteKey = String(override?.siteKey ?? turnstileSiteKey).trim();
-    const required = override?.required ?? turnstileRequired;
-    const enabled = Boolean(siteKey) && (required ?? true);
-
-    if (!enabled || !turnstileContainerRef.current) {
-      return;
-    }
-
-    try {
-      await loadTurnstileScript();
-      const turnstile = getTurnstile();
-      if (!turnstile || !turnstileContainerRef.current) {
-        return;
-      }
-
-      removeTurnstileWidget();
-      turnstileWidgetIdRef.current = turnstile.render(turnstileContainerRef.current, {
-        sitekey: siteKey,
+    await turnstileLifecycle.render({
+      resolveContainer: () => turnstileContainerRef.current,
+      isContainerCurrent: (container) => turnstileMountedRef.current && turnstileContainerRef.current === container,
+      options: {
+        sitekey: normalizedSiteKey,
+      },
+      callbacks: {
         callback: (token: string) => {
           setCfTurnstileToken(token || '');
         },
-        'expired-callback': () => {
+        expired: () => {
           setCfTurnstileToken('');
         },
-        'error-callback': () => {
+        error: () => {
           setCfTurnstileToken('');
         },
-        'timeout-callback': () => {
+        timeout: () => {
           setCfTurnstileToken('');
         },
-      });
-    } catch {
-      Toast.error('Cloudflare 人机校验加载失败，请稍后重试。');
-      setCfTurnstileToken('');
+      },
+      onError: () => {
+        Toast.error('Cloudflare 人机校验加载失败，请稍后重试。');
+        setCfTurnstileToken('');
+      },
+    });
+  };
+
+  const resetTurnstileWidget = () => {
+    if (!turnstileMountedRef.current) {
+      turnstileLifecycle.remove();
+      return;
+    }
+    setCfTurnstileToken('');
+    if (!turnstileLifecycle.reset() && turnstileEnabled && !challengeId) {
+      void initializeTurnstile(turnstileSiteKey);
     }
   };
 
   const refreshTurnstileConfig = async () => {
     try {
       const config = await getLoginConfig();
+      if (!turnstileMountedRef.current) return;
       setTurnstileRequired(config.cfTurnstileEnabled);
       const nextSiteKey = String(config.cfTurnstileSiteKey || '').trim() || String(turnstileSiteKey).trim();
       setTurnstileSiteKey(nextSiteKey);
-
-      if (config.cfTurnstileEnabled && nextSiteKey) {
-        await initializeTurnstile({ siteKey: nextSiteKey, required: true });
-      }
+      setTurnstileRefreshRevision((revision) => revision + 1);
     } catch {
-      Toast.error('Cloudflare 人机校验配置加载失败，请稍后重试。');
+      if (turnstileMountedRef.current) {
+        Toast.error('Cloudflare 人机校验配置加载失败，请稍后重试。');
+      }
     }
   };
 
@@ -230,8 +165,8 @@ export function LoginPage() {
     onSuccess: (response) => {
       // 密码正确但需要二次验证时，后端只返回挑战，不下发任何令牌。
       if (isAdminLoginTwoFactorChallenge(response)) {
+        removeTurnstileWidget();
         setChallengeId(response.challenge_id);
-        resetTurnstileWidget();
         return;
       }
 
@@ -250,24 +185,24 @@ export function LoginPage() {
   const accountLabel = isAgentLogin ? '代理账号' : '管理员账号';
 
   useEffect(() => {
+    turnstileMountedRef.current = true;
     document.title = '登录 · HIPPO 管理后台';
 
-    let isMounted = true;
     getLoginConfig()
       .then((config) => {
-        if (!isMounted) return;
+        if (!turnstileMountedRef.current) return;
         setTurnstileRequired(config.cfTurnstileEnabled);
         setTurnstileSiteKey((currentKey) => config.cfTurnstileSiteKey || currentKey);
       })
       .catch(() => {
-        if (isMounted) {
+        if (turnstileMountedRef.current) {
           setTurnstileRequired(Boolean(turnstileSiteKey));
         }
       });
 
     return () => {
-      isMounted = false;
-      removeTurnstileWidget();
+      turnstileMountedRef.current = false;
+      turnstileLifecycle.remove();
     };
   }, []);
 
@@ -277,12 +212,12 @@ export function LoginPage() {
       return;
     }
 
-    void initializeTurnstile({ siteKey: turnstileSiteKey, required: turnstileRequired ?? true });
+    void initializeTurnstile(turnstileSiteKey);
 
     return () => {
       removeTurnstileWidget();
     };
-  }, [challengeId, loginScope, turnstileEnabled, turnstileSiteKey, turnstileRequired]);
+  }, [challengeId, turnstileEnabled, turnstileRefreshRevision, turnstileSiteKey]);
 
   return (
     <main className="admin-login-page">
