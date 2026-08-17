@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 41
-- **Last Active**: 2026-08-13
+- **Total Sessions**: 42
+- **Last Active**: 2026-08-18
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1420 | Active |
+| `journal-1.md` | ~1453 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 42 | 2026-08-18 | 修复双端 Turnstile SPA 生命周期 | `d7f5d6f` | `main` |
 | 41 | 2026-08-13 | 手机 K 线统一切换 Lightweight Charts | `ecc1d06` | `main` |
 | 40 | 2026-08-13 | 完成新币确定性模拟行情与手动K线补偿 | `50c50ce` | `main` |
 | 39 | 2026-08-12 | 精简秒合约行情面板 | `d1c43d3` | `main` |

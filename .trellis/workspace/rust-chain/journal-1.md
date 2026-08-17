@@ -1418,3 +1418,36 @@ Enabled the shared /news back action, added Product Hub direct-open fallback, re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 42: 修复双端 Turnstile SPA 生命周期
+
+**Date**: 2026-08-18
+**Task**: 修复双端 Turnstile SPA 生命周期
+**Branch**: `main`
+
+### Summary
+
+复用单例 Turnstile 脚本并以渲染世代、容器连接状态和受保护回调清理后台与手机登录页的失效 widget，完成双端全量测试、构建、浏览器验证与规范同步。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d7f5d6f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
