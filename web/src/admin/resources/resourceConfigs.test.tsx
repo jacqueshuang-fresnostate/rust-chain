@@ -4020,17 +4020,17 @@ describe('resourceConfigs create actions', () => {
       return {};
     });
 
-    const createPage = render(<ResourcePage config={resourceConfigs.marketStrategyActions} />);
+    const createPage = render(<ResourcePage config={resourceConfigs.marketStrategies} />);
 
-    expect(await screen.findByText('行情策略动作')).toBeInTheDocument();
+    expect(await screen.findByText('行情策略')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '创建策略' }));
     const createDialog = await findActionSheet('创建策略');
     expectCreateModalSize(createDialog, 'wide');
     createPage.unmount();
 
-    render(<ResourcePage config={resourceConfigs.marketStrategyActions} />);
+    render(<ResourcePage config={resourceConfigs.marketStrategies} />);
 
-    expect(await screen.findByText('行情策略动作')).toBeInTheDocument();
+    expect(await screen.findByText('行情策略')).toBeInTheDocument();
     const initialMarketStrategyLoadCount = listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/market-strategies').length;
     expect(screen.getByRole('button', { name: '创建策略' })).toBeInTheDocument();
     expect(screen.getByText('BTC-USDT', { selector: 'span' })).toBeInTheDocument();
@@ -4085,6 +4085,16 @@ describe('resourceConfigs create actions', () => {
       volatility: '0.02000000',
       volume_min: '12.000000000000000000',
       volume_max: '24.000000000000000000',
+      generator: {
+        scenario: 'custom_path',
+        seed_mode: 'auto',
+        seed: null,
+        regenerate_seed: false,
+        mean_reversion_strength: '0.55',
+        noise_scale: '1',
+        wick_scale: '0.75',
+        volume_shape: 'uniform'
+      },
       nodes: [
         {
           target_time: new Date('2026-04-01T11:00').getTime(),
@@ -4158,7 +4168,7 @@ describe('resourceConfigs create actions', () => {
       return {};
     });
 
-    render(<ResourcePage config={resourceConfigs.marketStrategyActions} />);
+    render(<ResourcePage config={resourceConfigs.marketStrategies} />);
     expect(await screen.findByText('BTC-USDT')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '检测缺口/补偿K线（策略91）' }));
     const sheet = await findActionSheet('检测缺口与补偿K线');

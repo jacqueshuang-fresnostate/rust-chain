@@ -799,6 +799,252 @@ body {
   gap: 16px;
 }
 
+.admin-market-strategy-section {
+  display: grid;
+  gap: 18px;
+  padding: 20px;
+  border: 1px solid var(--admin-color-border);
+  border-radius: var(--admin-radius-lg);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(250, 247, 241, 0.86)),
+    var(--admin-color-bg);
+  box-shadow: 0 12px 32px rgba(36, 38, 44, 0.05);
+}
+
+.admin-market-generator-section {
+  position: relative;
+  overflow: hidden;
+}
+
+.admin-market-generator-section::before {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: linear-gradient(90deg, var(--admin-color-primary), rgba(255, 137, 67, 0.12) 72%, transparent);
+  content: '';
+}
+
+.admin-market-strategy-section__heading,
+.admin-market-preview-heading,
+.admin-market-version-sheet__intro,
+.admin-market-version-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.admin-market-strategy-section__heading h3,
+.admin-market-preview-heading .semi-typography,
+.admin-market-version-sheet__intro .semi-typography {
+  margin: 0;
+}
+
+.admin-market-strategy-section__heading p {
+  max-width: 720px;
+  margin: 5px 0 0;
+  color: var(--admin-color-text-secondary);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.admin-market-preset-bar {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.65fr) auto minmax(280px, 1.35fr);
+  align-items: end;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(235, 102, 24, 0.18);
+  border-radius: var(--admin-radius-md);
+  background: rgba(255, 244, 235, 0.56);
+}
+
+.admin-market-preset-bar label {
+  display: grid;
+  gap: 6px;
+  color: var(--admin-color-text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.admin-market-preset-description {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding-left: 16px;
+  border-left: 1px solid rgba(235, 102, 24, 0.18);
+  color: var(--admin-color-text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.admin-market-generator-fields {
+  padding-top: 2px;
+}
+
+.admin-market-seed-command {
+  padding: 14px 16px;
+  border: 1px dashed var(--admin-color-border-strong);
+  border-radius: var(--admin-radius-md);
+  background: var(--admin-color-fill);
+  color: var(--admin-color-text-secondary);
+}
+
+.admin-market-preview-sheet,
+.admin-market-version-sheet {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+  padding-bottom: 24px;
+}
+
+.admin-market-preview-state,
+.admin-empty-state {
+  min-height: 128px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--admin-color-border);
+  border-radius: var(--admin-radius-md);
+  background: var(--admin-color-fill);
+  color: var(--admin-color-text-secondary);
+}
+
+.admin-market-preview-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 0.55fr)) minmax(240px, 1.4fr);
+  gap: 12px;
+}
+
+.admin-market-preview-metrics .semi-card-body {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+}
+
+.admin-market-preview-metrics span {
+  color: var(--admin-color-text-secondary);
+  font-size: 12px;
+}
+
+.admin-market-preview-metrics strong {
+  color: var(--admin-color-text);
+  font-size: 22px;
+  letter-spacing: -0.025em;
+}
+
+.admin-market-preview-seed strong {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.admin-market-preview-chart {
+  width: 100%;
+  height: 164px;
+  padding: 18px;
+  border: 1px solid rgba(235, 102, 24, 0.18);
+  border-radius: var(--admin-radius-lg);
+  background:
+    linear-gradient(rgba(240, 229, 217, 0.46) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(240, 229, 217, 0.46) 1px, transparent 1px),
+    linear-gradient(180deg, #fffaf5, #fff);
+  background-size: 100% 25%, 12.5% 100%, 100% 100%;
+  color: var(--admin-color-primary);
+}
+
+.admin-market-preview-grid {
+  min-width: 720px;
+  border: 1px solid var(--admin-color-border);
+  border-radius: var(--admin-radius-md);
+  overflow: hidden;
+}
+
+.admin-market-preview-sheet:has(.admin-market-preview-grid) {
+  overflow-x: auto;
+}
+
+.admin-market-preview-grid__row {
+  display: grid;
+  grid-template-columns: minmax(170px, 1.3fr) repeat(5, minmax(90px, 1fr));
+  min-height: 42px;
+  align-items: center;
+  border-bottom: 1px solid var(--admin-color-border);
+}
+
+.admin-market-preview-grid__row:last-child {
+  border-bottom: 0;
+}
+
+.admin-market-preview-grid__row > * {
+  min-width: 0;
+  padding: 9px 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-market-preview-grid__head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f8f4ee;
+  color: var(--admin-color-text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-market-version-card {
+  width: 100%;
+  border-color: var(--admin-color-border);
+  border-radius: var(--admin-radius-md);
+  background: linear-gradient(145deg, #fff, #fdfaf6);
+}
+
+.admin-market-version-card > .semi-card-body {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+}
+
+.admin-market-version-card__header > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-market-version-card__meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 20px;
+  margin: 0;
+}
+
+.admin-market-version-card__meta > div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.admin-market-version-card__meta dt {
+  color: var(--admin-color-text-secondary);
+}
+
+.admin-market-version-card__meta dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--admin-color-text);
+  font-weight: 650;
+}
+
+.admin-market-version-card__seed {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
 .admin-market-strategy-node-editor {
   padding-top: 18px;
   border-top: 1px solid var(--admin-color-border);
@@ -1882,9 +2128,26 @@ body.admin-table-column-resizing * {
   }
 
   .admin-market-strategy-node-editor-heading,
-  .admin-market-recovery-toolbar {
+  .admin-market-recovery-toolbar,
+  .admin-market-strategy-section__heading,
+  .admin-market-preview-heading,
+  .admin-market-version-sheet__intro,
+  .admin-market-version-card__header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .admin-market-preset-bar,
+  .admin-market-preview-metrics,
+  .admin-market-version-card__meta {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-market-preset-description {
+    padding-top: 12px;
+    padding-left: 0;
+    border-top: 1px solid rgba(235, 102, 24, 0.18);
+    border-left: 0;
   }
 
   .admin-filter-actions {

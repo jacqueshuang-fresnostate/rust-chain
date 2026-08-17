@@ -32,6 +32,7 @@ fn realtime_plan_only_uses_current_minute_and_keeps_ticker_equal_to_kline_close(
         volatility: decimal("0.01"),
         volume_min: decimal("10"),
         volume_max: decimal("20"),
+        generator: Default::default(),
         nodes: Vec::new(),
     })
     .unwrap();
@@ -86,6 +87,7 @@ fn realtime_plan_does_not_generate_stopped_history_between_calls() {
         volatility: decimal("0.02"),
         volume_min: decimal("1"),
         volume_max: decimal("2"),
+        generator: Default::default(),
         nodes: Vec::new(),
     })
     .unwrap();
@@ -114,6 +116,7 @@ fn realtime_plan_uses_observed_second_and_finishes_with_deterministic_1m_values(
         volatility: decimal("0.03"),
         volume_min: decimal("60"),
         volume_max: decimal("120"),
+        generator: Default::default(),
         nodes: Vec::new(),
     })
     .unwrap();
@@ -152,6 +155,7 @@ fn subsecond_observations_share_the_same_deterministic_second_snapshot() {
         volatility: decimal("0.02"),
         volume_min: decimal("10"),
         volume_max: decimal("20"),
+        generator: Default::default(),
         nodes: Vec::new(),
     })
     .unwrap();
@@ -212,6 +216,7 @@ fn continuous_online_minute_closes_previous_1m_and_selects_completed_aggregates(
         volatility: decimal("0.02"),
         volume_min: decimal("30"),
         volume_max: decimal("90"),
+        generator: Default::default(),
         nodes: Vec::new(),
     })
     .unwrap();
@@ -259,6 +264,7 @@ fn online_close_rebuilds_aggregate_from_authoritative_one_minute_window() {
         volatility: decimal("0.02"),
         volume_min: decimal("5"),
         volume_max: decimal("15"),
+        generator: Default::default(),
         nodes: Vec::new(),
     })
     .unwrap();
@@ -343,6 +349,7 @@ fn restart_or_skipped_slot_never_creates_automatic_history_close() {
         volatility: decimal("0.01"),
         volume_min: decimal("10"),
         volume_max: decimal("20"),
+        generator: Default::default(),
         nodes: Vec::new(),
     })
     .unwrap();
@@ -387,6 +394,7 @@ fn at_most_five_second_observation_gap_closes_previous_slot() {
         volatility: decimal("0.01"),
         volume_min: decimal("1"),
         volume_max: decimal("2"),
+        generator: Default::default(),
         nodes: Vec::new(),
     })
     .unwrap();
@@ -428,6 +436,7 @@ fn observation_gap_over_five_seconds_does_not_auto_close_history() {
         volatility: decimal("0.01"),
         volume_min: decimal("1"),
         volume_max: decimal("2"),
+        generator: Default::default(),
         nodes: Vec::new(),
     })
     .unwrap();
@@ -466,6 +475,7 @@ fn strategy_or_version_change_breaks_online_continuity() {
         volatility: decimal("0.01"),
         volume_min: decimal("1"),
         volume_max: decimal("2"),
+        generator: Default::default(),
         nodes: Vec::new(),
     })
     .unwrap();

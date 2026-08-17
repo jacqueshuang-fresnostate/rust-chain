@@ -57,7 +57,7 @@ describe('AdminLayout', () => {
         group: '新币生命周期',
         children: ['新币项目', '生命周期动作', '发行申购', '派发记录', '上市认购', '锁仓仓位', '解禁记录']
       },
-      { group: '行情市场', children: ['交易对配置', '行情策略', '策略动作', '行情订阅'] },
+      { group: '行情市场', children: ['交易对配置', '行情策略', '行情订阅'] },
       { group: '闪兑管理', children: ['闪兑交易对', '闪兑订单'] },
       { group: '秒合约', children: ['秒合约产品', '秒合约订单'] },
       { group: '杠杆交易', children: ['杠杆产品', '杠杆仓位', '强平记录', '利息汇总'] },
@@ -77,6 +77,7 @@ describe('AdminLayout', () => {
     });
     expect(screen.queryByRole('menuitem', { name: '新币闪兑规则' })).not.toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: '现货动作' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: '策略动作' })).not.toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: '秒合约动作' })).not.toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: '理财动作' })).not.toBeInTheDocument();
     expect(screen.getByText('root-admin')).toBeInTheDocument();

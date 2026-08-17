@@ -18,6 +18,96 @@ use super::domain::MarketKlineValues;
 
 const ONE_MILLION: u64 = 1_000_000;
 
+/// 模拟行情版本使用的场景标签；场景只描述后台预设来源，最终输出始终由快照中的显式节点与高级参数决定。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyntheticScenario {
+    CustomPath,
+    TrendUp,
+    TrendDown,
+    Range,
+    HighVolatility,
+    CrashRecovery,
+    PumpThenDump,
+}
+
+impl SyntheticScenario {
+    /// 返回版本快照与后台 API 使用的稳定场景代码，禁止把中文展示名写入持久化枚举。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CustomPath => "custom_path",
+            Self::TrendUp => "trend_up",
+            Self::TrendDown => "trend_down",
+            Self::Range => "range",
+            Self::HighVolatility => "high_volatility",
+            Self::CrashRecovery => "crash_recovery",
+            Self::PumpThenDump => "pump_then_dump",
+        }
+    }
+}
+
+/// 版本 seed 的管理方式；两种模式都必须在版本行中保存实际 seed，确保生成结果可重放。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyntheticSeedMode {
+    Auto,
+    Fixed,
+}
+
+impl SyntheticSeedMode {
+    /// 返回创建、编辑与版本详情共同使用的稳定 seed 模式代码。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Fixed => "fixed",
+        }
+    }
+}
+
+/// 成交量随策略全局进度变化的形态；基础随机刻度仍由版本 seed 确定性派生。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyntheticVolumeShape {
+    Uniform,
+    Trend,
+    Bell,
+    EndSpike,
+}
+
+impl SyntheticVolumeShape {
+    /// 返回版本快照与后台 API 使用的稳定成交量形态代码。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Uniform => "uniform",
+            Self::Trend => "trend",
+            Self::Bell => "bell",
+            Self::EndSpike => "end_spike",
+        }
+    }
+}
+
+/// 单个不可变版本中的高级生成参数；默认值与 0102 版本上线时的固定算法常量完全一致。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyntheticGeneratorSettings {
+    pub scenario: SyntheticScenario,
+    pub seed_mode: SyntheticSeedMode,
+    pub mean_reversion_strength: BigDecimal,
+    pub noise_scale: BigDecimal,
+    pub wick_scale: BigDecimal,
+    pub volume_shape: SyntheticVolumeShape,
+}
+
+impl Default for SyntheticGeneratorSettings {
+    /// 为缺少 `generator` 对象的历史版本提供字节兼容默认值，不读取环境变量或当前后台配置。
+    fn default() -> Self {
+        Self {
+            scenario: SyntheticScenario::CustomPath,
+            seed_mode: SyntheticSeedMode::Auto,
+            mean_reversion_strength: BigDecimal::new(55.into(), 2),
+            noise_scale: BigDecimal::from(1),
+            wick_scale: BigDecimal::new(75.into(), 2),
+            volume_shape: SyntheticVolumeShape::Uniform,
+        }
+    }
+}
+
 /// 只允许由权威 1m 窗口派生的公开周期。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyntheticKlineInterval {
@@ -64,12 +154,34 @@ pub enum SyntheticTargetType {
     PercentFromPrevious,
 }
 
+impl SyntheticTargetType {
+    /// 返回节点版本快照使用的稳定目标类型代码，关系表与 JSON 必须保持同一字面量。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AbsolutePrice => "absolute_price",
+            Self::PercentFromStart => "percent_from_start",
+            Self::PercentFromPrevious => "percent_from_previous",
+        }
+    }
+}
+
 /// 节点执行约束：hard 精确命中，soft/range 在容差带内确定性取值。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyntheticExecutionMode {
     Hard,
     Soft,
     Range,
+}
+
+impl SyntheticExecutionMode {
+    /// 返回节点版本快照使用的稳定执行模式代码，禁止用展示文案替换持久化枚举。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Hard => "hard",
+            Self::Soft => "soft",
+            Self::Range => "range",
+        }
+    }
 }
 
 /// 一个有序策略节点；该类型不读写数据库，由 [`SyntheticMarketConfig::new`] 统一校验。
@@ -99,6 +211,7 @@ pub struct SyntheticMarketConfig {
     pub volatility: BigDecimal,
     pub volume_min: BigDecimal,
     pub volume_max: BigDecimal,
+    pub generator: SyntheticGeneratorSettings,
     pub nodes: Vec<SyntheticMarketNode>,
 }
 
@@ -119,6 +232,8 @@ pub enum SyntheticMarketError {
     NegativeParameter,
     #[error("synthetic volume range is invalid")]
     InvalidVolumeRange,
+    #[error("synthetic generator parameters are outside their supported ranges")]
+    InvalidGeneratorParameter,
     #[error("synthetic open_time is outside the strategy range or not minute aligned")]
     InvalidOpenTime,
     #[error("synthetic 1m candles must be ordered, continuous, and minute aligned")]
@@ -153,6 +268,7 @@ impl SyntheticMarketConfig {
         }
         validate_non_negative(&config.volatility)?;
         validate_volume_range(&config.volume_min, &config.volume_max)?;
+        validate_generator_settings(&config.generator)?;
 
         let mut previous_time = None;
         for node in &config.nodes {
@@ -182,7 +298,7 @@ impl SyntheticMarketConfig {
     /// 使用 `seed + version + symbol + open_time` 独立派生每分钟随机性并生成权威 1m OHLCV。
     /// 调用不依赖前一次调用顺序，因而重启、重试和分批边界不会改变结果。
     /// 开盘时间必须分钟对齐且落在策略区间内，否则返回 `InvalidOpenTime`；开收价分别取本分钟与下一分钟的路径价。
-    /// 上下影线按各自方向的确定性刻度乘以局部波动率与 0.75 系数展开，成交量在局部区间内按刻度线性取值。
+    /// 上下影线按各自方向的确定性刻度乘以局部波动率与版本影线系数展开，成交量按版本形态映射到局部区间。
     /// 取整后会再次收敛不变量：最高不低于开收较大者，最低不高于开收较小者且不低于精度对应的最小价。
     pub fn generate_1m(
         &self,
@@ -203,12 +319,12 @@ impl SyntheticMarketConfig {
         let lower = decimal_from_unit(slot_unit(self, open_time, b"wick-low"), 6)?;
         let body_high = open.clone().max(close.clone());
         let body_low = open.clone().min(close.clone());
-        let wick_factor = decimal("0.75")?;
+        let wick_factor = self.generator.wick_scale.clone();
         let high = &body_high + (&body_high * &volatility * upper * &wick_factor);
         let low = (&body_low - (&body_low * &volatility * lower * wick_factor))
             .max(min_price(self.price_precision));
         let (volume_min, volume_max) = self.local_volume_range(open_time);
-        let volume_unit = decimal_from_unit(slot_unit(self, open_time, b"volume"), 6)?;
+        let volume_unit = self.shaped_volume_unit(open_time)?;
         let volume = &volume_min + ((&volume_max - &volume_min) * volume_unit);
 
         let minimum_price = min_price(self.price_precision);
@@ -234,7 +350,7 @@ impl SyntheticMarketConfig {
     }
 
     /// 计算任意分钟时刻的确定性价格：正好命中锚点时走锚点取值，否则在左右锚点之间按分钟数线性插值。
-    /// 插值结果再叠加种子派生的有符号噪声，幅度为插值价乘以局部波动率、0.55 的回归系数与 `f*(1-f)` 包络。
+    /// 插值结果再叠加种子派生的有符号噪声，幅度由局部波动率、版本均值回归强度、噪声强度与 `f*(1-f)` 包络共同决定。
     /// 包络在区间两端为零，因此无论噪声取何值，锚点时刻的价格都不会被扰动，整条路径必然穿过既定节点。
     /// 结果不低于价格精度对应的最小价；本函数只做内存计算，同一版本与时刻可无限次复现同一结果。
     fn price_at(
@@ -254,9 +370,44 @@ impl SyntheticMarketConfig {
         let bridge = &left.price + ((&right.price - &left.price) * &fraction);
         let envelope = &fraction * (BigDecimal::from(1) - &fraction);
         let noise = decimal_from_signed_unit(slot_signed_unit(self, time, b"price"), 6)?;
-        let mean_reversion = decimal("0.55")?;
-        let adjustment = &bridge * self.local_volatility(time) * envelope * noise * mean_reversion;
+        let adjustment = &bridge
+            * self.local_volatility(time)
+            * envelope
+            * noise
+            * &self.generator.mean_reversion_strength
+            * &self.generator.noise_scale;
         Ok((bridge + adjustment).max(min_price(self.price_precision)))
+    }
+
+    /// 把版本 seed 派生的基础成交量刻度按策略全局进度塑形成均匀、递增、钟形或尾部放量。
+    /// `uniform` 原样返回旧算法刻度以保持历史版本兼容；其余形态把确定性纹理与进度曲线混合，结果始终夹在 0～1。
+    /// 本函数不改变节点的成交量上下界，只决定在当前局部区间中的相对位置，因此所有形态都继续满足非负与上下限约束。
+    fn shaped_volume_unit(
+        &self,
+        open_time: DateTime<Utc>,
+    ) -> Result<BigDecimal, SyntheticMarketError> {
+        let random = decimal_from_unit(slot_unit(self, open_time, b"volume"), 6)?;
+        if self.generator.volume_shape == SyntheticVolumeShape::Uniform {
+            return Ok(random);
+        }
+        let total = (self.end_time - self.start_time).num_seconds().max(1);
+        let elapsed = (open_time - self.start_time).num_seconds().clamp(0, total);
+        let progress = BigDecimal::from(elapsed) / BigDecimal::from(total);
+        let shaped = match self.generator.volume_shape {
+            SyntheticVolumeShape::Uniform => random,
+            SyntheticVolumeShape::Trend => {
+                (&random * decimal("0.45")?) + (&progress * decimal("0.55")?)
+            }
+            SyntheticVolumeShape::Bell => {
+                let bell = BigDecimal::from(4) * &progress * (BigDecimal::from(1) - &progress);
+                (&random * decimal("0.35")?) + (bell * decimal("0.65")?)
+            }
+            SyntheticVolumeShape::EndSpike => {
+                let tail = &progress * &progress * &progress;
+                (&random * decimal("0.35")?) + (tail * decimal("0.65")?)
+            }
+        };
+        Ok(shaped.max(BigDecimal::from(0)).min(BigDecimal::from(1)))
     }
 
     /// 给出锚点时刻的落地价格：hard 精确返回节点价，soft 与 range 在容差带内做确定性偏移。
@@ -498,6 +649,26 @@ fn validate_volume_range(
     } else {
         Ok(())
     }
+}
+
+/// 校验高级生成参数的稳定范围；场景、seed 模式与成交量形态由枚举类型保证，这里只验证高精度数值。
+/// 均值回归强度允许 0～2，噪声与影线强度允许 0～5，边界值均合法；超界时拒绝整个版本而不做夹紧。
+fn validate_generator_settings(
+    settings: &SyntheticGeneratorSettings,
+) -> Result<(), SyntheticMarketError> {
+    let zero = BigDecimal::from(0);
+    let two = BigDecimal::from(2);
+    let five = BigDecimal::from(5);
+    if settings.mean_reversion_strength < zero
+        || settings.mean_reversion_strength > two
+        || settings.noise_scale < zero
+        || settings.noise_scale > five
+        || settings.wick_scale < zero
+        || settings.wick_scale > five
+    {
+        return Err(SyntheticMarketError::InvalidGeneratorParameter);
+    }
+    Ok(())
 }
 
 /// 按百分比在基准价上换算目标价，传入 25 表示相对基准上涨百分之二十五，传入负值表示下跌。

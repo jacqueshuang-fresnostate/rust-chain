@@ -1205,23 +1205,6 @@ export const resourceConfigs = {
   },
   marketStrategies: {
     title: '行情策略',
-    endpoint: '/admin/api/v1/market-strategies',
-    responseKey: 'strategies',
-    filters: [pairFilter, statusFilter, limitFilter],
-    columns: [
-      { key: 'id', title: '策略ID' },
-      { key: 'pair_id', title: '交易对ID' },
-      { key: 'symbol', title: '交易对' },
-      { key: 'strategy_type', title: '策略类型' },
-      { key: 'start_price', title: '起始价', type: 'amount' },
-      { key: 'target_price', title: '目标价', type: 'amount' },
-      { key: 'status', title: '状态', type: 'status' },
-      { key: 'run_status', title: '运行状态', type: 'status' },
-      { key: 'created_at', title: '创建时间', type: 'timestamp' }
-    ]
-  },
-  marketStrategyActions: {
-    title: '行情策略动作',
     actions: ({ reload }) => <CreateMarketStrategyAction onCreated={reload} />,
     endpoint: '/admin/api/v1/market-strategies',
     responseKey: 'strategies',

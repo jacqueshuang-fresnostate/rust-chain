@@ -89,7 +89,66 @@ pub(crate) struct AdminMarketStrategyQuery {
 
 impl PresentationLayer for AdminMarketStrategyQuery {}
 
-#[derive(Debug, Deserialize)]
+/// 管理员可配置的版本级生成参数；`regenerate_seed` 只是一条编辑命令，不会进入不可变快照。
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct MarketStrategyGeneratorRequest {
+    pub(crate) scenario: String,
+    pub(crate) seed_mode: String,
+    pub(crate) seed: Option<String>,
+    #[serde(default)]
+    pub(crate) regenerate_seed: bool,
+    pub(crate) mean_reversion_strength: BigDecimal,
+    pub(crate) noise_scale: BigDecimal,
+    pub(crate) wick_scale: BigDecimal,
+    pub(crate) volume_shape: String,
+}
+
+impl Default for MarketStrategyGeneratorRequest {
+    /// 为旧后台请求提供与历史生成算法一致的完整默认参数，避免升级后因缺字段无法继续编辑。
+    fn default() -> Self {
+        Self {
+            scenario: "custom_path".to_owned(),
+            seed_mode: "auto".to_owned(),
+            seed: None,
+            regenerate_seed: false,
+            mean_reversion_strength: BigDecimal::new(55.into(), 2),
+            noise_scale: BigDecimal::from(1),
+            wick_scale: BigDecimal::new(75.into(), 2),
+            volume_shape: "uniform".to_owned(),
+        }
+    }
+}
+
+impl PresentationLayer for MarketStrategyGeneratorRequest {}
+
+/// 当前激活版本的生成器读模型；返回实际 seed，使后台预览、复制和排障都能明确重放来源。
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub(crate) struct MarketStrategyGeneratorResponse {
+    pub(crate) scenario: String,
+    pub(crate) seed_mode: String,
+    pub(crate) seed: String,
+    pub(crate) mean_reversion_strength: BigDecimal,
+    pub(crate) noise_scale: BigDecimal,
+    pub(crate) wick_scale: BigDecimal,
+    pub(crate) volume_shape: String,
+}
+
+impl PresentationLayer for MarketStrategyGeneratorResponse {}
+
+/// 场景预设携带的高级参数默认值；不包含实际 seed，应用预设不会在后台静默固定随机序列。
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct MarketStrategyGeneratorPresetResponse {
+    pub(crate) scenario: String,
+    pub(crate) seed_mode: String,
+    pub(crate) mean_reversion_strength: BigDecimal,
+    pub(crate) noise_scale: BigDecimal,
+    pub(crate) wick_scale: BigDecimal,
+    pub(crate) volume_shape: String,
+}
+
+impl PresentationLayer for MarketStrategyGeneratorPresetResponse {}
+
+#[derive(Debug, Clone, Deserialize)]
 pub(crate) struct CreateMarketStrategyRequest {
     pub(crate) pair_id: u64,
     pub(crate) strategy_type: String,
@@ -104,13 +163,15 @@ pub(crate) struct CreateMarketStrategyRequest {
     pub(crate) volume_max: BigDecimal,
     #[serde(default)]
     pub(crate) nodes: Vec<MarketStrategyNodeRequest>,
+    #[serde(default)]
+    pub(crate) generator: MarketStrategyGeneratorRequest,
     pub(crate) status: Option<String>,
     pub(crate) reason: Option<String>,
 }
 
 impl PresentationLayer for CreateMarketStrategyRequest {}
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub(crate) struct UpdateMarketStrategyRequest {
     pub(crate) strategy_type: String,
     pub(crate) start_price: BigDecimal,
@@ -124,6 +185,8 @@ pub(crate) struct UpdateMarketStrategyRequest {
     pub(crate) volume_max: BigDecimal,
     #[serde(default)]
     pub(crate) nodes: Vec<MarketStrategyNodeRequest>,
+    #[serde(default)]
+    pub(crate) generator: MarketStrategyGeneratorRequest,
     pub(crate) reason: Option<String>,
 }
 
@@ -175,6 +238,7 @@ pub(crate) struct AdminMarketStrategyDetailResponse {
     #[serde(flatten)]
     pub(crate) strategy: AdminMarketStrategyResponse,
     pub(crate) nodes: Vec<AdminMarketStrategyNodeResponse>,
+    pub(crate) generator: MarketStrategyGeneratorResponse,
 }
 
 impl PresentationLayer for AdminMarketStrategyDetailResponse {}
@@ -222,6 +286,108 @@ pub(crate) struct AdminMarketStrategyNodeResponse {
 }
 
 impl PresentationLayer for AdminMarketStrategyNodeResponse {}
+
+/// 策略草稿的无副作用预览请求；扁平化复用创建合同，编辑预览可携带策略 ID 继承 seed 与下一版本号。
+#[derive(Debug, Deserialize)]
+pub(crate) struct PreviewMarketStrategyRequest {
+    #[serde(flatten)]
+    pub(crate) strategy: CreateMarketStrategyRequest,
+    pub(crate) strategy_id: Option<u64>,
+    pub(crate) sample_count: Option<u32>,
+}
+
+impl PresentationLayer for PreviewMarketStrategyRequest {}
+
+/// 无副作用预览响应；总分钟数描述完整策略区间，samples 只是至多 240 根的均匀采样。
+#[derive(Debug, Serialize)]
+pub(crate) struct MarketStrategyPreviewResponse {
+    pub(crate) preview_seed: String,
+    pub(crate) preview_version: u32,
+    pub(crate) one_minute_count: u64,
+    pub(crate) sample_count: u32,
+    pub(crate) samples: Vec<MarketStrategyRecoverySampleResponse>,
+}
+
+impl PresentationLayer for MarketStrategyPreviewResponse {}
+
+/// 场景预设中的相对时间节点；后台根据当前策略起止时间把进度百分比换算为 UTC 分钟。
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct MarketStrategyPresetNodeResponse {
+    pub(crate) progress_percent: u32,
+    pub(crate) target_type: String,
+    pub(crate) target_value: BigDecimal,
+    pub(crate) execution_mode: String,
+    pub(crate) tolerance: BigDecimal,
+    pub(crate) volatility: BigDecimal,
+    pub(crate) volume_min: Option<BigDecimal>,
+    pub(crate) volume_max: Option<BigDecimal>,
+}
+
+impl PresentationLayer for MarketStrategyPresetNodeResponse {}
+
+/// 后端权威场景预设；所有影响生成的参数都显式返回，场景代码自身不会触发隐藏算法分支。
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct MarketStrategyPresetResponse {
+    pub(crate) code: String,
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) target_price_change_percent: BigDecimal,
+    pub(crate) generator: MarketStrategyGeneratorPresetResponse,
+    pub(crate) nodes: Vec<MarketStrategyPresetNodeResponse>,
+}
+
+impl PresentationLayer for MarketStrategyPresetResponse {}
+
+/// 场景预设目录响应；顺序由后端固定，后台可直接按返回顺序展示。
+#[derive(Debug, Serialize)]
+pub(crate) struct MarketStrategyPresetsResponse {
+    pub(crate) presets: Vec<MarketStrategyPresetResponse>,
+}
+
+impl PresentationLayer for MarketStrategyPresetsResponse {}
+
+/// 策略版本历史分页条件；版本按从新到旧排序，分页上限由应用层统一裁剪。
+#[derive(Debug, Deserialize)]
+pub(crate) struct MarketStrategyVersionsQuery {
+    pub(crate) limit: Option<u32>,
+    pub(crate) offset: Option<u32>,
+}
+
+impl PresentationLayer for MarketStrategyVersionsQuery {}
+
+/// 单个不可变版本的后台读模型；`config_json` 原样保留审计证据，generator 是兼容解析后的友好视图。
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct MarketStrategyVersionResponse {
+    pub(crate) version: i32,
+    #[serde(with = "unix_millis")]
+    pub(crate) effective_time: DateTime<Utc>,
+    pub(crate) seed: String,
+    pub(crate) created_by: Option<u64>,
+    #[serde(with = "unix_millis")]
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) active: bool,
+    pub(crate) config_json: Value,
+    pub(crate) generator: MarketStrategyGeneratorResponse,
+}
+
+impl PresentationLayer for MarketStrategyVersionResponse {}
+
+/// 策略版本历史分页响应；total 使用与行查询相同的策略 ID 条件。
+#[derive(Debug, Serialize)]
+pub(crate) struct MarketStrategyVersionsResponse {
+    pub(crate) versions: Vec<MarketStrategyVersionResponse>,
+    pub(crate) total: i64,
+}
+
+impl PresentationLayer for MarketStrategyVersionsResponse {}
+
+/// 复制历史版本为新版本的请求；原因必须非空并进入策略事件与管理员审计。
+#[derive(Debug, Deserialize)]
+pub(crate) struct RestoreMarketStrategyVersionRequest {
+    pub(crate) reason: String,
+}
+
+impl PresentationLayer for RestoreMarketStrategyVersionRequest {}
 
 /// 缺口检测的可选 UTC 范围；边界缺省时由应用层收敛到策略有效时段与已闭合分钟。
 #[derive(Debug, Deserialize)]

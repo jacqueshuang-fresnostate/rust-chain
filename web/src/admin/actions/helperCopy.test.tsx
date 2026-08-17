@@ -97,7 +97,7 @@ describe('Admin action helper copy', () => {
   it('does not render static helper copy on market strategy actions', () => {
     render(<MarketStrategyActions />);
 
-    expect(screen.getByText('行情策略动作')).toBeInTheDocument();
+    expect(screen.getByText('行情策略')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '创建策略' })).toBeInTheDocument();
     expect(screen.queryByText('创建 internal/strategy 交易对策略并控制策略运行状态。')).not.toBeInTheDocument();
     expect(screen.queryByText('开始和结束时间均使用 Unix milliseconds。')).not.toBeInTheDocument();

@@ -99,7 +99,7 @@ admin-authenticated.
   -> `{ strategies: StrategySummary[], total: i64 }`.
 - `GET /admin/api/v1/market-strategies/:id`
   -> `StrategyDetail`, which flattens all `StrategySummary` fields and adds
-  `nodes: StrategyNode[]`.
+  `nodes: StrategyNode[]` plus the active version `generator` read model.
 - `POST /admin/api/v1/market-strategies` request:
 
   ```json
@@ -120,7 +120,9 @@ admin-authenticated.
   ```
 
   `status` and `reason` are optional on create; missing `status` becomes
-  `draft`. Response is `StrategyDetail`.
+  `draft`. `generator` may be omitted only for legacy clients, in which case
+  the byte-compatible generator defaults documented below are used. Response
+  is `StrategyDetail`.
 - `PATCH /admin/api/v1/market-strategies/:id` accepts the same configuration
   fields except `pair_id` and `status`; `nodes` defaults to `[]` when omitted,
   and `reason` is required and trimmed. Response is `StrategyDetail`.
@@ -520,3 +522,187 @@ WHERE runs.strategy_id = ?;
 The correct path makes service restart inert with respect to historical gaps,
 binds every writer to the selected configuration version, and keeps manual
 history repair isolated from Redis, WebSocket, spot triggering, and checkpoints.
+
+## Scenario: Configurable synthetic OHLCV settings and immutable rollback
+
+### 1. Scope / Trigger
+
+- Trigger: changing synthetic scenario presets, seed policy, path noise,
+  wick size, volume shape, strategy preview, version history, rollback, or the
+  admin strategy form.
+- The implementation remains Rust-native and single-pair. It does not embed a
+  Python runtime or add correlation matrices, funding, L2 depth, or exports.
+- This extension reuses `strategy_versions.config_json` and its `seed` column;
+  it requires **no new migration**. Historical candles are never rewritten by
+  a settings change or rollback.
+- Realtime generation and manual recovery must both use
+  `synthetic_config_from_snapshot`; duplicating JSON parsing in either consumer
+  is forbidden.
+
+### 2. Signatures
+
+- `GET /admin/api/v1/market-strategies/presets`
+  -> `{ "presets": MarketStrategyPreset[] }`.
+- `POST /admin/api/v1/market-strategies/preview` accepts the complete create
+  payload plus `sample_count?: 1..=240` and `strategy_id?: u64` and returns:
+
+  ```json
+  {
+    "preview_seed": "actual-seed",
+    "preview_version": 2,
+    "one_minute_count": 60,
+    "sample_count": 60,
+    "samples": [{
+      "open_time": 1775023200000,
+      "open": "1", "high": "1.1", "low": "0.9",
+      "close": "1.01", "volume": "10"
+    }]
+  }
+  ```
+
+- `GET /admin/api/v1/market-strategies/:id/versions?limit?:u32&offset?:u32`
+  -> `{ "versions": MarketStrategyVersion[], "total": i64 }`, newest first.
+- `POST /admin/api/v1/market-strategies/:id/versions/:version/restore`
+  request `{ "reason": "..." }` -> `StrategyDetail`.
+- Create and update accept this nested object; omission remains a legacy
+  compatibility path:
+
+  ```json
+  {
+    "generator": {
+      "scenario": "custom_path|trend_up|trend_down|range|high_volatility|crash_recovery|pump_then_dump",
+      "seed_mode": "auto|fixed",
+      "seed": "required only for fixed",
+      "regenerate_seed": false,
+      "mean_reversion_strength": "0.55",
+      "noise_scale": "1",
+      "wick_scale": "0.75",
+      "volume_shape": "uniform|trend|bell|end_spike"
+    }
+  }
+  ```
+
+### 3. Contracts
+
+- `scenario` is an auditable preset label only. Every preset returns explicit
+  generator values and relative node templates; the generator must not branch
+  on the label or hide additional rules.
+- Generator ranges are inclusive: mean reversion `0..=2`, noise and wick
+  `0..=5`, fixed seed length `1..=128` Unicode characters. The version row
+  always stores the actual seed in `strategy_versions.seed`; `config_json`
+  stores seed mode and generator parameters but not a second seed copy or the
+  transient `regenerate_seed` command.
+- Create with `auto` generates a UUIDv7 seed. Update with `auto` inherits the
+  active seed unless `regenerate_seed=true`; fixed mode always uses the
+  submitted seed and rejects regeneration. Every successful update still
+  appends a new immutable version.
+- Historical JSON with no `generator` object resolves to
+  `custom_path/auto/0.55/1/0.75/uniform`, preserving the former fixed
+  algorithm byte-for-byte. If `generator` exists, all six persisted fields
+  are mandatory and invalid/partial data must fail rather than mix with
+  defaults.
+- Mean reversion and noise multiply only the deterministic bridge adjustment;
+  wick scale multiplies deterministic high/low extension; volume shape maps
+  the deterministic unit draw into `uniform`, increasing `trend`, middle-heavy
+  `bell`, or tail-heavy `end_spike`, always clamped to `0..=1` before applying
+  local volume bounds.
+- Create preview uses version `1`. Edit preview supplies `strategy_id`, verifies
+  that the pair matches, uses active version + 1, and follows the same seed
+  inheritance rule as update. A regenerate-seed preview returns a seed valid
+  only for that preview because formal submission intentionally generates a
+  fresh one. Preview reads only the pair/strategy/version rows and performs no
+  MySQL, Mongo, Redis, WebSocket, event, audit, or checkpoint write.
+- Restore is copy-on-write: lock the strategy and source version, reject an
+  active strategy or already-active source, restore main fields and relation
+  nodes, insert `max(version)+1` with the source JSON and seed, move the run
+  checkpoint to the new version, and write event/audit in one transaction.
+  Never reactivate or mutate the old row. Old snapshots missing `nodes` must
+  restore an empty historical node set rather than borrow current relation
+  nodes.
+- MySQL `CAST(... AS SIGNED)` version active flags decode as `i64` because the
+  wire type is BIGINT; decoding them as `i8` causes a production SQLx type
+  mismatch.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+|---|---|
+| Unknown scenario, seed mode, or volume shape | `400 VALIDATION_ERROR` with Chinese field message |
+| Fixed mode without seed, seed over 128 chars, or fixed + regenerate | `400 VALIDATION_ERROR`; no version |
+| Mean reversion outside `0..=2` or noise/wick outside `0..=5` | `400 VALIDATION_ERROR`; do not clamp |
+| Preview sample count outside `1..=240` | `400 VALIDATION_ERROR`; no side effect |
+| Preview pair missing, disabled, or not `internal|strategy` | `404` or `400`; no sample generation |
+| Edit preview strategy pair differs from request pair | `400 VALIDATION_ERROR` |
+| Partial/malformed persisted `generator` | request/worker fails; do not substitute defaults |
+| Update or restore while strategy is active | `409 CONFLICT`; all rows unchanged |
+| Restore source missing or current | `404` or `409`; no new version |
+| Blank restore reason | `400 VALIDATION_ERROR`; no event/audit/version |
+
+### 5. Good / Base / Bad Cases
+
+- Good: edit version 1 in auto mode without regeneration; preview reports
+  version 2 and the version-1 seed, update writes version 2 with that same seed,
+  and realtime/manual generation consume the same snapshot parser.
+- Good: copy version 1 while version 2 is active and paused; version 3 contains
+  version-1 JSON/seed, version 1 remains immutable, and existing K-lines remain
+  untouched.
+- Base: an old version has no `generator`; the detail and version list expose
+  compatibility defaults and generated candles exactly match the old code.
+- Bad: use current relation nodes while restoring an old snapshot that lacks
+  `nodes`; this silently contaminates the historical path with newer settings.
+- Bad: let `scenario="crash_recovery"` trigger hidden generator behavior in
+  addition to the explicit returned nodes; the stored snapshot would no longer
+  explain or replay its output.
+
+### 6. Tests Required
+
+```bash
+cargo test --test synthetic_market
+cargo test --lib modules::admin::service::tests -- --nocapture
+cargo test --test admin_routes admin_market_strategy_routes_require_admin_scope_mysql_and_validation -- --exact --nocapture
+DATABASE_URL="$DATABASE_URL" cargo test --test admin_routes admin_market_strategy_update_config_versions_and_audit -- --exact --nocapture
+npm --prefix web test -- src/admin/actions/MarketStrategyActions.test.tsx
+npm --prefix web test -- src/admin/resources/resourceConfigs.test.tsx -t "market strategy"
+```
+
+- Domain assertions: all parameter bounds, legacy byte compatibility, all four
+  volume shapes inside bounds, setting changes affect the intended OHLCV
+  component, and same input/seed/version replays exactly.
+- Route/storage assertions: seven presets, preview replay/purity, create and
+  edit seed semantics, immutable generator JSON, version ordering/active flag,
+  active-state conflicts, copy rollback version increment, event/audit reason,
+  and no schema migration.
+- Admin assertions: one `行情策略` entry, detail-before-edit, Chinese advanced
+  controls, backend preset application, create/edit payload, edit preview
+  `strategy_id`, preview version/seed/sample display, version history, and
+  reason-confirmed copy rollback.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// Two consumers parse defaults differently and auto mode changes seed on every edit.
+let settings = parse_worker_snapshot(config_json)?;
+let seed = Uuid::now_v7().to_string();
+UPDATE strategy_versions SET config_json = ? WHERE version = old_version;
+```
+
+#### Correct
+
+```rust
+let config = synthetic_config_from_snapshot(snapshot)?;
+let seed = resolve_updated_market_strategy_seed(&generator, &active.seed)?;
+insert_market_strategy_version_in_tx(
+    &mut tx,
+    strategy_id,
+    next_version,
+    effective_time,
+    immutable_json,
+    seed,
+    admin_id,
+).await?;
+```
+
+The correct path keeps settings explicit, deterministic, copy-on-write,
+auditable, and identical across realtime generation, preview, and recovery.

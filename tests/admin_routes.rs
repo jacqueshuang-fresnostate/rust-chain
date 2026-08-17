@@ -8609,6 +8609,66 @@ async fn admin_market_strategy_routes_require_admin_scope_mysql_and_validation()
     })
     .to_string();
 
+    let presets = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/market-strategies/presets")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let presets_status = presets.status();
+    let presets_payload = body_json(presets).await?;
+    assert_eq!(presets_status, StatusCode::OK, "payload: {presets_payload}");
+    assert_eq!(presets_payload["presets"].as_array().unwrap().len(), 7);
+    assert_eq!(presets_payload["presets"][0]["code"], "custom_path");
+    assert_eq!(presets_payload["presets"][5]["code"], "crash_recovery");
+
+    let invalid_generator_preview = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/market-strategies/preview")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "pair_id": 1,
+                        "strategy_type": "price_path",
+                        "start_price": "1",
+                        "target_price": "2",
+                        "start_time": 1770000000000_i64,
+                        "end_time": 1770003600000_i64,
+                        "volatility": "0.01",
+                        "volume_min": "10",
+                        "volume_max": "20",
+                        "generator": {
+                            "scenario": "trend_up",
+                            "seed_mode": "fixed",
+                            "seed": "fixed-preview",
+                            "mean_reversion_strength": "0.55",
+                            "noise_scale": "5.1",
+                            "wick_scale": "0.75",
+                            "volume_shape": "trend"
+                        },
+                        "sample_count": 24
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let invalid_generator_status = invalid_generator_preview.status();
+    let invalid_generator_payload = body_json(invalid_generator_preview).await?;
+    assert_eq!(invalid_generator_status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        invalid_generator_payload["message"],
+        "validation error: 噪声强度必须在 0～5 之间"
+    );
+
     let missing = app
         .clone()
         .oneshot(
@@ -8843,6 +8903,13 @@ async fn admin_market_strategy_create_list_update_and_audit() -> Result<(), Box<
     assert!(created["end_time"].is_number());
     assert_eq!(created["end_time"], end_time.timestamp_millis());
     assert!(created["created_at"].is_number());
+    assert_eq!(created["generator"]["scenario"], "custom_path");
+    assert_eq!(created["generator"]["seed_mode"], "auto");
+    assert!(
+        created["generator"]["seed"]
+            .as_str()
+            .is_some_and(|seed| !seed.is_empty())
+    );
 
     let listed = app
         .clone()
@@ -8880,6 +8947,8 @@ async fn admin_market_strategy_create_list_update_and_audit() -> Result<(), Box<
     assert!(!seed.is_empty());
     assert_eq!(config_json["strategy_type"], "price_path");
     assert_eq!(config_json["start_time"], start_time.timestamp_millis());
+    assert_eq!(config_json["generator"]["scenario"], "custom_path");
+    assert_eq!(config_json["generator"]["mean_reversion_strength"], "0.55");
 
     let (run_status, current_price, last_kline_open_time): (
         String,
@@ -9071,6 +9140,15 @@ async fn admin_market_strategy_update_config_versions_and_audit() -> Result<(), 
                         "volatility": "0.01000000",
                         "volume_min": "10.000000000000000000",
                         "volume_max": "20.000000000000000000",
+                        "generator": {
+                            "scenario": "range",
+                            "seed_mode": "fixed",
+                            "seed": "route-fixed-seed-v1",
+                            "mean_reversion_strength": "0.90",
+                            "noise_scale": "1.15",
+                            "wick_scale": "0.95",
+                            "volume_shape": "uniform"
+                        },
                         "status": "active",
                         "reason": "create before update"
                     })
@@ -9083,6 +9161,64 @@ async fn admin_market_strategy_update_config_versions_and_audit() -> Result<(), 
     let created = body_json(create).await?;
     assert_eq!(create_status, StatusCode::OK, "payload: {created}");
     let strategy_id = created["id"].as_u64().unwrap();
+    assert_eq!(created["generator"]["scenario"], "range");
+    assert_eq!(created["generator"]["seed_mode"], "fixed");
+    assert_eq!(created["generator"]["seed"], "route-fixed-seed-v1");
+
+    let preview_body = json!({
+        "pair_id": pair_id,
+        "strategy_type": "price_path",
+        "start_price": "1.000000000000000000",
+        "target_price": "2.000000000000000000",
+        "start_time": start_time.timestamp_millis(),
+        "end_time": end_time.timestamp_millis(),
+        "volatility": "0.01000000",
+        "volume_min": "10.000000000000000000",
+        "volume_max": "20.000000000000000000",
+        "generator": {
+            "scenario": "range",
+            "seed_mode": "fixed",
+            "seed": "route-fixed-seed-v1",
+            "mean_reversion_strength": "0.90",
+            "noise_scale": "1.15",
+            "wick_scale": "0.95",
+            "volume_shape": "uniform"
+        },
+        "sample_count": 6
+    });
+    let mut replayed_samples = None;
+    for _ in 0..2 {
+        let preview = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/admin/api/v1/market-strategies/preview")
+                    .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(preview_body.to_string()))
+                    .unwrap(),
+            )
+            .await?;
+        let preview_status = preview.status();
+        let preview_payload = body_json(preview).await?;
+        assert_eq!(preview_status, StatusCode::OK, "payload: {preview_payload}");
+        assert_eq!(preview_payload["preview_seed"], "route-fixed-seed-v1");
+        assert_eq!(preview_payload["preview_version"], 1);
+        assert_eq!(preview_payload["one_minute_count"], 60);
+        assert_eq!(preview_payload["sample_count"], 6);
+        if let Some(previous) = replayed_samples.as_ref() {
+            assert_eq!(&preview_payload["samples"], previous);
+        } else {
+            replayed_samples = Some(preview_payload["samples"].clone());
+        }
+    }
+    let version_count_after_preview: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM strategy_versions WHERE strategy_id = ?")
+            .bind(strategy_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(version_count_after_preview, 1);
 
     let active_update = app
         .clone()
@@ -9136,6 +9272,60 @@ async fn admin_market_strategy_update_config_versions_and_audit() -> Result<(), 
         )
         .await?;
     assert_eq!(pause.status(), StatusCode::OK);
+
+    let edit_preview = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/market-strategies/preview")
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "strategy_id": strategy_id,
+                        "pair_id": pair_id,
+                        "strategy_type": "price_path_v2",
+                        "start_price": "1.100000000000000000",
+                        "target_price": "2.200000000000000000",
+                        "start_time": update_start.timestamp_millis(),
+                        "end_time": update_end.timestamp_millis(),
+                        "volatility": "0.02000000",
+                        "volume_min": "12.000000000000000000",
+                        "volume_max": "24.000000000000000000",
+                        "generator": {
+                            "scenario": "trend_up",
+                            "seed_mode": "auto",
+                            "seed": null,
+                            "regenerate_seed": false,
+                            "mean_reversion_strength": "0.45",
+                            "noise_scale": "0.80",
+                            "wick_scale": "0.60",
+                            "volume_shape": "trend"
+                        },
+                        "sample_count": 4
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let edit_preview_status = edit_preview.status();
+    let edit_preview_payload = body_json(edit_preview).await?;
+    assert_eq!(
+        edit_preview_status,
+        StatusCode::OK,
+        "payload: {edit_preview_payload}"
+    );
+    assert_eq!(edit_preview_payload["preview_version"], 2);
+    assert_eq!(edit_preview_payload["preview_seed"], "route-fixed-seed-v1");
+    assert_eq!(edit_preview_payload["sample_count"], 4);
+    let version_count_after_edit_preview: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM strategy_versions WHERE strategy_id = ?")
+            .bind(strategy_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(version_count_after_edit_preview, 1);
 
     let missing_reason = app
         .clone()
@@ -9192,6 +9382,16 @@ async fn admin_market_strategy_update_config_versions_and_audit() -> Result<(), 
                         "volatility": "0.02000000",
                         "volume_min": "12.000000000000000000",
                         "volume_max": "24.000000000000000000",
+                        "generator": {
+                            "scenario": "trend_up",
+                            "seed_mode": "auto",
+                            "seed": null,
+                            "regenerate_seed": false,
+                            "mean_reversion_strength": "0.45",
+                            "noise_scale": "0.80",
+                            "wick_scale": "0.60",
+                            "volume_shape": "trend"
+                        },
                         "reason": "update config"
                     })
                     .to_string(),
@@ -9211,6 +9411,9 @@ async fn admin_market_strategy_update_config_versions_and_audit() -> Result<(), 
     assert_eq!(updated["target_price"], "2.200000000000000000");
     assert_eq!(updated["start_time"], update_start.timestamp_millis());
     assert_eq!(updated["end_time"], update_end.timestamp_millis());
+    assert_eq!(updated["generator"]["scenario"], "trend_up");
+    assert_eq!(updated["generator"]["seed_mode"], "auto");
+    assert_eq!(updated["generator"]["seed"], "route-fixed-seed-v1");
 
     let (stored_type, stored_start, stored_target, stored_status): (
         String,
@@ -9248,8 +9451,8 @@ async fn admin_market_strategy_update_config_versions_and_audit() -> Result<(), 
     assert_eq!(last_kline_open_time, Some(update_start));
     assert_eq!(recovery_status.as_deref(), Some("idle"));
 
-    let versions: Vec<(i32, Option<u64>, Value)> = sqlx::query_as(
-        r#"SELECT version, created_by, config_json
+    let versions: Vec<(i32, Option<u64>, String, Value)> = sqlx::query_as(
+        r#"SELECT version, created_by, seed, config_json
            FROM strategy_versions
            WHERE strategy_id = ?
            ORDER BY version"#,
@@ -9261,9 +9464,12 @@ async fn admin_market_strategy_update_config_versions_and_audit() -> Result<(), 
     assert_eq!(versions[0].0, 1);
     assert_eq!(versions[1].0, 2);
     assert_eq!(versions[1].1, Some(admin_id));
-    assert_eq!(versions[1].2["strategy_type"], "price_path_v2");
-    assert_eq!(versions[1].2["start_time"], update_start.timestamp_millis());
-    assert_eq!(versions[1].2["status"], "paused");
+    assert_eq!(versions[0].2, "route-fixed-seed-v1");
+    assert_eq!(versions[1].2, "route-fixed-seed-v1");
+    assert_eq!(versions[1].3["strategy_type"], "price_path_v2");
+    assert_eq!(versions[1].3["start_time"], update_start.timestamp_millis());
+    assert_eq!(versions[1].3["status"], "paused");
+    assert_eq!(versions[1].3["generator"]["scenario"], "trend_up");
 
     let events: Vec<(String, Value)> = sqlx::query_as(
         r#"SELECT event_type, payload_json
@@ -9301,6 +9507,99 @@ async fn admin_market_strategy_update_config_versions_and_audit() -> Result<(), 
         "price_path_v2"
     );
     assert_eq!(audits[2].reason.as_deref(), Some("update config"));
+
+    let version_history = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/market-strategies/{strategy_id}/versions?limit=20&offset=0"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let version_history_status = version_history.status();
+    let version_history_payload = body_json(version_history).await?;
+    assert_eq!(
+        version_history_status,
+        StatusCode::OK,
+        "payload: {version_history_payload}"
+    );
+    assert_eq!(version_history_payload["total"], 2);
+    assert_eq!(version_history_payload["versions"][0]["version"], 2);
+    assert_eq!(version_history_payload["versions"][0]["active"], true);
+    assert_eq!(
+        version_history_payload["versions"][0]["generator"]["scenario"],
+        "trend_up"
+    );
+    assert_eq!(version_history_payload["versions"][1]["version"], 1);
+    assert_eq!(version_history_payload["versions"][1]["active"], false);
+
+    let restore = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/admin/api/v1/market-strategies/{strategy_id}/versions/1/restore"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "reason": "restore original deterministic path" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await?;
+    let restore_status = restore.status();
+    let restored = body_json(restore).await?;
+    assert_eq!(restore_status, StatusCode::OK, "payload: {restored}");
+    assert_eq!(restored["strategy_type"], "price_path");
+    assert_eq!(restored["start_price"], "1.000000000000000000");
+    assert_eq!(restored["generator"]["scenario"], "range");
+    assert_eq!(restored["generator"]["seed"], "route-fixed-seed-v1");
+
+    let (active_version, restored_seed): (i32, String) = sqlx::query_as(
+        r#"SELECT runs.active_version, versions.seed
+           FROM strategy_runs runs
+           INNER JOIN strategy_versions versions
+             ON versions.strategy_id = runs.strategy_id
+            AND versions.version = runs.active_version
+           WHERE runs.strategy_id = ?"#,
+    )
+    .bind(strategy_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(active_version, 3);
+    assert_eq!(restored_seed, "route-fixed-seed-v1");
+
+    let version_count_after_restore: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM strategy_versions WHERE strategy_id = ?")
+            .bind(strategy_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(version_count_after_restore, 3);
+    let restore_event_count: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM strategy_events
+           WHERE strategy_id = ? AND event_type = 'market_strategy.version.restored'"#,
+    )
+    .bind(strategy_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(restore_event_count, 1);
+    let restore_audit_reason: String = sqlx::query_scalar(
+        r#"SELECT reason FROM admin_audit_logs
+           WHERE admin_id = ? AND target_type = 'market_strategy' AND target_id = ?
+             AND action = 'market_strategy.version.restore'
+           ORDER BY id DESC LIMIT 1"#,
+    )
+    .bind(admin_id)
+    .bind(strategy_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(restore_audit_reason, "restore original deterministic path");
 
     sqlx::query(
         "DELETE FROM admin_audit_logs WHERE admin_id = ? AND target_type = 'market_strategy'",

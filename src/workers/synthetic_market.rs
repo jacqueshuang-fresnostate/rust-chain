@@ -23,12 +23,11 @@ use crate::{
     infra::mongo::kline_collection_name,
     modules::market::{
         MarketDataProvider, MarketKlineSnapshot, MarketKlineValues, MarketTickerSnapshot,
-        MarketTickerValues, ValidatedMarketSymbol,
+        MarketTickerValues, SyntheticCandle, SyntheticKlineInterval, SyntheticMarketConfig,
+        SyntheticMarketNode, SyntheticStrategySnapshot, ValidatedMarketSymbol,
         adapters::{MarketIngestionService, SyntheticIngestionOutcome},
-        synthetic::{
-            SyntheticCandle, SyntheticExecutionMode, SyntheticKlineInterval, SyntheticMarketConfig,
-            SyntheticMarketNode, SyntheticTargetType, aggregate_1m_candles,
-        },
+        aggregate_1m_candles, synthetic_config_from_snapshot, synthetic_execution_mode_from_code,
+        synthetic_target_type_from_code,
     },
     state::AppState,
 };
@@ -761,58 +760,26 @@ fn strategy_config(
     row: &SyntheticStrategyRow,
     relation_nodes: Vec<SyntheticNodeRow>,
 ) -> AppResult<SyntheticMarketConfig> {
-    let snapshot = &row.config_json.0;
-    let nodes = match snapshot.get("nodes") {
-        Some(Value::Array(nodes)) => nodes
-            .iter()
-            .map(config_node)
-            .collect::<AppResult<Vec<_>>>()?,
-        Some(_) => {
-            return Err(AppError::Validation(
-                "synthetic strategy version nodes must be an array".to_owned(),
-            ));
-        }
-        None => relation_nodes
-            .into_iter()
-            .map(relation_node)
-            .collect::<AppResult<Vec<_>>>()?,
-    };
-    let price_precision = u32::try_from(row.price_precision).map_err(|_| {
-        AppError::Validation("synthetic strategy price precision must be non-negative".to_owned())
-    })?;
-    let version = u32::try_from(row.version).map_err(|_| {
-        AppError::Validation("synthetic strategy version must be non-negative".to_owned())
-    })?;
-    SyntheticMarketConfig::new(SyntheticMarketConfig {
+    let fallback_nodes = relation_nodes
+        .into_iter()
+        .map(relation_node)
+        .collect::<AppResult<Vec<_>>>()?;
+    synthetic_config_from_snapshot(SyntheticStrategySnapshot {
         symbol: row.symbol.clone(),
         seed: row.seed.clone(),
-        version,
-        price_precision,
-        start_time: config_time(snapshot, "start_time", row.start_time)?,
-        end_time: config_time(snapshot, "end_time", row.end_time)?,
-        start_price: config_decimal(snapshot, "start_price", &row.start_price)?,
-        target_price: config_decimal(snapshot, "target_price", &row.target_price)?,
-        volatility: config_decimal(snapshot, "volatility", &row.volatility)?,
-        volume_min: config_decimal(snapshot, "volume_min", &row.volume_min)?,
-        volume_max: config_decimal(snapshot, "volume_max", &row.volume_max)?,
-        nodes,
+        version: row.version,
+        price_precision: row.price_precision,
+        config_json: row.config_json.0.clone(),
+        fallback_start_time: row.start_time,
+        fallback_end_time: row.end_time,
+        fallback_start_price: row.start_price.clone(),
+        fallback_target_price: row.target_price.clone(),
+        fallback_volatility: row.volatility.clone(),
+        fallback_volume_min: row.volume_min.clone(),
+        fallback_volume_max: row.volume_max.clone(),
+        fallback_nodes,
     })
     .map_err(|error| AppError::Validation(error.to_string()))
-}
-
-/// 把版本快照里的单个节点转为领域节点，目标时间、类型、目标值、执行模式、容差和波动率都是必填项。
-/// 成交量上下限可以缺省或为 null，缺省表示该节点沿用策略级区间；任一必填字段缺失或取值非法都会失败。
-fn config_node(value: &Value) -> AppResult<SyntheticMarketNode> {
-    Ok(SyntheticMarketNode {
-        target_time: required_time(value, "target_time")?,
-        target_type: parse_target_type(required_string(value, "target_type")?)?,
-        target_value: required_decimal(value, "target_value")?,
-        execution_mode: parse_execution_mode(required_string(value, "execution_mode")?)?,
-        tolerance: required_decimal(value, "tolerance")?,
-        volatility: required_decimal(value, "volatility")?,
-        volume_min: optional_decimal(value, "volume_min")?,
-        volume_max: optional_decimal(value, "volume_max")?,
-    })
 }
 
 /// 把关系表节点行转为领域节点，字段形态已由列类型保证，只需再解析目标类型和执行模式两个枚举文本。
@@ -820,9 +787,11 @@ fn config_node(value: &Value) -> AppResult<SyntheticMarketNode> {
 fn relation_node(row: SyntheticNodeRow) -> AppResult<SyntheticMarketNode> {
     Ok(SyntheticMarketNode {
         target_time: row.target_time,
-        target_type: parse_target_type(&row.target_type)?,
+        target_type: synthetic_target_type_from_code(&row.target_type)
+            .map_err(|error| AppError::Validation(error.to_string()))?,
         target_value: row.target_value,
-        execution_mode: parse_execution_mode(&row.execution_mode)?,
+        execution_mode: synthetic_execution_mode_from_code(&row.execution_mode)
+            .map_err(|error| AppError::Validation(error.to_string()))?,
         tolerance: row.tolerance,
         volatility: row.volatility,
         volume_min: row.volume_min,
@@ -1002,120 +971,6 @@ fn current_minute_open_time(now: DateTime<Utc>) -> AppResult<DateTime<Utc>> {
     DateTime::<Utc>::from_timestamp(now.timestamp().div_euclid(60) * 60, 0).ok_or_else(|| {
         AppError::Validation("synthetic market timestamp is out of range".to_owned())
     })
-}
-
-/// 从版本快照读取一个时间字段，键不存在时回退到调用方给出的策略主表当前值。
-/// 键存在但格式非法不会回退而是直接失败，避免用当前配置掩盖一份已经损坏的历史快照。
-fn config_time(value: &Value, key: &str, fallback: DateTime<Utc>) -> AppResult<DateTime<Utc>> {
-    match value.get(key) {
-        Some(value) => value_time(value, key),
-        None => Ok(fallback),
-    }
-}
-
-/// 读取节点中必填的时间字段，键缺失即返回带字段名的校验错误。
-/// 与快照级时间不同，节点时间没有可回退的主表来源，因此这里不接受任何缺省值。
-fn required_time(value: &Value, key: &str) -> AppResult<DateTime<Utc>> {
-    value
-        .get(key)
-        .ok_or_else(|| AppError::Validation(format!("synthetic node {key} is required")))
-        .and_then(|value| value_time(value, key))
-}
-
-/// 解析时间取值，同时兼容毫秒整数和 RFC3339 字符串两种历史写法，字符串一律换算为 UTC。
-/// 毫秒超出可表示范围或字符串无法解析都返回校验错误，消息带上字段名以便定位是哪一段快照有问题。
-/// 其余 JSON 类型一律拒绝；本函数不检查分钟对齐，那项约束由领域构造器统一负责。
-fn value_time(value: &Value, key: &str) -> AppResult<DateTime<Utc>> {
-    if let Some(millis) = value.as_i64() {
-        return DateTime::<Utc>::from_timestamp_millis(millis).ok_or_else(|| {
-            AppError::Validation(format!("synthetic strategy {key} is out of range"))
-        });
-    }
-    if let Some(raw) = value.as_str() {
-        return DateTime::parse_from_rfc3339(raw)
-            .map(|time| time.with_timezone(&Utc))
-            .map_err(|error| {
-                AppError::Validation(format!("synthetic strategy {key} is invalid: {error}"))
-            });
-    }
-    Err(AppError::Validation(format!(
-        "synthetic strategy {key} must be milliseconds or RFC3339"
-    )))
-}
-
-/// 从版本快照读取一个十进制字段，键不存在时回退到调用方传入的策略主表当前值。
-/// 与时间字段同理，键存在却无法解析时直接失败，不会退回主表值而掩盖损坏的快照。
-fn config_decimal(value: &Value, key: &str, fallback: &BigDecimal) -> AppResult<BigDecimal> {
-    match value.get(key) {
-        Some(value) => value_decimal(value, key),
-        None => Ok(fallback.clone()),
-    }
-}
-
-/// 读取节点中必填的十进制字段，键缺失即返回带字段名的校验错误。
-/// 节点的目标值、容差与波动率都经由它解析，因此这些字段必须在版本快照里显式写出。
-fn required_decimal(value: &Value, key: &str) -> AppResult<BigDecimal> {
-    value
-        .get(key)
-        .ok_or_else(|| AppError::Validation(format!("synthetic node {key} is required")))
-        .and_then(|value| value_decimal(value, key))
-}
-
-/// 读取节点中可选的十进制字段，键缺失或显式为 null 都返回 `None`。
-/// 成交量上下限用它解析，`None` 表示该节点沿用策略级区间；键存在但无法解析仍然按错误返回。
-fn optional_decimal(value: &Value, key: &str) -> AppResult<Option<BigDecimal>> {
-    match value.get(key) {
-        None | Some(Value::Null) => Ok(None),
-        Some(value) => value_decimal(value, key).map(Some),
-    }
-}
-
-/// 把 JSON 取值解析为 `BigDecimal`：字符串取其内容，其余类型按原始 JSON 文本解析。
-/// 这样带引号的十进制串和裸数值都能兼容，且不经浮点中转，避免快照往返造成精度漂移。
-/// 解析失败返回带字段名的校验错误，不会退化成零值或默认值继续生成行情。
-fn value_decimal(value: &Value, key: &str) -> AppResult<BigDecimal> {
-    let raw = value
-        .as_str()
-        .map(str::to_owned)
-        .unwrap_or_else(|| value.to_string());
-    BigDecimal::from_str(&raw).map_err(|error| {
-        AppError::Validation(format!("synthetic strategy {key} is invalid: {error}"))
-    })
-}
-
-/// 读取节点中必填的字符串字段，键缺失或取值不是字符串都归为同一个校验错误。
-/// 目标类型与执行模式两个枚举文本由它取出，随后再交给各自的解析函数做白名单判断。
-fn required_string<'a>(value: &'a Value, key: &str) -> AppResult<&'a str> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .ok_or_else(|| AppError::Validation(format!("synthetic node {key} must be a string")))
-}
-
-/// 把目标类型文本映射为枚举，只接受 absolute_price、percent_from_start、percent_from_previous 三种。
-/// 匹配区分大小写且不做裁剪，未知取值返回带原文的校验错误，绝不静默按绝对价处理。
-fn parse_target_type(value: &str) -> AppResult<SyntheticTargetType> {
-    match value {
-        "absolute_price" => Ok(SyntheticTargetType::AbsolutePrice),
-        "percent_from_start" => Ok(SyntheticTargetType::PercentFromStart),
-        "percent_from_previous" => Ok(SyntheticTargetType::PercentFromPrevious),
-        _ => Err(AppError::Validation(format!(
-            "unsupported synthetic target type: {value}"
-        ))),
-    }
-}
-
-/// 把执行模式文本映射为枚举，只接受 hard、soft、range 三种取值。
-/// 未知取值返回带原文的校验错误，不会降级为 hard，避免把本应带容差的节点当成精确命中。
-fn parse_execution_mode(value: &str) -> AppResult<SyntheticExecutionMode> {
-    match value {
-        "hard" => Ok(SyntheticExecutionMode::Hard),
-        "soft" => Ok(SyntheticExecutionMode::Soft),
-        "range" => Ok(SyntheticExecutionMode::Range),
-        _ => Err(AppError::Validation(format!(
-            "unsupported synthetic execution mode: {value}"
-        ))),
-    }
 }
 
 /// 从 Mongo 文档按字段名读出十进制字符串并解析，字段类型不是字符串或内容非法都返回校验错误。

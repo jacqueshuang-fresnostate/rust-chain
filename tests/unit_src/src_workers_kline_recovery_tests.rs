@@ -191,6 +191,7 @@ async fn manual_recovery_rejects_unbounded_duplicate_and_live_slots_before_io() 
         volatility: BigDecimal::from(0),
         volume_min: BigDecimal::from(1),
         volume_max: BigDecimal::from(2),
+        generator: Default::default(),
         nodes: Vec::new(),
     })
     .unwrap();

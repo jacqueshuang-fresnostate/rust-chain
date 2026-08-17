@@ -1,4 +1,4 @@
-import type { ComponentType } from 'react';
+import type { ComponentType, ReactElement } from 'react';
 import type { RouteObject } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 
@@ -76,7 +76,6 @@ describe('adminRoutes', () => {
     ['agents', 'AgentManagementPage'],
     ['dashboard', 'DashboardPage'],
     ['new-coins/actions', 'NewCoinActions'],
-    ['market/strategies/actions', 'MarketStrategyActions'],
     ['prediction/settings', 'PredictionConfigPage']
   ])(
     'registers the %s action page',
@@ -86,9 +85,11 @@ describe('adminRoutes', () => {
     120_000
   );
 
-  it('keeps every admin route out of the initial bundle', () => {
+  it('keeps only the legacy strategy compatibility redirect eager', () => {
     const eagerRoutes = adminRoutes.filter((route) => route.path && route.element);
-    expect(eagerRoutes).toEqual([]);
+    expect(eagerRoutes.map((route) => route.path)).toEqual(['market/strategies/actions']);
+    const redirect = eagerRoutes[0]?.element as ReactElement<{ replace?: boolean; to?: string }>;
+    expect(redirect.props).toMatchObject({ replace: true, to: '/admin/market/strategies' });
   });
 
   it.each([

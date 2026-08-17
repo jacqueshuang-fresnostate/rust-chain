@@ -151,6 +151,7 @@ pub(crate) fn validate_create_market_strategy(
         request.start_time,
         request.end_time,
     )?;
+    validate_market_strategy_generator(&request.generator)?;
     if let Some(status) = request.status.as_deref() {
         validate_market_strategy_status(status)?;
     }
@@ -179,7 +180,9 @@ pub(crate) fn validate_update_market_strategy(
         &request.start_price,
         request.start_time,
         request.end_time,
-    )
+    )?;
+    validate_market_strategy_generator(&request.generator)?;
+    Ok(())
 }
 
 struct MarketStrategyConfigValidation<'a> {
@@ -209,6 +212,15 @@ fn validate_market_strategy_config(config: MarketStrategyConfigValidation<'_>) -
     if config.end_time <= config.start_time {
         return Err(AppError::Validation(
             "end_time must be after start_time".to_owned(),
+        ));
+    }
+    if config.start_time.timestamp_subsec_millis() != 0
+        || config.end_time.timestamp_subsec_millis() != 0
+        || config.start_time.timestamp().rem_euclid(60) != 0
+        || config.end_time.timestamp().rem_euclid(60) != 0
+    {
+        return Err(AppError::Validation(
+            "策略开始和结束时间必须对齐到 UTC 整分钟".to_owned(),
         ));
     }
     if config.volatility < &BigDecimal::from(0)
@@ -260,6 +272,7 @@ pub(crate) fn market_strategy_config_json(
     request: &CreateMarketStrategyRequest,
     status: &str,
     market_type: &str,
+    generator: &ValidatedMarketStrategyGenerator,
 ) -> Value {
     market_strategy_config_value(MarketStrategyConfigValue {
         pair_id: Some(request.pair_id),
@@ -274,6 +287,7 @@ pub(crate) fn market_strategy_config_json(
         volume_max: &request.volume_max,
         status,
         nodes: &request.nodes,
+        generator,
     })
 }
 
@@ -285,6 +299,7 @@ pub(crate) fn market_strategy_update_config_json(
     request: &UpdateMarketStrategyRequest,
     status: &str,
     market_type: &str,
+    generator: &ValidatedMarketStrategyGenerator,
 ) -> Value {
     market_strategy_config_value(MarketStrategyConfigValue {
         pair_id: None,
@@ -299,6 +314,7 @@ pub(crate) fn market_strategy_update_config_json(
         volume_max: &request.volume_max,
         status,
         nodes: &request.nodes,
+        generator,
     })
 }
 
@@ -315,6 +331,7 @@ struct MarketStrategyConfigValue<'a> {
     volume_max: &'a BigDecimal,
     status: &'a str,
     nodes: &'a [MarketStrategyNodeRequest],
+    generator: &'a ValidatedMarketStrategyGenerator,
 }
 
 /// 把策略配置与节点序列序列化成版本快照 JSON，是创建版与更新版配置的共同实现。
@@ -344,6 +361,7 @@ fn market_strategy_config_value(config: MarketStrategyConfigValue<'_>) -> Value 
             "volume_min": node.volume_min,
             "volume_max": node.volume_max,
         })).collect::<Vec<_>>(),
+        "generator": market_strategy_generator_snapshot_json(config.generator),
     });
     if let Some(pair_id) = config.pair_id {
         value["pair_id"] = json!(pair_id);

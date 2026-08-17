@@ -48,12 +48,25 @@ pub(super) fn routes() -> Router<AppState> {
             get(list_market_strategies).post(create_market_strategy),
         )
         .route(
+            "/market-strategies/presets",
+            get(list_market_strategy_presets),
+        )
+        .route("/market-strategies/preview", post(preview_market_strategy))
+        .route(
             "/market-strategies/:id",
             get(get_market_strategy).patch(update_market_strategy),
         )
         .route(
             "/market-strategies/:id/status",
             patch(update_market_strategy_status),
+        )
+        .route(
+            "/market-strategies/:id/versions",
+            get(list_market_strategy_versions),
+        )
+        .route(
+            "/market-strategies/:id/versions/:version/restore",
+            post(restore_market_strategy_version),
         )
         .route(
             "/market-strategies/:id/kline-gaps",
@@ -235,6 +248,60 @@ async fn list_market_strategies(
 ) -> AppResult<Json<AdminMarketStrategiesResponse>> {
     Ok(Json(
         list_market_strategies_use_case(state.mysql.clone(), query).await?,
+    ))
+}
+
+/// 返回模拟行情场景预设目录；该入口只做管理员鉴权并调用无 I/O 的应用用例。
+/// 响应中的中文名称、显式参数和相对节点模板均由后端维护，不读取当前策略或生成实际 seed。
+async fn list_market_strategy_presets(
+    _auth: AdminAuth,
+) -> AppResult<Json<MarketStrategyPresetsResponse>> {
+    Ok(Json(list_market_strategy_presets_use_case()))
+}
+
+/// 对完整行情策略草稿执行无副作用预览；路由只传入 MySQL 连接用于读取交易对目录。
+/// 生成过程不接收 Mongo、Redis 或广播句柄，因此即使预览失败也不会留下行情、任务或检查点写入。
+async fn preview_market_strategy(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+    Json(request): Json<PreviewMarketStrategyRequest>,
+) -> AppResult<Json<MarketStrategyPreviewResponse>> {
+    Ok(Json(
+        preview_market_strategy_use_case(state.mysql.clone(), request).await?,
+    ))
+}
+
+/// 分页读取指定策略的不可变版本历史；策略 ID 来自路径，筛选只允许分页参数。
+/// 响应标出当前激活版本并返回兼容解析后的高级参数，不改变策略运行状态。
+async fn list_market_strategy_versions(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+    Path(strategy_id): Path<u64>,
+    Query(query): Query<MarketStrategyVersionsQuery>,
+) -> AppResult<Json<MarketStrategyVersionsResponse>> {
+    Ok(Json(
+        list_market_strategy_versions_use_case(state.mysql.clone(), strategy_id, query).await?,
+    ))
+}
+
+/// 复制指定历史版本为递增新版本；管理员身份与审计原因由应用层写入同一事务。
+/// active 策略和当前激活版本会被拒绝，路由不直接更新主表、节点、运行检查点或版本行。
+async fn restore_market_strategy_version(
+    AdminAuth(claims): AdminAuth,
+    State(state): State<AppState>,
+    Path((strategy_id, version)): Path<(u64, i32)>,
+    Json(request): Json<RestoreMarketStrategyVersionRequest>,
+) -> AppResult<Json<AdminMarketStrategyDetailResponse>> {
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    Ok(Json(
+        restore_market_strategy_version_use_case(
+            state.mysql.clone(),
+            admin_id,
+            strategy_id,
+            version,
+            request,
+        )
+        .await?,
     ))
 }
 

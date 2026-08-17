@@ -99,7 +99,6 @@ export const adminNavItems: AdminNavItem[] = [
     children: [
       { path: '/admin/market/pairs', label: '交易对配置' },
       { path: '/admin/market/strategies', label: '行情策略' },
-      { path: '/admin/market/strategies/actions', label: '策略动作' },
       { path: '/admin/market/feed-config', label: '行情订阅' }
     ]
   },

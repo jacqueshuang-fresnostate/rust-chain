@@ -8,6 +8,16 @@
 //! 全程不获取 Redis 依赖，因此绝不会污染实时 ticker。
 
 use super::*;
+use crate::modules::admin::{
+    infrastructure::{
+        load_active_market_strategy_version_from_store, lock_active_market_strategy_version_in_tx,
+    },
+    service::{
+        market_strategy_generator_response, market_strategy_generator_response_from_snapshot,
+        resolve_new_market_strategy_seed, resolve_updated_market_strategy_seed,
+        validate_market_strategy_generator,
+    },
+};
 
 const MARKET_RECOVERY_RUNNING_TIMEOUT_MINUTES: i64 = 15;
 
@@ -240,7 +250,14 @@ pub(crate) async fn get_admin_market_strategy(
     let pool = admin_mysql_pool(pool)?;
     let strategy = load_admin_market_strategy_from_store(&pool, strategy_id).await?;
     let nodes = list_market_strategy_nodes_from_store(&pool, strategy_id).await?;
-    Ok(AdminMarketStrategyDetailResponse { strategy, nodes })
+    let version = load_active_market_strategy_version_from_store(&pool, strategy_id).await?;
+    let generator =
+        market_strategy_generator_response_from_snapshot(&version.config_json.0, version.seed)?;
+    Ok(AdminMarketStrategyDetailResponse {
+        strategy,
+        nodes,
+        generator,
+    })
 }
 
 /// 在策略有效时段与最近已闭合 UTC 分钟之间检测 Mongo 权威 1m K 线缺口。
@@ -769,235 +786,48 @@ async fn load_admin_recovery_config(
 /// 主配置字段逐项优先取版本 JSON 中的值，缺失时才回落到快照上的列值，
 /// 这样历史版本即便与当前策略主表已经不一致，也能按当时的参数复现出相同的 K 线。
 /// 版本号与价格精度需转换为无符号整数，越界归为内部错误；最终由生成器构造函数做一次整体自洽校验。
-fn admin_synthetic_config(
+pub(crate) fn admin_synthetic_config(
     snapshot: AdminSyntheticStrategySnapshot,
     relation_nodes: Vec<AdminMarketStrategyNodeResponse>,
 ) -> AppResult<crate::modules::market::synthetic::SyntheticMarketConfig> {
-    use crate::modules::market::synthetic::{SyntheticMarketConfig, SyntheticMarketNode};
-
-    let nodes = match snapshot.config_json.0.get("nodes") {
-        Some(serde_json::Value::Array(nodes)) => nodes
-            .iter()
-            .map(|node| {
-                let target_type = parse_admin_recovery_target_type(&required_recovery_string(
-                    node,
-                    "target_type",
-                )?)?;
-                let execution_mode = parse_admin_recovery_execution_mode(
-                    &required_recovery_string(node, "execution_mode")?,
-                )?;
-                Ok(SyntheticMarketNode {
-                    target_time: required_recovery_time(node, "target_time")?,
-                    target_type,
-                    target_value: required_recovery_decimal(node, "target_value")?,
-                    execution_mode,
-                    tolerance: required_recovery_decimal(node, "tolerance")?,
-                    volatility: required_recovery_decimal(node, "volatility")?,
-                    volume_min: optional_recovery_decimal(node, "volume_min")?,
-                    volume_max: optional_recovery_decimal(node, "volume_max")?,
-                })
-            })
-            .collect::<AppResult<Vec<_>>>()?,
-        Some(_) => {
-            return Err(AppError::Validation(
-                "stored market strategy version nodes must be an array".to_owned(),
-            ));
-        }
-        None => relation_nodes
-            .into_iter()
-            .map(|node| {
-                Ok(SyntheticMarketNode {
-                    target_time: node.target_time,
-                    target_type: parse_admin_recovery_target_type(&node.target_type)?,
-                    target_value: node.target_value,
-                    execution_mode: parse_admin_recovery_execution_mode(&node.execution_mode)?,
-                    tolerance: node.tolerance,
-                    volatility: node.volatility,
-                    volume_min: node.volume_min,
-                    volume_max: node.volume_max,
-                })
-            })
-            .collect::<AppResult<Vec<_>>>()?,
+    use crate::modules::market::{
+        SyntheticMarketNode, SyntheticStrategySnapshot, synthetic_config_from_snapshot,
+        synthetic_execution_mode_from_code, synthetic_target_type_from_code,
     };
-    let version = u32::try_from(snapshot.config_version)
-        .map_err(|_| AppError::Internal("market strategy version is invalid".to_owned()))?;
-    let price_precision = u32::try_from(snapshot.price_precision)
-        .map_err(|_| AppError::Internal("market pair price precision is invalid".to_owned()))?;
-    SyntheticMarketConfig::new(SyntheticMarketConfig {
+
+    let fallback_nodes = relation_nodes
+        .into_iter()
+        .map(|node| {
+            Ok(SyntheticMarketNode {
+                target_time: node.target_time,
+                target_type: synthetic_target_type_from_code(&node.target_type)
+                    .map_err(|error| AppError::Validation(error.to_string()))?,
+                target_value: node.target_value,
+                execution_mode: synthetic_execution_mode_from_code(&node.execution_mode)
+                    .map_err(|error| AppError::Validation(error.to_string()))?,
+                tolerance: node.tolerance,
+                volatility: node.volatility,
+                volume_min: node.volume_min,
+                volume_max: node.volume_max,
+            })
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+    synthetic_config_from_snapshot(SyntheticStrategySnapshot {
         symbol: snapshot.symbol,
         seed: snapshot.seed,
-        version,
-        price_precision,
-        start_time: recovery_config_time(
-            &snapshot.config_json.0,
-            "start_time",
-            snapshot.start_time,
-        )?,
-        end_time: recovery_config_time(&snapshot.config_json.0, "end_time", snapshot.end_time)?,
-        start_price: recovery_config_decimal(
-            &snapshot.config_json.0,
-            "start_price",
-            snapshot.start_price,
-        )?,
-        target_price: recovery_config_decimal(
-            &snapshot.config_json.0,
-            "target_price",
-            snapshot.target_price,
-        )?,
-        volatility: recovery_config_decimal(
-            &snapshot.config_json.0,
-            "volatility",
-            snapshot.volatility,
-        )?,
-        volume_min: recovery_config_decimal(
-            &snapshot.config_json.0,
-            "volume_min",
-            snapshot.volume_min,
-        )?,
-        volume_max: recovery_config_decimal(
-            &snapshot.config_json.0,
-            "volume_max",
-            snapshot.volume_max,
-        )?,
-        nodes,
+        version: snapshot.config_version,
+        price_precision: snapshot.price_precision,
+        config_json: snapshot.config_json.0,
+        fallback_start_time: snapshot.start_time,
+        fallback_end_time: snapshot.end_time,
+        fallback_start_price: snapshot.start_price,
+        fallback_target_price: snapshot.target_price,
+        fallback_volatility: snapshot.volatility,
+        fallback_volume_min: snapshot.volume_min,
+        fallback_volume_max: snapshot.volume_max,
+        fallback_nodes,
     })
     .map_err(|error| AppError::Validation(error.to_string()))
-}
-
-/// 把存量版本快照里的节点目标类型字符串还原为生成器枚举。
-/// 三种取值分别对应绝对价、相对起始价百分比和相对前一节点百分比；未知值判为校验错误，
-/// 提示是已落库数据不合法而非本次请求有误，这类脏数据会让该策略无法执行补偿。
-fn parse_admin_recovery_target_type(
-    value: &str,
-) -> AppResult<crate::modules::market::synthetic::SyntheticTargetType> {
-    use crate::modules::market::synthetic::SyntheticTargetType;
-
-    match value {
-        "absolute_price" => Ok(SyntheticTargetType::AbsolutePrice),
-        "percent_from_start" => Ok(SyntheticTargetType::PercentFromStart),
-        "percent_from_previous" => Ok(SyntheticTargetType::PercentFromPrevious),
-        _ => Err(AppError::Validation(
-            "stored market strategy version node target_type is invalid".to_owned(),
-        )),
-    }
-}
-
-/// 把存量版本快照里的节点执行模式字符串还原为生成器枚举。
-/// hard 表示必须精确命中目标价，soft 表示允许在容差内逼近，range 表示只需落在区间内；
-/// 与目标类型一样，未知值视为已落库数据不合法并返回校验错误。
-fn parse_admin_recovery_execution_mode(
-    value: &str,
-) -> AppResult<crate::modules::market::synthetic::SyntheticExecutionMode> {
-    use crate::modules::market::synthetic::SyntheticExecutionMode;
-
-    match value {
-        "hard" => Ok(SyntheticExecutionMode::Hard),
-        "soft" => Ok(SyntheticExecutionMode::Soft),
-        "range" => Ok(SyntheticExecutionMode::Range),
-        _ => Err(AppError::Validation(
-            "stored market strategy version node execution_mode is invalid".to_owned(),
-        )),
-    }
-}
-
-/// 从版本配置 JSON 中读取时间字段，键不存在时回落到调用方给出的快照列值。
-/// 键存在但值非法仍会报错而不是悄悄回落，这样能区分「历史版本没记这一项」和「记了但记错了」。
-fn recovery_config_time(
-    config: &serde_json::Value,
-    key: &str,
-    fallback: DateTime<Utc>,
-) -> AppResult<DateTime<Utc>> {
-    config
-        .get(key)
-        .map_or(Ok(fallback), |value| recovery_time(value, key))
-}
-
-/// 从节点 JSON 中读取必填时间字段，键缺失即报错而没有任何回落值。
-/// 节点时间没有可用的兜底来源，缺失会让整条价格路径失去锚点，因此必须直接失败。
-fn required_recovery_time(value: &serde_json::Value, key: &str) -> AppResult<DateTime<Utc>> {
-    value
-        .get(key)
-        .ok_or_else(|| AppError::Validation(format!("stored strategy node {key} is required")))
-        .and_then(|value| recovery_time(value, key))
-}
-
-/// 解析版本快照中的时间值，兼容毫秒时间戳与 RFC3339 字符串两种历史写法。
-/// 数字按毫秒时间戳解释，越界报「超出范围」；字符串按 RFC3339 解析后统一换算到 UTC，格式错误报「无效」。
-/// 既非数字也非字符串则报明确的类型提示，帮助定位是哪个版本写入了非预期结构。
-fn recovery_time(value: &serde_json::Value, key: &str) -> AppResult<DateTime<Utc>> {
-    if let Some(millis) = value.as_i64() {
-        return DateTime::from_timestamp_millis(millis).ok_or_else(|| {
-            AppError::Validation(format!("stored strategy version {key} is out of range"))
-        });
-    }
-    if let Some(raw) = value.as_str() {
-        return DateTime::parse_from_rfc3339(raw)
-            .map(|value| value.with_timezone(&Utc))
-            .map_err(|_| {
-                AppError::Validation(format!("stored strategy version {key} is invalid"))
-            });
-    }
-    Err(AppError::Validation(format!(
-        "stored strategy version {key} must be milliseconds or RFC3339"
-    )))
-}
-
-/// 从版本配置 JSON 中读取十进制字段，键不存在时回落到快照列值。
-/// 与时间字段同构：只有键完全缺失才回落，键存在却无法解析为十进制时照常报错。
-fn recovery_config_decimal(
-    config: &serde_json::Value,
-    key: &str,
-    fallback: BigDecimal,
-) -> AppResult<BigDecimal> {
-    config
-        .get(key)
-        .map_or(Ok(fallback), |value| recovery_decimal(value, key))
-}
-
-/// 从节点 JSON 中读取必填十进制字段，用于目标值、容差和波动率这类不可缺省项。
-/// 键缺失直接报必填错误；与可选版本的区别在于这里把 JSON null 之外的缺失也一律视为错误。
-fn required_recovery_decimal(value: &serde_json::Value, key: &str) -> AppResult<BigDecimal> {
-    value
-        .get(key)
-        .ok_or_else(|| AppError::Validation(format!("stored strategy node {key} is required")))
-        .and_then(|value| recovery_decimal(value, key))
-}
-
-/// 从节点 JSON 中读取可选十进制字段，用于成交量上下界这类允许不配置的项。
-/// 键缺失与显式 JSON null 同样返回 None，二者语义等价，都表示该节点不覆盖策略级的成交量设置。
-/// 值存在但无法解析为十进制时仍报错，避免把脏数据当成未配置处理。
-fn optional_recovery_decimal(
-    value: &serde_json::Value,
-    key: &str,
-) -> AppResult<Option<BigDecimal>> {
-    match value.get(key) {
-        None | Some(serde_json::Value::Null) => Ok(None),
-        Some(value) => recovery_decimal(value, key).map(Some),
-    }
-}
-
-/// 把版本快照中的十进制值解析为高精度小数，兼容 JSON 字符串与 JSON 数字两种写法。
-/// 字符串取其原文，其他类型退回到 JSON 字面量文本再解析，因此数字形态也能被处理。
-/// 全程走十进制字符串解析而非浮点转换，从而避免价格与成交量在往返过程中产生精度漂移。
-fn recovery_decimal(value: &serde_json::Value, key: &str) -> AppResult<BigDecimal> {
-    let raw = value
-        .as_str()
-        .map(str::to_owned)
-        .unwrap_or_else(|| value.to_string());
-    raw.parse::<BigDecimal>().map_err(|_| {
-        AppError::Validation(format!("stored strategy version {key} must be a decimal"))
-    })
-}
-
-/// 从节点 JSON 中读取必填字符串字段，用于目标类型与执行模式两个枚举代码。
-/// 键缺失或值不是字符串都归为同一类必填错误，且不做去空白处理，
-/// 因此带空白的代码会在后续枚举匹配阶段被判为非法而不是被静默接受。
-fn required_recovery_string(value: &serde_json::Value, key: &str) -> AppResult<String> {
-    value
-        .get(key)
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_owned)
-        .ok_or_else(|| AppError::Validation(format!("stored strategy node {key} is required")))
 }
 
 /// 对每个待补槽位调用确定性生成器产出 1m OHLCV，用于预览展示而不写入任何存储。
@@ -1058,6 +888,8 @@ pub(crate) async fn create_admin_market_strategy(
     request: CreateMarketStrategyRequest,
 ) -> AppResult<AdminMarketStrategyDetailResponse> {
     validate_create_market_strategy(&request)?;
+    let generator = validate_market_strategy_generator(&request.generator)?;
+    let seed = resolve_new_market_strategy_seed(&generator);
     let pool = admin_mysql_pool(pool)?;
 
     // 运行行的 active_version 外键要求版本已存在；所有配置与审计仍在同一事务内原子提交。
@@ -1092,8 +924,8 @@ pub(crate) async fn create_admin_market_strategy(
         strategy_id,
         1,
         request.start_time,
-        market_strategy_config_json(&request, &status, &market_type),
-        Uuid::now_v7().to_string(),
+        market_strategy_config_json(&request, &status, &market_type, &generator),
+        seed.clone(),
         admin_id,
     )
     .await?;
@@ -1117,14 +949,20 @@ pub(crate) async fn create_admin_market_strategy(
     )
     .await?;
     let nodes = list_market_strategy_nodes_in_tx(&mut tx, strategy_id).await?;
+    let generator = market_strategy_generator_response(&generator, seed);
     tx.commit().await?;
-    Ok(AdminMarketStrategyDetailResponse { strategy, nodes })
+    Ok(AdminMarketStrategyDetailResponse {
+        strategy,
+        nodes,
+        generator,
+    })
 }
 
 /// 更新非 active 行情策略的配置，重置运行检查点并追加下一版本快照后返回含节点的新详情。
 /// 请求须通过数值校验和审计原因校验；事务锁定策略后若状态仍为 active 则返回冲突。
 /// 锁后按“主配置、运行检查点、计算下一版本、回读、版本记录、策略事件、后台审计”顺序写入，失败整体回滚。
-/// 每次成功调用都会生成新 UUIDv7 版本和审计，故相同请求重放不是幂等操作；不会直接唤醒 worker。
+/// 每次成功调用都会追加递增版本和审计；自动 seed 默认继承当前激活版本，只有显式重生成才换 UUIDv7，固定模式使用提交值。
+/// 相同请求重放仍会创建新版本，因此不是幂等操作；提交后不会直接唤醒 worker，由运行组件自行观察 active_version。
 pub(crate) async fn update_admin_market_strategy(
     pool: Option<Pool<MySql>>,
     admin_id: u64,
@@ -1132,6 +970,7 @@ pub(crate) async fn update_admin_market_strategy(
     request: UpdateMarketStrategyRequest,
 ) -> AppResult<AdminMarketStrategyDetailResponse> {
     validate_update_market_strategy(&request)?;
+    let generator = validate_market_strategy_generator(&request.generator)?;
     let reason = required_admin_audit_reason(request.reason.clone())?;
     let pool = admin_mysql_pool(pool)?;
 
@@ -1144,6 +983,8 @@ pub(crate) async fn update_admin_market_strategy(
             "active market strategy must be paused or disabled before update".to_owned(),
         ));
     }
+    let active_version = lock_active_market_strategy_version_in_tx(&mut tx, strategy_id).await?;
+    let seed = resolve_updated_market_strategy_seed(&generator, &active_version.seed)?;
     let strategy_type = optional_string(request.strategy_type.clone()).unwrap();
     update_admin_market_strategy_in_tx(
         &mut tx,
@@ -1167,8 +1008,13 @@ pub(crate) async fn update_admin_market_strategy(
         strategy_id,
         next_version,
         request.start_time,
-        market_strategy_update_config_json(&request, &before.status, &before.market_type),
-        Uuid::now_v7().to_string(),
+        market_strategy_update_config_json(
+            &request,
+            &before.status,
+            &before.market_type,
+            &generator,
+        ),
+        seed.clone(),
         admin_id,
     )
     .await?;
@@ -1200,10 +1046,12 @@ pub(crate) async fn update_admin_market_strategy(
     )
     .await?;
     let nodes = list_market_strategy_nodes_in_tx(&mut tx, strategy_id).await?;
+    let generator = market_strategy_generator_response(&generator, seed);
     tx.commit().await?;
     Ok(AdminMarketStrategyDetailResponse {
         strategy: after,
         nodes,
+        generator,
     })
 }
 
@@ -1249,7 +1097,7 @@ pub(crate) async fn update_admin_market_strategy_status(
 /// before 与 after 均为可选：创建时只有 after，删除类操作只有 before，二者都为空时仍会写出空快照的记录。
 /// 事件面向策略自身的时间线，审计面向管理员操作追溯，二者内容重合是刻意冗余，便于分别按策略和按人检索。
 /// 本函数不提交也不回滚事务，失败直接上抛由调用方统一回滚。
-async fn record_admin_market_strategy_change_in_tx(
+pub(crate) async fn record_admin_market_strategy_change_in_tx(
     tx: &mut Transaction<'_, MySql>,
     admin_id: u64,
     strategy_id: u64,

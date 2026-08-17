@@ -274,6 +274,7 @@ async fn seed_complete_day_except_gap(
         volatility: decimal("0.01"),
         volume_min: decimal("10"),
         volume_max: decimal("20"),
+        generator: Default::default(),
         nodes: Vec::new(),
     })?;
     let documents = (0..1_440_i64)

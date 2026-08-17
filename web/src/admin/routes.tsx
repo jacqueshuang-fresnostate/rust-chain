@@ -81,9 +81,7 @@ export const adminRoutes: RouteObject[] = [
   resourceRoute('market/strategies', 'marketStrategies'),
   {
     path: 'market/strategies/actions',
-    lazy: async () => ({
-      Component: (await import('./actions/MarketStrategyActions')).MarketStrategyActions
-    })
+    element: <Navigate to="/admin/market/strategies" replace />
   },
   {
     path: 'market/feed-config',

@@ -161,7 +161,7 @@ const scroll = containedTableScrollForColumns(
   exposing the active panel semantically.
 - Repeated row controls need record-specific accessible names.
 
-## Market Strategy Nodes and Recovery SideSheet
+## Market Strategy Settings, Versions, Nodes, and Recovery
 
 - Create and edit reuse one market-strategy form and one ordered node editor.
   Each node exposes Chinese labels for target time/type/value, execution mode,
@@ -169,6 +169,38 @@ const scroll = containedTableScrollForColumns(
   `datetime-local` inputs, convert to Unix milliseconds at the API boundary,
   and preserve array order. Add/delete buttons and every repeated field need a
   record-specific Chinese accessible name such as `节点1目标时间` or `删除节点1`.
+- `/admin/market/strategies` is the single settings entry. It owns list,
+  create/edit, presets, OHLCV preview, version history/rollback, node editing,
+  status actions, and manual recovery. Do not restore a duplicate navigation
+  item or a second `marketStrategyActions` resource config. The legacy
+  `/admin/market/strategies/actions` URL may only redirect to the canonical
+  route.
+- The generator section uses Chinese controls for `行情场景`, `Seed 模式`,
+  `固定 Seed`/`当前实际 Seed`, `均值回归强度（0～2）`, `噪声强度（0～5）`,
+  `影线强度（0～5）`, and `成交量形态`. Create defaults must match backend
+  legacy defaults. Edit initializes every value from detail `generator`, never
+  from the list row.
+- Presets are loaded once after a create/edit SideSheet opens from
+  `GET /admin/api/v1/market-strategies/presets`. An empty or failed response
+  must not create a retry render loop; failure stays inline with an explicit
+  reload action. Selecting a scenario alone does not mutate price/nodes. The
+  administrator must click `应用场景预设`; applying requires valid start price
+  and time range, then writes all returned generator fields, target price, and
+  relative nodes into ordinary editable form state.
+- `生成 OHLCV 预览` is enabled only when the complete form is submittable.
+  Create preview omits `strategy_id`; edit preview includes the row strategy
+  ID so the backend can use the next version and inherited seed. Display total
+  minutes, returned sample count, preview version, actual seed, close-price
+  sparkline, and a scroll-contained OHLCV sample grid. State clearly that the
+  regenerate-seed preview seed is ephemeral. Preview never submits a reason or
+  creates/updates a strategy.
+- Every row exposes `版本历史`. The version SideSheet loads newest first,
+  marks the active version in text as well as color, and displays Chinese
+  scenario/seed mode plus actual seed, effective time, creation time, and
+  creator. A non-active version uses `ConfirmAction` with a trimmed reason to
+  call the copy-restore endpoint. Never relabel this as direct activation or
+  remove/overwrite the old card after success; reload history and the resource
+  list instead.
 - The strategy list response does not contain nodes. Opening edit must first
   load `GET /admin/api/v1/market-strategies/:id`, sort by `sequence_no`, and
   populate the shared form. Never submit the list row's implicit empty array,
@@ -235,9 +267,11 @@ const scroll = containedTableScrollForColumns(
 - KYC / Market Feed / Security Policy: tabpanel semantics and existing API
   payload behavior.
 - Market strategy actions: node add/edit/delete and repeated-field names,
-  detail-before-edit preservation, exact millisecond payloads, recovery
-  detect/preview/execute order, trimmed reason, submit lock, no-gap/error/live
-  states, and status/progress task history.
+  detail-before-edit generator/node preservation, backend preset application,
+  generator/seed payloads, create/edit preview context and rendered
+  version/seed/OHLCV, immutable history copy-restore with trimmed reason, exact
+  millisecond payloads, recovery detect/preview/execute order, submit lock,
+  no-gap/error/live states, and status/progress task history.
 
 ## Browser Assertions
 
