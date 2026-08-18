@@ -1,7 +1,7 @@
 import { Button, Card, SideSheet, Space, Typography } from '@douyinfe/semi-ui';
 import { useEffect, useState } from 'react';
 
-import { apiRequest } from '../../../api/client';
+import { ApiError, apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminModalTriggerButton, AdminSelect, AdminTextInput, type SemiSelectOption } from '../../../shared/SemiFormControls';
@@ -32,6 +32,15 @@ import {
 } from './shared';
 
 const { Text, Title } = Typography;
+
+export const LOAN_PRODUCT_REVISION_CONFLICT_MESSAGE = '贷款产品已被其他管理员更新，列表已刷新，请重新打开后确认最新配置。';
+
+class LoanProductRevisionConflictError extends Error {
+  constructor() {
+    super(LOAN_PRODUCT_REVISION_CONFLICT_MESSAGE);
+    this.name = 'LoanProductRevisionConflictError';
+  }
+}
 
 type LoanProductNameItemValues = {
   country: string;
@@ -154,7 +163,7 @@ function isLoanProductSubmittable(values: LoanProductValues): boolean {
   );
 }
 
-function loanProductRequestBody(values: LoanProductValues, reason: string) {
+function loanProductRequestBody(values: LoanProductValues, reason: string, revision?: number) {
   const nameJson = loanProductNameJson(values);
   const defaultName = values.names[0]?.title.trim() || values.name.trim();
   return {
@@ -169,8 +178,36 @@ function loanProductRequestBody(values: LoanProductValues, reason: string) {
     min_amount: requiredString(values.minAmount, '最小借款金额'),
     max_amount: optionalString(values.maxAmount) ?? null,
     status: requiredString(values.status, '状态'),
-    reason
+    reason,
+    ...(revision === undefined ? {} : { revision })
   };
+}
+
+function loanProductRevision(record: ApiRecord): number | null {
+  const revision = Number(recordString(record, 'revision'));
+  return Number.isSafeInteger(revision) && revision > 0 ? revision : null;
+}
+
+async function submitLoanProductMutation(label: string, request: () => Promise<unknown>, onConflict: () => void): Promise<boolean> {
+  try {
+    await submitAction(label, async () => {
+      try {
+        await request();
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 409) {
+          onConflict();
+          throw new LoanProductRevisionConflictError();
+        }
+        throw error;
+      }
+    });
+    return true;
+  } catch (error) {
+    if (error instanceof LoanProductRevisionConflictError) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 function loanProductFromRecord(record: ApiRecord): LoanProductValues {
@@ -361,6 +398,7 @@ export function CreateLoanProductAction({ onCreated }: { onCreated?: () => void 
 function LoanProductEditAction({ helpers, productId, record }: { helpers: RowActionHelpers; productId: string; record: ApiRecord }) {
   const [product, setProduct] = useState(() => loanProductFromRecord(record));
   const [visible, setVisible] = useState(false);
+  const revision = loanProductRevision(record);
   const { assetLoading, assetOptions } = useAssetOptions(visible);
   const { countries, countriesLoading } = useAdminCountryOptions(visible);
   const assetOptionsWithCurrent = includeCurrentOption(assetOptions, product.assetId, `${recordString(record, 'asset_symbol') || `资产${product.assetId}`}（ID: ${product.assetId}）`);
@@ -372,7 +410,15 @@ function LoanProductEditAction({ helpers, productId, record }: { helpers: RowAct
 
   return (
     <>
-      <Button disabled={!productId} onClick={() => setVisible(true)} size="small" theme="borderless">
+      <Button
+        disabled={!productId || revision === null}
+        onClick={() => {
+          setProduct(loanProductFromRecord(record));
+          setVisible(true);
+        }}
+        size="small"
+        theme="borderless"
+      >
         修改
       </Button>
       <SideSheet onCancel={() => setVisible(false)} title="修改贷款产品" visible={visible} {...createModalProps('wide')}>
@@ -389,15 +435,23 @@ function LoanProductEditAction({ helpers, productId, record }: { helpers: RowAct
             />
             <ConfirmAction
               actionText="提交修改"
-              disabled={!isLoanProductSubmittable(product)}
+              disabled={!isLoanProductSubmittable(product) || revision === null}
               title="确认修改贷款产品"
               onConfirm={async (reason) => {
-                await submitAction('修改贷款产品', () =>
-                  apiRequest(`/admin/api/v1/loan/products/${productId}`, {
-                    method: 'PATCH',
-                    body: JSON.stringify(loanProductRequestBody(product, reason))
-                  })
+                if (revision === null) return;
+                const updated = await submitLoanProductMutation(
+                  '修改贷款产品',
+                  () =>
+                    apiRequest(`/admin/api/v1/loan/products/${productId}`, {
+                      method: 'PATCH',
+                      body: JSON.stringify(loanProductRequestBody(product, reason, revision))
+                    }),
+                  () => {
+                    setVisible(false);
+                    helpers.reload();
+                  }
                 );
+                if (!updated) return;
                 setVisible(false);
                 helpers.reload();
               }}
@@ -413,6 +467,7 @@ export function LoanProductRowActions({ helpers, record }: { helpers: RowActionH
   const productId = recordString(record, 'id');
   const nextStatus = nextToggleStatus(recordString(record, 'status'));
   const actionText = toggleActionText(nextStatus);
+  const revision = loanProductRevision(record);
 
   return (
     <>
@@ -422,15 +477,20 @@ export function LoanProductRowActions({ helpers, record }: { helpers: RowActionH
       <LoanProductEditAction helpers={helpers} productId={productId} record={record} />
       <ConfirmAction
         actionText={actionText}
-        disabled={!productId}
+        disabled={!productId || revision === null}
         title={`${actionText}贷款产品`}
         onConfirm={async (reason) => {
-          await submitAction(`${actionText}贷款产品`, () =>
-            apiRequest(`/admin/api/v1/loan/products/${productId}/status`, {
-              method: 'PATCH',
-              body: JSON.stringify({ status: nextStatus, reason })
-            })
+          if (revision === null) return;
+          const updated = await submitLoanProductMutation(
+            `${actionText}贷款产品`,
+            () =>
+              apiRequest(`/admin/api/v1/loan/products/${productId}/status`, {
+                method: 'PATCH',
+                body: JSON.stringify({ status: nextStatus, reason, revision })
+              }),
+            helpers.reload
           );
+          if (!updated) return;
           helpers.reload();
         }}
       />

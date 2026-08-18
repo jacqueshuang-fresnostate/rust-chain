@@ -16,7 +16,10 @@ use crate::{
         secrets::{decrypt_secret, encrypt_secret},
     },
     modules::{
-        admin::{application::load_enabled_admin_smtp_config, service::admin_id_from_subject},
+        admin::{
+            application::{authorize_admin_permission, load_enabled_admin_smtp_config},
+            service::admin_id_from_subject,
+        },
         auth::presentation::{
             AdminLoginResponse, AdminTwoFactorSetupResponse, AdminTwoFactorStatusResponse,
             LoginTransportContext, LoginTwoFactorChallengeResponse,
@@ -191,11 +194,14 @@ pub(crate) async fn register_admin_actor(
     registration: AdminRegistration,
 ) -> AppResult<IssuedTokens> {
     let requester_subject = match admin_bearer_token(headers) {
-        Some(token) => Some(
-            claims_from_bearer_token(state, token, TokenScope::Admin)
+        Some(token) => {
+            let subject = claims_from_bearer_token(state, token, TokenScope::Admin)
                 .await?
-                .sub,
-        ),
+                .sub;
+            authorize_admin_permission(&mysql_pool(state)?, &subject, "admin.accounts.write")
+                .await?;
+            Some(subject)
+        }
         None => None,
     };
 

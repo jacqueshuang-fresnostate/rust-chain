@@ -16,6 +16,8 @@ pub(crate) struct AdminAuditLogListFilter {
     pub(crate) action: Option<String>,
     pub(crate) target_type: Option<String>,
     pub(crate) target_id: Option<String>,
+    pub(crate) created_from: Option<DateTime<Utc>>,
+    pub(crate) created_to: Option<DateTime<Utc>>,
     pub(crate) limit: u32,
     pub(crate) offset: u32,
 }
@@ -35,10 +37,11 @@ pub(crate) async fn insert_admin_audit_log_entry_in_tx(
     admin_id: u64,
     entry: AdminAuditLogEntry,
 ) -> AppResult<()> {
+    let request_context = crate::infra::admin_request_context::current_admin_request_context();
     sqlx::query(
         r#"INSERT INTO admin_audit_logs
-           (admin_id, action, target_type, target_id, before_json, after_json, reason)
-           VALUES (?, ?, ?, ?, ?, ?, ?)"#,
+           (admin_id, action, target_type, target_id, before_json, after_json, reason, ip, request_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(admin_id)
     .bind(entry.action)
@@ -47,6 +50,16 @@ pub(crate) async fn insert_admin_audit_log_entry_in_tx(
     .bind(entry.before_json.map(SqlxJson))
     .bind(entry.after_json.map(SqlxJson))
     .bind(optional_audit_reason(entry.reason))
+    .bind(
+        request_context
+            .as_ref()
+            .and_then(|context| context.source_ip.as_deref()),
+    )
+    .bind(
+        request_context
+            .as_ref()
+            .map(|context| context.request_id.as_str()),
+    )
     .execute(&mut **tx)
     .await?;
 
@@ -193,15 +206,18 @@ pub(crate) async fn list_admin_dashboard_latest_actions(
     .await?)
 }
 
-/// 按管理员、动作、目标类型和目标 ID 筛选后台审计日志，分页返回完整前后快照及总数。
-/// 列表与 COUNT 共用精确匹配谓词并按时间、ID 倒序；两次无锁读取可能受并发写入影响，JSON 解码或 SQL 失败返回错误。
+/// 按管理员、动作、目标类型、目标 ID 和审计时间范围筛选后台审计日志，分页返回完整前后快照及总数。
+/// 时间下界与上界都采用包含的“Unix 毫秒”语义；上界 SQL 实际比较下一毫秒的排他边界，
+/// 以覆盖 MySQL TIMESTAMP(6) 在目标毫秒内比前端时间戳更多出的微秒精度。
+/// 列表与 COUNT 共用完全相同的谓词并按时间、ID 倒序，
+/// 因而分页总数和当前页采用同一筛选口径。两次无锁读取仍可能受并发写入影响，JSON 解码或 SQL 失败返回错误。
 pub(crate) async fn list_admin_audit_logs(
     pool: &Pool<MySql>,
     filter: AdminAuditLogListFilter,
 ) -> AppResult<(Vec<AdminAuditLogResponse>, i64)> {
     let mut rows = QueryBuilder::<MySql>::new(
         r#"SELECT id, admin_id, action, target_type, target_id,
-                  before_json, after_json, reason, ip, created_at
+                  before_json, after_json, reason, ip, request_id, created_at
            FROM admin_audit_logs"#,
     );
     let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM admin_audit_logs");
@@ -222,6 +238,15 @@ pub(crate) async fn list_admin_audit_logs(
         if let Some(target_id) = filter.target_id.clone() {
             builder.push(" AND target_id = ");
             builder.push_bind(target_id);
+        }
+        if let Some(created_from) = filter.created_from {
+            builder.push(" AND created_at >= ");
+            builder.push_bind(created_from);
+        }
+        if let Some(created_to) = filter.created_to {
+            builder.push(" AND created_at < DATE_ADD(");
+            builder.push_bind(created_to);
+            builder.push(", INTERVAL 1000 MICROSECOND)");
         }
     }
 

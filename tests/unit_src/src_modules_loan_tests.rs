@@ -81,3 +81,28 @@ fn product_name_json_requires_default_locale_item() {
         super::service::validate_product_name_json(&name_json).expect_err("missing default locale");
     assert!(format!("{error:?}").contains("default_locale must exist"));
 }
+
+#[test]
+fn loan_product_reason_is_required_trimmed_and_bounded() {
+    assert_eq!(
+        required_product_reason(Some("  调整贷款额度  ".to_owned())).expect("trimmed reason"),
+        "调整贷款额度"
+    );
+    for reason in [None, Some(String::new()), Some("   ".to_owned())] {
+        let error = required_product_reason(reason).expect_err("blank reason must fail");
+        assert!(format!("{error:?}").contains("reason is required"));
+    }
+
+    let error = required_product_reason(Some("变".repeat(513)))
+        .expect_err("reason longer than audit column must fail");
+    assert!(format!("{error:?}").contains("reason is too long"));
+}
+
+#[test]
+fn loan_product_revision_must_be_present_and_positive() {
+    assert_eq!(required_product_revision(Some(7)).expect("revision"), 7);
+    for revision in [None, Some(0)] {
+        let error = required_product_revision(revision).expect_err("missing revision must fail");
+        assert!(format!("{error:?}").contains("revision is required"));
+    }
+}

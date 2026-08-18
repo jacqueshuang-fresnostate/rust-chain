@@ -172,7 +172,7 @@ async fn create_user_with_email(pool: &MySqlPool, email: String) -> u64 {
 async fn create_admin_user(pool: &MySqlPool) -> (u64, u64) {
     let suffix = Uuid::now_v7().simple().to_string();
     let role_id =
-        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_OBJECT())")
+        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_ARRAY('*'))")
             .bind(format!("spot-route-role-{suffix}"))
             .execute(pool)
             .await

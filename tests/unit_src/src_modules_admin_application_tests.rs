@@ -39,3 +39,43 @@ fn build_scoped_new_coin_list_query_allows_empty_filters() {
     assert!(flat.limit.is_none());
     assert!(flat.offset.is_none());
 }
+
+#[test]
+fn dashboard_environment_normalizes_aliases_to_a_stable_public_contract() {
+    for (raw, expected) in [
+        ("production", "production"),
+        (" PROD ", "production"),
+        ("staging", "staging"),
+        ("pre_production", "staging"),
+        ("test", "test"),
+        ("CI", "test"),
+        ("development", "development"),
+        ("local", "development"),
+        ("private-cluster-name", "development"),
+    ] {
+        assert_eq!(normalize_admin_dashboard_environment(raw), expected);
+    }
+}
+
+#[test]
+fn audit_log_time_range_accepts_open_and_inclusive_bounds() {
+    let instant = DateTime::<Utc>::from_timestamp_millis(1_800_000_000_000).unwrap();
+
+    assert!(validate_admin_audit_log_time_range(None, None).is_ok());
+    assert!(validate_admin_audit_log_time_range(Some(instant), None).is_ok());
+    assert!(validate_admin_audit_log_time_range(None, Some(instant)).is_ok());
+    assert!(validate_admin_audit_log_time_range(Some(instant), Some(instant)).is_ok());
+}
+
+#[test]
+fn audit_log_time_range_rejects_an_inverted_window() {
+    let earlier = DateTime::<Utc>::from_timestamp_millis(1_800_000_000_000).unwrap();
+    let later = DateTime::<Utc>::from_timestamp_millis(1_800_000_001_000).unwrap();
+
+    let error = validate_admin_audit_log_time_range(Some(later), Some(earlier)).unwrap_err();
+    assert!(matches!(error, AppError::Validation(_)));
+    assert_eq!(
+        error.to_string(),
+        "validation error: created_from must not be later than created_to"
+    );
+}

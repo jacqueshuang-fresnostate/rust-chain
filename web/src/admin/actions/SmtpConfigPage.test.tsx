@@ -92,6 +92,9 @@ describe('SmtpConfigPage', () => {
   beforeEach(() => {
     apiRequestMock.mockReset();
     apiRequestMock.mockImplementation((path, init) => {
+      if (path === '/admin/api/v1/smtp/config' && !init?.method) {
+        return Promise.resolve(savedConfig);
+      }
       if (path === '/admin/api/v1/smtp/configs' && !init?.method) {
         return Promise.resolve(listResponse);
       }
@@ -107,6 +110,9 @@ describe('SmtpConfigPage', () => {
     render(<SmtpConfigPage />);
 
     expect(await screen.findByDisplayValue('smtp.example.test')).toBeInTheDocument();
+    expect(screen.getByText('旧版单例兼容状态')).toBeInTheDocument();
+    expect(screen.getByText(/旧版默认单例“主发信配置”（ID 3）已包含在具名配置列表中/)).toBeInTheDocument();
+    expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/smtp/config');
     expect(screen.getByRole('tab', { name: '发信配置' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '验证码模板' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '发信策略' })).toBeInTheDocument();
@@ -122,8 +128,13 @@ describe('SmtpConfigPage', () => {
     expect(screen.getByRole('textbox', { name: 'SMTP host' }).closest('.semi-input-wrapper')).toBeInTheDocument();
     semiSelectByLabel('加密方式');
     expect(screen.getByLabelText('SMTP 用户名').closest('.semi-input-wrapper')).toBeInTheDocument();
+    expect(screen.getByLabelText('SMTP 用户名')).toHaveValue('');
     expect(screen.getByLabelText('SMTP 密码').closest('.semi-input-wrapper')).toBeInTheDocument();
     expect(screen.getByLabelText('SMTP 密码')).toHaveValue('');
+    expect(screen.getByText('用户名：mail****user')).toBeInTheDocument();
+    expect(screen.getByText('密码：已配置')).toBeInTheDocument();
+    expect(screen.getByText('最近测试：本会话尚未测试')).toBeInTheDocument();
+    expect(screen.getByText(/凭据轮换：仅输入新用户名或密码时更新/)).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: '启用 SMTP' })).toBeChecked();
     await userEvent.click(screen.getByText('验证码模板'));
     expect(screen.getByLabelText('验证码 HTML 模板 1')).toHaveAttribute('contenteditable', 'true');
@@ -135,9 +146,69 @@ describe('SmtpConfigPage', () => {
     expect(screen.queryByText(/smtp-password/)).not.toBeInTheDocument();
   });
 
+  it('shows a read-only migration prompt when the legacy singleton is absent from the named list', async () => {
+    apiRequestMock.mockImplementation((path, init) => {
+      if (path === '/admin/api/v1/smtp/config' && !init?.method) {
+        return Promise.resolve({ ...savedConfig, id: 99, name: 'default' });
+      }
+      if (path === '/admin/api/v1/smtp/configs' && !init?.method) {
+        return Promise.resolve(listResponse);
+      }
+      return Promise.resolve({});
+    });
+
+    render(<SmtpConfigPage />);
+
+    expect(await screen.findByText(/检测到旧版默认单例“default”（ID 99）尚未出现在具名列表/)).toBeInTheDocument();
+    expect(screen.getByText(/请新建具名配置完成迁移/)).toBeInTheDocument();
+    expect(apiRequestMock.mock.calls.some(([path, init]) => path === '/admin/api/v1/smtp/config' && Boolean(init?.method))).toBe(false);
+  });
+
+  it('keeps existing credentials when named-config update inputs remain blank', async () => {
+    const user = userEvent.setup();
+    apiRequestMock.mockImplementation((path, init) => {
+      if (path === '/admin/api/v1/smtp/config' && !init?.method) {
+        return Promise.resolve(savedConfig);
+      }
+      if (path === '/admin/api/v1/smtp/configs' && !init?.method) {
+        return Promise.resolve(listResponse);
+      }
+      if (path === '/admin/api/v1/smtp/configs/3' && init?.method === 'PATCH') {
+        return Promise.resolve(savedConfig);
+      }
+      return Promise.resolve({});
+    });
+
+    render(<SmtpConfigPage />);
+    await screen.findByDisplayValue('smtp.example.test');
+    expect(screen.getByLabelText('SMTP 用户名')).toHaveValue('');
+    expect(screen.getByLabelText('SMTP 密码')).toHaveValue('');
+    await user.click(screen.getByRole('button', { name: '保存配置' }));
+    await user.type(await screen.findByLabelText('操作原因'), '保留已有凭据');
+    await user.click(await screen.findByRole('button', { name: '确认' }));
+
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith(
+        '/admin/api/v1/smtp/configs/3',
+        expect.objectContaining({ method: 'PATCH' })
+      );
+    });
+    const request = apiRequestMock.mock.calls.find(
+      ([path, init]) => path === '/admin/api/v1/smtp/configs/3' && init?.method === 'PATCH'
+    )?.[1];
+    const body = JSON.parse(String(request?.body));
+    expect(body.reason).toBe('保留已有凭据');
+    expect(body).not.toHaveProperty('username');
+    expect(body).not.toHaveProperty('password');
+    expect(apiRequestMock.mock.calls.some(([path, init]) => path === '/admin/api/v1/smtp/config' && Boolean(init?.method))).toBe(false);
+  });
+
   it('saves SMTP config with operation reason and omits blank password to preserve existing secret', async () => {
     const user = userEvent.setup();
     apiRequestMock.mockImplementation((path, init) => {
+      if (path === '/admin/api/v1/smtp/config' && !init?.method) {
+        return Promise.resolve(null);
+      }
       if (path === '/admin/api/v1/smtp/configs' && !init?.method) {
         return Promise.resolve({ configs: [], delivery_settings: { strategy: 'priority' } });
       }
@@ -200,11 +271,15 @@ describe('SmtpConfigPage', () => {
     await waitFor(() => {
       expect(document.querySelector('.semi-sidesheet-title')?.textContent).not.toBe('新增发信配置');
     });
+    expect(apiRequestMock.mock.calls.some(([path, init]) => path === '/admin/api/v1/smtp/config' && Boolean(init?.method))).toBe(false);
   });
 
   it('saves the SMTP delivery strategy', async () => {
     const user = userEvent.setup();
     apiRequestMock.mockImplementation((path, init) => {
+      if (path === '/admin/api/v1/smtp/config' && !init?.method) {
+        return Promise.resolve(savedConfig);
+      }
       if (path === '/admin/api/v1/smtp/configs' && !init?.method) {
         return Promise.resolve(listResponse);
       }
@@ -236,6 +311,9 @@ describe('SmtpConfigPage', () => {
   it('sends a test email with recipient and operation reason', async () => {
     const user = userEvent.setup();
     apiRequestMock.mockImplementation((path, init) => {
+      if (path === '/admin/api/v1/smtp/config' && !init?.method) {
+        return Promise.resolve(savedConfig);
+      }
       if (path === '/admin/api/v1/smtp/configs' && !init?.method) {
         return Promise.resolve(listResponse);
       }
@@ -260,5 +338,6 @@ describe('SmtpConfigPage', () => {
         expect.objectContaining({ method: 'POST', body: JSON.stringify({ recipient: 'ops@example.test', reason: 'verify smtp', config_id: 3 }) })
       );
     });
+    expect(screen.getByText('最近测试收件邮箱：ops@example.test / 主发信配置')).toBeInTheDocument();
   });
 });

@@ -2,6 +2,7 @@ import { type ReactNode, useSyncExternalStore } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 
 import { authStore } from './authStore';
+import { AdminAccessGate } from '../admin/access';
 
 export function RequireAdmin({ children }: { children: ReactNode }) {
   const location = useLocation();
@@ -19,5 +20,5 @@ export function RequireAdmin({ children }: { children: ReactNode }) {
     return <Navigate to="/403" replace />;
   }
 
-  return <>{children}</>;
+  return <AdminAccessGate>{children}</AdminAccessGate>;
 }

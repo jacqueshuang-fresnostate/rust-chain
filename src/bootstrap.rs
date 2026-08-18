@@ -153,7 +153,7 @@ pub async fn bootstrap_default_admin(
 
 /// 在已持有命名锁的连接上开启事务，完成一次幂等的首个管理员创建，返回值区分本次新建还是跳过。
 /// 事务内先用 `FOR UPDATE` 读管理员表首行，只要存在任意一个管理员就提交空事务并跳过，不补建也不覆盖既有账号。
-/// 角色按名称加锁查找，缺失时插入一条权限为空对象的新角色，因此引导出来的账号还需要后续手动配置权限。
+/// 角色按名称加锁查找，缺失时插入显式 `*` 权限，使首个管理员能完成后续角色与业务配置。
 /// 口令在事务内哈希后写入，新管理员状态直接置为启用；角色与管理员同事务提交，避免中途失败留下孤立角色。
 async fn bootstrap_default_admin_while_locked(
     connection: &mut MySqlConnection,
@@ -180,7 +180,7 @@ async fn bootstrap_default_admin_while_locked(
     {
         Some(role_id) => role_id,
         None => {
-            sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_OBJECT())")
+            sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_ARRAY('*'))")
                 .bind(&config.role_name)
                 .execute(&mut *transaction)
                 .await?

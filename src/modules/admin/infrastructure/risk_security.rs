@@ -19,6 +19,64 @@ pub(crate) struct AdminRiskEventListFilter {
     pub(crate) offset: u32,
 }
 
+/// 在风控规则写事务中锁定并复核具体目标，防止选择器加载后资源又被禁用的竞态。
+/// global 不触库；user/pair 按正数主键、asset 按符号查询，三者都要求 status=active。
+/// 记录缺失返回 NotFound，存在但非启用状态返回 Validation；锁持续到调用方提交或回滚。
+pub(crate) async fn ensure_active_risk_rule_target_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    target_type: &str,
+    target_id: Option<&str>,
+) -> AppResult<()> {
+    let status = match target_type {
+        "global" => return Ok(()),
+        "user" => {
+            let user_id = target_id
+                .and_then(|value| value.parse::<u64>().ok())
+                .ok_or_else(|| AppError::Validation("invalid user risk target".to_owned()))?;
+            sqlx::query_scalar::<_, String>(
+                "SELECT status FROM users WHERE id = ? LIMIT 1 FOR UPDATE",
+            )
+            .bind(user_id)
+            .fetch_optional(&mut **tx)
+            .await?
+        }
+        "pair" => {
+            let pair_id = target_id
+                .and_then(|value| value.parse::<u64>().ok())
+                .ok_or_else(|| AppError::Validation("invalid pair risk target".to_owned()))?;
+            sqlx::query_scalar::<_, String>(
+                "SELECT status FROM trading_pairs WHERE id = ? LIMIT 1 FOR UPDATE",
+            )
+            .bind(pair_id)
+            .fetch_optional(&mut **tx)
+            .await?
+        }
+        "asset" => {
+            let symbol = target_id
+                .ok_or_else(|| AppError::Validation("invalid asset risk target".to_owned()))?;
+            sqlx::query_scalar::<_, String>(
+                "SELECT status FROM assets WHERE symbol = ? LIMIT 1 FOR UPDATE",
+            )
+            .bind(symbol)
+            .fetch_optional(&mut **tx)
+            .await?
+        }
+        _ => {
+            return Err(AppError::Validation(
+                "unsupported risk target_type".to_owned(),
+            ));
+        }
+    }
+    .ok_or(AppError::NotFound)?;
+
+    if status != "active" {
+        return Err(AppError::Validation(
+            "risk target must be active".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 /// 在调用方事务中按固定策略键新增或覆盖用户支付安全策略 JSON，并记录本次管理员 ID。
 /// 唯一键冲突走 upsert 覆盖且不显式锁旧配置；调用方负责校验策略、保存前后审计并提交，JSON 绑定或 SQL 失败时整体回滚。
 pub(crate) async fn save_admin_security_policy_in_tx(

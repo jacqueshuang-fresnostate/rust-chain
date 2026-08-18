@@ -1,8 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactElement } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { KycManagementPage } from './KycManagementPage';
+import { KycReviewsPage, KycSettingsPage } from './KycManagementPage';
 import { apiRequest } from '../../api/client';
 
 vi.mock('../../api/client', async () => {
@@ -106,6 +108,10 @@ async function selectSemiOptionByAccessibleName(user: ReturnType<typeof userEven
   fireEvent.click(option as HTMLElement);
 }
 
+function renderKycPage(page: ReactElement) {
+  return render(<MemoryRouter>{page}</MemoryRouter>);
+}
+
 describe('KycManagementPage', () => {
   beforeEach(() => {
     installedResizeObserverMock = !('ResizeObserver' in globalThis);
@@ -158,9 +164,11 @@ describe('KycManagementPage', () => {
   it('renders the review table at full container width and opens detail SideSheet', async () => {
     const user = userEvent.setup();
 
-    render(<KycManagementPage />);
+    renderKycPage(<KycReviewsPage />);
 
     const emailCell = await screen.findByText('kyc-user@example.test');
+    expect(screen.getByRole('button', { name: '前往规则配置' })).toBeInTheDocument();
+    expect(apiRequestMock).not.toHaveBeenCalledWith('/admin/api/v1/kyc/config');
     const tableWrapper = emailCell.closest('.semi-table-wrapper');
     expect(tableWrapper).toHaveStyle({ maxWidth: '100%', width: '100%' });
     expect(tableWrapper).toHaveClass('admin-business-table', 'admin-kyc-table', 'admin-resizable-table');
@@ -174,8 +182,6 @@ describe('KycManagementPage', () => {
     expect(within(tableWrapper as HTMLElement).getByText('Zhang San')).toBeInTheDocument();
     expect(within(tableWrapper as HTMLElement).getByText('CN12****7890')).toBeInTheDocument();
     expect(within(tableWrapper as HTMLElement).getByText('身份证')).toBeInTheDocument();
-    expect(screen.getByRole('tabpanel', { name: '人工审核' })).toBeInTheDocument();
-
     await user.click(screen.getByRole('button', { name: '查看 KYC 申请 501' }));
 
     expect(await screen.findByText('KYC 审核详情')).toBeInTheDocument();
@@ -202,7 +208,7 @@ describe('KycManagementPage', () => {
       return Promise.resolve({});
     });
 
-    render(<KycManagementPage />);
+    renderKycPage(<KycReviewsPage />);
 
     expect(await screen.findByText('当前状态暂无 KYC 申请')).toBeInTheDocument();
     expect(screen.getByText('审核队列已清空，可切换状态查看历史申请。')).toBeInTheDocument();
@@ -212,7 +218,7 @@ describe('KycManagementPage', () => {
   it('approves a pending submission, closes the SideSheet, and refreshes the list', async () => {
     const user = userEvent.setup();
 
-    render(<KycManagementPage />);
+    renderKycPage(<KycReviewsPage />);
 
     await user.click(await screen.findByRole('button', { name: '查看 KYC 申请 501' }));
     await user.clear(await screen.findByLabelText('通过后 KYC 等级'));
@@ -241,10 +247,10 @@ describe('KycManagementPage', () => {
   it('saves KYC config with Semi controls and operation reason', async () => {
     const user = userEvent.setup();
 
-    render(<KycManagementPage />);
+    renderKycPage(<KycSettingsPage />);
 
-    await user.click(await screen.findByRole('tab', { name: 'KYC 配置' }));
-    expect(screen.getByRole('tabpanel', { name: 'KYC 配置' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '前往审核队列' })).toBeInTheDocument();
+    expect(apiRequestMock.mock.calls.some(([path]) => String(path).startsWith('/admin/api/v1/kyc/submissions'))).toBe(false);
     const ruleTable = screen.getByRole('grid', { name: 'KYC 证件类型规则' });
     expect(within(ruleTable).getByRole('separator', { name: '调整国家 / 地区列宽' })).toBeInTheDocument();
     expect(within(ruleTable).getByRole('separator', { name: '调整操作列宽' })).toHaveAttribute('aria-valuemin', '120');

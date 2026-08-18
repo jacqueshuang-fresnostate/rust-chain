@@ -7,7 +7,7 @@ import { CreateEarnCategoryAction, CreateEarnProductAction, EarnCategoryRowActio
 import { CreateLoanProductAction, LoanOrderRowActions, LoanProductRowActions } from './actions/loan';
 import { CreateMarginPairAction, MarginLiquidationRowActions, MarginPositionRowActions, MarginProductRowActions } from './actions/margin';
 import { CreateMarketStrategyAction, CreateSpotPairAction, MarketPairRowActions, MarketStrategyRowActions, SpotOrderRowActions } from './actions/market';
-import { CreateNewCoinProjectAction } from './actions/newCoins';
+import { CreateNewCoinProjectAction, NewCoinProjectRowActions } from './actions/newCoins';
 import { AdminNewsRowActions, CreateAdminNewsAction } from './actions/news';
 import { CreateRiskRuleAction, RiskRuleRowActions } from './actions/risk';
 import { CreateSecondsPairAction, SecondsOrderRowActions, SecondsProductRowActions } from './actions/secondsContract';
@@ -31,6 +31,7 @@ import { formatAdminNumber } from '../../shared/numberFormat';
 import { formatBusinessOrderNo } from '../../shared/orderNo';
 import type { ApiRecord } from '../../api/types';
 import { PredictionMarketRowActions } from '../actions/PredictionMarketRowActions';
+import { adminMutationPermissionsForEndpoint, hasAdminPermission, useOptionalAdminAccess } from '../access';
 
 export type ResourceConfig = {
   actions?: React.ComponentProps<typeof AdminResourcePage<ApiRecord>>['actions'];
@@ -786,19 +787,6 @@ export const resourceConfigs = {
       { key: 'created_at', title: '申请时间', type: 'timestamp' }
     ]
   },
-  predictionAssetConfigs: {
-    title: '竞猜下注资产',
-    endpoint: '/admin/api/v1/prediction/asset-configs',
-    responseKey: 'configs',
-    filters: [limitFilter],
-    showJsonAction: false,
-    columns: [
-      { key: 'asset_symbol', title: '资产' },
-      { key: 'enabled', title: '允许下注', type: 'status' },
-      { key: 'max_payout_amount', title: '默认最大赔付', type: 'amount' },
-      { key: 'updated_at', title: '更新时间', type: 'timestamp' }
-    ]
-  },
   predictionMarkets: {
     title: '竞猜市场',
     endpoint: '/admin/api/v1/prediction/markets',
@@ -1065,6 +1053,7 @@ export const resourceConfigs = {
     endpoint: '/admin/api/v1/new-coins',
     responseKey: 'projects',
     filters: [limitFilter],
+    rowActions: (record) => <NewCoinProjectRowActions record={record} />,
     columns: [
       { key: 'id', title: '项目ID' },
       { key: 'asset_id', title: '资产ID' },
@@ -1440,7 +1429,6 @@ const SERVER_PAGED_ENDPOINTS = new Set([
   '/admin/api/v1/new-coins/subscriptions',
   '/admin/api/v1/new-coins/unlocks',
   '/admin/api/v1/news',
-  '/admin/api/v1/prediction/asset-configs',
   '/admin/api/v1/prediction/markets',
   '/admin/api/v1/prediction/orders',
   '/admin/api/v1/prediction/sync/logs',
@@ -1463,11 +1451,18 @@ export function isServerPagedResource(endpoint: string) {
 }
 
 export function ResourcePage({ config }: { config: ResourceConfig }) {
+  const access = useOptionalAdminAccess();
+  const canMutate =
+    access === null ||
+    adminMutationPermissionsForEndpoint(config.endpoint).some((permission) => hasAdminPermission(access, permission));
   // 按 endpoint 重建组件：路由复用同一实例时，分页与筛选状态不会带到下一个资源页。
   return (
     <AdminResourcePage<ApiRecord>
       key={config.endpoint}
       {...config}
+      actions={canMutate ? config.actions : undefined}
+      batchActions={canMutate ? config.batchActions : undefined}
+      rowActions={canMutate ? config.rowActions : undefined}
       serverPaged={isServerPagedResource(config.endpoint)}
     />
   );

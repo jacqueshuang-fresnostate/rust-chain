@@ -4,6 +4,7 @@
 //! 邮件与密钥两个模块不涉及长连接：前者按调用方传入的配置临时建立 SMTP 传输，后者提供凭据加解密与掩码工具。
 //! 业务专属的存储访问不放在这里，应留在各自上下文的基础设施层，本目录只承载真正被多个上下文复用的部分。
 
+pub mod admin_request_context;
 pub mod auth;
 pub mod email;
 pub mod mongo;

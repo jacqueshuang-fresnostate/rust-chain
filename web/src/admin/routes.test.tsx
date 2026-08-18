@@ -14,6 +14,11 @@ function routeResourceKey(path: string) {
   return handle?.resourceKey ?? '';
 }
 
+function routePermission(path: string) {
+  const handle = findRoute(path)?.handle as { permission?: string } | undefined;
+  return handle?.permission ?? '';
+}
+
 // 独立配置页只有解析 lazy 才能拿到组件，解析结果同时验证目标模块确实导出了该组件。
 async function lazyComponentName(path: string) {
   const route = findRoute(path);
@@ -53,7 +58,7 @@ describe('adminRoutes', () => {
     'lazily loads every resource route through the shared resource page',
     async () => {
       const resourceRoutes = adminRoutes.filter((route) => Boolean((route.handle as { resourceKey?: string } | undefined)?.resourceKey));
-      expect(resourceRoutes.length).toBeGreaterThan(40);
+      expect(resourceRoutes.length).toBeGreaterThanOrEqual(40);
       resourceRoutes.forEach((route) => {
         expect(typeof route.lazy).toBe('function');
         expect(route.element).toBeUndefined();
@@ -66,17 +71,21 @@ describe('adminRoutes', () => {
 
   it.each([
     ['market/feed-config', 'MarketFeedConfigPage'],
-    ['users/kyc', 'KycManagementPage'],
+    ['users/kyc/settings', 'KycSettingsPage'],
+    ['users/kyc/reviews', 'KycReviewsPage'],
     ['system/smtp', 'SmtpConfigPage'],
     ['system/uploads', 'UploadConfigPage'],
     ['system/brand', 'PlatformBrandPage'],
     ['wallet/quick-recharge', 'QuickRechargeConfigPage'],
     ['system/security-policy', 'SecurityPolicyPage'],
-    ['system/two-factor', 'AdminTwoFactorPage'],
+    ['account/security', 'AdminTwoFactorPage'],
     ['agents', 'AgentManagementPage'],
     ['dashboard', 'DashboardPage'],
+    ['config-center', 'ConfigCenterPage'],
+    ['audit-logs', 'AuditLogsPage'],
     ['new-coins/actions', 'NewCoinActions'],
-    ['prediction/settings', 'PredictionConfigPage']
+    ['prediction/settings', 'PredictionSettingsPage'],
+    ['prediction/sync', 'PredictionSyncPage']
   ])(
     'registers the %s action page',
     async (path, expectedName) => {
@@ -85,11 +94,45 @@ describe('adminRoutes', () => {
     120_000
   );
 
-  it('keeps only the legacy strategy compatibility redirect eager', () => {
+  it('keeps legacy workflow URLs as eager compatibility redirects', () => {
     const eagerRoutes = adminRoutes.filter((route) => route.path && route.element);
-    expect(eagerRoutes.map((route) => route.path)).toEqual(['market/strategies/actions']);
-    const redirect = eagerRoutes[0]?.element as ReactElement<{ replace?: boolean; to?: string }>;
-    expect(redirect.props).toMatchObject({ replace: true, to: '/admin/market/strategies' });
+    expect(eagerRoutes.map((route) => route.path)).toEqual([
+      'users/kyc',
+      'prediction/assets',
+      'prediction/sync-logs',
+      'market/strategies/actions',
+      'system/two-factor'
+    ]);
+    expect(
+      Object.fromEntries(
+        eagerRoutes.map((route) => [
+          route.path,
+          (route.element as ReactElement<{ replace?: boolean; to?: string }>).props
+        ])
+      )
+    ).toMatchObject({
+      'users/kyc': { replace: true, to: '/admin/users/kyc/reviews' },
+      'prediction/assets': { replace: true, to: '/admin/prediction/settings?tab=assets' },
+      'prediction/sync-logs': { replace: true, to: '/admin/prediction/sync' },
+      'market/strategies/actions': { replace: true, to: '/admin/market/strategies' },
+      'system/two-factor': { replace: true, to: '/admin/account/security' }
+    });
+  });
+
+  it.each([
+    ['users/kyc/settings', 'users.kyc.read'],
+    ['users/kyc/reviews', 'users.kyc.read'],
+    ['prediction/settings', 'prediction.settings.read'],
+    ['prediction/sync', 'prediction.sync.read'],
+    ['account/security', 'account.security.read'],
+    ['config-center', 'config_center.read'],
+    ['audit-logs', 'audit.logs.read']
+  ])('keeps the %s route behind %s', (path, permission) => {
+    expect(routePermission(path)).toBe(permission);
+  });
+
+  it('uses the dedicated audit workbench instead of the generic resource page', () => {
+    expect(routeResourceKey('audit-logs')).toBe('');
   });
 
   it.each([

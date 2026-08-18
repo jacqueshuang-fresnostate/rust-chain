@@ -372,7 +372,7 @@ async fn seed_margin_liquidation_record(
 async fn create_admin_user(pool: &MySqlPool) -> (u64, u64) {
     let suffix = Uuid::now_v7().simple().to_string();
     let role_id =
-        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_OBJECT())")
+        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_ARRAY('*'))")
             .bind(format!("admin-route-role-{suffix}"))
             .execute(pool)
             .await
@@ -2271,7 +2271,8 @@ async fn admin_dashboard_returns_operational_summary_shape() -> Result<(), Box<d
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
-    let settings = test_settings();
+    let mut settings = test_settings();
+    settings.app_env = "staging".to_owned();
     let (role_id, admin_id) = create_admin_user(&pool).await;
     let token = issue_token(
         &settings,
@@ -2287,7 +2288,9 @@ async fn admin_dashboard_returns_operational_summary_shape() -> Result<(), Box<d
     let audit_id = sqlx::query(
         r#"INSERT INTO admin_audit_logs
            (admin_id, action, target_type, target_id, after_json, reason)
-           VALUES (?, ?, 'dashboard_summary', 'summary', JSON_OBJECT('visible', true), 'dashboard test')"#,
+           VALUES (?, ?, 'dashboard_summary', 'summary',
+                   JSON_OBJECT('api_key', 'DASHBOARD_SHOULD_NOT_LEAK'),
+                   'dashboard private detail')"#,
     )
     .bind(admin_id)
     .bind(&action)
@@ -2309,6 +2312,7 @@ async fn admin_dashboard_returns_operational_summary_shape() -> Result<(), Box<d
     let payload = body_json(response).await?;
     assert_eq!(status, StatusCode::OK, "payload: {payload}");
     assert!(payload["generated_at"].is_number());
+    assert_eq!(payload["environment"], "staging");
     assert!(payload["users"]["total"].is_number());
     assert!(payload["wallet"]["active_assets"].is_number());
     let active_gateways: i64 =
@@ -2328,13 +2332,18 @@ async fn admin_dashboard_returns_operational_summary_shape() -> Result<(), Box<d
     assert!(payload["products"]["margin_open_positions"].is_number());
     assert!(payload["risk"]["pending_outbox_events"].is_number());
     assert!(payload["audit"]["admin_actions_24h"].as_i64().unwrap() >= 1);
-    assert!(
-        payload["audit"]["latest_actions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|entry| entry["action"] == action)
-    );
+    let latest_action = payload["audit"]["latest_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["action"] == action)
+        .expect("dashboard audit action should be included");
+    for private_field in ["before_json", "after_json", "reason", "ip", "request_id"] {
+        assert!(latest_action.get(private_field).is_none());
+    }
+    let serialized_payload = payload.to_string();
+    assert!(!serialized_payload.contains("DASHBOARD_SHOULD_NOT_LEAK"));
+    assert!(!serialized_payload.contains("0123456789abcdef0123456789abcdef"));
 
     sqlx::query("DELETE FROM admin_audit_logs WHERE id = ?")
         .bind(audit_id)
@@ -14085,7 +14094,9 @@ async fn admin_audit_logs_list_filters_and_timestamps() -> Result<(), Box<dyn Er
     let second_action = format!("audit.list.second.{}", &suffix[..12]);
     let other_action = format!("audit.list.other.{}", &suffix[..12]);
     let first_created_at = chrono::Utc.with_ymd_and_hms(2026, 5, 30, 10, 0, 0).unwrap();
-    let second_created_at = chrono::Utc.with_ymd_and_hms(2026, 5, 30, 10, 5, 0).unwrap();
+    // 数据库存到微秒，但审计 API 的筛选/响应合同为毫秒；上界应覆盖该毫秒内的全部微秒。
+    let second_created_at = chrono::Utc.with_ymd_and_hms(2026, 5, 30, 10, 5, 0).unwrap()
+        + chrono::Duration::microseconds(500);
     let token = issue_token(
         &settings,
         format!("admin:{admin_id}"),
@@ -14164,6 +14175,51 @@ async fn admin_audit_logs_list_filters_and_timestamps() -> Result<(), Box<dyn Er
     assert_eq!(logs[0]["created_at"], second_created_at.timestamp_millis());
     assert_eq!(logs[1]["id"], first_audit_id);
     assert_eq!(logs[1]["created_at"], first_created_at.timestamp_millis());
+
+    let by_time_range = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/audit-logs?target_type=audit_list_target&target_id={target_id}&created_from={}&created_to={}&limit=10",
+                    second_created_at.timestamp_millis(),
+                    second_created_at.timestamp_millis()
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let by_time_range_status = by_time_range.status();
+    let by_time_range_payload = body_json(by_time_range).await?;
+    assert_eq!(
+        by_time_range_status,
+        StatusCode::OK,
+        "payload: {by_time_range_payload}"
+    );
+    let time_range_logs = by_time_range_payload["logs"].as_array().unwrap();
+    assert_eq!(time_range_logs.len(), 1);
+    assert_eq!(time_range_logs[0]["id"], second_audit_id);
+    assert_eq!(by_time_range_payload["total"], 1);
+
+    let invalid_time_range = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/admin/api/v1/audit-logs?created_from={}&created_to={}",
+                    second_created_at.timestamp_millis(),
+                    first_created_at.timestamp_millis()
+                ))
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let invalid_time_range_status = invalid_time_range.status();
+    let invalid_time_range_payload = body_json(invalid_time_range).await?;
+    assert_eq!(invalid_time_range_status, StatusCode::BAD_REQUEST);
+    assert_eq!(invalid_time_range_payload["code"], "VALIDATION_ERROR");
 
     let by_action = app
         .oneshot(
@@ -15545,7 +15601,7 @@ const ADMIN_TOTP_TEST_SECRET: &str = "JBSWY3DPEHPK3PXP";
 async fn create_login_admin(pool: &MySqlPool) -> (u64, u64, String) {
     let suffix = Uuid::now_v7().simple().to_string();
     let role_id =
-        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_OBJECT())")
+        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_ARRAY('*'))")
             .bind(format!("admin-login-role-{suffix}"))
             .execute(pool)
             .await
@@ -16259,5 +16315,282 @@ async fn admin_user_status_update_blocks_login_and_audits() -> Result<(), Box<dy
         .execute(&pool)
         .await?;
     delete_admin_agent_management_fixture(&pool, admin_id, role_id, &[], &[user_id]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_rbac_returns_current_permissions_and_denies_ungranted_routes()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let suffix = Uuid::now_v7().simple().to_string();
+    let role_id = sqlx::query(
+        "INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_ARRAY('dashboard.read'))",
+    )
+    .bind(format!("admin-rbac-role-{suffix}"))
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let admin_id =
+        sqlx::query("INSERT INTO admin_users (username, password_hash, role_id) VALUES (?, ?, ?)")
+            .bind(format!("admin-rbac-user-{suffix}"))
+            .bind("not-a-real-hash")
+            .bind(role_id)
+            .execute(&pool)
+            .await?
+            .last_insert_id();
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )?;
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+
+    let access = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/access/me")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(access.status(), StatusCode::OK);
+    let access_payload = body_json(access).await?;
+    assert_eq!(access_payload["admin_id"], admin_id);
+    assert_eq!(access_payload["permissions"], json!(["dashboard.read"]));
+    assert_eq!(access_payload["is_super_admin"], false);
+
+    let dashboard = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/dashboard")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(dashboard.status(), StatusCode::OK);
+
+    let audit_logs = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/audit-logs")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(audit_logs.status(), StatusCode::FORBIDDEN);
+
+    let country_write = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/countries")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))?,
+        )
+        .await?;
+    assert_eq!(country_write.status(), StatusCode::FORBIDDEN);
+
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn admin_config_change_requires_two_people_and_replays_without_duplicate_audit()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let (maker_role_id, maker_id) = create_admin_user(&pool).await;
+    let (reviewer_role_id, reviewer_id) = create_admin_user(&pool).await;
+    let (applier_role_id, applier_id) = create_admin_user(&pool).await;
+    let maker_token = issue_token(
+        &settings,
+        format!("admin:{maker_id}"),
+        TokenScope::Admin,
+        900,
+    )?;
+    let reviewer_token = issue_token(
+        &settings,
+        format!("admin:{reviewer_id}"),
+        TokenScope::Admin,
+        900,
+    )?;
+    let applier_token = issue_token(
+        &settings,
+        format!("admin:{applier_id}"),
+        TokenScope::Admin,
+        900,
+    )?;
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+    let request_id = format!("config-change-test-{}", Uuid::now_v7().simple());
+
+    let created = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/config-change-requests")
+                .header(AUTHORIZATION, format!("Bearer {maker_token}"))
+                .header("content-type", "application/json")
+                .header("x-request-id", &request_id)
+                .header("x-forwarded-for", "203.0.113.9, 10.0.0.1")
+                .body(Body::from(
+                    json!({
+                        "config_domain": "system",
+                        "target_type": "smtp",
+                        "target_id": "default",
+                        "action": "rotate",
+                        "base_revision": 4,
+                        "before_json": {"enabled": true, "password": "old-secret"},
+                        "proposed_json": {"enabled": true, "password": "new-secret"},
+                        "reason": "轮换邮件凭据",
+                        "risk_level": "critical"
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(created.status(), StatusCode::OK);
+    assert_eq!(
+        created
+            .headers()
+            .get("x-request-id")
+            .and_then(|value| value.to_str().ok()),
+        Some(request_id.as_str())
+    );
+    let created_payload = body_json(created).await?;
+    let change_id = created_payload["id"].as_u64().unwrap();
+    assert_eq!(created_payload["status"], "pending");
+    assert_eq!(
+        created_payload["proposed_json"]["password"],
+        "***REDACTED***"
+    );
+
+    let self_review = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/admin/api/v1/config-change-requests/{change_id}/review"
+                ))
+                .header(AUTHORIZATION, format!("Bearer {maker_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"decision": "approve", "reason": "本人确认"}).to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(self_review.status(), StatusCode::FORBIDDEN);
+
+    for _ in 0..2 {
+        let review = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!(
+                        "/admin/api/v1/config-change-requests/{change_id}/review"
+                    ))
+                    .header(AUTHORIZATION, format!("Bearer {reviewer_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({"decision": "approve", "reason": "复核通过"}).to_string(),
+                    ))?,
+            )
+            .await?;
+        assert_eq!(review.status(), StatusCode::OK);
+        assert_eq!(body_json(review).await?["status"], "approved");
+    }
+
+    for _ in 0..2 {
+        let apply = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!(
+                        "/admin/api/v1/config-change-requests/{change_id}/apply"
+                    ))
+                    .header(AUTHORIZATION, format!("Bearer {applier_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"reason": "执行已复核变更"}).to_string()))?,
+            )
+            .await?;
+        assert_eq!(apply.status(), StatusCode::OK);
+        assert_eq!(body_json(apply).await?["status"], "applied");
+    }
+
+    let approved_audits: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM admin_audit_logs WHERE target_type = 'admin_config_change_request' AND target_id = ? AND action = 'config_change.approved'",
+    )
+    .bind(change_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    let applied_audits: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM admin_audit_logs WHERE target_type = 'admin_config_change_request' AND target_id = ? AND action = 'config_change.applied'",
+    )
+    .bind(change_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(approved_audits, 1);
+    assert_eq!(applied_audits, 1);
+
+    let (ip, stored_request_id, after_json) = sqlx::query_as::<_, (
+        Option<String>,
+        Option<String>,
+        Option<SqlxJson<Value>>,
+    )>(
+        "SELECT ip, request_id, after_json FROM admin_audit_logs WHERE admin_id = ? AND action = 'config_change.requested' AND target_id = ?",
+    )
+    .bind(maker_id)
+    .bind(change_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(ip.as_deref(), Some("203.0.113.9"));
+    assert_eq!(stored_request_id.as_deref(), Some(request_id.as_str()));
+    assert_eq!(
+        after_json.unwrap().0["proposed_json"]["password"],
+        "***REDACTED***"
+    );
+
+    sqlx::query("DELETE FROM admin_audit_logs WHERE target_type = 'admin_config_change_request' AND target_id = ?")
+        .bind(change_id.to_string())
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_config_change_requests WHERE id = ?")
+        .bind(change_id)
+        .execute(&pool)
+        .await?;
+    for (admin_id, role_id) in [
+        (maker_id, maker_role_id),
+        (reviewer_id, reviewer_role_id),
+        (applier_id, applier_role_id),
+    ] {
+        sqlx::query("DELETE FROM admin_users WHERE id = ?")
+            .bind(admin_id)
+            .execute(&pool)
+            .await?;
+        sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+            .bind(role_id)
+            .execute(&pool)
+            .await?;
+    }
     Ok(())
 }

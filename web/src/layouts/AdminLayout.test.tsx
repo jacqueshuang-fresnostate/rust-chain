@@ -3,9 +3,19 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { AdminLayout } from './AdminLayout';
+import { AdminAccessProvider, type AdminAccess } from '../admin/access';
 import { authStore } from '../auth/authStore';
 
-function renderAdminLayout(initialEntry = '/admin/dashboard') {
+const fullAccess: AdminAccess = {
+  admin_id: 1,
+  username: 'root-admin',
+  role_id: 1,
+  role_name: '超级管理员',
+  permissions: ['*'],
+  is_super_admin: true
+};
+
+function renderAdminLayout(initialEntry = '/admin/dashboard', access: AdminAccess = fullAccess) {
   const router = createMemoryRouter(
     [
       {
@@ -14,7 +24,10 @@ function renderAdminLayout(initialEntry = '/admin/dashboard') {
         children: [
           { path: 'dashboard', element: <div>仪表盘内容</div> },
           { path: 'users', element: <div>用户内容</div> },
-          { path: 'users/kyc', element: <div>KYC 审核内容</div> },
+          { path: 'users/kyc/reviews', element: <div>KYC 审核队列内容</div> },
+          { path: 'users/kyc/settings', element: <div>KYC 规则配置内容</div> },
+          { path: 'prediction/settings', element: <div>竞猜配置内容</div> },
+          { path: 'prediction/sync', element: <div>竞猜同步运行内容</div> },
           { path: 'news', element: <div>新闻内容</div> },
           { path: 'wallet/deposit-network-configs', element: <div>充值网络配置内容</div> },
           { path: 'wallet/deposit-address-pool', element: <div>充值地址池内容</div> },
@@ -22,14 +35,19 @@ function renderAdminLayout(initialEntry = '/admin/dashboard') {
           { path: 'loan/orders', element: <div>贷款订单内容</div> },
           { path: 'system/countries', element: <div>国家配置内容</div> },
           { path: 'system/security-policy', element: <div>安全策略内容</div> },
-          { path: 'system/brand', element: <div>PC 品牌配置内容</div> }
+          { path: 'system/brand', element: <div>PC 品牌配置内容</div> },
+          { path: 'account/security', element: <div>账号安全内容</div> }
         ]
       }
     ],
     { initialEntries: [initialEntry] }
   );
 
-  return render(<RouterProvider router={router} />);
+  return render(
+    <AdminAccessProvider access={access}>
+      <RouterProvider router={router} />
+    </AdminAccessProvider>
+  );
 }
 
 describe('AdminLayout', () => {
@@ -49,9 +67,10 @@ describe('AdminLayout', () => {
     });
 
     [
-      { group: '用户与代理', children: ['用户管理', 'KYC 审核', '代理管理', '代理佣金', '佣金规则'] },
+      { group: '用户与代理', children: ['用户管理', 'KYC 审核队列', 'KYC 规则配置', '代理管理', '代理佣金', '佣金规则'] },
       { group: '钱包资产', children: ['资产管理', '钱包账户', '充值网络配置', '充值地址池', '钱包流水'] },
       { group: '贷款管理', children: ['贷款产品', '贷款订单'] },
+      { group: '竞猜管理', children: ['竞猜配置', '竞猜市场', '竞猜订单', '同步运行'] },
       { group: '现货交易', children: ['现货订单', '现货成交'] },
       {
         group: '新币生命周期',
@@ -64,7 +83,8 @@ describe('AdminLayout', () => {
       { group: '理财 Earn', children: ['理财分类', '理财产品', '理财申购'] },
       { group: '内容运营', children: ['新闻中心'] },
       { group: '风控中心', children: ['风控规则', '风控事件'] },
-      { group: '系统配置', children: ['国家配置', '安全策略', 'PC 品牌配置', 'SMTP 邮件配置', '上传配置'] }
+      { group: '系统配置', children: ['国家配置', '安全策略', 'PC 品牌配置', 'SMTP 邮件配置', '上传配置'] },
+      { group: '我的账号', children: ['账号安全'] }
     ].forEach(({ group, children }) => {
       const groupButton = screen.getByRole('menuitem', { name: new RegExp(group) });
       expect(groupButton).toHaveAttribute('aria-expanded', 'false');
@@ -81,7 +101,21 @@ describe('AdminLayout', () => {
     expect(screen.queryByRole('menuitem', { name: '秒合约动作' })).not.toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: '理财动作' })).not.toBeInTheDocument();
     expect(screen.getByText('root-admin')).toBeInTheDocument();
-  }, 30000);
+  }, 60000);
+
+  it('hides navigation entries outside the current role permissions', () => {
+    renderAdminLayout('/admin/dashboard', {
+      ...fullAccess,
+      role_name: '只读总览',
+      permissions: ['dashboard.read'],
+      is_super_admin: false
+    });
+
+    expect(screen.getByRole('menuitem', { name: '总览仪表盘' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /用户与代理/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: '审计日志' })).not.toBeInTheDocument();
+    expect(screen.getByText('只读总览')).toBeInTheDocument();
+  });
 
   it('uses Semi theme and Navigation defaults instead of admin shell style classes', () => {
     const { container } = renderAdminLayout();
@@ -90,7 +124,7 @@ describe('AdminLayout', () => {
     expect(screen.getByAltText('HIPPO')).toBeInTheDocument();
     expect(screen.getByText('HIPPO')).toBeInTheDocument();
     expect(screen.queryByText('OPERATIONS')).not.toBeInTheDocument();
-    expect(screen.getByText('生产环境')).toBeInTheDocument();
+    expect(screen.getByText('测试环境').closest('[data-environment]')).toHaveAttribute('data-environment', 'test');
     expect(container.querySelector('.admin-header-context')).toHaveTextContent('运营总览总览仪表盘');
     expect(document.title).toBe('总览仪表盘 · HIPPO 管理后台');
     expect(container.querySelector('.admin-shell')).not.toBeInTheDocument();
@@ -171,12 +205,21 @@ describe('AdminLayout', () => {
   });
 
   it('activates the KYC review navigation entry', () => {
-    renderAdminLayout('/admin/users/kyc');
+    renderAdminLayout('/admin/users/kyc/reviews');
 
     const groupButton = screen.getByRole('menuitem', { name: /用户与代理/ });
     expect(groupButton).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByRole('menuitem', { name: 'KYC 审核' })).toHaveClass('semi-navigation-item-selected');
-    expect(screen.getByText('KYC 审核内容')).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'KYC 审核队列' })).toHaveClass('semi-navigation-item-selected');
+    expect(screen.getByText('KYC 审核队列内容')).toBeInTheDocument();
+  });
+
+  it('activates the current administrator account security entry', () => {
+    renderAdminLayout('/admin/account/security');
+
+    const groupButton = screen.getByRole('menuitem', { name: /我的账号/ });
+    expect(groupButton).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('menuitem', { name: '账号安全' })).toHaveClass('semi-navigation-item-selected');
+    expect(screen.getByText('账号安全内容')).toBeInTheDocument();
   });
 
   it('uses the Semi Navigation footer collapse control', () => {

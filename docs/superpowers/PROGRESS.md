@@ -7383,3 +7383,128 @@
 - 修改文件：`web/src/admin/resources/actions/margin.tsx`、`web/src/admin/resources/resourceConfigs.tsx`、`web/src/admin/resources/resourceConfigs.test.tsx`、`web/src/styles.css`、`.trellis/spec/admin/ui-system.md`、`.trellis/tasks/08-18-admin-margin-product-workflow/`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：`npm --prefix web run lint`、`npm --prefix web run typecheck`、`npm --prefix web run build` 通过；杠杆创建/编辑聚焦测试 2/2、`resourceConfigs.test.tsx` 65/65、Web 全量串行测试 301/301 通过。默认并行全量测试曾因两个无关长用例超时失败，这两个用例单独重跑均通过。`git diff --check` 与 Trellis task validate 通过。Ego Browser 使用真实 Chromium 和本地 Vite/mock API 在 1440px、760px、430px 验证：默认/支持模式列显示正确，四个 Tab 与单一 TabPanel 关联正确，SideSheet、流程面板、页脚按钮均无文档级横向溢出。
 - 后续事项：无；本次未修改 Rust 后端、数据库结构、移动端或 PC 端杠杆下单流程。
+
+## 2026-08-18 06:51 - 后台设置流程审计与优化规划
+
+- 完成内容：盘点后台 55 个导航路径、14 个一级分组、43 个通用资源页及独立配置页，整理通用 CRUD、单例全局配置、配置/运行态分离和审核处置四类流程；确认后台角色权限未实际授权、预测配置与贷款产品审计缺口、审计 IP 未写入、设置页缺少脏数据保护与乐观并发、配置与运营任务混排、SMTP 双写入口、Dashboard 未消费已有审计摘要等问题，并形成 P0/P1/P2 分级路线。建议先建设 RBAC、revision/冲突、统一审计与高风险审批底座，再迁移预测、贷款、安全策略及外部渠道配置，最后重组导航与运行可观测性。
+- 修改文件：`.trellis/tasks/08-18-admin-settings-workflow-audit/{task.json,prd.md,implement.jsonl,check.jsonl,research/admin-settings-workflow-audit.md}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：本次只进行代码与接口静态审计，使用 CodeGraph 及定向源码检索核对导航、路由、前后端请求、审计写入、权限与版本字段；未修改生产代码，因此未执行 Web 或 Rust 测试。Trellis 上下文校验与 `git diff --check` 均通过。
+- 后续事项：优先实施“后台配置治理底座 + 预测/贷款首批修复”；当前任务仅输出规划，未改动生产接口和页面。
+
+## 2026-08-18 07:17 - P0 后台权限与审计传输底座
+
+- 完成内容：建立管理员角色权限实时回查与路由权限映射，新增 `/admin/api/v1/access/me` 权限快照接口；后台请求统一生成/透传 request ID 并采集规范化来源 IP；所有现有后台审计写入口补齐 IP/request ID；新增 0104 迁移，包含审计关联列、预测/贷款 revision、高风险配置变更申请表及默认超级管理员显式 `*` 权限。
+- 修改文件：`src/infra/admin_request_context.rs`、`src/infra/mod.rs`、`src/lib.rs`、`src/modules/auth/mod.rs`、`src/modules/auth/application.rs`、`src/modules/admin/{domain.rs,repository.rs,service.rs,application.rs,infrastructure.rs,presentation.rs,routes.rs}`、`src/modules/admin/{service,application,infrastructure,presentation,routes}/access_control.rs`、各业务审计基础设施文件、`src/bootstrap.rs`、`migrations/0104_admin_configuration_governance.sql`
+- 验证结果：`cargo fmt --all` 通过；`cargo check --all-targets` 通过。
+- 后续事项：接入后台前端权限导航/页面守卫；完成预测与贷款 revision、原因和 before/after 审计；实现高风险配置双人复核 API/UI。
+## 2026-08-18 07:37 - P0 双人复核与后台权限界面
+
+- 完成内容：新增高风险配置变更申请、异人复核、拒绝/通过、幂等标记应用状态机及 MySQL 持久化；申请、复核、应用均与统一审计同事务，递归脱敏密码、令牌和密钥字段；补充权限码目录、前端权限快照、按权限过滤导航、路由读取守卫和通用资源操作可见性；新增 RBAC、审计来源 IP/request ID、双人复核重放和 0104 迁移契约测试。
+- 修改文件：`migrations/0104_admin_configuration_governance.sql`、`src/modules/admin/{repository.rs,service.rs,application.rs,infrastructure.rs,presentation.rs,routes.rs}`、`src/modules/admin/{service,application,infrastructure,presentation,routes}/{access_control.rs,config_changes.rs}`、`tests/admin_routes.rs`、`tests/admin_configuration_governance_migration.rs`、`tests/unit_src/src_modules_admin_service_tests.rs`、`web/src/admin/access.tsx`、`web/src/admin/access.test.tsx`、`web/src/admin/routes.tsx`、`web/src/admin/resources/resourceConfigs.tsx`、`web/src/auth/RequireAdmin.tsx`、`web/src/auth/RequireAdmin.test.tsx`、`web/src/layouts/AdminLayout.tsx`、`web/src/layouts/AdminLayout.test.tsx`。
+- 验证结果：`npm --prefix web run typecheck` 通过；`npm --prefix web run test -- --run src/admin/access.test.tsx src/auth/RequireAdmin.test.tsx src/layouts/AdminLayout.test.tsx src/admin/routes.test.tsx` 通过（4 个文件、56 个测试）。Rust 全量编译需等待并行的预测/贷款 P0 切片完成后统一执行。
+- 后续事项：整合预测配置和贷款产品的 revision/reason/审计实现，执行 P0 Rust 与后台全量质量门禁。
+
+## 2026-08-18 07:43 - P0 预测配置并发与审计
+
+- 完成内容：为预测全局设置和资产配置写入接入必填原因与客户端 revision；使用事务、行锁和条件更新阻止旧版本覆盖，成功后 revision 递增并回传，冲突返回 HTTP 409。配置变更与包含管理员、原因、安全 before/after、revision、来源 IP 和 request ID 的审计日志同事务提交；后台页面加载并提交 revision/原因，409 时显示中文冲突提示并刷新最新配置。
+- 修改文件：`src/modules/prediction/{application,infrastructure,presentation,repository,routes,service}.rs`、`tests/prediction_commission_routes.rs`、`tests/unit_src/src_modules_prediction_tests.rs`、`web/src/admin/actions/PredictionConfigPage.tsx`、`web/src/admin/actions/PredictionConfigPage.test.tsx`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo check --all-targets` 通过；预测模块库测试 6/6 通过；`prediction_commission_routes` 3/3 通过（当前未配置 `DATABASE_URL`，真实 MySQL 分支按既有约定跳过）；预测配置页面聚焦测试 3/3、Web `typecheck`、聚焦 ESLint 与限定本切片的 `git diff --check` 通过；改动 Rust 文件已使用 `rustfmt --edition 2024` 格式化。Web 全量 lint 仅被责任范围外 `web/src/admin/resources/actions/loan.test.tsx` 的未使用 `_revision` 阻断。
+- 后续事项：部署前执行共享迁移 `0104_admin_configuration_governance.sql`；在配置了 MySQL `DATABASE_URL` 的环境复跑真实并发与原子审计分支。
+
+## 2026-08-18 07:47 - 完成 P0 后台配置安全治理
+
+- 完成内容：贷款产品创建、修改、启停全部消费非空原因，修改/启停携带 revision 并通过事务行锁和条件更新返回 409 冲突；贷款配置与 before/after/revision/IP/request ID 审计原子提交，后台冲突后给出中文恢复提示并刷新。至此 P0 已覆盖实时 RBAC、权限目录、前端导航/路由/通用操作可见性、统一审计传输上下文、预测与贷款乐观并发，以及高风险配置异人复核和幂等状态转换。
+- 修改文件：`src/modules/loan/{application.rs,domain.rs,infrastructure.rs,mod.rs,presentation.rs,routes.rs,service.rs}`、`tests/loan_routes.rs`、`tests/unit_src/src_modules_loan_tests.rs`、`web/src/admin/resources/actions/{loan.tsx,loan.test.tsx}`、`.trellis/tasks/08-18-admin-settings-p0-governance/prd.md`，以及前两条 P0 记录列出的治理底座与预测文件。
+- 验证结果：`cargo fmt --all -- --check`、`cargo check --all-targets` 通过；Admin 治理单元测试 10/10、迁移测试 2/2、Prediction 6/6、Loan 6/6、预测路由 3/3、贷款路由 5/5 通过；两个 RBAC/双人复核路由用例编译并通过，当前未配置 `DATABASE_URL`，真实 MySQL 分支按约定跳过。后台 `lint`、`typecheck`、权限/路由/布局测试 56/56、预测/贷款/资源页聚焦测试 72/72 通过。
+- 后续事项：进入 P1 配置中心、流程路由重组、引用选择器、Dashboard 环境与 SMTP 单入口优化；部署前执行 `0104_admin_configuration_governance.sql`。
+
+## 2026-08-18 08:09 - P1 后台业务引用选择器与失效引用保护
+
+- 完成内容：将新币生命周期、后台派发、解禁规则、解禁费用、用户代理分配和风控对象中的裸 ID 改为可搜索的 Semi Select 引用选择器，统一展示名称/符号、数据库 ID、启用状态、生命周期与关键约束；禁用、暂停、非派发阶段或缺少资产符号的引用在选项中明确说明且不可选择，提交前再次复核当前选项。新币项目列表新增“配置与操作”快捷入口并携带项目上下文。后端为风控对象补充 global/user/pair/asset 形状归一化与事务内 active 复核，为新币项目、费用资产、项目资产和派发用户补充服务端 active 校验，避免前端加载后资源并发失效仍被误提交。
+- 修改文件：`web/src/admin/referenceOptions.tsx`、`web/src/shared/SemiFormControls.tsx`、`web/src/admin/actions/{NewCoinActions,helperCopy.test}.tsx`、`web/src/admin/resources/actions/{newCoins,risk,users}.tsx`、`web/src/admin/resources/{resourceConfigs,resourceConfigs.test}.tsx`、`web/src/styles.css`、`src/modules/admin/{application/new_coin,application/risk_security,infrastructure/risk_security,service/risk_security}.rs`、`tests/unit_src/src_modules_admin_service_tests.rs`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo check --all-targets` 通过；风控目标归一化聚焦单元测试 1/1 通过；Web `typecheck` 与改动文件聚焦 ESLint 通过；`helperCopy.test.tsx` 3/3、`resourceConfigs.test.tsx` 65/65 通过；本切片 `git diff --check` 通过。
+- 后续事项：继续收口 P1 配置中心页面、流程路由、Dashboard 审计摘要与 SMTP 单入口，并执行 P1 全量质量门禁。
+
+## 2026-08-18 08:03 - P1 后台信息架构与 SMTP 单入口
+
+- 完成内容：将 KYC 规则配置与审核队列拆分为 `/admin/users/kyc/settings` 和 `/admin/users/kyc/reviews`，旧 KYC 路径重定向审核队列；将竞猜全局/资产配置与同步执行/日志拆分为 `/admin/prediction/settings` 和 `/admin/prediction/sync`，旧同步日志路径重定向运行工作区，两组页面都提供双向快捷入口且只加载当前工作区所需 API。管理员两步验证迁移到 `/admin/account/security`，从“系统配置”移出并新增“我的账号 / 账号安全”导航，旧路径保留重定向。SMTP 页面仅使用具名 `/smtp/configs` 系列作为可见写入流程，另外以 GET 读取旧单例并展示已纳入列表、待迁移或读取失败提示，不暴露旧单例写入操作。新路由延续 P0 权限边界，分别映射 `users.kyc.read`、`prediction.settings.read`、`prediction.sync.read` 和 `account.security.read`。
+- 修改文件：`web/src/admin/{navigation,navigation.test,routes,routes.test,access,access.test}.tsx`、`web/src/admin/actions/{KycManagementPage,KycManagementPage.test,PredictionConfigPage,PredictionConfigPage.test,AdminTwoFactorPage,AdminTwoFactorPage.test,SmtpConfigPage,SmtpConfigPage.test}.tsx`、`web/src/admin/components/WorkflowPageActions.tsx`、`web/src/layouts/AdminLayout.test.tsx`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix web run typecheck` 通过；`npm --prefix web run lint` 通过；权限、导航、路由、布局、KYC、竞猜、账号两步验证与 SMTP 8 个聚焦测试文件共 78/78 通过；Trellis context validate 与 `git diff --check` 通过。
+- 后续事项：无；本切片未修改 Rust、Dashboard、配置中心或通用 `resourceConfigs`，也未覆盖并行工作树改动。
+
+## 2026-08-18 08:06 - P1 后端配置中心聚合合同
+
+- 完成内容：新增 `GET /admin/api/v1/config-center` 后端权威聚合接口，以单条 MySQL 一致性查询覆盖预测配置、行情订阅、行情策略、KYC 规则、贷款/杠杆/秒合约/理财产品、SMTP、上传、品牌、安全策略和国家配置共 13 个域；返回后端目录维护的中英文分组代码、配置/运营路径、配置与运行状态、发布/应用版本、修改/应用/测试时间及安全错误摘要。建立“未配置 > 运行异常 > 待应用 > 正常”纯判定规则，支持 query、group、status 过滤和状态分面 summary；SQL 不选择任何凭据字段，原始运行错误经敏感标记整段隐藏和 160 字符裁剪。补齐 `config_center.read` 路由权限映射与权限目录，并对齐本轮已拆分的 KYC 和预测运行路径。
+- 修改文件：`src/modules/admin/{repository,service,application,infrastructure,presentation,routes}.rs`、`src/modules/admin/{repository,service,application,infrastructure,presentation,routes}/config_center.rs`、`src/modules/admin/service/access_control.rs`、`tests/unit_src/src_modules_admin_service_config_center_tests.rs`、`tests/admin_config_center_contract.rs`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --all -- --check`、`cargo check --all-targets`、配置中心纯规则单测 7/7、独立路由/SQL/权限合同测试 3/3、后端架构门禁 11/11、配置中心限定 Clippy（`--lib --test admin_config_center_contract -D warnings`）、Trellis context validate 与限定改动 `git diff --check` 均通过。全量 `cargo clippy --all-targets -D warnings` 被并行 P0 文件 `tests/prediction_commission_routes.rs:715` 的既有 bool assert 告警阻断；中文文档全量门禁被并行 P0 `config_changes.rs` 的 4 处既有注释缺口阻断，本切片新增文件未出现在失败清单。当前未设置 `DATABASE_URL`，真实 MySQL 执行分支未运行，SQL 表/字段、13 分支、错误裁剪和零凭据列由独立合同测试锁定。
+- 后续事项：在配置了最新迁移和 `DATABASE_URL` 的 MySQL 环境执行一次配置中心真实聚合查询；并行 P0 切片修复上述 Clippy/中文文档门禁后再统一跑全量门禁。
+
+## 2026-08-18 08:09 - P1 Dashboard 审计摘要与环境标签
+
+- 完成内容：Dashboard 响应新增由 `Settings.app_env` 归一得到的稳定 `environment` 字段，只公开 production/staging/test/development 四值且不回显未知部署名；后台总览恢复消费既有 `audit.admin_actions_24h` 与 `latest_actions`，展示中文动作、中文目标、发生时间和完整审计日志入口，并补齐加载、错误、无总览数据及无最近动作状态。环境标签按生产/预发布/测试/开发映射中文名称与 red/orange/light-blue/grey 语义色，页面文案不再把当前实例写死为生产；最近动作响应测试确认不包含审计前后快照、原因、IP、request ID、配置密钥或错误堆栈。
+- 修改文件：`src/modules/admin/application/dashboard_audit.rs`、`src/modules/admin/presentation/dashboard_audit.rs`、`src/modules/admin/routes/system_config.rs`、`tests/admin_routes.rs`、`tests/unit_src/src_modules_admin_application_tests.rs`、`web/src/admin/dashboard/{DashboardPage.tsx,DashboardPage.css,DashboardPage.test.tsx}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --all -- --check`、`cargo check --all-targets` 通过；Admin 库测试 37/37 通过；Dashboard 路由聚焦测试 1/1 编译并通过（当前未配置 `DATABASE_URL`，真实 MySQL 分支按既有约定跳过）。Dashboard 前端聚焦测试 7/7、`npm --prefix web run typecheck`、`npm --prefix web run lint`、`npm --prefix web run build` 通过，构建仅有既有 lottie `eval` 与大 chunk 警告。Web 全量串行测试 45 个文件中 44 个通过、327 项中 325 项通过；责任范围外 `resourceConfigs.test.tsx` 因并行引用选择器改动出现 2 项断言失败（交易对选项请求次数 2→3、代理选择器选项未命中），Dashboard 聚焦用例仍全绿。
+- 后续事项：本切片按责任边界未编辑正在被并行 P0/P1 改动的 `AdminLayout.tsx`；该外壳仍有固定“生产环境”徽标，主会话需移除它或接入同源环境合同，避免非生产 Dashboard 同时出现冲突标签。未配置真实 MySQL，未做登录后浏览器视觉验收。
+
+## 2026-08-18 08:19 - 完成 P1 配置中心与后台流程重组
+
+- 完成内容：新增后台“配置中心”页面和独立导航/权限路由，消费后端 13 域权威聚合合同，提供中文分组、搜索、状态筛选、状态分面、发布/应用版本、运行状态、修改/应用/测试时间、脱敏错误摘要及配置/运行处置双入口；后台顶栏环境徽标改为 `VITE_APP_ENV`/构建模式归一结果，测试、预发布和开发构建不再固定显示生产环境。整合本轮 KYC、竞猜、账号安全和 SMTP 单入口路由拆分、Dashboard 审计摘要、可搜索业务引用选择器及服务端失效引用保护，P1 五项验收全部完成。
+- 修改文件：`web/src/admin/config-center/{ConfigCenterPage.tsx,ConfigCenterPage.css,ConfigCenterPage.test.tsx}`、`web/src/admin/{access,access.test,navigation,navigation.test,routes,routes.test}.tsx`、`web/src/layouts/{AdminLayout,AdminLayout.test}.tsx`、`.trellis/tasks/08-18-admin-settings-p1-workflows/prd.md`，以及本轮各 P1 切片记录列出的后端配置中心、Dashboard、SMTP/KYC/竞猜与引用选择器文件。
+- 验证结果：后端 `cargo fmt --all -- --check`、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings` 通过；Admin 服务单测 11/11、配置中心纯规则 7/7、配置中心合同 3/3、架构门禁 11/11 通过。Web `lint`、`typecheck`、生产 `build` 通过；全量 46 个测试文件中 45 个文件、331/332 项通过，唯一失败为并行高负载下 `AdminLayout` 旧 30 秒超时，调整为 60 秒后该文件 14/14 聚焦复跑通过；配置中心 3/3、引用选择器 68/68 通过。构建仅保留依赖 `lottie-web` 的既有 eval 与大 chunk 提示。
+- 后续事项：进入 P2 共享设置编辑壳、未保存变更保护、中文差异确认、审计详情与大页面责任拆分；最终统一复跑 Web 全量测试。
+
+## 2026-08-18 08:29 - P2 审计时间范围后端合同
+
+- 完成内容：为后台审计日志查询新增 `created_from`/`created_to` Unix 毫秒时间范围，两个边界均为包含语义；列表与总数查询复用同一时间谓词，开始时间晚于结束时间时在访问数据库前返回 400 校验错误。同步补充路由中文注释、开放/精确/倒置区间纯单元测试、真实路由筛选断言，并把共享设置编辑器、脏状态保护、中文差异确认、敏感字段只写不回显及审计浏览器合同写入后台 UI 规范。
+- 修改文件：`src/modules/admin/{presentation,application,infrastructure}/dashboard_audit.rs`、`src/modules/admin/routes/system_config.rs`、`tests/admin_routes.rs`、`tests/unit_src/src_modules_admin_application_tests.rs`、`.trellis/spec/admin/ui-system.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --all`、`cargo check --lib` 通过；审计时间范围纯单元测试 2/2 通过；`admin_audit_logs_list_filters_and_timestamps` 路由测试 1/1 编译并通过，当前未配置 `DATABASE_URL`，真实 MySQL 分支按既有约定跳过。
+- 后续事项：整合 P2 共享设置编辑壳、审计中文详情页和 SMTP/行情策略/预测大页拆分，随后执行前后端全量质量门禁。
+
+## 2026-08-18 08:34 - 配置审批状态机中文合同补全
+
+- 完成内容：补齐高风险配置变更复核、应用条件更新，以及复核动作解析/状态映射四个公开职责方法的详细中文合同，明确事务归属、并发条件更新、冲突/回滚语义、稳定状态码和输入错误边界；同时将审计结束时间实现修正为“包含完整目标毫秒”，避免 MySQL `TIMESTAMP(6)` 的微秒数据被毫秒上界遗漏。
+- 修改文件：`src/modules/admin/infrastructure/{config_changes,dashboard_audit}.rs`、`src/modules/admin/service/config_changes.rs`、`tests/admin_routes.rs`、`.trellis/spec/admin/ui-system.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --all` 通过；后端中文文档门禁 1/1 通过。前一轮后端架构门禁 11/11 通过；结束毫秒内微秒覆盖已加入真实 MySQL 路由测试，当前无 `DATABASE_URL` 时该条件分支按约定跳过。
+- 后续事项：P2 前端切片整合完成后统一复跑 `cargo check/clippy`、架构与文档门禁及 Web 全量门禁。
+
+## 2026-08-18 08:38 - P2 审计日志可读性工作台
+
+- 完成内容：将 `/admin/audit-logs` 从通用资源页切换为受 `audit.logs.read` 保护的独立工作台，按真实 DTO 查询管理员、动作、对象及包含边界的 `created_from`/`created_to` Unix 毫秒时间范围；新增中文动作/对象映射、对象工作区跳转、原因与请求追踪信息，以及递归字段差异和无差异状态。所有 token/password/secret/key/credential 类键在任意嵌套层级只显示遮罩值。新增“导出当前结果”，仅把当前页已加载的安全可读值写入带 UTF-8 BOM 的固定文件名 CSV，并额外防护表格公式注入，不调用虚构导出接口。
+- 修改文件：`web/src/admin/audit/{AuditLogsPage.tsx,AuditLogsPage.css,AuditLogsPage.test.tsx,auditApi.ts,auditPresentation.ts,auditPresentation.test.ts,auditExport.ts,auditExport.test.ts}`、`web/src/admin/{routes.tsx,routes.test.tsx}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix web run typecheck`、`npm --prefix web run lint`、审计/路由/权限 5 个聚焦测试文件 62/62、`npm --prefix web run build` 与 `git diff --check` 均通过；构建仅保留依赖 `lottie-web` 的既有 eval 和大 chunk 提示。
+- 后续事项：无功能遗留；本切片未进行登录后浏览器视觉验收，也未改动通用 `resourceConfigs` 或其他 P2 并行页面。
+
+## 2026-08-18 08:41 - P2 共享设置编辑工程与首批单例页
+
+- 完成内容：新增实际被品牌与安全策略页消费的共享设置编辑壳和 hooks，以规范 API 资源作为 React Query key，统一读取重试、写入不自动重放、成功缓存更新/失效、普通错误与 409 中文并发冲突；脏草稿同时接入 `beforeunload`、React Router 站内离开和手动刷新丢弃确认，保存成功后自动解除。新增中文字段级差异、影响摘要、必填且去空白原因及敏感值只显示配置/更新状态的确认组件；平台品牌保持既有 GET/PATCH 路径与请求体，安全策略保持原完整策略载荷并使用 danger 高风险语义。
+- 修改文件：`web/src/admin/settings/{AdminSettingsPage.tsx,AdminSettingsPage.test.tsx,SettingsSaveConfirmation.tsx,UnsavedChangesGuard.tsx,differences.ts,index.ts,query.ts,settings.css,useAdminSettingsEditor.ts}`、`web/src/admin/actions/{PlatformBrandPage,PlatformBrandPage.test,SecurityPolicyPage,SecurityPolicyPage.test}.tsx`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：共享设置、品牌与安全策略 3 个聚焦测试文件 11/11 通过，覆盖加载/读取重试、4xx 不重试、普通保存错误手动重试、脏状态、成功、409 冲突/缓存失效/显式重载、刷新/关闭及站内离开保护、中文差异/影响/原因和高风险语义；`npm --prefix web run typecheck`、完整 `npm --prefix web run lint`、生产 `npm --prefix web run build`、`git diff --check` 与 Trellis task validate 均通过。构建仅保留依赖 `lottie-web` 的既有 eval 和大 chunk 提示。
+- 后续事项：无功能遗留；本切片未进行登录后浏览器视觉验收，后续迁移其他单例配置页时可直接复用该壳与 hooks。
+
+## 2026-08-18 08:49 - P2 设置 schema 与敏感文本防泄漏加固
+
+- 完成内容：扩展共享设置字段 schema，使中文字段标签、格式化、前端校验和影响文案由同一声明驱动；品牌与安全策略保存接入 schema 校验，非法值会显示中文字段错误并阻止提交。共享设置测试改为只从读取接口接收 `secret_set` 元数据、写入输入保持空白，避免测试示例诱导前端把服务端密钥回填 DOM。新增非结构化文本统一脱敏器，审计原因、CSV 和设置错误中的 token/password/secret/key/passphrase/credential/ciphertext/Bearer 值均遮罩，错误只保留脱敏后的首行定长摘要；审计递归差异同步覆盖历史 ciphertext 字段。修正 P0 RBAC 后过时的 outbox 缺 RabbitMQ 测试，使其直接验证应用装配合同，不再让假 MySQL 权限回查抢先产生数据库错误。
+- 修改文件：`web/src/admin/settings/{differences,index,SettingsSaveConfirmation,AdminSettingsPage.test,query,settings.css}.ts*`、`web/src/admin/actions/{PlatformBrandPage,SecurityPolicyPage}.tsx`、`web/src/admin/audit/{AuditLogsPage,AuditLogsPage.test,auditPresentation,auditPresentation.test,auditExport}.ts*`、`web/src/shared/sensitiveText.ts`、`tests/events_outbox.rs`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：共享设置、品牌、安全策略与审计 6 个聚焦测试文件 24/24 通过；outbox 缺 RabbitMQ 聚焦测试 1/1 通过。Rust 沙箱内全量测试的 5 个 Wiremock 端口用例仅因本机端口权限失败，沙箱外重跑后这些用例全部通过；随后发现并修正上述 P0 过时 outbox 断言，最终全量门禁将在 P2 整合后重新执行。
+- 后续事项：等待 SMTP、竞猜和行情策略大页拆分完成，统一运行前后端全量门禁与浏览器视觉验收。
+
+## 2026-08-18 08:49 - P2 后台大页责任拆分与孤立实现清理
+
+- 完成内容：将 SMTP 868 行、竞猜配置 654 行和行情策略 829 行入口收敛为 1 行兼容导出，分别下沉领域类型、纯转换/校验、API 状态 hooks 和表单/列表/预览组件。SMTP 继续只向具名 `/smtp/configs` 写入，旧单例仅 GET 兼容；用户名/密码编辑值不回填，只显示用户名掩码、密码已配置、本会话最近测试和轮换语义，PATCH 空凭据仍省略字段以保持后端已有值。竞猜保留设置/同步两个导出、原 API、reason、revision 和 409 中文刷新语义。行情策略复用既有节点编辑器、版本与 K 线补偿组件，拆出确定性详情水合、预设单次加载 hook、详情先读编辑 hook、OHLCV 预览与创建/修改动作，请求合同不变。删除前两轮 `rg` 均证明 `ProductStatusActions` 在生产代码中仅命中自身定义，路由、导航、资源注册和生产 import 均为零，已删除实现及孤立测试。
+- 修改文件：`web/src/admin/actions/{SmtpConfigPage,SmtpConfigPage.test,PredictionConfigPage,PredictionConfigPage.test}.tsx`、`web/src/admin/actions/smtp/**`、`web/src/admin/actions/prediction/**`、`web/src/admin/resources/actions/marketStrategy.tsx`、`web/src/admin/resources/actions/marketStrategy/**`、删除 `web/src/admin/actions/{ProductStatusActions,ProductStatusActions.test}.tsx`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：SMTP 聚焦测试 6/6、竞猜 4/4、行情策略动作/节点/纯模型 9/9 通过；包含路由与资源注册的聚焦组合 129/129 通过。当前最终树 `npm --prefix web run typecheck`、`npm --prefix web run lint`、Web 全量 50 个文件 357/357 项测试、`VITE_API_BASE_URL=http://127.0.0.1:8080 npm --prefix web run build` 与 Trellis task validate 全部通过；构建仅保留依赖 `lottie-web` 的既有 eval 和大 chunk 提示。
+- 后续事项：无；本切片未进行登录后浏览器视觉验收，未修改路由/导航/权限/通用资源注册或其他并行 P2 实现。
+
+## 2026-08-18 09:20 - P2 最终树质量审查与重复入口收口
+
+- 完成内容：复核共享设置壳、SMTP 只写凭据、Prediction/行情策略拆分、ProductStatusActions 删除条件及 Rust 审计时间合同；修复审计普通字段文本和 CSV 元数据可绕过脱敏的问题，覆盖带引号 JSON、复数凭据键、Bearer 与全部导出单元格。Prediction 的 409 不再自动覆盖草稿，改为保留本地值并显式放弃后重载；将 `/admin/prediction/settings?tab=assets` 确立为下注资产唯一入口，移除侧栏和通用资源配置，旧 `/admin/prediction/assets` 仅兼容重定向，审计对象链接同步指向规范 Tab。行情策略无副作用预览不再发送 `reason`，K 线补偿打开时只读取任务历史、不自动检测或执行，范围明确展示为半开区间并避免关闭后的过期请求回写。同步提高一个在全量并行负载下超时、但聚焦 7 秒通过的新闻流程测试上限，消除 20 秒偶发门禁失败。
+- 修改文件：`web/src/shared/sensitiveText.ts`、`web/src/admin/audit/{AuditLogsPage,AuditLogsPage.test,auditPresentation,auditPresentation.test,auditExport,auditExport.test}.ts*`、`web/src/admin/actions/prediction/{PredictionSettingsWorkspace,usePredictionSettings}.ts*`、`web/src/admin/actions/PredictionConfigPage.test.tsx`、`web/src/admin/{routes,routes.test,navigation,navigation.test,access,access.test}.tsx`、`web/src/layouts/AdminLayout.test.tsx`、`web/src/admin/resources/{resourceConfigs,resourceConfigs.test}.tsx`、`web/src/admin/resources/actions/marketStrategy/MarketStrategyPreviewAction.tsx`、`web/src/admin/components/MarketStrategyRecoverySheet.tsx`、`web/src/admin/actions/MarketStrategyActions.test.tsx`、`.trellis/spec/admin/ui-system.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Web `typecheck`、完整 `lint`、生产 `build` 通过，全量 50 个测试文件 361/361 通过；Rust `cargo fmt --all -- --check`、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings` 通过，架构门禁 11/11、中文文档门禁 1/1、审计时间纯单测 2/2、审计路由聚焦 1/1、行情补偿合同 3/3 通过；`git diff --check` 通过。构建仅保留依赖 `lottie-web` 的既有 eval 与大 chunk 提示。
+- 后续事项：当前未配置 `DATABASE_URL`，审计路由真实 MySQL 微秒筛选分支按测试约定跳过；本轮未重新执行登录后浏览器视觉验收。
+
+## 2026-08-18 09:27 - 完成后台设置 P0/P1/P2 全量优化
+
+- 完成内容：关闭 P0/P1/P2 全部验收项。P0 完成运行时 RBAC、请求追踪审计、预测/贷款 revision 冲突和高风险异人复核；P1 完成 13 域配置中心、配置/运营路由拆分、SMTP 单写入口、Dashboard 环境与审计摘要，以及主要裸 ID 的可搜索引用选择器和服务端失效校验；P2 完成共享设置编辑壳、刷新与站内离开脏状态保护、中文差异/影响/必填原因确认、可读审计工作台与安全 CSV 导出、重复入口收口及 SMTP/竞猜/行情策略大页拆分。最终补充配置中心外部错误的统一单行脱敏，避免凭据内容通过错误消息回显。
+- 修改文件：本轮 P0/P1/P2 任务目录与 PRD、`migrations/0104_admin_configuration_governance.sql`、`src/modules/admin/**` 及预测/贷款/请求上下文相关后端文件、`web/src/admin/**`、`web/src/shared/{SemiFormControls,sensitiveText}.ts*`、`.trellis/spec/admin/ui-system.md`、`docs/superpowers/PROGRESS.md`；最终补丁为 `web/src/admin/config-center/{ConfigCenterPage.tsx,ConfigCenterPage.test.tsx}`。
+- 验证结果：最终树 `cargo fmt --all -- --check`、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、后端架构门禁 11/11、中文文档门禁 1/1、审计时间范围 2/2、审计路由 1/1、行情补偿 3/3 通过；本轮较早执行的 `cargo test --all-targets -- --test-threads=1` 全量通过。Web `typecheck`、完整 `lint`、50 个测试文件 361/361、生产 `build` 与 `git diff --check` 通过，构建仅保留 `lottie-web` 依赖的既有 eval 和大 chunk 警告。Ego Browser 在 1280×800 验证旧竞猜资产 URL 正确重定向到 `/admin/prediction/settings?tab=assets`，审计页面无横向溢出、中文差异和导出入口正常；此前 1728 宽度的 Dashboard/安全策略及 1280 宽度的配置中心、SMTP、竞猜、行情策略均已完成视觉验收。由于远端已部署镜像尚无 `/admin/api/v1/access/me`，本地视觉验收仅对该端点使用浏览器会话内超级管理员响应垫片，其余数据请求仍访问远端服务，未写入产品代码。
+- 后续事项：部署新镜像前执行 `0104_admin_configuration_governance.sql`；当前未配置 `DATABASE_URL`，需在目标 MySQL 环境复跑真实数据库并发、审计微秒边界和配置中心聚合查询。当前改动尚未提交或推送。

@@ -1014,10 +1014,11 @@ async fn insert_event_admin_audit_log_in_tx(
     before: &OutboxRecordRow,
     reason: &str,
 ) -> AppResult<()> {
+    let request_context = crate::infra::admin_request_context::current_admin_request_context();
     sqlx::query(
         r#"INSERT INTO admin_audit_logs
-           (admin_id, action, target_type, target_id, before_json, after_json, reason)
-           VALUES (?, ?, ?, ?, ?, ?, ?)"#,
+           (admin_id, action, target_type, target_id, before_json, after_json, reason, ip, request_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(admin_id)
     .bind(action)
@@ -1032,6 +1033,16 @@ async fn insert_event_admin_audit_log_in_tx(
         "retry_count": 0,
     })))
     .bind(reason)
+    .bind(
+        request_context
+            .as_ref()
+            .and_then(|context| context.source_ip.as_deref()),
+    )
+    .bind(
+        request_context
+            .as_ref()
+            .map(|context| context.request_id.as_str()),
+    )
     .execute(&mut **tx)
     .await?;
     Ok(())

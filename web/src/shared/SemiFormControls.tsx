@@ -2,6 +2,7 @@ import { Button, Checkbox, Input, Select, Switch, TextArea } from '@douyinfe/sem
 import type { ReactNode } from 'react';
 
 export type SemiSelectOption = {
+  disabled?: boolean;
   label: string;
   value: string;
 };
@@ -65,9 +66,9 @@ export function AdminSelect({ ariaLabel, disabled, filter, loading, onChange, op
       disabled={disabled}
       filter={filter}
       loading={loading}
-      onChange={(nextValue) => onChange(String(nextValue))}
-      onSelect={(nextValue) => onChange(String(nextValue))}
-      optionList={optionList}
+      onChange={(nextValue) => onChange(nextValue === null || nextValue === undefined ? '' : String(nextValue))}
+      onSelect={(nextValue) => onChange(nextValue === null || nextValue === undefined ? '' : String(nextValue))}
+      optionList={optionList.map((option) => ({ ...option, disabled: option.disabled }))}
       placeholder={placeholder}
       showClear={showClear}
       style={{ width: '100%' }}

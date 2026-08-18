@@ -2,7 +2,10 @@
 //!
 //! 表现层兼容 façade：按后台子域组织请求/响应 DTO，并稳定重导出现有符号路径。
 
+mod access_control;
 mod agents;
+mod config_center;
+mod config_changes;
 mod convert;
 mod countries;
 mod dashboard_audit;
@@ -17,8 +20,9 @@ mod users;
 mod wallet_assets;
 
 pub(crate) use self::{
-    agents::*, convert::*, countries::*, dashboard_audit::*, deposit_networks::*, market::*,
-    new_coin::*, news::*, risk_security::*, users::*, wallet_assets::*,
+    access_control::*, agents::*, config_center::*, config_changes::*, convert::*, countries::*,
+    dashboard_audit::*, deposit_networks::*, market::*, new_coin::*, news::*, risk_security::*,
+    users::*, wallet_assets::*,
 };
 pub use self::{market_feed::*, system_config::*};
 

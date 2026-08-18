@@ -71,6 +71,8 @@ pub(crate) struct SavePredictionSettingsRequest {
     pub(crate) default_settlement_mode: String,
     pub(crate) default_invalid_refund_policy: String,
     pub(crate) quote_ttl_seconds: u32,
+    pub(crate) revision: u64,
+    pub(crate) reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,12 +80,16 @@ pub(crate) struct UpsertPredictionAssetConfigRequest {
     pub(crate) asset_id: u64,
     pub(crate) enabled: bool,
     pub(crate) max_payout_amount: BigDecimal,
+    pub(crate) revision: u64,
+    pub(crate) reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct UpdatePredictionAssetConfigRequest {
     pub(crate) enabled: bool,
     pub(crate) max_payout_amount: BigDecimal,
+    pub(crate) revision: u64,
+    pub(crate) reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,6 +131,7 @@ pub(crate) struct PredictionSettingsResponse {
     pub(crate) default_settlement_mode: String,
     pub(crate) default_invalid_refund_policy: String,
     pub(crate) quote_ttl_seconds: u32,
+    pub(crate) revision: u64,
     pub(crate) last_sync_status: Option<String>,
     pub(crate) last_sync_error: Option<String>,
     #[serde(default, with = "option_unix_millis")]
@@ -211,6 +218,7 @@ pub(crate) struct PredictionAssetConfigResponse {
     pub(crate) asset_symbol: String,
     pub(crate) enabled: bool,
     pub(crate) max_payout_amount: BigDecimal,
+    pub(crate) revision: u64,
     #[serde(with = "unix_millis")]
     pub(crate) created_at: DateTime<Utc>,
     #[serde(with = "unix_millis")]
@@ -332,6 +340,7 @@ impl From<PredictionSettingsRow> for PredictionSettingsResponse {
             default_settlement_mode: row.default_settlement_mode,
             default_invalid_refund_policy: row.default_invalid_refund_policy,
             quote_ttl_seconds: row.quote_ttl_seconds,
+            revision: row.revision,
             last_sync_status: row.last_sync_status,
             last_sync_error: row.last_sync_error,
             last_sync_started_at: row.last_sync_started_at,
@@ -409,6 +418,7 @@ impl From<PredictionAssetConfigRow> for PredictionAssetConfigResponse {
             asset_symbol: row.asset_symbol,
             enabled: row.enabled,
             max_payout_amount: row.max_payout_amount,
+            revision: row.revision,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }

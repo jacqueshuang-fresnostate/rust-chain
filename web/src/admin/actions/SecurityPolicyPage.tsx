@@ -1,11 +1,18 @@
-import { IconLock, IconRefresh, IconSetting, IconShield } from '@douyinfe/semi-icons';
-import { Button, Card, Space, Switch, Tabs, Toast, Typography } from '@douyinfe/semi-ui';
-import { useEffect, useMemo, useState } from 'react';
+import { IconLock, IconSetting, IconShield } from '@douyinfe/semi-icons';
+import { Card, Space, Switch, Tabs, Typography } from '@douyinfe/semi-ui';
+import { useMemo, useState } from 'react';
 
-import { ApiError, apiRequest } from '../../api/client';
-import { PageHeader } from '../../layouts/PageHeader';
-import { ConfirmAction } from '../../shared/ConfirmAction';
+import { apiRequest } from '../../api/client';
 import { AdminCheckbox, AdminSelect, type SemiSelectOption } from '../../shared/SemiFormControls';
+import {
+  AdminSettingsPage,
+  buildSettingsDifferences,
+  buildSettingsImpactSummary,
+  SettingsSaveConfirmation,
+  type SettingsFieldDefinition,
+  useAdminSettingsEditor,
+  validateSettingsFields
+} from '../settings';
 
 const { Text, Title } = Typography;
 
@@ -63,6 +70,9 @@ const securityTabs = [
   { itemKey: 'summary', tab: '策略摘要', icon: <IconSetting aria-hidden="true" /> }
 ];
 
+const securityPolicyApiPath = '/admin/api/v1/security-policy';
+const securityPolicyImpactSummary = '保存后会立即影响全站用户登录、资金操作验证和第三方绑定入口。';
+
 const defaultPolicy: UserSecurityPolicy = {
   login_2fa_mode: 'user_enabled',
   registration_invite_required: false,
@@ -79,10 +89,6 @@ const defaultPolicy: UserSecurityPolicy = {
   }
 };
 
-function errorMessage(error: unknown) {
-  return error instanceof ApiError || error instanceof Error ? error.message : '操作失败';
-}
-
 function optionLabel(options: SemiSelectOption[], value: string) {
   return options.find((option) => option.value === value)?.label ?? value;
 }
@@ -91,10 +97,15 @@ function paymentLabel(policy: PaymentPolicy) {
   return policy.enabled ? optionLabel(methodOptions, policy.method) : '未启用';
 }
 
+function paymentDifferenceLabel(policy: PaymentPolicy) {
+  return `${policy.enabled ? '已启用' : '未启用'}；校验方式：${optionLabel(methodOptions, policy.method)}`;
+}
+
 function normalizePolicy(value: UserSecurityPolicy): UserSecurityPolicy {
   return {
-    ...defaultPolicy,
-    ...value,
+    login_2fa_mode: value.login_2fa_mode ?? defaultPolicy.login_2fa_mode,
+    registration_invite_required: value.registration_invite_required ?? defaultPolicy.registration_invite_required,
+    username_login_enabled: value.username_login_enabled ?? defaultPolicy.username_login_enabled,
     payment_policies: {
       ...defaultPolicy.payment_policies,
       ...value.payment_policies
@@ -106,10 +117,97 @@ function normalizePolicy(value: UserSecurityPolicy): UserSecurityPolicy {
   };
 }
 
+const securityPolicyFieldDefinitions: ReadonlyArray<SettingsFieldDefinition<UserSecurityPolicy>> = [
+  {
+    key: 'login_2fa_mode',
+    field: '登录 2FA 策略',
+    impact: securityPolicyImpactSummary,
+    read: (policy) => policy.login_2fa_mode,
+    format: (value) => optionLabel(loginModeOptions, String(value)),
+    validate: (value) => loginModeOptions.some((option) => option.value === value)
+      ? null
+      : '请选择受支持的登录两步验证策略。'
+  },
+  {
+    key: 'registration_invite_required',
+    field: '注册邀请码要求',
+    impact: securityPolicyImpactSummary,
+    read: (policy) => policy.registration_invite_required,
+    format: (value) => (value ? '邀请码必填' : '邀请码选填'),
+    validate: (value) => typeof value === 'boolean' ? null : '邀请码策略值无效。'
+  },
+  {
+    key: 'username_login_enabled',
+    field: '用户名登录入口',
+    impact: securityPolicyImpactSummary,
+    read: (policy) => policy.username_login_enabled,
+    format: (value) => (value ? '开启' : '关闭'),
+    validate: (value) => typeof value === 'boolean' ? null : '用户名登录开关值无效。'
+  },
+  ...actionConfigs.map(({ key, label }) => ({
+    key: `payment_policies.${key}`,
+    field: `${label}校验`,
+    impact: securityPolicyImpactSummary,
+    read: (policy: UserSecurityPolicy) => policy.payment_policies[key],
+    format: (value: unknown) => paymentDifferenceLabel(value as PaymentPolicy),
+    validate: (value: unknown) => {
+      const payment = value as PaymentPolicy | null;
+      if (!payment || typeof payment.enabled !== 'boolean') {
+        return `${label}校验开关值无效。`;
+      }
+      return methodOptions.some((option) => option.value === payment.method)
+        ? null
+        : `${label}校验方式无效。`;
+    }
+  })),
+  ...thirdPartyBindingConfigs.map(({ key, label }) => ({
+    key: `third_party_bindings.${key}`,
+    field: `${label}绑定入口`,
+    impact: securityPolicyImpactSummary,
+    read: (policy: UserSecurityPolicy) => policy.third_party_bindings[key],
+    format: (value: unknown) => (value ? '开启' : '关闭'),
+    validate: (value: unknown) => typeof value === 'boolean' ? null : `${label}绑定入口值无效。`
+  }))
+];
+
 export function SecurityPolicyPage() {
   const [activeTab, setActiveTab] = useState<SecurityTab>('login');
-  const [policy, setPolicy] = useState<UserSecurityPolicy>(defaultPolicy);
-  const [loading, setLoading] = useState(true);
+  const editor = useAdminSettingsEditor<UserSecurityPolicy, UserSecurityPolicy>({
+    settingKey: securityPolicyApiPath,
+    initialForm: defaultPolicy,
+    load: () => apiRequest<UserSecurityPolicy>(securityPolicyApiPath),
+    selectForm: normalizePolicy,
+    save: (policy, reason) =>
+      apiRequest<UserSecurityPolicy>(securityPolicyApiPath, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          login_2fa_mode: policy.login_2fa_mode,
+          registration_invite_required: policy.registration_invite_required,
+          username_login_enabled: policy.username_login_enabled,
+          payment_policies: policy.payment_policies,
+          third_party_bindings: policy.third_party_bindings,
+          reason
+        })
+      }),
+    successMessage: '安全策略已保存。'
+  });
+  const { draft: policy } = editor;
+  const differences = useMemo(
+    () => buildSettingsDifferences(editor.baseline ?? policy, policy, securityPolicyFieldDefinitions),
+    [editor.baseline, policy]
+  );
+  const validationIssues = useMemo(
+    () => validateSettingsFields(policy, securityPolicyFieldDefinitions),
+    [policy]
+  );
+  const impactSummary = useMemo(
+    () => buildSettingsImpactSummary(
+      differences,
+      securityPolicyFieldDefinitions,
+      securityPolicyImpactSummary
+    ),
+    [differences]
+  );
 
   const paymentSummary = useMemo(
     () => actionConfigs.map(({ key, label }) => `${label}：${paymentLabel(policy.payment_policies[key])}`).join('，'),
@@ -122,17 +220,8 @@ export function SecurityPolicyPage() {
     [policy]
   );
 
-  async function loadPolicy() {
-    setLoading(true);
-    try {
-      setPolicy(normalizePolicy(await apiRequest<UserSecurityPolicy>('/admin/api/v1/security-policy')));
-    } finally {
-      setLoading(false);
-    }
-  }
-
   function updatePaymentPolicy(action: SecurityActionKey, patch: Partial<PaymentPolicy>) {
-    setPolicy((current) => ({
+    editor.setDraft((current) => ({
       ...current,
       payment_policies: {
         ...current.payment_policies,
@@ -142,7 +231,7 @@ export function SecurityPolicyPage() {
   }
 
   function updateThirdPartyBinding(key: ThirdPartyBindingKey, enabled: boolean) {
-    setPolicy((current) => ({
+    editor.setDraft((current) => ({
       ...current,
       third_party_bindings: {
         ...current.third_party_bindings,
@@ -151,37 +240,23 @@ export function SecurityPolicyPage() {
     }));
   }
 
-  async function savePolicy(reason: string) {
-    try {
-      const saved = await apiRequest<UserSecurityPolicy>('/admin/api/v1/security-policy', {
-        method: 'PATCH',
-        body: JSON.stringify({ ...policy, reason })
-      });
-      setPolicy(normalizePolicy(saved));
-      Toast.success('保存安全策略已提交');
-    } catch (error) {
-      Toast.error(errorMessage(error));
-      throw error;
-    }
-  }
-
-  useEffect(() => {
-    loadPolicy().catch((error) => Toast.error(errorMessage(error)));
-  }, []);
-
   return (
-    <main className="exchange-page admin-action-page">
-      <PageHeader description="统一控制登录、资金动作验证与第三方绑定策略；保存时需要记录操作原因。" title="安全策略" />
+    <AdminSettingsPage
+      description="统一控制登录、资金动作验证与第三方绑定策略；保存时需要记录操作原因。"
+      feedback={editor.feedback}
+      isDirty={editor.isDirty}
+      isInitialLoading={editor.isInitialLoading}
+      isReady={editor.isReady}
+      isRefreshing={editor.isFetching}
+      loadError={editor.loadError}
+      onReload={editor.reloadLatest}
+      title="安全策略"
+    >
       <div className="admin-policy-workbench">
         <Tabs
           activeKey={activeTab}
           className="admin-action-tabs admin-policy-tabs"
           onChange={(key) => setActiveTab(key as SecurityTab)}
-          tabBarExtraContent={
-            <Button icon={<IconRefresh aria-hidden="true" />} loading={loading} onClick={() => loadPolicy().catch((error) => Toast.error(errorMessage(error)))} theme="borderless">
-              刷新策略
-            </Button>
-          }
           tabList={securityTabs}
           type="button"
         />
@@ -200,7 +275,10 @@ export function SecurityPolicyPage() {
                   登录 2FA 策略
                   <AdminSelect
                     ariaLabel="登录 2FA 策略"
-                    onChange={(login_2fa_mode) => setPolicy({ ...policy, login_2fa_mode: login_2fa_mode as LoginTwoFactorMode })}
+                    onChange={(login_2fa_mode) => editor.setDraft((current) => ({
+                      ...current,
+                      login_2fa_mode: login_2fa_mode as LoginTwoFactorMode
+                    }))}
                     optionList={loginModeOptions}
                     value={policy.login_2fa_mode}
                   />
@@ -211,7 +289,10 @@ export function SecurityPolicyPage() {
                     <div className="admin-action-checkbox">
                       <AdminCheckbox
                         checked={policy.registration_invite_required}
-                        onChange={(registration_invite_required) => setPolicy({ ...policy, registration_invite_required })}
+                        onChange={(registration_invite_required) => editor.setDraft((current) => ({
+                          ...current,
+                          registration_invite_required
+                        }))}
                       >
                         注册时必须填写邀请码
                       </AdminCheckbox>
@@ -226,7 +307,10 @@ export function SecurityPolicyPage() {
                       <Switch
                         aria-label="允许用户名登录"
                         checked={policy.username_login_enabled}
-                        onChange={(username_login_enabled) => setPolicy({ ...policy, username_login_enabled })}
+                        onChange={(username_login_enabled) => editor.setDraft((current) => ({
+                          ...current,
+                          username_login_enabled
+                        }))}
                       />
                     </Space>
                   </div>
@@ -324,9 +408,18 @@ export function SecurityPolicyPage() {
             <Text strong>保存当前安全策略</Text>
             <Text type="tertiary">提交前将要求填写操作原因，并沿用现有审计流程。</Text>
           </div>
-          <ConfirmAction actionText="保存安全策略" title="确认保存安全策略" onConfirm={savePolicy} />
+          <SettingsSaveConfirmation
+            actionText="保存安全策略"
+            differences={differences}
+            disabled={editor.isSaving}
+            impactSummary={impactSummary}
+            onConfirm={editor.saveChanges}
+            riskLevel="high"
+            title="确认保存高风险安全策略"
+            validationIssues={validationIssues}
+          />
         </div>
       </div>
-    </main>
+    </AdminSettingsPage>
   );
 }

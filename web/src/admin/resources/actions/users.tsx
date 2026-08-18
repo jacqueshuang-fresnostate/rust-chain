@@ -3,6 +3,7 @@ import { useState } from 'react';
 
 import { apiRequest } from '../../../api/client';
 import type { ApiRecord } from '../../../api/types';
+import { AdminReferenceSelect, isReferenceSelectable, useAdminReferenceOptions } from '../../referenceOptions';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminModalTriggerButton, AdminPasswordInput, AdminTextInput } from '../../../shared/SemiFormControls';
 import {
@@ -65,8 +66,8 @@ function isUserRechargeSubmittable(values: UserRechargeValues): boolean {
   return Boolean(values.assetId.trim() && values.amount.trim() && Number(values.amount) > 0);
 }
 
-function isAssignAgentSubmittable(values: AssignAgentValues): boolean {
-  return Boolean(values.agentId.trim() && Number(values.agentId) > 0);
+function isAssignAgentSubmittable(values: AssignAgentValues, selectableAgentIds: Set<string>): boolean {
+  return selectableAgentIds.has(values.agentId);
 }
 
 async function openUserAssets(userId: string, helpers: RowActionHelpers) {
@@ -127,32 +128,50 @@ function UserRechargeAction({ helpers, userId }: { helpers: RowActionHelpers; us
 function AssignAgentAction({ helpers, userId }: { helpers: RowActionHelpers; userId: string }) {
   const [assignment, setAssignment] = useState(initialAssignAgent);
   const [visible, setVisible] = useState(false);
+  const agentReferences = useAdminReferenceOptions('agent', visible);
+  const selectableAgentIds = new Set(agentReferences.options.filter((option) => !option.disabled).map((option) => option.value));
+
+  const close = () => {
+    setVisible(false);
+    setAssignment(initialAssignAgent);
+  };
 
   return (
     <>
       <Button disabled={!userId} onClick={() => setVisible(true)} size="small" theme="borderless">
         分配代理
       </Button>
-      <SideSheet onCancel={() => setVisible(false)} title="分配代理" visible={visible} {...createModalProps('medium')}>
+      <SideSheet onCancel={close} title="分配代理" visible={visible} {...createModalProps('medium')}>
         <Card bordered={false}>
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
             <div className="admin-action-form">
               <label>用户ID<AdminTextInput ariaLabel="用户ID" readOnly value={userId} onChange={() => undefined} /></label>
-              <label>代理ID<AdminTextInput ariaLabel="代理ID" value={assignment.agentId} onChange={(agentId) => setAssignment({ ...assignment, agentId })} /></label>
+              <AdminReferenceSelect
+                error={agentReferences.error}
+                label="目标代理"
+                loading={agentReferences.loading}
+                onChange={(agentId) => setAssignment({ ...assignment, agentId })}
+                options={agentReferences.options}
+                placeholder="搜索代理编号、邮箱或 ID"
+                value={assignment.agentId}
+              />
             </div>
             <ConfirmAction
               actionText="提交分配代理"
-              disabled={!isAssignAgentSubmittable(assignment)}
+              disabled={!isAssignAgentSubmittable(assignment, selectableAgentIds)}
               title="确认分配代理"
               onConfirm={async (reason) => {
+                if (!isReferenceSelectable(agentReferences.options, assignment.agentId)) {
+                  Toast.error('目标代理已失效或被禁用，请重新选择');
+                  return;
+                }
                 await submitAction('分配代理', () =>
                   apiRequest(`/admin/api/v1/users/${userId}/agent`, {
                     method: 'PATCH',
                     body: JSON.stringify({ agent_id: requiredPositiveInteger(assignment.agentId, '代理ID'), reason })
                   })
                 );
-                setVisible(false);
-                setAssignment(initialAssignAgent);
+                close();
                 helpers.reload();
               }}
             />

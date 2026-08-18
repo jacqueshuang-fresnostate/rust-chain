@@ -1,5 +1,5 @@
 import { Button, Card, Descriptions, SideSheet, Space, Spin, Tag, TextArea, Toast } from '@douyinfe/semi-ui';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { apiRequest } from '../../api/client';
 import { ResizableTable } from '../../shared/ResizableTable';
@@ -82,13 +82,32 @@ export function MarketStrategyRecoverySheet({ strategyId }: { strategyId: string
   const [gaps, setGaps] = useState<GapsResponse | null>(null);
   const [preview, setPreview] = useState<RecoveryPreview | null>(null);
   const [jobs, setJobs] = useState<RecoveryJob[]>([]);
+  const [jobsLoaded, setJobsLoaded] = useState(false);
+  const [jobsLoading, setJobsLoading] = useState(false);
+  const jobsRequestIdRef = useRef(0);
   const [reason, setReason] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
 
-  async function loadJobs() {
-    const result = await apiRequest<RecoveryJobsResponse>(`/admin/api/v1/market-strategies/${strategyId}/kline-recovery/jobs?limit=20&offset=0`);
-    setJobs(Array.isArray(result.jobs) ? result.jobs : []);
-  }
+  const loadJobs = useCallback(async () => {
+    const requestId = ++jobsRequestIdRef.current;
+    setJobsLoading(true);
+    try {
+      const result = await apiRequest<RecoveryJobsResponse>(`/admin/api/v1/market-strategies/${strategyId}/kline-recovery/jobs?limit=20&offset=0`);
+      if (jobsRequestIdRef.current !== requestId) return;
+      setJobs(Array.isArray(result.jobs) ? result.jobs : []);
+      setJobsLoaded(true);
+    } catch (error) {
+      if (jobsRequestIdRef.current !== requestId) return;
+      const message = error instanceof Error ? error.message : '加载补偿任务失败';
+      setJobsLoaded(false);
+      setErrorMessage(message);
+      Toast.error(message);
+    } finally {
+      if (jobsRequestIdRef.current === requestId) {
+        setJobsLoading(false);
+      }
+    }
+  }, [strategyId]);
 
   async function detectGaps() {
     setLoading(true);
@@ -150,13 +169,19 @@ export function MarketStrategyRecoverySheet({ strategyId }: { strategyId: string
   }
 
   useEffect(() => {
-    if (!visible) {
-      setGaps(null);
-      setPreview(null);
-      setReason('');
-      setErrorMessage('');
+    if (visible) {
+      void loadJobs();
+      return;
     }
-  }, [visible]);
+    jobsRequestIdRef.current += 1;
+    setGaps(null);
+    setPreview(null);
+    setJobs([]);
+    setJobsLoaded(false);
+    setJobsLoading(false);
+    setReason('');
+    setErrorMessage('');
+  }, [loadJobs, visible]);
 
   return (
     <>
@@ -190,8 +215,8 @@ export function MarketStrategyRecoverySheet({ strategyId }: { strategyId: string
               ) : (
                 <ResizableTable<GapRange>
                   columns={[
-                    { title: '开始时间', dataIndex: 'range_start', render: (value) => formatTime(Number(value)) },
-                    { title: '结束时间', dataIndex: 'range_end', render: (value) => formatTime(Number(value)) },
+                    { title: '开始时间（含）', dataIndex: 'range_start', render: (value) => formatTime(Number(value)) },
+                    { title: '结束时间（不含）', dataIndex: 'range_end', render: (value) => formatTime(Number(value)) },
                     { title: '缺失根数', dataIndex: 'one_minute_count' },
                     {
                       title: '操作',
@@ -214,7 +239,7 @@ export function MarketStrategyRecoverySheet({ strategyId }: { strategyId: string
                 <Descriptions
                   data={[
                     { key: '配置版本', value: String(preview.config_version) },
-                    { key: '范围', value: `${formatTime(preview.range_start)} 至 ${formatTime(preview.range_end)}` },
+                    { key: '范围 [开始, 结束)', value: `${formatTime(preview.range_start)} 至 ${formatTime(preview.range_end)}` },
                     { key: '1m 根数', value: String(preview.one_minute_count) },
                     { key: '聚合周期', value: preview.aggregate_intervals.join('、') || '—' },
                     { key: '首尾价格', value: `${preview.first_price} → ${preview.last_price}` },
@@ -249,14 +274,16 @@ export function MarketStrategyRecoverySheet({ strategyId }: { strategyId: string
           ) : null}
 
           <Card title="补偿任务历史">
-            {jobs.length === 0 ? (
+            {jobsLoading && !jobsLoaded ? (
+              <div aria-live="polite" className="admin-market-recovery-state"><Spin /> 正在加载补偿任务…</div>
+            ) : jobsLoaded && jobs.length === 0 ? (
               <div aria-live="polite" className="admin-market-recovery-state">暂无补偿任务。</div>
-            ) : (
+            ) : jobsLoaded ? (
               <ResizableTable<RecoveryJob>
                 columns={[
                   { title: '任务ID', dataIndex: 'id' },
                   { title: '状态', dataIndex: 'status', render: (value) => <Tag color={statusColor(String(value))}>{statusLabel(String(value))}</Tag> },
-                  { title: '范围', key: 'range', render: (_, job) => `${formatTime(job.range_start)} 至 ${formatTime(job.range_end)}` },
+                  { title: '范围 [开始, 结束)', key: 'range', render: (_, job) => `${formatTime(job.range_start)} 至 ${formatTime(job.range_end)}` },
                   { title: '1m 进度', key: 'progress', render: (_, job) => `${job.actual_1m_count}/${job.expected_1m_count}` },
                   { title: '聚合根数', dataIndex: 'actual_aggregate_count' },
                   { title: '原因/错误', key: 'message', render: (_, job) => job.error_message || job.reason },
@@ -267,7 +294,7 @@ export function MarketStrategyRecoverySheet({ strategyId }: { strategyId: string
                 rowKey="id"
                 size="small"
               />
-            )}
+            ) : null}
           </Card>
         </Space>
       </SideSheet>

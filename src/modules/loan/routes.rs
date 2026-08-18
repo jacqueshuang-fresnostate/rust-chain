@@ -61,7 +61,7 @@ pub fn user_routes() -> Router<AppState> {
 
 /// 装配管理端借贷入口：产品的增改查与启停、订单分页与详情、以及审批和拒绝两个审核动作。
 /// 产品与订单的只读接口未挂 `AdminAuth` 提取器，鉴权依赖该 Router 被挂载时所在的管理端中间件层。
-/// 产品创建、整体更新和状态切换三个写接口在处理函数内显式要求 `AdminAuth`，但不使用其管理员编号。
+/// 产品创建、整体更新和状态切换三个写接口在处理函数内显式要求 `AdminAuth`，并把管理员编号传入审计事务。
 /// 审批与拒绝同样要求 `AdminAuth`，并把解析出的管理员编号写入订单的 approved_by 或 rejected_by。
 /// 该函数只登记路由，产品配置改动不会回溯改写既有订单已快照的利率、期限和额度。
 pub fn admin_routes() -> Router<AppState> {
@@ -116,49 +116,55 @@ async fn get_admin_product(
     ))
 }
 
-/// 新建借贷产品配置，要求管理员身份但不记录创建人，claims 仅用于准入而被丢弃。
+/// 新建借贷产品配置，要求管理员身份并把 claims 中的管理员编号记录到同事务审计。
 /// 请求体的类型、计息模式、状态、期限、利率、KYC 门槛和额度区间会先整体校验，
-/// 名称多语言结构缺省时按简体中文自动补全，随后按贷款资产精度校验最小和最大额。
-/// 写入与回读不在同一事务：写入成功后回读失败会返回错误，但产品已经真实存在。
+/// 名称多语言结构缺省时按简体中文自动补全，reason 裁剪后必须非空，随后按贷款资产精度校验额度。
+/// 写入、revision=1 的响应回读和 before 为空的管理员审计在同一事务，任一步失败整体回滚。
 /// 新配置只影响此后创建的订单，不改写任何既有订单的条款快照。
 async fn create_product(
-    AdminAuth(_claims): AdminAuth,
+    AdminAuth(claims): AdminAuth,
     State(state): State<AppState>,
     Json(request): Json<CreateLoanProductRequest>,
 ) -> AppResult<Json<LoanProductResponse>> {
     let pool = mysql_pool(&state)?;
-    Ok(Json(create_loan_product_use_case(&pool, request).await?))
+    let admin_id = admin_id_from_subject(&claims.sub)?;
+    Ok(Json(
+        create_loan_product_use_case(&pool, admin_id, request).await?,
+    ))
 }
 
 /// 以整体覆盖方式更新指定产品，请求体必须携带全部字段，缺字段等同于置空而非保留原值。
-/// 与创建接口的差别在于 status 为必填而非可选，校验口径其余部分完全一致。
+/// 与创建接口的差别在于 status 和客户端 revision 为必填，reason 同样必须裁剪后非空。
 /// 产品编号不存在时返回 NotFound，不会退化成插入新产品。
+/// 事务内锁定旧快照并执行 revision 条件更新，旧版本返回 409；配置、版本递增与审计原子提交。
 /// 覆盖只作用于产品表，已创建订单快照的利率、期限、额度和抵押资金状态不受影响。
 async fn update_product(
-    AdminAuth(_claims): AdminAuth,
+    AdminAuth(claims): AdminAuth,
     State(state): State<AppState>,
     Path(product_id): Path<u64>,
     Json(request): Json<UpdateLoanProductRequest>,
 ) -> AppResult<Json<LoanProductResponse>> {
     let pool = mysql_pool(&state)?;
+    let admin_id = admin_id_from_subject(&claims.sub)?;
     Ok(Json(
-        update_loan_product_use_case(&pool, product_id, request).await?,
+        update_loan_product_use_case(&pool, admin_id, product_id, request).await?,
     ))
 }
 
 /// 单独切换产品上下架状态，只接受 active 与 disabled 两个取值。
 /// 相比整体更新接口，这里不要求重传利率、额度等配置，适合运营快速停售。
 /// 置为 disabled 只阻断后续下单，已 pending 的订单仍可被审批，已放款订单也照常计息和还款。
-/// 状态更新自动提交后再独立回读响应，回读失败不会回滚已经生效的状态变更。
+/// 请求必须携带非空 reason 和客户端 revision；旧版本返回 409，状态、版本递增与审计同事务提交。
 async fn update_product_status(
-    AdminAuth(_claims): AdminAuth,
+    AdminAuth(claims): AdminAuth,
     State(state): State<AppState>,
     Path(product_id): Path<u64>,
     Json(request): Json<UpdateLoanProductStatusRequest>,
 ) -> AppResult<Json<LoanProductResponse>> {
     let pool = mysql_pool(&state)?;
+    let admin_id = admin_id_from_subject(&claims.sub)?;
     Ok(Json(
-        update_loan_product_status_use_case(&pool, product_id, request.status).await?,
+        update_loan_product_status_use_case(&pool, admin_id, product_id, request).await?,
     ))
 }
 

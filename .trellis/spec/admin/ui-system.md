@@ -161,6 +161,52 @@ const scroll = containedTableScrollForColumns(
   exposing the active panel semantically.
 - Repeated row controls need record-specific accessible names.
 
+## Shared Settings Editors and Audit Explorer
+
+- Singleton settings pages use the shared settings editor shell and hooks rather
+  than page-local `useEffect` request state. Query keys include the canonical
+  API resource, mutations invalidate that resource after success, and retries
+  never replay a write mutation automatically.
+- The editor shell owns loading, retryable load failure, save failure, success,
+  conflict, and dirty state. HTTP 409 is presented as a Chinese concurrent-edit
+  conflict with an explicit latest-data reload action; it must never silently
+  overwrite the administrator's draft.
+- A dirty editor guards both React Router navigation and browser
+  refresh/close. The route confirmation is Chinese and offers continue editing
+  or discard-and-leave; `beforeunload` is installed only while dirty and is
+  removed after save, reset, discard, or unmount.
+- Save confirmation renders field-level changes with Chinese labels and
+  human-readable values, a concise impact summary, and a required trimmed
+  reason. Ordinary saves use the primary semantic treatment; high-risk changes
+  use the danger semantic treatment and state their runtime impact explicitly.
+- Secret inputs are write-only. Read responses and editor hydration expose only
+  masks, `*_set` flags, last validation/rotation metadata, or equivalent safe
+  status. Never place a stored secret, password, token, ciphertext, or a
+  placeholder pretending to be that secret back into the input value.
+- The audit explorer consumes `GET /admin/api/v1/audit-logs`. Its optional
+  `created_from` and `created_to` query parameters are inclusive Unix
+  millisecond bounds (including database microseconds within the selected end
+  millisecond); the backend rejects an inverted range. The UI translates
+  known action, target, and field codes to Chinese, shows structured before/after
+  differences, and provides a canonical object link where the target type has a
+  supported admin route.
+- Audit export uses the currently loaded filters and rows, emits a UTF-8 BOM CSV
+  with Chinese headers, and runs every serialized field through the same masking
+  layer as the visible detail. Export must not bypass pagination silently: its
+  label and filename describe that it contains the current result set.
+- Unknown audit fields remain visible under a safe fallback label so new
+  backend fields are not silently hidden. Recursive values whose key denotes a
+  password, secret, token, credential, private key, or ciphertext are masked
+  before rendering, even when historical rows predate backend redaction.
+  String values under ordinary keys and all exported metadata fields also pass
+  through free-text masking so named assignments, quoted JSON credentials, and
+  Bearer tokens cannot escape through diagnostics, IDs, or request traces.
+- Prediction configuration has one canonical entry at
+  `/admin/prediction/settings`: its `assets` tab owns editable wager-asset
+  configuration. The legacy `/admin/prediction/assets` URL redirects to
+  `/admin/prediction/settings?tab=assets` and must not appear as a second
+  sidebar or generic read-only resource page.
+
 ## Margin Product Configuration Workflow
 
 ### 1. Scope / Trigger

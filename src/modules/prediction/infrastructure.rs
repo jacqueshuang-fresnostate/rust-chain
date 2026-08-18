@@ -16,13 +16,13 @@
 
 use super::{
     presentation::{
-        CreatePredictionOrderRequest, CreatePredictionQuoteRequest, PredictionAssetConfigResponse,
-        PredictionMarketResponse, PredictionOrderResponse, PredictionQuoteResponse,
-        PredictionSyncResponse,
+        CreatePredictionOrderRequest, CreatePredictionQuoteRequest, PredictionMarketResponse,
+        PredictionOrderResponse, PredictionQuoteResponse, PredictionSyncResponse,
     },
     repository::{
-        PredictionAssetConfigRow, PredictionAssetMetaRow, PredictionOrderSettlementRow,
-        PredictionQuoteLockRow, PredictionSettingsRow, PredictionStakeAssetRow,
+        PredictionAdminAuditEntry, PredictionAssetConfigRow, PredictionAssetConfigUpdate,
+        PredictionAssetMetaRow, PredictionOrderSettlementRow, PredictionQuoteLockRow,
+        PredictionSettingsRow, PredictionSettingsUpdate, PredictionStakeAssetRow,
         PredictionSyncLogRow, PredictionWalletRow,
     },
     service,
@@ -51,6 +51,7 @@ use uuid::Uuid;
 pub(crate) const ADMIN_ASSET_CONFIGS_SQL: &str = r#"SELECT assets.id AS asset_id, assets.symbol AS asset_symbol,
                   COALESCE(configs.enabled, FALSE) AS enabled,
                   COALESCE(configs.max_payout_amount, 0) AS max_payout_amount,
+                  COALESCE(configs.revision, 0) AS revision,
                   COALESCE(configs.created_at, assets.created_at) AS created_at,
                   COALESCE(configs.updated_at, assets.created_at) AS updated_at
            FROM assets
@@ -196,46 +197,33 @@ pub(crate) async fn create_quote_in_db(
     })
 }
 
-#[allow(clippy::too_many_arguments)] // 单例设置按完整快照保存，显式字段避免部分配置产生不一致。
-/// 原子保存预测市场同步、资产范围、费率、结算和退款策略配置；写入不结算市场或移动用户资金。
-/// 设置是单例行，固定更新主键为 1 的记录，因此不存在并发插入多份配置的可能。
-/// 一条 UPDATE 覆盖全部八个字段，是完整快照写入而非增量补丁，
-/// 调用方必须先读出当前配置再整体回填，否则未传的字段会被覆盖成入参默认值。
-/// 同步标签与允许资产列表以 JSON 数组落库，调用方应先经去重归一化保证内容稳定。
-/// 配置只影响此后新建的报价与结算判定，已存在的报价和订单沿用各自固化的快照，
-/// 因此调整费率或赔付上限不会追溯改变在途订单的资金口径。
-/// 该行不存在时 UPDATE 影响零行且不报错，本函数不校验命中与否。
-pub(crate) async fn save_admin_settings(
-    pool: &Pool<MySql>,
-    sync_enabled: bool,
-    sync_interval_seconds: u32,
-    sync_tags: &[String],
-    allowed_asset_ids: &[u64],
-    default_fee_rate: BigDecimal,
-    default_settlement_mode: String,
-    default_invalid_refund_policy: String,
-    quote_ttl_seconds: u32,
-) -> AppResult<()> {
-    // 更新预测设置为后台配置页面提供的全局参数。
-    sqlx::query(
+/// 在调用方已锁定设置单例的事务内执行条件更新，并由数据库原子递增 revision。
+/// `expected_revision` 同时进入 WHERE 条件；影响零行表示版本已变化，调用方必须返回 409 且不得写审计。
+/// 本函数只写配置行，不提交事务、不回读也不写审计，业务变更与审计的原子性由应用层统一编排。
+pub(crate) async fn update_admin_settings_if_revision_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    update: &PredictionSettingsUpdate,
+) -> AppResult<bool> {
+    let result = sqlx::query(
         r#"UPDATE prediction_settings
            SET sync_enabled = ?, sync_interval_seconds = ?, sync_tags_json = ?,
                allowed_asset_ids_json = ?, default_fee_rate = ?,
                default_settlement_mode = ?, default_invalid_refund_policy = ?,
-               quote_ttl_seconds = ?
-           WHERE id = 1"#,
+               quote_ttl_seconds = ?, revision = revision + 1
+           WHERE id = 1 AND revision = ?"#,
     )
-    .bind(sync_enabled)
-    .bind(sync_interval_seconds)
-    .bind(SqlxJson(json!(sync_tags)))
-    .bind(SqlxJson(json!(allowed_asset_ids)))
-    .bind(default_fee_rate)
-    .bind(default_settlement_mode)
-    .bind(default_invalid_refund_policy)
-    .bind(quote_ttl_seconds)
-    .execute(pool)
+    .bind(update.sync_enabled)
+    .bind(update.sync_interval_seconds)
+    .bind(SqlxJson(json!(&update.sync_tags)))
+    .bind(SqlxJson(json!(&update.allowed_asset_ids)))
+    .bind(&update.default_fee_rate)
+    .bind(&update.default_settlement_mode)
+    .bind(&update.default_invalid_refund_policy)
+    .bind(update.quote_ttl_seconds)
+    .bind(update.expected_revision)
+    .execute(&mut **tx)
     .await?;
-    Ok(())
+    Ok(result.rows_affected() == 1)
 }
 
 /// 按稳定顺序返回全部启用资产的预测配置与总数，数据库失败不使用默认配置替代。
@@ -415,12 +403,12 @@ pub(crate) async fn create_order_in_tx(
     Ok((load_order_response(pool, order_id).await?, true))
 }
 
-/// 识别数据库唯一约束冲突，供预测订单幂等重放分支使用。
+/// 识别数据库唯一约束冲突，供预测订单幂等重放与资产配置首次创建竞争分支使用。
 ///
 /// 本判断仅解释 SQLx 适配器错误；调用方随后按用户和幂等键读取原订单，不比较重放的 `quote_id`。
 /// 只认唯一键冲突这一种数据库错误，外键冲突、超时与连接中断都不在此列，
 /// 它们会沿正常错误路径回滚，绝不会被误当成可安全重放的幂等命中。
-/// 判定不区分是哪个唯一索引被撞，因此调用点必须确保该语句上只有幂等键一个可能冲突的唯一约束。
+/// 判定不区分具体唯一索引，因此调用点必须确保碰撞字段可被安全解释为同一业务对象的并发写入。
 fn is_duplicate_key_error(error: &sqlx::Error) -> bool {
     matches!(error, sqlx::Error::Database(database_error) if database_error.is_unique_violation())
 }
@@ -983,7 +971,7 @@ pub(crate) async fn load_settings(pool: &Pool<MySql>) -> AppResult<PredictionSet
     sqlx::query_as::<_, PredictionSettingsRow>(
         r#"SELECT sync_enabled, sync_interval_seconds, sync_tags_json, allowed_asset_ids_json,
                   default_fee_rate, default_settlement_mode, default_invalid_refund_policy,
-                  quote_ttl_seconds, last_sync_status, last_sync_error,
+                  quote_ttl_seconds, revision, last_sync_status, last_sync_error,
                   last_sync_started_at, last_sync_finished_at, last_successful_sync_at,
                   last_sync_imported_count, last_sync_updated_count
            FROM prediction_settings
@@ -1005,7 +993,7 @@ pub(crate) async fn load_settings_in_tx(
     sqlx::query_as::<_, PredictionSettingsRow>(
         r#"SELECT sync_enabled, sync_interval_seconds, sync_tags_json, allowed_asset_ids_json,
                   default_fee_rate, default_settlement_mode, default_invalid_refund_policy,
-                  quote_ttl_seconds, last_sync_status, last_sync_error,
+                  quote_ttl_seconds, revision, last_sync_status, last_sync_error,
                   last_sync_started_at, last_sync_finished_at, last_successful_sync_at,
                   last_sync_imported_count, last_sync_updated_count
            FROM prediction_settings
@@ -1017,44 +1005,124 @@ pub(crate) async fn load_settings_in_tx(
     .ok_or_else(|| AppError::Internal("prediction settings are missing".to_owned()))
 }
 
-/// 按资产唯一键保存预测下注的启用状态与赔付上限，重复提交更新同一行而不新增记录；不修改既有订单资金。
-/// 写入前先校验赔付上限非负并确认该资产存在且处于启用状态，
-/// 因此无法为已下架资产开启下注，也无法配置出负数上限。
-/// 上限为零表示不设封顶而非禁止赔付，需要停用该资产应把启用标记置假，两者语义不可混用。
-/// upsert 命中既有行时同时覆盖启用标记与上限两列，属于整体替换而非部分更新。
-/// 配置只影响此后的报价与结算封顶，已存在订单固化的赔付上限不受影响。
-/// 写入后回读完整配置返回，回读不到则返回 `NotFound`；两次访问不在同一事务，
-/// 极端并发下可能读到他人刚写入的值。
-pub(crate) async fn upsert_asset_config(
-    pool: &Pool<MySql>,
+/// 在预测资产配置事务中锁定权威资产行与现有配置，并返回可审计的完整前镜像。
+/// 配置尚未创建时以 enabled=false、上限=0、revision=0 表示逻辑初始态；锁住 assets 行可串行化两个首次创建请求。
+/// 资产不存在或已停用返回 NotFound，锁持续到调用方提交或回滚，不在本函数内产生任何写入。
+pub(crate) async fn lock_admin_asset_config_in_tx(
+    tx: &mut Transaction<'_, MySql>,
     asset_id: u64,
-    enabled: bool,
-    max_payout_amount: BigDecimal,
-) -> AppResult<PredictionAssetConfigResponse> {
-    service::ensure_non_negative_decimal(&max_payout_amount, "max_payout_amount")?;
-    load_active_asset(pool, asset_id).await?;
-    sqlx::query(
-        r#"INSERT INTO prediction_asset_configs (asset_id, enabled, max_payout_amount)
-           VALUES (?, ?, ?)
-           ON DUPLICATE KEY UPDATE enabled = VALUES(enabled),
-                                   max_payout_amount = VALUES(max_payout_amount)"#,
+) -> AppResult<PredictionAssetConfigRow> {
+    sqlx::query_as::<_, PredictionAssetConfigRow>(
+        r#"SELECT assets.id AS asset_id, assets.symbol AS asset_symbol,
+                  COALESCE(configs.enabled, FALSE) AS enabled,
+                  COALESCE(configs.max_payout_amount, 0) AS max_payout_amount,
+                  COALESCE(configs.revision, 0) AS revision,
+                  COALESCE(configs.created_at, assets.created_at) AS created_at,
+                  COALESCE(configs.updated_at, assets.created_at) AS updated_at
+           FROM assets
+           LEFT JOIN prediction_asset_configs configs ON configs.asset_id = assets.id
+           WHERE assets.id = ? AND assets.status = 'active'
+           FOR UPDATE"#,
     )
     .bind(asset_id)
-    .bind(enabled)
-    .bind(&max_payout_amount)
-    .execute(pool)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)
+}
+
+/// 在已持有资产行锁的事务中创建或条件更新预测资产配置，成功时 revision 恰好递增一次。
+/// revision=0 只走 INSERT 并创建版本 1；既有配置使用 `WHERE revision = ?` 条件更新，影响零行由调用方映射为 409。
+/// 唯一键竞争同样折叠为未更新，函数不提交事务、不写审计，也不会改写任何历史报价或订单快照。
+pub(crate) async fn save_admin_asset_config_if_revision_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    update: &PredictionAssetConfigUpdate,
+) -> AppResult<bool> {
+    if update.expected_revision == 0 {
+        let inserted = sqlx::query(
+            r#"INSERT INTO prediction_asset_configs
+               (asset_id, enabled, max_payout_amount, revision)
+               VALUES (?, ?, ?, 1)"#,
+        )
+        .bind(update.asset_id)
+        .bind(update.enabled)
+        .bind(&update.max_payout_amount)
+        .execute(&mut **tx)
+        .await;
+        return match inserted {
+            Ok(result) => Ok(result.rows_affected() == 1),
+            Err(error) if is_duplicate_key_error(&error) => Ok(false),
+            Err(error) => Err(error.into()),
+        };
+    }
+
+    let result = sqlx::query(
+        r#"UPDATE prediction_asset_configs
+           SET enabled = ?, max_payout_amount = ?, revision = revision + 1
+           WHERE asset_id = ? AND revision = ?"#,
+    )
+    .bind(update.enabled)
+    .bind(&update.max_payout_amount)
+    .bind(update.asset_id)
+    .bind(update.expected_revision)
+    .execute(&mut **tx)
     .await?;
-    sqlx::query_as::<_, PredictionAssetConfigResponse>(
+    Ok(result.rows_affected() == 1)
+}
+
+/// 在当前事务内回读刚保存的预测资产配置，响应 revision 与审计 after 必须共同取自这份已提交候选状态。
+/// 查询要求配置行和资产行同时存在；缺失返回 NotFound 并促使调用方回滚，不会用左连接默认值伪造成功响应。
+pub(crate) async fn load_admin_asset_config_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    asset_id: u64,
+) -> AppResult<PredictionAssetConfigRow> {
+    sqlx::query_as::<_, PredictionAssetConfigRow>(
         r#"SELECT configs.asset_id, assets.symbol AS asset_symbol, configs.enabled,
-                  configs.max_payout_amount, configs.created_at, configs.updated_at
+                  configs.max_payout_amount, configs.revision,
+                  configs.created_at, configs.updated_at
            FROM prediction_asset_configs configs
            INNER JOIN assets ON assets.id = configs.asset_id
            WHERE configs.asset_id = ?"#,
     )
     .bind(asset_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut **tx)
     .await?
     .ok_or(AppError::NotFound)
+}
+
+/// 在预测配置业务事务内追加管理员审计，并补充当前 HTTP 请求的来源 IP 与 request ID。
+/// actor 只取已验证会话解析出的 admin_id；前后 JSON 已由应用层白名单化且包含 revision，本函数不接触原始请求体。
+/// 审计插入失败会让配置写入一并回滚，HTTP 之外没有 task-local 上下文时两项传输元数据按 NULL 落库。
+pub(crate) async fn insert_prediction_admin_audit_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    admin_id: u64,
+    entry: PredictionAdminAuditEntry,
+) -> AppResult<()> {
+    let request_context = crate::infra::admin_request_context::current_admin_request_context();
+    sqlx::query(
+        r#"INSERT INTO admin_audit_logs
+           (admin_id, action, target_type, target_id, before_json, after_json, reason, ip, request_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+    )
+    .bind(admin_id)
+    .bind(entry.action)
+    .bind(entry.target_type)
+    .bind(entry.target_id.to_string())
+    .bind(SqlxJson(entry.before_json))
+    .bind(SqlxJson(entry.after_json))
+    .bind(entry.reason)
+    .bind(
+        request_context
+            .as_ref()
+            .and_then(|context| context.source_ip.as_deref()),
+    )
+    .bind(
+        request_context
+            .as_ref()
+            .map(|context| context.request_id.as_str()),
+    )
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 /// 更新后台可控的市场展示状态与四项覆盖配置；上游标识与历史订单快照保持不变，也不触发结算。

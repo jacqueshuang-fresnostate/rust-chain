@@ -7,19 +7,78 @@
 
 use super::*;
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ValidatedRiskRuleTarget {
+    pub(crate) target_type: String,
+    pub(crate) target_id: Option<String>,
+}
+
 /// 校验风控规则类型、目标范围、阈值、时间窗和启停状态等请求形状。
-/// 不在此处解释规则优先级或读取当前策略；运行时合并语义由 risk 域负责。
-pub(crate) fn validate_create_risk_rule(request: &CreateRiskRuleRequest) -> AppResult<()> {
+/// 对象范围只允许运行时真正传入的 global/user/pair/asset 四维；用户与交易对必须是正数 ID，
+/// 资产使用大写符号而不是数据库 ID，以与钱包风控上下文的 scope value 保持一致。资源是否存在且处于 active
+/// 由应用事务在写规则前锁行确认；本函数不读库、不解释 config_json 内部阈值。
+pub(crate) fn validate_create_risk_rule(
+    request: &CreateRiskRuleRequest,
+) -> AppResult<ValidatedRiskRuleTarget> {
     if optional_string(Some(request.rule_type.clone())).is_none() {
         return Err(AppError::Validation("rule_type is required".to_owned()));
-    }
-    if optional_string(Some(request.target_type.clone())).is_none() {
-        return Err(AppError::Validation("target_type is required".to_owned()));
     }
     if request.config_json.is_null() {
         return Err(AppError::Validation("config_json is required".to_owned()));
     }
-    Ok(())
+
+    let target_type = optional_string(Some(request.target_type.clone()))
+        .map(|value| value.to_ascii_lowercase())
+        .ok_or_else(|| AppError::Validation("target_type is required".to_owned()))?;
+    let target_id = optional_string(request.target_id.clone());
+    match target_type.as_str() {
+        "global" => {
+            if target_id.is_some() {
+                return Err(AppError::Validation(
+                    "global risk target must not include target_id".to_owned(),
+                ));
+            }
+            Ok(ValidatedRiskRuleTarget {
+                target_type,
+                target_id: None,
+            })
+        }
+        "user" | "pair" => {
+            let normalized = target_id
+                .as_deref()
+                .and_then(|value| value.parse::<u64>().ok())
+                .filter(|value| *value > 0)
+                .ok_or_else(|| {
+                    AppError::Validation(
+                        "user and pair risk targets require a positive target_id".to_owned(),
+                    )
+                })?;
+            Ok(ValidatedRiskRuleTarget {
+                target_type,
+                target_id: Some(normalized.to_string()),
+            })
+        }
+        "asset" => {
+            let symbol = target_id
+                .filter(|value| {
+                    value
+                        .chars()
+                        .all(|character| character.is_ascii_alphanumeric())
+                })
+                .ok_or_else(|| {
+                    AppError::Validation(
+                        "asset risk target requires an alphanumeric asset symbol".to_owned(),
+                    )
+                })?;
+            Ok(ValidatedRiskRuleTarget {
+                target_type,
+                target_id: Some(symbol.to_ascii_uppercase()),
+            })
+        }
+        _ => Err(AppError::Validation(
+            "unsupported risk target_type".to_owned(),
+        )),
+    }
 }
 
 /// 将风控规则类型、目标、原始配置、启用状态和创建人映射为审计快照。

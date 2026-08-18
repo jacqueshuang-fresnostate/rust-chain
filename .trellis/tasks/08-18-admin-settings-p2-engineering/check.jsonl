@@ -1,0 +1,3 @@
+{"file":".trellis/tasks/08-18-admin-settings-p2-engineering/prd.md","reason":"核对 P2 验收标准。"}
+{"file":".trellis/spec/admin/index.md","reason":"执行后台 typecheck、lint、test 和 build。"}
+{"file":"docs/superpowers/PROGRESS.md","reason":"记录共享设置工程与审计体验切片。"}

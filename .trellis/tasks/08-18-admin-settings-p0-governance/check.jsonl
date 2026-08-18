@@ -1,0 +1,4 @@
+{"file":".trellis/tasks/08-18-admin-settings-p0-governance/prd.md","reason":"核对 P0 验收标准。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"执行后端格式、架构与最近业务测试。"}
+{"file":".trellis/spec/admin/index.md","reason":"执行后台 typecheck、lint、test 和 build。"}
+{"file":"docs/superpowers/PROGRESS.md","reason":"每个可交付切片记录修改与验证。"}

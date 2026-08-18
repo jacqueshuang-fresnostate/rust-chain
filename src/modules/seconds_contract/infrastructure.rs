@@ -915,10 +915,11 @@ pub(crate) async fn insert_admin_audit_log_in_tx(
     after_json: Option<Value>,
     reason: Option<String>,
 ) -> AppResult<()> {
+    let request_context = crate::infra::admin_request_context::current_admin_request_context();
     sqlx::query(
         r#"INSERT INTO admin_audit_logs
-           (admin_id, action, target_type, target_id, before_json, after_json, reason)
-           VALUES (?, ?, ?, ?, ?, ?, ?)"#,
+           (admin_id, action, target_type, target_id, before_json, after_json, reason, ip, request_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(admin_id)
     .bind(action)
@@ -927,6 +928,16 @@ pub(crate) async fn insert_admin_audit_log_in_tx(
     .bind(before_json.map(SqlxJson))
     .bind(after_json.map(SqlxJson))
     .bind(optional_string(reason))
+    .bind(
+        request_context
+            .as_ref()
+            .and_then(|context| context.source_ip.as_deref()),
+    )
+    .bind(
+        request_context
+            .as_ref()
+            .map(|context| context.request_id.as_str()),
+    )
     .execute(&mut **tx)
     .await?;
     Ok(())

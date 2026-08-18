@@ -4,13 +4,40 @@
 //! 当前文件先作为 DDD 迁移锚点，后续把对应职责的业务逻辑逐步迁入。
 
 use chrono::{DateTime, TimeDelta, Utc};
+use std::collections::BTreeSet;
 use thiserror::Error;
 
-/// 管理端执行上下文，用于承载鉴权后的管理员身份与权限快照。
-#[derive(Debug, Clone)]
+/// 管理端执行上下文，承载每次请求回查到的管理员、角色与权限快照。
+/// 该快照不写入 JWT，因此角色权限或账号状态改变会在下一次请求生效；
+/// 权限集合已去重且按字典序保存，便于前端稳定缓存与测试比较。
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdminScope {
-    pub admin_id: String,
-    pub permissions: Vec<String>,
+    pub admin_id: u64,
+    pub username: String,
+    pub role_id: u64,
+    pub role_name: String,
+    pub permissions: BTreeSet<String>,
+}
+
+impl AdminScope {
+    /// 判定快照是否允许指定权限码。
+    /// `*` 允许全部操作，`wallet.*` 这类域通配符允许对应前缀下的权限；
+    /// 空权限集默认拒绝，不再沿用历史上“空配置等于全权限”的隐式行为。
+    pub fn allows(&self, permission: &str) -> bool {
+        if self.permissions.contains("*") || self.permissions.contains(permission) {
+            return true;
+        }
+
+        permission
+            .match_indices('.')
+            .map(|(index, _)| format!("{}.*", &permission[..index]))
+            .any(|wildcard| self.permissions.contains(&wildcard))
+    }
+
+    /// 返回稳定排序的权限数组，供传输层序列化与前端权限导航使用。
+    pub fn permission_list(&self) -> Vec<String> {
+        self.permissions.iter().cloned().collect()
+    }
 }
 
 /// 敏感管理操作确认的领域实体。

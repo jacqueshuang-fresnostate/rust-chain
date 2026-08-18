@@ -155,7 +155,7 @@ struct RecoveryFixture {
 async fn create_recovery_fixture(pool: &MySqlPool) -> Result<RecoveryFixture, Box<dyn Error>> {
     let suffix = Uuid::now_v7().simple().to_string();
     let role_id =
-        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_OBJECT())")
+        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_ARRAY('*'))")
             .bind(format!("recovery-role-{suffix}"))
             .execute(pool)
             .await?

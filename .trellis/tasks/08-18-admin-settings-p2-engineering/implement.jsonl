@@ -1,0 +1,4 @@
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"抽取共享编辑模式前全局搜索现有 hooks 和组件。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"差异、错误和 revision 需要 API 与 UI 合同一致。"}
+{"file":".trellis/spec/admin/ui-system.md","reason":"设置壳、ConfirmAction、表格和可访问性规范。"}
+{"file":".trellis/tasks/08-18-admin-settings-workflow-audit/research/admin-settings-workflow-audit.md","reason":"P2 重复模式、大文件与孤立页证据。"}

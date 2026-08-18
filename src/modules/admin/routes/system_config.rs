@@ -233,20 +233,23 @@ async fn upload_image_route(
 
 /// 处理 GET /dashboard，返回跨用户、钱包、行情、交易、产品、风险与审计的运营总览。
 /// 与其他只读入口不同，这里会先取行情监督器运行快照再交给应用层，与库中保存的行情配置合并出订阅状态。
-/// 各分项摘要由多条独立查询拼装且不共享事务快照，因此是近实时视图；任一查询失败会导致整份仪表盘报错。
+/// 路由只向用例传递非敏感的 APP_ENV 文本，不透传完整 Settings；
+/// 各分项摘要由多条独立查询拼装且不共享事务快照。
+/// 任一查询失败会导致整份仪表盘报错，但响应不会包含配置密钥、审计快照或错误堆栈。
 async fn get_admin_dashboard(
     _auth: AdminAuth,
     State(state): State<AppState>,
 ) -> AppResult<Json<AdminDashboardResponse>> {
     let runtime = load_market_feed_runtime(&state).await;
     Ok(Json(
-        get_admin_dashboard_use_case(state.mysql.clone(), runtime).await?,
+        get_admin_dashboard_use_case(state.mysql.clone(), runtime, &state.settings.app_env).await?,
     ))
 }
 
-/// 处理 GET /audit-logs，按管理员、动作、目标类型和目标编号检索后台操作审计。
+/// 处理 GET /audit-logs，按管理员、动作、目标类型、目标编号和审计时间范围检索后台操作审计。
 /// 这是查看其余各入口所写 reason 与 before/after 快照的统一出口，结果按时间倒序分页返回；
-/// 读取审计本身不会再写一条审计，因此查询动作不会污染留痕数据。
+/// created_from/created_to 接收 Unix 毫秒并采用包含边界；读取审计本身不会再写一条审计，
+/// 因此查询动作不会污染留痕数据。
 async fn list_admin_audit_logs(
     _auth: AdminAuth,
     State(state): State<AppState>,

@@ -115,6 +115,22 @@ struct LoanProductFilterFixture {
     product_ids: [u64; 4],
 }
 
+struct LoanProductGovernanceFixture {
+    admin_id: u64,
+    role_id: u64,
+    asset_id: u64,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct LoanProductAuditRow {
+    action: String,
+    before_json: Option<SqlxJson<Value>>,
+    after_json: Option<SqlxJson<Value>>,
+    reason: Option<String>,
+    ip: Option<String>,
+    request_id: Option<String>,
+}
+
 async fn create_asset(pool: &MySqlPool, prefix: &str) -> Result<u64, sqlx::Error> {
     let suffix = Uuid::now_v7().simple().to_string();
     let symbol = format!("{prefix}{}", &suffix[suffix.len() - 10..]).to_ascii_uppercase();
@@ -126,6 +142,135 @@ async fn create_asset(pool: &MySqlPool, prefix: &str) -> Result<u64, sqlx::Error
     .execute(pool)
     .await?
     .last_insert_id())
+}
+
+async fn seed_loan_product_governance_fixture(
+    pool: &MySqlPool,
+) -> Result<LoanProductGovernanceFixture, sqlx::Error> {
+    let suffix = Uuid::now_v7().simple().to_string();
+    let role_id = sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, ?)")
+        .bind(format!("loan-governance-role-{suffix}"))
+        .bind(SqlxJson(json!(["*"])))
+        .execute(pool)
+        .await?
+        .last_insert_id();
+    let admin_id = sqlx::query(
+        "INSERT INTO admin_users (username, password_hash, role_id, status) VALUES (?, ?, ?, 'active')",
+    )
+    .bind(format!("loan-governance-{suffix}"))
+    .bind("not-a-real-hash")
+    .bind(role_id)
+    .execute(pool)
+    .await?
+    .last_insert_id();
+    let asset_id = create_asset(pool, "LNG").await?;
+    Ok(LoanProductGovernanceFixture {
+        admin_id,
+        role_id,
+        asset_id,
+    })
+}
+
+async fn cleanup_loan_product_governance_fixture(
+    pool: &MySqlPool,
+    fixture: &LoanProductGovernanceFixture,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+        .bind(fixture.admin_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM loan_products WHERE asset_id = ?")
+        .bind(fixture.asset_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(fixture.admin_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(fixture.role_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id = ?")
+        .bind(fixture.asset_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+fn loan_product_write_body(asset_id: u64, name: &str, reason: &str) -> Value {
+    json!({
+        "loan_type": "credit",
+        "asset_id": asset_id,
+        "name": name,
+        "name_json": {
+            "version": 1,
+            "default_locale": "zh-CN",
+            "items": [{ "locale": "zh-CN", "country": "CN", "title": name }]
+        },
+        "term_days": 30,
+        "interest_rate": "0.02",
+        "interest_calculation_mode": "full_term",
+        "min_kyc_level": 0,
+        "min_amount": "1",
+        "max_amount": "1000",
+        "status": "active",
+        "reason": reason
+    })
+}
+
+async fn write_admin_loan_product(
+    app: axum::Router,
+    method: &str,
+    uri: &str,
+    token: &str,
+    request_id: &str,
+    body: Value,
+) -> Result<(StatusCode, Option<String>, Value), Box<dyn Error>> {
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .header("cf-connecting-ip", "203.0.113.42")
+                .header("x-request-id", request_id)
+                .body(Body::from(body.to_string()))?,
+        )
+        .await?;
+    let status = response.status();
+    let response_request_id = response
+        .headers()
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    Ok((status, response_request_id, body_json(response).await?))
+}
+
+fn assert_no_sensitive_audit_keys(value: &Value) {
+    match value {
+        Value::Array(values) => values.iter().for_each(assert_no_sensitive_audit_keys),
+        Value::Object(values) => {
+            for (key, value) in values {
+                assert!(
+                    !matches!(
+                        key.as_str(),
+                        "password"
+                            | "password_hash"
+                            | "secret"
+                            | "token"
+                            | "credential"
+                            | "api_key"
+                            | "private_key"
+                    ),
+                    "sensitive key leaked into loan audit snapshot: {key}"
+                );
+                assert_no_sensitive_audit_keys(value);
+            }
+        }
+        _ => {}
+    }
 }
 
 async fn seed_loan_product_filter_fixture(
@@ -532,6 +677,269 @@ async fn admin_loan_products_reject_invalid_enum_filters_before_query() -> Resul
         );
     }
     Ok(())
+}
+
+#[tokio::test]
+async fn admin_loan_product_writes_are_revision_guarded_and_audited_in_one_transaction()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let fixture = seed_loan_product_governance_fixture(&pool).await?;
+    let token = issue_token(
+        &settings,
+        format!("admin:{}", fixture.admin_id),
+        TokenScope::Admin,
+        900,
+    )?;
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+    let suffix = Uuid::now_v7().simple().to_string();
+    let create_request_id = format!("loan-create-{}", &suffix[suffix.len() - 8..]);
+    let update_a_request_id = format!("loan-update-a-{}", &suffix[suffix.len() - 8..]);
+    let update_b_request_id = format!("loan-update-b-{}", &suffix[suffix.len() - 8..]);
+    let status_request_id = format!("loan-status-{}", &suffix[suffix.len() - 8..]);
+
+    let outcome: Result<(), Box<dyn Error>> = async {
+        let (blank_status, _, blank_payload) = write_admin_loan_product(
+            app.clone(),
+            "POST",
+            "/admin/api/v1/loan/products",
+            &token,
+            "loan-create-blank",
+            loan_product_write_body(fixture.asset_id, "空原因产品", "   "),
+        )
+        .await?;
+        assert_eq!(blank_status, StatusCode::BAD_REQUEST, "{blank_payload}");
+        assert_eq!(blank_payload["code"], "VALIDATION_ERROR");
+
+        let mut create_body =
+            loan_product_write_body(fixture.asset_id, "并发治理贷款", "  创建贷款产品  ");
+        // 产品名称结构允许前向兼容扩展键，审计快照仍必须深层白名单化，不能记录这些明文。
+        create_body["name_json"]["token"] = json!("must-not-enter-audit");
+        create_body["name_json"]["items"][0]["private_key"] = json!("must-not-enter-audit");
+        let (create_status, response_request_id, create_payload) = write_admin_loan_product(
+            app.clone(),
+            "POST",
+            "/admin/api/v1/loan/products",
+            &token,
+            &create_request_id,
+            create_body,
+        )
+        .await?;
+        assert_eq!(create_status, StatusCode::OK, "{create_payload}");
+        assert_eq!(
+            response_request_id.as_deref(),
+            Some(create_request_id.as_str())
+        );
+        assert_eq!(create_payload["revision"], 1);
+        let product_id = create_payload["id"].as_u64().expect("created product id");
+        let product_uri = format!("/admin/api/v1/loan/products/{product_id}");
+        let product_status_uri = format!("{product_uri}/status");
+
+        let missing_revision_body =
+            loan_product_write_body(fixture.asset_id, "缺版本更新", "缺少版本");
+        let (missing_revision_status, _, missing_revision_payload) = write_admin_loan_product(
+            app.clone(),
+            "PATCH",
+            &product_uri,
+            &token,
+            "loan-update-missing-revision",
+            missing_revision_body,
+        )
+        .await?;
+        assert_eq!(
+            missing_revision_status,
+            StatusCode::BAD_REQUEST,
+            "{missing_revision_payload}"
+        );
+        assert_eq!(missing_revision_payload["code"], "VALIDATION_ERROR");
+
+        let mut blank_update_body = loan_product_write_body(fixture.asset_id, "空原因更新", "   ");
+        blank_update_body["revision"] = json!(1);
+        let (blank_update_status, _, blank_update_payload) = write_admin_loan_product(
+            app.clone(),
+            "PATCH",
+            &product_uri,
+            &token,
+            "loan-update-blank-reason",
+            blank_update_body,
+        )
+        .await?;
+        assert_eq!(
+            blank_update_status,
+            StatusCode::BAD_REQUEST,
+            "{blank_update_payload}"
+        );
+
+        let mut update_a_body =
+            loan_product_write_body(fixture.asset_id, "并发更新结果A", "  并发更新A  ");
+        update_a_body["revision"] = json!(1);
+        let mut update_b_body =
+            loan_product_write_body(fixture.asset_id, "并发更新结果B", "  并发更新B  ");
+        update_b_body["revision"] = json!(1);
+        let (update_a, update_b) = tokio::join!(
+            write_admin_loan_product(
+                app.clone(),
+                "PATCH",
+                &product_uri,
+                &token,
+                &update_a_request_id,
+                update_a_body,
+            ),
+            write_admin_loan_product(
+                app.clone(),
+                "PATCH",
+                &product_uri,
+                &token,
+                &update_b_request_id,
+                update_b_body,
+            )
+        );
+        let updates = [update_a?, update_b?];
+        assert_eq!(
+            updates
+                .iter()
+                .filter(|(status, _, _)| *status == StatusCode::OK)
+                .count(),
+            1
+        );
+        assert_eq!(
+            updates
+                .iter()
+                .filter(|(status, _, _)| *status == StatusCode::CONFLICT)
+                .count(),
+            1
+        );
+        let successful_update = updates
+            .iter()
+            .find(|(status, _, _)| *status == StatusCode::OK)
+            .expect("one concurrent update succeeds");
+        assert_eq!(successful_update.2["revision"], 2);
+        let rejected_update = updates
+            .iter()
+            .find(|(status, _, _)| *status == StatusCode::CONFLICT)
+            .expect("one concurrent update conflicts");
+        assert_eq!(rejected_update.2["code"], "CONFLICT");
+
+        let (missing_status_revision, _, missing_status_payload) = write_admin_loan_product(
+            app.clone(),
+            "PATCH",
+            &product_status_uri,
+            &token,
+            "loan-status-missing-revision",
+            json!({ "status": "disabled", "reason": "缺少状态版本" }),
+        )
+        .await?;
+        assert_eq!(
+            missing_status_revision,
+            StatusCode::BAD_REQUEST,
+            "{missing_status_payload}"
+        );
+
+        let (blank_status_reason, _, blank_status_payload) = write_admin_loan_product(
+            app.clone(),
+            "PATCH",
+            &product_status_uri,
+            &token,
+            "loan-status-blank-reason",
+            json!({ "status": "disabled", "reason": "   ", "revision": 2 }),
+        )
+        .await?;
+        assert_eq!(
+            blank_status_reason,
+            StatusCode::BAD_REQUEST,
+            "{blank_status_payload}"
+        );
+
+        let (status_status, response_request_id, status_payload) = write_admin_loan_product(
+            app.clone(),
+            "PATCH",
+            &product_status_uri,
+            &token,
+            &status_request_id,
+            json!({ "status": "disabled", "reason": "  下架贷款产品  ", "revision": 2 }),
+        )
+        .await?;
+        assert_eq!(status_status, StatusCode::OK, "{status_payload}");
+        assert_eq!(
+            response_request_id.as_deref(),
+            Some(status_request_id.as_str())
+        );
+        assert_eq!(status_payload["revision"], 3);
+        assert_eq!(status_payload["status"], "disabled");
+
+        let stored: (String, u64) =
+            sqlx::query_as("SELECT status, revision FROM loan_products WHERE id = ?")
+                .bind(product_id)
+                .fetch_one(&pool)
+                .await?;
+        assert_eq!(stored, ("disabled".to_owned(), 3));
+
+        let audits = sqlx::query_as::<_, LoanProductAuditRow>(
+            r#"SELECT action, before_json, after_json, reason, ip, request_id
+               FROM admin_audit_logs
+               WHERE admin_id = ? AND target_type = 'loan_product' AND target_id = ?
+               ORDER BY id ASC"#,
+        )
+        .bind(fixture.admin_id)
+        .bind(product_id.to_string())
+        .fetch_all(&pool)
+        .await?;
+        assert_eq!(
+            audits.len(),
+            3,
+            "conflicts and invalid requests must not write audit rows"
+        );
+        assert_eq!(audits[0].action, "loan_product.create");
+        assert!(audits[0].before_json.is_none());
+        assert_eq!(audits[0].reason.as_deref(), Some("创建贷款产品"));
+        assert_eq!(audits[0].ip.as_deref(), Some("203.0.113.42"));
+        assert_eq!(
+            audits[0].request_id.as_deref(),
+            Some(create_request_id.as_str())
+        );
+        assert_eq!(audits[0].after_json.as_ref().unwrap().0["revision"], 1);
+
+        assert_eq!(audits[1].action, "loan_product.update");
+        assert_eq!(audits[1].before_json.as_ref().unwrap().0["revision"], 1);
+        assert_eq!(audits[1].after_json.as_ref().unwrap().0["revision"], 2);
+        let (expected_update_request_id, expected_update_reason) = match audits[1].reason.as_deref()
+        {
+            Some("并发更新A") => (update_a_request_id.as_str(), "并发更新A"),
+            Some("并发更新B") => (update_b_request_id.as_str(), "并发更新B"),
+            reason => panic!("unexpected update audit reason: {reason:?}"),
+        };
+        assert_eq!(audits[1].reason.as_deref(), Some(expected_update_reason));
+        assert_eq!(
+            audits[1].request_id.as_deref(),
+            Some(expected_update_request_id)
+        );
+
+        assert_eq!(audits[2].action, "loan_product.update_status");
+        assert_eq!(audits[2].before_json.as_ref().unwrap().0["revision"], 2);
+        assert_eq!(audits[2].after_json.as_ref().unwrap().0["revision"], 3);
+        assert_eq!(audits[2].reason.as_deref(), Some("下架贷款产品"));
+        assert_eq!(
+            audits[2].request_id.as_deref(),
+            Some(status_request_id.as_str())
+        );
+
+        for audit in &audits {
+            assert_eq!(audit.ip.as_deref(), Some("203.0.113.42"));
+            if let Some(before) = audit.before_json.as_ref() {
+                assert_no_sensitive_audit_keys(&before.0);
+            }
+            if let Some(after) = audit.after_json.as_ref() {
+                assert_no_sensitive_audit_keys(&after.0);
+            }
+        }
+        Ok(())
+    }
+    .await;
+
+    cleanup_loan_product_governance_fixture(&pool, &fixture).await?;
+    outcome
 }
 
 #[tokio::test]

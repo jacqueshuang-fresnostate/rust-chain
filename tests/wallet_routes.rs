@@ -114,14 +114,13 @@ async fn create_user(pool: &MySqlPool) -> u64 {
 
 async fn create_admin(pool: &MySqlPool) -> (u64, u64) {
     let suffix = Uuid::now_v7().simple().to_string();
-    let role_id = sqlx::query(
-        "INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_ARRAY('wallet:manage'))",
-    )
-    .bind(format!("wallet-role-{}", &suffix[16..32]))
-    .execute(pool)
-    .await
-    .unwrap()
-    .last_insert_id();
+    let role_id =
+        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_ARRAY('*'))")
+            .bind(format!("wallet-role-{}", &suffix[16..32]))
+            .execute(pool)
+            .await
+            .unwrap()
+            .last_insert_id();
     let admin_id =
         sqlx::query("INSERT INTO admin_users (username, password_hash, role_id) VALUES (?, ?, ?)")
             .bind(format!("wallet-admin-{}", &suffix[16..32]))

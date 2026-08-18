@@ -15,6 +15,7 @@ use super::*;
 pub(crate) async fn get_admin_dashboard(
     pool: Option<Pool<MySql>>,
     runtime: MarketFeedRuntimeStatus,
+    app_env: &str,
 ) -> AppResult<AdminDashboardResponse> {
     let pool = admin_mysql_pool(pool)?;
     let generated_at = Utc::now();
@@ -49,6 +50,7 @@ pub(crate) async fn get_admin_dashboard(
     // Dashboard 是跨多个后台子域的只读聚合，应用层负责组装，避免路由层重新耦合 SQL 细节。
     Ok(AdminDashboardResponse {
         generated_at,
+        environment: normalize_admin_dashboard_environment(app_env).to_owned(),
         users,
         wallet,
         market,
@@ -62,14 +64,30 @@ pub(crate) async fn get_admin_dashboard(
     })
 }
 
-/// 按管理员、动作、目标类型和目标 ID 筛选后台审计日志，并返回倒序分页记录与总数。
-/// 文本筛选去除空白，limit 裁剪到 1～100、offset 最大 100000；读取审计日志本身不会再生成审计。
+/// 把部署侧 APP_ENV 收敛为 Dashboard 对外稳定的四值合同，避免前端直接解释任意环境文本。
+/// 常见缩写与本地/CI 名称分别映射到 production、staging、test、development；
+/// 未知值按 development 降级且不会回显原文，避免把内部集群名称带到管理端。
+pub(crate) fn normalize_admin_dashboard_environment(app_env: &str) -> &'static str {
+    let normalized = app_env.trim().to_ascii_lowercase().replace('_', "-");
+    match normalized.as_str() {
+        "production" | "prod" => "production",
+        "staging" | "stage" | "preprod" | "pre-production" => "staging",
+        "test" | "testing" | "ci" => "test",
+        "development" | "develop" | "dev" | "local" => "development",
+        _ => "development",
+    }
+}
+
+/// 按管理员、动作、目标类型、目标 ID 和审计时间范围筛选后台审计日志，并返回倒序分页记录与总数。
+/// 文本筛选去除空白，时间范围使用包含边界且开始时间不得晚于结束时间；
+/// limit 裁剪到 1～100、offset 最大 100000，读取审计日志本身不会再生成审计。
 /// 目标编号按字符串筛选而非数值，因为不同资源的目标标识形态不一，其中包含幂等键这类非数字取值。
 /// 偏移上限意味着无法靠深翻页遍历全部历史，检索久远记录应改用管理员、动作或目标条件收窄范围。
 pub(crate) async fn list_admin_audit_logs(
     pool: Option<Pool<MySql>>,
     query: AdminAuditLogsQuery,
 ) -> AppResult<AdminAuditLogsResponse> {
+    validate_admin_audit_log_time_range(query.created_from, query.created_to)?;
     let pool = admin_mysql_pool(pool)?;
     let (logs, total) = list_admin_audit_logs_from_store(
         &pool,
@@ -78,10 +96,29 @@ pub(crate) async fn list_admin_audit_logs(
             action: query.action.and_then(optional_string),
             target_type: query.target_type.and_then(optional_string),
             target_id: query.target_id.and_then(optional_string),
+            created_from: query.created_from,
+            created_to: query.created_to,
             limit: route_limit(query.limit),
             offset: route_offset(query.offset),
         },
     )
     .await?;
     Ok(AdminAuditLogsResponse { logs, total })
+}
+
+/// 校验审计检索的可选时间边界；相等边界代表精确到同一毫秒的包含区间。
+/// 任一边界缺省时视为开放区间，只有开始时间晚于结束时间才返回可纠正的 400 校验错误。
+pub(crate) fn validate_admin_audit_log_time_range(
+    created_from: Option<DateTime<Utc>>,
+    created_to: Option<DateTime<Utc>>,
+) -> AppResult<()> {
+    if created_from
+        .zip(created_to)
+        .is_some_and(|(created_from, created_to)| created_from > created_to)
+    {
+        return Err(AppError::Validation(
+            "created_from must not be later than created_to".to_owned(),
+        ));
+    }
+    Ok(())
 }

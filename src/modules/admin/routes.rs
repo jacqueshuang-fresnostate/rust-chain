@@ -5,6 +5,9 @@
 //! 因此新增路由时必须自行确认路径不与既有资源冲突。
 //! 应用层用例在此统一改名为 `*_use_case` 后缀，目的是避免与各 handler 的同名函数在 `use super::*` 展开后互相遮蔽。
 
+mod access_control;
+mod config_center;
+mod config_changes;
 mod content;
 mod market_trading;
 mod new_coin_convert;
@@ -231,6 +234,9 @@ use axum::{
 /// - 任一提取或应用错误继续通过既有 `AppError` 映射返回，避免改变状态码和错误载荷。
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .merge(access_control::routes())
+        .merge(config_changes::routes())
+        .merge(config_center::routes())
         .merge(system_config::routes())
         .merge(content::routes())
         .merge(users_agents::routes())

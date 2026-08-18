@@ -11,7 +11,7 @@ use crate::time::{option_unix_millis, unix_millis};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use sqlx::types::Json as SqlxJson;
 
 /// 用户端产品列表的查询串，只支持限制条数，不支持偏移翻页。
@@ -88,6 +88,8 @@ pub(crate) struct CreateLoanProductRequest {
     pub(crate) max_amount: Option<BigDecimal>,
     /// 上下架状态，省略时默认 active。
     pub(crate) status: Option<String>,
+    /// 管理员变更原因，传输层允许缺省以返回统一校验错误，应用层要求裁剪后非空。
+    pub(crate) reason: Option<String>,
 }
 
 /// 整体覆盖借贷产品的请求体，字段含义与创建请求一致，差别只在 status 为必填。
@@ -106,6 +108,10 @@ pub(crate) struct UpdateLoanProductRequest {
     pub(crate) max_amount: Option<BigDecimal>,
     /// 上下架状态，此处必填，不再有默认值。
     pub(crate) status: String,
+    /// 客户端读取该产品时获得的版本；缺失、零值或落后于数据库当前版本都会拒绝覆盖。
+    pub(crate) revision: Option<u64>,
+    /// 管理员变更原因，应用层要求裁剪后非空并写入同事务审计。
+    pub(crate) reason: Option<String>,
 }
 
 /// 只切换产品上下架状态的轻量请求体，用于运营快速停售而无需重传全部配置。
@@ -113,6 +119,10 @@ pub(crate) struct UpdateLoanProductRequest {
 pub(crate) struct UpdateLoanProductStatusRequest {
     /// 目标状态，仅接受 active 或 disabled。
     pub(crate) status: String,
+    /// 客户端读取该产品时获得的版本，用于阻止旧页面覆盖新的上下架结果。
+    pub(crate) revision: Option<u64>,
+    /// 管理员变更原因，应用层要求裁剪后非空并写入同事务审计。
+    pub(crate) reason: Option<String>,
 }
 
 /// 用户提交借款申请的请求体，用户维度取自 JWT 而不在此结构中。
@@ -190,10 +200,68 @@ pub(crate) struct LoanProductResponse {
     min_amount: BigDecimal,
     max_amount: Option<BigDecimal>,
     status: String,
+    /// 配置乐观并发版本；创建初始为一，每次完整更新或状态变更成功后加一。
+    revision: u64,
     #[serde(with = "unix_millis")]
     created_at: DateTime<Utc>,
     #[serde(with = "unix_millis")]
     updated_at: DateTime<Utc>,
+}
+
+impl LoanProductResponse {
+    /// 返回当前配置 revision，供应用层在持有产品行锁后校验客户端基线。
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// 生成后台审计专用的显式白名单快照，只包含贷款产品公开配置与 revision。
+    /// 快照刻意不复用未来可能扩展的任意对象序列化，`name_json` 也会逐层投影允许字段，
+    /// 避免凭据、令牌或内部密钥被扩展键意外带入审计明文。
+    pub(crate) fn audit_snapshot(&self) -> Value {
+        json!({
+            "id": self.id,
+            "loan_type": self.loan_type,
+            "asset_id": self.asset_id,
+            "asset_symbol": self.asset_symbol,
+            "name": self.name,
+            "name_json": audit_product_name_json(&self.name_json.0),
+            "term_days": self.term_days,
+            "interest_rate": self.interest_rate,
+            "interest_calculation_mode": self.interest_calculation_mode,
+            "min_kyc_level": self.min_kyc_level,
+            "min_amount": self.min_amount,
+            "max_amount": self.max_amount,
+            "status": self.status,
+            "revision": self.revision,
+        })
+    }
+}
+
+/// 把产品多语言名称投影为审计允许的固定结构，忽略顶层与条目中的所有扩展键。
+/// 历史脏数据缺少字段时对应值写为 null 或空数组而不会阻断管理员修正配置；
+/// locale、country 与 title 是公开展示数据，因此可以保留，其他任意内容一律不进入审计。
+fn audit_product_name_json(name_json: &Value) -> Value {
+    let items = name_json
+        .get("items")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| {
+                    json!({
+                        "locale": item.get("locale").and_then(Value::as_str),
+                        "country": item.get("country").and_then(Value::as_str),
+                        "title": item.get("title").and_then(Value::as_str),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    json!({
+        "version": name_json.get("version").and_then(Value::as_u64),
+        "default_locale": name_json.get("default_locale").and_then(Value::as_str),
+        "items": items,
+    })
 }
 
 /// 借贷订单的对外视图，兼作订单查询的 FromRow 目标。

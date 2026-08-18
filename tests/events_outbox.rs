@@ -8,9 +8,10 @@ use exchange_api::{
     modules::{
         auth::{TokenScope, issue_token},
         events::{
-            EventOutboxRepository, EventOutboxWriter, InboxRetryDecision, InboxRetryPolicy,
-            NewOutboxEvent, OutboxInsertResult, OutboxMessage, OutboxPublisher,
-            RabbitMqOutboxPublisher, RabbitMqPublishEnvelope, routes,
+            EventOutboxRepository, EventOutboxService, EventOutboxWriter, InboxRetryDecision,
+            InboxRetryPolicy, MySqlEventOutboxRepository, NewOutboxEvent, OutboxInsertResult,
+            OutboxMessage, OutboxPublisher, RabbitMqOutboxPublisher, RabbitMqPublishEnvelope,
+            routes,
         },
     },
     state::AppState,
@@ -389,22 +390,25 @@ async fn event_outbox_publish_handler_returns_clear_error_without_mysql() {
 }
 
 #[tokio::test]
-async fn event_outbox_publish_handler_returns_clear_error_without_rabbitmq() {
+async fn event_outbox_service_returns_clear_error_without_rabbitmq() {
     let state = test_state();
-    let admin_token = admin_token(&state);
     let mysql = MySqlPoolOptions::new()
         .connect_lazy("mysql://test:test@localhost/test")
         .unwrap();
-    let app = routes::routes().with_state(state.with_mysql(mysql));
+    let state = state.with_mysql(mysql);
 
-    let (status, payload) = post_publish_once(app, Some(&admin_token)).await;
-
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    assert_eq!(payload["code"], "INTERNAL_ERROR");
+    // 路由在 P0 RBAC 后会先回查管理员权限；缺少 RabbitMQ 的装配合同应在应用层直接验证，
+    // 避免用不可连接的假 MySQL 把授权失败误判为 publisher 配置失败。
+    let error =
+        match EventOutboxService::<MySqlEventOutboxRepository, RabbitMqOutboxPublisher>::from_state(
+            &state,
+        ) {
+            Ok(_) => panic!("outbox service must reject a missing RabbitMQ connection"),
+            Err(error) => error,
+        };
     assert!(
-        payload["message"]
-            .as_str()
-            .unwrap()
+        error
+            .to_string()
             .contains("rabbitmq connection is not configured for event outbox publisher")
     );
 }
@@ -494,7 +498,7 @@ async fn event_outbox_requeue_restores_dead_letter_to_pending_and_audits() {
     let state = test_state();
     let suffix = Uuid::now_v7().simple().to_string();
     let role_id =
-        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_ARRAY())")
+        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_ARRAY('*'))")
             .bind(format!("events-role-{}", &suffix[16..32]))
             .execute(&pool)
             .await

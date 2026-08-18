@@ -8,6 +8,64 @@ use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
+mod config_center;
+
+pub(crate) use self::config_center::*;
+
+/// 高风险配置变更申请的持久化快照。
+/// JSON 字段在进入该结构前必须完成敏感字段脱敏，避免审批列表和统一审计回显凭据明文。
+#[derive(Debug, Clone)]
+pub(crate) struct AdminConfigChangeRecord {
+    pub(crate) id: u64,
+    pub(crate) request_no: String,
+    pub(crate) config_domain: String,
+    pub(crate) target_type: String,
+    pub(crate) target_id: String,
+    pub(crate) action: String,
+    pub(crate) base_revision: Option<u64>,
+    pub(crate) before_json: Option<Value>,
+    pub(crate) proposed_json: Value,
+    pub(crate) reason: String,
+    pub(crate) risk_level: String,
+    pub(crate) status: String,
+    pub(crate) created_by: u64,
+    pub(crate) reviewed_by: Option<u64>,
+    pub(crate) review_reason: Option<String>,
+    pub(crate) applied_by: Option<u64>,
+    pub(crate) reviewed_at: Option<DateTime<Utc>>,
+    pub(crate) applied_at: Option<DateTime<Utc>>,
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) updated_at: DateTime<Utc>,
+}
+
+/// 新建高风险配置变更申请时的持久化输入，全部字段已经由服务层完成规范化与脱敏。
+#[derive(Debug)]
+pub(crate) struct AdminConfigChangeWrite {
+    pub(crate) request_no: String,
+    pub(crate) config_domain: String,
+    pub(crate) target_type: String,
+    pub(crate) target_id: String,
+    pub(crate) action: String,
+    pub(crate) base_revision: Option<u64>,
+    pub(crate) before_json: Option<Value>,
+    pub(crate) proposed_json: Value,
+    pub(crate) reason: String,
+    pub(crate) risk_level: String,
+    pub(crate) created_by: u64,
+}
+
+/// 管理员授权仓储读模型，保留角色权限的原始 JSON 形状供纯服务规则解析。
+/// 该合同不暴露联表 SQL，也不负责将空对象解释为任何权限。
+#[derive(Debug)]
+pub(crate) struct AdminAccessRecord {
+    pub(crate) admin_id: u64,
+    pub(crate) username: String,
+    pub(crate) status: String,
+    pub(crate) role_id: u64,
+    pub(crate) role_name: String,
+    pub(crate) permissions: Value,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct AgentCommissionPayoutTarget {
     // 佣金结算只需要知道入账用户和资产，避免应用层依赖 agents/convert_orders 表结构。

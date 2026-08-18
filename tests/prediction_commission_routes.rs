@@ -4,6 +4,7 @@ use axum::{
 };
 use bigdecimal::BigDecimal;
 use exchange_api::{
+    build_router,
     config::Settings,
     modules::{
         auth::{TokenScope, issue_token},
@@ -12,13 +13,16 @@ use exchange_api::{
     state::AppState,
 };
 use secrecy::SecretString;
-use serde_json::Value;
-use sqlx::{MySqlPool, mysql::MySqlPoolOptions};
+use serde_json::{Value, json};
+use sqlx::{MySqlPool, mysql::MySqlPoolOptions, types::Json as SqlxJson};
 use std::{error::Error, str::FromStr};
 use tower::ServiceExt;
 use uuid::Uuid;
 
 mod support;
+
+static PREDICTION_CONFIG_GOVERNANCE_LOCK: tokio::sync::Mutex<()> =
+    tokio::sync::Mutex::const_new(());
 
 fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).expect("valid decimal")
@@ -262,7 +266,7 @@ async fn prediction_order_creates_precise_idempotent_agent_commission() -> Resul
 async fn create_prediction_admin(pool: &MySqlPool) -> (u64, u64) {
     let suffix = Uuid::now_v7().simple().to_string();
     let role_id =
-        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_OBJECT())")
+        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_ARRAY('*'))")
             .bind(format!("prediction-page-role-{}", &suffix[16..32]))
             .execute(pool)
             .await
@@ -278,6 +282,507 @@ async fn create_prediction_admin(pool: &MySqlPool) -> (u64, u64) {
             .unwrap()
             .last_insert_id();
     (role_id, admin_id)
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct PredictionSettingsGovernanceSnapshot {
+    sync_enabled: bool,
+    sync_interval_seconds: u32,
+    sync_tags_json: SqlxJson<Value>,
+    allowed_asset_ids_json: SqlxJson<Value>,
+    default_fee_rate: BigDecimal,
+    default_settlement_mode: String,
+    default_invalid_refund_policy: String,
+    quote_ttl_seconds: u32,
+    revision: u64,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct PredictionConfigAuditRow {
+    action: String,
+    before_json: SqlxJson<Value>,
+    after_json: SqlxJson<Value>,
+    reason: Option<String>,
+    ip: Option<String>,
+    request_id: Option<String>,
+}
+
+fn prediction_settings_write_body(
+    asset_id: u64,
+    revision: u64,
+    reason: &str,
+    sync_interval_seconds: u32,
+) -> Value {
+    json!({
+        "sync_enabled": true,
+        "sync_interval_seconds": sync_interval_seconds,
+        "sync_tags": ["governance", sync_interval_seconds.to_string()],
+        "allowed_asset_ids": [asset_id],
+        "default_fee_rate": "0.015",
+        "default_settlement_mode": "manual_confirm",
+        "default_invalid_refund_policy": "refund_stake_and_fee",
+        "quote_ttl_seconds": 30,
+        "revision": revision,
+        "reason": reason,
+    })
+}
+
+async fn write_prediction_admin_config(
+    app: axum::Router,
+    method: &str,
+    uri: &str,
+    token: &str,
+    request_id: &str,
+    body: Value,
+) -> Result<(StatusCode, Option<String>, Value), Box<dyn Error>> {
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .header("cf-connecting-ip", "203.0.113.84")
+                .header("x-request-id", request_id)
+                .body(Body::from(body.to_string()))?,
+        )
+        .await?;
+    let status = response.status();
+    let response_request_id = response
+        .headers()
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    let bytes = axum::body::to_bytes(response.into_body(), 1_048_576).await?;
+    Ok((status, response_request_id, serde_json::from_slice(&bytes)?))
+}
+
+fn assert_prediction_audit_has_no_sensitive_keys(value: &Value) {
+    match value {
+        Value::Array(values) => values
+            .iter()
+            .for_each(assert_prediction_audit_has_no_sensitive_keys),
+        Value::Object(values) => {
+            for (key, value) in values {
+                assert!(
+                    !matches!(
+                        key.as_str(),
+                        "password"
+                            | "password_hash"
+                            | "secret"
+                            | "token"
+                            | "credential"
+                            | "api_key"
+                            | "private_key"
+                    ),
+                    "sensitive key leaked into prediction audit snapshot: {key}"
+                );
+                assert_prediction_audit_has_no_sensitive_keys(value);
+            }
+        }
+        _ => {}
+    }
+}
+
+async fn restore_prediction_settings(
+    pool: &MySqlPool,
+    snapshot: &PredictionSettingsGovernanceSnapshot,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"UPDATE prediction_settings
+           SET sync_enabled = ?, sync_interval_seconds = ?, sync_tags_json = ?,
+               allowed_asset_ids_json = ?, default_fee_rate = ?,
+               default_settlement_mode = ?, default_invalid_refund_policy = ?,
+               quote_ttl_seconds = ?, revision = ?
+           WHERE id = 1"#,
+    )
+    .bind(snapshot.sync_enabled)
+    .bind(snapshot.sync_interval_seconds)
+    .bind(snapshot.sync_tags_json.clone())
+    .bind(snapshot.allowed_asset_ids_json.clone())
+    .bind(&snapshot.default_fee_rate)
+    .bind(&snapshot.default_settlement_mode)
+    .bind(&snapshot.default_invalid_refund_policy)
+    .bind(snapshot.quote_ttl_seconds)
+    .bind(snapshot.revision)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn prediction_configuration_writes_are_revision_guarded_and_audited_atomically()
+-> Result<(), Box<dyn Error>> {
+    let _guard = PREDICTION_CONFIG_GOVERNANCE_LOCK.lock().await;
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let original_settings = sqlx::query_as::<_, PredictionSettingsGovernanceSnapshot>(
+        r#"SELECT sync_enabled, sync_interval_seconds, sync_tags_json,
+                  allowed_asset_ids_json, default_fee_rate, default_settlement_mode,
+                  default_invalid_refund_policy, quote_ttl_seconds, revision
+           FROM prediction_settings WHERE id = 1"#,
+    )
+    .fetch_one(&pool)
+    .await?;
+    let (role_id, admin_id) = create_prediction_admin(&pool).await;
+    let suffix = Uuid::now_v7().simple().to_string();
+    let asset_id = sqlx::query(
+        "INSERT INTO assets (symbol, name, precision_scale, asset_type, status) VALUES (?, ?, 8, 'coin', 'active')",
+    )
+    .bind(format!("PG{}", &suffix[..12]))
+    .bind(format!("Prediction governance {suffix}"))
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let settings = test_settings();
+    let token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )?;
+    let app = build_router(AppState::new(settings).with_mysql(pool.clone()));
+    let next_settings_revision = original_settings
+        .revision
+        .checked_add(1)
+        .expect("prediction settings revision test fixture must not be exhausted");
+    let settings_request_a = format!("prediction-settings-a-{}", &suffix[24..]);
+    let settings_request_b = format!("prediction-settings-b-{}", &suffix[24..]);
+    let asset_request_a = format!("prediction-asset-a-{}", &suffix[24..]);
+    let asset_request_b = format!("prediction-asset-b-{}", &suffix[24..]);
+    let asset_update_request = format!("prediction-asset-update-{}", &suffix[24..]);
+
+    let outcome: Result<(), Box<dyn Error>> = async {
+        let (blank_settings_status, _, blank_settings_payload) =
+            write_prediction_admin_config(
+                app.clone(),
+                "PATCH",
+                "/admin/api/v1/prediction/settings",
+                &token,
+                "prediction-settings-blank-reason",
+                prediction_settings_write_body(
+                    asset_id,
+                    original_settings.revision,
+                    "   ",
+                    330,
+                ),
+            )
+            .await?;
+        assert_eq!(
+            blank_settings_status,
+            StatusCode::BAD_REQUEST,
+            "{blank_settings_payload}"
+        );
+        assert_eq!(blank_settings_payload["code"], "VALIDATION_ERROR");
+
+        let (settings_update_a, settings_update_b) = tokio::join!(
+            write_prediction_admin_config(
+                app.clone(),
+                "PATCH",
+                "/admin/api/v1/prediction/settings",
+                &token,
+                &settings_request_a,
+                prediction_settings_write_body(
+                    asset_id,
+                    original_settings.revision,
+                    "  并发设置更新A  ",
+                    331,
+                ),
+            ),
+            write_prediction_admin_config(
+                app.clone(),
+                "PATCH",
+                "/admin/api/v1/prediction/settings",
+                &token,
+                &settings_request_b,
+                prediction_settings_write_body(
+                    asset_id,
+                    original_settings.revision,
+                    "  并发设置更新B  ",
+                    332,
+                ),
+            )
+        );
+        let settings_updates = [settings_update_a?, settings_update_b?];
+        assert_eq!(
+            settings_updates
+                .iter()
+                .filter(|(status, _, _)| *status == StatusCode::OK)
+                .count(),
+            1
+        );
+        assert_eq!(
+            settings_updates
+                .iter()
+                .filter(|(status, _, _)| *status == StatusCode::CONFLICT)
+                .count(),
+            1
+        );
+        let successful_settings = settings_updates
+            .iter()
+            .find(|(status, _, _)| *status == StatusCode::OK)
+            .expect("one settings update succeeds");
+        assert_eq!(successful_settings.2["revision"], next_settings_revision);
+        let rejected_settings = settings_updates
+            .iter()
+            .find(|(status, _, _)| *status == StatusCode::CONFLICT)
+            .expect("one settings update conflicts");
+        assert_eq!(rejected_settings.2["code"], "CONFLICT");
+
+        let settings_audits = sqlx::query_as::<_, PredictionConfigAuditRow>(
+            r#"SELECT action, before_json, after_json, reason, ip, request_id
+               FROM admin_audit_logs
+               WHERE admin_id = ? AND target_type = 'prediction_settings' AND target_id = '1'
+               ORDER BY id ASC"#,
+        )
+        .bind(admin_id)
+        .fetch_all(&pool)
+        .await?;
+        assert_eq!(
+            settings_audits.len(),
+            1,
+            "blank and conflicting settings writes must not be audited"
+        );
+        let settings_audit = &settings_audits[0];
+        assert_eq!(settings_audit.action, "prediction_settings.update");
+        assert_eq!(
+            settings_audit.before_json.0["revision"],
+            original_settings.revision
+        );
+        assert_eq!(
+            settings_audit.after_json.0["revision"],
+            next_settings_revision
+        );
+        let expected_settings_request_id = match settings_audit.reason.as_deref() {
+            Some("并发设置更新A") => settings_request_a.as_str(),
+            Some("并发设置更新B") => settings_request_b.as_str(),
+            reason => panic!("unexpected settings audit reason: {reason:?}"),
+        };
+        assert_eq!(
+            settings_audit.request_id.as_deref(),
+            Some(expected_settings_request_id)
+        );
+        assert_eq!(settings_audit.ip.as_deref(), Some("203.0.113.84"));
+
+        let asset_list = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/api/v1/prediction/asset-configs")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(asset_list.status(), StatusCode::OK);
+        let asset_list_body = axum::body::to_bytes(asset_list.into_body(), 1_048_576).await?;
+        let asset_list_payload: Value = serde_json::from_slice(&asset_list_body)?;
+        let listed_asset = asset_list_payload["configs"]
+            .as_array()
+            .and_then(|configs| {
+                configs
+                    .iter()
+                    .find(|config| config["asset_id"].as_u64() == Some(asset_id))
+            })
+            .expect("new active asset must be listed for prediction configuration");
+        assert_eq!(listed_asset["revision"], 0);
+
+        let (blank_asset_status, _, blank_asset_payload) = write_prediction_admin_config(
+            app.clone(),
+            "POST",
+            "/admin/api/v1/prediction/asset-configs",
+            &token,
+            "prediction-asset-blank-reason",
+            json!({
+                "asset_id": asset_id,
+                "enabled": true,
+                "max_payout_amount": "1000",
+                "revision": 0,
+                "reason": "   ",
+            }),
+        )
+        .await?;
+        assert_eq!(
+            blank_asset_status,
+            StatusCode::BAD_REQUEST,
+            "{blank_asset_payload}"
+        );
+
+        let (asset_create_a, asset_create_b) = tokio::join!(
+            write_prediction_admin_config(
+                app.clone(),
+                "POST",
+                "/admin/api/v1/prediction/asset-configs",
+                &token,
+                &asset_request_a,
+                json!({
+                    "asset_id": asset_id,
+                    "enabled": true,
+                    "max_payout_amount": "1200",
+                    "revision": 0,
+                    "reason": "  首次资产配置A  ",
+                }),
+            ),
+            write_prediction_admin_config(
+                app.clone(),
+                "POST",
+                "/admin/api/v1/prediction/asset-configs",
+                &token,
+                &asset_request_b,
+                json!({
+                    "asset_id": asset_id,
+                    "enabled": true,
+                    "max_payout_amount": "1300",
+                    "revision": 0,
+                    "reason": "  首次资产配置B  ",
+                }),
+            )
+        );
+        let asset_creates = [asset_create_a?, asset_create_b?];
+        assert_eq!(
+            asset_creates
+                .iter()
+                .filter(|(status, _, _)| *status == StatusCode::OK)
+                .count(),
+            1
+        );
+        assert_eq!(
+            asset_creates
+                .iter()
+                .filter(|(status, _, _)| *status == StatusCode::CONFLICT)
+                .count(),
+            1
+        );
+        assert_eq!(
+            asset_creates
+                .iter()
+                .find(|(status, _, _)| *status == StatusCode::OK)
+                .expect("one asset create succeeds")
+                .2["revision"],
+            1
+        );
+
+        let asset_uri = format!("/admin/api/v1/prediction/asset-configs/{asset_id}");
+        let (asset_update_status, response_request_id, asset_update_payload) =
+            write_prediction_admin_config(
+                app.clone(),
+                "PATCH",
+                &asset_uri,
+                &token,
+                &asset_update_request,
+                json!({
+                    "enabled": false,
+                    "max_payout_amount": "900",
+                    "revision": 1,
+                    "reason": "  收紧资产配置  ",
+                }),
+            )
+            .await?;
+        assert_eq!(asset_update_status, StatusCode::OK, "{asset_update_payload}");
+        assert_eq!(asset_update_payload["revision"], 2);
+        assert_eq!(
+            response_request_id.as_deref(),
+            Some(asset_update_request.as_str())
+        );
+
+        let (stale_asset_status, _, stale_asset_payload) = write_prediction_admin_config(
+            app.clone(),
+            "PATCH",
+            &asset_uri,
+            &token,
+            "prediction-asset-stale",
+            json!({
+                "enabled": true,
+                "max_payout_amount": "9999",
+                "revision": 1,
+                "reason": "过期资产版本",
+            }),
+        )
+        .await?;
+        assert_eq!(
+            stale_asset_status,
+            StatusCode::CONFLICT,
+            "{stale_asset_payload}"
+        );
+        assert_eq!(stale_asset_payload["code"], "CONFLICT");
+
+        let stored_asset: (bool, BigDecimal, u64) = sqlx::query_as(
+            "SELECT enabled, max_payout_amount, revision FROM prediction_asset_configs WHERE asset_id = ?",
+        )
+        .bind(asset_id)
+        .fetch_one(&pool)
+        .await?;
+        assert!(!stored_asset.0);
+        assert_eq!(stored_asset.1, decimal("900"));
+        assert_eq!(stored_asset.2, 2);
+
+        let asset_audits = sqlx::query_as::<_, PredictionConfigAuditRow>(
+            r#"SELECT action, before_json, after_json, reason, ip, request_id
+               FROM admin_audit_logs
+               WHERE admin_id = ? AND target_type = 'prediction_asset_config' AND target_id = ?
+               ORDER BY id ASC"#,
+        )
+        .bind(admin_id)
+        .bind(asset_id.to_string())
+        .fetch_all(&pool)
+        .await?;
+        assert_eq!(
+            asset_audits.len(),
+            2,
+            "blank, concurrent loser and stale writes must not be audited"
+        );
+        assert_eq!(asset_audits[0].action, "prediction_asset_config.create");
+        assert_eq!(asset_audits[0].before_json.0["revision"], 0);
+        assert_eq!(asset_audits[0].after_json.0["revision"], 1);
+        let expected_asset_request_id = match asset_audits[0].reason.as_deref() {
+            Some("首次资产配置A") => asset_request_a.as_str(),
+            Some("首次资产配置B") => asset_request_b.as_str(),
+            reason => panic!("unexpected asset audit reason: {reason:?}"),
+        };
+        assert_eq!(
+            asset_audits[0].request_id.as_deref(),
+            Some(expected_asset_request_id)
+        );
+        assert_eq!(asset_audits[1].action, "prediction_asset_config.update");
+        assert_eq!(asset_audits[1].before_json.0["revision"], 1);
+        assert_eq!(asset_audits[1].after_json.0["revision"], 2);
+        assert_eq!(asset_audits[1].reason.as_deref(), Some("收紧资产配置"));
+        assert_eq!(
+            asset_audits[1].request_id.as_deref(),
+            Some(asset_update_request.as_str())
+        );
+
+        for audit in settings_audits.iter().chain(asset_audits.iter()) {
+            assert_eq!(audit.ip.as_deref(), Some("203.0.113.84"));
+            assert_prediction_audit_has_no_sensitive_keys(&audit.before_json.0);
+            assert_prediction_audit_has_no_sensitive_keys(&audit.after_json.0);
+        }
+        Ok(())
+    }
+    .await;
+
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM prediction_asset_configs WHERE asset_id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    restore_prediction_settings(&pool, &original_settings).await?;
+    sqlx::query("DELETE FROM assets WHERE id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
+        .execute(&pool)
+        .await?;
+    outcome
 }
 
 #[tokio::test]

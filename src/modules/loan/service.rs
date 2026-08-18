@@ -12,8 +12,8 @@ use crate::{
     error::{AppError, AppResult},
     modules::{
         loan::domain::{
-            INTEREST_MODE_ACTUAL_DAYS, INTEREST_MODE_FULL_TERM, LOAN_PRODUCT_NAME_TITLE_MAX_LEN,
-            LOAN_TYPE_COLLATERALIZED, LOAN_TYPE_CREDIT,
+            INTEREST_MODE_ACTUAL_DAYS, INTEREST_MODE_FULL_TERM, LOAN_PRODUCT_AUDIT_REASON_MAX_LEN,
+            LOAN_PRODUCT_NAME_TITLE_MAX_LEN, LOAN_TYPE_COLLATERALIZED, LOAN_TYPE_CREDIT,
         },
         wallet::truncate_amount_to_asset_precision,
     },
@@ -193,6 +193,28 @@ pub(crate) fn optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
+}
+
+/// 归一并校验贷款产品配置变更的审计原因，缺失、空串或纯空白都按必填错误处理。
+/// 长度按裁剪后的 Unicode 字符数限制在 512 以内，避免中文原因因字节数被过早拒绝，
+/// 也避免数据库截断后审计记录与管理员实际提交内容不一致。
+pub(crate) fn required_product_reason(reason: Option<String>) -> AppResult<String> {
+    let reason = optional_string(reason)
+        .ok_or_else(|| AppError::Validation("loan product reason is required".to_owned()))?;
+    if reason.chars().count() > LOAN_PRODUCT_AUDIT_REASON_MAX_LEN {
+        return Err(AppError::Validation(
+            "loan product reason is too long".to_owned(),
+        ));
+    }
+    Ok(reason)
+}
+
+/// 取出贷款产品更新请求携带的客户端 revision，缺失或零值都视为无效并在进入事务前拒绝。
+/// revision 从一开始单调递增，零值不可能对应已持久化配置；调用方还需在锁行后与数据库当前值比较。
+pub(crate) fn required_product_revision(revision: Option<u64>) -> AppResult<u64> {
+    revision
+        .filter(|revision| *revision > 0)
+        .ok_or_else(|| AppError::Validation("loan product revision is required".to_owned()))
 }
 
 /// 在管理端未提供多语言名称时，用纯文本产品名兜底生成一份合法的名称结构。

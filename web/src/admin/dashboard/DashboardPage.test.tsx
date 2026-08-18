@@ -15,21 +15,35 @@ vi.mock('../../api/client', async () => {
 
 const apiRequestMock = vi.mocked(apiRequest);
 
-function dashboardResponse() {
+function dashboardResponse({
+  environment = 'test',
+  latestActions = [
+    {
+      action: 'asset.create',
+      admin_id: 1,
+      created_at: 1_735_732_800_000,
+      id: 123,
+      target_id: '9',
+      target_type: 'asset'
+    }
+  ]
+}: {
+  environment?: string;
+  latestActions?: Array<{
+    action: string;
+    admin_id: number;
+    created_at: number;
+    id: number;
+    target_id: string;
+    target_type: string;
+  }>;
+} = {}) {
   return {
     audit: {
       admin_actions_24h: 1234,
-      latest_actions: [
-        {
-          action: 'asset.create',
-          admin_id: 1,
-          created_at: 1_735_732_800_000,
-          id: 123,
-          target_id: '9',
-          target_type: 'asset'
-        }
-      ]
+      latest_actions: latestActions
     },
+    environment,
     generated_at: 1_735_732_800_000,
     market: {
       active_pairs: 1234,
@@ -109,7 +123,7 @@ describe('DashboardPage', () => {
     expect(screen.getByText(/bitget, htx/)).toBeInTheDocument();
     expect(screen.getByText(/BTC-USDT, ETH-USDT/)).toBeInTheDocument();
     expect(screen.getByText('风控 / 事件积压')).toBeInTheDocument();
-    expect(screen.getByText(/链上托管未接入生产监听/)).toBeInTheDocument();
+    expect(screen.getByText(/链上托管未接入运行监听/)).toBeInTheDocument();
     expect(screen.getByText('待解禁：12')).toBeInTheDocument();
     expect(screen.getByText('待充值确认：34')).toBeInTheDocument();
     expect(screen.getByText('待提现处理：56')).toBeInTheDocument();
@@ -123,19 +137,57 @@ describe('DashboardPage', () => {
     expect(screen.getByText('Outbox 待发布：1,234')).toBeInTheDocument();
     expect(screen.getByText('Inbox 重试：78')).toBeInTheDocument();
     expect(screen.getByText('Inbox 死信：56')).toBeInTheDocument();
-    expect(screen.queryByText('最新审计动作')).not.toBeInTheDocument();
-    expect(screen.queryByText('24h 管理动作：1,234.00')).not.toBeInTheDocument();
+    expect(screen.getByText('测试环境')).toBeInTheDocument();
+    expect(screen.queryByText('生产环境')).not.toBeInTheDocument();
+    expect(screen.getByText('最近配置与运营动作')).toBeInTheDocument();
+    expect(screen.getByText('24 小时管理操作：1,234')).toBeInTheDocument();
+    expect(screen.getByText('创建资产')).toBeInTheDocument();
+    expect(screen.getByText('目标：资产 #9')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '查看全部审计日志' })).toHaveAttribute(
+      'href',
+      '/admin/audit-logs'
+    );
     expect(screen.queryByText('asset.create')).not.toBeInTheDocument();
     expect(screen.queryByText('asset #9')).not.toBeInTheDocument();
   });
 
+  it.each([
+    ['production', '生产环境', 'red'],
+    ['staging', '预发布环境', 'orange'],
+    ['test', '测试环境', 'light-blue'],
+    ['development', '开发环境', 'grey']
+  ])('maps %s to a Chinese semantic environment tag', async (environment, label, semanticColor) => {
+    apiRequestMock.mockResolvedValueOnce(dashboardResponse({ environment }));
+
+    render(<DashboardPage />);
+
+    const labelElement = await screen.findByText(label);
+    const tag = labelElement.closest('[data-environment]');
+    expect(tag).toHaveAttribute('data-environment', environment);
+    expect(tag).toHaveAttribute('data-semantic-color', semanticColor);
+  });
+
+  it('shows explicit initial loading and empty audit states', async () => {
+    apiRequestMock.mockResolvedValueOnce(dashboardResponse({ latestActions: [] }));
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText('正在加载总览数据…')).toBeInTheDocument();
+    expect(await screen.findByText('暂无最近配置或运营动作')).toBeInTheDocument();
+    expect(screen.getByText('24 小时管理操作：1,234')).toBeInTheDocument();
+  });
+
   it('shows load failure and retries with refresh button', async () => {
     const user = userEvent.setup();
-    apiRequestMock.mockRejectedValueOnce(new Error('network down')).mockResolvedValueOnce(dashboardResponse());
+    const requestError = new Error('network down\n    at private_backend_path.rs:42');
+    requestError.stack = 'SENSITIVE_BACKEND_STACK';
+    apiRequestMock.mockRejectedValueOnce(requestError).mockResolvedValueOnce(dashboardResponse());
 
     render(<DashboardPage />);
 
     expect(await screen.findByText(/加载失败：network down/)).toBeInTheDocument();
+    expect(screen.queryByText(/private_backend_path/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/SENSITIVE_BACKEND_STACK/)).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '刷新总览' }));
 
     await waitFor(() => expect(apiRequestMock).toHaveBeenCalledTimes(2));

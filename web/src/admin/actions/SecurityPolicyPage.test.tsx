@@ -1,5 +1,7 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { apiRequest } from '../../api/client';
@@ -62,6 +64,28 @@ async function selectSemiOption(user: ReturnType<typeof userEvent.setup>, label:
   fireEvent.click(option as HTMLElement);
 }
 
+function renderSecurityPolicyPage() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { gcTime: 0, retry: false },
+      mutations: { retry: false }
+    }
+  });
+  const router = createMemoryRouter(
+    [
+      { path: '/security', element: <SecurityPolicyPage /> },
+      { path: '/other', element: <div>其他页面</div> }
+    ],
+    { initialEntries: ['/security'] }
+  );
+  const view = render(
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
+  );
+  return { queryClient, router, ...view };
+}
+
 describe('SecurityPolicyPage', () => {
   beforeEach(() => {
     if (!globalThis.ResizeObserver) {
@@ -91,9 +115,11 @@ describe('SecurityPolicyPage', () => {
   it('loads and saves Admin login and payment verification policy', async () => {
     const user = userEvent.setup();
 
-    render(<SecurityPolicyPage />);
+    renderSecurityPolicyPage();
 
     expect(await screen.findByText('安全策略')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '保存安全策略' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '保存安全策略' }).closest('[data-risk-level="high"]')).toBeInTheDocument();
     expect(semiSelectByLabel('登录 2FA 策略')).toHaveTextContent('用户自选');
     expect(screen.getByRole('checkbox', { name: '注册时必须填写邀请码' })).not.toBeChecked();
     expect(screen.getByRole('switch', { name: '允许用户名登录' })).not.toBeChecked();
@@ -130,8 +156,15 @@ describe('SecurityPolicyPage', () => {
     expect(screen.getByText('用户名登录已开启')).toBeInTheDocument();
     expect(screen.getByText('Coinbase 钱包：已开启，TG 账号：已开启')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '保存安全策略' }));
+
+    expect(await screen.findByText('确认保存高风险安全策略')).toBeInTheDocument();
+    expect(screen.getByText('字段差异（6 项）')).toBeInTheDocument();
+    expect(screen.getByText('保存后会立即影响全站用户登录、资金操作验证和第三方绑定入口。')).toBeInTheDocument();
+    expect(screen.getByText('这是高风险配置变更，保存前请再次核对影响范围。')).toBeInTheDocument();
+    expect(screen.getByText('闪兑校验')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '确认保存' })).toBeDisabled();
     await user.type(await screen.findByLabelText('操作原因'), 'tighten policy');
-    await user.click(await screen.findByRole('button', { name: '确认' }));
+    await user.click(await screen.findByRole('button', { name: '确认保存' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/security-policy', expect.objectContaining({ method: 'PATCH' }));
@@ -153,5 +186,7 @@ describe('SecurityPolicyPage', () => {
       },
       reason: 'tighten policy'
     });
+    expect(await screen.findByText('安全策略已保存。')).toBeInTheDocument();
+    expect(screen.queryByText('有未保存的变更')).not.toBeInTheDocument();
   });
 });

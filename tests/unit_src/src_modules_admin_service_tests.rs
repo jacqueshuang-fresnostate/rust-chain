@@ -172,3 +172,154 @@ fn market_strategy_presets_expose_all_stable_scenarios_and_explicit_parameters()
         assert_eq!(preset.generator.seed_mode, "auto");
     }
 }
+
+fn config_change_record(
+    status: &str,
+) -> crate::modules::admin::repository::AdminConfigChangeRecord {
+    let now = Utc::now();
+    crate::modules::admin::repository::AdminConfigChangeRecord {
+        id: 7,
+        request_no: "ACR-test".to_owned(),
+        config_domain: "prediction".to_owned(),
+        target_type: "settings".to_owned(),
+        target_id: "default".to_owned(),
+        action: "update".to_owned(),
+        base_revision: Some(3),
+        before_json: Some(serde_json::json!({"enabled": false})),
+        proposed_json: serde_json::json!({"enabled": true}),
+        reason: "调整预测配置".to_owned(),
+        risk_level: "high".to_owned(),
+        status: status.to_owned(),
+        created_by: 11,
+        reviewed_by: None,
+        review_reason: None,
+        applied_by: None,
+        reviewed_at: None,
+        applied_at: None,
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+#[test]
+fn config_change_snapshot_redacts_nested_credentials() {
+    let sanitized = sanitize_admin_config_snapshot(serde_json::json!({
+        "host": "smtp.example.test",
+        "password": "plain-password",
+        "nested": {"api_key": "plain-key", "key_prefix": "public-prefix"},
+        "items": [{"refresh_token": "plain-token"}]
+    }));
+
+    assert_eq!(sanitized["host"], "smtp.example.test");
+    assert_eq!(sanitized["password"], "***REDACTED***");
+    assert_eq!(sanitized["nested"]["api_key"], "***REDACTED***");
+    assert_eq!(sanitized["nested"]["key_prefix"], "public-prefix");
+    assert_eq!(sanitized["items"][0]["refresh_token"], "***REDACTED***");
+}
+
+#[test]
+fn config_change_review_rejects_self_review_and_replays_same_result() {
+    let pending = config_change_record("pending");
+    assert!(matches!(
+        validate_config_review_transition(
+            &pending,
+            11,
+            AdminConfigReviewDecision::Approve,
+            "复核通过"
+        ),
+        Err(AppError::Forbidden)
+    ));
+
+    let mut approved = config_change_record("approved");
+    approved.reviewed_by = Some(22);
+    approved.review_reason = Some("复核通过".to_owned());
+    assert_eq!(
+        validate_config_review_transition(
+            &approved,
+            22,
+            AdminConfigReviewDecision::Approve,
+            "复核通过"
+        )
+        .unwrap(),
+        AdminConfigTransition::Replay
+    );
+    assert!(matches!(
+        validate_config_review_transition(
+            &approved,
+            23,
+            AdminConfigReviewDecision::Reject,
+            "改为拒绝"
+        ),
+        Err(AppError::Conflict(_))
+    ));
+}
+
+#[test]
+fn config_change_apply_transition_is_idempotent() {
+    assert_eq!(
+        validate_config_apply_transition(&config_change_record("approved")).unwrap(),
+        AdminConfigTransition::Apply
+    );
+    assert_eq!(
+        validate_config_apply_transition(&config_change_record("applied")).unwrap(),
+        AdminConfigTransition::Replay
+    );
+    assert!(matches!(
+        validate_config_apply_transition(&config_change_record("rejected")),
+        Err(AppError::Conflict(_))
+    ));
+}
+
+#[test]
+fn risk_rule_targets_are_normalized_and_reject_unusable_shapes() {
+    let mut request = CreateRiskRuleRequest {
+        rule_type: " withdraw_limit ".to_owned(),
+        target_type: " ASSET ".to_owned(),
+        target_id: Some(" usdt ".to_owned()),
+        config_json: serde_json::json!({"max_amount": "100"}),
+        enabled: Some(true),
+        reason: Some("配置限额".to_owned()),
+    };
+    assert_eq!(
+        validate_create_risk_rule(&request).unwrap(),
+        ValidatedRiskRuleTarget {
+            target_type: "asset".to_owned(),
+            target_id: Some("USDT".to_owned()),
+        }
+    );
+
+    request.target_type = "global".to_owned();
+    assert!(matches!(
+        validate_create_risk_rule(&request),
+        Err(AppError::Validation(message)) if message == "global risk target must not include target_id"
+    ));
+
+    request.target_type = "user".to_owned();
+    request.target_id = Some("disabled-user".to_owned());
+    assert!(matches!(
+        validate_create_risk_rule(&request),
+        Err(AppError::Validation(message)) if message == "user and pair risk targets require a positive target_id"
+    ));
+}
+
+#[test]
+fn admin_permission_mapping_is_fail_closed_and_action_aware() {
+    assert_eq!(
+        required_admin_permission("GET", "/admin/api/v1/config-change-requests").as_deref(),
+        Some("governance.changes.read")
+    );
+    assert_eq!(
+        required_admin_permission("POST", "/admin/api/v1/config-change-requests/7/review")
+            .as_deref(),
+        Some("governance.changes.review")
+    );
+    assert_eq!(
+        required_admin_permission("POST", "/admin/api/v1/config-change-requests/7/apply")
+            .as_deref(),
+        Some("governance.changes.operate")
+    );
+    assert_eq!(
+        required_admin_permission("GET", "/admin/api/v1/new-unmapped-route").as_deref(),
+        Some("admin.unmapped.read")
+    );
+}

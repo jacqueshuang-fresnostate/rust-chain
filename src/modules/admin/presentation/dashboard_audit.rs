@@ -20,6 +20,12 @@ pub(crate) struct AdminAuditLogsQuery {
     pub(crate) action: Option<String>,
     pub(crate) target_type: Option<String>,
     pub(crate) target_id: Option<String>,
+    /// 审计发生时间下界（含），使用 Unix 毫秒，缺省时不限制最早时间。
+    #[serde(default, with = "option_unix_millis")]
+    pub(crate) created_from: Option<DateTime<Utc>>,
+    /// 审计发生时间上界（含），使用 Unix 毫秒，缺省时不限制最晚时间。
+    #[serde(default, with = "option_unix_millis")]
+    pub(crate) created_to: Option<DateTime<Utc>>,
     pub(crate) limit: Option<u32>,
     pub(crate) offset: Option<u32>,
 }
@@ -73,6 +79,7 @@ pub(crate) struct AdminAuditLogResponse {
     pub(crate) after_json: Option<SqlxJson<Value>>,
     pub(crate) reason: Option<String>,
     pub(crate) ip: Option<String>,
+    pub(crate) request_id: Option<String>,
     #[serde(with = "unix_millis")]
     pub(crate) created_at: DateTime<Utc>,
 }
@@ -91,6 +98,7 @@ impl PresentationLayer for AdminAuditLogsResponse {}
 pub(crate) struct AdminDashboardResponse {
     #[serde(with = "unix_millis")]
     pub(crate) generated_at: DateTime<Utc>,
+    pub(crate) environment: String,
     pub(crate) users: AdminDashboardUsersSummary,
     pub(crate) wallet: AdminDashboardWalletSummary,
     pub(crate) market: AdminDashboardMarketSummary,

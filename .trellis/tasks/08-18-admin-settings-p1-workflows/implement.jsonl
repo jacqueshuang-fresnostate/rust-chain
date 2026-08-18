@@ -1,0 +1,5 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"配置状态聚合和路由拆分跨前后端。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复用现有选项源、资源页和行情发布状态模式。"}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"配置聚合与业务模块边界。"}
+{"file":".trellis/spec/admin/ui-system.md","reason":"导航、资源页、过滤、选择器与可访问性合同。"}
+{"file":".trellis/tasks/08-18-admin-settings-workflow-audit/research/admin-settings-workflow-audit.md","reason":"P1 信息架构与业务流程问题清单。"}

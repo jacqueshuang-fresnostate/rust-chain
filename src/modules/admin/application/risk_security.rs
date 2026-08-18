@@ -88,22 +88,28 @@ pub(crate) async fn create_admin_risk_rule(
     admin_id: u64,
     request: CreateRiskRuleRequest,
 ) -> AppResult<RiskRuleResponse> {
-    validate_create_risk_rule(&request)?;
+    let validated_target = validate_create_risk_rule(&request)?;
     let CreateRiskRuleRequest {
         rule_type,
-        target_type,
-        target_id,
+        target_type: _,
+        target_id: _,
         config_json,
         enabled,
         reason,
     } = request;
     let rule_type = optional_string(rule_type).expect("risk rule type validated");
-    let target_type = optional_string(target_type).expect("risk target type validated");
-    let target_id = target_id.and_then(optional_string);
+    let target_type = validated_target.target_type;
+    let target_id = validated_target.target_id;
     let pool = admin_mysql_pool(pool)?;
 
-    // 风控规则变更和后台审计必须同事务提交，避免规则已生效但操作来源不可追踪。
+    // 先锁定真实且启用的引用对象，再把规则与审计同事务提交，避免前端选中后对象被并发禁用。
     let mut tx = pool.begin().await?;
+    crate::modules::admin::infrastructure::ensure_active_risk_rule_target_in_tx(
+        &mut tx,
+        &target_type,
+        target_id.as_deref(),
+    )
+    .await?;
     let rule_id = insert_risk_rule_in_tx(
         &mut tx,
         RiskRuleWrite {

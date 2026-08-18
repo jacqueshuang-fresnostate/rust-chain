@@ -36,6 +36,7 @@ pub(crate) const DEFAULT_SYNC_POLL_SECONDS: u64 = 30;
 pub(crate) const DEFAULT_SYNC_LIMIT: &str = "100";
 pub(crate) const POLYMARKET_GAMMA_EVENTS_URL: &str = "https://gamma-api.polymarket.com/events";
 pub(crate) const REF_TYPE_PREDICTION_ORDER: &str = "prediction_order";
+const ADMIN_AUDIT_REASON_MAX_LEN: usize = 512;
 
 #[derive(Debug, Default)]
 pub(crate) struct SyncCounts {
@@ -121,6 +122,30 @@ pub(crate) fn user_id_from_subject(subject: &str) -> AppResult<u64> {
         .strip_prefix("user:")
         .and_then(|value| value.parse::<u64>().ok())
         .ok_or(AppError::Unauthorized)
+}
+
+/// 从 `admin:{id}` 会话 subject 解析管理员编号，结果只用于配置审计的 actor，绝不接受请求体覆盖。
+/// 前缀缺失、空编号、非数字或数值溢出统一返回 Unauthorized，避免向调用方泄露令牌内部格式。
+pub(crate) fn admin_id_from_subject(subject: &str) -> AppResult<u64> {
+    subject
+        .strip_prefix("admin:")
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or(AppError::Unauthorized)
+}
+
+/// 归一预测配置写入的审计原因；缺失、空白或超过审计列上限时在开启事务前拒绝请求。
+/// 返回值已裁剪首尾空白，应用层必须把该值原样交给事务审计，不能继续使用未经校验的请求字段。
+pub(crate) fn required_admin_reason(reason: Option<String>) -> AppResult<String> {
+    let Some(reason) = reason.map(|value| value.trim().to_owned()) else {
+        return Err(AppError::Validation("reason is required".to_owned()));
+    };
+    if reason.is_empty() {
+        return Err(AppError::Validation("reason is required".to_owned()));
+    }
+    if reason.chars().count() > ADMIN_AUDIT_REASON_MAX_LEN {
+        return Err(AppError::Validation("reason is too long".to_owned()));
+    }
+    Ok(reason)
 }
 
 /// 金额必须严格为正，零和负数一并拒绝，失败时不得创建报价、订单、钱包变更或流水。

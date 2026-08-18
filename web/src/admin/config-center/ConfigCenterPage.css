@@ -1,0 +1,192 @@
+.config-center-page {
+  display: grid;
+  gap: 18px;
+}
+
+.config-center-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.config-center-summary__card {
+  position: relative;
+  overflow: hidden;
+  min-height: 92px;
+  border: 1px solid var(--admin-color-border-subtle);
+  background: linear-gradient(145deg, var(--admin-color-surface-raised), var(--admin-color-surface));
+}
+
+.config-center-summary__card::after {
+  position: absolute;
+  right: -18px;
+  bottom: -28px;
+  width: 76px;
+  height: 76px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--admin-color-accent) 14%, transparent);
+  content: '';
+  filter: blur(4px);
+}
+
+.config-center-summary__card.is-error::after {
+  background: color-mix(in srgb, var(--admin-color-danger) 18%, transparent);
+}
+
+.config-center-summary__card strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 28px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.config-center-filter-card {
+  border: 1px solid var(--admin-color-border-subtle);
+  background: color-mix(in srgb, var(--admin-color-surface-raised) 88%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+.config-center-filters {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.5fr) minmax(160px, 0.7fr) minmax(160px, 0.7fr) auto;
+  gap: 14px;
+  align-items: end;
+}
+
+.config-center-filters label {
+  display: grid;
+  gap: 7px;
+  color: var(--admin-color-text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.config-center-filters__actions,
+.config-center-item__actions {
+  display: flex;
+  align-items: center;
+}
+
+.config-center-group {
+  display: grid;
+  gap: 12px;
+}
+
+.config-center-group__heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 2px;
+}
+
+.config-center-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.config-center-item {
+  border: 1px solid var(--admin-color-border-subtle);
+  background: linear-gradient(150deg, var(--admin-color-surface-raised), color-mix(in srgb, var(--admin-color-surface) 92%, transparent));
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.config-center-item:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--admin-color-accent) 38%, var(--admin-color-border-subtle));
+  box-shadow: 0 16px 38px rgb(0 0 0 / 10%);
+}
+
+.config-center-item__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.config-center-item__heading h5 {
+  margin-top: 4px;
+}
+
+.config-center-item__code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.config-center-item__metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.config-center-item__metrics span {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--admin-color-surface-muted);
+}
+
+.config-center-item__metrics strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.config-center-item__timeline {
+  display: grid;
+  gap: 5px;
+  margin-top: 14px;
+}
+
+.config-center-item__error {
+  display: block;
+  margin-top: 12px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--admin-color-danger) 9%, transparent);
+}
+
+.config-center-item__actions {
+  margin-top: 16px;
+}
+
+.config-center-state {
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  min-height: 180px;
+  border: 1px solid var(--admin-color-border-subtle);
+}
+
+.config-center-state.is-error {
+  justify-items: start;
+  place-items: initial;
+  min-height: 0;
+}
+
+@media (max-width: 1100px) {
+  .config-center-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .config-center-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .config-center-summary,
+  .config-center-grid,
+  .config-center-filters {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .config-center-item {
+    transition: none;
+  }
+}

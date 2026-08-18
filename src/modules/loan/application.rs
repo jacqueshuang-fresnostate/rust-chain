@@ -8,14 +8,16 @@
 //! 命中终态则提交并以 `changed=false` 返回实现幂等、状态不符则返回冲突、
 //! 其余情况在同一事务内完成资金移动与状态写入，最后提交并回读响应。
 //! 锁序固定为订单在前、钱包在后；还款场景再按贷款资产、抵押资产的顺序依次锁钱包。
-//! 产品配置类用例不使用事务，写入与回读分两次自动提交，回读失败不会撤销已生效的配置。
+//! 产品配置类用例把写入、revision 递增、回读与管理员审计放在同一事务；更新先锁产品行，
+//! 再同时校验客户端版本并执行带 revision 条件的 UPDATE，旧页面只能收到冲突而不能覆盖新配置。
 
 use super::{
     LOAN_TYPE_COLLATERALIZED, STATUS_ACTIVE, STATUS_CANCELLED, STATUS_DISBURSED, STATUS_OVERDUE,
     STATUS_PENDING, STATUS_REJECTED, STATUS_REPAID, ensure_amount_precision,
     ensure_amount_within_product_limits, ensure_non_negative_amount, ensure_positive_amount,
-    normalized_product_name_json, optional_string, product_default_name, route_limit, route_offset,
-    validate_idempotency_key, validate_interest_mode, validate_loan_type, validate_product_status,
+    normalized_product_name_json, optional_string, product_default_name, required_product_reason,
+    required_product_revision, route_limit, route_offset, validate_idempotency_key,
+    validate_interest_mode, validate_loan_type, validate_product_status,
 };
 use crate::{
     error::{AppError, AppResult},
@@ -24,21 +26,25 @@ use crate::{
             infrastructure::{
                 AdminLoanOrdersFilter, LoanOrderCreate, LoanProductWrite, apply_loan_wallet_credit,
                 apply_loan_wallet_debit, apply_loan_wallet_freeze, ensure_loan_user_kyc_level,
-                insert_loan_order_in_tx, insert_loan_product, is_duplicate_key_error,
-                list_admin_loan_orders, list_admin_loan_products, list_loan_products,
-                list_user_loan_orders, load_active_asset_meta, load_active_asset_meta_in_tx,
+                insert_loan_order_in_tx, insert_loan_product_audit_log_in_tx,
+                insert_loan_product_in_tx, is_duplicate_key_error, list_admin_loan_orders,
+                list_admin_loan_products, list_loan_products, list_user_loan_orders,
+                load_active_asset_meta, load_active_asset_meta_in_tx,
                 load_loan_order_by_idempotency, load_loan_order_response,
-                load_loan_product_response, load_user_loan_order_response,
-                lock_active_loan_product_terms, lock_loan_order, lock_user_loan_order,
+                load_loan_product_response, load_loan_product_response_in_tx,
+                load_user_loan_order_response, lock_active_loan_product_terms, lock_loan_order,
+                lock_loan_product_response_in_tx, lock_user_loan_order,
                 mark_loan_order_cancelled_in_tx, mark_loan_order_disbursed_in_tx,
                 mark_loan_order_rejected_in_tx, mark_loan_order_repaid_in_tx,
-                release_loan_collateral_if_needed, update_loan_product, update_loan_product_status,
+                release_loan_collateral_if_needed, update_loan_product_in_tx,
+                update_loan_product_status_in_tx,
             },
             presentation::{
                 AdminLoanOrdersQuery, AdminLoanOrdersResponse, AdminLoanProductsQuery,
                 AdminLoanProductsResponse, CreateLoanOrderRequest, CreateLoanProductRequest,
                 ListQuery, LoanOrderResponse, LoanOrdersResponse, LoanProductResponse,
-                LoanProductsResponse, UpdateLoanProductRequest, UserLoanOrdersQuery,
+                LoanProductsResponse, UpdateLoanProductRequest, UpdateLoanProductStatusRequest,
+                UserLoanOrdersQuery,
             },
             service::calculate_interest_amount,
         },
@@ -165,39 +171,106 @@ pub(crate) async fn get_admin_order_use_case(
     load_loan_order_response(pool, order_id).await
 }
 
-/// 校验活动资产、金额精度、额度、计息模式与多语言名称后以单条写入创建借贷产品。
-/// 产品写入和随后回读不是同一事务：写入成功但回读失败时产品仍已存在；本用例不修改用户钱包或订单。
+/// 校验活动资产、金额精度、额度、计息模式、多语言名称与必填原因后创建借贷产品。
+/// 产品插入、revision=1 的后快照与管理员审计在同一事务提交；审计失败或回读失败都会回滚产品。
+/// 创建审计记录管理员、原因、请求 IP/request_id，before 为空且 after 使用不含敏感明文的白名单快照。
 pub(crate) async fn create_loan_product_use_case(
     pool: &Pool<MySql>,
+    admin_id: u64,
     request: CreateLoanProductRequest,
 ) -> AppResult<LoanProductResponse> {
+    let reason = required_product_reason(request.reason.clone())?;
     let request = validate_create_product_request(pool, request).await?;
-    let product_id = insert_loan_product(pool, request.into_write()).await?;
-    load_loan_product_response(pool, product_id).await
+    let write = request.into_write();
+    let mut tx = pool.begin().await?;
+    let product_id = insert_loan_product_in_tx(&mut tx, &write).await?;
+    let product = load_loan_product_response_in_tx(&mut tx, product_id).await?;
+    insert_loan_product_audit_log_in_tx(
+        &mut tx,
+        admin_id,
+        "loan_product.create",
+        product_id,
+        None,
+        Some(product.audit_snapshot()),
+        &reason,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(product)
 }
 
-/// 校验完整产品配置与活动资产精度后覆盖指定借贷产品，再以独立查询回读响应。
-/// 更新成功后的回读失败不会撤销配置；既有订单已保存的利率、期限、额度和抵押资金状态不被改写。
+/// 校验完整产品配置、活动资产、必填原因和客户端 revision 后，在事务内锁定产品旧快照。
+/// 锁行后的当前版本必须与客户端基线一致，随后仍以 revision 条件更新并把版本原子加一；旧版本返回冲突。
+/// before/after 安全快照与管理员、原因及请求上下文同事务写审计，既有订单条款和抵押资金不被改写。
 pub(crate) async fn update_loan_product_use_case(
     pool: &Pool<MySql>,
+    admin_id: u64,
     product_id: u64,
     request: UpdateLoanProductRequest,
 ) -> AppResult<LoanProductResponse> {
+    let reason = required_product_reason(request.reason.clone())?;
+    let expected_revision = required_product_revision(request.revision)?;
     let request = validate_update_product_request(pool, request).await?;
-    update_loan_product(pool, product_id, request.into_write()).await?;
-    load_loan_product_response(pool, product_id).await
+    let write = request.into_write();
+    let mut tx = pool.begin().await?;
+    let before = lock_loan_product_response_in_tx(&mut tx, product_id).await?;
+    ensure_current_product_revision(before.revision(), expected_revision)?;
+    update_loan_product_in_tx(&mut tx, product_id, expected_revision, &write).await?;
+    let after = load_loan_product_response_in_tx(&mut tx, product_id).await?;
+    insert_loan_product_audit_log_in_tx(
+        &mut tx,
+        admin_id,
+        "loan_product.update",
+        product_id,
+        Some(before.audit_snapshot()),
+        Some(after.audit_snapshot()),
+        &reason,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(after)
 }
 
-/// 校验 active/disabled 后自动提交产品状态更新，再独立回读完整响应。
-/// 状态只影响后续创建订单；回读失败不回滚已提交状态，也不处理已有订单或钱包。
+/// 校验 active/disabled、必填原因和客户端 revision 后，锁定产品并原子切换状态、递增版本及写审计。
+/// 锁行读取与条件 UPDATE 双重阻止旧页面覆盖；冲突时事务不留下状态变化或审计记录。
+/// 状态只影响后续创建订单，不处理已有订单或钱包；返回值是同事务读到的最新 revision 快照。
 pub(crate) async fn update_loan_product_status_use_case(
     pool: &Pool<MySql>,
+    admin_id: u64,
     product_id: u64,
-    status: String,
+    request: UpdateLoanProductStatusRequest,
 ) -> AppResult<LoanProductResponse> {
-    let status = validate_product_status(&status)?;
-    update_loan_product_status(pool, product_id, &status).await?;
-    load_loan_product_response(pool, product_id).await
+    let status = validate_product_status(&request.status)?;
+    let reason = required_product_reason(request.reason)?;
+    let expected_revision = required_product_revision(request.revision)?;
+    let mut tx = pool.begin().await?;
+    let before = lock_loan_product_response_in_tx(&mut tx, product_id).await?;
+    ensure_current_product_revision(before.revision(), expected_revision)?;
+    update_loan_product_status_in_tx(&mut tx, product_id, expected_revision, &status).await?;
+    let after = load_loan_product_response_in_tx(&mut tx, product_id).await?;
+    insert_loan_product_audit_log_in_tx(
+        &mut tx,
+        admin_id,
+        "loan_product.update_status",
+        product_id,
+        Some(before.audit_snapshot()),
+        Some(after.audit_snapshot()),
+        &reason,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(after)
+}
+
+/// 在持有产品行锁后核对数据库当前 revision 与客户端基线，版本不一致立即返回 HTTP 409 对应冲突。
+/// 条件更新仍会再次绑定同一 expected revision，本检查用于在执行写语句前给出稳定冲突语义。
+fn ensure_current_product_revision(current_revision: u64, expected_revision: u64) -> AppResult<()> {
+    if current_revision != expected_revision {
+        return Err(AppError::Conflict(
+            "loan product revision is stale; reload before retrying".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// 按当前产品条款创建用户借贷订单，并在抵押贷场景同步冻结抵押资产。

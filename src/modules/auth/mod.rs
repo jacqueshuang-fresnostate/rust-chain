@@ -550,16 +550,24 @@ impl FromRequestParts<AppState> for UserAuth {
 impl FromRequestParts<AppState> for AdminAuth {
     type Rejection = AppError;
 
-    /// 为管理后台接口提取身份，只接受管理员作用域的令牌，用户或代理令牌会被判为禁止访问。
-    /// 这是后台接口的第一道关卡，但它只区分主体类别，不涉及角色与细粒度权限，功能级权限须另行校验。
+    /// 为管理后台接口提取身份，先校验 admin 作用域，再回查管理员状态、角色和当前路由权限。
+    /// 权限不嵌入 JWT，因此停用账号或收紧角色会在下一次请求立即生效；只有未挂载 MySQL 的轻量路由单测会略过第二步。
     /// 声明中的主体标识形如 `admin:<id>`，下游需要管理员 ID 时应从中解析，不得信任请求体里传来的值。
     async fn from_request_parts(
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        require_scope(parts, state, TokenScope::Admin)
-            .await
-            .map(Self)
+        let claims = require_scope(parts, state, TokenScope::Admin).await?;
+        if let Some(pool) = state.mysql.as_ref() {
+            crate::modules::admin::application::authorize_admin_request(
+                pool,
+                &claims.sub,
+                parts.method.as_str(),
+                parts.uri.path(),
+            )
+            .await?;
+        }
+        Ok(Self(claims))
     }
 }
 

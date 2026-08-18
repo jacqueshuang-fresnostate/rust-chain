@@ -1,10 +1,10 @@
-import { IconRefresh, IconSetting, IconShield } from '@douyinfe/semi-icons';
-import { Button, Card, Descriptions, Divider, Empty, Image, Select, SideSheet, Space, Tabs, Toast, Typography } from '@douyinfe/semi-ui';
+import { Button, Card, Descriptions, Divider, Empty, Image, Select, SideSheet, Space, Toast, Typography } from '@douyinfe/semi-ui';
 import type { ColumnProps } from '@douyinfe/semi-ui/lib/es/table';
 import { useEffect, useMemo, useState } from 'react';
 
 import { ApiError, apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
+import { WorkflowPageActions } from '../components/WorkflowPageActions';
 import { ConfirmAction } from '../../shared/ConfirmAction';
 import { ResizableTable } from '../../shared/ResizableTable';
 import { AdminSelect, AdminTextArea, AdminTextInput, type SemiSelectOption } from '../../shared/SemiFormControls';
@@ -15,7 +15,7 @@ import { containedTableStyle } from '../../shared/tableLayout';
 const { Text, Title } = Typography;
 
 type KycStatus = 'pending' | 'approved' | 'rejected';
-type KycTab = 'config' | 'reviews';
+type KycWorkspace = 'reviews' | 'settings';
 
 type KycCountryDocumentTypeRule = {
   country: string;
@@ -122,11 +122,6 @@ const kycDocumentTypeOptions: SemiSelectOption[] = [
   { value: 'residence_permit', label: '居住证' }
 ];
 
-const kycTabs = [
-  { itemKey: 'config', tab: 'KYC 配置', icon: <IconSetting aria-hidden="true" /> },
-  { itemKey: 'reviews', tab: '人工审核', icon: <IconShield aria-hidden="true" /> }
-];
-
 const submissionTypeLabelMap = {
   personal: '个人认证',
   enterprise: '企业认证'
@@ -196,7 +191,7 @@ function normalizeRequiredDocuments(documents: string[] | undefined) {
   return uniqueItems([...baseRequiredDocuments, ...requestedDocuments]);
 }
 
-  function normalizeCountryDocumentTypes(rules: KycCountryDocumentTypeRule[] | undefined) {
+function normalizeCountryDocumentTypes(rules: KycCountryDocumentTypeRule[] | undefined) {
   return (rules ?? []).map((rule) => ({
     country: rule.country,
     document_types: uniqueItems(rule.document_types),
@@ -265,8 +260,7 @@ function documentLabel(value: string) {
   return documentOptions.find((option) => option.value === value)?.label ?? value;
 }
 
-export function KycManagementPage() {
-  const [activeTab, setActiveTab] = useState<KycTab>('reviews');
+function KycWorkspacePage({ workspace }: { workspace: KycWorkspace }) {
   const [config, setConfig] = useState<KycConfig | null>(null);
   const [configForm, setConfigForm] = useState<ConfigForm>(defaultConfigForm);
   const [countryOptions, setCountryOptions] = useState<SemiSelectOption[]>([]);
@@ -300,16 +294,21 @@ export function KycManagementPage() {
   async function loadPage(nextStatus = reviewStatus) {
     setLoading(true);
     try {
-      const [nextConfig, submissionResponse, countriesResponse] = await Promise.all([
-        apiRequest<KycConfig>('/admin/api/v1/kyc/config'),
-        apiRequest<KycSubmissionsResponse>(`/admin/api/v1/kyc/submissions?status=${nextStatus}&limit=100`),
-        apiRequest<AdminCountriesResponse>('/admin/api/v1/countries?status=active&limit=200')
-      ]);
-      setConfig(nextConfig);
-      setConfigForm(configToForm(nextConfig));
-      setSubmissions(submissionResponse.submissions);
-      setSubmissionTotal(submissionResponse.total ?? submissionResponse.submissions.length);
-      setCountryOptions(adminCountrySelectOptions(countriesResponse.countries ?? []));
+      if (workspace === 'settings') {
+        const [nextConfig, countriesResponse] = await Promise.all([
+          apiRequest<KycConfig>('/admin/api/v1/kyc/config'),
+          apiRequest<AdminCountriesResponse>('/admin/api/v1/countries?status=active&limit=200')
+        ]);
+        setConfig(nextConfig);
+        setConfigForm(configToForm(nextConfig));
+        setCountryOptions(adminCountrySelectOptions(countriesResponse.countries ?? []));
+      } else {
+        const submissionResponse = await apiRequest<KycSubmissionsResponse>(
+          `/admin/api/v1/kyc/submissions?status=${nextStatus}&limit=100`
+        );
+        setSubmissions(submissionResponse.submissions);
+        setSubmissionTotal(submissionResponse.total ?? submissionResponse.submissions.length);
+      }
     } finally {
       setLoading(false);
     }
@@ -540,18 +539,22 @@ export function KycManagementPage() {
     <main className="exchange-page admin-action-page">
       <PageHeader
         actions={
-          <Button icon={<IconRefresh aria-hidden="true" />} loading={loading} onClick={() => loadPage().catch((error) => Toast.error(errorMessage(error)))} theme="borderless">
-            刷新
-          </Button>
+          <WorkflowPageActions
+            loading={loading}
+            onRefresh={() => loadPage().catch((error) => Toast.error(errorMessage(error)))}
+            shortcutLabel={workspace === 'settings' ? '前往审核队列' : '前往规则配置'}
+            shortcutPath={workspace === 'settings' ? '/admin/users/kyc/reviews' : '/admin/users/kyc/settings'}
+          />
         }
-        description="集中处理身份认证待办，并维护国家、证件类型与目标等级规则。"
-        title="KYC 管理"
+        description={
+          workspace === 'settings'
+            ? '维护 KYC 准入国家、证件类型、手持照与目标等级规则。'
+            : '集中处理身份认证待办，查看证件上下文并留存审核原因。'
+        }
+        title={workspace === 'settings' ? 'KYC 规则配置' : 'KYC 审核队列'}
       />
       <Card bordered={false} className="admin-action-workbench admin-kyc-workbench">
-        <Tabs activeKey={activeTab} className="admin-action-tabs" onChange={(key) => setActiveTab(key as KycTab)} tabList={kycTabs} type="button" />
-
-        {activeTab === 'config' ? (
-          <div aria-labelledby="semiTabconfig" id="semiTabPanelconfig" role="tabpanel" tabIndex={0}>
+        {workspace === 'settings' ? (
             <Space align="start" className="admin-kyc-panel" spacing={16} vertical style={{ width: '100%' }}>
               <div className="admin-section-heading">
                 <div>
@@ -637,11 +640,9 @@ export function KycManagementPage() {
                 }
               />
             </Space>
-          </div>
         ) : null}
 
-        {activeTab === 'reviews' ? (
-          <div aria-labelledby="semiTabreviews" id="semiTabPanelreviews" role="tabpanel" tabIndex={0}>
+        {workspace === 'reviews' ? (
             <Space align="start" className="admin-kyc-panel" spacing={16} vertical style={{ width: '100%' }}>
               <div className="admin-kyc-review-toolbar">
                 <div>
@@ -689,7 +690,6 @@ export function KycManagementPage() {
                 )}
               </div>
             </Space>
-          </div>
         ) : null}
       </Card>
 
@@ -781,4 +781,12 @@ export function KycManagementPage() {
       </SideSheet>
     </main>
   );
+}
+
+export function KycSettingsPage() {
+  return <KycWorkspacePage workspace="settings" />;
+}
+
+export function KycReviewsPage() {
+  return <KycWorkspacePage workspace="reviews" />;
 }

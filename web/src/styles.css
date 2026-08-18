@@ -1109,6 +1109,35 @@ body {
   font-weight: 700;
 }
 
+.admin-reference-field__meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--admin-color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.admin-reference-field__meta > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-reference-field__meta > span:last-child {
+  flex: 0 0 auto;
+  color: var(--admin-color-success);
+}
+
+.admin-reference-field__meta.is-disabled > span:last-child,
+.admin-reference-field__error {
+  color: var(--admin-color-danger);
+}
+
 .admin-action-form input,
 .admin-action-form select,
 .admin-action-form textarea,

@@ -1,0 +1,10 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"RBAC、审计和 revision 跨迁移、Rust API 与 React 后台。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"先复用已有 AdminAuth、ConfirmAction、审计和版本模式。"}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"授权、审计、事务与路由分层责任。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"架构、中文合同注释与验证门禁。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"不可变迁移、事务和并发更新规则。"}
+{"file":".trellis/spec/backend/auth-sessions.md","reason":"保持 AdminAuth 会话与 subject 合同兼容。"}
+{"file":".trellis/spec/backend/prediction-markets.md","reason":"预测设置与资产配置现有合同。"}
+{"file":".trellis/spec/backend/loan-products.md","reason":"贷款产品管理路由现有合同。"}
+{"file":".trellis/spec/admin/ui-system.md","reason":"后台确认原因、路由、表单和测试合同。"}
+{"file":".trellis/tasks/08-18-admin-settings-workflow-audit/research/admin-settings-workflow-audit.md","reason":"P0 问题证据、优先顺序和目标状态。"}

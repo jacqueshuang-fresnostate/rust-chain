@@ -1,0 +1,30 @@
+{
+  "id": "admin-settings-workflow-audit",
+  "name": "admin-settings-workflow-audit",
+  "title": "后台设置流程审计与优化规划",
+  "description": "盘点后台设置类页面的信息架构、配置闭环、权限审计、发布回滚和一致性问题，输出分阶段优化建议。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "admin P0/P1/P2 settings governance, workflow, and engineering optimization across Rust API, MySQL migrations, and React admin",
+  "package": null,
+  "priority": "P1",
+  "creator": "rust-chain",
+  "assignee": "rust-chain",
+  "createdAt": "2026-08-18",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-18-admin-settings-p0-governance",
+    "08-18-admin-settings-p1-workflows",
+    "08-18-admin-settings-p2-engineering"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

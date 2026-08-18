@@ -9,12 +9,14 @@ import {
   IconHomeStroked,
   IconHornStroked,
   IconLineChartStroked,
+  IconLayers,
   IconList,
   IconPieChartStroked,
   IconSettingStroked,
   IconShieldStroked,
   IconStopwatchStroked,
-  IconUserGroup
+  IconUserGroup,
+  IconUserSetting
 } from '@douyinfe/semi-icons';
 import type { ReactNode } from 'react';
 
@@ -27,12 +29,14 @@ export type AdminNavItem = {
 
 export const adminNavItems: AdminNavItem[] = [
   { path: '/admin/dashboard', label: '总览仪表盘', icon: <IconHomeStroked aria-hidden="true" /> },
+  { path: '/admin/config-center', label: '配置中心', icon: <IconLayers aria-hidden="true" /> },
   {
     label: '用户与代理',
     icon: <IconUserGroup aria-hidden="true" />,
     children: [
       { path: '/admin/users', label: '用户管理' },
-      { path: '/admin/users/kyc', label: 'KYC 审核' },
+      { path: '/admin/users/kyc/reviews', label: 'KYC 审核队列' },
+      { path: '/admin/users/kyc/settings', label: 'KYC 规则配置' },
       { path: '/admin/agents', label: '代理管理' },
       { path: '/admin/agent-commissions', label: '代理佣金' },
       { path: '/admin/agent-commission-rules', label: '佣金规则' }
@@ -66,10 +70,9 @@ export const adminNavItems: AdminNavItem[] = [
     icon: <IconPieChartStroked aria-hidden="true" />,
     children: [
       { path: '/admin/prediction/settings', label: '竞猜配置' },
-      { path: '/admin/prediction/assets', label: '下注资产' },
       { path: '/admin/prediction/markets', label: '竞猜市场' },
       { path: '/admin/prediction/orders', label: '竞猜订单' },
-      { path: '/admin/prediction/sync-logs', label: '同步日志' }
+      { path: '/admin/prediction/sync', label: '同步运行' }
     ]
   },
   {
@@ -156,11 +159,15 @@ export const adminNavItems: AdminNavItem[] = [
     children: [
       { path: '/admin/system/countries', label: '国家配置' },
       { path: '/admin/system/security-policy', label: '安全策略' },
-      { path: '/admin/system/two-factor', label: '两步验证' },
       { path: '/admin/system/brand', label: 'PC 品牌配置' },
       { path: '/admin/system/smtp', label: 'SMTP 邮件配置' },
       { path: '/admin/system/uploads', label: '上传配置' }
     ]
+  },
+  {
+    label: '我的账号',
+    icon: <IconUserSetting aria-hidden="true" />,
+    children: [{ path: '/admin/account/security', label: '账号安全' }]
   },
   { path: '/admin/audit-logs', label: '审计日志', icon: <IconList aria-hidden="true" /> }
 ];

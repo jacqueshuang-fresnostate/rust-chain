@@ -69,6 +69,10 @@ fn admin_asset_config_query_does_not_require_assets_updated_at() {
         super::infrastructure::ADMIN_ASSET_CONFIGS_SQL
             .contains("COALESCE(configs.updated_at, assets.created_at)")
     );
+    assert!(
+        super::infrastructure::ADMIN_ASSET_CONFIGS_SQL
+            .contains("COALESCE(configs.revision, 0) AS revision")
+    );
 }
 
 #[test]
@@ -77,5 +81,37 @@ fn prediction_user_subject_uses_sa_token_user_prefix() {
     assert!(matches!(
         super::service::user_id_from_subject("79"),
         Err(AppError::Unauthorized)
+    ));
+}
+
+#[test]
+fn prediction_admin_subject_is_parsed_only_from_admin_session_shape() {
+    assert_eq!(
+        super::service::admin_id_from_subject("admin:81").unwrap(),
+        81
+    );
+    for invalid in ["81", "user:81", "admin:", "admin:not-a-number"] {
+        assert!(matches!(
+            super::service::admin_id_from_subject(invalid),
+            Err(AppError::Unauthorized)
+        ));
+    }
+}
+
+#[test]
+fn prediction_admin_reason_is_trimmed_required_and_bounded() {
+    assert_eq!(
+        super::service::required_admin_reason(Some("  调整预测费率  ".to_owned())).unwrap(),
+        "调整预测费率"
+    );
+    for missing in [None, Some(String::new()), Some("   ".to_owned())] {
+        assert!(matches!(
+            super::service::required_admin_reason(missing),
+            Err(AppError::Validation(message)) if message == "reason is required"
+        ));
+    }
+    assert!(matches!(
+        super::service::required_admin_reason(Some("理".repeat(513))),
+        Err(AppError::Validation(message)) if message == "reason is too long"
     ));
 }

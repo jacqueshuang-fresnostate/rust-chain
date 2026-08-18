@@ -7,6 +7,28 @@
 
 use super::*;
 
+/// 确认新币项目仍处于启用状态，避免后台选择器加载后项目被并发停用仍继续写配置或派发资产。
+/// 调用方必须传入事务内锁定或回读的项目快照；非 active 项目统一返回校验错误且不产生事件或审计。
+fn ensure_active_new_coin_project(project: &NewCoinProjectResponse) -> AppResult<()> {
+    if project.status != "active" {
+        return Err(AppError::Validation(
+            "new coin project must be active".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// 确认派发接收用户仍可参与新操作；暂停、封禁等非 active 用户不得接收后台新币派发。
+/// 用户快照在同一事务中于用户行锁之后读取，因此检查结果保持到本次派发提交或回滚。
+fn ensure_active_distribution_user(user: &AdminUserResponse) -> AppResult<()> {
+    if user.status != "active" {
+        return Err(AppError::Validation(
+            "new coin distribution user must be active".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 /// 分页读取新币项目的发行、生命周期、解锁、手续费和上市后购买配置，并返回总数。
 /// 当前查询不提供业务筛选，只裁剪 limit/offset；读取不锁项目，也不聚合认购或派发金额。
 pub(crate) async fn list_admin_new_coin_projects(
@@ -206,6 +228,15 @@ pub(crate) async fn create_admin_new_coin_project(
 
     // 新币项目创建、生命周期事件和后台审计必须同事务提交，避免项目已开放但缺少追踪记录。
     let mut tx = pool.begin().await?;
+    load_active_asset_symbol_in_tx(&mut tx, request.asset_id).await?;
+    if let Some(unlock_fee_asset) = request
+        .unlock_fee_enabled
+        .unwrap_or(false)
+        .then_some(request.unlock_fee_asset)
+        .flatten()
+    {
+        load_active_asset_symbol_in_tx(&mut tx, unlock_fee_asset).await?;
+    }
     let project_id = insert_admin_new_coin_project_in_tx(
         &mut tx,
         AdminNewCoinProjectInsert {
@@ -272,6 +303,7 @@ pub(crate) async fn update_admin_new_coin_lifecycle(
     // 生命周期流转必须先锁定项目行，再校验当前状态到目标状态的单向流转规则。
     let mut tx = pool.begin().await?;
     let before = lock_admin_new_coin_project_in_tx(&mut tx, project_id).await?;
+    ensure_active_new_coin_project(&before)?;
     let current_status = parse_lifecycle_status_from_db(&before.lifecycle_status)?;
     current_status
         .transition_to(target_status)
@@ -319,6 +351,7 @@ pub(crate) async fn update_admin_new_coin_unlock_rule(
     // 锁定项目后再更新规则，避免后台并发修改导致审计 before/after 失真。
     let mut tx = pool.begin().await?;
     let before = lock_admin_new_coin_project_in_tx(&mut tx, project_id).await?;
+    ensure_active_new_coin_project(&before)?;
     let unlock_type = request.unlock_type.trim().to_owned();
     let listed_at = if unlock_type == "immediate_on_listing" {
         request.listed_at
@@ -367,6 +400,14 @@ pub(crate) async fn update_admin_new_coin_unlock_fee_rule(
     // 矿工费关闭时同步清空费率、计费依据和费用资产，避免旧配置被后续解禁误用。
     let mut tx = pool.begin().await?;
     let before = lock_admin_new_coin_project_in_tx(&mut tx, project_id).await?;
+    ensure_active_new_coin_project(&before)?;
+    if let Some(unlock_fee_asset) = request
+        .unlock_fee_enabled
+        .then_some(request.unlock_fee_asset)
+        .flatten()
+    {
+        load_active_asset_symbol_in_tx(&mut tx, unlock_fee_asset).await?;
+    }
     update_admin_new_coin_project_unlock_fee_rule_in_tx(
         &mut tx,
         project_id,
@@ -423,6 +464,7 @@ pub(crate) async fn update_admin_new_coin_post_listing_purchase(
     // 锁定新币项目和目标交易对，确保认购开关、交易对启用和审计一致提交。
     let mut tx = pool.begin().await?;
     let before = lock_admin_new_coin_project_in_tx(&mut tx, project_id).await?;
+    ensure_active_new_coin_project(&before)?;
     ensure_post_listing_purchase_lifecycle(&before)?;
     if request.enabled {
         let pair_id = request.pair_id.ok_or_else(|| {
@@ -472,6 +514,7 @@ pub(crate) async fn distribute_admin_new_coin(
     // 派发会同时影响申购单、钱包余额、锁仓明细、生命周期事件和后台审计，必须放入同一事务。
     let mut tx = pool.begin().await?;
     let project = lock_admin_new_coin_project_in_tx(&mut tx, project_id).await?;
+    ensure_active_new_coin_project(&project)?;
     ensure_distribution_lifecycle(&project)?;
     if admin_new_coin_idempotency_key_exists_in_tx(
         &mut tx,
@@ -484,6 +527,9 @@ pub(crate) async fn distribute_admin_new_coin(
             "new coin distribution has already been created".to_owned(),
         ));
     }
+    ensure_admin_user_exists_in_tx(&mut tx, request.user_id).await?;
+    let distribution_user = load_admin_user_in_tx(&mut tx, request.user_id).await?;
+    ensure_active_distribution_user(&distribution_user)?;
     if let Some(subscription_id) = request.subscription_id {
         apply_admin_new_coin_subscription_distribution_in_tx(
             &mut tx,

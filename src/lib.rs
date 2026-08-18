@@ -14,7 +14,7 @@ pub mod state;
 pub mod time;
 pub mod workers;
 
-use axum::{Json, Router, extract::State, routing::get};
+use axum::{Json, Router, extract::State, middleware, routing::get};
 use serde::Serialize;
 use state::AppState;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
@@ -56,7 +56,10 @@ pub fn build_router(state: AppState) -> Router {
         .merge(modules::margin::routes::admin_routes())
         .merge(modules::earn::routes::admin_routes())
         .merge(modules::loan::admin_routes())
-        .merge(modules::prediction::admin_routes());
+        .merge(modules::prediction::admin_routes())
+        .layer(middleware::from_fn(
+            infra::admin_request_context::admin_request_context_middleware,
+        ));
 
     let agent_api = Router::new()
         .merge(modules::auth::routes::agent_routes())

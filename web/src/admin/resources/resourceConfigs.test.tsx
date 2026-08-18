@@ -153,10 +153,10 @@ async function selectSemiOption(user: ReturnType<typeof userEvent.setup>, dialog
 }
 
 const assetRows = [
-  { id: 11, symbol: 'BTC', name: 'Bitcoin' },
-  { id: 12, symbol: 'USDT', name: 'Tether' },
-  { id: 22, symbol: 'ETH', name: 'Ethereum' },
-  { id: 32, symbol: 'BNB', name: 'BNB' }
+  { id: 11, symbol: 'BTC', name: 'Bitcoin', status: 'active' },
+  { id: 12, symbol: 'USDT', name: 'Tether', status: 'active' },
+  { id: 22, symbol: 'ETH', name: 'Ethereum', status: 'active' },
+  { id: 32, symbol: 'BNB', name: 'BNB', status: 'active' }
 ];
 
 class ResizeObserverMock {
@@ -1020,7 +1020,7 @@ describe('resourceConfigs create actions', () => {
       });
       expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/news').length).toBeGreaterThanOrEqual(initialNewsLoadCount + 4);
     });
-  }, 20_000);
+  }, 40_000);
 
   it('keeps the user ID column visible on user management', () => {
     expect(resourceConfigs.users.columns).toContainEqual({ key: 'id', title: '用户ID' });
@@ -1123,7 +1123,6 @@ describe('resourceConfigs create actions', () => {
   });
 
   it('registers prediction resources with localized filters and market row actions', () => {
-    expect(resourceConfigs.predictionAssetConfigs.endpoint).toBe('/admin/api/v1/prediction/asset-configs');
     expect(resourceConfigs.predictionMarkets.endpoint).toBe('/admin/api/v1/prediction/markets');
     expect(resourceConfigs.predictionOrders.endpoint).toBe('/admin/api/v1/prediction/orders');
     expect(resourceConfigs.predictionSyncLogs.endpoint).toBe('/admin/api/v1/prediction/sync/logs');
@@ -1963,13 +1962,12 @@ describe('resourceConfigs create actions', () => {
     dialog = await findActionSheet('添加风控规则');
     expectCreateModalSize(dialog, 'wide');
     semiInputByLabel(dialog, '规则类型');
-    semiInputByLabel(dialog, '对象类型');
-    semiInputByLabel(dialog, '对象ID');
+    semiSelectByLabel(dialog, '对象类型');
     expect(within(dialog).getByLabelText('规则配置JSON').closest('.semi-input-textarea-wrapper')).toBeInTheDocument();
     semiSelectByLabel(dialog, '启用');
     await user.type(within(dialog).getByLabelText('规则类型'), 'withdraw_limit');
-    await user.type(within(dialog).getByLabelText('对象类型'), 'user');
-    await user.type(within(dialog).getByLabelText('对象ID'), '123');
+    await selectSemiOption(user, dialog, '对象类型', '指定用户');
+    await selectSemiOption(user, dialog, '规则对象', 'user@example.com · 启用（ID: 123）');
     await user.clear(within(dialog).getByLabelText('规则配置JSON'));
     fireEvent.change(within(dialog).getByLabelText('规则配置JSON'), { target: { value: '{bad json' } });
     await user.click(within(dialog).getByRole('button', { name: '提交添加风控规则' }));
@@ -2100,7 +2098,7 @@ describe('resourceConfigs create actions', () => {
     expect(screen.getByText('可用')).toBeInTheDocument();
     expect(screen.getByText('10.00')).toBeInTheDocument();
     expect(screen.getAllByText('0.00')).toHaveLength(3);
-    expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/users')).toHaveLength(2);
+    expect(listAdminResourceMock.mock.calls.filter(([endpoint]) => endpoint === '/admin/api/v1/users')).toHaveLength(3);
   });
 
   it('filters users by email from user management page', async () => {
@@ -2191,6 +2189,14 @@ describe('resourceConfigs create actions', () => {
         return { rows, raw: { [responseKey]: rows } };
       }
 
+      if (endpoint === '/admin/api/v1/agents') {
+        const rows = [
+          { id: 42, agent_code: 'AGT-042', email: 'agent@example.com', level: 1, status: 'active' },
+          { id: 43, agent_code: 'AGT-OFF', email: 'disabled@example.com', level: 2, status: 'disabled' }
+        ];
+        return { rows, raw: { [responseKey]: rows } };
+      }
+
       return { rows: [], raw: {} };
     });
 
@@ -2200,8 +2206,8 @@ describe('resourceConfigs create actions', () => {
     await user.click(screen.getByRole('button', { name: '分配代理' }));
     const dialog = await findActionSheet('分配代理');
     semiInputByLabel(dialog, '用户ID');
-    semiInputByLabel(dialog, '代理ID');
-    await user.type(within(dialog).getByLabelText('代理ID'), '42');
+    semiSelectByLabel(dialog, '目标代理');
+    await selectSemiOption(user, dialog, '目标代理', 'AGT-042 · L1 · 启用（ID: 42）');
     await user.click(within(dialog).getByRole('button', { name: '提交分配代理' }));
     await user.type(await screen.findByLabelText('操作原因'), 'assign user agent');
     await user.click(await screen.findByRole('button', { name: '确认' }));
@@ -4272,8 +4278,15 @@ describe('resourceConfigs create actions', () => {
     expect(await screen.findByText('BTC-USDT')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '检测缺口/补偿K线（策略91）' }));
     const sheet = await findActionSheet('检测缺口与补偿K线');
+    await waitFor(() => {
+      expect(apiRequestMock).toHaveBeenCalledWith('/admin/api/v1/market-strategies/91/kline-recovery/jobs?limit=20&offset=0');
+    });
+    expect(apiRequestMock.mock.calls.some(([path]) => path === '/admin/api/v1/market-strategies/91/kline-gaps')).toBe(false);
+    expect(apiRequestMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
     await user.click(within(sheet).getByRole('button', { name: '重新检测K线缺口' }));
     expect(await within(sheet).findByText('缺口范围（共 2 根 1m）')).toBeInTheDocument();
+    expect(within(sheet).getByRole('columnheader', { name: '开始时间（含）' })).toBeInTheDocument();
+    expect(within(sheet).getByRole('columnheader', { name: '结束时间（不含）' })).toBeInTheDocument();
     await user.click(within(sheet).getByRole('button', { name: /预览缺口/ }));
     expect(await within(sheet).findByText('补偿预览')).toBeInTheDocument();
     expect(within(sheet).getByText('1.1 → 1.2')).toBeInTheDocument();

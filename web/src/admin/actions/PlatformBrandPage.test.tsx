@@ -1,9 +1,11 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PlatformBrandPage } from './PlatformBrandPage';
-import { apiRequest } from '../../api/client';
+import { ApiError, apiRequest } from '../../api/client';
 
 vi.mock('../../api/client', async () => {
   const actual = await vi.importActual<typeof import('../../api/client')>('../../api/client');
@@ -64,6 +66,28 @@ async function selectSemiOption(user: ReturnType<typeof userEvent.setup>, label:
   fireEvent.click(option as HTMLElement);
 }
 
+function renderPlatformBrandPage() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { gcTime: 0, retry: false },
+      mutations: { retry: false }
+    }
+  });
+  const router = createMemoryRouter(
+    [
+      { path: '/brand', element: <PlatformBrandPage /> },
+      { path: '/other', element: <div>其他页面</div> }
+    ],
+    { initialEntries: ['/brand'] }
+  );
+  const view = render(
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
+  );
+  return { queryClient, router, ...view };
+}
+
 describe('PlatformBrandPage', () => {
   beforeEach(() => {
     if (!globalThis.ResizeObserver) {
@@ -96,7 +120,7 @@ describe('PlatformBrandPage', () => {
   });
 
   it('loads and previews the saved PC brand config', async () => {
-    render(<PlatformBrandPage />);
+    renderPlatformBrandPage();
 
     expect(await screen.findByDisplayValue('Hippo Exchange')).toBeInTheDocument();
     expect(screen.getByDisplayValue('https://cdn.example.test/logo.png')).toHaveAccessibleName('PC Logo');
@@ -107,16 +131,24 @@ describe('PlatformBrandPage', () => {
 
   it('saves platform name and logo URL with an operation reason', async () => {
     const user = userEvent.setup();
-    render(<PlatformBrandPage />);
+    renderPlatformBrandPage();
 
     await user.clear(await screen.findByLabelText('平台名称'));
     await user.type(screen.getByLabelText('平台名称'), 'Rust Chain');
     await user.clear(screen.getByLabelText('PC Logo'));
     await user.type(screen.getByLabelText('PC Logo'), 'https://cdn.example.test/new-logo.png');
     await selectSemiOption(user, 'K线图引擎', 'TradingView Lightweight Charts');
+    expect(screen.getByRole('status')).toHaveTextContent('有未保存的变更');
     await user.click(screen.getByRole('button', { name: '保存品牌配置' }));
+
+    expect(await screen.findByText('字段差异（3 项）')).toBeInTheDocument();
+    expect(screen.getByText('保存后将立即影响 PC 端平台名称、Logo 与 K 线图展示。')).toBeInTheDocument();
+    expect(screen.getAllByText('平台名称').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('K线图引擎').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('PC Logo').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: '确认保存' })).toBeDisabled();
     await user.type(await screen.findByLabelText('操作原因'), 'update pc brand');
-    await user.click(await screen.findByRole('button', { name: '确认' }));
+    await user.click(await screen.findByRole('button', { name: '确认保存' }));
 
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith(
@@ -131,5 +163,33 @@ describe('PlatformBrandPage', () => {
       platform_name: 'Rust Chain',
       reason: 'update pc brand'
     });
+    expect(await screen.findByText('PC 品牌配置已保存。')).toBeInTheDocument();
+    expect(screen.queryByText('有未保存的变更')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保存品牌配置' })).toBeDisabled();
+  });
+
+  it('keeps the brand draft and shows the unified Chinese conflict after a 409 response', async () => {
+    const user = userEvent.setup();
+    apiRequestMock.mockImplementation((path, init) => {
+      if (path === '/admin/api/v1/platform/brand' && !init?.method) {
+        return Promise.resolve(brandConfig);
+      }
+      if (path === '/admin/api/v1/platform/brand' && init?.method === 'PATCH') {
+        return Promise.reject(new ApiError(409, 'CONFIG_CONFLICT', 'stale revision'));
+      }
+      return Promise.resolve({});
+    });
+    renderPlatformBrandPage();
+
+    await user.clear(await screen.findByLabelText('平台名称'));
+    await user.type(screen.getByLabelText('平台名称'), '本地品牌草稿');
+    await user.click(screen.getByRole('button', { name: '保存品牌配置' }));
+    await user.type(await screen.findByLabelText('操作原因'), '更新品牌');
+    await user.click(screen.getByRole('button', { name: '确认保存' }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText('配置已被其他管理员更新，当前草稿尚未覆盖；请重新加载最新配置后再修改。').length).toBeGreaterThan(0);
+    });
+    expect(screen.getByLabelText('平台名称')).toHaveValue('本地品牌草稿');
   });
 });

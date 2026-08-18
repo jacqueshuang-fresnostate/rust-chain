@@ -191,6 +191,7 @@ describe('MarketStrategyActions', () => {
       pair_id: 21,
       generator: { seed_mode: 'fixed', seed: 'stable-seed' }
     });
+    expect(JSON.parse(String(previewCall?.[1]?.body))).not.toHaveProperty('reason');
   });
 
   it('applies a backend preset and generates a side-effect-free OHLCV preview', async () => {
@@ -305,6 +306,7 @@ describe('MarketStrategyActions', () => {
         volume_shape: 'trend'
       }
     });
+    expect(JSON.parse(String(previewCall?.[1]?.body))).not.toHaveProperty('reason');
   });
 
   it('loads immutable versions and restores an old snapshot by copying it', async () => {

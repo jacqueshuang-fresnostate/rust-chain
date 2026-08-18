@@ -17,6 +17,7 @@ pub(crate) struct PredictionSettingsRow {
     pub(crate) default_settlement_mode: String,
     pub(crate) default_invalid_refund_policy: String,
     pub(crate) quote_ttl_seconds: u32,
+    pub(crate) revision: u64,
     pub(crate) last_sync_status: Option<String>,
     pub(crate) last_sync_error: Option<String>,
     pub(crate) last_sync_started_at: Option<DateTime<Utc>>,
@@ -65,8 +66,46 @@ pub(crate) struct PredictionAssetConfigRow {
     pub(crate) asset_symbol: String,
     pub(crate) enabled: bool,
     pub(crate) max_payout_amount: BigDecimal,
+    pub(crate) revision: u64,
     pub(crate) created_at: DateTime<Utc>,
     pub(crate) updated_at: DateTime<Utc>,
+}
+
+/// 预测全局设置的完整写入快照；`expected_revision` 只参与条件更新，不作为新版本直接落库。
+/// 应用层须先完成枚举、金额、资产与原因校验，再把该命令交给基础设施层在既有事务内执行。
+#[derive(Debug)]
+pub(crate) struct PredictionSettingsUpdate {
+    pub(crate) sync_enabled: bool,
+    pub(crate) sync_interval_seconds: u32,
+    pub(crate) sync_tags: Vec<String>,
+    pub(crate) allowed_asset_ids: Vec<u64>,
+    pub(crate) default_fee_rate: BigDecimal,
+    pub(crate) default_settlement_mode: String,
+    pub(crate) default_invalid_refund_policy: String,
+    pub(crate) quote_ttl_seconds: u32,
+    pub(crate) expected_revision: u64,
+}
+
+/// 单个预测下注资产的条件写入命令；revision=0 仅表示当前尚无配置行，首次成功写入从 1 开始。
+/// 资产编号来自已认证管理请求的路径或请求体，应用层必须保证两种入口最终使用同一命令语义。
+#[derive(Debug)]
+pub(crate) struct PredictionAssetConfigUpdate {
+    pub(crate) asset_id: u64,
+    pub(crate) enabled: bool,
+    pub(crate) max_payout_amount: BigDecimal,
+    pub(crate) expected_revision: u64,
+}
+
+/// 预测配置审计写入契约；前后快照由应用层显式白名单组装，禁止把任意请求体或敏感明文直接落库。
+/// 基础设施层只负责在业务事务内附加管理员、请求 IP 与 request ID，并且不得自行提交事务。
+#[derive(Debug)]
+pub(crate) struct PredictionAdminAuditEntry {
+    pub(crate) action: &'static str,
+    pub(crate) target_type: &'static str,
+    pub(crate) target_id: u64,
+    pub(crate) before_json: Value,
+    pub(crate) after_json: Value,
+    pub(crate) reason: String,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

@@ -74,9 +74,10 @@ export function AdminTwoFactorPage() {
 
   return (
     <div className="admin-action-workbench">
-      <PageHeader title="管理员两步验证" description="为当前管理员账号绑定 TOTP 验证器，登录时需额外输入动态验证码。" />
+      <PageHeader title="账号安全" description="管理当前管理员账号的两步验证；此设置不会改变全局安全策略。" />
       <Card loading={loading}>
         <Space vertical align="start" spacing={16} style={{ width: '100%' }}>
+          <Title heading={4}>两步验证</Title>
           <Banner
             type={enabled ? 'success' : 'warning'}
             description={enabled ? '当前账号已开启两步验证。' : '当前账号未开启两步验证，仅凭密码即可登录后台。'}

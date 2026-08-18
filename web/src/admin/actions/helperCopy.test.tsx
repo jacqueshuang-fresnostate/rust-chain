@@ -34,8 +34,8 @@ function stubResizeObserver() {
   vi.stubGlobal('ResizeObserver', ResizeObserverMock);
 }
 
-function semiSelectByLabel(label: string): HTMLElement {
-  const labelNode = screen.getByText(label).closest('label') as HTMLElement | null;
+function semiSelectByLabel(label: string, index = 0): HTMLElement {
+  const labelNode = screen.getAllByText(label)[index]?.closest('label') as HTMLElement | null;
   expect(labelNode).toBeInTheDocument();
   const select = labelNode?.querySelector('.semi-select') as HTMLElement | null;
   expect(select).toBeInTheDocument();
@@ -47,6 +47,9 @@ describe('Admin action helper copy', () => {
     stubResizeObserver();
     apiRequestMock.mockReset();
     apiRequestMock.mockImplementation(async (path) => {
+      if (path === '/admin/api/v1/agents/42') {
+        return { id: 42, agent_code: 'AGT-42', detail: 'agent-detail' };
+      }
       if (path === '/admin/api/v1/agents') {
         return {
           agents: [
@@ -64,8 +67,23 @@ describe('Admin action helper copy', () => {
           ]
         };
       }
-      if (path === '/admin/api/v1/agents/42') {
-        return { id: 42, agent_code: 'AGT-42', detail: 'agent-detail' };
+      if (path.startsWith('/admin/api/v1/new-coins?')) {
+        return {
+          projects: [
+            { id: 7, asset_id: 11, symbol: 'HIP', lifecycle_status: 'distribution', status: 'active' },
+            { id: 8, asset_id: 22, symbol: 'OLD', lifecycle_status: 'listed', status: 'disabled' }
+          ]
+        };
+      }
+      if (path.startsWith('/admin/api/v1/users?')) {
+        return {
+          users: [{ id: 123, email: 'user@example.com', kyc_level: 1, status: 'active' }]
+        };
+      }
+      if (path.startsWith('/admin/api/v1/assets?')) {
+        return {
+          assets: [{ id: 12, name: 'Tether', symbol: 'USDT', status: 'active' }]
+        };
       }
 
       return {};
@@ -76,12 +94,18 @@ describe('Admin action helper copy', () => {
     vi.unstubAllGlobals();
   });
 
-  it('uses Semi controls and omits static helper copy on new coin actions', () => {
+  it('uses searchable references and omits static helper copy on new coin actions', async () => {
+    const user = userEvent.setup();
     render(<NewCoinActions />);
 
     expect(screen.getByText('新币生命周期动作')).toBeInTheDocument();
     expect(screen.getByText('生命周期流转')).toBeInTheDocument();
-    expect(screen.getAllByLabelText('项目ID')[0].closest('.semi-input-wrapper')).toBeInTheDocument();
+    await waitFor(() => expect(semiSelectByLabel('新币项目')).not.toHaveClass('semi-select-disabled'));
+    const projectSelect = semiSelectByLabel('新币项目');
+    await user.click(projectSelect);
+    expect(await screen.findByText('HIP · 派发中 · 启用（ID: 7）')).toBeInTheDocument();
+    const disabledProject = await screen.findByText('OLD · 已上市 · 禁用（ID: 8）');
+    expect(disabledProject.closest('.semi-select-option')).toHaveClass('semi-select-option-disabled');
     expect(semiSelectByLabel('目标阶段')).toHaveTextContent('申购中');
     expect(semiSelectByLabel('解禁类型')).toHaveTextContent('上市即解禁');
     expect(screen.getByRole('checkbox', { name: '启用矿工费' })).toBeInTheDocument();

@@ -164,14 +164,13 @@ async fn create_user_with_email(tx: &mut Transaction<'_, MySql>, email: String) 
 
 async fn create_admin(pool: &MySqlPool) -> u64 {
     let suffix = Uuid::now_v7().simple().to_string();
-    let role_id = sqlx::query(
-        "INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_ARRAY('margin:read'))",
-    )
-    .bind(format!("margin-role-{}", &suffix[16..32]))
-    .execute(pool)
-    .await
-    .unwrap()
-    .last_insert_id();
+    let role_id =
+        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_ARRAY('*'))")
+            .bind(format!("margin-role-{}", &suffix[16..32]))
+            .execute(pool)
+            .await
+            .unwrap()
+            .last_insert_id();
     sqlx::query("INSERT INTO admin_users (username, password_hash, role_id) VALUES (?, ?, ?)")
         .bind(format!("margin-admin-{}", &suffix[16..32]))
         .bind("not-a-real-hash")

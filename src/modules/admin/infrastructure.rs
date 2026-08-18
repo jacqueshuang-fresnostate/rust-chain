@@ -63,7 +63,10 @@ use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
 use std::{collections::BTreeSet, path::PathBuf};
 use uuid::Uuid;
 
+mod access_control;
 mod agents;
+mod config_center;
+mod config_changes;
 mod convert;
 mod dashboard_audit;
 mod margin;
@@ -77,7 +80,10 @@ mod system_config;
 mod users;
 mod wallet_assets;
 
+pub(crate) use self::access_control::*;
 pub(crate) use self::agents::*;
+pub(crate) use self::config_center::*;
+pub(crate) use self::config_changes::*;
 pub(crate) use self::convert::*;
 pub(crate) use self::dashboard_audit::*;
 pub(crate) use self::margin::*;

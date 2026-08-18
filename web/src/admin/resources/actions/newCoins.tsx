@@ -1,7 +1,8 @@
-import { Card, Space } from '@douyinfe/semi-ui';
+import { Button, Card, Space } from '@douyinfe/semi-ui';
 import { useState } from 'react';
 
 import { apiRequest } from '../../../api/client';
+import type { ApiRecord } from '../../../api/types';
 import { ConfirmAction } from '../../../shared/ConfirmAction';
 import { AdminSelect, AdminTextInput, type SemiSelectOption } from '../../../shared/SemiFormControls';
 import {
@@ -12,11 +13,32 @@ import {
   FormModal,
   booleanFromSelect,
   completeCreate,
+  recordString,
   requiredPositiveInteger,
   requiredString,
   submitAction,
   useAssetOptions
 } from './shared';
+
+export function newCoinProjectActionsPath(projectId: string): string {
+  return `/admin/new-coins/actions?project_id=${encodeURIComponent(projectId)}`;
+}
+
+export function NewCoinProjectRowActions({ record }: { record: ApiRecord }) {
+  const projectId = recordString(record, 'id');
+  return (
+    <Button
+      disabled={!projectId}
+      onClick={() => {
+        window.location.hash = newCoinProjectActionsPath(projectId);
+      }}
+      size="small"
+      theme="borderless"
+    >
+      配置与操作
+    </Button>
+  );
+}
 
 type NewCoinProjectValues = {
   assetId: string;

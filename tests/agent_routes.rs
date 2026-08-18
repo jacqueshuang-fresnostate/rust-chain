@@ -133,7 +133,7 @@ async fn create_admin_with_password(
 ) -> (u64, u64, String) {
     let role_name = format!("agent-route-role-{label}-{}", Uuid::now_v7().simple());
     let role_id =
-        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_OBJECT())")
+        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_ARRAY('*'))")
             .bind(role_name)
             .execute(pool)
             .await

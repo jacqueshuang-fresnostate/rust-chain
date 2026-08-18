@@ -200,7 +200,7 @@ async fn exercise_bootstrap_contract(pool: &MySqlPool, database_url: &str) -> Re
     ensure_bootstrap_lock_is_free(pool).await?;
 
     let reused_role_id =
-        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_OBJECT())")
+        sqlx::query("INSERT INTO admin_roles (name, permissions) VALUES (?, JSON_ARRAY('*'))")
             .bind("reused_role")
             .execute(pool)
             .await?

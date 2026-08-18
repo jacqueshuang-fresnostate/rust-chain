@@ -2,7 +2,7 @@
 //!
 //! 基础设施层：封装 SQLx、Redis、第三方接口和仓储实现。
 //!
-//! 本文件的函数分成三类。产品配置类直接用连接池自动提交，各自独立无事务约束。
+//! 本文件的函数分成三类。产品配置写入与后台审计共享应用层事务，读取列表仍直接使用连接池。
 //! 以 `_in_tx` 结尾或接收 `Transaction` 的函数不自行开启也不提交事务，
 //! 全部由应用层持有同一事务并统一提交或回滚，它们各自都不具备独立幂等性。
 //! 资金原语共四个方向：freeze 把 available 挪到 frozen，unfreeze 反向，
@@ -129,14 +129,13 @@ pub(crate) struct LoanOrderCreate {
     pub(crate) idempotency_key: String,
 }
 
-/// 以单条自动提交语句插入借贷产品配置，返回自增主键供调用方回读完整响应。
-/// 不使用事务，因此写入一旦成功就无法随后续步骤回滚；应用层的回读失败并不会撤销该产品。
+/// 在调用方事务内插入借贷产品配置，revision 使用数据库缺省值一，并返回自增主键供同事务回读。
 /// 多语言名称以 SQLx 的 Json 包装绑定，由驱动负责序列化，本函数不再校验其结构。
-/// 该入口只写产品表，不触达用户钱包、订单或抵押资金。
-/// 写入失败时不返回编号，调用方不得据此构造尚未持久化的产品响应。
-pub(crate) async fn insert_loan_product(
-    pool: &Pool<MySql>,
-    product: LoanProductWrite,
+/// 应用层必须在提交前回读后快照并写入管理员审计；任一步失败都让产品插入一并回滚。
+/// 该入口只写产品表，不触达用户钱包、订单或抵押资金，也不自行提交事务。
+pub(crate) async fn insert_loan_product_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    product: &LoanProductWrite,
 ) -> AppResult<u64> {
     let result = sqlx::query(
         r#"INSERT INTO loan_products
@@ -147,7 +146,7 @@ pub(crate) async fn insert_loan_product(
     .bind(&product.loan_type)
     .bind(product.asset_id)
     .bind(&product.name)
-    .bind(SqlxJson(product.name_json))
+    .bind(SqlxJson(product.name_json.clone()))
     .bind(product.term_days)
     .bind(&product.interest_rate)
     .bind(&product.interest_calculation_mode)
@@ -155,31 +154,30 @@ pub(crate) async fn insert_loan_product(
     .bind(&product.min_amount)
     .bind(&product.max_amount)
     .bind(&product.status)
-    .execute(pool)
+    .execute(&mut **tx)
     .await?;
     Ok(result.last_insert_id())
 }
 
-/// 整体覆盖指定产品的全部可配置列，语义是替换而非合并，调用方必须传齐所有字段。
-/// 以受影响行数判断目标是否存在，为零时返回 NotFound 而不会退化成插入新产品。
-/// sqlx 的 MySQL 连接启用了 CLIENT_FOUND_ROWS，因此新旧值完全相同的更新仍算命中一行。
-/// 单条自动提交语句，没有事务保护，更新成功后应用层回读失败不会撤销本次改动。
-/// 更新只作用于产品表，不会级联改写已创建订单快照的利率、期限、额度或抵押资金状态。
-pub(crate) async fn update_loan_product(
-    pool: &Pool<MySql>,
+/// 在持有产品行锁的调用方事务内整体覆盖配置，并以客户端 revision 作为条件把版本原子加一。
+/// `WHERE revision = ?` 是行锁之外的第二道并发保护；受影响行数为零按旧版本冲突处理，
+/// 调用方不得重试成无条件更新。既有订单的利率、期限、额度和抵押资金快照不会被改写。
+pub(crate) async fn update_loan_product_in_tx(
+    tx: &mut Transaction<'_, MySql>,
     product_id: u64,
-    product: LoanProductWrite,
+    expected_revision: u64,
+    product: &LoanProductWrite,
 ) -> AppResult<()> {
     let updated = sqlx::query(
         r#"UPDATE loan_products
            SET loan_type = ?, asset_id = ?, name_json = ?, name = ?, term_days = ?, interest_rate = ?,
                interest_calculation_mode = ?, min_kyc_level = ?, min_amount = ?,
-               max_amount = ?, status = ?
-           WHERE id = ?"#,
+               max_amount = ?, status = ?, revision = revision + 1
+           WHERE id = ? AND revision = ?"#,
     )
     .bind(&product.loan_type)
     .bind(product.asset_id)
-    .bind(SqlxJson(product.name_json))
+    .bind(SqlxJson(product.name_json.clone()))
     .bind(&product.name)
     .bind(product.term_days)
     .bind(&product.interest_rate)
@@ -189,31 +187,38 @@ pub(crate) async fn update_loan_product(
     .bind(&product.max_amount)
     .bind(&product.status)
     .bind(product_id)
-    .execute(pool)
+    .bind(expected_revision)
+    .execute(&mut **tx)
     .await?;
     if updated.rows_affected() == 0 {
-        return Err(AppError::NotFound);
+        return Err(AppError::Conflict(
+            "loan product revision is stale; reload before retrying".to_owned(),
+        ));
     }
     Ok(())
 }
 
-/// 只改写产品的上下架状态列，供运营快速停售而无需重传利率、期限和额度等完整配置。
-/// 与整体更新共用同一套「受影响行数为零即 NotFound」的判定，不会创建新产品。
-/// 状态取值的合法性由应用层先行校验，本函数原样绑定字符串不再复核枚举。
-/// 置为 disabled 只阻断后续下单，已 pending 的订单仍可被审批，已放款订单照常计息和还款。
-/// 单条自动提交语句，不迁移任何订单状态，也不移动钱包余额。
-pub(crate) async fn update_loan_product_status(
-    pool: &Pool<MySql>,
+/// 在持有产品行锁的事务内只改写上下架状态，并以客户端 revision 为条件把版本原子加一。
+/// 状态合法性由应用层先行校验；条件未命中按旧版本冲突处理，禁止无条件覆盖另一管理员的新结果。
+/// disabled 只阻断后续下单，已 pending 的订单仍可审批，已放款订单照常计息和还款。
+pub(crate) async fn update_loan_product_status_in_tx(
+    tx: &mut Transaction<'_, MySql>,
     product_id: u64,
+    expected_revision: u64,
     status: &str,
 ) -> AppResult<()> {
-    let updated = sqlx::query("UPDATE loan_products SET status = ? WHERE id = ?")
+    let updated = sqlx::query(
+        "UPDATE loan_products SET status = ?, revision = revision + 1 WHERE id = ? AND revision = ?",
+    )
         .bind(status)
         .bind(product_id)
-        .execute(pool)
+        .bind(expected_revision)
+        .execute(&mut **tx)
         .await?;
     if updated.rows_affected() == 0 {
-        return Err(AppError::NotFound);
+        return Err(AppError::Conflict(
+            "loan product revision is stale; reload before retrying".to_owned(),
+        ));
     }
     Ok(())
 }
@@ -273,11 +278,25 @@ fn loan_product_query_builder() -> QueryBuilder<'static, MySql> {
         r#"SELECT products.id, products.loan_type, products.asset_id, assets.symbol AS asset_symbol,
                   products.name, products.name_json, products.term_days, products.interest_rate,
                   products.interest_calculation_mode, products.min_kyc_level,
-                  products.min_amount, products.max_amount, products.status,
+                  products.min_amount, products.max_amount, products.status, products.revision,
                   products.created_at, products.updated_at
            FROM loan_products products
            INNER JOIN assets ON assets.id = products.asset_id"#,
     )
+}
+
+/// 基于统一产品投影构造主键详情查询，按调用方需要在末尾追加 `FOR UPDATE`。
+/// 详情、事务回读与锁行共享同一字段清单，revision 因而不会在某条路径遗漏；
+/// 所有主键均以绑定参数传入，锁行查询只允许在应用层已开启的配置事务中执行。
+fn loan_product_by_id_query(product_id: u64, for_update: bool) -> QueryBuilder<'static, MySql> {
+    let mut builder = loan_product_query_builder();
+    builder.push(" WHERE products.id = ");
+    builder.push_bind(product_id);
+    builder.push(" LIMIT 1");
+    if for_update {
+        builder.push(" FOR UPDATE");
+    }
+    builder
 }
 
 /// 向构建器追加产品筛选谓词，先写入恒真的 `WHERE 1 = 1` 以便后续条件一律用 AND 拼接。
@@ -300,8 +319,8 @@ fn push_loan_product_filters(
     }
 }
 
-/// 按编号读取单个产品的完整配置与资产符号，供创建、更新和详情三条路径共用回读。
-/// 这里写死了独立 SQL 而非复用列表构建器，字段清单需与列表查询手工保持同步。
+/// 按编号读取单个产品的完整配置、revision 与资产符号，供详情和事务外只读调用。
+/// 查询复用统一产品投影，列表与详情的字段清单不会因手工维护而漂移。
 /// 不加行锁，返回值只是即时快照，不能作为并发下单时的条款依据。
 /// 编号不存在或资产行缺失导致 INNER JOIN 落空时统一返回 NotFound。
 /// 返回的是产品表当前配置，不会覆盖任何订单中已经固化的贷款条款。
@@ -309,21 +328,78 @@ pub(crate) async fn load_loan_product_response(
     pool: &Pool<MySql>,
     product_id: u64,
 ) -> AppResult<LoanProductResponse> {
-    sqlx::query_as::<_, LoanProductResponse>(
-        r#"SELECT products.id, products.loan_type, products.asset_id, assets.symbol AS asset_symbol,
-                  products.name, products.name_json, products.term_days, products.interest_rate,
-                  products.interest_calculation_mode, products.min_kyc_level,
-                  products.min_amount, products.max_amount, products.status,
-                  products.created_at, products.updated_at
-           FROM loan_products products
-           INNER JOIN assets ON assets.id = products.asset_id
-           WHERE products.id = ?
-           LIMIT 1"#,
+    loan_product_by_id_query(product_id, false)
+        .build_query_as::<LoanProductResponse>()
+        .fetch_optional(pool)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
+/// 在产品配置事务内按主键回读最新响应，能看到本事务尚未提交的 revision 与字段更新。
+/// 本函数不加锁，调用方必须已通过创建或 `lock_loan_product_response_in_tx` 拥有该行的写入边界；
+/// 产品或关联资产不存在时返回 NotFound，并使配置与审计事务整体回滚。
+pub(crate) async fn load_loan_product_response_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    product_id: u64,
+) -> AppResult<LoanProductResponse> {
+    loan_product_by_id_query(product_id, false)
+        .build_query_as::<LoanProductResponse>()
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
+/// 以 `FOR UPDATE` 锁定贷款产品并返回变更前完整快照，所有更新与状态切换必须先走该入口。
+/// 行锁把并发管理写串行化，应用层随后比较客户端 revision，条件更新再提供第二道防覆盖保障。
+/// 锁定发生在任何产品写入与审计之前；目标不存在时返回 NotFound，不产生部分副作用。
+pub(crate) async fn lock_loan_product_response_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    product_id: u64,
+) -> AppResult<LoanProductResponse> {
+    loan_product_by_id_query(product_id, true)
+        .build_query_as::<LoanProductResponse>()
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
+/// 在贷款产品配置事务内追加管理员审计，操作人、原因、安全前后快照与请求关联信息原子落库。
+/// before/after 由表现层显式白名单生成并包含 revision，不得传入凭据、令牌或密钥明文；
+/// HTTP 请求之外没有 task-local 上下文时 IP/request_id 保持 NULL，审计失败会回滚对应配置变更。
+pub(crate) async fn insert_loan_product_audit_log_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    admin_id: u64,
+    action: &str,
+    product_id: u64,
+    before_json: Option<Value>,
+    after_json: Option<Value>,
+    reason: &str,
+) -> AppResult<()> {
+    let request_context = crate::infra::admin_request_context::current_admin_request_context();
+    sqlx::query(
+        r#"INSERT INTO admin_audit_logs
+           (admin_id, action, target_type, target_id, before_json, after_json, reason, ip, request_id)
+           VALUES (?, ?, 'loan_product', ?, ?, ?, ?, ?, ?)"#,
     )
-    .bind(product_id)
-    .fetch_optional(pool)
-    .await?
-    .ok_or(AppError::NotFound)
+    .bind(admin_id)
+    .bind(action)
+    .bind(product_id.to_string())
+    .bind(before_json.map(SqlxJson))
+    .bind(after_json.map(SqlxJson))
+    .bind(reason)
+    .bind(
+        request_context
+            .as_ref()
+            .and_then(|context| context.source_ip.as_deref()),
+    )
+    .bind(
+        request_context
+            .as_ref()
+            .map(|context| context.request_id.as_str()),
+    )
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 /// 读取指定用户的借贷订单列表，user_id 作为首个 WHERE 条件固定拼入，实现归属隔离。

@@ -1,10 +1,16 @@
 import { Card, Space, Typography, Toast } from '@douyinfe/semi-ui';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { ApiError, apiRequest } from '../../api/client';
 import { PageHeader } from '../../layouts/PageHeader';
 import { ConfirmAction } from '../../shared/ConfirmAction';
 import { AdminCheckbox, AdminSelect, AdminTextInput } from '../../shared/SemiFormControls';
+import {
+  AdminReferenceSelect,
+  type AdminReferenceOption,
+  isReferenceSelectable,
+  useAdminReferenceOptions
+} from '../referenceOptions';
 
 const { Title } = Typography;
 
@@ -89,11 +95,47 @@ async function submitAction(label: string, request: () => Promise<unknown>) {
   }
 }
 
+function projectIdFromLocation(): string {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+  const hashQuery = window.location.hash.includes('?') ? window.location.hash.split('?').slice(1).join('?') : '';
+  return new URLSearchParams(hashQuery || window.location.search).get('project_id')?.trim() ?? '';
+}
+
+function distributionProjectOptions(options: AdminReferenceOption[]): AdminReferenceOption[] {
+  return options.map((option) => {
+    if (option.disabled || option.lifecycleStatus === 'distribution') {
+      return option;
+    }
+    return {
+      ...option,
+      disabled: true,
+      disabledReason: '项目必须处于派发中才能执行后台派发'
+    };
+  });
+}
+
 export function NewCoinActions() {
   const [lifecycle, setLifecycle] = useState(initialLifecycle);
   const [distribute, setDistribute] = useState(initialDistribute);
   const [unlockRule, setUnlockRule] = useState(initialUnlockRule);
   const [unlockFee, setUnlockFee] = useState(initialUnlockFee);
+  const projectReferences = useAdminReferenceOptions('newCoinProject');
+  const userReferences = useAdminReferenceOptions('user');
+  const assetReferences = useAdminReferenceOptions('asset');
+  const distributableProjects = useMemo(() => distributionProjectOptions(projectReferences.options), [projectReferences.options]);
+  const linkedProjectId = useMemo(projectIdFromLocation, []);
+
+  useEffect(() => {
+    if (!linkedProjectId || !projectReferences.options.some((option) => option.value === linkedProjectId)) {
+      return;
+    }
+    setLifecycle((current) => (current.projectId ? current : { ...current, projectId: linkedProjectId }));
+    setDistribute((current) => (current.projectId ? current : { ...current, projectId: linkedProjectId }));
+    setUnlockRule((current) => (current.projectId ? current : { ...current, projectId: linkedProjectId }));
+    setUnlockFee((current) => (current.projectId ? current : { ...current, projectId: linkedProjectId }));
+  }, [linkedProjectId, projectReferences.options]);
 
   return (
     <main className="exchange-page admin-action-page">
@@ -103,7 +145,15 @@ export function NewCoinActions() {
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
             <Title heading={4}>生命周期流转</Title>
             <div className="admin-action-form">
-              <label>项目ID<AdminTextInput ariaLabel="项目ID" value={lifecycle.projectId} onChange={(projectId) => setLifecycle({ ...lifecycle, projectId })} /></label>
+              <AdminReferenceSelect
+                error={projectReferences.error}
+                label="新币项目"
+                loading={projectReferences.loading}
+                onChange={(projectId) => setLifecycle({ ...lifecycle, projectId })}
+                options={projectReferences.options}
+                placeholder="搜索项目符号或 ID"
+                value={lifecycle.projectId}
+              />
               <label>
                 目标阶段
                 <AdminSelect
@@ -122,6 +172,7 @@ export function NewCoinActions() {
             </div>
             <ConfirmAction
               actionText="更新生命周期"
+              disabled={!isReferenceSelectable(projectReferences.options, lifecycle.projectId)}
               title="确认更新新币生命周期"
               onConfirm={(reason) =>
                 submitAction('更新生命周期', () =>
@@ -139,14 +190,34 @@ export function NewCoinActions() {
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
             <Title heading={4}>后台派发</Title>
             <div className="admin-action-form">
-              <label>项目ID<AdminTextInput ariaLabel="项目ID" value={distribute.projectId} onChange={(projectId) => setDistribute({ ...distribute, projectId })} /></label>
-              <label>用户ID<AdminTextInput ariaLabel="用户ID" value={distribute.userId} onChange={(userId) => setDistribute({ ...distribute, userId })} /></label>
+              <AdminReferenceSelect
+                error={projectReferences.error}
+                label="派发项目"
+                loading={projectReferences.loading}
+                onChange={(projectId) => setDistribute({ ...distribute, projectId })}
+                options={distributableProjects}
+                placeholder="搜索处于派发中的项目"
+                value={distribute.projectId}
+              />
+              <AdminReferenceSelect
+                error={userReferences.error}
+                label="接收用户"
+                loading={userReferences.loading}
+                onChange={(userId) => setDistribute({ ...distribute, userId })}
+                options={userReferences.options}
+                placeholder="搜索用户邮箱、手机或 ID"
+                value={distribute.userId}
+              />
               <label>申购ID<AdminTextInput ariaLabel="申购ID" value={distribute.subscriptionId} onChange={(subscriptionId) => setDistribute({ ...distribute, subscriptionId })} /></label>
               <label>派发数量<AdminTextInput ariaLabel="派发数量" value={distribute.quantity} onChange={(quantity) => setDistribute({ ...distribute, quantity })} /></label>
               <label>幂等键<AdminTextInput ariaLabel="幂等键" value={distribute.idempotencyKey} onChange={(idempotencyKey) => setDistribute({ ...distribute, idempotencyKey })} /></label>
             </div>
             <ConfirmAction
               actionText="执行派发"
+              disabled={
+                !isReferenceSelectable(distributableProjects, distribute.projectId) ||
+                !isReferenceSelectable(userReferences.options, distribute.userId)
+              }
               title="确认执行新币派发"
               onConfirm={(reason) =>
                 submitAction('执行派发', () =>
@@ -170,7 +241,15 @@ export function NewCoinActions() {
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
             <Title heading={4}>解禁规则</Title>
             <div className="admin-action-form">
-              <label>项目ID<AdminTextInput ariaLabel="项目ID" value={unlockRule.projectId} onChange={(projectId) => setUnlockRule({ ...unlockRule, projectId })} /></label>
+              <AdminReferenceSelect
+                error={projectReferences.error}
+                label="新币项目"
+                loading={projectReferences.loading}
+                onChange={(projectId) => setUnlockRule({ ...unlockRule, projectId })}
+                options={projectReferences.options}
+                placeholder="搜索项目符号或 ID"
+                value={unlockRule.projectId}
+              />
               <label>
                 解禁类型
                 <AdminSelect
@@ -190,6 +269,7 @@ export function NewCoinActions() {
             </div>
             <ConfirmAction
               actionText="更新解禁规则"
+              disabled={!isReferenceSelectable(projectReferences.options, unlockRule.projectId)}
               title="确认更新解禁规则"
               onConfirm={(reason) =>
                 submitAction('更新解禁规则', () =>
@@ -213,7 +293,15 @@ export function NewCoinActions() {
           <Space align="start" spacing={16} vertical style={{ width: '100%' }}>
             <Title heading={4}>矿工费规则</Title>
             <div className="admin-action-form">
-              <label>项目ID<AdminTextInput ariaLabel="项目ID" value={unlockFee.projectId} onChange={(projectId) => setUnlockFee({ ...unlockFee, projectId })} /></label>
+              <AdminReferenceSelect
+                error={projectReferences.error}
+                label="新币项目"
+                loading={projectReferences.loading}
+                onChange={(projectId) => setUnlockFee({ ...unlockFee, projectId })}
+                options={projectReferences.options}
+                placeholder="搜索项目符号或 ID"
+                value={unlockFee.projectId}
+              />
               <label className="admin-action-checkbox"><AdminCheckbox checked={unlockFee.feeEnabled} onChange={(feeEnabled) => setUnlockFee({ ...unlockFee, feeEnabled })}>启用矿工费</AdminCheckbox></label>
               <label>费率<AdminTextInput ariaLabel="费率" value={unlockFee.feeRate} onChange={(feeRate) => setUnlockFee({ ...unlockFee, feeRate })} /></label>
               <label>
@@ -228,10 +316,24 @@ export function NewCoinActions() {
                   value={unlockFee.feeBasis}
                 />
               </label>
-              <label>费用资产ID<AdminTextInput ariaLabel="费用资产ID" value={unlockFee.feeAsset} onChange={(feeAsset) => setUnlockFee({ ...unlockFee, feeAsset })} /></label>
+              {unlockFee.feeEnabled ? (
+                <AdminReferenceSelect
+                  error={assetReferences.error}
+                  label="费用资产"
+                  loading={assetReferences.loading}
+                  onChange={(feeAsset) => setUnlockFee({ ...unlockFee, feeAsset })}
+                  options={assetReferences.options}
+                  placeholder="搜索资产符号或 ID"
+                  value={unlockFee.feeAsset}
+                />
+              ) : null}
             </div>
             <ConfirmAction
               actionText="更新矿工费"
+              disabled={
+                !isReferenceSelectable(projectReferences.options, unlockFee.projectId) ||
+                (unlockFee.feeEnabled && !isReferenceSelectable(assetReferences.options, unlockFee.feeAsset))
+              }
               title="确认更新矿工费规则"
               onConfirm={(reason) =>
                 submitAction('更新矿工费', () =>

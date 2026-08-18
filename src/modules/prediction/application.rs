@@ -4,7 +4,8 @@
 //! 本文件同时充当 Axum 处理器与用例编排：函数直接接收提取器，完成鉴权、参数归一化与校验，
 //! 再调用基础设施完成查询或事务，最后组装响应 DTO。
 //! 端点分三类：无需登录的市场浏览、需要用户令牌的报价与下单查单、需要管理员令牌的配置与结算。
-//! 用户身份一律从 `UserAuth` 的会话 subject 解析，管理员端点只验令牌不读身份。
+//! 用户身份一律从 `UserAuth` 的会话 subject 解析；管理员配置写端点还会从 `AdminAuth`
+//! 的 subject 解析管理员编号用于审计，其余管理员端点只验证令牌。
 //! 涉及资金的三个用例是创建报价、创建订单和人工结算，它们的原子性全部由基础设施的事务保证，
 //! 本层只负责在进入事务前把非法输入挡住，事务开始后不再介入。
 //! 后台配置类端点遵循「先归一化再校验再写入」的顺序，任一步失败都不会留下部分配置。
@@ -28,6 +29,7 @@ use axum::{
     extract::{Path, Query, State},
 };
 use chrono::Utc;
+use serde_json::{Value, json};
 use std::collections::HashSet;
 use tokio::time::sleep;
 
@@ -80,20 +82,22 @@ pub(crate) async fn get_admin_settings(
     )))
 }
 
-/// 校验结算模式、退款策略、非负费率、同步周期、报价 TTL 及资产存在性后保存后台设置。
-/// 保存只改变配置和同步参数，不结算市场或移动用户资金；任一校验/SQL 失败不返回部分配置。
+/// 校验原因、客户端 revision、结算策略、费率、同步周期、报价 TTL 及资产存在性后保存后台设置。
+/// 设置行锁、条件更新、revision 递增和 before/after 管理员审计必须在同一事务内完成，任一步失败整体回滚。
 /// 同步间隔下限 30 秒，与轮询周期对齐，防止把间隔配到比轮询还短而实际无法生效。
 /// 报价有效期必须落在 1 到 120 秒之间：为零会让报价一生成即失效，过长则让用户能长时间锁定旧赔率。
 /// 资产范围逐个校验存在且启用，任一非法即整体拒绝，不保存部分有效的列表。
 /// 标签与资产列表在写入前分别去空去重，因此重复填写不会污染配置。
 /// 写入是整体覆盖而非增量合并，调用方必须提交完整配置，遗漏字段会被入参值覆盖。
-/// 保存成功后回读完整设置返回，回读与写入不在同一事务，极端并发下可能读到他人刚保存的值。
+/// 客户端版本落后时返回 Conflict/409，既不覆盖新值也不追加一条误导性的审计记录。
 pub(crate) async fn save_admin_settings(
-    _auth: AdminAuth,
+    AdminAuth(claims): AdminAuth,
     State(state): State<AppState>,
     Json(request): Json<presentation::SavePredictionSettingsRequest>,
 ) -> AppResult<Json<presentation::PredictionSettingsResponse>> {
     let pool = infrastructure::mysql_pool(&state)?;
+    let admin_id = service::admin_id_from_subject(&claims.sub)?;
+    let reason = service::required_admin_reason(request.reason)?;
     let settlement_mode = service::normalize_settlement_mode(&request.default_settlement_mode)?;
     let refund_policy =
         service::normalize_invalid_refund_policy(&request.default_invalid_refund_policy)?;
@@ -111,23 +115,47 @@ pub(crate) async fn save_admin_settings(
     infrastructure::validate_asset_ids_exist(&pool, &request.allowed_asset_ids).await?;
     let sync_tags = service::normalize_string_list(request.sync_tags);
     let allowed_asset_ids = service::unique_u64_list(request.allowed_asset_ids);
+    let update = repository::PredictionSettingsUpdate {
+        sync_enabled: request.sync_enabled,
+        sync_interval_seconds: request.sync_interval_seconds,
+        sync_tags,
+        allowed_asset_ids,
+        default_fee_rate: request.default_fee_rate,
+        default_settlement_mode: settlement_mode,
+        default_invalid_refund_policy: refund_policy,
+        quote_ttl_seconds: request.quote_ttl_seconds,
+        expected_revision: request.revision,
+    };
 
-    infrastructure::save_admin_settings(
-        &pool,
-        request.sync_enabled,
-        request.sync_interval_seconds,
-        &sync_tags,
-        &allowed_asset_ids,
-        request.default_fee_rate,
-        settlement_mode,
-        refund_policy,
-        request.quote_ttl_seconds,
+    let mut tx = pool.begin().await?;
+    let before = infrastructure::load_settings_in_tx(&mut tx).await?;
+    if before.revision != update.expected_revision {
+        return Err(AppError::Conflict(
+            "prediction settings revision is stale".to_owned(),
+        ));
+    }
+    if !infrastructure::update_admin_settings_if_revision_in_tx(&mut tx, &update).await? {
+        return Err(AppError::Conflict(
+            "prediction settings revision is stale".to_owned(),
+        ));
+    }
+    let after = infrastructure::load_settings_in_tx(&mut tx).await?;
+    infrastructure::insert_prediction_admin_audit_in_tx(
+        &mut tx,
+        admin_id,
+        repository::PredictionAdminAuditEntry {
+            action: "prediction_settings.update",
+            target_type: "prediction_settings",
+            target_id: 1,
+            before_json: prediction_settings_audit_json(&before),
+            after_json: prediction_settings_audit_json(&after),
+            reason,
+        },
     )
     .await?;
+    tx.commit().await?;
 
-    Ok(Json(presentation::PredictionSettingsResponse::from(
-        infrastructure::load_settings(&pool).await?,
-    )))
+    Ok(Json(presentation::PredictionSettingsResponse::from(after)))
 }
 
 /// 返回后台预测资产配置及与之口径一致的总数，查询失败不拼接部分配置。
@@ -191,20 +219,26 @@ pub(crate) async fn get_user_config(
 }
 
 /// 以请求体中的资产编号新增或覆盖其下注启用状态与赔付上限；写入不移动任何用户资金。
-/// 资产存在性与上限非负两项校验由基础设施在写入前完成，本处理器不重复判断。
+/// 原因、管理员主体、非负上限和客户端 revision 在开启事务前校验，非法请求不会占用配置行锁。
 /// 与按路径编号的更新端点共用同一段落库逻辑，区别仅在资产编号从请求体还是路径取，
 /// 因此两个端点的语义与副作用完全等价，可按前端习惯任选。
 /// 上限为零表示不设封顶而非禁止赔付，停用资产应把启用标记置假。
+/// 首次配置使用 revision=0 并创建版本 1；既有配置旧版本返回 Conflict/409，且不会写审计。
 pub(crate) async fn upsert_admin_asset_config(
-    _auth: AdminAuth,
+    AdminAuth(claims): AdminAuth,
     State(state): State<AppState>,
     Json(request): Json<presentation::UpsertPredictionAssetConfigRequest>,
 ) -> AppResult<Json<presentation::PredictionAssetConfigResponse>> {
-    infrastructure::upsert_asset_config(
-        &infrastructure::mysql_pool(&state)?,
-        request.asset_id,
-        request.enabled,
-        request.max_payout_amount,
+    save_admin_asset_config_use_case(
+        &state,
+        &claims.sub,
+        request.reason,
+        repository::PredictionAssetConfigUpdate {
+            asset_id: request.asset_id,
+            enabled: request.enabled,
+            max_payout_amount: request.max_payout_amount,
+            expected_revision: request.revision,
+        },
     )
     .await
     .map(Json)
@@ -212,23 +246,101 @@ pub(crate) async fn upsert_admin_asset_config(
 
 /// 以路径段中的资产编号新增或覆盖其下注启用状态与赔付上限；校验失败不保存部分字段。
 /// 请求体只含启用标记与上限两项，资产编号取自路径，因此不存在两处编号冲突的可能。
-/// 名为更新但底层是 upsert：资产尚无配置行时会新建而不是返回 `NotFound`，
-/// 这使前端可以对任意启用资产直接调用本端点而无需先创建。
+/// 名为更新但仍支持 revision=0 的首次配置：资产尚无配置行时会新建而不是返回 `NotFound`。
 /// 两个字段整体覆盖，调用方必须同时提交当前的启用状态与上限。
+/// 业务行、revision 与 before/after 审计同事务提交，旧 revision 不得覆盖其他管理员的新值。
 pub(crate) async fn update_admin_asset_config(
-    _auth: AdminAuth,
+    AdminAuth(claims): AdminAuth,
     State(state): State<AppState>,
     Path(asset_id): Path<u64>,
     Json(request): Json<presentation::UpdatePredictionAssetConfigRequest>,
 ) -> AppResult<Json<presentation::PredictionAssetConfigResponse>> {
-    infrastructure::upsert_asset_config(
-        &infrastructure::mysql_pool(&state)?,
-        asset_id,
-        request.enabled,
-        request.max_payout_amount,
+    save_admin_asset_config_use_case(
+        &state,
+        &claims.sub,
+        request.reason,
+        repository::PredictionAssetConfigUpdate {
+            asset_id,
+            enabled: request.enabled,
+            max_payout_amount: request.max_payout_amount,
+            expected_revision: request.revision,
+        },
     )
     .await
     .map(Json)
+}
+
+/// 统一执行 POST/PATCH 两条预测资产配置写路径，保证原因、版本、锁序和审计语义不会分叉。
+/// 事务先锁 assets 权威行及可选配置，再比较客户端 revision，随后条件写入、回读 after、追加审计并提交。
+/// 任一数据库或审计失败会回滚；旧版本返回 Conflict，首次创建与后续更新分别记录 create/update 动作。
+async fn save_admin_asset_config_use_case(
+    state: &AppState,
+    admin_subject: &str,
+    reason: Option<String>,
+    update: repository::PredictionAssetConfigUpdate,
+) -> AppResult<presentation::PredictionAssetConfigResponse> {
+    let admin_id = service::admin_id_from_subject(admin_subject)?;
+    let reason = service::required_admin_reason(reason)?;
+    service::ensure_non_negative_decimal(&update.max_payout_amount, "max_payout_amount")?;
+    let pool = infrastructure::mysql_pool(state)?;
+    let mut tx = pool.begin().await?;
+    let before = infrastructure::lock_admin_asset_config_in_tx(&mut tx, update.asset_id).await?;
+    if before.revision != update.expected_revision {
+        return Err(AppError::Conflict(
+            "prediction asset config revision is stale".to_owned(),
+        ));
+    }
+    if !infrastructure::save_admin_asset_config_if_revision_in_tx(&mut tx, &update).await? {
+        return Err(AppError::Conflict(
+            "prediction asset config revision is stale".to_owned(),
+        ));
+    }
+    let after = infrastructure::load_admin_asset_config_in_tx(&mut tx, update.asset_id).await?;
+    infrastructure::insert_prediction_admin_audit_in_tx(
+        &mut tx,
+        admin_id,
+        repository::PredictionAdminAuditEntry {
+            action: if before.revision == 0 {
+                "prediction_asset_config.create"
+            } else {
+                "prediction_asset_config.update"
+            },
+            target_type: "prediction_asset_config",
+            target_id: update.asset_id,
+            before_json: prediction_asset_config_audit_json(&before),
+            after_json: prediction_asset_config_audit_json(&after),
+            reason,
+        },
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(presentation::PredictionAssetConfigResponse::from(after))
+}
+
+/// 生成预测全局设置的审计白名单快照，只包含可编辑配置与 revision，不记录同步错误原文或任何凭据字段。
+fn prediction_settings_audit_json(row: &repository::PredictionSettingsRow) -> Value {
+    json!({
+        "sync_enabled": row.sync_enabled,
+        "sync_interval_seconds": row.sync_interval_seconds,
+        "sync_tags": service::json_string_array(&row.sync_tags_json),
+        "allowed_asset_ids": service::json_u64_array(&row.allowed_asset_ids_json),
+        "default_fee_rate": row.default_fee_rate.to_string(),
+        "default_settlement_mode": row.default_settlement_mode,
+        "default_invalid_refund_policy": row.default_invalid_refund_policy,
+        "quote_ttl_seconds": row.quote_ttl_seconds,
+        "revision": row.revision,
+    })
+}
+
+/// 生成单个预测资产配置的审计白名单快照；时间字段不参与配置差异，revision=0 明确表示此前尚无实体配置行。
+fn prediction_asset_config_audit_json(row: &repository::PredictionAssetConfigRow) -> Value {
+    json!({
+        "asset_id": row.asset_id,
+        "asset_symbol": row.asset_symbol,
+        "enabled": row.enabled,
+        "max_payout_amount": row.max_payout_amount.to_string(),
+        "revision": row.revision,
+    })
 }
 
 /// 返回用户可浏览的预测市场列表，可见性条件直接写进 SQL 而非在内存里过滤。

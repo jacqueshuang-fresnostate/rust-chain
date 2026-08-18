@@ -1,0 +1,108 @@
+.admin-dashboard-environment {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.admin-dashboard-audit-card {
+  grid-column: 1 / -1;
+  min-height: 0;
+}
+
+.admin-dashboard-audit-content {
+  display: grid;
+  width: 100%;
+  gap: var(--admin-space-lg);
+}
+
+.admin-dashboard-audit-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--admin-space-lg);
+}
+
+.admin-dashboard-audit-heading h4 {
+  margin: 0 0 var(--admin-space-xs);
+}
+
+.admin-dashboard-audit-link {
+  flex: 0 0 auto;
+  color: var(--admin-color-primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.admin-dashboard-audit-link:hover {
+  color: var(--admin-color-primary-hover);
+  text-decoration: underline;
+}
+
+.admin-dashboard-audit-link:focus-visible {
+  border-radius: var(--admin-radius-sm);
+  outline: 2px solid var(--admin-color-primary);
+  outline-offset: 3px;
+}
+
+.admin-dashboard-audit-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--admin-color-border);
+  border-radius: var(--admin-radius-sm);
+  list-style: none;
+}
+
+.admin-dashboard-audit-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--admin-space-xl);
+  padding: var(--admin-space-md) var(--admin-space-lg);
+  border-bottom: 1px solid var(--admin-color-border);
+}
+
+.admin-dashboard-audit-item:last-child {
+  border-bottom: 0;
+}
+
+.admin-dashboard-audit-copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--admin-space-xs);
+  overflow-wrap: anywhere;
+}
+
+.admin-dashboard-audit-item time {
+  color: var(--admin-color-text-secondary);
+  white-space: nowrap;
+}
+
+.admin-dashboard-audit-empty {
+  min-height: 96px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--admin-color-border-strong);
+  border-radius: var(--admin-radius-sm);
+  color: var(--admin-color-text-secondary);
+}
+
+@media (max-width: 640px) {
+  .admin-dashboard-audit-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .admin-dashboard-audit-link {
+    align-self: flex-start;
+  }
+
+  .admin-dashboard-audit-item {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--admin-space-sm);
+  }
+
+  .admin-dashboard-audit-item time {
+    white-space: normal;
+  }
+}

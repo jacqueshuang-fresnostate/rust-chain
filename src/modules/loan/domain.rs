@@ -39,3 +39,6 @@ pub const STATUS_OVERDUE: &str = "overdue";
 
 /// 多语言产品标题的最大长度，按字符数而非字节数计算，中英文使用同一口径。
 pub const LOAN_PRODUCT_NAME_TITLE_MAX_LEN: usize = 128;
+
+/// 贷款产品后台变更原因的最大字符数，与 `admin_audit_logs.reason` 的 512 字符容量保持一致。
+pub const LOAN_PRODUCT_AUDIT_REASON_MAX_LEN: usize = 512;
