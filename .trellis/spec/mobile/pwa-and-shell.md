@@ -228,8 +228,9 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   left order form plus right 148px five-ask/mid/five-bid book, a truthful account
   state, and a collapsed local-chart entry. The spot route keeps the five-entry
   dock but must not mount `RootHeader`; `RootHeader` is limited to Home,
-  Markets, Assets, and Profile. Contract mode may retain its dedicated existing
-  workspace and must not be merged into the Pencil spot branch.
+  Markets, Assets, and Profile. Margin/contract mode owns the separately
+  selected `cjzfi` (light) and `p6GfgT` (dark) workspace and must not be merged
+  into the Pencil spot branch.
 - Spot fields put the visible focus border and ring on the complete field shell.
   The nested input must have no border, outline, or inset focus shadow. Live
   market status text uses the global `.sr-only` utility and must remain clipped
@@ -349,18 +350,39 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   plain decimal field with a 44px BBO action: long uses best ask, short uses best
   bid, and only an absent side falls back to the latest ticker. Invalid or
   over-precision input has a visible localized error and cannot open review.
-- The contract order console keeps its two-column information architecture but
-  gives open/close, mode/leverage, BBO, percentage, available-asset, and
-  long/short controls one cool-neutral layered surface language. Selected,
-  `:focus-visible`, pressed, disabled, and reduced-motion states must remain
-  structurally distinct in both themes. Press feedback may translate by 1px
-  only when motion is allowed; it must not change layout geometry.
-- Contract percentage controls use a real minimum 44x44 target and may wrap
-  inside the form column rather than shrinking below the touch contract. The
-  margin field exposes the current localized minimum/maximum range, clears the
-  selected percentage after manual input, and uses `aria-invalid`,
-  `aria-errormessage`, a visible field border, and an announced localized reason
-  for invalid values. These additions must not alter the selected Spot template.
+- The selected margin main frame is measured at 390px: a safe-area-aware 58px
+  sticky header, a 460px module with `14 / 202 / 10 / 150 / 14` horizontal
+  geometry, a 450px order console/book, and a 44px local workspace tab row.
+  Header order is back, backend Logo plus pair/status/live quote, chart, and
+  more; favorite lives in the more menu rather than consuming header width.
+  The 390px geometry is exact, while widths above 390px keep the 202px form
+  column and let the live book consume the remaining space; widths below 360px
+  use the dedicated compact columns rather than clipping either side.
+- The 202px margin console follows the selected absolute track: open/close
+  `top 0 / h30`, settings `36 / 32`, price+BBO `74 / 56`, margin `136 / 46`,
+  percentage `188 / 32`, available `226 / 13`, TP/SL `245 / 16`, long summary
+  `267 / 28`, long action `301 / 42`, short summary `349 / 28`, and short action
+  `383 / 42`. The parallel 150px book renders six asks, latest price, seven
+  bids, B/S ratio, and precision using the existing live detail session.
+- Contract percentage is the selected five-stop discrete slider
+  `0/25/50/75/100`; its visual rail stays 32px high while each option owns a
+  44px-high transparent pointer/focus area. It does not wrap into the retired
+  three-column button grid. Manual input clears selection and retains the
+  localized min/max range, `aria-invalid`, `aria-errormessage`, visible field
+  border, and announced failure reason.
+- The local workspace defaults to Positions/Assets and keeps pending limit
+  orders separate. Positions show backend Logo, direction/mode/leverage,
+  service risk metrics, current-pair filtering, two-step single/bulk close, and
+  a history route. Unsupported strategy and TP/SL states stay explicitly
+  disabled. Batch HTTP success still inspects backend failures before showing
+  an all-success message.
+- Selected, `:focus-visible`, pressed, disabled, and reduced-motion states stay
+  structurally distinct in both themes. Programmatic scroll-to-positions uses
+  `auto` under reduced motion; state feedback must not move the fixed module
+  geometry or alter the selected Spot template. The Header more menu moves
+  focus to its first item, supports Arrow/Home/End navigation, closes on
+  Escape, and restores focus to the trigger; a translucent menu without those
+  keyboard semantics is not an acceptable visual-only implementation.
 - The login Turnstile uses Cloudflare explicit rendering with `size: flexible`,
   the current application light/dark theme, and the current mobile locale. Its
   centered stage may widen to 302px inside a 320px viewport so the official
@@ -637,13 +659,12 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   spot branch and the dedicated contract branch; contract additionally asserts
   real Logo/pair/direction/settings/form-derived values, in-panel API failure,
   busy dismissal lock, warm risk notice, and reduced-motion ownership.
-- Contract order-console controls: compile the scoped CSS and assert 44x44
-  percentage/asset targets, at least 44px primary actions, shared layered
-  surface/border/shadow roles, filled selected states, complete external focus
-  rings, 1px normal-motion press feedback, disabled elevation removal, and a
-  reduced-motion transform override. At 320x720, 390x844, and 448x900 in both
-  themes assert zero document overflow and visible margin range/error plus both
-  primary actions.
+- Margin Pencil parity: assert `cjzfi/p6GfgT`, the exact 390px header/module/
+  console/book/tab geometry above, six asks/seven bids, five slider stops, and
+  backend Logo/rate/capability/risk bindings. At 320x720, 390x920, and 448x900
+  in both themes assert zero document overflow, sticky header z-index 70,
+  visible long/short actions, reduced-motion scroll behavior, and no fabricated
+  order, strategy, balance, or risk values.
 - Contract order type: prove backend-only option rendering, market-first/first-
   real fallback, trigger-only open, explicit selection, non-mutating backdrop/
   close/Escape, focus trap/return, body scroll lock, market read-only price,

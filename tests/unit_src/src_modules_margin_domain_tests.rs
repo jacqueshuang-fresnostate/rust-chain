@@ -1,6 +1,7 @@
 use super::{
-    CrossMarginPositionRisk, MarginOrderType, allocate_cross_margin_payouts, evaluate_cross_margin,
-    margin_limit_order_is_triggered, margin_position_payout_amount, validate_margin_limit_price,
+    CrossMarginPositionRisk, MarginOrderType, MarginPositionDisplayInput,
+    allocate_cross_margin_payouts, evaluate_cross_margin, margin_limit_order_is_triggered,
+    margin_position_display_metrics, margin_position_payout_amount, validate_margin_limit_price,
 };
 use bigdecimal::BigDecimal;
 use std::str::FromStr;
@@ -61,6 +62,72 @@ fn position_payout_deducts_interest_and_never_returns_a_negative_amount() {
         margin_position_payout_amount(&decimal("100"), None, &decimal("3")),
         decimal("0.000000000000000000")
     );
+}
+
+#[test]
+fn position_display_metrics_match_isolated_long_risk_geometry() {
+    let margin_amount = decimal("20");
+    let notional_amount = decimal("100");
+    let interest_amount = decimal("1.5");
+    let entry_price = decimal("100");
+    let mark_price = decimal("84");
+    let unrealized_pnl = decimal("-16");
+    let equity = decimal("2.5");
+    let maintenance_margin = decimal("5");
+    let metrics = margin_position_display_metrics(MarginPositionDisplayInput {
+        margin_mode: "isolated",
+        direction: "long",
+        margin_amount: &margin_amount,
+        notional_amount: &notional_amount,
+        interest_amount: &interest_amount,
+        entry_price: &entry_price,
+        mark_price: &mark_price,
+        unrealized_pnl: &unrealized_pnl,
+        equity: &equity,
+        maintenance_margin: &maintenance_margin,
+    })
+    .unwrap();
+
+    assert_eq!(metrics.position_quantity, decimal("1.000000000000000000"));
+    assert_eq!(metrics.return_rate, Some(decimal("-0.800000000000000000")));
+    assert_eq!(metrics.margin_ratio, Some(decimal("0.500000000000000000")));
+    assert_eq!(
+        metrics.estimated_liquidation_price,
+        Some(decimal("86.500000000000000000"))
+    );
+    assert_eq!(
+        metrics.liquidation_distance_rate,
+        Some(decimal("0.029761904761904761"))
+    );
+}
+
+#[test]
+fn position_display_metrics_do_not_invent_cross_liquidation_price() {
+    let margin_amount = decimal("20");
+    let notional_amount = decimal("100");
+    let interest_amount = decimal("1");
+    let entry_price = decimal("100");
+    let mark_price = decimal("110");
+    let unrealized_pnl = decimal("-10");
+    let equity = decimal("9");
+    let maintenance_margin = decimal("5");
+    let metrics = margin_position_display_metrics(MarginPositionDisplayInput {
+        margin_mode: "cross",
+        direction: "short",
+        margin_amount: &margin_amount,
+        notional_amount: &notional_amount,
+        interest_amount: &interest_amount,
+        entry_price: &entry_price,
+        mark_price: &mark_price,
+        unrealized_pnl: &unrealized_pnl,
+        equity: &equity,
+        maintenance_margin: &maintenance_margin,
+    })
+    .unwrap();
+
+    assert_eq!(metrics.position_quantity, decimal("1.000000000000000000"));
+    assert_eq!(metrics.estimated_liquidation_price, None);
+    assert_eq!(metrics.liquidation_distance_rate, None);
 }
 
 #[test]

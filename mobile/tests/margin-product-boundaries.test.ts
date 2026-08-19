@@ -181,7 +181,7 @@ test('后端最小与最大竞态错误被稳定识别并转换为对称本地�
   assert.match(tradeSource, /const requestVersion = \+\+marginProductsRequestVersion[\s\S]*?requestVersion !== marginProductsRequestVersion[\s\S]*?if \(!options\.preserveExistingOnError\) \{[\s\S]*?products\.value = \[\]/)
 })
 
-test('杠杆快捷、设置、BBO、资产与主操作共用 44px 触控、层级和交互状态', () => {
+test('杠杆快捷、设置、BBO、资产与主操作遵守 Pencil 几何和完整交互状态', () => {
   const compiled = compileStyle({
     source: tradeCss,
     filename: 'TradeView.vue',
@@ -190,27 +190,29 @@ test('杠杆快捷、设置、BBO、资产与主操作共用 44px 触控、层�
   })
   assert.deepEqual(compiled.errors, [])
 
-  assert.match(cssRule('.contract-percentage'), /min-height: 92px;/)
-  assert.match(cssRule('.contract-trade .contract-percentage .percent-row'), /grid-auto-rows: 44px;/)
-  assert.match(cssRule('.contract-trade .contract-percentage .percent-row'), /grid-template-columns: repeat\(3, minmax\(44px, 1fr\)\);/)
-  assert.match(cssRule('.contract-percentage button'), /height: 44px;/)
-  assert.match(cssRule('.contract-percentage button'), /min-width: 44px;/)
-  assert.match(cssRule('.contract-percentage button::before'), /var\(--contract-control-surface\)/)
-  assert.match(cssRule('.contract-percentage button::before'), /var\(--contract-control-shadow\)/)
-  assert.match(cssRule('.contract-percentage button.active::before'), /border-color: color-mix/)
-  assert.doesNotMatch(tradeCss, /\.contract-percentage \{[^}]*height: 14px;/s)
+  assert.match(cssRule('.contract-percentage'), /height: 32px;/)
+  assert.match(cssRule('.contract-percentage'), /top: 188px;/)
+  assert.match(cssRule('.contract-trade .contract-percentage .percent-row'), /grid-template-columns: repeat\(5, minmax\(0, 1fr\)\);/)
+  assert.match(cssRule('.contract-trade .contract-percentage .percent-row'), /height: 32px;/)
+  assert.match(cssRule('.contract-percentage button,\n.contract-trade .contract-percentage .percent-row button'), /height: 44px;/)
+  assert.match(cssRule('.contract-percentage button,\n.contract-trade .contract-percentage .percent-row button'), /min-height: 44px;/)
+  assert.match(cssRule('.contract-percentage button::before'), /background: var\(--contract-surface\);/)
+  assert.match(cssRule('.contract-percentage button::before'), /border: 2px solid var\(--contract-line-strong\);/)
+  assert.match(cssRule('.contract-percentage button.passed::before,\n.contract-percentage button.active::before'), /background: var\(--contract-accent\);/)
+  assert.match(cssRule('.contract-trade .contract-percentage .percent-row button::after'), /height: 44px;/)
+  assert.match(cssRule('.contract-trade .contract-percentage .percent-row button::after'), /width: 44px;/)
 
-  assert.match(cssRule('.contract-mode-row button::before,\n.contract-order-type::before'), /var\(--contract-control-surface\)/)
-  assert.match(cssRule('.contract-price-row > button'), /height: 44px;/)
-  assert.match(cssRule('.contract-price-row > button'), /var\(--contract-control-shadow\)/)
-  assert.match(cssRule('.contract-balance-rows .contract-balance-action'), /height: 44px;/)
-  assert.match(cssRule('.contract-balance-control'), /overflow: visible;/)
-  assert.match(tradeSource, /class="numeric contract-balance-control"/)
-  assert.match(cssRule('.contract-submit'), /height: 46px;/)
-  assert.match(cssRule('.contract-submit'), /box-shadow:/)
-
-  assert.match(tradeCss, /:active:not\(:disabled\) \{[\s\S]*?transform: translateY\(1px\);/)
-  assert.match(tradeCss, /:disabled \{[\s\S]*?cursor: not-allowed;[\s\S]*?opacity: \.58;[\s\S]*?transform: none;/)
+  assert.match(cssRule('.contract-mode-row button,\n.contract-order-type'), /height: 32px;/)
+  assert.match(cssRule('.contract-price-row > button'), /height: 56px;/)
+  assert.match(cssRule('.contract-amount-field input'), /height: 44px;/)
+  assert.match(cssRule('.contract-header-control'), /height: 44px;/)
+  assert.match(cssRule('.contract-header-control'), /width: 44px;/)
+  assert.match(cssRule('.contract-position-tabs button'), /height: 44px;/)
+  assert.match(cssRule('.contract-submit'), /height: 42px;/)
+  assert.match(cssRule('.contract-submit--long,\n.contract-trade .contract-submit--long.submit-order'), /top: 301px;/)
+  assert.match(cssRule('.contract-submit--short'), /top: 383px;/)
+  assert.match(cssRule('.contract-submit:disabled'), /opacity: \.62;/)
+  assert.match(cssRule('.contract-header-control:active:not(:disabled)'), /transform: scale\(\.94\);/)
   assert.match(tradeCss, /\.contract-pencil-header button:focus-visible,[\s\S]*?outline: 2px solid var\(--focus\);[\s\S]*?outline-offset: 2px;/)
   assert.match(tradeCss, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.trade-view button:active,[\s\S]*?transform: none;/)
   assert.match(tradeCss, /\.trade-view \.contract-header-control:active:not\(:disabled\),[\s\S]*?\.trade-view \.contract-pencil-module button:active:not\(:disabled\) \{\s*transform: none;\s*\}/)

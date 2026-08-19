@@ -33,7 +33,9 @@ interface BackendMarginProduct {
   id: number
   pair_id?: number
   symbol: string
+  margin_asset?: string | number
   margin_asset_symbol?: string
+  logo_url?: string | null
   margin_mode?: string
   margin_modes?: string[] | string
   leverage_levels?: string[] | string
@@ -41,11 +43,17 @@ interface BackendMarginProduct {
   min_margin?: string | number
   max_margin?: string | number | null
   price_precision?: string | number
+  maintenance_margin_rate?: string | number
+  hourly_interest_rate?: string | number
 }
 
 interface BackendMarginTradingCapabilities {
   margin_modes?: string[] | string
   order_types?: string[] | string
+  take_profit_stop_loss?: boolean
+  strategy_orders?: boolean
+  bulk_close?: boolean
+  position_risk?: boolean
 }
 
 export interface SpotOrder {
@@ -64,10 +72,12 @@ export interface MarginPosition {
   id: string
   productId: number
   pairId: number
+  marginAssetId: number
   direction: 'long' | 'short'
   marginMode: 'cross' | 'isolated'
   marginAmount: number
   notionalAmount: number
+  borrowedAmount: number
   leverage: number
   orderType: MarginOrderType
   entryPrice: number | null
@@ -81,6 +91,52 @@ export interface MarginPosition {
 export interface MarginWallets {
   wallets: WalletAccount[]
   positions: MarginPosition[]
+  crossAccounts: MarginCrossAccount[]
+}
+
+export interface MarginCrossAccount {
+  marginAssetId: number
+  status: string
+  equity: number
+  unrealizedPnl: number
+  interestAmount: number
+  maintenanceMargin: number
+  marginRatio: number | null
+}
+
+export interface MarginPositionRisk {
+  positionId: string
+  pairId: number
+  symbol: string
+  marginAssetId: number
+  direction: 'long' | 'short'
+  marginAmount: number
+  notionalAmount: number
+  interestAmount: number
+  entryPrice: number
+  markPrice: number
+  maintenanceMarginRate: number
+  unrealizedPnl: number
+  equity: number
+  maintenanceMargin: number
+  positionQuantity: number
+  returnRate: number | null
+  marginRatio: number | null
+  estimatedLiquidationPrice: number | null
+  liquidationDistanceRate: number | null
+  shouldLiquidate: boolean
+  observedAt?: number
+}
+
+export interface MarginBatchActionFailure {
+  id: string
+  code: string
+  message: string
+}
+
+export interface MarginBatchActionResult {
+  positions: MarginPosition[]
+  failures: MarginBatchActionFailure[]
 }
 
 export async function placeSpotOrder(input: SpotOrderInput): Promise<void> {
@@ -154,7 +210,9 @@ export async function fetchMarginProducts(): Promise<MarginProduct[]> {
       id: product.id,
       pairId: asNumber(product.pair_id),
       symbol: `${pair.base}/${pair.quote}`,
+      marginAssetId: asNumber(product.margin_asset),
       marginAssetSymbol: (product.margin_asset_symbol || pair.quote).toUpperCase(),
+      logoUrl: String(product.logo_url || '').trim() || undefined,
       marginMode: modes[0] || 'isolated',
       marginModes: modes,
       orderTypes: [...orderTypes],
@@ -163,6 +221,12 @@ export async function fetchMarginProducts(): Promise<MarginProduct[]> {
       maxLeverage: asNumber(product.max_leverage, levels.at(-1) || 1),
       minMargin: marginLimits.minMargin,
       maxMargin: marginLimits.maxMargin,
+      maintenanceMarginRate: asNumber(product.maintenance_margin_rate),
+      hourlyInterestRate: asNumber(product.hourly_interest_rate),
+      takeProfitStopLossSupported: response.data.capabilities?.take_profit_stop_loss === true,
+      strategyOrdersSupported: response.data.capabilities?.strategy_orders === true,
+      bulkCloseSupported: response.data.capabilities?.bulk_close === true,
+      positionRiskSupported: response.data.capabilities?.position_risk === true,
     }
   })
 }
@@ -197,7 +261,11 @@ export async function fetchMarginPositions(status?: string, limit = 30): Promise
 }
 
 export async function fetchMarginWallets(): Promise<MarginWallets> {
-  const response = await client.get<{ wallets?: Array<Record<string, unknown>>; positions?: Array<Record<string, unknown>> }>(requestUrl('/margin/wallets'))
+  const response = await client.get<{
+    wallets?: Array<Record<string, unknown>>
+    positions?: Array<Record<string, unknown>>
+    cross_accounts?: Array<Record<string, unknown>>
+  }>(requestUrl('/margin/wallets'))
   return {
     wallets: (response.data.wallets || []).map((wallet) => ({
       assetId: asNumber(wallet.asset_id),
@@ -209,6 +277,51 @@ export async function fetchMarginWallets(): Promise<MarginWallets> {
       locked: asNumber(wallet.locked),
     })),
     positions: (response.data.positions || []).map(mapMarginPosition),
+    crossAccounts: (response.data.cross_accounts || []).map((account) => ({
+      marginAssetId: asNumber(account.margin_asset),
+      status: String(account.status || ''),
+      equity: asNumber(account.equity),
+      unrealizedPnl: asNumber(account.unrealized_pnl),
+      interestAmount: asNumber(account.interest_amount),
+      maintenanceMargin: asNumber(account.maintenance_margin),
+      marginRatio: optionalNumber(account.margin_ratio),
+    })),
+  }
+}
+
+/**
+ * 读取单个已成交仓位的服务端即时风险快照。
+ *
+ * 页面不得用该接口替代钱包/仓位列表，也不得把请求失败解释为零风险；失败时保留仓位并显示
+ * 占位符。所有后端 DECIMAL 仅在这一展示适配层转换为 number，不再参与提交请求。
+ */
+export async function fetchMarginPositionRisk(positionId: string): Promise<MarginPositionRisk> {
+  const response = await client.get<{ risk?: Record<string, unknown> }>(
+    requestUrl(`/margin/positions/${encodeURIComponent(positionId)}/risk`),
+  )
+  const risk = response.data.risk || {}
+  return {
+    positionId: String(risk.position_id ?? positionId),
+    pairId: asNumber(risk.pair_id),
+    symbol: String(risk.symbol || ''),
+    marginAssetId: asNumber(risk.margin_asset),
+    direction: String(risk.direction || '').toLowerCase() === 'short' ? 'short' : 'long',
+    marginAmount: asNumber(risk.margin_amount),
+    notionalAmount: asNumber(risk.notional_amount),
+    interestAmount: asNumber(risk.interest_amount),
+    entryPrice: asNumber(risk.entry_price),
+    markPrice: asNumber(risk.mark_price),
+    maintenanceMarginRate: asNumber(risk.maintenance_margin_rate),
+    unrealizedPnl: asNumber(risk.unrealized_pnl ?? risk.realized_pnl),
+    equity: asNumber(risk.equity),
+    maintenanceMargin: asNumber(risk.maintenance_margin),
+    positionQuantity: asNumber(risk.position_quantity),
+    returnRate: optionalNumber(risk.return_rate),
+    marginRatio: optionalNumber(risk.margin_ratio),
+    estimatedLiquidationPrice: optionalNumber(risk.estimated_liquidation_price),
+    liquidationDistanceRate: optionalNumber(risk.liquidation_distance_rate),
+    shouldLiquidate: risk.should_liquidate === true,
+    observedAt: normalizeTimestamp(risk.observed_at),
   }
 }
 
@@ -220,12 +333,20 @@ export async function cancelMarginPosition(positionId: string): Promise<void> {
   await client.post(requestUrl(`/margin/positions/${encodeURIComponent(positionId)}/cancel`), {})
 }
 
-export async function closeAllMarginPositions(productId?: number): Promise<void> {
-  await client.post(requestUrl('/margin/positions/close-all'), { product_id: productId || undefined })
+export async function closeAllMarginPositions(productId?: number): Promise<MarginBatchActionResult> {
+  const response = await client.post<{
+    positions?: Array<Record<string, unknown>>
+    failures?: Array<Record<string, unknown>>
+  }>(requestUrl('/margin/positions/close-all'), { product_id: productId || undefined })
+  return mapMarginBatchAction(response.data)
 }
 
-export async function cancelAllMarginPositions(productId?: number): Promise<void> {
-  await client.post(requestUrl('/margin/positions/cancel-all'), { product_id: productId || undefined })
+export async function cancelAllMarginPositions(productId?: number): Promise<MarginBatchActionResult> {
+  const response = await client.post<{
+    positions?: Array<Record<string, unknown>>
+    failures?: Array<Record<string, unknown>>
+  }>(requestUrl('/margin/positions/cancel-all'), { product_id: productId || undefined })
+  return mapMarginBatchAction(response.data)
 }
 
 export async function updateMarginLeverage(productId: number, leverage: number): Promise<void> {
@@ -301,10 +422,12 @@ function mapMarginPosition(position: Record<string, unknown>): MarginPosition {
     id: String(position.id),
     productId: asNumber(position.product_id),
     pairId: asNumber(position.pair_id),
+    marginAssetId: asNumber(position.margin_asset),
     direction: String(position.direction || '').toLowerCase() === 'short' ? 'short' : 'long',
     marginMode: String(position.margin_mode || 'isolated').toLowerCase() === 'cross' ? 'cross' : 'isolated',
     marginAmount: asNumber(position.margin_amount),
     notionalAmount: asNumber(position.notional_amount),
+    borrowedAmount: asNumber(position.borrowed_amount),
     leverage: asNumber(position.leverage, 1),
     orderType: String(position.order_type || '').trim().toLowerCase() === 'limit' ? 'limit' : 'market',
     entryPrice: optionalNumber(position.entry_price),
@@ -312,6 +435,20 @@ function mapMarginPosition(position: Record<string, unknown>): MarginPosition {
     realizedPnl: asNumber(position.realized_pnl),
     interestAmount: asNumber(position.interest_amount),
     status: String(position.status || 'open'),
+  }
+}
+
+function mapMarginBatchAction(payload: {
+  positions?: Array<Record<string, unknown>>
+  failures?: Array<Record<string, unknown>>
+}): MarginBatchActionResult {
+  return {
+    positions: (payload.positions || []).map(mapMarginPosition),
+    failures: (payload.failures || []).map((failure) => ({
+      id: String(failure.id || ''),
+      code: String(failure.code || ''),
+      message: String(failure.message || ''),
+    })),
   }
 }
 

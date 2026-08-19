@@ -9,25 +9,31 @@ const tradeSource = read('../src/views/TradeView.vue')
 const sheetsSource = read('../src/components/ContractTradeSheets.vue')
 const orderBookSource = read('../src/components/OrderBookPanel.vue')
 const tradingApiSource = read('../src/api/trading.ts')
+const ordersSource = read('../src/views/OrdersView.vue')
 
 test('当前八张 Pencil 杠杆画板均由生产页面声明', () => {
-  assert.match(tradeSource, /data-pencil-source="by3G9 pKHeU"/)
+  assert.match(tradeSource, /data-pencil-source="cjzfi p6GfgT"/)
   assert.match(sheetsSource, /data-pencil-source="f0L8yf R8t0p aNuw6 PKAcD Crw8v YuKtQ"/)
 })
 
-test('杠杆主页面使用真实交易对图标并在当前页打开三个选择弹层', () => {
-  assert.match(tradeSource, /<AssetMark :symbol="baseAsset" :src="ticker\?\.iconUrl" :fallback-src="ticker\?\.baseIconUrl" :size="24"/)
+test('杠杆主页面使用后台产品图标并在当前页打开四个选择弹层', () => {
+  assert.match(tradeSource, /<AssetMark :symbol="baseAsset" :src="selectedProduct\?\.logoUrl \|\| ticker\?\.iconUrl" :fallback-src="ticker\?\.baseIconUrl" :size="28"/)
   assert.match(tradeSource, /@click="openContractSheet\('pair'\)"/)
   assert.match(tradeSource, /@click="openContractSheet\('marginMode'\)"/)
   assert.match(tradeSource, /@click="openContractSheet\('leverage'\)"/)
+  assert.match(tradeSource, /@click="openContractSheet\('orderType'\)"/)
   assert.match(tradeSource, /<ContractTradeSheets[\s\S]*?:product="selectedProduct"[\s\S]*?:products="products"/)
   assert.match(tradeSource, /@select-pair="selectContractPair"/)
   assert.match(tradeSource, /router\.replace\(\{[\s\S]*?name: 'trade',[\s\S]*?query: \{ mode: 'contract' \}/)
   assert.match(tradeSource, /t\('trade\.bestBidOffer'\)/)
-  assert.match(tradeSource, /t\('trade\.fundingAndCountdown'\)/)
-  assert.match(tradeSource, /:mini-levels="6"/)
-  assert.match(tradeSource, /:show-mini-precision="false"/)
-  assert.match(orderBookSource, /miniLevels\?: number/)
+  assert.match(tradeSource, /t\('trade\.hourlyInterestAndCycle'\)/)
+  assert.match(tradeSource, /:mini-ask-levels="6"/)
+  assert.match(tradeSource, /:mini-bid-levels="7"/)
+  assert.match(tradeSource, /:mini-precision="contractBookPrecision"/)
+  assert.match(tradeSource, /:show-mini-precision="true"/)
+  assert.match(orderBookSource, /miniAskLevels\?: number/)
+  assert.match(orderBookSource, /miniBidLevels\?: number/)
+  assert.match(orderBookSource, /miniPrecision\?: string/)
   assert.match(orderBookSource, /showMiniPrecision\?: boolean/)
   assert.match(orderBookSource, /renderedMiniAsks/)
   assert.match(orderBookSource, /renderedMiniBids/)
@@ -35,19 +41,24 @@ test('杠杆主页面使用真实交易对图标并在当前页打开三个选�
 })
 
 test('杠杆主页面保留所选 Pencil 主结构并升级金融操作触控尺寸', () => {
-  assert.match(tradeSource, /\.contract-pencil-header \{[^}]*height: 61px;/s)
-  assert.match(tradeSource, /\.contract-pencil-module \{[^}]*gap: 12px;[^}]*grid-template-columns: minmax\(0, 1fr\) 150px;[^}]*padding: 2px 16px 4px;/s)
-  assert.match(tradeSource, /\.contract-open-close \{[^}]*height: 38px;[^}]*padding: 4px;/s)
-  assert.match(tradeSource, /\.contract-mode-row \{[^}]*height: 36px;/s)
-  assert.match(tradeSource, /\.contract-price-row \{[^}]*grid-template-columns: minmax\(0, 1fr\) 62px;/s)
-  assert.match(tradeSource, /\.contract-amount-field \{[^}]*height: 40px;/s)
-  assert.match(tradeSource, /\.contract-percentage \{[^}]*min-height: 92px;/s)
-  assert.match(tradeSource, /\.contract-trade \.contract-percentage \.percent-row \{[^}]*grid-auto-rows: 44px;[^}]*grid-template-columns: repeat\(3, minmax\(44px, 1fr\)\);/s)
-  assert.match(tradeSource, /\.contract-percentage button \{[^}]*height: 44px;[^}]*min-width: 44px;/s)
-  assert.match(tradeSource, /\.contract-balance-rows \{[^}]*gap: 4px;[^}]*grid-template-rows: 44px 18px;/s)
-  assert.match(tradeSource, /\.contract-submit \{[^}]*border-radius: 23px;[^}]*height: 46px;/s)
-  assert.match(tradeSource, /\.contract-trade \.trade-chart-panel \{[^}]*height: 372px;/s)
-  assert.match(tradeSource, /\.contract-position-tabs \{[^}]*height: 37px;[^}]*padding: 8px 20px 4px;/s)
+  assert.match(tradeSource, /\.contract-pencil-header \{[^}]*height: calc\(58px \+ env\(safe-area-inset-top\)\);[^}]*padding: env\(safe-area-inset-top\) 14px 0;/s)
+  assert.match(tradeSource, /\.contract-pencil-module \{[^}]*gap: 10px;[^}]*grid-template-columns: 202px minmax\(150px, 1fr\);[^}]*height: 460px;[^}]*padding: 2px 14px 8px;/s)
+  assert.match(tradeSource, /\.contract-open-close \{[^}]*height: 30px;[^}]*padding: 2px;[^}]*top: 0;/s)
+  assert.match(tradeSource, /\.contract-mode-row \{[^}]*grid-template-columns: 54px 48px minmax\(0, 1fr\);[^}]*height: 32px;[^}]*top: 36px;/s)
+  assert.match(tradeSource, /\.contract-price-row \{[^}]*grid-template-columns: minmax\(0, 138px\) 58px;[^}]*height: 56px;[^}]*top: 74px;/s)
+  assert.match(tradeSource, /\.contract-amount-field \{[^}]*height: 46px;[^}]*top: 136px;/s)
+  assert.match(tradeSource, /\.contract-percentage \{[^}]*height: 32px;[^}]*top: 188px;/s)
+  assert.match(tradeSource, /\.contract-trade \.contract-percentage \.percent-row \{[^}]*grid-template-columns: repeat\(5, minmax\(0, 1fr\)\);[^}]*height: 32px;/s)
+  assert.match(tradeSource, /\.contract-percentage button,[\s\S]*?height: 44px;[\s\S]*?min-height: 44px;/)
+  assert.match(tradeSource, /\.contract-available-row \{[^}]*height: 13px;[^}]*top: 226px;/s)
+  assert.match(tradeSource, /\.contract-tpsl \{[^}]*height: 16px;[^}]*top: 245px;/s)
+  assert.match(tradeSource, /\.contract-open-meta--long \{ top: 267px; \}/)
+  assert.match(tradeSource, /\.contract-open-meta--short \{ top: 349px; \}/)
+  assert.match(tradeSource, /\.contract-submit \{[^}]*border-radius: 21px;[^}]*height: 42px;/s)
+  assert.match(tradeSource, /\.contract-submit--long,[^}]*top: 301px;/s)
+  assert.match(tradeSource, /\.contract-submit--short \{[^}]*top: 383px;/s)
+  assert.match(tradeSource, /\.contract-trade \.trade-chart-panel \{[^}]*height: 450px;/s)
+  assert.match(tradeSource, /\.contract-position-tabs \{[^}]*height: 44px;[^}]*min-height: 44px;[^}]*padding: 0 10px 0 14px;/s)
 })
 
 test('交易对弹层只组合后端杠杆产品、自选与实时行情数据', () => {
@@ -56,7 +67,7 @@ test('交易对弹层只组合后端杠杆产品、自选与实时行情数据',
   assert.match(sheetsSource, /marketFavorites\.isFavorite\(row\.product\.symbol\)/)
   assert.match(sheetsSource, /sort\(\(left, right\) => \(right\.ticker\?\.volume \|\| 0\) - \(left\.ticker\?\.volume \|\| 0\)\)/)
   assert.match(sheetsSource, /v-for="row in filteredPairRows"/)
-  assert.match(sheetsSource, /<AssetMark :symbol="row\.pair\.base" :src="row\.ticker\?\.iconUrl" :fallback-src="row\.ticker\?\.baseIconUrl"/)
+  assert.match(sheetsSource, /<AssetMark :symbol="row\.pair\.base" :src="row\.product\.logoUrl \|\| row\.ticker\?\.iconUrl" :fallback-src="row\.ticker\?\.baseIconUrl"/)
   assert.match(sheetsSource, /row\.ticker \? formatPrice\(row\.ticker\.lastPrice\) : '--'/)
   assert.match(sheetsSource, /v-if="productsLoading" class="contract-pair-state"/)
   assert.match(sheetsSource, /v-else-if="productsError" class="contract-pair-state" role="alert"/)
@@ -78,6 +89,53 @@ test('用户保存的保证金模式和杠杆倍数由后端设置接口驱动',
   assert.match(tradeSource, /await updateMarginMode\(product\.id, nextMode\)/)
   assert.match(tradeSource, /createMarginOrderReview\(\{[\s\S]*?marginMode: marginMode\.value,[\s\S]*?leverage: leverage\.value/)
   assert.match(tradeSource, /placeMarginOrder\(review\.request\)/)
+})
+
+test('公开产品、能力、钱包和风险 DTO 被杠杆工作区完整消费', () => {
+  const productLoader = tradeSource.slice(
+    tradeSource.indexOf('async function loadMarginProducts'),
+    tradeSource.indexOf('function applyMarginProductDefaults'),
+  )
+  assert.match(productLoader, /await fetchMarginProducts\(\)/)
+  assert.doesNotMatch(productLoader, /session\.isAuthenticated/)
+
+  assert.match(tradingApiSource, /margin_asset\?: string \| number/)
+  assert.match(tradingApiSource, /logo_url\?: string \| null/)
+  assert.match(tradingApiSource, /maintenance_margin_rate\?: string \| number/)
+  assert.match(tradingApiSource, /hourly_interest_rate\?: string \| number/)
+  assert.match(tradingApiSource, /take_profit_stop_loss\?: boolean/)
+  assert.match(tradingApiSource, /strategy_orders\?: boolean/)
+  assert.match(tradingApiSource, /bulk_close\?: boolean/)
+  assert.match(tradingApiSource, /position_risk\?: boolean/)
+  assert.match(tradingApiSource, /crossAccounts: \(response\.data\.cross_accounts \|\| \[\]\)\.map/)
+  assert.match(tradingApiSource, /requestUrl\(`\/margin\/positions\/\$\{encodeURIComponent\(positionId\)\}\/risk`\)/)
+  for (const field of [
+    'unrealized_pnl',
+    'position_quantity',
+    'return_rate',
+    'margin_ratio',
+    'estimated_liquidation_price',
+    'liquidation_distance_rate',
+  ]) {
+    assert.match(tradingApiSource, new RegExp(field))
+  }
+  assert.match(tradingApiSource, /function mapMarginBatchAction[\s\S]*?positions:[\s\S]*?failures:/)
+  assert.match(tradeSource, /const result = await closeAllMarginPositions[\s\S]*?result\.failures\.length[\s\S]*?positionsPartiallyClosed/)
+  assert.match(ordersSource, /const result = await cancelAllMarginPositions\(\)[\s\S]*?result\.failures\.length[\s\S]*?batchCancelPartial/)
+  assert.match(ordersSource, /const result = await closeAllMarginPositions\(\)[\s\S]*?result\.failures\.length[\s\S]*?batchClosePartial/)
+  assert.match(tradeSource, /:disabled="!selectedProduct\?\.strategyOrdersSupported"/)
+  assert.match(tradeSource, /if \(tab === 'strategy' && !selectedProduct\.value\?\.strategyOrdersSupported\) return/)
+  assert.match(tradeSource, /marginRiskRefreshTimer = window\.setInterval[\s\S]*?loadMarginPositionRisks\(\)[\s\S]*?5_000/)
+  assert.match(tradeSource, /window\.clearInterval\(marginRiskRefreshTimer\)/)
+})
+
+test('Header 更多菜单支持键盘打开、循环导航、Escape 关闭和焦点恢复', () => {
+  assert.match(tradeSource, /ref="contractMoreButton"[\s\S]*?@keydown="handleContractMoreButtonKeydown"/)
+  assert.match(tradeSource, /ref="contractMoreMenu"[\s\S]*?role="menu"[\s\S]*?@keydown="handleContractMoreKeydown"/)
+  assert.match(tradeSource, /event\.key === 'Escape'[\s\S]*?closeContractMore\(\)/)
+  assert.match(tradeSource, /event\.key === 'ArrowDown'[\s\S]*?event\.key === 'ArrowUp'/)
+  assert.match(tradeSource, /contractMoreButton\.value\?\.focus\(\)/)
+  assert.match(tradeSource, /backdrop-filter: blur\(18px\) saturate\(135%\)/)
 })
 
 test('倍数与保证金模式仅暴露当前产品配置的真实选项', () => {

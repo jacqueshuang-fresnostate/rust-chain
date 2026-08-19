@@ -605,11 +605,15 @@ fn validate_decimal_storage(
 
 /// 返回后端在杠杆上下文中真实实现的能力集：订单类型支持市价和限价，保证金模式支持逐仓和全仓。
 /// 这份清单是硬编码的实现事实而非配置，用户侧和后台的产品列表都会附带它，
-/// 前端据此决定是否渲染限价输入框和模式切换，禁止对客户端宣称尚未实现的下单类型。
+/// 前端据此决定是否渲染限价输入框、模式切换和持仓操作，禁止对客户端宣称尚未实现的策略或止盈止损。
 pub(crate) fn margin_trading_capabilities() -> MarginTradingCapabilitiesResponse {
     // 两种保证金模式共用市价/限价能力，前端必须以此集合而不是本地假设决定可选项。
     MarginTradingCapabilitiesResponse {
         order_types: vec!["market".to_owned(), "limit".to_owned()],
         margin_modes: vec!["isolated".to_owned(), "cross".to_owned()],
+        take_profit_stop_loss: false,
+        strategy_orders: false,
+        bulk_close: true,
+        position_risk: true,
     }
 }

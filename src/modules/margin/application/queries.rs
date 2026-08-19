@@ -10,6 +10,7 @@ use super::support::{normalized_position_status, optional_string, route_limit, r
 use crate::{
     error::{AppError, AppResult},
     modules::margin::{
+        domain::{MarginPositionDisplayInput, margin_position_display_metrics},
         infrastructure::{
             cached_margin_risk_ticker, list_admin_interest_summary, list_admin_margin_positions,
             list_margin_wallet_accounts, list_user_cross_margin_accounts,
@@ -177,6 +178,19 @@ pub(crate) async fn get_margin_position_risk_snapshot(
         &ticker.last_price,
         &position.maintenance_margin_rate,
     )?;
+    let display_metrics = margin_position_display_metrics(MarginPositionDisplayInput {
+        margin_mode: &position.margin_mode,
+        direction: &position.direction,
+        margin_amount: &position.margin_amount,
+        notional_amount: &position.notional_amount,
+        interest_amount: &position.interest_amount,
+        entry_price: &entry_price,
+        mark_price: &ticker.last_price,
+        unrealized_pnl: &risk_state.realized_pnl,
+        equity: &risk_state.equity,
+        maintenance_margin: &risk_state.maintenance_margin,
+    })
+    .map_err(|message| AppError::Validation(message.to_owned()))?;
     Ok(MarginRiskSnapshotResponse {
         risk: MarginRiskSnapshot {
             position_id: position.id,
@@ -190,9 +204,15 @@ pub(crate) async fn get_margin_position_risk_snapshot(
             entry_price,
             mark_price: ticker.last_price,
             maintenance_margin_rate: position.maintenance_margin_rate,
+            unrealized_pnl: risk_state.realized_pnl.clone(),
             realized_pnl: risk_state.realized_pnl,
             equity: risk_state.equity,
             maintenance_margin: risk_state.maintenance_margin,
+            position_quantity: display_metrics.position_quantity,
+            return_rate: display_metrics.return_rate,
+            margin_ratio: display_metrics.margin_ratio,
+            estimated_liquidation_price: display_metrics.estimated_liquidation_price,
+            liquidation_distance_rate: display_metrics.liquidation_distance_rate,
             should_liquidate: risk_state.should_liquidate,
             observed_at: ticker.observed_at,
         },

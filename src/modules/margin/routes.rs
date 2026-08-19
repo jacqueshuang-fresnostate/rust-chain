@@ -105,10 +105,10 @@ pub fn admin_routes() -> Router<AppState> {
         .route("/margin/positions/:id", get(get_admin_position))
         .route("/margin/interest/summary", get(list_admin_interest_summary))
 }
-/// 返回用户可见的启用杠杆产品清单及后端真实支持的下单类型与保证金模式能力集。
-/// 只校验登录态而不使用用户标识，因为产品配置对所有已登录用户一致；`limit` 会被夹到 1 到 100。
+/// 公开返回启用杠杆产品清单及后端真实支持的下单、模式和持仓能力集。
+/// 产品配置不含用户资金或设置，因此允许访客在登录前浏览；钱包、风险和所有写入口仍分别要求 `UserAuth`。
+/// `limit` 会被夹到 1 到 100，停用产品由应用层固定过滤。
 async fn list_active_products(
-    UserAuth(_claims): UserAuth,
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
 ) -> AppResult<Json<MarginProductsResponse>> {

@@ -180,6 +180,14 @@ pub(crate) struct AdminMarginProductsResponse {
 pub(crate) struct MarginTradingCapabilitiesResponse {
     pub(crate) order_types: Vec<String>,
     pub(crate) margin_modes: Vec<String>,
+    /// 是否已实现止盈止损委托；当前仅声明能力，不允许客户端自行假设支持。
+    pub(crate) take_profit_stop_loss: bool,
+    /// 是否已实现策略委托；false 时客户端必须展示不可用状态而不是模拟订单。
+    pub(crate) strategy_orders: bool,
+    /// 是否支持按当前用户或产品批量平掉已成交仓位。
+    pub(crate) bulk_close: bool,
+    /// 是否提供按最新服务端行情计算的单仓风险快照。
+    pub(crate) position_risk: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -391,9 +399,26 @@ pub(crate) struct MarginRiskSnapshot {
     pub(crate) entry_price: BigDecimal,
     pub(crate) mark_price: BigDecimal,
     pub(crate) maintenance_margin_rate: BigDecimal,
+    /// 按标记价计算的浮动盈亏；这是页面展示应使用的准确业务名称。
+    pub(crate) unrealized_pnl: BigDecimal,
+    /// 兼容旧客户端的历史字段名，值与 `unrealized_pnl` 完全相同。
     pub(crate) realized_pnl: BigDecimal,
     pub(crate) equity: BigDecimal,
     pub(crate) maintenance_margin: BigDecimal,
+    /// 名义价值除以入场价得到的基础资产持仓数量。
+    pub(crate) position_quantity: BigDecimal,
+    /// 浮动盈亏除以投入保证金；分母无效时返回 null。
+    #[serde(default, serialize_with = "serialize_optional_decimal_amount")]
+    pub(crate) return_rate: Option<BigDecimal>,
+    /// 当前权益除以维持保证金；维持保证金为零时返回 null。
+    #[serde(default, serialize_with = "serialize_optional_decimal_amount")]
+    pub(crate) margin_ratio: Option<BigDecimal>,
+    /// 逐仓模式下按当前产品维持保证金率估算的强平价格；全仓返回 null。
+    #[serde(default, serialize_with = "serialize_optional_decimal_amount")]
+    pub(crate) estimated_liquidation_price: Option<BigDecimal>,
+    /// 标记价到预估强平价的绝对距离占标记价比例；无独立强平价时返回 null。
+    #[serde(default, serialize_with = "serialize_optional_decimal_amount")]
+    pub(crate) liquidation_distance_rate: Option<BigDecimal>,
     pub(crate) should_liquidate: bool,
     #[serde(with = "unix_millis")]
     pub(crate) observed_at: DateTime<Utc>,

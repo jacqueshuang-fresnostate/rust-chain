@@ -159,7 +159,7 @@ test('根栏目保持既有首页行情，并让现货、合约、资产与我�
     'class="spot-account-workspace"',
     'class="spot-chart-entry"',
     'class="contract-pencil-surface"',
-    'data-pencil-source="by3G9 pKHeU"',
+    'data-pencil-source="cjzfi p6GfgT"',
     'class="contract-pencil-header"',
     'class="contract-pencil-module"',
   ])

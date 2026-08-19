@@ -5,16 +5,19 @@ import { useI18n } from 'vue-i18n'
 import {
   ArrowLeft,
   ArrowLeftRight,
+  CandlestickChart,
   CheckCircle2,
   ChevronDown,
   CirclePlus,
   Download,
+  Ellipsis,
   History,
   Info,
   Inbox,
   List,
   RefreshCcw,
   Share2,
+  SlidersHorizontal,
   Star,
   TriangleAlert,
   X,
@@ -36,13 +39,19 @@ import {
   type MarketKlineInterval,
 } from '@/api/marketSocketProtocol'
 import {
+  cancelMarginPosition,
+  closeAllMarginPositions,
+  closeMarginPosition,
   createMarginOrderIdempotencyKey,
+  fetchMarginPositionRisk,
   fetchMarginSetting,
   fetchMarginProducts,
   fetchMarginWallets,
   placeMarginOrder,
   placeSpotOrder,
+  type MarginCrossAccount,
   type MarginPosition,
+  type MarginPositionRisk,
   updateMarginLeverage,
   updateMarginMode,
 } from '@/api/trading'
@@ -97,7 +106,9 @@ const marginMode = ref<'cross' | 'isolated'>('isolated')
 const products = ref<MarginProduct[]>([])
 const spotWallets = ref<WalletAccount[]>([])
 const marginWallets = ref<WalletAccount[]>([])
+const marginCrossAccounts = ref<MarginCrossAccount[]>([])
 const marginPositions = ref<MarginPosition[]>([])
+const marginRiskSnapshots = ref<Record<string, MarginPositionRisk>>({})
 const bids = ref<OrderBookLevel[]>([])
 const asks = ref<OrderBookLevel[]>([])
 const points = ref<KlinePoint[]>([])
@@ -126,9 +137,22 @@ const confirmOpen = ref(false)
 const confirmDialog = ref<HTMLElement | null>(null)
 const reviewButton = ref<HTMLButtonElement | null>(null)
 const reviewedMarginOrder = ref<MarginOrderReview | null>(null)
+const contractOpenMode = ref<'open' | 'close'>('open')
+const contractWorkspaceTab = ref<'orders' | 'positions' | 'strategy'>('positions')
+const currentPairOnly = ref(true)
+const contractMoreOpen = ref(false)
+const contractMoreButton = ref<HTMLButtonElement | null>(null)
+const contractMoreMenu = ref<HTMLElement | null>(null)
+const contractWorkspace = ref<HTMLElement | null>(null)
+const positionActionSaving = ref<string | null>(null)
+const armedPositionAction = ref<{ id: string; type: 'close' | 'cancel' } | null>(null)
+const bulkCloseArmed = ref(false)
+const bulkCloseSaving = ref(false)
 let marketRequestVersion = 0
 let marginProductsRequestVersion = 0
 let marginSettingRequestVersion = 0
+let marginRiskRequestVersion = 0
+let marginRiskRefreshTimer: number | undefined
 let viewActive = true
 const { trapFocus: trapSpotOrderTypeFocus } = useModalDialog(
   spotOrderTypeOpen,
@@ -152,23 +176,25 @@ const spotVisibleBalances = computed(() => spotWallets.value.filter((wallet) => 
   && wallet.available + wallet.frozen + wallet.locked > 0
 )))
 const selectedProduct = computed(() => products.value.find((product) => normalizeSymbol(product.symbol) === normalizeSymbol(pairSymbol.value)))
+const filledMarginPositions = computed(() => marginPositions.value.filter((position) => (
+  !['closed', 'liquidated', 'cancelled', 'canceled'].includes(position.status.toLowerCase())
+  && isFilledMarginPosition(position)
+)))
+const pendingMarginOrders = computed(() => marginPositions.value.filter((position) => (
+  !['closed', 'liquidated', 'cancelled', 'canceled'].includes(position.status.toLowerCase())
+  && isPendingMarginPosition(position)
+)))
 const visibleMarginPositions = computed(() => {
   const product = selectedProduct.value
+  if (!currentPairOnly.value) return filledMarginPositions.value
   if (!product) return []
-  return marginPositions.value
-    .filter((position) => (
-      position.productId === product.id
-      && !['closed', 'liquidated', 'cancelled', 'canceled'].includes(position.status.toLowerCase())
-      && isFilledMarginPosition(position)
-    ))
-    .slice(0, 3)
+  return filledMarginPositions.value.filter((position) => position.productId === product.id)
 })
 const visiblePendingMarginOrders = computed(() => {
   const product = selectedProduct.value
+  if (!currentPairOnly.value) return pendingMarginOrders.value
   if (!product) return []
-  return marginPositions.value.filter((position) => (
-    position.productId === product.id && isPendingMarginPosition(position)
-  ))
+  return pendingMarginOrders.value.filter((position) => position.productId === product.id)
 })
 const currentPrice = computed(() => ticker.value?.lastPrice ?? 0)
 const isLive = computed(() => currentPrice.value > 0 && (!marketStore.error || liveDetailActive.value))
@@ -244,9 +270,16 @@ const contractShortcutAvailable = computed(() => marginShortcutAvailable(
   availableBalance.value,
   selectedProduct.value?.maxMargin,
 ))
-const contractOpenQuantity = computed(() => {
-  if (currentPrice.value <= 0) return 0
-  return (contractShortcutAvailable.value * leverage.value) / currentPrice.value
+const contractBookPrecision = computed(() => {
+  const precision = selectedProduct.value?.pricePrecision
+  if (precision === null || precision === undefined) return '--'
+  if (precision <= 6) return (10 ** -precision).toFixed(precision)
+  return `1e-${precision}`
+})
+const contractInterestSummary = computed(() => {
+  const rate = selectedProduct.value?.hourlyInterestRate
+  if (rate === undefined || !Number.isFinite(rate)) return '-- / --'
+  return `${(rate * 100).toFixed(4)}% / 1h`
 })
 const marginRangeDescription = computed(() => {
   const product = selectedProduct.value
@@ -421,7 +454,7 @@ async function refreshIntervalKlines(selectedInterval: MarketKlineInterval): Pro
 
 async function loadMarginProducts(options: { preserveExistingOnError?: boolean } = {}): Promise<void> {
   const requestVersion = ++marginProductsRequestVersion
-  if (mode.value !== 'contract' || !session.isAuthenticated) {
+  if (mode.value !== 'contract') {
     marginSettingRequestVersion += 1
     products.value = []
     contractOrderType.value = null
@@ -436,7 +469,6 @@ async function loadMarginProducts(options: { preserveExistingOnError?: boolean }
     if (
       requestVersion !== marginProductsRequestVersion
       || mode.value !== 'contract'
-      || !session.isAuthenticated
     ) return
     products.value = nextProducts
     const nextSelected = nextProducts.find((product) => (
@@ -493,7 +525,9 @@ async function loadTradingBalances(): Promise<void> {
   if (!session.isAuthenticated) {
     spotWallets.value = []
     marginWallets.value = []
+    marginCrossAccounts.value = []
     marginPositions.value = []
+    marginRiskSnapshots.value = {}
     balancesLoading.value = false
     balancesError.value = false
     return
@@ -504,14 +538,18 @@ async function loadTradingBalances(): Promise<void> {
     if (mode.value === 'contract') {
       const margin = await fetchMarginWallets()
       marginWallets.value = margin.wallets
+      marginCrossAccounts.value = margin.crossAccounts
       marginPositions.value = margin.positions
+      await loadMarginPositionRisks(margin.positions)
     } else {
       spotWallets.value = await fetchWalletAccounts()
       marginPositions.value = []
+      marginRiskSnapshots.value = {}
     }
   } catch {
     if (mode.value === 'contract') {
       marginWallets.value = []
+      marginCrossAccounts.value = []
       marginPositions.value = []
     }
     else spotWallets.value = []
@@ -519,6 +557,29 @@ async function loadTradingBalances(): Promise<void> {
   } finally {
     balancesLoading.value = false
   }
+}
+
+async function loadMarginPositionRisks(positions = filledMarginPositions.value): Promise<void> {
+  const requestVersion = ++marginRiskRequestVersion
+  if (!session.isAuthenticated || mode.value !== 'contract' || !positions.length) {
+    if (!positions.length) marginRiskSnapshots.value = {}
+    return
+  }
+  const eligible = positions.filter((position) => {
+    const product = products.value.find((item) => item.id === position.productId)
+    return product?.positionRiskSupported !== false && isFilledMarginPosition(position)
+  })
+  if (!eligible.length) return
+  const results = await Promise.allSettled(eligible.map((position) => fetchMarginPositionRisk(position.id)))
+  if (requestVersion !== marginRiskRequestVersion || mode.value !== 'contract') return
+  const activeIds = new Set(positions.map((position) => position.id))
+  const next = Object.fromEntries(
+    Object.entries(marginRiskSnapshots.value).filter(([positionId]) => activeIds.has(positionId)),
+  )
+  results.forEach((result) => {
+    if (result.status === 'fulfilled') next[result.value.positionId] = result.value
+  })
+  marginRiskSnapshots.value = next
 }
 
 function setQuantity(percent: number): void {
@@ -573,11 +634,16 @@ function openPairPicker(): void {
 }
 
 function openContractSheet(sheet: 'pair' | 'leverage' | 'marginMode' | 'orderType'): void {
+  if (sheet === 'pair') {
+    settingsError.value = ''
+    contractSheet.value = sheet
+    return
+  }
   if (!session.isAuthenticated) {
     openLogin()
     return
   }
-  if (sheet !== 'pair' && !selectedProduct.value) {
+  if (!selectedProduct.value) {
     setFeedback(t('trade.unavailableContract'))
     return
   }
@@ -621,6 +687,7 @@ function selectContractPair(symbol: string): void {
 }
 
 function toggleFavorite(): void {
+  contractMoreOpen.value = false
   if (!session.isAuthenticated) {
     openLogin()
     return
@@ -672,6 +739,7 @@ function openDeposit(): void {
 }
 
 function openAssets(): void {
+  contractMoreOpen.value = false
   if (!session.isAuthenticated) {
     void router.push({ name: 'login', query: { redirect: '/assets' } })
     return
@@ -688,7 +756,187 @@ function openLogin(): void {
 }
 
 function openOrders(tab: 'spot' | 'margin' | 'positions' | 'history' = 'spot'): void {
+  contractMoreOpen.value = false
   void router.push({ name: 'orders', query: { tab } })
+}
+
+function openContractChart(): void {
+  contractMoreOpen.value = false
+  void router.push({
+    name: 'market-detail',
+    params: { symbol: pairSymbol.value.replace('/', '_') },
+  })
+}
+
+function toggleContractMore(): void {
+  if (contractMoreOpen.value) {
+    closeContractMore()
+    return
+  }
+  openContractMore('first')
+}
+
+function openContractMore(target: 'first' | 'last'): void {
+  contractMoreOpen.value = true
+  void nextTick(() => {
+    const items = contractMoreItems()
+    const item = target === 'last' ? items.at(-1) : items[0]
+    item?.focus()
+  })
+}
+
+function closeContractMore(restoreFocus = true): void {
+  if (!contractMoreOpen.value) return
+  contractMoreOpen.value = false
+  if (restoreFocus) void nextTick(() => contractMoreButton.value?.focus())
+}
+
+function contractMoreItems(): HTMLButtonElement[] {
+  if (!contractMoreMenu.value) return []
+  return Array.from(
+    contractMoreMenu.value.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'),
+  )
+}
+
+function handleContractMoreButtonKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+  event.preventDefault()
+  openContractMore(event.key === 'ArrowUp' ? 'last' : 'first')
+}
+
+function handleContractMoreKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    event.stopPropagation()
+    closeContractMore()
+    return
+  }
+
+  const items = contractMoreItems()
+  if (!items.length) return
+  const currentIndex = Math.max(0, items.indexOf(document.activeElement as HTMLButtonElement))
+  let targetIndex: number | null = null
+  if (event.key === 'ArrowDown') targetIndex = (currentIndex + 1) % items.length
+  if (event.key === 'ArrowUp') targetIndex = (currentIndex - 1 + items.length) % items.length
+  if (event.key === 'Home') targetIndex = 0
+  if (event.key === 'End') targetIndex = items.length - 1
+  if (targetIndex === null) return
+  event.preventDefault()
+  items[targetIndex]?.focus()
+}
+
+function selectContractWorkspaceTab(tab: 'orders' | 'positions' | 'strategy'): void {
+  if (tab === 'strategy' && !selectedProduct.value?.strategyOrdersSupported) return
+  contractWorkspaceTab.value = tab
+  contractOpenMode.value = tab === 'positions' ? 'close' : 'open'
+  armedPositionAction.value = null
+  bulkCloseArmed.value = false
+}
+
+function selectContractOpenMode(nextMode: 'open' | 'close'): void {
+  contractOpenMode.value = nextMode
+  if (nextMode === 'close') {
+    contractWorkspaceTab.value = 'positions'
+    void nextTick(() => contractWorkspace.value?.scrollIntoView({
+      behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      block: 'start',
+    }))
+  }
+}
+
+function productForPosition(position: MarginPosition): MarginProduct | undefined {
+  return products.value.find((product) => product.id === position.productId)
+}
+
+function symbolForPosition(position: MarginPosition): string {
+  return productForPosition(position)?.symbol || pairSymbol.value
+}
+
+function logoForPosition(position: MarginPosition): string | undefined {
+  const product = productForPosition(position)
+  return product?.logoUrl || marketStore.tickerFor(product?.symbol || pairSymbol.value)?.iconUrl
+}
+
+function riskForPosition(position: MarginPosition): MarginPositionRisk | undefined {
+  return marginRiskSnapshots.value[position.id]
+}
+
+function crossAccountForPosition(position: MarginPosition): MarginCrossAccount | undefined {
+  return marginCrossAccounts.value.find((account) => account.marginAssetId === position.marginAssetId)
+}
+
+function positionMarginRatio(position: MarginPosition): number | null {
+  if (position.marginMode === 'cross') return crossAccountForPosition(position)?.marginRatio ?? null
+  return riskForPosition(position)?.marginRatio ?? null
+}
+
+function formatRate(value: number | null | undefined, digits = 2): string {
+  return value === null || value === undefined || !Number.isFinite(value)
+    ? '--'
+    : `${(value * 100).toFixed(digits)}%`
+}
+
+function liquidationDistanceWidth(position: MarginPosition): string {
+  const distance = riskForPosition(position)?.liquidationDistanceRate
+  if (distance === null || distance === undefined || !Number.isFinite(distance)) return '0%'
+  return `${Math.min(100, Math.max(4, distance * 100))}%`
+}
+
+async function performPositionAction(position: MarginPosition, action: 'close' | 'cancel'): Promise<void> {
+  if (!session.isAuthenticated) {
+    openLogin()
+    return
+  }
+  if (positionActionSaving.value) return
+  if (armedPositionAction.value?.id !== position.id || armedPositionAction.value.type !== action) {
+    armedPositionAction.value = { id: position.id, type: action }
+    return
+  }
+
+  positionActionSaving.value = position.id
+  feedback.value = ''
+  try {
+    if (action === 'close') await closeMarginPosition(position.id)
+    else await cancelMarginPosition(position.id)
+    setFeedback(t(action === 'close' ? 'trade.positionClosed' : 'trade.marginOrderCanceled'), 'success')
+    armedPositionAction.value = null
+    await loadTradingBalances()
+  } catch (reason) {
+    setFeedback(apiErrorMessage(reason, t(action === 'close' ? 'trade.positionCloseFailed' : 'trade.marginOrderCancelFailed')))
+  } finally {
+    positionActionSaving.value = null
+  }
+}
+
+async function performBulkClose(): Promise<void> {
+  if (!session.isAuthenticated) {
+    openLogin()
+    return
+  }
+  if (!visibleMarginPositions.value.length || bulkCloseSaving.value) return
+  if (!bulkCloseArmed.value) {
+    bulkCloseArmed.value = true
+    return
+  }
+  bulkCloseSaving.value = true
+  feedback.value = ''
+  try {
+    const result = await closeAllMarginPositions(currentPairOnly.value ? selectedProduct.value?.id : undefined)
+    if (result.failures.length) {
+      setFeedback(t('trade.positionsPartiallyClosed', {
+        succeeded: result.positions.length,
+        failed: result.failures.length,
+      }))
+    } else {
+      setFeedback(t('trade.positionsClosed'), 'success')
+    }
+    bulkCloseArmed.value = false
+    await loadTradingBalances()
+  } catch (reason) {
+    setFeedback(apiErrorMessage(reason, t('trade.positionsCloseFailed')))
+  } finally {
+    bulkCloseSaving.value = false
+  }
 }
 
 async function applyContractLeverage(nextLeverage: number): Promise<void> {
@@ -887,12 +1135,20 @@ function trapDialogFocus(event: KeyboardEvent): void {
 onMounted(async () => {
   await marketStore.refresh()
   if (viewActive) marketStore.startLiveUpdates('trade')
+  marginRiskRefreshTimer = window.setInterval(() => {
+    if (viewActive && mode.value === 'contract' && session.isAuthenticated) {
+      void loadMarginPositionRisks()
+    }
+  }, 5_000)
 })
 
 watch(pairSymbol, (symbol) => {
   navigation.rememberTradeSymbol(symbol)
   marketDataPanel.value = 'orderBook'
   spotChartOpen.value = false
+  contractMoreOpen.value = false
+  armedPositionAction.value = null
+  bulkCloseArmed.value = false
   void loadMarketData()
 }, { immediate: true })
 
@@ -906,6 +1162,9 @@ watch(() => route.query.mode, (nextMode) => {
   navigation.rememberTradeMode(mode.value)
   percentage.value = 0
   quantity.value = ''
+  contractOpenMode.value = 'open'
+  contractWorkspaceTab.value = 'positions'
+  contractMoreOpen.value = false
 }, { immediate: true })
 
 watch(() => [mode.value, session.isAuthenticated, selectedProduct.value?.id] as const, () => {
@@ -951,6 +1210,8 @@ onBeforeUnmount(() => {
   viewActive = false
   marginProductsRequestVersion += 1
   marginSettingRequestVersion += 1
+  marginRiskRequestVersion += 1
+  if (marginRiskRefreshTimer !== undefined) window.clearInterval(marginRiskRefreshTimer)
   marketStore.stopLiveUpdates('trade')
   detailStreamSession.stop()
 })
@@ -1296,17 +1557,17 @@ onBeforeUnmount(() => {
     <template v-else>
       <section
         class="contract-pencil-surface"
-        data-pencil-source="by3G9 pKHeU"
+        data-pencil-source="cjzfi p6GfgT"
         data-instrument-hero="pair-price"
         data-market-quote="live"
         data-order-surface="live"
         :data-contract-state="visibleMarginPositions.length ? 'positions' : 'empty'"
       >
         <header class="contract-pencil-header">
-          <button class="contract-header-control" type="button" :aria-label="t('common.back')" @click="goBack">
-            <ArrowLeft :size="22" aria-hidden="true" />
-          </button>
-          <div class="trade-quote">
+          <div class="contract-header-identity">
+            <button class="contract-header-control" type="button" :aria-label="t('common.back')" @click="goBack">
+              <ArrowLeft :size="22" aria-hidden="true" />
+            </button>
             <button
               class="contract-pair-selector"
               type="button"
@@ -1316,31 +1577,69 @@ onBeforeUnmount(() => {
               aria-controls="contract-pair-dialog"
               @click="openContractSheet('pair')"
             >
-              <AssetMark :symbol="baseAsset" :src="ticker?.iconUrl" :fallback-src="ticker?.baseIconUrl" :size="24" />
+              <AssetMark :symbol="baseAsset" :src="selectedProduct?.logoUrl || ticker?.iconUrl" :fallback-src="ticker?.baseIconUrl" :size="28" />
               <span class="contract-pair-selector__copy">
                 <span>
                   <strong>{{ pairSymbol.replace('/', '') }}</strong>
+                  <small class="contract-product-badge">{{ t('trade.perpetualShort') }}</small>
                   <ChevronDown :size="14" aria-hidden="true" />
                 </span>
-                <small class="numeric" :class="(ticker?.changePercent || 0) >= 0 ? 'positive' : 'negative'">
-                  {{ t('trade.perpetualShort') }}
+                <small class="contract-pair-market numeric" :class="(ticker?.changePercent || 0) >= 0 ? 'positive' : 'negative'">
+                  {{ ticker ? formatPrice(currentPrice) : '--' }} ·
                   {{ ticker ? `${ticker.changePercent >= 0 ? '+' : ''}${ticker.changePercent.toFixed(2)}%` : '--' }}
                 </small>
               </span>
             </button>
           </div>
+          <div class="contract-header-actions">
+            <button class="contract-header-control" type="button" :aria-label="t('marketDetail.chart')" @click="openContractChart">
+              <CandlestickChart :size="19" aria-hidden="true" />
+            </button>
+            <button
+              ref="contractMoreButton"
+              class="contract-header-control"
+              type="button"
+              :aria-label="t('marketDetail.actions')"
+              :aria-expanded="contractMoreOpen"
+              aria-haspopup="menu"
+              @click="toggleContractMore"
+              @keydown="handleContractMoreButtonKeydown"
+            >
+              <Ellipsis :size="20" aria-hidden="true" />
+            </button>
+          </div>
           <button
-            class="contract-header-control"
-            :class="{ active: isFavorite }"
+            v-if="contractMoreOpen"
+            class="contract-more-dismiss"
             type="button"
-            :aria-label="t(isFavorite ? 'rootPrototype.removeFavorite' : 'rootPrototype.addFavorite', { symbol: pairSymbol })"
-            :aria-pressed="isFavorite"
-            :aria-busy="favoriteSaving"
-            :disabled="favoriteSaving"
-            @click="toggleFavorite"
+            :aria-label="t('common.close')"
+            tabindex="-1"
+            @click="closeContractMore()"
+          />
+          <div
+            v-if="contractMoreOpen"
+            ref="contractMoreMenu"
+            class="contract-more-menu"
+            role="menu"
+            @keydown="handleContractMoreKeydown"
           >
-            <Star :size="19" :fill="isFavorite ? 'currentColor' : 'none'" aria-hidden="true" />
-          </button>
+            <button
+              type="button"
+              role="menuitem"
+              :aria-busy="favoriteSaving"
+              :disabled="favoriteSaving"
+              @click="toggleFavorite"
+            >
+              <Star :size="16" :fill="isFavorite ? 'currentColor' : 'none'" aria-hidden="true" />
+              {{ t(isFavorite ? 'rootPrototype.removeFavorite' : 'rootPrototype.addFavorite', { symbol: pairSymbol }) }}
+            </button>
+            <button type="button" role="menuitem" @click="openOrders('margin')">
+              <List :size="16" aria-hidden="true" />{{ t('trade.viewOpenOrders') }}
+            </button>
+            <button type="button" role="menuitem" @click="openAssets">
+              <ArrowLeftRight :size="16" aria-hidden="true" />{{ t('nav.assets') }}
+            </button>
+          </div>
           <p class="sr-only">
             {{ t('marketDetail.high24h') }} {{ ticker ? formatPrice(ticker.highPrice) : t('common.marketUnavailable') }} ·
             {{ t('marketDetail.low24h') }} {{ ticker ? formatPrice(ticker.lowPrice) : t('common.marketUnavailable') }}
@@ -1355,8 +1654,8 @@ onBeforeUnmount(() => {
         >
           <div class="chart-panel trade-chart-panel">
             <div class="contract-book-status">
-              <span>{{ t('trade.fundingAndCountdown') }}</span>
-              <strong class="numeric">-- / --</strong>
+              <span>{{ t('trade.hourlyInterestAndCycle') }}</span>
+              <strong class="numeric">{{ contractInterestSummary }}</strong>
             </div>
             <div class="trade-order-book">
               <OrderBookPanel
@@ -1368,8 +1667,10 @@ onBeforeUnmount(() => {
                 :loading="depthLoading"
                 :quote-asset="quoteAsset"
                 layout="mini"
-                :mini-levels="6"
-                :show-mini-precision="false"
+                :mini-ask-levels="6"
+                :mini-bid-levels="7"
+                :mini-precision="contractBookPrecision"
+                :show-mini-precision="true"
               />
             </div>
             <p class="chart-semantic-summary">
@@ -1379,15 +1680,25 @@ onBeforeUnmount(() => {
 
           <div class="trade-console">
             <div class="contract-open-close" role="group" :aria-label="t('orders.stateCategory')">
-              <button type="button" class="active" aria-pressed="true">
+              <button
+                type="button"
+                :class="{ active: contractOpenMode === 'open' }"
+                :aria-pressed="contractOpenMode === 'open'"
+                @click="selectContractOpenMode('open')"
+              >
                 {{ t('trade.openPositionShort') }}
               </button>
-              <button type="button" aria-pressed="false" @click="openOrders('positions')">
+              <button
+                type="button"
+                :class="{ active: contractOpenMode === 'close' }"
+                :aria-pressed="contractOpenMode === 'close'"
+                @click="selectContractOpenMode('close')"
+              >
                 {{ t('trade.closePositionShort') }}
               </button>
             </div>
 
-            <div class="contract-mode-row" :aria-label="t('trade.settings')">
+            <div class="contract-mode-row contract-settings-row" :aria-label="t('trade.settings')">
               <button
                 type="button"
                 aria-haspopup="dialog"
@@ -1410,23 +1721,21 @@ onBeforeUnmount(() => {
                 <span class="numeric">{{ leverage }}x</span>
                 <ChevronDown :size="12" aria-hidden="true" />
               </button>
+              <button
+                class="contract-order-type"
+                type="button"
+                :class="{ active: contractOrderType !== null }"
+                aria-haspopup="dialog"
+                :aria-expanded="contractSheet === 'orderType'"
+                aria-controls="contract-orderType-dialog"
+                :aria-label="contractOrderType === null ? t('trade.marginOrderTypeUnavailable') : t('trade.orderTypeTrigger', { type: contractOrderTypeLabel })"
+                :disabled="settingsSaving || productsLoading || !selectedProduct?.orderTypes.length"
+                @click="openContractSheet('orderType')"
+              >
+                <span>{{ contractOrderTypeLabel }}</span>
+                <ChevronDown :size="12" aria-hidden="true" />
+              </button>
             </div>
-
-            <button
-              class="contract-order-type"
-              type="button"
-              :class="{ active: contractOrderType !== null }"
-              aria-haspopup="dialog"
-              :aria-expanded="contractSheet === 'orderType'"
-              aria-controls="contract-orderType-dialog"
-              :aria-label="contractOrderType === null ? t('trade.marginOrderTypeUnavailable') : t('trade.orderTypeTrigger', { type: contractOrderTypeLabel })"
-              :disabled="settingsSaving || productsLoading || !selectedProduct?.orderTypes.length"
-              @click="openContractSheet('orderType')"
-            >
-              <span>{{ contractOrderTypeLabel }}</span>
-              <Info :size="11" aria-hidden="true" />
-              <ChevronDown :size="12" aria-hidden="true" />
-            </button>
 
             <div class="contract-price-row">
               <label
@@ -1457,7 +1766,7 @@ onBeforeUnmount(() => {
             <p
               v-if="contractOrderType === 'limit' && !contractLimitPriceValidation.isValid"
               id="contract-limit-price-error"
-              class="contract-limit-price-error"
+              class="contract-limit-price-error sr-only"
               role="alert"
             >
               {{ marginLimitPriceValidationMessage(contractLimitPriceValidation) }}
@@ -1482,7 +1791,7 @@ onBeforeUnmount(() => {
               <b>{{ availableAsset }}</b>
             </label>
 
-            <div v-if="marginRangeDescription" class="contract-margin-guidance">
+            <div v-if="marginRangeDescription" class="contract-margin-guidance sr-only">
               <p id="contract-margin-range">{{ marginRangeDescription }}</p>
               <p
                 v-if="marginAmountError"
@@ -1495,12 +1804,17 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="contract-percentage">
-              <div class="percent-row" role="group" :aria-label="t('rootPrototype.balancePercentage')">
+              <div
+                class="percent-row"
+                role="group"
+                :aria-label="t('rootPrototype.balancePercentage')"
+                :style="{ '--percentage-progress': `${percentage ?? 0}%` }"
+              >
                 <button
                   v-for="value in [0, 25, 50, 75, 100]"
                   :key="value"
                   type="button"
-                  :class="{ active: percentage === value }"
+                  :class="{ active: percentage === value, passed: (percentage ?? 0) >= value }"
                   :aria-label="value === 100 ? t('trade.marginMaximumShortcut') : `${value}%`"
                   :aria-pressed="percentage === value"
                   :disabled="submitting || (session.isAuthenticated && (productsLoading || balancesLoading || !selectedProduct))"
@@ -1511,36 +1825,29 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <div class="contract-tpsl" aria-disabled="true">
-              <span aria-hidden="true" />
-              {{ t('rootPrototype.takeProfitStopLoss') }}
+            <div class="contract-available-row">
+              <span>{{ t('trade.available') }}</span>
+              <button v-if="!session.isAuthenticated" type="button" @click="openLogin">
+                {{ t('trade.viewAfterLogin') }}
+              </button>
+              <button v-else-if="balancesError" type="button" :disabled="balancesLoading" @click="loadTradingBalances">
+                {{ t('common.retry') }}
+              </button>
+              <button v-else class="numeric" type="button" :disabled="balancesLoading" @click="openAssets">
+                {{ balancesLoading ? t('trade.loadBalance') : `${formatAmount(availableBalance)} ${availableAsset}` }}
+                <CirclePlus v-if="!balancesLoading" :size="11" aria-hidden="true" />
+              </button>
             </div>
 
-            <dl class="contract-balance-rows">
-              <div>
-                <dt>{{ t('trade.available') }}</dt>
-                <dd v-if="!session.isAuthenticated" class="contract-balance-control">
-                  <button type="button" @click="openLogin">{{ t('trade.viewAfterLogin') }}</button>
-                </dd>
-                <dd v-else-if="balancesError" class="contract-balance-control">
-                  <button type="button" :disabled="balancesLoading" @click="loadTradingBalances">{{ t('common.retry') }}</button>
-                </dd>
-                <dd v-else class="numeric contract-balance-control">
-                  <button
-                    type="button"
-                    class="contract-balance-action"
-                    :disabled="balancesLoading"
-                    @click="openAssets"
-                  >
-                    <span>{{ balancesLoading ? t('trade.loadBalance') : `${formatAmount(availableBalance)} ${availableAsset}` }}</span>
-                    <CirclePlus v-if="!balancesLoading" :size="11" aria-hidden="true" />
-                  </button>
-                </dd>
-              </div>
-              <div>
-                <dt>{{ t('rootPrototype.contractQuantity') }}</dt>
-                <dd class="numeric">{{ formatAmount(contractOpenQuantity) }} {{ baseAsset }}</dd>
-              </div>
+            <div class="contract-tpsl" :aria-disabled="!selectedProduct?.takeProfitStopLossSupported">
+              <span aria-hidden="true" />
+              {{ t('rootPrototype.takeProfitStopLoss') }}
+              <small v-if="!selectedProduct?.takeProfitStopLossSupported">{{ t('trade.featureUnavailableShort') }}</small>
+            </div>
+
+            <dl class="contract-open-meta contract-open-meta--long">
+              <div><dt>{{ t('trade.openLongAvailable') }}</dt><dd class="numeric">{{ formatAmount(contractOrderQuantity) }} {{ baseAsset }}</dd></div>
+              <div><dt>{{ t('orders.margin') }}</dt><dd class="numeric">{{ formatAmount(Number(quantity) || 0) }} {{ availableAsset }}</dd></div>
             </dl>
 
             <p
@@ -1556,15 +1863,19 @@ onBeforeUnmount(() => {
               ref="reviewButton"
               class="contract-submit contract-submit--long submit-order"
               type="button"
-              :disabled="submitting || productsLoading || !isLive || (session.isAuthenticated && (!selectedProduct || !contractOrderType || (contractOrderType === 'limit' && !contractLimitPriceValidation.isValid)))"
+              :disabled="contractOpenMode === 'close' || submitting || productsLoading || !isLive || (session.isAuthenticated && (!selectedProduct || !contractOrderType || (contractOrderType === 'limit' && !contractLimitPriceValidation.isValid)))"
               @click="reviewContractOrder('buy', $event)"
             >
               {{ t('trade.longActionCompact') }}
             </button>
+            <dl class="contract-open-meta contract-open-meta--short">
+              <div><dt>{{ t('trade.openShortAvailable') }}</dt><dd class="numeric">{{ formatAmount(contractOrderQuantity) }} {{ baseAsset }}</dd></div>
+              <div><dt>{{ t('orders.margin') }}</dt><dd class="numeric">{{ formatAmount(Number(quantity) || 0) }} {{ availableAsset }}</dd></div>
+            </dl>
             <button
               class="contract-submit contract-submit--short"
               type="button"
-              :disabled="submitting || productsLoading || !isLive || (session.isAuthenticated && (!selectedProduct || !contractOrderType || (contractOrderType === 'limit' && !contractLimitPriceValidation.isValid)))"
+              :disabled="contractOpenMode === 'close' || submitting || productsLoading || !isLive || (session.isAuthenticated && (!selectedProduct || !contractOrderType || (contractOrderType === 'limit' && !contractLimitPriceValidation.isValid)))"
               @click="reviewContractOrder('sell', $event)"
             >
               {{ t('trade.shortActionCompact') }}
@@ -1572,38 +1883,161 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <nav class="contract-position-tabs" :aria-label="t('orders.category')">
-          <button class="active" type="button" @click="openOrders(mode === 'contract' ? 'positions' : 'spot')">
-            {{ t('orders.positions') }} ({{ visibleMarginPositions.length }})
+        <nav ref="contractWorkspace" class="contract-position-tabs" role="tablist" :aria-label="t('orders.category')">
+          <button
+            id="contract-orders-tab"
+            type="button"
+            role="tab"
+            :class="{ active: contractWorkspaceTab === 'orders' }"
+            :aria-selected="contractWorkspaceTab === 'orders'"
+            aria-controls="contract-workspace-panel"
+            @click="selectContractWorkspaceTab('orders')"
+          >
+            {{ t('trade.contractOrdersTab') }} ({{ visiblePendingMarginOrders.length }})
           </button>
-          <button type="button" @click="openOrders('margin')">
-            {{ t('trade.contractOrdersTab') }} ({{ visiblePendingMarginOrders.length }}) <ChevronDown :size="12" aria-hidden="true" />
+          <button
+            id="contract-positions-tab"
+            type="button"
+            role="tab"
+            :class="{ active: contractWorkspaceTab === 'positions' }"
+            :aria-selected="contractWorkspaceTab === 'positions'"
+            aria-controls="contract-workspace-panel"
+            @click="selectContractWorkspaceTab('positions')"
+          >
+            {{ t('trade.positionAssetsTab') }} <ChevronDown :size="12" aria-hidden="true" />
           </button>
-          <button type="button" @click="openAssets">{{ t('nav.assets') }}</button>
+          <button
+            id="contract-strategy-tab"
+            type="button"
+            role="tab"
+            :class="{ active: contractWorkspaceTab === 'strategy' }"
+            :aria-selected="contractWorkspaceTab === 'strategy'"
+            :aria-disabled="!selectedProduct?.strategyOrdersSupported"
+            :disabled="!selectedProduct?.strategyOrdersSupported"
+            aria-controls="contract-workspace-panel"
+            @click="selectContractWorkspaceTab('strategy')"
+          >
+            {{ t('trade.strategyOrdersTab') }} (0)
+          </button>
           <span aria-hidden="true" />
           <button type="button" :aria-label="t('orders.history')" @click="openOrders('history')">
             <History :size="17" aria-hidden="true" />
           </button>
         </nav>
 
-        <section v-if="visibleMarginPositions.length" class="contract-position-list" :aria-label="t('orders.positions')">
-          <article v-for="position in visibleMarginPositions" :key="position.id">
-            <div>
-              <strong>{{ pairSymbol }}</strong>
-              <span :class="position.direction === 'long' ? 'positive' : 'negative'">
-                {{ t(position.direction === 'long' ? 'orders.long' : 'orders.short') }}
-              </span>
-            </div>
-            <div class="numeric">
-              <span>{{ t('orders.margin') }} {{ formatAmount(position.marginAmount) }} {{ availableAsset }}</span>
-              <span>{{ t('orders.entryPrice') }} {{ formatPrice(position.entryPrice || 0) }}</span>
-            </div>
-          </article>
-        </section>
-        <section v-else class="contract-position-empty" role="status">
-          <span><Inbox :size="24" aria-hidden="true" /></span>
-          <strong>{{ session.isAuthenticated ? t('orders.noPositions') : t('trade.ordersLoginHint') }}</strong>
-          <button v-if="!session.isAuthenticated" type="button" @click="openLogin">{{ t('common.loginNow') }}</button>
+        <section
+          id="contract-workspace-panel"
+          class="contract-workspace-panel"
+          role="tabpanel"
+          :aria-labelledby="`contract-${contractWorkspaceTab}-tab`"
+        >
+          <div v-if="contractWorkspaceTab === 'positions'" class="contract-workspace-tools">
+            <button
+              class="contract-current-pair"
+              type="button"
+              :aria-pressed="currentPairOnly"
+              @click="currentPairOnly = !currentPairOnly"
+            >
+              <span aria-hidden="true" />{{ t('trade.onlyCurrent') }}
+            </button>
+            <button
+              class="contract-close-all"
+              type="button"
+              :class="{ armed: bulkCloseArmed }"
+              :disabled="bulkCloseSaving || !visibleMarginPositions.length || !selectedProduct?.bulkCloseSupported"
+              @click="performBulkClose"
+            >
+              {{ bulkCloseSaving ? t('orders.processing') : bulkCloseArmed ? t('trade.confirmCloseAll') : t('orders.closeAll') }}
+            </button>
+            <button class="contract-filter-control" type="button" :aria-label="t('trade.positionFilter')" @click="currentPairOnly = !currentPairOnly">
+              <SlidersHorizontal :size="15" aria-hidden="true" />
+            </button>
+          </div>
+
+          <div v-if="contractWorkspaceTab === 'positions' && visibleMarginPositions.length" class="contract-position-list">
+            <article v-for="position in visibleMarginPositions" :key="position.id" class="contract-position-card">
+              <header>
+                <div class="contract-position-identity">
+                  <AssetMark
+                    :symbol="symbolForPosition(position).split('/')[0] || baseAsset"
+                    :src="logoForPosition(position)"
+                    :size="24"
+                  />
+                  <div>
+                    <strong>{{ symbolForPosition(position).replace('/', '') }}</strong>
+                    <span :class="position.direction === 'long' ? 'positive' : 'negative'">
+                      {{ t(position.direction === 'long' ? 'orders.long' : 'orders.short') }}
+                    </span>
+                    <span>{{ t(position.marginMode === 'cross' ? 'trade.cross' : 'trade.isolated') }}</span>
+                    <span class="numeric">{{ position.leverage }}x</span>
+                  </div>
+                </div>
+                <div class="contract-position-pnl" :class="(riskForPosition(position)?.unrealizedPnl || 0) >= 0 ? 'positive' : 'negative'">
+                  <small>{{ t('trade.unrealizedPnl') }}</small>
+                  <strong class="numeric">{{ riskForPosition(position) ? formatAmount(riskForPosition(position)!.unrealizedPnl) : '--' }}</strong>
+                  <span class="numeric">{{ formatRate(riskForPosition(position)?.returnRate) }}</span>
+                </div>
+              </header>
+
+              <dl class="contract-position-metrics">
+                <div><dt>{{ t('common.quantity') }}</dt><dd class="numeric">{{ riskForPosition(position) ? formatAmount(riskForPosition(position)!.positionQuantity) : '--' }}</dd></div>
+                <div><dt>{{ t('orders.margin') }}</dt><dd class="numeric">{{ formatAmount(position.marginAmount) }}</dd></div>
+                <div><dt>{{ t('trade.maintenanceMarginRatio') }}</dt><dd class="numeric">{{ formatRate(positionMarginRatio(position)) }}</dd></div>
+                <div><dt>{{ t('orders.entryPrice') }}</dt><dd class="numeric">{{ position.entryPrice ? formatPrice(position.entryPrice) : '--' }}</dd></div>
+                <div><dt>{{ t('trade.markPrice') }}</dt><dd class="numeric">{{ riskForPosition(position) ? formatPrice(riskForPosition(position)!.markPrice) : '--' }}</dd></div>
+                <div><dt>{{ t('trade.estimatedLiquidationPrice') }}</dt><dd class="numeric">{{ riskForPosition(position)?.estimatedLiquidationPrice ? formatPrice(riskForPosition(position)!.estimatedLiquidationPrice!) : '--' }}</dd></div>
+              </dl>
+
+              <div class="contract-liquidation-distance">
+                <span>{{ t('trade.liquidationDistance') }}</span>
+                <i><b :style="{ width: liquidationDistanceWidth(position) }" /></i>
+                <strong class="numeric">{{ formatRate(riskForPosition(position)?.liquidationDistanceRate) }}</strong>
+              </div>
+              <button
+                class="contract-position-action"
+                type="button"
+                :class="{ armed: armedPositionAction?.id === position.id && armedPositionAction.type === 'close' }"
+                :disabled="positionActionSaving === position.id"
+                @click="performPositionAction(position, 'close')"
+              >
+                {{ positionActionSaving === position.id ? t('orders.processing') : armedPositionAction?.id === position.id && armedPositionAction.type === 'close' ? t('trade.confirmClosePosition') : t('trade.closePositionShort') }}
+              </button>
+            </article>
+          </div>
+
+          <div v-else-if="contractWorkspaceTab === 'orders' && visiblePendingMarginOrders.length" class="contract-order-list">
+            <article v-for="position in visiblePendingMarginOrders" :key="position.id" class="contract-pending-card">
+              <div class="contract-pending-identity">
+                <AssetMark :symbol="symbolForPosition(position).split('/')[0] || baseAsset" :src="logoForPosition(position)" :size="24" />
+                <span>
+                  <strong>{{ symbolForPosition(position).replace('/', '') }}</strong>
+                  <small :class="position.direction === 'long' ? 'positive' : 'negative'">
+                    {{ t(position.direction === 'long' ? 'orders.long' : 'orders.short') }} · {{ t('trade.limitOrderShort') }}
+                  </small>
+                </span>
+              </div>
+              <dl>
+                <div><dt>{{ t('trade.marginLimitPrice') }}</dt><dd class="numeric">{{ position.limitPrice || '--' }}</dd></div>
+                <div><dt>{{ t('orders.margin') }}</dt><dd class="numeric">{{ formatAmount(position.marginAmount) }} {{ productForPosition(position)?.marginAssetSymbol || availableAsset }}</dd></div>
+              </dl>
+              <button
+                type="button"
+                :class="{ armed: armedPositionAction?.id === position.id && armedPositionAction.type === 'cancel' }"
+                :disabled="positionActionSaving === position.id"
+                @click="performPositionAction(position, 'cancel')"
+              >
+                {{ positionActionSaving === position.id ? t('orders.processing') : armedPositionAction?.id === position.id && armedPositionAction.type === 'cancel' ? t('trade.confirmCancelOrder') : t('orders.cancel') }}
+              </button>
+            </article>
+          </div>
+
+          <div v-else class="contract-position-empty" role="status">
+            <span><Inbox :size="22" aria-hidden="true" /></span>
+            <strong v-if="contractWorkspaceTab === 'strategy'">{{ t('trade.strategyOrdersUnavailable') }}</strong>
+            <strong v-else-if="!session.isAuthenticated">{{ t('trade.ordersLoginHint') }}</strong>
+            <strong v-else>{{ t(contractWorkspaceTab === 'orders' ? 'orders.noMarginOrders' : 'orders.noPositions') }}</strong>
+            <button v-if="!session.isAuthenticated" type="button" @click="openLogin">{{ t('common.loginNow') }}</button>
+          </div>
         </section>
       </section>
     </template>
@@ -3785,82 +4219,111 @@ html[data-theme='dark'] .contract-order-confirm {
 }
 
 .contract-trade {
-  --contract-control-border: color-mix(in srgb, var(--line-strong) 86%, var(--text) 14%);
-  --contract-control-surface: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--surface) 94%, var(--text) 6%),
-    var(--surface-elevated)
-  );
-  --contract-control-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--text) 10%, transparent),
-    0 2px 6px color-mix(in srgb, var(--ink) 12%, transparent);
-  --contract-control-shadow-pressed:
-    inset 0 2px 4px color-mix(in srgb, var(--ink) 16%, transparent),
-    0 1px 2px color-mix(in srgb, var(--ink) 10%, transparent);
-  background: var(--page);
-  color: var(--text);
+  --contract-bg: #f7f9f8;
+  --contract-surface: #ffffff;
+  --contract-surface-soft: #edf2ef;
+  --contract-line: #dce5e0;
+  --contract-line-strong: #c4d0ca;
+  --contract-text: #111714;
+  --contract-muted: #68736d;
+  --contract-accent: #43efa9;
+  --contract-positive: #159a6d;
+  --contract-negative: #e94f37;
+  background: var(--contract-bg);
+  color: var(--contract-text);
   min-height: 100dvh;
+  overscroll-behavior-y: none;
   padding-bottom: calc(24px + env(safe-area-inset-bottom));
 }
 
+html[data-theme='dark'] .contract-trade {
+  --contract-bg: #070a09;
+  --contract-surface: #0c100e;
+  --contract-surface-soft: #111713;
+  --contract-line: #29342e;
+  --contract-line-strong: #3b4841;
+  --contract-text: #f2f7f4;
+  --contract-muted: #95a19a;
+  --contract-positive: #61f1b6;
+  --contract-negative: #ff654a;
+}
+
 .contract-pencil-surface {
-  background: var(--page);
+  background: var(--contract-bg);
+  color: var(--contract-text);
   min-height: 100dvh;
   min-width: 0;
 }
 
 .contract-pencil-header {
   align-items: center;
-  background: var(--page);
+  background: color-mix(in srgb, var(--contract-bg) 96%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--contract-line) 76%, transparent);
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 40px;
-  height: 61px;
-  padding: 8px 20px;
+  grid-template-columns: minmax(0, 1fr) 74px;
+  height: calc(58px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) 14px 0;
   position: sticky;
   top: 0;
-  z-index: var(--layer-sticky-header);
+  z-index: 70;
+}
+
+.contract-header-identity,
+.contract-header-actions,
+.contract-pair-selector,
+.contract-pair-selector__copy > span {
+  align-items: center;
+  display: flex;
+  min-width: 0;
+}
+
+.contract-header-identity {
+  height: 58px;
+}
+
+.contract-header-actions {
+  display: grid;
+  grid-template-columns: repeat(2, 37px);
+  height: 58px;
 }
 
 .contract-header-control {
   align-items: center;
-  background: var(--contract-control-surface);
-  border: 1px solid var(--contract-control-border);
-  border-radius: 999px;
-  box-shadow: var(--contract-control-shadow);
-  color: var(--text);
-  display: inline-flex;
+  background: transparent;
+  border: 0;
+  border-radius: 12px;
+  color: var(--contract-text);
+  display: grid;
   height: 44px;
   justify-content: center;
-  margin-inline: -2px;
   padding: 0;
   width: 44px;
 }
 
-.contract-header-control.active {
-  color: var(--positive);
+.contract-header-actions .contract-header-control {
+  margin-inline: -3px;
 }
 
-.contract-trade .trade-quote {
-  align-items: center;
-  background: transparent;
-  display: flex;
-  gap: 0;
-  grid-template-columns: none;
-  justify-content: center;
-  padding: 0;
+.contract-header-control:active:not(:disabled) {
+  background: var(--contract-surface-soft);
+  transform: scale(.94);
 }
 
 .contract-pair-selector {
-  align-items: center;
   background: transparent;
   border: 0;
-  color: var(--text);
-  display: inline-flex;
-  gap: 4px;
-  justify-content: center;
-  min-height: 44px;
-  min-width: 0;
-  padding: 0 4px;
+  color: var(--contract-text);
+  gap: 8px;
+  height: 44px;
+  margin-left: -3px;
+  max-width: 190px;
+  padding: 0 3px;
+}
+
+.contract-pair-selector :deep(.asset-mark) {
+  border: 1px solid color-mix(in srgb, var(--contract-accent) 32%, var(--contract-line));
+  box-shadow: none;
+  flex: 0 0 auto;
 }
 
 .contract-pair-selector__copy {
@@ -3871,193 +4334,185 @@ html[data-theme='dark'] .contract-order-confirm {
 }
 
 .contract-pair-selector__copy > span {
-  align-items: center;
-  display: inline-flex;
   gap: 4px;
-  min-width: 0;
+  width: 100%;
 }
 
 .contract-pair-selector strong {
+  font-family: var(--font-geist-sans), var(--font-family), sans-serif;
   font-size: 17px;
-  font-weight: 750;
+  font-weight: 760;
+  letter-spacing: -.35px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.contract-pair-selector small {
+.contract-product-badge {
+  background: color-mix(in srgb, var(--contract-accent) 18%, var(--contract-surface));
+  border-radius: 999px;
+  color: var(--contract-positive);
+  flex: 0 0 auto;
+  font-size: 8px;
+  font-weight: 720;
+  line-height: 16px;
+  padding: 0 6px;
+}
+
+.contract-pair-selector__copy .contract-pair-market {
   font-family: var(--font-geist-mono), var(--data-font), monospace;
-  font-size: 10px;
-  font-weight: 650;
-  max-width: 150px;
+  font-size: 9px;
+  font-weight: 620;
+  max-width: 146px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .contract-pair-selector[aria-expanded='true'] {
-  color: var(--positive);
+  color: var(--contract-positive);
 }
 
-.contract-pair-selector :deep(.asset-mark) {
+.contract-more-dismiss {
+  background: transparent;
   border: 0;
-  box-shadow: var(--asset-mark-shadow, none);
+  inset: 0;
+  padding: 0;
+  position: fixed;
+  z-index: 71;
+}
+
+.contract-more-menu {
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
+  backdrop-filter: blur(18px) saturate(135%);
+  background: color-mix(in srgb, var(--contract-surface) 94%, transparent);
+  border: 1px solid var(--contract-line);
+  border-radius: 14px;
+  box-shadow: 0 18px 42px color-mix(in srgb, #000 22%, transparent);
+  display: grid;
+  min-width: 188px;
+  overflow: hidden;
+  padding: 6px;
+  position: absolute;
+  right: 12px;
+  top: calc(env(safe-area-inset-top) + 52px);
+  z-index: 72;
+}
+
+.contract-more-menu button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  color: var(--contract-text);
+  display: flex;
+  font-size: 12px;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 10px;
+  text-align: left;
+}
+
+.contract-more-menu button:active {
+  background: var(--contract-surface-soft);
 }
 
 .contract-pencil-module {
   align-items: start;
-  background: var(--page);
+  background: var(--contract-bg);
   display: grid;
-  gap: 12px;
-  grid-template-columns: minmax(0, 1fr) 150px;
+  gap: 10px;
+  grid-template-columns: 202px minmax(150px, 1fr);
+  height: 460px;
   min-width: 0;
-  padding: 2px 16px 4px;
+  overflow: hidden;
+  padding: 2px 14px 8px;
 }
 
 .contract-trade .trade-console {
   background: transparent !important;
   border: 0;
-  display: grid;
-  gap: 8px;
   grid-column: 1;
   grid-row: 1;
+  height: 450px;
   min-width: 0;
   padding: 0;
+  position: relative;
 }
 
 .contract-open-close {
-  background: color-mix(in srgb, var(--surface-elevated) 88%, var(--text) 12%);
-  border: 1px solid var(--contract-control-border);
-  border-radius: 8px;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 8%, transparent);
+  background: var(--contract-surface-soft);
+  border-radius: 7px;
   display: grid;
-  gap: 4px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  height: 38px;
-  padding: 4px;
+  height: 30px;
+  left: 0;
+  padding: 2px;
+  position: absolute;
+  right: 0;
+  top: 0;
 }
 
 .contract-open-close button {
   background: transparent;
   border: 0;
-  border-radius: 6px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 650;
-  height: 44px;
-  margin-block: -7px;
+  border-radius: 5px;
+  color: var(--contract-muted);
+  font-size: 11px;
+  font-weight: 680;
+  height: 26px;
   min-width: 0;
   padding: 0 4px;
-  position: relative;
-  z-index: 0;
-}
-
-.contract-open-close button::before {
-  border-radius: 6px;
-  content: "";
-  inset: 7px 0;
-  position: absolute;
-  z-index: -1;
 }
 
 .contract-open-close button.active {
-  background: transparent;
-  color: var(--on-positive);
-}
-
-.contract-open-close button.active::before {
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--accent) 84%, white 16%),
-    var(--accent)
-  );
-  box-shadow: inset 0 1px 0 color-mix(in srgb, white 50%, transparent);
+  background: var(--contract-surface);
+  box-shadow: 0 1px 4px color-mix(in srgb, #000 10%, transparent);
+  color: var(--contract-text);
 }
 
 .contract-mode-row {
   display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  height: 36px;
+  gap: 5px;
+  grid-template-columns: 54px 48px minmax(0, 1fr);
+  height: 32px;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 36px;
 }
 
 .contract-mode-row button,
 .contract-order-type {
   align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 8px;
-  color: var(--text);
+  background: var(--contract-surface);
+  border: 1px solid var(--contract-line);
+  border-radius: 6px;
+  color: var(--contract-text);
   display: flex;
-  height: 44px;
-  justify-content: space-between;
-  margin-block: -4px;
-  min-width: 0;
-  padding: 0 10px;
-  position: relative;
-  z-index: 0;
-}
-
-.contract-mode-row button::before,
-.contract-order-type::before {
-  background: var(--contract-control-surface);
-  border: 1px solid var(--contract-control-border);
-  border-radius: 8px;
-  box-shadow: var(--contract-control-shadow);
-  content: "";
-  inset: 4px 0;
-  pointer-events: none;
-  position: absolute;
-  z-index: -1;
-}
-
-.contract-mode-row button[aria-expanded='true'],
-.contract-order-type[aria-expanded='true'] {
-  color: var(--positive);
-}
-
-.contract-mode-row button[aria-expanded='true']::before,
-.contract-order-type[aria-expanded='true']::before {
-  border-color: var(--accent);
-}
-
-.contract-price-row > button {
-  align-items: center;
-  background: var(--contract-control-surface);
-  border: 1px solid var(--contract-control-border);
-  border-radius: 8px;
-  box-shadow: var(--contract-control-shadow);
-  color: var(--text);
-  display: flex;
-  height: 44px;
+  font-size: 10px;
+  gap: 2px;
+  height: 32px;
   justify-content: center;
   min-width: 0;
   padding: 0 5px;
 }
 
-.contract-limit-price-error {
-  color: var(--negative);
-  font-size: 10px;
-  line-height: 1.3;
-  margin: -4px 2px 0;
-  overflow-wrap: anywhere;
+.contract-mode-row button[aria-expanded='true'],
+.contract-order-type[aria-expanded='true'] {
+  border-color: var(--contract-accent);
+  color: var(--contract-positive);
 }
 
 .contract-mode-row button:disabled,
 .contract-order-type:disabled {
-  color: var(--muted);
-  cursor: not-allowed;
-  opacity: .58;
-}
-
-.contract-mode-row button:disabled::before,
-.contract-order-type:disabled::before {
-  box-shadow: none;
+  color: var(--contract-muted);
+  opacity: .56;
 }
 
 .contract-mode-row span,
 .contract-order-type span {
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 650;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4065,56 +4520,62 @@ html[data-theme='dark'] .contract-order-confirm {
 }
 
 .contract-order-type {
-  gap: 5px;
   width: 100%;
 }
 
 .contract-order-type > span {
   flex: 1;
-  text-align: left;
-}
-
-.contract-order-type > svg {
-  color: var(--muted);
+  text-align: center;
 }
 
 .contract-price-row {
   display: grid;
-  gap: 8px;
-  grid-template-columns: minmax(0, 1fr) 62px;
+  gap: 6px;
+  grid-template-columns: minmax(0, 138px) 58px;
+  height: 56px;
+  left: 0;
   min-width: 0;
+  position: absolute;
+  right: 0;
+  top: 74px;
 }
 
 .contract-price-row > button {
+  background: var(--contract-surface);
+  border: 1px solid var(--contract-line);
+  border-radius: 7px;
+  color: var(--contract-text);
   font-family: var(--font-geist-mono), var(--data-font), monospace;
-  font-size: 12px;
-  font-weight: 650;
+  font-size: 11px;
+  font-weight: 700;
+  height: 56px;
+  min-width: 0;
+  padding: 0 4px;
 }
 
 .contract-field {
   align-items: center;
-  background: var(--surface-elevated);
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  background: var(--contract-surface);
+  border: 1px solid var(--contract-line);
+  border-radius: 7px;
   display: grid;
   min-width: 0;
 }
 
 .contract-field:focus-within {
-  border-color: var(--focus);
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  border-color: var(--contract-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--contract-accent) 16%, transparent);
 }
 
 .contract-field.is-invalid,
 .contract-field.is-invalid:focus-within {
-  border-color: var(--negative);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--negative) 16%, transparent);
+  border-color: var(--contract-negative);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--contract-negative) 13%, transparent);
 }
 
 .contract-field > span {
-  color: var(--muted);
+  color: var(--contract-muted);
   font-size: 9px;
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4124,7 +4585,7 @@ html[data-theme='dark'] .contract-order-confirm {
   background: transparent;
   border: 0;
   box-shadow: none;
-  color: var(--text);
+  color: var(--contract-text);
   font-family: var(--font-geist-mono), var(--data-font), monospace;
   min-width: 0;
   outline: 0;
@@ -4133,317 +4594,268 @@ html[data-theme='dark'] .contract-order-confirm {
 }
 
 .contract-price-field {
-  grid-template-rows: 13px 22px;
-  height: 44px;
-  padding: 4px 10px 3px;
+  grid-template-rows: 15px 27px;
+  height: 56px;
+  padding: 6px 10px 5px;
 }
 
 .contract-price-field input {
-  font-size: 12px;
-  height: 22px;
+  font-size: 13px;
+  font-weight: 680;
+  height: 27px;
 }
 
 .contract-amount-field {
   grid-template-columns: minmax(0, 1fr) auto;
-  height: 40px;
+  height: 46px;
+  left: 0;
   padding: 0 10px;
+  position: absolute;
+  right: 0;
+  top: 136px;
 }
 
 .contract-amount-field input {
-  font-size: 11px;
+  font-size: 13px;
+  font-weight: 680;
   grid-column: 1;
-  grid-row: 1;
-  height: 38px;
-  padding: 0;
+  height: 44px;
 }
 
 .contract-amount-field b {
   font-family: var(--font-geist-mono), var(--data-font), monospace;
-  font-size: 11px;
+  font-size: 10px;
   grid-column: 2;
-  grid-row: 1;
-}
-
-.contract-margin-guidance {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.contract-margin-guidance p {
-  color: var(--muted);
-  font-size: 9px;
-  line-height: 1.35;
-  margin: 0;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.contract-margin-guidance .contract-margin-error {
-  color: var(--negative);
-  font-weight: 650;
 }
 
 .contract-percentage {
-  display: grid;
-  min-height: 92px;
-  min-width: 0;
+  height: 32px;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 188px;
 }
 
 .contract-trade .contract-percentage .percent-row {
   display: grid;
-  gap: 4px;
-  grid-auto-rows: 44px;
-  grid-template-columns: repeat(3, minmax(44px, 1fr));
-  height: auto;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  height: 32px;
   margin: 0;
   min-width: 0;
+  position: relative;
 }
 
-.contract-percentage button {
+.contract-trade .contract-percentage .percent-row::before,
+.contract-trade .contract-percentage .percent-row::after {
+  border-radius: 999px;
+  content: '';
+  height: 3px;
+  left: 8px;
+  position: absolute;
+  right: 8px;
+  top: 8px;
+}
+
+.contract-trade .contract-percentage .percent-row::before {
+  background: var(--contract-line);
+}
+
+.contract-trade .contract-percentage .percent-row::after {
+  background: var(--contract-accent);
+  right: auto;
+  width: calc((100% - 16px) * var(--percentage-progress) / 100);
+}
+
+.contract-percentage button,
+.contract-trade .contract-percentage .percent-row button {
+  align-items: end;
   background: transparent;
   border: 0;
-  color: var(--muted);
+  color: var(--contract-muted);
+  display: grid;
   font-family: var(--font-geist-mono), var(--data-font), monospace;
-  font-size: 10px;
+  font-size: 8px;
   height: 44px;
+  justify-items: center;
+  margin-top: -6px;
   min-height: 44px;
-  min-width: 44px;
-  padding: 0 3px;
+  min-width: 0;
+  padding: 0 0 4px;
   position: relative;
-  z-index: 0;
+  z-index: 1;
 }
 
 .contract-percentage button::before {
-  background: var(--contract-control-surface);
-  border: 1px solid var(--contract-control-border);
-  border-radius: 8px;
-  box-shadow: var(--contract-control-shadow);
-  content: "";
-  inset: 5px 2px;
-  pointer-events: none;
+  background: var(--contract-surface);
+  border: 2px solid var(--contract-line-strong);
+  border-radius: 50%;
+  content: '';
+  height: 8px;
+  left: 50%;
   position: absolute;
-  z-index: -1;
-}
-
-.contract-percentage button.active {
-  color: var(--positive);
-  font-weight: 750;
-}
-
-.contract-percentage button.active::before {
-  background: color-mix(in srgb, var(--accent) 18%, var(--surface-elevated));
-  border-color: color-mix(in srgb, var(--accent) 72%, var(--contract-control-border));
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--accent) 34%, transparent),
-    0 2px 7px color-mix(in srgb, var(--accent) 14%, transparent);
+  top: 10px;
+  transform: translateX(-50%);
+  width: 8px;
 }
 
 .contract-trade .contract-percentage .percent-row button::after {
-  display: none;
+  content: '';
+  height: 44px;
+  left: 50%;
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  width: 44px;
 }
 
-.contract-trade .contract-percentage .percent-row button {
+.contract-percentage button.passed::before,
+.contract-percentage button.active::before {
+  background: var(--contract-accent);
+  border-color: var(--contract-accent);
+}
+
+.contract-percentage button.active {
+  color: var(--contract-text);
+  font-weight: 760;
+}
+
+.contract-available-row {
+  align-items: center;
+  color: var(--contract-muted);
+  display: flex;
+  font-size: 9px;
+  height: 13px;
+  justify-content: space-between;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 226px;
+}
+
+.contract-available-row button {
+  align-items: center;
   background: transparent;
   border: 0;
-  color: var(--muted);
-  min-height: 44px;
-  min-width: 44px;
-}
-
-.contract-trade .contract-percentage .percent-row button.active {
-  background: transparent;
-  border: 0;
-  color: var(--positive);
-}
-
-.contract-percentage button:disabled::before {
-  box-shadow: none;
+  color: var(--contract-text);
+  display: inline-flex;
+  font-size: 9px;
+  gap: 3px;
+  height: 32px;
+  justify-content: flex-end;
+  margin-right: -4px;
+  max-width: 150px;
+  overflow: hidden;
+  padding: 0 4px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .contract-tpsl {
   align-items: center;
+  color: var(--contract-text);
   display: flex;
-  font-size: 11px;
-  font-weight: 500;
-  gap: 6px;
-  min-height: 16px;
+  font-size: 10px;
+  gap: 5px;
+  height: 16px;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 245px;
 }
 
 .contract-tpsl > span {
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--contract-line-strong);
   border-radius: 3px;
-  height: 13px;
-  width: 13px;
+  height: 12px;
+  width: 12px;
 }
 
-.contract-balance-rows {
+.contract-tpsl small {
+  color: var(--contract-muted);
+  font-size: 8px;
+  margin-left: auto;
+}
+
+.contract-open-meta {
   display: grid;
-  gap: 4px;
-  grid-template-rows: 44px 18px;
+  gap: 1px;
+  height: 28px;
+  left: 0;
   margin: 0;
+  position: absolute;
+  right: 0;
 }
 
-.contract-balance-rows > div {
+.contract-open-meta--long { top: 267px; }
+.contract-open-meta--short { top: 349px; }
+
+.contract-open-meta > div {
   align-items: center;
   display: flex;
-  font-size: 10px;
-  gap: 8px;
-  justify-content: space-between;
-  min-height: 0;
-  min-width: 0;
-}
-
-.contract-balance-rows dt {
-  color: var(--muted);
-  flex: 0 0 auto;
-}
-
-.contract-balance-rows dd {
-  margin: 0;
-  min-width: 0;
-}
-
-.contract-balance-rows dd:not(.contract-balance-control) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.contract-balance-control {
-  overflow: visible;
-}
-
-.contract-balance-rows button {
-  background: var(--contract-control-surface);
-  border: 1px solid var(--contract-control-border);
-  border-radius: 999px;
-  box-shadow: var(--contract-control-shadow);
-  color: var(--text);
-  font-size: 10px;
-  min-height: 44px;
-  min-width: 44px;
-  padding: 0 10px;
-}
-
-.contract-balance-rows .contract-balance-action {
-  align-items: center;
-  display: inline-flex;
-  font-family: var(--font-geist-mono), var(--data-font), monospace;
-  gap: 3px;
-  height: 44px;
-  justify-content: flex-end;
-  max-width: 100%;
-}
-
-.contract-balance-action > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.contract-feedback {
   font-size: 9px;
-  line-height: 1.35;
-  margin: -2px 0;
-  overflow-wrap: anywhere;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.contract-open-meta dt { color: var(--contract-muted); }
+.contract-open-meta dd {
+  color: var(--contract-text);
+  margin: 0;
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .contract-submit {
   border: 0;
-  border-radius: 23px;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 44%, transparent),
-    0 4px 10px color-mix(in srgb, var(--ink) 18%, transparent);
-  font-size: 14px;
-  font-weight: 750;
-  height: 46px;
-  min-width: 0;
+  border-radius: 21px;
+  box-shadow: none;
+  font-size: 13px;
+  font-weight: 760;
+  height: 42px;
+  left: 0;
+  min-height: 42px;
   padding: 0 8px;
+  position: absolute;
+  right: 0;
   width: 100%;
 }
 
 .contract-submit--long,
 .contract-trade .contract-submit--long.submit-order {
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--accent) 86%, white 14%),
-    var(--accent)
-  );
-  color: var(--on-positive);
-  min-height: 46px;
+  background: var(--contract-accent);
+  color: #07130e;
+  min-height: 42px;
+  top: 301px;
 }
 
 .contract-submit--short {
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--negative) 84%, white 16%),
-    var(--negative)
-  );
-  color: var(--on-negative);
+  background: var(--contract-negative);
+  color: #fff;
+  top: 383px;
 }
 
 .contract-submit:disabled {
-  background: var(--contract-control-surface);
-  box-shadow: none;
-  color: var(--muted);
-  cursor: not-allowed;
-  opacity: .58;
+  background: var(--contract-surface-soft);
+  color: var(--contract-muted);
+  opacity: .62;
 }
 
-:is(
-  .contract-header-control,
-  .contract-open-close button,
-  .contract-mode-row button,
-  .contract-order-type,
-  .contract-price-row > button,
-  .contract-percentage button,
-  .contract-balance-action,
-  .contract-submit
-) {
-  transition:
-    transform 120ms ease,
-    box-shadow 120ms ease,
-    border-color 120ms ease,
-    color 120ms ease,
-    opacity 120ms ease;
-}
-
-:is(
-  .contract-header-control,
-  .contract-open-close button,
-  .contract-mode-row button,
-  .contract-price-row > button,
-  .contract-percentage button,
-  .contract-balance-action,
-  .contract-submit
-):active:not(:disabled) {
-  box-shadow: var(--contract-control-shadow-pressed);
-  transform: translateY(1px);
-}
-
-:is(
-  .contract-mode-row button,
-  .contract-percentage button
-):active:not(:disabled)::before {
-  box-shadow: var(--contract-control-shadow-pressed);
-}
-
-:is(
-  .contract-header-control,
-  .contract-open-close button,
-  .contract-mode-row button,
-  .contract-order-type,
-  .contract-price-row > button,
-  .contract-percentage button,
-  .contract-balance-action,
-  .contract-submit
-):disabled {
-  box-shadow: none;
-  cursor: not-allowed;
-  opacity: .58;
-  transform: none;
+.contract-feedback {
+  bottom: 0;
+  display: -webkit-box;
+  font-size: 8px;
+  left: 2px;
+  line-height: 10px;
+  margin: 0;
+  max-height: 20px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  position: absolute;
+  right: 2px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .contract-trade .trade-chart-panel {
@@ -4453,7 +4865,7 @@ html[data-theme='dark'] .contract-order-confirm {
   flex-direction: column;
   grid-column: 2;
   grid-row: 1;
-  height: 372px;
+  height: 450px;
   min-width: 0;
   overflow: hidden;
 }
@@ -4471,22 +4883,17 @@ html[data-theme='dark'] .contract-order-confirm {
 .contract-book-status span,
 .contract-book-status strong {
   font-size: 8px;
-  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.contract-book-status span {
-  color: var(--muted);
-  font-family: var(--font-geist-sans), var(--font-family), sans-serif;
-}
-
+.contract-book-status span { color: var(--contract-muted); }
 .contract-book-status strong {
-  color: var(--text);
+  color: var(--contract-text);
   font-family: var(--font-geist-mono), var(--data-font), monospace;
   font-size: 9px;
-  font-weight: 650;
 }
 
 .contract-trade .trade-order-book {
@@ -4497,175 +4904,368 @@ html[data-theme='dark'] .contract-order-confirm {
 }
 
 .contract-mini-book {
-  height: 346px;
-  min-height: 346px;
+  height: 424px;
+  min-height: 424px;
 }
 
 .contract-mini-book :deep(.order-book__mini-header) {
+  color: var(--contract-muted);
   height: 18px;
 }
 
 .contract-mini-book :deep(.order-book__mini-row) {
-  font-size: 11px;
-  height: 22.8px;
+  color: var(--contract-text);
+  font-size: 9px;
+  height: 22px;
 }
 
-.contract-mini-book :deep(.order-book__mini-mid) {
-  height: 34px;
-}
-
+.contract-mini-book :deep(.order-book__mini-mid) { height: 41px; }
 .contract-mini-book :deep(.order-book__mini-mid strong) {
+  color: var(--contract-positive);
   font-size: 15px;
 }
-
+.contract-mini-book :deep(.order-book__mini-mid small) { color: var(--contract-muted); }
 .contract-mini-book :deep(.order-book__mini-ratio) {
-  gap: 6px;
+  color: var(--contract-muted);
+  gap: 5px;
   grid-template-columns: auto minmax(0, 1fr) auto;
   height: 16px;
 }
-
 .contract-mini-book :deep(.order-book__mini-ratio)::before {
-  background: linear-gradient(
-    90deg,
-    var(--accent) 0 var(--mini-bid-ratio),
-    var(--negative) var(--mini-bid-ratio) 100%
-  );
+  background: linear-gradient(90deg, var(--contract-accent) 0 var(--mini-bid-ratio), var(--contract-negative) var(--mini-bid-ratio) 100%);
   border-radius: 2px;
-  content: "";
+  content: '';
   grid-column: 2;
-  height: 4px;
+  height: 3px;
 }
-
-.contract-mini-book :deep(.order-book__mini-ratio span:first-child) {
-  grid-column: 1;
-}
-
-.contract-mini-book :deep(.order-book__mini-ratio span:last-child) {
-  grid-column: 3;
-}
-
+.contract-mini-book :deep(.order-book__mini-ratio span:first-child) { grid-column: 1; }
+.contract-mini-book :deep(.order-book__mini-ratio span:last-child) { grid-column: 3; }
 .contract-mini-book :deep(.order-book__mini-precision) {
-  font-size: 8px;
-  height: 20px;
-  margin-top: 0;
-  padding-inline: 5px;
+  color: var(--contract-muted);
+  height: 24px;
+  padding-inline: 1px;
 }
-
-.contract-mini-book :deep(.order-book__mini-state) {
-  height: 346px;
-}
+.contract-mini-book :deep(.order-book__mini-precision-value) { background: var(--contract-surface-soft); }
+.contract-mini-book :deep(.order-book__mini-state) { height: 398px; }
 
 .contract-position-tabs {
   align-items: center;
+  border-bottom: 1px solid var(--contract-line);
+  border-top: 1px solid var(--contract-line);
   display: grid;
-  gap: 18px;
-  grid-template-columns: auto auto auto minmax(0, 1fr) 40px;
-  height: 37px;
-  min-height: 37px;
-  padding: 8px 20px 4px;
+  gap: 4px;
+  grid-template-columns: auto auto auto minmax(0, 1fr) 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0 10px 0 14px;
+  scroll-margin-top: calc(58px + env(safe-area-inset-top));
 }
 
 .contract-position-tabs button {
   align-items: center;
   background: transparent;
   border: 0;
-  color: var(--muted);
+  color: var(--contract-muted);
   display: inline-flex;
-  font-size: 12px;
+  font-size: 11px;
   gap: 3px;
-  justify-content: center;
   height: 44px;
-  margin-block: -5px;
-  padding: 0;
+  justify-content: center;
+  min-width: 44px;
+  padding: 0 5px;
   position: relative;
   white-space: nowrap;
 }
 
 .contract-position-tabs button.active {
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 650;
+  color: var(--contract-text);
+  font-weight: 720;
 }
 
 .contract-position-tabs button.active::after {
-  background: var(--accent);
-  border-radius: 1px;
-  bottom: 5px;
-  content: "";
+  background: var(--contract-accent);
+  border-radius: 2px;
+  bottom: 0;
+  content: '';
   height: 2px;
   left: 50%;
   position: absolute;
   transform: translateX(-50%);
-  width: 18px;
+  width: 22px;
 }
 
-.contract-position-empty {
+.contract-position-tabs button[aria-disabled='true'] { opacity: .58; }
+
+.contract-workspace-panel {
+  background: var(--contract-bg);
+  min-height: 330px;
+  padding: 0 16px calc(20px + env(safe-area-inset-bottom));
+}
+
+.contract-workspace-tools {
   align-items: center;
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 8px;
-  padding-top: 28px;
-  text-align: center;
+  grid-template-columns: minmax(0, 1fr) auto 36px;
+  height: 42px;
 }
 
-.contract-position-empty > span {
-  align-items: center;
-  background: var(--positive-soft);
-  border-radius: 999px;
-  color: var(--positive);
-  display: inline-flex;
-  height: 52px;
-  justify-content: center;
-  width: 52px;
-}
-
-.contract-position-empty strong {
-  font-size: 13px;
-  font-weight: 650;
-  max-width: 260px;
-}
-
-.contract-position-empty button {
+.contract-workspace-tools button {
   background: transparent;
   border: 0;
-  color: var(--positive);
-  min-height: 40px;
+  color: var(--contract-muted);
+  font-size: 10px;
+  min-height: 36px;
 }
 
-.contract-position-list {
-  display: grid;
-  padding: 8px 20px 0;
-}
-
-.contract-position-list article {
-  border-bottom: 1px solid var(--line);
-  display: grid;
-  gap: 5px;
-  min-height: 58px;
-  padding: 8px 0;
-}
-
-.contract-position-list article > div {
+.contract-current-pair {
   align-items: center;
   display: flex;
-  font-size: 10px;
-  gap: 8px;
+  gap: 7px;
+  justify-self: start;
+  padding: 0;
+}
+
+.contract-current-pair > span {
+  border: 1px solid var(--contract-line-strong);
+  border-radius: 3px;
+  height: 13px;
+  position: relative;
+  width: 13px;
+}
+
+.contract-current-pair[aria-pressed='true'] > span {
+  background: var(--contract-accent);
+  border-color: var(--contract-accent);
+}
+
+.contract-current-pair[aria-pressed='true'] > span::after {
+  border-bottom: 1.5px solid #07130e;
+  border-right: 1.5px solid #07130e;
+  content: '';
+  height: 6px;
+  left: 4px;
+  position: absolute;
+  top: 1px;
+  transform: rotate(45deg);
+  width: 3px;
+}
+
+.contract-close-all {
+  color: var(--contract-text) !important;
+  font-weight: 650;
+  padding: 0 5px;
+}
+.contract-close-all.armed { color: var(--contract-negative) !important; }
+.contract-filter-control { display: grid; place-items: center; padding: 0; }
+
+.contract-position-list,
+.contract-order-list {
+  display: grid;
+  gap: 10px;
+}
+
+.contract-position-card,
+.contract-pending-card {
+  background: var(--contract-surface);
+  border: 1px solid var(--contract-line);
+  border-radius: 12px;
+  min-width: 0;
+}
+
+.contract-position-card {
+  display: grid;
+  gap: 12px;
+  min-height: 272px;
+  padding: 14px 12px 12px;
+}
+
+.contract-position-card > header {
+  align-items: start;
+  display: flex;
   justify-content: space-between;
   min-width: 0;
 }
 
-.contract-position-list article > div:last-child {
-  color: var(--muted);
-  font-size: 9px;
+.contract-position-identity {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
 }
+
+.contract-position-identity > div {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.contract-position-identity strong {
+  flex-basis: 100%;
+  font-size: 13px;
+  line-height: 16px;
+}
+
+.contract-position-identity span {
+  background: var(--contract-surface-soft);
+  border-radius: 3px;
+  color: var(--contract-muted);
+  font-size: 8px;
+  line-height: 16px;
+  padding: 0 5px;
+}
+
+.contract-position-pnl {
+  display: grid;
+  justify-items: end;
+  min-width: 95px;
+}
+
+.contract-position-pnl small { color: var(--contract-muted); font-size: 8px; }
+.contract-position-pnl strong { font-size: 16px; line-height: 20px; }
+.contract-position-pnl span { font-size: 9px; }
+
+.contract-position-metrics {
+  display: grid;
+  gap: 12px 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.contract-position-metrics div { min-width: 0; }
+.contract-position-metrics dt {
+  color: var(--contract-muted);
+  font-size: 8px;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.contract-position-metrics dd {
+  color: var(--contract-text);
+  font-size: 10px;
+  font-weight: 650;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contract-liquidation-distance {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.contract-liquidation-distance span,
+.contract-liquidation-distance strong {
+  color: var(--contract-muted);
+  font-size: 8px;
+}
+
+.contract-liquidation-distance i {
+  background: var(--contract-line);
+  border-radius: 999px;
+  height: 4px;
+  overflow: hidden;
+}
+.contract-liquidation-distance b {
+  background: linear-gradient(90deg, var(--contract-accent), #f0c85d);
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+}
+
+.contract-position-action,
+.contract-pending-card > button {
+  background: var(--contract-surface-soft);
+  border: 1px solid var(--contract-line);
+  border-radius: 8px;
+  color: var(--contract-text);
+  font-size: 10px;
+  font-weight: 650;
+  min-height: 36px;
+}
+.contract-position-action.armed,
+.contract-pending-card > button.armed {
+  border-color: var(--contract-negative);
+  color: var(--contract-negative);
+}
+
+.contract-pending-card {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 108px;
+  padding: 12px;
+}
+.contract-pending-identity { align-items: center; display: flex; gap: 8px; min-width: 0; }
+.contract-pending-identity > span { display: grid; min-width: 0; }
+.contract-pending-identity strong { font-size: 12px; }
+.contract-pending-identity small { font-size: 9px; }
+.contract-pending-card dl {
+  display: grid;
+  gap: 4px;
+  grid-column: 1;
+  margin: 0;
+}
+.contract-pending-card dl > div { display: flex; font-size: 9px; gap: 8px; justify-content: space-between; }
+.contract-pending-card dt { color: var(--contract-muted); }
+.contract-pending-card dd { margin: 0; }
+.contract-pending-card > button { grid-column: 2; grid-row: 1 / span 2; min-width: 64px; }
+
+.contract-position-empty {
+  align-items: center;
+  color: var(--contract-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 220px;
+  padding-top: 52px;
+  text-align: center;
+}
+.contract-position-empty > span {
+  background: var(--contract-surface-soft);
+  border-radius: 50%;
+  color: var(--contract-muted);
+  display: grid;
+  height: 46px;
+  place-items: center;
+  width: 46px;
+}
+.contract-position-empty strong { font-size: 11px; font-weight: 620; max-width: 260px; }
+.contract-position-empty button { background: transparent; border: 0; color: var(--contract-positive); min-height: 40px; }
 
 .contract-pencil-header button:focus-visible,
 .contract-pencil-module button:focus-visible,
 .contract-position-tabs button:focus-visible,
-.contract-position-empty button:focus-visible {
-  box-shadow: 0 0 0 3px var(--focus-ring);
+.contract-workspace-panel button:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+
+@media (max-width: 359px) {
+  .contract-pencil-header { padding-inline: 10px; }
+  .contract-pair-selector { gap: 5px; max-width: 170px; }
+  .contract-product-badge { display: none; }
+  .contract-pencil-module {
+    gap: 8px;
+    grid-template-columns: minmax(0, 1fr) 132px;
+    padding-inline: 12px;
+  }
+  .contract-mode-row { grid-template-columns: 48px 42px minmax(0, 1fr); }
+  .contract-price-row { grid-template-columns: minmax(0, 1fr) 48px; }
+  .contract-mode-row button,
+  .contract-order-type { padding-inline: 3px; }
+  .contract-position-tabs { gap: 0; padding-inline: 8px 5px; }
+  .contract-position-tabs button { font-size: 9px; padding-inline: 3px; }
+  .contract-workspace-panel { padding-inline: 12px; }
+  .contract-position-card { padding-inline: 10px; }
+  .contract-position-metrics { gap-inline: 5px; }
 }
 
 @media (max-width: 820px) {
@@ -4805,40 +5405,6 @@ html[data-theme='dark'] .contract-order-confirm {
     font-size: 9px;
   }
 
-  .contract-pencil-header {
-    padding-inline: 12px;
-  }
-
-  .contract-pencil-module {
-    gap: 10px;
-    grid-template-columns: minmax(0, 1fr) 124px;
-    padding-inline: 12px;
-  }
-
-  .contract-mode-row,
-  .contract-price-row {
-    gap: 6px;
-  }
-
-  .contract-price-row {
-    grid-template-columns: minmax(0, 1fr) 48px;
-  }
-
-  .contract-field,
-  .contract-mode-row button,
-  .contract-order-type {
-    padding-inline: 7px;
-  }
-
-  .contract-position-tabs {
-    gap: 8px;
-    padding-left: 12px;
-    padding-right: 8px;
-  }
-
-  .contract-position-tabs button {
-    font-size: 9px;
-  }
 }
 
 @media (prefers-reduced-motion: no-preference) {

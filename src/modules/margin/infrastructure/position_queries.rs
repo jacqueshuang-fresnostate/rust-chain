@@ -30,6 +30,8 @@ pub(crate) struct MarginRiskPositionRow {
     pub(crate) margin_asset: u64,
     /// 持仓方向 long 或 short，决定价差的取号方式。
     pub(crate) direction: String,
+    /// 保证金模式；只有 isolated 才能计算单仓预估强平价。
+    pub(crate) margin_mode: String,
     /// 开仓时投入的自有保证金，是权益计算的基数。
     pub(crate) margin_amount: BigDecimal,
     /// 名义价值，等于保证金乘杠杆，浮盈和维持保证金都按它折算。
@@ -54,7 +56,7 @@ pub(crate) async fn load_user_risk_position_by_id(
 ) -> AppResult<Option<MarginRiskPositionRow>> {
     sqlx::query_as::<_, MarginRiskPositionRow>(
         r#"SELECT positions.id, positions.pair_id, pairs.symbol, positions.margin_asset,
-                  positions.direction, positions.margin_amount, positions.notional_amount,
+                  positions.direction, positions.margin_mode, positions.margin_amount, positions.notional_amount,
                   positions.interest_amount, positions.entry_price,
                   products.maintenance_margin_rate, positions.status
            FROM margin_positions positions

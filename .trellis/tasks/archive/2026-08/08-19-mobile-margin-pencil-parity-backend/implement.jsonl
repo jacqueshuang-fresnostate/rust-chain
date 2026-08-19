@@ -1,0 +1,8 @@
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"约束手机端金融 DTO、鉴权、十进制和错误映射"}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"约束杠杆页内部跳转、返回和 i18n"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"约束主题、安全区、弹层、PWA/Tauri 与 Pencil 页面"}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"约束后端分层与模块职责"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"约束 Rust 质量门禁、错误与测试"}
+{"file":".trellis/spec/backend/margin-trading-actions.md","reason":"约束杠杆资金、设置、风险和批量动作语义"}
+{"file":".trellis/tasks/08-19-mobile-margin-pencil-parity-backend/research/pencil-margin-baseline.md","reason":"当前 Pencil 选中页面的几何、颜色和行为基线"}
+{"file":".trellis/tasks/08-19-mobile-margin-pencil-parity-backend/research/backend-contract-gap.md","reason":"本任务需要补齐的接口字段和兼容约定"}

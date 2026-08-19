@@ -196,14 +196,8 @@ test('会话生命周期和四个市场页面共享服务端自选且不再使�
     assetsSource,
     ...views,
   ].some((contents) => contents.includes(retiredFavoritesKey)), false)
-  const contractHeaderStart = views[2]!.indexOf('class="contract-pencil-header"')
-  const contractFavoriteStart = views[2]!.indexOf(':class="{ active: isFavorite }"', contractHeaderStart)
-  const contractFavorite = views[2]!.slice(
-    contractFavoriteStart,
-    views[2]!.indexOf('</button>', contractFavoriteStart),
-  )
-  assert.match(contractFavorite, /:aria-busy="favoriteSaving"/)
-  assert.match(contractFavorite, /:disabled="favoriteSaving"/)
+  assert.match(views[2]!, /class="contract-more-menu"[\s\S]*?role="menuitem"[\s\S]*?:aria-busy="favoriteSaving"[\s\S]*?:disabled="favoriteSaving"[\s\S]*?@click="toggleFavorite"/)
+  assert.match(views[2]!, /<Star :size="16" :fill="isFavorite \? 'currentColor' : 'none'"/)
   assert.match(views[2]!, /\.contract-header-control \{[\s\S]*?height: 44px;[\s\S]*?width: 44px;/)
   assert.match(views[3]!, /@media \(max-width: 340px\)[\s\S]*?\.market-detail__icon-button \{[\s\S]*?width: 44px;/)
 })
@@ -217,6 +211,9 @@ test('交易对图片按交易对、基础资产、字母顺序回退且杠杆�
     assert.match(view, /:fallback-src="ticker(?:\.|\?\.)baseIconUrl"/)
   }
   assert.match(tradingApiSource, /logoUrl: String\(wallet\.logo_url \|\| ''\)\.trim\(\) \|\| undefined/)
+  assert.match(tradingApiSource, /logoUrl: String\(product\.logo_url \|\| ''\)\.trim\(\) \|\| undefined/)
+  assert.match(views[2]!, /:src="selectedProduct\?\.logoUrl \|\| ticker\?\.iconUrl"/)
+  assert.match(views[2]!, /:src="logoForPosition\(position\)"/)
   assert.match(assetsSource, /logoUrl: spot\?\.logoUrl \|\| margin\?\.logoUrl/)
   assert.match(assetsSource, /<AssetMark :symbol="row\.symbol" :src="row\.logoUrl"/)
 })

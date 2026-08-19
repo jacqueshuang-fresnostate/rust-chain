@@ -7599,3 +7599,31 @@
 - 修改文件：在前两条本任务记录基础上，最终补充 `mobile/src/{api/trading.ts,core/tradeForm.ts,views/TradeView.vue,i18n/messages/{zh-CN,en}.ts}`、`mobile/tests/margin-order-type-sheet.test.ts`、`src/modules/margin/application/open_position.rs`、`tests/{margin_routes,margin_limit_order_migration}.rs`、`docs/superpowers/PROGRESS.md`；既有未跟踪目录 `mobile/pencil/docs/` 未修改。
 - 验证结果：Rust `cargo fmt --all -- --check`、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、后端架构 11/11、迁移/聚合/成交时间合同 3/3、杠杆领域 10/10、开仓语义 3/3、行情触发 1/1 通过；依赖 MySQL/Redis 的杠杆路由和强平聚焦用例在环境变量未配置时执行了显式跳过分支，未声称完成真实依赖验证。Mobile `type-check`、聚焦 20/20、全量 416/416、PWA 与 Tauri 构建通过。Ego Browser 在 390×844 浅色和 320×720 深色/减少动态效果下验证两项选择、64px 选项、无横向溢出、滚动锁、焦点恢复、Escape/遮罩关闭、限价可编辑、BBO 回填、`1.` 错误 ARIA 与 `.5 -> 0.5` 冻结请求均正常；任务空间已关闭。`git diff --check` 通过。
 - 后续事项：部署前执行 `0106_margin_limit_orders.sql`；如需验证真实挂单成交、撤单竞争、返佣和强平隔离，请在隔离 MySQL/Redis 环境配置 `DATABASE_URL`、`REDIS_URL` 后复跑相关集成测试。当前改动尚未提交或推送。
+
+## 2026-08-19 22:07 - 补齐杠杆产品目录与持仓风险契约
+
+- 完成内容：将不含用户数据的启用杠杆产品目录改为匿名可读，钱包、设置、风险和所有资金写入口继续鉴权；能力集新增止盈止损、策略、一键平仓和风险快照显式开关。单仓风险响应在保留旧 `realized_pnl` 兼容字段的同时补充未实现盈亏、基础资产数量、收益率、保证金率、逐仓预估强平价及强平距离，并让派生指标复用同一服务端行情与强平风险快照；全仓不生成伪造的单仓强平价。
+- 修改文件：`src/modules/margin/{presentation,domain,routes}.rs`、`src/modules/margin/application/{product_config,queries}.rs`、`src/modules/margin/infrastructure/position_queries.rs`、`tests/{margin_routes,unit_src/src_modules_margin_domain_tests}.rs`、`.trellis/spec/backend/margin-trading-actions.md`、`.trellis/tasks/08-19-mobile-margin-pencil-parity-backend/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --all`、`cargo check --all-targets` 通过；杠杆领域单元测试 9/9、匿名产品目录无 MySQL 错误合同测试 1/1 通过。真实 MySQL/Redis 路由测试将在最终质量门禁阶段按环境可用性执行。
+- 后续事项：按 Pencil `cjzfi / p6GfgT` 重构手机端杠杆主页面并完整消费新增 DTO，随后执行全量验证和浏览器逐视口验收。
+
+## 2026-08-19 22:45 - 手机端杠杆主页面复刻当前 Pencil 选稿
+
+- 完成内容：以当前选中的 `cjzfi / p6GfgT` 为唯一主页面基线，重做安全区 Header、后台 Logo/交易对/实时行情、图表与更多菜单、202px 下单控制台、150px 六卖七买盘口、五档保证金滑杆、委托/资产/策略/历史工作区以及真实持仓风险卡；配套交易对、模式、倍数和订单类型弹层继续复用当前选稿。访客可读取公开产品并选择交易对，私有钱包和动作继续登录分流；已成交持仓与未成交限价委托分开，单笔/批量危险操作二次确认，批量接口会识别部分失败而不再误报全部成功。同步修正策略禁用语义、减少动态滚动、后台产品 Logo/费率/能力/全仓账户/风险 DTO 映射和相关规格/回归测试。
+- 修改文件：`mobile/src/{api/trading.ts,core/types.ts,views/{TradeView,OrdersView}.vue,components/{ContractTradeSheets,OrderBookPanel}.vue,i18n/messages/{zh-CN,en}.ts}`、`mobile/tests/{award-ui-trading-workspaces,contract-pencil-selected-parity,margin-order-type-sheet,margin-product-boundaries,market-favorites,pencil-trading-product-selected-parity,root-prototype-parity}.test.ts`、`.trellis/spec/mobile/{backend-integration,pwa-and-shell}.md`。
+- 验证结果：`npm --prefix mobile run type-check` 通过；相关聚焦回归 53/53、补充批量语义后的交易聚焦回归 36/36 通过；Ego Browser 在 390×920 浅色访客态实测 Header 58px、模块 460px、控制台 202×450、盘口 150×450、标签 44px，文档宽度与视口同为 390px且无横向溢出。最终全量测试、双主题多视口、构建与 Rust 质量门禁继续执行。
+- 后续事项：执行后端/移动端全量门禁，完成 320/390/448px 明暗主题与菜单/弹层/滚动交互验收，并收敛任务记录。
+
+## 2026-08-19 23:14 - 手机端杠杆 Pencil 复刻与后端契约最终验收
+
+- 完成内容：完成当前 Pencil 杠杆主页面与交易对、保证金模式、杠杆和订单类型弹层的最终收敛。390px 保持 `14 / 202 / 10 / 150 / 14` 精确双栏几何，448px 让真实盘口自然吃满剩余宽度，320px 使用紧凑列且无裁切；Header 更多菜单补齐首项聚焦、方向键/Home/End 导航、Escape 关闭、焦点恢复及真实毛玻璃。后端公开只读产品目录、显式能力集和单仓风险派生字段均由手机端完整消费，钱包、设置、风险与资金写入口继续鉴权；已成交持仓、未成交限价委托、部分成功批量结果和全仓/逐仓风险展示保持真实业务语义。
+- 修改文件：`src/modules/margin/{presentation,domain,routes}.rs`、`src/modules/margin/application/{product_config,queries}.rs`、`src/modules/margin/infrastructure/position_queries.rs`、`tests/{margin_routes,unit_src/src_modules_margin_domain_tests}.rs`、`mobile/src/{api/trading.ts,core/types.ts,views/{TradeView,OrdersView}.vue,components/{ContractTradeSheets,OrderBookPanel}.vue,i18n/messages/{zh-CN,en}.ts}`、`mobile/tests/{award-ui-trading-workspaces,contract-pencil-selected-parity,margin-order-type-sheet,margin-product-boundaries,market-favorites,pencil-trading-product-selected-parity,root-prototype-parity}.test.ts`、`.trellis/spec/{backend/margin-trading-actions,mobile/backend-integration,mobile/pwa-and-shell}.md`、`.trellis/tasks/archive/2026-08/08-19-mobile-margin-pencil-parity-backend/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Rust `cargo fmt --all -- --check`、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings` 通过；沙箱外 `cargo test --all-targets -- --test-threads=1` 共 58 个测试套件、831/831 通过，其中后端架构 11/11、杠杆路由 33/33、限价迁移 3/3、强平 8/8。Mobile `npm --prefix mobile run type-check`、全量测试 418/418、PWA 与 Tauri 构建通过。Ego Browser 在 390×920 明暗、320×720 深色和 448×900 浅色验收零横向溢出；390px 实测 Header 58px、模块 460px、控制台 202×450、盘口 150×450、标签 44px，448px 盘口扩展至 208px，320px 页面滚到底后 Header 仍位于 `top: 0`。交易对弹层 Escape/滚动锁/焦点恢复以及更多菜单键盘闭环均实测通过；Trellis validate 与 `git diff --check` 通过。
+- 后续事项：部署新后端与手机端构建后即可使用新增契约；当前改动尚未提交或推送，既有未跟踪目录 `mobile/pencil/docs/` 未修改。
+
+## 2026-08-19 23:21 - 提交并推送杠杆页面重构
+
+- 完成内容：整理并提交手机端杠杆 Pencil 复刻、后端公开产品与持仓风险契约、规格文档、回归测试和 Trellis 任务归档；推送范围排除既有未跟踪目录 `mobile/pencil/docs/`。
+- 修改文件：本次杠杆页面重构与后端契约涉及的 `mobile/src/**`、`mobile/tests/**`、`src/modules/margin/**`、`tests/**`、`.trellis/spec/**`、`.trellis/tasks/archive/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：沿用上一条记录的 Rust 831/831、Mobile 418/418、类型检查、Clippy、PWA/Tauri 构建与 Ego Browser 多视口验收；提交前补充执行 Git 暂存范围检查与 `git diff --cached --check`。
+- 后续事项：无。

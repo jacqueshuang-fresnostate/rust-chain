@@ -14,6 +14,8 @@
 - Transfer eligibility: `assets.margin_transfer_enabled`; new assets default to `FALSE` and the admin asset API owns this flag.
 - Margin wallet catalog: `GET /api/v1/margin/wallets` returns `asset_id`, `asset_symbol`, optional `logo_url`, `margin_transfer_enabled`, and the three balance buckets.
 - Settings: `GET /api/v1/margin/settings/{product_id}` plus leverage/mode PATCH routes.
+- Product catalog: anonymous `GET /api/v1/margin/products`; it contains no user funds or settings. Wallets, settings, risk, and every mutation remain user-authenticated.
+- Position risk: authenticated `GET /api/v1/margin/positions/{id}/risk`, scoped by both position id and JWT user id.
 - Persistence: `margin_positions.wallet_scope` and `margin_transfers(user_id, idempotency_key, transfer_id, request fields)`.
 - Cross account persistence: `margin_cross_accounts(user_id, margin_asset)` stores the latest account-level equity, PnL, interest, maintenance margin, ratio, status, and version.
 - Market cache: `market:ticker:{SANITIZED_SYMBOL}`, positive price observed within 60 seconds.
@@ -39,7 +41,10 @@
 - Same user/key/request replay returns the original `transfer_id` and original post-transfer ledger snapshots without moving funds again, even if the asset later becomes inactive.
 - Same key with different asset, direction, or amount returns conflict.
 - User leverage must be a configured product level. Persisted settings are readable through the GET route.
-- Product listing returns a capability envelope. Implemented values are `order_types=["market", "limit"]` and `margin_modes=["isolated", "cross"]`; clients render only those advertised order types, while missing-order-type PC requests remain market-compatible.
+- Product listing returns a capability envelope. Implemented values are `order_types=["market", "limit"]`, `margin_modes=["isolated", "cross"]`, `bulk_close=true`, and `position_risk=true`; unimplemented `take_profit_stop_loss` and `strategy_orders` remain false. Clients render only advertised behavior, while missing-order-type PC requests remain market-compatible.
+- The single-position risk response preserves the legacy `realized_pnl` alias and also returns the semantically correct `unrealized_pnl`, base quantity, return rate, margin ratio, isolated estimated liquidation price, and liquidation-distance rate. All decimals stay strings at the HTTP boundary.
+- Risk display derivatives use the same ticker and worker risk state as liquidation. Quantity is notional divided by entry price, return rate is unrealized PnL divided by margin, and margin ratio is equity divided by maintenance margin. Invalid denominators produce null rather than fabricated zero ratios.
+- An isolated liquidation estimate solves the mark price where equity equals maintenance margin. Cross positions return null for both isolated liquidation price and distance because liquidation belongs to the shared `(user_id, margin_asset)` account.
 - `cross` accounts are scoped by `(user_id, margin_asset)`. All open cross positions using that asset share wallet equity, initial margin, unrealized PnL, and accrued interest.
 - Cross equity is `wallet_equity + sum(filled_open_position.margin_amount) + sum(unrealized_pnl) - sum(interest_amount)`; maintenance margin is the sum of each filled position's notional times its configured maintenance rate. Pending limits are absent from both sums.
 - A cross account is liquidated as one unit when combined equity is less than or equal to combined maintenance margin. The worker locks all account positions in one transaction, settles each payout, writes each liquidation record, and closes every open cross position in that account.
@@ -50,6 +55,7 @@
 ### 4. Validation & Error Matrix
 
 - Missing/stale/non-positive ticker on open/close -> `VALIDATION_ERROR`, no financial mutation.
+- Anonymous access to the product catalog is allowed; anonymous access to wallets, settings, risk, open, close, cancel, bulk actions, or transfer remains `UNAUTHORIZED`.
 - Unsupported leverage or margin mode -> `VALIDATION_ERROR`.
 - Unknown `order_type`, a market request with `price`, a limit request without positive `price`, or either type with `trigger_price` -> `VALIDATION_ERROR`.
 - Limit `price` exceeds pair `price_precision` -> `VALIDATION_ERROR`; never round or rewrite the client's trigger boundary.
@@ -89,6 +95,8 @@
 - Liquidation worker test asserts payout uses recorded `wallet_scope`.
 - Bulk tests process more than 100 rows, retain prior successes/events, report a failed row, and continue to later rows.
 - Settings tests cover user isolation, leverage round-trip, mode round-trip, and cross acceptance for a product configured with `cross`.
+- Route tests prove the product catalog works without a bearer token while private margin routes still reject anonymous callers.
+- Risk tests cover the legacy PnL alias, new unrealized PnL, quantity, return/margin ratios, isolated liquidation price/distance, and null cross liquidation fields.
 - Domain tests cover combined PnL/interest/maintenance arithmetic and the equality liquidation boundary; worker integration tests must assert all same-asset cross positions close in one account liquidation.
 
 ### 7. Wrong vs Correct

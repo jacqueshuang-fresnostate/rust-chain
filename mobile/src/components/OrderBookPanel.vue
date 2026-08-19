@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChartNoAxesCombined, ChevronDown, LoaderCircle } from 'lucide-vue-next'
+import { ChartNoAxesCombined, ChevronDown, ListFilter, LoaderCircle } from 'lucide-vue-next'
 import { formatAmount, formatPrice } from '@/core/format'
 import type { OrderBookLevel } from '@/core/types'
 
@@ -14,6 +14,9 @@ const props = withDefaults(defineProps<{
   loading?: boolean
   layout?: 'stacked' | 'split' | 'paired' | 'matrix' | 'mini'
   miniLevels?: number
+  miniAskLevels?: number
+  miniBidLevels?: number
+  miniPrecision?: string
   showMiniPrecision?: boolean
 }>(), {
   baseAsset: '',
@@ -21,6 +24,9 @@ const props = withDefaults(defineProps<{
   loading: false,
   layout: 'stacked',
   miniLevels: 5,
+  miniAskLevels: undefined,
+  miniBidLevels: undefined,
+  miniPrecision: '0.01',
   showMiniPrecision: true,
 })
 
@@ -31,14 +37,14 @@ const visibleBids = computed(() => props.bids.slice(0, 6))
 const miniAsks = computed(() => props.asks.slice(0, 5).reverse())
 const miniBids = computed(() => props.bids.slice(0, 5))
 const renderedMiniAsks = computed(() => (
-  props.miniLevels === 5
+  (props.miniAskLevels ?? props.miniLevels) === 5
     ? miniAsks.value
-    : props.asks.slice(0, Math.max(1, props.miniLevels)).reverse()
+    : props.asks.slice(0, Math.max(1, props.miniAskLevels ?? props.miniLevels)).reverse()
 ))
 const renderedMiniBids = computed(() => (
-  props.miniLevels === 5
+  (props.miniBidLevels ?? props.miniLevels) === 5
     ? miniBids.value
-    : props.bids.slice(0, Math.max(1, props.miniLevels))
+    : props.bids.slice(0, Math.max(1, props.miniBidLevels ?? props.miniLevels))
 ))
 const matrixMode = computed(() => props.layout === 'paired' || props.layout === 'matrix')
 const matrixBids = computed(() => props.bids.slice(0, 7))
@@ -129,8 +135,11 @@ function matrixWidth(quantity: number): string {
             <span class="down numeric" role="cell">{{ 100 - miniBidRatio }}%&nbsp;&nbsp;S</span>
           </div>
           <div v-if="showMiniPrecision" class="order-book__mini-precision" aria-hidden="true">
-            <span class="numeric">0.01</span>
-            <ChevronDown :size="12" />
+            <span class="order-book__mini-precision-value">
+              <span class="numeric">{{ miniPrecision }}</span>
+              <ChevronDown :size="11" />
+            </span>
+            <ListFilter :size="13" />
           </div>
         </template>
         <div v-else class="order-book__mini-state" role="status">
@@ -685,15 +694,24 @@ function matrixWidth(quantity: number): string {
 
 .order-book__mini-precision {
   align-items: center;
+  display: flex;
+  font-size: 10px;
+  gap: 5px;
+  height: 24px;
+  justify-content: space-between;
+  justify-self: stretch;
+  margin-top: 2px;
+  padding: 0 3px;
+}
+
+.order-book__mini-precision-value {
+  align-items: center;
   background: var(--surface-2);
   border-radius: 4px;
   display: inline-flex;
-  font-size: 10px;
-  gap: 4px;
-  height: 24px;
-  justify-self: start;
-  margin-top: 2px;
-  padding: 0 7px;
+  gap: 3px;
+  height: 22px;
+  padding: 0 6px;
 }
 
 .order-book__mini-state {

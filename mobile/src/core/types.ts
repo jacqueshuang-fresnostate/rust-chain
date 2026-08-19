@@ -90,7 +90,9 @@ export interface MarginProduct {
   id: number
   pairId: number
   symbol: string
+  marginAssetId: number
   marginAssetSymbol: string
+  logoUrl?: string
   marginMode: 'cross' | 'isolated'
   marginModes: Array<'cross' | 'isolated'>
   orderTypes: MarginOrderType[]
@@ -99,6 +101,12 @@ export interface MarginProduct {
   maxLeverage: number
   minMargin: number
   maxMargin: number | null
+  maintenanceMarginRate: number
+  hourlyInterestRate: number
+  takeProfitStopLossSupported: boolean
+  strategyOrdersSupported: boolean
+  bulkCloseSupported: boolean
+  positionRiskSupported: boolean
 }
 
 export interface NewsItem {

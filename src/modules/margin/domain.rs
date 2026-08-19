@@ -103,6 +103,107 @@ pub(crate) fn margin_position_payout_amount(
         .unwrap_or_else(|| BigDecimal::from(0).with_scale(18))
 }
 
+/// 手机端持仓卡所需的派生风险指标，所有值均基于同一个服务端风险快照计算。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct MarginPositionDisplayMetrics {
+    /// 名义价值折算的基础资产数量。
+    pub(crate) position_quantity: BigDecimal,
+    /// 浮动盈亏相对投入保证金的比例。
+    pub(crate) return_rate: Option<BigDecimal>,
+    /// 当前权益相对维持保证金的比例。
+    pub(crate) margin_ratio: Option<BigDecimal>,
+    /// 逐仓模式下的预估强平价格；全仓没有独立单仓强平价。
+    pub(crate) estimated_liquidation_price: Option<BigDecimal>,
+    /// 标记价到预估强平价格的绝对距离比例。
+    pub(crate) liquidation_distance_rate: Option<BigDecimal>,
+}
+
+/// 单仓展示指标的同一时点输入，调用方必须从一份服务端风险快照中组装，禁止混用不同行情时刻。
+pub(crate) struct MarginPositionDisplayInput<'a> {
+    /// 仓位保证金模式，只接受 isolated 或 cross。
+    pub(crate) margin_mode: &'a str,
+    /// 仓位方向，只接受 long 或 short。
+    pub(crate) direction: &'a str,
+    /// 用户实际投入并被占用的保证金。
+    pub(crate) margin_amount: &'a BigDecimal,
+    /// 开仓时锁定的名义价值。
+    pub(crate) notional_amount: &'a BigDecimal,
+    /// 当前尚未结算的累计借款利息。
+    pub(crate) interest_amount: &'a BigDecimal,
+    /// 仓位真实成交均价。
+    pub(crate) entry_price: &'a BigDecimal,
+    /// 同一风险快照使用的服务端标记价。
+    pub(crate) mark_price: &'a BigDecimal,
+    /// 按标记价计算的未实现盈亏。
+    pub(crate) unrealized_pnl: &'a BigDecimal,
+    /// 保证金、未实现盈亏与利息合成后的当前权益。
+    pub(crate) equity: &'a BigDecimal,
+    /// 当前产品维持保证金率折算出的维持保证金金额。
+    pub(crate) maintenance_margin: &'a BigDecimal,
+}
+
+/// 从单仓风险快照派生页面展示指标，不读取存储且不改变强平判定。
+///
+/// 数量、收益率和保证金率分别按入场价、投入保证金和维持保证金作为分母；分母为零时相应
+/// 比率返回 `None`。预估强平价只对逐仓有单仓意义：做多和做空分别解出权益等于维持保证金
+/// 时的标记价。算出的价格非正时视为没有有效强平价，距离也随之返回 `None`。
+pub(crate) fn margin_position_display_metrics(
+    input: MarginPositionDisplayInput<'_>,
+) -> Result<MarginPositionDisplayMetrics, &'static str> {
+    let zero = BigDecimal::from(0);
+    if input.entry_price <= &zero || input.mark_price <= &zero {
+        return Err("margin display prices must be positive");
+    }
+    if input.direction != "long" && input.direction != "short" {
+        return Err("margin direction must be long or short");
+    }
+    if input.margin_mode != "isolated" && input.margin_mode != "cross" {
+        return Err("margin mode must be isolated or cross");
+    }
+
+    let position_quantity = if input.notional_amount > &zero {
+        (input.notional_amount.clone() / input.entry_price.clone()).with_scale(18)
+    } else {
+        zero.clone().with_scale(18)
+    };
+    let return_rate = (input.margin_amount > &zero)
+        .then(|| (input.unrealized_pnl.clone() / input.margin_amount.clone()).with_scale(18));
+    let margin_ratio = (input.maintenance_margin > &zero)
+        .then(|| (input.equity.clone() / input.maintenance_margin.clone()).with_scale(18));
+
+    let estimated_liquidation_price =
+        if input.margin_mode == "isolated" && input.notional_amount > &zero {
+            let adjustment = (input.maintenance_margin.clone() - input.margin_amount.clone()
+                + input.interest_amount.clone())
+                / input.notional_amount.clone();
+            let multiplier = if input.direction == "long" {
+                BigDecimal::from(1) + adjustment
+            } else {
+                BigDecimal::from(1) - adjustment
+            };
+            let price = (input.entry_price.clone() * multiplier).with_scale(18);
+            (price > zero).then_some(price)
+        } else {
+            None
+        };
+    let liquidation_distance_rate = estimated_liquidation_price.as_ref().map(|price| {
+        let delta = if input.mark_price >= price {
+            input.mark_price.clone() - price.clone()
+        } else {
+            price.clone() - input.mark_price.clone()
+        };
+        (delta / input.mark_price.clone()).with_scale(18)
+    });
+
+    Ok(MarginPositionDisplayMetrics {
+        position_quantity,
+        return_rate,
+        margin_ratio,
+        estimated_liquidation_price,
+        liquidation_distance_rate,
+    })
+}
+
 /// 一个全仓账户中的单仓风险输入，三项都以保证金币种计价并已按当前标记价估过值。
 #[derive(Debug, Clone)]
 pub(crate) struct CrossMarginPositionRisk {

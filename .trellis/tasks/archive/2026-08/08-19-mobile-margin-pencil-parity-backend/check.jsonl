@@ -1,0 +1,6 @@
+{"file":".trellis/tasks/08-19-mobile-margin-pencil-parity-backend/prd.md","reason":"逐项核对功能、视觉、接口和验收标准"}
+{"file":".trellis/tasks/08-19-mobile-margin-pencil-parity-backend/research/pencil-margin-baseline.md","reason":"核对 390px 关键几何和选中节点"}
+{"file":".trellis/tasks/08-19-mobile-margin-pencil-parity-backend/research/backend-contract-gap.md","reason":"核对公开/私有边界、风险公式和兼容字段"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"审查真实 API、金融精度和访客/登录态"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"审查主题、安全区、可访问性和构建边界"}
+{"file":".trellis/spec/backend/margin-trading-actions.md","reason":"审查资金动作、仓位状态和风险展示口径"}

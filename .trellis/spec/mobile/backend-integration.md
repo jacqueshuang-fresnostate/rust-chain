@@ -265,6 +265,30 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
 
 ### Financial mutation and wallet metadata contracts
 
+- `GET /margin/products` is a public read-only catalog in contract mode. It
+  maps product id/pair id, margin asset id/symbol, backend Logo, price
+  precision, leverage levels, margin bounds, maintenance/hourly rates, and the
+  capability envelope. Spot mode does not request this unrelated catalog.
+- Margin wallets, user settings, position risk, and every margin mutation stay
+  protected. A guest contract page may browse and switch products but must
+  route settings, balance, order, cancel, and close intents through login.
+- The capability envelope is authoritative. Mobile renders only advertised
+  order/margin modes and gates TP/SL, strategy, bulk close, and position-risk
+  controls with `take_profit_stop_loss`, `strategy_orders`, `bulk_close`, and
+  `position_risk`; it never fills an unsupported surface with demo records.
+- `GET /margin/wallets` retains `cross_accounts[]`. Filled positions poll
+  `/margin/positions/{id}/risk` and map unrealized PnL, base quantity, return
+  rate, margin ratio, isolated liquidation estimate, and liquidation distance.
+  A failed snapshot remains unavailable (`--`), not zero. Cross positions use
+  the shared account ratio and never invent a single-position liquidation
+  price.
+- Bulk close/cancel responses are partially successful by contract. Mobile
+  must inspect both `positions` and `failures`, reconcile balances, and report
+  counts; an HTTP 200 with failures is not an all-success message.
+- Financial request decimals remain explicit decimal strings at the API
+  boundary. Display adapters may convert read-only risk fields to numbers, but
+  that conversion must never feed a later submission.
+
 - The Seconds adapter must map and retain `payout_rate`, `entry_price`,
   `settlement_price`, and the backend `status`. The active-order selector must
   recognize `opened` and `active` (and `pending` when emitted) without rewriting
@@ -375,7 +399,8 @@ const points = detailSession.resolveKlineRequest(request, restKlines(initial))
 - Prediction history displays backend `order_no`. Margin position labels join
   `product_id` or `pair_id` to stable product/market metadata instead of
   treating a numeric pair id as a symbol.
-- Guest spot trading must not request authenticated margin products.
+- Guest spot mode must not request the unrelated margin catalog. Guest
+  contract mode may request the public catalog but no private margin endpoint.
 
 ## 6. Error Matrix
 

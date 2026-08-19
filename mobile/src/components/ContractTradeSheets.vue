@@ -406,7 +406,7 @@ function orderTypeDescription(orderType: MarginOrderType): string {
                 :aria-current="row.normalized === normalizeSymbol(pairSymbol) ? 'true' : undefined"
                 @click="selectPair(row.product.symbol)"
               >
-                <AssetMark :symbol="row.pair.base" :src="row.ticker?.iconUrl" :fallback-src="row.ticker?.baseIconUrl" :size="34" />
+                <AssetMark :symbol="row.pair.base" :src="row.product.logoUrl || row.ticker?.iconUrl" :fallback-src="row.ticker?.baseIconUrl" :size="34" />
                 <span class="contract-pair-row__name">
                   <strong>{{ row.pair.base }}<small>/{{ row.pair.quote }}</small></strong>
                   <small>{{ row.pair.base }} · {{ t('trade.perpetualShort') }}</small>

@@ -1067,6 +1067,19 @@ async fn margin_routes_require_expected_scope() {
         .unwrap();
     assert_eq!(unauthenticated_open.status(), StatusCode::UNAUTHORIZED);
 
+    for uri in ["/margin/wallets", "/margin/positions/1/risk"] {
+        let response = user_routes()
+            .with_state(AppState::new(settings.clone()))
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "{uri} must remain private"
+        );
+    }
+
     let user_on_admin = admin_routes()
         .with_state(AppState::new(settings.clone()))
         .oneshot(
@@ -1101,13 +1114,11 @@ async fn margin_routes_require_expected_scope() {
 #[tokio::test]
 async fn margin_routes_return_clear_error_without_mysql() {
     let settings = test_settings();
-    let token = issue_token(&settings, "user:42", TokenScope::User, 900).unwrap();
     let response = user_routes()
         .with_state(AppState::new(settings))
         .oneshot(
             Request::builder()
                 .uri("/margin/products")
-                .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1134,7 +1145,6 @@ async fn margin_lists_active_products_for_user_and_all_products_for_admin()
     };
     let settings = test_settings();
     let mut fixture_tx = pool.begin().await?;
-    let user_id = create_user(&mut fixture_tx).await;
     let admin_id = create_admin(&pool).await;
     let (base_asset, base_symbol) = create_asset(&mut fixture_tx, "MB").await;
     let (quote_asset, quote_symbol) = create_asset(&mut fixture_tx, "MQ").await;
@@ -1148,8 +1158,6 @@ async fn margin_lists_active_products_for_user_and_all_products_for_admin()
         .await?;
     fixture_tx.commit().await?;
 
-    let user_token =
-        issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let admin_token = issue_token(
         &settings,
         format!("admin:{admin_id}"),
@@ -1164,7 +1172,6 @@ async fn margin_lists_active_products_for_user_and_all_products_for_admin()
         .oneshot(
             Request::builder()
                 .uri("/margin/products")
-                .header("authorization", format!("Bearer {user_token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1186,6 +1193,10 @@ async fn margin_lists_active_products_for_user_and_all_products_for_admin()
         user_payload["capabilities"]["margin_modes"],
         serde_json::json!(["isolated", "cross"])
     );
+    assert_eq!(user_payload["capabilities"]["take_profit_stop_loss"], false);
+    assert_eq!(user_payload["capabilities"]["strategy_orders"], false);
+    assert_eq!(user_payload["capabilities"]["bulk_close"], true);
+    assert_eq!(user_payload["capabilities"]["position_risk"], true);
     assert!(
         user_payload["products"]
             .as_array()
@@ -3496,12 +3507,24 @@ async fn margin_position_risk_snapshot_returns_owned_position_metrics() -> Resul
     assert_eq!(payload["risk"]["entry_price"], "100.000000000000000000");
     assert_eq!(payload["risk"]["mark_price"], "84.000000000000000000");
     assert_eq!(payload["risk"]["maintenance_margin_rate"], "0.05000000");
+    assert_eq!(payload["risk"]["unrealized_pnl"], "-16.000000000000000000");
     assert_eq!(payload["risk"]["realized_pnl"], "-16.000000000000000000");
     assert_eq!(payload["risk"]["interest_amount"], "1.500000000000000000");
     assert_eq!(payload["risk"]["equity"], "2.500000000000000000");
     assert_eq!(
         payload["risk"]["maintenance_margin"],
         "5.000000000000000000"
+    );
+    assert_eq!(payload["risk"]["position_quantity"], "1.000000000000000000");
+    assert_eq!(payload["risk"]["return_rate"], "-0.800000000000000000");
+    assert_eq!(payload["risk"]["margin_ratio"], "0.500000000000000000");
+    assert_eq!(
+        payload["risk"]["estimated_liquidation_price"],
+        "86.500000000000000000"
+    );
+    assert_eq!(
+        payload["risk"]["liquidation_distance_rate"],
+        "0.029761904761904761"
     );
     assert_eq!(payload["risk"]["should_liquidate"], true);
     assert_eq!(payload["risk"]["observed_at"], observed_at_millis);

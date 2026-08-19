@@ -298,9 +298,16 @@ async function cancelAllMargin(): Promise<boolean> {
   actionId.value = 'margin-cancel-all'
   error.value = ''
   try {
-    await cancelAllMarginPositions()
+    const result = await cancelAllMarginPositions()
     await load()
-    feedback.value = t('orders.allPendingCanceled')
+    if (result.failures.length) {
+      error.value = t('orders.batchCancelPartial', {
+        succeeded: result.positions.length,
+        failed: result.failures.length,
+      })
+    } else {
+      feedback.value = t('orders.allPendingCanceled')
+    }
     return true
   } catch (reason) {
     error.value = apiErrorMessage(reason, t('orders.batchCancelFailed'))
@@ -315,9 +322,16 @@ async function closeAllMargin(): Promise<boolean> {
   actionId.value = 'margin-close-all'
   error.value = ''
   try {
-    await closeAllMarginPositions()
+    const result = await closeAllMarginPositions()
     await load()
-    feedback.value = t('orders.allCloseSubmitted')
+    if (result.failures.length) {
+      error.value = t('orders.batchClosePartial', {
+        succeeded: result.positions.length,
+        failed: result.failures.length,
+      })
+    } else {
+      feedback.value = t('orders.allCloseSubmitted')
+    }
     return true
   } catch (reason) {
     error.value = apiErrorMessage(reason, t('orders.allCloseFailed'))

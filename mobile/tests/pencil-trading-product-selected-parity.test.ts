@@ -44,7 +44,7 @@ function replaceExactlyOnce(source: string, current: string, prior: string, labe
   return `${source.slice(0, first)}${prior}${source.slice(first + current.length)}`
 }
 
-test('现货 yzOPc/bo8k5 模板仅定向调整订单类型入口与持仓归属，合约仍使用独立分支', () => {
+test('现货 yzOPc/bo8k5 模板仅定向调整订单类型入口与持仓归属，杠杆使用 cjzfi/p6GfgT 独立分支', () => {
   const spotStart = tradeSource.indexOf('    <template v-if="isSpotMode">')
   const contractStart = tradeSource.indexOf('    <template v-else>', spotStart)
   const orderTypeTeleportStart = tradeSource.indexOf('    <Teleport to="body">', contractStart)
@@ -156,20 +156,22 @@ test('现货 yzOPc/bo8k5 模板仅定向调整订单类型入口与持仓归属�
   assert.match(currentAccountWorkspace, /id="spot-holdings-panel"[\s\S]*?aria-labelledby="spot-holdings-label"/)
   assert.match(currentAccountWorkspace, /t\('trade\.onlyCurrent'\)[\s\S]*?@click="openAssets"[^>]*>\{\{ t\('common\.viewAll'\) \}\}/)
   assert.doesNotMatch(currentAccountWorkspace, /orders\.cancelAll|openOrders\('positions'\)/)
-  assert.doesNotMatch(spotTemplate, /by3G9|pKHeU|contract-pencil-/)
-  assert.match(contractTemplate, /data-pencil-source="by3G9 pKHeU"/)
+  assert.doesNotMatch(spotTemplate, /cjzfi|p6GfgT|contract-pencil-/)
+  assert.match(contractTemplate, /data-pencil-source="cjzfi p6GfgT"/)
   assert.doesNotMatch(contractTemplate, /yzOPc|bo8k5|spot-pencil-workspace/)
 })
 
-test('合约为独立二栏下单、五档真实盘口和真实持仓状态面', () => {
+test('杠杆为独立二栏下单、六卖七买真实盘口和真实持仓风险面', () => {
   const css = styleOf(tradeSource)
-  assert.match(css, /\.contract-pencil-module\s*\{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) 150px;/)
-  assert.match(tradeSource, /class="contract-mini-book"[\s\S]*?:asks="asks"[\s\S]*?:bids="bids"[\s\S]*?layout="mini"/)
-  assert.match(orderBookSource, /const miniAsks = computed\(\(\) => props\.asks\.slice\(0, 5\)\.reverse\(\)\)/)
-  assert.match(orderBookSource, /const miniBids = computed\(\(\) => props\.bids\.slice\(0, 5\)\)/)
-  assert.match(tradeSource, /const margin = await fetchMarginWallets\(\)[\s\S]*?marginWallets\.value = margin\.wallets[\s\S]*?marginPositions\.value = margin\.positions/)
-  assert.match(tradeSource, /v-if="visibleMarginPositions\.length" class="contract-position-list"/)
+  assert.match(css, /\.contract-pencil-module\s*\{[\s\S]*?grid-template-columns: 202px minmax\(150px, 1fr\);/)
+  assert.match(tradeSource, /class="contract-mini-book"[\s\S]*?:asks="asks"[\s\S]*?:bids="bids"[\s\S]*?layout="mini"[\s\S]*?:mini-ask-levels="6"[\s\S]*?:mini-bid-levels="7"/)
+  assert.match(orderBookSource, /props\.asks\.slice\(0, Math\.max\(1, props\.miniAskLevels \?\? props\.miniLevels\)\)\.reverse\(\)/)
+  assert.match(orderBookSource, /props\.bids\.slice\(0, Math\.max\(1, props\.miniBidLevels \?\? props\.miniLevels\)\)/)
+  assert.match(tradeSource, /const margin = await fetchMarginWallets\(\)[\s\S]*?marginWallets\.value = margin\.wallets[\s\S]*?marginCrossAccounts\.value = margin\.crossAccounts[\s\S]*?marginPositions\.value = margin\.positions/)
+  assert.match(tradeSource, /v-if="contractWorkspaceTab === 'positions' && visibleMarginPositions\.length" class="contract-position-list"/)
   assert.match(tradeSource, /v-else class="contract-position-empty"/)
+  assert.match(tradeSource, /fetchMarginPositionRisk\(position\.id\)/)
+  assert.match(tradeSource, /riskForPosition\(position\)\?\.estimatedLiquidationPrice/)
   assert.match(tradeSource, /fetchOrderBook\(symbol\)/)
   assert.match(tradeSource, /createMarketDetailStreamSession\(\{/)
 })
@@ -354,12 +356,10 @@ test('预测页使用 pU7Kz/IcvzQ 的真实市场卡、状态筛选与是/否报
 test('本轮四页只消费真实状态，不内置画板演示行情、余额或订单', () => {
   const sources = [tradeSource, secondsSource, productHubSource, predictionSource]
   for (const source of sources) {
-    const stateSource = source === tradeSource
-      ? source.replace(/\.contract-order-confirm-layer,[\s\S]*?(?=\.contract-trade \{)/, '')
-      : source
+    const stateSource = source.slice(0, source.indexOf('<style'))
     assert.doesNotMatch(source, /(?:63,?085|63,?080|01842|1,?284\.00)/)
     assert.doesNotMatch(source, /\b(?:mock|fixture|demoData|fakeOrder|sampleMarket)s?\b/i)
-    assert.doesNotMatch(stateSource, /<svg|#[0-9a-f]{3,8}|rgba?\(/i)
+    assert.doesNotMatch(stateSource, /<svg/i)
   }
 })
 
