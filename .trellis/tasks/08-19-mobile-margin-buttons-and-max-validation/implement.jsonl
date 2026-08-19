@@ -1,0 +1,5 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Mobile UI touch, icon, responsive and required quality gates."}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Authoritative DTO, financial amount and request-validation contracts."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Theme, focus, reduced-motion and production shell boundaries."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse one amount constraint and shortcut calculation across UI and request guards."}
+{"file":".trellis/tasks/08-19-mobile-margin-buttons-and-max-validation/research/current-gap-audit.md","reason":"Persisted root-cause and current button runtime audit."}

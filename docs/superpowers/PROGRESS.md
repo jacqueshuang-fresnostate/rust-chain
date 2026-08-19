@@ -7529,3 +7529,45 @@
 - 修改文件：`migrations/0105_agent_routed_online_support.sql`、`src/modules/support/**`、`src/modules/{mod}.rs`、`src/lib.rs`、`src/modules/admin/{application/agents,service/access_control}.rs`、`src/modules/agent/application.rs`、`src/modules/events/{application,presentation,routes,service/websocket}.rs`、`src/openapi{,/support}.rs`、`tests/{support_migration,support_routes,events_ws,openapi_routes}.rs`、`tests/unit_src/{src_modules_support_domain_tests,src_modules_admin_service_tests}.rs`、`web/src/{api/support,support/**,admin/support/**}.ts*` 及后台访问/导航/路由/布局/样式测试文件、`mobile/src/{api/support,core/supportChat,views/SupportChatView}.ts*`、`mobile/src/{views/HelpSupportView,router/index,i18n/messages/zh-CN,i18n/messages/en}.ts*`、`mobile/tests/{support-chat,pencil-selected-page-parity-20260807}.test.ts`、`.trellis/spec/{backend/online-support,backend/agent-hierarchy,backend/realtime-websockets,admin/ui-system,mobile/backend-integration,mobile/navigation-and-localization}.md`、`.trellis/tasks/08-18-agent-routed-online-support/**`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：Rust `cargo fmt --all -- --check`、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、后端架构 11/11、中文文档 1/1、迁移/OpenAPI/事件聚焦测试及沙箱外 `cargo test --all-targets -- --test-threads=1` 全量通过；另用隔离的 MySQL 9.3 临时实例执行真实 `support_routes` 3/3，通过精确代理隔离、父代理拒绝、未分配管理员兜底、幂等/游标/关闭重开、历史分页和邀请子树改派事务。Web `typecheck`、完整 `lint`、聚焦 8 文件 101/101、全量 52 文件 381/381、生产 `build` 通过；Mobile `type-check`、全量 396/396、PWA 与 Tauri 构建通过。Ego Browser 在手机 390×844、320×720 明暗访客/已登录会话及后台 1280×900 工作台验证站内入口、44px 操作、粘性输入栏、历史加载、服务端分页和零文档横向溢出；Trellis validate 与 `git diff --check` 通过。Web 构建仅保留依赖 `lottie-web` 的既有 eval 和大 chunk 提示。
 - 后续事项：部署时先执行 `0105_agent_routed_online_support.sql` 并重新构建前后端镜像；当前改动尚未提交或推送，既有未跟踪目录 `mobile/pencil/docs/` 未修改。
+
+## 2026-08-19 10:57 - 优化手机端杠杆下单确认弹窗
+
+- 完成内容：仅在 contract 模式新增 Pencil 杠杆语言的专属下单确认面板，现货确认内容和提交行为保持原样；整层通过 Teleport 挂载到 body，展示真实交易对、方向、保证金模式、杠杆、实时参考价、投入保证金、预估名义价值和开仓数量。补齐弹窗内提交错误与原地重试、提交期间防重复及关闭锁定、焦点圈定与恢复、滚动锁、明暗主题、安全区、320px 和减少动态效果适配。
+- 修改文件：`mobile/src/views/TradeView.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{margin-order-confirm-dialog,spot-trading-ui-optimization,award-ui-trading-workspaces,pencil-trading-product-selected-parity,ui-prototype-alignment-trading}.test.ts`、`.trellis/spec/mobile/{backend-integration,pwa-and-shell}.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Mobile `npm run type-check` 通过；确认弹窗相关聚焦测试 31/31、受影响补充测试 23/23、Mobile 全量测试 402/402 通过；`npm run build:pwa` 与 `npm run build:tauri` 通过。Ego Browser 在 390×844 明暗主题和 320×720 减少动态效果视口检查底部操作区、弹窗内错误、焦点圈定/恢复、滚动锁、安全区及零横向溢出；最终执行 `git diff --check` 通过。
+- 后续事项：无；未提交 Git，既有未跟踪目录 `mobile/pencil/docs/` 未修改。
+
+## 2026-08-19 11:41 - 杠杆下单确认弹窗终审与自修复
+
+- 完成内容：按 PRD、check.jsonl 与 Mobile 规范复核确认层真实行为并完成最终修复。确认数据现由同一快照同时驱动面板和 `placeMarginOrder` 请求，市价参考只参与实时估算且不进入请求；确认层统一复用模态框基础设施，支持触发器精确焦点恢复、初始关闭焦点、正反向 Tab 圈定、忙碌态容器接管焦点、Escape/遮罩关闭、滚动锁与原地错误重试。另修复现货确认层 Teleport 后浅色主题令牌继承、320px 英文标题换行、短视口回退及长错误挤压操作区问题，并把关键交互改为可执行 DOM 行为测试。
+- 修改文件：`mobile/src/core/{modalDialog,marginOrderConfirmation}.ts`、`mobile/src/views/TradeView.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{margin-order-confirm-dialog,android-ui-trading-prototype-v16,award-ui-trading-workspaces,contract-pencil-selected-parity,pencil-trading-product-selected-parity,root-prototype-parity,spot-trading-ui-optimization,trading-lending-views,ui-prototype-alignment-trading}.test.ts`、`.trellis/spec/mobile/{backend-integration,pwa-and-shell}.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Mobile `npm run type-check` 通过；确认层及受影响聚焦测试 56/56、Mobile 全量测试 404/404 通过；`npm run build:pwa`、`npm run build:tauri` 与 `git diff --check` 通过。按主会话指示未继续扩展浏览器视觉复验；既有未跟踪目录 `mobile/pencil/docs/` 未修改。
+- 后续事项：浏览器最终视觉验收由主会话完成；当前改动尚未提交 Git。
+
+## 2026-08-19 11:51 - 杠杆下单确认弹窗最终验收
+
+- 完成内容：使用 Ego Browser 完成确认弹窗的最终明暗主题、窄屏和交互验收。390×844 浅色中文、320×720 深色英文长错误/减少动态效果以及 448×900 最大画布均无横向溢出或底部遮挡；确认初始焦点、正反向 Tab 圈定、Escape/遮罩关闭、背景滚动恢复以及精确返回“做空”触发器正常。
+- 修改文件：`.trellis/tasks/08-19-margin-order-confirm-dialog/{prd.md,task.json}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix mobile run type-check` 通过；`npm --prefix mobile test` 全量 404/404 通过；`npm --prefix mobile run build:pwa`、`npm --prefix mobile run build:tauri`、Trellis validate 与 `git diff --check` 均通过。
+- 后续事项：无；当前改动尚未提交 Git，既有未跟踪目录 `mobile/pencil/docs/` 未修改。
+
+## 2026-08-19 12:28 - 优化手机端杠杆按钮并校验保证金上限
+
+- 完成内容：接入后端 `max_margin` 并将缺失/非法上限映射为 `null`；杠杆百分比快捷额按钱包可用额与产品上限封顶，手动输入清除选中态。保证金字段、确认前与请求前共用最小/最大边界校验，已知后端竞态错误改为本地化可重试反馈。同步统一杠杆按钮层级、44px 触控、焦点、按压、禁用和减少动态状态。
+- 修改文件：`mobile/src/{api/trading.ts,core/types.ts,core/tradeForm.ts,core/marginOrderConfirmation.ts,views/TradeView.vue}`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{margin-product-boundaries,margin-order-confirm-dialog,contract-pencil-selected-parity}.test.ts`、`.trellis/spec/mobile/{backend-integration,pwa-and-shell}.md`、`.trellis/tasks/08-19-mobile-margin-buttons-and-max-validation/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：最终 `npm --prefix mobile run type-check` 通过，最终聚焦测试 23/23 通过；本轮已执行 Mobile 全量测试、PWA/Tauri 构建与 `git diff --check`，均通过。Ego Browser 在 320×720、390×844、448×900 明暗主题验证无横向溢出，快捷按钮与主操作均达 44px，边界错误及按钮状态正常。
+- 后续事项：无；未提交或推送，既有 `mobile/pencil/docs/` 未修改。
+
+## 2026-08-19 12:43 - 杠杆按钮与保证金上限终审自修复
+
+- 完成内容：按 PRD、check.jsonl、Mobile 规范和最终工作树复核本次实现并修复边界问题。确认面板改为冻结下单快照，提交与原地重试复用同一幂等键，提交前再以最新产品边界校验；产品边界刷新采用 latest-request-wins，并在已知竞态错误后保留现有产品数据。DTO 仅接受正十进制上限，百分比金额继续以余额与产品上限精确封顶，估算溢出不再被判为有效。同步修复余额快捷操作焦点环裁切、已登录但无精确产品时操作未禁用、确认期间边界刷新状态及减少动态覆盖。
+- 修改文件：`mobile/src/{api/trading.ts,core/tradeForm.ts,core/marginOrderConfirmation.ts,views/TradeView.vue}`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{margin-product-boundaries,margin-order-confirm-dialog,spot-trading-ui-optimization}.test.ts`、`.trellis/spec/mobile/backend-integration.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix mobile run type-check` 通过；聚焦测试 40/40、Mobile 全量测试 410/410 通过；`npm --prefix mobile run build:pwa` 与 `npm --prefix mobile run build:tauri` 通过；项目未配置 Mobile lint script，`npm run lint --if-present` 正常跳过；Trellis task validate 与 `git diff --check` 通过。按收尾指示未重复扩大浏览器复验，沿用本任务此前 320/390/448px 明暗主题验收，并以新增源码/行为回归测试覆盖本轮修复。
+- 后续事项：无；未提交或推送，既有 `mobile/pencil/docs/` 未修改。
+
+## 2026-08-19 12:49 - 杠杆按钮与保证金边界最终浏览器验收
+
+- 完成内容：在终审修复后的最终代码上重新执行手机端真实浏览器验收。验证钱包可用 1,000 USDT、产品上限 100 USDT 时，100% 快捷额准确写入 100；手工输入 120 或 5 会分别在确认前显示中文最大/最小边界错误且不打开确认层，输入 50 则正常打开冻结快照的确认层。同步检查手工编辑会清除快捷选中态、键盘焦点环、按压位移、无产品禁用态和减少动态效果。
+- 修改文件：`docs/superpowers/PROGRESS.md`。
+- 验证结果：Ego Browser 在 390×844 浅色中文、320×720 深色英文/减少动态效果及 448×900 浅色中文下均保持文档宽度等于视口宽度；百分比按钮实测 44px、主操作 46px，键盘焦点为 2px 可见轮廓，按压态位移 1px。`npm --prefix mobile run type-check` 与最终聚焦测试 24/24 通过；终审阶段 Mobile 全量测试 410/410、PWA/Tauri 构建、Trellis validate 和 `git diff --check` 已通过。
+- 后续事项：无；当前改动尚未提交或推送，既有 `mobile/pencil/docs/` 未修改。

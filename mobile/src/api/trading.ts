@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { client, requestUrl } from './client'
 import { asNumber, normalizeSymbol, splitSymbol } from '@/core/format'
+import { mapMarginProductMarginLimits } from '@/core/tradeForm'
 import type { MarginProduct, WalletAccount } from '@/core/types'
 
 export interface SpotOrderInput {
@@ -17,6 +18,7 @@ export interface MarginOrderInput {
   marginMode: 'cross' | 'isolated'
   leverage: number
   marginAmount: number
+  idempotencyKey?: string
 }
 
 export interface MarginUserSetting {
@@ -34,6 +36,7 @@ interface BackendMarginProduct {
   leverage_levels?: string[] | string
   max_leverage?: string | number
   min_margin?: string | number
+  max_margin?: string | number | null
 }
 
 interface BackendMarginTradingCapabilities {
@@ -138,6 +141,7 @@ export async function fetchMarginProducts(): Promise<MarginProduct[]> {
     const pair = splitSymbol(product.symbol)
     const modes = resolveMarginModes(response.data.capabilities?.margin_modes, product.margin_modes, product.margin_mode)
     const levels = parseLeverage(product.leverage_levels, product.max_leverage)
+    const marginLimits = mapMarginProductMarginLimits(product)
     return {
       id: product.id,
       pairId: asNumber(product.pair_id),
@@ -147,7 +151,8 @@ export async function fetchMarginProducts(): Promise<MarginProduct[]> {
       marginModes: modes,
       leverageLevels: levels,
       maxLeverage: asNumber(product.max_leverage, levels.at(-1) || 1),
-      minMargin: asNumber(product.min_margin),
+      minMargin: marginLimits.minMargin,
+      maxMargin: marginLimits.maxMargin,
     }
   })
 }
@@ -160,8 +165,12 @@ export async function placeMarginOrder(input: MarginOrderInput): Promise<void> {
     margin_mode: input.marginMode,
     margin_amount: String(input.marginAmount),
     leverage: String(input.leverage),
-    idempotency_key: createIdempotencyKey('mobile-margin'),
+    idempotency_key: input.idempotencyKey || createMarginOrderIdempotencyKey(),
   })
+}
+
+export function createMarginOrderIdempotencyKey(): string {
+  return createIdempotencyKey('mobile-margin')
 }
 
 export async function fetchMarginPositions(status?: string, limit = 30): Promise<MarginPosition[]> {

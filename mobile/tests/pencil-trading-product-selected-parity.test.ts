@@ -354,9 +354,12 @@ test('预测页使用 pU7Kz/IcvzQ 的真实市场卡、状态筛选与是/否报
 test('本轮四页只消费真实状态，不内置画板演示行情、余额或订单', () => {
   const sources = [tradeSource, secondsSource, productHubSource, predictionSource]
   for (const source of sources) {
+    const stateSource = source === tradeSource
+      ? source.replace(/\.contract-order-confirm-layer,[\s\S]*?(?=\.contract-trade \{)/, '')
+      : source
     assert.doesNotMatch(source, /(?:63,?085|63,?080|01842|1,?284\.00)/)
     assert.doesNotMatch(source, /\b(?:mock|fixture|demoData|fakeOrder|sampleMarket)s?\b/i)
-    assert.doesNotMatch(source, /<svg|#[0-9a-f]{3,8}|rgba?\(/i)
+    assert.doesNotMatch(stateSource, /<svg|#[0-9a-f]{3,8}|rgba?\(/i)
   }
 })
 

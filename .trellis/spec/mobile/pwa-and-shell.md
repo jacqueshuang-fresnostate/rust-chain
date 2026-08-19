@@ -315,6 +315,36 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   `overflow: hidden`; only the middle detail region may scroll, while the
   header and action row remain fully visible inside dynamic-viewport and safe
   area bounds. Do not put submit/cancel actions inside the scrolling region.
+- The Trade confirmation layer Teleports to `body` for both modes. Spot keeps
+  its existing generic confirmation content; contract alone renders
+  `.contract-order-confirm` with the approved 22px top radius, 38x4 grab,
+  19px title, 44x44 circular close control, neutral data cards, warm risk
+  notice, and 48px mint action. Its three-row grid keeps the combined
+  grab/header, scrollable detail region, and action/error region separate so a
+  failed submission stays visible without moving the safe-area action
+  off-screen.
+- The Teleported contract review owns explicit light and dark structural,
+  text, line, mint, negative, and warning roles rather than inheriting tokens
+  from `.contract-trade`. It remains at most 448px wide, uses dynamic viewport
+  and all four safe-area insets, removes entry/press motion under reduced
+  motion, and has a 320px composition that never introduces horizontal scroll.
+- Contract review initially focuses its close control. Overlay, close, and
+  Escape dismissal call the same guarded close path; Tab remains contained,
+  body scroll is locked, and focus returns to the exact long/short trigger.
+  While submitting, every dismissal target is disabled and a no-focusable Tab
+  attempt remains on the dialog container.
+- The contract order console keeps its two-column information architecture but
+  gives open/close, mode/leverage, BBO, percentage, available-asset, and
+  long/short controls one cool-neutral layered surface language. Selected,
+  `:focus-visible`, pressed, disabled, and reduced-motion states must remain
+  structurally distinct in both themes. Press feedback may translate by 1px
+  only when motion is allowed; it must not change layout geometry.
+- Contract percentage controls use a real minimum 44x44 target and may wrap
+  inside the form column rather than shrinking below the touch contract. The
+  margin field exposes the current localized minimum/maximum range, clears the
+  selected percentage after manual input, and uses `aria-invalid`,
+  `aria-errormessage`, a visible field border, and an announced localized reason
+  for invalid values. These additions must not alter the selected Spot template.
 - The login Turnstile uses Cloudflare explicit rendering with `size: flexible`,
   the current application light/dark theme, and the current mobile locale. Its
   centered stage may widen to 302px inside a 320px viewport so the official
@@ -583,7 +613,17 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   transformed route ancestor, every action button rect stays within the
   viewport, and scrolling an overflowing detail region does not move the
   action row. Also exercise Escape, Tab wrap, focus return, body scroll lock,
-  both themes, and zero horizontal overflow.
+  both themes, and zero horizontal overflow. Run this for the unchanged generic
+  spot branch and the dedicated contract branch; contract additionally asserts
+  real Logo/pair/direction/settings/form-derived values, in-panel API failure,
+  busy dismissal lock, warm risk notice, and reduced-motion ownership.
+- Contract order-console controls: compile the scoped CSS and assert 44x44
+  percentage/asset targets, at least 44px primary actions, shared layered
+  surface/border/shadow roles, filled selected states, complete external focus
+  rings, 1px normal-motion press feedback, disabled elevation removal, and a
+  reduced-motion transform override. At 320x720, 390x844, and 448x900 in both
+  themes assert zero document overflow and visible margin range/error plus both
+  primary actions.
 - Assets Transfer parity: assert `v6phV/TuWXq/tPkL1/tPkD1`, a 520px sheet,
   140px amount hero with a 30px data input, 52px glass route, 52px API-logo
   asset row, 50px action, and absence of a native asset `select`. Exercise API

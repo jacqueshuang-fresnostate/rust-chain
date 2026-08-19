@@ -208,7 +208,7 @@ test('根视图继续调用真实 API/store，访客与加载错误状态不改�
   assert.match(views.trade, /fetchRecentTrades\(symbol\)/)
   assert.match(views.trade, /createMarketDetailStreamSession\(\{/)
   assert.match(views.trade, /await placeSpotOrder\(\{/)
-  assert.match(views.trade, /await placeMarginOrder\(\{/)
+  assert.match(views.trade, /await placeMarginOrder\(review\.request\)/)
   assert.match(views.assets, /fetchWalletAccounts\(\)/)
   assert.match(views.assets, /fetchMarginWallets\(\)/)
   assert.match(views.assets, /await transferWalletFunds\(transferAsset\.value,\s*transferFrom\.value,\s*to,\s*transferValue\)/)

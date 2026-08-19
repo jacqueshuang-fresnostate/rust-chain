@@ -94,6 +94,7 @@ export interface MarginProduct {
   leverageLevels: number[]
   maxLeverage: number
   minMargin: number
+  maxMargin: number | null
 }
 
 export interface NewsItem {

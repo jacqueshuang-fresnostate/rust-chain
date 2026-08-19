@@ -1,0 +1,5 @@
+{"file":".trellis/spec/mobile/index.md","reason":"检查确认层可访问性、触控目标与移动端全量门禁"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"检查杠杆确认数值与真实接口参数未漂移"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"检查 Teleport、层级、主题、安全区和窄屏行为"}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"检查中英文键对称及取消后的焦点恢复"}
+{"file":".trellis/tasks/08-19-margin-order-confirm-dialog/research/pencil-contract-confirm-audit.md","reason":"核对最终实现与 Pencil 杠杆弹层语言一致"}

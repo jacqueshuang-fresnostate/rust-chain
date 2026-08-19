@@ -34,15 +34,17 @@ test('杠杆主页面使用真实交易对图标并在当前页打开三个选�
   assert.doesNotMatch(tradeSource, /@click="changeLeverage"/)
 })
 
-test('杠杆主页面的关键几何尺寸与所选 Pencil 画板一致', () => {
+test('杠杆主页面保留所选 Pencil 主结构并升级金融操作触控尺寸', () => {
   assert.match(tradeSource, /\.contract-pencil-header \{[^}]*height: 61px;/s)
   assert.match(tradeSource, /\.contract-pencil-module \{[^}]*gap: 12px;[^}]*grid-template-columns: minmax\(0, 1fr\) 150px;[^}]*padding: 2px 16px 4px;/s)
   assert.match(tradeSource, /\.contract-open-close \{[^}]*height: 38px;[^}]*padding: 4px;/s)
   assert.match(tradeSource, /\.contract-mode-row \{[^}]*height: 36px;/s)
   assert.match(tradeSource, /\.contract-price-row \{[^}]*grid-template-columns: minmax\(0, 1fr\) 62px;/s)
   assert.match(tradeSource, /\.contract-amount-field \{[^}]*height: 40px;/s)
-  assert.match(tradeSource, /\.contract-percentage \{[^}]*height: 14px;/s)
-  assert.match(tradeSource, /\.contract-balance-rows \{[^}]*gap: 8px;[^}]*grid-template-rows: 15px 14px;/s)
+  assert.match(tradeSource, /\.contract-percentage \{[^}]*min-height: 92px;/s)
+  assert.match(tradeSource, /\.contract-trade \.contract-percentage \.percent-row \{[^}]*grid-auto-rows: 44px;[^}]*grid-template-columns: repeat\(3, minmax\(44px, 1fr\)\);/s)
+  assert.match(tradeSource, /\.contract-percentage button \{[^}]*height: 44px;[^}]*min-width: 44px;/s)
+  assert.match(tradeSource, /\.contract-balance-rows \{[^}]*gap: 4px;[^}]*grid-template-rows: 44px 18px;/s)
   assert.match(tradeSource, /\.contract-submit \{[^}]*border-radius: 23px;[^}]*height: 46px;/s)
   assert.match(tradeSource, /\.contract-trade \.trade-chart-panel \{[^}]*height: 372px;/s)
   assert.match(tradeSource, /\.contract-position-tabs \{[^}]*height: 37px;[^}]*padding: 8px 20px 4px;/s)
@@ -74,7 +76,8 @@ test('用户保存的保证金模式和杠杆倍数由后端设置接口驱动',
   assert.match(tradeSource, /product\.marginModes\.includes\(setting\.marginMode\)/)
   assert.match(tradeSource, /await updateMarginLeverage\(product\.id, nextLeverage\)/)
   assert.match(tradeSource, /await updateMarginMode\(product\.id, nextMode\)/)
-  assert.match(tradeSource, /placeMarginOrder\(\{[\s\S]*?marginMode: marginMode\.value,[\s\S]*?leverage: leverage\.value/)
+  assert.match(tradeSource, /createMarginOrderReview\(\{[\s\S]*?marginMode: marginMode\.value,[\s\S]*?leverage: leverage\.value/)
+  assert.match(tradeSource, /placeMarginOrder\(review\.request\)/)
 })
 
 test('倍数与保证金模式仅暴露当前产品配置的真实选项', () => {

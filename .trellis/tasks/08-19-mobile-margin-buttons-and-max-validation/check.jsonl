@@ -1,0 +1,5 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Verify 44px controls, Lucide usage, responsive behavior and full Mobile gates."}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Verify max_margin truthfulness, financial boundary handling and no fabricated fallback."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Verify Teleport-adjacent theme, focus, safe-area and reduced-motion behavior remains correct."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check Rust response -> mobile adapter -> form -> confirmation -> request consistency."}
+{"file":".trellis/tasks/08-19-mobile-margin-buttons-and-max-validation/research/current-gap-audit.md","reason":"Check implementation closes every observed root cause and button defect."}

@@ -16,6 +16,7 @@ import {
   RefreshCcw,
   Share2,
   Star,
+  TriangleAlert,
   X,
 } from 'lucide-vue-next'
 import AssetMark from '@/components/AssetMark.vue'
@@ -35,6 +36,7 @@ import {
   type MarketKlineInterval,
 } from '@/api/marketSocketProtocol'
 import {
+  createMarginOrderIdempotencyKey,
   fetchMarginSetting,
   fetchMarginProducts,
   fetchMarginWallets,
@@ -47,9 +49,20 @@ import {
 import { fetchWalletAccounts } from '@/api/wallet'
 import { publicMarketWebSocketUrl } from '@/config/app'
 import { formatAmount, formatPrice, normalizeSymbol } from '@/core/format'
+import {
+  classifyMarginOrderBackendBoundaryError,
+  createMarginOrderReview,
+  type MarginOrderReview,
+} from '@/core/marginOrderConfirmation'
 import { useModalDialog } from '@/core/modalDialog'
 import { goBackOr } from '@/core/navigation'
-import { quantityForBalancePercentage } from '@/core/tradeForm'
+import {
+  clampMarginShortcutAmount,
+  marginShortcutAvailable,
+  quantityForBalancePercentage,
+  type MarginAmountValidation,
+  validateMarginAmount,
+} from '@/core/tradeForm'
 import { currentIntlLocale } from '@/i18n'
 import { useMarketStore } from '@/stores/market'
 import { useMarketFavoritesStore } from '@/stores/marketFavorites'
@@ -69,7 +82,7 @@ const side = ref<'buy' | 'sell'>('buy')
 const orderType = ref<'limit' | 'market'>('limit')
 const price = ref('')
 const quantity = ref('')
-const percentage = ref(0)
+const percentage = ref<number | null>(0)
 const leverage = ref(5)
 const marginMode = ref<'cross' | 'isolated'>('isolated')
 const products = ref<MarginProduct[]>([])
@@ -103,9 +116,9 @@ const spotOrderTypeDialog = ref<HTMLElement | null>(null)
 const confirmOpen = ref(false)
 const confirmDialog = ref<HTMLElement | null>(null)
 const reviewButton = ref<HTMLButtonElement | null>(null)
-let returnFocus: HTMLElement | null = null
-let previousBodyOverflow = ''
+const reviewedMarginOrder = ref<MarginOrderReview | null>(null)
 let marketRequestVersion = 0
+let marginProductsRequestVersion = 0
 let marginSettingRequestVersion = 0
 let viewActive = true
 const { trapFocus: trapSpotOrderTypeFocus } = useModalDialog(
@@ -113,6 +126,10 @@ const { trapFocus: trapSpotOrderTypeFocus } = useModalDialog(
   spotOrderTypeDialog,
   '[data-order-type-current="true"]',
 )
+const {
+  trapFocus: trapConfirmFocus,
+  setReturnFocus: setConfirmReturnFocus,
+} = useModalDialog(confirmOpen, confirmDialog, '[data-dialog-cancel]')
 
 const pairSymbol = computed(() => String(route.params.symbol || 'BTC_USDT').replace(/[_-]/g, '/').toUpperCase())
 const isSpotMode = computed(() => mode.value === 'spot')
@@ -160,14 +177,48 @@ const amountValue = computed({
       : ''
   },
 })
-const contractNotionalValue = computed(() => {
-  const marginAmount = Number(quantity.value)
-  const value = marginAmount * leverage.value
-  return Number.isFinite(value) && value > 0 ? String(Number(value.toFixed(8))) : ''
-})
+function createCurrentMarginOrderReview(idempotencyKey?: string): MarginOrderReview {
+  return createMarginOrderReview({
+    productId: selectedProduct.value?.id || 0,
+    side: side.value,
+    marginMode: marginMode.value,
+    leverage: leverage.value,
+    marginAmount: Number(quantity.value),
+    idempotencyKey,
+    minMargin: selectedProduct.value?.minMargin,
+    maxMargin: selectedProduct.value?.maxMargin,
+    referencePrice: effectivePrice.value,
+  })
+}
+
+const marginOrderDraft = computed(() => createCurrentMarginOrderReview())
+const contractOrderReview = computed(() => reviewedMarginOrder.value || marginOrderDraft.value)
+const contractNotionalValue = computed(() => contractOrderReview.value.estimatedNotional)
+const contractOrderQuantity = computed(() => contractOrderReview.value.estimatedQuantity)
+const contractShortcutAvailable = computed(() => marginShortcutAvailable(
+  availableBalance.value,
+  selectedProduct.value?.maxMargin,
+))
 const contractOpenQuantity = computed(() => {
   if (currentPrice.value <= 0) return 0
-  return (availableBalance.value * leverage.value) / currentPrice.value
+  return (contractShortcutAvailable.value * leverage.value) / currentPrice.value
+})
+const marginRangeDescription = computed(() => {
+  const product = selectedProduct.value
+  if (!product) return ''
+  const minimum = formatAmount(product.minMargin, 8)
+  if (product.maxMargin === null) {
+    return t('trade.marginRangeWithoutMaximum', { minimum, asset: availableAsset.value })
+  }
+  return t('trade.marginRangeWithMaximum', {
+    minimum,
+    maximum: formatAmount(product.maxMargin, 8),
+    asset: availableAsset.value,
+  })
+})
+const marginAmountError = computed(() => {
+  if (mode.value !== 'contract' || !selectedProduct.value || !quantity.value.trim()) return ''
+  return marginAmountValidationMessage(marginOrderDraft.value.marginAmountValidation)
 })
 const orderButtonLabel = computed(() => {
   if (mode.value === 'contract') {
@@ -207,6 +258,37 @@ const detailStreamSession = createMarketDetailStreamSession({
 function setFeedback(message: string, tone: 'success' | 'error' = 'error'): void {
   feedback.value = message
   feedbackTone.value = tone
+}
+
+function marginAmountValidationMessage(validation: MarginAmountValidation): string {
+  if (validation.error === 'below-minimum') {
+    return t('trade.marginBelowMinimum', {
+      minimum: formatAmount(validation.minMargin, 8),
+      asset: availableAsset.value,
+    })
+  }
+  if (validation.error === 'above-maximum' && validation.maxMargin !== null) {
+    return t('trade.marginAboveMaximum', {
+      maximum: formatAmount(validation.maxMargin, 8),
+      asset: availableAsset.value,
+    })
+  }
+  if (validation.error === 'invalid') return t('trade.invalidMarginAmount')
+  return ''
+}
+
+function marginOrderFailureMessage(reason: unknown): string {
+  const sourceMessage = apiErrorMessage(reason, t('trade.orderFailed'))
+  const boundary = classifyMarginOrderBackendBoundaryError(sourceMessage)
+  if (boundary === 'below-minimum') {
+    void loadMarginProducts({ preserveExistingOnError: true })
+    return t('trade.marginMinimumChanged')
+  }
+  if (boundary === 'above-maximum') {
+    void loadMarginProducts({ preserveExistingOnError: true })
+    return t('trade.marginMaximumChanged')
+  }
+  return sourceMessage
 }
 
 function isCurrentMarketRequest(context: MarketDetailStreamContext, version: number): boolean {
@@ -282,7 +364,8 @@ async function refreshIntervalKlines(selectedInterval: MarketKlineInterval): Pro
   }
 }
 
-async function loadMarginProducts(): Promise<void> {
+async function loadMarginProducts(options: { preserveExistingOnError?: boolean } = {}): Promise<void> {
+  const requestVersion = ++marginProductsRequestVersion
   if (mode.value !== 'contract' || !session.isAuthenticated) {
     marginSettingRequestVersion += 1
     products.value = []
@@ -293,12 +376,19 @@ async function loadMarginProducts(): Promise<void> {
   productsLoading.value = true
   productsError.value = false
   try {
-    products.value = await fetchMarginProducts()
+    const nextProducts = await fetchMarginProducts()
+    if (
+      requestVersion !== marginProductsRequestVersion
+      || mode.value !== 'contract'
+      || !session.isAuthenticated
+    ) return
+    products.value = nextProducts
   } catch {
-    products.value = []
+    if (requestVersion !== marginProductsRequestVersion) return
+    if (!options.preserveExistingOnError) products.value = []
     productsError.value = true
   } finally {
-    productsLoading.value = false
+    if (requestVersion === marginProductsRequestVersion) productsLoading.value = false
   }
 }
 
@@ -372,12 +462,21 @@ function setQuantity(percent: number): void {
   }
   const nextQuantity = quantityForBalancePercentage({
     available: availableBalance.value,
+    maximum: mode.value === 'contract' ? selectedProduct.value?.maxMargin : null,
     mode: mode.value,
     percentage: percent / 100,
     price: effectivePrice.value,
     side: side.value,
   })
-  quantity.value = nextQuantity > 0 ? String(Number(nextQuantity.toFixed(8))) : ''
+  const roundedQuantity = Number(nextQuantity.toFixed(8))
+  const safeQuantity = mode.value === 'contract'
+    ? clampMarginShortcutAmount(roundedQuantity, availableBalance.value, selectedProduct.value?.maxMargin)
+    : roundedQuantity
+  quantity.value = safeQuantity > 0 ? String(safeQuantity) : ''
+}
+
+function clearPercentageSelection(): void {
+  percentage.value = null
 }
 
 function chooseInterval(value: string): void {
@@ -567,7 +666,7 @@ async function applyContractMarginMode(nextMode: 'cross' | 'isolated'): Promise<
   }
 }
 
-function reviewOrder(): void {
+function reviewOrder(event?: Event): void {
   feedback.value = ''
   const orderAmount = Number(quantity.value)
   if (spotOrderTypeOpen.value) return
@@ -583,27 +682,40 @@ function reviewOrder(): void {
     setFeedback(t('trade.unavailableContract'))
     return
   }
+  if (mode.value === 'contract' && !marginOrderDraft.value.marginAmountValidation.isValid) {
+    setFeedback(marginAmountValidationMessage(marginOrderDraft.value.marginAmountValidation))
+    return
+  }
   if (!Number.isFinite(orderAmount) || orderAmount <= 0 || !Number.isFinite(effectivePrice.value) || effectivePrice.value <= 0) {
     setFeedback(t('trade.invalidOrder'))
     return
   }
+  const trigger = event?.currentTarget
+  setConfirmReturnFocus(trigger instanceof HTMLElement ? trigger : reviewButton.value)
+  reviewedMarginOrder.value = mode.value === 'contract'
+    ? createCurrentMarginOrderReview(createMarginOrderIdempotencyKey())
+    : null
   confirmOpen.value = true
 }
 
-function reviewContractOrder(nextSide: 'buy' | 'sell'): void {
+function reviewContractOrder(nextSide: 'buy' | 'sell', event?: Event): void {
   side.value = nextSide
-  reviewOrder()
+  reviewOrder(event)
 }
 
 function closeConfirm(): void {
   if (submitting.value) return
   confirmOpen.value = false
+  reviewedMarginOrder.value = null
 }
 
 async function submitOrder(): Promise<void> {
+  if (submitting.value) return
   feedback.value = ''
-  const orderAmount = Number(quantity.value)
-  const submittedOrderType = mode.value === 'contract' ? 'market' : orderType.value
+  const submittedMode = mode.value
+  const review = submittedMode === 'contract' ? reviewedMarginOrder.value : null
+  const orderAmount = review?.request.marginAmount ?? Number(quantity.value)
+  const submittedOrderType = submittedMode === 'contract' ? 'market' : orderType.value
   const limitPrice = effectivePrice.value
   if (!session.isAuthenticated) {
     openLogin()
@@ -618,9 +730,30 @@ async function submitOrder(): Promise<void> {
     return
   }
 
+  if (submittedMode === 'contract') {
+    const product = selectedProduct.value
+    if (!review || !product || review.request.productId !== product.id) {
+      setFeedback(t('trade.unavailableContract'))
+      return
+    }
+    const requestMarginValidation = validateMarginAmount({
+      amount: review.request.marginAmount,
+      minMargin: product.minMargin,
+      maxMargin: product.maxMargin,
+    })
+    if (!requestMarginValidation.isValid) {
+      setFeedback(marginAmountValidationMessage(requestMarginValidation))
+      return
+    }
+    if (!review.isValid) {
+      setFeedback(t('trade.invalidOrder'))
+      return
+    }
+  }
+
   submitting.value = true
   try {
-    if (mode.value === 'spot') {
+    if (submittedMode === 'spot') {
       await placeSpotOrder({
         symbol: pairSymbol.value,
         side: side.value,
@@ -629,47 +762,26 @@ async function submitOrder(): Promise<void> {
         quantity: orderAmount,
       })
     } else {
-      if (!selectedProduct.value) throw new Error(t('trade.unavailableContract'))
-      await placeMarginOrder({
-        productId: selectedProduct.value.id,
-        side: side.value === 'buy' ? 'long' : 'short',
-        marginMode: marginMode.value,
-        leverage: leverage.value,
-        marginAmount: orderAmount,
-      })
+      if (!review) return
+      await placeMarginOrder(review.request)
     }
     setFeedback(t('trade.orderSubmitted'), 'success')
     quantity.value = ''
     percentage.value = 0
     confirmOpen.value = false
+    reviewedMarginOrder.value = null
     await loadTradingBalances()
   } catch (reason) {
-    setFeedback(apiErrorMessage(reason, t('trade.orderFailed')))
+    setFeedback(submittedMode === 'contract'
+      ? marginOrderFailureMessage(reason)
+      : apiErrorMessage(reason, t('trade.orderFailed')))
   } finally {
     submitting.value = false
   }
 }
 
 function trapDialogFocus(event: KeyboardEvent): void {
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    closeConfirm()
-    return
-  }
-  if (event.key !== 'Tab' || !confirmDialog.value) return
-  const focusable = Array.from(confirmDialog.value.querySelectorAll<HTMLElement>(
-    'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-  ))
-  if (!focusable.length) return
-  const first = focusable[0]
-  const last = focusable.at(-1) || first
-  if (event.shiftKey && document.activeElement === first) {
-    event.preventDefault()
-    last.focus()
-  } else if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault()
-    first.focus()
-  }
+  trapConfirmFocus(event, closeConfirm)
 }
 
 onMounted(async () => {
@@ -694,7 +806,6 @@ watch(() => route.query.mode, (nextMode) => {
   navigation.rememberTradeMode(mode.value)
   percentage.value = 0
   quantity.value = ''
-  void loadMarginProducts()
 }, { immediate: true })
 
 watch(() => [mode.value, session.isAuthenticated, selectedProduct.value?.id] as const, () => {
@@ -707,6 +818,7 @@ watch(() => [mode.value, session.isAuthenticated, selectedProduct.value?.id] as 
 })
 
 watch([mode, () => session.isAuthenticated], () => {
+  void loadMarginProducts()
   void loadTradingBalances()
 }, { immediate: true })
 
@@ -714,27 +826,18 @@ watch(currentPrice, (value) => {
   if (!price.value && value > 0) price.value = String(value)
 }, { immediate: true })
 
-watch(confirmOpen, async (open) => {
-  if (open) {
-    returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : reviewButton.value
-    previousBodyOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    await nextTick()
-    confirmDialog.value?.querySelector<HTMLElement>('[data-dialog-cancel]')?.focus()
-    return
-  }
-  document.body.style.overflow = previousBodyOverflow
+watch(submitting, async (busy) => {
+  if (!busy || !confirmOpen.value) return
   await nextTick()
-  returnFocus?.focus()
-  returnFocus = null
+  if (submitting.value && confirmOpen.value) confirmDialog.value?.focus()
 })
 
 onBeforeUnmount(() => {
   viewActive = false
+  marginProductsRequestVersion += 1
   marginSettingRequestVersion += 1
   marketStore.stopLiveUpdates('trade')
   detailStreamSession.stop()
-  if (confirmOpen.value) document.body.style.overflow = previousBodyOverflow
 })
 </script>
 
@@ -1216,21 +1319,46 @@ onBeforeUnmount(() => {
                   readonly
                 />
               </label>
-              <button type="button" :aria-label="t('marketDetail.latestPrice')" @click="price = String(currentPrice || '')">
+              <button
+                type="button"
+                :aria-label="t('marketDetail.latestPrice')"
+                :disabled="currentPrice <= 0"
+                @click="price = String(currentPrice || '')"
+              >
                 {{ t('trade.bestBidOffer') }}
               </button>
             </div>
 
-            <label class="contract-field contract-amount-field">
+            <label
+              class="contract-field contract-amount-field"
+              :class="{ 'is-invalid': marginAmountError }"
+              :data-margin-validation="marginAmountError ? 'invalid' : 'ready'"
+            >
               <span class="sr-only">{{ t('trade.marginField', { asset: availableAsset }) }}</span>
               <input
                 v-model="quantity"
                 class="numeric"
                 inputmode="decimal"
                 :placeholder="t('trade.marginAmountShort')"
+                :aria-describedby="marginRangeDescription ? 'contract-margin-range' : undefined"
+                :aria-errormessage="marginAmountError ? 'contract-margin-error' : undefined"
+                :aria-invalid="marginAmountError ? 'true' : 'false'"
+                @input="clearPercentageSelection"
               />
               <b>{{ availableAsset }}</b>
             </label>
+
+            <div v-if="marginRangeDescription" class="contract-margin-guidance">
+              <p id="contract-margin-range">{{ marginRangeDescription }}</p>
+              <p
+                v-if="marginAmountError"
+                id="contract-margin-error"
+                class="contract-margin-error"
+                role="alert"
+              >
+                {{ marginAmountError }}
+              </p>
+            </div>
 
             <div class="contract-percentage">
               <div class="percent-row" role="group" :aria-label="t('rootPrototype.balancePercentage')">
@@ -1239,7 +1367,9 @@ onBeforeUnmount(() => {
                   :key="value"
                   type="button"
                   :class="{ active: percentage === value }"
+                  :aria-label="value === 100 ? t('trade.marginMaximumShortcut') : `${value}%`"
                   :aria-pressed="percentage === value"
+                  :disabled="submitting || (session.isAuthenticated && (productsLoading || balancesLoading || !selectedProduct))"
                   @click="setQuantity(value)"
                 >
                   {{ value }}%
@@ -1255,14 +1385,19 @@ onBeforeUnmount(() => {
             <dl class="contract-balance-rows">
               <div>
                 <dt>{{ t('trade.available') }}</dt>
-                <dd v-if="!session.isAuthenticated">
+                <dd v-if="!session.isAuthenticated" class="contract-balance-control">
                   <button type="button" @click="openLogin">{{ t('trade.viewAfterLogin') }}</button>
                 </dd>
-                <dd v-else-if="balancesError">
+                <dd v-else-if="balancesError" class="contract-balance-control">
                   <button type="button" :disabled="balancesLoading" @click="loadTradingBalances">{{ t('common.retry') }}</button>
                 </dd>
-                <dd v-else class="numeric">
-                  <button type="button" class="contract-balance-action" @click="openAssets">
+                <dd v-else class="numeric contract-balance-control">
+                  <button
+                    type="button"
+                    class="contract-balance-action"
+                    :disabled="balancesLoading"
+                    @click="openAssets"
+                  >
                     <span>{{ balancesLoading ? t('trade.loadBalance') : `${formatAmount(availableBalance)} ${availableAsset}` }}</span>
                     <CirclePlus v-if="!balancesLoading" :size="11" aria-hidden="true" />
                   </button>
@@ -1287,16 +1422,16 @@ onBeforeUnmount(() => {
               ref="reviewButton"
               class="contract-submit contract-submit--long submit-order"
               type="button"
-              :disabled="submitting || productsLoading || !isLive"
-              @click="reviewContractOrder('buy')"
+              :disabled="submitting || productsLoading || !isLive || (session.isAuthenticated && !selectedProduct)"
+              @click="reviewContractOrder('buy', $event)"
             >
               {{ t('trade.longActionCompact') }}
             </button>
             <button
               class="contract-submit contract-submit--short"
               type="button"
-              :disabled="submitting || productsLoading || !isLive"
-              @click="reviewContractOrder('sell')"
+              :disabled="submitting || productsLoading || !isLive || (session.isAuthenticated && !selectedProduct)"
+              @click="reviewContractOrder('sell', $event)"
             >
               {{ t('trade.shortActionCompact') }}
             </button>
@@ -1427,48 +1562,169 @@ onBeforeUnmount(() => {
       </div>
     </Teleport>
 
-    <div v-if="confirmOpen" class="confirmation-layer">
-      <button
-        class="confirmation-overlay-dismiss"
-        type="button"
-        :aria-label="t('common.close')"
-        :disabled="submitting"
-        tabindex="-1"
-        @click="closeConfirm"
-      />
-      <section
-        ref="confirmDialog"
-        class="confirmation-sheet"
-        role="dialog"
-        aria-modal="true"
-        :aria-busy="submitting"
-        :aria-label="t('common.confirm')"
-        tabindex="-1"
-        @keydown="trapDialogFocus"
+    <Teleport to="body">
+      <div
+        v-if="confirmOpen"
+        class="confirmation-layer"
+        :class="{ 'contract-order-confirm-layer': !isSpotMode }"
+        :data-order-confirm-mode="mode"
       >
-        <header>
-          <span class="confirmation-icon"><CheckCircle2 :size="20" /></span>
-          <div><span>{{ t('common.confirm') }}</span><h2>{{ orderButtonLabel }}</h2></div>
-        </header>
-        <p>{{ pairSymbol }} · {{ formatAmount(Number(quantity || 0)) }} {{ mode === 'contract' ? availableAsset : baseAsset }}</p>
-        <div class="confirmation-detail">
-          <span>{{ t('common.price') }} {{ formatPrice(effectivePrice) }} {{ quoteAsset }}</span>
-          <span>
-            {{ mode === 'contract' ? t('rootPrototype.estimatedNotional') : t('common.amount') }}
-            {{ formatAmount(Number(mode === 'contract' ? contractNotionalValue : amountValue) || 0) }}
-            {{ mode === 'contract' ? availableAsset : quoteAsset }}
-          </span>
-        </div>
-        <div class="confirmation-actions">
-          <button data-dialog-cancel type="button" :disabled="submitting" @click="closeConfirm">
-            <X :size="16" /> {{ t('common.cancel') }}
-          </button>
-          <button class="confirmation-primary" type="button" :disabled="submitting" @click="submitOrder">
-            {{ submitting ? t('trade.submittingOrder') : t('common.confirm') }}
-          </button>
-        </div>
-      </section>
-    </div>
+        <button
+          class="confirmation-overlay-dismiss"
+          type="button"
+          :aria-label="t('common.close')"
+          :disabled="submitting"
+          tabindex="-1"
+          @click="closeConfirm"
+        />
+
+        <section
+          v-if="isSpotMode"
+          ref="confirmDialog"
+          class="confirmation-sheet"
+          role="dialog"
+          aria-modal="true"
+          :aria-busy="submitting"
+          :aria-label="t('common.confirm')"
+          tabindex="-1"
+          @keydown="trapDialogFocus"
+        >
+          <header>
+            <span class="confirmation-icon"><CheckCircle2 :size="20" /></span>
+            <div><span>{{ t('common.confirm') }}</span><h2>{{ orderButtonLabel }}</h2></div>
+          </header>
+          <p>{{ pairSymbol }} · {{ formatAmount(Number(quantity || 0)) }} {{ baseAsset }}</p>
+          <div class="confirmation-detail">
+            <span>{{ t('common.price') }} {{ formatPrice(effectivePrice) }} {{ quoteAsset }}</span>
+            <span>
+              {{ t('common.amount') }}
+              {{ formatAmount(Number(amountValue) || 0) }}
+              {{ quoteAsset }}
+            </span>
+          </div>
+          <div class="confirmation-actions">
+            <button data-dialog-cancel type="button" :disabled="submitting" @click="closeConfirm">
+              <X :size="16" /> {{ t('common.cancel') }}
+            </button>
+            <button class="confirmation-primary" type="button" :disabled="submitting" @click="submitOrder">
+              {{ submitting ? t('trade.submittingOrder') : t('common.confirm') }}
+            </button>
+          </div>
+        </section>
+
+        <section
+          v-else
+          ref="confirmDialog"
+          class="contract-order-confirm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="contract-order-confirm-title"
+          aria-describedby="contract-order-confirm-risk"
+          :aria-busy="submitting"
+          tabindex="-1"
+          @keydown="trapDialogFocus"
+        >
+          <div class="contract-order-confirm__top">
+            <span class="contract-order-confirm__grab" aria-hidden="true" />
+
+            <header class="contract-order-confirm__header">
+              <div>
+                <h2 id="contract-order-confirm-title">{{ t('trade.contractOrderConfirmTitle') }}</h2>
+                <p>{{ t('trade.contractOrderConfirmHint') }}</p>
+              </div>
+              <button
+                data-dialog-cancel
+                class="contract-order-confirm__close"
+                type="button"
+                :disabled="submitting"
+                :aria-label="t('common.close')"
+                @click="closeConfirm"
+              >
+                <X :size="20" aria-hidden="true" />
+              </button>
+            </header>
+          </div>
+
+          <div class="contract-order-confirm__body">
+            <section class="contract-order-confirm__identity" :aria-label="pairSymbol">
+              <AssetMark
+                :symbol="baseAsset"
+                :src="ticker?.iconUrl"
+                :fallback-src="ticker?.baseIconUrl"
+                :size="36"
+              />
+              <div>
+                <strong>{{ pairSymbol }}</strong>
+                <span>{{ t('trade.perpetualShort') }} · {{ t('trade.marketOrderShort') }}</span>
+              </div>
+              <span
+                class="contract-order-confirm__direction"
+                :class="contractOrderReview.request.side === 'long' ? 'is-long' : 'is-short'"
+              >
+                {{ t(contractOrderReview.request.side === 'long' ? 'orders.long' : 'orders.short') }}
+              </span>
+            </section>
+
+            <dl class="contract-order-confirm__details">
+              <div>
+                <dt>{{ t('rootPrototype.marginMode') }}</dt>
+                <dd>{{ t(contractOrderReview.request.marginMode === 'cross' ? 'trade.cross' : 'trade.isolated') }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('rootPrototype.leverage') }}</dt>
+                <dd class="numeric">{{ contractOrderReview.request.leverage }}x</dd>
+              </div>
+              <div>
+                <dt>{{ t('trade.contractReferencePrice') }}</dt>
+                <dd class="numeric">{{ formatPrice(contractOrderReview.referencePrice) }} {{ quoteAsset }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('trade.contractMarginCommitted') }}</dt>
+                <dd class="numeric">{{ formatAmount(contractOrderReview.request.marginAmount) }} {{ availableAsset }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('rootPrototype.estimatedNotional') }}</dt>
+                <dd class="numeric">{{ formatAmount(contractNotionalValue) }} {{ availableAsset }}</dd>
+              </div>
+              <div>
+                <dt>{{ t('trade.contractEstimatedQuantity') }}</dt>
+                <dd class="numeric">{{ formatAmount(contractOrderQuantity) }} {{ baseAsset }}</dd>
+              </div>
+            </dl>
+
+            <aside id="contract-order-confirm-risk" class="contract-order-confirm__risk">
+              <TriangleAlert :size="18" aria-hidden="true" />
+              <div>
+                <strong>{{ t('trade.marketExecutionRiskTitle') }}</strong>
+                <p>{{ t('trade.marketExecutionRiskDescription') }}</p>
+              </div>
+            </aside>
+          </div>
+
+          <footer class="contract-order-confirm__actions">
+            <p
+              v-if="feedback && !feedbackIsPositive"
+              class="contract-order-confirm__error"
+              role="alert"
+              aria-live="assertive"
+            >
+              {{ feedback }}
+            </p>
+            <button
+              class="contract-order-confirm__submit"
+              type="button"
+              :disabled="submitting || productsLoading"
+              @click="submitOrder"
+            >
+              <CheckCircle2 v-if="!submitting" :size="18" aria-hidden="true" />
+              {{ submitting
+                ? t('trade.submittingOrder')
+                : t('trade.confirmContractOrder', { direction: t(contractOrderReview.request.side === 'long' ? 'orders.long' : 'orders.short') }) }}
+            </button>
+          </footer>
+        </section>
+      </div>
+    </Teleport>
   </main>
 </template>
 
@@ -2981,11 +3237,422 @@ onBeforeUnmount(() => {
   max-width: 100%;
 }
 
+.confirmation-layer[data-order-confirm-mode='spot'] {
+  --page: var(--surface);
+  --surface-2: var(--soft);
+  --text: var(--ink);
+  --cyan: var(--focus);
+}
+
 .confirmation-sheet {
   padding-bottom: calc(18px + env(safe-area-inset-bottom));
 }
 
+.contract-order-confirm-layer,
+.contract-order-confirm-layer * {
+  box-sizing: border-box;
+}
+
+.contract-order-confirm-layer {
+  align-items: end;
+  bottom: 0;
+  display: grid;
+  height: 100vh;
+  height: 100dvh;
+  isolation: isolate;
+  left: auto;
+  max-width: none;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  position: fixed;
+  right: 5.5vw;
+  top: 0;
+  width: min(100%, 448px);
+  z-index: var(--layer-overlay, 80);
+}
+
+.contract-order-confirm-layer .confirmation-overlay-dismiss {
+  background: rgb(7 17 13 / 64%);
+}
+
+.contract-order-confirm-layer .confirmation-overlay-dismiss:disabled {
+  opacity: 1;
+}
+
+.contract-order-confirm {
+  --confirm-page: #ffffff;
+  --confirm-canvas: #f7f9f8;
+  --confirm-raised: #eef2f0;
+  --confirm-line: #ccd5d0;
+  --confirm-line-strong: #aebbb4;
+  --confirm-text: #111714;
+  --confirm-muted: #68736d;
+  --confirm-accent: #43efa9;
+  --confirm-accent-strong: #087b52;
+  --confirm-accent-soft: #d9f9eb;
+  --confirm-negative: #d54732;
+  --confirm-negative-soft: #fff0ec;
+  --confirm-warning: #e79a2b;
+  --confirm-warning-surface: rgb(255 180 84 / 9%);
+  --confirm-warning-line: rgb(255 180 84 / 30%);
+  background: var(--confirm-page);
+  border: 0;
+  border-radius: 22px 22px 0 0;
+  border-top: 1px solid var(--confirm-line);
+  box-shadow: 0 -10px 28px rgb(7 17 13 / 20%);
+  color: var(--confirm-text);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: min(620px, calc(100vh - max(12px, env(safe-area-inset-top, 0px))));
+  height: min(620px, calc(100dvh - max(12px, env(safe-area-inset-top, 0px))));
+  justify-self: center;
+  max-height: calc(100vh - max(12px, env(safe-area-inset-top, 0px)));
+  max-height: calc(100dvh - max(12px, env(safe-area-inset-top, 0px)));
+  max-width: 448px;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  overscroll-behavior: auto;
+  padding:
+    11px max(16px, env(safe-area-inset-right, 0px))
+    calc(18px + env(safe-area-inset-bottom, 0px))
+    max(16px, env(safe-area-inset-left, 0px));
+  position: relative;
+  row-gap: 12px;
+  width: 100%;
+  z-index: 1;
+}
+
+html[data-theme='dark'] .contract-order-confirm {
+  --confirm-page: #0c100e;
+  --confirm-canvas: #070a09;
+  --confirm-raised: #121714;
+  --confirm-line: #29342e;
+  --confirm-line-strong: #3a4a42;
+  --confirm-text: #f2f7f4;
+  --confirm-muted: #95a19a;
+  --confirm-accent: #43efa9;
+  --confirm-accent-strong: #61f1b6;
+  --confirm-accent-soft: #103326;
+  --confirm-negative: #ff7860;
+  --confirm-negative-soft: #391a20;
+  --confirm-warning: #f1b95c;
+  --confirm-warning-surface: rgb(255 180 84 / 10%);
+  --confirm-warning-line: rgb(255 180 84 / 28%);
+  box-shadow: 0 -10px 28px rgb(0 0 0 / 64%);
+}
+
+.contract-order-confirm__top {
+  display: grid;
+  grid-template-rows: 14px minmax(44px, auto);
+  min-width: 0;
+  row-gap: 12px;
+}
+
+.contract-order-confirm__grab {
+  align-items: center;
+  display: flex;
+  height: 14px;
+  justify-content: center;
+  width: 100%;
+}
+
+.contract-order-confirm__grab::before {
+  background: var(--confirm-muted);
+  border-radius: 2px;
+  content: '';
+  height: 4px;
+  opacity: .72;
+  width: 38px;
+}
+
+.contract-order-confirm__header {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  min-height: 44px;
+  min-width: 0;
+}
+
+.contract-order-confirm__header > div {
+  min-width: 0;
+}
+
+.contract-order-confirm__header h2,
+.contract-order-confirm__header p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.contract-order-confirm__header h2 {
+  font-size: 19px;
+  font-weight: 750;
+  letter-spacing: -.02em;
+  line-height: 1.15;
+}
+
+.contract-order-confirm__header p {
+  color: var(--confirm-muted);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.3;
+  margin-top: 3px;
+}
+
+.contract-order-confirm__close {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  color: var(--confirm-text);
+  display: inline-flex;
+  height: 44px;
+  justify-content: center;
+  padding: 0;
+  position: relative;
+  width: 44px;
+  z-index: 0;
+}
+
+.contract-order-confirm__close::before {
+  background: var(--confirm-canvas);
+  border: 1px solid var(--confirm-line);
+  border-radius: 50%;
+  content: '';
+  inset: 4px;
+  position: absolute;
+  z-index: -1;
+}
+
+.contract-order-confirm__body {
+  align-content: start;
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 1px;
+  scrollbar-width: none;
+}
+
+.contract-order-confirm__body::-webkit-scrollbar {
+  display: none;
+}
+
+.contract-order-confirm__identity {
+  align-items: center;
+  background: var(--confirm-canvas);
+  border: 1px solid var(--confirm-line);
+  border-radius: 12px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  min-height: 70px;
+  min-width: 0;
+  padding: 11px 12px;
+}
+
+.contract-order-confirm__identity > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.contract-order-confirm__identity strong {
+  font-family: var(--font-geist-mono), var(--data-font), monospace;
+  font-size: 15px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contract-order-confirm__identity > div > span {
+  color: var(--confirm-muted);
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.contract-order-confirm__direction {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 700;
+  justify-content: center;
+  min-height: 28px;
+  padding: 5px 10px;
+  white-space: nowrap;
+}
+
+.contract-order-confirm__direction.is-long {
+  background: var(--confirm-accent-soft);
+  border-color: var(--confirm-accent);
+  color: var(--confirm-accent-strong);
+}
+
+.contract-order-confirm__direction.is-short {
+  background: var(--confirm-negative-soft);
+  border-color: color-mix(in srgb, var(--confirm-negative) 48%, transparent);
+  color: var(--confirm-negative);
+}
+
+.contract-order-confirm__details {
+  background: var(--confirm-canvas);
+  border: 1px solid var(--confirm-line);
+  border-radius: 12px;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 12px;
+}
+
+.contract-order-confirm__details > div {
+  align-items: center;
+  border-bottom: 1px solid var(--confirm-line);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 39px;
+  min-width: 0;
+  padding: 7px 0;
+}
+
+.contract-order-confirm__details > div:last-child {
+  border-bottom: 0;
+}
+
+.contract-order-confirm__details dt {
+  color: var(--confirm-muted);
+  font-size: 11px;
+  line-height: 1.3;
+  min-width: 0;
+}
+
+.contract-order-confirm__details dd {
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.3;
+  margin: 0;
+  max-width: 190px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.contract-order-confirm__risk {
+  align-items: flex-start;
+  background: var(--confirm-warning-surface);
+  border: 1px solid var(--confirm-warning-line);
+  border-radius: 10px;
+  color: var(--confirm-text);
+  display: grid;
+  gap: 9px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  min-width: 0;
+  padding: 10px;
+}
+
+.contract-order-confirm__risk > svg {
+  color: var(--confirm-warning);
+  margin-top: 1px;
+}
+
+.contract-order-confirm__risk > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.contract-order-confirm__risk strong {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.contract-order-confirm__risk p {
+  color: var(--confirm-muted);
+  font-size: 10px;
+  line-height: 1.45;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.contract-order-confirm__actions {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.contract-order-confirm__error {
+  background: var(--confirm-negative-soft);
+  border: 1px solid color-mix(in srgb, var(--confirm-negative) 42%, transparent);
+  border-radius: 9px;
+  color: var(--confirm-negative);
+  font-size: 10px;
+  line-height: 1.4;
+  margin: 0;
+  max-height: 96px;
+  max-height: min(96px, 18dvh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  overscroll-behavior: contain;
+  padding: 8px 10px;
+}
+
+.contract-order-confirm__submit {
+  align-items: center;
+  background: var(--confirm-accent);
+  border: 0;
+  border-radius: 24px;
+  color: #07110d;
+  display: inline-flex;
+  font-size: 14px;
+  font-weight: 750;
+  gap: 7px;
+  height: 48px;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 16px;
+  width: 100%;
+}
+
+.contract-order-confirm__submit:disabled {
+  background: var(--confirm-raised);
+  color: var(--confirm-muted);
+}
+
+.contract-order-confirm button:focus-visible {
+  outline: 2px solid var(--confirm-accent);
+  outline-offset: 2px;
+}
+
+.contract-order-confirm__close:focus-visible {
+  outline: 0;
+}
+
+.contract-order-confirm__close:focus-visible::before {
+  box-shadow: 0 0 0 2px var(--confirm-accent);
+}
+
 .contract-trade {
+  --contract-control-border: color-mix(in srgb, var(--line-strong) 86%, var(--text) 14%);
+  --contract-control-surface: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface) 94%, var(--text) 6%),
+    var(--surface-elevated)
+  );
+  --contract-control-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text) 10%, transparent),
+    0 2px 6px color-mix(in srgb, var(--ink) 12%, transparent);
+  --contract-control-shadow-pressed:
+    inset 0 2px 4px color-mix(in srgb, var(--ink) 16%, transparent),
+    0 1px 2px color-mix(in srgb, var(--ink) 10%, transparent);
   background: var(--page);
   color: var(--text);
   min-height: 100dvh;
@@ -3012,9 +3679,10 @@ onBeforeUnmount(() => {
 
 .contract-header-control {
   align-items: center;
-  background: transparent;
-  border: 0;
+  background: var(--contract-control-surface);
+  border: 1px solid var(--contract-control-border);
   border-radius: 999px;
+  box-shadow: var(--contract-control-shadow);
   color: var(--text);
   display: inline-flex;
   height: 44px;
@@ -3114,9 +3782,10 @@ onBeforeUnmount(() => {
 }
 
 .contract-open-close {
-  background: var(--surface-elevated);
-  border: 1px solid var(--line-strong);
+  background: color-mix(in srgb, var(--surface-elevated) 88%, var(--text) 12%);
+  border: 1px solid var(--contract-control-border);
   border-radius: 8px;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 8%, transparent);
   display: grid;
   gap: 4px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3153,7 +3822,12 @@ onBeforeUnmount(() => {
 }
 
 .contract-open-close button.active::before {
-  background: var(--accent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 84%, white 16%),
+    var(--accent)
+  );
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 50%, transparent);
 }
 
 .contract-mode-row {
@@ -3182,9 +3856,10 @@ onBeforeUnmount(() => {
 
 .contract-mode-row button::before,
 .contract-order-type::before {
-  background: var(--surface-elevated);
-  border: 1px solid var(--line-strong);
+  background: var(--contract-control-surface);
+  border: 1px solid var(--contract-control-border);
   border-radius: 8px;
+  box-shadow: var(--contract-control-shadow);
   content: "";
   inset: 4px 0;
   pointer-events: none;
@@ -3202,9 +3877,10 @@ onBeforeUnmount(() => {
 
 .contract-price-row > button {
   align-items: center;
-  background: var(--surface-elevated);
-  border: 1px solid var(--line-strong);
+  background: var(--contract-control-surface);
+  border: 1px solid var(--contract-control-border);
   border-radius: 8px;
+  box-shadow: var(--contract-control-shadow);
   color: var(--text);
   display: flex;
   height: 44px;
@@ -3215,8 +3891,14 @@ onBeforeUnmount(() => {
 
 .contract-mode-row button:disabled,
 .contract-order-type:disabled {
-  cursor: default;
-  opacity: 1;
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: .58;
+}
+
+.contract-mode-row button:disabled::before,
+.contract-order-type:disabled::before {
+  box-shadow: none;
 }
 
 .contract-mode-row span,
@@ -3267,6 +3949,12 @@ onBeforeUnmount(() => {
 .contract-field:focus-within {
   border-color: var(--focus);
   box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.contract-field.is-invalid,
+.contract-field.is-invalid:focus-within {
+  border-color: var(--negative);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--negative) 16%, transparent);
 }
 
 .contract-field > span {
@@ -3322,17 +4010,40 @@ onBeforeUnmount(() => {
   grid-row: 1;
 }
 
+.contract-margin-guidance {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.contract-margin-guidance p {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.35;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.contract-margin-guidance .contract-margin-error {
+  color: var(--negative);
+  font-weight: 650;
+}
+
 .contract-percentage {
   display: grid;
-  height: 14px;
+  min-height: 92px;
+  min-width: 0;
 }
 
 .contract-trade .contract-percentage .percent-row {
   display: grid;
-  gap: 0;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  height: 14px;
+  gap: 4px;
+  grid-auto-rows: 44px;
+  grid-template-columns: repeat(3, minmax(44px, 1fr));
+  height: auto;
   margin: 0;
+  min-width: 0;
 }
 
 .contract-percentage button {
@@ -3340,15 +4051,38 @@ onBeforeUnmount(() => {
   border: 0;
   color: var(--muted);
   font-family: var(--font-geist-mono), var(--data-font), monospace;
-  font-size: 9px;
-  height: 14px;
-  min-width: 0;
-  padding: 0;
+  font-size: 10px;
+  height: 44px;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 3px;
+  position: relative;
+  z-index: 0;
+}
+
+.contract-percentage button::before {
+  background: var(--contract-control-surface);
+  border: 1px solid var(--contract-control-border);
+  border-radius: 8px;
+  box-shadow: var(--contract-control-shadow);
+  content: "";
+  inset: 5px 2px;
+  pointer-events: none;
+  position: absolute;
+  z-index: -1;
 }
 
 .contract-percentage button.active {
   color: var(--positive);
   font-weight: 750;
+}
+
+.contract-percentage button.active::before {
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface-elevated));
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--contract-control-border));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--accent) 34%, transparent),
+    0 2px 7px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .contract-trade .contract-percentage .percent-row button::after {
@@ -3359,14 +4093,18 @@ onBeforeUnmount(() => {
   background: transparent;
   border: 0;
   color: var(--muted);
-  min-height: 14px;
-  min-width: 0;
+  min-height: 44px;
+  min-width: 44px;
 }
 
 .contract-trade .contract-percentage .percent-row button.active {
   background: transparent;
   border: 0;
   color: var(--positive);
+}
+
+.contract-percentage button:disabled::before {
+  box-shadow: none;
 }
 
 .contract-tpsl {
@@ -3387,8 +4125,8 @@ onBeforeUnmount(() => {
 
 .contract-balance-rows {
   display: grid;
-  gap: 8px;
-  grid-template-rows: 15px 14px;
+  gap: 4px;
+  grid-template-rows: 44px 18px;
   margin: 0;
 }
 
@@ -3410,18 +4148,28 @@ onBeforeUnmount(() => {
 .contract-balance-rows dd {
   margin: 0;
   min-width: 0;
+}
+
+.contract-balance-rows dd:not(.contract-balance-control) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.contract-balance-control {
+  overflow: visible;
+}
+
 .contract-balance-rows button {
-  background: transparent;
-  border: 0;
+  background: var(--contract-control-surface);
+  border: 1px solid var(--contract-control-border);
+  border-radius: 999px;
+  box-shadow: var(--contract-control-shadow);
   color: var(--text);
   font-size: 10px;
-  min-height: 14px;
-  padding: 0;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 10px;
 }
 
 .contract-balance-rows .contract-balance-action {
@@ -3429,7 +4177,16 @@ onBeforeUnmount(() => {
   display: inline-flex;
   font-family: var(--font-geist-mono), var(--data-font), monospace;
   gap: 3px;
+  height: 44px;
   justify-content: flex-end;
+  max-width: 100%;
+}
+
+.contract-balance-action > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .contract-feedback {
@@ -3442,6 +4199,9 @@ onBeforeUnmount(() => {
 .contract-submit {
   border: 0;
   border-radius: 23px;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 44%, transparent),
+    0 4px 10px color-mix(in srgb, var(--ink) 18%, transparent);
   font-size: 14px;
   font-weight: 750;
   height: 46px;
@@ -3452,14 +4212,84 @@ onBeforeUnmount(() => {
 
 .contract-submit--long,
 .contract-trade .contract-submit--long.submit-order {
-  background: var(--accent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 86%, white 14%),
+    var(--accent)
+  );
   color: var(--on-positive);
   min-height: 46px;
 }
 
 .contract-submit--short {
-  background: var(--negative);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--negative) 84%, white 16%),
+    var(--negative)
+  );
   color: var(--on-negative);
+}
+
+.contract-submit:disabled {
+  background: var(--contract-control-surface);
+  box-shadow: none;
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: .58;
+}
+
+:is(
+  .contract-header-control,
+  .contract-open-close button,
+  .contract-mode-row button,
+  .contract-order-type,
+  .contract-price-row > button,
+  .contract-percentage button,
+  .contract-balance-action,
+  .contract-submit
+) {
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
+}
+
+:is(
+  .contract-header-control,
+  .contract-open-close button,
+  .contract-mode-row button,
+  .contract-price-row > button,
+  .contract-percentage button,
+  .contract-balance-action,
+  .contract-submit
+):active:not(:disabled) {
+  box-shadow: var(--contract-control-shadow-pressed);
+  transform: translateY(1px);
+}
+
+:is(
+  .contract-mode-row button,
+  .contract-percentage button
+):active:not(:disabled)::before {
+  box-shadow: var(--contract-control-shadow-pressed);
+}
+
+:is(
+  .contract-header-control,
+  .contract-open-close button,
+  .contract-mode-row button,
+  .contract-order-type,
+  .contract-price-row > button,
+  .contract-percentage button,
+  .contract-balance-action,
+  .contract-submit
+):disabled {
+  box-shadow: none;
+  cursor: not-allowed;
+  opacity: .58;
+  transform: none;
 }
 
 .contract-trade .trade-chart-panel {
@@ -3679,11 +4509,57 @@ onBeforeUnmount(() => {
 .contract-pencil-module button:focus-visible,
 .contract-position-tabs button:focus-visible,
 .contract-position-empty button:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--focus);
-  outline: 0;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (max-width: 820px) {
+  .contract-order-confirm-layer {
+    right: 0;
+    width: 100%;
+  }
 }
 
 @media (max-width: 340px) {
+  .contract-order-confirm {
+    padding-left: max(12px, env(safe-area-inset-left, 0px));
+    padding-right: max(12px, env(safe-area-inset-right, 0px));
+    row-gap: 10px;
+  }
+
+  .contract-order-confirm__body {
+    gap: 10px;
+  }
+
+  .contract-order-confirm__top {
+    row-gap: 10px;
+  }
+
+  .contract-order-confirm__identity {
+    gap: 8px;
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    padding-inline: 9px;
+  }
+
+  .contract-order-confirm__direction {
+    font-size: 10px;
+    padding-inline: 8px;
+  }
+
+  .contract-order-confirm__details {
+    padding-inline: 9px;
+  }
+
+  .contract-order-confirm__details > div {
+    gap: 8px;
+  }
+
+  .contract-order-confirm__details dd {
+    font-size: 11px;
+    max-width: 154px;
+  }
+
   .spot-pencil-header {
     padding-inline: 10px;
   }
@@ -3811,6 +4687,23 @@ onBeforeUnmount(() => {
   }
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  .contract-order-confirm {
+    animation: contract-order-confirm-enter 240ms cubic-bezier(.2, .8, .2, 1) both;
+  }
+}
+
+@keyframes contract-order-confirm-enter {
+  from {
+    opacity: .8;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .trade-view *,
   .trade-view *::before,
@@ -3818,7 +4711,11 @@ onBeforeUnmount(() => {
   .spot-order-type-layer,
   .spot-order-type-layer *,
   .spot-order-type-layer *::before,
-  .spot-order-type-layer *::after {
+  .spot-order-type-layer *::after,
+  .contract-order-confirm-layer,
+  .contract-order-confirm-layer *,
+  .contract-order-confirm-layer *::before,
+  .contract-order-confirm-layer *::after {
     animation-duration: .01ms !important;
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
@@ -3826,7 +4723,13 @@ onBeforeUnmount(() => {
   }
 
   .trade-view button:active,
-  .spot-order-type-layer button:active {
+  .spot-order-type-layer button:active,
+  .contract-order-confirm-layer button:active {
+    transform: none;
+  }
+
+  .trade-view .contract-header-control:active:not(:disabled),
+  .trade-view .contract-pencil-module button:active:not(:disabled) {
     transform: none;
   }
 }

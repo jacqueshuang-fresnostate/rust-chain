@@ -15,15 +15,19 @@ export function useModalDialog(
   initialFocusSelector = '[data-dialog-initial]',
 ): {
   trapFocus: (event: KeyboardEvent, close: () => void) => void
+  setReturnFocus: (element: HTMLElement | null) => void
 } {
   let returnFocus: HTMLElement | null = null
+  let requestedReturnFocus: HTMLElement | null = null
   let previousBodyOverflow = ''
 
   watch(open, async (isOpen) => {
     if (typeof document === 'undefined') return
 
     if (isOpen) {
-      returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+      returnFocus = requestedReturnFocus
+        || (document.activeElement instanceof HTMLElement ? document.activeElement : null)
+      requestedReturnFocus = null
       previousBodyOverflow = document.body.style.overflow
       document.body.style.overflow = 'hidden'
       await nextTick()
@@ -64,6 +68,7 @@ export function useModalDialog(
     const last = focusable[focusable.length - 1]
     if (!first || !last) {
       event.preventDefault()
+      container?.focus()
       return
     }
     if (event.shiftKey && document.activeElement === first) {
@@ -75,5 +80,9 @@ export function useModalDialog(
     }
   }
 
-  return { trapFocus }
+  function setReturnFocus(element: HTMLElement | null): void {
+    requestedReturnFocus = element
+  }
+
+  return { trapFocus, setReturnFocus }
 }

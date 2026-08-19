@@ -884,9 +884,44 @@ margin mode, and pair selection.
 - Contract ordering remains market-only until the backend advertises and
   accepts another order type. The amount input and percentage shortcuts remain
   margin amount, not base quantity or notional.
-- At 390x920, the production frame after removing the mock OS status bar uses
-  a 61px Header, 431px trade module, 425px `196 + 12 + 150` form/book split,
-  372px six-ask/six-bid compact book, and 37px position rail.
+- The margin-product adapter retains `min_margin` and optional `max_margin` as
+  `minMargin` and `maxMargin`. A missing, null, non-finite, zero, or negative
+  maximum maps to `null`; it must never become a fabricated zero cap.
+- Contract percentage shortcuts, including the 100%/maximum action, use
+  `min(real margin-wallet available, positive product maxMargin)` as their
+  percentage base. With no product maximum they use the real available balance.
+  Spot percentage behavior remains unchanged.
+- One pure margin-amount validation result owns the inclusive minimum/maximum
+  decision for the field state, opening the review, and the guard immediately
+  before `placeMarginOrder`. A value equal to either configured endpoint is
+  valid; an out-of-range value never reaches the order adapter.
+- The stable backend diagnostics `margin amount is below product minimum` and
+  `margin amount exceeds product maximum`, including a validation-error prefix,
+  map to localized race feedback. Keep the contract review open, reload current
+  product limits, and preserve retry; unknown backend messages retain the normal
+  API error contract.
+- Only the contract branch uses the dedicated `.contract-order-confirm`
+  review surface. The spot branch keeps its existing confirmation information
+  architecture and `placeSpotOrder` payload. Both branches continue through
+  the same validated review state rather than introducing a second mutation
+  owner.
+- The contract review reads its pair Logo and reference price from the current
+  Market Store ticker, its mode and leverage from the selected product/user
+  setting state, and its committed margin from the current form. Estimated
+  notional is `marginAmount * leverage`; estimated opening quantity is that
+  notional divided by the positive live reference price. It must not substitute
+  available wallet balance, a Pencil sample, or another product.
+- A rejected `placeMarginOrder` call leaves the review open and exposes the
+  mapped API error inside its fixed action region. A retry invokes the same
+  real mutation with the frozen reviewed values and the same idempotency key;
+  asynchronous setting/product refreshes must not rewrite the open review.
+  The submitting guard blocks duplicate calls and every dismissal path until
+  the in-flight call settles.
+- At 390px, the production frame after removing the mock OS status bar keeps a
+  61px Header, the `196 + 12 + 150` form/book column split, a 372px
+  six-ask/six-bid compact book, and a 37px position rail. The form and enclosing
+  module grow intrinsically for 44px shortcuts and localized range/error copy;
+  never clip those controls to restore the retired 431px module height.
 - The leverage, mode, and pair sheets are 500px, 446px, and 620px high and
   start-align their content tracks. Do not stretch their confirmation actions
   to the sheet bottom. At 340px and below, wrapped notices use intrinsic height
@@ -903,6 +938,13 @@ margin mode, and pair selection.
 | No exact product for the route symbol | Disable settings/order actions; never fall back to another product |
 | Product capability list is empty | Render no fabricated options and disable confirmation |
 | Ticker fields are missing | Render fallback mark/`--`; do not use design samples |
+| Spot order enters review | Keep the existing generic spot confirmation content and payload |
+| Contract market order enters review | Show the current pair, direction, market semantics, setting values, committed margin, derived notional, and derived quantity |
+| Margin amount is below `minMargin` or above positive `maxMargin` | Mark the field invalid, announce the localized boundary, and open no review or request |
+| Product has no usable `maxMargin` | Display the minimum and no-product-maximum state; base shortcuts on real wallet available |
+| Product limits change after review opens | Localize the known backend boundary failure, keep review/retry state, and reload current product limits |
+| Contract submission fails | Keep the review open, show the mapped error inside it, and allow retry after busy clears |
+| Contract submission is in flight | Ignore duplicate submission and keep overlay, close button, and Escape dismissal inactive |
 | Risk copy wraps at 320px | Grow the notice/body; keep submit visible and non-overlapping |
 
 ### 5. Good / Base / Bad Cases
@@ -919,6 +961,14 @@ margin mode, and pair selection.
 
 - Source/adapter tests lock the GET/PATCH paths, 404-only fallback, cross and
   isolated types, capability membership checks, and market-only submission.
+- Confirmation source tests lock the spot/contract branch boundary, ticker and
+  form-derived values, `margin * leverage / referencePrice` quantity, unchanged
+  `placeMarginOrder` input, in-panel failure, duplicate guard, and busy-state
+  dismissal lock.
+- Executable financial-boundary tests cover positive/null/invalid `max_margin`,
+  wallet-below-cap and wallet-above-cap percentages, inclusive endpoints,
+  below/above rejection, no-maximum behavior, shared review/request guards, and
+  known backend minimum/maximum error classification.
 - UI contract tests lock all eight Pencil IDs, 24px real asset mark, six book
   levels without precision control, exact 390px geometry, sheet tracks,
   localized copy, dialog semantics, safe area, and reduced motion.

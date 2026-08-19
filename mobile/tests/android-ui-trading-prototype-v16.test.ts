@@ -24,7 +24,7 @@ test('v16 现货与合约保留独立路由、实时报价、盘口和真实下�
   assert.match(tradeSource, /fetchMarginWallets\(\)/)
   assert.match(tradeSource, /quantityForBalancePercentage\(\{/)
   assert.match(tradeSource, /await placeSpotOrder\(\{/)
-  assert.match(tradeSource, /await placeMarginOrder\(\{/)
+  assert.match(tradeSource, /await placeMarginOrder\(review\.request\)/)
   assert.match(tradeSource, /watch\(\(\) => route\.query\.mode/)
   assert.doesNotMatch(tradeSource, /class="trade-category"/)
   assert.doesNotMatch(tradeSource, /selectTradeMode/)

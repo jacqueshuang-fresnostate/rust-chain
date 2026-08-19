@@ -1,0 +1,5 @@
+{"file":".trellis/spec/mobile/index.md","reason":"移动端组件、触控、确认层与质量门禁基线"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"确保确认内容只使用真实行情、产品、钱包与订单接口数据"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"遵守主题、安全区、覆盖层和手机壳层级合同"}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"保持中英文资源、焦点与导航语义一致"}
+{"file":".trellis/tasks/08-19-margin-order-confirm-dialog/research/pencil-contract-confirm-audit.md","reason":"Pencil 弹层视觉基线与现有生产差距"}

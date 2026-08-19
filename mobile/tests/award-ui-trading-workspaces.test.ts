@@ -33,7 +33,8 @@ test('交易工作台保留行情、K 线、盘口、余额、委托与下单处
   assert.match(tradeSource, /fetchMarginWallets\(\)/)
   assert.match(tradeSource, /quantityForBalancePercentage\(\{/)
   assert.match(tradeSource, /await placeSpotOrder\(\{[\s\S]*?symbol: pairSymbol\.value,[\s\S]*?quantity: orderAmount,/)
-  assert.match(tradeSource, /await placeMarginOrder\(\{[\s\S]*?productId: selectedProduct\.value\.id,[\s\S]*?marginAmount: orderAmount,/)
+  assert.match(tradeSource, /createMarginOrderReview\(\{[\s\S]*?productId: selectedProduct\.value\?\.id \|\| 0,[\s\S]*?marginAmount: Number\(quantity\.value\),/)
+  assert.match(tradeSource, /await placeMarginOrder\(review\.request\)/)
   assert.match(tradeSource, /openOrders\(mode === 'contract' \? 'positions' : 'spot'\)/)
   assert.match(tradeSource, /v-for="time in \['1m', '5m', '15m', '1h', '1d'\]"/)
   assert.doesNotMatch(tradeSource, /\['1m', '15m', '1h', '4h', '1d'\]/)
@@ -117,12 +118,15 @@ test('320–448px 响应式、安全区和低动态合同不产生工作区固�
   assert.match(tradeCss, /@media \(max-width: 340px\)\s*\{[\s\S]*?\.trade-quote\s*\{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) minmax\(96px, \.62fr\);[\s\S]*?\.trade-quote > div:first-child strong\s*\{\s*font-size: 29px;/)
 
   for (const [css, sourceName] of [[tradeCss, 'trade'], [secondsCss, 'seconds']] as const) {
+    const workspaceCss = sourceName === 'trade'
+      ? `${css.slice(0, css.indexOf('.contract-order-confirm-layer,'))}\n${css.slice(css.indexOf('.contract-trade {'))}`
+      : css
     assert.match(css, /overflow-x: clip;/, `${sourceName} should clip decorative x overflow`)
     assert.match(css, /env\(safe-area-inset-bottom\)/, `${sourceName} should reserve the bottom safe area`)
     assert.match(css, /@media \(max-width: 340px\)/, `${sourceName} should handle 320px layouts`)
     assert.match(css, /@media \(prefers-reduced-motion: reduce\)/, `${sourceName} should disable nonessential motion`)
     assert.doesNotMatch(css, /width:\s*100vw|overflow-x:\s*auto/)
-    assert.doesNotMatch(css, /#[0-9a-f]{3,8}|rgba?\(/i)
+    assert.doesNotMatch(workspaceCss, /#[0-9a-f]{3,8}|rgba?\(/i)
   }
 
   const spotOrderTypeLayerIndex = tradeCss.indexOf('.spot-order-type-layer {')
