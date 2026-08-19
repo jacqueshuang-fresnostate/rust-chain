@@ -7,9 +7,9 @@ import { formatPrice, normalizeSymbol, splitSymbol } from '@/core/format'
 import { useModalDialog } from '@/core/modalDialog'
 import { useMarketFavoritesStore } from '@/stores/marketFavorites'
 import { useMarketStore } from '@/stores/market'
-import type { MarginProduct } from '@/core/types'
+import type { MarginOrderType, MarginProduct } from '@/core/types'
 
-type ContractSheet = 'pair' | 'leverage' | 'marginMode' | null
+type ContractSheet = 'pair' | 'leverage' | 'marginMode' | 'orderType' | null
 type PairFilter = 'favorites' | 'all' | 'mainstream'
 type MarginMode = 'cross' | 'isolated'
 
@@ -20,6 +20,7 @@ const props = defineProps<{
   products: MarginProduct[]
   leverage: number
   marginMode: MarginMode
+  orderType: MarginOrderType | null
   saving: boolean
   error?: string
   productsLoading: boolean
@@ -31,6 +32,7 @@ const emit = defineEmits<{
   selectPair: [symbol: string]
   applyLeverage: [leverage: number]
   applyMarginMode: [mode: MarginMode]
+  selectOrderType: [orderType: MarginOrderType]
   retryProducts: []
 }>()
 
@@ -75,6 +77,7 @@ const supportedMarginModes = computed<MarginMode[]>(() => {
     .filter((mode): mode is MarginMode => mode === 'cross' || mode === 'isolated')
     .sort((left, right) => (left === right ? 0 : left === 'cross' ? -1 : 1))
 })
+const supportedOrderTypes = computed<MarginOrderType[]>(() => props.product?.orderTypes || [])
 const pairRows = computed(() => props.products.map((product) => {
   const pair = splitSymbol(product.symbol)
   return {
@@ -154,12 +157,26 @@ function applyMarginMode(): void {
   }
 }
 
+function selectOrderType(orderType: MarginOrderType): void {
+  if (!props.saving && supportedOrderTypes.value.includes(orderType)) {
+    emit('selectOrderType', orderType)
+  }
+}
+
 function marginModeLabel(mode: MarginMode): string {
   return t(mode === 'cross' ? 'trade.cross' : 'trade.isolated')
 }
 
 function marginModeDescription(mode: MarginMode): string {
   return t(mode === 'cross' ? 'trade.crossDescription' : 'trade.isolatedDescription')
+}
+
+function orderTypeLabel(orderType: MarginOrderType): string {
+  return t(orderType === 'market' ? 'trade.marketOrderShort' : 'trade.limitOrderShort')
+}
+
+function orderTypeDescription(orderType: MarginOrderType): string {
+  return t(orderType === 'market' ? 'trade.marginMarketOrderDescription' : 'trade.marginLimitOrderDescription')
 }
 </script>
 
@@ -194,7 +211,48 @@ function marginModeDescription(mode: MarginMode): string {
       >
         <span class="contract-sheet__grab" aria-hidden="true" />
 
-        <template v-if="open === 'leverage'">
+        <template v-if="open === 'orderType'">
+          <header class="contract-sheet__header">
+            <div>
+              <h2 id="contract-orderType-title">{{ t('trade.marginOrderTypeSheetTitle') }}</h2>
+              <p>{{ t('trade.marginOrderTypeSheetHint') }}</p>
+            </div>
+            <button :data-dialog-initial="orderType === null ? '' : undefined" class="contract-sheet__close" type="button" :disabled="saving" :aria-label="t('common.close')" @click="requestClose">
+              <X :size="18" aria-hidden="true" />
+            </button>
+          </header>
+
+          <div class="contract-sheet__scroll contract-order-type-body">
+            <div class="contract-mode-options" role="radiogroup" :aria-label="t('trade.marginOrderTypeSheetTitle')">
+              <button
+                v-for="item in supportedOrderTypes"
+                :key="item"
+                :data-dialog-initial="orderType === item ? '' : undefined"
+                type="button"
+                role="radio"
+                :class="{ active: orderType === item }"
+                :aria-checked="orderType === item"
+                @click="selectOrderType(item)"
+              >
+                <span class="contract-mode-radio" aria-hidden="true"><Check v-if="orderType === item" :size="13" /></span>
+                <span class="contract-mode-option__copy">
+                  <span class="contract-mode-option__title">
+                    <strong>{{ orderTypeLabel(item) }}</strong>
+                    <small v-if="orderType === item">{{ t('trade.currentOrderType') }}</small>
+                  </span>
+                  <small>{{ orderTypeDescription(item) }}</small>
+                </span>
+              </button>
+            </div>
+
+            <aside class="contract-sheet-notice contract-sheet-notice--plain">
+              <Info :size="15" aria-hidden="true" />
+              <span>{{ t('trade.marginOrderTypeNotice') }}</span>
+            </aside>
+          </div>
+        </template>
+
+        <template v-else-if="open === 'leverage'">
           <header class="contract-sheet__header">
             <div>
               <h2 id="contract-leverage-title">{{ t('trade.leverageSheetTitle') }}</h2>
@@ -457,6 +515,11 @@ html[data-theme='dark'] .contract-sheet {
   height: min(446px, calc(100dvh - max(12px, env(safe-area-inset-top))));
 }
 
+.contract-sheet--orderType {
+  grid-template-rows: 14px 45px auto;
+  height: min(338px, calc(100dvh - max(12px, env(safe-area-inset-top))));
+}
+
 .contract-sheet--marginMode .contract-sheet__header {
   height: 45px;
 }
@@ -557,6 +620,13 @@ html[data-theme='dark'] .contract-sheet {
   align-content: start;
   display: grid;
   gap: 14px;
+}
+
+.contract-order-type-body {
+  align-content: start;
+  display: grid;
+  gap: 14px;
+  min-height: 0;
 }
 
 .contract-leverage-body {

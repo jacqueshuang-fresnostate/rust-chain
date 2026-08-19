@@ -7571,3 +7571,31 @@
 - 修改文件：`docs/superpowers/PROGRESS.md`。
 - 验证结果：Ego Browser 在 390×844 浅色中文、320×720 深色英文/减少动态效果及 448×900 浅色中文下均保持文档宽度等于视口宽度；百分比按钮实测 44px、主操作 46px，键盘焦点为 2px 可见轮廓，按压态位移 1px。`npm --prefix mobile run type-check` 与最终聚焦测试 24/24 通过；终审阶段 Mobile 全量测试 410/410、PWA/Tauri 构建、Trellis validate 和 `git diff --check` 已通过。
 - 后续事项：无；当前改动尚未提交或推送，既有 `mobile/pencil/docs/` 未修改。
+
+## 2026-08-19 14:24 - 杠杆限价单后端与行情触发闭环
+
+- 完成内容：新增 `0106` 不可变迁移和市价/限价领域规则；开仓事务在保留既有幂等键、钱包锁序和市价行为的基础上，支持按服务端新鲜 ticker 立即成交或以空入场价持久化挂单。新增 accepted ticker 驱动的逐单锁行成交事务，成交时才启动计息、建立全仓账户、登记一次返佣并发送一次事件；未成交挂单继续支持原路撤销并从计息、逐仓及全仓强平集合隔离。API、后台/用户读模型、能力集和行情 ingestion 已同步订单类型、限价与价格精度，并补充迁移、领域、请求语义、幂等、可信成交价及 worker 隔离测试。
+- 修改文件：`migrations/0106_margin_limit_orders.sql`、`src/modules/margin/{domain,presentation,service,routes,mod,application,infrastructure}.rs`、`src/modules/margin/application/{open_position,product_config,trigger_limit_orders}.rs`、`src/modules/margin/infrastructure/{positions,position_queries,product_config,settlement}.rs`、`src/modules/market/infrastructure/adapters/ingestion.rs`、`src/workers/{margin_interest,margin_liquidation}.rs`、`tests/{margin_routes,margin_liquidation_worker,margin_limit_order_migration}.rs`、`tests/unit_src/src_modules_margin_{application,domain,open_position,service}_tests.rs`。
+- 验证结果：`cargo fmt --all && cargo check --all-targets` 通过；数据库/Redis 环境变量当前未配置，运行时集成用例留待最终聚焦命令确认其跳过结果。
+- 后续事项：执行 Rust 聚焦测试、架构/规范检查和最终 diff 复核；当前未提交或推送。
+
+## 2026-08-19 14:24 - 手机端杠杆订单类型与冻结确认闭环
+
+- 完成内容：移动端严格保留后端订单能力和交易对价格精度，能力刷新时执行市价优先/首个真实能力回落；新增可访问订单类型底部弹层、限价可编辑字段、做多卖一/做空买一及最新价回填、正数与精度校验。确认层冻结订单类型、限价、参考价和既有资金参数/幂等键，API 按冻结类型严格省略或携带价格；交易页和订单页按可空入场价分流已成交持仓与未成交委托，并补齐双语文案与聚焦测试。
+- 修改文件：`mobile/src/api/trading.ts`、`mobile/src/components/ContractTradeSheets.vue`、`mobile/src/core/{types,tradeForm,marginOrder,marginOrderConfirmation}.ts`、`mobile/src/views/{TradeView,OrdersView}.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{margin-order-type-sheet,margin-order-confirm-dialog,margin-product-boundaries,spot-trading-ui-optimization,trading-lending-views}.test.ts`。
+- 验证结果：`npm --prefix mobile run type-check` 通过；新增订单类型聚焦测试 6/6 通过；本轮较早版本 Mobile 全量测试 416/416 通过，最终源码将继续重跑全量测试与 PWA/Tauri 构建。
+- 后续事项：执行最终全量构建、浏览器视口验收和工作树复核；既有未跟踪目录 `mobile/pencil/docs/` 未修改。
+
+## 2026-08-19 15:35 - 杠杆限价闭环中断前质量审查与关键修复
+
+- 完成内容：按任务 PRD、check 上下文和 Trellis 规范审查未提交的杠杆市价/限价闭环，并完成已确认的后端语义修复：限价成交同时把 `opened_at` 与 `interest_accrued_at` 更新为数据库真实成交时刻，保留 `created_at` 作为委托创建时刻；后台 Dashboard 的持仓数及后台利息汇总排除 `entry_price IS NULL` 的未成交挂单，后台订单历史仍保留挂单；触发索引补入方向和限价列。同步扫描资金收益聚合，确认 wallet returns 仅统计 `closed/liquidated + closed_at` 窗口，现有语义不会计入 opened 挂单，因此未做无依据修改；按主会话收尾指示停止长验证并先返回审查结果。
+- 修改文件：`src/modules/margin/infrastructure/positions.rs`、`src/modules/margin/infrastructure/position_queries.rs`、`src/modules/admin/infrastructure/dashboard_audit.rs`、`migrations/0106_margin_limit_orders.sql`、`.trellis/spec/backend/margin-trading-actions.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：审查早期的 `cargo check --all-targets` 与 `npm --prefix mobile run type-check` 通过；最终轻量收尾的 `cargo fmt --all -- --check`、`git diff --check` 通过。`DATABASE_URL`、`REDIS_URL`、`MONGODB_URI`、`MONGO_URL` 均未配置，未声称真实依赖集成测试已执行。
+- 后续事项：最终后端改动尚未重跑 `cargo check/clippy`，架构及 margin/migration/market 测试、Mobile 全量测试与 PWA/Tauri 构建均未执行；已识别但尚未落地的移动端产品切换限价草稿隔离、精确限价字符串展示/API 映射、订单类型不可用文案和限价错误 ARIA，以及 `1.` JSON、成交时刻和聚合口径回归测试，交由主会话继续。当前未提交或推送，既有 `mobile/pencil/docs/` 未修改。
+
+## 2026-08-19 15:50 - 杠杆订单类型弹窗最终修复与验收
+
+- 完成内容：完成独立审查后的全部关键修复。手机端切换杠杆产品时清空旧交易对限价并按新交易对 BBO/实时价重新初始化；订单类型能力为空时显示真实“暂不可用”，不再伪装为市价；限价草稿拒绝不稳定的 `1.` API 文本、把 `.5` 规范为 `0.5`，并保留后端 DECIMAL 限价原文，补齐错误输入的 `aria-errormessage`。后端幂等字段收敛为不可变意图对象，移除过长参数链；新增真实成交时间、Dashboard/利息聚合隔离及迁移索引回归测试。市价/限价弹层继续只展示后端能力，关闭、遮罩与 Escape 不改选择，明确选项才更新并返回触发器焦点。
+- 修改文件：在前两条本任务记录基础上，最终补充 `mobile/src/{api/trading.ts,core/tradeForm.ts,views/TradeView.vue,i18n/messages/{zh-CN,en}.ts}`、`mobile/tests/margin-order-type-sheet.test.ts`、`src/modules/margin/application/open_position.rs`、`tests/{margin_routes,margin_limit_order_migration}.rs`、`docs/superpowers/PROGRESS.md`；既有未跟踪目录 `mobile/pencil/docs/` 未修改。
+- 验证结果：Rust `cargo fmt --all -- --check`、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、后端架构 11/11、迁移/聚合/成交时间合同 3/3、杠杆领域 10/10、开仓语义 3/3、行情触发 1/1 通过；依赖 MySQL/Redis 的杠杆路由和强平聚焦用例在环境变量未配置时执行了显式跳过分支，未声称完成真实依赖验证。Mobile `type-check`、聚焦 20/20、全量 416/416、PWA 与 Tauri 构建通过。Ego Browser 在 390×844 浅色和 320×720 深色/减少动态效果下验证两项选择、64px 选项、无横向溢出、滚动锁、焦点恢复、Escape/遮罩关闭、限价可编辑、BBO 回填、`1.` 错误 ARIA 与 `.5 -> 0.5` 冻结请求均正常；任务空间已关闭。`git diff --check` 通过。
+- 后续事项：部署前执行 `0106_margin_limit_orders.sql`；如需验证真实挂单成交、撤单竞争、返佣和强平隔离，请在隔离 MySQL/Redis 环境配置 `DATABASE_URL`、`REDIS_URL` 后复跑相关集成测试。当前改动尚未提交或推送。

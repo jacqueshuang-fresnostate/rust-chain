@@ -50,7 +50,7 @@ test('确认层 Teleport 到 body，且仅 contract 分支渲染专属杠杆面�
 test('杠杆确认明细只组合当前表单、行情、产品设置和后端 Logo', () => {
   assert.match(contractPanel, /<AssetMark[\s\S]*?:symbol="baseAsset"[\s\S]*?:src="ticker\?\.iconUrl"[\s\S]*?:fallback-src="ticker\?\.baseIconUrl"[\s\S]*?:size="36"/)
   assert.match(contractPanel, /\{\{ pairSymbol \}\}/)
-  assert.match(contractPanel, /t\('trade\.perpetualShort'\)[\s\S]*?t\('trade\.marketOrderShort'\)/)
+  assert.match(contractPanel, /t\('trade\.perpetualShort'\)[\s\S]*?contractOrderReview\.request\.orderType === 'limit'[\s\S]*?trade\.limitOrderShort[\s\S]*?trade\.marketOrderShort/)
   assert.match(contractPanel, /:class="contractOrderReview\.request\.side === 'long' \? 'is-long' : 'is-short'"/)
   assert.match(contractPanel, /t\('rootPrototype\.marginMode'\)[\s\S]*?contractOrderReview\.request\.marginMode === 'cross'/)
   assert.match(contractPanel, /t\('rootPrototype\.leverage'\)[\s\S]*?contractOrderReview\.request\.leverage/)
@@ -58,7 +58,7 @@ test('杠杆确认明细只组合当前表单、行情、产品设置和后端 L
   assert.match(contractPanel, /t\('trade\.contractMarginCommitted'\)[\s\S]*?formatAmount\(contractOrderReview\.request\.marginAmount\)[\s\S]*?availableAsset/)
   assert.match(contractPanel, /t\('rootPrototype\.estimatedNotional'\)[\s\S]*?formatAmount\(contractNotionalValue\)[\s\S]*?availableAsset/)
   assert.match(contractPanel, /t\('trade\.contractEstimatedQuantity'\)[\s\S]*?formatAmount\(contractOrderQuantity\)[\s\S]*?baseAsset/)
-  assert.match(tradeSource, /function createCurrentMarginOrderReview\(idempotencyKey\?: string\)[\s\S]*?productId: selectedProduct\.value\?\.id \|\| 0,[\s\S]*?marginAmount: Number\(quantity\.value\),[\s\S]*?referencePrice: effectivePrice\.value/)
+  assert.match(tradeSource, /function createCurrentMarginOrderReview\(idempotencyKey\?: string\)[\s\S]*?productId: selectedProduct\.value\?\.id \|\| 0,[\s\S]*?marginAmount: Number\(quantity\.value\),[\s\S]*?orderType: contractOrderType\.value,[\s\S]*?limitPrice: contractLimitPrice\.value,[\s\S]*?referencePrice: currentPrice\.value/)
   assert.match(tradeSource, /const marginOrderDraft = computed\(\(\) => createCurrentMarginOrderReview\(\)\)[\s\S]*?const contractOrderReview = computed\(\(\) => reviewedMarginOrder\.value \|\| marginOrderDraft\.value\)/)
   assert.match(tradeSource, /const contractNotionalValue = computed\(\(\) => contractOrderReview\.value\.estimatedNotional\)/)
   assert.match(tradeSource, /const contractOrderQuantity = computed\(\(\) => contractOrderReview\.value\.estimatedQuantity\)/)
@@ -72,6 +72,9 @@ test('杠杆确认模型以同一组值生成展示估算和真实下单参数',
     marginMode: 'cross',
     leverage: 7,
     marginAmount: 0.123456789,
+    orderType: 'market',
+    limitPrice: '',
+    pricePrecision: 8,
     referencePrice: 2.5,
   })
 
@@ -82,6 +85,7 @@ test('杠杆确认模型以同一组值生成展示估算和真实下单参数',
     marginMode: 'cross',
     leverage: 7,
     marginAmount: 0.123456789,
+    orderType: 'market',
   })
   assert.equal(review.estimatedNotional, 0.123456789 * 7)
   assert.equal(review.estimatedQuantity, (0.123456789 * 7) / 2.5)
@@ -93,6 +97,9 @@ test('杠杆确认模型以同一组值生成展示估算和真实下单参数',
     marginMode: 'cross',
     leverage: 7,
     marginAmount: 0.123456789,
+    orderType: 'market',
+    limitPrice: '',
+    pricePrecision: 8,
     referencePrice: 5,
   })
   assert.deepEqual(movedMarket.request, review.request)
@@ -104,6 +111,9 @@ test('杠杆确认模型以同一组值生成展示估算和真实下单参数',
     marginMode: 'isolated',
     leverage: 3,
     marginAmount: 10,
+    orderType: 'market',
+    limitPrice: '',
+    pricePrecision: 8,
     referencePrice: 100,
   })
   assert.equal(shortReview.request.side, 'short')
@@ -115,6 +125,9 @@ test('杠杆确认模型以同一组值生成展示估算和真实下单参数',
     marginMode: 'cross',
     leverage: 7,
     marginAmount: 10,
+    orderType: 'market',
+    limitPrice: '',
+    pricePrecision: 8,
     referencePrice: 0,
   })
   assert.equal(unavailableMarket.isValid, false)
@@ -126,6 +139,9 @@ test('杠杆确认模型以同一组值生成展示估算和真实下单参数',
     marginMode: 'cross',
     leverage: Number.MAX_VALUE,
     marginAmount: Number.MAX_VALUE,
+    orderType: 'market',
+    limitPrice: '',
+    pricePrecision: 8,
     referencePrice: 1,
   })
   assert.equal(overflowedEstimate.isValid, false)
@@ -136,7 +152,8 @@ test('杠杆确认模型以同一组值生成展示估算和真实下单参数',
 test('重试继续调用同一真实杠杆接口，失败留在面板且提交期间防重与禁关', () => {
   assert.match(submitOrderSource, /if \(submitting\.value\) return/)
   assert.match(submitOrderSource, /const submittedMode = mode\.value[\s\S]*?const review = submittedMode === 'contract' \? reviewedMarginOrder\.value : null/)
-  assert.match(submitOrderSource, /const submittedOrderType = submittedMode === 'contract' \? 'market' : orderType\.value/)
+  assert.match(submitOrderSource, /const submittedOrderType = orderType\.value/)
+  assert.match(submitOrderSource, /if \(submittedMode === 'spot'\) \{\s*if \(!isLive\.value\)[\s\S]*?!Number\.isFinite\(limitPrice\)/)
   assert.equal(submitOrderSource.match(/placeMarginOrder\(/g)?.length, 1)
   assert.match(submitOrderSource, /review\.request\.productId !== product\.id[\s\S]*?validateMarginAmount\(\{[\s\S]*?amount: review\.request\.marginAmount,[\s\S]*?!requestMarginValidation\.isValid[\s\S]*?!review\.isValid[\s\S]*?await placeMarginOrder\(review\.request\)/)
   assert.match(tradeSource, /reviewedMarginOrder\.value = mode\.value === 'contract'[\s\S]*?createCurrentMarginOrderReview\(createMarginOrderIdempotencyKey\(\)\)/)

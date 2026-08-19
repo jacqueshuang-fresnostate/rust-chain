@@ -23,7 +23,9 @@ pub(crate) use positions::{
     LockedMarginPositionRow, MarginOpenProductRule, ensure_cross_margin_account,
     existing_position_for_idempotency_key, existing_position_for_idempotency_key_readonly,
     insert_margin_position, load_cancelable_position_ids, load_open_position_ids,
-    lock_active_open_product, lock_user_position_by_id, set_margin_position_wallet_scope,
+    lock_active_open_product, lock_pending_margin_limit_position_by_id, lock_user_position_by_id,
+    mark_margin_limit_position_filled, set_margin_position_wallet_scope,
+    triggered_margin_limit_position_ids,
 };
 pub(crate) use product_config::{
     MarginProductSettingRule, MarginProductUpsertValues, ensure_asset_exists, ensure_pair_exists,

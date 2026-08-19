@@ -1,10 +1,11 @@
 //! 权威行情 ingestion 基础设施。
 //!
 //! 仅接收已由 provider 适配器归一化且通过领域校验的快照，按原顺序写 Redis 与 Mongo；
-//! ticker/depth 缓存成功后才尝试触发现货订单，撮合失败不回滚已落地行情。
+//! ticker/depth 缓存成功后才尝试触发现货订单，且只有被 CAS 接受的 ticker 才会触发杠杆限价单；
+//! 任一订单成交失败都不回滚已落地行情。
 //!
 //! 落地目标分三处：Redis 承载实时权威快照，Mongo 的 `market_klines_<SYMBOL>` 集合承载 K 线历史，
-//! MySQL 侧不写行情，只在缓存写入成功后被动触发现货限价单撮合。
+//! MySQL 侧不写行情，只在缓存写入成功后被动触发现货与杠杆限价单成交。
 //! 写入顺序固定为「先缓存后历史」，且由缓存的原子时序门禁做总闸：ticker 比较 `observed_at`，
 //! K 线比较 `(open_time, observed_at)`，被判为陈旧的快照直接短路，不会继续写 Mongo、不触发撮合、不广播。
 //! Redis 与 Mongo 不在同一事务内，Mongo 失败时已写入的 Redis 快照不会回滚，下一次推送会自然修复；
@@ -18,6 +19,7 @@ use crate::{
     infra::mongo::{ensure_kline_indexes, kline_collection_name},
     modules::{
         events::{EventBroadcastHub, EventBroadcastMessage},
+        margin::application::execute_triggered_margin_limit_orders_with_hub as execute_triggered_margin_limit_orders,
         market::{
             KlineUpsertKey, MarketDepthSnapshot, MarketKlineSnapshot, MarketTickerSnapshot,
             ValidatedMarketSymbol,
@@ -109,7 +111,7 @@ impl MarketIngestionService {
             .with_broadcast_hub(state.event_broadcast_hub.clone()))
     }
 
-    /// 注入可选 MySQL 池，供 ticker/depth 缓存成功后触发现货限价单；不测试连接或立即执行 SQL。
+    /// 注入可选 MySQL 池，供 ticker/depth 触发现货限价单、accepted ticker 触发杠杆限价单；不测试连接或立即执行 SQL。
     /// 传入 `None` 会让整条撮合触发链保持关闭，行情照常落地但不会有任何限价单被激活，
     /// 这也是纯行情采集进程的预期形态，因此缺少 MySQL 不会被当作配置错误。
     pub fn with_mysql(mut self, mysql: Option<Pool<MySql>>) -> Self {
@@ -117,7 +119,7 @@ impl MarketIngestionService {
         self
     }
 
-    /// 注入进程内广播中心，供现货触发链发布订单事件和 synthetic 行情发布实时快照；本方法本身不订阅或发布 WS 消息。
+    /// 注入进程内广播中心，供现货/杠杆触发链发布订单事件和 synthetic 行情发布实时快照；本方法本身不订阅或发布 WS 消息。
     /// 传入 `None` 时所有发布调用都会静默跳过而不报错，行情仍会正常写入 Redis 与 Mongo，
     /// 只是订阅端收不到推送，需要靠客户端轮询缓存补齐，因此生产进程应始终注入。
     pub fn with_broadcast_hub(mut self, broadcast_hub: Option<EventBroadcastHub>) -> Self {
@@ -125,8 +127,8 @@ impl MarketIngestionService {
         self
     }
 
-    /// 将供应商 ticker 快照写入 Redis 权威缓存，成功后再尝试触发现货限价撮合。
-    /// 快照必须已由 provider adapter 校验交易对、价格与时间；缓存失败时不得触发订单，撮合失败只告警且不撤销已写行情。
+    /// 将供应商 ticker 快照写入 Redis 权威缓存，只在 CAS 接受后尝试触发现货与杠杆限价单。
+    /// 快照必须已由 provider adapter 校验交易对、价格与时间；缓存失败时不得触发订单，成交失败只告警且不撤销已写行情。
     pub async fn ingest_ticker(&self, snapshot: &MarketTickerSnapshot) -> AppResult<()> {
         let entry = MarketTickerCacheEntry::from_snapshot(snapshot)
             .map_err(|error| AppError::Validation(error.to_string()))?;
@@ -138,11 +140,13 @@ impl MarketIngestionService {
         if outcome.is_accepted() {
             self.trigger_spot_limit_orders(snapshot.symbol(), snapshot.last_price(), "ticker")
                 .await;
+            self.trigger_margin_limit_orders(snapshot.symbol(), snapshot.last_price())
+                .await;
         }
         Ok(())
     }
 
-    /// 为 synthetic ticker 执行 Redis `observed_at` 原子 CAS；只有 accepted 才触发现货订单并按统一事件合同广播。
+    /// 为 synthetic ticker 执行 Redis `observed_at` 原子 CAS；只有 accepted 才触发现货/杠杆订单并按统一事件合同广播。
     /// 与 [`Self::ingest_ticker`] 的区别是这里把写入结论回传给调用方，并在接受后追加一次实时广播，
     /// 使策略行情与第三方 feed 走同一套 WebSocket 事件格式，订阅端无需区分数据出处。
     /// 副作用顺序固定为「先缓存、再撮合、后广播」，撮合失败只告警而不阻断广播，广播失败则整体返回错误。
@@ -162,6 +166,8 @@ impl MarketIngestionService {
             return Ok(SyntheticIngestionOutcome::RejectedStale);
         }
         self.trigger_spot_limit_orders(snapshot.symbol(), snapshot.last_price(), "ticker")
+            .await;
+        self.trigger_margin_limit_orders(snapshot.symbol(), snapshot.last_price())
             .await;
         self.publish(MarketFeedEvent::from_ticker_snapshot(snapshot)?)?;
         Ok(SyntheticIngestionOutcome::Accepted)
@@ -322,6 +328,28 @@ impl MarketIngestionService {
                 market_price = %market_price,
                 source,
                 "spot limit order trigger failed after market ingestion"
+            );
+        }
+    }
+
+    /// 只在 ticker 已成为 Redis 权威快照之后，以其 `last_price` 触发杠杆限价挂单。
+    /// 深度快照不调用本方法，避免把卖一价当成做空和做多共用的成交价；两个方向统一只认 accepted ticker。
+    /// 缺少 MySQL 时按纯行情进程语义静默跳过；触发失败只告警，挂单保留在数据库等待下一笔 accepted ticker。
+    async fn trigger_margin_limit_orders(&self, symbol: &str, market_price: &BigDecimal) {
+        if let Some(pool) = &self.mysql
+            && let Err(error) = execute_triggered_margin_limit_orders(
+                pool,
+                symbol,
+                market_price,
+                self.broadcast_hub.as_ref(),
+            )
+            .await
+        {
+            tracing::warn!(
+                error = %error,
+                symbol,
+                market_price = %market_price,
+                "margin limit order trigger failed after accepted ticker ingestion"
             );
         }
     }

@@ -61,7 +61,7 @@ pub(crate) struct ProductActionRequest {
 pub(crate) struct OpenMarginPositionRequest {
     pub(crate) product_id: u64,
     pub(crate) direction: String,
-    // 当前逐仓引擎只会按服务端最新行情即时开仓；保留字段以明确拒绝旧端限价语义。
+    // 缺省为 market 以兼容历史 PC 调用；limit 必须同时携带正数 price。
     pub(crate) order_type: Option<String>,
     pub(crate) price: Option<BigDecimal>,
     pub(crate) trigger_price: Option<BigDecimal>,
@@ -148,6 +148,7 @@ pub(crate) struct MarginProductResponse {
     pub(crate) id: u64,
     pub(crate) pair_id: u64,
     pub(crate) symbol: String,
+    pub(crate) price_precision: i32,
     pub(crate) margin_asset: u64,
     pub(crate) margin_asset_symbol: String,
     pub(crate) logo_url: Option<String>,
@@ -281,6 +282,7 @@ pub(crate) struct MarginPositionResponse {
     pub(crate) wallet_scope: String,
     pub(crate) margin_mode: String,
     pub(crate) direction: String,
+    pub(crate) order_type: String,
     pub(crate) margin_amount: BigDecimal,
     pub(crate) leverage: BigDecimal,
     pub(crate) notional_amount: BigDecimal,
@@ -290,6 +292,8 @@ pub(crate) struct MarginPositionResponse {
     pub(crate) interest_amount: BigDecimal,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) entry_price: Option<BigDecimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) limit_price: Option<BigDecimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) exit_price: Option<BigDecimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -342,6 +346,7 @@ pub(crate) struct AdminMarginPositionResponse {
     pub(crate) wallet_scope: String,
     pub(crate) margin_mode: String,
     pub(crate) direction: String,
+    pub(crate) order_type: String,
     pub(crate) margin_amount: BigDecimal,
     pub(crate) leverage: BigDecimal,
     pub(crate) notional_amount: BigDecimal,
@@ -351,6 +356,8 @@ pub(crate) struct AdminMarginPositionResponse {
     pub(crate) interest_amount: BigDecimal,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) entry_price: Option<BigDecimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) limit_price: Option<BigDecimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) exit_price: Option<BigDecimal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

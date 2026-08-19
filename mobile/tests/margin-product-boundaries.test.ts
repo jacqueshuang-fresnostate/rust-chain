@@ -102,6 +102,9 @@ test('最小与最大保证金边界包含端点，并直接决定确认快照�
     marginAmount: 9,
     minMargin: 10,
     maxMargin: 100,
+    orderType: 'market',
+    limitPrice: '',
+    pricePrecision: 8,
     referencePrice: 50,
   })
   assert.equal(belowMinimum.marginAmountValidation.error, 'below-minimum')
@@ -115,6 +118,9 @@ test('最小与最大保证金边界包含端点，并直接决定确认快照�
     marginAmount: 100,
     minMargin: 10,
     maxMargin: 100,
+    orderType: 'market',
+    limitPrice: '',
+    pricePrecision: 8,
     referencePrice: 50,
   })
   assert.equal(atMaximum.marginAmountValidation.isValid, true)
@@ -172,7 +178,7 @@ test('后端最小与最大竞态错误被稳定识别并转换为对称本地�
 
   assert.match(tradeSource, /boundary === 'below-minimum'[\s\S]*?loadMarginProducts\(\{ preserveExistingOnError: true \}\)[\s\S]*?t\('trade\.marginMinimumChanged'\)/)
   assert.match(tradeSource, /boundary === 'above-maximum'[\s\S]*?loadMarginProducts\(\{ preserveExistingOnError: true \}\)[\s\S]*?t\('trade\.marginMaximumChanged'\)/)
-  assert.match(tradeSource, /const requestVersion = \+\+marginProductsRequestVersion[\s\S]*?requestVersion !== marginProductsRequestVersion[\s\S]*?if \(!options\.preserveExistingOnError\) products\.value = \[\]/)
+  assert.match(tradeSource, /const requestVersion = \+\+marginProductsRequestVersion[\s\S]*?requestVersion !== marginProductsRequestVersion[\s\S]*?if \(!options\.preserveExistingOnError\) \{[\s\S]*?products\.value = \[\]/)
 })
 
 test('杠杆快捷、设置、BBO、资产与主操作共用 44px 触控、层级和交互状态', () => {

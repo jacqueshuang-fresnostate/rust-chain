@@ -84,6 +84,8 @@ export interface WalletAccount {
   locked: number
 }
 
+export type MarginOrderType = 'market' | 'limit'
+
 export interface MarginProduct {
   id: number
   pairId: number
@@ -91,6 +93,8 @@ export interface MarginProduct {
   marginAssetSymbol: string
   marginMode: 'cross' | 'isolated'
   marginModes: Array<'cross' | 'isolated'>
+  orderTypes: MarginOrderType[]
+  pricePrecision: number | null
   leverageLevels: number[]
   maxLeverage: number
   minMargin: number

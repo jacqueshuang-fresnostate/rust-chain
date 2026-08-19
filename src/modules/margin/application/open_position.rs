@@ -1,11 +1,11 @@
-//! 杠杆市价开仓用例。
+//! 杠杆市价/限价开仓用例。
 //!
 //! 这是本上下文风险最高的资金入口，负责把一次开仓请求变成仓位行、抵押扣款、代理返佣和一条私有事件。
 //! 关键顺序是：事务外校验并做只读幂等预检，事务内锁产品、写仓位占用幂等键、再锁钱包扣抵押。
 //! 先占键后动钱是防重复扣款的核心，唯一键冲突会回滚并转入只读重放，逐字段核对后返回既有仓位。
-//! 入场价一律取自服务端 Redis 行情缓存，请求体不接受任何客户端价格；名义价值等于保证金乘杠杆，
-//! 借款额为名义价值减保证金并非负截断，两者都按十八位小数落库。
-//! 事件只在事务提交且确实新建仓位时由包装函数发布，重放和失败路径都不广播。
+//! 市价单立即以服务端 Redis 新鲜 ticker 成交；限价单的客户价格只用于判定是否触发，
+//! 真正入场价同样只认服务端权威 ticker。未触发限价单会先冻结抵押、保留 `entry_price = NULL`，
+//! 不建全仓账户、不登记佣金也不发布开仓事件；只有首次实际成交后才会完成这些副作用。
 
 use super::product_config::validate_hourly_interest_rate;
 use super::support::{
@@ -21,6 +21,9 @@ use crate::{
         },
         events::EventBroadcastHub,
         margin::{
+            domain::{
+                MarginOrderType, margin_limit_order_is_triggered, validate_margin_limit_price,
+            },
             infrastructure::{
                 MarginOpenProductRule, cached_margin_entry_price,
                 debit_margin_position_open_collateral, ensure_cross_margin_account,
@@ -38,8 +41,27 @@ use crate::{
 use bigdecimal::BigDecimal;
 use redis::aio::ConnectionManager;
 use sqlx::{MySql, Pool};
-/// 校验市价开仓语义和用户幂等键，以服务端新鲜行情作为唯一入场价后创建保证金仓位。
-/// 事务先占用幂等键，再锁钱包扣抵押、写流水及返佣；同键同参重放不再次扣款，任一步失败整体回滚。
+
+/// 在进入资金事务前冻结的订单语义；限价仅用于触发判定，不是成交价。
+struct ValidatedMarginOpenOrder {
+    order_type: MarginOrderType,
+    limit_price: Option<BigDecimal>,
+}
+
+/// 幂等重放需要逐字段核对的不可变请求意图，集中持有借用以避免参数列表和调用点发生漂移。
+struct MarginOpenIdempotencyIntent<'a> {
+    product_id: u64,
+    direction: &'a str,
+    margin_mode: Option<&'a str>,
+    margin_amount: &'a BigDecimal,
+    leverage: &'a BigDecimal,
+    order_type: &'a str,
+    limit_price: Option<&'a BigDecimal>,
+}
+
+/// 校验市价/限价开仓语义和用户幂等键，以服务端新鲜行情作为唯一可能的入场价创建仓位或挂单。
+/// 事务先占用幂等键，再锁钱包扣抵押并写流水；返佣与全仓账户只在入场价已确定的真实成交分支落库。
+/// 同键同参重放不再次扣款，任一步失败整体回滚。
 ///
 /// 进入事务前先做只读幂等预检：命中既有仓位就逐字段核对产品、方向、模式、保证金和杠杆，
 /// 一致则直接返回原仓位且第二个返回值为假，不一致返回冲突，全程不消耗行锁也不读行情。
@@ -56,7 +78,7 @@ pub(crate) async fn open_margin_position(
     user_id: u64,
     request: OpenMarginPositionRequest,
 ) -> AppResult<(MarginPositionResponse, bool)> {
-    validate_market_open_order_semantics(&request)?;
+    let order = validate_open_order_semantics(&request)?;
     let idempotency_key = normalize_idempotency_key(&request.idempotency_key)?;
     let direction = normalize_direction(&request.direction)?;
     let requested_margin_mode = match request.margin_mode.as_deref() {
@@ -65,18 +87,20 @@ pub(crate) async fn open_margin_position(
     };
     validate_positive_decimal(&request.margin_amount, "margin amount")?;
     validate_positive_decimal(&request.leverage, "leverage")?;
+    let idempotency_intent = MarginOpenIdempotencyIntent {
+        product_id: request.product_id,
+        direction: &direction,
+        margin_mode: requested_margin_mode.as_deref(),
+        margin_amount: &request.margin_amount,
+        leverage: &request.leverage,
+        order_type: order.order_type.as_str(),
+        limit_price: order.limit_price.as_ref(),
+    };
 
     if let Some(existing) =
         existing_position_for_idempotency_key_readonly(pool, user_id, &idempotency_key).await?
     {
-        ensure_existing_position_matches_request(
-            &existing,
-            request.product_id,
-            &direction,
-            requested_margin_mode.as_deref(),
-            &request.margin_amount,
-            &request.leverage,
-        )?;
+        ensure_existing_position_matches_request(&existing, &idempotency_intent)?;
         return Ok((existing, false));
     }
 
@@ -88,12 +112,8 @@ pub(crate) async fn open_margin_position(
             if let Some(existing) = replay_existing_position_if_present(
                 pool,
                 user_id,
-                request.product_id,
-                &direction,
-                requested_margin_mode.as_deref(),
-                &request.margin_amount,
-                &request.leverage,
                 &idempotency_key,
+                &idempotency_intent,
             )
             .await?
             {
@@ -106,10 +126,31 @@ pub(crate) async fn open_margin_position(
     let position_margin_mode =
         selected_open_margin_mode(&product, requested_margin_mode.as_deref())?;
     validate_product_margin(&request.margin_amount, &request.leverage, &product)?;
+    if let Some(limit_price) = order.limit_price.as_ref() {
+        validate_margin_limit_price(limit_price, product.price_precision)
+            .map_err(|message| AppError::Validation(message.to_owned()))?;
+    }
     let notional_amount = request.margin_amount.clone() * request.leverage.clone();
     let borrowed_amount = margin_borrowed_amount(&notional_amount, &request.margin_amount);
-    let entry_price =
+    let market_price =
         cached_margin_entry_price(redis, product.pair_id, product.symbol.as_str()).await?;
+    let entry_price = match order.order_type {
+        MarginOrderType::Market => Some(market_price.clone()),
+        MarginOrderType::Limit => {
+            let limit_price = order
+                .limit_price
+                .as_ref()
+                .expect("validated limit order must carry a limit price");
+            if margin_limit_order_is_triggered(&direction, limit_price, &market_price)
+                .map_err(|message| AppError::Validation(message.to_owned()))?
+            {
+                Some(market_price.clone())
+            } else {
+                None
+            }
+        }
+    };
+    let is_filled = entry_price.is_some();
     // 先写入仓位占用用户幂等键，再锁定钱包扣保证金，避免同 key 并发重复扣款。
     let position_id = match insert_margin_position(
         &mut tx,
@@ -121,7 +162,9 @@ pub(crate) async fn open_margin_position(
         &request.leverage,
         &notional_amount,
         &borrowed_amount,
-        &entry_price,
+        order.order_type.as_str(),
+        order.limit_price.as_ref(),
+        entry_price.as_ref(),
         &idempotency_key,
     )
     .await
@@ -129,18 +172,9 @@ pub(crate) async fn open_margin_position(
         Ok(position_id) => position_id,
         Err(error) if is_duplicate_key_error(&error) => {
             tx.rollback().await?;
-            return replay_existing_position(
-                pool,
-                user_id,
-                request.product_id,
-                &direction,
-                requested_margin_mode.as_deref(),
-                &request.margin_amount,
-                &request.leverage,
-                &idempotency_key,
-            )
-            .await
-            .map(|position| (position, false));
+            return replay_existing_position(pool, user_id, &idempotency_key, &idempotency_intent)
+                .await
+                .map(|position| (position, false));
         }
         Err(error) => return Err(AppError::Database(error)),
     };
@@ -155,29 +189,31 @@ pub(crate) async fn open_margin_position(
     )
     .await?;
     set_margin_position_wallet_scope(&mut tx, position_id, &wallet_scope).await?;
-    if position_margin_mode == "cross" {
-        ensure_cross_margin_account(&mut tx, user_id, product.margin_asset).await?;
+    if is_filled {
+        if position_margin_mode == "cross" {
+            ensure_cross_margin_account(&mut tx, user_id, product.margin_asset).await?;
+        }
+        let commission_source_id = position_id.to_string();
+        insert_agent_business_commission_in_tx(
+            &mut tx,
+            AgentBusinessCommissionWrite {
+                user_id,
+                product_type: AGENT_COMMISSION_PRODUCT_MARGIN,
+                source_type: "margin_position",
+                source_id: &commission_source_id,
+                source_amount: &request.margin_amount,
+                payout_asset_id: product.margin_asset,
+            },
+        )
+        .await?;
     }
-    let commission_source_id = position_id.to_string();
-    insert_agent_business_commission_in_tx(
-        &mut tx,
-        AgentBusinessCommissionWrite {
-            user_id,
-            product_type: AGENT_COMMISSION_PRODUCT_MARGIN,
-            source_type: "margin_position",
-            source_id: &commission_source_id,
-            source_amount: &request.margin_amount,
-            payout_asset_id: product.margin_asset,
-        },
-    )
-    .await?;
     let position = load_position_by_id(&mut tx, position_id).await?;
     tx.commit().await?;
-    Ok((position, true))
+    Ok((position, is_filled))
 }
 
-/// 调用保证金开仓事务，并仅在首次提交新仓位后发布用户私有开仓事件。
-/// 同键重放返回原仓位且不再扣抵押或发事件；行情及事务失败不产生广播。
+/// 调用保证金开仓事务，并仅在本请求首次提交且已真实成交时发布用户私有开仓事件。
+/// 同键重放不再扣抵押或发事件；未触发限价单等后续 ticker 成交用例提交后再发事件。
 /// 事件发布严格排在 `open_margin_position` 返回之后，因此一定发生在数据库提交成功之后，
 /// 不会出现事务回滚但客户端已收到开仓通知的情况；广播失败也不会反向影响已提交的资金结果。
 pub(crate) async fn open_margin_position_with_events(
@@ -187,59 +223,35 @@ pub(crate) async fn open_margin_position_with_events(
     user_id: u64,
     request: OpenMarginPositionRequest,
 ) -> AppResult<OpenMarginPositionResponse> {
-    let (position, is_new_position) = open_margin_position(pool, redis, user_id, request).await?;
+    let (position, is_new_fill) = open_margin_position(pool, redis, user_id, request).await?;
     let response = OpenMarginPositionResponse { position };
-    publish_margin_position_opened_event_if_needed(
-        hub,
-        user_id,
-        &response.position,
-        is_new_position,
-    );
+    publish_margin_position_opened_event_if_needed(hub, user_id, &response.position, is_new_fill);
     Ok(response)
 }
 
 /// 在唯一键冲突之后强制取回既有仓位，用于「插入失败说明键已被占用」这条确定性分支。
 /// 与可空版本的差别是这里查不到记录会返回冲突而不是 None，因为此时另一个并发事务尚未提交，
 /// 客户端应当重试而不是被误判为产品不存在。异参冲突仍由逐字段核对给出。
-#[allow(clippy::too_many_arguments)] // 幂等核对必须逐字段比对原始下单语义，保持参数显式。
 async fn replay_existing_position(
     pool: &Pool<MySql>,
     user_id: u64,
-    product_id: u64,
-    direction: &str,
-    margin_mode: Option<&str>,
-    margin_amount: &BigDecimal,
-    leverage: &BigDecimal,
     idempotency_key: &str,
+    intent: &MarginOpenIdempotencyIntent<'_>,
 ) -> AppResult<MarginPositionResponse> {
-    replay_existing_position_if_present(
-        pool,
-        user_id,
-        product_id,
-        direction,
-        margin_mode,
-        margin_amount,
-        leverage,
-        idempotency_key,
-    )
-    .await?
-    .ok_or_else(|| AppError::Conflict("margin idempotency key is being committed".to_owned()))
+    replay_existing_position_if_present(pool, user_id, idempotency_key, intent)
+        .await?
+        .ok_or_else(|| AppError::Conflict("margin idempotency key is being committed".to_owned()))
 }
 
 /// 开新事务对幂等键加行锁读取既有仓位，命中则逐字段核对后返回，未命中返回 None。
 /// 用 FOR UPDATE 而非只读查询，是为了等待并发事务落定，避免在对方提交瞬间读到空结果。
 /// 未命中时直接返回而不提交事务，让它随作用域结束自动回滚，反正没有任何写入。
 /// 核对不通过时同样不提交，冲突错误先于提交返回，因此这条路径永远不产生资金副作用。
-#[allow(clippy::too_many_arguments)] // 幂等核对必须逐字段比对原始下单语义，保持参数显式。
 async fn replay_existing_position_if_present(
     pool: &Pool<MySql>,
     user_id: u64,
-    product_id: u64,
-    direction: &str,
-    margin_mode: Option<&str>,
-    margin_amount: &BigDecimal,
-    leverage: &BigDecimal,
     idempotency_key: &str,
+    intent: &MarginOpenIdempotencyIntent<'_>,
 ) -> AppResult<Option<MarginPositionResponse>> {
     let mut tx = pool.begin().await?;
     let Some(existing) =
@@ -247,35 +259,28 @@ async fn replay_existing_position_if_present(
     else {
         return Ok(None);
     };
-    ensure_existing_position_matches_request(
-        &existing,
-        product_id,
-        direction,
-        margin_mode,
-        margin_amount,
-        leverage,
-    )?;
+    ensure_existing_position_matches_request(&existing, intent)?;
     tx.commit().await?;
     Ok(Some(existing))
 }
 
 /// 核对幂等键命中的既有仓位与本次请求是否描述同一笔开仓，防止同键复用到不同下单意图。
-/// 比对产品、方向、保证金额和杠杆四项必比字段；保证金模式只在本次请求显式指定时才参与比对，
+/// 比对产品、方向、保证金额、杠杆、订单类型与限价；保证金模式只在本次请求显式指定时才参与比对，
 /// 因为缺省模式会在服务端按产品默认值推导，未传时不应把它当成不匹配。
 /// 任一项不同返回 Conflict，调用方据此拒绝请求，绝不能落到复用旧仓位或重新扣款。
 fn ensure_existing_position_matches_request(
     existing: &MarginPositionResponse,
-    product_id: u64,
-    direction: &str,
-    margin_mode: Option<&str>,
-    margin_amount: &BigDecimal,
-    leverage: &BigDecimal,
+    intent: &MarginOpenIdempotencyIntent<'_>,
 ) -> AppResult<()> {
-    if existing.product_id != product_id
-        || existing.direction != direction
-        || margin_mode.is_some_and(|mode| existing.margin_mode != mode)
-        || existing.margin_amount != *margin_amount
-        || existing.leverage != *leverage
+    if existing.product_id != intent.product_id
+        || existing.direction != intent.direction
+        || intent
+            .margin_mode
+            .is_some_and(|mode| existing.margin_mode != mode)
+        || existing.margin_amount != *intent.margin_amount
+        || existing.leverage != *intent.leverage
+        || existing.order_type != intent.order_type
+        || existing.limit_price.as_ref() != intent.limit_price
     {
         return Err(AppError::Conflict(
             "margin idempotency key belongs to a different request".to_owned(),
@@ -395,22 +400,47 @@ fn normalize_idempotency_key(value: &str) -> AppResult<String> {
     }
     Ok(trimmed.to_owned())
 }
-/// 拒绝一切非市价的开仓语义：`order_type` 传了就必须忽略大小写等于 market，`price` 与
-/// `trigger_price` 出现任意一个都直接判为参数非法，不做静默丢弃。
-/// 因为杠杆入场价只认服务端行情缓存，容忍客户端价格字段会让人误以为存在限价或触发单能力。
-/// 这道校验排在所有校验最前面，保证旧版客户端的限价请求在触碰幂等键之前就被挡住。
-fn validate_market_open_order_semantics(request: &OpenMarginPositionRequest) -> AppResult<()> {
-    if let Some(order_type) = request.order_type.as_deref()
-        && !order_type.trim().eq_ignore_ascii_case("market")
-    {
+/// 在进入任何资金事务前把请求归一化为市价或限价语义。
+/// 历史客户端未传 `order_type` 时仍视为市价；市价单严禁携带 `price`，限价单则必须携带严格为正的价格。
+/// `trigger_price` 不属于当前杠杆订单模型，两种订单都一律拒绝，防止客户端把未实现能力当成已提交。
+/// 交易对小数精度依赖事务内锁定的产品快照，因此此处只验正数，精度在锁产品后再次验证。
+fn validate_open_order_semantics(
+    request: &OpenMarginPositionRequest,
+) -> AppResult<ValidatedMarginOpenOrder> {
+    if request.trigger_price.is_some() {
         return Err(AppError::Validation(
-            "margin only supports market orders".to_owned(),
+            "margin orders must not include trigger_price".to_owned(),
         ));
     }
-    if request.price.is_some() || request.trigger_price.is_some() {
-        return Err(AppError::Validation(
-            "margin market orders must not include price or trigger_price".to_owned(),
-        ));
-    }
-    Ok(())
+    let order_type = MarginOrderType::parse(request.order_type.as_deref())
+        .map_err(|message| AppError::Validation(message.to_owned()))?;
+    let limit_price = match order_type {
+        MarginOrderType::Market => {
+            if request.price.is_some() {
+                return Err(AppError::Validation(
+                    "margin market orders must not include price".to_owned(),
+                ));
+            }
+            None
+        }
+        MarginOrderType::Limit => {
+            let price = request.price.as_ref().ok_or_else(|| {
+                AppError::Validation("margin limit orders require price".to_owned())
+            })?;
+            if price <= &BigDecimal::from(0) {
+                return Err(AppError::Validation(
+                    "margin limit price must be positive".to_owned(),
+                ));
+            }
+            Some(price.clone())
+        }
+    };
+    Ok(ValidatedMarginOpenOrder {
+        order_type,
+        limit_price,
+    })
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit_src/src_modules_margin_open_position_tests.rs"]
+mod tests;

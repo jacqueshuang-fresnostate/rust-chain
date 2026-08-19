@@ -446,7 +446,8 @@ pub async fn run_loop(state: AppState, interval_seconds: u64, limit: u32) -> App
     }
 }
 
-/// 挑选本轮待检查的逐仓候选，条件是状态 opened、模式 isolated 且已到重试时间。
+/// 挑选本轮待检查的逐仓候选，条件是已成交、状态 opened、模式 isolated 且已到重试时间。
+/// `entry_price IS NOT NULL` 显式把已冻结抵押但尚未成交的限价挂单隔离在强平风险集合之外。
 /// `next_liquidation_attempt_at` 为 NULL 视为立即可查，新开仓位因此在下一轮就被纳入检查。
 /// 该列同时充当节流器与跨重启检查点：安全仓位推迟五秒、异常仓位推迟六十秒，
 /// 进程重启后无需任何内存状态即可从数据库恢复原有的检查节奏。
@@ -463,6 +464,7 @@ async fn fetch_open_positions(
            FROM margin_positions positions
            INNER JOIN trading_pairs pairs ON pairs.id = positions.pair_id
            WHERE positions.status = 'opened' AND positions.margin_mode = 'isolated'
+             AND positions.entry_price IS NOT NULL
              AND (positions.next_liquidation_attempt_at IS NULL OR positions.next_liquidation_attempt_at <= ?)
            ORDER BY positions.next_liquidation_attempt_at ASC, positions.opened_at ASC, positions.id ASC
            LIMIT ?"#,
@@ -474,7 +476,7 @@ async fn fetch_open_positions(
     .map_err(AppError::from)
 }
 
-/// 挑选本轮待检查的全仓账户，用 DISTINCT 把持仓按「用户加保证金币种」去重成账户粒度。
+/// 挑选本轮待检查的全仓账户，用 DISTINCT 把已成交持仓按「用户加保证金币种」去重成账户粒度。
 /// 之所以从仓位表推导而不是直接扫账户表，是因为只有还持有 opened 全仓仓位的账户才需要评估风险。
 /// 只要账户内任意一个仓位到了重试时间，整个账户就会被选中，随后统一重新估值。
 /// 上限比逐仓更严，夹到 1 到 100 而非 500，因为一个账户可能展开成多笔仓位的重活。
@@ -489,6 +491,7 @@ async fn fetch_open_cross_accounts(
            FROM margin_positions positions
            WHERE positions.status = 'opened'
              AND positions.margin_mode = 'cross'
+             AND positions.entry_price IS NOT NULL
              AND (positions.next_liquidation_attempt_at IS NULL OR positions.next_liquidation_attempt_at <= ?)
            ORDER BY positions.user_id ASC, positions.margin_asset ASC
            LIMIT ?"#,
@@ -500,7 +503,7 @@ async fn fetch_open_cross_accounts(
     .map_err(AppError::from)
 }
 
-/// 列出某个全仓账户下全部 opened 仓位的主键与交易对符号，用于在开事务前逐个取标记价。
+/// 列出某个全仓账户下全部已成交 opened 仓位的主键与交易对符号，用于在开事务前逐个取标记价。
 /// 不带 `next_liquidation_attempt_at` 条件，因为账户级评估必须覆盖全部仓位，
 /// 漏掉任何一笔都会让共享权益算高，从而错过本应触发的强平。
 /// 只读不加锁，读到的集合可能与随后加锁读到的不完全一致；那次带 FOR UPDATE 的查询才是权威依据，
@@ -517,6 +520,7 @@ async fn fetch_cross_account_positions(
            INNER JOIN trading_pairs pairs ON pairs.id = positions.pair_id
            WHERE positions.user_id = ? AND positions.margin_asset = ?
              AND positions.margin_mode = 'cross' AND positions.status = 'opened'
+             AND positions.entry_price IS NOT NULL
            ORDER BY positions.id ASC"#,
     )
     .bind(user_id)
@@ -622,7 +626,7 @@ async fn liquidate_position_by_id(
         r#"UPDATE margin_positions
            SET status = 'liquidated', closed_at = ?, liquidated_at = ?, exit_price = ?,
                realized_pnl = ?, liquidation_reason = 'maintenance_margin', next_liquidation_attempt_at = NULL
-           WHERE id = ? AND status = 'opened'"#,
+           WHERE id = ? AND status = 'opened' AND entry_price IS NOT NULL"#,
     )
     .bind(now.naive_utc())
     .bind(now.naive_utc())
@@ -691,6 +695,7 @@ async fn liquidate_cross_account(
            INNER JOIN margin_products products ON products.id = positions.product_id
            WHERE positions.user_id = ? AND positions.margin_asset = ?
              AND positions.margin_mode = 'cross' AND positions.status = 'opened'
+             AND positions.entry_price IS NOT NULL
            ORDER BY positions.id ASC
            FOR UPDATE"#,
     )
@@ -814,7 +819,7 @@ async fn liquidate_cross_account(
                SET status = 'liquidated', closed_at = ?, liquidated_at = ?, exit_price = ?,
                    realized_pnl = ?, liquidation_reason = 'cross_maintenance_margin',
                    next_liquidation_attempt_at = NULL
-               WHERE id = ? AND status = 'opened'"#,
+               WHERE id = ? AND status = 'opened' AND entry_price IS NOT NULL"#,
         )
         .bind(now.naive_utc())
         .bind(now.naive_utc())
@@ -1062,7 +1067,7 @@ async fn reschedule_safe_liquidation_check(
 
 /// 直接在连接池上更新仓位的下次强平检查时间，不参与任何强平事务。
 /// 独立于事务是刻意设计：即便强平事务回滚，退避时间也必须留下来，否则失败仓位会被立刻重试并再次失败。
-/// WHERE 带 `status = 'opened'` 条件，已终结的仓位不会被重新排入调度，影响零行属于正常情况。
+/// WHERE 带 `status = 'opened' AND entry_price IS NOT NULL` 条件，已终结仓位和未成交挂单都不会被排入风险调度。
 /// 该列同时是跨重启检查点，进程重启后无需内存状态即可从数据库恢复原有的检查节奏。
 async fn schedule_next_liquidation_attempt(
     pool: &Pool<MySql>,
@@ -1070,7 +1075,7 @@ async fn schedule_next_liquidation_attempt(
     next_attempt_at: DateTime<Utc>,
 ) -> AppResult<()> {
     sqlx::query(
-        "UPDATE margin_positions SET next_liquidation_attempt_at = ? WHERE id = ? AND status = 'opened'",
+        "UPDATE margin_positions SET next_liquidation_attempt_at = ? WHERE id = ? AND status = 'opened' AND entry_price IS NOT NULL",
     )
     .bind(next_attempt_at.naive_utc())
     .bind(position_id)

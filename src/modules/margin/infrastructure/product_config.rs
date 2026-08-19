@@ -180,7 +180,7 @@ pub(crate) async fn load_product_by_id(
     product_id: u64,
 ) -> AppResult<MarginProductResponse> {
     sqlx::query_as::<_, MarginProductResponse>(
-        r#"SELECT products.id, products.pair_id, pairs.symbol,
+        r#"SELECT products.id, products.pair_id, pairs.symbol, pairs.price_precision,
                   products.margin_asset, assets.symbol AS margin_asset_symbol,
                   products.logo_url,
                   products.margin_mode, products.margin_modes, products.leverage_levels, products.max_leverage,
@@ -207,7 +207,7 @@ pub(crate) async fn lock_product_by_id(
     product_id: u64,
 ) -> AppResult<MarginProductResponse> {
     sqlx::query_as::<_, MarginProductResponse>(
-        r#"SELECT products.id, products.pair_id, pairs.symbol,
+        r#"SELECT products.id, products.pair_id, pairs.symbol, pairs.price_precision,
                   products.margin_asset, assets.symbol AS margin_asset_symbol,
                   products.logo_url,
                   products.margin_mode, products.margin_modes, products.leverage_levels, products.max_leverage,
@@ -401,7 +401,7 @@ pub(crate) async fn list_admin_margin_products(
 /// 只产出前缀，筛选条件、排序和分页由调用方按需追加。
 fn margin_product_query() -> QueryBuilder<'static, MySql> {
     QueryBuilder::<MySql>::new(
-        r#"SELECT products.id, products.pair_id, pairs.symbol,
+        r#"SELECT products.id, products.pair_id, pairs.symbol, pairs.price_precision,
                   products.margin_asset, assets.symbol AS margin_asset_symbol,
                   products.logo_url,
                   products.margin_mode, products.margin_modes, products.leverage_levels, products.max_leverage,

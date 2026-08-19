@@ -54,6 +54,12 @@ import {
   createMarginOrderReview,
   type MarginOrderReview,
 } from '@/core/marginOrderConfirmation'
+import {
+  isFilledMarginPosition,
+  isPendingMarginPosition,
+  marginLimitPriceFromBbo,
+  preferredMarginOrderType,
+} from '@/core/marginOrder'
 import { useModalDialog } from '@/core/modalDialog'
 import { goBackOr } from '@/core/navigation'
 import {
@@ -61,6 +67,7 @@ import {
   marginShortcutAvailable,
   quantityForBalancePercentage,
   type MarginAmountValidation,
+  type MarginLimitPriceValidation,
   validateMarginAmount,
 } from '@/core/tradeForm'
 import { currentIntlLocale } from '@/i18n'
@@ -68,7 +75,7 @@ import { useMarketStore } from '@/stores/market'
 import { useMarketFavoritesStore } from '@/stores/marketFavorites'
 import { useSessionStore } from '@/stores/session'
 import { useNavigationStore } from '@/stores/navigation'
-import type { KlinePoint, MarginProduct, OrderBookLevel, TradePrint, WalletAccount } from '@/core/types'
+import type { KlinePoint, MarginOrderType, MarginProduct, OrderBookLevel, TradePrint, WalletAccount } from '@/core/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -81,6 +88,8 @@ const mode = ref<'spot' | 'contract'>(route.query.mode === 'contract' ? 'contrac
 const side = ref<'buy' | 'sell'>('buy')
 const orderType = ref<'limit' | 'market'>('limit')
 const price = ref('')
+const contractOrderType = ref<MarginOrderType | null>(null)
+const contractLimitPrice = ref('')
 const quantity = ref('')
 const percentage = ref<number | null>(0)
 const leverage = ref(5)
@@ -103,7 +112,7 @@ const feedbackTone = ref<'success' | 'error'>('error')
 const submitting = ref(false)
 const settingsSaving = ref(false)
 const settingsError = ref('')
-const contractSheet = ref<'pair' | 'leverage' | 'marginMode' | null>(null)
+const contractSheet = ref<'pair' | 'leverage' | 'marginMode' | 'orderType' | null>(null)
 const depthLoading = ref(false)
 const depthError = ref(false)
 const chartLoading = ref(false)
@@ -150,13 +159,39 @@ const visibleMarginPositions = computed(() => {
     .filter((position) => (
       position.productId === product.id
       && !['closed', 'liquidated', 'cancelled', 'canceled'].includes(position.status.toLowerCase())
+      && isFilledMarginPosition(position)
     ))
     .slice(0, 3)
 })
+const visiblePendingMarginOrders = computed(() => {
+  const product = selectedProduct.value
+  if (!product) return []
+  return marginPositions.value.filter((position) => (
+    position.productId === product.id && isPendingMarginPosition(position)
+  ))
+})
 const currentPrice = computed(() => ticker.value?.lastPrice ?? 0)
 const isLive = computed(() => currentPrice.value > 0 && (!marketStore.error || liveDetailActive.value))
-const selectedOrderType = computed(() => mode.value === 'contract' ? 'market' : orderType.value)
-const effectivePrice = computed(() => selectedOrderType.value === 'limit' ? Number(price.value) : currentPrice.value)
+const selectedOrderType = computed(() => mode.value === 'contract' ? contractOrderType.value : orderType.value)
+const contractOrderTypeLabel = computed(() => {
+  if (contractOrderType.value === 'limit') return t('trade.limitOrderShort')
+  if (contractOrderType.value === 'market') return t('trade.marketOrderShort')
+  return t('trade.orderTypeUnavailableShort')
+})
+const effectivePrice = computed(() => {
+  if (mode.value === 'contract') {
+    return contractOrderType.value === 'limit' ? Number(contractLimitPrice.value) : currentPrice.value
+  }
+  return orderType.value === 'limit' ? Number(price.value) : currentPrice.value
+})
+const contractPriceValue = computed({
+  get: () => contractOrderType.value === 'limit'
+    ? contractLimitPrice.value
+    : currentPrice.value > 0 ? formatPrice(currentPrice.value) : '',
+  set: (value: string) => {
+    if (contractOrderType.value === 'limit') contractLimitPrice.value = value
+  },
+})
 const availableAsset = computed(() => {
   if (mode.value === 'contract') return selectedProduct.value?.marginAssetSymbol || quoteAsset.value
   return side.value === 'buy' ? quoteAsset.value : baseAsset.value
@@ -184,14 +219,24 @@ function createCurrentMarginOrderReview(idempotencyKey?: string): MarginOrderRev
     marginMode: marginMode.value,
     leverage: leverage.value,
     marginAmount: Number(quantity.value),
+    orderType: contractOrderType.value,
+    limitPrice: contractLimitPrice.value,
+    pricePrecision: selectedProduct.value?.pricePrecision,
     idempotencyKey,
     minMargin: selectedProduct.value?.minMargin,
     maxMargin: selectedProduct.value?.maxMargin,
-    referencePrice: effectivePrice.value,
+    referencePrice: currentPrice.value,
   })
 }
 
 const marginOrderDraft = computed(() => createCurrentMarginOrderReview())
+const contractLimitPriceValidation = computed(() => marginOrderDraft.value.limitPriceValidation)
+const contractSuggestedLimitPrice = computed(() => marginLimitPriceFromBbo({
+  side: side.value,
+  bids: bids.value,
+  asks: asks.value,
+  latestPrice: currentPrice.value,
+}))
 const contractOrderReview = computed(() => reviewedMarginOrder.value || marginOrderDraft.value)
 const contractNotionalValue = computed(() => contractOrderReview.value.estimatedNotional)
 const contractOrderQuantity = computed(() => contractOrderReview.value.estimatedQuantity)
@@ -274,6 +319,16 @@ function marginAmountValidationMessage(validation: MarginAmountValidation): stri
     })
   }
   if (validation.error === 'invalid') return t('trade.invalidMarginAmount')
+  return ''
+}
+
+function marginLimitPriceValidationMessage(validation: MarginLimitPriceValidation): string {
+  if (validation.error === 'required') return t('trade.marginLimitPriceRequired')
+  if (validation.error === 'precision' && validation.pricePrecision !== null) {
+    return t('trade.marginLimitPricePrecision', { precision: validation.pricePrecision })
+  }
+  if (validation.error === 'precision-unavailable') return t('trade.marginPricePrecisionUnavailable')
+  if (validation.error === 'invalid') return t('trade.marginLimitPriceInvalid')
   return ''
 }
 
@@ -369,6 +424,7 @@ async function loadMarginProducts(options: { preserveExistingOnError?: boolean }
   if (mode.value !== 'contract' || !session.isAuthenticated) {
     marginSettingRequestVersion += 1
     products.value = []
+    contractOrderType.value = null
     productsLoading.value = false
     productsError.value = false
     return
@@ -383,9 +439,19 @@ async function loadMarginProducts(options: { preserveExistingOnError?: boolean }
       || !session.isAuthenticated
     ) return
     products.value = nextProducts
+    const nextSelected = nextProducts.find((product) => (
+      normalizeSymbol(product.symbol) === normalizeSymbol(pairSymbol.value)
+    ))
+    contractOrderType.value = preferredMarginOrderType(
+      contractOrderType.value,
+      nextSelected?.orderTypes || [],
+    )
   } catch {
     if (requestVersion !== marginProductsRequestVersion) return
-    if (!options.preserveExistingOnError) products.value = []
+    if (!options.preserveExistingOnError) {
+      products.value = []
+      contractOrderType.value = null
+    }
     productsError.value = true
   } finally {
     if (requestVersion === marginProductsRequestVersion) productsLoading.value = false
@@ -398,6 +464,7 @@ function applyMarginProductDefaults(product: MarginProduct): void {
   marginMode.value = product.marginModes.includes(product.marginMode)
     ? product.marginMode
     : product.marginModes[0] || 'isolated'
+  contractOrderType.value = preferredMarginOrderType(contractOrderType.value, product.orderTypes)
 }
 
 async function syncMarginSetting(product: MarginProduct): Promise<void> {
@@ -505,7 +572,7 @@ function openPairPicker(): void {
   void router.push({ name: 'markets', query: { purpose: 'trade', mode: mode.value } })
 }
 
-function openContractSheet(sheet: 'pair' | 'leverage' | 'marginMode'): void {
+function openContractSheet(sheet: 'pair' | 'leverage' | 'marginMode' | 'orderType'): void {
   if (!session.isAuthenticated) {
     openLogin()
     return
@@ -514,8 +581,26 @@ function openContractSheet(sheet: 'pair' | 'leverage' | 'marginMode'): void {
     setFeedback(t('trade.unavailableContract'))
     return
   }
+  if (sheet === 'orderType' && !selectedProduct.value?.orderTypes.length) {
+    setFeedback(t('trade.marginOrderTypeUnavailable'))
+    return
+  }
   settingsError.value = ''
   contractSheet.value = sheet
+}
+
+function selectContractOrderType(nextOrderType: MarginOrderType): void {
+  const product = selectedProduct.value
+  if (!product?.orderTypes.includes(nextOrderType) || settingsSaving.value) return
+  contractOrderType.value = nextOrderType
+  if (nextOrderType === 'limit' && !contractLimitPrice.value.trim()) fillContractLimitPrice()
+  contractSheet.value = null
+}
+
+function fillContractLimitPrice(): void {
+  if (contractOrderType.value !== 'limit') return
+  const nextPrice = contractSuggestedLimitPrice.value
+  if (nextPrice !== null) contractLimitPrice.value = String(nextPrice)
 }
 
 function closeContractSheet(): void {
@@ -602,7 +687,7 @@ function openLogin(): void {
   void router.push({ name: 'login', query: { redirect: route.fullPath } })
 }
 
-function openOrders(tab: 'spot' | 'positions' | 'history' = 'spot'): void {
+function openOrders(tab: 'spot' | 'margin' | 'positions' | 'history' = 'spot'): void {
   void router.push({ name: 'orders', query: { tab } })
 }
 
@@ -686,6 +771,18 @@ function reviewOrder(event?: Event): void {
     setFeedback(marginAmountValidationMessage(marginOrderDraft.value.marginAmountValidation))
     return
   }
+  if (mode.value === 'contract' && contractOrderType.value === null) {
+    setFeedback(t('trade.marginOrderTypeUnavailable'))
+    return
+  }
+  if (
+    mode.value === 'contract'
+    && contractOrderType.value === 'limit'
+    && !contractLimitPriceValidation.value.isValid
+  ) {
+    setFeedback(marginLimitPriceValidationMessage(contractLimitPriceValidation.value))
+    return
+  }
   if (!Number.isFinite(orderAmount) || orderAmount <= 0 || !Number.isFinite(effectivePrice.value) || effectivePrice.value <= 0) {
     setFeedback(t('trade.invalidOrder'))
     return
@@ -715,19 +812,22 @@ async function submitOrder(): Promise<void> {
   const submittedMode = mode.value
   const review = submittedMode === 'contract' ? reviewedMarginOrder.value : null
   const orderAmount = review?.request.marginAmount ?? Number(quantity.value)
-  const submittedOrderType = submittedMode === 'contract' ? 'market' : orderType.value
+  const submittedOrderType = orderType.value
   const limitPrice = effectivePrice.value
   if (!session.isAuthenticated) {
     openLogin()
     return
   }
-  if (!isLive.value) {
-    setFeedback(t('trade.marketUnavailable'))
-    return
-  }
-  if (!Number.isFinite(orderAmount) || orderAmount <= 0 || !Number.isFinite(limitPrice) || limitPrice <= 0) {
-    setFeedback(t('trade.invalidOrder'))
-    return
+
+  if (submittedMode === 'spot') {
+    if (!isLive.value) {
+      setFeedback(t('trade.marketUnavailable'))
+      return
+    }
+    if (!Number.isFinite(orderAmount) || orderAmount <= 0 || !Number.isFinite(limitPrice) || limitPrice <= 0) {
+      setFeedback(t('trade.invalidOrder'))
+      return
+    }
   }
 
   if (submittedMode === 'contract') {
@@ -817,6 +917,13 @@ watch(() => [mode.value, session.isAuthenticated, selectedProduct.value?.id] as 
   void syncMarginSetting(product)
 })
 
+watch(() => selectedProduct.value?.id ?? null, async (productId, previousProductId) => {
+  if (productId === previousProductId) return
+  contractLimitPrice.value = ''
+  await nextTick()
+  if (contractOrderType.value === 'limit') fillContractLimitPrice()
+})
+
 watch([mode, () => session.isAuthenticated], () => {
   void loadMarginProducts()
   void loadTradingBalances()
@@ -824,6 +931,14 @@ watch([mode, () => session.isAuthenticated], () => {
 
 watch(currentPrice, (value) => {
   if (!price.value && value > 0) price.value = String(value)
+  if (
+    mode.value === 'contract'
+    && contractOrderType.value === 'limit'
+    && !contractLimitPrice.value.trim()
+    && value > 0
+  ) {
+    fillContractLimitPrice()
+  }
 }, { immediate: true })
 
 watch(submitting, async (busy) => {
@@ -1300,34 +1415,53 @@ onBeforeUnmount(() => {
             <button
               class="contract-order-type"
               type="button"
-              :class="{ active: selectedOrderType === 'market' }"
-              disabled
+              :class="{ active: contractOrderType !== null }"
+              aria-haspopup="dialog"
+              :aria-expanded="contractSheet === 'orderType'"
+              aria-controls="contract-orderType-dialog"
+              :aria-label="contractOrderType === null ? t('trade.marginOrderTypeUnavailable') : t('trade.orderTypeTrigger', { type: contractOrderTypeLabel })"
+              :disabled="settingsSaving || productsLoading || !selectedProduct?.orderTypes.length"
+              @click="openContractSheet('orderType')"
             >
-              <span>{{ t('trade.marketOrderShort') }}</span>
+              <span>{{ contractOrderTypeLabel }}</span>
               <Info :size="11" aria-hidden="true" />
               <ChevronDown :size="12" aria-hidden="true" />
             </button>
 
             <div class="contract-price-row">
-              <label class="contract-field contract-price-field">
+              <label
+                class="contract-field contract-price-field"
+                :class="{ 'is-invalid': contractOrderType === 'limit' && !contractLimitPriceValidation.isValid }"
+              >
                 <span>{{ t('common.price') }}</span>
                 <input
+                  v-model="contractPriceValue"
                   class="numeric"
-                  :value="currentPrice > 0 ? formatPrice(currentPrice) : ''"
-                  :placeholder="t('trade.marketPrice')"
+                  :placeholder="contractOrderType === 'limit' ? t('trade.pricePlaceholder') : t('trade.marketPrice')"
                   inputmode="decimal"
-                  readonly
+                  :readonly="contractOrderType !== 'limit'"
+                  :aria-invalid="contractOrderType === 'limit' && !contractLimitPriceValidation.isValid ? 'true' : 'false'"
+                  :aria-errormessage="contractOrderType === 'limit' && !contractLimitPriceValidation.isValid ? 'contract-limit-price-error' : undefined"
+                  @input="clearPercentageSelection"
                 />
               </label>
               <button
                 type="button"
                 :aria-label="t('marketDetail.latestPrice')"
-                :disabled="currentPrice <= 0"
-                @click="price = String(currentPrice || '')"
+                :disabled="contractOrderType !== 'limit' || contractSuggestedLimitPrice === null"
+                @click="fillContractLimitPrice"
               >
                 {{ t('trade.bestBidOffer') }}
               </button>
             </div>
+            <p
+              v-if="contractOrderType === 'limit' && !contractLimitPriceValidation.isValid"
+              id="contract-limit-price-error"
+              class="contract-limit-price-error"
+              role="alert"
+            >
+              {{ marginLimitPriceValidationMessage(contractLimitPriceValidation) }}
+            </p>
 
             <label
               class="contract-field contract-amount-field"
@@ -1422,7 +1556,7 @@ onBeforeUnmount(() => {
               ref="reviewButton"
               class="contract-submit contract-submit--long submit-order"
               type="button"
-              :disabled="submitting || productsLoading || !isLive || (session.isAuthenticated && !selectedProduct)"
+              :disabled="submitting || productsLoading || !isLive || (session.isAuthenticated && (!selectedProduct || !contractOrderType || (contractOrderType === 'limit' && !contractLimitPriceValidation.isValid)))"
               @click="reviewContractOrder('buy', $event)"
             >
               {{ t('trade.longActionCompact') }}
@@ -1430,7 +1564,7 @@ onBeforeUnmount(() => {
             <button
               class="contract-submit contract-submit--short"
               type="button"
-              :disabled="submitting || productsLoading || !isLive || (session.isAuthenticated && !selectedProduct)"
+              :disabled="submitting || productsLoading || !isLive || (session.isAuthenticated && (!selectedProduct || !contractOrderType || (contractOrderType === 'limit' && !contractLimitPriceValidation.isValid)))"
               @click="reviewContractOrder('sell', $event)"
             >
               {{ t('trade.shortActionCompact') }}
@@ -1442,8 +1576,8 @@ onBeforeUnmount(() => {
           <button class="active" type="button" @click="openOrders(mode === 'contract' ? 'positions' : 'spot')">
             {{ t('orders.positions') }} ({{ visibleMarginPositions.length }})
           </button>
-          <button type="button" @click="openOrders('positions')">
-            {{ t('trade.contractOrdersTab') }} (0) <ChevronDown :size="12" aria-hidden="true" />
+          <button type="button" @click="openOrders('margin')">
+            {{ t('trade.contractOrdersTab') }} ({{ visiblePendingMarginOrders.length }}) <ChevronDown :size="12" aria-hidden="true" />
           </button>
           <button type="button" @click="openAssets">{{ t('nav.assets') }}</button>
           <span aria-hidden="true" />
@@ -1462,7 +1596,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="numeric">
               <span>{{ t('orders.margin') }} {{ formatAmount(position.marginAmount) }} {{ availableAsset }}</span>
-              <span>{{ t('orders.entryPrice') }} {{ formatPrice(position.entryPrice) }}</span>
+              <span>{{ t('orders.entryPrice') }} {{ formatPrice(position.entryPrice || 0) }}</span>
             </div>
           </article>
         </section>
@@ -1482,6 +1616,7 @@ onBeforeUnmount(() => {
       :products="products"
       :leverage="leverage"
       :margin-mode="marginMode"
+      :order-type="contractOrderType"
       :saving="settingsSaving"
       :error="settingsError"
       :products-loading="productsLoading"
@@ -1490,6 +1625,7 @@ onBeforeUnmount(() => {
       @select-pair="selectContractPair"
       @apply-leverage="applyContractLeverage"
       @apply-margin-mode="applyContractMarginMode"
+      @select-order-type="selectContractOrderType"
       @retry-products="loadMarginProducts"
     />
 
@@ -1630,7 +1766,7 @@ onBeforeUnmount(() => {
             <header class="contract-order-confirm__header">
               <div>
                 <h2 id="contract-order-confirm-title">{{ t('trade.contractOrderConfirmTitle') }}</h2>
-                <p>{{ t('trade.contractOrderConfirmHint') }}</p>
+                <p>{{ t('trade.contractOrderConfirmHint', { type: t(contractOrderReview.request.orderType === 'limit' ? 'trade.limitOrderShort' : 'trade.marketOrderShort') }) }}</p>
               </div>
               <button
                 data-dialog-cancel
@@ -1655,7 +1791,7 @@ onBeforeUnmount(() => {
               />
               <div>
                 <strong>{{ pairSymbol }}</strong>
-                <span>{{ t('trade.perpetualShort') }} · {{ t('trade.marketOrderShort') }}</span>
+                <span>{{ t('trade.perpetualShort') }} · {{ t(contractOrderReview.request.orderType === 'limit' ? 'trade.limitOrderShort' : 'trade.marketOrderShort') }}</span>
               </div>
               <span
                 class="contract-order-confirm__direction"
@@ -1666,6 +1802,14 @@ onBeforeUnmount(() => {
             </section>
 
             <dl class="contract-order-confirm__details">
+              <div>
+                <dt>{{ t('trade.marginOrderType') }}</dt>
+                <dd>{{ t(contractOrderReview.request.orderType === 'limit' ? 'trade.limitOrderShort' : 'trade.marketOrderShort') }}</dd>
+              </div>
+              <div v-if="contractOrderReview.request.orderType === 'limit'">
+                <dt>{{ t('trade.marginLimitPrice') }}</dt>
+                <dd class="numeric">{{ formatPrice(Number(contractOrderReview.request.price || 0)) }} {{ quoteAsset }}</dd>
+              </div>
               <div>
                 <dt>{{ t('rootPrototype.marginMode') }}</dt>
                 <dd>{{ t(contractOrderReview.request.marginMode === 'cross' ? 'trade.cross' : 'trade.isolated') }}</dd>
@@ -1695,8 +1839,8 @@ onBeforeUnmount(() => {
             <aside id="contract-order-confirm-risk" class="contract-order-confirm__risk">
               <TriangleAlert :size="18" aria-hidden="true" />
               <div>
-                <strong>{{ t('trade.marketExecutionRiskTitle') }}</strong>
-                <p>{{ t('trade.marketExecutionRiskDescription') }}</p>
+                <strong>{{ t(contractOrderReview.request.orderType === 'limit' ? 'trade.limitExecutionRiskTitle' : 'trade.marketExecutionRiskTitle') }}</strong>
+                <p>{{ t(contractOrderReview.request.orderType === 'limit' ? 'trade.limitExecutionRiskDescription' : 'trade.marketExecutionRiskDescription') }}</p>
               </div>
             </aside>
           </div>
@@ -3867,11 +4011,13 @@ html[data-theme='dark'] .contract-order-confirm {
   z-index: -1;
 }
 
-.contract-mode-row button[aria-expanded='true'] {
+.contract-mode-row button[aria-expanded='true'],
+.contract-order-type[aria-expanded='true'] {
   color: var(--positive);
 }
 
-.contract-mode-row button[aria-expanded='true']::before {
+.contract-mode-row button[aria-expanded='true']::before,
+.contract-order-type[aria-expanded='true']::before {
   border-color: var(--accent);
 }
 
@@ -3887,6 +4033,14 @@ html[data-theme='dark'] .contract-order-confirm {
   justify-content: center;
   min-width: 0;
   padding: 0 5px;
+}
+
+.contract-limit-price-error {
+  color: var(--negative);
+  font-size: 10px;
+  line-height: 1.3;
+  margin: -4px 2px 0;
+  overflow-wrap: anywhere;
 }
 
 .contract-mode-row button:disabled,

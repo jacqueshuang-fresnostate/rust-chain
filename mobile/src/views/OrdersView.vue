@@ -22,6 +22,7 @@ import {
   type SpotOrder,
 } from '@/api/trading'
 import { formatAmount, formatPrice } from '@/core/format'
+import { isFilledMarginPosition, isPendingMarginPosition } from '@/core/marginOrder'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
 import type { MarginProduct, MarketPair } from '@/core/types'
@@ -67,8 +68,8 @@ let returnFocus: HTMLElement | null = null
 let previousBodyOverflow = ''
 
 const openedPositions = computed(() => positions.value.filter((position) => position.status === 'opened'))
-const cancelablePositions = computed(() => openedPositions.value.filter((position) => position.entryPrice <= 0))
-const closablePositions = computed(() => openedPositions.value.filter((position) => position.entryPrice > 0))
+const cancelablePositions = computed(() => openedPositions.value.filter(isPendingMarginPosition))
+const closablePositions = computed(() => openedPositions.value.filter(isFilledMarginPosition))
 const sortedSpotOrders = computed(() => [...spotOrders.value].sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0)))
 const sortedHistoryOrders = computed(() => [...historyOrders.value].sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0)))
 const emptyTitle = computed(() => {
@@ -81,7 +82,7 @@ const pendingActionLabel = computed(() => {
   if (!action) return ''
   if (action.kind === 'spot') return t('orders.cancel')
   if (action.kind === 'spot-all') return t('orders.cancelAll')
-  if (action.kind === 'margin') return action.position.entryPrice > 0 ? t('orders.close') : t('orders.cancel')
+  if (action.kind === 'margin') return isFilledMarginPosition(action.position) ? t('orders.close') : t('orders.cancel')
   if (action.kind === 'margin-cancel-all') return t('orders.cancelPending')
   return t('orders.closeAll')
 })
@@ -168,9 +169,19 @@ function positionDirectionLabel(position: MarginPosition): string {
   return t(position.direction === 'long' ? 'trade.openLong' : 'trade.openShort')
 }
 
+function marginOrderTypeLabel(position: MarginPosition): string {
+  return t(position.orderType === 'limit' ? 'trade.limitOrderShort' : 'trade.marketOrderShort')
+}
+
+function marginOrderPriceLabel(position: MarginPosition): string {
+  if (isFilledMarginPosition(position)) return formatPrice(position.entryPrice)
+  if (position.orderType === 'limit' && position.limitPrice !== null) return formatPrice(position.limitPrice)
+  return t('orders.waitingFill')
+}
+
 function currentPositionStatusLabel(position: MarginPosition): string {
   if (position.status.trim().toLowerCase() === 'opened') {
-    return position.entryPrice > 0 ? t('orders.statusHolding') : t('orders.waitingFill')
+    return isFilledMarginPosition(position) ? t('orders.statusHolding') : t('orders.waitingFill')
   }
   return currentOrderStatusLabel(position.status)
 }
@@ -178,7 +189,7 @@ function currentPositionStatusLabel(position: MarginPosition): string {
 function positionAmount(position: MarginPosition): string {
   const symbol = positionSymbol(position)
   const asset = baseAsset(symbol)
-  if (position.entryPrice > 0 && position.notionalAmount > 0) {
+  if (isFilledMarginPosition(position) && position.notionalAmount > 0) {
     return `${formatAmount(position.notionalAmount / position.entryPrice)} ${asset}`
   }
   const product = productFor(position)
@@ -265,7 +276,7 @@ async function cancelAllSpot(): Promise<boolean> {
 }
 
 async function actOnPosition(position: MarginPosition): Promise<boolean> {
-  const shouldCancel = position.entryPrice <= 0
+  const shouldCancel = isPendingMarginPosition(position)
   actionId.value = `margin-${position.id}`
   error.value = ''
   try {
@@ -566,7 +577,7 @@ function statusLabel(status: string): string {
                   class="orders-row__state"
                   :class="`is-${statusTone(position.status)}`"
                   type="button"
-                  :aria-label="`${position.entryPrice > 0 ? t('orders.close') : t('orders.cancel')} ${positionSymbol(position)}`"
+                  :aria-label="`${isFilledMarginPosition(position) ? t('orders.close') : t('orders.cancel')} ${positionSymbol(position)}`"
                   :disabled="actionId === `margin-${position.id}`"
                   @click="requestAction({ kind: 'margin', position })"
                 >
@@ -574,10 +585,10 @@ function statusLabel(status: string): string {
                 </button>
               </header>
               <div class="orders-row__summary">
-                <span>{{ positionDirectionLabel(position) }} · {{ position.leverage }}x · {{ position.entryPrice > 0 ? t('orders.marketPrice') : t('trade.limitOrderLabel') }}</span>
+                <span>{{ positionDirectionLabel(position) }} · {{ position.leverage }}x · {{ marginOrderTypeLabel(position) }}</span>
                 <strong class="pencil-numeric">
                   {{ positionAmount(position) }}
-                  <small>@ {{ position.entryPrice > 0 ? formatPrice(position.entryPrice) : t('orders.waitingFill') }}</small>
+                  <small>@ {{ marginOrderPriceLabel(position) }}</small>
                 </strong>
               </div>
             </article>
@@ -632,7 +643,7 @@ function statusLabel(status: string): string {
                 <span>{{ positionDirectionLabel(position) }} · {{ position.leverage }}x · {{ position.marginMode === 'cross' ? t('orders.cross') : t('orders.isolated') }}</span>
                 <strong class="pencil-numeric">
                   {{ positionAmount(position) }}
-                  <small>@ {{ position.entryPrice > 0 ? formatPrice(position.entryPrice) : t('orders.waitingFill') }}</small>
+                  <small>@ {{ marginOrderPriceLabel(position) }}</small>
                 </strong>
               </div>
             </article>

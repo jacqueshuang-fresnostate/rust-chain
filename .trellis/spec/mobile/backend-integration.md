@@ -856,12 +856,30 @@ interface MarginUserSetting {
   marginMode: 'cross' | 'isolated' | null
 }
 
+type MarginOrderType = 'market' | 'limit'
+
+interface MarginOrderCapabilities {
+  orderTypes: MarginOrderType[]
+  pricePrecision: number | null
+}
+
 fetchMarginSetting(productId: number): Promise<MarginUserSetting>
 updateMarginLeverage(productId: number, leverage: number): Promise<void>
 updateMarginMode(
   productId: number,
   mode: 'cross' | 'isolated',
 ): Promise<void>
+
+placeMarginOrder(input: {
+  productId: number
+  side: 'long' | 'short'
+  marginMode: 'cross' | 'isolated'
+  leverage: number
+  marginAmount: number
+  orderType: MarginOrderType
+  price?: string
+  idempotencyKey: string
+}): Promise<void>
 ```
 
 The selected production surfaces are `by3G9/pKHeU` for the main contract
@@ -881,9 +899,20 @@ margin mode, and pair selection.
 - The pair sheet renders only real `/margin/products` rows and Market Store
   tickers. Missing ticker image, price, or change remains an asset-letter
   fallback or `--`; no Pencil sample value is copied into production.
-- Contract ordering remains market-only until the backend advertises and
-  accepts another order type. The amount input and percentage shortcuts remain
+- The margin-product adapter retains only the exact `/margin/products`
+  `capabilities.order_types` values it recognizes and retains pair
+  `price_precision`; it never inserts a local market/limit fallback into an
+  empty capability set. A valid current selection survives refresh, otherwise
+  choose advertised market first, then the first real capability, or `null`.
+- The contract order-type trigger opens a dedicated sheet. Opening, backdrop,
+  close, and Escape preserve the current value; only an explicit advertised
+  option commits and closes. The amount input and percentage shortcuts remain
   margin amount, not base quantity or notional.
+- Market keeps the price field read-only on the live ticker and sends no
+  `price`. Limit makes the field editable and may fill from long ask/short bid,
+  falling back to the latest ticker. The entered plain decimal must be positive
+  and use no more than pair `pricePrecision` effective fractional digits; never
+  round an invalid user limit into range.
 - The margin-product adapter retains `min_margin` and optional `max_margin` as
   `minMargin` and `maxMargin`. A missing, null, non-finite, zero, or negative
   maximum maps to `null`; it must never become a fabricated zero cap.
@@ -907,13 +936,16 @@ margin mode, and pair selection.
   owner.
 - The contract review reads its pair Logo and reference price from the current
   Market Store ticker, its mode and leverage from the selected product/user
-  setting state, and its committed margin from the current form. Estimated
+  setting state, and its committed margin/order type/optional limit from the
+  current form. On open it freezes reference price, order type, exact limit
+  string, mode, leverage, margin, product, direction, and one idempotency key.
+  Estimated
   notional is `marginAmount * leverage`; estimated opening quantity is that
   notional divided by the positive live reference price. It must not substitute
   available wallet balance, a Pencil sample, or another product.
 - A rejected `placeMarginOrder` call leaves the review open and exposes the
   mapped API error inside its fixed action region. A retry invokes the same
-  real mutation with the frozen reviewed values and the same idempotency key;
+  real mutation with the exact frozen order type/price and the same idempotency key;
   asynchronous setting/product refreshes must not rewrite the open review.
   The submitting guard blocks duplicate calls and every dismissal path until
   the in-flight call settles.
@@ -937,9 +969,13 @@ margin mode, and pair selection.
 | Saved margin mode no longer exists | Ignore it and keep a configured mode |
 | No exact product for the route symbol | Disable settings/order actions; never fall back to another product |
 | Product capability list is empty | Render no fabricated options and disable confirmation |
+| Current order type disappears after capability refresh | Prefer advertised market, otherwise first real capability; use `null` when none remain |
 | Ticker fields are missing | Render fallback mark/`--`; do not use design samples |
 | Spot order enters review | Keep the existing generic spot confirmation content and payload |
 | Contract market order enters review | Show the current pair, direction, market semantics, setting values, committed margin, derived notional, and derived quantity |
+| Contract limit order enters review | Show frozen limit and live-reference estimate; send `order_type=limit` plus exact frozen `price` |
+| Market request is assembled | Send `order_type=market` and omit `price` entirely, even if a stale local limit input remains |
+| Limit is empty, non-positive, non-decimal, or over pair precision | Mark/announce the localized field error; open no review and send no request |
 | Margin amount is below `minMargin` or above positive `maxMargin` | Mark the field invalid, announce the localized boundary, and open no review or request |
 | Product has no usable `maxMargin` | Display the minimum and no-product-maximum state; base shortcuts on real wallet available |
 | Product limits change after review opens | Localize the known backend boundary failure, keep review/retry state, and reload current product limits |
@@ -951,16 +987,21 @@ margin mode, and pair selection.
 
 - Good: open BTC contract, load its saved 10x cross setting, choose 20x from a
   configured sheet, PATCH successfully, then render 20x.
+- Good: choose an advertised limit, fill long from best ask, open review, then
+  receive newer tickers while both review and retry keep the exact frozen limit,
+  reference, and idempotency key.
 - Base: a new user receives 404 for settings and continues with the product's
   first supported mode and configured leverage level.
 - Bad: tapping the leverage field cycles local values without a sheet or PATCH.
-- Bad: showing limit-order controls because the Pencil frame contains them
-  while the backend accepts market margin positions only.
+- Bad: showing an order type not present in backend capabilities, using bid for
+  long or ask for short, sending a market `price`, or rebuilding the request
+  from live form/ticker state during retry.
 
 ### 6. Tests Required
 
 - Source/adapter tests lock the GET/PATCH paths, 404-only fallback, cross and
-  isolated types, capability membership checks, and market-only submission.
+  isolated types, backend-only order capability parsing/fallback, pair precision,
+  market payload price omission, and limit payload exact-price inclusion.
 - Confirmation source tests lock the spot/contract branch boundary, ticker and
   form-derived values, `margin * leverage / referencePrice` quantity, unchanged
   `placeMarginOrder` input, in-panel failure, duplicate guard, and busy-state
@@ -969,12 +1010,16 @@ margin mode, and pair selection.
   wallet-below-cap and wallet-above-cap percentages, inclusive endpoints,
   below/above rejection, no-maximum behavior, shared review/request guards, and
   known backend minimum/maximum error classification.
+- Executable order tests cover positive/invalid/precision limit values,
+  trailing-zero precision, long-ask/short-bid/latest fallback, nullable-entry
+  holding/order classification, and immutable review/retry requests.
 - UI contract tests lock all eight Pencil IDs, 24px real asset mark, six book
   levels without precision control, exact 390px geometry, sheet tracks,
   localized copy, dialog semantics, safe area, and reduced motion.
-- Browser checks cover light/dark 390x920 main and all three sheets, then
+- Browser checks cover light/dark 390x920 main and all four sheets, then
   320x760 horizontal overflow, wrapped notice, focus trap, Escape dismissal,
-  body scroll lock, and trigger focus restoration.
+  body scroll lock, trigger focus restoration, editable/read-only price states,
+  BBO fill, and frozen market/limit confirmation details.
 
 ### 7. Wrong vs Correct
 

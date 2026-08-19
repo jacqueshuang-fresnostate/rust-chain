@@ -18,6 +18,9 @@ use std::{error::Error, str::FromStr};
 use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 
+const INGESTION_SOURCE: &str =
+    include_str!("../src/modules/market/infrastructure/adapters/ingestion.rs");
+
 fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).unwrap()
 }
@@ -37,6 +40,42 @@ fn test_symbol(prefix: &str) -> String {
     // Redis、Mongo 与 WebSocket 入口都会把交易对规范化为大写；测试夹具也使用同一形态，
     // 避免从小写 UUID 拼出的原始 symbol 误读另一个 Redis key 或订阅错误频道。
     format!("{}{}USDT", prefix, &uuid[16..32]).to_ascii_uppercase()
+}
+
+#[test]
+fn accepted_tickers_trigger_margin_limits_while_depth_and_stale_paths_do_not() {
+    let ticker = INGESTION_SOURCE
+        .split("pub async fn ingest_ticker")
+        .nth(1)
+        .expect("ticker ingestion function")
+        .split("pub async fn ingest_and_publish_synthetic_ticker")
+        .next()
+        .expect("ticker ingestion body");
+    assert!(ticker.contains("if outcome.is_accepted()"));
+    assert!(ticker.contains("self.trigger_margin_limit_orders"));
+
+    let synthetic_ticker = INGESTION_SOURCE
+        .split("pub async fn ingest_and_publish_synthetic_ticker")
+        .nth(1)
+        .expect("synthetic ticker ingestion function")
+        .split("pub async fn ingest_and_publish_ticker")
+        .next()
+        .expect("synthetic ticker ingestion body");
+    assert!(synthetic_ticker.contains("SyntheticIngestionOutcome::RejectedStale"));
+    assert!(synthetic_ticker.contains("self.trigger_margin_limit_orders"));
+    assert!(
+        synthetic_ticker.find("SyntheticIngestionOutcome::RejectedStale")
+            < synthetic_ticker.find("self.trigger_margin_limit_orders")
+    );
+
+    let depth = INGESTION_SOURCE
+        .split("    pub async fn ingest_depth")
+        .nth(1)
+        .expect("depth ingestion function")
+        .split("pub async fn ingest_kline")
+        .next()
+        .expect("depth ingestion body");
+    assert!(!depth.contains("trigger_margin_limit_orders"));
 }
 
 #[tokio::test]

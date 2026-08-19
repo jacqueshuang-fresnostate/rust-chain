@@ -166,10 +166,10 @@ test('现货订单类型触发器只打开选择层，显式选择才更改表�
   assert.match(tradeSource, /class="spot-type-field"[\s\S]*?:aria-expanded="spotOrderTypeOpen"[\s\S]*?aria-controls="spot-order-type-dialog"[\s\S]*?@click="openSpotOrderTypeSheet"/)
   assert.match(tradeSource, /@click="selectSpotOrderType\('limit'\)"/)
   assert.match(tradeSource, /@click="selectSpotOrderType\('market'\)"/)
-  assert.match(tradeSource, /const selectedOrderType = computed\(\(\) => mode\.value === 'contract' \? 'market' : orderType\.value\)/)
-  assert.match(tradeSource, /const effectivePrice = computed\(\(\) => selectedOrderType\.value === 'limit' \? Number\(price\.value\) : currentPrice\.value\)/)
+  assert.match(tradeSource, /const selectedOrderType = computed\(\(\) => mode\.value === 'contract' \? contractOrderType\.value : orderType\.value\)/)
+  assert.match(tradeSource, /const effectivePrice = computed\(\(\) => \{[\s\S]*?return orderType\.value === 'limit' \? Number\(price\.value\) : currentPrice\.value/)
   assert.match(tradeSource, /:readonly="orderType === 'market'"/)
-  assert.match(tradeSource, /const submittedMode = mode\.value[\s\S]*?const submittedOrderType = submittedMode === 'contract' \? 'market' : orderType\.value/)
+  assert.match(tradeSource, /const submittedMode = mode\.value[\s\S]*?const submittedOrderType = orderType\.value/)
   assert.match(tradeSource, /placeSpotOrder\(\{[\s\S]*?type: submittedOrderType,[\s\S]*?price: limitPrice,[\s\S]*?quantity: orderAmount,/)
   const modeWatch = tradeSource.match(/watch\(\(\) => route\.query\.mode,[\s\S]*?\}, \{ immediate: true \}\)/)?.[0]
   assert.ok(modeWatch)

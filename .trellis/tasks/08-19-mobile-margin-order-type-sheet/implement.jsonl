@@ -1,0 +1,12 @@
+{"file":".trellis/spec/backend/index.md","reason":"后端改动前置索引与质量检查入口。"}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"新增杠杆成交应用/基础设施职责时保持 DDD 依赖与文件规模约束。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"新增不可变迁移与 MySQL 字段/索引时遵循数据库合同。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"新增 Rust 可见职责、中文合同、路由/事务和架构测试约束。"}
+{"file":".trellis/spec/backend/margin-trading-actions.md","reason":"杠杆开仓、挂单、撤单、钱包结算、风险与能力集的核心业务合同。"}
+{"file":".trellis/spec/backend/agent-hierarchy.md","reason":"限价单必须在真实成交时而非挂单时登记代理业务返佣。"}
+{"file":".trellis/spec/backend/realtime-websockets.md","reason":"杠杆挂单与成交私有事件需要保持实时消息边界。"}
+{"file":".trellis/spec/mobile/index.md","reason":"手机交易页几何、交互、触控目标与真实资金数据总规范。"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"移动端杠杆产品能力、确认快照、请求和错误处理合同。"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"订单类型 bottom sheet、主题、可访问性、窄屏与滚动锁规范。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"迁移到 API 再到移动端的订单字段与状态流需要逐层核对。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复用现货触发和现有弹窗模式，避免两套漂移实现。"}

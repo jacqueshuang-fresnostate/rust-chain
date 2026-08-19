@@ -7,6 +7,81 @@
 
 use bigdecimal::BigDecimal;
 
+/// 杠杆开仓的唯一订单类型值对象，传输层文本只能在这里归一化为市价或限价。
+/// 枚举本身不持有客户端价格；实际成交价仍由应用层传入的服务端权威 ticker 决定。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MarginOrderType {
+    Market,
+    Limit,
+}
+
+impl MarginOrderType {
+    /// 将缺省值按历史兼容语义解析为市价，显式值裁剪空白并忽略大小写。
+    /// 任何其他文本都返回稳定错误，调用方必须在资金事务开始前拒绝。
+    pub(crate) fn parse(value: Option<&str>) -> Result<Self, &'static str> {
+        let Some(value) = value else {
+            return Ok(Self::Market);
+        };
+        if value.trim().eq_ignore_ascii_case("market") {
+            Ok(Self::Market)
+        } else if value.trim().eq_ignore_ascii_case("limit") {
+            Ok(Self::Limit)
+        } else {
+            Err("margin order_type must be market or limit")
+        }
+    }
+
+    /// 返回数据库、幂等比对与 API 共用的规范小写文本，不做额外分配或 I/O。
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Market => "market",
+            Self::Limit => "limit",
+        }
+    }
+}
+
+/// 校验杠杆限价严格为正且有效小数位不超过交易对价格精度。
+/// 先用 `normalized` 去掉尾随零，因此 `1.2300` 在两位精度下仍合法；非法的负精度配置一律拒绝。
+/// 本函数只做纯计算，不会圆整或改写用户的限价，避免下单意图在边界内被静默改变。
+pub(crate) fn validate_margin_limit_price(
+    price: &BigDecimal,
+    price_precision: i32,
+) -> Result<(), &'static str> {
+    if price <= &BigDecimal::from(0) {
+        return Err("margin limit price must be positive");
+    }
+    if price_precision < 0 {
+        return Err("margin pair price precision is invalid");
+    }
+    let (_, scale) = price.normalized().as_bigint_and_exponent();
+    if scale.max(0) > i64::from(price_precision) {
+        return Err("margin limit price exceeds pair price precision");
+    }
+    Ok(())
+}
+
+/// 用一笔权威市场价判定未成交杠杆限价单是否触发整笔成交。
+/// 做多与买入限价同向，市场价不高于限价时触发；做空与卖出同向，市场价不低于限价时触发。
+/// 等价边界也会成交；两个价格必须严格为正，方向非 long/short 则返回错误而不默认为某一边。
+/// 本函数不读 Redis 也不写仓位，调用方必须确保 `market_price` 来自已被行情 CAS 接受的服务端 ticker。
+pub(crate) fn margin_limit_order_is_triggered(
+    direction: &str,
+    limit_price: &BigDecimal,
+    market_price: &BigDecimal,
+) -> Result<bool, &'static str> {
+    if limit_price <= &BigDecimal::from(0) {
+        return Err("margin limit price must be positive");
+    }
+    if market_price <= &BigDecimal::from(0) {
+        return Err("margin market price must be positive");
+    }
+    match direction {
+        "long" => Ok(market_price <= limit_price),
+        "short" => Ok(market_price >= limit_price),
+        _ => Err("margin direction must be long or short"),
+    }
+}
+
 /// 计算逐仓仓位平仓时可返还用户的金额，口径为保证金加已实现盈亏再扣除累计利息。
 /// `realized_pnl` 为 None 表示仓位尚未成交也没有盈亏结果，直接返回十八位精度的零而非退回本金。
 /// 结果按非负截断：亏损吃穿保证金时只返还零，穿仓缺口不在这里体现，由全仓账户结算或坏账登记承担。

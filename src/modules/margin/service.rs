@@ -41,6 +41,8 @@ pub(crate) fn publish_margin_position_opened_event(
             "margin_asset": position.margin_asset,
             "margin_mode": position.margin_mode,
             "direction": position.direction,
+            "order_type": position.order_type,
+            "limit_price": position.limit_price,
             "margin_amount": position.margin_amount,
             "leverage": position.leverage,
             "notional_amount": position.notional_amount,
@@ -53,16 +55,16 @@ pub(crate) fn publish_margin_position_opened_event(
     ));
 }
 
-/// 仅当本次调用真正新建了仓位、且进程配置了广播中心时才推送开仓事件。
-/// 幂等键命中重放时 `is_new_position` 为假，直接静默返回，保证同一开仓请求不会被重复通知。
+/// 仅当调用方已经首次提交了真实成交、且进程配置了广播中心时才推送开仓事件。
+/// 幂等重放、未成交限价单和重复 ticker 都传入假，保证同一仓位只在入场价首次落库后通知一次。
 /// 未配置 `hub` 属于既有降级形态，事件丢弃但开仓事务已提交，不视为错误。
 pub(crate) fn publish_margin_position_opened_event_if_needed(
     hub: Option<&EventBroadcastHub>,
     user_id: u64,
     position: &MarginPositionResponse,
-    is_new_position: bool,
+    is_new_fill: bool,
 ) {
-    if is_new_position && let Some(hub) = hub {
+    if is_new_fill && let Some(hub) = hub {
         publish_margin_position_opened_event(hub, user_id, position);
     }
 }
@@ -172,6 +174,7 @@ pub(crate) fn margin_product_audit_json(product: &MarginProductResponse) -> Valu
         "id": product.id,
         "pair_id": product.pair_id,
         "symbol": product.symbol,
+        "price_precision": product.price_precision,
         "margin_asset": product.margin_asset,
         "margin_asset_symbol": product.margin_asset_symbol,
         "logo_url": product.logo_url,

@@ -64,6 +64,11 @@ type SpotOrderType = 'limit' | 'market'
 openSpotOrderTypeSheet(): void
 closeSpotOrderTypeSheet(): void
 selectSpotOrderType(type: SpotOrderType): void
+
+type MarginOrderType = 'market' | 'limit'
+openContractSheet(sheet: 'pair' | 'leverage' | 'marginMode' | 'orderType'): void
+selectContractOrderType(type: MarginOrderType): void
+fillContractLimitPrice(): void
 ```
 
 Spot account-surface signatures:
@@ -244,8 +249,9 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
 - Changing the spot order type is presentation/form state only. Limit continues
   to use the entered price; market continues to use the live current price;
   both submit through the existing `placeSpotOrder` type/price/quantity
-  contract. Contract mode remains forced to market and closes any open spot
-  order-type sheet.
+  contract. Activating contract mode closes any open spot order-type sheet;
+  contract order type is a separate backend-capability-driven state and never
+  reuses or mutates the spot selection.
 - The spot account workspace is a holdings summary, not an open-order list.
   Its current navigation marker reads localized Positions/Holdings and is a
   non-interactive `aria-current` label for the region that renders wallet
@@ -333,6 +339,16 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   body scroll is locked, and focus returns to the exact long/short trigger.
   While submitting, every dismissal target is disabled and a no-focusable Tab
   attempt remains on the dialog container.
+- The contract order-type control is an enabled dialog trigger only when the
+  current backend product advertises at least one recognized type. Its
+  Teleported fourth contract sheet renders only those options, initially
+  focuses the selected option, commits only explicit row clicks, and shares the
+  existing scroll-lock, Escape, backdrop, close, focus-return, safe-area,
+  light/dark, 44px, 320px, and reduced-motion contracts.
+- Contract market price remains read-only. Contract limit price is an editable
+  plain decimal field with a 44px BBO action: long uses best ask, short uses best
+  bid, and only an absent side falls back to the latest ticker. Invalid or
+  over-precision input has a visible localized error and cannot open review.
 - The contract order console keeps its two-column information architecture but
   gives open/close, mode/leverage, BBO, percentage, available-asset, and
   long/short controls one cool-neutral layered surface language. Selected,
@@ -467,8 +483,12 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
 | Nested spot input receives focus | Apply one ring to `.spot-field-shell`; child input keeps `box-shadow: none` |
 | Spot order-type trigger is selected | Open the Teleported sheet without changing `orderType` |
 | Spot order-type option is selected | Set that exact value, close the sheet, and retain the existing price/submission contract |
-| Spot order-type sheet is dismissed or contract mode activates | Close without changing the spot selection; contract remains market-only |
+| Spot order-type sheet is dismissed or contract mode activates | Close without changing the spot selection; contract uses its own advertised selection |
 | Spot order-type and confirmation dialogs compete | Keep them mutually exclusive and restore the body overflow/focus owner exactly once |
+| Contract order-type trigger opens | Preserve the current value and render only backend-advertised market/limit options |
+| Contract order-type sheet is dismissed | Keep the current value; restore body scroll and exact trigger focus |
+| Explicit contract limit is selected | Commit limit, enable the price field, and offer long-ask/short-bid/latest fill |
+| Contract capability refresh removes the selection | Prefer advertised market, otherwise first advertised type, otherwise disable review |
 | Spot account wallet rows are visible | Mark Holdings/Positions current and associate all wallet states with that labelled region |
 | Spot user selects Orders or History | Navigate to `/orders?tab=spot|history`; keep OrdersView authoritative for order reads/actions |
 | Spot account context offers a secondary action | Open Assets/View all; never show Cancel all without current-order data |
@@ -624,6 +644,13 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   reduced-motion transform override. At 320x720, 390x844, and 448x900 in both
   themes assert zero document overflow and visible margin range/error plus both
   primary actions.
+- Contract order type: prove backend-only option rendering, market-first/first-
+  real fallback, trigger-only open, explicit selection, non-mutating backdrop/
+  close/Escape, focus trap/return, body scroll lock, market read-only price,
+  editable precision-safe limit price, BBO side choice, frozen confirmation,
+  and exact market-without-price/limit-with-price request wiring. Inspect the
+  order-type and confirmation sheets at 320px/390px in both themes with reduced
+  motion and zero overflow.
 - Assets Transfer parity: assert `v6phV/TuWXq/tPkL1/tPkD1`, a 520px sheet,
   140px amount hero with a 30px data input, 52px glass route, 52px API-logo
   asset row, 50px action, and absence of a native asset `select`. Exercise API

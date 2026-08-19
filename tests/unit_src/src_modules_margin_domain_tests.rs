@@ -1,12 +1,50 @@
 use super::{
-    CrossMarginPositionRisk, allocate_cross_margin_payouts, evaluate_cross_margin,
-    margin_position_payout_amount,
+    CrossMarginPositionRisk, MarginOrderType, allocate_cross_margin_payouts, evaluate_cross_margin,
+    margin_limit_order_is_triggered, margin_position_payout_amount, validate_margin_limit_price,
 };
 use bigdecimal::BigDecimal;
 use std::str::FromStr;
 
 fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).expect("valid decimal")
+}
+
+#[test]
+fn margin_limit_trigger_boundaries_match_long_and_short_intent() {
+    let limit = decimal("100");
+
+    assert!(margin_limit_order_is_triggered("long", &limit, &decimal("99")).unwrap());
+    assert!(margin_limit_order_is_triggered("long", &limit, &decimal("100")).unwrap());
+    assert!(!margin_limit_order_is_triggered("long", &limit, &decimal("101")).unwrap());
+
+    assert!(!margin_limit_order_is_triggered("short", &limit, &decimal("99")).unwrap());
+    assert!(margin_limit_order_is_triggered("short", &limit, &decimal("100")).unwrap());
+    assert!(margin_limit_order_is_triggered("short", &limit, &decimal("101")).unwrap());
+}
+
+#[test]
+fn margin_limit_rules_reject_invalid_prices_direction_and_precision() {
+    assert!(margin_limit_order_is_triggered("sideways", &decimal("100"), &decimal("100")).is_err());
+    assert!(margin_limit_order_is_triggered("long", &decimal("0"), &decimal("100")).is_err());
+    assert!(margin_limit_order_is_triggered("short", &decimal("100"), &decimal("0")).is_err());
+
+    assert!(validate_margin_limit_price(&decimal("1.2300"), 2).is_ok());
+    assert!(validate_margin_limit_price(&decimal("1.234"), 2).is_err());
+    assert!(validate_margin_limit_price(&decimal("0"), 8).is_err());
+    assert!(validate_margin_limit_price(&decimal("1"), -1).is_err());
+}
+
+#[test]
+fn margin_order_type_keeps_market_compatibility_and_rejects_unknown_values() {
+    assert_eq!(
+        MarginOrderType::parse(None).unwrap(),
+        MarginOrderType::Market
+    );
+    assert_eq!(
+        MarginOrderType::parse(Some(" LIMIT ")).unwrap(),
+        MarginOrderType::Limit
+    );
+    assert!(MarginOrderType::parse(Some("stop")).is_err());
 }
 
 #[test]

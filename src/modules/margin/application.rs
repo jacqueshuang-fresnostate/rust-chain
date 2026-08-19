@@ -8,6 +8,7 @@ mod open_position;
 mod product_config;
 mod queries;
 mod support;
+mod trigger_limit_orders;
 
 pub(crate) use account_settings::{
     get_user_margin_setting, transfer_margin_funds, update_user_leverage, update_user_margin_mode,
@@ -27,6 +28,7 @@ pub(crate) use queries::{
     list_user_margin_positions, list_user_margin_wallets,
 };
 pub(crate) use support::{mysql_pool, route_limit};
+pub use trigger_limit_orders::execute_triggered_margin_limit_orders_with_hub;
 
 #[cfg(test)]
 pub(crate) use product_config::margin_trading_capabilities;

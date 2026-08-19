@@ -304,9 +304,15 @@ async fn margin_interest_worker_accrues_elapsed_full_hours_idempotently()
     let second_accrual_at = Utc.with_ymd_and_hms(1991, 2, 1, 5, 45, 0).unwrap();
     let fixture =
         seed_margin_position(&pool, "long", Some(&decimal("100.000000000000000000"))).await?;
+    let pending_limit = seed_margin_position(&pool, "long", None).await?;
     sqlx::query("UPDATE margin_products SET hourly_interest_rate = ? WHERE id = ?")
         .bind(decimal("0.00100000"))
         .bind(fixture.product_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE margin_products SET hourly_interest_rate = ? WHERE id = ?")
+        .bind(decimal("0.00100000"))
+        .bind(pending_limit.product_id)
         .execute(&pool)
         .await?;
     sqlx::query(
@@ -321,7 +327,19 @@ async fn margin_interest_worker_accrues_elapsed_full_hours_idempotently()
     .bind(fixture.position_id)
     .execute(&pool)
     .await?;
-    close_other_open_positions(&pool, &[fixture.position_id]).await?;
+    sqlx::query(
+        r#"UPDATE margin_positions
+           SET order_type = 'limit', limit_price = ?, opened_at = ?, borrowed_amount = ?,
+               interest_amount = 0, interest_accrued_at = NULL
+           WHERE id = ?"#,
+    )
+    .bind(decimal("90.000000000000000000"))
+    .bind(opened_at.naive_utc())
+    .bind(decimal("80.000000000000000000"))
+    .bind(pending_limit.position_id)
+    .execute(&pool)
+    .await?;
+    close_other_open_positions(&pool, &[fixture.position_id, pending_limit.position_id]).await?;
 
     let first = run_margin_interest_once(&pool, first_accrual_at, 10).await?;
 
@@ -338,6 +356,14 @@ async fn margin_interest_worker_accrues_elapsed_full_hours_idempotently()
         .await?;
     assert_eq!(interest_amount, decimal("0.240000000000000000"));
     assert_eq!(interest_accrued_at, Some(first_accrual_at));
+    let pending_interest: (BigDecimal, Option<chrono::DateTime<Utc>>) = sqlx::query_as(
+        "SELECT interest_amount, interest_accrued_at FROM margin_positions WHERE id = ?",
+    )
+    .bind(pending_limit.position_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(pending_interest.0, decimal("0.000000000000000000"));
+    assert_eq!(pending_interest.1, None);
 
     let replay = run_margin_interest_once(&pool, first_accrual_at, 10).await?;
 
@@ -840,7 +866,8 @@ async fn margin_liquidation_worker_rotates_past_safe_positions() -> Result<(), B
 }
 
 #[tokio::test]
-async fn margin_liquidation_worker_scans_past_broken_rows() -> Result<(), Box<dyn Error>> {
+async fn margin_liquidation_worker_excludes_pending_limit_orders_from_risk_scan()
+-> Result<(), Box<dyn Error>> {
     let _guard = TEST_LOCK.lock().await;
     let Some(pool) = mysql_pool_or_skip().await? else {
         return Ok(());
@@ -850,24 +877,36 @@ async fn margin_liquidation_worker_scans_past_broken_rows() -> Result<(), Box<dy
     };
     close_previous_margin_worker_positions(&pool).await?;
     let now = Utc.with_ymd_and_hms(1991, 1, 3, 12, 0, 0).unwrap();
-    let broken = seed_margin_position(&pool, "long", None).await?;
-    cache_ticker(&redis, &broken.pair_symbol, "84.000000000000000000", now).await?;
+    let pending = seed_margin_position(&pool, "long", None).await?;
+    sqlx::query("UPDATE margin_positions SET order_type = 'limit', limit_price = ? WHERE id = ?")
+        .bind(decimal("90.000000000000000000"))
+        .bind(pending.position_id)
+        .execute(&pool)
+        .await?;
     let healthy =
         seed_margin_position(&pool, "long", Some(&decimal("100.000000000000000000"))).await?;
     cache_ticker(&redis, &healthy.pair_symbol, "84.000000000000000000", now).await?;
-    close_other_open_positions(&pool, &[broken.position_id, healthy.position_id]).await?;
+    close_other_open_positions(&pool, &[pending.position_id, healthy.position_id]).await?;
 
     let summary = run_once_with_dependencies(&pool, &redis, now, 1).await?;
 
-    assert_eq!(summary.scanned, 2);
+    assert_eq!(summary.scanned, 1);
     assert_eq!(summary.liquidated, 1);
-    assert_eq!(summary.failed, 1);
-    let (broken_status,): (String,) =
-        sqlx::query_as("SELECT status FROM margin_positions WHERE id = ?")
-            .bind(broken.position_id)
+    assert_eq!(summary.failed, 0);
+    let (pending_status, next_attempt): (String, Option<chrono::DateTime<Utc>>) = sqlx::query_as(
+        "SELECT status, next_liquidation_attempt_at FROM margin_positions WHERE id = ?",
+    )
+    .bind(pending.position_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(pending_status, "opened");
+    assert_eq!(next_attempt, None);
+    let pending_liquidation_records: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM margin_liquidation_records WHERE position_id = ?")
+            .bind(pending.position_id)
             .fetch_one(&pool)
             .await?;
-    assert_eq!(broken_status, "opened");
+    assert_eq!(pending_liquidation_records, 0);
     let (healthy_status,): (String,) =
         sqlx::query_as("SELECT status FROM margin_positions WHERE id = ?")
             .bind(healthy.position_id)

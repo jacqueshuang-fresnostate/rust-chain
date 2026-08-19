@@ -24,7 +24,7 @@ test('交易页保留现货、合约和 mode 路由合同', () => {
   assert.match(tradeSource, /mode\.value === 'contract' && !selectedProduct\.value/)
   assert.match(tradeSource, /t\('trade\.marginField', \{ asset: availableAsset \}\)/)
   assert.match(tradeSource, /t\('rootPrototype\.estimatedNotional'\)/)
-  assert.match(tradeSource, /:class="\{ active: selectedOrderType === 'market' \}"/)
+  assert.match(tradeSource, /class="contract-order-type"[\s\S]*?:aria-expanded="contractSheet === 'orderType'"[\s\S]*?@click="openContractSheet\('orderType'\)"/)
   assert.match(tradeSource, /v-else-if="balancesError"[\s\S]*?@click="loadTradingBalances"/)
   assert.doesNotMatch(tradeSource, /percentage: percent,\s*price:/)
   assert.doesNotMatch(tradeSource, /marginAmount:\s*Number\(amountValue/)

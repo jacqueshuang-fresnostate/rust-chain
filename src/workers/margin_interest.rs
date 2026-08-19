@@ -92,6 +92,8 @@ struct LockedMarginPosition {
     interest_accrued_at: Option<DateTime<Utc>>,
     /// 开仓时间，作为首次计息的起点。
     opened_at: DateTime<Utc>,
+    /// 服务端权威入场价，为 NULL 表示限价挂单尚未成交，严禁计息。
+    entry_price: Option<BigDecimal>,
     /// 加锁瞬间的仓位状态，非 opened 则放弃本次计提。
     status: String,
     /// 产品当前的小时利率，实时联表取值，因此改配后立即影响后续计提。
@@ -154,8 +156,8 @@ pub async fn run_loop(pool: Pool<MySql>, interval_seconds: u64, limit: u32) -> A
     }
 }
 
-/// 挑选本轮待计息的候选仓位主键，条件是状态 opened、借款额为正且产品小时利率为正。
-/// 三个条件把免息产品和一倍杠杆仓位挡在事务之外，避免为必然跳过的仓位白白开事务加锁。
+/// 挑选本轮待计息的候选仓位主键，条件是已有入场价、状态 opened、借款额为正且产品小时利率为正。
+/// `entry_price IS NOT NULL` 是挂单与真实持仓的资金边界；其余条件把免息产品和一倍杠杆仓位挡在事务之外。
 /// 排序以 `interest_accrued_at` 升序打头，让最久未计息的仓位优先处理，形成天然的公平轮转；
 /// 再以开仓时间和主键兜底，保证排序完全确定，不会因并列值导致某些仓位长期排在后面被饿死。
 /// 上限在这里再夹一次到 1 到 500，即便调用方传入异常值也不会拉出超大结果集。
@@ -169,6 +171,7 @@ async fn fetch_interest_candidates(
            FROM margin_positions positions
            INNER JOIN margin_products products ON products.id = positions.product_id
            WHERE positions.status = 'opened'
+             AND positions.entry_price IS NOT NULL
              AND positions.borrowed_amount > 0
              AND products.hourly_interest_rate > 0
            ORDER BY positions.interest_accrued_at ASC, positions.opened_at ASC, positions.id ASC
@@ -183,7 +186,7 @@ async fn fetch_interest_candidates(
 /// 在独立事务中锁定一个 opened 仓位，按上次计息点到 `now` 的完整小时数累加借款利息。
 /// 不足完整小时、状态变化或无借款仓位幂等跳过；利息余额与计息时间戳同事务提交，避免崩溃重放重复收费。
 ///
-/// 一共有五道跳过闸门，依次是：仓位已不存在、状态非 opened 或无借款、不足一小时或利率为零、
+/// 一共有五道跳过闸门，依次是：仓位已不存在、未成交/状态非 opened/无借款、不足一小时或利率为零、
 /// 计算出的增量非正、带 `status = 'opened'` 条件的更新影响行数不为一。
 /// 最后一道尤为关键，它把状态检查与写入合成一条语句，即使并发平仓抢在加锁之后提交也不会误记利息。
 /// 每道闸门都显式 rollback 后返回 Skipped，因此跳过路径在数据库上不留任何痕迹。
@@ -200,7 +203,10 @@ async fn accrue_position_interest(
         tx.rollback().await?;
         return Ok(MarginInterestOutcome::Skipped);
     };
-    if position.status != "opened" || position.borrowed_amount <= 0 {
+    if position.status != "opened"
+        || position.entry_price.is_none()
+        || position.borrowed_amount <= 0
+    {
         tx.rollback().await?;
         return Ok(MarginInterestOutcome::Skipped);
     }
@@ -223,7 +229,7 @@ async fn accrue_position_interest(
     let update = sqlx::query(
         r#"UPDATE margin_positions
            SET interest_amount = ?, interest_accrued_at = ?
-           WHERE id = ? AND status = 'opened'"#,
+           WHERE id = ? AND status = 'opened' AND entry_price IS NOT NULL"#,
     )
     .bind(&interest_after)
     .bind(now.naive_utc())
@@ -240,7 +246,8 @@ async fn accrue_position_interest(
             r#"UPDATE margin_cross_accounts
                SET last_interest_amount = COALESCE(
                      (SELECT SUM(interest_amount) FROM margin_positions
-                      WHERE user_id = ? AND margin_asset = ? AND margin_mode = 'cross' AND status = 'opened'), 0),
+                      WHERE user_id = ? AND margin_asset = ? AND margin_mode = 'cross'
+                        AND status = 'opened' AND entry_price IS NOT NULL), 0),
                    version = version + 1
                WHERE user_id = ? AND margin_asset = ?"#,
         )
@@ -267,7 +274,7 @@ async fn lock_position(
     sqlx::query_as::<_, LockedMarginPosition>(
         r#"SELECT positions.id, positions.user_id, positions.margin_asset, positions.margin_mode,
                   positions.borrowed_amount, positions.interest_amount,
-                  positions.interest_accrued_at, positions.opened_at, positions.status,
+                  positions.interest_accrued_at, positions.opened_at, positions.entry_price, positions.status,
                   products.hourly_interest_rate
            FROM margin_positions positions
            INNER JOIN margin_products products ON products.id = positions.product_id

@@ -141,14 +141,15 @@ pub(crate) async fn load_admin_dashboard_trading_summary(
     .await?)
 }
 
-/// 汇总秒合约开仓、保证金持仓/强平及理财有效/即将到期数量，返回产品仪表盘摘要。
+/// 汇总秒合约开仓、已成交保证金持仓/强平及理财有效/即将到期数量，返回产品仪表盘摘要。
 /// 二十四小时时间条件由数据库 UTC 时间计算，聚合不锁产品记录或推进结算；查询失败直接返回数据库错误。
 pub(crate) async fn load_admin_dashboard_products_summary(
     pool: &Pool<MySql>,
 ) -> AppResult<AdminDashboardProductsSummary> {
     Ok(sqlx::query_as::<_, AdminDashboardProductsSummary>(
         r#"SELECT (SELECT COUNT(*) FROM seconds_contract_orders WHERE status = 'opened') AS seconds_open_orders,
-                  (SELECT COUNT(*) FROM margin_positions WHERE status = 'opened') AS margin_open_positions,
+                  (SELECT COUNT(*) FROM margin_positions
+                   WHERE status = 'opened' AND entry_price IS NOT NULL) AS margin_open_positions,
                   (SELECT COUNT(*) FROM margin_liquidation_records
                    WHERE liquidated_at >= DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 24 HOUR)) AS margin_liquidated_24h,
                   (SELECT COUNT(*) FROM earn_subscriptions WHERE status = 'subscribed') AS earn_active_subscriptions,

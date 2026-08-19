@@ -21,6 +21,48 @@ export interface MarginAmountValidation {
   maxMargin: number | null
 }
 
+export type MarginLimitPriceValidationError = 'required' | 'invalid' | 'precision' | 'precision-unavailable'
+
+export interface MarginLimitPriceValidation {
+  isValid: boolean
+  error: MarginLimitPriceValidationError | null
+  value: number | null
+  normalized: string | null
+  pricePrecision: number | null
+}
+
+/** Validates a positive plain decimal without rounding away the user's limit intent. */
+export function validateMarginLimitPrice(input: {
+  price: string
+  pricePrecision?: number | null
+}): MarginLimitPriceValidation {
+  const draft = input.price.trim()
+  const pricePrecision = Number.isInteger(input.pricePrecision) && Number(input.pricePrecision) >= 0
+    ? Number(input.pricePrecision)
+    : null
+  if (!draft) {
+    return { isValid: false, error: 'required', value: null, normalized: null, pricePrecision }
+  }
+  // A trailing decimal point is a valid editing state but not a stable API decimal.
+  // Prefix-dot values are canonicalized so `.5` is frozen and sent as `0.5`.
+  if (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(draft)) {
+    return { isValid: false, error: 'invalid', value: null, normalized: null, pricePrecision }
+  }
+  const normalized = draft.startsWith('.') ? `0${draft}` : draft
+  const value = Number(normalized)
+  if (!Number.isFinite(value) || value <= 0) {
+    return { isValid: false, error: 'invalid', value: null, normalized: null, pricePrecision }
+  }
+  if (pricePrecision === null) {
+    return { isValid: false, error: 'precision-unavailable', value, normalized, pricePrecision }
+  }
+  const fractionalDigits = (normalized.split('.')[1] || '').replace(/0+$/, '').length
+  if (fractionalDigits > pricePrecision) {
+    return { isValid: false, error: 'precision', value, normalized, pricePrecision }
+  }
+  return { isValid: true, error: null, value, normalized, pricePrecision }
+}
+
 /**
  * Maps the backend decimal limits without turning a missing maximum into zero.
  * Product configuration guarantees a positive minimum, while a malformed

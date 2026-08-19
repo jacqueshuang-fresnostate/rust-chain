@@ -140,8 +140,8 @@ pub(crate) async fn load_position_by_id(
     position_id: u64,
 ) -> AppResult<MarginPositionResponse> {
     sqlx::query_as::<_, MarginPositionResponse>(
-        r#"SELECT id, user_id, product_id, pair_id, margin_asset, wallet_scope, margin_mode, direction, margin_amount,
-                  leverage, notional_amount, borrowed_amount, interest_amount, entry_price,
+        r#"SELECT id, user_id, product_id, pair_id, margin_asset, wallet_scope, margin_mode, direction, order_type, margin_amount,
+                  leverage, notional_amount, borrowed_amount, interest_amount, entry_price, limit_price,
                   exit_price, realized_pnl, closed_at, status, idempotency_key
            FROM margin_positions
            WHERE id = ?

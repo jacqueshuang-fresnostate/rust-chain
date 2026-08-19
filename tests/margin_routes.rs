@@ -9,6 +9,7 @@ use exchange_api::{
     modules::{
         auth::{TokenScope, issue_token},
         events::{EventBroadcastHub, WebSocketChannel},
+        margin::application::execute_triggered_margin_limit_orders_with_hub,
         margin::routes::{admin_routes, user_routes},
         market::market_ticker_redis_key,
     },
@@ -1177,12 +1178,24 @@ async fn margin_lists_active_products_for_user_and_all_products_for_admin()
         String::from_utf8_lossy(&user_body)
     );
     let user_payload: Value = serde_json::from_slice(&user_body)?;
+    assert_eq!(
+        user_payload["capabilities"]["order_types"],
+        serde_json::json!(["market", "limit"])
+    );
+    assert_eq!(
+        user_payload["capabilities"]["margin_modes"],
+        serde_json::json!(["isolated", "cross"])
+    );
     assert!(
         user_payload["products"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|product| { product["id"] == active_product_id && product["symbol"] == symbol })
+            .any(|product| {
+                product["id"] == active_product_id
+                    && product["symbol"] == symbol
+                    && product["price_precision"] == 18
+            })
     );
     assert!(
         !user_payload["products"]
@@ -2306,6 +2319,9 @@ async fn margin_open_position_debits_wallet_and_writes_ledger() -> Result<(), Bo
         "60.000000000000000000"
     );
     assert_eq!(payload["position"]["status"], "opened");
+    assert_eq!(payload["position"]["order_type"], "market");
+    assert!(payload["position"].get("limit_price").is_none());
+    assert_eq!(payload["position"]["entry_price"], "100.000000000000000000");
     assert_eq!(
         payload["position"]["borrowed_amount"],
         "40.000000000000000000"
@@ -2364,6 +2380,361 @@ async fn margin_open_position_debits_wallet_and_writes_ledger() -> Result<(), Bo
     assert_eq!(commission.5, "pending");
     support::cleanup_direct_agent_commission(&pool, user_id, commission_fixture).await?;
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn margin_limit_order_is_idempotent_cancelable_and_fills_once_at_server_ticker()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let mut fixture_tx = pool.begin().await?;
+    let user_id = create_user(&mut fixture_tx).await;
+    let (base_asset, base_symbol) = create_asset(&mut fixture_tx, "LB").await;
+    let (quote_asset, quote_symbol) = create_asset(&mut fixture_tx, "LQ").await;
+    let symbol = format!("{base_symbol}-{quote_symbol}");
+    let pair_id = create_pair(&mut fixture_tx, base_asset, quote_asset, &symbol).await;
+    let product_id = seed_margin_product(&mut fixture_tx, pair_id, quote_asset).await;
+    sqlx::query("UPDATE margin_products SET hourly_interest_rate = ? WHERE id = ?")
+        .bind(decimal("0.00100000"))
+        .bind(product_id)
+        .execute(&mut *fixture_tx)
+        .await?;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(quote_asset)
+        .bind(decimal("200.000000000000000000"))
+        .execute(&mut *fixture_tx)
+        .await?;
+    fixture_tx.commit().await?;
+    let commission_fixture =
+        support::seed_direct_agent_commission(&pool, user_id, "margin", "0.05000000").await?;
+    cache_margin_ticker(&redis, &symbol, "100.000000000000000000").await?;
+
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let idempotency_key = format!("margin-limit-{}", Uuid::now_v7().simple());
+    let hub = EventBroadcastHub::new(16);
+    let mut private_events = hub.subscribe(&WebSocketChannel::private_user(user_id));
+    let app = user_routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_redis(redis)
+            .with_event_broadcast_hub(hub.clone()),
+    );
+    let request_body = format!(
+        r#"{{"product_id":{product_id},"direction":"long","order_type":"limit","price":"90.000000000000000000","margin_amount":"20.000000000000000000","leverage":"3.00000000","idempotency_key":"{idempotency_key}"}}"#
+    );
+
+    let pending_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/margin/positions")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(request_body.clone()))
+                .unwrap(),
+        )
+        .await?;
+    let pending_status = pending_response.status();
+    let pending_payload = body_json(pending_response).await?;
+    assert_eq!(pending_status, StatusCode::OK, "payload: {pending_payload}");
+    let position_id = pending_payload["position"]["id"].as_u64().unwrap();
+    assert_eq!(pending_payload["position"]["order_type"], "limit");
+    assert_eq!(
+        pending_payload["position"]["limit_price"],
+        "90.000000000000000000"
+    );
+    assert!(pending_payload["position"].get("entry_price").is_none());
+    assert!(
+        timeout(Duration::from_millis(30), private_events.recv())
+            .await
+            .is_err(),
+        "pending limit order must not publish a filled event"
+    );
+
+    let pending_row: (String, Option<BigDecimal>, Option<BigDecimal>, Option<chrono::NaiveDateTime>) =
+        sqlx::query_as(
+            "SELECT order_type, limit_price, entry_price, interest_accrued_at FROM margin_positions WHERE id = ?",
+        )
+        .bind(position_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(pending_row.0, "limit");
+    assert_eq!(pending_row.1, Some(decimal("90.000000000000000000")));
+    assert_eq!(pending_row.2, None);
+    assert_eq!(pending_row.3, None);
+    let (available_after_pending,): (BigDecimal,) =
+        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(quote_asset)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(available_after_pending, decimal("180.000000000000000000"));
+    let (commission_before_fill,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM agent_commission_records WHERE user_id = ? AND source_type = 'margin_position' AND source_id = ?",
+    )
+    .bind(user_id)
+    .bind(position_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(commission_before_fill, 0);
+
+    let replay_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/margin/positions")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(request_body))
+                .unwrap(),
+        )
+        .await?;
+    let replay_status = replay_response.status();
+    let replay_payload = body_json(replay_response).await?;
+    assert_eq!(replay_status, StatusCode::OK, "payload: {replay_payload}");
+    assert_eq!(replay_payload["position"]["id"], position_id);
+
+    for conflicting_body in [
+        format!(
+            r#"{{"product_id":{product_id},"direction":"long","order_type":"limit","price":"91","margin_amount":"20","leverage":"3","idempotency_key":"{idempotency_key}"}}"#
+        ),
+        format!(
+            r#"{{"product_id":{product_id},"direction":"long","order_type":"market","margin_amount":"20","leverage":"3","idempotency_key":"{idempotency_key}"}}"#
+        ),
+    ] {
+        let conflict = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/margin/positions")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(conflicting_body))
+                    .unwrap(),
+            )
+            .await?;
+        assert_eq!(conflict.status(), StatusCode::CONFLICT);
+    }
+    let (available_after_replays,): (BigDecimal,) =
+        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(quote_asset)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(available_after_replays, available_after_pending);
+
+    for invalid_body in [
+        format!(
+            r#"{{"product_id":{product_id},"direction":"long","order_type":"market","price":"90","margin_amount":"20","leverage":"3","idempotency_key":"invalid-market-price-{}"}}"#,
+            Uuid::now_v7().simple()
+        ),
+        format!(
+            r#"{{"product_id":{product_id},"direction":"long","order_type":"limit","margin_amount":"20","leverage":"3","idempotency_key":"invalid-limit-missing-{}"}}"#,
+            Uuid::now_v7().simple()
+        ),
+        format!(
+            r#"{{"product_id":{product_id},"direction":"long","order_type":"limit","price":"90","trigger_price":"89","margin_amount":"20","leverage":"3","idempotency_key":"invalid-limit-trigger-{}"}}"#,
+            Uuid::now_v7().simple()
+        ),
+        format!(
+            r#"{{"product_id":{product_id},"direction":"long","order_type":"limit","price":"90.0000000000000000001","margin_amount":"20","leverage":"3","idempotency_key":"invalid-limit-precision-{}"}}"#,
+            Uuid::now_v7().simple()
+        ),
+    ] {
+        let invalid = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/margin/positions")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(invalid_body))
+                    .unwrap(),
+            )
+            .await?;
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    }
+    let (available_after_invalid_requests,): (BigDecimal,) =
+        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(quote_asset)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(available_after_invalid_requests, available_after_pending);
+
+    // 先把挂单时间改成显著旧值，确保成交路径必须写入数据库真实成交时刻，
+    // 而不是误把创建委托的时间继续当作持仓开仓时间。
+    sqlx::query(
+        "UPDATE margin_positions SET opened_at = '2000-01-01 00:00:00.000000' WHERE id = ?",
+    )
+    .bind(position_id)
+    .execute(&pool)
+    .await?;
+
+    let trusted_market_price = decimal("89.000000000000000000");
+    assert_eq!(
+        execute_triggered_margin_limit_orders_with_hub(
+            &pool,
+            &symbol,
+            &trusted_market_price,
+            Some(&hub),
+        )
+        .await?,
+        1
+    );
+    assert_eq!(
+        execute_triggered_margin_limit_orders_with_hub(
+            &pool,
+            &symbol,
+            &trusted_market_price,
+            Some(&hub),
+        )
+        .await?,
+        0
+    );
+    let fill_event: Value = serde_json::from_str(
+        timeout(Duration::from_millis(100), private_events.recv())
+            .await??
+            .payload(),
+    )?;
+    assert_eq!(fill_event["type"], "margin.position.opened");
+    assert_eq!(fill_event["position_id"], position_id);
+    assert_eq!(fill_event["order_type"], "limit");
+    assert_eq!(fill_event["entry_price"], "89.000000000000000000");
+    assert!(
+        timeout(Duration::from_millis(30), private_events.recv())
+            .await
+            .is_err(),
+        "repeated ticker must not publish a second fill"
+    );
+    let filled_row: (
+        Option<BigDecimal>,
+        chrono::NaiveDateTime,
+        Option<chrono::NaiveDateTime>,
+        chrono::NaiveDateTime,
+    ) = sqlx::query_as(
+        "SELECT entry_price, opened_at, interest_accrued_at, created_at FROM margin_positions WHERE id = ?",
+    )
+    .bind(position_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(filled_row.0, Some(trusted_market_price));
+    assert_eq!(filled_row.2, Some(filled_row.1));
+    assert!(filled_row.1 >= filled_row.3);
+    let (commission_after_fill,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM agent_commission_records WHERE user_id = ? AND source_type = 'margin_position' AND source_id = ?",
+    )
+    .bind(user_id)
+    .bind(position_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(commission_after_fill, 1);
+
+    let cancel_key = format!("margin-limit-cancel-{}", Uuid::now_v7().simple());
+    let cancel_pending = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/margin/positions")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"product_id":{product_id},"direction":"long","order_type":"limit","price":"80","margin_amount":"20","leverage":"3","idempotency_key":"{cancel_key}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await?;
+    let cancel_pending_status = cancel_pending.status();
+    let cancel_pending_payload = body_json(cancel_pending).await?;
+    assert_eq!(
+        cancel_pending_status,
+        StatusCode::OK,
+        "payload: {cancel_pending_payload}"
+    );
+    let cancel_position_id = cancel_pending_payload["position"]["id"].as_u64().unwrap();
+    let cancel_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/margin/positions/{cancel_position_id}/cancel"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let cancel_status = cancel_response.status();
+    let cancel_payload = body_json(cancel_response).await?;
+    assert_eq!(cancel_status, StatusCode::OK, "payload: {cancel_payload}");
+    assert_eq!(cancel_payload["position"]["status"], "canceled");
+    let (available_after_cancel,): (BigDecimal,) =
+        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(quote_asset)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(available_after_cancel, decimal("180.000000000000000000"));
+
+    let immediate_key = format!("margin-limit-immediate-{}", Uuid::now_v7().simple());
+    let immediate_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/margin/positions")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"product_id":{product_id},"direction":"long","order_type":"limit","price":"101","margin_amount":"20","leverage":"3","idempotency_key":"{immediate_key}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await?;
+    let immediate_status = immediate_response.status();
+    let immediate_payload = body_json(immediate_response).await?;
+    assert_eq!(
+        immediate_status,
+        StatusCode::OK,
+        "payload: {immediate_payload}"
+    );
+    assert_eq!(immediate_payload["position"]["order_type"], "limit");
+    assert_eq!(
+        immediate_payload["position"]["limit_price"],
+        "101.000000000000000000"
+    );
+    assert_eq!(
+        immediate_payload["position"]["entry_price"], "100.000000000000000000",
+        "an immediately triggered limit must fill at the trusted server ticker, not client price"
+    );
+    let immediate_position_id = immediate_payload["position"]["id"].as_u64().unwrap();
+    let (immediate_interest_started, immediate_commissions): (Option<chrono::NaiveDateTime>, i64) =
+        sqlx::query_as(
+            r#"SELECT positions.interest_accrued_at,
+                  (SELECT COUNT(*) FROM agent_commission_records commissions
+                   WHERE commissions.user_id = positions.user_id
+                     AND commissions.source_type = 'margin_position'
+                     AND commissions.source_id = CAST(positions.id AS CHAR))
+           FROM margin_positions positions
+           WHERE positions.id = ?"#,
+        )
+        .bind(immediate_position_id)
+        .fetch_one(&pool)
+        .await?;
+    assert!(immediate_interest_started.is_some());
+    assert_eq!(immediate_commissions, 1);
+
+    support::cleanup_direct_agent_commission(&pool, user_id, commission_fixture).await?;
     Ok(())
 }
 

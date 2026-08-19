@@ -2,7 +2,8 @@ import axios from 'axios'
 import { client, requestUrl } from './client'
 import { asNumber, normalizeSymbol, splitSymbol } from '@/core/format'
 import { mapMarginProductMarginLimits } from '@/core/tradeForm'
-import type { MarginProduct, WalletAccount } from '@/core/types'
+import { parseMarginOrderTypes } from '@/core/marginOrder'
+import type { MarginOrderType, MarginProduct, WalletAccount } from '@/core/types'
 
 export interface SpotOrderInput {
   symbol: string
@@ -18,6 +19,8 @@ export interface MarginOrderInput {
   marginMode: 'cross' | 'isolated'
   leverage: number
   marginAmount: number
+  orderType: MarginOrderType
+  price?: string
   idempotencyKey?: string
 }
 
@@ -37,6 +40,7 @@ interface BackendMarginProduct {
   max_leverage?: string | number
   min_margin?: string | number
   max_margin?: string | number | null
+  price_precision?: string | number
 }
 
 interface BackendMarginTradingCapabilities {
@@ -65,7 +69,10 @@ export interface MarginPosition {
   marginAmount: number
   notionalAmount: number
   leverage: number
-  entryPrice: number
+  orderType: MarginOrderType
+  entryPrice: number | null
+  /** Preserve the backend DECIMAL text so a pending order's exact trigger intent is not rounded by JS. */
+  limitPrice: string | null
   realizedPnl: number
   interestAmount: number
   status: string
@@ -137,6 +144,7 @@ export async function cancelAllSpotOrders(orderIds: string[]): Promise<void> {
 
 export async function fetchMarginProducts(): Promise<MarginProduct[]> {
   const response = await client.get<{ products?: BackendMarginProduct[]; capabilities?: BackendMarginTradingCapabilities }>(requestUrl('/margin/products'))
+  const orderTypes = parseMarginOrderTypes(response.data.capabilities?.order_types)
   return (response.data.products || []).map((product) => {
     const pair = splitSymbol(product.symbol)
     const modes = resolveMarginModes(response.data.capabilities?.margin_modes, product.margin_modes, product.margin_mode)
@@ -149,6 +157,8 @@ export async function fetchMarginProducts(): Promise<MarginProduct[]> {
       marginAssetSymbol: (product.margin_asset_symbol || pair.quote).toUpperCase(),
       marginMode: modes[0] || 'isolated',
       marginModes: modes,
+      orderTypes: [...orderTypes],
+      pricePrecision: nonNegativeInteger(product.price_precision),
       leverageLevels: levels,
       maxLeverage: asNumber(product.max_leverage, levels.at(-1) || 1),
       minMargin: marginLimits.minMargin,
@@ -158,15 +168,21 @@ export async function fetchMarginProducts(): Promise<MarginProduct[]> {
 }
 
 export async function placeMarginOrder(input: MarginOrderInput): Promise<void> {
-  await client.post(requestUrl('/margin/positions'), {
+  const payload: Record<string, number | string> = {
     product_id: input.productId,
     direction: input.side,
-    order_type: 'market',
+    order_type: input.orderType,
     margin_mode: input.marginMode,
     margin_amount: String(input.marginAmount),
     leverage: String(input.leverage),
     idempotency_key: input.idempotencyKey || createMarginOrderIdempotencyKey(),
-  })
+  }
+  if (input.orderType === 'limit') {
+    const price = input.price?.trim()
+    if (!price) throw new TypeError('margin limit order requires a frozen price')
+    payload.price = price
+  }
+  await client.post(requestUrl('/margin/positions'), payload)
 }
 
 export function createMarginOrderIdempotencyKey(): string {
@@ -290,11 +306,31 @@ function mapMarginPosition(position: Record<string, unknown>): MarginPosition {
     marginAmount: asNumber(position.margin_amount),
     notionalAmount: asNumber(position.notional_amount),
     leverage: asNumber(position.leverage, 1),
-    entryPrice: asNumber(position.entry_price),
+    orderType: String(position.order_type || '').trim().toLowerCase() === 'limit' ? 'limit' : 'market',
+    entryPrice: optionalNumber(position.entry_price),
+    limitPrice: optionalDecimalString(position.limit_price),
     realizedPnl: asNumber(position.realized_pnl),
     interestAmount: asNumber(position.interest_amount),
     status: String(position.status || 'open'),
   }
+}
+
+function optionalNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null
+  const parsed = asNumber(value, Number.NaN)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function optionalDecimalString(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') return null
+  const normalized = String(value).trim()
+  if (!normalized || !Number.isFinite(Number(normalized))) return null
+  return normalized
+}
+
+function nonNegativeInteger(value: unknown): number | null {
+  const parsed = typeof value === 'string' && value.trim() ? Number(value) : value
+  return typeof parsed === 'number' && Number.isInteger(parsed) && parsed >= 0 ? parsed : null
 }
 
 function uniqueSpotOrders(orders: SpotOrder[]): SpotOrder[] {

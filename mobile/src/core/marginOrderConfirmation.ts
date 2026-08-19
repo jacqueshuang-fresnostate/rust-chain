@@ -1,7 +1,10 @@
 import {
   validateMarginAmount,
+  validateMarginLimitPrice,
   type MarginAmountValidation,
+  type MarginLimitPriceValidation,
 } from './tradeForm.ts'
+import type { MarginOrderType } from './types.ts'
 
 export interface MarginOrderReviewInput {
   productId: number
@@ -9,6 +12,9 @@ export interface MarginOrderReviewInput {
   marginMode: 'cross' | 'isolated'
   leverage: number
   marginAmount: number
+  orderType: MarginOrderType | null
+  limitPrice: string
+  pricePrecision?: number | null
   idempotencyKey?: string
   minMargin?: number
   maxMargin?: number | null
@@ -21,6 +27,8 @@ export interface MarginOrderRequest {
   marginMode: 'cross' | 'isolated'
   leverage: number
   marginAmount: number
+  orderType: MarginOrderType
+  price?: string
   idempotencyKey?: string
 }
 
@@ -30,6 +38,7 @@ export interface MarginOrderReview {
   estimatedNotional: number
   estimatedQuantity: number
   marginAmountValidation: MarginAmountValidation
+  limitPriceValidation: MarginLimitPriceValidation
   request: MarginOrderRequest
 }
 
@@ -37,13 +46,18 @@ export type MarginOrderBackendBoundaryError = 'below-minimum' | 'above-maximum'
 
 /**
  * Builds the contract review and API input from one set of current form values.
- * The live market price is review-only because margin positions execute at market.
+ * The reference ticker, limit intent and idempotency key are copied into one immutable review.
+ * A limit price is only a trigger boundary; estimated quantity still uses the frozen live reference.
  */
 export function createMarginOrderReview(input: MarginOrderReviewInput): MarginOrderReview {
   const marginAmountValidation = validateMarginAmount({
     amount: input.marginAmount,
     minMargin: input.minMargin ?? 0,
     maxMargin: input.maxMargin,
+  })
+  const limitPriceValidation = validateMarginLimitPrice({
+    price: input.limitPrice,
+    pricePrecision: input.pricePrecision,
   })
   const rawEstimatedNotional = Number.isFinite(input.marginAmount)
     && input.marginAmount > 0
@@ -64,19 +78,28 @@ export function createMarginOrderReview(input: MarginOrderReviewInput): MarginOr
     marginMode: input.marginMode,
     leverage: input.leverage,
     marginAmount: input.marginAmount,
+    orderType: input.orderType || 'market',
+    ...(input.orderType === 'limit' && limitPriceValidation.normalized
+      ? { price: limitPriceValidation.normalized }
+      : {}),
     ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
   }
 
   return {
     isValid: Number.isFinite(input.productId)
       && input.productId > 0
+      && input.orderType !== null
       && marginAmountValidation.isValid
+      && (input.orderType !== 'limit' || limitPriceValidation.isValid)
+      && Number.isFinite(input.referencePrice)
+      && input.referencePrice > 0
       && estimatedNotional > 0
       && estimatedQuantity > 0,
     referencePrice: input.referencePrice,
     estimatedNotional,
     estimatedQuantity,
     marginAmountValidation,
+    limitPriceValidation,
     request,
   }
 }

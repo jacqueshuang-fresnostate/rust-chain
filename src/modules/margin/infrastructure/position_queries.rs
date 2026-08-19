@@ -83,9 +83,9 @@ pub(crate) async fn list_user_margin_positions(
     let mut builder = QueryBuilder::<MySql>::new(
         r#"SELECT positions.id, positions.user_id, positions.product_id, positions.pair_id,
                   positions.margin_asset, positions.wallet_scope, positions.margin_mode,
-                  positions.direction, positions.margin_amount, positions.leverage,
+                  positions.direction, positions.order_type, positions.margin_amount, positions.leverage,
                   positions.notional_amount, positions.borrowed_amount, positions.interest_amount,
-                  positions.entry_price, positions.exit_price, positions.realized_pnl,
+                  positions.entry_price, positions.limit_price, positions.exit_price, positions.realized_pnl,
                   positions.closed_at, positions.status, positions.idempotency_key
            FROM margin_positions positions
            WHERE positions.user_id = "#,
@@ -168,8 +168,8 @@ pub(crate) async fn load_user_position_by_id(
     position_id: u64,
 ) -> AppResult<Option<MarginPositionResponse>> {
     sqlx::query_as::<_, MarginPositionResponse>(
-        r#"SELECT id, user_id, product_id, pair_id, margin_asset, wallet_scope, margin_mode, direction, margin_amount,
-                  leverage, notional_amount, borrowed_amount, interest_amount, entry_price,
+        r#"SELECT id, user_id, product_id, pair_id, margin_asset, wallet_scope, margin_mode, direction, order_type, margin_amount,
+                  leverage, notional_amount, borrowed_amount, interest_amount, entry_price, limit_price,
                   exit_price, realized_pnl, closed_at, status, idempotency_key
            FROM margin_positions
            WHERE id = ? AND user_id = ?
@@ -198,23 +198,24 @@ pub(crate) async fn list_admin_margin_positions(
     offset: u32,
 ) -> AppResult<(Vec<AdminMarginPositionResponse>, i64)> {
     let mut rows = QueryBuilder::<MySql>::new(
-        r#"SELECT id, user_id, product_id, pair_id, margin_asset, wallet_scope, margin_mode, direction, margin_amount,
-                  leverage, notional_amount, borrowed_amount, interest_amount, entry_price,
+        r#"SELECT id, user_id, product_id, pair_id, margin_asset, wallet_scope, margin_mode, direction, order_type, margin_amount,
+                  leverage, notional_amount, borrowed_amount, interest_amount, entry_price, limit_price,
                   exit_price, realized_pnl, closed_at, liquidated_at, liquidation_reason, status,
                   idempotency_key
            FROM margin_positions"#,
     );
     let mut total = QueryBuilder::<MySql>::new("SELECT COUNT(*) FROM margin_positions");
     for builder in [&mut rows, &mut total] {
-        push_admin_margin_position_filters(builder, user_id, email.clone(), pair_id, status);
+        push_admin_margin_position_filters(builder, user_id, email.clone(), pair_id, status, false);
     }
 
     fetch_admin_page(pool, rows, total, " ORDER BY id DESC", limit, offset).await
 }
 
-/// 向后台仓位查询追加四个可选筛选条件，是明细分页与利息汇总共用的唯一谓词来源。
+/// 向后台仓位查询追加四个可选筛选条件及可选的「仅已成交」边界，是明细分页与利息汇总共用的唯一谓词来源。
 /// 先落一个恒真的 `WHERE 1 = 1`，后续条件无需判断是不是第一个即可统一用 AND 拼接。
 /// 用户标识、交易对和状态都走参数化绑定；邮箱条件交由共享助手拼成 EXISTS 子查询。
+/// 后台仓位明细传 false 以继续展示待成交委托；利息汇总传 true，禁止把 `entry_price IS NULL` 的挂单借款快照计入资金费口径。
 /// 因为行查询和 COUNT 查询都调用它，新增筛选维度时不可能只改一侧而造成总数口径偏差。
 fn push_admin_margin_position_filters(
     builder: &mut QueryBuilder<'_, MySql>,
@@ -222,8 +223,12 @@ fn push_admin_margin_position_filters(
     email: Option<String>,
     pair_id: Option<u64>,
     status: Option<&str>,
+    filled_only: bool,
 ) {
     builder.push(" WHERE 1 = 1");
+    if filled_only {
+        builder.push(" AND entry_price IS NOT NULL");
+    }
     if let Some(user_id) = user_id {
         builder.push(" AND user_id = ");
         builder.push_bind(user_id);
@@ -247,8 +252,8 @@ pub(crate) async fn load_admin_margin_position_by_id(
     position_id: u64,
 ) -> AppResult<Option<AdminMarginPositionResponse>> {
     sqlx::query_as::<_, AdminMarginPositionResponse>(
-        r#"SELECT id, user_id, product_id, pair_id, margin_asset, wallet_scope, margin_mode, direction, margin_amount,
-                  leverage, notional_amount, borrowed_amount, interest_amount, entry_price,
+        r#"SELECT id, user_id, product_id, pair_id, margin_asset, wallet_scope, margin_mode, direction, order_type, margin_amount,
+                  leverage, notional_amount, borrowed_amount, interest_amount, entry_price, limit_price,
                   exit_price, realized_pnl, closed_at, liquidated_at, liquidation_reason, status,
                   idempotency_key
            FROM margin_positions
@@ -261,7 +266,7 @@ pub(crate) async fn load_admin_margin_position_by_id(
     .map_err(AppError::from)
 }
 
-/// 后台资金费汇总：分组行与分组总数共用同一组谓词，总数按分组键去重统计。
+/// 后台资金费汇总：只聚合已成交仓位，分组行与分组总数共用同一组谓词，总数按分组键去重统计。
 /// 按同一筛选聚合仓位利息与分页总数，该查询不执行计提。
 ///
 /// 按保证金币种与仓位状态两列分组，输出仓位笔数、借款额合计和已计提利息合计。
@@ -287,7 +292,7 @@ pub(crate) async fn list_admin_interest_summary(
         "SELECT COUNT(DISTINCT margin_asset, status) FROM margin_positions",
     );
     for builder in [&mut rows, &mut total] {
-        push_admin_margin_position_filters(builder, user_id, email.clone(), pair_id, status);
+        push_admin_margin_position_filters(builder, user_id, email.clone(), pair_id, status, true);
     }
     // 分组键 (margin_asset, status) 本身唯一，排序无需再补主键。
     rows.push(" GROUP BY margin_asset, status");
