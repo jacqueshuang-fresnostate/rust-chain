@@ -82,6 +82,7 @@ describe('adminRoutes', () => {
     ['agents', 'AgentManagementPage'],
     ['dashboard', 'DashboardPage'],
     ['config-center', 'ConfigCenterPage'],
+    ['support', 'AdminSupportPage'],
     ['audit-logs', 'AuditLogsPage'],
     ['new-coins/actions', 'NewCoinActions'],
     ['prediction/settings', 'PredictionSettingsPage'],
@@ -126,6 +127,7 @@ describe('adminRoutes', () => {
     ['prediction/sync', 'prediction.sync.read'],
     ['account/security', 'account.security.read'],
     ['config-center', 'config_center.read'],
+    ['support', 'support.conversations.read'],
     ['audit-logs', 'audit.logs.read']
   ])('keeps the %s route behind %s', (path, permission) => {
     expect(routePermission(path)).toBe(permission);

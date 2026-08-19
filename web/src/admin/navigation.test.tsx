@@ -32,6 +32,9 @@ describe('admin navigation registry', () => {
     expect(adminNavItems).toContainEqual(
       expect.objectContaining({ label: '配置中心', path: '/admin/config-center' })
     );
+    expect(adminNavItems).toContainEqual(
+      expect.objectContaining({ label: '在线客服', path: '/admin/support' })
+    );
     const users = adminNavItems.find((item) => item.label === '用户与代理');
     const prediction = adminNavItems.find((item) => item.label === '竞猜管理');
     const system = adminNavItems.find((item) => item.label === '系统配置');

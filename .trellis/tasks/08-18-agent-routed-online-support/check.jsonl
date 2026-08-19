@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Verify architecture, detailed Chinese contracts, lint, clippy, and tests."}
+{"file": ".trellis/spec/backend/agent-hierarchy.md", "reason": "Verify direct owner routing does not leak across agents or mutate hierarchy semantics."}
+{"file": ".trellis/spec/backend/realtime-websockets.md", "reason": "Verify REST recovery and best-effort event behavior."}
+{"file": ".trellis/spec/admin/ui-system.md", "reason": "Verify web workbench behavior and quality gates."}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "Verify route and locale completeness."}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Verify mobile API contracts and auth handling."}
+{"file": ".trellis/tasks/08-18-agent-routed-online-support/research/existing-support-and-agent-routing.md", "reason": "Check implementation against discovered edge cases."}

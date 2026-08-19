@@ -30,6 +30,7 @@ const ReferralsView = () => import('@/views/ReferralsView.vue')
 const SecurityView = () => import('@/views/SecurityView.vue')
 const SecondsHistoryView = () => import('@/views/SecondsHistoryView.vue')
 const SecondsView = () => import('@/views/SecondsView.vue')
+const SupportChatView = () => import('@/views/SupportChatView.vue')
 const SwapView = () => import('@/views/SwapView.vue')
 const EarnView = () => import('@/views/EarnView.vue')
 const TradeView = () => import('@/views/TradeView.vue')
@@ -61,6 +62,7 @@ const router = createRouter({
     { path: '/orders', name: 'orders', component: OrdersView, meta: { depth: 1, backFallback: '/' } },
     { path: '/profile', name: 'profile', component: ProfileView, meta: { depth: 0 } },
     { path: '/profile/help', name: 'help-support', component: HelpSupportView, meta: { showBottomNav: false, depth: 1, backFallback: '/profile' } },
+    { path: '/profile/help/chat', name: 'support-chat', component: SupportChatView, meta: { showBottomNav: false, depth: 2, backFallback: '/profile/help' } },
     { path: '/profile/language', name: 'language', component: LanguageView, meta: { showBottomNav: false, depth: 1, backFallback: '/profile' } },
     { path: '/profile/kyc', name: 'kyc', component: KycView, meta: { showBottomNav: false, depth: 1, backFallback: '/profile' } },
     { path: '/profile/security', name: 'security', component: SecurityView, meta: { showBottomNav: false, depth: 1, backFallback: '/profile' } },

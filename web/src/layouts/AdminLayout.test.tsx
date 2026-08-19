@@ -23,6 +23,7 @@ function renderAdminLayout(initialEntry = '/admin/dashboard', access: AdminAcces
         element: <AdminLayout />,
         children: [
           { path: 'dashboard', element: <div>仪表盘内容</div> },
+          { path: 'support', element: <div>在线客服内容</div> },
           { path: 'users', element: <div>用户内容</div> },
           { path: 'users/kyc/reviews', element: <div>KYC 审核队列内容</div> },
           { path: 'users/kyc/settings', element: <div>KYC 规则配置内容</div> },
@@ -62,7 +63,7 @@ describe('AdminLayout', () => {
   it('renders the Chinese admin navigation labels', () => {
     renderAdminLayout();
 
-    ['总览仪表盘', '审计日志'].forEach((label) => {
+    ['总览仪表盘', '在线客服', '审计日志'].forEach((label) => {
       expect(screen.getByRole('menuitem', { name: label })).toBeInTheDocument();
     });
 
@@ -144,6 +145,13 @@ describe('AdminLayout', () => {
     expect(groupButton).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByRole('menuitem', { name: '新闻中心' })).toHaveClass('semi-navigation-item-selected');
     expect(screen.getByText('新闻内容')).toBeInTheDocument();
+  });
+
+  it('activates the online support navigation entry', () => {
+    renderAdminLayout('/admin/support');
+
+    expect(screen.getByRole('menuitem', { name: '在线客服' })).toHaveClass('semi-navigation-item-selected');
+    expect(screen.getByText('在线客服内容')).toBeInTheDocument();
   });
 
   it('activates the country configuration navigation entry', () => {

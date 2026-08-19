@@ -26,5 +26,6 @@ pub mod risk;
 pub mod seconds_contract;
 pub mod security;
 pub mod spot;
+pub mod support;
 pub mod user;
 pub mod wallet;

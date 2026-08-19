@@ -36,6 +36,7 @@ describe('admin access mapping', () => {
     expect(adminReadPermissionForPath('/admin/prediction/assets')).toBe('prediction.settings.read');
     expect(adminReadPermissionForPath('/admin/account/security')).toBe('account.security.read');
     expect(adminReadPermissionForPath('/admin/config-center')).toBe('config_center.read');
+    expect(adminReadPermissionForPath('/admin/support')).toBe('support.conversations.read');
     expect(adminReadPermissionForPath('/admin/not-mapped')).toBe('admin.unmapped.read');
   });
 
@@ -43,6 +44,7 @@ describe('admin access mapping', () => {
     expect(adminMutationPermissionsForEndpoint('/admin/api/v1/market-pairs')).toContain('market.pairs.write');
     expect(adminMutationPermissionsForEndpoint('/admin/api/v1/new-coins')).toContain('new_coin.projects.write');
     expect(adminMutationPermissionsForEndpoint('/admin/api/v1/config-center')).toContain('config_center.write');
+    expect(adminMutationPermissionsForEndpoint('/admin/api/v1/support/conversations/11/messages')).toContain('support.conversations.write');
     expect(adminMutationPermissionsForEndpoint('/admin/api/v1/not-mapped')).toContain('admin.unmapped.write');
   });
 });

@@ -44,6 +44,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(modules::loan::user_routes())
         .merge(modules::prediction::user_routes())
         .merge(modules::news::routes::routes())
+        .merge(modules::support::routes::user_routes())
         .merge(modules::events::routes::routes());
 
     let admin_api = Router::new()
@@ -57,13 +58,16 @@ pub fn build_router(state: AppState) -> Router {
         .merge(modules::earn::routes::admin_routes())
         .merge(modules::loan::admin_routes())
         .merge(modules::prediction::admin_routes())
+        .merge(modules::support::routes::admin_routes())
         .layer(middleware::from_fn(
             infra::admin_request_context::admin_request_context_middleware,
         ));
 
     let agent_api = Router::new()
         .merge(modules::auth::routes::agent_routes())
-        .merge(modules::agent::routes::routes());
+        .merge(modules::agent::routes::routes())
+        .merge(modules::support::routes::agent_routes())
+        .merge(modules::events::routes::agent_routes());
 
     Router::new()
         .route("/health", get(health))

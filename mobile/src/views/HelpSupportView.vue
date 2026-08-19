@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, type Component } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   ArrowLeftRight,
   ChevronDown,
@@ -22,9 +23,9 @@ type HelpFaq = {
 }
 
 const { t } = useI18n()
+const router = useRouter()
 const query = ref('')
 const expandedFaqId = ref('')
-const supportChatUrl = configuredHttpUrl(import.meta.env.VITE_SUPPORT_CHAT_URL)
 const supportEmail = configuredEmail(import.meta.env.VITE_SUPPORT_EMAIL)
 
 const faqs: HelpFaq[] = [
@@ -58,17 +59,6 @@ const filteredFaqs = computed(() => {
     .some((key) => t(key).toLocaleLowerCase().includes(keyword)))
 })
 
-function configuredHttpUrl(value: unknown): string {
-  const candidate = String(value ?? '').trim()
-  if (!candidate) return ''
-  try {
-    const url = new URL(candidate)
-    return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : ''
-  } catch {
-    return ''
-  }
-}
-
 function configuredEmail(value: unknown): string {
   const candidate = String(value ?? '').trim()
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidate) ? candidate : ''
@@ -79,8 +69,7 @@ function toggleFaq(id: string): void {
 }
 
 function openChat(): void {
-  if (!supportChatUrl) return
-  window.open(supportChatUrl, '_blank', 'noopener,noreferrer')
+  void router.push({ name: 'support-chat' })
 }
 
 function openEmail(): void {
@@ -155,17 +144,16 @@ function openEmail(): void {
         <button
           class="help-support-row"
           type="button"
-          :disabled="!supportChatUrl"
           @click="openChat"
         >
           <MessageCircle :size="18" aria-hidden="true" />
           <span class="help-support-row__copy">
             <strong>{{ t('helpSupport.chatTitle') }}</strong>
-            <small>{{ supportChatUrl ? t('helpSupport.channelConfigured') : t('helpSupport.channelUnavailable') }}</small>
+            <small>{{ t('helpSupport.chatDescription') }}</small>
           </span>
           <span class="help-support-row__status">
-            {{ supportChatUrl ? t('helpSupport.openChannel') : t('helpSupport.unavailableShort') }}
-            <ChevronRight v-if="supportChatUrl" :size="16" aria-hidden="true" />
+            {{ t('helpSupport.openChannel') }}
+            <ChevronRight :size="16" aria-hidden="true" />
           </span>
         </button>
         <button

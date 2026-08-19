@@ -238,7 +238,7 @@ pub(crate) async fn list_admin_agent_users(
 }
 
 /// 把用户改派到指定启用代理，并重算该用户及其后代邀请路径、深度和根代理归属。
-/// 用户、目标代理、原邀请关系与审计同事务锁定和写入；任一步失败整体回滚，重复改派仍会产生审计。
+/// 用户、目标代理、原邀请关系、整棵迁移子树的已有客服会话与审计同事务锁定和写入；任一步失败整体回滚，重复改派仍会产生审计。
 /// 加锁顺序固定为先用户、再目标代理层级节点与代理主行、最后原邀请关系，以避免并发改派互相形成环等待。
 /// 目标代理编号为 0 直接判为校验错误，代理存在但状态不是 active 则返回冲突，因此停用代理无法接收新用户。
 /// 后代迁移只在该用户原本已有邀请关系时触发，首次建立归属的用户不存在需要重挂的下级。
@@ -294,6 +294,13 @@ pub(crate) async fn assign_admin_user_agent(
         )
         .await?;
     }
+    crate::modules::support::application::synchronize_conversation_subtree_assignments_in_tx(
+        &mut tx,
+        user_id,
+        request.agent_id,
+        &path,
+    )
+    .await?;
     let after = load_user_referral_in_tx(&mut tx, user_id).await?;
     insert_admin_audit_log_entry_in_tx(
         &mut tx,

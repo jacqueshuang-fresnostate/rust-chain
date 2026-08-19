@@ -13,6 +13,7 @@ function renderAgentLayout(initialEntry = '/agent/dashboard') {
         element: <AgentLayout />,
         children: [
           { path: 'dashboard', element: <div>代理总览内容</div> },
+          { path: 'support', element: <div>在线客服内容</div> },
           { path: 'users', element: <div>团队用户内容</div> }
         ]
       },
@@ -37,7 +38,7 @@ describe('AgentLayout', () => {
   it('renders the agent navigation labels and subject', () => {
     renderAgentLayout();
 
-    ['总览', '团队用户', '邀请码', '佣金记录', '闪兑统计', '团队树', '下级代理'].forEach((label) => {
+    ['总览', '在线客服', '团队用户', '邀请码', '佣金记录', '闪兑统计', '团队树', '下级代理'].forEach((label) => {
       expect(screen.getByRole('menuitem', { name: label })).toBeInTheDocument();
     });
     expect(screen.getByText('agent:9')).toBeInTheDocument();
@@ -50,6 +51,14 @@ describe('AgentLayout', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: '团队用户' }));
 
     expect(await screen.findByText('团队用户内容')).toBeInTheDocument();
+  });
+
+  it('opens the online support workbench from the sidebar', async () => {
+    renderAgentLayout();
+
+    fireEvent.click(screen.getByRole('menuitem', { name: '在线客服' }));
+
+    expect(await screen.findByText('在线客服内容')).toBeInTheDocument();
   });
 
   it('clears only the agent session on logout', async () => {

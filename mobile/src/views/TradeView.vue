@@ -5,13 +5,13 @@ import { useI18n } from 'vue-i18n'
 import {
   ArrowLeft,
   ArrowLeftRight,
-  BriefcaseBusiness,
   CheckCircle2,
   ChevronDown,
   CirclePlus,
   Download,
   History,
   Info,
+  Inbox,
   List,
   RefreshCcw,
   Share2,
@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-vue-next'
 import AssetMark from '@/components/AssetMark.vue'
+import ContractTradeSheets from '@/components/ContractTradeSheets.vue'
 import MobileMarketChart from '@/components/MobileMarketChart.vue'
 import OrderBookPanel from '@/components/OrderBookPanel.vue'
 import { apiErrorMessage } from '@/api/client'
@@ -34,12 +35,14 @@ import {
   type MarketKlineInterval,
 } from '@/api/marketSocketProtocol'
 import {
+  fetchMarginSetting,
   fetchMarginProducts,
   fetchMarginWallets,
   placeMarginOrder,
   placeSpotOrder,
   type MarginPosition,
   updateMarginLeverage,
+  updateMarginMode,
 } from '@/api/trading'
 import { fetchWalletAccounts } from '@/api/wallet'
 import { publicMarketWebSocketUrl } from '@/config/app'
@@ -68,7 +71,7 @@ const price = ref('')
 const quantity = ref('')
 const percentage = ref(0)
 const leverage = ref(5)
-const marginMode = ref<'isolated'>('isolated')
+const marginMode = ref<'cross' | 'isolated'>('isolated')
 const products = ref<MarginProduct[]>([])
 const spotWallets = ref<WalletAccount[]>([])
 const marginWallets = ref<WalletAccount[]>([])
@@ -86,10 +89,13 @@ const feedback = ref('')
 const feedbackTone = ref<'success' | 'error'>('error')
 const submitting = ref(false)
 const settingsSaving = ref(false)
+const settingsError = ref('')
+const contractSheet = ref<'pair' | 'leverage' | 'marginMode' | null>(null)
 const depthLoading = ref(false)
 const depthError = ref(false)
 const chartLoading = ref(false)
 const productsLoading = ref(false)
+const productsError = ref(false)
 const balancesLoading = ref(false)
 const balancesError = ref(false)
 const spotOrderTypeOpen = ref(false)
@@ -100,6 +106,7 @@ const reviewButton = ref<HTMLButtonElement | null>(null)
 let returnFocus: HTMLElement | null = null
 let previousBodyOverflow = ''
 let marketRequestVersion = 0
+let marginSettingRequestVersion = 0
 let viewActive = true
 const { trapFocus: trapSpotOrderTypeFocus } = useModalDialog(
   spotOrderTypeOpen,
@@ -277,22 +284,51 @@ async function refreshIntervalKlines(selectedInterval: MarketKlineInterval): Pro
 
 async function loadMarginProducts(): Promise<void> {
   if (mode.value !== 'contract' || !session.isAuthenticated) {
+    marginSettingRequestVersion += 1
     products.value = []
     productsLoading.value = false
+    productsError.value = false
     return
   }
   productsLoading.value = true
+  productsError.value = false
   try {
     products.value = await fetchMarginProducts()
-    const product = selectedProduct.value
-    if (product) {
-      leverage.value = product.leverageLevels.includes(5) ? 5 : product.leverageLevels[0] || 1
-      marginMode.value = 'isolated'
-    }
   } catch {
     products.value = []
+    productsError.value = true
   } finally {
     productsLoading.value = false
+  }
+}
+
+function applyMarginProductDefaults(product: MarginProduct): void {
+  const levels = product.leverageLevels.length ? product.leverageLevels : [product.maxLeverage || 1]
+  leverage.value = levels.includes(5) ? 5 : levels[0] || 1
+  marginMode.value = product.marginModes.includes(product.marginMode)
+    ? product.marginMode
+    : product.marginModes[0] || 'isolated'
+}
+
+async function syncMarginSetting(product: MarginProduct): Promise<void> {
+  const requestVersion = ++marginSettingRequestVersion
+  applyMarginProductDefaults(product)
+  try {
+    const setting = await fetchMarginSetting(product.id)
+    if (
+      requestVersion !== marginSettingRequestVersion
+      || selectedProduct.value?.id !== product.id
+      || mode.value !== 'contract'
+    ) return
+    if (setting.leverage && product.leverageLevels.includes(setting.leverage)) {
+      leverage.value = setting.leverage
+    }
+    if (setting.marginMode && product.marginModes.includes(setting.marginMode)) {
+      marginMode.value = setting.marginMode
+    }
+  } catch (reason) {
+    if (requestVersion !== marginSettingRequestVersion || selectedProduct.value?.id !== product.id) return
+    setFeedback(apiErrorMessage(reason, t('trade.marginSettingLoadFailed')))
   }
 }
 
@@ -370,6 +406,36 @@ function openPairPicker(): void {
   void router.push({ name: 'markets', query: { purpose: 'trade', mode: mode.value } })
 }
 
+function openContractSheet(sheet: 'pair' | 'leverage' | 'marginMode'): void {
+  if (!session.isAuthenticated) {
+    openLogin()
+    return
+  }
+  if (sheet !== 'pair' && !selectedProduct.value) {
+    setFeedback(t('trade.unavailableContract'))
+    return
+  }
+  settingsError.value = ''
+  contractSheet.value = sheet
+}
+
+function closeContractSheet(): void {
+  if (!settingsSaving.value) contractSheet.value = null
+}
+
+function selectContractPair(symbol: string): void {
+  if (settingsSaving.value) return
+  contractSheet.value = null
+  const routeSymbol = symbol.replace('/', '_')
+  navigation.rememberTradeSymbol(routeSymbol)
+  navigation.rememberTradeMode('contract')
+  void router.replace({
+    name: 'trade',
+    params: { symbol: routeSymbol },
+    query: { mode: 'contract' },
+  })
+}
+
 function toggleFavorite(): void {
   if (!session.isAuthenticated) {
     openLogin()
@@ -441,27 +507,61 @@ function openOrders(tab: 'spot' | 'positions' | 'history' = 'spot'): void {
   void router.push({ name: 'orders', query: { tab } })
 }
 
-async function changeLeverage(): Promise<void> {
+async function applyContractLeverage(nextLeverage: number): Promise<void> {
   const product = selectedProduct.value
   if (!product) {
     setFeedback(t('trade.unavailableContract'))
     return
   }
-  const levels = product.leverageLevels.length ? product.leverageLevels : [product.maxLeverage]
   if (!session.isAuthenticated) {
     openLogin()
     return
   }
-  const nextIndex = (levels.indexOf(leverage.value) + 1) % levels.length
-  const nextLeverage = levels[nextIndex]
+  if (!product.leverageLevels.includes(nextLeverage)) {
+    settingsError.value = t('trade.invalidLeverageSelection')
+    return
+  }
   settingsSaving.value = true
+  settingsError.value = ''
   feedback.value = ''
   try {
     await updateMarginLeverage(product.id, nextLeverage)
     leverage.value = nextLeverage
+    contractSheet.value = null
     setFeedback(t('trade.leverageChanged'), 'success')
   } catch (reason) {
-    setFeedback(apiErrorMessage(reason, t('trade.leverageChangeFailed')))
+    settingsError.value = apiErrorMessage(reason, t('trade.leverageChangeFailed'))
+    setFeedback(settingsError.value)
+  } finally {
+    settingsSaving.value = false
+  }
+}
+
+async function applyContractMarginMode(nextMode: 'cross' | 'isolated'): Promise<void> {
+  const product = selectedProduct.value
+  if (!product) {
+    setFeedback(t('trade.unavailableContract'))
+    return
+  }
+  if (!session.isAuthenticated) {
+    openLogin()
+    return
+  }
+  if (!product.marginModes.includes(nextMode)) {
+    settingsError.value = t('trade.invalidMarginModeSelection')
+    return
+  }
+  settingsSaving.value = true
+  settingsError.value = ''
+  feedback.value = ''
+  try {
+    await updateMarginMode(product.id, nextMode)
+    marginMode.value = nextMode
+    contractSheet.value = null
+    setFeedback(t('trade.marginModeChanged'), 'success')
+  } catch (reason) {
+    settingsError.value = apiErrorMessage(reason, t('trade.marginModeChangeFailed'))
+    setFeedback(settingsError.value)
   } finally {
     settingsSaving.value = false
   }
@@ -587,11 +687,24 @@ watch(pairSymbol, (symbol) => {
 watch(() => route.query.mode, (nextMode) => {
   mode.value = nextMode === 'contract' ? 'contract' : 'spot'
   if (mode.value === 'contract') closeSpotOrderTypeSheet()
+  else {
+    contractSheet.value = null
+    settingsError.value = ''
+  }
   navigation.rememberTradeMode(mode.value)
   percentage.value = 0
   quantity.value = ''
   void loadMarginProducts()
 }, { immediate: true })
+
+watch(() => [mode.value, session.isAuthenticated, selectedProduct.value?.id] as const, () => {
+  const product = selectedProduct.value
+  if (mode.value !== 'contract' || !session.isAuthenticated || !product) {
+    marginSettingRequestVersion += 1
+    return
+  }
+  void syncMarginSetting(product)
+})
 
 watch([mode, () => session.isAuthenticated], () => {
   void loadTradingBalances()
@@ -618,6 +731,7 @@ watch(confirmOpen, async (open) => {
 
 onBeforeUnmount(() => {
   viewActive = false
+  marginSettingRequestVersion += 1
   marketStore.stopLiveUpdates('trade')
   detailStreamSession.stop()
   if (confirmOpen.value) document.body.style.overflow = previousBodyOverflow
@@ -975,15 +1089,26 @@ onBeforeUnmount(() => {
             <ArrowLeft :size="22" aria-hidden="true" />
           </button>
           <div class="trade-quote">
-            <button class="contract-pair-selector" type="button" :aria-label="t('markets.pickerTitle')" @click="openPairPicker">
-              <span>
-                <strong>{{ pairSymbol.replace('/', '') }}</strong>
-                <ChevronDown :size="14" aria-hidden="true" />
+            <button
+              class="contract-pair-selector"
+              type="button"
+              :aria-label="t('markets.pickerTitle')"
+              aria-haspopup="dialog"
+              :aria-expanded="contractSheet === 'pair'"
+              aria-controls="contract-pair-dialog"
+              @click="openContractSheet('pair')"
+            >
+              <AssetMark :symbol="baseAsset" :src="ticker?.iconUrl" :fallback-src="ticker?.baseIconUrl" :size="24" />
+              <span class="contract-pair-selector__copy">
+                <span>
+                  <strong>{{ pairSymbol.replace('/', '') }}</strong>
+                  <ChevronDown :size="14" aria-hidden="true" />
+                </span>
+                <small class="numeric" :class="(ticker?.changePercent || 0) >= 0 ? 'positive' : 'negative'">
+                  {{ t('trade.perpetualShort') }}
+                  {{ ticker ? `${ticker.changePercent >= 0 ? '+' : ''}${ticker.changePercent.toFixed(2)}%` : '--' }}
+                </small>
               </span>
-              <small class="numeric" :class="(ticker?.changePercent || 0) >= 0 ? 'positive' : 'negative'">
-                {{ t('trade.perpetual') }}
-                {{ ticker ? `${ticker.changePercent >= 0 ? '+' : ''}${ticker.changePercent.toFixed(2)}%` : '' }}
-              </small>
             </button>
           </div>
           <button
@@ -1012,8 +1137,8 @@ onBeforeUnmount(() => {
         >
           <div class="chart-panel trade-chart-panel">
             <div class="contract-book-status">
-              <span>{{ t('trade.restAndSocket') }}</span>
-              <strong>{{ liveDetailActive ? t('trade.depthLive') : t('trade.depthSnapshot') }}</strong>
+              <span>{{ t('trade.fundingAndCountdown') }}</span>
+              <strong class="numeric">-- / --</strong>
             </div>
             <div class="trade-order-book">
               <OrderBookPanel
@@ -1025,6 +1150,8 @@ onBeforeUnmount(() => {
                 :loading="depthLoading"
                 :quote-asset="quoteAsset"
                 layout="mini"
+                :mini-levels="6"
+                :show-mini-precision="false"
               />
             </div>
             <p class="chart-semantic-summary">
@@ -1035,19 +1162,33 @@ onBeforeUnmount(() => {
           <div class="trade-console">
             <div class="contract-open-close" role="group" :aria-label="t('orders.stateCategory')">
               <button type="button" class="active" aria-pressed="true">
-                {{ t('ledger.typeMarginOpen') }}
+                {{ t('trade.openPositionShort') }}
               </button>
               <button type="button" aria-pressed="false" @click="openOrders('positions')">
-                {{ t('ledger.typeMarginClose') }}
+                {{ t('trade.closePositionShort') }}
               </button>
             </div>
 
             <div class="contract-mode-row" :aria-label="t('trade.settings')">
-              <button type="button" disabled>
-                <span>{{ t('trade.isolated') }}</span>
+              <button
+                type="button"
+                aria-haspopup="dialog"
+                :aria-expanded="contractSheet === 'marginMode'"
+                aria-controls="contract-marginMode-dialog"
+                :disabled="settingsSaving || productsLoading || !selectedProduct"
+                @click="openContractSheet('marginMode')"
+              >
+                <span>{{ t(marginMode === 'cross' ? 'trade.cross' : 'trade.isolated') }}</span>
                 <ChevronDown :size="12" aria-hidden="true" />
               </button>
-              <button type="button" :disabled="settingsSaving || productsLoading" @click="changeLeverage">
+              <button
+                type="button"
+                aria-haspopup="dialog"
+                :aria-expanded="contractSheet === 'leverage'"
+                aria-controls="contract-leverage-dialog"
+                :disabled="settingsSaving || productsLoading || !selectedProduct"
+                @click="openContractSheet('leverage')"
+              >
                 <span class="numeric">{{ leverage }}x</span>
                 <ChevronDown :size="12" aria-hidden="true" />
               </button>
@@ -1076,17 +1217,17 @@ onBeforeUnmount(() => {
                 />
               </label>
               <button type="button" :aria-label="t('marketDetail.latestPrice')" @click="price = String(currentPrice || '')">
-                {{ t('trade.marketPrice') }}
+                {{ t('trade.bestBidOffer') }}
               </button>
             </div>
 
             <label class="contract-field contract-amount-field">
-              <span>{{ t('trade.marginField', { asset: availableAsset }) }}</span>
+              <span class="sr-only">{{ t('trade.marginField', { asset: availableAsset }) }}</span>
               <input
                 v-model="quantity"
                 class="numeric"
                 inputmode="decimal"
-                :placeholder="t('trade.quantityPlaceholder')"
+                :placeholder="t('trade.marginAmountShort')"
               />
               <b>{{ availableAsset }}</b>
             </label>
@@ -1121,7 +1262,10 @@ onBeforeUnmount(() => {
                   <button type="button" :disabled="balancesLoading" @click="loadTradingBalances">{{ t('common.retry') }}</button>
                 </dd>
                 <dd v-else class="numeric">
-                  {{ balancesLoading ? t('trade.loadBalance') : `${formatAmount(availableBalance)} ${availableAsset}` }}
+                  <button type="button" class="contract-balance-action" @click="openAssets">
+                    <span>{{ balancesLoading ? t('trade.loadBalance') : `${formatAmount(availableBalance)} ${availableAsset}` }}</span>
+                    <CirclePlus v-if="!balancesLoading" :size="11" aria-hidden="true" />
+                  </button>
                 </dd>
               </div>
               <div>
@@ -1146,7 +1290,7 @@ onBeforeUnmount(() => {
               :disabled="submitting || productsLoading || !isLive"
               @click="reviewContractOrder('buy')"
             >
-              {{ t('trade.longAction', { leverage }) }}
+              {{ t('trade.longActionCompact') }}
             </button>
             <button
               class="contract-submit contract-submit--short"
@@ -1154,7 +1298,7 @@ onBeforeUnmount(() => {
               :disabled="submitting || productsLoading || !isLive"
               @click="reviewContractOrder('sell')"
             >
-              {{ t('trade.shortAction', { leverage }) }}
+              {{ t('trade.shortActionCompact') }}
             </button>
           </div>
         </section>
@@ -1164,7 +1308,7 @@ onBeforeUnmount(() => {
             {{ t('orders.positions') }} ({{ visibleMarginPositions.length }})
           </button>
           <button type="button" @click="openOrders('positions')">
-            {{ t('orders.current') }} <ChevronDown :size="12" aria-hidden="true" />
+            {{ t('trade.contractOrdersTab') }} (0) <ChevronDown :size="12" aria-hidden="true" />
           </button>
           <button type="button" @click="openAssets">{{ t('nav.assets') }}</button>
           <span aria-hidden="true" />
@@ -1188,12 +1332,31 @@ onBeforeUnmount(() => {
           </article>
         </section>
         <section v-else class="contract-position-empty" role="status">
-          <span><BriefcaseBusiness :size="24" aria-hidden="true" /></span>
+          <span><Inbox :size="24" aria-hidden="true" /></span>
           <strong>{{ session.isAuthenticated ? t('orders.noPositions') : t('trade.ordersLoginHint') }}</strong>
           <button v-if="!session.isAuthenticated" type="button" @click="openLogin">{{ t('common.loginNow') }}</button>
         </section>
       </section>
     </template>
+
+    <ContractTradeSheets
+      v-if="!isSpotMode"
+      :open="contractSheet"
+      :pair-symbol="pairSymbol"
+      :product="selectedProduct"
+      :products="products"
+      :leverage="leverage"
+      :margin-mode="marginMode"
+      :saving="settingsSaving"
+      :error="settingsError"
+      :products-loading="productsLoading"
+      :products-error="productsError"
+      @close="closeContractSheet"
+      @select-pair="selectContractPair"
+      @apply-leverage="applyContractLeverage"
+      @apply-margin-mode="applyContractMarginMode"
+      @retry-products="loadMarginProducts"
+    />
 
     <Teleport to="body">
       <div v-if="isSpotMode && spotOrderTypeOpen" class="spot-order-type-layer">
@@ -2839,8 +3002,8 @@ onBeforeUnmount(() => {
   align-items: center;
   background: var(--page);
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) 44px;
-  height: 60px;
+  grid-template-columns: 40px minmax(0, 1fr) 40px;
+  height: 61px;
   padding: 8px 20px;
   position: sticky;
   top: 0;
@@ -2856,6 +3019,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   height: 44px;
   justify-content: center;
+  margin-inline: -2px;
   padding: 0;
   width: 44px;
 }
@@ -2879,15 +3043,22 @@ onBeforeUnmount(() => {
   background: transparent;
   border: 0;
   color: var(--text);
-  display: grid;
-  gap: 2px;
-  justify-items: center;
-  min-height: 40px;
+  display: inline-flex;
+  gap: 4px;
+  justify-content: center;
+  min-height: 44px;
   min-width: 0;
-  padding: 0 8px;
+  padding: 0 4px;
 }
 
-.contract-pair-selector > span {
+.contract-pair-selector__copy {
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+  min-width: 0;
+}
+
+.contract-pair-selector__copy > span {
   align-items: center;
   display: inline-flex;
   gap: 4px;
@@ -2896,7 +3067,7 @@ onBeforeUnmount(() => {
 
 .contract-pair-selector strong {
   font-size: 17px;
-  font-weight: 500;
+  font-weight: 750;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2906,7 +3077,19 @@ onBeforeUnmount(() => {
   font-family: var(--font-geist-mono), var(--data-font), monospace;
   font-size: 10px;
   font-weight: 650;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.contract-pair-selector[aria-expanded='true'] {
+  color: var(--positive);
+}
+
+.contract-pair-selector :deep(.asset-mark) {
+  border: 0;
+  box-shadow: var(--asset-mark-shadow, none);
 }
 
 .contract-pencil-module {
@@ -2920,7 +3103,7 @@ onBeforeUnmount(() => {
 }
 
 .contract-trade .trade-console {
-  background: transparent;
+  background: transparent !important;
   border: 0;
   display: grid;
   gap: 8px;
@@ -2931,7 +3114,7 @@ onBeforeUnmount(() => {
 }
 
 .contract-open-close {
-  background: var(--page);
+  background: var(--surface-elevated);
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   display: grid;
@@ -2946,36 +3129,88 @@ onBeforeUnmount(() => {
   border: 0;
   border-radius: 6px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 650;
+  height: 44px;
+  margin-block: -7px;
   min-width: 0;
   padding: 0 4px;
+  position: relative;
+  z-index: 0;
+}
+
+.contract-open-close button::before {
+  border-radius: 6px;
+  content: "";
+  inset: 7px 0;
+  position: absolute;
+  z-index: -1;
 }
 
 .contract-open-close button.active {
-  background: var(--accent);
+  background: transparent;
   color: var(--on-positive);
+}
+
+.contract-open-close button.active::before {
+  background: var(--accent);
 }
 
 .contract-mode-row {
   display: grid;
   gap: 8px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  height: 36px;
 }
 
 .contract-mode-row button,
-.contract-order-type,
+.contract-order-type {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--text);
+  display: flex;
+  height: 44px;
+  justify-content: space-between;
+  margin-block: -4px;
+  min-width: 0;
+  padding: 0 10px;
+  position: relative;
+  z-index: 0;
+}
+
+.contract-mode-row button::before,
+.contract-order-type::before {
+  background: var(--surface-elevated);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  content: "";
+  inset: 4px 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: -1;
+}
+
+.contract-mode-row button[aria-expanded='true'] {
+  color: var(--positive);
+}
+
+.contract-mode-row button[aria-expanded='true']::before {
+  border-color: var(--accent);
+}
+
 .contract-price-row > button {
   align-items: center;
-  background: var(--page);
+  background: var(--surface-elevated);
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   color: var(--text);
   display: flex;
-  height: 36px;
-  justify-content: space-between;
+  height: 44px;
+  justify-content: center;
   min-width: 0;
-  padding: 0 10px;
+  padding: 0 5px;
 }
 
 .contract-mode-row button:disabled,
@@ -2986,7 +3221,8 @@ onBeforeUnmount(() => {
 
 .contract-mode-row span,
 .contract-order-type span {
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 650;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3014,15 +3250,14 @@ onBeforeUnmount(() => {
 }
 
 .contract-price-row > button {
-  font-size: 10px;
-  height: 44px;
-  justify-content: center;
-  padding-inline: 5px;
+  font-family: var(--font-geist-mono), var(--data-font), monospace;
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .contract-field {
   align-items: center;
-  background: var(--page);
+  background: var(--surface-elevated);
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   display: grid;
@@ -3072,17 +3307,12 @@ onBeforeUnmount(() => {
   padding: 0 10px;
 }
 
-.contract-amount-field > span {
-  grid-column: 1;
-  grid-row: 1;
-}
-
 .contract-amount-field input {
-  font-size: 12px;
+  font-size: 11px;
   grid-column: 1;
   grid-row: 1;
   height: 38px;
-  padding-top: 12px;
+  padding: 0;
 }
 
 .contract-amount-field b {
@@ -3094,13 +3324,14 @@ onBeforeUnmount(() => {
 
 .contract-percentage {
   display: grid;
-  min-height: 22px;
+  height: 14px;
 }
 
 .contract-trade .contract-percentage .percent-row {
   display: grid;
   gap: 0;
   grid-template-columns: repeat(5, minmax(0, 1fr));
+  height: 14px;
   margin: 0;
 }
 
@@ -3109,8 +3340,8 @@ onBeforeUnmount(() => {
   border: 0;
   color: var(--muted);
   font-family: var(--font-geist-mono), var(--data-font), monospace;
-  font-size: 8px;
-  min-height: 22px;
+  font-size: 9px;
+  height: 14px;
   min-width: 0;
   padding: 0;
 }
@@ -3120,11 +3351,15 @@ onBeforeUnmount(() => {
   font-weight: 750;
 }
 
+.contract-trade .contract-percentage .percent-row button::after {
+  display: none;
+}
+
 .contract-trade .contract-percentage .percent-row button {
   background: transparent;
   border: 0;
   color: var(--muted);
-  min-height: 22px;
+  min-height: 14px;
   min-width: 0;
 }
 
@@ -3137,8 +3372,8 @@ onBeforeUnmount(() => {
 .contract-tpsl {
   align-items: center;
   display: flex;
-  font-size: 10px;
-  font-weight: 550;
+  font-size: 11px;
+  font-weight: 500;
   gap: 6px;
   min-height: 16px;
 }
@@ -3152,17 +3387,18 @@ onBeforeUnmount(() => {
 
 .contract-balance-rows {
   display: grid;
-  gap: 5px;
+  gap: 8px;
+  grid-template-rows: 15px 14px;
   margin: 0;
 }
 
 .contract-balance-rows > div {
   align-items: center;
   display: flex;
-  font-size: 9px;
+  font-size: 10px;
   gap: 8px;
   justify-content: space-between;
-  min-height: 14px;
+  min-height: 0;
   min-width: 0;
 }
 
@@ -3183,9 +3419,17 @@ onBeforeUnmount(() => {
   background: transparent;
   border: 0;
   color: var(--text);
-  font-size: 9px;
+  font-size: 10px;
   min-height: 14px;
   padding: 0;
+}
+
+.contract-balance-rows .contract-balance-action {
+  align-items: center;
+  display: inline-flex;
+  font-family: var(--font-geist-mono), var(--data-font), monospace;
+  gap: 3px;
+  justify-content: flex-end;
 }
 
 .contract-feedback {
@@ -3198,7 +3442,7 @@ onBeforeUnmount(() => {
 .contract-submit {
   border: 0;
   border-radius: 23px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 750;
   height: 46px;
   min-width: 0;
@@ -3235,14 +3479,13 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  height: 30px;
+  height: 26px;
   justify-content: center;
   min-width: 0;
 }
 
 .contract-book-status span,
 .contract-book-status strong {
-  font-family: var(--font-geist-mono), var(--data-font), monospace;
   font-size: 8px;
   min-width: 0;
   overflow: hidden;
@@ -3252,10 +3495,13 @@ onBeforeUnmount(() => {
 
 .contract-book-status span {
   color: var(--muted);
+  font-family: var(--font-geist-sans), var(--font-family), sans-serif;
 }
 
 .contract-book-status strong {
   color: var(--text);
+  font-family: var(--font-geist-mono), var(--data-font), monospace;
+  font-size: 9px;
   font-weight: 650;
 }
 
@@ -3267,8 +3513,8 @@ onBeforeUnmount(() => {
 }
 
 .contract-mini-book {
-  height: 342px;
-  min-height: 342px;
+  height: 346px;
+  min-height: 346px;
 }
 
 .contract-mini-book :deep(.order-book__mini-header) {
@@ -3276,8 +3522,8 @@ onBeforeUnmount(() => {
 }
 
 .contract-mini-book :deep(.order-book__mini-row) {
-  font-size: 9px;
-  height: 23px;
+  font-size: 11px;
+  height: 22.8px;
 }
 
 .contract-mini-book :deep(.order-book__mini-mid) {
@@ -3289,7 +3535,29 @@ onBeforeUnmount(() => {
 }
 
 .contract-mini-book :deep(.order-book__mini-ratio) {
+  gap: 6px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   height: 16px;
+}
+
+.contract-mini-book :deep(.order-book__mini-ratio)::before {
+  background: linear-gradient(
+    90deg,
+    var(--accent) 0 var(--mini-bid-ratio),
+    var(--negative) var(--mini-bid-ratio) 100%
+  );
+  border-radius: 2px;
+  content: "";
+  grid-column: 2;
+  height: 4px;
+}
+
+.contract-mini-book :deep(.order-book__mini-ratio span:first-child) {
+  grid-column: 1;
+}
+
+.contract-mini-book :deep(.order-book__mini-ratio span:last-child) {
+  grid-column: 3;
 }
 
 .contract-mini-book :deep(.order-book__mini-precision) {
@@ -3300,16 +3568,17 @@ onBeforeUnmount(() => {
 }
 
 .contract-mini-book :deep(.order-book__mini-state) {
-  height: 342px;
+  height: 346px;
 }
 
 .contract-position-tabs {
   align-items: center;
   display: grid;
-  gap: 16px;
+  gap: 18px;
   grid-template-columns: auto auto auto minmax(0, 1fr) 40px;
-  min-height: 40px;
-  padding: 4px 16px 0 20px;
+  height: 37px;
+  min-height: 37px;
+  padding: 8px 20px 4px;
 }
 
 .contract-position-tabs button {
@@ -3318,10 +3587,11 @@ onBeforeUnmount(() => {
   border: 0;
   color: var(--muted);
   display: inline-flex;
-  font-size: 11px;
+  font-size: 12px;
   gap: 3px;
   justify-content: center;
-  min-height: 36px;
+  height: 44px;
+  margin-block: -5px;
   padding: 0;
   position: relative;
   white-space: nowrap;
@@ -3329,12 +3599,14 @@ onBeforeUnmount(() => {
 
 .contract-position-tabs button.active {
   color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
 }
 
 .contract-position-tabs button.active::after {
   background: var(--accent);
   border-radius: 1px;
-  bottom: 0;
+  bottom: 5px;
   content: "";
   height: 2px;
   left: 50%;
@@ -3364,8 +3636,8 @@ onBeforeUnmount(() => {
 }
 
 .contract-position-empty strong {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 650;
   max-width: 260px;
 }
 

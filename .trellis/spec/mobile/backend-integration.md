@@ -838,3 +838,238 @@ category mismatch, row-based offset/exhaustion, local-date ordering,
 filter/session/unmount stale responses, known/unknown type presentation,
 pluralization, signed zero, 8-place amount/balance/positive-fee precision,
 state branches, 44px controls, and 320px horizontal-overflow guards.
+
+## 13. Margin Contract Trading Selection Contract
+
+### 1. Scope / Trigger
+
+Apply this contract when changing the mobile contract branch of `TradeView`,
+its leverage/margin-mode/pair sheets, or the user margin-setting adapter. It
+prevents Pencil samples from becoming fabricated order capabilities and keeps
+saved user settings authoritative across reloads and pair changes.
+
+### 2. Signatures
+
+```ts
+interface MarginUserSetting {
+  leverage: number | null
+  marginMode: 'cross' | 'isolated' | null
+}
+
+fetchMarginSetting(productId: number): Promise<MarginUserSetting>
+updateMarginLeverage(productId: number, leverage: number): Promise<void>
+updateMarginMode(
+  productId: number,
+  mode: 'cross' | 'isolated',
+): Promise<void>
+```
+
+The selected production surfaces are `by3G9/pKHeU` for the main contract
+workspace and `f0L8yf/R8t0p`, `aNuw6/PKAcD`, `Crw8v/YuKtQ` for leverage,
+margin mode, and pair selection.
+
+### 3. Contracts
+
+- `GET /margin/settings/:product_id` is protected and returns nullable
+  `leverage` and `margin_mode`. A valid saved value overrides the product
+  default only when it still exists in that product's `leverageLevels` or
+  `marginModes` capability set.
+- A missing setting row is HTTP 404 and maps to `{ leverage: null,
+  marginMode: null }`; every other HTTP/network failure remains observable.
+- Leverage and mode mutations use only the two setting PATCH endpoints. Local
+  state changes after a successful response, never optimistically before it.
+- The pair sheet renders only real `/margin/products` rows and Market Store
+  tickers. Missing ticker image, price, or change remains an asset-letter
+  fallback or `--`; no Pencil sample value is copied into production.
+- Contract ordering remains market-only until the backend advertises and
+  accepts another order type. The amount input and percentage shortcuts remain
+  margin amount, not base quantity or notional.
+- At 390x920, the production frame after removing the mock OS status bar uses
+  a 61px Header, 431px trade module, 425px `196 + 12 + 150` form/book split,
+  372px six-ask/six-bid compact book, and 37px position rail.
+- The leverage, mode, and pair sheets are 500px, 446px, and 620px high and
+  start-align their content tracks. Do not stretch their confirmation actions
+  to the sheet bottom. At 340px and below, wrapped notices use intrinsic height
+  and move the action down without overlap.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Settings GET returns 404 | Keep product defaults; do not show an error |
+| Settings GET fails otherwise | Keep safe product defaults and show localized feedback |
+| Saved leverage no longer exists | Ignore it and keep a configured level |
+| Saved margin mode no longer exists | Ignore it and keep a configured mode |
+| No exact product for the route symbol | Disable settings/order actions; never fall back to another product |
+| Product capability list is empty | Render no fabricated options and disable confirmation |
+| Ticker fields are missing | Render fallback mark/`--`; do not use design samples |
+| Risk copy wraps at 320px | Grow the notice/body; keep submit visible and non-overlapping |
+
+### 5. Good / Base / Bad Cases
+
+- Good: open BTC contract, load its saved 10x cross setting, choose 20x from a
+  configured sheet, PATCH successfully, then render 20x.
+- Base: a new user receives 404 for settings and continues with the product's
+  first supported mode and configured leverage level.
+- Bad: tapping the leverage field cycles local values without a sheet or PATCH.
+- Bad: showing limit-order controls because the Pencil frame contains them
+  while the backend accepts market margin positions only.
+
+### 6. Tests Required
+
+- Source/adapter tests lock the GET/PATCH paths, 404-only fallback, cross and
+  isolated types, capability membership checks, and market-only submission.
+- UI contract tests lock all eight Pencil IDs, 24px real asset mark, six book
+  levels without precision control, exact 390px geometry, sheet tracks,
+  localized copy, dialog semantics, safe area, and reduced motion.
+- Browser checks cover light/dark 390x920 main and all three sheets, then
+  320x760 horizontal overflow, wrapped notice, focus trap, Escape dismissal,
+  body scroll lock, and trigger focus restoration.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+leverage.value = nextLevel
+marginMode.value = 'isolated'
+router.push('/markets?mode=contract')
+```
+
+#### Correct
+
+```ts
+await updateMarginLeverage(product.id, nextLevel)
+leverage.value = nextLevel
+
+await updateMarginMode(product.id, nextMode)
+marginMode.value = nextMode
+
+router.replace({
+  name: 'trade',
+  params: { symbol: selectedSymbol.replace('/', '_') },
+  query: { mode: 'contract' },
+})
+```
+
+## 14. Agent-Routed Online Support Contract
+
+### 1. Scope / Trigger
+
+Apply this contract when changing the mobile help entry, first-party support
+chat, support adapter, polling lifecycle, unread state, or message pagination.
+The mobile client never chooses an agent; it only renders the backend's current
+assignment snapshot.
+
+### 2. Signatures
+
+```ts
+fetchCurrentSupportConversation(): Promise<{
+  conversation: SupportConversation | null
+}>
+
+fetchSupportConversationMessages(options?: {
+  limit?: number
+  beforeId?: number
+}): Promise<{
+  messages: SupportMessage[]
+  has_more: boolean
+  next_before_id: number | null
+}>
+
+postSupportConversationMessage(input: {
+  body: string
+  clientMessageId: string
+}): Promise<{
+  conversation: SupportConversation
+  message: SupportMessage
+  replayed: boolean
+}>
+```
+
+Production paths are `/support/conversation`,
+`/support/conversation/messages`, `/support/conversation/read`, and
+`/support/conversation/status` through the authenticated user API client.
+
+### 3. Contracts
+
+- `/profile/help` opens the internal `/profile/help/chat` route. The retired
+  `VITE_SUPPORT_CHAT_URL` path must not return.
+- Guests render `LoginRequiredState` and make no protected support request.
+  Token replacement, logout, and unmount invalidate earlier conversation,
+  message, read, status, and send responses before they can mutate the new
+  session.
+- The backend owns `assigned_agent_id`/`assigned_agent_code`. Null assignment
+  is a usable platform-admin fallback state, not a disabled chat channel.
+- Initial load reads the conversation and newest bounded message page. The
+  “load older” action follows `next_before_id`, merges by immutable message ID,
+  keeps chronological order, and exposes distinct loading/error/retry states.
+- Poll every five seconds while an authenticated chat is mounted. Polling is
+  single-flight, stops on unmount/logout, merges rather than replaces older
+  loaded history, and treats REST as authoritative after process restart or a
+  missed WebSocket hint.
+- A send attempt trims the body, validates at most 2,000 Unicode scalar values,
+  creates one 8-64 character safe `client_message_id`, and reuses that exact
+  attempt on retry. A successful response is merged immediately, then REST is
+  reconciled.
+- Rendered agent/admin messages advance the user read cursor monotonically.
+  User messages display the backend `read_by_recipient` snapshot when present.
+- A closed conversation remains visible with history. Explicit reopen works,
+  and sending a valid new customer message may reopen it per backend contract.
+- Chinese and English locales cover loading, empty, cached refresh error,
+  older-history loading/error, sending/retry, read/unread, assignment,
+  unassigned, closed, and reopen states. Controls use Lucide icons only.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Guest opens chat | Render login-required state; issue no support API request |
+| Conversation is null | Render first-message empty state and assignment pending copy |
+| Assignment is null | Keep composer usable and explain platform support fallback |
+| Body is blank or over 2,000 scalars | Show localized validation; make no request |
+| Send fails | Keep immutable pending attempt and reuse its client ID on retry |
+| Newest-page refresh fails with cached messages | Keep history visible and show retryable refresh notice |
+| Older-page request fails | Keep all loaded messages and expose an older-page retry only |
+| Poll response repeats IDs | Deduplicate by message ID and retain chronological order |
+| Token changes while a request is in flight | Ignore the stale result and reset chat state |
+
+### 5. Good / Base / Bad Cases
+
+- Good: the user sends once, loses the response, retries the same attempt, and
+  receives the existing backend message without a duplicate bubble.
+- Good: after more than 100 messages, the user loads an older page without
+  losing the newest page or jumping to the thread bottom.
+- Base: the user has no assigned agent; the same composer sends successfully
+  and administrators can answer.
+- Bad: a local agent selector or environment URL bypasses the backend referral
+  assignment.
+- Bad: each poll replaces the array with the newest page and silently deletes
+  older history already loaded by the user.
+
+### 6. Tests Required
+
+- Adapter tests lock exact paths/body field names, page query names, envelopes,
+  Unix-millisecond timestamps, and nullable assignment.
+- Core tests cover scalar validation, safe client IDs, retry reuse, immutable
+  merge/order, page-cursor progression, grouping, and latest staff-read target.
+- View/source tests cover guest no-request behavior, internal navigation,
+  loading/empty/error/retry, unassigned/assigned/closed copy, load older,
+  single-flight polling cleanup, session invalidation, and i18n symmetry.
+- Browser checks cover light/dark 390x844 and 320x720 with no horizontal
+  overflow, a visible sticky composer above safe-area inset, 44px actions,
+  keyboard/IME Enter behavior, and preserved scroll position after older-page
+  insertion.
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong: a retry generates another key and can append a duplicate message.
+await send(body, createSupportClientMessageId())
+await send(body, createSupportClientMessageId())
+
+// Correct: freeze one attempt and replay the same identity until resolved.
+const attempt = createSupportSendAttempt(body)
+await executeSupportSendAttempt(attempt, send)
+await executeSupportSendAttempt(attempt, send)
+```

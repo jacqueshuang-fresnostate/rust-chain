@@ -987,6 +987,154 @@ async fn openapi_json_documents_user_2fa_security_policy_contract() {
 }
 
 #[tokio::test]
+async fn openapi_json_documents_agent_routed_support_contract() {
+    let openapi = openapi_json().await;
+
+    for (path, methods) in [
+        ("/api/v1/support/conversation", ["get"].as_slice()),
+        (
+            "/api/v1/support/conversation/messages",
+            ["get", "post"].as_slice(),
+        ),
+        ("/api/v1/support/conversation/read", ["post"].as_slice()),
+        ("/api/v1/support/conversation/status", ["patch"].as_slice()),
+        ("/agent/api/v1/support/conversations", ["get"].as_slice()),
+        (
+            "/agent/api/v1/support/conversations/{id}",
+            ["get"].as_slice(),
+        ),
+        (
+            "/agent/api/v1/support/conversations/{id}/messages",
+            ["get", "post"].as_slice(),
+        ),
+        (
+            "/agent/api/v1/support/conversations/{id}/read",
+            ["post"].as_slice(),
+        ),
+        (
+            "/agent/api/v1/support/conversations/{id}/status",
+            ["patch"].as_slice(),
+        ),
+        ("/admin/api/v1/support/conversations", ["get"].as_slice()),
+        (
+            "/admin/api/v1/support/conversations/{id}",
+            ["get"].as_slice(),
+        ),
+        (
+            "/admin/api/v1/support/conversations/{id}/messages",
+            ["get", "post"].as_slice(),
+        ),
+        (
+            "/admin/api/v1/support/conversations/{id}/read",
+            ["post"].as_slice(),
+        ),
+        (
+            "/admin/api/v1/support/conversations/{id}/status",
+            ["patch"].as_slice(),
+        ),
+    ] {
+        for method in methods {
+            assert!(
+                openapi["paths"][path].get(*method).is_some(),
+                "missing {method} {path}"
+            );
+            assert!(
+                operation_has_bearer_security(&openapi, path, method),
+                "support operation must require bearer auth: {method} {path}"
+            );
+        }
+    }
+
+    for schema_name in [
+        "UserSupportConversationResponse",
+        "SupportConversationResponse",
+        "SupportConversationsResponse",
+        "SupportMessageResponse",
+        "SupportMessagesResponse",
+        "SendSupportMessageRequest",
+        "SupportSendMessageResponse",
+        "MarkSupportReadRequest",
+        "UpdateSupportStatusRequest",
+    ] {
+        assert!(
+            openapi["components"]["schemas"][schema_name]
+                .get("properties")
+                .is_some(),
+            "missing support schema {schema_name}"
+        );
+    }
+
+    let conversation =
+        &openapi["components"]["schemas"]["SupportConversationResponse"]["properties"];
+    for field in [
+        "id",
+        "user_id",
+        "user_email",
+        "user_phone",
+        "assigned_agent_id",
+        "assigned_agent_code",
+        "status",
+        "user_read_message_id",
+        "staff_read_message_id",
+        "user_unread_count",
+        "staff_unread_count",
+        "last_message_id",
+        "last_message_sender_type",
+        "last_message_sender_id",
+        "last_message_preview",
+        "last_message_at",
+        "closed_at",
+        "created_at",
+        "updated_at",
+    ] {
+        assert!(
+            conversation.get(field).is_some(),
+            "missing SupportConversationResponse.{field}"
+        );
+    }
+    for timestamp in ["last_message_at", "closed_at", "created_at", "updated_at"] {
+        assert!(
+            schema_is_unix_millis(&conversation[timestamp]),
+            "SupportConversationResponse.{timestamp} must be Unix milliseconds"
+        );
+    }
+
+    let message = &openapi["components"]["schemas"]["SupportMessageResponse"]["properties"];
+    for field in [
+        "id",
+        "conversation_id",
+        "sender_type",
+        "sender_id",
+        "client_message_id",
+        "body",
+        "read_by_recipient",
+        "created_at",
+    ] {
+        assert!(
+            message.get(field).is_some(),
+            "missing SupportMessageResponse.{field}"
+        );
+    }
+    assert!(schema_is_unix_millis(&message["created_at"]));
+
+    let send_request = &openapi["components"]["schemas"]["SendSupportMessageRequest"]["properties"];
+    assert_eq!(
+        send_request["client_message_id"]["pattern"],
+        "^[A-Za-z0-9_-]{8,64}$"
+    );
+    assert_eq!(
+        openapi["paths"]["/api/v1/support/conversation/messages"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"],
+        "#/components/schemas/SendSupportMessageRequest"
+    );
+    assert_eq!(
+        openapi["paths"]["/api/v1/support/conversation/messages"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
+        "#/components/schemas/SupportSendMessageResponse"
+    );
+}
+
+#[tokio::test]
 async fn openapi_json_alias_is_registered() {
     let openapi = request_json("/api/openapi.json").await;
 

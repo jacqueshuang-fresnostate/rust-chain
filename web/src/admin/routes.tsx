@@ -60,6 +60,10 @@ export const adminRoutes: RouteObject[] = [
     'config-center',
     async () => (await import('./config-center/ConfigCenterPage')).ConfigCenterPage
   ),
+  guardedLazyRoute(
+    'support',
+    async () => (await import('./support/AdminSupportPage')).AdminSupportPage
+  ),
   resourceRoute('users', 'users'),
   guardedLazyRoute(
     'users/kyc/settings',

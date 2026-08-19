@@ -82,3 +82,69 @@ function endpointPath(endpoint: BusinessEndpoint): string {
   return `/ws/${endpoint}`
 }
 ```
+
+## Scenario: Exact-Agent Private Support Refresh Hints
+
+### 1. Scope / Trigger
+
+- Trigger: a committed durable support message should prompt a customer or its
+  exact assigned agent to reconcile sooner than the polling interval.
+
+### 2. Signatures
+
+- User private route: `GET /api/v1/ws/private?token=<user-token>`.
+- Agent private route: `GET /agent/api/v1/ws/private?token=<agent-token>`.
+- Channels: `private:user:<user_id>` and `private:agent:<agent_id>`.
+- Hint payload:
+  `{"type":"support.refresh","reason":"message_committed","conversation_id":1,"message_id":2}`.
+
+### 3. Contracts
+
+- Agent handshake authentication resolves the exact active `agent_id` from the
+  agent token and active ancestor chain before upgrade. It never accepts a
+  client channel, path, root ID, or subtree subscription.
+- Publish only after the support transaction commits and only for a
+  non-replayed message. Send the hint to the exact user and, when assigned, the
+  exact agent; do not broadcast message text or credentials.
+- Hints are process-local and lossy. Every client must poll/reconcile REST on
+  startup, reconnect, and normal intervals; no business state may exist only
+  in the broadcast hub.
+
+### 4. Validation & Error Matrix
+
+- Missing, revoked, wrong-scope, or inactive-chain agent token -> reject before
+  WebSocket upgrade.
+- Unassigned conversation -> publish only to the user channel.
+- Lagged receiver or restarted API -> drop the hint and recover from REST.
+
+### 5. Good/Base/Bad Cases
+
+- Good: Agent 9 receives a refresh for its customer while Agent 9's parent and
+  Agent 10 receive nothing.
+- Base: no broadcast hub is configured; the committed message remains fully
+  available through REST.
+- Bad: publish before commit or treat a delivered hint as proof that a message
+  exists.
+
+### 6. Tests Required
+
+- Assert the agent private route is registered and rejects invalid agent
+  identity before upgrade.
+- Publish one exact-agent message and assert exact delivery plus parent and
+  unrelated-channel silence.
+- Assert idempotent replay publishes no second hint and REST still returns the
+  original message.
+
+### 7. Wrong vs Correct
+
+```rust
+// Wrong: subtree fan-out leaks a child's customer activity.
+for ancestor in agent_ancestors {
+    hub.publish(EventBroadcastMessage::private_agent(ancestor.id, payload.clone()));
+}
+
+// Correct: one exact owner hint; REST remains authoritative.
+if let Some(agent_id) = conversation.assigned_agent_id {
+    hub.publish(EventBroadcastMessage::private_agent(agent_id, payload));
+}
+```

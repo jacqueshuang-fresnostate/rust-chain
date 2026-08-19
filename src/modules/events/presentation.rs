@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 /// 字段可空只是反序列化形态，缺失或空串在鉴权阶段都会被判为未授权。
 #[derive(Debug, Deserialize)]
 pub(crate) struct PrivateWsQuery {
-    /// 用户访问令牌，必须是 user scope 且会话未被撤销。
+    /// 访问令牌；用户私有端点要求 user scope，代理私有端点要求 agent scope，两者都必须未被撤销。
     pub(crate) token: Option<String>,
 }
 

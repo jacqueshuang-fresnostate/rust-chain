@@ -19,6 +19,7 @@ export type AdminAccess = {
 const AdminAccessContext = createContext<AdminAccess | null>(null);
 
 const frontendPathResources: Array<[string, string]> = [
+  ['/admin/support', 'support.conversations'],
   ['/admin/config-center', 'config_center'],
   ['/admin/prediction/sync-logs', 'prediction.sync'],
   ['/admin/prediction/sync', 'prediction.sync'],
@@ -80,6 +81,7 @@ const frontendPathResources: Array<[string, string]> = [
 ];
 
 const apiPathResources: Array<[string, string]> = [
+  ['/support', 'support.conversations'],
   ['/config-center', 'config_center'],
   ['/prediction/sync', 'prediction.sync'],
   ['/prediction/settings', 'prediction.settings'],

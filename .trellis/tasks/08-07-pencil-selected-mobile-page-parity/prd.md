@@ -17,6 +17,15 @@
   - `CzpTv` / `ZvGMv`：预测下单确认态。
   - `nqP6W` / `aXxul`：理财申购确认态。
 
+### 2026-08-18 current contract selection
+
+Pencil 当前选区已经切换为 8 张杠杆合约画板，本次用户请求只交付这一切片：
+
+- `by3G9` / `pKHeU`：`06 / Contract` 杠杆交易主页面明暗主题。
+- `f0L8yf` / `R8t0p`：杠杆倍数底部弹层明暗主题。
+- `aNuw6` / `PKAcD`：保证金模式底部弹层明暗主题。
+- `Crw8v` / `YuKtQ`：合约交易对底部弹层明暗主题。
+
 ## Requirements
 
 ### 1. Route and navigation parity
@@ -43,6 +52,15 @@
 - 弹层必须保留 `role="dialog"`、`aria-modal`、Escape 关闭、Tab 焦点闭环、背景滚动锁和焦点恢复。
 - 缺少 API 数据时只显示 `--`、骨架、空态或明确错误，不引入 Pencil 演示金额、资产、收益、赔率和客服承诺。
 
+### 4. Selected margin trading parity
+
+- 杠杆交易 Header 必须按画板显示后台行情返回的资产图标、交易对、永续标签、实时涨跌幅和自选状态；点击交易对在当前页打开底部选择器，不再跳转到通用行情页。
+- 主交易区保留真实订单簿、余额、仓位和市价开仓能力；后端仅支持市价委托时不得按画板伪造限价委托。
+- 杠杆倍数弹层只显示当前产品 `leverageLevels`，滑轨、快捷倍数和确认按钮均写入 `/margin/settings/:product_id/leverage`，成功后再更新页面状态。
+- 保证金模式弹层只显示当前产品 `marginModes`，确认后写入 `/margin/settings/:product_id/mode`；文案必须明确设置只作用于后续开仓，不伪造存量仓位迁移行为。
+- 进入或切换交易对时读取 `/margin/settings/:product_id`，已保存设置必须覆盖产品默认值；404 表示用户尚未设置，应安全回落到产品配置。
+- 交易对弹层只渲染 `/margin/products` 与实时行情 Store 的交集，图标、价格、涨跌幅和可交易状态全部使用真实数据，并支持搜索、自选/全部/主流筛选。
+
 ## Acceptance Criteria
 
 - [ ] 上述 8 组新增画板都在对应生产页根节点声明 `data-pencil-source`。
@@ -50,7 +68,12 @@
 - [ ] 帮助搜索可筛选 FAQ，FAQ 可展开/收起，未配置客服渠道不会导航到伪造地址。
 - [ ] 划转、预测和理财弹层形态与画板一致，但仍调用现有真实 API。
 - [ ] 订单、资金账单、消息中心的 loading/error/empty/data 分支均可辨识，布局无横向溢出。
-- [ ] 移动端相关源码合同测试、全量测试、TypeScript 类型检查和 PWA 构建通过。
+- [x] 移动端相关源码合同测试、全量测试、TypeScript 类型检查和 PWA 构建通过。
+- [x] 杠杆主页面及三个弹层声明当前 8 个 Pencil 来源，并在 390px 明暗主题下对齐选中画板。
+- [x] 杠杆倍数、保证金模式和交易对切换均使用真实产品/行情/用户设置接口，无演示数据与虚构能力。
+- [x] 三个杠杆弹层具备可访问对话框语义、焦点闭环、Escape/遮罩关闭、滚动锁、safe area 与焦点恢复。
+- [x] 390×920 主页面锁定 61px Header、431px 双栏交易区、425px 表单、372px 六档盘口和 37px 仓位标签轨；不显示画板中的虚构资金费率、余额或委托。
+- [x] 500px 杠杆、446px 保证金模式和 620px 交易对弹层按画板原始内容轨道排布；320×760 下长风险文案自适应增高且不裁切主操作。
 
 ## Out of scope
 
@@ -62,6 +85,6 @@
 ## Definition of Done
 
 - 生产页面、路由、双语文案与回归测试完成。
-- 通过 `npm --prefix mobile run type-check`、`npm --prefix mobile test`、`npm --prefix mobile run build:pwa` 和 `git diff --check`。
+- 通过 `npm --prefix mobile run type-check`、`npm --prefix mobile test`、`npm --prefix mobile run build:pwa`、`npm --prefix mobile run build:tauri` 和 `git diff --check`。
 - 使用 Ego 浏览器检查关键路由的 390px 明暗主题、空态与弹层。
 - 更新 `docs/superpowers/PROGRESS.md`。

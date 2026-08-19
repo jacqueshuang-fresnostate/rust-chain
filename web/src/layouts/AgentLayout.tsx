@@ -1,4 +1,11 @@
-import { IconCoinMoneyStroked, IconExit, IconHomeStroked, IconList, IconUserGroup } from '@douyinfe/semi-icons';
+import {
+  IconCoinMoneyStroked,
+  IconCustomerSupportStroked,
+  IconExit,
+  IconHomeStroked,
+  IconList,
+  IconUserGroup
+} from '@douyinfe/semi-icons';
 import { Avatar, Button, Layout, Nav, Space, Typography } from '@douyinfe/semi-ui';
 import type { NavItems, OnSelectedData } from '@douyinfe/semi-ui/lib/es/navigation';
 import type { CSSProperties, ReactNode } from 'react';
@@ -17,6 +24,7 @@ type AgentNavItem = {
 
 const navItems: AgentNavItem[] = [
   { path: '/agent/dashboard', label: '总览', icon: <IconHomeStroked aria-hidden="true" /> },
+  { path: '/agent/support', label: '在线客服', icon: <IconCustomerSupportStroked aria-hidden="true" /> },
   { path: '/agent/users', label: '团队用户', icon: <IconUserGroup aria-hidden="true" /> },
   { path: '/agent/invite-codes', label: '邀请码', icon: <IconList aria-hidden="true" /> },
   { path: '/agent/commissions', label: '佣金记录', icon: <IconCoinMoneyStroked aria-hidden="true" /> },

@@ -13,7 +13,8 @@ use exchange_api::{
 use futures_util::{SinkExt, StreamExt};
 use secrecy::SecretString;
 use std::net::SocketAddr;
-use tokio::{net::TcpListener, sync::oneshot};
+use std::time::Duration;
+use tokio::{net::TcpListener, sync::oneshot, time::timeout};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tower::ServiceExt;
 
@@ -121,6 +122,32 @@ async fn event_broadcast_hub_fans_out_matching_public_channel_messages() {
 }
 
 #[tokio::test]
+async fn agent_private_broadcast_targets_only_the_exact_agent_channel() {
+    let hub = EventBroadcastHub::new(16);
+    let exact_channel = WebSocketChannel::private_agent(42);
+    let parent_channel = WebSocketChannel::private_agent(7);
+    let mut exact_receiver = hub.subscribe(&exact_channel);
+    let mut parent_receiver = hub.subscribe(&parent_channel);
+
+    hub.publish(EventBroadcastMessage::private_agent(
+        42,
+        r#"{"type":"support.refresh","conversation_id":9}"#,
+    ));
+
+    let message = exact_receiver.recv().await.unwrap();
+    assert_eq!(
+        message.payload(),
+        r#"{"type":"support.refresh","conversation_id":9}"#
+    );
+    assert!(
+        timeout(Duration::from_millis(25), parent_receiver.recv())
+            .await
+            .is_err(),
+        "parent agent channel received an exact-child refresh"
+    );
+}
+
+#[tokio::test]
 async fn event_broadcast_subscription_skips_lagged_unrelated_messages() {
     let hub = EventBroadcastHub::new(1);
     let channel = WebSocketChannel::public("ticker", "BTC-USDT").unwrap();
@@ -172,6 +199,14 @@ async fn events_routes_expose_public_and_private_ws_paths() {
         .await
         .unwrap();
     assert_ne!(private_response.status(), StatusCode::NOT_FOUND);
+
+    let agent_private_response = build_router(
+        AppState::new(test_settings()).with_event_broadcast_hub(EventBroadcastHub::new(16)),
+    )
+    .oneshot(ws_request("/agent/api/v1/ws/private?token=invalid"))
+    .await
+    .unwrap();
+    assert_ne!(agent_private_response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

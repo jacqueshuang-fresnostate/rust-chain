@@ -55,6 +55,15 @@ impl WebSocketChannel {
         }
     }
 
+    /// 构造代理私有频道；调用方必须传入由 agent token 与服务端账号关系解析的精确代理 ID。
+    /// 频道主题固定为 `agent:<id>`，不接受物化路径或顶级代理 ID，因此父代订阅不会收到子代的客服刷新提示。
+    pub fn private_agent(agent_id: u64) -> Self {
+        Self {
+            namespace: "private".to_owned(),
+            topic: format!("agent:{agent_id}"),
+        }
+    }
+
     /// 序列化稳定频道路径；私有频道保持 `private:user:<id>`，公共频道保持既有三段格式。
     /// 仅分配字符串，不校验权限、不读写外部状态。
     pub fn as_text(&self) -> String {
@@ -71,6 +80,14 @@ impl WebSocketChannel {
 pub struct PrivateWsAuth {
     /// 已通过校验的用户编号，直接决定本连接绑定的私有频道。
     pub user_id: u64,
+}
+
+/// 代理私有 WebSocket 的鉴权结论，只保留服务端解析的精确代理 ID。
+/// 不保留代理管理员 ID、root ID 或 path，连接建立后因此无法切换到父级或子级频道。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentPrivateWsAuth {
+    /// 已验证的精确代理主键，直接决定订阅的 `private:agent:<id>` 频道。
+    pub agent_id: u64,
 }
 
 impl PrivateWsAuth {
@@ -257,6 +274,19 @@ pub(crate) async fn run_private_socket(
     run_subscription_socket(socket, public_ws_confirmation_text(&channel), subscription).await;
 }
 
+/// 为已在升级前鉴权的代理订阅唯一 `private:agent:<id>` 频道。
+/// 该频道只传送不含正文的客服刷新提示，不存储、不重放，掉线后必须以 REST 重新对齐。
+/// hub 缺失时连接仍保留 ping/pong，不得把是否收到提示当成消息提交成功的依据。
+pub(crate) async fn run_agent_private_socket(
+    socket: WebSocket,
+    auth: AgentPrivateWsAuth,
+    hub: Option<EventBroadcastHub>,
+) {
+    let channel = WebSocketChannel::private_agent(auth.agent_id);
+    let subscription = hub.map(|hub| hub.subscribe(&channel));
+    run_subscription_socket(socket, public_ws_confirmation_text(&channel), subscription).await;
+}
+
 /// 运行单频道 socket 生命周期；先发送确认，再在客户端帧与广播之间并发转发。
 /// 确认帧发送失败即直接返回，不进入循环，因为连接已不可用。
 /// 有订阅时用二选一等待同时照看客户端输入与广播输出，两侧任一出错即结束会话；
@@ -431,6 +461,15 @@ impl EventBroadcastMessage {
     pub fn private_user(user_id: u64, payload: impl Into<String>) -> Self {
         Self {
             channel: WebSocketChannel::private_user(user_id),
+            payload: payload.into(),
+        }
+    }
+
+    /// 构造单代理私有广播；代理 ID 必须来自服务端会话归属，payload 应只作刷新提示。
+    /// 相同输入只构造频道与文本，不实际发送、不落库也不保证代理当时在线。
+    pub fn private_agent(agent_id: u64, payload: impl Into<String>) -> Self {
+        Self {
+            channel: WebSocketChannel::private_agent(agent_id),
             payload: payload.into(),
         }
     }

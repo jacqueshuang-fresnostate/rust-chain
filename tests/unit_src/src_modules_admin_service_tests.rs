@@ -322,4 +322,13 @@ fn admin_permission_mapping_is_fail_closed_and_action_aware() {
         required_admin_permission("GET", "/admin/api/v1/new-unmapped-route").as_deref(),
         Some("admin.unmapped.read")
     );
+    assert_eq!(
+        required_admin_permission("GET", "/admin/api/v1/support/conversations").as_deref(),
+        Some("support.conversations.read")
+    );
+    assert_eq!(
+        required_admin_permission("POST", "/admin/api/v1/support/conversations/7/messages")
+            .as_deref(),
+        Some("support.conversations.write")
+    );
 }

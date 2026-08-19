@@ -1,0 +1,13 @@
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Map the database, API, realtime, web, and mobile contracts end to end."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse existing auth, event, request-client, and UI patterns."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Create a real support bounded context with valid dependency direction."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Add an immutable MySQL migration with canonical text metadata."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Follow route, comment, test, and architecture quality gates."}
+{"file": ".trellis/spec/backend/agent-hierarchy.md", "reason": "Preserve authoritative direct owner semantics while deliberately using exact-agent chat visibility."}
+{"file": ".trellis/spec/backend/auth-sessions.md", "reason": "Reuse user, agent, and admin token scopes safely."}
+{"file": ".trellis/spec/backend/realtime-websockets.md", "reason": "Keep realtime notifications best-effort and REST-authoritative."}
+{"file": ".trellis/spec/admin/ui-system.md", "reason": "Build the admin and agent support workbenches with existing UI conventions."}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "Add a safe mobile support route and complete i18n."}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Use the mobile API client, auth refresh, DTO adapters, and realtime reconciliation contracts."}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "Preserve mobile shell, PWA, and theme behavior."}
+{"file": ".trellis/tasks/08-18-agent-routed-online-support/research/existing-support-and-agent-routing.md", "reason": "Use the audited current support and agent ownership behavior."}

@@ -13,11 +13,15 @@ const props = withDefaults(defineProps<{
   quoteAsset?: string
   loading?: boolean
   layout?: 'stacked' | 'split' | 'paired' | 'matrix' | 'mini'
+  miniLevels?: number
+  showMiniPrecision?: boolean
 }>(), {
   baseAsset: '',
   quoteAsset: '',
   loading: false,
   layout: 'stacked',
+  miniLevels: 5,
+  showMiniPrecision: true,
 })
 
 const { t } = useI18n()
@@ -26,6 +30,16 @@ const splitAsks = computed(() => props.asks.slice(0, 6))
 const visibleBids = computed(() => props.bids.slice(0, 6))
 const miniAsks = computed(() => props.asks.slice(0, 5).reverse())
 const miniBids = computed(() => props.bids.slice(0, 5))
+const renderedMiniAsks = computed(() => (
+  props.miniLevels === 5
+    ? miniAsks.value
+    : props.asks.slice(0, Math.max(1, props.miniLevels)).reverse()
+))
+const renderedMiniBids = computed(() => (
+  props.miniLevels === 5
+    ? miniBids.value
+    : props.bids.slice(0, Math.max(1, props.miniLevels))
+))
 const matrixMode = computed(() => props.layout === 'paired' || props.layout === 'matrix')
 const matrixBids = computed(() => props.bids.slice(0, 7))
 const matrixAsks = computed(() => props.asks.slice(0, 7))
@@ -40,8 +54,8 @@ const maxQuantity = computed(() => Math.max(
 ))
 const hasRows = computed(() => props.bids.length > 0 || props.asks.length > 0)
 const miniBidRatio = computed(() => {
-  const bidTotal = miniBids.value.reduce((total, item) => total + item.quantity, 0)
-  const askTotal = miniAsks.value.reduce((total, item) => total + item.quantity, 0)
+  const bidTotal = renderedMiniBids.value.reduce((total, item) => total + item.quantity, 0)
+  const askTotal = renderedMiniAsks.value.reduce((total, item) => total + item.quantity, 0)
   const total = bidTotal + askTotal
   return total > 0 ? Math.round((bidTotal / total) * 100) : 50
 })
@@ -75,7 +89,7 @@ function matrixWidth(quantity: number): string {
         </div>
         <template v-if="hasRows">
           <div
-            v-for="(item, index) in miniAsks"
+            v-for="(item, index) in renderedMiniAsks"
             :key="`mini-ask-${item.price}-${index}`"
             class="order-book__mini-row"
             role="row"
@@ -96,7 +110,7 @@ function matrixWidth(quantity: number): string {
             </small>
           </div>
           <div
-            v-for="(item, index) in miniBids"
+            v-for="(item, index) in renderedMiniBids"
             :key="`mini-bid-${item.price}-${index}`"
             class="order-book__mini-row"
             role="row"
@@ -110,11 +124,11 @@ function matrixWidth(quantity: number): string {
             <span class="up numeric" role="cell">{{ formatPrice(item.price) }}</span>
             <span class="numeric" role="cell">{{ formatAmount(item.quantity) }}</span>
           </div>
-          <div class="order-book__mini-ratio" role="row">
+          <div class="order-book__mini-ratio" role="row" :style="{ '--mini-bid-ratio': `${miniBidRatio}%` }">
             <span class="up numeric" role="cell">B&nbsp;&nbsp;{{ miniBidRatio }}%</span>
             <span class="down numeric" role="cell">{{ 100 - miniBidRatio }}%&nbsp;&nbsp;S</span>
           </div>
-          <div class="order-book__mini-precision" aria-hidden="true">
+          <div v-if="showMiniPrecision" class="order-book__mini-precision" aria-hidden="true">
             <span class="numeric">0.01</span>
             <ChevronDown :size="12" />
           </div>

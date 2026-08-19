@@ -18,7 +18,8 @@ use crate::{
         auth::AdminAuth,
         events::{
             application::{
-                authorize_private_ws, list_inbox_records as list_inbox_records_use_case,
+                authorize_agent_private_ws, authorize_private_ws,
+                list_inbox_records as list_inbox_records_use_case,
                 list_outbox_records as list_outbox_records_use_case, publish_outbox_once,
                 requeue_outbox_dead_letter as requeue_outbox_dead_letter_use_case,
             },
@@ -28,8 +29,8 @@ use crate::{
             },
             public_channel,
             service::{
-                PublishedOutboxBatch, public_ws_confirmation_text, run_private_socket,
-                run_public_multi_socket, run_public_socket,
+                PublishedOutboxBatch, public_ws_confirmation_text, run_agent_private_socket,
+                run_private_socket, run_public_multi_socket, run_public_socket,
             },
         },
     },
@@ -60,6 +61,13 @@ pub fn routes() -> Router<AppState> {
         .route("/ws/seconds", get(public_multi_ws))
         .route("/ws/seconds/:namespace/:topic", get(public_ws))
         .route("/ws/private", get(private_ws))
+}
+
+/// 注册代理门户专用的私有 WebSocket，由上层挂载为 `/agent/api/v1/ws/private`。
+/// 握手令牌必须是 agent scope，并在升级前回查当前代理与全部祖先的 active 状态；
+/// 连接只订阅服务端解析的精确 `private:agent:<id>` 频道，不接受客户端指定代理或子树范围。
+pub fn agent_routes() -> Router<AppState> {
+    Router::new().route("/ws/private", get(agent_private_ws))
 }
 
 /// 手动触发一轮 outbox 发布并返回本轮批次摘要，供运维在积压时立即推进而不必等待定时轮询。
@@ -152,4 +160,17 @@ async fn private_ws(
     let auth = authorize_private_ws(&state, query).await?;
     let hub = state.event_broadcast_hub.clone();
     Ok(ws.on_upgrade(move |socket| run_private_socket(socket, auth, hub)))
+}
+
+/// 升级为代理私有 WebSocket，只用作持久客服消息提交后的低延迟刷新提示。
+/// 鉴权在升级前解析精确 agent_id，连接建立后无订阅命令，不能切换到其他代理频道。
+/// 广播丢失、进程重启或断线均不影响消息正确性，重连后客户端必须重新调用 support REST。
+async fn agent_private_ws(
+    Query(query): Query<PrivateWsQuery>,
+    State(state): State<AppState>,
+    ws: WebSocketUpgrade,
+) -> AppResult<Response> {
+    let auth = authorize_agent_private_ws(&state, query).await?;
+    let hub = state.event_broadcast_hub.clone();
+    Ok(ws.on_upgrade(move |socket| run_agent_private_socket(socket, auth, hub)))
 }

@@ -32,6 +32,7 @@ import { AdminPasswordInput, AdminTextInput } from '../shared/SemiFormControls';
 import { StatusTag } from '../shared/StatusTag';
 import { TimestampText } from '../shared/TimestampText';
 import { formatAdminNumber } from '../shared/numberFormat';
+import { OnlineSupportWorkbench } from '../support/OnlineSupportWorkbench';
 
 const { Text, Title } = Typography;
 
@@ -209,6 +210,10 @@ export function AgentDashboardPage() {
       ) : loading ? <Text type="secondary">加载中</Text> : null}
     </main>
   );
+}
+
+export function AgentSupportPage() {
+  return <OnlineSupportWorkbench scope="agent" />;
 }
 
 export function AgentUsersPage() {

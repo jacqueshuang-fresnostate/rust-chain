@@ -43,6 +43,7 @@ describe('agentRoutes', () => {
 
   it.each([
     ['dashboard', 'AgentDashboardPage'],
+    ['support', 'AgentSupportPage'],
     ['users', 'AgentUsersPage'],
     ['invite-codes', 'AgentInviteCodesPage'],
     ['commissions', 'AgentCommissionsPage'],

@@ -17,6 +17,7 @@ use crate::{
     error::{AppError, AppResult},
     modules::{
         admin::service::admin_id_from_subject,
+        agent::application::resolve_active_agent_id,
         auth::{AdminAuth, TokenScope, claims_from_bearer_token},
         events::{
             infrastructure::{
@@ -30,8 +31,9 @@ use crate::{
                 PrivateWsQuery, RequeueOutboxRequest,
             },
             service::{
-                EventInboxConsumerService, EventInboxProductionHandler, EventOutboxService,
-                InboxRetryPolicy, PrivateWsAuth, PublishedOutboxBatch, RabbitMqOutboxPublisher,
+                AgentPrivateWsAuth, EventInboxConsumerService, EventInboxProductionHandler,
+                EventOutboxService, InboxRetryPolicy, PrivateWsAuth, PublishedOutboxBatch,
+                RabbitMqOutboxPublisher,
             },
         },
     },
@@ -54,6 +56,23 @@ pub(crate) async fn authorize_private_ws(
         .ok_or(AppError::Unauthorized)?;
     let claims = claims_from_bearer_token(state, token, TokenScope::User).await?;
     PrivateWsAuth::from_user_subject(&claims.sub)
+}
+
+/// 校验代理私有 WebSocket 查询令牌，并回查代理账号、自身节点与全部祖先均为 active。
+/// 仅接受 agent scope，鉴权结果只保留当前精确 agent_id，不携带 path 也不获得子树频道能力；
+/// 令牌缺失、作用域不符、会话已撤销或代理链停用时在协议升级前失败，不创建任何广播订阅。
+pub(crate) async fn authorize_agent_private_ws(
+    state: &AppState,
+    query: PrivateWsQuery,
+) -> AppResult<AgentPrivateWsAuth> {
+    let token = query
+        .token
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .ok_or(AppError::Unauthorized)?;
+    let claims = claims_from_bearer_token(state, token, TokenScope::Agent).await?;
+    let agent_id = resolve_active_agent_id(state.mysql.clone(), &claims.sub).await?;
+    Ok(AgentPrivateWsAuth { agent_id })
 }
 
 impl PrivateWsAuth {

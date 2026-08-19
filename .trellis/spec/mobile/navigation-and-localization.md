@@ -89,6 +89,10 @@ lastTradePath: ComputedRef<string>
   route `help-support`; `/profile/help` declares depth 1, hides the Dock, and
   falls back to `/profile`. Do not reuse Message Center for this row: Home Bell
   remains the root announcement entry.
+- The Help online-service row pushes named route `support-chat` at
+  `/profile/help/chat`. It declares depth 2, hides the Dock, falls back to
+  `/profile/help`, and uses the authenticated first-party support API. It must
+  not open an environment URL or a new browser tab.
 - `PageHeader` calls `goBackOr`; it must not call `router.back()` directly.
 - `PageHeader` exposes an explicit `preferFallback` input. It bypasses a usable
   `history.state.back` only when the owning workflow requires a deterministic
@@ -176,6 +180,8 @@ lastTradePath: ComputedRef<string>
 | News is opened directly | Replace with `/products` through the shared `PageHeader` fallback |
 | Profile Help row is selected | Push `/profile/help`; do not open Message Center |
 | Help is opened directly | Back replaces with `/profile` |
+| Help opens online service | Push `/profile/help/chat`; keep Help in history and use no external URL |
+| Support chat is opened directly | Back replaces with `/profile/help` |
 | Trade mode changes | Replace route and persist mode |
 | Stored locale is unknown | Use system locale, then `zh-CN` |
 | Locale persistence is unavailable | Keep the in-memory locale active |
@@ -218,6 +224,9 @@ lastTradePath: ComputedRef<string>
   history when pushed, and uses `replace('/products')` when opened directly.
 - Browser: Profile Help opens `/profile/help` without the Dock, while the Home
   Bell still opens `/messages`; direct-open Help falls back to Profile.
+- Source/router/browser: the online-service row opens the named internal
+  `support-chat` route, direct-open Back falls back to Help, guests render the
+  login-required state, and no `VITE_SUPPORT_CHAT_URL` reference remains.
 - Browser: all five dock destinations remain visible with at least 44px icon
   targets inside the 84px navigation, and no horizontal page overflow at
   320px, 390px, and 448px. Independently verify spot, contract, and seconds

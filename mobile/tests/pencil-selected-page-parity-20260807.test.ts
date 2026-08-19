@@ -40,7 +40,7 @@ test('all eight saved light and dark Pencil pairs are declared by production roo
   }
 })
 
-test('help route fixes Profile intent and exposes only configured channels', () => {
+test('help route fixes Profile intent and exposes internal chat plus configured email', () => {
   assert.match(sources.router, /const HelpSupportView = \(\) => import\('@\/views\/HelpSupportView\.vue'\)/)
   assert.match(sources.router, /path: '\/profile\/help', name: 'help-support', component: HelpSupportView, meta: \{ showBottomNav: false, depth: 1, backFallback: '\/profile' \}/)
   assert.match(sources.profile, /router\.push\(\{ name: 'help-support' \}\)[\s\S]*?t\('profile\.helpSupport'\)/)
@@ -49,9 +49,9 @@ test('help route fixes Profile intent and exposes only configured channels', () 
 
   assert.match(sources.help, /const filteredFaqs = computed/)
   assert.match(sources.help, /expandedFaqId\.value === id \? '' : id/)
-  assert.match(sources.help, /import\.meta\.env\.VITE_SUPPORT_CHAT_URL/)
+  assert.match(sources.help, /router\.push\(\{ name: 'support-chat' \}\)/)
   assert.match(sources.help, /import\.meta\.env\.VITE_SUPPORT_EMAIL/)
-  assert.match(sources.help, /:disabled="!supportChatUrl"/)
+  assert.doesNotMatch(sources.help, /VITE_SUPPORT_CHAT_URL|supportChatUrl|window\.open/)
   assert.match(sources.help, /:disabled="!supportEmail"/)
   assert.doesNotMatch(sources.help, /support@hippo|24\s*\/\s*7|7\s*[×x]\s*24/i)
   assert.match(sources.help, /height: 44px;/)

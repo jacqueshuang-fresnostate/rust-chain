@@ -258,6 +258,17 @@ async fn agent_context(
     Ok((pool, scope))
 }
 
+/// 为其他限界上下文解析当前代理令牌对应的精确 active 代理 ID。
+/// 本入口复用代理门户的权威身份链：先解析 `agent:<admin_id>` subject，
+/// 再回查代理管理员、自身节点与全部祖先均为 active。返回值只是当前节点 ID，
+/// 不暴露 path 也不授予子树权限，在线客服等精确所有者业务必须使用这个值做等值筛选。
+pub(crate) async fn resolve_active_agent_id(
+    mysql: Option<Pool<MySql>>,
+    subject: &str,
+) -> AppResult<u64> {
+    Ok(agent_context(mysql, subject).await?.1.agent_id)
+}
+
 /// 取出代理路由所需的 MySQL 连接池，未配置数据库时归类为内部错误而非校验错误。
 /// 代理端全部接口都强依赖持久化，缺少连接池属于部署配置缺失，不应向调用方暴露为可重试的业务失败。
 fn agent_mysql_pool(mysql: Option<Pool<MySql>>) -> AppResult<Pool<MySql>> {

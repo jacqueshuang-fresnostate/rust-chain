@@ -1,3 +1,4 @@
+import axios from 'axios'
 import { client, requestUrl } from './client'
 import { asNumber, normalizeSymbol, splitSymbol } from '@/core/format'
 import type { MarginProduct, WalletAccount } from '@/core/types'
@@ -13,9 +14,14 @@ export interface SpotOrderInput {
 export interface MarginOrderInput {
   productId: number
   side: 'long' | 'short'
-  marginMode: 'isolated'
+  marginMode: 'cross' | 'isolated'
   leverage: number
   marginAmount: number
+}
+
+export interface MarginUserSetting {
+  leverage: number | null
+  marginMode: 'cross' | 'isolated' | null
 }
 
 interface BackendMarginProduct {
@@ -201,7 +207,32 @@ export async function updateMarginLeverage(productId: number, leverage: number):
   await client.patch(requestUrl(`/margin/settings/${productId}/leverage`), { leverage: String(leverage) })
 }
 
-export async function updateMarginMode(productId: number, mode: 'isolated'): Promise<void> {
+/**
+ * 读取当前用户针对单个杠杆产品保存的模式与倍数。
+ *
+ * 用户从未修改过该产品时后端返回 404，这不是页面错误：调用方应继续使用产品配置中的
+ * 默认模式和可选倍数。其他网络或服务端错误继续抛出，避免把真实故障误判成“未设置”。
+ */
+export async function fetchMarginSetting(productId: number): Promise<MarginUserSetting> {
+  try {
+    const response = await client.get<{ leverage?: string | number | null; margin_mode?: string | null }>(
+      requestUrl(`/margin/settings/${productId}`),
+    )
+    const leverage = asNumber(response.data.leverage)
+    const rawMode = response.data.margin_mode?.trim().toLowerCase()
+    return {
+      leverage: leverage > 0 ? leverage : null,
+      marginMode: rawMode === 'cross' || rawMode === 'isolated' ? rawMode : null,
+    }
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      return { leverage: null, marginMode: null }
+    }
+    throw error
+  }
+}
+
+export async function updateMarginMode(productId: number, mode: 'cross' | 'isolated'): Promise<void> {
   await client.patch(requestUrl(`/margin/settings/${productId}/mode`), { margin_mode: mode })
 }
 

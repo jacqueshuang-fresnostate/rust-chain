@@ -20,6 +20,7 @@ mod agents;
 mod auth;
 mod news;
 mod quick_recharge;
+mod support;
 mod system_config;
 mod user_security;
 mod wallet;
@@ -29,6 +30,7 @@ use self::agents::*;
 use self::auth::*;
 use self::news::*;
 use self::quick_recharge::*;
+use self::support::*;
 use self::system_config::*;
 use self::user_security::*;
 use self::wallet::*;
@@ -162,7 +164,24 @@ pub fn routes() -> Router<AppState> {
         update_admin_security_policy,
         reset_admin_user_two_factor,
         list_public_news,
-        get_public_news
+        get_public_news,
+        get_user_support_conversation,
+        list_user_support_messages,
+        send_user_support_message,
+        mark_user_support_read,
+        update_user_support_status,
+        list_agent_support_conversations,
+        get_agent_support_conversation,
+        list_agent_support_messages,
+        send_agent_support_message,
+        mark_agent_support_read,
+        update_agent_support_status,
+        list_admin_support_conversations,
+        get_admin_support_conversation,
+        list_admin_support_messages,
+        send_admin_support_message,
+        mark_admin_support_read,
+        update_admin_support_status
     ),
     components(schemas(
         ErrorResponse,
@@ -307,7 +326,16 @@ pub fn routes() -> Router<AppState> {
         AgentSubAgentResponse,
         AgentSubAgentsResponse,
         AgentTeamTreeNodeResponse,
-        AgentTeamTreeResponse
+        AgentTeamTreeResponse,
+        UserSupportConversationResponse,
+        SupportConversationResponse,
+        SupportConversationsResponse,
+        SupportMessageResponse,
+        SupportMessagesResponse,
+        SendSupportMessageRequest,
+        SupportSendMessageResponse,
+        MarkSupportReadRequest,
+        UpdateSupportStatusRequest
     )),
     tags(
         (name = "health", description = "服务健康检查"),
@@ -324,7 +352,10 @@ pub fn routes() -> Router<AppState> {
         (name = "admin-news", description = "后台新闻中心管理"),
         (name = "admin-security", description = "后台用户安全策略和 2FA 重置"),
         (name = "news", description = "用户端公开新闻中心"),
-        (name = "agent-portal", description = "代理门户数据查询和邀请码管理")
+        (name = "agent-portal", description = "代理门户数据查询和邀请码管理"),
+        (name = "support", description = "用户端持久在线客服"),
+        (name = "agent-support", description = "代理端精确归属客服队列"),
+        (name = "admin-support", description = "管理端全局客服队列")
     ),
     modifiers(&SecurityAddon)
 )]

@@ -4,6 +4,7 @@ import {
   IconBriefcaseStroked,
   IconCandlestickChartStroked,
   IconCoinMoneyStroked,
+  IconCustomerSupportStroked,
   IconGlobeStroked,
   IconGridView,
   IconHomeStroked,
@@ -30,6 +31,7 @@ export type AdminNavItem = {
 export const adminNavItems: AdminNavItem[] = [
   { path: '/admin/dashboard', label: '总览仪表盘', icon: <IconHomeStroked aria-hidden="true" /> },
   { path: '/admin/config-center', label: '配置中心', icon: <IconLayers aria-hidden="true" /> },
+  { path: '/admin/support', label: '在线客服', icon: <IconCustomerSupportStroked aria-hidden="true" /> },
   {
     label: '用户与代理',
     icon: <IconUserGroup aria-hidden="true" />,

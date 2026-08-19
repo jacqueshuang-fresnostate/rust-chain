@@ -32,6 +32,11 @@
 - An agent-invited user stores that agent as both owner and direct inviter. A user-invited descendant keeps the inviting user as direct inviter but inherits the inviter's owner agent, depth, and referral path.
 - The historical `root_agent_id` API field remains an alias for the directly owning agent. Do not reinterpret it as `agents.root_agent_id`; new consumers should prefer `owner_agent_id`.
 - Parent agents can see descendant-owned users; children cannot see parents, siblings, or unrelated trees.
+- Online support is the deliberate exception to subtree visibility: an agent
+  can list/open only conversations whose `assigned_agent_id` equals that
+  authenticated agent's exact ID. Parent reporting access never grants access
+  to a child's customer conversation. See
+  [Agent-Routed Online Support Contracts](./online-support.md).
 - Agent commission routes expose only records owned by the current agent and must not leak descendant payout records.
 - Commission rules and tiered payout behavior follow the multi-business commission scenario below.
 - Login, refresh, agent routes, agent invite-code registration, and user invite-code registration/binding require the owning agent and every ancestor to be active.
@@ -67,6 +72,9 @@
 - Auth test: suspending a parent blocks child login, refresh, routes, and invite-code registration.
 - Referral test: agent -> user A -> user B preserves B's owner agent, records A as B's direct inviter, increments depth/path, and exposes both dimensions in agent/admin responses.
 - Referral-status test: suspending an owning agent ancestor blocks both registration-time user invite codes and post-registration referral binding without partial writes.
+- Support isolation test: a parent can still see a child-owned user in team
+  reporting but gets not-found when opening that child's directly assigned
+  support conversation.
 
 ### 7. Wrong vs Correct
 
@@ -86,7 +94,7 @@ WHERE owner_agents.path = :scope_path
    OR owner_agents.path LIKE CONCAT(:scope_path, '/%')
 ```
 
-The server-derived path enforces the current agent subtree without accepting a client scope.
+The server-derived path enforces the current agent subtree without accepting a client scope. This query is for reporting/business subtree routes only; support routes must use exact `assigned_agent_id` equality as documented in the online-support contract.
 
 #### Wrong
 

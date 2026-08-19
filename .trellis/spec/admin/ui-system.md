@@ -391,6 +391,105 @@ const body = {
   no-checkpoint boundary are owned by
   [Synthetic Market and K-line Recovery Contracts](../backend/synthetic-market-kline.md).
 
+## Agent And Admin Online Support Workbench
+
+### 1. Scope / Trigger
+
+- Apply when changing `/agent/support`, `/admin/support`, their shared API
+  client/workbench, navigation, RBAC, queue pagination, or chat history.
+
+### 2. Signatures
+
+```ts
+createStaffSupportApi('agent' | 'admin'): {
+  listConversations({ status, unread_only, assigned_agent_id, unassigned, limit, offset })
+  getConversation(conversationId)
+  getMessages(conversationId, { limit, before_id })
+  sendMessage(conversationId, { body, client_message_id })
+  markRead(conversationId, messageId)
+  setStatus(conversationId, 'open' | 'closed')
+}
+```
+
+The scope binds both the API prefix and request-client authentication scope.
+Pages never concatenate an alternate staff identity or agent ID into a route.
+
+### 3. Contracts
+
+- The agent page explains and presents exact-owner visibility only. It has no
+  global/unassigned controls and cannot request another agent's queue.
+- The admin route/nav requires `support.conversations.read`; mutation controls
+  require `support.conversations.write`. Read-only roles can inspect history
+  while reply, read, and status actions remain visibly disabled.
+- Queue status and admin-unassigned filters execute server queries. `DataTable`
+  uses controlled server pagination: page/page-size map to
+  `offset=(page-1)*pageSize` and `limit=pageSize`; changing a server filter
+  resets to page 1. Never page only the first fixed 100 rows against a larger
+  backend `total`.
+- Any keyword filter that is not implemented by the backend must be labelled as
+  a current-page filter and must not claim global result coverage.
+- Opening a conversation loads its current metadata and newest message page.
+  “Load older” uses `next_before_id`, keeps existing messages on failure,
+  deduplicates immutable IDs, and preserves chronological order.
+- REST reconciliation runs on a bounded interval and ignores stale overlapping
+  queue/detail responses. Unmount clears every timer. A failed silent refresh
+  keeps cached queue/history visible with an inline retry.
+- A failed reply retains one body/client-message-ID attempt. Retry reuses that
+  ID; success clears the composer, merges/reloads persisted state, and does not
+  fabricate optimistic backend IDs.
+- The queue always shows customer identity, current exact agent or `未分配`,
+  status, staff unread count, last-message preview, and time. Message sender
+  labels distinguish customer, agent, and administrator.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Admin has read but no write permission | Keep workbench readable; disable all mutations with explanatory copy |
+| Server reports total beyond current page | Render controlled pagination and request the matching offset |
+| Older-message request fails | Keep loaded history and show an older-page retry |
+| Silent poll fails with cached content | Keep content and show a non-destructive warning |
+| Reply is blank or over 2,000 scalars | Make no request and show Chinese validation |
+| Reply request fails | Preserve the immutable attempt for same-ID retry |
+| Selected conversation disappears after reassignment/filter change | Clear or reload selection without showing another agent's stale details |
+
+### 5. Good / Base / Bad Cases
+
+- Good: Agent 8 pages to queue page 2, opens one exact-owned conversation,
+  loads older history, replies once, and reconciles the committed record.
+- Base: an admin opens an unassigned conversation and replies as administrator.
+- Bad: an agent UI sends `assigned_agent_id` to choose another owner's queue.
+- Bad: a local table shows page buttons backed only by the first 100 rows while
+  its summary displays a larger server total.
+
+### 6. Tests Required
+
+- API tests assert scope-specific prefixes/auth scopes, normalized user contact
+  fields, exact request bodies, and message/queue pagination parameters.
+- Workbench tests cover agent/admin control differences, runtime write
+  permission, page-to-offset mapping, filter page reset, current-page keyword
+  semantics, older-history merge/retry, unread/status actions, same-ID reply
+  retry, stale request suppression, and polling cleanup.
+- Route/navigation/access tests prove the admin read permission and agent route
+  registration; browser checks cover 1280px, empty/error/long-message states,
+  resizable queue columns, no action wrapping, and zero document overflow.
+
+### 7. Wrong vs Correct
+
+```tsx
+// Wrong: local pagination can never reach rows after the first fetch.
+<DataTable data={firstHundred} />
+
+// Correct: the table controls backend offset/limit.
+<DataTable
+  data={currentPageRows}
+  pagination={{ currentPage, pageSize, total, onPageChange, onPageSizeChange }}
+/>
+```
+
+Backend ownership, persistence, and exact-agent authorization remain defined by
+[Agent-Routed Online Support Contracts](../backend/online-support.md).
+
 ## Visual Tokens and Accessibility
 
 - Use the shared warm-white, graphite, HIPPO orange, information blue, success,
