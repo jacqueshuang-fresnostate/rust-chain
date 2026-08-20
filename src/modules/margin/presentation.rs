@@ -422,6 +422,60 @@ pub(crate) struct MarginRiskSnapshot {
     pub(crate) should_liquidate: bool,
     #[serde(with = "unix_millis")]
     pub(crate) observed_at: DateTime<Utc>,
+    /// 全仓模式的权威账户级风险快照；逐仓响应不序列化该字段以保持旧结构。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) cross_account_risk: Option<MarginCrossAccountRisk>,
+}
+
+/// 按 `(user_id, margin_asset)` 实时重算的全仓账户风险，所有小数在 HTTP 边界保持十八位字符串。
+#[derive(Debug, Serialize)]
+pub(crate) struct MarginCrossAccountRisk {
+    /// 账户共享的保证金资产主键。
+    pub(crate) margin_asset: u64,
+    /// 当前持仓卡所属 pair，只它的共享标记价在条件求根中变化。
+    pub(crate) reference_pair_id: u64,
+    /// 稳定假设值，明确其他 pair 保持当前标记价。
+    pub(crate) price_assumption: &'static str,
+    /// 杠杆钱包 available、所有仓位保证金、浮盈和利息汇总后的账户权益。
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    pub(crate) equity: BigDecimal,
+    /// 账户全部已成交全仓仓位的静态名义维持保证金之和。
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    pub(crate) maintenance_margin: BigDecimal,
+    /// 账户权益减维持保证金，是条件强平价公式中的 Buffer。
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    pub(crate) liquidation_buffer: BigDecimal,
+    /// 账户权益除以维持保证金；分母为零时是 null。
+    #[serde(default, serialize_with = "serialize_optional_decimal_amount")]
+    pub(crate) margin_ratio: Option<BigDecimal>,
+    /// 所有账户仓位按各自唯一 pair 当前标记价计算的浮动盈亏之和。
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    pub(crate) unrealized_pnl: BigDecimal,
+    /// 所有账户仓位已计提未结算利息之和。
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    pub(crate) interest_amount: BigDecimal,
+    /// 当前权益是否已不高于维持保证金。
+    pub(crate) should_liquidate: bool,
+    /// 参考 pair 按 long 正、short 负汇总的基础资产数量。
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    pub(crate) net_quantity: BigDecimal,
+    /// 参考 pair 不抵消方向的基础资产总数量。
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    pub(crate) gross_quantity: BigDecimal,
+    /// 条件价是否可稳定求解的 snake_case 状态码。
+    pub(crate) estimate_status: &'static str,
+    /// 按 `P*=P0-Buffer/D` 求根并保守圆整的正条件强平价，不可解时为 null。
+    #[serde(default, serialize_with = "serialize_optional_decimal_amount")]
+    pub(crate) conditional_liquidation_price: Option<BigDecimal>,
+    /// 条件价与参考 pair 当前标记价的绝对距离比例。
+    #[serde(default, serialize_with = "serialize_optional_decimal_amount")]
+    pub(crate) conditional_liquidation_distance_rate: Option<BigDecimal>,
+    /// 该完整账户快照中最早的行情观测时间。
+    #[serde(with = "unix_millis")]
+    pub(crate) marks_observed_at_min: DateTime<Utc>,
+    /// 该完整账户快照中最晚的行情观测时间。
+    #[serde(with = "unix_millis")]
+    pub(crate) marks_observed_at_max: DateTime<Utc>,
 }
 
 fn serialize_decimal_amount<S>(amount: &BigDecimal, serializer: S) -> Result<S::Ok, S::Error>

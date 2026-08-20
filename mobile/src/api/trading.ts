@@ -3,8 +3,17 @@ import { client, requestUrl } from './client'
 import { asNumber, normalizeSymbol, splitSymbol } from '@/core/format'
 import { mapMarginProductMarginLimits } from '@/core/tradeForm'
 import { parseMarginOrderTypes } from '@/core/marginOrder'
-import { parseMarginRiskNumber } from '@/core/marginRiskMetrics'
+import {
+  mapMarginCrossAccountRisk,
+  parseMarginRiskNumber,
+  type MarginCrossAccountRisk,
+} from '@/core/marginRiskMetrics'
 import type { MarginOrderType, MarginProduct, WalletAccount } from '@/core/types'
+
+export type {
+  MarginCrossAccountPriceAssumption,
+  MarginCrossAccountRisk,
+} from '@/core/marginRiskMetrics'
 
 export interface SpotOrderInput {
   symbol: string
@@ -127,6 +136,7 @@ export interface MarginPositionRisk {
   liquidationDistanceRate: number | null
   shouldLiquidate: boolean
   observedAt?: number
+  crossAccountRisk?: MarginCrossAccountRisk
 }
 
 export interface MarginBatchActionFailure {
@@ -323,6 +333,7 @@ export async function fetchMarginPositionRisk(positionId: string): Promise<Margi
     liquidationDistanceRate: optionalNumber(risk.liquidation_distance_rate),
     shouldLiquidate: risk.should_liquidate === true,
     observedAt: normalizeTimestamp(risk.observed_at),
+    crossAccountRisk: mapMarginCrossAccountRisk(risk.cross_account_risk),
   }
 }
 

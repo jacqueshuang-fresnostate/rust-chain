@@ -300,6 +300,52 @@ async fn seed_margin_position(
     .last_insert_id()
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn seed_margin_risk_position(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    product_id: u64,
+    pair_id: u64,
+    margin_asset: u64,
+    margin_mode: &str,
+    status: &str,
+    direction: &str,
+    margin_amount: &str,
+    notional_amount: &str,
+    interest_amount: &str,
+    entry_price: Option<&str>,
+) -> u64 {
+    let wallet_scope = if margin_mode == "cross" {
+        "margin"
+    } else {
+        "spot"
+    };
+    sqlx::query(
+        r#"INSERT INTO margin_positions
+           (user_id, product_id, pair_id, margin_asset, wallet_scope, margin_mode, direction,
+            margin_amount, leverage, notional_amount, interest_amount, entry_price, status,
+            idempotency_key)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 5, ?, ?, ?, ?, ?)"#,
+    )
+    .bind(user_id)
+    .bind(product_id)
+    .bind(pair_id)
+    .bind(margin_asset)
+    .bind(wallet_scope)
+    .bind(margin_mode)
+    .bind(direction)
+    .bind(decimal(margin_amount))
+    .bind(decimal(notional_amount))
+    .bind(decimal(interest_amount))
+    .bind(entry_price.map(decimal))
+    .bind(status)
+    .bind(format!("margin-risk-scope-{}", Uuid::now_v7().simple()))
+    .execute(&mut **tx)
+    .await
+    .unwrap()
+    .last_insert_id()
+}
+
 #[tokio::test]
 async fn margin_open_requires_fresh_ticker_before_wallet_or_position_mutation()
 -> Result<(), Box<dyn Error>> {
@@ -3528,6 +3574,10 @@ async fn margin_position_risk_snapshot_returns_owned_position_metrics() -> Resul
     );
     assert_eq!(payload["risk"]["should_liquidate"], true);
     assert_eq!(payload["risk"]["observed_at"], observed_at_millis);
+    assert!(
+        payload["risk"].get("cross_account_risk").is_none(),
+        "isolated risk response must preserve its existing top-level-only shape"
+    );
 
     let other_response = app
         .oneshot(
@@ -3539,6 +3589,275 @@ async fn margin_position_risk_snapshot_returns_owned_position_metrics() -> Resul
         )
         .await?;
     assert_eq!(other_response.status(), StatusCode::NOT_FOUND);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn cross_margin_risk_snapshot_aggregates_exact_scope_and_solves_reference_pair()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let mut fixture_tx = pool.begin().await?;
+    let user_id = create_user(&mut fixture_tx).await;
+    let other_user_id = create_user(&mut fixture_tx).await;
+    let (base_a, base_a_symbol) = create_asset(&mut fixture_tx, "CRA").await;
+    let (base_b, base_b_symbol) = create_asset(&mut fixture_tx, "CRB").await;
+    let (margin_asset, margin_symbol) = create_asset(&mut fixture_tx, "CRQ").await;
+    let (other_margin_asset, _) = create_asset(&mut fixture_tx, "CRO").await;
+    let symbol_a = format!("{base_a_symbol}-{margin_symbol}");
+    let symbol_b = format!("{base_b_symbol}-{margin_symbol}");
+    let pair_a = create_pair(&mut fixture_tx, base_a, margin_asset, &symbol_a).await;
+    let pair_b = create_pair(&mut fixture_tx, base_b, margin_asset, &symbol_b).await;
+    let product_a =
+        seed_margin_product_with_mode(&mut fixture_tx, pair_a, margin_asset, "cross", vec!["5"])
+            .await;
+    let product_b =
+        seed_margin_product_with_mode(&mut fixture_tx, pair_b, margin_asset, "cross", vec!["5"])
+            .await;
+    let other_asset_product = seed_margin_product_with_mode(
+        &mut fixture_tx,
+        pair_a,
+        other_margin_asset,
+        "cross",
+        vec!["5"],
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO margin_wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)",
+    )
+    .bind(user_id)
+    .bind(margin_asset)
+    .bind(decimal("10.000000000000000000"))
+    .execute(&mut *fixture_tx)
+    .await?;
+
+    let reference_position_id = seed_margin_risk_position(
+        &mut fixture_tx,
+        user_id,
+        product_a,
+        pair_a,
+        margin_asset,
+        "cross",
+        "opened",
+        "long",
+        "20",
+        "100",
+        "1",
+        Some("100"),
+    )
+    .await;
+    let hedge_position_id = seed_margin_risk_position(
+        &mut fixture_tx,
+        user_id,
+        product_a,
+        pair_a,
+        margin_asset,
+        "cross",
+        "opened",
+        "short",
+        "10",
+        "40",
+        "0",
+        Some("100"),
+    )
+    .await;
+    seed_margin_risk_position(
+        &mut fixture_tx,
+        user_id,
+        product_b,
+        pair_b,
+        margin_asset,
+        "cross",
+        "opened",
+        "long",
+        "20",
+        "100",
+        "22",
+        Some("50"),
+    )
+    .await;
+
+    // 以下五行分别验证 margin_mode、entry_price、status、user 和 margin_asset 边界。
+    seed_margin_risk_position(
+        &mut fixture_tx,
+        user_id,
+        product_a,
+        pair_a,
+        margin_asset,
+        "isolated",
+        "opened",
+        "long",
+        "900",
+        "900",
+        "0",
+        Some("100"),
+    )
+    .await;
+    seed_margin_risk_position(
+        &mut fixture_tx,
+        user_id,
+        product_a,
+        pair_a,
+        margin_asset,
+        "cross",
+        "opened",
+        "long",
+        "900",
+        "900",
+        "0",
+        None,
+    )
+    .await;
+    seed_margin_risk_position(
+        &mut fixture_tx,
+        user_id,
+        product_a,
+        pair_a,
+        margin_asset,
+        "cross",
+        "closed",
+        "long",
+        "900",
+        "900",
+        "0",
+        Some("100"),
+    )
+    .await;
+    seed_margin_risk_position(
+        &mut fixture_tx,
+        other_user_id,
+        product_a,
+        pair_a,
+        margin_asset,
+        "cross",
+        "opened",
+        "long",
+        "900",
+        "900",
+        "0",
+        Some("100"),
+    )
+    .await;
+    seed_margin_risk_position(
+        &mut fixture_tx,
+        user_id,
+        other_asset_product,
+        pair_a,
+        other_margin_asset,
+        "cross",
+        "opened",
+        "long",
+        "900",
+        "900",
+        "0",
+        Some("100"),
+    )
+    .await;
+    fixture_tx.commit().await?;
+
+    let observed_at_max = Utc::now().timestamp_millis();
+    let observed_at_min = observed_at_max - 1_000;
+    cache_margin_ticker_at(&redis, &symbol_a, "100.000000000000000000", observed_at_min).await?;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let app = user_routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_redis(redis.clone()),
+    );
+
+    let missing_pair_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/margin/positions/{reference_position_id}/risk"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(
+        missing_pair_response.status(),
+        StatusCode::BAD_REQUEST,
+        "missing any unique-pair mark must reject the entire cross account snapshot"
+    );
+
+    cache_margin_ticker_at(&redis, &symbol_b, "60.000000000000000000", observed_at_max).await?;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/margin/positions/{reference_position_id}/risk"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let status = response.status();
+    let payload = body_json(response).await?;
+    assert_eq!(status, StatusCode::OK, "payload: {payload}");
+    assert_eq!(payload["risk"]["position_id"], reference_position_id);
+    assert_eq!(payload["risk"]["estimated_liquidation_price"], Value::Null);
+    assert_eq!(payload["risk"]["liquidation_distance_rate"], Value::Null);
+    let account = &payload["risk"]["cross_account_risk"];
+    assert_eq!(account["margin_asset"], margin_asset);
+    assert_eq!(account["reference_pair_id"], pair_a);
+    assert_eq!(
+        account["price_assumption"],
+        "reference_pair_only_other_marks_static"
+    );
+    assert_eq!(account["equity"], "57.000000000000000000");
+    assert_eq!(account["maintenance_margin"], "12.000000000000000000");
+    assert_eq!(account["liquidation_buffer"], "45.000000000000000000");
+    assert_eq!(account["margin_ratio"], "4.750000000000000000");
+    assert_eq!(account["unrealized_pnl"], "20.000000000000000000");
+    assert_eq!(account["interest_amount"], "23.000000000000000000");
+    assert_eq!(account["should_liquidate"], false);
+    assert_eq!(account["net_quantity"], "0.600000000000000000");
+    assert_eq!(account["gross_quantity"], "1.400000000000000000");
+    assert_eq!(account["estimate_status"], "estimated");
+    assert_eq!(
+        account["conditional_liquidation_price"],
+        "25.000000000000000000"
+    );
+    assert_eq!(
+        account["conditional_liquidation_distance_rate"],
+        "0.750000000000000000"
+    );
+    assert_eq!(account["marks_observed_at_min"], observed_at_min);
+    assert_eq!(account["marks_observed_at_max"], observed_at_max);
+
+    sqlx::query("UPDATE margin_positions SET notional_amount = ? WHERE id = ?")
+        .bind(decimal("100.000000000000000000"))
+        .bind(hedge_position_id)
+        .execute(&pool)
+        .await?;
+    let hedged_response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/margin/positions/{reference_position_id}/risk"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let hedged_status = hedged_response.status();
+    let hedged_payload = body_json(hedged_response).await?;
+    assert_eq!(hedged_status, StatusCode::OK, "payload: {hedged_payload}");
+    let hedged_account = &hedged_payload["risk"]["cross_account_risk"];
+    assert_eq!(hedged_account["net_quantity"], "0.000000000000000000");
+    assert_eq!(hedged_account["gross_quantity"], "2.000000000000000000");
+    assert_eq!(hedged_account["estimate_status"], "net_delta_zero");
+    assert_eq!(hedged_account["conditional_liquidation_price"], Value::Null);
+    assert_eq!(
+        hedged_account["conditional_liquidation_distance_rate"],
+        Value::Null
+    );
 
     Ok(())
 }

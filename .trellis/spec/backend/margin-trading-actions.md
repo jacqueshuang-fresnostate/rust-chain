@@ -32,7 +32,7 @@
 - Cancel and ticker-fill use the same position-first lock order. Exactly one may transition a pending order; repeated tickers, retries, and competing service instances produce no duplicate mutation.
 - Pending limits have `interest_accrued_at = NULL`, create no cross account, commission, or filled event, and are excluded by every interest, position/risk/return aggregate, and isolated/cross liquidation query. User/admin order-history lists intentionally retain them so they remain cancelable and auditable. The fill transaction sets both `opened_at` and the interest start to the real database fill time, while `created_at` remains the original placement time; it then creates the cross account when needed, inserts one commission, and publishes one post-commit filled event.
 - `MarginPositionResponse`, user/admin reads, and private filled events preserve real `order_type`, optional `limit_price`, and optional `entry_price`. Clients classify filled holdings by positive non-null `entry_price` and pending orders by opened/null entry price.
-- `wallet_scope` snapshots whether collateral came from spot or margin. Close, cancel, and liquidation return funds to that same scope.
+- `wallet_scope` snapshots whether collateral came from spot or margin. Active close, cancel, and isolated liquidation return funds to that same scope. Account-level cross liquidation is the explicit exception: it only consumes the shared margin wallet's `available` bucket and never credits a position payout.
 - Position state, wallet balance, and ledger entry commit in one transaction.
 - Margin open idempotency compares product, direction, explicit mode, margin, leverage, normalized order type, and optional limit price. Same-key same-request replay returns the original pending or filled row without another debit; any order-type or limit-price change is a conflict.
 - Transfers lock spot then margin wallet in both directions, update both balances and ledgers atomically, and validate asset precision.
@@ -42,12 +42,19 @@
 - Same key with different asset, direction, or amount returns conflict.
 - User leverage must be a configured product level. Persisted settings are readable through the GET route.
 - Product listing returns a capability envelope. Implemented values are `order_types=["market", "limit"]`, `margin_modes=["isolated", "cross"]`, `bulk_close=true`, and `position_risk=true`; unimplemented `take_profit_stop_loss` and `strategy_orders` remain false. Clients render only advertised behavior, while missing-order-type PC requests remain market-compatible.
-- The single-position risk response preserves the legacy `realized_pnl` alias and also returns the semantically correct `unrealized_pnl`, base quantity, return rate, margin ratio, isolated estimated liquidation price, and liquidation-distance rate. All decimals stay strings at the HTTP boundary.
+- The position risk response preserves the legacy `realized_pnl` alias and also returns the semantically correct `unrealized_pnl`, base quantity, return rate, margin ratio, isolated estimated liquidation price, and liquidation-distance rate. All decimals stay strings at the HTTP boundary.
 - Risk display derivatives use the same ticker and worker risk state as liquidation. Quantity is notional divided by entry price, return rate is unrealized PnL divided by margin, and margin ratio is equity divided by maintenance margin. Invalid denominators produce null rather than fabricated zero ratios.
-- An isolated liquidation estimate solves the mark price where equity equals maintenance margin. Cross positions return null for both isolated liquidation price and distance because liquidation belongs to the shared `(user_id, margin_asset)` account.
+- An isolated liquidation estimate solves the mark price where equity equals maintenance margin. Isolated responses keep the existing top-level shape and omit `cross_account_risk`.
+- A cross response retains the legacy top-level per-position fields, where the two isolated liquidation estimate fields remain null, and adds authoritative `cross_account_risk`. The object contains `margin_asset`, `reference_pair_id`, `price_assumption`, equity, maintenance margin, liquidation buffer, margin ratio, unrealized PnL, interest, liquidation decision, net/gross reference-pair quantity, estimate status, optional conditional price/distance, and min/max mark observation times.
+- Cross risk rows are selected strictly by the JWT user, the reference position's `margin_asset`, `margin_mode='cross'`, `status='opened'`, and non-null `entry_price`. Isolated, pending, terminal, other-user, and other-asset rows never enter the account aggregate.
+- Cross risk fetches each unique pair ticker once and reuses it for every leg on that pair. A missing, stale, or invalid ticker for any pair rejects the whole account snapshot; partial account estimates are forbidden.
+- For reference mark `P0`, liquidation buffer `Buffer = equity - maintenance_margin`, and signed reference-pair net quantity `D` (long positive, short negative), the conditional account boundary is `P* = P0 - Buffer / D`; every other pair mark remains fixed. The implementation uses `BigDecimal` and conservatively rounds to pair tick precision (net long upward, net short downward).
+- Conditional estimates expose stable states. `estimated` is the only state with a price/distance; `already_liquidatable`, `net_delta_zero`, `net_delta_near_zero`, `invalid_exposure`, `no_positive_boundary`, and `wrong_adverse_direction` return null price/distance. Near-zero means `abs(D) / gross_quantity <= 0.000001`, defined by the named backend constant `CROSS_NET_DELTA_EPSILON`.
 - `cross` accounts are scoped by `(user_id, margin_asset)`. All open cross positions using that asset share wallet equity, initial margin, unrealized PnL, and accrued interest.
 - Cross equity is `wallet_equity + sum(filled_open_position.margin_amount) + sum(unrealized_pnl) - sum(interest_amount)`; maintenance margin is the sum of each filled position's notional times its configured maintenance rate. Pending limits are absent from both sums.
-- A cross account is liquidated as one unit when combined equity is less than or equal to combined maintenance margin. The worker locks all account positions in one transaction, settles each payout, writes each liquidation record, and closes every open cross position in that account.
+- A cross account is liquidated as one unit when combined equity is less than or equal to combined maintenance margin. Before opening the transaction, the worker groups candidate legs by symbol and performs exactly one cached ticker read per symbol; all same-symbol legs receive that same mark. Any unavailable symbol skips the entire account and reschedules its affected positions.
+- Once triggered, the transaction locks every account position and the one `(user_id, margin_asset)` margin wallet. It sets only `margin_wallet_accounts.available` to zero, preserves `frozen` and `locked`, and writes exactly one account ledger whose delta is `-available_before` (including one zero-delta audit row if the bucket was already zero). It never touches spot, another asset, or an isolated position.
+- Every cross liquidation record/event has `payout_amount = 0`. Positive residual account equity is consumed rather than credited; bad debt is exactly `max(-account_equity, 0)`. The terminal cross-account row retains the same pre-liquidation equity/risk snapshot that triggered the decision and stores that snapshot's bad debt rather than replacing `last_equity` with the post-clear wallet balance. Wallet mutation, one ledger, all position records/terminal transitions, and account bad debt commit atomically, and replay of terminal positions performs none of them again.
 - The margin wallet response includes `cross_accounts[]` with `equity`, `unrealized_pnl`, `interest_amount`, `maintenance_margin`, and optional `margin_ratio` from the latest worker snapshot.
 - Cross interest is accrued per position and aggregated into `margin_cross_accounts.last_interest_amount`; close and liquidation deduct the position's accrued interest from settlement.
 - Bulk actions have no silent 100-row cap, reuse single-item idempotent transactions, continue after failures, and return `failures`.
@@ -67,6 +74,7 @@
 - Same idempotency key with different request -> `CONFLICT`.
 - Same margin idempotency key with changed `order_type` or `limit_price` -> `CONFLICT`, with no additional collateral debit.
 - Unknown `wallet_scope` on close/cancel/liquidation -> `VALIDATION_ERROR`; never default to spot.
+- Missing/stale/non-positive ticker for any pair in a cross risk account -> `VALIDATION_ERROR` for the entire account snapshot; never return an aggregate with one leg omitted.
 - One bulk item fails -> include its id/code/message and continue later items.
 
 ### 5. Good/Base/Bad Cases
@@ -78,6 +86,8 @@
 - Good: disabling margin transfer rejects a new inbound request while the user's existing wallet row stays visible and can transfer back to spot.
 - Base: an enabled asset without a user margin-wallet row appears in `/margin/wallets` with three zero buckets; the read does not create a database row.
 - Base: a second close/cancel sees the terminal position and does not credit twice.
+- Good: a hedged cross account whose old position-equity settlement would increase `available` instead sets it to zero, records one `-available_before` ledger, and stores zero payout on every leg.
+- Good: partial same-pair hedges return a finite conditional account boundary while exact or near-exact hedges return an explicit null-bearing estimate status.
 - Bad: opposite transfer directions lock wallets in different orders; this creates a deadlock window.
 - Bad: filling at the client limit, an order-book BBO, a stale Redis frame, or a depth snapshot instead of the CAS-accepted server ticker.
 - Bad: including `entry_price IS NULL` rows in dashboard open-position counts, interest summaries, realized-return aggregates, isolated liquidation, cross-account expansion, or commission generation.
@@ -92,12 +102,14 @@
 - Transfer tests cover both directions, precision, insufficient balance, same-key replay, changed-request conflict, asset-disable replay, inbound eligibility rejection, outbound-after-disable, and ledger counts.
 - Wallet-list tests cover an enabled asset before lazy account creation, an existing wallet after the flag is disabled, backend Logo passthrough, and `margin_transfer_enabled` serialization.
 - Close/cancel tests assert balance, ledger, status, and idempotent retry for both wallet scopes.
-- Liquidation worker test asserts payout uses recorded `wallet_scope`.
+- Isolated liquidation worker tests assert payout uses recorded `wallet_scope` and otherwise remains unchanged.
+- Cross liquidation worker tests cover a hedged long/short account that previously could mint available balance, zero post-settlement available, unchanged frozen/locked and spot balances, one negative account ledger, zero payout on every position, all account positions terminal, exact bad-debt policy, same-symbol shared marks, and replay idempotency.
 - Bulk tests process more than 100 rows, retain prior successes/events, report a failed row, and continue to later rows.
 - Settings tests cover user isolation, leverage round-trip, mode round-trip, and cross acceptance for a product configured with `cross`.
 - Route tests prove the product catalog works without a bearer token while private margin routes still reject anonymous callers.
-- Risk tests cover the legacy PnL alias, new unrealized PnL, quantity, return/margin ratios, isolated liquidation price/distance, and null cross liquidation fields.
-- Domain tests cover combined PnL/interest/maintenance arithmetic and the equality liquidation boundary; worker integration tests must assert all same-asset cross positions close in one account liquidation.
+- Risk tests cover the legacy PnL alias, new unrealized PnL, quantity, return/margin ratios, isolated liquidation price/distance, and omitted cross object for isolated mode.
+- Cross route tests cover exact account-row scope, all-or-nothing unique-pair marks, multi-pair aggregation, min/max mark times, partial-hedge solving, exact-hedge null status, and null legacy isolated estimate fields.
+- Domain tests cover combined PnL/interest/maintenance arithmetic, the equality liquidation boundary, named near-zero threshold, partial long/short hedge roots, exact/near hedge nulls, already-triggered/non-positive/wrong-direction statuses, and full-consumption settlement/bad-debt arithmetic.
 
 ### 7. Wrong vs Correct
 
@@ -115,8 +127,16 @@ accrue_interest(position);
 ```rust
 credit_margin_position_amount(tx, user_id, asset_id, &position.wallet_scope, amount, change_type, position.id).await?;
 ensure_supported_user_margin_mode(&requested_mode)?;
-// cross risk is evaluated by (user_id, margin_asset), never by position alone.
+// cross risk is evaluated by (user_id, margin_asset), never by position alone;
+// each unique pair contributes one shared cached mark.
 evaluate_cross_margin(&wallet_equity, &position_margin, &position_risks);
+let boundary = estimate_cross_margin_conditional_price(
+    reference_pair_id,
+    reference_mark,
+    &(account_risk.equity - account_risk.maintenance_margin),
+    price_precision,
+    &positions,
+)?;
 // limit price only decides the boundary; the accepted server ticker is the fill.
 if margin_limit_order_is_triggered(direction, limit_price, accepted_ticker)? {
     mark_margin_limit_position_filled(tx, position.id, accepted_ticker).await?;

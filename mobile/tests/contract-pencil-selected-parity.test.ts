@@ -9,6 +9,8 @@ const tradeSource = read('../src/views/TradeView.vue')
 const sheetsSource = read('../src/components/ContractTradeSheets.vue')
 const orderBookSource = read('../src/components/OrderBookPanel.vue')
 const tradingApiSource = read('../src/api/trading.ts')
+const marginRiskSource = read('../src/core/marginRiskMetrics.ts')
+const marginRiskContractSource = `${tradingApiSource}\n${marginRiskSource}`
 const ordersSource = read('../src/views/OrdersView.vue')
 
 test('当前八张 Pencil 杠杆画板均由生产页面声明', () => {
@@ -131,9 +133,25 @@ test('公开产品、能力、钱包和风险 DTO 被杠杆工作区完整消费
     'margin_ratio',
     'estimated_liquidation_price',
     'liquidation_distance_rate',
+    'cross_account_risk',
+    'reference_pair_id',
+    'price_assumption',
+    'liquidation_buffer',
+    'net_quantity',
+    'gross_quantity',
+    'estimate_status',
+    'conditional_liquidation_price',
+    'conditional_liquidation_distance_rate',
+    'marks_observed_at_min',
+    'marks_observed_at_max',
   ]) {
-    assert.match(tradingApiSource, new RegExp(field))
+    assert.match(marginRiskContractSource, new RegExp(field))
   }
+  assert.match(tradingApiSource, /crossAccountRisk: mapMarginCrossAccountRisk\(risk\.cross_account_risk\)/)
+  assert.match(tradeSource, /crossAccountRisk: risk\?\.crossAccountRisk/)
+  assert.match(tradeSource, /t\('trade\.estimatedAccountLiquidationPrice'\)/)
+  assert.match(tradeSource, /t\('trade\.noStableSingleLiquidationPrice'\)/)
+  assert.match(tradeSource, /role="note"[\s\S]*?t\('trade\.crossAccountLiquidationAssumption'\)/)
   assert.match(tradingApiSource, /function mapMarginBatchAction[\s\S]*?positions:[\s\S]*?failures:/)
   assert.match(tradeSource, /const result = await closeAllMarginPositions[\s\S]*?result\.failures\.length[\s\S]*?positionsPartiallyClosed/)
   assert.match(ordersSource, /const result = await cancelAllMarginPositions\(\)[\s\S]*?result\.failures\.length[\s\S]*?batchCancelPartial/)
@@ -221,6 +239,7 @@ test('持仓三枚按钮复刻独立间距、42px 视觉面与 44px 触控合同
   assert.match(tradeSource, /--contract-position-action-surface: #ffffff;[\s\S]*?--contract-position-action-border: #087b52;[\s\S]*?--contract-position-action-text: #087b52;/)
   assert.match(tradeSource, /html\[data-theme='dark'\] \.contract-trade \{[\s\S]*?--contract-position-action-surface: #121714;[\s\S]*?--contract-position-action-border: #202923;[\s\S]*?--contract-position-action-text: var\(--contract-text\);/)
   assert.match(tradeSource, /\.contract-position-card \{[^}]*display: grid;[^}]*gap: 12px;[^}]*grid-template-rows: auto auto auto 44px;[^}]*min-height: 272px;/s)
+  assert.match(tradeSource, /\.contract-liquidation-distance small \{[^}]*grid-column: 1 \/ -1;[^}]*line-height: 12px;[^}]*min-width: 0;[^}]*overflow-wrap: anywhere;/s)
   assert.match(tradeSource, /\.contract-position-actions \{[^}]*display: grid;[^}]*gap: 10px;[^}]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);[^}]*height: 44px;[^}]*min-width: 0;[^}]*width: 100%;/s)
   assert.match(tradeSource, /\.contract-position-actions button \{[^}]*background: transparent;[^}]*border: 0;[^}]*border-radius: 12px;[^}]*height: 44px;[^}]*min-height: 44px;[^}]*min-width: 0;[^}]*position: relative;/s)
   assert.match(tradeSource, /\.contract-position-actions button::before \{[^}]*background: var\(--contract-position-action-surface\);[^}]*border: 1px solid var\(--contract-position-action-border\);[^}]*border-radius: 12px;[^}]*inset: 1px 0;/s)

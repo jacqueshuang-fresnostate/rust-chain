@@ -12,11 +12,14 @@ mod settlement;
 mod transfers;
 
 pub(crate) use market_data::{
-    cached_margin_entry_price, cached_margin_mark_price, cached_margin_risk_ticker,
+    MarginRiskTicker, cached_margin_entry_price, cached_margin_mark_price,
+    cached_margin_risk_ticker,
 };
 pub(crate) use position_queries::{
-    list_admin_interest_summary, list_admin_margin_positions, list_margin_wallet_accounts,
-    list_user_cross_margin_accounts, list_user_margin_positions, load_admin_margin_position_by_id,
+    MarginRiskPositionRow, list_admin_interest_summary, list_admin_margin_positions,
+    list_margin_wallet_accounts, list_user_cross_margin_accounts,
+    list_user_cross_margin_risk_positions, list_user_margin_positions,
+    load_admin_margin_position_by_id, load_user_cross_margin_wallet_available,
     load_user_position_by_id, load_user_risk_position_by_id,
 };
 pub(crate) use positions::{

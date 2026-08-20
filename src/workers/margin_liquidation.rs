@@ -5,8 +5,9 @@
 //! 逐仓判定基于单仓权益：保证金加浮盈减利息，权益不高于名义价值乘维持保证金率即触发，
 //! 结算时按非负权益返还，亏损截零，穿仓部分由平台隐性承担且不单独登记。
 //! 全仓判定基于账户共享权益：钱包可用余额加全部仓位保证金加浮盈减利息，与维持保证金总额比较，
-//! 触发后账户内所有全仓仓位在同一事务中一起关闭，共享钱包只按组合权益变更一次，
-//! 扣穿部分钳零后作为坏账写入账户行；各仓位的 payout 只是按正权益占比的展示性分摊，之和不超过组合正权益。
+//! 同 symbol 的所有多空腿每轮只读一次 Redis 并共用完全相同的标记价，任一唯一 symbol 缺价就跳过整个账户。
+//! 触发后账户内所有全仓仓位在同一事务中一起关闭，共享钱包只把锁定的 available 一次扣到零，
+//! 每仓 payout 恒为零，坏账精确等于强平前账户总权益的负值部分；frozen/locked、现货与其他资产不变。
 //! 每个账户或仓位独立开事务，单项失败只计数并继续，不会回滚本轮已提交的其他强平。
 //! 私有强平事件严格在对应事务提交之后才广播，且广播失败不影响已落地的资金结果，进程重启也不补发。
 
@@ -14,10 +15,7 @@ use crate::{
     error::{AppError, AppResult},
     modules::{
         events::{EventBroadcastHub, EventBroadcastMessage},
-        margin::domain::{
-            CrossMarginPositionRisk, CrossMarginRiskState, allocate_cross_margin_payouts,
-            evaluate_cross_margin,
-        },
+        margin::domain::{CrossMarginPositionRisk, CrossMarginRiskState, evaluate_cross_margin},
         margin::infrastructure::{
             apply_cross_margin_account_settlement, credit_margin_position_amount,
         },
@@ -32,7 +30,7 @@ use redis::{AsyncCommands, aio::ConnectionManager};
 use serde::Deserialize;
 use serde_json::json;
 use sqlx::{MySql, Pool, Transaction};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::env;
 use tokio::time::{Duration, interval};
 use tracing::{error, info, warn};
@@ -119,6 +117,7 @@ struct CrossMarginAccountCandidate {
 #[derive(Debug, sqlx::FromRow)]
 struct CrossMarginPositionCandidate {
     id: u64,
+    pair_id: u64,
     symbol: String,
 }
 
@@ -187,7 +186,7 @@ struct MarginLiquidationEvent {
     /// 触发强平时采用的标记价，同时被写为仓位的退出价。
     mark_price: BigDecimal,
     realized_pnl: BigDecimal,
-    /// 逐仓是真实入账的非负返还额；全仓是按正权益占比的分摊值，仅供展示。
+    /// 逐仓是真实入账的非负返还额；全仓强平按全扣政策恒为零。
     payout_amount: BigDecimal,
     /// 强平原因，逐仓为 `maintenance_margin`，全仓为 `cross_maintenance_margin`。
     reason: &'static str,
@@ -340,19 +339,23 @@ async fn run_once_with_dependencies_and_events(
             fetch_cross_account_positions(pool, account.user_id, account.margin_asset).await?;
         let mut marks = HashMap::new();
         let mut missing_mark = false;
-        for position in &positions {
-            match cached_ticker_price(redis, &position.symbol, now).await {
+        for (symbol, position_keys) in cross_position_keys_by_symbol(&positions) {
+            match cached_ticker_price(redis, &symbol, now).await {
                 Ok(Some(price)) => {
-                    marks.insert(position.id, price);
+                    for (_, pair_id) in position_keys {
+                        marks.insert(pair_id, price.clone());
+                    }
                 }
                 Ok(None) | Err(_) => {
                     missing_mark = true;
-                    schedule_next_liquidation_attempt(
-                        pool,
-                        position.id,
-                        now + chrono::TimeDelta::seconds(60),
-                    )
-                    .await?;
+                    for (position_id, _) in position_keys {
+                        schedule_next_liquidation_attempt(
+                            pool,
+                            position_id,
+                            now + chrono::TimeDelta::seconds(60),
+                        )
+                        .await?;
+                    }
                 }
             }
         }
@@ -503,7 +506,7 @@ async fn fetch_open_cross_accounts(
     .map_err(AppError::from)
 }
 
-/// 列出某个全仓账户下全部已成交 opened 仓位的主键与交易对符号，用于在开事务前逐个取标记价。
+/// 列出某个全仓账户下全部已成交 opened 仓位的主键、pair 与符号，用于在开事务前取完整标记价。
 /// 不带 `next_liquidation_attempt_at` 条件，因为账户级评估必须覆盖全部仓位，
 /// 漏掉任何一笔都会让共享权益算高，从而错过本应触发的强平。
 /// 只读不加锁，读到的集合可能与随后加锁读到的不完全一致；那次带 FOR UPDATE 的查询才是权威依据，
@@ -515,7 +518,7 @@ async fn fetch_cross_account_positions(
     margin_asset: u64,
 ) -> AppResult<Vec<CrossMarginPositionCandidate>> {
     sqlx::query_as::<_, CrossMarginPositionCandidate>(
-        r#"SELECT positions.id, pairs.symbol
+        r#"SELECT positions.id, positions.pair_id, pairs.symbol
            FROM margin_positions positions
            INNER JOIN trading_pairs pairs ON pairs.id = positions.pair_id
            WHERE positions.user_id = ? AND positions.margin_asset = ?
@@ -528,6 +531,22 @@ async fn fetch_cross_account_positions(
     .fetch_all(pool)
     .await
     .map_err(AppError::from)
+}
+
+/// 将全仓候选按 symbol 聚合为稳定有序的行情读取计划，每个键在一轮内只能触发一次 Redis GET。
+/// 分组值保留仓位主键供缺价时逐笔退避，同时保留 pair 主键供事务内的权威仓位行查价。
+/// 同 symbol 即使对应多个仓位或历史上的多个 pair 主键，也会复用同一价格值，避免对冲腿被 Redis 更新切成两个行情时点。
+fn cross_position_keys_by_symbol(
+    positions: &[CrossMarginPositionCandidate],
+) -> BTreeMap<String, Vec<(u64, u64)>> {
+    let mut grouped = BTreeMap::<String, Vec<(u64, u64)>>::new();
+    for position in positions {
+        grouped
+            .entry(position.symbol.clone())
+            .or_default()
+            .push((position.id, position.pair_id));
+    }
+    grouped
 }
 
 /// 读取指定交易对的服务端标记价，并施加强平专用的有效性判定。
@@ -662,22 +681,21 @@ async fn liquidate_position_by_id(
 }
 
 /// 统一处理一个全仓账户：按仓位 ID 锁定全部 opened 仓位，再锁保证金钱包并用组合权益决定是否清算。
-/// 调用方必须为每个仓位提供同一扫描时点的新鲜标记价；缺价、非 margin 钱包或缺入场价均中止整笔账户事务。
-/// 触发时按组合权益分配各仓位 payout，账户钱包结算、坏账、清算记录、仓位终态和风险快照必须原子提交。
+/// 调用方必须为每个唯一 pair 提供同一扫描时点的新鲜标记价；缺价、非 margin 钱包或缺入场价均中止整笔账户事务。
+/// 触发时每仓 payout 恒为零，账户钱包归零、坏账、清算记录、仓位终态和风险快照必须原子提交。
 /// 未触发只提交最新风险快照；成功事件在事务提交后由上层发布，重复扫描已关闭仓位会跳过。
 ///
 /// 锁序固定为「先按主键升序锁全部全仓仓位，再锁杠杆钱包」，与开仓、平仓、划转路径的
 /// 「先仓位后钱包」方向一致，因此账户级强平不会与用户主动操作形成交叉等待。
 /// 仓位集合为空说明账户已被清空，回滚跳过；钱包行缺失时按十八位精度的零权益参与计算而不报错。
-/// 逐仓位校验三件事：资金域必须是 margin、入场价必须存在、必须能在 `marks` 中找到对应标记价，
+/// 逐仓位校验三件事：资金域必须是 margin、入场价必须存在、必须能在 `marks` 中找到对应 pair 标记价，
 /// 任一不满足立即返回错误中止整笔账户事务，绝不带着残缺估值继续结算。
 /// 账户风险由领域层统一评估：钱包可用余额加全部仓位保证金加浮盈减利息为账户权益，
 /// 与维持保证金总额比较决定是否强平；无论是否触发都会先写回风险快照并递增版本号。
 /// 未触发时提交快照即返回，因此本函数在安全路径下仍有写入，不是纯只读。
-/// 触发后按各仓位正权益占比分摊组合权益，分摊结果只写进强平记录与事件用于展示，
-/// 真正的资金变更只有一次：共享钱包按组合权益增减，扣穿部分钳零并作为坏账记入账户行。
-/// 逐仓位写强平记录并以 `status = 'opened'` 为条件迁移到 liquidated，同时清空重试时间。
-/// 最后把账户状态置为 liquidated 并落盘结算后余额与坏债，全部写入随同一事务原子提交。
+/// 触发后真正的资金变更只有一次：共享钱包将事务锁定的 available 归零，流水是其负值；负账户权益的绝对值记为坏账。
+/// 逐仓位写 payout=0 的强平记录并以 `status = 'opened'` 为条件迁移到 liquidated；任一 UPDATE 不是一行都回滚账户流水。
+/// 最后把账户状态置为 liquidated 并落盘强平前风险快照的坏债，全部写入随同一事务原子提交。
 async fn liquidate_cross_account(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -734,7 +752,7 @@ async fn liquidate_cross_account(
                 "cross margin entry price is required for liquidation".to_owned(),
             ));
         };
-        let mark_price = marks.get(&position.id).ok_or_else(|| {
+        let mark_price = marks.get(&position.pair_id).ok_or_else(|| {
             AppError::Validation("cross margin mark price is required for liquidation".to_owned())
         })?;
         let realized_pnl = margin_realized_pnl(
@@ -766,16 +784,6 @@ async fn liquidate_cross_account(
         return Ok(LiquidationOutcome::Skipped);
     }
 
-    let position_equities = positions
-        .iter()
-        .zip(&per_position_states)
-        .map(|(position, (realized_pnl, _, _, _))| {
-            (position.margin_amount.clone() + realized_pnl.clone()
-                - position.interest_amount.clone())
-            .with_scale(18)
-        })
-        .collect::<Vec<_>>();
-    let payouts = allocate_cross_margin_payouts(&position_equities, &account_risk.portfolio_equity);
     let reference_id = format!(
         "{}:{}:{}",
         user_id,
@@ -786,15 +794,16 @@ async fn liquidate_cross_account(
         &mut tx,
         user_id,
         margin_asset,
-        &account_risk.portfolio_equity,
+        &account_risk.equity,
         &reference_id,
     )
     .await?;
 
     let mut events = Vec::with_capacity(positions.len());
-    for ((position, (realized_pnl, maintenance_margin, entry_price, mark_price)), payout_amount) in
-        positions.iter().zip(per_position_states).zip(payouts)
+    for (position, (realized_pnl, maintenance_margin, entry_price, mark_price)) in
+        positions.iter().zip(per_position_states)
     {
+        let payout_amount = BigDecimal::from(0).with_scale(18);
         let position_equity = (position.margin_amount.clone() + realized_pnl.clone()
             - position.interest_amount.clone())
         .with_scale(18);
@@ -814,7 +823,7 @@ async fn liquidate_cross_account(
             now,
         )
         .await?;
-        sqlx::query(
+        let update = sqlx::query(
             r#"UPDATE margin_positions
                SET status = 'liquidated', closed_at = ?, liquidated_at = ?, exit_price = ?,
                    realized_pnl = ?, liquidation_reason = 'cross_maintenance_margin',
@@ -828,6 +837,11 @@ async fn liquidate_cross_account(
         .bind(position.id)
         .execute(&mut *tx)
         .await?;
+        if update.rows_affected() != 1 {
+            return Err(AppError::Conflict(
+                "cross margin position changed during account liquidation".to_owned(),
+            ));
+        }
         events.push(MarginLiquidationEvent {
             user_id: position.user_id,
             position_id: position.id,
@@ -846,18 +860,22 @@ async fn liquidate_cross_account(
             liquidated_at: now,
         });
     }
-    sqlx::query(
+    let account_update = sqlx::query(
         r#"UPDATE margin_cross_accounts
-           SET status = 'liquidated', last_equity = ?, last_bad_debt = ?,
+           SET status = 'liquidated', last_bad_debt = ?,
                version = version + 1
            WHERE user_id = ? AND margin_asset = ?"#,
     )
-    .bind(&settlement.available_after)
     .bind(&settlement.bad_debt)
     .bind(user_id)
     .bind(margin_asset)
     .execute(&mut *tx)
     .await?;
+    if account_update.rows_affected() != 1 {
+        return Err(AppError::Conflict(
+            "cross margin account changed during account liquidation".to_owned(),
+        ));
+    }
     tx.commit().await?;
     Ok(LiquidationOutcome::Liquidated(events))
 }
@@ -1002,8 +1020,8 @@ async fn insert_liquidation_record(
 /// 在全仓账户强平事务内为其中一个仓位写强平审计，一次账户强平会逐笔调用多次。
 /// 列结构与逐仓版本完全一致，仅 `reason` 固定为 `cross_maintenance_margin`，
 /// 两条路径共用 `margin_liquidation_records` 一张表，靠该列区分处置类型。
-/// 需要特别注意 `payout_amount` 的含义与逐仓不同：这里是按正权益占比分摊出的展示值，
-/// 并非该仓位实际收到的入账，全仓真正的资金变更只在共享钱包上发生一次。
+/// 全仓记录的 `payout_amount` 恒为零，不再把单仓正权益或组合剩余权益分摊成返款。
+/// 真正的资金变更只在共享钱包上发生一次：将事务锁定前 available 全部消耗并记一条负增量流水。
 /// `equity` 记的是单仓权益而非账户权益，账户级的结算后余额与坏账另行写入账户行。
 async fn insert_cross_liquidation_record(
     tx: &mut Transaction<'_, MySql>,

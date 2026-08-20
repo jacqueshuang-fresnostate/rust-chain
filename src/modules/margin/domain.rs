@@ -1,11 +1,16 @@
 //! margin bounded context domain layer.
 //!
 //! 领域层：放置业务实体、值对象和不依赖 I/O 的业务规则。
-//! 本文件只保存杠杆的资金口径计算：逐仓返还额、全仓账户组合风险评估和账户权益的分仓分摊。
+//! 本文件只保存杠杆的资金口径计算：逐仓返还额、全仓账户组合风险、条件强平价与强平清算政策。
 //! 所有函数都是纯计算，不访问数据库、Redis 或行情，也不发布事件；调用方需自行保证输入取自同一时点快照。
 //! 金额一律以 `with_scale(18)` 归一到十八位小数，与 `DECIMAL(38,18)` 资金列精度保持一致。
 
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, RoundingMode};
+use std::str::FromStr;
+
+/// 全仓条件强平价的净数量稳定性阈值：净数量不高于同 pair 总数量的百万分之一时不展示价格。
+/// 该常量只用于展示估算的数值稳定性，绝不参与 `equity <= maintenance_margin` 的实际强平判定。
+pub(crate) const CROSS_NET_DELTA_EPSILON: &str = "0.000001";
 
 /// 杠杆开仓的唯一订单类型值对象，传输层文本只能在这里归一化为市价或限价。
 /// 枚举本身不持有客户端价格；实际成交价仍由应用层传入的服务端权威 ticker 决定。
@@ -220,8 +225,6 @@ pub(crate) struct CrossMarginPositionRisk {
 pub(crate) struct CrossMarginRiskState {
     /// 账户总权益，含杠杆钱包可用余额、已占用仓位保证金、浮盈与应付利息。
     pub(crate) equity: BigDecimal,
-    /// 组合权益，仅统计这批仓位自身净值，是强平时回写共享钱包的有符号增量。
-    pub(crate) portfolio_equity: BigDecimal,
     /// 各仓位浮动盈亏之和。
     pub(crate) unrealized_pnl: BigDecimal,
     /// 各仓位应付利息之和。
@@ -236,7 +239,7 @@ pub(crate) struct CrossMarginRiskState {
 
 /// 汇总同一用户、同一保证金币种下全部全仓仓位的估值，产出账户级共享风险快照。
 /// 浮盈、利息与维持保证金按仓位逐项求和；账户权益为钱包权益加已占用仓位保证金加浮盈再减利息，
-/// 组合权益剔除钱包部分，只表示这批仓位的净值，两者与各项汇总均归一到十八位小数。
+/// 权益与各项汇总均归一到十八位小数；强平后钱包如何处置由独立的账户清算政策决定，不能把仓位净值当作返款。
 /// 维持保证金为零时保证金率返回 None 以避免除零；仓位非空且权益不高于维持保证金即置强平标记。
 /// 纯计算函数，不查询行情、不加行锁、不落库，输入必须由调用方取自同一时点的仓位与钱包快照。
 pub(crate) fn evaluate_cross_margin(
@@ -265,8 +268,6 @@ pub(crate) fn evaluate_cross_margin(
     let equity = (wallet_equity.clone() + position_margin.clone() + unrealized_pnl.clone()
         - interest_amount.clone())
     .with_scale(18);
-    let portfolio_equity =
-        (position_margin.clone() + unrealized_pnl.clone() - interest_amount.clone()).with_scale(18);
     let margin_ratio = if maintenance_margin > 0 {
         Some((equity.clone() / maintenance_margin.clone()).with_scale(18))
     } else {
@@ -275,7 +276,6 @@ pub(crate) fn evaluate_cross_margin(
     CrossMarginRiskState {
         should_liquidate: !positions.is_empty() && equity <= maintenance_margin,
         equity,
-        portfolio_equity,
         unrealized_pnl,
         interest_amount,
         maintenance_margin,
@@ -283,52 +283,209 @@ pub(crate) fn evaluate_cross_margin(
     }
 }
 
-/// 将账户级可返还权益按各仓位正权益的占比拆分到每个仓位，仅用于强平记录和事件展示。
-///
-/// 钱包只按组合权益整体变更一次；这里的分摊结果之和被严格约束为不超过组合正权益，
-/// 避免盈利仓按自身权益返还、亏损仓被截零后凭空多分出资产。
-/// 组合权益非正或所有仓位权益都非正时，整批返回十八位精度的零，长度与输入一一对应。
-/// 权益非正的仓位一律分到零；最后一个正权益仓位领取剩余尾差，吸收逐笔按比例相除产生的十八位截断误差。
-pub(crate) fn allocate_cross_margin_payouts(
-    position_equities: &[BigDecimal],
-    portfolio_equity: &BigDecimal,
-) -> Vec<BigDecimal> {
+/// 全仓条件强平价估算中的一笔已成交仓位，数量由名义价值除以入场价得到。
+pub(crate) struct CrossMarginReferencePosition<'a> {
+    /// 交易对主键，只有与参考仓位同 pair 的仓位才改变条件价格斜率。
+    pub(crate) pair_id: u64,
+    /// long 记为正数量、short 记为负数量，非法值会使账户快照失败。
+    pub(crate) direction: &'a str,
+    /// 开仓时锁定的名义价值。
+    pub(crate) notional_amount: &'a BigDecimal,
+    /// 已成交的正入场价，是基础资产数量的分母。
+    pub(crate) entry_price: &'a BigDecimal,
+}
+
+/// 条件强平价的稳定状态，传输层直接使用对应的 snake_case 值。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CrossMarginEstimateStatus {
+    /// 当前账户尚未触发，且存在正的不利方向价格边界。
+    Estimated,
+    /// 当前权益已不高于维持保证金，无需再展示未来触发价。
+    AlreadyLiquidatable,
+    /// 同 pair 多空净数量精确为零，共享标记价变化不改变账户权益。
+    NetDeltaZero,
+    /// 净数量占总数量比例落入命名阈值，计算结果对小额资金变动过度敏感。
+    NetDeltaNearZero,
+    /// 目标 pair 没有正的可估值数量，数据不足以建立价格边界。
+    InvalidExposure,
+    /// 线性求根得到零或负价，正价轴上不存在该条件边界。
+    NoPositiveBoundary,
+    /// 按交易对精度保守圆整后不再位于净数量的不利方向。
+    WrongAdverseDirection,
+}
+
+impl CrossMarginEstimateStatus {
+    /// 返回 API 和手机端共用的稳定状态码，不做本地化或分配。
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Estimated => "estimated",
+            Self::AlreadyLiquidatable => "already_liquidatable",
+            Self::NetDeltaZero => "net_delta_zero",
+            Self::NetDeltaNearZero => "net_delta_near_zero",
+            Self::InvalidExposure => "invalid_exposure",
+            Self::NoPositiveBoundary => "no_positive_boundary",
+            Self::WrongAdverseDirection => "wrong_adverse_direction",
+        }
+    }
+}
+
+/// 指定 pair 在「其他 pair 标记价不变」假设下的账户级条件强平价结果。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CrossMarginConditionalPrice {
+    /// 同 pair 按 long 正、short 负汇总的基础资产数量。
+    pub(crate) net_quantity: BigDecimal,
+    /// 同 pair 不抵消方向的基础资产总数量。
+    pub(crate) gross_quantity: BigDecimal,
+    /// 估算状态；只有 Estimated 同时携带价格和距离。
+    pub(crate) status: CrossMarginEstimateStatus,
+    /// 保守圆整到 pair 价格精度的条件强平价。
+    pub(crate) price: Option<BigDecimal>,
+    /// 条件价与当前共享标记价的绝对距离比例。
+    pub(crate) distance_rate: Option<BigDecimal>,
+}
+
+/// 按 `P*=P0-Buffer/D` 估算指定 pair 的账户级条件强平价。
+/// 这里只让参考 pair 的所有多空腿共用一个变量价，其他 pair、钱包、利息和维持保证金保持输入快照不变。
+/// `liquidation_buffer` 必须是同一账户快照的 `equity-maintenance_margin`；非正表示已触发，先于对冲稳定性判定。
+/// 净数量精确为零或占总数量不高于 `CROSS_NET_DELTA_EPSILON` 时返回明确状态和空价格，不伪造无穷大。
+/// 有效根按净多头向上取 tick、净空头向下取 tick，保证展示价不比真实边界更乐观；圆整后方向失真则返回空值。
+/// 本函数只做 BigDecimal 纯计算，不更改实际强平触发精度，行情完整性和新鲜度由调用方在组装输入前保证。
+pub(crate) fn estimate_cross_margin_conditional_price(
+    reference_pair_id: u64,
+    current_mark: &BigDecimal,
+    liquidation_buffer: &BigDecimal,
+    price_precision: i32,
+    positions: &[CrossMarginReferencePosition<'_>],
+) -> Result<CrossMarginConditionalPrice, &'static str> {
+    let zero = BigDecimal::from(0);
+    if current_mark <= &zero {
+        return Err("cross margin reference mark must be positive");
+    }
+    if price_precision < 0 {
+        return Err("cross margin price precision is invalid");
+    }
+
+    let mut net_quantity = zero.clone();
+    let mut gross_quantity = zero.clone();
+    let mut invalid_exposure = false;
+    for position in positions
+        .iter()
+        .filter(|position| position.pair_id == reference_pair_id)
+    {
+        if position.entry_price <= &zero || position.notional_amount <= &zero {
+            invalid_exposure = true;
+            continue;
+        }
+        let quantity = position.notional_amount.clone() / position.entry_price.clone();
+        gross_quantity += quantity.clone();
+        match position.direction {
+            "long" => net_quantity += quantity,
+            "short" => net_quantity -= quantity,
+            _ => return Err("margin direction must be long or short"),
+        }
+    }
+    let display_net_quantity = net_quantity.clone().with_scale(18);
+    let display_gross_quantity = gross_quantity.clone().with_scale(18);
+    let empty_result = |status| CrossMarginConditionalPrice {
+        net_quantity: display_net_quantity.clone(),
+        gross_quantity: display_gross_quantity.clone(),
+        status,
+        price: None,
+        distance_rate: None,
+    };
+
+    if liquidation_buffer <= &zero {
+        return Ok(empty_result(CrossMarginEstimateStatus::AlreadyLiquidatable));
+    }
+    if invalid_exposure || gross_quantity <= zero {
+        return Ok(empty_result(CrossMarginEstimateStatus::InvalidExposure));
+    }
+    if net_quantity == 0 {
+        return Ok(empty_result(CrossMarginEstimateStatus::NetDeltaZero));
+    }
+    let absolute_net_quantity = decimal_absolute(&net_quantity);
+    let net_delta_ratio = absolute_net_quantity / gross_quantity;
+    let epsilon = BigDecimal::from_str(CROSS_NET_DELTA_EPSILON)
+        .expect("CROSS_NET_DELTA_EPSILON must be a valid decimal");
+    if net_delta_ratio <= epsilon {
+        return Ok(empty_result(CrossMarginEstimateStatus::NetDeltaNearZero));
+    }
+
+    let exact_price = current_mark.clone() - liquidation_buffer.clone() / net_quantity.clone();
+    if exact_price <= zero {
+        return Ok(empty_result(CrossMarginEstimateStatus::NoPositiveBoundary));
+    }
+    let rounding_mode = if net_quantity > 0 {
+        RoundingMode::Ceiling
+    } else {
+        RoundingMode::Floor
+    };
+    let price = exact_price
+        .with_scale_round(i64::from(price_precision), rounding_mode)
+        .with_scale(18);
+    let wrong_adverse_direction = if net_quantity > 0 {
+        &price >= current_mark
+    } else {
+        &price <= current_mark
+    };
+    if wrong_adverse_direction {
+        return Ok(empty_result(
+            CrossMarginEstimateStatus::WrongAdverseDirection,
+        ));
+    }
+    let distance_rate = (decimal_absolute(&(price.clone() - current_mark.clone()))
+        / current_mark.clone())
+    .with_scale(18);
+    Ok(CrossMarginConditionalPrice {
+        net_quantity: display_net_quantity,
+        gross_quantity: display_gross_quantity,
+        status: CrossMarginEstimateStatus::Estimated,
+        price: Some(price),
+        distance_rate: Some(distance_rate),
+    })
+}
+
+/// 全仓强平的唯一账户级钱包政策结果，不包含 frozen/locked 因为这两桶在本次清算中不变。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CrossMarginLiquidationSettlement {
+    /// 强平后 available 恒为十八位精度的零。
+    pub(crate) available_after: BigDecimal,
+    /// 账户级流水增量，精确等于负的事务锁定前 available。
+    pub(crate) wallet_delta: BigDecimal,
+    /// 穿仓坏账，精确等于强平前账户总权益负值的正部分。
+    pub(crate) bad_debt: BigDecimal,
+}
+
+/// 对一份已锁定的全仓账户快照应用「可用抵押全部消耗」清算政策。
+/// `available_before` 来自 `margin_wallet_accounts` 的 FOR UPDATE 行，必须非负；结果只把该桶一次性归零，流水为其负值。
+/// 仓位保证金、浮盈与利息不再作为钱包返款；正剩余权益被强平政策消耗，仅负账户权益的绝对值记为坏账。
+/// 纯计算不访问钱包；调用方必须将余额更新、唯一账户流水、仓位终态与坏账写入同一事务。
+pub(crate) fn cross_margin_liquidation_settlement(
+    available_before: &BigDecimal,
+    account_equity: &BigDecimal,
+) -> Result<CrossMarginLiquidationSettlement, &'static str> {
+    if available_before < &BigDecimal::from(0) {
+        return Err("cross margin wallet available must be non-negative");
+    }
     let zero = BigDecimal::from(0).with_scale(18);
-    let payout_total = if portfolio_equity > &zero {
-        portfolio_equity.clone().with_scale(18)
+    let bad_debt = if account_equity < &zero {
+        (-account_equity.clone()).with_scale(18)
     } else {
         zero.clone()
     };
-    let positive_total = position_equities
-        .iter()
-        .filter(|equity| *equity > &zero)
-        .fold(zero.clone(), |total, equity| total + equity.clone())
-        .with_scale(18);
-    if payout_total == zero || positive_total == zero {
-        return vec![zero; position_equities.len()];
-    }
+    Ok(CrossMarginLiquidationSettlement {
+        available_after: zero,
+        wallet_delta: (-available_before.clone()).with_scale(18),
+        bad_debt,
+    })
+}
 
-    let mut allocated = zero.clone();
-    let last_positive_index = position_equities
-        .iter()
-        .rposition(|equity| equity > &zero)
-        .expect("positive total requires one positive position");
-    position_equities
-        .iter()
-        .enumerate()
-        .map(|(index, equity)| {
-            if equity <= &zero {
-                return zero.clone();
-            }
-            if index == last_positive_index {
-                return (payout_total.clone() - allocated.clone()).with_scale(18);
-            }
-            let amount =
-                (payout_total.clone() * equity.clone() / positive_total.clone()).with_scale(18);
-            allocated += amount.clone();
-            amount
-        })
-        .collect()
+fn decimal_absolute(value: &BigDecimal) -> BigDecimal {
+    if value < &BigDecimal::from(0) {
+        -value.clone()
+    } else {
+        value.clone()
+    }
 }
 
 #[cfg(test)]

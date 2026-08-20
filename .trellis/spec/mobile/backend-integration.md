@@ -279,15 +279,33 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
 - `GET /margin/wallets` retains `cross_accounts[]`. Filled positions poll
   `/margin/positions/{id}/risk` and map unrealized PnL, base quantity, return
   rate, margin ratio, isolated liquidation estimate, and liquidation distance.
+  The risk adapter also strictly maps the optional `cross_account_risk` object
+  to typed camel-case fields: margin asset/reference pair, the fixed
+  `reference_pair_only_other_marks_static` assumption, account equity,
+  maintenance, buffer, ratio, PnL, interest, trigger state, net/gross quantity,
+  estimate status, conditional price/distance, and min/max mark observation
+  times. Missing/null means an older compatible backend; a present malformed
+  object is a contract error. Both mark times are required non-negative safe
+  millisecond integers and the minimum may not exceed the maximum. Backend DECIMAL read models may become finite
+  JavaScript numbers only inside this display adapter and must never feed an
+  order, transfer, or other mutation payload.
   Mark price, PnL, return, margin ratio, and liquidation distance remain
   snapshot-authoritative and unavailable (`--`) after a failed first read.
   Maintenance margin rate prefers a finite non-negative snapshot value and
   falls back only to the matching product rate. An isolated liquidation price
   prefers a finite positive snapshot value; when absent, display code may use
-  the backend-equivalent position/product formula. Cross positions render
-  localized account-level risk semantics and never calculate or display a
-  single-position liquidation price. Failed refreshes retain prior successful
-  snapshots for positions that are still active and never remove the positions.
+  the backend-equivalent position/product formula. A cross position consumes
+  only `cross_account_risk`: `estimate_status=estimated` plus a finite positive
+  conditional price renders the localized account estimate, and its distance
+  bar consumes only the conditional account distance. Zero/near-zero net
+  delta, already-liquidatable, no-positive-boundary, unavailable, unknown, or
+  structurally valid but semantically unusable estimate values render localized
+  "no stable single price" copy and
+  never enter the isolated formula. The card states that only the current pair
+  changes while all other marks remain fixed. When the optional object is
+  absent, retain the legacy localized account-level fallback for rollout
+  compatibility. Failed refreshes retain prior successful snapshots for
+  positions that are still active and never remove the positions.
 - Bulk close/cancel responses are partially successful by contract. Mobile
   must inspect both `positions` and `failures`, reconcile balances, and report
   counts; an HTTP 200 with failures is not an all-success message.
@@ -504,6 +522,15 @@ const points = detailSession.resolveKlineRequest(request, restKlines(initial))
   and absence of remote chart code or data sources.
 - Adapter tests for new-coin quote quantity, safe news rich text, prediction
   order number, and stable margin pair labels.
+- Margin-risk adapter/projection tests cover every `cross_account_risk`
+  snake-case to camel-case field, strict finite-decimal handling, a stable
+  account estimate and conditional distance, required ordered mark times,
+  malformed-object rejection, exact/near hedges,
+  already-liquidatable/no-positive-boundary states, invalid values, the old
+  backend fallback, and the unchanged isolated server/local-formula path.
+  Position-card source/parity tests lock the dynamic account label, explicit no
+  stable price copy, conditional-distance source, visible accessible scenario
+  note, unchanged action order, and symmetric `zh-CN`/English keys.
 - Seconds adapter tests must assert exact raw-to-camel mapping for
   `payout_rate`, optional `entry_price`/`settlement_price`, and unchanged
   `opened`/`active` statuses. View-flow tests must assert

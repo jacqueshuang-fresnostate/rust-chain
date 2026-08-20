@@ -164,8 +164,8 @@ pub(super) async fn insert_spot_wallet_ledger(
 /// 写入失败由调用方整体回滚；幂等键或仓位终态须阻止重复记账。
 ///
 /// 写的是独立的 `margin_wallet_ledger` 表，与现货流水物理隔离，两账套各自对账互不干扰。
-/// 全仓的两类结算在这里留痕：单仓平仓记有符号权益，账户级强平记钳位后的实际余额差值，
-/// 后者与原始组合权益可能不等，差额就是被登记为坏账的穿仓部分。
+/// 全仓的两类结算在这里留痕：主动单仓平仓记有符号权益，账户级强平则恰好记一条
+/// `-available_before` 流水并把 available 归零，不把仓位权益正向入账；穿仓缺口独立登记在全仓账户坏账字段。
 /// 划转的入账与出账也各写一条，与现货侧同 `transfer_id` 配对，构成可交叉核对的双边记录。
 pub(super) async fn insert_margin_wallet_ledger(
     tx: &mut Transaction<'_, MySql>,

@@ -576,11 +576,13 @@ async fn cross_margin_liquidation_settles_portfolio_once_without_minting_positiv
     let fixture =
         seed_margin_position(&pool, "long", Some(&decimal("100.000000000000000000"))).await?;
     sqlx::query(
-        "INSERT INTO margin_wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)",
+        "INSERT INTO margin_wallet_accounts (user_id, asset_id, available, frozen, locked) VALUES (?, ?, ?, ?, ?)",
     )
     .bind(fixture.user_id)
     .bind(fixture.margin_asset)
-    .bind(decimal("60.000000000000000000"))
+    .bind(decimal("3.000000000000000000"))
+    .bind(decimal("4.000000000000000000"))
+    .bind(decimal("5.000000000000000000"))
     .execute(&pool)
     .await?;
     sqlx::query(
@@ -588,7 +590,7 @@ async fn cross_margin_liquidation_settles_portfolio_once_without_minting_positiv
            SET margin_mode = 'cross', wallet_scope = 'margin', interest_amount = ?
            WHERE id = ?"#,
     )
-    .bind(decimal("90.000000000000000000"))
+    .bind(decimal("17.000000000000000000"))
     .bind(fixture.position_id)
     .execute(&pool)
     .await?;
@@ -601,7 +603,7 @@ async fn cross_margin_liquidation_settles_portfolio_once_without_minting_positiv
            (user_id, product_id, pair_id, margin_asset, margin_mode, wallet_scope, direction,
             margin_amount, leverage, notional_amount, borrowed_amount, interest_amount,
             entry_price, status, idempotency_key)
-           VALUES (?, ?, ?, ?, 'cross', 'margin', 'short', ?, ?, ?, ?, 0, ?, 'opened', ?)"#,
+           VALUES (?, ?, ?, ?, 'cross', 'margin', 'short', ?, ?, ?, ?, ?, ?, 'opened', ?)"#,
     )
     .bind(fixture.user_id)
     .bind(fixture.product_id)
@@ -611,6 +613,7 @@ async fn cross_margin_liquidation_settles_portfolio_once_without_minting_positiv
     .bind(decimal("5.00000000"))
     .bind(decimal("100.000000000000000000"))
     .bind(decimal("80.000000000000000000"))
+    .bind(decimal("17.000000000000000000"))
     .bind(decimal("100.000000000000000000"))
     .bind(format!("margin-worker-cross-{}", Uuid::now_v7().simple()))
     .execute(&pool)
@@ -618,12 +621,33 @@ async fn cross_margin_liquidation_settles_portfolio_once_without_minting_positiv
     .last_insert_id();
     cache_ticker(&redis, &fixture.pair_symbol, "80.000000000000000000", now).await?;
     close_other_open_positions(&pool, &[fixture.position_id, second_position_id]).await?;
+    let hub = EventBroadcastHub::new(16);
+    let mut private_events = hub.subscribe(&WebSocketChannel::private_user(fixture.user_id));
+    let state = AppState::new(test_settings())
+        .with_mysql(pool.clone())
+        .with_redis(redis.clone())
+        .with_event_broadcast_hub(hub);
 
-    let summary = run_once_with_dependencies(&pool, &redis, now, 10).await?;
+    let summary = run_once(&state, now, 10).await?;
 
     assert_eq!(summary.scanned, 1);
     assert_eq!(summary.liquidated, 1);
     assert_eq!(summary.failed, 0);
+    let mut event_position_ids = Vec::new();
+    for _ in 0..2 {
+        let event_message = timeout(Duration::from_millis(100), private_events.recv()).await??;
+        let event: Value = serde_json::from_str(event_message.payload())?;
+        assert_eq!(event["type"], "margin.position.liquidated");
+        assert_eq!(event["payout_amount"], "0.000000000000000000");
+        assert_eq!(event["reason"], "cross_maintenance_margin");
+        assert_eq!(event["mark_price"], "80.000000000000000000");
+        event_position_ids.push(event["position_id"].as_u64().unwrap());
+    }
+    event_position_ids.sort_unstable();
+    assert_eq!(
+        event_position_ids,
+        vec![fixture.position_id, second_position_id]
+    );
     let liquidated_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM margin_positions WHERE id IN (?, ?) AND status = 'liquidated'",
     )
@@ -632,8 +656,9 @@ async fn cross_margin_liquidation_settles_portfolio_once_without_minting_positiv
     .fetch_one(&pool)
     .await?;
     assert_eq!(liquidated_count, 2);
-    let (payout_sum, record_count): (BigDecimal, i64) = sqlx::query_as(
-        r#"SELECT COALESCE(SUM(payout_amount), 0), COUNT(*)
+    let (payout_sum, record_count, non_zero_payout_count): (BigDecimal, i64, i64) = sqlx::query_as(
+        r#"SELECT COALESCE(SUM(payout_amount), 0), COUNT(*),
+                  COUNT(CASE WHEN payout_amount <> 0 THEN 1 END)
            FROM margin_liquidation_records
            WHERE position_id IN (?, ?) AND reason = 'cross_maintenance_margin'"#,
     )
@@ -642,15 +667,19 @@ async fn cross_margin_liquidation_settles_portfolio_once_without_minting_positiv
     .fetch_one(&pool)
     .await?;
     assert_eq!(record_count, 2);
+    assert_eq!(non_zero_payout_count, 0);
     assert_eq!(payout_sum, decimal("0.000000000000000000"));
-    let margin_available: BigDecimal = sqlx::query_scalar(
-        "SELECT available FROM margin_wallet_accounts WHERE user_id = ? AND asset_id = ?",
-    )
+    let (margin_available, margin_frozen, margin_locked): (BigDecimal, BigDecimal, BigDecimal) =
+        sqlx::query_as(
+            "SELECT available, frozen, locked FROM margin_wallet_accounts WHERE user_id = ? AND asset_id = ?",
+        )
     .bind(fixture.user_id)
     .bind(fixture.margin_asset)
     .fetch_one(&pool)
     .await?;
-    assert_eq!(margin_available, decimal("10.000000000000000000"));
+    assert_eq!(margin_available, decimal("0.000000000000000000"));
+    assert_eq!(margin_frozen, decimal("4.000000000000000000"));
+    assert_eq!(margin_locked, decimal("5.000000000000000000"));
     let spot_available: BigDecimal = sqlx::query_scalar(
         "SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
     )
@@ -659,8 +688,8 @@ async fn cross_margin_liquidation_settles_portfolio_once_without_minting_positiv
     .fetch_one(&pool)
     .await?;
     assert_eq!(spot_available, decimal("80.000000000000000000"));
-    let (ledger_amount, ledger_count): (BigDecimal, i64) = sqlx::query_as(
-        r#"SELECT COALESCE(SUM(amount), 0), COUNT(*)
+    let ledger_count: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*)
            FROM margin_wallet_ledger
            WHERE user_id = ? AND asset_id = ?
              AND change_type = 'margin_cross_account_liquidate'"#,
@@ -669,19 +698,84 @@ async fn cross_margin_liquidation_settles_portfolio_once_without_minting_positiv
     .bind(fixture.margin_asset)
     .fetch_one(&pool)
     .await?;
-    assert_eq!(ledger_amount, decimal("-50.000000000000000000"));
     assert_eq!(ledger_count, 1);
-    let (last_bad_debt,): (BigDecimal,) = sqlx::query_as(
-        "SELECT last_bad_debt FROM margin_cross_accounts WHERE user_id = ? AND margin_asset = ?",
+    let (
+        ledger_amount,
+        ledger_balance_after,
+        ledger_available_after,
+        ledger_frozen_after,
+        ledger_locked_after,
+        ledger_ref_type,
+        ledger_ref_id,
+    ): (
+        BigDecimal,
+        BigDecimal,
+        BigDecimal,
+        BigDecimal,
+        BigDecimal,
+        String,
+        String,
+    ) = sqlx::query_as(
+        r#"SELECT amount, balance_after, available_after, frozen_after, locked_after,
+                  ref_type, ref_id
+           FROM margin_wallet_ledger
+           WHERE user_id = ? AND asset_id = ?
+             AND change_type = 'margin_cross_account_liquidate'"#,
     )
     .bind(fixture.user_id)
     .bind(fixture.margin_asset)
     .fetch_one(&pool)
     .await?;
+    assert_eq!(ledger_amount, decimal("-3.000000000000000000"));
+    assert_eq!(ledger_balance_after, decimal("0.000000000000000000"));
+    assert_eq!(ledger_available_after, decimal("0.000000000000000000"));
+    assert_eq!(ledger_frozen_after, decimal("4.000000000000000000"));
+    assert_eq!(ledger_locked_after, decimal("5.000000000000000000"));
+    assert_eq!(ledger_ref_type, "margin_cross_account");
+    assert_eq!(
+        ledger_ref_id,
+        format!(
+            "{}:{}:{}",
+            fixture.user_id, fixture.margin_asset, fixture.position_id
+        )
+    );
+    let (minimum_mark, maximum_mark): (BigDecimal, BigDecimal) = sqlx::query_as(
+        r#"SELECT MIN(mark_price), MAX(mark_price)
+           FROM margin_liquidation_records
+           WHERE position_id IN (?, ?) AND reason = 'cross_maintenance_margin'"#,
+    )
+    .bind(fixture.position_id)
+    .bind(second_position_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(minimum_mark, decimal("80.000000000000000000"));
+    assert_eq!(maximum_mark, decimal("80.000000000000000000"));
+    let (account_status, last_equity, last_bad_debt, account_version): (
+        String,
+        BigDecimal,
+        BigDecimal,
+        u64,
+    ) = sqlx::query_as(
+        r#"SELECT status, last_equity, last_bad_debt, version
+           FROM margin_cross_accounts
+           WHERE user_id = ? AND margin_asset = ?"#,
+    )
+    .bind(fixture.user_id)
+    .bind(fixture.margin_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(account_status, "liquidated");
+    assert_eq!(last_equity, decimal("9.000000000000000000"));
     assert_eq!(last_bad_debt, decimal("0.000000000000000000"));
 
-    let replay = run_once_with_dependencies(&pool, &redis, now, 10).await?;
+    let replay = run_once(&state, now, 10).await?;
     assert_eq!(replay.scanned, 0);
+    assert!(
+        timeout(Duration::from_millis(25), private_events.recv())
+            .await
+            .is_err(),
+        "cross liquidation replay must not publish duplicate private events"
+    );
     let ledger_count_after: i64 = sqlx::query_scalar(
         r#"SELECT COUNT(*) FROM margin_wallet_ledger
            WHERE user_id = ? AND asset_id = ?
@@ -692,6 +786,32 @@ async fn cross_margin_liquidation_settles_portfolio_once_without_minting_positiv
     .fetch_one(&pool)
     .await?;
     assert_eq!(ledger_count_after, 1);
+    let record_count_after: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*)
+           FROM margin_liquidation_records
+           WHERE position_id IN (?, ?) AND reason = 'cross_maintenance_margin'"#,
+    )
+    .bind(fixture.position_id)
+    .bind(second_position_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(record_count_after, 2);
+    let version_after: u64 = sqlx::query_scalar(
+        "SELECT version FROM margin_cross_accounts WHERE user_id = ? AND margin_asset = ?",
+    )
+    .bind(fixture.user_id)
+    .bind(fixture.margin_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(version_after, account_version);
+    let available_after_replay: BigDecimal = sqlx::query_scalar(
+        "SELECT available FROM margin_wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(fixture.user_id)
+    .bind(fixture.margin_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(available_after_replay, decimal("0.000000000000000000"));
     Ok(())
 }
 

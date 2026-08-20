@@ -2,6 +2,13 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-08-20 17:45 - 独立审查全仓双向强平与账户风险
+
+- 完成内容：逐项复核全仓强平原子结算/幂等、worker 同 symbol 行情快照、cross 风险 SQL 与 Decimal 公式、后端到 Mobile 严格字段映射及三态 UI；补强时间戳严格映射、保守 tick 舍入/非法暴露、多 pair 非零盈亏、流水/事件/重放幂等测试断言，并同步规范与 PRD 验收状态。
+- 修改文件：`mobile/src/core/marginRiskMetrics.ts`、`mobile/src/api/trading.ts`、`mobile/tests/margin-risk-metrics.test.ts`、`mobile/tests/contract-pencil-selected-parity.test.ts`、`mobile/tests/pencil-trading-product-selected-parity.test.ts`、`tests/margin_liquidation_worker.rs`、`tests/margin_routes.rs`、`src/modules/margin/domain.rs`、`.trellis/spec/backend/margin-trading-actions.md`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/tasks/08-20-margin-cross-hedged-liquidation-accounting/prd.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：审查修复后主会话终验 `cargo fmt --all -- --check`、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、沙箱外 `cargo test --all-targets`、Mobile 446/446、`type-check`、`build:pwa` 与 `git diff --check` 均通过；Rust cross-risk domain 14/14，worker/路由数据库集成测试完成编译且 SQL 占位符/bind 静态逐条核对一致。当前本地无 `DATABASE_URL` 且 Docker 服务未启动，数据库分支按设计跳过。
+- 后续事项：无。
+
 ## 2026-08-15 02:42 - 设计划转「选择资产」二级弹窗
 
 - 完成内容：新增 Pencil 画板 `39b / Transfer · Asset Picker` Light/Dark（`tPkL1`/`tPkD1`）：划转页简化背景 + 遮罩 + 底部「选择资产」Sheet（毛玻璃搜索、USDT 选中 / BTC / ETH 持仓行，可划转 `—`）。39 划转 Sheet 资产行补 chevron。未改生产 Vue。

@@ -1,10 +1,10 @@
 //! 杠杆仓位的资金结算与终态迁移适配器。
 //!
-//! 覆盖开仓抵押扣减、逐仓返还入账、全仓单仓与账户级权益结算，以及平仓和撤销的状态原子迁移。
+//! 覆盖开仓抵押扣减、逐仓返还入账、全仓单仓主动平仓与账户级强平清算，以及平仓和撤销的状态原子迁移。
 //! 所有函数都在调用方给定的事务上执行，自己不 begin 也不 commit，
 //! 因此「余额更新、流水写入、仓位终态」三件事能否原子落地完全由应用层的事务边界保证。
 //! 资金只在 available 桶内流动，frozen 与 locked 原样带入流水快照，杠杆不使用冻结语义。
-//! 逐仓按非负金额单向返还，亏损截零；全仓用有符号权益直接加减共享余额，扣穿则拒绝或记为坏账。
+//! 逐仓按非负金额单向返还，亏损截零；全仓主动平仓用有符号权益加减共享余额，强平则只把事务锁定的 available 一次归零。
 //! 每笔余额变更都配一条同额流水，流水中的 after 快照必须与本次更新后的余额完全一致。
 
 use super::ledger::{
@@ -13,7 +13,10 @@ use super::ledger::{
 };
 use crate::{
     error::{AppError, AppResult},
-    modules::margin::presentation::MarginPositionResponse,
+    modules::margin::{
+        domain::{CrossMarginLiquidationSettlement, cross_margin_liquidation_settlement},
+        presentation::MarginPositionResponse,
+    },
 };
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
@@ -285,70 +288,49 @@ pub(crate) async fn apply_cross_margin_position_settlement(
     .await
 }
 
-#[derive(Debug)]
-/// 全仓账户级结算结果，同时返回归零后的可用余额与极端跳空坏账。
-pub(crate) struct CrossMarginAccountSettlement {
-    /// 结算后的杠杆钱包可用余额，恒为非负；穿仓时被钳到零而不是写成负数。
-    pub(crate) available_after: BigDecimal,
-    /// 穿仓缺口，等于被钳掉的那部分负余额，正常情况下为零，非零表示平台承担了坏账。
-    pub(crate) bad_debt: BigDecimal,
-}
-
-/// 全仓强平只在共享钱包上结算一次；极端跳空超过可用余额的部分单独记为坏账。
+/// 全仓强平只在共享钱包上结算一次：将事务锁定的 available 全部消耗并写唯一账户流水。
 /// 账户、仓位、钱包和流水必须同事务提交；失败时不关闭部分仓位，也不产生外部结算事件。
 ///
-/// `portfolio_equity` 是该账户下全部被强平仓位的组合权益之和，有符号，通常为负。
-/// 与单仓结算的关键差别是这里不拒绝穿仓：可用余额加权益为负时钳到零，负的部分作为 `bad_debt` 返回，
-/// 由调用方登记为平台坏账，因此强平永远能推进，不会因为余额不足而卡住。
-/// 实际写库用的是钳位后余额与原余额的差值，保证流水金额与余额变化严格对应而非等于原始权益。
-/// 差值为零时跳过更新和流水，避免账户本就为零、权益也为零时留下空记录。
+/// `account_equity` 是强平判定使用的同一份账户总权益，坏账只按 `max(-account_equity, 0)` 计算；正剩余权益不回流用户。
+/// 钱包锁定后调用领域政策得到零余额和 `-available_before` 流水，不使用仓位保证金、PnL 或利息作为钱包增量。
+/// 即使锁定余额已为零也会写一条零额账户流水，使每次成功强平都有且仅有一个账户级审计引用。
+/// UPDATE 只触及 available；frozen/locked 保留锁定快照并原样写入流水，现货钱包与其他资产不在本函数边界内。
 /// 流水类型固定为 `margin_cross_account_liquidate`，引用类型为账户级而非单个仓位。
 pub(crate) async fn apply_cross_margin_account_settlement(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
     asset_id: u64,
-    portfolio_equity: &BigDecimal,
+    account_equity: &BigDecimal,
     reference_id: &str,
-) -> AppResult<CrossMarginAccountSettlement> {
+) -> AppResult<CrossMarginLiquidationSettlement> {
     let wallet = lock_margin_wallet_row(tx, user_id, asset_id).await?;
-    let raw_available_after = (wallet.available.clone() + portfolio_equity.clone()).with_scale(18);
-    let (available_after, bad_debt) = if raw_available_after < 0 {
-        (
-            BigDecimal::from(0).with_scale(18),
-            (-raw_available_after).with_scale(18),
-        )
-    } else {
-        (raw_available_after, BigDecimal::from(0).with_scale(18))
-    };
-    let applied_delta = (available_after.clone() - wallet.available.clone()).with_scale(18);
-    if applied_delta != 0 {
-        sqlx::query(
-            "UPDATE margin_wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?",
-        )
-        .bind(&available_after)
-        .bind(user_id)
-        .bind(asset_id)
-        .execute(&mut **tx)
-        .await?;
-        insert_margin_wallet_ledger(
-            tx,
-            user_id,
-            asset_id,
-            "margin_cross_account_liquidate",
-            &applied_delta,
-            &available_after,
-            &available_after,
-            &wallet.frozen,
-            &wallet.locked,
-            "margin_cross_account",
-            reference_id,
-        )
-        .await?;
-    }
-    Ok(CrossMarginAccountSettlement {
-        available_after,
-        bad_debt,
-    })
+    let settlement = cross_margin_liquidation_settlement(&wallet.available, account_equity)
+        .map_err(|message| AppError::Internal(message.to_owned()))?;
+    sqlx::query(
+        "UPDATE margin_wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(&settlement.available_after)
+    .bind(user_id)
+    .bind(asset_id)
+    .execute(&mut **tx)
+    .await?;
+    // 行已由 lock_margin_wallet_row 确认存在并加锁；available 本来为零时 MySQL 可报告零个 changed row，
+    // 但这仍是成功的零额清算，必须继续写唯一账户流水，不能误判为并发冲突。
+    insert_margin_wallet_ledger(
+        tx,
+        user_id,
+        asset_id,
+        "margin_cross_account_liquidate",
+        &settlement.wallet_delta,
+        &settlement.available_after,
+        &settlement.available_after,
+        &wallet.frozen,
+        &wallet.locked,
+        "margin_cross_account",
+        reference_id,
+    )
+    .await?;
+    Ok(settlement)
 }
 
 /// 在结算事务内以 opened 条件原子写入关闭时间、退出价和已实现盈亏。

@@ -891,6 +891,8 @@ function resolvePositionRiskDisplayMetrics(position: MarginPosition): MarginPosi
     serverMaintenanceMarginRate: risk?.maintenanceMarginRate,
     productMaintenanceMarginRate: productForPosition(position)?.maintenanceMarginRate,
     serverEstimatedLiquidationPrice: risk?.estimatedLiquidationPrice,
+    serverLiquidationDistanceRate: risk?.liquidationDistanceRate,
+    crossAccountRisk: risk?.crossAccountRisk,
   })
 }
 
@@ -908,10 +910,42 @@ function positionRiskDisplayMetrics(position: MarginPosition): MarginPositionRis
 
 function estimatedLiquidationPriceDisplay(position: MarginPosition): string {
   const metrics = positionRiskDisplayMetrics(position)
-  if (metrics.liquidationRiskScope === 'account') return t('trade.crossAccountRisk')
+  if (metrics.liquidationRiskScope === 'account') {
+    if (metrics.crossAccountEstimateState === 'legacy') return t('trade.crossAccountRisk')
+    if (
+      metrics.crossAccountEstimateState === 'estimated'
+      && metrics.estimatedLiquidationPrice !== null
+    ) {
+      return formatPrice(metrics.estimatedLiquidationPrice)
+    }
+    return t('trade.noStableSingleLiquidationPrice')
+  }
   return metrics.estimatedLiquidationPrice === null
     ? '--'
     : formatPrice(metrics.estimatedLiquidationPrice)
+}
+
+function estimatedLiquidationPriceLabel(position: MarginPosition): string {
+  const metrics = positionRiskDisplayMetrics(position)
+  return metrics.liquidationRiskScope === 'account' && metrics.crossAccountEstimateState !== 'legacy'
+    ? t('trade.estimatedAccountLiquidationPrice')
+    : t('trade.estimatedLiquidationPrice')
+}
+
+function liquidationDistanceLabel(position: MarginPosition): string {
+  const metrics = positionRiskDisplayMetrics(position)
+  return metrics.liquidationRiskScope === 'account' && metrics.crossAccountEstimateState !== 'legacy'
+    ? t('trade.crossAccountLiquidationDistance')
+    : t('trade.liquidationDistance')
+}
+
+function hasCrossAccountRiskSnapshot(position: MarginPosition): boolean {
+  const state = positionRiskDisplayMetrics(position).crossAccountEstimateState
+  return state !== null && state !== 'legacy'
+}
+
+function crossAccountRiskAssumptionId(position: MarginPosition): string {
+  return `cross-account-risk-assumption-${encodeURIComponent(position.id)}`
 }
 
 function formatRate(value: number | null | undefined, digits = 2): string {
@@ -921,7 +955,7 @@ function formatRate(value: number | null | undefined, digits = 2): string {
 }
 
 function liquidationDistanceWidth(position: MarginPosition): string {
-  const distance = riskForPosition(position)?.liquidationDistanceRate
+  const distance = positionRiskDisplayMetrics(position).liquidationDistanceRate
   if (distance === null || distance === undefined || !Number.isFinite(distance)) return '0%'
   return `${Math.min(100, Math.max(4, distance * 100))}%`
 }
@@ -2052,13 +2086,23 @@ onBeforeUnmount(() => {
                 <div><dt>{{ t('trade.maintenanceMarginRate') }}</dt><dd class="numeric">{{ formatRate(positionRiskDisplayMetrics(position).maintenanceMarginRate) }}</dd></div>
                 <div><dt>{{ t('orders.entryPrice') }}</dt><dd class="numeric">{{ position.entryPrice ? formatPrice(position.entryPrice) : '--' }}</dd></div>
                 <div><dt>{{ t('trade.markPrice') }}</dt><dd class="numeric">{{ riskForPosition(position) ? formatPrice(riskForPosition(position)!.markPrice) : '--' }}</dd></div>
-                <div><dt>{{ t('trade.estimatedLiquidationPrice') }}</dt><dd class="numeric">{{ estimatedLiquidationPriceDisplay(position) }}</dd></div>
+                <div :aria-describedby="hasCrossAccountRiskSnapshot(position) ? crossAccountRiskAssumptionId(position) : undefined">
+                  <dt>{{ estimatedLiquidationPriceLabel(position) }}</dt>
+                  <dd class="numeric" :title="estimatedLiquidationPriceDisplay(position)">{{ estimatedLiquidationPriceDisplay(position) }}</dd>
+                </div>
               </dl>
 
               <div class="contract-liquidation-distance">
-                <span>{{ t('trade.liquidationDistance') }}</span>
+                <span>{{ liquidationDistanceLabel(position) }}</span>
                 <i><b :style="{ width: liquidationDistanceWidth(position) }" /></i>
-                <strong class="numeric">{{ formatRate(riskForPosition(position)?.liquidationDistanceRate) }}</strong>
+                <strong class="numeric">{{ formatRate(positionRiskDisplayMetrics(position).liquidationDistanceRate) }}</strong>
+                <small
+                  v-if="hasCrossAccountRiskSnapshot(position)"
+                  :id="crossAccountRiskAssumptionId(position)"
+                  role="note"
+                >
+                  {{ t('trade.crossAccountLiquidationAssumption') }}
+                </small>
               </div>
               <div class="contract-position-actions" role="group" :aria-label="t('trade.positionActions')">
                 <button
@@ -5320,6 +5364,15 @@ html[data-theme='dark'] .contract-trade {
   border-radius: inherit;
   display: block;
   height: 100%;
+}
+
+.contract-liquidation-distance small {
+  color: var(--contract-muted);
+  font-size: 8px;
+  grid-column: 1 / -1;
+  line-height: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .contract-position-actions {

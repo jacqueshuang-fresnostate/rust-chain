@@ -21,6 +21,41 @@ fn margin_liquidation_scan_limit_scans_past_broken_rows() {
 }
 
 #[test]
+fn cross_positions_with_the_same_symbol_share_one_mark_read_plan() {
+    let positions = vec![
+        CrossMarginPositionCandidate {
+            id: 13,
+            pair_id: 7,
+            symbol: "BTC-USDT".to_owned(),
+        },
+        CrossMarginPositionCandidate {
+            id: 11,
+            pair_id: 7,
+            symbol: "BTC-USDT".to_owned(),
+        },
+        CrossMarginPositionCandidate {
+            id: 19,
+            pair_id: 9,
+            symbol: "ETH-USDT".to_owned(),
+        },
+        CrossMarginPositionCandidate {
+            id: 17,
+            pair_id: 8,
+            symbol: "BTC-USDT".to_owned(),
+        },
+    ];
+
+    let grouped = cross_position_keys_by_symbol(&positions);
+
+    assert_eq!(grouped.len(), 2);
+    assert_eq!(
+        grouped.get("BTC-USDT"),
+        Some(&vec![(13, 7), (11, 7), (17, 8)])
+    );
+    assert_eq!(grouped.get("ETH-USDT"), Some(&vec![(19, 9)]));
+}
+
+#[test]
 fn margin_liquidation_risk_state_rejects_invalid_direction() {
     let error = margin_liquidation_risk_state(
         "sideways",

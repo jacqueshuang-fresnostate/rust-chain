@@ -25,6 +25,7 @@ struct CachedTickerPayload {
 }
 
 /// 服务端行情缓存中的保证金风险价格与观测时间。
+#[derive(Debug, Clone)]
 pub(crate) struct MarginRiskTicker {
     /// 校验通过的最新价，直接作为风险快照的标记价参与浮盈计算。
     pub(crate) last_price: BigDecimal,

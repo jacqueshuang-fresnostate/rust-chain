@@ -17,7 +17,7 @@ use crate::{
 use bigdecimal::BigDecimal;
 use sqlx::{MySql, Pool, QueryBuilder};
 
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 /// 风险快照所需的用户仓位、产品费率和行情交易对字段集合。
 pub(crate) struct MarginRiskPositionRow {
     /// 仓位主键，回填到风险快照响应中供前端定位。
@@ -26,6 +26,8 @@ pub(crate) struct MarginRiskPositionRow {
     pub(crate) pair_id: u64,
     /// 交易对符号，来自联表的 `trading_pairs`，是行情缓存键的组成部分。
     pub(crate) symbol: String,
+    /// 交易对价格小数位，用于把账户条件强平价保守圆整到真实 tick。
+    pub(crate) price_precision: i32,
     /// 保证金计价币种，浮盈、利息和权益都以该币种表示。
     pub(crate) margin_asset: u64,
     /// 持仓方向 long 或 short，决定价差的取号方式。
@@ -55,7 +57,8 @@ pub(crate) async fn load_user_risk_position_by_id(
     position_id: u64,
 ) -> AppResult<Option<MarginRiskPositionRow>> {
     sqlx::query_as::<_, MarginRiskPositionRow>(
-        r#"SELECT positions.id, positions.pair_id, pairs.symbol, positions.margin_asset,
+        r#"SELECT positions.id, positions.pair_id, pairs.symbol, pairs.price_precision,
+                  positions.margin_asset,
                   positions.direction, positions.margin_mode, positions.margin_amount, positions.notional_amount,
                   positions.interest_amount, positions.entry_price,
                   products.maintenance_margin_rate, positions.status
@@ -70,6 +73,56 @@ pub(crate) async fn load_user_risk_position_by_id(
     .fetch_optional(pool)
     .await
     .map_err(AppError::from)
+}
+
+/// 按用户与保证金资产列出权威全仓风险行，范围严格限定为 cross、opened 且入场价非空。
+/// 查询同时联出 pair 符号/价格精度和产品当前维持保证金率，使 API 与强平 worker 使用同一口径。
+/// pending 限价、逐仓、已关闭、其他用户或其他保证金资产的行在 SQL 谓词中直接排除，不交给应用层二次过滤。
+/// 按 pair 与仓位主键升序返回以保持取价和聚合顺序稳定；本路径只读不加锁，并发终态变化会在下次请求中收敛。
+pub(crate) async fn list_user_cross_margin_risk_positions(
+    pool: &Pool<MySql>,
+    user_id: u64,
+    margin_asset: u64,
+) -> AppResult<Vec<MarginRiskPositionRow>> {
+    sqlx::query_as::<_, MarginRiskPositionRow>(
+        r#"SELECT positions.id, positions.pair_id, pairs.symbol, pairs.price_precision,
+                  positions.margin_asset, positions.direction, positions.margin_mode,
+                  positions.margin_amount, positions.notional_amount, positions.interest_amount,
+                  positions.entry_price, products.maintenance_margin_rate, positions.status
+           FROM margin_positions positions
+           INNER JOIN margin_products products ON products.id = positions.product_id
+           INNER JOIN trading_pairs pairs ON pairs.id = positions.pair_id
+           WHERE positions.user_id = ? AND positions.margin_asset = ?
+             AND positions.margin_mode = 'cross' AND positions.status = 'opened'
+             AND positions.entry_price IS NOT NULL
+           ORDER BY positions.pair_id ASC, positions.id ASC"#,
+    )
+    .bind(user_id)
+    .bind(margin_asset)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::from)
+}
+
+/// 读取指定用户和资产的杠杆钱包 available，作为实时全仓风险权益的共享钱包项。
+/// 账户行未建立时返回十八位零，与全仓开仓的惰性建账语义兼容；不会因为只读风险而创建空钱包。
+/// 本函数不加 FOR UPDATE 且不开事务，只服务于 API 展示；真实强平仍在 worker 事务内重新锁定钱包。
+pub(crate) async fn load_user_cross_margin_wallet_available(
+    pool: &Pool<MySql>,
+    user_id: u64,
+    margin_asset: u64,
+) -> AppResult<BigDecimal> {
+    Ok(sqlx::query_scalar::<_, BigDecimal>(
+        r#"SELECT available
+           FROM margin_wallet_accounts
+           WHERE user_id = ? AND asset_id = ?
+           LIMIT 1"#,
+    )
+    .bind(user_id)
+    .bind(margin_asset)
+    .fetch_optional(pool)
+    .await?
+    .unwrap_or_else(|| BigDecimal::from(0).with_scale(18)))
 }
 
 /// 查询单个用户的杠杆仓位列表，用户标识以 `push_bind` 参数化绑定后作为第一个 WHERE 条件。
