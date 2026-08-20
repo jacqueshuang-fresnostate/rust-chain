@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 45
+- **Total Sessions**: 46
 - **Last Active**: 2026-08-20
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1552 | Active |
+| `journal-1.md` | ~1585 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 46 | 2026-08-20 | 修复全仓双向强平与预估强平价 | `a98cc2b` | `main` |
 | 45 | 2026-08-20 | 手机端杠杆持仓按钮对齐 Pencil | `a2c82c8` | `main` |
 | 44 | 2026-08-18 | 后台行情策略与杠杆产品配置优化 | `2b36903` | `main` |
 | 43 | 2026-08-18 | 手机端 PWA 状态浮岛沉浸式重构 | `1f95db3` | `main` |

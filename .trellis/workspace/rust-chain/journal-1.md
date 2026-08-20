@@ -1550,3 +1550,36 @@ Enabled the shared /news back action, added Product Hub direct-open fallback, re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 46: 修复全仓双向强平与预估强平价
+
+**Date**: 2026-08-20
+**Task**: 修复全仓双向强平与预估强平价
+**Branch**: `main`
+
+### Summary
+
+修复全仓多空同时触发强平时杠杆钱包余额反增的问题，改为账户级原子归零与幂等流水；补充全仓账户预估强平价接口、手机端展示及完整回归测试。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a98cc2b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
