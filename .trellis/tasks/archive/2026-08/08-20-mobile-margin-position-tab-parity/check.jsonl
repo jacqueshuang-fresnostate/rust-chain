@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "移动端验证命令与交互质量合同"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "复核单仓与批量关闭边界、确认互斥和响应式几何"}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "验证用户可见文案和交易页语义"}
+{"file": ".trellis/spec/backend/margin-trading-actions.md", "reason": "核对能力门控和批量平仓作用域"}
+{"file": ".trellis/tasks/08-20-mobile-margin-position-tab-parity/research/pencil-position-actions.md", "reason": "核对 Pencil 三按钮顺序与差异"}

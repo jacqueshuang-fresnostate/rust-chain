@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "移动端质量门、触控与视觉合同"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "单仓关闭、批量平仓作用域与能力门控合同"}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "交易页导航与 i18n 合同"}
+{"file": ".trellis/spec/backend/margin-trading-actions.md", "reason": "杠杆操作能力与真实接口边界"}
+{"file": ".trellis/tasks/08-20-mobile-margin-position-tab-parity/research/pencil-position-actions.md", "reason": "Pencil 当前选中稿与生产差异"}
