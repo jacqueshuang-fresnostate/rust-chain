@@ -7676,3 +7676,10 @@
 - 修改文件：上述五项任务涉及的 `mobile/src/**`、`mobile/tests/**`、`.trellis/spec/mobile/**`、`.trellis/tasks/archive/2026-08/**` 与 `docs/superpowers/PROGRESS.md`；既有未跟踪目录 `mobile/pencil/docs/` 明确排除。
 - 验证结果：沿用提交前最终门禁：Mobile 全量测试 436/436、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`、Trellis 上下文校验及 `git diff --check` 均通过；提交前继续执行暂存范围与暂存差异检查。
 - 后续事项：无。
+
+## 2026-08-20 16:20 - 手机端杠杆持仓按钮对齐 Pencil 选稿
+
+- 完成内容：依据 Pencil 当前选中的浅色/深色“参考版持仓详情”，将杠杆工作区“资产”页签修正为带真实可见数量的“持仓 (N)”，并按选稿补齐“止盈止损 / 平仓 / 市价全平”三枚独立操作。普通平仓与卡内市价全平拥有互不串联的二次确认，但都只通过 `closeMarginPosition(position.id)` 关闭该张卡对应持仓；顶部“一键平仓”是唯一批量入口，并继续按“只看当前交易对”决定传产品 ID 或关闭全部持仓。危险确认状态互斥，作用域切换会撤销旧确认，保存期间锁定其他持仓动作；未开放的止盈止损按具体产品能力显示禁用状态且不发请求。三按钮使用 10px 间距、12px 圆角、44px 触控面与 42px 内嵌视觉面，并补齐中英文、ARIA、明暗主题和源码回归合同。
+- 修改文件：`mobile/src/views/TradeView.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{contract-pencil-selected-parity,award-ui-trading-workspaces}.test.ts`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/tasks/08-20-mobile-margin-position-tab-parity/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix mobile run type-check` 通过；Mobile 全量测试 441/441 通过；`npm --prefix mobile run build:pwa` 通过；项目无 lint script，`npm --prefix mobile run lint --if-present` 正常跳过；Trellis context validate 与 `git diff --check` 通过。Ego Browser 在 390×920 浅色和 320×720 深色下验证页签为“持仓 (0)”、三按钮等宽、间距均为 10px、操作组/触控高度均为 44px、圆角 12px且文档宽度等于视口，无横向溢出；只读视觉夹具未触发任何资金操作，任务空间已关闭。截图：`/private/tmp/margin-position-controls-light-390.png`、`/private/tmp/margin-position-controls-dark-320-final.png`。
+- 后续事项：无；本轮读取未保存 Pencil 选稿时产生的 `mobile/pencil/hippo-mobile-uiux.pen` 非业务重序列化差异已在保留 `/private/tmp/hippo-mobile-uiux-position-tab.pen` 临时备份后恢复到当前 HEAD，既有未跟踪目录 `mobile/pencil/docs/` 未修改且未纳入提交。

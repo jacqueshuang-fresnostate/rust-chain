@@ -144,6 +144,92 @@ test('公开产品、能力、钱包和风险 DTO 被杠杆工作区完整消费
   assert.match(tradeSource, /window\.clearInterval\(marginRiskRefreshTimer\)/)
 })
 
+test('持仓页签显示真实可见数量且持仓卡按 Pencil 顺序复用三段操作', () => {
+  assert.match(tradeSource, /t\('trade\.positionAssetsTab', \{ count: visibleMarginPositions\.length \}\)/)
+  assert.equal(zhCN.trade.positionAssetsTab, '持仓 ({count})')
+  assert.equal(en.trade.positionAssetsTab, 'Positions ({count})')
+
+  const positionCardStart = tradeSource.indexOf('<article v-for="position in visibleMarginPositions"')
+  const pendingOrdersStart = tradeSource.indexOf("<div v-else-if=\"contractWorkspaceTab === 'orders'", positionCardStart)
+  assert.ok(positionCardStart >= 0 && pendingOrdersStart > positionCardStart)
+  const positionCards = tradeSource.slice(positionCardStart, pendingOrdersStart)
+  assertOrdered(positionCards, [
+    'data-position-action="take-profit-stop-loss"',
+    'data-position-action="close"',
+    'data-position-action="market-close-all"',
+  ])
+  assert.match(positionCards, /data-position-action="take-profit-stop-loss"[\s\S]*?:disabled="!productForPosition\(position\)\?\.takeProfitStopLossSupported \|\| positionActionSaving !== null \|\| bulkCloseSaving"/)
+  const takeProfitStopLossAction = positionCards.slice(
+    positionCards.indexOf('data-position-action="take-profit-stop-loss"'),
+    positionCards.indexOf('data-position-action="close"'),
+  )
+  assert.doesNotMatch(takeProfitStopLossAction, /@click=|fetch\(|post\(/)
+  assert.match(positionCards, /data-position-action="close"[\s\S]*?@click="performPositionAction\(position, 'close'\)"/)
+  assert.match(positionCards, /data-position-action="market-close-all"[\s\S]*?@click="performPositionAction\(position, 'market-close-all'\)"/)
+  assert.doesNotMatch(positionCards, /performBulkClose|closeAllMarginPositions/)
+  assert.equal(zhCN.trade.positionActions, '持仓操作')
+  assert.equal(en.trade.positionActions, 'Position actions')
+  assert.equal(zhCN.trade.marketCloseAll, '市价全平')
+  assert.equal(en.trade.marketCloseAll, 'Market close all')
+  assert.equal(zhCN.trade.confirmMarketCloseAll, '确认市价全平')
+  assert.equal(en.trade.confirmMarketCloseAll, 'Confirm market close')
+})
+
+test('普通平仓与卡内市价全平使用独立确认意图并调用同一个单仓关闭接口', () => {
+  const singleClose = sliceSourceFunction('async function performPositionAction', 'async function performBulkClose')
+  assert.match(tradeSource, /type PositionActionType = 'close' \| 'market-close-all' \| 'cancel'/)
+  assert.match(singleClose, /armedPositionAction\.value\?\.id !== position\.id[\s\S]*?bulkCloseArmed\.value = false[\s\S]*?armedPositionAction\.value = \{ id: position\.id, type: action \}[\s\S]*?return/)
+  assert.match(singleClose, /const closesPosition = action === 'close' \|\| action === 'market-close-all'/)
+  assert.match(singleClose, /if \(closesPosition\) await closeMarginPosition\(position\.id\)/)
+  assert.match(singleClose, /else await cancelMarginPosition\(position\.id\)/)
+  assert.equal([...singleClose.matchAll(/closeMarginPosition\(position\.id\)/g)].length, 1)
+  assert.doesNotMatch(singleClose, /closeAllMarginPositions/)
+
+  const positionCards = tradeSource.slice(
+    tradeSource.indexOf('<article v-for="position in visibleMarginPositions"'),
+    tradeSource.indexOf("<div v-else-if=\"contractWorkspaceTab === 'orders'"),
+  )
+  assert.match(positionCards, /data-position-action="close"[\s\S]*?armedPositionAction\.type === 'close'[\s\S]*?trade\.confirmClosePosition/)
+  assert.match(positionCards, /data-position-action="market-close-all"[\s\S]*?armedPositionAction\.type === 'market-close-all'[\s\S]*?trade\.confirmMarketCloseAll/)
+  assert.match(positionCards, /data-position-action="market-close-all"[\s\S]*?:disabled="positionActionSaving !== null \|\| bulkCloseSaving"/)
+})
+
+test('顶部一键平仓保留 currentPairOnly 条件作用域且与卡内单仓动作分离', () => {
+  const bulkClose = sliceSourceFunction('async function performBulkClose', 'async function applyContractLeverage')
+  assert.match(bulkClose, /!visibleMarginPositions\.value\.length/)
+  assert.match(bulkClose, /!selectedProduct\.value\?\.bulkCloseSupported/)
+  assert.match(bulkClose, /if \(!bulkCloseArmed\.value\) \{[\s\S]*?armedPositionAction\.value = null[\s\S]*?bulkCloseArmed\.value = true[\s\S]*?return/)
+  assert.match(bulkClose, /await closeAllMarginPositions\(currentPairOnly\.value \? selectedProduct\.value\?\.id : undefined\)/)
+  assert.doesNotMatch(bulkClose, /closeMarginPosition\(/)
+  assert.equal([...tradeSource.matchAll(/@click="performBulkClose"/g)].length, 1)
+})
+
+test('切换当前交易对作用域会撤销旧确认意图且保存中不可变更作用域', () => {
+  const scopeToggle = sliceSourceFunction('function toggleCurrentPairScope', 'function selectContractWorkspaceTab')
+  assert.match(scopeToggle, /if \(positionActionSaving\.value \|\| bulkCloseSaving\.value\) return/)
+  assertOrdered(scopeToggle, [
+    'currentPairOnly.value = !currentPairOnly.value',
+    'armedPositionAction.value = null',
+    'bulkCloseArmed.value = false',
+  ])
+  assert.equal([...tradeSource.matchAll(/@click="toggleCurrentPairScope"/g)].length, 2)
+  assert.match(tradeSource, /class="contract-current-pair"[\s\S]*?:aria-pressed="currentPairOnly"[\s\S]*?:disabled="bulkCloseSaving \|\| positionActionSaving !== null"[\s\S]*?@click="toggleCurrentPairScope"/)
+  assert.match(tradeSource, /class="contract-filter-control"[\s\S]*?:aria-label="t\('trade\.positionFilter'\)"[\s\S]*?:aria-pressed="currentPairOnly"[\s\S]*?:disabled="bulkCloseSaving \|\| positionActionSaving !== null"[\s\S]*?@click="toggleCurrentPairScope"/)
+})
+
+test('持仓三枚按钮复刻独立间距、42px 视觉面与 44px 触控合同', () => {
+  assert.match(tradeSource, /--contract-position-action-surface: #ffffff;[\s\S]*?--contract-position-action-border: #087b52;[\s\S]*?--contract-position-action-text: #087b52;/)
+  assert.match(tradeSource, /html\[data-theme='dark'\] \.contract-trade \{[\s\S]*?--contract-position-action-surface: #121714;[\s\S]*?--contract-position-action-border: #202923;[\s\S]*?--contract-position-action-text: var\(--contract-text\);/)
+  assert.match(tradeSource, /\.contract-position-card \{[^}]*display: grid;[^}]*gap: 12px;[^}]*grid-template-rows: auto auto auto 44px;[^}]*min-height: 272px;/s)
+  assert.match(tradeSource, /\.contract-position-actions \{[^}]*display: grid;[^}]*gap: 10px;[^}]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);[^}]*height: 44px;[^}]*min-width: 0;[^}]*width: 100%;/s)
+  assert.match(tradeSource, /\.contract-position-actions button \{[^}]*background: transparent;[^}]*border: 0;[^}]*border-radius: 12px;[^}]*height: 44px;[^}]*min-height: 44px;[^}]*min-width: 0;[^}]*position: relative;/s)
+  assert.match(tradeSource, /\.contract-position-actions button::before \{[^}]*background: var\(--contract-position-action-surface\);[^}]*border: 1px solid var\(--contract-position-action-border\);[^}]*border-radius: 12px;[^}]*inset: 1px 0;/s)
+  assert.match(tradeSource, /\.contract-position-actions button:active:not\(:disabled\)::before \{[^}]*transform: translateY\(1px\);/s)
+  assert.match(tradeSource, /\.contract-position-actions button:disabled \{[^}]*opacity: \.58;/s)
+  assert.doesNotMatch(tradeSource, /\.contract-position-actions button \+ button|\.contract-position-actions button:first-child|\.contract-position-actions button:last-child/)
+  assert.match(tradeSource, /\.contract-position-tabs button:focus-visible,[\s\S]*?\.contract-workspace-panel button:focus-visible \{[\s\S]*?outline: 2px solid var\(--focus\);/)
+})
+
 test('Header 更多菜单支持键盘打开、循环导航、Escape 关闭和焦点恢复', () => {
   assert.match(tradeSource, /ref="contractMoreButton"[\s\S]*?@keydown="handleContractMoreButtonKeydown"/)
   assert.match(tradeSource, /ref="contractMoreMenu"[\s\S]*?role="menu"[\s\S]*?@keydown="handleContractMoreKeydown"/)
@@ -225,4 +311,21 @@ function resolveMessage(messages: unknown, key: string): unknown {
     if (!value || typeof value !== 'object') return undefined
     return (value as Record<string, unknown>)[segment]
   }, messages)
+}
+
+function assertOrdered(source: string, markers: string[]): void {
+  let cursor = -1
+  for (const marker of markers) {
+    const next = source.indexOf(marker, cursor + 1)
+    assert.ok(next > cursor, `expected ${marker} after previous marker`)
+    cursor = next
+  }
+}
+
+function sliceSourceFunction(startToken: string, endToken: string): string {
+  const start = tradeSource.indexOf(startToken)
+  assert.notEqual(start, -1, `missing start token: ${startToken}`)
+  const end = tradeSource.indexOf(endToken, start + startToken.length)
+  assert.notEqual(end, -1, `missing end token: ${endToken}`)
+  return tradeSource.slice(start, end)
 }

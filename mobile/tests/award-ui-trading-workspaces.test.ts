@@ -39,6 +39,7 @@ test('交易工作台保留行情、K 线、盘口、余额、委托与下单处
   assert.match(tradeSource, /await closeMarginPosition\(position\.id\)/)
   assert.match(tradeSource, /await cancelMarginPosition\(position\.id\)/)
   assert.match(tradeSource, /await closeAllMarginPositions\(currentPairOnly\.value \? selectedProduct\.value\?\.id : undefined\)/)
+  assert.doesNotMatch(tradeSource, /await closeAllMarginPositions\(selectedProduct\.value\??\.id\)/)
   assert.match(tradeSource, /fetchMarginPositionRisk\(position\.id\)/)
   assert.match(tradeSource, /v-for="time in \['1m', '5m', '15m', '1h', '1d'\]"/)
   assert.doesNotMatch(tradeSource, /\['1m', '15m', '1h', '4h', '1d'\]/)

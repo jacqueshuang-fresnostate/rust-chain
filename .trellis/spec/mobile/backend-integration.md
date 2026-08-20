@@ -998,6 +998,9 @@ placeMarginOrder(input: {
   price?: string
   idempotencyKey: string
 }): Promise<void>
+
+closeMarginPosition(positionId: string): Promise<void>
+closeAllMarginPositions(productId?: number): Promise<MarginBatchActionResult>
 ```
 
 The selected production surfaces are `cjzfi/p6GfgT` for the main contract
@@ -1085,6 +1088,24 @@ OS chrome and is not rendered by the web application.
   rail. The left console uses Pencil's absolute vertical tracks while visible
   dots may stay 12px inside 44px accessible hit areas. At 448px only the book
   expands; at 320px the console and book contract without document overflow.
+- The positions tab renders the count of the currently visible filled-position
+  collection. Each position card keeps the Pencil action order `TP/SL`,
+  `Close`, `Market close all`. The two close labels own independent armed
+  intents but both close only that card through
+  `closeMarginPosition(position.id)`; card actions must never call the batch
+  endpoint. The top `Close all` is the sole batch owner and calls
+  `closeAllMarginPositions(currentPairOnly ? selectedProduct.id : undefined)`.
+- Destructive confirmations are mutually exclusive. Arming a card action clears
+  the top batch intent, arming the top batch action clears the card intent, and
+  changing the current-pair scope clears both. Scope controls remain disabled
+  while any close request is in flight so the confirmed target set cannot
+  change during submission.
+- TP/SL stays visible in its Pencil slot but is disabled with localized
+  unavailable copy while the exact position product reports
+  `takeProfitStopLossSupported=false`; the disabled control has no click or
+  request handler. The three card actions are independent equal-width controls
+  with a 10px gap, 12px radius, 44px hit area, 42px inset visual face, and no
+  horizontal overflow at 320px in either theme.
 - The leverage, mode, and pair sheets are 500px, 446px, and 620px high and
   start-align their content tracks. Do not stretch their confirmation actions
   to the sheet bottom. At 340px and below, wrapped notices use intrinsic height
@@ -1113,6 +1134,12 @@ OS chrome and is not rendered by the web application.
 | Contract submission fails | Keep the review open, show the mapped error inside it, and allow retry after busy clears |
 | Contract submission is in flight | Ignore duplicate submission and keep overlay, close button, and Escape dismissal inactive |
 | Risk copy wraps at 320px | Grow the notice/body; keep submit visible and non-overlapping |
+| Position product does not advertise TP/SL | Keep the Pencil action visible and disabled; send no request |
+| Card `Close` or `Market close all` is confirmed | Close only that position ID through the single-position endpoint |
+| Top `Close all` is confirmed while current-pair scope is on | Send the selected product ID to the batch endpoint |
+| Top `Close all` is confirmed while current-pair scope is off | Omit `product_id` so the backend batch covers all visible account positions |
+| Another destructive intent is already armed | Replace it with the newly selected intent; never display two active confirmations |
+| A close request is in flight | Lock both scope controls and all other position mutations until it settles |
 
 ### 5. Good / Base / Bad Cases
 
@@ -1121,12 +1148,20 @@ OS chrome and is not rendered by the web application.
 - Good: choose an advertised limit, fill long from best ask, open review, then
   receive newer tickers while both review and retry keep the exact frozen limit,
   reference, and idempotency key.
+- Good: arm `Market close all` on one card, confirm it, and send exactly one
+  `closeMarginPosition` request for that card ID while every sibling position
+  remains untouched.
 - Base: a new user receives 404 for settings and continues with the product's
   first supported mode and configured leverage level.
+- Base: TP/SL is not advertised, so its slot remains understandable but disabled
+  while both supported close actions stay available.
 - Bad: tapping the leverage field cycles local values without a sheet or PATCH.
 - Bad: showing an order type not present in backend capabilities, using bid for
   long or ask for short, sending a market `price`, or rebuilding the request
   from live form/ticker state during retry.
+- Bad: wiring the card-level `Market close all` label to
+  `closeAllMarginPositions(productId)`, or retaining a card confirmation after
+  the user changes the batch scope.
 
 ### 6. Tests Required
 
@@ -1148,6 +1183,12 @@ OS chrome and is not rendered by the web application.
   asks/seven bids, exact 390px geometry, two-row field typography, shell-owned
   focus ring, 12px slider faces inside 44px targets, sheet tracks, localized
   copy, dialog semantics, safe area, and reduced motion.
+- Position-action source tests lock the visible-count tab, exact Pencil action
+  order, per-position capability lookup, independent card intents, one
+  single-position close call, the conditional batch product ID, mutually
+  exclusive confirmations, scope-lock behavior, and the absence of a TP/SL
+  request handler. CSS contracts lock 10px gaps, 12px radii, 44px hit/row
+  geometry, 42px visual faces, both theme token sets, and 320px no-overflow.
 - Browser checks cover light/dark 390x920 main and all four sheets, then
   320x760 horizontal overflow, wrapped notice, focus trap, Escape dismissal,
   body scroll lock, trigger focus restoration, guest order-type opening,
@@ -1162,6 +1203,9 @@ OS chrome and is not rendered by the web application.
 leverage.value = nextLevel
 marginMode.value = 'isolated'
 router.push('/markets?mode=contract')
+
+// Wrong: a card-level action must not close sibling positions.
+await closeAllMarginPositions(position.productId)
 ```
 
 #### Correct
@@ -1178,6 +1222,12 @@ router.replace({
   params: { symbol: selectedSymbol.replace('/', '_') },
   query: { mode: 'contract' },
 })
+
+// Card action: close one position only.
+await closeMarginPosition(position.id)
+
+// Top batch action: preserve the user's current-pair scope.
+await closeAllMarginPositions(currentPairOnly.value ? selectedProduct.value?.id : undefined)
 ```
 
 ## 14. Agent-Routed Online Support Contract

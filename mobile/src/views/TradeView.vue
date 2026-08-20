@@ -89,6 +89,13 @@ import { useSessionStore } from '@/stores/session'
 import { useNavigationStore } from '@/stores/navigation'
 import type { KlinePoint, MarginOrderType, MarginProduct, OrderBookLevel, TradePrint, WalletAccount } from '@/core/types'
 
+type PositionActionType = 'close' | 'market-close-all' | 'cancel'
+
+interface PositionActionState {
+  id: string
+  type: PositionActionType
+}
+
 const route = useRoute()
 const router = useRouter()
 const marketStore = useMarketStore()
@@ -146,8 +153,8 @@ const contractMoreOpen = ref(false)
 const contractMoreButton = ref<HTMLButtonElement | null>(null)
 const contractMoreMenu = ref<HTMLElement | null>(null)
 const contractWorkspace = ref<HTMLElement | null>(null)
-const positionActionSaving = ref<string | null>(null)
-const armedPositionAction = ref<{ id: string; type: 'close' | 'cancel' } | null>(null)
+const positionActionSaving = ref<PositionActionState | null>(null)
+const armedPositionAction = ref<PositionActionState | null>(null)
 const bulkCloseArmed = ref(false)
 const bulkCloseSaving = ref(false)
 let marketRequestVersion = 0
@@ -829,6 +836,13 @@ function handleContractMoreKeydown(event: KeyboardEvent): void {
   items[targetIndex]?.focus()
 }
 
+function toggleCurrentPairScope(): void {
+  if (positionActionSaving.value || bulkCloseSaving.value) return
+  currentPairOnly.value = !currentPairOnly.value
+  armedPositionAction.value = null
+  bulkCloseArmed.value = false
+}
+
 function selectContractWorkspaceTab(tab: 'orders' | 'positions' | 'strategy'): void {
   if (tab === 'strategy' && !selectedProduct.value?.strategyOrdersSupported) return
   contractWorkspaceTab.value = tab
@@ -912,27 +926,29 @@ function liquidationDistanceWidth(position: MarginPosition): string {
   return `${Math.min(100, Math.max(4, distance * 100))}%`
 }
 
-async function performPositionAction(position: MarginPosition, action: 'close' | 'cancel'): Promise<void> {
+async function performPositionAction(position: MarginPosition, action: PositionActionType): Promise<void> {
   if (!session.isAuthenticated) {
     openLogin()
     return
   }
-  if (positionActionSaving.value) return
+  if (positionActionSaving.value || bulkCloseSaving.value) return
   if (armedPositionAction.value?.id !== position.id || armedPositionAction.value.type !== action) {
+    bulkCloseArmed.value = false
     armedPositionAction.value = { id: position.id, type: action }
     return
   }
 
-  positionActionSaving.value = position.id
+  const closesPosition = action === 'close' || action === 'market-close-all'
+  positionActionSaving.value = { id: position.id, type: action }
   feedback.value = ''
   try {
-    if (action === 'close') await closeMarginPosition(position.id)
+    if (closesPosition) await closeMarginPosition(position.id)
     else await cancelMarginPosition(position.id)
-    setFeedback(t(action === 'close' ? 'trade.positionClosed' : 'trade.marginOrderCanceled'), 'success')
+    setFeedback(t(closesPosition ? 'trade.positionClosed' : 'trade.marginOrderCanceled'), 'success')
     armedPositionAction.value = null
     await loadTradingBalances()
   } catch (reason) {
-    setFeedback(apiErrorMessage(reason, t(action === 'close' ? 'trade.positionCloseFailed' : 'trade.marginOrderCancelFailed')))
+    setFeedback(apiErrorMessage(reason, t(closesPosition ? 'trade.positionCloseFailed' : 'trade.marginOrderCancelFailed')))
   } finally {
     positionActionSaving.value = null
   }
@@ -943,8 +959,14 @@ async function performBulkClose(): Promise<void> {
     openLogin()
     return
   }
-  if (!visibleMarginPositions.value.length || bulkCloseSaving.value) return
+  if (
+    !visibleMarginPositions.value.length
+    || positionActionSaving.value
+    || bulkCloseSaving.value
+    || !selectedProduct.value?.bulkCloseSupported
+  ) return
   if (!bulkCloseArmed.value) {
+    armedPositionAction.value = null
     bulkCloseArmed.value = true
     return
   }
@@ -1940,7 +1962,7 @@ onBeforeUnmount(() => {
             aria-controls="contract-workspace-panel"
             @click="selectContractWorkspaceTab('positions')"
           >
-            {{ t('trade.positionAssetsTab') }} <ChevronDown :size="12" aria-hidden="true" />
+            {{ t('trade.positionAssetsTab', { count: visibleMarginPositions.length }) }}
           </button>
           <button
             id="contract-strategy-tab"
@@ -1972,7 +1994,8 @@ onBeforeUnmount(() => {
               class="contract-current-pair"
               type="button"
               :aria-pressed="currentPairOnly"
-              @click="currentPairOnly = !currentPairOnly"
+              :disabled="bulkCloseSaving || positionActionSaving !== null"
+              @click="toggleCurrentPairScope"
             >
               <span aria-hidden="true" />{{ t('trade.onlyCurrent') }}
             </button>
@@ -1980,12 +2003,20 @@ onBeforeUnmount(() => {
               class="contract-close-all"
               type="button"
               :class="{ armed: bulkCloseArmed }"
-              :disabled="bulkCloseSaving || !visibleMarginPositions.length || !selectedProduct?.bulkCloseSupported"
+              :aria-busy="bulkCloseSaving"
+              :disabled="bulkCloseSaving || positionActionSaving !== null || !visibleMarginPositions.length || !selectedProduct?.bulkCloseSupported"
               @click="performBulkClose"
             >
               {{ bulkCloseSaving ? t('orders.processing') : bulkCloseArmed ? t('trade.confirmCloseAll') : t('orders.closeAll') }}
             </button>
-            <button class="contract-filter-control" type="button" :aria-label="t('trade.positionFilter')" @click="currentPairOnly = !currentPairOnly">
+            <button
+              class="contract-filter-control"
+              type="button"
+              :aria-label="t('trade.positionFilter')"
+              :aria-pressed="currentPairOnly"
+              :disabled="bulkCloseSaving || positionActionSaving !== null"
+              @click="toggleCurrentPairScope"
+            >
               <SlidersHorizontal :size="15" aria-hidden="true" />
             </button>
           </div>
@@ -2029,15 +2060,38 @@ onBeforeUnmount(() => {
                 <i><b :style="{ width: liquidationDistanceWidth(position) }" /></i>
                 <strong class="numeric">{{ formatRate(riskForPosition(position)?.liquidationDistanceRate) }}</strong>
               </div>
-              <button
-                class="contract-position-action"
-                type="button"
-                :class="{ armed: armedPositionAction?.id === position.id && armedPositionAction.type === 'close' }"
-                :disabled="positionActionSaving === position.id"
-                @click="performPositionAction(position, 'close')"
-              >
-                {{ positionActionSaving === position.id ? t('orders.processing') : armedPositionAction?.id === position.id && armedPositionAction.type === 'close' ? t('trade.confirmClosePosition') : t('trade.closePositionShort') }}
-              </button>
+              <div class="contract-position-actions" role="group" :aria-label="t('trade.positionActions')">
+                <button
+                  data-position-action="take-profit-stop-loss"
+                  type="button"
+                  :disabled="!productForPosition(position)?.takeProfitStopLossSupported || positionActionSaving !== null || bulkCloseSaving"
+                >
+                  <span>{{ t('rootPrototype.takeProfitStopLoss') }}</span>
+                  <small v-if="!productForPosition(position)?.takeProfitStopLossSupported">{{ t('trade.featureUnavailableShort') }}</small>
+                </button>
+                <button
+                  class="contract-position-action"
+                  data-position-action="close"
+                  type="button"
+                  :class="{ armed: armedPositionAction?.id === position.id && armedPositionAction.type === 'close' }"
+                  :aria-busy="positionActionSaving?.id === position.id && positionActionSaving.type === 'close'"
+                  :disabled="positionActionSaving !== null || bulkCloseSaving"
+                  @click="performPositionAction(position, 'close')"
+                >
+                  <span>{{ positionActionSaving?.id === position.id && positionActionSaving.type === 'close' ? t('orders.processing') : armedPositionAction?.id === position.id && armedPositionAction.type === 'close' ? t('trade.confirmClosePosition') : t('trade.closePositionShort') }}</span>
+                </button>
+                <button
+                  class="contract-position-market-close-all"
+                  data-position-action="market-close-all"
+                  type="button"
+                  :class="{ armed: armedPositionAction?.id === position.id && armedPositionAction.type === 'market-close-all' }"
+                  :aria-busy="positionActionSaving?.id === position.id && positionActionSaving.type === 'market-close-all'"
+                  :disabled="positionActionSaving !== null || bulkCloseSaving"
+                  @click="performPositionAction(position, 'market-close-all')"
+                >
+                  <span>{{ positionActionSaving?.id === position.id && positionActionSaving.type === 'market-close-all' ? t('orders.processing') : armedPositionAction?.id === position.id && armedPositionAction.type === 'market-close-all' ? t('trade.confirmMarketCloseAll') : t('trade.marketCloseAll') }}</span>
+                </button>
+              </div>
             </article>
           </div>
 
@@ -2059,10 +2113,11 @@ onBeforeUnmount(() => {
               <button
                 type="button"
                 :class="{ armed: armedPositionAction?.id === position.id && armedPositionAction.type === 'cancel' }"
-                :disabled="positionActionSaving === position.id"
+                :aria-busy="positionActionSaving?.id === position.id && positionActionSaving.type === 'cancel'"
+                :disabled="positionActionSaving !== null || bulkCloseSaving"
                 @click="performPositionAction(position, 'cancel')"
               >
-                {{ positionActionSaving === position.id ? t('orders.processing') : armedPositionAction?.id === position.id && armedPositionAction.type === 'cancel' ? t('trade.confirmCancelOrder') : t('orders.cancel') }}
+                {{ positionActionSaving?.id === position.id && positionActionSaving.type === 'cancel' ? t('orders.processing') : armedPositionAction?.id === position.id && armedPositionAction.type === 'cancel' ? t('trade.confirmCancelOrder') : t('orders.cancel') }}
               </button>
             </article>
           </div>
@@ -4266,6 +4321,9 @@ html[data-theme='dark'] .contract-order-confirm {
   --contract-accent: #43efa9;
   --contract-positive: #159a6d;
   --contract-negative: #e94f37;
+  --contract-position-action-surface: #ffffff;
+  --contract-position-action-border: #087b52;
+  --contract-position-action-text: #087b52;
   background: var(--contract-bg);
   color: var(--contract-text);
   min-height: 100dvh;
@@ -4284,6 +4342,9 @@ html[data-theme='dark'] .contract-trade {
   --contract-muted: #95a19a;
   --contract-positive: #61f1b6;
   --contract-negative: #ff654a;
+  --contract-position-action-surface: #121714;
+  --contract-position-action-border: #202923;
+  --contract-position-action-text: var(--contract-text);
 }
 
 .contract-pencil-surface {
@@ -5087,7 +5148,7 @@ html[data-theme='dark'] .contract-trade {
   align-items: center;
   display: grid;
   gap: 8px;
-  grid-template-columns: minmax(0, 1fr) auto 36px;
+  grid-template-columns: minmax(0, 1fr) auto 42px;
   height: 42px;
 }
 
@@ -5096,7 +5157,7 @@ html[data-theme='dark'] .contract-trade {
   border: 0;
   color: var(--contract-muted);
   font-size: 10px;
-  min-height: 36px;
+  min-height: 42px;
 }
 
 .contract-current-pair {
@@ -5157,6 +5218,7 @@ html[data-theme='dark'] .contract-trade {
 .contract-position-card {
   display: grid;
   gap: 12px;
+  grid-template-rows: auto auto auto 44px;
   min-height: 272px;
   padding: 14px 12px 12px;
 }
@@ -5260,7 +5322,75 @@ html[data-theme='dark'] .contract-trade {
   height: 100%;
 }
 
-.contract-position-action,
+.contract-position-actions {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  height: 44px;
+  min-width: 0;
+  padding-inline-end: 1px;
+  width: 100%;
+}
+
+.contract-position-actions button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 12px;
+  color: var(--contract-position-action-text);
+  display: flex;
+  flex-direction: column;
+  font-size: 14px;
+  font-weight: 600;
+  gap: 2px;
+  height: 44px;
+  justify-content: center;
+  line-height: 17px;
+  min-height: 44px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 3px 4px;
+  position: relative;
+  transition: color 120ms ease;
+  white-space: normal;
+}
+
+.contract-position-actions button::before {
+  background: var(--contract-position-action-surface);
+  border: 1px solid var(--contract-position-action-border);
+  border-radius: 12px;
+  content: '';
+  inset: 1px 0;
+  pointer-events: none;
+  position: absolute;
+  transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease;
+  z-index: 0;
+}
+
+.contract-position-actions button > * {
+  position: relative;
+  z-index: 1;
+}
+
+.contract-position-actions button:focus-visible {
+  z-index: 1;
+}
+
+.contract-position-actions button:active:not(:disabled)::before {
+  background: color-mix(in srgb, var(--contract-position-action-surface) 82%, var(--contract-position-action-border));
+  transform: translateY(1px);
+}
+
+.contract-position-actions button:disabled {
+  opacity: .58;
+}
+
+.contract-position-actions small {
+  font-size: 8px;
+  font-weight: 560;
+  line-height: 10px;
+}
+
 .contract-pending-card > button {
   background: var(--contract-surface-soft);
   border: 1px solid var(--contract-line);
@@ -5271,9 +5401,13 @@ html[data-theme='dark'] .contract-trade {
   min-height: 36px;
 }
 .contract-position-action.armed,
+.contract-position-market-close-all.armed,
 .contract-pending-card > button.armed {
-  border-color: var(--contract-negative);
   color: var(--contract-negative);
+}
+.contract-position-action.armed::before,
+.contract-position-market-close-all.armed::before {
+  border-color: var(--contract-negative);
 }
 
 .contract-pending-card {
