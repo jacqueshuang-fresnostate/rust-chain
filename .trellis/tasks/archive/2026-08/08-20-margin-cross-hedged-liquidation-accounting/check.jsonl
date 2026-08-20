@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"独立检查 Rust 格式、Clippy、测试和资金不变量。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"核对账户级单一结算、锁序、幂等和流水一致性。"}
+{"file":".trellis/spec/backend/margin-trading-actions.md","reason":"核对全仓强平和风险接口业务口径。"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"核对手机端仅消费后端账户级风险、不伪造公式。"}
+{"file":".trellis/tasks/08-20-margin-cross-hedged-liquidation-accounting/research/liquidation-accounting-root-cause.md","reason":"用已定位根因审查余额不再增加且重试不重复记账。"}
+{"file":".trellis/tasks/08-20-margin-cross-hedged-liquidation-accounting/research/cross-liquidation-price-contract.md","reason":"用推导公式审查同向、部分对冲、完全对冲和多标的边界。"}

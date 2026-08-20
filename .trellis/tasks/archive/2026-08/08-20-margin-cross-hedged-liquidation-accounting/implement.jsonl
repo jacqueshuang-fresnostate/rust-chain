@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/index.md","reason":"后端分层入口与强制质量约束。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Rust 资金路径、测试和中文合同注释质量门禁。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"MySQL 事务、行锁、金额与流水一致性约束。"}
+{"file":".trellis/spec/backend/margin-trading-actions.md","reason":"杠杆开平仓、全仓账户风控和强平既有业务合同。"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"手机端风险 DTO 映射、失败保留和服务端权威值约束。"}
+{"file":".trellis/tasks/08-20-margin-cross-hedged-liquidation-accounting/research/liquidation-accounting-root-cause.md","reason":"全仓强平余额增加的完整根因、锁序和回归场景。"}
+{"file":".trellis/tasks/08-20-margin-cross-hedged-liquidation-accounting/research/cross-liquidation-price-contract.md","reason":"账户级条件强平价公式、不可求解边界与最小兼容 API/UI 方案。"}
