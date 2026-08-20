@@ -1517,3 +1517,36 @@ Enabled the shared /news back action, added Product Hub direct-open fallback, re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 45: 手机端杠杆持仓按钮对齐 Pencil
+
+**Date**: 2026-08-20
+**Task**: 手机端杠杆持仓按钮对齐 Pencil
+**Branch**: `main`
+
+### Summary
+
+完成持仓页签、三枚持仓操作、单仓与批量平仓边界、确认互斥、双主题响应式样式、回归测试与 Ego 浏览器验收。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a2c82c8` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
