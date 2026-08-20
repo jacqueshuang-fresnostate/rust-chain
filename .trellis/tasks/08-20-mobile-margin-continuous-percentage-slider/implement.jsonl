@@ -1,0 +1,5 @@
+{"file":".trellis/spec/mobile/index.md","reason":"遵循手机端交易控件、真实余额与可访问触控合同。"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"同步杠杆选中页面的固定几何、主题、焦点与百分比控件合同。"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"保持杠杆百分比金额计算、产品上限及下单接口边界。"}
+{"file":".trellis/tasks/08-20-mobile-margin-continuous-percentage-slider/research/liquidation-position-refresh.md","reason":"按已确认根因实现强平后的 REST 权威账户对账、单飞和竞态隔离。"}
+{"file":".trellis/spec/backend/realtime-websockets.md","reason":"复用用户专属 /ws/private 鉴权、心跳、易失提示与 REST 对账合同。"}

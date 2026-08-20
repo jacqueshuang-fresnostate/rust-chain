@@ -87,7 +87,7 @@ test('现货钱包持有资产归属当前持仓面板，委托与历史仅导�
   assert.doesNotMatch(spotTemplate, /openOrders\('positions'\)/)
 
   assert.match(tradeSource, /const spotVisibleBalances = computed\(\(\) => spotWallets\.value\.filter\(\(wallet\) => \([\s\S]*?\[baseAsset\.value, quoteAsset\.value\]\.includes\(wallet\.symbol\)[\s\S]*?wallet\.available \+ wallet\.frozen \+ wallet\.locked > 0/)
-  assert.match(tradeSource, /else \{\s*spotWallets\.value = await fetchWalletAccounts\(\)\s*marginPositions\.value = \[\]/)
+  assert.match(tradeSource, /else \{\s*const wallets = await fetchWalletAccounts\(\)\s*if \(!isCurrentTradingBalancesRequest[\s\S]*?spotWallets\.value = wallets\s*marginPositions\.value = \[\]/)
   const tradingImport = tradeSource.match(/import \{[\s\S]*?\} from '@\/api\/trading'/)?.[0]
   assert.ok(tradingImport)
   assert.doesNotMatch(tradingImport, /\b(?:fetchSpotOrders|fetchOpenSpotOrders|fetchSpotOrderHistory|cancelSpotOrder|cancelAllSpotOrders|cancelAllMarginPositions)\b/)

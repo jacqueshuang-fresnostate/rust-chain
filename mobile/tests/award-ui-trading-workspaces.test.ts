@@ -97,7 +97,7 @@ test('表单、切换、百分比与主按钮满足 44–52px 和完整聚焦环
   assert.match(tradeCss, /\.input-stack \.field-shell input\s*\{[\s\S]*?min-height: 44px;/)
   assert.match(tradeCss, /\.side-switch button\s*\{[\s\S]*?min-height: 50px;/)
   assert.match(tradeCss, /\.amount-control input\[type="range"\]\s*\{[\s\S]*?height: 44px;[\s\S]*?min-height: 44px;/)
-  assert.match(tradeCss, /\.percent-row button\s*\{[\s\S]*?min-height: 48px;[\s\S]*?min-width: 44px;/)
+  assert.match(tradeCss, /\.contract-percentage__input\s*\{[\s\S]*?height: 44px;[\s\S]*?min-height: 44px;/)
   assert.match(tradeCss, /\.submit-order\s*\{\s*min-height: 52px;/)
   assert.match(tradeCss, /\.input-stack \.field-shell:focus-within\s*\{[\s\S]*?border-color: var\(--focus\);[\s\S]*?box-shadow: 0 0 0 3px var\(--focus-ring\);/)
 

@@ -148,3 +148,87 @@ if let Some(agent_id) = conversation.assigned_agent_id {
     hub.publish(EventBroadcastMessage::private_agent(agent_id, payload));
 }
 ```
+
+## Scenario: Margin Liquidation Private Refresh Hints
+
+### 1. Scope / Trigger
+
+- Trigger: the asynchronous margin-liquidation worker commits a terminal
+  position/wallet settlement that an already-open trading page did not initiate.
+- Scope: post-commit publication to the authenticated user's private socket and
+  client-side REST reconciliation. The event is a low-latency hint, not a
+  financial state snapshot.
+
+### 2. Signatures
+
+- User route: `GET /api/v1/ws/private?token=<user-access-token>`.
+- Server-owned channel: `private:user:<user_id>`; the client sends no subscribe
+  command and cannot choose another user ID.
+- Event discriminator: `type = "margin.position.liquidated"`.
+- Payload fields: `position_id`, `product_id`, `pair_id`, `margin_asset`,
+  `direction`, `margin_amount`, `notional_amount`, `interest_amount`,
+  `entry_price`, `mark_price`, `realized_pnl`, `payout_amount`, `reason`, and
+  Unix-millisecond `liquidated_at`.
+- Authoritative follow-up: `GET /api/v1/margin/wallets`, then risk reads only
+  for positions still present and eligible.
+
+### 3. Contracts
+
+- Authenticate a non-empty user-scope token before upgrade, resolve its exact
+  `user_id`, and bind exactly one private channel on the server.
+- Publish only after the liquidation transaction commits. A hub failure,
+  missing subscriber, lagged receiver, disconnect, or API restart must never
+  roll back or alter the committed liquidation.
+- Private broadcasts are process-local, lossy, and non-replayed. On socket open
+  or reconnect and after a matching event, the client must fetch the REST
+  account snapshot; it must also retain bounded periodic REST reconciliation.
+- The client may send text `ping` and receive text `pong`. Confirmation, pong,
+  error, unknown, and malformed frames do not mutate business state.
+- Event amount fields are notification context only. Wallet balances, active
+  positions, and risk-cache pruning come from the authoritative REST response.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Missing, revoked, expired, or wrong-scope token | Reject before WebSocket upgrade |
+| Subject is not strict `user:<u64>` | Reject before creating a private subscription |
+| Liquidation transaction rolls back | Publish no private event |
+| Broadcast hub is absent or receiver is lagged | Keep the committed settlement; REST polling converges later |
+| Client receives duplicate hints | Coalesce/serialize REST reconciliation; never apply the amount twice |
+| Client reconnects after missing hints | Reconcile REST immediately after open |
+
+### 5. Good / Base / Bad Cases
+
+- Good: one committed liquidation publishes to the exact user's channel; the
+  connected client immediately reloads wallets/open positions and removes the
+  terminal position.
+- Base: no client is connected, so the event is dropped and the next account
+  REST read still returns the correct committed state.
+- Bad: publish before commit, let the client subscribe to an arbitrary private
+  channel, or treat `payout_amount` in the event as an instruction to increment
+  the displayed wallet.
+
+### 6. Tests Required
+
+- Backend tests assert private-route pre-upgrade authentication, exact-user
+  channel isolation, text ping/pong, and no client-selected channel.
+- Liquidation worker tests assert one post-commit event with the exact
+  discriminator/position ID and no duplicate event on idempotent replay.
+- Mobile tests assert that open/reconnect and the matching event trigger REST,
+  while protocol, error, unknown, and malformed frames do not mutate state.
+- A disconnect/missed-event test must prove the periodic REST path eventually
+  removes the liquidated position and refreshes the wallet from one snapshot.
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong: a lossy notification payload becomes financial truth.
+wallet.available += Number(event.payout_amount)
+positions.value = positions.value.filter((item) => item.id !== event.position_id)
+
+// Correct: the event only accelerates an authoritative account reconciliation.
+if (event.type === 'margin.position.liquidated') {
+  void reconcileMarginAccountFromRest()
+}
+```

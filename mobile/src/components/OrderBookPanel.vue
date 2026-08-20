@@ -65,6 +65,7 @@ const miniBidRatio = computed(() => {
   const total = bidTotal + askTotal
   return total > 0 ? Math.round((bidTotal / total) * 100) : 50
 })
+const miniAskRatio = computed(() => 100 - miniBidRatio.value)
 
 function width(quantity: number): string {
   return `${Math.max(7, (quantity / maxQuantity.value) * 100)}%`
@@ -131,8 +132,23 @@ function matrixWidth(quantity: number): string {
             <span class="numeric" role="cell">{{ formatAmount(item.quantity) }}</span>
           </div>
           <div class="order-book__mini-ratio" role="row" :style="{ '--mini-bid-ratio': `${miniBidRatio}%` }">
-            <span class="up numeric" role="cell">B&nbsp;&nbsp;{{ miniBidRatio }}%</span>
-            <span class="down numeric" role="cell">{{ 100 - miniBidRatio }}%&nbsp;&nbsp;S</span>
+            <span
+              class="order-book__mini-ratio-label order-book__mini-ratio-label--bid numeric"
+              role="cell"
+              :aria-label="`${t('orderBook.buySide', { asset: baseAsset })} ${miniBidRatio}%`"
+            >
+              <b aria-hidden="true">B</b>
+              <strong aria-hidden="true">{{ miniBidRatio }}%</strong>
+            </span>
+            <span
+              class="order-book__mini-ratio-label order-book__mini-ratio-label--ask numeric"
+              role="cell"
+              :aria-label="`${t('orderBook.sellSide', { asset: baseAsset })} ${miniAskRatio}%`"
+            >
+              <strong aria-hidden="true">{{ miniAskRatio }}%</strong>
+              <b aria-hidden="true">S</b>
+            </span>
+            <i class="order-book__mini-ratio-track" aria-hidden="true" />
           </div>
           <div v-if="showMiniPrecision" class="order-book__mini-precision" aria-hidden="true">
             <span class="order-book__mini-precision-value">
@@ -606,8 +622,7 @@ function matrixWidth(quantity: number): string {
 }
 
 .order-book__mini-header,
-.order-book__mini-row,
-.order-book__mini-ratio {
+.order-book__mini-row {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr);
   min-width: 0;
@@ -621,8 +636,7 @@ function matrixWidth(quantity: number): string {
 }
 
 .order-book__mini-header span:last-child,
-.order-book__mini-row span:last-child,
-.order-book__mini-ratio span:last-child {
+.order-book__mini-row span:last-child {
   text-align: right;
 }
 
@@ -687,9 +701,76 @@ function matrixWidth(quantity: number): string {
 }
 
 .order-book__mini-ratio {
-  align-items: center;
-  font-size: 9px;
+  align-content: center;
+  column-gap: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: 10px 4px;
   height: 22px;
+  min-width: 0;
+  row-gap: 2px;
+}
+
+.order-book__mini-ratio-label {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 7px;
+  gap: 4px;
+  line-height: 1;
+  min-width: 0;
+}
+
+.order-book__mini-ratio-label b,
+.order-book__mini-ratio-label strong {
+  font: inherit;
+}
+
+.order-book__mini-ratio-label strong {
+  font-size: 8px;
+  font-weight: 760;
+}
+
+.order-book__mini-ratio-label--bid strong,
+.order-book__mini-ratio-label--bid b {
+  color: var(--positive);
+}
+
+.order-book__mini-ratio-label--ask {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+.order-book__mini-ratio-label--ask strong,
+.order-book__mini-ratio-label--ask b {
+  color: var(--negative);
+}
+
+.order-book__mini-ratio-track {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--positive) 88%, transparent) 0 var(--mini-bid-ratio),
+    color-mix(in srgb, var(--negative) 88%, transparent) var(--mini-bid-ratio) 100%
+  );
+  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  border-radius: 999px;
+  box-shadow: inset 0 1px 2px var(--line);
+  grid-column: 1 / -1;
+  height: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.order-book__mini-ratio-track::after {
+  background: var(--surface);
+  bottom: -1px;
+  box-shadow: 0 0 0 1px var(--line);
+  content: '';
+  left: var(--mini-bid-ratio);
+  position: absolute;
+  top: -1px;
+  transform: translateX(-1px);
+  width: 2px;
 }
 
 .order-book__mini-precision {

@@ -9,6 +9,7 @@ import {
   resolveBackendHealthUrl,
   resolveBackendRuntimeConfig,
   resolveBackendWebSocketUrl,
+  resolvePrivateUserWebSocketUrl,
 } from '../src/config/backend.ts'
 import {
   PRODUCT_BACKEND_ORIGIN,
@@ -25,6 +26,18 @@ test('development stays browser same-origin while the Vite proxy target is indep
   assert.equal(
     resolveBackendWebSocketUrl(runtime, '/ws/public', 'http://127.0.0.1:1611'),
     'ws://127.0.0.1:1611/api/v1/ws/public',
+  )
+  assert.equal(
+    resolvePrivateUserWebSocketUrl(
+      runtime,
+      ' access token/?= ',
+      'http://127.0.0.1:1611',
+    ),
+    'ws://127.0.0.1:1611/api/v1/ws/private?token=access%20token%2F%3F%3D',
+  )
+  assert.equal(
+    resolvePrivateUserWebSocketUrl(runtime, '   ', 'http://127.0.0.1:1611'),
+    null,
   )
   assert.equal(DEFAULT_BACKEND_DEV_PROXY_TARGET, PRODUCT_BACKEND_ORIGIN)
   assert.equal(resolveBackendDevProxyTarget(), PRODUCT_BACKEND_ORIGIN)
@@ -54,6 +67,10 @@ test('mobile product builds inject the remote backend while non-empty environmen
       resolveBackendWebSocketUrl(runtime, '/ws/public'),
       'wss://hipoex.cllbmz.kdns.fr/api/v1/ws/public',
     )
+    assert.equal(
+      resolvePrivateUserWebSocketUrl(runtime, 'TOKEN'),
+      'wss://hipoex.cllbmz.kdns.fr/api/v1/ws/private?token=TOKEN',
+    )
   }
 
   const overridden = resolveBackendRuntimeConfig({
@@ -63,10 +80,16 @@ test('mobile product builds inject the remote backend while non-empty environmen
   })
   assert.equal(resolveBackendApiUrl(overridden, '/markets'), 'https://api.example.test/api/v1/markets')
   assert.equal(resolveBackendWebSocketUrl(overridden, '/ws/public'), 'wss://api.example.test/api/v1/ws/public')
+  assert.equal(
+    resolvePrivateUserWebSocketUrl(overridden, 'TOKEN'),
+    'wss://api.example.test/api/v1/ws/private?token=TOKEN',
+  )
 
   const appSource = await readFile(new URL('../src/config/app.ts', import.meta.url), 'utf8')
   assert.match(appSource, /apiDomain:\s*resolveProductBackendOrigin\(env\.VITE_BACKEND_API_DOMAIN\)/)
   assert.match(appSource, /resolveBackendWebSocketUrl\(APP_CONFIG\.backend,\s*'\/ws\/public'/)
+  assert.match(appSource, /export function privateUserWebSocketUrl\(/)
+  assert.match(appSource, /resolvePrivateUserWebSocketUrl\(APP_CONFIG\.backend, accessToken, pageOrigin\)/)
 })
 
 test('mobile startup does not use the challenged health endpoint as an availability gate', async () => {

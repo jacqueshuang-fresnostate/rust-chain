@@ -1,6 +1,7 @@
 import {
   resolveBackendApiUrl,
   resolveBackendHealthUrl,
+  resolvePrivateUserWebSocketUrl,
   resolveBackendRuntimeConfig,
   resolveBackendWebSocketUrl,
 } from './backend'
@@ -29,4 +30,11 @@ export function backendHealthUrl(): string {
 
 export function publicMarketWebSocketUrl(pageOrigin = typeof window === 'undefined' ? '' : window.location.origin): string {
   return resolveBackendWebSocketUrl(APP_CONFIG.backend, '/ws/public', pageOrigin)
+}
+
+export function privateUserWebSocketUrl(
+  accessToken: string,
+  pageOrigin = typeof window === 'undefined' ? '' : window.location.origin,
+): string | null {
+  return resolvePrivateUserWebSocketUrl(APP_CONFIG.backend, accessToken, pageOrigin)
 }

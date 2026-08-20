@@ -26,7 +26,7 @@ import AssetMark from '@/components/AssetMark.vue'
 import ContractTradeSheets from '@/components/ContractTradeSheets.vue'
 import MobileMarketChart from '@/components/MobileMarketChart.vue'
 import OrderBookPanel from '@/components/OrderBookPanel.vue'
-import { apiErrorMessage } from '@/api/client'
+import { apiErrorMessage, readAccessToken } from '@/api/client'
 import { fetchKlines, fetchOrderBook, fetchRecentTrades } from '@/api/market'
 import {
   createMarketDetailStreamSession,
@@ -38,6 +38,10 @@ import {
   normalizeMarketKlineInterval,
   type MarketKlineInterval,
 } from '@/api/marketSocketProtocol'
+import {
+  createPrivateUserStream,
+  type PrivateUserEvent,
+} from '@/api/privateUserStream'
 import {
   cancelMarginPosition,
   closeAllMarginPositions,
@@ -55,7 +59,7 @@ import {
   updateMarginMode,
 } from '@/api/trading'
 import { fetchWalletAccounts } from '@/api/wallet'
-import { publicMarketWebSocketUrl } from '@/config/app'
+import { privateUserWebSocketUrl, publicMarketWebSocketUrl } from '@/config/app'
 import { formatAmount, formatPrice, normalizeSymbol } from '@/core/format'
 import {
   classifyMarginOrderBackendBoundaryError,
@@ -68,6 +72,11 @@ import {
   marginLimitPriceFromBbo,
   preferredMarginOrderType,
 } from '@/core/marginOrder'
+import {
+  createMarginAccountReconciliationLifecycle,
+  reconcileMarginRiskSnapshots,
+  type MarginAccountReconciliationRequest,
+} from '@/core/marginAccountReconciliation'
 import {
   resolveMarginPositionRiskMetrics,
   type MarginPositionRiskMetrics,
@@ -160,9 +169,21 @@ const bulkCloseSaving = ref(false)
 let marketRequestVersion = 0
 let marginProductsRequestVersion = 0
 let marginSettingRequestVersion = 0
-let marginRiskRequestVersion = 0
-let marginRiskRefreshTimer: number | undefined
+let tradingBalancesRequestVersion = 0
 let viewActive = true
+let viewMounted = false
+const marginAccountReconciliation = createMarginAccountReconciliationLifecycle({
+  sessionKey: () => session.token,
+  isContractMode: () => mode.value === 'contract',
+  isVisible: () => document.visibilityState !== 'hidden',
+  reconcile: reconcileMarginAccount,
+})
+const privateUserStream = createPrivateUserStream({
+  getAccessToken: readAccessToken,
+  getUrl: privateUserWebSocketUrl,
+  onOpen: requestPrivateMarginReconciliation,
+  onEvent: handlePrivateUserEvent,
+})
 const { trapFocus: trapSpotOrderTypeFocus } = useModalDialog(
   spotOrderTypeOpen,
   spotOrderTypeDialog,
@@ -510,11 +531,13 @@ function applyMarginProductDefaults(product: MarginProduct): void {
 
 async function syncMarginSetting(product: MarginProduct): Promise<void> {
   const requestVersion = ++marginSettingRequestVersion
+  const requestSessionKey = session.token
   applyMarginProductDefaults(product)
   try {
     const setting = await fetchMarginSetting(product.id)
     if (
       requestVersion !== marginSettingRequestVersion
+      || session.token !== requestSessionKey
       || selectedProduct.value?.id !== product.id
       || mode.value !== 'contract'
     ) return
@@ -525,13 +548,95 @@ async function syncMarginSetting(product: MarginProduct): Promise<void> {
       marginMode.value = setting.marginMode
     }
   } catch (reason) {
-    if (requestVersion !== marginSettingRequestVersion || selectedProduct.value?.id !== product.id) return
+    if (
+      requestVersion !== marginSettingRequestVersion
+      || session.token !== requestSessionKey
+      || selectedProduct.value?.id !== product.id
+    ) return
     setFeedback(apiErrorMessage(reason, t('trade.marginSettingLoadFailed')))
   }
 }
 
+function isMarginPositionRiskEligible(position: MarginPosition): boolean {
+  const product = products.value.find((item) => item.id === position.productId)
+  return position.status.trim().toLowerCase() === 'opened'
+    && isFilledMarginPosition(position)
+    && product?.positionRiskSupported !== false
+}
+
+async function reconcileMarginAccount(
+  request: MarginAccountReconciliationRequest,
+): Promise<void> {
+  const margin = await fetchMarginWallets()
+  if (!request.isCurrent()) return
+
+  const eligible = margin.positions.filter(isMarginPositionRiskEligible)
+  const eligiblePositionIds = eligible.map((position) => position.id)
+  const accountCommitted = request.commit(() => {
+    marginWallets.value = margin.wallets
+    marginPositions.value = margin.positions
+    marginRiskSnapshots.value = reconcileMarginRiskSnapshots(
+      marginRiskSnapshots.value,
+      eligiblePositionIds,
+    )
+    if (request.kind === 'background') balancesError.value = false
+  })
+  if (!accountCommitted || !eligible.length) return
+
+  const results = await Promise.allSettled(
+    eligible.map((position) => fetchMarginPositionRisk(position.id)),
+  )
+  request.commit(() => {
+    marginRiskSnapshots.value = reconcileMarginRiskSnapshots(
+      marginRiskSnapshots.value,
+      eligiblePositionIds,
+      results,
+    )
+  })
+}
+
+function requestPrivateMarginReconciliation(): void {
+  if (
+    !viewMounted
+    || !viewActive
+    || !session.token
+    || mode.value !== 'contract'
+  ) return
+  void marginAccountReconciliation.refreshBackground({ queueIfBusy: true })
+}
+
+function handlePrivateUserEvent(event: PrivateUserEvent): void {
+  if (event.type !== 'margin.position.liquidated') return
+  requestPrivateMarginReconciliation()
+}
+
+function syncPrivateUserStream(): void {
+  privateUserStream.stop()
+  if (
+    !viewMounted
+    || !viewActive
+    || !session.isAuthenticated
+    || mode.value !== 'contract'
+  ) return
+  privateUserStream.start()
+}
+
+function isCurrentTradingBalancesRequest(
+  requestVersion: number,
+  requestMode: 'spot' | 'contract',
+  requestSessionKey: string,
+): boolean {
+  return viewActive
+    && requestVersion === tradingBalancesRequestVersion
+    && mode.value === requestMode
+    && session.token === requestSessionKey
+}
+
 async function loadTradingBalances(): Promise<void> {
-  if (!session.isAuthenticated) {
+  const requestVersion = ++tradingBalancesRequestVersion
+  const requestMode = mode.value
+  const requestSessionKey = session.token
+  if (!requestSessionKey) {
     spotWallets.value = []
     marginWallets.value = []
     marginPositions.value = []
@@ -540,56 +645,44 @@ async function loadTradingBalances(): Promise<void> {
     balancesError.value = false
     return
   }
+
   balancesLoading.value = true
   balancesError.value = false
   try {
-    if (mode.value === 'contract') {
-      const margin = await fetchMarginWallets()
-      marginWallets.value = margin.wallets
-      marginPositions.value = margin.positions
-      await loadMarginPositionRisks(margin.positions)
+    if (requestMode === 'contract') {
+      const result = await marginAccountReconciliation.refreshForeground()
+      if (!isCurrentTradingBalancesRequest(requestVersion, requestMode, requestSessionKey)) return
+      if (result.state === 'error') throw result.error
+      if (result.state !== 'completed') return
     } else {
-      spotWallets.value = await fetchWalletAccounts()
+      const wallets = await fetchWalletAccounts()
+      if (!isCurrentTradingBalancesRequest(requestVersion, requestMode, requestSessionKey)) return
+      spotWallets.value = wallets
       marginPositions.value = []
       marginRiskSnapshots.value = {}
     }
   } catch {
-    if (mode.value === 'contract') {
+    if (!isCurrentTradingBalancesRequest(requestVersion, requestMode, requestSessionKey)) return
+    if (requestMode === 'contract') {
       marginWallets.value = []
       marginPositions.value = []
+      marginRiskSnapshots.value = {}
+    } else {
+      spotWallets.value = []
     }
-    else spotWallets.value = []
     balancesError.value = true
   } finally {
-    balancesLoading.value = false
+    if (isCurrentTradingBalancesRequest(requestVersion, requestMode, requestSessionKey)) {
+      balancesLoading.value = false
+    }
   }
-}
-
-async function loadMarginPositionRisks(positions = filledMarginPositions.value): Promise<void> {
-  const requestVersion = ++marginRiskRequestVersion
-  if (!session.isAuthenticated || mode.value !== 'contract' || !positions.length) {
-    if (!positions.length) marginRiskSnapshots.value = {}
-    return
-  }
-  const eligible = positions.filter((position) => {
-    const product = products.value.find((item) => item.id === position.productId)
-    return product?.positionRiskSupported !== false && isFilledMarginPosition(position)
-  })
-  if (!eligible.length) return
-  const results = await Promise.allSettled(eligible.map((position) => fetchMarginPositionRisk(position.id)))
-  if (requestVersion !== marginRiskRequestVersion || mode.value !== 'contract') return
-  const activeIds = new Set(positions.map((position) => position.id))
-  const next = Object.fromEntries(
-    Object.entries(marginRiskSnapshots.value).filter(([positionId]) => activeIds.has(positionId)),
-  )
-  results.forEach((result) => {
-    if (result.status === 'fulfilled') next[result.value.positionId] = result.value
-  })
-  marginRiskSnapshots.value = next
 }
 
 function setQuantity(percent: number): void {
-  percentage.value = percent
+  const normalizedPercent = Number.isFinite(percent)
+    ? Math.min(100, Math.max(0, percent))
+    : 0
+  percentage.value = normalizedPercent
   if (!session.isAuthenticated) {
     openLogin()
     return
@@ -598,7 +691,7 @@ function setQuantity(percent: number): void {
     available: availableBalance.value,
     maximum: mode.value === 'contract' ? selectedProduct.value?.maxMargin : null,
     mode: mode.value,
-    percentage: percent / 100,
+    percentage: normalizedPercent / 100,
     price: effectivePrice.value,
     side: side.value,
   })
@@ -607,6 +700,12 @@ function setQuantity(percent: number): void {
     ? clampMarginShortcutAmount(roundedQuantity, availableBalance.value, selectedProduct.value?.maxMargin)
     : roundedQuantity
   quantity.value = safeQuantity > 0 ? String(safeQuantity) : ''
+}
+
+function setContractPercentageFromSlider(event: Event): void {
+  const value = Number((event.currentTarget as HTMLInputElement | null)?.value)
+  if (!Number.isFinite(value)) return
+  setQuantity(value)
 }
 
 function clearPercentageSelection(): void {
@@ -1218,14 +1317,21 @@ function trapDialogFocus(event: KeyboardEvent): void {
   trapConfirmFocus(event, closeConfirm)
 }
 
+function handleTradeVisibilityChange(): void {
+  marginAccountReconciliation.invalidate()
+  if (document.visibilityState === 'hidden') return
+  if (viewActive) {
+    void marginAccountReconciliation.refreshBackground({ queueIfBusy: true })
+  }
+}
+
 onMounted(async () => {
+  viewMounted = true
+  document.addEventListener('visibilitychange', handleTradeVisibilityChange)
+  marginAccountReconciliation.startPolling()
+  syncPrivateUserStream()
   await marketStore.refresh()
   if (viewActive) marketStore.startLiveUpdates('trade')
-  marginRiskRefreshTimer = window.setInterval(() => {
-    if (viewActive && mode.value === 'contract' && session.isAuthenticated) {
-      void loadMarginPositionRisks()
-    }
-  }, 5_000)
 })
 
 watch(pairSymbol, (symbol) => {
@@ -1253,14 +1359,14 @@ watch(() => route.query.mode, (nextMode) => {
   contractMoreOpen.value = false
 }, { immediate: true })
 
-watch(() => [mode.value, session.isAuthenticated, selectedProduct.value?.id] as const, () => {
+watch(() => [mode.value, session.token, selectedProduct.value?.id] as const, () => {
   const product = selectedProduct.value
-  if (mode.value !== 'contract' || !session.isAuthenticated || !product) {
+  if (mode.value !== 'contract' || !session.token || !product) {
     marginSettingRequestVersion += 1
     return
   }
   void syncMarginSetting(product)
-})
+}, { flush: 'sync' })
 
 watch(() => selectedProduct.value?.id ?? null, async (productId, previousProductId) => {
   if (productId === previousProductId) return
@@ -1269,10 +1375,18 @@ watch(() => selectedProduct.value?.id ?? null, async (productId, previousProduct
   if (contractOrderType.value === 'limit') fillContractLimitPrice()
 })
 
-watch([mode, () => session.isAuthenticated], () => {
+watch(() => [mode.value, session.token] as const, (nextContext, previousContext) => {
+  marginAccountReconciliation.invalidate()
+  syncPrivateUserStream()
+  if (nextContext[1] !== (previousContext?.[1] ?? '')) {
+    spotWallets.value = []
+    marginWallets.value = []
+    marginPositions.value = []
+    marginRiskSnapshots.value = {}
+  }
   void loadMarginProducts()
   void loadTradingBalances()
-}, { immediate: true })
+}, { immediate: true, flush: 'sync' })
 
 watch(currentPrice, (value) => {
   if (!price.value && value > 0) price.value = String(value)
@@ -1293,11 +1407,14 @@ watch(submitting, async (busy) => {
 })
 
 onBeforeUnmount(() => {
+  viewMounted = false
   viewActive = false
   marginProductsRequestVersion += 1
   marginSettingRequestVersion += 1
-  marginRiskRequestVersion += 1
-  if (marginRiskRefreshTimer !== undefined) window.clearInterval(marginRiskRefreshTimer)
+  tradingBalancesRequestVersion += 1
+  document.removeEventListener('visibilitychange', handleTradeVisibilityChange)
+  privateUserStream.stop()
+  marginAccountReconciliation.stop()
   marketStore.stopLiveUpdates('trade')
   detailStreamSession.stop()
 })
@@ -1897,23 +2014,36 @@ onBeforeUnmount(() => {
 
             <div class="contract-percentage">
               <div
-                class="percent-row"
-                role="group"
-                :aria-label="t('rootPrototype.balancePercentage')"
+                class="contract-percentage__slider"
                 :style="{ '--percentage-progress': `${percentage ?? 0}%` }"
               >
-                <button
-                  v-for="value in [0, 25, 50, 75, 100]"
-                  :key="value"
-                  type="button"
-                  :class="{ active: percentage === value, passed: (percentage ?? 0) >= value }"
-                  :aria-label="value === 100 ? t('trade.marginMaximumShortcut') : `${value}%`"
-                  :aria-pressed="percentage === value"
-                  :disabled="submitting || (session.isAuthenticated && (productsLoading || balancesLoading || !selectedProduct))"
-                  @click="setQuantity(value)"
+                <input
+                  id="contract-percentage-input"
+                  class="contract-percentage__input"
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  :value="percentage ?? 0"
+                  :aria-label="t('rootPrototype.balancePercentage')"
+                  :aria-valuetext="`${percentage ?? 0}%`"
+                  :disabled="!session.isAuthenticated || submitting || productsLoading || balancesLoading || !selectedProduct"
+                  @input="setContractPercentageFromSlider"
+                />
+                <output
+                  class="contract-percentage__value numeric"
+                  for="contract-percentage-input"
+                  aria-hidden="true"
                 >
-                  <span class="sr-only">{{ value }}%</span>
-                </button>
+                  {{ percentage === null ? '—' : `${percentage}%` }}
+                </output>
+                <button
+                  v-if="!session.isAuthenticated"
+                  class="contract-percentage__auth-trigger"
+                  type="button"
+                  :aria-label="t('trade.viewAfterLogin')"
+                  @click="openLogin"
+                />
               </div>
             </div>
 
@@ -4808,101 +4938,140 @@ html[data-theme='dark'] .contract-trade {
   top: 188px;
 }
 
-.contract-trade .contract-percentage .percent-row {
+.contract-percentage__slider {
+  --percentage-progress: 0%;
+  align-items: center;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 34px;
   height: 32px;
   margin: 0;
   min-width: 0;
   position: relative;
 }
 
-.contract-trade .contract-percentage .percent-row::before,
-.contract-trade .contract-percentage .percent-row::after {
-  border-radius: 999px;
-  content: '';
-  height: 4px;
-  left: 8px;
-  position: absolute;
-  right: 8px;
-  top: 8px;
-}
-
-.contract-trade .contract-percentage .percent-row::before {
-  background: var(--contract-control-line);
-}
-
-.contract-trade .contract-percentage .percent-row::after {
-  background: var(--contract-accent);
-  right: auto;
-  width: calc((100% - 16px) * var(--percentage-progress) / 100);
-}
-
-.contract-percentage button,
-.contract-trade .contract-percentage .percent-row button {
-  align-items: end;
+.contract-percentage__input {
+  -webkit-appearance: none;
+  appearance: none;
   background: transparent;
   border: 0;
-  color: var(--contract-muted);
-  display: grid;
-  font-family: var(--font-geist-mono), var(--data-font), monospace;
-  font-size: 8px;
+  cursor: grab;
   height: 44px;
-  justify-items: center;
-  margin-top: -6px;
+  margin: -6px 0;
   min-height: 44px;
   min-width: 0;
-  padding: 0 0 4px;
-  position: relative;
-  z-index: 1;
+  outline: 0;
+  padding: 0;
+  width: 100%;
 }
 
-.contract-percentage button::before {
-  background: var(--contract-surface);
-  border: 1px solid var(--contract-control-line);
+.contract-percentage__input:active:not(:disabled) {
+  cursor: grabbing;
+}
+
+.contract-percentage__input::-webkit-slider-runnable-track {
+  background: linear-gradient(
+    90deg,
+    var(--contract-accent) 0 var(--percentage-progress),
+    var(--contract-control-line) var(--percentage-progress) 100%
+  );
+  border-radius: 999px;
+  height: 4px;
+}
+
+.contract-percentage__input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--contract-accent);
+  border: 3px solid var(--contract-bg);
   border-radius: 50%;
-  content: '';
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--contract-accent) 72%, var(--contract-control-line)),
+    0 4px 12px color-mix(in srgb, var(--contract-accent) 26%, transparent);
+  height: 18px;
+  margin-top: -7px;
+  transition: box-shadow 140ms ease, transform 140ms ease;
+  width: 18px;
+}
+
+.contract-percentage__input::-moz-range-track {
+  background: var(--contract-control-line);
+  border: 0;
+  border-radius: 999px;
+  height: 4px;
+}
+
+.contract-percentage__input::-moz-range-progress {
+  background: var(--contract-accent);
+  border: 0;
+  border-radius: 999px;
+  height: 4px;
+}
+
+.contract-percentage__input::-moz-range-thumb {
+  background: var(--contract-accent);
+  border: 3px solid var(--contract-bg);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--contract-accent) 72%, var(--contract-control-line)),
+    0 4px 12px color-mix(in srgb, var(--contract-accent) 26%, transparent);
   height: 12px;
-  left: 50%;
-  position: absolute;
-  top: 10px;
-  transform: translateX(-50%);
+  transition: box-shadow 140ms ease, transform 140ms ease;
   width: 12px;
 }
 
-.contract-trade .contract-percentage .percent-row button::after {
-  content: '';
-  height: 44px;
-  left: 50%;
-  position: absolute;
-  top: 0;
-  transform: translateX(-50%);
-  width: 44px;
-}
-
-.contract-percentage button.passed::before,
-.contract-percentage button.active::before {
-  background: var(--contract-accent);
-  border: 2px solid var(--contract-accent);
-}
-
-.contract-percentage button.active {
-  background: transparent;
-  border-color: transparent;
-  box-shadow: none;
-  color: var(--contract-text);
-  font-weight: 760;
-}
-
-.contract-trade .contract-percentage .percent-row button:focus-visible {
-  box-shadow: none;
-  outline: 0;
-}
-
-.contract-trade .contract-percentage .percent-row button:focus-visible::before {
+.contract-percentage__input:focus-visible::-webkit-slider-thumb {
   box-shadow:
     0 0 0 2px var(--contract-bg),
     0 0 0 4px var(--contract-accent);
+}
+
+.contract-percentage__input:focus-visible::-moz-range-thumb {
+  box-shadow:
+    0 0 0 2px var(--contract-bg),
+    0 0 0 4px var(--contract-accent);
+}
+
+.contract-percentage__input:disabled {
+  cursor: not-allowed;
+  opacity: .52;
+}
+
+.contract-percentage__value {
+  color: var(--contract-text);
+  font-family: var(--font-geist-mono), var(--data-font), monospace;
+  font-size: 9px;
+  font-weight: 680;
+  line-height: 1;
+  min-width: 34px;
+  text-align: right;
+}
+
+.contract-percentage__auth-trigger {
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  height: 44px;
+  inset: -6px 0 auto;
+  min-height: 44px;
+  position: absolute;
+  width: 100%;
+  z-index: 2;
+}
+
+.contract-percentage__auth-trigger:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--contract-accent);
+  outline: 0;
+}
+
+.contract-percentage__input:disabled::-webkit-slider-thumb {
+  background: var(--contract-muted);
+  box-shadow: none;
+}
+
+.contract-percentage__input:disabled::-moz-range-thumb {
+  background: var(--contract-muted);
+  box-shadow: none;
 }
 
 .contract-available-row {
@@ -4994,17 +5163,21 @@ html[data-theme='dark'] .contract-trade {
 }
 
 .contract-submit {
+  align-items: center;
   border: 0;
   border-radius: 21px;
   box-shadow: none;
+  display: flex;
   font-size: 14px;
   font-weight: 760;
   height: 42px;
+  justify-content: center;
   left: 0;
   min-height: 42px;
   padding: 0 8px;
   position: absolute;
   right: 0;
+  text-align: center;
   width: 100%;
 }
 
@@ -5113,19 +5286,51 @@ html[data-theme='dark'] .contract-trade {
 .contract-mini-book :deep(.order-book__mini-mid small) { color: var(--contract-muted); }
 .contract-mini-book :deep(.order-book__mini-ratio) {
   color: var(--contract-muted);
-  gap: 5px;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  height: 16px;
+  column-gap: 8px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: 12px 6px;
+  height: 30px;
+  row-gap: 4px;
 }
-.contract-mini-book :deep(.order-book__mini-ratio)::before {
-  background: linear-gradient(90deg, var(--contract-accent) 0 var(--mini-bid-ratio), var(--contract-negative) var(--mini-bid-ratio) 100%);
-  border-radius: 2px;
-  content: '';
-  grid-column: 2;
-  height: 3px;
+.contract-mini-book :deep(.order-book__mini-ratio-label) {
+  color: var(--contract-muted);
+  font-size: 8px;
 }
-.contract-mini-book :deep(.order-book__mini-ratio span:first-child) { grid-column: 1; }
-.contract-mini-book :deep(.order-book__mini-ratio span:last-child) { grid-column: 3; }
+.contract-mini-book :deep(.order-book__mini-ratio-label b) {
+  align-items: center;
+  border-radius: 3px;
+  display: inline-flex;
+  height: 14px;
+  justify-content: center;
+  min-width: 14px;
+  padding-inline: 3px;
+}
+.contract-mini-book :deep(.order-book__mini-ratio-label--bid b) {
+  background: color-mix(in srgb, var(--contract-accent) 14%, transparent);
+  color: var(--contract-accent);
+}
+.contract-mini-book :deep(.order-book__mini-ratio-label--bid strong) { color: var(--contract-accent); }
+.contract-mini-book :deep(.order-book__mini-ratio-label--ask b) {
+  background: color-mix(in srgb, var(--contract-negative) 14%, transparent);
+  color: var(--contract-negative);
+}
+.contract-mini-book :deep(.order-book__mini-ratio-label--ask strong) { color: var(--contract-negative); }
+.contract-mini-book :deep(.order-book__mini-ratio-track) {
+  background: linear-gradient(
+    90deg,
+    var(--contract-accent) 0 var(--mini-bid-ratio),
+    var(--contract-negative) var(--mini-bid-ratio) 100%
+  );
+  border-color: color-mix(in srgb, var(--contract-line) 82%, transparent);
+  box-shadow:
+    inset 0 1px 1px var(--contract-line),
+    0 2px 8px rgb(0 0 0 / 9%);
+  height: 6px;
+}
+.contract-mini-book :deep(.order-book__mini-ratio-track)::after {
+  background: var(--contract-bg);
+  box-shadow: 0 0 0 1px var(--contract-line);
+}
 .contract-mini-book :deep(.order-book__mini-precision) {
   color: var(--contract-muted);
   height: 24px;

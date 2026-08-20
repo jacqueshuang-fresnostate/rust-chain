@@ -378,19 +378,41 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   percentage `188 / 32`, available `226 / 13`, TP/SL `245 / 16`, long summary
   `267 / 28`, long action `301 / 42`, short summary `349 / 28`, and short action
   `383 / 42`. The parallel 150px book renders six asks, latest price, seven
-  bids, B/S ratio, and precision using the existing live detail session.
-- Contract percentage is the selected five-stop discrete slider
-  `0/25/50/75/100`; its visual rail stays 32px high while each option owns a
-  44px-high transparent pointer/focus area. It does not wrap into the retired
-  three-column button grid. Manual input clears selection and retains the
-  localized min/max range, `aria-invalid`, `aria-errormessage`, visible field
-  border, and announced failure reason.
+  bids, B/S ratio, and precision using the existing live detail session. The
+  ratio derives both sides from the rendered live levels, keeps their rounded
+  sum at `100%`, and uses a compact two-row composition: semantic B/S values
+  above one continuous split strength rail. Do not restore two disconnected
+  short lines or decorative ratios unrelated to the current order book.
+- Contract percentage is one native continuous range from `0` through `100`
+  in `1%` steps. Its visual rail stays 32px high while the input owns a
+  44px-high pointer/focus area; only one movable thumb is rendered, with no
+  discrete interval dots or stop buttons. The current percentage remains
+  visible and is announced by the range semantics. Manual input clears the
+  slider selection and retains the localized min/max range, `aria-invalid`,
+  `aria-errormessage`, visible field border, and announced failure reason.
 - The local workspace defaults to Positions/Assets and keeps pending limit
   orders separate. Positions show backend Logo, direction/mode/leverage,
   service risk metrics, current-pair filtering, two-step single/bulk close, and
   a history route. Unsupported strategy and TP/SL states stay explicitly
   disabled. Batch HTTP success still inspects backend failures before showing
   an all-success message.
+- While this margin workspace is mounted and authenticated, it owns one user
+  private socket at `/api/v1/ws/private?token=<access-token>`. The server binds
+  the user channel, so the client sends no subscribe command. Socket open,
+  reconnect, and `margin.position.liquidated` are silent refresh hints only:
+  they trigger `/margin/wallets` reconciliation and never edit balances or
+  positions from event fields.
+- A visible contract workspace also performs a five-second, single-flight REST
+  reconciliation and one immediate refresh after returning to the foreground.
+  A successful account snapshot replaces wallets and opened positions together
+  before surviving risk rows refresh; a background failure keeps the last
+  successful surface without a loading/error flash. Guest, spot, hidden, and
+  unmounted states start no new account request.
+- Private transport reconnects with the latest persisted token, bounded
+  exponential backoff, heartbeat, and current-socket identity guards. Logout,
+  account/token replacement, spot switching, and unmount close the socket and
+  clear heartbeat/reconnect work; stale REST results from any prior lifecycle
+  cannot write back after a contract/spot ABA transition.
 - Selected, `:focus-visible`, pressed, disabled, and reduced-motion states stay
   structurally distinct in both themes. Programmatic scroll-to-positions uses
   `auto` under reduced motion; state feedback must not move the fixed module

@@ -304,8 +304,11 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
   never enter the isolated formula. The card states that only the current pair
   changes while all other marks remain fixed. When the optional object is
   absent, retain the legacy localized account-level fallback for rollout
-  compatibility. Failed refreshes retain prior successful snapshots for
-  positions that are still active and never remove the positions.
+  compatibility. Failed risk refreshes retain prior successful snapshots for
+  positions that are still active. A successful `/margin/wallets` account
+  reconciliation is authoritative for the active-position set and removes
+  positions absent from that response together with their obsolete risk
+  snapshots.
 - Bulk close/cancel responses are partially successful by contract. Mobile
   must inspect both `positions` and `failures`, reconcile balances, and report
   counts; an HTTP 200 with failures is not an all-success message.
@@ -1059,15 +1062,16 @@ OS chrome and is not rendered by the web application.
   option commits and closes. Pair and order-type sheets are public after an
   exact product/capability is available; leverage and margin-mode sheets remain
   protected because they persist a user setting. The amount input and
-  percentage shortcuts remain margin amount, not base quantity or notional.
+  contract percentage range remains margin amount, not base quantity or notional.
 - The selected input visual contract uses one outer field shell and a two-row
   information hierarchy. Price is 138x56 with a 9px `价格 (QUOTE)` label and a
   17px/22px numeric value; margin is 202x46 with a 9px `保证金 (ASSET)` label,
   a 15px/20px numeric value, and a trailing settlement asset. Idle shells use
   a transparent 1px border; `:focus-within` owns the complete accent ring while
   the nested input keeps border, outline, and box-shadow at zero. Percentage
-  labels remain clipped `.sr-only` text; the five visible stops are 12px dots
-  on a 4px track inside 44px hit targets.
+  control is one native `0..100` range with `1%` steps, a 4px progress track,
+  one movable thumb, a visible current value, and a 44px interaction height;
+  it renders no fixed interval dots.
 - Market keeps the price field read-only on the live ticker and sends no
   `price`. Limit makes the field editable and may fill from long ask/short bid,
   falling back to the latest ticker. The entered plain decimal must be positive
@@ -1076,7 +1080,7 @@ OS chrome and is not rendered by the web application.
 - The margin-product adapter retains `min_margin` and optional `max_margin` as
   `minMargin` and `maxMargin`. A missing, null, non-finite, zero, or negative
   maximum maps to `null`; it must never become a fabricated zero cap.
-- Contract percentage shortcuts, including the 100%/maximum action, use
+- Every contract range percentage, including the 100% endpoint, uses
   `min(real margin-wallet available, positive product maxMargin)` as their
   percentage base. With no product maximum they use the real available balance.
   Spot percentage behavior remains unchanged.
@@ -1377,4 +1381,134 @@ await send(body, createSupportClientMessageId())
 const attempt = createSupportSendAttempt(body)
 await executeSupportSendAttempt(attempt, send)
 await executeSupportSendAttempt(attempt, send)
+```
+
+## 15. Margin Private Socket and Account Reconciliation Contract
+
+### 1. Scope / Trigger
+
+Apply this contract when a margin account can change outside the mounted
+`TradeView`, especially after an asynchronous liquidation worker settles a
+position. It covers the mobile user's private WebSocket, the five-second REST
+fallback, wallet/position/risk reconciliation, and request-lifecycle guards.
+
+### 2. Signatures
+
+```ts
+resolvePrivateUserWebSocketUrl(
+  config: BackendRuntimeConfig,
+  accessToken: string,
+  pageOrigin?: string,
+): string | null
+
+createPrivateUserStream(options: {
+  getAccessToken(): string
+  getUrl(accessToken: string): string | null
+  onOpen?(): void
+  onEvent(event: { type: string; [key: string]: unknown }): void
+}): { start(): boolean; stop(): void; isRunning(): boolean }
+
+createMarginAccountReconciliationLifecycle(options): {
+  refreshForeground(): Promise<MarginAccountReconciliationResult>
+  refreshBackground(options?: { queueIfBusy?: boolean }): Promise<MarginAccountReconciliationResult>
+  invalidate(): void
+  startPolling(): void
+  stop(): void
+}
+```
+
+Wire and REST endpoints:
+
+```text
+GET /api/v1/ws/private?token=<encoded-current-access-token>
+event -> {"type":"margin.position.liquidated", ...notificationContext}
+GET /api/v1/margin/wallets
+GET /api/v1/margin/positions/{position_id}/risk
+```
+
+### 3. Contracts
+
+- Start one private stream only while `TradeView` is mounted, the user is
+  authenticated, and the route is in contract mode. Stop it on logout, token
+  replacement, spot mode, or unmount; a restarted stream must read the latest
+  persisted access token and URL-encode it.
+- The server binds `private:user:<user_id>` during the authenticated handshake.
+  Mobile sends no subscribe command; it sends only heartbeat `ping` frames.
+  Current-socket identity guards prevent late open/message/close handlers from
+  an old connection affecting the replacement connection.
+- Initial open, reconnect, page visibility restoration, and
+  `margin.position.liquidated` request a silent REST reconciliation. The event
+  payload itself never adds/subtracts balances or removes a position.
+- `GET /margin/wallets` is the account authority for both wallet rows and the
+  current `opened` position list. Commit those two arrays from the same response,
+  prune risk snapshots to eligible surviving IDs, then fetch risk only for
+  surviving filled positions whose product supports position risk.
+- Keep a five-second, visible-page, single-flight background reconciliation so
+  a dropped hint, failed socket, or restarted API still converges. Repeated
+  hints while a request is busy coalesce into at most one following refresh.
+- Foreground loads and post-mutation refreshes preserve loading/error feedback
+  and may supersede an older poll. Background errors keep the last successful
+  account and do not flash first-load loading/error UI; a later cycle retries.
+- Every request binds its generation, access-token session, contract mode,
+  visibility requirement for background work, and mounted lifecycle. Logout,
+  account replacement, contract/spot ABA, hide/invalidate, or unmount makes an
+  older result stale and unable to commit.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Empty access token | Return no private URL; do not create a socket or margin request |
+| Guest or spot route | Keep private stream stopped and skip background reconciliation |
+| Text/JSON pong, confirmation, error, unknown, or malformed frame | Ignore as a business event |
+| Matching liquidation event during an active request | Queue one follow-up REST reconciliation |
+| Socket closes or errors | Clear heartbeat and reconnect with bounded exponential backoff |
+| Access token changes before reconnect | Build the reconnect URL from the latest persisted token |
+| Background `/margin/wallets` fails | Retain the last successful wallets, positions, risks, and quiet UI |
+| Risk read fails for one surviving position | Keep its last successful risk; apply other fulfilled risks |
+| Successful account snapshot omits a former position | Remove that position and its cached risk |
+| Old request returns after token/mode/lifecycle change | Return `stale`; commit nothing |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a private liquidation hint arrives, one silent `/margin/wallets` read
+  replaces wallet and opened positions, and the removed position's risk cache
+  disappears without re-entering the page.
+- Good: the socket misses the event during an API restart; the next visible
+  five-second poll reaches the same authoritative result.
+- Base: the socket opens with no account change; the immediate reconciliation
+  is idempotent and leaves the rendered account unchanged.
+- Bad: delete the position directly from event fields, increment the wallet by
+  `payout_amount`, poll only `/positions/{id}/risk`, overlap unlimited timers,
+  or let a late response from another token restore stale account data.
+
+### 6. Tests Required
+
+- URL tests assert same-origin/remote `ws`/`wss`, API prefix, token encoding,
+  and null for a blank token.
+- Transport tests assert no-token skip, no subscribe frame, heartbeat,
+  protocol-frame filtering, latest-token reconnect, bounded backoff, current
+  socket identity, and idempotent timer/socket cleanup.
+- Lifecycle tests assert five-second scheduling, background single-flight,
+  busy-hint coalescing, hidden/guest/spot/inactive skips, foreground
+  supersession, recovery after transient failure, and token/mode/unmount stale
+  protection.
+- TradeView tests assert the exact liquidation discriminator is a REST hint,
+  `/margin/wallets` commits wallets before risk reads, only opened/filled/
+  supported IDs receive risk reads, removed IDs are pruned, and explicit
+  mutations still call foreground reconciliation.
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong: risk polling cannot discover the authoritative active-position set.
+setInterval(() => loadMarginPositionRisks(localPositions.value), 5_000)
+
+// Correct: the private event is an accelerator and REST remains authoritative.
+privateStream.onEvent((event) => {
+  if (event.type === 'margin.position.liquidated') {
+    void accountLifecycle.refreshBackground({ queueIfBusy: true })
+  }
+})
+accountLifecycle.startPolling()
 ```

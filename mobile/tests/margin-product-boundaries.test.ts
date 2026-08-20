@@ -64,6 +64,14 @@ test('合约百分比以钱包可用额与产品上限的较小值为唯一基�
     available: 1_000,
     maximum: 120,
     mode: 'contract',
+    percentage: .37,
+    price: 50,
+    side: 'buy',
+  }), 44.4)
+  assert.equal(quantityForBalancePercentage({
+    available: 1_000,
+    maximum: 120,
+    mode: 'contract',
     percentage: 1,
     price: 50,
     side: 'sell',
@@ -141,6 +149,7 @@ test('字段、打开确认层和最终 placeMarginOrder 共用同一校验结�
   assert.match(tradeSource, /clampMarginShortcutAmount\(roundedQuantity, availableBalance\.value, selectedProduct\.value\?\.maxMargin\)/)
   assert.match(tradeSource, /contractShortcutAvailable = computed\(\(\) => marginShortcutAvailable\(/)
   assert.match(tradeSource, /const percentage = ref<number \| null>\(0\)/)
+  assert.match(tradeSource, /function setContractPercentageFromSlider\(event: Event\): void \{[\s\S]*?setQuantity\(value\)/)
   assert.match(tradeSource, /function clearPercentageSelection\(\): void \{\s*percentage\.value = null\s*\}/)
   assert.match(tradeSource, /@input="clearPercentageSelection"/)
   assert.match(tradeSource, /:aria-invalid="marginAmountError \? 'true' : 'false'"/)
@@ -181,7 +190,7 @@ test('后端最小与最大竞态错误被稳定识别并转换为对称本地�
   assert.match(tradeSource, /const requestVersion = \+\+marginProductsRequestVersion[\s\S]*?requestVersion !== marginProductsRequestVersion[\s\S]*?if \(!options\.preserveExistingOnError\) \{[\s\S]*?products\.value = \[\]/)
 })
 
-test('杠杆快捷、设置、BBO、资产与主操作遵守 Pencil 几何和完整交互状态', () => {
+test('杠杆连续滑杆、设置、BBO、资产与主操作遵守 Pencil 几何和完整交互状态', () => {
   const compiled = compileStyle({
     source: tradeCss,
     filename: 'TradeView.vue',
@@ -192,23 +201,16 @@ test('杠杆快捷、设置、BBO、资产与主操作遵守 Pencil 几何和完
 
   assert.match(cssRule('.contract-percentage'), /height: 32px;/)
   assert.match(cssRule('.contract-percentage'), /top: 188px;/)
-  assert.match(cssRule('.contract-trade .contract-percentage .percent-row'), /grid-template-columns: repeat\(5, minmax\(0, 1fr\)\);/)
-  assert.match(cssRule('.contract-trade .contract-percentage .percent-row'), /height: 32px;/)
-  assert.match(cssRule('.contract-percentage button,\n.contract-trade .contract-percentage .percent-row button'), /height: 44px;/)
-  assert.match(cssRule('.contract-percentage button,\n.contract-trade .contract-percentage .percent-row button'), /min-height: 44px;/)
-  assert.match(cssRule('.contract-percentage button::before'), /background: var\(--contract-surface\);/)
-  assert.match(cssRule('.contract-percentage button::before'), /border: 1px solid var\(--contract-control-line\);/)
-  assert.match(cssRule('.contract-percentage button::before'), /height: 12px;/)
-  assert.match(cssRule('.contract-percentage button::before'), /width: 12px;/)
-  assert.match(cssRule('.contract-percentage button.passed::before,\n.contract-percentage button.active::before'), /background: var\(--contract-accent\);/)
-  assert.match(cssRule('.contract-percentage button.passed::before,\n.contract-percentage button.active::before'), /border: 2px solid var\(--contract-accent\);/)
-  assert.match(cssRule('.contract-percentage button.active'), /background: transparent;/)
-  assert.match(cssRule('.contract-percentage button.active'), /box-shadow: none;/)
-  assert.match(cssRule('.contract-trade .contract-percentage .percent-row button::after'), /height: 44px;/)
-  assert.match(cssRule('.contract-trade .contract-percentage .percent-row button::after'), /width: 44px;/)
-  assert.match(cssRule('.contract-trade .contract-percentage .percent-row::before,\n.contract-trade .contract-percentage .percent-row::after'), /height: 4px;/)
-  assert.match(cssRule('.contract-trade .contract-percentage .percent-row button:focus-visible'), /box-shadow: none;/)
-  assert.match(cssRule('.contract-trade .contract-percentage .percent-row button:focus-visible'), /outline: 0;/)
+  assert.match(cssRule('.contract-percentage__slider'), /grid-template-columns: minmax\(0, 1fr\) 34px;/)
+  assert.match(cssRule('.contract-percentage__slider'), /height: 32px;/)
+  assert.match(cssRule('.contract-percentage__input'), /height: 44px;/)
+  assert.match(cssRule('.contract-percentage__input'), /min-height: 44px;/)
+  assert.match(cssRule('.contract-percentage__input::-webkit-slider-runnable-track'), /height: 4px;/)
+  assert.match(cssRule('.contract-percentage__input::-webkit-slider-thumb'), /height: 18px;/)
+  assert.match(cssRule('.contract-percentage__input::-webkit-slider-thumb'), /width: 18px;/)
+  assert.match(cssRule('.contract-percentage__input:focus-visible::-webkit-slider-thumb'), /0 0 0 4px var\(--contract-accent\)/)
+  assert.match(cssRule('.contract-percentage__auth-trigger'), /height: 44px;/)
+  assert.match(cssRule('.contract-percentage__value'), /text-align: right;/)
 
   assert.match(cssRule('.contract-mode-row button,\n.contract-order-type'), /height: 32px;/)
   assert.match(cssRule('.contract-price-row > button'), /height: 56px;/)
@@ -217,6 +219,10 @@ test('杠杆快捷、设置、BBO、资产与主操作遵守 Pencil 几何和完
   assert.match(cssRule('.contract-header-control'), /width: 44px;/)
   assert.match(cssRule('.contract-position-tabs button'), /height: 44px;/)
   assert.match(cssRule('.contract-submit'), /height: 42px;/)
+  assert.match(cssRule('.contract-submit'), /align-items: center;/)
+  assert.match(cssRule('.contract-submit'), /display: flex;/)
+  assert.match(cssRule('.contract-submit'), /justify-content: center;/)
+  assert.match(cssRule('.contract-submit'), /text-align: center;/)
   assert.match(cssRule('.contract-submit--long,\n.contract-trade .contract-submit--long.submit-order'), /top: 301px;/)
   assert.match(cssRule('.contract-submit--short'), /top: 383px;/)
   assert.match(cssRule('.contract-submit:disabled'), /opacity: \.62;/)

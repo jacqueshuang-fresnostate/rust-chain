@@ -328,11 +328,11 @@ test('逐仓公式严格拒绝缺失、非有限、越界与非正结果', () =>
   }), null)
 })
 
-test('持仓卡片接入纯函数并保留风险快照的部分成功合并', () => {
+test('持仓卡片接入纯函数并按权威 opened 持仓保留风险快照的部分成功合并', () => {
   const riskLoader = sliceBetween(
     tradeSource,
-    'async function loadMarginPositionRisks',
-    'function setQuantity',
+    'function isMarginPositionRiskEligible',
+    'function isCurrentTradingBalancesRequest',
   )
 
   assert.match(tradeSource, /import \{[\s\S]*?resolveMarginPositionRiskMetrics,[\s\S]*?\} from '@\/core\/marginRiskMetrics'/)
@@ -358,10 +358,12 @@ test('持仓卡片接入纯函数并保留风险快照的部分成功合并', ()
   assert.doesNotMatch(tradeSource, /positionMarginRatio|maintenanceMarginRatio|marginCrossAccounts|MarginCrossAccount/)
   assert.doesNotMatch(tradeSource, /\.marginRatio\b/)
 
-  assert.match(riskLoader, /Promise\.allSettled\(eligible\.map/)
-  assert.match(riskLoader, /Object\.entries\(marginRiskSnapshots\.value\)\.filter/)
-  assert.match(riskLoader, /if \(result\.status === 'fulfilled'\) next\[result\.value\.positionId\] = result\.value/)
-  assert.doesNotMatch(riskLoader, /marginPositions\.value\s*=/)
+  assert.match(riskLoader, /position\.status\.trim\(\)\.toLowerCase\(\) === 'opened'/)
+  assert.match(riskLoader, /product\?\.positionRiskSupported !== false/)
+  assert.match(riskLoader, /Promise\.allSettled\([\s\S]*?eligible\.map/)
+  assert.match(riskLoader, /reconcileMarginRiskSnapshots\([\s\S]*?eligiblePositionIds/)
+  assert.match(riskLoader, /marginWallets\.value = margin\.wallets[\s\S]*?marginPositions\.value = margin\.positions/)
+  assert.match(riskLoader, /request\.commit\(\(\) => \{[\s\S]*?marginRiskSnapshots\.value = reconcileMarginRiskSnapshots/)
 
   assert.match(tradingApiSource, /maintenanceMarginRate: parseMarginRiskNumber\(product\.maintenance_margin_rate\)/)
   assert.match(tradingApiSource, /maintenanceMarginRate: parseMarginRiskNumber\(risk\.maintenance_margin_rate\)/)

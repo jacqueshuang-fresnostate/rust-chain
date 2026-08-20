@@ -9,8 +9,8 @@
 | Guide | Description | Status |
 |-------|-------------|--------|
 | [Navigation and Localization](./navigation-and-localization.md) | Router history, trade context, safe back behavior, and `vue-i18n` contracts | Active |
-| [PWA, Theme, and Application Shell](./pwa-and-shell.md) | Web/Tauri build isolation, shell-only caching, persisted themes, root navigation, Canvas background, route motion, and message truthfulness | Active |
-| [Backend Integration](./backend-integration.md) | Runtime URL selection, Vite proxying, auth refresh, WebSocket, and DTO adapter contracts | Active |
+| [PWA, Theme, and Application Shell](./pwa-and-shell.md) | Web/Tauri build isolation, shell-only caching, persisted themes, root navigation, private margin stream lifecycle, route motion, and message truthfulness | Active |
+| [Backend Integration](./backend-integration.md) | Runtime URL selection, auth refresh, public/private WebSocket, authoritative account reconciliation, and DTO adapter contracts | Active |
 
 ## Quality Check
 
@@ -171,7 +171,7 @@ prototype:
 - Keep bright `--signal-green` for positive fills, charts, and signal surfaces.
   Positive body text uses the contrast-safe `--positive` role and must reach
   WCAG AA against `--surface`; do not use the bright fill token as small text.
-- Trading percentage shortcuts must derive quantity or margin from the
+- Trading percentage controls must derive quantity or margin from the
   authenticated user's real spot or margin available balance. Never use a
   fixed demo budget, and never fall back to a different margin product when the
   selected pair has no exact product match.
@@ -212,10 +212,10 @@ must own a tracked, self-contained snapshot of every visual build input:
 - Loading and failed API states must preserve the prototype's dimensions while
   showing skeletons, `--`, disabled controls, or explicit errors. Never fill
   missing production data with prototype demo values.
-- Trading percentage controls accept display values `25`, `50`, `75`, and
-  `100`, but calculations must normalize them to `0.25`, `0.5`, `0.75`, and
-  `1`. Contract input/submission remains margin amount; displayed notional is
-  `marginAmount * leverage`.
+- Spot percentage controls retain their discrete shortcuts. Contract uses one
+  native range accepting every integer display value from `0` through `100`;
+  calculations normalize it to `0..1`. Contract input/submission remains
+  margin amount; displayed notional is `marginAmount * leverage`.
 
 ### Production Color-Role Boundary
 

@@ -2,6 +2,34 @@
 
 本文件记录每次完成的任务切片。后续会话必须先读取本文件，再继续执行任务。
 
+## 2026-08-20 21:54 - 修复杠杆强平后的持仓实时同步
+
+- 完成内容：复用后端已存在的用户私有 `/api/v1/ws/private?token=<access_token>`，为手机杠杆工作台新增个人 WebSocket 生命周期；服务端自动绑定用户频道，客户端不发送订阅命令，连接建立/重连及 `margin.position.liquidated` 只作为静默 REST 对账提示。将原 5 秒单仓风险刷新升级为 `/margin/wallets` 权威账户对账，同一响应同步杠杆钱包与 `opened` 持仓，再仅刷新存活仓位风险；保留 5 秒单飞兜底和回前台补偿，覆盖推送丢失、断线与 API 重启。补齐最新 token 重连、心跳、有界退避、旧 socket 隔离、幂等清理、繁忙提示合并、前后台请求代次、账号/模式 ABA、退出/卸载迟到响应、静默失败保留与退出登录 loading 清理；强平后持仓会立即或最迟在下一轮对账移除，事件金额不直接参与资金计算。同步完成跨层 WebSocket/移动端规范和 break-loop 根因沉淀；后端强平事件与私有频道原实现满足合同，本轮未修改 Rust 代码。
+- 修改文件：`mobile/src/{api/privateUserStream.ts,core/marginAccountReconciliation.ts,config/app.ts,config/backend.ts,views/TradeView.vue}`、`mobile/tests/{private-user-stream,margin-account-reconciliation,backend-runtime,contract-pencil-selected-parity,margin-risk-metrics,trading-lending-views,spot-trading-ui-optimization}.test.ts`、`.trellis/spec/{backend/index.md,backend/realtime-websockets.md,mobile/index.md,mobile/backend-integration.md,mobile/pwa-and-shell.md}`、`.trellis/tasks/08-20-mobile-margin-continuous-percentage-slider/{prd.md,task.json,implement.jsonl,check.jsonl,research/liquidation-position-refresh.md}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：独立 Trellis 质量审查修复 3 类请求竞态后，聚焦测试 41/41、Mobile 全量测试 460/460、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2081 modules、142 条预缓存）、`npm --prefix mobile run build:tauri`（2081 modules）、Trellis task validate 与 `git diff --check` 全部通过。
+- 后续事项：无；当前改动尚未提交或推送。
+
+## 2026-08-20 18:45 - 优化杠杆盘口买卖力量比例
+
+- 完成内容：将杠杆迷你盘口 `order-book__mini-ratio` 从拥挤的「文字—短线—文字」行改为两层紧凑结构：上层使用带语义辅助文本的 B/S 标签与实时百分比，下层使用一条连续双色力量轨道和精确分界；卖方比例由 `100 - miniBidRatio` 统一派生，确保两侧显示和稳定为 100%。使用通用 OrderBook 语义令牌提供基础样式，并在杠杆工作台以薄荷/珊瑚主题、细描边、内高光和小型 B/S 芯片定向增强，不改变实时盘口数据源、六卖七买结构或现货布局。
+- 修改文件：`mobile/src/components/OrderBookPanel.vue`、`mobile/src/views/TradeView.vue`、`mobile/tests/{contract-pencil-selected-parity,pencil-trading-product-selected-parity}.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/08-20-mobile-margin-continuous-percentage-slider/{prd.md,task.json}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦回归 32/32、Mobile 全量测试 446/446、`npm --prefix mobile run type-check` 与 `npm --prefix mobile run build:pwa`（2079 modules、142 条预缓存）均通过；Ego Browser 在 390px Light/Dark 和 320px 实页检查中，比例区分别保持 150px/132px 宽、30px 高、6px 单轨，无横向溢出，实时 B/S 标签、ARIA 文本和轨道分界同步更新；同时通过旧版 Android WebView 阴影兼容性回归。
+- 后续事项：无。
+
+## 2026-08-20 18:36 - 将杠杆百分比改为连续滑杆
+
+- 完成内容：将杠杆下单区 `contract-percentage` 的 `0/25/50/75/100` 五个区间按钮替换为原生 `0..100`、步长 `1%` 的连续 range；移除全部固定区间点，保留单一进度轨道、滑块和当前百分比，拖动时继续复用真实杠杆钱包余额、产品 `maxMargin`、金额精度和下单校验链路。补齐 44px 触控、键盘/ARIA、登录入口、禁用、深浅主题、窄屏和低动态状态，并同步 Mobile 规范与回归测试；同时保留现货离散百分比不变。
+- 修改文件：`mobile/src/views/TradeView.vue`、`mobile/tests/{award-ui-trading-workspaces,contract-pencil-selected-parity,margin-product-boundaries,trading-lending-views,ui-prototype-alignment-trading}.test.ts`、`.trellis/spec/mobile/{index,pwa-and-shell,backend-integration}.md`、`.trellis/tasks/08-20-mobile-margin-continuous-percentage-slider/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦回归 38/38、Mobile 全量测试 446/446、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2079 modules、142 条预缓存）与 `git diff --check` 均通过；Ego Browser 在 390px Light/Dark 与 320px 实页复核无横向溢出，真实鼠标拖动从 0% 到 37% 后 range/output 同步为 37%，页面不存在固定区间按钮。
+- 后续事项：无。
+
+## 2026-08-20 18:24 - 居中杠杆做多与做空按钮文字
+
+- 完成内容：覆盖 `.submit-order` 的全局 `justify-content: space-between`，为杠杆主操作按钮显式设置 Flex 双轴居中与文本居中；做多按钮及同组件做空按钮在正常、禁用和深浅主题下保持一致对齐，并增加样式回归断言。
+- 修改文件：`mobile/src/views/TradeView.vue`、`mobile/tests/contract-pencil-selected-parity.test.ts`、`mobile/tests/margin-product-boundaries.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦测试 22/22、Mobile 全量测试 446/446、`npm --prefix mobile run type-check` 与 `git diff --check` 均通过。
+- 后续事项：无。
+
 ## 2026-08-20 17:45 - 独立审查全仓双向强平与账户风险
 
 - 完成内容：逐项复核全仓强平原子结算/幂等、worker 同 symbol 行情快照、cross 风险 SQL 与 Decimal 公式、后端到 Mobile 严格字段映射及三态 UI；补强时间戳严格映射、保守 tick 舍入/非法暴露、多 pair 非零盈亏、流水/事件/重放幂等测试断言，并同步规范与 PRD 验收状态。

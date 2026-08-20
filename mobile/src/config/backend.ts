@@ -105,6 +105,20 @@ export function resolveBackendWebSocketUrl(
   return url.toString()
 }
 
+export function resolvePrivateUserWebSocketUrl(
+  config: BackendRuntimeConfig,
+  accessToken: string,
+  pageOrigin?: string,
+): string | null {
+  const token = accessToken.trim()
+  if (!token) return null
+  return resolveBackendWebSocketUrl(
+    config,
+    `/ws/private?token=${encodeURIComponent(token)}`,
+    pageOrigin,
+  )
+}
+
 function assertBackendConfigured(config: BackendRuntimeConfig): void {
   if (config.configurationError) throw config.configurationError
 }

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/mobile/index.md","reason":"复核现货隔离、真实余额计算和 44px 可访问性。"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"复核连续滑杆与选中杠杆画板几何兼容。"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"复核任意百分比仍复用权威钱包和产品上限。"}
+{"file":".trellis/tasks/08-20-mobile-margin-continuous-percentage-slider/research/liquidation-position-refresh.md","reason":"复核强平后持仓/钱包对账、stale 防护、静默失败和回前台恢复。"}
+{"file":".trellis/spec/backend/realtime-websockets.md","reason":"复核私有 WS 只作提示、认证隔离、断线重连后 REST 对账与漏消息兜底。"}

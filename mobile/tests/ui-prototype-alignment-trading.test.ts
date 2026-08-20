@@ -45,7 +45,7 @@ test('现货和合约工作台保留真实数据链路并提供完整下单面',
   assert.match(tradeSource, /quantityForBalancePercentage\(\{/)
   assert.doesNotMatch(tradeSource, /const quoteBudget = 100 \* percent/)
   assert.doesNotMatch(tradeSource, /\|\| products\.value\[0\]/)
-  assert.match(tradeSource, /class="percent-row"/)
+  assert.match(tradeSource, /class="contract-percentage__input"[\s\S]*?type="range"/)
   assert.match(tradeSource, /role="dialog"/)
   assert.match(tradeSource, /aria-modal="true"/)
   assert.match(tradeSource, /useModalDialog\(confirmOpen, confirmDialog, '\[data-dialog-cancel\]'\)/)

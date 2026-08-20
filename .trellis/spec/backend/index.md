@@ -35,7 +35,7 @@ the feature contract for the business context being modified.
 | [User Authentication Contracts](./user-authentication.md) | User username configuration, username login policy, and cross-layer login identifier contracts | Active |
 | [PC Display and Chart Contracts](./platform-display-and-chart.md) | PC brand configuration, global K-line renderer selection, and TradingView Lightweight Charts data-source boundaries | Active |
 | [Prediction Market Contracts](./prediction-markets.md) | Polymarket-sourced prediction market sync, quote, wallet, settlement, and PC/admin display contracts | Active |
-| [Realtime WebSocket Contracts](./realtime-websockets.md) | Business-scoped public websocket aliases and PC market subscription routing | Active |
+| [Realtime WebSocket Contracts](./realtime-websockets.md) | Business-scoped public aliases, exact-user private refresh hints, and REST reconciliation boundaries | Active |
 | [Agent-Routed Online Support Contracts](./online-support.md) | Durable support messages, exact owning-agent isolation, admin fallback, reassignment, unread, pagination, and refresh contracts | Active |
 | [Synthetic Market and K-line Recovery Contracts](./synthetic-market-kline.md) | Deterministic strategy ticker/K-line generation, active-version leases, authoritative 1m aggregation, and admin-only historical recovery | Active |
 | [New Coin Mobile Contract](./new-coin-mobile-contract.md) | Public project purchase-pair exposure and authenticated mobile lifecycle actions | Active |
