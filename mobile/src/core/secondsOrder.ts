@@ -22,6 +22,19 @@ export interface SecondsOrderStatusPresentation {
   tone: 'positive' | 'negative' | 'pending'
 }
 
+export interface SecondsOrderProfitLossPresentation {
+  translationKey: 'seconds.profitAmount' | 'seconds.lossAmount' | 'seconds.profitLossAmount'
+  amount?: number
+  tone: 'positive' | 'negative' | 'pending'
+}
+
+export interface SecondsSettlementResultTracker {
+  track: (order: SecondsOrder) => void
+  reconcile: (orders: readonly SecondsOrder[]) => SecondsOrder[]
+  isTracking: (orderId: number) => boolean
+  reset: () => void
+}
+
 export type SecondsHistoryRequestResult =
   | { state: 'loaded'; orders: SecondsOrder[] }
   | { state: 'error'; error: unknown }
@@ -42,6 +55,86 @@ export function historicalSecondsOrders(orders: readonly SecondsOrder[]): Second
   return orders
     .filter((order) => !isActiveSecondsOrder(order))
     .sort((left, right) => right.createdAt - left.createdAt)
+}
+
+/**
+ * 创建仅存活于当前页面会话的结算结果追踪器。
+ *
+ * 首次调和时先检查“上一个权威快照已观察为活动”的订单，再把本次新出现的
+ * 活动订单纳入基线。这个顺序保证首次进页时的历史输赢不会被补提示，同时
+ * 允许“活动 -> 非活动但结果暂缺 -> win/loss”的延迟结算链路。
+ */
+export function createSecondsSettlementResultTracker(): SecondsSettlementResultTracker {
+  const trackedActiveOrderIds = new Set<number>()
+  const handledOrderIds = new Set<number>()
+
+  return {
+    track(order: SecondsOrder): void {
+      if (isActiveSecondsOrder(order) && !handledOrderIds.has(order.id)) {
+        trackedActiveOrderIds.add(order.id)
+      }
+    },
+    reconcile(nextOrders: readonly SecondsOrder[]): SecondsOrder[] {
+      const resolvedOrders: SecondsOrder[] = []
+
+      // 只从这次后端列表快照读取结果；倒计时、行情和上一次本地列表都不参与输赢判定。
+      for (const order of nextOrders) {
+        if (!trackedActiveOrderIds.has(order.id) || handledOrderIds.has(order.id)) continue
+        if (isCancelledSecondsOrder(order)) {
+          trackedActiveOrderIds.delete(order.id)
+          // 取消是本页会话的终态。即使之后收到乱序的旧活动快照，
+          // 也不能重新追踪并把该订单误报为输赢。
+          handledOrderIds.add(order.id)
+          continue
+        }
+        if (isActiveSecondsOrder(order) || !isSettledSecondsOrder(order)) continue
+
+        const result = normalizedSecondsOrderResult(order.result)
+        if (!result) {
+          // 非活动但暂无结果时保留追踪资格，后续轮询补齐结果仍能通知。
+          continue
+        }
+
+        handledOrderIds.add(order.id)
+        trackedActiveOrderIds.delete(order.id)
+        resolvedOrders.push(order)
+      }
+
+      // 必须放在结果检查之后：本次列表中首次出现的订单只建立基线，不产生历史补弹。
+      for (const order of nextOrders) {
+        if (isActiveSecondsOrder(order) && !handledOrderIds.has(order.id)) {
+          trackedActiveOrderIds.add(order.id)
+        }
+      }
+
+      return resolvedOrders.sort(compareSecondsSettlementResultOrder)
+    },
+    isTracking(orderId: number): boolean {
+      return trackedActiveOrderIds.has(orderId)
+    },
+    reset(): void {
+      trackedActiveOrderIds.clear()
+      handledOrderIds.clear()
+    },
+  }
+}
+
+/**
+ * 将新结算结果追加到待展示队尾。队首始终保持当前卡片，重试或重复快照
+ * 中的同一订单 ID 不会挤入第二份卡片。
+ */
+export function enqueueSecondsSettlementResults(
+  queue: readonly SecondsOrder[],
+  nextResults: readonly SecondsOrder[],
+): SecondsOrder[] {
+  const queuedOrderIds = new Set(queue.map((order) => order.id))
+  const merged = [...queue]
+  for (const order of nextResults) {
+    if (queuedOrderIds.has(order.id)) continue
+    queuedOrderIds.add(order.id)
+    merged.push(order)
+  }
+  return merged
 }
 
 export function secondsOrderStatusPresentation(
@@ -81,6 +174,57 @@ export function secondsOrderStatusPresentation(
     source: statusSource,
     tone,
   }
+}
+
+/**
+ * 只根据下单时固化的本金、赔率和最终结果生成历史盈亏展示值。
+ * 赢单返回净收益而非含本金的总派彩，输单返回负本金；没有权威结果时保持不可用。
+ */
+export function secondsOrderProfitLossPresentation(
+  order: Pick<SecondsOrder, 'result' | 'stakeAmount' | 'payoutRate'>,
+): SecondsOrderProfitLossPresentation {
+  const result = normalizedSecondsOrderResult(order.result)
+  if (result === 'win') {
+    const amount = secondsOrderEstimatedProfit(order)
+    return {
+      translationKey: 'seconds.profitAmount',
+      amount: Number.isFinite(amount) && amount >= 0 ? amount : undefined,
+      tone: Number.isFinite(amount) && amount >= 0 ? 'positive' : 'pending',
+    }
+  }
+  if (result === 'loss') {
+    const amount = -Math.abs(order.stakeAmount)
+    return {
+      translationKey: 'seconds.lossAmount',
+      amount: Number.isFinite(amount) ? amount : undefined,
+      tone: Number.isFinite(amount) ? 'negative' : 'pending',
+    }
+  }
+  return {
+    translationKey: 'seconds.profitLossAmount',
+    amount: undefined,
+    tone: 'pending',
+  }
+}
+
+function normalizedSecondsOrderResult(value: string | undefined): 'win' | 'loss' | null {
+  const result = value?.trim().toLowerCase()
+  return result === 'win' || result === 'loss' ? result : null
+}
+
+function isCancelledSecondsOrder(order: Pick<SecondsOrder, 'status'>): boolean {
+  const status = order.status.trim().toLowerCase()
+  return status === 'cancelled' || status === 'canceled'
+}
+
+function isSettledSecondsOrder(order: Pick<SecondsOrder, 'status'>): boolean {
+  return order.status.trim().toLowerCase() === 'settled'
+}
+
+function compareSecondsSettlementResultOrder(left: SecondsOrder, right: SecondsOrder): number {
+  const leftExpiry = Number.isFinite(left.expiresAt) ? left.expiresAt : Number.POSITIVE_INFINITY
+  const rightExpiry = Number.isFinite(right.expiresAt) ? right.expiresAt : Number.POSITIVE_INFINITY
+  return leftExpiry - rightExpiry || left.id - right.id
 }
 
 export function createSecondsHistoryRequestLifecycle(options: {
@@ -134,7 +278,9 @@ export function secondsOrderProgress(order: SecondsOrder, now: number): number {
   return Math.max(0, Math.min(100, ((now - order.createdAt) / duration) * 100))
 }
 
-export function secondsOrderEstimatedProfit(order: SecondsOrder): number {
+export function secondsOrderEstimatedProfit(
+  order: Pick<SecondsOrder, 'stakeAmount' | 'payoutRate'>,
+): number {
   return order.stakeAmount * order.payoutRate
 }
 

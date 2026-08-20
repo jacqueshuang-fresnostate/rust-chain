@@ -164,6 +164,21 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   margins, and keeps `pointer-events: none`. Only each visible status card and
   its controls restore pointer events; the component must not lock body scroll
   or prevent the page outside a card from receiving pointer input.
+- The Seconds settlement result is likewise a body-Teleported non-modal island,
+  not a dialog or backdrop. Its fixed root starts below the 60px Seconds
+  `PageHeader`, stays within the 448px application canvas, keeps
+  `pointer-events: none`, and restores pointer events only on the visible card.
+  It never locks body scroll or blocks the order form outside its own bounds.
+- The result card uses a semantic positive/negative glass double surface and
+  Lucide icons. It shows the API order pair, direction, duration, signed net
+  profit/loss plus settlement asset, and remaining FIFO count. Close, Continue,
+  and History targets are at least 44px; 320px may stack actions. Reduced motion
+  removes the reveal translation, blur, and transition.
+- Because the result island Teleports outside `.seconds-page`, its root owns
+  local surface, elevated, text, semantic, line, focus, and shadow aliases that
+  resolve only to the existing global `:root` theme tokens. It contains no
+  literal hex/RGB palette or duplicate theme state; `html[data-theme]` updates
+  those inherited tokens in place without remounting or replaying a queued result.
 - Each PWA state uses the same double-bezel structure: an outer
   `.pwa-status__card` supplies semantic ambient light and an inner
   `.pwa-status__panel` supplies the translucent, blurred surface and inset
@@ -510,7 +525,7 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
 | Contract order-type trigger opens | Preserve the current value and render only backend-advertised market/limit options |
 | Contract order-type sheet is dismissed | Keep the current value; restore body scroll and exact trigger focus |
 | Explicit contract limit is selected | Commit limit, enable the price field, and offer long-ask/short-bid/latest fill |
-| Contract capability refresh removes the selection | Prefer advertised market, otherwise first advertised type, otherwise disable review |
+| Contract capability refresh removes the selection | Prefer advertised limit, otherwise first advertised type, otherwise disable review |
 | Spot account wallet rows are visible | Mark Holdings/Positions current and associate all wallet states with that labelled region |
 | Spot user selects Orders or History | Navigate to `/orders?tab=spot|history`; keep OrdersView authoritative for order reads/actions |
 | Spot account context offers a secondary action | Open Assets/View all; never show Cancel all without current-order data |
@@ -523,6 +538,11 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
 | Loan collateral sheet is dismissed | Preserve `collateralAssetId` and amount; restore body overflow and trigger focus exactly once |
 | Loan user is authenticated | Skip the account-access summary and continue from Hero directly to product categories |
 | Loan user is a guest | Render one login-limit CTA with the existing `/products/loan` redirect; do not render a duplicate summary |
+| Swap direction control is activated | Immediately exchange the API-owned pay/receive assets and Logos, keep amount, clear the old quote/messages, and remain within the viewport |
+| Seconds history renders a resolved order | Use one full-width 48px profit/loss row above the two-column details; positive/negative values use semantic roles and unknown values remain neutral `--` |
+| Seconds settlement result is visible | Keep the root pointer-transparent and page scroll/input available; only the glass card and its 44px actions receive input |
+| Multiple Seconds results settle together | Show one card at a time, expose the remaining count, and advance FIFO without losing later cards |
+| Viewport is 320px or reduced motion is requested for a Seconds result | Keep zero horizontal overflow, stack actions when needed, and remove reveal motion |
 | Assistive live status is rendered | `.sr-only` remains absolute, clipped, 1x1px, and visually absent |
 | Turnstile renders at 320px | Keep a centered 302px stage and 300px challenge viewport within the device width; no decorative wrapper or horizontal scroll |
 | Turnstile theme or locale changes | Remove and explicitly re-render the widget with the new app theme/language, clearing the previous token |
@@ -650,6 +670,24 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   and 390px light/dark browser passes have zero document overflow, sticky
   headers remain at z-index 70, and visible enabled controls are at least 40px
   in each dimension (44px for primary/icon controls).
+- Swap direction browser pass: with a single backend config row, click the 44px
+  direction control at 320px and 390px, assert pay/receive symbols and Logos
+  exchange, the typed amount stays, the previous quote disappears, a second
+  click restores the initial direction, and document width remains the viewport
+  width.
+- Seconds history profit/loss pass: at 320px and 390px in both themes, assert a
+  win renders the localized profit label and signed positive net amount, a loss
+  renders the localized loss label and signed negative stake, and a cancelled
+  row renders the generic label with `--`. The full-width row remains inside
+  the card and document width equals viewport width even for grouped large
+  amounts.
+- Seconds settlement-notice pass: assert the Teleported root has no backdrop,
+  `aria-modal`, or body lock; its outside area is pointer-transparent while the
+  card is interactive. At 320px, 390px, and 448px in both themes verify signed
+  win/loss amounts, pair/direction/duration, FIFO remaining count, 44px actions,
+  zero horizontal overflow, named History navigation, and complete reduced-
+  motion overrides. Its local semantic roles must alias global `:root` tokens,
+  with no literal hex/RGB colors or component-local theme mirror state.
 - Viewport confirmation sheet: at 320x568, 320x720, 390x667, 390x844, and
   448x900 assert the Teleported overlay is a direct `body` child with no
   transformed route ancestor, every action button rect stays within the
@@ -661,17 +699,22 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   busy dismissal lock, warm risk notice, and reduced-motion ownership.
 - Margin Pencil parity: assert `cjzfi/p6GfgT`, the exact 390px header/module/
   console/book/tab geometry above, six asks/seven bids, five slider stops, and
-  backend Logo/rate/capability/risk bindings. At 320x720, 390x920, and 448x900
-  in both themes assert zero document overflow, sticky header z-index 70,
-  visible long/short actions, reduced-motion scroll behavior, and no fabricated
-  order, strategy, balance, or risk values.
-- Contract order type: prove backend-only option rendering, market-first/first-
+  backend Logo/rate/capability/risk bindings. Lock the 138x56 price and 202x46
+  margin shells, two-row 9px-label/17px-or-15px-value hierarchy, transparent
+  idle border, shell-only focus ring, 12px visible slider dots inside 44px hit
+  targets, hidden percentage labels, and leverage-bearing long/short copy. At
+  320x720, 390x920, and 448x900 in both themes assert zero document overflow,
+  sticky header z-index 70, visible long/short actions, reduced-motion scroll
+  behavior, and no fabricated order, strategy, balance, or risk values.
+- Contract order type: prove backend-only option rendering, limit-first/first-
   real fallback, trigger-only open, explicit selection, non-mutating backdrop/
-  close/Escape, focus trap/return, body scroll lock, market read-only price,
-  editable precision-safe limit price, BBO side choice, frozen confirmation,
-  and exact market-without-price/limit-with-price request wiring. Inspect the
-  order-type and confirmation sheets at 320px/390px in both themes with reduced
-  motion and zero overflow.
+  close/Escape, focus trap/return, body scroll lock, public guest opening after
+  capability load, market read-only price, editable precision-safe limit price,
+  BBO side choice, frozen confirmation, and exact market-without-price/limit-
+  with-price request wiring. Pair selection initially focuses Close so its
+  search shell stays neutral until Tab/user input. Inspect the order-type and
+  confirmation sheets at 320px/390px in both themes with reduced motion and
+  zero overflow.
 - Assets Transfer parity: assert `v6phV/TuWXq/tPkL1/tPkD1`, a 520px sheet,
   140px amount hero with a 30px data input, 52px glass route, 52px API-logo
   asset row, 50px action, and absence of a native asset `select`. Exercise API

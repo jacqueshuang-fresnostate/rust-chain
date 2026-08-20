@@ -1,0 +1,3 @@
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"约束闪兑交易对、Logo、钱包余额和报价请求的真实后端数据边界。"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"约束手机端按钮触控、输入状态、主题和窄屏布局。"}
+{"file":".trellis/tasks/archive/2026-08/08-20-mobile-swap-direction-action/research/root-cause.md","reason":"记录后端双向能力与前端无响应的直接根因。"}

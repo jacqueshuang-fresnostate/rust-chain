@@ -146,9 +146,32 @@ test('320–448px 响应式、安全区和低动态合同不产生工作区固�
   assert.doesNotMatch(tradeWithoutOrderTypeLayer, /position:\s*fixed/)
   assert.match(tradeSource, /<Teleport to="body">[\s\S]*?class="spot-order-type-layer"/)
   assert.match(tradeCss.slice(spotOrderTypeLayerIndex), /^\.spot-order-type-layer\s*\{[^}]*inset:\s*0;[^}]*position:\s*fixed;[^}]*\}/)
+  const secondsSettlementLayerIndex = secondsCss.indexOf('.seconds-settlement-layer {')
+  assert.notEqual(
+    secondsSettlementLayerIndex,
+    -1,
+    'seconds settlement result must own an independent style boundary',
+  )
   const secondsMaskIndex = secondsCss.indexOf('.seconds-mask {')
   assert.notEqual(secondsMaskIndex, -1, 'seconds confirmation mask must own an independent style boundary')
-  assert.doesNotMatch(secondsCss.slice(0, secondsMaskIndex), /position:\s*fixed/)
+  assert.ok(
+    secondsMaskIndex > secondsSettlementLayerIndex,
+    'seconds confirmation styles must remain after the settlement-result island',
+  )
+  const secondsBeforeMask = secondsCss.slice(0, secondsMaskIndex)
+  const secondsWithoutSettlementLayer = secondsBeforeMask.replace(
+    /\.seconds-settlement-layer\s*\{[^}]*\}/,
+    '',
+  )
+  assert.doesNotMatch(secondsWithoutSettlementLayer, /position:\s*fixed/)
+  assert.match(
+    secondsSource,
+    /<Teleport to="body">\s*<Transition name="seconds-result-reveal"[\s\S]*?class="seconds-settlement-layer"/,
+  )
+  assert.match(
+    secondsCss.slice(secondsSettlementLayerIndex),
+    /^\.seconds-settlement-layer\s*\{[^}]*pointer-events:\s*none;[^}]*position:\s*fixed;[^}]*\}/,
+  )
   assert.match(secondsSource, /<Teleport to="body">[\s\S]*?class="confirmation-layer seconds-mask"/)
   assert.match(secondsCss.slice(secondsMaskIndex), /^\.seconds-mask\s*\{[^}]*inset:\s*0;[^}]*position:\s*fixed;[^}]*\}/)
   assert.doesNotMatch(`${tradeSource}\n${secondsSource}`, /<svg|\p{Extended_Pictographic}/u)

@@ -101,7 +101,7 @@ export interface MarginProduct {
   maxLeverage: number
   minMargin: number
   maxMargin: number | null
-  maintenanceMarginRate: number
+  maintenanceMarginRate: number | null
   hourlyInterestRate: number
   takeProfitStopLossSupported: boolean
   strategyOrdersSupported: boolean

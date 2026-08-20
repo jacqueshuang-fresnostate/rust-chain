@@ -10,11 +10,14 @@ import {
   buildSwapAvailableBalanceMap,
   buildSwapPickerAssetLogos,
   ConvertPairContractError,
+  mapDirectionalConvertPairs,
   mapConvertPair,
   normalizeConvertPairLogoUrl,
   resolveReverseSwapPair,
   resolveSelectedSwapPair,
   resolveSwapPickerPair,
+  swapPairSelectionKey,
+  type BackendConvertPair,
   type ConvertPair,
 } from '../src/core/swapAssetLogos.ts'
 
@@ -106,7 +109,93 @@ test('闪兑交易对适配器执行双方可空 Logo 与 symbol 边界归一化
     ConvertPairContractError,
   )
 
-  assert.match(swapApiSource, /\.map\(mapConvertPair\)\.filter\(\(pair\) => pair\.enabled\)/)
+  assert.match(swapApiSource, /mapDirectionalConvertPairs\(response\.data\.pairs \|\| \[\]\)/)
+})
+
+test('单条后端闪兑配置投影为双向选择，并为反向使用目标侧限额与 Logo', () => {
+  const directions = mapDirectionalConvertPairs([{
+    id: 41,
+    from_asset_id: 10,
+    from_asset_symbol: 'BTC',
+    from_asset_logo_url: 'https://cdn.example.test/btc.png',
+    to_asset_id: 20,
+    to_asset_symbol: 'USDT',
+    to_asset_logo_url: 'https://cdn.example.test/usdt.png',
+    min_amount: '0.001',
+    max_amount: '2',
+    target_min_amount: '10',
+    target_max_amount: '5000',
+    fee_rate: '0.002',
+    enabled: true,
+  }])
+
+  assert.equal(directions.length, 2)
+  assert.deepEqual(directions[0], {
+    id: 41,
+    fromAssetId: 10,
+    fromAssetSymbol: 'BTC',
+    fromAssetLogoUrl: 'https://cdn.example.test/btc.png',
+    toAssetId: 20,
+    toAssetSymbol: 'USDT',
+    toAssetLogoUrl: 'https://cdn.example.test/usdt.png',
+    minAmount: 0.001,
+    maxAmount: 2,
+    feeRate: 0.002,
+    enabled: true,
+  })
+  assert.deepEqual(directions[1], {
+    id: 41,
+    fromAssetId: 20,
+    fromAssetSymbol: 'USDT',
+    fromAssetLogoUrl: 'https://cdn.example.test/usdt.png',
+    toAssetId: 10,
+    toAssetSymbol: 'BTC',
+    toAssetLogoUrl: 'https://cdn.example.test/btc.png',
+    minAmount: 10,
+    maxAmount: 5000,
+    feeRate: 0.002,
+    enabled: true,
+  })
+
+  const reverse = resolveReverseSwapPair(directions, directions[0]!)
+  assert.equal(reverse, directions[1])
+  assert.equal(swapPairSelectionKey(directions[0]!), '41:10:20')
+  assert.equal(swapPairSelectionKey(directions[1]!), '41:20:10')
+  assert.equal(resolveSelectedSwapPair(directions, '41:20:10'), directions[1])
+})
+
+test('后端显式反向配置优先于另一行的反向投影', () => {
+  const rows: BackendConvertPair[] = [
+    {
+      id: 51,
+      from_asset_id: 10,
+      from_asset_symbol: 'BTC',
+      to_asset_id: 20,
+      to_asset_symbol: 'USDT',
+      min_amount: 0.001,
+      target_min_amount: 10,
+      fee_rate: 0.001,
+      enabled: true,
+    },
+    {
+      id: 52,
+      from_asset_id: 20,
+      from_asset_symbol: 'USDT',
+      to_asset_id: 10,
+      to_asset_symbol: 'BTC',
+      min_amount: 25,
+      target_min_amount: 0.002,
+      fee_rate: 0.009,
+      enabled: true,
+    },
+  ]
+
+  const directions = mapDirectionalConvertPairs(rows)
+  assert.equal(directions.length, 2)
+  assert.deepEqual(directions.map((item) => [item.id, item.fromAssetSymbol, item.toAssetSymbol, item.minAmount, item.feeRate]), [
+    [51, 'BTC', 'USDT', 0.001, 0.001],
+    [52, 'USDT', 'BTC', 25, 0.009],
+  ])
 })
 
 test('资产选择器归一化重复 symbol，并按方向保留首个非空交易对 Logo', () => {
@@ -178,9 +267,9 @@ test('选中交易对、反向交易对及选择器方向切换会响应式更�
       toAssetLogoUrl: 'https://cdn.example.test/usdt-eth.png',
     }),
   ])
-  const pairId = ref(1)
+  const pairSelectionKey = ref(swapPairSelectionKey(pairs.value[0]!))
   const pickerSide = ref<'from' | 'to'>('from')
-  const selected = computed(() => resolveSelectedSwapPair(pairs.value, pairId.value))
+  const selected = computed(() => resolveSelectedSwapPair(pairs.value, pairSelectionKey.value))
   const pickerAssets = computed(() => buildSwapPickerAssetLogos(pairs.value, pickerSide.value))
 
   assert.equal(selected.value?.fromAssetLogoUrl, 'https://cdn.example.test/btc.png')
@@ -189,7 +278,7 @@ test('选中交易对、反向交易对及选择器方向切换会响应式更�
 
   const reversed = resolveReverseSwapPair(pairs.value, selected.value!)
   assert.equal(reversed?.id, 2)
-  pairId.value = reversed!.id
+  pairSelectionKey.value = swapPairSelectionKey(reversed!)
   assert.equal(selected.value?.fromAssetLogoUrl, 'https://cdn.example.test/usdt-reverse.png')
   assert.equal(selected.value?.toAssetLogoUrl, 'https://cdn.example.test/btc-reverse.png')
 
@@ -200,7 +289,7 @@ test('选中交易对、反向交易对及选择器方向切换会响应式更�
   const preservingCounterAsset = resolveSwapPickerPair(pairs.value, 'from', ' eth ', pairs.value[0])
   assert.equal(preservingCounterAsset?.id, 4)
   assert.equal(preservingCounterAsset?.fromAssetLogoUrl, 'https://cdn.example.test/eth-usdt.png')
-  pairId.value = preservingCounterAsset!.id
+  pairSelectionKey.value = swapPairSelectionKey(preservingCounterAsset!)
   assert.equal(selected.value?.fromAssetLogoUrl, 'https://cdn.example.test/eth-usdt.png')
   assert.equal(selected.value?.toAssetLogoUrl, 'https://cdn.example.test/usdt-eth.png')
 })
@@ -245,4 +334,13 @@ test('闪兑主卡片与选择器只用交易对 Logo，钱包账户只提供余
   assert.match(swapSource, /<AssetMark :symbol="asset\.symbol" :src="asset\.logoUrl" :size="38" \/>/)
   assert.doesNotMatch(swapSource, /assetLogoUrl/)
   assert.doesNotMatch(swapSource, /account[^\n]*\.logoUrl/)
+})
+
+test('闪兑调换按钮使用方向选择键并清理旧报价反馈', () => {
+  assert.match(swapSource, /const pairSelectionKey = ref\(''\)/)
+  assert.match(swapSource, /resolveSelectedSwapPair\(pairs\.value, pairSelectionKey\.value\)/)
+  assert.match(swapSource, /function swapDirection\(\): void \{[\s\S]*?resolveReverseSwapPair\(pairs\.value, pair\)[\s\S]*?pairSelectionKey\.value = swapPairSelectionKey\(reversed\)[\s\S]*?quote\.value = null[\s\S]*?error\.value = ''[\s\S]*?success\.value = ''/)
+  assert.match(swapSource, /@click="swapDirection"/)
+  assert.doesNotMatch(swapSource, /const pairId = ref/)
+  assert.match(swapApiSource, /from_asset_id: pair\.fromAssetId,[\s\S]*?to_asset_id: pair\.toAssetId,[\s\S]*?from_amount: String\(amount\)/)
 })

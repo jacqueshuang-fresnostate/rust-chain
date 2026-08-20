@@ -14,6 +14,8 @@ export interface BackendConvertPair {
   to_asset_logo_url?: string | null
   min_amount: string | number
   max_amount?: string | number | null
+  target_min_amount?: string | number | null
+  target_max_amount?: string | number | null
   fee_rate?: string | number | null
   enabled?: boolean | null
 }
@@ -80,6 +82,38 @@ export function mapConvertPair(pair: BackendConvertPair): ConvertPair {
   }
 }
 
+/**
+ * Projects backend convert rules into every direction accepted by the quote API.
+ * Explicit rows win over a reverse projection so independently configured pairs
+ * retain their own fee and limit contract.
+ */
+export function mapDirectionalConvertPairs(pairs: readonly BackendConvertPair[]): ConvertPair[] {
+  const enabledPairs = pairs.filter((pair) => pair.enabled !== false)
+  const explicitPairs = enabledPairs.map(mapConvertPair)
+  const directionalPairs = new Map<string, ConvertPair>()
+
+  for (const pair of explicitPairs) {
+    directionalPairs.set(swapPairDirectionKey(pair), pair)
+  }
+
+  for (const [index, source] of enabledPairs.entries()) {
+    const forward = explicitPairs[index]
+    if (!forward) continue
+    const reverse = mapReverseConvertPair(source, forward)
+    const reverseKey = swapPairDirectionKey(reverse)
+    if (!directionalPairs.has(reverseKey)) directionalPairs.set(reverseKey, reverse)
+  }
+
+  return [...directionalPairs.values()]
+}
+
+/** Distinguishes two directions that legitimately share one backend config ID. */
+export function swapPairSelectionKey(
+  pair: Pick<ConvertPair, 'id' | 'fromAssetId' | 'toAssetId'>,
+): string {
+  return `${pair.id}:${pair.fromAssetId}:${pair.toAssetId}`
+}
+
 export function buildSwapPickerAssetLogos(
   pairs: readonly Pick<ConvertPair, 'fromAssetSymbol' | 'fromAssetLogoUrl' | 'toAssetSymbol' | 'toAssetLogoUrl'>[],
   side: SwapPickerSide,
@@ -116,9 +150,9 @@ export function buildSwapAvailableBalanceMap(
 
 export function resolveSelectedSwapPair(
   pairs: readonly ConvertPair[],
-  pairId: number,
+  selectionKey: string,
 ): ConvertPair | undefined {
-  return pairs.find((pair) => pair.id === pairId) || pairs[0]
+  return pairs.find((pair) => swapPairSelectionKey(pair) === selectionKey) || pairs[0]
 }
 
 export function resolveReverseSwapPair(
@@ -156,4 +190,31 @@ export function resolveSwapPickerPair(
 function toFiniteNumber(value: unknown): number {
   const parsed = typeof value === 'number' ? value : Number(value)
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+function mapReverseConvertPair(source: BackendConvertPair, forward: ConvertPair): ConvertPair {
+  const reverseMaximum = source.target_max_amount === undefined
+    ? source.max_amount
+    : source.target_max_amount
+  return {
+    id: forward.id,
+    fromAssetId: forward.toAssetId,
+    fromAssetSymbol: forward.toAssetSymbol,
+    fromAssetLogoUrl: forward.toAssetLogoUrl,
+    toAssetId: forward.fromAssetId,
+    toAssetSymbol: forward.fromAssetSymbol,
+    toAssetLogoUrl: forward.fromAssetLogoUrl,
+    minAmount: toFiniteNumber(source.target_min_amount ?? source.min_amount),
+    maxAmount: reverseMaximum === null || reverseMaximum === undefined
+      ? undefined
+      : toFiniteNumber(reverseMaximum),
+    feeRate: forward.feeRate,
+    enabled: forward.enabled,
+  }
+}
+
+function swapPairDirectionKey(
+  pair: Pick<ConvertPair, 'fromAssetId' | 'toAssetId'>,
+): string {
+  return `${pair.fromAssetId}:${pair.toAssetId}`
 }

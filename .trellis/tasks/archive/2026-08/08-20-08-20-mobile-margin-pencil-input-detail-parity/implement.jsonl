@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"约束 Pencil 映射页面、组合输入焦点、触控目标、主题、安全区和多视口布局。"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"约束杠杆产品能力、订单类型选择、保证金金额、限价输入和真实 API 数据边界。"}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"约束底部弹层焦点恢复、访客跳转和中英文文案对称。"}
+{"file":".trellis/tasks/archive/2026-08/08-20-08-20-mobile-margin-pencil-input-detail-parity/research/pencil-live-gap-audit.md","reason":"记录当前 Pencil 选稿与修改前生产页面的逐项差异和实现边界。"}

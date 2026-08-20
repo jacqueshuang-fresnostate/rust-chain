@@ -279,9 +279,15 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
 - `GET /margin/wallets` retains `cross_accounts[]`. Filled positions poll
   `/margin/positions/{id}/risk` and map unrealized PnL, base quantity, return
   rate, margin ratio, isolated liquidation estimate, and liquidation distance.
-  A failed snapshot remains unavailable (`--`), not zero. Cross positions use
-  the shared account ratio and never invent a single-position liquidation
-  price.
+  Mark price, PnL, return, margin ratio, and liquidation distance remain
+  snapshot-authoritative and unavailable (`--`) after a failed first read.
+  Maintenance margin rate prefers a finite non-negative snapshot value and
+  falls back only to the matching product rate. An isolated liquidation price
+  prefers a finite positive snapshot value; when absent, display code may use
+  the backend-equivalent position/product formula. Cross positions render
+  localized account-level risk semantics and never calculate or display a
+  single-position liquidation price. Failed refreshes retain prior successful
+  snapshots for positions that are still active and never remove the positions.
 - Bulk close/cancel responses are partially successful by contract. Mobile
   must inspect both `positions` and `failures`, reconcile balances, and report
   counts; an HTTP 200 with failures is not an all-success message.
@@ -317,6 +323,29 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
   History reads are latest-request-wins and are invalidated on logout or
   unmount; guest, loading, error, list, and empty states remain mutually
   exclusive, and a failed read remains retryable.
+- Seconds history profit/loss is a read-only presentation derived only from the
+  immutable order snapshot. A `win` displays net profit as
+  `stakeAmount * payoutRate`, never principal-inclusive payout; a `loss`
+  displays `-stakeAmount`. Cancelled, missing-result, and unknown-result rows
+  keep the amount unavailable instead of fabricating zero or inferring from
+  entry/settlement prices. The unit is always the order's
+  `stakeAssetSymbol`, and the derived display value must never feed a wallet or
+  order request.
+- The Seconds trading page owns one non-persisted settlement-result tracker per
+  component session. Reconciliation checks only IDs previously observed as
+  active, then records active rows from the new authoritative list; this order
+  prevents first-load historical wins/losses from replaying. An active create
+  response is tracked immediately. Only a later API row with
+  `status=settled` and `result=win|loss` may enter the notice queue; ticker prices, countdown
+  completion, entry price, and settlement price never determine the outcome.
+- A tracked non-active row without a result stays eligible and keeps expiry
+  reconciliation retrying until a later snapshot supplies `win|loss` or marks
+  it cancelled. Cancellation remains terminal even if a reordered older active
+  snapshot arrives later. Results are de-duplicated for the page session, sorted by
+  `expiresAt` then ID within each reconciliation, and appended to a FIFO queue.
+  Logout, private-state reset, and unmount clear tracker and queue so a result
+  cannot cross an account or route boundary. A create response that resolves
+  after that session boundary is stale and must not rebuild the cleared state.
 - Prediction quote request and response outcomes are the closed union
   `yes | no`. Normalize case only at the adapter boundary and reject every
   other response value; never pass an arbitrary string into confirmation.
@@ -338,12 +367,18 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
 - **Good**: create returns an `opened` Seconds order with payout and entry
   price; the active panel renders that same object immediately and computes
   profit as `stakeAmount * payoutRate` even if order refresh then fails.
+- **Good**: a settled 100 USDT win at rate 0.8 renders `+80 USDT`; a loss
+  renders `-100 USDT`, both from the returned order snapshot.
 - **Base**: a deposit asset has a symbol but no name, and a network has no
   display name; the page shows the symbol and exact network code with no ETA.
+- **Base**: a cancelled or future-result Seconds row renders an unavailable
+  profit/loss amount while preserving its source status/result label.
 - **Bad**: a successful create is followed by a failed list refresh, so the UI
   shows "submit failed", removes the returned order, or enables another submit.
 - **Bad**: a prediction quote accepts `up`, drops `refund_amount`, or fills an
   absent quick-recharge token with `USDT`.
+- **Bad**: a history win adds principal again, derives outcome from live
+  prices, or labels an unknown result as a zero-value profit.
 
 ### Financial-order Wrong vs Correct
 
@@ -423,7 +458,14 @@ const points = detailSession.resolveKlineRequest(request, restKlines(initial))
 | Seconds create succeeds but order refresh fails | Keep/upsert the returned order and success state; surface only a refresh warning; keep duplicate submission locked |
 | Seconds history price is missing or malformed | Render the unavailable placeholder; do not coerce it to zero or substitute market data |
 | Seconds history result/status is unknown | Show the trimmed backend source value instead of an incorrect known translation |
+| Seconds history result is `win` | Show signed net profit `stakeAmount * payoutRate` in `stakeAssetSymbol`; do not add principal |
+| Seconds history result is `loss` | Show signed loss `-stakeAmount` in `stakeAssetSymbol` |
+| Seconds history result is absent, cancelled, or unknown | Show an unavailable profit/loss amount; do not infer from prices or fabricate zero |
 | Seconds history request settles after logout, retry, or unmount | Ignore the stale response and preserve the newer guest/request state |
+| Seconds first load contains historical wins/losses | Establish active-order baselines only; enqueue no historical notice |
+| Tracked active Seconds order becomes non-active without a result | Keep tracking and retry reconciliation until a result or cancellation arrives |
+| Tracked Seconds order returns `win|loss` repeatedly or in a reordered list | Enqueue it once for the page session and preserve FIFO display order |
+| Seconds order is cancelled, user logs out, or the page unmounts | Emit no result for cancellation and clear all settlement tracking/queue state |
 | Prediction quote response outcome is not `yes` or `no` | Reject the quote; do not expose confirmation |
 | Prediction confirm succeeds but wallet/history refresh fails | Keep/upsert the returned order, including `result`/`refundAmount`; retain success and show a refresh-specific warning |
 | Wallet asset name, network ETA, recharge currency, or token is absent | Keep it absent or show exact server identifiers/localized unavailable copy; never synthesize USD/USDT, a name, or minutes |
@@ -472,6 +514,12 @@ const points = detailSession.resolveKlineRequest(request, restKlines(initial))
   isolation, latest-request-wins retry, logout/unmount invalidation, and error
   recovery. They must also exercise shared active filtering, optional invalid
   prices, known translations, and visible unknown result/status source values.
+- Seconds settlement-notice tests must execute first-load historical results,
+  active-to-win/loss transitions, repeated and reordered snapshots, same-batch
+  expiry sorting, delayed missing results, cancellation, create-response
+  tracking, reset, and FIFO de-duplication. View contracts must prove
+  `applyReconciledOrders()` passes the raw API list to the tracker and amount
+  presentation reuses `secondsOrderProfitLossPresentation()`.
 - Prediction adapter tests must accept only `yes`/`no` quote outcomes, reject a
   third value before confirmation, and preserve `result` plus `refund_amount`.
   Confirm-flow tests must use a successful confirm followed by rejected wallet
@@ -652,12 +700,23 @@ interface MarketFavoritesResponse {
 interface BackendConvertPair {
   from_asset_logo_url?: string | null
   to_asset_logo_url?: string | null
+  min_amount: string | number
+  max_amount?: string | number | null
+  target_min_amount?: string | number | null
+  target_max_amount?: string | number | null
 }
 
 interface ConvertPair {
   fromAssetLogoUrl?: string
   toAssetLogoUrl?: string
 }
+
+mapDirectionalConvertPairs(pairs: readonly BackendConvertPair[]): ConvertPair[]
+swapPairSelectionKey(pair: {
+  id: number
+  fromAssetId: number
+  toAssetId: number
+}): string
 ```
 
 ### Contracts
@@ -681,6 +740,20 @@ interface ConvertPair {
   only balances and the holding filter, never Swap Logo metadata; the Swap
   wallet lookup stores normalized symbol-to-number entries rather than whole
   wallet objects.
+- One enabled backend convert row is bidirectional. The adapter emits its
+  configured direction and a reverse direction that swaps IDs, symbols, and
+  Logos while applying `target_min_amount/target_max_amount` as the reverse
+  source limits. If the response contains an explicit row for that reverse
+  direction, the explicit row wins so its own fee and limits remain
+  authoritative.
+- Selection identity is `${configId}:${fromAssetId}:${toAssetId}` rather than
+  the config ID alone because the two projected directions intentionally share
+  one backend row ID. The selection key is client state only; quote requests
+  continue to send exact `from_asset_id`, `to_asset_id`, and `from_amount`.
+- A direction click keeps the typed amount but clears the old quote and stale
+  error/success feedback before rendering the new pay/receive assets, balance,
+  Logo, and limits. Clicking a second time resolves the opposite directional
+  pair and returns to the original selection.
 - A missing or failed convert-pair image continues through `AssetMark`'s
   accessible symbol-initial fallback.
 - One Pinia store owns authenticated favorites for Home, Markets, Spot Trade,
@@ -710,15 +783,25 @@ interface ConvertPair {
 | Same directional symbol appears on multiple pairs | Keep one picker row and the first non-empty API Logo |
 | Wallet account has a different Logo | Ignore it for Swap visuals; consume only its available balance |
 | Selected/reversed pair changes | Read the new pair's direction-specific Logo reactively |
+| Only one configured direction exists | Project the supported reverse direction using target-side limits |
+| An explicit reverse row also exists | Use that exact row; do not overwrite it with a projection |
+| Forward and reverse share one config ID | Distinguish them with config ID plus both directional asset IDs |
+| Direction changes after a quote or message | Keep amount; clear quote, error, and success; send no request until the user asks for another quote |
 
 ### Good / Base / Bad Cases
 
 - Good: the selected BTC→USDT pair renders its exact from/to API images, then
   switching to USDT→BTC renders the reverse pair's two distinct API images.
+- Good: one BTC→USDT row with target minimum 10 projects USDT→BTC with minimum
+  10 USDT; the quote request sends USDT/BTC asset IDs and no synthetic key.
 - Base: a pair Logo is `null`; `AssetMark` receives `undefined` and renders the
   accessible symbol initial without inventing an image URL.
+- Base: both directions are configured explicitly; each direction keeps its
+  own backend row ID, fee, limits, and images.
 - Bad: the picker obtains images from `wallet_accounts.logo_url`, groups raw
   `" btc "` separately from `BTC`, or silently accepts a numeric Logo value.
+- Bad: store only `pair.id` as selected state, look for a second physical row,
+  and silently do nothing when the backend exposes one bidirectional rule.
 
 ### Tests Required
 
@@ -731,7 +814,9 @@ interface ConvertPair {
   Assets still renders wallet-owned Logo metadata. Swap tests execute
   direction-specific picker deduplication, assert selected pair Logo bindings,
   and prove wallet metadata is limited to balances/holding filters. They also
-  execute reverse/picker pair reactivity and the `AssetMark` source-exhaustion
+  execute single-row bidirectional projection, target-side limits, explicit
+  reverse precedence, direction-aware selection keys, reverse/picker
+  reactivity, quote/message clearing, and the `AssetMark` source-exhaustion
   path instead of relying only on source-text guards.
 - Run the focused market/favorites tests and `npm run type-check`; include the
   full mobile suite and PWA build at the final task gate.
@@ -745,6 +830,14 @@ const logoUrl = walletBySymbol.get(symbol)?.logoUrl
 // Correct: pair DTO owns visuals; wallet state owns only balance.
 const logoUrl = side === 'from' ? pair.fromAssetLogoUrl : pair.toAssetLogoUrl
 const balance = availableBySymbol.get(symbol) ?? 0
+```
+
+```ts
+// Wrong: both directions share an ID, so setting the ID cannot change the UI.
+pairId.value = reverse.id
+
+// Correct: preserve the backend ID but include the real request direction.
+pairSelectionKey.value = swapPairSelectionKey(reverse)
 ```
 
 ## 10. Home and Assets Today Return Contract
@@ -907,9 +1000,10 @@ placeMarginOrder(input: {
 }): Promise<void>
 ```
 
-The selected production surfaces are `by3G9/pKHeU` for the main contract
+The selected production surfaces are `cjzfi/p6GfgT` for the main contract
 workspace and `f0L8yf/R8t0p`, `aNuw6/PKAcD`, `Crw8v/YuKtQ` for leverage,
-margin mode, and pair selection.
+margin mode, and pair selection. The mock status bar in those frames is native
+OS chrome and is not rendered by the web application.
 
 ### 3. Contracts
 
@@ -928,11 +1022,22 @@ margin mode, and pair selection.
   `capabilities.order_types` values it recognizes and retains pair
   `price_precision`; it never inserts a local market/limit fallback into an
   empty capability set. A valid current selection survives refresh, otherwise
-  choose advertised market first, then the first real capability, or `null`.
+  choose advertised limit first to match the selected Pencil initial state,
+  then the first real capability, or `null`.
 - The contract order-type trigger opens a dedicated sheet. Opening, backdrop,
   close, and Escape preserve the current value; only an explicit advertised
-  option commits and closes. The amount input and percentage shortcuts remain
-  margin amount, not base quantity or notional.
+  option commits and closes. Pair and order-type sheets are public after an
+  exact product/capability is available; leverage and margin-mode sheets remain
+  protected because they persist a user setting. The amount input and
+  percentage shortcuts remain margin amount, not base quantity or notional.
+- The selected input visual contract uses one outer field shell and a two-row
+  information hierarchy. Price is 138x56 with a 9px `价格 (QUOTE)` label and a
+  17px/22px numeric value; margin is 202x46 with a 9px `保证金 (ASSET)` label,
+  a 15px/20px numeric value, and a trailing settlement asset. Idle shells use
+  a transparent 1px border; `:focus-within` owns the complete accent ring while
+  the nested input keeps border, outline, and box-shadow at zero. Percentage
+  labels remain clipped `.sr-only` text; the five visible stops are 12px dots
+  on a 4px track inside 44px hit targets.
 - Market keeps the price field read-only on the live ticker and sends no
   `price`. Limit makes the field editable and may fill from long ask/short bid,
   falling back to the latest ticker. The entered plain decimal must be positive
@@ -975,10 +1080,11 @@ margin mode, and pair selection.
   The submitting guard blocks duplicate calls and every dismissal path until
   the in-flight call settles.
 - At 390px, the production frame after removing the mock OS status bar keeps a
-  61px Header, the `196 + 12 + 150` form/book column split, a 372px
-  six-ask/six-bid compact book, and a 37px position rail. The form and enclosing
-  module grow intrinsically for 44px shortcuts and localized range/error copy;
-  never clip those controls to restore the retired 431px module height.
+  58px Header, a 460px module, the exact `14 + 202 + 10 + 150 + 14` horizontal
+  track, 450px console/book columns, six asks/seven bids, and a 44px position
+  rail. The left console uses Pencil's absolute vertical tracks while visible
+  dots may stay 12px inside 44px accessible hit areas. At 448px only the book
+  expands; at 320px the console and book contract without document overflow.
 - The leverage, mode, and pair sheets are 500px, 446px, and 620px high and
   start-align their content tracks. Do not stretch their confirmation actions
   to the sheet bottom. At 340px and below, wrapped notices use intrinsic height
@@ -994,7 +1100,7 @@ margin mode, and pair selection.
 | Saved margin mode no longer exists | Ignore it and keep a configured mode |
 | No exact product for the route symbol | Disable settings/order actions; never fall back to another product |
 | Product capability list is empty | Render no fabricated options and disable confirmation |
-| Current order type disappears after capability refresh | Prefer advertised market, otherwise first real capability; use `null` when none remain |
+| Current order type disappears after capability refresh | Prefer advertised limit, otherwise first real capability; use `null` when none remain |
 | Ticker fields are missing | Render fallback mark/`--`; do not use design samples |
 | Spot order enters review | Keep the existing generic spot confirmation content and payload |
 | Contract market order enters review | Show the current pair, direction, market semantics, setting values, committed margin, derived notional, and derived quantity |
@@ -1039,12 +1145,14 @@ margin mode, and pair selection.
   trailing-zero precision, long-ask/short-bid/latest fallback, nullable-entry
   holding/order classification, and immutable review/retry requests.
 - UI contract tests lock all eight Pencil IDs, 24px real asset mark, six book
-  levels without precision control, exact 390px geometry, sheet tracks,
-  localized copy, dialog semantics, safe area, and reduced motion.
+  asks/seven bids, exact 390px geometry, two-row field typography, shell-owned
+  focus ring, 12px slider faces inside 44px targets, sheet tracks, localized
+  copy, dialog semantics, safe area, and reduced motion.
 - Browser checks cover light/dark 390x920 main and all four sheets, then
   320x760 horizontal overflow, wrapped notice, focus trap, Escape dismissal,
-  body scroll lock, trigger focus restoration, editable/read-only price states,
-  BBO fill, and frozen market/limit confirmation details.
+  body scroll lock, trigger focus restoration, guest order-type opening,
+  neutral pair-search initial state, editable/read-only price states, BBO fill,
+  complete field-shell focus rings, and frozen market/limit confirmation details.
 
 ### 7. Wrong vs Correct
 

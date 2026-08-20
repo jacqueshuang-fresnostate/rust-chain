@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"复核 Pencil 几何、输入焦点、主题、触控和 320/390/448px 验收合同。"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"复核后端能力唯一来源、限价优先回落、访客弹层和保证金业务语义。"}
+{"file":".trellis/tasks/archive/2026-08/08-20-08-20-mobile-margin-pencil-input-detail-parity/prd.md","reason":"逐条核对本任务范围与验收标准。"}
+{"file":".trellis/tasks/archive/2026-08/08-20-08-20-mobile-margin-pencil-input-detail-parity/research/pencil-live-gap-audit.md","reason":"对照修改前差异确认每项问题已经收敛。"}

@@ -1,7 +1,7 @@
 import { client, requestUrl } from './client'
 import { asNumber } from '@/core/format'
 import {
-  mapConvertPair,
+  mapDirectionalConvertPairs,
   type BackendConvertPair,
   type ConvertPair,
 } from '@/core/swapAssetLogos'
@@ -34,7 +34,7 @@ export interface ConvertOrder {
 
 export async function fetchConvertPairs(): Promise<ConvertPair[]> {
   const response = await client.get<{ pairs?: BackendConvertPair[] }>(requestUrl('/convert/pairs'))
-  return (response.data.pairs || []).map(mapConvertPair).filter((pair) => pair.enabled)
+  return mapDirectionalConvertPairs(response.data.pairs || [])
 }
 
 export async function requestConvertQuote(pair: ConvertPair, amount: number): Promise<ConvertQuote> {

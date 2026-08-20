@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"遵循秒合约订单权威结果、对账与金融数据真实性契约。"}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"遵循秒合约历史命名路由和中英文文案对称约束。"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"遵循非模态悬浮层、主题、触控目标、移动视口和减少动态约束。"}
+{"file":".trellis/tasks/archive/2026-08/08-20-mobile-seconds-settlement-result-notice/research/settlement-notice-flow.md","reason":"使用已审计的活动订单状态转换、去重队列和边界处理方案。"}

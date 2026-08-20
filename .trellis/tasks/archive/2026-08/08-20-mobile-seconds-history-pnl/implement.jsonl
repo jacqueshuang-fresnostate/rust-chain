@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"约束 Seconds DTO 适配、订单快照和预计净收益的真实数据边界。"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"约束历史卡片的明暗主题、语义色和 320–448px 响应式布局。"}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"约束新增历史盈亏文案的中英文资源与模板 i18n 使用。"}
+{"file":".trellis/tasks/archive/2026-08/08-20-mobile-seconds-history-pnl/research/data-flow.md","reason":"记录盈利、亏损和未知结果的权威计算口径与数据流。"}

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"复核方向投影、显式配置优先、反向限额和请求载荷。"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"复核交互反馈、44px 目标和 320px 无溢出。"}
+{"file":".trellis/tasks/archive/2026-08/08-20-mobile-swap-direction-action/prd.md","reason":"逐条核对调换按钮行为和验收条件。"}
+{"file":".trellis/tasks/archive/2026-08/08-20-mobile-swap-direction-action/research/root-cause.md","reason":"确认修复覆盖共享配置 ID 和缺少显式反向行两层问题。"}

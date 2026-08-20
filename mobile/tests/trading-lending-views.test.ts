@@ -39,7 +39,14 @@ test('交易页保留现货、合约和 mode 路由合同', () => {
 test('秒合约页保留真实产品、钱包、下单和活动订单合同', () => {
   assert.match(secondsSource, /const nextProducts = await fetchSecondsProducts\(\)/)
   assert.match(secondsSource, /const privateStatePromise:[\s\S]*?session\.isAuthenticated[\s\S]*?Promise\.allSettled\(\[fetchSecondsOrders\(100\), fetchWalletAccounts\(\)\]\)/)
-  assert.match(secondsSource, /if \(!privateResults\) \{\s*orders\.value = \[\]\s*accounts\.value = \[\]/)
+  assert.match(
+    secondsSource,
+    /if \(!privateResults\) \{\s*clearSecondsPrivateState\(\)\s*replaceTickerSubscription\(\)\s*return\s*\}/,
+  )
+  assert.match(
+    secondsSource,
+    /function clearSecondsPrivateState\(\): void \{\s*orders\.value = \[\]\s*accounts\.value = \[\][\s\S]*?settlementResultTracker\.reset\(\)[\s\S]*?clearSettlementResultQueue\(\)\s*\}/,
+  )
   assert.match(secondsSource, /await openSecondsOrder\(\{\s*productId: selected\.value\.id,\s*durationSeconds: cycle\.value\.durationSeconds,\s*direction: direction\.value,\s*stakeAmount: amountNumber\.value,/)
   assert.match(secondsSource, /class="seconds-direction-grid"/)
   assert.match(secondsSource, /class="seconds-duration-grid"/)

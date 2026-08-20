@@ -49,7 +49,6 @@ import {
   fetchMarginWallets,
   placeMarginOrder,
   placeSpotOrder,
-  type MarginCrossAccount,
   type MarginPosition,
   type MarginPositionRisk,
   updateMarginLeverage,
@@ -69,6 +68,10 @@ import {
   marginLimitPriceFromBbo,
   preferredMarginOrderType,
 } from '@/core/marginOrder'
+import {
+  resolveMarginPositionRiskMetrics,
+  type MarginPositionRiskMetrics,
+} from '@/core/marginRiskMetrics'
 import { useModalDialog } from '@/core/modalDialog'
 import { goBackOr } from '@/core/navigation'
 import {
@@ -106,7 +109,6 @@ const marginMode = ref<'cross' | 'isolated'>('isolated')
 const products = ref<MarginProduct[]>([])
 const spotWallets = ref<WalletAccount[]>([])
 const marginWallets = ref<WalletAccount[]>([])
-const marginCrossAccounts = ref<MarginCrossAccount[]>([])
 const marginPositions = ref<MarginPosition[]>([])
 const marginRiskSnapshots = ref<Record<string, MarginPositionRisk>>({})
 const bids = ref<OrderBookLevel[]>([])
@@ -525,7 +527,6 @@ async function loadTradingBalances(): Promise<void> {
   if (!session.isAuthenticated) {
     spotWallets.value = []
     marginWallets.value = []
-    marginCrossAccounts.value = []
     marginPositions.value = []
     marginRiskSnapshots.value = {}
     balancesLoading.value = false
@@ -538,7 +539,6 @@ async function loadTradingBalances(): Promise<void> {
     if (mode.value === 'contract') {
       const margin = await fetchMarginWallets()
       marginWallets.value = margin.wallets
-      marginCrossAccounts.value = margin.crossAccounts
       marginPositions.value = margin.positions
       await loadMarginPositionRisks(margin.positions)
     } else {
@@ -549,7 +549,6 @@ async function loadTradingBalances(): Promise<void> {
   } catch {
     if (mode.value === 'contract') {
       marginWallets.value = []
-      marginCrossAccounts.value = []
       marginPositions.value = []
     }
     else spotWallets.value = []
@@ -639,16 +638,21 @@ function openContractSheet(sheet: 'pair' | 'leverage' | 'marginMode' | 'orderTyp
     contractSheet.value = sheet
     return
   }
-  if (!session.isAuthenticated) {
-    openLogin()
-    return
-  }
   if (!selectedProduct.value) {
     setFeedback(t('trade.unavailableContract'))
     return
   }
   if (sheet === 'orderType' && !selectedProduct.value?.orderTypes.length) {
     setFeedback(t('trade.marginOrderTypeUnavailable'))
+    return
+  }
+  if (sheet === 'orderType') {
+    settingsError.value = ''
+    contractSheet.value = sheet
+    return
+  }
+  if (!session.isAuthenticated) {
+    openLogin()
     return
   }
   settingsError.value = ''
@@ -861,13 +865,39 @@ function riskForPosition(position: MarginPosition): MarginPositionRisk | undefin
   return marginRiskSnapshots.value[position.id]
 }
 
-function crossAccountForPosition(position: MarginPosition): MarginCrossAccount | undefined {
-  return marginCrossAccounts.value.find((account) => account.marginAssetId === position.marginAssetId)
+function resolvePositionRiskDisplayMetrics(position: MarginPosition): MarginPositionRiskMetrics {
+  const risk = riskForPosition(position)
+  return resolveMarginPositionRiskMetrics({
+    marginMode: position.marginMode,
+    direction: position.direction,
+    entryPrice: position.entryPrice,
+    notionalAmount: position.notionalAmount,
+    marginAmount: position.marginAmount,
+    interestAmount: position.interestAmount,
+    serverMaintenanceMarginRate: risk?.maintenanceMarginRate,
+    productMaintenanceMarginRate: productForPosition(position)?.maintenanceMarginRate,
+    serverEstimatedLiquidationPrice: risk?.estimatedLiquidationPrice,
+  })
 }
 
-function positionMarginRatio(position: MarginPosition): number | null {
-  if (position.marginMode === 'cross') return crossAccountForPosition(position)?.marginRatio ?? null
-  return riskForPosition(position)?.marginRatio ?? null
+const marginRiskDisplayMetricsByPositionId = computed<Record<string, MarginPositionRiskMetrics>>(() => {
+  const result: Record<string, MarginPositionRiskMetrics> = {}
+  marginPositions.value.forEach((position) => {
+    result[position.id] = resolvePositionRiskDisplayMetrics(position)
+  })
+  return result
+})
+
+function positionRiskDisplayMetrics(position: MarginPosition): MarginPositionRiskMetrics {
+  return marginRiskDisplayMetricsByPositionId.value[position.id]
+}
+
+function estimatedLiquidationPriceDisplay(position: MarginPosition): string {
+  const metrics = positionRiskDisplayMetrics(position)
+  if (metrics.liquidationRiskScope === 'account') return t('trade.crossAccountRisk')
+  return metrics.estimatedLiquidationPrice === null
+    ? '--'
+    : formatPrice(metrics.estimatedLiquidationPrice)
 }
 
 function formatRate(value: number | null | undefined, digits = 2): string {
@@ -1742,12 +1772,15 @@ onBeforeUnmount(() => {
                 class="contract-field contract-price-field"
                 :class="{ 'is-invalid': contractOrderType === 'limit' && !contractLimitPriceValidation.isValid }"
               >
-                <span>{{ t('common.price') }}</span>
+                <span>{{ t('trade.priceField', { asset: quoteAsset }) }}</span>
                 <input
                   v-model="contractPriceValue"
                   class="numeric"
                   :placeholder="contractOrderType === 'limit' ? t('trade.pricePlaceholder') : t('trade.marketPrice')"
+                  autocomplete="off"
+                  enterkeyhint="done"
                   inputmode="decimal"
+                  :spellcheck="false"
                   :readonly="contractOrderType !== 'limit'"
                   :aria-invalid="contractOrderType === 'limit' && !contractLimitPriceValidation.isValid ? 'true' : 'false'"
                   :aria-errormessage="contractOrderType === 'limit' && !contractLimitPriceValidation.isValid ? 'contract-limit-price-error' : undefined"
@@ -1777,12 +1810,15 @@ onBeforeUnmount(() => {
               :class="{ 'is-invalid': marginAmountError }"
               :data-margin-validation="marginAmountError ? 'invalid' : 'ready'"
             >
-              <span class="sr-only">{{ t('trade.marginField', { asset: availableAsset }) }}</span>
+              <span>{{ t('trade.marginField', { asset: availableAsset }) }}</span>
               <input
                 v-model="quantity"
                 class="numeric"
+                autocomplete="off"
+                enterkeyhint="done"
                 inputmode="decimal"
-                :placeholder="t('trade.marginAmountShort')"
+                placeholder="0"
+                :spellcheck="false"
                 :aria-describedby="marginRangeDescription ? 'contract-margin-range' : undefined"
                 :aria-errormessage="marginAmountError ? 'contract-margin-error' : undefined"
                 :aria-invalid="marginAmountError ? 'true' : 'false'"
@@ -1820,7 +1856,7 @@ onBeforeUnmount(() => {
                   :disabled="submitting || (session.isAuthenticated && (productsLoading || balancesLoading || !selectedProduct))"
                   @click="setQuantity(value)"
                 >
-                  {{ value }}%
+                  <span class="sr-only">{{ value }}%</span>
                 </button>
               </div>
             </div>
@@ -1866,7 +1902,7 @@ onBeforeUnmount(() => {
               :disabled="contractOpenMode === 'close' || submitting || productsLoading || !isLive || (session.isAuthenticated && (!selectedProduct || !contractOrderType || (contractOrderType === 'limit' && !contractLimitPriceValidation.isValid)))"
               @click="reviewContractOrder('buy', $event)"
             >
-              {{ t('trade.longActionCompact') }}
+              {{ t('trade.longActionCompact', { leverage }) }}
             </button>
             <dl class="contract-open-meta contract-open-meta--short">
               <div><dt>{{ t('trade.openShortAvailable') }}</dt><dd class="numeric">{{ formatAmount(contractOrderQuantity) }} {{ baseAsset }}</dd></div>
@@ -1878,7 +1914,7 @@ onBeforeUnmount(() => {
               :disabled="contractOpenMode === 'close' || submitting || productsLoading || !isLive || (session.isAuthenticated && (!selectedProduct || !contractOrderType || (contractOrderType === 'limit' && !contractLimitPriceValidation.isValid)))"
               @click="reviewContractOrder('sell', $event)"
             >
-              {{ t('trade.shortActionCompact') }}
+              {{ t('trade.shortActionCompact', { leverage }) }}
             </button>
           </div>
         </section>
@@ -1982,10 +2018,10 @@ onBeforeUnmount(() => {
               <dl class="contract-position-metrics">
                 <div><dt>{{ t('common.quantity') }}</dt><dd class="numeric">{{ riskForPosition(position) ? formatAmount(riskForPosition(position)!.positionQuantity) : '--' }}</dd></div>
                 <div><dt>{{ t('orders.margin') }}</dt><dd class="numeric">{{ formatAmount(position.marginAmount) }}</dd></div>
-                <div><dt>{{ t('trade.maintenanceMarginRatio') }}</dt><dd class="numeric">{{ formatRate(positionMarginRatio(position)) }}</dd></div>
+                <div><dt>{{ t('trade.maintenanceMarginRate') }}</dt><dd class="numeric">{{ formatRate(positionRiskDisplayMetrics(position).maintenanceMarginRate) }}</dd></div>
                 <div><dt>{{ t('orders.entryPrice') }}</dt><dd class="numeric">{{ position.entryPrice ? formatPrice(position.entryPrice) : '--' }}</dd></div>
                 <div><dt>{{ t('trade.markPrice') }}</dt><dd class="numeric">{{ riskForPosition(position) ? formatPrice(riskForPosition(position)!.markPrice) : '--' }}</dd></div>
-                <div><dt>{{ t('trade.estimatedLiquidationPrice') }}</dt><dd class="numeric">{{ riskForPosition(position)?.estimatedLiquidationPrice ? formatPrice(riskForPosition(position)!.estimatedLiquidationPrice!) : '--' }}</dd></div>
+                <div><dt>{{ t('trade.estimatedLiquidationPrice') }}</dt><dd class="numeric">{{ estimatedLiquidationPriceDisplay(position) }}</dd></div>
               </dl>
 
               <div class="contract-liquidation-distance">
@@ -4224,6 +4260,7 @@ html[data-theme='dark'] .contract-order-confirm {
   --contract-surface-soft: #edf2ef;
   --contract-line: #dce5e0;
   --contract-line-strong: #c4d0ca;
+  --contract-control-line: #ccd5d0;
   --contract-text: #111714;
   --contract-muted: #68736d;
   --contract-accent: #43efa9;
@@ -4242,6 +4279,7 @@ html[data-theme='dark'] .contract-trade {
   --contract-surface-soft: #111713;
   --contract-line: #29342e;
   --contract-line-strong: #3b4841;
+  --contract-control-line: #29342e;
   --contract-text: #f2f7f4;
   --contract-muted: #95a19a;
   --contract-positive: #61f1b6;
@@ -4441,9 +4479,11 @@ html[data-theme='dark'] .contract-trade {
 }
 
 .contract-open-close {
-  background: var(--contract-surface-soft);
+  background: var(--contract-surface);
+  border: 1px solid var(--contract-control-line);
   border-radius: 7px;
   display: grid;
+  gap: 3px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   height: 30px;
   left: 0;
@@ -4460,15 +4500,16 @@ html[data-theme='dark'] .contract-trade {
   color: var(--contract-muted);
   font-size: 11px;
   font-weight: 680;
-  height: 26px;
+  height: 24px;
+  min-height: 24px;
   min-width: 0;
   padding: 0 4px;
 }
 
 .contract-open-close button.active {
-  background: var(--contract-surface);
-  box-shadow: 0 1px 4px color-mix(in srgb, #000 10%, transparent);
-  color: var(--contract-text);
+  background: var(--contract-accent);
+  box-shadow: none;
+  color: #07110d;
 }
 
 .contract-mode-row {
@@ -4486,14 +4527,15 @@ html[data-theme='dark'] .contract-trade {
 .contract-order-type {
   align-items: center;
   background: var(--contract-surface);
-  border: 1px solid var(--contract-line);
-  border-radius: 6px;
+  border: 1px solid var(--contract-control-line);
+  border-radius: 7px;
   color: var(--contract-text);
   display: flex;
   font-size: 10px;
   gap: 2px;
   height: 32px;
   justify-content: center;
+  min-height: 32px;
   min-width: 0;
   padding: 0 5px;
 }
@@ -4542,12 +4584,12 @@ html[data-theme='dark'] .contract-trade {
 
 .contract-price-row > button {
   background: var(--contract-surface);
-  border: 1px solid var(--contract-line);
-  border-radius: 7px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   color: var(--contract-text);
-  font-family: var(--font-geist-mono), var(--data-font), monospace;
-  font-size: 11px;
-  font-weight: 700;
+  font-family: var(--font-geist-sans), var(--font-family), sans-serif;
+  font-size: 12px;
+  font-weight: 650;
   height: 56px;
   min-width: 0;
   padding: 0 4px;
@@ -4556,21 +4598,25 @@ html[data-theme='dark'] .contract-trade {
 .contract-field {
   align-items: center;
   background: var(--contract-surface);
-  border: 1px solid var(--contract-line);
-  border-radius: 7px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   display: grid;
   min-width: 0;
 }
 
 .contract-field:focus-within {
   border-color: var(--contract-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--contract-accent) 16%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--contract-accent) 30%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--contract-accent) 13%, transparent);
 }
 
 .contract-field.is-invalid,
 .contract-field.is-invalid:focus-within {
   border-color: var(--contract-negative);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--contract-negative) 13%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--contract-negative) 26%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--contract-negative) 11%, transparent);
 }
 
 .contract-field > span {
@@ -4591,41 +4637,62 @@ html[data-theme='dark'] .contract-trade {
   outline: 0;
   padding: 0;
   width: 100%;
+  caret-color: var(--contract-accent);
+}
+
+.contract-field input::placeholder {
+  color: var(--contract-muted);
+  opacity: .72;
+}
+
+.contract-field input[readonly] {
+  cursor: default;
 }
 
 .contract-price-field {
-  grid-template-rows: 15px 27px;
+  align-content: center;
+  gap: 3px;
+  grid-template-rows: 13px 22px;
   height: 56px;
-  padding: 6px 10px 5px;
+  padding: 7px 10px;
 }
 
 .contract-price-field input {
-  font-size: 13px;
-  font-weight: 680;
-  height: 27px;
+  font-size: 17px;
+  font-weight: 700;
+  height: 22px;
+  line-height: 22px;
 }
 
 .contract-amount-field {
+  align-content: center;
+  column-gap: 6px;
   grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: 13px 20px;
   height: 46px;
   left: 0;
-  padding: 0 10px;
+  padding: 5px 10px 4px;
   position: absolute;
   right: 0;
   top: 136px;
 }
 
 .contract-amount-field input {
-  font-size: 13px;
-  font-weight: 680;
+  font-size: 15px;
+  font-weight: 700;
   grid-column: 1;
-  height: 44px;
+  grid-row: 2;
+  height: 20px;
+  line-height: 20px;
 }
 
 .contract-amount-field b {
+  align-self: center;
+  color: var(--contract-muted);
   font-family: var(--font-geist-mono), var(--data-font), monospace;
   font-size: 10px;
   grid-column: 2;
+  grid-row: 1 / span 2;
 }
 
 .contract-percentage {
@@ -4649,7 +4716,7 @@ html[data-theme='dark'] .contract-trade {
 .contract-trade .contract-percentage .percent-row::after {
   border-radius: 999px;
   content: '';
-  height: 3px;
+  height: 4px;
   left: 8px;
   position: absolute;
   right: 8px;
@@ -4657,7 +4724,7 @@ html[data-theme='dark'] .contract-trade {
 }
 
 .contract-trade .contract-percentage .percent-row::before {
-  background: var(--contract-line);
+  background: var(--contract-control-line);
 }
 
 .contract-trade .contract-percentage .percent-row::after {
@@ -4687,15 +4754,15 @@ html[data-theme='dark'] .contract-trade {
 
 .contract-percentage button::before {
   background: var(--contract-surface);
-  border: 2px solid var(--contract-line-strong);
+  border: 1px solid var(--contract-control-line);
   border-radius: 50%;
   content: '';
-  height: 8px;
+  height: 12px;
   left: 50%;
   position: absolute;
   top: 10px;
   transform: translateX(-50%);
-  width: 8px;
+  width: 12px;
 }
 
 .contract-trade .contract-percentage .percent-row button::after {
@@ -4711,12 +4778,26 @@ html[data-theme='dark'] .contract-trade {
 .contract-percentage button.passed::before,
 .contract-percentage button.active::before {
   background: var(--contract-accent);
-  border-color: var(--contract-accent);
+  border: 2px solid var(--contract-accent);
 }
 
 .contract-percentage button.active {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
   color: var(--contract-text);
   font-weight: 760;
+}
+
+.contract-trade .contract-percentage .percent-row button:focus-visible {
+  box-shadow: none;
+  outline: 0;
+}
+
+.contract-trade .contract-percentage .percent-row button:focus-visible::before {
+  box-shadow:
+    0 0 0 2px var(--contract-bg),
+    0 0 0 4px var(--contract-accent);
 }
 
 .contract-available-row {
@@ -4764,10 +4845,10 @@ html[data-theme='dark'] .contract-trade {
 }
 
 .contract-tpsl > span {
-  border: 1px solid var(--contract-line-strong);
+  border: 1.5px solid var(--contract-text);
   border-radius: 3px;
-  height: 12px;
-  width: 12px;
+  height: 16px;
+  width: 16px;
 }
 
 .contract-tpsl small {
@@ -4811,7 +4892,7 @@ html[data-theme='dark'] .contract-trade {
   border: 0;
   border-radius: 21px;
   box-shadow: none;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 760;
   height: 42px;
   left: 0;
@@ -5035,13 +5116,13 @@ html[data-theme='dark'] .contract-trade {
 }
 
 .contract-current-pair[aria-pressed='true'] > span {
-  background: var(--contract-accent);
-  border-color: var(--contract-accent);
+  background: var(--contract-text);
+  border-color: var(--contract-text);
 }
 
 .contract-current-pair[aria-pressed='true'] > span::after {
-  border-bottom: 1.5px solid #07130e;
-  border-right: 1.5px solid #07130e;
+  border-bottom: 1.5px solid var(--contract-bg);
+  border-right: 1.5px solid var(--contract-bg);
   content: '';
   height: 6px;
   left: 4px;

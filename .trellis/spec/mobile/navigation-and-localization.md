@@ -75,6 +75,9 @@ lastTradePath: ComputedRef<string>
   when opened directly, and is reached from the `/seconds` Header with
   `router.push({ name: 'seconds-history' })`. The trading workspace keeps active
   order cards but does not duplicate historical rows below the order form.
+- The Seconds settlement card's History action clears every queued result and
+  pushes `{ name: 'seconds-history' }`. Close and Continue remove only the
+  current FIFO item and leave the user on the trading page.
 - Message Center is one of those detail routes. The Home Bell pushes the named
   `message-center` route; `/messages` declares depth 1, hides the Dock, and
   falls back to named Home. Its custom selected-frame ArrowLeft calls
@@ -143,6 +146,15 @@ lastTradePath: ComputedRef<string>
 - Fixed UI text must use `vue-i18n`; do not add Chinese or English literals to Vue templates or API fallback mapping.
 - A history-page title must name the business records it contains (for example,
   Seconds order history), rather than using an ambiguous generic History label.
+- Seconds history uses symmetric `seconds.profitAmount`,
+  `seconds.lossAmount`, and `seconds.profitLossAmount` keys. The label follows
+  the authoritative result: win, loss, or unavailable/unknown respectively;
+  neither the template nor the amount formatter assembles fixed Chinese or
+  English copy.
+- Seconds settlement notices use symmetric locale keys for the settled kicker,
+  profit/loss title, authoritative-source note, detail label, remaining count,
+  Continue trading, and View order history. Pair, direction, duration, amount,
+  and asset remain bound order values rather than fixed template copy.
 - Supported app locales are `zh-CN` and `en`; the persisted key is `hippo_mobile_locale`.
 - Language changes update the Vue locale, `<html lang>`, runtime `Intl` locale, and persisted locale in one operation.
 - Locale-aware content APIs receive `currentApiLocale()` when the endpoint supports a locale parameter.
@@ -172,6 +184,9 @@ lastTradePath: ComputedRef<string>
 | Home seventh product shortcut selected | Push the named `seconds` route; do not open Prediction |
 | Seconds Header history action selected | Push `/seconds/history`, hide the Dock, and preserve `/seconds` in history |
 | Seconds history is opened directly | Back replaces with `/seconds` |
+| Seconds history result is win/loss/unknown | Render the matching localized profit/loss/generic label without translating an unknown source result incorrectly |
+| Settlement card selects View order history | Clear the entire result queue and push the named `seconds-history` route |
+| Settlement card selects Close or Continue | Advance exactly one FIFO result and remain on `/seconds` |
 | Home Bell opens Message Center | Push `/messages`, hide the Dock, and preserve Home in history |
 | Message Center Back has usable Home history | Use router Back and return Home |
 | Message Center Back has no usable history | Replace with named Home fallback |
@@ -215,6 +230,12 @@ lastTradePath: ComputedRef<string>
 - Router/behavior: prove Seconds -> Seconds history -> Back returns to Seconds,
   direct-open history replaces with `/seconds`, and the Header action uses the
   named route rather than scrolling the trading page.
+- Localization/source: prove all three Seconds history profit/loss labels exist
+  symmetrically in `zh-CN` and `en`, and the Vue template contains no fixed
+  Chinese copy.
+- Localization/source: prove all settlement-card keys exist symmetrically, all
+  three actions use localized copy, and History clears the queue before named
+  route navigation.
 - Browser: main tabs do not remain in history; direct-open detail back uses its fallback.
 - Browser: Home Bell opens Message Center without Root Header or Dock; its
   ArrowLeft returns Home, while a direct-open message route uses the same Home

@@ -17,6 +17,7 @@ import { formatAmount, formatDateTime, formatPrice } from '@/core/format'
 import {
   createSecondsHistoryRequestLifecycle,
   historicalSecondsOrders,
+  secondsOrderProfitLossPresentation,
   secondsOrderStatusPresentation,
 } from '@/core/secondsOrder'
 import { useSessionStore } from '@/stores/session'
@@ -62,6 +63,21 @@ function orderStatusLabel(order: SecondsOrder): string {
 
 function orderStatusTone(order: SecondsOrder): string {
   return `is-${secondsOrderStatusPresentation(order).tone}`
+}
+
+function orderProfitLossTitle(order: SecondsOrder): string {
+  return t(secondsOrderProfitLossPresentation(order).translationKey)
+}
+
+function orderProfitLossAmount(order: SecondsOrder): string {
+  const presentation = secondsOrderProfitLossPresentation(order)
+  if (presentation.amount === undefined) return '--'
+  const sign = presentation.amount > 0 ? '+' : ''
+  return `${sign}${formatAmount(presentation.amount)} ${order.stakeAssetSymbol}`
+}
+
+function orderProfitLossTone(order: SecondsOrder): string {
+  return `is-${secondsOrderProfitLossPresentation(order).tone}`
 }
 
 watch(() => session.isAuthenticated, (authenticated) => {
@@ -152,6 +168,12 @@ onBeforeUnmount(() => requestLifecycle.stop())
               </b>
             </header>
             <dl>
+              <div class="seconds-history-order__profit-loss">
+                <dt>{{ orderProfitLossTitle(order) }}</dt>
+                <dd class="numeric" :class="orderProfitLossTone(order)">
+                  {{ orderProfitLossAmount(order) }}
+                </dd>
+              </div>
               <div>
                 <dt>{{ t('seconds.direction') }}</dt>
                 <dd :class="order.direction">
@@ -281,6 +303,43 @@ onBeforeUnmount(() => requestLifecycle.stop())
   display: grid;
   gap: 3px;
   min-width: 0;
+}
+
+.seconds-history-order dl > .seconds-history-order__profit-loss {
+  align-items: center;
+  border-bottom: 1px solid var(--hairline);
+  border-top: 1px solid var(--hairline);
+  gap: 12px;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 48px;
+  padding: 7px 0;
+}
+
+.seconds-history-order .seconds-history-order__profit-loss dt {
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.seconds-history-order .seconds-history-order__profit-loss dd {
+  font-size: 16px;
+  font-weight: 760;
+  justify-content: flex-end;
+  line-height: 22px;
+  text-align: right;
+}
+
+.seconds-history-order__profit-loss dd.is-positive {
+  color: var(--positive);
+}
+
+.seconds-history-order__profit-loss dd.is-negative {
+  color: var(--negative);
+}
+
+.seconds-history-order__profit-loss dd.is-pending {
+  color: var(--muted-strong);
 }
 
 .seconds-history-order dt,

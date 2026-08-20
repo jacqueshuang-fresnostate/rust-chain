@@ -1,0 +1,5 @@
+{"file":".trellis/tasks/archive/2026-08/08-20-mobile-seconds-settlement-result-notice/prd.md","reason":"逐项核对首次加载不补弹、权威输赢、多单队列、去重和无障碍验收标准。"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"复核提示只由后端终态订单触发且不改变资金语义。"}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"复核历史跳转使用命名路由且双语键对称。"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"复核悬浮卡不锁滚动、44px 目标、明暗主题、窄屏与减少动态。"}
+{"file":".trellis/tasks/archive/2026-08/08-20-mobile-seconds-settlement-result-notice/research/settlement-notice-flow.md","reason":"复核追踪器状态转换、取消/未知结果、并发队列和清理边界。"}

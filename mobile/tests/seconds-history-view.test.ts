@@ -49,7 +49,7 @@ test('Seconds 历史命名路由支持 push、浏览器返回和直开兜底', a
     routerSource,
     /\{ path: '\/seconds\/history', name: 'seconds-history', component: SecondsHistoryView, meta: \{ showBottomNav: false, depth: 2, backFallback: '\/seconds' \} \}/,
   )
-  assert.match(secondsSource, /function openHistory\(\): void \{\s*void router\.push\(\{ name: 'seconds-history' \}\)\s*\}/)
+  assert.match(secondsSource, /function openHistory\(\): void \{\s*clearSettlementResultQueue\(\)\s*void router\.push\(\{ name: 'seconds-history' \}\)\s*\}/)
   assert.match(secondsSource, /:aria-label="t\('seconds\.historyTitle'\)" @click="openHistory"/)
 
   const stackedRouter = createSecondsRouter()
@@ -146,6 +146,8 @@ test('历史页完整展示 API 字段且缺失结算价不使用实时价替代
   assert.match(historyTemplate, /t\('seconds\.term'\)[\s\S]*?order\.durationSeconds/)
   assert.match(historyTemplate, /t\('orders\.entryPrice'\)[\s\S]*?order\.entryPrice !== undefined \? formatPrice\(order\.entryPrice\) : '--'/)
   assert.match(historyTemplate, /t\('seconds\.settlementPrice'\)[\s\S]*?order\.settlementPrice !== undefined \? formatPrice\(order\.settlementPrice\) : '--'/)
+  assert.match(historyTemplate, /class="seconds-history-order__profit-loss"[\s\S]*?orderProfitLossTitle\(order\)[\s\S]*?orderProfitLossTone\(order\)[\s\S]*?orderProfitLossAmount\(order\)/)
+  assert.match(historySource, /function orderProfitLossAmount\(order: SecondsOrder\): string \{[\s\S]*?secondsOrderProfitLossPresentation\(order\)[\s\S]*?presentation\.amount === undefined[\s\S]*?presentation\.amount > 0 \? '\+' : ''[\s\S]*?order\.stakeAssetSymbol/)
   assert.match(historyTemplate, /orderStatusLabel\(order\)/)
   assert.match(historyTemplate, /t\('seconds\.createdTime'\)[\s\S]*?formatDateTime\(order\.createdAt\)/)
   assert.match(historyTemplate, /data-settlement-source="api-only"/)
@@ -170,6 +172,9 @@ test('访客、加载、错误、列表和空态互斥且固定文案完全国�
     'historyEmptyDescription',
     'historyLoadFailed',
     'refreshHistory',
+    'profitAmount',
+    'lossAmount',
+    'profitLossAmount',
     'settlementPrice',
     'createdTime',
   ] as const
@@ -181,6 +186,12 @@ test('访客、加载、错误、列表和空态互斥且固定文案完全国�
   }
   assert.equal(en.seconds.historyTitle, 'Seconds order history')
   assert.equal(zhCN.seconds.historyTitle, '秒合约历史订单')
+  assert.equal(en.seconds.profitAmount, 'Profit amount')
+  assert.equal(en.seconds.lossAmount, 'Loss amount')
+  assert.equal(en.seconds.profitLossAmount, 'Profit / loss')
+  assert.equal(zhCN.seconds.profitAmount, '盈利金额')
+  assert.equal(zhCN.seconds.lossAmount, '亏损金额')
+  assert.equal(zhCN.seconds.profitLossAmount, '盈亏金额')
 })
 
 test('历史页使用语义主题、44px 操作、安全区与 320–448px 收缩结构', () => {
@@ -192,6 +203,9 @@ test('历史页使用语义主题、44px 操作、安全区与 320–448px 收�
   assert.match(historyStyle, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/)
   assert.match(historyStyle, /\.seconds-history-order header\s*\{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) minmax\(0, 45%\);/)
   assert.match(historyStyle, /\.seconds-history-order__status\s*\{[\s\S]*?overflow-wrap: anywhere;/)
+  assert.match(historyStyle, /\.seconds-history-order dl > \.seconds-history-order__profit-loss\s*\{[\s\S]*?grid-column: 1 \/ -1;[\s\S]*?min-height: 48px;/)
+  assert.match(historyStyle, /\.seconds-history-order__profit-loss dd\.is-positive\s*\{[\s\S]*?color: var\(--positive\);/)
+  assert.match(historyStyle, /\.seconds-history-order__profit-loss dd\.is-negative\s*\{[\s\S]*?color: var\(--negative\);/)
   assert.match(historyStyle, /\.seconds-history-state--error button\s*\{[\s\S]*?min-height: 44px;/)
   assert.match(historyStyle, /\.seconds-history-login :deep\(\.button\)\s*\{[\s\S]*?min-height: 44px;/)
   assert.match(historyStyle, /@media \(max-width: 340px\)/)

@@ -368,14 +368,14 @@ function orderTypeDescription(orderType: MarginOrderType): string {
               <h2 id="contract-pair-title">{{ t('trade.contractPairSheetTitle') }}</h2>
               <p>{{ t('trade.contractPairSheetHint', { asset: selectedPair.quote }) }}</p>
             </div>
-            <button class="contract-sheet__close" type="button" :aria-label="t('common.close')" @click="requestClose">
+            <button data-dialog-initial class="contract-sheet__close" type="button" :aria-label="t('common.close')" @click="requestClose">
               <X :size="18" aria-hidden="true" />
             </button>
           </header>
 
           <label class="contract-pair-search">
-              <Search :size="16" aria-hidden="true" />
-            <input v-model="searchQuery" data-dialog-initial type="search" :placeholder="t('trade.contractPairSearchPlaceholder')" />
+            <Search :size="16" aria-hidden="true" />
+            <input v-model="searchQuery" type="search" :placeholder="t('trade.contractPairSearchPlaceholder')" />
           </label>
 
           <div class="contract-pair-filters" role="tablist" :aria-label="t('trade.contractPairFilters')">

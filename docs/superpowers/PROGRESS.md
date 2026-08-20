@@ -7627,3 +7627,52 @@
 - 修改文件：本次杠杆页面重构与后端契约涉及的 `mobile/src/**`、`mobile/tests/**`、`src/modules/margin/**`、`tests/**`、`.trellis/spec/**`、`.trellis/tasks/archive/**`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：沿用上一条记录的 Rust 831/831、Mobile 418/418、类型检查、Clippy、PWA/Tauri 构建与 Ego Browser 多视口验收；提交前补充执行 Git 暂存范围检查与 `git diff --cached --check`。
 - 后续事项：无。
+
+## 2026-08-20 04:17 - 手机端杠杆输入控件与 Pencil 细节复刻
+
+- 完成内容：重新读取当前 Pencil 所选杠杆明暗主画板与四类底部弹层，按 `14 / 202 / 10 / 150 / 14` 主轨道修正输入区细节。价格和保证金改为完整双层信息结构，空闲态移除多余描边，焦点态只由外壳绘制连续强调环，原生输入的边框、阴影和轮廓归零；开平仓分段、设置按钮、BBO、滑杆圆点、止盈止损和主操作同步对齐画板几何。订单能力首次加载时按画板默认优先限价，访客可先查看并切换真实订单类型；交易对弹层改由关闭按钮承接初始焦点，避免搜索框打开即出现错误高亮。同步移除百分比按钮受到全局浅色主题样式污染产生的底部阴影，并补齐双语按钮文案和源码回归合同。
+- 修改文件：`mobile/src/{components/ContractTradeSheets.vue,core/marginOrder.ts,views/TradeView.vue,i18n/messages/{zh-CN,en}.ts}`、`mobile/tests/{contract-pencil-selected-parity,margin-order-type-sheet,margin-product-boundaries}.test.ts`、`.trellis/tasks/08-20-08-20-mobile-margin-pencil-input-detail-parity/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix mobile run type-check` 通过，杠杆聚焦测试 23/23 通过。Ego Browser 实测限价输入可写入 `68000.5`，保证金可写入 `12.50/25`，明暗主题焦点环连续且内部输入无二次边框；订单类型弹层在访客态正常打开并由 Escape 关闭后恢复焦点，交易对弹层初始聚焦关闭按钮、Tab 才进入搜索框。320×720、390×920、448×900 明暗视口均无横向溢出，390px 实测 Header 58px、模块 460px、控制台 202×450、盘口 150×450，截图已人工复核。
+- 后续事项：执行 Mobile 全量测试、PWA/Tauri 构建、Trellis 规范同步和最终工作树检查。
+
+## 2026-08-20 04:21 - 手机端杠杆 Pencil 输入细节最终验收
+
+- 完成内容：完成当前 Pencil 杠杆主画板及相关弹层的最终质量门禁。同步更新 Mobile 代码规范，把当前 `cjzfi/p6GfgT`、58px Header、460px 模块、限价优先、访客订单类型、双行价格/保证金输入、外壳唯一焦点环和五档无文字滑杆固化为可执行合同；Trellis 任务已验证并归档。
+- 修改文件：`.trellis/spec/mobile/{backend-integration,pwa-and-shell}.md`、`.trellis/tasks/archive/2026-08/08-20-08-20-mobile-margin-pencil-input-detail-parity/**`、`docs/superpowers/PROGRESS.md`，以及上一条记录列出的手机端实现和测试文件。
+- 验证结果：`npm --prefix mobile run type-check` 通过；杠杆聚焦测试 23/23、Mobile 全量测试 418/418 通过；`npm --prefix mobile run build:pwa` 与 `npm --prefix mobile run build:tauri` 通过，Tauri 输出确认不含 `sw.js`/`manifest.webmanifest`；项目未配置 Mobile lint script，`npm run lint --if-present` 正常跳过。Ego Browser 完成 320×720、390×920、448×900 明暗主题、限价/保证金输入、焦点环、访客订单类型和交易对弹层键盘路径验收，全部零横向溢出；Trellis validate 与 `git diff --check` 通过。
+- 后续事项：无；当前改动尚未提交或推送，既有未跟踪目录 `mobile/pencil/docs/` 未修改。
+
+## 2026-08-20 04:31 - 修复手机端闪兑方向调换无响应
+
+- 完成内容：定位到后端单条闪兑配置原生支持正反两个报价方向，而手机端此前只按配置 ID 查找第二条显式反向记录，导致共享同一 ID 或列表只有原始方向时点击无变化。现将每条启用配置投影为正反两个真实请求方向，反向交换资产 ID、symbol 与后台 Logo，并使用 `target_min_amount/target_max_amount` 作为支付侧限额；后端存在显式反向配置时仍以显式配置的费率和限额为准。选择状态改为“配置 ID + 支付资产 ID + 接收资产 ID”的方向键，点击调换会保留输入金额、立即切换资产和余额，并清空旧报价、错误与成功提示；报价请求仍只发送真实资产 ID 和金额。
+- 修改文件：`mobile/src/{api/swap.ts,core/swapAssetLogos.ts,views/SwapView.vue}`、`mobile/tests/swap-asset-logos.test.ts`、`.trellis/spec/mobile/{backend-integration,pwa-and-shell}.md`、`.trellis/tasks/archive/2026-08/08-20-mobile-swap-direction-action/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：闪兑聚焦测试 8/8、Mobile 全量测试 421/421、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`、`npm --prefix mobile run build:tauri` 均通过；项目未配置 Mobile lint script，`npm --prefix mobile run lint --if-present` 正常跳过。Ego Browser 在 390×920 本地预览中点击真实调换按钮，方向键由 `2:2:3` 切换为 `2:3:2`，支付/接收资产由 USDT→ETH 切换为 ETH→USDT，金额 `12.5` 保留，旧 quote/error/success 清空，第二次点击恢复原方向，页面宽度 390px 与视口一致且无横向溢出。Trellis validate、源码调试语句扫描与 `git diff --check` 通过。
+- 后续事项：无；当前修复以及此前未提交的杠杆输入细节改动均尚未提交或推送，既有未跟踪目录 `mobile/pencil/docs/` 未修改。
+
+## 2026-08-20 04:41 - 手机端秒合约历史订单增加盈亏金额
+
+- 完成内容：在 `/seconds/history` 每条历史订单中增加完整宽度的盈亏区域。赢单依据订单固化本金和赔率展示“盈利金额”及带 `+` 的净收益 `stakeAmount × payoutRate`，不会把本金重复计入；输单展示“亏损金额”及负本金；取消、缺少结果和未知结果展示通用“盈亏金额”和 `--`，不使用实时价格推测结果。金额单位沿用订单结算资产，盈利、亏损和未知状态分别使用正向、负向和中性语义色，并补齐中英文文案、共享展示模型、响应式合同与回归测试。
+- 修改文件：`mobile/src/{core/secondsOrder.ts,views/SecondsHistoryView.vue,i18n/messages/{zh-CN,en}.ts}`、`mobile/tests/{seconds-api-adapter,seconds-history-view}.test.ts`、`.trellis/spec/mobile/{backend-integration,navigation-and-localization,pwa-and-shell}.md`、`.trellis/tasks/archive/2026-08/08-20-mobile-seconds-history-pnl/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：秒合约聚焦测试 14/14、Mobile 全量测试 422/422、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`、`npm --prefix mobile run build:tauri` 均通过；项目未配置 Mobile lint script，`npm --prefix mobile run lint --if-present` 正常跳过。Ego Browser 在 390×844 浅色中验证 `+80 USDT`、`-50 USDT` 和取消态 `--` 的文案、16px 金额层级与语义色，在 320×720 深色中验证六位分组大额仍保持文档宽度等于 320px；运行时临时会话已清除，未写入后端或本机 Token。截图：`/private/tmp/seconds-history-pnl-390.png`。Trellis validate、调试语句扫描和 `git diff --check` 通过。
+- 后续事项：无；当前改动尚未提交或推送，之前未提交的杠杆/闪兑改动及既有 `mobile/pencil/docs/` 均未改动或误纳入。
+
+## 2026-08-20 05:32 - 手机端秒合约结算输赢即时提示
+
+- 完成内容：秒合约交易页新增基于后端最终订单快照的页面会话级结算追踪器。仅对本页已观察为活动、随后明确返回 `status=settled` 且 `result=win/loss` 的订单提示，不补弹首次加载的历史结果，也不依据倒计时或行情推测输赢；赢单展示带 `+` 的净盈利 `本金 × 赔率`，输单展示负本金。多笔同时结算按到期时间进入 FIFO 队列并按订单 ID 去重，缺少结果的终态继续轮询，取消订单永不提示；退出登录、页面卸载和私有状态清理时同步清空追踪器与队列。新增非模态毛玻璃结算卡、Lucide 输赢图标、权威来源说明、方向/期限信息、剩余结果计数、“继续交易”和“查看历史订单”操作及中英文无障碍播报；异步下单与对账增加会话代次守卫，防止退出登录后的迟到响应跨账号写回。
+- 修改文件：`mobile/src/{core/secondsOrder.ts,views/SecondsView.vue,i18n/messages/{zh-CN,en}.ts}`、`mobile/tests/{seconds-api-adapter,seconds-live-multi-orders,seconds-history-view,trading-lending-views,award-ui-trading-workspaces}.test.ts`、`.trellis/spec/mobile/{backend-integration,navigation-and-localization,pwa-and-shell}.md`、`.trellis/tasks/archive/2026-08/08-20-mobile-seconds-settlement-result-notice/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：秒合约聚焦测试 22/22、Mobile 全量测试 427/427、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`、`npm --prefix mobile run build:tauri` 均通过；项目未配置 Mobile lint script，`npm --prefix mobile run lint --if-present` 正常跳过。Ego Browser 在 390×844 浅色验证盈利 `+80 USDT`、剩余 1 笔和 44px 双操作，在 320×720 深色验证亏损 `-50 USDT`、纵向操作和零横向溢出，在 448×900 浅色验证双操作横排与历史订单跳转；减少动态效果媒体查询生效，卡片不锁定纵向滚动。截图：`/private/tmp/seconds-settlement-win-390.png`、`/private/tmp/seconds-settlement-loss-320-dark-retry.png`。Trellis validate、调试语句扫描和 `git diff --check` 通过。
+- 后续事项：无；本次仅修改手机端与相关规范/测试，未修改后端结算逻辑。当前改动尚未提交或推送，此前未提交的杠杆、闪兑、秒合约历史盈亏改动及既有 `mobile/pencil/docs/` 均保留且未误纳入。
+
+## 2026-08-20 06:10 - 修复手机端杠杆持仓风险指标缺失
+
+- 完成内容：修正 `/trade` 杠杆持仓卡片的风险字段口径，“维持保证金率”改为风险快照优先、产品配置回退，不再错误展示 `margin_ratio`；“预估强平价”优先使用服务端快照，逐仓快照暂缺时按后端领域同源公式使用仓位和产品参数安全回退，全仓明确显示“账户级风控”且不伪造单仓强平价。新增严格有限十进制风险解析、按仓位 ID 缓存的展示投影、双语文案及多仓/空仓/全仓/非法输入/服务端优先回归测试；后端现有风险接口与强平公式经审计已满足契约，因此未改动资金或强平逻辑。
+- 修改文件：`mobile/src/{api/trading.ts,core/{types,marginRiskMetrics}.ts,views/TradeView.vue,i18n/messages/{zh-CN,en}.ts}`、`mobile/tests/{margin-risk-metrics,margin-order-type-sheet,pencil-trading-product-selected-parity}.test.ts`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/tasks/archive/2026-08/08-20-mobile-margin-risk-metrics-display/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix mobile run type-check` 通过；Mobile 全量测试 436/436 通过；`npm --prefix mobile run build:pwa` 通过；项目未配置 Mobile lint script，`npm --prefix mobile run lint --if-present` 正常跳过；`git diff --check` 通过。Ego Browser 在 390×920 本地预览注入只读逐仓/全仓测试状态，实测逐仓显示 `0.80%` 与 `56,700.00`，全仓显示 `0.80%` 与“账户级风控”，文档宽度与视口同为 390px且无横向溢出；未写入后端或本机 Token。截图：`/var/folders/f9/9q7ggh6s5ms7fljhc7d3nmvh0000gn/T/ego-browser-shot-42969-1.png`。
+- 后续事项：无；本次修复尚未提交或推送，此前未提交的杠杆输入、闪兑、秒合约改动及既有 `mobile/pencil/docs/` 均保留且未误纳入。
+
+## 2026-08-20 12:44 - 提交并推送手机端交易体验修复
+
+- 完成内容：汇总提交手机端杠杆 Pencil 输入细节、闪兑方向调换、秒合约历史盈亏、秒合约结算输赢提示及杠杆持仓风险指标五项已验收改动，并同步纳入对应中英文文案、移动端规格、回归测试和 Trellis 任务归档。
+- 修改文件：上述五项任务涉及的 `mobile/src/**`、`mobile/tests/**`、`.trellis/spec/mobile/**`、`.trellis/tasks/archive/2026-08/**` 与 `docs/superpowers/PROGRESS.md`；既有未跟踪目录 `mobile/pencil/docs/` 明确排除。
+- 验证结果：沿用提交前最终门禁：Mobile 全量测试 436/436、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`、Trellis 上下文校验及 `git diff --check` 均通过；提交前继续执行暂存范围与暂存差异检查。
+- 后续事项：无。

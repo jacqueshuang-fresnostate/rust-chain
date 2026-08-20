@@ -4,12 +4,16 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import {
   ArrowDown,
+  ArrowRight,
   ArrowUp,
   CheckCircle2,
   CircleAlert,
   History,
   LoaderCircle,
   RefreshCw,
+  Timer,
+  TrendingDown,
+  Trophy,
   X,
 } from 'lucide-vue-next'
 import PageHeader from '@/components/PageHeader.vue'
@@ -35,8 +39,11 @@ import {
 } from '@/core/navigation'
 import {
   activeSecondsOrders,
+  createSecondsSettlementResultTracker,
+  enqueueSecondsSettlementResults,
   mergeSecondsOrderReconciliation,
   secondsOrderEstimatedProfit,
+  secondsOrderProfitLossPresentation,
   secondsOrderProgress,
   secondsOrderRemainingMs,
   secondsOrderStatusPresentation,
@@ -67,6 +74,7 @@ const refreshWarning = ref('')
 const confirmOpen = ref(false)
 const confirmDialog = ref<HTMLElement | null>(null)
 const reviewButton = ref<HTMLButtonElement | null>(null)
+const settlementResultQueue = ref<SecondsOrder[]>([])
 const sparklineCanvas = ref<HTMLCanvasElement | null>(null)
 const currentTime = ref(Date.now())
 let returnFocus: HTMLElement | null = null
@@ -81,11 +89,13 @@ let tickerSubscriptionKey = ''
 let stopTickerSubscription: (() => void) | null = null
 let expiryReconciliationPromise: Promise<void> | null = null
 let privateReconciliationGeneration = 0
+let privateSessionGeneration = 0
 let componentActive = true
 const committedOrdersById = new Map<number, SecondsOrder>()
 const expiryRetryAtByOrderId = new Map<number, number>()
 const queuedExpiryOrderIds = new Set<number>()
 const reconcilingExpiryOrderIds = new Set<number>()
+const settlementResultTracker = createSecondsSettlementResultTracker()
 const EXPIRY_RECONCILIATION_RETRY_MS = 5_000
 
 const cycle = computed<SecondsCycle | undefined>(() => (
@@ -99,6 +109,41 @@ const selectedActiveOrders = computed(() => {
   const symbol = normalizeProductSymbol(selected.value?.symbol || '')
   return activeOrders.value.filter((order) => normalizeProductSymbol(order.symbol) === symbol)
 })
+const currentSettlementResult = computed(() => settlementResultQueue.value[0] || null)
+const currentSettlementPresentation = computed(() => (
+  currentSettlementResult.value
+    ? secondsOrderProfitLossPresentation(currentSettlementResult.value)
+    : null
+))
+const currentSettlementTone = computed<'positive' | 'negative'>(() => (
+  currentSettlementPresentation.value?.translationKey === 'seconds.profitAmount'
+    ? 'positive'
+    : 'negative'
+))
+const currentSettlementTitle = computed(() => t(
+  currentSettlementTone.value === 'positive'
+    ? 'seconds.settlementProfit'
+    : 'seconds.settlementLoss',
+))
+const currentSettlementAmount = computed(() => {
+  const order = currentSettlementResult.value
+  const presentation = currentSettlementPresentation.value
+  if (!order || presentation?.amount === undefined) return '--'
+  const sign = presentation.translationKey === 'seconds.profitAmount' ? '+' : ''
+  return `${sign}${formatAmount(presentation.amount)} ${order.stakeAssetSymbol}`
+})
+const currentSettlementAnnouncement = computed(() => {
+  const order = currentSettlementResult.value
+  if (!order) return ''
+  return t('seconds.settlementAnnouncement', {
+    title: currentSettlementTitle.value,
+    amount: currentSettlementAmount.value,
+    symbol: order.symbol,
+    direction: t(order.direction === 'up' ? 'seconds.bullish' : 'seconds.bearish'),
+    duration: t('seconds.duration', { seconds: order.durationSeconds }),
+  })
+})
+const remainingSettlementResults = computed(() => Math.max(0, settlementResultQueue.value.length - 1))
 const amountNumber = computed(() => Number(amount.value || 0))
 const payoutRate = computed(() => cycle.value?.payoutRate || 0)
 const estimatedProfit = computed(() => (
@@ -317,8 +362,29 @@ function initializeSparkline(): void {
   drawSparkline()
 }
 
+function advanceSettlementResult(): void {
+  settlementResultQueue.value = settlementResultQueue.value.slice(1)
+}
+
+function clearSettlementResultQueue(): void {
+  settlementResultQueue.value = []
+}
+
 function openHistory(): void {
+  clearSettlementResultQueue()
   void router.push({ name: 'seconds-history' })
+}
+
+/** Clears order baselines, expiry retries, and notices at a private-session boundary. */
+function clearSecondsPrivateState(): void {
+  orders.value = []
+  accounts.value = []
+  committedOrdersById.clear()
+  expiryRetryAtByOrderId.clear()
+  queuedExpiryOrderIds.clear()
+  reconcilingExpiryOrderIds.clear()
+  settlementResultTracker.reset()
+  clearSettlementResultQueue()
 }
 
 async function load(): Promise<void> {
@@ -357,12 +423,7 @@ async function load(): Promise<void> {
       return
     }
     if (!privateResults) {
-      orders.value = []
-      accounts.value = []
-      committedOrdersById.clear()
-      expiryRetryAtByOrderId.clear()
-      queuedExpiryOrderIds.clear()
-      reconcilingExpiryOrderIds.clear()
+      clearSecondsPrivateState()
       replaceTickerSubscription()
       return
     }
@@ -416,6 +477,14 @@ async function reconcilePrivateState(): Promise<PrivateReconciliationResult> {
 }
 
 function applyReconciledOrders(nextOrders: readonly SecondsOrder[]): void {
+  // Consume the raw server snapshot before locally committed creates are merged.
+  const settledResults = settlementResultTracker.reconcile(nextOrders)
+  if (settledResults.length) {
+    settlementResultQueue.value = enqueueSecondsSettlementResults(
+      settlementResultQueue.value,
+      settledResults,
+    )
+  }
   const committedOrders = [...committedOrdersById.values()]
   orders.value = mergeSecondsOrderReconciliation(nextOrders, committedOrders)
   nextOrders.forEach((order) => committedOrdersById.delete(order.id))
@@ -451,7 +520,14 @@ async function reconcileExpiredOrders(): Promise<void> {
   const fullyLoaded = reconciliation.ordersLoaded && reconciliation.accountsLoaded
   const retryAt = Date.now() + EXPIRY_RECONCILIATION_RETRY_MS
   for (const orderId of batch) {
-    if (fullyLoaded && !activeIds.has(orderId)) expiryRetryAtByOrderId.delete(orderId)
+    // Keep polling a non-active order while its authoritative result is pending.
+    if (
+      fullyLoaded
+      && !activeIds.has(orderId)
+      && !settlementResultTracker.isTracking(orderId)
+    ) {
+      expiryRetryAtByOrderId.delete(orderId)
+    }
     else expiryRetryAtByOrderId.set(orderId, retryAt)
   }
   refreshWarning.value = fullyLoaded ? '' : t('seconds.refreshAfterOrderFailed')
@@ -510,6 +586,14 @@ function closeConfirm(): void {
   confirmOpen.value = false
 }
 
+function isCurrentSecondsMutationSession(generation: number): boolean {
+  return (
+    componentActive
+    && session.isAuthenticated
+    && generation === privateSessionGeneration
+  )
+}
+
 async function submit(): Promise<void> {
   if (submitting.value) return
   if (!session.isAuthenticated) {
@@ -523,6 +607,7 @@ async function submit(): Promise<void> {
   submitting.value = true
   error.value = ''
   refreshWarning.value = ''
+  const mutationSessionGeneration = privateSessionGeneration
   let openedOrder: SecondsOrder | null = null
   try {
     openedOrder = await openSecondsOrder({
@@ -531,7 +616,9 @@ async function submit(): Promise<void> {
       direction: direction.value,
       stakeAmount: amountNumber.value,
     })
-    if (!componentActive) return
+    if (!isCurrentSecondsMutationSession(mutationSessionGeneration)) return
+    // The create response is the earliest authoritative active-order observation.
+    settlementResultTracker.track(openedOrder)
     committedOrdersById.set(openedOrder.id, openedOrder)
     orders.value = upsertSecondsOrder(orders.value, openedOrder)
     amount.value = ''
@@ -539,17 +626,21 @@ async function submit(): Promise<void> {
     confirmOpen.value = false
     replaceTickerSubscription()
   } catch (reason) {
-    if (componentActive) error.value = apiErrorMessage(reason, t('seconds.orderFailed'))
+    if (isCurrentSecondsMutationSession(mutationSessionGeneration)) {
+      error.value = apiErrorMessage(reason, t('seconds.orderFailed'))
+    }
   } finally {
     if (componentActive) submitting.value = false
   }
-  if (openedOrder && componentActive) void reconcileOpenedOrder()
+  if (openedOrder && isCurrentSecondsMutationSession(mutationSessionGeneration)) {
+    void reconcileOpenedOrder(mutationSessionGeneration)
+  }
 }
 
-async function reconcileOpenedOrder(): Promise<void> {
+async function reconcileOpenedOrder(mutationSessionGeneration: number): Promise<void> {
   const reconciliation = await reconcilePrivateState()
   if (
-    componentActive
+    isCurrentSecondsMutationSession(mutationSessionGeneration)
     && (!reconciliation.ordersLoaded || !reconciliation.accountsLoaded)
   ) {
     refreshWarning.value = t('seconds.refreshAfterOrderFailed')
@@ -588,6 +679,17 @@ function trapDialogFocus(event: KeyboardEvent): void {
   }
 }
 
+watch(() => session.isAuthenticated, (authenticated) => {
+  privateSessionGeneration += 1
+  if (authenticated) return
+  privateReconciliationGeneration += 1
+  clearSecondsPrivateState()
+  success.value = ''
+  refreshWarning.value = ''
+  confirmOpen.value = false
+  replaceTickerSubscription()
+}, { flush: 'sync' })
+
 watch(confirmOpen, async (open) => {
   if (open) {
     returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : reviewButton.value
@@ -624,6 +726,7 @@ onBeforeUnmount(() => {
   chartRequestVersion += 1
   tickerSubscriptionGeneration += 1
   privateReconciliationGeneration += 1
+  privateSessionGeneration += 1
   secondsKlineSession.stop()
   stopTickerSubscription?.()
   stopTickerSubscription = null
@@ -632,6 +735,8 @@ onBeforeUnmount(() => {
   reconcilingExpiryOrderIds.clear()
   expiryRetryAtByOrderId.clear()
   committedOrdersById.clear()
+  settlementResultTracker.reset()
+  clearSettlementResultQueue()
   if (clockTimer) clearInterval(clockTimer)
   chartResizeObserver?.disconnect()
   chartThemeObserver?.disconnect()
@@ -962,6 +1067,83 @@ onBeforeUnmount(() => {
           </div>
         </section>
       </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <Transition name="seconds-result-reveal" mode="out-in">
+        <aside
+          v-if="currentSettlementResult"
+          :key="currentSettlementResult.id"
+          class="seconds-settlement-layer"
+        >
+          <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">
+            {{ currentSettlementAnnouncement }}
+          </p>
+          <article
+            class="seconds-settlement-card"
+            :data-tone="currentSettlementTone"
+            data-settlement-source="orders-api"
+            :aria-labelledby="`seconds-settlement-title-${currentSettlementResult.id}`"
+          >
+            <div class="seconds-settlement-card__panel">
+              <header class="seconds-settlement-card__header">
+                <span class="seconds-settlement-card__icon" aria-hidden="true">
+                  <Trophy v-if="currentSettlementTone === 'positive'" :size="24" :stroke-width="1.8" />
+                  <TrendingDown v-else :size="24" :stroke-width="1.8" />
+                </span>
+                <div>
+                  <small>{{ t('seconds.settlementResultEyebrow') }}</small>
+                  <strong :id="`seconds-settlement-title-${currentSettlementResult.id}`">
+                    {{ currentSettlementTitle }}
+                  </strong>
+                </div>
+                <button
+                  class="seconds-settlement-card__close"
+                  type="button"
+                  :aria-label="t('common.close')"
+                  :title="t('common.close')"
+                  @click="advanceSettlementResult"
+                >
+                  <X :size="19" :stroke-width="1.9" aria-hidden="true" />
+                </button>
+              </header>
+
+              <div class="seconds-settlement-card__amount">
+                <strong class="numeric">{{ currentSettlementAmount }}</strong>
+                <span>{{ t('seconds.settlementResultSource') }}</span>
+              </div>
+
+              <div class="seconds-settlement-card__meta" :aria-label="t('seconds.settlementResultDetails')">
+                <span><b>{{ currentSettlementResult.symbol }}</b></span>
+                <span>
+                  <ArrowUp v-if="currentSettlementResult.direction === 'up'" :size="14" aria-hidden="true" />
+                  <ArrowDown v-else :size="14" aria-hidden="true" />
+                  {{ t(currentSettlementResult.direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }}
+                </span>
+                <span>
+                  <Timer :size="14" aria-hidden="true" />
+                  {{ t('seconds.duration', { seconds: currentSettlementResult.durationSeconds }) }}
+                </span>
+              </div>
+
+              <p v-if="remainingSettlementResults" class="seconds-settlement-card__remaining">
+                {{ t('seconds.settlementResultsRemaining', { count: remainingSettlementResults }) }}
+              </p>
+
+              <div class="seconds-settlement-card__actions">
+                <button type="button" class="is-secondary" @click="advanceSettlementResult">
+                  <span>{{ t('seconds.continueTrading') }}</span>
+                  <ArrowRight :size="16" aria-hidden="true" />
+                </button>
+                <button type="button" class="is-primary" @click="openHistory">
+                  <History :size="16" aria-hidden="true" />
+                  <span>{{ t('seconds.viewHistory') }}</span>
+                </button>
+              </div>
+            </div>
+          </article>
+        </aside>
+      </Transition>
     </Teleport>
   </main>
 </template>
@@ -1508,6 +1690,296 @@ onBeforeUnmount(() => {
   outline: 0;
 }
 
+.seconds-settlement-layer {
+  --seconds-result-surface: var(--surface);
+  --seconds-result-surface-elevated: var(--surface-elevated);
+  --seconds-result-ink: var(--ink);
+  --seconds-result-muted: var(--muted);
+  --seconds-result-line: var(--line);
+  --seconds-result-shadow: var(--dark-surface);
+  --seconds-result-positive: var(--positive);
+  --seconds-result-negative: var(--negative);
+  --seconds-result-on-accent: var(--on-accent);
+  --seconds-result-focus: var(--focus);
+  --seconds-result-focus-ring: color-mix(in srgb, var(--focus) 28%, transparent);
+
+  box-sizing: border-box;
+  left: 50%;
+  max-width: min(448px, var(--app-max-width, 448px));
+  padding:
+    10px
+    max(12px, env(safe-area-inset-right))
+    0
+    max(12px, env(safe-area-inset-left));
+  pointer-events: none;
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 60px);
+  transform: translateX(-50%);
+  width: 100%;
+  z-index: calc(var(--layer-overlay, 80) + 2);
+}
+
+.seconds-settlement-card {
+  --seconds-result-tone: var(--seconds-result-positive);
+  --seconds-result-tone-soft: color-mix(
+    in srgb,
+    var(--seconds-result-tone) 14%,
+    var(--seconds-result-surface-elevated)
+  );
+
+  background:
+    linear-gradient(145deg, color-mix(in srgb, white 58%, transparent), transparent 38%),
+    color-mix(in srgb, var(--seconds-result-tone) 18%, var(--seconds-result-surface));
+  border-radius: 28px;
+  box-shadow:
+    0 22px 54px color-mix(in srgb, var(--seconds-result-shadow) 28%, transparent),
+    0 6px 18px color-mix(in srgb, var(--seconds-result-tone) 14%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 64%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--seconds-result-tone) 24%, var(--seconds-result-line));
+  box-sizing: border-box;
+  color: var(--seconds-result-ink);
+  overflow: hidden;
+  padding: 3px;
+  pointer-events: auto;
+  position: relative;
+  width: 100%;
+}
+
+.seconds-settlement-card[data-tone='negative'] {
+  --seconds-result-tone: var(--seconds-result-negative);
+}
+
+.seconds-settlement-card::before {
+  background:
+    radial-gradient(circle at 14% 12%, color-mix(in srgb, white 34%, transparent), transparent 32%),
+    radial-gradient(circle, color-mix(in srgb, var(--seconds-result-tone) 34%, transparent), transparent 68%);
+  content: '';
+  height: 210px;
+  pointer-events: none;
+  position: absolute;
+  right: -64px;
+  top: -108px;
+  width: 210px;
+}
+
+.seconds-settlement-card::after {
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--seconds-result-tone) 8%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--seconds-result-tone) 8%, transparent) 1px, transparent 1px);
+  background-size: 14px 14px;
+  content: '';
+  inset: 0;
+  -webkit-mask-image: linear-gradient(112deg, transparent 12%, black 72%, transparent);
+  mask-image: linear-gradient(112deg, transparent 12%, black 72%, transparent);
+  opacity: .72;
+  pointer-events: none;
+  position: absolute;
+}
+
+.seconds-settlement-card__panel {
+  -webkit-backdrop-filter: blur(24px) saturate(148%);
+  backdrop-filter: blur(24px) saturate(148%);
+  background:
+    linear-gradient(142deg, color-mix(in srgb, white 10%, transparent), transparent 44%),
+    color-mix(in srgb, var(--seconds-result-surface-elevated) 88%, transparent);
+  border: 1px solid color-mix(in srgb, white 25%, var(--seconds-result-line));
+  border-radius: 24px;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 36%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, var(--seconds-result-tone) 12%, transparent);
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 13px;
+  position: relative;
+  z-index: 1;
+}
+
+.seconds-settlement-card__header {
+  align-items: center;
+  display: grid;
+  gap: 11px;
+  grid-template-columns: 48px minmax(0, 1fr) 44px;
+  min-width: 0;
+}
+
+.seconds-settlement-card__icon {
+  align-items: center;
+  background:
+    radial-gradient(circle at 30% 22%, color-mix(in srgb, white 48%, transparent), transparent 36%),
+    linear-gradient(145deg, color-mix(in srgb, var(--seconds-result-tone-soft) 92%, white), color-mix(in srgb, var(--seconds-result-tone) 18%, var(--seconds-result-surface-elevated)));
+  border: 1px solid color-mix(in srgb, var(--seconds-result-tone) 32%, transparent);
+  border-radius: 17px;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 58%, transparent),
+    0 9px 22px color-mix(in srgb, var(--seconds-result-tone) 14%, transparent);
+  color: var(--seconds-result-tone);
+  display: inline-flex;
+  height: 48px;
+  justify-content: center;
+  width: 48px;
+}
+
+.seconds-settlement-card__header > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.seconds-settlement-card__header small {
+  color: var(--seconds-result-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  line-height: 15px;
+  text-transform: uppercase;
+}
+
+.seconds-settlement-card__header strong {
+  color: var(--seconds-result-ink);
+  font-size: 18px;
+  line-height: 25px;
+  overflow-wrap: anywhere;
+}
+
+.seconds-settlement-card__close {
+  align-items: center;
+  align-self: start;
+  background: color-mix(in srgb, var(--seconds-result-surface-elevated) 76%, transparent);
+  border: 1px solid color-mix(in srgb, var(--seconds-result-tone) 18%, var(--seconds-result-line));
+  border-radius: 50%;
+  color: var(--seconds-result-ink);
+  display: inline-flex;
+  height: 44px;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0;
+  width: 44px;
+}
+
+.seconds-settlement-card__amount {
+  align-items: baseline;
+  border-block: 1px solid color-mix(in srgb, var(--seconds-result-tone) 14%, var(--seconds-result-line));
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 10px 3px;
+}
+
+.seconds-settlement-card__amount strong {
+  color: var(--seconds-result-tone);
+  font-size: clamp(28px, 8vw, 36px);
+  letter-spacing: -.025em;
+  line-height: 1.05;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.seconds-settlement-card__amount span {
+  color: var(--seconds-result-muted);
+  font-size: 10px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.seconds-settlement-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 0;
+}
+
+.seconds-settlement-card__meta span {
+  align-items: center;
+  background: color-mix(in srgb, var(--seconds-result-tone-soft) 58%, transparent);
+  border: 1px solid color-mix(in srgb, var(--seconds-result-tone) 14%, var(--seconds-result-line));
+  border-radius: 999px;
+  color: var(--seconds-result-ink);
+  display: inline-flex;
+  font-size: 10px;
+  gap: 5px;
+  line-height: 16px;
+  max-width: 100%;
+  min-height: 28px;
+  overflow-wrap: anywhere;
+  padding: 5px 9px;
+}
+
+.seconds-settlement-card__meta svg {
+  color: var(--seconds-result-tone);
+  flex: 0 0 auto;
+}
+
+.seconds-settlement-card__remaining {
+  color: var(--seconds-result-tone);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  margin: -2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.seconds-settlement-card__actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+}
+
+.seconds-settlement-card__actions button {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 15px;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 750;
+  gap: 7px;
+  justify-content: center;
+  line-height: 16px;
+  min-height: 44px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 7px 10px;
+}
+
+.seconds-settlement-card__actions button.is-secondary {
+  background: color-mix(in srgb, var(--seconds-result-surface-elevated) 78%, transparent);
+  border-color: color-mix(in srgb, var(--seconds-result-tone) 18%, var(--seconds-result-line));
+  color: var(--seconds-result-ink);
+}
+
+.seconds-settlement-card__actions button.is-primary {
+  background: var(--seconds-result-tone);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--seconds-result-tone) 20%, transparent);
+  color: var(--seconds-result-on-accent);
+}
+
+.seconds-settlement-card__close:focus-visible,
+.seconds-settlement-card__actions button:focus-visible {
+  box-shadow:
+    0 0 0 3px var(--seconds-result-focus-ring),
+    inset 0 0 0 2px var(--seconds-result-focus);
+  outline: 0;
+}
+
+.seconds-result-reveal-enter-active,
+.seconds-result-reveal-leave-active {
+  transition:
+    filter .2s cubic-bezier(.32, .72, 0, 1),
+    opacity .2s cubic-bezier(.32, .72, 0, 1),
+    transform .24s cubic-bezier(.32, .72, 0, 1);
+}
+
+.seconds-result-reveal-enter-from,
+.seconds-result-reveal-leave-to {
+  filter: blur(8px);
+  opacity: 0;
+  transform: translate(-50%, -12px);
+}
+
 .seconds-mask {
   --page: var(--background);
   --surface-2: var(--soft);
@@ -1671,6 +2143,18 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 340px) {
+  .seconds-settlement-layer {
+    padding-inline: 8px;
+  }
+
+  .seconds-settlement-card__panel {
+    padding: 11px;
+  }
+
+  .seconds-settlement-card__actions {
+    grid-template-columns: 1fr;
+  }
+
   .seconds-market-board,
   .seconds-order-console {
     padding-inline: 16px;
@@ -1701,10 +2185,13 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) {
   .seconds-page *,
   .seconds-mask *,
+  .seconds-settlement-layer *,
   .seconds-page *::before,
   .seconds-mask *::before,
+  .seconds-settlement-layer *::before,
   .seconds-page *::after,
-  .seconds-mask *::after {
+  .seconds-mask *::after,
+  .seconds-settlement-layer *::after {
     animation-duration: .01ms !important;
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
@@ -1712,8 +2199,21 @@ onBeforeUnmount(() => {
   }
 
   .seconds-page button:active,
-  .seconds-mask button:active {
+  .seconds-mask button:active,
+  .seconds-settlement-layer button:active {
     transform: none;
+  }
+
+  .seconds-result-reveal-enter-active,
+  .seconds-result-reveal-leave-active {
+    transition: none !important;
+  }
+
+  .seconds-result-reveal-enter-from,
+  .seconds-result-reveal-leave-to {
+    filter: none;
+    opacity: 1;
+    transform: translateX(-50%);
   }
 
   .spin {

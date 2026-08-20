@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/margin-trading-actions.md","reason":"保持逐仓与全仓风险口径、服务端优先级和空值语义一致。"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"遵守移动端金融适配、错误降级和后端数据权威性约束。"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"保持 Pencil 杠杆持仓卡片和移动端主题边界，不影响无关壳层。"}
+{"file":".trellis/tasks/archive/2026-08/08-20-mobile-margin-risk-metrics-display/research/risk-metrics-data-flow.md","reason":"提供已审计的数据链路、根因和修复边界。"}

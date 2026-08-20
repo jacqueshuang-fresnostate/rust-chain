@@ -13,13 +13,13 @@ export function parseMarginOrderTypes(value: unknown): MarginOrderType[] {
   return [...new Set(normalized)]
 }
 
-/** Preserves a valid selection, otherwise prefers market and then the first real capability. */
+/** Preserves a valid selection, otherwise follows the Pencil default by preferring an advertised limit order. */
 export function preferredMarginOrderType(
   current: MarginOrderType | null | undefined,
   supported: readonly MarginOrderType[],
 ): MarginOrderType | null {
   if (current && supported.includes(current)) return current
-  if (supported.includes('market')) return 'market'
+  if (supported.includes('limit')) return 'limit'
   return supported[0] ?? null
 }
 

@@ -18,13 +18,15 @@ const sheetsSource = read('../src/components/ContractTradeSheets.vue')
 const tradeSource = read('../src/views/TradeView.vue')
 const ordersSource = read('../src/views/OrdersView.vue')
 
-test('杠杆订单类型只保留后端能力，失效时优先回落市价或首个真实能力', () => {
+test('杠杆订单类型只保留后端能力，失效时按 Pencil 默认优先回落限价或首个真实能力', () => {
   assert.deepEqual(parseMarginOrderTypes(undefined), [])
   assert.deepEqual(parseMarginOrderTypes([' LIMIT ', 'market', 'stop', 'limit']), ['limit', 'market'])
   assert.deepEqual(parseMarginOrderTypes('market, limit, trigger'), ['market', 'limit'])
 
-  assert.equal(preferredMarginOrderType(null, ['limit', 'market']), 'market')
+  assert.equal(preferredMarginOrderType(null, ['limit', 'market']), 'limit')
+  assert.equal(preferredMarginOrderType(null, ['market', 'limit']), 'limit')
   assert.equal(preferredMarginOrderType('limit', ['market', 'limit']), 'limit')
+  assert.equal(preferredMarginOrderType('market', ['market', 'limit']), 'market')
   assert.equal(preferredMarginOrderType('limit', ['market']), 'market')
   assert.equal(preferredMarginOrderType('market', ['limit']), 'limit')
   assert.equal(preferredMarginOrderType('market', []), null)
@@ -134,13 +136,23 @@ test('杠杆订单类型底部弹层只在显式选项时提交，关闭路径�
   assert.match(sheetsSource, /html\[data-theme='dark'\] \.contract-sheet/)
   assert.match(sheetsSource, /@media \(max-width: 340px\)/)
   assert.match(sheetsSource, /@media \(prefers-reduced-motion: no-preference\)/)
+
+  const openSheetFunction = tradeSource.slice(
+    tradeSource.indexOf('function openContractSheet'),
+    tradeSource.indexOf('function selectContractOrderType'),
+  )
+  assert.match(openSheetFunction, /sheet === 'orderType'[\s\S]*?contractSheet\.value = sheet[\s\S]*?return[\s\S]*?if \(!session\.isAuthenticated\)/)
+  assert.ok(
+    openSheetFunction.indexOf("sheet === 'orderType'") < openSheetFunction.indexOf('!session.isAuthenticated'),
+    '订单类型选择应在访客态公开，认证只约束需要持久化的倍数和保证金模式',
+  )
 })
 
 test('杠杆 API 按冻结类型组装请求，市价不带 price，限价才带 price', () => {
   assert.match(apiSource, /order_type: input\.orderType/)
   assert.match(apiSource, /if \(input\.orderType === 'limit'\) \{[\s\S]*?payload\.price = price/)
   assert.doesNotMatch(apiSource, /order_type: 'market'/)
-  assert.match(apiSource, /entryPrice: optionalNumber\(position\.entry_price\)/)
+  assert.match(apiSource, /entryPrice: parseMarginRiskNumber\(position\.entry_price\)/)
   assert.match(apiSource, /limitPrice: optionalDecimalString\(position\.limit_price\)/)
   assert.match(tradeSource, /:readonly="contractOrderType !== 'limit'"/)
   assert.match(tradeSource, /:aria-errormessage="contractOrderType === 'limit'[\s\S]*?contract-limit-price-error/)

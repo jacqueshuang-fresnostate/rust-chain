@@ -27,6 +27,7 @@ import {
   resolveReverseSwapPair,
   resolveSelectedSwapPair,
   resolveSwapPickerPair,
+  swapPairSelectionKey,
 } from '@/core/swapAssetLogos'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
@@ -38,7 +39,7 @@ const { t } = useI18n()
 const pairs = ref<ConvertPair[]>([])
 const accounts = ref<WalletAccount[]>([])
 const orders = ref<ConvertOrder[]>([])
-const pairId = ref(0)
+const pairSelectionKey = ref('')
 const amount = ref('')
 const quote = ref<ConvertQuote | null>(null)
 const loading = ref(false)
@@ -57,7 +58,7 @@ const historySection = ref<HTMLElement | null>(null)
 const { trapFocus: trapReviewFocus } = useModalDialog(reviewOpen, reviewDialog, '[data-dialog-cancel]')
 const { trapFocus: trapPickerFocus } = useModalDialog(pickerOpen, pickerDialog, '[data-picker-search]')
 
-const selectedPair = computed(() => resolveSelectedSwapPair(pairs.value, pairId.value))
+const selectedPair = computed(() => resolveSelectedSwapPair(pairs.value, pairSelectionKey.value))
 const availableBySymbol = computed(() => buildSwapAvailableBalanceMap(accounts.value))
 const availableBalance = (symbol: string): number => availableBySymbol.value.get(symbol.trim().toUpperCase()) || 0
 const available = computed(() => selectedPair.value ? availableBalance(selectedPair.value.fromAssetSymbol) : 0)
@@ -84,8 +85,10 @@ async function load(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    pairs.value = await fetchConvertPairs()
-    pairId.value = pairs.value[0]?.id || 0
+    const nextPairs = await fetchConvertPairs()
+    const nextSelectedPair = resolveSelectedSwapPair(nextPairs, pairSelectionKey.value)
+    pairs.value = nextPairs
+    pairSelectionKey.value = nextSelectedPair ? swapPairSelectionKey(nextSelectedPair) : ''
     if (session.isAuthenticated) {
       const [wallets, history] = await Promise.all([fetchWalletAccounts(), fetchConvertOrders()])
       accounts.value = wallets
@@ -102,8 +105,10 @@ function swapDirection(): void {
   const pair = selectedPair.value
   if (!pair) return
   const reversed = resolveReverseSwapPair(pairs.value, pair)
-  if (reversed) pairId.value = reversed.id
+  if (reversed) pairSelectionKey.value = swapPairSelectionKey(reversed)
   quote.value = null
+  error.value = ''
+  success.value = ''
 }
 
 function useMaximum(): void {
@@ -125,8 +130,10 @@ function closePicker(): void {
 function selectPickerAsset(symbol: string): void {
   const pair = resolveSwapPickerPair(pairs.value, pickerSide.value, symbol, selectedPair.value)
   if (!pair) return
-  pairId.value = pair.id
+  pairSelectionKey.value = swapPairSelectionKey(pair)
   quote.value = null
+  error.value = ''
+  success.value = ''
   closePicker()
 }
 

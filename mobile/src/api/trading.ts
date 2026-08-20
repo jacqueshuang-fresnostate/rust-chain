@@ -3,6 +3,7 @@ import { client, requestUrl } from './client'
 import { asNumber, normalizeSymbol, splitSymbol } from '@/core/format'
 import { mapMarginProductMarginLimits } from '@/core/tradeForm'
 import { parseMarginOrderTypes } from '@/core/marginOrder'
+import { parseMarginRiskNumber } from '@/core/marginRiskMetrics'
 import type { MarginOrderType, MarginProduct, WalletAccount } from '@/core/types'
 
 export interface SpotOrderInput {
@@ -115,7 +116,7 @@ export interface MarginPositionRisk {
   interestAmount: number
   entryPrice: number
   markPrice: number
-  maintenanceMarginRate: number
+  maintenanceMarginRate: number | null
   unrealizedPnl: number
   equity: number
   maintenanceMargin: number
@@ -221,7 +222,7 @@ export async function fetchMarginProducts(): Promise<MarginProduct[]> {
       maxLeverage: asNumber(product.max_leverage, levels.at(-1) || 1),
       minMargin: marginLimits.minMargin,
       maxMargin: marginLimits.maxMargin,
-      maintenanceMarginRate: asNumber(product.maintenance_margin_rate),
+      maintenanceMarginRate: parseMarginRiskNumber(product.maintenance_margin_rate),
       hourlyInterestRate: asNumber(product.hourly_interest_rate),
       takeProfitStopLossSupported: response.data.capabilities?.take_profit_stop_loss === true,
       strategyOrdersSupported: response.data.capabilities?.strategy_orders === true,
@@ -311,14 +312,14 @@ export async function fetchMarginPositionRisk(positionId: string): Promise<Margi
     interestAmount: asNumber(risk.interest_amount),
     entryPrice: asNumber(risk.entry_price),
     markPrice: asNumber(risk.mark_price),
-    maintenanceMarginRate: asNumber(risk.maintenance_margin_rate),
+    maintenanceMarginRate: parseMarginRiskNumber(risk.maintenance_margin_rate),
     unrealizedPnl: asNumber(risk.unrealized_pnl ?? risk.realized_pnl),
     equity: asNumber(risk.equity),
     maintenanceMargin: asNumber(risk.maintenance_margin),
     positionQuantity: asNumber(risk.position_quantity),
     returnRate: optionalNumber(risk.return_rate),
     marginRatio: optionalNumber(risk.margin_ratio),
-    estimatedLiquidationPrice: optionalNumber(risk.estimated_liquidation_price),
+    estimatedLiquidationPrice: parseMarginRiskNumber(risk.estimated_liquidation_price),
     liquidationDistanceRate: optionalNumber(risk.liquidation_distance_rate),
     shouldLiquidate: risk.should_liquidate === true,
     observedAt: normalizeTimestamp(risk.observed_at),
@@ -425,15 +426,15 @@ function mapMarginPosition(position: Record<string, unknown>): MarginPosition {
     marginAssetId: asNumber(position.margin_asset),
     direction: String(position.direction || '').toLowerCase() === 'short' ? 'short' : 'long',
     marginMode: String(position.margin_mode || 'isolated').toLowerCase() === 'cross' ? 'cross' : 'isolated',
-    marginAmount: asNumber(position.margin_amount),
-    notionalAmount: asNumber(position.notional_amount),
+    marginAmount: requiredMarginRiskNumber(position.margin_amount),
+    notionalAmount: requiredMarginRiskNumber(position.notional_amount),
     borrowedAmount: asNumber(position.borrowed_amount),
     leverage: asNumber(position.leverage, 1),
     orderType: String(position.order_type || '').trim().toLowerCase() === 'limit' ? 'limit' : 'market',
-    entryPrice: optionalNumber(position.entry_price),
+    entryPrice: parseMarginRiskNumber(position.entry_price),
     limitPrice: optionalDecimalString(position.limit_price),
     realizedPnl: asNumber(position.realized_pnl),
-    interestAmount: asNumber(position.interest_amount),
+    interestAmount: requiredMarginRiskNumber(position.interest_amount),
     status: String(position.status || 'open'),
   }
 }
@@ -456,6 +457,11 @@ function optionalNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null
   const parsed = asNumber(value, Number.NaN)
   return Number.isFinite(parsed) ? parsed : null
+}
+
+function requiredMarginRiskNumber(value: unknown): number {
+  // 必填回退参数异常时保留非有限哨兵，交由展示公式拒绝，不能静默制造为零。
+  return parseMarginRiskNumber(value) ?? Number.NaN
 }
 
 function optionalDecimalString(value: unknown): string | null {

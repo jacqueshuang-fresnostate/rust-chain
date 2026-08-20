@@ -1,0 +1,5 @@
+{"file":".trellis/tasks/archive/2026-08/08-20-mobile-seconds-history-pnl/prd.md","reason":"逐项核对赢单、输单、取消和未知结果的展示验收标准。"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"复核盈亏只从订单快照派生且不混淆总派彩和净收益。"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"复核语义色、完整宽度盈亏区和窄屏无溢出。"}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"复核中英文键对称且模板无硬编码中文。"}
+{"file":".trellis/tasks/archive/2026-08/08-20-mobile-seconds-history-pnl/research/data-flow.md","reason":"复核数据边界、未知状态和只读展示约束。"}
