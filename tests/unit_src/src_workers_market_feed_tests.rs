@@ -1,10 +1,12 @@
 use super::*;
+use futures_util::stream;
 use secrecy::SecretString;
 use std::sync::{
     Arc, Mutex as StdMutex,
     atomic::{AtomicUsize, Ordering},
 };
 use tokio::sync::{Notify, oneshot};
+use tokio::time::Instant;
 
 fn test_settings() -> Settings {
     Settings {
@@ -236,4 +238,81 @@ async fn provider_task_supervisor_records_the_first_finished_provider_failure() 
             error,
         } if error.contains("provider panic")
     ));
+}
+
+#[test]
+fn bitget_liveness_uses_text_heartbeat_and_accepts_plain_control_frames() {
+    assert_eq!(
+        market_feed_heartbeat_message(MarketFeedProvider::Bitget),
+        Some(Message::Text("ping".to_owned()))
+    );
+    assert_eq!(market_feed_heartbeat_message(MarketFeedProvider::Htx), None);
+    assert_eq!(
+        market_feed_heartbeat_message(MarketFeedProvider::Coinbase),
+        None
+    );
+    assert_eq!(
+        market_feed_text_action(MarketFeedProvider::Bitget, "pong").unwrap(),
+        MarketFeedTextAction::Ignore
+    );
+    assert_eq!(
+        market_feed_text_action(MarketFeedProvider::Bitget, " ping ").unwrap(),
+        MarketFeedTextAction::Reply("pong".to_owned())
+    );
+}
+
+#[tokio::test]
+async fn provider_liveness_refreshes_on_inbound_activity_and_times_out_a_silent_socket() {
+    let start = Instant::now();
+    let mut refreshed = MarketFeedSocketLiveness::new_for_tests(
+        MarketFeedProvider::Htx,
+        start,
+        None,
+        Duration::from_secs(75),
+    );
+    assert_eq!(refreshed.idle_deadline(), start + Duration::from_secs(75));
+    refreshed.record_inbound_at(start + Duration::from_secs(20));
+    assert_eq!(refreshed.idle_deadline(), start + Duration::from_secs(95));
+
+    let mut silent = MarketFeedSocketLiveness::new_for_tests(
+        MarketFeedProvider::Htx,
+        Instant::now(),
+        None,
+        Duration::from_millis(5),
+    );
+    let mut reader = stream::pending::<Result<Message, tungstenite::Error>>();
+    let event = tokio::time::timeout(Duration::from_millis(250), silent.wait_next(&mut reader))
+        .await
+        .expect("silent websocket should hit the bounded idle deadline");
+    assert!(matches!(event, MarketFeedSocketEvent::IdleTimeout));
+}
+
+#[tokio::test]
+async fn bitget_liveness_emits_a_heartbeat_before_the_idle_deadline() {
+    let mut liveness = MarketFeedSocketLiveness::new_for_tests(
+        MarketFeedProvider::Bitget,
+        Instant::now(),
+        Some(Duration::from_millis(5)),
+        Duration::from_millis(100),
+    );
+    let mut reader = stream::pending::<Result<Message, tungstenite::Error>>();
+    let event = tokio::time::timeout(Duration::from_millis(250), liveness.wait_next(&mut reader))
+        .await
+        .expect("Bitget heartbeat should be scheduled before the idle timeout");
+    assert!(matches!(event, MarketFeedSocketEvent::HeartbeatDue));
+}
+
+#[tokio::test]
+async fn due_bitget_heartbeat_wins_when_a_market_frame_is_already_ready() {
+    let mut liveness = MarketFeedSocketLiveness::new_for_tests(
+        MarketFeedProvider::Bitget,
+        Instant::now(),
+        Some(Duration::from_millis(5)),
+        Duration::from_millis(100),
+    );
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    let mut busy_reader = stream::iter([Ok(Message::Pong(Vec::new()))])
+        .chain(stream::pending::<Result<Message, tungstenite::Error>>());
+    let event = liveness.wait_next(&mut busy_reader).await;
+    assert!(matches!(event, MarketFeedSocketEvent::HeartbeatDue));
 }

@@ -4,12 +4,14 @@ import {
   tickerSubscriptionFrame,
   tickerUnsubscriptionFrame,
 } from './marketSocketProtocol.ts'
+import { createInboundSilenceWatchdog } from './webSocketLiveness.ts'
 
 const SOCKET_CONNECTING = 0
 const SOCKET_OPEN = 1
 const RECONNECT_BASE_MS = 1_000
 const RECONNECT_MAX_MS = 30_000
 const HEARTBEAT_MS = 25_000
+const INBOUND_IDLE_TIMEOUT_MS = 65_000
 
 export interface TickerUpdate {
   symbol: string
@@ -54,6 +56,7 @@ export interface MarketTickerStreamOptions {
   reconnectBaseMs?: number
   reconnectMaxMs?: number
   heartbeatMs?: number
+  inboundIdleTimeoutMs?: number
 }
 
 export interface MarketTickerStream {
@@ -86,6 +89,11 @@ export function createMarketTickerStream(options: MarketTickerStreamOptions): Ma
     positiveDelay(options.reconnectMaxMs, RECONNECT_MAX_MS),
   )
   const heartbeatMs = positiveDelay(options.heartbeatMs, HEARTBEAT_MS)
+  const inboundIdleTimeoutMs = positiveDelay(
+    options.inboundIdleTimeoutMs,
+    INBOUND_IDLE_TIMEOUT_MS,
+  )
+  const inboundWatchdog = createInboundSilenceWatchdog(scheduler, inboundIdleTimeoutMs)
   const subscriptions = new Set<TickerSubscription>()
   const socketSymbols = new Set<string>()
   let socket: TickerSocket | null = null
@@ -116,6 +124,7 @@ export function createMarketTickerStream(options: MarketTickerStreamOptions): Ma
   const closeCurrentSocket = (): void => {
     clearReconnect()
     clearHeartbeat()
+    inboundWatchdog.clear()
     socketSymbols.clear()
     reconnectAttempt = 0
     const current = socket
@@ -183,6 +192,7 @@ export function createMarketTickerStream(options: MarketTickerStreamOptions): Ma
       socket = null
       socketSymbols.clear()
       clearHeartbeat()
+      inboundWatchdog.clear()
       if (closeSocket) {
         try {
           next.close()
@@ -209,6 +219,7 @@ export function createMarketTickerStream(options: MarketTickerStreamOptions): Ma
         disconnect(true)
         return
       }
+      inboundWatchdog.arm(() => disconnect(true))
       heartbeatTimer = scheduler.setInterval(() => {
         if (socket !== next || disconnected || next.readyState !== SOCKET_OPEN) return
         try {
@@ -221,6 +232,7 @@ export function createMarketTickerStream(options: MarketTickerStreamOptions): Ma
 
     next.addEventListener('message', (event) => {
       if (socket !== next || disconnected) return
+      inboundWatchdog.arm(() => disconnect(true))
       const frame = parseMarketSocketFrame(event.data)
       if (!frame || frame.type !== 'ticker') return
       const update: TickerUpdate = {
@@ -263,6 +275,7 @@ export function createMarketTickerStream(options: MarketTickerStreamOptions): Ma
       socket = null
       socketSymbols.clear()
       clearHeartbeat()
+      inboundWatchdog.clear()
       try {
         failedSocket.close()
       } catch {
@@ -285,6 +298,7 @@ export function createMarketTickerStream(options: MarketTickerStreamOptions): Ma
         socket = null
         socketSymbols.clear()
         clearHeartbeat()
+        inboundWatchdog.clear()
         try {
           failedSocket.close()
         } catch {

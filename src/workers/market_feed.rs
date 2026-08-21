@@ -19,17 +19,32 @@ use crate::{
     state::AppState,
 };
 use flate2::read::GzDecoder;
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{future::Future, io::Read, pin::Pin, sync::Arc};
+use std::{
+    future::{Future, pending},
+    io::Read,
+    pin::Pin,
+    sync::Arc,
+};
 use tokio::{
     sync::RwLock,
     task::JoinHandle,
-    time::{Duration, sleep},
+    time::{
+        Duration, Instant, Interval, MissedTickBehavior, interval_at, sleep, sleep_until, timeout,
+    },
 };
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::{self, Message},
+};
 use tracing::{error, info, warn};
+
+const BITGET_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(25);
+const MARKET_FEED_INBOUND_IDLE_TIMEOUT: Duration = Duration::from_secs(75);
+const MARKET_FEED_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const MARKET_FEED_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarketFeedRuntimeConfig {
@@ -304,6 +319,131 @@ pub enum MarketFeedSupervisorEvent {
     },
 }
 
+#[derive(Debug)]
+enum MarketFeedSocketEvent {
+    Message(Option<Result<Message, tungstenite::Error>>),
+    HeartbeatDue,
+    IdleTimeout,
+}
+
+struct MarketFeedSocketLiveness {
+    provider: MarketFeedProvider,
+    idle_timeout: Duration,
+    idle_deadline: Instant,
+    heartbeat: Option<Interval>,
+}
+
+impl MarketFeedSocketLiveness {
+    /// 按供应商协议创建连接活性状态：Bitget 主动发文本心跳，HTX 与 Coinbase 依赖服务端活性帧，三者共用入站静默上限。
+    /// 构造只建立本地定时状态，不发送报文；首个心跳从完整周期后开始，避免刚完成订阅就额外占用供应商消息限额。
+    fn new(provider: MarketFeedProvider) -> Self {
+        Self::new_with_timing(
+            provider,
+            Instant::now(),
+            market_feed_heartbeat_interval(provider),
+            MARKET_FEED_INBOUND_IDLE_TIMEOUT,
+        )
+    }
+
+    /// 允许单元测试注入起点、心跳周期和静默上限，验证截止时间迁移而不等待生产级 75 秒。
+    /// 该入口仅在测试构建可见，不改变生产协议常量，也不会生成网络副作用。
+    #[cfg(test)]
+    fn new_for_tests(
+        provider: MarketFeedProvider,
+        started_at: Instant,
+        heartbeat_interval: Option<Duration>,
+        idle_timeout: Duration,
+    ) -> Self {
+        Self::new_with_timing(provider, started_at, heartbeat_interval, idle_timeout)
+    }
+
+    /// 组装可轮询的心跳 interval 与入站截止时间；零周期被视为禁用，防止 tokio interval 因非法周期 panic。
+    /// interval 使用 Delay 策略，任务被调度延迟后只补一次心跳，不会突发补发多条报文触发供应商限流。
+    fn new_with_timing(
+        provider: MarketFeedProvider,
+        started_at: Instant,
+        heartbeat_interval: Option<Duration>,
+        idle_timeout: Duration,
+    ) -> Self {
+        let heartbeat = heartbeat_interval
+            .filter(|interval| !interval.is_zero())
+            .map(|interval| {
+                let mut timer = interval_at(started_at + interval, interval);
+                timer.set_missed_tick_behavior(MissedTickBehavior::Delay);
+                timer
+            });
+        Self {
+            provider,
+            idle_timeout,
+            idle_deadline: started_at + idle_timeout,
+            heartbeat,
+        }
+    }
+
+    /// 返回当前入站静默截止点，仅用于核对活性状态；读取不会延长连接寿命或消费心跳 tick。
+    #[cfg(test)]
+    fn idle_deadline(&self) -> Instant {
+        self.idle_deadline
+    }
+
+    /// 用当前单调时钟记录任意入站帧，行情、确认、ping、pong 与关闭帧都能证明此前链路仍可读。
+    /// 本方法只延后静默截止点，不改变主动心跳节奏，避免高频行情让 Bitget 永远收不到客户端 ping。
+    fn record_inbound(&mut self) {
+        self.record_inbound_at(Instant::now());
+    }
+
+    /// 从指定单调时刻重算静默截止点，供生产入口和确定性测试共用；不接受墙上时钟，避免系统校时导致误判。
+    fn record_inbound_at(&mut self, observed_at: Instant) {
+        self.idle_deadline = observed_at + self.idle_timeout;
+    }
+
+    /// 同时等待下一条上游消息、供应商主动心跳时刻或入站静默截止点。
+    /// biased 顺序让到期心跳不会被持续可读的高频行情饿死，随后仍优先消费已到达帧再判断静默截止，避免边界误重连。
+    async fn wait_next<S>(&mut self, reader: &mut S) -> MarketFeedSocketEvent
+    where
+        S: Stream<Item = Result<Message, tungstenite::Error>> + Unpin,
+    {
+        let idle_deadline = self.idle_deadline;
+        tokio::select! {
+            biased;
+            _ = wait_for_market_feed_heartbeat(&mut self.heartbeat) => {
+                MarketFeedSocketEvent::HeartbeatDue
+            }
+            message = reader.next() => MarketFeedSocketEvent::Message(message),
+            _ = sleep_until(idle_deadline) => MarketFeedSocketEvent::IdleTimeout,
+        }
+    }
+}
+
+/// 返回供应商主动心跳周期；Bitget 官方要求客户端定时发送文本 ping，HTX 和 Coinbase 已提供服务端活性帧。
+/// `None` 表示不额外发送应用层心跳，但连接仍受统一入站静默上限保护。
+fn market_feed_heartbeat_interval(provider: MarketFeedProvider) -> Option<Duration> {
+    match provider {
+        MarketFeedProvider::Bitget => Some(BITGET_HEARTBEAT_INTERVAL),
+        MarketFeedProvider::Htx | MarketFeedProvider::Coinbase => None,
+    }
+}
+
+/// 生成供应商主动心跳报文；Bitget 协议要求纯文本 `ping`，其他供应商不在客户端主动发送应用层心跳。
+/// 返回值与 `market_feed_heartbeat_interval` 成对维护，调用方只在周期到期且存在报文时写入连接。
+fn market_feed_heartbeat_message(provider: MarketFeedProvider) -> Option<Message> {
+    match provider {
+        MarketFeedProvider::Bitget => Some(Message::Text("ping".to_owned())),
+        MarketFeedProvider::Htx | MarketFeedProvider::Coinbase => None,
+    }
+}
+
+/// 等待可选心跳计时器的下一次 tick；未启用主动心跳时保持 pending，让消息与静默截止分支独占调度。
+/// 本函数不发送报文、不重置静默截止，也不补发因调度暂停错过的多次 tick。
+async fn wait_for_market_feed_heartbeat(heartbeat: &mut Option<Interval>) {
+    match heartbeat {
+        Some(heartbeat) => {
+            heartbeat.tick().await;
+        }
+        None => pending::<()>().await,
+    }
+}
+
 /// 将供应商 WebSocket 消息归一化为行情帧、协议回复、忽略或关闭动作。
 /// HTX gzip 二进制在此解压，ping 必须回应；无法识别或错误确认帧不得进入价格缓存。
 /// 协议层 Ping 一律回 Pong 并带回原载荷，Pong 直接忽略，Close 转为关闭动作让调用方结束本轮读循环。
@@ -368,12 +508,21 @@ fn market_feed_binary_payload_text(
 
 /// 解析供应商文本帧并区分心跳/订阅确认与真实行情数据；错误确认直接失败，未知频道只忽略。
 /// 返回的行情帧仍需经过 provider adapter 严格解析后才能成为权威价格输入。
-/// JSON 无法解析直接返回校验错误；带 `ping` 字段的应用层心跳在此原值回 `pong`，不再进入频道判定。
+/// Bitget 纯文本 ping/pong 在 JSON 前处理；其余非法 JSON 返回校验错误，带 `ping` 字段的心跳原值回 `pong`。
 /// 只带 `event` 或 `op` 而没有 `data` 的控制帧一律忽略，避免把订阅回执当成行情写进缓存。
 pub fn market_feed_text_action(
     provider: MarketFeedProvider,
     payload: &str,
 ) -> AppResult<MarketFeedTextAction> {
+    let payload = payload.trim();
+    if provider == MarketFeedProvider::Bitget {
+        if payload.eq_ignore_ascii_case("pong") {
+            return Ok(MarketFeedTextAction::Ignore);
+        }
+        if payload.eq_ignore_ascii_case("ping") {
+            return Ok(MarketFeedTextAction::Reply("pong".to_owned()));
+        }
+    }
     let value: Value = serde_json::from_str(payload).map_err(|error| {
         crate::error::AppError::Validation(format!("invalid market feed websocket json: {error}"))
     })?;
@@ -867,34 +1016,72 @@ fn emit_market_feed_supervisor_event(event: MarketFeedSupervisorEvent) {
     }
 }
 
-/// 执行一次完整的供应商 WebSocket 周期：建立连接、逐条发送订阅消息，然后持续读取并归一化消息。
+/// 在统一写超时内发送订阅、心跳或协议回复；超时和 sink 错误都结束当前周期，让外层 REST 兜底与退避重连接管。
+/// 已发送成功的前序报文不会回滚，错误文本只包含操作类型，不记录订阅载荷或潜在凭据。
+async fn send_market_feed_socket_message<S>(
+    writer: &mut S,
+    message: Message,
+    operation: &'static str,
+) -> AppResult<()>
+where
+    S: Sink<Message, Error = tungstenite::Error> + Unpin,
+{
+    timeout(MARKET_FEED_WRITE_TIMEOUT, writer.send(message))
+        .await
+        .map_err(|_| {
+            crate::error::AppError::Internal(format!("market feed websocket {operation} timed out"))
+        })?
+        .map_err(|error| {
+            crate::error::AppError::Internal(format!(
+                "market feed websocket {operation} failed: {error}"
+            ))
+        })
+}
+
+/// 执行一次完整的供应商 WebSocket 周期：在连接超时内建连、逐条发送订阅消息，然后并行等待消息、心跳与静默截止。
 /// 行情帧交给 ingestion 落库并广播，单帧写入失败只累加失败计数并告警，不中断本次连接。
-/// 协议要求的回复原样写回连接，回写失败按内部错误终止周期；收到关闭帧或读到流末尾则退出读循环。
-/// 周期结束前校验不能只收到失败帧且零写入，纯失败的周期按校验错误返回，交由外层退避后重连。
-/// 连接、订阅与读取失败一律包成内部错误；已经完成的 Redis、Mongo 写入和广播不会因此回滚。
+/// Bitget 每 25 秒发送纯文本 ping；任意入站帧刷新 75 秒静默截止，超时、写失败、关闭或读错误都会结束本轮。
+/// 周期结束前校验不能只收到失败帧且零写入；已经完成的 Redis、Mongo 写入和广播不会因重连而回滚。
 async fn run_provider_once(state: AppState, config: MarketFeedConfig) -> AppResult<()> {
     let worker = MarketFeedWorker::<MarketIngestionService>::from_state(&state)?;
-    let (socket, _) = connect_async(config.url()).await.map_err(|error| {
+    let connection = timeout(MARKET_FEED_CONNECT_TIMEOUT, connect_async(config.url()))
+        .await
+        .map_err(|_| {
+            crate::error::AppError::Internal("market feed websocket connect timed out".to_owned())
+        })?;
+    let (socket, _) = connection.map_err(|error| {
         crate::error::AppError::Internal(format!("market feed websocket connect failed: {error}"))
     })?;
     let (mut writer, mut reader) = socket.split();
     for message in config.subscription_messages() {
-        writer
-            .send(Message::Text(message.clone()))
-            .await
-            .map_err(|error| {
-                crate::error::AppError::Internal(format!("market feed subscribe failed: {error}"))
-            })?;
+        send_market_feed_socket_message(&mut writer, Message::Text(message.clone()), "subscribe")
+            .await?;
     }
     let provider = config.provider();
+    let mut liveness = MarketFeedSocketLiveness::new(provider);
     let mut summary = MarketFeedSummary::default();
     loop {
-        let Some(message) = reader.next().await else {
-            break;
+        let message = match liveness.wait_next(&mut reader).await {
+            MarketFeedSocketEvent::Message(Some(message)) => message.map_err(|error| {
+                crate::error::AppError::Internal(format!(
+                    "market feed websocket read failed: {error}"
+                ))
+            })?,
+            MarketFeedSocketEvent::Message(None) => break,
+            MarketFeedSocketEvent::HeartbeatDue => {
+                if let Some(message) = market_feed_heartbeat_message(liveness.provider) {
+                    send_market_feed_socket_message(&mut writer, message, "heartbeat").await?;
+                }
+                continue;
+            }
+            MarketFeedSocketEvent::IdleTimeout => {
+                return Err(crate::error::AppError::Internal(format!(
+                    "market feed websocket inbound idle timeout after {} seconds",
+                    liveness.idle_timeout.as_secs()
+                )));
+            }
         };
-        let message = message.map_err(|error| {
-            crate::error::AppError::Internal(format!("market feed websocket read failed: {error}"))
-        })?;
+        liveness.record_inbound();
         match market_feed_socket_action(provider, message)? {
             MarketFeedSocketAction::Frame(frame) => {
                 summary.received += 1;
@@ -911,11 +1098,7 @@ async fn run_provider_once(state: AppState, config: MarketFeedConfig) -> AppResu
                 }
             }
             MarketFeedSocketAction::Reply(reply) => {
-                writer.send(reply).await.map_err(|error| {
-                    crate::error::AppError::Internal(format!(
-                        "market feed websocket reply failed: {error}"
-                    ))
-                })?;
+                send_market_feed_socket_message(&mut writer, reply, "reply").await?;
             }
             MarketFeedSocketAction::Ignore => {}
             MarketFeedSocketAction::Close => break,

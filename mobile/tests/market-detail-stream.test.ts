@@ -85,6 +85,13 @@ class FakeScheduler {
     entry[1].callback()
   }
 
+  runTimeoutWithDelay(delay: number): void {
+    const entry = [...this.timeouts.entries()].find(([, timer]) => timer.delay === delay)
+    assert.ok(entry, `expected a pending ${delay}ms timeout`)
+    this.timeouts.delete(entry[0])
+    entry[1].callback()
+  }
+
   tickIntervals(): void {
     for (const timer of [...this.intervals.values()]) timer.callback()
   }
@@ -318,6 +325,43 @@ test('detail stream reconnect delay grows exponentially and remains bounded', ()
   }
   assert.deepEqual(delays, [100, 200, 250, 250])
   stop()
+})
+
+test('detail stream closes a silent open socket and restores depth, trade, and kline subscriptions', () => {
+  const sockets: FakeSocket[] = []
+  const scheduler = new FakeScheduler()
+  const stop = startMarketDetailStream({
+    symbol: 'BTCUSDT',
+    interval: '15m',
+    url: 'wss://example.test/api/v1/ws/public',
+    createSocket: () => {
+      const socket = new FakeSocket()
+      sockets.push(socket)
+      return socket
+    },
+    scheduler,
+    reconnectBaseMs: 5,
+    inboundIdleTimeoutMs: 65,
+    onDepth: () => undefined,
+    onTrade: () => undefined,
+    onKline: () => undefined,
+  })
+
+  sockets[0]?.emit('open')
+  scheduler.runTimeoutWithDelay(65)
+  assert.equal(sockets[0]?.closeCount, 1)
+  scheduler.runTimeoutWithDelay(5)
+  assert.equal(sockets.length, 2)
+  sockets[1]?.emit('open')
+  assert.deepEqual(sockets[1]?.sent.map((frame) => JSON.parse(frame)), [
+    { op: 'subscribe', channel: 'depth', symbol: 'BTCUSDT' },
+    { op: 'subscribe', channel: 'trade', symbol: 'BTCUSDT' },
+    { op: 'subscribe', channel: 'kline', symbol: 'BTCUSDT', interval: '15m' },
+  ])
+
+  stop()
+  assert.equal(scheduler.timeouts.size, 0)
+  assert.equal(scheduler.intervals.size, 0)
 })
 
 test('detail stream rejects unsupported intervals before opening a socket', () => {

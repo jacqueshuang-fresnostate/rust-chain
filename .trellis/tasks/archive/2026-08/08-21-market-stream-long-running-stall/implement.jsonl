@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/realtime-websockets.md","reason":"Backend public WebSocket heartbeat, reconnect, lossy broadcast, and REST reconciliation contracts."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Worker documentation, bounded failure handling, architecture, and validation requirements."}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Authoritative mobile market WebSocket lease, heartbeat, reconnection, and detail-session contracts."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Extend the two existing stream lifecycle implementations without duplicating page-level recovery logic."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Trace upstream provider, ingestion, backend broadcast, and mobile consumer boundaries end to end."}
+{"file":".trellis/tasks/archive/2026-08/08-21-market-stream-long-running-stall/research/market-stream-liveness.md","reason":"Root cause, official provider heartbeat requirements, timeout policy, and validation plan."}

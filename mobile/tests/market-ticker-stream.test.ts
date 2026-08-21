@@ -36,12 +36,12 @@ class FakeSocket implements TickerSocket {
 }
 
 class FakeScheduler implements TickerStreamScheduler {
-  readonly timeouts = new Map<object, () => void>()
+  readonly timeouts = new Map<object, { callback: () => void; delay: number }>()
   readonly intervals = new Map<object, () => void>()
 
-  setTimeout(callback: () => void): object {
+  setTimeout(callback: () => void, delay: number): object {
     const handle = {}
-    this.timeouts.set(handle, callback)
+    this.timeouts.set(handle, { callback, delay })
     return handle
   }
 
@@ -60,10 +60,19 @@ class FakeScheduler implements TickerStreamScheduler {
   }
 
   runNextTimeout(): void {
-    const entry = this.timeouts.entries().next().value as [object, () => void] | undefined
+    const entry = this.timeouts.entries().next().value as
+      | [object, { callback: () => void; delay: number }]
+      | undefined
     assert.ok(entry, 'expected a pending reconnect')
     this.timeouts.delete(entry[0])
-    entry[1]()
+    entry[1].callback()
+  }
+
+  runTimeoutWithDelay(delay: number): void {
+    const entry = [...this.timeouts.entries()].find(([, timer]) => timer.delay === delay)
+    assert.ok(entry, `expected a pending ${delay}ms timeout`)
+    this.timeouts.delete(entry[0])
+    entry[1].callback()
   }
 }
 
@@ -225,6 +234,47 @@ test('ticker stream forwards the complete backend 24h snapshot without recomputi
     observedAt: 1_786_480_001_000,
   }])
   stop()
+})
+
+test('ticker stream replaces a silent open socket, refreshes on pong, and restores every lease', () => {
+  const sockets: FakeSocket[] = []
+  const scheduler = new FakeScheduler()
+  const stream = createMarketTickerStream({
+    getUrl: () => 'wss://example.test/api/v1/ws/public',
+    createSocket: () => {
+      const socket = new FakeSocket()
+      sockets.push(socket)
+      return socket
+    },
+    scheduler,
+    reconnectBaseMs: 5,
+    inboundIdleTimeoutMs: 65,
+  })
+
+  const stopBtc = stream.subscribe(['BTCUSDT'], () => undefined)
+  const stopEth = stream.subscribe(['ETHUSDT'], () => undefined)
+  sockets[0]?.emit('open')
+  const staleWatchdog = [...scheduler.timeouts.values()].find((timer) => timer.delay === 65)
+  assert.ok(staleWatchdog)
+
+  sockets[0]?.emit('message', 'pong')
+  staleWatchdog.callback()
+  assert.equal(sockets[0]?.closeCount, 0, 'a superseded watchdog cannot close a live socket')
+
+  scheduler.runTimeoutWithDelay(65)
+  assert.equal(sockets[0]?.closeCount, 1)
+  scheduler.runTimeoutWithDelay(5)
+  assert.equal(sockets.length, 2)
+  sockets[1]?.emit('open')
+  assert.deepEqual(commands(sockets[1]), [
+    { op: 'subscribe', channel: 'ticker', symbol: 'BTCUSDT' },
+    { op: 'subscribe', channel: 'ticker', symbol: 'ETHUSDT' },
+  ])
+
+  stopBtc()
+  stopEth()
+  assert.equal(scheduler.timeouts.size, 0)
+  assert.equal(scheduler.intervals.size, 0)
 })
 
 function emitTicker(socket: FakeSocket | undefined, symbol: string, lastPrice: number): void {

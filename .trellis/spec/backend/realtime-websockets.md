@@ -232,3 +232,93 @@ if (event.type === 'margin.position.liquidated') {
   void reconcileMarginAccountFromRest()
 }
 ```
+
+## Scenario: Upstream Market Feed Liveness and Recovery
+
+### 1. Scope / Trigger
+
+- Trigger: a Bitget, HTX, or Coinbase market WebSocket can remain transport-open
+  while delivering no frames, so the provider reconnect loop would otherwise
+  wait forever and stop feeding Redis, Mongo, outbox, and public broadcasts.
+- Scope: `src/workers/market_feed.rs` provider connection lifecycle. It does
+  not change normalized market payloads or downstream subscription commands.
+
+### 2. Signatures
+
+- Bitget application heartbeat: text `ping` every 25 seconds; text `pong` is a
+  control frame.
+- All-provider inbound idle deadline: 75 seconds from the most recent inbound
+  WebSocket frame.
+- Connection establishment timeout: 15 seconds.
+- Subscription, heartbeat, and protocol-reply write timeout: 10 seconds.
+- Recovery owner: the existing provider REST fallback followed by bounded
+  exponential WebSocket reconnect.
+
+### 3. Contracts
+
+- Bitget must receive a client text heartbeat independently of market traffic.
+  Its plain text `ping`/`pong` frames are handled before JSON decoding.
+- Every inbound frame refreshes the idle deadline, including market data,
+  subscription acknowledgements, application/protocol ping/pong, and close.
+  Outbound heartbeats do not prove that the peer is readable and therefore do
+  not refresh the deadline.
+- HTX remains server-ping driven and Coinbase remains heartbeat-channel driven;
+  neither receives an extra application heartbeat, but both use the same idle
+  deadline to detect half-open transport.
+- An idle, connect, or write timeout ends only the current provider cycle. The
+  failure enters the existing REST fallback and provider-specific reconnect
+  loop; another provider continues independently.
+- Any Redis/Mongo write, outbox event, or public broadcast completed before the
+  failure remains committed and is never replayed or rolled back by liveness
+  recovery.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Bitget sends plain `pong` | Ignore as a valid control frame; do not JSON-decode it |
+| Bitget sends plain `ping` | Reply with plain `pong` within the bounded write path |
+| Any provider emits an inbound frame | Move the idle deadline to `now + 75s` |
+| No inbound frame for 75 seconds | Return an internal idle-timeout error and enter fallback/reconnect |
+| Connect does not settle in 15 seconds | End the cycle with a connect-timeout error |
+| Subscribe/heartbeat/reply write exceeds 10 seconds | End the cycle with an operation-specific write-timeout error |
+| One provider is idle or failing | Keep other provider tasks running |
+
+### 5. Good / Base / Bad Cases
+
+- Good: Bitget receives `ping`, answers `pong`, and the connection continues
+  even when an illiquid pair has no order-book or trade update.
+- Good: a proxy silently drops the upstream path without a close frame; after
+  75 seconds the provider cycle exits, REST refreshes the snapshot, and the
+  reconnect loop restores all configured subscriptions.
+- Base: HTX pings or Coinbase heartbeats arrive normally and merely refresh the
+  common idle deadline.
+- Bad: treat `WebSocketStream` presence or a successful outbound `send()` as
+  proof of peer liveness, or wait only for close/error before reconnecting.
+
+### 6. Tests Required
+
+- Unit-test Bitget heartbeat selection plus plain text ping/pong actions.
+- Unit-test that inbound activity deterministically moves the idle deadline.
+- Run a pending/silent stream with a short injected deadline and assert the
+  idle event wins; separately assert Bitget heartbeat wins before that deadline.
+- Make a Bitget heartbeat and market frame ready together and assert the due
+  heartbeat wins, preventing sustained high-frequency data from starving it.
+- Keep the provider reconnect-loop event/backoff tests and the complete
+  `market_feed_worker` integration suite green.
+
+### 7. Wrong vs Correct
+
+```rust
+// Wrong: a half-open socket can keep this future pending forever.
+while let Some(message) = reader.next().await {
+    ingest(message?).await?;
+}
+
+// Correct: transport reads compete with protocol heartbeat and an inbound deadline.
+match liveness.wait_next(&mut reader).await {
+    MarketFeedSocketEvent::Message(message) => handle(message).await?,
+    MarketFeedSocketEvent::HeartbeatDue => send_bitget_ping().await?,
+    MarketFeedSocketEvent::IdleTimeout => return Err(idle_timeout_error()),
+}
+```

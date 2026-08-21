@@ -1512,3 +1512,105 @@ privateStream.onEvent((event) => {
 })
 accountLifecycle.startPolling()
 ```
+
+## 16. Public Market Socket Silence Recovery Contract
+
+### 1. Scope / Trigger
+
+Apply this contract to the shared multi-symbol ticker stream and the dedicated
+market-detail depth/trade/K-line stream. Browser WebSockets can remain `OPEN`
+after a proxy, NAT, radio transition, or suspended PWA loses the actual data
+path, so close/error events alone are not a complete recovery signal.
+
+### 2. Signatures
+
+```ts
+interface MarketTickerStreamOptions {
+  heartbeatMs?: number
+  inboundIdleTimeoutMs?: number
+}
+
+interface MarketDetailStreamOptions {
+  heartbeatMs?: number
+  inboundIdleTimeoutMs?: number
+}
+```
+
+Defaults:
+
+```text
+client text ping interval = 25_000 ms
+inbound idle timeout = 65_000 ms
+reconnect delay = existing bounded exponential backoff
+```
+
+### 3. Contracts
+
+- Arm one inbound-silence watchdog only after the current socket opens and its
+  subscription commands are sent successfully.
+- Refresh the watchdog before parsing every inbound frame. Text/JSON pong,
+  subscription confirmation, backend error, unknown, malformed, and valid
+  market frames all prove that the transport remains readable; only valid
+  market frames may mutate business state.
+- Sending `ping` does not refresh the watchdog. If no frame returns before the
+  timeout, close the exact current socket, clear its heartbeat/render work,
+  schedule the existing reconnect, and resend the current authoritative
+  subscription set after open.
+- A re-armed watchdog invalidates already-queued callbacks through a generation
+  token. A stale timeout or an event from an old socket must not close, clear
+  timers for, or dispatch through a newer connection.
+- Releasing the final ticker lease and stopping a detail stream clear heartbeat,
+  watchdog, reconnect, and pending animation-frame work idempotently.
+- The watchdog is transport recovery only. It does not fabricate prices,
+  advance candles, merge a stale REST row, or alter ticker newest-observation
+  authority.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Current socket receives any frame | Re-arm the 65-second watchdog before protocol parsing |
+| Current socket stays `OPEN` but silent for 65 seconds | Close it and schedule bounded reconnect |
+| A valid pong arrives after a ping | Refresh liveness; mutate no ticker/depth/trade/K-line state |
+| Superseded watchdog callback runs late | Ignore it through generation mismatch |
+| Old socket emits message/close/error after replacement | Ignore it through current-socket identity checks |
+| Ticker reconnects with multiple active leases | Subscribe to the exact union of current normalized symbols |
+| Detail reconnects | Restore the selected depth/trade/K-line channels, symbol, and interval |
+| Final lease or stream stop | Leave no timeout, interval, reconnect, or render callback |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a mobile radio transition leaves the socket `OPEN` but silent; the
+  watchdog closes it, reconnects, and restores BTC and ETH ticker leases.
+- Good: an illiquid market returns only backend `pong` frames; transport stays
+  healthy without inventing a market update.
+- Base: normal ticker/depth/trade/K-line traffic continuously refreshes the
+  watchdog while existing render coalescing remains unchanged.
+- Bad: reset the deadline when sending `ping`, depend on `readyState === OPEN`,
+  or let page components implement independent reconnect timers.
+
+### 6. Tests Required
+
+- Ticker transport tests simulate an open silent socket, assert close/reconnect,
+  and assert every active lease is re-subscribed.
+- Ticker tests retain an old watchdog callback, receive pong, then prove the old
+  callback cannot close the refreshed socket.
+- Detail transport tests simulate the same silence and assert depth, trade, and
+  the selected K-line interval are all restored.
+- Existing close/error, exponential backoff, old-socket, stop, render coalescing,
+  REST race, and session-generation tests must remain green.
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong: send success does not prove that the peer or reverse path is alive.
+setInterval(() => socket.send('ping'), 25_000)
+
+// Correct: outbound heartbeat and inbound proof have independent timers.
+heartbeatTimer = setInterval(() => socket.send('ping'), 25_000)
+inboundWatchdog.arm(() => closeAndReconnectCurrentSocket())
+socket.addEventListener('message', (event) => {
+  inboundWatchdog.arm(() => closeAndReconnectCurrentSocket())
+  dispatchOnlyValidatedMarketFrame(event.data)
+})
+```

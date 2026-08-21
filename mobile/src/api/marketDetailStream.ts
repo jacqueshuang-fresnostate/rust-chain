@@ -9,12 +9,14 @@ import {
   parseMarketSocketFrame,
   tradeSubscriptionFrame,
 } from './marketSocketProtocol.ts'
+import { createInboundSilenceWatchdog } from './webSocketLiveness.ts'
 
 const SOCKET_CONNECTING = 0
 const SOCKET_OPEN = 1
 const RECONNECT_BASE_MS = 1_000
 const RECONNECT_MAX_MS = 30_000
 const HEARTBEAT_MS = 25_000
+const INBOUND_IDLE_TIMEOUT_MS = 65_000
 const DEFAULT_DETAIL_CHANNELS = ['depth', 'trade', 'kline'] as const
 
 export type MarketDetailStreamChannel = (typeof DEFAULT_DETAIL_CHANNELS)[number]
@@ -58,6 +60,7 @@ export interface MarketDetailStreamOptions {
   reconnectBaseMs?: number
   reconnectMaxMs?: number
   heartbeatMs?: number
+  inboundIdleTimeoutMs?: number
 }
 
 export interface MarketDetailStreamContext {
@@ -145,6 +148,11 @@ export function startMarketDetailStream(options: MarketDetailStreamOptions): () 
     positiveDelay(options.reconnectMaxMs, RECONNECT_MAX_MS),
   )
   const heartbeatMs = positiveDelay(options.heartbeatMs, HEARTBEAT_MS)
+  const inboundIdleTimeoutMs = positiveDelay(
+    options.inboundIdleTimeoutMs,
+    INBOUND_IDLE_TIMEOUT_MS,
+  )
+  const inboundWatchdog = createInboundSilenceWatchdog(scheduler, inboundIdleTimeoutMs)
 
   let active = true
   let socket: MarketDetailSocket | null = null
@@ -217,10 +225,11 @@ export function startMarketDetailStream(options: MarketDetailStreamOptions): () 
     let disconnected = false
 
     const disconnect = (): void => {
-      if (disconnected) return
+      if (disconnected || socket !== next) return
       disconnected = true
-      if (socket === next) socket = null
+      socket = null
       clearHeartbeat()
+      inboundWatchdog.clear()
       clearPendingDepth()
       clearPendingKline()
       scheduleReconnect()
@@ -256,6 +265,7 @@ export function startMarketDetailStream(options: MarketDetailStreamOptions): () 
         closeAfterFailure()
         return
       }
+      inboundWatchdog.arm(closeAfterFailure)
       heartbeatTimer = scheduler.setInterval(() => {
         if (!active || socket !== next || next.readyState !== SOCKET_OPEN) return
         try {
@@ -268,6 +278,7 @@ export function startMarketDetailStream(options: MarketDetailStreamOptions): () 
 
     next.addEventListener('message', (event) => {
       if (!active || socket !== next || disconnected) return
+      inboundWatchdog.arm(closeAfterFailure)
       const frame = parseMarketSocketFrame(event.data)
       if (!frame || normalizeFrameSymbol(frame) !== symbol) return
       if (frame.type === 'depth' && channels.has('depth')) {
@@ -316,6 +327,7 @@ export function startMarketDetailStream(options: MarketDetailStreamOptions): () 
     active = false
     clearReconnect()
     clearHeartbeat()
+    inboundWatchdog.clear()
     clearPendingDepth()
     clearPendingKline()
     const current = socket

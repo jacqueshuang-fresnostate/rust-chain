@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/realtime-websockets.md","reason":"Verify upstream/downstream liveness behavior and reconnect reconciliation remain contract-compliant."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verify Rust docs, fmt, check, clippy, tests, and architecture constraints."}
+{"file":".trellis/spec/mobile/index.md","reason":"Verify required mobile type-check, tests, and applicable build gates."}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Verify ticker leases and detail sessions clear timers, reject stale sockets, and restore subscriptions."}
+{"file":".trellis/tasks/archive/2026-08/08-21-market-stream-long-running-stall/research/market-stream-liveness.md","reason":"Validate the implementation against the diagnosed half-open and protocol-heartbeat failure modes."}
