@@ -52,16 +52,28 @@ export async function fetchSecondsOrders(limit = 50): Promise<SecondsOrder[]> {
   return (response.data.orders || []).map(mapSecondsOrder)
 }
 
-export async function openSecondsOrder(input: { productId: number; durationSeconds: number; direction: 'up' | 'down'; stakeAmount: number }): Promise<SecondsOrder> {
+export interface OpenSecondsOrderInput {
+  productId: number
+  durationSeconds: number
+  direction: 'up' | 'down'
+  stakeAmount: number
+  idempotencyKey?: string
+}
+
+export async function openSecondsOrder(input: OpenSecondsOrderInput): Promise<SecondsOrder> {
   const response = await client.post<{ order?: Record<string, unknown> }>(requestUrl('/seconds-contracts/orders'), {
     product_id: input.productId,
     duration_seconds: input.durationSeconds,
     direction: input.direction,
     stake_amount: String(input.stakeAmount),
-    idempotency_key: createIdempotencyKey('mobile-seconds'),
+    idempotency_key: input.idempotencyKey || createSecondsOrderIdempotencyKey(),
   })
   if (!response.data.order) throw new Error('Seconds-contract order response is missing order data')
   return mapSecondsOrder(response.data.order)
+}
+
+export function createSecondsOrderIdempotencyKey(): string {
+  return createIdempotencyKey('mobile-seconds')
 }
 
 function mapCycle(cycle: Record<string, unknown>): SecondsCycle {

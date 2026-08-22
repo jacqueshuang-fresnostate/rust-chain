@@ -73,8 +73,9 @@ test('Seconds 历史命名路由支持 push、浏览器返回和直开兜底', a
 
 test('交易工作台只留活动订单，历史页只消费真实非活动订单', () => {
   assert.match(secondsSource, /const activeOrders = computed\(\(\) => activeSecondsOrders\(orders\.value\)\)/)
-  assert.match(secondsSource, /v-for="order in activeOrders"/)
-  assert.doesNotMatch(secondsSource, /seconds-session-records|seconds-orders|ordersSection|scrollToOrders/)
+  assert.match(secondsSource, /const filteredActiveOrders = computed/)
+  assert.match(secondsSource, /v-for="order in filteredActiveOrders"/)
+  assert.doesNotMatch(secondsSource, /seconds-session-records|ordersSection|scrollToOrders/)
   assert.doesNotMatch(secondsSource, /formatDateTime/)
 
   const orders = [

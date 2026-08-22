@@ -185,13 +185,16 @@ test('杠杆为独立二栏下单、六卖七买真实盘口和真实持仓风�
   assert.match(tradeSource, /createMarketDetailStreamSession\(\{/)
 })
 
-test('秒合约由真实订单切换 VL8er/g9agt 与 Lpt6q/WxeB8 几何并直用现货钱包', () => {
+test('秒合约锁定 VL8er/g9agt 选中稿几何并直用真实订单与现货钱包', () => {
   const css = styleOf(secondsSource)
-  assert.match(secondsSource, /data-pencil-source="VL8er g9agt Lpt6q WxeB8"/)
+  assert.match(secondsSource, /data-pencil-source="VL8er\/g9agt"/)
+  assert.doesNotMatch(secondsSource, /Lpt6q|WxeB8/)
   assert.match(secondsSource, /const activeOrders = computed\(\(\) => activeSecondsOrders\(orders\.value\)\)/)
   assert.match(secondsSource, /:data-seconds-state="activeOrders\.length \? 'active' : 'default'"/)
   assert.doesNotMatch(secondsSource, /secondary-view|secondary-content|page--prototype-grid/)
-  assert.match(secondsSource, /v-if="activeOrders\.length"[\s\S]*?data-active-order-list="all"[\s\S]*?v-for="order in activeOrders"/)
+  assert.match(secondsSource, /const filteredActiveOrders = computed[\s\S]*?activeOrderFilter\.value === 'all'/)
+  assert.match(secondsSource, /v-if="filteredActiveOrders\.length"[\s\S]*?:data-active-order-list="activeOrderFilter"[\s\S]*?v-for="order in filteredActiveOrders"/)
+  assert.match(secondsSource, /<AssetMark[\s\S]*?baseIconUrl[\s\S]*?iconUrl/)
   assert.match(secondsSource, /fetchSecondsProducts\(\)/)
   assert.match(secondsSource, /fetchSecondsOrders\(100\)/)
   assert.match(secondsSource, /fetchWalletAccounts\(\)/)
@@ -202,20 +205,22 @@ test('秒合约由真实订单切换 VL8er/g9agt 与 Lpt6q/WxeB8 几何并直用
   assert.match(secondsSource, /fetchKlines\(symbol, '1m'\)/)
   assert.match(secondsSource, /await openSecondsOrder\(\{[\s\S]*?productId:[\s\S]*?durationSeconds:[\s\S]*?direction:[\s\S]*?stakeAmount:/)
 
-  assert.match(css, /\.seconds-market-board\s*\{[\s\S]*?padding: 4px 20px 0;/)
-  assert.match(css, /\.seconds-micro-chart\s*\{[\s\S]*?height: 170px;/)
-  assert.match(css, /\.seconds-active-order\s*\{[\s\S]*?border-radius: 14px;[\s\S]*?padding: 12px 14px;/)
-  assert.match(css, /\.seconds-direction-grid button\s*\{\s*min-height: 52px;/)
-  assert.match(css, /\.seconds-duration-grid button\s*\{[\s\S]*?height: 36px;[\s\S]*?min-height: 36px;/)
-  assert.match(css, /\.seconds-amount-presets\s*\{\s*display: none;/)
-  assert.match(css, /\.seconds-submit\s*\{[\s\S]*?border-radius: 26px;[\s\S]*?min-height: 52px;/)
+  assert.match(css, /\.seconds-header\s*\{[\s\S]*?height: 60px !important;[\s\S]*?padding: 10px 20px !important;/)
+  assert.match(css, /\.seconds-trading-operation\s*\{[\s\S]*?grid-template-rows: 22px 53px 112px 202px;[\s\S]*?height: 420px;[\s\S]*?padding: 2px 20px 10px;/)
+  assert.match(css, /\.seconds-micro-chart\s*\{[\s\S]*?height: 112px;/)
+  assert.match(css, /\.seconds-order-console\s*\{[\s\S]*?grid-template-rows: 30px 26px 38px 40px 44px;[\s\S]*?height: 202px;/)
+  assert.match(css, /\.seconds-active-order\s*\{[\s\S]*?border-radius: 12px;[\s\S]*?height: 82px;[\s\S]*?padding: 8px 10px;/)
+  assert.match(css, /\.seconds-direction-grid button\s*\{[\s\S]*?height: 40px;/)
+  assert.match(css, /\.seconds-duration-grid button\s*\{[\s\S]*?height: 30px;/)
+  assert.match(css, /\.seconds-submit\s*\{[\s\S]*?border-radius: 10px;[\s\S]*?height: 44px;/)
+  assert.match(css, /\.seconds-orders-workspace\s*\{[\s\S]*?padding: 12px 20px calc\(16px \+ env\(safe-area-inset-bottom\)\);/)
 })
 
 test('秒合约确认层 Teleport 到 body 并将固定操作区与可滚动明细分离', () => {
   const css = styleOf(secondsSource)
   const teleportedLayer = secondsSource.match(/<Teleport to="body">([\s\S]*?)<\/Teleport>/)?.[1]
   assert.ok(teleportedLayer)
-  assert.match(teleportedLayer, /<div v-if="confirmOpen && selected && cycle" class="confirmation-layer seconds-mask" @click\.self="closeConfirm">/)
+  assert.match(teleportedLayer, /<div v-if="confirmOpen && orderReview" class="confirmation-layer seconds-mask" @click\.self="closeConfirm">/)
   assert.match(teleportedLayer, /ref="confirmDialog"[\s\S]*?role="dialog"[\s\S]*?aria-modal="true"[\s\S]*?@keydown="trapDialogFocus"/)
 
   const bodyBoundary = teleportedLayer.match(
@@ -227,7 +232,7 @@ test('秒合约确认层 Teleport 到 body 并将固定操作区与可滚动明�
   assert.match(bodyBoundary[1], /<p v-if="error" class="dialog-feedback" role="alert">/)
   assert.doesNotMatch(bodyBoundary[1], /confirmation-actions|dialog-actions/)
 
-  assert.match(secondsSource, /function closeConfirm\(\): void \{\s*if \(submitting\.value\) return\s*confirmOpen\.value = false\s*\}/)
+  assert.match(secondsSource, /function closeConfirm\(\): void \{\s*if \(submitting\.value\) return\s*confirmOpen\.value = false\s*orderReview\.value = null\s*\}/)
   assert.match(secondsSource, /if \(event\.key === 'Escape'\) \{[\s\S]*?event\.preventDefault\(\)[\s\S]*?closeConfirm\(\)[\s\S]*?return\s*\}/)
   assert.match(secondsSource, /if \(event\.key !== 'Tab' \|\| !confirmDialog\.value\) return/)
   assert.match(secondsSource, /event\.shiftKey && document\.activeElement === first[\s\S]*?last\.focus\(\)[\s\S]*?document\.activeElement === last[\s\S]*?first\.focus\(\)/)

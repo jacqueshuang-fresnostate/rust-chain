@@ -7,6 +7,8 @@ import {
   ArrowRight,
   ArrowUp,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   CircleAlert,
   History,
   LoaderCircle,
@@ -16,13 +18,15 @@ import {
   Trophy,
   X,
 } from 'lucide-vue-next'
+import AssetMark from '@/components/AssetMark.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
 import { fetchKlines } from '@/api/market'
 import { createMarketDetailStreamSession } from '@/api/marketDetailStream'
-import { subscribeTickers } from '@/api/marketSocket'
+import { subscribeTickers, type TickerUpdate } from '@/api/marketSocket'
 import { normalizeMarketSocketSymbol } from '@/api/marketSocketProtocol'
 import {
+  createSecondsOrderIdempotencyKey,
   fetchSecondsOrders,
   fetchSecondsProducts,
   openSecondsOrder,
@@ -32,7 +36,7 @@ import {
 } from '@/api/seconds'
 import { fetchWalletAccounts } from '@/api/wallet'
 import { publicMarketWebSocketUrl } from '@/config/app'
-import { formatAmount, formatPrice } from '@/core/format'
+import { formatAmount, formatPercent, formatPrice, splitSymbol } from '@/core/format'
 import {
   createBottomNavSecondsFallbackTarget,
   isBottomNavigationSecondsEntry,
@@ -61,10 +65,11 @@ const products = ref<SecondsProduct[]>([])
 const orders = ref<SecondsOrder[]>([])
 const accounts = ref<WalletAccount[]>([])
 const sparklinePoints = ref<KlinePoint[]>([])
-const liveTickerPrices = ref<Record<string, number>>({})
+const liveTickerSnapshots = ref<Record<string, TickerUpdate>>({})
 const selected = ref<SecondsProduct | null>(null)
 const selectedCycleId = ref(0)
 const direction = ref<'up' | 'down'>('up')
+const activeOrderFilter = ref<'all' | 'up' | 'down'>('all')
 const amount = ref('')
 const loading = ref(false)
 const submitting = ref(false)
@@ -72,6 +77,20 @@ const error = ref('')
 const success = ref('')
 const refreshWarning = ref('')
 const confirmOpen = ref(false)
+interface SecondsOrderReview {
+  readonly productId: number
+  readonly cycleId: number
+  readonly symbol: string
+  readonly stakeAssetId: number
+  readonly stakeAssetSymbol: string
+  readonly durationSeconds: number
+  readonly payoutRate: number
+  readonly direction: 'up' | 'down'
+  readonly stakeAmount: number
+  readonly referencePrice: number
+  readonly idempotencyKey: string
+}
+const orderReview = ref<SecondsOrderReview | null>(null)
 const confirmDialog = ref<HTMLElement | null>(null)
 const reviewButton = ref<HTMLButtonElement | null>(null)
 const settlementResultQueue = ref<SecondsOrder[]>([])
@@ -108,6 +127,44 @@ const activeOrders = computed(() => activeSecondsOrders(orders.value))
 const selectedActiveOrders = computed(() => {
   const symbol = normalizeProductSymbol(selected.value?.symbol || '')
   return activeOrders.value.filter((order) => normalizeProductSymbol(order.symbol) === symbol)
+})
+const filteredActiveOrders = computed(() => (
+  activeOrderFilter.value === 'all'
+    ? activeOrders.value
+    : activeOrders.value.filter((order) => order.direction === activeOrderFilter.value)
+))
+const activeOrderCounts = computed(() => ({
+  all: activeOrders.value.length,
+  up: activeOrders.value.filter((order) => order.direction === 'up').length,
+  down: activeOrders.value.filter((order) => order.direction === 'down').length,
+}))
+const nearestSelectedActiveOrder = computed(() => (
+  [...selectedActiveOrders.value].sort((left, right) => {
+    if (left.expiresAt !== right.expiresAt) return left.expiresAt - right.expiresAt
+    return left.id - right.id
+  })[0] || null
+))
+const selectedPairLabel = computed(() => (
+  selected.value ? displayProductSymbol(selected.value.symbol) : t('seconds.title')
+))
+const selectedLiveTicker = computed(() => (
+  liveTickerSnapshots.value[normalizeProductSymbol(selected.value?.symbol || '')]
+))
+const selectedChangePercent = computed<number | null>(() => {
+  const liveChange = selectedLiveTicker.value?.changePercent
+  if (Number.isFinite(liveChange)) return Number(liveChange)
+  const snapshotChange = selectedTicker.value?.changePercent
+  return Number.isFinite(snapshotChange) ? Number(snapshotChange) : null
+})
+const roundStatusLabel = computed(() => {
+  const order = nearestSelectedActiveOrder.value
+  if (order) {
+    return t('seconds.activeRoundStatus', {
+      id: order.id,
+      countdown: orderCountdown(order),
+    })
+  }
+  return t('seconds.readyState')
 })
 const currentSettlementResult = computed(() => settlementResultQueue.value[0] || null)
 const currentSettlementPresentation = computed(() => (
@@ -146,9 +203,9 @@ const currentSettlementAnnouncement = computed(() => {
 const remainingSettlementResults = computed(() => Math.max(0, settlementResultQueue.value.length - 1))
 const amountNumber = computed(() => Number(amount.value || 0))
 const payoutRate = computed(() => cycle.value?.payoutRate || 0)
-const estimatedProfit = computed(() => (
-  Number.isFinite(amountNumber.value) && amountNumber.value > 0
-    ? amountNumber.value * payoutRate.value
+const reviewEstimatedProfit = computed(() => (
+  orderReview.value
+    ? orderReview.value.stakeAmount * orderReview.value.payoutRate
     : 0
 ))
 const valid = computed(() => Boolean(
@@ -158,25 +215,35 @@ const valid = computed(() => Boolean(
   && (!cycle.value.maxStake || amountNumber.value <= cycle.value.maxStake)
   && amountNumber.value <= (account.value?.available || 0),
 ))
-const quickAmounts = computed(() => {
-  const activeCycle = cycle.value
-  if (!activeCycle) return []
-  const upperBound = Math.min(
-    activeCycle.maxStake || Number.POSITIVE_INFINITY,
-    account.value?.available || 0,
-  )
-  return [...new Set([
-    activeCycle.minStake,
-    activeCycle.minStake * 2,
-    activeCycle.minStake * 5,
-    upperBound,
-  ])]
-    .filter((value) => Number.isFinite(value) && value >= activeCycle.minStake && value <= upperBound)
-    .slice(0, 4)
-})
-const quickAmountSlots = computed(() => (
-  quickAmounts.value.length ? quickAmounts.value : [0, 0, 0, 0]
+const amountFieldInvalid = computed(() => Boolean(
+  session.isAuthenticated
+  && !loading.value
+  && amount.value
+  && !valid.value,
 ))
+const cycleLimitLabel = computed(() => {
+  const activeCycle = cycle.value
+  const asset = selected.value?.stakeAssetSymbol || '--'
+  if (!activeCycle) return '--'
+  if (activeCycle.maxStake) {
+    return t('seconds.cycleLimitRange', {
+      minimum: formatAmount(activeCycle.minStake),
+      maximum: formatAmount(activeCycle.maxStake),
+      asset,
+    })
+  }
+  return t('seconds.cycleLimitMinimum', {
+    minimum: formatAmount(activeCycle.minStake),
+    asset,
+  })
+})
+const orderActionLabel = computed(() => t('seconds.orderAction', {
+  direction: t(direction.value === 'up' ? 'seconds.bullish' : 'seconds.bearish'),
+  amount: Number.isFinite(amountNumber.value) && amountNumber.value > 0
+    ? formatAmount(amountNumber.value)
+    : '--',
+  asset: selected.value?.stakeAssetSymbol || '--',
+}))
 const homeFallback = createBottomNavSecondsFallbackTarget()
 const preferHomeFallback = computed(() => {
   void router.currentRoute.value.fullPath
@@ -185,6 +252,15 @@ const preferHomeFallback = computed(() => {
 
 function normalizeProductSymbol(value: string): string {
   return normalizeMarketSocketSymbol(value)
+}
+
+function displayProductSymbol(value: string): string {
+  const pair = splitSymbol(value)
+  return pair.base && pair.quote ? `${pair.base}/${pair.quote}` : value
+}
+
+function baseSymbol(value: string): string {
+  return splitSymbol(value).base || value
 }
 
 function countdownLabel(milliseconds: number): string {
@@ -196,7 +272,7 @@ function countdownLabel(milliseconds: number): string {
 
 function latestPriceForSymbol(symbol: string): number {
   const normalized = normalizeProductSymbol(symbol)
-  const livePrice = liveTickerPrices.value[normalized]
+  const livePrice = liveTickerSnapshots.value[normalized]?.lastPrice
   if (Number.isFinite(livePrice) && livePrice > 0) return livePrice
   if (normalized === normalizeProductSymbol(selected.value?.symbol || '')) {
     const candlePrice = sparklinePoints.value.at(-1)?.close
@@ -242,8 +318,8 @@ function replaceTickerSubscription(): void {
   stopTickerSubscription = null
   tickerSubscriptionKey = subscriptionKey
   const acceptedSymbols = new Set(normalizedSymbols)
-  liveTickerPrices.value = Object.fromEntries(
-    Object.entries(liveTickerPrices.value).filter(([symbol]) => acceptedSymbols.has(symbol)),
+  liveTickerSnapshots.value = Object.fromEntries(
+    Object.entries(liveTickerSnapshots.value).filter(([symbol]) => acceptedSymbols.has(symbol)),
   )
   if (!normalizedSymbols.length) return
 
@@ -256,9 +332,26 @@ function replaceTickerSubscription(): void {
     ) {
       return
     }
-    liveTickerPrices.value = {
-      ...liveTickerPrices.value,
-      [update.symbol]: update.lastPrice,
+    const previous = liveTickerSnapshots.value[update.symbol]
+    if (
+      previous?.observedAt !== undefined
+      && update.observedAt !== undefined
+      && update.observedAt < previous.observedAt
+    ) {
+      return
+    }
+    liveTickerSnapshots.value = {
+      ...liveTickerSnapshots.value,
+      [update.symbol]: {
+        ...previous,
+        ...update,
+        ...(update.changePercent === undefined && previous?.changePercent !== undefined
+          ? { changePercent: previous.changePercent }
+          : {}),
+        ...(update.observedAt === undefined && previous?.observedAt !== undefined
+          ? { observedAt: previous.observedAt }
+          : {}),
+      },
     }
   })
 }
@@ -311,14 +404,15 @@ function drawSparkline(): void {
   context.clearRect(0, 0, width, height)
 
   const styles = getComputedStyle(canvas)
-  const lineColor = styles.getPropertyValue('--line').trim()
-  const positiveColor = styles.getPropertyValue('--positive').trim()
+  const lineColor = styles.getPropertyValue('--seconds-line').trim()
+  const positiveColor = styles.getPropertyValue('--seconds-signal').trim()
   context.strokeStyle = lineColor
   context.lineWidth = 1
-  for (const y of [34, 68, 102, 136]) {
+  for (let index = 0; index < 4; index += 1) {
+    const y = 0.5 + ((height - 1) * index) / 3
     context.beginPath()
-    context.moveTo(0, y + 0.5)
-    context.lineTo(width, y + 0.5)
+    context.moveTo(0, y)
+    context.lineTo(width, y)
     context.stroke()
   }
 
@@ -328,9 +422,9 @@ function drawSparkline(): void {
   const maximum = Math.max(...closes)
   const range = maximum - minimum || 1
   const horizontalPadding = 2
-  const verticalPadding = 14
+  const verticalPadding = 10
   context.strokeStyle = positiveColor
-  context.lineWidth = 1.5
+  context.lineWidth = 2
   context.lineJoin = 'round'
   context.lineCap = 'round'
   context.beginPath()
@@ -344,9 +438,25 @@ function drawSparkline(): void {
 
   const last = closes.at(-1) || 0
   const lastY = verticalPadding + ((maximum - last) / range) * (height - verticalPadding * 2)
+  const glow = context.createRadialGradient(
+    width - horizontalPadding,
+    lastY,
+    0,
+    width - horizontalPadding,
+    lastY,
+    12,
+  )
+  glow.addColorStop(0, positiveColor)
+  glow.addColorStop(1, 'transparent')
+  context.globalAlpha = 0.38
+  context.fillStyle = glow
+  context.beginPath()
+  context.arc(width - horizontalPadding, lastY, 12, 0, Math.PI * 2)
+  context.fill()
+  context.globalAlpha = 1
   context.fillStyle = positiveColor
   context.beginPath()
-  context.arc(width - horizontalPadding, lastY, 4, 0, Math.PI * 2)
+  context.arc(width - horizontalPadding, lastY, 4.5, 0, Math.PI * 2)
   context.fill()
 }
 
@@ -573,17 +683,48 @@ function reviewOrder(): void {
     void router.push({ name: 'login', query: { redirect: '/seconds' } })
     return
   }
-  if (!selected.value || !cycle.value || !valid.value) {
+  const product = selected.value
+  const activeCycle = cycle.value
+  if (!product || !activeCycle || !valid.value) {
     error.value = t('seconds.invalidAmount')
     return
   }
   error.value = ''
+  orderReview.value = Object.freeze({
+    productId: product.id,
+    cycleId: activeCycle.id,
+    symbol: product.symbol,
+    stakeAssetId: product.stakeAssetId,
+    stakeAssetSymbol: product.stakeAssetSymbol,
+    durationSeconds: activeCycle.durationSeconds,
+    payoutRate: activeCycle.payoutRate,
+    direction: direction.value,
+    stakeAmount: amountNumber.value,
+    referencePrice: selectedLatestPrice.value,
+    idempotencyKey: createSecondsOrderIdempotencyKey(),
+  })
   confirmOpen.value = true
 }
 
 function closeConfirm(): void {
   if (submitting.value) return
   confirmOpen.value = false
+  orderReview.value = null
+}
+
+function isOrderReviewValid(review: SecondsOrderReview): boolean {
+  const product = products.value.find((item) => item.id === review.productId)
+  const currentCycle = product?.cycles.find((item) => item.id === review.cycleId)
+  const currentAccount = accounts.value.find((item) => item.assetId === review.stakeAssetId)
+  return Boolean(
+    product
+    && currentCycle
+    && currentCycle.durationSeconds === review.durationSeconds
+    && Number.isFinite(review.stakeAmount)
+    && review.stakeAmount >= currentCycle.minStake
+    && (!currentCycle.maxStake || review.stakeAmount <= currentCycle.maxStake)
+    && review.stakeAmount <= (currentAccount?.available || 0),
+  )
 }
 
 function isCurrentSecondsMutationSession(generation: number): boolean {
@@ -600,7 +741,8 @@ async function submit(): Promise<void> {
     error.value = t('seconds.loginDescription')
     return
   }
-  if (!selected.value || !cycle.value || !valid.value) {
+  const review = orderReview.value
+  if (!review || !isOrderReviewValid(review)) {
     error.value = t('seconds.invalidAmount')
     return
   }
@@ -611,10 +753,11 @@ async function submit(): Promise<void> {
   let openedOrder: SecondsOrder | null = null
   try {
     openedOrder = await openSecondsOrder({
-      productId: selected.value.id,
-      durationSeconds: cycle.value.durationSeconds,
-      direction: direction.value,
-      stakeAmount: amountNumber.value,
+      productId: review.productId,
+      durationSeconds: review.durationSeconds,
+      direction: review.direction,
+      stakeAmount: review.stakeAmount,
+      idempotencyKey: review.idempotencyKey,
     })
     if (!isCurrentSecondsMutationSession(mutationSessionGeneration)) return
     // The create response is the earliest authoritative active-order observation.
@@ -624,6 +767,7 @@ async function submit(): Promise<void> {
     amount.value = ''
     success.value = t('seconds.created')
     confirmOpen.value = false
+    orderReview.value = null
     replaceTickerSubscription()
   } catch (reason) {
     if (isCurrentSecondsMutationSession(mutationSessionGeneration)) {
@@ -650,11 +794,6 @@ async function reconcileOpenedOrder(mutationSessionGeneration: number): Promise<
 function orderStatusLabel(order: SecondsOrder): string {
   const presentation = secondsOrderStatusPresentation(order)
   return presentation.translationKey ? t(presentation.translationKey) : presentation.source
-}
-
-function highestRate(product: SecondsProduct): string {
-  const highest = Math.max(0, ...product.cycles.map((item) => item.payoutRate * 100))
-  return highest.toFixed(0)
 }
 
 function trapDialogFocus(event: KeyboardEvent): void {
@@ -687,6 +826,7 @@ watch(() => session.isAuthenticated, (authenticated) => {
   success.value = ''
   refreshWarning.value = ''
   confirmOpen.value = false
+  orderReview.value = null
   replaceTickerSubscription()
 }, { flush: 'sync' })
 
@@ -747,10 +887,11 @@ onBeforeUnmount(() => {
 <template>
   <main
     class="page page--plain seconds-page"
-    data-pencil-source="VL8er g9agt Lpt6q WxeB8"
+    data-pencil-source="VL8er/g9agt"
     data-instrument-hero="pair-price"
   >
     <PageHeader
+      class="seconds-header"
       :back="true"
       :eyebrow="t('seconds.scene')"
       :fallback="homeFallback"
@@ -760,22 +901,24 @@ onBeforeUnmount(() => {
       :subtitle="t('seconds.context')"
     >
       <template #center>
-        <label class="field seconds-pair-field">
+        <label class="seconds-pair-field" :data-disabled="loading || !products.length">
           <span class="sr-only">{{ t('marketDetail.market') }}</span>
-          <span class="seconds-select-shell">
-            <select
-              :value="selected?.id || ''"
-              :disabled="loading || !products.length"
-              :aria-label="t('marketDetail.market')"
-              @change="selectProductFromEvent"
-            >
-              <option v-if="!products.length" value="">{{ loading ? t('seconds.loading') : t('seconds.noProducts') }}</option>
-              <option v-for="product in products" :key="product.id" :value="product.id">
-                {{ product.symbol }}
-              </option>
-            </select>
-            <small v-if="selected" :data-highest-rate="highestRate(selected)">{{ t('seconds.title') }}</small>
+          <span class="seconds-pair-copy" aria-hidden="true">
+            <strong>{{ selectedPairLabel }}</strong>
+            <small>{{ t('seconds.title') }}</small>
+            <ChevronDown :size="15" :stroke-width="2" />
           </span>
+          <select
+            :value="selected?.id || ''"
+            :disabled="loading || !products.length"
+            :aria-label="t('marketDetail.market')"
+            @change="selectProductFromEvent"
+          >
+            <option v-if="!products.length" value="">{{ loading ? t('seconds.loading') : t('seconds.noProducts') }}</option>
+            <option v-for="product in products" :key="product.id" :value="product.id">
+              {{ displayProductSymbol(product.symbol) }}
+            </option>
+          </select>
         </label>
       </template>
       <template #actions>
@@ -793,115 +936,54 @@ onBeforeUnmount(() => {
         :class="{ 'seconds-guest': !session.isAuthenticated }"
       >
         <section
-          class="seconds-market-board"
+          class="seconds-trading-operation"
           :data-seconds-market="selected ? 'live' : loading ? 'loading' : 'empty'"
           :aria-busy="loading || marketStore.loading"
         >
-          <div class="seconds-price-row">
+          <div class="seconds-market-status">
+            <span class="seconds-round-state">
+              <i aria-hidden="true" />
+              <b class="numeric">{{ selected ? roundStatusLabel : loading ? t('seconds.loading') : t('seconds.readyState') }}</b>
+            </span>
+            <span class="seconds-return-rate numeric">
+              {{ cycle ? t('seconds.returnRate', { rate: (payoutRate * 100).toFixed(0) }) : '--' }}
+            </span>
+          </div>
+
+          <div class="seconds-price-panel">
             <strong class="numeric">{{ selectedLatestPrice > 0 ? formatPrice(selectedLatestPrice) : '--' }}</strong>
-            <span class="numeric">
-              {{ cycle ? t('seconds.duration', { seconds: cycle.durationSeconds }) : '--' }}
-              · {{ cycle ? `${(payoutRate * 100).toFixed(2)}%` : '--' }}
+            <div class="seconds-price-meta">
+              <span class="numeric">
+                {{ selectedChangePercent === null ? '--' : formatPercent(selectedChangePercent) }} ·
+                {{ t('seconds.referencePrice') }}
+                {{ selectedLatestPrice > 0 ? formatPrice(selectedLatestPrice) : '--' }}
+              </span>
+            </div>
+            <span
+              class="seconds-live-state"
+              :data-state="selectedLiveTicker ? 'live' : selectedLatestPrice > 0 ? 'snapshot' : 'unavailable'"
+            >
+              {{ selectedLiveTicker
+                ? t('common.liveData')
+                : selectedLatestPrice > 0
+                  ? t('seconds.marketSnapshot')
+                  : t('common.marketUnavailable') }}
             </span>
           </div>
 
           <div class="seconds-micro-chart" :data-chart-state="sparklinePoints.length ? 'ready' : 'empty'">
-            <canvas ref="sparklineCanvas" :aria-label="t('seconds.referencePrice')" />
+            <canvas ref="sparklineCanvas" role="img" :aria-label="t('seconds.referencePrice')" />
             <span v-if="!sparklinePoints.length" role="status">
               {{ loading ? t('common.loading') : t('common.marketUnavailable') }}
             </span>
           </div>
-        </section>
 
-        <section
-          v-if="activeOrders.length"
-          class="seconds-active-orders"
-          data-active-order-list="all"
-          :aria-label="t('seconds.activeOrders')"
-        >
-          <article
-            v-for="order in activeOrders"
-            :key="order.id"
-            class="seconds-active-order"
-            data-active-order="real"
-            :data-active-order-id="order.id"
+          <section
+            class="instrument-plate seconds-order-console"
+            data-instrument-plate="market-and-order"
           >
-            <header>
-              <span :class="order.direction">
-                <ArrowUp v-if="order.direction === 'up'" :size="12" aria-hidden="true" />
-                <ArrowDown v-else :size="12" aria-hidden="true" />
-                {{ order.symbol }} · {{ t(order.direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }}
-              </span>
-              <b class="numeric">{{ t('seconds.duration', { seconds: order.durationSeconds }) }}</b>
-              <strong class="numeric">{{ orderStatusLabel(order) }} {{ orderCountdown(order) }}</strong>
-            </header>
-            <div class="seconds-active-progress" aria-hidden="true">
-              <i :style="{ width: `${orderProgress(order)}%` }" />
-            </div>
-            <dl>
-              <div>
-                <dt>{{ t('orders.entryPrice') }}</dt>
-                <dd class="numeric">{{ order.entryPrice !== undefined ? formatPrice(order.entryPrice) : '--' }}</dd>
-              </div>
-              <div>
-                <dt>{{ t('marketDetail.latestPrice') }}</dt>
-                <dd class="positive numeric">
-                  {{ latestPriceForSymbol(order.symbol) > 0 ? formatPrice(latestPriceForSymbol(order.symbol)) : '--' }}
-                </dd>
-              </div>
-              <div>
-                <dt>{{ t('seconds.stakeAmount') }}</dt>
-                <dd class="numeric">{{ formatAmount(order.stakeAmount) }} {{ order.stakeAssetSymbol }}</dd>
-              </div>
-              <div>
-                <dt>{{ t('seconds.estimatedProfit') }}</dt>
-                <dd class="positive numeric">
-                  +{{ formatAmount(orderEstimatedProfit(order)) }} {{ order.stakeAssetSymbol }}
-                </dd>
-              </div>
-            </dl>
-          </article>
-        </section>
-
-        <section
-          class="instrument-plate seconds-order-console"
-          data-instrument-plate="market-and-order"
-        >
-          <section class="seconds-control-group" aria-labelledby="seconds-direction-label">
-            <div class="seconds-control-label">
-              <span id="seconds-direction-label">{{ t('seconds.direction') }}</span>
-            </div>
-            <div class="seconds-direction-grid" role="group" :aria-label="t('seconds.direction')">
-              <button
-                type="button"
-                class="up"
-                :class="{ active: direction === 'up' }"
-                :aria-pressed="direction === 'up'"
-                :disabled="loading || !selected"
-                @click="setDirection('up')"
-              >
-                <ArrowUp :size="16" aria-hidden="true" />
-                <span>{{ t('seconds.bullish') }}</span>
-              </button>
-              <button
-                type="button"
-                class="down"
-                :class="{ active: direction === 'down' }"
-                :aria-pressed="direction === 'down'"
-                :disabled="loading || !selected"
-                @click="setDirection('down')"
-              >
-                <ArrowDown :size="16" aria-hidden="true" />
-                <span>{{ t('seconds.bearish') }}</span>
-              </button>
-            </div>
-          </section>
-
-          <section class="seconds-control-group" aria-labelledby="seconds-duration-label">
-            <div class="seconds-control-label">
-              <span id="seconds-duration-label">{{ t('seconds.term') }}</span>
-            </div>
-            <div class="seconds-duration-grid" role="group" :aria-label="t('seconds.term')">
+            <div class="seconds-duration-scroll" role="group" :aria-label="t('seconds.term')">
+              <div class="seconds-duration-grid">
               <template v-if="selected?.cycles.length">
                 <button
                   v-for="item in selected.cycles"
@@ -918,90 +1000,208 @@ onBeforeUnmount(() => {
               <template v-else>
                 <button v-for="slot in 4" :key="slot" type="button" disabled><span>--</span></button>
               </template>
+              </div>
             </div>
-          </section>
 
-          <label
-            class="field seconds-amount-field"
-            :data-field-state="amount && !valid ? 'invalid' : amount && valid ? 'complete' : 'idle'"
-          >
-            <span>{{ t('seconds.stakeAmount') }}</span>
-            <div>
-              <input
-                v-model="amount"
-                class="numeric"
-                inputmode="decimal"
-                :disabled="loading || !selected"
-                :aria-invalid="Boolean(amount) && !valid"
-                @input="setAmount(amount)"
-              />
-              <b>{{ selected?.stakeAssetSymbol || '--' }}</b>
+            <div class="seconds-cycle-limit">
+              <span>{{ cycle ? t('seconds.cycleOrderLimit', { seconds: cycle.durationSeconds }) : '--' }}</span>
+              <b class="numeric">{{ cycleLimitLabel }}</b>
             </div>
-          </label>
 
-          <div class="seconds-amount-presets" role="group" :aria-label="t('seconds.stakeAmount')">
-            <button
-              v-for="(value, index) in quickAmountSlots"
-              :key="`${value}-${index}`"
-              type="button"
-              :aria-pressed="value > 0 && amountNumber === value"
-              :disabled="loading || !selected || value <= 0"
-              @click="setAmount(value)"
+            <label
+              class="seconds-amount-field"
+              :data-field-state="amountFieldInvalid ? 'invalid' : amount && valid ? 'complete' : 'idle'"
             >
-              {{ value > 0 ? formatAmount(value) : '--' }}
+              <span>{{ t('seconds.stakeAmount') }}</span>
+              <div>
+                <input
+                  v-model="amount"
+                  class="numeric"
+                  inputmode="decimal"
+                  autocomplete="off"
+                  :disabled="loading || !selected"
+                  :aria-invalid="amountFieldInvalid"
+                  aria-describedby="seconds-balance-hint"
+                  @input="setAmount(amount)"
+                />
+                <b>{{ selected?.stakeAssetSymbol || '--' }}</b>
+              </div>
+              <small id="seconds-balance-hint" class="sr-only">
+                {{ selected && session.isAuthenticated && account
+                  ? t('seconds.balanceMinimum', {
+                    available: formatAmount(account.available),
+                    asset: selected.stakeAssetSymbol,
+                    minimum: formatAmount(cycle?.minStake || 0),
+                  })
+                  : t('seconds.loginDescription') }}
+              </small>
+            </label>
+
+            <div class="seconds-direction-grid" role="group" :aria-label="t('seconds.direction')">
+              <button
+                type="button"
+                class="up"
+                :class="{ active: direction === 'up' }"
+                :aria-pressed="direction === 'up'"
+                :disabled="loading || !selected"
+                @click="setDirection('up')"
+              >
+                <i aria-hidden="true" />
+                <span>{{ t('seconds.bullish') }}</span>
+              </button>
+              <button
+                type="button"
+                class="down"
+                :class="{ active: direction === 'down' }"
+                :aria-pressed="direction === 'down'"
+                :disabled="loading || !selected"
+                @click="setDirection('down')"
+              >
+                <i aria-hidden="true" />
+                <span>{{ t('seconds.bearish') }}</span>
+              </button>
+            </div>
+
+            <button
+              ref="reviewButton"
+              class="button button--primary button--full seconds-submit"
+              type="button"
+              :disabled="submitting || loading || !selected"
+              :aria-busy="submitting"
+              @click="reviewOrder"
+            >
+              {{ submitting ? t('common.submitting') : orderActionLabel }}
+            </button>
+          </section>
+        </section>
+
+        <section class="seconds-orders-workspace" :aria-label="t('seconds.inProgressOrders')">
+          <header class="seconds-orders-heading">
+            <div>
+              <h2>{{ t('seconds.inProgressOrders') }}</h2>
+              <span class="numeric" :aria-label="t('seconds.activeOrderCount', { count: activeOrders.length })">
+                {{ activeOrders.length }}
+              </span>
+            </div>
+            <button type="button" @click="openHistory">
+              <span>{{ t('seconds.allOrders') }}</span>
+              <ChevronRight :size="14" aria-hidden="true" />
+            </button>
+          </header>
+
+          <div class="seconds-order-filters" role="group" :aria-label="t('seconds.orderFilter')">
+            <button
+              type="button"
+              :class="{ active: activeOrderFilter === 'all' }"
+              :aria-pressed="activeOrderFilter === 'all'"
+              @click="activeOrderFilter = 'all'"
+            >
+              {{ t('common.all') }} {{ activeOrderCounts.all }}
+            </button>
+            <button
+              type="button"
+              class="up"
+              :class="{ active: activeOrderFilter === 'up' }"
+              :aria-pressed="activeOrderFilter === 'up'"
+              @click="activeOrderFilter = 'up'"
+            >
+              {{ t('seconds.bullish') }} {{ activeOrderCounts.up }}
+            </button>
+            <button
+              type="button"
+              class="down"
+              :class="{ active: activeOrderFilter === 'down' }"
+              :aria-pressed="activeOrderFilter === 'down'"
+              @click="activeOrderFilter = 'down'"
+            >
+              {{ t('seconds.bearish') }} {{ activeOrderCounts.down }}
             </button>
           </div>
 
-          <dl class="seconds-order-summary">
-            <div>
-              <dt>{{ t('swap.spotWalletNote') }}</dt>
-              <dd class="numeric">
-                {{ selected && session.isAuthenticated && account
-                  ? `${formatAmount(account.available)} ${selected.stakeAssetSymbol}`
-                  : '--' }}
-              </dd>
-            </div>
-          </dl>
-
-          <div class="seconds-feedback" aria-live="polite">
+          <div v-if="error || success || refreshWarning || loading" class="seconds-feedback" aria-live="polite">
             <div v-if="error" class="seconds-message seconds-message--error" role="alert">
               <CircleAlert :size="16" aria-hidden="true" />
               <span>{{ error }}</span>
               <button type="button" :aria-label="t('common.retry')" @click="load"><RefreshCw :size="16" /></button>
             </div>
-            <div v-if="success" class="seconds-message seconds-message--success" data-session-feedback="created" role="status">
+            <div v-else-if="success" class="seconds-message seconds-message--success" data-session-feedback="created" role="status">
               <CheckCircle2 :size="16" aria-hidden="true" />
               <span>{{ success }}</span>
             </div>
-            <div v-if="refreshWarning" class="seconds-message seconds-message--warning" role="status">
+            <div v-else-if="refreshWarning" class="seconds-message seconds-message--warning" role="status">
               <RefreshCw :size="16" aria-hidden="true" />
               <span>{{ refreshWarning }}</span>
             </div>
-            <span v-if="loading && !error && !success && !refreshWarning"><LoaderCircle :size="15" class="spin" />{{ t('seconds.loading') }}</span>
-            <span v-else-if="!session.isAuthenticated && !error && !success && !refreshWarning">{{ t('seconds.loginDescription') }}</span>
+            <span v-else><LoaderCircle :size="15" class="spin" />{{ t('seconds.loading') }}</span>
           </div>
 
-          <button
-            ref="reviewButton"
-            class="button button--primary button--full seconds-submit"
-            type="button"
-            :disabled="submitting || loading || !selected"
-            @click="reviewOrder"
+          <div
+            v-if="filteredActiveOrders.length"
+            class="seconds-active-order-list"
+            :data-active-order-list="activeOrderFilter"
           >
-            {{ submitting ? t('common.submitting') : t('seconds.confirmOrder') }}
-          </button>
+            <article
+              v-for="order in filteredActiveOrders"
+              :key="order.id"
+              class="seconds-active-order"
+              :class="order.direction"
+              data-active-order="real"
+              :data-active-order-id="order.id"
+            >
+              <header>
+                <div class="seconds-active-order__identity">
+                  <AssetMark
+                    :symbol="baseSymbol(order.symbol)"
+                    :src="marketStore.tickerFor(order.symbol)?.baseIconUrl || marketStore.tickerFor(order.symbol)?.iconUrl"
+                    :fallback-src="marketStore.tickerFor(order.symbol)?.iconUrl"
+                    :size="22"
+                  />
+                  <strong>{{ displayProductSymbol(order.symbol) }}</strong>
+                  <span :class="order.direction">
+                    {{ t(order.direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }}
+                  </span>
+                </div>
+                <span
+                  class="seconds-active-order__countdown numeric"
+                  :aria-label="`${orderStatusLabel(order)} ${orderCountdown(order)}`"
+                >
+                  <i aria-hidden="true" />
+                  <b>{{ orderCountdown(order) }}</b>
+                </span>
+              </header>
+              <dl>
+                <div>
+                  <dt>{{ t('seconds.stakeAmount') }}</dt>
+                  <dd class="numeric">{{ formatAmount(order.stakeAmount) }} {{ order.stakeAssetSymbol }}</dd>
+                </div>
+                <div>
+                  <dt>{{ t('orders.entryPrice') }}</dt>
+                  <dd class="numeric">{{ order.entryPrice !== undefined ? formatPrice(order.entryPrice) : '--' }}</dd>
+                </div>
+                <div>
+                  <dt>{{ t('seconds.estimatedProfit') }}</dt>
+                  <dd class="numeric">+{{ formatAmount(orderEstimatedProfit(order)) }} {{ order.stakeAssetSymbol }}</dd>
+                </div>
+              </dl>
+              <div class="seconds-active-progress" aria-hidden="true">
+                <i :style="{ width: `${orderProgress(order)}%` }" />
+              </div>
+            </article>
+          </div>
 
-          <p class="seconds-risk-note">
-            <CircleAlert :size="14" aria-hidden="true" />
-            <span>{{ t('seconds.introDescription') }}</span>
+          <p v-else class="seconds-active-orders-empty" role="status">
+            {{ !session.isAuthenticated
+              ? t('seconds.loginDescription')
+              : loading
+                ? t('seconds.loading')
+                : t('seconds.activeOrdersEmpty') }}
           </p>
         </section>
-
       </section>
     </div>
 
     <Teleport to="body">
-      <div v-if="confirmOpen && selected && cycle" class="confirmation-layer seconds-mask" @click.self="closeConfirm">
+      <div v-if="confirmOpen && orderReview" class="confirmation-layer seconds-mask" @click.self="closeConfirm">
         <section
           ref="confirmDialog"
           class="confirmation-sheet seconds-dialog"
@@ -1017,7 +1217,7 @@ onBeforeUnmount(() => {
             <span class="confirmation-icon"><CheckCircle2 :size="20" /></span>
             <div>
               <strong id="seconds-confirm-title">{{ t('seconds.confirmOrder') }}</strong>
-              <small>{{ selected.symbol }} · {{ t('seconds.settledIn', { asset: selected.stakeAssetSymbol }) }}</small>
+              <small>{{ orderReview.symbol }} · {{ t('seconds.settledIn', { asset: orderReview.stakeAssetSymbol }) }}</small>
             </div>
             <button
               class="icon-button"
@@ -1033,19 +1233,19 @@ onBeforeUnmount(() => {
 
           <div class="seconds-dialog__body">
             <p id="seconds-confirm-summary">
-              {{ selected.symbol }} · {{ t(direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }} ·
-              {{ formatAmount(amountNumber) }} {{ selected.stakeAssetSymbol }}
+              {{ orderReview.symbol }} · {{ t(orderReview.direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }} ·
+              {{ formatAmount(orderReview.stakeAmount) }} {{ orderReview.stakeAssetSymbol }}
             </p>
 
             <dl class="confirmation-detail">
-              <div><dt>{{ t('seconds.direction') }}</dt><dd>{{ t(direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }}</dd></div>
-              <div><dt>{{ t('seconds.term') }}</dt><dd>{{ t('seconds.duration', { seconds: cycle.durationSeconds }) }}</dd></div>
-              <div><dt>{{ t('seconds.stakeAmount') }}</dt><dd>{{ formatAmount(amountNumber) }} {{ selected.stakeAssetSymbol }}</dd></div>
+              <div><dt>{{ t('seconds.direction') }}</dt><dd>{{ t(orderReview.direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }}</dd></div>
+              <div><dt>{{ t('seconds.term') }}</dt><dd>{{ t('seconds.duration', { seconds: orderReview.durationSeconds }) }}</dd></div>
+              <div><dt>{{ t('seconds.stakeAmount') }}</dt><dd>{{ formatAmount(orderReview.stakeAmount) }} {{ orderReview.stakeAssetSymbol }}</dd></div>
               <div>
                 <dt>{{ t('seconds.payoutRate') }}</dt>
-                <dd>{{ (cycle.payoutRate * 100).toFixed(2) }}% · +{{ formatAmount(estimatedProfit) }} {{ selected.stakeAssetSymbol }}</dd>
+                <dd>{{ (orderReview.payoutRate * 100).toFixed(2) }}% · +{{ formatAmount(reviewEstimatedProfit) }} {{ orderReview.stakeAssetSymbol }}</dd>
               </div>
-              <div><dt>{{ t('marketDetail.latestPrice') }}</dt><dd>{{ selectedLatestPrice > 0 ? formatPrice(selectedLatestPrice) : '--' }}</dd></div>
+              <div><dt>{{ t('marketDetail.latestPrice') }}</dt><dd>{{ orderReview.referencePrice > 0 ? formatPrice(orderReview.referencePrice) : '--' }}</dd></div>
             </dl>
 
             <p v-if="error" class="dialog-feedback" role="alert">{{ error }}</p>
@@ -1150,464 +1350,700 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .seconds-page {
-  background: var(--page);
-  color: var(--text);
+  background: var(--seconds-page);
+  color: var(--seconds-text);
+  font-family: var(--font-geist-sans), Inter, "PingFang SC", sans-serif;
   min-width: 0;
   overflow-x: clip;
+  padding-bottom: 0;
   position: relative;
+}
+
+.seconds-page .numeric {
+  font-family: var(--font-geist-mono), var(--data-font);
+  font-variant-numeric: tabular-nums;
 }
 
 .seconds-content {
   min-width: 0;
-  padding: 0 0 calc(24px + env(safe-area-inset-bottom));
+  padding: 0;
 }
 
 .seconds-workspace,
-.seconds-market-board,
-.seconds-order-console {
+.seconds-trading-operation,
+.seconds-order-console,
+.seconds-orders-workspace {
   min-width: 0;
 }
 
 .seconds-workspace {
-  display: grid;
-  gap: 0;
+  display: block;
   width: 100%;
+}
+
+.seconds-header {
+  background: var(--seconds-page) !important;
+  box-sizing: border-box;
+  grid-template-columns: 40px minmax(0, 1fr) 40px !important;
+  height: 60px !important;
+  min-height: 60px !important;
+  padding: 10px 20px !important;
+}
+
+.seconds-header :deep(.page-header__copy) {
+  height: 22px;
+  left: 50%;
+  min-width: 0;
+  padding: 0;
+  position: absolute;
+  top: 19px;
+  transform: translateX(-50%);
+  width: 140px;
+}
+
+.seconds-header :deep(.page-header__back.icon-button),
+.seconds-header :deep(.page-header__actions),
+.seconds-header :deep(.page-header__actions > .icon-button) {
+  height: 40px !important;
+  min-height: 40px !important;
+  min-width: 40px !important;
+  width: 40px !important;
+}
+
+.seconds-header :deep(.page-header__actions) {
+  grid-column: 3;
+}
+
+.seconds-header :deep(.icon-button) {
+  color: var(--seconds-text);
+  position: relative;
+}
+
+.seconds-header :deep(.icon-button)::before {
+  content: '';
+  inset: -2px;
+  position: absolute;
 }
 
 .seconds-pair-field {
-  display: grid;
-  justify-self: center;
-  max-width: 260px;
+  display: block;
+  height: 22px;
   min-width: 0;
-  width: 100%;
+  position: relative;
+  width: 140px;
 }
 
-.seconds-select-shell {
+.seconds-pair-copy {
   align-items: center;
-  background: var(--surface);
-  border: 1px solid transparent;
-  border-radius: 12px;
-  box-sizing: border-box;
+  color: var(--seconds-text);
   display: grid;
-  gap: 6px;
-  grid-template-columns: minmax(0, 1fr) auto;
-  height: 44px;
-  justify-content: center;
-  min-height: 44px;
+  gap: 4px;
+  grid-template-columns: minmax(0, 1fr) auto 15px;
+  height: 22px;
   min-width: 0;
-  padding: 0 6px;
   width: 100%;
 }
 
-.seconds-select-shell:focus-within {
-  border-color: var(--focus);
-  box-shadow: inset 0 0 0 1px var(--focus);
-}
-
-.seconds-select-shell select {
-  background: transparent;
-  border: 0;
-  box-shadow: none;
-  color: var(--text);
-  font-size: 15px;
+.seconds-pair-copy strong {
+  font-size: 17px;
   font-weight: 750;
-  height: 42px;
-  min-height: 42px;
-  min-width: 0;
-  outline: 0;
-  padding: 0 2px 0 0;
-  text-align: right;
-  width: 100%;
-}
-
-.seconds-select-shell small {
-  background: var(--positive-soft);
-  border-radius: 50%;
-  color: var(--positive);
-  font-size: 9px;
-  font-weight: 650;
-  line-height: 20px;
-  padding: 0 7px;
+  letter-spacing: -.2px;
+  line-height: 22px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.seconds-select-shell select:focus,
-.seconds-select-shell select:focus-visible {
-  border: 0;
-  box-shadow: none;
-  outline: 0;
-}
-
-.seconds-select-shell:has(select:disabled) {
-  opacity: .64;
-}
-
-.seconds-market-board {
-  background: var(--page);
-  border: 0;
-  display: grid;
-  gap: 6px;
+.seconds-pair-copy small {
+  color: var(--seconds-muted);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 14px;
+  max-width: 48px;
   overflow: hidden;
-  padding: 4px 20px 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.seconds-price-row {
-  align-items: baseline;
+.seconds-pair-copy svg {
+  display: block;
+}
+
+.seconds-pair-field select {
+  appearance: none;
+  cursor: pointer;
+  height: 44px;
+  inset: -11px 0 auto;
+  opacity: 0;
+  position: absolute;
+  width: 100%;
+}
+
+.seconds-pair-field:focus-within {
+  border-radius: 6px;
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.seconds-pair-field[data-disabled='true'] {
+  opacity: .58;
+}
+
+.seconds-trading-operation {
+  align-content: start;
+  background: var(--seconds-page);
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: 22px 53px 112px 202px;
+  height: 420px;
+  padding: 2px 20px 10px;
+  row-gap: 6px;
+}
+
+.seconds-market-status {
+  align-items: center;
   display: flex;
-  gap: 10px;
+  height: 22px;
   justify-content: space-between;
   min-width: 0;
 }
 
-.seconds-price-row strong {
-  color: var(--text);
-  font-size: 34px;
-  font-weight: 750;
-  letter-spacing: -.8px;
-  line-height: 42px;
+.seconds-round-state {
+  align-items: center;
+  color: var(--seconds-muted);
+  display: inline-flex;
+  gap: 6px;
   min-width: 0;
-  overflow-wrap: anywhere;
 }
 
-.seconds-price-row span {
-  color: var(--positive);
+.seconds-round-state > i,
+.seconds-active-order__countdown > i {
+  background: var(--seconds-signal);
+  border-radius: 50%;
+  display: block;
   flex: 0 0 auto;
-  font-size: 11px;
+  height: 6px;
+  width: 6px;
+}
+
+.seconds-round-state b {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seconds-return-rate {
+  align-items: center;
+  background: var(--seconds-positive-soft);
+  border-radius: 9px;
+  color: var(--seconds-positive-text);
+  display: inline-flex;
+  flex: 0 0 82px;
+  font-size: 10px;
   font-weight: 650;
-  line-height: 16px;
-  text-align: right;
+  height: 22px;
+  justify-content: center;
+  line-height: 14px;
+  overflow: hidden;
+  padding: 0 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seconds-price-panel {
+  display: grid;
+  grid-template-rows: 35px 18px;
+  height: 53px;
+  min-width: 0;
+  position: relative;
+}
+
+.seconds-price-panel > strong {
+  color: var(--seconds-positive-text);
+  font-size: 31px;
+  font-weight: 800;
+  letter-spacing: -.8px;
+  line-height: 35px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seconds-price-meta {
+  align-items: center;
+  color: var(--seconds-muted);
+  display: flex;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 14px;
+  min-width: 0;
+  padding-right: 84px;
+}
+
+.seconds-price-meta > span {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.seconds-live-state {
+  align-items: center;
+  bottom: 2px;
+  color: var(--seconds-muted);
+  display: inline-flex;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+  max-width: 82px;
+  overflow: hidden;
+  position: absolute;
+  right: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seconds-live-state[data-state='unavailable'] {
+  color: var(--seconds-negative);
 }
 
 .seconds-micro-chart {
-  height: 170px;
+  height: 112px;
   min-width: 0;
   position: relative;
 }
 
 .seconds-micro-chart canvas {
   display: block;
-  height: 170px;
+  height: 112px;
   width: 100%;
 }
 
 .seconds-micro-chart > span {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--seconds-muted);
+  font-size: 10px;
   left: 50%;
+  line-height: 14px;
+  max-width: calc(100% - 24px);
+  overflow: hidden;
   position: absolute;
+  text-overflow: ellipsis;
   top: 50%;
   transform: translate(-50%, -50%);
   white-space: nowrap;
 }
 
-.seconds-active-orders {
-  display: grid;
-  gap: 10px;
-  margin: 12px 20px 0;
-  min-width: 0;
-}
-
-.seconds-active-order {
-  background: var(--surface);
-  border: 1px solid var(--positive);
-  border-radius: 14px;
-  display: grid;
-  gap: 10px;
-  margin: 0;
-  min-width: 0;
-  padding: 12px 14px;
-}
-
-.seconds-active-order header {
-  align-items: center;
-  display: flex;
-  gap: 8px;
-  min-width: 0;
-}
-
-.seconds-active-order header > span {
-  align-items: center;
-  background: var(--positive);
-  border-radius: 11px;
-  color: var(--on-accent);
-  display: inline-flex;
-  font-size: 10px;
-  font-weight: 750;
-  gap: 4px;
-  height: 22px;
-  padding: 0 10px;
-}
-
-.seconds-active-order header > span.down {
-  background: var(--negative);
-}
-
-.seconds-active-order header b,
-.seconds-active-order header strong {
-  font-size: 10px;
-}
-
-.seconds-active-order header strong {
-  color: var(--positive);
-  margin-left: auto;
-  text-align: right;
-}
-
-.seconds-active-progress {
-  background: var(--positive-soft);
-  border-radius: 3px;
-  height: 6px;
-  overflow: hidden;
-}
-
-.seconds-active-progress i {
-  background: var(--positive);
-  border-radius: inherit;
-  display: block;
-  height: 100%;
-  transition: width .2s linear;
-}
-
-.seconds-active-order dl {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-}
-
-.seconds-active-order dl > div {
-  align-items: center;
-  display: flex;
-  gap: 12px;
-  justify-content: space-between;
-  min-width: 0;
-}
-
-.seconds-active-order dt,
-.seconds-active-order dd {
-  font-size: 10px;
-  line-height: 15px;
-  margin: 0;
-}
-
-.seconds-active-order dt {
-  color: var(--muted);
-}
-
-.seconds-active-order dd {
-  color: var(--text);
-  font-weight: 650;
-  min-width: 0;
-  overflow-wrap: anywhere;
-  text-align: right;
-}
-
-.seconds-active-order dd.positive {
-  color: var(--positive);
-}
-
 .seconds-order-console {
-  background: var(--page);
+  background: transparent;
   border: 0;
   border-radius: 0;
   box-shadow: none;
+  box-sizing: border-box;
   display: grid;
-  gap: 12px;
-  padding: 12px 20px 20px;
-}
-
-.seconds-control-group,
-.seconds-amount-field {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-
-.seconds-control-label,
-.seconds-amount-field > span {
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 650;
-  line-height: 16px;
-}
-
-.seconds-direction-grid,
-.seconds-duration-grid {
-  display: grid;
-  min-width: 0;
-}
-
-.seconds-direction-grid {
-  gap: 10px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.seconds-direction-grid button {
-  min-height: 52px;
-  align-items: center;
-  background: var(--positive);
-  border: 1px solid transparent;
-  border-radius: 12px;
-  color: var(--on-accent);
-  display: inline-flex;
-  font-size: 14px;
-  font-weight: 750;
   gap: 6px;
-  justify-content: center;
+  grid-template-rows: 30px 26px 38px 40px 44px;
+  height: 202px;
   min-width: 0;
+  padding: 0;
 }
 
-.seconds-direction-grid button.down {
-  background: var(--negative-soft);
-  color: var(--negative);
+.seconds-duration-scroll {
+  box-sizing: border-box;
+  height: 44px;
+  margin-block: -7px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: 7px;
+  scrollbar-width: none;
 }
 
-.seconds-direction-grid button:not(.active) {
-  opacity: .72;
-}
-
-.seconds-direction-grid button:disabled {
-  cursor: default;
+.seconds-duration-scroll::-webkit-scrollbar {
+  display: none;
 }
 
 .seconds-duration-grid {
-  gap: 8px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  display: grid;
+  gap: 6px;
+  grid-auto-columns: calc((100% - 18px) / 4);
+  grid-auto-flow: column;
+  grid-template-columns: none;
+  height: 30px;
+  min-width: 100%;
+  width: 100%;
 }
 
 .seconds-duration-grid button {
   align-items: center;
-  background: var(--surface);
-  border: 1px solid var(--line-strong);
-  border-radius: 18px;
-  color: var(--text);
+  background: var(--seconds-control-surface);
+  border: 1px solid var(--seconds-line);
+  border-radius: 9px;
+  color: var(--seconds-text);
   display: inline-flex;
   font-size: 11px;
-  font-weight: 650;
-  height: 36px;
+  font-weight: 600;
+  height: 30px;
   justify-content: center;
-  min-height: 36px;
+  max-height: 30px;
+  min-height: 30px !important;
   min-width: 0;
-  padding: 0 6px;
+  padding: 0 4px;
+  position: relative;
+  box-shadow: none;
+  white-space: nowrap;
+}
+
+.seconds-duration-grid button::before {
+  content: '';
+  inset: -8px 0;
+  position: absolute;
 }
 
 .seconds-duration-grid button.active {
-  background: var(--positive-soft);
-  border-color: transparent;
-  color: var(--positive);
+  background: var(--seconds-positive-soft);
+  border-color: var(--seconds-positive-text);
+  color: var(--seconds-positive-text);
+  font-weight: 700;
+}
+
+.seconds-duration-grid button:disabled {
+  cursor: default;
+  opacity: .55;
+}
+
+.seconds-cycle-limit {
+  align-items: center;
+  background: var(--seconds-positive-soft);
+  border-radius: 8px;
+  color: var(--seconds-muted);
+  display: flex;
+  font-size: 9px;
+  gap: 8px;
+  height: 26px;
+  justify-content: space-between;
+  line-height: 13px;
+  min-width: 0;
+  padding: 0 10px;
+}
+
+.seconds-cycle-limit > span {
+  color: var(--seconds-positive-text);
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.seconds-cycle-limit > b {
+  color: var(--seconds-text);
+  font-size: 10px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .seconds-amount-field {
-  gap: 0;
-  height: 52px;
-  min-height: 52px;
-  padding: 0;
+  align-items: center;
+  background: var(--seconds-control-surface);
+  border: 1px solid var(--seconds-line);
+  border-radius: 10px;
+  box-sizing: border-box;
+  color: var(--seconds-text);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  height: 38px;
+  min-width: 0;
+  padding: 0 12px;
   position: relative;
 }
 
-.seconds-amount-field > span {
-  left: 0;
+.seconds-amount-field::before {
+  content: '';
+  inset: -4px 0;
   position: absolute;
-  top: 2px;
-  z-index: 1;
 }
 
-.seconds-page .seconds-order-console .seconds-amount-field > div {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-bottom: 1px solid var(--line);
-  box-shadow: none;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  height: 52px;
-  min-height: 52px;
-  min-width: 0;
-  padding: 13px 0 0;
-}
-
-.seconds-page .seconds-order-console .seconds-amount-field:focus-within > div {
+.seconds-amount-field:focus-within {
   border-color: var(--focus);
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
-.seconds-page .seconds-order-console .seconds-amount-field[data-field-state="invalid"] > div {
-  border-color: var(--negative);
+.seconds-amount-field[data-field-state='invalid'] {
+  border-color: var(--seconds-negative);
 }
 
-.seconds-page .seconds-order-console .seconds-amount-field input {
+.seconds-amount-field > span {
+  color: var(--seconds-muted);
+  font-size: 10px;
+  font-weight: 550;
+  line-height: 14px;
+}
+
+.seconds-amount-field > div {
+  align-items: center;
+  display: flex;
+  gap: 5px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.seconds-amount-field input {
+  appearance: textfield;
   background: transparent;
   border: 0;
   box-shadow: none;
-  color: var(--text);
-  font-size: 22px;
+  color: var(--seconds-text);
+  flex: 1 1 auto;
+  font-size: 15px;
   font-weight: 750;
-  height: 38px;
-  min-height: 38px;
+  height: 36px;
   min-width: 0;
   outline: 0;
   padding: 0;
+  text-align: right;
   width: 100%;
 }
 
-.seconds-page .seconds-order-console .seconds-amount-field input:focus,
-.seconds-page .seconds-order-console .seconds-amount-field input:focus-visible {
+.seconds-amount-field input:focus,
+.seconds-amount-field input:focus-visible {
   border: 0;
   box-shadow: none;
   outline: 0;
 }
 
 .seconds-amount-field b {
-  font-size: 12px;
-  overflow-wrap: anywhere;
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 650;
 }
 
-.seconds-amount-presets {
-  display: none;
-}
-
-.seconds-order-summary {
-  margin: -4px 0 0;
+.seconds-direction-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  height: 40px;
   min-width: 0;
 }
 
-.seconds-order-summary > div {
-  align-items: baseline;
+.seconds-direction-grid button {
+  align-items: center;
+  background: var(--seconds-control-surface);
+  border: 1px solid var(--seconds-line);
+  border-radius: 14px;
+  color: var(--seconds-muted);
+  display: inline-flex;
+  font-size: 14px;
+  font-weight: 800;
+  gap: 7px;
+  height: 40px;
+  justify-content: center;
+  max-height: 40px;
+  min-height: 40px !important;
+  min-width: 0;
+  padding: 0 8px;
+  position: relative;
+  box-shadow: none;
+}
+
+.seconds-direction-grid button::before {
+  content: '';
+  inset: -3px 0;
+  position: absolute;
+}
+
+.seconds-direction-grid button > i {
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  box-sizing: border-box;
+  display: block;
+  height: 8px;
+  width: 8px;
+}
+
+.seconds-direction-grid button.up.active {
+  background: var(--seconds-positive-soft);
+  border-color: var(--seconds-positive-text);
+  box-shadow: none;
+  color: var(--seconds-positive-text);
+}
+
+.seconds-direction-grid button.down.active {
+  background: var(--seconds-negative-soft);
+  border-color: var(--seconds-negative);
+  box-shadow: none;
+  color: var(--seconds-negative);
+}
+
+.seconds-direction-grid button.active > i {
+  background: currentColor;
+  box-shadow: inset 0 0 0 2px var(--seconds-control-surface);
+}
+
+.seconds-direction-grid button:disabled {
+  cursor: default;
+  opacity: .55;
+}
+
+.seconds-submit {
+  background: var(--seconds-signal) !important;
+  background-image: none !important;
+  border: 0;
+  border-radius: 10px;
+  color: var(--seconds-on-signal) !important;
+  font-size: 14px;
+  font-weight: 700;
+  height: 44px;
+  max-height: 44px;
+  min-height: 44px !important;
+  overflow: hidden;
+  padding: 0 12px;
+  box-shadow: none !important;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.seconds-submit:disabled {
+  cursor: default;
+  opacity: .55;
+}
+
+.seconds-orders-workspace {
+  align-content: start;
+  background: var(--seconds-orders-surface);
+  border-top: 1px solid var(--seconds-line);
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 362px;
+  padding: 12px 20px calc(16px + env(safe-area-inset-bottom));
+  width: 100%;
+}
+
+.seconds-orders-heading {
+  align-items: center;
   display: flex;
-  gap: 6px;
+  height: 24px;
   justify-content: space-between;
   min-width: 0;
 }
 
-.seconds-order-summary dt,
-.seconds-order-summary dd {
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 16px;
-  margin: 0;
+.seconds-orders-heading > div {
+  align-items: center;
+  display: flex;
+  gap: 7px;
+  min-width: 0;
 }
 
-.seconds-order-summary dd {
-  color: var(--text);
+.seconds-orders-heading h2 {
+  color: var(--seconds-text);
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 20px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seconds-orders-heading > div > span {
+  align-items: center;
+  background: var(--seconds-positive-soft);
+  border-radius: 8px;
+  color: var(--seconds-positive-text);
+  display: inline-flex;
+  flex: 0 0 22px;
+  font-size: 10px;
+  font-weight: 700;
+  height: 22px;
+  justify-content: center;
+  min-width: 22px;
+}
+
+.seconds-orders-heading > button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--seconds-positive-text);
+  display: inline-flex;
+  font-size: 11px;
   font-weight: 650;
+  gap: 4px;
+  height: 24px;
+  max-height: 24px;
+  min-height: 24px !important;
+  padding: 0;
+  position: relative;
+}
+
+.seconds-orders-heading > button::before {
+  content: '';
+  inset: -10px 0;
+  position: absolute;
+}
+
+.seconds-order-filters {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  height: 30px;
+  margin-top: 6px;
   min-width: 0;
-  overflow-wrap: anywhere;
-  text-align: right;
+}
+
+.seconds-order-filters button {
+  background: var(--seconds-card-surface);
+  border: 1px solid var(--seconds-line);
+  border-radius: 9px;
+  color: var(--seconds-muted);
+  font-size: 10px;
+  font-weight: 600;
+  height: 30px;
+  max-height: 30px;
+  min-height: 30px !important;
+  min-width: 0;
+  padding: 0 6px;
+  position: relative;
+}
+
+.seconds-order-filters button::before {
+  content: '';
+  inset: -8px 0;
+  position: absolute;
+}
+
+.seconds-order-filters button.active {
+  background: var(--seconds-positive-soft);
+  border-color: var(--seconds-positive-text);
+  color: var(--seconds-positive-text);
+  font-weight: 750;
+}
+
+.seconds-order-filters button.down.active {
+  background: var(--seconds-negative-soft);
+  border-color: var(--seconds-negative);
+  color: var(--seconds-negative);
 }
 
 .seconds-feedback {
   display: grid;
   gap: 6px;
-  min-height: 0;
+  margin-top: 8px;
   min-width: 0;
 }
 
 .seconds-feedback > span {
   align-items: center;
-  color: var(--muted);
+  color: var(--seconds-muted);
   display: flex;
   font-size: 10px;
   gap: 7px;
   line-height: 16px;
+  min-height: 44px;
 }
 
 .seconds-message {
@@ -1615,78 +2051,228 @@ onBeforeUnmount(() => {
   border: 1px solid currentColor;
   border-radius: 10px;
   display: grid;
-  font-size: 11px;
-  gap: 9px;
+  font-size: 10px;
+  gap: 8px;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  line-height: 16px;
+  line-height: 15px;
   min-height: 44px;
   min-width: 0;
-  padding: 3px 4px 3px 11px;
+  padding: 3px 4px 3px 10px;
 }
 
 .seconds-message--error {
-  background: var(--negative-soft);
-  color: var(--negative);
+  background: var(--seconds-negative-soft);
+  color: var(--seconds-negative);
 }
 
 .seconds-message--success {
-  background: var(--positive-soft);
-  color: var(--positive);
+  background: var(--seconds-positive-soft);
+  color: var(--seconds-positive-text);
   grid-template-columns: auto minmax(0, 1fr);
 }
 
 .seconds-message--warning {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--seconds-control-surface);
+  color: var(--seconds-positive-text);
   grid-template-columns: auto minmax(0, 1fr);
 }
 
 .seconds-message button {
   background: transparent;
+  border: 0;
   color: inherit;
   display: grid;
   min-height: 36px;
   min-width: 36px;
+  padding: 0;
   place-items: center;
 }
 
-.seconds-submit {
-  border-radius: 26px;
-  min-height: 52px;
-  width: 100%;
-}
-
-.seconds-submit:disabled {
-  background: var(--positive-soft);
-  color: var(--positive);
-  opacity: 1;
-}
-
-.seconds-risk-note {
-  align-items: flex-start;
-  background: var(--negative-soft);
-  border-radius: 10px;
-  color: var(--negative);
-  display: flex;
-  font-size: 11px;
-  font-weight: 500;
+.seconds-active-order-list {
+  display: grid;
   gap: 8px;
-  line-height: 16px;
-  margin: 0;
-  padding: 10px 12px;
+  margin-top: 8px;
+  min-width: 0;
 }
 
-.seconds-risk-note svg {
+.seconds-active-order {
+  background: var(--seconds-card-surface);
+  border: 1px solid var(--seconds-line);
+  border-radius: 12px;
+  box-sizing: border-box;
+  display: grid;
+  gap: 7px;
+  grid-template-rows: 22px 25px 3px;
+  height: 82px;
+  min-width: 0;
+  padding: 8px 10px;
+}
+
+.seconds-active-order > header {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  height: 22px;
+  min-width: 0;
+}
+
+.seconds-active-order__identity {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.seconds-active-order__identity > strong {
+  color: var(--seconds-text);
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 15px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seconds-active-order__identity > span {
+  background: var(--seconds-positive-soft);
+  border-radius: 6px;
+  color: var(--seconds-positive-text);
   flex: 0 0 auto;
-  margin-top: 1px;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 16px;
+  padding: 0 6px;
+}
+
+.seconds-active-order__identity > span.down {
+  background: var(--seconds-negative-soft);
+  color: var(--seconds-negative);
+}
+
+.seconds-active-order__countdown {
+  align-items: center;
+  color: var(--seconds-positive-text);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 10px;
+  gap: 5px;
+  line-height: 14px;
+}
+
+.seconds-active-order.down .seconds-active-order__countdown {
+  color: var(--seconds-negative);
+}
+
+.seconds-active-order.down .seconds-active-order__countdown > i {
+  background: var(--seconds-negative);
+}
+
+.seconds-active-order__countdown b {
+  font-weight: 700;
+}
+
+.seconds-active-order dl {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  height: 25px;
+  margin: 0;
+  min-width: 0;
+}
+
+.seconds-active-order dl > div {
+  display: grid;
+  gap: 1px;
+  grid-template-rows: 10px 14px;
+  min-width: 0;
+}
+
+.seconds-active-order dt,
+.seconds-active-order dd {
+  line-height: 1;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seconds-active-order dt {
+  color: var(--seconds-muted);
+  font-size: 8px;
+  font-weight: 500;
+}
+
+.seconds-active-order dd {
+  color: var(--seconds-text);
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 14px;
+}
+
+.seconds-active-order dl > div:last-child,
+.seconds-active-order dl > div:last-child dd {
+  text-align: right;
+}
+
+.seconds-active-order dl > div:nth-child(2),
+.seconds-active-order dl > div:nth-child(2) dd {
+  text-align: center;
+}
+
+.seconds-active-order.up dl > div:last-child dd {
+  color: var(--seconds-positive-text);
+}
+
+.seconds-active-order.down dl > div:last-child dd {
+  color: var(--seconds-negative);
+}
+
+.seconds-active-progress {
+  background: var(--seconds-line);
+  border-radius: 2px;
+  height: 3px;
+  overflow: hidden;
+}
+
+.seconds-active-progress > i {
+  background: var(--seconds-signal);
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+  transition: width .2s linear;
+}
+
+.seconds-active-order.down .seconds-active-progress > i {
+  background: var(--seconds-negative);
+}
+
+.seconds-active-orders-empty {
+  align-items: center;
+  border: 1px dashed var(--seconds-line);
+  border-radius: 12px;
+  color: var(--seconds-muted);
+  display: flex;
+  font-size: 10px;
+  height: 82px;
+  justify-content: center;
+  line-height: 15px;
+  margin: 8px 0 0;
+  min-width: 0;
+  padding: 0 16px;
+  text-align: center;
 }
 
 .seconds-duration-grid button:focus-visible,
 .seconds-direction-grid button:focus-visible,
+.seconds-order-filters button:focus-visible,
+.seconds-orders-heading > button:focus-visible,
 .seconds-submit:focus-visible,
 .seconds-message button:focus-visible,
 .seconds-dialog button:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-ring), inset 0 0 0 2px var(--focus);
   outline: 0;
 }
 
@@ -2155,26 +2741,35 @@ onBeforeUnmount(() => {
     grid-template-columns: 1fr;
   }
 
-  .seconds-market-board,
-  .seconds-order-console {
-    padding-inline: 16px;
+  .seconds-price-panel > strong {
+    font-size: 29px;
   }
 
-  .seconds-active-orders {
-    margin-inline: 16px;
+  .seconds-price-meta {
+    font-size: 9px;
+    gap: 5px;
+    padding-right: 70px;
   }
 
-  .seconds-price-row strong {
-    font-size: 30px;
+  .seconds-live-state {
+    font-size: 9px;
+    max-width: 68px;
   }
 
-  .seconds-duration-grid {
-    gap: 6px;
+  .seconds-cycle-limit > b {
+    font-size: 8px;
   }
 
-  .seconds-duration-grid button {
-    font-size: 10px;
-    padding-inline: 3px;
+  .seconds-direction-grid button {
+    font-size: 11px;
+  }
+
+  .seconds-active-order__identity {
+    gap: 4px;
+  }
+
+  .seconds-active-order__identity > span {
+    padding-inline: 4px;
   }
 
   .dialog-actions {

@@ -5,6 +5,7 @@ import test from 'node:test'
 const tradeSource = source('../src/views/TradeView.vue')
 const secondsSource = source('../src/views/SecondsView.vue')
 const parityCss = source('../src/styles/prototype-parity.css')
+const selectedCss = source('../src/styles/pencil-selected-pages.css')
 const routerSource = source('../src/router/index.ts')
 const tradeCss = styleOf(tradeSource)
 const secondsCss = styleOf(secondsSource)
@@ -55,7 +56,7 @@ test('秒合约继续直用现货钱包、后台产品周期与真实下单接�
   assert.match(secondsSource, /accounts\.value\.find\(\(item\) => item\.assetId === selected\.value\?\.stakeAssetId\)/)
   assert.match(secondsSource, /selected\.value\?\.cycles\.find\(\(item\) => item\.id === selectedCycleId\.value\)/)
   assert.match(secondsSource, /function setDirection\(nextDirection: 'up' \| 'down'\)/)
-  assert.match(secondsSource, /await openSecondsOrder\(\{[\s\S]*?productId: selected\.value\.id,[\s\S]*?durationSeconds: cycle\.value\.durationSeconds,[\s\S]*?direction: direction\.value,[\s\S]*?stakeAmount: amountNumber\.value,/)
+  assert.match(secondsSource, /const review = orderReview\.value[\s\S]*?await openSecondsOrder\(\{[\s\S]*?productId: review\.productId,[\s\S]*?durationSeconds: review\.durationSeconds,[\s\S]*?direction: review\.direction,[\s\S]*?stakeAmount: review\.stakeAmount,[\s\S]*?idempotencyKey: review\.idempotencyKey,/)
   assert.match(secondsSource, /marketStore\.tickerFor\(selected\.value\?\.symbol \|\| ''\)/)
   assert.doesNotMatch(secondsSource, /\b(?:transfer|fetchMarginWallets|updateMarginLeverage|placeMarginOrder)\b|划转/iu)
 })
@@ -76,23 +77,32 @@ test('两类页面采用单一价格主角和连续 Instrument plate', () => {
   ])
   assertOrdered(secondsSource, [
     'data-instrument-hero="pair-price"',
-    'class="field seconds-pair-field"',
-    'class="seconds-direction-grid"',
+    'class="seconds-pair-field"',
+    'class="seconds-trading-operation"',
+    'class="seconds-market-status"',
+    'class="seconds-price-panel"',
+    'class="seconds-micro-chart"',
+    'class="instrument-plate seconds-order-console"',
     'class="seconds-duration-grid"',
-    'class="field seconds-amount-field"',
-    'class="seconds-order-summary"',
+    'class="seconds-cycle-limit"',
+    'class="seconds-amount-field"',
+    'class="seconds-direction-grid"',
+    'class="button button--primary button--full seconds-submit"',
+    'class="seconds-orders-workspace"',
+    'class="seconds-order-filters"',
+    'class="seconds-active-order-list"',
   ])
-  assert.doesNotMatch(secondsSource, /seconds-session-records|seconds-orders|ordersSection|scrollToOrders/)
+  assert.doesNotMatch(secondsSource, /seconds-session-records|ordersSection|scrollToOrders/)
 
   assert.match(tradeSource, /<style\s+scoped\s*>/)
   assert.match(secondsSource, /<style\s+scoped\s*>/)
   assert.match(tradeCss, /\.trade-workspace\s*\{[\s\S]*?background: var\(--surface\);[\s\S]*?border-bottom: 1px solid var\(--line-strong\);/)
-  assert.match(secondsCss, /\.seconds-workspace\s*\{[\s\S]*?gap: 0;/)
+  assert.match(secondsCss, /\.seconds-workspace\s*\{[\s\S]*?display: block;[\s\S]*?width: 100%;/)
   assert.match(tradeCss, /border-radius: 0;/)
-  assert.match(secondsCss, /border-radius: 0;/)
+  assert.match(secondsCss, /\.seconds-order-console\s*\{[\s\S]*?border-radius: 0;/)
 })
 
-test('表单、切换、百分比与主按钮满足 44–52px 和完整聚焦环合同', () => {
+test('交易表单保持可用触控，Seconds 视觉几何锁定 30/38/40/44px 选中稿', () => {
   assert.match(tradeCss, /\.input-stack \.field-shell\s*\{[\s\S]*?height: 52px;[\s\S]*?min-height: 52px;/)
   assert.match(tradeCss, /\.input-stack \.field-shell input\s*\{[\s\S]*?min-height: 44px;/)
   assert.match(tradeCss, /\.side-switch button\s*\{[\s\S]*?min-height: 50px;/)
@@ -101,12 +111,17 @@ test('表单、切换、百分比与主按钮满足 44–52px 和完整聚焦环
   assert.match(tradeCss, /\.submit-order\s*\{\s*min-height: 52px;/)
   assert.match(tradeCss, /\.input-stack \.field-shell:focus-within\s*\{[\s\S]*?border-color: var\(--focus\);[\s\S]*?box-shadow: 0 0 0 3px var\(--focus-ring\);/)
 
-  assert.match(secondsCss, /\.seconds-select-shell\s*\{[\s\S]*?height: 44px;[\s\S]*?min-height: 44px;/)
-  assert.match(secondsCss, /\.seconds-amount-field > div\s*\{[\s\S]*?height: 52px;[\s\S]*?min-height: 52px;/)
-  assert.match(secondsCss, /\.seconds-direction-grid button\s*\{\s*min-height: 52px;/)
-  assert.match(secondsCss, /\.seconds-submit\s*\{[\s\S]*?min-height: 52px;/)
-  assert.match(secondsCss, /\.seconds-select-shell:focus-within\s*\{[\s\S]*?border-color: var\(--focus\);[\s\S]*?box-shadow: inset 0 0 0 1px var\(--focus\);/)
-  assert.match(secondsCss, /\.seconds-amount-field:focus-within > div\s*\{[\s\S]*?border-color: var\(--focus\);[\s\S]*?box-shadow: 0 0 0 3px var\(--focus-ring\);/)
+  assert.match(secondsCss, /\.seconds-pair-field select\s*\{[\s\S]*?height: 44px;[\s\S]*?inset: -11px 0 auto;/)
+  assert.match(secondsCss, /\.seconds-order-console\s*\{[\s\S]*?grid-template-rows: 30px 26px 38px 40px 44px;[\s\S]*?height: 202px;/)
+  assert.match(secondsCss, /\.seconds-duration-grid button\s*\{[\s\S]*?height: 30px;/)
+  assert.match(secondsCss, /\.seconds-duration-grid button::before\s*\{[\s\S]*?inset: -8px 0;/)
+  assert.match(secondsCss, /\.seconds-amount-field\s*\{[\s\S]*?height: 38px;/)
+  assert.match(secondsCss, /\.seconds-amount-field::before\s*\{[\s\S]*?inset: -4px 0;/)
+  assert.match(secondsCss, /\.seconds-direction-grid button\s*\{[\s\S]*?height: 40px;/)
+  assert.match(secondsCss, /\.seconds-direction-grid button::before\s*\{[\s\S]*?inset: -3px 0;/)
+  assert.match(secondsCss, /\.seconds-submit\s*\{[\s\S]*?height: 44px;[\s\S]*?min-height: 44px !important;/)
+  assert.match(secondsCss, /\.seconds-pair-field:focus-within\s*\{[\s\S]*?outline: 2px solid var\(--focus\);[\s\S]*?outline-offset: 3px;/)
+  assert.match(secondsCss, /\.seconds-amount-field:focus-within\s*\{[\s\S]*?border-color: var\(--focus\);[\s\S]*?box-shadow: 0 0 0 3px var\(--focus-ring\);/)
 
   assert.doesNotMatch(tradeCss, /box-shadow:\s*inset 3px 0/)
   assert.doesNotMatch(secondsCss, /box-shadow:\s*inset 3px 0/)
@@ -115,9 +130,9 @@ test('表单、切换、百分比与主按钮满足 44–52px 和完整聚焦环
 test('320–448px 响应式、安全区和低动态合同不产生工作区固定遮挡', () => {
   for (const width of [320, 360, 390, 448]) {
     const tradeInnerWidth = width - 32
-    const secondsInnerWidth = width - 32
+    const secondsInnerWidth = width - 40
     assert.ok(tradeInnerWidth >= 5 * 44, `${width}px interval rail must fit five touch targets`)
-    assert.ok(secondsInnerWidth >= 3 * 44, `${width}px duration rail must fit three touch targets`)
+    assert.ok((secondsInnerWidth - 18) / 4 >= 44, `${width}px duration rail must show four usable targets`)
   }
 
   assert.match(tradeCss, /\.trade-quote > div:first-child strong\s*\{[\s\S]*?overflow-wrap: normal;[\s\S]*?white-space: nowrap;/)
@@ -128,12 +143,16 @@ test('320–448px 响应式、安全区和低动态合同不产生工作区固�
     assert.match(css, /env\(safe-area-inset-bottom\)/, `${sourceName} should reserve the bottom safe area`)
     assert.match(css, /@media \(max-width: 340px\)/, `${sourceName} should handle 320px layouts`)
     assert.match(css, /@media \(prefers-reduced-motion: reduce\)/, `${sourceName} should disable nonessential motion`)
-    assert.doesNotMatch(css, /width:\s*100vw|overflow-x:\s*auto/)
+    assert.doesNotMatch(css, /width:\s*100vw/)
     if (sourceName === 'trade') {
+      assert.doesNotMatch(css, /overflow-x:\s*auto/)
       assert.match(css, /--contract-bg: #f7f9f8;/)
       assert.match(css, /html\[data-theme='dark'\] \.contract-trade \{[\s\S]*?--contract-bg: #070a09;/)
       assert.match(css, /@media \(max-width: 359px\)[\s\S]*?grid-template-columns: minmax\(0, 1fr\) 132px;/)
     } else {
+      assert.match(css, /\.seconds-duration-scroll\s*\{[\s\S]*?overflow-x: auto;/)
+      assert.match(css, /\.seconds-trading-operation\s*\{[\s\S]*?height: 420px;/)
+      assert.match(css, /\.seconds-orders-workspace\s*\{[\s\S]*?padding: 12px 20px calc\(16px \+ env\(safe-area-inset-bottom\)\);/)
       assert.doesNotMatch(css, /#[0-9a-f]{3,8}|rgba?\(/i)
     }
   }
@@ -178,13 +197,14 @@ test('320–448px 响应式、安全区和低动态合同不产生工作区固�
   assert.doesNotMatch(`${tradeSource}\n${secondsSource}`, /<svg|\p{Extended_Pictographic}/u)
 })
 
-test('交易与秒合约使用首页薄荷主动作和连续面板层级', () => {
+test('交易与秒合约使用薄荷主动作，Seconds 使用独立选中稿主题令牌', () => {
   assert.match(parityCss, /\.trade-view \.trade-instrument-hero\s*\{[\s\S]*?var\(--signal-green\)/)
-  assert.match(parityCss, /\.trade-view \.submit-order,[\s\S]*?\.seconds-page \.seconds-submit\s*\{[\s\S]*?background:\s*var\(--accent\)/)
-  assert.match(parityCss, /\.seconds-page \.seconds-market-board\s*\{[\s\S]*?var\(--signal-green\)/)
-  assert.match(parityCss, /\.seconds-page \.seconds-market-board::after\s*\{\s*content:\s*none;\s*\}/)
-  assert.doesNotMatch(secondsSource, /seconds-round-row|t\('seconds\.currentRound'\)/)
-  assert.match(parityCss, /\.seconds-page \.seconds-order-console\s*\{[\s\S]*?border-radius:\s*0/)
+  assert.match(parityCss, /\.trade-view \.submit-order,[\s\S]*?background:\s*var\(--accent\)/)
+  assert.match(selectedCss, /\.app-stage \.mobile-canvas \.seconds-page\s*\{[\s\S]*?--seconds-page: #ffffff;[\s\S]*?--seconds-signal: #43efa9;/)
+  assert.match(selectedCss, /html\[data-theme='dark'\] \.app-stage \.mobile-canvas \.seconds-page\s*\{[\s\S]*?--seconds-page: #000000;[\s\S]*?--seconds-card-surface: #0c100e;/)
+  assert.match(secondsCss, /\.seconds-submit\s*\{[\s\S]*?background: var\(--seconds-signal\) !important;/)
+  assert.doesNotMatch(secondsSource, /01842|t\('seconds\.currentRound'\)/)
+  assert.match(secondsSource, /nearestSelectedActiveOrder[\s\S]*?t\('seconds\.activeRoundStatus'/)
 })
 
 function source(path: string): string {

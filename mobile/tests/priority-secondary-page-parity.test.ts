@@ -15,6 +15,7 @@ const sources = {
 }
 const prototypeCss = readFileSync(new URL('../src/styles/prototype-base.css', import.meta.url), 'utf8')
 const parityCss = readFileSync(new URL('../src/styles/prototype-parity.css', import.meta.url), 'utf8')
+const selectedCss = readFileSync(new URL('../src/styles/pencil-selected-pages.css', import.meta.url), 'utf8')
 
 function templateOf(source: string): string {
   const start = source.indexOf('<template>')
@@ -118,38 +119,32 @@ test('贷款与安全中心标题精确对齐公开路由且保留根页面入�
   assert.equal(zhCN.rootPrototype.accountAndSecurity, '账户与安全')
 })
 
-test('秒合约工作台保持原型顺序、真实接口与登录回跳', () => {
+test('秒合约工作台保持选中稿操作区与订单区顺序、真实接口与登录回跳', () => {
   const template = templateOf(sources.seconds)
   assertOrdered(template, [
     'seconds-pair-field',
     'seconds-content',
     'seconds-workspace',
-    'class="seconds-market-board"',
-    'class="seconds-price-row"',
+    'class="seconds-trading-operation"',
+    'class="seconds-market-status"',
+    'class="seconds-price-panel"',
     'class="seconds-micro-chart"',
-    'class="seconds-active-orders"',
-    'class="seconds-active-order"',
     'class="instrument-plate seconds-order-console"',
-    'seconds-direction-grid',
-    'seconds-duration-grid',
-    'seconds-amount-field',
-    'seconds-amount-presets',
-    'seconds-order-summary',
-    'seconds-feedback',
-    'seconds-submit',
-  ])
-  assertOrdered(template, [
-    "t('orders.entryPrice')",
-    "t('marketDetail.latestPrice')",
-    "t('seconds.stakeAmount')",
-    "t('seconds.estimatedProfit')",
-    "t('seconds.direction')",
-    "t('seconds.term')",
-    "t('seconds.confirmOrder')",
+    'class="seconds-duration-scroll"',
+    'class="seconds-cycle-limit"',
+    'class="seconds-amount-field"',
+    'class="seconds-direction-grid"',
+    'class="button button--primary button--full seconds-submit"',
+    'class="seconds-orders-workspace"',
+    'class="seconds-orders-heading"',
+    'class="seconds-order-filters"',
+    'class="seconds-feedback"',
+    'class="seconds-active-order-list"',
+    'class="seconds-active-order"',
   ])
   assert.equal(zhCN.seconds.estimatedProfit, '预计收益')
   assert.equal(en.seconds.estimatedProfit, 'Estimated profit')
-  assert.match(sources.seconds, /amountNumber\.value \* payoutRate\.value/)
+  assert.match(sources.seconds, /orderReview\.value\.stakeAmount \* orderReview\.value\.payoutRate/)
   assert.match(sources.seconds, /function orderEstimatedProfit\(order: SecondsOrder\): number \{\s*return secondsOrderEstimatedProfit\(order\)\s*\}/)
   assert.match(sources.seconds, /order\.entryPrice !== undefined \? formatPrice\(order\.entryPrice\) : '--'/)
   assert.match(sources.seconds, /openedOrder = await openSecondsOrder\(\{/)
@@ -157,7 +152,7 @@ test('秒合约工作台保持原型顺序、真实接口与登录回跳', () =>
   assert.match(sources.seconds, /fetchSecondsProducts\(\)/)
   assert.match(sources.seconds, /fetchSecondsOrders\(100\)/)
   assert.match(sources.seconds, /fetchWalletAccounts\(\)/)
-  assert.match(sources.seconds, /await openSecondsOrder\(\{[\s\S]*productId:[\s\S]*durationSeconds:[\s\S]*direction:[\s\S]*stakeAmount:/)
+  assert.match(sources.seconds, /await openSecondsOrder\(\{[\s\S]*productId: review\.productId,[\s\S]*durationSeconds: review\.durationSeconds,[\s\S]*direction: review\.direction,[\s\S]*stakeAmount: review\.stakeAmount,[\s\S]*idempotencyKey: review\.idempotencyKey,/)
   assert.match(sources.seconds, /router\.push\(\{ name: 'login', query: \{ redirect: '\/seconds' \} \}\)/)
   assert.match(sources.seconds, /class="confirmation-layer seconds-mask"/)
   assert.match(sources.seconds, /role="dialog"/)
@@ -166,18 +161,15 @@ test('秒合约工作台保持原型顺序、真实接口与登录回跳', () =>
   assert.doesNotMatch(sources.seconds, /LoginRequiredState/)
 })
 
-test('秒合约行情面板移除装饰标识与轮次摘要且保留国际化合同', () => {
-  assert.match(
-    prototypeCss,
-    /\.seconds-market-board::after\s*\{[\s\S]*?content:\s*"LOCAL \/ SHORT CYCLE";/,
-  )
-  assert.match(
-    parityCss,
-    /\.seconds-page \.seconds-market-board::after\s*\{\s*content:\s*none;\s*\}/,
-  )
-  assert.doesNotMatch(sources.seconds, /seconds-round-row|t\('seconds\.currentRound'\)/)
-  assert.equal(zhCN.seconds.currentRound, '当前轮次')
-  assert.equal(en.seconds.currentRound, 'Current round')
+test('秒合约行情摘要只使用权威订单倒计时或就绪态且保留国际化合同', () => {
+  assert.match(selectedCss, /\.app-stage \.mobile-canvas \.seconds-page\s*\{[\s\S]*?--seconds-signal: #43efa9;/)
+  assert.match(sources.seconds, /const nearestSelectedActiveOrder = computed/)
+  assert.match(sources.seconds, /const roundStatusLabel = computed\(\(\) => \{[\s\S]*?id: order\.id,[\s\S]*?countdown: orderCountdown\(order\)[\s\S]*?t\('seconds\.readyState'\)/)
+  assert.doesNotMatch(sources.seconds, /01842|t\('seconds\.currentRound'\)/)
+  assert.equal(zhCN.seconds.readyState, '等待下单')
+  assert.equal(en.seconds.readyState, 'Ready to trade')
+  assert.equal(zhCN.seconds.activeRoundStatus, '订单 #{id} · 剩余 {countdown}')
+  assert.equal(en.seconds.activeRoundStatus, 'Order #{id} · {countdown} left')
 })
 
 test('消息中心使用公告真实源并保持 FkZ6j 四分类连续列表结构', () => {

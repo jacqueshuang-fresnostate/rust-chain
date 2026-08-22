@@ -1,0 +1,8 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Run the complete Mobile quality gate and verify selected page/icon constraints."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Review visual parity, theme cascade, safe-area, 320–448px overflow, touch and build requirements."}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Review real-data ownership, generation isolation, create commit point, active-order and settlement semantics."}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Review named history route, safe back behavior, and locale symmetry without fixed template copy."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check API-to-adapter-to-view data flow and edge states remain consistent."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check no avoidable visual or business logic duplication was introduced."}
+{"file":".trellis/tasks/archive/2026-08/08-22-mobile-seconds-pencil-selected-parity/research/pencil-selected-spec.md","reason":"Compare implementation and runtime computed geometry against the selected Pencil source of truth."}
+{"file":".trellis/tasks/archive/2026-08/08-22-mobile-seconds-pencil-selected-parity/research/current-seconds-implementation.md","reason":"Confirm preserved behaviors, affected test surfaces and known mismatch risks are covered."}

@@ -47,14 +47,15 @@ test('秒合约页保留真实产品、钱包、下单和活动订单合同', ()
     secondsSource,
     /function clearSecondsPrivateState\(\): void \{\s*orders\.value = \[\]\s*accounts\.value = \[\][\s\S]*?settlementResultTracker\.reset\(\)[\s\S]*?clearSettlementResultQueue\(\)\s*\}/,
   )
-  assert.match(secondsSource, /await openSecondsOrder\(\{\s*productId: selected\.value\.id,\s*durationSeconds: cycle\.value\.durationSeconds,\s*direction: direction\.value,\s*stakeAmount: amountNumber\.value,/)
+  assert.match(secondsSource, /const review = orderReview\.value[\s\S]*?await openSecondsOrder\(\{\s*productId: review\.productId,\s*durationSeconds: review\.durationSeconds,\s*direction: review\.direction,\s*stakeAmount: review\.stakeAmount,\s*idempotencyKey: review\.idempotencyKey,/)
   assert.match(secondsSource, /class="seconds-direction-grid"/)
   assert.match(secondsSource, /class="seconds-duration-grid"/)
   assert.match(secondsSource, /class="[^"]*seconds-amount-field[^"]*"/)
-  assert.match(secondsSource, /data-active-order-list="all"/)
+  assert.match(secondsSource, /:data-active-order-list="activeOrderFilter"/)
+  assert.match(secondsSource, /v-for="order in filteredActiveOrders"/)
   assert.match(secondsSource, /selected && session\.isAuthenticated && account/)
   assert.match(secondsSource, /router\.push\(\{ name: 'seconds-history' \}\)/)
-  assert.doesNotMatch(secondsSource, /seconds-session-records|seconds-orders|ordersSection|scrollToOrders/)
+  assert.doesNotMatch(secondsSource, /seconds-session-records|ordersSection|scrollToOrders/)
   assert.doesNotMatch(secondsSource, /cancelSecondsOrder|\/seconds-contracts\/orders\/\$\{[^}]+\}\/cancel/)
 })
 

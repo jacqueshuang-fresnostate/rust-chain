@@ -1,0 +1,8 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Mobile Vue/PWA quality commands, icon-control and selected-production-snapshot contracts."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Selected Pencil page theming, canvas, touch geometry, settlement island, responsive and build contracts."}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"Seconds product/ticker/K-line/wallet/create/reconcile/settlement DTO and concurrency truth contracts."}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Independent Seconds/history routing, safe back behavior, and symmetric zh-CN/en localization contracts."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Preserve data ownership across API adapters, component state, realtime streams, and display."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse existing AssetMark, modal, chart, order and presentation helpers instead of duplicating logic."}
+{"file":".trellis/tasks/archive/2026-08/08-22-mobile-seconds-pencil-selected-parity/research/pencil-selected-spec.md","reason":"Exact current Pencil frame IDs, 390px geometry, light/dark palette, typography and interaction mapping."}
+{"file":".trellis/tasks/archive/2026-08/08-22-mobile-seconds-pencil-selected-parity/research/current-seconds-implementation.md","reason":"Existing production implementation, preserved behavior, affected files and recommended test seams."}

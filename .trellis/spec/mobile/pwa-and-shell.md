@@ -525,6 +525,37 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   categories; guests receive only one 48px localized login CTA that preserves
   the `/products/loan` redirect. Do not restore `loan-access-pencil__summary`,
   its decorative status icon, or its retired ready/login explanation copy.
+- The selected Seconds references are `VL8er` (light) and `g9agt` (dark), and
+  `/seconds` records them as `data-pencil-source="VL8er/g9agt"`. Production does
+  not duplicate the Pencil status bar: its visual canvas starts with a 60px
+  Header, followed by a fixed 420px trading operation and an order workspace
+  starting at `y=480` with a 362px minimum height. The Header keeps 40px left
+  and right controls, a visually absolute-centered 140x22 pair/title track, and
+  the named Seconds-history route on the right action.
+- At the 390px reference width, every Seconds content track is 350px with 20px
+  side insets. The operation grid is `22px 53px 112px 202px` with 6px row gaps;
+  the form grid is `30px 26px 38px 40px 44px`, also with 6px gaps. The chart
+  remains 112px high, the active-order cards are 350x82 with 8px gaps, and the
+  list grows naturally rather than clipping a fourth order. At narrower and
+  wider widths these tracks remain fluid and never create document overflow.
+- Seconds uses the selected flat white/pure-black canvas without the retired
+  prototype grid. Light tokens are `#ffffff`, `#111714`, `#68736d`, `#dde4e0`,
+  `#d9f9eb`, `#087b52`, `#43efa9`, and `#ff654a`; dark tokens are `#000000`,
+  `#050806`, `#0c100e`, `#f2f7f4`, `#95a19a`, `#202923`, `#103326`, `#61f1b6`,
+  `#43efa9`, and `#ff654a`. These route tokens live in the shared global
+  selected-page stylesheet; scoped CSS owns only Seconds layout and states.
+- Seconds period and filter controls intentionally have 30px visible geometry,
+  and the heading action has 24px visible geometry. Explicit local `height`,
+  `min-height`, and, where needed, transparent expanded hit areas must defeat
+  legacy global button minimums without shrinking accessible pointer targets.
+  Browser validation must inspect computed dimensions, not only source rules.
+- Pencil controls geometry and visual hierarchy, while products, cycles,
+  limits, prices, K-lines, balances, Logos, active orders, countdowns, and
+  results remain authoritative API/WebSocket data. Empty/loading/guest/error
+  states preserve the selected tracks without inserting Pencil sample values.
+  The current ticker percentage uses a valid live value first and otherwise
+  falls back to the current market snapshot instead of flashing unavailable
+  when a price-only live frame arrives.
 
 ## 4. Validation & Error Matrix
 
@@ -578,6 +609,10 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
 | Seconds settlement result is visible | Keep the root pointer-transparent and page scroll/input available; only the glass card and its 44px actions receive input |
 | Multiple Seconds results settle together | Show one card at a time, expose the remaining count, and advance FIFO without losing later cards |
 | Viewport is 320px or reduced motion is requested for a Seconds result | Keep zero horizontal overflow, stack actions when needed, and remove reveal motion |
+| Selected Seconds page renders at 390px | Header is 60px, operation is 420px, orders start at y=480, inner tracks are 350px, and the center title has zero horizontal delta |
+| Selected Seconds page renders at 320px or 448px | Fluid tracks stay inside the viewport, period/filter controls retain their visible geometry, and the document has zero horizontal overflow |
+| A live Seconds ticker frame omits change percentage | Keep the live price and fall back to the current market snapshot percentage rather than displaying a transient unavailable value |
+| More than three Seconds orders are active | Render every matching real order below the 362px minimum workspace; never cap or clip the list |
 | Assistive live status is rendered | `.sr-only` remains absolute, clipped, 1x1px, and visually absent |
 | Turnstile renders at 320px | Keep a centered 302px stage and 300px challenge viewport within the device width; no decorative wrapper or horizontal scroll |
 | Turnstile theme or locale changes | Remove and explicitly re-render the widget with the new app theme/language, clearing the previous token |
@@ -723,6 +758,11 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   zero horizontal overflow, named History navigation, and complete reduced-
   motion overrides. Its local semantic roles must alias global `:root` tokens,
   with no literal hex/RGB colors or component-local theme mirror state.
+- Selected Seconds parity pass: at 390px in both themes assert the 60/420/362
+  vertical geometry, 350px content tracks, 112px chart, 30/26/38/40/44 form,
+  82px cards, exact selected tokens, absolute Header centering, and computed
+  visible button heights. Repeat at 320px and 448px for zero document overflow,
+  real pair switching, confirmation open/cancel, and named History navigation.
 - Viewport confirmation sheet: at 320x568, 320x720, 390x667, 390x844, and
   448x900 assert the Teleported overlay is a direct `body` child with no
   transformed route ancestor, every action button rect stays within the

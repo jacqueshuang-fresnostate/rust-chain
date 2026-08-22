@@ -5,54 +5,55 @@ import en from '../src/i18n/messages/en.ts'
 import zhCN from '../src/i18n/messages/zh-CN.ts'
 
 const pageHeaderSource = read('../src/components/PageHeader.vue')
+const secondsApiSource = read('../src/api/seconds.ts')
 const secondsSource = read('../src/views/SecondsView.vue')
 const secondsStyle = secondsSource.match(/<style\s+scoped\s*>([\s\S]*?)<\/style>/)?.[1] || ''
 
-test('PageHeader 为 Seconds 提供向后兼容的中间插槽且 Header 只有一个交易对控件', () => {
+test('PageHeader 为 Seconds 提供向后兼容的中间插槽且交易对按选中稿绝对居中', () => {
   assert.match(
     pageHeaderSource,
     /<div class="page-header__copy">\s*<slot name="center">\s*<slot name="copy">[\s\S]*?<strong class="page-header__title">\{\{ title \}\}<\/strong>[\s\S]*?<\/slot>\s*<\/slot>\s*<\/div>/,
   )
 
   const pageHeader = secondsSource.match(/<PageHeader[\s\S]*?<\/PageHeader>/)?.[0] || ''
-  assert.match(pageHeader, /<template #center>[\s\S]*?<label class="field seconds-pair-field">[\s\S]*?<select[\s\S]*?product\.symbol[\s\S]*?<\/template>/)
+  assert.match(pageHeader, /<template #center>[\s\S]*?<label class="seconds-pair-field"[\s\S]*?<strong>\{\{ selectedPairLabel \}\}<\/strong>[\s\S]*?<ChevronDown[\s\S]*?<select[\s\S]*?product\.symbol[\s\S]*?<\/template>/)
   assert.match(pageHeader, /<template #actions>[\s\S]*?t\('seconds\.historyTitle'\)[\s\S]*?@click="openHistory"/)
   assert.match(secondsSource, /function openHistory\(\): void \{\s*clearSettlementResultQueue\(\)\s*void router\.push\(\{ name: 'seconds-history' \}\)\s*\}/)
-  assert.equal((pageHeader.match(/class="field seconds-pair-field"/g) || []).length, 1)
-  assert.equal((secondsSource.match(/class="field seconds-pair-field"/g) || []).length, 1)
-  assert.doesNotMatch(secondsSource.slice(secondsSource.indexOf('</PageHeader>') + 13), /class="field seconds-pair-field"/)
+  assert.equal((pageHeader.match(/class="seconds-pair-field"/g) || []).length, 1)
+  assert.equal((secondsSource.match(/class="seconds-pair-field"/g) || []).length, 1)
+  assert.doesNotMatch(secondsSource.slice(secondsSource.indexOf('</PageHeader>') + 13), /class="seconds-pair-field"/)
 
   const pairRule = cssRule(secondsStyle, '.seconds-pair-field {')
-  assert.match(pairRule, /justify-self: center;/)
-  assert.match(pairRule, /max-width: 260px;/)
+  assert.match(pairRule, /height: 22px;/)
   assert.match(pairRule, /min-width: 0;/)
-  assert.match(pairRule, /width: 100%;/)
-  assert.doesNotMatch(pairRule, /position:|left:|right:|top:|z-index:/)
+  assert.match(pairRule, /position: relative;/)
+  assert.match(pairRule, /width: 140px;/)
 
-  const shellRule = cssRule(secondsStyle, '.seconds-select-shell {')
-  assert.match(shellRule, /grid-template-columns: minmax\(0, 1fr\) auto;/)
-  assert.match(shellRule, /height: 44px;/)
-  assert.match(shellRule, /min-height: 44px;/)
-  assert.match(shellRule, /width: 100%;/)
-  const focusRule = cssRule(secondsStyle, '.seconds-select-shell:focus-within {')
-  assert.match(focusRule, /box-shadow: inset 0 0 0 1px var\(--focus\);/)
-  assert.doesNotMatch(focusRule, /0 0 0 3px/)
+  const selectRule = cssRule(secondsStyle, '.seconds-pair-field select {')
+  assert.match(selectRule, /height: 44px;/)
+  assert.match(selectRule, /inset: -11px 0 auto;/)
+  assert.match(selectRule, /opacity: 0;/)
+  assert.match(selectRule, /width: 100%;/)
+  const focusRule = cssRule(secondsStyle, '.seconds-pair-field:focus-within {')
+  assert.match(focusRule, /outline: 2px solid var\(--focus\);/)
+  assert.match(focusRule, /outline-offset: 3px;/)
 
   for (const width of [320, 390, 448]) {
-    const compactInline = width <= 340 ? 14 : 18
-    assert.ok(width - compactInline * 2 - 44 * 2 >= 204, `${width}px header center track must remain usable`)
+    assert.ok(width - 20 * 2 - 40 * 2 >= 140, `${width}px header center track must fit the 140px title`)
   }
 })
 
 test('Seconds 使用内部 ticker 与 1m K 线会话并保留 REST/WS generation 竞态保护', () => {
-  assert.match(secondsSource, /import \{ subscribeTickers \} from '@\/api\/marketSocket'/)
+  assert.match(secondsSource, /import \{ subscribeTickers, type TickerUpdate \} from '@\/api\/marketSocket'/)
   assert.match(secondsSource, /import \{ createMarketDetailStreamSession \} from '@\/api\/marketDetailStream'/)
   assert.match(secondsSource, /getUrl: publicMarketWebSocketUrl,\s*channels: \['kline'\]/)
   assert.match(secondsSource, /\.\.\.products\.value\.map\(\(product\) => normalizeProductSymbol\(product\.symbol\)\)/)
   assert.match(secondsSource, /\.\.\.activeOrders\.value\.map\(\(order\) => normalizeProductSymbol\(order\.symbol\)\)/)
   assert.match(secondsSource, /stopTickerSubscription = subscribeTickers\(normalizedSymbols, \(update\) => \{/)
   assert.match(secondsSource, /generation !== tickerSubscriptionGeneration/)
-  assert.match(secondsSource, /\[update\.symbol\]: update\.lastPrice/)
+  assert.match(secondsSource, /const liveTickerSnapshots = ref<Record<string, TickerUpdate>>\(\{\}\)/)
+  assert.match(secondsSource, /previous\?\.observedAt !== undefined[\s\S]*?update\.observedAt < previous\.observedAt[\s\S]*?return/)
+  assert.match(secondsSource, /\[update\.symbol\]: \{[\s\S]*?\.\.\.previous,[\s\S]*?\.\.\.update,[\s\S]*?update\.changePercent === undefined[\s\S]*?update\.observedAt === undefined/)
 
   assert.match(secondsSource, /secondsKlineSession\.replace\(symbol, '1m', requestVersion\)/)
   assert.match(secondsSource, /secondsKlineSession\.beginKlineRequest\(context\)/)
@@ -60,22 +61,44 @@ test('Seconds 使用内部 ticker 与 1m K 线会话并保留 REST/WS generation
   assert.match(secondsSource, /secondsKlineSession\.isCurrent\(context, symbol, '1m', requestVersion\)/)
   assert.match(secondsSource, /secondsKlineSession\.isCurrentKlineRequest\(request\)/)
   assert.match(secondsSource, /secondsKlineSession\.resolveKlineRequest\(request, nextPoints\)/)
-  assert.match(secondsSource, /const livePrice = liveTickerPrices\.value\[normalized\][\s\S]*?sparklinePoints\.value\.at\(-1\)\?\.close[\s\S]*?marketStore\.tickerFor\(symbol\)\?\.lastPrice/)
+  assert.match(secondsSource, /const livePrice = liveTickerSnapshots\.value\[normalized\]\?\.lastPrice[\s\S]*?sparklinePoints\.value\.at\(-1\)\?\.close[\s\S]*?marketStore\.tickerFor\(symbol\)\?\.lastPrice/)
+  assert.match(secondsSource, /const selectedChangePercent = computed<number \| null>[\s\S]*?const liveChange = selectedLiveTicker\.value\?\.changePercent\s*if \(Number\.isFinite\(liveChange\)\) return Number\(liveChange\)\s*const snapshotChange = selectedTicker\.value\?\.changePercent/)
 
   assert.match(secondsSource, /onBeforeUnmount\(\(\) => \{[\s\S]*?chartRequestVersion \+= 1[\s\S]*?tickerSubscriptionGeneration \+= 1[\s\S]*?secondsKlineSession\.stop\(\)[\s\S]*?stopTickerSubscription\?\.\(\)/)
   assert.doesNotMatch(secondsSource, /https?:\/\/www\.tradingview|<iframe|<script[^>]+src=/i)
 })
 
-test('Seconds 渲染全部活动订单、保留并行下单表单并按订单批量到期对账', () => {
+test('Seconds 确认层冻结提交快照并让同一次重试复用幂等键', () => {
+  assert.match(secondsSource, /interface SecondsOrderReview \{[\s\S]*?readonly productId: number[\s\S]*?readonly referencePrice: number[\s\S]*?readonly idempotencyKey: string/)
+  assert.match(
+    secondsSource,
+    /orderReview\.value = Object\.freeze\(\{[\s\S]*?productId: product\.id,[\s\S]*?durationSeconds: activeCycle\.durationSeconds,[\s\S]*?direction: direction\.value,[\s\S]*?stakeAmount: amountNumber\.value,[\s\S]*?referencePrice: selectedLatestPrice\.value,[\s\S]*?idempotencyKey: createSecondsOrderIdempotencyKey\(\)/,
+  )
+  assert.match(secondsSource, /function isOrderReviewValid\(review: SecondsOrderReview\): boolean \{[\s\S]*?review\.stakeAmount >= currentCycle\.minStake[\s\S]*?review\.stakeAmount <= \(currentAccount\?\.available \|\| 0\)/)
+
+  const submitSource = secondsSource.match(
+    /async function submit\(\): Promise<void> \{[\s\S]*?(?=\nasync function reconcileOpenedOrder)/,
+  )?.[0] || ''
+  assert.match(submitSource, /const review = orderReview\.value[\s\S]*?!review \|\| !isOrderReviewValid\(review\)/)
+  assert.match(submitSource, /productId: review\.productId,[\s\S]*?durationSeconds: review\.durationSeconds,[\s\S]*?direction: review\.direction,[\s\S]*?stakeAmount: review\.stakeAmount,[\s\S]*?idempotencyKey: review\.idempotencyKey,/)
+  assert.doesNotMatch(submitSource, /createSecondsOrderIdempotencyKey/)
+  assert.match(secondsSource, /v-if="confirmOpen && orderReview"[\s\S]*?orderReview\.symbol[\s\S]*?orderReview\.direction[\s\S]*?orderReview\.stakeAmount[\s\S]*?orderReview\.payoutRate[\s\S]*?orderReview\.referencePrice/)
+
+  assert.match(secondsApiSource, /idempotencyKey\?: string/)
+  assert.match(secondsApiSource, /idempotency_key: input\.idempotencyKey \|\| createSecondsOrderIdempotencyKey\(\)/)
+})
+
+test('Seconds 渲染全部活动订单、本地方向筛选与并行下单表单并按订单批量到期对账', () => {
   assert.match(secondsSource, /const activeOrders = computed\(\(\) => activeSecondsOrders\(orders\.value\)\)/)
-  assert.doesNotMatch(secondsSource, /\bactiveOrder\b|Boolean\(activeOrder\)/)
-  assert.match(secondsSource, /v-if="activeOrders\.length"[\s\S]*?data-active-order-list="all"/)
-  assert.match(secondsSource, /v-for="order in activeOrders"/)
+  assert.match(secondsSource, /const filteredActiveOrders = computed\(\(\) => \([\s\S]*?activeOrderFilter\.value === 'all'[\s\S]*?order\.direction === activeOrderFilter\.value/)
+  assert.match(secondsSource, /@click="activeOrderFilter = 'all'"[\s\S]*?@click="activeOrderFilter = 'up'"[\s\S]*?@click="activeOrderFilter = 'down'"/)
+  assert.match(secondsSource, /v-if="filteredActiveOrders\.length"[\s\S]*?:data-active-order-list="activeOrderFilter"/)
+  assert.match(secondsSource, /v-for="order in filteredActiveOrders"/)
   assert.match(secondsSource, /:data-active-order-id="order\.id"/)
-  assert.match(secondsSource, /order\.symbol[\s\S]*?orderCountdown\(order\)[\s\S]*?orderProgress\(order\)[\s\S]*?order\.entryPrice[\s\S]*?latestPriceForSymbol\(order\.symbol\)[\s\S]*?order\.stakeAmount[\s\S]*?orderEstimatedProfit\(order\)/)
+  assert.match(secondsSource, /<AssetMark[\s\S]*?:src="marketStore\.tickerFor\(order\.symbol\)\?\.baseIconUrl \|\| marketStore\.tickerFor\(order\.symbol\)\?\.iconUrl"/)
+  assert.match(secondsSource, /displayProductSymbol\(order\.symbol\)[\s\S]*?orderCountdown\(order\)[\s\S]*?order\.stakeAmount[\s\S]*?order\.entryPrice[\s\S]*?orderEstimatedProfit\(order\)[\s\S]*?orderProgress\(order\)/)
 
   assert.equal((secondsSource.match(/:disabled="loading \|\| !selected"/g) || []).length, 4)
-  assert.match(secondsSource, /:disabled="loading \|\| !selected \|\| value <= 0"/)
   assert.match(secondsSource, /:disabled="submitting \|\| loading \|\| !selected"/)
   assert.match(secondsSource, /async function submit\(\): Promise<void> \{\s*if \(submitting\.value\) return/)
 

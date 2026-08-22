@@ -91,6 +91,7 @@ openSecondsOrder(input: {
   durationSeconds: number
   direction: SecondsDirection
   stakeAmount: number
+  idempotencyKey?: string
 }): Promise<SecondsOrder>
 
 requestPredictionQuote(input: {
@@ -329,6 +330,12 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
   and show success before any reconciliation fetch. A later refresh failure is
   a refresh warning; it must retain the returned order, must not relabel the
   mutation as failed, and must not reopen a duplicate-submit path.
+- Opening the Seconds confirmation creates one immutable review snapshot with
+  the selected product/cycle, direction, stake, reference price, payout rate,
+  and one generated idempotency key. The dialog and submit request read only
+  that snapshot. Retrying the same still-open review must reuse its key; closing
+  the dialog and creating a new review generates a new key. Revalidate the
+  frozen product/cycle and current wallet availability before submission.
 - Seconds reconciliation requests are generation-isolated. An older list or
   wallet response must not overwrite state produced by a newer open/reconcile
   cycle. Keep locally committed create responses until an authoritative list

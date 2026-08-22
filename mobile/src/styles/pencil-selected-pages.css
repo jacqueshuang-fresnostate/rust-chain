@@ -132,6 +132,50 @@ html[data-theme='dark'] .wallet-pencil-page .deposit-detail__qr {
   --asset-mark-shadow: 0 2px 5px rgb(7 17 13 / 14%);
 }
 
+.app-stage .mobile-canvas .seconds-page {
+  --seconds-page: #ffffff;
+  --seconds-orders-surface: #ffffff;
+  --seconds-card-surface: #ffffff;
+  --seconds-control-surface: #ffffff;
+  --seconds-text: #111714;
+  --seconds-muted: #68736d;
+  --seconds-line: #dde4e0;
+  --seconds-positive-soft: #d9f9eb;
+  --seconds-positive-text: #087b52;
+  --seconds-signal: #43efa9;
+  --seconds-negative: #ff654a;
+  --seconds-negative-soft: #ffe2dc;
+  --seconds-on-signal: #111714;
+  --page: #ffffff;
+  --surface: #ffffff;
+  --surface-elevated: #ffffff;
+  --surface-2: #ffffff;
+  --line: #dde4e0;
+  --line-strong: #dde4e0;
+  --ink: #111714;
+  --text: #111714;
+  --muted: #68736d;
+  --muted-strong: #111714;
+  --accent: #43efa9;
+  --positive: #087b52;
+  --positive-soft: #d9f9eb;
+  --negative: #ff654a;
+  --negative-soft: #ffe2dc;
+  --on-positive: #111714;
+  --on-accent: #111714;
+  --focus: #087b52;
+  --focus-ring: color-mix(in srgb, #087b52 24%, transparent);
+  background-image: none;
+}
+
+.app-stage .mobile-canvas .seconds-page .seconds-order-console {
+  background: transparent;
+}
+
+.app-stage .mobile-canvas .seconds-page.page {
+  background-image: none;
+}
+
 html[data-theme='dark'] .app-stage .mobile-canvas .contract-trade,
 html[data-theme='dark'] .app-stage .mobile-canvas .seconds-page,
 html[data-theme='dark'] .app-stage .mobile-canvas .product-hub,
@@ -159,6 +203,41 @@ html[data-theme='dark'] .app-stage .mobile-canvas .contract-trade {
   --on-positive: #07110d;
   --on-negative: #250b06;
   --asset-mark-shadow: 0 2px 5px rgb(0 0 0 / 35%);
+}
+
+html[data-theme='dark'] .app-stage .mobile-canvas .seconds-page {
+  --seconds-page: #000000;
+  --seconds-orders-surface: #050806;
+  --seconds-card-surface: #0c100e;
+  --seconds-control-surface: #0c100e;
+  --seconds-text: #f2f7f4;
+  --seconds-muted: #95a19a;
+  --seconds-line: #202923;
+  --seconds-positive-soft: #103326;
+  --seconds-positive-text: #61f1b6;
+  --seconds-signal: #43efa9;
+  --seconds-negative: #ff654a;
+  --seconds-negative-soft: #3b1b16;
+  --seconds-on-signal: #111714;
+  --page: #000000;
+  --surface: #000000;
+  --surface-elevated: #0c100e;
+  --surface-2: #0c100e;
+  --line: #202923;
+  --line-strong: #202923;
+  --ink: #f2f7f4;
+  --text: #f2f7f4;
+  --muted: #95a19a;
+  --muted-strong: #f2f7f4;
+  --accent: #43efa9;
+  --positive: #61f1b6;
+  --positive-soft: #103326;
+  --negative: #ff654a;
+  --negative-soft: #3b1b16;
+  --on-positive: #111714;
+  --on-accent: #111714;
+  --focus: #61f1b6;
+  --focus-ring: color-mix(in srgb, #61f1b6 24%, transparent);
 }
 
 .pencil-page {

@@ -7753,3 +7753,17 @@
 - 修改文件：`mobile/src/core/countrySearch.ts`、`mobile/src/views/RegisterView.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/register-country-search.test.ts`、`.trellis/spec/mobile/navigation-and-localization.md`、`.trellis/tasks/archive/2026-08/08-21-mobile-register-country-search/**`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：RED 阶段聚焦测试因 `countrySearch.ts` 尚不存在而失败；实现后注册国家搜索与既有认证合同测试 11/11、Mobile 全量测试 470/470、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2083 modules、229 条预缓存）和 `npm --prefix mobile run build:tauri`（2083 modules）通过，项目未配置独立 lint script。Ego Browser 在 390×844 浅色实测 249 个真实国家、`cote ivoire` 精确过滤到 CI、选择后回填与焦点恢复；在 320×720 深色实测本地化无结果状态、滚动锁、Escape 和横向溢出 0。
 - 后续事项：无；本次注册搜索改动尚未提交或推送，既有未提交的 AssetMark/TradeView/Pencil 文档与其他 Trellis 归档改动均保持原样。
+
+## 2026-08-22 20:50 - 手机端秒合约按 Pencil 选稿 1:1 重构
+
+- 完成内容：以 Pencil 当前选中的浅色 `VL8er` 与深色 `g9agt` 为唯一视觉基线，重构生产 `/seconds` 为 60px Header、420px 行情/下单操作区和独立进行中订单区；390px 基准锁定 350px 内容轨道、112px 实时折线图、`30/26/38/40/44px` 下单表单及 82px 活动订单卡，并补齐浅深主题精确令牌、绝对居中交易对、真实 Logo、方向筛选与自然增长订单列表。保留真实产品、周期、钱包、行情/K 线、并行订单、倒计时、结算提示和历史路由；实时涨跌幅支持价格帧缺字段时回退权威快照，确认层冻结产品/周期/方向/金额/赔率/参考价和幂等键，同一次重试不会重复生成请求键。
+- 修改文件：`mobile/src/{api/seconds.ts,views/SecondsView.vue,styles/pencil-selected-pages.css,i18n/messages/{zh-CN,en}.ts}`、`mobile/tests/{seconds-pencil-selected-parity,seconds-live-multi-orders,seconds-history-view,trading-lending-views,award-ui-trading-workspaces,pencil-trading-product-selected-parity,priority-secondary-page-parity,android-ui-trading-prototype-v16,ui-prototype-alignment-trading}.test.ts`、`.trellis/spec/mobile/{backend-integration,pwa-and-shell}.md`、`.trellis/tasks/archive/2026-08/08-22-mobile-seconds-pencil-selected-parity/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Seconds 聚焦回归 25/25、Mobile 全量测试 477/477、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`、`npm --prefix mobile run build:tauri` 均通过；归档后的 Trellis context 8+8 条全部通过，`git diff --check` 通过。Ego Browser 在 390px 明暗主题确认 Header 60px、操作区 420px、订单区从 y=480 开始且最小 362px、标题水平偏差 0、页面无旧网格；320px 深色与 448px 浅色均零横向溢出。真实产品切换、确认弹层打开/取消及 `/seconds/history` 跳转均实测通过，未提交真实订单。
+- 后续事项：无；本轮按用户要求完成实现和验收，改动尚未提交或推送，既有 `mobile/pencil/docs/superpowers/PROGRESS.md` 修改保持原样且未纳入本任务。
+
+## 2026-08-22 21:09 - 提交并推送手机端秒合约 Pencil 复刻
+
+- 完成内容：整理本轮 `/seconds` 的 Pencil `VL8er/g9agt` 1:1 复刻、实时行情与确认幂等修复、双语文案、回归测试、Mobile 可执行规范及 Trellis 归档，并按限定范围提交推送；既有 `mobile/pencil/docs/superpowers/PROGRESS.md` 修改继续排除。
+- 修改文件：本轮秒合约重构涉及的 `mobile/src/**`、`mobile/tests/**`、`.trellis/spec/mobile/**`、`.trellis/tasks/archive/2026-08/08-22-mobile-seconds-pencil-selected-parity/**` 与 `docs/superpowers/PROGRESS.md`。
+- 验证结果：沿用提交前最终门禁：Seconds 聚焦回归 25/25、Mobile 全量测试 477/477、类型检查、PWA/Tauri 构建、Ego Browser 多尺寸明暗主题验收、归档任务 validate 与 `git diff --check` 全部通过；提交前继续执行暂存范围和暂存差异检查。
+- 后续事项：无。
