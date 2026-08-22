@@ -1,0 +1,3 @@
+{"file":".trellis/spec/mobile/index.md","reason":"检查共享组件改动要求执行的移动端完整质量门禁。"}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"检查 AssetMark、主题、真实 Logo 与无图回退的视觉和业务边界。"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"检查图片来源递进和后端权威数据未被视觉优化破坏。"}

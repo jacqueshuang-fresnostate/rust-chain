@@ -2,9 +2,11 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Check, ChevronDown, Eye, EyeOff, MailCheck } from 'lucide-vue-next'
+import { Check, ChevronDown, Eye, EyeOff, MailCheck, Search, X } from 'lucide-vue-next'
 import { apiErrorMessage } from '@/api/client'
 import { fetchCountries, fetchRegisterConfig, registerWithEmail, sendRegistrationCode, type CountryOption } from '@/api/auth'
+import { filterCountryOptions } from '@/core/countrySearch'
+import { useModalDialog } from '@/core/modalDialog'
 import {
   createLoginRedirectTarget,
   replaceAuthStep,
@@ -35,6 +37,14 @@ const showPassword = ref(false)
 const emailCodeRequired = ref(true)
 const inviteCodeRequired = ref(false)
 const emailInput = ref<HTMLInputElement | null>(null)
+const countryPickerOpen = ref(false)
+const countrySearch = ref('')
+const countryPickerDialog = ref<HTMLElement | null>(null)
+const countryPickerTrigger = ref<HTMLButtonElement | null>(null)
+const {
+  trapFocus: trapCountryPickerFocus,
+  setReturnFocus: setCountryPickerReturnFocus,
+} = useModalDialog(countryPickerOpen, countryPickerDialog, '[data-country-search]')
 let timer: number | undefined
 
 const safeRedirect = computed(() => sanitizeInternalRedirect(route.query.redirect))
@@ -50,6 +60,9 @@ const regionNames = computed(() => {
     return null
   }
 })
+const selectedCountry = computed(() => countries.value.find((country) => country.code === countryCode.value))
+const selectedCountryLabel = computed(() => selectedCountry.value ? countryLabel(selectedCountry.value) : t('auth.selectCountry'))
+const filteredCountries = computed(() => filterCountryOptions(countries.value, countrySearch.value, countryLabel))
 
 const fallbackCountries: CountryOption[] = [
   { code: 'CN', name: 'China' },
@@ -68,6 +81,34 @@ const fallbackCountries: CountryOption[] = [
 
 function countryLabel(country: CountryOption): string {
   return regionNames.value?.of(country.code) || country.name || country.code
+}
+
+function countrySecondaryLabel(country: CountryOption): string {
+  const localized = countryLabel(country)
+  return country.name && country.name.toLowerCase() !== localized.toLowerCase()
+    ? country.name
+    : ''
+}
+
+function openCountryPicker(): void {
+  countrySearch.value = ''
+  setCountryPickerReturnFocus(countryPickerTrigger.value)
+  countryPickerOpen.value = true
+}
+
+function closeCountryPicker(): void {
+  countryPickerOpen.value = false
+}
+
+function selectCountry(code: string): void {
+  const country = countries.value.find((option) => option.code === code)
+  if (!country) return
+  countryCode.value = country.code
+  closeCountryPicker()
+}
+
+function handleCountryPickerKeydown(event: KeyboardEvent): void {
+  trapCountryPickerFocus(event, closeCountryPicker)
 }
 
 function returnToLogin(): void {
@@ -168,14 +209,20 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
       </div>
 
       <div class="register-fields">
-        <label class="pencil-field__shell auth-pencil-field auth-pencil-field--action">
+        <button
+          ref="countryPickerTrigger"
+          class="pencil-field__shell auth-pencil-field auth-pencil-field--action country-picker-trigger"
+          type="button"
+          aria-haspopup="dialog"
+          :aria-expanded="countryPickerOpen"
+          aria-controls="register-country-picker"
+          :aria-label="t('auth.countrySelectedLabel', { country: selectedCountryLabel })"
+          @click="openCountryPicker"
+        >
           <span>{{ t('auth.country') }}</span>
-          <select v-model="countryCode" autocomplete="country">
-            <option value="" disabled>{{ t('auth.selectCountry') }}</option>
-            <option v-for="country in countries" :key="country.code" :value="country.code">{{ countryLabel(country) }}</option>
-          </select>
+          <strong :class="{ 'is-placeholder': !selectedCountry }">{{ selectedCountryLabel }}</strong>
           <i class="auth-pencil-field__action"><ChevronDown :size="16" /></i>
-        </label>
+        </button>
 
         <label class="pencil-field__shell auth-pencil-field" :class="{ 'auth-pencil-field--action': emailCodeRequired && email.includes('@') }">
           <span>{{ t('auth.email') }}</span>
@@ -246,6 +293,69 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
       <p v-if="countriesNotice" class="register-notice" role="status">{{ countriesNotice }}</p>
       <p v-if="error" class="auth-pencil-feedback" role="alert">{{ error }}</p>
     </form>
+
+    <Teleport to="body">
+      <div v-if="countryPickerOpen" class="auth-pencil-page country-picker-mask" @click.self="closeCountryPicker">
+        <section
+          id="register-country-picker"
+          ref="countryPickerDialog"
+          class="country-picker-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="register-country-picker-title"
+          @keydown="handleCountryPickerKeydown"
+        >
+          <div class="country-picker-handle" aria-hidden="true" />
+          <header class="country-picker-header">
+            <div>
+              <small>{{ t('auth.country') }}</small>
+              <h2 id="register-country-picker-title">{{ t('auth.countryPickerTitle') }}</h2>
+            </div>
+            <button type="button" :aria-label="t('auth.countryPickerClose')" @click="closeCountryPicker">
+              <X :size="20" aria-hidden="true" />
+            </button>
+          </header>
+
+          <label class="country-picker-search">
+            <Search :size="18" aria-hidden="true" />
+            <input
+              v-model="countrySearch"
+              data-country-search
+              type="search"
+              autocomplete="off"
+              autocapitalize="none"
+              :aria-label="t('auth.countrySearchLabel')"
+              :placeholder="t('auth.countrySearchPlaceholder')"
+              :spellcheck="false"
+            />
+          </label>
+
+          <div class="country-picker-list">
+            <button
+              v-for="country in filteredCountries"
+              :key="country.code"
+              class="country-picker-option"
+              :class="{ 'is-selected': country.code === countryCode }"
+              type="button"
+              :aria-pressed="country.code === countryCode"
+              @click="selectCountry(country.code)"
+            >
+              <span class="country-picker-option__copy">
+                <strong>{{ countryLabel(country) }}</strong>
+                <small v-if="countrySecondaryLabel(country)">{{ countrySecondaryLabel(country) }}</small>
+              </span>
+              <span class="country-picker-option__code">{{ country.code }}</span>
+              <Check v-if="country.code === countryCode" :size="18" aria-hidden="true" />
+            </button>
+
+            <div v-if="!filteredCountries.length" class="country-picker-empty" role="status">
+              <Search :size="24" aria-hidden="true" />
+              <strong>{{ t('auth.countryNoResults') }}</strong>
+            </div>
+          </div>
+        </section>
+      </div>
+    </Teleport>
   </main>
 </template>
 
@@ -368,6 +478,41 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
   pointer-events: none;
 }
 
+.country-picker-trigger {
+  appearance: none;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+
+.country-picker-trigger > strong {
+  align-self: center;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  grid-column: 1;
+  grid-row: 2;
+  line-height: 20px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.country-picker-trigger > strong.is-placeholder {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.country-picker-trigger[aria-expanded='true'] {
+  border-color: var(--positive);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.country-picker-trigger:focus-visible {
+  outline: 0;
+}
+
 .register-confirm-field {
   display: grid;
   grid-template-rows: 48px 20px;
@@ -487,7 +632,221 @@ onUnmounted(() => { if (timer) window.clearInterval(timer) })
   color: var(--negative);
 }
 
+.country-picker-mask.auth-pencil-page {
+  align-items: end;
+  backdrop-filter: blur(10px);
+  background: var(--overlay);
+  display: grid;
+  inset: 0;
+  justify-items: center;
+  min-height: 0;
+  padding: 0;
+  position: fixed;
+  z-index: var(--layer-overlay);
+}
+
+.country-picker-sheet {
+  background: var(--surface-elevated);
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 24px 24px 0 0;
+  box-shadow: var(--shadow-soft);
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  height: min(680px, 82dvh);
+  max-height: calc(100dvh - 20px);
+  min-height: 360px;
+  overflow: hidden;
+  padding: 10px 20px calc(14px + env(safe-area-inset-bottom));
+  width: min(100%, 448px);
+}
+
+.country-picker-handle {
+  background: var(--line-strong);
+  border-radius: 999px;
+  height: 4px;
+  justify-self: center;
+  margin-bottom: 6px;
+  width: 38px;
+}
+
+.country-picker-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  min-height: 58px;
+}
+
+.country-picker-header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.country-picker-header small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.country-picker-header h2 {
+  color: var(--ink);
+  font-size: 19px;
+  font-weight: 680;
+  line-height: 25px;
+  margin: 0;
+}
+
+.country-picker-header > button {
+  align-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--ink);
+  display: inline-flex;
+  height: 44px;
+  justify-content: center;
+  padding: 0;
+  width: 44px;
+}
+
+.country-picker-search {
+  align-items: center;
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: 14px;
+  color: var(--muted);
+  display: flex;
+  gap: 10px;
+  height: 52px;
+  margin: 6px 0 10px;
+  padding: 0 14px;
+}
+
+.country-picker-search:focus-within {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.country-picker-search input {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font-size: 14px;
+  height: 50px;
+  min-width: 0;
+  outline: 0;
+  padding: 0;
+  width: 100%;
+}
+
+.country-picker-search input:focus-visible {
+  outline: 0;
+}
+
+.country-picker-list {
+  min-height: 0;
+  overscroll-behavior: contain;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.country-picker-list::-webkit-scrollbar {
+  display: none;
+}
+
+.country-picker-option {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  color: var(--ink);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto 20px;
+  min-height: 62px;
+  padding: 7px 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.country-picker-option + .country-picker-option {
+  border-top-color: var(--hairline, var(--line));
+}
+
+.country-picker-option.is-selected {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.country-picker-option__copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.country-picker-option__copy strong,
+.country-picker-option__copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.country-picker-option__copy strong {
+  font-size: 14px;
+  font-weight: 620;
+  line-height: 20px;
+}
+
+.country-picker-option__copy small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.country-picker-option__code {
+  color: var(--muted-strong);
+  font-family: var(--font-geist-mono), var(--data-font);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .08em;
+}
+
+.country-picker-option > svg {
+  color: var(--positive);
+}
+
+.country-picker-header > button:focus-visible,
+.country-picker-option:focus-visible {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  outline: 0;
+}
+
+.country-picker-empty {
+  align-items: center;
+  color: var(--muted);
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  min-height: 180px;
+  padding: 24px;
+  text-align: center;
+}
+
+.country-picker-empty strong {
+  font-size: 13px;
+  font-weight: 560;
+}
+
 @media (max-width: 340px) {
   .auth-pencil-canvas { padding-inline: 16px; }
+  .country-picker-sheet { padding-inline: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .country-picker-mask {
+    backdrop-filter: none;
+  }
 }
 </style>

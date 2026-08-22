@@ -2196,11 +2196,11 @@ onBeforeUnmount(() => {
                   />
                   <div>
                     <strong>{{ symbolForPosition(position).replace('/', '') }}</strong>
-                    <span :class="position.direction === 'long' ? 'positive' : 'negative'">
+                    <span class="contract-position-badge" :class="position.direction === 'long' ? 'positive' : 'negative'">
                       {{ t(position.direction === 'long' ? 'orders.long' : 'orders.short') }}
                     </span>
-                    <span>{{ t(position.marginMode === 'cross' ? 'trade.cross' : 'trade.isolated') }}</span>
-                    <span class="numeric">{{ position.leverage }}x</span>
+                    <span class="contract-position-badge">{{ t(position.marginMode === 'cross' ? 'trade.cross' : 'trade.isolated') }}</span>
+                    <span class="contract-position-badge numeric">{{ position.leverage }}x</span>
                   </div>
                 </div>
                 <div class="contract-position-pnl" :class="(riskForPosition(position)?.unrealizedPnl || 0) >= 0 ? 'positive' : 'negative'">
@@ -4594,8 +4594,6 @@ html[data-theme='dark'] .contract-trade {
 }
 
 .contract-pair-selector :deep(.asset-mark) {
-  border: 1px solid color-mix(in srgb, var(--contract-accent) 32%, var(--contract-line));
-  box-shadow: none;
   flex: 0 0 auto;
 }
 
@@ -5500,7 +5498,7 @@ html[data-theme='dark'] .contract-trade {
   line-height: 16px;
 }
 
-.contract-position-identity span {
+.contract-position-identity > div > .contract-position-badge {
   background: var(--contract-surface-soft);
   border-radius: 3px;
   color: var(--contract-muted);

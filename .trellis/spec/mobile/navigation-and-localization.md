@@ -43,6 +43,19 @@ fetchLoginConfig(): Promise<{ usernameLoginEnabled: boolean }>
 fetchRegisterConfig(): Promise<{ emailCodeRequired: boolean; inviteCodeRequired: boolean }>
 ```
 
+Registration country-search signatures live in
+`mobile/src/core/countrySearch.ts`:
+
+```ts
+interface CountrySearchOption { code: string; name: string }
+normalizeCountrySearchText(value: unknown): string
+filterCountryOptions<T extends CountrySearchOption>(
+  countries: readonly T[],
+  query: unknown,
+  localizedLabel: (country: T) => string,
+): T[]
+```
+
 The navigation store persists both parts of the latest trade context:
 
 ```ts
@@ -141,6 +154,30 @@ lastTradePath: ComputedRef<string>
 - Login only exposes username mode when `/auth/login/config` enables it.
 - Registration requires or hides the email-code field and requires the invitation code according to `/auth/register/config`.
 
+### Registration country picker
+
+- The `/register` country field is a 48px dialog trigger rather than a native
+  `select`. It preserves the selected ISO code in component state and sends
+  that exact code through the existing `country_code` registration payload.
+- The picker is Teleported to `body`, reuses `useModalDialog`, focuses its
+  search input on open, locks document scrolling, traps Tab, supports Escape
+  and backdrop dismissal, and restores focus to the exact trigger.
+- Search is Unicode-aware, deterministic across device locales, insensitive to
+  case, punctuation, whitespace, full-width forms, and decomposable accents.
+  Every query token must match the combined ISO code, backend name, or current
+  `Intl.DisplayNames` label; filtering preserves the backend list order.
+- Selecting an explicit result is the only operation that changes
+  `countryCode`. Opening, searching, closing, or receiving no results must not
+  mutate the selection.
+- The current option uses selected styling and `aria-pressed`; every option
+  shows its ISO code and localized name, with a distinct backend name only when
+  it adds information.
+- Picker title, search label/placeholder, close label, current-selection label,
+  and empty state are symmetric `auth.*` keys in `zh-CN` and `en`.
+- The existing API fallback country list remains searchable when `/countries`
+  fails. This picker does not change KYC country selection or request location
+  permission.
+
 ### Localization
 
 - Fixed UI text must use `vue-i18n`; do not add Chinese or English literals to Vue templates or API fallback mapping.
@@ -202,6 +239,11 @@ lastTradePath: ComputedRef<string>
 | Locale persistence is unavailable | Keep the in-memory locale active |
 | Content translation is unknown | Preserve backend source text |
 | Public country endpoint is unavailable | Show the basic region list and keep server validation on submit |
+| Registration country query is blank | Preserve the complete backend/fallback order |
+| Query matches localized name, backend name, or ISO code | Show every matching country without changing the active selection |
+| Query has no match | Show the localized empty state and keep the prior selection |
+| Country picker is dismissed | Restore body scrolling and exact trigger focus without changing `countryCode` |
+| Country result is selected | Store its exact ISO code, close the picker, and restore trigger focus |
 | Authentication config endpoint is unavailable | Default to email-only login, required email code, and optional invitation code |
 | Login opens register, forgot-password, or 2FA | Replace Login while preserving sanitized `redirect` |
 | Register, forgot-password, or invalid/reset 2FA returns to Login | Replace the explicit Login target with sanitized `redirect` |
@@ -214,6 +256,13 @@ lastTradePath: ComputedRef<string>
 - Bad: Tap Home, Markets, and Assets, then browser Back returns to Markets. This means a main tab used `push`.
 - Bad: Render `/news` with `PageHeader :back="false"`; users have no visible route back to Product Hub.
 - Bad: Switch to English and still see fixed Chinese labels on product pages.
+- Good: Open the registration country picker in Chinese, search `cote ivoire`,
+  select `CI`, and submit the unchanged ISO code while the row displays the
+  localized country name.
+- Base: Dismiss a filtered picker with Escape; the previous country remains
+  selected and focus returns to the 48px trigger.
+- Bad: Implement search with a locale-dependent lowercase conversion; a device
+  locale such as Turkish can make ASCII ISO-code matching inconsistent.
 
 ## 6. Tests Required
 
@@ -225,6 +274,14 @@ lastTradePath: ComputedRef<string>
   exercise Vue Router web history replacement semantics to prove the custom
   Seconds source is cleared rather than merged into later routes.
 - Unit: locale normalization and app-locale to API-locale mapping.
+- Unit: country search normalization and token matching across localized name,
+  backend name, ISO code, full-width text, punctuation, and decomposable accents.
+- Source/browser: the registration picker is Teleported, labelled, starts on
+  search, restores focus, keeps body scroll locked while open, renders a
+  localized no-result state, and retains zero horizontal overflow at 320px,
+  390px, and 448px in both themes.
+- Integration/source: country selection still passes only `countryCode.value`
+  into `registerWithEmail`; dismissing or filtering never mutates it.
 - Unit: dynamic prediction text preserves English and localizes supported Chinese patterns.
 - Browser: pair picker returns to the selected trade pair and preserves futures mode.
 - Router/behavior: prove Seconds -> Seconds history -> Back returns to Seconds,
@@ -267,6 +324,9 @@ router.push('/assets')
 router.back()
 mode.value = 'contract'
 const label = '确认订单'
+const filtered = countries.filter((country) =>
+  country.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
+)
 ```
 
 ### Correct
@@ -277,6 +337,7 @@ await goBackOr(router, route.meta.backFallback || '/')
 // /news route meta.backFallback is '/products'; PageHeader owns this call.
 selectTradeMode('contract') // persists mode and replaces the route
 const label = t('prediction.confirmOrder')
+const filtered = filterCountryOptions(countries, query, countryLabel)
 ```
 
 ## 8. Prototype-to-Client Handoff

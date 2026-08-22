@@ -316,6 +316,19 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   `--`, not fabricated values. USDT is preferred only when it exists in the
   current source-account response. Search filters the current source list and
   never creates an asset row.
+- Shared `AssetMark` presentation has two explicit states. A successfully
+  loaded backend image is only clipped to a circle: it has no generated
+  highlight, gradient, border, inner ring, shadow, padding, or symbol-hash
+  color. The hash palette is presentation-only for the exact symbol-initial
+  fallback after all backend image candidates are absent or fail; that fallback
+  remains a flat themed circle and its typography scales within the existing
+  24–54px geometry. Page-local selectors may position or flex the mark but must
+  not add a product-accent ring or decorative material around the real image.
+  Vue forwards a parent's scoped-style attribute to a child component root, so
+  contract position badge material must target the explicit
+  `.contract-position-badge` class rather than a broad
+  `.contract-position-identity span` descendant that also matches the
+  `AssetMark` root `<span>`.
 - The authenticated Assets canvas stacks two full-width account cards for
   `现货账户` and `杠杆账户`, plus an explicit `全部账户` reset. Each card shows its
   own API-derived USDT estimate and positive-holding count; selecting it filters
@@ -746,6 +759,14 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   both themes. Runtime-computed light tokens must not resolve the hero or close
   face to a dark surface, and the desktop overlay rect must match the mobile
   canvas rect.
+- Shared asset-mark presentation: assert image/fallback state classes, a plain
+  circular image with no highlight/gradient/border/ring/shadow/padding,
+  continuous backend-image failure progression, flat themed fallback, scaled
+  initial typography, and no trade-header override that restores an accent
+  border. Compile `TradeView` scoped CSS and reject the broad contract-position
+  descendant-span selector while preserving direction, margin-mode, and
+  leverage badges. Runtime-check a 24–54px sample in both themes and keep
+  document overflow at zero.
 - Assets account-scope parity: assert vertically stacked full-width account
   cards, separate spot/margin derived rows,
   backend Logo reuse, all/spot/margin switching, a truthful zero-margin state,

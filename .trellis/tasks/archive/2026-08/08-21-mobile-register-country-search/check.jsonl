@@ -1,0 +1,2 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Verify required tests, type-check, builds, Lucide usage, touch geometry, themes, and phone widths."}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Verify registration payload, localized copy, auth redirects, and form privacy remain unchanged."}

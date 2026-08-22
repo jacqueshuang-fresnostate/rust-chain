@@ -20,8 +20,8 @@ const imageSources = computed(() => buildAssetMarkImageSources(props.src, props.
 const imageSource = computed(() => assetMarkImageSourceAt(imageSources.value, imageIndex.value))
 const tone = computed(() => props.symbol.split('').reduce((total, char) => total + char.charCodeAt(0), 0) % 5)
 const markStyle = computed(() => ({
-  height: `${props.size}px`,
-  width: `${props.size}px`,
+  '--asset-mark-font-size': `${Math.min(21, Math.max(11, props.size * 0.4))}px`,
+  '--asset-mark-size': `${props.size}px`,
 }))
 
 watch([() => props.src, () => props.fallbackSrc], () => {
@@ -32,7 +32,10 @@ watch([() => props.src, () => props.fallbackSrc], () => {
 <template>
   <span
     class="asset-mark"
-    :class="`asset-mark--tone-${tone}`"
+    :class="[
+      `asset-mark--tone-${tone}`,
+      imageSource ? 'asset-mark--image' : 'asset-mark--fallback',
+    ]"
     :style="markStyle"
     role="img"
     :aria-label="t('common.assetIcon', { symbol })"
@@ -53,19 +56,35 @@ watch([() => props.src, () => props.fallbackSrc], () => {
 .asset-mark {
   --asset-color: var(--positive);
   --asset-ink: var(--positive);
+  --asset-mark-font-size: 15px;
+  --asset-mark-size: 38px;
   align-items: center;
-  background: color-mix(in srgb, var(--asset-color) 10%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--asset-color) 46%, var(--line-strong));
+  border: 0;
   border-radius: 50%;
-  box-shadow:
-    inset 0 0 0 3px var(--surface),
-    inset 0 0 0 4px color-mix(in srgb, var(--asset-color) 22%, transparent);
+  box-sizing: border-box;
   color: var(--asset-ink);
   display: inline-flex;
   flex: 0 0 auto;
-  font-size: 15px;
+  font-size: var(--asset-mark-font-size);
+  isolation: isolate;
   justify-content: center;
+  height: var(--asset-mark-size);
   overflow: hidden;
+  position: relative;
+  vertical-align: middle;
+  width: var(--asset-mark-size);
+}
+
+.asset-mark--image {
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.asset-mark--fallback {
+  background: color-mix(in srgb, var(--asset-color) 12%, var(--surface-elevated));
+  border: 1px solid color-mix(in srgb, var(--asset-color) 42%, var(--line-strong));
+  box-shadow: none;
 }
 
 .asset-mark--tone-1 {
@@ -90,6 +109,8 @@ watch([() => props.src, () => props.fallbackSrc], () => {
 
 .asset-mark img {
   background: var(--surface-elevated);
+  border-radius: inherit;
+  display: block;
   height: 100%;
   object-fit: cover;
   width: 100%;
@@ -98,5 +119,8 @@ watch([() => props.src, () => props.fallbackSrc], () => {
 .asset-mark b {
   font-weight: 800;
   letter-spacing: 0;
+  line-height: 1;
+  position: relative;
+  z-index: 1;
 }
 </style>

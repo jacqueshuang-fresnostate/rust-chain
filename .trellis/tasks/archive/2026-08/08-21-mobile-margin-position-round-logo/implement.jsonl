@@ -1,0 +1,4 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Mobile quality gate and shared UI contracts."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Authoritative shared AssetMark image/fallback presentation contract."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Preserve the shared component and narrow the page-local selector instead of duplicating image styling."}
+{"file":".trellis/tasks/archive/2026-08/08-21-mobile-margin-position-round-logo/research/css-cascade-diagnosis.md","reason":"Ego Browser reproduction and exact scoped-CSS cascade root cause."}

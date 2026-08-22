@@ -1,0 +1,3 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Required mobile test, type-check, PWA, and Tauri validation commands."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Validate real backend images remain plain circles and page-local selectors do not decorate them."}
+{"file":".trellis/tasks/archive/2026-08/08-21-mobile-margin-position-round-logo/research/css-cascade-diagnosis.md","reason":"Re-run the exact computed-style reproduction and confirm the broad selector no longer wins."}

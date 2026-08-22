@@ -7719,9 +7719,37 @@
 - 验证结果：`npm --prefix mobile run type-check` 通过；Mobile 全量测试 441/441 通过；`npm --prefix mobile run build:pwa` 通过；项目无 lint script，`npm --prefix mobile run lint --if-present` 正常跳过；Trellis context validate 与 `git diff --check` 通过。Ego Browser 在 390×920 浅色和 320×720 深色下验证页签为“持仓 (0)”、三按钮等宽、间距均为 10px、操作组/触控高度均为 44px、圆角 12px且文档宽度等于视口，无横向溢出；只读视觉夹具未触发任何资金操作，任务空间已关闭。截图：`/private/tmp/margin-position-controls-light-390.png`、`/private/tmp/margin-position-controls-dark-320-final.png`。
 - 后续事项：无；本轮读取未保存 Pencil 选稿时产生的 `mobile/pencil/hippo-mobile-uiux.pen` 非业务重序列化差异已在保留 `/private/tmp/hippo-mobile-uiux-position-tab.pen` 临时备份后恢复到当前 HEAD，既有未跟踪目录 `mobile/pencil/docs/` 未修改且未纳入提交。
 
+## 2026-08-21 11:14 - 简化手机端资产标识为纯圆形 Logo
+
+- 完成内容：将共享 `AssetMark` 明确拆分为真实图片态与无图字母回退态。后台 Logo 成功加载后仅执行圆形裁切，完整移除高光、渐变、描边、内环、阴影和内边距；`tone-2` 等哈希色只影响图片缺失后的平面字母回退。同步删除杠杆交易 Header 强制添加的绿色描边，保留后台 Logo 来源递进、失败回退、可访问名称以及 24–54px 自适应字母字号。
+- 修改文件：`mobile/src/components/AssetMark.vue`、`mobile/src/views/TradeView.vue`、`mobile/tests/asset-mark-material.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/archive/2026-08/08-21-mobile-asset-mark-tone-polish/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Mobile 全量测试 463/463、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`、`npm --prefix mobile run build:tauri`、Trellis context validate 与 `git diff --check` 均通过。Ego Browser 在 390×844 明暗主题实测 BTC 后台图片为 28×28 完整圆形，图片与容器同尺寸，计算样式为透明背景、0px 边框、无阴影、0px 内边距、50% 圆角、`overflow: hidden`，且文档横向溢出为 0。
+- 后续事项：无；当前改动尚未提交或推送，既有未跟踪目录 `mobile/pencil/docs/` 未修改且未纳入本次范围。
+
+## 2026-08-21 11:44 - 修复手机端杠杆持仓 Logo 被标签样式覆盖
+
+- 完成内容：Ego Browser 复现并定位到 `.contract-position-identity span` 会因 Vue scoped 属性转发命中 `AssetMark` 根 `<span>`，把共享 50% 圆角和 0 内边距覆盖为 3px 圆角及横向内边距。现为多空、全仓/逐仓、杠杆倍数三枚标签增加显式 `.contract-position-badge`，并把材质规则收窄到该专用类；真实后台 Logo 恢复为 24×24 纯圆形，同时保留标签原有文案、语义类、3px 圆角、4px 间距与内边距。回归测试限定模板与 scoped style 区块，逐类核对三枚标签、检查 Vue 编译后选择器，并用旧宽泛选择器变异夹具证明守卫能报错；同步固化 Mobile 规范和运行时研究记录。
+- 修改文件：`mobile/src/views/TradeView.vue`、`mobile/tests/asset-mark-material.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/archive/2026-08/08-21-mobile-margin-position-round-logo/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：聚焦测试 20/20、Mobile 全量测试 464/464、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2081 modules、142 条预缓存）、`npm --prefix mobile run build:tauri`（2081 modules）与 `git diff --check` 均通过；项目未配置 Mobile lint script，`npm --prefix mobile run lint --if-present` 正常跳过。Ego Browser 已在 390×844 明暗主题确认 24×24 Logo 根节点及 `img` 均为 50% 圆角、padding 0、`overflow: hidden`、无边框/阴影，页面 `overflowX` 为 0。
+- 后续事项：无；本轮未回滚、覆盖或格式化其他任务及用户的未提交改动。
+
 ## 2026-08-21 21:42 - 修复行情 WebSocket 长时间运行后静默断流
 
 - 完成内容：完成“交易所上游 → Rust ingestion/广播 → 手机公共 WebSocket”全链路诊断，确认既有重连只响应 close/error，无法识别仍为 OPEN 的半开连接；同时确认 Bitget 官方要求客户端定时发送纯文本 `ping`，现有后端既未主动发送，也会把纯文本 `pong` 误交给 JSON 解析。现为 Bitget 增加 25 秒主动心跳、纯文本 ping/pong 控制帧处理，为三家上游统一增加 75 秒入站静默上限、15 秒连接上限及 10 秒订阅/心跳/回复写上限，超时后继续走既有 REST 兜底和有界退避重连。手机 ticker 共享流与市场详情流复用 generation 隔离的入站静默看门狗，任意入站帧均刷新 65 秒截止点，静默后关闭精确当前 socket、重连并恢复全部 lease 或 depth/trade/kline 订阅；同步收紧详情流旧 socket identity guard，释放最后 lease/stop 时完整清理定时器和动画帧。
 - 修改文件：`src/workers/market_feed.rs`、`tests/unit_src/src_workers_market_feed_tests.rs`、`mobile/src/api/{webSocketLiveness,marketTickerStream,marketDetailStream}.ts`、`mobile/tests/{market-ticker-stream,market-detail-stream}.test.ts`、`.trellis/spec/backend/realtime-websockets.md`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/tasks/archive/2026-08/08-21-market-stream-long-running-stall/**`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：RED 阶段 Rust 测试因缺少 heartbeat/liveness 类型与函数编译失败，Mobile 两个静默连接测试均因没有 65ms watchdog 失败；另用“心跳到期且行情帧已经 ready”的回归用例复现并修正读分支饿死心跳。最终 Rust lib 全量 280/280、行情 worker 32/32、后端架构 11/11、行情 liveness 聚焦 8/8 通过，`cargo fmt --all -- --check`、`cargo check --all-targets`、`cargo clippy --all-targets --all-features -- -D warnings` 通过；Mobile ticker/detail 聚焦 15/15、全量 466/466、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`、`npm --prefix mobile run build:tauri` 通过，项目未配置独立 lint script；Trellis validate 与 `git diff --check` 通过。
 - 后续事项：无；本轮不覆盖工作区既有未提交的 AssetMark/TradeView/Pencil 文档与 Trellis 归档改动，当前行情修复尚未提交或推送。
+
+## 2026-08-21 23:02 - 提交并推送行情订阅断流修复
+
+- 完成内容：仅暂存并提交行情上游心跳、静默超时、手机端看门狗、精确重订阅、回归测试、规范与任务归档；工作区既有 AssetMark、TradeView、Pencil 文档和其他 Trellis 归档改动均未纳入。
+- 修改文件：提交 `262f9d5`（`fix: 修复行情订阅长时间静默断流`）包含的 15 个文件。
+- 验证结果：提交前 `git diff --cached --check` 通过，提交已推送至 `origin/main`（`00df8ec..262f9d5`）。
+- 后续事项：无。
+
+## 2026-08-21 23:23 - 手机端注册国家支持搜索
+
+- 完成内容：将注册页原生国家下拉框升级为 Teleport 到 `body` 的沉浸式底部搜索弹层。搜索同时匹配当前语言的 `Intl.DisplayNames` 国家名、后端原始名称与 ISO 国家代码，并统一处理大小写、全角字符、标点、空白和可分解重音；空查询保持后端顺序。选择器复用 `useModalDialog`，具备打开后聚焦搜索框、页面滚动锁、Tab 闭环、Escape/遮罩/关闭按钮退出和精确触发器焦点恢复；筛选与关闭不改变已选国家，只有显式选中才更新原 `countryCode`，注册接口载荷保持不变。补齐当前选择、标题、搜索、关闭和无结果状态的中英文文案，以及 320–448px、明暗主题、44px 触控和零横向溢出样式。
+- 修改文件：`mobile/src/core/countrySearch.ts`、`mobile/src/views/RegisterView.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/register-country-search.test.ts`、`.trellis/spec/mobile/navigation-and-localization.md`、`.trellis/tasks/archive/2026-08/08-21-mobile-register-country-search/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：RED 阶段聚焦测试因 `countrySearch.ts` 尚不存在而失败；实现后注册国家搜索与既有认证合同测试 11/11、Mobile 全量测试 470/470、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2083 modules、229 条预缓存）和 `npm --prefix mobile run build:tauri`（2083 modules）通过，项目未配置独立 lint script。Ego Browser 在 390×844 浅色实测 249 个真实国家、`cote ivoire` 精确过滤到 CI、选择后回填与焦点恢复；在 320×720 深色实测本地化无结果状态、滚动锁、Escape 和横向溢出 0。
+- 后续事项：无；本次注册搜索改动尚未提交或推送，既有未提交的 AssetMark/TradeView/Pencil 文档与其他 Trellis 归档改动均保持原样。
