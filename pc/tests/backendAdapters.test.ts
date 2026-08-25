@@ -1332,6 +1332,10 @@ test('PC news detail uses a dedicated article route', () => {
 
 test('maps backend margin products, positions, and open request into PC contract shapes', () => {
   const products = mapMarginProductsToContractCoins({
+    capabilities: {
+      margin_modes: ['cross'],
+      order_types: ['market', 'limit'],
+    },
     products: [
       {
         id: 6,
@@ -1356,7 +1360,8 @@ test('maps backend margin products, positions, and open request into PC contract
   assert.equal(products.data[0].symbol, 'ETH/USDT')
   assert.equal(products.data[0].logoUrl, 'https://cdn.example.com/eth-usdt.png')
   assert.deepEqual(products.data[0].leverage, [1, 3, 5])
-  assert.deepEqual(products.data[0].marginModes, ['isolated', 'cross'])
+  assert.deepEqual(products.data[0].marginModes, ['cross'])
+  assert.equal(products.data[0].marginMode, null)
 
   assert.deepEqual(mapPcMarginOpenRequest({ contractCoinId: 6, direction: 1, type: 0, leverage: 3, marginMode: 'cross', volume: 100 }, 'margin-1'), {
     product_id: 6,

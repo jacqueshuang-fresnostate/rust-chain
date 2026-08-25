@@ -13,13 +13,15 @@ use crate::{
                 ConvertOrdersResponse, ConvertPairsResponse, ConvertQuoteResponse,
                 CreateConvertQuoteRequest, ListQuery,
             },
-            repository::ConvertPairRule,
+            repository::{ConvertAuthoritativeQuoteRecord, ConvertPairRule},
             service::{
                 QUOTE_TTL_SECONDS, convert_market_pricing_source, convert_quote_amounts,
-                ensure_convert_amount_precision, ensure_sufficient_convert_balance,
-                map_convert_repository_error, optional_query_string, parse_quote_id,
+                convert_quote_fingerprint, ensure_convert_amount_precision,
+                ensure_sufficient_convert_balance, map_convert_repository_error,
+                normalize_convert_rate_for_storage, optional_query_string, parse_quote_id,
                 resolve_fixed_convert_rate, resolve_market_convert_rate, route_limit,
-                user_id_from_subject, validate_quote_amount,
+                user_id_from_subject, validate_convert_market_price_snapshot,
+                validate_quote_amount,
             },
         },
         events::{EventBroadcastHub, EventBroadcastMessage},
@@ -30,6 +32,15 @@ use redis::aio::ConnectionManager;
 use serde_json::json;
 use sqlx::{MySql, Pool};
 use uuid::Uuid;
+
+#[derive(Debug, Clone)]
+struct ResolvedConvertPrice {
+    rate: bigdecimal::BigDecimal,
+    source: String,
+    symbol: Option<String>,
+    observed_at: chrono::DateTime<Utc>,
+    version: String,
+}
 
 /// 编排闪兑交易对读取与响应组装；该只读用例不创建资金事务，也不改变闪兑业务状态。
 /// 返回启用闪兑对、限额与数据库资产 Logo，不从符号推导图片或汇率。
@@ -62,11 +73,9 @@ pub(crate) async fn list_convert_orders(
     Ok(ConvertOrdersResponse { orders })
 }
 
-/// 为当前用户按启用换币规则生成限时报价，并同时落库及写入 Redis 缓存。
-/// 调用方须提供用户身份、可用 MySQL/Redis；金额、资产精度、交易对限额及源钱包余额会先校验。
-/// 汇率取固定配置或当前市场源，目标额和费用按各资产精度截断，返回值必须与持久化快照一致。
-/// MySQL 写入与 Redis 缓存不在同一事务；数据库成功后缓存失败会报错并可能留下不可确认的报价行。
-/// 每次调用生成新的报价编号，不提供请求幂等；确认环节仍以归属、缓存存在性和过期时间为准。
+/// 为当前用户按启用换币规则生成限时报价，先写 MySQL 权威快照，再尽力写 Redis 展示缓存。
+/// 金额、资产精度、交易对限额及源钱包余额会先校验；市场汇率只读 append-only MySQL 历史。
+/// 缓存失败不影响已落库报价的可确认性，确认环节只信 MySQL owner、指纹、过期与消费状态。
 pub(crate) async fn create_convert_quote(
     mysql: Option<Pool<MySql>>,
     redis: Option<ConnectionManager>,
@@ -75,7 +84,6 @@ pub(crate) async fn create_convert_quote(
 ) -> AppResult<ConvertQuoteResponse> {
     let user_id = user_id_from_subject(subject)?;
     let pool = mysql_pool(mysql)?;
-    let redis = RedisConvertQuoteCache::new(redis_manager(redis)?);
     let pair =
         infrastructure::load_pair_rule(&pool, request.from_asset_id, request.to_asset_id).await?;
     let from_precision_scale =
@@ -88,16 +96,41 @@ pub(crate) async fn create_convert_quote(
         infrastructure::load_wallet_balance(&pool, user_id, request.from_asset_id).await?;
     ensure_sufficient_convert_balance(&request.from_amount, &balance)?;
 
-    let rate = resolve_convert_quote_rate(redis.manager().clone().into(), &pair).await?;
+    let database_now = infrastructure::database_now(&pool).await?;
+    let mut pricing = resolve_convert_quote_rate(&pool, &pair, database_now).await?;
+    pricing.rate = normalize_convert_rate_for_storage(&pricing.rate)?;
     let amounts = convert_quote_amounts(
         &request.from_amount,
         &pair,
-        &rate,
+        &pricing.rate,
         from_precision_scale,
         to_precision_scale,
     )?;
     let quote_id = QuoteId(Uuid::now_v7());
-    let expires_at = Utc::now() + TimeDelta::seconds(QUOTE_TTL_SECONDS);
+    let expires_at = database_now + TimeDelta::seconds(QUOTE_TTL_SECONDS);
+    let quote_id_value = quote_id.0.to_string();
+    let mut authoritative = ConvertAuthoritativeQuoteRecord {
+        quote_id: quote_id_value.clone(),
+        convert_pair_id: pair.id,
+        user_id,
+        from_asset_id: pair.from_asset_id,
+        to_asset_id: pair.to_asset_id,
+        from_amount: request.from_amount.clone(),
+        to_amount: amounts.to_amount.clone(),
+        rate: pricing.rate.clone(),
+        spread_rate: pair.spread_rate.clone(),
+        fee_rate: pair.fee_rate.clone(),
+        fee_amount: amounts.fee_amount.clone(),
+        request_fingerprint: String::new(),
+        price_source: pricing.source.clone(),
+        price_symbol: pricing.symbol.clone(),
+        price_observed_at: pricing.observed_at,
+        price_version: pricing.version.clone(),
+        expires_at,
+        status: "quoted".to_owned(),
+        consumed_at: None,
+    };
+    authoritative.request_fingerprint = convert_quote_fingerprint(&authoritative);
     let repository = MySqlConvertRepository::new(pool);
 
     repository
@@ -109,30 +142,40 @@ pub(crate) async fn create_convert_quote(
             to_asset_id: pair.to_asset_id,
             from_amount: request.from_amount.clone(),
             to_amount: amounts.to_amount.clone(),
-            rate: rate.clone(),
+            rate: pricing.rate.clone(),
             spread_rate: pair.spread_rate.clone(),
             fee_rate: pair.fee_rate.clone(),
             fee_amount: amounts.fee_amount.clone(),
+            request_fingerprint: authoritative.request_fingerprint.clone(),
+            price_source: pricing.source.clone(),
+            price_symbol: pricing.symbol.clone(),
+            price_observed_at: pricing.observed_at,
+            price_version: pricing.version.clone(),
             expires_at,
         })
         .await
         .map_err(map_convert_repository_error)?;
-    redis
-        .save_quote_ttl(ConvertQuoteCacheEntry {
-            quote_id: quote_id.clone(),
-            user_id: user_id.to_string(),
-            from_asset: pair.from_asset_id.to_string(),
-            to_asset: pair.to_asset_id.to_string(),
-            from_amount: request.from_amount.clone(),
-            to_amount: amounts.to_amount.clone(),
-            fee_rate: pair.fee_rate.clone(),
-            fee_amount: amounts.fee_amount.clone(),
-            expires_at,
-            redis_key: format!("convert:quote:{}", quote_id.0),
-            ttl_seconds: QUOTE_TTL_SECONDS,
-        })
-        .await
-        .map_err(map_convert_repository_error)?;
+    if let Some(redis) = redis {
+        let cache = RedisConvertQuoteCache::new(redis);
+        if let Err(error) = cache
+            .save_quote_ttl(ConvertQuoteCacheEntry {
+                quote_id: quote_id.clone(),
+                user_id: user_id.to_string(),
+                from_asset: pair.from_asset_id.to_string(),
+                to_asset: pair.to_asset_id.to_string(),
+                from_amount: request.from_amount.clone(),
+                to_amount: amounts.to_amount.clone(),
+                fee_rate: pair.fee_rate.clone(),
+                fee_amount: amounts.fee_amount.clone(),
+                expires_at,
+                redis_key: format!("convert:quote:{}", quote_id.0),
+                ttl_seconds: QUOTE_TTL_SECONDS,
+            })
+            .await
+        {
+            tracing::warn!(%error, quote_id = %quote_id.0, "闪兑 Redis quote 缓存写入失败，MySQL 权威报价仍可确认");
+        }
+    }
 
     Ok(ConvertQuoteResponse {
         quote_id: quote_id.0.to_string(),
@@ -141,44 +184,30 @@ pub(crate) async fn create_convert_quote(
         to_asset_id: pair.to_asset_id,
         from_amount: request.from_amount,
         to_amount: amounts.to_amount,
-        rate,
+        rate: pricing.rate,
         spread_rate: pair.spread_rate,
         fee_rate: pair.fee_rate,
         fee_amount: amounts.fee_amount,
+        price_source: pricing.source,
+        price_symbol: pricing.symbol,
+        price_observed_at: pricing.observed_at,
+        price_version: pricing.version,
         expires_at,
     })
 }
 
-/// 确认闪兑报价的归属与有效期，并在单一数据库事务内完成双资产余额及流水结算。
-/// Redis 快照须存在、归属当前用户且未到期，MySQL 也须存在同一用户报价；报价阶段没有预冻结资金。
-/// 结算事务从源 available 扣完整 from_amount、向目标 available 加 to_amount，frozen/locked 不变，并写两条 quote_id 流水。
-/// 相同报价重放由订单唯一键拒绝二次入账；缓存缺失/过期发生在事务前，确认期余额不足则回滚 pending 订单及全部资金写入。
+/// 确认 MySQL 权威报价，并在单一数据库事务内完成双资产余额、流水与 quote 一次消费。
+/// 事务先锁 quote 验证 owner、指纹、数据库时间过期和消费状态，再按 `(user_id, asset_id)` 稳定顺序锁钱包。
+/// Redis 参数仅为兼容既有调用签名而保留，缓存缺失、过期或被篡改都不参与资金判断。
 pub(crate) async fn confirm_convert_quote(
     mysql: Option<Pool<MySql>>,
-    redis: Option<ConnectionManager>,
+    _redis: Option<ConnectionManager>,
     subject: &str,
     request: ConfirmConvertQuoteRequest,
 ) -> AppResult<ConfirmConvertQuoteResponse> {
     let user_id = user_id_from_subject(subject)?;
     let quote_id = parse_quote_id(&request.quote_id)?;
-    let redis = RedisConvertQuoteCache::new(redis_manager(redis)?);
-    let entry = redis
-        .get_quote_ttl(&quote_id)
-        .await
-        .map_err(map_convert_repository_error)?
-        .ok_or(AppError::NotFound)?;
-
-    if entry.user_id != user_id.to_string() {
-        return Err(AppError::NotFound);
-    }
-    if Utc::now() >= entry.expires_at {
-        return Err(AppError::Validation("convert quote is expired".to_owned()));
-    }
-
     let pool = mysql_pool(mysql)?;
-    if !infrastructure::quote_exists_for_user(&pool, &quote_id, user_id).await? {
-        return Err(AppError::NotFound);
-    }
     infrastructure::confirm_and_settle_convert_quote(&pool, &quote_id, user_id).await?;
     Ok(ConfirmConvertQuoteResponse {
         quote_id: request.quote_id,
@@ -213,32 +242,51 @@ pub(crate) async fn confirm_convert_quote_with_events(
     Ok(response)
 }
 
-/// 按交易对的 pricing_mode 选择服务端权威汇率来源：fixed 读配置固定汇率，market 读 Redis 缓存行情。
-/// market 分支要求交易对已关联活动 trading_pair，且缓存里存在最新成交价，缺任一项即拒绝报价而非退回固定汇率。
+/// 按交易对的 pricing_mode 选择服务端权威汇率来源：fixed 读配置固定汇率，market 读 MySQL 行情历史。
+/// market 分支要求交易对已关联活动 trading_pair，且最新历史快照非未来、未陈旧并有完整证据。
 /// 返回的是尚未叠加价差的原始汇率，价差与手续费在 `convert_quote_amounts` 中统一折算。
 /// 未识别的 pricing_mode 返回参数错误；本函数只读配置和缓存，不写库、不冻结资金。
 async fn resolve_convert_quote_rate(
-    redis: Option<ConnectionManager>,
+    pool: &Pool<MySql>,
     pair: &ConvertPairRule,
-) -> AppResult<bigdecimal::BigDecimal> {
+    database_now: chrono::DateTime<Utc>,
+) -> AppResult<ResolvedConvertPrice> {
     match pair.pricing_mode.as_str() {
-        "fixed" => resolve_fixed_convert_rate(pair),
+        "fixed" => Ok(ResolvedConvertPrice {
+            rate: resolve_fixed_convert_rate(pair)?,
+            source: "fixed".to_owned(),
+            symbol: None,
+            observed_at: pair.pricing_updated_at,
+            version: format!(
+                "convert_pair:{}:{}",
+                pair.id,
+                pair.pricing_updated_at.timestamp_micros()
+            ),
+        }),
         "market" => {
             let (symbol, market_base_asset_id, market_quote_asset_id) =
                 convert_market_pricing_source(pair)?;
-            let market_price = infrastructure::latest_market_price(redis, symbol)
+            let market_price = infrastructure::latest_market_price(pool, symbol)
                 .await?
                 .ok_or_else(|| {
                     AppError::Validation(
-                        "convert market pricing requires cached market price".to_owned(),
+                        "convert market pricing requires authoritative price history".to_owned(),
                     )
                 })?;
-            resolve_market_convert_rate(
+            validate_convert_market_price_snapshot(&market_price, symbol, database_now, 60)?;
+            let rate = resolve_market_convert_rate(
                 pair,
-                market_price,
+                market_price.price.clone(),
                 market_base_asset_id,
                 market_quote_asset_id,
-            )
+            )?;
+            Ok(ResolvedConvertPrice {
+                rate,
+                source: market_price.source,
+                symbol: Some(market_price.symbol),
+                observed_at: market_price.observed_at,
+                version: market_price.source_version,
+            })
         }
         _ => Err(AppError::Validation(
             "unsupported convert pricing_mode".to_owned(),
@@ -251,13 +299,5 @@ async fn resolve_convert_quote_rate(
 fn mysql_pool(pool: Option<Pool<MySql>>) -> AppResult<Pool<MySql>> {
     pool.ok_or_else(|| {
         AppError::Internal("mysql pool is not configured for convert routes".to_owned())
-    })
-}
-
-/// 把可选的 Redis 连接管理器解包为必需依赖；报价的 TTL 快照只存在于 Redis，缺失即无法确认。
-/// 与 MySQL 同理按内部错误上报，避免在没有缓存的情况下生成永远无法兑现的报价。
-fn redis_manager(redis: Option<ConnectionManager>) -> AppResult<ConnectionManager> {
-    redis.ok_or_else(|| {
-        AppError::Internal("redis connection is not configured for convert routes".to_owned())
     })
 }

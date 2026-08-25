@@ -21,6 +21,7 @@ import {
     type OrderListParams,
     type OrderType
 } from '@/api/contract'
+import { resolveMarginPositionSymbol, type MarginMode } from '@/domain/marginActions'
 
 export interface ContractCoin {
     id: number
@@ -34,6 +35,7 @@ export interface ContractCoin {
     maxLeverage: number
     marginRate: number
     marginModes: Array<'cross' | 'isolated'>
+    marginMode: MarginMode | null
     leverage: number[]
 }
 
@@ -63,6 +65,7 @@ export interface ContractOrder {
 
 export interface ContractWallet {
     id: number
+    productId: number | null
     memberId: number
     symbol: string
     coinSymbol: string
@@ -91,6 +94,13 @@ export interface ContractWallet {
     // Fee
     closeFee: number
     maintenanceMarginRate: number
+    marginTransferEnabled: boolean
+    maxTransferableToSpot: number
+    transferToSpotBlockReason: string | null
+    crossAccountVersion: number | null
+    transferRiskEquity: number | null
+    transferRiskMaintenanceMargin: number | null
+    transferRiskObservedAt: number | null
 }
 
 export const useContractStore = defineStore('contract', () => {
@@ -121,7 +131,8 @@ export const useContractStore = defineStore('contract', () => {
                     minTurnover: c.minTurnover,
                     maxLeverage: c.maxLeverage,
                     marginRate: c.marginRate,
-                    marginModes: Array.isArray(c.marginModes) && c.marginModes.length > 0 ? c.marginModes : ['isolated'],
+                    marginModes: Array.isArray(c.marginModes) ? c.marginModes : [],
+                    marginMode: c.marginMode === 'cross' || c.marginMode === 'isolated' ? c.marginMode : null,
                     leverage: Array.isArray(c.leverage) ? c.leverage : (typeof c.leverage === 'string' ? c.leverage.split(',').map(Number) : [1, 2, 3, 5, 10, 20, 50, 100])
                 }))
                 console.log('--- coins ---', coins.value)
@@ -258,37 +269,58 @@ export const useContractStore = defineStore('contract', () => {
             const body = res.data
             const list = body?.data || (Array.isArray(body) ? body : [])
 
-            wallets.value = list.map((w: any) => ({
-                id: w.id,
-                memberId: w.memberId,
-                symbol: w.contractCoin?.symbol || '',
-                coinSymbol: w.contractCoin?.coinSymbol || '',
-                baseSymbol: w.contractCoin?.baseSymbol || 'USDT',
-                // Balances
-                usdtBalance: Number(w.usdtBalance) || 0,
-                usdtFrozenBalance: Number(w.usdtFrozenBalance) || 0,
-                // Buy (Long)
-                usdtBuyPosition: Number(w.usdtBuyPosition) || 0,
-                usdtBuyPrice: Number(w.usdtBuyPrice) || 0,
-                usdtBuyLeverage: Number(w.usdtBuyLeverage) || 1,
-                usdtBuyPrincipalAmount: Number(w.usdtBuyPrincipalAmount) || 0,
-                usdtFrozenBuyPosition: Number(w.usdtFrozenBuyPosition) || 0,
-                // Sell (Short)
-                usdtSellPosition: Number(w.usdtSellPosition) || 0,
-                usdtSellPrice: Number(w.usdtSellPrice) || 0,
-                usdtSellLeverage: Number(w.usdtSellLeverage) || 1,
-                usdtSellPrincipalAmount: Number(w.usdtSellPrincipalAmount) || 0,
-                usdtFrozenSellPosition: Number(w.usdtFrozenSellPosition) || 0,
-                // Share & P&L
-                usdtShareNumber: Number(w.usdtShareNumber) || 1,
-                usdtPattern: w.usdtPattern || 'FIXED',
-                usdtTotalProfitAndLoss: Number(w.usdtTotalProfitAndLoss) || 0,
-                // Current price
-                currentPrice: Number(w.contractCoin?.currentPrice || w.currentPrice) || 0,
-                // Fees
-                closeFee: Number(w.contractCoin?.closeFee) || 0.0001,
-                maintenanceMarginRate: Number(w.contractCoin?.maintenanceMarginRate) || 0.005
-            }))
+            wallets.value = list.map((w: any) => {
+                const parsedProductId = Number(w.productId)
+                const productId = Number.isFinite(parsedProductId) && parsedProductId > 0 ? parsedProductId : null
+                const rawSymbol = w.symbol || w.contractCoin?.symbol || ''
+                return {
+                    id: w.id,
+                    productId,
+                    memberId: w.memberId,
+                    symbol: resolveMarginPositionSymbol(rawSymbol, productId, coins.value),
+                    coinSymbol: w.coinSymbol || w.contractCoin?.coinSymbol || '',
+                    baseSymbol: w.baseSymbol || w.contractCoin?.baseSymbol || 'USDT',
+                    // Balances
+                    usdtBalance: Number(w.usdtBalance) || 0,
+                    usdtFrozenBalance: Number(w.usdtFrozenBalance) || 0,
+                    // Buy (Long)
+                    usdtBuyPosition: Number(w.usdtBuyPosition) || 0,
+                    usdtBuyPrice: Number(w.usdtBuyPrice) || 0,
+                    usdtBuyLeverage: Number(w.usdtBuyLeverage) || 1,
+                    usdtBuyPrincipalAmount: Number(w.usdtBuyPrincipalAmount) || 0,
+                    usdtFrozenBuyPosition: Number(w.usdtFrozenBuyPosition) || 0,
+                    // Sell (Short)
+                    usdtSellPosition: Number(w.usdtSellPosition) || 0,
+                    usdtSellPrice: Number(w.usdtSellPrice) || 0,
+                    usdtSellLeverage: Number(w.usdtSellLeverage) || 1,
+                    usdtSellPrincipalAmount: Number(w.usdtSellPrincipalAmount) || 0,
+                    usdtFrozenSellPosition: Number(w.usdtFrozenSellPosition) || 0,
+                    // Share & P&L
+                    usdtShareNumber: Number(w.usdtShareNumber) || 1,
+                    usdtPattern: w.usdtPattern || 'FIXED',
+                    usdtTotalProfitAndLoss: Number(w.usdtTotalProfitAndLoss) || 0,
+                    // Current price
+                    currentPrice: Number(w.contractCoin?.currentPrice || w.currentPrice) || 0,
+                    // Fees
+                    closeFee: Number(w.contractCoin?.closeFee) || 0.0001,
+                    maintenanceMarginRate: Number(w.contractCoin?.maintenanceMarginRate ?? w.maintenanceMarginRate) || 0.005,
+                    marginTransferEnabled: w.marginTransferEnabled === true,
+                    maxTransferableToSpot: Math.max(0, Number(w.maxTransferableToSpot) || 0),
+                    transferToSpotBlockReason: typeof w.transferToSpotBlockReason === 'string' ? w.transferToSpotBlockReason : null,
+                    crossAccountVersion: w.crossAccountVersion == null
+                        ? null
+                        : (Number.isFinite(Number(w.crossAccountVersion)) ? Number(w.crossAccountVersion) : null),
+                    transferRiskEquity: w.transferRiskEquity == null
+                        ? null
+                        : (Number.isFinite(Number(w.transferRiskEquity)) ? Number(w.transferRiskEquity) : null),
+                    transferRiskMaintenanceMargin: w.transferRiskMaintenanceMargin == null
+                        ? null
+                        : (Number.isFinite(Number(w.transferRiskMaintenanceMargin)) ? Number(w.transferRiskMaintenanceMargin) : null),
+                    transferRiskObservedAt: w.transferRiskObservedAt == null
+                        ? null
+                        : (Number.isFinite(Number(w.transferRiskObservedAt)) ? Number(w.transferRiskObservedAt) : null)
+                }
+            })
             console.log('=== wallets parsed ===', wallets.value)
         } catch (e) {
             console.error('loadWallets error', e)
@@ -337,11 +369,11 @@ export const useContractStore = defineStore('contract', () => {
     async function submitCloseAllPositions(contractCoinId?: number) {
         loading.value = true
         try {
-            const res = await closeAllPositions(contractCoinId || 0, 0)
+            const res = await closeAllPositions(contractCoinId || 0)
             await delay(500)
             await Promise.all([loadCurrentOrders(contractCoinId), loadHistoryOrders(contractCoinId), loadWallets()])
             triggerOrderRefresh()
-            return res.data
+            return res.data.data
         } finally {
             loading.value = false
         }
@@ -390,7 +422,7 @@ export const useContractStore = defineStore('contract', () => {
         return res.data
     }
 
-    async function submitSwitchPattern(contractCoinId: number, targetPattern: 'cross' | 'isolated') {
+    async function submitSwitchPattern(contractCoinId: number, targetPattern: MarginMode) {
         const res = await switchPattern(contractCoinId, targetPattern)
         return res.data
     }

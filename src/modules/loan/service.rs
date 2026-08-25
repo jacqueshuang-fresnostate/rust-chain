@@ -13,14 +13,19 @@ use crate::{
     modules::{
         loan::domain::{
             INTEREST_MODE_ACTUAL_DAYS, INTEREST_MODE_FULL_TERM, LOAN_PRODUCT_AUDIT_REASON_MAX_LEN,
-            LOAN_PRODUCT_NAME_TITLE_MAX_LEN, LOAN_TYPE_COLLATERALIZED, LOAN_TYPE_CREDIT,
+            LOAN_PRODUCT_NAME_TITLE_MAX_LEN, LOAN_RISK_STATE_HEALTHY, LOAN_RISK_STATE_LIQUIDATABLE,
+            LOAN_RISK_STATE_MARGIN_CALL, LOAN_TYPE_COLLATERALIZED, LOAN_TYPE_CREDIT,
         },
-        wallet::truncate_amount_to_asset_precision,
+        wallet::{
+            MAX_ASSET_PRECISION_SCALE, amount_fits_asset_precision,
+            truncate_amount_to_asset_precision,
+        },
     },
 };
-use bigdecimal::BigDecimal;
+use bigdecimal::{BigDecimal, RoundingMode};
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 /// 构造借贷金额比较专用的零值基准，固定带 18 位小数以对齐账本列的最大精度。
 /// 显式指定 scale 是为了让 `0` 与 `0.000000000000000000` 在比较时行为一致，
@@ -41,11 +46,21 @@ pub(crate) fn calculate_interest_amount(
     now: DateTime<Utc>,
     precision_scale: i32,
 ) -> AppResult<BigDecimal> {
+    ensure_positive_amount(principal, "principal")?;
+    ensure_non_negative_amount(interest_rate, "interest_rate")?;
+    if term_days == 0 {
+        return Err(AppError::Validation(
+            "term_days must be positive".to_owned(),
+        ));
+    }
+    ensure_asset_precision_scale(precision_scale)?;
+    ensure_amount_precision(principal, precision_scale, "principal")?;
+    ensure_amount_precision(interest_rate, 8, "interest_rate")?;
     let raw_interest = match mode {
         INTEREST_MODE_FULL_TERM => principal.clone() * interest_rate.clone(),
         INTEREST_MODE_ACTUAL_DAYS => {
             let elapsed_seconds = (now - disbursed_at).num_seconds().max(0);
-            let elapsed_days = ((elapsed_seconds + 86_399) / 86_400).max(1);
+            let elapsed_days = (elapsed_seconds.saturating_add(86_399) / 86_400).max(1);
             let charged_days = elapsed_days.min(i64::from(term_days));
             principal.clone() * interest_rate.clone() * BigDecimal::from(charged_days)
                 / BigDecimal::from(term_days)
@@ -60,6 +75,129 @@ pub(crate) fn calculate_interest_amount(
         &raw_interest,
         precision_scale,
     ))
+}
+
+/// 校验并返回抵押贷的三档 LTV 阈值；信用贷则要求三项全部留空。
+/// 抵押贷必须满足 `0 < initial < maintenance < liquidation <= 1`，防止风险区间重叠或倒置。
+pub(crate) fn validate_loan_ltv_thresholds(
+    loan_type: &str,
+    initial_ltv: Option<BigDecimal>,
+    maintenance_ltv: Option<BigDecimal>,
+    liquidation_ltv: Option<BigDecimal>,
+) -> AppResult<Option<(BigDecimal, BigDecimal, BigDecimal)>> {
+    if loan_type != LOAN_TYPE_COLLATERALIZED {
+        if initial_ltv.is_some() || maintenance_ltv.is_some() || liquidation_ltv.is_some() {
+            return Err(AppError::Validation(
+                "credit loan must not configure LTV thresholds".to_owned(),
+            ));
+        }
+        return Ok(None);
+    }
+
+    let initial_ltv =
+        initial_ltv.ok_or_else(|| AppError::Validation("initial_ltv is required".to_owned()))?;
+    let maintenance_ltv = maintenance_ltv
+        .ok_or_else(|| AppError::Validation("maintenance_ltv is required".to_owned()))?;
+    let liquidation_ltv = liquidation_ltv
+        .ok_or_else(|| AppError::Validation("liquidation_ltv is required".to_owned()))?;
+    ensure_amount_precision(&initial_ltv, 8, "initial_ltv")?;
+    ensure_amount_precision(&maintenance_ltv, 8, "maintenance_ltv")?;
+    ensure_amount_precision(&liquidation_ltv, 8, "liquidation_ltv")?;
+    let one = BigDecimal::from(1);
+    if initial_ltv <= zero_amount()
+        || initial_ltv >= maintenance_ltv
+        || maintenance_ltv >= liquidation_ltv
+        || liquidation_ltv > one
+    {
+        return Err(AppError::Validation(
+            "LTV thresholds must satisfy 0 < initial < maintenance < liquidation <= 1".to_owned(),
+        ));
+    }
+    Ok(Some((initial_ltv, maintenance_ltv, liquidation_ltv)))
+}
+
+/// 计算债务对抵押市值的 LTV，结果固定保留 18 位并向上取整。
+/// 向上取整使临界风险不会因显示精度截断而被低估；任何非正债务、数量或价格都失败关闭。
+pub(crate) fn calculate_loan_ltv(
+    debt_amount: &BigDecimal,
+    collateral_amount: &BigDecimal,
+    collateral_price: &BigDecimal,
+) -> AppResult<BigDecimal> {
+    ensure_positive_amount(debt_amount, "debt_amount")?;
+    ensure_positive_amount(collateral_amount, "collateral_amount")?;
+    ensure_positive_amount(collateral_price, "collateral_price")?;
+    let collateral_value = collateral_amount.clone() * collateral_price.clone();
+    ensure_positive_amount(&collateral_value, "collateral_value")?;
+    Ok((debt_amount.clone() / collateral_value).with_scale_round(18, RoundingMode::Ceiling))
+}
+
+/// 用不含除法舍入的乘法关系校验 LTV 不超过初始线。
+/// 等于阈值允许通过，高出任意 Decimal 最小量都会在冻结或放款前被拒绝。
+pub(crate) fn ensure_loan_ltv_within_initial(
+    debt_amount: &BigDecimal,
+    collateral_amount: &BigDecimal,
+    collateral_price: &BigDecimal,
+    initial_ltv: &BigDecimal,
+) -> AppResult<()> {
+    ensure_positive_amount(debt_amount, "debt_amount")?;
+    ensure_positive_amount(collateral_amount, "collateral_amount")?;
+    ensure_positive_amount(collateral_price, "collateral_price")?;
+    ensure_positive_amount(initial_ltv, "initial_ltv")?;
+    if debt_amount > &(collateral_amount.clone() * collateral_price.clone() * initial_ltv.clone()) {
+        return Err(AppError::Validation(
+            "loan LTV exceeds product initial_ltv".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// 把实时 LTV 投影为正常、预警或可清算三态，清算线优先级最高。
+pub(crate) fn loan_risk_state(
+    ltv: &BigDecimal,
+    maintenance_ltv: &BigDecimal,
+    liquidation_ltv: &BigDecimal,
+) -> &'static str {
+    if ltv >= liquidation_ltv {
+        LOAN_RISK_STATE_LIQUIDATABLE
+    } else if ltv >= maintenance_ltv {
+        LOAN_RISK_STATE_MARGIN_CALL
+    } else {
+        LOAN_RISK_STATE_HEALTHY
+    }
+}
+
+/// 为借贷申请生成内容指纹，用户、产品、本金、抵押资产与数量均纳入。
+/// Decimal 先去掉无意义尾零，缺失抵押字段用显式空标记，保证同键同参能稳定重放。
+pub(crate) fn loan_order_request_fingerprint(
+    user_id: u64,
+    product_id: u64,
+    amount: &BigDecimal,
+    collateral_asset_id: Option<u64>,
+    collateral_amount: Option<&BigDecimal>,
+) -> String {
+    let fields = [
+        "loan_order".to_owned(),
+        user_id.to_string(),
+        product_id.to_string(),
+        canonical_decimal(amount),
+        collateral_asset_id
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none".to_owned()),
+        collateral_amount
+            .map(canonical_decimal)
+            .unwrap_or_else(|| "none".to_owned()),
+    ];
+    let mut digest = Sha256::new();
+    for field in fields {
+        digest.update(field.len().to_be_bytes());
+        digest.update(field.as_bytes());
+    }
+    hex::encode(digest.finalize())
+}
+
+/// Decimal 指纹编码去除尾零但保留精确十进制值。
+fn canonical_decimal(value: &BigDecimal) -> String {
+    value.normalized().to_plain_string()
 }
 
 /// 校验借款金额落在产品额度区间内，下界为闭区间，上界在配置了最大额时同样为闭区间。
@@ -170,7 +308,8 @@ pub(crate) fn ensure_amount_precision(
     precision_scale: i32,
     field: &str,
 ) -> AppResult<()> {
-    if amount_scale_within_precision(amount, precision_scale) {
+    ensure_asset_precision_scale(precision_scale)?;
+    if amount_fits_asset_precision(amount, precision_scale) {
         return Ok(());
     }
     Err(AppError::Validation(format!(
@@ -178,12 +317,14 @@ pub(crate) fn ensure_amount_precision(
     )))
 }
 
-/// 判断归一化后的小数位是否落在资产精度以内，是精度校验的底层判定。
-/// 先 normalized 去掉尾随零再取 exponent，负 scale 表示整数带尾零，用 max(0) 折算为零位小数。
-/// 只回答布尔结果，不产生错误信息，也不修改传入的金额。
-fn amount_scale_within_precision(amount: &BigDecimal, precision_scale: i32) -> bool {
-    let (_, scale) = amount.normalized().as_bigint_and_exponent();
-    scale.max(0) <= precision_scale.into()
+/// 资产精度元数据必须与钱包及 DECIMAL(38,18) 的共同边界一致；越界时禁止钳制后继续记账。
+fn ensure_asset_precision_scale(precision_scale: i32) -> AppResult<()> {
+    if !(0..=MAX_ASSET_PRECISION_SCALE).contains(&precision_scale) {
+        return Err(AppError::Internal(
+            "asset precision_scale must be between 0 and 18".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// 裁剪可选文本并把纯空白归一为空值，使「未传该字段」与「传了空串」得到一致语义。

@@ -4,8 +4,9 @@
 //!
 //! 闪兑的持久化被切成两条互不重叠的链路。报价链路写 `convert_quotes` 并把同一份快照
 //! 以 `convert:quote:{uuid}` 为键缓存进 Redis，二者不共享事务，缓存靠键 TTL 自然淘汰。
-//! 结算链路在单个 MySQL 事务内完成：先按 quote_id 幂等插入 pending 订单，再锁定订单行，
-//! 依「源资产、目标资产」顺序锁钱包，从源资产 available 扣款、向目标资产 available 入账，
+//! 结算链路在单个 MySQL 事务内完成：先锁 quote 并复核归属、指纹、过期、消费与当前配置，
+//! 再插入并锁定 pending 订单，依 `(user_id, asset_id)` 全序锁双钱包，从源资产 available 扣款、
+//! 向目标资产 available 入账，
 //! 同步落两条 `convert_settlement` 流水与一条代理佣金记录，最后把订单置为 completed。
 //! frozen 与 locked 在整个闪兑流程中都不参与，手续费已折进 to_amount 不再单独扣钱包。
 
@@ -21,20 +22,24 @@ use crate::{
             ConvertQuoteInsertResult, ConvertRepositoryError, QuoteId,
             presentation::{ConvertOrderResponse, ConvertPairResponse},
             repository::{
-                ConvertPairRule, ConvertPairRuleDbRecord, ConvertSettlementOrderRecord,
+                ConvertAuthoritativeQuoteRecord, ConvertMarketPriceSnapshot, ConvertPairRule,
+                ConvertPairRuleDbRecord, ConvertSettlementOrderRecord,
                 ConvertSettlementWalletRecord, WalletBalanceRecord,
             },
-            service::{convert_pair_rule_from_record, ensure_asset_precision_scale},
+            service::{
+                convert_market_pricing_source, convert_pair_rule_from_record,
+                convert_quote_amounts, convert_quote_fingerprint, ensure_asset_precision_scale,
+                ensure_convert_amount_precision, normalize_convert_rate_for_storage,
+                resolve_fixed_convert_rate, validate_quote_amount,
+            },
         },
-        market::market_ticker_redis_key,
         wallet::truncate_amount_to_asset_precision,
     },
 };
 use bigdecimal::BigDecimal;
+use chrono::{DateTime, Utc};
 use redis::AsyncCommands;
-use serde_json::Value;
 use sqlx::{MySql, Pool, QueryBuilder, Transaction};
-use std::str::FromStr;
 
 impl From<sqlx::Error> for ConvertRepositoryError {
     /// 将 SQLx 故障文本保留为闪兑存储错误；不执行重试或回滚已提交事务。
@@ -141,8 +146,9 @@ impl MySqlConvertRepository {
         let insert_result = sqlx::query(
             r#"INSERT INTO convert_quotes
                (quote_id, convert_pair_id, user_id, from_asset, to_asset, from_amount,
-                to_amount, rate, spread_rate, fee_rate, fee_amount, expires_at, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'quoted')
+                to_amount, rate, spread_rate, fee_rate, fee_amount, request_fingerprint,
+                price_source, price_symbol, price_observed_at, price_version, expires_at, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'quoted')
                ON DUPLICATE KEY UPDATE quote_id = quote_id"#,
         )
         .bind(quote.quote_id.0.to_string())
@@ -156,6 +162,11 @@ impl MySqlConvertRepository {
         .bind(quote.spread_rate)
         .bind(quote.fee_rate)
         .bind(quote.fee_amount)
+        .bind(quote.request_fingerprint)
+        .bind(quote.price_source)
+        .bind(quote.price_symbol)
+        .bind(quote.price_observed_at.naive_utc())
+        .bind(quote.price_version)
         .bind(quote.expires_at.naive_utc())
         .execute(&self.pool)
         .await?;
@@ -298,14 +309,17 @@ pub(crate) async fn load_pair_rule(
     to_asset_id: u64,
 ) -> AppResult<ConvertPairRule> {
     let row = sqlx::query_as::<_, ConvertPairRuleDbRecord>(
-        r#"SELECT pairs.id, pairs.from_asset AS from_asset_id, pairs.to_asset AS to_asset_id,
+        r#"SELECT pairs.id, pairs.enabled,
+                  pairs.from_asset AS from_asset_id, pairs.to_asset AS to_asset_id,
                   pairs.pricing_mode, pairs.spread_rate, pairs.fee_rate,
                   pairs.min_amount, pairs.max_amount,
                   pairs.target_min_amount, pairs.target_max_amount,
                   rules.fixed_rate,
                   market_pairs.symbol AS market_pair_symbol,
                   market_pairs.base_asset AS market_base_asset_id,
-                  market_pairs.quote_asset AS market_quote_asset_id
+                  market_pairs.quote_asset AS market_quote_asset_id,
+                  GREATEST(pairs.updated_at, COALESCE(rules.updated_at, pairs.updated_at))
+                      AS pricing_updated_at
            FROM convert_pairs pairs
            LEFT JOIN new_coin_convert_rules rules
              ON rules.convert_pair_id = pairs.id AND rules.status = 'active' AND rules.rate_source = 'fixed'
@@ -357,80 +371,62 @@ pub(crate) async fn load_wallet_balance(
     }))
 }
 
-/// 从行情接入链写入的 ticker 缓存里取出指定交易对的最新成交价，作为市场计价的权威汇率来源。
-/// Redis 未配置或键不存在都返回空值，由调用方决定是拒绝报价还是走其他分支，本函数不自行兜底。
-/// 载荷必须是含字符串 last_price 字段的 JSON，解析失败或字段缺失一律按内部错误上报。
-/// 价格解析成功后还要求严格为正，非正价格返回参数错误，避免下游取倒数时出现除零或负汇率。
-/// 只读缓存，不回源现货撮合、不刷新 TTL，也绝不接受客户端提交的价格作为替代。
+/// 从 MySQL append-only 行情历史选择该交易对事件时间最新的 ticker。
+/// 本查询刻意不跳过未来、陈旧或异常快照；服务层校验最新行并 fail closed，禁止回退旧价掩盖坏数据。
 pub(crate) async fn latest_market_price(
-    redis: Option<redis::aio::ConnectionManager>,
+    pool: &Pool<MySql>,
     pair_symbol: &str,
-) -> AppResult<Option<BigDecimal>> {
-    let Some(mut connection) = redis else {
-        return Ok(None);
-    };
-    let payload: Option<String> = connection
-        .get(market_ticker_redis_key(pair_symbol))
-        .await
-        .map_err(AppError::from)?;
-    let Some(payload) = payload else {
-        return Ok(None);
-    };
-    let value = serde_json::from_str::<Value>(&payload)
-        .map_err(|error| AppError::Internal(format!("invalid cached ticker payload: {error}")))?;
-    let last_price = value
-        .get("last_price")
-        .and_then(Value::as_str)
-        .ok_or_else(|| AppError::Internal("cached ticker is missing last_price".to_owned()))?;
-    let price = BigDecimal::from_str(last_price)
-        .map_err(|_| AppError::Internal("cached ticker last_price is invalid".to_owned()))?;
-    if price <= 0 {
-        return Err(AppError::Validation(
-            "convert market price must be positive".to_owned(),
-        ));
-    }
-    Ok(Some(price))
+) -> AppResult<Option<ConvertMarketPriceSnapshot>> {
+    sqlx::query_as::<_, ConvertMarketPriceSnapshot>(
+        r#"SELECT price, source, symbol, observed_at, source_version
+           FROM market_price_ticks
+           WHERE symbol = REPLACE(REPLACE(REPLACE(UPPER(?), '-', ''), '/', ''), '_', '')
+           ORDER BY observed_at DESC,
+                    CASE source
+                        WHEN 'bitget' THEN 0
+                        WHEN 'htx' THEN 1
+                        WHEN 'coinbase' THEN 2
+                        WHEN 'strategy' THEN 3
+                        ELSE 9
+                    END ASC,
+                    source_version DESC,
+                    id DESC
+           LIMIT 1"#,
+    )
+    .bind(pair_symbol)
+    .fetch_optional(pool)
+    .await
+    .map_err(AppError::from)
 }
 
-/// 通过调用方提供的执行器读取资产 precision_scale，并校验其处于钱包支持的 0..=18 范围。
-/// 缺失或损坏配置会阻止报价/结算；本函数只读元数据，不截断现有余额或流水。
+/// 返回 MySQL 当前时间，quote 创建与过期边界均以该时钟为准。
+pub(crate) async fn database_now(pool: &Pool<MySql>) -> AppResult<DateTime<Utc>> {
+    let value = sqlx::query_scalar::<_, chrono::NaiveDateTime>("SELECT CURRENT_TIMESTAMP(6)")
+        .fetch_one(pool)
+        .await?;
+    Ok(DateTime::<Utc>::from_naive_utc_and_offset(value, Utc))
+}
+
+/// 通过调用方提供的执行器读取活动资产 precision_scale，并校验其处于钱包支持的 0..=18 范围。
+/// 资产缺失、停用或精度损坏都会阻止报价/结算；本函数不截断现有余额或流水。
 pub(crate) async fn load_asset_precision_scale<'e, E>(executor: E, asset_id: u64) -> AppResult<i32>
 where
     E: sqlx::Executor<'e, Database = MySql>,
 {
-    let (precision_scale,): (i32,) =
-        sqlx::query_as("SELECT precision_scale FROM assets WHERE id = ? LIMIT 1")
-            .bind(asset_id)
-            .fetch_optional(executor)
-            .await?
-            .ok_or(AppError::NotFound)?;
+    let (precision_scale,): (i32,) = sqlx::query_as(
+        "SELECT precision_scale FROM assets WHERE id = ? AND status = 'active' LIMIT 1",
+    )
+    .bind(asset_id)
+    .fetch_optional(executor)
+    .await?
+    .ok_or(AppError::NotFound)?;
     ensure_asset_precision_scale(precision_scale)?;
     Ok(precision_scale)
 }
 
-/// 在进入结算事务前核对该报价行确实存在且属于当前用户，避免拿别人的 quote_id 触发结算。
-/// 条件同时约束 quote_id 与 user_id，命中失败一律返回 false 由调用方转成 NotFound，
-/// 不区分「报价不存在」和「报价属于他人」，防止通过错误码探测他人报价是否存在。
-/// 刻意不检查订单状态和 expires_at：有效期以 Redis 快照为准，已确认与否交给订单唯一键裁决。
-/// 查询不加行锁，本次通过不代表结算一定成功，真正的幂等保障在确认事务内的订单插入语句。
-pub(crate) async fn quote_exists_for_user(
-    pool: &Pool<MySql>,
-    quote_id: &QuoteId,
-    user_id: u64,
-) -> AppResult<bool> {
-    let row = sqlx::query_as::<_, (u64,)>(
-        "SELECT id FROM convert_quotes WHERE quote_id = ? AND user_id = ? LIMIT 1",
-    )
-    .bind(quote_id.0.to_string())
-    .bind(user_id)
-    .fetch_optional(pool)
-    .await?;
-
-    Ok(row.is_some())
-}
-
 /// 为报价创建唯一 pending 订单，并在自有 MySQL 事务内完成闪兑资金结算。
-/// 实际锁序是：依 quote_id 插入订单，锁该用户 pending 订单，再依“源资产、目标资产”顺序锁钱包；代码不按资产编号重排。
+/// 实际锁序是：quote→convert_pair/计价规则→按 asset_id 升序的资产行→pending 订单→
+/// 按 asset_id 升序的两个 `(user_id, asset_id)` 钱包行。
 /// 结算从源资产 available 扣除完整 from_amount，向目标资产 available 增加报价 to_amount；frozen/locked 保持不变。
 /// 两条 `convert_settlement` 流水分别记录源资产负额和目标资产正额，均引用 quote_id；费用只保存在订单快照，已包含在 to_amount 计算中，不另扣钱包。
 /// 订单完成、代理佣金记录、两侧余额和流水同事务提交；唯一订单已存在、余额不足或任一步失败都会回滚本次写入。
@@ -441,15 +437,243 @@ pub(crate) async fn confirm_and_settle_convert_quote(
 ) -> AppResult<()> {
     let quote_id_value = quote_id.0.to_string();
     let mut tx = pool.begin().await?;
-    let inserted = insert_order_for_quote_in_tx(&mut tx, &quote_id_value).await?;
-    if !inserted {
+    let quote = lock_authoritative_quote(&mut tx, &quote_id_value).await?;
+    if quote.user_id != user_id {
+        return Err(AppError::NotFound);
+    }
+    if quote.status != "quoted" || quote.consumed_at.is_some() {
         return Err(AppError::Conflict(
             "convert quote has already been confirmed".to_owned(),
         ));
     }
+    let database_now = database_now_in_tx(&mut tx).await?;
+    if database_now >= quote.expires_at {
+        return Err(AppError::Validation("convert quote is expired".to_owned()));
+    }
+    if quote.from_asset_id == quote.to_asset_id
+        || quote.from_amount <= 0
+        || quote.to_amount <= 0
+        || quote.rate <= 0
+    {
+        return Err(AppError::Conflict(
+            "convert quote contains invalid authoritative amounts".to_owned(),
+        ));
+    }
+    if convert_quote_fingerprint(&quote) != quote.request_fingerprint {
+        return Err(AppError::Conflict(
+            "convert quote fingerprint verification failed".to_owned(),
+        ));
+    }
+    validate_authoritative_quote_config_in_tx(&mut tx, &quote, database_now).await?;
+    insert_order_for_quote_in_tx(&mut tx, &quote).await?;
     settle_convert_order_in_tx(&mut tx, &quote_id_value, user_id).await?;
+    let consumed = sqlx::query(
+        r#"UPDATE convert_quotes
+           SET status = 'consumed', consumed_at = ?
+           WHERE quote_id = ? AND user_id = ? AND status = 'quoted'
+             AND consumed_at IS NULL AND expires_at > ?"#,
+    )
+    .bind(database_now.naive_utc())
+    .bind(&quote_id_value)
+    .bind(user_id)
+    .bind(database_now.naive_utc())
+    .execute(&mut *tx)
+    .await?;
+    if consumed.rows_affected() != 1 {
+        return Err(AppError::Conflict(
+            "convert quote could not be consumed exactly once".to_owned(),
+        ));
+    }
     tx.commit().await?;
     Ok(())
+}
+
+/// 在 quote 行锁之后锁定当前闪兑配置并复核报价快照。
+/// 锁序固定为 quote→convert_pair→计价规则/现货对→按 asset_id 升序的资产行，
+/// 随后才会创建订单和锁钱包。任一配置在 quote 后改变都返回冲突且零动账。
+async fn validate_authoritative_quote_config_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    quote: &ConvertAuthoritativeQuoteRecord,
+    database_now: DateTime<Utc>,
+) -> AppResult<()> {
+    let row = sqlx::query_as::<_, ConvertPairRuleDbRecord>(
+        r#"SELECT pairs.id, pairs.enabled,
+                  pairs.from_asset AS from_asset_id, pairs.to_asset AS to_asset_id,
+                  pairs.pricing_mode, pairs.spread_rate, pairs.fee_rate,
+                  pairs.min_amount, pairs.max_amount,
+                  pairs.target_min_amount, pairs.target_max_amount,
+                  rules.fixed_rate,
+                  market_pairs.symbol AS market_pair_symbol,
+                  market_pairs.base_asset AS market_base_asset_id,
+                  market_pairs.quote_asset AS market_quote_asset_id,
+                  GREATEST(pairs.updated_at, COALESCE(rules.updated_at, pairs.updated_at))
+                      AS pricing_updated_at
+           FROM convert_pairs pairs
+           LEFT JOIN new_coin_convert_rules rules
+             ON rules.convert_pair_id = pairs.id AND rules.status = 'active'
+            AND rules.rate_source = 'fixed'
+           LEFT JOIN trading_pairs market_pairs
+             ON ((market_pairs.base_asset = pairs.from_asset AND market_pairs.quote_asset = pairs.to_asset)
+                 OR (market_pairs.base_asset = pairs.to_asset AND market_pairs.quote_asset = pairs.from_asset))
+            AND market_pairs.status = 'active'
+           WHERE pairs.id = ?
+           ORDER BY market_pairs.id DESC
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(quote.convert_pair_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or_else(convert_quote_config_conflict)?;
+    let assets_match = (row.from_asset_id == quote.from_asset_id
+        && row.to_asset_id == quote.to_asset_id)
+        || (row.from_asset_id == quote.to_asset_id && row.to_asset_id == quote.from_asset_id);
+    if !row.enabled || !assets_match {
+        return Err(convert_quote_config_conflict());
+    }
+    let pair = convert_pair_rule_from_record(row, quote.from_asset_id, quote.to_asset_id)
+        .map_err(|_| convert_quote_config_conflict())?;
+    if pair.spread_rate != quote.spread_rate || pair.fee_rate != quote.fee_rate {
+        return Err(convert_quote_config_conflict());
+    }
+    validate_quote_amount(&quote.from_amount, &pair)
+        .map_err(|_| convert_quote_config_conflict())?;
+
+    let (first_asset_id, second_asset_id) = if quote.from_asset_id < quote.to_asset_id {
+        (quote.from_asset_id, quote.to_asset_id)
+    } else {
+        (quote.to_asset_id, quote.from_asset_id)
+    };
+    let first_precision = lock_active_asset_precision_in_tx(tx, first_asset_id).await?;
+    let second_precision = lock_active_asset_precision_in_tx(tx, second_asset_id).await?;
+    let (from_precision, to_precision) = if quote.from_asset_id == first_asset_id {
+        (first_precision, second_precision)
+    } else {
+        (second_precision, first_precision)
+    };
+    ensure_convert_amount_precision(&quote.from_amount, from_precision, "from_amount")
+        .map_err(|_| convert_quote_config_conflict())?;
+
+    match pair.pricing_mode.as_str() {
+        "fixed" => {
+            let expected_rate = normalize_convert_rate_for_storage(
+                &resolve_fixed_convert_rate(&pair).map_err(|_| convert_quote_config_conflict())?,
+            )
+            .map_err(|_| convert_quote_config_conflict())?;
+            let expected_version = format!(
+                "convert_pair:{}:{}",
+                pair.id,
+                pair.pricing_updated_at.timestamp_micros()
+            );
+            if quote.rate != expected_rate
+                || quote.price_source != "fixed"
+                || quote.price_symbol.is_some()
+                || quote.price_observed_at != pair.pricing_updated_at
+                || quote.price_version != expected_version
+            {
+                return Err(convert_quote_config_conflict());
+            }
+        }
+        "market" => {
+            let (expected_symbol, market_base_asset_id, market_quote_asset_id) =
+                convert_market_pricing_source(&pair)
+                    .map_err(|_| convert_quote_config_conflict())?;
+            let evidence_symbol = quote
+                .price_symbol
+                .as_deref()
+                .ok_or_else(convert_quote_config_conflict)?;
+            let normalize_symbol = |value: &str| {
+                value
+                    .trim()
+                    .chars()
+                    .filter(|character| !matches!(character, '-' | '/' | '_'))
+                    .flat_map(char::to_uppercase)
+                    .collect::<String>()
+            };
+            let direction_matches = (quote.from_asset_id == market_base_asset_id
+                && quote.to_asset_id == market_quote_asset_id)
+                || (quote.from_asset_id == market_quote_asset_id
+                    && quote.to_asset_id == market_base_asset_id);
+            if !direction_matches
+                || normalize_symbol(evidence_symbol) != normalize_symbol(expected_symbol)
+                || !matches!(
+                    quote.price_source.as_str(),
+                    "bitget" | "htx" | "coinbase" | "strategy"
+                )
+                || quote.price_version.trim().is_empty()
+                || quote.price_observed_at > database_now
+            {
+                return Err(convert_quote_config_conflict());
+            }
+        }
+        _ => return Err(convert_quote_config_conflict()),
+    }
+
+    let expected_amounts = convert_quote_amounts(
+        &quote.from_amount,
+        &pair,
+        &quote.rate,
+        from_precision,
+        to_precision,
+    )
+    .map_err(|_| convert_quote_config_conflict())?;
+    if expected_amounts.to_amount != quote.to_amount
+        || expected_amounts.fee_amount != quote.fee_amount
+    {
+        return Err(convert_quote_config_conflict());
+    }
+    Ok(())
+}
+
+async fn lock_active_asset_precision_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    asset_id: u64,
+) -> AppResult<i32> {
+    let (precision_scale, status): (i32, String) = sqlx::query_as(
+        "SELECT precision_scale, status FROM assets WHERE id = ? LIMIT 1 FOR UPDATE",
+    )
+    .bind(asset_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or_else(convert_quote_config_conflict)?;
+    if status != "active" {
+        return Err(convert_quote_config_conflict());
+    }
+    ensure_asset_precision_scale(precision_scale).map_err(|_| convert_quote_config_conflict())?;
+    Ok(precision_scale)
+}
+
+fn convert_quote_config_conflict() -> AppError {
+    AppError::Conflict("convert configuration changed after quote creation".to_owned())
+}
+
+/// 以 `FOR UPDATE` 锁定 MySQL 权威 quote；确认流程的第一把锁始终是报价行。
+async fn lock_authoritative_quote(
+    tx: &mut Transaction<'_, MySql>,
+    quote_id: &str,
+) -> AppResult<ConvertAuthoritativeQuoteRecord> {
+    sqlx::query_as::<_, ConvertAuthoritativeQuoteRecord>(
+        r#"SELECT quote_id, convert_pair_id, user_id,
+                  from_asset AS from_asset_id, to_asset AS to_asset_id,
+                  from_amount, to_amount, rate, spread_rate, fee_rate, fee_amount,
+                  request_fingerprint, price_source, price_symbol, price_observed_at,
+                  price_version, expires_at, status, consumed_at
+           FROM convert_quotes
+           WHERE quote_id = ?
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(quote_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)
+}
+
+async fn database_now_in_tx(tx: &mut Transaction<'_, MySql>) -> AppResult<DateTime<Utc>> {
+    let value = sqlx::query_scalar::<_, chrono::NaiveDateTime>("SELECT CURRENT_TIMESTAMP(6)")
+        .fetch_one(&mut **tx)
+        .await?;
+    Ok(DateTime::<Utc>::from_naive_utc_and_offset(value, Utc))
 }
 
 /// 在结算事务内把报价快照复制成一条 pending 订单，并以返回值告知调用方是否为首次插入。
@@ -459,30 +683,44 @@ pub(crate) async fn confirm_and_settle_convert_quote(
 /// 报价行不存在时 SELECT 命中零行，同样返回 false，语义上与重复确认合并处理。
 async fn insert_order_for_quote_in_tx(
     tx: &mut Transaction<'_, MySql>,
-    quote_id: &str,
-) -> AppResult<bool> {
-    // 同一事务内先锁定并插入订单，再完成钱包结算；任意一步失败都会整体回滚，避免留下不可恢复的 pending 订单。
+    quote: &ConvertAuthoritativeQuoteRecord,
+) -> AppResult<()> {
     let result = sqlx::query(
         r#"INSERT INTO convert_orders
            (quote_id, convert_pair_id, user_id, from_asset, to_asset, from_amount,
             to_amount, rate, fee_rate, fee_amount, status)
-           SELECT quotes.quote_id, quotes.convert_pair_id, quotes.user_id, quotes.from_asset,
-                  quotes.to_asset, quotes.from_amount, quotes.to_amount, quotes.rate,
-                  quotes.fee_rate, quotes.fee_amount, 'pending'
-           FROM convert_quotes quotes
-           WHERE quotes.quote_id = ?
-           ON DUPLICATE KEY UPDATE quote_id = convert_orders.quote_id"#,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')"#,
     )
-    .bind(quote_id)
+    .bind(&quote.quote_id)
+    .bind(quote.convert_pair_id)
+    .bind(quote.user_id)
+    .bind(quote.from_asset_id)
+    .bind(quote.to_asset_id)
+    .bind(&quote.from_amount)
+    .bind(&quote.to_amount)
+    .bind(&quote.rate)
+    .bind(&quote.fee_rate)
+    .bind(&quote.fee_amount)
     .execute(&mut **tx)
-    .await?;
-
-    Ok(result.last_insert_id() != 0)
+    .await;
+    match result {
+        Ok(_) => Ok(()),
+        Err(error)
+            if error
+                .as_database_error()
+                .is_some_and(|item| item.is_unique_violation()) =>
+        {
+            Err(AppError::Conflict(
+                "convert quote has already produced an order".to_owned(),
+            ))
+        }
+        Err(error) => Err(AppError::Database(error)),
+    }
 }
 
 /// 在调用方已开启的事务内完成一笔闪兑的全部资金移动，调用前订单必须已插入且状态为 pending。
-/// 加锁顺序固定为：先 FOR UPDATE 锁定该用户的 pending 订单行，再锁源资产钱包，最后锁目标资产钱包。
-/// 顺序按订单记录的「源、目标」而非资产编号大小排列，因此同一用户反向对敲存在理论上的锁序交叉。
+/// 加锁顺序固定为：先 FOR UPDATE 锁定该用户的 pending 订单行，再按 asset_id 升序锁两个钱包。
+/// 同一用户的正反向闪兑因此遵守同一 `(user_id, asset_id)` 全序，不会形成钱包等待环。
 /// 源资产从 available 全额扣除 from_amount，扣前先比对余额，不足则整个事务回滚且不留 pending 订单。
 /// 目标资产 available 加上 to_amount 后按目标资产 precision_scale 向零截断再写回，
 /// 截断作用于加总后的余额而非增量，因此极端情况下入账可能比 to_amount 少一个最小单位。
@@ -508,14 +746,29 @@ async fn settle_convert_order_in_tx(
     .await?
     .ok_or(AppError::NotFound)?;
 
-    let from_wallet = lock_wallet_row(tx, user_id, order.from_asset_id).await?;
+    if order.from_asset_id == order.to_asset_id {
+        return Err(AppError::Conflict(
+            "convert settlement assets must be distinct".to_owned(),
+        ));
+    }
+    let (first_asset_id, second_asset_id) = if order.from_asset_id < order.to_asset_id {
+        (order.from_asset_id, order.to_asset_id)
+    } else {
+        (order.to_asset_id, order.from_asset_id)
+    };
+    let first_wallet = lock_wallet_row(tx, user_id, first_asset_id).await?;
+    let second_wallet = lock_wallet_row(tx, user_id, second_asset_id).await?;
+    let (from_wallet, to_wallet) = if order.from_asset_id == first_asset_id {
+        (first_wallet, second_wallet)
+    } else {
+        (second_wallet, first_wallet)
+    };
     if from_wallet.available < order.from_amount {
         return Err(AppError::Validation(format!(
             "insufficient available balance for convert settlement: requested {}, available {}, locked {}",
             order.from_amount, from_wallet.available, from_wallet.locked
         )));
     }
-    let to_wallet = lock_wallet_row(tx, user_id, order.to_asset_id).await?;
     let to_precision_scale = load_asset_precision_scale(&mut **tx, order.to_asset_id).await?;
 
     let from_available_after = from_wallet.available.clone() - order.from_amount.clone();

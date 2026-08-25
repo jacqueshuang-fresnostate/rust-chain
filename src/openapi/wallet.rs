@@ -7,6 +7,7 @@ use super::*;
 
 #[derive(ToSchema)]
 pub(super) struct CreateWithdrawalRequest {
+    quote_id: String,
     asset_symbol: String,
     network: Option<String>,
     address: String,
@@ -18,10 +19,40 @@ pub(super) struct CreateWithdrawalRequest {
 }
 
 #[derive(ToSchema)]
+pub(super) struct CreateWithdrawalQuoteRequest {
+    asset_symbol: String,
+    network: String,
+    amount: String,
+}
+
+#[derive(ToSchema)]
+pub(super) struct WithdrawalQuoteResponse {
+    quote_id: String,
+    asset_symbol: String,
+    network: String,
+    amount: String,
+    fee: String,
+    net: String,
+    total_reserved: String,
+    fee_config_version: String,
+    #[schema(format = Int64)]
+    expires_at: i64,
+}
+
+#[derive(ToSchema)]
 pub(super) struct WithdrawalRequestResponse {
     id: u64,
+    quote_id: String,
     status: String,
+    asset_symbol: String,
+    network: String,
+    amount: String,
+    fee: String,
+    net: String,
     total_reserved: String,
+    fee_config_version: String,
+    #[schema(format = Int64)]
+    expires_at: i64,
     security_method: SecurityVerificationMethod,
 }
 
@@ -40,15 +71,23 @@ pub(super) struct WalletWithdrawalResponse {
     security_method: String,
     idempotency_key: String,
     gateway_request_id: String,
+    withdrawal_quote_id: Option<String>,
     tx_hash: Option<String>,
     block_height: Option<u64>,
     confirmations: u32,
     failure_reason: Option<String>,
+    broadcast_error_class: Option<String>,
+    broadcast_last_error: Option<String>,
+    broadcast_resolution: Option<String>,
+    #[schema(format = Int64)]
+    acceptance_evidence_at: Option<i64>,
     review_reason: Option<String>,
     reviewed_by: Option<u64>,
     broadcasted_by: Option<u64>,
     confirmed_by: Option<u64>,
     failed_by: Option<u64>,
+    retry_count: u32,
+    gateway_query_count: u32,
     #[schema(format = Int64)]
     reviewed_at: Option<i64>,
     #[schema(format = Int64)]
@@ -59,6 +98,10 @@ pub(super) struct WalletWithdrawalResponse {
     failed_at: Option<i64>,
     #[schema(format = Int64)]
     released_at: Option<i64>,
+    #[schema(format = Int64)]
+    last_gateway_query_at: Option<i64>,
+    #[schema(format = Int64)]
+    manual_review_at: Option<i64>,
     #[schema(format = Int64)]
     created_at: i64,
 }
@@ -330,6 +373,23 @@ fn list_withdraw_assets() {}
     )
 )]
 fn get_or_assign_deposit_address() {}
+
+/// 用当前资产精度与阶梯费率生成有限期报价，提交时必须带回同一 quote_id。
+#[utoipa::path(
+    post,
+    path = "/api/v1/wallet/withdrawals/quote",
+    tag = "wallet",
+    summary = "生成服务端权威提现报价",
+    request_body = CreateWithdrawalQuoteRequest,
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "报价成功", body = WithdrawalQuoteResponse),
+        (status = 400, description = "参数或资产配置错误", body = ErrorResponse),
+        (status = 401, description = "未登录", body = ErrorResponse),
+        (status = 500, description = "服务内部错误", body = ErrorResponse)
+    )
+)]
+fn create_withdrawal_quote() {}
 
 /// 提交提现申请，按后台安全策略校验资金密码等要件后冻结相应资金并进入待审核状态。
 /// 资金密码错误返回未认证，安全要件缺失返回参数错误；本步只冻结资金，不做任何链上广播。

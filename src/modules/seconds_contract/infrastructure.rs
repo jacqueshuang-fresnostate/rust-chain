@@ -17,7 +17,8 @@ use super::{
     repository::{
         SecondsContractAdminOrderFilter, SecondsContractOrderInsert, SecondsContractProductRow,
         SecondsContractProductRuleRow, SecondsContractProductWrite,
-        SecondsContractWalletLedgerWrite, SecondsContractWalletRow,
+        SecondsContractSettlementPriceRow, SecondsContractWalletLedgerWrite,
+        SecondsContractWalletRow,
     },
     service::{NormalizedSecondsContractProductCycle, optional_string},
 };
@@ -26,7 +27,7 @@ use crate::{
     modules::market::market_ticker_redis_key,
 };
 use bigdecimal::BigDecimal;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use redis::{AsyncCommands, aio::ConnectionManager};
 use serde_json::Value;
 use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
@@ -463,7 +464,10 @@ pub(crate) async fn list_user_orders(
         r#"SELECT orders.id, orders.user_id, orders.product_id, orders.pair_id,
                   NULL AS email, pairs.symbol, orders.stake_asset, assets.symbol AS stake_asset_symbol,
                   orders.direction, orders.stake_amount, orders.duration_seconds,
-                  orders.payout_rate, orders.entry_price, orders.settlement_price, orders.status, orders.result,
+                  orders.payout_rate, orders.entry_price, orders.settlement_price,
+                  orders.settlement_price_tick_id, orders.settlement_price_source,
+                  orders.settlement_price_observed_at, orders.settlement_price_generation,
+                  orders.settlement_price_version, orders.status, orders.result,
                   orders.idempotency_key, orders.expires_at, orders.created_at
            FROM seconds_contract_orders orders
            INNER JOIN trading_pairs pairs ON pairs.id = orders.pair_id
@@ -492,7 +496,10 @@ pub(crate) async fn list_admin_orders(
         r#"SELECT orders.id, orders.user_id, orders.product_id, orders.pair_id,
                   users.email, pairs.symbol, orders.stake_asset, assets.symbol AS stake_asset_symbol,
                   orders.direction, orders.stake_amount, orders.duration_seconds,
-                  orders.payout_rate, orders.entry_price, orders.settlement_price, orders.status, orders.result,
+                  orders.payout_rate, orders.entry_price, orders.settlement_price,
+                  orders.settlement_price_tick_id, orders.settlement_price_source,
+                  orders.settlement_price_observed_at, orders.settlement_price_generation,
+                  orders.settlement_price_version, orders.status, orders.result,
                   orders.idempotency_key, orders.expires_at, orders.created_at
            FROM seconds_contract_orders orders
            INNER JOIN users ON users.id = orders.user_id
@@ -561,7 +568,10 @@ pub(crate) async fn existing_order_for_idempotency_key(
         r#"SELECT orders.id, orders.user_id, orders.product_id, orders.pair_id,
                   NULL AS email, pairs.symbol, orders.stake_asset, assets.symbol AS stake_asset_symbol,
                   orders.direction, orders.stake_amount, orders.duration_seconds,
-                  orders.payout_rate, orders.entry_price, orders.settlement_price, orders.status, orders.result,
+                  orders.payout_rate, orders.entry_price, orders.settlement_price,
+                  orders.settlement_price_tick_id, orders.settlement_price_source,
+                  orders.settlement_price_observed_at, orders.settlement_price_generation,
+                  orders.settlement_price_version, orders.status, orders.result,
                   orders.idempotency_key, orders.expires_at, orders.created_at
            FROM seconds_contract_orders orders
            INNER JOIN trading_pairs pairs ON pairs.id = orders.pair_id
@@ -590,7 +600,10 @@ pub(crate) async fn existing_order_for_idempotency_key_readonly(
         r#"SELECT orders.id, orders.user_id, orders.product_id, orders.pair_id,
                   NULL AS email, pairs.symbol, orders.stake_asset, assets.symbol AS stake_asset_symbol,
                   orders.direction, orders.stake_amount, orders.duration_seconds,
-                  orders.payout_rate, orders.entry_price, orders.settlement_price, orders.status, orders.result,
+                  orders.payout_rate, orders.entry_price, orders.settlement_price,
+                  orders.settlement_price_tick_id, orders.settlement_price_source,
+                  orders.settlement_price_observed_at, orders.settlement_price_generation,
+                  orders.settlement_price_version, orders.status, orders.result,
                   orders.idempotency_key, orders.expires_at, orders.created_at
            FROM seconds_contract_orders orders
            INNER JOIN trading_pairs pairs ON pairs.id = orders.pair_id
@@ -866,7 +879,10 @@ pub(crate) async fn lock_order_by_id(
         r#"SELECT orders.id, orders.user_id, orders.product_id, orders.pair_id,
                   users.email, pairs.symbol, orders.stake_asset, assets.symbol AS stake_asset_symbol,
                   orders.direction, orders.stake_amount, orders.duration_seconds,
-                  orders.payout_rate, orders.entry_price, orders.settlement_price, orders.status, orders.result,
+                  orders.payout_rate, orders.entry_price, orders.settlement_price,
+                  orders.settlement_price_tick_id, orders.settlement_price_source,
+                  orders.settlement_price_observed_at, orders.settlement_price_generation,
+                  orders.settlement_price_version, orders.status, orders.result,
                   orders.idempotency_key, orders.expires_at, orders.created_at
            FROM seconds_contract_orders orders
            INNER JOIN users ON users.id = orders.user_id
@@ -888,15 +904,77 @@ pub(crate) async fn mark_order_settled(
     tx: &mut Transaction<'_, MySql>,
     order_id: u64,
     result: &str,
+    snapshot: &SecondsContractSettlementPriceRow,
 ) -> AppResult<()> {
-    sqlx::query(
-        "UPDATE seconds_contract_orders SET status = 'settled', result = ?, settled_at = CURRENT_TIMESTAMP(6) WHERE id = ?",
+    let update = sqlx::query(
+        r#"UPDATE seconds_contract_orders
+           SET status = 'settled', result = ?, settlement_price = ?,
+               settlement_price_tick_id = ?, settlement_price_source = ?,
+               settlement_price_observed_at = ?, settlement_price_generation = ?,
+               settlement_price_version = ?, settled_at = CURRENT_TIMESTAMP(6)
+           WHERE id = ? AND status = 'opened'"#,
     )
     .bind(result)
+    .bind(&snapshot.price)
+    .bind(snapshot.id)
+    .bind(&snapshot.source)
+    .bind(snapshot.observed_at.naive_utc())
+    .bind(snapshot.generation)
+    .bind(&snapshot.source_version)
     .bind(order_id)
     .execute(&mut **tx)
     .await?;
+    if update.rows_affected() != 1 {
+        return Err(AppError::Conflict(
+            "seconds contract order changed during settlement".to_owned(),
+        ));
+    }
     Ok(())
+}
+
+/// 读取当前数据库时间，供人工结算与本地到期边界统一使用；调用方不能用应用进程时钟替代。
+pub(crate) async fn database_now(tx: &mut Transaction<'_, MySql>) -> AppResult<DateTime<Utc>> {
+    let now = sqlx::query_scalar::<_, chrono::NaiveDateTime>("SELECT CURRENT_TIMESTAMP(6)")
+        .fetch_one(&mut **tx)
+        .await?;
+    Ok(DateTime::<Utc>::from_naive_utc_and_offset(now, Utc))
+}
+
+/// 选择到期事件窗口 `[expires_at, expires_at + 5s)` 内第一条不可变 ticker。
+/// 排序先按事件时间，再按固定供应商优先级、源版本和主键，处理早晚不会改变选择结果。
+/// 窗口内没有历史行时返回 `None`，调用方必须保持 pending，禁止读取 Redis 最新价兜底。
+pub(crate) async fn select_settlement_price_snapshot(
+    tx: &mut Transaction<'_, MySql>,
+    symbol: &str,
+    expires_at: DateTime<Utc>,
+) -> AppResult<Option<SecondsContractSettlementPriceRow>> {
+    let snapshot = sqlx::query_as::<_, SecondsContractSettlementPriceRow>(
+        r#"SELECT id, symbol, price, source, observed_at, generation, source_version
+           FROM market_price_ticks
+           WHERE symbol = REPLACE(REPLACE(REPLACE(UPPER(?), '-', ''), '/', ''), '_', '')
+             AND observed_at >= ?
+             AND observed_at < DATE_ADD(?, INTERVAL 5 SECOND)
+           ORDER BY observed_at ASC,
+                    CASE source
+                        WHEN 'bitget' THEN 0
+                        WHEN 'htx' THEN 1
+                        WHEN 'coinbase' THEN 2
+                        WHEN 'strategy' THEN 3
+                        ELSE 9
+                    END ASC,
+                    source_version ASC,
+                    id ASC
+           LIMIT 1"#,
+    )
+    .bind(symbol)
+    .bind(expires_at.naive_utc())
+    .bind(expires_at.naive_utc())
+    .fetch_optional(&mut **tx)
+    .await?;
+    if let Some(snapshot) = snapshot.as_ref() {
+        super::service::validate_settlement_price_snapshot(snapshot, symbol, expires_at)?;
+    }
+    Ok(snapshot)
 }
 
 #[allow(clippy::too_many_arguments)] // 审计字段与数据库列稳定对应，调用方事务负责原子提交。
@@ -1098,7 +1176,10 @@ fn seconds_contract_order_by_id_sql() -> &'static str {
     r#"SELECT orders.id, orders.user_id, orders.product_id, orders.pair_id,
               users.email, pairs.symbol, orders.stake_asset, assets.symbol AS stake_asset_symbol,
               orders.direction, orders.stake_amount, orders.duration_seconds,
-              orders.payout_rate, orders.entry_price, orders.settlement_price, orders.status, orders.result,
+              orders.payout_rate, orders.entry_price, orders.settlement_price,
+                  orders.settlement_price_tick_id, orders.settlement_price_source,
+                  orders.settlement_price_observed_at, orders.settlement_price_generation,
+                  orders.settlement_price_version, orders.status, orders.result,
               orders.idempotency_key, orders.expires_at, orders.created_at
        FROM seconds_contract_orders orders
        INNER JOIN users ON users.id = orders.user_id

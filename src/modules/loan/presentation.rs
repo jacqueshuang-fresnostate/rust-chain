@@ -86,6 +86,15 @@ pub(crate) struct CreateLoanProductRequest {
     pub(crate) min_amount: BigDecimal,
     /// 单笔最高借款额，省略表示不限；给出时须为正且不小于最低额。
     pub(crate) max_amount: Option<BigDecimal>,
+    /// 抵押贷申请与放款时允许的最大 LTV；信用贷必须为空。
+    pub(crate) initial_ltv: Option<BigDecimal>,
+    /// 进入保证金预警的 LTV 阈值，必须高于 initial_ltv。
+    pub(crate) maintenance_ltv: Option<BigDecimal>,
+    /// 强制清算 LTV 阈值，必须高于 maintenance_ltv 且不超过 1。
+    pub(crate) liquidation_ltv: Option<BigDecimal>,
+    /// 抵押资产白名单及其权威行情绑定；信用贷必须为空数组。
+    #[serde(default)]
+    pub(crate) collateral_assets: Vec<LoanCollateralAssetRequest>,
     /// 上下架状态，省略时默认 active。
     pub(crate) status: Option<String>,
     /// 管理员变更原因，传输层允许缺省以返回统一校验错误，应用层要求裁剪后非空。
@@ -106,12 +115,40 @@ pub(crate) struct UpdateLoanProductRequest {
     pub(crate) min_kyc_level: i32,
     pub(crate) min_amount: BigDecimal,
     pub(crate) max_amount: Option<BigDecimal>,
+    pub(crate) initial_ltv: Option<BigDecimal>,
+    pub(crate) maintenance_ltv: Option<BigDecimal>,
+    pub(crate) liquidation_ltv: Option<BigDecimal>,
+    #[serde(default)]
+    pub(crate) collateral_assets: Vec<LoanCollateralAssetRequest>,
     /// 上下架状态，此处必填，不再有默认值。
     pub(crate) status: String,
     /// 客户端读取该产品时获得的版本；缺失、零值或落后于数据库当前版本都会拒绝覆盖。
     pub(crate) revision: Option<u64>,
     /// 管理员变更原因，应用层要求裁剪后非空并写入同事务审计。
     pub(crate) reason: Option<String>,
+}
+
+/// 抵押贷产品中一项可接受抵押物及行情源配置。
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct LoanCollateralAssetRequest {
+    /// 允许被冻结的抵押资产编号。
+    pub(crate) collateral_asset_id: u64,
+    /// 行情 ticker 符号，必须是“抵押资产/贷款资产”对应的规范化符号。
+    pub(crate) oracle_symbol: String,
+    /// 行情适配器标识，当前只接受 `market_ticker_redis`。
+    pub(crate) oracle_source: String,
+    /// 该产品可接受的行情最大年龄，单位秒。
+    pub(crate) oracle_max_age_seconds: u64,
+}
+
+/// 对外返回的抵押物白名单快照。
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub(crate) struct LoanCollateralAssetResponse {
+    pub(crate) collateral_asset_id: u64,
+    pub(crate) collateral_asset_symbol: String,
+    pub(crate) oracle_symbol: String,
+    pub(crate) oracle_source: String,
+    pub(crate) oracle_max_age_seconds: u64,
 }
 
 /// 只切换产品上下架状态的轻量请求体，用于运营快速停售而无需重传全部配置。
@@ -184,6 +221,27 @@ pub(crate) struct LoanOrderActionResponse {
     pub(crate) changed: bool,
 }
 
+/// 用户查询单笔抵押贷时返回的服务端实时风险快照。
+#[derive(Debug, Serialize)]
+pub(crate) struct LoanOrderHealthResponse {
+    pub(crate) order_id: u64,
+    pub(crate) status: String,
+    pub(crate) risk_state: String,
+    pub(crate) debt_amount: BigDecimal,
+    pub(crate) collateral_value: BigDecimal,
+    pub(crate) current_ltv: BigDecimal,
+    pub(crate) initial_ltv: BigDecimal,
+    pub(crate) maintenance_ltv: BigDecimal,
+    pub(crate) liquidation_ltv: BigDecimal,
+    pub(crate) oracle_symbol: String,
+    pub(crate) oracle_source: String,
+    pub(crate) collateral_price: BigDecimal,
+    #[serde(with = "unix_millis")]
+    pub(crate) price_observed_at: DateTime<Utc>,
+    #[serde(with = "unix_millis")]
+    pub(crate) calculated_at: DateTime<Utc>,
+}
+
 /// 借贷产品的对外视图，同时用作产品查询的 FromRow 目标。
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub(crate) struct LoanProductResponse {
@@ -199,6 +257,10 @@ pub(crate) struct LoanProductResponse {
     min_kyc_level: i32,
     min_amount: BigDecimal,
     max_amount: Option<BigDecimal>,
+    initial_ltv: Option<BigDecimal>,
+    maintenance_ltv: Option<BigDecimal>,
+    liquidation_ltv: Option<BigDecimal>,
+    collateral_assets: SqlxJson<Vec<LoanCollateralAssetResponse>>,
     status: String,
     /// 配置乐观并发版本；创建初始为一，每次完整更新或状态变更成功后加一。
     revision: u64,
@@ -231,6 +293,10 @@ impl LoanProductResponse {
             "min_kyc_level": self.min_kyc_level,
             "min_amount": self.min_amount,
             "max_amount": self.max_amount,
+            "initial_ltv": self.initial_ltv,
+            "maintenance_ltv": self.maintenance_ltv,
+            "liquidation_ltv": self.liquidation_ltv,
+            "collateral_assets": &self.collateral_assets.0,
             "status": self.status,
             "revision": self.revision,
         })
@@ -297,6 +363,23 @@ pub(crate) struct LoanOrderResponse {
     collateral_asset_symbol: Option<String>,
     /// 抵押数量，下单成功即从 available 冻结到 frozen，直到取消、拒绝或还款时释放。
     collateral_amount: Option<BigDecimal>,
+    /// 申请时固化的三档 LTV 风控阈值。
+    initial_ltv: Option<BigDecimal>,
+    maintenance_ltv: Option<BigDecimal>,
+    liquidation_ltv: Option<BigDecimal>,
+    /// 申请时固化的行情配置与最大年龄。
+    oracle_symbol: Option<String>,
+    oracle_source: Option<String>,
+    oracle_max_age_seconds: Option<u64>,
+    /// 申请和放款两个关键时点的权威价格与 LTV 快照。
+    application_collateral_price: Option<BigDecimal>,
+    #[serde(default, with = "option_unix_millis")]
+    application_price_observed_at: Option<DateTime<Utc>>,
+    application_ltv: Option<BigDecimal>,
+    approval_collateral_price: Option<BigDecimal>,
+    #[serde(default, with = "option_unix_millis")]
+    approval_price_observed_at: Option<DateTime<Utc>>,
+    approval_ltv: Option<BigDecimal>,
     /// 订单当前状态，取值为 pending、disbursed、rejected、cancelled、repaid、overdue 之一。
     status: String,
     /// 实际收取的利息，仅在还款成功时写入，未结清订单不代表当前应计利息。
@@ -330,6 +413,9 @@ pub(crate) struct LoanOrderResponse {
     /// 结清时刻。
     #[serde(default, with = "option_unix_millis")]
     repaid_at: Option<DateTime<Utc>>,
+    /// 强制清算完成时刻，与 repaid_at 互斥。
+    #[serde(default, with = "option_unix_millis")]
+    liquidated_at: Option<DateTime<Utc>>,
     /// 抵押释放时刻，取消、驳回或还款任一路径都会写入，非空即表示不会再次释放。
     #[serde(default, with = "option_unix_millis")]
     collateral_released_at: Option<DateTime<Utc>>,

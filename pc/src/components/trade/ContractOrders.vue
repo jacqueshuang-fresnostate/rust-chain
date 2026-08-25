@@ -18,7 +18,7 @@
       <div v-else-if="loading" class="h-full flex items-center justify-center text-muted-foreground">
         <span class="animate-spin mr-2">⏳</span> {{ $t('common.loading') }}
       </div>
-      <div v-else-if="isEmpty" class="h-full flex flex-col items-center justify-center text-muted-foreground opacity-50">
+      <div v-else-if="isEmpty && (activeTab !== 'positions' || batchFailures.length === 0)" class="h-full flex flex-col items-center justify-center text-muted-foreground opacity-50">
         <span class="text-4xl mb-2">📄</span>
         <span>{{ $t('trade.no_data') }}</span>
       </div>
@@ -42,6 +42,12 @@
           >
             {{ $t('trade.close_all') }}
           </button>
+        </div>
+        <div v-if="batchFailures.length" data-testid="margin-batch-failures" class="mb-3 rounded border border-down/40 bg-down/5 p-2 text-xs text-down">
+          <div class="mb-1 font-bold">{{ $t('trade.failed_positions') }}</div>
+          <div v-for="failure in batchFailures" :key="`${failure.id}-${failure.code}`">
+            #{{ failure.id }} · {{ failure.message }}
+          </div>
         </div>
         <table class="w-full text-xs text-left">
           <thead>
@@ -89,7 +95,7 @@
               </td>
               <td class="py-2.5 text-right">
                 <button v-if="pos.entryPrice <= 0" @click="cancelPosition(pos)" class="text-xs text-muted-foreground hover:text-primary hover:underline mr-2">{{ $t('common.cancel') }}</button>
-                <button @click="openCloseModal(pos)" class="text-xs text-primary hover:underline mr-2">{{ $t('trade.close_position') }}</button>
+                <button v-else @click="openCloseModal(pos)" class="text-xs text-primary hover:underline mr-2">{{ $t('trade.close_position') }}</button>
               </td>
             </tr>
           </tbody>
@@ -145,60 +151,8 @@
           </span>
         </div>
 
-        <!-- Order Type Toggle -->
-        <div class="flex gap-2 mb-4">
-          <span @click="closeOrderType = 0"
-            :class="closeOrderType === 0 ? 'text-foreground font-bold underline' : 'text-muted-foreground font-medium hover:text-foreground'"
-            class="text-xs cursor-pointer transition-colors">
-            {{ $t('trade.market') }}
-          </span>
-          <span @click="closeOrderType = 1"
-            :class="closeOrderType === 1 ? 'text-foreground font-bold underline' : 'text-muted-foreground font-medium hover:text-foreground'"
-            class="text-xs cursor-pointer transition-colors">
-            {{ $t('trade.limit') }}
-          </span>
-        </div>
-
-        <!-- Price Input (Limit only) -->
-        <div v-if="closeOrderType === 1" class="mb-3">
-          <div class="flex items-center bg-background border border-input rounded px-3 h-10 focus-within:border-primary transition-colors hover:border-border/80">
-            <span class="text-xs text-muted-foreground w-12 shrink-0">{{ $t('trade.price') }}</span>
-            <input
-              v-model="closePrice"
-              type="number"
-              class="bg-transparent flex-1 outline-none text-right font-mono text-sm"
-              placeholder="0.00"
-            />
-            <span class="text-xs text-muted-foreground ml-2 w-10 text-right">USDT</span>
-          </div>
-        </div>
-        <div v-else class="h-10 flex items-center px-3 bg-muted/20 border border-transparent rounded text-sm text-muted-foreground mb-3">
-          {{ $t('trade.market_price') }}
-        </div>
-
-        <!-- Amount Input -->
-        <div class="mb-2">
-          <div class="flex items-center bg-background border border-input rounded px-3 h-10 focus-within:border-primary transition-colors hover:border-border/80">
-            <span class="text-xs text-muted-foreground w-12 shrink-0">{{ $t('trade.amount') }}</span>
-            <input
-              v-model="closeVolume"
-              type="number"
-              class="bg-transparent flex-1 outline-none text-right font-mono text-sm"
-              placeholder="0"
-              :max="closingPosition?.avaPosition"
-              min="0"
-            />
-            <span class="text-xs text-muted-foreground ml-2 w-10 text-right">{{ $t('trade.contracts_unit') }}</span>
-          </div>
-        </div>
-
-        <!-- Percent Shortcuts -->
-        <div class="flex gap-2 mb-4">
-          <button v-for="p in [25, 50, 75, 100]" :key="p"
-            @click="setClosePercent(p)"
-            class="flex-1 bg-muted/50 hover:bg-muted text-[10px] py-1.5 rounded border border-transparent hover:border-border transition-all font-medium">
-            {{ p }}%
-          </button>
+        <div class="mb-4 rounded border border-border bg-muted/20 px-3 py-3 text-sm text-muted-foreground">
+          {{ $t('trade.market_full_close') }}
         </div>
 
         <!-- Action Buttons -->
@@ -226,9 +180,12 @@ import { useI18n } from 'vue-i18n'
 import { useContractStore } from '@/stores/contract'
 import { useToast } from 'vue-toastification'
 import numeral from 'numeral'
-import type { OrderType } from '@/api/contract'
 import AuthRequiredState from '@/components/common/AuthRequiredState.vue'
 import { useAuthRequired } from '@/composables/useAuthRequired'
+import {
+  summarizeMarginBatchAction,
+  type MarginBatchFailure,
+} from '@/domain/marginActions'
 
 const props = defineProps<{
   symbol?: string
@@ -249,20 +206,14 @@ const loading = ref(false)
 // Close position modal state
 const showCloseModal = ref(false)
 const closingPosition = ref<PositionItem | null>(null)
-const closeOrderType = ref<OrderType>(0) // 0=市价 1=限价
-const closePrice = ref<number | null>(null)
-const closeVolume = ref<number | null>(null)
 const closing = ref(false)
+const batchFailures = ref<MarginBatchFailure[]>([])
 
 const historyOrders = computed(() => contractStore.historyOrders)
 const activeCoinId = computed(() => contractStore.activeCoin?.id)
 
 const canClose = computed(() => {
-    if (!closeVolume.value || closeVolume.value <= 0) return false
-    if (!closingPosition.value) return false
-    if (closeVolume.value > closingPosition.value.avaPosition) return false
-    if (closeOrderType.value === 1 && (!closePrice.value || closePrice.value <= 0)) return false
-    return true
+    return Boolean(closingPosition.value && closingPosition.value.avaPosition > 0)
 })
 
 // Build position list from wallets — only items with actual positions (buy or sell > 0)
@@ -434,17 +385,8 @@ const openCloseModal = (pos: PositionItem) => {
         return
     }
     closingPosition.value = pos
-    closeOrderType.value = 0 // default to market
-    closePrice.value = pos.currentPrice || null
-    closeVolume.value = pos.avaPosition // default to full available position
     closing.value = false
     showCloseModal.value = true
-}
-
-/** Set volume by percentage of available position */
-const setClosePercent = (p: number) => {
-    if (!closingPosition.value) return
-    closeVolume.value = Math.floor(closingPosition.value.avaPosition * p / 100)
 }
 
 /** Confirm and submit the close position order */
@@ -456,19 +398,12 @@ const confirmClosePosition = async () => {
     const pos = closingPosition.value
     const coinId = activeCoinId.value
     if (!pos || !coinId) return
-    if (!closeVolume.value || closeVolume.value <= 0) return
 
     closing.value = true
     try {
-        // 平仓: direction 0=买入平空(close SHORT), 1=卖出平多(close LONG)
-        const direction = pos.direction === 'LONG' ? 1 : 0
         await contractStore.submitClosePosition({
             contractCoinId: coinId,
-            direction: direction as 0 | 1,
-            type: closeOrderType.value as 0 | 1,
-            triggerPrice: 0,
-            entrustPrice: closeOrderType.value === 1 ? (closePrice.value || 0) : 0,
-            volume: closeVolume.value
+            positionId: pos.orderId
         })
         toast.success($t('trade.close_success'))
         showCloseModal.value = false
@@ -486,9 +421,21 @@ const closeAllOpenPositions = async () => {
     }
     if (!activeCoinId.value) return
     closing.value = true
+    batchFailures.value = []
     try {
-        await contractStore.submitCloseAllPositions(activeCoinId.value)
-        toast.success($t('trade.close_success'))
+        const result = await contractStore.submitCloseAllPositions(activeCoinId.value)
+        batchFailures.value = result.failures
+        const outcome = summarizeMarginBatchAction(result)
+        if (outcome === 'success') {
+            toast.success($t('trade.close_success'))
+        } else if (outcome === 'partial_failure') {
+            toast.warning($t('trade.close_all_partial', {
+                succeeded: result.succeeded.length,
+                failed: result.failures.length,
+            }))
+        } else {
+            toast.error($t('trade.close_all_failed', { failed: result.failures.length }))
+        }
     } catch (e: any) {
         toast.error(e?.response?.data?.message || e.message || $t('trade.close_failed'))
     } finally {
@@ -531,6 +478,10 @@ const cancelAllOpenOrders = async () => {
 
 watch([() => props.symbol, activeTab, activeCoinId, isLoggedIn], () => {
     loadData()
+})
+
+watch([() => props.symbol, activeCoinId], () => {
+    batchFailures.value = []
 })
 
 watch(() => contractStore.orderRefreshKey, () => {

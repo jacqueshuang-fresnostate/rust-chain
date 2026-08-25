@@ -15,7 +15,7 @@ use crate::{
     modules::loan::presentation::{LoanOrderResponse, LoanProductResponse},
 };
 use bigdecimal::BigDecimal;
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
 
@@ -36,6 +36,9 @@ pub(crate) struct LoanProductTermsRow {
     pub(crate) min_kyc_level: i32,
     pub(crate) min_amount: BigDecimal,
     pub(crate) max_amount: Option<BigDecimal>,
+    pub(crate) initial_ltv: Option<BigDecimal>,
+    pub(crate) maintenance_ltv: Option<BigDecimal>,
+    pub(crate) liquidation_ltv: Option<BigDecimal>,
     pub(crate) status: String,
 }
 
@@ -45,6 +48,7 @@ pub(crate) struct LoanProductTermsRow {
 pub(crate) struct LoanOrderLockRow {
     pub(crate) id: u64,
     pub(crate) user_id: u64,
+    pub(crate) loan_type: String,
     /// 放款与还款所用的贷款资产。
     pub(crate) asset_id: u64,
     /// 借款本金，也是计息基数。
@@ -54,6 +58,12 @@ pub(crate) struct LoanOrderLockRow {
     pub(crate) term_days: u32,
     pub(crate) collateral_asset_id: Option<u64>,
     pub(crate) collateral_amount: Option<BigDecimal>,
+    pub(crate) initial_ltv: Option<BigDecimal>,
+    pub(crate) maintenance_ltv: Option<BigDecimal>,
+    pub(crate) liquidation_ltv: Option<BigDecimal>,
+    pub(crate) oracle_symbol: Option<String>,
+    pub(crate) oracle_source: Option<String>,
+    pub(crate) oracle_max_age_seconds: Option<u64>,
     pub(crate) status: String,
     /// 放款时刻，为空则无法按实际天数计息，还款会被拒绝。
     pub(crate) disbursed_at: Option<DateTime<Utc>>,
@@ -64,6 +74,8 @@ pub(crate) struct LoanOrderLockRow {
 /// 资产元数据，精度决定金额校验与截断口径，状态决定该资产能否参与借贷资金流。
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct AssetMetaRow {
+    /// 资产符号，用于确认 oracle 价格的基础/计价单位。
+    pub(crate) symbol: String,
     /// 小数位上限，取值范围与钱包账本列一致。
     pub(crate) precision_scale: i32,
     /// 资产状态，非 active 时中止相关资金流程。
@@ -109,7 +121,47 @@ pub(crate) struct LoanProductWrite {
     pub(crate) min_kyc_level: i32,
     pub(crate) min_amount: BigDecimal,
     pub(crate) max_amount: Option<BigDecimal>,
+    pub(crate) initial_ltv: Option<BigDecimal>,
+    pub(crate) maintenance_ltv: Option<BigDecimal>,
+    pub(crate) liquidation_ltv: Option<BigDecimal>,
+    pub(crate) collateral_assets: Vec<LoanProductCollateralWrite>,
     pub(crate) status: String,
+}
+
+/// 已经应用层校验且符号已规范化的抵押物行情绑定。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LoanProductCollateralWrite {
+    pub(crate) collateral_asset_id: u64,
+    pub(crate) oracle_symbol: String,
+    pub(crate) oracle_source: String,
+    pub(crate) oracle_max_age_seconds: u64,
+}
+
+/// 下单时在产品行锁内取得的唯一抵押物配置。
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub(crate) struct LoanCollateralRuleRow {
+    pub(crate) collateral_asset_id: u64,
+    pub(crate) oracle_symbol: String,
+    pub(crate) oracle_source: String,
+    pub(crate) oracle_max_age_seconds: u64,
+}
+
+/// 同一用户幂等键下的既有订单，用指纹区分同参重放和异参冲突。
+#[derive(Debug, sqlx::FromRow)]
+pub(crate) struct LoanOrderReplayRow {
+    pub(crate) id: u64,
+    pub(crate) product_id: u64,
+    pub(crate) amount: BigDecimal,
+    pub(crate) collateral_asset_id: Option<u64>,
+    pub(crate) collateral_amount: Option<BigDecimal>,
+    pub(crate) request_fingerprint: String,
+}
+
+/// 放款时必须与本金入账同事务保存的行情与 LTV 快照。
+pub(crate) struct LoanApprovalRiskSnapshot<'a> {
+    pub(crate) collateral_price: &'a BigDecimal,
+    pub(crate) price_observed_at: DateTime<Utc>,
+    pub(crate) ltv: &'a BigDecimal,
 }
 
 /// 订单插入载荷，其中的计息与额度字段全部来自锁定产品时的条款快照而非请求体。
@@ -127,6 +179,16 @@ pub(crate) struct LoanOrderCreate {
     pub(crate) collateral_asset_id: Option<u64>,
     pub(crate) collateral_amount: Option<BigDecimal>,
     pub(crate) idempotency_key: String,
+    pub(crate) request_fingerprint: String,
+    pub(crate) initial_ltv: Option<BigDecimal>,
+    pub(crate) maintenance_ltv: Option<BigDecimal>,
+    pub(crate) liquidation_ltv: Option<BigDecimal>,
+    pub(crate) oracle_symbol: Option<String>,
+    pub(crate) oracle_source: Option<String>,
+    pub(crate) oracle_max_age_seconds: Option<u64>,
+    pub(crate) application_collateral_price: Option<BigDecimal>,
+    pub(crate) application_price_observed_at: Option<DateTime<Utc>>,
+    pub(crate) application_ltv: Option<BigDecimal>,
 }
 
 /// 在调用方事务内插入借贷产品配置，revision 使用数据库缺省值一，并返回自增主键供同事务回读。
@@ -140,8 +202,9 @@ pub(crate) async fn insert_loan_product_in_tx(
     let result = sqlx::query(
         r#"INSERT INTO loan_products
            (loan_type, asset_id, name, name_json, term_days, interest_rate, interest_calculation_mode,
-            min_kyc_level, min_amount, max_amount, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            min_kyc_level, min_amount, max_amount, initial_ltv, maintenance_ltv, liquidation_ltv,
+            status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(&product.loan_type)
     .bind(product.asset_id)
@@ -153,10 +216,16 @@ pub(crate) async fn insert_loan_product_in_tx(
     .bind(product.min_kyc_level)
     .bind(&product.min_amount)
     .bind(&product.max_amount)
+    .bind(&product.initial_ltv)
+    .bind(&product.maintenance_ltv)
+    .bind(&product.liquidation_ltv)
     .bind(&product.status)
     .execute(&mut **tx)
     .await?;
-    Ok(result.last_insert_id())
+    let product_id = result.last_insert_id();
+    replace_loan_product_collateral_assets_in_tx(tx, product_id, &product.collateral_assets)
+        .await?;
+    Ok(product_id)
 }
 
 /// 在持有产品行锁的调用方事务内整体覆盖配置，并以客户端 revision 作为条件把版本原子加一。
@@ -172,7 +241,8 @@ pub(crate) async fn update_loan_product_in_tx(
         r#"UPDATE loan_products
            SET loan_type = ?, asset_id = ?, name_json = ?, name = ?, term_days = ?, interest_rate = ?,
                interest_calculation_mode = ?, min_kyc_level = ?, min_amount = ?,
-               max_amount = ?, status = ?, revision = revision + 1
+               max_amount = ?, initial_ltv = ?, maintenance_ltv = ?, liquidation_ltv = ?,
+               status = ?, revision = revision + 1
            WHERE id = ? AND revision = ?"#,
     )
     .bind(&product.loan_type)
@@ -185,6 +255,9 @@ pub(crate) async fn update_loan_product_in_tx(
     .bind(product.min_kyc_level)
     .bind(&product.min_amount)
     .bind(&product.max_amount)
+    .bind(&product.initial_ltv)
+    .bind(&product.maintenance_ltv)
+    .bind(&product.liquidation_ltv)
     .bind(&product.status)
     .bind(product_id)
     .bind(expected_revision)
@@ -194,6 +267,35 @@ pub(crate) async fn update_loan_product_in_tx(
         return Err(AppError::Conflict(
             "loan product revision is stale; reload before retrying".to_owned(),
         ));
+    }
+    replace_loan_product_collateral_assets_in_tx(tx, product_id, &product.collateral_assets)
+        .await?;
+    Ok(())
+}
+
+/// 以整体覆盖语义替换产品抵押白名单，删除与逐项插入共享产品配置事务。
+async fn replace_loan_product_collateral_assets_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    product_id: u64,
+    collateral_assets: &[LoanProductCollateralWrite],
+) -> AppResult<()> {
+    sqlx::query("DELETE FROM loan_product_collateral_assets WHERE product_id = ?")
+        .bind(product_id)
+        .execute(&mut **tx)
+        .await?;
+    for collateral in collateral_assets {
+        sqlx::query(
+            r#"INSERT INTO loan_product_collateral_assets
+               (product_id, collateral_asset_id, oracle_symbol, oracle_source, oracle_max_age_seconds)
+               VALUES (?, ?, ?, ?, ?)"#,
+        )
+        .bind(product_id)
+        .bind(collateral.collateral_asset_id)
+        .bind(&collateral.oracle_symbol)
+        .bind(&collateral.oracle_source)
+        .bind(collateral.oracle_max_age_seconds)
+        .execute(&mut **tx)
+        .await?;
     }
     Ok(())
 }
@@ -278,7 +380,23 @@ fn loan_product_query_builder() -> QueryBuilder<'static, MySql> {
         r#"SELECT products.id, products.loan_type, products.asset_id, assets.symbol AS asset_symbol,
                   products.name, products.name_json, products.term_days, products.interest_rate,
                   products.interest_calculation_mode, products.min_kyc_level,
-                  products.min_amount, products.max_amount, products.status, products.revision,
+                  products.min_amount, products.max_amount, products.initial_ltv,
+                  products.maintenance_ltv, products.liquidation_ltv,
+                  (SELECT COALESCE(
+                       JSON_ARRAYAGG(JSON_OBJECT(
+                           'collateral_asset_id', rules.collateral_asset_id,
+                           'collateral_asset_symbol', collateral_assets.symbol,
+                           'oracle_symbol', rules.oracle_symbol,
+                           'oracle_source', rules.oracle_source,
+                           'oracle_max_age_seconds', rules.oracle_max_age_seconds
+                       )),
+                       JSON_ARRAY()
+                   )
+                   FROM loan_product_collateral_assets rules
+                   INNER JOIN assets collateral_assets
+                     ON collateral_assets.id = rules.collateral_asset_id
+                   WHERE rules.product_id = products.id) AS collateral_assets,
+                  products.status, products.revision,
                   products.created_at, products.updated_at
            FROM loan_products products
            INNER JOIN assets ON assets.id = products.asset_id"#,
@@ -516,7 +634,7 @@ pub(crate) async fn load_user_loan_order_response(
 }
 
 /// 按用户与幂等键读取既有借贷订单，用于唯一键冲突后的重放返回。
-/// 回读不锁订单也不再次冻结抵押；当前路径不核对本次产品、金额和抵押参数，调用方不得复用键表达不同请求。
+/// 回读不锁订单也不再次冻结抵押；调用方已在唯一键竞争回滚后核对本次请求指纹和原始参数。
 pub(crate) async fn load_loan_order_by_idempotency(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -534,6 +652,26 @@ pub(crate) async fn load_loan_order_by_idempotency(
         .ok_or(AppError::NotFound)
 }
 
+/// 事务因唯一键竞争回滚后读取既有订单的请求字段，确保异参请求不会伪装成幂等成功。
+pub(crate) async fn load_loan_order_replay(
+    pool: &Pool<MySql>,
+    user_id: u64,
+    idempotency_key: &str,
+) -> AppResult<LoanOrderReplayRow> {
+    sqlx::query_as::<_, LoanOrderReplayRow>(
+        r#"SELECT id, product_id, amount, collateral_asset_id, collateral_amount,
+                  request_fingerprint
+           FROM loan_orders
+           WHERE user_id = ? AND idempotency_key = ?
+           LIMIT 1"#,
+    )
+    .bind(user_id)
+    .bind(idempotency_key)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(AppError::NotFound)
+}
+
 /// 在调用方事务中以 FOR UPDATE 锁定产品行，并取回订单需要快照的条款。
 /// 加锁的目的是让条款读取与订单插入之间不被管理端的产品改配置插入，保证同一笔订单条款自洽。
 /// 锁定后才检查状态：产品不存在返回 NotFound，存在但非 active 返回参数错误。
@@ -545,7 +683,8 @@ pub(crate) async fn lock_active_loan_product_terms(
 ) -> AppResult<LoanProductTermsRow> {
     let product = sqlx::query_as::<_, LoanProductTermsRow>(
         r#"SELECT id, loan_type, asset_id, term_days, interest_rate,
-                  interest_calculation_mode, min_kyc_level, min_amount, max_amount, status
+                  interest_calculation_mode, min_kyc_level, min_amount, max_amount,
+                  initial_ltv, maintenance_ltv, liquidation_ltv, status
            FROM loan_products
            WHERE id = ?
            LIMIT 1
@@ -563,6 +702,49 @@ pub(crate) async fn lock_active_loan_product_terms(
     Ok(product)
 }
 
+/// 在产品已被调用方锁定后锁定并读取指定抵押资产的白名单配置，不存在时按参数错误拒绝下单。
+pub(crate) async fn lock_loan_collateral_rule_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    product_id: u64,
+    collateral_asset_id: u64,
+) -> AppResult<LoanCollateralRuleRow> {
+    sqlx::query_as::<_, LoanCollateralRuleRow>(
+        r#"SELECT collateral_asset_id, oracle_symbol, oracle_source, oracle_max_age_seconds
+           FROM loan_product_collateral_assets
+           WHERE product_id = ? AND collateral_asset_id = ?
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(product_id)
+    .bind(collateral_asset_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or_else(|| {
+        AppError::Validation("collateral asset is not allowed for this loan product".to_owned())
+    })
+}
+
+/// 在创建资金副作用前锁定同用户幂等键的既有订单，供应用层核对规范化请求指纹。
+pub(crate) async fn lock_loan_order_replay_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    idempotency_key: &str,
+) -> AppResult<Option<LoanOrderReplayRow>> {
+    sqlx::query_as::<_, LoanOrderReplayRow>(
+        r#"SELECT id, product_id, amount, collateral_asset_id, collateral_amount,
+                  request_fingerprint
+           FROM loan_orders
+           WHERE user_id = ? AND idempotency_key = ?
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(user_id)
+    .bind(idempotency_key)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(AppError::from)
+}
+
 /// 在事务中以 FOR UPDATE 锁定订单行，供管理端审批与拒绝两条路径串行化状态迁移。
 /// 不带 user_id 条件，因此后台可操作任意用户订单；订单不存在时返回 NotFound。
 /// 持锁后调用方才去读写钱包，这一锁序保证并发审批不会重复放款或重复释放抵押。
@@ -572,9 +754,11 @@ pub(crate) async fn lock_loan_order(
     order_id: u64,
 ) -> AppResult<LoanOrderLockRow> {
     sqlx::query_as::<_, LoanOrderLockRow>(
-        r#"SELECT id, user_id, asset_id, amount, interest_rate,
+        r#"SELECT id, user_id, loan_type, asset_id, amount, interest_rate,
                   interest_calculation_mode, term_days, collateral_asset_id,
-                  collateral_amount, status, disbursed_at, collateral_released_at
+                  collateral_amount, initial_ltv, maintenance_ltv, liquidation_ltv,
+                  oracle_symbol, oracle_source, oracle_max_age_seconds,
+                  status, disbursed_at, collateral_released_at
            FROM loan_orders
            WHERE id = ?
            LIMIT 1
@@ -597,9 +781,11 @@ pub(crate) async fn lock_user_loan_order(
     order_id: u64,
 ) -> AppResult<Option<LoanOrderLockRow>> {
     sqlx::query_as::<_, LoanOrderLockRow>(
-        r#"SELECT id, user_id, asset_id, amount, interest_rate,
+        r#"SELECT id, user_id, loan_type, asset_id, amount, interest_rate,
                   interest_calculation_mode, term_days, collateral_asset_id,
-                  collateral_amount, status, disbursed_at, collateral_released_at
+                  collateral_amount, initial_ltv, maintenance_ltv, liquidation_ltv,
+                  oracle_symbol, oracle_source, oracle_max_age_seconds,
+                  status, disbursed_at, collateral_released_at
            FROM loan_orders
            WHERE id = ? AND user_id = ?
            LIMIT 1
@@ -610,6 +796,29 @@ pub(crate) async fn lock_user_loan_order(
     .fetch_optional(&mut **tx)
     .await
     .map_err(AppError::Database)
+}
+
+/// 不加锁读取当前用户的抵押贷风险快照，供健康度接口取权威行情后即时计算。
+pub(crate) async fn load_user_loan_risk_order(
+    pool: &Pool<MySql>,
+    user_id: u64,
+    order_id: u64,
+) -> AppResult<LoanOrderLockRow> {
+    sqlx::query_as::<_, LoanOrderLockRow>(
+        r#"SELECT id, user_id, loan_type, asset_id, amount, interest_rate,
+                  interest_calculation_mode, term_days, collateral_asset_id,
+                  collateral_amount, initial_ltv, maintenance_ltv, liquidation_ltv,
+                  oracle_symbol, oracle_source, oracle_max_age_seconds,
+                  status, disbursed_at, collateral_released_at
+           FROM loan_orders
+           WHERE id = ? AND user_id = ?
+           LIMIT 1"#,
+    )
+    .bind(order_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(AppError::NotFound)
 }
 
 /// 在调用方事务中写入订单行，把产品条款与抵押参数一并固化为不可变快照。
@@ -625,8 +834,12 @@ pub(crate) async fn insert_loan_order_in_tx(
         r#"INSERT INTO loan_orders
            (user_id, product_id, loan_type, asset_id, amount, interest_rate,
             interest_calculation_mode, term_days, min_kyc_level, collateral_asset_id,
-            collateral_amount, status, idempotency_key)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)"#,
+            collateral_amount, initial_ltv, maintenance_ltv, liquidation_ltv,
+            oracle_symbol, oracle_source, oracle_max_age_seconds,
+            application_collateral_price, application_price_observed_at, application_ltv,
+            status, idempotency_key, request_fingerprint)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                   'pending', ?, ?)"#,
     )
     .bind(order.user_id)
     .bind(order.product_id)
@@ -639,7 +852,21 @@ pub(crate) async fn insert_loan_order_in_tx(
     .bind(order.min_kyc_level)
     .bind(order.collateral_asset_id)
     .bind(&order.collateral_amount)
+    .bind(&order.initial_ltv)
+    .bind(&order.maintenance_ltv)
+    .bind(&order.liquidation_ltv)
+    .bind(&order.oracle_symbol)
+    .bind(&order.oracle_source)
+    .bind(order.oracle_max_age_seconds)
+    .bind(&order.application_collateral_price)
+    .bind(
+        order
+            .application_price_observed_at
+            .map(|value| value.naive_utc()),
+    )
+    .bind(&order.application_ltv)
     .bind(&order.idempotency_key)
+    .bind(&order.request_fingerprint)
     .execute(&mut **tx)
     .await?;
     Ok(result.last_insert_id())
@@ -664,29 +891,60 @@ pub(crate) async fn mark_loan_order_cancelled_in_tx(
 
 /// 在调用方事务中把订单置为 disbursed，并一次性写入审批人、审批时刻、放款时刻和到期时刻。
 /// 审批与放款共用同一个数据库时间戳，因此这两个时间在数据上总是相等。
-/// due_at 由应用层按审批时刻加期限天数算好后传入，逾期扫描任务后续据此判定超期。
+/// due_at 与 disbursed_at 使用同一个数据库时钟并在 SQL 内加期限天数，避免锁等待缩短实际借款期限。
 /// disbursed_at 是实际天数计息的起点，缺失会导致还款阶段直接被拒绝。
 /// 本金入账流水必须在同一事务内先写成功，否则回滚后订单仍保持待审核状态。
 pub(crate) async fn mark_loan_order_disbursed_in_tx(
     tx: &mut Transaction<'_, MySql>,
     order_id: u64,
     admin_id: u64,
-    due_at: NaiveDateTime,
+    term_days: u32,
+    risk_snapshot: Option<LoanApprovalRiskSnapshot<'_>>,
 ) -> AppResult<()> {
-    sqlx::query(
+    let (collateral_price, price_observed_at, ltv) = match risk_snapshot {
+        Some(snapshot) => (
+            Some(snapshot.collateral_price),
+            Some(snapshot.price_observed_at.naive_utc()),
+            Some(snapshot.ltv),
+        ),
+        None => (None, None, None),
+    };
+    let updated = sqlx::query(
         r#"UPDATE loan_orders
            SET status = 'disbursed',
                approved_by = ?,
                approved_at = CURRENT_TIMESTAMP(6),
                disbursed_at = CURRENT_TIMESTAMP(6),
-               due_at = ?
+               due_at = TIMESTAMPADD(DAY, ?, CURRENT_TIMESTAMP(6)),
+               approval_collateral_price = ?,
+               approval_price_observed_at = ?,
+               approval_ltv = ?
            WHERE id = ?"#,
     )
     .bind(admin_id)
-    .bind(due_at)
+    .bind(i64::from(term_days))
+    .bind(collateral_price)
+    .bind(price_observed_at)
+    .bind(ltv)
     .bind(order_id)
     .execute(&mut **tx)
     .await?;
+    if updated.rows_affected() != 1 {
+        return Err(AppError::Conflict(
+            "loan order could not be marked disbursed".to_owned(),
+        ));
+    }
+    let due_at = sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
+        "SELECT due_at FROM loan_orders WHERE id = ? LIMIT 1",
+    )
+    .bind(order_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    if due_at.is_none() {
+        return Err(AppError::Validation(
+            "loan term produces an invalid due_at".to_owned(),
+        ));
+    }
     Ok(())
 }
 
@@ -753,7 +1011,7 @@ pub(crate) async fn load_active_asset_meta_in_tx(
     asset_id: u64,
 ) -> AppResult<AssetMetaRow> {
     let asset = sqlx::query_as::<_, AssetMetaRow>(
-        "SELECT precision_scale, status FROM assets WHERE id = ? LIMIT 1",
+        "SELECT symbol, precision_scale, status FROM assets WHERE id = ? LIMIT 1 FOR UPDATE",
     )
     .bind(asset_id)
     .fetch_optional(&mut **tx)
@@ -765,6 +1023,62 @@ pub(crate) async fn load_active_asset_meta_in_tx(
     Ok(asset)
 }
 
+/// 贷款资产与抵押资产统一按主键升序锁定，稳定本次资金动作的状态和精度。
+/// 这避免两个贷款产品以相反的贷款/抵押资产组合并发时形成资产行锁环。
+pub(crate) async fn lock_active_loan_asset_metas_in_order(
+    tx: &mut Transaction<'_, MySql>,
+    asset_ids: impl IntoIterator<Item = u64>,
+) -> AppResult<Vec<(u64, AssetMetaRow)>> {
+    let mut asset_ids: Vec<_> = asset_ids.into_iter().collect();
+    asset_ids.sort_unstable();
+    asset_ids.dedup();
+    let mut assets = Vec::with_capacity(asset_ids.len());
+    for asset_id in asset_ids {
+        assets.push((asset_id, load_active_asset_meta_in_tx(tx, asset_id).await?));
+    }
+    Ok(assets)
+}
+
+/// 已形成债务的还款只依赖不可变资产精度，不因资产下架而阻断用户结清和抵押释放。
+/// 精度合法性由调用方的 Decimal 计算守卫复核；缺失资产仍按 NotFound 失败关闭。
+async fn lock_asset_precision_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    asset_id: u64,
+) -> AppResult<i32> {
+    sqlx::query_scalar::<_, i32>(
+        "SELECT precision_scale FROM assets WHERE id = ? LIMIT 1 FOR UPDATE",
+    )
+    .bind(asset_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)
+}
+
+/// 已形成债务涉及的资产统一按主键升序锁定，只固化精度而不要求资产仍处于 active。
+/// 这样下架不会阻断结清或清算，同时避免反向资产组合在并发资金事务中形成行锁环。
+pub(crate) async fn lock_loan_asset_precisions_in_order(
+    tx: &mut Transaction<'_, MySql>,
+    asset_ids: impl IntoIterator<Item = u64>,
+) -> AppResult<Vec<(u64, i32)>> {
+    let mut asset_ids: Vec<_> = asset_ids.into_iter().collect();
+    asset_ids.sort_unstable();
+    asset_ids.dedup();
+    let mut precisions = Vec::with_capacity(asset_ids.len());
+    for asset_id in asset_ids {
+        precisions.push((asset_id, lock_asset_precision_in_tx(tx, asset_id).await?));
+    }
+    Ok(precisions)
+}
+
+/// 风险查询不得因资产下架丢失既有债务的精度口径；只读版本不加行锁、不要求 active。
+pub(crate) async fn load_asset_precision(pool: &Pool<MySql>, asset_id: u64) -> AppResult<i32> {
+    sqlx::query_scalar::<_, i32>("SELECT precision_scale FROM assets WHERE id = ? LIMIT 1")
+        .bind(asset_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
 /// 以连接池读取资产精度并确认其处于 active，供产品配置阶段校验最小额与最大额的小数位。
 /// 该路径不在事务内，因此只用于产品管理这类无资金移动的场景，下单与还款走事务版本。
 /// 资产缺失返回 NotFound，被禁用返回参数错误，两者都会阻止产品配置落库。
@@ -774,7 +1088,7 @@ pub(crate) async fn load_active_asset_meta(
     asset_id: u64,
 ) -> AppResult<AssetMetaRow> {
     let asset = sqlx::query_as::<_, AssetMetaRow>(
-        "SELECT precision_scale, status FROM assets WHERE id = ? LIMIT 1",
+        "SELECT symbol, precision_scale, status FROM assets WHERE id = ? LIMIT 1",
     )
     .bind(asset_id)
     .fetch_optional(pool)
@@ -805,6 +1119,22 @@ pub(crate) async fn ensure_loan_user_kyc_level(
         return Err(AppError::Validation(format!(
             "loan product requires KYC level {min_kyc_level}"
         )));
+    }
+    Ok(())
+}
+
+/// 放款前锁定抵押钱包并确认订单快照数量仍完整位于 frozen，缺口会阻断本金入账。
+pub(crate) async fn ensure_loan_collateral_frozen_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    collateral_asset_id: u64,
+    collateral_amount: &BigDecimal,
+) -> AppResult<()> {
+    let wallet = lock_or_create_wallet_row(tx, user_id, collateral_asset_id).await?;
+    if wallet.frozen < *collateral_amount {
+        return Err(AppError::Conflict(
+            "loan collateral frozen balance is below the order snapshot".to_owned(),
+        ));
     }
     Ok(())
 }
@@ -1076,6 +1406,145 @@ async fn lock_or_create_wallet_row(
     .ok_or_else(|| AppError::Validation("wallet account is required".to_owned()))
 }
 
+/// 多资产借贷动作统一按资产主键升序预锁钱包；后续资金原语重复读取同一行不会改变锁序。
+pub(crate) async fn lock_loan_wallets_in_order(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    asset_ids: impl IntoIterator<Item = u64>,
+) -> AppResult<()> {
+    let mut asset_ids: Vec<_> = asset_ids.into_iter().collect();
+    asset_ids.sort_unstable();
+    asset_ids.dedup();
+    for asset_id in asset_ids {
+        lock_or_create_wallet_row(tx, user_id, asset_id).await?;
+    }
+    Ok(())
+}
+
+/// 放款同时确认平台现金流出与本金应收建立，两腿按订单稳定键保持数学平衡。
+pub(crate) async fn insert_loan_disbursement_journal_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    order_id: u64,
+    user_id: u64,
+    asset_id: u64,
+    principal: &BigDecimal,
+) -> AppResult<()> {
+    if principal <= &BigDecimal::from(0) {
+        return Err(AppError::Internal(
+            "loan disbursement principal must be positive".to_owned(),
+        ));
+    }
+    let transaction_key = format!("loan_disbursement:{order_id}");
+    insert_loan_platform_journal_leg(
+        tx,
+        &transaction_key,
+        "loan_disbursement",
+        "platform_loan_funding",
+        asset_id,
+        -principal.clone(),
+        order_id,
+        user_id,
+    )
+    .await?;
+    insert_loan_platform_journal_leg(
+        tx,
+        &transaction_key,
+        "loan_disbursement",
+        "loan_principal_receivable_open",
+        asset_id,
+        principal.clone(),
+        order_id,
+        user_id,
+    )
+    .await
+}
+
+/// 还款把本金与利息分别关闭应收并记入回收腿；四腿（零利息时两腿）之和必须为零。
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn insert_loan_repayment_journal_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    order_id: u64,
+    user_id: u64,
+    asset_id: u64,
+    principal: &BigDecimal,
+    interest: &BigDecimal,
+    repayment: &BigDecimal,
+) -> AppResult<()> {
+    if principal <= &BigDecimal::from(0)
+        || interest < &BigDecimal::from(0)
+        || (principal.clone() + interest.clone()).normalized() != repayment.normalized()
+    {
+        return Err(AppError::Internal(
+            "loan repayment journal amounts do not balance".to_owned(),
+        ));
+    }
+    let transaction_key = format!("loan_repayment:{order_id}");
+    for (account_code, amount) in [
+        ("loan_principal_receivable_close", -principal.clone()),
+        ("platform_loan_principal_recovery", principal.clone()),
+    ] {
+        insert_loan_platform_journal_leg(
+            tx,
+            &transaction_key,
+            "loan_repayment",
+            account_code,
+            asset_id,
+            amount,
+            order_id,
+            user_id,
+        )
+        .await?;
+    }
+    if interest > &BigDecimal::from(0) {
+        for (account_code, amount) in [
+            ("loan_interest_receivable_close", -interest.clone()),
+            ("platform_loan_interest_recovery", interest.clone()),
+        ] {
+            insert_loan_platform_journal_leg(
+                tx,
+                &transaction_key,
+                "loan_repayment",
+                account_code,
+                asset_id,
+                amount,
+                order_id,
+                user_id,
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn insert_loan_platform_journal_leg(
+    tx: &mut Transaction<'_, MySql>,
+    transaction_key: &str,
+    context: &str,
+    account_code: &str,
+    asset_id: u64,
+    amount: BigDecimal,
+    order_id: u64,
+    user_id: u64,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"INSERT INTO platform_financial_journal
+           (transaction_key, context, account_code, asset_id, amount, ref_type, ref_id,
+            metadata_json)
+           VALUES (?, ?, ?, ?, ?, 'loan_order', ?, JSON_OBJECT('user_id', ?))"#,
+    )
+    .bind(transaction_key)
+    .bind(context)
+    .bind(account_code)
+    .bind(asset_id)
+    .bind(amount)
+    .bind(order_id.to_string())
+    .bind(user_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 /// 写入一条借贷相关的钱包流水，是四个资金原语记账的唯一出口。
 /// `amount` 带符号，出账为负、入账为正；`balance_type` 标明这条流水描述的是哪个余额桶。
 /// `balance_after` 是该桶变动后的值，另外三个 after 参数记录变动完成时三桶的完整快照，
@@ -1132,11 +1601,16 @@ fn loan_order_query_builder() -> QueryBuilder<'static, MySql> {
                   orders.amount, orders.interest_rate, orders.interest_calculation_mode,
                   orders.term_days, orders.min_kyc_level,
                   orders.collateral_asset_id, collateral_assets.symbol AS collateral_asset_symbol,
-                  orders.collateral_amount, orders.status, orders.interest_amount,
+                  orders.collateral_amount, orders.initial_ltv, orders.maintenance_ltv,
+                  orders.liquidation_ltv, orders.oracle_symbol, orders.oracle_source,
+                  orders.oracle_max_age_seconds, orders.application_collateral_price,
+                  orders.application_price_observed_at, orders.application_ltv,
+                  orders.approval_collateral_price, orders.approval_price_observed_at,
+                  orders.approval_ltv, orders.status, orders.interest_amount,
                   orders.repayment_amount, orders.approved_by, orders.rejected_by,
                   orders.rejected_reason, orders.approved_at, orders.rejected_at,
                   orders.disbursed_at, orders.due_at, orders.overdue_at,
-                  orders.cancelled_at, orders.repaid_at,
+                  orders.cancelled_at, orders.repaid_at, orders.liquidated_at,
                   orders.collateral_released_at, orders.created_at, orders.updated_at
            FROM loan_orders orders
            INNER JOIN users ON users.id = orders.user_id

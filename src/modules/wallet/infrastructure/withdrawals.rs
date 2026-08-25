@@ -9,15 +9,18 @@ use crate::{
     error::{AppError, AppResult},
     modules::wallet::{
         WithdrawFeeTier, calculate_withdraw_fee, normalize_withdraw_fee_tiers,
-        presentation::WalletWithdrawalResponse,
+        presentation::{WalletWithdrawalResponse, WithdrawalQuoteResponse},
         repository::{
             WalletChainBroadcastCommand, WalletChainBroadcastResult, WalletChainGateway,
-            WalletChainPollPage,
+            WalletChainGatewayError, WalletChainGatewayErrorClass, WalletChainPollPage,
+            WalletChainWithdrawalQueryResult,
         },
+        withdrawal_fee_config_version, withdrawal_quote_fingerprint,
     },
 };
 use axum::async_trait;
 use bigdecimal::BigDecimal;
+use chrono::{DateTime, Utc};
 use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
 use std::time::Duration;
 
@@ -50,7 +53,7 @@ impl WalletChainGateway for HttpWalletChainGateway {
         endpoint: &str,
         bearer_token: Option<&str>,
         command: &WalletChainBroadcastCommand,
-    ) -> AppResult<WalletChainBroadcastResult> {
+    ) -> Result<WalletChainBroadcastResult, WalletChainGatewayError> {
         let mut request = self
             .client
             .post(endpoint)
@@ -59,18 +62,60 @@ impl WalletChainGateway for HttpWalletChainGateway {
         if let Some(token) = bearer_token {
             request = request.bearer_auth(token);
         }
-        let response = request
-            .send()
-            .await
-            .map_err(|error| AppError::Internal(format!("wallet gateway request failed: {error}")))?
-            .error_for_status()
-            .map_err(|error| {
-                AppError::Internal(format!("wallet gateway rejected broadcast: {error}"))
-            })?;
+        let response = request.send().await.map_err(|error| {
+            WalletChainGatewayError::new(
+                WalletChainGatewayErrorClass::Unknown,
+                format!("wallet gateway broadcast outcome is unknown: {error}"),
+            )
+        })?;
+        let status = response.status();
+        if !status.is_success() {
+            let class = classify_broadcast_http_status(status);
+            return Err(WalletChainGatewayError::new(
+                class,
+                format!("wallet gateway broadcast returned HTTP {status}"),
+            ));
+        }
         response.json().await.map_err(|error| {
-            AppError::Internal(format!(
-                "wallet gateway broadcast response is invalid: {error}"
-            ))
+            WalletChainGatewayError::new(
+                WalletChainGatewayErrorClass::Unknown,
+                format!("wallet gateway broadcast response is invalid: {error}"),
+            )
+        })
+    }
+
+    async fn query_withdrawal(
+        &self,
+        endpoint: &str,
+        bearer_token: Option<&str>,
+        request_id: &str,
+    ) -> Result<WalletChainWithdrawalQueryResult, WalletChainGatewayError> {
+        let mut request = self
+            .client
+            .get(endpoint)
+            .timeout(Duration::from_secs(15))
+            .query(&[("request_id", request_id)]);
+        if let Some(token) = bearer_token {
+            request = request.bearer_auth(token);
+        }
+        let response = request.send().await.map_err(|error| {
+            WalletChainGatewayError::new(
+                WalletChainGatewayErrorClass::Unknown,
+                format!("wallet gateway status query failed: {error}"),
+            )
+        })?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(WalletChainGatewayError::new(
+                WalletChainGatewayErrorClass::Unknown,
+                format!("wallet gateway status query returned HTTP {status}"),
+            ));
+        }
+        response.json().await.map_err(|error| {
+            WalletChainGatewayError::new(
+                WalletChainGatewayErrorClass::Unknown,
+                format!("wallet gateway status response is invalid: {error}"),
+            )
         })
     }
 
@@ -107,12 +152,106 @@ impl WalletChainGateway for HttpWalletChainGateway {
         })
     }
 }
+
+/// 仅把 HTTP 明确表达“请求未进入受理流程”的客户端错误视为确定拒绝。
+/// 408/409/425/429、全部 5xx 与未知扩展状态都可能发生在远端已按 request_id 受理之后，
+/// 必须保留冻结并走状态查询，绝不能据此重发或退冻。
+pub(crate) fn classify_broadcast_http_status(
+    status: reqwest::StatusCode,
+) -> WalletChainGatewayErrorClass {
+    use reqwest::StatusCode;
+
+    if matches!(
+        status,
+        StatusCode::BAD_REQUEST
+            | StatusCode::UNAUTHORIZED
+            | StatusCode::PAYMENT_REQUIRED
+            | StatusCode::FORBIDDEN
+            | StatusCode::NOT_FOUND
+            | StatusCode::METHOD_NOT_ALLOWED
+            | StatusCode::NOT_ACCEPTABLE
+            | StatusCode::GONE
+            | StatusCode::LENGTH_REQUIRED
+            | StatusCode::PAYLOAD_TOO_LARGE
+            | StatusCode::URI_TOO_LONG
+            | StatusCode::UNSUPPORTED_MEDIA_TYPE
+            | StatusCode::RANGE_NOT_SATISFIABLE
+            | StatusCode::EXPECTATION_FAILED
+            | StatusCode::UNPROCESSABLE_ENTITY
+    ) {
+        WalletChainGatewayErrorClass::DeterministicRejected
+    } else {
+        WalletChainGatewayErrorClass::Unknown
+    }
+}
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct WithdrawalAssetRule {
     pub(crate) id: u64,
     pub(crate) precision_scale: i32,
     pub(crate) fee: BigDecimal,
+    pub(crate) fee_config_version: String,
 }
+
+/// 报价前确认网络当前启用且允许本资产提现。
+/// 这个无锁检查只用于阻止创建无效报价；真正动账前会在同一事务内重新加锁确认。
+pub(crate) async fn ensure_active_withdrawal_network(
+    pool: &Pool<MySql>,
+    network: &str,
+    asset_symbol: &str,
+) -> AppResult<()> {
+    let supported = sqlx::query_scalar::<_, bool>(
+        r#"SELECT EXISTS(
+               SELECT 1
+               FROM deposit_network_configs
+               WHERE network = ?
+                 AND status = 'active'
+                 AND (asset_symbols_json IS NULL
+                      OR JSON_CONTAINS(asset_symbols_json, JSON_QUOTE(?)))
+           )"#,
+    )
+    .bind(network)
+    .bind(asset_symbol)
+    .fetch_one(pool)
+    .await?;
+    if supported {
+        Ok(())
+    } else {
+        Err(AppError::Validation(format!(
+            "asset {asset_symbol} does not support withdrawal network {network}"
+        )))
+    }
+}
+
+/// 冻结资金前锁定网络配置并重新校验启用状态与资产白名单。
+/// 锁保持到提现单、余额、流水和报价消费一起提交，配置并发变更不会穿过动账边界。
+pub(crate) async fn lock_active_withdrawal_network_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    network: &str,
+    asset_symbol: &str,
+) -> AppResult<()> {
+    let supported = sqlx::query_scalar::<_, u64>(
+        r#"SELECT id
+           FROM deposit_network_configs
+           WHERE network = ?
+             AND status = 'active'
+             AND (asset_symbols_json IS NULL
+                  OR JSON_CONTAINS(asset_symbols_json, JSON_QUOTE(?)))
+           LIMIT 1 FOR UPDATE"#,
+    )
+    .bind(network)
+    .bind(asset_symbol)
+    .fetch_optional(&mut **tx)
+    .await?
+    .is_some();
+    if supported {
+        Ok(())
+    } else {
+        Err(AppError::Conflict(format!(
+            "withdrawal network configuration changed for asset {asset_symbol} on {network}"
+        )))
+    }
+}
+
 /// 加载启用提现资产的精度与费率配置，并就地按本次提现金额算出服务端费用。
 /// 阶梯费率读出后先做规范化，重叠区间或开放阶梯位置不合法时直接返回校验错误，不退化成固定费用。
 /// 规范化通过后按金额命中的阶梯计百分比费用，无命中阶梯时取资产固定费用，结果按资产精度向零截断。
@@ -136,10 +275,13 @@ pub(crate) async fn load_withdrawal_asset_rule(
     match row {
         Some((id, true, fixed_fee, precision_scale, SqlxJson(tiers))) => {
             let tiers = normalize_withdraw_fee_tiers(tiers).map_err(AppError::Validation)?;
+            let fee_config_version =
+                withdrawal_fee_config_version(id, precision_scale, &fixed_fee, &tiers);
             Ok(WithdrawalAssetRule {
                 id,
                 precision_scale,
                 fee: calculate_withdraw_fee(amount, &fixed_fee, &tiers, precision_scale),
+                fee_config_version,
             })
         }
         Some((_, false, _, _, _)) => Err(AppError::Validation(
@@ -147,6 +289,171 @@ pub(crate) async fn load_withdrawal_asset_rule(
         )),
         None => Err(AppError::NotFound),
     }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub(crate) struct WithdrawalQuoteRecord {
+    pub(crate) quote_id: String,
+    pub(crate) user_id: u64,
+    pub(crate) asset_id: u64,
+    pub(crate) asset_symbol: String,
+    pub(crate) network: String,
+    pub(crate) amount: BigDecimal,
+    pub(crate) fee: BigDecimal,
+    pub(crate) net: BigDecimal,
+    pub(crate) total_reserved: BigDecimal,
+    pub(crate) fee_config_version: String,
+    pub(crate) request_fingerprint: String,
+    pub(crate) expires_at: DateTime<Utc>,
+    pub(crate) consumed_at: Option<DateTime<Utc>>,
+    pub(crate) withdrawal_id: Option<u64>,
+}
+
+impl WithdrawalQuoteRecord {
+    /// 裁剪持久化报价为公开响应；所有金额均沿用入库快照，不在返回阶段重新计费。
+    pub(crate) fn response(&self) -> WithdrawalQuoteResponse {
+        WithdrawalQuoteResponse {
+            quote_id: self.quote_id.clone(),
+            asset_symbol: self.asset_symbol.clone(),
+            network: self.network.clone(),
+            amount: self.amount.clone(),
+            fee: self.fee.clone(),
+            net: self.net.clone(),
+            total_reserved: self.total_reserved.clone(),
+            fee_config_version: self.fee_config_version.clone(),
+            expires_at: self.expires_at,
+        }
+    }
+}
+
+/// 在已锁定网络与资产配置的事务中持久化服务端提现报价。
+/// 费用、到账额、冻结总额、配置版本、所有者与请求指纹在同一行固化。
+pub(crate) async fn insert_withdrawal_quote_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    asset: &WithdrawalAssetRule,
+    asset_symbol: &str,
+    network: &str,
+    amount: &BigDecimal,
+    expires_at: DateTime<Utc>,
+) -> AppResult<WithdrawalQuoteResponse> {
+    let quote_id = uuid::Uuid::now_v7().to_string();
+    // 当前提现模型把手续费加收在本金之外，因此链上净到账等于标准化本金。
+    let fee = asset.fee.clone().with_scale(18);
+    let net = amount.clone().with_scale(18);
+    let total_reserved = (amount.clone() + fee.clone()).with_scale(18);
+    let fingerprint =
+        withdrawal_quote_fingerprint(user_id, asset.id, asset_symbol, network, amount);
+    sqlx::query(
+        r#"INSERT INTO wallet_withdrawal_quotes
+              (id, user_id, asset_id, asset_symbol, network, amount, fee, net, total_reserved,
+               fee_config_version, request_fingerprint, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+    )
+    .bind(&quote_id)
+    .bind(user_id)
+    .bind(asset.id)
+    .bind(asset_symbol)
+    .bind(network)
+    .bind(amount)
+    .bind(&fee)
+    .bind(&net)
+    .bind(&total_reserved)
+    .bind(&asset.fee_config_version)
+    .bind(&fingerprint)
+    .bind(expires_at)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(WithdrawalQuoteResponse {
+        quote_id,
+        asset_symbol: asset_symbol.to_owned(),
+        network: network.to_owned(),
+        amount: amount.clone(),
+        fee,
+        net,
+        total_reserved,
+        fee_config_version: asset.fee_config_version.clone(),
+        expires_at,
+    })
+}
+
+/// 无锁读取用户报价供安全校验前预检；提交事务仍会再次加锁并复核全部版本与参数。
+pub(crate) async fn load_withdrawal_quote(
+    pool: &Pool<MySql>,
+    quote_id: &str,
+    user_id: u64,
+) -> AppResult<WithdrawalQuoteRecord> {
+    sqlx::query_as::<_, WithdrawalQuoteRecord>(&format!(
+        "{} WHERE quotes.id = ? AND quotes.user_id = ? LIMIT 1",
+        withdrawal_quote_select_sql()
+    ))
+    .bind(quote_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(AppError::NotFound)
+}
+
+async fn load_withdrawal_quote_for_update(
+    tx: &mut Transaction<'_, MySql>,
+    quote_id: &str,
+    user_id: u64,
+) -> AppResult<WithdrawalQuoteRecord> {
+    sqlx::query_as::<_, WithdrawalQuoteRecord>(&format!(
+        "{} WHERE quotes.id = ? AND quotes.user_id = ? LIMIT 1 FOR UPDATE",
+        withdrawal_quote_select_sql()
+    ))
+    .bind(quote_id)
+    .bind(user_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)
+}
+
+/// 在提现报价事务内锁定资产配置，并按当前阶梯规则计算本次金额对应的权威手续费。
+///
+/// 查询同时锁住资产行，使报价保存的费用版本与费率配置来自同一事务快照；资产停用、金额精度非法或
+/// 阶梯区间异常都会在写入报价前失败。返回值包含规范化费率版本，后续消费报价时必须再次比对该版本，
+/// 从而保证配置变化后的旧报价不会继续冻结用户资金。
+pub(crate) async fn load_withdrawal_asset_rule_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    asset_symbol: &str,
+    amount: &BigDecimal,
+) -> AppResult<WithdrawalAssetRule> {
+    let row = sqlx::query_as::<_, (u64, bool, BigDecimal, i32, SqlxJson<Vec<WithdrawFeeTier>>)>(
+        r#"SELECT id, withdraw_enabled, withdraw_fee, precision_scale,
+                  COALESCE(withdraw_fee_tiers_json, JSON_ARRAY())
+           FROM assets
+           WHERE symbol = ? AND status = 'active'
+           LIMIT 1 FOR UPDATE"#,
+    )
+    .bind(asset_symbol)
+    .fetch_optional(&mut **tx)
+    .await?;
+    match row {
+        Some((id, true, fixed_fee, precision_scale, SqlxJson(tiers))) => {
+            let tiers = normalize_withdraw_fee_tiers(tiers).map_err(AppError::Validation)?;
+            let fee_config_version =
+                withdrawal_fee_config_version(id, precision_scale, &fixed_fee, &tiers);
+            Ok(WithdrawalAssetRule {
+                id,
+                precision_scale,
+                fee: calculate_withdraw_fee(amount, &fixed_fee, &tiers, precision_scale),
+                fee_config_version,
+            })
+        }
+        Some((_, false, _, _, _)) => Err(AppError::Validation(
+            "asset does not support withdraw".to_owned(),
+        )),
+        None => Err(AppError::NotFound),
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ReservedWithdrawal {
+    pub(crate) withdrawal: WalletWithdrawalResponse,
+    pub(crate) quote: WithdrawalQuoteResponse,
 }
 
 /// 按用户与幂等键读取既有提现请求，用于重复请求安全重放。
@@ -182,22 +489,89 @@ pub(crate) async fn load_withdrawal_by_user_key(
 pub(crate) async fn reserve_withdrawal_request(
     pool: &Pool<MySql>,
     user_id: u64,
-    asset: &WithdrawalAssetRule,
+    quote_id: &str,
     asset_symbol: &str,
-    network: Option<&str>,
+    network: &str,
     address: &str,
     amount: &BigDecimal,
     idempotency_key: &str,
     security_method: &str,
-) -> AppResult<WalletWithdrawalResponse> {
-    let total_reserved = (amount.clone() + asset.fee.clone()).with_scale(18);
+) -> AppResult<ReservedWithdrawal> {
     let gateway_request_id = uuid::Uuid::now_v7().to_string();
     let mut tx = pool.begin().await?;
+
+    // 报价是资金事务的第一把锁。报价锁定后才允许锁提现单和钱包，
+    // 从而保证同一 quote 的并发提交只有一个能消费并冻结资金。
+    let quote = load_withdrawal_quote_for_update(&mut tx, quote_id, user_id).await?;
+    let quote_response = quote.response();
+    let expected_fingerprint =
+        withdrawal_quote_fingerprint(user_id, quote.asset_id, asset_symbol, network, amount);
+    if quote.user_id != user_id
+        || quote.asset_symbol != asset_symbol
+        || quote.network != network
+        || quote.amount != *amount
+        || quote.request_fingerprint != expected_fingerprint
+    {
+        return Err(AppError::Conflict(
+            "withdrawal quote does not match request parameters".to_owned(),
+        ));
+    }
+
+    // 已消费报价只能精确重放到原提现单，不会二次冻结。
+    if let Some(withdrawal_id) = quote.withdrawal_id {
+        let withdrawal = load_withdrawal_by_id_in_tx(&mut tx, withdrawal_id).await?;
+        if withdrawal.user_id != user_id
+            || withdrawal.withdrawal_quote_id.as_deref() != Some(quote_id)
+            || withdrawal.idempotency_key != idempotency_key
+            || withdrawal.asset_symbol != asset_symbol
+            || withdrawal.network.as_deref() != Some(network)
+            || withdrawal.address != address
+            || withdrawal.amount != *amount
+        {
+            return Err(AppError::Conflict(
+                "withdrawal quote was already consumed by a different request".to_owned(),
+            ));
+        }
+        tx.commit().await?;
+        return Ok(ReservedWithdrawal {
+            withdrawal,
+            quote: quote_response,
+        });
+    }
+    if quote.consumed_at.is_some() {
+        return Err(AppError::Conflict(
+            "withdrawal quote is already consumed".to_owned(),
+        ));
+    }
+    if quote.expires_at <= Utc::now() {
+        return Err(AppError::Validation(
+            "withdrawal quote is expired".to_owned(),
+        ));
+    }
+
+    // 网络配置与资产费率一样是报价的权威输入。必须在任何钱包动账前加锁复核。
+    lock_active_withdrawal_network_in_tx(&mut tx, network, asset_symbol).await?;
+
+    // 消费时再次读取并锁定资产配置。只要费率、阶梯或精度版本有变，
+    // 旧报价立即失效，且此分支发生在钱包更新之前。
+    let asset = load_withdrawal_asset_rule_in_tx(&mut tx, asset_symbol, amount).await?;
+    let current_total = (amount.clone() + asset.fee.clone()).with_scale(18);
+    if quote.asset_id != asset.id
+        || quote.fee_config_version != asset.fee_config_version
+        || quote.fee != asset.fee
+        || quote.net != amount.clone().with_scale(18)
+        || quote.total_reserved != current_total
+    {
+        return Err(AppError::Conflict(
+            "withdrawal quote fee configuration has changed".to_owned(),
+        ));
+    }
+
     let result = sqlx::query(
         r#"INSERT INTO wallet_withdrawal_requests
               (user_id, asset_id, asset_symbol, network, address, amount, fee, total_reserved,
-               status, security_method, idempotency_key, gateway_request_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_review', ?, ?, ?)"#,
+               status, security_method, idempotency_key, gateway_request_id, withdrawal_quote_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_review', ?, ?, ?, ?)"#,
     )
     .bind(user_id)
     .bind(asset.id)
@@ -205,11 +579,12 @@ pub(crate) async fn reserve_withdrawal_request(
     .bind(network)
     .bind(address)
     .bind(amount)
-    .bind(&asset.fee)
-    .bind(&total_reserved)
+    .bind(&quote.fee)
+    .bind(&quote.total_reserved)
     .bind(security_method)
     .bind(idempotency_key)
     .bind(&gateway_request_id)
+    .bind(quote_id)
     .execute(&mut *tx)
     .await;
     let withdrawal_id = match result {
@@ -221,14 +596,14 @@ pub(crate) async fn reserve_withdrawal_request(
     };
 
     let wallet = lock_wallet_balance(&mut tx, user_id, asset.id).await?;
-    if wallet.available < total_reserved {
+    if wallet.available < quote.total_reserved {
         return Err(AppError::Validation(format!(
             "insufficient available balance for withdrawal: requested {}, available {}",
-            total_reserved, wallet.available
+            quote.total_reserved, wallet.available
         )));
     }
-    let available_after = (wallet.available.clone() - total_reserved.clone()).with_scale(18);
-    let frozen_after = (wallet.frozen.clone() + total_reserved.clone()).with_scale(18);
+    let available_after = (wallet.available.clone() - quote.total_reserved.clone()).with_scale(18);
+    let frozen_after = (wallet.frozen.clone() + quote.total_reserved.clone()).with_scale(18);
     update_wallet_balance(
         &mut tx,
         user_id,
@@ -243,7 +618,7 @@ pub(crate) async fn reserve_withdrawal_request(
         user_id,
         asset.id,
         "withdrawal_reserve",
-        &(-total_reserved),
+        &(-quote.total_reserved.clone()),
         "available",
         &available_after,
         &available_after,
@@ -253,9 +628,27 @@ pub(crate) async fn reserve_withdrawal_request(
         &withdrawal_id.to_string(),
     )
     .await?;
+    let consumed = sqlx::query(
+        r#"UPDATE wallet_withdrawal_quotes
+           SET consumed_at = CURRENT_TIMESTAMP(6), withdrawal_id = ?
+           WHERE id = ? AND user_id = ? AND consumed_at IS NULL AND withdrawal_id IS NULL"#,
+    )
+    .bind(withdrawal_id)
+    .bind(quote_id)
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?;
+    if consumed.rows_affected() != 1 {
+        return Err(AppError::Conflict(
+            "withdrawal quote was consumed concurrently".to_owned(),
+        ));
+    }
     let withdrawal = load_withdrawal_by_id_in_tx(&mut tx, withdrawal_id).await?;
     tx.commit().await?;
-    Ok(withdrawal)
+    Ok(ReservedWithdrawal {
+        withdrawal,
+        quote: quote_response,
+    })
 }
 
 /// 按用户和状态读取提现请求快照，限制单次返回数量且不锁定资金。
@@ -365,7 +758,8 @@ pub(crate) async fn approve_withdrawal_in_tx(
 }
 
 /// 在拒绝或可安全失败的提现状态下释放 frozen，并把完整预留额退回 available。
-/// 目标状态只接受拒绝与失败两种：拒绝允许从待审核或已批准迁移，失败允许从已批准或广播中迁移，其余组合一律冲突。
+/// 目标状态只接受拒绝与失败两种：拒绝允许从待审核或已批准迁移，通用失败只允许从尚未发送的已批准状态迁移。
+/// 广播中/结果不明必须改走带权威未受理证据的专用入口，不允许仅凭人工失败原因解冻。
 /// 已产生链上交易哈希的请求不得通过该路径自动解冻；调用方持有事务并负责同时提交审核状态。
 /// 锁序固定为先按主键锁提现单、再锁钱包账户行，与创建和确认路径同向，杜绝审核与链回执并发时的死锁。
 /// 释放前复核 frozen 不小于预留额，不足即返回冲突并由调用方回滚，防止把冻结桶退成负数。
@@ -384,9 +778,13 @@ pub(crate) async fn release_withdrawal_in_tx(
         return Ok(withdrawal);
     }
     let release_allowed = match target_status {
-        "rejected" => matches!(withdrawal.status.as_str(), "pending_review" | "approved"),
+        "rejected" => {
+            matches!(withdrawal.status.as_str(), "pending_review" | "approved")
+                && withdrawal.acceptance_evidence_at.is_none()
+        }
         // 已经取得交易哈希的请求不得自动解冻，必须等待链上确认或进入人工处置。
-        "failed" => matches!(withdrawal.status.as_str(), "approved" | "broadcasting"),
+        // 广播中即使未观测到 tx 也可能已被远端受理；只有专用的权威未受理入口能退冻。
+        "failed" => withdrawal.status == "approved" && withdrawal.acceptance_evidence_at.is_none(),
         _ => false,
     };
     if !release_allowed {
@@ -453,6 +851,226 @@ pub(crate) async fn release_withdrawal_in_tx(
     load_withdrawal_by_id_in_tx(tx, withdrawal_id).await
 }
 
+/// 只供网关状态查询的权威“未受理”结果使用：将歧义状态标记为可安全释放后，
+/// 复用统一退冻逻辑。无交易哈希和来源状态是硬前置，因此人工 fail 路由不能借此释放 unknown。
+pub(crate) async fn release_authoritatively_not_accepted_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    withdrawal_id: u64,
+    reason: &str,
+) -> AppResult<WalletWithdrawalResponse> {
+    let withdrawal = load_withdrawal_by_id_for_update(tx, withdrawal_id).await?;
+    if withdrawal.status == "failed"
+        && withdrawal.broadcast_resolution.as_deref() == Some("authoritative_not_accepted")
+    {
+        return Ok(withdrawal);
+    }
+    if !matches!(
+        withdrawal.status.as_str(),
+        "approved" | "unknown_broadcast" | "broadcasting" | "manual_review"
+    ) || withdrawal.tx_hash.is_some()
+        || withdrawal.acceptance_evidence_at.is_some()
+    {
+        return Err(AppError::Conflict(format!(
+            "withdrawal cannot be released without authoritative non-acceptance from status {}",
+            withdrawal.status
+        )));
+    }
+    sqlx::query(
+        r#"UPDATE wallet_withdrawal_requests
+           SET status = 'approved', broadcast_resolution = 'authoritative_not_accepted'
+           WHERE id = ? AND status IN ('approved', 'unknown_broadcast', 'broadcasting', 'manual_review') AND tx_hash IS NULL"#,
+    )
+    .bind(withdrawal_id)
+    .execute(&mut **tx)
+    .await?;
+    release_withdrawal_in_tx(tx, withdrawal_id, None, "failed", reason).await
+}
+
+/// 将广播结果不明的请求留在 frozen；达到尝试上限时改进人工审核，同样不移动资金。
+pub(crate) async fn mark_withdrawal_unknown_broadcast_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    withdrawal_id: u64,
+    error_class: &str,
+    reason: &str,
+    next_attempt_seconds: u64,
+    manual_review: bool,
+) -> AppResult<WalletWithdrawalResponse> {
+    let reason = bounded_text(reason, 500);
+    let withdrawal = load_withdrawal_by_id_for_update(tx, withdrawal_id).await?;
+    if withdrawal.status == "confirmed" || withdrawal.status == "failed" {
+        return Ok(withdrawal);
+    }
+    // 人工审核是自动状态机的吸收态；后台明确处置前，查询失败不得把它重新排入自动队列。
+    if withdrawal.status == "manual_review" {
+        return Ok(withdrawal);
+    }
+    if !matches!(
+        withdrawal.status.as_str(),
+        "broadcasting" | "unknown_broadcast" | "manual_review"
+    ) || withdrawal.tx_hash.is_some()
+        || withdrawal.acceptance_evidence_at.is_some()
+    {
+        return Err(AppError::Conflict(format!(
+            "withdrawal cannot record an unknown broadcast from status {}",
+            withdrawal.status
+        )));
+    }
+    let target = if manual_review {
+        "manual_review"
+    } else {
+        "unknown_broadcast"
+    };
+    sqlx::query(
+        r#"UPDATE wallet_withdrawal_requests
+           SET status = ?, broadcast_error_class = ?, broadcast_last_error = ?,
+               failure_reason = ?, broadcast_resolution = NULL,
+               next_attempt_at = CASE WHEN ? THEN NULL
+                                      ELSE DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL ? SECOND) END,
+               manual_review_at = CASE WHEN ? THEN COALESCE(manual_review_at, CURRENT_TIMESTAMP(6))
+                                       ELSE manual_review_at END
+           WHERE id = ? AND status IN ('broadcasting', 'unknown_broadcast', 'manual_review')"#,
+    )
+    .bind(target)
+    .bind(error_class)
+    .bind(&reason)
+    .bind(&reason)
+    .bind(manual_review)
+    .bind(next_attempt_seconds as i64)
+    .bind(manual_review)
+    .bind(withdrawal_id)
+    .execute(&mut **tx)
+    .await?;
+    load_withdrawal_by_id_in_tx(tx, withdrawal_id).await
+}
+
+/// 远端权威确认未受理但仍有重试额度时，回到 approved 等待以同一 request_id 重发。
+pub(crate) async fn schedule_withdrawal_after_not_accepted_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    withdrawal_id: u64,
+    reason: &str,
+    next_attempt_seconds: u64,
+) -> AppResult<WalletWithdrawalResponse> {
+    let reason = bounded_text(reason, 500);
+    let withdrawal = load_withdrawal_by_id_for_update(tx, withdrawal_id).await?;
+    if !matches!(
+        withdrawal.status.as_str(),
+        "unknown_broadcast" | "broadcasting"
+    ) || withdrawal.tx_hash.is_some()
+        || withdrawal.acceptance_evidence_at.is_some()
+    {
+        return Err(AppError::Conflict(format!(
+            "withdrawal cannot retry after non-acceptance from status {}",
+            withdrawal.status
+        )));
+    }
+    sqlx::query(
+        r#"UPDATE wallet_withdrawal_requests
+           SET status = 'approved', broadcast_resolution = 'authoritative_not_accepted',
+               broadcast_last_error = ?, failure_reason = ?,
+               next_attempt_at = DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL ? SECOND)
+           WHERE id = ? AND status IN ('unknown_broadcast', 'broadcasting') AND tx_hash IS NULL"#,
+    )
+    .bind(&reason)
+    .bind(&reason)
+    .bind(next_attempt_seconds as i64)
+    .bind(withdrawal_id)
+    .execute(&mut **tx)
+    .await?;
+    load_withdrawal_by_id_in_tx(tx, withdrawal_id).await
+}
+
+/// 把交易哈希、区块高度或确认数等受理证据永久钉在提现单上并转人工审核。
+/// 即使后续网关返回不带证据的 `not_accepted`，权威释放入口也会因该时间戳拒绝退冻。
+pub(crate) async fn mark_withdrawal_acceptance_evidence_for_manual_review_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    withdrawal_id: u64,
+    reason: &str,
+    tx_hash: Option<&str>,
+    block_height: Option<u64>,
+    confirmations: u32,
+) -> AppResult<WalletWithdrawalResponse> {
+    let reason = bounded_text(reason, 500);
+    let tx_hash = tx_hash
+        .map(|value| normalize_chain_value(value, "tx_hash", 255))
+        .transpose()?;
+    let withdrawal = load_withdrawal_by_id_for_update(tx, withdrawal_id).await?;
+    if withdrawal.status == "confirmed" {
+        return Ok(withdrawal);
+    }
+    if !matches!(
+        withdrawal.status.as_str(),
+        "approved" | "broadcasting" | "unknown_broadcast" | "broadcasted" | "manual_review"
+    ) {
+        return Err(AppError::Conflict(format!(
+            "withdrawal cannot record acceptance evidence from status {}",
+            withdrawal.status
+        )));
+    }
+    if let (Some(existing), Some(observed)) = (withdrawal.tx_hash.as_deref(), tx_hash.as_deref())
+        && existing != observed
+    {
+        return Err(AppError::Conflict(
+            "withdrawal chain transaction hash does not match".to_owned(),
+        ));
+    }
+
+    sqlx::query(
+        r#"UPDATE wallet_withdrawal_requests
+           SET status = 'manual_review', tx_hash = COALESCE(tx_hash, ?),
+               block_height = IF(? IS NULL, block_height,
+                                 GREATEST(COALESCE(block_height, 0), ?)),
+               confirmations = GREATEST(confirmations, ?),
+               acceptance_evidence_at = COALESCE(acceptance_evidence_at, CURRENT_TIMESTAMP(6)),
+               broadcast_resolution = CASE WHEN COALESCE(tx_hash, ?) IS NULL
+                                           THEN NULL ELSE 'accepted' END,
+               failure_reason = ?, next_attempt_at = NULL,
+               manual_review_at = COALESCE(manual_review_at, CURRENT_TIMESTAMP(6))
+           WHERE id = ?
+             AND status IN ('approved', 'broadcasting', 'unknown_broadcast', 'broadcasted', 'manual_review')"#,
+    )
+    .bind(tx_hash.as_deref())
+    .bind(block_height)
+    .bind(block_height)
+    .bind(confirmations)
+    .bind(tx_hash.as_deref())
+    .bind(&reason)
+    .bind(withdrawal_id)
+    .execute(&mut **tx)
+    .await?;
+    load_withdrawal_by_id_in_tx(tx, withdrawal_id).await
+}
+
+/// 广播与查询的每个决策点都以稳定 event_key 留痕，重启/重放命中唯一键而不重复增长。
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn insert_withdrawal_broadcast_audit_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    withdrawal_id: u64,
+    gateway_request_id: &str,
+    event_key: &str,
+    event_type: &str,
+    outcome_class: &str,
+    tx_hash: Option<&str>,
+    detail: Option<&str>,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"INSERT INTO wallet_withdrawal_broadcast_audits
+              (withdrawal_id, gateway_request_id, event_key, event_type, outcome_class,
+               tx_hash, detail)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE event_key = VALUES(event_key)"#,
+    )
+    .bind(withdrawal_id)
+    .bind(gateway_request_id)
+    .bind(bounded_text(event_key, 160))
+    .bind(event_type)
+    .bind(outcome_class)
+    .bind(tx_hash)
+    .bind(detail.map(|value| bounded_text(value, 500)))
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 /// 锁定已批准或广播中的提现并记录链交易哈希及确认进度。
 /// 交易哈希先做格式规范：裁剪首尾空白后不得为空、不得超长、不得含空白字符，不合法直接返回校验错误。
 /// 若申请已处于已广播且哈希完全相同，则转交进度更新入口只做单调推进，不重复改写广播时间与操作人。
@@ -478,7 +1096,17 @@ pub(crate) async fn mark_withdrawal_broadcasted_in_tx(
         )
         .await;
     }
-    if !matches!(withdrawal.status.as_str(), "approved" | "broadcasting") {
+    if let Some(existing_tx_hash) = withdrawal.tx_hash.as_deref()
+        && existing_tx_hash != tx_hash
+    {
+        return Err(AppError::Conflict(
+            "withdrawal chain transaction hash does not match".to_owned(),
+        ));
+    }
+    if !matches!(
+        withdrawal.status.as_str(),
+        "approved" | "broadcasting" | "unknown_broadcast" | "manual_review"
+    ) {
         return Err(AppError::Conflict(format!(
             "withdrawal cannot be broadcast from status {}",
             withdrawal.status
@@ -486,12 +1114,18 @@ pub(crate) async fn mark_withdrawal_broadcasted_in_tx(
     }
     sqlx::query(
         r#"UPDATE wallet_withdrawal_requests
-           SET status = 'broadcasted', tx_hash = ?, block_height = ?,
-               confirmations = ?, broadcast_at = CURRENT_TIMESTAMP(6),
-               broadcasted_by = COALESCE(?, broadcasted_by), next_attempt_at = NULL
-           WHERE id = ? AND status IN ('approved', 'broadcasting')"#,
+           SET status = 'broadcasted', tx_hash = ?,
+               block_height = IF(? IS NULL, block_height,
+                                 GREATEST(COALESCE(block_height, 0), ?)),
+               confirmations = GREATEST(confirmations, ?),
+               broadcast_at = COALESCE(broadcast_at, CURRENT_TIMESTAMP(6)),
+               broadcasted_by = COALESCE(?, broadcasted_by), next_attempt_at = NULL,
+               broadcast_resolution = 'accepted',
+               acceptance_evidence_at = COALESCE(acceptance_evidence_at, CURRENT_TIMESTAMP(6))
+           WHERE id = ? AND status IN ('approved', 'broadcasting', 'unknown_broadcast', 'manual_review')"#,
     )
     .bind(&tx_hash)
+    .bind(block_height)
     .bind(block_height)
     .bind(confirmations)
     .bind(admin_id)
@@ -503,7 +1137,7 @@ pub(crate) async fn mark_withdrawal_broadcasted_in_tx(
 
 /// 在链上广播已确认后核销提现 frozen 预留额，并写入最终确认流水。
 /// 这是提现路径上唯一让资金真正离开钱包的步骤：预留额从 frozen 永久扣除，不回流 available，因此三桶总额在此减少。
-/// 仅接受 broadcasted 或人工审核状态；冻结额不足会中止事务，防止账本确认超过真实预留。
+/// 仅接受已有交易哈希的 broadcasted 或人工审核状态；冻结额不足会中止事务，防止账本确认超过真实预留。
 /// 锁序沿用先锁提现单再锁钱包账户行，与创建和释放路径同向，保证链回执与后台操作并发时不会互相等待成环。
 /// available/locked 原值回写、frozen 减 total_reserved 且按 18 位定点计算；写一条 `withdrawal_confirm` frozen 负流水，金额包含本金和服务端费用，业务引用指向该申请。
 /// 状态更新按原状态为已广播或人工审核作为条件，区块高度择非空保留、确认数取历史与本次的较大值，避免链回执乱序回退进度。
@@ -524,6 +1158,11 @@ pub(crate) async fn confirm_withdrawal_in_tx(
             "withdrawal cannot be confirmed from status {}",
             withdrawal.status
         )));
+    }
+    if withdrawal.tx_hash.is_none() {
+        return Err(AppError::Conflict(
+            "withdrawal cannot be confirmed without an accepted transaction hash".to_owned(),
+        ));
     }
     let wallet = lock_wallet_balance(tx, withdrawal.user_id, withdrawal.asset_id).await?;
     if wallet.frozen < withdrawal.total_reserved {
@@ -558,12 +1197,15 @@ pub(crate) async fn confirm_withdrawal_in_tx(
     .await?;
     sqlx::query(
         r#"UPDATE wallet_withdrawal_requests
-           SET status = 'confirmed', block_height = COALESCE(?, block_height),
+           SET status = 'confirmed',
+               block_height = IF(? IS NULL, block_height,
+                                 GREATEST(COALESCE(block_height, 0), ?)),
                confirmations = GREATEST(confirmations, ?),
                confirmed_at = CURRENT_TIMESTAMP(6),
                confirmed_by = COALESCE(?, confirmed_by), next_attempt_at = NULL
            WHERE id = ? AND status IN ('broadcasted', 'manual_review')"#,
     )
+    .bind(block_height)
     .bind(block_height)
     .bind(confirmations)
     .bind(admin_id)
@@ -619,10 +1261,12 @@ pub(crate) async fn update_withdrawal_chain_progress_in_tx(
     }
     sqlx::query(
         r#"UPDATE wallet_withdrawal_requests
-           SET block_height = COALESCE(?, block_height),
+           SET block_height = IF(? IS NULL, block_height,
+                                 GREATEST(COALESCE(block_height, 0), ?)),
                confirmations = GREATEST(confirmations, ?)
            WHERE id = ?"#,
     )
+    .bind(block_height)
     .bind(block_height)
     .bind(confirmations)
     .bind(withdrawal_id)
@@ -631,8 +1275,8 @@ pub(crate) async fn update_withdrawal_chain_progress_in_tx(
     load_withdrawal_by_id_in_tx(tx, withdrawal_id).await
 }
 
-/// 把已广播提现转入人工审核并截断保存失败原因，原因按字符截断到五百个以内以适配存储列宽。
-/// 只允许从已广播迁移，因为这正是资金已上链但结果不确定的区间；其他状态返回带原状态的冲突错误。
+/// 把已批准、广播中、广播结果不明或已广播的提现转入人工审核，并截断保存失败原因。
+/// 这些状态都可能包含远端受理的不确定性；其他状态返回带原状态的冲突错误。
 /// 转入后清空下次尝试时刻，使该申请退出自动广播重试，改由人工决定继续确认还是判定失败。
 /// 目标状态重放直接返回；冻结预留额继续保留在 frozen，禁止在链结果不明时自动退款或核销。
 pub(crate) async fn mark_withdrawal_manual_review_in_tx(
@@ -645,7 +1289,10 @@ pub(crate) async fn mark_withdrawal_manual_review_in_tx(
     if withdrawal.status == "manual_review" {
         return Ok(withdrawal);
     }
-    if withdrawal.status != "broadcasted" {
+    if !matches!(
+        withdrawal.status.as_str(),
+        "approved" | "broadcasted" | "broadcasting" | "unknown_broadcast"
+    ) {
         return Err(AppError::Conflict(format!(
             "withdrawal cannot enter manual review from status {}",
             withdrawal.status
@@ -653,8 +1300,9 @@ pub(crate) async fn mark_withdrawal_manual_review_in_tx(
     }
     sqlx::query(
         r#"UPDATE wallet_withdrawal_requests
-           SET status = 'manual_review', failure_reason = ?, next_attempt_at = NULL
-           WHERE id = ? AND status = 'broadcasted'"#,
+           SET status = 'manual_review', failure_reason = ?, next_attempt_at = NULL,
+               manual_review_at = COALESCE(manual_review_at, CURRENT_TIMESTAMP(6))
+           WHERE id = ? AND status IN ('approved', 'broadcasted', 'broadcasting', 'unknown_broadcast')"#,
     )
     .bind(reason)
     .bind(withdrawal_id)
@@ -669,13 +1317,27 @@ fn wallet_withdrawal_select_sql() -> &'static str {
     r#"SELECT requests.id, requests.user_id, requests.asset_id, requests.asset_symbol,
               requests.network, requests.address, requests.amount, requests.fee,
               requests.total_reserved, requests.status, requests.security_method,
-              requests.idempotency_key, requests.gateway_request_id, requests.tx_hash,
+              requests.idempotency_key, requests.gateway_request_id,
+              requests.withdrawal_quote_id, requests.tx_hash,
               requests.block_height, requests.confirmations, requests.failure_reason,
+              requests.broadcast_error_class, requests.broadcast_last_error,
+              requests.broadcast_resolution, requests.acceptance_evidence_at,
               requests.review_reason,
               requests.reviewed_by, requests.broadcasted_by, requests.confirmed_by,
-              requests.failed_by, requests.reviewed_at, requests.broadcast_at,
+              requests.failed_by, requests.retry_count, requests.gateway_query_count,
+              requests.reviewed_at, requests.broadcast_at,
               requests.confirmed_at, requests.failed_at, requests.released_at, requests.created_at
+              , requests.last_gateway_query_at, requests.manual_review_at
        FROM wallet_withdrawal_requests requests"#
+}
+
+fn withdrawal_quote_select_sql() -> &'static str {
+    r#"SELECT quotes.id AS quote_id, quotes.user_id, quotes.asset_id,
+              quotes.asset_symbol, quotes.network, quotes.amount, quotes.fee,
+              quotes.net, quotes.total_reserved, quotes.fee_config_version,
+              quotes.request_fingerprint, quotes.expires_at, quotes.consumed_at,
+              quotes.withdrawal_id
+       FROM wallet_withdrawal_quotes quotes"#
 }
 
 /// 校验并裁剪链上标识，拒绝空串、超长值以及任何含空白字符的取值，错误消息带上字段名便于定位。
@@ -686,6 +1348,10 @@ fn normalize_chain_value(value: &str, label: &str, max_length: usize) -> AppResu
         return Err(AppError::Validation(format!("{label} format is invalid")));
     }
     Ok(value.to_owned())
+}
+
+fn bounded_text(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
 }
 
 /// 在事务内按主键回读提现申请的最新快照，供各状态迁移函数把结果返回给调用方。

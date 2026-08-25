@@ -26,8 +26,10 @@ use argon2::{
 };
 use axum::{
     async_trait,
-    extract::FromRequestParts,
-    http::{header::AUTHORIZATION, request::Parts},
+    extract::{FromRequestParts, Request, State},
+    http::{Method, header::AUTHORIZATION, request::Parts},
+    middleware::Next,
+    response::Response,
 };
 use chrono::{DateTime, NaiveDateTime, Utc};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
@@ -137,11 +139,47 @@ pub struct AdminAuth(pub Claims);
 #[derive(Debug, Clone)]
 pub struct AgentAuth(pub Claims);
 
+/// 管理端路由树的统一身份与首次改密闸门。
+///
+/// 个别历史管理路由的 handler 没有显式提取 `AdminAuth`，仅依赖它们被挂载在
+/// `/admin/api/v1` 下。因此必须在聚合路由层再统一执行一次鉴权，否则强制改密管理员会从
+/// 未挂提取器的读路由绕过闸门。只有登录、登录 2FA、刷新和登录配置是匿名入口；
+/// 其他路由全部复用 `AdminAuth` 的作用域、会话代际、强制改密与权限回查语义。
+pub async fn admin_auth_gate_middleware(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> AppResult<Response> {
+    if is_public_admin_auth_route(request.method(), request.uri().path()) {
+        return Ok(next.run(request).await);
+    }
+
+    let (mut parts, body) = request.into_parts();
+    AdminAuth::from_request_parts(&mut parts, &state).await?;
+    Ok(next.run(Request::from_parts(parts, body)).await)
+}
+
+fn is_public_admin_auth_route(method: &Method, raw_path: &str) -> bool {
+    if method == Method::OPTIONS {
+        return true;
+    }
+    let path = raw_path.strip_prefix("/admin/api/v1").unwrap_or(raw_path);
+    matches!(
+        (method, path),
+        (&Method::GET, "/auth/login/config")
+            | (&Method::POST, "/auth/login")
+            | (&Method::POST, "/auth/login/2fa")
+            | (&Method::POST, "/auth/refresh")
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthActor {
     pub actor_type: ActorType,
     pub actor_id: u64,
     pub user_id: Option<u64>,
+    /// 管理员凭据代际；用户与代理固定为零。改密后旧代际令牌即使在撤销竞态中晚到，也会被数据库闸门拒绝。
+    pub auth_session_version: u64,
 }
 
 impl AuthActor {
@@ -154,7 +192,14 @@ impl AuthActor {
             actor_type,
             actor_id,
             user_id,
+            auth_session_version: 0,
         }
+    }
+
+    /// 覆盖从管理员凭据或刷新令牌记录读取的权威会话代际。
+    pub(crate) fn with_auth_session_version(mut self, auth_session_version: u64) -> Self {
+        self.auth_session_version = auth_session_version;
+        self
     }
 
     /// 生成写入令牌 `sub` 声明的主体标识，格式是主体类型与主体 ID 以冒号连接。
@@ -250,6 +295,7 @@ pub struct StoredRefreshToken {
     pub actor_type: ActorType,
     pub actor_id: u64,
     pub user_id: Option<u64>,
+    pub auth_session_version: u64,
     pub token_hash: String,
     pub expires_at: NaiveDateTime,
 }
@@ -264,6 +310,7 @@ pub struct StoredProjectRefreshToken {
     pub actor_type: ActorType,
     pub actor_id: u64,
     pub user_id: Option<u64>,
+    pub auth_session_version: u64,
     pub scope: TokenScope,
     pub expires_at: DateTime<Utc>,
 }
@@ -273,6 +320,7 @@ pub struct RefreshTokenRecord {
     pub actor_type: ActorType,
     pub actor_id: u64,
     pub user_id: Option<u64>,
+    pub auth_session_version: u64,
     pub scope: TokenScope,
 }
 
@@ -318,20 +366,25 @@ pub fn hash_refresh_token(refresh_token: &str) -> AppResult<String> {
 }
 
 /// 强制下线一个主体：先逐个登出会话管理器中该主体已签发的访问令牌，再清空 Redis 里登记的刷新令牌。
-/// 枚举令牌列表失败时按空列表继续，所以会话后端异常只会导致访问令牌未被撤销，而不会让整个调用失败；
-/// 但任何一次登出报错都会立即上抛，此时余下的令牌以及 Redis 中的刷新令牌都还没有被清理。
+/// 枚举或任一次登出失败都会立即上抛，调用方不得在无法证明旧访问令牌失效时返回成功；
+/// 此时新凭据可能已在数据库生效，但余下会话仍需运维重试撤销并要求主体重新登录。
 /// 两个后端各自独立操作，不具备整体原子性；未配置会话管理器或 Redis 时，对应步骤直接跳过并视为成功。
 /// 本函数不改动数据库中的账号状态与口令哈希，调用方须先完成凭据变更再撤销会话，否则旧凭据仍可重新登录。
 pub async fn revoke_actor_auth_sessions(state: &AppState, actor: &AuthActor) -> AppResult<()> {
     if let Some(manager) = &state.auth_manager {
-        let tokens = manager
+        let tokens = match manager
             .get_token_value_list_by_login_id(
                 actor.actor_type.as_str(),
                 &actor.actor_id.to_string(),
                 None,
             )
             .await
-            .unwrap_or_default();
+        {
+            Ok(tokens) => tokens,
+            // 从未创建过会话与“当前没有旧会话可撤销”等价；真实后端故障仍必须上抛。
+            Err(SaTokenError::SessionNotFound) => Vec::new(),
+            Err(error) => return Err(map_sa_token_error(error)),
+        };
         for token in tokens {
             manager
                 .logout(&TokenValue::new(token))
@@ -411,11 +464,22 @@ pub fn issue_token(
     scope: TokenScope,
     ttl_seconds: u64,
 ) -> AppResult<String> {
+    issue_token_with_session_version(settings, subject, scope, ttl_seconds, 0)
+}
+
+/// 为认证服务签发携带会话代际的 JWT。公开测试 helper 仍默认代际零，以兼容既有固定夹具。
+fn issue_token_with_session_version(
+    settings: &Settings,
+    subject: impl Into<String>,
+    scope: TokenScope,
+    ttl_seconds: u64,
+    auth_session_version: u64,
+) -> AppResult<String> {
     let claims = Claims {
         sub: subject.into(),
         scope,
         exp: (Utc::now().timestamp() + ttl_seconds as i64) as usize,
-        token_id: Uuid::now_v7().to_string(),
+        token_id: versioned_token_id(auth_session_version, Uuid::now_v7().to_string()),
     };
 
     encode(
@@ -496,12 +560,35 @@ fn claims_from_token_info(token_info: TokenInfo) -> AppResult<Claims> {
         .map(|time| time.timestamp().max(0) as usize)
         .unwrap_or(0);
 
+    let auth_session_version = token_info
+        .extra_data
+        .as_ref()
+        .and_then(|extra| extra.get("auth_session_version"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+
     Ok(Claims {
         sub: format!("{}:{}", scope.as_login_type(), token_info.login_id),
         scope,
         exp,
-        token_id: token_info.token.to_string(),
+        token_id: versioned_token_id(auth_session_version, token_info.token.to_string()),
     })
+}
+
+/// 从统一令牌 ID 中还原管理员凭据代际；历史令牌没有前缀，按迁移默认值零处理。
+pub(crate) fn claims_auth_session_version(claims: &Claims) -> AppResult<u64> {
+    let Some(encoded) = claims.token_id.strip_prefix("sv:") else {
+        return Ok(0);
+    };
+    let (version, token_id) = encoded.split_once(':').ok_or(AppError::Unauthorized)?;
+    if token_id.is_empty() {
+        return Err(AppError::Unauthorized);
+    }
+    version.parse().map_err(|_| AppError::Unauthorized)
+}
+
+fn versioned_token_id(auth_session_version: u64, token_id: String) -> String {
+    format!("sv:{auth_session_version}:{token_id}")
 }
 
 /// 向会话管理器查询令牌对应的服务端会话并转换成声明，令牌是否有效完全以后端记录为准。
@@ -562,6 +649,7 @@ impl FromRequestParts<AppState> for AdminAuth {
             crate::modules::admin::application::authorize_admin_request(
                 pool,
                 &claims.sub,
+                claims_auth_session_version(&claims)?,
                 parts.method.as_str(),
                 parts.uri.path(),
             )

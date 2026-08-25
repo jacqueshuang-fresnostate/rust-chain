@@ -36,6 +36,18 @@ pub const STATUS_CANCELLED: &str = "cancelled";
 pub const STATUS_REPAID: &str = "repaid";
 /// 订单状态：超过 due_at 仍未结清，由逾期扫描任务标记，仍然允许还款。
 pub const STATUS_OVERDUE: &str = "overdue";
+/// 订单状态：抵押物已进入平台清算，回收与坏账已全部记账的终态。
+pub const STATUS_LIQUIDATED: &str = "liquidated";
+
+/// 抵押贷当前支持的唯一服务端行情适配器标识。
+pub const LOAN_ORACLE_SOURCE_MARKET_TICKER_REDIS: &str = "market_ticker_redis";
+
+/// 抵押率低于维持线，订单处于正常区间。
+pub const LOAN_RISK_STATE_HEALTHY: &str = "healthy";
+/// 抵押率达到维持线但未达强制清算线。
+pub const LOAN_RISK_STATE_MARGIN_CALL: &str = "margin_call";
+/// 抵押率达到强制清算线。
+pub const LOAN_RISK_STATE_LIQUIDATABLE: &str = "liquidatable";
 
 /// 多语言产品标题的最大长度，按字符数而非字节数计算，中英文使用同一口径。
 pub const LOAN_PRODUCT_NAME_TITLE_MAX_LEN: usize = 128;

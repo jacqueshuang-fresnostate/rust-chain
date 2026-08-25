@@ -12,49 +12,62 @@
 //! 再同时校验客户端版本并执行带 revision 条件的 UPDATE，旧页面只能收到冲突而不能覆盖新配置。
 
 use super::{
-    LOAN_TYPE_COLLATERALIZED, STATUS_ACTIVE, STATUS_CANCELLED, STATUS_DISBURSED, STATUS_OVERDUE,
-    STATUS_PENDING, STATUS_REJECTED, STATUS_REPAID, ensure_amount_precision,
-    ensure_amount_within_product_limits, ensure_non_negative_amount, ensure_positive_amount,
-    normalized_product_name_json, optional_string, product_default_name, required_product_reason,
-    required_product_revision, route_limit, route_offset, validate_idempotency_key,
-    validate_interest_mode, validate_loan_type, validate_product_status,
+    LOAN_ORACLE_SOURCE_MARKET_TICKER_REDIS, LOAN_TYPE_COLLATERALIZED, STATUS_ACTIVE,
+    STATUS_CANCELLED, STATUS_DISBURSED, STATUS_LIQUIDATED, STATUS_OVERDUE, STATUS_PENDING,
+    STATUS_REJECTED, STATUS_REPAID, ensure_amount_precision, ensure_amount_within_product_limits,
+    ensure_non_negative_amount, ensure_positive_amount, normalized_product_name_json,
+    optional_string, product_default_name, required_product_reason, required_product_revision,
+    route_limit, route_offset, validate_idempotency_key, validate_interest_mode,
+    validate_loan_type, validate_product_status,
 };
 use crate::{
     error::{AppError, AppResult},
     modules::{
         loan::{
             infrastructure::{
-                AdminLoanOrdersFilter, LoanOrderCreate, LoanProductWrite, apply_loan_wallet_credit,
-                apply_loan_wallet_debit, apply_loan_wallet_freeze, ensure_loan_user_kyc_level,
-                insert_loan_order_in_tx, insert_loan_product_audit_log_in_tx,
-                insert_loan_product_in_tx, is_duplicate_key_error, list_admin_loan_orders,
-                list_admin_loan_products, list_loan_products, list_user_loan_orders,
-                load_active_asset_meta, load_active_asset_meta_in_tx,
-                load_loan_order_by_idempotency, load_loan_order_response,
+                AdminLoanOrdersFilter, LoanApprovalRiskSnapshot, LoanOrderCreate,
+                LoanOrderReplayRow, LoanProductCollateralWrite, LoanProductWrite,
+                apply_loan_wallet_credit, apply_loan_wallet_debit, apply_loan_wallet_freeze,
+                ensure_loan_collateral_frozen_in_tx, ensure_loan_user_kyc_level,
+                insert_loan_disbursement_journal_in_tx, insert_loan_order_in_tx,
+                insert_loan_product_audit_log_in_tx, insert_loan_product_in_tx,
+                insert_loan_repayment_journal_in_tx, is_duplicate_key_error,
+                list_admin_loan_orders, list_admin_loan_products, list_loan_products,
+                list_user_loan_orders, load_active_asset_meta, load_asset_precision,
+                load_loan_order_by_idempotency, load_loan_order_replay, load_loan_order_response,
                 load_loan_product_response, load_loan_product_response_in_tx,
-                load_user_loan_order_response, lock_active_loan_product_terms, lock_loan_order,
-                lock_loan_product_response_in_tx, lock_user_loan_order,
-                mark_loan_order_cancelled_in_tx, mark_loan_order_disbursed_in_tx,
-                mark_loan_order_rejected_in_tx, mark_loan_order_repaid_in_tx,
-                release_loan_collateral_if_needed, update_loan_product_in_tx,
-                update_loan_product_status_in_tx,
+                load_user_loan_order_response, load_user_loan_risk_order,
+                lock_active_loan_asset_metas_in_order, lock_active_loan_product_terms,
+                lock_loan_asset_precisions_in_order, lock_loan_collateral_rule_in_tx,
+                lock_loan_order, lock_loan_order_replay_in_tx, lock_loan_product_response_in_tx,
+                lock_loan_wallets_in_order, lock_user_loan_order, mark_loan_order_cancelled_in_tx,
+                mark_loan_order_disbursed_in_tx, mark_loan_order_rejected_in_tx,
+                mark_loan_order_repaid_in_tx, release_loan_collateral_if_needed,
+                update_loan_product_in_tx, update_loan_product_status_in_tx,
             },
+            oracle::{ensure_loan_oracle_observation_fresh, load_fresh_loan_oracle_price},
             presentation::{
                 AdminLoanOrdersQuery, AdminLoanOrdersResponse, AdminLoanProductsQuery,
                 AdminLoanProductsResponse, CreateLoanOrderRequest, CreateLoanProductRequest,
-                ListQuery, LoanOrderResponse, LoanOrdersResponse, LoanProductResponse,
-                LoanProductsResponse, UpdateLoanProductRequest, UpdateLoanProductStatusRequest,
-                UserLoanOrdersQuery,
+                ListQuery, LoanCollateralAssetRequest, LoanOrderHealthResponse, LoanOrderResponse,
+                LoanOrdersResponse, LoanProductResponse, LoanProductsResponse,
+                UpdateLoanProductRequest, UpdateLoanProductStatusRequest, UserLoanOrdersQuery,
             },
-            service::calculate_interest_amount,
+            service::{
+                calculate_interest_amount, calculate_loan_ltv, ensure_loan_ltv_within_initial,
+                loan_order_request_fingerprint, loan_risk_state, validate_loan_ltv_thresholds,
+            },
         },
+        market::ValidatedMarketSymbol,
         wallet::truncate_amount_to_asset_precision,
     },
 };
 use bigdecimal::BigDecimal;
-use chrono::{TimeDelta, Utc};
+use chrono::Utc;
+use redis::aio::ConnectionManager;
 use serde_json::Value;
 use sqlx::{MySql, Pool};
+use std::collections::HashSet;
 
 /// 按产品编号倒序列出可申请的借贷产品，状态过滤硬编码为 active，调用方无法查看已下架配置。
 /// 数量默认 50、夹紧到 1..=200，不支持偏移翻页，因此产品较多时只能看到最新的一批。
@@ -277,45 +290,151 @@ fn ensure_current_product_revision(current_revision: u64, expected_revision: u64
 /// 用户须满足 KYC、金额及资产精度要求；抵押贷必须提供正数且精度合法的抵押资产数量。
 /// 事务先锁定启用产品，再校验条款、插入订单，随后锁定钱包并完成可用额到冻结额的双流水迁移。
 /// 订单、抵押余额和账本必须原子提交，任何失败都不得留下未足额抵押的有效订单。
-/// 用户级幂等键唯一；重复插入会回滚当前事务并返回该键既有订单，`created=false` 且不再次冻结抵押。
-/// 当前实现不会核对重放请求的产品、金额或抵押参数是否与旧订单一致，调用方必须保证同一键只表示同一请求。
+/// 用户级幂等键唯一；同参重放返回原订单且不再次冻结，异参复用同键稳定冲突。
+/// 抵押贷在任何写入前校验新鲜权威 ticker 与初始 LTV，并把风险配置及价格固化进订单。
 pub(crate) async fn create_loan_order_use_case(
     pool: &Pool<MySql>,
+    redis: Option<&ConnectionManager>,
     user_id: u64,
     request: CreateLoanOrderRequest,
 ) -> AppResult<(LoanOrderResponse, bool)> {
+    let product_id = request.product_id;
+    let requested_collateral_asset_id = request.collateral_asset_id;
+    let requested_collateral_amount = request.collateral_amount;
     let idempotency_key = validate_idempotency_key(request.idempotency_key)?;
     let amount = request.amount;
     ensure_positive_amount(&amount, "amount")?;
+    let request_fingerprint = loan_order_request_fingerprint(
+        user_id,
+        product_id,
+        &amount,
+        requested_collateral_asset_id,
+        requested_collateral_amount.as_ref(),
+    );
 
     let mut tx = pool.begin().await?;
-    let product = lock_active_loan_product_terms(&mut tx, request.product_id).await?;
-    let asset = load_active_asset_meta_in_tx(&mut tx, product.asset_id).await?;
+    if let Some(replay) = lock_loan_order_replay_in_tx(&mut tx, user_id, &idempotency_key).await? {
+        ensure_loan_order_replay_matches(
+            &replay,
+            product_id,
+            &amount,
+            requested_collateral_asset_id,
+            requested_collateral_amount.as_ref(),
+            &request_fingerprint,
+        )?;
+        let order_id = replay.id;
+        tx.commit().await?;
+        return Ok((load_loan_order_response(pool, order_id).await?, false));
+    }
+
+    let product = lock_active_loan_product_terms(&mut tx, product_id).await?;
+    let assets = lock_active_loan_asset_metas_in_order(
+        &mut tx,
+        std::iter::once(product.asset_id).chain(
+            (product.loan_type == LOAN_TYPE_COLLATERALIZED)
+                .then_some(requested_collateral_asset_id)
+                .flatten(),
+        ),
+    )
+    .await?;
+    let asset = assets
+        .iter()
+        .find_map(|(asset_id, asset)| (*asset_id == product.asset_id).then_some(asset))
+        .ok_or_else(|| AppError::Internal("locked loan asset metadata is missing".to_owned()))?;
     ensure_amount_precision(&amount, asset.precision_scale, "amount")?;
     ensure_amount_within_product_limits(&amount, &product.min_amount, &product.max_amount)?;
     ensure_loan_user_kyc_level(&mut tx, user_id, product.min_kyc_level).await?;
 
-    let (collateral_asset_id, collateral_amount) = if product.loan_type == LOAN_TYPE_COLLATERALIZED
-    {
-        let collateral_asset_id = request.collateral_asset_id.ok_or_else(|| {
+    let now = Utc::now();
+    let (
+        collateral_asset_id,
+        collateral_amount,
+        initial_ltv,
+        maintenance_ltv,
+        liquidation_ltv,
+        oracle_symbol,
+        oracle_source,
+        oracle_max_age_seconds,
+        application_collateral_price,
+        application_price_observed_at,
+        application_ltv,
+    ) = if product.loan_type == LOAN_TYPE_COLLATERALIZED {
+        let collateral_asset_id = requested_collateral_asset_id.ok_or_else(|| {
             AppError::Validation(
                 "collateral_asset_id is required for collateralized loan".to_owned(),
             )
         })?;
-        let collateral_amount = request.collateral_amount.ok_or_else(|| {
+        let collateral_amount = requested_collateral_amount.clone().ok_or_else(|| {
             AppError::Validation("collateral_amount is required for collateralized loan".to_owned())
         })?;
         ensure_positive_amount(&collateral_amount, "collateral_amount")?;
-        let collateral_asset = load_active_asset_meta_in_tx(&mut tx, collateral_asset_id).await?;
+        let collateral_asset = assets
+            .iter()
+            .find_map(|(asset_id, asset)| (*asset_id == collateral_asset_id).then_some(asset))
+            .ok_or_else(|| {
+                AppError::Internal("locked collateral asset metadata is missing".to_owned())
+            })?;
         ensure_amount_precision(
             &collateral_amount,
             collateral_asset.precision_scale,
             "collateral_amount",
         )?;
-        (Some(collateral_asset_id), Some(collateral_amount))
+        let initial_ltv = product.initial_ltv.clone().ok_or_else(|| {
+            AppError::Internal("collateralized loan product is missing initial_ltv".to_owned())
+        })?;
+        let maintenance_ltv = product.maintenance_ltv.clone().ok_or_else(|| {
+            AppError::Internal("collateralized loan product is missing maintenance_ltv".to_owned())
+        })?;
+        let liquidation_ltv = product.liquidation_ltv.clone().ok_or_else(|| {
+            AppError::Internal("collateralized loan product is missing liquidation_ltv".to_owned())
+        })?;
+        validate_loan_ltv_thresholds(
+            &product.loan_type,
+            Some(initial_ltv.clone()),
+            Some(maintenance_ltv.clone()),
+            Some(liquidation_ltv.clone()),
+        )?;
+        let rule =
+            lock_loan_collateral_rule_in_tx(&mut tx, product.id, collateral_asset_id).await?;
+        if rule.collateral_asset_id != collateral_asset_id {
+            return Err(AppError::Internal(
+                "loan collateral rule identity mismatch".to_owned(),
+            ));
+        }
+        let ticker = load_fresh_loan_oracle_price(
+            redis,
+            &rule.oracle_source,
+            &rule.oracle_symbol,
+            rule.oracle_max_age_seconds,
+            now,
+        )
+        .await?;
+        ensure_loan_ltv_within_initial(&amount, &collateral_amount, &ticker.price, &initial_ltv)?;
+        let application_ltv = calculate_loan_ltv(&amount, &collateral_amount, &ticker.price)?;
+        (
+            Some(collateral_asset_id),
+            Some(collateral_amount),
+            Some(initial_ltv),
+            Some(maintenance_ltv),
+            Some(liquidation_ltv),
+            Some(ticker.symbol),
+            Some(ticker.source),
+            Some(rule.oracle_max_age_seconds),
+            Some(ticker.price),
+            Some(ticker.observed_at),
+            Some(application_ltv),
+        )
     } else {
-        (None, None)
+        if requested_collateral_asset_id.is_some() || requested_collateral_amount.is_some() {
+            return Err(AppError::Validation(
+                "credit loan must not include collateral".to_owned(),
+            ));
+        }
+        (
+            None, None, None, None, None, None, None, None, None, None, None,
+        )
     };
+    let application_oracle_freshness = application_price_observed_at.zip(oracle_max_age_seconds);
 
     let insert = insert_loan_order_in_tx(
         &mut tx,
@@ -324,7 +443,7 @@ pub(crate) async fn create_loan_order_use_case(
             product_id: product.id,
             loan_type: product.loan_type,
             asset_id: product.asset_id,
-            amount,
+            amount: amount.clone(),
             interest_rate: product.interest_rate,
             interest_calculation_mode: product.interest_calculation_mode,
             term_days: product.term_days,
@@ -332,6 +451,16 @@ pub(crate) async fn create_loan_order_use_case(
             collateral_asset_id,
             collateral_amount: collateral_amount.clone(),
             idempotency_key: idempotency_key.clone(),
+            request_fingerprint: request_fingerprint.clone(),
+            initial_ltv,
+            maintenance_ltv,
+            liquidation_ltv,
+            oracle_symbol,
+            oracle_source,
+            oracle_max_age_seconds,
+            application_collateral_price,
+            application_price_observed_at,
+            application_ltv,
         },
     )
     .await;
@@ -340,6 +469,15 @@ pub(crate) async fn create_loan_order_use_case(
         Ok(order_id) => order_id,
         Err(error) if is_duplicate_key_error(&error) => {
             tx.rollback().await?;
+            let replay = load_loan_order_replay(pool, user_id, &idempotency_key).await?;
+            ensure_loan_order_replay_matches(
+                &replay,
+                product_id,
+                &amount,
+                requested_collateral_asset_id,
+                requested_collateral_amount.as_ref(),
+                &request_fingerprint,
+            )?;
             let order = load_loan_order_by_idempotency(pool, user_id, &idempotency_key).await?;
             return Ok((order, false));
         }
@@ -360,9 +498,42 @@ pub(crate) async fn create_loan_order_use_case(
         )
         .await?;
     }
+    if let Some((observed_at, max_age_seconds)) = application_oracle_freshness {
+        ensure_loan_oracle_observation_fresh(observed_at, max_age_seconds, Utc::now())?;
+    }
 
     tx.commit().await?;
     Ok((load_loan_order_response(pool, order_id).await?, true))
+}
+
+/// 对幂等键下的原始业务参数做 Decimal 规范化比较，指纹迁移前后的订单都能得到一致语义。
+fn ensure_loan_order_replay_matches(
+    replay: &LoanOrderReplayRow,
+    product_id: u64,
+    amount: &BigDecimal,
+    collateral_asset_id: Option<u64>,
+    collateral_amount: Option<&BigDecimal>,
+    request_fingerprint: &str,
+) -> AppResult<()> {
+    if replay.request_fingerprint == request_fingerprint {
+        return Ok(());
+    }
+    let amount_matches = replay.amount.normalized() == amount.normalized();
+    let collateral_amount_matches = match (replay.collateral_amount.as_ref(), collateral_amount) {
+        (Some(existing), Some(requested)) => existing.normalized() == requested.normalized(),
+        (None, None) => true,
+        _ => false,
+    };
+    if replay.product_id != product_id
+        || !amount_matches
+        || replay.collateral_asset_id != collateral_asset_id
+        || !collateral_amount_matches
+    {
+        return Err(AppError::Conflict(
+            "idempotency_key was already used with different loan order parameters".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// 把创建产品请求转交统一校验流程，唯一的差异是 status 可选并默认取 active。
@@ -384,6 +555,10 @@ async fn validate_create_product_request(
         request.min_kyc_level,
         request.min_amount,
         request.max_amount,
+        request.initial_ltv,
+        request.maintenance_ltv,
+        request.liquidation_ltv,
+        request.collateral_assets,
         request
             .status
             .unwrap_or_else(|| super::STATUS_ACTIVE.to_owned()),
@@ -410,6 +585,10 @@ async fn validate_update_product_request(
         request.min_kyc_level,
         request.min_amount,
         request.max_amount,
+        request.initial_ltv,
+        request.maintenance_ltv,
+        request.liquidation_ltv,
+        request.collateral_assets,
         request.status,
     )
     .await
@@ -431,6 +610,10 @@ struct NormalizedLoanProductRequest {
     min_amount: BigDecimal,
     /// 可为空表示该产品不设借款上限。
     max_amount: Option<BigDecimal>,
+    initial_ltv: Option<BigDecimal>,
+    maintenance_ltv: Option<BigDecimal>,
+    liquidation_ltv: Option<BigDecimal>,
+    collateral_assets: Vec<LoanProductCollateralWrite>,
     status: String,
 }
 
@@ -449,6 +632,10 @@ impl NormalizedLoanProductRequest {
             min_kyc_level: self.min_kyc_level,
             min_amount: self.min_amount,
             max_amount: self.max_amount,
+            initial_ltv: self.initial_ltv,
+            maintenance_ltv: self.maintenance_ltv,
+            liquidation_ltv: self.liquidation_ltv,
+            collateral_assets: self.collateral_assets,
             status: self.status,
         }
     }
@@ -474,6 +661,10 @@ async fn normalize_product_request(
     min_kyc_level: i32,
     min_amount: BigDecimal,
     max_amount: Option<BigDecimal>,
+    initial_ltv: Option<BigDecimal>,
+    maintenance_ltv: Option<BigDecimal>,
+    liquidation_ltv: Option<BigDecimal>,
+    collateral_assets: Vec<LoanCollateralAssetRequest>,
     status: String,
 ) -> AppResult<NormalizedLoanProductRequest> {
     let loan_type = validate_loan_type(&loan_type)?;
@@ -489,6 +680,7 @@ async fn normalize_product_request(
         ));
     }
     ensure_non_negative_amount(&interest_rate, "interest_rate")?;
+    ensure_amount_precision(&interest_rate, 8, "interest_rate")?;
     if min_kyc_level < 0 {
         return Err(AppError::Validation(
             "min_kyc_level must be non-negative".to_owned(),
@@ -508,6 +700,16 @@ async fn normalize_product_request(
     if let Some(max_amount) = max_amount.as_ref() {
         ensure_amount_precision(max_amount, asset.precision_scale, "max_amount")?;
     }
+    let thresholds =
+        validate_loan_ltv_thresholds(&loan_type, initial_ltv, maintenance_ltv, liquidation_ltv)?;
+    let collateral_assets =
+        normalize_loan_collateral_assets(pool, &loan_type, &asset, asset_id, collateral_assets)
+            .await?;
+    let (initial_ltv, maintenance_ltv, liquidation_ltv) = thresholds
+        .map(|(initial, maintenance, liquidation)| {
+            (Some(initial), Some(maintenance), Some(liquidation))
+        })
+        .unwrap_or((None, None, None));
 
     Ok(NormalizedLoanProductRequest {
         loan_type,
@@ -520,8 +722,97 @@ async fn normalize_product_request(
         min_kyc_level,
         min_amount,
         max_amount,
+        initial_ltv,
+        maintenance_ltv,
+        liquidation_ltv,
+        collateral_assets,
         status,
     })
+}
+
+/// 校验抵押物白名单、资产状态、行情单位、来源和最大年龄，并返回可直接持久化的规范化配置。
+async fn normalize_loan_collateral_assets(
+    pool: &Pool<MySql>,
+    loan_type: &str,
+    loan_asset: &super::infrastructure::AssetMetaRow,
+    loan_asset_id: u64,
+    collateral_assets: Vec<LoanCollateralAssetRequest>,
+) -> AppResult<Vec<LoanProductCollateralWrite>> {
+    if loan_type != LOAN_TYPE_COLLATERALIZED {
+        if !collateral_assets.is_empty() {
+            return Err(AppError::Validation(
+                "credit loan must not configure collateral assets".to_owned(),
+            ));
+        }
+        return Ok(Vec::new());
+    }
+    if collateral_assets.is_empty() {
+        return Err(AppError::Validation(
+            "collateralized loan requires at least one collateral asset".to_owned(),
+        ));
+    }
+
+    let mut asset_ids = HashSet::new();
+    let mut oracle_symbols = HashSet::new();
+    let mut normalized = Vec::with_capacity(collateral_assets.len());
+    for collateral in collateral_assets {
+        if collateral.collateral_asset_id == loan_asset_id {
+            return Err(AppError::Validation(
+                "collateral asset must differ from loan asset".to_owned(),
+            ));
+        }
+        if !asset_ids.insert(collateral.collateral_asset_id) {
+            return Err(AppError::Validation(
+                "collateral asset is duplicated".to_owned(),
+            ));
+        }
+        let collateral_asset = load_active_asset_meta(pool, collateral.collateral_asset_id).await?;
+        let oracle_source = optional_string(Some(collateral.oracle_source))
+            .ok_or_else(|| AppError::Validation("oracle_source is required".to_owned()))?;
+        if oracle_source != LOAN_ORACLE_SOURCE_MARKET_TICKER_REDIS {
+            return Err(AppError::Validation(
+                "unsupported loan oracle_source".to_owned(),
+            ));
+        }
+        if collateral.oracle_max_age_seconds == 0 || collateral.oracle_max_age_seconds > 86_400 {
+            return Err(AppError::Validation(
+                "oracle_max_age_seconds must be between 1 and 86400".to_owned(),
+            ));
+        }
+        let oracle_symbol = ValidatedMarketSymbol::from_raw(&collateral.oracle_symbol)
+            .map_err(|_| AppError::Validation("invalid loan oracle_symbol".to_owned()))?
+            .as_str()
+            .to_owned();
+        let expected_symbol = ValidatedMarketSymbol::from_raw(&format!(
+            "{}{}",
+            collateral_asset.symbol, loan_asset.symbol
+        ))
+        .map_err(|_| {
+            AppError::Validation(
+                "collateral and loan asset symbols cannot form an oracle symbol".to_owned(),
+            )
+        })?
+        .as_str()
+        .to_owned();
+        if oracle_symbol != expected_symbol {
+            return Err(AppError::Validation(format!(
+                "oracle_symbol must price collateral in loan asset as {expected_symbol}"
+            )));
+        }
+        if !oracle_symbols.insert(oracle_symbol.clone()) {
+            return Err(AppError::Validation(
+                "oracle_symbol is duplicated".to_owned(),
+            ));
+        }
+        normalized.push(LoanProductCollateralWrite {
+            collateral_asset_id: collateral.collateral_asset_id,
+            oracle_symbol,
+            oracle_source,
+            oracle_max_age_seconds: collateral.oracle_max_age_seconds,
+        });
+    }
+    normalized.sort_by_key(|item| item.collateral_asset_id);
+    Ok(normalized)
 }
 
 /// 锁定当前用户 pending 订单，抵押贷先把 collateral frozen 等额退回 available，再标记 cancelled。
@@ -558,12 +849,16 @@ pub(crate) async fn cancel_loan_order_use_case(
 /// 余额、流水与 disbursed 状态同事务提交；已放款或已还款重放返回 `changed=false`，不二次入账。
 pub(crate) async fn approve_loan_order_use_case(
     pool: &Pool<MySql>,
+    redis: Option<&ConnectionManager>,
     admin_id: u64,
     order_id: u64,
 ) -> AppResult<(LoanOrderResponse, bool)> {
     let mut tx = pool.begin().await?;
     let order = lock_loan_order(&mut tx, order_id).await?;
-    if order.status == STATUS_DISBURSED || order.status == STATUS_REPAID {
+    if matches!(
+        order.status.as_str(),
+        STATUS_DISBURSED | STATUS_OVERDUE | STATUS_REPAID | STATUS_LIQUIDATED
+    ) {
         tx.commit().await?;
         return Ok((load_loan_order_response(pool, order_id).await?, false));
     }
@@ -572,10 +867,115 @@ pub(crate) async fn approve_loan_order_use_case(
             "loan order is not pending review".to_owned(),
         ));
     }
+    if order.term_days == 0 {
+        return Err(AppError::Internal(
+            "loan order term_days must be positive".to_owned(),
+        ));
+    }
+    let assets = lock_active_loan_asset_metas_in_order(
+        &mut tx,
+        std::iter::once(order.asset_id).chain(order.collateral_asset_id),
+    )
+    .await?;
+    let loan_asset = assets
+        .iter()
+        .find_map(|(asset_id, asset)| (*asset_id == order.asset_id).then_some(asset))
+        .ok_or_else(|| AppError::Internal("locked loan asset metadata is missing".to_owned()))?;
+    ensure_amount_precision(&order.amount, loan_asset.precision_scale, "amount")?;
+    if let (Some(collateral_asset_id), Some(collateral_amount)) =
+        (order.collateral_asset_id, order.collateral_amount.as_ref())
+    {
+        let collateral_asset = assets
+            .iter()
+            .find_map(|(asset_id, asset)| (*asset_id == collateral_asset_id).then_some(asset))
+            .ok_or_else(|| {
+                AppError::Internal("locked collateral asset metadata is missing".to_owned())
+            })?;
+        ensure_amount_precision(
+            collateral_amount,
+            collateral_asset.precision_scale,
+            "collateral_amount",
+        )?;
+    }
+    validate_loan_ltv_thresholds(
+        &order.loan_type,
+        order.initial_ltv.clone(),
+        order.maintenance_ltv.clone(),
+        order.liquidation_ltv.clone(),
+    )?;
 
-    let due_at = Utc::now()
-        .checked_add_signed(TimeDelta::days(i64::from(order.term_days)))
-        .ok_or_else(|| AppError::Validation("loan due_at is outside valid range".to_owned()))?;
+    let now = Utc::now();
+    let approval_risk = if order.loan_type == LOAN_TYPE_COLLATERALIZED {
+        order.collateral_asset_id.ok_or_else(|| {
+            AppError::Internal("collateralized loan order is missing collateral asset".to_owned())
+        })?;
+        let collateral_amount = order.collateral_amount.as_ref().ok_or_else(|| {
+            AppError::Internal("collateralized loan order is missing collateral amount".to_owned())
+        })?;
+        let initial_ltv = order.initial_ltv.as_ref().ok_or_else(|| {
+            AppError::Internal("collateralized loan order is missing initial_ltv".to_owned())
+        })?;
+        let oracle_symbol = order.oracle_symbol.as_deref().ok_or_else(|| {
+            AppError::Internal("collateralized loan order is missing oracle_symbol".to_owned())
+        })?;
+        let oracle_source = order.oracle_source.as_deref().ok_or_else(|| {
+            AppError::Internal("collateralized loan order is missing oracle_source".to_owned())
+        })?;
+        let oracle_max_age_seconds = order.oracle_max_age_seconds.ok_or_else(|| {
+            AppError::Internal(
+                "collateralized loan order is missing oracle_max_age_seconds".to_owned(),
+            )
+        })?;
+        let ticker = load_fresh_loan_oracle_price(
+            redis,
+            oracle_source,
+            oracle_symbol,
+            oracle_max_age_seconds,
+            now,
+        )
+        .await?;
+        ensure_loan_ltv_within_initial(
+            &order.amount,
+            collateral_amount,
+            &ticker.price,
+            initial_ltv,
+        )?;
+        let approval_ltv = calculate_loan_ltv(&order.amount, collateral_amount, &ticker.price)?;
+        Some((ticker.price, ticker.observed_at, approval_ltv))
+    } else {
+        None
+    };
+
+    lock_loan_wallets_in_order(
+        &mut tx,
+        order.user_id,
+        std::iter::once(order.asset_id).chain(order.collateral_asset_id),
+    )
+    .await?;
+    if let (Some(collateral_asset_id), Some(collateral_amount)) =
+        (order.collateral_asset_id, order.collateral_amount.as_ref())
+    {
+        ensure_loan_collateral_frozen_in_tx(
+            &mut tx,
+            order.user_id,
+            collateral_asset_id,
+            collateral_amount,
+        )
+        .await?;
+    }
+    if let Some((_, price_observed_at, _)) = approval_risk.as_ref() {
+        let oracle_max_age_seconds = order.oracle_max_age_seconds.ok_or_else(|| {
+            AppError::Internal(
+                "collateralized loan order is missing oracle_max_age_seconds".to_owned(),
+            )
+        })?;
+        ensure_loan_oracle_observation_fresh(
+            *price_observed_at,
+            oracle_max_age_seconds,
+            Utc::now(),
+        )?;
+    }
+
     // 放款入账和订单审核状态必须原子提交，避免余额入账后订单仍处于待审核。
     apply_loan_wallet_credit(
         &mut tx,
@@ -586,10 +986,140 @@ pub(crate) async fn approve_loan_order_use_case(
         order.id,
     )
     .await?;
-    mark_loan_order_disbursed_in_tx(&mut tx, order.id, admin_id, due_at.naive_utc()).await?;
+    insert_loan_disbursement_journal_in_tx(
+        &mut tx,
+        order.id,
+        order.user_id,
+        order.asset_id,
+        &order.amount,
+    )
+    .await?;
+    let risk_snapshot = approval_risk
+        .as_ref()
+        .map(
+            |(collateral_price, price_observed_at, ltv)| LoanApprovalRiskSnapshot {
+                collateral_price,
+                price_observed_at: *price_observed_at,
+                ltv,
+            },
+        );
+    mark_loan_order_disbursed_in_tx(&mut tx, order.id, admin_id, order.term_days, risk_snapshot)
+        .await?;
 
     tx.commit().await?;
     Ok((load_loan_order_response(pool, order_id).await?, true))
+}
+
+/// 读取当前用户抵押贷订单的服务端权威健康度；缓存缺失或陈旧时失败关闭，不回退申请价。
+pub(crate) async fn get_loan_order_health_use_case(
+    pool: &Pool<MySql>,
+    redis: Option<&ConnectionManager>,
+    user_id: u64,
+    order_id: u64,
+) -> AppResult<LoanOrderHealthResponse> {
+    let order = load_user_loan_risk_order(pool, user_id, order_id).await?;
+    if order.loan_type != LOAN_TYPE_COLLATERALIZED {
+        return Err(AppError::Validation(
+            "loan health is only available for collateralized orders".to_owned(),
+        ));
+    }
+    if !matches!(
+        order.status.as_str(),
+        STATUS_PENDING | STATUS_DISBURSED | STATUS_OVERDUE
+    ) {
+        return Err(AppError::Conflict(
+            "loan order is already terminal".to_owned(),
+        ));
+    }
+    let collateral_amount = order.collateral_amount.as_ref().ok_or_else(|| {
+        AppError::Internal("collateralized loan order is missing collateral amount".to_owned())
+    })?;
+    let collateral_asset_id = order.collateral_asset_id.ok_or_else(|| {
+        AppError::Internal("collateralized loan order is missing collateral asset".to_owned())
+    })?;
+    let initial_ltv = order.initial_ltv.clone().ok_or_else(|| {
+        AppError::Internal("collateralized loan order is missing initial_ltv".to_owned())
+    })?;
+    let maintenance_ltv = order.maintenance_ltv.clone().ok_or_else(|| {
+        AppError::Internal("collateralized loan order is missing maintenance_ltv".to_owned())
+    })?;
+    let liquidation_ltv = order.liquidation_ltv.clone().ok_or_else(|| {
+        AppError::Internal("collateralized loan order is missing liquidation_ltv".to_owned())
+    })?;
+    validate_loan_ltv_thresholds(
+        &order.loan_type,
+        Some(initial_ltv.clone()),
+        Some(maintenance_ltv.clone()),
+        Some(liquidation_ltv.clone()),
+    )?;
+    let oracle_symbol = order.oracle_symbol.clone().ok_or_else(|| {
+        AppError::Internal("collateralized loan order is missing oracle_symbol".to_owned())
+    })?;
+    let oracle_source = order.oracle_source.clone().ok_or_else(|| {
+        AppError::Internal("collateralized loan order is missing oracle_source".to_owned())
+    })?;
+    let oracle_max_age_seconds = order.oracle_max_age_seconds.ok_or_else(|| {
+        AppError::Internal("collateralized loan order is missing oracle_max_age_seconds".to_owned())
+    })?;
+    let now = Utc::now();
+    let ticker = load_fresh_loan_oracle_price(
+        redis,
+        &oracle_source,
+        &oracle_symbol,
+        oracle_max_age_seconds,
+        now,
+    )
+    .await?;
+    let loan_asset_precision = load_asset_precision(pool, order.asset_id).await?;
+    let collateral_asset_precision = load_asset_precision(pool, collateral_asset_id).await?;
+    ensure_amount_precision(&order.amount, loan_asset_precision, "amount")?;
+    ensure_amount_precision(
+        collateral_amount,
+        collateral_asset_precision,
+        "collateral_amount",
+    )?;
+    let calculated_at = now.max(Utc::now());
+    ensure_loan_oracle_observation_fresh(
+        ticker.observed_at,
+        oracle_max_age_seconds,
+        calculated_at,
+    )?;
+    let interest_amount = match order.disbursed_at {
+        Some(disbursed_at) => calculate_interest_amount(
+            &order.amount,
+            &order.interest_rate,
+            &order.interest_calculation_mode,
+            order.term_days,
+            disbursed_at,
+            calculated_at,
+            loan_asset_precision,
+        )?,
+        None => BigDecimal::from(0),
+    };
+    let debt_amount = truncate_amount_to_asset_precision(
+        &(order.amount.clone() + interest_amount),
+        loan_asset_precision,
+    );
+    let collateral_value = (collateral_amount.clone() * ticker.price.clone()).with_scale(18);
+    let current_ltv = calculate_loan_ltv(&debt_amount, collateral_amount, &ticker.price)?;
+    let risk_state = loan_risk_state(&current_ltv, &maintenance_ltv, &liquidation_ltv).to_owned();
+
+    Ok(LoanOrderHealthResponse {
+        order_id,
+        status: order.status,
+        risk_state,
+        debt_amount,
+        collateral_value,
+        current_ltv,
+        initial_ltv,
+        maintenance_ltv,
+        liquidation_ltv,
+        oracle_symbol,
+        oracle_source,
+        collateral_price: ticker.price,
+        price_observed_at: ticker.observed_at,
+        calculated_at,
+    })
 }
 
 /// 锁定 pending 订单，抵押贷把 collateral frozen 退回 available 后记录拒绝管理员与可选原因。
@@ -623,7 +1153,7 @@ pub(crate) async fn reject_loan_order_use_case(
 /// 为当前用户结清已放款或逾期借贷订单，计算应计利息并释放抵押资产。
 /// 订单须归属当前用户且具有放款时间；已还款订单直接返回原结果，其他状态拒绝操作。
 /// 事务锁定订单后，按贷款资产精度向零截断利息及本金加利息，再从贷款资产 available 扣除总还款额。
-/// 随后抵押贷把 collateral frozen 退回 available；实际锁序为订单→贷款钱包→抵押钱包，代码不按资产编号重排。
+/// 随后抵押贷把 collateral frozen 退回 available；实际锁序为订单→按资产编号升序预锁全部相关钱包。
 /// 还款写一条 `loan_repayment` available 负流水；抵押释放另写 available 正/frozen 负两条流水，locked 始终不变。
 /// 钱包、流水、抵押释放时间与 repaid 状态同事务提交，任一步失败回滚本次扣款和释放。
 /// 已还款状态构成幂等边界并返回 `changed=false`；余额不足或任一步失败均整体回滚。
@@ -649,7 +1179,22 @@ pub(crate) async fn repay_loan_order_use_case(
     let disbursed_at = order.disbursed_at.ok_or_else(|| {
         AppError::Validation("loan order disbursed_at is required for repayment".to_owned())
     })?;
-    let asset = load_active_asset_meta_in_tx(&mut tx, order.asset_id).await?;
+    let asset_precisions = lock_loan_asset_precisions_in_order(
+        &mut tx,
+        std::iter::once(order.asset_id).chain(order.collateral_asset_id),
+    )
+    .await?;
+    let asset_precision = asset_precisions
+        .iter()
+        .find_map(|(asset_id, precision)| (*asset_id == order.asset_id).then_some(*precision))
+        .ok_or_else(|| AppError::Internal("locked loan asset precision is missing".to_owned()))?;
+    lock_loan_wallets_in_order(
+        &mut tx,
+        order.user_id,
+        std::iter::once(order.asset_id).chain(order.collateral_asset_id),
+    )
+    .await?;
+    // 钱包锁等待可能跨过实际天数计息边界，必须在取得全部资金锁之后确定最终利息。
     let interest_amount = calculate_interest_amount(
         &order.amount,
         &order.interest_rate,
@@ -657,11 +1202,11 @@ pub(crate) async fn repay_loan_order_use_case(
         order.term_days,
         disbursed_at,
         Utc::now(),
-        asset.precision_scale,
+        asset_precision,
     )?;
     let repayment_amount = truncate_amount_to_asset_precision(
         &(order.amount.clone() + interest_amount.clone()),
-        asset.precision_scale,
+        asset_precision,
     );
 
     // 还款扣款、抵押释放、订单结清金额必须原子提交，保证账务和订单状态一致。
@@ -672,6 +1217,16 @@ pub(crate) async fn repay_loan_order_use_case(
         &repayment_amount,
         "loan_repayment",
         order.id,
+    )
+    .await?;
+    insert_loan_repayment_journal_in_tx(
+        &mut tx,
+        order.id,
+        order.user_id,
+        order.asset_id,
+        &order.amount,
+        &interest_amount,
+        &repayment_amount,
     )
     .await?;
     release_loan_collateral_if_needed(&mut tx, &order).await?;

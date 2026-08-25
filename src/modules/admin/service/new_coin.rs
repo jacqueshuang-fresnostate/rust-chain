@@ -19,6 +19,11 @@ pub(crate) fn validate_distribute_new_coin(request: &DistributeNewCoinRequest) -
             "idempotency_key must not be empty".to_owned(),
         ));
     }
+    if request.idempotency_key.len() > 128 {
+        return Err(AppError::Validation(
+            "idempotency_key must not exceed 128 bytes".to_owned(),
+        ));
+    }
     Ok(())
 }
 
@@ -64,7 +69,7 @@ pub(crate) fn validate_update_new_coin_post_listing_purchase(
 /// 校验新币项目初始生命周期、资产、认购窗口、价格、额度及解锁规则的完整组合。
 /// 资产唯一性和并发创建冲突由数据库约束处理；本函数不写项目、钱包或审计。
 /// 初始生命周期可以是四态中的任意一个而不强制从预热开始，因此允许直接创建已上市的历史项目。
-/// 总量要求严格为正而发行价只要求非负，故零价免费发行是合法配置；符号去空后不得为空。
+/// 总量和发行价都要求严格为正，禁止零价配置绕过真实计价；符号去空后不得为空。
 /// 解锁规则必填，解锁手续费规则在未显式启用时按关闭处理，两者都按各自的互斥字段形状校验。
 pub(crate) fn validate_create_new_coin_project(
     request: &CreateNewCoinProjectRequest,
@@ -80,9 +85,14 @@ pub(crate) fn validate_create_new_coin_project(
             "total_supply must be positive".to_owned(),
         ));
     }
-    if request.issue_price < 0 {
+    if request.issue_price <= 0 {
         return Err(AppError::Validation(
-            "issue_price must be non-negative".to_owned(),
+            "issue_price must be positive".to_owned(),
+        ));
+    }
+    if request.quote_asset_id == 0 || request.quote_asset_id == request.asset_id {
+        return Err(AppError::Validation(
+            "quote_asset_id must identify a different active asset".to_owned(),
         ));
     }
     if optional_string(Some(request.symbol.clone())).is_none() {
@@ -99,6 +109,11 @@ pub(crate) fn validate_create_new_coin_project(
         request.unlock_fee_rate.as_ref(),
         request.unlock_fee_basis.clone(),
         request.unlock_fee_asset,
+    )?;
+    crate::modules::new_coin::service::ensure_unlock_fee_asset_matches_quote_asset(
+        request.unlock_fee_enabled.unwrap_or(false),
+        request.unlock_fee_asset,
+        Some(request.quote_asset_id),
     )?;
 
     Ok(())
@@ -250,6 +265,10 @@ pub(crate) fn new_coin_project_audit_json(project: &NewCoinProjectResponse) -> V
         "lifecycle_status": project.lifecycle_status,
         "total_supply": project.total_supply,
         "issue_price": project.issue_price,
+        "quote_asset_id": project.quote_asset_id,
+        "reserved_supply": project.reserved_supply,
+        "allocated_supply": project.allocated_supply,
+        "remaining_supply": project.remaining_supply,
         "listed_at": project.listed_at.map(|value| value.timestamp_millis()),
         "unlock_type": project.unlock_type,
         "fixed_unlock_at": project.fixed_unlock_at.map(|value| value.timestamp_millis()),
@@ -375,11 +394,21 @@ fn validate_unlock_fee_rule_shape(
     if !unlock_fee_enabled {
         return Ok(());
     }
-    if unlock_fee_rate.is_none_or(|rate| rate <= 0) {
+    let Some(unlock_fee_rate) = unlock_fee_rate else {
+        return Err(AppError::Validation(
+            "unlock_fee_rate must be positive when unlock fee is enabled".to_owned(),
+        ));
+    };
+    if unlock_fee_rate <= &BigDecimal::from(0) {
         return Err(AppError::Validation(
             "unlock_fee_rate must be positive when unlock fee is enabled".to_owned(),
         ));
     }
+    crate::modules::new_coin::service::ensure_new_coin_amount_precision(
+        unlock_fee_rate,
+        8,
+        "unlock_fee_rate",
+    )?;
     match optional_string(unlock_fee_basis).as_deref() {
         Some("market_value" | "profit") => {}
         Some(_) => {

@@ -21,6 +21,18 @@ import {
   type WalletLedgerPage,
 } from '@/core/walletLedger'
 import type { DepositAddress, DepositAsset, DepositNetwork, WalletAccount } from '@/core/types'
+import {
+  isWithdrawalDecimalString,
+  withdrawalQuoteAmountsAreConsistent,
+  type WithdrawalFeeTier,
+} from '@/core/withdrawalQuote'
+
+export {
+  calculateWithdrawalFee,
+  maximumQuotedWithdrawalAmount,
+  normalizeWithdrawalPreviewAmount,
+} from '@/core/withdrawalQuote'
+export type { WithdrawalFeeTier } from '@/core/withdrawalQuote'
 
 export {
   createTodayReturnRequestLifecycle,
@@ -73,6 +85,26 @@ export type {
 export interface WithdrawalAsset extends DepositAsset {
   withdrawEnabled: boolean
   withdrawFee: number
+  precisionScale: number
+  withdrawFeeTiers: WithdrawalFeeTier[]
+}
+
+export interface WithdrawalQuote {
+  quoteId: string
+  assetSymbol: string
+  network: string
+  amount: string
+  fee: string
+  net: string
+  totalReserved: string
+  feeConfigVersion: string
+  expiresAt: number
+}
+
+export interface WithdrawalSubmission extends WithdrawalQuote {
+  id: number
+  status: string
+  securityMethod: string
 }
 
 export interface WithdrawalRecord {
@@ -121,6 +153,32 @@ interface BackendDepositAsset {
   min_deposit_amount?: string | number | null
   withdraw_enabled?: boolean | null
   withdraw_fee?: string | number | null
+  precision_scale?: number | null
+  withdraw_fee_tiers?: BackendWithdrawalFeeTier[] | null
+}
+
+interface BackendWithdrawalFeeTier {
+  min_amount?: string | number | null
+  max_amount?: string | number | null
+  fee_rate_percent?: string | number | null
+}
+
+interface BackendWithdrawalQuote {
+  quote_id?: string
+  asset_symbol?: string
+  network?: string
+  amount?: string | number
+  fee?: string | number
+  net?: string | number
+  total_reserved?: string | number
+  fee_config_version?: string
+  expires_at?: number
+}
+
+interface BackendWithdrawalSubmission extends BackendWithdrawalQuote {
+  id?: number
+  status?: string
+  security_method?: string
 }
 
 interface BackendDepositNetwork {
@@ -186,6 +244,12 @@ export async function fetchWithdrawalAssets(): Promise<WithdrawalAsset[]> {
       withdrawEnabled: asset.withdraw_enabled !== false,
       minDepositAmount: asNumber(asset.min_deposit_amount),
       withdrawFee: asNumber(asset.withdraw_fee),
+      precisionScale: Math.min(18, Math.max(0, Math.trunc(asNumber(asset.precision_scale)))),
+      withdrawFeeTiers: (asset.withdraw_fee_tiers || []).map((tier) => ({
+        minAmount: asNumber(tier.min_amount),
+        maxAmount: tier.max_amount == null ? undefined : asNumber(tier.max_amount),
+        feeRatePercent: asNumber(tier.fee_rate_percent),
+      })).sort((left, right) => left.minAmount - right.minAmount),
       name: asset.name?.trim() || undefined,
     }))
     .filter((asset) => asset.withdrawEnabled)
@@ -243,17 +307,118 @@ export async function fetchReturnHistory(
   return mapReturnHistory(response.data, periodDays)
 }
 
-export async function submitWithdrawal(input: { assetSymbol: string; network?: string; address: string; amount: number; fee: number; fundPassword?: string; totpCode?: string }): Promise<void> {
-  await client.post(requestUrl('/wallet/withdrawals'), {
+export async function fetchWithdrawalQuote(input: {
+  assetSymbol: string
+  network: string
+  amount: string | number
+}): Promise<WithdrawalQuote> {
+  const response = await client.post<BackendWithdrawalQuote>(requestUrl('/wallet/withdrawals/quote'), {
     asset_symbol: input.assetSymbol.toUpperCase(),
     network: input.network,
-    address: input.address.trim(),
     amount: String(input.amount),
-    fee: String(input.fee),
-    idempotency_key: createWithdrawalIdempotencyKey(),
+  })
+  return mapWithdrawalQuote(response.data, true)
+}
+
+export async function submitWithdrawal(input: {
+  quote: WithdrawalQuote
+  address: string
+  fundPassword?: string
+  totpCode?: string
+}): Promise<WithdrawalSubmission> {
+  const response = await client.post<BackendWithdrawalSubmission>(requestUrl('/wallet/withdrawals'), {
+    quote_id: input.quote.quoteId,
+    asset_symbol: input.quote.assetSymbol,
+    network: input.quote.network,
+    address: input.address.trim(),
+    amount: input.quote.amount,
+    fee: input.quote.fee,
+    idempotency_key: createWithdrawalIdempotencyKey(input.quote.quoteId),
     fund_password: input.fundPassword?.trim() || undefined,
     totp_code: input.totpCode?.trim() || undefined,
   })
+  const submitted = mapWithdrawalSubmission(response.data)
+  assertWithdrawalContract(input.quote, submitted)
+  return submitted
+}
+
+function mapWithdrawalQuote(raw: BackendWithdrawalQuote, requireUnexpired = false): WithdrawalQuote {
+  const quote: WithdrawalQuote = {
+    quoteId: String(raw.quote_id || '').trim(),
+    assetSymbol: String(raw.asset_symbol || '').trim().toUpperCase(),
+    network: String(raw.network || '').trim(),
+    amount: decimalString(raw.amount),
+    fee: decimalString(raw.fee),
+    net: decimalString(raw.net),
+    totalReserved: decimalString(raw.total_reserved),
+    feeConfigVersion: String(raw.fee_config_version || '').trim(),
+    expiresAt: typeof raw.expires_at === 'number' ? raw.expires_at : Number.NaN,
+  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(quote.quoteId)
+    || !/^[A-Z0-9]{1,32}$/.test(quote.assetSymbol)
+    || !/^(?:eth|base|tron|btc|solana)$/.test(quote.network)
+    || !/^[0-9a-f]{64}$/.test(quote.feeConfigVersion)
+    || !Number.isSafeInteger(quote.expiresAt)
+    || quote.expiresAt <= 0
+    || (requireUnexpired && quote.expiresAt <= Date.now())
+    || !withdrawalQuoteAmountsAreConsistent(
+      quote.amount,
+      quote.fee,
+      quote.net,
+      quote.totalReserved,
+    )) {
+    throw new Error('invalid withdrawal quote response')
+  }
+  return quote
+}
+
+function mapWithdrawalSubmission(raw: BackendWithdrawalSubmission): WithdrawalSubmission {
+  const quote = mapWithdrawalQuote(raw)
+  const id = asNumber(raw.id)
+  const status = String(raw.status || '').trim()
+  const securityMethod = String(raw.security_method || '').trim()
+  if (!Number.isSafeInteger(id) || id <= 0 || !status || !securityMethod) {
+    throw new Error('invalid withdrawal submission response')
+  }
+  return { ...quote, id, status, securityMethod }
+}
+
+function assertWithdrawalContract(quote: WithdrawalQuote, submitted: WithdrawalSubmission): void {
+  if (quote.quoteId !== submitted.quoteId
+    || quote.assetSymbol !== submitted.assetSymbol
+    || quote.network !== submitted.network
+    || quote.feeConfigVersion !== submitted.feeConfigVersion
+    || quote.expiresAt !== submitted.expiresAt
+    || !sameDecimal(quote.amount, submitted.amount)
+    || !sameDecimal(quote.fee, submitted.fee)
+    || !sameDecimal(quote.net, submitted.net)
+    || !sameDecimal(quote.totalReserved, submitted.totalReserved)) {
+    throw new Error('withdrawal submission does not match the authorized quote')
+  }
+}
+
+function decimalString(value: string | number | undefined): string {
+  if (typeof value !== 'string') {
+    throw new Error('invalid withdrawal decimal response')
+  }
+  const normalized = value.trim()
+  if (!isWithdrawalDecimalString(normalized)) {
+    throw new Error('invalid withdrawal decimal response')
+  }
+  return normalized
+}
+
+function sameDecimal(left: string, right: string): boolean {
+  return canonicalDecimal(left) === canonicalDecimal(right)
+}
+
+function canonicalDecimal(value: string): string {
+  const match = value.trim().match(/^([+-]?)(\d+)(?:\.(\d*))?$/)
+  if (!match) return value.trim()
+  const whole = (match[2] || '0').replace(/^0+(?=\d)/, '')
+  const fraction = (match[3] || '').replace(/0+$/, '')
+  const zero = whole === '0' && !fraction
+  return `${match[1] === '-' && !zero ? '-' : ''}${whole}${fraction ? `.${fraction}` : ''}`
 }
 
 interface BackendWithdrawalRecord {
@@ -287,10 +452,8 @@ export async function fetchWithdrawalRecords(limit = 50): Promise<WithdrawalReco
   }))
 }
 
-function createWithdrawalIdempotencyKey(): string {
-  const randomPart = globalThis.crypto?.randomUUID?.()
-    ?? Math.random().toString(36).slice(2)
-  return `mobile-withdraw-${Date.now()}-${randomPart}`
+function createWithdrawalIdempotencyKey(quoteId: string): string {
+  return `mobile-withdraw-${quoteId}`
 }
 
 export async function fetchWalletLedger(options: {

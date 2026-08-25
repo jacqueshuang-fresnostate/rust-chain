@@ -1,5 +1,5 @@
-//! 默认管理员引导：保证全新部署在后台账号表为空时，也能创建出第一个可登录的超级管理员。
-//! 引导参数来自 `BOOTSTRAP_ADMIN_*` 环境变量，未配置时回落到内置默认值，用户名复用正式注册的规范化与校验规则。
+//! 管理员一次性引导：只有部署方显式开启引导模式时，才在后台账号表为空的环境创建首个管理员。
+//! 引导口令只能来自环境变量或 Secret 文件；缺失、空值和已知公开默认值均在连接数据库前失败。
 //! 整个过程先用 MySQL 命名锁串行化，再在事务里检查是否已存在管理员，确保多实例并发启动最多只产生一个初始账号。
 //! 本模块只负责创建首个管理员及其所属角色，不写入任何具体权限，权限内容需要登录后台之后再行配置。
 
@@ -8,18 +8,54 @@ use crate::{
     modules::auth::{hash_password, normalize_username},
 };
 use secrecy::{ExposeSecret, SecretString};
+use sha2::{Digest, Sha256};
 use sqlx::{Acquire, MySqlConnection, MySqlPool};
-use std::{env, fmt};
+use std::{env, fmt, fs};
 
 pub const DEFAULT_BOOTSTRAP_ADMIN_ROLE_NAME: &str = "super_admin";
 pub const DEFAULT_BOOTSTRAP_ADMIN_USERNAME: &str = "admin";
 
 const BOOTSTRAP_ADMIN_LOCK_NAME: &str = "exchange.bootstrap.default_admin";
 const BOOTSTRAP_ADMIN_LOCK_TIMEOUT_SECONDS: i32 = 30;
-const DEFAULT_BOOTSTRAP_ADMIN_PASSWORD: &str = "Qaz123456@";
 const BOOTSTRAP_ADMIN_PASSWORD_MIN_CHARS: usize = 8;
 const BOOTSTRAP_ADMIN_PASSWORD_MAX_CHARS: usize = 128;
 const BOOTSTRAP_ADMIN_ROLE_NAME_MAX_CHARS: usize = 64;
+// 已公开历史口令仅保存摘要，源码和镜像示例不得再携带可直接登录的明文。
+const KNOWN_DEFAULT_BOOTSTRAP_PASSWORD_SHA256: &str =
+    "c76e3324b6aa293f00cf010dabaf82a58c9d2ecb34df4f3c433de0822edb9421";
+
+/// 管理员引导开关；缺省明确表示关闭，只有 `create_admin` 会触发账号创建。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BootstrapAdminMode {
+    Disabled,
+    CreateAdmin,
+}
+
+impl BootstrapAdminMode {
+    /// 解析 `BOOTSTRAP_MODE`，缺失时安全关闭；显式空值或未知值直接报错，避免拼写错误意外改变部署行为。
+    pub fn from_env() -> AppResult<Self> {
+        Self::from_optional_value(optional_env("BOOTSTRAP_MODE")?)
+    }
+
+    fn from_optional_value(value: Option<String>) -> AppResult<Self> {
+        match value {
+            None => Ok(Self::Disabled),
+            Some(value) => match value.trim().to_ascii_lowercase().as_str() {
+                "disabled" => Ok(Self::Disabled),
+                "create_admin" => Ok(Self::CreateAdmin),
+                _ => Err(AppError::Validation(
+                    "BOOTSTRAP_MODE must be disabled or create_admin".to_owned(),
+                )),
+            },
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum BootstrapPasswordSource {
+    Direct(String),
+    File(String),
+}
 
 /// 已校验的引导管理员三要素，只能通过本文件的构造函数得到，保证字段都经过规范化。
 /// 口令用 `SecretString` 承载并配有手写的 `Debug`，避免引导配置出现在日志时泄露明文。
@@ -30,23 +66,13 @@ pub struct BootstrapAdminConfig {
 }
 
 impl BootstrapAdminConfig {
-    /// 构造完全依赖内置常量的引导配置，供未设置任何 `BOOTSTRAP_ADMIN_*` 环境变量的场景与测试直接使用。
-    /// 内置口令是公开的固定弱口令，只用来让全新环境完成首次登录，上线后必须立即在后台改掉。
-    pub fn built_in_defaults() -> AppResult<Self> {
-        Self::from_values(
-            DEFAULT_BOOTSTRAP_ADMIN_USERNAME.to_owned(),
-            DEFAULT_BOOTSTRAP_ADMIN_PASSWORD.to_owned(),
-            Some(DEFAULT_BOOTSTRAP_ADMIN_ROLE_NAME.to_owned()),
-        )
-    }
-
-    /// 从 `BOOTSTRAP_ADMIN_USERNAME`、`BOOTSTRAP_ADMIN_PASSWORD` 和 `BOOTSTRAP_ADMIN_ROLE_NAME` 读取引导配置。
-    /// 前两项缺失或去掉首尾空白后为空时回落到内置默认值，角色名缺失则在校验阶段回落到默认超级管理员角色。
-    /// 环境变量含非 UTF-8 字节会直接返回校验错误，不会被当成未配置而悄悄使用默认值。
+    /// 从部署环境读取一次性引导凭据；口令可来自 `BOOTSTRAP_ADMIN_PASSWORD` 或其 `_FILE` 变体，但二者不可同时提供非空值。
+    /// Compose 会将未选中的另一来源展开为空串，该空占位不算第二个来源；若两者都缺失或为空仍直接失败。
+    /// 用户名和角色名仍允许使用非敏感默认值；口令读取失败或命中历史公开值也会直接失败。
     pub fn from_env() -> AppResult<Self> {
         Self::from_values(
             env_or_default("BOOTSTRAP_ADMIN_USERNAME", DEFAULT_BOOTSTRAP_ADMIN_USERNAME)?,
-            env_or_default("BOOTSTRAP_ADMIN_PASSWORD", DEFAULT_BOOTSTRAP_ADMIN_PASSWORD)?,
+            required_password_secret()?,
             optional_env("BOOTSTRAP_ADMIN_ROLE_NAME")?,
         )
     }
@@ -62,12 +88,24 @@ impl BootstrapAdminConfig {
     ) -> AppResult<Self> {
         let username = normalize_username(&username)?;
         let password_length = password.chars().count();
+        if password.trim().is_empty() {
+            return Err(AppError::Validation(
+                "BOOTSTRAP_ADMIN_PASSWORD must not be blank".to_owned(),
+            ));
+        }
         if !(BOOTSTRAP_ADMIN_PASSWORD_MIN_CHARS..=BOOTSTRAP_ADMIN_PASSWORD_MAX_CHARS)
             .contains(&password_length)
         {
             return Err(AppError::Validation(format!(
                 "BOOTSTRAP_ADMIN_PASSWORD must be {BOOTSTRAP_ADMIN_PASSWORD_MIN_CHARS}-{BOOTSTRAP_ADMIN_PASSWORD_MAX_CHARS} characters long"
             )));
+        }
+        if hex::encode(Sha256::digest(password.as_bytes()))
+            == KNOWN_DEFAULT_BOOTSTRAP_PASSWORD_SHA256
+        {
+            return Err(AppError::Validation(
+                "BOOTSTRAP_ADMIN_PASSWORD is a known default and must be replaced".to_owned(),
+            ));
         }
 
         let role_name = normalize_role_name(
@@ -154,7 +192,7 @@ pub async fn bootstrap_default_admin(
 /// 在已持有命名锁的连接上开启事务，完成一次幂等的首个管理员创建，返回值区分本次新建还是跳过。
 /// 事务内先用 `FOR UPDATE` 读管理员表首行，只要存在任意一个管理员就提交空事务并跳过，不补建也不覆盖既有账号。
 /// 角色按名称加锁查找，缺失时插入显式 `*` 权限，使首个管理员能完成后续角色与业务配置。
-/// 口令在事务内哈希后写入，新管理员状态直接置为启用；角色与管理员同事务提交，避免中途失败留下孤立角色。
+/// 口令在事务内哈希后写入，新管理员状态直接置为启用并标记首次强制改密；角色与管理员同事务提交，避免中途失败留下孤立角色。
 async fn bootstrap_default_admin_while_locked(
     connection: &mut MySqlConnection,
     config: &BootstrapAdminConfig,
@@ -190,7 +228,7 @@ async fn bootstrap_default_admin_while_locked(
 
     // 任意管理员存在时必须整体跳过；角色与首个管理员也必须同事务提交，避免留下孤立角色。
     sqlx::query(
-        "INSERT INTO admin_users (username, password_hash, role_id, status) VALUES (?, ?, ?, 'active')",
+        "INSERT INTO admin_users (username, password_hash, must_change_password, role_id, status) VALUES (?, ?, TRUE, ?, 'active')",
     )
     .bind(&config.username)
     .bind(password_hash)
@@ -236,6 +274,59 @@ fn env_or_default(name: &str, default: &str) -> AppResult<String> {
     Ok(optional_trimmed(optional_env(name)?).unwrap_or_else(|| default.to_owned()))
 }
 
+/// 读取引导口令的环境变量或 Docker Secret 文件；Compose 为未选中来源注入的空占位被视为未配置。
+/// 两个来源均缺失/空白、同时非空、文件不可读或 Secret 内容为空都返回配置错误，绝不退回固定口令。
+fn required_password_secret() -> AppResult<String> {
+    let direct_raw = optional_env("BOOTSTRAP_ADMIN_PASSWORD")?;
+    let file_raw = optional_env("BOOTSTRAP_ADMIN_PASSWORD_FILE")?;
+    match select_password_source(direct_raw, file_raw)? {
+        BootstrapPasswordSource::Direct(value) => Ok(value),
+        BootstrapPasswordSource::File(path) => {
+            let value = fs::read_to_string(path.trim()).map_err(|error| {
+                AppError::Validation(format!(
+                    "BOOTSTRAP_ADMIN_PASSWORD_FILE could not be read: {error}"
+                ))
+            })?;
+            let value = value.trim_end_matches(['\r', '\n']).to_owned();
+            if value.trim().is_empty() {
+                Err(AppError::Validation(
+                    "BOOTSTRAP_ADMIN_PASSWORD_FILE must not be empty".to_owned(),
+                ))
+            } else {
+                Ok(value)
+            }
+        }
+    }
+}
+
+fn select_password_source(
+    direct_raw: Option<String>,
+    file_raw: Option<String>,
+) -> AppResult<BootstrapPasswordSource> {
+    let direct = direct_raw.as_ref().filter(|value| !value.trim().is_empty());
+    let file = file_raw.as_ref().filter(|value| !value.trim().is_empty());
+    if direct.is_some() && file.is_some() {
+        return Err(AppError::Validation(
+            "set only one of BOOTSTRAP_ADMIN_PASSWORD or BOOTSTRAP_ADMIN_PASSWORD_FILE".to_owned(),
+        ));
+    }
+
+    match (direct, file) {
+        (Some(value), None) => Ok(BootstrapPasswordSource::Direct(value.to_owned())),
+        (None, Some(path)) => Ok(BootstrapPasswordSource::File(path.trim().to_owned())),
+        _ if direct_raw.is_some() && file_raw.is_none() => Err(AppError::Validation(
+            "BOOTSTRAP_ADMIN_PASSWORD must not be blank".to_owned(),
+        )),
+        _ if file_raw.is_some() && direct_raw.is_none() => Err(AppError::Validation(
+            "BOOTSTRAP_ADMIN_PASSWORD_FILE must not be blank".to_owned(),
+        )),
+        _ => Err(AppError::Validation(
+            "BOOTSTRAP_ADMIN_PASSWORD or BOOTSTRAP_ADMIN_PASSWORD_FILE is required and must not be blank"
+                .to_owned(),
+        )),
+    }
+}
+
 /// 裁掉可选文本的首尾空白，并把裁剪后变成空串的输入折叠为 `None`，统一「留空即未配置」的语义。
 /// 该转换只处理空白，不涉及大小写、字符集或长度约束，这些规则由各自的规范化函数负责。
 fn optional_trimmed(value: Option<String>) -> Option<String> {
@@ -261,3 +352,7 @@ fn normalize_role_name(value: &str) -> AppResult<String> {
     }
     Ok(role_name)
 }
+
+#[cfg(test)]
+#[path = "../tests/unit_src/src_bootstrap_tests.rs"]
+mod tests;

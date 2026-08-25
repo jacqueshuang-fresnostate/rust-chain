@@ -18,7 +18,7 @@ pub use domain::{
     amount_fits_asset_precision, asset_amount_fractional_scale, calculate_withdraw_fee,
     create_lock_positions, fixed_time_merge_key, immediate_on_listing_merge_key,
     normalize_withdraw_fee_tiers, truncate_amount_to_asset_precision,
-    verify_locked_balance_invariant,
+    verify_locked_balance_invariant, withdrawal_fee_config_version, withdrawal_quote_fingerprint,
 };
 pub use infrastructure::{MySqlWalletRepository, NewAssetLockPosition, NewAssetLockPositionSource};
 pub use repository::WalletRepository;

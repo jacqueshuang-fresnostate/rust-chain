@@ -14,13 +14,22 @@ use crate::{
     error::{AppError, AppResult},
     modules::{
         margin::{
+            domain::{
+                MarkedCrossMarginPosition, cross_margin_max_transferable,
+                evaluate_marked_cross_margin,
+            },
             infrastructure::{
-                MarginProductSettingRule, insert_margin_transfer,
-                load_margin_transfer_by_idempotency_key, load_margin_transfer_wallet_snapshots,
-                load_user_margin_setting, load_user_margin_setting_from_pool,
-                lock_active_product_setting_rule, resolve_active_transfer_asset,
-                resolve_transfer_asset_id_for_replay, transfer_margin_to_spot_wallets,
-                transfer_spot_to_margin_wallets, upsert_user_margin_setting,
+                MarginProductSettingRule, MarginRiskPositionRow, MarginRiskTicker,
+                apply_margin_to_spot_transfer, apply_spot_to_margin_transfer,
+                cached_margin_risk_ticker, ensure_and_lock_cross_margin_account,
+                insert_margin_transfer, list_user_cross_margin_risk_positions,
+                load_cross_margin_account, load_margin_transfer_by_idempotency_key,
+                load_margin_transfer_wallet_snapshots, load_user_margin_setting,
+                load_user_margin_setting_from_pool, lock_active_product_setting_rule,
+                lock_cross_margin_risk_positions, lock_margin_transfer_wallets,
+                require_active_cross_margin_account, resolve_active_transfer_asset,
+                resolve_transfer_asset_id_for_replay, update_locked_cross_margin_risk,
+                upsert_user_margin_setting,
             },
             presentation::{
                 MarginUserSettingResponse, TransferMarginFundsRequest, TransferMarginFundsResponse,
@@ -31,7 +40,10 @@ use crate::{
     },
 };
 use bigdecimal::BigDecimal;
+use chrono::Utc;
+use redis::aio::ConnectionManager;
 use sqlx::{MySql, Pool};
+use std::collections::BTreeMap;
 use uuid::Uuid;
 /// 在现货与杠杆账户间划转同一资产；账户方向、正金额和资产精度必须先通过校验。
 /// 事务先插入划转记录占用用户幂等键，再由资金层统一按“现货钱包→杠杆钱包”顺序加锁。
@@ -48,6 +60,7 @@ use uuid::Uuid;
 /// 因此返回的是当时的余额而不是当前余额，不会泄漏后续交易造成的变化。
 pub(crate) async fn transfer_margin_funds(
     pool: &Pool<MySql>,
+    redis: Option<&ConnectionManager>,
     user_id: u64,
     request: TransferMarginFundsRequest,
 ) -> AppResult<TransferMarginFundsResponse> {
@@ -82,6 +95,21 @@ pub(crate) async fn transfer_margin_funds(
     {
         return Ok(response);
     }
+    let risk_prefetch = if from == "margin" && to == "spot" {
+        let mut asset_tx = pool.begin().await?;
+        let asset =
+            resolve_active_transfer_asset(&mut asset_tx, asset_id, asset_symbol.as_deref()).await?;
+        if !amount_fits_asset_precision(&amount, asset.precision_scale) {
+            return Err(AppError::Validation(format!(
+                "margin transfer amount supports at most {} decimal places for asset {}",
+                asset.precision_scale, asset.id
+            )));
+        }
+        asset_tx.commit().await?;
+        Some(prefetch_cross_transfer_risk(pool, redis, user_id, asset.id).await?)
+    } else {
+        None
+    };
     let transfer_id = Uuid::now_v7().to_string();
     let mut tx = pool.begin().await?;
     let asset = resolve_active_transfer_asset(&mut tx, asset_id, asset_symbol.as_deref()).await?;
@@ -133,12 +161,90 @@ pub(crate) async fn transfer_margin_funds(
     // 现货账户和杠杆账户的余额变化、两边流水必须同事务提交，避免出现单边扣款或审计缺口。
     let (spot_wallet, margin_wallet) = match (from.as_str(), to.as_str()) {
         ("spot", "margin") => {
-            transfer_spot_to_margin_wallets(&mut tx, user_id, asset.id, &amount, &transfer_id)
-                .await?
+            let wallets = lock_margin_transfer_wallets(&mut tx, user_id, asset.id).await?;
+            apply_spot_to_margin_transfer(
+                &mut tx,
+                user_id,
+                asset.id,
+                &amount,
+                &transfer_id,
+                wallets,
+            )
+            .await?
         }
         ("margin", "spot") => {
-            transfer_margin_to_spot_wallets(&mut tx, user_id, asset.id, &amount, &transfer_id)
-                .await?
+            let prefetch = risk_prefetch.as_ref().ok_or_else(|| {
+                AppError::Internal("cross transfer risk prefetch is required".to_owned())
+            })?;
+            if prefetch.margin_asset != asset.id {
+                return Err(AppError::Conflict(
+                    "margin transfer asset changed during risk prefetch".to_owned(),
+                ));
+            }
+            let account = ensure_and_lock_cross_margin_account(&mut tx, user_id, asset.id).await?;
+            require_active_cross_margin_account(&account)?;
+            if prefetch.account_version.unwrap_or(0) != account.version {
+                return Err(AppError::Conflict(
+                    "cross margin account changed during transfer risk prefetch".to_owned(),
+                ));
+            }
+            let positions = lock_cross_margin_risk_positions(&mut tx, user_id, asset.id).await?;
+            if !same_cross_risk_positions(&prefetch.positions, &positions) {
+                return Err(AppError::Conflict(
+                    "cross margin positions changed during transfer risk prefetch".to_owned(),
+                ));
+            }
+            ensure_transfer_marks_fresh(&prefetch.tickers)?;
+            let wallets = lock_margin_transfer_wallets(&mut tx, user_id, asset.id).await?;
+            // 双钱包锁可能被反向划转长时间占用；取得全部资金锁后必须再校验一次价格时间。
+            ensure_transfer_marks_fresh(&prefetch.tickers)?;
+            let before = evaluate_cross_transfer_risk(
+                wallets.margin_available(),
+                &positions,
+                &prefetch.tickers,
+            )?;
+            let max_transferable =
+                cross_margin_max_transferable(wallets.margin_available(), &before)
+                    .map_err(|message| AppError::Validation(message.to_owned()))?;
+            if amount > max_transferable {
+                return Err(AppError::Validation(format!(
+                    "cross margin transfer exceeds risk maximum: requested {amount}, max_transferable_to_spot {max_transferable}, reason maintenance_margin"
+                )));
+            }
+            let available_after =
+                (wallets.margin_available().clone() - amount.clone()).with_scale(18);
+            let after =
+                evaluate_cross_transfer_risk(&available_after, &positions, &prefetch.tickers)?;
+            if after.equity < after.maintenance_margin {
+                return Err(AppError::Validation(
+                    "cross margin transfer would fall below maintenance margin".to_owned(),
+                ));
+            }
+            let snapshots = apply_margin_to_spot_transfer(
+                &mut tx,
+                user_id,
+                asset.id,
+                &amount,
+                &transfer_id,
+                wallets,
+            )
+            .await?;
+            let observed_at = prefetch
+                .tickers
+                .values()
+                .map(|ticker| ticker.observed_at)
+                .min()
+                .unwrap_or_else(Utc::now);
+            update_locked_cross_margin_risk(
+                &mut tx,
+                user_id,
+                asset.id,
+                account.version,
+                &after,
+                observed_at,
+            )
+            .await?;
+            snapshots
         }
         _ => {
             return Err(AppError::Validation(
@@ -151,6 +257,213 @@ pub(crate) async fn transfer_margin_funds(
         transfer_id,
         spot_wallet,
         margin_wallet,
+    })
+}
+
+struct CrossTransferRiskPrefetch {
+    margin_asset: u64,
+    account_version: Option<u64>,
+    positions: Vec<MarginRiskPositionRow>,
+    tickers: BTreeMap<u64, MarginRiskTicker>,
+}
+
+/// 在取得写锁前按唯一 pair 预取一批新鲜标记价；事务内会再次核对账户版本、仓位集合和价格年龄。
+async fn prefetch_cross_transfer_risk(
+    pool: &Pool<MySql>,
+    redis: Option<&ConnectionManager>,
+    user_id: u64,
+    margin_asset: u64,
+) -> AppResult<CrossTransferRiskPrefetch> {
+    let account = load_cross_margin_account(pool, user_id, margin_asset).await?;
+    if let Some(account) = account.as_ref() {
+        require_active_cross_margin_account(account)?;
+    }
+    let positions = list_user_cross_margin_risk_positions(pool, user_id, margin_asset).await?;
+    let mut symbols = BTreeMap::<u64, String>::new();
+    for position in &positions {
+        if let Some(existing) = symbols.insert(position.pair_id, position.symbol.clone())
+            && existing != position.symbol
+        {
+            return Err(AppError::Internal(format!(
+                "pair {} has inconsistent symbols in cross transfer risk rows",
+                position.pair_id
+            )));
+        }
+    }
+    let mut tickers = BTreeMap::new();
+    for (pair_id, symbol) in symbols {
+        tickers.insert(
+            pair_id,
+            cached_margin_risk_ticker(redis, pair_id, &symbol).await?,
+        );
+    }
+    Ok(CrossTransferRiskPrefetch {
+        margin_asset,
+        account_version: account.map(|account| account.version),
+        positions,
+        tickers,
+    })
+}
+
+fn same_cross_risk_positions(
+    expected: &[MarginRiskPositionRow],
+    locked: &[MarginRiskPositionRow],
+) -> bool {
+    expected.len() == locked.len()
+        && expected.iter().all(|left| {
+            locked.iter().any(|right| {
+                left.id == right.id
+                    && left.pair_id == right.pair_id
+                    && left.symbol == right.symbol
+                    && left.direction == right.direction
+                    && left.margin_amount == right.margin_amount
+                    && left.notional_amount == right.notional_amount
+                    && left.interest_amount == right.interest_amount
+                    && left.entry_price == right.entry_price
+                    && left.maintenance_margin_rate == right.maintenance_margin_rate
+            })
+        })
+}
+
+fn ensure_transfer_marks_fresh(tickers: &BTreeMap<u64, MarginRiskTicker>) -> AppResult<()> {
+    let now = Utc::now();
+    if let Some((pair_id, _)) = tickers.iter().find(|(_, ticker)| ticker.observed_at > now) {
+        return Err(AppError::Validation(format!(
+            "margin transfer risk ticker is from the future for pair {pair_id}"
+        )));
+    }
+    let cutoff = now - chrono::TimeDelta::seconds(60);
+    if let Some((pair_id, _)) = tickers
+        .iter()
+        .find(|(_, ticker)| ticker.observed_at < cutoff)
+    {
+        return Err(AppError::Validation(format!(
+            "margin transfer risk ticker is stale for pair {pair_id}"
+        )));
+    }
+    Ok(())
+}
+
+fn evaluate_cross_transfer_risk(
+    wallet_available: &BigDecimal,
+    positions: &[MarginRiskPositionRow],
+    tickers: &BTreeMap<u64, MarginRiskTicker>,
+) -> AppResult<crate::modules::margin::domain::CrossMarginRiskState> {
+    let mut marked = Vec::with_capacity(positions.len());
+    for position in positions {
+        let entry_price = position.entry_price.as_ref().ok_or_else(|| {
+            AppError::Internal("cross transfer risk position is missing entry price".to_owned())
+        })?;
+        let ticker = tickers.get(&position.pair_id).ok_or_else(|| {
+            AppError::Validation(format!(
+                "margin transfer risk price is unavailable for pair {}",
+                position.pair_id
+            ))
+        })?;
+        marked.push(MarkedCrossMarginPosition {
+            direction: &position.direction,
+            margin_amount: &position.margin_amount,
+            notional_amount: &position.notional_amount,
+            interest_amount: &position.interest_amount,
+            entry_price,
+            mark_price: &ticker.last_price,
+            maintenance_margin_rate: &position.maintenance_margin_rate,
+        });
+    }
+    evaluate_marked_cross_margin(wallet_available, &marked)
+        .map(|evaluated| evaluated.account)
+        .map_err(|message| AppError::Validation(message.to_owned()))
+}
+
+/// 钱包读模型使用的权威转出能力快照；真正提交仍会在事务内重算并校验版本。
+pub(super) struct CrossTransferCapacity {
+    pub(super) max_transferable: BigDecimal,
+    pub(super) block_reason: Option<String>,
+    pub(super) account_version: Option<u64>,
+    pub(super) equity: Option<BigDecimal>,
+    pub(super) maintenance_margin: Option<BigDecimal>,
+    pub(super) observed_at: Option<chrono::DateTime<Utc>>,
+}
+
+/// 计算全仓账户当前可安全转回现货的钱包额度，并生成供查询接口展示的风险快照。
+///
+/// 本方法先读取账户状态和所有全仓持仓，再用同一批经过时效校验的标记价计算权益、维持保证金与
+/// 安全缓冲；行情缺失、过期或账户正在强平时按 fail-closed 返回零额度。这里的结果只用于读模型，
+/// 真正划转仍会在数据库事务取得账户、持仓与钱包锁后重新校验行情及账户版本，避免查询结果被当成授权。
+pub(super) async fn calculate_cross_transfer_capacity(
+    pool: &Pool<MySql>,
+    redis: Option<&ConnectionManager>,
+    user_id: u64,
+    margin_asset: u64,
+    available: &BigDecimal,
+) -> AppResult<CrossTransferCapacity> {
+    let account = load_cross_margin_account(pool, user_id, margin_asset).await?;
+    if let Some(account) = account.as_ref()
+        && account.status != "active"
+    {
+        return Ok(CrossTransferCapacity {
+            max_transferable: BigDecimal::from(0).with_scale(18),
+            block_reason: Some(format!("account_{}", account.status)),
+            account_version: Some(account.version),
+            equity: None,
+            maintenance_margin: None,
+            observed_at: None,
+        });
+    }
+    let prefetch = match prefetch_cross_transfer_risk(pool, redis, user_id, margin_asset).await {
+        Ok(prefetch) => prefetch,
+        Err(AppError::Database(error)) => return Err(AppError::Database(error)),
+        Err(error) => {
+            tracing::warn!(user_id, margin_asset, error = %error, "全仓最大转出额因行情不可用而关闭");
+            return Ok(CrossTransferCapacity {
+                max_transferable: BigDecimal::from(0).with_scale(18),
+                block_reason: Some("price_unavailable".to_owned()),
+                account_version: account.as_ref().map(|account| account.version),
+                equity: None,
+                maintenance_margin: None,
+                observed_at: None,
+            });
+        }
+    };
+    if prefetch.positions.is_empty() {
+        return Ok(CrossTransferCapacity {
+            max_transferable: available.clone().with_scale(18),
+            block_reason: None,
+            account_version: prefetch.account_version,
+            equity: Some(available.clone().with_scale(18)),
+            maintenance_margin: Some(BigDecimal::from(0).with_scale(18)),
+            observed_at: None,
+        });
+    }
+    let risk = match evaluate_cross_transfer_risk(available, &prefetch.positions, &prefetch.tickers)
+    {
+        Ok(risk) => risk,
+        Err(error) => {
+            tracing::warn!(user_id, margin_asset, error = %error, "全仓最大转出额因风险数据异常而关闭");
+            return Ok(CrossTransferCapacity {
+                max_transferable: BigDecimal::from(0).with_scale(18),
+                block_reason: Some("risk_unavailable".to_owned()),
+                account_version: prefetch.account_version,
+                equity: None,
+                maintenance_margin: None,
+                observed_at: None,
+            });
+        }
+    };
+    let max_transferable = cross_margin_max_transferable(available, &risk)
+        .map_err(|message| AppError::Validation(message.to_owned()))?;
+    let block_reason = (max_transferable <= 0).then(|| "maintenance_margin".to_owned());
+    Ok(CrossTransferCapacity {
+        max_transferable,
+        block_reason,
+        account_version: prefetch.account_version,
+        equity: Some(risk.equity),
+        maintenance_margin: Some(risk.maintenance_margin),
+        observed_at: prefetch
+            .tickers
+            .values()
+            .map(|ticker| ticker.observed_at)
+            .min(),
     })
 }
 

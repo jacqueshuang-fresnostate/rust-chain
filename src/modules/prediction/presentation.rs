@@ -189,6 +189,11 @@ pub(crate) struct PredictionMarketResponse {
     pub(crate) fee_rate_override: Option<BigDecimal>,
     #[serde(default, with = "option_unix_millis")]
     pub(crate) last_synced_at: Option<DateTime<Utc>>,
+    /// 每次上游刷新或本地关盘都会递增，quote 消费必须与创建时版本一致。
+    pub(crate) market_version: u64,
+    /// 本地 DB 时间关盘时刻；未到期或由上游先关闭时可为空。
+    #[serde(default, with = "option_unix_millis")]
+    pub(crate) locally_closed_at: Option<DateTime<Utc>>,
     #[serde(with = "unix_millis")]
     pub(crate) created_at: DateTime<Utc>,
     #[serde(with = "unix_millis")]
@@ -238,6 +243,9 @@ pub(crate) struct PredictionQuoteResponse {
     pub(crate) shares: BigDecimal,
     pub(crate) theoretical_payout: BigDecimal,
     pub(crate) effective_payout_cap: BigDecimal,
+    pub(crate) market_version: u64,
+    #[serde(with = "unix_millis")]
+    pub(crate) market_last_synced_at: DateTime<Utc>,
     #[serde(with = "unix_millis")]
     pub(crate) expires_at: DateTime<Utc>,
 }
@@ -401,6 +409,8 @@ impl From<PredictionMarketRow> for PredictionMarketResponse {
             payout_cap_overrides_json: row.payout_cap_overrides_json.map(SqlxJson),
             fee_rate_override: row.fee_rate_override,
             last_synced_at: row.last_synced_at,
+            market_version: row.market_version,
+            locally_closed_at: row.locally_closed_at,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }

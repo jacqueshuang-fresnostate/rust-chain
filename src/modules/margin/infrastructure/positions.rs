@@ -386,26 +386,6 @@ pub(crate) async fn set_margin_position_wallet_scope(
     Ok(())
 }
 
-/// 确保全仓账户存在；账户按用户和保证金资产唯一，避免不同交易对各自分账。
-/// 用 INSERT ... ON DUPLICATE KEY UPDATE 把状态重置为 active，因此曾被强平置为其他状态的账户
-/// 会在再次开全仓时自动恢复可用，同时这条语句天然幂等，并发或重放都不会产生第二行。
-/// 只保证账户行存在，不初始化任何权益字段，那些 `last_` 列由强平 worker 后续刷新。
-/// 只有全仓开仓才调用它，逐仓不需要账户级聚合。
-pub(crate) async fn ensure_cross_margin_account(
-    tx: &mut Transaction<'_, MySql>,
-    user_id: u64,
-    margin_asset: u64,
-) -> AppResult<()> {
-    sqlx::query(
-        "INSERT INTO margin_cross_accounts (user_id, margin_asset) VALUES (?, ?) ON DUPLICATE KEY UPDATE status = 'active'",
-    )
-    .bind(user_id)
-    .bind(margin_asset)
-    .execute(&mut **tx)
-    .await?;
-    Ok(())
-}
-
 /// 按用户和仓位标识执行 FOR UPDATE，固定关闭或取消前的状态与资金来源。
 /// 未命中返回空；调用方必须先锁仓位再锁钱包，并在同一事务更新终态。
 ///

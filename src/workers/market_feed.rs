@@ -9,28 +9,36 @@
 
 use crate::{
     config::Settings,
-    error::AppResult,
-    modules::market::adapters::{
-        MarketFeedChannel, MarketFeedConfig, MarketFeedFrame, MarketFeedProvider,
-        MarketFeedRestFallbackConfig, MarketFeedRestFallbackHttpClient, MarketFeedSummary,
-        MarketFeedWorker, MarketIngestionService, MarketIngestionSink,
-        ReqwestMarketFeedRestFallbackHttpClient,
+    error::{AppError, AppResult},
+    modules::market::{
+        MarketDataProvider, MarketDepthSnapshot, MarketKlineSnapshot, MarketTickerSnapshot,
+        adapters::{
+            MarketFeedChannel, MarketFeedConfig, MarketFeedFrame, MarketFeedProvider,
+            MarketFeedRestFallbackConfig, MarketFeedRestFallbackHttpClient, MarketFeedSummary,
+            MarketFeedWorker, MarketIngestionService, MarketIngestionSink,
+            ReqwestMarketFeedRestFallbackHttpClient,
+        },
     },
     state::AppState,
 };
+use axum::async_trait;
 use flate2::read::GzDecoder;
-use futures_util::{Sink, SinkExt, Stream, StreamExt};
+use futures_util::{FutureExt, Sink, SinkExt, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::Digest;
 use std::{
     future::{Future, pending},
     io::Read,
-    pin::Pin,
-    sync::Arc,
+    panic::AssertUnwindSafe,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 use tokio::{
-    sync::RwLock,
-    task::JoinHandle,
+    sync::{Mutex, RwLock},
+    task::{JoinHandle, JoinSet},
     time::{
         Duration, Instant, Interval, MissedTickBehavior, interval_at, sleep, sleep_until, timeout,
     },
@@ -39,12 +47,163 @@ use tokio_tungstenite::{
     connect_async,
     tungstenite::{self, Message},
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 const BITGET_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(25);
 const MARKET_FEED_INBOUND_IDLE_TIMEOUT: Duration = Duration::from_secs(75);
 const MARKET_FEED_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const MARKET_FEED_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// 行情 generation 围栏；所有外部写入前必须确认绑定 generation 仍是当前值。
+#[derive(Debug, Clone, Default)]
+struct MarketFeedGenerationFence {
+    active: Arc<RwLock<u64>>,
+}
+
+impl MarketFeedGenerationFence {
+    /// 取排他锁切换 generation；必须等待所有旧代写许可释放后才能返回。
+    async fn activate(&self, generation: u64) {
+        *self.active.write().await = generation;
+    }
+
+    /// 取当前 generation 的共享写许可；调用方必须持有 guard 跨越整个外部副作用。
+    /// 这使“检查围栏”与“写 MySQL/Redis/Mongo”不再存在 reload 可插入的空档。
+    async fn enter(&self, generation: u64) -> AppResult<tokio::sync::OwnedRwLockReadGuard<u64>> {
+        let guard = self.active.clone().read_owned().await;
+        if *guard == generation {
+            Ok(guard)
+        } else {
+            Err(AppError::Conflict(format!(
+                "stale market feed generation {generation} is fenced"
+            )))
+        }
+    }
+}
+
+/// 把一次完整的行情副作用绑定到 generation。
+/// WebSocket 与 REST 路径都持有该许可直到存储和实时事件发布全部返回，
+/// 因此 reload 的排他切换不能插入在“已写 Redis/Mongo、尚未发 event”之间。
+#[derive(Clone)]
+struct MarketFeedWriteFence {
+    generation: u64,
+    fence: MarketFeedGenerationFence,
+}
+
+impl MarketFeedWriteFence {
+    fn new(generation: u64, fence: MarketFeedGenerationFence) -> Self {
+        Self { generation, fence }
+    }
+
+    async fn enter(&self) -> AppResult<tokio::sync::OwnedRwLockReadGuard<u64>> {
+        self.fence.enter(self.generation).await
+    }
+}
+
+/// 为一个 generation 包装真实摄取器：ticker 先归档 MySQL 历史，再写 Redis/Mongo/事件链。
+#[derive(Clone)]
+struct GenerationBoundMarketIngestionSink {
+    inner: MarketIngestionService,
+    mysql: sqlx::Pool<sqlx::MySql>,
+    generation: u64,
+    fence: MarketFeedGenerationFence,
+}
+
+impl GenerationBoundMarketIngestionSink {
+    fn from_state(
+        state: &AppState,
+        generation: u64,
+        fence: MarketFeedGenerationFence,
+    ) -> AppResult<Self> {
+        let mysql = state.mysql.clone().ok_or_else(|| {
+            AppError::Internal("mysql is required for replayable market feed history".to_owned())
+        })?;
+        Ok(Self {
+            inner: MarketIngestionService::from_state(state)?,
+            mysql,
+            generation,
+            fence,
+        })
+    }
+
+    fn source(provider: MarketDataProvider) -> &'static str {
+        match provider {
+            MarketDataProvider::Bitget => "bitget",
+            MarketDataProvider::Htx => "htx",
+            MarketDataProvider::Coinbase => "coinbase",
+            MarketDataProvider::Strategy => "strategy",
+        }
+    }
+
+    async fn archive_ticker(&self, snapshot: &MarketTickerSnapshot) -> AppResult<()> {
+        if self.generation == 0 {
+            return Err(AppError::Validation(
+                "market feed history generation must be positive".to_owned(),
+            ));
+        }
+        if snapshot.last_price() <= &bigdecimal::BigDecimal::from(0) {
+            return Err(AppError::Validation(
+                "market feed history price must be positive".to_owned(),
+            ));
+        }
+        let source = Self::source(snapshot.provider());
+        let symbol = snapshot
+            .symbol()
+            .trim()
+            .chars()
+            .filter(|character| !matches!(character, '-' | '/' | '_'))
+            .flat_map(char::to_uppercase)
+            .collect::<String>();
+        if symbol.is_empty() {
+            return Err(AppError::Validation(
+                "market feed history symbol is required".to_owned(),
+            ));
+        }
+        let canonical = format!(
+            "{}|{}|{}|{}",
+            source,
+            symbol,
+            snapshot.observed_at().timestamp_micros(),
+            snapshot.last_price().normalized()
+        );
+        let event_key = hex::encode(sha2::Sha256::digest(canonical.as_bytes()));
+        sqlx::query(
+            r#"INSERT INTO market_price_ticks
+               (event_key, symbol, price, source, observed_at, generation, source_version)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE event_key = VALUES(event_key)"#,
+        )
+        .bind(&event_key)
+        .bind(&symbol)
+        .bind(snapshot.last_price())
+        .bind(source)
+        .bind(snapshot.observed_at().naive_utc())
+        .bind(self.generation)
+        .bind(&event_key)
+        .execute(&self.mysql)
+        .await?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl MarketIngestionSink for GenerationBoundMarketIngestionSink {
+    async fn ingest_ticker(&self, snapshot: &MarketTickerSnapshot) -> AppResult<()> {
+        let _permit = self.fence.enter(self.generation).await?;
+        self.archive_ticker(snapshot).await?;
+        self.inner.ingest_ticker(snapshot).await
+    }
+
+    async fn ingest_depth(&self, snapshot: &MarketDepthSnapshot) -> AppResult<()> {
+        let _permit = self.fence.enter(self.generation).await?;
+        self.inner.ingest_depth(snapshot).await
+    }
+
+    async fn ingest_kline(&self, snapshot: &MarketKlineSnapshot) -> AppResult<()> {
+        let _permit = self.fence.enter(self.generation).await?;
+        self.inner.ingest_kline(snapshot).await
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarketFeedRuntimeConfig {
@@ -144,6 +303,8 @@ impl MarketFeedRuntimeConfig {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MarketFeedRuntimeStatus {
     pub applied_version: Option<u64>,
+    pub generation: u64,
+    pub ready: bool,
     pub symbols: Vec<String>,
     pub intervals: Vec<String>,
     pub providers: Vec<String>,
@@ -154,21 +315,72 @@ pub struct MarketFeedRuntimeStatus {
 #[derive(Clone)]
 pub struct MarketFeedSupervisorHandle {
     state: Arc<RwLock<MarketFeedSupervisorState>>,
+    operation_lock: Arc<Mutex<()>>,
+    generation_counter: Arc<AtomicU64>,
+    fence: MarketFeedGenerationFence,
+    runner: Arc<dyn MarketFeedGenerationRunner>,
 }
 
 struct MarketFeedSupervisorState {
     status: MarketFeedRuntimeStatus,
-    task: Option<JoinHandle<()>>,
+    task: Option<MarketFeedGenerationTask>,
+}
+
+struct MarketFeedGenerationTask {
+    generation: u64,
+    cancellation: CancellationToken,
+    handle: JoinHandle<()>,
+}
+
+#[async_trait]
+trait MarketFeedGenerationRunner: Send + Sync {
+    /// 运行一个指定代际的完整行情 provider 集合，直到收到取消信号或任一受监督任务失败。
+    ///
+    /// 实现必须让所有持久化与事件发布持有对应 generation fence 许可，并在返回前 drain、join 全部子任务；
+    /// reload/disable 依赖这一完成语义，确保旧代际不会在新配置生效后继续写 MySQL、Redis、Mongo 或事件总线。
+    async fn run(
+        &self,
+        state: AppState,
+        config: MarketFeedRuntimeConfig,
+        generation: u64,
+        fence: MarketFeedGenerationFence,
+        cancellation: CancellationToken,
+    ) -> AppResult<()>;
+}
+
+struct DefaultMarketFeedGenerationRunner;
+
+#[async_trait]
+impl MarketFeedGenerationRunner for DefaultMarketFeedGenerationRunner {
+    /// 使用生产行情循环执行指定代际，并把结构化并发、取消与写入围栏参数原样传入底层编排器。
+    async fn run(
+        &self,
+        state: AppState,
+        config: MarketFeedRuntimeConfig,
+        generation: u64,
+        fence: MarketFeedGenerationFence,
+        cancellation: CancellationToken,
+    ) -> AppResult<()> {
+        run_config_loop_with_generation(state, config, generation, fence, cancellation).await
+    }
 }
 
 impl MarketFeedSupervisorHandle {
     /// 创建尚未应用任何版本且没有后台任务的行情监督器；首个有效配置必须经 reload 校验后才进入运行状态。
     pub fn new() -> Self {
+        Self::with_runner(Arc::new(DefaultMarketFeedGenerationRunner))
+    }
+
+    fn with_runner(runner: Arc<dyn MarketFeedGenerationRunner>) -> Self {
         Self {
             state: Arc::new(RwLock::new(MarketFeedSupervisorState {
                 status: MarketFeedRuntimeStatus::default(),
                 task: None,
             })),
+            operation_lock: Arc::new(Mutex::new(())),
+            generation_counter: Arc::new(AtomicU64::new(0)),
+            fence: MarketFeedGenerationFence::default(),
+            runner,
         }
     }
 
@@ -177,69 +389,141 @@ impl MarketFeedSupervisorHandle {
         Self::new()
     }
 
+    #[cfg(test)]
+    fn with_runner_for_tests(runner: Arc<dyn MarketFeedGenerationRunner>) -> Self {
+        Self::with_runner(runner)
+    }
+
     /// 取得当前已应用配置版本及最近 reload 结果的一致快照，供管理端扫描状态；读取不会启动、停止或重试任务。
     pub async fn status(&self) -> MarketFeedRuntimeStatus {
         self.state.read().await.status.clone()
     }
 
-    /// 应用一个版本化行情配置：先用 adapter 校验新订阅矩阵并启动新监督任务，再在写锁内中止旧任务、替换句柄并发布成功状态。
-    /// 禁用配置直接停止旧任务并记 skipped；校验失败发生在替换前，旧任务继续运行，调用方可另行用 `record_failure` 暴露错误。
+    /// 串行应用版本化配置：先校验，再 cancel/join 旧 generation，最后切换围栏并启动新代。
     pub async fn reload(
         &self,
         state: AppState,
         config: MarketFeedRuntimeConfig,
         version: u64,
     ) -> AppResult<MarketFeedRuntimeStatus> {
-        if !config.enabled() {
-            self.stop().await;
+        let _operation = self.operation_lock.lock().await;
+        if config.enabled() {
+            let symbol_refs: Vec<&str> = config.symbols().iter().map(String::as_str).collect();
+            let interval_refs: Vec<&str> = config.intervals().iter().map(String::as_str).collect();
+            MarketFeedWorker::<MarketIngestionService>::provider_configs_for(
+                &state.settings,
+                config.providers(),
+                &symbol_refs,
+                &interval_refs,
+            )?;
+        }
+        let generation = self.generation_counter.fetch_add(1, Ordering::SeqCst) + 1;
+        self.shutdown_active_generation(generation).await;
+        let status_name = if config.enabled() {
+            "success"
+        } else {
+            "skipped"
+        };
+        {
             let mut guard = self.state.write().await;
-            guard.status = runtime_status_from_config(&config, version, "skipped", None);
-            return Ok(guard.status.clone());
+            guard.status = runtime_status_from_config(
+                &config,
+                version,
+                generation,
+                config.enabled(),
+                status_name,
+                None,
+            );
         }
-        let startup_config = config.clone();
-        MarketFeedWorker::<MarketIngestionService>::provider_configs_for(
-            &state.settings,
-            startup_config.providers(),
-            &startup_config
-                .symbols()
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>(),
-            &startup_config
-                .intervals()
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>(),
-        )?;
-        let worker_state = state.clone();
-        let task_config = config.clone();
-        let task = tokio::spawn(async move {
-            if let Err(error) = run_config_loop(worker_state, task_config).await {
-                tracing::error!(%error, "行情订阅受控循环已停止");
-            }
-        });
-        let mut guard = self.state.write().await;
-        if let Some(previous) = guard.task.take() {
-            previous.abort();
+        if config.enabled() {
+            self.spawn_generation(state, config, generation).await;
         }
-        guard.task = Some(task);
-        guard.status = runtime_status_from_config(&config, version, "success", None);
-        Ok(guard.status.clone())
+        Ok(self.state.read().await.status.clone())
     }
 
-    /// 中止当前行情任务并把最近 reload 状态记为跳过；保留已应用版本和配置快照、清除旧错误，表达受控停机而非供应商故障。
+    /// cancel 并等待当前 generation 完整退出，再推进到新的禁用 generation。
     pub async fn stop(&self) {
+        let _operation = self.operation_lock.lock().await;
+        let generation = self.generation_counter.fetch_add(1, Ordering::SeqCst) + 1;
+        self.shutdown_active_generation(generation).await;
         let mut guard = self.state.write().await;
-        if let Some(task) = guard.task.take() {
-            task.abort();
-        }
+        guard.status.generation = generation;
+        guard.status.ready = false;
         guard.status.last_reload_status = Some("skipped".to_owned());
         guard.status.last_reload_error = None;
+    }
+
+    async fn spawn_generation(
+        &self,
+        state: AppState,
+        config: MarketFeedRuntimeConfig,
+        generation: u64,
+    ) {
+        let cancellation = CancellationToken::new();
+        let task_cancellation = cancellation.clone();
+        let runner = self.runner.clone();
+        let fence = self.fence.clone();
+        let supervisor_state = self.state.clone();
+        let handle = tokio::spawn(async move {
+            let outcome = AssertUnwindSafe(runner.run(
+                state,
+                config,
+                generation,
+                fence,
+                task_cancellation.clone(),
+            ))
+            .catch_unwind()
+            .await;
+            let failure = match outcome {
+                Ok(Ok(())) if task_cancellation.is_cancelled() => None,
+                Ok(Ok(())) => Some("market feed generation stopped unexpectedly".to_owned()),
+                Ok(Err(error)) if task_cancellation.is_cancelled() => {
+                    tracing::debug!(generation, %error, "行情 generation 取消后结束");
+                    None
+                }
+                Ok(Err(error)) => Some(error.to_string()),
+                Err(_) => Some("market feed generation panicked".to_owned()),
+            };
+            if let Some(error) = failure {
+                tracing::error!(generation, %error, "行情 generation 失败并退出");
+                let mut guard = supervisor_state.write().await;
+                if guard.status.generation == generation {
+                    guard.status.ready = false;
+                    guard.status.last_reload_status = Some("failed".to_owned());
+                    guard.status.last_reload_error = Some(error);
+                }
+            }
+        });
+        self.state.write().await.task = Some(MarketFeedGenerationTask {
+            generation,
+            cancellation,
+            handle,
+        });
+    }
+
+    async fn shutdown_active_generation(&self, next_generation: u64) {
+        // 先 cancel 并 join 旧父子任务，保证旧代不会在新代就绪后补发 event。
+        // 围栏的排他切换又会等待任何在途存储写许可，因此不存在 check/write 窗口。
+        let task = self.state.write().await.task.take();
+        if let Some(task) = task {
+            task.cancellation.cancel();
+            if let Err(error) = task.handle.await {
+                tracing::error!(
+                    generation = task.generation,
+                    %error,
+                    "行情 generation join 失败"
+                );
+            }
+        }
+        self.fence.activate(next_generation).await;
     }
 
     /// 记录配置扫描或 reload 失败供管理端诊断；保留上一次已应用版本和任务句柄，不把一次扫描错误误当成已成功切换。
     pub async fn record_failure(&self, error: String) -> MarketFeedRuntimeStatus {
         let mut guard = self.state.write().await;
+        if guard.task.is_none() {
+            guard.status.ready = false;
+        }
         guard.status.last_reload_status = Some("failed".to_owned());
         guard.status.last_reload_error = Some(error);
         guard.status.clone()
@@ -251,8 +535,11 @@ impl MarketFeedSupervisorHandle {
         config: MarketFeedRuntimeConfig,
         version: u64,
     ) -> AppResult<MarketFeedRuntimeStatus> {
+        let generation = self.generation_counter.fetch_add(1, Ordering::SeqCst) + 1;
+        self.fence.activate(generation).await;
         let mut guard = self.state.write().await;
-        guard.status = runtime_status_from_config(&config, version, "success", None);
+        guard.status =
+            runtime_status_from_config(&config, version, generation, false, "success", None);
         Ok(guard.status.clone())
     }
 }
@@ -271,11 +558,15 @@ impl Default for MarketFeedSupervisorHandle {
 fn runtime_status_from_config(
     config: &MarketFeedRuntimeConfig,
     version: u64,
+    generation: u64,
+    ready: bool,
     status: &str,
     error: Option<String>,
 ) -> MarketFeedRuntimeStatus {
     MarketFeedRuntimeStatus {
         applied_version: Some(version),
+        generation,
+        ready,
         symbols: config.symbols().to_vec(),
         intervals: config.intervals().to_vec(),
         providers: config
@@ -655,6 +946,18 @@ pub async fn run_config_once(state: &AppState, config: &MarketFeedRuntimeConfig)
 /// 单供应商失败按配置基准做有上限退避并继续，不影响其他供应商；若任一监督任务异常结束则本入口返回错误，交由上层配置 supervisor 标记失败。
 /// 每个有效帧在 ingestion 时写 Redis/Mongo、outbox 并广播，任务间没有跨供应商事务，前序持久化不会因后续连接故障回滚。
 pub async fn run_config_loop(state: AppState, config: MarketFeedRuntimeConfig) -> AppResult<()> {
+    let fence = MarketFeedGenerationFence::default();
+    fence.activate(1).await;
+    run_config_loop_with_generation(state, config, 1, fence, CancellationToken::new()).await
+}
+
+async fn run_config_loop_with_generation(
+    state: AppState,
+    config: MarketFeedRuntimeConfig,
+    generation: u64,
+    fence: MarketFeedGenerationFence,
+    cancellation: CancellationToken,
+) -> AppResult<()> {
     if !config.enabled() {
         return Ok(());
     }
@@ -674,88 +977,90 @@ pub async fn run_config_loop(state: AppState, config: MarketFeedRuntimeConfig) -
             &interval_refs,
         )?;
     let reconnect_delay = Duration::from_secs(config.reconnect_seconds());
-    let mut tasks = Vec::with_capacity(provider_configs.len());
+    let mut tasks = JoinSet::new();
     for (provider_config, rest_fallback_config) in
         provider_configs.into_iter().zip(rest_fallback_configs)
     {
         let state = state.clone();
         let provider = provider_config.provider();
-        tasks.push(MarketFeedProviderTask::spawn(provider, async move {
-            run_provider_reconnect_loop(
+        let task_cancellation = cancellation.clone();
+        let task_fence = fence.clone();
+        tasks.spawn(async move {
+            let future = run_provider_reconnect_loop(
                 state,
                 provider_config,
                 rest_fallback_config,
                 reconnect_delay,
-            )
-            .await
-        }));
+                generation,
+                task_fence,
+                task_cancellation,
+            );
+            let result = AssertUnwindSafe(future).catch_unwind().await;
+            let result = match result {
+                Ok(result) => result,
+                Err(_) => Err(AppError::Internal(format!(
+                    "market feed provider {} panicked",
+                    provider.code()
+                ))),
+            };
+            (provider, result)
+        });
     }
-
-    await_market_feed_provider_tasks(tasks, emit_market_feed_supervisor_event).await
-}
-
-struct MarketFeedProviderTask {
-    provider: MarketFeedProvider,
-    handle: Pin<Box<tokio::task::JoinHandle<AppResult<()>>>>,
-}
-
-impl MarketFeedProviderTask {
-    /// 把某个供应商的重连循环交给 tokio 执行，并把供应商标识与任务句柄绑定在一起。
-    /// 绑定后即使任务异常终止也能定位到具体供应商；句柄固定在堆上，便于后续轮询它的完成状态。
-    fn spawn<F>(provider: MarketFeedProvider, future: F) -> Self
-    where
-        F: Future<Output = AppResult<()>> + Send + 'static,
-    {
-        Self {
-            provider,
-            handle: Box::pin(tokio::spawn(future)),
-        }
-    }
-}
-
-/// 轮询等待多个供应商任务，只要有一个结束就取出它的结果，并把该结果作为整个等待的结果返回。
-/// 轮询间隔固定 10 毫秒，用 swap_remove 摘出已完成项，因此剩余任务的相对顺序不保证稳定。
-/// 正常运行时重连循环不会自行退出，任何一个结束都说明该供应商出了问题；本函数只等待，不主动中止其余任务。
-async fn await_market_feed_provider_tasks<F>(
-    mut tasks: Vec<MarketFeedProviderTask>,
-    mut emit_event: F,
-) -> AppResult<()>
-where
-    F: FnMut(MarketFeedSupervisorEvent),
-{
-    while !tasks.is_empty() {
-        for index in 0..tasks.len() {
-            if tasks[index].handle.as_mut().is_finished() {
-                let task = tasks.swap_remove(index);
-                return await_finished_market_feed_provider_task(task, &mut emit_event).await;
+    tokio::select! {
+        _ = cancellation.cancelled() => {
+            while let Some(joined) = tasks.join_next().await {
+                if let Err(error) = joined {
+                    tracing::warn!(generation, %error, "取消行情 provider 时 join 失败");
+                }
             }
+            Ok(())
         }
-        sleep(Duration::from_millis(10)).await;
-    }
-    Ok(())
-}
-
-/// 取回已结束供应商任务的结果，并区分业务错误与 tokio 侧任务失败两种情况。
-/// 任务自身返回的错误原样上抛；join 失败说明任务 panic 或被中止，此时先发出监督事件再包装成内部错误。
-/// 事件里带上供应商标识，使日志能够直接定位是哪一家的连接任务异常终止。
-async fn await_finished_market_feed_provider_task<F>(
-    task: MarketFeedProviderTask,
-    emit_event: &mut F,
-) -> AppResult<()>
-where
-    F: FnMut(MarketFeedSupervisorEvent),
-{
-    match task.handle.await {
-        Ok(result) => result,
-        Err(error) => {
-            let error = error.to_string();
-            emit_event(MarketFeedSupervisorEvent::ProviderTaskFailed {
-                provider: task.provider,
-                error: error.clone(),
+        joined = tasks.join_next() => {
+            let Some(joined) = joined else {
+                return Err(AppError::Internal(
+                    "market feed generation has no provider tasks".to_owned(),
+                ));
+            };
+            let (provider, result) = match joined {
+                Ok(joined) => joined,
+                Err(join_error) => {
+                    cancellation.cancel();
+                    while let Some(joined) = tasks.join_next().await {
+                        if let Err(error) = joined {
+                            tracing::warn!(generation, %error, "join 失败后回收行情 provider 任务时再次失败");
+                        }
+                    }
+                    return Err(AppError::Internal(format!(
+                        "market feed provider join failed: {join_error}"
+                    )));
+                }
+            };
+            let error = match result {
+                Ok(()) if cancellation.is_cancelled() => {
+                    while let Some(joined) = tasks.join_next().await {
+                        if let Err(join_error) = joined {
+                            tracing::warn!(generation, %join_error, "取消后回收行情 provider 任务时 join 失败");
+                        }
+                    }
+                    return Ok(());
+                }
+                Ok(()) => AppError::Internal(format!(
+                    "market feed provider {} stopped unexpectedly",
+                    provider.code()
+                )),
+                Err(error) => error,
+            };
+            emit_market_feed_supervisor_event(MarketFeedSupervisorEvent::ProviderTaskFailed {
+                provider,
+                error: error.to_string(),
             });
-            Err(crate::error::AppError::Internal(format!(
-                "market feed provider task failed: {error}"
-            )))
+            cancellation.cancel();
+            while let Some(joined) = tasks.join_next().await {
+                if let Err(join_error) = joined {
+                    tracing::warn!(generation, %join_error, "失败后回收行情 provider 任务时 join 失败");
+                }
+            }
+            Err(error)
         }
     }
 }
@@ -787,18 +1092,53 @@ async fn run_once_with_providers(
         symbols,
         intervals,
     )?;
-    let mut handles = Vec::with_capacity(configs.len());
+    let cancellation = CancellationToken::new();
+    let fence = MarketFeedGenerationFence::default();
+    fence.activate(1).await;
+    let mut tasks = JoinSet::new();
     for config in configs {
         let state = state.clone();
-        handles.push(tokio::spawn(async move {
-            run_provider_once(state, config).await
-        }));
+        let cancellation = cancellation.clone();
+        let fence = fence.clone();
+        tasks.spawn(async move {
+            tokio::select! {
+                _ = cancellation.cancelled() => Ok(()),
+                result = run_provider_once_with_generation(
+                    state,
+                    config,
+                    1,
+                    fence,
+                    cancellation.clone(),
+                ) => result,
+            }
+        });
     }
 
-    for handle in handles {
-        handle.await.map_err(|error| {
+    while let Some(joined) = tasks.join_next().await {
+        let result = joined.map_err(|error| {
             crate::error::AppError::Internal(format!("market feed provider task failed: {error}"))
-        })??;
+        });
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                cancellation.cancel();
+                while let Some(joined) = tasks.join_next().await {
+                    if let Err(join_error) = joined {
+                        warn!(%join_error, "回收行情 provider 单次任务时 join 失败");
+                    }
+                }
+                return Err(error);
+            }
+            Err(error) => {
+                cancellation.cancel();
+                while let Some(joined) = tasks.join_next().await {
+                    if let Err(join_error) = joined {
+                        warn!(%join_error, "回收行情 provider 单次任务时 join 失败");
+                    }
+                }
+                return Err(error);
+            }
+        }
     }
     Ok(())
 }
@@ -811,19 +1151,39 @@ async fn run_provider_reconnect_loop(
     config: MarketFeedConfig,
     rest_fallback_config: MarketFeedRestFallbackConfig,
     reconnect_delay: Duration,
+    generation: u64,
+    fence: MarketFeedGenerationFence,
+    cancellation: CancellationToken,
 ) -> AppResult<()> {
     let http_client = rest_fallback_http_client(&state.settings);
-    run_provider_reconnect_loop_with(
+    let run_fence = fence.clone();
+    let build_fence = fence.clone();
+    let rest_write_fence = fence.clone();
+    let socket_cancellation = cancellation.clone();
+    run_provider_reconnect_loop_with_cancellation(
         state,
         config,
         reconnect_delay,
-        run_provider_once,
+        move |state, config| {
+            run_provider_once_with_generation(
+                state,
+                config,
+                generation,
+                run_fence.clone(),
+                socket_cancellation.clone(),
+            )
+        },
         MarketFeedRestFallbackRuntime::new(
             rest_fallback_config,
-            |state| async move { MarketFeedWorker::<MarketIngestionService>::from_state(&state) },
+            move |state| {
+                let fence = build_fence.clone();
+                async move { market_feed_worker_for_generation(&state, generation, fence) }
+            },
             http_client,
-        ),
+        )
+        .with_generation_fence(generation, rest_write_fence),
         emit_market_feed_supervisor_event,
+        cancellation,
     )
     .await
 }
@@ -875,6 +1235,7 @@ struct MarketFeedRestFallbackRuntime<B, C> {
     config: MarketFeedRestFallbackConfig,
     build_worker: B,
     http_client: C,
+    write_fence: Option<MarketFeedWriteFence>,
 }
 
 impl<B, C> MarketFeedRestFallbackRuntime<B, C> {
@@ -885,7 +1246,14 @@ impl<B, C> MarketFeedRestFallbackRuntime<B, C> {
             config,
             build_worker,
             http_client,
+            write_fence: None,
         }
+    }
+
+    /// 生产代际路径在 REST 全轮摄取期间持有共享许可，保护最后一次 event 发布。
+    fn with_generation_fence(mut self, generation: u64, fence: MarketFeedGenerationFence) -> Self {
+        self.write_fence = Some(MarketFeedWriteFence::new(generation, fence));
+        self
     }
 }
 
@@ -894,35 +1262,79 @@ impl<B, C> MarketFeedRestFallbackRuntime<B, C> {
 /// 并把下一轮延迟翻倍直到封顶 60 秒。无论成败都会在轮末等待该延迟，因此成功也不会形成忙循环。
 /// 循环没有正常退出分支，只会随任务被中止而结束；本函数不判断兜底是否可用，也不改写行情写入结果。
 /// 执行函数、worker 构造器、HTTP 客户端与事件回调都由调用方注入，便于在测试中替换而不接触真实网络。
-async fn run_provider_reconnect_loop_with<F, Fut, B, BuildFut, C, E>(
+#[cfg(test)]
+async fn run_provider_reconnect_loop_with<S, F, Fut, B, BuildFut, C, E>(
+    state: AppState,
+    config: MarketFeedConfig,
+    reconnect_delay: Duration,
+    run_provider: F,
+    fallback: MarketFeedRestFallbackRuntime<B, C>,
+    emit_event: E,
+) -> AppResult<()>
+where
+    S: MarketIngestionSink,
+    F: FnMut(AppState, MarketFeedConfig) -> Fut,
+    Fut: Future<Output = AppResult<()>>,
+    B: FnMut(AppState) -> BuildFut,
+    BuildFut: Future<Output = AppResult<MarketFeedWorker<S>>>,
+    C: MarketFeedRestFallbackHttpClient,
+    E: FnMut(MarketFeedSupervisorEvent),
+{
+    run_provider_reconnect_loop_with_cancellation(
+        state,
+        config,
+        reconnect_delay,
+        run_provider,
+        fallback,
+        emit_event,
+        CancellationToken::new(),
+    )
+    .await
+}
+
+async fn run_provider_reconnect_loop_with_cancellation<S, F, Fut, B, BuildFut, C, E>(
     state: AppState,
     config: MarketFeedConfig,
     reconnect_delay: Duration,
     mut run_provider: F,
     mut fallback: MarketFeedRestFallbackRuntime<B, C>,
     mut emit_event: E,
+    cancellation: CancellationToken,
 ) -> AppResult<()>
 where
+    S: MarketIngestionSink,
     F: FnMut(AppState, MarketFeedConfig) -> Fut,
     Fut: Future<Output = AppResult<()>>,
     B: FnMut(AppState) -> BuildFut,
-    BuildFut: Future<Output = AppResult<MarketFeedWorker<MarketIngestionService>>>,
+    BuildFut: Future<Output = AppResult<MarketFeedWorker<S>>>,
     C: MarketFeedRestFallbackHttpClient,
     E: FnMut(MarketFeedSupervisorEvent),
 {
     let mut backoff = MarketFeedReconnectBackoff::new(reconnect_delay);
     loop {
         let delay = backoff.next_delay();
-        match run_provider_cycle_with_rest_fallback(
+        let write_fence = fallback.write_fence.clone();
+        let cycle = run_provider_cycle_with_rest_fallback_guarded(
             state.clone(),
             config.clone(),
             fallback.config.clone(),
             fallback.http_client.clone(),
             &mut run_provider,
             &mut fallback.build_worker,
-        )
-        .await
-        {
+            write_fence,
+        );
+        tokio::pin!(cycle);
+        let result = tokio::select! {
+            result = &mut cycle => result,
+            _ = cancellation.cancelled() => {
+                // 取消只阻止后续帧；当前摄取必须完成并释放 generation 写许可后，
+                // 父任务才可被 join。直接 drop SQL/Redis/Mongo future 可能让服务端副作用
+                // 在围栏推进后才落地，因此这里显式 drain 当前周期。
+                let _ = cycle.await;
+                return Ok(());
+            },
+        };
+        match result {
             Ok(_) => {
                 emit_event(MarketFeedSupervisorEvent::ProviderCycleSucceeded {
                     provider: config.provider(),
@@ -944,7 +1356,10 @@ where
                 backoff.record_failure();
             }
         }
-        sleep(delay).await;
+        tokio::select! {
+            _ = cancellation.cancelled() => return Ok(()),
+            _ = sleep(delay) => {}
+        }
     }
 }
 
@@ -967,6 +1382,38 @@ where
     BuildFut: Future<Output = AppResult<MarketFeedWorker<S>>>,
     C: MarketFeedRestFallbackHttpClient,
 {
+    run_provider_cycle_with_rest_fallback_guarded(
+        state,
+        config,
+        rest_fallback_config,
+        http_client,
+        &mut run_provider,
+        &mut build_worker,
+        None,
+    )
+    .await
+}
+
+/// 生产代际路径在 REST 写入与事件发布的整个过程持有 generation 许可；
+/// 公开的无 generation 测试入口则传 `None`，保持原有泛型契约。
+#[allow(clippy::too_many_arguments)]
+async fn run_provider_cycle_with_rest_fallback_guarded<S, F, Fut, B, BuildFut, C>(
+    state: AppState,
+    config: MarketFeedConfig,
+    rest_fallback_config: MarketFeedRestFallbackConfig,
+    http_client: C,
+    run_provider: &mut F,
+    build_worker: &mut B,
+    write_fence: Option<MarketFeedWriteFence>,
+) -> AppResult<MarketFeedSummary>
+where
+    S: MarketIngestionSink,
+    F: FnMut(AppState, MarketFeedConfig) -> Fut,
+    Fut: Future<Output = AppResult<()>>,
+    B: FnMut(AppState) -> BuildFut,
+    BuildFut: Future<Output = AppResult<MarketFeedWorker<S>>>,
+    C: MarketFeedRestFallbackHttpClient,
+{
     match run_provider(state.clone(), config).await {
         Ok(()) => Ok(MarketFeedSummary::default()),
         Err(error) => {
@@ -977,6 +1424,10 @@ where
             }
             warn!(%error, "行情 WebSocket 周期失败，开始执行 REST 兜底");
             let worker = build_worker(state).await?;
+            let _permit = match write_fence {
+                Some(write_fence) => Some(write_fence.enter().await?),
+                None => None,
+            };
             let summary = worker
                 .run_rest_fallback_config(&rest_fallback_config, &http_client)
                 .await?;
@@ -1042,8 +1493,46 @@ where
 /// 行情帧交给 ingestion 落库并广播，单帧写入失败只累加失败计数并告警，不中断本次连接。
 /// Bitget 每 25 秒发送纯文本 ping；任意入站帧刷新 75 秒静默截止，超时、写失败、关闭或读错误都会结束本轮。
 /// 周期结束前校验不能只收到失败帧且零写入；已经完成的 Redis、Mongo 写入和广播不会因重连而回滚。
-async fn run_provider_once(state: AppState, config: MarketFeedConfig) -> AppResult<()> {
-    let worker = MarketFeedWorker::<MarketIngestionService>::from_state(&state)?;
+fn market_feed_worker_for_generation(
+    state: &AppState,
+    generation: u64,
+    fence: MarketFeedGenerationFence,
+) -> AppResult<MarketFeedWorker<GenerationBoundMarketIngestionSink>> {
+    let worker = MarketFeedWorker::new(GenerationBoundMarketIngestionSink::from_state(
+        state, generation, fence,
+    )?);
+    Ok(match state.event_broadcast_hub.clone() {
+        Some(hub) => worker.with_broadcast_hub(hub),
+        None => worker,
+    })
+}
+
+async fn run_provider_once_with_generation(
+    state: AppState,
+    config: MarketFeedConfig,
+    generation: u64,
+    fence: MarketFeedGenerationFence,
+    cancellation: CancellationToken,
+) -> AppResult<()> {
+    let worker = market_feed_worker_for_generation(&state, generation, fence.clone())?;
+    run_provider_socket(
+        worker,
+        config,
+        MarketFeedWriteFence::new(generation, fence),
+        cancellation,
+    )
+    .await
+}
+
+async fn run_provider_socket<S>(
+    worker: MarketFeedWorker<S>,
+    config: MarketFeedConfig,
+    write_fence: MarketFeedWriteFence,
+    cancellation: CancellationToken,
+) -> AppResult<()>
+where
+    S: MarketIngestionSink,
+{
     let connection = timeout(MARKET_FEED_CONNECT_TIMEOUT, connect_async(config.url()))
         .await
         .map_err(|_| {
@@ -1061,7 +1550,11 @@ async fn run_provider_once(state: AppState, config: MarketFeedConfig) -> AppResu
     let mut liveness = MarketFeedSocketLiveness::new(provider);
     let mut summary = MarketFeedSummary::default();
     loop {
-        let message = match liveness.wait_next(&mut reader).await {
+        let socket_event = tokio::select! {
+            _ = cancellation.cancelled() => break,
+            event = liveness.wait_next(&mut reader) => event,
+        };
+        let message = match socket_event {
             MarketFeedSocketEvent::Message(Some(message)) => message.map_err(|error| {
                 crate::error::AppError::Internal(format!(
                     "market feed websocket read failed: {error}"
@@ -1085,7 +1578,12 @@ async fn run_provider_once(state: AppState, config: MarketFeedConfig) -> AppResu
         match market_feed_socket_action(provider, message)? {
             MarketFeedSocketAction::Frame(frame) => {
                 summary.received += 1;
-                match worker.ingest_frame(&frame).await {
+                let result = async {
+                    let _permit = write_fence.enter().await?;
+                    worker.ingest_frame(&frame).await
+                }
+                .await;
+                match result {
                     Ok(()) => summary.ingested += 1,
                     Err(error) => {
                         summary.failed += 1;

@@ -1,7 +1,7 @@
 //! 杠杆市价/限价开仓用例。
 //!
 //! 这是本上下文风险最高的资金入口，负责把一次开仓请求变成仓位行、抵押扣款、代理返佣和一条私有事件。
-//! 关键顺序是：事务外校验并做只读幂等预检，事务内锁产品、写仓位占用幂等键、再锁钱包扣抵押。
+//! 关键顺序是：事务外校验并做只读幂等预检；全仓成交路径在事务内先锁账户，再锁产品、仓位与钱包。
 //! 先占键后动钱是防重复扣款的核心，唯一键冲突会回滚并转入只读重放，逐字段核对后返回既有仓位。
 //! 市价单立即以服务端 Redis 新鲜 ticker 成交；限价单的客户价格只用于判定是否触发，
 //! 真正入场价同样只认服务端权威 ticker。未触发限价单会先冻结抵押、保留 `entry_price = NULL`，
@@ -25,11 +25,16 @@ use crate::{
                 MarginOrderType, margin_limit_order_is_triggered, validate_margin_limit_price,
             },
             infrastructure::{
-                MarginOpenProductRule, cached_margin_entry_price,
-                debit_margin_position_open_collateral, ensure_cross_margin_account,
+                MarginOpenProductRule, activate_cross_margin_account_for_open,
+                bump_cross_margin_account_version, cached_margin_entry_price,
+                debit_margin_position_open_collateral,
+                discard_new_cross_margin_account_for_pending_order,
+                ensure_and_lock_cross_margin_account_with_creation,
                 existing_position_for_idempotency_key,
                 existing_position_for_idempotency_key_readonly, insert_margin_position,
-                load_position_by_id, lock_active_open_product, set_margin_position_wallet_scope,
+                load_margin_open_product_account_scope, load_position_by_id,
+                lock_active_open_product, require_active_cross_margin_account,
+                set_margin_position_wallet_scope,
             },
             presentation::{
                 MarginPositionResponse, OpenMarginPositionRequest, OpenMarginPositionResponse,
@@ -104,7 +109,33 @@ pub(crate) async fn open_margin_position(
         return Ok((existing, false));
     }
 
+    // 全仓写路径必须先确定账户键并锁账户，再锁产品/仓位/钱包；事务内会重新核对产品配置。
+    let preflight_scope = load_margin_open_product_account_scope(pool, request.product_id).await?;
+    let preflight_cross_asset = preflight_scope
+        .as_ref()
+        .filter(|scope| scope.status == "active")
+        .and_then(|scope| {
+            let mode = requested_margin_mode
+                .as_deref()
+                .unwrap_or(scope.margin_mode.as_str());
+            (mode == "cross" && scope.margin_modes.0.iter().any(|item| item == "cross"))
+                .then_some(scope.margin_asset)
+        });
+
     let mut tx = pool.begin().await?;
+    let mut cross_account = if let Some(margin_asset) = preflight_cross_asset {
+        let (account, created) =
+            ensure_and_lock_cross_margin_account_with_creation(&mut tx, user_id, margin_asset)
+                .await?;
+        if account.status == "liquidating" {
+            return Err(AppError::Conflict(
+                "cross margin account is liquidating".to_owned(),
+            ));
+        }
+        Some((margin_asset, account, created))
+    } else {
+        None
+    };
     let product = match lock_active_open_product(&mut tx, request.product_id).await {
         Ok(product) => product,
         Err(AppError::NotFound) => {
@@ -125,6 +156,22 @@ pub(crate) async fn open_margin_position(
     };
     let position_margin_mode =
         selected_open_margin_mode(&product, requested_margin_mode.as_deref())?;
+    if position_margin_mode == "cross" {
+        let Some((locked_asset, _, _)) = cross_account.as_ref() else {
+            return Err(AppError::Conflict(
+                "margin product mode changed while acquiring cross account lock".to_owned(),
+            ));
+        };
+        if *locked_asset != product.margin_asset {
+            return Err(AppError::Conflict(
+                "margin product asset changed while acquiring cross account lock".to_owned(),
+            ));
+        }
+    } else if cross_account.is_some() {
+        return Err(AppError::Conflict(
+            "margin product mode changed while acquiring cross account lock".to_owned(),
+        ));
+    }
     validate_product_margin(&request.margin_amount, &request.leverage, &product)?;
     if let Some(limit_price) = order.limit_price.as_ref() {
         validate_margin_limit_price(limit_price, product.price_precision)
@@ -151,6 +198,15 @@ pub(crate) async fn open_margin_position(
         }
     };
     let is_filled = entry_price.is_some();
+    if let Some((margin_asset, account, _)) = cross_account.as_mut() {
+        if is_filled {
+            activate_cross_margin_account_for_open(&mut tx, user_id, *margin_asset, account)
+                .await?;
+        } else {
+            // 未成交挂单不进入账户风险集合；已清算账户也不能挂一笔永远无法触发的 cross 委托。
+            require_active_cross_margin_account(account)?;
+        }
+    }
     // 先写入仓位占用用户幂等键，再锁定钱包扣保证金，避免同 key 并发重复扣款。
     let position_id = match insert_margin_position(
         &mut tx,
@@ -190,9 +246,6 @@ pub(crate) async fn open_margin_position(
     .await?;
     set_margin_position_wallet_scope(&mut tx, position_id, &wallet_scope).await?;
     if is_filled {
-        if position_margin_mode == "cross" {
-            ensure_cross_margin_account(&mut tx, user_id, product.margin_asset).await?;
-        }
         let commission_source_id = position_id.to_string();
         insert_agent_business_commission_in_tx(
             &mut tx,
@@ -206,6 +259,20 @@ pub(crate) async fn open_margin_position(
             },
         )
         .await?;
+    }
+    if let Some((margin_asset, account, created)) = cross_account.take() {
+        if is_filled {
+            bump_cross_margin_account_version(&mut tx, user_id, margin_asset, account.version)
+                .await?;
+        } else if created {
+            discard_new_cross_margin_account_for_pending_order(
+                &mut tx,
+                user_id,
+                margin_asset,
+                account.version,
+            )
+            .await?;
+        }
     }
     let position = load_position_by_id(&mut tx, position_id).await?;
     tx.commit().await?;

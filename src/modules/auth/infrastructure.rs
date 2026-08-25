@@ -54,6 +54,8 @@ struct RedisRefreshTokenRecord {
     actor_type: String,
     actor_id: u64,
     user_id: Option<u64>,
+    #[serde(default)]
+    auth_session_version: u64,
     scope: TokenScope,
     expires_at: i64,
 }
@@ -91,6 +93,7 @@ impl ProjectRefreshTokenRepository for RedisProjectRefreshTokenRepository {
             actor_type: token.actor_type.as_str().to_owned(),
             actor_id: token.actor_id,
             user_id: token.user_id,
+            auth_session_version: token.auth_session_version,
             scope: token.scope,
             expires_at: token.expires_at.timestamp(),
         };
@@ -132,6 +135,7 @@ impl ProjectRefreshTokenRepository for RedisProjectRefreshTokenRepository {
             actor_type,
             actor_id: record.actor_id,
             user_id: record.user_id,
+            auth_session_version: record.auth_session_version,
             scope: record.scope,
         }))
     }
@@ -285,14 +289,20 @@ impl MySqlAuthRepository {
     /// 留空是刻意为之：管理员不对应任何交易账户，一旦回填就可能被下游误当成用户身份去操作资产。
     /// 停用与不存在同样都返回 `None`。本查询不涉及角色与权限，功能级授权由业务侧另行判定。
     async fn find_active_admin(&self, actor: &AuthActor) -> AppResult<Option<AuthActor>> {
-        let actor_id = sqlx::query_scalar::<_, u64>(
-            "SELECT id FROM admin_users WHERE id = ? AND status = 'active' LIMIT 1",
+        let row = sqlx::query_as::<_, (u64, u64)>(
+            r#"SELECT id, auth_session_version
+               FROM admin_users
+               WHERE id = ? AND status = 'active' AND must_change_password = FALSE
+               LIMIT 1"#,
         )
         .bind(actor.actor_id)
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(actor_id.map(|actor_id| AuthActor::new(ActorType::Admin, actor_id, None)))
+        Ok(row.map(|(actor_id, auth_session_version)| {
+            AuthActor::new(ActorType::Admin, actor_id, None)
+                .with_auth_session_version(auth_session_version)
+        }))
     }
 
     /// 确认代理后台账号活跃，并要求其所属代理及整条祖先链路上没有任何一级被停用。
@@ -486,18 +496,22 @@ impl AuthRepository for MySqlAuthRepository {
         &self,
         username: &str,
     ) -> AppResult<Option<StoredActorCredential>> {
-        let row = sqlx::query_as::<_, (u64, String, String)>(
-            "SELECT id, password_hash, status FROM admin_users WHERE username = ? LIMIT 1",
+        let row = sqlx::query_as::<_, (u64, String, String, u64)>(
+            r#"SELECT id, password_hash, status, auth_session_version
+               FROM admin_users WHERE username = ? LIMIT 1"#,
         )
         .bind(username)
         .fetch_optional(&self.pool)
         .await?;
 
         Ok(
-            row.map(|(actor_id, password_hash, status)| StoredActorCredential {
-                actor: AuthActor::new(ActorType::Admin, actor_id, None),
-                password_hash,
-                status,
+            row.map(|(actor_id, password_hash, status, auth_session_version)| {
+                StoredActorCredential {
+                    actor: AuthActor::new(ActorType::Admin, actor_id, None)
+                        .with_auth_session_version(auth_session_version),
+                    password_hash,
+                    status,
+                }
             }),
         )
     }
@@ -583,13 +597,15 @@ impl AuthRepository for MySqlAuthRepository {
     /// 本方法不清理该主体的历史令牌，同一主体可以同时持有多枚有效刷新令牌。
     async fn store_refresh_token(&self, token: StoredRefreshToken) -> AppResult<()> {
         sqlx::query(
-            r#"INSERT INTO refresh_tokens (user_id, actor_type, actor_id, token_hash, expires_at)
-               VALUES (?, ?, ?, ?, ?)
+            r#"INSERT INTO refresh_tokens
+                  (user_id, actor_type, actor_id, auth_session_version, token_hash, expires_at)
+               VALUES (?, ?, ?, ?, ?, ?)
                ON DUPLICATE KEY UPDATE token_hash = token_hash"#,
         )
         .bind(token.user_id)
         .bind(token.actor_type.as_str())
         .bind(token.actor_id)
+        .bind(token.auth_session_version)
         .bind(token.token_hash)
         .bind(token.expires_at)
         .execute(&self.pool)
@@ -608,8 +624,8 @@ impl AuthRepository for MySqlAuthRepository {
         token_hash: &str,
         now: NaiveDateTime,
     ) -> AppResult<Option<RefreshTokenRecord>> {
-        let row = sqlx::query_as::<_, (String, u64, Option<u64>)>(
-            r#"SELECT actor_type, actor_id, user_id
+        let row = sqlx::query_as::<_, (String, u64, Option<u64>, u64)>(
+            r#"SELECT actor_type, actor_id, user_id, auth_session_version
                FROM refresh_tokens
                WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?
                LIMIT 1"#,
@@ -619,13 +635,14 @@ impl AuthRepository for MySqlAuthRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        row.map(|(actor_type, actor_id, user_id)| {
+        row.map(|(actor_type, actor_id, user_id, auth_session_version)| {
             let actor_type = ActorType::from_storage(&actor_type)?;
             Ok(RefreshTokenRecord {
                 scope: actor_type.scope(),
                 actor_type,
                 actor_id,
                 user_id,
+                auth_session_version,
             })
         })
         .transpose()
@@ -755,6 +772,89 @@ pub(crate) async fn load_admin_username(pool: &Pool<MySql>, admin_id: u64) -> Ap
         .fetch_optional(pool)
         .await?
         .ok_or(AppError::Unauthorized)
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub(crate) struct AdminPasswordCredentialRecord {
+    pub(crate) password_hash: String,
+    pub(crate) status: String,
+    pub(crate) must_change_password: bool,
+}
+
+/// 在管理员改密事务中锁定当前凭证与强制改密标志；不存在时返回未授权，且锁在事务提交前持续持有。
+pub(crate) async fn lock_admin_password_credential_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    admin_id: u64,
+) -> AppResult<AdminPasswordCredentialRecord> {
+    sqlx::query_as::<_, AdminPasswordCredentialRecord>(
+        r#"SELECT password_hash, status, must_change_password
+           FROM admin_users
+           WHERE id = ?
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(admin_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::Unauthorized)
+}
+
+/// 在已锁定管理员行上同时写入新哈希、清除首次改密标志并记录改密时刻，三项不可拆分提交。
+pub(crate) async fn update_admin_password_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    admin_id: u64,
+    password_hash: &str,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"UPDATE admin_users
+           SET password_hash = ?, must_change_password = FALSE,
+               password_changed_at = CURRENT_TIMESTAMP(6),
+               auth_session_version = auth_session_version + 1
+           WHERE id = ?"#,
+    )
+    .bind(password_hash)
+    .bind(admin_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// 在同一改密事务内撤销 MySQL 中尚未撤销的管理员刷新令牌；重复执行不改写既有撤销时间。
+pub(crate) async fn revoke_admin_refresh_tokens_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    admin_id: u64,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"UPDATE refresh_tokens
+           SET revoked_at = CURRENT_TIMESTAMP(6)
+           WHERE actor_type = 'admin' AND actor_id = ? AND revoked_at IS NULL"#,
+    )
+    .bind(admin_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// 把管理员自助改密写入后台审计，记录是否由首次强制闸门触发，但不保存任何口令或哈希。
+pub(crate) async fn insert_admin_password_change_audit_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    admin_id: u64,
+    was_forced: bool,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"INSERT INTO admin_audit_logs
+              (admin_id, action, target_type, target_id, before_json, after_json, reason)
+           VALUES (?, 'admin.password.change', 'admin_user', ?,
+                   JSON_OBJECT('must_change_password', ?),
+                   JSON_OBJECT('must_change_password', FALSE),
+                   'administrator self-service password rotation')"#,
+    )
+    .bind(admin_id)
+    .bind(admin_id.to_string())
+    .bind(was_forced)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 #[derive(Debug)]

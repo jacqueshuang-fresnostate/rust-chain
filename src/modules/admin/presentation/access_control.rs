@@ -8,6 +8,7 @@ use serde::Serialize;
 pub(crate) struct AdminAccessResponse {
     pub(crate) admin_id: u64,
     pub(crate) username: String,
+    pub(crate) must_change_password: bool,
     pub(crate) role_id: u64,
     pub(crate) role_name: String,
     pub(crate) permissions: Vec<String>,
@@ -22,6 +23,7 @@ impl From<AdminScope> for AdminAccessResponse {
         Self {
             admin_id: scope.admin_id,
             username: scope.username,
+            must_change_password: scope.must_change_password,
             role_id: scope.role_id,
             role_name: scope.role_name,
             permissions,

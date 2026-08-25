@@ -476,6 +476,201 @@ async fn delete_pair_and_assets(
     Ok(())
 }
 
+#[tokio::test]
+async fn bootstrap_admin_is_gated_until_password_rotation_and_old_session_is_revoked()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let (role_id, admin_id, username) = create_login_admin(&pool).await;
+    sqlx::query("UPDATE admin_users SET must_change_password = TRUE WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+
+    let settings = test_settings();
+    let auth_manager = exchange_api::infra::auth::memory_manager(&settings);
+    let app = build_router(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_auth_manager(auth_manager),
+    );
+    let login = app
+        .clone()
+        .oneshot(admin_login_request(&username, LOGIN_LOCKOUT_TEST_PASSWORD))
+        .await?;
+    assert_eq!(login.status(), StatusCode::OK);
+    let login_payload = body_json(login).await?;
+    let old_token = login_payload["access_token"].as_str().unwrap().to_owned();
+    let old_refresh_token = login_payload["refresh_token"].as_str().unwrap().to_owned();
+
+    let me = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/access/me")
+                .header(AUTHORIZATION, format!("Bearer {old_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(me.status(), StatusCode::OK);
+    assert_eq!(body_json(me).await?["must_change_password"], true);
+
+    let blocked = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/access/permissions")
+                .header(AUTHORIZATION, format!("Bearer {old_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(blocked.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        body_json(blocked).await?["code"],
+        "ADMIN_PASSWORD_CHANGE_REQUIRED"
+    );
+
+    let blocked_two_factor = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/auth/2fa")
+                .header(AUTHORIZATION, format!("Bearer {old_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(blocked_two_factor.status(), StatusCode::FORBIDDEN);
+
+    // 聚合路由层也必须拦截未显式挂 AdminAuth 提取器的历史管理读路由。
+    // 这条回归用例防止新增/存量 handler 遗漏提取器时绕过首次改密闸门。
+    let blocked_route_without_extractor = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/loan/products?limit=1")
+                .header(AUTHORIZATION, format!("Bearer {old_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(
+        blocked_route_without_extractor.status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        body_json(blocked_route_without_extractor).await?["code"],
+        "ADMIN_PASSWORD_CHANGE_REQUIRED"
+    );
+
+    // 刷新端点不经 AdminAuth 提取器，因此必须在主体回表处独立拦住强制改密账号。
+    let blocked_refresh = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/auth/refresh")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "refresh_token": old_refresh_token.clone() }).to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(blocked_refresh.status(), StatusCode::UNAUTHORIZED);
+
+    let new_password = "RotatedPass456!";
+    let changed = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/admin/api/v1/auth/password")
+                .header(AUTHORIZATION, format!("Bearer {old_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "current_password": LOGIN_LOCKOUT_TEST_PASSWORD,
+                        "new_password": new_password,
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(changed.status(), StatusCode::OK);
+    assert_eq!(body_json(changed).await?["requires_relogin"], true);
+
+    let old_session = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/access/me")
+                .header(AUTHORIZATION, format!("Bearer {old_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(old_session.status(), StatusCode::UNAUTHORIZED);
+    let revoked_refresh = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api/v1/auth/refresh")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "refresh_token": old_refresh_token }).to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(revoked_refresh.status(), StatusCode::UNAUTHORIZED);
+
+    let (must_change, password_hash): (bool, String) =
+        sqlx::query_as("SELECT must_change_password, password_hash FROM admin_users WHERE id = ?")
+            .bind(admin_id)
+            .fetch_one(&pool)
+            .await?;
+    assert!(!must_change);
+    assert!(verify_password(&password_hash, new_password)?);
+
+    let old_login = app
+        .clone()
+        .oneshot(admin_login_request(&username, LOGIN_LOCKOUT_TEST_PASSWORD))
+        .await?;
+    assert_eq!(old_login.status(), StatusCode::UNAUTHORIZED);
+    let new_login = app
+        .clone()
+        .oneshot(admin_login_request(&username, new_password))
+        .await?;
+    assert_eq!(new_login.status(), StatusCode::OK);
+    let new_token = body_json(new_login).await?["access_token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let allowed = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/v1/access/permissions")
+                .header(AUTHORIZATION, format!("Bearer {new_token}"))
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(allowed.status(), StatusCode::OK);
+
+    let audit_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM admin_audit_logs WHERE admin_id = ? AND action = 'admin.password.change'",
+    )
+    .bind(admin_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(audit_count, 1);
+
+    sqlx::query("DELETE FROM admin_audit_logs WHERE admin_id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    delete_login_admin(&pool, role_id, admin_id, &username).await?;
+    Ok(())
+}
+
 async fn delete_rule_fixture(
     pool: &MySqlPool,
     pair_id: u64,
@@ -570,6 +765,11 @@ async fn delete_new_coin_distribution_fixture(
         .await?;
     sqlx::query("DELETE FROM new_coin_distributions WHERE project_id = ?")
         .bind(project_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM asset_unlock_records WHERE user_id = ? AND asset_id = ?")
+        .bind(user_id)
+        .bind(asset_id)
         .execute(pool)
         .await?;
     sqlx::query("DELETE sources FROM asset_lock_position_sources sources INNER JOIN asset_lock_positions positions ON positions.id = sources.lock_position_id WHERE positions.user_id = ? AND positions.asset_id = ?")
@@ -11897,14 +12097,15 @@ async fn admin_new_coin_post_listing_purchase_updates_project_pair_and_audit()
     let project_id = sqlx::query(
         r#"INSERT INTO new_coin_projects
            (asset_id, symbol, lifecycle_status, total_supply, issue_price, listed_at,
-            unlock_type, fixed_unlock_at, status)
-           VALUES (?, ?, 'listed', ?, ?, CURRENT_TIMESTAMP(6), 'fixed_time',
+            quote_asset_id, unlock_type, fixed_unlock_at, status)
+           VALUES (?, ?, 'listed', ?, ?, CURRENT_TIMESTAMP(6), ?, 'fixed_time',
                    DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 7 DAY), 'active')"#,
     )
     .bind(asset_id)
     .bind(&base_symbol)
     .bind(decimal("1000000.000000000000000000"))
     .bind(decimal("1.000000000000000000"))
+    .bind(quote_asset)
     .execute(&pool)
     .await?
     .last_insert_id();
@@ -12089,6 +12290,7 @@ async fn admin_new_coin_project_routes_require_admin_scope_and_mysql() -> Result
         "lifecycle_status": "preheat",
         "total_supply": "1000000.000000000000000000",
         "issue_price": "1.000000000000000000",
+        "quote_asset_id": 2,
         "unlock_type": "fixed_time",
         "fixed_unlock_at": 1794309753000_i64
     })
@@ -12136,6 +12338,7 @@ async fn admin_new_coin_project_routes_require_admin_scope_and_mysql() -> Result
                         "lifecycle_status": "preheat",
                         "total_supply": "1000000.000000000000000000",
                         "issue_price": "1.000000000000000000",
+                        "quote_asset_id": 2,
                         "unlock_type": "fixed_time"
                     })
                     .to_string(),
@@ -12166,6 +12369,7 @@ async fn admin_new_coin_project_routes_require_admin_scope_and_mysql() -> Result
                         "lifecycle_status": "preheat",
                         "total_supply": "1000000.000000000000000000",
                         "issue_price": "1.000000000000000000",
+                        "quote_asset_id": 2,
                         "unlock_type": "immediate_on_listing"
                     })
                     .to_string(),
@@ -12475,6 +12679,7 @@ async fn admin_new_coin_rule_updates_modify_project_events_and_audits() -> Resul
     let settings = test_settings();
     let (role_id, admin_id) = create_admin_user(&pool).await;
     let asset_id = create_asset(&pool, "ANU").await;
+    let quote_asset_id = create_asset(&pool, "ANV").await;
     let token = issue_token(
         &settings,
         format!("admin:{admin_id}"),
@@ -12491,14 +12696,15 @@ async fn admin_new_coin_rule_updates_modify_project_events_and_audits() -> Resul
     let listed_at = chrono::Utc.with_ymd_and_hms(2026, 10, 1, 8, 0, 0).unwrap();
     let project_id = sqlx::query(
         r#"INSERT INTO new_coin_projects
-           (asset_id, symbol, lifecycle_status, total_supply, issue_price, listed_at, unlock_type,
-            fixed_unlock_at, status)
-           VALUES (?, ?, 'listed', ?, ?, ?, 'fixed_time', ?, 'active')"#,
+           (asset_id, symbol, lifecycle_status, total_supply, issue_price, quote_asset_id,
+            listed_at, unlock_type, fixed_unlock_at, status)
+           VALUES (?, ?, 'listed', ?, ?, ?, ?, 'fixed_time', ?, 'active')"#,
     )
     .bind(asset_id)
     .bind(&symbol)
     .bind(decimal("1000000.000000000000000000"))
     .bind(decimal("1.000000000000000000"))
+    .bind(quote_asset_id)
     .bind(listed_at)
     .bind(fixed_unlock_at)
     .execute(&pool)
@@ -12576,7 +12782,7 @@ async fn admin_new_coin_rule_updates_modify_project_events_and_audits() -> Resul
                         "unlock_fee_enabled": true,
                         "unlock_fee_rate": "0.04000000",
                         "unlock_fee_basis": "profit",
-                        "unlock_fee_asset": asset_id,
+                        "unlock_fee_asset": quote_asset_id,
                         "reason": "charge miner fee on profit"
                     })
                     .to_string(),
@@ -12590,7 +12796,7 @@ async fn admin_new_coin_rule_updates_modify_project_events_and_audits() -> Resul
     assert_eq!(fee_payload["unlock_fee_enabled"], true);
     assert_eq!(fee_payload["unlock_fee_rate"], "0.04000000");
     assert_eq!(fee_payload["unlock_fee_basis"], "profit");
-    assert_eq!(fee_payload["unlock_fee_asset"], asset_id);
+    assert_eq!(fee_payload["unlock_fee_asset"], quote_asset_id);
 
     let events = sqlx::query_as::<_, (String, Option<u64>, Value)>(
         r#"SELECT event_type, created_by, payload_json
@@ -12646,6 +12852,10 @@ async fn admin_new_coin_rule_updates_modify_project_events_and_audits() -> Resul
     );
 
     delete_new_coin_project_fixture(&pool, project_id, asset_id, admin_id, role_id).await?;
+    sqlx::query("DELETE FROM assets WHERE id = ?")
+        .bind(quote_asset_id)
+        .execute(&pool)
+        .await?;
     Ok(())
 }
 
@@ -12657,6 +12867,7 @@ async fn admin_new_coin_project_create_lists_events_and_audits() -> Result<(), B
     let settings = test_settings();
     let (role_id, admin_id) = create_admin_user(&pool).await;
     let asset_id = create_asset(&pool, "ANP").await;
+    let quote_asset_id = create_asset(&pool, "ANQ").await;
     let token = issue_token(
         &settings,
         format!("admin:{admin_id}"),
@@ -12682,12 +12893,13 @@ async fn admin_new_coin_project_create_lists_events_and_audits() -> Result<(), B
                         "lifecycle_status": "preheat",
                         "total_supply": "1000000.000000000000000000",
                         "issue_price": "1.000000000000000000",
+                        "quote_asset_id": quote_asset_id,
                         "unlock_type": "fixed_time",
                         "fixed_unlock_at": 1794309753000_i64,
                         "unlock_fee_enabled": true,
                         "unlock_fee_rate": "0.04000000",
                         "unlock_fee_basis": "market_value",
-                        "unlock_fee_asset": asset_id,
+                        "unlock_fee_asset": quote_asset_id,
                         "reason": "create new coin project"
                     })
                     .to_string(),
@@ -12704,11 +12916,15 @@ async fn admin_new_coin_project_create_lists_events_and_audits() -> Result<(), B
     assert_eq!(created["lifecycle_status"], "preheat");
     assert_eq!(created["total_supply"], "1000000.000000000000000000");
     assert_eq!(created["issue_price"], "1.000000000000000000");
+    assert_eq!(created["quote_asset_id"], quote_asset_id);
+    assert_eq!(created["reserved_supply"], "0");
+    assert_eq!(created["allocated_supply"], "0");
+    assert_eq!(created["remaining_supply"], "1000000.000000000000000000");
     assert_eq!(created["unlock_type"], "fixed_time");
     assert_eq!(created["unlock_fee_enabled"], true);
     assert_eq!(created["unlock_fee_rate"], "0.04000000");
     assert_eq!(created["unlock_fee_basis"], "market_value");
-    assert_eq!(created["unlock_fee_asset"], asset_id);
+    assert_eq!(created["unlock_fee_asset"], quote_asset_id);
 
     let listed = app
         .oneshot(
@@ -12757,6 +12973,10 @@ async fn admin_new_coin_project_create_lists_events_and_audits() -> Result<(), B
     assert_eq!(audits[0].reason.as_deref(), Some("create new coin project"));
 
     delete_new_coin_project_fixture(&pool, project_id, asset_id, admin_id, role_id).await?;
+    sqlx::query("DELETE FROM assets WHERE id = ?")
+        .bind(quote_asset_id)
+        .execute(&pool)
+        .await?;
     Ok(())
 }
 
@@ -12862,6 +13082,7 @@ async fn admin_new_coin_distribution_creates_wallet_lock_event_and_audit()
     let (role_id, admin_id) = create_admin_user(&pool).await;
     let user_id = create_user(&pool).await;
     let asset_id = create_asset(&pool, "AND").await;
+    let quote_asset_id = create_asset(&pool, "ANE").await;
     let token = issue_token(
         &settings,
         format!("admin:{admin_id}"),
@@ -12877,15 +13098,20 @@ async fn admin_new_coin_distribution_creates_wallet_lock_event_and_audit()
 
     let project_id = sqlx::query(
         r#"INSERT INTO new_coin_projects
-           (asset_id, symbol, lifecycle_status, total_supply, issue_price, unlock_type,
-            fixed_unlock_at, status)
-           VALUES (?, ?, 'preheat', ?, ?, 'fixed_time', ?, 'active')"#,
+           (asset_id, symbol, lifecycle_status, total_supply, issue_price, quote_asset_id,
+            remaining_supply, unlock_type, fixed_unlock_at, unlock_fee_enabled, unlock_fee_rate,
+            unlock_fee_basis, unlock_fee_asset, status)
+           VALUES (?, ?, 'preheat', ?, ?, ?, ?, 'fixed_time', ?, TRUE, 0.1,
+                   'market_value', ?, 'active')"#,
     )
     .bind(asset_id)
     .bind(&symbol)
     .bind(decimal("1000000.000000000000000000"))
     .bind(decimal("1.000000000000000000"))
+    .bind(quote_asset_id)
+    .bind(decimal("1000000.000000000000000000"))
     .bind(unlock_at)
+    .bind(quote_asset_id)
     .execute(&pool)
     .await?
     .last_insert_id();
@@ -12997,6 +13223,44 @@ async fn admin_new_coin_distribution_creates_wallet_lock_event_and_audit()
     assert_eq!(source_id, idempotency_key);
     assert_eq!(source_amount, decimal("10.000000000000000000"));
 
+    sqlx::query("UPDATE new_coin_projects SET unlock_fee_rate = 0.9 WHERE id = ?")
+        .bind(project_id)
+        .execute(&pool)
+        .await?;
+    let (
+        unlock_quantity,
+        unlock_price,
+        fee_enabled,
+        fee_asset,
+        fee_amount,
+        fee_status,
+        unlock_status,
+    ): (
+        BigDecimal,
+        BigDecimal,
+        bool,
+        Option<u64>,
+        Option<BigDecimal>,
+        String,
+        String,
+    ) = sqlx::query_as(
+        r#"SELECT unlock_quantity, unlock_price, unlock_fee_enabled, unlock_fee_asset,
+                  unlock_fee_amount, fee_paid_status, status
+           FROM asset_unlock_records
+           WHERE idempotency_key = ? AND lock_position_id = ?"#,
+    )
+    .bind(format!("new_coin_distribution:{idempotency_key}"))
+    .bind(lock_position_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(unlock_quantity, decimal("10.000000000000000000"));
+    assert_eq!(unlock_price, decimal("1.000000000000000000"));
+    assert!(fee_enabled);
+    assert_eq!(fee_asset, Some(quote_asset_id));
+    assert_eq!(fee_amount, Some(decimal("1.000000000000000000")));
+    assert_eq!(fee_status, "pending");
+    assert_eq!(unlock_status, "pending");
+
     let ledger = sqlx::query_as::<_, (String, String, String, BigDecimal, String)>(
         r#"SELECT change_type, balance_type, ref_id, amount, ref_type
            FROM wallet_ledger
@@ -13011,6 +13275,20 @@ async fn admin_new_coin_distribution_creates_wallet_lock_event_and_audit()
     assert_eq!(ledger.2, idempotency_key);
     assert_eq!(ledger.3, decimal("10.000000000000000000"));
     assert_eq!(ledger.4, "new_coin_distribution");
+
+    let (reserved_supply, allocated_supply, remaining_supply): (
+        BigDecimal,
+        BigDecimal,
+        BigDecimal,
+    ) = sqlx::query_as(
+        "SELECT reserved_supply, allocated_supply, remaining_supply FROM new_coin_projects WHERE id = ?",
+    )
+    .bind(project_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(reserved_supply, decimal("0.000000000000000000"));
+    assert_eq!(allocated_supply, decimal("10.000000000000000000"));
+    assert_eq!(remaining_supply, decimal("999990.000000000000000000"));
 
     let (event_type, event_admin_id, event_payload): (String, Option<u64>, Value) = sqlx::query_as(
         r#"SELECT event_type, created_by, payload_json
@@ -13091,6 +13369,10 @@ async fn admin_new_coin_distribution_creates_wallet_lock_event_and_audit()
     assert_eq!(duplicate_with_spaces.status(), StatusCode::CONFLICT);
 
     delete_new_coin_distribution_fixture(&pool, project_id, asset_id, user_id, admin_id, role_id)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id = ?")
+        .bind(quote_asset_id)
+        .execute(&pool)
         .await?;
     Ok(())
 }

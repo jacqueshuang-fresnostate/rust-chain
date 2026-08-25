@@ -1,9 +1,10 @@
 use super::{
-    WalletLedgerCategory, WalletLedgerEntryRow, WalletLedgerFilter,
+    WalletLedgerCategory, WalletLedgerEntryRow, WalletLedgerFilter, classify_broadcast_http_status,
     classify_wallet_ledger_change_type, push_wallet_ledger_filters,
     return_history_historical_close_if_valid, return_history_kline_document_close_if_valid,
     today_return_ticker_price_if_current, wallet_ledger_entry_response,
 };
+use crate::modules::wallet::repository::WalletChainGatewayErrorClass;
 use bigdecimal::BigDecimal;
 use chrono::{TimeDelta, TimeZone, Utc};
 use mongodb::bson::{DateTime as BsonDateTime, doc};
@@ -13,6 +14,41 @@ use std::{collections::BTreeSet, str::FromStr};
 
 fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).unwrap()
+}
+
+#[test]
+fn withdrawal_broadcast_http_statuses_only_release_on_definite_non_acceptance() {
+    use reqwest::StatusCode;
+
+    for status in [
+        StatusCode::BAD_REQUEST,
+        StatusCode::UNAUTHORIZED,
+        StatusCode::FORBIDDEN,
+        StatusCode::NOT_FOUND,
+        StatusCode::UNPROCESSABLE_ENTITY,
+    ] {
+        assert_eq!(
+            classify_broadcast_http_status(status),
+            WalletChainGatewayErrorClass::DeterministicRejected,
+            "status: {status}"
+        );
+    }
+    for status in [
+        StatusCode::REQUEST_TIMEOUT,
+        StatusCode::CONFLICT,
+        StatusCode::TOO_EARLY,
+        StatusCode::TOO_MANY_REQUESTS,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        StatusCode::BAD_GATEWAY,
+        StatusCode::SERVICE_UNAVAILABLE,
+        StatusCode::GATEWAY_TIMEOUT,
+    ] {
+        assert_eq!(
+            classify_broadcast_http_status(status),
+            WalletChainGatewayErrorClass::Unknown,
+            "status: {status}"
+        );
+    }
 }
 
 fn ticker_payload(symbol: &str, price: &str, observed_at: chrono::DateTime<Utc>) -> String {

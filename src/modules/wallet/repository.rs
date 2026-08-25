@@ -9,6 +9,7 @@ use crate::{
 };
 use axum::async_trait;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 pub trait WalletRepository: Send {
     /// 按用户与资产加载 available/frozen/locked 快照；是否加锁由具体工作单元实现约定。
@@ -51,6 +52,76 @@ pub struct WalletChainBroadcastResult {
     pub block_height: Option<u64>,
     #[serde(default)]
     pub confirmations: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalletChainGatewayErrorClass {
+    DeterministicRejected,
+    Unknown,
+    RetryableBeforeAcceptance,
+}
+
+impl WalletChainGatewayErrorClass {
+    /// 返回写入审计日志和数据库状态的稳定错误分类代码。
+    ///
+    /// 该字符串属于网关状态机契约：确定拒绝才允许释放冻结资金，结果未知必须保留冻结并转人工复核，
+    /// 接收前可重试只允许复用原请求号重试。调用方不得通过错误消息文本推断资金处理语义。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DeterministicRejected => "deterministic_rejected",
+            Self::Unknown => "unknown",
+            Self::RetryableBeforeAcceptance => "retryable_before_acceptance",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WalletChainGatewayError {
+    pub class: WalletChainGatewayErrorClass,
+    pub message: String,
+}
+
+impl WalletChainGatewayError {
+    /// 创建带确定状态机分类的链网关错误，并保留经脱敏的诊断消息。
+    ///
+    /// 分类由网关适配器在 HTTP/网络边界完成，worker 只消费分类而不重新猜测远端是否已经受理；
+    /// 这可避免 timeout、5xx 或损坏响应被误当成确定失败并自动解冻。
+    pub fn new(class: WalletChainGatewayErrorClass, message: impl Into<String>) -> Self {
+        Self {
+            class,
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for WalletChainGatewayError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for WalletChainGatewayError {}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WalletChainWithdrawalQueryStatus {
+    NotAccepted,
+    Rejected,
+    Pending,
+    Accepted,
+    Broadcasted,
+    Confirmed,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WalletChainWithdrawalQueryResult {
+    pub status: WalletChainWithdrawalQueryStatus,
+    pub tx_hash: Option<String>,
+    pub block_height: Option<u64>,
+    #[serde(default)]
+    pub confirmations: u32,
+    pub failure_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -98,7 +169,16 @@ pub trait WalletChainGateway: Send + Sync {
         endpoint: &str,
         bearer_token: Option<&str>,
         command: &WalletChainBroadcastCommand,
-    ) -> AppResult<WalletChainBroadcastResult>;
+    ) -> Result<WalletChainBroadcastResult, WalletChainGatewayError>;
+
+    /// 以与广播相同的稳定 request_id 查询远端受理状态。
+    /// 只有显式 `not_accepted`/`rejected` 才是可释放冻结的权威证据；查询故障本身不具备该语义。
+    async fn query_withdrawal(
+        &self,
+        endpoint: &str,
+        bearer_token: Option<&str>,
+        request_id: &str,
+    ) -> Result<WalletChainWithdrawalQueryResult, WalletChainGatewayError>;
 
     /// 从给定游标分页拉取充值与提现链事件，并返回下一游标。
     /// 网关错误不得推进游标，调用方应在本地事务成功处理整页后再保存进度。

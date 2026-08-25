@@ -2,10 +2,10 @@
 //!
 //! 基础设施层：封装 SQLx、Redis、第三方接口和仓储实现。
 //! 本文件提供新币发行上下文全部仓储 trait 的 MySQL 适配器，覆盖项目与订单只读查询、
-//! 申购与上市后购买的下单事务、解禁手续费状态置位，以及到期锁仓的释放入账。
+//! 申购与上市后购买的下单事务、解禁费真实结算，以及到期锁仓的释放入账。
 //! 所有资金动作都收敛在单个 MySQL 事务内，统一按「先锁项目与交易对配置、再锁钱包账户行、
 //! 最后写锁仓与解禁记录」的方向取行锁，保证并发下单与后台改配置之间不会互相插队。
-//! 金额一律由 `BigDecimal` 承载并按数据库列定义的 18 位小数存取，本层不额外舍入或截断。
+//! 金额一律由 `BigDecimal` 承载；客户金额必须精确匹配资产精度，服务端计算费用向零截断。
 //! 本层不发布任何领域事件，事件广播由 application 层在事务提交成功后自行触发。
 
 use crate::{
@@ -14,24 +14,26 @@ use crate::{
         LifecycleStatus,
         repository::{
             NewCoinDistributionRead, NewCoinLedgerMetadata, NewCoinLockPositionWrite,
-            NewCoinOrderRepository, NewCoinPairRead, NewCoinProjectRead, NewCoinProjectRuleRead,
-            NewCoinPurchaseOrderInsert, NewCoinPurchaseOrderInsertResult,
+            NewCoinOrderRepository, NewCoinOrderWriteOutcome, NewCoinPairRead, NewCoinProjectRead,
+            NewCoinProjectRuleRead, NewCoinPurchaseOrderInsert, NewCoinPurchaseOrderInsertResult,
             NewCoinPurchaseOrderWrite, NewCoinPurchaseRead, NewCoinReadRepository,
             NewCoinRepositoryError, NewCoinSubscriptionOrderWrite, NewCoinSubscriptionRead,
-            NewCoinUnlockFeeRepository, NewCoinUnlockRead, NewCoinUnlockReleaseRepository,
-            NewCoinWalletRead, ReleaseUnlockOutcome, UnlockFeeExpectation, UnlockFeePaidStatus,
-            UnlockFeePaymentUpdate, UnlockFeePaymentWrite,
+            NewCoinUnlockRead, NewCoinWalletRead, UnlockFeePaidStatus, UnlockFeePaymentUpdate,
+            UnlockFeePaymentWrite,
         },
         service::{
+            authoritative_new_coin_quote_amount, ensure_new_coin_amount_precision,
             ensure_post_listing_purchase_enabled, lifecycle_status, lock_positions_for_project,
-            unlock_fee_fields,
+            new_coin_unlock_idempotency_key, quantize_unlock_fee_amount, unlock_fee_fields,
         },
     },
 };
 use axum::async_trait;
 use bigdecimal::BigDecimal;
 use chrono::Utc;
-use sqlx::{MySql, Pool, QueryBuilder, Transaction};
+use sqlx::{MySql, Pool, Transaction};
+
+mod unlock;
 
 impl From<sqlx::Error> for NewCoinRepositoryError {
     /// 把 SQLx 底层错误折叠为仓储层的 `Storage` 变体，只保留其字符串描述。
@@ -131,34 +133,23 @@ impl MySqlNewCoinRepository {
             .transpose()
     }
 
-    /// 按解禁幂等键与 `user_id` 把 `fee_paid_status` 由任意非 paid 值改写为 paid，
-    /// 同时用入参覆盖记录上的费用资产与费用金额两列。
-    /// `WHERE` 自带 `fee_paid_status <> 'paid'` 守卫，把状态判定与更新压在一条语句里，
-    /// 因此重复调用只有首次影响一行返回 `true`，之后恒为 `false`，可安全重放。
-    /// 此兼容入口不校验金额是否与项目费率一致、不扣减钱包、不写 `wallet_ledger`，
-    /// 是纯粹的状态置位；调用方须先完成金额与支付资产比对，
-    /// 否则会把错误的收费口径永久写入解禁记录。
+    /// 兼容入口与用户路由共用同一真实结算事务：重读不可变应收、锁钱包扣款、
+    /// 写用户流水与平台双腿分录后才置 paid。同参重放复核证据并返回 `false`。
     pub async fn mark_unlock_fee_paid(
         &self,
         payment: UnlockFeePaymentUpdate,
     ) -> Result<bool, NewCoinRepositoryError> {
-        let result = sqlx::query(
-            r#"UPDATE asset_unlock_records
-               SET fee_paid_status = 'paid',
-                   unlock_fee_asset = ?,
-                   unlock_fee_amount = ?
-               WHERE idempotency_key = ?
-                 AND user_id = ?
-                 AND fee_paid_status <> 'paid'"#,
+        unlock::pay_unlock_fee_in_tx(
+            &self.pool,
+            UnlockFeePaymentWrite {
+                unlock_idempotency_key: payment.unlock_idempotency_key,
+                user_id: payment.user_id,
+                payment_asset_id: payment.payment_asset_id,
+                amount: payment.amount,
+            },
         )
-        .bind(payment.payment_asset_id)
-        .bind(payment.amount)
-        .bind(payment.unlock_idempotency_key)
-        .bind(payment.user_id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(result.rows_affected() == 1)
+        .await
+        .map_err(|error| NewCoinRepositoryError::Storage(error.to_string()))
     }
 
     /// 在幂等插入命中重复键、`last_insert_id` 退化为 0 时，按幂等键回读既有购买单主键。
@@ -217,7 +208,8 @@ impl NewCoinReadRepository for MySqlNewCoinReadRepository {
     /// 被后台停用的项目在此不可见，也不会回退去读草稿态记录。
     async fn list_active_projects(&self, limit: u32) -> AppResult<Vec<NewCoinProjectRead>> {
         let rows = sqlx::query_as::<_, NewCoinProjectReadRow>(
-            r#"SELECT id, asset_id, symbol, lifecycle_status, total_supply, issue_price, listed_at,
+            r#"SELECT id, asset_id, symbol, lifecycle_status, total_supply, issue_price,
+                      quote_asset_id, reserved_supply, allocated_supply, remaining_supply, listed_at,
                       unlock_type, fixed_unlock_at, relative_unlock_seconds, unlock_fee_enabled,
                       unlock_fee_rate, unlock_fee_basis, unlock_fee_asset,
                       post_listing_purchase_enabled, post_listing_pair_id, status
@@ -243,7 +235,8 @@ impl NewCoinReadRepository for MySqlNewCoinReadRepository {
         symbol: &str,
     ) -> AppResult<Option<NewCoinProjectRead>> {
         let row = sqlx::query_as::<_, NewCoinProjectReadRow>(
-            r#"SELECT id, asset_id, symbol, lifecycle_status, total_supply, issue_price, listed_at,
+            r#"SELECT id, asset_id, symbol, lifecycle_status, total_supply, issue_price,
+                      quote_asset_id, reserved_supply, allocated_supply, remaining_supply, listed_at,
                       unlock_type, fixed_unlock_at, relative_unlock_seconds, unlock_fee_enabled,
                       unlock_fee_rate, unlock_fee_basis, unlock_fee_asset,
                       post_listing_purchase_enabled, post_listing_pair_id, status
@@ -269,7 +262,7 @@ impl NewCoinReadRepository for MySqlNewCoinReadRepository {
         limit: u32,
     ) -> AppResult<Vec<NewCoinSubscriptionRead>> {
         let rows = sqlx::query_as::<_, NewCoinSubscriptionReadRow>(
-            r#"SELECT id, project_id, user_id, quote_asset, quote_amount, requested_quantity,
+            r#"SELECT id, project_id, user_id, quote_asset, issue_price, quote_amount, requested_quantity,
                       allocated_quantity, status, idempotency_key, created_at
                FROM new_coin_subscriptions
                WHERE user_id = ?
@@ -365,241 +358,8 @@ impl NewCoinReadRepository for MySqlNewCoinReadRepository {
 }
 
 #[async_trait]
-impl NewCoinUnlockFeeRepository for MySqlNewCoinReadRepository {
-    /// 按解禁幂等键与 `user_id` 回读该条记录应收的手续费口径，即是否启用收费、支付资产和应付金额。
-    /// 返回值刻意不含 `fee_paid_status`，只回答「应该收多少」，是否已收需另行查询，
-    /// 两者分离可避免调用方把「应收」直接当成「已收」而错误放行。
-    /// 记录不存在返回 `None`；查询不加行锁，结果返回后仍可能被并发缴费改写，
-    /// 因此只适合做缴费前的金额比对，不能替代事务内的重复收费守卫。
-    async fn find_unlock_fee_expectation(
-        &self,
-        unlock_idempotency_key: &str,
-        user_id: u64,
-    ) -> AppResult<Option<UnlockFeeExpectation>> {
-        let row = sqlx::query_as::<_, UnlockFeeExpectationRow>(
-            r#"SELECT unlock_fee_enabled, unlock_fee_asset, unlock_fee_amount
-               FROM asset_unlock_records
-               WHERE idempotency_key = ? AND user_id = ?
-               LIMIT 1"#,
-        )
-        .bind(unlock_idempotency_key)
-        .bind(user_id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(row.map(Into::into))
-    }
-
-    /// 把匹配用户与幂等键、且当前非 paid 的解禁记录置为 paid，并覆盖记录上的费用资产与费用金额。
-    /// 状态守卫写在 `WHERE` 里而不是先查后写，因此并发重复缴费只有一条 UPDATE 能命中，
-    /// 返回 `true` 的调用在整个记录生命周期内至多出现一次，其余重放一律返回 `false`。
-    /// 与同名的兼容入口一样，此实现只改解禁记录自身，
-    /// 不扣钱包余额也不写 `wallet_ledger`，真正的资金扣减由上层在自己的事务中完成。
-    async fn mark_unlock_fee_paid(&self, payment: UnlockFeePaymentWrite) -> AppResult<bool> {
-        // 手续费支付状态使用幂等更新，重复支付同一解锁记录时不能重复改变业务状态。
-        let result = sqlx::query(
-            r#"UPDATE asset_unlock_records
-               SET fee_paid_status = 'paid',
-                   unlock_fee_asset = ?,
-                   unlock_fee_amount = ?
-               WHERE idempotency_key = ?
-                 AND user_id = ?
-                 AND fee_paid_status <> 'paid'"#,
-        )
-        .bind(payment.payment_asset_id)
-        .bind(payment.amount)
-        .bind(payment.unlock_idempotency_key)
-        .bind(payment.user_id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(result.rows_affected() == 1)
-    }
-}
-
-#[async_trait]
-impl NewCoinUnlockReleaseRepository for MySqlNewCoinReadRepository {
-    /// 在单个事务内完成一笔到期解禁的资金释放，把锁仓额度转成可用余额并留下完整审计。
-    /// 进入事务前先无锁确认该幂等键与用户存在对应记录，缺失直接返回 `NotFound`，不为非法键开事务。
-    /// 事务内按固定顺序取锁：先用联表 `FOR UPDATE` 同时锁住解禁记录与其锁仓位置，
-    /// 再锁钱包账户行，最后重读锁仓剩余量；解禁记录恒先于钱包加锁，
-    /// 与下单路径「配置行在前、钱包行在后」的方向一致，两条资金链路不会互相等待成环。
-    /// 放行条件必须同时成立：记录未释放、锁仓仍为 active、解禁时点已到、剩余量足够本次数量，
-    /// 且项目未开启解禁收费或该记录已缴费。
-    /// 条件不成立时若记录已是 released，判定为重放，提交空事务并以 `released = false`
-    /// 回吐既有资产与数量；否则返回 `Validation` 表示未到期或未缴费，事务回滚不留痕迹。
-    /// 资金只有一个流向：从 `wallet_accounts.locked` 扣减并等额加到 `available`，
-    /// 全程不经过 `frozen` 中转；锁仓行同步累加 `released_amount`、扣减 `remaining_amount`，
-    /// 减到零才把位置状态由 active 改为 released。
-    /// 每次真实释放固定写两条 change_type 为 `new_coin_unlock_release` 的账本，
-    /// 分别记录 locked 腿的负变动与 available 腿的正变动，ref_id 取解禁幂等键便于反查。
-    /// 钱包账户缺失、locked 余额不足或锁仓剩余量被并发占用时整体回滚，
-    /// 绝不出现只改了余额却没有账本、或只释放锁仓却没入账的中间态。
-    async fn release_due_paid_unlock(
-        &self,
-        unlock_idempotency_key: &str,
-        user_id: u64,
-    ) -> AppResult<ReleaseUnlockOutcome> {
-        let exists = sqlx::query_as::<_, (u64,)>(
-            "SELECT id FROM asset_unlock_records WHERE idempotency_key = ? AND user_id = ? LIMIT 1",
-        )
-        .bind(unlock_idempotency_key)
-        .bind(user_id)
-        .fetch_optional(&self.pool)
-        .await?;
-        if exists.is_none() {
-            return Err(AppError::NotFound);
-        }
-
-        let mut tx = self.pool.begin().await?;
-        let Some(row) = sqlx::query_as::<_, ReleasableUnlockRow>(
-            r#"SELECT unlocks.id AS unlock_id, unlocks.asset_id, unlocks.lock_position_id,
-                      unlocks.unlock_quantity
-               FROM asset_unlock_records unlocks
-               INNER JOIN asset_lock_positions positions ON positions.id = unlocks.lock_position_id
-               WHERE unlocks.idempotency_key = ? AND unlocks.user_id = ?
-                 AND unlocks.status <> 'released'
-                 AND positions.status = 'active'
-                 AND positions.unlock_at <= CURRENT_TIMESTAMP(6)
-                 AND positions.remaining_amount >= unlocks.unlock_quantity
-                 AND (unlocks.unlock_fee_enabled = false OR unlocks.fee_paid_status = 'paid')
-               LIMIT 1
-               FOR UPDATE"#,
-        )
-        .bind(unlock_idempotency_key)
-        .bind(user_id)
-        .fetch_optional(&mut *tx)
-        .await?
-        else {
-            if let Some((asset_id, unlock_quantity)) = sqlx::query_as::<_, (u64, BigDecimal)>(
-                r#"SELECT asset_id, unlock_quantity
-                   FROM asset_unlock_records
-                   WHERE idempotency_key = ? AND user_id = ? AND status = 'released'
-                   LIMIT 1"#,
-            )
-            .bind(unlock_idempotency_key)
-            .bind(user_id)
-            .fetch_optional(&mut *tx)
-            .await?
-            {
-                tx.commit().await?;
-                return Ok(ReleaseUnlockOutcome {
-                    asset_id,
-                    unlock_quantity,
-                    released: false,
-                });
-            }
-            return Err(AppError::Validation(
-                "unlock is not releasable until unlock time is reached and required fee is paid"
-                    .to_owned(),
-            ));
-        };
-
-        let Some((available, frozen, locked)) =
-            sqlx::query_as::<_, (BigDecimal, BigDecimal, BigDecimal)>(
-                "SELECT available, frozen, locked FROM wallet_accounts WHERE user_id = ? AND asset_id = ? FOR UPDATE",
-            )
-            .bind(user_id)
-            .bind(row.asset_id)
-            .fetch_optional(&mut *tx)
-            .await?
-        else {
-            return Err(AppError::Validation(
-                "wallet account is required before unlock release".to_owned(),
-            ));
-        };
-
-        if locked < row.unlock_quantity {
-            return Err(AppError::Validation(
-                "wallet locked balance is insufficient for unlock release".to_owned(),
-            ));
-        }
-
-        let available_after = available + row.unlock_quantity.clone();
-        let locked_after = locked - row.unlock_quantity.clone();
-
-        let (remaining_before,) = sqlx::query_as::<_, (BigDecimal,)>(
-            "SELECT remaining_amount FROM asset_lock_positions WHERE id = ? FOR UPDATE",
-        )
-        .bind(row.lock_position_id)
-        .fetch_one(&mut *tx)
-        .await?;
-        let remaining_after = remaining_before - row.unlock_quantity.clone();
-        let lock_status = if remaining_after == 0 {
-            "released"
-        } else {
-            "active"
-        };
-
-        // 锁仓释放、解锁记录状态、钱包余额和双向流水必须在一个事务中完成，避免余额变化缺少审计记录。
-        sqlx::query(
-            r#"UPDATE asset_lock_positions
-               SET released_amount = released_amount + ?,
-                   remaining_amount = ?,
-                   status = ?
-               WHERE id = ? AND remaining_amount >= ?"#,
-        )
-        .bind(&row.unlock_quantity)
-        .bind(&remaining_after)
-        .bind(lock_status)
-        .bind(row.lock_position_id)
-        .bind(&row.unlock_quantity)
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query("UPDATE asset_unlock_records SET status = 'released' WHERE id = ?")
-            .bind(row.unlock_id)
-            .execute(&mut *tx)
-            .await?;
-
-        sqlx::query(
-            "UPDATE wallet_accounts SET available = ?, locked = ? WHERE user_id = ? AND asset_id = ?",
-        )
-        .bind(&available_after)
-        .bind(&locked_after)
-        .bind(user_id)
-        .bind(row.asset_id)
-        .execute(&mut *tx)
-        .await?;
-
-        sqlx::query(
-            r#"INSERT INTO wallet_ledger
-               (user_id, asset_id, change_type, amount, balance_type, balance_after,
-                available_after, frozen_after, locked_after, ref_type, ref_id)
-               VALUES (?, ?, 'new_coin_unlock_release', ?, 'locked', ?, ?, ?, ?, 'new_coin_unlock', ?),
-                      (?, ?, 'new_coin_unlock_release', ?, 'available', ?, ?, ?, ?, 'new_coin_unlock', ?)"#,
-        )
-        .bind(user_id)
-        .bind(row.asset_id)
-        .bind(-row.unlock_quantity.clone())
-        .bind(&locked_after)
-        .bind(&available_after)
-        .bind(&frozen)
-        .bind(&locked_after)
-        .bind(unlock_idempotency_key)
-        .bind(user_id)
-        .bind(row.asset_id)
-        .bind(&row.unlock_quantity)
-        .bind(&available_after)
-        .bind(&available_after)
-        .bind(&frozen)
-        .bind(&locked_after)
-        .bind(unlock_idempotency_key)
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-        Ok(ReleaseUnlockOutcome {
-            asset_id: row.asset_id,
-            unlock_quantity: row.unlock_quantity,
-            released: true,
-        })
-    }
-}
-
-#[async_trait]
 impl NewCoinOrderRepository for MySqlNewCoinReadRepository {
-    /// 按符号读取启用项目的下单规则，取的列比公开项目模型更窄，但覆盖风控判定所需的全部开关。
+    /// 按符号读取项目下单规则，包含停用项目以支持历史订单的幂等重放。
     /// 返回内容包含生命周期、发行价、上市时间、解禁类型与相对周期秒数、解禁费四要素，
     /// 以及上市后购买开关和后台限定的交易对编号。
     /// 该查询走连接池且不加锁，只用于下单前的预校验；
@@ -616,29 +376,9 @@ impl NewCoinOrderRepository for MySqlNewCoinReadRepository {
         Ok(row.map(Into::into))
     }
 
-    /// 读取上市后购买要用的交易对，并在 SQL 层强制其 `base_asset` 等于项目资产且状态为 active。
-    /// 把两个条件绑进同一条查询，可阻止调用方拿任意 `pair_id` 去买入不相干的币种，
-    /// 不匹配、已下架或根本不存在时统一返回 `None`，本层不区分具体原因。
-    /// 这里使用不加锁读取，返回的基础与计价资产编号仅供预校验；
-    /// 真正成交时会在事务内以加锁版本重新确认，避免交易对被并发下架后仍然成交。
-    async fn find_pair_for_purchase(
-        &self,
-        pair_id: u64,
-        project_asset_id: u64,
-    ) -> AppResult<Option<NewCoinPairRead>> {
-        let row = sqlx::query_as::<_, NewCoinPairReadRow>(new_coin_pair_select_sql(false))
-            .bind(pair_id)
-            .bind(project_asset_id)
-            .fetch_optional(&self.pool)
-            .await?;
-        Ok(row.map(Into::into))
-    }
-
     /// 在单个事务内落地一笔新币申购：登记订单、扣计价资产、按锁仓计划分配新币，再把订单推进到 allocated。
-    /// 与购买路径不同，本实现不在事务内重新锁定项目行，沿用调用方传入的项目规则快照
-    /// 与其预先算好的锁仓计划，因此不防御「申购期间后台改规则」这一竞态。
-    /// 事务首先以 `SELECT ... FOR UPDATE` 占位幂等键，键已存在即返回 `Conflict` 且不比较重放参数；
-    /// 该行锁同时挡住同键并发请求，使「查重加插入」不会因竞态写出两张申购单。
+    /// 事务先锁全局幂等键；命中时只比较并回读原结果，未命中才锁项目并重读权威价格、供给和解禁规则。
+    /// 这样跨项目异参重放不会形成项目行反向锁环；项目行锁仍串行化所有真实供给预留。
     /// 订单先以 `pending` 与零配额落库，扣款和分配都成功后再改写为实际配额与 `allocated`，
     /// 因此中途失败回滚后不会残留一张显示已配额却没有资产到账的订单。
     /// 资金方向为计价资产 `available` 单向扣减，余额不足时整体回滚；
@@ -649,34 +389,95 @@ impl NewCoinOrderRepository for MySqlNewCoinReadRepository {
     async fn create_subscription_order(
         &self,
         order: NewCoinSubscriptionOrderWrite,
-    ) -> AppResult<Option<u64>> {
+    ) -> AppResult<NewCoinOrderWriteOutcome> {
         let mut tx = self.pool.begin().await?;
-        if idempotency_key_exists(&mut tx, "new_coin_subscriptions", &order.idempotency_key).await?
+        if let Some(replay) =
+            lock_subscription_replay_in_tx(&mut tx, &order.idempotency_key).await?
         {
-            return Err(AppError::Conflict(
-                "new coin subscription has already been created".to_owned(),
+            ensure_subscription_replay_matches(&replay, &order)?;
+            tx.commit().await?;
+            return Ok(replay.into_outcome(false));
+        }
+        let locked_project = lock_order_project_in_tx(&mut tx, order.project.id).await?;
+        ensure_active_project(&locked_project)?;
+        ensure_project_supply_invariant(&locked_project)?;
+        if lifecycle_status(&locked_project.lifecycle_status)? != LifecycleStatus::Subscription {
+            return Err(AppError::Validation(
+                "new coin subscription is not open for this project".to_owned(),
             ));
         }
-        sqlx::query(
-            r#"INSERT INTO new_coin_subscriptions
-               (project_id, user_id, quote_asset, quote_amount, requested_quantity,
-                allocated_quantity, status, idempotency_key)
-               VALUES (?, ?, ?, ?, ?, 0, 'pending', ?)"#,
+        if locked_project.quote_asset_id != Some(order.quote_asset_id) {
+            return Err(AppError::Validation(
+                "quote_asset_id does not match the project authority".to_owned(),
+            ));
+        }
+        ensure_distinct_new_coin_assets(locked_project.asset_id, order.quote_asset_id)?;
+        let asset_precisions = lock_active_asset_precisions_in_order(
+            &mut tx,
+            &new_coin_order_asset_ids(&locked_project, order.quote_asset_id),
         )
-        .bind(order.project.id)
+        .await?;
+        let base_precision = locked_asset_precision(&asset_precisions, locked_project.asset_id)?;
+        let quote_precision = locked_asset_precision(&asset_precisions, order.quote_asset_id)?;
+        ensure_project_supply_precision(&locked_project, base_precision)?;
+        ensure_new_coin_amount_precision(&order.quantity, base_precision, "quantity")?;
+        ensure_new_coin_amount_precision(&order.quote_amount, quote_precision, "quote_amount")?;
+        let authoritative_quote = authoritative_new_coin_quote_amount(
+            &locked_project.issue_price,
+            &order.quantity,
+            quote_precision,
+        )?;
+        if authoritative_quote.normalized() != order.quote_amount.normalized() {
+            return Err(AppError::Validation(
+                "quote_amount does not match server-authoritative issue price".to_owned(),
+            ));
+        }
+        lock_new_coin_order_wallets_in_order(
+            &mut tx,
+            order.user_id,
+            locked_project.asset_id,
+            order.quote_asset_id,
+        )
+        .await?;
+        reserve_new_coin_supply_in_tx(&mut tx, locked_project.id, &order.quantity).await?;
+        let lock_positions = lock_positions_for_project(
+            &locked_project,
+            order.user_id,
+            locked_project.asset_id,
+            &order.idempotency_key,
+            order.quantity.clone(),
+            Utc::now(),
+            "new_coin_subscription",
+        )?;
+        let inserted = sqlx::query(
+            r#"INSERT INTO new_coin_subscriptions
+               (project_id, user_id, quote_asset, issue_price, quote_amount, requested_quantity,
+                allocated_quantity, status, idempotency_key, request_fingerprint)
+               VALUES (?, ?, ?, ?, ?, ?, 0, 'pending', ?, ?)"#,
+        )
+        .bind(locked_project.id)
         .bind(order.user_id)
         .bind(order.quote_asset_id)
-        .bind(&order.quote_amount)
+        .bind(&locked_project.issue_price)
+        .bind(&authoritative_quote)
         .bind(&order.quantity)
         .bind(&order.idempotency_key)
+        .bind(&order.request_fingerprint)
         .execute(&mut *tx)
-        .await?;
+        .await;
+        if let Err(error) = inserted {
+            if is_mysql_duplicate_key(&error) {
+                tx.rollback().await?;
+                return replay_subscription_after_unique_conflict(&self.pool, &order).await;
+            }
+            return Err(error.into());
+        }
 
         debit_wallet_available(
             &mut tx,
             order.user_id,
             order.quote_asset_id,
-            &order.quote_amount,
+            &authoritative_quote,
             NewCoinLedgerMetadata {
                 change_type: "new_coin_subscription_payment",
                 ref_type: "new_coin_subscription",
@@ -687,12 +488,12 @@ impl NewCoinOrderRepository for MySqlNewCoinReadRepository {
         let lock_position_id = apply_new_coin_allocation(
             &mut tx,
             order.user_id,
-            order.project.asset_id,
+            locked_project.asset_id,
             &order.quantity,
-            &order.lock_positions,
-            &order.project.issue_price,
-            &order.quote_amount,
-            &order.project,
+            &lock_positions,
+            &locked_project.issue_price,
+            &authoritative_quote,
+            &locked_project,
             NewCoinLedgerMetadata {
                 change_type: "new_coin_subscription_lock",
                 ref_type: "new_coin_subscription",
@@ -700,39 +501,100 @@ impl NewCoinOrderRepository for MySqlNewCoinReadRepository {
             },
         )
         .await?;
+        let status = if lock_position_id.is_some() {
+            "allocated"
+        } else {
+            "available"
+        };
         sqlx::query(
-            "UPDATE new_coin_subscriptions SET allocated_quantity = ?, status = 'allocated' WHERE idempotency_key = ?",
+            "UPDATE new_coin_subscriptions SET allocated_quantity = ?, status = ? WHERE idempotency_key = ?",
         )
         .bind(&order.quantity)
+        .bind(status)
         .bind(&order.idempotency_key)
         .execute(&mut *tx)
         .await?;
+        finalize_new_coin_supply_in_tx(&mut tx, locked_project.id, &order.quantity).await?;
         tx.commit().await?;
-        Ok(lock_position_id)
+        Ok(NewCoinOrderWriteOutcome {
+            project_id: locked_project.id,
+            asset_id: locked_project.asset_id,
+            quote_asset_id: order.quote_asset_id,
+            lock_position_id,
+            status: status.to_owned(),
+            authoritative_price: locked_project.issue_price,
+            authoritative_quote_amount: authoritative_quote,
+            created: true,
+        })
     }
 
-    /// 在单个事务内落地一笔二级市场买入：校验项目与交易对、登记订单、扣计价资产、锁仓新币并置为 locked。
-    /// 加锁顺序固定为项目行、交易对行、订单幂等键、钱包行、锁仓行，由粗粒度配置逐级下探到细粒度资金，
-    /// 先锁项目可阻止后台在同一瞬间关闭购买开关或换交易对，从而杜绝按旧快照成交。
+    /// 在单个事务内落地一笔上市后平台买入：校验项目与交易对、登记订单、扣计价资产并分配新币。
+    /// 加锁顺序固定为订单幂等键、项目行、交易对行、资产行、钱包行、锁仓行；
+    /// 未命中重放后锁项目可阻止后台在同一瞬间关闭购买开关或换交易对，从而杜绝按旧快照成交。
     /// 事务内重读到的项目必须仍处于 `listed` 且开启上市后购买，请求的交易对必须正是项目指定的那一个，
     /// 交易对自身还要求基础资产等于项目资产且状态 active，任一不满足即回滚并返回 `Validation` 或 `NotFound`。
     /// 锁仓计划基于事务内的项目规则与 `Utc::now()` 现算，因此相对周期类解禁以实际成交时刻为起点，
     /// 而不是以请求到达时刻为起点。
-    /// 幂等键以 `FOR UPDATE` 占位，任何重复键一律返回 `Conflict`，既不比对参数也不回读既有订单。
+    /// 幂等键以 `FOR UPDATE` 串行化：同指纹重放回读既有订单，异指纹重用则返回 `Conflict`。
     /// 资金方向为计价资产 `available` 单向扣减，新币按解禁规则进 `locked` 或在无锁仓计划时直接进 `available`，
     /// 分别以 `new_coin_purchase_payment` 与 `new_coin_purchase_lock` 写账本，ref_id 取购买幂等键。
-    /// 订单先落 `pending` 且锁仓编号为空，成功后回填首个锁仓位置编号并置为 `locked`；
+    /// 订单先落 `pending` 且锁仓编号为空，成功后回填首个锁仓位置编号并置为 `locked` 或 `available`；
     /// 返回值即该编号，`None` 表示无锁仓的即时到账。本函数不发布任何事件。
     async fn create_purchase_order(
         &self,
         order: NewCoinPurchaseOrderWrite,
-    ) -> AppResult<Option<u64>> {
+    ) -> AppResult<NewCoinOrderWriteOutcome> {
         let mut tx = self.pool.begin().await?;
-        // 下单事务内重新锁定项目和交易对，避免后台刚关闭认购或调整规则后用户仍按旧快照成交。
-        let locked_project =
-            lock_purchase_project_in_tx(&mut tx, order.project.id, order.pair_id).await?;
+        if let Some(replay) = lock_purchase_replay_in_tx(&mut tx, &order.idempotency_key).await? {
+            ensure_purchase_replay_matches(&replay, &order)?;
+            tx.commit().await?;
+            return Ok(replay.into_outcome(false));
+        }
+        let locked_project = lock_order_project_in_tx(&mut tx, order.project.id).await?;
+        ensure_active_project(&locked_project)?;
+        ensure_project_supply_invariant(&locked_project)?;
+        if lifecycle_status(&locked_project.lifecycle_status)? != LifecycleStatus::Listed {
+            return Err(AppError::Validation(
+                "post-listing new coin purchase is not open for this project".to_owned(),
+            ));
+        }
+        ensure_post_listing_purchase_enabled(&locked_project, order.pair_id)?;
         let locked_pair =
             lock_pair_for_purchase_in_tx(&mut tx, order.pair_id, locked_project.asset_id).await?;
+        if locked_project.quote_asset_id != Some(locked_pair.quote_asset_id) {
+            return Err(AppError::Validation(
+                "purchase pair quote asset does not match the project authority".to_owned(),
+            ));
+        }
+        ensure_distinct_new_coin_assets(locked_project.asset_id, locked_pair.quote_asset_id)?;
+        if order.price.normalized() != locked_project.issue_price.normalized() {
+            return Err(AppError::Validation(
+                "price does not match the server-authoritative issue price".to_owned(),
+            ));
+        }
+        let asset_precisions = lock_active_asset_precisions_in_order(
+            &mut tx,
+            &new_coin_order_asset_ids(&locked_project, locked_pair.quote_asset_id),
+        )
+        .await?;
+        let base_precision = locked_asset_precision(&asset_precisions, locked_project.asset_id)?;
+        let quote_precision =
+            locked_asset_precision(&asset_precisions, locked_pair.quote_asset_id)?;
+        ensure_project_supply_precision(&locked_project, base_precision)?;
+        ensure_new_coin_amount_precision(&order.quantity, base_precision, "quantity")?;
+        let authoritative_quote = authoritative_new_coin_quote_amount(
+            &locked_project.issue_price,
+            &order.quantity,
+            quote_precision,
+        )?;
+        lock_new_coin_order_wallets_in_order(
+            &mut tx,
+            order.user_id,
+            locked_project.asset_id,
+            locked_pair.quote_asset_id,
+        )
+        .await?;
+        reserve_new_coin_supply_in_tx(&mut tx, locked_project.id, &order.quantity).await?;
         let lock_positions = lock_positions_for_project(
             &locked_project,
             order.user_id,
@@ -742,36 +604,37 @@ impl NewCoinOrderRepository for MySqlNewCoinReadRepository {
             Utc::now(),
             "new_coin_purchase",
         )?;
-        if idempotency_key_exists(&mut tx, "new_coin_purchase_orders", &order.idempotency_key)
-            .await?
-        {
-            return Err(AppError::Conflict(
-                "new coin purchase has already been created".to_owned(),
-            ));
-        }
-        sqlx::query(
+        let inserted = sqlx::query(
             r#"INSERT INTO new_coin_purchase_orders
                (project_id, user_id, pair_id, base_asset, quote_asset, price, quantity,
-                quote_amount, lock_position_id, status, idempotency_key)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'pending', ?)"#,
+                quote_amount, lock_position_id, status, idempotency_key, request_fingerprint)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'pending', ?, ?)"#,
         )
         .bind(locked_project.id)
         .bind(order.user_id)
         .bind(order.pair_id)
         .bind(locked_pair.base_asset_id)
         .bind(locked_pair.quote_asset_id)
-        .bind(&order.price)
+        .bind(&locked_project.issue_price)
         .bind(&order.quantity)
-        .bind(&order.quote_amount)
+        .bind(&authoritative_quote)
         .bind(&order.idempotency_key)
+        .bind(&order.request_fingerprint)
         .execute(&mut *tx)
-        .await?;
+        .await;
+        if let Err(error) = inserted {
+            if is_mysql_duplicate_key(&error) {
+                tx.rollback().await?;
+                return replay_purchase_after_unique_conflict(&self.pool, &order).await;
+            }
+            return Err(error.into());
+        }
 
         debit_wallet_available(
             &mut tx,
             order.user_id,
             locked_pair.quote_asset_id,
-            &order.quote_amount,
+            &authoritative_quote,
             NewCoinLedgerMetadata {
                 change_type: "new_coin_purchase_payment",
                 ref_type: "new_coin_purchase",
@@ -785,8 +648,8 @@ impl NewCoinOrderRepository for MySqlNewCoinReadRepository {
             locked_project.asset_id,
             &order.quantity,
             &lock_positions,
-            &order.price,
-            &order.quote_amount,
+            &locked_project.issue_price,
+            &authoritative_quote,
             &locked_project,
             NewCoinLedgerMetadata {
                 change_type: "new_coin_purchase_lock",
@@ -795,15 +658,31 @@ impl NewCoinOrderRepository for MySqlNewCoinReadRepository {
             },
         )
         .await?;
+        let status = if lock_position_id.is_some() {
+            "locked"
+        } else {
+            "available"
+        };
         sqlx::query(
-            "UPDATE new_coin_purchase_orders SET lock_position_id = ?, status = 'locked' WHERE idempotency_key = ?",
+            "UPDATE new_coin_purchase_orders SET lock_position_id = ?, status = ? WHERE idempotency_key = ?",
         )
         .bind(lock_position_id)
+        .bind(status)
         .bind(&order.idempotency_key)
         .execute(&mut *tx)
         .await?;
+        finalize_new_coin_supply_in_tx(&mut tx, locked_project.id, &order.quantity).await?;
         tx.commit().await?;
-        Ok(lock_position_id)
+        Ok(NewCoinOrderWriteOutcome {
+            project_id: locked_project.id,
+            asset_id: locked_project.asset_id,
+            quote_asset_id: locked_pair.quote_asset_id,
+            lock_position_id,
+            status: status.to_owned(),
+            authoritative_price: locked_project.issue_price,
+            authoritative_quote_amount: authoritative_quote,
+            created: true,
+        })
     }
 }
 
@@ -813,25 +692,47 @@ impl NewCoinOrderRepository for MySqlNewCoinReadRepository {
 /// 且请求的 `requested_pair_id` 正是项目配置的那一个交易对。
 /// 该行锁一直持有到事务结束，期间后台对同一项目的配置修改会被阻塞，
 /// 从而消除「校验通过之后规则被改、却仍按旧规则扣款锁仓」的时间窗口。
-async fn lock_purchase_project_in_tx(
+async fn lock_order_project_in_tx(
     tx: &mut Transaction<'_, MySql>,
     project_id: u64,
-    requested_pair_id: u64,
 ) -> AppResult<NewCoinProjectRuleRead> {
     let sql = new_coin_project_rule_select_sql("id = ?", "LIMIT 1 FOR UPDATE");
-    let project = sqlx::query_as::<_, NewCoinProjectRuleReadRow>(&sql)
+    sqlx::query_as::<_, NewCoinProjectRuleReadRow>(&sql)
         .bind(project_id)
         .fetch_optional(&mut **tx)
         .await?
         .map(NewCoinProjectRuleRead::from)
-        .ok_or(AppError::NotFound)?;
-    if lifecycle_status(&project.lifecycle_status)? != LifecycleStatus::Listed {
+        .ok_or(AppError::NotFound)
+}
+
+/// 项目锁定后确认运营状态仍为 active；幂等重放会在本守卫之前回吐原结果。
+fn ensure_active_project(project: &NewCoinProjectRuleRead) -> AppResult<()> {
+    if project.status != "active" {
         return Err(AppError::Validation(
-            "post-listing new coin purchase is not open for this project".to_owned(),
+            "new coin project is not active".to_owned(),
         ));
     }
-    ensure_post_listing_purchase_enabled(&project, requested_pair_id)?;
-    Ok(project)
+    Ok(())
+}
+
+/// 项目行锁内复核总量恒等式，避免脏计数器被继续用于发行并把历史差额扩大。
+fn ensure_project_supply_invariant(project: &NewCoinProjectRuleRead) -> AppResult<()> {
+    let zero = BigDecimal::from(0);
+    if project.total_supply <= zero
+        || project.reserved_supply < zero
+        || project.allocated_supply < zero
+        || project.remaining_supply < zero
+        || (project.reserved_supply.clone()
+            + project.allocated_supply.clone()
+            + project.remaining_supply.clone())
+        .normalized()
+            != project.total_supply.normalized()
+    {
+        return Err(AppError::Internal(
+            "new coin project supply accounting invariant is broken".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// 在下单事务内以 `FOR UPDATE` 锁定交易对行，并要求其基础资产恰为项目资产、状态为 active。
@@ -858,12 +759,14 @@ async fn lock_pair_for_purchase_in_tx(
 /// 两个参数都由本模块以字面量传入，不接受任何外部输入，不存在 SQL 注入面。
 fn new_coin_project_rule_select_sql(predicate: &str, suffix: &str) -> String {
     format!(
-        r#"SELECT id, asset_id, lifecycle_status, issue_price, listed_at, unlock_type,
+        r#"SELECT id, asset_id, status, lifecycle_status, total_supply, issue_price,
+                  quote_asset_id, reserved_supply, allocated_supply, remaining_supply,
+                  listed_at, unlock_type,
                   fixed_unlock_at, relative_unlock_seconds, unlock_fee_enabled,
                   unlock_fee_rate, unlock_fee_basis, unlock_fee_asset,
                   post_listing_purchase_enabled, post_listing_pair_id
            FROM new_coin_projects
-           WHERE {predicate} AND status = 'active'
+           WHERE {predicate}
            {suffix}"#,
     )
 }
@@ -887,23 +790,274 @@ fn new_coin_pair_select_sql(for_update: bool) -> &'static str {
     }
 }
 
-/// 在事务内以 `SELECT ... LIMIT 1 FOR UPDATE` 探测目标表是否已存在该幂等键，同时兼作并发占位。
-/// 命中时取到的行锁、未命中时取到的间隙锁都会持有到事务结束，使同键并发请求被迫串行，
-/// 因此调用方的「先查重再插入」两步操作不会因竞态写出两条订单。
-/// 表名由本模块以字面量传入并直接拼进 SQL，幂等键则走占位符绑定，调用方不得传入外部字符串作为表名。
-async fn idempotency_key_exists(
+/// 锁定申购幂等键并读回原始价格、金额、状态与首个锁仓结果。
+async fn lock_subscription_replay_in_tx(
     tx: &mut Transaction<'_, MySql>,
-    table_name: &str,
     idempotency_key: &str,
-) -> AppResult<bool> {
-    let mut query = QueryBuilder::<MySql>::new("SELECT id FROM ");
-    query
-        .push(table_name)
-        .push(" WHERE idempotency_key = ")
-        .push_bind(idempotency_key)
-        .push(" LIMIT 1 FOR UPDATE");
-    let exists: Option<(u64,)> = query.build_query_as().fetch_optional(&mut **tx).await?;
-    Ok(exists.is_some())
+) -> AppResult<Option<NewCoinOrderReplayRow>> {
+    Ok(sqlx::query_as::<_, NewCoinOrderReplayRow>(
+        r#"SELECT subscriptions.request_fingerprint, subscriptions.project_id,
+                  subscriptions.user_id, projects.asset_id,
+                  subscriptions.quote_asset AS quote_asset_id,
+                  CAST(NULL AS UNSIGNED) AS pair_id,
+                  subscriptions.requested_quantity AS quantity, subscriptions.status,
+                  subscriptions.issue_price AS authoritative_price,
+                  subscriptions.quote_amount AS authoritative_quote_amount,
+                  (SELECT sources.lock_position_id
+                     FROM asset_lock_position_sources sources
+                    WHERE sources.source_type = 'new_coin_subscription'
+                      AND sources.source_id = subscriptions.idempotency_key
+                    LIMIT 1) AS lock_position_id
+           FROM new_coin_subscriptions subscriptions
+           INNER JOIN new_coin_projects projects ON projects.id = subscriptions.project_id
+           WHERE subscriptions.idempotency_key = ?
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(idempotency_key)
+    .fetch_optional(&mut **tx)
+    .await?)
+}
+
+/// 锁定买入幂等键并读回订单中已固化的权威成交结果。
+async fn lock_purchase_replay_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    idempotency_key: &str,
+) -> AppResult<Option<NewCoinOrderReplayRow>> {
+    Ok(sqlx::query_as::<_, NewCoinOrderReplayRow>(
+        r#"SELECT request_fingerprint, project_id, user_id, base_asset AS asset_id,
+                  quote_asset AS quote_asset_id, pair_id, quantity, status,
+                  price AS authoritative_price, quote_amount AS authoritative_quote_amount,
+                  lock_position_id
+           FROM new_coin_purchase_orders
+           WHERE idempotency_key = ?
+           LIMIT 1
+           FOR UPDATE"#,
+    )
+    .bind(idempotency_key)
+    .fetch_optional(&mut **tx)
+    .await?)
+}
+
+/// 不同项目并发抢同一全局幂等键时，唯一约束失败后必须在新事务中回读胜者并比较参数。
+async fn replay_subscription_after_unique_conflict(
+    pool: &Pool<MySql>,
+    order: &NewCoinSubscriptionOrderWrite,
+) -> AppResult<NewCoinOrderWriteOutcome> {
+    let mut tx = pool.begin().await?;
+    let replay = lock_subscription_replay_in_tx(&mut tx, &order.idempotency_key)
+        .await?
+        .ok_or_else(|| {
+            AppError::Conflict("new coin subscription idempotency key conflict".to_owned())
+        })?;
+    ensure_subscription_replay_matches(&replay, order)?;
+    tx.commit().await?;
+    Ok(replay.into_outcome(false))
+}
+
+async fn replay_purchase_after_unique_conflict(
+    pool: &Pool<MySql>,
+    order: &NewCoinPurchaseOrderWrite,
+) -> AppResult<NewCoinOrderWriteOutcome> {
+    let mut tx = pool.begin().await?;
+    let replay = lock_purchase_replay_in_tx(&mut tx, &order.idempotency_key)
+        .await?
+        .ok_or_else(|| {
+            AppError::Conflict("new coin purchase idempotency key conflict".to_owned())
+        })?;
+    ensure_purchase_replay_matches(&replay, order)?;
+    tx.commit().await?;
+    Ok(replay.into_outcome(false))
+}
+
+fn is_mysql_duplicate_key(error: &sqlx::Error) -> bool {
+    let Some(database_error) = error.as_database_error() else {
+        return false;
+    };
+    database_error
+        .code()
+        .is_some_and(|code| code == "1062" || code == "23000")
+}
+
+/// 新记录直接比较 SHA-256；迁移前无指纹的历史记录按已固化业务字段比较，避免伪造兼容哈希。
+fn ensure_subscription_replay_matches(
+    replay: &NewCoinOrderReplayRow,
+    order: &NewCoinSubscriptionOrderWrite,
+) -> AppResult<()> {
+    let matches = replay
+        .request_fingerprint
+        .as_deref()
+        .filter(|fingerprint| !fingerprint.is_empty())
+        .map_or_else(
+            || {
+                replay.project_id == order.project.id
+                    && replay.user_id == order.user_id
+                    && replay.quote_asset_id == order.quote_asset_id
+                    && replay.quantity.normalized() == order.quantity.normalized()
+                    && replay.authoritative_quote_amount.normalized()
+                        == order.quote_amount.normalized()
+            },
+            |fingerprint| fingerprint == order.request_fingerprint,
+        );
+    ensure_new_coin_replay_matches(matches)
+}
+
+fn ensure_purchase_replay_matches(
+    replay: &NewCoinOrderReplayRow,
+    order: &NewCoinPurchaseOrderWrite,
+) -> AppResult<()> {
+    let matches = replay
+        .request_fingerprint
+        .as_deref()
+        .filter(|fingerprint| !fingerprint.is_empty())
+        .map_or_else(
+            || {
+                replay.project_id == order.project.id
+                    && replay.user_id == order.user_id
+                    && replay.pair_id == Some(order.pair_id)
+                    && replay.authoritative_price.normalized() == order.price.normalized()
+                    && replay.quantity.normalized() == order.quantity.normalized()
+            },
+            |fingerprint| fingerprint == order.request_fingerprint,
+        );
+    ensure_new_coin_replay_matches(matches)
+}
+
+fn ensure_new_coin_replay_matches(matches: bool) -> AppResult<()> {
+    if !matches {
+        return Err(AppError::Conflict(
+            "idempotency key is already bound to a different new coin request".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// 锁定后按资产编号读取有效精度，资产停用时在任何动账之前失败关闭。
+async fn active_asset_precision_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    asset_id: u64,
+) -> AppResult<i32> {
+    let (precision_scale, status): (i32, String) = sqlx::query_as(
+        "SELECT precision_scale, status FROM assets WHERE id = ? LIMIT 1 FOR UPDATE",
+    )
+    .bind(asset_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    if status != "active" {
+        return Err(AppError::Validation(
+            "new coin order asset must be active".to_owned(),
+        ));
+    }
+    Ok(precision_scale)
+}
+
+/// 项目内涉及的基础、计价和可选手续费资产统一按主键升序加锁，避免交叉资产订单形成锁环。
+fn new_coin_order_asset_ids(project: &NewCoinProjectRuleRead, quote_asset_id: u64) -> Vec<u64> {
+    let mut asset_ids = vec![project.asset_id, quote_asset_id];
+    if project.unlock_fee_enabled
+        && let Some(unlock_fee_asset) = project.unlock_fee_asset
+    {
+        asset_ids.push(unlock_fee_asset);
+    }
+    asset_ids.sort_unstable();
+    asset_ids.dedup();
+    asset_ids
+}
+
+async fn lock_active_asset_precisions_in_order(
+    tx: &mut Transaction<'_, MySql>,
+    asset_ids: &[u64],
+) -> AppResult<Vec<(u64, i32)>> {
+    let mut precisions = Vec::with_capacity(asset_ids.len());
+    for &asset_id in asset_ids {
+        precisions.push((asset_id, active_asset_precision_in_tx(tx, asset_id).await?));
+    }
+    Ok(precisions)
+}
+
+fn locked_asset_precision(precisions: &[(u64, i32)], asset_id: u64) -> AppResult<i32> {
+    precisions
+        .iter()
+        .find_map(|(locked_asset_id, precision)| {
+            (*locked_asset_id == asset_id).then_some(*precision)
+        })
+        .ok_or_else(|| AppError::Internal("new coin asset precision lock is missing".to_owned()))
+}
+
+fn ensure_distinct_new_coin_assets(asset_id: u64, quote_asset_id: u64) -> AppResult<()> {
+    if asset_id == quote_asset_id {
+        return Err(AppError::Validation(
+            "new coin base and quote assets must be different".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// 迁移前项目计数器也必须能由基础资产精确表示，禁止钱包按资产精度记账而供给表保留额外小数。
+fn ensure_project_supply_precision(
+    project: &NewCoinProjectRuleRead,
+    precision_scale: i32,
+) -> AppResult<()> {
+    for (field, amount) in [
+        ("total_supply", &project.total_supply),
+        ("reserved_supply", &project.reserved_supply),
+        ("allocated_supply", &project.allocated_supply),
+        ("remaining_supply", &project.remaining_supply),
+    ] {
+        ensure_new_coin_amount_precision(amount, precision_scale, field)?;
+    }
+    Ok(())
+}
+
+/// 在已持有项目行锁的事务中预留供给，剩余不足时不修改任何计数器。
+async fn reserve_new_coin_supply_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    project_id: u64,
+    quantity: &BigDecimal,
+) -> AppResult<()> {
+    let updated = sqlx::query(
+        r#"UPDATE new_coin_projects
+           SET reserved_supply = reserved_supply + ?, remaining_supply = remaining_supply - ?
+           WHERE id = ? AND remaining_supply >= ?"#,
+    )
+    .bind(quantity)
+    .bind(quantity)
+    .bind(project_id)
+    .bind(quantity)
+    .execute(&mut **tx)
+    .await?;
+    if updated.rows_affected() != 1 {
+        return Err(AppError::Validation(
+            "new coin project remaining supply is insufficient".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// 钱包与锁仓全部成功后才把预留数量转入已分配，受影响行数异常时整单回滚。
+async fn finalize_new_coin_supply_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    project_id: u64,
+    quantity: &BigDecimal,
+) -> AppResult<()> {
+    let updated = sqlx::query(
+        r#"UPDATE new_coin_projects
+           SET reserved_supply = reserved_supply - ?, allocated_supply = allocated_supply + ?
+           WHERE id = ? AND reserved_supply >= ?"#,
+    )
+    .bind(quantity)
+    .bind(quantity)
+    .bind(project_id)
+    .bind(quantity)
+    .execute(&mut **tx)
+    .await?;
+    if updated.rows_affected() != 1 {
+        return Err(AppError::Internal(
+            "new coin supply reservation could not be finalized".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// 把一笔已付款订单对应的新币额度落到用户钱包，按有无锁仓计划走两条互斥路径。
@@ -978,6 +1132,7 @@ async fn apply_new_coin_allocation(
             unlock_price,
             purchase_cost,
             project,
+            &position.source_type,
             &position.source_id,
         )
         .await?;
@@ -1005,10 +1160,24 @@ async fn ensure_unlock_record(
     unlock_price: &BigDecimal,
     purchase_cost: &BigDecimal,
     project: &NewCoinProjectRuleRead,
+    source_type: &str,
     source_id: &str,
 ) -> AppResult<()> {
-    let (fee_paid_status, unlock_fee_amount) =
+    let (mut fee_paid_status, mut unlock_fee_amount) =
         unlock_fee_fields(project, quantity, unlock_price, purchase_cost)?;
+    if let (Some(fee_asset_id), Some(raw_fee_amount)) =
+        (project.unlock_fee_asset, unlock_fee_amount.as_ref())
+    {
+        let precision = active_asset_precision_in_tx(tx, fee_asset_id).await?;
+        let quantized = quantize_unlock_fee_amount(raw_fee_amount, precision)?;
+        fee_paid_status = if quantized > 0 {
+            "pending"
+        } else {
+            "not_required"
+        };
+        unlock_fee_amount = Some(quantized);
+    }
+    let unlock_idempotency_key = new_coin_unlock_idempotency_key(source_type, source_id)?;
     sqlx::query(
         r#"INSERT INTO asset_unlock_records
            (user_id, asset_id, lock_position_id, unlock_quantity, unlock_price,
@@ -1028,7 +1197,7 @@ async fn ensure_unlock_record(
     .bind(project.unlock_fee_asset)
     .bind(&unlock_fee_amount)
     .bind(fee_paid_status)
-    .bind(source_id)
+    .bind(unlock_idempotency_key)
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -1048,11 +1217,11 @@ async fn debit_wallet_available(
     asset_id: u64,
     amount: &BigDecimal,
     ledger: NewCoinLedgerMetadata<'_>,
-) -> AppResult<()> {
+) -> AppResult<u64> {
     let wallet = lock_wallet_row(tx, user_id, asset_id).await?;
     if wallet.available < *amount {
         return Err(AppError::Validation(format!(
-            "insufficient available balance for new coin order: requested {}, available {}, locked {}",
+            "insufficient available balance for new coin payment: requested {}, available {}, locked {}",
             amount, wallet.available, wallet.locked
         )));
     }
@@ -1118,6 +1287,7 @@ async fn credit_wallet_available(
         ref_id,
     )
     .await
+    .map(|_| ())
 }
 
 /// 以 `FOR UPDATE` 锁定并读取用户某资产的钱包行，一次取回 available、frozen、locked 三态余额。
@@ -1165,6 +1335,25 @@ async fn lock_or_create_wallet_row(
     .execute(&mut **tx)
     .await?;
     lock_wallet_row(tx, user_id, asset_id).await
+}
+
+/// 同一用户的一笔订单先按资产主键顺序锁住付款与入账钱包，后续重复读取不会改变锁序。
+async fn lock_new_coin_order_wallets_in_order(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    base_asset_id: u64,
+    quote_asset_id: u64,
+) -> AppResult<()> {
+    let mut asset_ids = [base_asset_id, quote_asset_id];
+    asset_ids.sort_unstable();
+    for asset_id in asset_ids {
+        if asset_id == base_asset_id {
+            lock_or_create_wallet_row(tx, user_id, asset_id).await?;
+        } else {
+            lock_wallet_row(tx, user_id, asset_id).await?;
+        }
+    }
+    Ok(())
 }
 
 /// 按 merge_key 归并锁仓位置并登记一条来源明细，是新币批次解禁在存储层的幂等落点。
@@ -1215,7 +1404,7 @@ async fn upsert_lock_position(
     .bind(&position.source_type)
     .bind(&position.source_id)
     .bind(&position.amount)
-    .bind(position.unlock_at.naive_utc())
+    .bind(position.source_time.naive_utc())
     .execute(&mut **tx)
     .await?;
 
@@ -1259,8 +1448,8 @@ async fn insert_new_coin_wallet_ledger(
     change_type: &str,
     ref_type: &str,
     ref_id: &str,
-) -> AppResult<()> {
-    sqlx::query(
+) -> AppResult<u64> {
+    let result = sqlx::query(
         r#"INSERT INTO wallet_ledger
            (user_id, asset_id, change_type, amount, balance_type, balance_after,
             available_after, frozen_after, locked_after, ref_type, ref_id)
@@ -1279,7 +1468,7 @@ async fn insert_new_coin_wallet_ledger(
     .bind(ref_id)
     .execute(&mut **tx)
     .await?;
-    Ok(())
+    Ok(result.last_insert_id())
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -1290,6 +1479,10 @@ struct NewCoinProjectReadRow {
     lifecycle_status: String,
     total_supply: BigDecimal,
     issue_price: BigDecimal,
+    quote_asset_id: Option<u64>,
+    reserved_supply: BigDecimal,
+    allocated_supply: BigDecimal,
+    remaining_supply: BigDecimal,
     listed_at: Option<chrono::DateTime<chrono::Utc>>,
     unlock_type: String,
     fixed_unlock_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -1309,6 +1502,7 @@ struct NewCoinSubscriptionReadRow {
     project_id: u64,
     user_id: u64,
     quote_asset: u64,
+    issue_price: BigDecimal,
     quote_amount: BigDecimal,
     requested_quantity: BigDecimal,
     allocated_quantity: BigDecimal,
@@ -1368,26 +1562,17 @@ struct NewCoinUnlockReadRow {
 }
 
 #[derive(Debug, sqlx::FromRow)]
-struct UnlockFeeExpectationRow {
-    unlock_fee_enabled: bool,
-    unlock_fee_asset: Option<u64>,
-    unlock_fee_amount: Option<BigDecimal>,
-}
-
-#[derive(Debug, sqlx::FromRow)]
-struct ReleasableUnlockRow {
-    unlock_id: u64,
-    asset_id: u64,
-    lock_position_id: u64,
-    unlock_quantity: BigDecimal,
-}
-
-#[derive(Debug, sqlx::FromRow)]
 struct NewCoinProjectRuleReadRow {
     id: u64,
     asset_id: u64,
+    status: String,
     lifecycle_status: String,
+    total_supply: BigDecimal,
     issue_price: BigDecimal,
+    quote_asset_id: Option<u64>,
+    reserved_supply: BigDecimal,
+    allocated_supply: BigDecimal,
+    remaining_supply: BigDecimal,
     listed_at: Option<chrono::DateTime<chrono::Utc>>,
     unlock_type: String,
     fixed_unlock_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -1413,6 +1598,37 @@ struct NewCoinWalletReadRow {
     locked: BigDecimal,
 }
 
+#[derive(Debug, sqlx::FromRow)]
+struct NewCoinOrderReplayRow {
+    request_fingerprint: Option<String>,
+    project_id: u64,
+    user_id: u64,
+    asset_id: u64,
+    quote_asset_id: u64,
+    pair_id: Option<u64>,
+    quantity: BigDecimal,
+    status: String,
+    authoritative_price: BigDecimal,
+    authoritative_quote_amount: BigDecimal,
+    lock_position_id: Option<u64>,
+}
+
+impl NewCoinOrderReplayRow {
+    /// 把持久化的首次下单快照转成仓储结果，重放始终标记为未新建。
+    fn into_outcome(self, created: bool) -> NewCoinOrderWriteOutcome {
+        NewCoinOrderWriteOutcome {
+            project_id: self.project_id,
+            asset_id: self.asset_id,
+            quote_asset_id: self.quote_asset_id,
+            lock_position_id: self.lock_position_id,
+            status: self.status,
+            authoritative_price: self.authoritative_price,
+            authoritative_quote_amount: self.authoritative_quote_amount,
+            created,
+        }
+    }
+}
+
 impl From<NewCoinProjectReadRow> for NewCoinProjectRead {
     /// 把公开项目查询行逐字段搬进只读模型，字段一一对应，不做默认值填充、单位换算或状态推断。
     /// 解禁与收费相关列在数据库中允许为空，这里原样保留 `Option`，
@@ -1425,6 +1641,10 @@ impl From<NewCoinProjectReadRow> for NewCoinProjectRead {
             lifecycle_status: row.lifecycle_status,
             total_supply: row.total_supply,
             issue_price: row.issue_price,
+            quote_asset_id: row.quote_asset_id,
+            reserved_supply: row.reserved_supply,
+            allocated_supply: row.allocated_supply,
+            remaining_supply: row.remaining_supply,
             listed_at: row.listed_at,
             unlock_type: row.unlock_type,
             fixed_unlock_at: row.fixed_unlock_at,
@@ -1449,6 +1669,7 @@ impl From<NewCoinSubscriptionReadRow> for NewCoinSubscriptionRead {
             project_id: row.project_id,
             user_id: row.user_id,
             quote_asset: row.quote_asset,
+            issue_price: row.issue_price,
             quote_amount: row.quote_amount,
             requested_quantity: row.requested_quantity,
             allocated_quantity: row.allocated_quantity,
@@ -1528,18 +1749,6 @@ impl From<NewCoinUnlockReadRow> for NewCoinUnlockRead {
     }
 }
 
-impl From<UnlockFeeExpectationRow> for UnlockFeeExpectation {
-    /// 平移解禁应收费用的三列查询结果，只回答「是否收费、收什么资产、收多少」。
-    /// 刻意不携带缴费状态，使调用方无法把「应收」误当成「已收」，是否已缴需要另行查询确认。
-    fn from(row: UnlockFeeExpectationRow) -> Self {
-        Self {
-            unlock_fee_enabled: row.unlock_fee_enabled,
-            unlock_fee_asset: row.unlock_fee_asset,
-            unlock_fee_amount: row.unlock_fee_amount,
-        }
-    }
-}
-
 impl From<NewCoinProjectRuleReadRow> for NewCoinProjectRuleRead {
     /// 平移下单规则查询行，供不加锁预校验与事务内加锁重读共用同一份内存表示。
     /// 与公开项目模型相比少了符号、总供应量和状态列，多出的部分正是下单必须判定的解禁与购买开关配置。
@@ -1549,8 +1758,14 @@ impl From<NewCoinProjectRuleReadRow> for NewCoinProjectRuleRead {
         Self {
             id: row.id,
             asset_id: row.asset_id,
+            status: row.status,
             lifecycle_status: row.lifecycle_status,
+            total_supply: row.total_supply,
             issue_price: row.issue_price,
+            quote_asset_id: row.quote_asset_id,
+            reserved_supply: row.reserved_supply,
+            allocated_supply: row.allocated_supply,
+            remaining_supply: row.remaining_supply,
             listed_at: row.listed_at,
             unlock_type: row.unlock_type,
             fixed_unlock_at: row.fixed_unlock_at,

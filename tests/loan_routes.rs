@@ -9,7 +9,7 @@ use exchange_api::{
     config::Settings,
     modules::{
         auth::{TokenScope, issue_token},
-        loan::routes::user_routes,
+        loan::{admin_routes as loan_admin_routes, routes::user_routes},
     },
     state::AppState,
 };
@@ -428,8 +428,9 @@ async fn seed_fixture(pool: &MySqlPool, status: &str) -> Result<LoanFixture, sql
         r#"INSERT INTO loan_orders
            (user_id, product_id, loan_type, asset_id, amount, interest_rate,
             interest_calculation_mode, term_days, min_kyc_level, collateral_asset_id,
-            collateral_amount, status, idempotency_key, disbursed_at, due_at, overdue_at)
-           VALUES (?, ?, 'collateralized', ?, ?, 0.02, 'full_term', 30, 0, ?, ?, ?, ?, ?, ?, ?)"#,
+            collateral_amount, status, idempotency_key, request_fingerprint,
+            disbursed_at, due_at, overdue_at)
+           VALUES (?, ?, 'collateralized', ?, ?, 0.02, 'full_term', 30, 0, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(user_id)
     .bind(product_id)
@@ -439,6 +440,7 @@ async fn seed_fixture(pool: &MySqlPool, status: &str) -> Result<LoanFixture, sql
     .bind(decimal("50.000000000000000000"))
     .bind(status)
     .bind(format!("loan-route-{suffix}"))
+    .bind("0".repeat(64))
     .bind((status != "pending").then(|| (now - TimeDelta::days(30)).naive_utc()))
     .bind((status != "pending").then(|| (now - TimeDelta::days(1)).naive_utc()))
     .bind((status == "overdue").then(|| (now - TimeDelta::days(1)).naive_utc()))
@@ -658,17 +660,26 @@ async fn admin_loan_products_filter_rows_and_total_by_type_and_status() -> Resul
 #[tokio::test]
 async fn admin_loan_products_reject_invalid_enum_filters_before_query() -> Result<(), Box<dyn Error>>
 {
-    // 不可连接的惰性连接池可证明非法枚举在执行 SQL 前即被拒绝。
+    // 直接挂载 bounded-context Router，隔离全局管理员鉴权中间件；本测试只证明非法枚举在执行 SQL 前即被拒绝。
     let pool = MySqlPoolOptions::new()
         .acquire_timeout(Duration::from_millis(100))
         .connect_lazy("mysql://test:test@127.0.0.1:1/test")?;
-    let app = build_router(AppState::new(test_settings()).with_mysql(pool));
+    let app = loan_admin_routes().with_state(AppState::new(test_settings()).with_mysql(pool));
 
     for (query, expected_message) in [
         ("loan_type=margin", "unsupported loan_type"),
         ("status=pending", "unsupported loan product status"),
     ] {
-        let (status, payload) = admin_loan_products(app.clone(), query).await?;
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/loan/products?{query}"))
+                    .body(Body::empty())?,
+            )
+            .await?;
+        let status = response.status();
+        let payload = body_json(response).await?;
         assert_eq!(status, StatusCode::BAD_REQUEST, "payload: {payload}");
         assert_eq!(payload["code"], "VALIDATION_ERROR");
         assert_eq!(
@@ -953,6 +964,11 @@ async fn loan_repay_settles_overdue_order_releases_collateral_and_is_idempotent(
 
     // 断言体单独求值，保证夹具在任何提前返回路径上都会被清理。
     let outcome: Result<(), Box<dyn Error>> = async {
+        sqlx::query("UPDATE assets SET status = 'disabled' WHERE id IN (?, ?)")
+            .bind(fixture.asset_id)
+            .bind(fixture.collateral_asset_id)
+            .execute(&pool)
+            .await?;
         let (status, payload) = repay(&pool, &settings, &fixture).await?;
         assert_eq!(status, StatusCode::OK, "payload: {payload}");
         assert_eq!(payload["changed"], true);

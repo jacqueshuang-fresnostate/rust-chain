@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, LoaderCircle, ShieldCheck, X } from 'lucide-vue-next'
@@ -7,7 +7,18 @@ import AssetMark from '@/components/AssetMark.vue'
 import LoginRequiredState from '@/components/LoginRequiredState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { apiErrorMessage } from '@/api/client'
-import { fetchDepositNetworks, fetchWalletAccounts, fetchWithdrawalAssets, submitWithdrawal, type WithdrawalAsset } from '@/api/wallet'
+import {
+  calculateWithdrawalFee,
+  fetchDepositNetworks,
+  fetchWalletAccounts,
+  fetchWithdrawalAssets,
+  fetchWithdrawalQuote,
+  maximumQuotedWithdrawalAmount,
+  normalizeWithdrawalPreviewAmount,
+  submitWithdrawal,
+  type WithdrawalAsset,
+  type WithdrawalQuote,
+} from '@/api/wallet'
 import { formatAmount } from '@/core/format'
 import { useModalDialog } from '@/core/modalDialog'
 import { useSessionStore } from '@/stores/session'
@@ -27,6 +38,8 @@ const fundPassword = ref('')
 const totpCode = ref('')
 const loading = ref(false)
 const submitting = ref(false)
+const quoting = ref(false)
+const quote = ref<WithdrawalQuote | null>(null)
 const error = ref('')
 const success = ref('')
 const validationAttempted = ref(false)
@@ -35,11 +48,24 @@ const reviewDialog = ref<HTMLElement | null>(null)
 const { trapFocus: trapReviewFocus } = useModalDialog(reviewOpen, reviewDialog, '[data-dialog-cancel]')
 
 const available = computed(() => account.value?.available || 0)
-const fee = computed(() => asset.value?.withdrawFee || 0)
 const numericAmount = computed(() => Number(amount.value))
-const receiveAmount = computed(() => Math.max(0, Number(amount.value || 0) - fee.value))
+const previewFee = computed(() => asset.value
+  ? calculateWithdrawalFee(
+    numericAmount.value,
+    asset.value.withdrawFee,
+    asset.value.withdrawFeeTiers,
+    asset.value.precisionScale,
+  )
+  : 0)
+const previewNet = computed(() => asset.value
+  ? Math.max(0, normalizeWithdrawalPreviewAmount(numericAmount.value, asset.value.precisionScale))
+  : 0)
+const previewTotalReserved = computed(() => previewNet.value + previewFee.value)
 const addressInvalid = computed(() => validationAttempted.value && !address.value.trim())
-const amountInvalid = computed(() => validationAttempted.value && (!Number.isFinite(numericAmount.value) || numericAmount.value <= 0 || numericAmount.value > available.value))
+const amountInvalid = computed(() => validationAttempted.value && (
+  !Number.isFinite(numericAmount.value)
+  || numericAmount.value <= 0
+))
 const selectedNetworkLabel = computed(() => {
   return networks.value.find((network) => network.network === selectedNetwork.value)?.displayName
     || selectedNetwork.value
@@ -68,40 +94,67 @@ async function load(): Promise<void> {
 }
 
 function useMaximum(): void {
-  amount.value = String(Math.max(0, available.value - fee.value))
+  if (!asset.value) return
+  amount.value = String(maximumQuotedWithdrawalAmount(
+    available.value,
+    asset.value.withdrawFee,
+    asset.value.withdrawFeeTiers,
+    asset.value.precisionScale,
+  ))
 }
 
-function requestSubmit(): void {
+async function requestSubmit(): Promise<void> {
+  if (quoting.value || submitting.value) return
   error.value = ''
   success.value = ''
   validationAttempted.value = true
-  if (!asset.value || !address.value.trim() || !Number.isFinite(numericAmount.value) || numericAmount.value <= 0) {
+  if (!asset.value || !selectedNetwork.value || !address.value.trim() || !Number.isFinite(numericAmount.value) || numericAmount.value <= 0) {
     error.value = t('withdraw.invalidRequest')
     return
   }
-  if (numericAmount.value > available.value) {
-    error.value = t('withdraw.exceedsBalance')
-    return
+  const requestedAsset = asset.value.symbol
+  const requestedNetwork = selectedNetwork.value
+  const requestedAmount = amount.value
+  quoting.value = true
+  try {
+    const authorized = await fetchWithdrawalQuote({
+      assetSymbol: requestedAsset,
+      network: requestedNetwork,
+      amount: requestedAmount,
+    })
+    if (asset.value?.symbol !== requestedAsset
+      || selectedNetwork.value !== requestedNetwork
+      || amount.value !== requestedAmount) return
+    quote.value = authorized
+    reviewOpen.value = true
+  } catch (reason) {
+    quote.value = null
+    error.value = apiErrorMessage(reason, t('withdraw.quoteFailed'))
+  } finally {
+    quoting.value = false
   }
-  reviewOpen.value = true
 }
 
 function closeReview(): void {
   if (submitting.value) return
   reviewOpen.value = false
+  quote.value = null
   error.value = ''
 }
 
 async function submit(): Promise<void> {
-  if (!asset.value || !reviewOpen.value) return
+  if (submitting.value || !asset.value || !reviewOpen.value || !quote.value) return
+  if (quote.value.expiresAt <= Date.now()) {
+    error.value = t('withdraw.quoteExpired')
+    quote.value = null
+    reviewOpen.value = false
+    return
+  }
   submitting.value = true
   try {
     await submitWithdrawal({
-      assetSymbol: asset.value.symbol,
-      network: selectedNetwork.value || undefined,
+      quote: quote.value,
       address: address.value,
-      amount: numericAmount.value,
-      fee: fee.value,
       fundPassword: fundPassword.value || undefined,
       totpCode: totpCode.value || undefined,
     })
@@ -111,6 +164,7 @@ async function submit(): Promise<void> {
     totpCode.value = ''
     validationAttempted.value = false
     reviewOpen.value = false
+    quote.value = null
     await load()
   } catch (reason) {
     error.value = apiErrorMessage(reason, t('withdraw.failed'))
@@ -118,6 +172,12 @@ async function submit(): Promise<void> {
     submitting.value = false
   }
 }
+
+watch([amount, selectedNetwork], () => {
+  if (!quote.value) return
+  quote.value = null
+  reviewOpen.value = false
+})
 
 function handleReviewKeydown(event: KeyboardEvent): void {
   trapReviewFocus(event, closeReview)
@@ -205,8 +265,9 @@ onMounted(() => { void load() })
               <small v-if="amountInvalid" class="withdraw-field__error">{{ t('withdraw.invalidRequest') }}</small>
             </label>
             <section class="withdraw-estimate">
-              <div><span>{{ t('withdraw.networkFee') }}</span><strong class="numeric">{{ formatAmount(fee) }} {{ asset.symbol }}</strong></div>
-              <div><span>{{ t('withdraw.estimatedArrival') }}</span><strong class="numeric up">{{ formatAmount(receiveAmount) }} {{ asset.symbol }}</strong></div>
+              <div><span>{{ t('withdraw.networkFee') }}</span><strong class="numeric">{{ formatAmount(previewFee) }} {{ asset.symbol }}</strong></div>
+              <div><span>{{ t('withdraw.estimatedArrival') }}</span><strong class="numeric up">{{ formatAmount(previewNet) }} {{ asset.symbol }}</strong></div>
+              <div><span>{{ t('withdraw.totalReserved') }}</span><strong class="numeric">{{ formatAmount(previewTotalReserved) }} {{ asset.symbol }}</strong></div>
             </section>
             <section class="security-section">
               <div class="security-section__title">
@@ -233,7 +294,7 @@ onMounted(() => { void load() })
               </label>
             </section>
             <p v-if="success" class="success-message" aria-live="polite">{{ success }}</p>
-            <button class="button button--primary button--full withdraw-submit" type="submit" :disabled="submitting">{{ submitting ? t('common.submitting') : t('withdraw.submit') }}</button>
+            <button class="button button--primary button--full withdraw-submit" type="submit" :disabled="submitting || quoting">{{ submitting || quoting ? t('common.submitting') : t('withdraw.submit') }}</button>
             <p class="withdraw-notice">{{ t('withdraw.notice') }}</p>
             <nav class="withdraw-shortcuts" :aria-label="t('assets.fundTools')">
               <button type="button" @click="router.push({ name: 'withdrawal-records' })">{{ t('withdrawRecords.title') }}</button>
@@ -245,7 +306,7 @@ onMounted(() => { void load() })
       </template>
     </div>
 
-    <div v-if="reviewOpen && asset" class="withdraw-review-mask" @click.self="closeReview">
+    <div v-if="reviewOpen && asset && quote" class="withdraw-review-mask" @click.self="closeReview">
       <section
         ref="reviewDialog"
         class="withdraw-review"
@@ -272,11 +333,12 @@ onMounted(() => { void load() })
           </button>
         </header>
         <dl class="withdraw-review__summary">
-          <div><dt>{{ t('withdraw.network') }}</dt><dd>{{ selectedNetwork || t('withdraw.reviewedNetwork') }}</dd></div>
+          <div><dt>{{ t('withdraw.network') }}</dt><dd>{{ quote.network || t('withdraw.reviewedNetwork') }}</dd></div>
           <div><dt>{{ t('withdraw.address') }}</dt><dd class="numeric">{{ address }}</dd></div>
-          <div><dt>{{ t('withdraw.quantity') }}</dt><dd class="numeric">{{ formatAmount(numericAmount) }} {{ asset.symbol }}</dd></div>
-          <div><dt>{{ t('withdraw.networkFee') }}</dt><dd class="numeric">{{ formatAmount(fee) }} {{ asset.symbol }}</dd></div>
-          <div><dt>{{ t('withdraw.estimatedArrival') }}</dt><dd class="numeric up">{{ formatAmount(receiveAmount) }} {{ asset.symbol }}</dd></div>
+          <div><dt>{{ t('withdraw.quantity') }}</dt><dd class="numeric">{{ quote.amount }} {{ asset.symbol }}</dd></div>
+          <div><dt>{{ t('withdraw.networkFee') }}</dt><dd class="numeric">{{ quote.fee }} {{ asset.symbol }}</dd></div>
+          <div><dt>{{ t('withdraw.estimatedArrival') }}</dt><dd class="numeric up">{{ quote.net }} {{ asset.symbol }}</dd></div>
+          <div><dt>{{ t('withdraw.totalReserved') }}</dt><dd class="numeric">{{ quote.totalReserved }} {{ asset.symbol }}</dd></div>
         </dl>
         <p id="withdraw-review-description" class="withdraw-review__notice">{{ t('withdraw.notice') }}</p>
         <p v-if="error" class="withdraw-review__error" role="alert">{{ error }}</p>

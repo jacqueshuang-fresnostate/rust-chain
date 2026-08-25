@@ -1,24 +1,25 @@
 //! 杠杆仓位的平仓与撤销生命周期用例。
 //!
 //! 平仓针对已成交仓位，按服务端标记价结算盈亏后把权益写回钱包；撤销只针对入场价为空的未成交仓位，
-//! 把保证金原额退回，两条路径都以「先锁仓位再锁钱包」的固定顺序取锁，避免与开仓路径交叉等待。
+//! 把保证金原额退回。已成交全仓平仓按账户→仓位→钱包取锁；未成交撤单不进入全仓风险集合，仍按仓位→钱包处理。
 //! 逐仓与全仓在平仓时资金口径不同：逐仓按非负返还额入账，亏损截零；
 //! 全仓以有符号组合权益更新共享钱包，亏损真实扣减，扣穿则拒绝并交由账户级强平处理。
 //! 所有用例都返回「是否为首次状态迁移」的布尔值，终态重放返回既有快照且不重复入账。
 //! 批量版本逐笔独立开事务并即时发事件，单笔失败只进入 failures 列表，不回滚已成功的结算。
 
-use super::support::validate_positive_decimal;
 use crate::{
     error::{AppError, AppResult},
     modules::{
         events::EventBroadcastHub,
         margin::{
-            domain::margin_position_payout_amount,
+            domain::{margin_mark_pnl, margin_position_payout_amount},
             infrastructure::{
                 LockedMarginPositionRow, apply_cross_margin_position_settlement,
-                cached_margin_mark_price, credit_margin_position_amount,
+                bump_cross_margin_account_version, cached_margin_mark_price,
+                credit_margin_position_amount, ensure_and_lock_cross_margin_account,
                 load_cancelable_position_ids, load_open_position_ids, load_position_by_id,
-                lock_user_position_by_id, mark_position_canceled, mark_position_closed,
+                load_user_position_by_id, lock_user_position_by_id, mark_position_canceled,
+                mark_position_closed, require_active_cross_margin_account,
             },
             presentation::{
                 CancelAllMarginPositionsResponse, CancelMarginPositionResponse,
@@ -32,7 +33,6 @@ use crate::{
         },
     },
 };
-use bigdecimal::BigDecimal;
 use chrono::Utc;
 use redis::aio::ConnectionManager;
 use sqlx::{MySql, Pool};
@@ -46,7 +46,15 @@ pub(crate) async fn close_margin_position(
     user_id: u64,
     position_id: u64,
 ) -> AppResult<(MarginPositionResponse, bool)> {
+    let scope = load_user_position_by_id(pool, user_id, position_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let mut tx = pool.begin().await?;
+    let cross_account = if scope.margin_mode == "cross" {
+        Some(ensure_and_lock_cross_margin_account(&mut tx, user_id, scope.margin_asset).await?)
+    } else {
+        None
+    };
     let Some(position) = lock_user_position_by_id(&mut tx, user_id, position_id).await? else {
         return Err(AppError::NotFound);
     };
@@ -60,13 +68,20 @@ pub(crate) async fn close_margin_position(
             "margin entry price is required to close position".to_owned(),
         ));
     };
+    if position.margin_mode == "cross" {
+        let account = cross_account.as_ref().ok_or_else(|| {
+            AppError::Conflict("margin position account scope changed concurrently".to_owned())
+        })?;
+        require_active_cross_margin_account(account)?;
+    }
     let mark_price = cached_margin_mark_price(redis, position.pair_id, &position.symbol).await?;
-    let realized_pnl = margin_realized_pnl(
+    let realized_pnl = margin_mark_pnl(
         &position.direction,
         &position.notional_amount,
         entry_price,
         &mark_price,
-    )?;
+    )
+    .map_err(|message| AppError::Validation(message.to_owned()))?;
     let position_equity = (position.margin_amount.clone() + realized_pnl.clone()
         - position.interest_amount.clone())
     .with_scale(18);
@@ -112,6 +127,10 @@ pub(crate) async fn close_margin_position(
         &realized_pnl,
     )
     .await?;
+    if let Some(account) = cross_account {
+        bump_cross_margin_account_version(&mut tx, user_id, position.margin_asset, account.version)
+            .await?;
+    }
     let position = load_position_by_id(&mut tx, position.id).await?;
     tx.commit().await?;
     Ok((position, true))
@@ -276,29 +295,4 @@ fn validate_cancelable_position(position: &LockedMarginPositionRow) -> AppResult
         ));
     }
     Ok(())
-}
-
-/// 按名义价值和价格变动比例计算平仓已实现盈亏，公式为名义价值乘以价差再除以入场价。
-/// 做多取标记价减入场价，做空取入场价减标记价，因此返回值可正可负，亏损直接体现为负数。
-/// 入场价和标记价都必须严格为正，任一非正立即报参数错误，避免除零或用脏价格结算资金。
-/// 结果统一归一到十八位小数，与仓位表的 `realized_pnl` 列精度一致；未在这里扣减利息，
-/// 利息由调用方在计算权益和返还额时另行减去。方向非法时返回参数错误而不是按做多兜底。
-fn margin_realized_pnl(
-    direction: &str,
-    notional_amount: &BigDecimal,
-    entry_price: &BigDecimal,
-    mark_price: &BigDecimal,
-) -> AppResult<BigDecimal> {
-    validate_positive_decimal(entry_price, "entry price")?;
-    validate_positive_decimal(mark_price, "mark price")?;
-    let price_delta = match direction {
-        "long" => mark_price.clone() - entry_price.clone(),
-        "short" => entry_price.clone() - mark_price.clone(),
-        _ => {
-            return Err(AppError::Validation(
-                "margin direction must be long or short".to_owned(),
-            ));
-        }
-    };
-    Ok((notional_amount.clone() * price_delta / entry_price.clone()).with_scale(18))
 }

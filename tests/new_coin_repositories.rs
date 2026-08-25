@@ -69,22 +69,25 @@ async fn mysql_new_coin_purchase_order_and_unlock_fee_status_are_idempotent()
     .last_insert_id();
     let project_id = sqlx::query(
         r#"INSERT INTO new_coin_projects
-           (asset_id, symbol, lifecycle_status, total_supply, issue_price, listed_at, unlock_type,
+           (asset_id, symbol, lifecycle_status, total_supply, issue_price, quote_asset_id,
+            reserved_supply, allocated_supply, remaining_supply, listed_at, unlock_type,
             fixed_unlock_at, unlock_fee_enabled, unlock_fee_rate, unlock_fee_basis, unlock_fee_asset, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+           VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(base_asset_id)
     .bind(&base_symbol)
     .bind("listed")
     .bind(decimal("1000000.000000000000000000"))
     .bind(decimal("1.000000000000000000"))
+    .bind(quote_asset_id)
+    .bind(decimal("1000000.000000000000000000"))
     .bind(now.naive_utc())
     .bind("fixed_time")
     .bind((now + Duration::days(7)).naive_utc())
     .bind(true)
     .bind(decimal("0.04000000"))
     .bind("market_value")
-    .bind(fee_asset_id)
+    .bind(quote_asset_id)
     .bind("active")
     .execute(&pool)
     .await?
@@ -129,6 +132,12 @@ async fn mysql_new_coin_purchase_order_and_unlock_fee_status_are_idempotent()
     .bind(&unlock_key)
     .execute(&pool)
     .await?;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(fee_asset_id)
+        .bind(decimal("10.000000000000000000"))
+        .execute(&pool)
+        .await?;
 
     let repository = MySqlNewCoinRepository::new(pool.clone());
     let first_order = repository
@@ -186,6 +195,17 @@ async fn mysql_new_coin_purchase_order_and_unlock_fee_status_are_idempotent()
             .await
             .unwrap()
     );
+    assert!(
+        !repository
+            .mark_unlock_fee_paid(UnlockFeePaymentUpdate {
+                unlock_idempotency_key: unlock_key.clone(),
+                user_id,
+                payment_asset_id: fee_asset_id,
+                amount: decimal("2.000000000000000000"),
+            })
+            .await
+            .unwrap()
+    );
     assert_eq!(
         repository
             .unlock_fee_paid_status(&unlock_key, user_id)
@@ -193,6 +213,28 @@ async fn mysql_new_coin_purchase_order_and_unlock_fee_status_are_idempotent()
             .unwrap(),
         Some(UnlockFeePaidStatus::Paid)
     );
+    let (available, ledger_count, journal_count, journal_sum): (BigDecimal, i64, i64, BigDecimal) =
+        sqlx::query_as(
+            r#"SELECT wallets.available,
+                     (SELECT COUNT(*) FROM wallet_ledger
+                       WHERE ref_type = 'new_coin_unlock' AND ref_id = ?),
+                     (SELECT COUNT(*) FROM platform_financial_journal
+                       WHERE transaction_key = CONCAT('new_coin_unlock_fee:', unlocks.id)),
+                     (SELECT COALESCE(SUM(amount), 0) FROM platform_financial_journal
+                       WHERE transaction_key = CONCAT('new_coin_unlock_fee:', unlocks.id))
+               FROM asset_unlock_records unlocks
+               INNER JOIN wallet_accounts wallets
+                 ON wallets.user_id = unlocks.user_id AND wallets.asset_id = unlocks.unlock_fee_asset
+               WHERE unlocks.idempotency_key = ?"#,
+        )
+        .bind(&unlock_key)
+        .bind(&unlock_key)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(available.normalized(), decimal("8").normalized());
+    assert_eq!(ledger_count, 1);
+    assert_eq!(journal_count, 2);
+    assert_eq!(journal_sum, decimal("0"));
 
     cleanup_new_coin_fixture(
         &pool,
@@ -236,11 +278,25 @@ async fn cleanup_new_coin_fixture(
     pool: &sqlx::Pool<sqlx::MySql>,
     fixture: NewCoinFixtureCleanup<'_>,
 ) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"DELETE FROM platform_financial_journal
+           WHERE transaction_key IN (
+               SELECT CONCAT('new_coin_unlock_fee:', id)
+               FROM asset_unlock_records WHERE idempotency_key = ?
+           )"#,
+    )
+    .bind(fixture.unlock_key)
+    .execute(pool)
+    .await?;
     sqlx::query("DELETE FROM new_coin_purchase_orders WHERE idempotency_key = ?")
         .bind(fixture.purchase_key)
         .execute(pool)
         .await?;
     sqlx::query("DELETE FROM asset_unlock_records WHERE idempotency_key = ?")
+        .bind(fixture.unlock_key)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_ledger WHERE ref_type = 'new_coin_unlock' AND ref_id = ?")
         .bind(fixture.unlock_key)
         .execute(pool)
         .await?;
@@ -254,6 +310,10 @@ async fn cleanup_new_coin_fixture(
         .await?;
     sqlx::query("DELETE FROM trading_pairs WHERE id = ?")
         .bind(fixture.pair_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_accounts WHERE user_id = ?")
+        .bind(fixture.user_id)
         .execute(pool)
         .await?;
     for asset_id in fixture.asset_ids {

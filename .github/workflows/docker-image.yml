@@ -13,9 +13,53 @@ env:
   REGISTRY_IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
+  quality-gate:
+    name: P0 release quality gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust quality components
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: p0-release-gate
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            pc/package-lock.json
+            mobile/package-lock.json
+
+      - name: Install frontend dependencies
+        run: |
+          npm --prefix web ci
+          npm --prefix pc ci
+          npm --prefix mobile ci
+
+      - name: Run P0 release gate
+        run: ./scripts/p0-release-gate.sh
+
   pull-request-build:
     name: Build pull request
     if: github.event_name == 'pull_request'
+    needs:
+      - quality-gate
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -51,6 +95,8 @@ jobs:
   publish-platform:
     name: Build and publish ${{ matrix.platform }}
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs:
+      - quality-gate
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read

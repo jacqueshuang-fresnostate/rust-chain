@@ -40,7 +40,7 @@ use crate::{
 };
 use axum::http::StatusCode;
 use bigdecimal::BigDecimal;
-use chrono::{TimeDelta, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use reqwest::Url;
 use serde_json::{Value, json};
 use sqlx::{MySql, Pool, QueryBuilder, Transaction, types::Json as SqlxJson};
@@ -51,7 +51,7 @@ use uuid::Uuid;
 pub(crate) const ADMIN_ASSET_CONFIGS_SQL: &str = r#"SELECT assets.id AS asset_id, assets.symbol AS asset_symbol,
                   COALESCE(configs.enabled, FALSE) AS enabled,
                   COALESCE(configs.max_payout_amount, 0) AS max_payout_amount,
-                  COALESCE(configs.revision, 0) AS revision,
+                  COALESCE(configs.revision, CAST(0 AS UNSIGNED)) AS revision,
                   COALESCE(configs.created_at, assets.created_at) AS created_at,
                   COALESCE(configs.updated_at, assets.created_at) AS updated_at
            FROM assets
@@ -96,7 +96,7 @@ where
 type SyncCounts = service::SyncCounts;
 type EffectiveMarketConfig = service::EffectiveMarketConfig;
 
-/// 分别读取设置、市场和资产配置后写入预测报价快照；这些读取与插入不在同一事务，也不加行锁。
+/// 以数据库时钟在事务内锁定市场并写入预测报价快照；全局设置的前置读取不加锁。
 /// 报价固化本金、概率、费率、赔付上限和过期时间，不冻结钱包或写资金流水；插入失败不返回可用报价编号。
 /// 校验依次为下注方向合法、本金为正、市场同时处于可见与未结算、资产启用且金额符合其精度，
 /// 再确认该资产落在生效配置的允许范围内，任一不满足都在写库之前返回校验错误。
@@ -106,8 +106,8 @@ type EffectiveMarketConfig = service::EffectiveMarketConfig;
 /// 理论赔付超过生效赔付上限时直接拒绝报价，而不是先出价再在结算时封顶，
 /// 使用户在下单前就知道该笔投注不被接受。
 /// 报价编号取 UUID v7 加 pq 前缀，天然按时间递增；有效期取设置中的秒数并至少为 1 秒。
-/// 由于读取与插入分离且不加锁，市场概率可能在报价生成后立即变化，
-/// 这一竞态由下单事务重新锁定报价与市场来兜底，本函数只保证快照自洽。
+/// 市场行从校验到 quote 插入一直持有排他锁，因此概率、状态、end_at、
+/// last_synced_at 与 market_version 必然来自同一快照；下单事务会再锁市场复核。
 pub(crate) async fn create_quote_in_db(
     pool: &Pool<MySql>,
     user_id: u64,
@@ -116,15 +116,22 @@ pub(crate) async fn create_quote_in_db(
     let outcome = service::normalize_binary_outcome(&request.outcome)?;
     service::ensure_positive_amount(&request.stake_amount, "stake_amount")?;
     let settings = load_settings(pool).await?;
-    let market = load_market_response(pool, request.market_id).await?;
-    if market.display_status != service::STATUS_ACTIVE
-        || market.settlement_status != service::SETTLEMENT_OPEN
-    {
-        return Err(AppError::Validation(
-            "prediction market is not open for quotes".to_owned(),
-        ));
-    }
-    let asset = load_active_asset(pool, request.asset_id).await?;
+    ensure_prediction_asset_enabled(pool, request.asset_id).await?;
+    let mut tx = pool.begin().await?;
+    let market = lock_market(&mut tx, request.market_id).await?;
+    let database_now = database_now_in_tx(&mut tx).await?;
+    service::validate_market_trading_window(
+        &market.display_status,
+        &market.settlement_status,
+        market.end_at,
+        market.last_synced_at,
+        database_now,
+        service::market_sync_max_age_seconds(settings.sync_interval_seconds),
+    )?;
+    let market_last_synced_at = market.last_synced_at.ok_or_else(|| {
+        AppError::Validation("prediction market has no synchronized snapshot".to_owned())
+    })?;
+    let asset = load_active_asset_in_tx(&mut tx, request.asset_id).await?;
     service::ensure_amount_precision(&request.stake_amount, asset.precision_scale, "stake_amount")?;
     let effective = effective_market_config(&settings, &market);
     if !effective.allowed_asset_ids.contains(&request.asset_id) {
@@ -132,7 +139,6 @@ pub(crate) async fn create_quote_in_db(
             "asset is not allowed for this prediction market".to_owned(),
         ));
     }
-    ensure_prediction_asset_enabled(pool, request.asset_id).await?;
 
     let accepted_price = if outcome == service::OUTCOME_YES {
         market.yes_price.clone()
@@ -148,7 +154,8 @@ pub(crate) async fn create_quote_in_db(
         asset.precision_scale,
     );
     let effective_payout_cap =
-        effective_payout_cap(pool, request.asset_id, &effective.payout_cap_overrides).await?;
+        effective_payout_cap_in_tx(&mut tx, request.asset_id, &effective.payout_cap_overrides)
+            .await?;
     if effective_payout_cap > 0 && theoretical_payout > effective_payout_cap {
         return Err(AppError::Validation(
             "prediction quote exceeds configured payout cap".to_owned(),
@@ -156,15 +163,16 @@ pub(crate) async fn create_quote_in_db(
     }
     let quote_id = format!("pq_{}", Uuid::now_v7().simple());
     let ttl_seconds = i64::from(settings.quote_ttl_seconds.max(1));
-    let expires_at = Utc::now()
+    let expires_at = database_now
         .checked_add_signed(TimeDelta::seconds(ttl_seconds))
         .ok_or_else(|| AppError::Validation("quote expiry is outside valid range".to_owned()))?;
 
     sqlx::query(
         r#"INSERT INTO prediction_quotes
            (quote_id, user_id, market_id, outcome, asset_id, stake_amount, fee_amount,
-            accepted_price, shares, theoretical_payout, effective_payout_cap, expires_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            accepted_price, shares, theoretical_payout, effective_payout_cap,
+            market_version, market_last_synced_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(&quote_id)
     .bind(user_id)
@@ -177,9 +185,12 @@ pub(crate) async fn create_quote_in_db(
     .bind(&shares)
     .bind(&theoretical_payout)
     .bind(&effective_payout_cap)
+    .bind(market.market_version)
+    .bind(market_last_synced_at)
     .bind(expires_at)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
 
     Ok(PredictionQuoteResponse {
         quote_id,
@@ -193,6 +204,8 @@ pub(crate) async fn create_quote_in_db(
         shares,
         theoretical_payout,
         effective_payout_cap,
+        market_version: market.market_version,
+        market_last_synced_at,
         expires_at,
     })
 }
@@ -315,15 +328,26 @@ pub(crate) async fn create_order_in_tx(
             "prediction quote was already used".to_owned(),
         ));
     }
-    if quote.expires_at <= Utc::now() {
+    let market = lock_market(&mut tx, quote.market_id).await?;
+    let settings = load_settings_in_tx(&mut tx).await?;
+    // 时间必须在取得市场行锁后读取；若锁等待跨过 end_at，旧的锁前时间不得放行订单。
+    let database_now = database_now_in_tx(&mut tx).await?;
+    if database_now >= quote.expires_at {
         return Err(AppError::Validation("prediction quote expired".to_owned()));
     }
-    let market = lock_market(&mut tx, quote.market_id).await?;
-    if market.display_status != service::STATUS_ACTIVE
-        || market.settlement_status != service::SETTLEMENT_OPEN
+    service::validate_market_trading_window(
+        &market.display_status,
+        &market.settlement_status,
+        market.end_at,
+        market.last_synced_at,
+        database_now,
+        service::market_sync_max_age_seconds(settings.sync_interval_seconds),
+    )?;
+    if market.market_version != quote.market_version
+        || market.last_synced_at != Some(quote.market_last_synced_at)
     {
-        return Err(AppError::Validation(
-            "prediction market is not open for orders".to_owned(),
+        return Err(AppError::Conflict(
+            "prediction market changed after quote creation".to_owned(),
         ));
     }
     let asset = load_active_asset_in_tx(&mut tx, quote.asset_id).await?;
@@ -371,12 +395,21 @@ pub(crate) async fn create_order_in_tx(
         .bind(order_id)
         .execute(&mut *tx)
         .await?;
-    sqlx::query(
-        "UPDATE prediction_quotes SET consumed_at = CURRENT_TIMESTAMP(6) WHERE quote_id = ?",
+    let consumed = sqlx::query(
+        r#"UPDATE prediction_quotes
+           SET consumed_at = ?
+           WHERE quote_id = ? AND consumed_at IS NULL AND expires_at > ?"#,
     )
+    .bind(database_now.naive_utc())
     .bind(&quote.quote_id)
+    .bind(database_now.naive_utc())
     .execute(&mut *tx)
     .await?;
+    if consumed.rows_affected() != 1 {
+        return Err(AppError::Conflict(
+            "prediction quote could not be consumed exactly once".to_owned(),
+        ));
+    }
     apply_wallet_prediction_open(
         &mut tx,
         user_id,
@@ -712,10 +745,16 @@ pub(crate) async fn sync_polymarket_markets_inner(pool: &Pool<MySql>) -> AppResu
                    liquidity = VALUES(liquidity),
                    end_at = VALUES(end_at),
                    source_status = VALUES(source_status),
-                   display_status = VALUES(display_status),
+                   display_status = IF(
+                       VALUES(end_at) IS NOT NULL
+                       AND VALUES(end_at) <= CURRENT_TIMESTAMP(6),
+                       'hidden',
+                       VALUES(display_status)
+                   ),
                    external_resolution = VALUES(external_resolution),
                    sync_payload_json = VALUES(sync_payload_json),
-                   last_synced_at = CURRENT_TIMESTAMP(6)"#,
+                   last_synced_at = CURRENT_TIMESTAMP(6),
+                   market_version = market_version + 1"#,
         )
         .bind(&market.external_event_id)
         .bind(&market.external_market_id)
@@ -908,6 +947,7 @@ pub(crate) fn prediction_market_query_builder() -> QueryBuilder<'static, MySql> 
                   markets.settlement_status, markets.settlement_mode_override,
                   markets.allowed_asset_ids_override_json, markets.payout_cap_overrides_json,
                   markets.fee_rate_override, markets.last_synced_at,
+                  markets.market_version, markets.locally_closed_at,
                   markets.created_at, markets.updated_at
            FROM prediction_markets markets"#,
     )
@@ -1016,7 +1056,7 @@ pub(crate) async fn lock_admin_asset_config_in_tx(
         r#"SELECT assets.id AS asset_id, assets.symbol AS asset_symbol,
                   COALESCE(configs.enabled, FALSE) AS enabled,
                   COALESCE(configs.max_payout_amount, 0) AS max_payout_amount,
-                  COALESCE(configs.revision, 0) AS revision,
+                  COALESCE(configs.revision, CAST(0 AS UNSIGNED)) AS revision,
                   COALESCE(configs.created_at, assets.created_at) AS created_at,
                   COALESCE(configs.updated_at, assets.created_at) AS updated_at
            FROM assets
@@ -1132,7 +1172,8 @@ pub(crate) async fn insert_prediction_admin_audit_in_tx(
 /// 展示状态只影响用户侧可见性，不冻结在途订单也不阻止到期结算；
 /// 需要注意它会在下一轮同步被上游状态覆盖，所以不适合作为长期下架手段。
 /// 返回是否命中到市场行，未命中说明市场编号不存在，由调用方决定报 `NotFound` 还是忽略。
-/// 该更新不加锁也不与结算互斥，改配置只对此后新建的报价生效。
+/// UPDATE 会由 MySQL 取得市场行锁并递增 market_version；已生成但未消费的旧 quote
+/// 会在下单事务的版本复核中失效，防止按旧费率或资产范围成交。
 pub(crate) async fn update_admin_market(
     pool: &Pool<MySql>,
     market_id: u64,
@@ -1147,7 +1188,7 @@ pub(crate) async fn update_admin_market(
         r#"UPDATE prediction_markets
            SET display_status = ?, settlement_mode_override = ?,
                allowed_asset_ids_override_json = ?, payout_cap_overrides_json = ?,
-               fee_rate_override = ?
+               fee_rate_override = ?, market_version = market_version + 1
            WHERE id = ?"#,
     )
     .bind(display_status)
@@ -1283,7 +1324,8 @@ pub(crate) async fn lock_quote(
     sqlx::query_as::<_, PredictionQuoteLockRow>(
         r#"SELECT quote_id, user_id, market_id, outcome, asset_id, stake_amount,
                   fee_amount, accepted_price, shares, theoretical_payout,
-                  effective_payout_cap, expires_at, consumed_at
+                  effective_payout_cap, market_version, market_last_synced_at,
+                  expires_at, consumed_at
            FROM prediction_quotes
            WHERE quote_id = ?
            LIMIT 1
@@ -1293,6 +1335,16 @@ pub(crate) async fn lock_quote(
     .fetch_optional(&mut **tx)
     .await?
     .ok_or(AppError::NotFound)
+}
+
+/// 返回当前事务连接看到的 MySQL 时间，所有关盘和 quote 过期边界统一以它为准。
+pub(crate) async fn database_now_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+) -> AppResult<DateTime<Utc>> {
+    let value = sqlx::query_scalar::<_, chrono::NaiveDateTime>("SELECT CURRENT_TIMESTAMP(6)")
+        .fetch_one(&mut **tx)
+        .await?;
+    Ok(DateTime::<Utc>::from_naive_utc_and_offset(value, Utc))
 }
 
 /// 在调用方事务内以 `FOR UPDATE` 锁定并读取一个市场，返回与只读查询完全相同的完整字段。
@@ -1312,7 +1364,7 @@ pub(crate) async fn lock_market(
                   display_status, external_resolution, local_resolution, settlement_status,
                   settlement_mode_override, allowed_asset_ids_override_json,
                   payout_cap_overrides_json, fee_rate_override, last_synced_at,
-                  created_at, updated_at
+                  market_version, locally_closed_at, created_at, updated_at
            FROM prediction_markets
            WHERE id = ?
            LIMIT 1
@@ -1430,15 +1482,9 @@ pub(crate) fn effective_market_config(
     }
 }
 
-/// 求解某个资产在当前市场下实际生效的赔付上限，市场级覆盖优先于资产级全局配置。
-/// 覆盖以资产编号的十进制字符串为键在 JSON 对象中查找，命中且能解析为十进制才采用；
-/// 键不存在或值无法解析都会静默回退到资产配置表，不报错也不放大上限。
-/// 回退查询在资产未配置时给出零，而零在封顶语义中表示不设上限，
-/// 因此未配置资产的报价不会被上限拦下，真正的准入由启用校验负责。
-/// 返回值会同时用于报价阶段的超限拒绝和落库固化，订单结算时按固化值封顶，
-/// 后台事后调整上限不会追溯影响在途订单。
-pub(crate) async fn effective_payout_cap(
-    pool: &Pool<MySql>,
+/// 在报价事务内读取赔付上限，避免持有市场锁时再借用第二条连接造成池耗尽或跨快照。
+async fn effective_payout_cap_in_tx(
+    tx: &mut Transaction<'_, MySql>,
     asset_id: u64,
     overrides: &Option<Value>,
 ) -> AppResult<BigDecimal> {
@@ -1450,15 +1496,14 @@ pub(crate) async fn effective_payout_cap(
     {
         return Ok(cap);
     }
-    let cap = sqlx::query_as::<_, (BigDecimal,)>(
+    Ok(sqlx::query_as::<_, (BigDecimal,)>(
         "SELECT max_payout_amount FROM prediction_asset_configs WHERE asset_id = ? LIMIT 1",
     )
     .bind(asset_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut **tx)
     .await?
     .map(|row| row.0)
-    .unwrap_or_else(|| BigDecimal::from(0));
-    Ok(cap)
+    .unwrap_or_else(|| BigDecimal::from(0)))
 }
 
 /// 逐个校验后台提交的资产范围里每个编号都存在且处于启用状态，任一不满足即整体报错。

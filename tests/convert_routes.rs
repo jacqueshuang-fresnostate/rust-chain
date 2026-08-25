@@ -17,10 +17,14 @@ use exchange_api::{
 use redis::AsyncCommands;
 use secrecy::SecretString;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use sqlx::{MySqlPool, mysql::MySqlPoolOptions};
-use std::{error::Error, str::FromStr};
+use std::{error::Error, str::FromStr, time::Duration};
+use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
+
+static TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
 #[derive(sqlx::FromRow)]
 struct AgentCommissionRecordAssertion {
@@ -292,21 +296,51 @@ async fn seed_trading_pair(pool: &MySqlPool, base_asset: u64, quote_asset: u64) 
     symbol
 }
 
-async fn cache_market_ticker(
-    redis: &redis::aio::ConnectionManager,
+async fn seed_market_ticker_history(
+    pool: &MySqlPool,
     symbol: &str,
     last_price: &str,
-) -> Result<(), redis::RedisError> {
-    let mut connection = redis.clone();
-    let payload = json!({
-        "symbol": symbol,
-        "last_price": last_price,
-        "observed_at": 1_717_171_000_000_i64,
-    })
-    .to_string();
-    connection
-        .set(market_ticker_redis_key(symbol), payload)
-        .await
+) -> Result<(), sqlx::Error> {
+    let version = Uuid::now_v7().simple().to_string();
+    sqlx::query(
+        r#"INSERT INTO market_price_ticks
+           (event_key, symbol, price, source, observed_at, generation, source_version)
+           VALUES (?, REPLACE(UPPER(?), '-', ''), ?, 'bitget', CURRENT_TIMESTAMP(6), 1, ?)"#,
+    )
+    .bind(format!("{version}{version}"))
+    .bind(symbol)
+    .bind(decimal(last_price))
+    .bind(version)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn request_convert_quote_status(
+    app: &axum::Router,
+    token: &str,
+    from_asset_id: u64,
+    to_asset_id: u64,
+) -> Result<StatusCode, Box<dyn Error>> {
+    Ok(app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/convert/quote")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "from_asset_id": from_asset_id,
+                        "to_asset_id": to_asset_id,
+                        "from_amount": "1.000000000000000000"
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?
+        .status())
 }
 
 async fn seed_convert_rule(pool: &MySqlPool, pair_id: u64, fixed_rate: &str) -> u64 {
@@ -359,9 +393,54 @@ async fn seed_convert_quote(
 ) -> String {
     let quote_id = Uuid::now_v7().to_string();
     sqlx::query(
+        r#"INSERT INTO new_coin_convert_rules
+           (convert_pair_id, rate_source, fixed_rate, status)
+           VALUES (?, 'fixed', 2, 'active')
+           ON DUPLICATE KEY UPDATE rate_source = 'fixed', fixed_rate = 2, status = 'active'"#,
+    )
+    .bind(pair_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    let (observed_at, expires_at): (chrono::DateTime<Utc>, chrono::DateTime<Utc>) = sqlx::query_as(
+        r#"SELECT GREATEST(pairs.updated_at, rules.updated_at),
+                  DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 30 SECOND)
+           FROM convert_pairs pairs
+           INNER JOIN new_coin_convert_rules rules ON rules.convert_pair_id = pairs.id
+           WHERE pairs.id = ?"#,
+    )
+    .bind(pair_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let price_version = format!("convert_pair:{pair_id}:{}", observed_at.timestamp_micros());
+    let canonical = [
+        "convert-quote-v1".to_owned(),
+        quote_id.clone(),
+        user_id.to_string(),
+        pair_id.to_string(),
+        from_asset.to_string(),
+        to_asset.to_string(),
+        decimal("10").normalized().to_string(),
+        decimal("20").normalized().to_string(),
+        decimal("2").normalized().to_string(),
+        decimal("0").normalized().to_string(),
+        decimal("0").normalized().to_string(),
+        decimal("0").normalized().to_string(),
+        "fixed".to_owned(),
+        String::new(),
+        observed_at.timestamp_micros().to_string(),
+        price_version.clone(),
+        expires_at.timestamp_micros().to_string(),
+    ]
+    .join("|");
+    let fingerprint = hex::encode(Sha256::digest(canonical.as_bytes()));
+    sqlx::query(
         r#"INSERT INTO convert_quotes
-           (quote_id, convert_pair_id, user_id, from_asset, to_asset, from_amount, to_amount, rate, spread_rate, expires_at, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 30 SECOND), 'quoted')"#,
+           (quote_id, convert_pair_id, user_id, from_asset, to_asset, from_amount,
+            to_amount, rate, spread_rate, fee_rate, fee_amount, request_fingerprint,
+            price_source, price_observed_at, price_version, expires_at, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 'fixed', ?, ?, ?, 'quoted')"#,
     )
     .bind(&quote_id)
     .bind(pair_id)
@@ -372,6 +451,10 @@ async fn seed_convert_quote(
     .bind(decimal("20.000000000000000000"))
     .bind(decimal("2.000000000000000000"))
     .bind(decimal("0.00000000"))
+    .bind(fingerprint)
+    .bind(observed_at)
+    .bind(price_version)
+    .bind(expires_at)
     .execute(pool)
     .await
     .unwrap();
@@ -380,6 +463,7 @@ async fn seed_convert_quote(
 
 #[tokio::test]
 async fn convert_routes_require_auth_for_user_actions() {
+    let _guard = TEST_LOCK.lock().await;
     let app = user_routes().with_state(AppState::new(test_settings()));
 
     let orders_response = app
@@ -428,6 +512,7 @@ async fn convert_routes_require_auth_for_user_actions() {
 
 #[tokio::test]
 async fn convert_routes_return_clear_error_without_mysql() {
+    let _guard = TEST_LOCK.lock().await;
     let settings = test_settings();
     let token = issue_token(&settings, "user:42", TokenScope::User, 900).unwrap();
     let response = user_routes()
@@ -456,6 +541,7 @@ async fn convert_routes_return_clear_error_without_mysql() {
 
 #[tokio::test]
 async fn convert_routes_list_pairs_and_user_orders() -> Result<(), Box<dyn Error>> {
+    let _guard = TEST_LOCK.lock().await;
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
@@ -554,6 +640,7 @@ async fn convert_routes_list_pairs_and_user_orders() -> Result<(), Box<dyn Error
 
 #[tokio::test]
 async fn convert_quote_supports_reverse_direction_from_single_pair() -> Result<(), Box<dyn Error>> {
+    let _guard = TEST_LOCK.lock().await;
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
@@ -630,6 +717,7 @@ async fn convert_quote_supports_reverse_direction_from_single_pair() -> Result<(
 #[tokio::test]
 async fn convert_quote_applies_pair_fee_rate_and_settles_net_amount() -> Result<(), Box<dyn Error>>
 {
+    let _guard = TEST_LOCK.lock().await;
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
@@ -760,6 +848,7 @@ async fn convert_quote_applies_pair_fee_rate_and_settles_net_amount() -> Result<
 #[tokio::test]
 async fn convert_quote_uses_target_asset_limits_for_reverse_direction() -> Result<(), Box<dyn Error>>
 {
+    let _guard = TEST_LOCK.lock().await;
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
@@ -847,11 +936,9 @@ async fn convert_quote_uses_target_asset_limits_for_reverse_direction() -> Resul
 }
 
 #[tokio::test]
-async fn convert_quote_supports_market_pricing_from_cached_ticker() -> Result<(), Box<dyn Error>> {
+async fn convert_quote_uses_mysql_market_history_without_redis() -> Result<(), Box<dyn Error>> {
+    let _guard = TEST_LOCK.lock().await;
     let Some(pool) = mysql_pool().await else {
-        return Ok(());
-    };
-    let Some(redis) = redis_manager().await else {
         return Ok(());
     };
     let settings = test_settings();
@@ -860,7 +947,7 @@ async fn convert_quote_supports_market_pricing_from_cached_ticker() -> Result<()
     let quote_asset = create_asset(&pool, "CMQ").await;
     let market_symbol = seed_trading_pair(&pool, base_asset, quote_asset).await;
     let pair_id = seed_convert_pair_with_pricing(&pool, quote_asset, base_asset, "market").await;
-    cache_market_ticker(&redis, &market_symbol, "2.000000000000000000").await?;
+    seed_market_ticker_history(&pool, &market_symbol, "2.000000000000000000").await?;
     sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
         .bind(user_id)
         .bind(quote_asset)
@@ -869,11 +956,7 @@ async fn convert_quote_supports_market_pricing_from_cached_ticker() -> Result<()
         .await?;
 
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
-    let app = user_routes().with_state(
-        AppState::new(settings)
-            .with_mysql(pool.clone())
-            .with_redis(redis.clone()),
-    );
+    let app = user_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
 
     let response = app
         .oneshot(
@@ -906,6 +989,11 @@ async fn convert_quote_supports_market_pricing_from_cached_ticker() -> Result<()
     assert_eq!(quote["convert_pair_id"], pair_id);
     assert_eq!(quote["from_asset_id"], quote_asset);
     assert_eq!(quote["to_asset_id"], base_asset);
+    assert_eq!(quote["price_source"], "bitget");
+    assert_eq!(
+        quote["price_symbol"],
+        market_symbol.replace('-', "").to_ascii_uppercase()
+    );
     assert_eq!(
         BigDecimal::from_str(quote["rate"].as_str().unwrap()).unwrap(),
         decimal("0.500000000000000000")
@@ -916,10 +1004,9 @@ async fn convert_quote_supports_market_pricing_from_cached_ticker() -> Result<()
     );
 
     let quote_id = quote["quote_id"].as_str().unwrap().to_owned();
-    let mut raw_redis = redis.clone();
-    let _: usize = raw_redis.del(format!("convert:quote:{quote_id}")).await?;
-    let _: usize = raw_redis
-        .del(market_ticker_redis_key(&market_symbol))
+    sqlx::query("DELETE FROM market_price_ticks WHERE symbol = REPLACE(UPPER(?), '-', '')")
+        .bind(&market_symbol)
+        .execute(&pool)
         .await?;
     sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
         .bind(&market_symbol)
@@ -930,8 +1017,98 @@ async fn convert_quote_supports_market_pricing_from_cached_ticker() -> Result<()
 }
 
 #[tokio::test]
+async fn convert_market_quote_fails_closed_for_missing_future_or_stale_history()
+-> Result<(), Box<dyn Error>> {
+    let _guard = TEST_LOCK.lock().await;
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_user(&pool).await;
+    let base_asset = create_asset(&pool, "FHB").await;
+    let quote_asset = create_asset(&pool, "FHQ").await;
+    let market_symbol = seed_trading_pair(&pool, base_asset, quote_asset).await;
+    let pair_id = seed_convert_pair_with_pricing(&pool, base_asset, quote_asset, "market").await;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, 10)")
+        .bind(user_id)
+        .bind(base_asset)
+        .execute(&pool)
+        .await?;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900)?;
+    let app = user_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+
+    assert_eq!(
+        request_convert_quote_status(&app, &token, base_asset, quote_asset).await?,
+        StatusCode::BAD_REQUEST
+    );
+
+    let version = Uuid::now_v7().simple().to_string();
+    let event_key = format!("{version}{version}");
+    sqlx::query(
+        r#"INSERT INTO market_price_ticks
+           (event_key, symbol, price, source, observed_at, generation, source_version)
+           VALUES (?, REPLACE(UPPER(?), '-', ''), 2, 'bitget',
+                   DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 1 HOUR), 1, ?)"#,
+    )
+    .bind(&event_key)
+    .bind(&market_symbol)
+    .bind(&version)
+    .execute(&pool)
+    .await?;
+    assert_eq!(
+        request_convert_quote_status(&app, &token, base_asset, quote_asset).await?,
+        StatusCode::BAD_REQUEST
+    );
+
+    sqlx::query(
+        "UPDATE market_price_ticks SET observed_at = DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 61 SECOND) WHERE event_key = ?",
+    )
+    .bind(&event_key)
+    .execute(&pool)
+    .await?;
+    assert_eq!(
+        request_convert_quote_status(&app, &token, base_asset, quote_asset).await?,
+        StatusCode::BAD_REQUEST
+    );
+
+    let (quote_count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM convert_quotes WHERE user_id = ?")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(quote_count, 0);
+    let (available,): (BigDecimal,) =
+        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(base_asset)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(available.normalized(), decimal("10"));
+
+    sqlx::query("DELETE FROM market_price_ticks WHERE event_key = ?")
+        .bind(&event_key)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM trading_pairs WHERE symbol = ?")
+        .bind(&market_symbol)
+        .execute(&pool)
+        .await?;
+    cleanup_fixture(
+        &pool,
+        "missing-history-no-quote",
+        pair_id,
+        base_asset,
+        quote_asset,
+        user_id,
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn convert_market_quote_truncates_target_amount_to_asset_precision()
 -> Result<(), Box<dyn Error>> {
+    let _guard = TEST_LOCK.lock().await;
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
@@ -941,10 +1118,10 @@ async fn convert_market_quote_truncates_target_amount_to_asset_precision()
     let settings = test_settings();
     let user_id = create_user(&pool).await;
     let btc_asset = create_asset_with_precision(&pool, "CBTC", 8).await;
-    let usdt_asset = create_asset_with_precision(&pool, "CUSDT", 18).await;
+    let usdt_asset = create_asset_with_precision(&pool, "CUS", 18).await;
     let market_symbol = seed_trading_pair(&pool, btc_asset, usdt_asset).await;
     let pair_id = seed_convert_pair_with_pricing(&pool, usdt_asset, btc_asset, "market").await;
-    cache_market_ticker(&redis, &market_symbol, "3.000000000000000000").await?;
+    seed_market_ticker_history(&pool, &market_symbol, "3.000000000000000000").await?;
     sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
         .bind(user_id)
         .bind(usdt_asset)
@@ -1065,6 +1242,7 @@ async fn convert_market_quote_truncates_target_amount_to_asset_precision()
 #[tokio::test]
 async fn convert_confirm_settles_wallet_balances_and_marks_order_completed()
 -> Result<(), Box<dyn Error>> {
+    let _guard = TEST_LOCK.lock().await;
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
@@ -1186,8 +1364,315 @@ async fn convert_confirm_settles_wallet_balances_and_marks_order_completed()
 }
 
 #[tokio::test]
+async fn convert_mysql_quote_expiry_and_single_consumption_do_not_depend_on_redis()
+-> Result<(), Box<dyn Error>> {
+    let _guard = TEST_LOCK.lock().await;
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_user(&pool).await;
+    let from_asset = create_asset(&pool, "CMA").await;
+    let to_asset = create_asset(&pool, "CMB").await;
+    let pair_id = seed_convert_pair(&pool, from_asset, to_asset).await;
+    sqlx::query(
+        "INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, 50), (?, ?, 0)",
+    )
+    .bind(user_id)
+    .bind(from_asset)
+    .bind(user_id)
+    .bind(to_asset)
+    .execute(&pool)
+    .await?;
+    let expired_quote = seed_convert_quote(&pool, user_id, pair_id, from_asset, to_asset).await;
+    sqlx::query("UPDATE convert_quotes SET expires_at = CURRENT_TIMESTAMP(6) WHERE quote_id = ?")
+        .bind(&expired_quote)
+        .execute(&pool)
+        .await?;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900)?;
+    let app = user_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let expired = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/convert/confirm")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"quote_id": expired_quote}).to_string()))?,
+        )
+        .await?;
+    assert_eq!(expired.status(), StatusCode::BAD_REQUEST);
+    let (expired_consumed,): (Option<chrono::DateTime<Utc>>,) =
+        sqlx::query_as("SELECT consumed_at FROM convert_quotes WHERE quote_id = ?")
+            .bind(&expired_quote)
+            .fetch_one(&pool)
+            .await?;
+    assert!(expired_consumed.is_none());
+
+    let quote_id = seed_convert_quote(&pool, user_id, pair_id, from_asset, to_asset).await;
+    let first = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/convert/confirm")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"quote_id": quote_id}).to_string()))?,
+        )
+        .await?;
+    assert_eq!(first.status(), StatusCode::OK);
+    let replay = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/convert/confirm")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"quote_id": quote_id}).to_string()))?,
+        )
+        .await?;
+    assert_eq!(replay.status(), StatusCode::CONFLICT);
+    let (status, consumed_at, order_count): (String, Option<chrono::DateTime<Utc>>, i64) =
+        sqlx::query_as(
+            r#"SELECT quotes.status, quotes.consumed_at,
+                      (SELECT COUNT(*) FROM convert_orders orders WHERE orders.quote_id = quotes.quote_id)
+               FROM convert_quotes quotes WHERE quotes.quote_id = ?"#,
+        )
+        .bind(&quote_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(status, "consumed");
+    assert!(consumed_at.is_some());
+    assert_eq!(order_count, 1);
+    sqlx::query("DELETE FROM convert_quotes WHERE quote_id = ?")
+        .bind(&expired_quote)
+        .execute(&pool)
+        .await?;
+    cleanup_fixture(&pool, &quote_id, pair_id, from_asset, to_asset, user_id).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn convert_quote_fingerprint_tampering_fails_before_wallet_mutation()
+-> Result<(), Box<dyn Error>> {
+    let _guard = TEST_LOCK.lock().await;
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_user(&pool).await;
+    let from_asset = create_asset(&pool, "CFA").await;
+    let to_asset = create_asset(&pool, "CFB").await;
+    let pair_id = seed_convert_pair(&pool, from_asset, to_asset).await;
+    sqlx::query(
+        "INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, 50), (?, ?, 0)",
+    )
+    .bind(user_id)
+    .bind(from_asset)
+    .bind(user_id)
+    .bind(to_asset)
+    .execute(&pool)
+    .await?;
+    let quote_id = seed_convert_quote(&pool, user_id, pair_id, from_asset, to_asset).await;
+    sqlx::query("UPDATE convert_quotes SET to_amount = to_amount + 1 WHERE quote_id = ?")
+        .bind(&quote_id)
+        .execute(&pool)
+        .await?;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900)?;
+    let response = user_routes()
+        .with_state(AppState::new(settings).with_mysql(pool.clone()))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/convert/confirm")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"quote_id": quote_id}).to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let (available,): (BigDecimal,) =
+        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(from_asset)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(available.normalized(), decimal("50"));
+    let (order_count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM convert_orders WHERE quote_id = ?")
+            .bind(&quote_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(order_count, 0);
+    cleanup_fixture(&pool, &quote_id, pair_id, from_asset, to_asset, user_id).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn convert_confirmation_rejects_disabled_pair_config_without_consuming_or_posting()
+-> Result<(), Box<dyn Error>> {
+    let _guard = TEST_LOCK.lock().await;
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_user(&pool).await;
+    let from_asset = create_asset(&pool, "CCA").await;
+    let to_asset = create_asset(&pool, "CCB").await;
+    let pair_id = seed_convert_pair(&pool, from_asset, to_asset).await;
+    sqlx::query(
+        "INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, 50), (?, ?, 0)",
+    )
+    .bind(user_id)
+    .bind(from_asset)
+    .bind(user_id)
+    .bind(to_asset)
+    .execute(&pool)
+    .await?;
+    let quote_id = seed_convert_quote(&pool, user_id, pair_id, from_asset, to_asset).await;
+    sqlx::query("UPDATE convert_pairs SET enabled = FALSE WHERE id = ?")
+        .bind(pair_id)
+        .execute(&pool)
+        .await?;
+
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900)?;
+    let response = user_routes()
+        .with_state(AppState::new(settings).with_mysql(pool.clone()))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/convert/confirm")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"quote_id": quote_id}).to_string()))?,
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let balances: Vec<(u64, BigDecimal)> = sqlx::query_as(
+        "SELECT asset_id, available FROM wallet_accounts WHERE user_id = ? AND asset_id IN (?, ?) ORDER BY asset_id",
+    )
+    .bind(user_id)
+    .bind(from_asset)
+    .bind(to_asset)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(balances.len(), 2);
+    assert_eq!(balances[0].1.normalized(), decimal("50"));
+    assert_eq!(balances[1].1.normalized(), decimal("0"));
+    let (status, consumed_at, order_count, ledger_count): (
+        String,
+        Option<chrono::DateTime<Utc>>,
+        i64,
+        i64,
+    ) = sqlx::query_as(
+        r#"SELECT quotes.status, quotes.consumed_at,
+                  (SELECT COUNT(*) FROM convert_orders orders WHERE orders.quote_id = quotes.quote_id),
+                  (SELECT COUNT(*) FROM wallet_ledger ledger
+                   WHERE ledger.ref_type = 'convert_order' AND ledger.ref_id = quotes.quote_id)
+           FROM convert_quotes quotes WHERE quotes.quote_id = ?"#,
+    )
+    .bind(&quote_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(status, "quoted");
+    assert!(consumed_at.is_none());
+    assert_eq!(order_count, 0);
+    assert_eq!(ledger_count, 0);
+
+    cleanup_fixture(&pool, &quote_id, pair_id, from_asset, to_asset, user_id).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn bidirectional_convert_confirms_use_stable_wallet_lock_order() -> Result<(), Box<dyn Error>>
+{
+    let _guard = TEST_LOCK.lock().await;
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_user(&pool).await;
+    let asset_a = create_asset(&pool, "CLA").await;
+    let asset_b = create_asset(&pool, "CLB").await;
+    let pair_ab = seed_convert_pair(&pool, asset_a, asset_b).await;
+    let pair_ba = seed_convert_pair(&pool, asset_b, asset_a).await;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, 100), (?, ?, 100)")
+        .bind(user_id)
+        .bind(asset_a)
+        .bind(user_id)
+        .bind(asset_b)
+        .execute(&pool)
+        .await?;
+    let quote_ab = seed_convert_quote(&pool, user_id, pair_ab, asset_a, asset_b).await;
+    let quote_ba = seed_convert_quote(&pool, user_id, pair_ba, asset_b, asset_a).await;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900)?;
+    let app = user_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let first = app.clone().oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/convert/confirm")
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(json!({"quote_id": quote_ab}).to_string()))?,
+    );
+    let second = app.oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/convert/confirm")
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(json!({"quote_id": quote_ba}).to_string()))?,
+    );
+    let (first, second) = tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::join!(first, second)
+    })
+    .await?;
+    assert_eq!(first?.status(), StatusCode::OK);
+    assert_eq!(second?.status(), StatusCode::OK);
+    let balances: Vec<(u64, BigDecimal)> = sqlx::query_as(
+        "SELECT asset_id, available FROM wallet_accounts WHERE user_id = ? AND asset_id IN (?, ?) ORDER BY asset_id",
+    )
+    .bind(user_id)
+    .bind(asset_a)
+    .bind(asset_b)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(balances.len(), 2);
+    assert!(
+        balances
+            .iter()
+            .all(|(_, value)| value.normalized() == decimal("110"))
+    );
+    sqlx::query("DELETE FROM wallet_ledger WHERE ref_type = 'convert_order' AND ref_id = ?")
+        .bind(&quote_ba)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM convert_orders WHERE quote_id = ?")
+        .bind(&quote_ba)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM convert_quotes WHERE quote_id = ?")
+        .bind(&quote_ba)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM new_coin_convert_rules WHERE convert_pair_id = ?")
+        .bind(pair_ba)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM convert_pairs WHERE id = ?")
+        .bind(pair_ba)
+        .execute(&pool)
+        .await?;
+    cleanup_fixture(&pool, &quote_ab, pair_ab, asset_a, asset_b, user_id).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn convert_confirm_creates_pending_agent_commission_for_referred_user()
 -> Result<(), Box<dyn Error>> {
+    let _guard = TEST_LOCK.lock().await;
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
@@ -1352,6 +1837,7 @@ async fn convert_confirm_creates_pending_agent_commission_for_referred_user()
 
 #[tokio::test]
 async fn convert_confirm_skips_disabled_agent_commission_rule() -> Result<(), Box<dyn Error>> {
+    let _guard = TEST_LOCK.lock().await;
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
@@ -1448,6 +1934,7 @@ async fn convert_confirm_skips_disabled_agent_commission_rule() -> Result<(), Bo
 
 #[tokio::test]
 async fn convert_confirm_uses_latest_active_agent_commission_rule() -> Result<(), Box<dyn Error>> {
+    let _guard = TEST_LOCK.lock().await;
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
@@ -1570,6 +2057,7 @@ async fn convert_confirm_uses_latest_active_agent_commission_rule() -> Result<()
 #[tokio::test]
 async fn convert_confirm_rolls_back_order_when_settlement_fails_and_allows_retry()
 -> Result<(), Box<dyn Error>> {
+    let _guard = TEST_LOCK.lock().await;
     let Some(pool) = mysql_pool().await else {
         return Ok(());
     };
@@ -1585,7 +2073,7 @@ async fn convert_confirm_rolls_back_order_when_settlement_fails_and_allows_retry
     sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
         .bind(user_id)
         .bind(from_asset)
-        .bind(decimal("10.000000000000000000"))
+        .bind(decimal("9.000000000000000000"))
         .execute(&pool)
         .await?;
 
@@ -1650,10 +2138,10 @@ async fn convert_confirm_rolls_back_order_when_settlement_fails_and_allows_retry
     }
     assert_eq!(order_count, 0);
 
-    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+    sqlx::query("UPDATE wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?")
+        .bind(decimal("10.000000000000000000"))
         .bind(user_id)
-        .bind(to_asset)
-        .bind(decimal("0.000000000000000000"))
+        .bind(from_asset)
         .execute(&pool)
         .await?;
 

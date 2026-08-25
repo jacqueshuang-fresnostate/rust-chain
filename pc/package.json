@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "type-check": "vue-tsc -b",
+    "test:margin": "node --experimental-strip-types --test tests/contract-margin-actions.test.ts",
     "preview": "vite preview",
     "tauri": "tauri"
   },

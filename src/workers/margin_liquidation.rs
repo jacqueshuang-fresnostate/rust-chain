@@ -15,9 +15,12 @@ use crate::{
     error::{AppError, AppResult},
     modules::{
         events::{EventBroadcastHub, EventBroadcastMessage},
-        margin::domain::{CrossMarginPositionRisk, CrossMarginRiskState, evaluate_cross_margin},
+        margin::domain::{
+            MarkedCrossMarginPosition, evaluate_margin_position_risk, evaluate_marked_cross_margin,
+        },
         margin::infrastructure::{
             apply_cross_margin_account_settlement, credit_margin_position_amount,
+            ensure_and_lock_cross_margin_account, update_locked_cross_margin_risk,
         },
         market::market_ticker_redis_key,
     },
@@ -30,8 +33,11 @@ use redis::{AsyncCommands, aio::ConnectionManager};
 use serde::Deserialize;
 use serde_json::json;
 use sqlx::{MySql, Pool, Transaction};
-use std::collections::{BTreeMap, HashMap};
 use std::env;
+use std::{
+    collections::{BTreeMap, HashMap},
+    time::Instant,
+};
 use tokio::time::{Duration, interval};
 use tracing::{error, info, warn};
 
@@ -86,18 +92,8 @@ pub struct MarginLiquidationSummary {
     pub failed: u32,
 }
 
-/// 单个仓位的强平判定结果，逐仓直接使用，全仓则为每个仓位单独构造用于写强平记录。
-#[derive(Debug, Clone, PartialEq)]
-pub struct MarginLiquidationRiskState {
-    /// 是否触及强平线，判定条件是权益不高于维持保证金。
-    pub should_liquidate: bool,
-    /// 仓位权益，等于保证金加已实现口径盈亏再减累计利息，可为负。
-    pub equity: BigDecimal,
-    /// 维持保证金要求，等于名义价值乘产品维持保证金率。
-    pub maintenance_margin: BigDecimal,
-    /// 按标记价折算的盈亏，做多做空取号相反。
-    pub realized_pnl: BigDecimal,
-}
+/// 保留 worker 的公开类型名，实际结构和公式由 margin 领域层统一定义。
+pub use crate::modules::margin::domain::MarginPositionRiskState as MarginLiquidationRiskState;
 
 /// 逐仓强平候选，只带主键和交易对符号，后者用于取行情缓存。
 #[derive(Debug, sqlx::FromRow)]
@@ -170,6 +166,15 @@ struct CachedTickerPayload {
     observed_at: DateTime<Utc>,
 }
 
+/// 已在扫描时点通过校验的强平标记价；单调时钟用于在等待行锁后再次校验新鲜度。
+#[derive(Debug, Clone)]
+struct MarginLiquidationMark {
+    price: BigDecimal,
+    observed_at: DateTime<Utc>,
+    validated_logical_at: DateTime<Utc>,
+    validated_at: Instant,
+}
+
 /// 强平事件载荷，在事务内构造但只在提交成功后才被广播出去。
 #[derive(Debug, Clone)]
 struct MarginLiquidationEvent {
@@ -217,54 +222,16 @@ pub fn margin_liquidation_risk_state(
     mark_price: &BigDecimal,
     maintenance_margin_rate: &BigDecimal,
 ) -> AppResult<MarginLiquidationRiskState> {
-    validate_positive_decimal(entry_price, "margin entry price")?;
-    validate_positive_decimal(mark_price, "margin mark price")?;
-    let price_delta = match direction {
-        "long" => mark_price.clone() - entry_price.clone(),
-        "short" => entry_price.clone() - mark_price.clone(),
-        _ => {
-            return Err(AppError::Validation(
-                "margin direction must be long or short".to_owned(),
-            ));
-        }
-    };
-    let realized_pnl = (notional_amount.clone() * price_delta / entry_price.clone()).with_scale(18);
-    let equity =
-        (margin_amount.clone() + realized_pnl.clone() - interest_amount.clone()).with_scale(18);
-    let maintenance_margin =
-        (notional_amount.clone() * maintenance_margin_rate.clone()).with_scale(18);
-    Ok(MarginLiquidationRiskState {
-        should_liquidate: equity <= maintenance_margin,
-        equity,
-        maintenance_margin,
-        realized_pnl,
-    })
-}
-
-/// 只计算按标记价折算的盈亏，不产出权益和维持保证金，供全仓路径逐仓位取浮盈使用。
-/// 与 `margin_liquidation_risk_state` 内部同名口径一致：名义价值乘价差再除入场价，
-/// 做多取标记价减入场价、做空取反，结果归一到十八位小数并可正可负。
-/// 全仓不能直接用完整风险函数，因为它的判定基于账户共享权益而不是单仓权益，
-/// 所以这里只取盈亏这一项，再交给领域层的账户级评估汇总。
-/// 入场价与标记价必须为正，方向必须是 long 或 short，否则返回参数错误中止整笔账户事务。
-fn margin_realized_pnl(
-    direction: &str,
-    notional_amount: &BigDecimal,
-    entry_price: &BigDecimal,
-    mark_price: &BigDecimal,
-) -> AppResult<BigDecimal> {
-    validate_positive_decimal(entry_price, "margin entry price")?;
-    validate_positive_decimal(mark_price, "margin mark price")?;
-    let price_delta = match direction {
-        "long" => mark_price.clone() - entry_price.clone(),
-        "short" => entry_price.clone() - mark_price.clone(),
-        _ => {
-            return Err(AppError::Validation(
-                "margin direction must be long or short".to_owned(),
-            ));
-        }
-    };
-    Ok((notional_amount.clone() * price_delta / entry_price.clone()).with_scale(18))
+    evaluate_margin_position_risk(
+        direction,
+        margin_amount,
+        notional_amount,
+        interest_amount,
+        entry_price,
+        mark_price,
+        maintenance_margin_rate,
+    )
+    .map_err(|message| AppError::Validation(message.to_owned()))
 }
 
 /// 从应用状态取得 MySQL 仓位/钱包、Redis 权威 ticker 与可选事件 hub 后执行单轮强平；MySQL 或 Redis 缺失时在扫描前失败。
@@ -323,6 +290,7 @@ async fn run_once_with_dependencies_and_events(
     now: DateTime<Utc>,
     limit: u32,
 ) -> AppResult<MarginLiquidationSummary> {
+    let scan_started_at = Instant::now();
     let liquidation_limit = margin_liquidation_limit(limit);
     let candidates = fetch_open_positions(pool, now, margin_liquidation_scan_limit(limit)).await?;
     let cross_accounts =
@@ -340,10 +308,10 @@ async fn run_once_with_dependencies_and_events(
         let mut marks = HashMap::new();
         let mut missing_mark = false;
         for (symbol, position_keys) in cross_position_keys_by_symbol(&positions) {
-            match cached_ticker_price(redis, &symbol, now).await {
-                Ok(Some(price)) => {
+            match cached_ticker_price(redis, &symbol, now, scan_started_at).await {
+                Ok(Some(mark)) => {
                     for (_, pair_id) in position_keys {
-                        marks.insert(pair_id, price.clone());
+                        marks.insert(pair_id, mark.clone());
                     }
                 }
                 Ok(None) | Err(_) => {
@@ -387,8 +355,8 @@ async fn run_once_with_dependencies_and_events(
             break;
         }
         summary.scanned += 1;
-        let mark_price = match cached_ticker_price(redis, &candidate.symbol, now).await {
-            Ok(Some(price)) => price,
+        let mark = match cached_ticker_price(redis, &candidate.symbol, now, scan_started_at).await {
+            Ok(Some(mark)) => mark,
             Ok(None) => {
                 summary.skipped += 1;
                 reschedule_liquidation_attempt(pool, candidate.position_id, now).await?;
@@ -403,7 +371,7 @@ async fn run_once_with_dependencies_and_events(
             }
         };
 
-        match liquidate_position_by_id(pool, candidate.position_id, &mark_price, now).await {
+        match liquidate_position_by_id(pool, candidate.position_id, &mark, now).await {
             Ok(LiquidationOutcome::Liquidated(events)) => {
                 summary.liquidated += 1;
                 if let Some(hub) = event_hub {
@@ -550,15 +518,16 @@ fn cross_position_keys_by_symbol(
 }
 
 /// 读取指定交易对的服务端标记价，并施加强平专用的有效性判定。
-/// 三种结果语义不同：缓存键不存在返回 Ok(None) 表示行情缺失，价格非正或超过六十秒未更新返回 Err，
+/// 三种结果语义不同：缓存键不存在返回 Ok(None) 表示行情缺失，价格非正、时间在未来或超过六十秒未更新返回 Err，
 /// JSON 解析失败同样返回 Err 但归为内部错误，因为那意味着写入端与读取端契约不一致。
 /// 新鲜度以传入的 `now` 为基准而非函数内部再取时间，使同一轮扫描对所有仓位使用统一的时间尺度。
 /// 拒绝陈旧价格是强平安全的关键：宁可推迟处置，也不用过期价格误判某个仓位安全或误砍某个正常仓位。
 async fn cached_ticker_price(
     redis: &ConnectionManager,
     symbol: &str,
-    now: DateTime<Utc>,
-) -> AppResult<Option<BigDecimal>> {
+    scan_now: DateTime<Utc>,
+    scan_started_at: Instant,
+) -> AppResult<Option<MarginLiquidationMark>> {
     let mut connection = redis.clone();
     let payload: Option<String> = connection.get(market_ticker_redis_key(symbol)).await?;
     let Some(payload) = payload else {
@@ -567,10 +536,47 @@ async fn cached_ticker_price(
     let ticker = serde_json::from_str::<CachedTickerPayload>(&payload)
         .map_err(|error| AppError::Internal(format!("invalid margin ticker payload: {error}")))?;
     validate_positive_decimal(&ticker.last_price, "margin mark price")?;
-    if ticker.observed_at < now - chrono::TimeDelta::seconds(60) {
+    let validated_logical_at = logical_time_after(scan_now, scan_started_at)?;
+    if ticker.observed_at > validated_logical_at {
+        return Err(AppError::Validation(
+            "margin ticker is from the future".to_owned(),
+        ));
+    }
+    if ticker.observed_at < validated_logical_at - chrono::TimeDelta::seconds(60) {
         return Err(AppError::Validation("margin ticker is stale".to_owned()));
     }
-    Ok(Some(ticker.last_price))
+    Ok(Some(MarginLiquidationMark {
+        price: ticker.last_price,
+        observed_at: ticker.observed_at,
+        validated_logical_at,
+        validated_at: Instant::now(),
+    }))
+}
+
+fn logical_time_after(
+    logical_time: DateTime<Utc>,
+    started_at: Instant,
+) -> AppResult<DateTime<Utc>> {
+    let elapsed = chrono::TimeDelta::from_std(started_at.elapsed()).map_err(|error| {
+        AppError::Internal(format!(
+            "margin ticker elapsed time is out of range: {error}"
+        ))
+    })?;
+    Ok(logical_time + elapsed)
+}
+
+/// 把扫描使用的逻辑时钟加上真实等锁时长，避免原本新鲜的价格在事务阻塞后陈旧却仍被提交。
+fn ensure_liquidation_mark_fresh(mark: &MarginLiquidationMark) -> AppResult<()> {
+    let effective_now = logical_time_after(mark.validated_logical_at, mark.validated_at)?;
+    if mark.observed_at > effective_now {
+        return Err(AppError::Validation(
+            "margin ticker is from the future".to_owned(),
+        ));
+    }
+    if mark.observed_at < effective_now - chrono::TimeDelta::seconds(60) {
+        return Err(AppError::Validation("margin ticker is stale".to_owned()));
+    }
+    Ok(())
 }
 
 /// 在独立事务中强平一个逐仓仓位：先锁仓位并重算风险，再结算非负剩余权益、写清算记录并关闭仓位。
@@ -587,7 +593,7 @@ async fn cached_ticker_price(
 async fn liquidate_position_by_id(
     pool: &Pool<MySql>,
     position_id: u64,
-    mark_price: &BigDecimal,
+    mark: &MarginLiquidationMark,
     now: DateTime<Utc>,
 ) -> AppResult<LiquidationOutcome> {
     let mut tx = pool.begin().await?;
@@ -604,13 +610,14 @@ async fn liquidate_position_by_id(
             "margin entry price is required for liquidation".to_owned(),
         ));
     };
+    ensure_liquidation_mark_fresh(mark)?;
     let risk_state = margin_liquidation_risk_state(
         &position.direction,
         &position.margin_amount,
         &position.notional_amount,
         &position.interest_amount,
         entry_price,
-        mark_price,
+        &mark.price,
         &position.maintenance_margin_rate,
     )?;
     if !risk_state.should_liquidate {
@@ -629,12 +636,14 @@ async fn liquidate_position_by_id(
         position.id,
     )
     .await?;
+    // 钱包锁可能阻塞；任何已写入的余额和流水会在此校验失败时随事务一起回滚。
+    ensure_liquidation_mark_fresh(mark)?;
 
     insert_liquidation_record(
         &mut tx,
         &position,
         entry_price,
-        mark_price,
+        &mark.price,
         &risk_state,
         &payout_amount,
         now,
@@ -649,7 +658,7 @@ async fn liquidate_position_by_id(
     )
     .bind(now.naive_utc())
     .bind(now.naive_utc())
-    .bind(mark_price)
+    .bind(&mark.price)
     .bind(&risk_state.realized_pnl)
     .bind(position.id)
     .execute(&mut *tx)
@@ -670,7 +679,7 @@ async fn liquidate_position_by_id(
         notional_amount: position.notional_amount,
         interest_amount: position.interest_amount,
         entry_price: entry_price.clone(),
-        mark_price: mark_price.clone(),
+        mark_price: mark.price.clone(),
         realized_pnl: risk_state.realized_pnl,
         payout_amount,
         reason: "maintenance_margin",
@@ -680,13 +689,13 @@ async fn liquidate_position_by_id(
     Ok(LiquidationOutcome::Liquidated(vec![event]))
 }
 
-/// 统一处理一个全仓账户：按仓位 ID 锁定全部 opened 仓位，再锁保证金钱包并用组合权益决定是否清算。
+/// 统一处理一个全仓账户：先锁账户，再按仓位 ID 锁定全部 opened 仓位，最后锁保证金钱包并决定是否清算。
 /// 调用方必须为每个唯一 pair 提供同一扫描时点的新鲜标记价；缺价、非 margin 钱包或缺入场价均中止整笔账户事务。
 /// 触发时每仓 payout 恒为零，账户钱包归零、坏账、清算记录、仓位终态和风险快照必须原子提交。
 /// 未触发只提交最新风险快照；成功事件在事务提交后由上层发布，重复扫描已关闭仓位会跳过。
 ///
-/// 锁序固定为「先按主键升序锁全部全仓仓位，再锁杠杆钱包」，与开仓、平仓、划转路径的
-/// 「先仓位后钱包」方向一致，因此账户级强平不会与用户主动操作形成交叉等待。
+/// 锁序固定为「账户→按主键升序的全仓仓位→杠杆钱包」，与开仓、平仓、划转和计息保持一致，
+/// 因此账户级强平不会与用户主动操作形成交叉等待。
 /// 仓位集合为空说明账户已被清空，回滚跳过；钱包行缺失时按十八位精度的零权益参与计算而不报错。
 /// 逐仓位校验三件事：资金域必须是 margin、入场价必须存在、必须能在 `marks` 中找到对应 pair 标记价，
 /// 任一不满足立即返回错误中止整笔账户事务，绝不带着残缺估值继续结算。
@@ -700,10 +709,11 @@ async fn liquidate_cross_account(
     pool: &Pool<MySql>,
     user_id: u64,
     margin_asset: u64,
-    marks: &HashMap<u64, BigDecimal>,
+    marks: &HashMap<u64, MarginLiquidationMark>,
     now: DateTime<Utc>,
 ) -> AppResult<LiquidationOutcome> {
     let mut tx = pool.begin().await?;
+    let account = ensure_and_lock_cross_margin_account(&mut tx, user_id, margin_asset).await?;
     let positions = sqlx::query_as::<_, LockedCrossMarginPosition>(
         r#"SELECT positions.id, positions.user_id, positions.product_id, positions.pair_id,
                   positions.margin_asset, positions.wallet_scope, positions.direction,
@@ -725,6 +735,11 @@ async fn liquidate_cross_account(
         tx.rollback().await?;
         return Ok(LiquidationOutcome::Skipped);
     }
+    if account.status == "liquidated" {
+        return Err(AppError::Conflict(
+            "liquidated cross margin account still has opened positions".to_owned(),
+        ));
+    }
 
     let wallet_equity = sqlx::query_scalar::<_, BigDecimal>(
         r#"SELECT COALESCE(available, 0)
@@ -738,9 +753,11 @@ async fn liquidate_cross_account(
     .fetch_optional(&mut *tx)
     .await?
     .unwrap_or_else(|| BigDecimal::from(0).with_scale(18));
-    let mut position_margin = BigDecimal::from(0);
-    let mut risks = Vec::with_capacity(positions.len());
-    let mut per_position_states = Vec::with_capacity(positions.len());
+    for mark in marks.values() {
+        ensure_liquidation_mark_fresh(mark)?;
+    }
+    let mut marked_positions = Vec::with_capacity(positions.len());
+    let mut mark_snapshots = Vec::with_capacity(positions.len());
     for position in &positions {
         if position.wallet_scope != "margin" {
             return Err(AppError::Validation(
@@ -752,33 +769,36 @@ async fn liquidate_cross_account(
                 "cross margin entry price is required for liquidation".to_owned(),
             ));
         };
-        let mark_price = marks.get(&position.pair_id).ok_or_else(|| {
+        let mark = marks.get(&position.pair_id).ok_or_else(|| {
             AppError::Validation("cross margin mark price is required for liquidation".to_owned())
         })?;
-        let realized_pnl = margin_realized_pnl(
-            &position.direction,
-            &position.notional_amount,
+        marked_positions.push(MarkedCrossMarginPosition {
+            direction: &position.direction,
+            margin_amount: &position.margin_amount,
+            notional_amount: &position.notional_amount,
+            interest_amount: &position.interest_amount,
             entry_price,
-            mark_price,
-        )?;
-        let maintenance_margin = (position.notional_amount.clone()
-            * position.maintenance_margin_rate.clone())
-        .with_scale(18);
-        position_margin += position.margin_amount.clone();
-        risks.push(CrossMarginPositionRisk {
-            unrealized_pnl: realized_pnl.clone(),
-            interest_amount: position.interest_amount.clone(),
-            maintenance_margin: maintenance_margin.clone(),
+            mark_price: &mark.price,
+            maintenance_margin_rate: &position.maintenance_margin_rate,
         });
-        per_position_states.push((
-            realized_pnl,
-            maintenance_margin,
-            entry_price.clone(),
-            mark_price.clone(),
-        ));
+        mark_snapshots.push((entry_price.clone(), mark.price.clone()));
     }
-    let account_risk = evaluate_cross_margin(&wallet_equity, &position_margin, &risks);
-    update_cross_account_snapshot(&mut tx, user_id, margin_asset, &account_risk, now).await?;
+    let evaluated = evaluate_marked_cross_margin(&wallet_equity, &marked_positions)
+        .map_err(|message| AppError::Validation(message.to_owned()))?;
+    let account_risk = evaluated.account;
+    let risk_version = update_locked_cross_margin_risk(
+        &mut tx,
+        user_id,
+        margin_asset,
+        account.version,
+        &account_risk,
+        marks
+            .values()
+            .map(|mark| mark.observed_at)
+            .min()
+            .unwrap_or(now),
+    )
+    .await?;
     if !account_risk.should_liquidate {
         tx.commit().await?;
         return Ok(LiquidationOutcome::Skipped);
@@ -800,9 +820,13 @@ async fn liquidate_cross_account(
     .await?;
 
     let mut events = Vec::with_capacity(positions.len());
-    for (position, (realized_pnl, maintenance_margin, entry_price, mark_price)) in
-        positions.iter().zip(per_position_states)
+    for ((position, risk_state), (entry_price, mark_price)) in positions
+        .iter()
+        .zip(evaluated.positions)
+        .zip(mark_snapshots)
     {
+        let realized_pnl = risk_state.realized_pnl;
+        let maintenance_margin = risk_state.maintenance_margin;
         let payout_amount = BigDecimal::from(0).with_scale(18);
         let position_equity = (position.margin_amount.clone() + realized_pnl.clone()
             - position.interest_amount.clone())
@@ -864,11 +888,12 @@ async fn liquidate_cross_account(
         r#"UPDATE margin_cross_accounts
            SET status = 'liquidated', last_bad_debt = ?,
                version = version + 1
-           WHERE user_id = ? AND margin_asset = ?"#,
+           WHERE user_id = ? AND margin_asset = ? AND version = ?"#,
     )
     .bind(&settlement.bad_debt)
     .bind(user_id)
     .bind(margin_asset)
+    .bind(risk_version)
     .execute(&mut *tx)
     .await?;
     if account_update.rows_affected() != 1 {
@@ -878,45 +903,6 @@ async fn liquidate_cross_account(
     }
     tx.commit().await?;
     Ok(LiquidationOutcome::Liquidated(events))
-}
-
-/// 在强平事务内写回全仓账户的最新风险快照，账户行不存在时顺带以 active 状态创建。
-/// 用 INSERT ... ON DUPLICATE KEY UPDATE 实现存在即更新，因此首次评估的账户无需预建。
-/// 每次写入都把 `version` 递增，供读取方判断快照新旧；插入分支从 1 起算。
-/// 状态被重置为 active，所以本次评估若判定安全，此前被标记为 liquidated 的账户会恢复可用；
-/// 若判定触发强平，调用方会在同一事务的最后再把状态改写为 liquidated，以后者为准。
-/// 保证金率为 None 时该列落成 NULL，表示维持保证金为零、比率无意义，而不是记作零。
-async fn update_cross_account_snapshot(
-    tx: &mut Transaction<'_, MySql>,
-    user_id: u64,
-    margin_asset: u64,
-    risk: &CrossMarginRiskState,
-    now: DateTime<Utc>,
-) -> AppResult<()> {
-    sqlx::query(
-        r#"INSERT INTO margin_cross_accounts
-             (user_id, margin_asset, status, last_equity, last_unrealized_pnl,
-              last_interest_amount, last_maintenance_margin, last_margin_ratio, last_risk_at, version)
-           VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, 1)
-           ON DUPLICATE KEY UPDATE
-             status = 'active', last_equity = VALUES(last_equity),
-             last_unrealized_pnl = VALUES(last_unrealized_pnl),
-             last_interest_amount = VALUES(last_interest_amount),
-             last_maintenance_margin = VALUES(last_maintenance_margin),
-             last_margin_ratio = VALUES(last_margin_ratio), last_risk_at = VALUES(last_risk_at),
-             version = version + 1"#,
-    )
-    .bind(user_id)
-    .bind(margin_asset)
-    .bind(&risk.equity)
-    .bind(&risk.unrealized_pnl)
-    .bind(&risk.interest_amount)
-    .bind(&risk.maintenance_margin)
-    .bind(&risk.margin_ratio)
-    .bind(now.naive_utc())
-    .execute(&mut **tx)
-    .await?;
-    Ok(())
 }
 
 /// 向用户私有频道推送单笔强平通知，载荷含入场价、标记价、盈亏、返还额和强平原因。

@@ -2,6 +2,7 @@
 //!
 //! SQL、Redis、钱包流水和结算写入按真实适配器职责拆分；本文件只保留既有稳定路径。
 
+mod cross_accounts;
 mod ledger;
 mod market_data;
 mod position_queries;
@@ -11,6 +12,14 @@ mod query_support;
 mod settlement;
 mod transfers;
 
+pub(crate) use cross_accounts::{
+    activate_cross_margin_account_for_open, bump_cross_margin_account_version,
+    discard_new_cross_margin_account_for_pending_order, ensure_and_lock_cross_margin_account,
+    ensure_and_lock_cross_margin_account_with_creation, load_cross_margin_account,
+    load_margin_open_product_account_scope, load_margin_position_account_scope,
+    lock_cross_margin_risk_positions, require_active_cross_margin_account,
+    update_locked_cross_margin_risk,
+};
 pub(crate) use market_data::{
     MarginRiskTicker, cached_margin_entry_price, cached_margin_mark_price,
     cached_margin_risk_ticker,
@@ -23,10 +32,10 @@ pub(crate) use position_queries::{
     load_user_position_by_id, load_user_risk_position_by_id,
 };
 pub(crate) use positions::{
-    LockedMarginPositionRow, MarginOpenProductRule, ensure_cross_margin_account,
-    existing_position_for_idempotency_key, existing_position_for_idempotency_key_readonly,
-    insert_margin_position, load_cancelable_position_ids, load_open_position_ids,
-    lock_active_open_product, lock_pending_margin_limit_position_by_id, lock_user_position_by_id,
+    LockedMarginPositionRow, MarginOpenProductRule, existing_position_for_idempotency_key,
+    existing_position_for_idempotency_key_readonly, insert_margin_position,
+    load_cancelable_position_ids, load_open_position_ids, lock_active_open_product,
+    lock_pending_margin_limit_position_by_id, lock_user_position_by_id,
     mark_margin_limit_position_filled, set_margin_position_wallet_scope,
     triggered_margin_limit_position_ids,
 };
@@ -43,8 +52,8 @@ pub(crate) use settlement::{
     mark_position_canceled, mark_position_closed,
 };
 pub(crate) use transfers::{
-    insert_margin_transfer, load_margin_transfer_by_idempotency_key,
-    load_margin_transfer_wallet_snapshots, resolve_active_transfer_asset,
-    resolve_transfer_asset_id_for_replay, transfer_margin_to_spot_wallets,
-    transfer_spot_to_margin_wallets,
+    apply_margin_to_spot_transfer, apply_spot_to_margin_transfer, insert_margin_transfer,
+    load_margin_transfer_by_idempotency_key, load_margin_transfer_wallet_snapshots,
+    lock_margin_transfer_wallets, resolve_active_transfer_asset,
+    resolve_transfer_asset_id_for_replay,
 };

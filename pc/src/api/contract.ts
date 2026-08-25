@@ -9,10 +9,11 @@ import {
   type BackendMarginWalletsResponse,
   type BackendMarginPositionsResponse,
   type BackendMarginProductsResponse,
+  type BackendMarginBatchActionResponse,
 } from './backendAdapters'
+import type { MarginBatchActionResult, MarginMode } from '../domain/marginActions'
 
 export type OpenDirection = 0 | 1
-export type CloseDirection = 0 | 1
 export type OrderType = 0 | 1 | 2
 
 export interface OpenPositionParams {
@@ -22,17 +23,13 @@ export interface OpenPositionParams {
   triggerPrice?: number
   entrustPrice?: number
   leverage: number
-  marginMode?: 'cross' | 'isolated'
+  marginMode?: MarginMode
   volume: number
 }
 
 export interface ClosePositionParams {
   contractCoinId: number
-  direction: CloseDirection
-  type: OrderType
-  triggerPrice?: number
-  entrustPrice?: number
-  volume: number
+  positionId: string
 }
 
 export interface OrderListParams {
@@ -52,10 +49,10 @@ export interface TransferParams {
   amount: number
 }
 
-export interface MarginActionResult {
+export interface MarginActionResult<T = unknown> {
   code: number
   message: string
-  data: unknown
+  data: T
 }
 
 export async function fetchBaseSymbol(): Promise<{ data: any }> {
@@ -81,8 +78,10 @@ export async function openPosition(params: OpenPositionParams): Promise<{ data: 
 }
 
 export async function closePosition(params: ClosePositionParams): Promise<{ data: any }> {
-  const positionId = await resolveOpenPositionId(params)
-  const response = await request.instance.post(backendApiUrl(`/margin/positions/${positionId}/close`), {})
+  const response = await request.instance.post(
+    backendApiUrl(`/margin/positions/${encodeURIComponent(params.positionId)}/close`),
+    {},
+  )
   return {
     data: {
       code: 0,
@@ -92,10 +91,12 @@ export async function closePosition(params: ClosePositionParams): Promise<{ data
   }
 }
 
-export function closeAllPositions(_contractCoinId: number, _type: 0 | 1 | 2): Promise<{ data: any }> {
-  return request.instance
-    .post(backendApiUrl('/margin/positions/close-all'), { product_id: _contractCoinId || undefined })
-    .then((response) => ({ data: { code: 0, message: 'success', data: response.data } }))
+export async function closeAllPositions(contractCoinId: number): Promise<{ data: MarginActionResult<MarginBatchActionResult> }> {
+  const response = await request.instance.post<BackendMarginBatchActionResponse>(
+    backendApiUrl('/margin/positions/close-all'),
+    { product_id: contractCoinId || undefined },
+  )
+  return { data: { code: 0, message: 'success', data: mapMarginBatchAction(response.data) } }
 }
 
 export async function cancelOrder(entrustId: string): Promise<{ data: any }> {
@@ -145,7 +146,7 @@ export async function transferFunds(params: TransferParams): Promise<{ data: any
 
 export interface MarginUserSetting {
   leverage: number | null
-  marginMode: string | null
+  marginMode: MarginMode | null
 }
 
 /// 读取服务端已保存的杠杆与仓位模式，避免刷新后表单回退到本地默认值。
@@ -156,7 +157,9 @@ export async function fetchMarginSetting(contractCoinId: number): Promise<Margin
   const leverage = Number(response.data.leverage)
   return {
     leverage: Number.isFinite(leverage) && leverage > 0 ? leverage : null,
-    marginMode: response.data.margin_mode ?? null,
+    marginMode: response.data.margin_mode === 'cross' || response.data.margin_mode === 'isolated'
+      ? response.data.margin_mode
+      : null,
   }
 }
 
@@ -171,9 +174,9 @@ export function canSwitchPattern(_contractCoinId: number, _targetPattern: string
   return Promise.resolve({ data: { code: 0, message: 'success', data: true } })
 }
 
-export async function switchPattern(contractCoinId: number, targetPattern: string): Promise<{ data: any }> {
+export async function switchPattern(contractCoinId: number, targetPattern: MarginMode): Promise<{ data: any }> {
   const response = await request.instance.patch(backendApiUrl(`/margin/settings/${contractCoinId}/mode`), {
-    margin_mode: targetPattern === 'CROSSED' ? 'cross' : targetPattern.toLowerCase(),
+    margin_mode: targetPattern,
   })
   return { data: { code: 0, message: 'success', data: response.data } }
 }
@@ -229,15 +232,15 @@ async function fetchMarginOrders(params: OrderListParams): Promise<{ data: any }
   return { data: { code: 0, message: 'success', data: filtered } }
 }
 
-async function resolveOpenPositionId(params: ClosePositionParams): Promise<string> {
-  const response = await request.instance.get<BackendMarginPositionsResponse>(backendApiUrl('/margin/positions'), {
-    params: { status: 'opened' },
-  })
-  const position = response.data.positions.find((item) => {
-    return item.product_id === params.contractCoinId && (params.direction === 1 ? item.direction !== 'short' : item.direction === 'short')
-  })
-  if (!position) throw new Error('No open margin position is available to close.')
-  return String(position.id)
+export function mapMarginBatchAction(response: BackendMarginBatchActionResponse): MarginBatchActionResult {
+  return {
+    succeeded: response.positions.map((position) => String(position.id)),
+    failures: response.failures.map((failure) => ({
+      id: String(failure.id),
+      code: failure.code,
+      message: failure.message,
+    })),
+  }
 }
 
 function normalizeSymbol(symbol: string): string {

@@ -1,0 +1,10 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "docs/architecture/project-optimization-audit-2026-08-24.md", "reason": "P0-03、P0-04、P0-05 权威需求与证据"}
+{"file": ".trellis/tasks/08-24-project-architecture-business-flow-audit/research/business-flows.md", "reason": "新币和借贷资金流程研究"}
+{"file": ".trellis/tasks/08-24-project-architecture-business-flow-audit/research/data-async-ops.md", "reason": "worker、数据一致性与运维研究"}
+{"file": ".trellis/spec/backend/new-coin-mobile-contract.md", "reason": "新币业务合同"}
+{"file": ".trellis/spec/backend/loan-products.md", "reason": "借贷产品合同"}
+{"file": ".trellis/spec/backend/wallet-amount-precision.md", "reason": "钱包金额精度和流水规范"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "迁移、事务和锁规范"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "质量验证门禁"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层业务完整性"}

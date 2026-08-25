@@ -180,7 +180,7 @@ async fn wallet_withdrawal_route_returns_clear_error_without_mysql_after_auth() 
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    r#"{"asset_symbol":"USDT","address":"TTest","amount":"1.000000000000000000","fee":"0.100000000000000000","idempotency_key":"withdraw-unit-no-mysql","fund_password":"123456"}"#,
+                    r#"{"quote_id":"019a9a8b-2710-7000-8000-000000000001","asset_symbol":"USDT","network":"TRC20","address":"TTest","amount":"1.000000000000000000","fee":"0.100000000000000000","idempotency_key":"withdraw-unit-no-mysql","fund_password":"123456"}"#,
                 ))
                 .unwrap(),
         )

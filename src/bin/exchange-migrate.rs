@@ -5,7 +5,7 @@
 
 use anyhow::Context;
 use exchange_api::bootstrap::{
-    BootstrapAdminConfig, BootstrapAdminOutcome, bootstrap_default_admin,
+    BootstrapAdminConfig, BootstrapAdminMode, BootstrapAdminOutcome, bootstrap_default_admin,
 };
 use sqlx::mysql::MySqlPoolOptions;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
@@ -14,7 +14,7 @@ static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
 /// 依次执行数据库结构迁移与默认管理员引导，任一步失败都带中文上下文向上返回并让进程以非零码退出。
 /// 连接串只从 `DATABASE_URL` 读取，先尝试加载 `.env` 但忽略其缺失；连接池限制为单连接，避免迁移期间并发改表。
-/// 引导所需的用户名、口令与角色名来自 `BOOTSTRAP_ADMIN_*` 环境变量，未配置时使用内置默认值。
+/// `BOOTSTRAP_MODE` 缺省为关闭；只有显式 `create_admin` 才读取一次性 Secret 并执行首管理员引导。
 /// 无论引导成功与否都会先关闭连接池再判断结果，确保命名锁所在会话及时释放而不是等到进程退出。
 /// 最终按新建还是跳过打印不同日志，两种情况都算执行成功，只有真正的错误才会中断流水线。
 #[tokio::main]
@@ -38,19 +38,26 @@ async fn main() -> anyhow::Result<()> {
         .context("执行 SQLx migrations 失败")?;
     tracing::info!("数据库 migrations 已全部应用");
 
-    let bootstrap_result = match BootstrapAdminConfig::from_env() {
-        Ok(config) => bootstrap_default_admin(&pool, &config).await,
-        Err(error) => Err(error),
+    let bootstrap_result = match BootstrapAdminMode::from_env() {
+        Ok(BootstrapAdminMode::Disabled) => None,
+        Ok(BootstrapAdminMode::CreateAdmin) => Some(match BootstrapAdminConfig::from_env() {
+            Ok(config) => bootstrap_default_admin(&pool, &config).await,
+            Err(error) => Err(error),
+        }),
+        Err(error) => Some(Err(error)),
     };
     pool.close().await;
 
-    match bootstrap_result.context("初始化默认管理员失败")? {
-        BootstrapAdminOutcome::Created => {
-            tracing::info!("默认管理员已创建");
-        }
-        BootstrapAdminOutcome::SkippedExistingAdmin => {
-            tracing::info!("数据库已存在管理员，默认管理员引导已跳过");
-        }
+    match bootstrap_result {
+        None => tracing::info!("管理员引导模式未开启，已跳过账号创建"),
+        Some(result) => match result.context("初始化引导管理员失败")? {
+            BootstrapAdminOutcome::Created => {
+                tracing::info!("一次性引导管理员已创建，首次登录必须修改口令");
+            }
+            BootstrapAdminOutcome::SkippedExistingAdmin => {
+                tracing::info!("数据库已存在管理员，引导管理员创建已跳过");
+            }
+        },
     }
 
     Ok(())

@@ -17,7 +17,7 @@ use crate::{
             SecondsContractProductResponse, SettleSecondsContractOrderResponse,
             UpdateSecondsContractProductRequest,
         },
-        repository::SecondsContractProductRuleRow,
+        repository::{SecondsContractProductRuleRow, SecondsContractSettlementPriceRow},
     },
     modules::{
         events::{EventBroadcastHub, EventBroadcastMessage},
@@ -25,8 +25,68 @@ use crate::{
     },
 };
 use bigdecimal::BigDecimal;
+use chrono::{DateTime, TimeDelta, Utc};
 use serde_json::{Value, json};
 use std::collections::HashSet;
+
+/// 结算价格事件窗口长度；可选历史范围为 `[expires_at, expires_at + 5s)`。
+pub(crate) const SETTLEMENT_PRICE_WINDOW_SECONDS: i64 = 5;
+
+/// 对选中的结算行情做完整证据校验，防止损坏的历史行进入资金结算。
+/// 交易对去除常见分隔符后比较；价格必须为正，来源必须是已知 provider，
+/// generation 和 source_version 必须可追溯，observed_at 必须落在左闭右开窗口。
+/// 任一字段不合法都 fail closed，调用方不得跳过该行回退到其他价格。
+pub(crate) fn validate_settlement_price_snapshot(
+    snapshot: &SecondsContractSettlementPriceRow,
+    expected_symbol: &str,
+    expires_at: DateTime<Utc>,
+) -> AppResult<()> {
+    let normalize_symbol = |value: &str| {
+        value
+            .trim()
+            .chars()
+            .filter(|character| !matches!(character, '-' | '/' | '_'))
+            .flat_map(char::to_uppercase)
+            .collect::<String>()
+    };
+    let expected_symbol = normalize_symbol(expected_symbol);
+    if expected_symbol.is_empty() || normalize_symbol(&snapshot.symbol) != expected_symbol {
+        return Err(AppError::Validation(
+            "seconds contract settlement price symbol is invalid".to_owned(),
+        ));
+    }
+    if snapshot.price <= 0 {
+        return Err(AppError::Validation(
+            "seconds contract settlement price must be positive".to_owned(),
+        ));
+    }
+    if !matches!(
+        snapshot.source.as_str(),
+        "bitget" | "htx" | "coinbase" | "strategy"
+    ) {
+        return Err(AppError::Validation(
+            "seconds contract settlement price source is invalid".to_owned(),
+        ));
+    }
+    if snapshot.generation == 0 || snapshot.source_version.trim().is_empty() {
+        return Err(AppError::Validation(
+            "seconds contract settlement price provenance is incomplete".to_owned(),
+        ));
+    }
+    let window_end = expires_at
+        .checked_add_signed(TimeDelta::seconds(SETTLEMENT_PRICE_WINDOW_SECONDS))
+        .ok_or_else(|| {
+            AppError::Validation(
+                "seconds contract settlement event window is outside valid range".to_owned(),
+            )
+        })?;
+    if snapshot.observed_at < expires_at || snapshot.observed_at >= window_end {
+        return Err(AppError::Validation(
+            "seconds contract settlement price is outside the event window".to_owned(),
+        ));
+    }
+    Ok(())
+}
 
 /// 校验通过后的单个秒合约周期配置，是产品创建与更新写库前的统一中间形态。
 /// 构造该结构不代表已落库，调用方仍需在管理事务内按周期时长整体覆盖写入产品规则行。
@@ -85,6 +145,13 @@ pub(crate) fn order_audit_json(
         "payout_rate": order.payout_rate,
         "entry_price": order.entry_price,
         "settlement_price": order.settlement_price,
+        "settlement_price_tick_id": order.settlement_price_tick_id,
+        "settlement_price_source": order.settlement_price_source,
+        "settlement_price_observed_at": order
+            .settlement_price_observed_at
+            .map(|value| value.timestamp_millis()),
+        "settlement_price_generation": order.settlement_price_generation,
+        "settlement_price_version": order.settlement_price_version,
         "status": order.status,
         "result": order.result,
         "payout_amount": payout_amount,
@@ -162,6 +229,13 @@ pub(crate) fn publish_seconds_contract_order_settled_event(
             "stake_amount": response.order.stake_amount,
             "duration_seconds": response.order.duration_seconds,
             "settlement_price": response.order.settlement_price,
+            "settlement_price_tick_id": response.order.settlement_price_tick_id,
+            "settlement_price_source": response.order.settlement_price_source,
+            "settlement_price_observed_at": response.order
+                .settlement_price_observed_at
+                .map(|value| value.timestamp_millis()),
+            "settlement_price_generation": response.order.settlement_price_generation,
+            "settlement_price_version": response.order.settlement_price_version,
             "payout_amount": response.payout_amount,
             "result": response.order.result,
             "status": response.order.status,
@@ -235,6 +309,23 @@ pub(crate) fn settlement_payout_amount(
         result,
         precision_scale,
     )
+}
+
+/// 按订单方向和事件时点价格判定胜负；平价统一为 loss，非法方向直接拒绝。
+pub(crate) fn settlement_result_from_prices(
+    direction: &str,
+    entry_price: &BigDecimal,
+    settlement_price: &BigDecimal,
+) -> AppResult<&'static str> {
+    match direction {
+        "up" if settlement_price > entry_price => Ok("win"),
+        "up" => Ok("loss"),
+        "down" if settlement_price < entry_price => Ok("win"),
+        "down" => Ok("loss"),
+        _ => Err(AppError::Validation(
+            "seconds contract direction must be up or down".to_owned(),
+        )),
+    }
 }
 
 /// 计算秒合约结算入账额，是整个模块唯一的赔付口径来源。

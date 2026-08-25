@@ -55,6 +55,8 @@ pub(crate) struct PredictionMarketRow {
     pub(crate) payout_cap_overrides_json: Option<Value>,
     pub(crate) fee_rate_override: Option<BigDecimal>,
     pub(crate) last_synced_at: Option<DateTime<Utc>>,
+    pub(crate) market_version: u64,
+    pub(crate) locally_closed_at: Option<DateTime<Utc>>,
     pub(crate) external_resolution: Option<String>,
     pub(crate) created_at: DateTime<Utc>,
     pub(crate) updated_at: DateTime<Utc>,
@@ -174,6 +176,8 @@ pub(crate) struct PredictionQuoteLockRow {
     pub(crate) shares: BigDecimal,
     pub(crate) theoretical_payout: BigDecimal,
     pub(crate) effective_payout_cap: BigDecimal,
+    pub(crate) market_version: u64,
+    pub(crate) market_last_synced_at: DateTime<Utc>,
     pub(crate) expires_at: DateTime<Utc>,
     pub(crate) consumed_at: Option<DateTime<Utc>>,
 }

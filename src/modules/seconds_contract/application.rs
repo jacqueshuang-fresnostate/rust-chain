@@ -28,14 +28,15 @@ use super::{
         SecondsContractWalletLedgerWrite,
     },
     service::{
-        NormalizedSecondsContractProductCycle, ensure_existing_order_matches_request,
-        ensure_existing_settlement_matches, normalize_direction, normalize_idempotency_key,
-        normalize_settlement_result, normalized_product_status, optional_image_url,
-        optional_string, order_audit_json, product_audit_json,
-        publish_seconds_contract_order_opened_event_if_needed,
+        NormalizedSecondsContractProductCycle, SETTLEMENT_PRICE_WINDOW_SECONDS,
+        ensure_existing_order_matches_request, ensure_existing_settlement_matches,
+        normalize_direction, normalize_idempotency_key, normalize_settlement_result,
+        normalized_product_status, optional_image_url, optional_string, order_audit_json,
+        product_audit_json, publish_seconds_contract_order_opened_event_if_needed,
         publish_seconds_contract_order_settled_event_if_needed, required_reason, route_limit,
-        route_offset, settlement_payout_amount, validate_create_product_request,
-        validate_product_stake, validate_stake_amount, validate_update_product_request,
+        route_offset, settlement_payout_amount, settlement_result_from_prices,
+        validate_create_product_request, validate_product_stake, validate_stake_amount,
+        validate_update_product_request,
     },
 };
 use crate::{
@@ -48,7 +49,6 @@ use crate::{
     state::AppState,
 };
 use bigdecimal::BigDecimal;
-use chrono::Utc;
 use redis::aio::ConnectionManager;
 use sqlx::{MySql, Pool};
 
@@ -331,7 +331,8 @@ pub(crate) async fn open_order(
     validate_product_stake(&request.stake_amount, &product)?;
     let entry_price =
         infrastructure::cached_entry_price(redis, product.pair_id, product.symbol.as_str()).await?;
-    let expires_at = Utc::now() + chrono::TimeDelta::seconds(product.duration_seconds as i64);
+    let expires_at = infrastructure::database_now(&mut tx).await?
+        + chrono::TimeDelta::seconds(product.duration_seconds as i64);
     let order = SecondsContractOrderInsert {
         user_id,
         product_id: product.id,
@@ -432,8 +433,9 @@ pub(crate) async fn open_order_with_events(
     Ok(response)
 }
 
-/// 管理员按请求给出的 win/loss 结果结算秒合约订单；本用例不校验到期时间，也不根据市场价推导输赢。
-/// 事务先锁订单再读取资产精度；胜单随后锁共享现货钱包，入账与流水、订单终态及管理员审计原子提交。
+/// 管理员请求结算秒合约订单；实际结果必须由事件时间窗口中的 MySQL 历史价格推导并与请求一致。
+/// 事务先锁订单，再以数据库时间确认窗口已关闭并选择不可变快照；胜单随后锁共享现货钱包，
+/// 入账与流水、价格证据、订单终态及管理员审计原子提交。
 /// 负单不入账；已 settled 且结果一致时返回原结算并不重复派奖，结果冲突或非 opened 状态拒绝处理。
 /// 成功提交后仅事件包装层对首次结算发布通知，重放与失败路径均不得产生外部副作用。
 pub(crate) async fn settle_order(
@@ -442,7 +444,7 @@ pub(crate) async fn settle_order(
     order_id: u64,
     request: SettleSecondsContractOrderRequest,
 ) -> AppResult<(SettleSecondsContractOrderResponse, bool)> {
-    let result = normalize_settlement_result(&request.result)?;
+    let requested_result = normalize_settlement_result(&request.result)?;
     let reason = required_reason(request.reason.clone())?;
     let pool = require_mysql_pool(pool)?;
     let mut tx = pool.begin().await?;
@@ -450,8 +452,9 @@ pub(crate) async fn settle_order(
     let stake_asset_precision =
         infrastructure::load_asset_precision_scale(&mut tx, order.stake_asset).await?;
     if order.status == "settled" {
-        ensure_existing_settlement_matches(&order, &result)?;
-        let payout_amount = settlement_payout_amount(&order, &result, stake_asset_precision);
+        ensure_existing_settlement_matches(&order, &requested_result)?;
+        let payout_amount =
+            settlement_payout_amount(&order, &requested_result, stake_asset_precision);
         tx.commit().await?;
         return Ok((
             SettleSecondsContractOrderResponse {
@@ -467,8 +470,35 @@ pub(crate) async fn settle_order(
         ));
     }
 
+    let database_now = infrastructure::database_now(&mut tx).await?;
+    let settlement_window_closes_at =
+        order.expires_at + chrono::TimeDelta::seconds(SETTLEMENT_PRICE_WINDOW_SECONDS);
+    if database_now < settlement_window_closes_at {
+        return Err(AppError::Conflict(
+            "seconds contract settlement event window has not closed".to_owned(),
+        ));
+    }
+    let snapshot =
+        infrastructure::select_settlement_price_snapshot(&mut tx, &order.symbol, order.expires_at)
+            .await?
+            .ok_or_else(|| {
+                AppError::Conflict(
+                    "seconds contract settlement price history is pending for the event window"
+                        .to_owned(),
+                )
+            })?;
+    let entry_price = order.entry_price.as_ref().ok_or_else(|| {
+        AppError::Validation("seconds contract entry price is required for settlement".to_owned())
+    })?;
+    let result = settlement_result_from_prices(&order.direction, entry_price, &snapshot.price)?;
+    if result != requested_result {
+        return Err(AppError::Conflict(
+            "requested seconds contract result does not match the event-time price".to_owned(),
+        ));
+    }
+
     let before_json = Some(order_audit_json(&order, BigDecimal::from(0)));
-    let payout_amount = settlement_payout_amount(&order, &result, stake_asset_precision);
+    let payout_amount = settlement_payout_amount(&order, result, stake_asset_precision);
 
     if payout_amount > 0 {
         let wallet =
@@ -498,7 +528,7 @@ pub(crate) async fn settle_order(
         .await?;
     }
 
-    infrastructure::mark_order_settled(&mut tx, order.id, &result).await?;
+    infrastructure::mark_order_settled(&mut tx, order.id, result, &snapshot).await?;
     let settled_order = infrastructure::load_order_by_id(&mut tx, order.id).await?;
     infrastructure::insert_admin_audit_log_in_tx(
         &mut tx,

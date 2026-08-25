@@ -2,21 +2,22 @@
 //!
 //! 仓储层：定义持久化边界、仓储接口和面向领域的读写契约。
 //!
-//! 闪兑的持久化被拆成两个互不重叠的端口：`ConvertQuoteRepository` 负责限时报价快照，
-//! 实际由 Redis 承载并依赖键 TTL 自动淘汰；`ConvertOrderRepository` 负责确认记录，
-//! 由 MySQL 唯一键提供资金幂等。两者不共享事务，报价写入成功不代表订单可确认。
-//! 本文件另外声明数据库行到内存规则的中间结构，供服务层做正反向换算。
+//! MySQL `convert_quotes` 是线上资金确认的唯一权威事实，保存 owner、指纹、价格证据、
+//! 过期与消费状态；Redis 端口只保留为可丢失的展示缓存和纯内存服务测试适配器。
+//! `ConvertOrderRepository` 的旧兼容端口仍由 MySQL 唯一键提供幂等，但线上确认路径会在
+//! 同一个事务内锁 quote、按稳定资产顺序锁钱包并完成消费。数据库行到内存规则的中间
+//! 结构也在本文件声明，供服务层做正反向换算。
 
 use bigdecimal::BigDecimal;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 
 use crate::modules::convert::domain::{
     ConvertConfirmationInsert, ConvertQuoteCacheEntry, ConvertQuoteConfirmationRecord,
     ConvertRepositoryError, QuoteId,
 };
 
-/// 限时报价快照的读写端口，生产实现为 Redis，测试可替换为内存 Map。
-/// 实现必须让快照随 TTL 自然消失，不得提供延长有效期或续期的语义。
+/// 可丢失报价缓存的读写端口，生产实现为 Redis，测试可替换为内存 Map。
+/// 该端口不参与线上资金确认；缓存命中也不能覆盖 MySQL 的 owner、过期或消费状态。
 pub trait ConvertQuoteRepository {
     /// 保存限时报价缓存快照，TTL 与 expires_at 必须表达同一过期边界。
     /// 实现失败返回仓储错误；不得把缺少缓存的报价伪装成可确认状态。
@@ -69,6 +70,16 @@ pub struct ConvertQuoteInsert {
     pub fee_rate: BigDecimal,
     /// 以源资产计价的手续费金额，已从净额中扣除。
     pub fee_amount: BigDecimal,
+    /// 对报价全部资金字段与价格证据计算出的 SHA-256 指纹。
+    pub request_fingerprint: String,
+    /// 固定配置或行情供应商来源。
+    pub price_source: String,
+    /// 市场计价交易对；固定计价为空。
+    pub price_symbol: Option<String>,
+    /// 价格或固定配置的观察时刻。
+    pub price_observed_at: DateTime<Utc>,
+    /// 价格事件摘要或固定配置版本。
+    pub price_version: String,
     /// 报价绝对到期时刻，与 Redis 键 TTL 表达同一边界。
     pub expires_at: chrono::DateTime<Utc>,
 }
@@ -87,6 +98,8 @@ pub struct ConvertQuoteInsertResult {
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub(crate) struct ConvertPairRuleDbRecord {
     pub(crate) id: u64,
+    /// 闪兑对当前是否启用；确认阶段锁行后必须再次校验。
+    pub(crate) enabled: bool,
     /// 配置中定义的正向源资产，未必等于用户请求的源资产。
     pub(crate) from_asset_id: u64,
     /// 配置中定义的正向目标资产。
@@ -113,6 +126,8 @@ pub(crate) struct ConvertPairRuleDbRecord {
     pub(crate) market_base_asset_id: Option<u64>,
     /// 该现货交易对的 quote 资产编号，用于判定行情方向。
     pub(crate) market_quote_asset_id: Option<u64>,
+    /// pair 与固定规则中较新的配置更新时间，用作 fixed quote 版本。
+    pub(crate) pricing_updated_at: DateTime<Utc>,
 }
 
 /// 已按用户请求方向归一化的报价规则：限额换成请求方向那一侧，固定汇率在反向时取倒数。
@@ -136,6 +151,41 @@ pub(crate) struct ConvertPairRule {
     pub(crate) market_pair_symbol: Option<String>,
     pub(crate) market_base_asset_id: Option<u64>,
     pub(crate) market_quote_asset_id: Option<u64>,
+    pub(crate) pricing_updated_at: DateTime<Utc>,
+}
+
+/// MySQL 行锁下读取的权威闪兑报价，确认阶段不再读取 Redis。
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub(crate) struct ConvertAuthoritativeQuoteRecord {
+    pub(crate) quote_id: String,
+    pub(crate) convert_pair_id: u64,
+    pub(crate) user_id: u64,
+    pub(crate) from_asset_id: u64,
+    pub(crate) to_asset_id: u64,
+    pub(crate) from_amount: BigDecimal,
+    pub(crate) to_amount: BigDecimal,
+    pub(crate) rate: BigDecimal,
+    pub(crate) spread_rate: BigDecimal,
+    pub(crate) fee_rate: BigDecimal,
+    pub(crate) fee_amount: BigDecimal,
+    pub(crate) request_fingerprint: String,
+    pub(crate) price_source: String,
+    pub(crate) price_symbol: Option<String>,
+    pub(crate) price_observed_at: DateTime<Utc>,
+    pub(crate) price_version: String,
+    pub(crate) expires_at: DateTime<Utc>,
+    pub(crate) status: String,
+    pub(crate) consumed_at: Option<DateTime<Utc>>,
+}
+
+/// MySQL 行情历史中用于市场闪兑计价的不可变快照。
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub(crate) struct ConvertMarketPriceSnapshot {
+    pub(crate) price: BigDecimal,
+    pub(crate) source: String,
+    pub(crate) symbol: String,
+    pub(crate) observed_at: DateTime<Utc>,
+    pub(crate) source_version: String,
 }
 
 /// 报价阶段非锁定读取的钱包余额快照，只用于提示性校验，确认时会在事务内重新锁行复核。

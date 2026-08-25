@@ -228,18 +228,21 @@ WHERE version = 99
 
 ## 初始化首个后台管理员
 
-项目内置以下默认管理员，数据库全新且 `admin_users` 为空时由一次性的 `migrate` 服务
-自动创建：
+生产默认不创建管理员。数据库全新且 `admin_users` 为空时，只有一次性的 `migrate`
+服务收到显式引导模式和一次性 Secret 才创建首个管理员：
 
 ```dotenv
+BOOTSTRAP_MODE=create_admin
 BOOTSTRAP_ADMIN_USERNAME=admin
-BOOTSTRAP_ADMIN_PASSWORD=Qaz123456@
+BOOTSTRAP_ADMIN_PASSWORD=<由 secret manager 注入的一次性高强度随机值>
+# 或仅设置 BOOTSTRAP_ADMIN_PASSWORD_FILE=/run/secrets/bootstrap_admin_password
 BOOTSTRAP_ADMIN_ROLE_NAME=super_admin
 ```
 
-三个环境变量未配置或为空时使用上述内置值；设置非空值可以覆盖对应默认值。覆盖账号或
-角色格式非法、覆盖密码少于 8 个或超过 128 个字符时，迁移器以非零状态退出并阻止 API
-启动。账号会去除首尾空白、转为小写，并限制为 3–32 位字母、数字或下划线；角色名会转为
+`BOOTSTRAP_MODE` 缺省为 `disabled`，不会创建账号。显式 `create_admin` 时，口令变量和
+`_FILE` 只能二选一；缺失、空白、命中已公开默认值、少于 8 个或超过 128 个字符都会让
+迁移器以非零状态退出并阻止 API 启动。账号会去除首尾空白、转为小写，并限制为 3–32 位
+字母、数字或下划线；角色名会转为
 小写并限制为 1–64 位字母、数字、下划线或连字符。
 
 `admin_users` 为空时，迁移器在同一事务内创建或复用角色，并使用项目现有 Argon2 helper
@@ -247,9 +250,9 @@ BOOTSTRAP_ADMIN_ROLE_NAME=super_admin
 账号、角色或密码。并发迁移器通过数据库命名锁串行执行该步骤，日志和错误信息不会包含
 明文密码。
 
-`Qaz123456@` 是公开默认密码。生产环境应在首次初始化前通过
-`BOOTSTRAP_ADMIN_PASSWORD` 覆盖它；数据库已经存在管理员后重新设置该变量不会重置密码。
-三个引导变量只传给 `migrate`，不会传给长期运行的 `api` 容器。
+引导账号首次登录后只有本人权限快照和改密端点可用；完成改密会撤销旧会话并解除闸门。
+引导变量只传给 `migrate`，不会传给长期运行的 `api` 容器；初始化成功后应把模式恢复为
+`disabled` 并销毁一次性 Secret。
 
 ## 通过 1Panel 部署，第三方服务独立管理
 
@@ -349,8 +352,8 @@ docker run --rm \
   /usr/local/bin/exchange-migrate
 ```
 
-不提供引导变量时，上述命令使用内置的 `admin / Qaz123456@`；生产环境可通过同名
-`--env` 参数覆盖。
+不提供引导变量时，上述命令只执行迁移且不创建管理员。首次引导需额外传入
+`--env BOOTSTRAP_MODE=create_admin` 和一次性口令 Secret。
 
 启动默认集成服务时，使用 `--env-file` 提供与
 [`docker-compose.env.example`](../../docker-compose.env.example) 等价的运行时配置，
@@ -446,8 +449,9 @@ GitHub Actions 发布流程使用仓库自带的 `GITHUB_TOKEN`，不需要保�
 - `JWT_SECRET`：使用高熵随机值。
 - `CREDENTIAL_ENCRYPTION_KEY`：必须恰好为 32 字节。该值用于 AES-256-GCM，
   一旦保存过加密凭据就必须保持稳定，否则旧数据无法解密。
-- `BOOTSTRAP_ADMIN_PASSWORD`：内置公开默认值为 `Qaz123456@`，生产初始化前应覆盖；只提供
-  给一次性迁移容器，不得加入 API 环境。
+- `BOOTSTRAP_MODE=create_admin` 与 `BOOTSTRAP_ADMIN_PASSWORD`/
+  `BOOTSTRAP_ADMIN_PASSWORD_FILE`：仅在首次引导时传给一次性迁移容器，不得加入
+  API 环境；完成后关闭模式并销毁 Secret。
 
 不要提交实际的环境文件。生产环境应从受控的 secret manager 或受限权限文件注入这些值。
 完整 Compose 需定期备份 `mysql-data`、`mongo-data`、`redis-data`、`rabbitmq-data` 和

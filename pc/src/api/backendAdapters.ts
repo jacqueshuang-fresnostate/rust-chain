@@ -698,7 +698,7 @@ export interface BackendMarginProduct {
 
 export interface BackendMarginProductsResponse {
   products: BackendMarginProduct[]
-  capabilities?: {
+  capabilities: {
     margin_modes?: string[] | string
     order_types?: string[] | string
   }
@@ -725,6 +725,8 @@ export interface BackendMarginPosition {
   wallet_scope?: string
   margin_mode: string
   direction: string
+  order_type?: 'market' | 'limit'
+  limit_price?: string | number | null
   margin_amount: string | number
   leverage: string | number
   notional_amount: string | number
@@ -742,17 +744,47 @@ export interface BackendMarginPositionsResponse {
   positions: BackendMarginPosition[]
 }
 
+export interface BackendMarginBatchActionFailure {
+  id: number
+  code: string
+  message: string
+}
+
+export interface BackendMarginBatchActionResponse {
+  positions: BackendMarginPosition[]
+  failures: BackendMarginBatchActionFailure[]
+}
+
 export interface BackendMarginWallet {
   asset_id: number
   asset_symbol: string
+  logo_url?: string | null
+  margin_transfer_enabled?: boolean
   available: string | number
   frozen: string | number
   locked: string | number
+  max_transferable_to_spot?: string | number
+  transfer_to_spot_block_reason?: string | null
+  cross_account_version?: number | null
+  transfer_risk_equity?: string | number | null
+  transfer_risk_maintenance_margin?: string | number | null
+  transfer_risk_observed_at?: number | null
+}
+
+export interface BackendMarginCrossAccount {
+  margin_asset: number
+  status: string
+  equity: string | number
+  unrealized_pnl: string | number
+  interest_amount: string | number
+  maintenance_margin: string | number
+  margin_ratio?: string | number | null
 }
 
 export interface BackendMarginWalletsResponse {
   wallets: BackendMarginWallet[]
   positions: BackendMarginPosition[]
+  cross_accounts?: BackendMarginCrossAccount[]
 }
 
 export interface BackendMyInviteUser {
@@ -1510,20 +1542,25 @@ export function mapMarginProductsToContractCoins(response: BackendMarginProducts
     message: 'success',
     data: response.products.map((product) => {
       const marginModes = resolveMarginModes(response.capabilities?.margin_modes, product.margin_modes, product.margin_mode)
+      const configuredDefaultMode = parseMarginModes(product.margin_mode)[0] ?? null
+      const marginMode = configuredDefaultMode && marginModes.includes(configuredDefaultMode)
+        ? configuredDefaultMode
+        : null
       return {
-      id: product.id,
-      symbol: displaySymbolFromCompact(product.symbol),
-      baseSymbol: product.margin_asset_symbol,
-      coinSymbol: displaySymbolFromCompact(product.symbol).split('/')[0],
-      logoUrl: typeof product.logo_url === 'string' ? product.logo_url.trim() : '',
-      enable: product.status === 'active',
-      sort: product.id,
-      minTurnover: toNumber(product.min_margin),
-      maxLeverage: toNumber(product.max_leverage),
-      marginRate: toNumber(product.maintenance_margin_rate),
-      marginModes,
-      usdtPattern: marginModes.includes('cross') ? 'CROSSED' : 'FIXED',
-      leverage: parseLeverageLevels(product.leverage_levels),
+        id: product.id,
+        symbol: displaySymbolFromCompact(product.symbol),
+        baseSymbol: product.margin_asset_symbol,
+        coinSymbol: displaySymbolFromCompact(product.symbol).split('/')[0],
+        logoUrl: typeof product.logo_url === 'string' ? product.logo_url.trim() : '',
+        enable: product.status === 'active',
+        sort: product.id,
+        minTurnover: toNumber(product.min_margin),
+        maxLeverage: toNumber(product.max_leverage),
+        marginRate: toNumber(product.maintenance_margin_rate),
+        marginModes,
+        marginMode,
+        usdtPattern: marginMode === 'cross' ? 'CROSSED' : 'FIXED',
+        leverage: parseLeverageLevels(product.leverage_levels),
       }
     }),
   }
@@ -1549,19 +1586,22 @@ export function mapMarginPositionsToContractOrders(response: BackendMarginPositi
   return {
     code: 0,
     message: 'success',
-    data: response.positions.map((position) => ({
-      orderId: String(position.id),
-      productId: position.product_id,
-      symbol: displaySymbolFromCompact(position.symbol || String(position.pair_id)),
-      price: toNumber(position.entry_price ?? position.exit_price ?? 0),
-      amount: toNumber(position.notional_amount),
-      direction: position.direction === 'short' ? 1 : 0,
-      type: 0,
-      leverage: toNumber(position.leverage),
-      tradedAmount: toNumber(position.notional_amount),
-      status: marginPositionStatusToPc(position.status),
-      createTime: 0,
-    })),
+    data: response.positions.map((position) => {
+      const isLimit = position.order_type === 'limit'
+      return {
+        orderId: String(position.id),
+        productId: position.product_id,
+        symbol: displaySymbolFromCompact(position.symbol || String(position.pair_id)),
+        price: toNumber(isLimit ? (position.limit_price ?? position.entry_price ?? 0) : (position.entry_price ?? position.exit_price ?? 0)),
+        amount: toNumber(position.notional_amount),
+        direction: position.direction === 'short' ? 1 : 0,
+        type: isLimit ? 0 : 1,
+        leverage: toNumber(position.leverage),
+        tradedAmount: position.entry_price == null ? 0 : toNumber(position.notional_amount),
+        status: marginPositionStatusToPc(position.status),
+        createTime: 0,
+      }
+    }),
   }
 }
 
@@ -1580,6 +1620,7 @@ export function mapMarginWalletsToContractWallets(response: BackendMarginWallets
     data: [
       ...response.wallets.map((wallet) => ({
         id: wallet.asset_id,
+        productId: null,
         memberId: 0,
         symbol: wallet.asset_symbol,
         coinSymbol: wallet.asset_symbol,
@@ -1602,6 +1643,16 @@ export function mapMarginWalletsToContractWallets(response: BackendMarginWallets
         currentPrice: 0,
         closeFee: 0,
         maintenanceMarginRate: 0,
+        marginTransferEnabled: wallet.margin_transfer_enabled ?? false,
+        // Missing authority data must stay closed rather than falling back to the raw wallet balance.
+        maxTransferableToSpot: toNonNegativeNumber(wallet.max_transferable_to_spot),
+        transferToSpotBlockReason: wallet.transfer_to_spot_block_reason ?? null,
+        crossAccountVersion: wallet.cross_account_version ?? null,
+        transferRiskEquity: wallet.transfer_risk_equity == null ? null : toNumber(wallet.transfer_risk_equity),
+        transferRiskMaintenanceMargin: wallet.transfer_risk_maintenance_margin == null
+          ? null
+          : toNumber(wallet.transfer_risk_maintenance_margin),
+        transferRiskObservedAt: wallet.transfer_risk_observed_at ?? null,
       })),
       ...response.positions.map(mapMarginPositionToContractWallet),
     ],
@@ -1801,7 +1852,7 @@ function secondsProfit(order: BackendSecondsOrder): number {
 
 function marginPositionStatusToPc(status: string): number {
   const normalized = status.toLowerCase()
-  return normalized === 'open' || normalized === 'opened' ? 0 : 1
+  return normalized === 'open' || normalized === 'opened' || normalized === 'pending' ? 0 : 1
 }
 
 function parseLeverageLevels(levels: string[] | string): number[] {
@@ -1809,12 +1860,13 @@ function parseLeverageLevels(levels: string[] | string): number[] {
   return values.map((level) => toNumber(level)).filter((level) => level > 0)
 }
 
-function parseMarginModes(modes: string[] | string | undefined, fallbackMode: string): Array<'cross' | 'isolated'> {
+function parseMarginModes(modes: string[] | string | undefined, fallbackMode?: string): Array<'cross' | 'isolated'> {
   const values = Array.isArray(modes) ? modes : typeof modes === 'string' ? modes.split(',') : [fallbackMode]
   const normalized = values
+    .filter((mode): mode is string => typeof mode === 'string')
     .map((mode) => mode.trim().toLowerCase())
     .filter((mode): mode is 'cross' | 'isolated' => mode === 'cross' || mode === 'isolated')
-  return normalized.length > 0 ? [...new Set(normalized)] : ['isolated']
+  return [...new Set(normalized)]
 }
 
 function resolveMarginModes(
@@ -1823,10 +1875,9 @@ function resolveMarginModes(
   fallbackMode: string,
 ): Array<'cross' | 'isolated'> {
   const configured = parseMarginModes(productModes, fallbackMode)
-  if (!capabilityModes) return configured
-  const supported = parseMarginModes(capabilityModes, 'isolated')
-  const usable = configured.filter((mode) => supported.includes(mode))
-  return usable.length > 0 ? usable : supported
+  if (capabilityModes === undefined) return []
+  const supported = parseMarginModes(capabilityModes)
+  return configured.filter((mode) => supported.includes(mode))
 }
 
 function mapMarginPositionToContractWallet(position: BackendMarginPosition) {
@@ -1834,6 +1885,7 @@ function mapMarginPositionToContractWallet(position: BackendMarginPosition) {
   const isShort = position.direction === 'short'
   return {
     id: position.id,
+    productId: position.product_id,
     memberId: position.user_id,
     symbol,
     coinSymbol: symbol.split('/')[0],
@@ -1856,6 +1908,13 @@ function mapMarginPositionToContractWallet(position: BackendMarginPosition) {
     currentPrice: toNumber(position.entry_price ?? 0),
     closeFee: 0,
     maintenanceMarginRate: 0,
+    marginTransferEnabled: false,
+    maxTransferableToSpot: 0,
+    transferToSpotBlockReason: null,
+    crossAccountVersion: null,
+    transferRiskEquity: null,
+    transferRiskMaintenanceMargin: null,
+    transferRiskObservedAt: null,
   }
 }
 
@@ -2028,6 +2087,10 @@ function firstNumber(...values: Array<string | number | null | undefined>): numb
 function toNumber(value: string | number | null | undefined): number {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+function toNonNegativeNumber(value: string | number | null | undefined): number {
+  return Math.max(0, toNumber(value))
 }
 
 function formatUnixMillis(value: number): string {

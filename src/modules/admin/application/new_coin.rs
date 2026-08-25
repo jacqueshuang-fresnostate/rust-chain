@@ -6,6 +6,54 @@
 //! 派发是本文件唯一动用户资产的用例，它以请求幂等键防重复发币，并按项目解锁规则决定直接入账还是转锁仓。
 
 use super::*;
+use crate::modules::new_coin::service::{
+    ensure_new_coin_amount_precision, ensure_unlock_fee_asset_matches_quote_asset,
+};
+
+async fn lock_new_coin_asset_precisions_in_order(
+    tx: &mut Transaction<'_, MySql>,
+    asset_ids: impl IntoIterator<Item = u64>,
+) -> AppResult<Vec<(u64, i32)>> {
+    let mut asset_ids: Vec<_> = asset_ids.into_iter().collect();
+    asset_ids.sort_unstable();
+    asset_ids.dedup();
+    let mut precisions = Vec::with_capacity(asset_ids.len());
+    for asset_id in asset_ids {
+        let precision =
+            crate::modules::admin::infrastructure::load_active_new_coin_asset_precision_in_tx(
+                tx, asset_id,
+            )
+            .await?;
+        precisions.push((asset_id, precision));
+    }
+    Ok(precisions)
+}
+
+fn new_coin_asset_precision(precisions: &[(u64, i32)], asset_id: u64) -> AppResult<i32> {
+    precisions
+        .iter()
+        .find_map(|(id, precision)| (*id == asset_id).then_some(*precision))
+        .ok_or_else(|| AppError::Internal("new coin asset precision lock is missing".to_owned()))
+}
+
+fn ensure_admin_new_coin_supply_invariant(project: &NewCoinProjectResponse) -> AppResult<()> {
+    let zero = BigDecimal::from(0);
+    if project.total_supply <= zero
+        || project.reserved_supply < zero
+        || project.allocated_supply < zero
+        || project.remaining_supply < zero
+        || (project.reserved_supply.clone()
+            + project.allocated_supply.clone()
+            + project.remaining_supply.clone())
+        .normalized()
+            != project.total_supply.normalized()
+    {
+        return Err(AppError::Internal(
+            "new coin project supply accounting invariant is broken".to_owned(),
+        ));
+    }
+    Ok(())
+}
 
 /// 确认新币项目仍处于启用状态，避免后台选择器加载后项目被并发停用仍继续写配置或派发资产。
 /// 调用方必须传入事务内锁定或回读的项目快照；非 active 项目统一返回校验错误且不产生事件或审计。
@@ -228,15 +276,24 @@ pub(crate) async fn create_admin_new_coin_project(
 
     // 新币项目创建、生命周期事件和后台审计必须同事务提交，避免项目已开放但缺少追踪记录。
     let mut tx = pool.begin().await?;
-    load_active_asset_symbol_in_tx(&mut tx, request.asset_id).await?;
-    if let Some(unlock_fee_asset) = request
+    let unlock_fee_asset = request
         .unlock_fee_enabled
         .unwrap_or(false)
         .then_some(request.unlock_fee_asset)
-        .flatten()
-    {
-        load_active_asset_symbol_in_tx(&mut tx, unlock_fee_asset).await?;
-    }
+        .flatten();
+    let mut asset_ids = vec![request.asset_id, request.quote_asset_id];
+    asset_ids.extend(unlock_fee_asset);
+    let precisions = lock_new_coin_asset_precisions_in_order(&mut tx, asset_ids).await?;
+    ensure_new_coin_amount_precision(
+        &request.total_supply,
+        new_coin_asset_precision(&precisions, request.asset_id)?,
+        "total_supply",
+    )?;
+    ensure_new_coin_amount_precision(
+        &request.issue_price,
+        new_coin_asset_precision(&precisions, request.quote_asset_id)?,
+        "issue_price",
+    )?;
     let project_id = insert_admin_new_coin_project_in_tx(
         &mut tx,
         AdminNewCoinProjectInsert {
@@ -245,18 +302,26 @@ pub(crate) async fn create_admin_new_coin_project(
             lifecycle_status: request.lifecycle_status.trim().to_owned(),
             total_supply: request.total_supply,
             issue_price: request.issue_price,
+            quote_asset_id: request.quote_asset_id,
             listed_at: request.listed_at,
             unlock_type: request.unlock_type.trim().to_owned(),
             fixed_unlock_at: request.fixed_unlock_at,
             relative_unlock_seconds: request.relative_unlock_seconds,
             unlock_fee_enabled: request.unlock_fee_enabled.unwrap_or(false),
-            unlock_fee_rate: request.unlock_fee_rate,
-            unlock_fee_basis: request
-                .unlock_fee_basis
-                .as_deref()
-                .map(str::trim)
-                .map(str::to_owned),
-            unlock_fee_asset: request.unlock_fee_asset,
+            unlock_fee_rate: unlock_fee_asset
+                .is_some()
+                .then_some(request.unlock_fee_rate)
+                .flatten(),
+            unlock_fee_basis: if unlock_fee_asset.is_some() {
+                request
+                    .unlock_fee_basis
+                    .as_deref()
+                    .map(str::trim)
+                    .map(str::to_owned)
+            } else {
+                None
+            },
+            unlock_fee_asset,
         },
     )
     .await?;
@@ -401,6 +466,11 @@ pub(crate) async fn update_admin_new_coin_unlock_fee_rule(
     let mut tx = pool.begin().await?;
     let before = lock_admin_new_coin_project_in_tx(&mut tx, project_id).await?;
     ensure_active_new_coin_project(&before)?;
+    ensure_unlock_fee_asset_matches_quote_asset(
+        request.unlock_fee_enabled,
+        request.unlock_fee_asset,
+        before.quote_asset_id,
+    )?;
     if let Some(unlock_fee_asset) = request
         .unlock_fee_enabled
         .then_some(request.unlock_fee_asset)
@@ -472,7 +542,15 @@ pub(crate) async fn update_admin_new_coin_post_listing_purchase(
                 "pair_id is required when post-listing purchase is enabled".to_owned(),
             )
         })?;
-        ensure_admin_new_coin_post_listing_pair_in_tx(&mut tx, pair_id, before.asset_id).await?;
+        ensure_admin_new_coin_post_listing_pair_in_tx(
+            &mut tx,
+            pair_id,
+            before.asset_id,
+            before.quote_asset_id.ok_or_else(|| {
+                AppError::Validation("new coin project quote asset is not configured".to_owned())
+            })?,
+        )
+        .await?;
         activate_admin_new_coin_post_listing_pair_in_tx(&mut tx, pair_id).await?;
         enable_admin_new_coin_post_listing_purchase_in_tx(&mut tx, project_id, pair_id).await?;
     } else {
@@ -516,6 +594,12 @@ pub(crate) async fn distribute_admin_new_coin(
     let project = lock_admin_new_coin_project_in_tx(&mut tx, project_id).await?;
     ensure_active_new_coin_project(&project)?;
     ensure_distribution_lifecycle(&project)?;
+    ensure_admin_new_coin_supply_invariant(&project)?;
+    ensure_unlock_fee_asset_matches_quote_asset(
+        project.unlock_fee_enabled,
+        project.unlock_fee_asset,
+        project.quote_asset_id,
+    )?;
     if admin_new_coin_idempotency_key_exists_in_tx(
         &mut tx,
         "new_coin_distributions",
@@ -527,10 +611,34 @@ pub(crate) async fn distribute_admin_new_coin(
             "new coin distribution has already been created".to_owned(),
         ));
     }
+    let mut asset_ids = vec![project.asset_id];
+    if project.unlock_fee_enabled {
+        asset_ids.extend(project.unlock_fee_asset);
+    }
+    let precisions = lock_new_coin_asset_precisions_in_order(&mut tx, asset_ids).await?;
+    let project_asset_precision = new_coin_asset_precision(&precisions, project.asset_id)?;
+    for (field, amount) in [
+        ("total_supply", &project.total_supply),
+        ("reserved_supply", &project.reserved_supply),
+        ("allocated_supply", &project.allocated_supply),
+        ("remaining_supply", &project.remaining_supply),
+    ] {
+        ensure_new_coin_amount_precision(amount, project_asset_precision, field)?;
+    }
+    ensure_new_coin_amount_precision(&request.quantity, project_asset_precision, "quantity")?;
+    let unlock_fee_precision = if project.unlock_fee_enabled {
+        project
+            .unlock_fee_asset
+            .map(|asset_id| new_coin_asset_precision(&precisions, asset_id))
+            .transpose()?
+    } else {
+        None
+    };
+    reserve_admin_new_coin_supply_in_tx(&mut tx, project_id, &request.quantity).await?;
     ensure_admin_user_exists_in_tx(&mut tx, request.user_id).await?;
     let distribution_user = load_admin_user_in_tx(&mut tx, request.user_id).await?;
     ensure_active_distribution_user(&distribution_user)?;
-    if let Some(subscription_id) = request.subscription_id {
+    let purchase_cost = if let Some(subscription_id) = request.subscription_id {
         apply_admin_new_coin_subscription_distribution_in_tx(
             &mut tx,
             subscription_id,
@@ -538,9 +646,13 @@ pub(crate) async fn distribute_admin_new_coin(
             request.user_id,
             &request.quantity,
         )
-        .await?;
-    }
+        .await?
+    } else {
+        BigDecimal::from(0)
+    };
 
+    lock_admin_new_coin_distribution_wallet_in_tx(&mut tx, request.user_id, project.asset_id)
+        .await?;
     let source_time = Utc::now();
     let lock_positions = lock_positions_for_distribution(
         &project,
@@ -556,6 +668,9 @@ pub(crate) async fn distribute_admin_new_coin(
         project.asset_id,
         &request.quantity,
         &lock_positions,
+        &project,
+        &purchase_cost,
+        unlock_fee_precision,
         AdminNewCoinLedgerWrite {
             change_type: "new_coin_distribution_lock",
             ref_type: "new_coin_distribution",
@@ -563,6 +678,7 @@ pub(crate) async fn distribute_admin_new_coin(
         },
     )
     .await?;
+    finalize_admin_new_coin_supply_in_tx(&mut tx, project_id, &request.quantity).await?;
     let status = if lock_position_id.is_some() {
         "locked"
     } else {

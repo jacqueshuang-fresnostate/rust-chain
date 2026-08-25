@@ -19,9 +19,10 @@ use crate::{
             AgentRegistration, AuthActor, IssuedTokens, NewAdminActor, NewAgentActor, NewUserActor,
             ProjectRefreshTokenRepository, RefreshTokenRecord, StoredActorCredential,
             StoredProjectRefreshToken, StoredRefreshToken, TokenScope, UserCredentials,
-            decode_claims,
+            claims_auth_session_version, decode_claims,
             domain::{login_failure_key, login_locked_error},
-            hash_password, hash_refresh_token, issue_token, map_sa_token_error, normalize_username,
+            hash_password, hash_refresh_token, issue_token_with_session_version,
+            map_sa_token_error, normalize_username,
             repository::AuthRepository,
             verify_password,
         },
@@ -137,27 +138,22 @@ impl<R: AuthRepository> AuthService<R> {
             .await
     }
 
-    /// 管理员表非空时先验证请求主体仍为活跃管理员，表为空时走首管理员引导。
-    ///
-    /// “查空表—插入”未被同一事务或表锁包围，并发引导由唯一/外键约束决定结果；
-    /// 管理员插入后令牌签发失败不会删除已创建账号。
+    /// 创建管理员前始终验证请求主体仍为活跃管理员；首管理员只能由显式 migrator 引导创建。
+    /// 管理员插入后令牌签发失败不会删除已创建账号，调用方应按用户名回查而不是匿名重试。
     pub async fn register_admin(
         &self,
         requester_subject: Option<&str>,
         registration: AdminRegistration,
     ) -> AppResult<IssuedTokens> {
-        // 首个管理员通过空表引导注册，此后必须由现有活跃管理员创建新管理员。
-        if self.repository.has_any_admin().await? {
-            let admin_id = requester_subject
-                .ok_or(AppError::Unauthorized)?
-                .strip_prefix("admin:")
-                .and_then(|value| value.parse::<u64>().ok())
-                .ok_or(AppError::Unauthorized)?;
-            self.repository
-                .find_active_actor(&AuthActor::new(ActorType::Admin, admin_id, None))
-                .await?
-                .ok_or(AppError::Forbidden)?;
-        }
+        let admin_id = requester_subject
+            .ok_or(AppError::Unauthorized)?
+            .strip_prefix("admin:")
+            .and_then(|value| value.parse::<u64>().ok())
+            .ok_or(AppError::Unauthorized)?;
+        self.repository
+            .find_active_actor(&AuthActor::new(ActorType::Admin, admin_id, None))
+            .await?
+            .ok_or(AppError::Forbidden)?;
         let username = required_string(registration.username, "username")?;
         let password = required_string(registration.password, "password")?;
         let role_id = registration
@@ -262,6 +258,12 @@ impl<R: AuthRepository> AuthService<R> {
             .await?
             .ok_or(AppError::Unauthorized)?;
 
+        if claims_auth_session_version(&claims)? != stored.auth_session_version
+            || stored.auth_session_version != actor.auth_session_version
+        {
+            return Err(AppError::Unauthorized);
+        }
+
         self.issue_tokens(actor).await
     }
 
@@ -290,6 +292,10 @@ impl<R: AuthRepository> AuthService<R> {
             .find_active_actor(&actor)
             .await?
             .ok_or(AppError::Unauthorized)?;
+
+        if stored.auth_session_version != actor.auth_session_version {
+            return Err(AppError::Unauthorized);
+        }
 
         self.issue_tokens(actor).await
     }
@@ -356,17 +362,19 @@ impl<R: AuthRepository> AuthService<R> {
 
         let scope = actor.actor_type.scope();
         let subject = actor.subject();
-        let access_token = issue_token(
+        let access_token = issue_token_with_session_version(
             &self.settings,
             subject.clone(),
             scope,
             self.settings.jwt_access_ttl_seconds,
+            actor.auth_session_version,
         )?;
-        let refresh_token = issue_token(
+        let refresh_token = issue_token_with_session_version(
             &self.settings,
             subject,
             scope,
             self.settings.jwt_refresh_ttl_seconds,
+            actor.auth_session_version,
         )?;
         let token_hash = hash_refresh_token(&refresh_token)?;
         let expires_at = Utc::now().naive_utc()
@@ -377,6 +385,7 @@ impl<R: AuthRepository> AuthService<R> {
                 actor_type: actor.actor_type,
                 actor_id: actor.actor_id,
                 user_id: actor.user_id,
+                auth_session_version: actor.auth_session_version,
                 token_hash,
                 expires_at,
             })
@@ -410,6 +419,7 @@ impl<R: AuthRepository> AuthService<R> {
                     "actor_type": actor.actor_type.as_str(),
                     "actor_id": actor.actor_id,
                     "user_id": actor.user_id,
+                    "auth_session_version": actor.auth_session_version,
                 })),
                 None,
                 None,
@@ -424,6 +434,7 @@ impl<R: AuthRepository> AuthService<R> {
             actor_type: actor.actor_type,
             actor_id: actor.actor_id,
             user_id: actor.user_id,
+            auth_session_version: actor.auth_session_version,
             scope,
             expires_at,
         };
@@ -438,6 +449,7 @@ impl<R: AuthRepository> AuthService<R> {
                     actor_type: actor.actor_type,
                     actor_id: actor.actor_id,
                     user_id: actor.user_id,
+                    auth_session_version: actor.auth_session_version,
                     token_hash: hash_refresh_token(&refresh_token)?,
                     expires_at: Utc::now().naive_utc()
                         + Duration::seconds(self.settings.jwt_refresh_ttl_seconds as i64),

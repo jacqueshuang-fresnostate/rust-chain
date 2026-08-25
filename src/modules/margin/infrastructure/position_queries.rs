@@ -174,7 +174,13 @@ pub(crate) async fn list_margin_wallet_accounts(
                   assets.margin_transfer_enabled,
                   COALESCE(wallets.available, 0) AS available,
                   COALESCE(wallets.frozen, 0) AS frozen,
-                  COALESCE(wallets.locked, 0) AS locked
+                  COALESCE(wallets.locked, 0) AS locked,
+                  COALESCE(wallets.available, 0) AS max_transferable_to_spot,
+                  NULL AS transfer_to_spot_block_reason,
+                  NULL AS cross_account_version,
+                  NULL AS transfer_risk_equity,
+                  NULL AS transfer_risk_maintenance_margin,
+                  NULL AS transfer_risk_observed_at
            FROM assets
            LEFT JOIN margin_wallet_accounts wallets
              ON wallets.asset_id = assets.id AND wallets.user_id = ?

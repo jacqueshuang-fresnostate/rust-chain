@@ -1,4 +1,5 @@
 use axum::{
+    Router,
     body::Body,
     http::{Request, StatusCode},
 };
@@ -26,6 +27,37 @@ fn decimal(value: &str) -> BigDecimal {
 async fn body_json(response: axum::response::Response) -> Result<Value, Box<dyn Error>> {
     let body = axum::body::to_bytes(response.into_body(), 1_048_576).await?;
     Ok(serde_json::from_slice(&body)?)
+}
+
+async fn create_withdrawal_quote(
+    app: &Router,
+    token: &str,
+    asset_symbol: &str,
+    network: &str,
+    amount: &str,
+) -> Result<Value, Box<dyn Error>> {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/wallet/withdrawals/quote")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "asset_symbol": asset_symbol,
+                        "network": network,
+                        "amount": amount,
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    let status = response.status();
+    let payload = body_json(response).await?;
+    assert_eq!(status, StatusCode::OK, "payload: {payload}");
+    Ok(payload)
 }
 
 fn test_settings() -> Settings {
@@ -195,6 +227,52 @@ async fn upsert_deposit_network_config(pool: &MySqlPool, network: &str, group_co
     .unwrap();
 }
 
+async fn allow_withdrawal_network(
+    pool: &MySqlPool,
+    network: &str,
+    asset_symbol: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"UPDATE deposit_network_configs
+           SET status = 'active',
+               asset_symbols_json = CASE
+                   WHEN asset_symbols_json IS NULL THEN NULL
+                   WHEN JSON_CONTAINS(asset_symbols_json, JSON_QUOTE(?)) THEN asset_symbols_json
+                   ELSE JSON_ARRAY_APPEND(asset_symbols_json, '$', ?)
+               END
+           WHERE network = ?"#,
+    )
+    .bind(asset_symbol)
+    .bind(asset_symbol)
+    .bind(network)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn disallow_withdrawal_network(
+    pool: &MySqlPool,
+    network: &str,
+    asset_symbol: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"UPDATE deposit_network_configs
+           SET asset_symbols_json = JSON_REMOVE(
+               asset_symbols_json,
+               JSON_UNQUOTE(JSON_SEARCH(asset_symbols_json, 'one', ?))
+           )
+           WHERE network = ?
+             AND asset_symbols_json IS NOT NULL
+             AND JSON_SEARCH(asset_symbols_json, 'one', ?) IS NOT NULL"#,
+    )
+    .bind(asset_symbol)
+    .bind(network)
+    .bind(asset_symbol)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 async fn seed_wallet(pool: &MySqlPool, user_id: u64, asset_id: u64, ref_id: &str) {
     sqlx::query(
         r#"INSERT INTO wallet_accounts (user_id, asset_id, available, frozen, locked)
@@ -320,6 +398,11 @@ async fn cleanup_wallet_route_fixture(
     user_id: u64,
     asset_id: u64,
 ) -> Result<(), sqlx::Error> {
+    let asset_symbol =
+        sqlx::query_scalar::<_, String>("SELECT symbol FROM assets WHERE id = ? LIMIT 1")
+            .bind(asset_id)
+            .fetch_optional(pool)
+            .await?;
     sqlx::query("DELETE FROM wallet_ledger WHERE user_id = ? AND asset_id = ?")
         .bind(user_id)
         .bind(asset_id)
@@ -338,6 +421,18 @@ async fn cleanup_wallet_route_fixture(
         .bind(asset_id)
         .execute(pool)
         .await?;
+    // Quote 与提现单互相保留审计链接，生产外键为 RESTRICT。测试清理需先显式拆除反向链接，
+    // 不得依赖 MySQL 与 CHECK 约束不兼容的 ON DELETE SET NULL。
+    sqlx::query(
+        "UPDATE wallet_withdrawal_requests SET withdrawal_quote_id = NULL WHERE user_id = ?",
+    )
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    sqlx::query("DELETE FROM wallet_withdrawal_quotes WHERE user_id = ?")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
     sqlx::query("DELETE FROM wallet_withdrawal_requests WHERE user_id = ?")
         .bind(user_id)
         .execute(pool)
@@ -351,6 +446,21 @@ async fn cleanup_wallet_route_fixture(
         .bind(asset_id)
         .execute(pool)
         .await?;
+    if let Some(asset_symbol) = asset_symbol {
+        sqlx::query(
+            r#"UPDATE deposit_network_configs
+               SET asset_symbols_json = JSON_REMOVE(
+                   asset_symbols_json,
+                   JSON_UNQUOTE(JSON_SEARCH(asset_symbols_json, 'one', ?))
+               )
+               WHERE asset_symbols_json IS NOT NULL
+                 AND JSON_SEARCH(asset_symbols_json, 'one', ?) IS NOT NULL"#,
+        )
+        .bind(&asset_symbol)
+        .bind(&asset_symbol)
+        .execute(pool)
+        .await?;
+    }
     sqlx::query("DELETE FROM assets WHERE id = ?")
         .bind(asset_id)
         .execute(pool)
@@ -1698,6 +1808,7 @@ async fn wallet_withdrawal_requires_fund_password_and_records_pending_request()
         .bind(asset_id)
         .fetch_one(&pool)
         .await?;
+    allow_withdrawal_network(&pool, "tron", &asset_symbol).await?;
     sqlx::query("UPDATE assets SET withdraw_fee = ? WHERE id = ?")
         .bind(decimal("0.250000000000000000"))
         .bind(asset_id)
@@ -1710,6 +1821,10 @@ async fn wallet_withdrawal_requires_fund_password_and_records_pending_request()
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let app = routes().with_state(AppState::new(settings.clone()).with_mysql(pool.clone()));
     let withdrawal_key = format!("withdraw-create-{}", Uuid::now_v7().simple());
+    let quote =
+        create_withdrawal_quote(&app, &token, &asset_symbol, "trc20", "2.000000000000000000")
+            .await?;
+    assert_eq!(quote["fee"], "0.250000000000000000");
 
     let missing_security_response = app
         .clone()
@@ -1721,11 +1836,12 @@ async fn wallet_withdrawal_requires_fund_password_and_records_pending_request()
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({
+                        "quote_id": quote["quote_id"],
                         "asset_symbol": asset_symbol.to_ascii_lowercase(),
                         "network": "trc20",
                         "address": "TWithdrawAddress",
                         "amount": "2.000000000000000000",
-                        "fee": "0.100000000000000000",
+                        "fee": quote["fee"],
                         "idempotency_key": format!("withdraw-missing-security-{}", Uuid::now_v7().simple())
                     })
                     .to_string(),
@@ -1749,11 +1865,12 @@ async fn wallet_withdrawal_requires_fund_password_and_records_pending_request()
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({
+                        "quote_id": quote["quote_id"],
                         "asset_symbol": asset_symbol.to_ascii_lowercase(),
                         "network": "trc20",
                         "address": "TWithdrawAddress",
                         "amount": "2.000000000000000000",
-                        "fee": "0.100000000000000000",
+                        "fee": quote["fee"],
                         "idempotency_key": withdrawal_key.clone(),
                         "fund_password": "123456"
                     })
@@ -1774,6 +1891,22 @@ async fn wallet_withdrawal_requires_fund_password_and_records_pending_request()
     let created: Value = serde_json::from_slice(&create_body)?;
     let withdrawal_id = created["id"].as_u64().unwrap();
     assert_eq!(created["status"], "pending_review");
+    for field in [
+        "quote_id",
+        "asset_symbol",
+        "network",
+        "amount",
+        "fee",
+        "net",
+        "total_reserved",
+        "fee_config_version",
+        "expires_at",
+    ] {
+        assert_eq!(
+            created[field], quote[field],
+            "mismatched quote field {field}"
+        );
+    }
     assert_eq!(created["total_reserved"], "2.250000000000000000");
     assert_eq!(created["security_method"], "fund_password");
 
@@ -1806,7 +1939,13 @@ async fn wallet_withdrawal_requires_fund_password_and_records_pending_request()
     assert_eq!(stored.7, "pending_review");
     assert_eq!(stored.8, "fund_password");
 
+    // 报价消费后即使费率已更改，精确幂等重放仍只返回原申请，不会二次冻结。
+    sqlx::query("UPDATE assets SET withdraw_fee = 0.5 WHERE id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
     let replay_response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -1815,12 +1954,12 @@ async fn wallet_withdrawal_requires_fund_password_and_records_pending_request()
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({
+                        "quote_id": quote["quote_id"],
                         "asset_symbol": asset_symbol.to_ascii_lowercase(),
-                        "network": "tron",
                         "address": "TWithdrawAddress",
                         "amount": "2.000000000000000000",
-                        "fee": "0.000000000000000000",
-                        "idempotency_key": withdrawal_key
+                        "fee": quote["fee"],
+                        "idempotency_key": withdrawal_key.clone()
                     })
                     .to_string(),
                 ))
@@ -1831,6 +1970,28 @@ async fn wallet_withdrawal_requires_fund_password_and_records_pending_request()
     let replay_payload: Value =
         serde_json::from_slice(&axum::body::to_bytes(replay_response.into_body(), 8192).await?)?;
     assert_eq!(replay_payload["id"], withdrawal_id);
+    let mismatched_replay = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/wallet/withdrawals")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "quote_id": quote["quote_id"],
+                        "asset_symbol": asset_symbol.to_ascii_lowercase(),
+                        "network": "tron",
+                        "address": "TDifferentAddress",
+                        "amount": "2.000000000000000000",
+                        "fee": quote["fee"],
+                        "idempotency_key": withdrawal_key
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(mismatched_replay.status(), StatusCode::CONFLICT);
     let (available_after_reserve, frozen_after_reserve): (BigDecimal, BigDecimal) = sqlx::query_as(
         "SELECT available, frozen FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
     )
@@ -1914,6 +2075,7 @@ async fn wallet_withdrawal_uses_tiered_withdraw_fee_when_amount_matches()
         .bind(asset_id)
         .fetch_one(&pool)
         .await?;
+    allow_withdrawal_network(&pool, "tron", &asset_symbol).await?;
     sqlx::query(
         r#"UPDATE assets
            SET withdraw_fee = ?,
@@ -1936,6 +2098,10 @@ async fn wallet_withdrawal_uses_tiered_withdraw_fee_when_amount_matches()
 
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let app = routes().with_state(AppState::new(settings.clone()).with_mysql(pool.clone()));
+    let quote =
+        create_withdrawal_quote(&app, &token, &asset_symbol, "trc20", "2.000000000000000000")
+            .await?;
+    assert_eq!(quote["fee"], "0.040000000000000000");
 
     let create_response = app
         .oneshot(
@@ -1946,11 +2112,12 @@ async fn wallet_withdrawal_uses_tiered_withdraw_fee_when_amount_matches()
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({
+                        "quote_id": quote["quote_id"],
                         "asset_symbol": asset_symbol.to_ascii_lowercase(),
                         "network": "trc20",
                         "address": "TWithdrawAddress",
                         "amount": "2.000000000000000000",
-                        "fee": "0.000000000000000000",
+                        "fee": quote["fee"],
                         "idempotency_key": format!("withdraw-tier-{}", Uuid::now_v7().simple()),
                         "fund_password": "123456"
                     })
@@ -2017,6 +2184,36 @@ async fn wallet_withdrawal_uses_tiered_withdraw_fee_when_amount_matches()
     assert_eq!(broadcasted.status(), StatusCode::OK);
     let broadcasted_payload = body_json(broadcasted).await?;
     assert_eq!(broadcasted_payload["broadcasted_by"], admin_id);
+
+    // 进入人工复核后已持久化的受理哈希仍不可被后到的异哈希回执/人工操作覆盖。
+    sqlx::query(
+        "UPDATE wallet_withdrawal_requests SET status = 'manual_review', manual_review_at = CURRENT_TIMESTAMP(6) WHERE id = ?",
+    )
+    .bind(withdrawal_id)
+    .execute(&pool)
+    .await?;
+    let conflicting_broadcast = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/wallet/withdrawals/{withdrawal_id}/broadcast"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"tx_hash":"0xdifferentwithdrawaltx","block_height":99,"confirmations":0}"#,
+                ))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(conflicting_broadcast.status(), StatusCode::CONFLICT);
+    let preserved_tx_hash: String =
+        sqlx::query_scalar("SELECT tx_hash FROM wallet_withdrawal_requests WHERE id = ?")
+            .bind(withdrawal_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(preserved_tx_hash, "0xwithdrawalconfirmed");
+
     for _ in 0..2 {
         let confirmed = admin_app
             .clone()
@@ -2074,6 +2271,261 @@ async fn wallet_withdrawal_uses_tiered_withdraw_fee_when_amount_matches()
 }
 
 #[tokio::test]
+async fn withdrawal_quote_enforces_tier_boundaries_expiry_and_config_version_without_moving_funds()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_user(&pool).await;
+    let (asset_id, _) = create_asset(&pool).await;
+    let asset_symbol: String = sqlx::query_scalar("SELECT symbol FROM assets WHERE id = ?")
+        .bind(asset_id)
+        .fetch_one(&pool)
+        .await?;
+    allow_withdrawal_network(&pool, "tron", &asset_symbol).await?;
+    sqlx::query(
+        r#"UPDATE assets
+           SET precision_scale = 2,
+               withdraw_fee = 0.25,
+               withdraw_fee_tiers_json = '[
+                 {"min_amount":"1","max_amount":"10","fee_rate_percent":"2"},
+                 {"min_amount":"10","fee_rate_percent":"3"}
+               ]'
+           WHERE id = ?"#,
+    )
+    .bind(asset_id)
+    .execute(&pool)
+    .await?;
+    seed_wallet(
+        &pool,
+        user_id,
+        asset_id,
+        &format!("withdraw-quote-{}", Uuid::now_v7().simple()),
+    )
+    .await;
+    seed_fund_password(&pool, user_id, "123456").await;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900)?;
+    let other_user_id = create_user(&pool).await;
+    let other_token = issue_token(
+        &settings,
+        format!("user:{other_user_id}"),
+        TokenScope::User,
+        900,
+    )?;
+    let app = routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+
+    let below = create_withdrawal_quote(&app, &token, &asset_symbol, "tron", "9.999").await?;
+    let boundary = create_withdrawal_quote(&app, &token, &asset_symbol, "tron", "10").await?;
+    let open_tail = create_withdrawal_quote(&app, &token, &asset_symbol, "tron", "1000").await?;
+    assert_eq!(below["amount"], "9.990000000000000000");
+    assert_eq!(below["fee"], "0.190000000000000000");
+    assert_eq!(below["net"], "9.990000000000000000");
+    assert_eq!(below["total_reserved"], "10.180000000000000000");
+    assert_eq!(boundary["fee"], "0.300000000000000000");
+    assert_eq!(open_tail["fee"], "30.000000000000000000");
+
+    // 旧客户端绕过报价直接提交时，序列化边界必须拒绝，不进入资金用例。
+    let missing_quote_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/wallet/withdrawals")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "asset_symbol": asset_symbol.clone(),
+                        "network": "tron",
+                        "address": "TMissingQuote",
+                        "amount": "2.000000000000000000",
+                        "fee": "0.040000000000000000",
+                        "idempotency_key": format!("missing-quote-{}", Uuid::now_v7().simple()),
+                        "fund_password": "123456"
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(
+        missing_quote_response.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+
+    // 报价所有者被绑定在查询和事务行锁两道边界，其他用户看不到也消费不了。
+    let cross_owner_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/wallet/withdrawals")
+                .header("authorization", format!("Bearer {other_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "quote_id": boundary["quote_id"],
+                        "asset_symbol": asset_symbol.clone(),
+                        "network": "tron",
+                        "address": "TCrossOwner",
+                        "amount": boundary["amount"],
+                        "fee": boundary["fee"],
+                        "idempotency_key": format!("cross-owner-{}", Uuid::now_v7().simple())
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(cross_owner_response.status(), StatusCode::NOT_FOUND);
+
+    // 同一报价用不同金额重放会在指纹校验处拒绝，不消费报价。
+    let mismatched_parameters_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/wallet/withdrawals")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "quote_id": boundary["quote_id"],
+                        "asset_symbol": asset_symbol.clone(),
+                        "network": "tron",
+                        "address": "TMismatchedAmount",
+                        "amount": "10.010000000000000000",
+                        "fee": boundary["fee"],
+                        "idempotency_key": format!("mismatched-{}", Uuid::now_v7().simple())
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(
+        mismatched_parameters_response.status(),
+        StatusCode::CONFLICT
+    );
+
+    let expired = create_withdrawal_quote(&app, &token, &asset_symbol, "tron", "2").await?;
+    sqlx::query(
+        r#"UPDATE wallet_withdrawal_quotes
+           SET created_at = DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 10 MINUTE),
+               expires_at = DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 1 SECOND)
+           WHERE id = ?"#,
+    )
+    .bind(expired["quote_id"].as_str().unwrap())
+    .execute(&pool)
+    .await?;
+    let expired_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/wallet/withdrawals")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "quote_id": expired["quote_id"],
+                        "asset_symbol": asset_symbol.clone(),
+                        "network": "tron",
+                        "address": "TExpiredQuote",
+                        "amount": expired["amount"],
+                        "fee": expired["fee"],
+                        "idempotency_key": format!("expired-{}", Uuid::now_v7().simple()),
+                        "fund_password": "123456"
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(expired_response.status(), StatusCode::BAD_REQUEST);
+
+    allow_withdrawal_network(&pool, "btc", &asset_symbol).await?;
+    let network_stale = create_withdrawal_quote(&app, &token, &asset_symbol, "btc", "2").await?;
+    disallow_withdrawal_network(&pool, "btc", &asset_symbol).await?;
+    let network_stale_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/wallet/withdrawals")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "quote_id": network_stale["quote_id"],
+                        "asset_symbol": asset_symbol.clone(),
+                        "network": "btc",
+                        "address": "bc1StaleNetwork",
+                        "amount": network_stale["amount"],
+                        "fee": network_stale["fee"],
+                        "idempotency_key": format!("stale-network-{}", Uuid::now_v7().simple()),
+                        "fund_password": "123456"
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(network_stale_response.status(), StatusCode::CONFLICT);
+
+    let stale = create_withdrawal_quote(&app, &token, &asset_symbol, "tron", "2").await?;
+    sqlx::query("UPDATE assets SET withdraw_fee_tiers_json = JSON_ARRAY() WHERE id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    let stale_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/wallet/withdrawals")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "quote_id": stale["quote_id"],
+                        "asset_symbol": asset_symbol,
+                        "network": "tron",
+                        "address": "TStaleQuote",
+                        "amount": stale["amount"],
+                        "fee": stale["fee"],
+                        "idempotency_key": format!("stale-{}", Uuid::now_v7().simple()),
+                        "fund_password": "123456"
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(stale_response.status(), StatusCode::CONFLICT);
+
+    let (available, frozen): (BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT available, frozen FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(available, decimal("12.500000000000000000"));
+    assert_eq!(frozen, decimal("1.500000000000000000"));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM wallet_withdrawal_requests WHERE user_id = ?",
+        )
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await?,
+        0
+    );
+
+    cleanup_wallet_route_fixture(&pool, user_id, asset_id).await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(other_user_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn wallet_withdrawal_rejects_assets_with_withdraw_disabled() -> Result<(), Box<dyn Error>> {
     let Some(pool) = mysql_pool().await else {
         return Ok(());
@@ -2099,18 +2551,14 @@ async fn wallet_withdrawal_rejects_assets_with_withdraw_disabled() -> Result<(),
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/wallet/withdrawals")
+                .uri("/wallet/withdrawals/quote")
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({
                         "asset_symbol": asset_symbol.to_ascii_lowercase(),
                         "network": "trc20",
-                        "address": "TWithdrawAddress",
                         "amount": "2.000000000000000000",
-                        "fee": "0.100000000000000000",
-                        "idempotency_key": format!("withdraw-disabled-{}", Uuid::now_v7().simple()),
-                        "fund_password": "123456"
                     })
                     .to_string(),
                 ))
@@ -2148,6 +2596,7 @@ async fn wallet_withdrawal_risk_rule_rejects_over_limit_amount_without_reserving
         .bind(asset_id)
         .fetch_one(&pool)
         .await?;
+    allow_withdrawal_network(&pool, "tron", &asset_symbol).await?;
     sqlx::query("UPDATE assets SET withdraw_fee = ? WHERE id = ?")
         .bind(decimal("0.250000000000000000"))
         .bind(asset_id)
@@ -2169,6 +2618,9 @@ async fn wallet_withdrawal_risk_rule_rejects_over_limit_amount_without_reserving
 
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let app = routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let quote =
+        create_withdrawal_quote(&app, &token, &asset_symbol, "trc20", "2.000000000000000000")
+            .await?;
 
     let rejected = app
         .clone()
@@ -2180,11 +2632,12 @@ async fn wallet_withdrawal_risk_rule_rejects_over_limit_amount_without_reserving
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({
+                        "quote_id": quote["quote_id"],
                         "asset_symbol": asset_symbol.clone(),
                         "network": "trc20",
                         "address": "TWithdrawAddress",
                         "amount": "2.000000000000000000",
-                        "fee": "0.100000000000000000",
+                        "fee": quote["fee"],
                         "idempotency_key": format!("withdraw-risk-{}", Uuid::now_v7().simple()),
                         "fund_password": "123456"
                     })
@@ -2245,11 +2698,12 @@ async fn wallet_withdrawal_risk_rule_rejects_over_limit_amount_without_reserving
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({
+                        "quote_id": quote["quote_id"],
                         "asset_symbol": asset_symbol,
                         "network": "trc20",
                         "address": "TWithdrawAddress",
                         "amount": "2.000000000000000000",
-                        "fee": "0.100000000000000000",
+                        "fee": quote["fee"],
                         "idempotency_key": format!("withdraw-risk-allowed-{}", Uuid::now_v7().simple()),
                         "fund_password": "123456"
                     })

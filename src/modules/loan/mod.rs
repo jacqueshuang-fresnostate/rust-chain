@@ -4,13 +4,16 @@
 pub mod application;
 pub mod domain;
 pub mod infrastructure;
+pub mod liquidation;
+pub mod oracle;
 pub mod presentation;
 pub mod routes;
 pub mod service;
 
 pub(crate) use self::domain::{
-    LOAN_TYPE_COLLATERALIZED, STATUS_ACTIVE, STATUS_CANCELLED, STATUS_DISBURSED, STATUS_OVERDUE,
-    STATUS_PENDING, STATUS_REJECTED, STATUS_REPAID,
+    LOAN_ORACLE_SOURCE_MARKET_TICKER_REDIS, LOAN_TYPE_COLLATERALIZED, STATUS_ACTIVE,
+    STATUS_CANCELLED, STATUS_DISBURSED, STATUS_LIQUIDATED, STATUS_OVERDUE, STATUS_PENDING,
+    STATUS_REJECTED, STATUS_REPAID,
 };
 pub(crate) use self::service::{
     ensure_amount_precision, ensure_amount_within_product_limits, ensure_non_negative_amount,

@@ -97,6 +97,7 @@ async fn mysql_convert_order_insert_is_idempotent_by_quote_id() -> Result<(), Bo
     let to_symbol = format!("T{}", &suffix[12..24]);
     let quote_id = QuoteId(Uuid::now_v7());
     let quote_id_value = quote_id.0.to_string();
+    let price_observed_at = Utc::now();
 
     let user_id = sqlx::query("INSERT INTO users (email, password_hash) VALUES (?, ?)")
         .bind(&email)
@@ -135,6 +136,11 @@ async fn mysql_convert_order_insert_is_idempotent_by_quote_id() -> Result<(), Bo
             spread_rate: decimal("0.00000000"),
             fee_rate: decimal("0.00000000"),
             fee_amount: decimal("0.000000000000000000"),
+            request_fingerprint: "0".repeat(64),
+            price_source: "fixed".to_owned(),
+            price_symbol: None,
+            price_observed_at,
+            price_version: "repository-test-v1".to_owned(),
             expires_at: Utc::now() + TimeDelta::seconds(60),
         })
         .await

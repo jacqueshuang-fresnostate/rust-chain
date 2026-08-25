@@ -43,6 +43,33 @@ pub(crate) struct MarginTransferRecord {
     /// 首次划转的金额，重放时必须完全相等才认定为同一笔请求。
     pub(crate) amount: BigDecimal,
 }
+
+/// 同一事务按 spot→margin 顺序取得的两侧钱包快照；风险闸门必须基于其中锁定的 margin available。
+pub(crate) struct LockedMarginTransferWallets {
+    spot: super::ledger::MarginWalletRow,
+    margin: super::ledger::MarginWalletRow,
+}
+
+impl LockedMarginTransferWallets {
+    /// 返回已经在当前事务中加锁的杠杆钱包可用余额。
+    ///
+    /// 风险闸门只可使用该快照计算转出后的账户权益，禁止再次执行无锁查询，否则并发开仓、计息或
+    /// 强平可能让校验依据与最终扣款对象不一致。返回借用值也确保调用方不能绕过适配器直接改写余额。
+    pub(crate) fn margin_available(&self) -> &BigDecimal {
+        &self.margin.available
+    }
+}
+
+/// 双向划转共用的唯一钱包锁入口，任何方向都固定 spot 在前、margin 在后。
+pub(crate) async fn lock_margin_transfer_wallets(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    asset_id: u64,
+) -> AppResult<LockedMarginTransferWallets> {
+    let spot = lock_spot_wallet_row(tx, user_id, asset_id).await?;
+    let margin = lock_margin_wallet_row(tx, user_id, asset_id).await?;
+    Ok(LockedMarginTransferWallets { spot, margin })
+}
 /// 按现货后保证金的稳定顺序锁定两侧钱包，将同额资金从现货转入保证金并各写流水。
 /// 两侧余额、两笔流水与划转记录同事务提交；余额不足或任一步失败整体回滚。
 ///
@@ -51,22 +78,22 @@ pub(crate) struct MarginTransferRecord {
 /// 现货流水记为 `margin_transfer_out` 且金额取负，杠杆流水记为 `margin_transfer_in` 金额取正，
 /// 两条共用同一个 `transfer_id`，构成可对账的配对记录。
 /// 返回值固定是「现货快照在前、杠杆快照在后」，与资金流向无关，调用方按位置解构即可。
-pub(crate) async fn transfer_spot_to_margin_wallets(
+pub(crate) async fn apply_spot_to_margin_transfer(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
     asset_id: u64,
     amount: &BigDecimal,
     transfer_id: &str,
+    wallets: LockedMarginTransferWallets,
 ) -> AppResult<(MarginWalletAccountSnapshot, MarginWalletAccountSnapshot)> {
-    // 双向划转统一先锁现货、再锁杠杆钱包，避免反向请求形成交叉等待。
-    let spot_wallet = lock_spot_wallet_row(tx, user_id, asset_id).await?;
+    let spot_wallet = wallets.spot;
     if spot_wallet.available < *amount {
         return Err(AppError::Validation(format!(
             "insufficient available balance for margin transfer: requested {}, available {}, locked {}",
             amount, spot_wallet.available, spot_wallet.locked
         )));
     }
-    let margin_wallet = lock_margin_wallet_row(tx, user_id, asset_id).await?;
+    let margin_wallet = wallets.margin;
     let spot_available_after = spot_wallet.available.clone() - amount.clone();
     let margin_available_after = margin_wallet.available.clone() + amount.clone();
     sqlx::query("UPDATE wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?")
@@ -131,16 +158,16 @@ pub(crate) async fn transfer_spot_to_margin_wallets(
 /// 即使资金方向相反也固定先锁现货钱包、再锁杠杆钱包，随后校验杠杆侧可用余额。
 /// 杠杆可用余额扣减、现货可用余额增加及两条配对流水必须同事务提交，余额快照与流水一致。
 /// 本函数不提交事务也不独立处理重放；调用方以划转幂等记录阻止重复动账。
-pub(crate) async fn transfer_margin_to_spot_wallets(
+pub(crate) async fn apply_margin_to_spot_transfer(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
     asset_id: u64,
     amount: &BigDecimal,
     transfer_id: &str,
+    wallets: LockedMarginTransferWallets,
 ) -> AppResult<(MarginWalletAccountSnapshot, MarginWalletAccountSnapshot)> {
-    // 与 spot -> margin 保持相同锁序。
-    let spot_wallet = lock_spot_wallet_row(tx, user_id, asset_id).await?;
-    let margin_wallet = lock_margin_wallet_row(tx, user_id, asset_id).await?;
+    let spot_wallet = wallets.spot;
+    let margin_wallet = wallets.margin;
     if margin_wallet.available < *amount {
         return Err(AppError::Validation(format!(
             "insufficient margin available balance for transfer: requested {}, available {}, locked {}",

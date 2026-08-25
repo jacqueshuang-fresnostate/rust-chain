@@ -213,7 +213,8 @@ async fn list_margin_wallets(
     let user_id = user_id_from_subject(&claims.sub)?;
     let pool = mysql_pool(&state)?;
     Ok(Json(
-        list_user_margin_wallets_use_case(&pool, user_id, route_limit(None)).await?,
+        list_user_margin_wallets_use_case(&pool, state.redis.as_ref(), user_id, route_limit(None))
+            .await?,
     ))
 }
 
@@ -228,7 +229,7 @@ async fn transfer_margin_funds(
     let user_id = user_id_from_subject(&claims.sub)?;
     let pool = mysql_pool(&state)?;
     Ok(Json(
-        transfer_margin_funds_use_case(&pool, user_id, request).await?,
+        transfer_margin_funds_use_case(&pool, state.redis.as_ref(), user_id, request).await?,
     ))
 }
 

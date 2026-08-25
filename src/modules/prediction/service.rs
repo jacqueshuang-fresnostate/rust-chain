@@ -13,7 +13,7 @@
 
 use crate::error::{AppError, AppResult};
 use bigdecimal::BigDecimal;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use serde_json::Value;
 use std::{collections::HashSet, str::FromStr};
 
@@ -37,6 +37,52 @@ pub(crate) const DEFAULT_SYNC_LIMIT: &str = "100";
 pub(crate) const POLYMARKET_GAMMA_EVENTS_URL: &str = "https://gamma-api.polymarket.com/events";
 pub(crate) const REF_TYPE_PREDICTION_ORDER: &str = "prediction_order";
 const ADMIN_AUDIT_REASON_MAX_LEN: usize = 512;
+
+/// 把同步周期换算为资金路径可接受的最大陈旧秒数，至少 60 秒且最多 1 小时。
+pub(crate) fn market_sync_max_age_seconds(sync_interval_seconds: u32) -> i64 {
+    i64::from(sync_interval_seconds.max(30))
+        .saturating_mul(2)
+        .clamp(60, 3_600)
+}
+
+/// 校验预测市场在数据库时钟下仍可报价或下单。
+/// `now == end_at` 明确视为已关盘；缺结束时间、缺同步时间或同步过旧均 fail closed。
+pub(crate) fn validate_market_trading_window(
+    display_status: &str,
+    settlement_status: &str,
+    end_at: Option<DateTime<Utc>>,
+    last_synced_at: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+    max_sync_age_seconds: i64,
+) -> AppResult<()> {
+    if display_status != STATUS_ACTIVE || settlement_status != SETTLEMENT_OPEN {
+        return Err(AppError::Validation(
+            "prediction market is not open for trading".to_owned(),
+        ));
+    }
+    let end_at = end_at.ok_or_else(|| {
+        AppError::Validation("prediction market end_at is required for trading".to_owned())
+    })?;
+    if now >= end_at {
+        return Err(AppError::Validation(
+            "prediction market has reached end_at".to_owned(),
+        ));
+    }
+    let last_synced_at = last_synced_at.ok_or_else(|| {
+        AppError::Validation("prediction market has no synchronized snapshot".to_owned())
+    })?;
+    let oldest_allowed = now
+        .checked_sub_signed(TimeDelta::seconds(max_sync_age_seconds.max(0)))
+        .ok_or_else(|| {
+            AppError::Validation("prediction market synchronized snapshot is stale".to_owned())
+        })?;
+    if last_synced_at > now || last_synced_at < oldest_allowed {
+        return Err(AppError::Validation(
+            "prediction market synchronized snapshot is stale".to_owned(),
+        ));
+    }
+    Ok(())
+}
 
 #[derive(Debug, Default)]
 pub(crate) struct SyncCounts {

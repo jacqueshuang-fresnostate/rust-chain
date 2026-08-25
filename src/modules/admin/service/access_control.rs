@@ -77,6 +77,8 @@ pub(crate) fn admin_scope_from_record(record: AdminAccessRecord) -> AppResult<Ad
     Ok(AdminScope {
         admin_id: record.admin_id,
         username: record.username,
+        must_change_password: record.must_change_password,
+        auth_session_version: record.auth_session_version,
         role_id: record.role_id,
         role_name: record.role_name,
         permissions,

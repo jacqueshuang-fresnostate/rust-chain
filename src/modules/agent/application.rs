@@ -200,7 +200,7 @@ pub(crate) async fn update_agent_invite_code_status(
 
 /// 校验新旧口令后锁定代理管理员凭证，同事务更新哈希并撤销 MySQL 刷新令牌。
 /// 旧口令或账号状态不符时不写入；提交后尝试撤销 Sa-Token/Redis 会话且不签发新令牌。
-/// 外部失败时新密码已生效；令牌枚举若被会话助手降级为空集合，也不能证明全部旧访问令牌已删除。
+/// 外部失败时新密码已生效；会话枚举或登出失败会向上报告，避免把未完成的撤销伪装成成功。
 pub(crate) async fn change_agent_password(
     state: AppState,
     subject: &str,

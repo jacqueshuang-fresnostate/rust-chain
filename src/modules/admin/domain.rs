@@ -14,6 +14,8 @@ use thiserror::Error;
 pub struct AdminScope {
     pub admin_id: u64,
     pub username: String,
+    pub must_change_password: bool,
+    pub auth_session_version: u64,
     pub role_id: u64,
     pub role_name: String,
     pub permissions: BTreeSet<String>,

@@ -231,6 +231,23 @@ pub(crate) struct MarginWalletAccountResponse {
     pub(crate) frozen: BigDecimal,
     #[serde(serialize_with = "serialize_decimal_amount")]
     pub(crate) locked: BigDecimal,
+    /// 当前服务端风险快照允许从 margin 转回 spot 的上限，不能由 available 替代。
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    pub(crate) max_transferable_to_spot: BigDecimal,
+    /// 上限为零时的稳定拒绝原因；无拒绝时为 null。
+    pub(crate) transfer_to_spot_block_reason: Option<String>,
+    /// 计算上限时读取的全仓账户版本，提交时会在锁内再次核对。
+    pub(crate) cross_account_version: Option<u64>,
+    #[serde(default, serialize_with = "serialize_optional_decimal_amount")]
+    pub(crate) transfer_risk_equity: Option<BigDecimal>,
+    #[serde(default, serialize_with = "serialize_optional_decimal_amount")]
+    pub(crate) transfer_risk_maintenance_margin: Option<BigDecimal>,
+    #[serde(
+        default,
+        with = "option_unix_millis",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) transfer_risk_observed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]

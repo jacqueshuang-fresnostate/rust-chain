@@ -11,6 +11,7 @@ use exchange_api::{
         prediction::routes::{admin_routes, user_routes},
     },
     state::AppState,
+    workers::prediction_market_close,
 };
 use secrecy::SecretString;
 use serde_json::{Value, json};
@@ -134,8 +135,9 @@ async fn prediction_order_creates_precise_idempotent_agent_commission() -> Resul
         .await?;
     let market_id = sqlx::query(
         r#"INSERT INTO prediction_markets
-           (external_market_id, title, tags_json, yes_price, no_price)
-           VALUES (?, ?, JSON_ARRAY(), 0.50000000, 0.50000000)"#,
+           (external_market_id, title, tags_json, yes_price, no_price, end_at, last_synced_at)
+           VALUES (?, ?, JSON_ARRAY(), 0.50000000, 0.50000000,
+                   DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 1 HOUR), CURRENT_TIMESTAMP(6))"#,
     )
     .bind(format!("prediction-commission-{suffix}"))
     .bind("Prediction commission market")
@@ -146,12 +148,15 @@ async fn prediction_order_creates_precise_idempotent_agent_commission() -> Resul
     sqlx::query(
         r#"INSERT INTO prediction_quotes
            (quote_id, user_id, market_id, outcome, asset_id, stake_amount, fee_amount,
-            accepted_price, shares, theoretical_payout, effective_payout_cap, expires_at)
-           VALUES (?, ?, ?, 'yes', ?, ?, ?, ?, ?, ?, ?, DATE_ADD(NOW(6), INTERVAL 1 HOUR))"#,
+            accepted_price, shares, theoretical_payout, effective_payout_cap,
+            market_version, market_last_synced_at, expires_at)
+           SELECT ?, ?, id, 'yes', ?, ?, ?, ?, ?, ?, ?, market_version, last_synced_at,
+                  DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 1 HOUR)
+           FROM prediction_markets
+           WHERE id = ?"#,
     )
     .bind(&quote_id)
     .bind(user_id)
-    .bind(market_id)
     .bind(asset_id)
     .bind(decimal("10.12345678"))
     .bind(decimal("0.10000000"))
@@ -159,6 +164,7 @@ async fn prediction_order_creates_precise_idempotent_agent_commission() -> Resul
     .bind(decimal("20.24691356"))
     .bind(decimal("20.24691356"))
     .bind(decimal("100.00000000"))
+    .bind(market_id)
     .execute(&pool)
     .await?;
 
@@ -258,6 +264,305 @@ async fn prediction_order_creates_precise_idempotent_agent_commission() -> Resul
         .await?;
     sqlx::query("DELETE FROM users WHERE id = ?")
         .bind(user_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn prediction_end_at_boundary_closes_locally_and_rejects_order_without_wallet_change()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let suffix = Uuid::now_v7().simple().to_string();
+    let user_id = sqlx::query("INSERT INTO users (email, password_hash) VALUES (?, 'test')")
+        .bind(format!("prediction-boundary-{suffix}@example.test"))
+        .execute(&pool)
+        .await?
+        .last_insert_id();
+    let asset_id = sqlx::query(
+        "INSERT INTO assets (symbol, name, precision_scale, asset_type, status) VALUES (?, ?, 8, 'coin', 'active')",
+    )
+    .bind(format!("PB{}", &suffix[..12]))
+    .bind("Prediction boundary")
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, 20)")
+        .bind(user_id)
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    let market_id = sqlx::query(
+        r#"INSERT INTO prediction_markets
+           (external_market_id, title, tags_json, yes_price, no_price,
+            end_at, last_synced_at)
+           VALUES (?, 'Boundary market', JSON_ARRAY(), 0.5, 0.5,
+                   CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6))"#,
+    )
+    .bind(format!("prediction-boundary-{suffix}"))
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let quote_id = format!("prediction-boundary-quote-{suffix}");
+    sqlx::query(
+        r#"INSERT INTO prediction_quotes
+           (quote_id, user_id, market_id, outcome, asset_id, stake_amount, fee_amount,
+            accepted_price, shares, theoretical_payout, effective_payout_cap,
+            market_version, market_last_synced_at, expires_at)
+           SELECT ?, ?, id, 'yes', ?, 10, 0, 0.5, 20, 20, 100,
+                  market_version, last_synced_at, DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 1 HOUR)
+           FROM prediction_markets WHERE id = ?"#,
+    )
+    .bind(&quote_id)
+    .bind(user_id)
+    .bind(asset_id)
+    .bind(market_id)
+    .execute(&pool)
+    .await?;
+
+    let token = issue_token(
+        &test_settings(),
+        format!("user:{user_id}"),
+        TokenScope::User,
+        900,
+    )?;
+    let close_pool = pool.clone();
+    let close_task =
+        tokio::spawn(async move { prediction_market_close::run_once(&close_pool, 500).await });
+    let response = user_routes()
+        .with_state(AppState::new(test_settings()).with_mysql(pool.clone()))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/prediction/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "quote_id": quote_id,
+                        "idempotency_key": format!("prediction-boundary-order-{suffix}")
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    let summary = close_task.await??;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let (available,): (BigDecimal,) =
+        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(asset_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(available.normalized(), decimal("20"));
+    let (consumed_at,): (Option<chrono::DateTime<chrono::Utc>>,) =
+        sqlx::query_as("SELECT consumed_at FROM prediction_quotes WHERE quote_id = ?")
+            .bind(&quote_id)
+            .fetch_one(&pool)
+            .await?;
+    assert!(consumed_at.is_none());
+    let (order_count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM prediction_orders WHERE quote_id = ?")
+            .bind(&quote_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(order_count, 0);
+
+    assert!(summary.closed >= 1);
+    let (display_status, settlement_status, version, locally_closed_at): (
+        String,
+        String,
+        u64,
+        Option<chrono::DateTime<chrono::Utc>>,
+    ) = sqlx::query_as(
+        "SELECT display_status, settlement_status, market_version, locally_closed_at FROM prediction_markets WHERE id = ?",
+    )
+    .bind(market_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(display_status, "hidden");
+    assert_eq!(settlement_status, "pending_confirmation");
+    assert_eq!(version, 2);
+    assert!(locally_closed_at.is_some());
+    sqlx::query("DELETE FROM prediction_quotes WHERE quote_id = ?")
+        .bind(&quote_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+        .bind(user_id)
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM prediction_markets WHERE id = ?")
+        .bind(market_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn prediction_market_config_change_invalidates_existing_quote_before_wallet_change()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let suffix = Uuid::now_v7().simple().to_string();
+    let user_id = sqlx::query("INSERT INTO users (email, password_hash) VALUES (?, 'test')")
+        .bind(format!("prediction-version-{suffix}@example.test"))
+        .execute(&pool)
+        .await?
+        .last_insert_id();
+    let asset_id = sqlx::query(
+        "INSERT INTO assets (symbol, name, precision_scale, asset_type, status) VALUES (?, ?, 8, 'coin', 'active')",
+    )
+    .bind(format!("PV{}", &suffix[..12]))
+    .bind("Prediction version")
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, 20)")
+        .bind(user_id)
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    let market_id = sqlx::query(
+        r#"INSERT INTO prediction_markets
+           (external_market_id, title, tags_json, yes_price, no_price, end_at, last_synced_at)
+           VALUES (?, 'Version market', JSON_ARRAY(), 0.5, 0.5,
+                   DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 1 HOUR), CURRENT_TIMESTAMP(6))"#,
+    )
+    .bind(format!("prediction-version-{suffix}"))
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    let quote_id = format!("prediction-version-quote-{suffix}");
+    sqlx::query(
+        r#"INSERT INTO prediction_quotes
+           (quote_id, user_id, market_id, outcome, asset_id, stake_amount, fee_amount,
+            accepted_price, shares, theoretical_payout, effective_payout_cap,
+            market_version, market_last_synced_at, expires_at)
+           SELECT ?, ?, id, 'yes', ?, 10, 0, 0.5, 20, 20, 100,
+                  market_version, last_synced_at, DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 1 HOUR)
+           FROM prediction_markets WHERE id = ?"#,
+    )
+    .bind(&quote_id)
+    .bind(user_id)
+    .bind(asset_id)
+    .bind(market_id)
+    .execute(&pool)
+    .await?;
+
+    let (role_id, admin_id) = create_prediction_admin(&pool).await;
+    let settings = test_settings();
+    let admin_token = issue_token(
+        &settings,
+        format!("admin:{admin_id}"),
+        TokenScope::Admin,
+        900,
+    )?;
+    let admin_response = admin_routes()
+        .with_state(AppState::new(settings.clone()).with_mysql(pool.clone()))
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/prediction/markets/{market_id}"))
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "display_status": "active",
+                        "settlement_mode_override": null,
+                        "allowed_asset_ids_override": null,
+                        "payout_cap_overrides": null,
+                        "fee_rate_override": "0.01"
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(admin_response.status(), StatusCode::OK);
+    let (market_version,): (u64,) =
+        sqlx::query_as("SELECT market_version FROM prediction_markets WHERE id = ?")
+            .bind(market_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(market_version, 2);
+
+    let user_token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900)?;
+    let order_response = user_routes()
+        .with_state(AppState::new(settings).with_mysql(pool.clone()))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/prediction/orders")
+                .header("authorization", format!("Bearer {user_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "quote_id": quote_id,
+                        "idempotency_key": format!("prediction-version-order-{suffix}")
+                    })
+                    .to_string(),
+                ))?,
+        )
+        .await?;
+    assert_eq!(order_response.status(), StatusCode::CONFLICT);
+    let (available,): (BigDecimal,) =
+        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+            .bind(user_id)
+            .bind(asset_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(available.normalized(), decimal("20"));
+    let (consumed_at, order_count): (Option<chrono::DateTime<chrono::Utc>>, i64) =
+        sqlx::query_as(
+            r#"SELECT quotes.consumed_at,
+                      (SELECT COUNT(*) FROM prediction_orders orders WHERE orders.quote_id = quotes.quote_id)
+               FROM prediction_quotes quotes WHERE quotes.quote_id = ?"#,
+        )
+        .bind(&quote_id)
+        .fetch_one(&pool)
+        .await?;
+    assert!(consumed_at.is_none());
+    assert_eq!(order_count, 0);
+
+    sqlx::query("DELETE FROM prediction_quotes WHERE quote_id = ?")
+        .bind(&quote_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
+        .bind(user_id)
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM prediction_markets WHERE id = ?")
+        .bind(market_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM assets WHERE id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_users WHERE id = ?")
+        .bind(admin_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM admin_roles WHERE id = ?")
+        .bind(role_id)
         .execute(&pool)
         .await?;
     Ok(())
@@ -574,9 +879,14 @@ async fn prediction_configuration_writes_are_revision_guarded_and_audited_atomic
                     .body(Body::empty())?,
             )
             .await?;
-        assert_eq!(asset_list.status(), StatusCode::OK);
+        let asset_list_status = asset_list.status();
         let asset_list_body = axum::body::to_bytes(asset_list.into_body(), 1_048_576).await?;
         let asset_list_payload: Value = serde_json::from_slice(&asset_list_body)?;
+        assert_eq!(
+            asset_list_status,
+            StatusCode::OK,
+            "{asset_list_payload}"
+        );
         let listed_asset = asset_list_payload["configs"]
             .as_array()
             .and_then(|configs| {

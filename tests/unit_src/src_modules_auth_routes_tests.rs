@@ -120,6 +120,13 @@ async fn assert_auth_route_forbidden(app: Router, path: &str, body: &'static str
     assert_eq!(payload["code"], "FORBIDDEN");
 }
 
+async fn assert_auth_route_unauthorized(app: Router, path: &str, body: &'static str) {
+    let (status, payload) = request_auth_route(app, path, body).await;
+
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}");
+    assert_eq!(payload["code"], "UNAUTHORIZED");
+}
+
 #[tokio::test]
 async fn user_auth_routes_return_clear_error_without_mysql() {
     let app = user_routes().with_state(test_state());
@@ -198,7 +205,7 @@ async fn user_auth_routes_return_clear_error_without_mysql() {
 async fn admin_auth_routes_return_clear_error_without_mysql() {
     let app = admin_routes().with_state(test_state());
 
-    assert_auth_route_requires_mysql(
+    assert_auth_route_unauthorized(
         app.clone(),
         "/auth/register",
         r#"{"username":"admin","password":"password-1"}"#,

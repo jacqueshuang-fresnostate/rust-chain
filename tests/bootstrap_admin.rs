@@ -15,10 +15,6 @@ const BOOTSTRAP_ADMIN_LOCK_NAME: &str = "exchange.bootstrap.default_admin";
 
 #[test]
 fn bootstrap_config_validates_normalizes_and_redacts_values() {
-    let built_in = BootstrapAdminConfig::built_in_defaults().unwrap();
-    assert_eq!(built_in.username(), "admin");
-    assert_eq!(built_in.role_name(), "super_admin");
-
     let config = BootstrapAdminConfig::from_values(
         "  Bootstrap_Admin  ".to_owned(),
         "safe-bootstrap-password".to_owned(),
@@ -47,6 +43,7 @@ fn bootstrap_config_validates_normalizes_and_redacts_values() {
             None,
         ),
         BootstrapAdminConfig::from_values("valid_admin".to_owned(), "short".to_owned(), None),
+        BootstrapAdminConfig::from_values("valid_admin".to_owned(), "Qaz123456@".to_owned(), None),
         BootstrapAdminConfig::from_values(
             "valid_admin".to_owned(),
             "valid-password".to_owned(),
@@ -54,6 +51,31 @@ fn bootstrap_config_validates_normalizes_and_redacts_values() {
         ),
     ] {
         assert!(invalid.is_err());
+    }
+}
+
+#[test]
+fn deployment_examples_have_no_fixed_bootstrap_password_fallback() {
+    for path in [
+        "docker-compose.example.yml",
+        "docker-compose.1panel.example.yml",
+        "docker-compose.env.example",
+        "docker-compose.1panel.env.example",
+    ] {
+        let source = fs::read_to_string(path).expect("read deployment example");
+        let bootstrap_source = source
+            .lines()
+            .filter(|line| line.contains("BOOTSTRAP_"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !bootstrap_source.contains("Qaz123456@"),
+            "fixed bootstrap password leaked in {path}"
+        );
+        assert!(
+            source.contains("BOOTSTRAP_MODE"),
+            "explicit bootstrap mode missing in {path}"
+        );
     }
 }
 
@@ -117,19 +139,70 @@ async fn bootstrap_creates_once_skips_existing_admins_and_reuses_roles() {
 }
 
 async fn exercise_bootstrap_contract(pool: &MySqlPool, database_url: &str) -> Result<()> {
-    let initial_password = "Qaz123456@";
-    let (username, password_hash, status, role_name): (String, String, String, String) =
-        sqlx::query_as(
-            r#"SELECT admin_users.username, admin_users.password_hash, admin_users.status, admin_roles.name
+    ensure!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM admin_users")
+            .fetch_one(pool)
+            .await?
+            == 0,
+        "migrator must not create an administrator unless bootstrap mode is explicit"
+    );
+
+    for environment in [
+        vec![("BOOTSTRAP_MODE", "create_admin")],
+        vec![
+            ("BOOTSTRAP_MODE", "create_admin"),
+            ("BOOTSTRAP_ADMIN_PASSWORD", "   "),
+        ],
+        vec![
+            ("BOOTSTRAP_MODE", "create_admin"),
+            ("BOOTSTRAP_ADMIN_PASSWORD", "Qaz123456@"),
+        ],
+    ] {
+        let output = run_migrate(database_url, &environment)?;
+        ensure!(
+            !output.status.success(),
+            "missing, blank, and known default bootstrap passwords must fail"
+        );
+        ensure!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM admin_users")
+                .fetch_one(pool)
+                .await?
+                == 0
+        );
+    }
+
+    let initial_password = "one-time-bootstrap-7!safe";
+    let created = run_migrate(
+        database_url,
+        &[
+            ("BOOTSTRAP_MODE", "create_admin"),
+            ("BOOTSTRAP_ADMIN_PASSWORD", initial_password),
+            ("BOOTSTRAP_ADMIN_PASSWORD_FILE", ""),
+        ],
+    )?;
+    ensure!(
+        created.status.success(),
+        "valid explicit bootstrap must succeed"
+    );
+    let (username, password_hash, status, role_name, must_change_password): (
+        String,
+        String,
+        String,
+        String,
+        bool,
+    ) = sqlx::query_as(
+        r#"SELECT admin_users.username, admin_users.password_hash, admin_users.status,
+                      admin_roles.name, admin_users.must_change_password
                FROM admin_users
                INNER JOIN admin_roles ON admin_roles.id = admin_users.role_id
                LIMIT 1"#,
-        )
-        .fetch_one(pool)
-        .await?;
+    )
+    .fetch_one(pool)
+    .await?;
     ensure!(username == "admin");
     ensure!(status == "active");
     ensure!(role_name == "super_admin");
+    ensure!(must_change_password);
     ensure!(password_hash != initial_password);
     ensure!(password_hash.starts_with("$argon2"));
     ensure!(verify_password(&password_hash, initial_password)?);
@@ -139,6 +212,7 @@ async fn exercise_bootstrap_contract(pool: &MySqlPool, database_url: &str) -> Re
     let skipped_migrate_output = run_migrate(
         database_url,
         &[
+            ("BOOTSTRAP_MODE", "create_admin"),
             ("BOOTSTRAP_ADMIN_USERNAME", "other_admin"),
             ("BOOTSTRAP_ADMIN_PASSWORD", ignored_password),
             ("BOOTSTRAP_ADMIN_ROLE_NAME", "unused_role"),
@@ -174,6 +248,7 @@ async fn exercise_bootstrap_contract(pool: &MySqlPool, database_url: &str) -> Re
     let invalid_migrate_output = run_migrate(
         database_url,
         &[
+            ("BOOTSTRAP_MODE", "create_admin"),
             ("BOOTSTRAP_ADMIN_USERNAME", "invalid_admin"),
             ("BOOTSTRAP_ADMIN_PASSWORD", invalid_password),
             ("BOOTSTRAP_ADMIN_ROLE_NAME", "invalid_role"),
@@ -209,6 +284,7 @@ async fn exercise_bootstrap_contract(pool: &MySqlPool, database_url: &str) -> Re
     let override_migrate_output = run_migrate(
         database_url,
         &[
+            ("BOOTSTRAP_MODE", "create_admin"),
             ("BOOTSTRAP_ADMIN_USERNAME", "  Reuse_Admin  "),
             ("BOOTSTRAP_ADMIN_PASSWORD", reused_password),
             ("BOOTSTRAP_ADMIN_ROLE_NAME", "  Reused_Role  "),
@@ -319,11 +395,33 @@ async fn exercise_bootstrap_contract(pool: &MySqlPool, database_url: &str) -> Re
         .execute(pool)
         .await?;
 
-    let recovered = BootstrapAdminConfig::built_in_defaults()?;
-    ensure!(
-        bootstrap_default_admin(pool, &recovered).await? == BootstrapAdminOutcome::Created,
-        "bootstrap must recover after the forced transaction failure"
+    let recovered_password = "recovered-one-time-password!7";
+    let recovered_secret_path = std::env::temp_dir().join(format!(
+        "exchange-bootstrap-secret-{}",
+        Uuid::now_v7().simple()
+    ));
+    fs::write(&recovered_secret_path, format!("{recovered_password}\n"))?;
+    let recovered_secret_path = recovered_secret_path.to_string_lossy().into_owned();
+    let recovered = run_migrate(
+        database_url,
+        &[
+            ("BOOTSTRAP_MODE", "create_admin"),
+            ("BOOTSTRAP_ADMIN_PASSWORD", ""),
+            ("BOOTSTRAP_ADMIN_PASSWORD_FILE", &recovered_secret_path),
+        ],
     );
+    fs::remove_file(&recovered_secret_path)?;
+    let recovered = recovered?;
+    ensure!(
+        recovered.status.success(),
+        "bootstrap must recover from a Docker Secret file after the forced transaction failure: {}",
+        combined_output(&recovered)
+    );
+    let recovered_hash: String =
+        sqlx::query_scalar("SELECT password_hash FROM admin_users WHERE username = 'admin'")
+            .fetch_one(pool)
+            .await?;
+    ensure!(verify_password(&recovered_hash, recovered_password)?);
     ensure_bootstrap_lock_is_free(pool).await?;
 
     Ok(())
@@ -353,8 +451,10 @@ fn run_migrate(database_url: &str, bootstrap_environment: &[(&str, &str)]) -> Re
         .current_dir(&working_directory)
         .env("DATABASE_URL", database_url)
         .env("RUST_LOG", "info")
+        .env_remove("BOOTSTRAP_MODE")
         .env_remove("BOOTSTRAP_ADMIN_USERNAME")
         .env_remove("BOOTSTRAP_ADMIN_PASSWORD")
+        .env_remove("BOOTSTRAP_ADMIN_PASSWORD_FILE")
         .env_remove("BOOTSTRAP_ADMIN_ROLE_NAME");
     for (name, value) in bootstrap_environment {
         command.env(name, value);

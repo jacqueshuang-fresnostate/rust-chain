@@ -59,6 +59,18 @@ pub(super) struct RefreshRequest {
 }
 
 #[derive(ToSchema)]
+pub(super) struct AdminPasswordChangeRequest {
+    current_password: String,
+    new_password: String,
+}
+
+#[derive(ToSchema)]
+pub(super) struct AdminPasswordChangeResponse {
+    changed: bool,
+    requires_relogin: bool,
+}
+
+#[derive(ToSchema)]
 pub(super) struct TokenResponse {
     access_token: String,
     refresh_token: String,
@@ -333,13 +345,12 @@ fn reset_login_two_factor() {}
 )]
 fn user_refresh() {}
 
-/// 创建后台管理员账号，仅在管理员表为空的引导场景，或由已登录管理员携带有效凭证时才允许。
-/// 初始化完成后缺少或携带无效凭证返回未认证，凭证对应管理员不存在或已停用返回禁止访问。
+/// 创建后台管理员账号始终要求已登录管理员及账号写权限；首管理员只由显式 migrator bootstrap 创建。
 #[utoipa::path(
     post,
     path = "/admin/api/v1/auth/register",
     tag = "auth",
-    summary = "管理员注册（仅空表引导或现有管理员创建）",
+    summary = "现有管理员创建后台账号",
     request_body = AdminAuthRequest,
     responses(
         (status = 200, description = "注册成功", body = TokenResponse),
@@ -368,6 +379,24 @@ fn admin_register() {}
     )
 )]
 fn admin_login() {}
+
+/// 管理员自助轮换口令；引导账号在强制改密期间仍可访问本端点。
+/// 成功后清除强制标志并撤销所有旧会话，客户端必须重新登录。
+#[utoipa::path(
+    patch,
+    path = "/admin/api/v1/auth/password",
+    tag = "auth",
+    summary = "修改当前管理员口令并撤销旧会话",
+    request_body = AdminPasswordChangeRequest,
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "改密成功，需重新登录", body = AdminPasswordChangeResponse),
+        (status = 400, description = "新口令不符合规则", body = ErrorResponse),
+        (status = 401, description = "旧口令或会话无效", body = ErrorResponse),
+        (status = 500, description = "服务内部错误", body = ErrorResponse)
+    )
+)]
+fn admin_password_change() {}
 
 /// 为后台会话续期，用刷新令牌换取新的管理员访问令牌，作用域仍限定在后台。
 /// 刷新令牌失效返回未认证，此时管理员需要重新登录后台。

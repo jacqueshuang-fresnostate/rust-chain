@@ -61,6 +61,8 @@ pub(crate) struct AdminAccessRecord {
     pub(crate) admin_id: u64,
     pub(crate) username: String,
     pub(crate) status: String,
+    pub(crate) must_change_password: bool,
+    pub(crate) auth_session_version: u64,
     pub(crate) role_id: u64,
     pub(crate) role_name: String,
     pub(crate) permissions: Value,

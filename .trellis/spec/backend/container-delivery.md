@@ -18,8 +18,8 @@
 - Default command: `/usr/local/bin/exchange-supervisor`, which starts and monitors Rust plus Nginx.
 - Public listener: Nginx on `0.0.0.0:8080`.
 - Internal listener: `/usr/local/bin/exchange-api` on `127.0.0.1:8081`.
-- Migration process: `/usr/local/bin/exchange-migrate`, applying embedded SQLx migrations,
-  bootstrapping the first administrator when `admin_users` is empty, and exiting.
+- Migration process: `/usr/local/bin/exchange-migrate`, applying embedded SQLx migrations and,
+  only when `BOOTSTRAP_MODE=create_admin`, bootstrapping the first administrator before exiting.
 - Health endpoint: `GET /health` returns HTTP 200 with `{"status":"ok"}`.
 - Published image: `ghcr.io/jacqueshuang-fresnostate/rust-chain:<tag>`.
 - Build workflow: native GitHub Actions matrix plus digest-based manifest finalization.
@@ -61,16 +61,19 @@
   Cloudflare Managed Challenge may target `/admin/*`. The admin endpoint remains a fallback and
   must return the same policy.
 - `CREDENTIAL_ENCRYPTION_KEY` must remain exactly 32 bytes and stable after encrypted data exists.
-- The migration service always requires `DATABASE_URL`. It may also receive
-  `BOOTSTRAP_ADMIN_USERNAME`, `BOOTSTRAP_ADMIN_PASSWORD`, and
-  `BOOTSTRAP_ADMIN_ROLE_NAME`; these bootstrap values must never be passed to the API service.
-- Missing or blank bootstrap values use the built-in defaults `admin`, `Qaz123456@`, and
-  `super_admin`. Non-blank environment values override those defaults.
+- The migration service always requires `DATABASE_URL`. It may also receive `BOOTSTRAP_MODE`,
+  `BOOTSTRAP_ADMIN_USERNAME`, exactly one of `BOOTSTRAP_ADMIN_PASSWORD` or
+  `BOOTSTRAP_ADMIN_PASSWORD_FILE`, and `BOOTSTRAP_ADMIN_ROLE_NAME`; bootstrap values must never be
+  passed to the API service.
+- Bootstrap is disabled when `BOOTSTRAP_MODE` is absent or `disabled`. Only the exact
+  `create_admin` value enables it. In that mode a non-blank, non-default one-time password is
+  mandatory; username and role may retain the non-secret `admin` and `super_admin` defaults.
 - Bootstrap normalizes the username with the shared auth helper, validates the password and role
   name, hashes the password with the shared Argon2 helper, and never logs or includes the plaintext
   password in errors.
 - Bootstrap must serialize concurrent migration runners, then use one transaction to check for any
-  administrator, create or reuse the requested role, and insert an active administrator. If any
+  administrator, create or reuse the requested role, and insert an active administrator marked for
+  mandatory password rotation. If any
   administrator already exists, it skips before creating a role and never changes an existing
   username, role, status, or password hash.
 - Every acquired bootstrap named lock must be explicitly released on both success and failure
@@ -127,7 +130,8 @@
 | Condition | Required result |
 |-----------|-----------------|
 | `DATABASE_URL` is absent from the migration process | Exit non-zero with a configuration error |
-| Bootstrap variables are absent or blank | Use `admin`, `Qaz123456@`, and `super_admin` |
+| `BOOTSTRAP_MODE` is absent or `disabled` | Apply migrations and create no administrator |
+| Bootstrap mode is enabled but password is absent, blank, duplicated across env/file, or known-default | Write no bootstrap rows and exit non-zero |
 | A bootstrap username, password, or role name is invalid | Write no bootstrap rows, exit non-zero, and keep the API blocked |
 | `admin_users` is empty and bootstrap credentials are valid | Create one active administrator with an Argon2 hash and the requested role |
 | Any administrator already exists | Skip without creating a role or changing any administrator |
@@ -160,8 +164,8 @@
 
 ### 5. Good/Base/Bad Cases
 
-- Good: copy `docker-compose.env.example`, replace every placeholder, pull a pinned image tag,
-  start the stack, and observe migration plus first-administrator bootstrap exit `0` followed by a
+- Good: copy `docker-compose.env.example`, replace every placeholder, inject a one-time random
+  bootstrap Secret only for the first deployment, pull a pinned image tag, start the stack, and observe migration plus first-administrator bootstrap exit `0` followed by a
   healthy integrated container that serves both the admin SPA and API on port `8080`.
 - Good (1Panel): install dependencies separately, connect them to the selected external network,
   provide full connection URLs through the Compose environment, observe migration exit `0`, and
@@ -202,7 +206,7 @@
   MySQL, MongoDB, Redis, or RabbitMQ service/volume definitions.
 - Assert expanded `api` and `migrate` environments contain identical `DATABASE_URL` and `RUST_LOG`
   values.
-- Assert expanded `migrate` contains all three bootstrap variables while expanded `api` contains
+- Assert expanded `migrate` contains the bootstrap mode, username, password/password-file, and role variables while expanded `api` contains
   none of them.
 - Assert the expanded 1Panel API environment contains matching Turnstile Secret/Site Key examples,
   the default enforce value is `true`, and the login policy is disabled if either half is absent.
@@ -256,15 +260,17 @@ treats Rust plus Nginx as one restartable application.
 Bootstrap credentials have the same one-shot boundary:
 
 ```yaml
-# Wrong: the long-running API inherits the bootstrap password.
+# Wrong: the long-running API inherits a bootstrap password.
 x-common-environment: &common-environment
-  BOOTSTRAP_ADMIN_PASSWORD: Qaz123456@
+  BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD}
 
-# Correct: only the migration process receives bootstrap overrides.
+# Correct: only an explicitly enabled migration process receives the one-time Secret.
 services:
   migrate:
     environment:
-      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-Qaz123456@}
+      BOOTSTRAP_MODE: ${BOOTSTRAP_MODE:-disabled}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_ADMIN_PASSWORD_FILE: ${BOOTSTRAP_ADMIN_PASSWORD_FILE:-}
 ```
 
 Turnstile enablement must not be coupled to the clearance override:

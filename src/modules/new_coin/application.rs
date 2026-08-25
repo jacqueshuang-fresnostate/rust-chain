@@ -17,7 +17,6 @@ use crate::{
     modules::{
         events::{EventBroadcastHub, EventBroadcastMessage},
         new_coin::{
-            LifecycleStatus,
             infrastructure::MySqlNewCoinReadRepository,
             presentation::{
                 CreatePurchaseRequest, CreateSubscriptionRequest, ListQuery,
@@ -33,15 +32,14 @@ use crate::{
                 NewCoinUnlockReleaseRepository, UnlockFeePaymentWrite,
             },
             service::{
-                ensure_idempotency_key, ensure_positive_amount,
-                ensure_post_listing_purchase_enabled, ensure_unlock_fee_payment_matches,
-                lifecycle_status, lock_positions_for_project, route_limit, user_id_from_subject,
+                ensure_idempotency_key, ensure_positive_amount, ensure_unlock_fee_payment_matches,
+                new_coin_purchase_fingerprint, new_coin_subscription_fingerprint, route_limit,
+                user_id_from_subject,
             },
         },
     },
 };
 use bigdecimal::BigDecimal;
-use chrono::Utc;
 use serde_json::json;
 use sqlx::{MySql, Pool};
 
@@ -159,8 +157,8 @@ pub(crate) async fn list_new_coin_unlocks(
 /// 先按解禁幂等键与用户读取应收口径，读不到即返回 `NotFound`，据此同时挡住不存在的记录和越权访问。
 /// 随后由 `ensure_unlock_fee_payment_matches` 拦截四类非法缴费：本不收费、支付资产不符、
 /// 记录未配置应收金额、金额不等；金额比较按 normalized 进行，仅 scale 不同的等值支付会被接受。
-/// 当前实现只更新解锁记录，不扣钱包也不写资金流水；状态守卫压在 UPDATE 的 WHERE 内，
-/// 因此重复调用不报错而是返回 `paid=false`，调用方须据该字段而非 HTTP 状态判断本次是否生效。
+/// 仓储事务会锁定应收与钱包，扣 available、写用户流水与平台收支双腿，再固化 paid 时间和流水编号；
+/// 同参重复调用在复核完整结算证据后返回 `paid=false`，异参、余额不足或任一写入失败均不推进状态。
 /// 本用例不发布事件，缴费成功也不触发任何广播。
 pub(crate) async fn pay_new_coin_unlock_fee(
     pool: Option<Pool<MySql>>,
@@ -263,7 +261,7 @@ async fn release_new_coin_unlock_with_internal(
 /// 事件类型为 `new_coin.subscription.created`，携带幂等键、项目与资产编号、计价资产与金额、
 /// 申购数量、订单状态和锁仓位置编号，字段全部取自内核回吐的载荷而非重新查库。
 /// 仓储提交订单、余额、流水和锁仓后才发布该私有事件；广播中心未配置时静默跳过，不影响资金结果。
-/// 重复幂等键由仓储返回 Conflict，此时既不扣款也不广播，因此重放不会产生第二条通知。
+/// 同指纹重放返回原结果但不再广播，异指纹复用幂等键返回 Conflict，两者都不重复扣款。
 pub(crate) async fn create_new_coin_subscription_with_events(
     pool: Option<Pool<MySql>>,
     event_broadcast_hub: Option<&EventBroadcastHub>,
@@ -311,9 +309,8 @@ struct NewCoinSubscriptionEventPayload {
 /// 申购下单的内核：按符号取项目规则、执行全部前置校验、算出锁仓计划，再交仓储在单事务中落地。
 /// 校验顺序为项目存在、生命周期恰为 subscription、支付金额与申购数量均为正、幂等键去空后非空，
 /// 任一失败都在建立事务之前返回，因此不会占用行锁也不会留下半张订单。
-/// 项目规则在此处不加锁读取，仓储的申购事务也不会重新锁定项目行，
-/// 所以本路径不防御「校验通过后后台改规则」的竞态，这一点与买入路径不同。
-/// 锁仓计划以幂等键作为来源编号、以当前时刻作为来源时间生成，
+/// 此处只做不加锁的快速预校验；仓储事务会重新锁项目并复核价格、计价资产、供给和解禁规则。
+/// 锁仓计划在项目行锁内以幂等键作为来源编号、以当前时刻作为来源时间生成，
 /// 因此相对周期类解禁从下单时刻起算，且同一幂等键重跑会得到相同的来源标识。
 /// 响应状态由仓储返回的锁仓编号推导：有编号说明资产被锁仓记为 allocated，
 /// 无编号说明按规则直接到账记为 available。
@@ -329,34 +326,27 @@ async fn create_new_coin_subscription_with_internal(
     Option<NewCoinSubscriptionEventPayload>,
 )> {
     let user_id = user_id_from_subject(subject)?;
+    ensure_positive_amount(&request.quote_amount, "quote_amount")?;
+    ensure_positive_amount(&request.quantity, "quantity")?;
+    ensure_idempotency_key(&request.idempotency_key)?;
     let repository = new_coin_read_repository(pool)?;
     let project = repository
         .find_project_rule_by_symbol(&symbol)
         .await?
         .ok_or(AppError::NotFound)?;
-    if lifecycle_status(&project.lifecycle_status)? != LifecycleStatus::Subscription {
-        return Err(AppError::Validation(
-            "new coin subscription is not open for this project".to_owned(),
-        ));
-    }
-    ensure_positive_amount(&request.quote_amount, "quote_amount")?;
-    ensure_positive_amount(&request.quantity, "quantity")?;
-    ensure_idempotency_key(&request.idempotency_key)?;
 
     let idempotency_key = request.idempotency_key.clone();
     let quantity = request.quantity.clone();
     let quote_amount = request.quote_amount.clone();
     let quote_asset_id = request.quote_asset_id;
-    let lock_positions = lock_positions_for_project(
-        &project,
+    let request_fingerprint = new_coin_subscription_fingerprint(
         user_id,
-        project.asset_id,
-        &idempotency_key,
-        quantity.clone(),
-        Utc::now(),
-        "new_coin_subscription",
-    )?;
-    let lock_position_id = repository
+        project.id,
+        quote_asset_id,
+        &quote_amount,
+        &quantity,
+    );
+    let outcome = repository
         .create_subscription_order(NewCoinSubscriptionOrderWrite {
             user_id,
             project: project.clone(),
@@ -364,38 +354,33 @@ async fn create_new_coin_subscription_with_internal(
             quote_amount: quote_amount.clone(),
             quantity: quantity.clone(),
             idempotency_key: idempotency_key.clone(),
-            lock_positions,
+            request_fingerprint,
         })
         .await?;
-    let status = if lock_position_id.is_some() {
-        "allocated".to_owned()
-    } else {
-        "available".to_owned()
-    };
     let response = NewCoinOrderCreationResponse {
         idempotency_key,
-        status,
-        lock_position_id,
+        status: outcome.status.clone(),
+        lock_position_id: outcome.lock_position_id,
     };
     let event_payload = NewCoinSubscriptionEventPayload {
         idempotency_key: response.idempotency_key.clone(),
-        project_id: project.id,
-        asset_id: project.asset_id,
-        quote_asset_id,
-        quote_amount,
+        project_id: outcome.project_id,
+        asset_id: outcome.asset_id,
+        quote_asset_id: outcome.quote_asset_id,
+        quote_amount: outcome.authoritative_quote_amount,
         quantity,
         status: response.status.clone(),
-        lock_position_id,
+        lock_position_id: outcome.lock_position_id,
     };
-    Ok((response, Some(event_payload)))
+    Ok((response, outcome.created.then_some(event_payload)))
 }
 
-/// 创建上市后购买：要求 listed、后台开关开启且 `pair_id` 精确匹配批准交易对，再按 `price × quantity` 原子扣款并分配新币。
+/// 创建上市后购买：要求 listed、后台开关开启且 `pair_id` 精确匹配批准交易对，再按项目权威 `issue_price × quantity` 原子扣款并分配新币。
 /// 本函数是事件外壳，只负责在内核成功返回后把成交结果广播给下单用户本人。
 /// 事件类型为 `new_coin.purchase.created`，比申购事件多出交易对编号与成交价格两个字段，
 /// 使订阅方无需回查即可还原这笔二级市场买入的完整成交口径。
 /// 仓储提交订单、余额、流水和锁仓后才发布该私有事件；广播中心未配置时静默跳过。
-/// 重复幂等键返回 Conflict，不产生第二笔资金变更，也不会重复发出通知。
+/// 同指纹重放返回原结果但不再广播，异指纹复用幂等键返回 Conflict，两者都不重复资金变更。
 pub(crate) async fn create_new_coin_purchase_with_events(
     pool: Option<Pool<MySql>>,
     event_broadcast_hub: Option<&EventBroadcastHub>,
@@ -403,7 +388,7 @@ pub(crate) async fn create_new_coin_purchase_with_events(
     symbol: String,
     request: CreatePurchaseRequest,
 ) -> AppResult<NewCoinOrderCreationResponse> {
-    // 应用层统一认购后事件构建，避免路由层感知具体消息体。
+    // 应用层统一购买后事件构建，避免路由层感知具体消息体。
     let user_id = user_id_from_subject(subject)?;
     let (response, event_payload) =
         create_new_coin_purchase_with_internal(pool, subject, symbol, request).await?;
@@ -463,65 +448,49 @@ async fn create_new_coin_purchase_with_internal(
     Option<NewCoinPurchaseEventPayload>,
 )> {
     let user_id = user_id_from_subject(subject)?;
+    ensure_positive_amount(&request.price, "price")?;
+    ensure_positive_amount(&request.quantity, "quantity")?;
+    ensure_idempotency_key(&request.idempotency_key)?;
     let repository = new_coin_read_repository(pool)?;
     let project = repository
         .find_project_rule_by_symbol(&symbol)
         .await?
         .ok_or(AppError::NotFound)?;
-    if lifecycle_status(&project.lifecycle_status)? != LifecycleStatus::Listed {
-        return Err(AppError::Validation(
-            "post-listing new coin purchase is not open for this project".to_owned(),
-        ));
-    }
-    // 上市后认购必须服从后台单独开关和绑定交易对，避免用户绕过后台配置直接下单。
-    ensure_post_listing_purchase_enabled(&project, request.pair_id)?;
-    ensure_positive_amount(&request.price, "price")?;
-    ensure_positive_amount(&request.quantity, "quantity")?;
-    ensure_idempotency_key(&request.idempotency_key)?;
-
-    let pair = repository
-        .find_pair_for_purchase(request.pair_id, project.asset_id)
-        .await?
-        .ok_or(AppError::NotFound)?;
     let idempotency_key = request.idempotency_key.clone();
     let price = request.price.clone();
     let quantity = request.quantity.clone();
-    let quote_amount = price.clone() * quantity.clone();
     let pair_id = request.pair_id;
-    let lock_position_id = repository
+    let request_fingerprint =
+        new_coin_purchase_fingerprint(user_id, project.id, pair_id, &price, &quantity);
+    let outcome = repository
         .create_purchase_order(NewCoinPurchaseOrderWrite {
             user_id,
             project: project.clone(),
             pair_id,
             price: price.clone(),
             quantity: quantity.clone(),
-            quote_amount: quote_amount.clone(),
             idempotency_key: idempotency_key.clone(),
+            request_fingerprint,
         })
         .await?;
-    let status = if lock_position_id.is_some() {
-        "locked".to_owned()
-    } else {
-        "available".to_owned()
-    };
     let response = NewCoinOrderCreationResponse {
         idempotency_key,
-        status,
-        lock_position_id,
+        status: outcome.status.clone(),
+        lock_position_id: outcome.lock_position_id,
     };
     let event_payload = NewCoinPurchaseEventPayload {
         idempotency_key: response.idempotency_key.clone(),
-        project_id: project.id,
+        project_id: outcome.project_id,
         pair_id,
-        asset_id: project.asset_id,
-        quote_asset_id: pair.quote_asset_id,
-        price,
+        asset_id: outcome.asset_id,
+        quote_asset_id: outcome.quote_asset_id,
+        price: outcome.authoritative_price,
         quantity,
-        quote_amount,
+        quote_amount: outcome.authoritative_quote_amount,
         status: response.status.clone(),
-        lock_position_id,
+        lock_position_id: outcome.lock_position_id,
     };
-    Ok((response, Some(event_payload)))
+    Ok((response, outcome.created.then_some(event_payload)))
 }
 
 /// 从可选连接池装配新币仓储适配器，是本文件所有用例接触持久化的唯一入口。

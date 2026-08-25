@@ -1,4 +1,7 @@
 use super::*;
+use crate::modules::new_coin::service::{
+    calculate_unlock_fee_fields, new_coin_unlock_idempotency_key, quantize_unlock_fee_amount,
+};
 
 #[derive(Debug)]
 pub(crate) struct AdminNewCoinFlatListFilter {
@@ -38,6 +41,7 @@ pub(crate) struct AdminNewCoinProjectInsert {
     pub(crate) lifecycle_status: String,
     pub(crate) total_supply: BigDecimal,
     pub(crate) issue_price: BigDecimal,
+    pub(crate) quote_asset_id: u64,
     pub(crate) listed_at: Option<DateTime<Utc>>,
     pub(crate) unlock_type: String,
     pub(crate) fixed_unlock_at: Option<DateTime<Utc>>,
@@ -295,16 +299,19 @@ pub(crate) async fn insert_admin_new_coin_project_in_tx(
 ) -> AppResult<u64> {
     let result = sqlx::query(
         r#"INSERT INTO new_coin_projects
-           (asset_id, symbol, lifecycle_status, total_supply, issue_price, listed_at,
+           (asset_id, symbol, lifecycle_status, total_supply, issue_price, quote_asset_id,
+            reserved_supply, allocated_supply, remaining_supply, listed_at,
             unlock_type, fixed_unlock_at, relative_unlock_seconds, unlock_fee_enabled,
             unlock_fee_rate, unlock_fee_basis, unlock_fee_asset, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')"#,
+           VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')"#,
     )
     .bind(input.asset_id)
     .bind(&input.symbol)
     .bind(&input.lifecycle_status)
     .bind(&input.total_supply)
     .bind(&input.issue_price)
+    .bind(input.quote_asset_id)
+    .bind(&input.total_supply)
     .bind(input.listed_at)
     .bind(&input.unlock_type)
     .bind(input.fixed_unlock_at)
@@ -598,16 +605,18 @@ pub(crate) async fn ensure_admin_new_coin_post_listing_pair_in_tx(
     tx: &mut Transaction<'_, MySql>,
     pair_id: u64,
     project_asset_id: u64,
+    project_quote_asset_id: u64,
 ) -> AppResult<()> {
     sqlx::query_as::<_, (u64,)>(
         r#"SELECT id
            FROM trading_pairs
-           WHERE id = ? AND base_asset = ?
+           WHERE id = ? AND base_asset = ? AND quote_asset = ?
            LIMIT 1
            FOR UPDATE"#,
     )
     .bind(pair_id)
     .bind(project_asset_id)
+    .bind(project_quote_asset_id)
     .fetch_optional(&mut **tx)
     .await?
     .ok_or(AppError::NotFound)?;
@@ -661,20 +670,23 @@ pub(crate) async fn apply_admin_new_coin_subscription_distribution_in_tx(
     project_id: u64,
     user_id: u64,
     quantity: &BigDecimal,
-) -> AppResult<()> {
-    let Some((requested_quantity, allocated_quantity)): Option<(BigDecimal, BigDecimal)> =
-        sqlx::query_as(
-            r#"SELECT requested_quantity, allocated_quantity
+) -> AppResult<BigDecimal> {
+    let Some((requested_quantity, allocated_quantity, issue_price)): Option<(
+        BigDecimal,
+        BigDecimal,
+        BigDecimal,
+    )> = sqlx::query_as(
+        r#"SELECT requested_quantity, allocated_quantity, issue_price
                FROM new_coin_subscriptions
                WHERE id = ? AND project_id = ? AND user_id = ?
                LIMIT 1
                FOR UPDATE"#,
-        )
-        .bind(subscription_id)
-        .bind(project_id)
-        .bind(user_id)
-        .fetch_optional(&mut **tx)
-        .await?
+    )
+    .bind(subscription_id)
+    .bind(project_id)
+    .bind(user_id)
+    .fetch_optional(&mut **tx)
+    .await?
     else {
         return Err(AppError::NotFound);
     };
@@ -699,7 +711,7 @@ pub(crate) async fn apply_admin_new_coin_subscription_distribution_in_tx(
     .bind(subscription_id)
     .execute(&mut **tx)
     .await?;
-    Ok(())
+    Ok(issue_price * quantity.clone())
 }
 
 /// 在调用方事务中把新币分配量记入可用余额，或记入锁定余额并建立锁仓来源。
@@ -707,12 +719,16 @@ pub(crate) async fn apply_admin_new_coin_subscription_distribution_in_tx(
 /// 账户行先锁定后更新，钱包余额、账后快照和锁仓明细必须由同一事务一起提交。
 /// 无锁仓计划时返回空值并直接加可用余额；有计划时返回首个锁仓仓位编号。
 /// 锁仓来源依靠唯一键防重复，但钱包加账不独立幂等；失败须由调用方回滚整个分配事务。
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn apply_admin_new_coin_distribution_allocation_in_tx(
     tx: &mut Transaction<'_, MySql>,
     user_id: u64,
     asset_id: u64,
     quantity: &BigDecimal,
     lock_positions: &[AdminNewCoinLockPositionWrite],
+    project: &NewCoinProjectResponse,
+    purchase_cost: &BigDecimal,
+    unlock_fee_precision: Option<i32>,
     ledger: AdminNewCoinLedgerWrite<'_>,
 ) -> AppResult<Option<u64>> {
     if lock_positions.is_empty() {
@@ -756,11 +772,168 @@ pub(crate) async fn apply_admin_new_coin_distribution_allocation_in_tx(
     let mut first_lock_position_id = None;
     for position in lock_positions {
         let position_id = upsert_admin_new_coin_lock_position(tx, position).await?;
+        ensure_admin_new_coin_unlock_record_in_tx(
+            tx,
+            user_id,
+            asset_id,
+            position_id,
+            &position.amount,
+            project,
+            purchase_cost,
+            unlock_fee_precision,
+            &position.source_id,
+        )
+        .await?;
         if first_lock_position_id.is_none() {
             first_lock_position_id = Some(position_id);
         }
     }
     Ok(first_lock_position_id)
+}
+
+/// 派发计算相对解禁起点前先取得目标钱包锁，避免资金锁等待被误计入用户锁仓周期。
+pub(crate) async fn lock_admin_new_coin_distribution_wallet_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    asset_id: u64,
+) -> AppResult<()> {
+    lock_or_create_admin_wallet_row_in_tx(tx, user_id, asset_id).await?;
+    Ok(())
+}
+
+/// 后台派发产生锁仓时同步固化解禁应收；之后调整项目费率不会改写该批记录。
+#[allow(clippy::too_many_arguments)]
+async fn ensure_admin_new_coin_unlock_record_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    asset_id: u64,
+    lock_position_id: u64,
+    quantity: &BigDecimal,
+    project: &NewCoinProjectResponse,
+    purchase_cost: &BigDecimal,
+    unlock_fee_precision: Option<i32>,
+    source_id: &str,
+) -> AppResult<()> {
+    let (mut fee_paid_status, mut unlock_fee_amount) = calculate_unlock_fee_fields(
+        project.unlock_fee_enabled,
+        project.unlock_fee_rate.as_ref(),
+        project.unlock_fee_basis.as_deref(),
+        project.unlock_fee_asset,
+        quantity,
+        &project.issue_price,
+        purchase_cost,
+    )?;
+    if let (Some(_), Some(raw_fee_amount)) = (project.unlock_fee_asset, unlock_fee_amount.as_ref())
+    {
+        let precision = unlock_fee_precision.ok_or_else(|| {
+            AppError::Internal("unlock fee asset precision was not locked".to_owned())
+        })?;
+        let quantized = quantize_unlock_fee_amount(raw_fee_amount, precision)?;
+        fee_paid_status = if quantized > 0 {
+            "pending"
+        } else {
+            "not_required"
+        };
+        unlock_fee_amount = Some(quantized);
+    }
+
+    let unlock_idempotency_key =
+        new_coin_unlock_idempotency_key("new_coin_distribution", source_id)?;
+    sqlx::query(
+        r#"INSERT INTO asset_unlock_records
+           (user_id, asset_id, lock_position_id, unlock_quantity, unlock_price,
+            unlock_fee_enabled, unlock_fee_rate, unlock_fee_basis, unlock_fee_asset,
+            unlock_fee_amount, fee_paid_status, status, idempotency_key)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+           ON DUPLICATE KEY UPDATE updated_at = updated_at"#,
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .bind(lock_position_id)
+    .bind(quantity)
+    .bind(&project.issue_price)
+    .bind(project.unlock_fee_enabled)
+    .bind(&project.unlock_fee_rate)
+    .bind(&project.unlock_fee_basis)
+    .bind(project.unlock_fee_asset)
+    .bind(&unlock_fee_amount)
+    .bind(fee_paid_status)
+    .bind(unlock_idempotency_key)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// 新币资金事务以行锁读取 active 资产精度，调用方按资产主键顺序调用以统一锁序。
+pub(crate) async fn load_active_new_coin_asset_precision_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    asset_id: u64,
+) -> AppResult<i32> {
+    let Some((precision_scale, status)): Option<(i32, String)> = sqlx::query_as(
+        "SELECT precision_scale, status FROM assets WHERE id = ? LIMIT 1 FOR UPDATE",
+    )
+    .bind(asset_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    else {
+        return Err(AppError::NotFound);
+    };
+    if status != "active" {
+        return Err(AppError::Validation(
+            "new coin asset must be active".to_owned(),
+        ));
+    }
+    Ok(precision_scale)
+}
+
+/// 在已锁定项目的派发事务内预留供给，剩余数量不足时拒绝且不动钱包。
+pub(crate) async fn reserve_admin_new_coin_supply_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    project_id: u64,
+    quantity: &BigDecimal,
+) -> AppResult<()> {
+    let updated = sqlx::query(
+        r#"UPDATE new_coin_projects
+           SET reserved_supply = reserved_supply + ?, remaining_supply = remaining_supply - ?
+           WHERE id = ? AND remaining_supply >= ?"#,
+    )
+    .bind(quantity)
+    .bind(quantity)
+    .bind(project_id)
+    .bind(quantity)
+    .execute(&mut **tx)
+    .await?;
+    if updated.rows_affected() != 1 {
+        return Err(AppError::Validation(
+            "new coin project remaining supply is insufficient".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// 派发钱包与锁仓落库后把预留供给转入已分配，失败由外层事务回滚全部资金腿。
+pub(crate) async fn finalize_admin_new_coin_supply_in_tx(
+    tx: &mut Transaction<'_, MySql>,
+    project_id: u64,
+    quantity: &BigDecimal,
+) -> AppResult<()> {
+    let updated = sqlx::query(
+        r#"UPDATE new_coin_projects
+           SET reserved_supply = reserved_supply - ?, allocated_supply = allocated_supply + ?
+           WHERE id = ? AND reserved_supply >= ?"#,
+    )
+    .bind(quantity)
+    .bind(quantity)
+    .bind(project_id)
+    .bind(quantity)
+    .execute(&mut **tx)
+    .await?;
+    if updated.rows_affected() != 1 {
+        return Err(AppError::Internal(
+            "new coin distribution supply reservation could not be finalized".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 async fn upsert_admin_new_coin_lock_position(
@@ -828,7 +1001,9 @@ async fn upsert_admin_new_coin_lock_position(
 fn admin_new_coin_project_query() -> QueryBuilder<'static, MySql> {
     QueryBuilder::<MySql>::new(
         r#"SELECT projects.id, projects.asset_id, projects.symbol, projects.lifecycle_status,
-                  projects.total_supply, projects.issue_price, projects.listed_at,
+                  projects.total_supply, projects.issue_price, projects.quote_asset_id,
+                  projects.reserved_supply, projects.allocated_supply, projects.remaining_supply,
+                  projects.listed_at,
                   projects.unlock_type, projects.fixed_unlock_at, projects.relative_unlock_seconds,
                   projects.unlock_fee_enabled, projects.unlock_fee_rate, projects.unlock_fee_basis,
                   projects.unlock_fee_asset, projects.status, projects.post_listing_purchase_enabled,

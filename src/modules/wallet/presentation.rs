@@ -63,7 +63,29 @@ pub struct DepositAddressResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct CreateWithdrawalQuoteRequest {
+    pub asset_symbol: String,
+    pub network: String,
+    pub amount: BigDecimal,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct WithdrawalQuoteResponse {
+    pub quote_id: String,
+    pub asset_symbol: String,
+    pub network: String,
+    pub amount: BigDecimal,
+    pub fee: BigDecimal,
+    pub net: BigDecimal,
+    pub total_reserved: BigDecimal,
+    pub fee_config_version: String,
+    #[serde(with = "unix_millis")]
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct CreateWithdrawalRequest {
+    pub quote_id: String,
     pub asset_symbol: String,
     pub network: Option<String>,
     pub address: String,
@@ -77,8 +99,17 @@ pub struct CreateWithdrawalRequest {
 #[derive(Debug, Serialize)]
 pub struct WithdrawalRequestResponse {
     pub id: u64,
+    pub quote_id: String,
     pub status: String,
+    pub asset_symbol: String,
+    pub network: String,
+    pub amount: BigDecimal,
+    pub fee: BigDecimal,
+    pub net: BigDecimal,
     pub total_reserved: BigDecimal,
+    pub fee_config_version: String,
+    #[serde(with = "unix_millis")]
+    pub expires_at: DateTime<Utc>,
     pub security_method: SecurityVerificationMethod,
 }
 
@@ -124,15 +155,23 @@ pub struct WalletWithdrawalResponse {
     pub security_method: String,
     pub idempotency_key: String,
     pub gateway_request_id: String,
+    pub withdrawal_quote_id: Option<String>,
     pub tx_hash: Option<String>,
     pub block_height: Option<u64>,
     pub confirmations: u32,
     pub failure_reason: Option<String>,
+    pub broadcast_error_class: Option<String>,
+    pub broadcast_last_error: Option<String>,
+    pub broadcast_resolution: Option<String>,
+    #[serde(default, with = "option_unix_millis")]
+    pub acceptance_evidence_at: Option<DateTime<Utc>>,
     pub review_reason: Option<String>,
     pub reviewed_by: Option<u64>,
     pub broadcasted_by: Option<u64>,
     pub confirmed_by: Option<u64>,
     pub failed_by: Option<u64>,
+    pub retry_count: u32,
+    pub gateway_query_count: u32,
     #[serde(default, with = "option_unix_millis")]
     pub reviewed_at: Option<DateTime<Utc>>,
     #[serde(default, with = "option_unix_millis")]
@@ -143,6 +182,10 @@ pub struct WalletWithdrawalResponse {
     pub failed_at: Option<DateTime<Utc>>,
     #[serde(default, with = "option_unix_millis")]
     pub released_at: Option<DateTime<Utc>>,
+    #[serde(default, with = "option_unix_millis")]
+    pub last_gateway_query_at: Option<DateTime<Utc>>,
+    #[serde(default, with = "option_unix_millis")]
+    pub manual_review_at: Option<DateTime<Utc>>,
     #[serde(with = "unix_millis")]
     pub created_at: DateTime<Utc>,
 }

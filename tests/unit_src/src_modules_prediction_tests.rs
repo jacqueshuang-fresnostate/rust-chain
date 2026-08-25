@@ -1,4 +1,5 @@
 use crate::error::AppError;
+use chrono::{TimeDelta, TimeZone, Utc};
 use serde_json::{Value, json};
 
 #[test]
@@ -71,7 +72,7 @@ fn admin_asset_config_query_does_not_require_assets_updated_at() {
     );
     assert!(
         super::infrastructure::ADMIN_ASSET_CONFIGS_SQL
-            .contains("COALESCE(configs.revision, 0) AS revision")
+            .contains("COALESCE(configs.revision, CAST(0 AS UNSIGNED)) AS revision")
     );
 }
 
@@ -114,4 +115,92 @@ fn prediction_admin_reason_is_trimmed_required_and_bounded() {
         super::service::required_admin_reason(Some("理".repeat(513))),
         Err(AppError::Validation(message)) if message == "reason is too long"
     ));
+}
+
+#[test]
+fn prediction_trading_window_is_left_open_at_end_and_rejects_stale_sync() {
+    let now = Utc.with_ymd_and_hms(2026, 8, 24, 12, 0, 0).unwrap();
+    assert!(
+        super::service::validate_market_trading_window(
+            super::service::STATUS_ACTIVE,
+            super::service::SETTLEMENT_OPEN,
+            Some(now + TimeDelta::microseconds(1)),
+            Some(now - TimeDelta::seconds(60)),
+            now,
+            60,
+        )
+        .is_ok()
+    );
+    assert!(
+        super::service::validate_market_trading_window(
+            super::service::STATUS_ACTIVE,
+            super::service::SETTLEMENT_OPEN,
+            Some(now),
+            Some(now),
+            now,
+            60,
+        )
+        .is_err()
+    );
+    assert!(
+        super::service::validate_market_trading_window(
+            super::service::STATUS_ACTIVE,
+            super::service::SETTLEMENT_OPEN,
+            Some(now + TimeDelta::minutes(10)),
+            Some(now - TimeDelta::seconds(60) - TimeDelta::microseconds(1)),
+            now,
+            60,
+        )
+        .is_err()
+    );
+    assert!(
+        super::service::validate_market_trading_window(
+            super::service::STATUS_ACTIVE,
+            super::service::SETTLEMENT_OPEN,
+            Some(now + TimeDelta::minutes(10)),
+            Some(now + TimeDelta::microseconds(1)),
+            now,
+            60,
+        )
+        .is_err()
+    );
+
+    for (display_status, settlement_status, end_at, last_synced_at) in [
+        (
+            super::service::STATUS_HIDDEN,
+            super::service::SETTLEMENT_OPEN,
+            Some(now + TimeDelta::minutes(10)),
+            Some(now),
+        ),
+        (
+            super::service::STATUS_ACTIVE,
+            super::service::SETTLEMENT_PENDING_CONFIRMATION,
+            Some(now + TimeDelta::minutes(10)),
+            Some(now),
+        ),
+        (
+            super::service::STATUS_ACTIVE,
+            super::service::SETTLEMENT_OPEN,
+            None,
+            Some(now),
+        ),
+        (
+            super::service::STATUS_ACTIVE,
+            super::service::SETTLEMENT_OPEN,
+            Some(now + TimeDelta::minutes(10)),
+            None,
+        ),
+    ] {
+        assert!(
+            super::service::validate_market_trading_window(
+                display_status,
+                settlement_status,
+                end_at,
+                last_synced_at,
+                now,
+                60,
+            )
+            .is_err()
+        );
+    }
 }

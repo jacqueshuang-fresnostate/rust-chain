@@ -1,7 +1,7 @@
 //! 杠杆定价所依赖的服务端行情缓存适配器。
 //!
 //! 开仓入场价、平仓标记价和风险快照价格全部从这里取，来源是行情接入链写入 Redis 的 ticker 缓存。
-//! 三个入口共用同一套有效性判定：缓存必须存在、价格必须为正、观测时间不得早于当前六十秒。
+//! 三个入口共用同一套有效性判定：缓存必须存在、价格必须为正、观测时间必须落在当前时刻到过去六十秒内。
 //! 任何一项不满足都返回校验错误，绝不回退到客户端传入的价格，这是杠杆不接受用户报价的实现保证。
 //! 本文件只读 Redis，不访问 MySQL、不加锁、不产生任何资金写入，失败时调用方须在动账之前中止。
 
@@ -92,7 +92,8 @@ pub(crate) async fn cached_margin_entry_price(
 /// 三个取价入口共用的行情有效性闸门，依次检查连接、缓存、价格符号和新鲜度四项。
 /// Redis 未配置时直接报校验错误而不是当作缺失行情，两种情况文案相同但都不允许继续动账。
 /// 价格必须严格大于零，避免撮合异常写入的零价被用作入场价或标记价而算出无穷大的仓位。
-/// 观测时间早于当前六十秒即判为陈旧，宁可让开仓和平仓失败也不用过期价格结算资金。
+/// 观测时间晚于服务端当前时刻视为时钟或输入异常，早于当前六十秒则判为陈旧。
+/// 两类时间边界都 fail closed，宁可让开仓、平仓和资金转出失败也不用非权威时点的价格。
 /// `missing_message` 与 `label` 只用于区分调用来源的错误文案，不影响判定逻辑。
 async fn cached_valid_margin_ticker(
     redis: Option<&ConnectionManager>,
@@ -114,7 +115,13 @@ async fn cached_valid_margin_ticker(
             "{label} price must be positive for pair {pair_id}"
         )));
     }
-    if ticker.observed_at < Utc::now() - chrono::TimeDelta::seconds(60) {
+    let now = Utc::now();
+    if ticker.observed_at > now {
+        return Err(AppError::Validation(format!(
+            "{label} is from the future for pair {pair_id}"
+        )));
+    }
+    if ticker.observed_at < now - chrono::TimeDelta::seconds(60) {
         return Err(AppError::Validation(format!(
             "{label} is stale for pair {pair_id}"
         )));

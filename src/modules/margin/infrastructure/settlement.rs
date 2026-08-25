@@ -8,8 +8,8 @@
 //! 每笔余额变更都配一条同额流水，流水中的 after 快照必须与本次更新后的余额完全一致。
 
 use super::ledger::{
-    insert_margin_wallet_ledger, insert_spot_wallet_ledger, lock_existing_margin_wallet_row,
-    lock_margin_wallet_row, lock_spot_wallet_row,
+    insert_margin_wallet_ledger, insert_spot_wallet_ledger, load_existing_margin_wallet_available,
+    lock_existing_margin_wallet_row, lock_margin_wallet_row, lock_spot_wallet_row,
 };
 use crate::{
     error::{AppError, AppResult},
@@ -74,9 +74,20 @@ pub(crate) async fn debit_margin_position_open_collateral(
         return Ok("margin".to_owned());
     }
 
-    if let Some(margin_wallet) = lock_existing_margin_wallet_row(tx, user_id, asset_id).await?
-        && margin_wallet.available >= *amount
-    {
+    let use_margin_wallet = load_existing_margin_wallet_available(tx, user_id, asset_id)
+        .await?
+        .is_some_and(|available| available >= *amount);
+    if use_margin_wallet {
+        let margin_wallet = lock_existing_margin_wallet_row(tx, user_id, asset_id)
+            .await?
+            .ok_or_else(|| {
+                AppError::Conflict("margin wallet changed while opening position".to_owned())
+            })?;
+        if margin_wallet.available < *amount {
+            return Err(AppError::Conflict(
+                "margin wallet balance changed while opening position".to_owned(),
+            ));
+        }
         let available_after = margin_wallet.available.clone() - amount.clone();
         sqlx::query(
             "UPDATE margin_wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?",

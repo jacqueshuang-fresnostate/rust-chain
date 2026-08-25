@@ -18,6 +18,8 @@ pub(crate) async fn load_admin_access_record(
         r#"SELECT admins.id AS admin_id,
                   admins.username,
                   admins.status,
+                  admins.must_change_password,
+                  admins.auth_session_version,
                   roles.id AS role_id,
                   roles.name AS role_name,
                   roles.permissions
@@ -35,6 +37,8 @@ pub(crate) async fn load_admin_access_record(
         admin_id: row.try_get("admin_id")?,
         username: row.try_get("username")?,
         status: row.try_get("status")?,
+        must_change_password: row.try_get("must_change_password")?,
+        auth_session_version: row.try_get("auth_session_version")?,
         role_id: row.try_get("role_id")?,
         role_name: row.try_get("role_name")?,
         permissions: row.try_get::<SqlxJson<Value>, _>("permissions")?.0,

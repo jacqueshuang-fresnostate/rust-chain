@@ -7767,3 +7767,31 @@
 - 修改文件：本轮秒合约重构涉及的 `mobile/src/**`、`mobile/tests/**`、`.trellis/spec/mobile/**`、`.trellis/tasks/archive/2026-08/08-22-mobile-seconds-pencil-selected-parity/**` 与 `docs/superpowers/PROGRESS.md`。
 - 验证结果：沿用提交前最终门禁：Seconds 聚焦回归 25/25、Mobile 全量测试 477/477、类型检查、PWA/Tauri 构建、Ego Browser 多尺寸明暗主题验收、归档任务 validate 与 `git diff --check` 全部通过；提交前继续执行暂存范围和暂存差异检查。
 - 后续事项：无。
+
+## 2026-08-23 09:34 - 手机端杠杆下拉框与输入框对齐 Pencil 选稿
+
+- 完成内容：以 Pencil 当前选中的浅色 `IpirH` 和深色 `mcfEf` 交易模块为唯一排版基线，将 `/trade?mode=contract` 的保证金模式与杠杆改为 `98 / 6 / 98` 两列 38px 下拉触发器，并把委托类型拆为下一行独立 202×40px 触发器；价格区调整为 138×54px 输入壳加 58×54px BBO，保证金输入调整为 202×48px。交易模块/控制台/盘口同步调整为 500/490px，比例滑杆、余额、止盈止损、开多/开空摘要与按钮全部按选稿轨道顺延；保留后台产品能力、真实结算资产、限价精度、BBO、连续比例滑杆、弹层焦点恢复、错误态和真实下单载荷，没有添加无后端能力的资产切换箭头。320px 紧凑布局继续保持两列设置和独立委托类型，无横向溢出。
+- 修改文件：`mobile/src/views/TradeView.vue`、`mobile/tests/{contract-pencil-selected-parity,margin-product-boundaries}.test.ts`、`.trellis/spec/mobile/{pwa-and-shell,backend-integration}.md`、`.trellis/tasks/08-23-mobile-margin-selected-field-layout-parity/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：RED 阶段新选稿来源、模板层级和新几何合同共 4 项按预期失败；实现后杠杆聚焦回归 37/37、Mobile 全量测试 478/478、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`、`npm --prefix mobile run build:tauri` 均通过，项目未配置独立 Mobile lint script，`npm --prefix mobile run lint --if-present` 正常跳过。Ego Browser 在 390×844 实测模块 500px、控制台 490px、设置按钮 98×38px、委托类型 202×40px、价格 202×54px、保证金 202×48px以及后续全部相对坐标与选稿一致；三个真实触发器可用，保证金模式和委托类型弹层可打开/关闭并恢复精确焦点，限价输入可编辑且只有外壳显示焦点环。320×720 和 448×900 文档宽度分别等于视口且按钮未裁切，明暗主题令牌切换正确。截图：`/var/folders/f9/9q7ggh6s5ms7fljhc7d3nmvh0000gn/T/ego-browser-shot-70204-1.png`。Trellis 5+5 上下文校验与 `git diff --check` 通过。
+- 后续事项：无；本轮改动尚未提交或推送，既有 `mobile/pencil/docs/superpowers/PROGRESS.md` 修改保持原样且未纳入本任务。
+
+## 2026-08-23 11:29 - 手机端根导航与交易选择弹窗对齐 Pencil 选稿
+
+- 完成内容：以 Pencil 当前选中的浅色 `X0ux9F` 为基线，将五栏根 Dock 的中央交易球修正为 56×56px、`top: -12px`，并将原来的直接跳转改为 Teleport 到 `body` 的交易方式选择层。弹窗复用选稿 358×300px 特殊轮廓 SVG path、330×58px 四行内容、54px 凹口关闭按钮和 35% 遮罩，并按真实业务接入现货、合约、秒合约和闪兑；保留交易对/合约模式记忆、秒合约来源状态和闪兑返回历史。补齐单选组语义、初始关闭聚焦、Tab/Shift+Tab 闭环、Escape/遮罩退出、body 滚动锁、精确焦点恢复、明暗主题、安全区与 reduced-motion。
+- 修改文件：`mobile/src/components/AppBottomNav.vue`、`mobile/src/styles/prototype-parity.css`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{root-trade-navigation-modal,shell-navigation,root-prototype-parity,pencil-selected-home-layout,pencil-navigation-flow-20260804,ui-prototype-alignment-foundation,editorial-shell-home-markets}.test.ts`、`.trellis/spec/mobile/{navigation-and-localization,pwa-and-shell}.md`、`.trellis/tasks/08-23-mobile-root-navigation-trade-modal-parity/**`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：根导航聚焦回归 54/54、Mobile 全量测试 482/482、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa` 和 `npm --prefix mobile run build:tauri` 均通过；Trellis 5+5 上下文校验和 `git diff --check` 通过。Ego Browser 在 390×844 明暗主题实测弹窗 x16/y462、轮廓与 Dock 相隔 4px、关闭按钮 x168/y755；320×720 与 448×900 尺寸均零横向溢出。四个真实路由、Escape、Tab/Shift+Tab、遮罩、滚动解锁与交易触发器焦点恢复全部通过。截图：`/private/tmp/hippo-trade-picker-dark-390.png`、`/private/tmp/hippo-trade-picker-light-390-settled.png`、`/private/tmp/hippo-trade-picker-light-320.png`、`/private/tmp/hippo-trade-picker-light-448.png`。
+- 后续事项：无；本轮改动尚未提交或推送，既有杠杆布局任务及 `mobile/pencil/docs/superpowers/PROGRESS.md` 修改保持原样。
+
+## 2026-08-24 04:41 - 全项目结构与业务流程优化审计
+
+- 完成内容：完成 Rust 后端、管理后台、PC、Mobile、数据/迁移、异步/实时、测试、CI 与部署的静态审计收口；最终复核并去重确认 12 项 P0、21 项 P1 与 8 组 P2，补齐 P0/P1 的分类、可定位路径/行号或符号、影响、增量方案、验收、工作量与依赖；修正 Mobile 提现费证据、Web 资源/样式热点路径及其他缩写证据路径，并使 30/60/90 天顺序与依赖图一致；仓库外备份、KMS、WAF、告警等静态未发现项继续标记“待补证”。
+- 修改文件：`docs/architecture/project-optimization-audit-2026-08-24.md`、`.trellis/tasks/08-24-project-architecture-business-flow-audit/{prd.md,task.json,check.jsonl,implement.jsonl,research/*.md}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：已执行的 Rust 基线 `cargo fmt --all -- --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test --lib`（280/280）、`cargo test --test backend_architecture`（11/11）通过；Web 基线 `npm --prefix web run lint && npm --prefix web run typecheck && npm --prefix web test`（52 个文件、381 条测试）通过；PC 基线 `npm --prefix pc run type-check` 通过；Mobile 基线 `npm --prefix mobile run type-check && npm --prefix mobile test`（482 条测试）通过。报告校验确认 P0=12、P1=21、4 个 Mermaid fence 成对、Markdown 相对链接缺失 0、显式路径缺失 0、行号越界 0；`python3 ./.trellis/scripts/task.py validate .trellis/tasks/08-24-project-architecture-business-flow-audit` 与 `git diff --check` 通过。
+- 后续事项：未修改生产业务代码；后续按 P0/P1 独立任务实施。
+
+## 2026-08-24 16:22 - 完成 P0-01 至 P0-12 全量风险修复
+
+- 完成内容：完成审计报告全部 12 项 P0 发布阻断修复。管理员初始化改为显式一次性模式并加入强制改密、会话版本和全局访问闸门；提现增加服务端权威报价、配置版本/过期/指纹校验、稳定网关请求号、歧义广播持续冻结及人工复核闭环。新币认购改为服务端权威定价、供给行锁和原子分配，解禁费实现真实钱包扣款、用户流水和平台收入分录；抵押借贷补齐白名单、严格 LTV、权威价格时效、审批重估、健康扫描、幂等清算与坏账核算。秒合约使用不可变事件时点快照结算，预测市场按数据库时间本地关盘，闪兑报价以 MySQL 行锁记录为唯一权威，行情 provider 重载采用代次栅栏、取消与完整 join。全仓杠杆转出复用强平同源风险公式并在事务锁后复核，PC 端平多/平空、保证金模式、全平能力与批量失败提示收敛到后端真实合同；新增迁移 `0107`–`0116`、跨端防回归测试和 GitHub Actions P0 质量门禁。
+- 修改文件：`.github/workflows/docker-image.yml`、`scripts/p0-release-gate.sh`、`migrations/0107_*.sql` 至 `migrations/0116_*.sql`、`src/{bootstrap.rs,bin/exchange-migrate.rs,modules/{admin,auth,wallet,new_coin,loan,seconds_contract,prediction,convert,margin}/**,workers/{wallet_chain,loan_health,loan_overdue,seconds_contract_settlement,prediction_market_close,market_feed,margin_liquidation,margin_interest}.rs}`、`tests/**`、`mobile/src/{api/wallet.ts,core/withdrawalQuote.ts,views/{WithdrawView,WithdrawalRecordsView}.vue,i18n/messages/**}`、`mobile/tests/**`、`pc/src/{api,components,domain,stores}/**`、`pc/tests/**`、Docker Compose/部署示例、Trellis P0 任务与后端容器交付规范。
+- 验证结果：`./scripts/p0-release-gate.sh` 完整通过：`cargo fmt --all -- --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test --all-targets -- --test-threads=1` 全部通过（Rust lib 306/306，所有集成/迁移/架构测试零失败）；管理后台 lint、typecheck、52 个测试文件共 381/381 通过；PC type-check 与杠杆合同测试 11/11 通过；Mobile type-check 与全量测试 486/486 通过。另已在 MySQL 8.4 全新库验证 `0001` 至 `0116` 顺序迁移及重复执行，`git diff --check` 与五个 Trellis 任务上下文校验在最终收尾阶段再次执行。
+- 后续事项：P0 代码范围无遗留；部署前需先执行迁移，只有首次有意创建管理员时临时设置 `BOOTSTRAP_MODE=create_admin` 与高强度口令并在完成后关闭，同时配置提现网关状态查询地址或按 `manual_review` 流程处理歧义广播。当前改动尚未提交或推送。

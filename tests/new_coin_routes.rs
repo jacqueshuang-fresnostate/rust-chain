@@ -123,31 +123,45 @@ async fn create_asset(pool: &MySqlPool, prefix: &str) -> (u64, String) {
     (asset_id, symbol)
 }
 
-async fn create_new_coin_project(pool: &MySqlPool, asset_id: u64, symbol: &str) -> u64 {
-    create_new_coin_project_with_status(pool, asset_id, symbol, "listed").await
+async fn create_new_coin_project(
+    pool: &MySqlPool,
+    asset_id: u64,
+    symbol: &str,
+    quote_asset_id: Option<u64>,
+) -> u64 {
+    create_new_coin_project_with_status(pool, asset_id, symbol, quote_asset_id, "listed").await
 }
 
 async fn create_new_coin_project_with_status(
     pool: &MySqlPool,
     asset_id: u64,
     symbol: &str,
+    quote_asset_id: Option<u64>,
     lifecycle_status: &str,
 ) -> u64 {
+    let unlock_fee_enabled = quote_asset_id.is_some();
+    let unlock_fee_rate = unlock_fee_enabled.then(|| decimal("0.04000000"));
+    let unlock_fee_basis = unlock_fee_enabled.then_some("market_value");
     sqlx::query(
         r#"INSERT INTO new_coin_projects
-           (asset_id, symbol, lifecycle_status, total_supply, issue_price, listed_at,
+           (asset_id, symbol, lifecycle_status, total_supply, issue_price, quote_asset_id,
+            reserved_supply, allocated_supply, remaining_supply, listed_at,
             unlock_type, fixed_unlock_at, unlock_fee_enabled, unlock_fee_rate,
             unlock_fee_basis, unlock_fee_asset, status)
-           VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP(6), 'fixed_time',
-                   DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 7 DAY), true, ?, 'market_value', ?, 'active')"#,
+           VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, CURRENT_TIMESTAMP(6), 'fixed_time',
+                   DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 7 DAY), ?, ?, ?, ?, 'active')"#,
     )
     .bind(asset_id)
     .bind(symbol)
     .bind(lifecycle_status)
     .bind(decimal("1000000.000000000000000000"))
     .bind(decimal("1.000000000000000000"))
-    .bind(decimal("0.04000000"))
-    .bind(asset_id)
+    .bind(quote_asset_id)
+    .bind(decimal("1000000.000000000000000000"))
+    .bind(unlock_fee_enabled)
+    .bind(unlock_fee_rate)
+    .bind(unlock_fee_basis)
+    .bind(quote_asset_id)
     .execute(pool)
     .await
     .unwrap()
@@ -276,8 +290,14 @@ async fn new_coin_routes_list_projects_and_allow_fee_payment() -> Result<(), Box
     let settings = test_settings();
     let user_id = create_user(&pool).await;
     let (asset_id, symbol) = create_asset(&pool, "NC").await;
-    let project_id = create_new_coin_project(&pool, asset_id, &symbol).await;
+    let project_id = create_new_coin_project(&pool, asset_id, &symbol, None).await;
     let unlock_key = seed_unlock_record(&pool, user_id, asset_id, 0).await;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(asset_id)
+        .bind(decimal("10.000000000000000000"))
+        .execute(&pool)
+        .await?;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let app = user_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
 
@@ -327,7 +347,101 @@ async fn new_coin_routes_list_projects_and_allow_fee_payment() -> Result<(), Box
         unlock["idempotency_key"] == unlock_key && unlock["fee_paid_status"] == "pending"
     }));
 
-    let pay_response = app
+    // Existing immutable fee receivables remain payable after an asset is disabled. This avoids
+    // stranding a locked allocation merely because the asset lifecycle changed after issuance.
+    sqlx::query("UPDATE assets SET status = 'disabled' WHERE id = ?")
+        .bind(asset_id)
+        .execute(&pool)
+        .await?;
+
+    let first_payment = app.clone().oneshot(
+        Request::builder()
+            .method("POST")
+            .uri(format!("/new-coins/unlocks/{unlock_key}/pay-fee"))
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(format!(
+                r#"{{"payment_asset_id":{asset_id},"amount":"2.000000000000000000"}}"#
+            )))
+            .unwrap(),
+    );
+    let second_payment = app.clone().oneshot(
+        Request::builder()
+            .method("POST")
+            .uri(format!("/new-coins/unlocks/{unlock_key}/pay-fee"))
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(format!(
+                r#"{{"payment_asset_id":{asset_id},"amount":"2.000000000000000000"}}"#
+            )))
+            .unwrap(),
+    );
+    let (first_payment, second_payment) = tokio::join!(first_payment, second_payment);
+    let mut paid_flags = Vec::new();
+    for response in [first_payment?, second_payment?] {
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 8192).await?;
+        let payload: Value = serde_json::from_slice(&body)?;
+        assert_eq!(payload["unlock_idempotency_key"], unlock_key);
+        paid_flags.push(payload["paid"].as_bool().expect("paid boolean"));
+    }
+    paid_flags.sort_unstable();
+    assert_eq!(paid_flags, vec![false, true]);
+
+    let (available, fee_status, fee_paid_at, payment_ledger_id): (
+        BigDecimal,
+        String,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<u64>,
+    ) = sqlx::query_as(
+        r#"SELECT wallets.available, unlocks.fee_paid_status, unlocks.fee_paid_at,
+                  unlocks.unlock_fee_payment_ledger_id
+           FROM asset_unlock_records unlocks
+           INNER JOIN wallet_accounts wallets
+             ON wallets.user_id = unlocks.user_id AND wallets.asset_id = unlocks.unlock_fee_asset
+           WHERE unlocks.idempotency_key = ?"#,
+    )
+    .bind(&unlock_key)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(available.normalized(), decimal("8").normalized());
+    assert_eq!(fee_status, "paid");
+    assert!(fee_paid_at.is_some());
+    assert!(payment_ledger_id.is_some());
+    let (ledger_count, journal_count, journal_sum): (i64, i64, BigDecimal) = sqlx::query_as(
+        r#"SELECT
+             (SELECT COUNT(*) FROM wallet_ledger
+               WHERE ref_type = 'new_coin_unlock' AND ref_id = ?
+                 AND change_type = 'new_coin_unlock_fee_payment'),
+             (SELECT COUNT(*) FROM platform_financial_journal
+               WHERE transaction_key = CONCAT('new_coin_unlock_fee:', ?)),
+             (SELECT COALESCE(SUM(amount), 0) FROM platform_financial_journal
+               WHERE transaction_key = CONCAT('new_coin_unlock_fee:', ?))"#,
+    )
+    .bind(&unlock_key)
+    .bind(
+        sqlx::query_scalar::<_, u64>(
+            "SELECT id FROM asset_unlock_records WHERE idempotency_key = ?",
+        )
+        .bind(&unlock_key)
+        .fetch_one(&pool)
+        .await?,
+    )
+    .bind(
+        sqlx::query_scalar::<_, u64>(
+            "SELECT id FROM asset_unlock_records WHERE idempotency_key = ?",
+        )
+        .bind(&unlock_key)
+        .fetch_one(&pool)
+        .await?,
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(ledger_count, 1);
+    assert_eq!(journal_count, 2);
+    assert_eq!(journal_sum, decimal("0"));
+
+    let paid_replay = app
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -336,16 +450,13 @@ async fn new_coin_routes_list_projects_and_allow_fee_payment() -> Result<(), Box
                 .header("content-type", "application/json")
                 .body(Body::from(format!(
                     r#"{{"payment_asset_id":{asset_id},"amount":"2.000000000000000000"}}"#
-                )))
-                .unwrap(),
+                )))?,
         )
-        .await
-        .unwrap();
-    assert_eq!(pay_response.status(), StatusCode::OK);
-    let pay_body = axum::body::to_bytes(pay_response.into_body(), 8192).await?;
-    let paid: Value = serde_json::from_slice(&pay_body)?;
-    assert_eq!(paid["paid"], true);
-    assert_eq!(paid["unlock_idempotency_key"], unlock_key);
+        .await?;
+    assert_eq!(paid_replay.status(), StatusCode::OK);
+    let paid_replay = axum::body::to_bytes(paid_replay.into_body(), 8192).await?;
+    let paid_replay: Value = serde_json::from_slice(&paid_replay)?;
+    assert_eq!(paid_replay["paid"], false);
 
     cleanup_fixture(&pool, user_id, asset_id, project_id, &unlock_key).await?;
     Ok(())
@@ -360,8 +471,14 @@ async fn new_coin_routes_reject_invalid_fee_payment_and_early_release() -> Resul
     let settings = test_settings();
     let user_id = create_user(&pool).await;
     let (asset_id, symbol) = create_asset(&pool, "NF").await;
-    let project_id = create_new_coin_project(&pool, asset_id, &symbol).await;
+    let project_id = create_new_coin_project(&pool, asset_id, &symbol, None).await;
     let unlock_key = seed_unlock_record(&pool, user_id, asset_id, 7).await;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(asset_id)
+        .bind(decimal("1.000000000000000000"))
+        .execute(&pool)
+        .await?;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
     let app = user_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
 
@@ -382,6 +499,22 @@ async fn new_coin_routes_reject_invalid_fee_payment_and_early_release() -> Resul
         .unwrap();
     assert_eq!(invalid_fee_response.status(), StatusCode::BAD_REQUEST);
 
+    let insufficient_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/new-coins/unlocks/{unlock_key}/pay-fee"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"payment_asset_id":{asset_id},"amount":"2.000000000000000000"}}"#
+                )))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(insufficient_response.status(), StatusCode::BAD_REQUEST);
+
     let release_response = app
         .clone()
         .oneshot(
@@ -396,6 +529,77 @@ async fn new_coin_routes_reject_invalid_fee_payment_and_early_release() -> Resul
         .unwrap();
     assert_eq!(release_response.status(), StatusCode::BAD_REQUEST);
 
+    // 单独篡改状态位不构成缴费证据：正数应收不能伪装成免费，
+    // 也不能只写 paid 而缺少钱包流水和平台双腿分录。
+    sqlx::query(
+        "UPDATE asset_unlock_records SET fee_paid_status = 'not_required' WHERE idempotency_key = ?",
+    )
+    .bind(&unlock_key)
+    .execute(&pool)
+    .await?;
+    let forged_not_required = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/new-coins/unlocks/{unlock_key}/release"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(forged_not_required.status(), StatusCode::BAD_REQUEST);
+    sqlx::query(
+        r#"UPDATE asset_unlock_records
+           SET unlock_fee_amount = NULL, fee_paid_status = 'not_required'
+           WHERE idempotency_key = ?"#,
+    )
+    .bind(&unlock_key)
+    .execute(&pool)
+    .await?;
+    let forged_null_snapshot = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/new-coins/unlocks/{unlock_key}/release"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(forged_null_snapshot.status(), StatusCode::BAD_REQUEST);
+    sqlx::query(
+        r#"UPDATE asset_unlock_records
+           SET unlock_fee_amount = 2, fee_paid_status = 'paid', fee_paid_at = CURRENT_TIMESTAMP(6),
+               unlock_fee_payment_ledger_id = NULL
+           WHERE idempotency_key = ?"#,
+    )
+    .bind(&unlock_key)
+    .execute(&pool)
+    .await?;
+    let forged_paid = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/new-coins/unlocks/{unlock_key}/release"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(forged_paid.status(), StatusCode::BAD_REQUEST);
+    sqlx::query(
+        r#"UPDATE asset_unlock_records
+           SET fee_paid_status = 'pending', fee_paid_at = NULL,
+               unlock_fee_payment_ledger_id = NULL
+           WHERE idempotency_key = ?"#,
+    )
+    .bind(&unlock_key)
+    .execute(&pool)
+    .await?;
+
     let (fee_status, status): (String, String) = sqlx::query_as(
         "SELECT fee_paid_status, status FROM asset_unlock_records WHERE idempotency_key = ?",
     )
@@ -404,8 +608,239 @@ async fn new_coin_routes_reject_invalid_fee_payment_and_early_release() -> Resul
     .await?;
     assert_eq!(fee_status, "pending");
     assert_eq!(status, "pending");
+    let (available, ledger_count, journal_count): (BigDecimal, i64, i64) = sqlx::query_as(
+        r#"SELECT wallets.available,
+             (SELECT COUNT(*) FROM wallet_ledger
+               WHERE ref_type = 'new_coin_unlock' AND ref_id = ?),
+             (SELECT COUNT(*) FROM platform_financial_journal journal
+               INNER JOIN asset_unlock_records unlocks
+                 ON journal.transaction_key = CONCAT('new_coin_unlock_fee:', unlocks.id)
+               WHERE unlocks.idempotency_key = ?)
+           FROM wallet_accounts wallets
+           WHERE wallets.user_id = ? AND wallets.asset_id = ?"#,
+    )
+    .bind(&unlock_key)
+    .bind(&unlock_key)
+    .bind(user_id)
+    .bind(asset_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(available.normalized(), decimal("1").normalized());
+    assert_eq!(ledger_count, 0);
+    assert_eq!(journal_count, 0);
 
     cleanup_fixture(&pool, user_id, asset_id, project_id, &unlock_key).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn new_coin_unlock_fee_rolls_back_wallet_and_paid_state_when_journal_write_fails()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_user(&pool).await;
+    let (asset_id, symbol) = create_asset(&pool, "NB").await;
+    let project_id = create_new_coin_project(&pool, asset_id, &symbol, None).await;
+    let unlock_key = seed_unlock_record(&pool, user_id, asset_id, 0).await;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(asset_id)
+        .bind(decimal("10.000000000000000000"))
+        .execute(&pool)
+        .await?;
+    let unlock_id: u64 =
+        sqlx::query_scalar("SELECT id FROM asset_unlock_records WHERE idempotency_key = ?")
+            .bind(&unlock_key)
+            .fetch_one(&pool)
+            .await?;
+    let transaction_key = format!("new_coin_unlock_fee:{unlock_id}");
+    sqlx::query(
+        r#"INSERT INTO platform_financial_journal
+           (transaction_key, context, account_code, asset_id, amount, ref_type, ref_id)
+           VALUES (?, 'new_coin_unlock_fee', 'user_unlock_fee_expense', ?, ?,
+                   'new_coin_unlock', ?)"#,
+    )
+    .bind(&transaction_key)
+    .bind(asset_id)
+    .bind(decimal("-2.000000000000000000"))
+    .bind(unlock_id.to_string())
+    .execute(&pool)
+    .await?;
+
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900)?;
+    let app = user_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/new-coins/unlocks/{unlock_key}/pay-fee"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"payment_asset_id":{asset_id},"amount":"2.000000000000000000"}}"#
+                )))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let (available, fee_status, fee_paid_at, payment_ledger_id, ledger_count): (
+        BigDecimal,
+        String,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<u64>,
+        i64,
+    ) = sqlx::query_as(
+        r#"SELECT wallets.available, unlocks.fee_paid_status, unlocks.fee_paid_at,
+                  unlocks.unlock_fee_payment_ledger_id,
+                  (SELECT COUNT(*) FROM wallet_ledger ledger
+                    WHERE ledger.ref_type = 'new_coin_unlock' AND ledger.ref_id = ?)
+           FROM asset_unlock_records unlocks
+           INNER JOIN wallet_accounts wallets
+             ON wallets.user_id = unlocks.user_id AND wallets.asset_id = unlocks.unlock_fee_asset
+           WHERE unlocks.idempotency_key = ?"#,
+    )
+    .bind(&unlock_key)
+    .bind(&unlock_key)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(available.normalized(), decimal("10").normalized());
+    assert_eq!(fee_status, "pending");
+    assert!(fee_paid_at.is_none());
+    assert!(payment_ledger_id.is_none());
+    assert_eq!(ledger_count, 0);
+
+    let release = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/new-coins/unlocks/{unlock_key}/release"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(release.status(), StatusCode::BAD_REQUEST);
+
+    cleanup_fixture(&pool, user_id, asset_id, project_id, &unlock_key).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn concurrent_new_coin_subscriptions_never_allocate_beyond_remaining_supply()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let user_id = create_user(&pool).await;
+    let (base_asset, base_symbol) = create_asset(&pool, "NX").await;
+    let (quote_asset, _quote_symbol) = create_asset(&pool, "NY").await;
+    let project_id = create_new_coin_project_with_status(
+        &pool,
+        base_asset,
+        &base_symbol,
+        Some(quote_asset),
+        "subscription",
+    )
+    .await;
+    sqlx::query(
+        r#"UPDATE new_coin_projects
+           SET total_supply = 15, reserved_supply = 0,
+               allocated_supply = 0, remaining_supply = 15
+           WHERE id = ?"#,
+    )
+    .bind(project_id)
+    .execute(&pool)
+    .await?;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, 100)")
+        .bind(user_id)
+        .bind(quote_asset)
+        .execute(&pool)
+        .await?;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id) VALUES (?, ?)")
+        .bind(user_id)
+        .bind(base_asset)
+        .execute(&pool)
+        .await?;
+
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900)?;
+    let app = user_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    let first_key = format!("supply-a-{}", Uuid::now_v7().simple());
+    let second_key = format!("supply-b-{}", Uuid::now_v7().simple());
+    let request = |key: &str| {
+        Request::builder()
+            .method("POST")
+            .uri(format!("/new-coins/{base_symbol}/subscriptions"))
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(format!(
+                r#"{{"quote_asset_id":{quote_asset},"quote_amount":"10","quantity":"10","idempotency_key":"{key}"}}"#
+            )))
+            .unwrap()
+    };
+    let (first, second) = tokio::join!(
+        app.clone().oneshot(request(&first_key)),
+        app.clone().oneshot(request(&second_key)),
+    );
+    let first = first?;
+    let second = second?;
+    let mut statuses = [first.status(), second.status()];
+    statuses.sort_unstable();
+    assert_eq!(statuses, [StatusCode::OK, StatusCode::BAD_REQUEST]);
+    let winner_key = if first.status() == StatusCode::OK {
+        &first_key
+    } else {
+        &second_key
+    };
+
+    let (reserved, allocated, remaining, order_count, quote_available, base_locked): (
+        BigDecimal,
+        BigDecimal,
+        BigDecimal,
+        i64,
+        BigDecimal,
+        BigDecimal,
+    ) = sqlx::query_as(
+        r#"SELECT projects.reserved_supply, projects.allocated_supply,
+                  projects.remaining_supply,
+                  (SELECT COUNT(*) FROM new_coin_subscriptions WHERE project_id = projects.id),
+                  quote_wallet.available, base_wallet.locked
+           FROM new_coin_projects projects
+           INNER JOIN wallet_accounts quote_wallet
+             ON quote_wallet.user_id = ? AND quote_wallet.asset_id = ?
+           INNER JOIN wallet_accounts base_wallet
+             ON base_wallet.user_id = ? AND base_wallet.asset_id = ?
+           WHERE projects.id = ?"#,
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .bind(user_id)
+    .bind(base_asset)
+    .bind(project_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(reserved, decimal("0"));
+    assert_eq!(allocated.normalized(), decimal("10").normalized());
+    assert_eq!(remaining.normalized(), decimal("5").normalized());
+    assert_eq!(order_count, 1);
+    assert_eq!(quote_available.normalized(), decimal("90").normalized());
+    assert_eq!(base_locked.normalized(), decimal("10").normalized());
+
+    cleanup_order_fixture(
+        &pool,
+        user_id,
+        base_asset,
+        quote_asset,
+        project_id,
+        None,
+        winner_key,
+        "new_coin_subscription",
+    )
+    .await?;
     Ok(())
 }
 
@@ -419,8 +854,14 @@ async fn new_coin_subscription_debits_quote_wallet_and_locks_fixed_time_allocati
     let user_id = create_user(&pool).await;
     let (base_asset, base_symbol) = create_asset(&pool, "NS").await;
     let (quote_asset, _quote_symbol) = create_asset(&pool, "NQ").await;
-    let project_id =
-        create_new_coin_project_with_status(&pool, base_asset, &base_symbol, "subscription").await;
+    let project_id = create_new_coin_project_with_status(
+        &pool,
+        base_asset,
+        &base_symbol,
+        Some(quote_asset),
+        "subscription",
+    )
+    .await;
     sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
         .bind(user_id)
         .bind(quote_asset)
@@ -442,6 +883,28 @@ async fn new_coin_subscription_debits_quote_wallet_and_locks_fixed_time_allocati
         AppState::new(settings)
             .with_mysql(pool.clone())
             .with_event_broadcast_hub(hub),
+    );
+
+    let tampered_key = format!("new-sub-tampered-{}", Uuid::now_v7().simple());
+    let tampered_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/new-coins/{base_symbol}/subscriptions"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"quote_asset_id":{quote_asset},"quote_amount":"19.000000000000000000","quantity":"20.000000000000000000","idempotency_key":"{tampered_key}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(tampered_response.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        timeout(Duration::from_millis(25), private_events.recv())
+            .await
+            .is_err()
     );
 
     let response = app
@@ -532,7 +995,44 @@ async fn new_coin_subscription_debits_quote_wallet_and_locks_fixed_time_allocati
     .await?;
     assert_eq!(ledger_count, 2);
 
+    let (total_supply, reserved_supply, allocated_supply, remaining_supply): (
+        BigDecimal,
+        BigDecimal,
+        BigDecimal,
+        BigDecimal,
+    ) = sqlx::query_as(
+        "SELECT total_supply, reserved_supply, allocated_supply, remaining_supply FROM new_coin_projects WHERE id = ?",
+    )
+    .bind(project_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(reserved_supply, decimal("0"));
+    assert_eq!(allocated_supply.normalized(), decimal("20").normalized());
+    assert_eq!(
+        remaining_supply.normalized(),
+        decimal("999980").normalized()
+    );
+    assert_eq!(
+        (reserved_supply + allocated_supply + remaining_supply).normalized(),
+        total_supply.normalized()
+    );
+
+    // 迁移前订单没有运行时指纹；即使项目随后停用并推进生命周期，同参重试也必须回吐原结果。
+    sqlx::query(
+        "UPDATE new_coin_subscriptions SET request_fingerprint = NULL WHERE idempotency_key = ?",
+    )
+    .bind(&idempotency_key)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "UPDATE new_coin_projects SET status = 'disabled', lifecycle_status = 'listed' WHERE id = ?",
+    )
+    .bind(project_id)
+    .execute(&pool)
+    .await?;
+
     let duplicate_response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -550,7 +1050,7 @@ async fn new_coin_subscription_debits_quote_wallet_and_locks_fixed_time_allocati
     let duplicate_body = axum::body::to_bytes(duplicate_response.into_body(), 8192).await?;
     assert_eq!(
         duplicate_status,
-        StatusCode::CONFLICT,
+        StatusCode::OK,
         "payload: {}",
         String::from_utf8_lossy(&duplicate_body)
     );
@@ -571,6 +1071,26 @@ async fn new_coin_subscription_debits_quote_wallet_and_locks_fixed_time_allocati
     .fetch_one(&pool)
     .await?;
     assert_eq!(ledger_count_after_duplicate, 2);
+    assert!(
+        timeout(Duration::from_millis(25), private_events.recv())
+            .await
+            .is_err()
+    );
+
+    let conflict_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/new-coins/{base_symbol}/subscriptions"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"quote_asset_id":{quote_asset},"quote_amount":"21.000000000000000000","quantity":"21.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(conflict_response.status(), StatusCode::CONFLICT);
 
     cleanup_order_fixture(
         &pool,
@@ -596,10 +1116,11 @@ async fn new_coin_purchase_debits_quote_wallet_and_locks_fixed_time_allocation()
     let user_id = create_user(&pool).await;
     let (base_asset, base_symbol) = create_asset(&pool, "NP").await;
     let (quote_asset, quote_symbol) = create_asset(&pool, "NT").await;
-    let project_id = create_new_coin_project(&pool, base_asset, &base_symbol).await;
+    let project_id =
+        create_new_coin_project(&pool, base_asset, &base_symbol, Some(quote_asset)).await;
     let pair_id = create_pair(&pool, base_asset, quote_asset, &base_symbol, &quote_symbol).await;
     sqlx::query(
-        "UPDATE new_coin_projects SET post_listing_purchase_enabled = TRUE, post_listing_pair_id = ? WHERE id = ?",
+        "UPDATE new_coin_projects SET issue_price = 2, post_listing_purchase_enabled = TRUE, post_listing_pair_id = ? WHERE id = ?",
     )
     .bind(pair_id)
     .bind(project_id)
@@ -626,6 +1147,28 @@ async fn new_coin_purchase_debits_quote_wallet_and_locks_fixed_time_allocation()
         AppState::new(settings)
             .with_mysql(pool.clone())
             .with_event_broadcast_hub(hub),
+    );
+
+    let tampered_key = format!("new-pur-tampered-{}", Uuid::now_v7().simple());
+    let tampered_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/new-coins/{base_symbol}/purchase"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"pair_id":{pair_id},"price":"1.990000000000000000","quantity":"10.000000000000000000","idempotency_key":"{tampered_key}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(tampered_response.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        timeout(Duration::from_millis(25), private_events.recv())
+            .await
+            .is_err()
     );
 
     let response = app
@@ -665,10 +1208,7 @@ async fn new_coin_purchase_debits_quote_wallet_and_locks_fixed_time_allocation()
     assert_eq!(event["quote_asset_id"], quote_asset);
     assert_eq!(event["price"], "2.000000000000000000");
     assert_eq!(event["quantity"], "10.000000000000000000");
-    assert_eq!(
-        event["quote_amount"],
-        "20.000000000000000000000000000000000000"
-    );
+    assert_eq!(event["quote_amount"], "20.000000000000000000");
     assert_eq!(event["status"], "locked");
     assert_eq!(event["lock_position_id"], lock_position_id);
 
@@ -712,6 +1252,23 @@ async fn new_coin_purchase_debits_quote_wallet_and_locks_fixed_time_allocation()
     .await?;
     assert_eq!(ledger_count, 2);
 
+    let (reserved_supply, allocated_supply, remaining_supply): (
+        BigDecimal,
+        BigDecimal,
+        BigDecimal,
+    ) = sqlx::query_as(
+        "SELECT reserved_supply, allocated_supply, remaining_supply FROM new_coin_projects WHERE id = ?",
+    )
+    .bind(project_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(reserved_supply, decimal("0"));
+    assert_eq!(allocated_supply.normalized(), decimal("10").normalized());
+    assert_eq!(
+        remaining_supply.normalized(),
+        decimal("999990").normalized()
+    );
+
     let (unlock_count, fee_status): (i64, String) = sqlx::query_as(
         r#"SELECT COUNT(*), MIN(fee_paid_status)
            FROM asset_unlock_records
@@ -725,7 +1282,24 @@ async fn new_coin_purchase_debits_quote_wallet_and_locks_fixed_time_allocation()
     assert_eq!(unlock_count, 1);
     assert_eq!(fee_status, "pending");
 
+    // 历史 NULL 指纹、项目停用和交易对下架都不得破坏成功订单的同参重放。
+    sqlx::query(
+        "UPDATE new_coin_purchase_orders SET request_fingerprint = NULL WHERE idempotency_key = ?",
+    )
+    .bind(&idempotency_key)
+    .execute(&pool)
+    .await?;
+    sqlx::query("UPDATE new_coin_projects SET status = 'disabled' WHERE id = ?")
+        .bind(project_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE trading_pairs SET status = 'disabled' WHERE id = ?")
+        .bind(pair_id)
+        .execute(&pool)
+        .await?;
+
     let duplicate_response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -743,7 +1317,7 @@ async fn new_coin_purchase_debits_quote_wallet_and_locks_fixed_time_allocation()
     let duplicate_body = axum::body::to_bytes(duplicate_response.into_body(), 8192).await?;
     assert_eq!(
         duplicate_status,
-        StatusCode::CONFLICT,
+        StatusCode::OK,
         "payload: {}",
         String::from_utf8_lossy(&duplicate_body)
     );
@@ -764,6 +1338,26 @@ async fn new_coin_purchase_debits_quote_wallet_and_locks_fixed_time_allocation()
     .fetch_one(&pool)
     .await?;
     assert_eq!(ledger_count_after_duplicate, 2);
+    assert!(
+        timeout(Duration::from_millis(25), private_events.recv())
+            .await
+            .is_err()
+    );
+
+    let conflict_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/new-coins/{base_symbol}/purchase"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"pair_id":{pair_id},"price":"2.000000000000000000","quantity":"11.000000000000000000","idempotency_key":"{idempotency_key}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(conflict_response.status(), StatusCode::CONFLICT);
 
     cleanup_order_fixture(
         &pool,
@@ -788,8 +1382,13 @@ async fn new_coin_purchase_requires_enabled_post_listing_pair() -> Result<(), Bo
     let user_id = create_user(&pool).await;
     let (base_asset, base_symbol) = create_asset(&pool, "NE").await;
     let (quote_asset, quote_symbol) = create_asset(&pool, "NU").await;
-    let project_id = create_new_coin_project(&pool, base_asset, &base_symbol).await;
+    let project_id =
+        create_new_coin_project(&pool, base_asset, &base_symbol, Some(quote_asset)).await;
     let pair_id = create_pair(&pool, base_asset, quote_asset, &base_symbol, &quote_symbol).await;
+    sqlx::query("UPDATE new_coin_projects SET issue_price = 2 WHERE id = ?")
+        .bind(project_id)
+        .execute(&pool)
+        .await?;
     sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
         .bind(user_id)
         .bind(quote_asset)
@@ -886,18 +1485,15 @@ async fn new_coin_routes_release_due_paid_unlock_updates_wallet_and_lock_state()
     let settings = test_settings();
     let user_id = create_user(&pool).await;
     let (asset_id, symbol) = create_asset(&pool, "NR").await;
-    let project_id = create_new_coin_project(&pool, asset_id, &symbol).await;
+    let project_id = create_new_coin_project(&pool, asset_id, &symbol, None).await;
     let unlock_key = seed_unlock_record(&pool, user_id, asset_id, 0).await;
-    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, locked) VALUES (?, ?, ?)")
-        .bind(user_id)
-        .bind(asset_id)
-        .bind(decimal("10.000000000000000000"))
-        .execute(&pool)
-        .await?;
     sqlx::query(
-        "UPDATE asset_unlock_records SET fee_paid_status = 'paid' WHERE idempotency_key = ?",
+        "INSERT INTO wallet_accounts (user_id, asset_id, available, locked) VALUES (?, ?, ?, ?)",
     )
-    .bind(&unlock_key)
+    .bind(user_id)
+    .bind(asset_id)
+    .bind(decimal("2.000000000000000000"))
+    .bind(decimal("10.000000000000000000"))
     .execute(&pool)
     .await?;
     let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
@@ -910,22 +1506,40 @@ async fn new_coin_routes_release_due_paid_unlock_updates_wallet_and_lock_state()
             .with_event_broadcast_hub(hub),
     );
 
-    let release_response = app
+    let pay_response = app
         .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!("/new-coins/unlocks/{unlock_key}/release"))
+                .uri(format!("/new-coins/unlocks/{unlock_key}/pay-fee"))
                 .header("authorization", format!("Bearer {token}"))
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"payment_asset_id":{asset_id},"amount":"2.000000000000000000"}}"#
+                )))
                 .unwrap(),
         )
-        .await
-        .unwrap();
-    assert_eq!(release_response.status(), StatusCode::OK);
-    let release_body = axum::body::to_bytes(release_response.into_body(), 8192).await?;
-    let released: Value = serde_json::from_slice(&release_body)?;
-    assert_eq!(released["released"], true);
+        .await?;
+    assert_eq!(pay_response.status(), StatusCode::OK);
+
+    let release_request = || {
+        Request::builder()
+            .method("POST")
+            .uri(format!("/new-coins/unlocks/{unlock_key}/release"))
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let (first_release, second_release) = tokio::join!(
+        app.clone().oneshot(release_request()),
+        app.clone().oneshot(release_request())
+    );
+    for release_response in [first_release?, second_release?] {
+        assert_eq!(release_response.status(), StatusCode::OK);
+        let release_body = axum::body::to_bytes(release_response.into_body(), 8192).await?;
+        let released: Value = serde_json::from_slice(&release_body)?;
+        assert_eq!(released["released"], true);
+    }
 
     let event_message = timeout(Duration::from_millis(100), private_events.recv()).await??;
     let event: Value = serde_json::from_str(event_message.payload())?;
@@ -934,18 +1548,14 @@ async fn new_coin_routes_release_due_paid_unlock_updates_wallet_and_lock_state()
     assert_eq!(event["asset_id"], asset_id);
     assert_eq!(event["unlock_quantity"], "10.000000000000000000");
     assert_eq!(event["released"], true);
+    assert!(
+        timeout(Duration::from_millis(25), private_events.recv())
+            .await
+            .is_err(),
+        "concurrent new coin unlock replay must not publish duplicate private event"
+    );
 
-    let replay_response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/new-coins/unlocks/{unlock_key}/release"))
-                .header("authorization", format!("Bearer {token}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let replay_response = app.oneshot(release_request()).await?;
     assert_eq!(replay_response.status(), StatusCode::OK);
     let replay_body = axum::body::to_bytes(replay_response.into_body(), 8192).await?;
     let replayed: Value = serde_json::from_slice(&replay_body)?;
@@ -954,7 +1564,7 @@ async fn new_coin_routes_release_due_paid_unlock_updates_wallet_and_lock_state()
         timeout(Duration::from_millis(25), private_events.recv())
             .await
             .is_err(),
-        "idempotent new coin unlock replay must not publish duplicate private event"
+        "idempotent new coin unlock replay must not publish a private event"
     );
 
     let (available, locked): (BigDecimal, BigDecimal) = sqlx::query_as(
@@ -992,7 +1602,7 @@ async fn new_coin_routes_release_due_paid_unlock_updates_wallet_and_lock_state()
     .bind(&unlock_key)
     .fetch_one(&pool)
     .await?;
-    assert_eq!(ledger_count, 2);
+    assert_eq!(ledger_count, 3);
 
     cleanup_fixture(&pool, user_id, asset_id, project_id, &unlock_key).await?;
     Ok(())
@@ -1014,7 +1624,11 @@ async fn cleanup_order_fixture(
         .bind(idempotency_key)
         .execute(pool)
         .await?;
-    sqlx::query("DELETE FROM asset_unlock_records WHERE idempotency_key = ?")
+    sqlx::query(
+        "DELETE FROM asset_unlock_records WHERE idempotency_key = ? OR idempotency_key = CONCAT(?, ':', ?)",
+    )
+        .bind(idempotency_key)
+        .bind(ref_type)
         .bind(idempotency_key)
         .execute(pool)
         .await?;
@@ -1073,11 +1687,21 @@ async fn cleanup_fixture(
     project_id: u64,
     unlock_key: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("DELETE FROM wallet_ledger WHERE ref_type = 'new_coin_unlock' AND ref_id = ?")
+    sqlx::query(
+        r#"DELETE FROM platform_financial_journal
+           WHERE context = 'new_coin_unlock_fee'
+             AND ref_id IN (
+                 SELECT CAST(id AS CHAR) FROM asset_unlock_records WHERE idempotency_key = ?
+             )"#,
+    )
+    .bind(unlock_key)
+    .execute(pool)
+    .await?;
+    sqlx::query("DELETE FROM asset_unlock_records WHERE idempotency_key = ?")
         .bind(unlock_key)
         .execute(pool)
         .await?;
-    sqlx::query("DELETE FROM asset_unlock_records WHERE idempotency_key = ?")
+    sqlx::query("DELETE FROM wallet_ledger WHERE ref_type = 'new_coin_unlock' AND ref_id = ?")
         .bind(unlock_key)
         .execute(pool)
         .await?;

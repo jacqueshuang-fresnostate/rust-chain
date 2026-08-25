@@ -24,6 +24,7 @@ use super::{
         admin_id_from_subject, approve_withdrawal as approve_withdrawal_use_case,
         broadcast_withdrawal as broadcast_withdrawal_use_case, build_wallet_ledger_filter,
         confirm_withdrawal as confirm_withdrawal_use_case,
+        create_withdrawal_quote as create_withdrawal_quote_use_case,
         create_withdrawal_request as create_withdrawal_request_use_case,
         fail_withdrawal as fail_withdrawal_use_case,
         get_or_assign_deposit_address as get_or_assign_deposit_address_use_case,
@@ -43,13 +44,13 @@ use super::{
     },
     presentation::{
         AdminWalletListQuery, AdminWalletWithdrawalsResponse, BroadcastWithdrawalRequest,
-        ConfirmWithdrawalRequest, CreateWithdrawalRequest, DepositAddressRequest,
-        DepositAddressResponse, DepositAssetsResponse, DepositNetworksQuery,
+        ConfirmWithdrawalRequest, CreateWithdrawalQuoteRequest, CreateWithdrawalRequest,
+        DepositAddressRequest, DepositAddressResponse, DepositAssetsResponse, DepositNetworksQuery,
         DepositNetworksResponse, FailWithdrawalRequest, ObserveDepositRequest, ReturnHistoryQuery,
         ReturnHistoryResponse, ReverseDepositRequest, ReviewWithdrawalRequest, TodayReturnResponse,
         WalletAccountsResponse, WalletDepositEventResponse, WalletDepositsResponse,
         WalletLedgerQuery, WalletLedgerResponse, WalletWithdrawalQuery, WalletWithdrawalResponse,
-        WalletWithdrawalsResponse, WithdrawalRequestResponse,
+        WalletWithdrawalsResponse, WithdrawalQuoteResponse, WithdrawalRequestResponse,
     },
 };
 
@@ -73,6 +74,7 @@ pub fn routes() -> Router<AppState> {
             "/wallet/withdrawals",
             get(list_user_withdrawals).post(create_withdrawal_request),
         )
+        .route("/wallet/withdrawals/quote", post(create_withdrawal_quote))
 }
 
 /// 组装后台钱包路由：提现分页查询与审批、拒绝、广播补录、确认、失败五个状态迁移，以及充值事件查询、观测与冲正。
@@ -234,6 +236,19 @@ async fn create_withdrawal_request(
         create_withdrawal_request_use_case(&pool, state.settings.as_ref(), user_id, request)
             .await?;
     Ok(Json(withdrawal))
+}
+
+/// 为当前用户持久化一份有限期的权威提现报价，后续提交必须消费返回的 quote_id。
+async fn create_withdrawal_quote(
+    UserAuth(claims): UserAuth,
+    State(state): State<AppState>,
+    Json(request): Json<CreateWithdrawalQuoteRequest>,
+) -> AppResult<Json<WithdrawalQuoteResponse>> {
+    let user_id = user_id_from_subject(&claims.sub)?;
+    let pool = mysql_pool(&state)?;
+    Ok(Json(
+        create_withdrawal_quote_use_case(&pool, user_id, request).await?,
+    ))
 }
 
 /// 返回当前用户的提现申请列表，可按状态筛选并限制条数，结果按申请编号倒序。

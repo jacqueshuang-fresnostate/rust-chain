@@ -248,6 +248,7 @@ impl DomainLayer for AdminTwoFactorSettings {}
 pub struct AdminLoginTwoFactorChallenge {
     pub challenge_id: String,
     pub admin_id: u64,
+    pub auth_session_version: u64,
     pub attempt_count: u32,
     pub expires_at: DateTime<Utc>,
     pub consumed_at: Option<DateTime<Utc>>,

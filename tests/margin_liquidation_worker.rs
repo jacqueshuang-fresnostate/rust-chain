@@ -916,6 +916,44 @@ async fn margin_liquidation_worker_skips_safe_position() -> Result<(), Box<dyn E
 }
 
 #[tokio::test]
+async fn margin_liquidation_worker_rejects_future_ticker() -> Result<(), Box<dyn Error>> {
+    let _guard = TEST_LOCK.lock().await;
+    let Some(pool) = mysql_pool_or_skip().await? else {
+        return Ok(());
+    };
+    let Some(redis) = redis_manager_or_skip().await? else {
+        return Ok(());
+    };
+    close_previous_margin_worker_positions(&pool).await?;
+    let now = Utc.with_ymd_and_hms(1991, 1, 2, 13, 0, 0).unwrap();
+    let fixture =
+        seed_margin_position(&pool, "long", Some(&decimal("100.000000000000000000"))).await?;
+    cache_ticker(
+        &redis,
+        &fixture.pair_symbol,
+        "84.000000000000000000",
+        now + chrono::TimeDelta::seconds(120),
+    )
+    .await?;
+    close_other_open_positions(&pool, &[fixture.position_id]).await?;
+
+    let summary = run_once_with_dependencies(&pool, &redis, now, 10).await?;
+
+    assert_eq!(summary.scanned, 1);
+    assert_eq!(summary.liquidated, 0);
+    assert_eq!(summary.failed, 1);
+    let (status, next_attempt): (String, Option<chrono::DateTime<Utc>>) = sqlx::query_as(
+        "SELECT status, next_liquidation_attempt_at FROM margin_positions WHERE id = ?",
+    )
+    .bind(fixture.position_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(status, "opened");
+    assert_eq!(next_attempt, Some(now + chrono::TimeDelta::seconds(60)));
+    Ok(())
+}
+
+#[tokio::test]
 async fn margin_liquidation_worker_rotates_past_safe_positions() -> Result<(), Box<dyn Error>> {
     let _guard = TEST_LOCK.lock().await;
     let Some(pool) = mysql_pool_or_skip().await? else {

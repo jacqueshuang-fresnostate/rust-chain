@@ -230,3 +230,76 @@ fn unlock_fee_supports_profit_basis_and_disabled_fee_releases_without_payment() 
     assert_eq!(disabled_fee.amount, amount(0));
     assert_eq!(ensure_unlock_release_allowed(&disabled_fee, false), Ok(()));
 }
+
+#[test]
+fn authoritative_new_coin_quote_requires_an_exact_positive_asset_amount() {
+    use super::service::authoritative_new_coin_quote_amount;
+
+    assert_eq!(
+        authoritative_new_coin_quote_amount(&decimal("1.25"), &decimal("4"), 2)
+            .expect("exact quote"),
+        decimal("5.00")
+    );
+    let precision_error = authoritative_new_coin_quote_amount(&decimal("0.333"), &decimal("1"), 2)
+        .expect_err("non representable quote must fail");
+    assert!(format!("{precision_error:?}").contains("precision_scale"));
+    let zero_error = authoritative_new_coin_quote_amount(&decimal("0.001"), &decimal("1"), 0)
+        .expect_err("a quote may not be truncated into a free issuance");
+    assert!(format!("{zero_error:?}").contains("precision_scale"));
+    let metadata_error = authoritative_new_coin_quote_amount(&decimal("1"), &decimal("1"), 19)
+        .expect_err("unsupported database precision must fail closed");
+    assert!(format!("{metadata_error:?}").contains("between 0 and 18"));
+}
+
+#[test]
+fn generated_unlock_fee_is_truncated_to_payment_asset_precision() {
+    use super::service::quantize_unlock_fee_amount;
+
+    assert_eq!(
+        quantize_unlock_fee_amount(&decimal("1.234567899"), 8).expect("valid precision"),
+        decimal("1.23456789")
+    );
+    assert_eq!(
+        quantize_unlock_fee_amount(&decimal("0.000000009"), 8).expect("sub-unit fee"),
+        decimal("0.00000000")
+    );
+    assert!(quantize_unlock_fee_amount(&decimal("1"), 19).is_err());
+}
+
+#[test]
+fn enabled_unlock_fee_must_use_the_project_quote_asset() {
+    use super::service::ensure_unlock_fee_asset_matches_quote_asset;
+
+    assert!(ensure_unlock_fee_asset_matches_quote_asset(true, Some(22), Some(22)).is_ok());
+    assert!(ensure_unlock_fee_asset_matches_quote_asset(true, Some(11), Some(22)).is_err());
+    assert!(ensure_unlock_fee_asset_matches_quote_asset(true, Some(22), None).is_err());
+    assert!(ensure_unlock_fee_asset_matches_quote_asset(false, Some(11), None).is_ok());
+}
+
+#[test]
+fn new_coin_request_fingerprints_normalize_decimals_and_bind_all_parameters() {
+    use super::service::{new_coin_purchase_fingerprint, new_coin_subscription_fingerprint};
+
+    let first = new_coin_subscription_fingerprint(7, 11, 13, &decimal("10.00"), &decimal("4.0"));
+    let same = new_coin_subscription_fingerprint(7, 11, 13, &decimal("10"), &decimal("4"));
+    let changed = new_coin_subscription_fingerprint(7, 11, 13, &decimal("10"), &decimal("5"));
+    assert_eq!(first, same);
+    assert_ne!(first, changed);
+
+    assert_ne!(
+        new_coin_purchase_fingerprint(7, 11, 17, &decimal("2"), &decimal("3")),
+        new_coin_purchase_fingerprint(7, 11, 18, &decimal("2"), &decimal("3"))
+    );
+}
+
+#[test]
+fn unlock_idempotency_keys_are_namespaced_by_issuance_flow() {
+    use super::service::new_coin_unlock_idempotency_key;
+
+    let subscription = new_coin_unlock_idempotency_key("new_coin_subscription", "same-key")
+        .expect("subscription unlock key");
+    let purchase = new_coin_unlock_idempotency_key("new_coin_purchase", "same-key")
+        .expect("purchase unlock key");
+    assert_ne!(subscription, purchase);
+    assert_eq!(subscription, "new_coin_subscription:same-key");
+}

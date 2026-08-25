@@ -1,8 +1,9 @@
 use super::{
     CROSS_NET_DELTA_EPSILON, CrossMarginEstimateStatus, CrossMarginPositionRisk,
     CrossMarginReferencePosition, MarginOrderType, MarginPositionDisplayInput,
-    cross_margin_liquidation_settlement, estimate_cross_margin_conditional_price,
-    evaluate_cross_margin, margin_limit_order_is_triggered, margin_position_display_metrics,
+    MarkedCrossMarginPosition, cross_margin_liquidation_settlement, cross_margin_max_transferable,
+    estimate_cross_margin_conditional_price, evaluate_cross_margin, evaluate_margin_position_risk,
+    evaluate_marked_cross_margin, margin_limit_order_is_triggered, margin_position_display_metrics,
     margin_position_payout_amount, validate_margin_limit_price,
 };
 use bigdecimal::BigDecimal;
@@ -35,6 +36,116 @@ fn margin_limit_rules_reject_invalid_prices_direction_and_precision() {
     assert!(validate_margin_limit_price(&decimal("1.234"), 2).is_err());
     assert!(validate_margin_limit_price(&decimal("0"), 8).is_err());
     assert!(validate_margin_limit_price(&decimal("1"), -1).is_err());
+}
+
+#[test]
+fn shared_cross_risk_formula_handles_hedges_interest_and_exact_transfer_boundary() {
+    let long_margin = decimal("20");
+    let long_notional = decimal("200");
+    let long_interest = decimal("3");
+    let long_entry = decimal("100");
+    let short_margin = decimal("10");
+    let short_notional = decimal("100");
+    let short_interest = decimal("2");
+    let short_entry = decimal("100");
+    let mark = decimal("75");
+    let long_rate = decimal("0.05");
+    let short_rate = decimal("0.10");
+    let positions = [
+        MarkedCrossMarginPosition {
+            direction: "long",
+            margin_amount: &long_margin,
+            notional_amount: &long_notional,
+            interest_amount: &long_interest,
+            entry_price: &long_entry,
+            mark_price: &mark,
+            maintenance_margin_rate: &long_rate,
+        },
+        MarkedCrossMarginPosition {
+            direction: "short",
+            margin_amount: &short_margin,
+            notional_amount: &short_notional,
+            interest_amount: &short_interest,
+            entry_price: &short_entry,
+            mark_price: &mark,
+            maintenance_margin_rate: &short_rate,
+        },
+    ];
+
+    let before = evaluate_marked_cross_margin(&decimal("50"), &positions).unwrap();
+    assert_eq!(
+        before.account.unrealized_pnl,
+        decimal("-25.000000000000000000")
+    );
+    assert_eq!(
+        before.account.interest_amount,
+        decimal("5.000000000000000000")
+    );
+    assert_eq!(before.account.equity, decimal("50.000000000000000000"));
+    assert_eq!(
+        before.account.maintenance_margin,
+        decimal("20.000000000000000000")
+    );
+    assert_eq!(
+        cross_margin_max_transferable(&decimal("50"), &before.account).unwrap(),
+        decimal("30.000000000000000000")
+    );
+    assert!(cross_margin_max_transferable(&decimal("-0.01"), &before.account).is_err());
+
+    let at_boundary = evaluate_marked_cross_margin(&decimal("20"), &positions).unwrap();
+    assert_eq!(
+        at_boundary.account.equity,
+        at_boundary.account.maintenance_margin
+    );
+    let below_boundary = evaluate_marked_cross_margin(&decimal("19.99"), &positions).unwrap();
+    assert!(below_boundary.account.equity < below_boundary.account.maintenance_margin);
+
+    let empty = evaluate_marked_cross_margin(&decimal("50"), &[]).unwrap();
+    assert!(!empty.account.should_liquidate);
+    assert_eq!(
+        empty.account.maintenance_margin,
+        decimal("0.000000000000000000")
+    );
+    assert_eq!(
+        cross_margin_max_transferable(&decimal("50"), &empty.account).unwrap(),
+        decimal("50.000000000000000000")
+    );
+}
+
+#[test]
+fn position_query_and_liquidation_share_long_short_direction_formula() {
+    let common = (
+        decimal("10"),
+        decimal("100"),
+        decimal("1"),
+        decimal("100"),
+        decimal("90"),
+        decimal("0.05"),
+    );
+    let long = evaluate_margin_position_risk(
+        "long", &common.0, &common.1, &common.2, &common.3, &common.4, &common.5,
+    )
+    .unwrap();
+    let short = evaluate_margin_position_risk(
+        "short", &common.0, &common.1, &common.2, &common.3, &common.4, &common.5,
+    )
+    .unwrap();
+    assert_eq!(long.realized_pnl, decimal("-10.000000000000000000"));
+    assert_eq!(short.realized_pnl, decimal("10.000000000000000000"));
+    assert!(long.should_liquidate);
+    assert!(!short.should_liquidate);
+    assert!(
+        evaluate_margin_position_risk(
+            "long",
+            &common.0,
+            &common.1,
+            &decimal("-1"),
+            &common.3,
+            &common.4,
+            &common.5,
+        )
+        .is_err()
+    );
 }
 
 #[test]

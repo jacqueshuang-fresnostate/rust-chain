@@ -13,22 +13,22 @@ use crate::{
         risk::{RiskGuardInput, RiskScope, enforce_risk_control},
         security::{SecurityAction, SecurityVerificationInput, verify_user_security_action},
         wallet::{
-            amount_fits_asset_precision, infrastructure,
+            infrastructure,
             infrastructure::{
                 ReturnHistoryAssetActivityRow, TodayReturnAssetActivityRow, WalletLedgerCategory,
                 WalletLedgerFilter,
             },
             presentation::{
                 AdminWalletListQuery, AdminWalletWithdrawalsResponse, BroadcastWithdrawalRequest,
-                ConfirmWithdrawalRequest, CreateWithdrawalRequest, DepositAddressRequest,
-                DepositAddressResponse, DepositAssetResponse, DepositNetworkResponse,
-                DepositNetworksQuery, FailWithdrawalRequest, ObserveDepositRequest,
-                ReturnHistoryMissingPrice, ReturnHistoryPoint, ReturnHistoryResponse,
-                ReturnHistorySummary, ReverseDepositRequest, ReviewWithdrawalRequest,
-                TodayReturnResponse, TodayReturnStatus, WalletAccountResponse,
-                WalletDepositEventResponse, WalletDepositsResponse, WalletLedgerQuery,
-                WalletLedgerResponse, WalletWithdrawalQuery, WalletWithdrawalResponse,
-                WithdrawalRequestResponse,
+                ConfirmWithdrawalRequest, CreateWithdrawalQuoteRequest, CreateWithdrawalRequest,
+                DepositAddressRequest, DepositAddressResponse, DepositAssetResponse,
+                DepositNetworkResponse, DepositNetworksQuery, FailWithdrawalRequest,
+                ObserveDepositRequest, ReturnHistoryMissingPrice, ReturnHistoryPoint,
+                ReturnHistoryResponse, ReturnHistorySummary, ReverseDepositRequest,
+                ReviewWithdrawalRequest, TodayReturnResponse, TodayReturnStatus,
+                WalletAccountResponse, WalletDepositEventResponse, WalletDepositsResponse,
+                WalletLedgerQuery, WalletLedgerResponse, WalletWithdrawalQuery,
+                WalletWithdrawalResponse, WithdrawalQuoteResponse, WithdrawalRequestResponse,
             },
             truncate_amount_to_asset_precision,
         },
@@ -48,6 +48,7 @@ use std::{
 const TODAY_RETURN_REPORTING_ASSET: &str = "USDT";
 const TODAY_RETURN_REPORTING_SCALE: i32 = 18;
 const REALIZED_RETURN_ZERO: &str = "0.000000000000000000";
+const WITHDRAWAL_QUOTE_TTL_SECONDS: i64 = 300;
 
 /// 列出当前启用且允许充值的资产配置，供充值入口的币种选择列表使用。
 /// 该用例无入参可校验，直接透传基础设施查询；返回的精度与最小充值额是后续链上入账的判定依据。
@@ -671,7 +672,60 @@ pub(crate) fn build_wallet_ledger_filter(
     })
 }
 
-/// 创建提现申请并冻结“申请金额 + 服务端费用”；调用方必须提供已认证用户、稳定幂等键及安全验证凭据。
+/// 生成并持久化服务端权威提现报价。金额先按资产精度向零截断，再用规范化阶梯计费；
+/// fee/net/total_reserved、配置版本、所有者和指纹一次入库，提交时不再信任客户端金额派生值。
+pub(crate) async fn create_withdrawal_quote(
+    pool: &Pool<MySql>,
+    user_id: u64,
+    request: CreateWithdrawalQuoteRequest,
+) -> AppResult<WithdrawalQuoteResponse> {
+    let asset_symbol = normalize_asset_symbol(&request.asset_symbol)?;
+    let network = normalize_deposit_network(&request.network)?;
+    if request.amount <= 0 {
+        return Err(AppError::Validation("amount must be positive".to_owned()));
+    }
+
+    // 报价同样必须取配置行锁：先网络、后资产，与提现消费事务保持同一锁序。
+    // 这样精度、阶梯、版本与入库 quote 来自同一个不可并发改写的快照。
+    let mut tx = pool.begin().await?;
+    if let Err(error) =
+        infrastructure::lock_active_withdrawal_network_in_tx(&mut tx, &network, &asset_symbol).await
+    {
+        return match error {
+            AppError::Conflict(_) => Err(AppError::Validation(format!(
+                "asset {asset_symbol} does not support withdrawal network {network}"
+            ))),
+            error => Err(error),
+        };
+    }
+    // 先取精度，再以标准化金额重算阶梯，避免截断恰好跨越费率边界。
+    let initial =
+        infrastructure::load_withdrawal_asset_rule_in_tx(&mut tx, &asset_symbol, &request.amount)
+            .await?;
+    let amount =
+        truncate_amount_to_asset_precision(&request.amount, initial.precision_scale).with_scale(18);
+    if amount <= 0 {
+        return Err(AppError::Validation(
+            "amount is below the asset precision".to_owned(),
+        ));
+    }
+    let asset =
+        infrastructure::load_withdrawal_asset_rule_in_tx(&mut tx, &asset_symbol, &amount).await?;
+    let quote = infrastructure::insert_withdrawal_quote_in_tx(
+        &mut tx,
+        user_id,
+        &asset,
+        &asset_symbol,
+        &network,
+        &amount,
+        Utc::now() + TimeDelta::seconds(WITHDRAWAL_QUOTE_TTL_SECONDS),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(quote)
+}
+
+/// 创建提现申请并冻结“申请金额 + 服务端报价费用”；调用方必须提供已认证用户、稳定幂等键及安全验证凭据。
 /// 用例依次执行资产精度/费用规则、幂等重放、风控和资金安全校验，命中拒绝时不得消耗资金或生成申请。
 /// 申请记录、available→frozen 变更及账本由基础设施在同一事务提交；费用以资产精度截断后的服务端规则为准。
 /// 冻结只写一条 available 负流水，金额为本金加费用；frozen 增量体现在同条流水的三桶账后快照。
@@ -684,20 +738,69 @@ pub(crate) async fn create_withdrawal_request(
     request: CreateWithdrawalRequest,
 ) -> AppResult<WithdrawalRequestResponse> {
     let request = validate_withdrawal_request(request)?;
-    let asset =
-        infrastructure::load_withdrawal_asset_rule(pool, &request.asset_symbol, &request.amount)
-            .await?;
-    if !amount_fits_asset_precision(&request.amount, asset.precision_scale) {
-        return Err(AppError::Validation(format!(
-            "withdrawal amount supports at most {} decimal places",
-            asset.precision_scale
-        )));
+    let quote = infrastructure::load_withdrawal_quote(pool, &request.quote_id, user_id).await?;
+    if request
+        .network
+        .as_deref()
+        .is_some_and(|network| network != quote.network)
+    {
+        return Err(AppError::Conflict(
+            "withdrawal quote does not match request parameters".to_owned(),
+        ));
+    }
+    let network = quote.network.as_str();
+    let expected_fingerprint = super::withdrawal_quote_fingerprint(
+        user_id,
+        quote.asset_id,
+        &request.asset_symbol,
+        network,
+        &request.amount,
+    );
+    if quote.asset_symbol != request.asset_symbol
+        || quote.amount != request.amount
+        || quote.fee != request.fee
+        || quote.request_fingerprint != expected_fingerprint
+    {
+        return Err(AppError::Conflict(
+            "withdrawal quote does not match request parameters".to_owned(),
+        ));
     }
     if let Some(existing) =
         infrastructure::load_withdrawal_by_user_key(pool, user_id, &request.idempotency_key).await?
     {
-        ensure_withdrawal_replay_matches(&existing, &request, &asset.fee)?;
-        return withdrawal_request_response(existing);
+        ensure_withdrawal_replay_matches(&existing, &request, &quote.response())?;
+        return withdrawal_request_response(existing, quote.response());
+    }
+    if quote.expires_at <= Utc::now() {
+        return Err(AppError::Validation(
+            "withdrawal quote is expired".to_owned(),
+        ));
+    }
+    if quote.consumed_at.is_some() || quote.withdrawal_id.is_some() {
+        return Err(AppError::Conflict(
+            "withdrawal quote was already consumed".to_owned(),
+        ));
+    }
+    if let Err(error) =
+        infrastructure::ensure_active_withdrawal_network(pool, network, &request.asset_symbol).await
+    {
+        return match error {
+            AppError::Validation(_) | AppError::NotFound => Err(AppError::Conflict(
+                "withdrawal quote network configuration has changed".to_owned(),
+            )),
+            error => Err(error),
+        };
+    }
+    let asset =
+        infrastructure::load_withdrawal_asset_rule(pool, &request.asset_symbol, &request.amount)
+            .await?;
+    if asset.id != quote.asset_id
+        || asset.fee_config_version != quote.fee_config_version
+        || asset.fee != quote.fee
+    {
+        return Err(AppError::Conflict(
+            "withdrawal quote fee configuration has changed".to_owned(),
+        ));
     }
     // 风控闸门先于安全校验和冻结执行，命中拒绝时不消耗验证凭据、也不产生任何资金状态。
     // 提现用例不持有 Redis 句柄，限频规则在该路径不生效。
@@ -733,9 +836,9 @@ pub(crate) async fn create_withdrawal_request(
     let withdrawal = match infrastructure::reserve_withdrawal_request(
         pool,
         user_id,
-        &asset,
+        &request.quote_id,
         &request.asset_symbol,
-        request.network.as_deref(),
+        network,
         &request.address,
         &request.amount,
         &request.idempotency_key,
@@ -754,12 +857,14 @@ pub(crate) async fn create_withdrawal_request(
             .ok_or_else(|| {
                 AppError::Conflict("withdrawal idempotency key was used concurrently".to_owned())
             })?;
-            ensure_withdrawal_replay_matches(&existing, &request, &asset.fee)?;
-            existing
+            let replay_quote =
+                infrastructure::load_withdrawal_quote(pool, &request.quote_id, user_id).await?;
+            ensure_withdrawal_replay_matches(&existing, &request, &replay_quote.response())?;
+            return withdrawal_request_response(existing, replay_quote.response());
         }
         Err(error) => return Err(error),
     };
-    withdrawal_request_response(withdrawal)
+    withdrawal_request_response(withdrawal.withdrawal, withdrawal.quote)
 }
 
 /// 按当前用户和可选状态读取提现请求，不暴露其他用户记录。
@@ -896,8 +1001,8 @@ pub(crate) async fn confirm_withdrawal(
 
 /// 在尚可安全退款的状态下把提现标记失败，并将 frozen 全额连本带费退回 available。
 /// 失败原因由请求体必填字段提供，仍需经过非空与五百一十二字符上限校验，空白原因视为缺失。
-/// 与拒绝共用同一释放实现但允许的来源状态不同：失败只接受已批准或广播中，覆盖上链前确认失败的场景。
-/// 已有链上交易哈希的不确定请求不会经此自动释放，只能走人工审核；目标状态重放不生成第二笔退款流水。
+/// 与拒绝共用同一释放实现但只接受尚未进入广播的已批准状态，覆盖调用链网关之前已确定失败的场景。
+/// 广播中、结果不明或已有交易哈希的请求均不会经此释放，必须查询到权威未受理或继续人工复核；目标状态重放不生成第二笔退款流水。
 pub(crate) async fn fail_withdrawal(
     pool: &Pool<MySql>,
     admin_id: u64,
@@ -984,6 +1089,12 @@ pub(crate) fn admin_id_from_subject(subject: &str) -> AppResult<u64> {
 fn validate_withdrawal_request(
     request: CreateWithdrawalRequest,
 ) -> AppResult<CreateWithdrawalRequest> {
+    let quote_id = request.quote_id.trim();
+    if uuid::Uuid::parse_str(quote_id).is_err() {
+        return Err(AppError::Validation(
+            "quote_id format is invalid".to_owned(),
+        ));
+    }
     if request.asset_symbol.trim().is_empty() {
         return Err(AppError::Validation("asset_symbol is required".to_owned()));
     }
@@ -1009,6 +1120,7 @@ fn validate_withdrawal_request(
     }
 
     Ok(CreateWithdrawalRequest {
+        quote_id: quote_id.to_owned(),
         asset_symbol: request.asset_symbol.trim().to_ascii_uppercase(),
         network: request
             .network
@@ -1030,13 +1142,19 @@ fn validate_withdrawal_request(
 fn ensure_withdrawal_replay_matches(
     existing: &WalletWithdrawalResponse,
     request: &CreateWithdrawalRequest,
-    configured_fee: &BigDecimal,
+    quote: &WithdrawalQuoteResponse,
 ) -> AppResult<()> {
-    if existing.asset_symbol != request.asset_symbol
-        || existing.network != request.network
+    if existing.withdrawal_quote_id.as_deref() != Some(request.quote_id.as_str())
+        || existing.asset_symbol != request.asset_symbol
+        || existing.network.as_deref() != Some(quote.network.as_str())
+        || request
+            .network
+            .as_deref()
+            .is_some_and(|network| network != quote.network)
         || existing.address != request.address
         || existing.amount != request.amount
-        || existing.fee != *configured_fee
+        || existing.fee != quote.fee
+        || existing.total_reserved != quote.total_reserved
     {
         return Err(AppError::Conflict(
             "withdrawal idempotency key was reused with different parameters".to_owned(),
@@ -1051,6 +1169,7 @@ fn ensure_withdrawal_replay_matches(
 /// 响应不包含地址、幂等键和链上进度，避免创建接口回显敏感或尚未生效的字段。
 fn withdrawal_request_response(
     withdrawal: WalletWithdrawalResponse,
+    quote: WithdrawalQuoteResponse,
 ) -> AppResult<WithdrawalRequestResponse> {
     let security_method = match withdrawal.security_method.as_str() {
         "fund_password" => crate::modules::security::SecurityVerificationMethod::FundPassword,
@@ -1064,16 +1183,35 @@ fn withdrawal_request_response(
             ));
         }
     };
+    if withdrawal.withdrawal_quote_id.as_deref() != Some(quote.quote_id.as_str())
+        || withdrawal.asset_symbol != quote.asset_symbol
+        || withdrawal.network.as_deref() != Some(quote.network.as_str())
+        || withdrawal.amount != quote.amount
+        || withdrawal.fee != quote.fee
+        || withdrawal.total_reserved != quote.total_reserved
+    {
+        return Err(AppError::Internal(
+            "withdrawal and quote snapshots do not match".to_owned(),
+        ));
+    }
     Ok(WithdrawalRequestResponse {
         id: withdrawal.id,
+        quote_id: quote.quote_id,
         status: withdrawal.status,
-        total_reserved: withdrawal.total_reserved,
+        asset_symbol: quote.asset_symbol,
+        network: quote.network,
+        amount: quote.amount,
+        fee: quote.fee,
+        net: quote.net,
+        total_reserved: quote.total_reserved,
+        fee_config_version: quote.fee_config_version,
+        expires_at: quote.expires_at,
         security_method,
     })
 }
 
-/// 校验提现状态筛选值，先做裁剪与空值归一，再要求命中八个已登记状态之一。
-/// 允许集合覆盖待审核、已批准、广播中、已广播、已确认、人工审核、已拒绝和已失败，缺省表示不按状态筛选。
+/// 校验提现状态筛选值，先做裁剪与空值归一，再要求命中九个已登记状态之一。
+/// 允许集合覆盖待审核、已批准、广播中、结果不明、已广播、已确认、人工审核、已拒绝和已失败，缺省表示不按状态筛选。
 /// 比对区分大小写且不做别名映射，非法取值返回校验错误，避免拼错状态时静默返回空列表让运营误判。
 fn normalize_withdrawal_status(status: Option<String>) -> AppResult<Option<String>> {
     let status = normalize_optional_query_string(status);
@@ -1083,6 +1221,7 @@ fn normalize_withdrawal_status(status: Option<String>) -> AppResult<Option<Strin
             "pending_review"
                 | "approved"
                 | "broadcasting"
+                | "unknown_broadcast"
                 | "broadcasted"
                 | "confirmed"
                 | "manual_review"

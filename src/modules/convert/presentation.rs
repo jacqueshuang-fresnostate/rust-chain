@@ -38,10 +38,10 @@ pub(crate) struct CreateConvertQuoteRequest {
     pub(crate) from_amount: BigDecimal,
 }
 
-/// 确认报价的请求体，只需报价标识；金额和汇率一律以服务端缓存快照为准。
+/// 确认报价的请求体，只需报价标识；金额和汇率一律以服务端 MySQL 权威快照为准。
 #[derive(Debug, Deserialize)]
 pub(crate) struct ConfirmConvertQuoteRequest {
-    /// 报价 UUID 字符串，解析失败在读取 Redis 前即返回参数错误。
+    /// 报价 UUID 字符串，解析失败在开启 MySQL 资金事务前即返回参数错误。
     pub(crate) quote_id: String,
 }
 
@@ -57,7 +57,7 @@ pub(crate) struct ConvertPairResponse {
     pub(crate) to_asset_symbol: String,
     /// 目标资产图标地址，同样允许为空由前端兜底。
     pub(crate) to_asset_logo_url: Option<String>,
-    /// 计价模式，fixed 走配置固定汇率，market 走缓存行情。
+    /// 计价模式，fixed 走配置固定汇率，market 走 MySQL 权威行情历史。
     pub(crate) pricing_mode: String,
     /// 价差比例，实际汇率为原始汇率乘以 `1 - spread_rate`。
     pub(crate) spread_rate: BigDecimal,
@@ -128,6 +128,15 @@ pub(crate) struct ConvertQuoteResponse {
     pub(crate) fee_rate: BigDecimal,
     /// 以源资产计价的手续费，已按源资产精度向零截断。
     pub(crate) fee_amount: BigDecimal,
+    /// 权威价格来源；fixed 或具体行情供应商。
+    pub(crate) price_source: String,
+    /// 市场计价符号；fixed 报价为空。
+    pub(crate) price_symbol: Option<String>,
+    /// 权威价格/配置观察时刻。
+    #[serde(with = "unix_millis")]
+    pub(crate) price_observed_at: DateTime<Utc>,
+    /// 不可变行情摘要或固定配置版本。
+    pub(crate) price_version: String,
     /// 报价失效时刻，到点后确认接口一律拒绝。
     #[serde(with = "unix_millis")]
     pub(crate) expires_at: DateTime<Utc>,

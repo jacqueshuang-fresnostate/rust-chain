@@ -135,6 +135,18 @@ pub(crate) struct AdminTwoFactorCodeRequest {
     pub(crate) totp_code: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct AdminPasswordChangeRequest {
+    pub(crate) current_password: Option<String>,
+    pub(crate) new_password: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AdminPasswordChangeResponse {
+    pub(crate) changed: bool,
+    pub(crate) requires_relogin: bool,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 pub(crate) enum AdminLoginResponse {

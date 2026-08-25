@@ -30,6 +30,7 @@ const statusKeys: Record<string, string> = {
   pending_review: 'withdrawRecords.statusPendingReview',
   approved: 'withdrawRecords.statusApproved',
   broadcasting: 'withdrawRecords.statusBroadcasting',
+  unknown_broadcast: 'withdrawRecords.statusUnknownBroadcast',
   broadcasted: 'withdrawRecords.statusBroadcasted',
   confirmed: 'withdrawRecords.statusConfirmed',
   manual_review: 'withdrawRecords.statusManualReview',

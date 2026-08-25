@@ -20,16 +20,35 @@ use sqlx::{MySql, Pool};
 pub(crate) async fn authorize_admin_request(
     pool: &Pool<MySql>,
     subject: &str,
+    auth_session_version: u64,
     method: &str,
     path: &str,
 ) -> AppResult<AdminScope> {
     let scope = load_admin_scope(pool, subject).await?;
+    if scope.auth_session_version != auth_session_version {
+        return Err(AppError::Unauthorized);
+    }
+    if scope.must_change_password && !is_forced_password_change_route(method, path) {
+        return Err(AppError::security_forbidden(
+            "ADMIN_PASSWORD_CHANGE_REQUIRED",
+            "administrator password must be changed before performing this operation",
+        ));
+    }
     if let Some(permission) = required_admin_permission(method, path)
         && !scope.allows(&permission)
     {
         return Err(AppError::Forbidden);
     }
     Ok(scope)
+}
+
+/// 强制改密期间仅开放本人权限快照和改密提交；其余读写、2FA 与刷新后的业务请求都继续被闸门拒绝。
+fn is_forced_password_change_route(method: &str, raw_path: &str) -> bool {
+    let path = raw_path.strip_prefix("/admin/api/v1").unwrap_or(raw_path);
+    matches!(
+        (method, path),
+        ("GET", "/access/me") | ("PATCH", "/auth/password")
+    )
 }
 
 /// 返回后端授权器实际采用的权限码目录，供角色配置页展示和校验候选值。
@@ -44,9 +63,19 @@ pub(crate) fn list_admin_permission_catalog() -> AdminPermissionCatalogResponse 
 pub(crate) async fn authorize_admin_permission(
     pool: &Pool<MySql>,
     subject: &str,
+    auth_session_version: u64,
     permission: &str,
 ) -> AppResult<AdminScope> {
     let scope = load_admin_scope(pool, subject).await?;
+    if scope.auth_session_version != auth_session_version {
+        return Err(AppError::Unauthorized);
+    }
+    if scope.must_change_password {
+        return Err(AppError::security_forbidden(
+            "ADMIN_PASSWORD_CHANGE_REQUIRED",
+            "administrator password must be changed before performing this operation",
+        ));
+    }
     if scope.allows(permission) {
         Ok(scope)
     } else {

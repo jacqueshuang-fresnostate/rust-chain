@@ -1,8 +1,8 @@
 //! 钱包链上出入金后台任务。
 //!
-//! 每轮先认领到期的已批准提现并调用链网关广播，再按每个启用网关的持久游标轮询提现回执与充值事件。
-//! 提现认领用带条件的原子更新实现互斥，配合下次尝试时刻形成三十秒可见性窗口，多实例并发下同一申请只会被一个进程处理。
-//! 广播失败按指数退避重排，达到最大尝试次数才释放冻结判定失败；已经取得链上交易哈希的申请一律不自动解冻。
+//! 每轮先认领到期的已批准提现并调用链网关广播，对广播中/结果不明的请求只用稳定 request id 查询，再按每个启用网关的持久游标轮询链事件。
+//! 广播与对账认领都用带条件的原子更新实现互斥，配合下次尝试时刻形成三十秒可见性窗口，多实例并发下同一申请只会被一个进程处理。
+//! 只有确定性拒绝、明确的受理前失败或权威未受理查询才能释放冻结；超时、断连、5xx和无效响应始终保留 frozen，预算耗尽后转人工复核。
 //! 链事件按错误性质分流：基础设施类错误停在当前页保留旧游标等待下轮，确定性拒绝写入死信后越过，避免毒性事件卡死游标。
 //! 只有整页处理完毕才推进网关游标，因此事件至少处理一次，重复由链事件唯一键与提现状态机各自幂等消化。
 //! 网关凭据只在调用前解密且不落日志；本任务不直接改写余额，所有资金变更都委托钱包上下文的事务入口完成。
@@ -14,14 +14,19 @@ use crate::{
         application::{normalize_deposit_network, observe_deposit},
         infrastructure::{
             HttpWalletChainGateway, NewWalletChainEventDeadLetter, confirm_withdrawal_in_tx,
-            insert_wallet_chain_event_dead_letter, load_withdrawal_by_gateway_request_for_update,
+            insert_wallet_chain_event_dead_letter, insert_withdrawal_broadcast_audit_in_tx,
+            load_withdrawal_by_gateway_request_for_update,
+            mark_withdrawal_acceptance_evidence_for_manual_review_in_tx,
             mark_withdrawal_broadcasted_in_tx, mark_withdrawal_manual_review_in_tx,
-            release_withdrawal_in_tx, update_withdrawal_chain_progress_in_tx,
+            mark_withdrawal_unknown_broadcast_in_tx, release_authoritatively_not_accepted_in_tx,
+            schedule_withdrawal_after_not_accepted_in_tx, update_withdrawal_chain_progress_in_tx,
         },
         presentation::ObserveDepositRequest,
         repository::{
             WalletChainBroadcastCommand, WalletChainDepositObservation, WalletChainGateway,
-            WalletChainWithdrawalObservation,
+            WalletChainGatewayError, WalletChainGatewayErrorClass,
+            WalletChainWithdrawalObservation, WalletChainWithdrawalQueryResult,
+            WalletChainWithdrawalQueryStatus,
         },
     },
     state::AppState,
@@ -69,6 +74,7 @@ pub struct WalletChainWorkerSummary {
 #[derive(Debug, sqlx::FromRow)]
 struct WithdrawalCandidate {
     id: u64,
+    status: String,
     gateway_request_id: String,
     network: String,
     asset_symbol: String,
@@ -76,7 +82,9 @@ struct WithdrawalCandidate {
     amount: BigDecimal,
     fee: BigDecimal,
     retry_count: u32,
-    broadcast_url: String,
+    gateway_query_count: u32,
+    broadcast_url: Option<String>,
+    withdrawal_status_url: Option<String>,
     auth_token_encrypted: Option<String>,
 }
 
@@ -110,9 +118,9 @@ pub async fn run_once(
 
 /// 钱包链 worker 单轮核心：先认领并广播待处理提现，再按网关游标轮询提现回执和充值事件。
 /// 候选提现按申请编号升序取一批，逐个用条件更新认领；认领失败说明已被其他实例抢走，直接跳过不计入处理。
-/// 认领会把状态改为广播中、尝试次数加一并把下次可见时刻推后三十秒，因此崩溃后该申请会在窗口到期后自动重新可认领。
+/// 已批准请求的认领会把状态改为广播中、广播尝试次数加一并推后可见时刻；崩溃后该状态只进入查询对账，绝不盲目二次广播。
 /// 广播成功即在独立事务中登记交易哈希与确认进度，此步不核销冻结，资金仍留在 frozen 等待确认。
-/// 广播失败按累计尝试次数决策：未达上限则按指数退避重排回已批准，达到上限才在事务中释放冻结并判定失败。
+/// 广播错误按类别决策：确定拒绝可当场释放，受理前可重试错误按预算重排/释放，结果不明则只查询并在预算耗尽后保持冻结转人工。
 /// 链事件阶段逐个网关处理，凭据解密失败或轮询失败只记录并跳过该网关，其游标保持不变。
 /// 提现回执与充值事件分两段处理，回执段一旦命中可重试错误立即停页且跳过本网关剩余充值事件，避免游标越过未处理数据。
 /// 确定性拒绝的事件写入死信后继续处理同页后续事件；只有整页无停页时才推进游标，因此事件语义是至少一次。
@@ -128,61 +136,32 @@ pub async fn run_once_with_gateway(
     let candidates = load_withdrawal_candidates(pool, config.batch_limit).await?;
     for candidate in candidates {
         summary.withdrawal_scanned += 1;
-        if !claim_withdrawal(pool, candidate.id).await? {
-            continue;
-        }
-        let bearer_token =
-            decrypt_gateway_token(candidate.auth_token_encrypted.as_deref(), encryption_key);
-        let command = WalletChainBroadcastCommand {
-            request_id: candidate.gateway_request_id,
-            network: candidate.network,
-            asset_symbol: candidate.asset_symbol,
-            address: candidate.address,
-            amount: candidate.amount.to_string(),
-            fee: candidate.fee.to_string(),
-        };
-        let broadcast = match bearer_token {
-            Ok(token) => {
-                gateway
-                    .broadcast_withdrawal(&candidate.broadcast_url, token.as_deref(), &command)
-                    .await
+        if candidate.status == "approved" {
+            if !claim_withdrawal_for_broadcast(pool, candidate.id).await? {
+                continue;
             }
-            Err(error) => Err(error),
-        };
-        match broadcast {
-            Ok(result) => {
-                let tx_hash = normalize_gateway_identifier(&result.tx_hash, "tx_hash", 255)?;
-                let mut tx = pool.begin().await?;
-                mark_withdrawal_broadcasted_in_tx(
-                    &mut tx,
-                    candidate.id,
-                    None,
-                    &tx_hash,
-                    result.block_height,
-                    result.confirmations,
-                )
-                .await?;
-                tx.commit().await?;
-                summary.withdrawal_broadcasted += 1;
+            process_broadcast_candidate(
+                pool,
+                encryption_key,
+                gateway,
+                &candidate,
+                config,
+                &mut summary,
+            )
+            .await?;
+        } else {
+            if !claim_withdrawal_for_reconciliation(pool, candidate.id).await? {
+                continue;
             }
-            Err(error) => {
-                let attempts = candidate.retry_count.saturating_add(1);
-                if attempts >= config.max_attempts {
-                    let mut tx = pool.begin().await?;
-                    let reason = bounded_failure_reason(&format!(
-                        "wallet gateway broadcast failed: {error}"
-                    ));
-                    release_withdrawal_in_tx(&mut tx, candidate.id, None, "failed", &reason)
-                        .await?;
-                    tx.commit().await?;
-                    summary.withdrawal_failed += 1;
-                } else {
-                    schedule_withdrawal_retry(pool, candidate.id, &error.to_string(), attempts)
-                        .await?;
-                    summary.withdrawal_retried += 1;
-                }
-                warn!(withdrawal_id = candidate.id, %error, "提现链上广播失败");
-            }
+            process_reconciliation_candidate(
+                pool,
+                encryption_key,
+                gateway,
+                &candidate,
+                config,
+                &mut summary,
+            )
+            .await?;
         }
     }
 
@@ -271,6 +250,441 @@ pub async fn run_once_with_gateway(
     Ok(summary)
 }
 
+async fn process_broadcast_candidate(
+    pool: &Pool<MySql>,
+    encryption_key: Option<&str>,
+    gateway: &dyn WalletChainGateway,
+    candidate: &WithdrawalCandidate,
+    config: WalletChainWorkerConfig,
+    summary: &mut WalletChainWorkerSummary,
+) -> AppResult<()> {
+    let attempts = candidate.retry_count.saturating_add(1);
+    let command = WalletChainBroadcastCommand {
+        request_id: candidate.gateway_request_id.clone(),
+        network: candidate.network.clone(),
+        asset_symbol: candidate.asset_symbol.clone(),
+        address: candidate.address.clone(),
+        amount: candidate.amount.to_string(),
+        fee: candidate.fee.to_string(),
+    };
+    let broadcast = match (
+        candidate.broadcast_url.as_deref(),
+        decrypt_gateway_token(candidate.auth_token_encrypted.as_deref(), encryption_key),
+    ) {
+        (Some(endpoint), Ok(token)) => {
+            gateway
+                .broadcast_withdrawal(endpoint, token.as_deref(), &command)
+                .await
+        }
+        (None, _) => Err(WalletChainGatewayError::new(
+            WalletChainGatewayErrorClass::RetryableBeforeAcceptance,
+            "wallet gateway broadcast endpoint is not configured",
+        )),
+        (_, Err(error)) => Err(WalletChainGatewayError::new(
+            WalletChainGatewayErrorClass::RetryableBeforeAcceptance,
+            format!("wallet gateway credentials are unavailable: {error}"),
+        )),
+    };
+
+    let event_key = format!("broadcast:{attempts}");
+    let mut tx = pool.begin().await?;
+    match broadcast {
+        Ok(result) => {
+            let tx_hash = match normalize_gateway_identifier(&result.tx_hash, "tx_hash", 255) {
+                Ok(tx_hash) => tx_hash,
+                Err(error) => {
+                    let reason = bounded_failure_reason(&format!(
+                        "wallet gateway broadcast response is invalid: {error}"
+                    ));
+                    insert_withdrawal_broadcast_audit_in_tx(
+                        &mut tx,
+                        candidate.id,
+                        &candidate.gateway_request_id,
+                        &event_key,
+                        "broadcast",
+                        "unknown",
+                        None,
+                        Some(&reason),
+                    )
+                    .await?;
+                    // HTTP 2xx 且已解析为“广播成功”结构本身就是受理证据；
+                    // 即使哈希格式损坏，也只能铆住证据转人工，不得遗忘后再被退冻。
+                    mark_withdrawal_acceptance_evidence_for_manual_review_in_tx(
+                        &mut tx,
+                        candidate.id,
+                        &reason,
+                        None,
+                        result.block_height,
+                        result.confirmations,
+                    )
+                    .await?;
+                    summary.withdrawal_manual_review += 1;
+                    tx.commit().await?;
+                    return Ok(());
+                }
+            };
+            mark_withdrawal_broadcasted_in_tx(
+                &mut tx,
+                candidate.id,
+                None,
+                &tx_hash,
+                result.block_height,
+                result.confirmations,
+            )
+            .await?;
+            insert_withdrawal_broadcast_audit_in_tx(
+                &mut tx,
+                candidate.id,
+                &candidate.gateway_request_id,
+                &event_key,
+                "broadcast",
+                "accepted",
+                Some(&tx_hash),
+                None,
+            )
+            .await?;
+            summary.withdrawal_broadcasted += 1;
+        }
+        Err(error) => {
+            let reason = bounded_failure_reason(&format!(
+                "wallet gateway broadcast failed: {}",
+                error.message
+            ));
+            insert_withdrawal_broadcast_audit_in_tx(
+                &mut tx,
+                candidate.id,
+                &candidate.gateway_request_id,
+                &event_key,
+                "broadcast",
+                error.class.as_str(),
+                None,
+                Some(&reason),
+            )
+            .await?;
+            match error.class {
+                WalletChainGatewayErrorClass::DeterministicRejected => {
+                    release_authoritatively_not_accepted_in_tx(&mut tx, candidate.id, &reason)
+                        .await?;
+                    summary.withdrawal_failed += 1;
+                }
+                WalletChainGatewayErrorClass::RetryableBeforeAcceptance
+                    if attempts >= config.max_attempts =>
+                {
+                    release_authoritatively_not_accepted_in_tx(&mut tx, candidate.id, &reason)
+                        .await?;
+                    summary.withdrawal_failed += 1;
+                }
+                WalletChainGatewayErrorClass::RetryableBeforeAcceptance => {
+                    schedule_withdrawal_after_not_accepted_in_tx(
+                        &mut tx,
+                        candidate.id,
+                        &reason,
+                        retry_backoff_seconds(attempts),
+                    )
+                    .await?;
+                    summary.withdrawal_retried += 1;
+                }
+                WalletChainGatewayErrorClass::Unknown => {
+                    let manual_review = attempts >= config.max_attempts;
+                    mark_withdrawal_unknown_broadcast_in_tx(
+                        &mut tx,
+                        candidate.id,
+                        error.class.as_str(),
+                        &reason,
+                        retry_backoff_seconds(attempts),
+                        manual_review,
+                    )
+                    .await?;
+                    if manual_review {
+                        summary.withdrawal_manual_review += 1;
+                    } else {
+                        summary.withdrawal_retried += 1;
+                    }
+                }
+            }
+            warn!(
+                withdrawal_id = candidate.id,
+                error_class = error.class.as_str(),
+                error = %error,
+                "提现链上广播未成功"
+            );
+        }
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn process_reconciliation_candidate(
+    pool: &Pool<MySql>,
+    encryption_key: Option<&str>,
+    gateway: &dyn WalletChainGateway,
+    candidate: &WithdrawalCandidate,
+    config: WalletChainWorkerConfig,
+    summary: &mut WalletChainWorkerSummary,
+) -> AppResult<()> {
+    let query_attempt = candidate.gateway_query_count.saturating_add(1);
+    let event_key = format!("query:{query_attempt}");
+    let query = match (
+        candidate.withdrawal_status_url.as_deref(),
+        decrypt_gateway_token(candidate.auth_token_encrypted.as_deref(), encryption_key),
+    ) {
+        (Some(endpoint), Ok(token)) => {
+            gateway
+                .query_withdrawal(endpoint, token.as_deref(), &candidate.gateway_request_id)
+                .await
+        }
+        (None, _) => Err(WalletChainGatewayError::new(
+            WalletChainGatewayErrorClass::Unknown,
+            "wallet gateway status endpoint is not configured",
+        )),
+        (_, Err(error)) => Err(WalletChainGatewayError::new(
+            WalletChainGatewayErrorClass::Unknown,
+            format!("wallet gateway credentials are unavailable: {error}"),
+        )),
+    };
+
+    let mut tx = pool.begin().await?;
+    match query {
+        Err(error) => {
+            let reason = bounded_failure_reason(&format!(
+                "wallet gateway status query failed: {}",
+                error.message
+            ));
+            insert_withdrawal_broadcast_audit_in_tx(
+                &mut tx,
+                candidate.id,
+                &candidate.gateway_request_id,
+                &event_key,
+                "query",
+                "unknown",
+                None,
+                Some(&reason),
+            )
+            .await?;
+            let manual_review =
+                query_attempt >= config.max_attempts || candidate.withdrawal_status_url.is_none();
+            mark_withdrawal_unknown_broadcast_in_tx(
+                &mut tx,
+                candidate.id,
+                "unknown",
+                &reason,
+                retry_backoff_seconds(query_attempt),
+                manual_review,
+            )
+            .await?;
+            if manual_review {
+                summary.withdrawal_manual_review += 1;
+            } else {
+                summary.withdrawal_retried += 1;
+            }
+        }
+        Ok(result) => {
+            let explicitly_not_accepted = matches!(
+                result.status,
+                WalletChainWithdrawalQueryStatus::NotAccepted
+                    | WalletChainWithdrawalQueryStatus::Rejected
+            );
+            if explicitly_not_accepted && query_result_has_acceptance_evidence(&result) {
+                // “未受理”与交易哈希/区块/确认数同时出现是自相矛盾的远端响应，不能作为退冻证据。
+                let reason = bounded_failure_reason(
+                    "wallet gateway reported non-acceptance together with chain acceptance evidence",
+                );
+                let audit_tx_hash = result
+                    .tx_hash
+                    .as_deref()
+                    .and_then(|value| normalize_gateway_identifier(value, "tx_hash", 255).ok());
+                insert_withdrawal_broadcast_audit_in_tx(
+                    &mut tx,
+                    candidate.id,
+                    &candidate.gateway_request_id,
+                    &event_key,
+                    "query",
+                    "unknown",
+                    audit_tx_hash.as_deref(),
+                    Some(&reason),
+                )
+                .await?;
+                mark_withdrawal_acceptance_evidence_for_manual_review_in_tx(
+                    &mut tx,
+                    candidate.id,
+                    &reason,
+                    audit_tx_hash.as_deref(),
+                    result.block_height,
+                    result.confirmations,
+                )
+                .await?;
+                summary.withdrawal_manual_review += 1;
+            } else if explicitly_not_accepted {
+                let reason = bounded_failure_reason(
+                    result
+                        .failure_reason
+                        .as_deref()
+                        .unwrap_or("wallet gateway authoritatively reported not accepted"),
+                );
+                insert_withdrawal_broadcast_audit_in_tx(
+                    &mut tx,
+                    candidate.id,
+                    &candidate.gateway_request_id,
+                    &event_key,
+                    "query",
+                    "authoritative_not_accepted",
+                    None,
+                    Some(&reason),
+                )
+                .await?;
+                release_authoritatively_not_accepted_in_tx(&mut tx, candidate.id, &reason).await?;
+                summary.withdrawal_failed += 1;
+            } else if let Some(raw_tx_hash) = result.tx_hash.as_deref() {
+                let tx_hash = match normalize_gateway_identifier(raw_tx_hash, "tx_hash", 255) {
+                    Ok(tx_hash) => tx_hash,
+                    Err(error) => {
+                        let reason = bounded_failure_reason(&format!(
+                            "wallet gateway status response is invalid: {error}"
+                        ));
+                        insert_withdrawal_broadcast_audit_in_tx(
+                            &mut tx,
+                            candidate.id,
+                            &candidate.gateway_request_id,
+                            &event_key,
+                            "query",
+                            "unknown",
+                            None,
+                            Some(&reason),
+                        )
+                        .await?;
+                        // 查询结果已经携带 tx_hash 字段，即使值格式损坏也不能把这份
+                        // 受理证据降级成可释放的普通 manual_review。
+                        mark_withdrawal_acceptance_evidence_for_manual_review_in_tx(
+                            &mut tx,
+                            candidate.id,
+                            &reason,
+                            None,
+                            result.block_height,
+                            result.confirmations,
+                        )
+                        .await?;
+                        summary.withdrawal_manual_review += 1;
+                        tx.commit().await?;
+                        return Ok(());
+                    }
+                };
+                mark_withdrawal_broadcasted_in_tx(
+                    &mut tx,
+                    candidate.id,
+                    None,
+                    &tx_hash,
+                    result.block_height,
+                    result.confirmations,
+                )
+                .await?;
+                insert_withdrawal_broadcast_audit_in_tx(
+                    &mut tx,
+                    candidate.id,
+                    &candidate.gateway_request_id,
+                    &event_key,
+                    "query",
+                    "accepted",
+                    Some(&tx_hash),
+                    None,
+                )
+                .await?;
+                summary.withdrawal_broadcasted += 1;
+                if result.status == WalletChainWithdrawalQueryStatus::Confirmed {
+                    confirm_withdrawal_in_tx(
+                        &mut tx,
+                        candidate.id,
+                        None,
+                        result.block_height,
+                        result.confirmations.max(1),
+                    )
+                    .await?;
+                    summary.withdrawal_confirmed += 1;
+                }
+            } else if result.block_height.is_some() || result.confirmations > 0 {
+                let reason = bounded_failure_reason(
+                    "wallet gateway reported chain progress without a transaction hash",
+                );
+                insert_withdrawal_broadcast_audit_in_tx(
+                    &mut tx,
+                    candidate.id,
+                    &candidate.gateway_request_id,
+                    &event_key,
+                    "query",
+                    "unknown",
+                    None,
+                    Some(&reason),
+                )
+                .await?;
+                mark_withdrawal_acceptance_evidence_for_manual_review_in_tx(
+                    &mut tx,
+                    candidate.id,
+                    &reason,
+                    None,
+                    result.block_height,
+                    result.confirmations,
+                )
+                .await?;
+                summary.withdrawal_manual_review += 1;
+            } else {
+                let status_claims_acceptance = matches!(
+                    result.status,
+                    WalletChainWithdrawalQueryStatus::Accepted
+                        | WalletChainWithdrawalQueryStatus::Broadcasted
+                        | WalletChainWithdrawalQueryStatus::Confirmed
+                );
+                let reason = if status_claims_acceptance {
+                    "wallet gateway reported acceptance without a transaction hash"
+                } else {
+                    "wallet gateway status remains pending or unknown"
+                };
+                insert_withdrawal_broadcast_audit_in_tx(
+                    &mut tx,
+                    candidate.id,
+                    &candidate.gateway_request_id,
+                    &event_key,
+                    "query",
+                    "unknown",
+                    None,
+                    Some(reason),
+                )
+                .await?;
+                if status_claims_acceptance {
+                    // accepted/broadcasted/confirmed 状态本身就是远端受理声明。
+                    // 缺失 tx_hash 不能让后到的 not_accepted 回执自动退冻。
+                    mark_withdrawal_acceptance_evidence_for_manual_review_in_tx(
+                        &mut tx,
+                        candidate.id,
+                        reason,
+                        None,
+                        None,
+                        0,
+                    )
+                    .await?;
+                    summary.withdrawal_manual_review += 1;
+                } else {
+                    let manual_review = query_attempt >= config.max_attempts;
+                    mark_withdrawal_unknown_broadcast_in_tx(
+                        &mut tx,
+                        candidate.id,
+                        "unknown",
+                        reason,
+                        retry_backoff_seconds(query_attempt),
+                        manual_review,
+                    )
+                    .await?;
+                    if manual_review {
+                        summary.withdrawal_manual_review += 1;
+                    } else {
+                        summary.withdrawal_retried += 1;
+                    }
+                }
+            }
+        }
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
 /// 以配置周期至少 1 秒持续运行钱包链任务；周期级数据库、解密或网关错误只记录并进入下一轮，单个链事件按核心入口的可重试/死信规则隔离。
 /// 提现状态、next-attempt、链事件死信与网关游标承担跨重启恢复；循环不缓存密钥，也不越过未完整处理的页面推进游标。
 pub async fn run_loop(state: AppState, config: WalletChainWorkerConfig) -> AppResult<()> {
@@ -300,7 +714,7 @@ pub async fn run_loop(state: AppState, config: WalletChainWorkerConfig) -> AppRe
 /// 随后按网关请求编号对申请加排他锁，并二次核对申请自身的网络确实属于该网关，防止跨网关串改他人申请。
 /// 已广播与已确认两类回执都要求带交易哈希：申请仍在已批准或广播中则登记广播，否则只单调推进区块高度与确认数。
 /// 已确认回执在进度更新后若申请尚未确认，再调用确认入口从 frozen 永久扣除预留额并写确认流水。
-/// 失败回执按申请当前状态分流：尚未上链的已批准或广播中直接释放冻结判失败，已广播则转人工审核保留冻结。
+/// 只有回执明确标记 not_accepted/rejected 才调用权威未受理释放入口；通用 failed 表示结果仍有歧义，一律转人工复核并保留冻结。
 /// 若申请已处于失败、人工审核或已确认则视为终态静默接受，其余状态返回冲突交由上层按确定性错误进死信。
 /// 全部状态迁移共用同一事务，任一步失败整体回滚；重复回执只提高确认数，不会重复扣减 frozen。
 async fn process_withdrawal_observation(
@@ -317,11 +731,6 @@ async fn process_withdrawal_observation(
     }
     let receipt_status = normalize_withdrawal_receipt_status(&observation.status)?;
     let request_id = normalize_gateway_identifier(&observation.request_id, "request_id", 128)?;
-    let tx_hash = observation
-        .tx_hash
-        .as_deref()
-        .map(|value| normalize_gateway_identifier(value, "tx_hash", 255))
-        .transpose()?;
     let mut tx = pool.begin().await?;
     let mut withdrawal =
         load_withdrawal_by_gateway_request_for_update(&mut tx, &request_id).await?;
@@ -336,13 +745,72 @@ async fn process_withdrawal_observation(
             "withdrawal does not belong to the configured gateway".to_owned(),
         ));
     }
+    let tx_hash = match observation
+        .tx_hash
+        .as_deref()
+        .map(|value| normalize_gateway_identifier(value, "tx_hash", 255))
+        .transpose()
+    {
+        Ok(tx_hash) => tx_hash,
+        Err(error) => {
+            // 回执携带了交易哈希字段，但值格式损坏。这不是可以忽略的纯解析错误：
+            // 它至少表示远端声称存在链上交易，必须持久化证据闸门并保留冻结。
+            let reason = bounded_failure_reason(&format!(
+                "wallet gateway withdrawal receipt contains an invalid transaction hash: {error}"
+            ));
+            if matches!(
+                withdrawal.status.as_str(),
+                "approved"
+                    | "broadcasting"
+                    | "unknown_broadcast"
+                    | "broadcasted"
+                    | "manual_review"
+                    | "confirmed"
+            ) {
+                let was_manual_or_confirmed =
+                    matches!(withdrawal.status.as_str(), "manual_review" | "confirmed");
+                mark_withdrawal_acceptance_evidence_for_manual_review_in_tx(
+                    &mut tx,
+                    withdrawal.id,
+                    &reason,
+                    None,
+                    observation.block_height,
+                    observation.confirmations,
+                )
+                .await?;
+                insert_withdrawal_broadcast_audit_in_tx(
+                    &mut tx,
+                    withdrawal.id,
+                    &request_id,
+                    &format!(
+                        "receipt:{}:invalid_tx_hash",
+                        observation.status.trim().to_ascii_lowercase()
+                    ),
+                    "receipt",
+                    "unknown",
+                    None,
+                    Some(&reason),
+                )
+                .await?;
+                if !was_manual_or_confirmed {
+                    summary.withdrawal_manual_review += 1;
+                }
+                tx.commit().await?;
+                return Ok(());
+            }
+            return Err(error);
+        }
+    };
 
     match receipt_status {
         WithdrawalReceiptStatus::Broadcasted | WithdrawalReceiptStatus::Confirmed => {
             let tx_hash = tx_hash.ok_or_else(|| {
                 AppError::Validation("withdrawal receipt tx_hash is required".to_owned())
             })?;
-            if matches!(withdrawal.status.as_str(), "approved" | "broadcasting") {
+            if matches!(
+                withdrawal.status.as_str(),
+                "approved" | "broadcasting" | "unknown_broadcast" | "manual_review"
+            ) {
                 withdrawal = mark_withdrawal_broadcasted_in_tx(
                     &mut tx,
                     withdrawal.id,
@@ -375,24 +843,132 @@ async fn process_withdrawal_observation(
                 .await?;
                 summary.withdrawal_confirmed += 1;
             }
+            insert_withdrawal_broadcast_audit_in_tx(
+                &mut tx,
+                withdrawal.id,
+                &request_id,
+                &format!(
+                    "receipt:{}:{}:{}",
+                    observation.status.to_ascii_lowercase(),
+                    tx_hash,
+                    observation.confirmations
+                ),
+                "receipt",
+                if receipt_status == WithdrawalReceiptStatus::Confirmed {
+                    "confirmed"
+                } else {
+                    "accepted"
+                },
+                Some(&tx_hash),
+                None,
+            )
+            .await?;
+        }
+        WithdrawalReceiptStatus::NotAccepted => {
+            let acceptance_evidence = tx_hash.is_some()
+                || observation.block_height.is_some()
+                || observation.confirmations > 0
+                || withdrawal.tx_hash.is_some()
+                || withdrawal.acceptance_evidence_at.is_some()
+                || matches!(withdrawal.status.as_str(), "broadcasted" | "confirmed");
+            if acceptance_evidence {
+                let reason = bounded_failure_reason(
+                    "wallet gateway reported non-acceptance together with chain acceptance evidence",
+                );
+                let evidence_tx_hash = tx_hash.clone().or_else(|| withdrawal.tx_hash.clone());
+                let was_manual_review = withdrawal.status == "manual_review";
+                if matches!(
+                    withdrawal.status.as_str(),
+                    "approved"
+                        | "broadcasting"
+                        | "unknown_broadcast"
+                        | "broadcasted"
+                        | "manual_review"
+                ) {
+                    mark_withdrawal_acceptance_evidence_for_manual_review_in_tx(
+                        &mut tx,
+                        withdrawal.id,
+                        &reason,
+                        tx_hash.as_deref(),
+                        observation.block_height,
+                        observation.confirmations,
+                    )
+                    .await?;
+                    if !was_manual_review {
+                        summary.withdrawal_manual_review += 1;
+                    }
+                }
+                insert_withdrawal_broadcast_audit_in_tx(
+                    &mut tx,
+                    withdrawal.id,
+                    &request_id,
+                    "receipt:not_accepted:contradictory",
+                    "receipt",
+                    "unknown",
+                    evidence_tx_hash.as_deref(),
+                    Some(&reason),
+                )
+                .await?;
+            } else {
+                let reason = bounded_failure_reason(
+                    observation
+                        .failure_reason
+                        .as_deref()
+                        .unwrap_or("wallet gateway authoritatively reported not accepted"),
+                );
+                release_authoritatively_not_accepted_in_tx(&mut tx, withdrawal.id, &reason).await?;
+                insert_withdrawal_broadcast_audit_in_tx(
+                    &mut tx,
+                    withdrawal.id,
+                    &request_id,
+                    "receipt:not_accepted",
+                    "receipt",
+                    "authoritative_not_accepted",
+                    None,
+                    Some(&reason),
+                )
+                .await?;
+                summary.withdrawal_failed += 1;
+            }
         }
         WithdrawalReceiptStatus::Failed => {
-            let reason = bounded_failure_reason(
-                observation
-                    .failure_reason
-                    .as_deref()
-                    .unwrap_or("wallet gateway reported terminal failure"),
-            );
-            if matches!(withdrawal.status.as_str(), "approved" | "broadcasting") {
-                release_withdrawal_in_tx(&mut tx, withdrawal.id, None, "failed", &reason).await?;
-                summary.withdrawal_failed += 1;
-            } else if withdrawal.status == "broadcasted" {
-                mark_withdrawal_manual_review_in_tx(&mut tx, withdrawal.id, &reason).await?;
-                summary.withdrawal_manual_review += 1;
-            } else if !matches!(
+            let reason =
+                bounded_failure_reason(observation.failure_reason.as_deref().unwrap_or(
+                    "wallet gateway reported terminal failure with uncertain acceptance",
+                ));
+            if matches!(
                 withdrawal.status.as_str(),
-                "failed" | "manual_review" | "confirmed"
+                "approved" | "broadcasting" | "unknown_broadcast" | "broadcasted"
             ) {
+                if tx_hash.is_some()
+                    || observation.block_height.is_some()
+                    || observation.confirmations > 0
+                {
+                    mark_withdrawal_acceptance_evidence_for_manual_review_in_tx(
+                        &mut tx,
+                        withdrawal.id,
+                        &reason,
+                        tx_hash.as_deref(),
+                        observation.block_height,
+                        observation.confirmations,
+                    )
+                    .await?;
+                } else {
+                    mark_withdrawal_manual_review_in_tx(&mut tx, withdrawal.id, &reason).await?;
+                }
+                insert_withdrawal_broadcast_audit_in_tx(
+                    &mut tx,
+                    withdrawal.id,
+                    &request_id,
+                    "receipt:failed",
+                    "receipt",
+                    "unknown",
+                    tx_hash.as_deref(),
+                    Some(&reason),
+                )
+                .await?;
+                summary.withdrawal_manual_review += 1;
+            } else if !matches!(withdrawal.status.as_str(), "manual_review" | "confirmed") {
                 return Err(AppError::Conflict(format!(
                     "withdrawal failure receipt cannot update status {}",
                     withdrawal.status
@@ -578,16 +1154,16 @@ async fn load_withdrawal_candidates(
     limit: u32,
 ) -> AppResult<Vec<WithdrawalCandidate>> {
     sqlx::query_as::<_, WithdrawalCandidate>(
-        r#"SELECT requests.id, requests.gateway_request_id, requests.network,
+        r#"SELECT requests.id, requests.status, requests.gateway_request_id, requests.network,
                   requests.asset_symbol, requests.address, requests.amount, requests.fee,
-                  requests.retry_count, gateways.broadcast_url,
+                  requests.retry_count, requests.gateway_query_count, gateways.broadcast_url,
+                  gateways.withdrawal_status_url,
                   gateways.auth_token_encrypted
            FROM wallet_withdrawal_requests requests
            INNER JOIN wallet_chain_gateways gateways
                    ON gateways.network = requests.network
                   AND gateways.status = 'active'
-                  AND gateways.broadcast_url IS NOT NULL
-           WHERE requests.status IN ('approved', 'broadcasting')
+           WHERE requests.status IN ('approved', 'broadcasting', 'unknown_broadcast')
              AND (requests.next_attempt_at IS NULL OR requests.next_attempt_at <= CURRENT_TIMESTAMP(6))
            ORDER BY requests.id ASC
            LIMIT ?"#,
@@ -603,14 +1179,35 @@ async fn load_withdrawal_candidates(
 /// 认领同时把状态置为广播中、尝试次数加一并把下次可见时刻推后三十秒，形成崩溃后可自动重试的可见性窗口。
 /// 尝试次数在此自增而非广播失败时才加，意味着进程在广播过程中崩溃同样会消耗一次尝试额度。
 /// 该更新不开显式事务，单语句自身即为原子操作，也不触碰任何余额或流水。
-async fn claim_withdrawal(pool: &Pool<MySql>, withdrawal_id: u64) -> AppResult<bool> {
+async fn claim_withdrawal_for_broadcast(pool: &Pool<MySql>, withdrawal_id: u64) -> AppResult<bool> {
     let result = sqlx::query(
         r#"UPDATE wallet_withdrawal_requests
            SET status = 'broadcasting', broadcasting_at = CURRENT_TIMESTAMP(6),
                retry_count = retry_count + 1,
                next_attempt_at = DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 30 SECOND)
            WHERE id = ?
-             AND status IN ('approved', 'broadcasting')
+             AND status = 'approved'
+             AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP(6))"#,
+    )
+    .bind(withdrawal_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// 认领广播结果待对账的请求。此路径只增加查询计数，绝不增加广播次数也不重发请求。
+async fn claim_withdrawal_for_reconciliation(
+    pool: &Pool<MySql>,
+    withdrawal_id: u64,
+) -> AppResult<bool> {
+    let result = sqlx::query(
+        r#"UPDATE wallet_withdrawal_requests
+           SET status = 'unknown_broadcast', gateway_query_count = gateway_query_count + 1,
+               last_gateway_query_at = CURRENT_TIMESTAMP(6),
+               next_attempt_at = DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL 30 SECOND)
+           WHERE id = ?
+             AND status IN ('broadcasting', 'unknown_broadcast')
+             AND tx_hash IS NULL
              AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP(6))"#,
     )
     .bind(withdrawal_id)
@@ -623,31 +1220,6 @@ async fn claim_withdrawal(pool: &Pool<MySql>, withdrawal_id: u64) -> AppResult<b
 /// 失败原因截断后写入申请，仅作为可观测信息，不改变状态机含义，也不影响后续能否重试。
 /// 更新以状态仍为广播中为条件，受影响行数不为一即判定并发抢先并返回冲突，避免覆盖他人已推进的状态。
 /// 该操作只调整调度字段，冻结资金原封不动留在 frozen，既不释放也不核销。
-async fn schedule_withdrawal_retry(
-    pool: &Pool<MySql>,
-    withdrawal_id: u64,
-    reason: &str,
-    attempts: u32,
-) -> AppResult<()> {
-    let result = sqlx::query(
-        r#"UPDATE wallet_withdrawal_requests
-           SET status = 'approved', failure_reason = ?,
-               next_attempt_at = DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL ? SECOND)
-           WHERE id = ? AND status = 'broadcasting'"#,
-    )
-    .bind(bounded_failure_reason(reason))
-    .bind(retry_backoff_seconds(attempts) as i64)
-    .bind(withdrawal_id)
-    .execute(pool)
-    .await?;
-    if result.rows_affected() != 1 {
-        return Err(AppError::Conflict(
-            "withdrawal retry state changed concurrently".to_owned(),
-        ));
-    }
-    Ok(())
-}
-
 /// 读取所有启用且配置了事件轮询地址的链网关，连同加密凭据与上次充值游标一起取出。
 /// 按主键升序返回，使多实例的网关处理顺序一致，便于对照日志排查某个网络的停页原因。
 /// 未配置轮询地址的网关被排除在外，因此只能广播不能收事件的网络不会进入本轮事件处理。
@@ -711,20 +1283,28 @@ fn bounded_failure_reason(reason: &str) -> String {
     reason.chars().take(500).collect()
 }
 
+/// 查询响应只要携带交易哈希、区块高度或正确认数，就已经包含远端受理证据。
+/// 该证据与 `not_accepted`/`rejected` 同时出现时必须转人工，禁止自动释放。
+fn query_result_has_acceptance_evidence(result: &WalletChainWithdrawalQueryResult) -> bool {
+    result.tx_hash.is_some() || result.block_height.is_some() || result.confirmations > 0
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WithdrawalReceiptStatus {
     Broadcasted,
     Confirmed,
+    NotAccepted,
     Failed,
 }
 
-/// 把网关回执状态文本收敛为内部枚举，只接受已广播、已确认和失败三种取值。
+/// 把网关回执状态文本收敛为内部枚举，只接受已广播、已确认、权威未受理和歧义失败四类取值。
 /// 比对前裁剪空白并转小写，因此大小写与多余空格不影响识别；未知状态返回校验错误。
 /// 未知状态属于确定性拒绝，会被归档为死信而非反复重试，防止网关新增状态时无声卡死游标。
 fn normalize_withdrawal_receipt_status(status: &str) -> AppResult<WithdrawalReceiptStatus> {
     match status.trim().to_ascii_lowercase().as_str() {
         "broadcasted" => Ok(WithdrawalReceiptStatus::Broadcasted),
         "confirmed" => Ok(WithdrawalReceiptStatus::Confirmed),
+        "not_accepted" | "rejected" => Ok(WithdrawalReceiptStatus::NotAccepted),
         "failed" => Ok(WithdrawalReceiptStatus::Failed),
         _ => Err(AppError::Validation(
             "wallet gateway withdrawal status is invalid".to_owned(),

@@ -77,6 +77,7 @@ pub(crate) struct CreateNewCoinProjectRequest {
     pub(crate) lifecycle_status: String,
     pub(crate) total_supply: BigDecimal,
     pub(crate) issue_price: BigDecimal,
+    pub(crate) quote_asset_id: u64,
     #[serde(default, with = "option_unix_millis")]
     pub(crate) listed_at: Option<DateTime<Utc>>,
     pub(crate) unlock_type: String,
@@ -166,6 +167,10 @@ pub(crate) struct NewCoinProjectResponse {
     pub(crate) lifecycle_status: String,
     pub(crate) total_supply: BigDecimal,
     pub(crate) issue_price: BigDecimal,
+    pub(crate) quote_asset_id: Option<u64>,
+    pub(crate) reserved_supply: BigDecimal,
+    pub(crate) allocated_supply: BigDecimal,
+    pub(crate) remaining_supply: BigDecimal,
     #[serde(default, with = "option_unix_millis")]
     pub(crate) listed_at: Option<DateTime<Utc>>,
     pub(crate) unlock_type: String,

@@ -108,6 +108,72 @@ pub(crate) fn margin_position_payout_amount(
         .unwrap_or_else(|| BigDecimal::from(0).with_scale(18))
 }
 
+/// 单仓在一笔服务端标记价下的统一风险结果。
+///
+/// 查询、主动平仓和强平都必须经由同一计算入口，避免方向盈亏、权益或维持保证金出现多套口径。
+#[derive(Debug, Clone, PartialEq)]
+pub struct MarginPositionRiskState {
+    /// 权益是否已经不高于维持保证金。
+    pub should_liquidate: bool,
+    /// 保证金加标记盈亏再减累计利息。
+    pub equity: BigDecimal,
+    /// 名义价值乘当前产品维持保证金率。
+    pub maintenance_margin: BigDecimal,
+    /// 按标记价折算的未实现盈亏；保留历史字段语义供强平记录复用。
+    pub realized_pnl: BigDecimal,
+}
+
+/// 按方向和同一标记价计算单仓盈亏，是主动平仓与账户风险评估共用的唯一价差公式。
+pub(crate) fn margin_mark_pnl(
+    direction: &str,
+    notional_amount: &BigDecimal,
+    entry_price: &BigDecimal,
+    mark_price: &BigDecimal,
+) -> Result<BigDecimal, &'static str> {
+    if entry_price <= &BigDecimal::from(0) {
+        return Err("margin entry price must be positive");
+    }
+    if mark_price <= &BigDecimal::from(0) {
+        return Err("margin mark price must be positive");
+    }
+    let price_delta = match direction {
+        "long" => mark_price.clone() - entry_price.clone(),
+        "short" => entry_price.clone() - mark_price.clone(),
+        _ => return Err("margin direction must be long or short"),
+    };
+    Ok((notional_amount.clone() * price_delta / entry_price.clone()).with_scale(18))
+}
+
+/// 计算逐仓风险；账户级查询和强平会复用其中的盈亏与维持保证金结果再做组合聚合。
+pub fn evaluate_margin_position_risk(
+    direction: &str,
+    margin_amount: &BigDecimal,
+    notional_amount: &BigDecimal,
+    interest_amount: &BigDecimal,
+    entry_price: &BigDecimal,
+    mark_price: &BigDecimal,
+    maintenance_margin_rate: &BigDecimal,
+) -> Result<MarginPositionRiskState, &'static str> {
+    if margin_amount < &BigDecimal::from(0)
+        || notional_amount < &BigDecimal::from(0)
+        || interest_amount < &BigDecimal::from(0)
+        || maintenance_margin_rate < &BigDecimal::from(0)
+    {
+        return Err("margin risk amounts and rate must be non-negative");
+    }
+    let realized_pnl = margin_mark_pnl(direction, notional_amount, entry_price, mark_price)?;
+    let equity =
+        (margin_amount.clone() + realized_pnl.clone() - interest_amount.clone()).with_scale(18);
+    let maintenance_margin =
+        (notional_amount.clone() * maintenance_margin_rate.clone()).with_scale(18);
+    Ok(MarginPositionRiskState {
+        should_liquidate: equity <= maintenance_margin,
+        equity,
+        maintenance_margin,
+        realized_pnl,
+    })
+}
+
 /// 手机端持仓卡所需的派生风险指标，所有值均基于同一个服务端风险快照计算。
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct MarginPositionDisplayMetrics {
@@ -220,6 +286,24 @@ pub(crate) struct CrossMarginPositionRisk {
     pub(crate) maintenance_margin: BigDecimal,
 }
 
+/// 一笔已成交全仓仓位和它在本批次使用的标记价。
+pub(crate) struct MarkedCrossMarginPosition<'a> {
+    pub(crate) direction: &'a str,
+    pub(crate) margin_amount: &'a BigDecimal,
+    pub(crate) notional_amount: &'a BigDecimal,
+    pub(crate) interest_amount: &'a BigDecimal,
+    pub(crate) entry_price: &'a BigDecimal,
+    pub(crate) mark_price: &'a BigDecimal,
+    pub(crate) maintenance_margin_rate: &'a BigDecimal,
+}
+
+/// 账户风险与按输入顺序返回的各仓统一估值结果。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct EvaluatedCrossMarginRisk {
+    pub(crate) account: CrossMarginRiskState,
+    pub(crate) positions: Vec<MarginPositionRiskState>,
+}
+
 /// 全仓账户组合风险快照，同一用户同一保证金币种下所有全仓仓位共享这组指标。
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CrossMarginRiskState {
@@ -280,6 +364,65 @@ pub(crate) fn evaluate_cross_margin(
         interest_amount,
         maintenance_margin,
         margin_ratio,
+    }
+}
+
+/// 用同一批标记价统一评估全仓账户。
+///
+/// 本函数先逐仓调用唯一单仓风险公式，再调用账户聚合公式；查询、强平和资金转出均复用该入口，
+/// 因而不会各自复制方向盈亏或维持保证金算法。输入顺序会被保留，方便调用方关联仓位主键。
+pub(crate) fn evaluate_marked_cross_margin(
+    wallet_equity: &BigDecimal,
+    positions: &[MarkedCrossMarginPosition<'_>],
+) -> Result<EvaluatedCrossMarginRisk, &'static str> {
+    let mut position_margin = BigDecimal::from(0);
+    let mut position_states = Vec::with_capacity(positions.len());
+    let mut account_positions = Vec::with_capacity(positions.len());
+    for position in positions {
+        let state = evaluate_margin_position_risk(
+            position.direction,
+            position.margin_amount,
+            position.notional_amount,
+            position.interest_amount,
+            position.entry_price,
+            position.mark_price,
+            position.maintenance_margin_rate,
+        )?;
+        position_margin += position.margin_amount.clone();
+        account_positions.push(CrossMarginPositionRisk {
+            unrealized_pnl: state.realized_pnl.clone(),
+            interest_amount: position.interest_amount.clone(),
+            maintenance_margin: state.maintenance_margin.clone(),
+        });
+        position_states.push(state);
+    }
+    Ok(EvaluatedCrossMarginRisk {
+        account: evaluate_cross_margin(
+            wallet_equity,
+            &position_margin.with_scale(18),
+            &account_positions,
+        ),
+        positions: position_states,
+    })
+}
+
+/// 从账户风险缓冲和实际 available 共同得出可转回现货的上限。
+/// 上限恰为 `min(available, max(equity - maintenance, 0))`，调用方仍须用转后快照复核不低于维持线。
+pub(crate) fn cross_margin_max_transferable(
+    available: &BigDecimal,
+    risk: &CrossMarginRiskState,
+) -> Result<BigDecimal, &'static str> {
+    if available < &BigDecimal::from(0) {
+        return Err("cross margin available balance must be non-negative");
+    }
+    let zero = BigDecimal::from(0).with_scale(18);
+    let buffer = (risk.equity.clone() - risk.maintenance_margin.clone()).with_scale(18);
+    if buffer <= zero {
+        Ok(zero)
+    } else if buffer < *available {
+        Ok(buffer)
+    } else {
+        Ok(available.clone().with_scale(18))
     }
 }
 

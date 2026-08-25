@@ -140,6 +140,10 @@ pub(crate) struct NewCoinProjectRead {
     pub(crate) lifecycle_status: String,
     pub(crate) total_supply: BigDecimal,
     pub(crate) issue_price: BigDecimal,
+    pub(crate) quote_asset_id: Option<u64>,
+    pub(crate) reserved_supply: BigDecimal,
+    pub(crate) allocated_supply: BigDecimal,
+    pub(crate) remaining_supply: BigDecimal,
     pub(crate) listed_at: Option<chrono::DateTime<chrono::Utc>>,
     pub(crate) unlock_type: String,
     pub(crate) fixed_unlock_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -159,6 +163,7 @@ pub(crate) struct NewCoinSubscriptionRead {
     pub(crate) project_id: u64,
     pub(crate) user_id: u64,
     pub(crate) quote_asset: u64,
+    pub(crate) issue_price: BigDecimal,
     pub(crate) quote_amount: BigDecimal,
     pub(crate) requested_quantity: BigDecimal,
     pub(crate) allocated_quantity: BigDecimal,
@@ -243,8 +248,14 @@ pub(crate) struct ReleaseUnlockOutcome {
 pub(crate) struct NewCoinProjectRuleRead {
     pub(crate) id: u64,
     pub(crate) asset_id: u64,
+    pub(crate) status: String,
     pub(crate) lifecycle_status: String,
+    pub(crate) total_supply: BigDecimal,
     pub(crate) issue_price: BigDecimal,
+    pub(crate) quote_asset_id: Option<u64>,
+    pub(crate) reserved_supply: BigDecimal,
+    pub(crate) allocated_supply: BigDecimal,
+    pub(crate) remaining_supply: BigDecimal,
     pub(crate) listed_at: Option<chrono::DateTime<chrono::Utc>>,
     pub(crate) unlock_type: String,
     pub(crate) fixed_unlock_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -278,6 +289,7 @@ pub(crate) struct NewCoinLockPositionWrite {
     pub(crate) unlock_at: chrono::DateTime<chrono::Utc>,
     pub(crate) amount: BigDecimal,
     pub(crate) merge_key: String,
+    pub(crate) source_time: chrono::DateTime<chrono::Utc>,
     pub(crate) source_type: String,
     pub(crate) source_id: String,
 }
@@ -297,7 +309,7 @@ pub(crate) struct NewCoinSubscriptionOrderWrite {
     pub(crate) quote_amount: BigDecimal,
     pub(crate) quantity: BigDecimal,
     pub(crate) idempotency_key: String,
-    pub(crate) lock_positions: Vec<NewCoinLockPositionWrite>,
+    pub(crate) request_fingerprint: String,
 }
 
 #[derive(Debug, Clone)]
@@ -307,8 +319,21 @@ pub(crate) struct NewCoinPurchaseOrderWrite {
     pub(crate) pair_id: u64,
     pub(crate) price: BigDecimal,
     pub(crate) quantity: BigDecimal,
-    pub(crate) quote_amount: BigDecimal,
     pub(crate) idempotency_key: String,
+    pub(crate) request_fingerprint: String,
+}
+
+/// 新币下单事务的最终结果；`created=false` 表示同参数幂等重放。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NewCoinOrderWriteOutcome {
+    pub(crate) project_id: u64,
+    pub(crate) asset_id: u64,
+    pub(crate) quote_asset_id: u64,
+    pub(crate) lock_position_id: Option<u64>,
+    pub(crate) status: String,
+    pub(crate) authoritative_price: BigDecimal,
+    pub(crate) authoritative_quote_amount: BigDecimal,
+    pub(crate) created: bool,
 }
 
 #[async_trait]
@@ -379,8 +404,8 @@ pub(crate) trait NewCoinUnlockFeeRepository: Clone + Send + Sync + 'static {
         user_id: u64,
     ) -> AppResult<Option<UnlockFeeExpectation>>;
 
-    /// 把匹配用户的解锁记录从非 paid 更新为 paid；返回值表示本次是否改变一行。
-    /// 当前 MySQL 实现不扣钱包、不写资金流水，调用方必须把它视为状态置位而非资金支付。
+    /// 在单事务内锁定应收、扣减用户可用余额、写钱包流水与平台收入分录后标记 paid。
+    /// 同键重放返回 false；资产、金额不符或余额不足必须整体回滚。
     async fn mark_unlock_fee_paid(&self, payment: UnlockFeePaymentWrite) -> AppResult<bool>;
 }
 
@@ -402,35 +427,26 @@ pub(crate) trait NewCoinUnlockReleaseRepository: Clone + Send + Sync + 'static {
 #[async_trait]
 pub(crate) trait NewCoinOrderRepository: Clone + Send + Sync + 'static {
     /// 按项目符号读取完整下单规则，包括生命周期、购买开关、批准交易对和解锁费配置。
-    /// 结果供下单前的快速失败校验使用，实现方不必在此加锁；
+    /// 结果供下单前解析项目主键和生成请求指纹，实现方不必在此加锁；
     /// 真正扣款前必须由下单事务内的加锁重读再确认一次，避免按过期配置成交。
-    /// 只返回启用项目，停用或不存在统一返回 `None`。
+    /// 必须保留停用项目，使已经成功的订单在项目停用后仍可按同键同参回放；
+    /// 新请求是否允许成交由事务内的 active 与生命周期守卫决定。
     async fn find_project_rule_by_symbol(
         &self,
         symbol: &str,
     ) -> AppResult<Option<NewCoinProjectRuleRead>>;
 
-    /// 读取指定交易对并确认其基础资产等于项目资产；不匹配时返回 `None`。
-    /// 资产匹配必须由实现方在查询条件中强制，而非交给调用方比对，
-    /// 否则持任意交易对编号的请求就能借项目通道买入不相干的币种。
-    /// 已下架的交易对同样返回 `None`；返回的计价资产编号会成为该笔买入的付款资产。
-    async fn find_pair_for_purchase(
-        &self,
-        pair_id: u64,
-        project_asset_id: u64,
-    ) -> AppResult<Option<NewCoinPairRead>>;
-
-    /// 创建申购订单；当前 MySQL 实现在事务中锁定计价钱包，原子扣款、写流水、分配资产并 upsert 锁仓。
-    /// 项目规则在事务前读取且不会重新锁定；重复幂等键返回 Conflict，返回值是首个锁仓位置编号或 `None`（直接到账）。
+    /// 创建申购订单；事务内重新锁项目，核对计价资产、发行价与剩余供给后原子扣款分配。
+    /// 同键同指纹回吐原结果，同键异指纹返回 Conflict，重放不重复扣款或占用供给。
     async fn create_subscription_order(
         &self,
         order: NewCoinSubscriptionOrderWrite,
-    ) -> AppResult<Option<u64>>;
+    ) -> AppResult<NewCoinOrderWriteOutcome>;
 
-    /// 创建上市后购买订单；当前 MySQL 实现锁定项目、交易对和钱包并原子落地扣款、流水、分配与锁仓。
-    /// 任意重复幂等键均返回 Conflict，不比较重放参数；返回值是首个锁仓位置编号或 `None`（直接到账）。
+    /// 创建上市后购买订单；事务内锁定项目与交易对，仅接受项目发行价和绑定计价资产。
+    /// 供给预留、钱包扣款、新币入账与供给确认共享事务；幂等重放语义与申购一致。
     async fn create_purchase_order(
         &self,
         order: NewCoinPurchaseOrderWrite,
-    ) -> AppResult<Option<u64>>;
+    ) -> AppResult<NewCoinOrderWriteOutcome>;
 }

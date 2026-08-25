@@ -1,8 +1,10 @@
 use crate::{
     error::{AppError, AppResult},
     modules::loan::domain::STATUS_DISBURSED,
+    workers::loan_health,
 };
 use chrono::{DateTime, Utc};
+use redis::{Client, aio::ConnectionManager};
 use sqlx::{MySql, Pool, Transaction};
 use std::env;
 use tokio::time::{Duration, interval};
@@ -16,10 +18,10 @@ pub struct LoanOverdueWorkerConfig {
 }
 
 impl LoanOverdueWorkerConfig {
-    /// 读取贷款逾期开关、周期与批量环境配置；默认关闭、周期 300 秒、批量 100，缺失或不可解析值回落到这些默认值。
+    /// 读取贷款逾期与健康扫描共用开关、周期和批量配置；默认启用以保证风险状态会被持续推进。
     pub fn from_env() -> Self {
         Self {
-            enabled: env_bool("LOAN_OVERDUE_ENABLED", false),
+            enabled: env_bool("LOAN_OVERDUE_ENABLED", true),
             interval_seconds: env_u64("LOAN_OVERDUE_INTERVAL_SECONDS", 300),
             batch_limit: env_u32("LOAN_OVERDUE_BATCH_LIMIT", 100),
         }
@@ -85,10 +87,18 @@ pub async fn run_once_with_dependencies(
 /// `loan_orders.status/overdue_at` 是跨重启恢复点，循环不维护额外游标，也不补发提交后事件。
 pub async fn run_loop(pool: Pool<MySql>, interval_seconds: u64, limit: u32) -> AppResult<()> {
     let mut ticker = interval(Duration::from_secs(interval_seconds.max(1)));
+    let mut health_redis = match connect_loan_health_redis().await {
+        Ok(redis) => Some(redis),
+        Err(error) => {
+            error!(%error, "贷款健康扫描 Redis 初始化失败，将在周期内重试");
+            None
+        }
+    };
 
     loop {
         ticker.tick().await;
-        match run_once_with_dependencies(&pool, Utc::now(), limit).await {
+        let now = Utc::now();
+        match run_once_with_dependencies(&pool, now, limit).await {
             Ok(summary) => info!(
                 scanned = summary.scanned,
                 marked = summary.marked,
@@ -98,7 +108,39 @@ pub async fn run_loop(pool: Pool<MySql>, interval_seconds: u64, limit: u32) -> A
             ),
             Err(error) => error!(%error, "贷款逾期扫描周期失败"),
         }
+        if health_redis.is_none() {
+            health_redis = match connect_loan_health_redis().await {
+                Ok(redis) => Some(redis),
+                Err(error) => {
+                    error!(%error, "贷款健康扫描 Redis 重连失败");
+                    None
+                }
+            };
+        }
+        if let Some(redis) = health_redis.as_ref() {
+            // 逾期扫描可能耗时，健康检查必须重新取时钟，避免把已过期 ticker 当成仍然新鲜。
+            let health_now = Utc::now();
+            match loan_health::run_once_with_dependencies(&pool, redis, health_now, limit).await {
+                Ok(summary) => info!(
+                    scanned = summary.scanned,
+                    liquidated = summary.liquidated,
+                    healthy = summary.healthy,
+                    skipped = summary.skipped,
+                    failed = summary.failed,
+                    "贷款健康与清算扫描周期完成"
+                ),
+                Err(error) => error!(%error, "贷款健康与清算扫描周期失败"),
+            }
+        }
     }
+}
+
+/// 复用进程的 REDIS_URL 建立可重连管理器；URL 不进入错误文案和日志字段。
+async fn connect_loan_health_redis() -> AppResult<ConnectionManager> {
+    let redis_url = env::var("REDIS_URL")
+        .map_err(|_| AppError::Internal("REDIS_URL is required for loan health scan".to_owned()))?;
+    let client = Client::open(redis_url)?;
+    ConnectionManager::new(client).await.map_err(AppError::from)
 }
 
 async fn fetch_overdue_candidates(

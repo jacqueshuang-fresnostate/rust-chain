@@ -1,7 +1,8 @@
 //! 权威 ticker 驱动的杠杆限价挂单成交用例。
 //!
 //! 本模块只接收已经通过 Redis CAS 时序门禁的服务端 ticker，绝不接收 HTTP 请求中的客户价格。
-//! 候选主键查询只做无锁初筛，每笔挂单都在独立事务中先锁仓位，再复核方向、限价、入场价和状态。
+//! 候选主键查询只做无锁初筛；逐仓在独立事务中直接锁仓位，全仓则先锁共享账户再锁挂单。
+//! 两种路径都会在持锁后复核方向、限价、入场价和状态，全仓成交与资金转出共用账户优先锁序。
 //! 只有从 `entry_price = NULL` 成功迁移到真实入场价的事务，才会重置计息起点、补建全仓账户、
 //! 登记一次代理返佣并在提交后发布私有成交事件。撤单、重复 ticker 或多实例竞争只会有一方改动行。
 
@@ -16,9 +17,10 @@ use crate::{
         margin::{
             domain::margin_limit_order_is_triggered,
             infrastructure::{
-                ensure_cross_margin_account, load_position_by_id,
+                bump_cross_margin_account_version, ensure_and_lock_cross_margin_account,
+                load_margin_position_account_scope, load_position_by_id,
                 lock_pending_margin_limit_position_by_id, mark_margin_limit_position_filled,
-                triggered_margin_limit_position_ids,
+                require_active_cross_margin_account, triggered_margin_limit_position_ids,
             },
             presentation::MarginPositionResponse,
             service::publish_margin_position_opened_event_if_needed,
@@ -74,7 +76,8 @@ pub async fn execute_triggered_margin_limit_orders_with_hub(
 }
 
 /// 在独立事务中尝试把一笔 pending limit 迁移为已成交仓位。
-/// 锁到行之后仍必须检查 `opened + limit + entry_price IS NULL`，因为无锁候选查询与真正取锁之间可能发生撤单或另一实例成交。
+/// 全仓挂单先根据不可变账户归属锁共享账户，逐仓则直接锁仓位；锁到行后仍必须检查
+/// `opened + limit + entry_price IS NULL`，因为无锁候选查询与真正取锁之间可能发生撤单或另一实例成交。
 /// 域规则在锁内用同一 ticker 再判一次做多/做空边界；不满足时提交只读事务并返回 None，不留任何资金副作用。
 /// 状态更新、全仓账户与佣金写入共享事务；任一环节失败均回滚，私有事件由上层在 commit 返回后才发布。
 async fn execute_one_triggered_margin_limit_order(
@@ -82,7 +85,21 @@ async fn execute_one_triggered_margin_limit_order(
     position_id: u64,
     market_price: &BigDecimal,
 ) -> AppResult<Option<MarginPositionResponse>> {
+    let scope = load_margin_position_account_scope(pool, position_id).await?;
     let mut tx = pool.begin().await?;
+    let cross_account = if scope
+        .as_ref()
+        .is_some_and(|scope| scope.margin_mode == "cross")
+    {
+        let scope = scope.as_ref().expect("checked scope must exist");
+        let account =
+            ensure_and_lock_cross_margin_account(&mut tx, scope.user_id, scope.margin_asset)
+                .await?;
+        require_active_cross_margin_account(&account)?;
+        Some(account)
+    } else {
+        None
+    };
     let Some(position) = lock_pending_margin_limit_position_by_id(&mut tx, position_id).await?
     else {
         tx.commit().await?;
@@ -111,8 +128,10 @@ async fn execute_one_triggered_margin_limit_order(
         tx.rollback().await?;
         return Ok(None);
     }
-    if position.margin_mode == "cross" {
-        ensure_cross_margin_account(&mut tx, position.user_id, position.margin_asset).await?;
+    if position.margin_mode == "cross" && cross_account.is_none() {
+        return Err(AppError::Conflict(
+            "margin position account scope changed before limit fill".to_owned(),
+        ));
     }
     let commission_source_id = position.id.to_string();
     insert_agent_business_commission_in_tx(
@@ -127,6 +146,15 @@ async fn execute_one_triggered_margin_limit_order(
         },
     )
     .await?;
+    if let Some(account) = cross_account {
+        bump_cross_margin_account_version(
+            &mut tx,
+            position.user_id,
+            position.margin_asset,
+            account.version,
+        )
+        .await?;
+    }
     let filled_position = load_position_by_id(&mut tx, position.id).await?;
     tx.commit().await?;
     Ok(Some(filled_position))

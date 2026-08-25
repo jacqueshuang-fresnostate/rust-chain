@@ -12,15 +12,19 @@
 
 use crate::{
     error::{AppError, AppResult},
-    modules::new_coin::{
-        LifecycleStatus, NewCoinDomainError, NewCoinOrderKind, UnlockFeeInput, UnlockFeeQuote,
-        UnlockFeeRule, UnlockRule, UnlockSource, apply_unlock_rule, calculate_unlock_fee,
-        ensure_unlock_release_allowed, plan_post_listing_purchase,
-        repository::{NewCoinLockPositionWrite, NewCoinProjectRuleRead, UnlockFeeExpectation},
+    modules::{
+        new_coin::{
+            LifecycleStatus, NewCoinDomainError, NewCoinOrderKind, UnlockFeeInput, UnlockFeeQuote,
+            UnlockFeeRule, UnlockRule, UnlockSource, apply_unlock_rule, calculate_unlock_fee,
+            ensure_unlock_release_allowed, plan_post_listing_purchase,
+            repository::{NewCoinLockPositionWrite, NewCoinProjectRuleRead, UnlockFeeExpectation},
+        },
+        wallet::{MAX_ASSET_PRECISION_SCALE, truncate_amount_to_asset_precision},
     },
 };
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
+use sha2::{Digest, Sha256};
 use std::cmp::{Ordering, max};
 
 use super::repository::{
@@ -347,16 +351,164 @@ pub(crate) fn ensure_positive_amount(amount: &BigDecimal, field: &str) -> AppRes
 
 /// 新币申购、购买与解禁共用的幂等键守卫，去掉首尾空白后必须仍然非空。
 /// 空键会让存储层的唯一约束失去意义，使同一请求重试写出多张订单，因此必须在开启事务之前拒绝。
-/// 注意本函数只校验非空，不做长度、字符集或归一化处理，
+/// 长度上限与 `asset_lock_position_sources.source_id` 的 128 字节容量一致，避免订单已插入后来源落库失败。
+/// 注意本函数不做字符集或归一化处理，
 /// 也不改写入参，因此含首尾空白的键会原样进入数据库并与去空后的键视为不同键。
 pub(crate) fn ensure_idempotency_key(value: &str) -> AppResult<()> {
     if value.trim().is_empty() {
         Err(AppError::Validation(
             "idempotency_key must not be empty".to_owned(),
         ))
+    } else if value.len() > 128 {
+        Err(AppError::Validation(
+            "idempotency_key must not exceed 128 bytes".to_owned(),
+        ))
     } else {
         Ok(())
     }
+}
+
+/// 解禁记录的幂等域必须包含来源类型；订单表之间允许复用原始键，裸键会串到另一类订单的应收快照。
+pub(crate) fn new_coin_unlock_idempotency_key(
+    source_type: &str,
+    source_id: &str,
+) -> AppResult<String> {
+    let key = format!("{source_type}:{source_id}");
+    if key.len() > 255 {
+        return Err(AppError::Validation(
+            "new coin unlock idempotency key is too long".to_owned(),
+        ));
+    }
+    Ok(key)
+}
+
+/// 为申购请求生成稳定 SHA-256 指纹，数值先 normalized 以消除无意义尾随零。
+/// 用户、项目、计价资产、支付额与数量全部入参，任一字段改变都会得到不同指纹。
+/// 指纹只用于同幂等键的请求内容比对，不代替事务内的权威价格与供给校验。
+pub(crate) fn new_coin_subscription_fingerprint(
+    user_id: u64,
+    project_id: u64,
+    quote_asset_id: u64,
+    quote_amount: &BigDecimal,
+    quantity: &BigDecimal,
+) -> String {
+    request_fingerprint(&[
+        "new_coin_subscription".to_owned(),
+        user_id.to_string(),
+        project_id.to_string(),
+        quote_asset_id.to_string(),
+        canonical_decimal(quote_amount),
+        canonical_decimal(quantity),
+    ])
+}
+
+/// 为上市后购买请求生成稳定指纹，覆盖用户、项目、交易对、客户价格与数量。
+/// 客户价格仍进入指纹，但成交前必须与服务端发行价严格相等，因此不会成为定价来源。
+/// 相同数值不同 scale 经 normalized 后一致，保证 `1.0` 与 `1.000` 能正确幂等重放。
+pub(crate) fn new_coin_purchase_fingerprint(
+    user_id: u64,
+    project_id: u64,
+    pair_id: u64,
+    price: &BigDecimal,
+    quantity: &BigDecimal,
+) -> String {
+    request_fingerprint(&[
+        "new_coin_purchase".to_owned(),
+        user_id.to_string(),
+        project_id.to_string(),
+        pair_id.to_string(),
+        canonical_decimal(price),
+        canonical_decimal(quantity),
+    ])
+}
+
+/// 按计价资产精度计算服务端权威应付金额；乘积无法被该资产精确表示时直接拒绝。
+/// 严禁向零截断应付额，否则小额订单可能被截成零或形成少付；发行价、数量和最终应付额均须为正。
+/// 本函数不接受客户报价，返回值只由项目发行价、数量和资产精度决定。
+pub(crate) fn authoritative_new_coin_quote_amount(
+    issue_price: &BigDecimal,
+    quantity: &BigDecimal,
+    quote_precision_scale: i32,
+) -> AppResult<BigDecimal> {
+    ensure_positive_amount(issue_price, "project issue_price")?;
+    ensure_positive_amount(quantity, "quantity")?;
+    let quote_amount = issue_price.clone() * quantity.clone();
+    ensure_new_coin_amount_precision(
+        &quote_amount,
+        quote_precision_scale,
+        "server-authoritative quote_amount",
+    )?;
+    ensure_positive_amount(&quote_amount, "server-authoritative quote_amount")?;
+    Ok(quote_amount.with_scale(i64::from(quote_precision_scale)))
+}
+
+/// 确认用户金额未超出资产精度；不做隐式截断，避免请求值与实际入账值不一致。
+/// 判定使用与钱包生成金额相同的向零截断函数，再按 normalized 比较数值。
+/// 精度超出钱包与 DECIMAL(38,18) 共同支持的 0..=18 属于资产元数据错误，按内部错误失败关闭。
+pub(crate) fn ensure_new_coin_amount_precision(
+    amount: &BigDecimal,
+    precision_scale: i32,
+    field: &str,
+) -> AppResult<()> {
+    if !(0..=MAX_ASSET_PRECISION_SCALE).contains(&precision_scale) {
+        return Err(AppError::Internal(
+            "asset precision_scale must be between 0 and 18".to_owned(),
+        ));
+    }
+    let truncated = truncate_amount_to_asset_precision(amount, precision_scale);
+    if truncated.normalized() != amount.normalized() {
+        return Err(AppError::Validation(format!(
+            "{field} exceeds asset precision_scale {precision_scale}"
+        )));
+    }
+    Ok(())
+}
+
+/// 将服务端计算的解禁费按支付资产精度向零截断，作为之后不可变的应收快照。
+pub(crate) fn quantize_unlock_fee_amount(
+    amount: &BigDecimal,
+    payment_asset_precision_scale: i32,
+) -> AppResult<BigDecimal> {
+    if !(0..=18).contains(&payment_asset_precision_scale) {
+        return Err(AppError::Internal(
+            "unlock fee asset precision_scale must be between 0 and 18".to_owned(),
+        ));
+    }
+    Ok(truncate_amount_to_asset_precision(
+        amount,
+        payment_asset_precision_scale,
+    ))
+}
+
+/// 解禁市值和利润都以项目 `issue_price` 的计价资产为单位。
+/// 当前模型没有额外的汇率快照，因此收费资产必须与项目计价资产一致；
+/// 否则相同数值会被错当成另一种资产的数量并影响真实扣款。
+pub(crate) fn ensure_unlock_fee_asset_matches_quote_asset(
+    unlock_fee_enabled: bool,
+    unlock_fee_asset: Option<u64>,
+    quote_asset_id: Option<u64>,
+) -> AppResult<()> {
+    if unlock_fee_enabled && (quote_asset_id.is_none() || unlock_fee_asset != quote_asset_id) {
+        return Err(AppError::Validation(
+            "unlock_fee_asset must equal the project quote_asset_id".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// 对一组已规范化字段做长度前缀编码后哈希，避免简单分隔符带来的边界碰撞。
+fn request_fingerprint(parts: &[String]) -> String {
+    let mut digest = Sha256::new();
+    for part in parts {
+        digest.update(part.len().to_be_bytes());
+        digest.update(part.as_bytes());
+    }
+    hex::encode(digest.finalize())
+}
+
+/// 去掉十进制数字的无意义尾随零，返回可稳定参与指纹的字符串。
+fn canonical_decimal(value: &BigDecimal) -> String {
+    value.normalized().to_string()
 }
 
 /// 把数据库中的生命周期字符串解析为枚举，取值依次为预热、申购、分发、已上市四个阶段。
@@ -432,6 +584,7 @@ pub(crate) fn lock_positions_for_project(
             unlock_at: position.unlock_at,
             amount: position.remaining_amount,
             merge_key: position.merge_key,
+            source_time,
             source_type: source_type.to_owned(),
             source_id: source_id.to_owned(),
         })
@@ -483,31 +636,54 @@ pub(crate) fn unlock_rule_from_project(project: &NewCoinProjectRuleRead) -> AppR
 /// 收益取市值减购买成本并与零取大，因此亏损批次的费用为零而非负数。
 /// 基准取值超出这两种时直接报错，不静默回退到市值口径。
 /// 金额为零时状态回落到 not_required，避免生成一条永远无需支付的 pending 记录。
-/// 本函数是纯计算：不扣款、不写库、不做资产精度量化，落库精度由数据库列定义决定。
+/// 本函数只计算原始应收；持久化前还必须按支付资产精度向零截断。
 pub(crate) fn unlock_fee_fields(
     project: &NewCoinProjectRuleRead,
     quantity: &BigDecimal,
     unlock_price: &BigDecimal,
     purchase_cost: &BigDecimal,
 ) -> AppResult<(&'static str, Option<BigDecimal>)> {
-    if !project.unlock_fee_enabled {
+    ensure_unlock_fee_asset_matches_quote_asset(
+        project.unlock_fee_enabled,
+        project.unlock_fee_asset,
+        project.quote_asset_id,
+    )?;
+    calculate_unlock_fee_fields(
+        project.unlock_fee_enabled,
+        project.unlock_fee_rate.as_ref(),
+        project.unlock_fee_basis.as_deref(),
+        project.unlock_fee_asset,
+        quantity,
+        unlock_price,
+        purchase_cost,
+    )
+}
+
+/// 对任意已固化项目快照计算解禁应收，使用户下单与后台派发共享同一费率和收益口径。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn calculate_unlock_fee_fields(
+    unlock_fee_enabled: bool,
+    unlock_fee_rate: Option<&BigDecimal>,
+    unlock_fee_basis: Option<&str>,
+    unlock_fee_asset: Option<u64>,
+    quantity: &BigDecimal,
+    unlock_price: &BigDecimal,
+    purchase_cost: &BigDecimal,
+) -> AppResult<(&'static str, Option<BigDecimal>)> {
+    if !unlock_fee_enabled {
         return Ok(("not_required", None));
     }
-    let fee_rate = project.unlock_fee_rate.clone().unwrap_or_default();
+    let fee_rate = unlock_fee_rate.cloned().unwrap_or_default();
     if fee_rate <= BigDecimal::default() {
         return Ok(("not_required", Some(BigDecimal::default())));
     }
-    if project.unlock_fee_asset.is_none() {
+    if unlock_fee_asset.is_none() {
         return Err(AppError::Validation(
             "unlock_fee_asset is required when unlock fee is enabled".to_owned(),
         ));
     }
     let market_value = quantity.clone() * unlock_price.clone();
-    let basis_amount = match project
-        .unlock_fee_basis
-        .as_deref()
-        .unwrap_or("market_value")
-    {
+    let basis_amount = match unlock_fee_basis.unwrap_or("market_value") {
         "market_value" => market_value,
         "profit" => max(market_value - purchase_cost.clone(), BigDecimal::default()),
         _ => {

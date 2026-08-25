@@ -59,6 +59,10 @@ pub fn build_router(state: AppState) -> Router {
         .merge(modules::loan::admin_routes())
         .merge(modules::prediction::admin_routes())
         .merge(modules::support::routes::admin_routes())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            modules::auth::admin_auth_gate_middleware,
+        ))
         .layer(middleware::from_fn(
             infra::admin_request_context::admin_request_context_middleware,
         ));

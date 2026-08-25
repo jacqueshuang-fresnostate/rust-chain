@@ -8,6 +8,7 @@
 
 use bigdecimal::BigDecimal;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 
 /// 钱包资产允许的最大小数位（数据库与链上金额展示统一约束）。
@@ -208,6 +209,49 @@ pub fn calculate_withdraw_fee(
         .map(|tier| amount.clone() * tier.fee_rate_percent.clone() / BigDecimal::from(100))
         .unwrap_or_else(|| fixed_fee.clone());
     truncate_amount_to_asset_precision(&raw_fee, precision_scale)
+}
+
+/// 对参与提现计费的资产配置生成稳定 SHA-256 版本；任何固定费、精度或阶梯边界变化都会产生新版本。
+pub fn withdrawal_fee_config_version(
+    asset_id: u64,
+    precision_scale: i32,
+    fixed_fee: &BigDecimal,
+    tiers: &[WithdrawFeeTier],
+) -> String {
+    let mut canonical = format!(
+        "withdraw-fee-v1|{asset_id}|{precision_scale}|{}",
+        fixed_fee.normalized()
+    );
+    for tier in tiers {
+        canonical.push('|');
+        canonical.push_str(&tier.min_amount.normalized().to_string());
+        canonical.push(':');
+        canonical.push_str(
+            &tier
+                .max_amount
+                .as_ref()
+                .map(|value| value.normalized().to_string())
+                .unwrap_or_else(|| "*".to_owned()),
+        );
+        canonical.push(':');
+        canonical.push_str(&tier.fee_rate_percent.normalized().to_string());
+    }
+    hex::encode(Sha256::digest(canonical.as_bytes()))
+}
+
+/// 绑定报价所有者、资产、网络与标准化金额，提交阶段重算后逐字比较，异参重放在动账前失败。
+pub fn withdrawal_quote_fingerprint(
+    user_id: u64,
+    asset_id: u64,
+    asset_symbol: &str,
+    network: &str,
+    amount: &BigDecimal,
+) -> String {
+    let canonical = format!(
+        "withdraw-quote-v1|{user_id}|{asset_id}|{asset_symbol}|{network}|{}",
+        amount.normalized()
+    );
+    hex::encode(Sha256::digest(canonical.as_bytes()))
 }
 
 /// 判定提现金额是否落在单条阶梯的左闭右开区间内，起始金额取等命中、上界取等不命中。

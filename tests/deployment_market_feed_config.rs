@@ -1,4 +1,3 @@
-const ONEPANEL_COMPOSE: &str = include_str!("../docker-compose.1panel.yml");
 const ONEPANEL_EXAMPLE_COMPOSE: &str = include_str!("../docker-compose.1panel.example.yml");
 const STANDARD_EXAMPLE_COMPOSE: &str = include_str!("../docker-compose.example.yml");
 const ONEPANEL_ENV_EXAMPLE: &str = include_str!("../docker-compose.1panel.env.example");
@@ -7,7 +6,6 @@ const STANDARD_ENV_EXAMPLE: &str = include_str!("../docker-compose.env.example")
 #[test]
 fn deployment_examples_keep_market_feed_restart_fallbacks() {
     for (name, source) in [
-        ("docker-compose.1panel.yml", ONEPANEL_COMPOSE),
         (
             "docker-compose.1panel.example.yml",
             ONEPANEL_EXAMPLE_COMPOSE,

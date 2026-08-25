@@ -89,8 +89,8 @@ async fn seed_loan_order(
         r#"INSERT INTO loan_orders
            (user_id, product_id, loan_type, asset_id, amount, interest_rate,
             interest_calculation_mode, term_days, min_kyc_level, status, idempotency_key,
-            disbursed_at, due_at)
-           VALUES (?, ?, 'credit', ?, ?, 0.02, 'full_term', 30, 0, ?, ?, ?, ?)"#,
+            request_fingerprint, disbursed_at, due_at)
+           VALUES (?, ?, 'credit', ?, ?, 0.02, 'full_term', 30, 0, ?, ?, ?, ?, ?)"#,
     )
     .bind(user_id)
     .bind(product_id)
@@ -98,6 +98,7 @@ async fn seed_loan_order(
     .bind(decimal("100.000000000000000000"))
     .bind(status)
     .bind(Uuid::now_v7().simple().to_string())
+    .bind("0".repeat(64))
     .bind((due_at - TimeDelta::days(30)).naive_utc())
     .bind(due_at.naive_utc())
     .execute(pool)
@@ -228,6 +229,6 @@ async fn loan_overdue_worker_skips_orders_that_are_not_disbursed() -> Result<(),
 }
 
 #[test]
-fn loan_overdue_worker_ships_disabled() {
-    assert!(!LoanOverdueWorkerConfig::from_env().enabled);
+fn loan_overdue_worker_ships_enabled_for_periodic_health_scans() {
+    assert!(LoanOverdueWorkerConfig::from_env().enabled);
 }

@@ -21,10 +21,10 @@ use crate::{
             service::admin_id_from_subject,
         },
         auth::presentation::{
-            AdminLoginResponse, AdminTwoFactorSetupResponse, AdminTwoFactorStatusResponse,
-            LoginTransportContext, LoginTwoFactorChallengeResponse,
-            LoginTwoFactorSetupChallengeResponse, LoginTwoFactorSetupResponse, TokenResponse,
-            UserAuthRequest, UserLoginResponse,
+            AdminLoginResponse, AdminPasswordChangeRequest, AdminPasswordChangeResponse,
+            AdminTwoFactorSetupResponse, AdminTwoFactorStatusResponse, LoginTransportContext,
+            LoginTwoFactorChallengeResponse, LoginTwoFactorSetupChallengeResponse,
+            LoginTwoFactorSetupResponse, TokenResponse, UserAuthRequest, UserLoginResponse,
         },
         auth::{
             ActorType, AdminCredentials, AdminRegistration, AgentCredentials, AuthActor,
@@ -42,15 +42,18 @@ use crate::{
                 ensure_registration_email_available_in_tx,
                 ensure_registration_email_not_cooling_down_in_tx,
                 increment_email_verification_attempt_in_tx,
+                insert_admin_password_change_audit_in_tx,
                 insert_registration_email_verification_in_tx, insert_user_email_verification_in_tx,
                 insert_verified_user_in_tx, load_admin_username, load_password_reset_user_id,
+                lock_admin_password_credential_in_tx,
                 lock_latest_pending_email_verification_by_purpose_in_tx,
                 lock_password_reset_user_in_tx, lock_registration_country_in_tx,
                 lock_verified_user_email_in_tx, mark_email_verification_verified_in_tx,
-                prepare_referral_binding_in_tx, revoke_user_refresh_tokens_in_tx,
-                supersede_pending_email_verifications_in_tx,
-                supersede_pending_registration_email_codes_in_tx, update_user_password_in_tx,
-                verify_registration_email_code_in_tx, verify_turnstile_site_response,
+                prepare_referral_binding_in_tx, revoke_admin_refresh_tokens_in_tx,
+                revoke_user_refresh_tokens_in_tx, supersede_pending_email_verifications_in_tx,
+                supersede_pending_registration_email_codes_in_tx, update_admin_password_in_tx,
+                update_user_password_in_tx, verify_registration_email_code_in_tx,
+                verify_turnstile_site_response,
             },
             revoke_actor_auth_sessions, verify_password,
         },
@@ -185,34 +188,31 @@ pub(crate) enum UserLoginOutcome {
     },
 }
 
-/// 编排管理员注册：有 Bearer 令牌时先验证管理员作用域，空令牌仅留给首管理员引导。
-/// 凭证解析或账号写入失败不签发令牌；首次注册的“查空表—插入”及插入后的令牌签发
-/// 均不是同一事务，并发冲突与已建账号后的会话失败分别由数据库约束和调用方处理。
+/// 编排管理员创建：必须先验证管理员作用域与账号写权限；匿名首管理员创建已由显式 migrator 引导取代。
+/// 凭证解析或账号写入失败不签发令牌；插入与令牌签发不是同一事务，会话失败后账号可能已经存在。
 pub(crate) async fn register_admin_actor(
     state: &AppState,
     headers: &HeaderMap,
     registration: AdminRegistration,
 ) -> AppResult<IssuedTokens> {
-    let requester_subject = match admin_bearer_token(headers) {
-        Some(token) => {
-            let subject = claims_from_bearer_token(state, token, TokenScope::Admin)
-                .await?
-                .sub;
-            authorize_admin_permission(&mysql_pool(state)?, &subject, "admin.accounts.write")
-                .await?;
-            Some(subject)
-        }
-        None => None,
-    };
+    let token = admin_bearer_token(headers).ok_or(AppError::Unauthorized)?;
+    let claims = claims_from_bearer_token(state, token, TokenScope::Admin).await?;
+    let requester_subject = claims.sub.clone();
+    authorize_admin_permission(
+        &mysql_pool(state)?,
+        &requester_subject,
+        super::claims_auth_session_version(&claims)?,
+        "admin.accounts.write",
+    )
+    .await?;
 
     auth_service(state)?
-        .register_admin(requester_subject.as_deref(), registration)
+        .register_admin(Some(&requester_subject), registration)
         .await
 }
 
-/// 从请求头中取出管理员注册请求可能携带的 Bearer 令牌，缺失、前缀不符或令牌为空串都返回未提供。
-/// 与受保护接口的提取器不同，这里的缺失并不算错误：注册用例正是靠有无令牌来区分首次引导与常规创建。
-/// 本函数只做前缀剥离，不验证签名、不检查作用域，返回值必须再经过完整的令牌校验才能当作身份使用。
+/// 从请求头中取出管理员注册请求必须携带的 Bearer 令牌，缺失、前缀不符或令牌为空串都返回未提供。
+/// 本函数只做前缀剥离，不验证签名、不检查作用域，返回值必须再经过完整的令牌校验和管理员写权限校验才能当作身份使用。
 fn admin_bearer_token(headers: &HeaderMap) -> Option<&str> {
     headers
         .get(AUTHORIZATION)
@@ -241,7 +241,9 @@ pub(crate) async fn login_admin_actor(
         ));
     }
 
-    let challenge = create_admin_login_two_factor_challenge(pool, actor.actor_id).await?;
+    let challenge =
+        create_admin_login_two_factor_challenge(pool, actor.actor_id, actor.auth_session_version)
+            .await?;
 
     Ok(AdminLoginResponse::TwoFactorChallenge(
         LoginTwoFactorChallengeResponse {
@@ -291,10 +293,54 @@ pub(crate) async fn verify_admin_login_two_factor(
     consume_admin_login_two_factor_challenge(pool, &challenge.challenge_id).await?;
 
     let tokens = auth_service(state)?
-        .issue_tokens_for_actor(AuthActor::new(ActorType::Admin, challenge.admin_id, None))
+        .issue_tokens_for_actor(
+            AuthActor::new(ActorType::Admin, challenge.admin_id, None)
+                .with_auth_session_version(challenge.auth_session_version),
+        )
         .await?;
 
     Ok(tokens.into())
+}
+
+/// 校验当前管理员旧口令后，在同一 MySQL 事务中更新哈希、清除首次强制改密标志、撤销数据库刷新令牌并写审计。
+/// 提交事务前必须先成功撤销 Sa-Token/Redis 会话；任一撤销失败就回滚口令变更，不返回“已改密但旧会话仍有效”的成功响应。
+/// 成功响应不签发替代令牌，调用方必须使用新口令重新登录。
+pub(crate) async fn change_admin_password(
+    state: &AppState,
+    pool: &Pool<MySql>,
+    subject: &str,
+    request: AdminPasswordChangeRequest,
+) -> AppResult<AdminPasswordChangeResponse> {
+    let admin_id = admin_id_from_subject(subject)?;
+    let current_password = required_string(request.current_password, "current_password")?;
+    let new_password =
+        validate_reset_password(&required_string(request.new_password, "new_password")?)?;
+    if current_password == new_password {
+        return Err(AppError::Validation(
+            "new_password must be different from current_password".to_owned(),
+        ));
+    }
+    let password_hash = hash_password(&new_password)?;
+
+    let mut tx = pool.begin().await?;
+    let credential = lock_admin_password_credential_in_tx(&mut tx, admin_id).await?;
+    if credential.status != "active"
+        || !verify_password(&credential.password_hash, &current_password)?
+    {
+        return Err(AppError::Unauthorized);
+    }
+    update_admin_password_in_tx(&mut tx, admin_id, &password_hash).await?;
+    revoke_admin_refresh_tokens_in_tx(&mut tx, admin_id).await?;
+    insert_admin_password_change_audit_in_tx(&mut tx, admin_id, credential.must_change_password)
+        .await?;
+    // 不允许“数据库改密成功但旧访问会话仍有效”的成功响应。
+    // 先将可撤销的服务端会话全部下线，任一后端失败则不提交口令与闸门事务。
+    revoke_actor_auth_sessions(state, &AuthActor::new(ActorType::Admin, admin_id, None)).await?;
+    tx.commit().await?;
+    Ok(AdminPasswordChangeResponse {
+        changed: true,
+        requires_relogin: true,
+    })
 }
 
 /// 按 `admin:<id>` 形式的主体标识读取该管理员的二次验证启用状态，主体格式非法时按未授权处理。

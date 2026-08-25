@@ -12,9 +12,10 @@ use crate::{
     modules::auth::{
         AdminAuth, AdminCredentials, AdminRegistration, AgentCredentials, TokenScope,
         application::{
-            confirm_admin_two_factor, confirm_login_two_factor_setup_and_issue_tokens,
-            disable_admin_two_factor, get_admin_two_factor_status, load_login_config,
-            load_register_config, login_admin_with_turnstile, login_agent_with_turnstile,
+            change_admin_password as change_admin_password_use_case, confirm_admin_two_factor,
+            confirm_login_two_factor_setup_and_issue_tokens, disable_admin_two_factor,
+            get_admin_two_factor_status, load_login_config, load_register_config,
+            login_admin_with_turnstile, login_agent_with_turnstile,
             login_user_with_optional_two_factor_response, mysql_pool, refresh_actor_tokens,
             register_admin_actor, register_user_with_email_code_response,
             reject_agent_registration, reset_login_two_factor_with_email_code,
@@ -24,10 +25,11 @@ use crate::{
             verify_login_two_factor_and_issue_tokens,
         },
         presentation::{
-            AdminAuthRequest, AdminLoginResponse, AdminTwoFactorCodeRequest,
-            AdminTwoFactorSetupResponse, AdminTwoFactorStatusResponse, AgentAuthRequest,
-            LoginConfigResponse, LoginTransportContext, LoginTwoFactorCodeResponse,
-            LoginTwoFactorRequest, LoginTwoFactorResetCodeRequest, LoginTwoFactorResetRequest,
+            AdminAuthRequest, AdminLoginResponse, AdminPasswordChangeRequest,
+            AdminPasswordChangeResponse, AdminTwoFactorCodeRequest, AdminTwoFactorSetupResponse,
+            AdminTwoFactorStatusResponse, AgentAuthRequest, LoginConfigResponse,
+            LoginTransportContext, LoginTwoFactorCodeResponse, LoginTwoFactorRequest,
+            LoginTwoFactorResetCodeRequest, LoginTwoFactorResetRequest,
             LoginTwoFactorResetResponse, LoginTwoFactorSetupConfirmRequest,
             LoginTwoFactorSetupRequest, LoginTwoFactorSetupResponse, PasswordResetCodeRequest,
             PasswordResetCodeResponse, PasswordResetRequest, PasswordResetResponse, RefreshRequest,
@@ -41,7 +43,7 @@ use axum::{
     Json, Router,
     extract::State,
     http::HeaderMap,
-    routing::{get, post},
+    routing::{get, patch, post},
 };
 use chrono::Utc;
 
@@ -74,7 +76,7 @@ pub fn user_routes() -> Router<AppState> {
 }
 
 /// 组装管理后台认证路由表，包含管理员注册、登录、登录二次验证、令牌刷新以及四个二次验证管理入口。
-/// 注册入口只在系统尚无任何管理员时允许匿名调用，此后必须携带有效的管理员令牌，该判断在应用层完成。
+/// 注册入口始终需要已存在且活跃的管理员令牌与账号写权限；首个管理员只能由显式 migrator bootstrap 创建。
 /// 四个二次验证管理入口通过提取器要求已登录管理员，是本表中仅有的需要鉴权的路径。
 /// 登录配置查询与用户端复用同一个处理函数，响应内容不随调用方身份变化，不会泄露后台专有策略。
 pub fn admin_routes() -> Router<AppState> {
@@ -87,6 +89,7 @@ pub fn admin_routes() -> Router<AppState> {
         .route("/auth/2fa/setup", post(admin_two_factor_setup))
         .route("/auth/2fa/confirm", post(admin_two_factor_confirm))
         .route("/auth/2fa/disable", post(admin_two_factor_disable))
+        .route("/auth/password", patch(admin_password_change))
         .route("/auth/refresh", post(admin_refresh))
 }
 
@@ -311,10 +314,8 @@ async fn reset_login_two_factor(
     }))
 }
 
-/// 创建管理员账号并返回首组后台令牌，请求头中是否携带 Bearer 令牌决定这次调用走引导还是常规路径。
-/// 管理员表为空时允许匿名完成首次引导；一旦已存在管理员，就必须携带有效且仍然活跃的管理员令牌。
-/// 该判断完全在应用层完成，路由层只原样透传请求头，因此不能指望中间件替代这道检查。
-/// 引导路径的查空表与插入不在同一事务内，并发引导的最终结果由用户名唯一约束裁定。
+/// 创建管理员账号并返回首组后台令牌；请求必须携带 Bearer 令牌，应用层会校验管理员作用域、活跃状态、强制改密闸门与账号写权限。
+/// 管理员表为空也不开放匿名注册；首个管理员的并发与幂等创建由 migrator 命名锁和事务统一保证。
 async fn admin_register(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -427,6 +428,18 @@ async fn admin_two_factor_disable(
     let status = disable_admin_two_factor(&state, &pool, &claims.sub, request.totp_code).await?;
 
     Ok(Json(status))
+}
+
+/// 修改当前管理员登录口令；该端点是首次强制改密闸门除本人查询外唯一放行的写入口。
+/// 成功后当前及其他既有会话全部失效，响应只要求重新登录，不返回可替换的令牌。
+async fn admin_password_change(
+    State(state): State<AppState>,
+    AdminAuth(claims): AdminAuth,
+    Json(request): Json<AdminPasswordChangeRequest>,
+) -> AppResult<Json<AdminPasswordChangeResponse>> {
+    let pool = mysql_pool(&state)?;
+    let response = change_admin_password_use_case(&state, &pool, &claims.sub, request).await?;
+    Ok(Json(response))
 }
 
 /// 用管理员作用域的刷新令牌换取新一组后台令牌，作用域不符会被直接拒绝。

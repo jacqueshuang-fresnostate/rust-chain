@@ -8,8 +8,8 @@
 //! 它不读实时钱包、不锁行、不结算资金；线上真实资金路径走应用层的 MySQL 事务。
 
 use super::repository::{
-    ConvertOrderRepository, ConvertPairRule, ConvertPairRuleDbRecord, ConvertQuoteRepository,
-    WalletBalanceRecord,
+    ConvertAuthoritativeQuoteRecord, ConvertOrderRepository, ConvertPairRule,
+    ConvertPairRuleDbRecord, ConvertQuoteRepository, WalletBalanceRecord,
 };
 use super::{
     ConfirmConvertQuoteCommand, ConvertConfirmationInsert, ConvertConfirmationResult, ConvertQuote,
@@ -23,9 +23,36 @@ use crate::{
     },
 };
 use bigdecimal::BigDecimal;
+use chrono::{DateTime, TimeDelta, Utc};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 pub(crate) const QUOTE_TTL_SECONDS: i64 = 30;
+
+/// 对 MySQL quote 的资金字段和价格证据计算稳定 SHA-256；十进制先去尾零，时间使用微秒整数。
+pub(crate) fn convert_quote_fingerprint(quote: &ConvertAuthoritativeQuoteRecord) -> String {
+    let canonical = [
+        "convert-quote-v1".to_owned(),
+        quote.quote_id.clone(),
+        quote.user_id.to_string(),
+        quote.convert_pair_id.to_string(),
+        quote.from_asset_id.to_string(),
+        quote.to_asset_id.to_string(),
+        quote.from_amount.normalized().to_string(),
+        quote.to_amount.normalized().to_string(),
+        quote.rate.normalized().to_string(),
+        quote.spread_rate.normalized().to_string(),
+        quote.fee_rate.normalized().to_string(),
+        quote.fee_amount.normalized().to_string(),
+        quote.price_source.clone(),
+        quote.price_symbol.clone().unwrap_or_default(),
+        quote.price_observed_at.timestamp_micros().to_string(),
+        quote.price_version.clone(),
+        quote.expires_at.timestamp_micros().to_string(),
+    ]
+    .join("|");
+    hex::encode(Sha256::digest(canonical.as_bytes()))
+}
 
 /// 报价金额计算的输出对，两项都已按各自资产精度向零截断，可直接落库。
 #[derive(Debug, Clone)]
@@ -112,6 +139,7 @@ pub(crate) fn convert_pair_rule_from_record(
         market_pair_symbol: row.market_pair_symbol,
         market_base_asset_id: row.market_base_asset_id,
         market_quote_asset_id: row.market_quote_asset_id,
+        pricing_updated_at: row.pricing_updated_at,
     })
 }
 
@@ -243,8 +271,8 @@ pub(crate) fn resolve_fixed_convert_rate(pair: &ConvertPairRule) -> AppResult<Bi
 
 /// 一次性取齐市场计价所需的三项配置：现货交易对符号、base 资产编号和 quote 资产编号。
 /// 三者要么同时存在要么同时缺失，缺失说明该闪兑对没有关联到状态为 active 的现货交易对。
-/// 任一项为空即拒绝市场报价并返回相同的参数错误，不查询 Redis，也不猜测资产方向。
-/// 返回的符号只是行情缓存键的来源，方向匹配由 `resolve_market_convert_rate` 负责判定。
+/// 任一项为空即拒绝市场报价并返回相同的参数错误，不查询行情历史，也不猜测资产方向。
+/// 返回的符号用于检索 MySQL 历史，方向匹配由 `resolve_market_convert_rate` 负责判定。
 pub(crate) fn convert_market_pricing_source(pair: &ConvertPairRule) -> AppResult<(&str, u64, u64)> {
     let symbol = pair.market_pair_symbol.as_deref().ok_or_else(|| {
         AppError::Validation("convert market pricing requires active trading pair".to_owned())
@@ -262,7 +290,7 @@ pub(crate) fn convert_market_pricing_source(pair: &ConvertPairRule) -> AppResult
 /// 把现货行情价换算成闪兑请求方向上的汇率，只承认两种精确匹配，不做任何跨对路由。
 /// 请求方向与市场 base 到 quote 完全一致时直接使用原价，恰好相反时使用 `1 / market_price`。
 /// 两侧资产与行情交易对对不上就拒绝，避免把无关交易对的价格误用为兑换比例。
-/// 价格为正由行情适配器在读取缓存时保证，本函数据此直接取倒数而不再复核除零风险。
+/// 本函数再次要求价格为正，防止正向使用负价或反向出现除零；不依赖上游过滤兜底。
 /// 返回值尚未叠加价差与手续费，两者在目标额计算环节统一折算。
 pub(crate) fn resolve_market_convert_rate(
     pair: &ConvertPairRule,
@@ -270,6 +298,11 @@ pub(crate) fn resolve_market_convert_rate(
     market_base_asset_id: u64,
     market_quote_asset_id: u64,
 ) -> AppResult<BigDecimal> {
+    if market_price <= 0 {
+        return Err(AppError::Validation(
+            "convert market price must be positive".to_owned(),
+        ));
+    }
     if pair.from_asset_id == market_base_asset_id && pair.to_asset_id == market_quote_asset_id {
         return Ok(market_price);
     }
@@ -282,8 +315,71 @@ pub(crate) fn resolve_market_convert_rate(
     ))
 }
 
-/// 把仓储层的存储与序列化故障统一收敛为内部错误，对客户端不区分是 Redis 还是 MySQL 出问题。
-/// 刻意不映射成参数错误或未找到，避免把缓存不可用伪装成报价不存在而诱导客户端重复下单。
+/// 把汇率先截断到 `convert_quotes.rate DECIMAL(38,18)` 的可持久化精度。
+/// 反向报价的除法可能产生超过 18 位小数；若先按高精度算指纹、再由 MySQL 隐式量化，确认回读会误判篡改。
+pub(crate) fn normalize_convert_rate_for_storage(rate: &BigDecimal) -> AppResult<BigDecimal> {
+    let normalized = truncate_amount_to_asset_precision(rate, MAX_ASSET_PRECISION_SCALE);
+    if normalized <= 0 {
+        return Err(AppError::Validation(
+            "convert rate is below persistent precision".to_owned(),
+        ));
+    }
+    Ok(normalized)
+}
+
+/// 校验 MySQL 行情历史返回的最新一条快照，不从坏快照回退到更旧价格。
+/// 未来、陈旧、非正、来源/版本缺失或交易对不匹配均 fail closed，避免资金报价在数据异常时继续。
+pub(crate) fn validate_convert_market_price_snapshot(
+    snapshot: &super::repository::ConvertMarketPriceSnapshot,
+    expected_symbol: &str,
+    database_now: DateTime<Utc>,
+    max_age_seconds: i64,
+) -> AppResult<()> {
+    let normalize_symbol = |value: &str| {
+        value
+            .trim()
+            .chars()
+            .filter(|character| !matches!(character, '-' | '/' | '_'))
+            .flat_map(char::to_uppercase)
+            .collect::<String>()
+    };
+    if normalize_symbol(&snapshot.symbol) != normalize_symbol(expected_symbol) {
+        return Err(AppError::Validation(
+            "convert market price symbol does not match pricing pair".to_owned(),
+        ));
+    }
+    if snapshot.price <= 0 {
+        return Err(AppError::Validation(
+            "convert market price must be positive".to_owned(),
+        ));
+    }
+    if !matches!(
+        snapshot.source.as_str(),
+        "bitget" | "htx" | "coinbase" | "strategy"
+    ) || snapshot.source_version.trim().is_empty()
+    {
+        return Err(AppError::Validation(
+            "convert market price evidence is incomplete".to_owned(),
+        ));
+    }
+    if snapshot.observed_at > database_now {
+        return Err(AppError::Validation(
+            "convert market price is from the future".to_owned(),
+        ));
+    }
+    let oldest_allowed = database_now
+        .checked_sub_signed(TimeDelta::seconds(max_age_seconds.max(0)))
+        .ok_or_else(|| AppError::Validation("convert market price age is invalid".to_owned()))?;
+    if snapshot.observed_at < oldest_allowed {
+        return Err(AppError::Validation(
+            "convert market price is stale".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// 把仓储层的存储与序列化故障统一收敛为内部错误，对客户端不区分具体适配器故障。
+/// 刻意不映射成参数错误或未找到，避免把存储不可用伪装成报价不存在而诱导客户端重复下单。
 /// 原始错误以调试格式保留在消息里供日志排查；本函数不重试，也不撤销已经发生的存储副作用。
 pub(crate) fn map_convert_repository_error(error: ConvertRepositoryError) -> AppError {
     AppError::Internal(format!("{error:?}"))

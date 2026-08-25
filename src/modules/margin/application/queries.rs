@@ -6,13 +6,14 @@
 //! 用户侧查询一律带上用户标识作为过滤条件，防止仅凭仓位主键越权读取他人持仓。
 //! 后台查询把状态筛选先做白名单归一化，并让行查询与 COUNT 共用同一组谓词，保证明细与总数口径一致。
 
+use super::account_settings::calculate_cross_transfer_capacity;
 use super::support::{normalized_position_status, optional_string, route_limit, route_offset};
 use crate::{
     error::{AppError, AppResult},
     modules::margin::{
         domain::{
-            CrossMarginPositionRisk, CrossMarginReferencePosition, MarginPositionDisplayInput,
-            estimate_cross_margin_conditional_price, evaluate_cross_margin,
+            CrossMarginReferencePosition, MarginPositionDisplayInput, MarkedCrossMarginPosition,
+            estimate_cross_margin_conditional_price, evaluate_marked_cross_margin,
             margin_position_display_metrics,
         },
         infrastructure::{
@@ -60,10 +61,27 @@ pub(crate) async fn list_user_margin_positions(
 /// 仓位部分固定只取 opened，全仓账户的权益与保证金率是强平 worker 上次刷新的落库值。
 pub(crate) async fn list_user_margin_wallets(
     pool: &Pool<MySql>,
+    redis: Option<&ConnectionManager>,
     user_id: u64,
     limit: u32,
 ) -> AppResult<MarginWalletsResponse> {
-    let wallets = list_margin_wallet_accounts(pool, user_id).await?;
+    let mut wallets = list_margin_wallet_accounts(pool, user_id).await?;
+    for wallet in &mut wallets {
+        let capacity = calculate_cross_transfer_capacity(
+            pool,
+            redis,
+            user_id,
+            wallet.asset_id,
+            &wallet.available,
+        )
+        .await?;
+        wallet.max_transferable_to_spot = capacity.max_transferable;
+        wallet.transfer_to_spot_block_reason = capacity.block_reason;
+        wallet.cross_account_version = capacity.account_version;
+        wallet.transfer_risk_equity = capacity.equity;
+        wallet.transfer_risk_maintenance_margin = capacity.maintenance_margin;
+        wallet.transfer_risk_observed_at = capacity.observed_at;
+    }
     let positions = list_user_margin_positions_rows(pool, user_id, Some("opened"), limit).await?;
     let cross_accounts = list_user_cross_margin_accounts(pool, user_id).await?;
     Ok(MarginWalletsResponse {
@@ -241,10 +259,8 @@ async fn get_cross_margin_position_risk_snapshot(
 
     let wallet_available =
         load_user_cross_margin_wallet_available(pool, user_id, margin_asset).await?;
-    let mut position_margin = BigDecimal::from(0);
-    let mut account_position_risks = Vec::with_capacity(positions.len());
+    let mut marked_positions = Vec::with_capacity(positions.len());
     let mut reference_positions = Vec::with_capacity(positions.len());
-    let mut reference_risk_state = None;
     for position in &positions {
         let entry_price = position.entry_price.as_ref().ok_or_else(|| {
             AppError::Internal("cross margin risk query returned a null entry price".to_owned())
@@ -254,20 +270,14 @@ async fn get_cross_margin_position_risk_snapshot(
                 "cross margin risk ticker missing after complete prefetch".to_owned(),
             )
         })?;
-        let risk_state = margin_liquidation_risk_state(
-            &position.direction,
-            &position.margin_amount,
-            &position.notional_amount,
-            &position.interest_amount,
+        marked_positions.push(MarkedCrossMarginPosition {
+            direction: &position.direction,
+            margin_amount: &position.margin_amount,
+            notional_amount: &position.notional_amount,
+            interest_amount: &position.interest_amount,
             entry_price,
-            &ticker.last_price,
-            &position.maintenance_margin_rate,
-        )?;
-        position_margin += position.margin_amount.clone();
-        account_position_risks.push(CrossMarginPositionRisk {
-            unrealized_pnl: risk_state.realized_pnl.clone(),
-            interest_amount: position.interest_amount.clone(),
-            maintenance_margin: risk_state.maintenance_margin.clone(),
+            mark_price: &ticker.last_price,
+            maintenance_margin_rate: &position.maintenance_margin_rate,
         });
         reference_positions.push(CrossMarginReferencePosition {
             pair_id: position.pair_id,
@@ -275,15 +285,10 @@ async fn get_cross_margin_position_risk_snapshot(
             notional_amount: &position.notional_amount,
             entry_price,
         });
-        if position.id == position_id {
-            reference_risk_state = Some(risk_state);
-        }
     }
-    let account_risk = evaluate_cross_margin(
-        &wallet_available,
-        &position_margin.with_scale(18),
-        &account_position_risks,
-    );
+    let evaluated = evaluate_marked_cross_margin(&wallet_available, &marked_positions)
+        .map_err(|message| AppError::Validation(message.to_owned()))?;
+    let account_risk = evaluated.account;
     let liquidation_buffer =
         (account_risk.equity.clone() - account_risk.maintenance_margin.clone()).with_scale(18);
     let reference_ticker = tickers_by_pair
@@ -334,9 +339,13 @@ async fn get_cross_margin_position_risk_snapshot(
     let reference_entry_price = reference_position.entry_price.clone().ok_or_else(|| {
         AppError::Internal("cross margin reference position lost its entry price".to_owned())
     })?;
-    let reference_risk_state = reference_risk_state.ok_or_else(|| {
-        AppError::Internal("cross margin reference risk state was not calculated".to_owned())
-    })?;
+    let reference_risk_state = positions
+        .iter()
+        .position(|position| position.id == position_id)
+        .and_then(|index| evaluated.positions.get(index).cloned())
+        .ok_or_else(|| {
+            AppError::Internal("cross margin reference risk state was not calculated".to_owned())
+        })?;
     build_margin_risk_snapshot(
         reference_position,
         reference_entry_price,

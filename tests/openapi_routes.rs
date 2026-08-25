@@ -126,6 +126,7 @@ async fn openapi_json_exposes_first_batch_contract() {
         "/api/v1/platform/brand",
         "/admin/api/v1/auth/register",
         "/admin/api/v1/auth/login",
+        "/admin/api/v1/auth/password",
         "/admin/api/v1/auth/refresh",
         "/admin/api/v1/platform/brand",
         "/admin/api/v1/countries",
@@ -803,6 +804,11 @@ async fn openapi_json_documents_user_2fa_security_policy_contract() {
         ("/api/v1/user/2fa/reset-code", ["post"].as_slice(), true),
         ("/api/v1/user/2fa/reset", ["post"].as_slice(), true),
         ("/api/v1/wallet/withdrawals", ["post"].as_slice(), true),
+        (
+            "/api/v1/wallet/withdrawals/quote",
+            ["post"].as_slice(),
+            true,
+        ),
         ("/api/v1/wallet/withdrawals", ["get"].as_slice(), true),
         ("/admin/api/v1/wallet/withdrawals", ["get"].as_slice(), true),
         (
@@ -890,7 +896,11 @@ async fn openapi_json_documents_user_2fa_security_policy_contract() {
         "UpdateSecurityPolicyRequest",
         "ResetUserTwoFactorRequest",
         "AdminUserTwoFactorResetResponse",
+        "AdminPasswordChangeRequest",
+        "AdminPasswordChangeResponse",
         "CreateWithdrawalRequest",
+        "CreateWithdrawalQuoteRequest",
+        "WithdrawalQuoteResponse",
         "WithdrawalRequestResponse",
         "WalletWithdrawalResponse",
         "WalletWithdrawalsResponse",
@@ -907,6 +917,48 @@ async fn openapi_json_documents_user_2fa_security_policy_contract() {
         assert!(
             schema.get("properties").is_some(),
             "missing schema {schema_name}"
+        );
+    }
+
+    let withdrawal_request_schema = &openapi["components"]["schemas"]["CreateWithdrawalRequest"];
+    let withdrawal_required = withdrawal_request_schema["required"]
+        .as_array()
+        .expect("CreateWithdrawalRequest.required");
+    for field in [
+        "quote_id",
+        "asset_symbol",
+        "address",
+        "amount",
+        "fee",
+        "idempotency_key",
+    ] {
+        assert!(
+            withdrawal_required.iter().any(|value| value == field),
+            "CreateWithdrawalRequest.{field} must be required"
+        );
+    }
+    assert!(
+        withdrawal_request_schema["properties"]
+            .get("network")
+            .is_some(),
+        "legacy network compatibility field is missing"
+    );
+    let quote_response_properties =
+        &openapi["components"]["schemas"]["WithdrawalQuoteResponse"]["properties"];
+    for field in [
+        "quote_id",
+        "asset_symbol",
+        "network",
+        "amount",
+        "fee",
+        "net",
+        "total_reserved",
+        "fee_config_version",
+        "expires_at",
+    ] {
+        assert!(
+            quote_response_properties.get(field).is_some(),
+            "missing WithdrawalQuoteResponse.{field}"
         );
     }
 

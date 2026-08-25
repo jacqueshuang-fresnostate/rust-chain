@@ -137,6 +137,40 @@ async fn seed_ticker_at(
         .unwrap();
 }
 
+async fn make_order_due_with_event_price(pool: &MySqlPool, order_id: u64, price: &str) {
+    sqlx::query(
+        "UPDATE seconds_contract_orders SET expires_at = DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 10 SECOND) WHERE id = ?",
+    )
+    .bind(order_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    let (symbol, expires_at): (String, chrono::DateTime<chrono::Utc>) = sqlx::query_as(
+        r#"SELECT pairs.symbol, orders.expires_at
+           FROM seconds_contract_orders orders
+           INNER JOIN trading_pairs pairs ON pairs.id = orders.pair_id
+           WHERE orders.id = ?"#,
+    )
+    .bind(order_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let version = Uuid::now_v7().simple().to_string();
+    sqlx::query(
+        r#"INSERT INTO market_price_ticks
+           (event_key, symbol, price, source, observed_at, generation, source_version)
+           VALUES (?, REPLACE(UPPER(?), '-', ''), ?, 'bitget', ?, 1, ?)"#,
+    )
+    .bind(format!("{version}{version}"))
+    .bind(symbol)
+    .bind(decimal(price))
+    .bind(expires_at.naive_utc())
+    .bind(version)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 fn state_with_mysql_and_redis(
     settings: Settings,
     pool: MySqlPool,
@@ -632,6 +666,7 @@ async fn seconds_contract_stake_and_manual_payout_respect_asset_precision()
     let opened_payload = body_json(opened).await?;
     assert_eq!(opened_status, StatusCode::OK, "payload: {opened_payload}");
     let order_id = opened_payload["order"]["id"].as_u64().unwrap();
+    make_order_due_with_event_price(&pool, order_id, "105.000000000000000000").await;
 
     let settled = admin_routes()
         .with_state(AppState::new(settings).with_mysql(pool.clone()))
@@ -2430,6 +2465,7 @@ async fn seconds_contract_settle_win_credits_payout_and_writes_ledger() -> Resul
     let opened_event: Value = serde_json::from_str(opened_event_message.payload())?;
     assert_eq!(opened_event["type"], "seconds_contract.order.opened");
     assert_eq!(opened_event["order_id"], order_id);
+    make_order_due_with_event_price(&pool, order_id, "105.000000000000000000").await;
 
     let settle_app = admin_routes().with_state(
         state_with_mysql_and_redis(settings, pool.clone(), None).with_event_broadcast_hub(hub),
@@ -2581,6 +2617,7 @@ async fn seconds_contract_settle_rejects_different_result_replay() -> Result<(),
     let open_body = axum::body::to_bytes(open_response.into_body(), 65_536).await?;
     let open_payload: Value = serde_json::from_slice(&open_body)?;
     let order_id = open_payload["order"]["id"].as_u64().unwrap();
+    make_order_due_with_event_price(&pool, order_id, "105.000000000000000000").await;
     let settle_app =
         admin_routes().with_state(state_with_mysql_and_redis(settings, pool.clone(), None));
 
@@ -2912,6 +2949,7 @@ async fn assert_seconds_contract_settlement_idempotent_loss() -> Result<(), Box<
     let open_body = axum::body::to_bytes(open_response.into_body(), 65_536).await?;
     let open_payload: Value = serde_json::from_slice(&open_body)?;
     let order_id = open_payload["order"]["id"].as_u64().unwrap();
+    make_order_due_with_event_price(&pool, order_id, "105.000000000000000000").await;
     let settle_app =
         admin_routes().with_state(state_with_mysql_and_redis(settings, pool.clone(), None));
 

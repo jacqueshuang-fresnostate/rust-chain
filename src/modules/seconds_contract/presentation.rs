@@ -7,7 +7,7 @@
 //! 所有时间字段统一用 `unix_millis` 序列化成毫秒时间戳，避免客户端因时区解析出现到期时刻偏差。
 //! 本文件不含任何业务逻辑、数据库访问或资金计算。
 
-use crate::time::unix_millis;
+use crate::time::{option_unix_millis, unix_millis};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -271,6 +271,17 @@ pub(crate) struct SecondsContractOrderResponse {
     pub(crate) entry_price: Option<BigDecimal>,
     /// 结算价，未结算订单为 `None`；与开仓价比对即可复核胜负判定。
     pub(crate) settlement_price: Option<BigDecimal>,
+    /// 结算价引用的不可变行情历史主键；pending 订单为 `None`。
+    pub(crate) settlement_price_tick_id: Option<u64>,
+    /// 结算行情来源，例如 bitget、htx 或 coinbase。
+    pub(crate) settlement_price_source: Option<String>,
+    /// 结算行情的事件观察时刻，而非 worker 实际处理时刻。
+    #[serde(default, with = "option_unix_millis")]
+    pub(crate) settlement_price_observed_at: Option<DateTime<Utc>>,
+    /// 写入该行情的行情 worker generation。
+    pub(crate) settlement_price_generation: Option<u64>,
+    /// 结算行情的确定性源版本。
+    pub(crate) settlement_price_version: Option<String>,
     /// 订单状态，`opened` 为持仓中，`settled` 为已结算。
     pub(crate) status: String,
     /// 胜负结果，`win` 或 `loss`；未结算时为 `None`。
@@ -293,10 +304,10 @@ pub(crate) struct OpenSecondsContractOrderResponse {
     pub(crate) order: SecondsContractOrderResponse,
 }
 
-/// 后台人工结算请求体，胜负由调用方给出，服务端不自行比价推导。
+/// 后台人工结算请求体；服务端用事件时点价格推导胜负，并要求该结果与调用方请求一致。
 #[derive(Debug, Deserialize)]
 pub(crate) struct SettleSecondsContractOrderRequest {
-    /// 结算结果，只接受 `win` 或 `loss`；与既有结算结果冲突时请求会被拒绝。
+    /// 期望结算结果，只接受 `win` 或 `loss`；与事件价格推导结果或既有终态冲突时会被拒绝。
     pub(crate) result: String,
     /// 审计原因，业务上必填，用于记录人工介入结算的依据。
     pub(crate) reason: Option<String>,

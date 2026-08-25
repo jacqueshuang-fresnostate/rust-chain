@@ -500,15 +500,18 @@ pub async fn record_admin_totp_verified(pool: &Pool<MySql>, admin_id: u64) -> Ap
 pub async fn create_admin_login_two_factor_challenge(
     pool: &Pool<MySql>,
     admin_id: u64,
+    auth_session_version: u64,
 ) -> AppResult<CreatedLoginTwoFactorChallenge> {
     let challenge_id = Uuid::now_v7().to_string();
     let expires_at = Utc::now() + Duration::seconds(LOGIN_CHALLENGE_TTL_SECONDS);
     sqlx::query(
-        r#"INSERT INTO admin_login_two_factor_challenges (challenge_id, admin_id, expires_at)
-           VALUES (?, ?, ?)"#,
+        r#"INSERT INTO admin_login_two_factor_challenges
+              (challenge_id, admin_id, auth_session_version, expires_at)
+           VALUES (?, ?, ?, ?)"#,
     )
     .bind(&challenge_id)
     .bind(admin_id)
+    .bind(auth_session_version)
     .bind(expires_at.naive_utc())
     .execute(pool)
     .await?;
@@ -529,10 +532,16 @@ pub async fn load_admin_login_two_factor_challenge(
     pool: &Pool<MySql>,
     challenge_id: &str,
 ) -> AppResult<AdminLoginTwoFactorChallenge> {
-    let row = sqlx::query_as::<_, (String, u64, u32, DateTime<Utc>, Option<DateTime<Utc>>)>(
-        r#"SELECT challenge_id, admin_id, attempt_count, expires_at, consumed_at
-           FROM admin_login_two_factor_challenges
-           WHERE challenge_id = ?
+    let row = sqlx::query_as::<_, (String, u64, u64, u32, DateTime<Utc>, Option<DateTime<Utc>>)>(
+        r#"SELECT challenges.challenge_id, challenges.admin_id,
+                  challenges.auth_session_version, challenges.attempt_count,
+                  challenges.expires_at, challenges.consumed_at
+           FROM admin_login_two_factor_challenges challenges
+           INNER JOIN admin_users admins
+                   ON admins.id = challenges.admin_id
+                  AND admins.status = 'active'
+                  AND admins.auth_session_version = challenges.auth_session_version
+           WHERE challenges.challenge_id = ?
            LIMIT 1"#,
     )
     .bind(challenge_id)
@@ -543,9 +552,10 @@ pub async fn load_admin_login_two_factor_challenge(
     Ok(AdminLoginTwoFactorChallenge {
         challenge_id: row.0,
         admin_id: row.1,
-        attempt_count: row.2,
-        expires_at: row.3,
-        consumed_at: row.4,
+        auth_session_version: row.2,
+        attempt_count: row.3,
+        expires_at: row.4,
+        consumed_at: row.5,
     })
 }
 

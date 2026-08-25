@@ -9,6 +9,25 @@
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 
+/// 秒合约事件时点结算所引用的不可变行情行；一旦写入订单，重放只能复用同一主键与版本。
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub(crate) struct SecondsContractSettlementPriceRow {
+    /// 行情历史主键。
+    pub(crate) id: u64,
+    /// 已归一化的行情交易对，必须与订单交易对一致。
+    pub(crate) symbol: String,
+    /// 到期窗口内的最新成交价。
+    pub(crate) price: BigDecimal,
+    /// 行情供应商代码。
+    pub(crate) source: String,
+    /// 供应商声明的事件观察时刻。
+    pub(crate) observed_at: DateTime<Utc>,
+    /// 产生该行情的本地 worker generation。
+    pub(crate) generation: u64,
+    /// 行情源版本或确定性事件摘要。
+    pub(crate) source_version: String,
+}
+
 /// 秒合约产品主表连表查询结果，用于面向展示的产品目录与后台列表。
 /// 其中的时长、赔率与投注上下限是周期集合首条的冗余副本，供不支持多周期的旧客户端读取，
 /// 不能直接当作下单校验依据，下单必须使用带资产精度的规则行。

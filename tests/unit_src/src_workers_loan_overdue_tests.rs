@@ -11,10 +11,10 @@ fn loan_overdue_limits_are_bounded() {
 }
 
 #[test]
-fn loan_overdue_worker_is_disabled_by_default() {
+fn loan_overdue_and_health_worker_is_enabled_by_default() {
     let config = LoanOverdueWorkerConfig::from_env();
 
-    assert!(!config.enabled);
+    assert!(config.enabled);
     assert_eq!(config.interval_seconds, 300);
     assert_eq!(config.batch_limit, 100);
 }

@@ -3993,6 +3993,34 @@ async fn margin_position_risk_snapshot_rejects_closed_and_stale_positions()
         &redis,
         &symbol,
         "90.000000000000000000",
+        (Utc::now() + chrono::TimeDelta::seconds(120)).timestamp_millis(),
+    )
+    .await?;
+    let future_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/margin/positions/{opened_position_id}/risk"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let future_status = future_response.status();
+    let future_payload = body_json(future_response).await?;
+    assert_eq!(future_status, StatusCode::BAD_REQUEST);
+    assert_eq!(future_payload["code"], "VALIDATION_ERROR");
+    assert!(
+        future_payload["message"]
+            .as_str()
+            .unwrap()
+            .contains("future")
+    );
+
+    cache_margin_ticker_at(
+        &redis,
+        &symbol,
+        "90.000000000000000000",
         (Utc::now() - chrono::TimeDelta::seconds(120)).timestamp_millis(),
     )
     .await?;
@@ -4011,6 +4039,478 @@ async fn margin_position_risk_snapshot_rejects_closed_and_stale_positions()
     assert_eq!(stale_payload["code"], "VALIDATION_ERROR");
     assert!(stale_payload["message"].as_str().unwrap().contains("stale"));
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn cross_margin_transfer_exposes_exact_risk_max_and_fails_closed()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let mut tx = pool.begin().await?;
+    let user_id = create_user(&mut tx).await;
+    let (base_a, base_a_symbol) = create_asset(&mut tx, "TGA").await;
+    let (base_b, base_b_symbol) = create_asset(&mut tx, "TGB").await;
+    let (margin_asset, margin_symbol) = create_asset(&mut tx, "TGQ").await;
+    sqlx::query("UPDATE assets SET margin_transfer_enabled = TRUE WHERE id = ?")
+        .bind(margin_asset)
+        .execute(&mut *tx)
+        .await?;
+    let symbol_a = format!("{base_a_symbol}-{margin_symbol}");
+    let symbol_b = format!("{base_b_symbol}-{margin_symbol}");
+    let pair_a = create_pair(&mut tx, base_a, margin_asset, &symbol_a).await;
+    let pair_b = create_pair(&mut tx, base_b, margin_asset, &symbol_b).await;
+    let product_a =
+        seed_margin_product_with_mode(&mut tx, pair_a, margin_asset, "cross", vec!["5"]).await;
+    let product_b =
+        seed_margin_product_with_mode(&mut tx, pair_b, margin_asset, "cross", vec!["5"]).await;
+    sqlx::query("UPDATE margin_products SET maintenance_margin_rate = ? WHERE id = ?")
+        .bind(decimal("0.10000000"))
+        .bind(product_b)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(margin_asset)
+        .bind(decimal("10.000000000000000000"))
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "INSERT INTO margin_wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)",
+    )
+    .bind(user_id)
+    .bind(margin_asset)
+    .bind(decimal("50.000000000000000000"))
+    .execute(&mut *tx)
+    .await?;
+    seed_margin_risk_position(
+        &mut tx,
+        user_id,
+        product_a,
+        pair_a,
+        margin_asset,
+        "cross",
+        "opened",
+        "long",
+        "20",
+        "200",
+        "3",
+        Some("100"),
+    )
+    .await;
+    seed_margin_risk_position(
+        &mut tx,
+        user_id,
+        product_b,
+        pair_b,
+        margin_asset,
+        "cross",
+        "opened",
+        "short",
+        "10",
+        "100",
+        "2",
+        Some("100"),
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO margin_cross_accounts (user_id, margin_asset, status, version) VALUES (?, ?, 'active', 7)",
+    )
+    .bind(user_id)
+    .bind(margin_asset)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let app = user_routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_redis(redis.clone()),
+    );
+
+    let stale_at = (Utc::now() - chrono::TimeDelta::seconds(120)).timestamp_millis();
+    cache_margin_ticker_at(&redis, &symbol_a, "75", stale_at).await?;
+    cache_margin_ticker_at(&redis, &symbol_b, "75", stale_at).await?;
+    let stale_wallets = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/margin/wallets")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let stale_payload = body_json(stale_wallets).await?;
+    let stale_wallet = stale_payload["wallets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|wallet| wallet["asset_id"] == margin_asset)
+        .unwrap();
+    assert_eq!(
+        stale_wallet["max_transferable_to_spot"],
+        "0.000000000000000000"
+    );
+    assert_eq!(
+        stale_wallet["transfer_to_spot_block_reason"],
+        "price_unavailable"
+    );
+
+    let stale_transfer = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/margin/transfers")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"asset_id":{margin_asset},"from":"margin","to":"spot","amount":"1","idempotency_key":"stale-{}"}}"#,
+                    Uuid::now_v7().simple()
+                )))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(stale_transfer.status(), StatusCode::BAD_REQUEST);
+
+    cache_margin_ticker(&redis, &symbol_a, "75").await?;
+    cache_margin_ticker(&redis, &symbol_b, "75").await?;
+    let wallets = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/margin/wallets")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let wallet_payload = body_json(wallets).await?;
+    let wallet = wallet_payload["wallets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|wallet| wallet["asset_id"] == margin_asset)
+        .unwrap();
+    assert_eq!(wallet["transfer_risk_equity"], "50.000000000000000000");
+    assert_eq!(
+        wallet["transfer_risk_maintenance_margin"],
+        "20.000000000000000000"
+    );
+    assert_eq!(wallet["max_transferable_to_spot"], "30.000000000000000000");
+    assert_eq!(wallet["transfer_to_spot_block_reason"], Value::Null);
+    assert_eq!(wallet["cross_account_version"], 7);
+
+    let over_key = format!("over-risk-{}", Uuid::now_v7().simple());
+    let over = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/margin/transfers")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"asset_id":{margin_asset},"from":"margin","to":"spot","amount":"30.01","idempotency_key":"{over_key}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(over.status(), StatusCode::BAD_REQUEST);
+    let failed_transfer_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM margin_transfers WHERE user_id = ? AND idempotency_key = ?",
+    )
+    .bind(user_id)
+    .bind(&over_key)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        failed_transfer_count, 0,
+        "risk rejection must roll back idempotency row"
+    );
+
+    let exact = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/margin/transfers")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"asset_id":{margin_asset},"from":"margin","to":"spot","amount":"30","idempotency_key":"exact-{}"}}"#,
+                    Uuid::now_v7().simple()
+                )))
+                .unwrap(),
+        )
+        .await?;
+    let exact_status = exact.status();
+    let exact_payload = body_json(exact).await?;
+    assert_eq!(exact_status, StatusCode::OK, "payload: {exact_payload}");
+    assert_eq!(
+        exact_payload["margin_wallet"]["available"],
+        "20.000000000000000000"
+    );
+    assert_eq!(
+        exact_payload["spot_wallet"]["available"],
+        "40.000000000000000000"
+    );
+    let (last_equity, last_maintenance): (BigDecimal, BigDecimal) = sqlx::query_as(
+        "SELECT last_equity, last_maintenance_margin FROM margin_cross_accounts WHERE user_id = ? AND margin_asset = ?",
+    )
+    .bind(user_id)
+    .bind(margin_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(last_equity, last_maintenance);
+
+    sqlx::query(
+        "UPDATE margin_cross_accounts SET status = 'liquidating', version = version + 1 WHERE user_id = ? AND margin_asset = ?",
+    )
+    .bind(user_id)
+    .bind(margin_asset)
+    .execute(&pool)
+    .await?;
+    let liquidating_wallets = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/margin/wallets")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let liquidating_payload = body_json(liquidating_wallets).await?;
+    let liquidating_wallet = liquidating_payload["wallets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|wallet| wallet["asset_id"] == margin_asset)
+        .unwrap();
+    assert_eq!(
+        liquidating_wallet["transfer_to_spot_block_reason"],
+        "account_liquidating"
+    );
+    let liquidating_transfer = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/margin/transfers")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"asset_id":{margin_asset},"from":"margin","to":"spot","amount":"0.01","idempotency_key":"liquidating-{}"}}"#,
+                    Uuid::now_v7().simple()
+                )))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(liquidating_transfer.status(), StatusCode::CONFLICT);
+    Ok(())
+}
+
+#[tokio::test]
+async fn cross_margin_transfer_and_close_serialize_without_unsafe_commit()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let mut tx = pool.begin().await?;
+    let user_id = create_user(&mut tx).await;
+    let (base_asset, base_symbol) = create_asset(&mut tx, "TCB").await;
+    let (margin_asset, margin_symbol) = create_asset(&mut tx, "TCQ").await;
+    sqlx::query("UPDATE assets SET margin_transfer_enabled = TRUE WHERE id = ?")
+        .bind(margin_asset)
+        .execute(&mut *tx)
+        .await?;
+    let symbol = format!("{base_symbol}-{margin_symbol}");
+    let pair_id = create_pair(&mut tx, base_asset, margin_asset, &symbol).await;
+    let product_id =
+        seed_margin_product_with_mode(&mut tx, pair_id, margin_asset, "cross", vec!["5"]).await;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, 0)")
+        .bind(user_id)
+        .bind(margin_asset)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "INSERT INTO margin_wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)",
+    )
+    .bind(user_id)
+    .bind(margin_asset)
+    .bind(decimal("100.000000000000000000"))
+    .execute(&mut *tx)
+    .await?;
+    let position_id = seed_margin_risk_position(
+        &mut tx,
+        user_id,
+        product_id,
+        pair_id,
+        margin_asset,
+        "cross",
+        "opened",
+        "long",
+        "20",
+        "100",
+        "0",
+        Some("100"),
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO margin_cross_accounts (user_id, margin_asset, status, version) VALUES (?, ?, 'active', 1)",
+    )
+    .bind(user_id)
+    .bind(margin_asset)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    cache_margin_ticker(&redis, &symbol, "100").await?;
+
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let app = user_routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_redis(redis),
+    );
+    let transfer_request = Request::builder()
+        .method("POST")
+        .uri("/margin/transfers")
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(format!(
+            r#"{{"asset_id":{margin_asset},"from":"margin","to":"spot","amount":"100","idempotency_key":"concurrent-{}"}}"#,
+            Uuid::now_v7().simple()
+        )))
+        .unwrap();
+    let close_request = Request::builder()
+        .method("POST")
+        .uri(format!("/margin/positions/{position_id}/close"))
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from("{}"))
+        .unwrap();
+    let (transfer_result, close_result) = timeout(Duration::from_secs(5), async {
+        tokio::join!(
+            app.clone().oneshot(transfer_request),
+            app.oneshot(close_request)
+        )
+    })
+    .await
+    .expect("stable cross-account lock order must not deadlock");
+    let transfer_response = transfer_result?;
+    let close_response = close_result?;
+    assert!(
+        transfer_response.status() == StatusCode::OK
+            || transfer_response.status() == StatusCode::CONFLICT,
+        "stale account version may reject, but must not partially commit"
+    );
+    assert_eq!(close_response.status(), StatusCode::OK);
+
+    let position_status: String =
+        sqlx::query_scalar("SELECT status FROM margin_positions WHERE id = ?")
+            .bind(position_id)
+            .fetch_one(&pool)
+            .await?;
+    let margin_available: BigDecimal = sqlx::query_scalar(
+        "SELECT available FROM margin_wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(margin_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(position_status, "closed");
+    assert!(margin_available >= 0);
+
+    // 同一锁序还要覆盖开仓：要么转出先提交而开仓因余额不足失败，要么开仓先提交并让旧转出版本失效。
+    sqlx::query(
+        "UPDATE margin_wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(decimal("100.000000000000000000"))
+    .bind(user_id)
+    .bind(margin_asset)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "UPDATE margin_cross_accounts SET status = 'active', version = version + 1 WHERE user_id = ? AND margin_asset = ?",
+    )
+    .bind(user_id)
+    .bind(margin_asset)
+    .execute(&pool)
+    .await?;
+    let app = user_routes().with_state(
+        AppState::new(test_settings())
+            .with_mysql(pool.clone())
+            .with_redis(redis_manager().await.expect("redis remains available")),
+    );
+    let open_key = format!("concurrent-open-{}", Uuid::now_v7().simple());
+    let open_request = Request::builder()
+        .method("POST")
+        .uri("/margin/positions")
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(format!(
+            r#"{{"product_id":{product_id},"direction":"long","margin_mode":"cross","margin_amount":"20","leverage":"5","idempotency_key":"{open_key}"}}"#
+        )))
+        .unwrap();
+    let transfer_request = Request::builder()
+        .method("POST")
+        .uri("/margin/transfers")
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(format!(
+            r#"{{"asset_id":{margin_asset},"from":"margin","to":"spot","amount":"100","idempotency_key":"concurrent-open-transfer-{}"}}"#,
+            Uuid::now_v7().simple()
+        )))
+        .unwrap();
+    let (open_result, transfer_result) = timeout(Duration::from_secs(5), async {
+        tokio::join!(
+            app.clone().oneshot(open_request),
+            app.oneshot(transfer_request)
+        )
+    })
+    .await
+    .expect("open and transfer must share a deadlock-free account-first lock order");
+    let open_response = open_result?;
+    let transfer_response = transfer_result?;
+    assert!(
+        open_response.status() == StatusCode::OK
+            || open_response.status() == StatusCode::BAD_REQUEST
+            || open_response.status() == StatusCode::CONFLICT
+    );
+    assert!(
+        transfer_response.status() == StatusCode::OK
+            || transfer_response.status() == StatusCode::BAD_REQUEST
+            || transfer_response.status() == StatusCode::CONFLICT
+    );
+    let opened_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM margin_positions WHERE user_id = ? AND idempotency_key = ? AND status = 'opened'",
+    )
+    .bind(user_id)
+    .bind(&open_key)
+    .fetch_one(&pool)
+    .await?;
+    let available_after_open_race: BigDecimal = sqlx::query_scalar(
+        "SELECT available FROM margin_wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(margin_asset)
+    .fetch_one(&pool)
+    .await?;
+    if opened_count == 1 {
+        let equity = available_after_open_race + decimal("20.000000000000000000");
+        assert!(equity >= decimal("5.000000000000000000"));
+    }
     Ok(())
 }
 

@@ -24,17 +24,18 @@ use super::service::{admin_id_from_subject, user_id_from_subject};
 use super::presentation::{
     AdminLoanOrdersQuery, AdminLoanOrdersResponse, AdminLoanProductsQuery,
     AdminLoanProductsResponse, CreateLoanOrderRequest, CreateLoanProductRequest, ListQuery,
-    LoanOrderActionResponse, LoanOrderResponse, LoanOrdersResponse, LoanProductResponse,
-    LoanProductsResponse, ReviewLoanOrderRequest, UpdateLoanProductRequest,
+    LoanOrderActionResponse, LoanOrderHealthResponse, LoanOrderResponse, LoanOrdersResponse,
+    LoanProductResponse, LoanProductsResponse, ReviewLoanOrderRequest, UpdateLoanProductRequest,
     UpdateLoanProductStatusRequest, UserLoanOrdersQuery,
 };
 
 use super::application::{
     approve_loan_order_use_case, cancel_loan_order_use_case, create_loan_order_use_case,
     create_loan_product_use_case, get_admin_order_use_case, get_admin_product_use_case,
-    get_user_order_use_case, list_active_products_use_case, list_admin_orders_use_case,
-    list_admin_products_use_case, list_user_orders_use_case, reject_loan_order_use_case,
-    repay_loan_order_use_case, update_loan_product_status_use_case, update_loan_product_use_case,
+    get_loan_order_health_use_case, get_user_order_use_case, list_active_products_use_case,
+    list_admin_orders_use_case, list_admin_products_use_case, list_user_orders_use_case,
+    reject_loan_order_use_case, repay_loan_order_use_case, update_loan_product_status_use_case,
+    update_loan_product_use_case,
 };
 
 /// 从 HTTP 运行时状态提取借贷用例所需的 MySQL 连接池。
@@ -55,6 +56,7 @@ pub fn user_routes() -> Router<AppState> {
         .route("/loan/products", get(list_active_products))
         .route("/loan/orders", get(list_user_orders).post(create_order))
         .route("/loan/orders/:id", get(get_user_order))
+        .route("/loan/orders/:id/health", get(get_order_health))
         .route("/loan/orders/:id/cancel", post(cancel_order))
         .route("/loan/orders/:id/repay", post(repay_order))
 }
@@ -180,7 +182,8 @@ async fn create_order(
 ) -> AppResult<Json<LoanOrderActionResponse>> {
     let user_id = user_id_from_subject(&claims.sub)?;
     let (order, changed) =
-        create_loan_order_use_case(&mysql_pool(&state)?, user_id, request).await?;
+        create_loan_order_use_case(&mysql_pool(&state)?, state.redis.as_ref(), user_id, request)
+            .await?;
     Ok(Json(LoanOrderActionResponse { order, changed }))
 }
 
@@ -211,6 +214,24 @@ async fn get_user_order(
     let user_id = user_id_from_subject(&claims.sub)?;
     Ok(Json(
         get_user_order_use_case(&mysql_pool(&state)?, user_id, order_id).await?,
+    ))
+}
+
+/// 基于订单固化的行情来源与最大年龄返回当前抵押率；Redis 缺失或价格陈旧时失败关闭。
+async fn get_order_health(
+    UserAuth(claims): UserAuth,
+    State(state): State<AppState>,
+    Path(order_id): Path<u64>,
+) -> AppResult<Json<LoanOrderHealthResponse>> {
+    let user_id = user_id_from_subject(&claims.sub)?;
+    Ok(Json(
+        get_loan_order_health_use_case(
+            &mysql_pool(&state)?,
+            state.redis.as_ref(),
+            user_id,
+            order_id,
+        )
+        .await?,
     ))
 }
 
@@ -282,8 +303,13 @@ async fn approve_order(
     Path(order_id): Path<u64>,
 ) -> AppResult<Json<LoanOrderActionResponse>> {
     let admin_id = admin_id_from_subject(&claims.sub)?;
-    let (order, changed) =
-        approve_loan_order_use_case(&mysql_pool(&state)?, admin_id, order_id).await?;
+    let (order, changed) = approve_loan_order_use_case(
+        &mysql_pool(&state)?,
+        state.redis.as_ref(),
+        admin_id,
+        order_id,
+    )
+    .await?;
     Ok(Json(LoanOrderActionResponse { order, changed }))
 }
 

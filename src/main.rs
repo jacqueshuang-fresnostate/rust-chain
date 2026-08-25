@@ -15,8 +15,8 @@ use exchange_api::{
     state::AppState,
     workers::{
         agent_commission_settlement, earn_auto_redemption, event_inbox, event_outbox, loan_overdue,
-        margin_interest, margin_liquidation, market_feed, seconds_contract_settlement,
-        synthetic_market, unlock_scanner, wallet_chain,
+        margin_interest, margin_liquidation, market_feed, prediction_market_close,
+        seconds_contract_settlement, synthetic_market, unlock_scanner, wallet_chain,
     },
 };
 use std::sync::Arc;
@@ -156,10 +156,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("模拟行情实时循环已由 KLINE_RECOVERY_ENABLED 兼容开关关闭");
     }
 
-    if state.settings.seconds_contract_settlement_enabled
-        && state.mysql.is_some()
-        && state.redis.is_some()
-    {
+    if state.settings.seconds_contract_settlement_enabled && state.mysql.is_some() {
         let seconds_contract_settlement_state = state.clone();
         let interval_seconds = state.settings.seconds_contract_settlement_interval_seconds;
         let batch_limit = state.settings.seconds_contract_settlement_batch_limit;
@@ -277,6 +274,12 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(async move {
             if let Err(error) = prediction::run_sync_loop(prediction_sync_state).await {
                 tracing::error!(%error, "竞猜市场同步循环已停止");
+            }
+        });
+        let prediction_close_state = state.clone();
+        tokio::spawn(async move {
+            if let Err(error) = prediction_market_close::run_loop(prediction_close_state).await {
+                tracing::error!(%error, "竞猜市场本地关盘循环已停止");
             }
         });
     }

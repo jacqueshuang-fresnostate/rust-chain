@@ -191,6 +191,7 @@ impl AuthRepository for TestAuthRepository {
                 actor_type: token.actor_type,
                 actor_id: token.actor_id,
                 user_id: token.user_id,
+                auth_session_version: token.auth_session_version,
                 scope: token.actor_type.scope(),
             }))
     }
@@ -258,6 +259,27 @@ fn actor_type_maps_to_token_scope_and_storage_value() {
 }
 
 #[test]
+fn jwt_session_version_round_trips_and_legacy_tokens_remain_version_zero() {
+    let state = test_state();
+    let versioned =
+        issue_token_with_session_version(&state.settings, "admin:42", TokenScope::Admin, 60, 7)
+            .unwrap();
+    let versioned_claims = decode_claims(&state.settings, &versioned).unwrap();
+    assert_eq!(claims_auth_session_version(&versioned_claims).unwrap(), 7);
+
+    let legacy = issue_token(&state.settings, "admin:42", TokenScope::Admin, 60).unwrap();
+    let legacy_claims = decode_claims(&state.settings, &legacy).unwrap();
+    assert_eq!(claims_auth_session_version(&legacy_claims).unwrap(), 0);
+
+    let mut malformed = legacy_claims;
+    malformed.token_id = "sv:not-a-number:token".to_owned();
+    assert!(matches!(
+        claims_auth_session_version(&malformed),
+        Err(AppError::Unauthorized)
+    ));
+}
+
+#[test]
 fn refresh_token_hash_is_deterministic_and_not_plaintext() {
     let first = hash_refresh_token("refresh-token-1").unwrap();
     let second = hash_refresh_token("refresh-token-1").unwrap();
@@ -318,8 +340,9 @@ async fn username_login_requires_policy_toggle() {
 }
 
 #[tokio::test]
-async fn admin_registration_allows_bootstrap_then_requires_active_admin() {
+async fn admin_registration_always_requires_an_existing_active_admin() {
     let repository = TestAuthRepository::default();
+    repository.active_admin_ids.lock().unwrap().insert(1);
     let state = test_state();
     let service = AuthService::new(repository, state.settings.clone(), None, None);
     let registration = |username: &str| AdminRegistration {
@@ -328,14 +351,8 @@ async fn admin_registration_allows_bootstrap_then_requires_active_admin() {
         role_id: Some(1),
     };
 
-    // 空表引导：允许无凭证创建首个管理员。
-    service
-        .register_admin(None, registration("bootstrap_admin"))
-        .await
-        .unwrap();
-
     let unauthenticated = service
-        .register_admin(None, registration("second_admin"))
+        .register_admin(None, registration("bootstrap_admin"))
         .await;
     assert!(matches!(unauthenticated, Err(AppError::Unauthorized)));
 

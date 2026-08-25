@@ -98,3 +98,54 @@ fn quote_ttl_requires_positive_ttl() {
         ConvertQuoteError::InvalidTtl
     );
 }
+
+#[test]
+fn authoritative_market_price_validation_fails_closed_on_bad_or_stale_ticks() {
+    let now = Utc.with_ymd_and_hms(2026, 8, 24, 12, 0, 0).unwrap();
+    let valid = repository::ConvertMarketPriceSnapshot {
+        price: BigDecimal::from(100),
+        source: "bitget".to_owned(),
+        symbol: "BTCUSDT".to_owned(),
+        observed_at: now - TimeDelta::seconds(60),
+        source_version: "event-v1".to_owned(),
+    };
+    assert!(service::validate_convert_market_price_snapshot(&valid, "BTC-USDT", now, 60).is_ok());
+
+    let mut invalid = valid.clone();
+    invalid.observed_at = now + TimeDelta::microseconds(1);
+    assert!(service::validate_convert_market_price_snapshot(&invalid, "BTCUSDT", now, 60).is_err());
+
+    invalid = valid.clone();
+    invalid.observed_at = now - TimeDelta::seconds(60) - TimeDelta::microseconds(1);
+    assert!(service::validate_convert_market_price_snapshot(&invalid, "BTCUSDT", now, 60).is_err());
+
+    invalid = valid.clone();
+    invalid.price = BigDecimal::from(0);
+    assert!(service::validate_convert_market_price_snapshot(&invalid, "BTCUSDT", now, 60).is_err());
+
+    invalid = valid.clone();
+    invalid.source_version.clear();
+    assert!(service::validate_convert_market_price_snapshot(&invalid, "BTCUSDT", now, 60).is_err());
+
+    invalid = valid.clone();
+    invalid.source = "unknown".to_owned();
+    assert!(service::validate_convert_market_price_snapshot(&invalid, "BTCUSDT", now, 60).is_err());
+
+    invalid = valid;
+    invalid.symbol = "ETHUSDT".to_owned();
+    assert!(service::validate_convert_market_price_snapshot(&invalid, "BTCUSDT", now, 60).is_err());
+
+    let underscored = repository::ConvertMarketPriceSnapshot {
+        symbol: "BTC_USDT".to_owned(),
+        ..repository::ConvertMarketPriceSnapshot {
+            price: BigDecimal::from(100),
+            source: "bitget".to_owned(),
+            symbol: "BTCUSDT".to_owned(),
+            observed_at: now,
+            source_version: "event-v2".to_owned(),
+        }
+    };
+    assert!(
+        service::validate_convert_market_price_snapshot(&underscored, "BTC-USDT", now, 60).is_ok()
+    );
+}

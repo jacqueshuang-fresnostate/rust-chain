@@ -34,12 +34,20 @@ pub(crate) use returns::{
     load_today_return_asset_activity,
 };
 pub(crate) use withdrawals::{
-    approve_withdrawal_in_tx, confirm_withdrawal_in_tx, list_admin_wallet_withdrawals_page,
-    list_wallet_withdrawals, load_withdrawal_asset_rule,
-    load_withdrawal_by_gateway_request_for_update, load_withdrawal_by_user_key,
-    mark_withdrawal_broadcasted_in_tx, mark_withdrawal_manual_review_in_tx,
-    release_withdrawal_in_tx, reserve_withdrawal_request, update_withdrawal_chain_progress_in_tx,
+    approve_withdrawal_in_tx, confirm_withdrawal_in_tx, ensure_active_withdrawal_network,
+    insert_withdrawal_broadcast_audit_in_tx, insert_withdrawal_quote_in_tx,
+    list_admin_wallet_withdrawals_page, list_wallet_withdrawals, load_withdrawal_asset_rule,
+    load_withdrawal_asset_rule_in_tx, load_withdrawal_by_gateway_request_for_update,
+    load_withdrawal_by_user_key, load_withdrawal_quote, lock_active_withdrawal_network_in_tx,
+    mark_withdrawal_acceptance_evidence_for_manual_review_in_tx, mark_withdrawal_broadcasted_in_tx,
+    mark_withdrawal_manual_review_in_tx, mark_withdrawal_unknown_broadcast_in_tx,
+    release_authoritatively_not_accepted_in_tx, release_withdrawal_in_tx,
+    reserve_withdrawal_request, schedule_withdrawal_after_not_accepted_in_tx,
+    update_withdrawal_chain_progress_in_tx,
 };
+
+#[cfg(test)]
+pub(crate) use withdrawals::classify_broadcast_http_status;
 
 #[cfg(test)]
 use accounts_ledger::{

@@ -8,7 +8,12 @@
 //! 这笔债务要到平仓或强平时才被真正消费，从权益里扣除。
 //! 每个仓位独立开事务并加行锁，单笔失败只计数并继续，不影响同批其他仓位。
 
-use crate::error::{AppError, AppResult};
+use crate::{
+    error::{AppError, AppResult},
+    modules::margin::infrastructure::{
+        ensure_and_lock_cross_margin_account, require_active_cross_margin_account,
+    },
+};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use sqlx::{MySql, Pool, Transaction};
@@ -71,6 +76,9 @@ pub struct MarginInterestSummary {
 #[derive(Debug, sqlx::FromRow)]
 struct MarginInterestCandidate {
     position_id: u64,
+    user_id: u64,
+    margin_asset: u64,
+    margin_mode: String,
 }
 
 /// 计提事务内加锁读到的仓位与产品联表快照，计息判定与写入全部基于这份数据。
@@ -123,7 +131,7 @@ pub async fn run_once_with_dependencies(
             break;
         }
         summary.scanned += 1;
-        match accrue_position_interest(pool, candidate.position_id, now).await {
+        match accrue_position_interest(pool, &candidate, now).await {
             Ok(MarginInterestOutcome::Accrued) => summary.accrued += 1,
             Ok(MarginInterestOutcome::Skipped) => summary.skipped += 1,
             Err(error) => {
@@ -167,7 +175,8 @@ async fn fetch_interest_candidates(
     limit: u32,
 ) -> AppResult<Vec<MarginInterestCandidate>> {
     sqlx::query_as::<_, MarginInterestCandidate>(
-        r#"SELECT positions.id AS position_id
+        r#"SELECT positions.id AS position_id, positions.user_id,
+                  positions.margin_asset, positions.margin_mode
            FROM margin_positions positions
            INNER JOIN margin_products products ON products.id = positions.product_id
            WHERE positions.status = 'opened'
@@ -195,14 +204,34 @@ async fn fetch_interest_candidates(
 /// 全仓仓位在同一事务内额外重算账户级利息聚合并递增版本号，让风险快照和强平读到一致的账户视图。
 async fn accrue_position_interest(
     pool: &Pool<MySql>,
-    position_id: u64,
+    candidate: &MarginInterestCandidate,
     now: DateTime<Utc>,
 ) -> AppResult<MarginInterestOutcome> {
     let mut tx = pool.begin().await?;
-    let Some(position) = lock_position(&mut tx, position_id).await? else {
+    let cross_account = if candidate.margin_mode == "cross" {
+        let account = ensure_and_lock_cross_margin_account(
+            &mut tx,
+            candidate.user_id,
+            candidate.margin_asset,
+        )
+        .await?;
+        require_active_cross_margin_account(&account)?;
+        Some(account)
+    } else {
+        None
+    };
+    let Some(position) = lock_position(&mut tx, candidate.position_id).await? else {
         tx.rollback().await?;
         return Ok(MarginInterestOutcome::Skipped);
     };
+    if position.user_id != candidate.user_id
+        || position.margin_asset != candidate.margin_asset
+        || position.margin_mode != candidate.margin_mode
+    {
+        return Err(AppError::Conflict(
+            "margin interest account scope changed concurrently".to_owned(),
+        ));
+    }
     if position.status != "opened"
         || position.entry_price.is_none()
         || position.borrowed_amount <= 0
@@ -242,21 +271,30 @@ async fn accrue_position_interest(
     }
     if position.margin_mode == "cross" {
         // 全仓利息按账户聚合，风险快照和统一强平都读取这个聚合值。
-        sqlx::query(
+        let account = cross_account.as_ref().ok_or_else(|| {
+            AppError::Conflict("cross margin account lock is required for interest".to_owned())
+        })?;
+        let account_update = sqlx::query(
             r#"UPDATE margin_cross_accounts
                SET last_interest_amount = COALESCE(
                      (SELECT SUM(interest_amount) FROM margin_positions
                       WHERE user_id = ? AND margin_asset = ? AND margin_mode = 'cross'
                         AND status = 'opened' AND entry_price IS NOT NULL), 0),
                    version = version + 1
-               WHERE user_id = ? AND margin_asset = ?"#,
+               WHERE user_id = ? AND margin_asset = ? AND version = ?"#,
         )
         .bind(position.user_id)
         .bind(position.margin_asset)
         .bind(position.user_id)
         .bind(position.margin_asset)
+        .bind(account.version)
         .execute(&mut *tx)
         .await?;
+        if account_update.rows_affected() != 1 {
+            return Err(AppError::Conflict(
+                "cross margin account changed during interest accrual".to_owned(),
+            ));
+        }
     }
     tx.commit().await?;
     Ok(MarginInterestOutcome::Accrued)

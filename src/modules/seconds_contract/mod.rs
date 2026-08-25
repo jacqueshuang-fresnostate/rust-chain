@@ -17,3 +17,7 @@ pub mod presentation;
 pub mod repository;
 pub mod routes;
 pub mod service;
+
+#[cfg(test)]
+#[path = "../../../tests/unit_src/src_modules_seconds_contract_tests.rs"]
+mod tests;

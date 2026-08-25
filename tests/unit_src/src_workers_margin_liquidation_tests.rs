@@ -1,5 +1,5 @@
 use super::*;
-use std::str::FromStr;
+use std::{str::FromStr, time::Instant};
 
 fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).unwrap()
@@ -68,4 +68,38 @@ fn margin_liquidation_risk_state_rejects_invalid_direction() {
     )
     .unwrap_err();
     assert!(error.to_string().contains("long or short"));
+}
+
+#[test]
+fn liquidation_mark_is_rechecked_after_waiting_for_database_locks() {
+    let logical_now = Utc::now();
+    let fresh = MarginLiquidationMark {
+        price: decimal("100"),
+        observed_at: logical_now,
+        validated_logical_at: logical_now,
+        validated_at: Instant::now(),
+    };
+    assert!(ensure_liquidation_mark_fresh(&fresh).is_ok());
+
+    let stale_after_wait = MarginLiquidationMark {
+        validated_at: Instant::now() - std::time::Duration::from_secs(61),
+        ..fresh.clone()
+    };
+    assert!(
+        ensure_liquidation_mark_fresh(&stale_after_wait)
+            .unwrap_err()
+            .to_string()
+            .contains("stale")
+    );
+
+    let future = MarginLiquidationMark {
+        observed_at: logical_now + chrono::TimeDelta::seconds(120),
+        ..fresh
+    };
+    assert!(
+        ensure_liquidation_mark_fresh(&future)
+            .unwrap_err()
+            .to_string()
+            .contains("future")
+    );
 }

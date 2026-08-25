@@ -31,6 +31,21 @@ fn validation_message(result: AppResult<()>) -> String {
     }
 }
 
+#[test]
+fn new_coin_unlock_fee_rate_must_fit_persisted_precision() {
+    let request = UpdateNewCoinUnlockFeeRuleRequest {
+        unlock_fee_enabled: true,
+        unlock_fee_rate: Some(decimal("0.123456789")),
+        unlock_fee_basis: Some("market_value".to_owned()),
+        unlock_fee_asset: Some(1),
+        reason: Some("precision regression".to_owned()),
+    };
+
+    let error = validate_update_new_coin_unlock_fee_rule(&request)
+        .expect_err("DECIMAL(18,8) fee rates must not be silently rounded");
+    assert!(format!("{error:?}").contains("precision_scale 8"));
+}
+
 fn generator_request(seed_mode: &str, seed: Option<&str>) -> MarketStrategyGeneratorRequest {
     MarketStrategyGeneratorRequest {
         scenario: "trend_up".to_owned(),

@@ -1,22 +1,11 @@
 use bigdecimal::BigDecimal;
-use chrono::{TimeZone, Utc};
-use exchange_api::{
-    config::Settings,
-    modules::{
-        events::{EventBroadcastHub, WebSocketChannel},
-        market::market_ticker_redis_key,
-    },
-    state::AppState,
-    workers::seconds_contract_settlement::{
-        SecondsContractSettlementWorker, run_once_with_dependencies,
-        seconds_contract_settlement_result,
-    },
+use chrono::{DateTime, TimeDelta, TimeZone, Utc};
+use exchange_api::workers::seconds_contract_settlement::{
+    run_once_with_pool, seconds_contract_settlement_result,
 };
-use redis::AsyncCommands;
-use secrecy::SecretString;
 use sqlx::{MySql, MySqlPool, Transaction, mysql::MySqlPoolOptions};
-use std::{error::Error, str::FromStr, time::Duration};
-use tokio::{sync::Mutex, time::timeout};
+use std::{error::Error, str::FromStr};
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
 static TEST_LOCK: Mutex<()> = Mutex::const_new(());
@@ -25,120 +14,23 @@ fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).unwrap()
 }
 
-fn env_or_skip(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(value) if !value.trim().is_empty() => Some(value),
-        _ => {
-            eprintln!("skipping seconds contract settlement worker test because {name} is not set");
-            None
-        }
-    }
-}
-
-fn unique_symbol(prefix: &str) -> String {
-    let uuid = Uuid::now_v7().simple().to_string();
-    format!("{}{}", prefix, &uuid[22..32]).to_ascii_uppercase()
-}
-
-fn test_settings() -> Settings {
-    Settings {
-        app_env: "test".to_owned(),
-        app_host: "127.0.0.1".parse().unwrap(),
-        app_port: 0,
-        database_url: SecretString::new("mysql://test:test@localhost/test".to_owned()),
-        mongodb_uri: SecretString::new("mongodb://localhost:27017".to_owned()),
-        mongodb_database: "exchange_test".to_owned(),
-        redis_url: SecretString::new("redis://localhost:6379".to_owned()),
-        rabbitmq_url: SecretString::new("amqp://guest:guest@localhost:5672/%2f".to_owned()),
-        jwt_secret: SecretString::new("test-secret".to_owned()),
-        credential_encryption_key: Some(SecretString::new(
-            "0123456789abcdef0123456789abcdef".to_owned(),
-        )),
-        jwt_access_ttl_seconds: 900,
-        jwt_refresh_ttl_seconds: 2_592_000,
-        bitget_rest_base_url: "https://bitget.test".to_owned(),
-        bitget_ws_url: "wss://bitget.test/ws".to_owned(),
-        htx_rest_base_url: "https://htx.test".to_owned(),
-        htx_ws_url: "wss://htx.test/ws".to_owned(),
-        coinbase_rest_base_url: "https://coinbase.test".to_owned(),
-        coinbase_ws_url: "wss://coinbase.test/ws".to_owned(),
-        market_feed_symbols: Vec::new(),
-        market_feed_intervals: Vec::new(),
-        market_feed_providers: Vec::new(),
-        market_feed_reconnect_seconds: 5,
-        market_feed_rest_fallback_timeout_seconds: 3,
-        event_inbox_retry_scan_seconds: 10,
-        event_outbox_publisher_enabled: true,
-        event_outbox_publisher_interval_seconds: 5,
-        unlock_scanner_enabled: true,
-        unlock_scanner_interval_seconds: 10,
-        unlock_scanner_batch_limit: 100,
-        kline_recovery_enabled: true,
-        kline_recovery_interval_seconds: 30,
-        kline_recovery_batch_limit: 100,
-        seconds_contract_settlement_enabled: true,
-        seconds_contract_settlement_interval_seconds: 5,
-        seconds_contract_settlement_batch_limit: 100,
-        earn_auto_redemption_enabled: true,
-        earn_auto_redemption_interval_seconds: 60,
-        earn_auto_redemption_batch_limit: 100,
-        margin_liquidation_enabled: true,
-        margin_liquidation_interval_seconds: 5,
-        margin_liquidation_batch_limit: 100,
-        margin_interest_enabled: true,
-        margin_interest_interval_seconds: 60,
-        margin_interest_batch_limit: 100,
-        agent_commission_auto_settle_enabled: false,
-        agent_commission_auto_settle_interval_seconds: 60,
-        agent_commission_auto_settle_min_age_seconds: 3600,
-        agent_commission_auto_settle_batch_limit: 100,
-    }
-}
-
 async fn mysql_pool_or_skip() -> Result<Option<MySqlPool>, Box<dyn Error>> {
-    let Some(database_url) = env_or_skip("DATABASE_URL") else {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!("skipping seconds event-price tests because DATABASE_URL is not set");
         return Ok(None);
     };
     let pool = MySqlPoolOptions::new()
         .max_connections(5)
         .connect(&database_url)
         .await?;
-    sqlx::migrate!("./migrations").run(&pool).await?;
+    sqlx::migrate!().run(&pool).await?;
     Ok(Some(pool))
 }
 
-async fn redis_manager_or_skip() -> Result<Option<redis::aio::ConnectionManager>, Box<dyn Error>> {
-    let Some(redis_url) = env_or_skip("REDIS_URL") else {
-        return Ok(None);
-    };
-    let client = redis::Client::open(redis_url)?;
-    Ok(Some(redis::aio::ConnectionManager::new(client).await?))
-}
-
-async fn close_previous_seconds_worker_orders(pool: &MySqlPool) -> Result<(), Box<dyn Error>> {
-    sqlx::query(
-        "UPDATE seconds_contract_orders SET status = 'settled' WHERE idempotency_key LIKE 'seconds-worker-%' AND status = 'opened'",
-    )
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-async fn order_status(pool: &MySqlPool, order_id: u64) -> Result<String, Box<dyn Error>> {
-    let (status,): (String,) =
-        sqlx::query_as("SELECT status FROM seconds_contract_orders WHERE id = ?")
-            .bind(order_id)
-            .fetch_one(pool)
-            .await?;
-    Ok(status)
-}
-
 async fn create_user(tx: &mut Transaction<'_, MySql>) -> Result<u64, Box<dyn Error>> {
-    let email = format!("seconds-worker-{}@example.test", Uuid::now_v7().simple());
     Ok(
-        sqlx::query("INSERT INTO users (email, password_hash) VALUES (?, ?)")
-            .bind(email)
-            .bind("not-a-real-hash")
+        sqlx::query("INSERT INTO users (email, password_hash) VALUES (?, 'test')")
+            .bind(format!("event-price-{}@test.invalid", Uuid::now_v7()))
             .execute(&mut **tx)
             .await?
             .last_insert_id(),
@@ -147,600 +39,314 @@ async fn create_user(tx: &mut Transaction<'_, MySql>) -> Result<u64, Box<dyn Err
 
 async fn create_asset(
     tx: &mut Transaction<'_, MySql>,
-    symbol: &str,
-) -> Result<u64, Box<dyn Error>> {
-    Ok(sqlx::query(
+    prefix: &str,
+) -> Result<(u64, String), Box<dyn Error>> {
+    let suffix = Uuid::now_v7().simple().to_string();
+    let symbol = format!("{}{}", prefix, &suffix[24..]).to_ascii_uppercase();
+    let id = sqlx::query(
         "INSERT INTO assets (symbol, name, precision_scale, asset_type, status) VALUES (?, ?, 18, 'coin', 'active')",
     )
-    .bind(symbol)
+    .bind(&symbol)
     .bind(format!("{symbol} asset"))
     .execute(&mut **tx)
     .await?
-    .last_insert_id())
+    .last_insert_id();
+    Ok((id, symbol))
 }
 
-async fn seed_due_seconds_order(
-    pool: &MySqlPool,
-    direction: &str,
-    entry_price: &BigDecimal,
-    now: chrono::DateTime<Utc>,
-) -> Result<(u64, u64, u64, u64, String), Box<dyn Error>> {
-    seed_due_seconds_order_with_optional_entry(pool, direction, Some(entry_price), now).await
+struct SecondsFixture {
+    pair_symbol: String,
+    product_id: u64,
+    pair_id: u64,
+    stake_asset: u64,
 }
 
-async fn seed_due_seconds_order_without_entry_price(
-    pool: &MySqlPool,
-    direction: &str,
-    now: chrono::DateTime<Utc>,
-) -> Result<(u64, u64, u64, u64, String), Box<dyn Error>> {
-    seed_due_seconds_order_with_optional_entry(pool, direction, None, now).await
-}
-
-async fn seed_due_seconds_order_with_missing_wallet(
-    pool: &MySqlPool,
-    direction: &str,
-    entry_price: &BigDecimal,
-    now: chrono::DateTime<Utc>,
-) -> Result<(u64, u64, u64, u64, String), Box<dyn Error>> {
-    let (order_id, user_id, product_id, stake_asset, pair_symbol) =
-        seed_due_seconds_order(pool, direction, entry_price, now).await?;
-    sqlx::query("DELETE FROM wallet_accounts WHERE user_id = ?")
-        .bind(user_id)
-        .execute(pool)
-        .await?;
-    Ok((order_id, user_id, product_id, stake_asset, pair_symbol))
-}
-
-async fn seed_due_seconds_order_with_optional_entry(
-    pool: &MySqlPool,
-    direction: &str,
-    entry_price: Option<&BigDecimal>,
-    now: chrono::DateTime<Utc>,
-) -> Result<(u64, u64, u64, u64, String), Box<dyn Error>> {
+async fn seed_fixture(pool: &MySqlPool) -> Result<SecondsFixture, Box<dyn Error>> {
     let mut tx = pool.begin().await?;
-    let user_id = create_user(&mut tx).await?;
-    let base_symbol = unique_symbol("SWB");
-    let quote_symbol = unique_symbol("SWQ");
-    let base_asset = create_asset(&mut tx, &base_symbol).await?;
-    let quote_asset = create_asset(&mut tx, &quote_symbol).await?;
+    let (base_asset, base_symbol) = create_asset(&mut tx, "EB").await?;
+    let (quote_asset, quote_symbol) = create_asset(&mut tx, "EQ").await?;
     let pair_symbol = format!("{base_symbol}-{quote_symbol}");
     let pair_id = sqlx::query(
         r#"INSERT INTO trading_pairs
-           (base_asset, quote_asset, symbol, price_precision, qty_precision, min_order_value, status, market_type)
-           VALUES (?, ?, ?, 18, 18, ?, 'active', 'external')"#,
+           (base_asset, quote_asset, symbol, price_precision, qty_precision,
+            min_order_value, status, market_type)
+           VALUES (?, ?, ?, 18, 18, 1, 'active', 'external')"#,
     )
     .bind(base_asset)
     .bind(quote_asset)
     .bind(&pair_symbol)
-    .bind(decimal("1.000000000000000000"))
     .execute(&mut *tx)
     .await?
     .last_insert_id();
     let product_id = sqlx::query(
         r#"INSERT INTO seconds_contract_products
            (pair_id, stake_asset, duration_seconds, payout_rate, min_stake, max_stake, status)
-           VALUES (?, ?, 60, ?, ?, ?, 'active')"#,
+           VALUES (?, ?, 60, 0.8, 1, 100, 'active')"#,
     )
     .bind(pair_id)
     .bind(quote_asset)
-    .bind(decimal("0.80000000"))
-    .bind(decimal("5.000000000000000000"))
-    .bind(decimal("100.000000000000000000"))
     .execute(&mut *tx)
     .await?
     .last_insert_id();
-    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+    tx.commit().await?;
+    Ok(SecondsFixture {
+        pair_symbol,
+        product_id,
+        pair_id,
+        stake_asset: quote_asset,
+    })
+}
+
+async fn seed_order(
+    pool: &MySqlPool,
+    fixture: &SecondsFixture,
+    expires_at: DateTime<Utc>,
+    direction: &str,
+) -> Result<u64, Box<dyn Error>> {
+    let mut tx = pool.begin().await?;
+    let user_id = create_user(&mut tx).await?;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, 40)")
         .bind(user_id)
-        .bind(quote_asset)
-        .bind(decimal("40.000000000000000000"))
+        .bind(fixture.stake_asset)
         .execute(&mut *tx)
         .await?;
     let order_id = sqlx::query(
         r#"INSERT INTO seconds_contract_orders
            (user_id, product_id, pair_id, stake_asset, direction, stake_amount,
-            payout_rate, entry_price, status, idempotency_key, expires_at, next_settlement_attempt_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'opened', ?, ?, ?)"#,
+            payout_rate, entry_price, status, idempotency_key, opened_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, 10, 0.8, 100, 'opened', ?, DATE_SUB(?, INTERVAL 60 SECOND), ?)"#,
     )
     .bind(user_id)
-    .bind(product_id)
-    .bind(pair_id)
-    .bind(quote_asset)
+    .bind(fixture.product_id)
+    .bind(fixture.pair_id)
+    .bind(fixture.stake_asset)
     .bind(direction)
-    .bind(decimal("10.000000000000000000"))
-    .bind(decimal("0.80000000"))
-    .bind(entry_price)
-    .bind(format!("seconds-worker-{}", Uuid::now_v7().simple()))
-    .bind((now - chrono::TimeDelta::seconds(1)).naive_utc())
-    .bind(now.naive_utc())
+    .bind(format!("event-price-{}", Uuid::now_v7()))
+    .bind(expires_at.naive_utc())
+    .bind(expires_at.naive_utc())
     .execute(&mut *tx)
     .await?
     .last_insert_id();
     tx.commit().await?;
-    Ok((order_id, user_id, product_id, quote_asset, pair_symbol))
+    Ok(order_id)
+}
+
+async fn insert_tick(
+    pool: &MySqlPool,
+    symbol: &str,
+    price: &str,
+    source: &str,
+    observed_at: DateTime<Utc>,
+    generation: u64,
+) -> Result<u64, Box<dyn Error>> {
+    let version = Uuid::now_v7().simple().to_string();
+    Ok(sqlx::query(
+        r#"INSERT INTO market_price_ticks
+           (event_key, symbol, price, source, observed_at, generation, source_version)
+           VALUES (?, REPLACE(UPPER(?), '-', ''), ?, ?, ?, ?, ?)"#,
+    )
+    .bind(format!("{version}{version}"))
+    .bind(symbol)
+    .bind(decimal(price))
+    .bind(source)
+    .bind(observed_at.naive_utc())
+    .bind(generation)
+    .bind(version)
+    .execute(pool)
+    .await?
+    .last_insert_id())
+}
+
+type SnapshotRow = (
+    String,
+    Option<BigDecimal>,
+    Option<u64>,
+    Option<String>,
+    Option<DateTime<Utc>>,
+    Option<u64>,
+    Option<String>,
+);
+
+async fn order_snapshot(pool: &MySqlPool, order_id: u64) -> Result<SnapshotRow, sqlx::Error> {
+    sqlx::query_as(
+        r#"SELECT status, settlement_price, settlement_price_tick_id,
+                  settlement_price_source, settlement_price_observed_at,
+                  settlement_price_generation, settlement_price_version
+           FROM seconds_contract_orders WHERE id = ?"#,
+    )
+    .bind(order_id)
+    .fetch_one(pool)
+    .await
 }
 
 #[test]
-fn seconds_contract_settlement_result_uses_direction_and_prices() {
+fn settlement_result_uses_direction_and_exact_prices() {
     assert_eq!(
         seconds_contract_settlement_result("up", &decimal("100"), &decimal("101")).unwrap(),
         "win"
     );
     assert_eq!(
-        seconds_contract_settlement_result("up", &decimal("100"), &decimal("99")).unwrap(),
-        "loss"
-    );
-    assert_eq!(
-        seconds_contract_settlement_result("down", &decimal("100"), &decimal("99")).unwrap(),
-        "win"
-    );
-    assert_eq!(
-        seconds_contract_settlement_result("down", &decimal("100"), &decimal("101")).unwrap(),
-        "loss"
-    );
-    assert_eq!(
-        seconds_contract_settlement_result("up", &decimal("100"), &decimal("100")).unwrap(),
+        seconds_contract_settlement_result("down", &decimal("100"), &decimal("100")).unwrap(),
         "loss"
     );
 }
 
 #[tokio::test]
-async fn seconds_contract_settlement_worker_settles_due_orders_from_cached_ticker_idempotently()
--> Result<(), Box<dyn Error>> {
-    let _guard = TEST_LOCK.lock().await;
-    let Some(pool) = mysql_pool_or_skip().await? else {
-        return Ok(());
-    };
-    let Some(redis) = redis_manager_or_skip().await? else {
-        return Ok(());
-    };
-    close_previous_seconds_worker_orders(&pool).await?;
-    let now = Utc.with_ymd_and_hms(1980, 1, 1, 12, 0, 0).unwrap();
-    let (order_id, user_id, product_id, stake_asset, pair_symbol) =
-        seed_due_seconds_order(&pool, "up", &decimal("100.000000000000000000"), now).await?;
-    let redis_key = market_ticker_redis_key(&pair_symbol);
-    let mut redis_connection = redis.clone();
-    let ticker_payload = serde_json::json!({
-        "symbol": pair_symbol.replace('-', ""),
-        "last_price": "105.000000000000000000",
-        "volume_24h": "1.000000000000000000",
-        "observed_at": now.timestamp_millis(),
-    })
-    .to_string();
-    let _: () = redis_connection.set(&redis_key, ticker_payload).await?;
-    let hub = EventBroadcastHub::new(16);
-    let _keepalive_hub = hub.clone();
-    let mut private_events = hub.subscribe(&WebSocketChannel::private_user(user_id));
-    let worker = SecondsContractSettlementWorker;
-    let state = AppState::new(test_settings())
-        .with_mysql(pool.clone())
-        .with_redis(redis.clone())
-        .with_event_broadcast_hub(hub);
-
-    let summary = worker.run_once(&state, now, 10).await?;
-
-    assert_eq!(summary.scanned, 1);
-    assert_eq!(summary.settled, 1);
-    assert_eq!(summary.skipped, 0);
-    assert_eq!(summary.failed, 0);
-    let event_message = timeout(Duration::from_millis(100), private_events.recv()).await??;
-    let event: serde_json::Value = serde_json::from_str(event_message.payload())?;
-    assert_eq!(event["type"], "seconds_contract.order.settled");
-    assert_eq!(event["order_id"], order_id);
-    assert_eq!(event["product_id"], product_id);
-    assert_eq!(event["stake_asset"], stake_asset);
-    assert_eq!(event["direction"], "up");
-    assert_eq!(event["stake_amount"], "10.000000000000000000");
-    assert_eq!(event["settlement_price"], "105.000000000000000000");
-    assert_eq!(event["payout_amount"], "18.000000000000000000");
-    assert_eq!(event["result"], "win");
-    assert_eq!(event["status"], "settled");
-    let (status, result, settlement_price): (String, Option<String>, Option<BigDecimal>) =
-        sqlx::query_as(
-            "SELECT status, result, settlement_price FROM seconds_contract_orders WHERE id = ?",
-        )
-        .bind(order_id)
-        .fetch_one(&pool)
-        .await?;
-    assert_eq!(status, "settled");
-    assert_eq!(result.as_deref(), Some("win"));
-    assert_eq!(settlement_price, Some(decimal("105.000000000000000000")));
-    let (available,): (BigDecimal,) =
-        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ?")
-            .bind(user_id)
-            .fetch_one(&pool)
-            .await?;
-    assert_eq!(available, decimal("58.000000000000000000"));
-    let (ledger_count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'seconds_contract_order' AND ref_id = ? AND change_type = 'seconds_contract_settle_win'",
-    )
-    .bind(order_id.to_string())
-    .fetch_one(&pool)
-    .await?;
-    assert_eq!(ledger_count, 1);
-
-    let idempotent = worker.run_once(&state, now, 10).await?;
-
-    assert_eq!(idempotent.scanned, 0);
-    assert_eq!(idempotent.settled, 0);
-    assert!(
-        timeout(Duration::from_millis(25), private_events.recv())
-            .await
-            .is_err(),
-        "idempotent seconds contract settlement replay must not publish duplicate private event"
-    );
-    let (ledger_count_after,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'seconds_contract_order' AND ref_id = ? AND change_type = 'seconds_contract_settle_win'",
-    )
-    .bind(order_id.to_string())
-    .fetch_one(&pool)
-    .await?;
-    assert_eq!(ledger_count_after, 1);
-    let _: usize = redis_connection.del(&redis_key).await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn seconds_contract_settlement_worker_truncates_payout_to_asset_precision()
--> Result<(), Box<dyn Error>> {
-    let _guard = TEST_LOCK.lock().await;
-    let Some(pool) = mysql_pool_or_skip().await? else {
-        return Ok(());
-    };
-    let Some(redis) = redis_manager_or_skip().await? else {
-        return Ok(());
-    };
-    close_previous_seconds_worker_orders(&pool).await?;
-    let now = Utc.with_ymd_and_hms(1980, 1, 7, 12, 0, 0).unwrap();
-    let (order_id, user_id, _, stake_asset, pair_symbol) =
-        seed_due_seconds_order(&pool, "up", &decimal("100.000000000000000000"), now).await?;
-    sqlx::query("UPDATE assets SET precision_scale = 2 WHERE id = ?")
-        .bind(stake_asset)
-        .execute(&pool)
-        .await?;
-    sqlx::query(
-        "UPDATE seconds_contract_orders SET stake_amount = ?, payout_rate = ? WHERE id = ?",
-    )
-    .bind(decimal("10.12"))
-    .bind(decimal("0.33333333"))
-    .bind(order_id)
-    .execute(&pool)
-    .await?;
-    sqlx::query("UPDATE wallet_accounts SET available = ? WHERE user_id = ? AND asset_id = ?")
-        .bind(decimal("39.88"))
-        .bind(user_id)
-        .bind(stake_asset)
-        .execute(&pool)
-        .await?;
-    let redis_key = market_ticker_redis_key(&pair_symbol);
-    let mut redis_connection = redis.clone();
-    let ticker_payload = serde_json::json!({
-        "symbol": pair_symbol.replace('-', ""),
-        "last_price": "105.000000000000000000",
-        "volume_24h": "1.000000000000000000",
-        "observed_at": now.timestamp_millis(),
-    })
-    .to_string();
-    let _: () = redis_connection.set(&redis_key, ticker_payload).await?;
-    let hub = EventBroadcastHub::new(16);
-    let _keepalive_hub = hub.clone();
-    let mut private_events = hub.subscribe(&WebSocketChannel::private_user(user_id));
-    let state = AppState::new(test_settings())
-        .with_mysql(pool.clone())
-        .with_redis(redis.clone())
-        .with_event_broadcast_hub(hub);
-
-    let summary = SecondsContractSettlementWorker
-        .run_once(&state, now, 10)
-        .await?;
-    assert_eq!(summary.settled, 1);
-    assert_eq!(summary.failed, 0);
-    let event_message = timeout(Duration::from_millis(100), private_events.recv()).await??;
-    let event: serde_json::Value = serde_json::from_str(event_message.payload())?;
-    assert_eq!(
-        decimal(event["payout_amount"].as_str().unwrap()).normalized(),
-        decimal("13.49").normalized()
-    );
-    let (available,): (BigDecimal,) =
-        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
-            .bind(user_id)
-            .bind(stake_asset)
-            .fetch_one(&pool)
-            .await?;
-    let (payout_amount,): (BigDecimal,) = sqlx::query_as(
-        "SELECT amount FROM wallet_ledger WHERE ref_type = 'seconds_contract_order' AND ref_id = ? AND change_type = 'seconds_contract_settle_win'",
-    )
-    .bind(order_id.to_string())
-    .fetch_one(&pool)
-    .await?;
-    assert_eq!(available.normalized(), decimal("53.37").normalized());
-    assert_eq!(payout_amount.normalized(), decimal("13.49").normalized());
-    let _: usize = redis_connection.del(&redis_key).await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn seconds_contract_settlement_worker_scans_past_missing_ticker_rows()
--> Result<(), Box<dyn Error>> {
-    let _guard = TEST_LOCK.lock().await;
-    let Some(pool) = mysql_pool_or_skip().await? else {
-        return Ok(());
-    };
-    let Some(redis) = redis_manager_or_skip().await? else {
-        return Ok(());
-    };
-    close_previous_seconds_worker_orders(&pool).await?;
-    let now = Utc.with_ymd_and_hms(1980, 1, 2, 12, 0, 0).unwrap();
-    let (missing_order_id, _, _, _, _) =
-        seed_due_seconds_order(&pool, "up", &decimal("100.000000000000000000"), now).await?;
-    let (settle_order_id, _, _, _, pair_symbol) =
-        seed_due_seconds_order(&pool, "up", &decimal("100.000000000000000000"), now).await?;
-    let redis_key = market_ticker_redis_key(&pair_symbol);
-    let mut redis_connection = redis.clone();
-    let ticker_payload = serde_json::json!({
-        "symbol": pair_symbol.replace('-', ""),
-        "last_price": "105.000000000000000000",
-        "volume_24h": "1.000000000000000000",
-        "observed_at": now.timestamp_millis(),
-    })
-    .to_string();
-    let _: () = redis_connection.set(&redis_key, ticker_payload).await?;
-
-    let skipped = run_once_with_dependencies(&pool, &redis, now, 1).await?;
-    assert_eq!(skipped.scanned, 1);
-    assert_eq!(skipped.settled, 0);
-    assert_eq!(skipped.skipped, 1);
-
-    let summary = run_once_with_dependencies(&pool, &redis, now, 1).await?;
-
-    assert_eq!(summary.scanned, 1);
-    assert_eq!(summary.settled, 1);
-    assert_eq!(summary.skipped, 0);
-    assert_eq!(summary.failed, 0);
-    let (missing_status,): (String,) =
-        sqlx::query_as("SELECT status FROM seconds_contract_orders WHERE id = ?")
-            .bind(missing_order_id)
-            .fetch_one(&pool)
-            .await?;
-    let (settled_status,): (String,) =
-        sqlx::query_as("SELECT status FROM seconds_contract_orders WHERE id = ?")
-            .bind(settle_order_id)
-            .fetch_one(&pool)
-            .await?;
-    assert_eq!(missing_status, "opened");
-    assert_eq!(settled_status, "settled");
-    let (rescheduled_count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM seconds_contract_orders WHERE id = ? AND next_settlement_attempt_at > ?",
-    )
-    .bind(missing_order_id)
-    .bind(now.naive_utc())
-    .fetch_one(&pool)
-    .await?;
-    assert_eq!(rescheduled_count, 1);
-    let _: usize = redis_connection.del(&redis_key).await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn seconds_contract_settlement_worker_rejects_non_positive_exit_price()
--> Result<(), Box<dyn Error>> {
-    let _guard = TEST_LOCK.lock().await;
-    let Some(pool) = mysql_pool_or_skip().await? else {
-        return Ok(());
-    };
-    let Some(redis) = redis_manager_or_skip().await? else {
-        return Ok(());
-    };
-    close_previous_seconds_worker_orders(&pool).await?;
-    let now = Utc.with_ymd_and_hms(1980, 1, 3, 12, 0, 0).unwrap();
-    let (order_id, user_id, _, _, pair_symbol) =
-        seed_due_seconds_order(&pool, "down", &decimal("100.000000000000000000"), now).await?;
-    let redis_key = market_ticker_redis_key(&pair_symbol);
-    let mut redis_connection = redis.clone();
-    let ticker_payload = serde_json::json!({
-        "symbol": pair_symbol.replace('-', ""),
-        "last_price": "0.000000000000000000",
-        "volume_24h": "1.000000000000000000",
-        "observed_at": now.timestamp_millis(),
-    })
-    .to_string();
-    let _: () = redis_connection.set(&redis_key, ticker_payload).await?;
-
-    let summary = run_once_with_dependencies(&pool, &redis, now, 10).await?;
-
-    assert_eq!(summary.scanned, 1);
-    assert_eq!(summary.settled, 0);
-    assert_eq!(summary.skipped, 0);
-    assert_eq!(summary.failed, 1);
-    let (status, result): (String, Option<String>) =
-        sqlx::query_as("SELECT status, result FROM seconds_contract_orders WHERE id = ?")
-            .bind(order_id)
-            .fetch_one(&pool)
-            .await?;
-    assert_eq!(status, "opened");
-    assert_eq!(result, None);
-    let (available,): (BigDecimal,) =
-        sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ?")
-            .bind(user_id)
-            .fetch_one(&pool)
-            .await?;
-    assert_eq!(available, decimal("40.000000000000000000"));
-    let (ledger_count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'seconds_contract_order' AND ref_id = ? AND change_type = 'seconds_contract_settle_win'",
-    )
-    .bind(order_id.to_string())
-    .fetch_one(&pool)
-    .await?;
-    assert_eq!(ledger_count, 0);
-    let (rescheduled_count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM seconds_contract_orders WHERE id = ? AND next_settlement_attempt_at > ?",
-    )
-    .bind(order_id)
-    .bind(now.naive_utc())
-    .fetch_one(&pool)
-    .await?;
-    assert_eq!(rescheduled_count, 1);
-    let _: usize = redis_connection.del(&redis_key).await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn seconds_contract_settlement_worker_reschedules_stale_tickers() -> Result<(), Box<dyn Error>>
+async fn timely_delayed_and_replay_use_the_same_event_price_snapshot() -> Result<(), Box<dyn Error>>
 {
     let _guard = TEST_LOCK.lock().await;
     let Some(pool) = mysql_pool_or_skip().await? else {
         return Ok(());
     };
-    let Some(redis) = redis_manager_or_skip().await? else {
-        return Ok(());
-    };
-    close_previous_seconds_worker_orders(&pool).await?;
-    let now = Utc.with_ymd_and_hms(1980, 1, 4, 12, 0, 0).unwrap();
-    let (order_id, _, _, _, pair_symbol) =
-        seed_due_seconds_order(&pool, "up", &decimal("100.000000000000000000"), now).await?;
-    let redis_key = market_ticker_redis_key(&pair_symbol);
-    let mut redis_connection = redis.clone();
-    let ticker_payload = serde_json::json!({
-        "symbol": pair_symbol.replace('-', ""),
-        "last_price": "105.000000000000000000",
-        "volume_24h": "1.000000000000000000",
-        "observed_at": (now - chrono::TimeDelta::seconds(61)).timestamp_millis(),
-    })
-    .to_string();
-    let _: () = redis_connection.set(&redis_key, ticker_payload).await?;
-
-    let summary = run_once_with_dependencies(&pool, &redis, now, 10).await?;
-
-    assert_eq!(summary.scanned, 1);
-    assert_eq!(summary.settled, 0);
-    assert_eq!(summary.failed, 1);
-    assert_eq!(order_status(&pool, order_id).await?, "opened");
-    let (rescheduled_count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM seconds_contract_orders WHERE id = ? AND next_settlement_attempt_at > ?",
+    sqlx::query("UPDATE seconds_contract_orders SET status = 'settled' WHERE idempotency_key LIKE 'event-price-%' AND status = 'opened'")
+        .execute(&pool)
+        .await?;
+    let fixture = seed_fixture(&pool).await?;
+    let expires_at = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap();
+    let timely_order = seed_order(&pool, &fixture, expires_at, "up").await?;
+    let delayed_order = seed_order(&pool, &fixture, expires_at, "up").await?;
+    insert_tick(
+        &pool,
+        &fixture.pair_symbol,
+        "105",
+        "htx",
+        expires_at + TimeDelta::milliseconds(400),
+        8,
     )
-    .bind(order_id)
-    .bind(now.naive_utc())
+    .await?;
+    let expected_tick = insert_tick(
+        &pool,
+        &fixture.pair_symbol,
+        "104",
+        "bitget",
+        expires_at + TimeDelta::milliseconds(100),
+        7,
+    )
+    .await?;
+
+    let timely = run_once_with_pool(&pool, expires_at + TimeDelta::seconds(5), 1).await?;
+    assert_eq!(timely.settled, 1);
+    let delayed = run_once_with_pool(&pool, expires_at + TimeDelta::minutes(5), 1).await?;
+    assert_eq!(delayed.settled, 1);
+
+    let timely_snapshot = order_snapshot(&pool, timely_order).await?;
+    let delayed_snapshot = order_snapshot(&pool, delayed_order).await?;
+    assert_eq!(timely_snapshot, delayed_snapshot);
+    assert_eq!(timely_snapshot.0, "settled");
+    assert_eq!(
+        timely_snapshot.1.as_ref().unwrap().normalized(),
+        decimal("104")
+    );
+    assert_eq!(timely_snapshot.2, Some(expected_tick));
+    assert_eq!(timely_snapshot.3.as_deref(), Some("bitget"));
+    assert_eq!(timely_snapshot.5, Some(7));
+
+    let replay = run_once_with_pool(&pool, expires_at + TimeDelta::minutes(6), 100).await?;
+    assert_eq!(replay.settled, 0);
+    assert_eq!(order_snapshot(&pool, timely_order).await?, timely_snapshot);
+    let (ledger_count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'seconds_contract_order' AND ref_id IN (?, ?) AND change_type = 'seconds_contract_settle_win'",
+    )
+    .bind(timely_order.to_string())
+    .bind(delayed_order.to_string())
     .fetch_one(&pool)
     .await?;
-    assert_eq!(rescheduled_count, 1);
-    let _: usize = redis_connection.del(&redis_key).await?;
+    assert_eq!(ledger_count, 2);
     Ok(())
 }
 
 #[tokio::test]
-async fn seconds_contract_settlement_worker_reschedules_persistent_settlement_failures()
+async fn scan_before_window_close_does_not_postpone_first_eligible_settlement()
 -> Result<(), Box<dyn Error>> {
     let _guard = TEST_LOCK.lock().await;
     let Some(pool) = mysql_pool_or_skip().await? else {
         return Ok(());
     };
-    let Some(redis) = redis_manager_or_skip().await? else {
-        return Ok(());
-    };
-    close_previous_seconds_worker_orders(&pool).await?;
-    let now = Utc.with_ymd_and_hms(1980, 1, 5, 12, 0, 0).unwrap();
-    let (broken_order_id, _, _, _, broken_pair_symbol) =
-        seed_due_seconds_order_with_missing_wallet(
-            &pool,
-            "up",
-            &decimal("100.000000000000000000"),
-            now,
-        )
-        .await?;
-    let (healthy_order_id, _, _, _, healthy_pair_symbol) =
-        seed_due_seconds_order(&pool, "up", &decimal("100.000000000000000000"), now).await?;
-    let mut redis_connection = redis.clone();
-    for pair_symbol in [&broken_pair_symbol, &healthy_pair_symbol] {
-        let payload = serde_json::json!({
-            "symbol": pair_symbol.replace('-', ""),
-            "last_price": "105.000000000000000000",
-            "volume_24h": "1.000000000000000000",
-            "observed_at": now.timestamp_millis(),
-        })
-        .to_string();
-        let _: () = redis_connection
-            .set(market_ticker_redis_key(pair_symbol), payload)
-            .await?;
-    }
+    let fixture = seed_fixture(&pool).await?;
+    let expires_at = Utc.with_ymd_and_hms(2020, 1, 1, 1, 0, 0).unwrap();
+    let order_id = seed_order(&pool, &fixture, expires_at, "up").await?;
+    let tick_id = insert_tick(&pool, &fixture.pair_symbol, "101", "bitget", expires_at, 1).await?;
 
-    let failed = run_once_with_dependencies(&pool, &redis, now, 1).await?;
-    assert_eq!(failed.scanned, 1);
-    assert_eq!(failed.settled, 0);
-    assert_eq!(failed.failed, 1);
+    let early = run_once_with_pool(&pool, expires_at + TimeDelta::seconds(1), 1).await?;
+    assert_eq!(early.scanned, 0);
+    assert_eq!(order_snapshot(&pool, order_id).await?.0, "opened");
 
-    let summary = run_once_with_dependencies(&pool, &redis, now, 1).await?;
-
-    assert_eq!(summary.scanned, 1);
-    assert_eq!(summary.settled, 1);
-    assert_eq!(summary.failed, 0);
-    assert_eq!(order_status(&pool, broken_order_id).await?, "opened");
-    assert_eq!(order_status(&pool, healthy_order_id).await?, "settled");
-    let (rescheduled_count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM seconds_contract_orders WHERE id = ? AND next_settlement_attempt_at > ?",
-    )
-    .bind(broken_order_id)
-    .bind(now.naive_utc())
-    .fetch_one(&pool)
-    .await?;
-    assert_eq!(rescheduled_count, 1);
-    let _: usize = redis_connection
-        .del(market_ticker_redis_key(&broken_pair_symbol))
-        .await?;
-    let _: usize = redis_connection
-        .del(market_ticker_redis_key(&healthy_pair_symbol))
-        .await?;
+    let on_time = run_once_with_pool(&pool, expires_at + TimeDelta::seconds(5), 1).await?;
+    assert_eq!(on_time.settled, 1);
+    assert_eq!(order_snapshot(&pool, order_id).await?.2, Some(tick_id));
     Ok(())
 }
 
 #[tokio::test]
-async fn seconds_contract_settlement_worker_reschedules_missing_entry_price_rows()
+async fn missing_history_stays_pending_then_late_replay_uses_event_time_tick()
 -> Result<(), Box<dyn Error>> {
     let _guard = TEST_LOCK.lock().await;
     let Some(pool) = mysql_pool_or_skip().await? else {
         return Ok(());
     };
-    let Some(redis) = redis_manager_or_skip().await? else {
+    let fixture = seed_fixture(&pool).await?;
+    let expires_at = Utc.with_ymd_and_hms(2020, 1, 2, 0, 0, 0).unwrap();
+    let order_id = seed_order(&pool, &fixture, expires_at, "up").await?;
+    let first_attempt = expires_at + TimeDelta::seconds(5);
+    let pending = run_once_with_pool(&pool, first_attempt, 1).await?;
+    assert_eq!(pending.skipped, 1);
+    assert_eq!(pending.failed, 0);
+    let pending_snapshot = order_snapshot(&pool, order_id).await?;
+    assert_eq!(pending_snapshot.0, "opened");
+    assert!(pending_snapshot.1.is_none());
+
+    let tick_id = insert_tick(
+        &pool,
+        &fixture.pair_symbol,
+        "103",
+        "coinbase",
+        expires_at + TimeDelta::seconds(1),
+        9,
+    )
+    .await?;
+    let delayed = run_once_with_pool(&pool, first_attempt + TimeDelta::seconds(60), 1).await?;
+    assert_eq!(delayed.settled, 1);
+    let snapshot = order_snapshot(&pool, order_id).await?;
+    assert_eq!(snapshot.2, Some(tick_id));
+    assert_eq!(snapshot.1.unwrap().normalized(), decimal("103"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn settlement_window_is_left_closed_and_right_open() -> Result<(), Box<dyn Error>> {
+    let _guard = TEST_LOCK.lock().await;
+    let Some(pool) = mysql_pool_or_skip().await? else {
         return Ok(());
     };
-    close_previous_seconds_worker_orders(&pool).await?;
-    let now = Utc.with_ymd_and_hms(1980, 1, 6, 12, 0, 0).unwrap();
-    let (missing_entry_order_id, _, _, _, _) =
-        seed_due_seconds_order_without_entry_price(&pool, "up", now).await?;
-    let (healthy_order_id, _, _, _, healthy_pair_symbol) =
-        seed_due_seconds_order(&pool, "up", &decimal("100.000000000000000000"), now).await?;
-    let mut redis_connection = redis.clone();
-    let payload = serde_json::json!({
-        "symbol": healthy_pair_symbol.replace('-', ""),
-        "last_price": "105.000000000000000000",
-        "volume_24h": "1.000000000000000000",
-        "observed_at": now.timestamp_millis(),
-    })
-    .to_string();
-    let _: () = redis_connection
-        .set(market_ticker_redis_key(&healthy_pair_symbol), payload)
-        .await?;
-
-    let failed = run_once_with_dependencies(&pool, &redis, now, 1).await?;
-    assert_eq!(failed.scanned, 1);
-    assert_eq!(failed.settled, 0);
-    assert_eq!(failed.failed, 1);
-
-    let summary = run_once_with_dependencies(&pool, &redis, now, 1).await?;
-
-    assert_eq!(summary.scanned, 1);
-    assert_eq!(summary.settled, 1);
-    assert_eq!(summary.failed, 0);
-    assert_eq!(order_status(&pool, missing_entry_order_id).await?, "opened");
-    assert_eq!(order_status(&pool, healthy_order_id).await?, "settled");
-    let (rescheduled_count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM seconds_contract_orders WHERE id = ? AND next_settlement_attempt_at > ?",
+    let fixture = seed_fixture(&pool).await?;
+    let expires_at = Utc.with_ymd_and_hms(2020, 1, 3, 0, 0, 0).unwrap();
+    let order_id = seed_order(&pool, &fixture, expires_at, "up").await?;
+    insert_tick(
+        &pool,
+        &fixture.pair_symbol,
+        "999",
+        "bitget",
+        expires_at - TimeDelta::microseconds(1),
+        1,
     )
-    .bind(missing_entry_order_id)
-    .bind(now.naive_utc())
-    .fetch_one(&pool)
     .await?;
-    assert_eq!(rescheduled_count, 1);
-    let _: usize = redis_connection
-        .del(market_ticker_redis_key(&healthy_pair_symbol))
-        .await?;
+    insert_tick(
+        &pool,
+        &fixture.pair_symbol,
+        "888",
+        "bitget",
+        expires_at + TimeDelta::seconds(5),
+        1,
+    )
+    .await?;
+    let pending = run_once_with_pool(&pool, expires_at + TimeDelta::seconds(5), 1).await?;
+    assert_eq!(pending.skipped, 1);
+    assert_eq!(order_snapshot(&pool, order_id).await?.0, "opened");
+
+    let exact_tick =
+        insert_tick(&pool, &fixture.pair_symbol, "101", "bitget", expires_at, 2).await?;
+    let settled = run_once_with_pool(&pool, expires_at + TimeDelta::seconds(65), 1).await?;
+    assert_eq!(settled.settled, 1);
+    assert_eq!(order_snapshot(&pool, order_id).await?.2, Some(exact_tick));
     Ok(())
 }

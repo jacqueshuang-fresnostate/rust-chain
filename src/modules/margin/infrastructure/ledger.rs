@@ -117,6 +117,26 @@ pub(super) async fn lock_existing_margin_wallet_row(
     .map_err(AppError::from)
 }
 
+/// 不加锁预读逐仓可用余额，只用于在事务取得任何钱包锁前选择唯一资金域。
+/// 真正扣款仍会在所选钱包的 FOR UPDATE 快照上复核，预读变化时失败重试而不改走另一把锁。
+pub(super) async fn load_existing_margin_wallet_available(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    asset_id: u64,
+) -> AppResult<Option<BigDecimal>> {
+    sqlx::query_scalar::<_, BigDecimal>(
+        r#"SELECT available
+           FROM margin_wallet_accounts
+           WHERE user_id = ? AND asset_id = ?
+           LIMIT 1"#,
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(AppError::from)
+}
+
 #[allow(clippy::too_many_arguments)] // 账本必须显式记录三桶快照和业务引用，聚合会降低资金审计可读性。
 /// 在调用方事务内追加现货钱包流水，三桶余额后快照必须对应同次保证金资金变更。
 /// 写入失败由调用方连同钱包与仓位回滚；同一业务重放不得产生第二笔流水。
