@@ -1,7 +1,7 @@
 {"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
 {"file": "docs/architecture/project-optimization-audit-2026-08-24.md", "reason": "P0-09、P0-11 权威需求与证据"}
-{"file": ".trellis/tasks/08-24-project-architecture-business-flow-audit/research/business-flows.md", "reason": "杠杆资金与风险流程研究"}
-{"file": ".trellis/tasks/08-24-project-architecture-business-flow-audit/research/frontends-cross-layer.md", "reason": "PC 杠杆合同漂移研究"}
+{"file": ".trellis/tasks/archive/2026-08/08-24-project-architecture-business-flow-audit/research/business-flows.md", "reason": "杠杆资金与风险流程研究"}
+{"file": ".trellis/tasks/archive/2026-08/08-24-project-architecture-business-flow-audit/research/frontends-cross-layer.md", "reason": "PC 杠杆合同漂移研究"}
 {"file": ".trellis/spec/backend/margin-trading-actions.md", "reason": "杠杆动作、钱包范围和能力合同"}
 {"file": ".trellis/spec/backend/wallet-amount-precision.md", "reason": "资金精度规范"}
 {"file": ".trellis/spec/backend/database-guidelines.md", "reason": "事务和锁规范"}

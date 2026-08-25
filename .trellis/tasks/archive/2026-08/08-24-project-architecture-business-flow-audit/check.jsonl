@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "用于核对请求、领域、存储、异步事件与三端 UI 的端到端数据流。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "用于识别跨端 DTO、状态枚举、配置和适配器的重复实现。"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端分层、数据库、日志、业务合同与质量门禁总索引。"}
+{"file": ".trellis/spec/admin/index.md", "reason": "管理后台 UI 与测试质量合同总索引。"}
+{"file": ".trellis/spec/mobile/index.md", "reason": "手机端导航、后端集成、PWA 与实时数据合同总索引。"}
+{"file": ".trellis/tasks/archive/2026-08/08-24-project-architecture-business-flow-audit/research/repository-inventory.md", "reason": "仓库规模、热点文件、测试层级、CI 与任务治理的量化基线。"}
+{"file": ".trellis/tasks/archive/2026-08/08-24-project-architecture-business-flow-audit/research/backend-architecture.md", "reason": "Rust 限界上下文、分层、错误、资金持久化所有权、worker 与测试架构审计。"}
+{"file": ".trellis/tasks/archive/2026-08/08-24-project-architecture-business-flow-audit/research/business-flows.md", "reason": "注册、充提、交易、杠杆、秒合约、闪兑、借贷、理财、预测、新币、代理与客服的资金不变式审计。"}
+{"file": ".trellis/tasks/archive/2026-08/08-24-project-architecture-business-flow-audit/research/frontends-cross-layer.md", "reason": "后台、PC、手机端契约漂移、实时生命周期、测试与巨型视图审计。"}
+{"file": ".trellis/tasks/archive/2026-08/08-24-project-architecture-business-flow-audit/research/data-async-ops.md", "reason": "迁移、MQ、worker、行情、部署、密钥、备份、可观测性与 CI 审计。"}

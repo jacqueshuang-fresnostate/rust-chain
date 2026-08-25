@@ -1,7 +1,7 @@
 {"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
 {"file": "docs/architecture/project-optimization-audit-2026-08-24.md", "reason": "P0-06、P0-07、P0-08、P0-10 权威需求与证据"}
-{"file": ".trellis/tasks/08-24-project-architecture-business-flow-audit/research/business-flows.md", "reason": "价格和结算流程研究"}
-{"file": ".trellis/tasks/08-24-project-architecture-business-flow-audit/research/data-async-ops.md", "reason": "行情任务和数据一致性研究"}
+{"file": ".trellis/tasks/archive/2026-08/08-24-project-architecture-business-flow-audit/research/business-flows.md", "reason": "价格和结算流程研究"}
+{"file": ".trellis/tasks/archive/2026-08/08-24-project-architecture-business-flow-audit/research/data-async-ops.md", "reason": "行情任务和数据一致性研究"}
 {"file": ".trellis/spec/backend/seconds-contracts.md", "reason": "秒合约业务合同"}
 {"file": ".trellis/spec/backend/prediction-markets.md", "reason": "预测市场业务合同"}
 {"file": ".trellis/spec/backend/realtime-websockets.md", "reason": "实时行情与推送边界"}

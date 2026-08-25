@@ -1,9 +1,9 @@
 {"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
 {"file": "docs/architecture/project-optimization-audit-2026-08-24.md", "reason": "P0 需求、证据、验收和发布阻断的权威审计报告"}
-{"file": ".trellis/tasks/08-24-project-architecture-business-flow-audit/research/backend-architecture.md", "reason": "后端结构与热点研究"}
-{"file": ".trellis/tasks/08-24-project-architecture-business-flow-audit/research/business-flows.md", "reason": "关键资金业务流程研究"}
-{"file": ".trellis/tasks/08-24-project-architecture-business-flow-audit/research/frontends-cross-layer.md", "reason": "前后端合同漂移研究"}
-{"file": ".trellis/tasks/08-24-project-architecture-business-flow-audit/research/data-async-ops.md", "reason": "数据、异步任务与运维风险研究"}
+{"file": ".trellis/tasks/archive/2026-08/08-24-project-architecture-business-flow-audit/research/backend-architecture.md", "reason": "后端结构与热点研究"}
+{"file": ".trellis/tasks/archive/2026-08/08-24-project-architecture-business-flow-audit/research/business-flows.md", "reason": "关键资金业务流程研究"}
+{"file": ".trellis/tasks/archive/2026-08/08-24-project-architecture-business-flow-audit/research/frontends-cross-layer.md", "reason": "前后端合同漂移研究"}
+{"file": ".trellis/tasks/archive/2026-08/08-24-project-architecture-business-flow-audit/research/data-async-ops.md", "reason": "数据、异步任务与运维风险研究"}
 {"file": ".trellis/spec/backend/directory-structure.md", "reason": "后端目录与依赖方向"}
 {"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "项目质量门禁"}
 {"file": ".trellis/spec/backend/database-guidelines.md", "reason": "数据库迁移和查询规范"}
