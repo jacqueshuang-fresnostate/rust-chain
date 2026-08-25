@@ -7795,3 +7795,10 @@
 - 修改文件：`.github/workflows/docker-image.yml`、`scripts/p0-release-gate.sh`、`migrations/0107_*.sql` 至 `migrations/0116_*.sql`、`src/{bootstrap.rs,bin/exchange-migrate.rs,modules/{admin,auth,wallet,new_coin,loan,seconds_contract,prediction,convert,margin}/**,workers/{wallet_chain,loan_health,loan_overdue,seconds_contract_settlement,prediction_market_close,market_feed,margin_liquidation,margin_interest}.rs}`、`tests/**`、`mobile/src/{api/wallet.ts,core/withdrawalQuote.ts,views/{WithdrawView,WithdrawalRecordsView}.vue,i18n/messages/**}`、`mobile/tests/**`、`pc/src/{api,components,domain,stores}/**`、`pc/tests/**`、Docker Compose/部署示例、Trellis P0 任务与后端容器交付规范。
 - 验证结果：`./scripts/p0-release-gate.sh` 完整通过：`cargo fmt --all -- --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test --all-targets -- --test-threads=1` 全部通过（Rust lib 306/306，所有集成/迁移/架构测试零失败）；管理后台 lint、typecheck、52 个测试文件共 381/381 通过；PC type-check 与杠杆合同测试 11/11 通过；Mobile type-check 与全量测试 486/486 通过。另已在 MySQL 8.4 全新库验证 `0001` 至 `0116` 顺序迁移及重复执行，`git diff --check` 与五个 Trellis 任务上下文校验在最终收尾阶段再次执行。
 - 后续事项：P0 代码范围无遗留；部署前需先执行迁移，只有首次有意创建管理员时临时设置 `BOOTSTRAP_MODE=create_admin` 与高强度口令并在完成后关闭，同时配置提现网关状态查询地址或按 `manual_review` 流程处理歧义广播。当前改动尚未提交或推送。
+
+## 2026-08-25 10:20 - 提交并推送 P0 全量风险修复
+
+- 完成内容：按 P0 任务范围整理提交，修复测试误读本地忽略文件 `docker-compose.1panel.yml` 的发布快照问题，并将 P0-01 至 P0-12 实现、架构审计、迁移、发布门禁和测试以提交 `5aa98f1` 写入 `main`；随后将四个 P0 子任务、P0 总任务及架构审计任务标记完成并归档，以提交 `8dd9c89` 记录。两项提交已推送到 `origin/main`。
+- 修改文件：提交 `5aa98f1` 中的 196 个 P0 业务、迁移、跨端、测试、部署、CI、审计与任务文件，以及提交 `8dd9c89` 中的 `.trellis/tasks/archive/2026-08/08-24-*` 归档记录；手机端杠杆布局、根导航弹窗和 `mobile/pencil/docs/superpowers/PROGRESS.md` 等既有未提交改动未纳入。
+- 验证结果：针对 Git 暂存快照而非混合工作区重新运行 `./scripts/p0-release-gate.sh`，Rust fmt/clippy/全目标测试零失败（lib 306/306），管理后台 381/381、PC 杠杆合同 11/11、Mobile 481/481 通过；工作提交与归档提交的 `git diff --cached --check` 均通过，六个归档 Trellis 任务上下文校验通过；首次推送结果为 `5b370b5..8dd9c89 main -> main`。
+- 后续事项：P0 无；当前工作区仅保留此前手机端杠杆布局、根导航弹窗及 Pencil 进度等独立未提交工作。
