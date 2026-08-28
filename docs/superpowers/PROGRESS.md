@@ -7816,3 +7816,10 @@
 - 修改文件：`mobile/src/components/MarginCloseSheet.vue`、`mobile/src/core/marginClose.ts`、`mobile/src/api/trading.ts`、`mobile/src/views/TradeView.vue`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{margin-close-sheet,contract-pencil-selected-parity,private-user-stream}.test.ts`；`migrations/0117_margin_partial_close.sql`、`src/modules/margin/{domain,presentation,routes,service}.rs`、`src/modules/margin/application/lifecycle.rs`、`src/modules/margin/infrastructure{.rs,/positions.rs,/settlement.rs,/close_executions.rs}`、`src/workers/margin_liquidation.rs`、`src/modules/wallet/infrastructure/returns.rs`、`tests/{margin_routes,margin_liquidation_worker,wallet_routes,margin_partial_close_migration,withdrawal_quote_migration}.rs`、`tests/unit_src/src_modules_margin_{domain,service}_tests.rs`；`.trellis/spec/{backend/{margin-trading-actions,realtime-websockets,wallet-amount-precision},mobile/{backend-integration,pwa-and-shell}}.md` 与 `.trellis/tasks/08-28-mobile-margin-close-slide-parity/**`。
 - 验证结果：Mobile 全量 494/494、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2089 modules、138 条预缓存）和 `npm --prefix mobile run build:tauri`（2089 modules）通过；`cargo fmt --all -- --check`、`cargo check --all-targets`、`cargo clippy --all-targets --all-features -- -D warnings`、Rust lib 312/312、后端架构 11/11、部分平仓迁移 1/1、迁移链静态回归 3/3 通过。Ego Browser 在 390px 真触控实测比例 100→37、可平量和预计盈亏同步变化，底部确认提交比例 37；320px 键盘 50→49、448px 布局及 500px 高视口均无横向溢出。MySQL 部分平仓、强平累计盈亏和今日收益集成用例已成功编译，但当前环境没有获准使用的隔离 `DATABASE_URL`，测试按既有约定跳过真实数据库分支。
 - 后续事项：部署前先执行迁移 `0117_margin_partial_close.sql`；当前改动尚未提交或推送，工作区其他既有未提交内容保持原样。
+
+## 2026-08-28 19:21 - 提交杠杆比例滑杆与部分平仓
+
+- 完成内容：将杠杆平仓比例拖动、真实部分结算、幂等执行记录、私有事件、收益口径、迁移与回归测试整理为功能提交 `53d10b2`；只纳入本任务范围，工作区既有根导航、杠杆字段布局与 Pencil 改动继续保留。
+- 修改文件：提交 `53d10b2` 包含的 40 个后端、Mobile、迁移、测试、规范和任务文件，以及本条进度记录。
+- 验证结果：基于 Git 暂存快照执行 Mobile 全量 489/489、`npm --prefix mobile run type-check`、`cargo fmt --all -- --check`、`cargo check --all-targets` 与 `git diff --cached --check` 均通过；实现工作区此前完成 Mobile 494/494、Rust lib 312/312、Clippy、PWA/Tauri 构建和 Ego Browser 真触控验收。
+- 后续事项：部署前执行 `0117_margin_partial_close.sql`；任务归档与会话记录完成后统一推送至 `origin/main`。
