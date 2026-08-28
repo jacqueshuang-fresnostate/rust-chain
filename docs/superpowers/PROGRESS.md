@@ -7837,3 +7837,10 @@
 - 修改文件：`mobile/src/components/AppBottomNav.vue`、`mobile/src/styles/prototype-parity.css`、`mobile/tests/{root-trade-navigation-modal,editorial-shell-home-markets,shell-navigation,pencil-selected-home-layout}.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/08-23-mobile-root-navigation-trade-modal-parity/{prd.md,task.json,research/pencil-selected-navigation-spec.md}`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：先以定向测试确认旧 `active` 实现出现预期失败（2/4 通过）；实现及关联合同更新后定向回归 20/20、Mobile 全量测试 494/494、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2089 modules、139 条预缓存）、Trellis 任务上下文校验、残留状态扫描与 `git diff --check` 均通过。
 - 后续事项：无；本轮改动尚未提交或推送，工作区其他既有未提交内容保持原样。
+
+## 2026-08-29 01:26 - 提交并推送底部交易导航弹窗
+
+- 完成内容：将中央交易入口弹窗、四个真实交易目的地、Pencil 几何、焦点与安全区适配，以及最终移除 `trade-navigation-picker__selection` 和选项 `active` 状态的改动整理为功能提交 `c9543c4`；任务以提交 `c40f952` 完成归档，会话以提交 `0184bc0` 记录，三项提交均已推送至 `origin/main`。
+- 修改文件：功能提交 `c9543c4` 中的 21 个 Mobile、测试、规范、任务和进度文件；归档提交 `c40f952` 中的 Trellis 任务归档；会话提交 `0184bc0` 中的 `.trellis/workspace/rust-chain/{journal-1.md,index.md}`；本条 `docs/superpowers/PROGRESS.md` 记录。
+- 验证结果：Mobile 定向回归 20/20、全量测试 494/494、类型检查、PWA 构建（2089 modules、139 条预缓存）、Trellis 上下文校验、残留状态扫描、`git diff --cached --check` 均通过；首次推送结果为 `68fe32f..0184bc0 main -> main`。
+- 后续事项：无；既有杠杆字段布局与 Pencil 工作区改动未纳入本轮提交，继续保留在本地工作区。
