@@ -108,6 +108,113 @@ pub(crate) fn margin_position_payout_amount(
         .unwrap_or_else(|| BigDecimal::from(0).with_scale(18))
 }
 
+/// 把本次平仓或强平切片的已实现盈亏累加到仓位历史值，并统一落为十八位小数。
+///
+/// `previous` 为 NULL 代表该仓位此前没有已实现盈亏；它不等价于“本次盈亏缺失”，
+/// 调用方仍必须提供通过服务端标记价计算出的当前切片结果。主动部分平仓、最终平仓和后续强平
+/// 必须共用本函数，避免终态处理覆盖已经结算并写入钱包的历史切片盈亏。
+pub(crate) fn accumulate_margin_realized_pnl(
+    previous: Option<&BigDecimal>,
+    current: &BigDecimal,
+) -> BigDecimal {
+    (previous
+        .cloned()
+        .unwrap_or_else(|| BigDecimal::from(0).with_scale(18))
+        + current.clone())
+    .with_scale(18)
+}
+
+/// 一次主动平仓从当前剩余仓位分配出的结算切片与落库后剩余金额。
+/// 关闭金额和剩余金额成对保存，调用方不得再用浮点比例二次推导钱包或仓位写入值。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct MarginCloseSlice {
+    /// 用户本次选择的整数百分比，作用于加锁后的当前剩余仓位。
+    pub(crate) close_percentage: u16,
+    /// 是否消费当前仓位的全部剩余敞口；只有该状态允许迁移为 closed。
+    pub(crate) fully_closed: bool,
+    /// 本次释放并参与权益结算的保证金。
+    pub(crate) close_margin_amount: BigDecimal,
+    /// 本次按权威标记价计算已实现盈亏的名义价值。
+    pub(crate) close_notional_amount: BigDecimal,
+    /// 本次同比例释放的借款本金快照，仅用于审计和剩余敞口维护。
+    pub(crate) close_borrowed_amount: BigDecimal,
+    /// 本次结算并从权益扣除的累计利息份额。
+    pub(crate) close_interest_amount: BigDecimal,
+    /// 部分平仓后继续留在 opened 仓位中的保证金。
+    pub(crate) remaining_margin_amount: BigDecimal,
+    /// 部分平仓后继续承担市场风险的名义价值。
+    pub(crate) remaining_notional_amount: BigDecimal,
+    /// 部分平仓后继续计息的借款本金。
+    pub(crate) remaining_borrowed_amount: BigDecimal,
+    /// 部分平仓后尚未结算的已计提利息。
+    pub(crate) remaining_interest_amount: BigDecimal,
+}
+
+/// 按整数百分比从已锁定仓位分配一次平仓切片，并以十八位小数向下截取关闭份额。
+/// 剩余金额始终用「原金额减关闭金额」得到，因此四类金额分别严格守恒；100% 直接消费原值，
+/// 避免先乘除再圆整造成末位残留。1..99% 若把正保证金或正名义价值截成零，或使剩余值为零，
+/// 则拒绝该请求，调用方必须在任何钱包、流水或仓位写入之前返回参数错误。
+pub(crate) fn allocate_margin_close_slice(
+    margin_amount: &BigDecimal,
+    notional_amount: &BigDecimal,
+    borrowed_amount: &BigDecimal,
+    interest_amount: &BigDecimal,
+    close_percentage: u16,
+) -> Result<MarginCloseSlice, &'static str> {
+    let zero = BigDecimal::from(0).with_scale(18);
+    if !(1..=100).contains(&close_percentage) {
+        return Err("margin close percentage must be between 1 and 100");
+    }
+    if margin_amount <= &zero || notional_amount <= &zero {
+        return Err("margin close source margin and notional must be positive");
+    }
+    if borrowed_amount < &zero || interest_amount < &zero {
+        return Err("margin close borrowed amount and interest must be non-negative");
+    }
+
+    let fully_closed = close_percentage == 100;
+    let allocate = |amount: &BigDecimal| {
+        if fully_closed {
+            amount.clone().with_scale(18)
+        } else {
+            (amount.clone() * BigDecimal::from(close_percentage) / BigDecimal::from(100))
+                .with_scale_round(18, RoundingMode::Down)
+        }
+    };
+    let close_margin_amount = allocate(margin_amount);
+    let close_notional_amount = allocate(notional_amount);
+    let close_borrowed_amount = allocate(borrowed_amount);
+    let close_interest_amount = allocate(interest_amount);
+    let remaining_margin_amount =
+        (margin_amount.clone() - close_margin_amount.clone()).with_scale(18);
+    let remaining_notional_amount =
+        (notional_amount.clone() - close_notional_amount.clone()).with_scale(18);
+    let remaining_borrowed_amount =
+        (borrowed_amount.clone() - close_borrowed_amount.clone()).with_scale(18);
+    let remaining_interest_amount =
+        (interest_amount.clone() - close_interest_amount.clone()).with_scale(18);
+
+    if close_margin_amount <= zero || close_notional_amount <= zero {
+        return Err("margin close percentage is below the representable amount");
+    }
+    if !fully_closed && (remaining_margin_amount <= zero || remaining_notional_amount <= zero) {
+        return Err("margin partial close must preserve a positive remaining position");
+    }
+
+    Ok(MarginCloseSlice {
+        close_percentage,
+        fully_closed,
+        close_margin_amount,
+        close_notional_amount,
+        close_borrowed_amount,
+        close_interest_amount,
+        remaining_margin_amount,
+        remaining_notional_amount,
+        remaining_borrowed_amount,
+        remaining_interest_amount,
+    })
+}
+
 /// 单仓在一笔服务端标记价下的统一风险结果。
 ///
 /// 查询、主动平仓和强平都必须经由同一计算入口，避免方向盈亏、权益或维持保证金出现多套口径。

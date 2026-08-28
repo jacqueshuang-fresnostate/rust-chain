@@ -2,6 +2,7 @@
 //!
 //! SQL、Redis、钱包流水和结算写入按真实适配器职责拆分；本文件只保留既有稳定路径。
 
+mod close_executions;
 mod cross_accounts;
 mod ledger;
 mod market_data;
@@ -12,6 +13,10 @@ mod query_support;
 mod settlement;
 mod transfers;
 
+pub(crate) use close_executions::{
+    MarginCloseExecutionWrite, insert_margin_close_execution, load_margin_close_execution_by_id,
+    load_margin_close_execution_by_key_readonly, lock_margin_close_execution_by_key,
+};
 pub(crate) use cross_accounts::{
     activate_cross_margin_account_for_open, bump_cross_margin_account_version,
     discard_new_cross_margin_account_for_pending_order, ensure_and_lock_cross_margin_account,
@@ -47,9 +52,10 @@ pub(crate) use product_config::{
     update_margin_product, update_margin_product_status, upsert_user_margin_setting,
 };
 pub(crate) use settlement::{
-    apply_cross_margin_account_settlement, apply_cross_margin_position_settlement,
-    credit_margin_position_amount, debit_margin_position_open_collateral, load_position_by_id,
-    mark_position_canceled, mark_position_closed,
+    MarginPositionPartialCloseWrite, apply_cross_margin_account_settlement,
+    apply_cross_margin_position_settlement, credit_margin_position_amount,
+    debit_margin_position_open_collateral, load_position_by_id, mark_position_canceled,
+    mark_position_closed, mark_position_partially_closed,
 };
 pub(crate) use transfers::{
     apply_margin_to_spot_transfer, apply_spot_to_margin_transfer, insert_margin_transfer,

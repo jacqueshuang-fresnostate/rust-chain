@@ -75,10 +75,19 @@ let to_amount = truncate_amount_to_asset_precision(&raw_to_amount, to_asset.prec
 - `GET /api/v1/wallet/today-return` requires `UserAuth` and derives the user ID
   only from the token.
 - Aggregate UTC-day Seconds win/loss, Prediction payout/refund net of stake and
-  fee, Margin `closed` and `liquidated` rows as
-  `realized_pnl - interest_amount`, and Earn `earn_redeem` credit minus
-  principal. Exclude deposits, withdrawals, transfers, canceled/open margin
-  positions, spot cost basis, and unrealized PnL.
+  fee, immutable Margin partial-close executions as slice
+  `realized_pnl - close_interest_amount`, terminal Margin rows for only the
+  remaining unrecorded slice, and Earn `earn_redeem` credit minus principal.
+  An opened position with a committed partial-close execution is realized
+  activity even though its remainder stays open. Exclude deposits, withdrawals,
+  transfers, canceled/pending margin positions, spot cost basis, and unrealized
+  PnL.
+- Explicit terminal closes are owned by their `fully_closed` execution and must
+  not also contribute their terminal position row. A legacy close or liquidation
+  after earlier partial executions contributes cumulative terminal PnL minus all
+  earlier execution PnL and the remaining position interest, with the remaining
+  position margin as basis. This keeps each slice on its actual UTC execution or
+  terminal day and prevents duplicate amount or basis.
 - Basis is Seconds stake, Prediction stake plus fee, Margin margin amount, and
   Earn subscribed principal. A refunded Prediction order keeps its original
   stake-plus-fee basis; refund and fee-refund change return amount, not the
@@ -112,7 +121,7 @@ let to_amount = truncate_amount_to_asset_precision(&raw_to_amount, to_asset.prec
 
 - `GET /api/v1/wallet/return-history?days=1|7|30|180` requires `UserAuth`;
   missing, malformed, or non-whitelisted `days` is HTTP 400.
-- Reuse the Today formulas and exclusions, but aggregate the four terminal fact
+- Reuse the Today formulas and exclusions, but aggregate the five auditable fact
   sources by UTC day and asset. Return exactly N ascending UTC-day points and
   fill inactive days with complete 18-place zero decimals.
 - USDT, USDC, and USD use parity. A past non-stable activity uses only the
@@ -128,10 +137,11 @@ let to_amount = truncate_amount_to_asset_precision(&raw_to_amount, to_asset.prec
 
 ### Tests Required
 
-- Whitelist/auth, exact N-day UTC continuity, all four fact formulas and
-  exclusions, historical close/current ticker separation, no-activity zero,
-  missing-price propagation, 18-place serialization, and first-partial
-  cumulative invalidation.
+- Whitelist/auth, exact N-day UTC continuity, all five fact formulas and
+  exclusions, opened partial-close inclusion, explicit-terminal deduplication,
+  legacy terminal-remainder attribution, historical close/current ticker
+  separation, no-activity zero, missing-price propagation, 18-place
+  serialization, and first-partial cumulative invalidation.
 
 ## Scenario: Categorized Wallet Ledger Query
 

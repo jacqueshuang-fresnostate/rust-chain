@@ -57,6 +57,15 @@ pub(crate) struct ProductActionRequest {
     pub(crate) product_id: Option<u64>,
 }
 
+/// 单仓主动平仓请求；空对象保持历史 100% 全平语义，显式比例必须同时携带幂等键。
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct CloseMarginPositionRequest {
+    /// 作用于事务内当前剩余仓位的整数百分比，合法区间由应用层统一校验为 1..=100。
+    pub(crate) percentage: Option<i64>,
+    /// 显式部分/全平意图的用户级幂等键；历史空请求不要求该字段。
+    pub(crate) idempotency_key: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct OpenMarginPositionRequest {
     pub(crate) product_id: u64,
@@ -271,6 +280,39 @@ pub(crate) struct MarginUserSettingResponse {
 #[derive(Debug, Serialize)]
 pub(crate) struct CloseMarginPositionResponse {
     pub(crate) position: MarginPositionResponse,
+    /// 显式比例请求对应的不可变结算执行；历史空请求保持 null。
+    pub(crate) execution: Option<MarginPositionCloseExecutionResponse>,
+    /// 本次执行真实应用到钱包的增量；重放沿用原执行值，历史终态重放为 null。
+    #[serde(default, serialize_with = "serialize_optional_decimal_amount")]
+    pub(crate) settlement_amount: Option<BigDecimal>,
+    /// 是否命中既有幂等执行；true 时本次请求没有产生资金或仓位写入。
+    pub(crate) replayed: bool,
+}
+
+/// 一次显式部分或全量平仓的不可变审计结果，全部金额来自同一事务内的服务端计算。
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub(crate) struct MarginPositionCloseExecutionResponse {
+    pub(crate) id: u64,
+    pub(crate) position_id: u64,
+    pub(crate) idempotency_key: String,
+    pub(crate) close_percentage: u16,
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    pub(crate) close_margin_amount: BigDecimal,
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    pub(crate) close_notional_amount: BigDecimal,
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    pub(crate) close_borrowed_amount: BigDecimal,
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    pub(crate) close_interest_amount: BigDecimal,
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    pub(crate) exit_price: BigDecimal,
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    pub(crate) realized_pnl: BigDecimal,
+    #[serde(serialize_with = "serialize_decimal_amount")]
+    pub(crate) settlement_amount: BigDecimal,
+    pub(crate) fully_closed: bool,
+    #[serde(with = "unix_millis")]
+    pub(crate) created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize)]

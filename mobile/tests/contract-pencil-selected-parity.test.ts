@@ -191,7 +191,7 @@ test('持仓页签显示真实可见数量且持仓卡按 Pencil 顺序复用三
     positionCards.indexOf('data-position-action="close"'),
   )
   assert.doesNotMatch(takeProfitStopLossAction, /@click=|fetch\(|post\(/)
-  assert.match(positionCards, /data-position-action="close"[\s\S]*?@click="performPositionAction\(position, 'close'\)"/)
+  assert.match(positionCards, /data-position-action="close"[\s\S]*?aria-haspopup="dialog"[\s\S]*?@click="openMarginCloseSheet\(position, \$event\)"/)
   assert.match(positionCards, /data-position-action="market-close-all"[\s\S]*?@click="performPositionAction\(position, 'market-close-all'\)"/)
   assert.doesNotMatch(positionCards, /performBulkClose|closeAllMarginPositions/)
   assert.equal(zhCN.trade.positionActions, '持仓操作')
@@ -202,21 +202,26 @@ test('持仓页签显示真实可见数量且持仓卡按 Pencil 顺序复用三
   assert.equal(en.trade.confirmMarketCloseAll, 'Confirm market close')
 })
 
-test('普通平仓与卡内市价全平使用独立确认意图并调用同一个单仓关闭接口', () => {
-  const singleClose = sliceSourceFunction('async function performPositionAction', 'async function performBulkClose')
+test('普通平仓使用选中稿滑动弹窗，卡内市价全平继续使用独立二次确认', () => {
+  const openCloseSheet = sliceSourceFunction('function openMarginCloseSheet', 'function closeMarginCloseSheet')
+  const confirmClose = sliceSourceFunction('async function confirmMarginClose', 'async function performPositionAction')
+  const quickAction = sliceSourceFunction('async function performPositionAction', 'async function performBulkClose')
   assert.match(tradeSource, /type PositionActionType = 'close' \| 'market-close-all' \| 'cancel'/)
-  assert.match(singleClose, /armedPositionAction\.value\?\.id !== position\.id[\s\S]*?bulkCloseArmed\.value = false[\s\S]*?armedPositionAction\.value = \{ id: position\.id, type: action \}[\s\S]*?return/)
-  assert.match(singleClose, /const closesPosition = action === 'close' \|\| action === 'market-close-all'/)
-  assert.match(singleClose, /if \(closesPosition\) await closeMarginPosition\(position\.id\)/)
-  assert.match(singleClose, /else await cancelMarginPosition\(position\.id\)/)
-  assert.equal([...singleClose.matchAll(/closeMarginPosition\(position\.id\)/g)].length, 1)
-  assert.doesNotMatch(singleClose, /closeAllMarginPositions/)
+  assert.doesNotMatch(openCloseSheet, /closeMarginPosition\(/)
+  assert.match(confirmClose, /positionActionSaving\.value = \{ id: position\.id, type: 'close' \}[\s\S]*?createMarginCloseIdempotencyKey\(\)[\s\S]*?await closeMarginPosition\(position\.id, \{[\s\S]*?percentage: attempt\.percentage,[\s\S]*?idempotencyKey: attempt\.idempotencyKey/)
+  assert.equal([...confirmClose.matchAll(/closeMarginPosition\(position\.id, \{/g)].length, 1)
+  assert.match(quickAction, /armedPositionAction\.value\?\.id !== position\.id[\s\S]*?bulkCloseArmed\.value = false[\s\S]*?armedPositionAction\.value = \{ id: position\.id, type: action \}[\s\S]*?return/)
+  assert.match(quickAction, /const closesPosition = action === 'market-close-all'/)
+  assert.match(quickAction, /if \(closesPosition\) await closeMarginPosition\(position\.id\)/)
+  assert.match(quickAction, /else await cancelMarginPosition\(position\.id\)/)
+  assert.doesNotMatch(`${confirmClose}\n${quickAction}`, /closeAllMarginPositions/)
 
   const positionCards = tradeSource.slice(
     tradeSource.indexOf('<article v-for="position in visibleMarginPositions"'),
     tradeSource.indexOf("<div v-else-if=\"contractWorkspaceTab === 'orders'"),
   )
-  assert.match(positionCards, /data-position-action="close"[\s\S]*?armedPositionAction\.type === 'close'[\s\S]*?trade\.confirmClosePosition/)
+  assert.match(positionCards, /data-position-action="close"[\s\S]*?:aria-expanded="marginClosePositionId === position\.id"[\s\S]*?openMarginCloseSheet/)
+  assert.doesNotMatch(positionCards, /data-position-action="close"[\s\S]*?armedPositionAction\.type === 'close'/)
   assert.match(positionCards, /data-position-action="market-close-all"[\s\S]*?armedPositionAction\.type === 'market-close-all'[\s\S]*?trade\.confirmMarketCloseAll/)
   assert.match(positionCards, /data-position-action="market-close-all"[\s\S]*?:disabled="positionActionSaving !== null \|\| bulkCloseSaving"/)
 })

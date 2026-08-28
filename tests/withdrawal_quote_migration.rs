@@ -3,7 +3,7 @@ use sqlx::{MySqlPool, mysql::MySqlPoolOptions};
 use url::Url;
 use uuid::Uuid;
 
-const FINAL_MIGRATION_VERSION: i64 = 116;
+const FINAL_MIGRATION_VERSION: i64 = 117;
 const RECONCILIATION_MIGRATION: &str =
     include_str!("../migrations/0108_withdrawal_broadcast_reconciliation.sql");
 const QUOTE_MIGRATION: &str = include_str!("../migrations/0109_withdrawal_quotes.sql");
@@ -78,7 +78,7 @@ async fn fresh_database_runs_the_complete_migration_chain_idempotently() {
         .context("drop isolated migration-chain database");
     server_pool.close().await;
 
-    exercise_result.expect("fresh 0001-0116 migration-chain contract");
+    exercise_result.expect("fresh 0001-0117 migration-chain contract");
     cleanup_result.expect("migration-chain test database cleanup");
 }
 
@@ -91,7 +91,7 @@ async fn exercise_complete_migration_chain(pool: &MySqlPool) -> Result<()> {
         .version;
     ensure!(
         final_version == FINAL_MIGRATION_VERSION,
-        "expected migration chain to end at 0116, found {final_version:04}"
+        "expected migration chain to end at 0117, found {final_version:04}"
     );
     let first_version = migrator
         .migrations
@@ -121,7 +121,7 @@ async fn exercise_complete_migration_chain(pool: &MySqlPool) -> Result<()> {
     migrator
         .run(pool)
         .await
-        .context("run fresh migrations 0001-0116")?;
+        .context("run fresh migrations 0001-0117")?;
     let applied_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE success = TRUE")
             .fetch_one(pool)

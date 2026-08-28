@@ -66,9 +66,11 @@ pub(crate) async fn load_today_return_asset_activity(
         .collect())
 }
 
-/// 按 UTC 自然日和资产聚合 Seconds、Prediction、Margin 与 Earn 终态事实的已实现收益及本金基数。
-/// 四路子查询各自定义收益：秒合约赢按本金乘赔率、输按本金取负；预测按赔付加退款加费用退回减本金减手续费。
-/// 杠杆取已实现盈亏减利息，本金基数取保证金；理财取赎回流水金额减申购本金，并只认同一申购的首条赎回流水以防重复计收益。
+/// 按 UTC 自然日和资产聚合 Seconds、Prediction、Margin 与 Earn 可审计事实的已实现收益及本金基数。
+/// 五路子查询各自定义收益：秒合约赢按本金乘赔率、输按本金取负；预测按赔付加退款加费用退回减本金减手续费。
+/// 杠杆部分平仓执行按执行日计入「切片盈亏减切片利息」，终态仓位只补计尚未出现在执行表中的剩余切片；
+/// 显式全平已有 terminal 执行，因此终态分支会排除它，避免同一笔收益和本金重复计算。理财取赎回流水金额减申购本金，
+/// 并只认同一申购的首条赎回流水以防重复计收益。
 /// 日期维度分别取各业务的结算、平仓或赎回时刻，时间过滤为左闭右开，因此边界时刻只会归入一个自然日。
 /// 时间戳按 UTC 朴素时刻绑定，日期由数据库直接截取，与应用层的 UTC 自然日口径保持一致。
 /// 公式与 today-return 口径一致；查询不包含充值、提现、内部划转、未结算订单或未实现盈亏，也不锁钱包。
@@ -122,9 +124,31 @@ pub(crate) async fn load_return_history_asset_activity(
 
                UNION ALL
 
+               SELECT DATE(executions.created_at) AS activity_day,
+                      assets.symbol AS asset_symbol,
+                      SUM(executions.realized_pnl - executions.close_interest_amount) AS amount,
+                      SUM(executions.close_margin_amount) AS basis_amount
+               FROM margin_position_close_executions executions
+               INNER JOIN margin_positions positions
+                   ON positions.id = executions.position_id
+                  AND positions.user_id = executions.user_id
+               INNER JOIN assets ON assets.id = positions.margin_asset
+               WHERE executions.user_id = ?
+                 AND executions.created_at >= ?
+                 AND executions.created_at < ?
+               GROUP BY DATE(executions.created_at), assets.symbol
+
+               UNION ALL
+
                SELECT DATE(positions.closed_at) AS activity_day,
                       assets.symbol AS asset_symbol,
-                      SUM(COALESCE(positions.realized_pnl, 0) - positions.interest_amount) AS amount,
+                      SUM(COALESCE(positions.realized_pnl, 0)
+                          - COALESCE((
+                              SELECT SUM(previous.realized_pnl)
+                              FROM margin_position_close_executions previous
+                              WHERE previous.position_id = positions.id
+                          ), 0)
+                          - positions.interest_amount) AS amount,
                       SUM(positions.margin_amount) AS basis_amount
                FROM margin_positions positions
                INNER JOIN assets ON assets.id = positions.margin_asset
@@ -132,6 +156,12 @@ pub(crate) async fn load_return_history_asset_activity(
                  AND positions.status IN ('closed', 'liquidated')
                  AND positions.closed_at >= ?
                  AND positions.closed_at < ?
+                 AND NOT EXISTS (
+                     SELECT 1
+                     FROM margin_position_close_executions terminal_execution
+                     WHERE terminal_execution.position_id = positions.id
+                       AND terminal_execution.fully_closed = TRUE
+                 )
                GROUP BY DATE(positions.closed_at), assets.symbol
 
                UNION ALL
@@ -167,6 +197,9 @@ pub(crate) async fn load_return_history_asset_activity(
            GROUP BY activity.activity_day, activity.asset_symbol
            ORDER BY activity.activity_day ASC, activity.asset_symbol ASC"#,
     )
+    .bind(user_id)
+    .bind(period_start_at)
+    .bind(calculated_at)
     .bind(user_id)
     .bind(period_start_at)
     .bind(calculated_at)

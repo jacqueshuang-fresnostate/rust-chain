@@ -233,6 +233,37 @@ if (event.type === 'margin.position.liquidated') {
 }
 ```
 
+## Scenario: Margin User Close Refresh Hints
+
+### 1. Scope / Trigger
+
+- Trigger: a user commits a full or partial single-position close and another
+  open mobile session should reconcile the reduced position and wallet sooner.
+
+### 2. Signatures
+
+- Partial discriminator: `margin.position.partially_closed`.
+- Terminal discriminator remains `margin.position.closed`.
+- Both include `position_id`; the partial event additionally carries execution
+  context such as `close_percentage` and `fully_closed=false`.
+
+### 3. Contracts
+
+- Publish only after the financial transaction commits and only for a newly
+  created close execution. Exact idempotent replay emits no second hint.
+- Event amounts are context, not client-side balance instructions. Mobile
+  reconciles `/margin/wallets` and eligible risk snapshots through the same
+  serialized REST path used by liquidation events.
+- The process-local socket may drop the event; periodic and reconnect REST
+  reconciliation remain authoritative.
+
+### 4. Tests Required
+
+- Backend tests assert one partial event after commit, one terminal event for a
+  final close, and no duplicate event on same-key replay.
+- Mobile tests assert that partial and terminal close hints request REST
+  reconciliation without directly changing displayed balances.
+
 ## Scenario: Upstream Market Feed Liveness and Recovery
 
 ### 1. Scope / Trigger

@@ -4702,6 +4702,470 @@ async fn margin_close_position_settles_realized_pnl_and_is_idempotent() -> Resul
 }
 
 #[tokio::test]
+async fn margin_partial_close_settles_only_selected_slice_and_replays_exactly()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let mut fixture_tx = pool.begin().await?;
+    let user_id = create_user(&mut fixture_tx).await;
+    let (base_asset, base_symbol) = create_asset(&mut fixture_tx, "PCB").await;
+    let (quote_asset, quote_symbol) = create_asset(&mut fixture_tx, "PCQ").await;
+    let symbol = format!("{base_symbol}-{quote_symbol}");
+    let pair_id = create_pair(&mut fixture_tx, base_asset, quote_asset, &symbol).await;
+    let product_id = seed_margin_product(&mut fixture_tx, pair_id, quote_asset).await;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(quote_asset)
+        .bind(decimal("100.000000000000000000"))
+        .execute(&mut *fixture_tx)
+        .await?;
+    fixture_tx.commit().await?;
+
+    cache_margin_ticker(&redis, &symbol, "100.000000000000000000").await?;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let hub = EventBroadcastHub::new(16);
+    let _keepalive_hub = hub.clone();
+    let mut private_events = hub.subscribe(&WebSocketChannel::private_user(user_id));
+    let app = user_routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_redis(redis.clone())
+            .with_event_broadcast_hub(hub),
+    );
+    let open_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/margin/positions")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"product_id":{product_id},"direction":"long","margin_amount":"20.000000000000000000","leverage":"5","idempotency_key":"partial-open-{}"}}"#,
+                    Uuid::now_v7().simple()
+                )))
+                .unwrap(),
+        )
+        .await?;
+    let open_status = open_response.status();
+    let open_payload = body_json(open_response).await?;
+    assert_eq!(open_status, StatusCode::OK, "payload: {open_payload}");
+    let position_id = open_payload["position"]["id"].as_u64().unwrap();
+    let _opened = timeout(Duration::from_millis(100), private_events.recv()).await??;
+    sqlx::query("UPDATE margin_positions SET interest_amount = ? WHERE id = ?")
+        .bind(decimal("1.250000000000000000"))
+        .bind(position_id)
+        .execute(&pool)
+        .await?;
+
+    cache_margin_ticker(&redis, &symbol, "110.000000000000000000").await?;
+    let close_key = format!("partial-close-{}", Uuid::now_v7().simple());
+    let close_body = format!(r#"{{"percentage":50,"idempotency_key":"{close_key}"}}"#);
+    let close_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/margin/positions/{position_id}/close"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(close_body.clone()))
+                .unwrap(),
+        )
+        .await?;
+    let close_status = close_response.status();
+    let close_payload = body_json(close_response).await?;
+    assert_eq!(close_status, StatusCode::OK, "payload: {close_payload}");
+    assert_eq!(close_payload["position"]["status"], "opened");
+    assert_eq!(
+        close_payload["position"]["margin_amount"],
+        "10.000000000000000000"
+    );
+    assert_eq!(
+        close_payload["position"]["notional_amount"],
+        "50.000000000000000000"
+    );
+    assert_eq!(
+        close_payload["position"]["borrowed_amount"],
+        "40.000000000000000000"
+    );
+    assert_eq!(
+        close_payload["position"]["interest_amount"],
+        "0.625000000000000000"
+    );
+    assert_eq!(
+        close_payload["position"]["realized_pnl"],
+        "5.000000000000000000"
+    );
+    assert_eq!(close_payload["execution"]["close_percentage"], 50);
+    assert_eq!(
+        close_payload["execution"]["close_margin_amount"],
+        "10.000000000000000000"
+    );
+    assert_eq!(
+        close_payload["execution"]["close_notional_amount"],
+        "50.000000000000000000"
+    );
+    assert_eq!(
+        close_payload["execution"]["close_borrowed_amount"],
+        "40.000000000000000000"
+    );
+    assert_eq!(
+        close_payload["execution"]["close_interest_amount"],
+        "0.625000000000000000"
+    );
+    assert_eq!(
+        close_payload["execution"]["realized_pnl"],
+        "5.000000000000000000"
+    );
+    assert_eq!(
+        close_payload["execution"]["settlement_amount"],
+        "14.375000000000000000"
+    );
+    assert_eq!(close_payload["execution"]["fully_closed"], false);
+    assert_eq!(close_payload["replayed"], false);
+
+    let partial_event_message =
+        timeout(Duration::from_millis(100), private_events.recv()).await??;
+    let partial_event: Value = serde_json::from_str(partial_event_message.payload())?;
+    assert_eq!(partial_event["type"], "margin.position.partially_closed");
+    assert_eq!(partial_event["position_id"], position_id);
+    assert_eq!(partial_event["close_percentage"], 50);
+    assert_eq!(partial_event["fully_closed"], false);
+
+    let available_after_partial: BigDecimal = sqlx::query_scalar(
+        "SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(available_after_partial, decimal("94.375000000000000000"));
+    let execution_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM margin_position_close_executions WHERE user_id = ? AND idempotency_key = ?",
+    )
+    .bind(user_id)
+    .bind(&close_key)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(execution_count, 1);
+    let partial_ledger_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM wallet_ledger WHERE ref_type = 'margin_position' AND ref_id = ? AND change_type = 'margin_position_close'",
+    )
+    .bind(position_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(partial_ledger_count, 1);
+
+    let risk_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/margin/positions/{position_id}/risk"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let risk_status = risk_response.status();
+    let risk_payload = body_json(risk_response).await?;
+    assert_eq!(risk_status, StatusCode::OK, "payload: {risk_payload}");
+    assert_eq!(
+        risk_payload["risk"]["position_quantity"],
+        "0.500000000000000000"
+    );
+
+    cache_margin_ticker(&redis, &symbol, "120.000000000000000000").await?;
+    let replay_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/margin/positions/{position_id}/close"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(close_body))
+                .unwrap(),
+        )
+        .await?;
+    let replay_status = replay_response.status();
+    let replay_payload = body_json(replay_response).await?;
+    assert_eq!(replay_status, StatusCode::OK, "payload: {replay_payload}");
+    assert_eq!(
+        replay_payload["execution"]["exit_price"],
+        "110.000000000000000000"
+    );
+    assert_eq!(replay_payload["replayed"], true);
+    assert!(
+        timeout(Duration::from_millis(25), private_events.recv())
+            .await
+            .is_err(),
+        "same-key partial-close replay must not publish another event"
+    );
+    let available_after_replay: BigDecimal = sqlx::query_scalar(
+        "SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(available_after_replay, available_after_partial);
+
+    let conflict_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/margin/positions/{position_id}/close"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"percentage":25,"idempotency_key":"{close_key}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await?;
+    assert_eq!(conflict_response.status(), StatusCode::CONFLICT);
+
+    let final_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/margin/positions/{position_id}/close"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await?;
+    let final_status = final_response.status();
+    let final_payload = body_json(final_response).await?;
+    assert_eq!(final_status, StatusCode::OK, "payload: {final_payload}");
+    assert_eq!(final_payload["position"]["status"], "closed");
+    assert_eq!(
+        final_payload["position"]["realized_pnl"],
+        "15.000000000000000000"
+    );
+    assert_eq!(final_payload["execution"], Value::Null);
+    let final_available: BigDecimal = sqlx::query_scalar(
+        "SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(final_available, decimal("113.750000000000000000"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn cross_margin_partial_close_applies_signed_slice_equity() -> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let Some(redis) = redis_manager().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let mut fixture_tx = pool.begin().await?;
+    let user_id = create_user(&mut fixture_tx).await;
+    let (base_asset, base_symbol) = create_asset(&mut fixture_tx, "CPB").await;
+    let (quote_asset, quote_symbol) = create_asset(&mut fixture_tx, "CPQ").await;
+    let symbol = format!("{base_symbol}-{quote_symbol}");
+    let pair_id = create_pair(&mut fixture_tx, base_asset, quote_asset, &symbol).await;
+    let product_id =
+        seed_margin_product_with_mode(&mut fixture_tx, pair_id, quote_asset, "cross", vec!["5"])
+            .await;
+    sqlx::query(
+        "INSERT INTO margin_wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .bind(decimal("100.000000000000000000"))
+    .execute(&mut *fixture_tx)
+    .await?;
+    fixture_tx.commit().await?;
+
+    cache_margin_ticker(&redis, &symbol, "100.000000000000000000").await?;
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let app = user_routes().with_state(
+        AppState::new(settings)
+            .with_mysql(pool.clone())
+            .with_redis(redis.clone()),
+    );
+    let opened = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/margin/positions")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"product_id":{product_id},"direction":"long","margin_mode":"cross","margin_amount":"20","leverage":"5","idempotency_key":"cross-partial-open-{}"}}"#,
+                    Uuid::now_v7().simple()
+                )))
+                .unwrap(),
+        )
+        .await?;
+    let opened_status = opened.status();
+    let opened_payload = body_json(opened).await?;
+    assert_eq!(opened_status, StatusCode::OK, "payload: {opened_payload}");
+    let position_id = opened_payload["position"]["id"].as_u64().unwrap();
+
+    cache_margin_ticker(&redis, &symbol, "70.000000000000000000").await?;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/margin/positions/{position_id}/close"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"percentage":50,"idempotency_key":"cross-partial-close-{}"}}"#,
+                    Uuid::now_v7().simple()
+                )))
+                .unwrap(),
+        )
+        .await?;
+    let status = response.status();
+    let payload = body_json(response).await?;
+    assert_eq!(status, StatusCode::OK, "payload: {payload}");
+    assert_eq!(payload["position"]["status"], "opened");
+    assert_eq!(
+        payload["position"]["margin_amount"],
+        "10.000000000000000000"
+    );
+    assert_eq!(
+        payload["position"]["notional_amount"],
+        "50.000000000000000000"
+    );
+    assert_eq!(
+        payload["execution"]["realized_pnl"],
+        "-15.000000000000000000"
+    );
+    assert_eq!(
+        payload["execution"]["settlement_amount"],
+        "-5.000000000000000000"
+    );
+    assert_eq!(payload["settlement_amount"], "-5.000000000000000000");
+
+    let available: BigDecimal = sqlx::query_scalar(
+        "SELECT available FROM margin_wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(available, decimal("75.000000000000000000"));
+    let (ledger_amount, ledger_count): (BigDecimal, i64) = sqlx::query_as(
+        r#"SELECT COALESCE(SUM(amount), 0), COUNT(*)
+           FROM margin_wallet_ledger
+           WHERE ref_type = 'margin_position' AND ref_id = ?
+             AND change_type = 'margin_cross_position_close'"#,
+    )
+    .bind(position_id.to_string())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(ledger_amount, decimal("-5.000000000000000000"));
+    assert_eq!(ledger_count, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn margin_partial_close_rejects_invalid_or_unkeyed_percentages_before_money_mutation()
+-> Result<(), Box<dyn Error>> {
+    let Some(pool) = mysql_pool().await else {
+        return Ok(());
+    };
+    let settings = test_settings();
+    let mut fixture_tx = pool.begin().await?;
+    let user_id = create_user(&mut fixture_tx).await;
+    let (base_asset, base_symbol) = create_asset(&mut fixture_tx, "PVB").await;
+    let (quote_asset, quote_symbol) = create_asset(&mut fixture_tx, "PVQ").await;
+    let pair_id = create_pair(
+        &mut fixture_tx,
+        base_asset,
+        quote_asset,
+        &format!("{base_symbol}-{quote_symbol}"),
+    )
+    .await;
+    let product_id = seed_margin_product(&mut fixture_tx, pair_id, quote_asset).await;
+    let position_id = seed_margin_position(
+        &mut fixture_tx,
+        user_id,
+        product_id,
+        pair_id,
+        quote_asset,
+        "20.000000000000000000",
+        Some("100.000000000000000000"),
+    )
+    .await;
+    sqlx::query("INSERT INTO wallet_accounts (user_id, asset_id, available) VALUES (?, ?, ?)")
+        .bind(user_id)
+        .bind(quote_asset)
+        .bind(decimal("80.000000000000000000"))
+        .execute(&mut *fixture_tx)
+        .await?;
+    fixture_tx.commit().await?;
+
+    let token = issue_token(&settings, format!("user:{user_id}"), TokenScope::User, 900).unwrap();
+    let app = user_routes().with_state(AppState::new(settings).with_mysql(pool.clone()));
+    for body in [
+        r#"{"percentage":-1,"idempotency_key":"invalid-negative"}"#,
+        r#"{"percentage":0,"idempotency_key":"invalid-zero"}"#,
+        r#"{"percentage":101,"idempotency_key":"invalid-high"}"#,
+        r#"{"percentage":50}"#,
+        r#"{"percentage":50,"idempotency_key":"   "}"#,
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/margin/positions/{position_id}/close"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+    let available: BigDecimal = sqlx::query_scalar(
+        "SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?",
+    )
+    .bind(user_id)
+    .bind(quote_asset)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(available, decimal("80.000000000000000000"));
+    let (margin_amount, notional_amount, status): (BigDecimal, BigDecimal, String) =
+        sqlx::query_as(
+            "SELECT margin_amount, notional_amount, status FROM margin_positions WHERE id = ?",
+        )
+        .bind(position_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(margin_amount, decimal("20.000000000000000000"));
+    assert_eq!(notional_amount, decimal("40.000000000000000000"));
+    assert_eq!(status, "opened");
+    let execution_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM margin_position_close_executions WHERE position_id = ?",
+    )
+    .bind(position_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(execution_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
 async fn margin_close_position_hides_other_users_position() -> Result<(), Box<dyn Error>> {
     let Some(pool) = mysql_pool().await else {
         return Ok(());

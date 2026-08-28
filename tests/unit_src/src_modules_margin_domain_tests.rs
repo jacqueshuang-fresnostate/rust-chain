@@ -1,7 +1,8 @@
 use super::{
     CROSS_NET_DELTA_EPSILON, CrossMarginEstimateStatus, CrossMarginPositionRisk,
     CrossMarginReferencePosition, MarginOrderType, MarginPositionDisplayInput,
-    MarkedCrossMarginPosition, cross_margin_liquidation_settlement, cross_margin_max_transferable,
+    MarkedCrossMarginPosition, accumulate_margin_realized_pnl, allocate_margin_close_slice,
+    cross_margin_liquidation_settlement, cross_margin_max_transferable,
     estimate_cross_margin_conditional_price, evaluate_cross_margin, evaluate_margin_position_risk,
     evaluate_marked_cross_margin, margin_limit_order_is_triggered, margin_position_display_metrics,
     margin_position_payout_amount, validate_margin_limit_price,
@@ -11,6 +12,145 @@ use std::str::FromStr;
 
 fn decimal(value: &str) -> BigDecimal {
     BigDecimal::from_str(value).expect("valid decimal")
+}
+
+#[test]
+fn realized_pnl_accumulation_preserves_partial_close_history() {
+    assert_eq!(
+        accumulate_margin_realized_pnl(None, &decimal("-16")),
+        decimal("-16.000000000000000000")
+    );
+    assert_eq!(
+        accumulate_margin_realized_pnl(Some(&decimal("5.25")), &decimal("-16")),
+        decimal("-10.750000000000000000")
+    );
+}
+
+#[test]
+fn partial_close_slice_preserves_exact_remainders_at_database_scale() {
+    let slice = allocate_margin_close_slice(
+        &decimal("20.000000000000000001"),
+        &decimal("100.000000000000000003"),
+        &decimal("80.000000000000000002"),
+        &decimal("1.250000000000000001"),
+        37,
+    )
+    .expect("37 percent is representable");
+
+    assert_eq!(slice.close_percentage, 37);
+    assert!(!slice.fully_closed);
+    assert_eq!(slice.close_margin_amount, decimal("7.400000000000000000"));
+    assert_eq!(
+        slice.remaining_margin_amount,
+        decimal("12.600000000000000001")
+    );
+    assert_eq!(
+        slice.close_notional_amount,
+        decimal("37.000000000000000001")
+    );
+    assert_eq!(
+        slice.remaining_notional_amount,
+        decimal("63.000000000000000002")
+    );
+    assert_eq!(
+        slice.close_margin_amount.clone() + slice.remaining_margin_amount.clone(),
+        decimal("20.000000000000000001")
+    );
+    assert_eq!(
+        slice.close_notional_amount.clone() + slice.remaining_notional_amount.clone(),
+        decimal("100.000000000000000003")
+    );
+    assert_eq!(
+        slice.close_borrowed_amount.clone() + slice.remaining_borrowed_amount.clone(),
+        decimal("80.000000000000000002")
+    );
+    assert_eq!(
+        slice.close_interest_amount.clone() + slice.remaining_interest_amount.clone(),
+        decimal("1.250000000000000001")
+    );
+}
+
+#[test]
+fn close_slice_uses_every_remaining_amount_at_one_hundred_percent() {
+    let slice = allocate_margin_close_slice(
+        &decimal("20.000000000000000001"),
+        &decimal("100.000000000000000003"),
+        &decimal("80.000000000000000002"),
+        &decimal("1.250000000000000001"),
+        100,
+    )
+    .expect("full close remains valid");
+
+    assert!(slice.fully_closed);
+    assert_eq!(slice.close_margin_amount, decimal("20.000000000000000001"));
+    assert_eq!(
+        slice.close_notional_amount,
+        decimal("100.000000000000000003")
+    );
+    assert_eq!(
+        slice.close_borrowed_amount,
+        decimal("80.000000000000000002")
+    );
+    assert_eq!(slice.close_interest_amount, decimal("1.250000000000000001"));
+    assert_eq!(
+        slice.remaining_margin_amount,
+        decimal("0.000000000000000000")
+    );
+    assert_eq!(
+        slice.remaining_notional_amount,
+        decimal("0.000000000000000000")
+    );
+}
+
+#[test]
+fn one_percent_close_keeps_a_positive_ninety_nine_percent_remainder() {
+    let slice = allocate_margin_close_slice(
+        &decimal("20"),
+        &decimal("100"),
+        &decimal("80"),
+        &decimal("1.25"),
+        1,
+    )
+    .expect("one percent remains representable");
+
+    assert_eq!(slice.close_margin_amount, decimal("0.200000000000000000"));
+    assert_eq!(slice.close_notional_amount, decimal("1.000000000000000000"));
+    assert_eq!(slice.close_borrowed_amount, decimal("0.800000000000000000"));
+    assert_eq!(slice.close_interest_amount, decimal("0.012500000000000000"));
+    assert_eq!(
+        slice.remaining_margin_amount,
+        decimal("19.800000000000000000")
+    );
+    assert_eq!(
+        slice.remaining_notional_amount,
+        decimal("99.000000000000000000")
+    );
+}
+
+#[test]
+fn close_slice_rejects_invalid_percentages_and_unrepresentable_partial_amounts() {
+    for percentage in [0, 101] {
+        assert!(
+            allocate_margin_close_slice(
+                &decimal("20"),
+                &decimal("100"),
+                &decimal("80"),
+                &decimal("1"),
+                percentage,
+            )
+            .is_err()
+        );
+    }
+    assert!(
+        allocate_margin_close_slice(
+            &decimal("0.000000000000000001"),
+            &decimal("0.000000000000000001"),
+            &decimal("0"),
+            &decimal("0"),
+            1,
+        )
+        .is_err()
+    );
 }
 
 #[test]

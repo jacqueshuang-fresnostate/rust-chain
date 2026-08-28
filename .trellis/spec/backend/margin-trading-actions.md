@@ -10,13 +10,18 @@
 ### 2. Signatures
 
 - Open/position routes: `/api/v1/margin/positions`, `/close`, `/close-all`, `/cancel`, `/cancel-all`.
+- Single close request: optional integer `percentage` in `1..=100` plus
+  `idempotency_key`; a body-less or empty legacy request remains a 100% close.
 - Transfer: `POST /api/v1/margin/transfers` with asset, `from`, `to`, `amount`, and optional `idempotency_key`.
 - Transfer eligibility: `assets.margin_transfer_enabled`; new assets default to `FALSE` and the admin asset API owns this flag.
 - Margin wallet catalog: `GET /api/v1/margin/wallets` returns `asset_id`, `asset_symbol`, optional `logo_url`, `margin_transfer_enabled`, and the three balance buckets.
 - Settings: `GET /api/v1/margin/settings/{product_id}` plus leverage/mode PATCH routes.
 - Product catalog: anonymous `GET /api/v1/margin/products`; it contains no user funds or settings. Wallets, settings, risk, and every mutation remain user-authenticated.
 - Position risk: authenticated `GET /api/v1/margin/positions/{id}/risk`, scoped by both position id and JWT user id.
-- Persistence: `margin_positions.wallet_scope` and `margin_transfers(user_id, idempotency_key, transfer_id, request fields)`.
+- Persistence: `margin_positions.wallet_scope`,
+  `margin_position_close_executions(user_id, idempotency_key, position_id,
+  close_percentage, allocated amounts, mark, PnL, settlement, terminal flag)`,
+  and `margin_transfers(user_id, idempotency_key, transfer_id, request fields)`.
 - Cross account persistence: `margin_cross_accounts(user_id, margin_asset)` stores the latest account-level equity, PnL, interest, maintenance margin, ratio, status, and version.
 - Market cache: `market:ticker:{SANITIZED_SYMBOL}`, positive price observed within 60 seconds.
 - Margin order intent: `margin_positions.order_type = market|limit`, nullable `limit_price`, and nullable `entry_price`; `entry_price IS NULL` is an unfilled order, not a risk-bearing position.
@@ -34,6 +39,29 @@
 - `MarginPositionResponse`, user/admin reads, and private filled events preserve real `order_type`, optional `limit_price`, and optional `entry_price`. Clients classify filled holdings by positive non-null `entry_price` and pending orders by opened/null entry price.
 - `wallet_scope` snapshots whether collateral came from spot or margin. Active close, cancel, and isolated liquidation return funds to that same scope. Account-level cross liquidation is the explicit exception: it only consumes the shared margin wallet's `available` bucket and never credits a position payout.
 - Position state, wallet balance, and ledger entry commit in one transaction.
+- An explicit single-close percentage allocates that share of the currently
+  locked remaining margin, notional, borrowed principal, and accrued interest.
+  Percentages below 100 keep the row `opened` with exact remainders; 100 closes
+  every remaining amount. Allocation rounds the closed slice down to the
+  database's 18-decimal scale and derives the remainder by subtraction, so no
+  amount disappears. A nonzero partial request that would create a zero closed
+  or remaining margin/notional is rejected before wallet mutation.
+- Realized PnL uses only the allocated notional and the fresh server mark.
+  Isolated settlement credits the nonnegative allocated equity back to the
+  recorded wallet scope; cross settlement applies the allocated signed equity
+  to the shared margin wallet. The execution row, wallet delta/ledger, position
+  remainder or terminal transition, and cross-account version bump commit in
+  one transaction.
+- Explicit close requests require a non-empty idempotency key no longer than
+  128 bytes. Same user/key/position/percentage replay returns the original
+  execution without another wallet or position mutation. Reusing a key for a
+  different position or percentage is a conflict. Legacy body-less full close
+  retains terminal-state replay compatibility.
+- `realized_pnl` on an opened partially closed row is cumulative; a later final
+  close or liquidation adds its remaining-slice PnL before storing the terminal
+  result. Partial execution price and allocated amounts remain immutable in the
+  execution table. Liquidation audit rows keep the liquidation slice PnL, while
+  the terminal position and private liquidation event expose cumulative PnL.
 - Margin open idempotency compares product, direction, explicit mode, margin, leverage, normalized order type, and optional limit price. Same-key same-request replay returns the original pending or filled row without another debit; any order-type or limit-price change is a conflict.
 - Transfers lock spot then margin wallet in both directions, update both balances and ledgers atomically, and validate asset precision.
 - A new `spot -> margin` transfer requires an active asset with `margin_transfer_enabled = TRUE`. Disabling the flag blocks only new inbound transfers; an existing margin balance remains visible and may still move `margin -> spot`.
@@ -73,6 +101,11 @@
 - Insufficient source available balance -> `VALIDATION_ERROR`, no opposite-side credit.
 - Same idempotency key with different request -> `CONFLICT`.
 - Same margin idempotency key with changed `order_type` or `limit_price` -> `CONFLICT`, with no additional collateral debit.
+- Explicit close percentage outside `1..=100`, missing/oversized close
+  idempotency key, or an unrepresentable nonzero slice -> `VALIDATION_ERROR`
+  before wallet mutation.
+- Same close key with a different position or percentage -> `CONFLICT`, with no
+  additional execution, ledger, wallet delta, or remainder update.
 - Unknown `wallet_scope` on close/cancel/liquidation -> `VALIDATION_ERROR`; never default to spot.
 - Missing/stale/non-positive ticker for any pair in a cross risk account -> `VALIDATION_ERROR` for the entire account snapshot; never return an aggregate with one leg omitted.
 - One bulk item fails -> include its id/code/message and continue later items.
@@ -86,6 +119,12 @@
 - Good: disabling margin transfer rejects a new inbound request while the user's existing wallet row stays visible and can transfer back to spot.
 - Base: an enabled asset without a user margin-wallet row appears in `/margin/wallets` with three zero buckets; the read does not create a database row.
 - Base: a second close/cancel sees the terminal position and does not credit twice.
+- Good: a 37% isolated close credits only that slice's nonnegative equity,
+  records one immutable execution, and leaves 63% of all four exposure amounts
+  opened; retrying the same key returns the same result without another ledger.
+- Good: a partial cross close applies the slice's signed equity and refreshes
+  account risk from the reduced remaining row; it never treats a negative
+  slice as zero.
 - Good: a hedged cross account whose old position-equity settlement would increase `available` instead sets it to zero, records one `-available_before` ledger, and stores zero payout on every leg.
 - Good: partial same-pair hedges return a finite conditional account boundary while exact or near-exact hedges return an explicit null-bearing estimate status.
 - Bad: opposite transfer directions lock wallets in different orders; this creates a deadlock window.
@@ -102,6 +141,10 @@
 - Transfer tests cover both directions, precision, insufficient balance, same-key replay, changed-request conflict, asset-disable replay, inbound eligibility rejection, outbound-after-disable, and ledger counts.
 - Wallet-list tests cover an enabled asset before lazy account creation, an existing wallet after the flag is disabled, backend Logo passthrough, and `margin_transfer_enabled` serialization.
 - Close/cancel tests assert balance, ledger, status, and idempotent retry for both wallet scopes.
+- Partial-close tests cover isolated and cross settlement, 1/37/50/100 percent
+  allocations, cumulative realized PnL, exact remainder preservation, same-key
+  replay, changed-request conflict, validation, concurrent retries, one
+  execution/ledger per committed request, and legacy body-less full close.
 - Isolated liquidation worker tests assert payout uses recorded `wallet_scope` and otherwise remains unchanged.
 - Cross liquidation worker tests cover a hedged long/short account that previously could mint available balance, zero post-settlement available, unchanged frozen/locked and spot balances, one negative account ledger, zero payout on every position, all account positions terminal, exact bad-debt policy, same-symbol shared marks, and replay idempotency.
 - Bulk tests process more than 100 rows, retain prior successes/events, report a failed row, and continue to later rows.

@@ -11,7 +11,10 @@ use crate::modules::{
     events::{EventBroadcastHub, EventBroadcastMessage},
     margin::{
         domain::margin_position_payout_amount,
-        presentation::{MarginPositionResponse, MarginProductResponse},
+        presentation::{
+            CloseMarginPositionResponse, MarginPositionCloseExecutionResponse,
+            MarginPositionResponse, MarginProductResponse,
+        },
     },
 };
 use bigdecimal::BigDecimal;
@@ -73,11 +76,33 @@ pub(crate) fn publish_margin_position_opened_event_if_needed(
 /// `payout_amount` 由领域函数按保证金加盈亏减利息重算并非负截断，只作展示，不代表本次真实入账额；
 /// 全仓仓位实际是以有符号组合权益更新共享钱包，逐仓才与该返还额一致。
 /// 调用方须在平仓事务提交后调用；本函数不读库、不重算钱包余额，也不会修改仓位终态。
+#[cfg(test)]
 pub(crate) fn publish_margin_position_closed_event(
     hub: &EventBroadcastHub,
     user_id: u64,
     position: &MarginPositionResponse,
 ) {
+    publish_margin_position_closed_event_with_settlement(hub, user_id, position, None);
+}
+
+/// 组装终态平仓提示；逐仓优先使用应用层传入的真实本次结算额，全仓同时保留有符号结算上下文。
+/// `settlement_amount` 只可能来自刚提交的事务或不可变执行记录，缺失时才回退历史仓位推导口径。
+fn publish_margin_position_closed_event_with_settlement(
+    hub: &EventBroadcastHub,
+    user_id: u64,
+    position: &MarginPositionResponse,
+    settlement_amount: Option<&BigDecimal>,
+) {
+    let derived_payout = margin_position_payout_amount(
+        &position.margin_amount,
+        position.realized_pnl.as_ref(),
+        &position.interest_amount,
+    );
+    let payout_amount = if position.margin_mode == "isolated" {
+        settlement_amount.unwrap_or(&derived_payout)
+    } else {
+        &derived_payout
+    };
     hub.publish(EventBroadcastMessage::private_user(
         user_id,
         json!({
@@ -91,11 +116,8 @@ pub(crate) fn publish_margin_position_closed_event(
             "exit_price": position.exit_price,
             "realized_pnl": position.realized_pnl,
             "interest_amount": decimal_amount_string(&position.interest_amount),
-            "payout_amount": decimal_amount_string(&margin_position_payout_amount(
-                &position.margin_amount,
-                position.realized_pnl.as_ref(),
-                &position.interest_amount,
-            )),
+            "payout_amount": decimal_amount_string(payout_amount),
+            "settlement_amount": settlement_amount.map(decimal_amount_string),
             "closed_at": position.closed_at.map(|closed_at| closed_at.timestamp_millis()),
             "status": position.status,
         })
@@ -103,17 +125,64 @@ pub(crate) fn publish_margin_position_closed_event(
     ));
 }
 
-/// 仅当本次调用真正完成了首次平仓结算、且广播中心可用时才推送平仓事件。
-/// 对已是 closed、canceled 或 liquidated 的仓位重复发起平仓时 `is_new_close` 为假，不重复通知。
-/// 批量平仓逐笔提交后立即调用，前序成功的通知不会被后续单笔失败吞掉。
-pub(crate) fn publish_margin_position_closed_event_if_needed(
-    hub: Option<&EventBroadcastHub>,
+/// 向用户私有频道发送部分平仓后的 REST 对账提示，金额字段只描述已提交执行而不指示客户端本地加减余额。
+/// 事件同时带剩余仓位金额和不可变执行主键，便于多端诊断；真正钱包、仓位和风险状态仍以 REST 为准。
+pub(crate) fn publish_margin_position_partially_closed_event(
+    hub: &EventBroadcastHub,
     user_id: u64,
     position: &MarginPositionResponse,
-    is_new_close: bool,
+    execution: &MarginPositionCloseExecutionResponse,
 ) {
-    if is_new_close && let Some(hub) = hub {
-        publish_margin_position_closed_event(hub, user_id, position);
+    hub.publish(EventBroadcastMessage::private_user(
+        user_id,
+        json!({
+            "type": "margin.position.partially_closed",
+            "position_id": position.id,
+            "product_id": position.product_id,
+            "pair_id": position.pair_id,
+            "margin_asset": position.margin_asset,
+            "execution_id": execution.id,
+            "close_percentage": execution.close_percentage,
+            "close_margin_amount": decimal_amount_string(&execution.close_margin_amount),
+            "close_notional_amount": decimal_amount_string(&execution.close_notional_amount),
+            "realized_pnl": decimal_amount_string(&execution.realized_pnl),
+            "settlement_amount": decimal_amount_string(&execution.settlement_amount),
+            "remaining_margin_amount": decimal_amount_string(&position.margin_amount),
+            "remaining_notional_amount": decimal_amount_string(&position.notional_amount),
+            "fully_closed": false,
+            "status": position.status,
+        })
+        .to_string(),
+    ));
+}
+
+/// 在主动平仓事务提交后发布一次刷新提示：部分执行使用专用事件，终态执行沿用 closed 事件。
+/// 幂等重放、终态兼容重放和未配置广播中心都不发送；广播失败不会回滚已经提交的资金事务。
+pub(crate) fn publish_margin_position_close_event_if_needed(
+    hub: Option<&EventBroadcastHub>,
+    user_id: u64,
+    response: &CloseMarginPositionResponse,
+    is_new_execution: bool,
+) {
+    if !is_new_execution {
+        return;
+    }
+    let Some(hub) = hub else {
+        return;
+    };
+    if let Some(execution) = response
+        .execution
+        .as_ref()
+        .filter(|execution| !execution.fully_closed)
+    {
+        publish_margin_position_partially_closed_event(hub, user_id, &response.position, execution);
+    } else {
+        publish_margin_position_closed_event_with_settlement(
+            hub,
+            user_id,
+            &response.position,
+            response.settlement_amount.as_ref(),
+        );
     }
 }
 

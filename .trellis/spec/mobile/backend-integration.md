@@ -1036,7 +1036,10 @@ placeMarginOrder(input: {
   idempotencyKey: string
 }): Promise<void>
 
-closeMarginPosition(positionId: string): Promise<void>
+closeMarginPosition(positionId: string, intent?: {
+  percentage: number
+  idempotencyKey: string
+}): Promise<void>
 closeAllMarginPositions(productId?: number): Promise<MarginBatchActionResult>
 ```
 
@@ -1128,10 +1131,13 @@ OS chrome and is not rendered by the web application.
   expands; at 320px the console and book contract without document overflow.
 - The positions tab renders the count of the currently visible filled-position
   collection. Each position card keeps the Pencil action order `TP/SL`,
-  `Close`, `Market close all`. The two close labels own independent armed
-  intents but both close only that card through
-  `closeMarginPosition(position.id)`; card actions must never call the batch
-  endpoint. The top `Close all` is the sole batch owner and calls
+  `Close`, `Market close all`. The ordinary `Close` action opens the selected
+  Pencil sheet and submits one frozen integer percentage plus idempotency key
+  through `closeMarginPosition(position.id, intent)`. `Market close all`
+  remains a separate 100% card shortcut through the legacy-compatible
+  `closeMarginPosition(position.id)` call. Both actions affect only that card;
+  card actions must never call the batch endpoint. The top `Close all` is the
+  sole batch owner and calls
   `closeAllMarginPositions(currentPairOnly ? selectedProduct.id : undefined)`.
 - Destructive confirmations are mutually exclusive. Arming a card action clears
   the top batch intent, arming the top batch action clears the card intent, and
@@ -1174,6 +1180,9 @@ OS chrome and is not rendered by the web application.
 | Risk copy wraps at 320px | Grow the notice/body; keep submit visible and non-overlapping |
 | Position product does not advertise TP/SL | Keep the Pencil action visible and disabled; send no request |
 | Card `Close` or `Market close all` is confirmed | Close only that position ID through the single-position endpoint |
+| Sheet ratio changes | Update proportional preview only; send no request and do not mutate the authoritative position |
+| Final sheet confirmation reaches its threshold | Submit the frozen position ID, integer percentage, and idempotency key exactly once |
+| A partial-close request has an uncertain/failing response | Keep the same frozen ratio and key for retry; never generate a second settlement intent |
 | Top `Close all` is confirmed while current-pair scope is on | Send the selected product ID to the batch endpoint |
 | Top `Close all` is confirmed while current-pair scope is off | Omit `product_id` so the backend batch covers all visible account positions |
 | Another destructive intent is already armed | Replace it with the newly selected intent; never display two active confirmations |
@@ -1189,6 +1198,9 @@ OS chrome and is not rendered by the web application.
 - Good: arm `Market close all` on one card, confirm it, and send exactly one
   `closeMarginPosition` request for that card ID while every sibling position
   remains untouched.
+- Good: select 37%, slide the independent confirmation control, and submit
+  `{ percentage: 37, idempotency_key: <frozen> }`; after success reconcile the
+  remaining position and wallet from REST instead of subtracting locally.
 - Base: a new user receives 404 for settings and continues with the product's
   first supported mode and configured leverage level.
 - Base: TP/SL is not advertised, so its slot remains understandable but disabled
@@ -1200,6 +1212,9 @@ OS chrome and is not rendered by the web application.
 - Bad: wiring the card-level `Market close all` label to
   `closeAllMarginPositions(productId)`, or retaining a card confirmation after
   the user changes the batch scope.
+- Bad: treating the ratio rail as static decoration, deriving settlement from
+  JavaScript floating-point amounts, or creating a new idempotency key after an
+  uncertain response to the same frozen intent.
 
 ### 6. Tests Required
 
@@ -1621,3 +1636,37 @@ socket.addEventListener('message', (event) => {
   dispatchOnlyValidatedMarketFrame(event.data)
 })
 ```
+
+## 17. Mobile Margin Partial-Close Confirmation Contract
+
+```text
+POST /api/v1/margin/positions/:id/close
+explicit request body = { percentage: 1..100, idempotency_key: string }
+legacy full-close body = {}
+response authority = refreshed GET /api/v1/margin/wallets plus supported risk snapshots
+```
+
+- The sheet ratio is an independent native range from 1% through 100%, defaulting
+  to 100%. It changes only quantity/PnL previews until the final confirmation;
+  price, quantity, client-computed settlement, and preview amounts are never sent.
+- Opening or dragging below the UI confirmation threshold is local-only and
+  sends no HTTP request. Crossing the bottom confirmation threshold freezes the
+  current position id, integer percentage, and idempotency key, then calls
+  `closeMarginPosition(position.id, intent)` exactly once; an in-flight guard
+  rejects additional pointer, keyboard, or card actions.
+- Mark price, position quantity, and estimated PnL shown before confirmation
+  come from the server risk snapshot. The current ticker may fill only a
+  missing positive mark-price display; it does not become a settlement input.
+- A successful mutation triggers foreground wallet/position reconciliation.
+  The sheet closes after success even if a private position event arrives
+  first. A failed or uncertain mutation keeps the sheet open, displays the
+  normalized API error, resets only the confirmation slider, and reuses the
+  frozen percentage and idempotency key for an explicit retry.
+- The backend allocates the percentage from the row-locked remaining exposure,
+  persists one immutable close execution, and commits wallet delta, ledger,
+  position remainder/terminal state, and cross-account version together. Same
+  key and request replays without another financial mutation; same key with a
+  different position or percentage conflicts.
+- The existing card-level Market close all action remains a separate explicit
+  two-step 100% shortcut using the legacy empty request. The workspace-level
+  Close all action remains the only batch endpoint consumer.

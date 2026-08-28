@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "Mobile 质量门禁与触控目标检查"}
+{"file": ".trellis/tasks/08-28-mobile-margin-close-slide-parity/prd.md", "reason": "逐项核对平仓弹窗与拖动确认验收标准"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "核对单仓部分平仓请求边界、服务端权威数据与对账流程"}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "核对弹窗焦点、关闭语义与中英文固定文案"}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "核对 Pencil 几何、主题、安全区与拖动防误触合同"}
+{"file": ".trellis/tasks/08-28-mobile-margin-close-slide-parity/research/pencil-close-design.md", "reason": "核对当前 Pencil 浅色/深色选稿的尺寸、颜色与真实数据映射"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端架构、注释与质量门禁"}
+{"file": ".trellis/spec/backend/margin-trading-actions.md", "reason": "核对部分平仓资金、幂等、事件与并发合同"}
+{"file": ".trellis/spec/backend/wallet-amount-precision.md", "reason": "核对部分平仓收益即时入账、终态去重与跨日归属"}

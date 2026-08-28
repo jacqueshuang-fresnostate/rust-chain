@@ -16,7 +16,8 @@ use crate::{
     modules::{
         events::{EventBroadcastHub, EventBroadcastMessage},
         margin::domain::{
-            MarkedCrossMarginPosition, evaluate_margin_position_risk, evaluate_marked_cross_margin,
+            MarkedCrossMarginPosition, accumulate_margin_realized_pnl,
+            evaluate_margin_position_risk, evaluate_marked_cross_margin,
         },
         margin::infrastructure::{
             apply_cross_margin_account_settlement, credit_margin_position_amount,
@@ -132,6 +133,8 @@ struct LockedCrossMarginPosition {
     margin_amount: BigDecimal,
     notional_amount: BigDecimal,
     interest_amount: BigDecimal,
+    /// 此前主动部分平仓已经落账的累计已实现盈亏，终态强平时只能追加，不能覆盖。
+    realized_pnl: Option<BigDecimal>,
     /// 为 NULL 表示未成交，全仓强平遇到这种数据视为异常并中止整个账户。
     entry_price: Option<BigDecimal>,
     maintenance_margin_rate: BigDecimal,
@@ -152,6 +155,8 @@ struct LockedMarginPosition {
     margin_amount: BigDecimal,
     notional_amount: BigDecimal,
     interest_amount: BigDecimal,
+    /// 此前主动部分平仓已经落账的累计已实现盈亏，终态强平时只能追加，不能覆盖。
+    realized_pnl: Option<BigDecimal>,
     /// 加锁瞬间的状态，非 opened 说明已被平仓或撤销，回滚跳过。
     status: String,
     entry_price: Option<BigDecimal>,
@@ -190,6 +195,7 @@ struct MarginLiquidationEvent {
     entry_price: BigDecimal,
     /// 触发强平时采用的标记价，同时被写为仓位的退出价。
     mark_price: BigDecimal,
+    /// 仓位截至本次强平的累计已实现盈亏；强平审计表仍只记录本次剩余切片盈亏。
     realized_pnl: BigDecimal,
     /// 逐仓是真实入账的非负返还额；全仓强平按全扣政策恒为零。
     payout_amount: BigDecimal,
@@ -624,6 +630,8 @@ async fn liquidate_position_by_id(
         tx.rollback().await?;
         return Ok(LiquidationOutcome::Skipped);
     }
+    let cumulative_realized_pnl =
+        accumulate_margin_realized_pnl(position.realized_pnl.as_ref(), &risk_state.realized_pnl);
 
     let payout_amount = non_negative_amount(&risk_state.equity);
     credit_margin_position_amount(
@@ -659,7 +667,7 @@ async fn liquidate_position_by_id(
     .bind(now.naive_utc())
     .bind(now.naive_utc())
     .bind(&mark.price)
-    .bind(&risk_state.realized_pnl)
+    .bind(&cumulative_realized_pnl)
     .bind(position.id)
     .execute(&mut *tx)
     .await?;
@@ -680,7 +688,7 @@ async fn liquidate_position_by_id(
         interest_amount: position.interest_amount,
         entry_price: entry_price.clone(),
         mark_price: mark.price.clone(),
-        realized_pnl: risk_state.realized_pnl,
+        realized_pnl: cumulative_realized_pnl,
         payout_amount,
         reason: "maintenance_margin",
         liquidated_at: now,
@@ -718,7 +726,7 @@ async fn liquidate_cross_account(
         r#"SELECT positions.id, positions.user_id, positions.product_id, positions.pair_id,
                   positions.margin_asset, positions.wallet_scope, positions.direction,
                   positions.margin_amount, positions.notional_amount, positions.interest_amount,
-                  positions.entry_price, products.maintenance_margin_rate
+                  positions.realized_pnl, positions.entry_price, products.maintenance_margin_rate
            FROM margin_positions positions
            INNER JOIN margin_products products ON products.id = positions.product_id
            WHERE positions.user_id = ? AND positions.margin_asset = ?
@@ -826,6 +834,8 @@ async fn liquidate_cross_account(
         .zip(mark_snapshots)
     {
         let realized_pnl = risk_state.realized_pnl;
+        let cumulative_realized_pnl =
+            accumulate_margin_realized_pnl(position.realized_pnl.as_ref(), &realized_pnl);
         let maintenance_margin = risk_state.maintenance_margin;
         let payout_amount = BigDecimal::from(0).with_scale(18);
         let position_equity = (position.margin_amount.clone() + realized_pnl.clone()
@@ -857,7 +867,7 @@ async fn liquidate_cross_account(
         .bind(now.naive_utc())
         .bind(now.naive_utc())
         .bind(&mark_price)
-        .bind(&realized_pnl)
+        .bind(&cumulative_realized_pnl)
         .bind(position.id)
         .execute(&mut *tx)
         .await?;
@@ -878,7 +888,7 @@ async fn liquidate_cross_account(
             interest_amount: position.interest_amount.clone(),
             entry_price,
             mark_price,
-            realized_pnl,
+            realized_pnl: cumulative_realized_pnl,
             payout_amount,
             reason: "cross_maintenance_margin",
             liquidated_at: now,
@@ -946,7 +956,7 @@ async fn lock_position_by_id(
     sqlx::query_as::<_, LockedMarginPosition>(
         r#"SELECT positions.id, positions.user_id, positions.product_id, positions.pair_id,
                   positions.margin_asset, positions.wallet_scope, positions.direction, positions.margin_amount,
-                  positions.notional_amount, positions.interest_amount, positions.status,
+                  positions.notional_amount, positions.interest_amount, positions.realized_pnl, positions.status,
                   positions.entry_price, products.maintenance_margin_rate
            FROM margin_positions positions
            INNER JOIN margin_products products ON products.id = positions.product_id

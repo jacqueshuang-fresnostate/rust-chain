@@ -16,7 +16,12 @@ use redis::AsyncCommands;
 use secrecy::SecretString;
 use serde_json::Value;
 use sqlx::{MySql, MySqlPool, Transaction, mysql::MySqlPoolOptions, types::Json as SqlxJson};
-use std::{collections::HashSet, error::Error, str::FromStr, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+    str::FromStr,
+    time::Duration,
+};
 use tokio::{sync::Mutex, time::timeout};
 use uuid::Uuid;
 
@@ -439,8 +444,9 @@ async fn margin_liquidation_worker_liquidates_unsafe_position_idempotently()
     let now = Utc.with_ymd_and_hms(1991, 1, 1, 12, 0, 0).unwrap();
     let fixture =
         seed_margin_position(&pool, "long", Some(&decimal("100.000000000000000000"))).await?;
-    sqlx::query("UPDATE margin_positions SET interest_amount = ? WHERE id = ?")
+    sqlx::query("UPDATE margin_positions SET interest_amount = ?, realized_pnl = ? WHERE id = ?")
         .bind(decimal("1.250000000000000000"))
+        .bind(decimal("5.250000000000000000"))
         .bind(fixture.position_id)
         .execute(&pool)
         .await?;
@@ -472,7 +478,7 @@ async fn margin_liquidation_worker_liquidates_unsafe_position_idempotently()
     assert_eq!(event["notional_amount"], "100.000000000000000000");
     assert_eq!(event["entry_price"], "100.000000000000000000");
     assert_eq!(event["mark_price"], "84.000000000000000000");
-    assert_eq!(event["realized_pnl"], "-16.000000000000000000");
+    assert_eq!(event["realized_pnl"], "-10.750000000000000000");
     assert_eq!(event["interest_amount"], "1.250000000000000000");
     assert_eq!(event["payout_amount"], "2.750000000000000000");
     assert_eq!(event["reason"], "maintenance_margin");
@@ -486,7 +492,7 @@ async fn margin_liquidation_worker_liquidates_unsafe_position_idempotently()
         .await?;
     assert_eq!(status, "liquidated");
     assert_eq!(exit_price, Some(decimal("84.000000000000000000")));
-    assert_eq!(realized_pnl, Some(decimal("-16.000000000000000000")));
+    assert_eq!(realized_pnl, Some(decimal("-10.750000000000000000")));
     let (available,): (BigDecimal,) =
         sqlx::query_as("SELECT available FROM wallet_accounts WHERE user_id = ? AND asset_id = ?")
             .bind(fixture.user_id)
@@ -587,10 +593,12 @@ async fn cross_margin_liquidation_settles_portfolio_once_without_minting_positiv
     .await?;
     sqlx::query(
         r#"UPDATE margin_positions
-           SET margin_mode = 'cross', wallet_scope = 'margin', interest_amount = ?
+           SET margin_mode = 'cross', wallet_scope = 'margin', interest_amount = ?,
+               realized_pnl = ?
            WHERE id = ?"#,
     )
     .bind(decimal("17.000000000000000000"))
+    .bind(decimal("3.000000000000000000"))
     .bind(fixture.position_id)
     .execute(&pool)
     .await?;
@@ -634,6 +642,7 @@ async fn cross_margin_liquidation_settles_portfolio_once_without_minting_positiv
     assert_eq!(summary.liquidated, 1);
     assert_eq!(summary.failed, 0);
     let mut event_position_ids = Vec::new();
+    let mut event_realized_pnl = HashMap::new();
     for _ in 0..2 {
         let event_message = timeout(Duration::from_millis(100), private_events.recv()).await??;
         let event: Value = serde_json::from_str(event_message.payload())?;
@@ -641,12 +650,29 @@ async fn cross_margin_liquidation_settles_portfolio_once_without_minting_positiv
         assert_eq!(event["payout_amount"], "0.000000000000000000");
         assert_eq!(event["reason"], "cross_maintenance_margin");
         assert_eq!(event["mark_price"], "80.000000000000000000");
-        event_position_ids.push(event["position_id"].as_u64().unwrap());
+        let position_id = event["position_id"].as_u64().unwrap();
+        event_position_ids.push(position_id);
+        event_realized_pnl.insert(
+            position_id,
+            event["realized_pnl"].as_str().unwrap().to_owned(),
+        );
     }
     event_position_ids.sort_unstable();
     assert_eq!(
         event_position_ids,
         vec![fixture.position_id, second_position_id]
+    );
+    assert_eq!(
+        event_realized_pnl
+            .get(&fixture.position_id)
+            .map(String::as_str),
+        Some("-17.000000000000000000")
+    );
+    assert_eq!(
+        event_realized_pnl
+            .get(&second_position_id)
+            .map(String::as_str),
+        Some("20.000000000000000000")
     );
     let liquidated_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM margin_positions WHERE id IN (?, ?) AND status = 'liquidated'",
@@ -656,6 +682,20 @@ async fn cross_margin_liquidation_settles_portfolio_once_without_minting_positiv
     .fetch_one(&pool)
     .await?;
     assert_eq!(liquidated_count, 2);
+    let persisted_realized_pnl: Vec<(u64, BigDecimal)> = sqlx::query_as(
+        "SELECT id, realized_pnl FROM margin_positions WHERE id IN (?, ?) ORDER BY id ASC",
+    )
+    .bind(fixture.position_id)
+    .bind(second_position_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(
+        persisted_realized_pnl,
+        vec![
+            (fixture.position_id, decimal("-17.000000000000000000")),
+            (second_position_id, decimal("20.000000000000000000")),
+        ]
+    );
     let (payout_sum, record_count, non_zero_payout_count): (BigDecimal, i64, i64) = sqlx::query_as(
         r#"SELECT COALESCE(SUM(payout_amount), 0), COUNT(*),
                   COUNT(CASE WHEN payout_amount <> 0 THEN 1 END)

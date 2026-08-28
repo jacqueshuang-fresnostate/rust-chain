@@ -24,6 +24,7 @@ import {
 } from 'lucide-vue-next'
 import AssetMark from '@/components/AssetMark.vue'
 import ContractTradeSheets from '@/components/ContractTradeSheets.vue'
+import MarginCloseSheet from '@/components/MarginCloseSheet.vue'
 import MobileMarketChart from '@/components/MobileMarketChart.vue'
 import OrderBookPanel from '@/components/OrderBookPanel.vue'
 import { apiErrorMessage, readAccessToken } from '@/api/client'
@@ -46,6 +47,7 @@ import {
   cancelMarginPosition,
   closeAllMarginPositions,
   closeMarginPosition,
+  createMarginCloseIdempotencyKey,
   createMarginOrderIdempotencyKey,
   fetchMarginPositionRisk,
   fetchMarginSetting,
@@ -103,6 +105,12 @@ type PositionActionType = 'close' | 'market-close-all' | 'cancel'
 interface PositionActionState {
   id: string
   type: PositionActionType
+}
+
+interface MarginCloseAttempt {
+  positionId: string
+  percentage: number
+  idempotencyKey: string
 }
 
 const route = useRoute()
@@ -164,6 +172,10 @@ const contractMoreMenu = ref<HTMLElement | null>(null)
 const contractWorkspace = ref<HTMLElement | null>(null)
 const positionActionSaving = ref<PositionActionState | null>(null)
 const armedPositionAction = ref<PositionActionState | null>(null)
+const marginClosePositionId = ref<string | null>(null)
+const marginCloseReturnFocus = ref<HTMLElement | null>(null)
+const marginCloseError = ref('')
+const marginCloseAttempt = ref<MarginCloseAttempt | null>(null)
 const bulkCloseArmed = ref(false)
 const bulkCloseSaving = ref(false)
 let marketRequestVersion = 0
@@ -606,7 +618,11 @@ function requestPrivateMarginReconciliation(): void {
 }
 
 function handlePrivateUserEvent(event: PrivateUserEvent): void {
-  if (event.type !== 'margin.position.liquidated') return
+  if (![
+    'margin.position.liquidated',
+    'margin.position.partially_closed',
+    'margin.position.closed',
+  ].includes(event.type)) return
   requestPrivateMarginReconciliation()
 }
 
@@ -978,6 +994,38 @@ function riskForPosition(position: MarginPosition): MarginPositionRisk | undefin
   return marginRiskSnapshots.value[position.id]
 }
 
+const marginClosePosition = computed(() => (
+  marginClosePositionId.value
+    ? filledMarginPositions.value.find((position) => position.id === marginClosePositionId.value)
+    : undefined
+))
+const marginCloseSheetOpen = computed(() => marginClosePosition.value !== undefined)
+const marginCloseProduct = computed(() => marginClosePosition.value
+  ? productForPosition(marginClosePosition.value)
+  : undefined)
+const marginCloseSymbol = computed(() => marginClosePosition.value
+  ? symbolForPosition(marginClosePosition.value)
+  : pairSymbol.value)
+const marginCloseBaseAsset = computed(() => marginCloseSymbol.value.split('/')[0] || baseAsset.value)
+const marginCloseQuoteAsset = computed(() => marginCloseSymbol.value.split('/')[1] || quoteAsset.value)
+const marginCloseRisk = computed(() => marginClosePosition.value
+  ? riskForPosition(marginClosePosition.value)
+  : undefined)
+const marginCloseMarkPrice = computed(() => {
+  const riskPrice = marginCloseRisk.value?.markPrice
+  if (Number.isFinite(riskPrice) && Number(riskPrice) > 0) return Number(riskPrice)
+  const marketPrice = marketStore.tickerFor(marginCloseSymbol.value)?.lastPrice
+  return Number.isFinite(marketPrice) && Number(marketPrice) > 0 ? Number(marketPrice) : null
+})
+const marginCloseQuantity = computed(() => {
+  const value = marginCloseRisk.value?.positionQuantity
+  return Number.isFinite(value) && Number(value) >= 0 ? Number(value) : null
+})
+const marginCloseEstimatedPnl = computed(() => {
+  const value = marginCloseRisk.value?.unrealizedPnl
+  return Number.isFinite(value) ? Number(value) : null
+})
+
 function resolvePositionRiskDisplayMetrics(position: MarginPosition): MarginPositionRiskMetrics {
   const risk = riskForPosition(position)
   return resolveMarginPositionRiskMetrics({
@@ -1059,7 +1107,83 @@ function liquidationDistanceWidth(position: MarginPosition): string {
   return `${Math.min(100, Math.max(4, distance * 100))}%`
 }
 
-async function performPositionAction(position: MarginPosition, action: PositionActionType): Promise<void> {
+function openMarginCloseSheet(position: MarginPosition, event?: Event): void {
+  if (!session.isAuthenticated) {
+    openLogin()
+    return
+  }
+  if (positionActionSaving.value || bulkCloseSaving.value) return
+  const trigger = event?.currentTarget
+  marginCloseReturnFocus.value = trigger instanceof HTMLElement ? trigger : null
+  marginCloseError.value = ''
+  marginCloseAttempt.value = null
+  armedPositionAction.value = null
+  bulkCloseArmed.value = false
+  marginClosePositionId.value = position.id
+}
+
+function closeMarginCloseSheet(): void {
+  if (positionActionSaving.value?.type === 'close') return
+  marginClosePositionId.value = null
+  marginCloseError.value = ''
+  marginCloseAttempt.value = null
+}
+
+async function confirmMarginClose(percentage: number): Promise<void> {
+  const position = marginClosePosition.value
+  if (!position || positionActionSaving.value || bulkCloseSaving.value) return
+  if (!session.isAuthenticated) {
+    closeMarginCloseSheet()
+    openLogin()
+    return
+  }
+
+  positionActionSaving.value = { id: position.id, type: 'close' }
+  marginCloseError.value = ''
+  feedback.value = ''
+  const existingAttempt = marginCloseAttempt.value
+  const attempt = existingAttempt
+    && existingAttempt.positionId === position.id
+    && existingAttempt.percentage === percentage
+    ? existingAttempt
+    : {
+        positionId: position.id,
+        percentage,
+        idempotencyKey: createMarginCloseIdempotencyKey(),
+      }
+  marginCloseAttempt.value = attempt
+  let closed = false
+  try {
+    await closeMarginPosition(position.id, {
+      percentage: attempt.percentage,
+      idempotencyKey: attempt.idempotencyKey,
+    })
+    closed = true
+    setFeedback(
+      percentage === 100
+        ? t('trade.positionClosed')
+        : t('trade.positionPartiallyClosed', { percentage }),
+      'success',
+    )
+    await loadTradingBalances()
+  } catch (reason) {
+    const message = apiErrorMessage(reason, t('trade.positionCloseFailed'))
+    marginCloseError.value = message
+    setFeedback(message)
+  } finally {
+    positionActionSaving.value = null
+    if (closed) {
+      marginClosePositionId.value = null
+      marginCloseError.value = ''
+      marginCloseAttempt.value = null
+    }
+  }
+}
+
+async function performPositionAction(
+  position: MarginPosition,
+  action: Exclude<PositionActionType, 'close'>,
+): Promise<void> {
   if (!session.isAuthenticated) {
     openLogin()
     return
@@ -1071,7 +1195,7 @@ async function performPositionAction(position: MarginPosition, action: PositionA
     return
   }
 
-  const closesPosition = action === 'close' || action === 'market-close-all'
+  const closesPosition = action === 'market-close-all'
   positionActionSaving.value = { id: position.id, type: action }
   feedback.value = ''
   try {
@@ -1339,6 +1463,8 @@ watch(pairSymbol, (symbol) => {
   marketDataPanel.value = 'orderBook'
   spotChartOpen.value = false
   contractMoreOpen.value = false
+  marginClosePositionId.value = null
+  marginCloseError.value = ''
   armedPositionAction.value = null
   bulkCloseArmed.value = false
   void loadMarketData()
@@ -1346,6 +1472,8 @@ watch(pairSymbol, (symbol) => {
 
 watch(() => route.query.mode, (nextMode) => {
   mode.value = nextMode === 'contract' ? 'contract' : 'spot'
+  marginClosePositionId.value = null
+  marginCloseError.value = ''
   if (mode.value === 'contract') closeSpotOrderTypeSheet()
   else {
     contractSheet.value = null
@@ -1387,6 +1515,12 @@ watch(() => [mode.value, session.token] as const, (nextContext, previousContext)
   void loadMarginProducts()
   void loadTradingBalances()
 }, { immediate: true, flush: 'sync' })
+
+watch(marginClosePosition, (position) => {
+  if (!marginClosePositionId.value || position) return
+  marginClosePositionId.value = null
+  marginCloseError.value = ''
+})
 
 watch(currentPrice, (value) => {
   if (!price.value && value > 0) price.value = String(value)
@@ -2247,12 +2381,14 @@ onBeforeUnmount(() => {
                   class="contract-position-action"
                   data-position-action="close"
                   type="button"
-                  :class="{ armed: armedPositionAction?.id === position.id && armedPositionAction.type === 'close' }"
+                  aria-haspopup="dialog"
+                  :aria-expanded="marginClosePositionId === position.id"
+                  aria-controls="margin-close-dialog"
                   :aria-busy="positionActionSaving?.id === position.id && positionActionSaving.type === 'close'"
                   :disabled="positionActionSaving !== null || bulkCloseSaving"
-                  @click="performPositionAction(position, 'close')"
+                  @click="openMarginCloseSheet(position, $event)"
                 >
-                  <span>{{ positionActionSaving?.id === position.id && positionActionSaving.type === 'close' ? t('orders.processing') : armedPositionAction?.id === position.id && armedPositionAction.type === 'close' ? t('trade.confirmClosePosition') : t('trade.closePositionShort') }}</span>
+                  <span>{{ positionActionSaving?.id === position.id && positionActionSaving.type === 'close' ? t('orders.processing') : t('trade.closePositionShort') }}</span>
                 </button>
                 <button
                   class="contract-position-market-close-all"
@@ -2326,6 +2462,24 @@ onBeforeUnmount(() => {
       @apply-margin-mode="applyContractMarginMode"
       @select-order-type="selectContractOrderType"
       @retry-products="loadMarginProducts"
+    />
+
+    <MarginCloseSheet
+      :open="marginCloseSheetOpen"
+      :saving="positionActionSaving?.type === 'close'"
+      :return-focus="marginCloseReturnFocus"
+      :symbol="marginCloseSymbol"
+      :direction="marginClosePosition?.direction || 'long'"
+      :margin-mode="marginClosePosition?.marginMode || 'isolated'"
+      :leverage="marginClosePosition?.leverage || marginCloseProduct?.maxLeverage || 1"
+      :base-asset="marginCloseBaseAsset"
+      :quote-asset="marginCloseQuoteAsset"
+      :mark-price="marginCloseMarkPrice"
+      :position-quantity="marginCloseQuantity"
+      :estimated-pnl="marginCloseEstimatedPnl"
+      :error="marginCloseError"
+      @confirm="confirmMarginClose"
+      @close="closeMarginCloseSheet"
     />
 
     <Teleport to="body">

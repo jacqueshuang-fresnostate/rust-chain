@@ -1245,3 +1245,45 @@ resolveRootRouteKey('seconds', undefined) // null: raised secondary action
 - Android verification must inspect the compiled `MainActivity` callback and,
   when a device is available, test the visual state during an in-progress
   boundary drag. Checking only the final JavaScript `scrollY` is insufficient.
+
+## Margin Position Close Sheet Contract
+
+- The Contract position-card `Close` action opens the body-Teleported bottom
+  sheet mapped from Pencil light frame `ajSJF` and dark frame `DGiNR`. Opening
+  the sheet is read-only and must not call the close endpoint.
+- Keep the selected 390px geometry as the reference: a 500px bottom sheet,
+  24px top corners, 20px horizontal content inset, 58px price and quantity
+  fields, 24px percentage rail, 69px position summary, and 62px confirmation
+  rail. At 340px and below the horizontal inset may contract to 16px; at every
+  supported width the sheet remains full-width with zero page overflow.
+- Render pair, direction, margin mode, leverage, mark price, position quantity,
+  and estimated PnL from the selected authoritative position/risk snapshot.
+  Missing fields render `--`; Pencil sample values must never become fallbacks.
+- `margin-close-sheet__ratio` is the position-size selector, not decorative
+  tick marks. It uses native range semantics over integer percentages
+  `1..=100`, defaults to 100 on every fresh open, supports touch/pointer and
+  keyboard input, and exposes localized current-value text. Moving it updates
+  the displayed closable quantity, proportional estimated PnL, confirmation
+  copy, and visual fill without issuing a request.
+- The selected ratio is frozen together with position ID and one idempotency
+  key when final confirmation starts. Busy state disables further ratio edits;
+  a failed or uncertain request keeps the same ratio/key for an exact retry,
+  while closing/reopening the sheet starts a new intent.
+- The pink 62px action is a pointer/keyboard slider, not a click-to-submit
+  button. A pointer gesture must start on the circular handle; tapping or
+  pressing the track itself emits nothing. Pointer release below normalized
+  progress `0.9` resets to zero and emits nothing; release at or above `0.9`
+  emits exactly one confirmation. Use pointer capture, `touch-action: none`,
+  request/emit guards, and reset on cancel, failure, disappearance of the
+  target position, or sheet reopen.
+- The pink confirmation rail separately exposes slider semantics (`role=slider`,
+  0..100 progress, localized value text). Arrow keys adjust confirmation by ten
+  percent, Home/End set boundaries, and Enter or Space confirms only after its
+  progress already reached the threshold. It must never be reused as the
+  position-size selector.
+- The close button is the initial safe focus. Overlay, close button, and Escape
+  dismiss only while idle; Tab stays inside, body scrolling stays locked, and
+  focus returns to the exact position-card action. In-flight state blocks
+  dismissal and duplicate drags.
+- Preserve bottom safe area, reduced-motion fallback, both color themes, Lucide
+  icons, and zero horizontal overflow at 320x720, 390x844, and 448x900.

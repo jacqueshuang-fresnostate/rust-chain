@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "手机端共享控件、可访问性与验证合同"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "单仓平仓 API、服务端数据真实性与对账合同"}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "弹窗与双语固定文案合同"}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "移动端主题、安全区、触控与覆盖层合同"}
+{"file": ".trellis/tasks/08-28-mobile-margin-close-slide-parity/research/pencil-close-design.md", "reason": "当前 Pencil 浅色/深色选稿几何、颜色与数据映射"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端分层、迁移与质量入口"}
+{"file": ".trellis/spec/backend/margin-trading-actions.md", "reason": "部分平仓结算、幂等和资金流水合同"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "新增不可变迁移与金额列约束"}
+{"file": ".trellis/spec/backend/realtime-websockets.md", "reason": "部分平仓提交后的私有刷新提示"}
+{"file": ".trellis/spec/backend/wallet-amount-precision.md", "reason": "部分平仓执行与终态剩余切片的今日收益去重口径"}

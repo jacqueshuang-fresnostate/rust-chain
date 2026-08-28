@@ -229,7 +229,10 @@ test('TradeView scopes the private stream to mounted authenticated contract mode
   assert.match(streamSetup, /onOpen: requestPrivateMarginReconciliation/)
   assert.match(streamSetup, /onEvent: handlePrivateUserEvent/)
 
-  assert.match(eventHandler, /event\.type !== 'margin\.position\.liquidated'/)
+  assert.match(eventHandler, /'margin\.position\.liquidated'/)
+  assert.match(eventHandler, /'margin\.position\.partially_closed'/)
+  assert.match(eventHandler, /'margin\.position\.closed'/)
+  assert.match(eventHandler, /\.includes\(event\.type\)/)
   assert.match(eventHandler, /requestPrivateMarginReconciliation\(\)/)
   assert.doesNotMatch(eventHandler, /marginWallets\.value|marginPositions\.value|marginRiskSnapshots\.value/)
   assert.match(refreshHint, /!viewMounted[\s\S]*?!session\.token[\s\S]*?mode\.value !== 'contract'/)

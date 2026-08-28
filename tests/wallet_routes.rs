@@ -931,6 +931,100 @@ async fn wallet_today_return_aggregates_realized_sources_and_marks_missing_ticke
     .bind(period_start_at)
     .execute(&pool)
     .await?;
+    // 尚未终态的部分平仓必须在执行当日立即进入收益，不等后续全平。
+    let opened_partial_position_id = sqlx::query(
+        r#"INSERT INTO margin_positions
+           (user_id, product_id, pair_id, margin_asset, direction, margin_amount,
+            leverage, notional_amount, interest_amount, status, idempotency_key,
+            entry_price, realized_pnl)
+           VALUES (?, ?, ?, ?, 'long', 60, 2, 120, 3, 'opened', ?, 100, 7)"#,
+    )
+    .bind(user_id)
+    .bind(margin_product_id)
+    .bind(pair_id)
+    .bind(usdt_asset_id)
+    .bind(format!("today-return-open-partial-margin-{suffix}"))
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    sqlx::query(
+        r#"INSERT INTO margin_position_close_executions
+           (user_id, position_id, idempotency_key, close_percentage,
+            close_margin_amount, close_notional_amount, close_borrowed_amount,
+            close_interest_amount, exit_price, realized_pnl, settlement_amount,
+            fully_closed, created_at)
+           VALUES (?, ?, ?, 40, 40, 80, 0, 2, 100, 7, 45, FALSE, ?)"#,
+    )
+    .bind(user_id)
+    .bind(opened_partial_position_id)
+    .bind(format!("today-return-open-partial-execution-{suffix}"))
+    .bind(period_start_at)
+    .execute(&pool)
+    .await?;
+
+    // 历史部分平仓后通过兼容接口终态关闭：执行表计历史切片，终态行只补剩余切片。
+    let legacy_terminal_position_id = sqlx::query(
+        r#"INSERT INTO margin_positions
+           (user_id, product_id, pair_id, margin_asset, direction, margin_amount,
+            leverage, notional_amount, interest_amount, status, idempotency_key,
+            entry_price, exit_price, realized_pnl, closed_at)
+           VALUES (?, ?, ?, ?, 'long', 75, 2, 150, 3, 'closed', ?, 100, 110, 10, ?)"#,
+    )
+    .bind(user_id)
+    .bind(margin_product_id)
+    .bind(pair_id)
+    .bind(usdt_asset_id)
+    .bind(format!("today-return-legacy-terminal-margin-{suffix}"))
+    .bind(period_start_at)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    sqlx::query(
+        r#"INSERT INTO margin_position_close_executions
+           (user_id, position_id, idempotency_key, close_percentage,
+            close_margin_amount, close_notional_amount, close_borrowed_amount,
+            close_interest_amount, exit_price, realized_pnl, settlement_amount,
+            fully_closed, created_at)
+           VALUES (?, ?, ?, 25, 25, 50, 0, 1, 105, 4, 28, FALSE, ?)"#,
+    )
+    .bind(user_id)
+    .bind(legacy_terminal_position_id)
+    .bind(format!("today-return-legacy-partial-execution-{suffix}"))
+    .bind(period_start_at)
+    .execute(&pool)
+    .await?;
+
+    // 显式 100% 平仓的终态仓位和 terminal 执行是同一事实，只能统计执行表一次。
+    let explicit_terminal_position_id = sqlx::query(
+        r#"INSERT INTO margin_positions
+           (user_id, product_id, pair_id, margin_asset, direction, margin_amount,
+            leverage, notional_amount, interest_amount, status, idempotency_key,
+            entry_price, exit_price, realized_pnl, closed_at)
+           VALUES (?, ?, ?, ?, 'long', 20, 2, 40, 1, 'closed', ?, 100, 105, 2, ?)"#,
+    )
+    .bind(user_id)
+    .bind(margin_product_id)
+    .bind(pair_id)
+    .bind(usdt_asset_id)
+    .bind(format!("today-return-explicit-terminal-margin-{suffix}"))
+    .bind(period_start_at)
+    .execute(&pool)
+    .await?
+    .last_insert_id();
+    sqlx::query(
+        r#"INSERT INTO margin_position_close_executions
+           (user_id, position_id, idempotency_key, close_percentage,
+            close_margin_amount, close_notional_amount, close_borrowed_amount,
+            close_interest_amount, exit_price, realized_pnl, settlement_amount,
+            fully_closed, created_at)
+           VALUES (?, ?, ?, 100, 20, 40, 0, 1, 105, 2, 21, TRUE, ?)"#,
+    )
+    .bind(user_id)
+    .bind(explicit_terminal_position_id)
+    .bind(format!("today-return-explicit-terminal-execution-{suffix}"))
+    .bind(period_start_at)
+    .execute(&pool)
+    .await?;
     sqlx::query(
         r#"INSERT INTO margin_positions
            (user_id, product_id, pair_id, margin_asset, direction, margin_amount,
@@ -1075,9 +1169,9 @@ async fn wallet_today_return_aggregates_realized_sources_and_marks_missing_ticke
     let complete_payload = body_json(complete_response).await?;
     assert_eq!(complete_payload["scope"], "realized");
     assert_eq!(complete_payload["reporting_asset"], "USDT");
-    assert_eq!(complete_payload["amount"], "6.500000000000000000");
-    assert_eq!(complete_payload["basis_amount"], "171.000000000000000000");
-    assert_eq!(complete_payload["rate"], "0.038011695906432748");
+    assert_eq!(complete_payload["amount"], "18.500000000000000000");
+    assert_eq!(complete_payload["basis_amount"], "331.000000000000000000");
+    assert_eq!(complete_payload["rate"], "0.055891238670694864");
     assert_eq!(complete_payload["status"], "complete");
     assert_eq!(complete_payload["missing_price_assets"], json!([]));
 
@@ -1151,7 +1245,7 @@ async fn wallet_today_return_aggregates_realized_sources_and_marks_missing_ticke
         .await?;
     let partial_payload = body_json(partial_response).await?;
     assert_eq!(partial_payload["status"], "partial");
-    assert_eq!(partial_payload["amount"], "6.500000000000000000");
+    assert_eq!(partial_payload["amount"], "18.500000000000000000");
     assert_eq!(
         partial_payload["missing_price_assets"],
         json!([base_symbol.clone()])
@@ -1205,6 +1299,14 @@ async fn wallet_today_return_aggregates_realized_sources_and_marks_missing_ticke
         .execute(&pool)
         .await?;
     sqlx::query("DELETE FROM prediction_orders WHERE user_id = ?")
+        .bind(other_user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM margin_position_close_executions WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM margin_position_close_executions WHERE user_id = ?")
         .bind(other_user_id)
         .execute(&pool)
         .await?;

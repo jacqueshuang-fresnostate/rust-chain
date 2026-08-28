@@ -65,8 +65,12 @@ pub(crate) struct LockedMarginPositionRow {
     pub(crate) margin_amount: BigDecimal,
     /// 名义价值，平仓时按它与价格变动比例折算已实现盈亏。
     pub(crate) notional_amount: BigDecimal,
+    /// 尚未释放的借款本金，部分平仓必须同比例减少以保持后续计息敞口一致。
+    pub(crate) borrowed_amount: BigDecimal,
     /// 已计提的累计利息，平仓时从权益中扣除。
     pub(crate) interest_amount: BigDecimal,
+    /// 先前部分平仓累计实现的盈亏；最终全平在此基础上追加本次切片结果。
+    pub(crate) realized_pnl: Option<BigDecimal>,
     /// 入场价，为 NULL 表示仓位未成交，是撤销与平仓的分流依据。
     pub(crate) entry_price: Option<BigDecimal>,
     /// 加锁瞬间的仓位状态，非 opened 时按终态重放处理而不重复结算。
@@ -402,8 +406,9 @@ pub(crate) async fn lock_user_position_by_id(
         r#"SELECT positions.id, positions.pair_id, pairs.symbol,
                   positions.margin_asset, positions.wallet_scope, positions.margin_mode,
                   positions.direction, positions.margin_amount,
-                  positions.notional_amount, positions.interest_amount, positions.entry_price,
-                  positions.status
+                  positions.notional_amount, positions.borrowed_amount,
+                  positions.interest_amount, positions.realized_pnl,
+                  positions.entry_price, positions.status
            FROM margin_positions positions
            INNER JOIN trading_pairs pairs ON pairs.id = positions.pair_id
            WHERE positions.id = ? AND positions.user_id = ?

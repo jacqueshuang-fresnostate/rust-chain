@@ -42,14 +42,15 @@ use crate::{
                 AdminMarginPositionResponse, AdminMarginPositionsResponse,
                 AdminMarginProductsQuery, AdminMarginProductsResponse,
                 CancelAllMarginPositionsResponse, CancelMarginPositionResponse,
-                CloseAllMarginPositionsResponse, CloseMarginPositionResponse,
-                CreateMarginProductRequest, ListPositionsQuery, ListQuery,
-                MarginPositionDetailResponse, MarginPositionsResponse, MarginProductResponse,
-                MarginProductsResponse, MarginRiskSnapshotResponse, MarginUserSettingResponse,
-                MarginWalletsResponse, OpenMarginPositionRequest, OpenMarginPositionResponse,
-                ProductActionRequest, TransferMarginFundsRequest, TransferMarginFundsResponse,
-                UpdateMarginProductRequest, UpdateMarginProductStatusRequest,
-                UpdateUserLeverageRequest, UpdateUserMarginModeRequest,
+                CloseAllMarginPositionsResponse, CloseMarginPositionRequest,
+                CloseMarginPositionResponse, CreateMarginProductRequest, ListPositionsQuery,
+                ListQuery, MarginPositionDetailResponse, MarginPositionsResponse,
+                MarginProductResponse, MarginProductsResponse, MarginRiskSnapshotResponse,
+                MarginUserSettingResponse, MarginWalletsResponse, OpenMarginPositionRequest,
+                OpenMarginPositionResponse, ProductActionRequest, TransferMarginFundsRequest,
+                TransferMarginFundsResponse, UpdateMarginProductRequest,
+                UpdateMarginProductStatusRequest, UpdateUserLeverageRequest,
+                UpdateUserMarginModeRequest,
             },
         },
     },
@@ -375,13 +376,14 @@ async fn open_position(
     ))
 }
 
-/// 主动平掉当前用户的单个杠杆仓位，按服务端标记价结算盈亏并把权益写回对应钱包。
-/// 需要 Redis 取标记价；逐仓返还非负金额到开仓时记录的资金域，全仓则以有符号权益更新共享钱包。
-/// 仓位已是终态时按重放语义返回当前快照，不重复入账也不重复发事件。
+/// 主动平掉当前用户单个杠杆仓位的指定比例，缺省空请求保持历史 100% 全平语义。
+/// 显式比例必须携带幂等键；应用层按加锁后的剩余敞口和 Redis 权威标记价结算，客户端不上传金额或价格。
+/// 逐仓返还非负切片权益到原资金域，全仓以有符号切片权益更新共享钱包；同键重放不重复入账或发事件。
 async fn close_position(
     UserAuth(claims): UserAuth,
     State(state): State<AppState>,
     Path(position_id): Path<u64>,
+    request: Option<Json<CloseMarginPositionRequest>>,
 ) -> AppResult<Json<CloseMarginPositionResponse>> {
     let user_id = user_id_from_subject(&claims.sub)?;
     let pool = mysql_pool(&state)?;
@@ -392,6 +394,7 @@ async fn close_position(
             state.event_broadcast_hub.as_ref(),
             user_id,
             position_id,
+            request.map(|Json(request)| request).unwrap_or_default(),
         )
         .await?,
     ))

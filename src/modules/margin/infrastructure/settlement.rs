@@ -344,7 +344,7 @@ pub(crate) async fn apply_cross_margin_account_settlement(
     Ok(settlement)
 }
 
-/// 在结算事务内以 opened 条件原子写入关闭时间、退出价和已实现盈亏。
+/// 在结算事务内以 opened 条件原子写入关闭时间、退出价和包含历史部分执行的累计已实现盈亏。
 /// 受影响行不是一行即返回并发冲突，调用方必须回滚钱包结算与流水。
 ///
 /// WHERE 同时约束仓位主键、用户标识和 status = 'opened'，把状态检查与状态迁移合成一条语句，
@@ -357,7 +357,7 @@ pub(crate) async fn mark_position_closed(
     position_id: u64,
     closed_at: DateTime<Utc>,
     exit_price: &BigDecimal,
-    realized_pnl: &BigDecimal,
+    cumulative_realized_pnl: &BigDecimal,
 ) -> AppResult<()> {
     let update_position = sqlx::query(
         r#"UPDATE margin_positions
@@ -367,7 +367,7 @@ pub(crate) async fn mark_position_closed(
     )
     .bind(closed_at.naive_utc())
     .bind(exit_price)
-    .bind(realized_pnl)
+    .bind(cumulative_realized_pnl)
     .bind(position_id)
     .bind(user_id)
     .execute(&mut **tx)
@@ -375,6 +375,56 @@ pub(crate) async fn mark_position_closed(
     if update_position.rows_affected() != 1 {
         return Err(AppError::Conflict(
             "margin position close status changed concurrently".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// 部分平仓后需要写回仓位行的完整剩余快照；字段由领域切片一次性生成，避免调用点错位传参。
+pub(crate) struct MarginPositionPartialCloseWrite<'a> {
+    /// 继续作为仓位抵押物的保证金。
+    pub(crate) remaining_margin_amount: &'a BigDecimal,
+    /// 继续承担价格风险的名义价值。
+    pub(crate) remaining_notional_amount: &'a BigDecimal,
+    /// 继续计息的借款本金。
+    pub(crate) remaining_borrowed_amount: &'a BigDecimal,
+    /// 尚未被本次结算扣除的累计利息。
+    pub(crate) remaining_interest_amount: &'a BigDecimal,
+    /// 包含历史部分执行和本次切片结果的累计已实现盈亏。
+    pub(crate) cumulative_realized_pnl: &'a BigDecimal,
+}
+
+/// 在部分平仓事务内原子缩减四类剩余敞口，并写入累计已实现盈亏但保持仓位 opened。
+/// 调用方已持有仓位锁；WHERE 仍约束用户、状态和正入场价，影响行数不是一则回滚钱包与执行记录。
+/// 所有剩余金额必须由领域切片通过原值减关闭份额得到，本函数不接受比例也不自行圆整，
+/// 从而保证保证金、名义价值、借款本金和已计提利息分别守恒。`interest_accrued_at` 不重置，
+/// 因为现有时间点已经标记上一次计提边界，后续 worker 只对缩减后的借款本金继续计息。
+pub(crate) async fn mark_position_partially_closed(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    position_id: u64,
+    write: MarginPositionPartialCloseWrite<'_>,
+) -> AppResult<()> {
+    let update_position = sqlx::query(
+        r#"UPDATE margin_positions
+           SET margin_amount = ?, notional_amount = ?, borrowed_amount = ?,
+               interest_amount = ?, realized_pnl = ?,
+               next_liquidation_attempt_at = NULL
+           WHERE id = ? AND user_id = ? AND status = 'opened'
+             AND entry_price IS NOT NULL"#,
+    )
+    .bind(write.remaining_margin_amount)
+    .bind(write.remaining_notional_amount)
+    .bind(write.remaining_borrowed_amount)
+    .bind(write.remaining_interest_amount)
+    .bind(write.cumulative_realized_pnl)
+    .bind(position_id)
+    .bind(user_id)
+    .execute(&mut **tx)
+    .await?;
+    if update_position.rows_affected() != 1 {
+        return Err(AppError::Conflict(
+            "margin position partial close state changed concurrently".to_owned(),
         ));
     }
     Ok(())

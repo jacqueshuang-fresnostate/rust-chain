@@ -150,6 +150,11 @@ export interface MarginBatchActionResult {
   failures: MarginBatchActionFailure[]
 }
 
+export interface MarginCloseInput {
+  percentage: number
+  idempotencyKey: string
+}
+
 export async function placeSpotOrder(input: SpotOrderInput): Promise<void> {
   const payload: Record<string, string> = {
     pair_id: normalizeSymbol(input.symbol).replace(/(USDT|USDC|BTC|ETH|USD)$/, '-$1'),
@@ -337,8 +342,23 @@ export async function fetchMarginPositionRisk(positionId: string): Promise<Margi
   }
 }
 
-export async function closeMarginPosition(positionId: string): Promise<void> {
-  await client.post(requestUrl(`/margin/positions/${encodeURIComponent(positionId)}/close`), {})
+export function createMarginCloseIdempotencyKey(): string {
+  return createIdempotencyKey('mobile-margin-close')
+}
+
+export async function closeMarginPosition(
+  positionId: string,
+  input?: MarginCloseInput,
+): Promise<void> {
+  await client.post(
+    requestUrl(`/margin/positions/${encodeURIComponent(positionId)}/close`),
+    input
+      ? {
+          percentage: input.percentage,
+          idempotency_key: input.idempotencyKey,
+        }
+      : {},
+  )
 }
 
 export async function cancelMarginPosition(positionId: string): Promise<void> {
