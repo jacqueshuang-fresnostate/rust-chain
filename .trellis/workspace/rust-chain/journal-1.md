@@ -1583,3 +1583,37 @@ Enabled the shared /news back action, added Product Hub direct-open fallback, re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 47: 杠杆比例拖动与真实部分平仓
+
+**Date**: 2026-08-28
+**Task**: 杠杆比例拖动与真实部分平仓
+**Branch**: `main`
+
+### Summary
+
+完成手机端平仓比例滑杆、后端事务化部分平仓、幂等执行、收益与强平口径修复，并通过暂存快照验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `53d10b2` | (see git log) |
+| `a931423` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

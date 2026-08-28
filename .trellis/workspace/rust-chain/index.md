@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 46
-- **Last Active**: 2026-08-20
+- **Total Sessions**: 47
+- **Last Active**: 2026-08-28
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1585 | Active |
+| `journal-1.md` | ~1619 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 47 | 2026-08-28 | 杠杆比例拖动与真实部分平仓 | `53d10b2`, `a931423` | `main` |
 | 46 | 2026-08-20 | 修复全仓双向强平与预估强平价 | `a98cc2b` | `main` |
 | 45 | 2026-08-20 | 手机端杠杆持仓按钮对齐 Pencil | `a2c82c8` | `main` |
 | 44 | 2026-08-18 | 后台行情策略与杠杆产品配置优化 | `2b36903` | `main` |
