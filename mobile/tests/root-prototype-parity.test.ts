@@ -118,15 +118,16 @@ test('根壳层保持原型舞台、64px 顶栏、路由栈、PWA 状态与异�
   assert.doesNotMatch(appSource, /SIGNAL THEATRE|SIGNALS|LIVE EXCHANGE INSTRUMENT|HONG KONG/)
 })
 
-test('五项根导航保留单一抬升交易入口与类型化 replace', () => {
+test('五项根导航保留单一抬升交易入口、类型化根 replace 与交易弹窗', () => {
   const keys = [...navSource.matchAll(/\bkey:\s*'([^']+)'/g)].map((match) => match[1])
   assert.deepEqual(keys, ['home', 'markets', 'trade', 'assets', 'profile'])
   assert.match(navSource, /params:\s*\{\s*symbol:\s*navigation\.lastTradeSymbol\s*\}/)
-  assert.match(navSource, /navigation\.lastTradeMode === 'contract' \? \{ mode: 'contract' \} : undefined/)
+  assert.match(navSource, /query:\s*mode === 'contract' \? \{ mode: 'contract' \} : undefined/)
   assert.match(navSource, /'trade-nav-action': item\.primary/)
-  assert.match(navSource, /function selectRoot\(to: RouteLocationRaw\)/)
-  assert.match(navSource, /router\.replace\(to\)/)
-  assert.doesNotMatch(navSource, /<RouterLink|<svg|\p{Extended_Pictographic}/u)
+  assert.match(navSource, /function selectRoot\(item: RootNavigationItem, event: MouseEvent\)/)
+  assert.match(navSource, /router\.replace\(item\.to\)/)
+  assert.match(navSource, /<Teleport to="body">/)
+  assert.doesNotMatch(navSource, /<RouterLink|\p{Extended_Pictographic}/u)
 })
 
 test('根栏目保持既有首页行情，并让现货、合约、资产与我的映射当前 Pencil 选中稿', () => {

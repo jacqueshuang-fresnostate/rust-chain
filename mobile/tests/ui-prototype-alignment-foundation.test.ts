@@ -76,7 +76,7 @@ test('五栏根导航保留 44px 焦点与抬升交易入口', () => {
   assert.deepEqual(keys, ['home', 'markets', 'trade', 'assets', 'profile'])
   assert.match(parityCss, /\.bottom-nav__dock\s*\{[\s\S]*?grid-template-columns:\s*repeat\(5,\s*minmax\(0,\s*1fr\)\)/)
   assert.match(parityCss, /\.bottom-nav__item\s*\{[\s\S]*?min-width:\s*44px/)
-  assert.match(parityCss, /\.bottom-nav \.trade-nav-action \.bottom-nav__icon\s*\{[\s\S]*?height:\s*56px;[\s\S]*?top:\s*-18px/)
+  assert.match(parityCss, /\.bottom-nav \.trade-nav-action \.bottom-nav__icon\s*\{[\s\S]*?height:\s*56px;[\s\S]*?top:\s*-12px/)
   assert.doesNotMatch(bottomNavSource, /<style scoped/)
 })
 

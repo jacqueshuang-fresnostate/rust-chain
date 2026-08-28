@@ -84,7 +84,8 @@ test('News 从 category 深链恢复真实产品分类且普通入口默认全�
 })
 
 test('根 Dock replace、认证 redirect 和 goBackOr 回退合同保持', async () => {
-  assert.match(bottomNavSource, /function selectRoot\(to: RouteLocationRaw\)[\s\S]*?router\.replace\(to\)/)
+  assert.match(bottomNavSource, /function selectRoot\(item: RootNavigationItem, event: MouseEvent\)[\s\S]*?router\.replace\(item\.to\)/)
+  assert.match(bottomNavSource, /createBottomNavSecondsTarget\(\)/)
   assert.deepEqual(createLoginRedirectTarget('/profile/security'), {
     name: 'login',
     query: { redirect: '/profile/security' },

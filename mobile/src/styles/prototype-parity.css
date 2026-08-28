@@ -3343,7 +3343,7 @@ body,
   height: 56px;
   left: 50%;
   position: absolute;
-  top: -18px;
+  top: -12px;
   transform: translateX(-50%);
   width: 56px;
 }
@@ -3358,6 +3358,167 @@ body,
 
 .app-stage .mobile-canvas .bottom-nav__item:focus-visible .bottom-nav__icon {
   box-shadow: 0 0 0 3px var(--focus-ring), 0 0 0 1px var(--focus);
+}
+
+/* Pencil selected root trade chooser: X0ux9F / RtubA / U99rP / eLvdo / QrlAB. */
+.trade-navigation-picker {
+  --trade-picker-surface: #fff;
+  --trade-picker-text: #111;
+  background: rgb(0 0 0 / 35%);
+  inset: 0;
+  position: fixed;
+  z-index: var(--layer-overlay);
+}
+
+:root[data-theme='dark'] .trade-navigation-picker {
+  --trade-picker-surface: #0c100e;
+  --trade-picker-text: #f2f7f4;
+  background: rgb(0 0 0 / 58%);
+}
+
+.trade-navigation-picker__dialog {
+  bottom: calc(35px + env(safe-area-inset-bottom));
+  height: 347px;
+  left: 50%;
+  max-width: 358px;
+  pointer-events: auto;
+  position: fixed;
+  transform: translateX(-50%);
+  transform-origin: 50% 100%;
+  width: min(calc(100vw - 32px), 358px);
+}
+
+.trade-navigation-picker__title {
+  clip-path: inset(50%);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+.trade-navigation-picker__shape {
+  filter: drop-shadow(0 6px 11px rgb(0 0 0 / 10%));
+  height: 300px;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  width: 100%;
+}
+
+.trade-navigation-picker__shape path {
+  fill: var(--trade-picker-surface);
+}
+
+:root[data-theme='dark'] .trade-navigation-picker__shape {
+  filter: drop-shadow(0 6px 11px rgb(0 0 0 / 46%));
+}
+
+.trade-navigation-picker__options {
+  display: grid;
+  gap: 4px;
+  left: 14px;
+  pointer-events: auto;
+  position: absolute;
+  right: 14px;
+  top: 12px;
+}
+
+.trade-navigation-picker__option {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 12px;
+  color: var(--trade-picker-text);
+  display: flex;
+  font-family: var(--font-geist-sans), 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 18px;
+  font-weight: 600;
+  gap: 16px;
+  height: 58px;
+  line-height: 1;
+  min-width: 0;
+  padding: 0 18px;
+  text-align: left;
+  width: 100%;
+}
+
+.trade-navigation-picker__option > svg {
+  flex: 0 0 25px;
+}
+
+.trade-navigation-picker__option > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.trade-navigation-picker__option:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--focus), 0 0 0 3px var(--focus-ring);
+  outline: 0;
+}
+
+.trade-navigation-picker__close {
+  align-items: center;
+  appearance: none;
+  background: #07110d;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 6px 16px rgb(0 0 0 / 27%);
+  color: #fff;
+  display: flex;
+  height: 54px;
+  justify-content: center;
+  left: 50%;
+  padding: 0;
+  pointer-events: auto;
+  position: absolute;
+  top: 293px;
+  transform: translateX(-50%);
+  width: 54px;
+}
+
+.trade-navigation-picker__close:focus-visible {
+  box-shadow: 0 0 0 3px var(--focus-ring), 0 0 0 1px var(--focus), 0 6px 16px rgb(0 0 0 / 27%);
+  outline: 0;
+}
+
+.app-stage .mobile-canvas .bottom-nav.trade-picker-open .trade-nav-action .bottom-nav__icon {
+  opacity: 0;
+}
+
+.trade-picker-enter-active,
+.trade-picker-leave-active {
+  transition: opacity 190ms ease;
+}
+
+.trade-picker-enter-active .trade-navigation-picker__dialog,
+.trade-picker-leave-active .trade-navigation-picker__dialog {
+  transition: transform 260ms cubic-bezier(.16, 1, .3, 1);
+}
+
+.trade-picker-enter-active .trade-navigation-picker__close,
+.trade-picker-leave-active .trade-navigation-picker__close {
+  transition: transform 260ms cubic-bezier(.16, 1, .3, 1);
+}
+
+.trade-picker-enter-from,
+.trade-picker-leave-to {
+  opacity: 0;
+}
+
+.trade-picker-enter-from .trade-navigation-picker__dialog,
+.trade-picker-leave-to .trade-navigation-picker__dialog {
+  transform: translateX(-50%) translateY(18px) scale(.94);
+}
+
+.trade-picker-enter-from .trade-navigation-picker__close,
+.trade-picker-leave-to .trade-navigation-picker__close {
+  transform: translateX(-50%) rotate(-32deg) scale(.82);
 }
 
 @media (max-width: 360px) {
@@ -3484,7 +3645,13 @@ html[lang='en'] .app-stage .mobile-canvas .home-view .home-guest-hero__copy h1 {
   .app-stage .mobile-canvas .root-header .root-header__control.root-header__control,
   .app-stage .mobile-canvas .root-header .root-header__control.root-header__control:active,
   .app-stage .mobile-canvas .bottom-nav__item,
-  .app-stage .mobile-canvas .bottom-nav__icon {
+  .app-stage .mobile-canvas .bottom-nav__icon,
+  .trade-picker-enter-active,
+  .trade-picker-leave-active,
+  .trade-picker-enter-active .trade-navigation-picker__dialog,
+  .trade-picker-leave-active .trade-navigation-picker__dialog,
+  .trade-picker-enter-active .trade-navigation-picker__close,
+  .trade-picker-leave-active .trade-navigation-picker__close {
     transition: none;
   }
 

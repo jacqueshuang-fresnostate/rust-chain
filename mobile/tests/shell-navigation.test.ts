@@ -14,14 +14,16 @@ const baseStyles = read('../src/styles/base.css')
 const prototypeStyles = read('../src/styles/prototype-base.css')
 const parityStyles = read('../src/styles/prototype-parity.css')
 
-test('根导航保持五个有序目的地与单一交易入口', () => {
+test('根导航保持五个有序目的地并由中央入口打开真实交易选择器', () => {
   const keys = [...bottomNavSource.matchAll(/\bkey:\s*'([^']+)'/g)].map((match) => match[1])
   assert.deepEqual(keys, ['home', 'markets', 'trade', 'assets', 'profile'])
   assert.match(bottomNavSource, /t\('nav\.trade'\)/)
   assert.match(bottomNavSource, /params:\s*\{\s*symbol:\s*navigation\.lastTradeSymbol\s*\}/)
-  assert.match(bottomNavSource, /navigation\.lastTradeMode === 'contract' \? \{ mode: 'contract' \} : undefined/)
-  assert.match(bottomNavSource, /function selectRoot\(to: RouteLocationRaw\)/)
-  assert.match(bottomNavSource, /router\.replace\(to\)/)
+  assert.match(bottomNavSource, /navigation\.rememberTradeMode\('spot'\)/)
+  assert.doesNotMatch(bottomNavSource, /selectedTradeDestination|option\.active/)
+  assert.match(bottomNavSource, /function selectRoot\(item: RootNavigationItem, event: MouseEvent\)/)
+  assert.match(bottomNavSource, /if \(item\.to\) void router\.replace\(item\.to\)/)
+  assert.match(bottomNavSource, /<Teleport to="body">/)
   assert.match(bottomNavSource, /key:\s*'trade'[\s\S]*?primary:\s*true/)
 })
 

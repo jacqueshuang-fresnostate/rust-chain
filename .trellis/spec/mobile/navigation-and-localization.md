@@ -70,10 +70,17 @@ lastTradePath: ComputedRef<string>
 
 - Root navigation has exactly five ordered visual destinations and uses router
   `replace`: `home`, `markets`, persisted `trade`, `assets`, and `profile`.
-- The central Trade destination restores both the persisted symbol and the
-  persisted spot/contract mode. Spot, contract, and seconds remain independent
-  operational routes and stay reachable through product/page actions; visual
-  dock consolidation must not merge their business behavior.
+- The central Trade control opens the body-Teleported root trade chooser rather
+  than navigating immediately. Its current row restores the persisted symbol
+  and spot/contract mode; the chooser exposes only real destinations: Spot,
+  Contract, Seconds, and Convert. Pencil-only labels without a production route
+  must not become inert or fabricated controls.
+- Spot and Contract replace the current root entry while restoring the persisted
+  pair; Seconds replaces through `createBottomNavSecondsTarget()` so its Header
+  keeps the deterministic Home fallback; Convert pushes named `swap` because it
+  is a detail workflow whose Back action must return to the chooser source.
+- Spot, contract, seconds, and convert remain independent operational routes;
+  visual dock consolidation must not merge their business behavior.
 - Spot resolves to `/trade/:symbol`; contract resolves to
   `/trade/:symbol?mode=contract`; seconds resolves to `/seconds`. Do not merge
   these three operational surfaces into one root destination.
@@ -215,9 +222,12 @@ lastTradePath: ComputedRef<string>
 | Seconds history source is `bottom-navigation-seconds` | Ignore stale `state.back` and replace Home |
 | Seconds was pushed from the selected Home shortcut | Use history Back and return Home |
 | Main tab selected | Replace current history entry |
+| Central Trade control selected | Open the labelled root trade chooser; do not mutate the route |
 | Spot root selected | Open persisted symbol without `mode=contract` |
 | Contract root selected | Open persisted symbol with `mode=contract` |
 | Seconds root selected | Open the independent named route `seconds` |
+| Convert selected from the root chooser | Push named `swap`; Back returns to the source root page |
+| Root trade chooser is dismissed | Preserve route and selection; unlock body and restore exact Trade-trigger focus |
 | Home seventh product shortcut selected | Push the named `seconds` route; do not open Prediction |
 | Seconds Header history action selected | Push `/seconds/history`, hide the Dock, and preserve `/seconds` in history |
 | Seconds history is opened directly | Back replaces with `/seconds` |
@@ -294,6 +304,11 @@ lastTradePath: ComputedRef<string>
   three actions use localized copy, and History clears the queue before named
   route navigation.
 - Browser: main tabs do not remain in history; direct-open detail back uses its fallback.
+- Browser/source: the central Trade control opens one Teleported labelled dialog,
+  initially focuses Close, traps Tab/Shift+Tab, dismisses with Escape/backdrop,
+  restores exact trigger focus, and leaves the route unchanged until an option
+  is explicitly selected. Spot/Contract/Seconds/Convert reach their real route
+  with the replace/push boundaries defined above.
 - Browser: Home Bell opens Message Center without Root Header or Dock; its
   ArrowLeft returns Home, while a direct-open message route uses the same Home
   fallback.

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Mobile shared UI quality commands and touch-target contract."}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Root replace semantics, trade context, seconds source and symmetric i18n contracts."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Selected shaped Dock, layer order, safe-area, theme and reduced-motion contracts."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse the existing modal lifecycle and navigation helpers instead of duplicating them."}
+{"file":".trellis/tasks/08-23-mobile-root-navigation-trade-modal-parity/research/pencil-selected-navigation-spec.md","reason":"Exact X0ux9F Dock, mask, path, row and close-control geometry."}

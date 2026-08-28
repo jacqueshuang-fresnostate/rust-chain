@@ -7823,3 +7823,17 @@
 - 修改文件：提交 `53d10b2` 包含的 40 个后端、Mobile、迁移、测试、规范和任务文件，以及本条进度记录。
 - 验证结果：基于 Git 暂存快照执行 Mobile 全量 489/489、`npm --prefix mobile run type-check`、`cargo fmt --all -- --check`、`cargo check --all-targets` 与 `git diff --cached --check` 均通过；实现工作区此前完成 Mobile 494/494、Rust lib 312/312、Clippy、PWA/Tauri 构建和 Ego Browser 真触控验收。
 - 后续事项：部署前执行 `0117_margin_partial_close.sql`；任务归档与会话记录完成后统一推送至 `origin/main`。
+
+## 2026-08-29 00:58 - 移除底部交易选择器尾部选中标记
+
+- 完成内容：移除底部交易弹窗的 `trade-navigation-picker__selection`、Lucide `Check` 图标、专用样式及主题变量；选中项继续通过整行背景高亮和 `aria-checked` 表达状态，原有路由与弹窗交互保持不变。
+- 修改文件：`mobile/src/components/AppBottomNav.vue`、`mobile/src/styles/prototype-parity.css`、`mobile/tests/root-trade-navigation-modal.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/08-23-mobile-root-navigation-trade-modal-parity/prd.md`、`.trellis/tasks/08-23-mobile-root-navigation-trade-modal-parity/task.json`、`.trellis/tasks/08-23-mobile-root-navigation-trade-modal-parity/research/pencil-selected-navigation-spec.md`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：先以定向测试确认旧实现出现预期失败（2/4 通过），实现后定向测试 4/4、Mobile 全量测试 494/494、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2089 modules、139 条预缓存）与 `git diff --check` 均通过。
+- 后续事项：无；本轮改动尚未提交或推送，工作区其他既有未提交内容保持原样。
+
+## 2026-08-29 01:10 - 移除底部交易选项 active 状态
+
+- 完成内容：移除 `trade-navigation-picker__option` 的 `active` 类、当前目标派生逻辑、选中背景变量和加粗样式；四个交易目的地改为样式一致的原生按钮，同时移除不再成立的 `radiogroup`、`radio` 与 `aria-checked` 单选语义，路由选择、弹窗生命周期和底部根导航自身的当前栏目状态保持不变。
+- 修改文件：`mobile/src/components/AppBottomNav.vue`、`mobile/src/styles/prototype-parity.css`、`mobile/tests/{root-trade-navigation-modal,editorial-shell-home-markets,shell-navigation,pencil-selected-home-layout}.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/tasks/08-23-mobile-root-navigation-trade-modal-parity/{prd.md,task.json,research/pencil-selected-navigation-spec.md}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：先以定向测试确认旧 `active` 实现出现预期失败（2/4 通过）；实现及关联合同更新后定向回归 20/20、Mobile 全量测试 494/494、`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`（2089 modules、139 条预缓存）、Trellis 任务上下文校验、残留状态扫描与 `git diff --check` 均通过。
+- 后续事项：无；本轮改动尚未提交或推送，工作区其他既有未提交内容保持原样。

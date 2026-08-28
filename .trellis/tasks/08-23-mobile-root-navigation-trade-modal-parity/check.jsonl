@@ -1,0 +1,5 @@
+{"file":".trellis/spec/mobile/index.md","reason":"Run the complete Mobile shared UI quality gate."}
+{"file":".trellis/spec/mobile/navigation-and-localization.md","reason":"Verify replace/push boundaries, real route mapping, localization and focus behavior."}
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"Verify selected geometry, layer order, themes, safe-area, responsive width and reduced motion."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Confirm no duplicate modal lifecycle or route helper was introduced."}
+{"file":".trellis/tasks/08-23-mobile-root-navigation-trade-modal-parity/research/pencil-selected-navigation-spec.md","reason":"Compare source and runtime geometry against X0ux9F."}

@@ -227,17 +227,31 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   font size with viewport width.
 - The selected visual bottom navigation has exactly five entries in this order:
   Home, Markets, Trade, Assets, Profile. Trade is the raised center action and
-  resolves the persisted pair plus the persisted spot/contract mode; this
-  visual consolidation must not merge the independent spot, contract, or
-  seconds business routes. Seconds stays reachable from the selected Home
-  shortcut and its direct route while using the secondary motion/back
-  contract. All dock icon targets remain at least
-  44x44px from 320px through 448px.
+  opens the selected `X0ux9F` chooser; it does not navigate before an explicit
+  option selection. This visual consolidation must not merge the independent
+  spot, contract, seconds, or convert business routes. Seconds stays reachable
+  from the selected Home shortcut, chooser, and direct route while using the
+  secondary motion/back contract. All dock icon targets remain at least 44x44px
+  from 320px through 448px.
 - The raised Trade face is one uninterrupted 56px mint circle with a 24px
-  Lucide ArrowLeftRight. Its computed `background-image` must be `none`.
+  Lucide ArrowLeftRight positioned 12px above the 68px Dock surface. Its
+  computed `background-image` must be `none`.
   Earlier legacy active-item selectors must explicitly exclude
   `.trade-nav-action`; otherwise their centered 28px gradient wins by
   specificity and turns the circle into a square color patch.
+- The selected root trade chooser Teleports to `body` at overlay layer 80. At
+  the 390px baseline it owns a 35% black viewport mask, the exact Pencil path
+  in a 358x300 surface, four 330x58 rows at x30/y12 with 4px gaps, and a 54px
+  circular Close control at viewport bottom 35px plus the safe area. The path
+  bottom stays 4px above the Dock top; its centered concave notch surrounds the
+  Close control. At 320px the surface is `viewport - 32px`; at 448px it remains
+  capped at 358px. Both sizes must keep zero horizontal overflow.
+- The chooser reuses `useModalDialog`: Close receives initial focus, Tab wraps
+  through all four real options and Close, Escape/backdrop dismiss without route
+  mutation, body scrolling stays locked only while open, and focus returns to
+  the exact Trade trigger. The four destination buttons do not expose a current
+  or `active` option state. Dark theme maps the surface/text roles without
+  changing geometry; reduced motion removes every picker transition.
 - The selected Pencil spot references are `yzOPc` (light) and `bo8k5` (dark).
   Their production default is a 64px spot-owned secondary header, a continuous
   left order form plus right 148px five-ask/mid/five-bid book, a truthful account
@@ -582,6 +596,9 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
 | Confirmation details exceed a short viewport | Scroll only the middle detail region; keep header and every action button fully inside the safe viewport |
 | Spot route has `showBottomNav` | Keep the five-entry dock, hide `RootHeader`, and render the spot-owned 64px header |
 | Trade is the active dock item | Keep one 56px mint circle with no inherited 28px active gradient |
+| Root Trade control is selected | Open the X0ux9F chooser above the Dock; preserve the current URL until explicit selection |
+| Root chooser is open at 390x844 | Surface x16/y462, path bottom y762, Dock top y766, Close x168/y755, and zero horizontal overflow |
+| Root chooser is dismissed | Restore body overflow and exact Trade-trigger focus; preserve the previous route/mode |
 | Spot market stream has no rows yet | Show a truthful loading/unavailable state; never synthesize book or trade rows |
 | Nested spot input receives focus | Apply one ring to `.spot-field-shell`; child input keeps `box-shadow: none` |
 | Spot order-type trigger is selected | Open the Teleported sheet without changing `orderType` |
@@ -730,6 +747,12 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   `elementFromPoint` hit within the Trade button. Source tests must fail when a
   legacy `.active:not(.seconds-nav-action)` selector does not also exclude
   `.trade-nav-action`.
+- Root trade chooser pass: at 390x844 assert the exact `X0ux9F` mask, path,
+  358x300 surface, four 330x58 rows without an active selection state, 54px Close and 4px
+  path-to-Dock gap. Repeat at 320x720 and 448x900 in both themes for safe-area,
+  zero overflow, initial Close focus, Tab/Shift+Tab wrap, Escape/backdrop close,
+  body unlock, trigger focus restoration, reduced motion, and all four real
+  route outcomes.
 - Spot Pencil parity: at 390px assert 64px header, 442px split workspace,
   196px form, 148px mini book, 281px account state, 48px chart entry, no
   `RootHeader`, and no PWA/status text entering the visual layout. At 320px the
