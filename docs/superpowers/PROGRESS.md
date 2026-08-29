@@ -7851,3 +7851,10 @@
 - 修改文件：`src/workers/kline_recovery.rs`、`tests/unit_src/src_workers_kline_recovery_tests.rs`、`.trellis/tasks/08-18-synthetic-market-settings/{task.json,implement.jsonl,check.jsonl}`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：新增测试在旧实现上按预期失败、修复后通过；稳定版 `cargo fmt --all -- --check`、`cargo clippy --all-targets --all-features -- -D warnings`、K 线恢复 Worker 11/11、后端架构 11/11、后端中文文档门禁 1/1 与 Trellis 上下文校验均通过；另使用本机 `rustc 1.98.0-nightly (2026-05-30)` 执行 `cargo +nightly clippy --lib -- -D warnings`，确认 CI 对应版本不再报告 `result_large_err`。
 - 后续事项：无；本轮修复尚未提交或推送，其他既有未提交改动保持原样。
+
+## 2026-08-29 11:33 - 提交并推送 K 线恢复 Clippy 修复
+
+- 完成内容：将 `ManualKlineRecoveryError` 装箱、标准错误链和错误尺寸回归测试整理为提交 `b81c222`，并推送至 `origin/main`，用于修复 GitHub Actions 在 Rust 1.98、`-D warnings` 下的 `clippy::result_large_err` 失败。
+- 修改文件：提交 `b81c222` 中的 `src/workers/kline_recovery.rs`、`tests/unit_src/src_workers_kline_recovery_tests.rs`、`.trellis/tasks/08-18-synthetic-market-settings/{task.json,implement.jsonl,check.jsonl}`、`docs/superpowers/PROGRESS.md`，以及本条交付记录。
+- 验证结果：稳定版全目标全特性 Clippy、Rust 1.98 nightly Clippy、Worker 11/11、后端架构 11/11、后端中文文档门禁 1/1、Trellis 上下文校验与暂存差异检查均通过；首次推送结果为 `1f35e69..b81c222 main -> main`。
+- 后续事项：等待 GitHub Actions 使用新提交重新执行；其他既有未提交改动未纳入本轮提交并继续保留在本地工作区。
