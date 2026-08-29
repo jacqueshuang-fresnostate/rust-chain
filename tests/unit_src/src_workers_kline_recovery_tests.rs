@@ -2,6 +2,11 @@ use super::*;
 use chrono::{TimeDelta, TimeZone, Utc};
 
 #[test]
+fn manual_recovery_error_keeps_the_result_error_path_compact() {
+    assert!(std::mem::size_of::<ManualKlineRecoveryError>() <= 64);
+}
+
+#[test]
 fn recovery_gap_returns_missing_open_times_after_checkpoint_until_now() {
     let checkpoint = Utc.with_ymd_and_hms(2026, 5, 26, 10, 0, 0).unwrap();
     let now = checkpoint + TimeDelta::minutes(4);

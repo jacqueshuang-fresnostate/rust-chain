@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "修复 Rust 1.98 CI 的 clippy::result_large_err：ManualKlineRecoveryError 装箱 AppError 并保留错误链，新增 <=64 字节回归；Worker 11/11、架构 11/11、文档 1/1、稳定版全目标全特性 Clippy 与 Rust 1.98 nightly Clippy 均通过。",
   "meta": {}
 }

@@ -53,7 +53,7 @@ pub struct ManualKlineRecoveryCounts {
 #[derive(Debug)]
 pub struct ManualKlineRecoveryError {
     counts: ManualKlineRecoveryCounts,
-    source: AppError,
+    source: Box<AppError>,
 }
 
 impl ManualKlineRecoveryError {
@@ -72,7 +72,12 @@ impl std::fmt::Display for ManualKlineRecoveryError {
     }
 }
 
-impl std::error::Error for ManualKlineRecoveryError {}
+impl std::error::Error for ManualKlineRecoveryError {
+    /// 保留被装箱 `AppError` 的错误链，便于日志和诊断工具继续读取底层错误类别。
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
 
 impl KlineRecoveryWorker {
     /// 执行一轮 K 线缺口恢复；策略扫描上限收敛到 1..=100，每个策略最多生成 500 根已闭合 K 线。
@@ -635,7 +640,10 @@ fn manual_recovery_error(
     counts: ManualKlineRecoveryCounts,
     source: AppError,
 ) -> ManualKlineRecoveryError {
-    ManualKlineRecoveryError { counts, source }
+    ManualKlineRecoveryError {
+        counts,
+        source: Box::new(source),
+    }
 }
 
 /// 手动补偿的单根写入：先用领域键校验周期与开盘时间，再按周期加开盘时间幂等 upsert。

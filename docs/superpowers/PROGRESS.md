@@ -7844,3 +7844,10 @@
 - 修改文件：功能提交 `c9543c4` 中的 21 个 Mobile、测试、规范、任务和进度文件；归档提交 `c40f952` 中的 Trellis 任务归档；会话提交 `0184bc0` 中的 `.trellis/workspace/rust-chain/{journal-1.md,index.md}`；本条 `docs/superpowers/PROGRESS.md` 记录。
 - 验证结果：Mobile 定向回归 20/20、全量测试 494/494、类型检查、PWA 构建（2089 modules、139 条预缓存）、Trellis 上下文校验、残留状态扫描、`git diff --cached --check` 均通过；首次推送结果为 `68fe32f..0184bc0 main -> main`。
 - 后续事项：无；既有杠杆字段布局与 Pencil 工作区改动未纳入本轮提交，继续保留在本地工作区。
+
+## 2026-08-29 02:06 - 修复手动 K 线补偿错误类型过大
+
+- 完成内容：针对 Rust 1.98 在 `-D warnings` 下触发的 `clippy::result_large_err`，将 `ManualKlineRecoveryError` 内部大型 `AppError` 改为 `Box<AppError>`，同时补充标准错误链 `source()`，保持原有展示文本、部分补偿计数和调用签名不变；新增错误类型不超过 64 字节的回归测试，避免后续重新内联大型错误。
+- 修改文件：`src/workers/kline_recovery.rs`、`tests/unit_src/src_workers_kline_recovery_tests.rs`、`.trellis/tasks/08-18-synthetic-market-settings/{task.json,implement.jsonl,check.jsonl}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：新增测试在旧实现上按预期失败、修复后通过；稳定版 `cargo fmt --all -- --check`、`cargo clippy --all-targets --all-features -- -D warnings`、K 线恢复 Worker 11/11、后端架构 11/11、后端中文文档门禁 1/1 与 Trellis 上下文校验均通过；另使用本机 `rustc 1.98.0-nightly (2026-05-30)` 执行 `cargo +nightly clippy --lib -- -D warnings`，确认 CI 对应版本不再报告 `result_large_err`。
+- 后续事项：无；本轮修复尚未提交或推送，其他既有未提交改动保持原样。
