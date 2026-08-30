@@ -7893,3 +7893,10 @@
 - 修改文件：`mobile/src/views/SecondsView.vue`、`mobile/tests/seconds-pencil-selected-parity.test.ts`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：新增契约断言先在旧实现上失败；实现后定向测试 6/6、Mobile 全量测试 501/501、`npm run type-check`、`npm run build:pwa`、`npm run build:tauri` 均通过。
 - 后续事项：无。
+
+## 2026-08-30 18:54 - 提交并推送秒合约核心交互优化
+
+- 完成内容：将秒合约历史订单、Pencil 结算弹窗、交易对选择器、成功提示清理和买跌红色主操作整理为提交 `8326f12`，并推送至 `origin/main`；未纳入本轮范围的 P0、杠杆与其他并行工作继续保留在本地工作区。
+- 修改文件：提交 `8326f12` 中的 Mobile 秒合约实现、双语资源、选中稿样式、回归测试、Mobile Trellis 规范与已完成任务记录，以及本条交付记录。
+- 验证结果：基于精确暂存快照创建隔离 worktree，`npm run type-check`、Mobile 测试 498/498、`npm run build:pwa`、`npm run build:tauri` 均通过；两份完成任务上下文校验、`git diff --cached --check` 通过；首次推送结果为 `fac1def..8326f12 main -> main`。
+- 后续事项：等待 GitHub Actions 执行；本地其余未提交任务不在本轮提交范围内。
