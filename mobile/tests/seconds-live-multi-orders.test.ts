@@ -8,6 +8,7 @@ const pageHeaderSource = read('../src/components/PageHeader.vue')
 const secondsApiSource = read('../src/api/seconds.ts')
 const secondsSource = read('../src/views/SecondsView.vue')
 const secondsStyle = secondsSource.match(/<style\s+scoped\s*>([\s\S]*?)<\/style>/)?.[1] || ''
+const selectedPageCss = read('../src/styles/pencil-selected-pages.css')
 
 test('PageHeader 为 Seconds 提供向后兼容的中间插槽且交易对按选中稿绝对居中', () => {
   assert.match(
@@ -16,25 +17,23 @@ test('PageHeader 为 Seconds 提供向后兼容的中间插槽且交易对按选
   )
 
   const pageHeader = secondsSource.match(/<PageHeader[\s\S]*?<\/PageHeader>/)?.[0] || ''
-  assert.match(pageHeader, /<template #center>[\s\S]*?<label class="seconds-pair-field"[\s\S]*?<strong>\{\{ selectedPairLabel \}\}<\/strong>[\s\S]*?<ChevronDown[\s\S]*?<select[\s\S]*?product\.symbol[\s\S]*?<\/template>/)
+  assert.match(pageHeader, /<template #center>[\s\S]*?<button[\s\S]*?class="seconds-pair-field"[\s\S]*?aria-haspopup="dialog"[\s\S]*?<strong>\{\{ selectedPairLabel \}\}<\/strong>[\s\S]*?<ChevronDown[\s\S]*?<\/template>/)
   assert.match(pageHeader, /<template #actions>[\s\S]*?t\('seconds\.historyTitle'\)[\s\S]*?@click="openHistory"/)
-  assert.match(secondsSource, /function openHistory\(\): void \{\s*clearSettlementResultQueue\(\)\s*void router\.push\(\{ name: 'seconds-history' \}\)\s*\}/)
+  assert.match(secondsSource, /function openHistory\(\): void \{\s*pairPickerOpen\.value = false\s*clearSettlementResultQueue\(\)\s*void router\.push\(\{ name: 'seconds-history' \}\)\s*\}/)
   assert.equal((pageHeader.match(/class="seconds-pair-field"/g) || []).length, 1)
   assert.equal((secondsSource.match(/class="seconds-pair-field"/g) || []).length, 1)
   assert.doesNotMatch(secondsSource.slice(secondsSource.indexOf('</PageHeader>') + 13), /class="seconds-pair-field"/)
 
   const pairRule = cssRule(secondsStyle, '.seconds-pair-field {')
-  assert.match(pairRule, /height: 22px;/)
+  assert.match(pairRule, /height: 44px;/)
+  assert.match(pairRule, /margin: -11px 0;/)
   assert.match(pairRule, /min-width: 0;/)
+  assert.match(pairRule, /padding: 11px 0;/)
   assert.match(pairRule, /position: relative;/)
   assert.match(pairRule, /width: 140px;/)
 
-  const selectRule = cssRule(secondsStyle, '.seconds-pair-field select {')
-  assert.match(selectRule, /height: 44px;/)
-  assert.match(selectRule, /inset: -11px 0 auto;/)
-  assert.match(selectRule, /opacity: 0;/)
-  assert.match(selectRule, /width: 100%;/)
-  const focusRule = cssRule(secondsStyle, '.seconds-pair-field:focus-within {')
+  assert.doesNotMatch(pageHeader, /<select\b|<option\b/)
+  const focusRule = cssRule(secondsStyle, '.seconds-pair-field:focus-visible {')
   assert.match(focusRule, /outline: 2px solid var\(--focus\);/)
   assert.match(focusRule, /outline-offset: 3px;/)
 
@@ -104,8 +103,9 @@ test('Seconds 渲染全部活动订单、本地方向筛选与并行下单表单
 
   const mutationStart = secondsSource.indexOf('openedOrder = await openSecondsOrder({')
   const immediateUpsert = secondsSource.indexOf('orders.value = upsertSecondsOrder(orders.value, openedOrder)', mutationStart)
-  const successCommit = secondsSource.indexOf("success.value = t('seconds.created')", immediateUpsert)
-  const submittingReleased = secondsSource.indexOf('submitting.value = false', successCommit)
+  const amountReset = secondsSource.indexOf("amount.value = ''", immediateUpsert)
+  const confirmationClosed = secondsSource.indexOf('confirmOpen.value = false', amountReset)
+  const submittingReleased = secondsSource.indexOf('submitting.value = false', confirmationClosed)
   const reconciliation = secondsSource.indexOf(
     'void reconcileOpenedOrder(mutationSessionGeneration)',
     submittingReleased,
@@ -113,10 +113,12 @@ test('Seconds 渲染全部活动订单、本地方向筛选与并行下单表单
   assert.ok(
     mutationStart >= 0
     && immediateUpsert > mutationStart
-    && successCommit > immediateUpsert
-    && submittingReleased > successCommit
+    && amountReset > immediateUpsert
+    && confirmationClosed > amountReset
+    && submittingReleased > confirmationClosed
     && reconciliation > submittingReleased,
   )
+  assert.doesNotMatch(secondsSource, /seconds-message--success|data-session-feedback="created"|success\.value/)
   assert.match(secondsSource, /committedOrdersById\.set\(openedOrder\.id, openedOrder\)/)
   assert.match(secondsSource, /mergeSecondsOrderReconciliation\(nextOrders, committedOrders\)/)
   assert.match(secondsSource, /refreshWarning\.value = t\('seconds\.refreshAfterOrderFailed'\)/)
@@ -139,7 +141,7 @@ test('Seconds 渲染全部活动订单、本地方向筛选与并行下单表单
   assert.match(en.seconds.refreshAfterOrderFailed, /order was created/i)
 })
 
-test('Seconds 使用权威结果追踪器、FIFO 队列和非模态沉浸结算卡', () => {
+test('Seconds 使用权威结果追踪器、FIFO 队列和 Pencil 模态结算弹窗', () => {
   assert.match(secondsSource, /const settlementResultTracker = createSecondsSettlementResultTracker\(\)/)
   assert.match(secondsSource, /const settlementResultQueue = ref<SecondsOrder\[]>\(\[\]\)/)
   assert.match(
@@ -157,6 +159,10 @@ test('Seconds 使用权威结果追踪器、FIFO 队列和非模态沉浸结算�
   assert.match(
     secondsSource,
     /const currentSettlementAmount = computed\([\s\S]*?presentation\.translationKey === 'seconds\.profitAmount' \? '\+' : ''[\s\S]*?formatAmount\(presentation\.amount\)[\s\S]*?order\.stakeAssetSymbol/,
+  )
+  assert.match(
+    secondsSource,
+    /const currentSettlementRate = computed\([\s\S]*?presentation\.amount \/ order\.stakeAmount[\s\S]*?rate > 0 \? '\+' : ''[\s\S]*?rate\.toFixed\(2\)/,
   )
 
   assert.match(
@@ -196,59 +202,79 @@ test('Seconds 使用权威结果追踪器、FIFO 队列和非模态沉浸结算�
   const settlementTemplate = secondsSource.match(
     /<Teleport to="body">\s*<Transition name="seconds-result-reveal"[\s\S]*?<\/Teleport>/,
   )?.[0] || ''
-  assert.match(settlementTemplate, /class="seconds-settlement-layer"/)
+  assert.match(settlementTemplate, /v-if="settlementDialogOpen && currentSettlementResult"[\s\S]*?class="seconds-settlement-layer"/)
+  assert.doesNotMatch(settlementTemplate, /:key="currentSettlementResult\.id"/)
+  assert.match(settlementTemplate, /data-pencil-source="tFcTH FBdqS"/)
+  assert.match(settlementTemplate, /@click\.self="advanceSettlementResult"/)
   assert.doesNotMatch(settlementTemplate, /data-app-theme|settlementTheme/)
   assert.match(settlementTemplate, /class="sr-only" role="status" aria-live="polite" aria-atomic="true"[\s\S]*?currentSettlementAnnouncement/)
-  assert.match(settlementTemplate, /class="seconds-settlement-card"[\s\S]*?data-settlement-source="orders-api"[\s\S]*?:aria-labelledby=/)
-  assert.doesNotMatch(settlementTemplate, /class="seconds-settlement-card"[\s\S]{0,180}?role="status"/)
-  assert.match(settlementTemplate, /Trophy[\s\S]*?TrendingDown[\s\S]*?currentSettlementAmount/)
-  assert.match(settlementTemplate, /currentSettlementResult\.symbol[\s\S]*?currentSettlementResult\.direction[\s\S]*?currentSettlementResult\.durationSeconds/)
+  assert.match(settlementTemplate, /ref="settlementDialog"[\s\S]*?class="seconds-settlement-card"/)
+  assert.match(settlementTemplate, /data-settlement-source="orders-api"/)
+  assert.match(settlementTemplate, /role="dialog"[\s\S]*?aria-modal="true"/)
+  assert.match(settlementTemplate, /@keydown="handleSettlementDialogKeydown"/)
+  assert.match(settlementTemplate, /CircleCheckBig[\s\S]*?seconds\.statusSettled[\s\S]*?data-settlement-initial[\s\S]*?<X/)
+  assert.match(settlementTemplate, /BadgeDollarSign[\s\S]*?currentSettlementTitle[\s\S]*?currentSettlementAmount[\s\S]*?currentSettlementRate/)
+  assert.match(settlementTemplate, /currentSettlementResult\.entryPrice !== undefined \? formatPrice\(currentSettlementResult\.entryPrice\) : '--'/)
+  assert.match(settlementTemplate, /currentSettlementResult\.settlementPrice !== undefined \? formatPrice\(currentSettlementResult\.settlementPrice\) : '--'/)
+  assert.match(settlementTemplate, /displayProductSymbol\(currentSettlementResult\.symbol\)[\s\S]*?currentSettlementResult\.direction[\s\S]*?currentSettlementResult\.durationSeconds/)
   assert.match(settlementTemplate, /settlementResultsRemaining[\s\S]*?remainingSettlementResults/)
-  assert.match(settlementTemplate, /@click="advanceSettlementResult"[\s\S]*?seconds\.continueTrading[\s\S]*?@click="openHistory"[\s\S]*?seconds\.viewHistory/)
-  assert.doesNotMatch(settlementTemplate, /aria-modal|confirmation-layer|@click\.self|entryPrice|settlementPrice|latestPrice/i)
+  assert.match(settlementTemplate, /@click="openHistory"[\s\S]*?seconds\.viewHistory/)
+  assert.doesNotMatch(settlementTemplate, /seconds\.continueTrading|latestPrice|Trophy|TrendingDown/)
+  assert.match(
+    secondsSource,
+    /useModalDialog\([\s\S]*?settlementDialogOpen,[\s\S]*?settlementDialog,[\s\S]*?'\[data-settlement-initial\]'[\s\S]*?\)/,
+  )
 
   const layerRule = cssRule(secondsStyle, '.seconds-settlement-layer {')
-  assert.match(layerRule, /max-width: min\(448px, var\(--app-max-width, 448px\)\);/)
-  assert.match(layerRule, /pointer-events: none;/)
-  assert.match(layerRule, /top: calc\(env\(safe-area-inset-top, 0px\) \+ 60px\);/)
-  const resultTokenAliases = {
-    surface: 'surface',
-    'surface-elevated': 'surface-elevated',
-    ink: 'ink',
-    muted: 'muted',
-    line: 'line',
-    shadow: 'dark-surface',
-    positive: 'positive',
-    negative: 'negative',
-    'on-accent': 'on-accent',
-    focus: 'focus',
-  } as const
-  for (const [localRole, rootToken] of Object.entries(resultTokenAliases)) {
-    assert.match(
-      layerRule,
-      new RegExp(`--seconds-result-${localRole}: var\\(--${rootToken}\\);`),
-    )
-  }
-  assert.match(layerRule, /--seconds-result-focus-ring: color-mix\(in srgb, var\(--focus\) 28%, transparent\);/)
+  assert.match(layerRule, /background: var\(--seconds-result-backdrop\);/)
+  assert.match(layerRule, /inset: 0;/)
+  assert.match(layerRule, /overflow-y: auto;/)
+  assert.match(layerRule, /pointer-events: auto;/)
   assert.doesNotMatch(secondsSource, /#[0-9a-f]{3,8}|rgba?\(/i)
   assert.doesNotMatch(secondsSource, /settlementTheme|syncSecondsTheme|data-app-theme/)
   assert.match(secondsSource, /chartThemeObserver = new MutationObserver\(drawSparkline\)/)
   const cardRule = cssRule(secondsStyle, '.seconds-settlement-card {')
-  assert.match(cardRule, /pointer-events: auto;/)
-  assert.match(cardRule, /border-radius: 28px;/)
-  assert.match(secondsStyle, /\.seconds-settlement-card__panel\s*\{[\s\S]*?backdrop-filter: blur\(24px\) saturate\(148%\);/)
-  assert.match(secondsStyle, /\.seconds-settlement-card__actions button\s*\{[\s\S]*?min-height: 44px;/)
-  assert.match(secondsStyle, /@media \(max-width: 340px\)[\s\S]*?\.seconds-settlement-card__actions\s*\{[\s\S]*?grid-template-columns: 1fr;/)
+  assert.match(cardRule, /border-radius: 24px;/)
+  assert.match(cardRule, /gap: 14px;/)
+  assert.match(cardRule, /max-width: 358px;/)
+  assert.match(cardRule, /min-height: 541px;/)
+  assert.match(cardRule, /padding: 20px 20px 18px;/)
+  assert.match(cardRule, /transform: translateY\(-13\.5px\);/)
+  assert.match(secondsStyle, /\.seconds-settlement-card__result\s*\{[\s\S]*?height: 176px;/)
+  assert.match(secondsStyle, /\.seconds-settlement-card__prices\s*\{[\s\S]*?height: 68px;/)
+  assert.match(secondsStyle, /\.seconds-settlement-card__summary\s*\{[\s\S]*?height: 64px;/)
+  assert.match(secondsStyle, /\.seconds-settlement-card__note\s*\{[\s\S]*?min-height: 39px;/)
+  assert.match(secondsStyle, /\.seconds-settlement-card__history\s*\{[\s\S]*?height: 52px;/)
+  assert.match(secondsStyle, /\.seconds-settlement-card__close\s*\{[\s\S]*?height: 44px;[\s\S]*?margin: -5px;/)
   assert.match(secondsStyle, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.seconds-result-reveal-enter-active,[\s\S]*?transition: none !important;/)
 
-  assert.equal(zhCN.seconds.settlementProfit, '结算盈利')
-  assert.equal(zhCN.seconds.settlementLoss, '结算亏损')
-  assert.equal(zhCN.seconds.continueTrading, '继续交易')
+  const lightThemeRule = cssRule(selectedPageCss, ".seconds-settlement-layer[data-pencil-source='tFcTH FBdqS'] {")
+  assert.match(lightThemeRule, /--seconds-result-backdrop: #00000099;/)
+  assert.match(lightThemeRule, /--seconds-result-card: #ffffff;/)
+  assert.match(lightThemeRule, /--seconds-result-card-border: #dde7e1;/)
+  assert.match(lightThemeRule, /--seconds-result-positive: #079863;/)
+  const darkThemeRule = cssRule(selectedPageCss, "html[data-theme='dark'] .seconds-settlement-layer[data-pencil-source='tFcTH FBdqS'] {")
+  assert.match(darkThemeRule, /--seconds-result-backdrop: #000000b8;/)
+  assert.match(darkThemeRule, /--seconds-result-card: #101713;/)
+  assert.match(darkThemeRule, /--seconds-result-card-border: #2c3a32;/)
+  assert.match(darkThemeRule, /--seconds-result-positive: #56f0b2;/)
+
+  assert.equal(zhCN.seconds.settlementProfit, '本单结算盈利')
+  assert.equal(zhCN.seconds.settlementLoss, '本单结算亏损')
+  assert.equal(zhCN.seconds.settlementEntryPrice, '买入价格')
+  assert.equal(zhCN.seconds.settlementDirection, '方向')
+  assert.equal(zhCN.seconds.settlementCycle, '周期')
+  assert.match(zhCN.seconds.settlementReturnRate, /\{rate\}/)
+  assert.match(zhCN.seconds.settlementAutoSummary, /\{amount\}[\s\S]*\{asset\}/)
   assert.equal(zhCN.seconds.viewHistory, '查看历史订单')
   assert.match(zhCN.seconds.settlementAnnouncement, /\{title\}[\s\S]*\{amount\}[\s\S]*\{duration\}/)
-  assert.equal(en.seconds.settlementProfit, 'Settlement profit')
-  assert.equal(en.seconds.settlementLoss, 'Settlement loss')
-  assert.equal(en.seconds.continueTrading, 'Continue trading')
+  assert.equal(en.seconds.settlementProfit, 'This order settled in profit')
+  assert.equal(en.seconds.settlementLoss, 'This order settled at a loss')
+  assert.equal(en.seconds.settlementEntryPrice, 'Entry price')
+  assert.equal(en.seconds.settlementDirection, 'Direction')
+  assert.equal(en.seconds.settlementCycle, 'Cycle')
+  assert.match(en.seconds.settlementReturnRate, /\{rate\}/)
+  assert.match(en.seconds.settlementAutoSummary, /\{amount\}[\s\S]*\{asset\}/)
   assert.equal(en.seconds.viewHistory, 'View order history')
   assert.match(en.seconds.settlementAnnouncement, /\{title\}[\s\S]*\{amount\}[\s\S]*\{duration\}/)
 })

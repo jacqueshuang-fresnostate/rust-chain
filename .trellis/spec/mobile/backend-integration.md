@@ -343,6 +343,15 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
   can advance. Public products, ticker fallback, and K-lines start independently
   of private order/wallet refresh, so one protected endpoint failure does not
   hide otherwise available public market data.
+- The Seconds pair picker renders only `fetchSecondsProducts()` results. It
+  reuses the page's existing all-product ticker subscription and resolves each
+  visible price through `liveTickerSnapshots -> selected candle when applicable
+  -> marketStore` without starting another socket. Logo authority is the
+  backend market snapshot in `baseIconUrl -> iconUrl -> AssetMark symbol`
+  order. Missing prices render `--`; neither Pencil sample pairs nor synthetic
+  image/price fallbacks enter production. Choosing a row delegates to the
+  existing `selectProduct()` path so cycle, minimum stake, and K-line switch
+  together while the independent `orders` collection remains unchanged.
 - The dedicated Seconds history page reuses `fetchSecondsOrders(100)` and the
   shared `isActiveSecondsOrder` boundary after DTO mapping. It renders only
   non-active rows, preserves unknown result/status source values, and reads
@@ -484,6 +493,9 @@ const points = detailSession.resolveKlineRequest(request, restKlines(initial))
 | Symbol/interval changes or repeats through an ABA sequence | Invalidate the old context, REST token, and pending animation-frame callback |
 | Seconds create response omits `order` or has an invalid direction | Reject the mutation response; preserve existing orders and surface submit failure |
 | Seconds create succeeds but order refresh fails | Keep/upsert the returned order and success state; surface only a refresh warning; keep duplicate submission locked |
+| Seconds product exists but has no market image | Render the deterministic `AssetMark` symbol fallback; do not guess another asset image |
+| Seconds ticker is absent or invalid for one picker row | Render `--` for that row and keep all other products selectable |
+| Seconds pair is selected while other pairs have active orders | Switch only selected product/cycle/amount/K-line state; retain every active order and the shared product subscription |
 | Seconds history price is missing or malformed | Render the unavailable placeholder; do not coerce it to zero or substitute market data |
 | Seconds history result/status is unknown | Show the trimmed backend source value instead of an incorrect known translation |
 | Seconds history result is `win` | Show signed net profit `stakeAmount * payoutRate` in `stakeAssetSymbol`; do not add principal |
@@ -557,6 +569,10 @@ const points = detailSession.resolveKlineRequest(request, restKlines(initial))
   tracking, reset, and FIFO de-duplication. View contracts must prove
   `applyReconciledOrders()` passes the raw API list to the tracker and amount
   presentation reuses `secondsOrderProfitLossPresentation()`.
+- Seconds pair-picker tests must prove rows come from the API collection, Logo
+  precedence is `baseIconUrl -> iconUrl -> symbol`, prices use the existing
+  product-wide ticker state, missing prices remain `--`, and choosing a product
+  calls the existing selection/K-line path without assigning `orders.value`.
 - Prediction adapter tests must accept only `yes`/`no` quote outcomes, reject a
   third value before confirmation, and preserve `result` plus `refund_amount`.
   Confirm-flow tests must use a successful confirm followed by rejected wallet

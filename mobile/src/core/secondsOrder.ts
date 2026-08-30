@@ -28,6 +28,8 @@ export interface SecondsOrderProfitLossPresentation {
   tone: 'positive' | 'negative' | 'pending'
 }
 
+export type SecondsHistoryDirectionFilter = 'all' | 'up' | 'down'
+
 export interface SecondsSettlementResultTracker {
   track: (order: SecondsOrder) => void
   reconcile: (orders: readonly SecondsOrder[]) => SecondsOrder[]
@@ -55,6 +57,18 @@ export function historicalSecondsOrders(orders: readonly SecondsOrder[]): Second
   return orders
     .filter((order) => !isActiveSecondsOrder(order))
     .sort((left, right) => right.createdAt - left.createdAt)
+}
+
+/**
+ * Filter an already-authoritative history snapshot without mutating its order.
+ * The `all` branch also returns a copy so callers never receive the source array.
+ */
+export function filterSecondsHistoryOrdersByDirection(
+  orders: readonly SecondsOrder[],
+  direction: SecondsHistoryDirectionFilter,
+): SecondsOrder[] {
+  if (direction === 'all') return [...orders]
+  return orders.filter((order) => order.direction === direction)
 }
 
 /**

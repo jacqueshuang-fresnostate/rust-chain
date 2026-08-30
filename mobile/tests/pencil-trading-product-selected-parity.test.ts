@@ -218,7 +218,9 @@ test('秒合约锁定 VL8er/g9agt 选中稿几何并直用真实订单与现货�
 
 test('秒合约确认层 Teleport 到 body 并将固定操作区与可滚动明细分离', () => {
   const css = styleOf(secondsSource)
-  const teleportedLayer = secondsSource.match(/<Teleport to="body">([\s\S]*?)<\/Teleport>/)?.[1]
+  const teleportedLayer = secondsSource.match(
+    /<Teleport to="body">\s*(<div v-if="confirmOpen && orderReview"[\s\S]*?)<\/Teleport>/,
+  )?.[1]
   assert.ok(teleportedLayer)
   assert.match(teleportedLayer, /<div v-if="confirmOpen && orderReview" class="confirmation-layer seconds-mask" @click\.self="closeConfirm">/)
   assert.match(teleportedLayer, /ref="confirmDialog"[\s\S]*?role="dialog"[\s\S]*?aria-modal="true"[\s\S]*?@keydown="trapDialogFocus"/)

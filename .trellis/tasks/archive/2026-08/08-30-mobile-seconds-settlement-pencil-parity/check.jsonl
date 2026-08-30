@@ -1,0 +1,3 @@
+{"file":".trellis/spec/mobile/pwa-and-shell.md","reason":"复核弹窗主题、响应式、可访问性、动效和 Shell 边界"}
+{"file":".trellis/spec/mobile/backend-integration.md","reason":"复核结算值仅来自权威订单快照且无行情补值"}
+{"file":".trellis/tasks/archive/2026-08/08-30-mobile-seconds-settlement-pencil-parity/research/pencil-settlement-dialog.md","reason":"按 390×920 节点边界与明暗颜色进行 1:1 验收"}

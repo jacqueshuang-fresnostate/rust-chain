@@ -546,6 +546,26 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   starting at `y=480` with a 362px minimum height. The Header keeps 40px left
   and right controls, a visually absolute-centered 140x22 pair/title track, and
   the named Seconds-history route on the right action.
+- The Seconds pair-picker references are `vONcc` (light) and `kLXCs` (dark).
+  The 140x22 Header identity sits inside one real 44px dialog trigger; never
+  restore the transparent native `select`. Opening it Teleports a labelled
+  modal root to `body`, focuses search, traps Tab, closes with Escape/backdrop/
+  Close, locks body scrolling, and returns focus to that exact Header trigger.
+- At 390x920 the pair-picker covers the viewport and owns a 390x840 sheet at
+  `y=80`, with 24px top corners, `18px 20px 16px` padding, and 14px content
+  gaps. Its title row is 350x34, visible Close face is 34px inside a 44px
+  target, search is 350x46, and every product row is 350x64 with an 8px gap,
+  30px backend Logo, formatted pair, current price, and Lucide Check only on
+  the selected product. The sheet uses the exact selected light/dark palette
+  from the global selected-page stylesheet because its root is outside the
+  route theme boundary.
+- Search filters only the current API product collection by raw pair,
+  formatted pair, base, or quote without changing the active product. A row
+  selection calls the existing product switch, closes the dialog, and leaves
+  all current orders untouched. Loading, product-empty, and no-result states
+  are localized and truthful. A long list scrolls inside the list with
+  contained overscroll; 320px short screens contract safely, 448px centers the
+  390px sheet, and reduced motion removes the reveal without changing geometry.
 - At the 390px reference width, every Seconds content track is 350px with 20px
   side insets. The operation grid is `22px 53px 112px 202px` with 6px row gaps;
   the form grid is `30px 26px 38px 40px 44px`, also with 6px gaps. The chart
@@ -563,6 +583,29 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   `min-height`, and, where needed, transparent expanded hit areas must defeat
   legacy global button minimums without shrinking accessible pointer targets.
   Browser validation must inspect computed dimensions, not only source rules.
+- The dedicated Seconds-history references are `vZy6U` (light) and `x29z7`
+  (dark). At 390px its title and filter stay on the 16px inset track as a
+  358x52 header and 358x38 direction-filter row, while list content starts at
+  `x=0, y=134`; every subsequent card starts 156px later. Each filter button is
+  a real 44px target starting at `y=82` and contains a top-aligned 33px pill
+  surface with 16px radius and `7px 16px` padding; the Chinese active pill is
+  59px wide.
+- Seconds-history cards fill the current 320–448px phone canvas. At the 390px
+  reference they are exactly `x=0, width=390, height=142`, with no radius,
+  border, or shadow, `14px 16px` padding, and 8px internal gaps. The 16px card
+  inset returns visible content to the same 358px text track as the title and
+  filters. On that inner track the Chinese detail row measures direction
+  `x=0/w=27`, status `x=140/w=40`, and time `x=293/w=65`; intrinsic edge
+  columns plus a centered status in the flexible middle track own this geometry,
+  not a fixed-width direction column. Keep 27px/40px item minima on the Chinese
+  direction/status text so an available fallback font cannot shave either
+  measured face by one pixel. Their three visible lines are pair plus page-specific compact
+  duration and result-derived signed P&L; direction, authoritative lifecycle
+  `status`, and API creation time; then stake, entry price, and settlement
+  price. The status line never substitutes final `result`, missing API values
+  stay `--`, and visible card values inherit the page Noto/PingFang family
+  rather than the global `.numeric` font. Chinese history duration has no space
+  (`{seconds}秒`).
 - Pencil controls geometry and visual hierarchy, while products, cycles,
   limits, prices, K-lines, balances, Logos, active orders, countdowns, and
   results remain authoritative API/WebSocket data. Empty/loading/guest/error
@@ -622,10 +665,14 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
 | Loan user is authenticated | Skip the account-access summary and continue from Hero directly to product categories |
 | Loan user is a guest | Render one login-limit CTA with the existing `/products/loan` redirect; do not render a duplicate summary |
 | Swap direction control is activated | Immediately exchange the API-owned pay/receive assets and Logos, keep amount, clear the old quote/messages, and remain within the viewport |
-| Seconds history renders a resolved order | Use one full-width 48px profit/loss row above the two-column details; positive/negative values use semantic roles and unknown values remain neutral `--` |
-| Seconds settlement result is visible | Keep the root pointer-transparent and page scroll/input available; only the glass card and its 44px actions receive input |
-| Multiple Seconds results settle together | Show one card at a time, expose the remaining count, and advance FIFO without losing later cards |
-| Viewport is 320px or reduced motion is requested for a Seconds result | Keep zero horizontal overflow, stack actions when needed, and remove reveal motion |
+| Seconds Header pair trigger is selected | Open the `vONcc`/`kLXCs` body-Teleported picker, focus search, lock body scroll, and keep the route unchanged |
+| Seconds pair search has no match | Render the localized no-result state; preserve the selected product and every active order |
+| Seconds pair row is selected | Switch product/K-line through the existing selection path, close the picker, restore Header focus, and do not mutate active orders |
+| Seconds pair picker is dismissed | Preserve product and search-independent trading state, unlock body exactly once, and restore exact trigger focus |
+| Seconds history renders a resolved order | Match `vZy6U`/`x29z7`: 52px header, 38px filter track with `y=82` 44px targets around 33px pills, and full-canvas 142px three-line cards with 16px content insets and no radius/border/shadow; show lifecycle `status` only while deriving signed P&L from final `result`, with unknown values neutral `--` |
+| Seconds settlement result is visible | Cover the viewport with the selected Pencil backdrop, expose one labelled modal dialog, lock body scroll, trap focus, and initially focus the 44px Close target |
+| Multiple Seconds results settle together | Show one dialog at a time, announce the remaining count for assistive technology, and let Close/Escape/backdrop advance FIFO without losing later results |
+| Viewport is 320px or reduced motion is requested for a Seconds result | Keep 16px safe gutters, zero horizontal overflow, one full-width History action, and remove reveal motion without changing final geometry |
 | Selected Seconds page renders at 390px | Header is 60px, operation is 420px, orders start at y=480, inner tracks are 350px, and the center title has zero horizontal delta |
 | Selected Seconds page renders at 320px or 448px | Fluid tracks stay inside the viewport, period/filter controls retain their visible geometry, and the document has zero horizontal overflow |
 | A live Seconds ticker frame omits change percentage | Keep the live price and fall back to the current market snapshot percentage rather than displaying a transient unavailable value |
@@ -768,19 +815,33 @@ createTurnstileLifecycle(options?: TurnstileLifecycleOptions): {
   exchange, the typed amount stays, the previous quote disappears, a second
   click restores the initial direction, and document width remains the viewport
   width.
-- Seconds history profit/loss pass: at 320px and 390px in both themes, assert a
-  win renders the localized profit label and signed positive net amount, a loss
-  renders the localized loss label and signed negative stake, and a cancelled
-  row renders the generic label with `--`. The full-width row remains inside
-  the card and document width equals viewport width even for grouped large
-  amounts.
-- Seconds settlement-notice pass: assert the Teleported root has no backdrop,
-  `aria-modal`, or body lock; its outside area is pointer-transparent while the
-  card is interactive. At 320px, 390px, and 448px in both themes verify signed
-  win/loss amounts, pair/direction/duration, FIFO remaining count, 44px actions,
-  zero horizontal overflow, named History navigation, and complete reduced-
-  motion overrides. Its local semantic roles must alias global `:root` tokens,
-  with no literal hex/RGB colors or component-local theme mirror state.
+- Seconds history Pencil/parity pass: at 320px, 390px, and 448px in both themes,
+  assert the `vZy6U`/`x29z7` 52/38/142 hierarchy, `y=82` 44px filter hit boxes
+  with nested 33px pill surfaces, and three-line cards with page-owned
+  typography. At 390px cards must be `x=0 / width=390 / height=142` at
+  `y=134/290/446`; at every tested width they fill the phone canvas, use a 16px
+  inner text track, and have no radius, border, or shadow.
+  A settled win/loss keeps the localized lifecycle status while its separate
+  P&L renders the signed positive net amount/negative stake; a cancelled row
+  renders the generic P&L label with `--`. Assert compact no-space Chinese
+  duration, API-only prices, and document width equal to viewport width even
+  for grouped large amounts.
+- Seconds settlement-dialog pass: assert the Teleported root owns the selected
+  Pencil backdrop and a labelled `aria-modal` dialog using `useModalDialog`.
+  At 390×920 in both themes verify x=16/y=176, 358×541 geometry, the exact
+  34/176/68/64/39/52 child stack, API-only entry/settlement prices, signed
+  win/loss amount and rate, pair/direction/cycle, FIFO advancement, 44px Close,
+  one History action, focus trap/restoration, and body lock. At 320px and 448px
+  verify safe gutters and zero horizontal overflow; reduced motion must retain
+  final geometry while removing transition.
+- Seconds pair-picker pass: assert the Header uses one 44px dialog trigger and
+  no native `select`; at 390x920 in both themes verify the `vONcc`/`kLXCs`
+  390x840 sheet at y=80, 350x34 header, 350x46 search, 350x64 rows, 30px API
+  Logos, live/snapshot prices, selected Check, localized note, focus trap/
+  restoration, Escape/backdrop close, and body lock. Search must filter by
+  pair/base/quote without mutating selection until a row is chosen. Repeat at
+  320x640 and 448x920 for zero overflow, long-list scrolling, and reduced
+  motion.
 - Selected Seconds parity pass: at 390px in both themes assert the 60/420/362
   vertical geometry, 350px content tracks, 112px chart, 30/26/38/40/44 form,
   82px cards, exact selected tokens, absolute Header centering, and computed

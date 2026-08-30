@@ -7858,3 +7858,38 @@
 - 修改文件：提交 `b81c222` 中的 `src/workers/kline_recovery.rs`、`tests/unit_src/src_workers_kline_recovery_tests.rs`、`.trellis/tasks/08-18-synthetic-market-settings/{task.json,implement.jsonl,check.jsonl}`、`docs/superpowers/PROGRESS.md`，以及本条交付记录。
 - 验证结果：稳定版全目标全特性 Clippy、Rust 1.98 nightly Clippy、Worker 11/11、后端架构 11/11、后端中文文档门禁 1/1、Trellis 上下文校验与暂存差异检查均通过；首次推送结果为 `1f35e69..b81c222 main -> main`。
 - 后续事项：等待 GitHub Actions 使用新提交重新执行；其他既有未提交改动未纳入本轮提交并继续保留在本地工作区。
+
+## 2026-08-30 15:32 - 1:1 对齐当前 Pencil 秒合约历史订单页
+
+- 完成内容：重新读取 Pencil 当前选中的 `07d / 秒合约 · 历史订单 · 浅色主题` 与深色主题画板，将页面浅色背景/卡片改为纯白 `#FFFFFF`，深色背景/卡片改为纯黑 `#000000`；Header 改为左侧 24px Lucide `ArrowLeft` 返回图标、右侧标题“秒合约订单”，保持 52px Header、16px 安全轨、右对齐标题和原有真实 API/方向筛选/状态流程。
+- 修改文件：`mobile/src/views/SecondsHistoryView.vue`、`mobile/src/styles/pencil-selected-pages.css`、`mobile/tests/seconds-history-view.test.ts`、`.trellis/tasks/08-29-mobile-seconds-history-pencil-parity/{prd.md,research/pencil-seconds-history.md}`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：Mobile 全量测试 496/496 通过，`npm --prefix mobile run type-check` 通过，`git diff --check` 通过；Ego Browser 在 390×920 视口实测 Header `x=16/y=16/w=358/h=52`、返回图标 `x=16/y=30/w=24/h=24`、标题 `x=254/y=25/w=120/h=34`、筛选轨 `x=16/y=82/w=358/h=38`，与选稿几何一致；实测明暗背景分别为 `rgb(255,255,255)` / `rgb(0,0,0)`。
+- 后续事项：无。
+
+## 2026-08-30 16:57 - 1:1 实现 Pencil 秒合约盈亏结算弹窗
+
+- 完成内容：依据 Pencil 当前选中的浅色 `tFcTH` 与深色 `FBdqS` 画板，将 `/seconds` 旧的非模态结算通知重构为全屏模态结算弹窗；精确实现已结算状态、盈亏图标/净额/收益率、权威买入价与结算价对比、交易对/方向/周期、自动结算说明和单一历史订单操作，并补齐浅深主题、320–448px 安全轨、低动态、焦点循环、Escape/遮罩关闭、body 滚动锁和 FIFO 多结果行为。移除结果容器的订单 key，避免 `out-in` 切换后焦点落回页面、第二笔结果无法继续键盘关闭；不改动后端结算与资金逻辑。
+- 修改文件：`mobile/src/views/SecondsView.vue`、`mobile/src/styles/pencil-selected-pages.css`、`mobile/src/i18n/messages/{zh-CN,en}.ts`、`mobile/tests/{seconds-live-multi-orders,award-ui-trading-workspaces}.test.ts`、`.trellis/spec/mobile/{pwa-and-shell,navigation-and-localization}.md`、`.trellis/tasks/archive/2026-08/08-30-mobile-seconds-settlement-pencil-parity/*`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`npm --prefix mobile run type-check`、`npm --prefix mobile run build:pwa`、`npm --prefix mobile run build:tauri` 均通过；Mobile 全量测试 496/496 通过。Ego Browser 在 390×920 实测弹窗 `x=16/y=176/w=358/h=541`，状态/结果/价格/摘要/说明/按钮高度依次为 `34/176/68/64/39/52`，浅色卡片 `rgb(255,255,255)`、深色卡片 `rgb(16,23,19)` 与 Pencil 一致，文档宽度为 390；Tab 在关闭和历史按钮间循环，首笔盈利 `+18.48 USDT / +92.40%` 关闭后正确切换第二笔亏损 `-25 USDT / -100.00%`，再次关闭恢复页面。明暗截图：`/var/folders/f9/9q7ggh6s5ms7fljhc7d3nmvh0000gn/T/ego-browser-shot-23490-1.png`、`/var/folders/f9/9q7ggh6s5ms7fljhc7d3nmvh0000gn/T/ego-browser-shot-23490-2.png`。
+- 后续事项：无。
+
+## 2026-08-30 17:51 - 移除秒合约页面下单成功提示
+
+- 完成内容：移除 `seconds-message seconds-message--success` 成功提示及其无效状态/CSS；下单成功后继续以权威返回订单立即更新进行中订单列表、关闭确认弹窗并异步对账，不影响错误、刷新警告和加载提示。
+- 修改文件：`mobile/src/views/SecondsView.vue`、`mobile/tests/seconds-live-multi-orders.test.ts`、`mobile/tests/android-ui-trading-prototype-v16.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：相关测试 10/10、Mobile 全量测试 496/496、`npm --prefix mobile run type-check` 与 `git diff --check` 均通过。
+- 后续事项：无。
+
+## 2026-08-30 18:34 - 手机端秒合约交易对选择对齐 Pencil 07c
+
+- 完成内容：依据 Pencil 当前选中的浅色 `vONcc` 与深色 `kLXCs` 画板，将 `/seconds` Header 的透明原生下拉框重构为 body-Teleport 交易对选择层；完成 390×920 下 390×840 面板、34px 标题行、46px 搜索框、64px 产品行、30px 后台 Logo、实时/快照价格、选中 Check、明暗主题、320/448px 响应式、短屏与低动态适配；搜索支持交易对/基础币/结算币，选择继续复用既有产品/K 线切换且不影响活动订单；补齐 i18n、可访问焦点循环、Escape/遮罩/关闭、滚动锁与焦点归还，并同步 Mobile Trellis 规范和回归测试。
+- 修改文件：`mobile/src/views/SecondsView.vue`、`mobile/src/styles/pencil-selected-pages.css`、`mobile/src/i18n/messages/zh-CN.ts`、`mobile/src/i18n/messages/en.ts`、`mobile/tests/seconds-pair-picker-pencil-parity.test.ts`、`mobile/tests/seconds-pencil-selected-parity.test.ts`、`mobile/tests/seconds-live-multi-orders.test.ts`、`mobile/tests/award-ui-trading-workspaces.test.ts`、`mobile/tests/pencil-trading-product-selected-parity.test.ts`、`mobile/tests/seconds-history-view.test.ts`、`.trellis/spec/mobile/pwa-and-shell.md`、`.trellis/spec/mobile/backend-integration.md`、`.trellis/spec/mobile/navigation-and-localization.md`、`.trellis/tasks/08-30-mobile-seconds-pair-picker-pencil-parity/*`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：先执行新增契约测试得到旧实现 5/5 失败；实现后定向测试 32/32 通过；`npm run type-check` 通过；Mobile 全量 `npm test` 501/501 通过；`npm run build:pwa` 与 `npm run build:tauri` 均通过；`git diff --check` 与 Trellis context validate 通过。Ego Browser 在真实 Vue 页面验证 390×920 明暗主题：选择层 `0,0,390,920`，面板 `0,80,390,840`，标题 `20,98,350,34`，搜索 `20,146,350,46`，产品行 `20,206,350,64`；搜索 BTC、产品切换、实时价格/后台 Logo、Tab 循环、Escape/遮罩关闭、body 解锁及触发器焦点归还均通过；320×640 与 448×920 横向溢出均为 0。
+- 后续事项：本次未提交或推送；工作树仍包含此前其他任务的大量未提交改动，提交时需要按任务范围拆分。
+
+## 2026-08-30 18:42 - 秒合约买跌主操作切换为红色
+
+- 完成内容：秒合约方向切换为“买跌”时，为下单主按钮增加方向修饰类并使用既有负向语义色 `--seconds-negative`；切回“买涨”后自动恢复薄荷绿色，提交、禁用和下单业务逻辑保持不变。
+- 修改文件：`mobile/src/views/SecondsView.vue`、`mobile/tests/seconds-pencil-selected-parity.test.ts`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：新增契约断言先在旧实现上失败；实现后定向测试 6/6、Mobile 全量测试 501/501、`npm run type-check`、`npm run build:pwa`、`npm run build:tauri` 均通过。
+- 后续事项：无。

@@ -240,6 +240,163 @@ html[data-theme='dark'] .app-stage .mobile-canvas .seconds-page {
   --focus-ring: color-mix(in srgb, #61f1b6 24%, transparent);
 }
 
+/* Pencil 07d Seconds history owns a pure monochrome canvas in the current selected frames. */
+.app-stage .mobile-canvas .seconds-page.seconds-history-page {
+  --history-canvas: #ffffff;
+  --history-card: #ffffff;
+  --history-header-text: #17201c;
+  --history-text: #17201c;
+  --history-back: #69756e;
+  --history-positive: #0daa79;
+  --history-negative: #e05b68;
+  --history-filter-active: #ddf7ec;
+  --history-filter-inactive: #eaf0ed;
+  --history-filter-inactive-text: #56625b;
+  --history-status: #718078;
+  --history-time: #8a948e;
+  --history-summary: #78847d;
+  --page: var(--history-canvas);
+  --surface: var(--history-canvas);
+  --surface-elevated: var(--history-card);
+  --ink: var(--history-text);
+  --text: var(--history-text);
+  --muted: var(--history-summary);
+  --muted-strong: var(--history-status);
+  --positive: var(--history-positive);
+  --negative: var(--history-negative);
+  --focus: var(--history-positive);
+  --focus-ring: color-mix(in srgb, var(--history-positive) 24%, transparent);
+  background-color: var(--history-canvas);
+}
+
+html[data-theme='dark'] .app-stage .mobile-canvas .seconds-page.seconds-history-page {
+  --history-canvas: #000000;
+  --history-card: #000000;
+  --history-header-text: #eef6f1;
+  --history-text: #eff7f2;
+  --history-back: #a8b5ae;
+  --history-positive: #0daa79;
+  --history-negative: #e05b68;
+  --history-filter-active: #1e3a30;
+  --history-filter-inactive: #17231e;
+  --history-filter-inactive-text: #b9c7c0;
+  --history-status: #a8b5ae;
+  --history-time: #89968f;
+  --history-summary: #a8b5ae;
+  --page: var(--history-canvas);
+  --surface: var(--history-canvas);
+  --surface-elevated: var(--history-card);
+  --ink: var(--history-text);
+  --text: var(--history-text);
+  --muted: var(--history-summary);
+  --muted-strong: var(--history-status);
+  --positive: var(--history-positive);
+  --negative: var(--history-negative);
+  --focus: var(--history-positive);
+  --focus-ring: color-mix(in srgb, var(--history-positive) 28%, transparent);
+  background-color: var(--history-canvas);
+}
+
+/* Pencil 07c Seconds pair picker is Teleported to body and owns an explicit theme boundary. */
+.seconds-pair-picker-layer[data-pencil-source='vONcc kLXCs'] {
+  --seconds-pair-backdrop: #00000099;
+  --seconds-pair-sheet: #ffffff;
+  --seconds-pair-sheet-border: #dde7e1;
+  --seconds-pair-sheet-shadow: #00000022;
+  --seconds-pair-text: #111714;
+  --seconds-pair-close: #e8f0ec;
+  --seconds-pair-close-border: #cbd8d1;
+  --seconds-pair-close-icon: #25372d;
+  --seconds-pair-search: #f4f7f5;
+  --seconds-pair-search-border: #ccd5d0;
+  --seconds-pair-muted: #68736d;
+  --seconds-pair-row: #ffffff;
+  --seconds-pair-row-border: #ccd5d0;
+  --seconds-pair-selected: #d9f9eb;
+  --seconds-pair-signal: #43efa9;
+  --seconds-pair-check: #087b52;
+  --seconds-pair-focus: #087b52;
+  --seconds-pair-focus-ring: color-mix(in srgb, #087b52 26%, transparent);
+}
+
+html[data-theme='dark'] .seconds-pair-picker-layer[data-pencil-source='vONcc kLXCs'] {
+  --seconds-pair-backdrop: #000000b8;
+  --seconds-pair-sheet: #0b0f0d;
+  --seconds-pair-sheet-border: #2c3a32;
+  --seconds-pair-sheet-shadow: #00000044;
+  --seconds-pair-text: #f2f7f4;
+  --seconds-pair-close: #1a251f;
+  --seconds-pair-close-border: #2b3b32;
+  --seconds-pair-close-icon: #b4c1ba;
+  --seconds-pair-search: #151f1a;
+  --seconds-pair-search-border: #29342e;
+  --seconds-pair-muted: #95a19a;
+  --seconds-pair-row: #0c100e;
+  --seconds-pair-row-border: #29342e;
+  --seconds-pair-selected: #103326;
+  --seconds-pair-signal: #43efa9;
+  --seconds-pair-check: #61f1b6;
+  --seconds-pair-focus: #61f1b6;
+  --seconds-pair-focus-ring: color-mix(in srgb, #61f1b6 26%, transparent);
+}
+
+/* Pencil 07e Seconds settlement dialog is Teleported to body and therefore owns this theme boundary. */
+.seconds-settlement-layer[data-pencil-source='tFcTH FBdqS'] {
+  --seconds-result-backdrop: #00000099;
+  --seconds-result-card: #ffffff;
+  --seconds-result-card-border: #dde7e1;
+  --seconds-result-card-shadow: #07120d40;
+  --seconds-result-status-soft: #ddf8eb;
+  --seconds-result-positive: #079863;
+  --seconds-result-negative: #ff654a;
+  --seconds-result-negative-soft: #ffe2dc;
+  --seconds-result-text: #142019;
+  --seconds-result-label: #6f7c75;
+  --seconds-result-close: #e8f0ec;
+  --seconds-result-close-border: #cbd8d1;
+  --seconds-result-close-icon: #25372d;
+  --seconds-result-icon-soft: #ddf8eb;
+  --seconds-result-icon-border: #9be8c8;
+  --seconds-result-icon-shadow: #43efa933;
+  --seconds-result-price-surface: #f3f7f5;
+  --seconds-result-summary-surface: #f2f7f4;
+  --seconds-result-note-surface: #f7faf8;
+  --seconds-result-arrow-surface: #e3eee8;
+  --seconds-result-arrow-icon: #34483e;
+  --seconds-result-action: #43efa9;
+  --seconds-result-action-text: #0b2017;
+  --seconds-result-focus: #087b52;
+  --seconds-result-focus-ring: color-mix(in srgb, #087b52 28%, transparent);
+}
+
+html[data-theme='dark'] .seconds-settlement-layer[data-pencil-source='tFcTH FBdqS'] {
+  --seconds-result-backdrop: #000000b8;
+  --seconds-result-card: #101713;
+  --seconds-result-card-border: #2c3a32;
+  --seconds-result-card-shadow: #00000099;
+  --seconds-result-status-soft: #103326;
+  --seconds-result-positive: #56f0b2;
+  --seconds-result-negative: #ff654a;
+  --seconds-result-negative-soft: #3b1b16;
+  --seconds-result-text: #f3f7f5;
+  --seconds-result-label: #93a198;
+  --seconds-result-close: #1a251f;
+  --seconds-result-close-border: #2b3b32;
+  --seconds-result-close-icon: #b4c1ba;
+  --seconds-result-icon-soft: #103326;
+  --seconds-result-icon-border: #1d694d;
+  --seconds-result-icon-shadow: #43efa922;
+  --seconds-result-price-surface: #152019;
+  --seconds-result-summary-surface: #18231d;
+  --seconds-result-note-surface: #152019;
+  --seconds-result-arrow-surface: #223128;
+  --seconds-result-arrow-icon: #c0cec6;
+  --seconds-result-action: #43efa9;
+  --seconds-result-action-text: #0b2017;
+  --seconds-result-focus: #61f1b6;
+  --seconds-result-focus-ring: color-mix(in srgb, #61f1b6 28%, transparent);
+}
+
 .pencil-page {
   display: flow-root;
   min-width: 0;

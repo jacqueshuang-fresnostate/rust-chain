@@ -52,7 +52,8 @@ test('Seconds Header 使用绝对居中的 140x22 交易对轨道和 40px 视觉
   assert.match(header, /<strong>\{\{ selectedPairLabel \}\}<\/strong>/)
   assert.match(header, /<small>\{\{ t\('seconds\.title'\) \}\}<\/small>/)
   assert.match(header, /<ChevronDown :size="15"/)
-  assert.match(header, /<select[\s\S]*?@change="selectProductFromEvent"/)
+  assert.match(header, /<button[\s\S]*?class="seconds-pair-field"[\s\S]*?aria-haspopup="dialog"[\s\S]*?@click="openPairPicker"/)
+  assert.doesNotMatch(header, /<select\b|<option\b/)
   assert.match(header, /<History :size="18"/)
 
   const copyRule = blockOf(secondsStyle, '.seconds-header :deep(.page-header__copy) {')
@@ -123,6 +124,8 @@ test('Seconds 202px 下单表单锁定期限、限额、金额、方向和 44px 
   assert.match(secondsStyle, /\.seconds-direction-grid button\.up\.active\s*\{[\s\S]*?box-shadow:\s*none;/)
   assert.match(secondsStyle, /\.seconds-submit\s*\{[\s\S]*?border-radius:\s*10px;[\s\S]*?height:\s*44px;/)
   assert.match(secondsStyle, /\.seconds-submit\s*\{[\s\S]*?box-shadow:\s*none !important;/)
+  assert.match(secondsTemplate, /:class="\{ 'seconds-submit--down': direction === 'down' \}"/)
+  assert.match(secondsStyle, /\.seconds-submit\.seconds-submit--down\s*\{[\s\S]*?background:\s*var\(--seconds-negative\) !important;/)
 
   assert.match(secondsTemplate, /:aria-pressed="direction === 'up'"/)
   assert.match(secondsTemplate, /:aria-pressed="direction === 'down'"/)

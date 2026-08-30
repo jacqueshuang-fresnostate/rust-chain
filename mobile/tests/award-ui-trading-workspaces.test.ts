@@ -111,7 +111,7 @@ test('交易表单保持可用触控，Seconds 视觉几何锁定 30/38/40/44px 
   assert.match(tradeCss, /\.submit-order\s*\{\s*min-height: 52px;/)
   assert.match(tradeCss, /\.input-stack \.field-shell:focus-within\s*\{[\s\S]*?border-color: var\(--focus\);[\s\S]*?box-shadow: 0 0 0 3px var\(--focus-ring\);/)
 
-  assert.match(secondsCss, /\.seconds-pair-field select\s*\{[\s\S]*?height: 44px;[\s\S]*?inset: -11px 0 auto;/)
+  assert.match(secondsCss, /\.seconds-pair-field\s*\{[\s\S]*?height: 44px;[\s\S]*?margin: -11px 0;[\s\S]*?padding: 11px 0;/)
   assert.match(secondsCss, /\.seconds-order-console\s*\{[\s\S]*?grid-template-rows: 30px 26px 38px 40px 44px;[\s\S]*?height: 202px;/)
   assert.match(secondsCss, /\.seconds-duration-grid button\s*\{[\s\S]*?height: 30px;/)
   assert.match(secondsCss, /\.seconds-duration-grid button::before\s*\{[\s\S]*?inset: -8px 0;/)
@@ -120,7 +120,7 @@ test('交易表单保持可用触控，Seconds 视觉几何锁定 30/38/40/44px 
   assert.match(secondsCss, /\.seconds-direction-grid button\s*\{[\s\S]*?height: 40px;/)
   assert.match(secondsCss, /\.seconds-direction-grid button::before\s*\{[\s\S]*?inset: -3px 0;/)
   assert.match(secondsCss, /\.seconds-submit\s*\{[\s\S]*?height: 44px;[\s\S]*?min-height: 44px !important;/)
-  assert.match(secondsCss, /\.seconds-pair-field:focus-within\s*\{[\s\S]*?outline: 2px solid var\(--focus\);[\s\S]*?outline-offset: 3px;/)
+  assert.match(secondsCss, /\.seconds-pair-field:focus-visible\s*\{[\s\S]*?outline: 2px solid var\(--focus\);[\s\S]*?outline-offset: 3px;/)
   assert.match(secondsCss, /\.seconds-amount-field:focus-within\s*\{[\s\S]*?border-color: var\(--focus\);[\s\S]*?box-shadow: 0 0 0 3px var\(--focus-ring\);/)
 
   assert.doesNotMatch(tradeCss, /box-shadow:\s*inset 3px 0/)
@@ -183,14 +183,22 @@ test('320–448px 响应式、安全区和低动态合同不产生工作区固�
     /\.seconds-settlement-layer\s*\{[^}]*\}/,
     '',
   )
-  assert.doesNotMatch(secondsWithoutSettlementLayer, /position:\s*fixed/)
+  const secondsWithoutModalLayers = secondsWithoutSettlementLayer.replace(
+    /\.seconds-pair-picker-layer\s*\{[^}]*\}/,
+    '',
+  )
+  assert.doesNotMatch(secondsWithoutModalLayers, /position:\s*fixed/)
+  assert.match(
+    secondsSource,
+    /<Teleport to="body">\s*<Transition name="seconds-pair-picker-reveal">[\s\S]*?class="seconds-pair-picker-layer"/,
+  )
   assert.match(
     secondsSource,
     /<Teleport to="body">\s*<Transition name="seconds-result-reveal"[\s\S]*?class="seconds-settlement-layer"/,
   )
   assert.match(
     secondsCss.slice(secondsSettlementLayerIndex),
-    /^\.seconds-settlement-layer\s*\{[^}]*pointer-events:\s*none;[^}]*position:\s*fixed;[^}]*\}/,
+    /^\.seconds-settlement-layer\s*\{[^}]*inset:\s*0;[^}]*pointer-events:\s*auto;[^}]*position:\s*fixed;[^}]*\}/,
   )
   assert.match(secondsSource, /<Teleport to="body">[\s\S]*?class="confirmation-layer seconds-mask"/)
   assert.match(secondsCss.slice(secondsMaskIndex), /^\.seconds-mask\s*\{[^}]*inset:\s*0;[^}]*position:\s*fixed;[^}]*\}/)

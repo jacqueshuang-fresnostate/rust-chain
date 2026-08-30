@@ -95,9 +95,14 @@ lastTradePath: ComputedRef<string>
   when opened directly, and is reached from the `/seconds` Header with
   `router.push({ name: 'seconds-history' })`. The trading workspace keeps active
   order cards but does not duplicate historical rows below the order form.
-- The Seconds settlement card's History action clears every queued result and
-  pushes `{ name: 'seconds-history' }`. Close and Continue remove only the
-  current FIFO item and leave the user on the trading page.
+- The Seconds settlement dialog's History action clears every queued result and
+  pushes `{ name: 'seconds-history' }`. Close, Escape, and backdrop selection
+  remove only the current FIFO item and leave the user on the trading page.
+- The Seconds Header pair control is an in-page dialog, not a route. Opening,
+  searching, closing, or choosing a product keeps `/seconds`; choosing a row
+  runs the existing product switch before the picker closes. History navigation
+  first closes this picker, clears settlement results, and then pushes the named
+  history route so no Teleported surface survives navigation.
 - Message Center is one of those detail routes. The Home Bell pushes the named
   `message-center` route; `/messages` declares depth 1, hides the Dock, and
   falls back to named Home. Its custom selected-frame ArrowLeft calls
@@ -195,10 +200,15 @@ lastTradePath: ComputedRef<string>
   the authoritative result: win, loss, or unavailable/unknown respectively;
   neither the template nor the amount formatter assembles fixed Chinese or
   English copy.
-- Seconds settlement notices use symmetric locale keys for the settled kicker,
-  profit/loss title, authoritative-source note, detail label, remaining count,
-  Continue trading, and View order history. Pair, direction, duration, amount,
-  and asset remain bound order values rather than fixed template copy.
+- Seconds settlement notices use symmetric locale keys for the settled status,
+  profit/loss title, return rate, entry/settlement prices, pair, direction,
+  cycle, automatic-settlement note, remaining count, and View order history.
+  Pair, direction, duration, amount, and asset remain bound order values rather
+  than fixed template copy.
+- Seconds pair selection uses symmetric keys for title, search placeholder and
+  accessible label, product-list label, no-result state, and the current-order
+  preservation note. Pair symbols, prices, and Logos stay runtime data; no
+  fixed Chinese or English copy belongs in `SecondsView.vue`.
 - Supported app locales are `zh-CN` and `en`; the persisted key is `hippo_mobile_locale`.
 - Language changes update the Vue locale, `<html lang>`, runtime `Intl` locale, and persisted locale in one operation.
 - Locale-aware content APIs receive `currentApiLocale()` when the endpoint supports a locale parameter.
@@ -229,11 +239,14 @@ lastTradePath: ComputedRef<string>
 | Convert selected from the root chooser | Push named `swap`; Back returns to the source root page |
 | Root trade chooser is dismissed | Preserve route and selection; unlock body and restore exact Trade-trigger focus |
 | Home seventh product shortcut selected | Push the named `seconds` route; do not open Prediction |
+| Seconds Header pair trigger selected | Keep `/seconds`, open the labelled picker, and focus its search input |
+| Seconds pair picker closes by Close, Escape, or backdrop | Keep the selected pair and route; restore Header trigger focus |
+| Seconds pair row selected | Switch the current product in place, close the picker, and keep `/seconds` plus all active orders |
 | Seconds Header history action selected | Push `/seconds/history`, hide the Dock, and preserve `/seconds` in history |
 | Seconds history is opened directly | Back replaces with `/seconds` |
 | Seconds history result is win/loss/unknown | Render the matching localized profit/loss/generic label without translating an unknown source result incorrectly |
 | Settlement card selects View order history | Clear the entire result queue and push the named `seconds-history` route |
-| Settlement card selects Close or Continue | Advance exactly one FIFO result and remain on `/seconds` |
+| Settlement dialog selects Close, Escape, or backdrop | Advance exactly one FIFO result and remain on `/seconds` |
 | Home Bell opens Message Center | Push `/messages`, hide the Dock, and preserve Home in history |
 | Message Center Back has usable Home history | Use router Back and return Home |
 | Message Center Back has no usable history | Replace with named Home fallback |
@@ -294,15 +307,20 @@ lastTradePath: ComputedRef<string>
   into `registerWithEmail`; dismissing or filtering never mutates it.
 - Unit: dynamic prediction text preserves English and localizes supported Chinese patterns.
 - Browser: pair picker returns to the selected trade pair and preserves futures mode.
+- Source/browser: the Seconds pair trigger opens the `vONcc`/`kLXCs` Teleported
+  dialog without route mutation; search starts focused, filters API products,
+  Tab cycles, Escape/backdrop/Close restore the exact trigger, selection updates
+  the Header in place, and all pair-picker locale keys exist in `zh-CN` and
+  `en` with no fixed template copy.
 - Router/behavior: prove Seconds -> Seconds history -> Back returns to Seconds,
   direct-open history replaces with `/seconds`, and the Header action uses the
   named route rather than scrolling the trading page.
 - Localization/source: prove all three Seconds history profit/loss labels exist
   symmetrically in `zh-CN` and `en`, and the Vue template contains no fixed
   Chinese copy.
-- Localization/source: prove all settlement-card keys exist symmetrically, all
-  three actions use localized copy, and History clears the queue before named
-  route navigation.
+- Localization/source: prove all settlement-dialog keys exist symmetrically,
+  the single visible History action uses localized copy, Close has a localized
+  accessible name, and History clears the queue before named route navigation.
 - Browser: main tabs do not remain in history; direct-open detail back uses its fallback.
 - Browser/source: the central Trade control opens one Teleported labelled dialog,
   initially focuses Close, traps Tab/Shift+Tab, dismisses with Escape/backdrop,

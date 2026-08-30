@@ -3,19 +3,19 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import {
-  ArrowDown,
   ArrowRight,
-  ArrowUp,
+  BadgeDollarSign,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  CircleCheckBig,
   CircleAlert,
   History,
+  Info,
   LoaderCircle,
   RefreshCw,
-  Timer,
-  TrendingDown,
-  Trophy,
+  Search,
   X,
 } from 'lucide-vue-next'
 import AssetMark from '@/components/AssetMark.vue'
@@ -37,6 +37,7 @@ import {
 import { fetchWalletAccounts } from '@/api/wallet'
 import { publicMarketWebSocketUrl } from '@/config/app'
 import { formatAmount, formatPercent, formatPrice, splitSymbol } from '@/core/format'
+import { useModalDialog } from '@/core/modalDialog'
 import {
   createBottomNavSecondsFallbackTarget,
   isBottomNavigationSecondsEntry,
@@ -74,9 +75,12 @@ const amount = ref('')
 const loading = ref(false)
 const submitting = ref(false)
 const error = ref('')
-const success = ref('')
 const refreshWarning = ref('')
 const confirmOpen = ref(false)
+const pairPickerOpen = ref(false)
+const pairSearch = ref('')
+const pairPickerDialog = ref<HTMLElement | null>(null)
+const pairPickerTrigger = ref<HTMLButtonElement | null>(null)
 interface SecondsOrderReview {
   readonly productId: number
   readonly cycleId: number
@@ -94,6 +98,8 @@ const orderReview = ref<SecondsOrderReview | null>(null)
 const confirmDialog = ref<HTMLElement | null>(null)
 const reviewButton = ref<HTMLButtonElement | null>(null)
 const settlementResultQueue = ref<SecondsOrder[]>([])
+const settlementDialogOpen = ref(false)
+const settlementDialog = ref<HTMLElement | null>(null)
 const sparklineCanvas = ref<HTMLCanvasElement | null>(null)
 const currentTime = ref(Date.now())
 let returnFocus: HTMLElement | null = null
@@ -147,6 +153,15 @@ const nearestSelectedActiveOrder = computed(() => (
 const selectedPairLabel = computed(() => (
   selected.value ? displayProductSymbol(selected.value.symbol) : t('seconds.title')
 ))
+const filteredPairProducts = computed(() => {
+  const query = pairSearch.value.trim().toUpperCase()
+  if (!query) return products.value
+  return products.value.filter((product) => {
+    const pair = splitSymbol(product.symbol)
+    return [product.symbol, displayProductSymbol(product.symbol), pair.base, pair.quote]
+      .some((value) => value.toUpperCase().includes(query))
+  })
+})
 const selectedLiveTicker = computed(() => (
   liveTickerSnapshots.value[normalizeProductSymbol(selected.value?.symbol || '')]
 ))
@@ -189,6 +204,14 @@ const currentSettlementAmount = computed(() => {
   const sign = presentation.translationKey === 'seconds.profitAmount' ? '+' : ''
   return `${sign}${formatAmount(presentation.amount)} ${order.stakeAssetSymbol}`
 })
+const currentSettlementRate = computed(() => {
+  const order = currentSettlementResult.value
+  const presentation = currentSettlementPresentation.value
+  if (!order || presentation?.amount === undefined || order.stakeAmount <= 0) return '--'
+  const rate = (presentation.amount / order.stakeAmount) * 100
+  if (!Number.isFinite(rate)) return '--'
+  return `${rate > 0 ? '+' : ''}${rate.toFixed(2)}%`
+})
 const currentSettlementAnnouncement = computed(() => {
   const order = currentSettlementResult.value
   if (!order) return ''
@@ -201,6 +224,19 @@ const currentSettlementAnnouncement = computed(() => {
   })
 })
 const remainingSettlementResults = computed(() => Math.max(0, settlementResultQueue.value.length - 1))
+const { trapFocus: trapSettlementDialogFocus } = useModalDialog(
+  settlementDialogOpen,
+  settlementDialog,
+  '[data-settlement-initial]',
+)
+const {
+  trapFocus: trapPairPickerFocus,
+  setReturnFocus: setPairPickerReturnFocus,
+} = useModalDialog(
+  pairPickerOpen,
+  pairPickerDialog,
+  '[data-seconds-pair-search]',
+)
 const amountNumber = computed(() => Number(amount.value || 0))
 const payoutRate = computed(() => cycle.value?.payoutRate || 0)
 const reviewEstimatedProfit = computed(() => (
@@ -474,15 +510,43 @@ function initializeSparkline(): void {
 
 function advanceSettlementResult(): void {
   settlementResultQueue.value = settlementResultQueue.value.slice(1)
+  if (!settlementResultQueue.value.length) {
+    settlementDialogOpen.value = false
+    return
+  }
+  void nextTick(() => {
+    settlementDialog.value?.querySelector<HTMLElement>('[data-settlement-initial]')?.focus()
+  })
 }
 
 function clearSettlementResultQueue(): void {
+  settlementDialogOpen.value = false
   settlementResultQueue.value = []
 }
 
+function handleSettlementDialogKeydown(event: KeyboardEvent): void {
+  trapSettlementDialogFocus(event, advanceSettlementResult)
+}
+
 function openHistory(): void {
+  pairPickerOpen.value = false
   clearSettlementResultQueue()
   void router.push({ name: 'seconds-history' })
+}
+
+function openPairPicker(): void {
+  if (confirmOpen.value || settlementDialogOpen.value) return
+  pairSearch.value = ''
+  setPairPickerReturnFocus(pairPickerTrigger.value)
+  pairPickerOpen.value = true
+}
+
+function closePairPicker(): void {
+  pairPickerOpen.value = false
+}
+
+function handlePairPickerKeydown(event: KeyboardEvent): void {
+  trapPairPickerFocus(event, closePairPicker)
 }
 
 /** Clears order baselines, expiry retries, and notices at a private-session boundary. */
@@ -649,33 +713,28 @@ function selectProduct(product: SecondsProduct): void {
   direction.value = 'up'
   amount.value = String(product.cycles[0]?.minStake || '')
   error.value = ''
-  success.value = ''
   void loadSparkline(product.symbol)
 }
 
-function selectProductFromEvent(event: Event): void {
-  const productId = Number((event.target as HTMLSelectElement).value)
-  const product = products.value.find((item) => item.id === productId)
-  if (product) selectProduct(product)
+function choosePairProduct(product: SecondsProduct): void {
+  selectProduct(product)
+  closePairPicker()
 }
 
 function selectCycle(cycleId: number): void {
   selectedCycleId.value = cycleId
   amount.value = String(cycle.value?.minStake || '')
   error.value = ''
-  success.value = ''
 }
 
 function setDirection(nextDirection: 'up' | 'down'): void {
   direction.value = nextDirection
   error.value = ''
-  success.value = ''
 }
 
 function setAmount(value: string | number): void {
   amount.value = String(value)
   error.value = ''
-  success.value = ''
 }
 
 function reviewOrder(): void {
@@ -765,7 +824,6 @@ async function submit(): Promise<void> {
     committedOrdersById.set(openedOrder.id, openedOrder)
     orders.value = upsertSecondsOrder(orders.value, openedOrder)
     amount.value = ''
-    success.value = t('seconds.created')
     confirmOpen.value = false
     orderReview.value = null
     replaceTickerSubscription()
@@ -823,8 +881,8 @@ watch(() => session.isAuthenticated, (authenticated) => {
   if (authenticated) return
   privateReconciliationGeneration += 1
   clearSecondsPrivateState()
-  success.value = ''
   refreshWarning.value = ''
+  pairPickerOpen.value = false
   confirmOpen.value = false
   orderReview.value = null
   replaceTickerSubscription()
@@ -844,6 +902,19 @@ watch(confirmOpen, async (open) => {
   returnFocus?.focus()
   returnFocus = null
 })
+
+watch([currentSettlementResult, confirmOpen, pairPickerOpen], async ([result, confirmationOpen, pickerOpen]) => {
+  if (!result || confirmationOpen || pickerOpen) {
+    settlementDialogOpen.value = false
+    return
+  }
+  if (settlementDialogOpen.value) return
+  // Let the confirmation dialog restore scroll and focus before the settlement dialog acquires them.
+  await nextTick()
+  if (currentSettlementResult.value && !confirmOpen.value && !pairPickerOpen.value) {
+    settlementDialogOpen.value = true
+  }
+}, { immediate: true })
 
 watch(sparklinePoints, async () => {
   await nextTick()
@@ -901,25 +972,23 @@ onBeforeUnmount(() => {
       :subtitle="t('seconds.context')"
     >
       <template #center>
-        <label class="seconds-pair-field" :data-disabled="loading || !products.length">
-          <span class="sr-only">{{ t('marketDetail.market') }}</span>
+        <button
+          ref="pairPickerTrigger"
+          class="seconds-pair-field"
+          type="button"
+          aria-haspopup="dialog"
+          :aria-expanded="pairPickerOpen"
+          aria-controls="seconds-pair-picker"
+          :aria-label="t('seconds.pairPickerTitle')"
+          :data-state="loading ? 'loading' : products.length ? 'ready' : 'empty'"
+          @click="openPairPicker"
+        >
           <span class="seconds-pair-copy" aria-hidden="true">
             <strong>{{ selectedPairLabel }}</strong>
             <small>{{ t('seconds.title') }}</small>
             <ChevronDown :size="15" :stroke-width="2" />
           </span>
-          <select
-            :value="selected?.id || ''"
-            :disabled="loading || !products.length"
-            :aria-label="t('marketDetail.market')"
-            @change="selectProductFromEvent"
-          >
-            <option v-if="!products.length" value="">{{ loading ? t('seconds.loading') : t('seconds.noProducts') }}</option>
-            <option v-for="product in products" :key="product.id" :value="product.id">
-              {{ displayProductSymbol(product.symbol) }}
-            </option>
-          </select>
-        </label>
+        </button>
       </template>
       <template #actions>
         <button class="icon-button" type="button" :aria-label="t('seconds.historyTitle')" @click="openHistory">
@@ -1065,6 +1134,7 @@ onBeforeUnmount(() => {
             <button
               ref="reviewButton"
               class="button button--primary button--full seconds-submit"
+              :class="{ 'seconds-submit--down': direction === 'down' }"
               type="button"
               :disabled="submitting || loading || !selected"
               :aria-busy="submitting"
@@ -1118,15 +1188,11 @@ onBeforeUnmount(() => {
             </button>
           </div>
 
-          <div v-if="error || success || refreshWarning || loading" class="seconds-feedback" aria-live="polite">
+          <div v-if="error || refreshWarning || loading" class="seconds-feedback" aria-live="polite">
             <div v-if="error" class="seconds-message seconds-message--error" role="alert">
               <CircleAlert :size="16" aria-hidden="true" />
               <span>{{ error }}</span>
               <button type="button" :aria-label="t('common.retry')" @click="load"><RefreshCw :size="16" /></button>
-            </div>
-            <div v-else-if="success" class="seconds-message seconds-message--success" data-session-feedback="created" role="status">
-              <CheckCircle2 :size="16" aria-hidden="true" />
-              <span>{{ success }}</span>
             </div>
             <div v-else-if="refreshWarning" class="seconds-message seconds-message--warning" role="status">
               <RefreshCw :size="16" aria-hidden="true" />
@@ -1201,6 +1267,106 @@ onBeforeUnmount(() => {
     </div>
 
     <Teleport to="body">
+      <Transition name="seconds-pair-picker-reveal">
+        <div
+          v-if="pairPickerOpen"
+          class="seconds-pair-picker-layer"
+          data-pencil-source="vONcc kLXCs"
+          @click.self="closePairPicker"
+        >
+          <section
+            id="seconds-pair-picker"
+            ref="pairPickerDialog"
+            class="seconds-pair-picker"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="seconds-pair-picker-title"
+            tabindex="-1"
+            @keydown="handlePairPickerKeydown"
+          >
+            <header class="seconds-pair-picker__header">
+              <h2 id="seconds-pair-picker-title" class="seconds-pair-picker__title">
+                {{ t('seconds.pairPickerTitle') }}
+              </h2>
+              <button
+                class="seconds-pair-picker__close"
+                type="button"
+                :aria-label="t('common.close')"
+                @click="closePairPicker"
+              >
+                <span class="seconds-pair-picker__close-face" aria-hidden="true">
+                  <X :size="18" :stroke-width="1.9" />
+                </span>
+              </button>
+            </header>
+
+            <label class="seconds-pair-picker__search">
+              <Search :size="18" :stroke-width="1.9" aria-hidden="true" />
+              <input
+                v-model="pairSearch"
+                data-seconds-pair-search
+                type="search"
+                autocomplete="off"
+                spellcheck="false"
+                :aria-label="t('seconds.pairPickerSearchLabel')"
+                :placeholder="t('seconds.pairPickerSearchPlaceholder')"
+              />
+            </label>
+
+            <div
+              class="seconds-pair-picker__list"
+              role="listbox"
+              :aria-label="t('seconds.pairPickerProductsLabel')"
+            >
+              <button
+                v-for="product in filteredPairProducts"
+                :key="product.id"
+                class="seconds-pair-picker__row"
+                :class="{ 'is-selected': selected?.id === product.id }"
+                type="button"
+                role="option"
+                :aria-selected="selected?.id === product.id"
+                @click="choosePairProduct(product)"
+              >
+                <AssetMark
+                  :symbol="baseSymbol(product.symbol)"
+                  :src="marketStore.tickerFor(product.symbol)?.baseIconUrl || marketStore.tickerFor(product.symbol)?.iconUrl"
+                  :fallback-src="marketStore.tickerFor(product.symbol)?.iconUrl"
+                  :size="30"
+                />
+                <strong class="numeric">{{ displayProductSymbol(product.symbol) }}</strong>
+                <span class="seconds-pair-picker__price numeric">
+                  {{ latestPriceForSymbol(product.symbol) > 0
+                    ? formatPrice(latestPriceForSymbol(product.symbol))
+                    : '--' }}
+                </span>
+                <Check
+                  v-if="selected?.id === product.id"
+                  :size="17"
+                  :stroke-width="2.2"
+                  aria-hidden="true"
+                />
+              </button>
+
+              <p v-if="loading" class="seconds-pair-picker__state" role="status">
+                <LoaderCircle :size="18" class="spin" aria-hidden="true" />
+                <span>{{ t('seconds.loading') }}</span>
+              </p>
+              <p v-else-if="!products.length" class="seconds-pair-picker__state" role="status">
+                {{ t('seconds.noProducts') }}
+              </p>
+              <p v-else-if="!filteredPairProducts.length" class="seconds-pair-picker__state" role="status">
+                {{ t('seconds.pairPickerNoResults') }}
+              </p>
+            </div>
+
+            <p class="seconds-pair-picker__note">{{ t('seconds.pairPickerNote') }}</p>
+          </section>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <Teleport to="body">
       <div v-if="confirmOpen && orderReview" class="confirmation-layer seconds-mask" @click.self="closeConfirm">
         <section
           ref="confirmDialog"
@@ -1272,74 +1438,114 @@ onBeforeUnmount(() => {
     <Teleport to="body">
       <Transition name="seconds-result-reveal" mode="out-in">
         <aside
-          v-if="currentSettlementResult"
-          :key="currentSettlementResult.id"
+          v-if="settlementDialogOpen && currentSettlementResult"
           class="seconds-settlement-layer"
+          data-pencil-source="tFcTH FBdqS"
+          @click.self="advanceSettlementResult"
         >
           <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">
             {{ currentSettlementAnnouncement }}
           </p>
           <article
+            ref="settlementDialog"
             class="seconds-settlement-card"
             :data-tone="currentSettlementTone"
+            :data-direction="currentSettlementResult.direction"
             data-settlement-source="orders-api"
+            role="dialog"
+            aria-modal="true"
             :aria-labelledby="`seconds-settlement-title-${currentSettlementResult.id}`"
+            :aria-describedby="`seconds-settlement-note-${currentSettlementResult.id}`"
+            tabindex="-1"
+            @keydown="handleSettlementDialogKeydown"
           >
-            <div class="seconds-settlement-card__panel">
-              <header class="seconds-settlement-card__header">
-                <span class="seconds-settlement-card__icon" aria-hidden="true">
-                  <Trophy v-if="currentSettlementTone === 'positive'" :size="24" :stroke-width="1.8" />
-                  <TrendingDown v-else :size="24" :stroke-width="1.8" />
+            <header class="seconds-settlement-card__status-row">
+              <span class="seconds-settlement-card__status">
+                <CircleCheckBig :size="17" :stroke-width="2" aria-hidden="true" />
+                <span>{{ t('seconds.statusSettled') }}</span>
+              </span>
+              <button
+                class="seconds-settlement-card__close"
+                type="button"
+                :aria-label="t('common.close')"
+                :title="t('common.close')"
+                data-settlement-initial
+                @click="advanceSettlementResult"
+              >
+                <span class="seconds-settlement-card__close-surface" aria-hidden="true">
+                  <X :size="18" :stroke-width="1.9" />
                 </span>
-                <div>
-                  <small>{{ t('seconds.settlementResultEyebrow') }}</small>
-                  <strong :id="`seconds-settlement-title-${currentSettlementResult.id}`">
-                    {{ currentSettlementTitle }}
-                  </strong>
-                </div>
-                <button
-                  class="seconds-settlement-card__close"
-                  type="button"
-                  :aria-label="t('common.close')"
-                  :title="t('common.close')"
-                  @click="advanceSettlementResult"
-                >
-                  <X :size="19" :stroke-width="1.9" aria-hidden="true" />
-                </button>
-              </header>
+              </button>
+            </header>
 
-              <div class="seconds-settlement-card__amount">
-                <strong class="numeric">{{ currentSettlementAmount }}</strong>
-                <span>{{ t('seconds.settlementResultSource') }}</span>
+            <section class="seconds-settlement-card__result">
+              <span class="seconds-settlement-card__result-icon" aria-hidden="true">
+                <BadgeDollarSign :size="34" :stroke-width="1.75" />
+              </span>
+              <strong :id="`seconds-settlement-title-${currentSettlementResult.id}`">
+                {{ currentSettlementTitle }}
+              </strong>
+              <b class="seconds-settlement-card__amount numeric">{{ currentSettlementAmount }}</b>
+              <span class="seconds-settlement-card__rate">
+                {{ t('seconds.settlementReturnRate', { rate: currentSettlementRate }) }}
+              </span>
+            </section>
+
+            <section class="seconds-settlement-card__prices" :aria-label="t('seconds.settlementPriceComparison')">
+              <span class="seconds-settlement-card__price">
+                <small>{{ t('seconds.settlementEntryPrice') }}</small>
+                <strong class="numeric">
+                  {{ currentSettlementResult.entryPrice !== undefined ? formatPrice(currentSettlementResult.entryPrice) : '--' }}
+                </strong>
+              </span>
+              <span class="seconds-settlement-card__price-arrow" aria-hidden="true">
+                <ArrowRight :size="16" :stroke-width="1.9" />
+              </span>
+              <span class="seconds-settlement-card__price seconds-settlement-card__price--settled">
+                <small>{{ t('seconds.settlementPrice') }}</small>
+                <strong class="numeric">
+                  {{ currentSettlementResult.settlementPrice !== undefined ? formatPrice(currentSettlementResult.settlementPrice) : '--' }}
+                </strong>
+              </span>
+            </section>
+
+            <dl class="seconds-settlement-card__summary" :aria-label="t('seconds.settlementResultDetails')">
+              <div>
+                <dt>{{ t('seconds.settlementPair') }}</dt>
+                <dd>{{ displayProductSymbol(currentSettlementResult.symbol) }}</dd>
               </div>
-
-              <div class="seconds-settlement-card__meta" :aria-label="t('seconds.settlementResultDetails')">
-                <span><b>{{ currentSettlementResult.symbol }}</b></span>
-                <span>
-                  <ArrowUp v-if="currentSettlementResult.direction === 'up'" :size="14" aria-hidden="true" />
-                  <ArrowDown v-else :size="14" aria-hidden="true" />
-                  {{ t(currentSettlementResult.direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }}
-                </span>
-                <span>
-                  <Timer :size="14" aria-hidden="true" />
-                  {{ t('seconds.duration', { seconds: currentSettlementResult.durationSeconds }) }}
-                </span>
+              <div>
+                <dt>{{ t('seconds.settlementDirection') }}</dt>
+                <dd>{{ t(currentSettlementResult.direction === 'up' ? 'seconds.bullish' : 'seconds.bearish') }}</dd>
               </div>
-
-              <p v-if="remainingSettlementResults" class="seconds-settlement-card__remaining">
-                {{ t('seconds.settlementResultsRemaining', { count: remainingSettlementResults }) }}
-              </p>
-
-              <div class="seconds-settlement-card__actions">
-                <button type="button" class="is-secondary" @click="advanceSettlementResult">
-                  <span>{{ t('seconds.continueTrading') }}</span>
-                  <ArrowRight :size="16" aria-hidden="true" />
-                </button>
-                <button type="button" class="is-primary" @click="openHistory">
-                  <History :size="16" aria-hidden="true" />
-                  <span>{{ t('seconds.viewHistory') }}</span>
-                </button>
+              <div>
+                <dt>{{ t('seconds.settlementCycle') }}</dt>
+                <dd>{{ t('seconds.historyDuration', { seconds: currentSettlementResult.durationSeconds }) }}</dd>
               </div>
+            </dl>
+
+            <p
+              :id="`seconds-settlement-note-${currentSettlementResult.id}`"
+              class="seconds-settlement-card__note"
+            >
+              <Info :size="17" :stroke-width="1.8" aria-hidden="true" />
+              <span>
+                {{ t('seconds.settlementAutoSummary', {
+                  amount: formatAmount(currentSettlementResult.stakeAmount),
+                  asset: currentSettlementResult.stakeAssetSymbol,
+                }) }}
+              </span>
+            </p>
+
+            <p v-if="remainingSettlementResults" class="sr-only">
+              {{ t('seconds.settlementResultsRemaining', { count: remainingSettlementResults }) }}
+            </p>
+
+            <div class="seconds-settlement-card__actions">
+              <button type="button" class="seconds-settlement-card__history" @click="openHistory">
+                <History :size="16" :stroke-width="2" aria-hidden="true" />
+                <span>{{ t('seconds.viewHistory') }}</span>
+              </button>
             </div>
           </article>
         </aside>
@@ -1426,10 +1632,20 @@ onBeforeUnmount(() => {
 }
 
 .seconds-pair-field {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: inherit;
+  cursor: pointer;
   display: block;
-  height: 22px;
+  height: 44px;
+  margin: -11px 0;
   min-width: 0;
+  padding: 11px 0;
   position: relative;
+  touch-action: manipulation;
   width: 140px;
 }
 
@@ -1467,26 +1683,268 @@ onBeforeUnmount(() => {
 
 .seconds-pair-copy svg {
   display: block;
+  transition: transform 180ms ease;
 }
 
-.seconds-pair-field select {
-  appearance: none;
-  cursor: pointer;
-  height: 44px;
-  inset: -11px 0 auto;
-  opacity: 0;
-  position: absolute;
-  width: 100%;
+.seconds-pair-field[aria-expanded='true'] .seconds-pair-copy svg {
+  transform: rotate(180deg);
 }
 
-.seconds-pair-field:focus-within {
-  border-radius: 6px;
+.seconds-pair-field:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 3px;
 }
 
-.seconds-pair-field[data-disabled='true'] {
-  opacity: .58;
+.seconds-pair-picker-layer {
+  align-items: flex-end;
+  background: var(--seconds-pair-backdrop);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  position: fixed;
+  z-index: 120;
+}
+
+.seconds-pair-picker {
+  background: var(--seconds-pair-sheet);
+  border: 0;
+  border-radius: 24px 24px 0 0;
+  box-shadow:
+    inset 0 1px 0 var(--seconds-pair-sheet-border),
+    inset 1px 0 0 var(--seconds-pair-sheet-border),
+    inset -1px 0 0 var(--seconds-pair-sheet-border),
+    0 -12px 42px var(--seconds-pair-sheet-shadow);
+  box-sizing: border-box;
+  color: var(--seconds-pair-text);
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-geist-sans), Inter, "PingFang SC", sans-serif;
+  gap: 14px;
+  height: calc(100dvh - 80px);
+  max-height: 840px;
+  max-width: 390px;
+  min-height: 0;
+  overflow: hidden;
+  padding: 18px 20px calc(16px + env(safe-area-inset-bottom));
+  width: 100%;
+}
+
+.seconds-pair-picker__header {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  height: 34px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.seconds-pair-picker__title {
+  color: var(--seconds-pair-text);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -.2px;
+  line-height: 26px;
+  margin: 0;
+}
+
+.seconds-pair-picker__close {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  height: 44px;
+  justify-content: center;
+  margin: -5px;
+  padding: 5px;
+  touch-action: manipulation;
+  width: 44px;
+}
+
+.seconds-pair-picker__close-face {
+  align-items: center;
+  background: var(--seconds-pair-close);
+  border: 1px solid var(--seconds-pair-close-border);
+  border-radius: 50%;
+  box-sizing: border-box;
+  color: var(--seconds-pair-close-icon);
+  display: inline-flex;
+  height: 34px;
+  justify-content: center;
+  transition: background-color 160ms ease, transform 160ms ease;
+  width: 34px;
+}
+
+.seconds-pair-picker__close:active .seconds-pair-picker__close-face {
+  transform: scale(.94);
+}
+
+.seconds-pair-picker__close:focus-visible,
+.seconds-pair-picker__row:focus-visible,
+.seconds-pair-picker__search:focus-within {
+  outline: 2px solid var(--seconds-pair-focus);
+  outline-offset: 2px;
+}
+
+.seconds-pair-picker__search {
+  align-items: center;
+  background: var(--seconds-pair-search);
+  border: 1px solid var(--seconds-pair-search-border);
+  border-radius: 12px;
+  box-sizing: border-box;
+  color: var(--seconds-pair-muted);
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
+  height: 46px;
+  padding: 0 14px;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.seconds-pair-picker__search:focus-within {
+  border-color: var(--seconds-pair-focus);
+  box-shadow: 0 0 0 3px var(--seconds-pair-focus-ring);
+  outline: 0;
+}
+
+.seconds-pair-picker__search svg {
+  flex: 0 0 auto;
+}
+
+.seconds-pair-picker__search input {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--seconds-pair-text);
+  flex: 1 1 auto;
+  font: 450 13px/18px var(--font-geist-sans), Inter, "PingFang SC", sans-serif;
+  height: 100%;
+  min-width: 0;
+  outline: 0;
+  padding: 0;
+}
+
+.seconds-pair-picker__search input::placeholder {
+  color: var(--seconds-pair-muted);
+  opacity: 1;
+}
+
+.seconds-pair-picker__search input::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+.seconds-pair-picker__list {
+  display: grid;
+  flex: 0 1 auto;
+  gap: 8px;
+  max-height: calc(100% - 136px);
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.seconds-pair-picker__list::-webkit-scrollbar {
+  display: none;
+}
+
+.seconds-pair-picker__row {
+  align-items: center;
+  appearance: none;
+  background: var(--seconds-pair-row);
+  border: 1px solid var(--seconds-pair-row-border);
+  border-radius: 12px;
+  box-sizing: border-box;
+  color: var(--seconds-pair-text);
+  cursor: pointer;
+  display: grid;
+  flex: 0 0 auto;
+  gap: 12px;
+  grid-template-columns: 30px minmax(0, 1fr) max-content 17px;
+  height: 64px;
+  min-height: 64px;
+  padding: 0 14px;
+  text-align: left;
+  touch-action: manipulation;
+  transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
+  width: 100%;
+}
+
+.seconds-pair-picker__row.is-selected {
+  background: var(--seconds-pair-selected);
+  border-color: var(--seconds-pair-signal);
+}
+
+.seconds-pair-picker__row:active {
+  transform: scale(.985);
+}
+
+.seconds-pair-picker__row > strong {
+  font: 700 15px/20px var(--font-geist-mono), var(--data-font);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seconds-pair-picker__price {
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.seconds-pair-picker__row > svg {
+  color: var(--seconds-pair-check);
+  display: block;
+}
+
+.seconds-pair-picker__state {
+  align-items: center;
+  border: 1px dashed var(--seconds-pair-row-border);
+  border-radius: 12px;
+  color: var(--seconds-pair-muted);
+  display: flex;
+  font-size: 13px;
+  gap: 8px;
+  justify-content: center;
+  line-height: 18px;
+  margin: 0;
+  min-height: 64px;
+  padding: 0 14px;
+  text-align: center;
+}
+
+.seconds-pair-picker__note {
+  color: var(--seconds-pair-muted);
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 450;
+  line-height: 14px;
+  margin: 0;
+  min-height: 14px;
+}
+
+.seconds-pair-picker-reveal-enter-active,
+.seconds-pair-picker-reveal-leave-active {
+  transition: opacity 220ms ease;
+}
+
+.seconds-pair-picker-reveal-enter-active .seconds-pair-picker,
+.seconds-pair-picker-reveal-leave-active .seconds-pair-picker {
+  transition: transform 300ms cubic-bezier(.22, 1, .36, 1);
+}
+
+.seconds-pair-picker-reveal-enter-from,
+.seconds-pair-picker-reveal-leave-to {
+  opacity: 0;
+}
+
+.seconds-pair-picker-reveal-enter-from .seconds-pair-picker,
+.seconds-pair-picker-reveal-leave-to .seconds-pair-picker {
+  transform: translateY(18px);
 }
 
 .seconds-trading-operation {
@@ -1907,6 +2365,10 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 
+.seconds-submit.seconds-submit--down {
+  background: var(--seconds-negative) !important;
+}
+
 .seconds-submit:disabled {
   cursor: default;
   opacity: .55;
@@ -2063,12 +2525,6 @@ onBeforeUnmount(() => {
 .seconds-message--error {
   background: var(--seconds-negative-soft);
   color: var(--seconds-negative);
-}
-
-.seconds-message--success {
-  background: var(--seconds-positive-soft);
-  color: var(--seconds-positive-text);
-  grid-template-columns: auto minmax(0, 1fr);
 }
 
 .seconds-message--warning {
@@ -2277,293 +2733,371 @@ onBeforeUnmount(() => {
 }
 
 .seconds-settlement-layer {
-  --seconds-result-surface: var(--surface);
-  --seconds-result-surface-elevated: var(--surface-elevated);
-  --seconds-result-ink: var(--ink);
-  --seconds-result-muted: var(--muted);
-  --seconds-result-line: var(--line);
-  --seconds-result-shadow: var(--dark-surface);
-  --seconds-result-positive: var(--positive);
-  --seconds-result-negative: var(--negative);
-  --seconds-result-on-accent: var(--on-accent);
-  --seconds-result-focus: var(--focus);
-  --seconds-result-focus-ring: color-mix(in srgb, var(--focus) 28%, transparent);
-
+  align-items: center;
+  background: var(--seconds-result-backdrop);
   box-sizing: border-box;
-  left: 50%;
-  max-width: min(448px, var(--app-max-width, 448px));
+  display: grid;
+  inset: 0;
+  justify-items: center;
+  min-height: 100dvh;
+  overflow-x: clip;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding:
-    10px
-    max(12px, env(safe-area-inset-right))
-    0
-    max(12px, env(safe-area-inset-left));
-  pointer-events: none;
+    max(16px, env(safe-area-inset-top))
+    max(16px, env(safe-area-inset-right))
+    max(16px, env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-left));
+  pointer-events: auto;
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 60px);
-  transform: translateX(-50%);
   width: 100%;
   z-index: calc(var(--layer-overlay, 80) + 2);
 }
 
 .seconds-settlement-card {
   --seconds-result-tone: var(--seconds-result-positive);
-  --seconds-result-tone-soft: color-mix(
-    in srgb,
-    var(--seconds-result-tone) 14%,
-    var(--seconds-result-surface-elevated)
-  );
+  --seconds-result-tone-soft: var(--seconds-result-icon-soft);
+  --seconds-result-tone-border: var(--seconds-result-icon-border);
+  --seconds-result-tone-shadow: var(--seconds-result-icon-shadow);
 
-  background:
-    linear-gradient(145deg, color-mix(in srgb, white 58%, transparent), transparent 38%),
-    color-mix(in srgb, var(--seconds-result-tone) 18%, var(--seconds-result-surface));
-  border-radius: 28px;
+  background: var(--seconds-result-card);
+  border: 0;
+  border-radius: 24px;
   box-shadow:
-    0 22px 54px color-mix(in srgb, var(--seconds-result-shadow) 28%, transparent),
-    0 6px 18px color-mix(in srgb, var(--seconds-result-tone) 14%, transparent),
-    inset 0 1px 0 color-mix(in srgb, white 64%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--seconds-result-tone) 24%, var(--seconds-result-line));
+    0 16px 40px var(--seconds-result-card-shadow),
+    inset 0 0 0 1px var(--seconds-result-card-border);
   box-sizing: border-box;
-  color: var(--seconds-result-ink);
+  color: var(--seconds-result-text);
+  display: grid;
+  font-family: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  gap: 14px;
+  margin: auto;
+  max-width: 358px;
+  min-height: 541px;
+  min-width: 0;
   overflow: hidden;
-  padding: 3px;
-  pointer-events: auto;
-  position: relative;
+  padding: 20px 20px 18px;
+  transform: translateY(-13.5px);
   width: 100%;
 }
 
 .seconds-settlement-card[data-tone='negative'] {
   --seconds-result-tone: var(--seconds-result-negative);
+  --seconds-result-tone-soft: var(--seconds-result-negative-soft);
+  --seconds-result-tone-border: color-mix(in srgb, var(--seconds-result-negative) 42%, transparent);
+  --seconds-result-tone-shadow: color-mix(in srgb, var(--seconds-result-negative) 22%, transparent);
 }
 
-.seconds-settlement-card::before {
-  background:
-    radial-gradient(circle at 14% 12%, color-mix(in srgb, white 34%, transparent), transparent 32%),
-    radial-gradient(circle, color-mix(in srgb, var(--seconds-result-tone) 34%, transparent), transparent 68%);
-  content: '';
-  height: 210px;
-  pointer-events: none;
-  position: absolute;
-  right: -64px;
-  top: -108px;
-  width: 210px;
-}
-
-.seconds-settlement-card::after {
-  background-image:
-    linear-gradient(color-mix(in srgb, var(--seconds-result-tone) 8%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in srgb, var(--seconds-result-tone) 8%, transparent) 1px, transparent 1px);
-  background-size: 14px 14px;
-  content: '';
-  inset: 0;
-  -webkit-mask-image: linear-gradient(112deg, transparent 12%, black 72%, transparent);
-  mask-image: linear-gradient(112deg, transparent 12%, black 72%, transparent);
-  opacity: .72;
-  pointer-events: none;
-  position: absolute;
-}
-
-.seconds-settlement-card__panel {
-  -webkit-backdrop-filter: blur(24px) saturate(148%);
-  backdrop-filter: blur(24px) saturate(148%);
-  background:
-    linear-gradient(142deg, color-mix(in srgb, white 10%, transparent), transparent 44%),
-    color-mix(in srgb, var(--seconds-result-surface-elevated) 88%, transparent);
-  border: 1px solid color-mix(in srgb, white 25%, var(--seconds-result-line));
-  border-radius: 24px;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 36%, transparent),
-    inset 0 -1px 0 color-mix(in srgb, var(--seconds-result-tone) 12%, transparent);
-  display: grid;
-  gap: 12px;
-  min-width: 0;
-  padding: 13px;
-  position: relative;
-  z-index: 1;
-}
-
-.seconds-settlement-card__header {
+.seconds-settlement-card__status-row {
   align-items: center;
-  display: grid;
-  gap: 11px;
-  grid-template-columns: 48px minmax(0, 1fr) 44px;
+  display: flex;
+  height: 34px;
+  justify-content: space-between;
   min-width: 0;
 }
 
-.seconds-settlement-card__icon {
+.seconds-settlement-card__status {
   align-items: center;
-  background:
-    radial-gradient(circle at 30% 22%, color-mix(in srgb, white 48%, transparent), transparent 36%),
-    linear-gradient(145deg, color-mix(in srgb, var(--seconds-result-tone-soft) 92%, white), color-mix(in srgb, var(--seconds-result-tone) 18%, var(--seconds-result-surface-elevated)));
-  border: 1px solid color-mix(in srgb, var(--seconds-result-tone) 32%, transparent);
-  border-radius: 17px;
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 58%, transparent),
-    0 9px 22px color-mix(in srgb, var(--seconds-result-tone) 14%, transparent);
-  color: var(--seconds-result-tone);
+  background: var(--seconds-result-status-soft);
+  border-radius: 99px;
+  box-sizing: border-box;
+  color: var(--seconds-result-positive);
   display: inline-flex;
-  height: 48px;
-  justify-content: center;
-  width: 48px;
+  font-size: 13px;
+  font-weight: 600;
+  gap: 7px;
+  height: 33px;
+  line-height: 19px;
+  padding: 7px 11px;
 }
 
-.seconds-settlement-card__header > div {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.seconds-settlement-card__header small {
-  color: var(--seconds-result-muted);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .08em;
-  line-height: 15px;
-  text-transform: uppercase;
-}
-
-.seconds-settlement-card__header strong {
-  color: var(--seconds-result-ink);
-  font-size: 18px;
-  line-height: 25px;
-  overflow-wrap: anywhere;
+.seconds-settlement-card__status svg {
+  flex: 0 0 auto;
 }
 
 .seconds-settlement-card__close {
   align-items: center;
-  align-self: start;
-  background: color-mix(in srgb, var(--seconds-result-surface-elevated) 76%, transparent);
-  border: 1px solid color-mix(in srgb, var(--seconds-result-tone) 18%, var(--seconds-result-line));
+  background: transparent;
+  border: 0;
   border-radius: 50%;
-  color: var(--seconds-result-ink);
-  display: inline-flex;
+  display: grid;
   height: 44px;
-  justify-content: center;
+  justify-items: center;
+  margin: -5px;
   min-height: 44px;
   min-width: 44px;
-  padding: 0;
+  padding: 5px;
   width: 44px;
 }
 
-.seconds-settlement-card__amount {
-  align-items: baseline;
-  border-block: 1px solid color-mix(in srgb, var(--seconds-result-tone) 14%, var(--seconds-result-line));
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  justify-content: space-between;
-  min-width: 0;
-  padding: 10px 3px;
-}
-
-.seconds-settlement-card__amount strong {
-  color: var(--seconds-result-tone);
-  font-size: clamp(28px, 8vw, 36px);
-  letter-spacing: -.025em;
-  line-height: 1.05;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.seconds-settlement-card__amount span {
-  color: var(--seconds-result-muted);
-  font-size: 10px;
-  line-height: 16px;
-  overflow-wrap: anywhere;
-}
-
-.seconds-settlement-card__meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  min-width: 0;
-}
-
-.seconds-settlement-card__meta span {
+.seconds-settlement-card__close-surface {
   align-items: center;
-  background: color-mix(in srgb, var(--seconds-result-tone-soft) 58%, transparent);
-  border: 1px solid color-mix(in srgb, var(--seconds-result-tone) 14%, var(--seconds-result-line));
-  border-radius: 999px;
-  color: var(--seconds-result-ink);
+  background: var(--seconds-result-close);
+  border: 1px solid var(--seconds-result-close-border);
+  border-radius: 50%;
+  box-sizing: border-box;
+  color: var(--seconds-result-close-icon);
   display: inline-flex;
-  font-size: 10px;
-  gap: 5px;
-  line-height: 16px;
-  max-width: 100%;
-  min-height: 28px;
-  overflow-wrap: anywhere;
-  padding: 5px 9px;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
 }
 
-.seconds-settlement-card__meta svg {
+.seconds-settlement-card__result {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  height: 176px;
+  min-width: 0;
+}
+
+.seconds-settlement-card__result-icon {
+  align-items: center;
+  background: var(--seconds-result-tone-soft);
+  border: 1px solid var(--seconds-result-tone-border);
+  border-radius: 50%;
+  box-shadow: 0 6px 18px var(--seconds-result-tone-shadow);
+  box-sizing: border-box;
   color: var(--seconds-result-tone);
+  display: inline-flex;
+  flex: 0 0 68px;
+  height: 68px;
+  justify-content: center;
+  width: 68px;
+}
+
+.seconds-settlement-card__result > strong {
+  color: var(--seconds-result-text);
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 26px;
+  margin: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seconds-settlement-card__amount {
+  color: var(--seconds-result-tone);
+  font-family: var(--font-geist-mono), var(--data-font);
+  font-size: 36px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+  letter-spacing: -.8px;
+  line-height: 47px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seconds-settlement-card__rate {
+  color: var(--seconds-result-tone);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 20px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seconds-settlement-card__prices {
+  align-items: center;
+  background: var(--seconds-result-price-surface);
+  border-radius: 14px;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px minmax(0, 1fr);
+  height: 68px;
+  min-width: 0;
+  padding: 12px 14px;
+}
+
+.seconds-settlement-card__price {
+  display: grid;
+  gap: 3px;
+  justify-self: start;
+  min-width: 0;
+}
+
+.seconds-settlement-card__price--settled {
+  justify-items: end;
+  justify-self: end;
+}
+
+.seconds-settlement-card__price small {
+  color: var(--seconds-result-label);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 19px;
+}
+
+.seconds-settlement-card__price strong {
+  color: var(--seconds-result-text);
+  font-family: var(--font-geist-mono), var(--data-font);
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  line-height: 22px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seconds-settlement-card__price--settled strong {
+  color: var(--seconds-result-tone);
+}
+
+.seconds-settlement-card__price-arrow {
+  align-items: center;
+  background: var(--seconds-result-arrow-surface);
+  border-radius: 50%;
+  color: var(--seconds-result-arrow-icon);
+  display: inline-flex;
+  height: 30px;
+  justify-content: center;
+  width: 30px;
+}
+
+.seconds-settlement-card__summary {
+  align-items: center;
+  background: var(--seconds-result-summary-surface);
+  border-radius: 14px;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  height: 64px;
+  margin: 0;
+  min-width: 0;
+  padding: 12px 14px;
+}
+
+.seconds-settlement-card__summary > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.seconds-settlement-card__summary > div:nth-child(2) {
+  justify-items: end;
+  justify-self: center;
+}
+
+.seconds-settlement-card__summary > div:last-child {
+  justify-items: end;
+  justify-self: end;
+}
+
+.seconds-settlement-card__summary dt {
+  color: var(--seconds-result-label);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 17px;
+}
+
+.seconds-settlement-card__summary dd {
+  color: var(--seconds-result-text);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 20px;
+  margin: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seconds-settlement-card[data-direction='up'] .seconds-settlement-card__summary > div:nth-child(2) dd {
+  color: var(--seconds-result-positive);
+}
+
+.seconds-settlement-card[data-direction='down'] .seconds-settlement-card__summary > div:nth-child(2) dd {
+  color: var(--seconds-result-negative);
+}
+
+.seconds-settlement-card__note {
+  align-items: center;
+  background: var(--seconds-result-note-surface);
+  border-radius: 12px;
+  box-sizing: border-box;
+  color: var(--seconds-result-label);
+  display: flex;
+  font-size: 13px;
+  font-weight: 400;
+  gap: 8px;
+  line-height: 19px;
+  margin: 0;
+  min-height: 39px;
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.seconds-settlement-card__note svg {
   flex: 0 0 auto;
 }
 
-.seconds-settlement-card__remaining {
-  color: var(--seconds-result-tone);
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 16px;
-  margin: -2px 0 0;
-  overflow-wrap: anywhere;
+.seconds-settlement-card__note span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .seconds-settlement-card__actions {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: block;
+  height: 52px;
   min-width: 0;
 }
 
-.seconds-settlement-card__actions button {
+.seconds-settlement-card__history {
   align-items: center;
-  border: 1px solid transparent;
-  border-radius: 15px;
+  background: var(--seconds-result-action);
+  border: 0;
+  border-radius: 14px;
+  color: var(--seconds-result-action-text);
   display: inline-flex;
-  font-size: 12px;
-  font-weight: 750;
+  font-size: 16px;
+  font-weight: 700;
   gap: 7px;
+  height: 52px;
   justify-content: center;
-  line-height: 16px;
-  min-height: 44px;
-  min-width: 0;
-  overflow-wrap: anywhere;
-  padding: 7px 10px;
-}
-
-.seconds-settlement-card__actions button.is-secondary {
-  background: color-mix(in srgb, var(--seconds-result-surface-elevated) 78%, transparent);
-  border-color: color-mix(in srgb, var(--seconds-result-tone) 18%, var(--seconds-result-line));
-  color: var(--seconds-result-ink);
-}
-
-.seconds-settlement-card__actions button.is-primary {
-  background: var(--seconds-result-tone);
-  box-shadow: 0 8px 20px color-mix(in srgb, var(--seconds-result-tone) 20%, transparent);
-  color: var(--seconds-result-on-accent);
+  min-height: 52px;
+  padding: 0 14px;
+  width: 100%;
 }
 
 .seconds-settlement-card__close:focus-visible,
-.seconds-settlement-card__actions button:focus-visible {
-  box-shadow:
-    0 0 0 3px var(--seconds-result-focus-ring),
-    inset 0 0 0 2px var(--seconds-result-focus);
-  outline: 0;
+.seconds-settlement-card__history:focus-visible {
+  box-shadow: 0 0 0 3px var(--seconds-result-focus-ring);
+  outline: 2px solid var(--seconds-result-focus);
+  outline-offset: 2px;
 }
 
 .seconds-result-reveal-enter-active,
 .seconds-result-reveal-leave-active {
+  transition: opacity .2s cubic-bezier(.32, .72, 0, 1);
+}
+
+.seconds-result-reveal-enter-active .seconds-settlement-card,
+.seconds-result-reveal-leave-active .seconds-settlement-card {
   transition:
-    filter .2s cubic-bezier(.32, .72, 0, 1),
     opacity .2s cubic-bezier(.32, .72, 0, 1),
     transform .24s cubic-bezier(.32, .72, 0, 1);
 }
 
 .seconds-result-reveal-enter-from,
 .seconds-result-reveal-leave-to {
-  filter: blur(8px);
   opacity: 0;
-  transform: translate(-50%, -12px);
+}
+
+.seconds-result-reveal-enter-from .seconds-settlement-card,
+.seconds-result-reveal-leave-to .seconds-settlement-card {
+  opacity: 0;
+  transform: translateY(-1.5px) scale(.98);
 }
 
 .seconds-mask {
@@ -2729,16 +3263,25 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 340px) {
-  .seconds-settlement-layer {
-    padding-inline: 8px;
+  .seconds-pair-picker {
+    padding-inline: 16px;
   }
 
-  .seconds-settlement-card__panel {
-    padding: 11px;
+  .seconds-pair-picker__row {
+    gap: 9px;
+    padding-inline: 12px;
   }
 
-  .seconds-settlement-card__actions {
-    grid-template-columns: 1fr;
+  .seconds-pair-picker__price {
+    font-size: 12px;
+  }
+
+  .seconds-settlement-card__amount {
+    font-size: 32px;
+  }
+
+  .seconds-settlement-card__note {
+    font-size: 12px;
   }
 
   .seconds-price-panel > strong {
@@ -2777,15 +3320,32 @@ onBeforeUnmount(() => {
   }
 }
 
+@media (max-height: 640px) {
+  .seconds-pair-picker {
+    height: calc(100dvh - 32px);
+    max-height: none;
+  }
+}
+
+@media (max-height: 600px) {
+  .seconds-settlement-card {
+    margin-block: 0;
+    transform: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .seconds-page *,
   .seconds-mask *,
+  .seconds-pair-picker-layer *,
   .seconds-settlement-layer *,
   .seconds-page *::before,
   .seconds-mask *::before,
+  .seconds-pair-picker-layer *::before,
   .seconds-settlement-layer *::before,
   .seconds-page *::after,
   .seconds-mask *::after,
+  .seconds-pair-picker-layer *::after,
   .seconds-settlement-layer *::after {
     animation-duration: .01ms !important;
     animation-iteration-count: 1 !important;
@@ -2795,20 +3355,37 @@ onBeforeUnmount(() => {
 
   .seconds-page button:active,
   .seconds-mask button:active,
+  .seconds-pair-picker-layer button:active,
   .seconds-settlement-layer button:active {
     transform: none;
   }
 
   .seconds-result-reveal-enter-active,
-  .seconds-result-reveal-leave-active {
+  .seconds-result-reveal-leave-active,
+  .seconds-pair-picker-reveal-enter-active,
+  .seconds-pair-picker-reveal-leave-active {
     transition: none !important;
+  }
+
+  .seconds-pair-picker-reveal-enter-from,
+  .seconds-pair-picker-reveal-leave-to {
+    opacity: 1;
+  }
+
+  .seconds-pair-picker-reveal-enter-from .seconds-pair-picker,
+  .seconds-pair-picker-reveal-leave-to .seconds-pair-picker {
+    transform: none;
   }
 
   .seconds-result-reveal-enter-from,
   .seconds-result-reveal-leave-to {
-    filter: none;
     opacity: 1;
-    transform: translateX(-50%);
+  }
+
+  .seconds-result-reveal-enter-from .seconds-settlement-card,
+  .seconds-result-reveal-leave-to .seconds-settlement-card {
+    opacity: 1;
+    transform: translateY(-13.5px);
   }
 
   .spin {

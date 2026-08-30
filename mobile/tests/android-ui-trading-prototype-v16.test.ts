@@ -61,7 +61,7 @@ test('余额百分比严格使用真实可用额并区分现货买卖与合约�
   }), 0)
 })
 
-test('秒合约显示真实参考价、预计收益、确认与后端返回订单记录', () => {
+test('秒合约显示真实参考价、预计收益、确认与后端返回订单记录且不叠加成功提示', () => {
   assert.match(secondsSource, /const nextProducts = await fetchSecondsProducts\(\)/)
   assert.match(secondsSource, /session\.isAuthenticated\s*\? Promise\.allSettled\(\[fetchSecondsOrders\(100\), fetchWalletAccounts\(\)\]\)\s*:\s*Promise\.resolve\(null\)/)
   assert.match(secondsSource, /function reviewOrder\(\): void \{\s*if \(!session\.isAuthenticated\)/)
@@ -74,7 +74,7 @@ test('秒合约显示真实参考价、预计收益、确认与后端返回订�
   assert.match(secondsSource, /order\.entryPrice !== undefined \? formatPrice\(order\.entryPrice\) : '--'/)
   assert.match(secondsSource, /return secondsOrderEstimatedProfit\(order\)/)
   assert.match(secondsSource, /:data-seconds-market="selected \? 'live' : loading \? 'loading' : 'empty'"/)
-  assert.match(secondsSource, /data-session-feedback="created"/)
+  assert.doesNotMatch(secondsSource, /data-session-feedback="created"|seconds-message--success/)
   assert.match(secondsSource, /t\('marketDetail\.latestPrice'\)/)
   assert.match(secondsSource, /role="dialog"/)
   assert.match(secondsSource, /aria-modal="true"/)
