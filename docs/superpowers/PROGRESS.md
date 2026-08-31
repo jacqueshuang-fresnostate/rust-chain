@@ -7907,3 +7907,10 @@
 - 修改文件：`mobile/src/{main.ts,core/{performanceTier.ts,countrySearch.ts},components/{SignalField.vue,LaunchIntro.vue,LightweightMarketChart.vue},styles/base.css,views/{HomeView.vue,AssetsView.vue,KycView.vue},api/{requestCache.ts,auth.ts,market.ts,swap.ts,trading.ts,seconds.ts,earn.ts,loan.ts,prediction.ts,newCoin.ts,wallet.ts},i18n/messages/{zh-CN.ts,en.ts}}`、`mobile/tests/{performance-tier,request-cache,reference-request-whitelist,functional-spinner,kyc-country-search,access-identity-settings-views,award-ui-assets-profile,motion-parity,launch-intro}.test.ts`、`.trellis/spec/mobile/{pwa-and-shell,backend-integration}.md`、`.trellis/tasks/08-31-mobile-animation-performance/*`、`docs/superpowers/PROGRESS.md`。
 - 验证结果：独立 `trellis-check` 定向测试 46/46 与 type-check 通过；主会话 Mobile 全量测试 533/533、`npm run build:pwa`、`npm run build:tauri` 全部通过。Ego Browser 实测 KYC 搜索 `China`、`cote ivoire`、`United States` 均得到唯一正确国家，选择后触发器显示 `美国 (US)`，Escape/选择均归还焦点并解除滚动锁；浅深主题文字/表面可读，320/390/448px 文档宽度与视口一致。reduced-motion 和 constrained 两种场景下国家遮罩 `backdrop-filter: none`；资产长数字、功能 spinner 时间推进、受限档 Canvas 静态化和 TTL 内页面返回不重复请求也已完成浏览器回归。
 - 后续事项：代码与测试已完成；本轮未提交或推送，待用户确认后按任务范围整理提交。
+
+## 2026-08-31 09:31 - 提交并推送手机端性能与 KYC 搜索优化
+
+- 完成内容：将手机端动画可靠性、低端设备性能分级、参考请求 TTL/single-flight 白名单、资产长数字适配与 KYC 可搜索国家弹层整理为功能提交 `194772f`；完成任务归档提交 `72f9999` 与会话日志提交 `b0c05c1`，并推送至 `origin/main`。未纳入本轮范围的 P0、杠杆、Pencil 与其他并行工作继续保留在本地工作区。
+- 修改文件：功能提交 `194772f` 中的 Mobile 实现、双语资源、回归测试、Mobile Trellis 规范、任务资料与完成记录；归档提交 `72f9999`；会话日志提交 `b0c05c1`；以及本条交付记录。
+- 验证结果：基于精确暂存树创建隔离 worktree，`npm run type-check`、Mobile 测试 518/518、`npm run build:pwa`、`npm run build:tauri` 全部通过；`git diff --cached --check` 通过；首次推送结果为 `0db7538..b0c05c1 main -> main`。
+- 后续事项：等待 GitHub Actions 执行；本地其余未提交任务不在本轮提交范围内。
