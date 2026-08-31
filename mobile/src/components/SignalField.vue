@@ -10,20 +10,29 @@ const props = withDefaults(defineProps<{
 const MAX_SIGNAL_DPR = 2
 const MAX_SIGNAL_PIXELS = 2_200_000
 const REDUCED_SIGNAL_TIMESTAMP = 1800
+const SIGNAL_FRAME_INTERVAL_MS = 1000 / 30
 const canvasRef = ref<HTMLCanvasElement | null>(null)
+const staticMode = ref(false)
 let restart: (() => void) | null = null
 let cleanup: (() => void) | null = null
 
 onMounted(() => {
   const canvas = canvasRef.value
   if (!canvas) return
-  const context = canvas.getContext('2d')
-  if (!context) return
-
   const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+  const constrained = document.documentElement.dataset.performanceTier === 'constrained'
   let reduced = motionQuery.matches
+  // Keep the semantic static state active even when constrained CSS hides the canvas before resize.
+  staticMode.value = reduced || constrained
+  const context = canvas.getContext('2d')
+  if (!context) {
+    staticMode.value = true
+    return
+  }
+  let intersecting = true
   let animationId = 0
   let resizeId = 0
+  let lastDrawTime = 0
   let width = 0
   let height = 0
   let ratio = 1
@@ -140,18 +149,28 @@ onMounted(() => {
     context.stroke()
   }
 
+  const shouldAnimate = (): boolean => (
+    !document.hidden && intersecting && !reduced && !constrained && width > 0 && height > 0
+  )
+
   const animate = (timestamp: number): void => {
-    if (document.hidden || reduced) return
-    draw(timestamp)
+    if (!shouldAnimate()) return
+    if (timestamp - lastDrawTime >= SIGNAL_FRAME_INTERVAL_MS) {
+      draw(timestamp)
+      lastDrawTime = timestamp
+    }
     animationId = requestAnimationFrame(animate)
   }
 
   const start = (): void => {
     cancelAnimationFrame(animationId)
     animationId = 0
-    if (document.hidden || width <= 0 || height <= 0) return
-    draw(performance.now())
-    if (!reduced) animationId = requestAnimationFrame(animate)
+    staticMode.value = reduced || constrained
+    if (document.hidden || !intersecting || width <= 0 || height <= 0 || staticMode.value) return
+    const timestamp = performance.now()
+    draw(timestamp)
+    lastDrawTime = timestamp
+    animationId = requestAnimationFrame(animate)
   }
 
   const onPointerMove = (event: PointerEvent): void => {
@@ -186,6 +205,18 @@ onMounted(() => {
     start()
   }
 
+  const intersectionObserver = typeof IntersectionObserver === 'undefined'
+    ? null
+    : new IntersectionObserver((entries) => {
+        intersecting = entries.some((entry) => entry.target === canvas && entry.isIntersecting)
+        if (intersecting) {
+          if (resize()) start()
+        } else {
+          cancelAnimationFrame(animationId)
+          animationId = 0
+        }
+      })
+
   const onResize = (): void => {
     cancelAnimationFrame(resizeId)
     resizeId = requestAnimationFrame(() => {
@@ -197,10 +228,13 @@ onMounted(() => {
   if (resize()) start()
   restart = start
   window.addEventListener('resize', onResize)
-  window.addEventListener('pointermove', onPointerMove, { passive: true })
-  window.addEventListener('pointerdown', onPointerMove, { passive: true })
+  if (!constrained) {
+    window.addEventListener('pointermove', onPointerMove, { passive: true })
+    window.addEventListener('pointerdown', onPointerMove, { passive: true })
+  }
   document.addEventListener('visibilitychange', onVisibilityChange)
   motionQuery.addEventListener('change', onMotionChange)
+  intersectionObserver?.observe(canvas)
 
   cleanup = () => {
     cancelAnimationFrame(animationId)
@@ -210,6 +244,7 @@ onMounted(() => {
     window.removeEventListener('pointerdown', onPointerMove)
     document.removeEventListener('visibilitychange', onVisibilityChange)
     motionQuery.removeEventListener('change', onMotionChange)
+    intersectionObserver?.disconnect()
     restart = null
   }
 })
@@ -223,8 +258,18 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="signal-field-shell" role="presentation">
+  <div class="signal-field-shell" :class="{ 'is-static': staticMode }" role="presentation">
     <span class="signal-static-fallback" aria-hidden="true" />
     <canvas ref="canvasRef" class="signal-field" aria-hidden="true" />
   </div>
 </template>
+
+<style scoped>
+.signal-field-shell.is-static .signal-field {
+  display: none;
+}
+
+.signal-field-shell.is-static .signal-static-fallback {
+  opacity: .82;
+}
+</style>

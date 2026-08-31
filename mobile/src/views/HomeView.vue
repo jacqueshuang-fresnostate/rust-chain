@@ -46,6 +46,7 @@ import { useMarketStore } from '@/stores/market'
 import { useMarketFavoritesStore } from '@/stores/marketFavorites'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSessionStore } from '@/stores/session'
+import { useThemeStore } from '@/stores/theme'
 import type { WalletAccount } from '@/core/types'
 
 const router = useRouter()
@@ -53,6 +54,7 @@ const marketStore = useMarketStore()
 const marketFavorites = useMarketFavoritesStore()
 const navigation = useNavigationStore()
 const session = useSessionStore()
+const theme = useThemeStore()
 const { locale, t } = useI18n()
 
 type HomeTab = 'favorites' | 'mainstream' | 'popular' | 'gainers' | 'newCoins'
@@ -111,6 +113,7 @@ const marketBriefToneLabel = computed(() => {
 const marketBriefActionLabel = computed(() => marketBrief.value
   ? t('home.openMarketBrief')
   : t(marketStore.error ? 'home.retryMarketBrief' : 'home.marketBriefLoading'))
+const guestHeroImage = computed(() => theme.isDark ? guestHeroDark : guestHeroLight)
 
 const totalAssetEstimate = computed(() => [...spotAccounts.value, ...marginAccounts.value].reduce((total, account) => {
   const accountAmount = account.available + account.frozen + account.locked
@@ -384,8 +387,7 @@ watch(() => session.token, () => {
 
     <section v-if="!session.isAuthenticated" class="home-portfolio home-portfolio--guest">
       <article class="home-guest-hero">
-        <img class="home-guest-hero__image home-guest-hero__image--light" :src="guestHeroLight" alt="">
-        <img class="home-guest-hero__image home-guest-hero__image--dark" :src="guestHeroDark" alt="">
+        <img class="home-guest-hero__image" :src="guestHeroImage" alt="">
         <span class="home-guest-hero__overlay" aria-hidden="true" />
         <span class="home-guest-hero__bloom" aria-hidden="true" />
         <div class="home-guest-hero__copy">

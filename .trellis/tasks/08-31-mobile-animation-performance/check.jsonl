@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "核对手机端分层与验证要求"}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "核对功能性动画、低性能降级、PWA 和图表契约"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "核对请求缓存白名单不影响金融实时性"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "核对复用边界与重复实现"}
+{"file": ".trellis/tasks/08-31-mobile-animation-performance/research/mobile-performance-audit.md", "reason": "按审计风险核对实现、测试与回归范围"}

@@ -6,6 +6,13 @@ import zhCN from '../src/i18n/messages/zh-CN.ts'
 
 const homeSource = readFileSync(new URL('../src/views/HomeView.vue', import.meta.url), 'utf8')
 
+test('访客 Hero 首屏只渲染当前主题图片', () => {
+  assert.match(homeSource, /const theme = useThemeStore\(\)/)
+  assert.match(homeSource, /const guestHeroImage = computed\(\(\) => theme\.isDark \? guestHeroDark : guestHeroLight\)/)
+  assert.equal((homeSource.match(/class="home-guest-hero__image"/g) || []).length, 1)
+  assert.doesNotMatch(homeSource, /home-guest-hero__image--(?:light|dark)/)
+})
+
 test('首页搜索与快捷入口使用原型短文案且不缩短产品页标签', () => {
   assert.equal(zhCN.home.searchPlaceholder, '搜索币种、产品或功能')
   assert.equal(zhCN.home.newCoinsShortcut, '新币')

@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/mobile/index.md", "reason": "手机端实现入口、组件边界与验证命令"}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "PWA、主题、应用壳、动效、Canvas 和图表运行时契约"}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "移动端 API、实时数据与禁止缓存金融响应的契约"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用现有国家搜索、弹窗与请求生命周期能力"}
+{"file": ".trellis/tasks/08-31-mobile-animation-performance/research/mobile-performance-audit.md", "reason": "静态性能热点、请求缓存白名单、长数字与 KYC 搜索审计"}

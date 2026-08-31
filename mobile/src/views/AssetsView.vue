@@ -54,6 +54,7 @@ type AssetHoldingRow = {
 }
 
 type AssetAccountScope = 'all' | 'spot' | 'margin'
+type AssetValueSizeTier = 'full' | 'medium' | 'small' | 'minimum'
 
 const QUOTE_ASSET_SYMBOL = 'USDT'
 
@@ -158,6 +159,7 @@ const totalEstimateLabel = computed(() => {
     maximumFractionDigits: 2,
   }).format(totalEstimate.value)
 })
+const assetsHeroImage = computed(() => theme.isDark ? assetsHeroDark : assetsHeroLight)
 const todayReturnPresentation = computed(() => resolveTodayReturnPresentation({
   visible: balanceVisible.value,
   state: todayReturnState.value,
@@ -171,6 +173,24 @@ const todayReturnPresentation = computed(() => resolveTodayReturnPresentation({
     error: t('home.todayReturnUnavailable'),
   },
 }))
+const totalValueSizeTier = computed(() => assetValueSizeTier(totalEstimateLabel.value))
+const returnValueSizeTier = computed(() => assetValueSizeTier(
+  `${todayReturnPresentation.value.amount} ${todayReturnPresentation.value.detail}`,
+))
+const summaryValueSizeTier = computed<AssetValueSizeTier>(() => (
+  totalValueSizeTier.value === 'minimum' || returnValueSizeTier.value === 'minimum'
+    ? 'minimum'
+    : totalValueSizeTier.value
+))
+
+/** Use stable formatted-length tiers without layout measurement or text below 20px. */
+function assetValueSizeTier(value: string): AssetValueSizeTier {
+  const length = Array.from(value).length
+  if (length <= 8) return 'full'
+  if (length <= 11) return 'medium'
+  if (length <= 15) return 'small'
+  return 'minimum'
+}
 
 const marginTransferAssetIds = computed(() => new Set(
   marginAccounts.value
@@ -527,8 +547,7 @@ onUnmounted(() => {
 
     <div v-if="!session.isAuthenticated" class="pencil-content assets-pencil__guest-content" data-assets-state="guest">
       <section class="pencil-hero assets-hero assets-hero--guest">
-        <img v-show="!theme.isDark" class="assets-hero__image" :src="assetsHeroLight" alt="">
-        <img v-show="theme.isDark" class="assets-hero__image" :src="assetsHeroDark" alt="">
+        <img class="assets-hero__image" :src="assetsHeroImage" alt="">
         <span class="assets-hero__overlay" :class="{ 'assets-hero__overlay--dark': theme.isDark }" aria-hidden="true" />
         <span class="assets-hero__bloom" aria-hidden="true" />
         <div class="assets-guest-copy">
@@ -554,12 +573,11 @@ onUnmounted(() => {
         :data-account-state="memberState"
         :data-estimate-coverage="estimateCoverage"
       >
-        <img v-show="!theme.isDark" class="assets-hero__image" :src="assetsHeroLight" alt="">
-        <img v-show="theme.isDark" class="assets-hero__image" :src="assetsHeroDark" alt="">
+        <img class="assets-hero__image" :src="assetsHeroImage" alt="">
         <span class="assets-hero__overlay" :class="{ 'assets-hero__overlay--dark': theme.isDark }" aria-hidden="true" />
         <span class="assets-hero__bloom" aria-hidden="true" />
 
-        <div class="assets-member-summary">
+        <div class="assets-member-summary" :data-value-size="summaryValueSizeTier">
           <div class="assets-member-summary__total">
             <div class="assets-member-summary__label">
               <span>{{ t('assets.totalValue') }}</span>
@@ -574,7 +592,7 @@ onUnmounted(() => {
                 <EyeOff v-else :size="14" aria-hidden="true" />
               </button>
             </div>
-            <div class="assets-member-summary__value">
+            <div class="assets-member-summary__value" :data-value-size="totalValueSizeTier">
               <strong class="pencil-numeric">{{ totalEstimateLabel }}</strong>
               <small>{{ QUOTE_ASSET_SYMBOL }}</small>
             </div>
@@ -582,6 +600,7 @@ onUnmounted(() => {
           </div>
           <div
             class="assets-member-summary__return"
+            :data-value-size="returnValueSizeTier"
             :data-today-return-status="balanceVisible ? todayReturnState : 'hidden'"
             :aria-busy="balanceVisible && todayReturnState === 'loading'"
             aria-live="polite"
@@ -1035,19 +1054,36 @@ onUnmounted(() => {
 .assets-member-summary__value {
   align-items: end;
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
 }
 
 .assets-member-summary__value strong {
   color: var(--ink);
-  font-size: 34px;
+  font-size: clamp(30px, 8vw, 34px);
   font-weight: 700;
   line-height: 38px;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: 100%;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.assets-member-summary__value[data-value-size='medium'] strong { font-size: 30px; line-height: 34px; }
+.assets-member-summary__value[data-value-size='small'] strong { font-size: 25px; line-height: 30px; }
+.assets-member-summary__value[data-value-size='minimum'] strong { font-size: 20px; line-height: 24px; overflow-wrap: anywhere; }
+
+.assets-member-summary[data-value-size='minimum'] {
+  align-items: start;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+
+.assets-member-summary[data-value-size='minimum'] .assets-member-summary__return {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  justify-items: start;
+  text-align: left;
 }
 
 .assets-member-summary__value small,
@@ -1073,9 +1109,13 @@ onUnmounted(() => {
 .assets-member-summary__return strong,
 .assets-member-summary__return small {
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+}
+
+.assets-member-summary__return[data-value-size='small'] strong,
+.assets-member-summary__return[data-value-size='minimum'] strong {
+  font-size: 15px;
+  line-height: 20px;
 }
 
 .assets-hero-actions {

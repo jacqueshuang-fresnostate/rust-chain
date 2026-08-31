@@ -1,4 +1,9 @@
-import { client, requestUrl } from './client'
+import { client, readAccessToken, requestUrl } from './client'
+import {
+  createReferenceRequestKey,
+  referenceRequestRegistry,
+  type ReferenceRequestOptions,
+} from './requestCache'
 import { asNumber } from '@/core/format'
 import {
   mapTodayReturn,
@@ -221,49 +226,71 @@ export interface WalletTransferResult {
   marginWallet: WalletAccount
 }
 
-export async function fetchDepositAssets(): Promise<DepositAsset[]> {
-  const response = await client.get<{ assets?: BackendDepositAsset[] }>(requestUrl('/wallet/deposit-assets'))
-  return (response.data.assets || [])
-    .map((asset) => ({
-      symbol: asset.symbol.toUpperCase(),
-      name: asset.name?.trim() || undefined,
-      logoUrl: asset.logo_url?.trim() || undefined,
-      depositEnabled: asset.deposit_enabled !== false,
-      minDepositAmount: asNumber(asset.min_deposit_amount),
-    }))
-    .filter((asset) => asset.depositEnabled)
+export async function fetchDepositAssets(options: ReferenceRequestOptions = {}): Promise<DepositAsset[]> {
+  const url = requestUrl('/wallet/deposit-assets')
+  return referenceRequestRegistry.request(walletReferenceKey(url), 30_000, async () => {
+    const response = await client.get<{ assets?: BackendDepositAsset[] }>(url)
+    return (response.data.assets || [])
+      .map((asset) => ({
+        symbol: asset.symbol.toUpperCase(),
+        name: asset.name?.trim() || undefined,
+        logoUrl: asset.logo_url?.trim() || undefined,
+        depositEnabled: asset.deposit_enabled !== false,
+        minDepositAmount: asNumber(asset.min_deposit_amount),
+      }))
+      .filter((asset) => asset.depositEnabled)
+  }, options)
 }
 
-export async function fetchWithdrawalAssets(): Promise<WithdrawalAsset[]> {
-  const response = await client.get<{ assets?: BackendDepositAsset[] }>(requestUrl('/wallet/withdraw-assets'))
-  return (response.data.assets || [])
-    .map((asset) => ({
-      symbol: asset.symbol.toUpperCase(),
-      logoUrl: asset.logo_url?.trim() || undefined,
-      depositEnabled: asset.deposit_enabled !== false,
-      withdrawEnabled: asset.withdraw_enabled !== false,
-      minDepositAmount: asNumber(asset.min_deposit_amount),
-      withdrawFee: asNumber(asset.withdraw_fee),
-      precisionScale: Math.min(18, Math.max(0, Math.trunc(asNumber(asset.precision_scale)))),
-      withdrawFeeTiers: (asset.withdraw_fee_tiers || []).map((tier) => ({
-        minAmount: asNumber(tier.min_amount),
-        maxAmount: tier.max_amount == null ? undefined : asNumber(tier.max_amount),
-        feeRatePercent: asNumber(tier.fee_rate_percent),
-      })).sort((left, right) => left.minAmount - right.minAmount),
-      name: asset.name?.trim() || undefined,
-    }))
-    .filter((asset) => asset.withdrawEnabled)
+export async function fetchWithdrawalAssets(options: ReferenceRequestOptions = {}): Promise<WithdrawalAsset[]> {
+  const url = requestUrl('/wallet/withdraw-assets')
+  return referenceRequestRegistry.request(walletReferenceKey(url), 30_000, async () => {
+    const response = await client.get<{ assets?: BackendDepositAsset[] }>(url)
+    return (response.data.assets || [])
+      .map((asset) => ({
+        symbol: asset.symbol.toUpperCase(),
+        logoUrl: asset.logo_url?.trim() || undefined,
+        depositEnabled: asset.deposit_enabled !== false,
+        withdrawEnabled: asset.withdraw_enabled !== false,
+        minDepositAmount: asNumber(asset.min_deposit_amount),
+        withdrawFee: asNumber(asset.withdraw_fee),
+        precisionScale: Math.min(18, Math.max(0, Math.trunc(asNumber(asset.precision_scale)))),
+        withdrawFeeTiers: (asset.withdraw_fee_tiers || []).map((tier) => ({
+          minAmount: asNumber(tier.min_amount),
+          maxAmount: tier.max_amount == null ? undefined : asNumber(tier.max_amount),
+          feeRatePercent: asNumber(tier.fee_rate_percent),
+        })).sort((left, right) => left.minAmount - right.minAmount),
+        name: asset.name?.trim() || undefined,
+      }))
+      .filter((asset) => asset.withdrawEnabled)
+  }, options)
 }
 
-export async function fetchDepositNetworks(assetSymbol: string, minimum = 0): Promise<DepositNetwork[]> {
-  const response = await client.get<{ networks?: BackendDepositNetwork[] }>(requestUrl('/wallet/deposit-networks'), {
-    params: { asset_symbol: assetSymbol.toUpperCase() },
-  })
-  return (response.data.networks || []).map((network) => ({
-    network: network.network,
-    displayName: network.display_name?.trim() || network.network,
-    minDepositAmount: minimum,
-  }))
+export async function fetchDepositNetworks(
+  assetSymbol: string,
+  minimum = 0,
+  options: ReferenceRequestOptions = {},
+): Promise<DepositNetwork[]> {
+  const normalizedAsset = assetSymbol.toUpperCase()
+  const url = requestUrl('/wallet/deposit-networks')
+  return referenceRequestRegistry.request(walletReferenceKey(url, {
+    asset_symbol: normalizedAsset,
+    minimum,
+  }), 30_000, async () => {
+    const response = await client.get<{ networks?: BackendDepositNetwork[] }>(url, {
+      params: { asset_symbol: normalizedAsset },
+    })
+    return (response.data.networks || []).map((network) => ({
+      network: network.network,
+      displayName: network.display_name?.trim() || network.network,
+      minDepositAmount: minimum,
+    }))
+  }, options)
+}
+
+/** 钱包目录可能受账号或地区策略影响，因此按当前内存会话隔离，不跨 token 共享。 */
+function walletReferenceKey(url: string, params: Readonly<Record<string, unknown>> = {}): string {
+  return createReferenceRequestKey(url, params, `wallet:${readAccessToken() || 'guest'}`)
 }
 
 export async function createDepositAddress(assetSymbol: string, network: string, minimum = 0): Promise<DepositAddress> {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Building2, Camera, CheckCircle2, IdCard, LockKeyhole, UserRound } from 'lucide-vue-next'
+import { Building2, Camera, Check, CheckCircle2, ChevronDown, IdCard, LockKeyhole, Search, UserRound, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import PageHeader from '@/components/PageHeader.vue'
@@ -8,20 +8,29 @@ import { apiErrorMessage } from '@/api/client'
 import { fetchCountries, type CountryOption } from '@/api/auth'
 import { fetchKycStatus, submitKycApplication, type KycCountryDocumentRule, type KycStatus } from '@/api/user'
 import { formatDateTime } from '@/core/format'
+import { filterCountryOptions, matchesCountryIdentity } from '@/core/countrySearch'
+import { useModalDialog } from '@/core/modalDialog'
 import { useSessionStore } from '@/stores/session'
 
 type SubmissionType = 'personal' | 'enterprise'
 type UploadKind = 'front' | 'back' | 'handheld'
+type KycCountryOption = CountryOption & {
+  value: string
+  label: string
+  localizedLabel: string
+  searchAliases: string[]
+}
 
 const session = useSessionStore()
 const route = useRoute()
 const router = useRouter()
-const { t } = useI18n()
+const { locale, t } = useI18n()
 const kyc = ref<KycStatus | null>(null)
 const countries = ref<CountryOption[]>([])
 const loading = ref(false)
 const submitting = ref(false)
 const error = ref('')
+const countryDirectoryError = ref('')
 const success = ref('')
 const submissionType = ref<SubmissionType>('personal')
 const form = ref({
@@ -37,6 +46,14 @@ const previews = ref<Record<UploadKind, string>>({ front: '', back: '', handheld
 const frontInput = ref<HTMLInputElement | null>(null)
 const backInput = ref<HTMLInputElement | null>(null)
 const handheldInput = ref<HTMLInputElement | null>(null)
+const countryPickerOpen = ref(false)
+const countrySearch = ref('')
+const countryPickerDialog = ref<HTMLElement | null>(null)
+const countryPickerTrigger = ref<HTMLButtonElement | null>(null)
+const {
+  trapFocus: trapCountryPickerFocus,
+  setReturnFocus: setCountryPickerReturnFocus,
+} = useModalDialog(countryPickerOpen, countryPickerDialog, '[data-country-search]')
 
 const latest = computed(() => kyc.value?.latestSubmission)
 const isLocked = computed(() => latest.value?.status === 'pending' || latest.value?.status === 'approved')
@@ -46,14 +63,36 @@ const configuredCountries = computed(() => {
   const rules = kyc.value?.config.countryDocumentTypes.map((rule) => rule.country).filter(Boolean) || []
   return rules.length ? uniqueValues(rules) : uniqueValues(kyc.value?.config.allowedCountries || [])
 })
-const countryOptions = computed(() => {
+const regionNameResolvers = computed<Intl.DisplayNames[]>(() => uniqueValues([
+  locale.value,
+  'en',
+  'zh-CN',
+]).flatMap((localeName) => {
+  try {
+    return [new Intl.DisplayNames([localeName], { type: 'region' })]
+  } catch {
+    return []
+  }
+}))
+const countryOptions = computed<KycCountryOption[]>(() => {
   const configured = configuredCountries.value
-  if (!configured.length) return countries.value.map((country) => ({ value: country.name || country.code, label: countryLabel(country) }))
+  if (!configured.length) {
+    return countries.value.map((country) => kycCountryOption(country.name || country.code, country))
+  }
   return configured.map((value) => {
     const country = countries.value.find((item) => matchesCountry(value, item))
-    return { value, label: country ? countryLabel(country) : value }
+    return kycCountryOption(value, country)
   })
 })
+const filteredCountryOptions = computed(() => filterCountryOptions(
+  countryOptions.value,
+  countrySearch.value,
+  (country) => country.localizedLabel,
+))
+const selectedCountryOption = computed(() => countryOptions.value.find(
+  (country) => country.value.toLowerCase() === form.value.country.toLowerCase(),
+))
+const selectedCountryLabel = computed(() => selectedCountryOption.value?.label || t('kyc.selectCountry'))
 const selectedRule = computed<KycCountryDocumentRule | undefined>(() => kyc.value?.config.countryDocumentTypes.find((rule) => rule.country.toLowerCase() === form.value.country.toLowerCase()))
 const documentTypes = computed(() => {
   const configured = selectedRule.value?.documentTypes || []
@@ -75,12 +114,62 @@ function uniqueValues(values: string[]): string[] {
 }
 
 function matchesCountry(value: string, country: CountryOption): boolean {
-  const normalized = value.trim().toLowerCase()
-  return normalized === country.code.toLowerCase() || normalized === country.name.toLowerCase()
+  return matchesCountryIdentity(country, value, localizedCountryNames(country))
 }
 
-function countryLabel(country: CountryOption): string {
-  return country.name && country.name !== country.code ? `${country.name} (${country.code})` : country.code
+function localizedCountryNames(country: CountryOption): string[] {
+  return uniqueValues(regionNameResolvers.value.flatMap((resolver) => {
+    try {
+      const name = resolver.of(country.code)
+      return name ? [name] : []
+    } catch {
+      return []
+    }
+  }))
+}
+
+function kycCountryOption(value: string, country?: CountryOption): KycCountryOption {
+  const code = country?.code || value
+  const name = country?.name || value
+  const localizedNames = country ? localizedCountryNames(country) : []
+  const localizedLabel = localizedNames[0] || name || code
+  return {
+    value,
+    code,
+    name,
+    localizedLabel,
+    searchAliases: uniqueValues([value, ...localizedNames]),
+    label: code && localizedLabel !== code ? `${localizedLabel} (${code})` : localizedLabel,
+  }
+}
+
+function countrySecondaryLabel(country: KycCountryOption): string {
+  return country.name.toLowerCase() !== country.localizedLabel.toLowerCase() ? country.name : ''
+}
+
+function isCountrySelected(value: string): boolean {
+  return value.trim().toLowerCase() === form.value.country.trim().toLowerCase()
+}
+
+function openCountryPicker(): void {
+  countrySearch.value = ''
+  setCountryPickerReturnFocus(countryPickerTrigger.value)
+  countryPickerOpen.value = true
+}
+
+function closeCountryPicker(): void {
+  countryPickerOpen.value = false
+}
+
+function selectCountry(value: string): void {
+  const country = countryOptions.value.find((option) => option.value === value)
+  if (!country) return
+  form.value.country = country.value
+  closeCountryPicker()
+}
+
+function handleCountryPickerKeydown(event: KeyboardEvent): void {
+  trapCountryPickerFocus(event, closeCountryPicker)
 }
 
 function documentLabel(value: string): string {
@@ -102,10 +191,24 @@ async function load(): Promise<void> {
   if (!session.isAuthenticated) return
   loading.value = true
   error.value = ''
+  countryDirectoryError.value = ''
   try {
-    const [nextKyc, nextCountries] = await Promise.all([fetchKycStatus(), fetchCountries()])
+    const [kycResult, countriesResult] = await Promise.allSettled([
+      fetchKycStatus(),
+      fetchCountries(),
+    ])
+    if (countriesResult.status === 'fulfilled') {
+      countries.value = countriesResult.value
+    } else {
+      countries.value = []
+      countryDirectoryError.value = apiErrorMessage(countriesResult.reason, t('kyc.countryLoadFailed'))
+    }
+    if (kycResult.status === 'rejected') {
+      kyc.value = null
+      throw kycResult.reason
+    }
+    const nextKyc = kycResult.value
     kyc.value = nextKyc
-    countries.value = nextCountries
     if (nextKyc.latestSubmission?.status === 'rejected') {
       form.value.realName = nextKyc.latestSubmission.realName
       form.value.country = nextKyc.latestSubmission.country
@@ -203,7 +306,9 @@ async function submit(): Promise<void> {
 }
 
 watch(countryOptions, (options) => {
-  if (!options.some((option) => option.value === form.value.country)) form.value.country = options[0]?.value || ''
+  if (!options.some((option) => option.value.toLowerCase() === form.value.country.toLowerCase())) {
+    form.value.country = options[0]?.value || ''
+  }
 }, { immediate: true })
 watch(documentTypes, (types) => {
   if (!types.includes(form.value.documentType)) form.value.documentType = types[0] || ''
@@ -230,6 +335,7 @@ onMounted(() => { void load() })
       <template v-else>
         <p v-if="error" class="pencil-message pencil-message--error kyc-feedback" role="alert">{{ error }}</p>
         <p v-else-if="success" class="pencil-message pencil-message--success kyc-feedback" role="status">{{ success }}</p>
+        <p v-if="countryDirectoryError" class="kyc-note kyc-country-directory-warning" role="status">{{ countryDirectoryError }}</p>
         <p v-if="loading" class="kyc-loading" role="status">{{ t('kyc.loading') }}</p>
         <template v-else-if="kyc">
           <section class="kyc-status" :class="latest ? `kyc-status--${latest.status}` : ''" role="status">
@@ -252,12 +358,22 @@ onMounted(() => { void load() })
             </div>
 
             <section class="kyc-fields">
-              <label class="kyc-field">
+              <div class="kyc-field">
                 <span>{{ t('kyc.country') }}</span>
-                <select v-model="form.country">
-                  <option v-for="country in countryOptions" :key="country.value" :value="country.value">{{ country.label }}</option>
-                </select>
-              </label>
+                <button
+                  id="kyc-country-picker-trigger"
+                  ref="countryPickerTrigger"
+                  class="kyc-country-trigger"
+                  type="button"
+                  aria-haspopup="dialog"
+                  :aria-controls="countryPickerOpen ? 'kyc-country-picker' : undefined"
+                  :aria-expanded="countryPickerOpen"
+                  @click="openCountryPicker"
+                >
+                  <span>{{ selectedCountryLabel }}</span>
+                  <ChevronDown :size="17" aria-hidden="true" />
+                </button>
+              </div>
               <label class="kyc-field">
                 <span>{{ t('kyc.documentType') }}</span>
                 <select v-model="form.documentType">
@@ -313,6 +429,63 @@ onMounted(() => { void load() })
         </template>
       </template>
     </div>
+
+    <Teleport to="body">
+      <div v-if="countryPickerOpen" class="kyc-country-picker-mask" @click.self="closeCountryPicker">
+        <section
+          id="kyc-country-picker"
+          ref="countryPickerDialog"
+          class="kyc-country-picker-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="kyc-country-picker-title"
+          @keydown="handleCountryPickerKeydown"
+        >
+          <div class="kyc-country-picker-handle" aria-hidden="true" />
+          <header class="kyc-country-picker-header">
+            <h2 id="kyc-country-picker-title">{{ t('kyc.countryPickerTitle') }}</h2>
+            <button type="button" :aria-label="t('kyc.countryPickerClose')" @click="closeCountryPicker">
+              <X :size="20" aria-hidden="true" />
+            </button>
+          </header>
+          <label class="kyc-country-picker-search">
+            <Search :size="18" aria-hidden="true" />
+            <input
+              v-model="countrySearch"
+              data-country-search
+              type="search"
+              autocomplete="off"
+              autocapitalize="none"
+              :aria-label="t('kyc.countrySearchLabel')"
+              :placeholder="t('kyc.countrySearchPlaceholder')"
+              :spellcheck="false"
+            />
+          </label>
+          <div class="kyc-country-picker-list">
+            <button
+              v-for="country in filteredCountryOptions"
+              :key="country.value"
+              class="kyc-country-picker-option"
+              :class="{ 'is-selected': isCountrySelected(country.value) }"
+              type="button"
+              :aria-pressed="isCountrySelected(country.value)"
+              @click="selectCountry(country.value)"
+            >
+              <span>
+                <strong>{{ country.localizedLabel }}</strong>
+                <small v-if="countrySecondaryLabel(country)">{{ countrySecondaryLabel(country) }}</small>
+              </span>
+              <code>{{ country.code }}</code>
+              <Check v-if="isCountrySelected(country.value)" :size="18" aria-hidden="true" />
+            </button>
+            <div v-if="!filteredCountryOptions.length" class="kyc-country-picker-empty" role="status">
+              <Search :size="24" aria-hidden="true" />
+              <strong>{{ t('kyc.countryNoResults') }}</strong>
+            </div>
+          </div>
+        </section>
+      </div>
+    </Teleport>
   </main>
 </template>
 
@@ -343,6 +516,9 @@ onMounted(() => { void load() })
 .kyc-field > span { color: var(--muted); font-size: 11px; font-weight: 500; line-height: 15px; }
 .kyc-field input,
 .kyc-field select { appearance: none; background: transparent; border: 0; color: var(--ink); font-size: 14px; font-weight: 600; line-height: 20px; min-height: 25px; outline: 0; padding: 0; width: 100%; }
+.kyc-country-trigger { align-items: center; background: transparent; color: var(--ink); display: flex; font-size: 14px; font-weight: 600; gap: 8px; justify-content: space-between; min-height: 25px; padding: 0; text-align: left; width: 100%; }
+.kyc-country-trigger span { min-width: 0; overflow-wrap: anywhere; }
+.kyc-country-trigger svg { flex: 0 0 auto; }
 .document-grid { display: grid; gap: 8px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .upload-tile { align-items: center; background: transparent; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); display: flex; flex-direction: column; font-size: 11px; gap: 6px; height: 72px; justify-content: center; min-height: 72px; overflow: hidden; padding: 5px; position: relative; }
 .upload-tile:focus-visible { box-shadow: 0 0 0 2px var(--focus-ring); outline: 0; }
@@ -351,12 +527,36 @@ onMounted(() => { void load() })
 .upload-tile__status { background: var(--surface-elevated); bottom: 0; color: var(--positive); font-size: 9px; font-weight: 600; inset-inline: 0; overflow: hidden; padding: 3px; position: absolute; text-align: center; text-overflow: ellipsis; white-space: nowrap; z-index: 1; }
 .hidden-input { display: none; }
 .kyc-note { color: var(--muted); font-size: 11px; line-height: 16px; margin: 0; }
+.kyc-country-directory-warning { color: var(--warning); }
 .kyc-submit { font-size: 15px; height: 48px; min-height: 48px; width: 100%; }
 .kyc-page button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.kyc-country-picker-mask { align-items: end; backdrop-filter: blur(10px); background: var(--overlay); display: grid; inset: 0; justify-items: center; position: fixed; z-index: var(--layer-overlay); }
+.kyc-country-picker-sheet { background: var(--surface-elevated); border: 1px solid var(--line); border-bottom: 0; border-radius: 24px 24px 0 0; display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); height: min(680px, 82dvh); max-height: calc(100dvh - 20px); min-height: 360px; overflow: hidden; padding: 10px 20px calc(14px + env(safe-area-inset-bottom)); width: min(100%, 448px); }
+.kyc-country-picker-handle { background: var(--line-strong); border-radius: 999px; height: 4px; justify-self: center; margin-bottom: 6px; width: 38px; }
+.kyc-country-picker-header { align-items: center; display: flex; justify-content: space-between; min-height: 58px; }
+.kyc-country-picker-header h2 { color: var(--ink); font-size: 19px; line-height: 25px; margin: 0; }
+.kyc-country-picker-header button { align-items: center; background: color-mix(in srgb, var(--surface-elevated) 90%, var(--ink)); border: 1px solid var(--line); border-radius: 50%; color: var(--ink); display: inline-flex; height: 44px; justify-content: center; min-height: 44px; padding: 0; width: 44px; }
+.kyc-country-picker-search { align-items: center; background: color-mix(in srgb, var(--surface-elevated) 90%, var(--ink)); border: 1px solid transparent; border-radius: 14px; color: var(--muted); display: flex; gap: 10px; height: 52px; margin: 6px 0 10px; padding: 0 14px; }
+.kyc-country-picker-search:focus-within { border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-ring); }
+.kyc-country-picker-search input { appearance: none; background: transparent; border: 0; color: var(--ink); font-size: 14px; height: 50px; min-width: 0; outline: 0; padding: 0; width: 100%; }
+.kyc-country-picker-list { min-height: 0; overscroll-behavior: contain; overflow-y: auto; scrollbar-width: none; }
+.kyc-country-picker-list::-webkit-scrollbar { display: none; }
+.kyc-country-picker-option { align-items: center; background: transparent; border-bottom: 1px solid var(--line); color: var(--ink); display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) auto 20px; min-height: 58px; padding: 8px 2px; text-align: left; width: 100%; }
+.kyc-country-picker-option.is-selected { color: var(--positive); }
+.kyc-country-picker-option > span { display: grid; gap: 2px; min-width: 0; }
+.kyc-country-picker-option strong { font-size: 14px; overflow-wrap: anywhere; }
+.kyc-country-picker-option small { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.kyc-country-picker-option code { color: var(--muted-strong); font-family: var(--data-font); font-size: 12px; }
+.kyc-country-picker-empty { align-items: center; color: var(--muted); display: flex; flex-direction: column; gap: 10px; justify-content: center; min-height: 180px; text-align: center; }
+:global(html[data-performance-tier='constrained'] .kyc-country-picker-mask) { backdrop-filter: none; }
+@media (prefers-reduced-motion: reduce) {
+  .kyc-country-picker-mask { backdrop-filter: none; }
+}
 @media (max-width: 340px) {
   .kyc-content { padding-inline: 16px; }
   .account-login-state { align-items: start; grid-template-columns: 44px minmax(0, 1fr); }
   .account-login-state .pencil-primary { grid-column: 2; justify-self: start; }
   .document-grid { gap: 6px; }
+  .kyc-country-picker-sheet { padding-inline: 16px; }
 }
 </style>

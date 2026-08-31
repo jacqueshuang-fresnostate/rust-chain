@@ -1,4 +1,9 @@
 import { client, requestUrl } from './client'
+import {
+  createReferenceRequestKey,
+  referenceRequestRegistry,
+  type ReferenceRequestOptions,
+} from './requestCache'
 import { asNumber } from '@/core/format'
 
 export interface NewCoinProject {
@@ -75,9 +80,12 @@ export interface NewCoinUnlock {
   createdAt: number
 }
 
-export async function fetchNewCoinProjects(limit = 50): Promise<NewCoinProject[]> {
-  const response = await client.get<{ projects?: Array<Record<string, unknown>> }>(requestUrl('/new-coins'), { params: { limit } })
-  return (response.data.projects || []).map(mapProject)
+export async function fetchNewCoinProjects(limit = 50, options: ReferenceRequestOptions = {}): Promise<NewCoinProject[]> {
+  const url = requestUrl('/new-coins')
+  return referenceRequestRegistry.request(createReferenceRequestKey(url, { limit }), 30_000, async () => {
+    const response = await client.get<{ projects?: Array<Record<string, unknown>> }>(url, { params: { limit } })
+    return (response.data.projects || []).map(mapProject)
+  }, options)
 }
 
 export async function fetchNewCoinProject(symbol: string): Promise<NewCoinProject> {

@@ -1371,3 +1371,69 @@ resolveRootRouteKey('seconds', undefined) // null: raised secondary action
   dismissal and duplicate drags.
 - Preserve bottom safe area, reduced-motion fallback, both color themes, Lucide
   icons, and zero horizontal overflow at 320x720, 390x844, and 448x900.
+
+## Runtime Performance, Functional Motion, and Dense Account UI Contract
+
+```ts
+type PerformanceTier = 'standard' | 'constrained'
+
+resolvePerformanceTier(signals: {
+  saveData?: unknown
+  deviceMemory?: unknown
+  hardwareConcurrency?: unknown
+}): PerformanceTier
+
+detectPerformanceTier(navigatorLike?: object | null): PerformanceTier
+```
+
+- Resolve the tier and write `data-performance-tier` on `<html>` before the Vue
+  application mounts. Explicit `saveData`, at most 2 GiB memory, at most two
+  logical cores, or the combination of at most 4 GiB and four cores selects the
+  constrained tier. Missing, non-finite, or invalid browser signals select the
+  standard tier rather than assuming that an older WebView is slow.
+- Functional feedback and decorative motion are separate contracts. The shared
+  `functional-spinner` animation uses only `transform: rotate(...)`; `.spin`,
+  Turnstile loading, recharge loading, and other real busy indicators keep a
+  low-frequency `steps(8)` rotation under reduced-motion and constrained mode.
+  Decorative infinite animation, route veils, heavy backdrop filters, and
+  ambient transitions may stop in those modes without hiding business state.
+- `SignalField` runs at no more than 30 frames per second in standard mode,
+  pauses while the document is hidden or the canvas is outside the viewport,
+  and cancels every animation/resize observer on unmount. Reduced-motion and
+  constrained mode set the component's semantic static state before measuring
+  the canvas, render the static fallback, and start no continuous rAF loop.
+- `LaunchIntro` must decide whether motion is allowed before importing GSAP.
+  Load GSAP dynamically only when the once-per-session intro will really play;
+  constrained and reduced-motion sessions skip the overlay and do not download
+  that chunk. Async import failure, page hide, timeout, or unmount must remove
+  scroll lock and release every timeline/context exactly once.
+- `LightweightMarketChart` observes a replacement points-array boundary rather
+  than deep-traversing every OHLC object. Producers must publish a new array for
+  live append/update; the chart retains its incremental update and viewport
+  restoration rules.
+- Theme-specific hero artwork renders exactly one `<img>` for the active theme.
+  Do not use two downloaded images whose visibility is controlled only by CSS.
+- The Assets member total uses deterministic formatted-length tiers and never
+  `text-overflow: ellipsis`. It may wrap and stack the Today Return row at the
+  minimum tier, but stays at least 20px, preserves every digit, does not overlap
+  the action row, and creates no horizontal overflow at 320, 390, or 448px.
+- The KYC country field uses the configured backend country set as its only
+  options and opens a body-Teleported searchable dialog. Search matches ISO
+  code, backend name, and localized region name; selection preserves the
+  backend's original `country` value. The dialog focuses search on open, traps
+  Tab, closes with Escape/backdrop/close, restores the exact trigger, locks body
+  scroll only while open, and shows a localized no-results state.
+- A Teleported KYC picker does not inherit page-local `--surface-2`. Its field
+  and close surfaces must derive from `--surface-elevated` and `--ink` so light
+  and dark themes retain readable text/icon contrast without hard-coded theme
+  duplication.
+- Reduced-motion and constrained-device blur fallbacks for the Teleported KYC
+  mask must compile to the actual mask selector. Wrap the complete descendant
+  selector in `:global(...)` and inspect `vue/compiler-sfc` output; a partial
+  global selector can collapse onto bare `html` and leave the overlay blur
+  active on the devices that most need the fallback.
+
+Required verification includes pure tier tests, spinner source/runtime tests,
+SignalField lifecycle contracts, a production PWA build proving GSAP is split,
+browser constrained/reduced-motion checks, KYC search in both themes, and Assets
+long-number geometry at 320/390/448px.

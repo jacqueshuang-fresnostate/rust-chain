@@ -1,4 +1,9 @@
 import { client, requestUrl } from './client'
+import {
+  createReferenceRequestKey,
+  referenceRequestRegistry,
+  type ReferenceRequestOptions,
+} from './requestCache'
 import { asNumber } from '@/core/format'
 import { i18n } from '@/i18n'
 
@@ -34,21 +39,27 @@ export interface LoanOrder {
   createdAt: number
 }
 
-export async function fetchLoanProducts(limit = 50): Promise<LoanProduct[]> {
-  const response = await client.get<{ products?: Array<Record<string, unknown>> }>(requestUrl('/loan/products'), { params: { limit } })
-  return (response.data.products || []).map((product) => ({
-    id: asNumber(product.id),
-    loanType: String(product.loan_type || 'credit').toLowerCase() === 'collateralized' ? 'collateralized' : 'credit',
-    assetId: asNumber(product.asset_id),
-    assetSymbol: String(product.asset_symbol || '').toUpperCase(),
-    name: String(product.name || i18n.global.t('loan.defaultProduct')),
-    termDays: asNumber(product.term_days),
-    interestRate: asNumber(product.interest_rate),
-    interestCalculationMode: String(product.interest_calculation_mode || ''),
-    minKycLevel: asNumber(product.min_kyc_level),
-    minAmount: asNumber(product.min_amount),
-    maxAmount: product.max_amount === null || product.max_amount === undefined ? undefined : asNumber(product.max_amount),
-  }))
+export async function fetchLoanProducts(limit = 50, options: ReferenceRequestOptions = {}): Promise<LoanProduct[]> {
+  const url = requestUrl('/loan/products')
+  return referenceRequestRegistry.request(createReferenceRequestKey(url, {
+    limit,
+    locale: i18n.global.locale.value,
+  }), 60_000, async () => {
+    const response = await client.get<{ products?: Array<Record<string, unknown>> }>(url, { params: { limit } })
+    return (response.data.products || []).map((product) => ({
+      id: asNumber(product.id),
+      loanType: String(product.loan_type || 'credit').toLowerCase() === 'collateralized' ? 'collateralized' : 'credit',
+      assetId: asNumber(product.asset_id),
+      assetSymbol: String(product.asset_symbol || '').toUpperCase(),
+      name: String(product.name || i18n.global.t('loan.defaultProduct')),
+      termDays: asNumber(product.term_days),
+      interestRate: asNumber(product.interest_rate),
+      interestCalculationMode: String(product.interest_calculation_mode || ''),
+      minKycLevel: asNumber(product.min_kyc_level),
+      minAmount: asNumber(product.min_amount),
+      maxAmount: product.max_amount === null || product.max_amount === undefined ? undefined : asNumber(product.max_amount),
+    }))
+  }, options)
 }
 
 export async function fetchLoanOrders(limit = 50): Promise<LoanOrder[]> {

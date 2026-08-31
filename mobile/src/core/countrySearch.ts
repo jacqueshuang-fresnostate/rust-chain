@@ -1,6 +1,7 @@
 export interface CountrySearchOption {
   code: string
   name: string
+  searchAliases?: readonly string[]
 }
 
 const COMBINING_MARKS_PATTERN = /\p{M}+/gu
@@ -18,6 +19,18 @@ export function normalizeCountrySearchText(value: unknown): string {
     .trim()
 }
 
+/** Match a configured country identity without replacing the backend's raw value. */
+export function matchesCountryIdentity(
+  country: CountrySearchOption,
+  value: unknown,
+  aliases: readonly string[] = country.searchAliases || [],
+): boolean {
+  const normalizedValue = normalizeCountrySearchText(value)
+  if (!normalizedValue) return false
+  return [country.code, country.name, ...aliases]
+    .some((candidate) => normalizeCountrySearchText(candidate) === normalizedValue)
+}
+
 /** Match every query token against ISO code, backend name, and localized name. */
 export function filterCountryOptions<T extends CountrySearchOption>(
   countries: readonly T[],
@@ -33,6 +46,7 @@ export function filterCountryOptions<T extends CountrySearchOption>(
       country.code,
       country.name,
       localizedLabel(country),
+      ...(country.searchAliases || []),
     ].join(' '))
     return tokens.every((token) => searchableText.includes(token))
   })

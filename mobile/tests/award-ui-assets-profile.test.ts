@@ -63,14 +63,28 @@ test('资产页独立展示现货与杠杆余额，并只允许后端开放资�
 test('资产 Hero 使用跟随主题的两张跟踪生产素材', () => {
   assert.match(assetsSource, /assetsHeroLight from '@\/assets\/assets\/assets-hero-light\.jpg'/)
   assert.match(assetsSource, /assetsHeroDark from '@\/assets\/assets\/assets-hero-dark\.jpg'/)
-  assert.match(assetsSource, /v-show="!theme\.isDark"[\s\S]*?:src="assetsHeroLight"/)
-  assert.match(assetsSource, /v-show="theme\.isDark"[\s\S]*?:src="assetsHeroDark"/)
+  assert.match(assetsSource, /const assetsHeroImage = computed\(\(\) => theme\.isDark \? assetsHeroDark : assetsHeroLight\)/)
+  assert.equal((assetsSource.match(/class="assets-hero__image" :src="assetsHeroImage"/g) || []).length, 2)
+  assert.doesNotMatch(assetsSource, /v-show="!?theme\.isDark"/)
   assert.ok(existsSync(new URL('../src/assets/assets/assets-hero-light.jpg', import.meta.url)))
   assert.ok(existsSync(new URL('../src/assets/assets/assets-hero-dark.jpg', import.meta.url)))
   assert.equal(sha256('../src/assets/assets/assets-hero-light.jpg'), 'eb1d0237547675fd61694cd07879b09b30ad8fa976541978501eb04bb246f5dc')
   assert.equal(sha256('../src/assets/assets/assets-hero-dark.jpg'), '52d3e5fab2674d3693a8a3e574f557ca5c89a4d46ea6bdb7cc3f8b3fa6af7691')
   assert.match(assetsSource, /assets-hero__overlay--dark[\s\S]*?background: color-mix\(in srgb, var\(--page\) 25%, transparent\)/)
   assert.doesNotMatch(assetsSource, /mobile\/pencil|@\/\.\.\/pencil|generated-178568/)
+})
+
+test('资产会员摘要按字符长度稳定降级且完整显示数值', () => {
+  assert.match(assetsSource, /type AssetValueSizeTier = 'full' \| 'medium' \| 'small' \| 'minimum'/)
+  assert.match(assetsSource, /if \(length <= 8\) return 'full'[\s\S]*?if \(length <= 11\) return 'medium'[\s\S]*?if \(length <= 15\) return 'small'/)
+  assert.match(assetsSource, /const summaryValueSizeTier = computed<AssetValueSizeTier>[\s\S]*?totalValueSizeTier\.value === 'minimum' \|\| returnValueSizeTier\.value === 'minimum'/)
+  assert.match(assetsSource, /class="assets-member-summary" :data-value-size="summaryValueSizeTier"/)
+  assert.match(assetsSource, /class="assets-member-summary__value" :data-value-size="totalValueSizeTier"/)
+  assert.match(assetsSource, /font-size: clamp\(30px, 8vw, 34px\)/)
+  assert.match(assetsSource, /data-value-size='minimum'[\s\S]*?font-size: 20px/)
+  assert.match(assetsSource, /overflow-wrap: anywhere/)
+  assert.doesNotMatch(assetsSource, /assets-member-summary__[\s\S]{0,300}text-overflow: ellipsis/)
+  assert.doesNotMatch(assetsSource, /scaleX\(/)
 })
 
 test('资产页保留钱包、划转、资金路由与可访问确认层', () => {

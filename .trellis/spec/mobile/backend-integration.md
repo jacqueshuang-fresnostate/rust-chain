@@ -1686,3 +1686,51 @@ response authority = refreshed GET /api/v1/margin/wallets plus supported risk sn
 - The existing card-level Market close all action remains a separate explicit
   two-step 100% shortcut using the legacy empty request. The workspace-level
   Close all action remains the only batch endpoint consumer.
+
+## 18. In-Memory Reference Request Deduplication Contract
+
+```ts
+interface ReferenceRequestOptions {
+  force?: boolean
+}
+
+interface MemoryRequestRegistry {
+  request<T>(
+    key: string,
+    ttlMs: number,
+    loader: () => Promise<T>,
+    options?: ReferenceRequestOptions,
+  ): Promise<T>
+  invalidate(key?: string): void
+}
+```
+
+- The registry is process-memory-only. It must not write API responses to
+  localStorage, IndexedDB, the service worker, or a cross-session browser cache.
+- TTL begins when a loader succeeds. Errors and cancellations never populate
+  the cache. Equal keys share one in-flight promise; every caller receives an
+  isolated clone so one view cannot mutate another view's cached DTO.
+- `force` bypasses a completed cache value while still sharing the same current
+  in-flight request. Key or global invalidation must prevent an already-running
+  stale loader from repopulating the cache after it resolves.
+- Cache keys contain the resolved API URL plus stable, sorted parameters. Add
+  locale when mapping depends on localized fallback copy. Wallet directories
+  additionally contain the current access-token scope because regional/account
+  policy can change the available assets and networks.
+- Whitelist only slow-changing reference/catalog calls with explicit TTLs at
+  their call sites: countries, public auth configuration, market-pair metadata,
+  convert pairs, margin/seconds/earn/loan product catalogs, prediction config,
+  new-coin project catalogs, and wallet deposit/withdraw directories.
+- Never cache wallet balances, Today Return, KYC state, orders, positions,
+  ledger pages, market tickers, candles, depth, trades, one-time quotes, private
+  profile/security state, or any POST/PATCH/DELETE mutation. Those calls remain
+  network-authoritative on every required reconciliation.
+- A route remount within TTL must reuse the whitelisted result; explicit manual
+  refresh or a business mutation that changes a catalog may pass `force` or
+  invalidate the exact key before authoritative reload.
+
+Required tests cover successful TTL timing, expired reload, concurrent
+single-flight behavior, failure behavior, cloning, force, key/global
+invalidation, stable parameter ordering, whitelist presence, and strong-data
+exclusions. A browser route-away/route-back check must prove a stable endpoint
+is requested once within its TTL.

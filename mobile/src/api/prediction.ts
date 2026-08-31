@@ -1,4 +1,9 @@
 import { client, requestUrl } from './client'
+import {
+  createReferenceRequestKey,
+  referenceRequestRegistry,
+  type ReferenceRequestOptions,
+} from './requestCache'
 import { asNumber } from '@/core/format'
 import { i18n } from '@/i18n'
 
@@ -50,13 +55,16 @@ export interface PredictionOrder {
   createdAt: number
 }
 
-export async function fetchPredictionConfig(): Promise<PredictionAsset[]> {
-  const response = await client.get<{ allowed_assets?: Array<Record<string, unknown>> }>(requestUrl('/prediction/config'))
-  return (response.data.allowed_assets || []).map((asset) => ({
-    assetId: asNumber(asset.asset_id),
-    assetSymbol: String(asset.asset_symbol || '').toUpperCase(),
-    maxPayoutAmount: asNumber(asset.max_payout_amount),
-  }))
+export async function fetchPredictionConfig(options: ReferenceRequestOptions = {}): Promise<PredictionAsset[]> {
+  const url = requestUrl('/prediction/config')
+  return referenceRequestRegistry.request(createReferenceRequestKey(url), 2 * 60_000, async () => {
+    const response = await client.get<{ allowed_assets?: Array<Record<string, unknown>> }>(url)
+    return (response.data.allowed_assets || []).map((asset) => ({
+      assetId: asNumber(asset.asset_id),
+      assetSymbol: String(asset.asset_symbol || '').toUpperCase(),
+      maxPayoutAmount: asNumber(asset.max_payout_amount),
+    }))
+  }, options)
 }
 
 export async function fetchPredictionMarkets(limit = 50): Promise<PredictionMarket[]> {

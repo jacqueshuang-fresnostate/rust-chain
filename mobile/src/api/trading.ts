@@ -1,5 +1,10 @@
 import axios from 'axios'
 import { client, requestUrl } from './client'
+import {
+  createReferenceRequestKey,
+  referenceRequestRegistry,
+  type ReferenceRequestOptions,
+} from './requestCache'
 import { asNumber, normalizeSymbol, splitSymbol } from '@/core/format'
 import { mapMarginProductMarginLimits } from '@/core/tradeForm'
 import { parseMarginOrderTypes } from '@/core/marginOrder'
@@ -214,37 +219,41 @@ export async function cancelAllSpotOrders(orderIds: string[]): Promise<void> {
   if (rejected) throw rejected.reason
 }
 
-export async function fetchMarginProducts(): Promise<MarginProduct[]> {
-  const response = await client.get<{ products?: BackendMarginProduct[]; capabilities?: BackendMarginTradingCapabilities }>(requestUrl('/margin/products'))
-  const orderTypes = parseMarginOrderTypes(response.data.capabilities?.order_types)
-  return (response.data.products || []).map((product) => {
-    const pair = splitSymbol(product.symbol)
-    const modes = resolveMarginModes(response.data.capabilities?.margin_modes, product.margin_modes, product.margin_mode)
-    const levels = parseLeverage(product.leverage_levels, product.max_leverage)
-    const marginLimits = mapMarginProductMarginLimits(product)
-    return {
-      id: product.id,
-      pairId: asNumber(product.pair_id),
-      symbol: `${pair.base}/${pair.quote}`,
-      marginAssetId: asNumber(product.margin_asset),
-      marginAssetSymbol: (product.margin_asset_symbol || pair.quote).toUpperCase(),
-      logoUrl: String(product.logo_url || '').trim() || undefined,
-      marginMode: modes[0] || 'isolated',
-      marginModes: modes,
-      orderTypes: [...orderTypes],
-      pricePrecision: nonNegativeInteger(product.price_precision),
-      leverageLevels: levels,
-      maxLeverage: asNumber(product.max_leverage, levels.at(-1) || 1),
-      minMargin: marginLimits.minMargin,
-      maxMargin: marginLimits.maxMargin,
-      maintenanceMarginRate: parseMarginRiskNumber(product.maintenance_margin_rate),
-      hourlyInterestRate: asNumber(product.hourly_interest_rate),
-      takeProfitStopLossSupported: response.data.capabilities?.take_profit_stop_loss === true,
-      strategyOrdersSupported: response.data.capabilities?.strategy_orders === true,
-      bulkCloseSupported: response.data.capabilities?.bulk_close === true,
-      positionRiskSupported: response.data.capabilities?.position_risk === true,
-    }
-  })
+export async function fetchMarginProducts(options: ReferenceRequestOptions = {}): Promise<MarginProduct[]> {
+  const url = requestUrl('/margin/products')
+  // 产品能力目录不含用户仓位或钱包数据，因此公开缓存键不需要 token。
+  return referenceRequestRegistry.request(createReferenceRequestKey(url), 60_000, async () => {
+    const response = await client.get<{ products?: BackendMarginProduct[]; capabilities?: BackendMarginTradingCapabilities }>(url)
+    const orderTypes = parseMarginOrderTypes(response.data.capabilities?.order_types)
+    return (response.data.products || []).map((product) => {
+      const pair = splitSymbol(product.symbol)
+      const modes = resolveMarginModes(response.data.capabilities?.margin_modes, product.margin_modes, product.margin_mode)
+      const levels = parseLeverage(product.leverage_levels, product.max_leverage)
+      const marginLimits = mapMarginProductMarginLimits(product)
+      return {
+        id: product.id,
+        pairId: asNumber(product.pair_id),
+        symbol: `${pair.base}/${pair.quote}`,
+        marginAssetId: asNumber(product.margin_asset),
+        marginAssetSymbol: (product.margin_asset_symbol || pair.quote).toUpperCase(),
+        logoUrl: String(product.logo_url || '').trim() || undefined,
+        marginMode: modes[0] || 'isolated',
+        marginModes: modes,
+        orderTypes: [...orderTypes],
+        pricePrecision: nonNegativeInteger(product.price_precision),
+        leverageLevels: levels,
+        maxLeverage: asNumber(product.max_leverage, levels.at(-1) || 1),
+        minMargin: marginLimits.minMargin,
+        maxMargin: marginLimits.maxMargin,
+        maintenanceMarginRate: parseMarginRiskNumber(product.maintenance_margin_rate),
+        hourlyInterestRate: asNumber(product.hourly_interest_rate),
+        takeProfitStopLossSupported: response.data.capabilities?.take_profit_stop_loss === true,
+        strategyOrdersSupported: response.data.capabilities?.strategy_orders === true,
+        bulkCloseSupported: response.data.capabilities?.bulk_close === true,
+        positionRiskSupported: response.data.capabilities?.position_risk === true,
+      }
+    })
+  }, options)
 }
 
 export async function placeMarginOrder(input: MarginOrderInput): Promise<void> {

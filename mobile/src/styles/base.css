@@ -426,3 +426,78 @@ textarea::placeholder {
     transform: none;
   }
 }
+
+/* Functional feedback keeps moving even when decorative motion is reduced. */
+@keyframes functional-spinner {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+html body :is(
+  .spin.spin.spin,
+  .auth-cf-turnstile-spinner.auth-cf-turnstile-spinner.auth-cf-turnstile-spinner,
+  .recharge-loading__icon.recharge-loading__icon.recharge-loading__icon,
+  .is-spinning.is-spinning.is-spinning
+) {
+  animation: functional-spinner .8s linear infinite !important;
+}
+
+/* Constrained mode removes paint-heavy shell decoration without changing layout or controls. */
+html[data-performance-tier='constrained'] #app .app-frame,
+html[data-performance-tier='constrained'] #app .app-frame * {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+html[data-performance-tier='constrained'] #app .app-frame :is(
+  .route-veil,
+  .asset-orbit,
+  .signal-bars i,
+  .market-brief__meter i,
+  .market-brief__state > i,
+  .markets-hero
+) {
+  animation: none !important;
+  transition: none !important;
+}
+
+html[data-performance-tier='constrained'] #app .app-frame .route-veil {
+  display: none !important;
+}
+
+html[data-performance-tier='constrained'] #app .app-frame .signal-field {
+  display: none;
+}
+
+html[data-performance-tier='constrained'] #app .app-frame .signal-static-fallback {
+  opacity: .82;
+}
+
+html[data-performance-tier='constrained'] body :is(
+  .country-picker-mask,
+  .kyc-country-picker-mask
+) {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+html[data-performance-tier='constrained'] body :is(
+  .spin.spin.spin,
+  .auth-cf-turnstile-spinner.auth-cf-turnstile-spinner.auth-cf-turnstile-spinner,
+  .recharge-loading__icon.recharge-loading__icon.recharge-loading__icon,
+  .is-spinning.is-spinning.is-spinning
+) {
+  animation: functional-spinner 1.8s steps(8, end) infinite !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html body :is(
+    .spin.spin.spin,
+    .auth-cf-turnstile-spinner.auth-cf-turnstile-spinner.auth-cf-turnstile-spinner,
+    .recharge-loading__icon.recharge-loading__icon.recharge-loading__icon,
+    .is-spinning.is-spinning.is-spinning
+  ) {
+    animation: functional-spinner 1.8s steps(8, end) infinite !important;
+  }
+}

@@ -70,7 +70,7 @@ test('Turnstile mobile shell stays flexible without scaling or clipping the chal
   assert.match(source, /\.cf-turnstile-widget :deep\(iframe\) \{[\s\S]*max-width: 100% !important;/)
   assert.doesNotMatch(source, /\.cf-turnstile-widget \{[\s\S]*?transform:/)
   assert.match(source, /@media \(max-width: 340px\)[\s\S]*\.auth-cf-turnstile \{[\s\S]*margin-inline: -7px;[\s\S]*width: calc\(100% \+ 14px\);/)
-  assert.match(source, /@media \(prefers-reduced-motion: reduce\)[\s\S]*animation: none;/)
+  assert.match(source, /class="auth-cf-turnstile-spinner"/)
 })
 
 test('Turnstile status copy exists in both mobile locales', () => {

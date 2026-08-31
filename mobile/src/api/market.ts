@@ -1,5 +1,10 @@
 import { client, requestUrl } from './client'
 import {
+  createReferenceRequestKey,
+  referenceRequestRegistry,
+  type ReferenceRequestOptions,
+} from './requestCache'
+import {
   DEFAULT_MARKET_KLINE_LIMIT,
   mapMarketDepthSnapshot,
   mapMarketKlines,
@@ -43,19 +48,23 @@ interface BackendTrade {
 
 export { mapMarketTicker }
 
-export async function fetchMarketPairs(): Promise<MarketPair[]> {
-  const response = await client.get<{ markets?: BackendMarket[] }>(requestUrl('/markets'))
-  return (response.data.markets || [])
-    .map((market) => {
-      const pair = splitSymbol(market.symbol, market.base_asset, market.quote_asset)
-      return {
-        id: asNumber(market.id),
-        symbol: `${pair.base}/${pair.quote}`,
-        base: pair.base,
-        quote: pair.quote,
-      }
-    })
-    .filter((pair) => pair.id > 0 && Boolean(pair.base && pair.quote))
+export async function fetchMarketPairs(options: ReferenceRequestOptions = {}): Promise<MarketPair[]> {
+  const url = requestUrl('/markets')
+  // 只缓存公开交易对元数据；ticker、K 线、深度与成交始终走实时请求。
+  return referenceRequestRegistry.request(createReferenceRequestKey(url, { projection: 'pairs' }), 2 * 60_000, async () => {
+    const response = await client.get<{ markets?: BackendMarket[] }>(url)
+    return (response.data.markets || [])
+      .map((market) => {
+        const pair = splitSymbol(market.symbol, market.base_asset, market.quote_asset)
+        return {
+          id: asNumber(market.id),
+          symbol: `${pair.base}/${pair.quote}`,
+          base: pair.base,
+          quote: pair.quote,
+        }
+      })
+      .filter((pair) => pair.id > 0 && Boolean(pair.base && pair.quote))
+  }, options)
 }
 
 export async function fetchMarketTickers(): Promise<MarketTicker[]> {

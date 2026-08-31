@@ -35,8 +35,9 @@ test('访客主页使用 tracked 明暗 Hero，登录后才展示真实资产与
 
   assert.match(homeSource, /v-if="!session\.isAuthenticated" class="home-portfolio home-portfolio--guest"/)
   assert.match(homeSource, /v-else[\s\S]*class="portfolio-overview home-portfolio home-portfolio--member"/)
-  assert.match(homeSource, /class="home-guest-hero__image home-guest-hero__image--light" :src="guestHeroLight"/)
-  assert.match(homeSource, /class="home-guest-hero__image home-guest-hero__image--dark" :src="guestHeroDark"/)
+  assert.match(homeSource, /const guestHeroImage = computed\(\(\) => theme\.isDark \? guestHeroDark : guestHeroLight\)/)
+  assert.equal((homeSource.match(/class="home-guest-hero__image"/g) || []).length, 1)
+  assert.match(homeSource, /class="home-guest-hero__image" :src="guestHeroImage"/)
   assert.match(homeSource, /function openLogin\(\)[\s\S]*name: 'login'[\s\S]*redirect: '\/'/)
   assert.doesNotMatch(homeSource.match(/home-portfolio--guest[\s\S]*?<\/section>/)?.[0] ?? '', /displayedAssetAmount|portfolio-chart|todayReturn/)
 

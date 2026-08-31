@@ -1,4 +1,9 @@
 import { client, requestUrl } from './client'
+import {
+  createReferenceRequestKey,
+  referenceRequestRegistry,
+  type ReferenceRequestOptions,
+} from './requestCache'
 import { asNumber } from '@/core/format'
 import { i18n } from '@/i18n'
 
@@ -31,24 +36,30 @@ export interface EarnSubscription {
   maturesAt: number
 }
 
-export async function fetchEarnProducts(limit = 50): Promise<EarnProduct[]> {
-  const response = await client.get<{ products?: Array<Record<string, unknown>> }>(requestUrl('/earn/products'), { params: { limit } })
-  return (response.data.products || []).map((product) => ({
-    id: asNumber(product.id),
-    assetId: asNumber(product.asset_id),
-    assetSymbol: String(product.asset_symbol || '').toUpperCase(),
-    name: String(product.name || ''),
-    category: String(product.category_name || product.category || i18n.global.t('earn.defaultCategory')),
-    termDays: asNumber(product.term_days),
-    aprRate: asNumber(product.apr_rate),
-    redemptionFeeRate: optionalNumber(product.redemption_fee_rate),
-    maturityProfitFeeRate: optionalNumber(product.maturity_profit_fee_rate),
-    earlyRedeemFeeBasis: optionalText(product.early_redeem_fee_basis),
-    earlyRedeemFeeRate: optionalNumber(product.early_redeem_fee_rate),
-    minSubscribe: asNumber(product.min_subscribe),
-    maxSubscribe: product.max_subscribe === null || product.max_subscribe === undefined ? undefined : asNumber(product.max_subscribe),
-    status: String(product.status || ''),
-  }))
+export async function fetchEarnProducts(limit = 50, options: ReferenceRequestOptions = {}): Promise<EarnProduct[]> {
+  const url = requestUrl('/earn/products')
+  return referenceRequestRegistry.request(createReferenceRequestKey(url, {
+    limit,
+    locale: i18n.global.locale.value,
+  }), 60_000, async () => {
+    const response = await client.get<{ products?: Array<Record<string, unknown>> }>(url, { params: { limit } })
+    return (response.data.products || []).map((product) => ({
+      id: asNumber(product.id),
+      assetId: asNumber(product.asset_id),
+      assetSymbol: String(product.asset_symbol || '').toUpperCase(),
+      name: String(product.name || ''),
+      category: String(product.category_name || product.category || i18n.global.t('earn.defaultCategory')),
+      termDays: asNumber(product.term_days),
+      aprRate: asNumber(product.apr_rate),
+      redemptionFeeRate: optionalNumber(product.redemption_fee_rate),
+      maturityProfitFeeRate: optionalNumber(product.maturity_profit_fee_rate),
+      earlyRedeemFeeBasis: optionalText(product.early_redeem_fee_basis),
+      earlyRedeemFeeRate: optionalNumber(product.early_redeem_fee_rate),
+      minSubscribe: asNumber(product.min_subscribe),
+      maxSubscribe: product.max_subscribe === null || product.max_subscribe === undefined ? undefined : asNumber(product.max_subscribe),
+      status: String(product.status || ''),
+    }))
+  }, options)
 }
 
 export async function fetchEarnSubscriptions(limit = 50): Promise<EarnSubscription[]> {

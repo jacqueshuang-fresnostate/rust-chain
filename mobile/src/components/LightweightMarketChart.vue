@@ -298,7 +298,6 @@ watch(
       renderAllData(true, viewport)
     }
   },
-  { deep: true },
 )
 
 watch(() => props.locale, (locale) => {

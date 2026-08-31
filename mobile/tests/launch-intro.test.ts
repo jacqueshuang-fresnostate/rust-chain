@@ -46,7 +46,8 @@ test('会话存储受限时启动判断和记录均不会阻断应用', () => {
 
 test('生产应用只挂载一个独立 GSAP 启动组件', () => {
   assert.match(packageJson.dependencies?.gsap ?? '', /^\^?\d+\.\d+\.\d+$/)
-  assert.match(componentSource, /import \{ gsap \} from 'gsap'/)
+  assert.doesNotMatch(componentSource, /^import .* from 'gsap'/m)
+  assert.match(componentSource, /const \{ gsap \} = await import\('gsap'\)/)
   assert.match(appSource, /import LaunchIntro from '@\/components\/LaunchIntro\.vue'/)
   assert.equal((appSource.match(/<LaunchIntro \/>/g) ?? []).length, 1)
   assert.match(componentSource, /gsap\.context\(/)
@@ -68,6 +69,7 @@ test('动画使用克制的品牌揭示、扫光、细进度线和左右幕帘�
 
 test('启动层处理低动态、安全区、最高层级和完整清理', () => {
   assert.match(componentSource, /prefers-reduced-motion: reduce/)
+  assert.match(componentSource, /dataset\.performanceTier !== 'constrained'/)
   assert.match(componentSource, /finishIntro\(\)/)
   assert.match(componentSource, /document\.documentElement\.classList\.add\(SCROLL_LOCK_CLASS\)/)
   assert.match(componentSource, /document\.documentElement\.classList\.remove\(SCROLL_LOCK_CLASS\)/)
@@ -87,6 +89,10 @@ test('启动层在 GSAP 未完成或初始化异常时仍会确定性自动移�
   assert.match(componentSource, /const AUTO_DISMISS_MS = 3000/)
   assert.match(componentSource, /autoDismissTimer = window\.setTimeout\(finishIntro, AUTO_DISMISS_MS\)/)
   assert.match(componentSource, /function finishIntro\(\)[\s\S]*?clearAutoDismissTimer\(\)[\s\S]*?isVisible\.value = false/)
-  assert.match(componentSource, /try \{[\s\S]*?gsap\.context\([\s\S]*?\} catch \{\s*finishIntro\(\)\s*\}/)
-  assert.match(componentSource, /onBeforeUnmount\(\(\) => \{\s*clearAutoDismissTimer\(\)/)
+  assert.match(componentSource, /disposed \|\| !isVisible\.value \|\| document\.hidden/)
+  assert.match(componentSource, /addEventListener\('visibilitychange', handleVisibilityChange\)/)
+  assert.match(componentSource, /addEventListener\('pagehide', handlePageHide\)/)
+  assert.match(componentSource, /addEventListener\('pageshow', handlePageShow\)/)
+  assert.match(componentSource, /onMounted\(\(\) => \{[\s\S]*?if \(document\.hidden\) \{[\s\S]*?finishIntro\(\)[\s\S]*?return/)
+  assert.match(componentSource, /onBeforeUnmount\(\(\) => \{\s*disposed = true/)
 })

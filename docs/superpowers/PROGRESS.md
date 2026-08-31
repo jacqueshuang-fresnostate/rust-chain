@@ -7900,3 +7900,10 @@
 - 修改文件：提交 `8326f12` 中的 Mobile 秒合约实现、双语资源、选中稿样式、回归测试、Mobile Trellis 规范与已完成任务记录，以及本条交付记录。
 - 验证结果：基于精确暂存快照创建隔离 worktree，`npm run type-check`、Mobile 测试 498/498、`npm run build:pwa`、`npm run build:tauri` 均通过；两份完成任务上下文校验、`git diff --cached --check` 通过；首次推送结果为 `fac1def..8326f12 main -> main`。
 - 后续事项：等待 GitHub Actions 执行；本地其余未提交任务不在本轮提交范围内。
+
+## 2026-08-31 03:15 - 完成手机端动画性能、参考请求与 KYC 国家搜索优化
+
+- 完成内容：将功能性加载旋转与装饰动效分离，低动态和受限设备仍保留低频加载反馈；新增启动前性能档位、SignalField 30fps/可见性暂停与静态降级、GSAP 按需分包、K 线浅监听和稳定参考 GET 的内存 TTL/single-flight 白名单。资产页只渲染当前主题 Hero，会员总额与今日收益按长度降级到最小 20px 并完整换行。KYC 国家改为可搜索底部弹层，支持 ISO、后端名、本地化名及去重音符搜索，保留后端配置原始 country 值；国家目录失败不再遮蔽认证状态，并修复 Teleport 明暗主题及低动态/受限设备模糊降级的 scoped CSS 编译问题。
+- 修改文件：`mobile/src/{main.ts,core/{performanceTier.ts,countrySearch.ts},components/{SignalField.vue,LaunchIntro.vue,LightweightMarketChart.vue},styles/base.css,views/{HomeView.vue,AssetsView.vue,KycView.vue},api/{requestCache.ts,auth.ts,market.ts,swap.ts,trading.ts,seconds.ts,earn.ts,loan.ts,prediction.ts,newCoin.ts,wallet.ts},i18n/messages/{zh-CN.ts,en.ts}}`、`mobile/tests/{performance-tier,request-cache,reference-request-whitelist,functional-spinner,kyc-country-search,access-identity-settings-views,award-ui-assets-profile,motion-parity,launch-intro}.test.ts`、`.trellis/spec/mobile/{pwa-and-shell,backend-integration}.md`、`.trellis/tasks/08-31-mobile-animation-performance/*`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：独立 `trellis-check` 定向测试 46/46 与 type-check 通过；主会话 Mobile 全量测试 533/533、`npm run build:pwa`、`npm run build:tauri` 全部通过。Ego Browser 实测 KYC 搜索 `China`、`cote ivoire`、`United States` 均得到唯一正确国家，选择后触发器显示 `美国 (US)`，Escape/选择均归还焦点并解除滚动锁；浅深主题文字/表面可读，320/390/448px 文档宽度与视口一致。reduced-motion 和 constrained 两种场景下国家遮罩 `backdrop-filter: none`；资产长数字、功能 spinner 时间推进、受限档 Canvas 静态化和 TTL 内页面返回不重复请求也已完成浏览器回归。
+- 后续事项：代码与测试已完成；本轮未提交或推送，待用户确认后按任务范围整理提交。

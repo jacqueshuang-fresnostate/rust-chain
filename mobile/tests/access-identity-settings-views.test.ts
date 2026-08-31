@@ -91,7 +91,7 @@ test('认证与语言跳转不会把敏感表单字段写入 URL 查询参数', 
 })
 
 test('KYC 保留国家规则、文件校验、图片转换和完整提交载荷', () => {
-  assert.match(sources.kyc, /Promise\.all\(\[fetchKycStatus\(\), fetchCountries\(\)\]\)/)
+  assert.match(sources.kyc, /Promise\.allSettled\(\[[\s\S]*?fetchKycStatus\(\),[\s\S]*?fetchCountries\(\)/)
   assert.match(sources.kyc, /file\.size > maxDocumentSize\.value/)
   assert.match(sources.kyc, /file\.type\.startsWith\('image\/'\)/)
   assert.match(sources.kyc, /reader\.readAsDataURL\(file\)/)

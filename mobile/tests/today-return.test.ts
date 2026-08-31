@@ -249,7 +249,9 @@ test('资产页今日收益与钱包请求独立并隔离换号、退出和卸�
   assert.match(assetsSource, /const sessionKey = session\.token[\s\S]*const requestVersion = \+\+transferRequestVersion[\s\S]*await transferWalletFunds[\s\S]*requestVersion !== transferRequestVersion \|\| session\.token !== sessionKey/)
   assert.match(assetsSource, /onUnmounted\(\(\) => \{[\s\S]*accountRequestLifecycle\.stop\(\)[\s\S]*todayReturnRequestLifecycle\.stop\(\)[\s\S]*transferRequestVersion \+= 1/)
   assert.doesNotMatch(assetsSource, /watch\(\(\) => session\.isAuthenticated,[\s\S]*loadAccounts\(\)/)
-  assert.match(assetsSource, /\.assets-member-summary__return strong,[\s\S]*\.assets-member-summary__return small \{[\s\S]*max-width: 100%;[\s\S]*text-overflow: ellipsis;/)
+  assert.match(assetsSource, /\.assets-member-summary__return strong,[\s\S]*\.assets-member-summary__return small \{[\s\S]*max-width: 100%;[\s\S]*overflow-wrap: anywhere;/)
+  const returnRule = assetsSource.match(/\.assets-member-summary__return strong,\s*\.assets-member-summary__return small \{([^}]*)\}/)?.[1] || ''
+  assert.doesNotMatch(returnRule, /text-overflow: ellipsis/)
 })
 
 test('今日收益加载、失败和不完整文案中英文对称', () => {

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { gsap } from 'gsap'
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import compactLogo from '@/assets/brand/hippo-logo-compact.png'
 import {
@@ -20,15 +19,21 @@ function resolveSessionStorage(): LaunchIntroStorage | null {
 }
 
 const storage = resolveSessionStorage()
-const isVisible = ref(shouldPlayLaunchIntro(storage))
+const shouldDisplay = shouldPlayLaunchIntro(storage)
+const motionAllowed = (
+  document.documentElement.dataset.performanceTier !== 'constrained'
+  && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+)
+const isVisible = ref(shouldDisplay && motionAllowed)
 const rootRef = ref<HTMLElement | null>(null)
 
 let animationContext: gsap.Context | null = null
 let timeline: gsap.core.Timeline | null = null
 let autoDismissTimer: number | null = null
 let hasFinished = false
+let disposed = false
 
-if (isVisible.value) {
+if (shouldDisplay) {
   rememberLaunchIntro(storage)
 }
 
@@ -58,13 +63,8 @@ function finishIntro() {
   isVisible.value = false
 }
 
-onMounted(() => {
+async function startAnimation(): Promise<void> {
   if (!isVisible.value) return
-
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    finishIntro()
-    return
-  }
 
   const root = rootRef.value
   if (!root) {
@@ -76,6 +76,11 @@ onMounted(() => {
   autoDismissTimer = window.setTimeout(finishIntro, AUTO_DISMISS_MS)
 
   try {
+    const { gsap } = await import('gsap')
+    if (disposed || !isVisible.value || document.hidden) {
+      if (!disposed) finishIntro()
+      return
+    }
     animationContext = gsap.context(() => {
       timeline = gsap.timeline({
         defaults: { ease: 'power3.out' },
@@ -152,11 +157,40 @@ onMounted(() => {
         }, 2.02)
     }, root)
   } catch {
-    finishIntro()
+    if (!disposed) finishIntro()
   }
+}
+
+function handleVisibilityChange(): void {
+  if (document.hidden) finishIntro()
+}
+
+function handlePageHide(): void {
+  finishIntro()
+}
+
+function handlePageShow(): void {
+  unlockScroll()
+  if (isVisible.value) finishIntro()
+}
+
+onMounted(() => {
+  if (!isVisible.value) return
+  if (document.hidden) {
+    finishIntro()
+    return
+  }
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+  window.addEventListener('pagehide', handlePageHide)
+  window.addEventListener('pageshow', handlePageShow)
+  void startAnimation()
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+  window.removeEventListener('pagehide', handlePageHide)
+  window.removeEventListener('pageshow', handlePageShow)
   clearAutoDismissTimer()
   unlockScroll()
   releaseAnimation()

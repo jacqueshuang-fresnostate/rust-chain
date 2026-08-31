@@ -1,4 +1,9 @@
 import { client, requestUrl } from './client'
+import {
+  createReferenceRequestKey,
+  referenceRequestRegistry,
+  type ReferenceRequestOptions,
+} from './requestCache'
 import { asNumber } from '@/core/format'
 import { mapSecondsOrder, type SecondsOrder } from '@/core/secondsOrder'
 
@@ -22,29 +27,32 @@ export interface SecondsProduct {
   status: string
 }
 
-export async function fetchSecondsProducts(limit = 50): Promise<SecondsProduct[]> {
-  const response = await client.get<{ products?: Array<Record<string, unknown>> }>(requestUrl('/seconds-contracts/products'), { params: { limit } })
-  return (response.data.products || []).map((product) => {
-    const cycles = Array.isArray(product.cycles) ? product.cycles : []
-    const mappedCycles = cycles.map((cycle) => mapCycle(cycle as Record<string, unknown>))
-    if (!mappedCycles.length) {
-      mappedCycles.push({
+export async function fetchSecondsProducts(limit = 50, options: ReferenceRequestOptions = {}): Promise<SecondsProduct[]> {
+  const url = requestUrl('/seconds-contracts/products')
+  return referenceRequestRegistry.request(createReferenceRequestKey(url, { limit }), 60_000, async () => {
+    const response = await client.get<{ products?: Array<Record<string, unknown>> }>(url, { params: { limit } })
+    return (response.data.products || []).map((product) => {
+      const cycles = Array.isArray(product.cycles) ? product.cycles : []
+      const mappedCycles = cycles.map((cycle) => mapCycle(cycle as Record<string, unknown>))
+      if (!mappedCycles.length) {
+        mappedCycles.push({
+          id: asNumber(product.id),
+          durationSeconds: asNumber(product.duration_seconds),
+          payoutRate: asNumber(product.payout_rate),
+          minStake: asNumber(product.min_stake),
+          maxStake: product.max_stake === null || product.max_stake === undefined ? undefined : asNumber(product.max_stake),
+        })
+      }
+      return {
         id: asNumber(product.id),
-        durationSeconds: asNumber(product.duration_seconds),
-        payoutRate: asNumber(product.payout_rate),
-        minStake: asNumber(product.min_stake),
-        maxStake: product.max_stake === null || product.max_stake === undefined ? undefined : asNumber(product.max_stake),
-      })
-    }
-    return {
-      id: asNumber(product.id),
-      symbol: String(product.symbol || ''),
-      stakeAssetId: asNumber(product.stake_asset),
-      stakeAssetSymbol: String(product.stake_asset_symbol || '').toUpperCase(),
-      cycles: mappedCycles,
-      status: String(product.status || ''),
-    }
-  })
+        symbol: String(product.symbol || ''),
+        stakeAssetId: asNumber(product.stake_asset),
+        stakeAssetSymbol: String(product.stake_asset_symbol || '').toUpperCase(),
+        cycles: mappedCycles,
+        status: String(product.status || ''),
+      }
+    })
+  }, options)
 }
 
 export async function fetchSecondsOrders(limit = 50): Promise<SecondsOrder[]> {

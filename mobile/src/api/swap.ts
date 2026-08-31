@@ -1,4 +1,9 @@
 import { client, requestUrl } from './client'
+import {
+  createReferenceRequestKey,
+  referenceRequestRegistry,
+  type ReferenceRequestOptions,
+} from './requestCache'
 import { asNumber } from '@/core/format'
 import {
   mapDirectionalConvertPairs,
@@ -32,9 +37,12 @@ export interface ConvertOrder {
   createdAt: number
 }
 
-export async function fetchConvertPairs(): Promise<ConvertPair[]> {
-  const response = await client.get<{ pairs?: BackendConvertPair[] }>(requestUrl('/convert/pairs'))
-  return mapDirectionalConvertPairs(response.data.pairs || [])
+export async function fetchConvertPairs(options: ReferenceRequestOptions = {}): Promise<ConvertPair[]> {
+  const url = requestUrl('/convert/pairs')
+  return referenceRequestRegistry.request(createReferenceRequestKey(url), 2 * 60_000, async () => {
+    const response = await client.get<{ pairs?: BackendConvertPair[] }>(url)
+    return mapDirectionalConvertPairs(response.data.pairs || [])
+  }, options)
 }
 
 export async function requestConvertQuote(pair: ConvertPair, amount: number): Promise<ConvertQuote> {

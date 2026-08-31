@@ -1,4 +1,9 @@
 import { client, persistAuthTokens, requestUrl } from './client'
+import {
+  createReferenceRequestKey,
+  referenceRequestRegistry,
+  type ReferenceRequestOptions,
+} from './requestCache'
 import { i18n } from '@/i18n'
 
 interface BackendLoginResponse {
@@ -36,26 +41,33 @@ export type LoginOutcome =
   | { type: 'two-factor'; challengeId: string }
   | { type: 'two-factor-setup'; setupChallengeId: string }
 
-export async function fetchLoginConfig(): Promise<LoginConfig> {
-  const response = await client.get<{
-    username_login_enabled?: boolean
-    cf_turnstile_enabled?: boolean
-    cf_turnstile_site_key?: string
-  }>(requestUrl('/auth/login/config'))
+export async function fetchLoginConfig(options: ReferenceRequestOptions = {}): Promise<LoginConfig> {
+  const url = requestUrl('/auth/login/config')
+  // 公开配置不随登录身份变化，缓存键刻意不包含 token。
+  return referenceRequestRegistry.request(createReferenceRequestKey(url), 5 * 60_000, async () => {
+    const response = await client.get<{
+      username_login_enabled?: boolean
+      cf_turnstile_enabled?: boolean
+      cf_turnstile_site_key?: string
+    }>(url)
 
-  return {
-    usernameLoginEnabled: Boolean(response.data.username_login_enabled),
-    cfTurnstileEnabled: Boolean(response.data.cf_turnstile_enabled),
-    cfTurnstileSiteKey: String(response.data.cf_turnstile_site_key || '').trim(),
-  }
+    return {
+      usernameLoginEnabled: Boolean(response.data.username_login_enabled),
+      cfTurnstileEnabled: Boolean(response.data.cf_turnstile_enabled),
+      cfTurnstileSiteKey: String(response.data.cf_turnstile_site_key || '').trim(),
+    }
+  }, options)
 }
 
-export async function fetchRegisterConfig(): Promise<RegisterConfig> {
-  const response = await client.get<{ email_code_required?: boolean; invite_code_required?: boolean }>(requestUrl('/auth/register/config'))
-  return {
-    emailCodeRequired: Boolean(response.data.email_code_required),
-    inviteCodeRequired: Boolean(response.data.invite_code_required),
-  }
+export async function fetchRegisterConfig(options: ReferenceRequestOptions = {}): Promise<RegisterConfig> {
+  const url = requestUrl('/auth/register/config')
+  return referenceRequestRegistry.request(createReferenceRequestKey(url), 5 * 60_000, async () => {
+    const response = await client.get<{ email_code_required?: boolean; invite_code_required?: boolean }>(url)
+    return {
+      emailCodeRequired: Boolean(response.data.email_code_required),
+      inviteCodeRequired: Boolean(response.data.invite_code_required),
+    }
+  }, options)
 }
 
 export async function loginWithPassword(
@@ -146,12 +158,15 @@ export async function resetPasswordWithCode(input: { email: string; code: string
   })
 }
 
-export async function fetchCountries(): Promise<CountryOption[]> {
-  const response = await client.get<{ countries?: Array<Record<string, unknown>> }>(requestUrl('/countries'))
-  return (response.data.countries || [])
-    .map((row) => ({
-      code: String(row.code || row.country_code || row.value || '').trim().toUpperCase(),
-      name: String(row.name || row.country_name || row.label || row.zh_name || row.code || '').trim(),
-    }))
-    .filter((country) => Boolean(country.code))
+export async function fetchCountries(options: ReferenceRequestOptions = {}): Promise<CountryOption[]> {
+  const url = requestUrl('/countries')
+  return referenceRequestRegistry.request(createReferenceRequestKey(url), 30 * 60_000, async () => {
+    const response = await client.get<{ countries?: Array<Record<string, unknown>> }>(url)
+    return (response.data.countries || [])
+      .map((row) => ({
+        code: String(row.code || row.country_code || row.value || '').trim().toUpperCase(),
+        name: String(row.name || row.country_name || row.label || row.zh_name || row.code || '').trim(),
+      }))
+      .filter((country) => Boolean(country.code))
+  }, options)
 }

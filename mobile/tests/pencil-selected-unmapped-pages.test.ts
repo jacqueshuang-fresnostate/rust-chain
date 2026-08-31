@@ -62,7 +62,7 @@ test('选中稿共享头部、字段、弹层和根壳职责保持一致', () =>
 test('资产与我的页面锁定 390px 选中稿几何和 Lucide 图标', () => {
   assert.match(views.assets, /\.assets-hero \{[\s\S]*?height: 236px;[\s\S]*?padding: 18px 20px 16px/)
   assert.match(views.assets, /\.assets-hero--member[\s\S]*?align-content: center;[\s\S]*?grid-template-rows: auto 66px/)
-  assert.match(views.assets, /\.assets-member-summary__value strong[\s\S]*?font-size: 34px/)
+  assert.match(views.assets, /\.assets-member-summary__value strong[\s\S]*?font-size: clamp\(30px, 8vw, 34px\)/)
   assert.match(views.assets, /\.assets-hero-actions button[\s\S]*?height: 66px[\s\S]*?min-height: 66px/)
   assert.match(views.assets, /\.assets-holding-row[\s\S]*?min-height: 52px/)
   assert.match(views.assets, /class="assets-balance-toggle"[\s\S]*?<Eye v-if="balanceVisible" :size="14"/)
