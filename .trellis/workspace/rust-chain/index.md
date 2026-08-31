@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 48
-- **Last Active**: 2026-08-29
+- **Total Sessions**: 49
+- **Last Active**: 2026-08-31
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1652 | Active |
+| `journal-1.md` | ~1685 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 49 | 2026-08-31 | 手机端性能与 KYC 国家搜索优化 | `194772f` | `main` |
 | 48 | 2026-08-29 | 手机端底部交易导航弹窗 | `c9543c4` | `main` |
 | 47 | 2026-08-28 | 杠杆比例拖动与真实部分平仓 | `53d10b2`, `a931423` | `main` |
 | 46 | 2026-08-20 | 修复全仓双向强平与预估强平价 | `a98cc2b` | `main` |

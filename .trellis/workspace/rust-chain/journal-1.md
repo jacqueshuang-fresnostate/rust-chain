@@ -233,7 +233,9 @@ Audited and polished the mobile Sites prototype product hub, message center, sec
 
 ### Main Changes
 
-(Add details)
+- 将业务加载 spinner 与装饰动效分层，增加低端设备性能档位、SignalField 帧率控制与静态降级。
+- 新增稳定参考 GET 的 TTL/single-flight 白名单缓存，金融强一致请求与实时行情保持不缓存。
+- 优化资产长数字布局，并将 KYC 国家字段改为支持 ISO、后端名称和本地化名称的可搜索弹层。
 
 ### Git Commits
 
@@ -243,7 +245,7 @@ Audited and polished the mobile Sites prototype product hub, message center, sec
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] 基于精确暂存树的隔离 worktree：`npm run type-check`、Mobile 518/518 测试、`npm run build:pwa`、`npm run build:tauri` 全部通过。
 
 ### Status
 
@@ -1638,6 +1640,39 @@ Enabled the shared /news back action, added Product Hub direct-open fallback, re
 | Hash | Message |
 |------|---------|
 | `c9543c4` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 49: 手机端性能与 KYC 国家搜索优化
+
+**Date**: 2026-08-31
+**Task**: 手机端性能与 KYC 国家搜索优化
+**Branch**: `main`
+
+### Summary
+
+完成手机端功能性加载动画、低端设备性能分级、参考请求 TTL/single-flight 白名单、资产长数字适配及 KYC 可搜索国家弹层，并通过隔离暂存快照的类型检查、518 项测试、PWA 与 Tauri 构建。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `194772f` | (see git log) |
 
 ### Testing
 
