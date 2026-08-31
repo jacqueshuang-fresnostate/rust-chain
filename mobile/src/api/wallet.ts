@@ -18,10 +18,12 @@ import {
   type ReturnHistoryPeriodDays,
 } from '@/core/returnHistory'
 import {
+  isWalletLedgerAccountFilter,
   isWalletLedgerCategory,
   mapWalletLedgerResponse,
   WalletLedgerContractError,
   type BackendWalletLedgerResponse,
+  type WalletLedgerAccountFilter,
   type WalletLedgerCategory,
   type WalletLedgerPage,
 } from '@/core/walletLedger'
@@ -64,19 +66,28 @@ export {
   formatWalletLedgerGroupHeading,
   formatWalletLedgerTime,
   groupWalletLedgerEntries,
+  isWalletLedgerAccountFilter,
+  isWalletLedgerAccountType,
   isWalletLedgerContractError,
   isWalletLedgerCategory,
   mapWalletLedgerResponse,
+  mergeWalletLedgerEntries,
+  WALLET_LEDGER_ACCOUNT_FILTERS,
+  WALLET_LEDGER_ACCOUNT_TYPES,
   WALLET_LEDGER_CATEGORIES,
   WALLET_LEDGER_FILTERS,
   WALLET_LEDGER_KNOWN_CHANGE_TYPES,
   WALLET_LEDGER_MAX_FRACTION_DIGITS,
   walletLedgerAmountSign,
+  walletLedgerAccountTranslationKey,
   walletLedgerCategoryTranslationKey,
+  walletLedgerEntryIdentity,
   walletLedgerTypePresentation,
   WalletLedgerContractError,
 } from '@/core/walletLedger'
 export type {
+  WalletLedgerAccountFilter,
+  WalletLedgerAccountType,
   WalletLedgerCategory,
   WalletLedgerDateGroup,
   WalletLedgerEntry,
@@ -487,6 +498,7 @@ export async function fetchWalletLedger(options: {
   limit?: number
   offset?: number
   category?: WalletLedgerCategory
+  accountType?: WalletLedgerAccountFilter
   changeType?: string
 } = {}): Promise<WalletLedgerPage> {
   const limit = options.limit ?? 30
@@ -500,12 +512,17 @@ export async function fetchWalletLedger(options: {
   if (options.category !== undefined && !isWalletLedgerCategory(options.category)) {
     throw new WalletLedgerContractError('invalid wallet ledger category')
   }
+  const accountType = options.accountType ?? 'all'
+  if (!isWalletLedgerAccountFilter(accountType)) {
+    throw new WalletLedgerContractError('invalid wallet ledger account type')
+  }
   const changeType = options.changeType?.trim()
   const response = await client.get<BackendWalletLedgerResponse>(requestUrl('/wallet/ledger'), {
     params: {
       limit,
       offset,
       category: options.category,
+      account_type: accountType,
       change_type: changeType || undefined,
     },
   })

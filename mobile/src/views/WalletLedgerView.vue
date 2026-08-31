@@ -14,10 +14,15 @@ import {
   formatWalletLedgerTime,
   groupWalletLedgerEntries,
   isWalletLedgerContractError,
+  mergeWalletLedgerEntries,
+  WALLET_LEDGER_ACCOUNT_FILTERS,
   WALLET_LEDGER_FILTERS,
   walletLedgerAmountSign,
+  walletLedgerAccountTranslationKey,
   walletLedgerCategoryTranslationKey,
+  walletLedgerEntryIdentity,
   walletLedgerTypePresentation,
+  type WalletLedgerAccountFilter,
   type WalletLedgerDateGroup,
   type WalletLedgerEntry,
   type WalletLedgerFilter,
@@ -31,6 +36,7 @@ const session = useSessionStore()
 const { locale, t } = useI18n()
 const entries = ref<WalletLedgerEntry[]>([])
 const activeFilter = ref<WalletLedgerFilter>('all')
+const activeAccountType = ref<WalletLedgerAccountFilter>('all')
 const loading = ref(false)
 const loadingMore = ref(false)
 const exhausted = ref(false)
@@ -39,6 +45,7 @@ const error = ref('')
 const requestLifecycle = createWalletLedgerRequestLifecycle({
   sessionKey: () => session.token,
   selectedFilter: () => activeFilter.value,
+  selectedAccountType: () => activeAccountType.value,
   fetchPage: fetchWalletLedger,
 })
 
@@ -71,7 +78,7 @@ async function load(reset = true): Promise<void> {
 
   const nextEntries = reset
     ? result.value.entries
-    : mergeEntries(entries.value, result.value.entries)
+    : mergeWalletLedgerEntries(entries.value, result.value.entries)
   const pagination = advanceWalletLedgerPagination(offset, result.value)
   entries.value = nextEntries
   nextOffset.value = pagination.nextOffset
@@ -92,8 +99,24 @@ function changeFilter(filter: WalletLedgerFilter): void {
   void load()
 }
 
+function changeAccountType(accountType: WalletLedgerAccountFilter): void {
+  if (accountType === activeAccountType.value) return
+  requestLifecycle.invalidate()
+  activeAccountType.value = accountType
+  entries.value = []
+  nextOffset.value = 0
+  exhausted.value = false
+  error.value = ''
+  loadingMore.value = false
+  void load()
+}
+
 function filterLabel(filter: WalletLedgerFilter): string {
   return t(walletLedgerCategoryTranslationKey(filter))
+}
+
+function accountLabel(accountType: WalletLedgerAccountFilter): string {
+  return t(walletLedgerAccountTranslationKey(accountType))
 }
 
 function categoryLabel(category: WalletLedgerEntry['category']): string {
@@ -134,15 +157,6 @@ function signedAmount(entry: WalletLedgerEntry): string {
 function ledgerDecimal(value: number): string {
   void locale.value
   return formatWalletLedgerDecimal(value, currentIntlLocale())
-}
-
-function mergeEntries(
-  current: readonly WalletLedgerEntry[],
-  incoming: readonly WalletLedgerEntry[],
-): WalletLedgerEntry[] {
-  const byId = new Map(current.map((entry) => [entry.id, entry]))
-  for (const entry of incoming) byId.set(entry.id, entry)
-  return [...byId.values()]
 }
 
 function resetSessionState(): void {
@@ -195,6 +209,18 @@ onBeforeUnmount(() => requestLifecycle.stop())
         :description="t('ledger.loginDescription')"
       />
       <template v-else>
+        <nav class="ledger-account-filter" :aria-label="t('ledger.accountFilterLabel')">
+          <button
+            v-for="accountType in WALLET_LEDGER_ACCOUNT_FILTERS"
+            :key="accountType"
+            type="button"
+            :aria-pressed="activeAccountType === accountType"
+            :class="{ 'is-active': activeAccountType === accountType }"
+            @click="changeAccountType(accountType)"
+          >
+            {{ accountLabel(accountType) }}
+          </button>
+        </nav>
         <nav class="ledger-filter" :aria-label="t('ledger.filterLabel')">
           <button
             v-for="filter in WALLET_LEDGER_FILTERS"
@@ -202,7 +228,6 @@ onBeforeUnmount(() => requestLifecycle.stop())
             type="button"
             :aria-pressed="activeFilter === filter"
             :class="{ 'is-active': activeFilter === filter }"
-            :disabled="loading || loadingMore"
             @click="changeFilter(filter)"
           >
             {{ filterLabel(filter) }}
@@ -231,10 +256,19 @@ onBeforeUnmount(() => requestLifecycle.stop())
               <span>{{ t('ledger.groupCount', group.entries.length) }}</span>
             </header>
             <div class="ledger-list" role="list">
-              <article v-for="entry in group.entries" :key="entry.id" class="ledger-row" role="listitem">
+              <article
+                v-for="entry in group.entries"
+                :key="walletLedgerEntryIdentity(entry)"
+                class="ledger-row"
+                role="listitem"
+              >
                 <div class="ledger-row__title">
                   <div class="ledger-row__heading">
                     <strong>{{ entryLabel(entry) }}</strong>
+                    <span
+                      class="ledger-row__account"
+                      :data-account-type="entry.accountType"
+                    >{{ accountLabel(entry.accountType) }}</span>
                     <span class="ledger-row__category">{{ categoryLabel(entry.category) }}</span>
                   </div>
                   <small class="ledger-row__meta">{{ entry.symbol }} · {{ entryTime(entry) }}</small>
@@ -310,6 +344,35 @@ onBeforeUnmount(() => requestLifecycle.stop())
   scroll-snap-type: inline proximity;
 }
 
+.ledger-account-filter {
+  background: var(--surface-elevated);
+  border: 1px solid var(--line);
+  border-radius: var(--wallet-pill-radius, 999px);
+  display: grid;
+  gap: 4px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  min-height: 44px;
+  padding: 3px;
+}
+
+.ledger-account-filter button {
+  background: transparent;
+  border: 0;
+  border-radius: var(--wallet-pill-radius, 999px);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 580;
+  min-height: 44px;
+  min-width: 0;
+  padding: 0 8px;
+}
+
+.ledger-account-filter .is-active {
+  background: var(--accent-soft);
+  color: var(--positive);
+  font-weight: 680;
+}
+
 .ledger-filter::-webkit-scrollbar {
   display: none;
 }
@@ -332,6 +395,7 @@ onBeforeUnmount(() => requestLifecycle.stop())
   white-space: nowrap;
 }
 
+.ledger-account-filter button:focus-visible,
 .ledger-filter button:focus-visible,
 .ledger-state--error button:focus-visible,
 .ledger-inline-error button:focus-visible,
@@ -520,6 +584,7 @@ onBeforeUnmount(() => requestLifecycle.stop())
   white-space: nowrap;
 }
 
+.ledger-row__account,
 .ledger-row__category {
   background: var(--surface-elevated);
   border: 1px solid var(--line);
@@ -533,6 +598,12 @@ onBeforeUnmount(() => requestLifecycle.stop())
   padding: 0 6px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ledger-row__account[data-account-type='margin'] {
+  background: var(--accent-soft);
+  border-color: var(--positive);
+  color: var(--positive);
 }
 
 .ledger-row small {
@@ -662,6 +733,7 @@ onBeforeUnmount(() => requestLifecycle.stop())
     gap: 2px;
   }
 
+  .ledger-row__account,
   .ledger-row__category {
     max-width: 100%;
   }

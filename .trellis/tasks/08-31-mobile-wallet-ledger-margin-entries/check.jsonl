@@ -1,0 +1,13 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend pre-development checklist and active feature-contract index."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Wallet route, presentation, application and SQL infrastructure ownership boundaries."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Architecture guards, Chinese risk comments, tests and final validation requirements."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "SQLx query, MySQL type and immutable migration conventions."}
+{"file": ".trellis/spec/backend/wallet-amount-precision.md", "reason": "Wallet ledger category, filter parity and DECIMAL serialization contracts."}
+{"file": ".trellis/spec/backend/margin-trading-actions.md", "reason": "Spot/margin wallet scope and paired margin ledger persistence semantics."}
+{"file": ".trellis/spec/mobile/index.md", "reason": "Mobile quality gate, touch target and production UI contracts."}
+{"file": ".trellis/spec/mobile/backend-integration.md", "reason": "Protected financial read adapters, DTO truthfulness and stale response contracts."}
+{"file": ".trellis/spec/mobile/pwa-and-shell.md", "reason": "Production mobile shell, responsive styling and request lifecycle constraints."}
+{"file": ".trellis/spec/mobile/navigation-and-localization.md", "reason": "Wallet ledger bilingual labels, grouping and unknown-value localization behavior."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer database-to-API-to-mobile contract mapping checklist."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Shared predicate, mapper and identity helper reuse guidance."}
+{"file": ".trellis/tasks/08-31-mobile-wallet-ledger-margin-entries/research/margin-ledger-data-flow.md", "reason": "Audited two-table ledger flow, chosen UNION/read contract, composite identity and regression risks."}

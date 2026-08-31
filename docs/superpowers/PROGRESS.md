@@ -7914,3 +7914,10 @@
 - 修改文件：功能提交 `194772f` 中的 Mobile 实现、双语资源、回归测试、Mobile Trellis 规范、任务资料与完成记录；归档提交 `72f9999`；会话日志提交 `b0c05c1`；以及本条交付记录。
 - 验证结果：基于精确暂存树创建隔离 worktree，`npm run type-check`、Mobile 测试 518/518、`npm run build:pwa`、`npm run build:tauri` 全部通过；`git diff --cached --check` 通过；首次推送结果为 `0db7538..b0c05c1 main -> main`。
 - 后续事项：等待 GitHub Actions 执行；本地其余未提交任务不在本轮提交范围内。
+
+## 2026-08-31 10:24 - 手机资金账单补齐杠杆账户流水
+
+- 完成内容：将用户资金账单从仅查询 `wallet_ledger` 改为按用户合并读取现货 `wallet_ledger` 与杠杆 `margin_wallet_ledger`；新增严格的 `account_type=all|spot|margin` 查询及行级权威账户来源，联合后统一应用现有业务分类/资产/引用/时间筛选、COUNT 和稳定分页。手机端新增“全部/现货/杠杆”账户筛选与行级账户标签，使用 `accountType:id` 复合身份避免两张表数字 ID 冲突，并补齐快速切换竞态隔离、双语文案及回归测试；不修改任何资金写入、结算逻辑或数据库迁移。
+- 修改文件：`src/modules/wallet/{presentation.rs,application.rs,infrastructure.rs,infrastructure/accounts_ledger.rs,routes.rs}`、`tests/{unit_src/src_modules_wallet_application_tests.rs,unit_src/src_modules_wallet_infrastructure_tests.rs,unit_src/src_modules_wallet_routes_tests.rs,wallet_routes.rs}`、`mobile/src/{core/walletLedger.ts,api/wallet.ts,views/WalletLedgerView.vue,i18n/messages/zh-CN.ts,i18n/messages/en.ts}`、`mobile/tests/wallet-ledger-classification.test.ts`、`.trellis/spec/backend/wallet-amount-precision.md`、`.trellis/spec/mobile/{backend-integration.md,navigation-and-localization.md}`、`.trellis/tasks/08-31-mobile-wallet-ledger-margin-entries/*`、`docs/superpowers/PROGRESS.md`。
+- 验证结果：`cargo fmt --all -- --check`、`cargo test --lib wallet_ledger -- --nocapture`（11/11）、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings` 全部通过；钱包模块验证累计 46/46 通过。Mobile 全量测试 534/534、`npm run type-check`、`npm run build:pwa`、`npm run build:tauri` 全部通过；任务上下文校验和定向 `git diff --check` 通过。路由集成用例完成编译并返回通过，但本机未配置 `DATABASE_URL`，真实 MySQL 数据断言按测试合同跳过。
+- 后续事项：部署前在 MySQL 8.x 环境执行 `wallet_routes_return_authenticated_user_accounts_and_ledger`，验证真实 UNION、手续费 JOIN 与跨表分页；本轮未提交或推送。

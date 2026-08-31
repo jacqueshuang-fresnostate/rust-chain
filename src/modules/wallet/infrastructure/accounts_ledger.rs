@@ -175,6 +175,7 @@ struct WalletAccountRow {
 #[derive(Debug, sqlx::FromRow)]
 pub(super) struct WalletLedgerEntryRow {
     pub(super) id: u64,
+    pub(super) account_type: String,
     pub(super) user_id: u64,
     pub(super) asset_id: u64,
     pub(super) symbol: String,
@@ -196,12 +197,42 @@ pub(crate) struct WalletLedgerFilter {
     pub(crate) asset_symbol: Option<String>,
     pub(crate) change_type: Option<String>,
     pub(crate) category: Option<WalletLedgerCategory>,
+    pub(crate) account_type: WalletLedgerAccountType,
     pub(crate) ref_type: Option<String>,
     pub(crate) ref_id: Option<String>,
     pub(crate) start_time: Option<String>,
     pub(crate) end_time: Option<String>,
     pub(crate) limit: u32,
     pub(crate) offset: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// 资金流水的账户范围：all 只用于查询，spot/margin 同时是响应行的权威来源。
+/// 该维度与 change_type 推导的业务分类独立，不得用 margin 业务类别猜测账户来源。
+pub(crate) enum WalletLedgerAccountType {
+    All,
+    Spot,
+    Margin,
+}
+
+impl WalletLedgerAccountType {
+    pub(crate) const ALL: [Self; 3] = [Self::All, Self::Spot, Self::Margin];
+
+    /// 返回账户筛选和响应共用的稳定小写字符串。
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Spot => "spot",
+            Self::Margin => "margin",
+        }
+    }
+
+    /// 只接受 all/spot/margin 白名单，未知值交给应用层转成取连接池前的校验错误。
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|account_type| account_type.as_str() == value)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -311,6 +342,9 @@ const WALLET_LEDGER_CATEGORY_RULES: &[WalletLedgerCategoryRule] = &[
         change_type_prefixes: &["prediction_"],
     },
 ];
+
+pub(super) const WALLET_LEDGER_STABLE_ORDER_SQL: &str =
+    " ORDER BY wl.created_at DESC, wl.account_type ASC, wl.id DESC";
 
 /// 按精确 change_type 或受控前缀归类钱包流水，未命中时归入 other。
 /// 分类只影响查询与展示，不改变原始 change_type、业务引用或任何账本金额。
@@ -703,19 +737,22 @@ pub(crate) async fn list_wallet_accounts(
     Ok(rows.into_iter().map(wallet_account_response).collect())
 }
 
-/// 按同一过滤条件查询用户钱包流水和总数，并补充关联业务手续费。
-/// fee 仅从闪兑订单、现货成交、提现申请/记录关联补充；流水 amount 和三桶 after 直接取 wallet_ledger，不重算资金。
-/// 该入口只读账本快照，不锁余额；分页总数、分类规则与返回行使用一致谓词。
+/// 按同一过滤条件合并查询用户现货与杠杆流水、总数，并仅为现货分支补充关联业务手续费。
+/// 两张物理表用 UNION ALL 保留转账双边记录；amount 和三桶 after 直接取原账本，不抵销也不重算。
+/// 该入口只读账本快照，不锁余额；行和 COUNT 共用联合源及谓词，全局稳定排序后才分页。
 pub(crate) async fn list_wallet_ledger(
     pool: &Pool<MySql>,
     user_id: u64,
     filter: WalletLedgerFilter,
 ) -> AppResult<WalletLedgerResponse> {
     let total = count_wallet_ledger(pool, user_id, &filter).await?;
-    let mut builder = QueryBuilder::<MySql>::new(wallet_ledger_select_sql());
-    builder.push_bind(user_id);
+    let mut builder = QueryBuilder::<MySql>::new(wallet_ledger_select_prefix());
+    push_wallet_ledger_union_source(&mut builder, user_id);
+    builder.push(wallet_ledger_fee_joins_sql());
+    builder.push(" WHERE 1 = 1");
     push_wallet_ledger_filters(&mut builder, &filter);
-    builder.push(" ORDER BY wl.id DESC LIMIT ");
+    builder.push(WALLET_LEDGER_STABLE_ORDER_SQL);
+    builder.push(" LIMIT ");
     builder.push_bind(filter.limit as i64);
     builder.push(" OFFSET ");
     builder.push_bind(filter.offset as i64);
@@ -744,8 +781,8 @@ pub(crate) async fn list_wallet_ledger(
     })
 }
 
-/// 统计当前筛选下用户账本的总行数，供分页计算总页数。
-/// 计数查询复用与行查询完全相同的用户条件和过滤谓词构造器，两者结果因此描述同一筛选集合。
+/// 统计当前筛选下用户两张账本的总行数，供分页计算总页数。
+/// 计数查询复用与行查询完全相同的 UNION ALL 用户范围和过滤谓词，两者因此描述同一集合。
 /// 计数只关联资产表以支持按资产符号筛选，不关联补充手续费用的业务表，避免多值连接放大行数。
 /// 数据库返回的有符号计数会被下限钳到零再转为无符号，防止异常值让分页出现负数页码。
 async fn count_wallet_ledger(
@@ -753,13 +790,9 @@ async fn count_wallet_ledger(
     user_id: u64,
     filter: &WalletLedgerFilter,
 ) -> AppResult<u64> {
-    let mut count_builder = QueryBuilder::<MySql>::new(
-        r#"SELECT COUNT(*)
-           FROM wallet_ledger wl
-           JOIN assets a ON a.id = wl.asset_id
-           WHERE wl.user_id = "#,
-    );
-    count_builder.push_bind(user_id);
+    let mut count_builder = QueryBuilder::<MySql>::new("SELECT COUNT(*)");
+    push_wallet_ledger_union_source(&mut count_builder, user_id);
+    count_builder.push(" WHERE 1 = 1");
     push_wallet_ledger_filters(&mut count_builder, filter);
     Ok(count_builder
         .build_query_scalar::<i64>()
@@ -791,6 +824,10 @@ pub(super) fn push_wallet_ledger_filters<'args>(
     }
     if let Some(category) = filter.category {
         push_wallet_ledger_category_filter(builder, category);
+    }
+    if filter.account_type != WalletLedgerAccountType::All {
+        builder.push(" AND wl.account_type = ");
+        builder.push_bind(filter.account_type.as_str());
     }
     if let Some(ref_type) = filter.ref_type.as_deref() {
         builder.push(" AND wl.ref_type = ");
@@ -873,19 +910,44 @@ fn push_wallet_ledger_category_rule<'args>(
     );
 }
 
-/// 返回用户账本行查询的固定前缀，末尾停在用户条件的绑定位，供调用方继续追加过滤、排序与分页。
-/// 手续费列由多个左连接按引用类型择一取值：闪兑取订单费、现货取成交费、提现按新旧两张表分别取费，都取不到时归零。
-/// 现货连接需要把引用编号按冒号拆成买卖单编号再匹配，提现连接额外比对用户与资产，避免跨用户串账。
-/// 补充手续费只影响展示字段，流水金额与三桶 after 仍原样取自账本表，本查询不重算任何资金数值。
-fn wallet_ledger_select_sql() -> &'static str {
-    r#"SELECT wl.id, wl.user_id, wl.asset_id, a.symbol, wl.change_type, wl.amount,
+/// 追加按用户剪枝的两账本 UNION ALL 派生源，并一次关联资产元数据。
+/// 账户来源由分支字面量赋值，不从 change_type 猜测；用 UNION ALL 是为了保留同一转账在两个账户上的完整记录。
+/// 用户条件在每个物理分支内绑定，既保持越权边界，也避免先物化全站账本。
+pub(super) fn push_wallet_ledger_union_source<'args>(
+    builder: &mut QueryBuilder<'args, MySql>,
+    user_id: u64,
+) {
+    builder.push(
+        r#" FROM (
+               SELECT id, user_id, asset_id, change_type, amount, balance_type,
+                      balance_after, available_after, frozen_after, locked_after,
+                      ref_type, ref_id, created_at, 'spot' AS account_type
+               FROM wallet_ledger
+               WHERE user_id = "#,
+    );
+    builder.push_bind(user_id);
+    builder.push(
+        r#" UNION ALL
+               SELECT id, user_id, asset_id, change_type, amount, balance_type,
+                      balance_after, available_after, frozen_after, locked_after,
+                      ref_type, ref_id, created_at, 'margin' AS account_type
+               FROM margin_wallet_ledger
+               WHERE user_id = "#,
+    );
+    builder.push_bind(user_id);
+    builder.push(") wl JOIN assets a ON a.id = wl.asset_id");
+}
+
+/// 返回联合账本行查询的投影前缀，保留权威账户来源与全部定点快照字段。
+fn wallet_ledger_select_prefix() -> &'static str {
+    r#"SELECT wl.id, wl.account_type, wl.user_id, wl.asset_id, a.symbol, wl.change_type, wl.amount,
               wl.balance_type, wl.balance_after, wl.available_after, wl.frozen_after,
               wl.locked_after,
               COALESCE(
-                  CASE WHEN wl.ref_type = 'convert_order' THEN convert_orders.fee_amount END,
-                  CASE WHEN wl.ref_type = 'spot_trade' THEN spot_trades.fee END,
+                  CASE WHEN wl.account_type = 'spot' AND wl.ref_type = 'convert_order' THEN convert_orders.fee_amount END,
+                  CASE WHEN wl.account_type = 'spot' AND wl.ref_type = 'spot_trade' THEN spot_trades.fee END,
                   CASE
-                      WHEN wl.ref_type IN (
+                      WHEN wl.account_type = 'spot' AND wl.ref_type IN (
                           'wallet_withdrawal_request',
                           'wallet_withdrawal',
                           'withdrawal_request'
@@ -893,25 +955,31 @@ fn wallet_ledger_select_sql() -> &'static str {
                       THEN wallet_withdrawal_requests.fee
                   END,
                   CASE
-                      WHEN wl.ref_type IN ('withdraw_record', 'withdrawal_record', 'withdraw')
+                      WHEN wl.account_type = 'spot' AND wl.ref_type IN ('withdraw_record', 'withdrawal_record', 'withdraw')
                       THEN withdraw_records.fee
                   END,
                   0
               ) AS fee,
-              wl.ref_type, wl.ref_id, wl.created_at
-       FROM wallet_ledger wl
-       JOIN assets a ON a.id = wl.asset_id
-       LEFT JOIN convert_orders
-              ON wl.ref_type = 'convert_order'
+              wl.ref_type, wl.ref_id, wl.created_at"#
+}
+
+/// 返回现货流水展示手续费的关联集；杠杆分支因 account_type 守卫始终得到零。
+/// 连接额外比对用户、资产和引用类型，避免数字引用在两套账本或不同用户间串账。
+fn wallet_ledger_fee_joins_sql() -> &'static str {
+    r#" LEFT JOIN convert_orders
+              ON wl.account_type = 'spot'
+             AND wl.ref_type = 'convert_order'
              AND convert_orders.quote_id = wl.ref_id
              AND convert_orders.user_id = wl.user_id
              AND convert_orders.from_asset = wl.asset_id
        LEFT JOIN spot_trades
-              ON wl.ref_type = 'spot_trade'
+              ON wl.account_type = 'spot'
+             AND wl.ref_type = 'spot_trade'
              AND spot_trades.buy_order_id = CAST(SUBSTRING_INDEX(wl.ref_id, ':', 1) AS UNSIGNED)
              AND spot_trades.sell_order_id = CAST(SUBSTRING_INDEX(wl.ref_id, ':', -1) AS UNSIGNED)
        LEFT JOIN wallet_withdrawal_requests
-              ON wl.ref_type IN (
+              ON wl.account_type = 'spot'
+             AND wl.ref_type IN (
                      'wallet_withdrawal_request',
                      'wallet_withdrawal',
                      'withdrawal_request'
@@ -920,11 +988,11 @@ fn wallet_ledger_select_sql() -> &'static str {
              AND wallet_withdrawal_requests.user_id = wl.user_id
              AND wallet_withdrawal_requests.asset_symbol = a.symbol
        LEFT JOIN withdraw_records
-              ON wl.ref_type IN ('withdraw_record', 'withdrawal_record', 'withdraw')
+              ON wl.account_type = 'spot'
+             AND wl.ref_type IN ('withdraw_record', 'withdrawal_record', 'withdraw')
              AND withdraw_records.id = CAST(wl.ref_id AS UNSIGNED)
              AND withdraw_records.user_id = wl.user_id
-             AND withdraw_records.asset_id = wl.asset_id
-       WHERE wl.user_id = "#
+             AND withdraw_records.asset_id = wl.asset_id"#
 }
 
 /// 把账户查询行整体搬运为账户列表响应项，保留资产符号与图标地址供前端直接展示。
@@ -946,11 +1014,18 @@ fn wallet_account_response(row: WalletAccountRow) -> WalletAccountResponse {
 /// 手续费取自查询阶段左连接的择一结果，未匹配业务单据时为零，该字段是展示补充而非账本自身的资金腿。
 /// 映射保留三桶账后快照和业务引用，不重新计算或改变任何资金金额。
 pub(super) fn wallet_ledger_entry_response(row: WalletLedgerEntryRow) -> WalletLedgerEntryResponse {
+    let account_type = match row.account_type.as_str() {
+        "spot" => WalletLedgerAccountType::Spot.as_str(),
+        "margin" => WalletLedgerAccountType::Margin.as_str(),
+        value => unreachable!("union source emitted unsupported wallet account type: {value}"),
+    }
+    .to_owned();
     let category = classify_wallet_ledger_change_type(&row.change_type)
         .as_str()
         .to_owned();
     WalletLedgerEntryResponse {
         id: row.id,
+        account_type,
         user_id: row.user_id,
         asset_id: row.asset_id,
         symbol: row.symbol,

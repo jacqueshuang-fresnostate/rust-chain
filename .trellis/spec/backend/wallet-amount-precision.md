@@ -152,6 +152,20 @@ let to_amount = truncate_amount_to_asset_precision(&raw_to_amount, to_asset.prec
   `prediction`, and `other`. Omission preserves the existing all-row behavior;
   existing exact `change_type` and the other filters remain compatible and may
   be combined with category.
+- The same endpoint reads both `wallet_ledger` and
+  `margin_wallet_ledger` through one `UNION ALL` read model. Every row returns
+  authoritative `account_type=spot|margin`, and the optional account filter is
+  exactly `all|spot|margin`; omission means `all`.
+- Account source and business category are independent dimensions. A
+  `margin_*` row may belong to either account, so neither backend nor clients
+  infer account source from `change_type`.
+- Validate `account_type` before acquiring the MySQL pool, just like category.
+  List and COUNT apply the same account/category/field predicates to the
+  combined source.
+- Apply pagination only after global deterministic ordering by
+  `created_at DESC`, account type, and row ID descending. The two physical
+  tables have independent ID sequences, so consumers use `(account_type, id)`
+  as the row identity.
 - Parse and whitelist category before acquiring the MySQL pool so malformed
   input deterministically returns HTTP 400 even when database state is absent.
 - Funding is exact `deposit`, `admin_recharge`, or `quick_recharge`, plus
@@ -167,7 +181,9 @@ let to_amount = truncate_amount_to_asset_precision(&raw_to_amount, to_asset.prec
 
 ### Tests Required
 
-- Whitelist and before-database validation, exact `change_type` compatibility,
-  exact/prefix/other classification, shared row/COUNT predicate construction,
-  filtered total/page metadata, authoritative response category, and unchanged
-  18-place decimal serialization.
+- Whitelist and before-database validation for both category and account,
+  exact `change_type` compatibility, exact/prefix/other classification, shared
+  row/COUNT predicate construction, two-table union, globally stable ordering,
+  overlapping numeric IDs, combined filters, filtered total/page metadata,
+  authoritative response category/account source, and unchanged 18-place
+  decimal serialization.

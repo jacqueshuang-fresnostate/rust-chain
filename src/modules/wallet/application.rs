@@ -15,8 +15,8 @@ use crate::{
         wallet::{
             infrastructure,
             infrastructure::{
-                ReturnHistoryAssetActivityRow, TodayReturnAssetActivityRow, WalletLedgerCategory,
-                WalletLedgerFilter,
+                ReturnHistoryAssetActivityRow, TodayReturnAssetActivityRow,
+                WalletLedgerAccountType, WalletLedgerCategory, WalletLedgerFilter,
             },
             presentation::{
                 AdminWalletListQuery, AdminWalletWithdrawalsResponse, BroadcastWithdrawalRequest,
@@ -631,14 +631,30 @@ pub(crate) fn normalize_deposit_network(value: &str) -> AppResult<String> {
     }
 }
 
-/// 把账本查询 DTO 规范为资产、分类、引用、时间及分页过滤器。
-/// 分类必须精确匹配十类之一，未知取值返回带完整候选清单的校验错误，而不是静默忽略该筛选条件。
+/// 把账本查询 DTO 规范为资产、账户、分类、引用、时间及分页过滤器。
+/// 账户只接受 all/spot/margin，分类必须精确匹配十类之一；未知取值返回带完整候选清单的校验错误。
 /// 资产代码走统一归一并可能报错，其余文本条件只做裁剪与空值归一，起止时间原样保留交由 SQL 比较。
 /// 分页在此完成钳制，页大小落在一到一百之间，偏移封顶十万，因此过滤器交给基础设施时已是安全边界。
 /// 未知分类、非法资产代码在执行 SQL 前拒绝；行查询与计数随后复用同一过滤器以保证总数与数据一致。
 pub(crate) fn build_wallet_ledger_filter(
     query: WalletLedgerQuery,
 ) -> AppResult<WalletLedgerFilter> {
+    let account_type = query
+        .account_type
+        .map(|value| {
+            WalletLedgerAccountType::parse(value.trim()).ok_or_else(|| {
+                AppError::Validation(format!(
+                    "unsupported wallet ledger account_type; expected one of: {}",
+                    WalletLedgerAccountType::ALL
+                        .iter()
+                        .map(|account_type| account_type.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            })
+        })
+        .transpose()?
+        .unwrap_or(WalletLedgerAccountType::All);
     let category = query
         .category
         .map(|value| {
@@ -663,6 +679,7 @@ pub(crate) fn build_wallet_ledger_filter(
             .transpose()?,
         change_type: normalize_optional_query_string(query.change_type),
         category,
+        account_type,
         ref_type: normalize_optional_query_string(query.ref_type),
         ref_id: normalize_optional_query_string(query.ref_id),
         start_time: normalize_optional_query_string(query.start_time),

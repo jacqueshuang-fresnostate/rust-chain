@@ -18,13 +18,18 @@ export const WALLET_LEDGER_CATEGORIES = [
 ] as const
 
 export const WALLET_LEDGER_FILTERS = ['all', ...WALLET_LEDGER_CATEGORIES] as const
+export const WALLET_LEDGER_ACCOUNT_TYPES = ['spot', 'margin'] as const
+export const WALLET_LEDGER_ACCOUNT_FILTERS = ['all', ...WALLET_LEDGER_ACCOUNT_TYPES] as const
 export const WALLET_LEDGER_MAX_FRACTION_DIGITS = 8
 
 export type WalletLedgerCategory = typeof WALLET_LEDGER_CATEGORIES[number]
 export type WalletLedgerFilter = typeof WALLET_LEDGER_FILTERS[number]
+export type WalletLedgerAccountType = typeof WALLET_LEDGER_ACCOUNT_TYPES[number]
+export type WalletLedgerAccountFilter = typeof WALLET_LEDGER_ACCOUNT_FILTERS[number]
 
 export interface BackendWalletLedgerEntry {
   id: unknown
+  account_type: unknown
   symbol: unknown
   change_type: unknown
   category: unknown
@@ -48,6 +53,7 @@ export interface BackendWalletLedgerResponse {
 
 export interface WalletLedgerEntry {
   id: number
+  accountType: WalletLedgerAccountType
   symbol: string
   changeType: string
   category: WalletLedgerCategory
@@ -88,12 +94,13 @@ export interface WalletLedgerFetchOptions {
   limit: number
   offset: number
   category?: WalletLedgerCategory
+  accountType: WalletLedgerAccountFilter
 }
 
 export type WalletLedgerRequestResult =
   | { state: 'guest' }
-  | { state: 'loaded'; filter: WalletLedgerFilter; value: WalletLedgerPage }
-  | { state: 'error'; filter: WalletLedgerFilter; error: unknown }
+  | { state: 'loaded'; filter: WalletLedgerFilter; accountType: WalletLedgerAccountFilter; value: WalletLedgerPage }
+  | { state: 'error'; filter: WalletLedgerFilter; accountType: WalletLedgerAccountFilter; error: unknown }
   | { state: 'stale' }
 
 export interface WalletLedgerRequestLifecycle {
@@ -118,6 +125,12 @@ const CATEGORY_TRANSLATION_KEYS: Record<WalletLedgerFilter, string> = {
   loan: 'ledger.categoryLoan',
   prediction: 'ledger.categoryPrediction',
   other: 'ledger.categoryOther',
+}
+
+const ACCOUNT_TRANSLATION_KEYS: Record<WalletLedgerAccountFilter, string> = {
+  all: 'ledger.accountAll',
+  spot: 'ledger.accountSpot',
+  margin: 'ledger.accountMargin',
 }
 
 const CHANGE_TYPE_TRANSLATION_KEYS = {
@@ -177,8 +190,39 @@ export function isWalletLedgerCategory(value: unknown): value is WalletLedgerCat
     && (WALLET_LEDGER_CATEGORIES as readonly string[]).includes(value)
 }
 
+export function isWalletLedgerAccountType(value: unknown): value is WalletLedgerAccountType {
+  return typeof value === 'string'
+    && (WALLET_LEDGER_ACCOUNT_TYPES as readonly string[]).includes(value)
+}
+
+export function isWalletLedgerAccountFilter(value: unknown): value is WalletLedgerAccountFilter {
+  return typeof value === 'string'
+    && (WALLET_LEDGER_ACCOUNT_FILTERS as readonly string[]).includes(value)
+}
+
 export function walletLedgerCategoryTranslationKey(filter: WalletLedgerFilter): string {
   return CATEGORY_TRANSLATION_KEYS[filter]
+}
+
+export function walletLedgerAccountTranslationKey(
+  accountType: WalletLedgerAccountFilter,
+): string {
+  return ACCOUNT_TRANSLATION_KEYS[accountType]
+}
+
+export function walletLedgerEntryIdentity(
+  entry: Pick<WalletLedgerEntry, 'accountType' | 'id'>,
+): string {
+  return `${entry.accountType}:${entry.id}`
+}
+
+export function mergeWalletLedgerEntries(
+  current: readonly WalletLedgerEntry[],
+  incoming: readonly WalletLedgerEntry[],
+): WalletLedgerEntry[] {
+  const byIdentity = new Map(current.map((entry) => [walletLedgerEntryIdentity(entry), entry]))
+  for (const entry of incoming) byIdentity.set(walletLedgerEntryIdentity(entry), entry)
+  return [...byIdentity.values()]
 }
 
 export function walletLedgerAmountSign(amount: number): '+' | '' {
@@ -327,6 +371,7 @@ export function formatWalletLedgerDecimal(value: number, locale: string): string
 export function createWalletLedgerRequestLifecycle(input: {
   sessionKey: () => string
   selectedFilter: () => WalletLedgerFilter
+  selectedAccountType: () => WalletLedgerAccountFilter
   fetchPage: (options: WalletLedgerFetchOptions) => Promise<WalletLedgerPage>
 }): WalletLedgerRequestLifecycle {
   let requestVersion = 0
@@ -339,28 +384,35 @@ export function createWalletLedgerRequestLifecycle(input: {
       const sessionKey = input.sessionKey()
       if (!sessionKey) return { state: 'guest' }
       const filter = input.selectedFilter()
+      const accountType = input.selectedAccountType()
       const category = filter === 'all' ? undefined : filter
 
       try {
-        const value = await input.fetchPage({ offset, limit, category })
+        const value = await input.fetchPage({ offset, limit, category, accountType })
         if (category && value.entries.some((entry) => entry.category !== category)) {
           throw new WalletLedgerContractError('invalid wallet ledger filtered category')
+        }
+        if (accountType !== 'all'
+          && value.entries.some((entry) => entry.accountType !== accountType)) {
+          throw new WalletLedgerContractError('invalid wallet ledger filtered account type')
         }
         if (!active
           || version !== requestVersion
           || input.sessionKey() !== sessionKey
-          || input.selectedFilter() !== filter) {
+          || input.selectedFilter() !== filter
+          || input.selectedAccountType() !== accountType) {
           return { state: 'stale' }
         }
-        return { state: 'loaded', filter, value }
+        return { state: 'loaded', filter, accountType, value }
       } catch (error) {
         if (!active
           || version !== requestVersion
           || input.sessionKey() !== sessionKey
-          || input.selectedFilter() !== filter) {
+          || input.selectedFilter() !== filter
+          || input.selectedAccountType() !== accountType) {
           return { state: 'stale' }
         }
-        return { state: 'error', filter, error }
+        return { state: 'error', filter, accountType, error }
       }
     },
     invalidate(): void {
@@ -379,6 +431,9 @@ function mapWalletLedgerEntry(value: unknown, index: number): WalletLedgerEntry 
   }
   const entry = value as BackendWalletLedgerEntry
   const changeType = requiredText(entry.change_type, `entries[${index}].change_type`)
+  if (!isWalletLedgerAccountType(entry.account_type)) {
+    throw new WalletLedgerContractError(`invalid wallet ledger entries[${index}].account_type`)
+  }
   if (!isWalletLedgerCategory(entry.category)) {
     throw new WalletLedgerContractError(`invalid wallet ledger entries[${index}].category`)
   }
@@ -401,6 +456,7 @@ function mapWalletLedgerEntry(value: unknown, index: number): WalletLedgerEntry 
 
   return {
     id: requiredInteger(entry.id, `entries[${index}].id`, 1),
+    accountType: entry.account_type,
     symbol: normalizeRealizedReturnAssetSymbol(
       entry.symbol,
       `entries[${index}].symbol`,
@@ -438,7 +494,12 @@ function requiredText(value: unknown, field: string): string {
 }
 
 function compareWalletLedgerEntries(left: WalletLedgerEntry, right: WalletLedgerEntry): number {
-  return right.createdAt - left.createdAt || right.id - left.id
+  const createdAtOrder = right.createdAt - left.createdAt
+  if (createdAtOrder) return createdAtOrder
+  if (left.accountType !== right.accountType) {
+    return left.accountType < right.accountType ? -1 : 1
+  }
+  return right.id - left.id
 }
 
 function localCalendarKey(date: Date): string {

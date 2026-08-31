@@ -1,8 +1,10 @@
 use super::{
-    WalletLedgerCategory, WalletLedgerEntryRow, WalletLedgerFilter, classify_broadcast_http_status,
+    WALLET_LEDGER_STABLE_ORDER_SQL, WalletLedgerAccountType, WalletLedgerCategory,
+    WalletLedgerEntryRow, WalletLedgerFilter, classify_broadcast_http_status,
     classify_wallet_ledger_change_type, push_wallet_ledger_filters,
-    return_history_historical_close_if_valid, return_history_kline_document_close_if_valid,
-    today_return_ticker_price_if_current, wallet_ledger_entry_response,
+    push_wallet_ledger_union_source, return_history_historical_close_if_valid,
+    return_history_kline_document_close_if_valid, today_return_ticker_price_if_current,
+    wallet_ledger_entry_response,
 };
 use crate::modules::wallet::repository::WalletChainGatewayErrorClass;
 use bigdecimal::BigDecimal;
@@ -66,6 +68,7 @@ fn wallet_ledger_filter(category: WalletLedgerCategory) -> WalletLedgerFilter {
         asset_symbol: Some("USDT".to_owned()),
         change_type: Some("spot_trade_settlement".to_owned()),
         category: Some(category),
+        account_type: WalletLedgerAccountType::Margin,
         ref_type: Some("spot_trade".to_owned()),
         ref_id: Some("100:200".to_owned()),
         start_time: Some("2026-08-01T00:00:00Z".to_owned()),
@@ -118,6 +121,7 @@ fn wallet_ledger_filter_sql_combines_category_with_existing_exact_predicates() {
         "UPPER(a.symbol) = ?",
         " AND wl.change_type = ?",
         "LEFT(BINARY wl.change_type, ?) = ?",
+        "wl.account_type = ?",
         "wl.ref_type = ?",
         "wl.ref_id = ?",
         "wl.created_at >= ?",
@@ -135,9 +139,32 @@ fn wallet_ledger_filter_sql_combines_category_with_existing_exact_predicates() {
 }
 
 #[test]
+fn wallet_ledger_source_unions_both_accounts_and_orders_globally_before_paging() {
+    let mut builder = QueryBuilder::<MySql>::new("SELECT wl.id");
+    push_wallet_ledger_union_source(&mut builder, 42);
+    builder.push(" WHERE 1 = 1");
+    builder.push(WALLET_LEDGER_STABLE_ORDER_SQL);
+    builder.push(" LIMIT ? OFFSET ?");
+    let sql = builder.sql();
+
+    assert!(sql.contains("'spot' AS account_type"));
+    assert!(sql.contains("FROM wallet_ledger"));
+    assert!(sql.contains("UNION ALL"));
+    assert!(sql.contains("'margin' AS account_type"));
+    assert!(sql.contains("FROM margin_wallet_ledger"));
+    assert_eq!(sql.matches("WHERE user_id = ?").count(), 2);
+    assert!(
+        sql.contains(
+            "ORDER BY wl.created_at DESC, wl.account_type ASC, wl.id DESC LIMIT ? OFFSET ?"
+        )
+    );
+}
+
+#[test]
 fn wallet_ledger_entry_response_includes_authoritative_category_and_exact_decimals() {
     let response = wallet_ledger_entry_response(WalletLedgerEntryRow {
         id: 1,
+        account_type: "margin".to_owned(),
         user_id: 2,
         asset_id: 3,
         symbol: "USDT".to_owned(),
@@ -156,6 +183,7 @@ fn wallet_ledger_entry_response_includes_authoritative_category_and_exact_decima
     let payload = serde_json::to_value(response).unwrap();
 
     assert_eq!(payload["change_type"], "future_wallet_adjustment");
+    assert_eq!(payload["account_type"], "margin");
     assert_eq!(payload["category"], "other");
     assert_eq!(payload["amount"], "0.123456789012345678");
     assert_eq!(payload["balance_after"], "10.123456789012345678");

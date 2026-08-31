@@ -366,6 +366,7 @@ pub struct WalletLedgerQuery {
     pub asset_symbol: Option<String>,
     pub change_type: Option<String>,
     pub category: Option<String>,
+    pub account_type: Option<String>,
     pub ref_type: Option<String>,
     pub ref_id: Option<String>,
     pub start_time: Option<String>,
@@ -391,6 +392,7 @@ pub struct WalletLedgerPageResponse {
 #[derive(Debug, Serialize)]
 pub struct WalletLedgerEntryResponse {
     pub id: u64,
+    pub account_type: String,
     pub user_id: u64,
     pub asset_id: u64,
     pub symbol: String,

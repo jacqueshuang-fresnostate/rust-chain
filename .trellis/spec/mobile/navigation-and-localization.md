@@ -217,6 +217,11 @@ lastTradePath: ComputedRef<string>
   symmetric `ledger.*` keys in `zh-CN` and `en`. An unknown `change_type`
   renders localized `ledger.typeOther` as its primary label and keeps the raw
   enum visible as secondary technical information.
+- Wallet ledger account-source controls and row badges use symmetric keys for
+  All, Spot, and Margin. Account source is separate from business category;
+  the category key for `margin` renders 杠杆 / Margin rather than 合约 /
+  Futures. Unknown account-source values are contract errors and are never
+  guessed from the change type.
 - Wallet ledger dates group by the runtime's local calendar day. Group headings
   use localized Today/Yesterday labels or `Intl.DateTimeFormat`, and record
   counts use vue-i18n pluralization rather than assembled fixed copy.

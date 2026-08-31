@@ -393,6 +393,33 @@ async fn seed_wallet_ledger_entry(
     .unwrap();
 }
 
+async fn seed_margin_wallet_ledger_entry(
+    pool: &MySqlPool,
+    user_id: u64,
+    asset_id: u64,
+    change_type: &str,
+    amount: &str,
+    ref_id: &str,
+) {
+    let amount = decimal(amount);
+    sqlx::query(
+        r#"INSERT INTO margin_wallet_ledger
+           (user_id, asset_id, change_type, amount, balance_type, balance_after,
+            available_after, frozen_after, locked_after, ref_type, ref_id)
+           VALUES (?, ?, ?, ?, 'available', ?, ?, 0, 0, 'wallet_route_fixture', ?)"#,
+    )
+    .bind(user_id)
+    .bind(asset_id)
+    .bind(change_type)
+    .bind(&amount)
+    .bind(&amount)
+    .bind(&amount)
+    .bind(ref_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 async fn cleanup_wallet_route_fixture(
     pool: &MySqlPool,
     user_id: u64,
@@ -403,6 +430,11 @@ async fn cleanup_wallet_route_fixture(
             .bind(asset_id)
             .fetch_optional(pool)
             .await?;
+    sqlx::query("DELETE FROM margin_wallet_ledger WHERE user_id = ? AND asset_id = ?")
+        .bind(user_id)
+        .bind(asset_id)
+        .execute(pool)
+        .await?;
     sqlx::query("DELETE FROM wallet_ledger WHERE user_id = ? AND asset_id = ?")
         .bind(user_id)
         .bind(asset_id)
@@ -488,6 +520,7 @@ async fn wallet_routes_return_authenticated_user_accounts_and_ledger() -> Result
     let spot_boundary_ref_id = format!("wallet-spot-boundary-{}", Uuid::now_v7().simple());
     let spot_case_ref_id = format!("wallet-spot-case-{}", Uuid::now_v7().simple());
     let unknown_ref_id = format!("wallet-unknown-{}", Uuid::now_v7().simple());
+    let margin_transfer_ref_id = format!("wallet-margin-{}", Uuid::now_v7().simple());
     seed_wallet(&pool, user_id, asset_id, &ref_id).await;
     seed_convert_fee_ledger(&pool, user_id, asset_id, &convert_quote_id).await;
     seed_wallet_ledger_entry(
@@ -499,6 +532,36 @@ async fn wallet_routes_return_authenticated_user_accounts_and_ledger() -> Result
         &recharge_ref_id,
     )
     .await;
+    seed_wallet_ledger_entry(
+        &pool,
+        user_id,
+        asset_id,
+        "margin_transfer_out",
+        "-2.500000000000000000",
+        &margin_transfer_ref_id,
+    )
+    .await;
+    seed_margin_wallet_ledger_entry(
+        &pool,
+        user_id,
+        asset_id,
+        "margin_transfer_in",
+        "2.500000000000000000",
+        &margin_transfer_ref_id,
+    )
+    .await;
+    for table in ["wallet_ledger", "margin_wallet_ledger"] {
+        let query = format!(
+            "UPDATE {table} SET created_at = '2026-08-31 00:00:00.123456' \
+             WHERE user_id = ? AND asset_id = ? AND ref_id = ?"
+        );
+        sqlx::query(&query)
+            .bind(user_id)
+            .bind(asset_id)
+            .bind(&margin_transfer_ref_id)
+            .execute(&pool)
+            .await?;
+    }
     seed_wallet_ledger_entry(
         &pool,
         user_id,
@@ -588,6 +651,7 @@ async fn wallet_routes_return_authenticated_user_accounts_and_ledger() -> Result
     assert_eq!(ledger["entries"][0]["user_id"], user_id);
     assert_eq!(ledger["entries"][0]["ref_id"], ref_id);
     assert_eq!(ledger["entries"][0]["category"], "funding");
+    assert_eq!(ledger["entries"][0]["account_type"], "spot");
     assert_eq!(ledger["entries"][0]["amount"], "12.500000000000000000");
     assert_eq!(
         decimal(ledger["entries"][0]["fee"].as_str().unwrap()),
@@ -620,6 +684,7 @@ async fn wallet_routes_return_authenticated_user_accounts_and_ledger() -> Result
     assert_eq!(convert_ledger["entries"].as_array().unwrap().len(), 1);
     assert_eq!(convert_ledger["entries"][0]["ref_id"], convert_quote_id);
     assert_eq!(convert_ledger["entries"][0]["category"], "convert");
+    assert_eq!(convert_ledger["entries"][0]["account_type"], "spot");
     assert_eq!(convert_ledger["entries"][0]["fee"], "0.250000000000000000");
 
     let funding = body_json(
@@ -678,6 +743,100 @@ async fn wallet_routes_return_authenticated_user_accounts_and_ledger() -> Result
     assert_eq!(spot["page"]["total_elements"], 1);
     assert_eq!(spot["entries"][0]["ref_id"], spot_ref_id);
     assert_eq!(spot["entries"][0]["category"], "spot");
+
+    let first_margin_page = body_json(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/wallet/ledger?asset_id={asset_id}&category=margin&ref_id={margin_transfer_ref_id}&limit=1"
+                    ))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await?,
+    )
+    .await?;
+    assert_eq!(first_margin_page["page"]["total_elements"], 2);
+    assert_eq!(first_margin_page["page"]["total_pages"], 2);
+    assert_eq!(first_margin_page["entries"][0]["account_type"], "margin");
+    assert_eq!(
+        first_margin_page["entries"][0]["amount"],
+        "2.500000000000000000"
+    );
+
+    let second_margin_page = body_json(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/wallet/ledger?asset_id={asset_id}&category=margin&ref_id={margin_transfer_ref_id}&limit=1&offset=1"
+                    ))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await?,
+    )
+    .await?;
+    assert_eq!(second_margin_page["page"]["total_elements"], 2);
+    assert_eq!(second_margin_page["entries"][0]["account_type"], "spot");
+    assert_eq!(
+        second_margin_page["entries"][0]["amount"],
+        "-2.500000000000000000"
+    );
+
+    for (account_type, expected_change_type) in [
+        ("spot", "margin_transfer_out"),
+        ("margin", "margin_transfer_in"),
+    ] {
+        let filtered = body_json(
+            app.clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!(
+                            "/wallet/ledger?asset_id={asset_id}&category=margin&account_type={account_type}&ref_id={margin_transfer_ref_id}&limit=10"
+                        ))
+                        .header("authorization", format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await?,
+        )
+        .await?;
+        assert_eq!(filtered["page"]["total_elements"], 1);
+        assert_eq!(filtered["entries"].as_array().unwrap().len(), 1);
+        assert_eq!(filtered["entries"][0]["account_type"], account_type);
+        assert_eq!(filtered["entries"][0]["category"], "margin");
+        assert_eq!(filtered["entries"][0]["change_type"], expected_change_type);
+    }
+
+    let explicit_all = body_json(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/wallet/ledger?asset_id={asset_id}&account_type=all&ref_id={margin_transfer_ref_id}&limit=10"
+                    ))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await?,
+    )
+    .await?;
+    assert_eq!(explicit_all["page"]["total_elements"], 2);
+    let account_types = explicit_all["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["account_type"].as_str().unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        account_types,
+        std::collections::BTreeSet::from(["margin", "spot"])
+    );
 
     let other = body_json(
         app.oneshot(

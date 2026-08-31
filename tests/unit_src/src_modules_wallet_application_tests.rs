@@ -4,7 +4,8 @@ use super::{
 };
 use crate::modules::wallet::{
     infrastructure::{
-        ReturnHistoryAssetActivityRow, TodayReturnAssetActivityRow, WalletLedgerCategory,
+        ReturnHistoryAssetActivityRow, TodayReturnAssetActivityRow, WalletLedgerAccountType,
+        WalletLedgerCategory,
     },
     presentation::{TodayReturnStatus, WalletLedgerQuery},
 };
@@ -44,12 +45,39 @@ fn wallet_ledger_query(category: Option<&str>) -> WalletLedgerQuery {
         asset_symbol: None,
         change_type: None,
         category: category.map(str::to_owned),
+        account_type: None,
         ref_type: None,
         ref_id: None,
         start_time: None,
         end_time: None,
         limit: None,
         offset: None,
+    }
+}
+
+#[test]
+fn wallet_ledger_account_type_accepts_only_all_spot_and_margin() {
+    for expected in WalletLedgerAccountType::ALL {
+        let mut query = wallet_ledger_query(None);
+        query.account_type = Some(expected.as_str().to_owned());
+        let filter = build_wallet_ledger_filter(query).expect("supported account type must pass");
+        assert_eq!(filter.account_type, expected);
+    }
+
+    assert_eq!(
+        build_wallet_ledger_filter(wallet_ledger_query(None))
+            .expect("omitted account type must mean all")
+            .account_type,
+        WalletLedgerAccountType::All
+    );
+
+    for account_type in ["", "ALL", "futures", "funding", "spot_margin"] {
+        let mut query = wallet_ledger_query(None);
+        query.account_type = Some(account_type.to_owned());
+        assert!(
+            build_wallet_ledger_filter(query).is_err(),
+            "unsupported account type must fail validation: {account_type}"
+        );
     }
 }
 
@@ -86,6 +114,7 @@ fn wallet_ledger_filter_keeps_existing_exact_filters_compatible() {
         asset_symbol: Some(" usdt ".to_owned()),
         change_type: Some(" spot_trade_settlement ".to_owned()),
         category: Some(" spot ".to_owned()),
+        account_type: Some(" margin ".to_owned()),
         ref_type: Some(" spot_trade ".to_owned()),
         ref_id: Some(" 100:200 ".to_owned()),
         start_time: Some(" 2026-08-01T00:00:00Z ".to_owned()),
@@ -99,6 +128,7 @@ fn wallet_ledger_filter_keeps_existing_exact_filters_compatible() {
     assert_eq!(filter.asset_symbol.as_deref(), Some("USDT"));
     assert_eq!(filter.change_type.as_deref(), Some("spot_trade_settlement"));
     assert_eq!(filter.category, Some(WalletLedgerCategory::Spot));
+    assert_eq!(filter.account_type, WalletLedgerAccountType::Margin);
     assert_eq!(filter.ref_type.as_deref(), Some("spot_trade"));
     assert_eq!(filter.ref_id.as_deref(), Some("100:200"));
     assert_eq!(filter.start_time.as_deref(), Some("2026-08-01T00:00:00Z"));

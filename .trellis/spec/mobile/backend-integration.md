@@ -266,6 +266,16 @@ The REST compatibility shapes remain `bids/asks[].amount` for depth and
 
 ### Financial mutation and wallet metadata contracts
 
+- `GET /wallet/ledger` is the authenticated combined spot/margin account read
+  model. Every row carries authoritative `account_type=spot|margin`; optional
+  `account_type=all|spot|margin` defaults to `all` and remains independent of
+  the business `category` filter.
+- The wallet-ledger adapter validates account source and never derives it from
+  `change_type`. List identity is `(account_type, id)` because the two physical
+  ledgers have independent numeric ID sequences. Account/category switches
+  invalidate older requests, reset pagination, and preserve only results for
+  the current combined filter.
+
 - `GET /margin/products` is a public read-only catalog in contract mode. It
   maps product id/pair id, margin asset id/symbol, backend Logo, price
   precision, leverage levels, margin bounds, maintenance/hourly rates, and the
@@ -967,28 +977,39 @@ zero/positive/negative/cross-zero geometry, partial cumulative propagation,
 guest/latest-request/ABA/token/unmount isolation, privacy, source contracts,
 44px period/retry controls, and symmetric locale keys.
 
-## 12. Wallet Ledger Category Contract
+## 12. Wallet Ledger Account And Category Contract
 
 ```ts
+type WalletLedgerAccountType = 'spot' | 'margin'
+type WalletLedgerAccountFilter = 'all' | WalletLedgerAccountType
+
 type WalletLedgerCategory =
   | 'funding' | 'spot' | 'margin' | 'seconds' | 'convert'
   | 'earn' | 'new_coin' | 'loan' | 'prediction' | 'other'
 
+interface WalletLedgerEntry {
+  id: number
+  accountType: WalletLedgerAccountType
+  // remaining authoritative ledger fields
+}
+
 fetchWalletLedger(options?: {
   limit?: number
   offset?: number
+  accountType?: WalletLedgerAccountFilter
   category?: WalletLedgerCategory
   changeType?: string
 }): Promise<WalletLedgerPage>
 ```
 
-- The category union must match the Rust API exactly. Omission means all rows;
+- Both account and category unions must match the Rust API exactly. Omitted
+  account means `all`, while omitted category means every business category;
   `change_type` remains an optional exact compatibility filter and may be
-  combined with category.
-- The adapter strictly validates authoritative entry categories, decimal
-  amount/fee/balance fields, timestamps, and pagination totals. A selected
-  category response containing another category is a contract error and must
-  not enter page state.
+  combined with both dimensions.
+- The adapter strictly validates authoritative entry account source and
+  category, decimal amount/fee/balance fields, timestamps, and pagination
+  totals. A selected account/category response containing another value is a
+  contract error and must not enter page state.
 - Amount, post-change balance, and positive fee presentation uses one
   locale-aware ledger formatter with up to 8 fractional digits. The smallest
   supported positive unit (`0.00000001`) must remain visible rather than round
@@ -997,18 +1018,23 @@ fetchWalletLedger(options?: {
   exhaustion remain distinct. Pagination advances its offset by response rows
   consumed, not by the deduplicated visible-entry count, and an empty page is
   exhausted even if inconsistent metadata claims more pages.
-- Reads are keyed by exact session token and selected category. Category
-  changes, token replacement/logout, and unmount invalidate older reads before
-  they can mutate entries, errors, loading state, or pagination.
+- Reads are keyed by exact session token, selected account, and selected
+  category. Account/category changes, token replacement/logout, and unmount
+  invalidate older reads before they can mutate entries, errors, loading state,
+  or pagination.
+- Two physical ledgers may emit the same numeric ID. Merge/deduplication and
+  rendered list keys therefore use `accountType:id`, while pagination still
+  advances by the raw number of response rows consumed.
 - Local adapter/contract diagnostics are not user copy; the view renders the
   localized ledger failure message instead of exposing internal English error
   strings.
 
-Required tests cover the exact category union, strict response mapping,
-category mismatch, row-based offset/exhaustion, local-date ordering,
-filter/session/unmount stale responses, known/unknown type presentation,
-pluralization, signed zero, 8-place amount/balance/positive-fee precision,
-state branches, 44px controls, and 320px horizontal-overflow guards.
+Required tests cover exact account/category unions, strict response mapping,
+account/category mismatch, overlapping numeric IDs, row-based offset/exhaustion,
+local-date ordering, account/filter/session/unmount stale responses,
+known/unknown type presentation, pluralization, signed zero, 8-place
+amount/balance/positive-fee precision, state branches, 44px controls, and 320px
+horizontal-overflow guards.
 
 ## 13. Margin Contract Trading Selection Contract
 

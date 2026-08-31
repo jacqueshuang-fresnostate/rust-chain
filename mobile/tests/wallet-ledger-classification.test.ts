@@ -11,12 +11,18 @@ import {
   groupWalletLedgerEntries,
   isWalletLedgerContractError,
   mapWalletLedgerResponse,
+  mergeWalletLedgerEntries,
+  WALLET_LEDGER_ACCOUNT_FILTERS,
   WALLET_LEDGER_FILTERS,
   WALLET_LEDGER_KNOWN_CHANGE_TYPES,
   WALLET_LEDGER_MAX_FRACTION_DIGITS,
   walletLedgerAmountSign,
+  walletLedgerAccountTranslationKey,
   walletLedgerCategoryTranslationKey,
+  walletLedgerEntryIdentity,
   walletLedgerTypePresentation,
+  type WalletLedgerAccountFilter,
+  type WalletLedgerAccountType,
   type WalletLedgerEntry,
   type WalletLedgerFilter,
   type WalletLedgerPage,
@@ -28,11 +34,12 @@ const walletApiSource = readFileSync(new URL('../src/api/wallet.ts', import.meta
 const walletCoreSource = readFileSync(new URL('../src/core/walletLedger.ts', import.meta.url), 'utf8')
 const viewSource = readFileSync(new URL('../src/views/WalletLedgerView.vue', import.meta.url), 'utf8')
 
-test('账单适配器严格消费权威分类、分页、金额、手续费和时间', () => {
+test('账单适配器严格消费权威账户、分类、分页、金额、手续费和时间', () => {
   const mapped = mapWalletLedgerResponse({
     entries: [
       backendEntry({
         id: 7,
+        account_type: 'spot',
         symbol: 'usdt',
         change_type: 'withdrawal_confirm',
         category: 'funding',
@@ -53,6 +60,7 @@ test('账单适配器严格消费权威分类、分页、金额、手续费和�
   assert.deepEqual(mapped, {
     entries: [{
       id: 7,
+      accountType: 'spot',
       symbol: 'USDT',
       changeType: 'withdrawal_confirm',
       category: 'funding',
@@ -72,6 +80,20 @@ test('账单适配器严格消费权威分类、分页、金额、手续费和�
   assert.throws(
     () => mapWalletLedgerResponse({ entries: [], page: undefined }),
     (error) => isWalletLedgerContractError(error) && /page/.test(error.message),
+  )
+  assert.throws(
+    () => mapWalletLedgerResponse({
+      entries: [backendEntry({ account_type: undefined })],
+      page: pageFixture(),
+    }),
+    /account_type/,
+  )
+  assert.throws(
+    () => mapWalletLedgerResponse({
+      entries: [backendEntry({ account_type: 'all' })],
+      page: pageFixture(),
+    }),
+    /account_type/,
   )
   assert.throws(
     () => mapWalletLedgerResponse({
@@ -115,6 +137,23 @@ test('账单适配器严格消费权威分类、分页、金额、手续费和�
     }),
     /total_pages/,
   )
+})
+
+test('现货与杠杆的相同数字 ID 使用 accountType:id 复合身份合并', () => {
+  const timestamp = new Date(2026, 7, 10, 12, 0).getTime()
+  const spot = ledgerEntry(30, timestamp, 'spot')
+  const margin = ledgerEntry(30, timestamp, 'margin')
+  const merged = mergeWalletLedgerEntries(
+    [spot],
+    [margin, { ...spot, amount: 999 }],
+  )
+
+  assert.deepEqual(merged.map(walletLedgerEntryIdentity).sort(), ['margin:30', 'spot:30'])
+  assert.equal(merged.length, 2)
+  assert.equal(merged.find((entry) => entry.accountType === 'spot')?.amount, 999)
+
+  const grouped = groupWalletLedgerEntries(merged, new Date(2026, 7, 10, 18, 0))
+  assert.deepEqual(grouped[0].entries.map(walletLedgerEntryIdentity), ['margin:30', 'spot:30'])
 })
 
 test('加载更多偏移按服务端已消费行推进，重复 ID 和空页都能确定性收口', () => {
@@ -181,7 +220,7 @@ test('本地日历分组按日期和组内时间倒序，并区分今天、昨�
   assert.match(formatWalletLedgerTime(entries[0].createdAt, 'en-US'), /08:00|8:00/)
 })
 
-test('十一个筛选项和全部已知变动类型在中英文中都有对称文案', () => {
+test('业务与账户筛选项、全部已知变动类型在中英文中都有对称文案', () => {
   assert.deepEqual(WALLET_LEDGER_FILTERS, [
     'all',
     'funding',
@@ -195,6 +234,7 @@ test('十一个筛选项和全部已知变动类型在中英文中都有对称�
     'prediction',
     'other',
   ])
+  assert.deepEqual(WALLET_LEDGER_ACCOUNT_FILTERS, ['all', 'spot', 'margin'])
   assert.deepEqual([...WALLET_LEDGER_KNOWN_CHANGE_TYPES].sort(), [
     'admin_recharge',
     'agent_commission_payout',
@@ -245,6 +285,7 @@ test('十一个筛选项和全部已知变动类型在中英文中都有对称�
 
   const translationKeys = new Set<string>([
     ...WALLET_LEDGER_FILTERS.map(walletLedgerCategoryTranslationKey),
+    ...WALLET_LEDGER_ACCOUNT_FILTERS.map(walletLedgerAccountTranslationKey),
     ...WALLET_LEDGER_KNOWN_CHANGE_TYPES.map((type) => (
       walletLedgerTypePresentation(type).translationKey
     )),
@@ -254,6 +295,7 @@ test('十一个筛选项和全部已知变动类型在中英文中都有对称�
     'ledger.fee',
     'ledger.sourceType',
     'ledger.typeOther',
+    'ledger.accountFilterLabel',
   ])
   for (const key of translationKeys) {
     assert.equal(typeof resolveMessage(zhCN, key), 'string', `zh-CN missing ${key}`)
@@ -268,8 +310,12 @@ test('十一个筛选项和全部已知变动类型在中英文中都有对称�
   assert.equal(walletLedgerTypePresentation('prediction_fee_refund').source, undefined)
   assert.equal(resolveMessage(zhCN, 'ledger.categoryFunding'), '充提')
   assert.equal(resolveMessage(en, 'ledger.categoryFunding'), 'Deposits & withdrawals')
-  assert.equal(resolveMessage(zhCN, 'ledger.categoryMargin'), '合约')
-  assert.equal(resolveMessage(en, 'ledger.categoryMargin'), 'Futures')
+  assert.equal(resolveMessage(zhCN, 'ledger.categoryMargin'), '杠杆')
+  assert.equal(resolveMessage(en, 'ledger.categoryMargin'), 'Margin')
+  assert.equal(resolveMessage(zhCN, 'ledger.accountSpot'), '现货')
+  assert.equal(resolveMessage(en, 'ledger.accountSpot'), 'Spot')
+  assert.equal(resolveMessage(zhCN, 'ledger.accountMargin'), '杠杆')
+  assert.equal(resolveMessage(en, 'ledger.accountMargin'), 'Margin')
 
   const testI18n = createI18n({
     legacy: false,
@@ -295,16 +341,18 @@ test('账单金额、余额和手续费保留最多八位小数且最小非零�
   assert.equal(formatWalletLedgerDecimal(-0, 'en-US'), '0')
 })
 
-test('账单请求生命周期阻止旧分类、旧会话和卸载后的响应写回', async () => {
+test('账单请求生命周期阻止旧账户、旧分类、旧会话和卸载后的响应写回', async () => {
   let sessionKey = ''
   let selectedFilter: WalletLedgerFilter = 'all'
+  let selectedAccountType: WalletLedgerAccountFilter = 'all'
   const requests: Array<{
-    options: { limit: number; offset: number; category?: string }
+    options: { limit: number; offset: number; category?: string; accountType: WalletLedgerAccountFilter }
     deferred: ReturnType<typeof deferred<WalletLedgerPage>>
   }> = []
   const lifecycle = createWalletLedgerRequestLifecycle({
     sessionKey: () => sessionKey,
     selectedFilter: () => selectedFilter,
+    selectedAccountType: () => selectedAccountType,
     fetchPage: (options) => {
       const pending = deferred<WalletLedgerPage>()
       requests.push({ options, deferred: pending })
@@ -318,7 +366,12 @@ test('账单请求生命周期阻止旧分类、旧会话和卸载后的响应�
   sessionKey = 'TOKEN_A'
   selectedFilter = 'funding'
   const funding = lifecycle.load(0, 30)
-  assert.deepEqual(requests[0].options, { limit: 30, offset: 0, category: 'funding' })
+  assert.deepEqual(requests[0].options, {
+    limit: 30,
+    offset: 0,
+    category: 'funding',
+    accountType: 'all',
+  })
 
   selectedFilter = 'spot'
   const spot = lifecycle.load(0, 30)
@@ -327,23 +380,49 @@ test('账单请求生命周期阻止旧分类、旧会话和卸载后的响应�
   requests[1].deferred.resolve(pageResult(2, 'spot'))
   assert.equal((await spot).state, 'loaded')
 
+  selectedAccountType = 'spot'
+  const spotAccount = lifecycle.load(0, 30)
+  selectedAccountType = 'margin'
+  const marginAccount = lifecycle.load(0, 30)
+  requests[2].deferred.resolve(pageResult(3, 'spot', 'spot'))
+  assert.deepEqual(await spotAccount, { state: 'stale' })
+  requests[3].deferred.resolve(pageResult(4, 'spot', 'margin'))
+  assert.equal((await marginAccount).state, 'loaded')
+
   selectedFilter = 'funding'
   const mismatched = lifecycle.load(0, 30)
-  requests[2].deferred.resolve(pageResult(3, 'spot'))
+  requests[4].deferred.resolve(pageResult(5, 'spot', 'margin'))
   const mismatchResult = await mismatched
   assert.equal(mismatchResult.state, 'error')
   assert.ok(mismatchResult.state === 'error' && isWalletLedgerContractError(mismatchResult.error))
 
   selectedFilter = 'all'
+  selectedAccountType = 'spot'
+  const mismatchedAccount = lifecycle.load(0, 30)
+  requests[5].deferred.resolve(pageResult(6, 'other', 'margin'))
+  const accountMismatchResult = await mismatchedAccount
+  assert.equal(accountMismatchResult.state, 'error')
+  assert.ok(
+    accountMismatchResult.state === 'error'
+      && isWalletLedgerContractError(accountMismatchResult.error),
+  )
+
+  selectedFilter = 'all'
+  selectedAccountType = 'all'
   const all = lifecycle.load(30, 30)
-  assert.deepEqual(requests[3].options, { limit: 30, offset: 30, category: undefined })
+  assert.deepEqual(requests[6].options, {
+    limit: 30,
+    offset: 30,
+    category: undefined,
+    accountType: 'all',
+  })
   sessionKey = 'TOKEN_B'
-  requests[3].deferred.resolve(pageResult(4, 'other'))
+  requests[6].deferred.resolve(pageResult(7, 'other'))
   assert.deepEqual(await all, { state: 'stale' })
 
   const beforeUnmount = lifecycle.load(0, 30)
   lifecycle.stop()
-  requests[4].deferred.resolve(pageResult(5, 'other'))
+  requests[7].deferred.resolve(pageResult(8, 'other'))
   assert.deepEqual(await beforeUnmount, { state: 'stale' })
   assert.deepEqual(await lifecycle.load(0, 30), { state: 'stale' })
 })
@@ -351,13 +430,19 @@ test('账单请求生命周期阻止旧分类、旧会话和卸载后的响应�
 test('页面和 API 源码保留分页、状态分支、手续费、原始未知类型与窄屏合同', () => {
   assert.match(walletApiSource, /client\.get<BackendWalletLedgerResponse>\(requestUrl\('\/wallet\/ledger'\)/)
   assert.match(walletApiSource, /category: options\.category/)
+  assert.match(walletApiSource, /account_type: accountType/)
   assert.match(walletApiSource, /change_type: changeType \|\| undefined/)
   assert.match(walletApiSource, /return mapWalletLedgerResponse\(response\.data\)/)
 
   assert.match(viewSource, /v-for="filter in WALLET_LEDGER_FILTERS"/)
+  assert.match(viewSource, /v-for="accountType in WALLET_LEDGER_ACCOUNT_FILTERS"/)
+  assert.match(viewSource, /selectedAccountType: \(\) => activeAccountType\.value/)
   assert.match(viewSource, /groupWalletLedgerEntries\(entries\.value\)/)
   assert.match(viewSource, /t\('ledger\.groupCount', group\.entries\.length\)/)
   assert.match(viewSource, /categoryLabel\(entry\.category\)/)
+  assert.match(viewSource, /accountLabel\(entry\.accountType\)/)
+  assert.match(viewSource, /:key="walletLedgerEntryIdentity\(entry\)"/)
+  assert.match(viewSource, /mergeWalletLedgerEntries\(entries\.value, result\.value\.entries\)/)
   assert.match(viewSource, /v-if="entry\.fee > 0"/)
   assert.match(viewSource, /t\('ledger\.sourceType', \{ type: entrySource\(entry\) \}\)/)
   assert.match(viewSource, /advanceWalletLedgerPagination\(offset, result\.value\)/)
@@ -384,6 +469,7 @@ test('页面和 API 源码保留分页、状态分支、手续费、原始未知
 function backendEntry(overrides: Record<string, unknown> = {}) {
   return {
     id: 1,
+    account_type: 'spot',
     symbol: 'USDT',
     change_type: 'deposit_confirm',
     category: 'funding',
@@ -404,9 +490,14 @@ function pageFixture() {
   }
 }
 
-function ledgerEntry(id: number, createdAt: number): WalletLedgerEntry {
+function ledgerEntry(
+  id: number,
+  createdAt: number,
+  accountType: WalletLedgerAccountType = 'spot',
+): WalletLedgerEntry {
   return {
     id,
+    accountType,
     symbol: 'USDT',
     changeType: 'deposit_confirm',
     category: 'funding',
@@ -417,9 +508,13 @@ function ledgerEntry(id: number, createdAt: number): WalletLedgerEntry {
   }
 }
 
-function pageResult(id: number, category: WalletLedgerEntry['category']): WalletLedgerPage {
+function pageResult(
+  id: number,
+  category: WalletLedgerEntry['category'],
+  accountType: WalletLedgerAccountType = 'spot',
+): WalletLedgerPage {
   return {
-    entries: [{ ...ledgerEntry(id, new Date(2026, 7, 10, id).getTime()), category }],
+    entries: [{ ...ledgerEntry(id, new Date(2026, 7, 10, id).getTime(), accountType), category }],
     page: {
       number: 0,
       size: 30,

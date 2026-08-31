@@ -19,7 +19,8 @@ pub use deposits::{
 pub use withdrawals::HttpWalletChainGateway;
 
 pub(crate) use accounts_ledger::{
-    WalletLedgerCategory, WalletLedgerFilter, list_wallet_accounts, list_wallet_ledger,
+    WalletLedgerAccountType, WalletLedgerCategory, WalletLedgerFilter, list_wallet_accounts,
+    list_wallet_ledger,
 };
 pub(crate) use deposits::{
     assign_deposit_address_in_tx, ensure_deposit_enabled_asset, list_active_deposit_networks,
@@ -51,8 +52,8 @@ pub(crate) use withdrawals::classify_broadcast_http_status;
 
 #[cfg(test)]
 use accounts_ledger::{
-    WalletLedgerEntryRow, classify_wallet_ledger_change_type, push_wallet_ledger_filters,
-    wallet_ledger_entry_response,
+    WALLET_LEDGER_STABLE_ORDER_SQL, WalletLedgerEntryRow, classify_wallet_ledger_change_type,
+    push_wallet_ledger_filters, push_wallet_ledger_union_source, wallet_ledger_entry_response,
 };
 
 #[cfg(test)]
